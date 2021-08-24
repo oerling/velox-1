@@ -23,6 +23,29 @@ using namespace facebook::velox::exec::test;
 
 using facebook::velox::test::BatchMaker;
 
+// A PlanNode that passes its input to its output and makes variable
+// memory reservations.
+class TestingConsumerNode : public core::PlanNode {
+ public:
+  explicit TestingConsumerNode(std::shared_ptr<const core::PlanNode> input)
+      : PlanNode("consumer"), sources_{input} {}
+
+  const std::shared_ptr<const RowType>& outputType() const override {
+    return sources_[0]->outputType();
+  }
+
+  const std::vector<std::shared_ptr<const PlanNode>>& sources() const override {
+    return sources_;
+  }
+
+  std::string_view name() const override {
+    return "consumer";
+  }
+
+ private:
+  std::vector<std::shared_ptr<const core::PlanNode>> sources_;
+};
+
 class DriverTest : public OperatorTestBase {
  protected:
   enum class ResultOperation {
@@ -57,7 +80,8 @@ class DriverTest : public OperatorTestBase {
       int32_t rowsInBatch,
       // applies to second column
       std::function<bool(int64_t)> filterFunc = nullptr,
-      int32_t* filterHits = nullptr) {
+      int32_t* filterHits = nullptr,
+      bool addTestingConsumer = false) {
     std::vector<RowVectorPtr> batches;
     for (int32_t i = 0; i < numBatches; ++i) {
       batches.push_back(std::dynamic_pointer_cast<RowVector>(
@@ -90,6 +114,11 @@ class DriverTest : public OperatorTestBase {
       expressions.push_back(project);
 
       planBuilder.project(expressions, projectNames);
+    }
+    if (addTestingConsumer) {
+      planBuilder.addNode([](std::shared_ptr<const core::PlanNode> input) {
+        return std::make_shared<TestingConsumerNode>(input);
+      });
     }
     return planBuilder.planNode();
   }
@@ -312,6 +341,126 @@ TEST_F(DriverTest, yield) {
     counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       readResults(params[i], ResultOperation::kYield, 10'000, &counters[i], i);
+    }));
+  }
+  for (int32_t i = 0; i < kNumTasks; ++i) {
+    threads[i].join();
+    EXPECT_EQ(counters[i], kThreadsPerTask * hits);
+    EXPECT_TRUE(stateFutures_.at(i).isReady());
+  }
+}
+
+// An operator that passes through its input but maintains a varying
+// memory allocation. For example, a distinct with spilling would have a similar
+// behavior.
+
+class TestingConsumer : public Operator {
+ public:
+  TestingConsumer(
+      DriverCtx* ctx,
+      int32_t id,
+      std::shared_ptr<const TestingConsumerNode> node)
+      : Operator(ctx, node->outputType(), id, node->id(), "consumer"),
+        recoverableTracker_(memory::MemoryUsageTracker::create(
+            operatorCtx_->pool()->getMemoryUsageTracker(),
+            memory::UsageType::kRecoverableMem,
+            memory::MemoryUsageConfigBuilder().build())) {}
+
+  bool needsInput() const override {
+    return !isFinishing_ && !input_;
+  }
+
+  void addInput(RowVectorPtr input) override {
+    input_ = std::move(input);
+  }
+
+  RowVectorPtr getOutput() override {
+    if (!input_) {
+      return nullptr;
+    }
+    int64_t size = 50 << 20;
+    if (!reserveAndRun(
+            recoverableTracker_,
+            size,
+            [this](int64_t size) {
+              LOG(INFO) << "Spiller called: " << size;
+              return spill(size);
+            },
+            [&]() {
+              // Use the reserved memory.
+              recoverableTracker_->update(
+                  recoverableTracker_->getAvailableReservation());
+            })) {
+      VELOX_FAIL("Out of memory");
+    }
+    return std::move(input_);
+  }
+
+  BlockingReason isBlocked(ContinueFuture* future) override {
+    return BlockingReason::kNotBlocked;
+  }
+
+  int64_t spill(int64_t size) override {
+    int64_t freed =
+        std::min(size, recoverableTracker_->getCurrentRecoverableBytes());
+    recoverableTracker_->update(-freed);
+    recoverableTracker_->release();
+    return freed;
+  }
+
+ private:
+  std::shared_ptr<memory::MemoryUsageTracker> recoverableTracker_;
+};
+
+TEST_F(DriverTest, memoryReservation) {
+  constexpr int32_t kNumTasks = 20;
+  constexpr int32_t kThreadsPerTask = 5;
+  constexpr int64_t kProcessBytes = 1 << 30;
+  constexpr int64_t kTotalMemory = 100 << 20; // 100MB.
+  memory::MemoryManagerStrategy::registerFactory(
+      [&]() { return std::make_unique<TaskMemoryStrategy>(kProcessBytes); });
+
+  Operator::registerOperator(
+      [](DriverCtx* ctx,
+         int32_t id,
+         std::shared_ptr<const core::PlanNode>& node)
+          -> std::unique_ptr<TestingConsumer> {
+        if (auto consumer =
+                std::dynamic_pointer_cast<const TestingConsumerNode>(node)) {
+          return std::make_unique<TestingConsumer>(ctx, id, consumer);
+        }
+        return nullptr;
+      });
+
+  auto& manager = memory::getProcessDefaultMemoryManager();
+  std::vector<int32_t> counters;
+  counters.reserve(kNumTasks);
+  std::vector<CursorParameters> params;
+  params.resize(kNumTasks);
+  int32_t hits;
+  for (int32_t i = 0; i < kNumTasks; ++i) {
+    params[i].queryCtx = core::QueryCtx::create();
+    params[i].planNode = makeValuesFilterProject(
+        rowType_,
+        "m1 % 10 > 0",
+        "m1 % 3 + m2 % 5 + m3 % 7 + m4 % 11 + m5 % 13 + m6 % 17 + m7 % 19",
+        200,
+        2'000,
+        [](int64_t num) { return num % 10 > 0; },
+        &hits,
+        true);
+    params[i].numThreads = kThreadsPerTask;
+  }
+  std::vector<std::thread> threads;
+  threads.reserve(kNumTasks);
+  for (int32_t i = 0; i < kNumTasks; ++i) {
+    counters.push_back(0);
+    threads.push_back(std::thread([this, &params, &counters, i]() {
+      try {
+        readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);
+      } catch (const std::exception& e) {
+        LOG(INFO) << "Reservation task errored out " << e.what();
+      }
     }));
   }
   for (int32_t i = 0; i < kNumTasks; ++i) {
