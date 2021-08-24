@@ -46,6 +46,29 @@ class TestingConsumerNode : public core::PlanNode {
   std::vector<std::shared_ptr<const core::PlanNode>> sources_;
 };
 
+// A PlanNode that passes its input to its output and periodically
+// pauses and resumes other Tasks.
+class TestingIOLimiterGateNode : public core::PlanNode {
+ public:
+  explicit TestingIOLimiterGateNode(std::shared_ptr<const core::PlanNode> input)
+      : PlanNode("IOLimiterGate"), sources_{input} {}
+
+  const std::shared_ptr<const RowType>& outputType() const override {
+    return sources_[0]->outputType();
+  }
+
+  const std::vector<std::shared_ptr<const PlanNode>>& sources() const override {
+    return sources_;
+  }
+
+  std::string_view name() const override {
+    return "IOLimiterGate";
+  }
+
+ private:
+  std::vector<std::shared_ptr<const core::PlanNode>> sources_;
+};
+
 class DriverTest : public OperatorTestBase {
  protected:
   enum class ResultOperation {
@@ -72,6 +95,14 @@ class DriverTest : public OperatorTestBase {
              BIGINT()});
   }
 
+  void TearDown() override {
+    if (wakeupInitialized_) {
+      wakeupCancelled_ = true;
+      wakeupThread_.join();
+    }
+    OperatorTestBase::TearDown();
+  }
+
   std::shared_ptr<const core::PlanNode> makeValuesFilterProject(
       const std::shared_ptr<const RowType>& rowType,
       const std::string& filter,
@@ -81,6 +112,7 @@ class DriverTest : public OperatorTestBase {
       // applies to second column
       std::function<bool(int64_t)> filterFunc = nullptr,
       int32_t* filterHits = nullptr,
+      bool addTestingGate = false,
       bool addTestingConsumer = false) {
     std::vector<RowVectorPtr> batches;
     for (int32_t i = 0; i < numBatches; ++i) {
@@ -120,6 +152,12 @@ class DriverTest : public OperatorTestBase {
         return std::make_shared<TestingConsumerNode>(input);
       });
     }
+    if (addTestingGate) {
+      planBuilder.addNode([](std::shared_ptr<const core::PlanNode> input) {
+        return std::make_shared<TestingIOLimiterGateNode>(input);
+      });
+    }
+
     return planBuilder.planNode();
   }
 
@@ -183,10 +221,86 @@ class DriverTest : public OperatorTestBase {
     }
   }
 
+ public:
+  // Sets 'future' to a future that will be realized within a random
+  // delay of a few ms.
+  void registerForWakeup(ContinueFuture* future) {
+    std::lock_guard<std::mutex> l(wakeupMutex_);
+    if (!wakeupInitialized_) {
+      wakeupInitialized_ = true;
+      wakeupThread_ = std::thread([&]() {
+        int32_t counter = 0;
+        for (;;) {
+          if (wakeupCancelled_) {
+            return;
+          }
+          // Wait a small interval and realize a small number of queued
+          // promises, if any.
+          auto units = 1 + (++counter % 5);
+          std::this_thread::sleep_for(std::chrono::milliseconds(units));
+          auto count = 1 + (++counter % 4);
+          for (auto i = 0; i < count; ++i) {
+            if (wakeupPromises_.empty()) {
+              break;
+            }
+            wakeupPromises_.front().setValue(true);
+            wakeupPromises_.pop_front();
+          }
+        }
+      });
+    }
+    auto [promise, semiFuture] = makeVeloxPromiseContract<bool>(
+								"wakup");
+    *future = std::move(semiFuture);
+    wakeupPromises_.push_back(std::move(promise));
+  }
+
+  // Registers a Task for use in randomTask().
+  void registerTask(std::shared_ptr<Task> task) {
+    std::lock_guard<std::mutex> l(taskMutex_);
+    if (std::find(allTasks_.begin(), allTasks_.end(), task) == allTasks_.end()) {
+      return;
+    }
+    allTasks_.push_back(task);
+  }
+
+  void unregisterTask(std::shared_ptr<Task> task) {
+    std::lock_guard<std::mutex> l(taskMutex_);
+    auto it = std::find(allTasks_.begin(), allTasks_.end(), task);
+    if (it == allTasks_.end()) {
+      return;
+    }
+    allTasks_.erase(it);
+  }
+
+  std::shared_ptr<Task> randomTask() {
+    std::lock_guard<std::mutex> l(taskMutex_);
+    if (allTasks_.empty()) {
+      return nullptr;
+    }
+    return allTasks_[folly::Random::rand32() % allTasks_.size()];
+  }
+
+ protected:
+  // State for registerForWakeup().
+  std::mutex wakeupMutex_;
+  std::thread wakeupThread_;
+  std::deque<folly::Promise<bool>> wakeupPromises_;
+  bool wakeupInitialized_{false};
+  // Set to true when it is time to exit 'wakeupThread_'.
+  bool wakeupCancelled_{false};
+
   std::shared_ptr<const RowType> rowType_;
   std::mutex mutex_;
   std::vector<std::shared_ptr<Task>> tasks_;
   std::unordered_map<int32_t, folly::Future<bool>> stateFutures_;
+
+  // Mutex for randomTask()
+  std::mutex taskMutex_;
+  // Tasks registered for randomTask()
+  std::vector<std::shared_ptr<Task>> allTasks_;
+
+  folly::Random::DefaultGenerator rng_;
 };
 
 TEST_F(DriverTest, error) {
@@ -350,10 +464,175 @@ TEST_F(DriverTest, yield) {
   }
 }
 
+// A testing Operator that periodically does one of the following:
+//
+// 1. Blocks and registers a resume that continues the Driver after a timed
+// pause. This simulates blocking to wait for exchange or consumer.
+//
+// 2. Enters a cancel-free section where the Driver is on thread but is not
+// counted as running and is therefore instantaneously cancellable and pausable.
+// Comes back on thread after a timed pause. This simulates an RPC to an out of
+// process service.
+//
+// 3.  Enters a cancel-free section where this pauses and resumes random Tasks,
+// including its own Task. This simulates making Tasks release memory under
+// memory contention, checkpointing Tasks for migration or fault tolerance and
+// other process-wide coordination activities.
+//
+// These situations will occur with arbitrary concurrency and sequence and must
+// therefore be in one test to check against deadlocks.
+class TestingIOLimiterGate : public Operator {
+ public:
+  TestingIOLimiterGate(
+      DriverCtx* ctx,
+      int32_t id,
+      std::shared_ptr<const TestingIOLimiterGateNode> node,
+      DriverTest* test,
+      int32_t sequence)
+      : Operator(ctx, node->outputType(), id, node->id(), "IOLimiterGate"),
+        test_(test),
+        sequence_(sequence),
+        counter_(sequence),
+        future_(false) {
+    test_->registerTask(operatorCtx_->task());
+  }
+
+  bool needsInput() const override {
+    return !isFinishing_ && !input_;
+  }
+
+  void addInput(RowVectorPtr input) override {
+    input_ = std::move(input);
+  }
+
+  RowVectorPtr getOutput() override {
+    if (!input_) {
+      return nullptr;
+    }
+    ++counter_;
+    // Block for a time quantum evern 10th time.
+    if (counter_ % 10 == 0) {
+      test_->registerForWakeup(&future_);
+      hasFuture_ = true;
+      return nullptr;
+    }
+    {
+      CancelFreeSection(operatorCtx_->driver());
+      sleep(1);
+      if (counter_ % 7 == 0) {
+        // Every 7th time, stop and resume other Tasks. This operation is
+        // globally serilized.
+        std::lock_guard<std::mutex> l(pauseMutex_);
+
+        for (auto i = 0; i <= counter_ % 3; ++i) {
+          auto task = test_->randomTask();
+          auto cancelPool = task->cancelPool();
+          cancelPool->requestPause(true);
+          auto& executor = folly::QueuedImmediateExecutor::instance();
+          auto future = cancelPool->finishFuture().via(&executor);
+          future.wait();
+          sleep(2);
+	  cancelPool->requestPause(false);
+	  Task::resume(task);
+        }
+      }
+    }
+
+    return input_;
+  }
+
+  BlockingReason isBlocked(ContinueFuture* future) override {
+    if (hasFuture_) {
+      *future = std::move(future_);
+      return BlockingReason::kWaitForConsumer;
+    }
+    return BlockingReason::kNotBlocked;
+  }
+
+  void finish() override {
+    test_->unregisterTask(operatorCtx_->task());
+    Operator::finish();
+  }
+
+ private:
+  void sleep(int32_t units) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(units));
+  }
+  // The DriverTest under which this is running. Used for global context.
+  DriverTest* test_;
+  // Mutex to serialize the pause/restart exercise so that only one instance
+  // does this at a time.
+  static std::mutex pauseMutex_;
+
+  // Sequence number of 'this' within the test run.
+  const int32_t sequence_;
+  // Counter for actions. Initialized from 'sequence_'. Decides what
+  // the next action in getOutput() will be.
+  int32_t counter_;
+  bool hasFuture_{false};
+  ContinueFuture future_;
+};
+
+std::mutex TestingIOLimiterGate ::pauseMutex_;
+
+TEST_F(DriverTest, ioLimiterGate) {
+  constexpr int32_t kNumTasks = 20;
+  constexpr int32_t kThreadsPerTask = 5;
+  int32_t sequence = 0;
+  Operator::registerOperator(
+      [&](DriverCtx* ctx,
+          int32_t id,
+          std::shared_ptr<const core::PlanNode>& node)
+          -> std::unique_ptr<TestingIOLimiterGate> {
+        if (auto gate =
+                std::dynamic_pointer_cast<const TestingIOLimiterGateNode>(
+                    node)) {
+          return std::make_unique<TestingIOLimiterGate>(
+              ctx, id, gate, this, ++sequence);
+        }
+        return nullptr;
+      });
+
+  std::vector<int32_t> counters;
+  counters.reserve(kNumTasks);
+  std::vector<CursorParameters> params;
+  params.resize(kNumTasks);
+  int32_t hits;
+  for (int32_t i = 0; i < kNumTasks; ++i) {
+    params[i].queryCtx = core::QueryCtx::create();
+    params[i].planNode = makeValuesFilterProject(
+        rowType_,
+        "m1 % 10 > 0",
+        "m1 % 3 + m2 % 5 + m3 % 7 + m4 % 11 + m5 % 13 + m6 % 17 + m7 % 19",
+        200,
+        2'000,
+        [](int64_t num) { return num % 10 > 0; },
+        &hits,
+        true);
+    params[i].numThreads = kThreadsPerTask;
+  }
+  std::vector<std::thread> threads;
+  threads.reserve(kNumTasks);
+  for (int32_t i = 0; i < kNumTasks; ++i) {
+    counters.push_back(0);
+    threads.push_back(std::thread([this, &params, &counters, i]() {
+      try {
+        readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);
+      } catch (const std::exception& e) {
+        LOG(INFO) << "Reservation task errored out " << e.what();
+      }
+    }));
+  }
+  for (int32_t i = 0; i < kNumTasks; ++i) {
+    threads[i].join();
+    EXPECT_EQ(counters[i], kThreadsPerTask * hits);
+    EXPECT_TRUE(stateFutures_.at(i).isReady());
+  }
+}
+
 // An operator that passes through its input but maintains a varying
 // memory allocation. For example, a distinct with spilling would have a similar
 // behavior.
-
 class TestingConsumer : public Operator {
  public:
   TestingConsumer(
@@ -413,6 +692,7 @@ class TestingConsumer : public Operator {
 };
 
 TEST_F(DriverTest, memoryReservation) {
+  return;
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
   constexpr int64_t kProcessBytes = 1 << 30;
