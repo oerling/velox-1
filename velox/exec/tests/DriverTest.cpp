@@ -250,7 +250,7 @@ class DriverTest : public OperatorTestBase {
       });
     }
     auto [promise, semiFuture] = makeVeloxPromiseContract<bool>(
-								"wakup");
+								"wakeup");
     *future = std::move(semiFuture);
     wakeupPromises_.push_back(std::move(promise));
   }
@@ -526,6 +526,9 @@ class TestingIOLimiterGate : public Operator {
 
         for (auto i = 0; i <= counter_ % 3; ++i) {
           auto task = test_->randomTask();
+	  if (!task) {
+	    continue;
+	  }
           auto cancelPool = task->cancelPool();
           cancelPool->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
@@ -543,6 +546,7 @@ class TestingIOLimiterGate : public Operator {
 
   BlockingReason isBlocked(ContinueFuture* future) override {
     if (hasFuture_) {
+      hasFuture_ = false;
       *future = std::move(future_);
       return BlockingReason::kWaitForConsumer;
     }
@@ -578,7 +582,7 @@ std::mutex TestingIOLimiterGate ::pauseMutex_;
 TEST_F(DriverTest, ioLimiterGate) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
-  int32_t sequence = 0;
+  static int32_t sequence = 0;
   Operator::registerOperator(
       [&](DriverCtx* ctx,
           int32_t id,
@@ -619,7 +623,7 @@ TEST_F(DriverTest, ioLimiterGate) {
       try {
         readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);
       } catch (const std::exception& e) {
-        LOG(INFO) << "Reservation task errored out " << e.what();
+        LOG(INFO) << "IOLimiterGate task errored out " << e.what();
       }
     }));
   }
@@ -728,7 +732,8 @@ TEST_F(DriverTest, memoryReservation) {
         2'000,
         [](int64_t num) { return num % 10 > 0; },
         &hits,
-        true);
+        false,
+	true);
     params[i].numThreads = kThreadsPerTask;
   }
   std::vector<std::thread> threads;
