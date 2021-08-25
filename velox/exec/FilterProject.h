@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -24,8 +26,8 @@ class FilterProject : public Operator {
   FilterProject(
       int32_t operatorId,
       DriverCtx* driverCtx,
-      std::shared_ptr<const core::FilterNode> filter,
-      std::shared_ptr<const core::ProjectNode> project);
+      const std::shared_ptr<const core::FilterNode>& filter,
+      const std::shared_ptr<const core::ProjectNode>& project);
 
   bool isFilter() const override {
     return true;
@@ -53,6 +55,11 @@ class FilterProject : public Operator {
   }
 
  private:
+  // Tests if 'numProcessedRows_' equals to the length of input_ and clears
+  // outstanding references to input_ if done. Returns true if getOutput
+  // should return nullptr.
+  bool allInputProcessed();
+
   // Clears references to non-reusable vectors from 'output_' once an
   // input is fully processed. This makes it more likely that
   // producers will have singly referenced reusable vectors for the
@@ -76,5 +83,7 @@ class FilterProject : public Operator {
   int32_t numExprs_;
 
   FilterEvalCtx filterEvalCtx_;
+
+  vector_size_t numProcessedInputRows_{0};
 };
 } // namespace facebook::velox::exec

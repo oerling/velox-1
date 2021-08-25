@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -201,7 +203,7 @@ VELOX_UDF_END();
 
 template <typename T>
 VELOX_UDF_BEGIN(bitwise_and)
-FOLLY_ALWAYS_INLINE bool call(T& result, T a, T b) {
+FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
   result = a & b;
   return true;
 }
@@ -209,7 +211,7 @@ VELOX_UDF_END();
 
 template <typename T>
 VELOX_UDF_BEGIN(bitwise_not)
-FOLLY_ALWAYS_INLINE bool call(T& result, T a) {
+FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a) {
   result = ~a;
   return true;
 }
@@ -217,7 +219,7 @@ VELOX_UDF_END();
 
 template <typename T>
 VELOX_UDF_BEGIN(bitwise_or)
-FOLLY_ALWAYS_INLINE bool call(T& result, T a, T b) {
+FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
   result = a | b;
   return true;
 }
@@ -225,7 +227,7 @@ VELOX_UDF_END();
 
 template <typename T>
 VELOX_UDF_BEGIN(bitwise_xor)
-FOLLY_ALWAYS_INLINE bool call(T& result, T a, T b) {
+FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
   result = a ^ b;
   return true;
 }

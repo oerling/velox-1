@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -17,9 +19,6 @@
 #include "velox/exec/Driver.h"
 
 namespace facebook::velox::exec {
-
-class ExchangeClient;
-class LocalMerge;
 
 using OperationTimer = CpuWallTimer;
 using OperationTiming = CpuWallTiming;
@@ -145,7 +144,7 @@ class OperatorCtx {
 
   memory::MappedMemory* recoverableMappedMemory() const;
 
-  std::shared_ptr<Task> task() const {
+  const std::shared_ptr<Task>& task() const {
     return driverCtx_->task;
   }
 
@@ -220,7 +219,7 @@ class Operator {
   }
 
   // Returns kNotBlocked if 'this' is not prevented from
-  // advancing. Otherwise returns a reason and sets 'future' to a
+  // advancing. Otherwise, returns a reason and sets 'future' to a
   // future that will be realized when the reason is no longer present.
   // The caller must wait for the `future` to complete before making
   // another call.
@@ -296,7 +295,7 @@ class Operator {
 
   // Clears the columns of 'output_' that are projected from
   // 'input_'. This should be done when preparing to produce a next
-  // batch of output so as to drop any lingering references to row
+  // batch of output to drop any lingering references to row
   // number mappings or input vectors. In this way input vectors do
   // not have to be copied and will be singly referenced by their
   // producer.
@@ -315,22 +314,14 @@ class Operator {
   // 'identityProjections_' and 'resultProjections_'.
   RowVectorPtr fillOutput(vector_size_t size, BufferPtr mapping);
 
-  // Tests if 'numProcessedRows_' equals to the length of input_ and clears
-  // outstanding references to input_ if done. Returns true if getOutput
-  // should return nullptr.
-  bool allInputProcessed();
-
   // Drops references to identity projected columns from 'output_' and
   // clears 'input_'. The producer will see its vectors as singly
   // referenced.
   void inputProcessed();
 
-  void setProcessedRows(vector_size_t numRows) {
-    numProcessedInputRows_ = numRows;
-  }
-
   std::unique_ptr<OperatorCtx> operatorCtx_;
   OperatorStats stats_;
+  const std::shared_ptr<const RowType> outputType_;
 
   // Holds the last data from addInput until it is processed. Reset after the
   // input is processed.
@@ -340,9 +331,7 @@ class Operator {
   // from 'input_' and from 'results_'. Reused if singly referenced.
   RowVectorPtr output_;
 
-  vector_size_t numProcessedInputRows_ = 0;
   bool isFinishing_ = false;
-  std::shared_ptr<const RowType> outputType_;
   std::vector<IdentityProjection> identityProjections_;
   std::vector<VectorPtr> results_;
 

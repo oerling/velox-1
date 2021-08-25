@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -361,6 +363,23 @@ TEST(SelectivityVectorTest, iterator) {
     count++;
   }
   EXPECT_EQ(count, bits::countBits(&contiguous[0], 0, 240));
+}
+
+TEST(SelectivityVectorTest, resizeTest) {
+  SelectivityVector vector(64, false);
+  vector.resize(128, /* value */ true);
+
+  // Ensure last 64 bits are set to 1
+  for (int i = 64; i < vector.size(); i++) {
+    ASSERT_TRUE(vector.isValid(i));
+  }
+
+  SelectivityVector rows(64, false);
+  rows.resize(128, /* value */ false);
+
+  for (int i = 64; i < rows.size(); i++) {
+    ASSERT_TRUE(!rows.isValid(i));
+  }
 }
 
 } // namespace test

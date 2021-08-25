@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -151,6 +153,8 @@ class Task : public memory::MemoryConsumer {
   void splitFinished(const core::PlanNodeId& planNodeId, int32_t splitGroupId);
 
   void multipleSplitsFinished(int32_t numSplits);
+
+  void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
 
   void createLocalMergeSources(
       unsigned numSources,

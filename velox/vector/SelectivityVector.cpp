@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -20,4 +22,9 @@ const SelectivityVector& SelectivityVector::empty() {
   static SelectivityVector kEmpty{SelectivityVector(0, false)};
   return kEmpty;
 }
+
+SelectivityVector SelectivityVector::empty(vector_size_t size) {
+  return SelectivityVector{size, false};
+}
+
 } // namespace facebook::velox

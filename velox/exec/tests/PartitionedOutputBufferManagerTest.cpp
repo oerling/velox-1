@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -41,7 +43,8 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
     auto queryCtx = core::QueryCtx::create();
     bufferManager_->removeTask(taskId);
     auto task = std::make_shared<Task>(taskId, nullptr, 0, std::move(queryCtx));
-    bufferManager_->initializeTask(task, numDestinations, numDrivers);
+
+    bufferManager_->initializeTask(task, false, numDestinations, numDrivers);
     return task;
   }
 

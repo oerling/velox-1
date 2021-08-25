@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -69,11 +71,9 @@ DataAvailable DestinationBuffer::getAndClearNotify() {
   return result;
 }
 
-void DestinationBuffer::acknowledge(
+std::vector<std::shared_ptr<VectorStreamGroup>> DestinationBuffer::acknowledge(
     int64_t sequence,
-    bool fromGetData,
-    std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
-    uint64_t* totalFreed) {
+    bool fromGetData) {
   int64_t numDeleted = sequence - sequence_;
   if (numDeleted == 0 && fromGetData) {
     // If called from getData, it is expected that there will be
@@ -82,48 +82,45 @@ void DestinationBuffer::acknowledge(
     // because the messages may arrive out of order. Note that getData
     // implicitly acknowledges all messages with a lower sequence
     // number than the one in getData.
-    return;
+    return {};
   }
   if (numDeleted <= 0) {
     // Acknowledges come out of order, e.g. ack of 10 and 9 have
     // swapped places in flight.
-    *totalFreed = 0;
     VLOG(0) << this << " Out of order ack: " << sequence << " over "
             << sequence_;
-    return;
+    return {};
   }
+
   VELOX_CHECK_LE(
       numDeleted, data_.size(), "Ack received for a not yet produced item");
-  uint64_t freedBytes = 0;
+  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
   for (auto i = 0; i < numDeleted; ++i) {
     if (!data_[i]) {
       VELOX_CHECK_EQ(i, data_.size() - 1, "null marker found in the middle");
       break;
     }
-    freedBytes += data_[i]->size();
     freed.push_back(std::move(data_[i]));
   }
   data_.erase(data_.begin(), data_.begin() + numDeleted);
   sequence_ += numDeleted;
-  *totalFreed = freedBytes;
+  return freed;
 }
 
-void DestinationBuffer::deleteResults(
-    std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
-    uint64_t* totalFreed) {
-  uint64_t freedBytes = 0;
+std::vector<std::shared_ptr<VectorStreamGroup>>
+DestinationBuffer::deleteResults() {
+  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
   for (auto i = 0; i < data_.size(); ++i) {
     if (!data_[i]) {
       VELOX_CHECK_EQ(i, data_.size() - 1, "null marker found in the middle");
       break;
     }
-    freedBytes += data_[i]->size();
     freed.push_back(std::move(data_[i]));
   }
-  *totalFreed = freedBytes;
   data_.clear();
   // Notify any consumers that are still waiting.
   getAndClearNotify().notify();
+  return freed;
 }
 
 std::string DestinationBuffer::toString() {
@@ -134,33 +131,103 @@ std::string DestinationBuffer::toString() {
   return out.str();
 }
 
+namespace {
+// Frees 'freed' and realizes 'promises'. Used after
+// updateAfterAcknowledgeLocked. This runs outside of the mutex, so
+// that we do the expensive free outside and only then continue the
+// producers which will allocate more memory.
+void releaseAfterAcknowledge(
+    std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
+    std::vector<VeloxPromise<bool>>& promises) {
+  freed.clear();
+  for (auto& promise : promises) {
+    promise.setValue(true);
+  }
+}
+} // namespace
+
+void PartitionedOutputBuffer::updateBroadcastOutputBuffers(
+    int numBuffers,
+    bool noMoreBuffers) {
+  VELOX_CHECK(broadcast_);
+
+  std::vector<VeloxPromise<bool>> promises;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+
+    if (numBuffers > buffers_.size()) {
+      addBroadcastOutputBuffersLocked(numBuffers);
+    }
+
+    if (!noMoreBuffers) {
+      return;
+    }
+
+    noMoreBroadcastBuffers_ = true;
+    updateAfterAcknowledgeLocked(dataToBroadcast_, promises);
+  }
+
+  releaseAfterAcknowledge(dataToBroadcast_, promises);
+}
+
+void PartitionedOutputBuffer::addBroadcastOutputBuffersLocked(int numBuffers) {
+  VELOX_CHECK(!noMoreBroadcastBuffers_)
+  buffers_.reserve(numBuffers);
+  for (auto i = buffers_.size(); i < numBuffers; i++) {
+    auto buffer = std::make_unique<DestinationBuffer>();
+    for (const auto& data : dataToBroadcast_) {
+      buffer->enqueue(data);
+    }
+    if (atEnd_) {
+      buffer->enqueue(nullptr);
+    }
+    buffers_.emplace_back(std::move(buffer));
+  }
+}
+
 BlockingReason PartitionedOutputBuffer::enqueue(
     int destination,
-    std::unique_ptr<VectorStreamGroup>&& data,
+    std::unique_ptr<VectorStreamGroup> data,
     ContinueFuture* future) {
   VELOX_CHECK(data);
-  DataAvailable dataAvailable;
+  std::vector<DataAvailable> dataAvailableCallbacks;
   bool blocked = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
     VELOX_CHECK_LT(destination, buffers_.size());
-    if (task_->state() != kRunning) {
-      throw std::runtime_error(
-          "Task is terminated, cannot add data to output.");
-    }
+    VELOX_CHECK(
+        task_->state() == kRunning,
+        "Task is terminated, cannot add data to output.");
+
     totalSize_ += data->size();
-    auto buffer = buffers_[destination].get();
-    buffer->enqueue(std::move(data));
+    if (broadcast_) {
+      std::shared_ptr<VectorStreamGroup> shared = std::move(data);
+      for (auto& buffer : buffers_) {
+        buffer->enqueue(shared);
+        dataAvailableCallbacks.emplace_back(buffer->getAndClearNotify());
+      }
+
+      if (!noMoreBroadcastBuffers_) {
+        dataToBroadcast_.emplace_back(shared);
+      }
+    } else {
+      auto buffer = buffers_[destination].get();
+      buffer->enqueue(std::move(data));
+      dataAvailableCallbacks.emplace_back(buffer->getAndClearNotify());
+    }
+
     if (totalSize_ > maxSize_ && future) {
       promises_.emplace_back("PartitionedOutputBuffer::enqueue");
       *future = promises_.back().getSemiFuture();
       blocked = true;
     }
-    dataAvailable = buffer->getAndClearNotify();
   }
 
-  // outside of mutex_
-  dataAvailable.notify();
+  // Outside mutex_.
+  for (auto& callback : dataAvailableCallbacks) {
+    callback.notify();
+  }
+
   return blocked ? BlockingReason::kWaitForConsumer
                  : BlockingReason::kNotBlocked;
 }
@@ -184,7 +251,8 @@ void PartitionedOutputBuffer::noMoreData() {
       }
     }
   }
-  // outside of mutex_
+
+  // Outside mutex_.
   if (atEnd_) {
     for (auto& notification : finished) {
       notification.notify();
@@ -198,6 +266,9 @@ bool PartitionedOutputBuffer::isFinished() {
 }
 
 bool PartitionedOutputBuffer::isFinishedLocked() {
+  if (broadcast_ && !noMoreBroadcastBuffers_) {
+    return false;
+  }
   for (auto& buffer : buffers_) {
     if (buffer) {
       return false;
@@ -205,21 +276,6 @@ bool PartitionedOutputBuffer::isFinishedLocked() {
   }
   return true;
 }
-
-// Frees 'freed' and realizes 'promises'. Used after
-// updateAfterAcknowledgeLocked. This runs outside of the mutex, so
-// that we do the expensive free outside and only then continue the
-// producers which will allocate more memory.
-namespace {
-void releaseAfterAcknowledge(
-    std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
-    std::vector<VeloxPromise<bool>>& promises) {
-  freed.clear();
-  for (auto& promise : promises) {
-    promise.setValue(true);
-  }
-}
-} // namespace
 
 void PartitionedOutputBuffer::acknowledge(int destination, int64_t sequence) {
   std::vector<std::shared_ptr<VectorStreamGroup>> freed;
@@ -233,16 +289,25 @@ void PartitionedOutputBuffer::acknowledge(int destination, int64_t sequence) {
               << " and sequence " << sequence;
       return;
     }
-    uint64_t totalFreed = 0;
-    buffer->acknowledge(sequence, false, freed, &totalFreed);
-    updateAfterAcknowledgeLocked(totalFreed, promises);
+    freed = buffer->acknowledge(sequence, false);
+    updateAfterAcknowledgeLocked(freed, promises);
   }
   releaseAfterAcknowledge(freed, promises);
 }
 
 void PartitionedOutputBuffer::updateAfterAcknowledgeLocked(
-    int64_t totalFreed,
+    const std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
     std::vector<VeloxPromise<bool>>& promises) {
+  uint64_t totalFreed = 0;
+  for (const auto& free : freed) {
+    if (free.unique()) {
+      totalFreed += free->size();
+    }
+  }
+  if (totalFreed == 0) {
+    return;
+  }
+
   VELOX_CHECK_LE(
       totalFreed,
       totalSize_,
@@ -267,12 +332,11 @@ bool PartitionedOutputBuffer::deleteResults(int destination) {
       VLOG(1) << "Extra delete  received  for destination " << destination;
       return false;
     }
-    uint64_t totalFreed = 0;
-    buffer->deleteResults(freed, &totalFreed);
+    freed = buffer->deleteResults();
     buffers_[destination] = nullptr;
     ++numFinalAcknowledges_;
     isFinished = isFinishedLocked();
-    updateAfterAcknowledgeLocked(totalFreed, promises);
+    updateAfterAcknowledgeLocked(freed, promises);
   }
   if (!promises.empty()) {
     VLOG(1) << "Delete of results unblocks producers. Can happen in early end "
@@ -293,9 +357,13 @@ void PartitionedOutputBuffer::getData(
   std::vector<std::shared_ptr<VectorStreamGroup>> data;
   std::vector<std::shared_ptr<VectorStreamGroup>> freed;
   std::vector<VeloxPromise<bool>> promises;
-  uint64_t totalFreed = 0;
   {
     std::lock_guard<std::mutex> l(mutex_);
+
+    if (broadcast_ && destination >= buffers_.size()) {
+      addBroadcastOutputBuffersLocked(destination + 1);
+    }
+
     VELOX_CHECK_LT(destination, buffers_.size());
     auto destinationBuffer = buffers_[destination].get();
     VELOX_CHECK(
@@ -303,8 +371,8 @@ void PartitionedOutputBuffer::getData(
         "getData received after its buffer is deleted. Destination: {}, sequence: {}",
         destination,
         sequence);
-    destinationBuffer->acknowledge(sequence, true, freed, &totalFreed);
-    updateAfterAcknowledgeLocked(totalFreed, promises);
+    freed = destinationBuffer->acknowledge(sequence, true);
+    updateAfterAcknowledgeLocked(freed, promises);
     destinationBuffer->getData(maxBytes, sequence, notify, data);
   }
   releaseAfterAcknowledge(freed, promises);
@@ -355,17 +423,18 @@ PartitionedOutputBufferManager::getInstance(const std::string& host) {
 
 std::shared_ptr<PartitionedOutputBuffer>
 PartitionedOutputBufferManager::getBuffer(const std::string& taskId) {
-  std::lock_guard<std::mutex> l(mutex_);
-  auto it = buffers_.find(taskId);
-  VELOX_CHECK(
-      it != buffers_.end(), "Output buffers for task not found: {}", taskId);
-  return it->second;
+  return buffers_.withLock([&](auto& buffers) {
+    auto it = buffers.find(taskId);
+    VELOX_CHECK(
+        it != buffers.end(), "Output buffers for task not found: {}", taskId);
+    return it->second;
+  });
 }
 
 BlockingReason PartitionedOutputBufferManager::enqueue(
     const std::string& taskId,
     int destination,
-    std::unique_ptr<VectorStreamGroup>&& data,
+    std::unique_ptr<VectorStreamGroup> data,
     ContinueFuture* future) {
   return getBuffer(taskId)->enqueue(destination, std::move(data), future);
 }
@@ -382,35 +451,34 @@ void PartitionedOutputBufferManager::acknowledge(
     const std::string& taskId,
     int destination,
     int64_t sequence) {
-  std::shared_ptr<PartitionedOutputBuffer> buffer;
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    auto it = buffers_.find(taskId);
-    if (it == buffers_.end()) {
-      VLOG(1) << "Receiving ack for non-existent task " << taskId
-              << " destination " << destination << " sequence " << sequence;
-      return;
-    }
-    buffer = it->second;
+  auto buffer = buffers_.withLock(
+      [&](auto& buffers) -> std::shared_ptr<PartitionedOutputBuffer> {
+        auto it = buffers.find(taskId);
+        if (it == buffers.end()) {
+          VLOG(1) << "Receiving ack for non-existent task " << taskId
+                  << " destination " << destination << " sequence " << sequence;
+          return nullptr;
+        }
+        return it->second;
+      });
+  if (buffer) {
+    buffer->acknowledge(destination, sequence);
   }
-  buffer->acknowledge(destination, sequence);
 }
 
 void PartitionedOutputBufferManager::deleteResults(
     const std::string& taskId,
     int destination) {
-  std::shared_ptr<PartitionedOutputBuffer> buffer;
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    auto it = buffers_.find(taskId);
-    if (it == buffers_.end()) {
-      return;
-    }
-    buffer = it->second;
-  }
-  if (buffer->deleteResults(destination)) {
-    std::lock_guard<std::mutex> l(mutex_);
-    buffers_.erase(taskId);
+  auto buffer = buffers_.withLock(
+      [&](auto& buffers) -> std::shared_ptr<PartitionedOutputBuffer> {
+        auto it = buffers.find(taskId);
+        if (it == buffers.end()) {
+          return nullptr;
+        }
+        return it->second;
+      });
+  if (buffer && buffer->deleteResults(destination)) {
+    buffers_.withLock([&](auto& buffers) { buffers.erase(taskId); });
   }
 }
 
@@ -425,43 +493,57 @@ void PartitionedOutputBufferManager::getData(
 
 void PartitionedOutputBufferManager::initializeTask(
     std::shared_ptr<Task> task,
+    bool broadcast,
     int numDestinations,
     int numDrivers) {
-  std::lock_guard<std::mutex> l(mutex_);
-  auto it = buffers_.find(task->taskId());
-  if (it == buffers_.end()) {
-    buffers_[task->taskId()] = std::make_shared<PartitionedOutputBuffer>(
-        task, numDestinations, numDrivers);
-  } else {
-    VELOX_FAIL(
-        "Registering an output buffer for pre-existing taskId {}",
-        task->taskId());
-  }
+  const auto& taskId = task->taskId();
+
+  buffers_.withLock([&](auto& buffers) {
+    auto it = buffers.find(taskId);
+    if (it == buffers.end()) {
+      buffers[taskId] = std::make_shared<PartitionedOutputBuffer>(
+          std::move(task), broadcast, numDestinations, numDrivers);
+    } else {
+      VELOX_FAIL(
+          "Registering an output buffer for pre-existing taskId {}", taskId);
+    }
+  });
+}
+
+void PartitionedOutputBufferManager::updateBroadcastOutputBuffers(
+    const std::string& taskId,
+    int numBuffers,
+    bool noMoreBuffers) {
+  getBuffer(taskId)->updateBroadcastOutputBuffers(numBuffers, noMoreBuffers);
 }
 
 void PartitionedOutputBufferManager::removeTask(const std::string& taskId) {
-  std::shared_ptr<PartitionedOutputBuffer> buffer;
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    auto iter = buffers_.find(taskId);
-    if (iter == buffers_.end()) {
-      // Already removed.
-      return;
-    }
-    buffer = iter->second;
-    buffers_.erase(taskId);
+  auto buffer = buffers_.withLock(
+      [&](auto& buffers) -> std::shared_ptr<PartitionedOutputBuffer> {
+        auto it = buffers.find(taskId);
+        if (it == buffers.end()) {
+          // Already removed.
+          return nullptr;
+        }
+        auto taskBuffer = it->second;
+        buffers.erase(taskId);
+        return taskBuffer;
+      });
+  if (buffer) {
+    buffer->terminate();
   }
-  buffer->terminate();
 }
 
 std::string PartitionedOutputBufferManager::toString() {
-  std::stringstream out;
-  out << "[BufferManager:" << std::endl;
-  for (auto& pair : buffers_) {
-    out << pair.first << ": " << pair.second->toString() << std::endl;
-  }
-  out << "]";
-  return out.str();
+  return buffers_.withLock([](const auto& buffers) {
+    std::stringstream out;
+    out << "[BufferManager:" << std::endl;
+    for (const auto& pair : buffers) {
+      out << pair.first << ": " << pair.second->toString() << std::endl;
+    }
+    out << "]";
+    return out.str();
+  });
 }
 
 } // namespace facebook::velox::exec

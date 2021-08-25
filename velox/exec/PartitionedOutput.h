@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -106,6 +108,7 @@ class PartitionedOutput : public Operator {
             "PartitionedOutput"),
         keyChannels_(toChannels(planNode->inputType(), planNode->keys())),
         numDestinations_(planNode->numPartitions()),
+        replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
         outputChannels_(calculateOutputChannels(
             planNode->inputType(),
             planNode->outputType())),
@@ -143,11 +146,25 @@ class PartitionedOutput : public Operator {
   }
 
  private:
+  void initializeInput(RowVectorPtr input);
+
+  void initializeDestinations();
+
+  void initializeSizeBuffers();
+
+  void calculateHashes();
+
+  void estimateRowSizes();
+
+  /// Collect all rows with null keys into the provided SelectivityVector.
+  void collectNullRows(SelectivityVector& nullRows);
+
   static constexpr uint64_t kMaxDestinationSize = 1024 * 1024; // 1MB
   static constexpr uint64_t kMinDestinationSize = 16 * 1024; // 16 KB
 
   const std::vector<ChannelIndex> keyChannels_;
   const int numDestinations_;
+  const bool replicateNullsAndAny_;
   // Empty if column order in the output is exactly the same as in input.
   const std::vector<ChannelIndex> outputChannels_;
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
@@ -162,8 +179,11 @@ class PartitionedOutput : public Operator {
   std::vector<vector_size_t> rowSize_;
   std::vector<uint64_t> hashes_;
   std::vector<std::unique_ptr<Destination>> destinations_;
-  SelectivityVector allRows_;
+  bool replicatedAny_{false};
   std::weak_ptr<exec::PartitionedOutputBufferManager> bufferManager_;
+
+  // Reusable memory.
+  SelectivityVector rows_;
 };
 
 } // namespace facebook::velox::exec

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -228,7 +230,7 @@ void FlatVector<StringView>::set(vector_size_t idx, StringView value) {
 
 /// For types that requires buffer allocation this should be called only if
 /// value is inlined or if value is already allocated in a buffer within the
-/// vector. Used by StringProxy to allow UDFs to write directly int the
+/// vector. Used by StringProxy to allow UDFs to write directly into the
 /// buffers and avoid copying.
 template <>
 void FlatVector<StringView>::setNoCopy(

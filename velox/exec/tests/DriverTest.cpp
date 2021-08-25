@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -48,10 +50,10 @@ class TestingConsumerNode : public core::PlanNode {
 
 // A PlanNode that passes its input to its output and periodically
 // pauses and resumes other Tasks.
-class TestingIOLimiterGateNode : public core::PlanNode {
+class TestingPauserNode : public core::PlanNode {
  public:
-  explicit TestingIOLimiterGateNode(std::shared_ptr<const core::PlanNode> input)
-      : PlanNode("IOLimiterGate"), sources_{input} {}
+  explicit TestingPauserNode(std::shared_ptr<const core::PlanNode> input)
+      : PlanNode("Pauser"), sources_{input} {}
 
   const std::shared_ptr<const RowType>& outputType() const override {
     return sources_[0]->outputType();
@@ -62,7 +64,7 @@ class TestingIOLimiterGateNode : public core::PlanNode {
   }
 
   std::string_view name() const override {
-    return "IOLimiterGate";
+    return "Pauser";
   }
 
  private:
@@ -112,7 +114,7 @@ class DriverTest : public OperatorTestBase {
       // applies to second column
       std::function<bool(int64_t)> filterFunc = nullptr,
       int32_t* filterHits = nullptr,
-      bool addTestingGate = false,
+      bool addTestingPauser = false,
       bool addTestingConsumer = false) {
     std::vector<RowVectorPtr> batches;
     for (int32_t i = 0; i < numBatches; ++i) {
@@ -152,9 +154,9 @@ class DriverTest : public OperatorTestBase {
         return std::make_shared<TestingConsumerNode>(input);
       });
     }
-    if (addTestingGate) {
+    if (addTestingPauser) {
       planBuilder.addNode([](std::shared_ptr<const core::PlanNode> input) {
-        return std::make_shared<TestingIOLimiterGateNode>(input);
+        return std::make_shared<TestingPauserNode>(input);
       });
     }
 
@@ -258,7 +260,7 @@ class DriverTest : public OperatorTestBase {
   // Registers a Task for use in randomTask().
   void registerTask(std::shared_ptr<Task> task) {
     std::lock_guard<std::mutex> l(taskMutex_);
-    if (std::find(allTasks_.begin(), allTasks_.end(), task) == allTasks_.end()) {
+    if (std::find(allTasks_.begin(), allTasks_.end(), task) != allTasks_.end()) {
       return;
     }
     allTasks_.push_back(task);
@@ -481,15 +483,15 @@ TEST_F(DriverTest, yield) {
 //
 // These situations will occur with arbitrary concurrency and sequence and must
 // therefore be in one test to check against deadlocks.
-class TestingIOLimiterGate : public Operator {
+class TestingPauser : public Operator {
  public:
-  TestingIOLimiterGate(
+  TestingPauser(
       DriverCtx* ctx,
       int32_t id,
-      std::shared_ptr<const TestingIOLimiterGateNode> node,
+      std::shared_ptr<const TestingPauserNode> node,
       DriverTest* test,
       int32_t sequence)
-      : Operator(ctx, node->outputType(), id, node->id(), "IOLimiterGate"),
+      : Operator(ctx, node->outputType(), id, node->id(), "Pauser"),
         test_(test),
         sequence_(sequence),
         counter_(sequence),
@@ -510,6 +512,7 @@ class TestingIOLimiterGate : public Operator {
       return nullptr;
     }
     ++counter_;
+    auto label = operatorCtx_->driver()->label();
     // Block for a time quantum evern 10th time.
     if (counter_ % 10 == 0) {
       test_->registerForWakeup(&future_);
@@ -517,7 +520,7 @@ class TestingIOLimiterGate : public Operator {
       return nullptr;
     }
     {
-      CancelFreeSection(operatorCtx_->driver());
+      CancelFreeSection  noCancel(operatorCtx_->driver());
       sleep(1);
       if (counter_ % 7 == 0) {
         // Every 7th time, stop and resume other Tasks. This operation is
@@ -541,10 +544,11 @@ class TestingIOLimiterGate : public Operator {
       }
     }
 
-    return input_;
+    return std::move(input_);
   }
 
   BlockingReason isBlocked(ContinueFuture* future) override {
+    VELOX_CHECK(!operatorCtx_->driver()->state().isCancelFree);
     if (hasFuture_) {
       hasFuture_ = false;
       *future = std::move(future_);
@@ -577,9 +581,9 @@ class TestingIOLimiterGate : public Operator {
   ContinueFuture future_;
 };
 
-std::mutex TestingIOLimiterGate ::pauseMutex_;
+std::mutex TestingPauser ::pauseMutex_;
 
-TEST_F(DriverTest, ioLimiterGate) {
+TEST_F(DriverTest, pauserNode) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
   static int32_t sequence = 0;
@@ -587,12 +591,12 @@ TEST_F(DriverTest, ioLimiterGate) {
       [&](DriverCtx* ctx,
           int32_t id,
           std::shared_ptr<const core::PlanNode>& node)
-          -> std::unique_ptr<TestingIOLimiterGate> {
-        if (auto gate =
-                std::dynamic_pointer_cast<const TestingIOLimiterGateNode>(
+          -> std::unique_ptr<TestingPauser> {
+        if (auto pauser =
+                std::dynamic_pointer_cast<const TestingPauserNode>(
                     node)) {
-          return std::make_unique<TestingIOLimiterGate>(
-              ctx, id, gate, this, ++sequence);
+          return std::make_unique<TestingPauser>(
+              ctx, id, pauser, this, ++sequence);
         }
         return nullptr;
       });
@@ -623,7 +627,7 @@ TEST_F(DriverTest, ioLimiterGate) {
       try {
         readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);
       } catch (const std::exception& e) {
-        LOG(INFO) << "IOLimiterGate task errored out " << e.what();
+        LOG(INFO) << "Pauser task errored out " << e.what();
       }
     }));
   }

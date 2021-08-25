@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -19,18 +21,17 @@
 #endif
 
 #include <queue>
+#include "velox/common/base/Exceptions.h"
 #include "velox/row/UnsafeRow.h"
 #include "velox/row/UnsafeRowParser.h"
 #include "velox/vector/ComplexVector.h"
 
-namespace facebook {
-namespace velox {
-namespace row {
+namespace facebook::velox::row {
 
 /**
  * A virtual class that represents iterators that loop through UnsafeRow data.
  */
-struct UnsafeRowDataIterator {
+class UnsafeRowDataIterator {
  public:
   /**
    * UnsafeRowDataIterator constructor.
@@ -391,18 +392,6 @@ inline DataIteratorPtr getIteratorPtr(
 }
 
 /**
- * Exception for UnsafeRowDeserializers
- */
-class UnsafeRowDeserializationException : public std::runtime_error {
- public:
-  explicit UnsafeRowDeserializationException(const std::string& s)
-      : std::runtime_error(s) {}
-
-  explicit UnsafeRowDeserializationException(const char* s)
-      : std::runtime_error(s) {}
-};
-
-/**
  * UnsafeRowDeserializer for primitive types.
  */
 struct UnsafeRowPrimitiveDeserializer {
@@ -443,7 +432,7 @@ struct UnsafeRowStaticDeserializer {
     if constexpr (
         UnsafeRowStaticUtilities::simpleSqlTypeToTypeKind<SqlType>() ==
         TypeKind::INVALID) {
-      throw UnsafeRowDeserializationException("Invalid type");
+      VELOX_NYI("Invalid deserialize SqlType");
     } else {
       if (!data.has_value()) {
         return std::nullopt;
@@ -458,7 +447,9 @@ struct UnsafeRowStaticDeserializer {
         return data;
       } else {
         // Complex types will be captured via template specializations
-        throw UnsafeRowDeserializationException("Unsupported type");
+        VELOX_NYI(
+            "Unsupported deserialize SqlType: {}",
+            UnsafeRowStaticUtilities::simpleSqlTypeToTypeKind<SqlType>())
       }
     }
   }
@@ -875,8 +866,8 @@ struct UnsafeRowDynamicVectorDeserializer {
       return createFlatVector<TypeTraits<TypeKind::TIMESTAMP>::NativeType>(
           dataIterators, type, pool, numIteratorsToProcess);
     } else {
-      throw UnsafeRowDeserializationException(
-          "Unsupported root type in a complex type.");
+      VELOX_NYI(
+          "Unsupported complex type in convertPrimitiveIteratorsToVectors")
     }
   }
 
@@ -905,7 +896,7 @@ struct UnsafeRowDynamicVectorDeserializer {
       return convertPrimitiveIteratorsToVectors(
           dataIterators, pool, numIteratorsToProcess);
     } else {
-      throw UnsafeRowDeserializationException("Unsupported type");
+      VELOX_NYI("Unsupported data iterators type");
     }
   }
 
@@ -927,6 +918,4 @@ struct UnsafeRowDynamicVectorDeserializer {
   }
 };
 
-} // namespace row
-} // namespace velox
-} // namespace facebook
+} // namespace facebook::velox::row

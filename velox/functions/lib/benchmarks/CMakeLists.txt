@@ -1,3 +1,5 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -17,5 +19,7 @@ target_link_libraries(
   velox_expression
   velox_exec_test_lib
   velox_exec_test_util
+  velox_vector_test_lib
+  velox_vector_fuzzer
   ${FOLLY_WITH_DEPENDENCIES}
   ${FOLLY_BENCHMARK})

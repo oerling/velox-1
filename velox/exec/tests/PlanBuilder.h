@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -140,6 +142,15 @@ class PlanBuilder {
   PlanBuilder& partitionedOutput(
       const std::vector<ChannelIndex>& keyIndices,
       int numPartitions,
+      const std::vector<ChannelIndex>& outputLayout = {});
+
+  PlanBuilder& partitionedOutputBroadcast(
+      const std::vector<ChannelIndex>& outputLayout = {});
+
+  PlanBuilder& partitionedOutput(
+      const std::vector<ChannelIndex>& keyIndices,
+      int numPartitions,
+      bool replicateNullsAndAny,
       const std::vector<ChannelIndex>& outputLayout = {});
 
   PlanBuilder& localPartition(

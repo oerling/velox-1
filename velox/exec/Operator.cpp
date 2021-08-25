@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -157,17 +159,6 @@ void Operator::inputProcessed() {
   for (auto& projection : identityProjections_) {
     columns[projection.outputChannel] = nullptr;
   }
-}
-
-bool Operator::allInputProcessed() {
-  if (!input_) {
-    return true;
-  }
-  if (numProcessedInputRows_ == input_->size()) {
-    inputProcessed();
-    return true;
-  }
-  return false;
 }
 
 void Operator::clearIdentityProjectedOutput() {

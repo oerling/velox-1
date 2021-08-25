@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -324,10 +326,38 @@ PlanBuilder& PlanBuilder::partitionedOutput(
     const std::vector<ChannelIndex>& keyIndices,
     int numPartitions,
     const std::vector<ChannelIndex>& outputLayout) {
+  return partitionedOutput(keyIndices, numPartitions, false, outputLayout);
+}
+
+PlanBuilder& PlanBuilder::partitionedOutput(
+    const std::vector<ChannelIndex>& keyIndices,
+    int numPartitions,
+    bool replicateNullsAndAny,
+    const std::vector<ChannelIndex>& outputLayout) {
   auto outputType = toRowType(planNode_->outputType(), outputLayout);
   auto keys = fields(keyIndices);
   planNode_ = std::make_shared<core::PartitionedOutputNode>(
-      nextPlanNodeId(), keys, numPartitions, outputType, planNode_);
+      nextPlanNodeId(),
+      keys,
+      numPartitions,
+      false,
+      replicateNullsAndAny,
+      outputType,
+      planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::partitionedOutputBroadcast(
+    const std::vector<ChannelIndex>& outputLayout) {
+  auto outputType = toRowType(planNode_->outputType(), outputLayout);
+  planNode_ = std::make_shared<core::PartitionedOutputNode>(
+      nextPlanNodeId(),
+      std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>{},
+      1,
+      true,
+      false,
+      outputType,
+      planNode_);
   return *this;
 }
 

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -74,6 +76,11 @@ class ConstantExpr : public SpecialForm {
       EvalCtx* context,
       VectorPtr* result) override;
 
+  void evalSpecialFormSimplified(
+      const SelectivityVector& rows,
+      EvalCtx* context,
+      VectorPtr* result) override;
+
   const VectorPtr& value() const {
     return sharedSubexprValues_;
   }
@@ -105,6 +112,11 @@ class FieldReference : public SpecialForm {
   }
 
   void evalSpecialForm(
+      const SelectivityVector& rows,
+      EvalCtx* context,
+      VectorPtr* result) override;
+
+  void evalSpecialFormSimplified(
       const SelectivityVector& rows,
       EvalCtx* context,
       VectorPtr* result) override;

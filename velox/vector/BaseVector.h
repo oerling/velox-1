@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -432,6 +434,23 @@ class BaseVector {
       std::shared_ptr<BaseVector>* result);
 
   virtual void ensureWritable(const SelectivityVector& rows);
+
+  // Flattens the input vector.
+  //
+  // TODO: This method reuses ensureWritable(), which ensures that both:
+  //  (a) the vector is flattened, and
+  //  (b) it's singly-referenced
+  //
+  // We don't necessarily need (b) if we only want to flatten vectors.
+  static void flattenVector(
+      std::shared_ptr<BaseVector>* vector,
+      size_t vectorSize) {
+    BaseVector::ensureWritable(
+        SelectivityVector::empty(vectorSize),
+        (*vector)->type(),
+        (*vector)->pool(),
+        vector);
+  }
 
   template <typename T>
   static inline vector_size_t byteSize(vector_size_t count) {

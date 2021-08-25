@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -20,6 +22,7 @@
 #include "velox/functions/lib/string/StringCore.h"
 
 namespace facebook::velox::exec {
+
 using functions::stringCore::maxEncoding;
 using functions::stringCore::StringEncodingMode;
 
@@ -51,6 +54,21 @@ void ConstantExpr::evalSpecialForm(
     return;
   }
   *result = sharedSubexprValues_;
+}
+
+void ConstantExpr::evalSpecialFormSimplified(
+    const SelectivityVector& rows,
+    EvalCtx* context,
+    VectorPtr* result) {
+  // Simplified path should never ask us to write to a vector that was already
+  // pre-allocated.
+  VELOX_CHECK(*result == nullptr);
+
+  if (sharedSubexprValues_ == nullptr) {
+    *result = BaseVector::createConstant(value_, rows.end(), context->pool());
+  } else {
+    *result = value();
+  }
 }
 
 void FieldReference::evalSpecialForm(
@@ -112,6 +130,15 @@ void FieldReference::evalSpecialForm(
     *result = useDecode ? std::move(decoded.wrap(child, *input.get(), rows))
                         : std::move(child);
   }
+}
+
+void FieldReference::evalSpecialFormSimplified(
+    const SelectivityVector& rows,
+    EvalCtx* context,
+    VectorPtr* result) {
+  auto row = context->row();
+  *result = row->childAt(index(context));
+  BaseVector::flattenVector(result, rows.end());
 }
 
 namespace {

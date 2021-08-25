@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -46,12 +48,19 @@ class SelectivityVector {
     }
   }
 
+  // Returns a statically allocated reference to an empty selectivity vector
+  // (size zero).
   static const SelectivityVector& empty();
 
-  void resize(int32_t size) {
+  // Returns a new allocated selectivity vector of size `size`, where all bits
+  // are set to false.
+  static SelectivityVector empty(vector_size_t size);
+
+  /// Resizes the vector to new size and sets the new bits with value `value`.
+  void resize(int32_t size, bool value = true) {
     // Note default insert true's
     auto numWords = bits::nwords(size);
-    bits_.resize(numWords, -1);
+    bits_.resize(numWords, value ? -1 : 0);
     begin_ = 0;
     end_ = size;
     size_ = size;

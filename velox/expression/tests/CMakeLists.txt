@@ -1,3 +1,5 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,7 +15,8 @@
 # for generated headers
 include_directories(${CMAKE_BINARY_DIR})
 
-add_executable(velox_expression_test ExprTest.cpp CastExprTest.cpp)
+add_executable(velox_expression_test ExprTest.cpp CastExprTest.cpp
+                                     EvalSimplifiedTest.cpp VectorFuzzer.cpp)
 
 add_test(
   NAME velox_expression_test
@@ -39,3 +42,17 @@ target_link_libraries(
   ${gflags_LIBRARIES}
   ${GLOG}
   ${FMT})
+
+add_library(velox_vector_fuzzer VectorFuzzer.cpp)
+
+target_link_libraries(velox_vector_fuzzer velox_type velox_vector)
+
+add_library(velox_expression_fuzzer ExpressionFuzzer.cpp)
+
+target_link_libraries(velox_expression_fuzzer velox_type velox_vector_fuzzer
+                      velox_vector_test_lib)
+
+add_executable(velox_expression_fuzzer_main ExpressionFuzzerMain.cpp)
+
+target_link_libraries(velox_expression_fuzzer_main velox_expression_fuzzer
+                      velox_functions_common)

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -381,13 +383,23 @@ class FunctionBaseTest : public testing::Test {
                                : ReturnType(result->valueAt(0));
   }
 
-  // TODO Enable ASSERT_EQ for vectors
-  void assertEqualVectors(const VectorPtr& expected, const VectorPtr& actual) {
-    ASSERT_EQ(expected->size(), actual->size());
-    for (auto i = 0; i < expected->size(); i++) {
+  // TODO: Enable ASSERT_EQ for vectors
+  void assertEqualVectors(
+      const VectorPtr& expected,
+      const VectorPtr& actual,
+      std::optional<size_t> vectorSize = std::nullopt,
+      const std::string& additionalContext = "") {
+    // TODO: Remove vectorSize when ConstantVectors carry their proper size (as
+    // opposed to kMaxElements).
+    if (vectorSize == std::nullopt) {
+      vectorSize = expected->size();
+      ASSERT_EQ(expected->size(), actual->size());
+    }
+
+    for (auto i = 0; i < *vectorSize; i++) {
       ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
           << "at " << i << ": " << expected->toString(i) << " vs. "
-          << actual->toString(i);
+          << actual->toString(i) << additionalContext;
     }
   }
 

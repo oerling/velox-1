@@ -1,3 +1,5 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -18,11 +20,13 @@ target_link_libraries(
 
 add_executable(
   velox_functions_test
+  ArithmeticTest.cpp
   ArrayConstructorTest.cpp
   ArrayContainsTest.cpp
-  ArithmeticTest.cpp
   ArrayFilterTest.cpp
   ArrayIntersectTest.cpp
+  ArrayMaxTest.cpp
+  ArrayMinTest.cpp
   CoalesceTest.cpp
   ComparisonsTest.cpp
   IsNullTest.cpp

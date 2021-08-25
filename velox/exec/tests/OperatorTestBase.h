@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -150,6 +152,24 @@ class OperatorTestBase : public testing::Test {
       std::function<bool(vector_size_t /*row */)> valueIsNullAt = nullptr) {
     return vectorMaker_.mapVector(
         size, sizeAt, keyAt, valueAt, isNullAt, valueIsNullAt);
+  }
+
+  static VectorPtr
+  wrapInDictionary(BufferPtr indices, vector_size_t size, VectorPtr vector) {
+    return BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), std::move(indices), size, std::move(vector));
+  }
+
+  BufferPtr makeIndices(
+      vector_size_t size,
+      const std::function<vector_size_t(vector_size_t)>& indexAt) const {
+    BufferPtr indices =
+        AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
+    auto rawIndices = indices->asMutable<vector_size_t>();
+    for (int i = 0; i < size; i++) {
+      rawIndices[i] = indexAt(i);
+    }
+    return indices;
   }
 
   // Helper function for comparing vector results

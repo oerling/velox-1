@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -11,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include <iostream>
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 #include <folly/executors/task_queue/UnboundedBlockingQueue.h>
@@ -108,6 +112,7 @@ BlockingState::BlockingState(
 void BlockingState::setResume(
     std::shared_ptr<BlockingState> state,
     folly::Executor* executor) {
+  VELOX_CHECK(!state->driver_->isOnThread());
   auto& exec = folly::QueuedImmediateExecutor::instance();
   std::move(state->future_)
       .via(&exec)
@@ -116,11 +121,15 @@ void BlockingState::setResume(
         auto driver = state->driver_;
         {
           std::lock_guard<std::mutex> l(*driver->cancelPool()->mutex());
+	  VELOX_CHECK(!driver->state().isCancelFree);
+	  VELOX_CHECK(driver->state().hasBlockingFuture);
+	  driver->state().hasBlockingFuture = false;
           if (driver->cancelPool()->pauseRequested()) {
-            driver->state().hasBlockingFuture = false;
+	    // The thread will be enqueued at resume.
             return;
           }
         }
+	SETCONT(state->driver_->state());
         Driver::enqueue(state->driver_);
       })
       .thenError(
@@ -210,6 +219,9 @@ void Driver::testingJoinAndReinitializeExecutor(int32_t threads) {
 void Driver::enqueue(
     std::shared_ptr<Driver> driver,
     folly::Executor* executor) {
+  // This is expected to be called inside the Driver's CancelPool mutex.
+  VELOX_CHECK(!driver->state().enqueued);
+  driver->state().enqueued = true;
   auto currentExecutor = (executor ? executor : Driver::executor());
   currentExecutor->add(
       [driver, currentExecutor]() { Driver::run(driver, currentExecutor); });
@@ -475,7 +487,7 @@ void Driver::setError(std::exception_ptr exception) {
 std::string Driver::toString() {
   std::stringstream out;
   out << "{Driver: ";
-  if (state_.isOnThread) {
+  if (state_.isOnThread()) {
     out << "running ";
   } else {
     out << "blocked " << static_cast<int>(blockingReason_) << " ";
@@ -520,4 +532,10 @@ CancelFreeSection::~CancelFreeSection() {
   }
 }
 
+  std::string Driver::label() {
+    return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
+  }
+
+
+  
 } // namespace facebook::velox::exec

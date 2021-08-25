@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -668,18 +670,27 @@ class PartitionedOutputNode : public PlanNode {
       const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
           keys,
       int numPartitions,
+      bool broadcast,
+      bool replicateNullsAndAny,
       const RowTypePtr outputType,
       std::shared_ptr<const PlanNode> source)
       : PlanNode(id),
         sources_{{std::move(source)}},
         keys_(keys),
         numPartitions_(numPartitions),
+        broadcast_(broadcast),
+        replicateNullsAndAny_(replicateNullsAndAny),
         outputType_(outputType) {
     VELOX_CHECK(numPartitions > 0, "numPartitions must be greater than zero");
     if (numPartitions == 1) {
       VELOX_CHECK(
           keys_.empty(),
           "Non-empty partitioning keys require more than one partition");
+    }
+    if (broadcast) {
+      VELOX_CHECK(
+          keys_.empty(),
+          "Broadcast partitioning doesn't allow for partitioning keys");
     }
   }
 
@@ -703,6 +714,18 @@ class PartitionedOutputNode : public PlanNode {
     return numPartitions_;
   }
 
+  bool isBroadcast() const {
+    return broadcast_;
+  }
+
+  /// Returns true if an arbitrary row and all rows with null keys must be
+  /// replicated to all destinations. This is used to ensure correct results for
+  /// anti-join which requires all nodes to know whether combined build side is
+  /// empty and whether it has any entry with null join key.
+  bool isReplicateNullsAndAny() const {
+    return replicateNullsAndAny_;
+  }
+
   std::string_view name() const override {
     return "repartitioning";
   }
@@ -711,6 +734,8 @@ class PartitionedOutputNode : public PlanNode {
   const std::vector<std::shared_ptr<const PlanNode>> sources_;
   const std::vector<std::shared_ptr<const FieldAccessTypedExpr>> keys_;
   const int numPartitions_;
+  const bool broadcast_;
+  const bool replicateNullsAndAny_;
   const RowTypePtr outputType_;
 };
 

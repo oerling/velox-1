@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -43,8 +45,8 @@ enum class FileFormat {
   JSON = 6,
 };
 
-FileFormat ToFileFormat(std::string s);
-std::string ToString(FileFormat fmt);
+FileFormat toFileFormat(std::string s);
+std::string toString(FileFormat fmt);
 
 /**
  * Formatting options for serialization.

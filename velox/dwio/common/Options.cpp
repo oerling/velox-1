@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -18,7 +20,7 @@ namespace facebook {
 namespace dwio {
 namespace common {
 
-FileFormat ToFileFormat(std::string s) {
+FileFormat toFileFormat(std::string s) {
   if (s == "orc") {
     return FileFormat::ORC;
   } else if (s == "rc") {
@@ -35,7 +37,7 @@ FileFormat ToFileFormat(std::string s) {
   return FileFormat::UNKNOWN;
 }
 
-std::string ToString(FileFormat fmt) {
+std::string toString(FileFormat fmt) {
   switch (fmt) {
     case FileFormat::ORC:
       return "orc";

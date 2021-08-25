@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -39,14 +41,16 @@ enum class StopReason {
   kAlreadyOnThread
 };
 
-// Represents a Driver's state. This is used for cancellation, forcing release
-// of  and for waiting for memory.
+// Represents a Driver's state. This is used for cancellation, forcing
+// release of and for waiting for memory. The fields are serialized on
+// the mutex of the Driver's CancelPool.
 struct ThreadState {
   // The thread currently running this.
   std::thread::id thread;
-  // True if running on a thread. A Driver can be on a thread but in a
-  // waiting state, e.g. for memory, for RPC results.
-  bool isOnThread{false};
+  // The tid of 'thread'. Allows finding the thread in a debugger.
+  int32_t tid;
+  // True if queued on an executor but not on thread.
+  bool enqueued{false};
   // True if being terminated or already terminated.
   bool isTerminated{false};
   // True if there is a future outstanding that will schedule this on an
@@ -57,8 +61,26 @@ struct ThreadState {
   // memory, which a third party can revoke while the thread is in
   // this state.
   bool isCancelFree{false};
+  const char* continueFile= nullptr; 
+  int32_t continueLine{0};
+
+  bool isOnThread() const {
+    return thread != std::thread::id();
+  }
+
+  void setThread() {
+    thread = std::this_thread::get_id();
+    tid = gettid();
+  }
+
+  void clearThread() {
+    thread = std::thread::id(); // no thread.
+    tid = 0;
+  }
 };
 
+#define SETCONT(state) {state.continueLine = __LINE__; state.continueFile = __FILE__;}
+  
 class CancelPool {
  public:
   // Returns kNone if no pause or terminate is requested. The thread count is
@@ -66,10 +88,12 @@ class CancelPool {
   // calling tread should unwind and return itself to its pool.
   StopReason enter(ThreadState& state) {
     std::lock_guard<std::mutex> l(mutex_);
+    VELOX_CHECK(state.enqueued);
+    state.enqueued = false;
     if (state.isTerminated) {
       return StopReason::kAlreadyTerminated;
     }
-    if (state.isOnThread) {
+    if (state.isOnThread()) {
       return StopReason::kAlreadyOnThread;
     }
     auto reason = shouldStopLocked();
@@ -78,8 +102,7 @@ class CancelPool {
     }
     if (reason == StopReason::kNone) {
       ++numThreads_;
-      state.isOnThread = true;
-      state.thread = std::this_thread::get_id();
+      state.setThread();
       state.hasBlockingFuture = false;
     }
     return reason;
@@ -87,12 +110,12 @@ class CancelPool {
 
   StopReason enterForTerminate(ThreadState& state) {
     std::lock_guard<std::mutex> l(mutex_);
-    if (state.isOnThread || state.isTerminated) {
+    if (state.isOnThread() || state.isTerminated) {
       state.isTerminated = true;
       return StopReason::kAlreadyOnThread;
     }
     state.isTerminated = true;
-    state.isOnThread = true;
+    state.setThread();
     return StopReason::kTerminate;
   }
 
@@ -101,8 +124,7 @@ class CancelPool {
     if (--numThreads_ == 0) {
       finished();
     }
-    state.thread = std::thread::id(); // no thread.
-    state.isOnThread = false;
+    state.clearThread();
     if (state.isTerminated) {
       return StopReason::kTerminate;
     }
@@ -121,12 +143,12 @@ class CancelPool {
   // unwind and return itself to its pool.
   StopReason enterCancelFree(ThreadState& state) {
     VELOX_CHECK(!state.hasBlockingFuture);
-    VELOX_CHECK(state.isOnThread);
+    VELOX_CHECK(state.isOnThread());
     std::lock_guard<std::mutex> l(mutex_);
     if (state.isTerminated) {
       return StopReason::kAlreadyTerminated;
     }
-    if (!state.isOnThread) {
+    if (!state.isOnThread()) {
       return StopReason::kAlreadyTerminated;
     }
     auto reason = shouldStopLocked();
@@ -138,10 +160,10 @@ class CancelPool {
     // CancelPool. The pause can wait at the exit of the cancel free
     // section.
     if (reason == StopReason::kNone || reason == StopReason::kPause) {
+      state.isCancelFree = true;
       if (--numThreads_ == 0) {
         finished();
       }
-      state.isCancelFree = true;
     }
     return StopReason::kNone;
   }
@@ -164,6 +186,7 @@ class CancelPool {
           return StopReason::kNone;
         }
         --numThreads_;
+	state.isCancelFree = true;
       }
       // If the pause flag is on when trying to reenter, sleep a while
       // outside of the mutex and recheck. This is rare and not time

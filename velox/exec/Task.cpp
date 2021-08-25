@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -128,13 +130,17 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
        ++pipeline) {
     auto& factory = self->driverFactories_[pipeline];
     auto numDrivers = std::min(factory->maxDrivers, maxDrivers);
-    auto numDestinations = factory->numDestinations();
-    if (numDestinations) {
+    auto partitionedOutputNode = factory->needsPartitionedOutput();
+    if (partitionedOutputNode) {
       VELOX_CHECK(
           !self->hasPartitionedOutput_,
           "Only one output pipeline per task is supported");
       self->hasPartitionedOutput_ = true;
-      bufferManager->initializeTask(self, numDestinations, numDrivers);
+      bufferManager->initializeTask(
+          self,
+          partitionedOutputNode->isBroadcast(),
+          partitionedOutputNode->numPartitions(),
+          numDrivers);
     }
 
     std::shared_ptr<ExchangeClient> exchangeClient = nullptr;
@@ -171,6 +177,7 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   self->drivers_ = std::move(drivers);
   for (auto& driver : self->drivers_) {
     if (driver) {
+      SETCONT(driver->state());
       Driver::enqueue(driver);
     }
   }
@@ -188,8 +195,17 @@ void Task::resume(std::shared_ptr<Task> self) {
         // CancelPool mutex.
         continue;
       }
+      if (driver->state().enqueued) {
+	// A Driver can wait for a thread and there can be a
+	// pause/resume during the wait. The Driver should not be
+	// enqueued twice.
+	continue;
+      }
       VELOX_CHECK(!driver->isOnThread() && !driver->isTerminated());
       if (!driver->state().hasBlockingFuture) {
+	// Do not continue a Driver that is blocked on external
+	// event. The Driver gets enqueued by the promise realization.
+	SETCONT(driver->state());
         Driver::enqueue(driver);
       }
     }
@@ -376,6 +392,17 @@ void Task::checkGroupSplitsCompleteLocked(
     mapGroupSplits.erase(it);
     taskStats_.completedSplitGroups.emplace(splitGroupId);
   }
+}
+
+void Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
+  auto bufferManager = bufferManager_.lock();
+  VELOX_CHECK_NOT_NULL(
+      bufferManager,
+      "Unable to initialize task. "
+      "PartitionedOutputBufferManager was already destructed");
+
+  bufferManager->updateBroadcastOutputBuffers(
+      taskId_, numBuffers, noMoreBuffers);
 }
 
 void Task::setAllOutputConsumed() {

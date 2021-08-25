@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -191,6 +193,15 @@ class ExprTest : public testing::Test {
         untyped, rowType ? rowType : testDataType_, execCtx_->pool());
   }
 
+  std::unique_ptr<exec::ExprSet> compileExpression(
+      const std::string& expr,
+      const RowTypePtr& rowType) {
+    std::vector<std::shared_ptr<const core::ITypedExpr>> expressions = {
+        parseExpression(expr, rowType)};
+    return std::make_unique<exec::ExprSet>(
+        std::move(expressions), execCtx_.get());
+  }
+
   std::vector<VectorPtr> evaluateMultiple(
       const std::vector<std::string>& texts,
       const RowVectorPtr& input) {
@@ -213,6 +224,15 @@ class ExprTest : public testing::Test {
 
   VectorPtr evaluate(const std::string& text, const RowVectorPtr& input) {
     return evaluateMultiple({text}, input)[0];
+  }
+
+  VectorPtr evaluate(exec::ExprSet* exprSet, const RowVectorPtr& input) {
+    exec::EvalCtx context(execCtx_.get(), exprSet, input.get());
+
+    SelectivityVector rows(input->size());
+    std::vector<VectorPtr> result(1);
+    exprSet->eval(rows, &context, &result);
+    return result[0];
   }
 
   template <typename T>
@@ -614,6 +634,16 @@ class ExprTest : public testing::Test {
       vector_size_t size,
       std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
       std::function<T(vector_size_t /* idx */)> valueAt,
+      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
+    return vectorMaker_->arrayVector(size, sizeAt, valueAt, isNullAt);
+  }
+
+  template <typename T>
+  ArrayVectorPtr makeArrayVector(
+      vector_size_t size,
+      std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
+      std::function<T(vector_size_t /* idx */, vector_size_t /*index */)>
+          valueAt,
       std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
     return vectorMaker_->arrayVector(size, sizeAt, valueAt, isNullAt);
   }
@@ -2144,4 +2174,72 @@ TEST_F(ExprTest, rewriteInputs) {
         ROW({"alpha", "beta", "c"}, {INTEGER(), DOUBLE(), DOUBLE()}));
     ASSERT_EQ(*expectedExpr, *expr);
   }
+}
+
+TEST_F(ExprTest, memo) {
+  auto base = makeArrayVector<int64_t>(
+      1'000,
+      [](auto row) { return row % 5 + 1; },
+      [](auto row, auto index) { return (row % 3) + index; });
+
+  auto evenIndices = makeIndices(100, [](auto row) { return 8 + row * 2; });
+  auto oddIndices = makeIndices(100, [](auto row) { return 9 + row * 2; });
+
+  auto rowType = ROW({"c0"}, {base->type()});
+  auto exprSet = compileExpression("c0[1]", rowType);
+
+  auto result = evaluate(
+      exprSet.get(), makeRowVector({wrapInDictionary(evenIndices, 100, base)}));
+  auto expectedResult =
+      makeFlatVector<int64_t>(100, [](auto row) { return (8 + row * 2) % 3; });
+  assertEqualVectors(expectedResult, result);
+
+  result = evaluate(
+      exprSet.get(), makeRowVector({wrapInDictionary(oddIndices, 100, base)}));
+  expectedResult =
+      makeFlatVector<int64_t>(100, [](auto row) { return (9 + row * 2) % 3; });
+  assertEqualVectors(expectedResult, result);
+
+  auto everyFifth = makeIndices(100, [](auto row) { return row * 5; });
+  result = evaluate(
+      exprSet.get(), makeRowVector({wrapInDictionary(everyFifth, 100, base)}));
+  expectedResult =
+      makeFlatVector<int64_t>(100, [](auto row) { return (row * 5) % 3; });
+  assertEqualVectors(expectedResult, result);
+}
+
+// This test triggers the situation when peelEncodings() produces an empty
+// selectivity vector, which if passed to evalWithMemo() causes the latter to
+// produce null Expr::dictionaryCache_, which leads to a crash in evaluation of
+// subsequent rows. We have fixed that issue with condition and this test is for
+// that.
+TEST_F(ExprTest, memoNulls) {
+  // Generate 5 rows with null string and 5 with a string.
+  auto base = makeFlatVector<StringView>(
+      10, [](vector_size_t /*row*/) { return StringView("abcdefg"); });
+
+  // Two batches by 5 rows each.
+  auto first5Indices = makeIndices(5, [](auto row) { return row; });
+  auto last5Indices = makeIndices(5, [](auto row) { return row + 5; });
+  // Nulls for the 1st batch.
+  BufferPtr nulls =
+      AlignedBuffer::allocate<bool>(5, execCtx_->pool(), bits::kNull);
+
+  auto rowType = ROW({"c0"}, {base->type()});
+  auto exprSet = compileExpression("STRPOS(c0, 'abc') >= 0", rowType);
+
+  auto result = evaluate(
+      exprSet.get(),
+      makeRowVector(
+          {BaseVector::wrapInDictionary(nulls, first5Indices, 5, base)}));
+  // Expecting 5 nulls.
+  auto expectedResult =
+      BaseVector::createNullConstant(BOOLEAN(), 5, execCtx_->pool());
+  assertEqualVectors(expectedResult, result);
+
+  result = evaluate(
+      exprSet.get(), makeRowVector({wrapInDictionary(last5Indices, 5, base)}));
+  // Expecting 5 trues.
+  expectedResult = BaseVector::createConstant(true, 5, execCtx_->pool());
+  assertEqualVectors(expectedResult, result);
 }

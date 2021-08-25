@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -40,18 +42,13 @@ struct DataAvailable {
 
 class DestinationBuffer {
  public:
-  void enqueue(std::unique_ptr<VectorStreamGroup>&& data) {
+  void enqueue(std::shared_ptr<VectorStreamGroup> data) {
     // drop duplicate end markers
     if (data == nullptr && !data_.empty() && data_.back() == nullptr) {
       return;
     }
 
-    // The ownership of 'data' moves from unique to shared. This
-    // allows for multiple re-fetches and acknowledging of one sequence number
-    // without any ordering guarantees, the data does not get deleted while some
-    // thread holds a reference.
-    std::shared_ptr<VectorStreamGroup> shared(std::move(data));
-    data_.push_back(std::move(shared));
+    data_.push_back(std::move(data));
   }
 
   // Copies data starting at 'sequence' into 'result', stopping after
@@ -67,17 +64,13 @@ class DestinationBuffer {
   // warning for the case where no data is removed, otherwise we
   // expect that data does get freed. We cannot assert that data gets
   // deleted because acknowledge messages can arrive out of order.
-  void acknowledge(
+  std::vector<std::shared_ptr<VectorStreamGroup>> acknowledge(
       int64_t sequence,
-      bool fromGetData,
-      std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
-      uint64_t* totalFreed);
+      bool fromGetData);
 
   // Returns all data to be freed in 'freed' and their size in
   // 'totalFreed'. 'this' can be destroyed after this.
-  void deleteResults(
-      std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
-      uint64_t* totalFreed);
+  std::vector<std::shared_ptr<VectorStreamGroup>> deleteResults();
 
   // Returns and clears the notify callback, if any, along with arguments for
   // the callback.
@@ -99,11 +92,13 @@ class PartitionedOutputBuffer {
  public:
   PartitionedOutputBuffer(
       std::shared_ptr<Task> task,
+      bool broadcast,
       int numDestinations,
       int numDrivers)
-      : task_(task),
+      : task_(std::move(task)),
+        broadcast_(broadcast),
         numDrivers_(numDrivers),
-        maxSize_(task->queryCtx()->maxPartitionedOutputBufferSize()),
+        maxSize_(task_->queryCtx()->maxPartitionedOutputBufferSize()),
         continueSize_(maxSize_ / 2) {
     buffers_.reserve(numDestinations);
     for (int i = 0; i < numDestinations; i++) {
@@ -111,9 +106,14 @@ class PartitionedOutputBuffer {
     }
   }
 
+  /// The total number of broadcast buffers may not be known at the task start
+  /// time. This method can be called to update the total number of broadcast
+  /// destinations while the task is running.
+  void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
+
   BlockingReason enqueue(
       int destination,
-      std::unique_ptr<VectorStreamGroup>&& data,
+      std::unique_ptr<VectorStreamGroup> data,
       ContinueFuture* future);
 
   void noMoreData();
@@ -146,16 +146,28 @@ class PartitionedOutputBuffer {
   // Updates buffered size and returns possibly continuable producer promises in
   // 'promises'.
   void updateAfterAcknowledgeLocked(
-      int64_t totalFreed,
+      const std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
       std::vector<VeloxPromise<bool>>& promises);
 
+  /// Given an updated total number of broadcast buffers, add any missing ones
+  /// and enqueue data that has been produced so far (e.g. dataToBroadcast_).
+  void addBroadcastOutputBuffersLocked(int numBuffers);
+
   std::shared_ptr<Task> task_;
+  const bool broadcast_;
   const int numDrivers_ = 0;
   // If 'totalSize_' > 'maxSize_', each producer is blocked after adding data.
   const uint64_t maxSize_;
   // When 'totalSize_' goes below 'continueSize_', blocked producers are
   // resumed.
   const uint64_t continueSize_;
+
+  bool noMoreBroadcastBuffers_ = false;
+
+  // While noMoreBroadcastBuffers_ is false, stores the enqueued data to
+  // broadcast to destinations that have not yet been initialized. Cleared
+  // after receiving no-more-broadcast-buffers signal.
+  std::vector<std::shared_ptr<VectorStreamGroup>> dataToBroadcast_;
 
   std::mutex mutex_;
   // Actual data size in 'buffers_'.
@@ -173,16 +185,22 @@ class PartitionedOutputBufferManager {
  public:
   void initializeTask(
       std::shared_ptr<Task> task,
+      bool broadcast,
       int numDestinations,
       int numDrivers);
 
+  void updateBroadcastOutputBuffers(
+      const std::string& taskId,
+      int numBuffers,
+      bool noMoreBuffers);
+
   // Adds data to the outgoing queue for 'destination'. 'data' must not be
   // nullptr. 'data' is always added but if the buffers are full the future is
-  // set to a continue future that will be realized when there is space.
+  // set to a ContinueFuture that will be realized when there is space.
   BlockingReason enqueue(
       const std::string& taskId,
       int destination,
-      std::unique_ptr<VectorStreamGroup>&& data,
+      std::unique_ptr<VectorStreamGroup> data,
       ContinueFuture* future);
 
   void noMoreData(const std::string& taskId);
@@ -231,8 +249,9 @@ class PartitionedOutputBufferManager {
   // Retrieves the set of buffers for a query.
   std::shared_ptr<PartitionedOutputBuffer> getBuffer(const std::string& taskId);
 
-  std::mutex mutex_;
-  std::unordered_map<std::string, std::shared_ptr<PartitionedOutputBuffer>>
+  folly::Synchronized<
+      std::unordered_map<std::string, std::shared_ptr<PartitionedOutputBuffer>>,
+      std::mutex>
       buffers_;
 };
 } // namespace facebook::velox::exec

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -60,7 +62,7 @@ class ExchangeQueue {
  public:
   ~ExchangeQueue() {
     std::lock_guard<std::mutex> l(mutex_);
-    clearAllPromisesUnlocked();
+    clearAllPromises();
   }
 
   std::mutex& mutex() {
@@ -94,7 +96,7 @@ class ExchangeQueue {
     }
     error_ = error;
     atEnd_ = true;
-    clearAllPromisesUnlocked();
+    clearAllPromises();
   }
 
   std::unique_ptr<SerializedPage> dequeue(bool* atEnd, ContinueFuture* future) {
@@ -133,11 +135,11 @@ class ExchangeQueue {
   void checkComplete() {
     if (noMoreSources_ && numCompleted_ == numSources_) {
       atEnd_ = true;
-      clearAllPromisesUnlocked();
+      clearAllPromises();
     }
   }
 
-  void clearAllPromisesUnlocked() {
+  void clearAllPromises() {
     for (auto& promise : promises_) {
       promise.setValue(true);
     }

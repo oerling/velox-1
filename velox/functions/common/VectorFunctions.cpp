@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -28,6 +30,8 @@ void registerVectorFunctions() {
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_constructor, "array_constructor");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_intersect, "array_intersect");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_max, "array_max");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_min, "array_min");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_cardinality, "cardinality");
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_filter, "filter");

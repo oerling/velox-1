@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -375,4 +377,93 @@ TEST_F(MultiFragmentTest, partitionedOutput) {
     assertQuery(
         op, {leafTaskId}, "SELECT c0, c1, c2, c3, c4, c3, c2, c1, c0 FROM tmp");
   }
+}
+
+TEST_F(MultiFragmentTest, broadcast) {
+  auto data = makeRowVector(
+      {makeFlatVector<int32_t>(1'000, [](auto row) { return row; })});
+
+  // Make leaf task: Values -> Repartitioning (broadcast)
+  std::vector<std::shared_ptr<Task>> tasks;
+  auto leafTaskId = makeTaskId("leaf", 0);
+  auto leafPlan =
+      PlanBuilder().values({data}).partitionedOutputBroadcast().planNode();
+  auto leafTask = makeTask(leafTaskId, leafPlan, 0);
+  tasks.emplace_back(leafTask);
+  Task::start(leafTask, 1);
+
+  // Make next stage tasks.
+  std::shared_ptr<core::PlanNode> finalAggPlan;
+  std::vector<std::string> finalAggTaskIds;
+  for (int i = 0; i < 3; i++) {
+    finalAggPlan = PlanBuilder()
+                       .exchange(leafPlan->outputType())
+                       .finalAggregation({}, {"count(1)"})
+                       .partitionedOutput({}, 1)
+                       .planNode();
+
+    finalAggTaskIds.push_back(makeTaskId("final-agg", i));
+    auto task = makeTask(finalAggTaskIds.back(), finalAggPlan, i);
+    tasks.emplace_back(task);
+    Task::start(task, 1);
+    leafTask->updateBroadcastOutputBuffers(i + 1, false);
+    addRemoteSplits(task, {leafTaskId});
+  }
+  leafTask->updateBroadcastOutputBuffers(finalAggTaskIds.size(), true);
+
+  // Collect results from multiple tasks.
+  auto op = PlanBuilder().exchange(finalAggPlan->outputType()).planNode();
+
+  assertQuery(op, finalAggTaskIds, "SELECT UNNEST(array[1000, 1000, 1000])");
+}
+
+TEST_F(MultiFragmentTest, replicateNullsAndAny) {
+  auto data = makeRowVector({makeFlatVector<int32_t>(
+      1'000, [](auto row) { return row; }, nullEvery(7))});
+
+  std::vector<std::shared_ptr<Task>> tasks;
+  auto addTask = [&](std::shared_ptr<Task> task,
+                     const std::vector<std::string>& remoteTaskIds) {
+    tasks.emplace_back(task);
+    Task::start(task, 1);
+    if (!remoteTaskIds.empty()) {
+      addRemoteSplits(task, remoteTaskIds);
+    }
+  };
+
+  // Make leaf task: Values -> Repartitioning (3-way)
+  auto leafTaskId = makeTaskId("leaf", 0);
+  auto leafPlan =
+      PlanBuilder().values({data}).partitionedOutput({0}, 3, true).planNode();
+  auto leafTask = makeTask(leafTaskId, leafPlan, 0);
+  addTask(leafTask, {});
+
+  // Make next stage tasks to count nulls.
+  std::shared_ptr<core::PlanNode> finalAggPlan;
+  std::vector<std::string> finalAggTaskIds;
+  for (int i = 0; i < 3; i++) {
+    finalAggPlan =
+        PlanBuilder()
+            .exchange(leafPlan->outputType())
+            .project({"c0 is null"}, {"co_is_null"})
+            .partialAggregation({}, {"count_if(co_is_null)", "count(1)"})
+            .partitionedOutput({}, 1)
+            .planNode();
+
+    finalAggTaskIds.push_back(makeTaskId("final-agg", i));
+    auto task = makeTask(finalAggTaskIds.back(), finalAggPlan, i);
+    addTask(task, {leafTaskId});
+  }
+
+  // Collect results and verify number of nulls is 3 times larger than in the
+  // original data.
+  auto op = PlanBuilder()
+                .exchange(finalAggPlan->outputType())
+                .finalAggregation({}, {"sum(a0)", "sum(a1)"})
+                .planNode();
+
+  assertQuery(
+      op,
+      finalAggTaskIds,
+      "SELECT 3 * ceil(1000.0 / 7) /* number of null rows */, 1000 + 2 * ceil(1000.0 / 7) /* total number of rows */");
 }

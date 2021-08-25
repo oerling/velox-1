@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -317,6 +319,7 @@ void VectorHasher::lookupValueIdsTyped(
       }
       result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
     });
+    rows.updateBounds();
   } else {
     cachedHashes.resize(decoded.base()->size());
     std::fill(cachedHashes.begin(), cachedHashes.end(), 0);
@@ -340,6 +343,7 @@ void VectorHasher::lookupValueIdsTyped(
       }
       result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
     });
+    rows.updateBounds();
   }
 }
 

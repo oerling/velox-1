@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -133,12 +135,15 @@ class Driver {
   static void testingJoinAndReinitializeExecutor(int32_t threads = 0);
 
   bool isOnThread() const {
-    return state_.isOnThread;
+    return state_.isOnThread();
   }
 
   bool isTerminated() const {
     return state_.isTerminated;
   }
+
+  std::string label();
+
   core::ThreadState& state() {
     return state_;
   }
@@ -241,14 +246,14 @@ struct DriverFactory {
       std::shared_ptr<ExchangeClient> exchangeClient,
       std::function<int(int pipelineId)> numDrivers);
 
-  int numDestinations() const {
+  std::shared_ptr<const core::PartitionedOutputNode> needsPartitionedOutput() {
     VELOX_CHECK(!planNodes.empty());
     if (auto partitionedOutputNode =
             std::dynamic_pointer_cast<const core::PartitionedOutputNode>(
                 planNodes.back())) {
-      return partitionedOutputNode->numPartitions();
+      return partitionedOutputNode;
     } else {
-      return 0;
+      return nullptr;
     }
   }
 
