@@ -124,28 +124,29 @@ class MemoryManagerStrategyBase : public MemoryManagerStrategy {
 
   MemoryUsageConfig getDefaultMemoryUsageConfig(
       UsageLevel /*level*/) const override {
-    return MemoryUsageConfig();
-  }
+  return MemoryUsageConfig();
+}
 
-  void registerConsumer(
-      MemoryConsumer* consumer,
-      const std::weak_ptr<MemoryConsumer>& consumerPtr) override {
-    std::lock_guard<std::mutex> l(mutex_);
-    consumers_.emplace(consumer, consumerPtr);
-  }
+void registerConsumer(
+    MemoryConsumer* consumer,
+    const std::weak_ptr<MemoryConsumer>& consumerPtr) override {
+  std::lock_guard<std::mutex> l(mutex_);
+  consumers_.emplace(consumer, consumerPtr);
+}
 
-  void unregisterConsumer(MemoryConsumer* consumer) override {
-    std::lock_guard<std::mutex> l(mutex_);
-    consumers_.erase(consumer);
-  }
+void unregisterConsumer(MemoryConsumer* consumer) override {
+  std::lock_guard<std::mutex> l(mutex_);
+  consumers_.erase(consumer);
+}
 
- protected:
-  using ConsumerMap =
-      std::unordered_map<MemoryConsumer*, std::weak_ptr<MemoryConsumer>>;
+protected:
+using ConsumerMap =
+    std::unordered_map<MemoryConsumer*, std::weak_ptr<MemoryConsumer>>;
 
-  std::mutex mutex_;
-  ConsumerMap consumers_;
-};
+std::mutex mutex_;
+ConsumerMap consumers_;
+}
+;
 
 class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
  public:
