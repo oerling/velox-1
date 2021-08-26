@@ -551,7 +551,7 @@ class MemoryManager final : public IMemoryManager {
   void unregisterConsumer(MemoryConsumer* consumer) final {
     MemoryManagerStrategy::instance()->unregisterConsumer(consumer);
   }
-  
+
  private:
   FRIEND_TEST(MemoryPoolImplTest, CapSubtree);
   FRIEND_TEST(MemoryPoolImplTest, CapAllocation);

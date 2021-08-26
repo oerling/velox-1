@@ -61,7 +61,7 @@ struct ThreadState {
   // memory, which a third party can revoke while the thread is in
   // this state.
   bool isCancelFree{false};
-  const char* continueFile= nullptr; 
+  const char* continueFile = nullptr;
   int32_t continueLine{0};
 
   bool isOnThread() const {
@@ -79,8 +79,12 @@ struct ThreadState {
   }
 };
 
-#define SETCONT(state) {state.continueLine = __LINE__; state.continueFile = __FILE__;}
-  
+#define SETCONT(state)             \
+  {                                \
+    state.continueLine = __LINE__; \
+    state.continueFile = __FILE__; \
+  }
+
 class CancelPool {
  public:
   // Returns kNone if no pause or terminate is requested. The thread count is
@@ -186,7 +190,7 @@ class CancelPool {
           return StopReason::kNone;
         }
         --numThreads_;
-	state.isCancelFree = true;
+        state.isCancelFree = true;
       }
       // If the pause flag is on when trying to reenter, sleep a while
       // outside of the mutex and recheck. This is rare and not time

@@ -26,8 +26,8 @@
 namespace facebook::velox::memory {
 constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
 
-#define VELOX_MEM_CAP_EXCEEDED()                                  \
-  _VELOX_THROW(                                                   \
+#define VELOX_MEM_CAP_EXCEEDED()                                    \
+  _VELOX_THROW(                                                     \
       ::facebook::velox::VeloxRuntimeError,                         \
       ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
       ::facebook::velox::error_code::kMemCapExceeded.c_str(),       \

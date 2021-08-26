@@ -121,15 +121,15 @@ void BlockingState::setResume(
         auto driver = state->driver_;
         {
           std::lock_guard<std::mutex> l(*driver->cancelPool()->mutex());
-	  VELOX_CHECK(!driver->state().isCancelFree);
-	  VELOX_CHECK(driver->state().hasBlockingFuture);
-	  driver->state().hasBlockingFuture = false;
+          VELOX_CHECK(!driver->state().isCancelFree);
+          VELOX_CHECK(driver->state().hasBlockingFuture);
+          driver->state().hasBlockingFuture = false;
           if (driver->cancelPool()->pauseRequested()) {
-	    // The thread will be enqueued at resume.
+            // The thread will be enqueued at resume.
             return;
           }
         }
-	SETCONT(state->driver_->state());
+        SETCONT(state->driver_->state());
         Driver::enqueue(state->driver_);
       })
       .thenError(
@@ -532,10 +532,8 @@ CancelFreeSection::~CancelFreeSection() {
   }
 }
 
-  std::string Driver::label() {
-    return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
-  }
+std::string Driver::label() {
+  return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
+}
 
-
-  
 } // namespace facebook::velox::exec

@@ -251,8 +251,7 @@ class DriverTest : public OperatorTestBase {
         }
       });
     }
-    auto [promise, semiFuture] = makeVeloxPromiseContract<bool>(
-								"wakeup");
+    auto [promise, semiFuture] = makeVeloxPromiseContract<bool>("wakeup");
     *future = std::move(semiFuture);
     wakeupPromises_.push_back(std::move(promise));
   }
@@ -260,7 +259,8 @@ class DriverTest : public OperatorTestBase {
   // Registers a Task for use in randomTask().
   void registerTask(std::shared_ptr<Task> task) {
     std::lock_guard<std::mutex> l(taskMutex_);
-    if (std::find(allTasks_.begin(), allTasks_.end(), task) != allTasks_.end()) {
+    if (std::find(allTasks_.begin(), allTasks_.end(), task) !=
+        allTasks_.end()) {
       return;
     }
     allTasks_.push_back(task);
@@ -520,7 +520,7 @@ class TestingPauser : public Operator {
       return nullptr;
     }
     {
-      CancelFreeSection  noCancel(operatorCtx_->driver());
+      CancelFreeSection noCancel(operatorCtx_->driver());
       sleep(1);
       if (counter_ % 7 == 0) {
         // Every 7th time, stop and resume other Tasks. This operation is
@@ -529,17 +529,17 @@ class TestingPauser : public Operator {
 
         for (auto i = 0; i <= counter_ % 3; ++i) {
           auto task = test_->randomTask();
-	  if (!task) {
-	    continue;
-	  }
+          if (!task) {
+            continue;
+          }
           auto cancelPool = task->cancelPool();
           cancelPool->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
           auto future = cancelPool->finishFuture().via(&executor);
           future.wait();
           sleep(2);
-	  cancelPool->requestPause(false);
-	  Task::resume(task);
+          cancelPool->requestPause(false);
+          Task::resume(task);
         }
       }
     }
@@ -593,8 +593,7 @@ TEST_F(DriverTest, pauserNode) {
           std::shared_ptr<const core::PlanNode>& node)
           -> std::unique_ptr<TestingPauser> {
         if (auto pauser =
-                std::dynamic_pointer_cast<const TestingPauserNode>(
-                    node)) {
+                std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
           return std::make_unique<TestingPauser>(
               ctx, id, pauser, this, ++sequence);
         }
@@ -737,7 +736,7 @@ TEST_F(DriverTest, memoryReservation) {
         [](int64_t num) { return num % 10 > 0; },
         &hits,
         false,
-	true);
+        true);
     params[i].numThreads = kThreadsPerTask;
   }
   std::vector<std::thread> threads;

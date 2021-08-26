@@ -196,16 +196,16 @@ void Task::resume(std::shared_ptr<Task> self) {
         continue;
       }
       if (driver->state().enqueued) {
-	// A Driver can wait for a thread and there can be a
-	// pause/resume during the wait. The Driver should not be
-	// enqueued twice.
-	continue;
+        // A Driver can wait for a thread and there can be a
+        // pause/resume during the wait. The Driver should not be
+        // enqueued twice.
+        continue;
       }
       VELOX_CHECK(!driver->isOnThread() && !driver->isTerminated());
       if (!driver->state().hasBlockingFuture) {
-	// Do not continue a Driver that is blocked on external
-	// event. The Driver gets enqueued by the promise realization.
-	SETCONT(driver->state());
+        // Do not continue a Driver that is blocked on external
+        // event. The Driver gets enqueued by the promise realization.
+        SETCONT(driver->state());
         Driver::enqueue(driver);
       }
     }
