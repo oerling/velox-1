@@ -493,7 +493,6 @@ class TestingPauser : public Operator {
       int32_t sequence)
       : Operator(ctx, node->outputType(), id, node->id(), "Pauser"),
         test_(test),
-        sequence_(sequence),
         counter_(sequence),
         future_(false) {
     test_->registerTask(operatorCtx_->task());
@@ -572,10 +571,8 @@ class TestingPauser : public Operator {
   // does this at a time.
   static std::mutex pauseMutex_;
 
-  // Sequence number of 'this' within the test run.
-  const int32_t sequence_;
-  // Counter for actions. Initialized from 'sequence_'. Decides what
-  // the next action in getOutput() will be.
+  // Counter deciding 
+  // the next action in getOutput().
   int32_t counter_;
   bool hasFuture_{false};
   ContinueFuture future_;
@@ -682,7 +679,7 @@ class TestingConsumer : public Operator {
     return std::move(input_);
   }
 
-  BlockingReason isBlocked(ContinueFuture* future) override {
+  BlockingReason isBlocked(ContinueFuture* /*future*/) override {
     return BlockingReason::kNotBlocked;
   }
 

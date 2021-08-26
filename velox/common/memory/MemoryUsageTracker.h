@@ -16,6 +16,7 @@
 
 #pragma once
 
+
 #include <array>
 #include <atomic>
 #include <memory>
@@ -316,9 +317,8 @@ class MemoryUsageTracker
         maxMemory_{
             config.maxUserMemory.value_or(kMaxMemory),
             config.maxSystemMemory.value_or(kMaxMemory),
-            config.maxTotalMemory.value_or(kMaxMemory)},
-        allowOvercommit_{config.allowOvercommit},
-        forMemoryManager_{config.forMemoryManager} {}
+            config.maxTotalMemory.value_or(kMaxMemory)}
+ {}
 
   void maySetMax(UsageType type, int64_t newPeak) {
     auto& peakUsage = peakUsageInBytes_[static_cast<int>(type)];
@@ -378,8 +378,5 @@ class MemoryUsageTracker
 
   int64_t reservation_{0};
   std::atomic<int64_t> usedReservation_{};
-
-  bool allowOvercommit_;
-  bool forMemoryManager_;
 };
 } // namespace facebook::velox::memory

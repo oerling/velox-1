@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/*
 
 #pragma once
 
@@ -63,20 +62,20 @@ class MemoryManagerStrategy {
   // We use this to implement a fair memory usage policy.
   virtual bool canChangeLimitsDynamically() const = 0;
 
-  // Returns a shared pointer to the memory usage quota.
-  // UsageType specifies whether it is for Process, Query, Task or Operators
+  // Returns the recommended initial size for 'level'.
+  // 'level' specifies whether this is for Process, Query, Task or Operators
   // If canChangeQuotaDynamically() returns true, quota may change dynamically
   // as the number of MemoryConsumers changes and registered MemoryConsumers
   // will be/ updated through 'updateMemoryUsageConfig()'.
   virtual MemoryUsageConfig getDefaultMemoryUsageConfig(
       UsageLevel Level) const = 0;
 
-  // To register a memory consumer with MemoryManager.
+  // Registers a memory consumer with MemoryManager.
   virtual void registerConsumer(
       MemoryConsumer* consumer,
       const std::weak_ptr<MemoryConsumer>& consumerPtr) = 0;
 
-  // To unregister a memory consumer with MemoryManager.
+  // Unregisters a memory consumer with MemoryManager.
   virtual void unregisterConsumer(MemoryConsumer* consumer) = 0;
 
   // Tries to recover memory so that 'requester' can allocate 'size'
@@ -124,29 +123,28 @@ class MemoryManagerStrategyBase : public MemoryManagerStrategy {
 
   MemoryUsageConfig getDefaultMemoryUsageConfig(
       UsageLevel /*level*/) const override {
-  return MemoryUsageConfig();
-}
+    return MemoryUsageConfig();
+  }
 
-void registerConsumer(
-    MemoryConsumer* consumer,
-    const std::weak_ptr<MemoryConsumer>& consumerPtr) override {
-  std::lock_guard<std::mutex> l(mutex_);
-  consumers_.emplace(consumer, consumerPtr);
-}
+  void registerConsumer(
+      MemoryConsumer* consumer,
+      const std::weak_ptr<MemoryConsumer>& consumerPtr) override {
+    std::lock_guard<std::mutex> l(mutex_);
+    consumers_.emplace(consumer, consumerPtr);
+  }
 
-void unregisterConsumer(MemoryConsumer* consumer) override {
-  std::lock_guard<std::mutex> l(mutex_);
-  consumers_.erase(consumer);
-}
+  void unregisterConsumer(MemoryConsumer* consumer) override {
+    std::lock_guard<std::mutex> l(mutex_);
+    consumers_.erase(consumer);
+  }
 
-protected:
-using ConsumerMap =
-    std::unordered_map<MemoryConsumer*, std::weak_ptr<MemoryConsumer>>;
+ protected:
+  using ConsumerMap =
+      std::unordered_map<MemoryConsumer*, std::weak_ptr<MemoryConsumer>>;
 
-std::mutex mutex_;
-ConsumerMap consumers_;
-}
-;
+  std::mutex mutex_;
+  ConsumerMap consumers_;
+};
 
 class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
  public:

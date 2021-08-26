@@ -44,7 +44,6 @@ Task::Task(
       bufferManager_(
           PartitionedOutputBufferManager::getInstance(queryCtx_->host())) {
   constexpr int64_t kInitialTaskMemory = 8 << 20; // 8MB
-  constexpr int64_t kUnlimited = 100000000000LL;
   auto strategy = memory::MemoryManagerStrategy::instance();
   if (strategy->canResize()) {
     auto tracker = pool_->getMemoryUsageTracker();
@@ -703,7 +702,7 @@ Task::getLocalExchangeSources(const core::PlanNodeId& planNodeId) {
   return it->second.sources;
 }
 
-Driver* Task::thisDriver() const {
+Driver* FOLLY_NULLABLE Task::thisDriver() const {
   auto thisThread = std::this_thread::get_id();
   {
     std::lock_guard<std::mutex> l(mutex_);

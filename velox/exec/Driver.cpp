@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <iostream>
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 #include <folly/executors/task_queue/UnboundedBlockingQueue.h>
@@ -502,7 +501,7 @@ std::string Driver::toString() {
 bool Driver::growTaskMemory(
     memory::UsageType type,
     int64_t size,
-    memory::MemoryUsageTracker* tracker) {
+    memory::MemoryUsageTracker* /*tracker*/) {
   CancelFreeSection guard(this);
   return memory::MemoryManagerStrategy::instance()->recover(
       driverCtx()->task, type, size);

@@ -341,7 +341,7 @@ class Task : public memory::MemoryConsumer {
 
   // Returns the Driver running on the current thread or nullptr if the current
   // thread is not running a Driver of 'this'.
-  Driver* thisDriver() const;
+  Driver* FOLLY_NULLABLE thisDriver() const;
 
  private:
   struct BarrierState {
