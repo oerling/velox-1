@@ -90,9 +90,6 @@ class Task {
       ConsumerSupplier consumerSupplier,
       std::function<void(std::exception_ptr)> onError = nullptr);
 
-  Task(const std::string& id, std::shared_ptr<core::QueryCtx> ctx)
-      : taskId_(id), destination_(0), queryCtx_(ctx) {}
-
   ~Task();
 
   const std::string& taskId() const {
@@ -329,6 +326,10 @@ class Task {
     return cancelPool_;
   }
 
+  // Returns the Driver running on the current thread or nullptr if the current
+  // thread is not running a Driver of 'this'.
+  Driver* FOLLY_NULLABLE thisDriver() const;
+
  private:
   struct BarrierState {
     int32_t numRequested;
@@ -380,6 +381,8 @@ class Task {
       std::unordered_map<int32_t, GroupSplitsInfo>::iterator it);
 
   void addSplitLocked(SplitsState& splitsState, exec::Split&& split);
+
+  folly::SemiFuture<bool> recoverMemory(int64_t minMemoryToRecover);
 
   const std::string taskId_;
   std::shared_ptr<const core::PlanNode> planNode_;
@@ -437,4 +440,5 @@ class Task {
   core::CancelPoolPtr cancelPool_{std::make_shared<core::CancelPool>()};
   std::weak_ptr<PartitionedOutputBufferManager> bufferManager_;
 };
+
 } // namespace facebook::velox::exec
