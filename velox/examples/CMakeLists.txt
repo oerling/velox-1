@@ -11,19 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_library(
-  velox_functions_spark OBJECT
-  Hash.cpp
-  LeastGreatest.cpp
-  RegexFunctions.cpp
-  Register.cpp
-  RegisterArithmetic.cpp
-  RegisterCompare.cpp
-  SplitFunctions.cpp
-  String.cpp
-  Subscript.cpp)
 
-target_link_libraries(velox_functions_spark velox_functions_lib
-                      velox_functions_common)
+add_executable(velox_example_expression_eval ExpressionEval.cpp)
 
-add_subdirectory(tests)
+target_link_libraries(velox_example_expression_eval velox_type velox_vector
+                      velox_memory)
