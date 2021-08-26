@@ -15,7 +15,9 @@
  */
 #pragma once
 
+
 #include <folly/futures/Future.h>
+#include <folly/portability/SysSyscall.h>
 #include <mutex>
 #include "velox/common/future/VeloxPromise.h"
 
@@ -61,8 +63,6 @@ struct ThreadState {
   // memory, which a third party can revoke while the thread is in
   // this state.
   bool isCancelFree{false};
-  const char* continueFile = nullptr;
-  int32_t continueLine{0};
 
   bool isOnThread() const {
     return thread != std::thread::id();
@@ -70,7 +70,7 @@ struct ThreadState {
 
   void setThread() {
     thread = std::this_thread::get_id();
-    tid = gettid();
+    tid = syscall(FOLLY_SYS_gettid);
   }
 
   void clearThread() {
@@ -78,12 +78,6 @@ struct ThreadState {
     tid = 0;
   }
 };
-
-#define SETCONT(state)             \
-  {                                \
-    state.continueLine = __LINE__; \
-    state.continueFile = __FILE__; \
-  }
 
 class CancelPool {
  public:

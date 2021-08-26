@@ -127,7 +127,6 @@ void BlockingState::setResume(
             return;
           }
         }
-        SETCONT(state->driver_->state());
         Driver::enqueue(state->driver_);
       })
       .thenError(

@@ -149,7 +149,6 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   self->drivers_ = std::move(drivers);
   for (auto& driver : self->drivers_) {
     if (driver) {
-      SETCONT(driver->state());
       Driver::enqueue(driver);
     }
   }
@@ -180,7 +179,6 @@ void Task::resume(std::shared_ptr<Task> self) {
       if (!driver->state().hasBlockingFuture) {
         // Do not continue a Driver that is blocked on external
         // event. The Driver gets enqueued by the promise realization.
-        SETCONT(driver->state());
         Driver::enqueue(driver);
       }
     }
