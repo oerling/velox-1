@@ -15,7 +15,6 @@
  */
 #pragma once
 
-
 #include <folly/futures/Future.h>
 #include <folly/portability/SysSyscall.h>
 #include <mutex>
