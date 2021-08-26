@@ -571,7 +571,7 @@ class TestingPauser : public Operator {
   // does this at a time.
   static std::mutex pauseMutex_;
 
-  // Counter deciding 
+  // Counter deciding
   // the next action in getOutput().
   int32_t counter_;
   bool hasFuture_{false};

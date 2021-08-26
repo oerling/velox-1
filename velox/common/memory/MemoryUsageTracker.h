@@ -16,7 +16,6 @@
 
 #pragma once
 
-
 #include <array>
 #include <atomic>
 #include <memory>
@@ -317,8 +316,7 @@ class MemoryUsageTracker
         maxMemory_{
             config.maxUserMemory.value_or(kMaxMemory),
             config.maxSystemMemory.value_or(kMaxMemory),
-            config.maxTotalMemory.value_or(kMaxMemory)}
- {}
+            config.maxTotalMemory.value_or(kMaxMemory)} {}
 
   void maySetMax(UsageType type, int64_t newPeak) {
     auto& peakUsage = peakUsageInBytes_[static_cast<int>(type)];
