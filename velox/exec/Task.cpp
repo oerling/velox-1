@@ -31,7 +31,7 @@ Task::Task(
     const std::string& taskId,
     std::shared_ptr<const core::PlanNode> planNode,
     int destination,
-    std::shared_ptr<core::QueryCtx>&& queryCtx,
+    std::shared_ptr<core::QueryCtx> queryCtx,
     ConsumerSupplier consumerSupplier,
     std::function<void(std::exception_ptr)> onError)
     : taskId_(taskId),

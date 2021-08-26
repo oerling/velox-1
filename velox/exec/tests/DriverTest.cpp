@@ -554,7 +554,14 @@ std::mutex TestingPauser ::pauseMutex_;
 TEST_F(DriverTest, pauserNode) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
+  // Run with a fraction of the testing threads fitting in the executor.
+  Driver::testingJoinAndReinitializeExecutor(20);
   static int32_t sequence = 0;
+  // Use a static variable to pass the test instance to the create
+  // function of the testing operator. The testing operator registers
+  // all its Tasks in the test instance to create inter-Task pauses.
+  static DriverTest* testInstance;
+  testInstance = this;
   Operator::registerOperator(
       [&](DriverCtx* ctx,
           int32_t id,
@@ -563,7 +570,7 @@ TEST_F(DriverTest, pauserNode) {
         if (auto pauser =
                 std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
           return std::make_unique<TestingPauser>(
-              ctx, id, pauser, this, ++sequence);
+              ctx, id, pauser, testInstance, ++sequence);
         }
         return nullptr;
       });
@@ -603,6 +610,7 @@ TEST_F(DriverTest, pauserNode) {
     EXPECT_EQ(counters[i], kThreadsPerTask * hits);
     EXPECT_TRUE(stateFutures_.at(i).isReady());
   }
+  Driver::testingJoinAndReinitializeExecutor(10);
 }
 
 int main(int argc, char** argv) {
