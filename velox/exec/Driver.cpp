@@ -127,7 +127,6 @@ void BlockingState::setResume(
             return;
           }
         }
-        SETCONT(state->driver_->state());
         Driver::enqueue(state->driver_);
       })
       .thenError(
@@ -496,6 +495,23 @@ std::string Driver::toString() {
   out << "}";
   return out.str();
 }
+CancelFreeSection::CancelFreeSection(Driver* driver) : driver_(driver) {
+  if (driver->cancelPool()->enterCancelFree(driver->state()) !=
+      core::StopReason::kNone) {
+    VELOX_FAIL("Terminate detected when entering cancel-free");
+  }
+}
+
+CancelFreeSection::~CancelFreeSection() {
+  if (driver_->cancelPool()->leaveCancelFree(driver_->state()) !=
+      core::StopReason::kNone) {
+    VELOX_FAIL("Terminate detected when leaving cancel-free");
+  }
+}
+
+std::string Driver::label() {
+  return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
+}
 
 bool Driver::growTaskMemory(
     memory::UsageType type,
@@ -514,24 +530,6 @@ int64_t Driver::spill(int64_t size) {
     }
   }
   return spilled;
-}
-
-CancelFreeSection::CancelFreeSection(Driver* driver) : driver_(driver) {
-  if (driver->cancelPool()->enterCancelFree(driver->state()) !=
-      core::StopReason::kNone) {
-    VELOX_FAIL("Terminate detected when entering cancel-free");
-  }
-}
-
-CancelFreeSection::~CancelFreeSection() {
-  if (driver_->cancelPool()->leaveCancelFree(driver_->state()) !=
-      core::StopReason::kNone) {
-    VELOX_FAIL("Terminate detected when leaving cancel-free");
-  }
-}
-
-std::string Driver::label() {
-  return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
 }
 
 } // namespace facebook::velox::exec

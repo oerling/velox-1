@@ -31,7 +31,7 @@ Task::Task(
     const std::string& taskId,
     std::shared_ptr<const core::PlanNode> planNode,
     int destination,
-    std::shared_ptr<core::QueryCtx>&& queryCtx,
+    std::shared_ptr<core::QueryCtx> queryCtx,
     ConsumerSupplier consumerSupplier,
     std::function<void(std::exception_ptr)> onError)
     : taskId_(taskId),
@@ -110,12 +110,7 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
     self->numDrivers_ += std::min(factory->maxDrivers, maxDrivers);
   }
   self->taskStats_.pipelineStats.resize(self->driverFactories_.size());
-  // Register self for possible memory recovery callback. Do this
-  // after sizing 'drivers_' but before starting the
-  // Drivers. 'drivers_' can be read by memory recovery or
-  // cancellation while Drivers are being made, so the array should
-  // have final size from the start.
-  memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
+  // Register self for possible memory recovery callback.  memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
 
   auto bufferManager = self->bufferManager_.lock();
   VELOX_CHECK_NOT_NULL(
@@ -176,7 +171,6 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   self->drivers_ = std::move(drivers);
   for (auto& driver : self->drivers_) {
     if (driver) {
-      SETCONT(driver->state());
       Driver::enqueue(driver);
     }
   }
@@ -186,6 +180,9 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
 void Task::resume(std::shared_ptr<Task> self) {
   VELOX_CHECK(!self->exception_, "Cannot resume failed task");
   std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
+  // Setting pause requested must be atomic wth the resuming so that
+  // cancel free sections do not go back on thread during resume.
+  self->cancelPool_->requestPauseLocked(false);
   for (auto& driver : self->drivers_) {
     if (driver) {
       if (driver->state().isCancelFree) {
@@ -204,7 +201,6 @@ void Task::resume(std::shared_ptr<Task> self) {
       if (!driver->state().hasBlockingFuture) {
         // Do not continue a Driver that is blocked on external
         // event. The Driver gets enqueued by the promise realization.
-        SETCONT(driver->state());
         Driver::enqueue(driver);
       }
     }

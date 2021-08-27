@@ -70,7 +70,7 @@ class Task : public memory::MemoryConsumer {
       const std::string& taskId,
       std::shared_ptr<const core::PlanNode> planNode,
       int destination,
-      std::shared_ptr<core::QueryCtx>&& queryCtx,
+      std::shared_ptr<core::QueryCtx> queryCtx,
       Consumer consumer = nullptr,
       std::function<void(std::exception_ptr)> onError = nullptr)
       : Task{
@@ -86,7 +86,7 @@ class Task : public memory::MemoryConsumer {
       const std::string& taskId,
       std::shared_ptr<const core::PlanNode> planNode,
       int destination,
-      std::shared_ptr<core::QueryCtx>&& queryCtx,
+      std::shared_ptr<core::QueryCtx> queryCtx,
       ConsumerSupplier consumerSupplier,
       std::function<void(std::exception_ptr)> onError = nullptr);
 
@@ -338,6 +338,7 @@ class Task : public memory::MemoryConsumer {
   }
 
   int64_t recover(int64_t size) override;
+
 
   // Returns the Driver running on the current thread or nullptr if the current
   // thread is not running a Driver of 'this'.
