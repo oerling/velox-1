@@ -29,7 +29,8 @@ namespace facebook::velox::cache {
 
 class AsyncDataCache;
 class CacheShard;
-
+  class SsdCache;
+  
 // Type for tracking last access. This is based on CPU clock and
 // scaled to be around 1ms resolution. This can wrap around and is
 // only comparable to other values of the same type. This is a
@@ -255,6 +256,18 @@ class AsyncDataCacheEntry {
   // mutex. If set, 'this' is pinned for either exclusive or shared.
   std::shared_ptr<FusedLoad> load_;
 
+  // Group id. Used for deciding if 'this' should be written to SSD.
+  uint64_t groupId_{0};
+  
+  // Tracking id. Used for deciding if this should be written to SSD.
+  TrackingId trackingId_;
+  
+  // SSD file from which this was loaded or nullptr if not backed by SSD.
+  SsdFile* ssdFile_{nullptr};
+
+  // Region of 'ssdFile_'. Used for updating SSD cache use counts.
+  int32_t ssdFileRegion_{0};
+  
   friend class CacheShard;
   friend class CachePin;
 };
@@ -538,7 +551,7 @@ class CacheShard {
 class AsyncDataCache : public memory::MappedMemory,
                        public std::enable_shared_from_this<AsyncDataCache> {
  public:
-  AsyncDataCache(memory::MappedMemory* mappedMemory, uint64_t maxBytes);
+  AsyncDataCache(memory::MappedMemory* mappedMemory, uint64_t maxBytes, std::unique_ptr<SsdCache> ssd = nullptr);
 
   // Finds or creates a cache entry corresponding to 'key'. The entry
   // is returned in 'pin'. If the entry is new, it is pinned in
@@ -601,6 +614,10 @@ class AsyncDataCache : public memory::MappedMemory,
     return maxBytes_;
   }
 
+  SsdCache* ssdCache() {
+    return ssdCache_.get();
+  }
+  
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
@@ -613,6 +630,7 @@ class AsyncDataCache : public memory::MappedMemory,
   std::atomic<memory::MachinePageCount> prefetchPages_{0};
   uint64_t maxBytes_;
   CacheStats stats_;
+  std::unique_ptr<SsdCache> ssdCache_;
 };
 
 // Samples a set of values T from 'numSamples' calls of

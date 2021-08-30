@@ -23,7 +23,8 @@ namespace facebook::velox::cache {
 void ScanTracker::recordReference(
     const TrackingId id,
     uint64_t bytes,
-    uint64_t /*groupId*/) {
+    uint64_t fileId,
+    uint64_t groupId) {
   std::lock_guard<std::mutex> l(mutex_);
   data_[id].incrementReference(bytes);
   sum_.incrementReference(bytes);
@@ -32,7 +33,8 @@ void ScanTracker::recordReference(
 void ScanTracker::recordRead(
     const TrackingId id,
     uint64_t bytes,
-    uint64_t /*groupId*/) {
+    uint64_t fileId,
+    uint64_t groupId) {
   std::lock_guard<std::mutex> l(mutex_);
   data_[id].incrementRead(bytes);
   sum_.incrementRead(bytes);

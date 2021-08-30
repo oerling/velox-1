@@ -40,7 +40,8 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
       cache_, region, input_, fileNum_, tracker_, id, groupId_);
 }
 
-  bool CachedBufferedInput::isBuffered(uint64_t /*offset*/, uint64_t /*length*/) const {
+bool CachedBufferedInput::isBuffered(uint64_t /*offset*/, uint64_t /*length*/)
+    const {
   return false;
 }
 
@@ -211,6 +212,28 @@ class DwrfFusedLoad : public cache::FusedLoad {
  private:
   std::unique_ptr<AbstractInputStreamHolder> input_;
 };
+
+class SsdLoad {
+ public:
+  void initialize(SsdFile& file, CachePin&& pin, SsdPin pin) {
+    std::vector<CachePin> pins;
+    pins.push_back(std::move(pin));
+    cache::FusedLoad::initialize(std::move(pins));
+    ssdPin_ = std::move(ssdPin);
+  }
+
+  void loadData() {
+    auto entry = pins_[0].entry();
+    if (entry->tinyData()) {
+      file_.load(ssdPin_.run(), entry->tinyData());
+    } else {
+      file_.load(ssdPin_.run(), entry->data());
+    }
+  }
+
+ private:
+  SsdPin pin_;
+};
 } // namespace
 
 void CachedBufferedInput::readRegion(std::vector<CachePin> pins) {
@@ -233,7 +256,21 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
       0);
 }
 
-  void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*> /*requests*/) {
-  // No op placeholder.
+void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*> requests) {
+  auto& file = SsdCache::file(fileId_);
+  // Check if the loadable items are backed by SSD. Remove the request for the
+  // found items.
+  for (int32_t i = requests.size() - 1; i >= 0; --i) {
+    auto request = requests[i];
+    auto SsdPin pin =
+        file.find(RawCacheKey{fileId_, region.pin().entry()->offset()});
+    if (!pin.empty()) {
+      auto load = std::make_shared<SsdLoad>();
+      load->initialize(std::move(region.pin), std::move(ssdPin));
+    }
+
+    regions.erase(regions.begin() + i);
+  }
 }
+
 } // namespace facebook::velox::dwrf

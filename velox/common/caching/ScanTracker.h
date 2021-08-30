@@ -117,11 +117,11 @@ class ScanTracker {
 
   // Records that a scan references 'bytes' bytes of the stream given
   // by 'id'. This is called when preparing to read a stripe.
-  void recordReference(const TrackingId id, uint64_t bytes, uint64_t groupId);
+  void recordReference(const TrackingId id, uint64_t bytes, uint64_t fileId, uint64_t groupId);
 
   // Records that 'bytes' bytes have actually been read from the stream
   // given by 'id'.
-  void recordRead(const TrackingId id, uint64_t bytes, uint64_t groupId);
+  void recordRead(const TrackingId id, uint64_t bytes, uint64_t fileId, uint64_t groupId);
 
   // True if 'trackingId' is read at least  'minReadPct' % of the time.
   bool shouldPrefetch(TrackingId id, int32_t minReadPct) {
@@ -149,4 +149,34 @@ class ScanTracker {
   TrackingData sum_;
 };
 
+  
+struct GroupTrackerKey {
+  StringIdLease groupId;
+  TrackingId column;
+};
+
+struct GroupData {
+  AccessStats access;
+  // Volume of reads that would go to disk without SSD.
+  uint32_t savedIoKb;
+
+  int32_t score(AccessTime time, int32_t size) {
+    return (now - access.lastUse) / (1 + access.numUses) * (1 + (size >> 14));
+  }
+};
+  
+class GroupTracker {
+public:
+  recordAccess(uint64_t groupId, TrackingId trackingId);
+
+  static GroupTracker* instance();
+
+private:
+  std::mutex mutex_;
+  folly::F14FastMap<GroupTrackerKey, GroupData> data_;
+  // data from groups with score below this are cacheable.
+
+  int32_t admissionThreshold_;
+};
+     
 } // namespace facebook::velox::cache

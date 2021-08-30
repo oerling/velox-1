@@ -93,16 +93,20 @@ class CacheTest : public testing::Test {
 
   void SetUp() override {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
-    rng_.seed(1);
+    rn g_.seed(1);
   }
 
   void TearDown() override {
     executor_->join();
   }
 
-  void initializeCache(int64_t maxBytes) {
-    cache_ =
-        std::make_unique<AsyncDataCache>(MappedMemory::getInstance(), maxBytes);
+  void initializeCache(int64_t maxBytes, const std::string& file = "") {
+    std::unique_ptr<SsdCache> ssd;
+    if (!file.empty()) {
+      ssd = std::make_unique<SsdCache>(file);
+    }
+    cache_ = std::make_unique<AsyncDataCache>(
+        MappedMemory::getInstance(), maxBytes, std::move(ssd));
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));
@@ -314,8 +318,25 @@ TEST_F(CacheTest, TestSingleFileThreads) {
   std::vector<std::thread> threads;
   threads.reserve(numThreads);
   for (int i = 0; i < numThreads; ++i) {
-    threads.push_back(std::thread(
-				  [this, i]() { readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20); }));
+    threads.push_back(std::thread([this, i]() {
+      readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
+    }));
+  }
+  for (int i = 0; i < numThreads; ++i) {
+    threads[i].join();
+  }
+}
+
+TEST_F(CacheTest, TestSsdThreads) {
+  initializeCache(1 << 28, "/tmp/ssdtest");
+
+  const int numThreads = 4;
+  std::vector<std::thread> threads;
+  threads.reserve(numThreads);
+  for (int i = 0; i < numThreads; ++i) {
+    threads.push_back(std::thread([this, i]() {
+      readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
+    }));
   }
   for (int i = 0; i < numThreads; ++i) {
     threads[i].join();
