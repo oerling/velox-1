@@ -321,6 +321,7 @@ TEST_F(CacheTest, TestSingleFileThreads) {
     threads.push_back(std::thread([this, i]() {
       readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
     }));
+<<<<<<< HEAD
   }
   for (int i = 0; i < numThreads; ++i) {
     threads[i].join();
@@ -337,6 +338,8 @@ TEST_F(CacheTest, TestSsdThreads) {
     threads.push_back(std::thread([this, i]() {
       readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
     }));
+=======
+>>>>>>> main
   }
   for (int i = 0; i < numThreads; ++i) {
     threads[i].join();
