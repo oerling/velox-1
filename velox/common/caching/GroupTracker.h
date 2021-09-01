@@ -47,6 +47,18 @@ class ApproxCounter {
     uint32_t readCount;
     uint32_t referenceCount;
   };
+
+  // Represents a groupId, column and its size and score.
+  struct SsdScore {
+    // 
+    float score;
+
+    // Expected size in bytes for caching to SSD
+    float size;
+
+    // Represents the groupId and TrackingId of the group, column pair.
+    uint64_t hash;
+  };
   
 class GroupTracker {
  public:

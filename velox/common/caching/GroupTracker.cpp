@@ -43,10 +43,13 @@ namespace facebook::velox::cache {
   }
 
   void GroupStats::makeSsdFilter(SsdCache& cache) {
-    
+    std::vector<uint64_t> scores;
+    for (auto& group : groups_) {
+      group->addColumnScores(group, scores);
+    }
   }
 
-  
+
 
 
 
