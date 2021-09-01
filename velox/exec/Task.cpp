@@ -110,7 +110,9 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
     self->numDrivers_ += std::min(factory->maxDrivers, maxDrivers);
   }
   self->taskStats_.pipelineStats.resize(self->driverFactories_.size());
-  // Register self for possible memory recovery callback.  memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
+
+  // Register self for possible memory recovery callback.
+  memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
 
   auto bufferManager = self->bufferManager_.lock();
   VELOX_CHECK_NOT_NULL(
@@ -180,18 +182,18 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
 void Task::resume(std::shared_ptr<Task> self) {
   VELOX_CHECK(!self->exception_, "Cannot resume failed task");
   std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
-  // Setting pause requested must be atomic wth the resuming so that
-  // cancel free sections do not go back on thread during resume.
+  // Setting pause requested must be atomic with the resuming so that
+  // suspended sections do not go back on thread during resume.
   self->cancelPool_->requestPauseLocked(false);
   for (auto& driver : self->drivers_) {
     if (driver) {
-      if (driver->state().isCancelFree) {
+      if (driver->state().isSuspended) {
         // The Driver will come on thread in its own time as long as
         // the cancel flag is reset. This check needs to be inside the
         // CancelPool mutex.
         continue;
       }
-      if (driver->state().enqueued) {
+      if (driver->state().isEnqueued) {
         // A Driver can wait for a thread and there can be a
         // pause/resume during the wait. The Driver should not be
         // enqueued twice.

@@ -119,7 +119,7 @@ void BlockingState::setResume(
         auto driver = state->driver_;
         {
           std::lock_guard<std::mutex> l(*driver->cancelPool()->mutex());
-          VELOX_CHECK(!driver->state().isCancelFree);
+          VELOX_CHECK(!driver->state().isSuspended);
           VELOX_CHECK(driver->state().hasBlockingFuture);
           driver->state().hasBlockingFuture = false;
           if (driver->cancelPool()->pauseRequested()) {
@@ -217,8 +217,8 @@ void Driver::enqueue(
     std::shared_ptr<Driver> driver,
     folly::Executor* executor) {
   // This is expected to be called inside the Driver's CancelPool mutex.
-  VELOX_CHECK(!driver->state().enqueued);
-  driver->state().enqueued = true;
+  VELOX_CHECK(!driver->state().isEnqueued);
+  driver->state().isEnqueued = true;
   auto currentExecutor = (executor ? executor : Driver::executor());
   currentExecutor->add(
       [driver, currentExecutor]() { Driver::run(driver, currentExecutor); });
@@ -495,21 +495,23 @@ std::string Driver::toString() {
   out << "}";
   return out.str();
 }
-CancelFreeSection::CancelFreeSection(Driver* driver) : driver_(driver) {
-  if (driver->cancelPool()->enterCancelFree(driver->state()) !=
+
+SuspendedSection::SuspendedSection(Driver* FOLLY_NONNULL driver)
+    : driver_(driver) {
+  if (driver->cancelPool()->enterSuspended(driver->state()) !=
       core::StopReason::kNone) {
-    VELOX_FAIL("Terminate detected when entering cancel-free");
+    VELOX_FAIL("Terminate detected when entering suspended section");
   }
 }
 
-CancelFreeSection::~CancelFreeSection() {
-  if (driver_->cancelPool()->leaveCancelFree(driver_->state()) !=
+SuspendedSection::~SuspendedSection() {
+  if (driver_->cancelPool()->leaveSuspended(driver_->state()) !=
       core::StopReason::kNone) {
-    VELOX_FAIL("Terminate detected when leaving cancel-free");
+    VELOX_FAIL("Terminate detected when leaving suspended section");
   }
 }
 
-std::string Driver::label() {
+std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
 }
 
@@ -517,7 +519,7 @@ bool Driver::growTaskMemory(
     memory::UsageType type,
     int64_t size,
     memory::MemoryUsageTracker* /*tracker*/) {
-  CancelFreeSection guard(this);
+  SuspendedSection guard(this);
   return memory::MemoryManagerStrategy::instance()->recover(
       driverCtx()->task, type, size);
 }

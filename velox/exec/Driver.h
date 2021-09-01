@@ -142,7 +142,7 @@ class Driver {
     return state_.isTerminated;
   }
 
-  std::string label();
+  std::string label() const;
 
   core::ThreadState& state() {
     return state_;
@@ -218,7 +218,7 @@ class Driver {
   std::shared_ptr<Task> task_;
   core::CancelPoolPtr cancelPool_;
 
-  // Set via 'cancelPool_' and serialized by ''cancelPool_'s  mutex.
+  // Set via 'cancelPool_' and serialized by 'cancelPool_'s mutex.
   core::ThreadState state_;
 
   std::vector<std::unique_ptr<Operator>> operators_;
@@ -284,21 +284,20 @@ struct DriverFactory {
 // Begins and ends a section where a thread is running but not
 // counted in its CancelPool. Using this, a Driver thread can for
 // example stop its own Task. For arbitrating memory overbooking,
-// the contending threads go cancel-free and each in turn enter a
+// the contending threads go suspended and each in turn enters a
 // global critical section. When running the arbitration strategy, a
 // thread can stop and restart Tasks, including its own. When a Task
-// is stopped, the strategy thread can alter its memory including
-// spilling or killing the whole Task. Other threads waiting to run
-// the arbitration (MemoryManagerStrategy::recover), are in a cancel
-// free state which also means that they are not altering their own
-// memory except via running recover.
-class CancelFreeSection {
+// is stopped, its drivers are blocked or suspended and the strategy thread can
+// alter the Task's memory including spilling or killing the whole Task. Other
+// threads waiting to run the arbitration, are in a suspended state which also
+// means that they are instantaneously killable or spillable.
+class SuspendedSection {
  public:
-  explicit CancelFreeSection(Driver* driver);
-  ~CancelFreeSection();
+  explicit SuspendedSection(Driver* FOLLY_NONNULL driver);
+  ~SuspendedSection();
 
  private:
-  Driver* driver_;
+  Driver* FOLLY_NONNULL driver_;
 };
 
 } // namespace facebook::velox::exec

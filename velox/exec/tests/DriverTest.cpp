@@ -48,7 +48,7 @@ class TestingConsumerNode : public core::PlanNode {
   std::vector<std::shared_ptr<const core::PlanNode>> sources_;
 };
 
-// A PlanNode that passes its input to its output and periodically
+ // A PlanNode that passes its input to its output and periodically
 // pauses and resumes other Tasks.
 class TestingPauserNode : public core::PlanNode {
  public:
@@ -114,7 +114,6 @@ class DriverTest : public OperatorTestBase {
       // applies to second column
       std::function<bool(int64_t)> filterFunc = nullptr,
       int32_t* filterHits = nullptr,
-
       bool addTestingPauser = false,
       bool addTestingConsumer = false) {
     std::vector<RowVectorPtr> batches;
@@ -239,6 +238,7 @@ class DriverTest : public OperatorTestBase {
           // Wait a small interval and realize a small number of queued
           // promises, if any.
           auto units = 1 + (++counter % 5);
+          // NOLINT
           std::this_thread::sleep_for(std::chrono::milliseconds(units));
           auto count = 1 + (++counter % 4);
           for (auto i = 0; i < count; ++i) {
@@ -471,12 +471,12 @@ TEST_F(DriverTest, yield) {
 // 1. Blocks and registers a resume that continues the Driver after a timed
 // pause. This simulates blocking to wait for exchange or consumer.
 //
-// 2. Enters a cancel-free section where the Driver is on thread but is not
+// 2. Enters a suspended section where the Driver is on thread but is not
 // counted as running and is therefore instantaneously cancellable and pausable.
 // Comes back on thread after a timed pause. This simulates an RPC to an out of
 // process service.
 //
-// 3.  Enters a cancel-free section where this pauses and resumes random Tasks,
+// 3.  Enters a suspended section where this pauses and resumes random Tasks,
 // including its own Task. This simulates making Tasks release memory under
 // memory contention, checkpointing Tasks for migration or fault tolerance and
 // other process-wide coordination activities.
@@ -519,7 +519,7 @@ class TestingPauser : public Operator {
       return nullptr;
     }
     {
-      CancelFreeSection noCancel(operatorCtx_->driver());
+      SuspendedSection noCancel(operatorCtx_->driver());
       sleep(1);
       if (counter_ % 7 == 0) {
         // Every 7th time, stop and resume other Tasks. This operation is
@@ -546,7 +546,7 @@ class TestingPauser : public Operator {
   }
 
   BlockingReason isBlocked(ContinueFuture* future) override {
-    VELOX_CHECK(!operatorCtx_->driver()->state().isCancelFree);
+    VELOX_CHECK(!operatorCtx_->driver()->state().isSuspended);
     if (hasFuture_) {
       hasFuture_ = false;
       *future = std::move(future_);
@@ -562,6 +562,7 @@ class TestingPauser : public Operator {
 
  private:
   void sleep(int32_t units) {
+    // NOLINT
     std::this_thread::sleep_for(std::chrono::milliseconds(units));
   }
   // The DriverTest under which this is running. Used for global context.
@@ -593,7 +594,7 @@ TEST_F(DriverTest, pauserNode) {
   Operator::registerOperator(
       [&](DriverCtx* ctx,
           int32_t id,
-          std::shared_ptr<const core::PlanNode>& node)
+          const std::shared_ptr<const core::PlanNode>& node)
           -> std::unique_ptr<TestingPauser> {
         if (auto pauser =
                 std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
@@ -714,7 +715,7 @@ TEST_F(DriverTest, memoryReservation) {
   Operator::registerOperator(
       [](DriverCtx* ctx,
          int32_t id,
-         std::shared_ptr<const core::PlanNode>& node)
+         const std::shared_ptr<const core::PlanNode>& node)
           -> std::unique_ptr<TestingConsumer> {
         if (auto consumer =
                 std::dynamic_pointer_cast<const TestingConsumerNode>(node)) {

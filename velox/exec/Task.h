@@ -106,7 +106,9 @@ class Task : public memory::MemoryConsumer {
   // alive by 'self'. 'self' going out of scope may cause the Task to
   // be freed. This happens if a cancelled task is decoupled from the
   // task manager and threads are left to finish themselves.
-  static void removeDriver(std::shared_ptr<Task> self, Driver* instance);
+  static void removeDriver(
+      std::shared_ptr<Task> self,
+      Driver* FOLLY_NONNULL instance);
 
   // Sets the (so far) max split sequence id, so all splits with sequence id
   // equal or below that, will be ignored in the 'addSplitWithSequence' call.

@@ -35,7 +35,6 @@ struct IdentityProjection {
 
 struct MemoryStats {
   uint64_t userMemoryReservation = {};
-  // TODO(venkatra): Populate revocableMemoryReservation as well.
   uint64_t revocableMemoryReservation = {};
   uint64_t systemMemoryReservation = {};
   uint64_t peakUserMemoryReservation = {};
@@ -207,7 +206,8 @@ class Operator {
   using PlanNodeTranslator = std::function<std::unique_ptr<Operator>(
       DriverCtx* ctx,
       int32_t id,
-      std::shared_ptr<const core::PlanNode>& node)>;
+      const std::shared_ptr<const core::PlanNode>& node)>;
+
 
   // 'operatorId' is the initial index of the 'this' in the Driver's
   // list of Operators. This is used as in index into OperatorStats

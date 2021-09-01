@@ -45,13 +45,40 @@ enum class StopReason {
 // Represents a Driver's state. This is used for cancellation, forcing
 // release of and for waiting for memory. The fields are serialized on
 // the mutex of the Driver's CancelPool.
+//
+// The Driver goes through the following states:
+// Not on thread. It is created and has not started. All flags are false.
+//
+// Enqueued - The Driver is added to an executor but does not yet have a thread.
+// isEnqueued is true. Next states are terminated or on thread.
+//
+// On thread - 'thread' is set to the thread that is running the Driver. Next
+// states are blocked, terminated, suspended, enqueued.
+//
+//  Blocked - The Driver is not on thread and is waiting for an external event.
+//  Next states are terminated, enqueud.
+//
+// Suspended - The Driver is on thread, 'thread' and 'isSuspended' are set. The
+// thread does not manipulate the Driver's state and is suspended as in waiting
+// for memory or out of process IO. This is different from Blocked in that here
+// we keep the stack so that when the wait is over the control stack is not
+// lost. Next states are on thread or terminated.
+//
+//  Terminated - 'isTerminated' is set. The Driver cannot run after this and
+// the state is final.
+//
+// CancelPool  allows terminating or pausing a set of Drivers. The Task API
+// allows starting or resuming Drivers. When terminate is requested the request
+// is successful when all Drivers are off thread, blocked or suspended. When
+// pause is requested, we have success when all Drivers are either enqueued,
+// suspended, off thread or blocked.
 struct ThreadState {
   // The thread currently running this.
   std::thread::id thread;
   // The tid of 'thread'. Allows finding the thread in a debugger.
   int32_t tid;
   // True if queued on an executor but not on thread.
-  bool enqueued{false};
+  bool isEnqueued{false};
   // True if being terminated or already terminated.
   bool isTerminated{false};
   // True if there is a future outstanding that will schedule this on an
@@ -61,7 +88,7 @@ struct ThreadState {
   // strategy decision. The thread is not supposed to access its
   // memory, which a third party can revoke while the thread is in
   // this state.
-  bool isCancelFree{false};
+  bool isSuspended{false};
 
   bool isOnThread() const {
     return thread != std::thread::id();
@@ -69,7 +96,11 @@ struct ThreadState {
 
   void setThread() {
     thread = std::this_thread::get_id();
+#if !defined(__APPLE__)
+    // This is a debugging feature disabled on the Mac since syscall
+    // is deprecated on that platform.
     tid = syscall(FOLLY_SYS_gettid);
+#endif
   }
 
   void clearThread() {
@@ -82,118 +113,33 @@ class CancelPool {
  public:
   // Returns kNone if no pause or terminate is requested. The thread count is
   // incremented if kNone is returned. If something else is returned the
-  // calling tread should unwind and return itself to its pool.
-  StopReason enter(ThreadState& state) {
-    std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(state.enqueued);
-    state.enqueued = false;
-    if (state.isTerminated) {
-      return StopReason::kAlreadyTerminated;
-    }
-    if (state.isOnThread()) {
-      return StopReason::kAlreadyOnThread;
-    }
-    auto reason = shouldStopLocked();
-    if (reason == StopReason::kTerminate) {
-      state.isTerminated = true;
-    }
-    if (reason == StopReason::kNone) {
-      ++numThreads_;
-      state.setThread();
-      state.hasBlockingFuture = false;
-    }
-    return reason;
-  }
+  // calling thread should unwind and return itself to its pool.
+  StopReason enter(ThreadState& state);
 
-  StopReason enterForTerminate(ThreadState& state) {
-    std::lock_guard<std::mutex> l(mutex_);
-    if (state.isOnThread() || state.isTerminated) {
-      state.isTerminated = true;
-      return StopReason::kAlreadyOnThread;
-    }
-    state.isTerminated = true;
-    state.setThread();
-    return StopReason::kTerminate;
-  }
+  // Sets the state to terminated. Returns kAlreadyOnThread if the
+  // Driver is running. In this case, the Driver will free resources
+  // and the caller should not do anything. Returns kTerminate if the
+  // Driver was not on thread. When this happens, the Driver is on the
+  // caller thread wit isTerminated set and the caller is responsible
+  // for freeing resources.
+  StopReason enterForTerminate(ThreadState& state);
 
-  StopReason leave(ThreadState& state) {
-    std::lock_guard<std::mutex> l(mutex_);
-    if (--numThreads_ == 0) {
-      finished();
-    }
-    state.clearThread();
-    if (state.isTerminated) {
-      return StopReason::kTerminate;
-    }
-    auto reason = shouldStopLocked();
-    if (reason == StopReason::kTerminate) {
-      state.isTerminated = true;
-    }
-    return reason;
-  }
+  // Marks that the Driver is not on thread. If no more Drivers in the
+  // CancelPool are on thread, this realizes any finishFutures. The
+  // Driver may go off thread because of hasBlockingFuture or pause
+  // requested or terminate requested. The return value indicates the
+  // reason. If kTerminate is returned, the isTerminated flag is set.
+  StopReason leave(ThreadState& state);
 
-  // Enters a cancel-free section where the caller stays on thread but
+  // Enters a suspended section where the caller stays on thread but
   // is not accounted as being on the thread.  Returns kNone if no
   // terminate is requested. The thread count is decremented if kNone
   // is returned. If thread count goes to zero, waiting promises are
-  // realized. If kNone is not returned the calling tread should
+  // realized. If kNone is not returned the calling thread should
   // unwind and return itself to its pool.
-  StopReason enterCancelFree(ThreadState& state) {
-    VELOX_CHECK(!state.hasBlockingFuture);
-    VELOX_CHECK(state.isOnThread());
-    std::lock_guard<std::mutex> l(mutex_);
-    if (state.isTerminated) {
-      return StopReason::kAlreadyTerminated;
-    }
-    if (!state.isOnThread()) {
-      return StopReason::kAlreadyTerminated;
-    }
-    auto reason = shouldStopLocked();
-    if (reason == StopReason::kTerminate) {
-      state.isTerminated = true;
-    }
-    // A pause will not stop entering the cancel free section. It will
-    // just ack that the thread is no longer in inside the
-    // CancelPool. The pause can wait at the exit of the cancel free
-    // section.
-    if (reason == StopReason::kNone || reason == StopReason::kPause) {
-      state.isCancelFree = true;
-      if (--numThreads_ == 0) {
-        finished();
-      }
-    }
-    return StopReason::kNone;
-  }
+  StopReason enterSuspended(ThreadState& state);
 
-  StopReason leaveCancelFree(ThreadState& state) {
-    for (;;) {
-      {
-        std::lock_guard<std::mutex> l(mutex_);
-        ++numThreads_;
-        state.isCancelFree = false;
-        if (state.isTerminated) {
-          return StopReason::kAlreadyTerminated;
-        }
-        if (terminateRequested_) {
-          state.isTerminated = true;
-          return StopReason::kTerminate;
-        }
-        if (!pauseRequested_) {
-          // For yield or anything but pause  we return here.
-          return StopReason::kNone;
-        }
-        --numThreads_;
-        state.isCancelFree = true;
-      }
-      // If the pause flag is on when trying to reenter, sleep a while
-      // outside of the mutex and recheck. This is rare and not time
-      // critical. Can happen if memory interrupt sets pause while
-      // already inside a cancel free section for other reason, like
-      // IO.
-      std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
-    }
-  }
-
+  StopReason leaveSuspended(ThreadState& state);
   // Returns a stop reason without synchronization. If the stop reason
   // is yield, then atomically decrements the count of threads that
   // are to yield.
@@ -233,6 +179,9 @@ class CancelPool {
     return terminateRequested_;
   }
 
+  // Once 'pauseRequested_' is set, it will not be cleared until
+  // task::resume(). It is therefore OK to read it without a mutex
+  // from a thread that this flag concerns.
   bool pauseRequested() const {
     return pauseRequested_;
   }

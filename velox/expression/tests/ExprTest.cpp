@@ -20,8 +20,8 @@
 #include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/functions/Udf.h"
-#include "velox/functions/common/CoreFunctions.h"
-#include "velox/functions/common/VectorFunctions.h"
+#include "velox/functions/prestosql/CoreFunctions.h"
+#include "velox/functions/prestosql/VectorFunctions.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/vector/tests/VectorMaker.h"
@@ -1029,6 +1029,14 @@ TEST_F(ExprTest, constantFolding) {
     ASSERT_EQ(2, expr->inputs().size());
     EXPECT_EQ(1, extractConstant(expr->inputs()[0].get()));
     EXPECT_EQ(2, extractConstant(expr->inputs()[1].get()));
+  }
+
+  {
+    // codepoint() takes a single character, so this expression
+    // deterministically throws; however, we should never throw at constant
+    // folding time. Ensure compiling this expression does not throw..
+    auto typedExpr = parseExpression("codepoint('abcdef')");
+    EXPECT_NO_THROW(exec::ExprSet exprSet({typedExpr}, execCtx_.get(), true));
   }
 }
 
