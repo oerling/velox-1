@@ -41,32 +41,63 @@ class ApproxCounter {
   int32_t count_;
 };
 
+  struct ReadCounts {
+    uint64_t referenceBytes;
+    uint64_t readBytes;
+    uint32_t readCount;
+    uint32_t referenceCount;
+  };
+  
 class GroupTracker {
  public:
   GroupTracker(const StringIdLease& name) : name_(name){};
 
- private:
+  void recordFile(uint64_t fileId, int32_t numStripes);
+
+  void recordReference(uint64_t fileId, int32_t bytes);
+  void recordRead(uint64_t fileId, int32_t bytes);
+
+private:
+
   StringIdLease name_;
   std::mutex mutex_;
-  folly::F14FastMap<TrackingId, ColumnData> columns_;
+
+  // 
+  folly::F14FastMap<TrackingId, TrackingData> columns_;
   ApproxCounter numFiles_;
+
+  // Set of a few sample fileIds used to measure average column sizes.
   folly::F14FastSet<uint64_t> sampleFiles_;
-  uint64_t numStripes_{0};
+
+  // Per column references and reads for the files in 'sampleFiles_'.
+  folly::F14FastMap<TrackingId, ReadCounts> sampleFileReads_;
+
+  // Number of stripes in files in 'sampleFiles_'.
+  uint64_t numSampleStripes_{0};
 };
-
-void recordStripes(uint64_t fileId, int32_t numStripes, uint64_t fileSize);
-
-void recordReference(TrackingId id, uint64_t fileId, uint64_t groupId);
-
-void recordRead(TrackingId id, uint64_t fileId, uint64_t groupId);
 
 // Singleton for  keeping track of file groups.
 class GroupStats {
  public:
+
+  void recordFile(uint64_t fileId, uint64_t groupId, int32_t numStripes);
+
+  void recordReference(uint64_t fileId, uint64_t groupId, TrackingId id, int32_t bytes);
+
+  void recordRead(uint64_t fileId, uint64_t groupId, TrackingId trackingId, int32_t bytes);
+
   static GroupStats* instance();
 
+  bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const;
+  
  private:
+  // fills 'saveToSsd_' with the best save candidates.
+  void makeSsdFilter(SsdCache& cache);
+  
+  std::mutex mutex_;
   F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
+  // Bloom filter of groupId, trackingId hashes for streams that should be saved to SSD.
+  std::vector<uint64_t> saveToSsd_;
 };
 
 } // namespace facebook::velox::cache

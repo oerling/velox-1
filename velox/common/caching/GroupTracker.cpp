@@ -19,6 +19,37 @@
 
 namespace facebook::velox::cache {
 
+  void GroupTracker::recordFile(uint64_t fileId, int32_t numStripes) {
+    distinctFiles_.add(fileId);
+    ++numOpens_;
+    numOpenStripes_ += stripes;
+  }
+
+  void GroupTracker::recordReference(uint64_t fileId, TrackingId trackingId, int32_t bytes) {
+    auto& data = columns_[trackingId];
+    data..referencedBytes += bytes;
+    ++data.numReferences;
+  }
+
+    void GroupTracker::recordRead(uint64_t fileId, TrackingId trackingId, int32_t bytes) {
+    auto& data = columns_[trackingId];
+    data..readBytes += bytes;
+    ++data.numReads;
+  }
+
+  bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) {
+    uint64_t hash = bits::hashMix(folly::hasher<uint64>(groupId), std::hash<TrackingId>()(trackingId));
+    return Bloom::test(saveToSsd.data(). saveToSsd.size(), hash);
+  }
+
+  void GroupStats::makeSsdFilter(SsdCache& cache) {
+    
+  }
+
+  
+
+
+
 
 
 

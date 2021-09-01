@@ -148,35 +148,5 @@ class ScanTracker {
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
 };
-
-  
-struct GroupTrackerKey {
-  StringIdLease groupId;
-  TrackingId column;
-};
-
-struct GroupData {
-  AccessStats access;
-  // Volume of reads that would go to disk without SSD.
-  uint32_t savedIoKb;
-
-  int32_t score(AccessTime time, int32_t size) {
-    return (now - access.lastUse) / (1 + access.numUses) * (1 + (size >> 14));
-  }
-};
-  
-class GroupTracker {
-public:
-  recordAccess(uint64_t groupId, TrackingId trackingId);
-
-  static GroupTracker* instance();
-
-private:
-  std::mutex mutex_;
-  folly::F14FastMap<GroupTrackerKey, GroupData> data_;
-  // data from groups with score below this are cacheable.
-
-  int32_t admissionThreshold_;
-};
      
 } // namespace facebook::velox::cache
