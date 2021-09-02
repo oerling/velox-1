@@ -224,7 +224,7 @@ std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
   for (auto i = 0; i < numStripes; i++) {
     auto& stripe = getFooter().stripes(i);
     rowsPerStripe.push_back(stripe.numberofrows());
-    if (input_->shouldPrefetchstripes()) {
+    if (input_->shouldPrefetchStripes()) {
       ++numQueued;
       input_->enqueue(
           {stripe.offset() + stripe.indexlength() + stripe.datalength(),

@@ -19,25 +19,14 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/tests/QueryAssertions.h"
-
-DEFINE_int64(cache_mb, 0, "Size of file cache");
-DECLARE_bool(async_cache);
+DEFINE_int32(cache_mb, 1024, "File cache size for testing");
 
 namespace facebook::velox::exec::test {
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
-  std::unique_ptr<DataCache> cache;
-  if (FLAGS_cache_mb) {
-    if (FLAGS_async_cache) {
-      asyncCache_ = std::make_unique<AsyncDataCache>(
+  asyncCache_ = std::make_unique<AsyncDataCache>(
           memory::MappedMemory::getInstance(), nullptr, FLAGS_cache_mb << 20);
-    }
-    cache = std::make_unique<velox::SimpleLRUDataCache>(FLAGS_cache_mb << 20);
-  } else {
-    cache = std::make_unique<DummyDataCache>();
-    dataCache = reinterpret_cast<DummyDataCache*>(cache.get());
-  }
   auto hiveConnector =
       connector::getConnectorFactory(connector::hive::kHiveConnectorName)
           ->newConnector(kHiveConnectorId, std::move(cache));
