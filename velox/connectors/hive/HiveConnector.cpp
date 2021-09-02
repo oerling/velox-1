@@ -14,6 +14,8 @@
 #include "velox/connectors/hive/HiveConnector.h"
 #include <velox/dwio/dwrf/reader/SelectiveColumnReader.h>
 #include "velox/dwio/common/InputStream.h"
+#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/exec/ControlExpr.h"
 #include "velox/expression/ControlExpr.h"
 
 using namespace facebook::velox::dwrf;
@@ -23,9 +25,8 @@ DEFINE_int32(
     file_handle_cache_mb,
     1024,
     "Amount of space for the file handle cache in mb.");
-
+DECLARE_int32(max_io_threads);
 namespace facebook::velox::connector::hive {
-
 namespace {
 static const char* kPath = "$path";
 static const char* kBucket = "$bucket";
@@ -116,13 +117,17 @@ HiveDataSource::HiveDataSource(
     FileHandleFactory* fileHandleFactory,
     velox::memory::MemoryPool* pool,
     DataCache* dataCache,
-    ExpressionEvaluator* expressionEvaluator)
+    ExpressionEvaluator* expressionEvaluator,
+    memory::MappedMemory* _mappedMemory,
+    const std::string& scanId)
     : outputType_(outputType),
       fileHandleFactory_(fileHandleFactory),
       pool_(pool),
       readerOpts_(pool),
       dataCache_(dataCache),
-      expressionEvaluator_(expressionEvaluator) {
+      expressionEvaluator_(expressionEvaluator),
+      mappedMemory_(_mappedMemory),
+      scanId_(scanId) {
   regularColumns_.reserve(outputType->size());
 
   std::vector<std::string> columnNames;
@@ -195,7 +200,6 @@ HiveDataSource::HiveDataSource(
 }
 
 namespace {
-
 bool testFilters(
     common::ScanSpec* scanSpec,
     dwrf::DwrfReader* reader,
@@ -232,6 +236,31 @@ bool testFilters(
 
   return true;
 }
+
+class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
+ public:
+  InputStreamHolder(FileHandleCachedPtr fileHandle)
+      : fileHandle_(std::move(fileHandle)) {
+    static dwio::common::IoStatistics stats;
+    input_ = std::make_unique<dwio::common::ReadFileInputStream>(
+        fileHandle_->file.get(), dwio::common::MetricsLog::voidLog(), &stats);
+  }
+
+  dwio::common::InputStream& get() override {
+    return *input_;
+  }
+
+ private:
+  FileHandleCachedPtr fileHandle_;
+  std::unique_ptr<dwio::common::InputStream> input_;
+};
+
+std::unique_ptr<InputStreamHolder> makeStreamHolder(
+    FileHandleFactory* factory,
+    std::string path) {
+  return std::make_unique<InputStreamHolder>(factory->generate(path));
+}
+
 } // namespace
 
 void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
@@ -249,6 +278,17 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     dataCacheConfig->cache = dataCache_;
     dataCacheConfig->filenum = fileHandle_->uuid.id();
     readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
+  }
+  if (auto asyncCache = dynamic_cast<AsyncDataCache*>(mappedMemory_)) {
+    bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
+        (asyncCache),
+        Connector::getTracker(scanId_),
+        fileHandle_->groupId.id(),
+        [factory = fileHandleFactory_, path = split_->filePath]() {
+          return makeStreamHolder(factory, path);
+        },
+        HiveConnector::executor());
+    readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
   }
 
   reader_ = dwrf::DwrfReader::create(
@@ -437,6 +477,27 @@ HiveConnector::HiveConnector(
           std::make_unique<SimpleLRUCache<std::string, FileHandle>>(
               FLAGS_file_handle_cache_mb << 20),
           std::make_unique<FileHandleGenerator>()) {}
+
+std::mutex HiveConnector::initMutex_;
+std::unique_ptr<folly::IOThreadPoolExecutor> HiveConnector::executor_;
+
+// static
+folly::IOThreadPoolExecutor* HiveConnector::executor() {
+  if (!FLAGS_max_io_threads) {
+    return nullptr;
+  }
+  if (executor_.get()) {
+    return executor_.get();
+  }
+  std::lock_guard<std::mutex> l(initMutex_);
+  if (executor_) {
+    return executor_.get();
+  }
+  executor_ = std::make_unique<folly::IOThreadPoolExecutor>(
+      FLAGS_max_io_threads / 2, FLAGS_max_io_threads);
+
+  return executor_.get();
+}
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
 

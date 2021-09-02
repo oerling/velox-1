@@ -17,15 +17,27 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 
+DEFINE_int64(cache_mb, 0, "Size of file cache");
+DECLARE_bool(async_cache);
+
 namespace facebook::velox::exec::test {
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
-  auto dummyDataCache = std::make_unique<DummyDataCache>();
-  dataCache = dummyDataCache.get();
+  std::unique_ptr<DataCache> cache;
+  if (FLAGS_cache_mb) {
+    if (FLAGS_async_cache) {
+      asyncCache_ = std::make_unique<AsyncDataCache>(
+          memory::MappedMemory::getInstance(), nullptr, FLAGS_cache_mb << 20);
+    }
+    cache = std::make_unique<velox::SimpleLRUDataCache>(FLAGS_cache_mb << 20);
+  } else {
+    cache = std::make_unique<DummyDataCache>();
+    dataCache = reinterpret_cast<DummyDataCache*>(cache.get());
+  }
   auto hiveConnector =
       connector::getConnectorFactory(connector::hive::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, std::move(dummyDataCache));
+          ->newConnector(kHiveConnectorId, std::move(cache));
   connector::registerConnector(hiveConnector);
 }
 
@@ -44,9 +56,10 @@ void HiveConnectorTestBase::writeToFile(
 void HiveConnectorTestBase::writeToFile(
     const std::string& filePath,
     const std::string& name,
-    const std::vector<RowVectorPtr>& vectors) {
+    const std::vector<RowVectorPtr>& vectors,
+    std::shared_ptr<dwrf::Config> config) {
   facebook::velox::dwrf::WriterOptions options;
-  options.config = std::make_shared<facebook::velox::dwrf::Config>();
+  options.config = config;
   options.schema = vectors[0]->type();
   auto sink = std::make_unique<facebook::dwio::common::FileSink>(filePath);
   facebook::velox::dwrf::Writer writer{

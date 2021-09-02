@@ -94,7 +94,8 @@ struct DriverCtx {
   }
 
   std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
-      const std::string& connectorId) const;
+      const std::string& connectorId,
+      const std::string& nodeId = "unnamed") const;
 
  private:
   // Lifetime of operator memory pools is same as the driverCtx, since some

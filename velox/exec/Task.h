@@ -310,6 +310,19 @@ class Task {
     return cancelPool_;
   }
 
+  // True if registerSplitPrefeatch() has been called on 'id'.
+  bool hasSplitPrefetch(const core::PlanNodeId& id) {
+    return true; // Never prefetch. This s a placeholder.
+  }
+
+  // Registers 'prefetch' to be called on all splits intended for 'id' when
+  // first queued.
+  void registerSplitPrefetch(
+      const core::PlanNodeId& id,
+      std::function<void(
+          std::shared_ptr<connector::ConnectorSplit> prefetch)>) { /*no op*/
+  }
+
  private:
   struct BarrierState {
     int32_t numRequested;
@@ -340,8 +353,24 @@ class Task {
     // Keep the max added split's sequence id to deduplicate incoming splits.
     long maxSequenceId{std::numeric_limits<long>::min()};
 
+    // Optional function to call when first receiving a split. Allows
+    // initiating async prefetch of file footers or
+    // similar. Optionally registered by the split consumer.
+    std::function<void(std::shared_ptr<connector::ConnectorSplit>)> prefetch;
+
     // We need these due to having promises in the structure.
     SplitsState() = default;
+
+    ~SplitsState() {
+      // Mark possibly prefetching splits to be cancelled.
+      for (auto& split : splits) {
+        auto connectorSplit = split.connectorSplit;
+        if (connectorSplit) {
+          connectorSplit->cancelled = true;
+        }
+      }
+    }
+
     SplitsState(SplitsState const&) = delete;
     SplitsState& operator=(SplitsState const&) = delete;
   };
