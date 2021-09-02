@@ -26,7 +26,7 @@ DEFINE_int32(
     file_handle_cache_mb,
     1024,
     "Amount of space for the file handle cache in mb.");
-DECLARE_int32(max_io_threads);
+DEFINE_int32(max_io_threads, 10, "Number of threads for background prefetch");
 namespace facebook::velox::connector::hive {
 namespace {
 static const char* kPath = "$path";

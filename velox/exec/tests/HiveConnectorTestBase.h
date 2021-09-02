@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #pragma once
+#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/OperatorTestBase.h"
@@ -159,7 +160,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
 
   DummyDataCache* dataCache;
   // Use instead of MappedMemory::getInstance() if set.
-  std::unique_ptr<AsyncDataCache> asyncCache_;
+  std::unique_ptr<cache::AsyncDataCache> asyncCache_;
 };
 
 } // namespace facebook::velox::exec::test
