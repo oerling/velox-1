@@ -95,7 +95,7 @@ ReaderBase::ReaderBase(
   input_ = bufferedInputFactory_->create(*stream_, pool, dataCacheConfig);
 
   // We may have cached the tail before, in which case we can skip the read.
-  if (dataCacheConfig) {
+  if (dataCacheConfig && dataCacheConfig->cache) {
     const std::string tailKey = TailKey(dataCacheConfig->filenum);
     std::string tail;
     if (dataCacheConfig->cache->get(tailKey, &tail)) {
@@ -204,7 +204,7 @@ ReaderBase::ReaderBase(
   }
 
   // Insert the tail in the data cache so we can skip the disk read next time.
-  if (dataCacheConfig) {
+  if (dataCacheConfig && dataCacheConfig->cache) {
     std::unique_ptr<char[]> tail(new char[tailSize]);
     input_->read(fileLength_ - tailSize, tailSize, LogType::FOOTER)
         ->readFully(tail.get(), tailSize);
@@ -220,8 +220,19 @@ std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
   std::vector<uint64_t> rowsPerStripe;
   auto numStripes = getFooter().stripes_size();
   rowsPerStripe.reserve(numStripes);
+  int32_t numQueued = 0;
   for (auto i = 0; i < numStripes; i++) {
-    rowsPerStripe.push_back(getFooter().stripes(i).numberofrows());
+    auto& stripe = getFooter().stripes(i);
+    rowsPerStripe.push_back(stripe.numberofrows());
+    if (input_->shouldPrefetchstripes()) {
+      ++numQueued;
+      input_->enqueue(
+          {stripe.offset() + stripe.indexlength() + stripe.datalength(),
+           stripe.footerlength()});
+    }
+  }
+  if (numQueued) {
+    input_->load(LogType::FOOTER);
   }
   return rowsPerStripe;
 }

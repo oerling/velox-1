@@ -72,7 +72,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
   void writeToFile(
       const std::string& filePath,
       const std::string& name,
-      const std::vector<RowVectorPtr>& vectors);
+      const std::vector<RowVectorPtr>& vectors,
+      std::shared_ptr<dwrf::Config> config =
+          std::make_shared<facebook::velox::dwrf::Config>());
 
   std::vector<RowVectorPtr> makeVectors(
       const std::shared_ptr<const RowType>& rowType,
@@ -148,7 +150,16 @@ class HiveConnectorTestBase : public OperatorTestBase {
   static void
   addSplit(Task* task, const core::PlanNodeId& planNodeId, exec::Split&& split);
 
+  memory::MappedMemory* mappedMemory() {
+    if (asyncCache_) {
+      return asyncCache_.get();
+    }
+    return memory::MappedMemory::getInstance();
+  }
+
   DummyDataCache* dataCache;
+  // Use instead of MappedMemory::getInstance() if set.
+  std::unique_ptr<AsyncDataCache> asyncCache_;
 };
 
 } // namespace facebook::velox::exec::test

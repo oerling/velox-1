@@ -82,11 +82,15 @@ DriverCtx::DriverCtx(
 }
 
 std::unique_ptr<connector::ConnectorQueryCtx>
-DriverCtx::createConnectorQueryCtx(const std::string& connectorId) const {
+DriverCtx::createConnectorQueryCtx(
+    const std::string& connectorId,
+    const std::string& nodeId) const {
   return std::make_unique<connector::ConnectorQueryCtx>(
       execCtx->pool(),
       task->queryCtx()->getConnectorConfig(connectorId),
-      expressionEvaluator.get());
+      expressionEvaluator.get(),
+      task->queryCtx()->mappedMemory(),
+      fmt::format("{}.{}", task->taskId(), nodeId));
 }
 
 BlockingState::BlockingState(

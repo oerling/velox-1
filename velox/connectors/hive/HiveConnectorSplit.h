@@ -17,6 +17,7 @@
 
 #include <optional>
 #include <unordered_map>
+#include "velox/connectors/Connector.h"
 #include "velox/exec/Operator.h"
 
 namespace facebook::velox::connector::hive {
@@ -29,6 +30,20 @@ struct HiveConnectorSplit : public connector::ConnectorSplit {
   const uint64_t length;
   const std::unordered_map<std::string, std::string> partitionKeys;
   std::optional<int32_t> tableBucketNumber;
+
+  // Serializes access to prefetch members.
+  std::mutex prefetchMutex;
+
+  // True if an async prefetch thread or the table scan thread have started
+  // processsing. If true, the async tread will do nothing and the table scan
+  // thred will wait for the preheat to finish.
+  bool prefetchInProgress{false};
+
+  // Allows the table scan thread to get a future to wait for preheat to finish.
+  folly::Promise<bool> prefetchPromise;
+
+  // Set by the async prefetch threads when it completes the prefetching.
+  std::shared_ptr<DataSource> prefetchedDataSource;
 
   HiveConnectorSplit(
       const std::string& connectorId,
