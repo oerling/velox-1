@@ -131,6 +131,10 @@ class HiveDataSource : public DataSource {
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
+  void addDynamicFilter(
+      ChannelIndex outputChannel,
+      const std::shared_ptr<common::Filter>& filter) override;
+
   RowVectorPtr next(uint64_t size) override;
 
   uint64_t getCompletedRows() override {
@@ -166,7 +170,7 @@ class HiveDataSource : public DataSource {
   std::vector<std::string> regularColumns_;
   std::unique_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::unique_ptr<dwrf::ColumnReaderFactory> columnReaderFactory_;
-  std::unique_ptr<common::ScanSpec> scanSpec_ = nullptr;
+  std::unique_ptr<common::ScanSpec> scanSpec_;
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
   dwio::common::RowReaderOptions rowReaderOpts_;

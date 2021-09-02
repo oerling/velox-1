@@ -239,6 +239,68 @@ Driver::Driver(
   ctx_->driver = this;
 }
 
+namespace {
+/// Checks if output channel is produced using identity projection and returns
+/// input channel if so.
+std::optional<ChannelIndex> getIdentityProjection(
+    const std::vector<IdentityProjection>& projections,
+    ChannelIndex outputChannel) {
+  for (const auto& projection : projections) {
+    if (projection.outputChannel == outputChannel) {
+      return projection.inputChannel;
+    }
+  }
+  return std::nullopt;
+}
+} // namespace
+
+void Driver::pushdownFilters(int operatorIndex) {
+  auto op = operators_[operatorIndex].get();
+  const auto& filters = op->getDynamicFilters();
+  if (filters.empty()) {
+    return;
+  }
+
+  op->stats().addRuntimeStat("dynamicFiltersProduced", filters.size());
+
+  // Walk operator list upstream and find a place to install the filters.
+  for (const auto& entry : filters) {
+    auto channel = entry.first;
+    for (auto i = operatorIndex - 1; i >= 0; --i) {
+      auto prevOp = operators_[i].get();
+
+      if (i == 0) {
+        // Source operator.
+        VELOX_CHECK(
+            prevOp->canAddDynamicFilter(),
+            "Cannot push down dynamic filters produced by {}",
+            op->toString());
+        prevOp->addDynamicFilter(channel, entry.second);
+        prevOp->stats().addRuntimeStat("dynamicFiltersAccepted", 1);
+        break;
+      }
+
+      const auto& identityProjections = prevOp->identityProjections();
+      auto inputChannel = getIdentityProjection(identityProjections, channel);
+      if (!inputChannel.has_value()) {
+        // Filter channel is not an identity projection.
+        VELOX_CHECK(
+            prevOp->canAddDynamicFilter(),
+            "Cannot push down dynamic filters produced by {}",
+            op->toString());
+        prevOp->addDynamicFilter(channel, entry.second);
+        prevOp->stats().addRuntimeStat("dynamicFiltersAccepted", 1);
+        break;
+      }
+
+      // Continue walking upstream.
+      channel = inputChannel.value();
+    }
+  }
+
+  op->clearDynamicFilters();
+}
+
 core::StopReason Driver::runInternal(
     std::shared_ptr<Driver>& self,
     std::shared_ptr<BlockingState>* blockingState) {
@@ -316,6 +378,7 @@ core::StopReason Driver::runInternal(
                 op->stats().outputBytes += resultBytes;
               }
             }
+            pushdownFilters(i);
             if (result) {
               OperationTimer timer(nextOp->stats().addInputTiming);
               nextOp->stats().inputPositions += result->size();
@@ -358,8 +421,11 @@ core::StopReason Driver::runInternal(
           // control here so it can advance. If it is again blocked,
           // this will be detected when trying to add input and we
           // will come back here after this is again on thread.
-          OperationTimer timer(op->stats().getOutputTiming);
-          op->getOutput();
+          {
+            OperationTimer timer(op->stats().getOutputTiming);
+            op->getOutput();
+          }
+          pushdownFilters(i);
           continue;
         }
         if (i == 0) {
@@ -457,7 +523,7 @@ bool Driver::terminate() {
   return false;
 }
 
-bool Driver::mayPushdownAggregation(Operator* aggregation) {
+bool Driver::mayPushdownAggregation(Operator* aggregation) const {
   for (auto i = 1; i < operators_.size(); ++i) {
     auto op = operators_[i].get();
     if (aggregation == op) {
@@ -467,8 +533,58 @@ bool Driver::mayPushdownAggregation(Operator* aggregation) {
       return false;
     }
   }
-  VELOX_CHECK(false, "{} not found in its Driver", aggregation->toString());
-  return false;
+  VELOX_FAIL(
+      "Aggregation operator not found in its Driver: {}",
+      aggregation->toString());
+}
+
+std::unordered_set<ChannelIndex> Driver::canPushdownFilters(
+    Operator* FOLLY_NONNULL filterSource,
+    const std::vector<ChannelIndex>& channels) const {
+  int filterSourceIndex = -1;
+  for (auto i = 0; i < operators_.size(); ++i) {
+    auto op = operators_[i].get();
+    if (filterSource == op) {
+      filterSourceIndex = i;
+      break;
+    }
+  }
+  VELOX_CHECK_GE(
+      filterSourceIndex,
+      0,
+      "Operator not found in its Driver: {}",
+      filterSource->toString());
+
+  std::unordered_set<ChannelIndex> supportedChannels;
+  for (auto i = 0; i < channels.size(); ++i) {
+    auto channel = channels[i];
+    for (auto j = filterSourceIndex - 1; j >= 0; --j) {
+      auto prevOp = operators_[j].get();
+
+      if (j == 0) {
+        // Source operator.
+        if (prevOp->canAddDynamicFilter()) {
+          supportedChannels.emplace(channels[i]);
+        }
+        break;
+      }
+
+      const auto& identityProjections = prevOp->identityProjections();
+      auto inputChannel = getIdentityProjection(identityProjections, channel);
+      if (!inputChannel.has_value()) {
+        // Filter channel is not an identity projection.
+        if (prevOp->canAddDynamicFilter()) {
+          supportedChannels.emplace(channels[i]);
+        }
+        break;
+      }
+
+      // Continue walking upstream.
+      channel = inputChannel.value();
+    }
+  }
+
+  return supportedChannels;
 }
 
 Operator* FOLLY_NULLABLE
