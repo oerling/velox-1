@@ -68,7 +68,8 @@ void OrderBy::finish() {
   // the rows.
   returningRows_.resize(numRows_);
   RowContainerIterator iter;
-  data_->listRows(&iter, numRows_, returningRows_.data());
+  data_->listRows(
+      &iter, numRows_, RowContainer::kUnlimited, returningRows_.data());
 
   std::sort(
       returningRows_.begin(),

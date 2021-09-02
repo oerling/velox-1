@@ -16,6 +16,7 @@ add_library(
   HashAggregation.cpp
   HashStringAllocator.cpp
   RowContainer.cpp
+  Spill.cpp
   ContainerRowSerde.cpp
   HashTable.cpp
   Driver.cpp

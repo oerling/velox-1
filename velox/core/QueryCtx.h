@@ -39,7 +39,7 @@ class QueryCtx : public Context {
         config, connectorConfigs, mappedMemory, std::move(pool));
   }
 
-  // TODO: Make constructors private once presto_cpp
+  // TODO(venkatra): Make constructors private once presto_cpp
   // is updated to use factory methods.
   QueryCtx()
       : QueryCtx(
@@ -101,6 +101,10 @@ class QueryCtx : public Context {
     return 1L << 24; // 16MB
   }
 
+  uint64_t maxBatchBytes() {
+    return 1 << 24; // 16 MB.
+  }
+
   uint64_t maxPartitionedOutputBufferSize() const {
     return get<uint64_t>(
         kMaxPartitionedOutputBufferSize,
@@ -126,6 +130,18 @@ class QueryCtx : public Context {
 
   bool adaptiveFilterReorderingEnabled() const {
     return get<bool>(kAdaptiveFilterReorderingEnabled, true);
+  }
+
+  uint64_t maxFinalAggregationMemoryUsage() const {
+    return get<uint64_t>(kMaxFinalAggregationMemoryUsage, 5UL << 30);
+  }
+
+  uint64_t spillFileSize() const {
+    return get<uint64_t>(kSpillFileSize, 1UL << 30);
+  }
+
+  std::string spillFilePath() const {
+    return get<std::string>(kSpillFilePath, "/tmp/sp");
   }
 
   bool isMatchStructByName() const {
@@ -219,6 +235,13 @@ class QueryCtx : public Context {
   static constexpr bool kFlushPerBatch = true;
   static constexpr const char* kAdaptiveFilterReorderingEnabled =
       "driver.adaptive_filter_reordering_enabled";
+
+
+  static constexpr const char* kMaxFinalAggregationMemoryUsage =
+      "driver.max-final-aggregation-memory-usage";
+  static constexpr const char* kSpillFileSize = "driver.spill-file-size";
+
+  static constexpr const char* kSpillFilePath = "driver.spill-file-path";
 
   static constexpr uint64_t kMaxLocalExchangeBufferSizeDefault = 32UL << 20;
 
