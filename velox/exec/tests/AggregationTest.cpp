@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 #include <folly/Random.h>
+#include <folly/container/F14Set.h>
 
+#include "velox/aggregates/AggregateNames.h"
 #include "velox/aggregates/tests/AggregationTestBase.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/tests/PlanBuilder.h"
@@ -74,21 +76,20 @@ class AggregationTest : public AggregationTestBase {
       bool distinct) {
     std::vector<std::string> aggregates;
     if (!distinct) {
-      aggregates = {
-          "sum(15)",
-          "sum(0.1)",
-          "sum(c4)",
-          "sum(c5)",
-          "min(15)",
-          "min(0.1)",
-          "min(c3)",
-          "min(c4)",
-          "min(c5)",
-          "max(15)",
-          "max(0.1)",
-          "max(c3)",
-          "max(c4)",
-          "max(c5)"};
+      aggregates = {"sum(15)",
+                    "sum(0.1)",
+                    "sum(c4)",
+                    "sum(c5)",
+                    "min(15)",
+                    "min(0.1)",
+                    "min(c3)",
+                    "min(c4)",
+                    "min(c5)",
+                    "max(15)",
+                    "max(0.1)",
+                    "max(c3)",
+                    "max(c4)",
+                    "max(c5)"};
     }
     auto op = PlanBuilder()
                   .values(vectors)
@@ -162,6 +163,73 @@ class AggregationTest : public AggregationTestBase {
       setKey<StringView>(3, c3, 2, count % 1000, rowVector.get());
       setKey<StringView>(4, c4, 5, count % 1000, rowVector.get());
       setKey<StringView>(5, c5, 8, count % 1000, rowVector.get());
+    }
+  }
+
+  // Inserts 'key' into 'order' with random bits and a serial
+  // umber. The serial number makes repeats of 'key' unique and the
+  // random bits randomize the order in the set.
+  void insertRandomOrder(
+      int64_t key,
+      int64_t serial,
+      folly::F14FastSet<uint64_t>& order) {
+    // The word has 24 bits of grouping key, 8 random bits and 32 bits of serial
+    // number.
+    order.insert(
+        ((folly::Random::rand32(rng_) & 0xff) << 24) | key | (serial << 32));
+  }
+
+  // Returns the key from a value inserted with insertRandomOrder().
+  int32_t randomOrderKey(uint64_t key) {
+    return key & ((1 << 24) - 1);
+  }
+
+  void addBatch(
+      int32_t count,
+      RowVectorPtr rows,
+      BufferPtr& dictionary,
+      std::vector<RowVectorPtr>& batches) {
+    std::vector<VectorPtr> children;
+    dictionary->setSize(count * sizeof(vector_size_t));
+    children.push_back(BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), dictionary, count, rows->childAt(0)));
+    children.push_back(BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), dictionary, count, rows->childAt(1)));
+    children.push_back(children[1]);
+    batches.push_back(std::make_shared<RowVector>(
+        rows->pool(),
+        rows->type(),
+        BufferPtr(nullptr),
+        count,
+        children,
+        folly::none));
+    dictionary = AlignedBuffer::allocate<vector_size_t>(
+        dictionary->capacity() / sizeof(vector_size_t), rows->pool());
+  }
+
+  // Makes batches which reference rows in 'rows' via dictionary. The
+  // dictionary indices are given by 'order', wich has values with
+  // indices plus random bits so as to create randomly scattered,
+  // sometimes repeated values.
+  void makeBatches(
+      RowVectorPtr rows,
+      folly::F14FastSet<uint64_t>& order,
+      std::vector<RowVectorPtr>& batches) {
+    constexpr int32_t kBatch = 1000;
+    BufferPtr dictionary =
+        AlignedBuffer::allocate<vector_size_t>(kBatch, rows->pool());
+    auto rawIndices = dictionary->asMutable<vector_size_t>();
+    int32_t counter = 0;
+    for (auto& n : order) {
+      rawIndices[counter++] = randomOrderKey(n);
+      if (counter == kBatch) {
+        addBatch(counter, rows, dictionary, batches);
+        rawIndices = dictionary->asMutable<vector_size_t>();
+        counter = 0;
+      }
+    }
+    if (counter) {
+      addBatch(counter, rows, dictionary, batches);
     }
   }
 
@@ -436,6 +504,81 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
                         .planNode();
 
   assertQuery(params, "SELECT c0, count(1) FROM tmp GROUP BY 1");
+}
+  
+TEST_F(AggregationTest, spill) {
+  constexpr int32_t kNumDistinct = 200000;
+  rng_.seed(1);
+  rowType_ = ROW({"c0", "c1", "a"}, {INTEGER(), VARCHAR(), VARCHAR()});
+  // The input batch has kNumDistinct distinct keys. The repeat count of a key
+  // is given by min(1, (k % 100) - 90). The batch is repeated 3 times, each
+  // time in a different order.
+  RowVectorPtr rows = std::static_pointer_cast<RowVector>(
+      BaseVector::create(rowType_, kNumDistinct, pool_.get()));
+  folly::F14FastSet<uint64_t> order1;
+  folly::F14FastSet<uint64_t> order2;
+  folly::F14FastSet<uint64_t> order3;
+  auto c0 = rows->childAt(0)->as<FlatVector<int32_t>>();
+  c0->resize(kNumDistinct);
+  auto c1 = rows->childAt(1)->as<FlatVector<StringView>>();
+  c1->resize(kNumDistinct);
+  int32_t totalCount = 0;
+  for (int32_t i = 0; i < kNumDistinct; ++i) {
+    c0->set(i, i);
+    std::string str = fmt::format("{}{}", i, i);
+    c1->set(i, StringView(str));
+    auto numRepeats = std::max(1, (i % 100) - 90);
+    // We make random permutations of the data by adding the indices into a set
+    // with a random 6 high bits followed by a serial number. These are inlined
+    // in the F14FastSet in an order that depends on the hash number.
+    for (auto j = 0; j < numRepeats; ++j) {
+      ++totalCount;
+      insertRandomOrder(i, totalCount, order1);
+      insertRandomOrder(i, totalCount, order2);
+      insertRandomOrder(i, totalCount, order3);
+    }
+  }
+  std::vector<RowVectorPtr> batches;
+  makeBatches(rows, order1, batches);
+  makeBatches(rows, order2, batches);
+  makeBatches(rows, order3, batches);
+  CursorParameters params;
+  std::unordered_map<std::string, std::string> configStrings;
+  configStrings["driver.max-final-aggregation-memory-usage"] = "16000000";
+  configStrings["driver.spill-file-size"] = "16000000";
+  std::shared_ptr<Config> config =
+      std::make_shared<core::MemConfig>(configStrings);
+  std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
+
+  params.queryCtx = std::make_shared<core::QueryCtx>(
+      std::move(config),
+      std::move(connectorConfigs),
+      memory::MappedMemory::getInstance());
+  params.planNode = PlanBuilder()
+                        .values(batches)
+                        .partialAggregation({0, 1}, {"array_agg(a)"})
+                        .finalAggregation({0, 1}, {"array_agg(a0)"})
+                        .planNode();
+  auto pair = readCursor(params, [](Task*) {});
+  int32_t numRows = 0;
+  for (auto rowVector : pair.second) {
+    numRows += rowVector->size();
+    auto groups = rowVector->childAt(0)->as<FlatVector<int32_t>>();
+    auto array = rowVector->childAt(2)->as<ArrayVector>();
+    auto elements = array->elements()->as<FlatVector<StringView>>();
+    for (auto i = 0; i < rowVector->size(); ++i) {
+      auto group = groups->valueAt(i);
+      auto str = rowVector->childAt(1)->as<FlatVector<StringView>>();
+      auto offset = array->offsetAt(i);
+      auto size = array->sizeAt(i);
+      auto repeats = std::max(1, (group % 100) - 90);
+      EXPECT_EQ(size, 3 * repeats);
+      for (auto j = offset; j < offset + size; ++j) {
+        EXPECT_TRUE(elements->equalValueAt(str, j, i));
+      }
+    }
+  }
+  EXPECT_EQ(numRows, kNumDistinct);
 }
 
 } // namespace

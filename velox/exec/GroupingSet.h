@@ -16,7 +16,10 @@
 #pragma once
 
 #include "velox/exec/HashTable.h"
+#include "velox/exec/Spill.h"
+#include "velox/exec/TreeOfLosers.h"
 #include "velox/exec/VectorHasher.h"
+
 
 namespace facebook::velox::exec {
 
@@ -31,6 +34,7 @@ class GroupingSet {
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
       bool ignoreNullKeys,
+      bool isPartial,
       OperatorCtx* driverCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
@@ -59,10 +63,30 @@ class GroupingSet {
   const SelectivityVector* prepareSelectivityVector(
       size_t aggregateIndex,
       const RowVectorPtr& input);
+  void checkSpill(const RowVectorPtr& input);
 
+  int32_t
+  listRowsNoSpill(RowContainerIterator* iterator, int32_t maxRows, char** rows);
+
+  void extractGroups(
+      char** groups,
+      int32_t numGroups,
+      bool isPartial,
+      RowVectorPtr& result);
+
+  bool getSpilledOutput(RowVectorPtr result);
+  bool mergeNext(RowVectorPtr& result);
+  int32_t compareSpilled(VectorRow left, VectorRow right);
+  void initializeRow(VectorRow& keys, char* row);
+  bool isSameKey(VectorRow key, char* row);
+  void updateRow(VectorRow& keys, char* row);
+  void extractSpillResult(RowVectorPtr& result);
+
+  
   std::vector<ChannelIndex> keyChannels_;
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   const bool isGlobal_;
+  const bool isPartial_;
   std::vector<std::unique_ptr<Aggregate>> aggregates_;
   // For each aggregation, can hold an index to a boolean channel (projection in
   // the input row vector), that acts as row mask for the aggregation.
@@ -99,6 +123,26 @@ class GroupingSet {
   HashStringAllocator stringAllocator_;
   AllocationPool rows_;
   const bool isAdaptive_;
+
+  uint64_t spillThreshold_ = 0;
+  uint64_t maxBatchBytes_;
+  int32_t numKeys_;
+  std::unique_ptr<SpillState> spill_;
+  std::unique_ptr<TreeOfLosers<VectorRow, SpillStream>> merge_;
+  RowContainerIterator spillIterator_;
+  std::unique_ptr<RowContainer> mergeRows_;
+  // The row with the current merge state, allocated from 'mergeRow_'.
+  char* mergeState_ = nullptr;
+  // The currently running spill way in producing spilld output.
+  int32_t outputWay_ = -1;
+  std::vector<VectorPtr> mergeArgs_;
+  SelectivityVector mergeSelection_;
+  // The set of rows that are outside of the spillable hash number
+  // ranges. Used when producing output.
+  std::vector<char*> nonSpilledRows_;
+  // Index of first in 'nonSpilledRows_' that has not been added to output.
+  size_t nonSpilledIndex_ = 0;
+
 };
 
 } // namespace facebook::velox::exec

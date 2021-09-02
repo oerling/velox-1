@@ -117,6 +117,7 @@ HashAggregation::HashAggregation(
       std::move(args),
       std::move(constantLists),
       aggregationNode->ignoreNullKeys(),
+      isPartialOutput_,
       operatorCtx_.get());
 }
 

@@ -24,6 +24,7 @@ add_library(
   HashBuild.cpp
   HashProbe.cpp
   HashStringAllocator.cpp
+  Spill.cpp
   HashTable.cpp
   Limit.cpp
   LocalPartition.cpp

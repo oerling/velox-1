@@ -382,6 +382,7 @@ class VectorHasher {
     return inRange;
   }
 
+ public:
   template <typename T>
   uint64_t valueId(T value) {
     if (isRange_) {

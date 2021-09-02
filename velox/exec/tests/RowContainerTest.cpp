@@ -220,8 +220,8 @@ TEST_F(RowContainerTest, types) {
   EXPECT_EQ(kNumRows, data->numRows());
   std::vector<char*> rows(kNumRows);
   RowContainerIterator iter;
-  EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), kNumRows);
-  EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), 0);
+  EXPECT_EQ(data->listRows(&iter, kNumRows, RowContainer::kUnlimited, rows.data()), kNumRows);
+  EXPECT_EQ(data->listRows(&iter, kNumRows, RowContainer::kUnlimited, rows.data()), 0);
 
   SelectivityVector allRows(kNumRows);
   for (auto column = 0; column < batch->childrenSize(); ++column) {

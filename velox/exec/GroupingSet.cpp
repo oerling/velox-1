@@ -50,6 +50,7 @@ GroupingSet::GroupingSet(
     std::vector<std::vector<ChannelIndex>>&& channelLists,
     std::vector<std::vector<VectorPtr>>&& constantLists,
     bool ignoreNullKeys,
+    bool isPartial,
     OperatorCtx* operatorCtx)
     : hashers_(std::move(hashers)),
       isGlobal_(hashers_.empty()),
@@ -58,6 +59,7 @@ GroupingSet::GroupingSet(
       channelLists_(std::move(channelLists)),
       constantLists_(std::move(constantLists)),
       ignoreNullKeys_(ignoreNullKeys),
+      isPartial_(isPartial),
       driverCtx_(operatorCtx->driverCtx()),
       mappedMemory_(operatorCtx->mappedMemory()),
       stringAllocator_(mappedMemory_),
@@ -74,6 +76,10 @@ GroupingSet::GroupingSet(
   }
   for (const std::vector<ChannelIndex>& argList : channelLists_) {
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
+  }
+  if (!isPartial_) {
+    spillThreshold_ =
+        driverCtx_->task->queryCtx()->maxFinalAggregationMemoryUsage();
   }
 }
 
@@ -99,6 +105,7 @@ void GroupingSet::addInput(const RowVectorPtr& input, bool mayPushdown) {
     return;
   }
 
+checkSpill(input);
   bool rehash = false;
   if (!table_) {
     rehash = true;
@@ -179,7 +186,10 @@ void GroupingSet::initializeGlobalAggregation() {
   // Row layout is:
   //  - null flags - one bit per aggregate,
   //  - fixed-width accumulators - one per aggregate
-  int32_t offset = bits::nbytes(aggregates_.size());
+  int32_t rowSizeOffset = bits::nbytes(aggregates_.size());
+  int32_t offset = rowSizeOffset + sizeof(int32_t);
+
+
   int32_t nullOffset = 0;
 
   for (auto& aggregate : aggregates_) {
@@ -187,7 +197,8 @@ void GroupingSet::initializeGlobalAggregation() {
     aggregate->setOffsets(
         offset,
         RowContainer::nullByte(nullOffset),
-        RowContainer::nullMask(nullOffset));
+        RowContainer::nullMask(nullOffset),
+			  rowSizeOffset);
     offset += aggregate->accumulatorFixedWidthSize();
     ++nullOffset;
   }
@@ -245,6 +256,28 @@ const SelectivityVector* GroupingSet::prepareSelectivityVector(
   return &maskedActiveRows_;
 }
 
+void GroupingSet::extractGroups(
+    char** groups,
+    int32_t numGroups,
+    bool isPartial,
+    RowVectorPtr& result) {
+  result->resize(numGroups);
+  auto totalKeys = lookup_->hashers.size();
+  for (int32_t i = 0; i < totalKeys; ++i) {
+    auto keyVector = result->childAt(i);
+    table_->rows()->extractColumn(groups, numGroups, i, keyVector);
+  }
+  for (int32_t i = 0; i < aggregates_.size(); ++i) {
+    aggregates_[i]->finalize(groups, numGroups);
+    auto aggregateVector = result->childAt(i + totalKeys);
+    if (isPartial) {
+      aggregates_[i]->extractAccumulators(groups, numGroups, &aggregateVector);
+    } else {
+      aggregates_[i]->extractValues(groups, numGroups, &aggregateVector);
+    }
+  }
+}
+  
 bool GroupingSet::getOutput(
     int32_t batchSize,
     bool isPartial,
@@ -276,29 +309,29 @@ bool GroupingSet::getOutput(
 
   // @lint-ignore CLANGTIDY
   char* groups[batchSize];
-  int32_t numGroups =
-      table_ ? table_->rows()->listRows(iterator, batchSize, groups) : 0;
-  if (!numGroups) {
-    return false;
+  int32_t numGroups = listRowsNoSpill(iterator, batchSize, groups);
+  if (numGroups) {
+    extractGroups(groups, numGroups, isPartial, result);
+    return true;
   }
-  result->resize(numGroups);
-  auto totalKeys = lookup_->hashers.size();
-  for (int32_t i = 0; i < totalKeys; ++i) {
-    auto keyVector = result->childAt(i);
-    table_->rows()->extractColumn(groups, numGroups, i, keyVector);
-  }
-  for (int32_t i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(groups, numGroups);
-    auto aggregateVector = result->childAt(i + totalKeys);
-    if (isPartial) {
-      aggregates_[i]->extractAccumulators(groups, numGroups, &aggregateVector);
-    } else {
-      aggregates_[i]->extractValues(groups, numGroups, &aggregateVector);
-    }
-  }
-  return true;
+  return getSpilledOutput(result);
 }
 
+int32_t GroupingSet::listRowsNoSpill(
+    RowContainerIterator* iterator,
+    int32_t maxRows,
+    char** rows) {
+  if (!table_) {
+    return 0;
+  }
+  if (!spill_) {
+    return table_->rows()->listRows(iterator, maxRows, maxBatchBytes_, rows);
+  } else {
+    return 0;
+  }
+}
+
+  
 void GroupingSet::resetPartial() {
   if (table_) {
     table_->clear();
@@ -317,4 +350,50 @@ const HashLookup& GroupingSet::hashLookup() const {
   return *lookup_;
 }
 
+namespace {
+uint64_t maxSerializedSize(const RowVectorPtr& input) {
+  vector_size_t result = 0;
+  auto resultPtr = &result;
+  IndexRange range{0, input->size()};
+  VectorStreamGroup::estimateSerializedSize(
+      input, folly::Range(&range, 1), &resultPtr);
+  return result;
+}
+} // namespace
+
+void GroupingSet::checkSpill(const RowVectorPtr& input) {
+  if (!spillThreshold_ || !table_ ||
+      table_->allocatedBytes() < spillThreshold_) {
+    return;
+  }
+  auto maxSize = maxSerializedSize(input);
+  auto [rows, bytes] = table_->rows()->freeSpace();
+  if (rows > input->size() && bytes > maxSize) {
+    return;
+  }
+  if (!spill_) {
+    auto queryCtx = driverCtx_->execCtx->queryCtx();
+    auto path = fmt::format(
+        "{}-{}-{}-",
+        queryCtx->spillFilePath(),
+        process::getProcessId(),
+        SpillState::spillFileId());
+    spill_ = std::make_unique<SpillState>(
+        table_->rows()->spillType(),
+        path,
+        HashBitField{29, 32},
+        queryCtx->spillFileSize(),
+        200000,
+        *driverCtx_->execCtx->pool(),
+        queryCtx->mappedMemory());
+  }
+  table_->rows()->spill(
+      *spill_,
+      input->size(),
+      maxSize,
+      spillIterator_,
+      [&](folly::Range<char**> rows) { table_->erase(rows); });
+}
+
+  
 } // namespace facebook::velox::exec

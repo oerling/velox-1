@@ -74,6 +74,12 @@ OperatorSupplier makeConsumerSupplier(
       };
       return std::make_unique<CallbackSink>(operatorId, ctx, consumer);
     };
+  } else if (
+      auto join =
+          std::dynamic_pointer_cast<const core::HashJoinNode>(planNode)) {
+    return [join](int32_t operatorId, DriverCtx* ctx) {
+      return std::make_unique<HashBuild>(operatorId, ctx, join);
+    };
   }
 
   if (auto localPartitionNode =
