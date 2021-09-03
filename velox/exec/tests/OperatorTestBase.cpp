@@ -32,10 +32,8 @@ OperatorTestBase::OperatorTestBase() {
   if (!MappedMemory::hasDefaultInstance()) {
     // Sets the process default MappedMemory to an async cache of up
     // to 4GB backed by a default MappedMemory
-    static std::unique_ptr<MappedMemory> rawMappedMemory =
-        MappedMemory::createDefaultInstance();
     MappedMemory::setDefaultInstance(std::make_unique<cache::AsyncDataCache>(
-        rawMappedMemory.get(), 4UL << 30));
+        MappedMemory::createDefaultInstance(), 4UL << 30));
   }
   VELOX_CHECK(
       dynamic_cast<cache::AsyncDataCache*>(MappedMemory::getInstance()) !=

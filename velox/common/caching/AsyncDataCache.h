@@ -538,7 +538,7 @@ class CacheShard {
 class AsyncDataCache : public memory::MappedMemory,
                        public std::enable_shared_from_this<AsyncDataCache> {
  public:
-  AsyncDataCache(memory::MappedMemory* mappedMemory, uint64_t maxBytes);
+  AsyncDataCache(std::unique_ptr<memory::MappedMemory> mappedMemory, uint64_t maxBytes);
 
   // Finds or creates a cache entry corresponding to 'key'. The entry
   // is returned in 'pin'. If the entry is new, it is pinned in
@@ -604,7 +604,9 @@ class AsyncDataCache : public memory::MappedMemory,
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
-  memory::MappedMemory* const mappedMemory_;
+  // Keeps the id to file map alive as long as 'this' is live.
+  std::shared_ptr<StringIdMap> fileIds_;
+  std::unique_ptr<memory::MappedMemory> mappedMemory_;
   std::vector<std::unique_ptr<CacheShard>> shards_;
   int32_t shardCounter_{};
   std::atomic<memory::MachinePageCount> cachedPages_{0};

@@ -149,9 +149,12 @@ void CacheInputStream::loadPosition() {
   auto offset = region_.offset;
   if (pin_.empty()) {
     auto loadRegion = region_;
+    // Quantize position to previous multiple of 'loadQuantum_'.
     loadRegion.offset += (position_ / loadQuantum_) * loadQuantum_;
-    loadRegion.length =
-        std::min<int32_t>(loadQuantum_, region_.length - position_);
+    // Set length to be the lesser of 'loadQuantum_' and distance to end of
+    // 'region_'
+    loadRegion.length = std::min<int32_t>(
+        loadQuantum_, region_.length - (loadRegion.offset - region_.offset));
     loadSync(loadRegion);
   }
   auto* entry = pin_.entry();
