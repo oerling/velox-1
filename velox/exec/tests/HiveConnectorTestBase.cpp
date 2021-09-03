@@ -25,8 +25,6 @@ namespace facebook::velox::exec::test {
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
-  asyncCache_ = std::make_unique<cache::AsyncDataCache>(
-          memory::MappedMemory::getInstance(), FLAGS_cache_mb << 20);
   auto hiveConnector =
       connector::getConnectorFactory(connector::hive::kHiveConnectorName)
           ->newConnector(kHiveConnectorId, nullptr);

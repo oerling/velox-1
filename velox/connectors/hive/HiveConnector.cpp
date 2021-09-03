@@ -298,6 +298,11 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
   }
   if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
+    if (!readerOpts.getDataCacheConfig()) {
+    auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
+    dataCacheConfig->filenum = fileHandle_->uuid.id();
+    readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
+    }
     bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
         (asyncCache),
         Connector::getTracker(scanId_),

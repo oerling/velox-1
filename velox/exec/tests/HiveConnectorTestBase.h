@@ -152,15 +152,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
   addSplit(Task* task, const core::PlanNodeId& planNodeId, exec::Split&& split);
 
   memory::MappedMemory* mappedMemory() {
-    if (asyncCache_) {
-      return asyncCache_.get();
-    }
     return memory::MappedMemory::getInstance();
   }
 
   DummyDataCache* dataCache;
-  // Use instead of MappedMemory::getInstance() if set.
-  std::unique_ptr<cache::AsyncDataCache> asyncCache_;
 };
 
 } // namespace facebook::velox::exec::test

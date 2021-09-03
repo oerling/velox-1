@@ -534,53 +534,6 @@ TEST_F(TableScanTest, emptyFile) {
   }
 }
 
-TEST_F(TableScanTest, cacheEnabled) {
-  // DataCache not enabled
-  auto rowType = ROW({"c0", "c1", "c2"}, {DOUBLE(), VARCHAR(), BIGINT()});
-  auto vectors = makeVectors(10, 1'000, rowType);
-  auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
-
-  CursorParameters params;
-  params.planNode = tableScanNode(rowType);
-
-  auto cursor = std::make_unique<TaskCursor>(params);
-
-  addSplit(cursor->task().get(), "0", makeHiveSplit(filePath->path));
-  cursor->task()->noMoreSplits("0");
-
-  while (cursor->moveNext()) {
-    cursor->current();
-  }
-
-  EXPECT_EQ(dataCache->getCount, 0);
-  EXPECT_EQ(dataCache->putCount, 0);
-
-  // DataCache enabled
-  std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
-  std::unordered_map<std::string, std::string> hiveConnectorConfigs;
-  hiveConnectorConfigs.insert({kNodeSelectionStrategy, kSoftAffinity});
-  connectorConfigs.insert(
-      {kHiveConnectorId,
-       std::make_shared<core::MemConfig>(std::move(hiveConnectorConfigs))});
-  params.queryCtx = core::QueryCtx::create(
-      std::make_shared<core::MemConfig>(),
-      connectorConfigs,
-      memory::MappedMemory::getInstance());
-
-  cursor = std::make_unique<TaskCursor>(params);
-
-  addSplit(cursor->task().get(), "0", makeHiveSplit(filePath->path));
-  cursor->task()->noMoreSplits("0");
-
-  while (cursor->moveNext()) {
-    cursor->current();
-  }
-
-  EXPECT_NE(dataCache->getCount, 0);
-  EXPECT_NE(dataCache->putCount, 0);
-}
-
 TEST_F(TableScanTest, partitionedTable) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
