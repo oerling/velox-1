@@ -86,6 +86,10 @@ class CachedBufferedInput : public BufferedInput {
 
   bool shouldPreload() override;
 
+  bool shouldPrefetchStripes() const override {
+    return true;
+  }
+  
  private:
   struct CacheRequest {
     cache::RawFileCacheKey key;

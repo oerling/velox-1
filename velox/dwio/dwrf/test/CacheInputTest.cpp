@@ -102,7 +102,7 @@ class CacheTest : public testing::Test {
 
   void initializeCache(int64_t maxBytes) {
     cache_ =
-        std::make_unique<AsyncDataCache>(MappedMemory::getInstance(), maxBytes);
+        std::make_unique<AsyncDataCache>(MappedMemory::createDefaultInstance(), maxBytes);
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));

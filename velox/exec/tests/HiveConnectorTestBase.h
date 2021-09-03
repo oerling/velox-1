@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #pragma once
+#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/OperatorTestBase.h"
@@ -72,7 +73,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
   void writeToFile(
       const std::string& filePath,
       const std::string& name,
-      const std::vector<RowVectorPtr>& vectors);
+      const std::vector<RowVectorPtr>& vectors,
+      std::shared_ptr<dwrf::Config> config =
+          std::make_shared<facebook::velox::dwrf::Config>());
 
   std::vector<RowVectorPtr> makeVectors(
       const std::shared_ptr<const RowType>& rowType,
@@ -147,6 +150,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
 
   static void
   addSplit(Task* task, const core::PlanNodeId& planNodeId, exec::Split&& split);
+
+  memory::MappedMemory* mappedMemory() {
+    return memory::MappedMemory::getInstance();
+  }
 
   DummyDataCache* dataCache;
 };
