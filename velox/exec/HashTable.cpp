@@ -493,7 +493,7 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   }
 }
 
-  template <bool ignoreNullKeys>
+template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::initializeNewGroups(HashLookup& lookup) {
   if (lookup.newGroups.empty()) {
     return;
@@ -649,7 +649,6 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
   }
 }
 
-
 template <bool ignoreNullKeys>
 bool HashTable<ignoreNullKeys>::arrayPushRow(char* row, int32_t index) {
   auto existing = table_[index];
@@ -774,7 +773,7 @@ void HashTable<ignoreNullKeys>::rehash() {
     do {
       numGroups = (i == 0 ? this : otherTables_[i - 1].get())
                       ->rows()
-	->listRows(&iterator, kHashBatchSize, groups);
+                      ->listRows(&iterator, kHashBatchSize, groups);
       if (!insertBatch(groups, hashes, numGroups)) {
         VELOX_CHECK(hashMode_ != HashMode::kHash);
         setHashMode(HashMode::kHash, 0);
@@ -831,8 +830,7 @@ bool HashTable<ignoreNullKeys>::analyze() {
   RowContainerIterator iterator;
   int32_t numGroups;
   do {
-    numGroups = rows_->listRows(
-        &iterator, kHashBatchSize, groups);
+    numGroups = rows_->listRows(&iterator, kHashBatchSize, groups);
     for (int32_t i = 0; i < hashers_.size(); ++i) {
       auto& hasher = hashers_[i];
       if (!hasher->isRange()) {
