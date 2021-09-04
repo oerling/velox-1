@@ -83,6 +83,8 @@ class HashTableTest : public testing::Test {
     EXPECT_EQ(topTable_->hashMode(), mode);
     LOG(INFO) << "Made table " << describeTable();
     testProbe();
+    testErase();
+    testProbe();
   }
 
   std::string describeTable() {
@@ -308,6 +310,19 @@ class HashTableTest : public testing::Test {
         << std::endl;
   }
 
+  // Erases every third item in the hash table.
+  void testErase() {
+    std::vector<char*> toErase;
+    int32_t counter = 0;
+    for (auto i = 0; i < rowOfKey_.size(); ++i) {
+      if (rowOfKey_[i] && ++counter % 3 == 0) {
+	toErase.push_back(rowOfKey_[i]);
+	rowOfKey_[i] = nullptr;
+      }
+      }
+    topTable_->erase(folly::Range<char**>(toErase.data(), toErase.size()));
+  }
+  
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
   memory::MappedMemory* mappedMemory_{memory::MappedMemory::getInstance()};
