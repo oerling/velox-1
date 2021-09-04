@@ -120,7 +120,12 @@ class CachedBufferedInput : public BufferedInput {
   StreamSource streamSource_;
   folly::IOThreadPoolExecutor* const executor_;
 
-  // Pins that are candidates for loading.
+  //  Percentage of reads over enqueues that qualifies a stream to be
+  //  coalesced with nearby streams and prefetched. Anything read less
+  //  frequently will be synchronously read on first use.
+  int32_t prefetchThreshold_ = 60;
+  
+  // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
   // Coalesced loads spanning multiple cache entries in one IO.
   std::vector<std::shared_ptr<cache::FusedLoad>> fusedLoads_;

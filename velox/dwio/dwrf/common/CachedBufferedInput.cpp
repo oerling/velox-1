@@ -78,7 +78,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
   int32_t numNewLoads = 0;
   auto requests = std::move(requests_);
   for (auto& request : requests) {
-    if (tracker_->shouldPrefetch(request.trackingId, 3)) {
+    if (request.trackingId.empty() || tracker_->shouldPrefetch(request.trackingId, prefetchThreshold_)) {
       request.pin = cache_->findOrCreate(request.key, request.size, nullptr);
       if (request.pin.empty()) {
         // Already loading for another thread.
