@@ -19,7 +19,8 @@
 #include "velox/exec/tests/Cursor.h"
 #include "velox/exec/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/PlanBuilder.h"
-#include "velox/type/tests/FilterBulder.h"
+#include "velox/type/tests/FilterBuilder.h"
+#include "velox/type/tests/SubfieldFiltersBuilder.h"
 
 #if __has_include("filesystem")
 #include <filesystem>
@@ -34,9 +35,6 @@ using namespace facebook::velox::connector::hive;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::common::test;
 using namespace facebook::velox::exec::test;
-
-using ColumnHandleMap =
-    std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>;
 
 static const std::string kNodeSelectionStrategy = "node_selection_strategy";
 static const std::string kSoftAffinity = "SOFT_AFFINITY";
@@ -65,6 +63,18 @@ class TableScanTest : public HiveConnectorTestBase {
     return HiveConnectorTestBase::makeVectors(inputs, count, rowsPerVector);
   }
 
+  std::shared_ptr<core::QueryCtx> queryCtxWithCache() {
+    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
+    std::unordered_map<std::string, std::string> hiveConnectorConfigs;
+    hiveConnectorConfigs.insert({kNodeSelectionStrategy, kSoftAffinity});
+    connectorConfigs.insert(
+        {kHiveConnectorId,
+         std::make_shared<core::MemConfig>(std::move(hiveConnectorConfigs))});
+    return core::QueryCtx::create(
+        std::make_shared<core::MemConfig>(), connectorConfigs, mappedMemory());
+  }
+
+  
   std::shared_ptr<Task> assertQuery(
       const std::shared_ptr<const core::PlanNode>& plan,
       const std::shared_ptr<HiveConnectorSplit>& hiveSplit,
@@ -105,32 +115,6 @@ class TableScanTest : public HiveConnectorTestBase {
 
   static int64_t getSkippedSplitsStat(const std::shared_ptr<Task>& task) {
     return getTableScanStats(task).runtimeStats["skippedSplits"].sum;
-  }
-
-  std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
-      SubfieldFilters subfieldFilters,
-      const std::shared_ptr<const core::ITypedExpr>& remainingFilter =
-          nullptr) {
-    return std::make_shared<connector::hive::HiveTableHandle>(
-        true, std::move(subfieldFilters), remainingFilter);
-  }
-
-  void addRegularColumns(
-      const std::shared_ptr<const RowType>& rowType,
-      ColumnHandleMap& assignments) const {
-    for (auto& name : rowType->names()) {
-      assignments[name] = regularColumn(name);
-    }
-  }
-
-  ColumnHandleMap allRegularColumns(
-      const std::shared_ptr<const RowType>& rowType) const {
-    ColumnHandleMap assignments;
-    assignments.reserve(rowType->size());
-    for (auto& name : rowType->names()) {
-      assignments[name] = regularColumn(name);
-    }
-    return assignments;
   }
 
   void testPartitionedTable(const std::string& filePath) {
@@ -178,31 +162,6 @@ class TableScanTest : public HiveConnectorTestBase {
       ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
 };
-
-namespace {
-class SubfieldFiltersBuilder {
- public:
-  SubfieldFiltersBuilder& add(
-      const std::string& path,
-      std::unique_ptr<common::Filter> filter) {
-    filters_[common::Subfield(path)] = std::move(filter);
-    return *this;
-  }
-
-  SubfieldFilters build() {
-    return std::move(filters_);
-  }
-
- private:
-  SubfieldFilters filters_;
-};
-
-SubfieldFilters singleSubfieldFilter(
-    const std::string& path,
-    std::unique_ptr<common::Filter> filter) {
-  return SubfieldFiltersBuilder().add(path, std::move(filter)).build();
-}
-} // namespace
 
 TEST_F(TableScanTest, allColumns) {
   auto vectors = makeVectors(10, 1'000);
@@ -573,53 +532,6 @@ TEST_F(TableScanTest, emptyFile) {
   } catch (const VeloxException& e) {
     EXPECT_EQ("ORC file is empty", e.message());
   }
-}
-
-TEST_F(TableScanTest, cacheEnabled) {
-  // DataCache not enabled
-  auto rowType = ROW({"c0", "c1", "c2"}, {DOUBLE(), VARCHAR(), BIGINT()});
-  auto vectors = makeVectors(10, 1'000, rowType);
-  auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
-
-  CursorParameters params;
-  params.planNode = tableScanNode(rowType);
-
-  auto cursor = std::make_unique<TaskCursor>(params);
-
-  addSplit(cursor->task().get(), "0", makeHiveSplit(filePath->path));
-  cursor->task()->noMoreSplits("0");
-
-  while (cursor->moveNext()) {
-    cursor->current();
-  }
-
-  EXPECT_EQ(dataCache->getCount, 0);
-  EXPECT_EQ(dataCache->putCount, 0);
-
-  // DataCache enabled
-  std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
-  std::unordered_map<std::string, std::string> hiveConnectorConfigs;
-  hiveConnectorConfigs.insert({kNodeSelectionStrategy, kSoftAffinity});
-  connectorConfigs.insert(
-      {kHiveConnectorId,
-       std::make_shared<core::MemConfig>(std::move(hiveConnectorConfigs))});
-  params.queryCtx = core::QueryCtx::create(
-      std::make_shared<core::MemConfig>(),
-      connectorConfigs,
-      memory::MappedMemory::getInstance());
-
-  cursor = std::make_unique<TaskCursor>(params);
-
-  addSplit(cursor->task().get(), "0", makeHiveSplit(filePath->path));
-  cursor->task()->noMoreSplits("0");
-
-  while (cursor->moveNext()) {
-    cursor->current();
-  }
-
-  EXPECT_NE(dataCache->getCount, 0);
-  EXPECT_NE(dataCache->putCount, 0);
 }
 
 TEST_F(TableScanTest, partitionedTable) {

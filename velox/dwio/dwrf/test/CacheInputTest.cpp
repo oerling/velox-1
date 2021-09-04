@@ -106,7 +106,7 @@ class CacheTest : public testing::Test {
       ssd = std::make_unique<SsdCache>(file);
     }
     cache_ = std::make_unique<AsyncDataCache>(
-        MappedMemory::getInstance(), maxBytes, std::move(ssd));
+        MappedMemory::createDefaultInstance(), maxBytes, std::move(ssd));
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));
@@ -321,7 +321,6 @@ TEST_F(CacheTest, TestSingleFileThreads) {
     threads.push_back(std::thread([this, i]() {
       readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
     }));
-<<<<<<< HEAD
   }
   for (int i = 0; i < numThreads; ++i) {
     threads[i].join();
@@ -338,8 +337,6 @@ TEST_F(CacheTest, TestSsdThreads) {
     threads.push_back(std::thread([this, i]() {
       readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
     }));
-=======
->>>>>>> main
   }
   for (int i = 0; i < numThreads; ++i) {
     threads[i].join();

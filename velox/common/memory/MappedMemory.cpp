@@ -255,6 +255,7 @@ bool MappedMemoryImpl::checkConsistency() {
 std::unique_ptr<MappedMemory> MappedMemory::instance_;
 std::mutex MappedMemory::initMutex_;
 
+// static
 MappedMemory* MappedMemory::getInstance() {
   if (instance_) {
     return instance_.get();
@@ -266,6 +267,19 @@ MappedMemory* MappedMemory::getInstance() {
   instance_ = std::make_unique<MappedMemoryImpl>();
   return instance_.get();
 }
+
+// static
+  std::unique_ptr<MappedMemory> MappedMemory::createDefaultInstance() {
+  return std::make_unique<MappedMemoryImpl>();
+}
+
+// static
+void MappedMemory::setDefaultInstance(
+    std::unique_ptr<MappedMemory> instance) {
+  VELOX_CHECK(!instance_, "Must not change process default MappedMemory");
+  instance_ = std::move(instance);
+}
+
 std::shared_ptr<MappedMemory> MappedMemory::addChild(
     std::shared_ptr<MemoryUsageTracker> tracker) {
   return std::make_shared<ScopedMappedMemory>(this, tracker);

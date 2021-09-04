@@ -80,6 +80,12 @@ class BufferedInput {
     return false;
   }
 
+  virtual bool shouldPrefetchStripes() const {
+    return false;
+  }
+
+  virtual void setNumStripes(int32_t /*numStripes*/) {} 
+  
  protected:
   dwio::common::InputStream& input_;
 

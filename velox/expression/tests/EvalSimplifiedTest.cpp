@@ -33,22 +33,9 @@ using functions::test::FunctionBaseTest;
 class EvalSimplifiedTest : public FunctionBaseTest {
  protected:
   void assertEqualVectors(const VectorPtr& expected, const VectorPtr& actual) {
-    size_t vectorSize = expected->size();
-
-    // If one of the vectors is constant, they will report kMaxElements as
-    // size().
-    if (expected->isConstantEncoding() || actual->isConstantEncoding()) {
-      // If one is constant, use the size of the other; if both are, assume size
-      // is 1.
-      vectorSize = std::min(expected->size(), actual->size());
-      if (vectorSize == BaseVector::kMaxElements) {
-        vectorSize = 1;
-      }
-    } else {
-      ASSERT_EQ(expected->size(), actual->size());
-    }
+    ASSERT_EQ(expected->size(), actual->size());
     FunctionBaseTest::assertEqualVectors(
-        expected, actual, vectorSize, fmt::format(" (seed {}).", seed_));
+        expected, actual, fmt::format(" (seed {}).", seed_));
   }
 
   // Generate random (but deterministic) input row vectors.
@@ -139,4 +126,18 @@ TEST_F(EvalSimplifiedTest, strings) {
 
 TEST_F(EvalSimplifiedTest, doubles) {
   runTest("ceil(c1) * c0", ROW({"c0", "c1"}, {DOUBLE(), DOUBLE()}));
+}
+
+// Ensure that the right exprSet object is instantiated if `kExprEvalSimplified`
+// is specified.
+TEST_F(EvalSimplifiedTest, queryParameter) {
+  queryCtx_->setConfigOverridesUnsafe({
+      {core::QueryCtx::kExprEvalSimplified, "true"},
+  });
+
+  auto expr = makeTypedExpr("1 + 1", nullptr);
+  auto exprSet = exec::makeExprSetFromFlag({expr}, &execCtx_);
+
+  auto* ptr = dynamic_cast<exec::ExprSetSimplified*>(exprSet.get());
+  EXPECT_TRUE(ptr != nullptr) << "expected ExprSetSimplified derived object.";
 }

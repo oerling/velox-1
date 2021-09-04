@@ -31,8 +31,8 @@ void ConstantExpr::evalSpecialForm(
     EvalCtx* context,
     VectorPtr* result) {
   if (!sharedSubexprValues_) {
-    sharedSubexprValues_ = BaseVector::createConstant(
-        value_, BaseVector::kMaxElements, context->execCtx()->pool());
+    sharedSubexprValues_ =
+        BaseVector::createConstant(value_, 1, context->execCtx()->pool());
   }
 
   if (isString()) {
@@ -41,19 +41,15 @@ void ConstantExpr::evalSpecialForm(
     determineStringEncoding(context, vector, rows);
   }
 
-  if (result->get()) {
-    VELOX_CHECK_EQ((*result)->typeKind(), sharedSubexprValues_->typeKind());
-    BaseVector::ensureWritable(
-        rows, (*result)->type(), context->execCtx()->pool(), result);
-    (*result)->copy(sharedSubexprValues_.get(), rows, nullptr);
-    if (isString()) {
-      (*result)
-          ->asUnchecked<SimpleVector<StringView>>()
-          ->copyStringEncodingFrom(sharedSubexprValues_.get());
-    }
-    return;
+  context->moveOrCopyResult(
+      BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
+      rows,
+      result);
+
+  if (isString()) {
+    (*result)->asUnchecked<SimpleVector<StringView>>()->copyStringEncodingFrom(
+        sharedSubexprValues_.get());
   }
-  *result = sharedSubexprValues_;
 }
 
 void ConstantExpr::evalSpecialFormSimplified(
@@ -67,7 +63,7 @@ void ConstantExpr::evalSpecialFormSimplified(
   if (sharedSubexprValues_ == nullptr) {
     *result = BaseVector::createConstant(value_, rows.end(), context->pool());
   } else {
-    *result = value();
+    *result = BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_);
   }
 }
 
@@ -318,7 +314,7 @@ uint64_t* rowsWithError(
     const SelectivityVector& rows,
     const SelectivityVector& activeRows,
     EvalCtx* context,
-    FlatVectorPtr<StringView>* previousErrors,
+    EvalCtx::ErrorVectorPtr* previousErrors,
     LocalSelectivityVector& errorRowsHolder) {
   auto errors = context->errors();
   if (!errors) {
@@ -345,7 +341,11 @@ uint64_t* rowsWithError(
     // Add the new errors to the previous ones and free the new errors.
     bits::forEachSetBit(
         errors->rawNulls(), rows.begin(), errors->size(), [&](int32_t row) {
-          context->addError(row, errors->valueAt(row), previousErrors);
+          context->addError(
+              row,
+              *std::static_pointer_cast<std::exception_ptr>(
+                  errors->valueAt(row)),
+              previousErrors);
         });
     context->swapErrors(previousErrors);
     *previousErrors = nullptr;
@@ -371,7 +371,9 @@ void finalizeErrors(
     if (throwOnError && errorNulls[i]) {
       int32_t errorIndex = i * 64 + __builtin_ctzll(errorNulls[i]);
       if (errorIndex < errors->size() && errorIndex < rows.end()) {
-        throw std::runtime_error(std::string(errors->valueAt(errorIndex)));
+        auto exceptionPtr = std::static_pointer_cast<std::exception_ptr>(
+            errors->valueAt(errorIndex));
+        std::rethrow_exception(*exceptionPtr);
       }
     }
   }
@@ -417,7 +419,7 @@ void ConjunctExpr::evalSpecialForm(
   int32_t numActive = activeRows->countSelected();
   for (int32_t i = 0; i < inputs_.size(); ++i) {
     VectorPtr inputResult;
-    FlatVectorPtr<StringView> errors;
+    EvalCtx::ErrorVectorPtr errors;
     if (handleErrors) {
       context->swapErrors(&errors);
     }
@@ -713,8 +715,7 @@ class ExprCallable : public Callable {
         capture_->type(),
         BufferPtr(nullptr),
         rows.end(),
-        std::move(allVectors),
-        folly::none);
+        std::move(allVectors));
     EvalCtx lambdaCtx(context->execCtx(), context->exprSet(), row.get());
     body_->eval(rows, &lambdaCtx, result);
   }

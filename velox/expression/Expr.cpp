@@ -21,6 +21,12 @@
 #include "velox/expression/VarSetter.h"
 #include "velox/expression/VectorFunction.h"
 
+DEFINE_bool(
+    force_eval_simplified,
+    false,
+    "Whether to overwrite queryCtx and force the "
+    "use of simplified expression evaluation path.");
+
 namespace facebook::velox::exec {
 
 using functions::stringCore::maxEncoding;
@@ -869,7 +875,7 @@ void Expr::evalAll(
 
   if (!tryPeelArgs ||
       !applyFunctionWithPeeling(rows, *remainingRows, context, result)) {
-    applyFunction(rows, *remainingRows, context, result);
+    applyFunction(*remainingRows, context, result);
   }
   if (remainingRows != &rows) {
     addNulls(rows, remainingRows->asRange().bits(), context, result);
@@ -1001,21 +1007,20 @@ bool Expr::applyFunctionWithPeeling(
   }
 
   VectorPtr peeledResult;
-  applyFunction(*newRows, *newRows, context, &peeledResult);
+  applyFunction(*newRows, context, &peeledResult);
   context->setWrapped(this, peeledResult, rows, result);
   return true;
 }
 
 void Expr::applyFunction(
     const SelectivityVector& rows,
-    const SelectivityVector& applyRows,
     EvalCtx* context,
     VectorPtr* result) {
   scanVectorFunctionInputsStringEncoding(
       vectorFunction_.get(), inputValues_, context, rows);
   auto resultEncoding = getVectorFunctionResultStringEncoding(
       vectorFunction_.get(), inputValues_);
-  applyVectorFunction(applyRows, context, result);
+  applyVectorFunction(rows, context, result);
   if (resultEncoding.has_value()) {
     (*result)->as<SimpleVector<StringView>>()->setStringEncoding(
         *resultEncoding);
@@ -1146,6 +1151,16 @@ void ExprSetSimplified::eval(
   for (int32_t i = begin; i < end; ++i) {
     exprs_[i]->evalSimplified(rows, context, &(*result)[i]);
   }
+}
+
+std::unique_ptr<ExprSet> makeExprSetFromFlag(
+    std::vector<std::shared_ptr<const core::ITypedExpr>>&& source,
+    core::ExecCtx* execCtx) {
+  if (execCtx->queryCtx()->exprEvalSimplified() ||
+      FLAGS_force_eval_simplified) {
+    return std::make_unique<ExprSetSimplified>(std::move(source), execCtx);
+  }
+  return std::make_unique<ExprSet>(std::move(source), execCtx);
 }
 
 void determineStringEncoding(

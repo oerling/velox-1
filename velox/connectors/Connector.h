@@ -16,9 +16,13 @@
 #pragma once
 
 #include "velox/common/caching/DataCache.h"
+#include "velox/common/caching/ScanTracker.h"
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
 
+namespace facebook::velox::common {
+class Filter;
+}
 namespace facebook::velox::core {
 class ITypedExpr;
 }
@@ -31,6 +35,10 @@ namespace facebook::velox::connector {
 // as a RowVectorPtr, potentially after processing pushdowns.
 struct ConnectorSplit {
   const std::string connectorId;
+
+  // true if the Task processing this has aborted. Allows aborting
+  // async prefetch for the split.
+  bool cancelled{};
 
   explicit ConnectorSplit(const std::string& _connectorId)
       : connectorId(_connectorId) {}
@@ -85,6 +93,14 @@ class DataSource {
   // processed.
   virtual RowVectorPtr next(uint64_t size) = 0;
 
+  // Add dynamically generated filter.
+  // @param outputChannel index into outputType specified in
+  // Connector::createDataSource() that identifies the column this filter
+  // applies to.
+  virtual void addDynamicFilter(
+      ChannelIndex outputChannel,
+      const std::shared_ptr<common::Filter>& filter) = 0;
+
   // Returns the number of input bytes processed so far.
   virtual uint64_t getCompletedBytes() = 0;
 
@@ -122,10 +138,14 @@ class ConnectorQueryCtx {
   ConnectorQueryCtx(
       memory::MemoryPool* pool,
       Config* config,
-      ExpressionEvaluator* expressionEvaluator)
+      ExpressionEvaluator* expressionEvaluator,
+      memory::MappedMemory* _mappedMemory,
+      std::optional<std::string> scanId = std::nullopt)
       : pool_(pool),
         config_(config),
-        expressionEvaluator_(expressionEvaluator) {}
+        expressionEvaluator_(expressionEvaluator),
+        mappedMemory_(_mappedMemory),
+        scanId_(scanId) {}
 
   memory::MemoryPool* memoryPool() const {
     return pool_;
@@ -139,10 +159,20 @@ class ConnectorQueryCtx {
     return expressionEvaluator_;
   }
 
+  memory::MappedMemory* mappedMemory() const {
+    return mappedMemory_;
+  }
+
+  const std::optional<std::string>& scanId() const {
+    return scanId_;
+  }
+
  private:
   memory::MemoryPool* pool_;
   Config* config_;
   ExpressionEvaluator* expressionEvaluator_;
+  memory::MappedMemory* mappedMemory_;
+  std::optional<std::string> scanId_;
 };
 
 class Connector {
@@ -168,13 +198,34 @@ class Connector {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
+  // Schedules 'split' for async prefetching. The default is
+  // no-op. Supporting connectors may prime caches and pre-build a
+  // DataSource. Supporting connectors must synchronize the processing
+  // with a possible prefetch.
+  virtual void prefetchSplit(
+      const std::shared_ptr<const RowType>& outputType,
+      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
+      const std::unordered_map<
+          std::string,
+          std::shared_ptr<connector::ColumnHandle>>& columnHandles,
+      ConnectorQueryCtx* connectorQueryCtx,
+      std::shared_ptr<ConnectorSplit> split) {}
+
   virtual std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
+  static std::shared_ptr<cache::ScanTracker> getTracker(const std::string& scanId);
+
  private:
+  static void unregisterTracker(cache::ScanTracker* tracker);
+
   const std::string id_;
+
+  static std::mutex trackerMutex_;
+  static std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>
+      trackers_;
 };
 
 class ConnectorFactory {
@@ -206,9 +257,9 @@ bool unregisterConnector(const std::string& connectorId);
 
 std::shared_ptr<Connector> getConnector(const std::string& connectorId);
 
-#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                      \
-  namespace {                                                             \
-  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =                 \
+#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                    \
+  namespace {                                                           \
+  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =               \
       facebook::velox::connector::registerConnectorFactory((theFactory)); \
   }
 } // namespace facebook::velox::connector

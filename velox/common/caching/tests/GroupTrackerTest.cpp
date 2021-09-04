@@ -90,7 +90,7 @@ class GroupTrackerTest : public testing::Test {
 
   std::vector<int32_t> columns;
   auto& table = tables_[tableIndex];
-  `, auto numColumns = table.groups[0].columnSizes().size();
+  , auto numColumns = table.groups[0].columnSizes().size();
   std::unordered_map<int32_t> readColumns;
   int32_t toRead = 5 + random(numColumns > 20 ? 10 : 5);
   for (auto i = 0; i < numRead; ++i) {

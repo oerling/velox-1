@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
@@ -86,6 +87,14 @@ class CachedBufferedInput : public BufferedInput {
 
   bool shouldPreload() override;
 
+  bool shouldPrefetchStripes() const override {
+    return true;
+  }
+
+  void setNumStripes(int32_t numStripes) override {
+    GroupStats::instance().recordFile(fileNum_, numStripes);
+  }
+  
  private:
   struct CacheRequest {
     cache::RawFileCacheKey key;
@@ -116,7 +125,12 @@ class CachedBufferedInput : public BufferedInput {
   StreamSource streamSource_;
   folly::IOThreadPoolExecutor* const executor_;
 
-  // Pins that are candidates for loading.
+  //  Percentage of reads over enqueues that qualifies a stream to be
+  //  coalesced with nearby streams and prefetched. Anything read less
+  //  frequently will be synchronously read on first use.
+  int32_t prefetchThreshold_ = 60;
+  
+  // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
   // Coalesced loads spanning multiple cache entries in one IO.
   std::vector<std::shared_ptr<cache::FusedLoad>> fusedLoads_;

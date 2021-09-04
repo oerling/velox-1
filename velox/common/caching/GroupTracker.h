@@ -16,7 +16,12 @@
 
 #pragma once
 
+#include "velox/common/base/Bloom.h"
 #include "velox/common/caching/ScanTracker.h"
+#include "velox/common/caching/StringIdMap.h"
+
+#include <folly/container/F14Map.h>
+#include <folly/container/F14Set.h>
 
 namespace facebook::velox::cache {
 
@@ -26,8 +31,8 @@ class ApproxCounter {
 
   void add(uint64_t value) {
     auto hash = folly::hasher<uint64_t>()(value);
-    if (!bloom::test(bits, bits.size(), hash)) {
-      Bloom::set(bits, bits.size(), hash);
+    if (!Bloom::test(bits_.data(), bits_.size(), hash)) {
+      Bloom::set(bits_.data(), bits_.size(), hash);
       ++count_;
     }
   }
@@ -41,40 +46,42 @@ class ApproxCounter {
   int32_t count_;
 };
 
-  struct ReadCounts {
-    uint64_t referenceBytes;
-    uint64_t readBytes;
-    uint32_t readCount;
-    uint32_t referenceCount;
-  };
+struct ReadCounts {
+  uint64_t referenceBytes;
+  uint64_t readBytes;
+  uint32_t readCount;
+  uint32_t referenceCount;
+};
 
-  // Represents a groupId, column and its size and score.
-  struct SsdScore {
-    // 
-    float score;
+// Represents a groupId, column and its size and score.
+struct SsdScore {
+  //
+  float score;
 
-    // Expected size in bytes for caching to SSD
-    float size;
+  // Expected size in bytes for caching to SSD
+  float size;
 
-    // Represents the groupId and TrackingId of the group, column pair.
-    uint64_t hash;
-  };
-  
+  // Represents the groupId and TrackingId of the group, column pair.
+  uint64_t hash;
+};
+
 class GroupTracker {
  public:
-  GroupTracker(const StringIdLease& name) : name_(name){};
+  static constexpr int32_t kExpectedNumFiles = 100;
+
+  GroupTracker(const StringIdLease& name)
+      : name_(name), numFiles_(kExpectedNumFiles) {}
 
   void recordFile(uint64_t fileId, int32_t numStripes);
 
   void recordReference(uint64_t fileId, int32_t bytes);
   void recordRead(uint64_t fileId, int32_t bytes);
 
-private:
-
+ private:
   StringIdLease name_;
   std::mutex mutex_;
 
-  // 
+  //
   folly::F14FastMap<TrackingId, TrackingData> columns_;
   ApproxCounter numFiles_;
 
@@ -91,24 +98,33 @@ private:
 // Singleton for  keeping track of file groups.
 class GroupStats {
  public:
-
   void recordFile(uint64_t fileId, uint64_t groupId, int32_t numStripes);
 
-  void recordReference(uint64_t fileId, uint64_t groupId, TrackingId id, int32_t bytes);
+  void recordReference(
+      uint64_t fileId,
+      uint64_t groupId,
+      TrackingId id,
+      int32_t bytes);
 
-  void recordRead(uint64_t fileId, uint64_t groupId, TrackingId trackingId, int32_t bytes);
+  void recordRead(
+      uint64_t fileId,
+      uint64_t groupId,
+      TrackingId trackingId,
+      int32_t bytes);
 
   static GroupStats* instance();
 
   bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const;
-  
+
  private:
-  // fills 'saveToSsd_' with the best save candidates.
-  void makeSsdFilter(SsdCache& cache);
-  
+  // Sets  'hashes' to a Bloom filter of hashes from fileId, offset that ar in
+  // the top sizeMB most referenced data.
+  void makeSsdFilter(std::vector<uint64_t>& hashes);
+
   std::mutex mutex_;
   F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
-  // Bloom filter of groupId, trackingId hashes for streams that should be saved to SSD.
+  // Bloom filter of groupId, trackingId hashes for streams that should be saved
+  // to SSD.
   std::vector<uint64_t> saveToSsd_;
 };
 

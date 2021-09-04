@@ -16,6 +16,7 @@
 
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
+#include "velox/common/caching/Ssd.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 
@@ -405,8 +406,15 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.allocClocks += allocClocks_;
 }
 
-AsyncDataCache::AsyncDataCache(MappedMemory* mappedMemory, uint64_t maxBytes)
-    : mappedMemory_(mappedMemory), cachedPages_(0), maxBytes_(maxBytes) {
+AsyncDataCache::AsyncDataCache(
+    std::unique_ptr<MappedMemory> mappedMemory,
+    uint64_t maxBytes,
+    std::unique_ptr<SsdCache> ssdCache)
+    : fileIds_(fileIdsShared()),
+      mappedMemory_(std::move(mappedMemory)),
+      ssdCache_(std::move(ssdCache)),
+      cachedPages_(0),
+      maxBytes_(maxBytes) {
   for (auto i = 0; i < kNumShards; ++i) {
     shards_.push_back(std::make_unique<CacheShard>(this));
   }

@@ -18,6 +18,7 @@
 #include "velox/common/caching/DataCache.h"
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/reader/ScanSpec.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
@@ -124,9 +125,15 @@ class HiveDataSource : public DataSource {
       FileHandleFactory* fileHandleFactory,
       velox::memory::MemoryPool* pool,
       DataCache* dataCache,
-      ExpressionEvaluator* expressionEvaluator);
+      ExpressionEvaluator* expressionEvaluator,
+      memory::MappedMemory* mappedMemory,
+      const std::string& scanId);
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
+
+  void addDynamicFilter(
+      ChannelIndex outputChannel,
+      const std::shared_ptr<common::Filter>& filter) override;
 
   RowVectorPtr next(uint64_t size) override;
 
@@ -161,8 +168,9 @@ class HiveDataSource : public DataSource {
   FileHandleFactory* fileHandleFactory_;
   velox::memory::MemoryPool* pool_;
   std::vector<std::string> regularColumns_;
+  std::unique_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::unique_ptr<dwrf::ColumnReaderFactory> columnReaderFactory_;
-  std::unique_ptr<common::ScanSpec> scanSpec_ = nullptr;
+  std::unique_ptr<common::ScanSpec> scanSpec_;
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
   dwio::common::RowReaderOptions rowReaderOpts_;
@@ -192,6 +200,9 @@ class HiveDataSource : public DataSource {
   VectorPtr filterResult_;
   SelectivityVector filterRows_;
   exec::FilterEvalCtx filterEvalCtx_;
+
+  memory::MappedMemory* const mappedMemory_;
+  std::string scanId_;
 };
 
 class HiveConnector final : public Connector {
@@ -218,7 +229,9 @@ class HiveConnector final : public Connector {
                 kNodeSelectionStrategySoftAffinity
             ? dataCache_.get()
             : nullptr,
-        connectorQueryCtx->expressionEvaluator());
+        connectorQueryCtx->expressionEvaluator(),
+        connectorQueryCtx->mappedMemory(),
+        connectorQueryCtx->scanId().value());
   }
 
   std::shared_ptr<DataSink> createDataSink(
@@ -236,6 +249,8 @@ class HiveConnector final : public Connector {
         connectorQueryCtx->memoryPool());
   }
 
+  static folly::IOThreadPoolExecutor* executor();
+
  private:
   std::unique_ptr<DataCache> dataCache_;
   FileHandleFactory fileHandleFactory_;
@@ -246,6 +261,9 @@ class HiveConnector final : public Connector {
       "NO_PREFERENCE";
   static constexpr const char* kNodeSelectionStrategySoftAffinity =
       "SOFT_AFFINITY";
+
+  static std::mutex initMutex_;
+  static std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
 };
 
 class HiveConnectorFactory : public ConnectorFactory {

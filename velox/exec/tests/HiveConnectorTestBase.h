@@ -14,14 +14,19 @@
  * limitations under the License.
  */
 #pragma once
+#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/OperatorTestBase.h"
 #include "velox/exec/tests/TempFilePath.h"
+#include "velox/type/tests/SubfieldFiltersBuilder.h"
 
 namespace facebook::velox::exec::test {
 
 static const std::string kHiveConnectorId = "test-hive";
+
+using ColumnHandleMap =
+    std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>;
 
 // A dummy cache that always misses. This class is for testing purpose only.
 class DummyDataCache : public DataCache {
@@ -68,7 +73,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
   void writeToFile(
       const std::string& filePath,
       const std::string& name,
-      const std::vector<RowVectorPtr>& vectors);
+      const std::vector<RowVectorPtr>& vectors,
+      std::shared_ptr<dwrf::Config> config =
+          std::make_shared<facebook::velox::dwrf::Config>());
 
   std::vector<RowVectorPtr> makeVectors(
       const std::shared_ptr<const RowType>& rowType,
@@ -89,7 +96,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
 
   std::shared_ptr<exec::Task> assertQuery(
       const std::shared_ptr<const core::PlanNode>& plan,
-      const std::unordered_map<int, std::shared_ptr<TempFilePath>>& filePaths,
+      const std::unordered_map<int, std::vector<std::shared_ptr<TempFilePath>>>&
+          filePaths,
       const std::string& duckDbSql);
 
   static std::vector<std::shared_ptr<TempFilePath>> makeFilePaths(int count);
@@ -108,6 +116,14 @@ class HiveConnectorTestBase : public OperatorTestBase {
       uint64_t start = 0,
       uint64_t length = std::numeric_limits<uint64_t>::max());
 
+  static std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
+      common::test::SubfieldFilters subfieldFilters,
+      const std::shared_ptr<const core::ITypedExpr>& remainingFilter =
+          nullptr) {
+    return std::make_shared<connector::hive::HiveTableHandle>(
+        true, std::move(subfieldFilters), remainingFilter);
+  }
+
   static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
       const std::string& name);
 
@@ -117,6 +133,16 @@ class HiveConnectorTestBase : public OperatorTestBase {
   static std::shared_ptr<connector::hive::HiveColumnHandle> synthesizedColumn(
       const std::string& name);
 
+  static ColumnHandleMap allRegularColumns(
+      const std::shared_ptr<const RowType>& rowType) {
+    ColumnHandleMap assignments;
+    assignments.reserve(rowType->size());
+    for (auto& name : rowType->names()) {
+      assignments[name] = regularColumn(name);
+    }
+    return assignments;
+  }
+
   static void addConnectorSplit(
       Task* task,
       const core::PlanNodeId& planNodeId,
@@ -124,6 +150,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
 
   static void
   addSplit(Task* task, const core::PlanNodeId& planNodeId, exec::Split&& split);
+
+  memory::MappedMemory* mappedMemory() {
+    return memory::MappedMemory::getInstance();
+  }
 
   DummyDataCache* dataCache;
 };
