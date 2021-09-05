@@ -67,7 +67,7 @@ struct AccessStats {
   }
 };
 
-// Owning reference to a file number and an offset.
+// Owning reference to a file id and an offset.
 struct FileCacheKey {
   StringIdLease fileNum;
   uint64_t offset;
@@ -578,7 +578,7 @@ struct SsdKey {
   StringIdLease file;
   uint64_t offset;
 
-  bool operator=(const SsdKey& other) const {
+  bool operator==(const SsdKey& other) const {
     return offset == other.offset && file.id() == other.file.id();
   }
 };
@@ -651,6 +651,10 @@ class SsdFile {
 
  private:
   static constexpr int32_t kDecayInterval = 1000;
+
+  // Increments event count and periodically decays scores.
+  void newEventLocked();
+
   std::mutex mutex_;
   // A bitmap where a 1 indicates a region that is in use. Entries that
   // refer to an in use region are readable.
@@ -675,7 +679,7 @@ class SsdFile {
 
   // Count of reads and writes. The scores are decayed every time e count goes
   // over kDecayInterval or half 'entries_' size, wichever comes first.
-  uint64_t numActions_{0};
+  uint64_t numEvents_{0};
 
   // File descriptor.
   int32_t fd_;
@@ -684,8 +688,9 @@ class SsdFile {
 class SsdCache {
  public:
   static constexpr int32_t kNumShards = 32;
-  SsdCache(std::string_view filePrefix, uint64_t maxSize);
+  SsdCache(std::string_view filePrefix, uint64_t maxBytes);
 
+  // Returns the shard corresponding to 'fileId'.
   SsdFile& file(uint64_t fileId);
 
  private:

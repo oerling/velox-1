@@ -17,99 +17,93 @@
 #pragma once
 
 #include "velox/common/caching/AsyncDataCache.h"
-
+#include "velox/common/caching/FileIds.h"
 #include <folly/portability/SysUio.h>
 
-       #include <sys/types.h>
-       #include <sys/stat.h>
-       #include <fcntl.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 namespace facebook::velox::cache {
 
-  SsdPin::SsdPin(SsdFile& file, SsdRun run)
-    : file_(&file),
-      run_(run) {
-    file_->pinRegion(run_.offset());
-  }
+SsdPin::SsdPin(SsdFile& file, SsdRun run) : file_(&file), run_(run) {
+  file_->pinRegion(run_.offset());
+}
 
-  SsdPin::~SsdPin() {
-    file_->unpinRegion(run_.offset());
-  }
-  
-  SsdFile::SsdFile(const std::string& filename, int32_t maxRegions)
+SsdPin::~SsdPin() {
+  file_->unpinRegion(run_.offset());
+}
+
+SsdFile::SsdFile(const std::string& filename, int32_t maxRegions)
     : maxRegions_(maxRegions) {
-
-    fd_ = open(filename.c_str(), O_CREATE | O_RDWR,  S_IRUSR | S_IWUSR);
-    if (fd_ < 0) {
-      std::c_err << "Cannot open or create " << filename << " error " << errno << std::endl;
-      exit(1);
-    }
-    uint64_t size = lseek(fd_, 0, SEEK_END);
-    numRegions_ = size / kRegionSize;
-    if (size % kRegionSize > 0) {
-      ftruncate(fd_, numRegions_ * kRegionSize);
-    }
-    regionScore_.resize(kMaxRegions);
-    regionSize_.resize(kMaxRegions);
-    regionPins_.resize(kMaxRegions);
-
+  fd_ = open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+  if (fd_ < 0) {
+    LOG(ERROR) << "Cannot open or create " << filename << " error " << errno
+               << std::endl;
+    exit(1);
   }
-
-  void SsdFile::pinRegion(uint64_t offset) {
-    std::lock_guard<std::mutex> l(mutex_);
-    ++regionPins_[regionIndex(offset)];
-
+  uint64_t size = lseek(fd_, 0, SEEK_END);
+  numRegions_ = size / kRegionSize;
+  if (size % kRegionSize > 0) {
+    ftruncate(fd_, numRegions_ * kRegionSize);
   }
-  
-  void unpinRegion(uint64_t offset) {
-    std::lock_guard<std::mutex> l(mutex_);
-    --regionPins_[regionIndex(offset)];
-  }
+  regionScore_.resize(maxRegions_);
+  regionSize_.resize(maxRegions_);
+  regionPins_.resize(maxRegions_);
+}
 
-  SsdPin SsdFile::find(RawFileCacheKey key) {
-    SsdKey ssdKey{StringIdLease(fileIds(), key.fileId), key.offset};
-    std::lock_guard<std::mutex> l(mutex_);
-    newEvent();
-    auto it = entries_.find(ssdKey);
-    if (it == entries_.end()) {
-      return SsdPin();
-    }
-    return SsdPin(this, it->second);
-  }
+void SsdFile::pinRegion(uint64_t offset) {
+  std::lock_guard<std::mutex> l(mutex_);
+  ++regionPins_[regionIndex(offset)];
+}
 
-  void SsdFile::newEvent() {
-    ++numActions_;
-    if (numActions > kDecayInterval && numActions_ > entries_.size() /2) {
-      for (auto i = 0; i < numRegions_; ++i) {
-	int64_t score = regionScore_[i];
-	regionScore[i] = (score * 15) / 16;
-      }
+void SsdFile::unpinRegion(uint64_t offset) {
+  std::lock_guard<std::mutex> l(mutex_);
+  --regionPins_[regionIndex(offset)];
+}
+
+SsdPin SsdFile::find(RawFileCacheKey key) {
+  SsdKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
+  std::lock_guard<std::mutex> l(mutex_);
+  newEventLocked();
+  auto it = entries_.find(ssdKey);
+  if (it == entries_.end()) {
+    return SsdPin();
+  }
+  return SsdPin(*this, it->second);
+}
+
+void SsdFile::newEventLocked() {
+  ++numEvents_;
+  if (numEvents_ > kDecayInterval && numEvents_ > entries_.size() / 2) {
+    for (auto i = 0; i < numRegions_; ++i) {
+      int64_t score = regionScore_[i];
+      regionScore_[i] = (score * 15) / 16;
     }
   }
-  
+}
+
 void SsdFile::load(SsdRun run, char* data) {
   regionScore_[regionIndex(run.offset())] += run.size();
-  auto rc = pread(fd_, data, run.size(), run.offset()); 
-  VELOX_CHECK(rc, run.size());
+  auto rc = pread(fd_, data, run.size(), run.offset());
+  VELOX_CHECK_EQ(rc, run.size());
 }
 
 void SsdFile::load(SsdRun ssdRun, memory::MappedMemory::Allocation data) {
-  regionScore_[regionIndex(run.offset())] += run.size();
+  regionScore_[regionIndex(ssdRun.offset())] += ssdRun.size();
   std::vector<struct iovec> iovecs;
   iovecs.reserve(data.numRuns());
   int64_t bytesLeft = ssdRun.size();
   for (auto i = 0; i < data.numPages(); ++i) {
-
     auto run = data.runAt(i);
-    iovecs.push_back({run.data<char>(), std::min(run.numBytes)});
+    iovecs.push_back({run.data<char>(), std::min<int64_t>(bytesLeft, run.numBytes())});
     bytesLeft -= run.numBytes();
     if (bytesLeft <= 0) {
       break;
     };
   }
 
-
-  auto rc = folly::preadv(fd_, iovects.data(), iovecs.size(), ssdRun.offset());
+  auto rc = folly::preadv(fd_, iovecs.data(), iovecs.size(), ssdRun.offset());
   VELOX_CHECK_EQ(rc, ssdRun.size());
 }
 
@@ -118,23 +112,22 @@ void SsdFile::store(std::vector<CachePin> pins) {
   for (auto& pin : pins) {
     total += pin.entry()->size();
   }
-  
 }
-  
-SsdCache::SsdCache(std::string_view filePrefix, uint64_t maxSize)
-    : filePrefix_(filePrefix),
-      maxSize_(bits::roundUp(maxSize, kNumShards * SsdFile::kRegionSize * 4)) {
+
+SsdCache::SsdCache(std::string_view filePrefix, uint64_t maxBytes)
+    : filePrefix_(filePrefix) {
   files_.reserve(kNumShards);
+  constexpr uint64_t kSizeQuantum = kNumShards * SsdFile::kRegionSize;
+  int32_t fileMaxRegions = bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum / kNumShards;
   for (auto i = 0; i < kNumShards; ++i) {
     files_.push_back(
-        std::make_unique<SsdFile>(std::format("{}{}", filePrefix_, i)));
+		     std::make_unique<SsdFile>(fmt::format("{}{}", filePrefix_, i), fileMaxRegions));
   }
 }
 
-SsdFile* SsdCache::file(uint64_t fileId) {
+SsdFile& SsdCache::file(uint64_t fileId) {
   auto index = fileId % kNumShards;
-  return files_[index];
+  return *files_[index];
 }
 
 } // namespace facebook::velox::cache
-
