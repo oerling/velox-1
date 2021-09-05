@@ -92,7 +92,7 @@ class CachedBufferedInput : public BufferedInput {
   }
 
   void setNumStripes(int32_t numStripes) override {
-    GroupStats::instance().recordFile(fileNum_, numStripes);
+    cache::GroupStats::instance().recordFile(fileNum_, groupId_, numStripes);
   }
   
  private:

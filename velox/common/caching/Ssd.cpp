@@ -34,6 +34,15 @@ SsdPin::~SsdPin() {
   file_->unpinRegion(run_.offset());
 }
 
+  void SsdPin::operator=(SsdPin&& other) {
+    if (file_) {
+      file_->unpinRegion(run_.offset());
+    }
+    file_ = other.file_;
+    other.file_ = nullptr;
+    run_ = other.run_;
+  }
+
 SsdFile::SsdFile(const std::string& filename, int32_t maxRegions)
     : maxRegions_(maxRegions) {
   fd_ = open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
@@ -83,13 +92,23 @@ void SsdFile::newEventLocked() {
   }
 }
 
+void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
+  VELOX_CHECK_EQ(run.size(), entry.size()); 
+  if (entry.tinyData()) {
+      load(run, entry.tinyData());
+    } else {
+	load(run, entry.data());
+  }
+  entry.setSsdFile(this, regionIndex(run.offset()));
+}
+  
 void SsdFile::load(SsdRun run, char* data) {
   regionScore_[regionIndex(run.offset())] += run.size();
   auto rc = pread(fd_, data, run.size(), run.offset());
   VELOX_CHECK_EQ(rc, run.size());
 }
 
-void SsdFile::load(SsdRun ssdRun, memory::MappedMemory::Allocation data) {
+void SsdFile::load(SsdRun ssdRun, memory::MappedMemory::Allocation& data) {
   regionScore_[regionIndex(ssdRun.offset())] += ssdRun.size();
   std::vector<struct iovec> iovecs;
   iovecs.reserve(data.numRuns());

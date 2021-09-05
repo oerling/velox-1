@@ -211,6 +211,15 @@ class AsyncDataCacheEntry {
 
   void setExclusiveToShared();
 
+  void setSsdFile(SsdFile* file, int32_t region) {
+    ssdFile_ = file;
+    ssdFileRegion_ = region;
+  }
+
+  void setTrackingId(TrackingId id) {
+    trackingId_ = id;
+  }
+  
  private:
   void release();
   void addReference();
@@ -557,11 +566,22 @@ class SsdRun {
  public:
   SsdRun() : bits_(0) {}
 
-  SsdRun(uint8_t file, uint64_t offset, uint32_t size)
+  SsdRun(uint64_t offset, uint32_t size)
       : bits_((offset << 23) | ((size - 1))) {
     VELOX_CHECK_LT(offset, 1L << 36); // 64G
     VELOX_CHECK_LT(size - 1, 1 << 23); // 8MB
   }
+
+  SsdRun(const SsdRun& other) = default;
+  SsdRun(SsdRun&& other) = default;
+
+  void operator=(const SsdRun& other) {
+    bits_ = other.bits_;
+  }
+  void operator=(SsdRun&& other) {
+    bits_ = other.bits_;
+  }
+
   uint64_t offset() const {
     return (bits_ >> 23);
   }
@@ -571,7 +591,7 @@ class SsdRun {
   }
 
  private:
-  const uint64_t bits_;
+  uint64_t bits_;
 };
 
 struct SsdKey {
@@ -607,12 +627,30 @@ class SsdPin {
 
   SsdPin(SsdFile& file, SsdRun run);
 
+  SsdPin(const SsdPin& other) = delete;
+
+  SsdPin(SsdPin&& other) {
+    run_ = other.run_;
+    file_ = other.file_;
+    other.file_ = nullptr;
+  }
+
   ~SsdPin();
+
+  void operator=(SsdPin&&);
+  
   bool empty() {
     return file_ == nullptr;
   }
+  SsdFile* file() {
+    return file_;
+  }
 
- private:
+  SsdRun run() const {
+    return run_;
+  }
+
+private:
   SsdFile* file_;
   SsdRun run_;
 };
@@ -634,9 +672,11 @@ class SsdFile {
 
   SsdPin find(RawFileCacheKey key);
 
+  void load(SsdRun run, AsyncDataCacheEntry& entry);
+  
   void load(SsdRun run, char* data);
 
-  void load(SsdRun run, memory::MappedMemory::Allocation data);
+  void load(SsdRun run, memory::MappedMemory::Allocation& data);
 
   void pinRegion(uint64_t offset);
   void unpinRegion(uint64_t offset);

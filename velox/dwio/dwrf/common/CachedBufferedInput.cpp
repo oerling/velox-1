@@ -23,6 +23,8 @@ using cache::CachePin;
 using cache::LoadState;
 using cache::RawFileCacheKey;
 using cache::ScanTracker;
+using cache::SsdFile;
+using cache::SsdPin;
 using cache::TrackingId;
 using memory::MappedMemory;
 
@@ -35,7 +37,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   }
   requests_.emplace_back(CacheRequest{
       RawFileCacheKey{fileNum_, region.offset}, region.length, id, CachePin()});
-  tracker_->recordReference(id, region.length, groupId_);
+  tracker_->recordReference(id, fileNum_, region.length, groupId_);
   return std::make_unique<CacheInputStream>(
       cache_, region, input_, fileNum_, tracker_, id, groupId_);
 }
@@ -78,7 +80,8 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
   int32_t numNewLoads = 0;
   auto requests = std::move(requests_);
   for (auto& request : requests) {
-    if (request.trackingId.empty() || tracker_->shouldPrefetch(request.trackingId, prefetchThreshold_)) {
+    if (request.trackingId.empty() ||
+        tracker_->shouldPrefetch(request.trackingId, prefetchThreshold_)) {
       request.pin = cache_->findOrCreate(request.key, request.size, nullptr);
       if (request.pin.empty()) {
         // Already loading for another thread.
@@ -87,6 +90,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
       if (request.pin.entry()->isExclusive()) {
         // A new entry to be filled.
         request.pin.entry()->setPrefetch();
+	request.pin.entry()->setTrackingId(request.trackingId);
         toLoad.push_back(&request);
       } else {
         // Already in cache, access time is refreshed.
@@ -213,9 +217,9 @@ class DwrfFusedLoad : public cache::FusedLoad {
   std::unique_ptr<AbstractInputStreamHolder> input_;
 };
 
-class SsdLoad {
+class SsdLoad : public cache::FusedLoad {
  public:
-  void initialize(SsdFile& file, CachePin&& pin, SsdPin pin) {
+  void initialize(SsdFile& file, CachePin&& pin, SsdPin&& ssdPin) {
     std::vector<CachePin> pins;
     pins.push_back(std::move(pin));
     cache::FusedLoad::initialize(std::move(pins));
@@ -223,16 +227,12 @@ class SsdLoad {
   }
 
   void loadData() {
-    auto entry = pins_[0].entry();
-    if (entry->tinyData()) {
-      file_.load(ssdPin_.run(), entry->tinyData());
-    } else {
-      file_.load(ssdPin_.run(), entry->data());
-    }
+    auto* entry = pins_[0].entry();
+    ssdPin_.file()->load(ssdPin_.run(), *entry);
   }
 
  private:
-  SsdPin pin_;
+  SsdPin ssdPin_;
 };
 } // namespace
 
@@ -257,19 +257,28 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
 }
 
 void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*> requests) {
-  auto& file = SsdCache::file(fileId_);
+  auto* ssdCache = cache_->ssdCache();
+  if (!ssdCache) {
+    return;
+  }
+  auto& file = ssdCache->file(fileNum_);
   // Check if the loadable items are backed by SSD. Remove the request for the
   // found items.
   for (int32_t i = requests.size() - 1; i >= 0; --i) {
     auto request = requests[i];
-    auto SsdPin pin =
-        file.find(RawCacheKey{fileId_, region.pin().entry()->offset()});
-    if (!pin.empty()) {
+    auto ssdPin =
+        file.find(RawFileCacheKey{fileNum_, request->pin.entry()->offset()});
+    if (!ssdPin.empty()) {
       auto load = std::make_shared<SsdLoad>();
-      load->initialize(std::move(region.pin), std::move(ssdPin));
+      load->initialize(file, std::move(request->pin), std::move(ssdPin));
+      if (executor_ &&
+          (request->trackingId.empty() ||
+           tracker_->shouldPrefetch(request->trackingId, prefetchThreshold_))) {
+        executor_->add(
+            [pendingLoad = load]() { pendingLoad->loadOrFuture(nullptr); });
+      }
+      requests.erase(requests.begin() + i);
     }
-
-    regions.erase(regions.begin() + i);
   }
 }
 

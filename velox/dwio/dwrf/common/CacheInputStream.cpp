@@ -54,7 +54,7 @@ bool CacheInputStream::Next(const void** buffer, int32_t* size) {
   offsetInRun_ += *size;
   position_ += *size;
   if (tracker_) {
-    tracker_->recordRead(trackingId_, *size, groupId_);
+    tracker_->recordRead(trackingId_, *size, fileNum_, groupId_);
   }
   return true;
 }
@@ -135,6 +135,19 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       continue;
     }
     if (pin_.entry()->isExclusive()) {
+      pin_.entry()->setTrackingId(trackingId_);
+      auto ssdCache = cache_->ssdCache();
+
+      if (ssdCache) {
+	auto& file = ssdCache->file(fileNum_);
+	auto ssdPin = file.find(cache::RawFileCacheKey{fileNum_, region.offset});
+	  if (!ssdPin.empty()) {
+	    file.load(ssdPin.run(), *pin_.entry());
+	    pin_.entry()->setValid(true);
+	    pin_.entry()->setExclusiveToShared();
+	    return;
+	  }
+      }
       auto ranges = makeRanges(pin_.entry(), region.length);
       input_.read(ranges, region.offset, dwio::common::LogType::FILE);
       pin_.entry()->setValid(true);
