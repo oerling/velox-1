@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/common/caching/Ssd.h"
+#include "velox/common/caching/AsyncDataCache.h"
 
 #include <folly/portability/SysUio.h>
 
@@ -24,17 +24,16 @@
        #include <sys/stat.h>
        #include <fcntl.h>
 
-
 namespace facebook::velox::cache {
 
   SsdPin::SsdPin(SsdFile& file, SsdRun run)
-    : file_(file),
+    : file_(&file),
       run_(run) {
-    file_.pinRegion(run_.offset());
+    file_->pinRegion(run_.offset());
   }
 
   SsdPin::~SsdPin() {
-    file_.unpinRegion(run_.offset());
+    file_->unpinRegion(run_.offset());
   }
   
   SsdFile::SsdFile(const std::string& filename, int32_t maxRegions)

@@ -47,7 +47,7 @@ class GroupTrackerTest : public testing::Test {
 
   // Makes a test population of tables. A table has many file groups
   // (partitions) with the same number of columns and same column sizes.
-  void makeTables(int numTables) {
+  void makeTables(int32_t numTables) {
     for (auto i = 0; i < numTables; ++i) {
       int32_t sizeClass = random(100);
       int32_t numColumns = 0;
@@ -61,90 +61,120 @@ class GroupTrackerTest : public testing::Test {
 
       std::vector<int32_t> sizes;
       for (auto i = 0; i < numColumns; ++i) {
-        sizes.push_back(columnSizes_[random(columnSizes.size())]);
+        sizes.push_back(columnSizes_[random(columnSizes_.size())]);
       }
       int32_t numGroups = 10 + random(30);
       std::vector<TestGroup> groups;
       for (auto i = 0; i < numGroups; ++i) {
         TestGroup group;
-        group.id =StringIdLease(fileIds(), fmt::format("group{}", groupCounter);
-	int32_t numFiles = 10 + random(6);
-	for (auto fileNum = ; fieleNum < numFiles; ++fileNum) {
-          group.files.push_back(fmt::format(
-              "{}/file{}", fileIds().string(group.id.id()), fileNum));
-	}
-	group.sizes = sizes;
-	groups.push_back(std::move(group));
+        group.id = StringIdLease(fileIds(), fmt::format("group{}", i));
+        int32_t numFiles = 10 + random(6);
+        for (auto fileNum = 0; fileNum < numFiles; ++fileNum) {
+          group.files.push_back(TestFile{
+              StringIdLease(
+                  fileIds(),
+                  fmt::format(
+                      "{}/file{}", fileIds().string(group.id.id()), fileNum)),
+              10});
+        }
+        group.columnSizes = sizes;
+        groups.push_back(std::move(group));
       }
       TestTable table;
       table.groups = std::move(groups);
       tables_.push_back(std::move(table));
     }
   }
-}
-  
-  // Reads a random set of groups from a random table, selecting a biased random set of columns with some being sparsely read.
-  void query() {
-  auto numTables = tables_.size();
-  int32_t tableIndex = random(numTables, numTables);
 
-  std::vector<int32_t> columns;
-  auto& table = tables_[tableIndex];
-  , auto numColumns = table.groups[0].columnSizes().size();
-  std::unordered_map<int32_t> readColumns;
-  int32_t toRead = 5 + random(numColumns > 20 ? 10 : 5);
-  for (auto i = 0; i < numRead; ++i) {
-    readColumns.insert(random(numColumns, numColumns));
-  }
-  auto numGroups = table.groups.size();
-  auto readGroups = std::min(numGroups, 5 + random(numGroups));
-  for (auto groupIndex = numGroups - readGroups; groupIndex < numGroups;
-       ++groupIndex) {
-    auto& group = table.groups[groupIndex];
-    for (auto& file : group.files) {
-      groups.recordFile(file.id, file.numStripes);
-      for (column : readColumns) {
+  // Reads a random set of groups from a random table, selecting a biased
+  // random set of columns with some being sparsely read.
+  void query() {
+    auto numTables = tables_.size();
+    int32_t tableIndex = random(numTables, numTables);
+    auto& stats = GroupStats::instance();
+    std::vector<int32_t> columns;
+    auto& table = tables_[tableIndex];
+    auto numColumns = table.groups[0].columnSizes.size();
+    std::unordered_set<int32_t> readColumns;
+    int32_t toRead = 5 + random(numColumns > 20 ? 10 : 5);
+    for (auto i = 0; i < toRead; ++i) {
+      readColumns.insert(random(numColumns, numColumns));
+    }
+    auto numGroups = table.groups.size();
+    auto readGroups = std::min<int32_t>(numGroups, 5 + random(numGroups));
+    for (auto groupIndex = numGroups - readGroups; groupIndex < numGroups;
+         ++groupIndex) {
+      auto& group = table.groups[groupIndex];
+      for (auto& file : group.files) {
+        stats.recordFile(file.id.id(), group.id.id(), file.numStripes);
+        for (auto column : readColumns) {
+          stats.recordReference(
+              file.id.id(),
+              group.id.id(),
+              TrackingId(column, 0),
+              group.columnSizes[column]);
+          auto readBytes = shouldRead(column, group.columnSizes[column]);
+          if (readBytes) {
+            if (stats.shouldSaveToSsd(group.id.id(), TrackingId(column, 0))) {
+              numFromSsd_ += readBytes;
+            } else {
+              numFromDisk_ += readBytes;
+            }
+            stats.recordRead(
+                file.id.id(), group.id.id(), TrackingId(column, 0), readBytes);
+          }
+        }
       }
     }
   }
-}
 
-std::string groupName(const std::string filename) {
-  const char* slash = strrchr(name.c_str(), '/');
-  if (slash) {
-    return std::string(filename, slash - str.data());
+  // For a stable 1/3, read 1/3 of the data.
+  int32_t shouldRead(int32_t column, int32_t size) {
+    int32_t rnd = random(100);
+    if (column % 21 == 0) {
+      // 5% are read for 1/10.
+      return rnd > 95 ? size / 10 : 0;
+    }
+    if (column % 7 == 0) {
+      // 1/7 is read for 1/1 1/2 of the time.
+      if (rnd > 50) {
+        return size / 3;
+      }
+      return 0;
+    }
+
+    return size;
   }
-  return filename;
-}
 
-bool shouldReference(uint64_t fileId, uint64_t groupId, int32_t columnId) {}
+  int32_t random(int32_t range, int32_t maskRange) {
+    return (folly::Random::rand32(rng_) % range) |
+        (folly::Random::rand32(rng_) % maskRange);
+  }
 
-bool shouldRead(uint64_t groupId, int32_t column) {}
+  int32_t random(int32_t pctLow, int32_t lowRange, int32_t highRange) {
+    return folly::Random::rand32(rng_) %
+        (folly::Random::rand32() % 100 > pctLow ? highRange : lowRange);
+  }
 
-int32_t random(int32_t range, int32_t maskRange) {
-  return (folly::Random::rand32(rng_) % range) |
-      (folly::Random::rand32(rng_) % maskRange);
-}
+  int32_t random(int32_t range) {
+    return folly::Random::rand32(rng_) % range;
+  }
+  std::vector<TestTable> tables_;
+  std::vector<int32_t>
+      columnSizes_{1000, 2000, 3000, 3000, 3000, 4000, 10000, 15000, 100000};
+  uint64_t numFromSsd_{0};
+  uint64_t numFromDisk_{0};
+  folly::Random::DefaultGenerator rng_;
+};
 
-int32_t random(int32_t pctLow, int32_t lowRange, int32_t highRange) {
-  return folly::Random::rand32(rng_) %
-      (folly::Random::rand32() % 100 > lowPct ? highRange : lowRange);
-}
-
-int32_t random(int32_t range) {
-  return folly::Random::rand32(rng_) % range;
-}
-std::vector<TestTable> tables_;
-std::vector<int32_t>
-    columnSizes_{1000, 2000, 3000, 3000, 3000, 4000, 10000, 15000, 100000};
-
-folly::Random::DefaultGenerator rng_;
-}
-;
-
-TEST_F(GroupTrackerTest, biased) {
+TEST_F(GroupTrackerTest, scan) {
+  constexpr int32_t kQueries = 1000;
+  uint64_t ssdSize = 1UL << 30;
   auto& stats = GroupStats::instance();
   for (auto i = 0; i < kQueries; ++i) {
     query();
+    if (i % (kQueries / 10) == 0) {
+      GroupStats::instance().updateSsdFilter(ssdSize);
+    }
   }
 }

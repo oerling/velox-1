@@ -19,6 +19,7 @@
 #include "velox/common/base/Bloom.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
+#include "velox/common/caching/FileIds.h"
 
 #include <folly/container/F14Map.h>
 #include <folly/container/F14Set.h>
@@ -74,9 +75,11 @@ class GroupTracker {
 
   void recordFile(uint64_t fileId, int32_t numStripes);
 
-  void recordReference(uint64_t fileId, int32_t bytes);
-  void recordRead(uint64_t fileId, int32_t bytes);
+  void recordReference(uint64_t fileId, TrackingId trackingId, int32_t bytes);
+  void recordRead(uint64_t fileId, TrackingId trackingId, int32_t bytes);
 
+  void addColumnScores(std::vector<SsdScore>& scores) const;
+  
  private:
   StringIdLease name_;
   std::mutex mutex_;
@@ -85,14 +88,9 @@ class GroupTracker {
   folly::F14FastMap<TrackingId, TrackingData> columns_;
   ApproxCounter numFiles_;
 
-  // Set of a few sample fileIds used to measure average column sizes.
-  folly::F14FastSet<uint64_t> sampleFiles_;
+  uint64_t numOpens_{0};
+  uint64_t numOpenStripes_{0};
 
-  // Per column references and reads for the files in 'sampleFiles_'.
-  folly::F14FastMap<TrackingId, ReadCounts> sampleFileReads_;
-
-  // Number of stripes in files in 'sampleFiles_'.
-  uint64_t numSampleStripes_{0};
 };
 
 // Singleton for  keeping track of file groups.
@@ -112,17 +110,29 @@ class GroupStats {
       TrackingId trackingId,
       int32_t bytes);
 
-  static GroupStats* instance();
+  static GroupStats& instance();
 
+  // Returns true if groupId, trackingId qualify the data to be cached to SSD.
   bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const;
 
- private:
-  // Sets  'hashes' to a Bloom filter of hashes from fileId, offset that ar in
-  // the top sizeMB most referenced data.
-  void makeSsdFilter(std::vector<uint64_t>& hashes);
+  // Updates the SSD selection criteria. The group. trackingId pairs
+  // that account for the top 'ssdSize' bytes of reported IO are
+  // selected.
+  void updateSsdFilter(uint64_t ssdSize);
 
+private:
+  void decay();
+  GroupTracker& group(uint64_t id) {
+    auto it = groups_.find(id);
+    if (it == groups_.end()) {
+      groups_[id] = std::make_unique<GroupTracker>(StringIdLease(fileIds(), id));
+      return *groups_[id];
+    }
+    return *it->second;
+  }
+  
   std::mutex mutex_;
-  F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
+  folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
   // Bloom filter of groupId, trackingId hashes for streams that should be saved
   // to SSD.
   std::vector<uint64_t> saveToSsd_;
