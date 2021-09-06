@@ -90,7 +90,6 @@ class GroupTracker {
 
   uint64_t numOpens_{0};
   uint64_t numOpenStripes_{0};
-
 };
 
 // Singleton for  keeping track of file groups.
@@ -136,6 +135,7 @@ private:
   // Bloom filter of groupId, trackingId hashes for streams that should be saved
   // to SSD.
   std::vector<uint64_t> saveToSsd_;
+  bool allFitOnSsd_{false};
 };
 
 } // namespace facebook::velox::cache

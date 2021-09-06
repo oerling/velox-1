@@ -160,11 +160,7 @@ class AsyncDataCacheEntry {
   }
 
   // Call this after loading the data and before releasing the pin.
-  void setValid(bool success = true) {
-    VELOX_CHECK_NE(0, numPins_);
-    dataValid_ = success;
-    load_.reset();
-  }
+  void setValid(bool success = true);
 
   void touch() {
     accessStats_.touch();
@@ -219,7 +215,7 @@ class AsyncDataCacheEntry {
   void setTrackingId(TrackingId id) {
     trackingId_ = id;
   }
-  
+
  private:
   void release();
   void addReference();
@@ -321,6 +317,15 @@ class CachePin {
   }
   AsyncDataCacheEntry* entry() const {
     return entry_;
+  }
+
+  bool operator<(const CachePin& other) const {
+    auto id1 = entry_->key_.fileNum.id();
+    auto id2 = other.entry_->key_.fileNum.id();
+    if (id1 == id2) {
+      return entry_->offset() < other.entry_->offset();
+    }
+    return id1 < id2;
   }
 
  private:
@@ -514,6 +519,8 @@ class CacheShard {
   // Adds the stats of 'this' to 'stats'.
   void updateStats(CacheStats& stats);
 
+  void getSsdSaveable(std::vector<CachePin>& pins);
+  
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
   void calibrateThreshold();
@@ -559,7 +566,6 @@ class CacheShard {
   uint64_t allocClocks_;
 };
 
-
 // A 64 bit word describing a SSD cache entry. 32 files x 64G per file, up to
 // 8MB in entry size for a total of 2TB. Larger capacities need more bits.
 class SsdRun {
@@ -603,7 +609,6 @@ struct SsdKey {
   }
 };
 
-
 } // namespace facebook::velox::cache
 namespace std {
 template <>
@@ -616,8 +621,6 @@ struct hash<::facebook::velox::cache::SsdKey> {
 } // namespace std
 
 namespace facebook::velox::cache {
-
-  class SsdFile;
 
 // Represents an SsdFile entry that is planned for load or being loaded. This
 // is destroyed after load.
@@ -638,7 +641,7 @@ class SsdPin {
   ~SsdPin();
 
   void operator=(SsdPin&&);
-  
+
   bool empty() {
     return file_ == nullptr;
   }
@@ -650,7 +653,7 @@ class SsdPin {
     return run_;
   }
 
-private:
+ private:
   SsdFile* file_;
   SsdRun run_;
 };
@@ -663,7 +666,11 @@ class SsdFile {
 
   // Constructs a cache backed by filename. Discards any previous
   // contents of filename.
-  SsdFile(const std::string& filename, int32_t maxRegions);
+  SsdFile(
+      const std::string& filename,
+      SsdCache& cache,
+      int32_t ordinal,
+      int32_t maxRegions);
 
   // Adds entries of  'pins'  to this file. 'pins' must be in read mode and
   // those pins that are successfully added to SSD are marked as being on SSD.
@@ -673,7 +680,7 @@ class SsdFile {
   SsdPin find(RawFileCacheKey key);
 
   void load(SsdRun run, AsyncDataCacheEntry& entry);
-  
+
   void load(SsdRun run, char* data);
 
   void load(SsdRun run, memory::MappedMemory::Allocation& data);
@@ -689,18 +696,50 @@ class SsdFile {
     regionScore_[region] += size;
   }
 
+  int32_t maxRegions() const {
+    return maxRegions_;
+  }
+
+  int32_t ordinal() const {
+    return ordinal_;
+  }
+
  private:
   static constexpr int32_t kDecayInterval = 1000;
+
+  // Returns [start, size] of contiguous space for storing data of a
+  // number of contiguous 'pins' starting at 'startIndex'.  Returns a
+  // run of 0 bytes if there is no space
+  std::pair<uint64_t, int32_t> getSpace(
+      const std::vector<CachePin>& pins,
+      int32_t begin);
+
+  // Removes all 'entries_' that reference data in 'toErase'.
+  void clearRegionEntriesLocked(const std::vector<int32_t>& toErase);
+
+  // Clears one or more  regions for accommodating new entries. The regions are
+  // added to 'writableRegions_'. Returns true if regions could be cleared.
+  // cleared.
+  bool evictLocked();
 
   // Increments event count and periodically decays scores.
   void newEventLocked();
 
   std::mutex mutex_;
-  // A bitmap where a 1 indicates a region that is in use. Entries that
-  // refer to an in use region are readable.
-  std::vector<uint64_t> activeRegions_;
-  // Number of 64MB regions in the file.
+
+  // The containing SsdCache.
+  SsdCache& cache_;
+
+  // Stripe number within 'cache_'.
+  int32_t ordinal_;
+
+  // Number of kRegionSize regions in the file.
   int32_t numRegions_{0};
+
+  // True if stopped serving traffic. Happens if no evictions are
+  // possible due to everything being pinned. Clears when pins
+  // decrease and space can be cleared.
+  bool suspended_{false};
 
   // Maximum size of the backing file in kRegionSize units.
   const int32_t maxRegions_;
@@ -708,6 +747,9 @@ class SsdFile {
   // Number of used bytes in in each region. A new entry must fit
   // between the offset and the end of the region.
   std::vector<uint32_t> regionSize_;
+
+  // Region numbers available for writing new entries.
+  std::vector<int32_t> writableRegions_;
 
   // Count of KB used from the corresponding region. Decays with time.
   std::vector<uint64_t> regionScore_;
@@ -733,17 +775,29 @@ class SsdCache {
   // Returns the shard corresponding to 'fileId'.
   SsdFile& file(uint64_t fileId);
 
+  uint64_t maxBytes() const {
+    return files_[0]->maxRegions() * files_.size() * SsdFile::kRegionSize;
+  }
+
+  // Returns true if no store s in progress. Atomically sets a store
+  // to be in progress. store() must be called after this. The storing
+  // state is reset asynchronously after writing to SSD finishes.
+  bool startStore();
+
+  void store(std::vector<CachePin> pins);
+
  private:
   std::string filePrefix_;
   std::vector<std::unique_ptr<SsdFile>> files_;
+  // Count of shards with unfinished stores.
+  std::atomic<int32_t> storesInProgress_{0};
 };
 
-  
 class AsyncDataCache : public memory::MappedMemory,
                        public std::enable_shared_from_this<AsyncDataCache> {
  public:
   AsyncDataCache(
-		 std::unique_ptr<memory::MappedMemory> mappedMemory,
+      std::unique_ptr<memory::MappedMemory> mappedMemory,
       uint64_t maxBytes,
       std::unique_ptr<SsdCache> ssdCache = nullptr);
 
@@ -812,6 +866,10 @@ class AsyncDataCache : public memory::MappedMemory,
     return ssdCache_.get();
   }
 
+  void incrementNew(uint64_t size);
+
+  void possibleSsdSave(uint64_t bytes);
+
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
@@ -826,6 +884,17 @@ class AsyncDataCache : public memory::MappedMemory,
   // but not yet hit for the first time.
   std::atomic<memory::MachinePageCount> prefetchPages_{0};
   uint64_t maxBytes_;
+
+  // Approximate counter of bytes allocated to cover misses. When this
+  // exceeds 'nextSsdScoreSize_' we update the SSD admission criteria.
+  uint64_t newBytes_{0};
+
+  // 'newBytes_' value after which SSD admission should be reconsidered.
+  uint64_t nextSsdScoreSize_{1UL << 30};
+
+  // Approximate counter tracking new entries that could be saved to SSD.
+  uint64_t ssdSaveable_{0};
+
   CacheStats stats_;
 };
 

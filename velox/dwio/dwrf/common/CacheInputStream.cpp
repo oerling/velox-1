@@ -135,6 +135,7 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       continue;
     }
     if (pin_.entry()->isExclusive()) {
+      pin_.entry()->setGroupId(groupId_);
       pin_.entry()->setTrackingId(trackingId_);
       auto ssdCache = cache_->ssdCache();
 

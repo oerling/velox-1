@@ -16,6 +16,7 @@
 
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
+#include "velox/common/caching/GroupTracker.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 
@@ -93,6 +94,16 @@ memory::MachinePageCount AsyncDataCacheEntry::setPrefetch(bool flag) {
   return shard_->cache()->incrementPrefetchPages(flag ? numPages : -numPages);
 }
 
+void AsyncDataCacheEntry::setValid(bool success) {
+  VELOX_CHECK_NE(0, numPins_);
+  dataValid_ = success;
+  load_.reset();
+  if (!ssdFile_ &&
+      GroupStats::instance().shouldSaveToSsd(groupId_, trackingId_)) {
+    shard_->cache()->possibleSsdSave(size_);
+  }
+}
+
 std::unique_ptr<AsyncDataCacheEntry> CacheShard::getFreeEntryWithSize(
     uint64_t /*sizeHint*/) {
   std::unique_ptr<AsyncDataCacheEntry> newEntry;
@@ -166,6 +177,7 @@ CachePin CacheShard::initEntry(
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
   ++numNew_;
+  entry->setSsdFile(nullptr, 0);
   entry->key_ = FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset};
   if (entry->size() < size) {
     ClockTimer t(allocClocks_);
@@ -191,6 +203,7 @@ CachePin CacheShard::initEntry(
   }
   entry->touch();
   entry->size_ = size;
+  cache_->incrementNew(size);
   CachePin pin;
   pin.setEntry(entry);
   return pin;
@@ -405,6 +418,18 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.allocClocks += allocClocks_;
 }
 
+void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
+  std::lock_guard<std::mutex> l(mutex_);
+  for (auto& entry : entries_) {
+    if (!entry->ssdFile_ &&
+        GroupStats::instance().shouldSaveToSsd(entry->key_.fileNum.id(), entry->trackingId_)) {
+      CachePin pin;
+      pin.setEntry(entry.get());
+      pins.push_back(std::move(pin));
+    }
+  }
+}
+
 AsyncDataCache::AsyncDataCache(
     std::unique_ptr<MappedMemory> mappedMemory,
     uint64_t maxBytes,
@@ -451,6 +476,40 @@ bool AsyncDataCache::allocate(
         numPages * MappedMemory::kPageSize, nthAttempt >= kNumShards);
   }
   return false;
+}
+
+void AsyncDataCache::incrementNew(uint64_t size) {
+  newBytes_ += size;
+  if (!ssdCache_) {
+    return;
+  }
+  if (newBytes_ > nextSsdScoreSize_) {
+    // Check next time after replacing 1GB or half the cache, whichever comes
+    // last.
+    nextSsdScoreSize_ = newBytes_ +
+        std::max<int64_t>(cachedPages_ * MappedMemory::kPageSize, 1UL << 30);
+    GroupStats::instance().updateSsdFilter(ssdCache_->maxBytes() * 0.9);
+  }
+}
+
+void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
+  if (!ssdCache_) {
+    return;
+  }
+  ssdSaveable_ += bytes;
+  if (ssdSaveable_ / MappedMemory::kPageSize > cachedPages_ / 8) {
+    ssdSaveable_ = 0;
+    // Do not start a new save if another one is in progress.
+    if (!ssdCache_->startStore()) {
+      return;
+    }
+
+    std::vector<CachePin> pins;
+    for (auto& shard : shards_) {
+      shard->getSsdSaveable(pins);
+    }
+    ssdCache_->store(pins);
+  }
 }
 
 CacheStats AsyncDataCache::refreshStats() const {

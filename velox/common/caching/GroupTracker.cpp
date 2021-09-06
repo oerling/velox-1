@@ -43,8 +43,42 @@ void GroupTracker::recordRead(
   data.readBytes += bytes;
   ++data.numReads;
 }
+namespace {
+uint64_t ssdFilterHash(uint64_t groupId, TrackingId trackingId) {
+  return bits::hashMix(
+      folly::hasher<uint64_t>()(groupId), std::hash<TrackingId>()(trackingId));
+}
 
-void GroupTracker::addColumnScores(std::vector<SsdScore>& scores) const {}
+// Returns an arbitrary multiplier for score based on
+// size.
+
+float sizeFactor(float size) {
+  // Number of bytes transferred as part of a large request in in
+  // the time of a round trip with no data transfer.
+  constexpr float kBytesPerLatency = 10000;
+  return kBytesPerLatency / (kBytesPerLatency + size);
+}
+} // namespace
+
+void GroupTracker::addColumnScores(std::vector<SsdScore>& scores) const {
+  if (!numOpens_) {
+    return;
+  }
+  int32_t numFiles = numFiles_.count();
+  auto stripesInFile = numOpenStripes_ / numOpens_;
+  auto numStripes = numFiles * stripesInFile;
+  for (auto& pair : columns_) {
+    auto& data = pair.second;
+    if (!data.numReads || !data.numReferences) {
+      continue; // Unused.
+    }
+    float size = (data.referencedBytes / data.numReferences) * numStripes;
+    float readSize = data.readBytes / data.numReads;
+    float readFraction = readSize / size;
+    float score = data.numReads * sizeFactor(size) * readFraction;
+    scores.push_back(SsdScore{score, size, ssdFilterHash(name_.id(), pair.first)});
+  }
+}
 
 void GroupStats::recordFile(
     uint64_t fileId,
@@ -74,8 +108,10 @@ void GroupStats::recordRead(
 
 bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
     const {
-  uint64_t hash = bits::hashMix(
-      folly::hasher<uint64_t>()(groupId), std::hash<TrackingId>()(trackingId));
+  if (allFitOnSsd_) {
+    return true;
+  }
+  uint64_t hash = ssdFilterHash(groupId, trackingId);
   return Bloom::test(saveToSsd_.data(), saveToSsd_.size(), hash);
 }
 
@@ -83,6 +119,32 @@ void GroupStats::updateSsdFilter(uint64_t ssdSize) {
   std::vector<SsdScore> scores;
   for (auto& pair : groups_) {
     pair.second->addColumnScores(scores);
+  }
+  // Sort the scores, high score first.
+  std::sort(
+      scores.begin(),
+      scores.end(),
+      [](const SsdScore& left, const SsdScore& right) {
+        return left.score > right.score;
+      });
+  float size = 0;
+
+  int32_t i = 0;
+  for (; i < scores.size(); ++i) {
+    size += scores[i].size;
+    if (size > ssdSize) {
+      break;
+    }
+  }
+  if (i == scores.size()) {
+    allFitOnSsd_ = true;
+  } else {
+    allFitOnSsd_ = false;
+    saveToSsd_.clear();
+    saveToSsd_.resize(bits::nextPowerOfTwo(4 + (i / 8)));
+    for (auto included = 0; included < i; ++included) {
+      Bloom::set(saveToSsd_.data(), saveToSsd_.size(), scores[i].hash);
+    }
   }
 }
 

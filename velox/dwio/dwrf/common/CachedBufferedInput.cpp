@@ -91,6 +91,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
         // A new entry to be filled.
         request.pin.entry()->setPrefetch();
 	request.pin.entry()->setTrackingId(request.trackingId);
+	request.pin.entry()->setGroupId(groupId_);
         toLoad.push_back(&request);
       } else {
         // Already in cache, access time is refreshed.
