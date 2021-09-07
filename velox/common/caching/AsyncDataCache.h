@@ -538,7 +538,9 @@ class CacheShard {
 class AsyncDataCache : public memory::MappedMemory,
                        public std::enable_shared_from_this<AsyncDataCache> {
  public:
-  AsyncDataCache(std::unique_ptr<memory::MappedMemory> mappedMemory, uint64_t maxBytes);
+  AsyncDataCache(
+      std::unique_ptr<memory::MappedMemory> mappedMemory,
+      uint64_t maxBytes);
 
   // Finds or creates a cache entry corresponding to 'key'. The entry
   // is returned in 'pin'. If the entry is new, it is pinned in

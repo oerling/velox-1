@@ -22,8 +22,8 @@ namespace facebook::velox {
 StringIdMap& fileIds() {
   return *fileIdsShared();
 }
-  
-  const std::shared_ptr<StringIdMap>& fileIdsShared() {
+
+const std::shared_ptr<StringIdMap>& fileIdsShared() {
   static std::shared_ptr<StringIdMap> ids = std::make_shared<StringIdMap>();
   return ids;
 }

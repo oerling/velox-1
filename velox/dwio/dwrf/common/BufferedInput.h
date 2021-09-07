@@ -83,7 +83,7 @@ class BufferedInput {
   virtual bool shouldPrefetchStripes() const {
     return false;
   }
-  
+
  protected:
   dwio::common::InputStream& input_;
 

@@ -216,7 +216,8 @@ class Connector {
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
-  static std::shared_ptr<cache::ScanTracker> getTracker(const std::string& scanId);
+  static std::shared_ptr<cache::ScanTracker> getTracker(
+      const std::string& scanId);
 
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
@@ -257,9 +258,9 @@ bool unregisterConnector(const std::string& connectorId);
 
 std::shared_ptr<Connector> getConnector(const std::string& connectorId);
 
-#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                    \
-  namespace {                                                           \
-  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =               \
+#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                      \
+  namespace {                                                             \
+  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =                 \
       facebook::velox::connector::registerConnectorFactory((theFactory)); \
   }
 } // namespace facebook::velox::connector

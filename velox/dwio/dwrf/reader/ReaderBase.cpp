@@ -218,19 +218,18 @@ ReaderBase::ReaderBase(
       auto& stripe = getFooter().stripes(i);
       ++numQueued;
       input_->enqueue(
-		      {stripe.offset() + stripe.indexlength() + stripe.datalength(),
-		       stripe.footerlength()});
+          {stripe.offset() + stripe.indexlength() + stripe.datalength(),
+           stripe.footerlength()});
     }
     if (numQueued) {
       input_->load(LogType::FOOTER);
     }
-
-  }  
+  }
   // initialize file decrypter
   handler_ = DecryptionHandler::create(*footer_, factory);
 }
 
-  std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
+std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
   std::vector<uint64_t> rowsPerStripe;
   auto numStripes = getFooter().stripes_size();
   rowsPerStripe.reserve(numStripes);

@@ -30,8 +30,8 @@ class AsyncDataCacheTest : public testing::Test {
  protected:
   static constexpr int32_t kNumFiles = 100;
   void initializeCache(int64_t maxBytes) {
-    cache_ =
-        std::make_shared<AsyncDataCache>(MappedMemory::createDefaultInstance(), maxBytes);
+    cache_ = std::make_shared<AsyncDataCache>(
+        MappedMemory::createDefaultInstance(), maxBytes);
     for (auto i = 0; i < kNumFiles; ++i) {
       auto name = fmt::format("testing_file_{}", i);
       filenames_.push_back(StringIdLease(fileIds(), name));
