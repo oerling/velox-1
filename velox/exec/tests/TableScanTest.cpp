@@ -74,7 +74,6 @@ class TableScanTest : public HiveConnectorTestBase {
         std::make_shared<core::MemConfig>(), connectorConfigs, mappedMemory());
   }
 
-  
   std::shared_ptr<Task> assertQuery(
       const std::shared_ptr<const core::PlanNode>& plan,
       const std::shared_ptr<HiveConnectorSplit>& hiveSplit,

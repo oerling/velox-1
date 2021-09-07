@@ -34,8 +34,8 @@ class AsyncDataCacheTest : public testing::Test {
     if (ssdBytes) {
       ssdCache = std::make_unique<SsdCache>("/tmp/testcache", ssdBytes);
     }
-    cache_ =
-      std::make_shared<AsyncDataCache>(MappedMemory::createDefaultInstance(), maxBytes, std::move(ssdCache));
+    cache_ = std::make_shared<AsyncDataCache>(
+        MappedMemory::createDefaultInstance(), maxBytes, std::move(ssdCache));
     for (auto i = 0; i < kNumFiles; ++i) {
       auto name = fmt::format("testing_file_{}", i);
       filenames_.push_back(StringIdLease(fileIds(), name));
@@ -268,4 +268,3 @@ TEST_F(AsyncDataCacheTest, outOfCapacity) {
   EXPECT_EQ(0, cache_->incrementPrefetchPages(0));
   EXPECT_EQ(4092, cache_->numAllocated());
 }
-

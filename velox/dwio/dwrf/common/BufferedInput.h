@@ -84,8 +84,8 @@ class BufferedInput {
     return false;
   }
 
-  virtual void setNumStripes(int32_t /*numStripes*/) {} 
-  
+  virtual void setNumStripes(int32_t /*numStripes*/) {}
+
  protected:
   dwio::common::InputStream& input_;
 

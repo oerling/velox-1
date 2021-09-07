@@ -17,9 +17,9 @@
 #pragma once
 
 #include "velox/common/base/Bloom.h"
+#include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
-#include "velox/common/caching/FileIds.h"
 
 #include <folly/container/F14Map.h>
 #include <folly/container/F14Set.h>
@@ -79,7 +79,7 @@ class GroupTracker {
   void recordRead(uint64_t fileId, TrackingId trackingId, int32_t bytes);
 
   void addColumnScores(std::vector<SsdScore>& scores) const;
-  
+
  private:
   StringIdLease name_;
   std::mutex mutex_;
@@ -119,17 +119,18 @@ class GroupStats {
   // selected.
   void updateSsdFilter(uint64_t ssdSize);
 
-private:
+ private:
   void decay();
   GroupTracker& group(uint64_t id) {
     auto it = groups_.find(id);
     if (it == groups_.end()) {
-      groups_[id] = std::make_unique<GroupTracker>(StringIdLease(fileIds(), id));
+      groups_[id] =
+          std::make_unique<GroupTracker>(StringIdLease(fileIds(), id));
       return *groups_[id];
     }
     return *it->second;
   }
-  
+
   std::mutex mutex_;
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
   // Bloom filter of groupId, trackingId hashes for streams that should be saved

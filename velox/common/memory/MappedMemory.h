@@ -161,9 +161,10 @@ class MappedMemory {
   // Returns the process-wide default instance.
   static MappedMemory* getInstance();
 
-  // Creates a default MappedMemory instance but does not set this to process default.
+  // Creates a default MappedMemory instance but does not set this to process
+  // default.
   static std::unique_ptr<MappedMemory> createDefaultInstance();
-  
+
   // Sets the process-wide default instance. Throws if one is already set.
   static void setDefaultInstance(std::unique_ptr<MappedMemory> instance);
 

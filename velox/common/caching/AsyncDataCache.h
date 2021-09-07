@@ -219,7 +219,7 @@ class AsyncDataCacheEntry {
   void setGroupId(uint64_t groupId) {
     groupId_ = groupId;
   }
-  
+
  private:
   void release();
   void addReference();
@@ -524,7 +524,7 @@ class CacheShard {
   void updateStats(CacheStats& stats);
 
   void getSsdSaveable(std::vector<CachePin>& pins);
-  
+
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
   void calibrateThreshold();

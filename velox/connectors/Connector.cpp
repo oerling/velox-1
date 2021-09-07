@@ -75,11 +75,11 @@ std::shared_ptr<Connector> getConnector(const std::string& connectorId) {
 
 std::mutex Connector::trackerMutex_;
 
-  std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>
+std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>
     Connector::trackers_;
 
 // static
-  void Connector::unregisterTracker(cache::ScanTracker* tracker) {
+void Connector::unregisterTracker(cache::ScanTracker* tracker) {
   std::lock_guard<std::mutex> l(trackerMutex_);
   auto it = trackers_.find(tracker->id());
   if (it != trackers_.end()) {
@@ -87,12 +87,13 @@ std::mutex Connector::trackerMutex_;
   }
 }
 
-  std::shared_ptr<cache::ScanTracker> Connector::getTracker(
+std::shared_ptr<cache::ScanTracker> Connector::getTracker(
     const std::string& scanId) {
   std::lock_guard<std::mutex> l(trackerMutex_);
   auto it = trackers_.find(scanId);
   if (it == trackers_.end()) {
-    auto newTracker = std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
+    auto newTracker =
+        std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
     trackers_[newTracker->id()] = newTracker;
     return newTracker;
   }

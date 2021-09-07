@@ -35,7 +35,7 @@ SsdPin::~SsdPin() {
   if (file_) {
     file_->unpinRegion(run_.offset());
   }
-  }
+}
 
 void SsdPin::operator=(SsdPin&& other) {
   if (file_) {

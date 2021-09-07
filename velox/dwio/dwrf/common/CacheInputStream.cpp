@@ -140,14 +140,15 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       auto ssdCache = cache_->ssdCache();
 
       if (ssdCache) {
-	auto& file = ssdCache->file(fileNum_);
-	auto ssdPin = file.find(cache::RawFileCacheKey{fileNum_, region.offset});
-	  if (!ssdPin.empty()) {
-	    file.load(ssdPin.run(), *pin_.entry());
-	    pin_.entry()->setValid(true);
-	    pin_.entry()->setExclusiveToShared();
-	    return;
-	  }
+        auto& file = ssdCache->file(fileNum_);
+        auto ssdPin =
+            file.find(cache::RawFileCacheKey{fileNum_, region.offset});
+        if (!ssdPin.empty()) {
+          file.load(ssdPin.run(), *pin_.entry());
+          pin_.entry()->setValid(true);
+          pin_.entry()->setExclusiveToShared();
+          return;
+        }
       }
       auto ranges = makeRanges(pin_.entry(), region.length);
       input_.read(ranges, region.offset, dwio::common::LogType::FILE);
