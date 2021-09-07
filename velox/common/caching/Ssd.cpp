@@ -32,8 +32,10 @@ SsdPin::SsdPin(SsdFile& file, SsdRun run) : file_(&file), run_(run) {
 }
 
 SsdPin::~SsdPin() {
-  file_->unpinRegion(run_.offset());
-}
+  if (file_) {
+    file_->unpinRegion(run_.offset());
+  }
+  }
 
 void SsdPin::operator=(SsdPin&& other) {
   if (file_) {
@@ -49,7 +51,7 @@ SsdFile::SsdFile(
     SsdCache& cache,
     int32_t ordinal,
     int32_t maxRegions)
-  : cache_(cache), ordinal_(ordinal), maxRegions_(maxRegions) {
+    : cache_(cache), ordinal_(ordinal), maxRegions_(maxRegions) {
   fd_ = open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
     LOG(ERROR) << "Cannot open or create " << filename << " error " << errno
@@ -61,6 +63,7 @@ SsdFile::SsdFile(
   if (size % kRegionSize > 0) {
     ftruncate(fd_, numRegions_ * kRegionSize);
   }
+  fileSize_ = numRegions_ * kRegionSize;
   regionScore_.resize(maxRegions_);
   regionSize_.resize(maxRegions_);
   regionPins_.resize(maxRegions_);
@@ -78,6 +81,27 @@ void SsdFile::unpinRegion(uint64_t offset) {
     evictLocked();
   }
 }
+
+namespace {
+void addEntryToIovecs(AsyncDataCacheEntry& entry, std::vector<iovec>& iovecs) {
+  if (entry.tinyData()) {
+    iovecs.push_back({entry.tinyData(), entry.size()});
+    return;
+  }
+  auto& data = entry.data();
+  iovecs.reserve(iovecs.size() + data.numRuns());
+  int64_t bytesLeft = entry.size();
+  for (auto i = 0; i < data.numPages(); ++i) {
+    auto run = data.runAt(i);
+    iovecs.push_back(
+        {run.data<char>(), std::min<int64_t>(bytesLeft, run.numBytes())});
+    bytesLeft -= run.numBytes();
+    if (bytesLeft <= 0) {
+      break;
+    };
+  }
+}
+} // namespace
 
 SsdPin SsdFile::find(RawFileCacheKey key) {
   SsdKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
@@ -105,10 +129,15 @@ void SsdFile::newEventLocked() {
 
 void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
   VELOX_CHECK_EQ(run.size(), entry.size());
+  regionScore_[regionIndex(run.offset())] += run.size();
   if (entry.tinyData()) {
     load(run, entry.tinyData());
   } else {
-    load(run, entry.data());
+    std::vector<struct iovec> iovecs;
+    addEntryToIovecs(entry, iovecs);
+
+    auto rc = folly::preadv(fd_, iovecs.data(), iovecs.size(), run.offset());
+    VELOX_CHECK_EQ(rc, run.size());
   }
   entry.setSsdFile(this, regionIndex(run.offset()));
 }
@@ -119,30 +148,34 @@ void SsdFile::load(SsdRun run, char* data) {
   VELOX_CHECK_EQ(rc, run.size());
 }
 
-void SsdFile::load(SsdRun ssdRun, memory::MappedMemory::Allocation& data) {
-  regionScore_[regionIndex(ssdRun.offset())] += ssdRun.size();
-  std::vector<struct iovec> iovecs;
-  iovecs.reserve(data.numRuns());
-  int64_t bytesLeft = ssdRun.size();
-  for (auto i = 0; i < data.numPages(); ++i) {
-    auto run = data.runAt(i);
-    iovecs.push_back(
-        {run.data<char>(), std::min<int64_t>(bytesLeft, run.numBytes())});
-    bytesLeft -= run.numBytes();
-    if (bytesLeft <= 0) {
-      break;
-    };
-  }
-
-  auto rc = folly::preadv(fd_, iovecs.data(), iovecs.size(), ssdRun.offset());
-  VELOX_CHECK_EQ(rc, ssdRun.size());
-}
-
-  std::pair<uint64_t, int32_t> SsdFile::getSpace(
-      const std::vector<CachePin>& pins,
-      int32_t begin) {
+std::pair<uint64_t, int32_t> SsdFile::getSpace(
+    const std::vector<CachePin>& pins,
+    int32_t begin) {
   std::lock_guard<std::mutex> l(mutex_);
-  evictLocked();
+  for (;;) {
+    if (writableRegions_.empty()) {
+      if (!evictLocked()) {
+        return {0, 0};
+      }
+    }
+    auto region = writableRegions_[0];
+    auto offset = regionSize_[region];
+    auto available = kRegionSize - regionSize_[region];
+    int64_t toWrite = 0;
+    for (; begin < pins.size(); ++begin) {
+      auto entry = pins[begin].entry();
+      if (entry->size() > available) {
+        break;
+      }
+      available -= entry->size();
+      toWrite += entry->size();
+    }
+    if (toWrite) {
+      regionSize_[region] += toWrite;
+      return {offset, toWrite};
+    }
+    writableRegions_.erase(writableRegions_.begin());
+  }
 }
 
 bool SsdFile::evictLocked() {
@@ -199,6 +232,59 @@ void SsdFile::store(std::vector<CachePin> pins) {
   }
   int32_t storeIndex = 0;
   while (storeIndex < pins.size()) {
+    auto [offset, available] = getSpace(pins, storeIndex);
+    if (!available) {
+      // No space can be reclaimed. Free the pins.
+      for (int32_t i = storeIndex; i < pins.size(); ++i) {
+        pins[i].clear();
+      }
+      return;
+    }
+    int32_t numWritten = 0;
+    int32_t bytes = 0;
+    std::vector<iovec> iovecs;
+    for (auto i = storeIndex; i < pins.size(); ++i) {
+      auto pin = std::move(pins[i]);
+      pin.entry()->setSsdFile(this, offset);
+      addEntryToIovecs(*pin.entry(), iovecs);
+      bytes += pin.entry()->size();
+      ++numWritten;
+      if (bytes >= available) {
+        break;
+      }
+    }
+    if (offset > fileSize_) {
+      ftruncate(fd_, offset);
+      fileSize_ = offset;
+    }
+    int32_t rc = folly::pwritev(fd_, iovecs.data(), iovecs.size(), offset);
+    if (rc != bytes) {
+      LOG(ERROR) << "Failed to write to SSD " << errno;
+      // Unpin without marking as resident in SSD.
+      for (auto i = storeIndex; i < pins.size(); ++i) {
+        pins[i].clear();
+      }
+      return;
+    }
+    if (offset == fileSize_) {
+      fileSize_ += bytes;
+    }
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      for (auto i = storeIndex; i < storeIndex + numWritten; ++i) {
+        auto entry = pins[i].entry();
+        entry->setSsdFile(this, offset);
+        auto size = entry->size();
+        SsdKey key = {entry->key().fileNum, offset};
+        entries_[std::move(key)] = SsdRun(offset, size);
+        offset += size;
+      }
+    }
+    // Unpin the written entries.
+    for (auto i = storeIndex; i < storeIndex + numWritten; ++i) {
+      pins[i].clear();
+    }
+    storeIndex += numWritten;
   }
 }
 

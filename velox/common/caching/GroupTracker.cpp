@@ -111,6 +111,9 @@ bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
   if (allFitOnSsd_) {
     return true;
   }
+  if (saveToSsd_.empty()) {
+    return false;
+  }
   uint64_t hash = ssdFilterHash(groupId, trackingId);
   return Bloom::test(saveToSsd_.data(), saveToSsd_.size(), hash);
 }

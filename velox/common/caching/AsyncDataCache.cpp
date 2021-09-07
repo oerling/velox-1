@@ -484,10 +484,9 @@ void AsyncDataCache::incrementNew(uint64_t size) {
     return;
   }
   if (newBytes_ > nextSsdScoreSize_) {
-    // Check next time after replacing 1GB or half the cache, whichever comes
-    // last.
+    // Check next time after replacing half the cache.
     nextSsdScoreSize_ = newBytes_ +
-        std::max<int64_t>(cachedPages_ * MappedMemory::kPageSize, 1UL << 30);
+        std::max<int64_t>(cachedPages_ * MappedMemory::kPageSize, 1UL << 28);
     GroupStats::instance().updateSsdFilter(ssdCache_->maxBytes() * 0.9);
   }
 }

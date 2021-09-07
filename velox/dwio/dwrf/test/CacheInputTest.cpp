@@ -93,17 +93,20 @@ class CacheTest : public testing::Test {
 
   void SetUp() override {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
-    rn g_.seed(1);
+    rng_.seed(1);
   }
 
   void TearDown() override {
     executor_->join();
   }
 
-  void initializeCache(int64_t maxBytes, const std::string& file = "") {
+  void initializeCache(
+      int64_t maxBytes,
+      const std::string& file = "",
+      uint64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssd;
     if (!file.empty()) {
-      ssd = std::make_unique<SsdCache>(file);
+      ssd = std::make_unique<SsdCache>(file, ssdBytes);
     }
     cache_ = std::make_unique<AsyncDataCache>(
         MappedMemory::createDefaultInstance(), maxBytes, std::move(ssd));
@@ -240,6 +243,14 @@ class CacheTest : public testing::Test {
   // in the previous stripes. When at end, destroys a set of
   // CachedBufferedInputs and their streams while they are in a
   // background loading state.
+  //
+  // 'readPct' is the probability any given
+  // stripe will access any given column. 'readPctModulo' biases the
+  // read probability of as a function of the column number. If this
+  // is 1, all columns will be read at 'readPct'. If this is 4,
+  // 'readPct is divided by 1 + columnId % readPctModulo, so that
+  // multiples of 4 get read at readPct and columns with id % 4 == 3
+  // get read at 1/4 of readPct.
   void readLoop(
       const std::string& filename,
       int numColumns,
@@ -308,6 +319,17 @@ TEST_F(CacheTest, bufferedInput) {
   initializeCache(160 << 20);
   readLoop("testfile", 30, 70, 10, 20);
   readLoop("testfile", 30, 70, 10, 20);
+  readLoop("testfile2", 30, 70, 70, 20);
+}
+
+TEST_F(CacheTest, ssd) {
+  // Size 160 MB. Frequent evictions and not everything fits in
+  // prefetch window. SSD size 2GB, not everything fits.
+  initializeCache(160 << 20, "/tmp/testssd", 2UL << 30);
+  // Read all columns with no skips for 40 stripes.
+  readLoop("testfile", 30, 100, 1, 40);
+  // Read the same but with 70 to 7% of each column read.
+  readLoop("testfile", 30, 70, 10, 40);
   readLoop("testfile2", 30, 70, 70, 20);
 }
 

@@ -216,6 +216,10 @@ class AsyncDataCacheEntry {
     trackingId_ = id;
   }
 
+  void setGroupId(uint64_t groupId) {
+    groupId_ = groupId;
+  }
+  
  private:
   void release();
   void addReference();
@@ -683,11 +687,14 @@ class SsdFile {
 
   void load(SsdRun run, char* data);
 
-  void load(SsdRun run, memory::MappedMemory::Allocation& data);
-
+  // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
+
+  // Decrements the pin count of the region of 'offset'. If the pin
+  // count goes to zero and evict is due, starts the evict.
   void unpinRegion(uint64_t offset);
 
+  // Returns the region number corresponding to offset.
   int32_t regionIndex(uint64_t offset) {
     return offset / kRegionSize;
   }
@@ -765,6 +772,7 @@ class SsdFile {
 
   // File descriptor.
   int32_t fd_;
+  uint64_t fileSize_{0};
 };
 
 class SsdCache {
@@ -890,7 +898,7 @@ class AsyncDataCache : public memory::MappedMemory,
   uint64_t newBytes_{0};
 
   // 'newBytes_' value after which SSD admission should be reconsidered.
-  uint64_t nextSsdScoreSize_{1UL << 30};
+  uint64_t nextSsdScoreSize_{};
 
   // Approximate counter tracking new entries that could be saved to SSD.
   uint64_t ssdSaveable_{0};
