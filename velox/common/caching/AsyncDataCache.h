@@ -200,6 +200,14 @@ class AsyncDataCacheEntry {
     return isPrefetch_;
   }
 
+  // distinguishes between a reuse of a cached entry from from first
+  // retrieval of a prefetched entry.
+  bool wasPrefetch() {
+    bool value = wasPrefetch_;
+    wasPrefetch_ = false;
+    return value;
+  }
+
   // True if 'data_' is fully loaded from the backing storage.
   bool dataValid() const {
     return dataValid_;
@@ -261,6 +269,11 @@ class AsyncDataCacheEntry {
   // hit. Allows catching a situation where prefetched entries get
   // evicted before they are hit.
   bool isPrefetch_{false};
+
+  // Set after first hit of a prefetched entry. Cleared by
+  // wasPrefetch(). Does not require synchronization since used for
+  // statistics only.
+  bool wasPrefetch_{false};
 
   // Represents a pending coalesced IO that is either loading this or
   // scheduled to load this. Setting/clearing requires the shard
@@ -407,7 +420,7 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   // is that a normal return will have filled all the pins with valid
   // data. A throw means that the data in the pins is undefined.  The
   // caller will release the pins in due time.
-  virtual void loadData() = 0;
+  virtual void loadData(bool isPrefetch) = 0;
 
   // Sets a final state and resumes waiting threads.
   void setEndState(LoadState endState);

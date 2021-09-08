@@ -111,7 +111,7 @@ class AsyncDataCacheTest : public testing::Test {
 
 class TestingFusedLoad : public FusedLoad {
  public:
-  void loadData() override {
+  void loadData(bool /*isPrefetch*/) override {
     for (auto& pin : pins_) {
       auto& buffer = pin.entry()->data();
       AsyncDataCacheTest::initializeContents(

@@ -310,6 +310,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         [factory = fileHandleFactory_, path = split_->filePath]() {
           return makeStreamHolder(factory, path);
         },
+        ioStats_.get(),
         HiveConnector::executor());
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
   }
@@ -486,6 +487,14 @@ void HiveDataSource::setNullConstantValue(
     common::ScanSpec* spec,
     const TypePtr& type) const {
   spec->setConstantValue(BaseVector::createNullConstant(type, 1, pool_));
+}
+
+std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats()
+    override {
+  return {
+      {"skippedSplits", skippedSplits_},
+      {"skippedSplitBytes", skippedSplitBytes_},
+      {"skippedStrides", skippedStrides_}};
 }
 
 HiveConnector::HiveConnector(
