@@ -36,26 +36,26 @@ struct OperationCounters {
   uint64_t delayInjectedInSecs{0};
 };
 
-  class IoCounter {
-  public:
-    uint64_t count() const {
-      return count_;
-    }
+class IoCounter {
+ public:
+  uint64_t count() const {
+    return count_;
+  }
 
-    uint64_t bytes() const {
-      return bytes_;
-    }
+  uint64_t bytes() const {
+    return bytes_;
+  }
 
-    void increment(uint64_t bytes) {
-      ++count_;
-      bytes_ += bytes;
-    }
+  void increment(uint64_t bytes) {
+    ++count_;
+    bytes_ += bytes;
+  }
 
-  private:
-    std::atomic<uint64_t> count_;
-    std::atomic<uint64_t> bytes_;
-  };
-  
+ private:
+  std::atomic<uint64_t> count_;
+  std::atomic<uint64_t> bytes_;
+};
+
 class IoStatistics {
  public:
   uint64_t rawBytesRead() const;
@@ -78,11 +78,11 @@ class IoStatistics {
     return read_;
   }
 
-    IoCounter& ssdRead() {
+  IoCounter& ssdRead() {
     return ssdRead_;
   }
 
-      IoCounter& ramHit() {
+  IoCounter& ramHit() {
     return ramHit_;
   }
 
@@ -113,9 +113,10 @@ class IoStatistics {
   // Hits from RAM cache. Does not include first use of prefetched data.
   IoCounter ramHit_;
 
-  // Read from SSD cache instead of storage. Includes both random and planned reads.
+  // Read from SSD cache instead of storage. Includes both random and planned
+  // reads.
   IoCounter ssdRead_;
-  
+
   std::unordered_map<std::string, OperationCounters> operationStats_;
   mutable std::mutex operationStatsMutex_;
 };

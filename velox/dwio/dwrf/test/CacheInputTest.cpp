@@ -163,7 +163,7 @@ class CacheTest : public testing::Test {
         [inputStream]() {
           return std::make_unique<TestInputStreamHolder>(inputStream);
         },
-	ioStats_,
+        ioStats_,
         executor_.get());
     data->file = dynamic_cast<TestInputStream*>(inputStream.get());
     for (auto i = 0; i < streamStarts_.size() - 1; ++i) {

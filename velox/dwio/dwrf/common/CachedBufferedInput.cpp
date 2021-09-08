@@ -37,7 +37,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id, CachePin()});
   tracker_->recordReference(id, region.length, groupId_);
   return std::make_unique<CacheInputStream>(
-					    cache_, ioStats_.get(), region, input_, fileNum_, tracker_, id, groupId_);
+      cache_, ioStats_.get(), region, input_, fileNum_, tracker_, id, groupId_);
 }
 
 bool CachedBufferedInput::isBuffered(uint64_t /*offset*/, uint64_t /*length*/)
@@ -156,10 +156,10 @@ bool CachedBufferedInput::tryMerge(
     if (extension > 0) {
       first.length += extension;
       if (gap > 0) {
-	ioStats_->incRawOverreadBytes(gap);
-	if (input_.getStats() != nullptr) {
-	  input_.getStats()->incRawOverreadBytes(gap);
-	}
+        ioStats_->incRawOverreadBytes(gap);
+        if (input_.getStats() != nullptr) {
+          input_.getStats()->incRawOverreadBytes(gap);
+        }
       }
       }
 
@@ -214,7 +214,7 @@ class DwrfFusedLoad : public cache::FusedLoad {
       lastOffset = startOffset + size;
     }
     if (isPrefetch) {
-          ioStats_->prefetch().increment(totalRead);
+      ioStats_->prefetch().increment(totalRead);
     } else {
       ioStats_->read().increment(totalRead);
     }

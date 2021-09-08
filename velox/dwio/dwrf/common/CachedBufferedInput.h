@@ -60,7 +60,7 @@ class CachedBufferedInput : public BufferedInput {
         tracker_(std::move(tracker)),
         groupId_(groupId),
         streamSource_(streamSource),
-	ioStats_(std::move(ioStats)),
+        ioStats_(std::move(ioStats)),
         executor_(executor) {}
 
   ~CachedBufferedInput() override {
@@ -147,7 +147,7 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
         tracker_(std::move(tracker)),
         groupId_(groupId),
         streamSource_(streamSource),
-	ioStats_(ioStats),
+        ioStats_(ioStats),
         executor_(executor) {}
 
   std::unique_ptr<BufferedInput> create(
@@ -162,7 +162,7 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
         tracker_,
         groupId_,
         streamSource_,
-	ioStats_,
+        ioStats_,
         executor_);
   }
 

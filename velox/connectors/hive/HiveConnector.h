@@ -147,7 +147,7 @@ class HiveDataSource : public DataSource {
 
   std::unordered_map<std::string, int64_t> runtimeStats() override;
 
-private:
+ private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
   // some rows passed the filter. If no or all rows passed

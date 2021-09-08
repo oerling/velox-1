@@ -144,11 +144,11 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       pin_.entry()->setExclusiveToShared();
     } else {
       if (pin_.entry()->dataValid()) {
-	if (!pin_.entry()->wasPrefetch()) {
-	  ioStats_->ramHit().increment(pin_.entry()->size());
-	}
+        if (!pin_.entry()->wasPrefetch()) {
+          ioStats_->ramHit().increment(pin_.entry()->size());
+        }
       } else {
-	pin_.entry()->ensureLoaded(true);
+        pin_.entry()->ensureLoaded(true);
       }
     }
   } while (pin_.empty());

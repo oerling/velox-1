@@ -208,7 +208,7 @@ class AsyncDataCacheEntry {
     wasPrefetch_ = false;
     return value;
   }
-  
+
   // True if 'data_' is fully loaded from the backing storage.
   bool dataValid() const {
     return dataValid_;

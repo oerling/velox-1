@@ -127,7 +127,7 @@ CachePin CacheShard::findOrCreate(
       found->touch();
       // The entry is in a readable state. Add a pin.
       if (found->isPrefetch_) {
-	found->wasPrefetch_ = true;
+        found->wasPrefetch_ = true;
         found->setPrefetch(false);
       } else {
         ++numHit_;
