@@ -21,7 +21,7 @@
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
 
-#include <folly //Executor.h>
+#include <folly/Executor.h>
 
 namespace facebook::velox::dwrf {
 
