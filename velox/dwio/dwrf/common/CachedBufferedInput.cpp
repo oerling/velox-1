@@ -165,7 +165,7 @@ bool CachedBufferedInput::tryMerge(
           input_.getStats()->incRawOverreadBytes(gap);
         }
       }
-      }
+    }
 
     return true;
   }
@@ -232,20 +232,30 @@ class DwrfFusedLoad : public cache::FusedLoad {
 
 class SsdLoad : public cache::FusedLoad {
  public:
-  void initialize(SsdFile& file, CachePin&& pin, SsdPin&& ssdPin) {
+  void initialize(
+      SsdFile& file,
+      CachePin&& pin,
+      SsdPin&& ssdPin,
+      std::shared_ptr<dwio::common::IoStatistics> ioStats) {
     std::vector<CachePin> pins;
     pins.push_back(std::move(pin));
     cache::FusedLoad::initialize(std::move(pins));
     ssdPin_ = std::move(ssdPin);
+    ioStats_ = ioStats;
   }
 
-  void loadData() {
+  void loadData(bool isPrefetch) override {
     auto* entry = pins_[0].entry();
     ssdPin_.file()->load(ssdPin_.run(), *entry);
+    if (isPrefetch) {
+            ioStats_->prefetch().increment(entry->size());
+    }
+    ioStats_->ssdRead().increment(entry->size());
   }
 
  private:
   SsdPin ssdPin_;
+  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
 };
 } // namespace
 
@@ -284,7 +294,8 @@ void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*> requests) {
         file.find(RawFileCacheKey{fileNum_, request->pin.entry()->offset()});
     if (!ssdPin.empty()) {
       auto load = std::make_shared<SsdLoad>();
-      load->initialize(file, std::move(request->pin), std::move(ssdPin));
+      load->initialize(
+          file, std::move(request->pin), std::move(ssdPin), ioStats_);
       if (executor_ &&
           (request->trackingId.empty() ||
            tracker_->shouldPrefetch(request->trackingId, prefetchThreshold_))) {
