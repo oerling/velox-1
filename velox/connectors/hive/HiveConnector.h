@@ -115,11 +115,11 @@ class HiveDataSink : public DataSink {
 };
 
 class HiveConnector;
-  
+
 class HiveDataSource : public DataSource {
  public:
   HiveDataSource(
-		 const std::shared_ptr<const RowType>& outputType,
+      const std::shared_ptr<const RowType>& outputType,
       const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
@@ -129,8 +129,8 @@ class HiveDataSource : public DataSource {
       DataCache* dataCache,
       ExpressionEvaluator* expressionEvaluator,
       memory::MappedMemory* mappedMemory,
-		 const std::string& scanId,
-		 folly::Executor* FOLLY_NULLABLE executor);
+      const std::string& scanId,
+      folly::Executor* FOLLY_NULLABLE executor);
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
@@ -219,7 +219,7 @@ class HiveConnector final : public Connector {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) override final {
     return std::make_shared<HiveDataSource>(
-					    outputType,
+        outputType,
         tableHandle,
         columnHandles,
         &fileHandleFactory_,
@@ -231,8 +231,8 @@ class HiveConnector final : public Connector {
             : nullptr,
         connectorQueryCtx->expressionEvaluator(),
         connectorQueryCtx->mappedMemory(),
-					    connectorQueryCtx->scanId().value(),
-					    executor_);
+        connectorQueryCtx->scanId().value(),
+        executor_);
   }
 
   std::shared_ptr<DataSink> createDataSink(

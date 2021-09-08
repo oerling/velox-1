@@ -28,7 +28,7 @@ void HiveConnectorTestBase::SetUp() {
   executor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
   auto hiveConnector =
       connector::getConnectorFactory(connector::hive::kHiveConnectorName)
-    ->newConnector(kHiveConnectorId, nullptr, executor_.get());
+          ->newConnector(kHiveConnectorId, nullptr, executor_.get());
   connector::registerConnector(hiveConnector);
 }
 

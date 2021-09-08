@@ -503,8 +503,7 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
       {"numLocalRead", ioStats_->ssdRead().count()},
       {"localReadBytes", ioStats_->ssdRead().bytes()},
       {"numRamRead", ioStats_->ramHit().count()},
-      {"ramReadBytes", ioStats_->ramHit().bytes()}
-  };
+      {"ramReadBytes", ioStats_->ramHit().bytes()}};
 }
 
 HiveConnector::HiveConnector(
