@@ -52,6 +52,7 @@ class CachedBufferedInput : public BufferedInput {
       std::shared_ptr<cache::ScanTracker> tracker,
       uint64_t groupId,
       StreamSource streamSource,
+      std::shared_ptr<dwio::common::IoStatistics> ioStats,
       folly::IOThreadPoolExecutor* executor)
       : BufferedInput(input, pool, dataCacheConfig),
         cache_(cache),
@@ -59,6 +60,7 @@ class CachedBufferedInput : public BufferedInput {
         tracker_(std::move(tracker)),
         groupId_(groupId),
         streamSource_(streamSource),
+	ioStats_(std::move(ioStats)),
         executor_(executor) {}
 
   ~CachedBufferedInput() override {
@@ -118,6 +120,7 @@ class CachedBufferedInput : public BufferedInput {
   std::shared_ptr<cache::ScanTracker> tracker_;
   const uint64_t groupId_;
   StreamSource streamSource_;
+  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   folly::IOThreadPoolExecutor* const executor_;
 
   //  Percentage of reads over enqueues that qualifies a stream to be
@@ -138,11 +141,13 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
       std::shared_ptr<cache::ScanTracker> tracker,
       uint64_t groupId,
       StreamSource streamSource,
+      std::shared_ptr<dwio::common::IoStatistics> ioStats,
       folly::IOThreadPoolExecutor* executor)
       : cache_(cache),
         tracker_(std::move(tracker)),
         groupId_(groupId),
         streamSource_(streamSource),
+	ioStats_(ioStats),
         executor_(executor) {}
 
   std::unique_ptr<BufferedInput> create(
@@ -157,6 +162,7 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
         tracker_,
         groupId_,
         streamSource_,
+	ioStats_,
         executor_);
   }
 
@@ -172,6 +178,7 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
   std::shared_ptr<cache::ScanTracker> tracker_;
   const uint64_t groupId_;
   StreamSource streamSource_;
+  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   folly::IOThreadPoolExecutor* executor_;
 };
 } // namespace facebook::velox::dwrf

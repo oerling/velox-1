@@ -145,14 +145,9 @@ class HiveDataSource : public DataSource {
     return ioStats_->rawBytesRead();
   }
 
-  std::unordered_map<std::string, int64_t> runtimeStats() override {
-    return {
-        {"skippedSplits", skippedSplits_},
-        {"skippedSplitBytes", skippedSplitBytes_},
-        {"skippedStrides", skippedStrides_}};
-  }
+  std::unordered_map<std::string, int64_t> runtimeStats() override;
 
- private:
+private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
   // some rows passed the filter. If no or all rows passed
@@ -174,7 +169,7 @@ class HiveDataSource : public DataSource {
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
   dwio::common::RowReaderOptions rowReaderOpts_;
-  std::unique_ptr<dwio::common::IoStatistics> ioStats_;
+  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   std::unique_ptr<dwrf::DwrfReader> reader_;
   std::unique_ptr<dwrf::DwrfRowReader> rowReader_;
   std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;
