@@ -201,6 +201,8 @@ TEST_F(AsyncDataCacheTest, pin) {
   pin = cache_->findOrCreate(key, kSize, &wait);
   EXPECT_FALSE(pin.entry()->dataValid());
   EXPECT_TRUE(pin.entry()->isShared());
+  EXPECT_TRUE(pin.entry()->getAndClearFirstUseFlag());
+  EXPECT_FALSE(pin.entry()->getAndClearFirstUseFlag());
   pin.entry()->ensureLoaded(true);
   checkContents(pin.entry()->data());
   otherPin = pin;

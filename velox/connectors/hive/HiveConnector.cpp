@@ -119,16 +119,18 @@ HiveDataSource::HiveDataSource(
     velox::memory::MemoryPool* pool,
     DataCache* dataCache,
     ExpressionEvaluator* expressionEvaluator,
-    memory::MappedMemory* _mappedMemory,
-    const std::string& scanId)
+    memory::MappedMemory* mappedMemory,
+    const std::string& scanId,
+    folly::Executor* executor)
     : outputType_(outputType),
       fileHandleFactory_(fileHandleFactory),
       pool_(pool),
       readerOpts_(pool),
       dataCache_(dataCache),
       expressionEvaluator_(expressionEvaluator),
-      mappedMemory_(_mappedMemory),
-      scanId_(scanId) {
+      mappedMemory_(mappedMemory),
+      scanId_(scanId),
+      executor_(executor) {
   regularColumns_.reserve(outputType->size());
 
   std::vector<std::string> columnNames;
@@ -258,7 +260,7 @@ class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
 
 std::unique_ptr<InputStreamHolder> makeStreamHolder(
     FileHandleFactory* factory,
-    std::string path) {
+    const std::string& path) {
   return std::make_unique<InputStreamHolder>(factory->generate(path));
 }
 
@@ -310,8 +312,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         [factory = fileHandleFactory_, path = split_->filePath]() {
           return makeStreamHolder(factory, path);
         },
-        ioStats_.get(),
-        HiveConnector::executor());
+        ioStats_,
+        executor_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
   }
 
@@ -489,44 +491,32 @@ void HiveDataSource::setNullConstantValue(
   spec->setConstantValue(BaseVector::createNullConstant(type, 1, pool_));
 }
 
-std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats()
-    override {
+std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
   return {
       {"skippedSplits", skippedSplits_},
       {"skippedSplitBytes", skippedSplitBytes_},
-      {"skippedStrides", skippedStrides_}};
+      {"skippedStrides", skippedStrides_},
+      {"numPrefetch", ioStats_->prefetch().count()},
+      {"prefetchBytes", ioStats_->prefetch().bytes()},
+      {"numStorageRead", ioStats_->read().count()},
+      {"storageReadBytes", ioStats_->read().bytes()},
+      {"numLocalRead", ioStats_->ssdRead().count()},
+      {"localReadBytes", ioStats_->ssdRead().bytes()},
+      {"numRamRead", ioStats_->ramHit().count()},
+      {"ramReadBytes", ioStats_->ramHit().bytes()}};
 }
 
 HiveConnector::HiveConnector(
     const std::string& id,
-    std::unique_ptr<DataCache> dataCache)
+    std::unique_ptr<DataCache> dataCache,
+    folly::Executor* executor)
     : Connector(id),
       dataCache_(std::move(dataCache)),
       fileHandleFactory_(
           std::make_unique<SimpleLRUCache<std::string, FileHandle>>(
               FLAGS_file_handle_cache_mb << 20),
-          std::make_unique<FileHandleGenerator>()) {}
-
-std::mutex HiveConnector::initMutex_;
-std::unique_ptr<folly::IOThreadPoolExecutor> HiveConnector::executor_;
-
-// static
-folly::IOThreadPoolExecutor* HiveConnector::executor() {
-  if (!FLAGS_max_io_threads) {
-    return nullptr;
-  }
-  if (executor_.get()) {
-    return executor_.get();
-  }
-  std::lock_guard<std::mutex> l(initMutex_);
-  if (executor_) {
-    return executor_.get();
-  }
-  executor_ = std::make_unique<folly::IOThreadPoolExecutor>(
-      FLAGS_max_io_threads / 2, FLAGS_max_io_threads);
-
-  return executor_.get();
-}
+          std::make_unique<FileHandleGenerator>()),
+      executor_(executor) {}
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
 

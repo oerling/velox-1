@@ -22,7 +22,7 @@
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
 
-#include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/Executor.h>
 
 namespace facebook::velox::dwrf {
 
@@ -54,7 +54,7 @@ class CachedBufferedInput : public BufferedInput {
       uint64_t groupId,
       StreamSource streamSource,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
-      folly::IOThreadPoolExecutor* executor)
+      folly::Executor* executor)
       : BufferedInput(input, pool, dataCacheConfig),
         cache_(cache),
         fileNum_(dataCacheConfig->filenum),
@@ -126,7 +126,7 @@ class CachedBufferedInput : public BufferedInput {
   const uint64_t groupId_;
   StreamSource streamSource_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-  folly::IOThreadPoolExecutor* const executor_;
+  folly::Executor* const executor_;
 
   //  Percentage of reads over enqueues that qualifies a stream to be
   //  coalesced with nearby streams and prefetched. Anything read less
@@ -147,7 +147,7 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
       uint64_t groupId,
       StreamSource streamSource,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
-      folly::IOThreadPoolExecutor* executor)
+      folly::Executor* executor)
       : cache_(cache),
         tracker_(std::move(tracker)),
         groupId_(groupId),
@@ -184,6 +184,6 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
   const uint64_t groupId_;
   StreamSource streamSource_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-  folly::IOThreadPoolExecutor* executor_;
+  folly::Executor* executor_;
 };
 } // namespace facebook::velox::dwrf

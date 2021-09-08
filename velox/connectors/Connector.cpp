@@ -73,36 +73,37 @@ std::shared_ptr<Connector> getConnector(const std::string& connectorId) {
   return it->second;
 }
 
-std::mutex Connector::trackerMutex_;
-
-std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>
+folly::Synchronized<
+    std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>>
     Connector::trackers_;
 
 // static
 void Connector::unregisterTracker(cache::ScanTracker* tracker) {
-  std::lock_guard<std::mutex> l(trackerMutex_);
-  auto it = trackers_.find(tracker->id());
-  if (it != trackers_.end()) {
-    trackers_.erase(it);
-  }
+  trackers_.withWLock([&](auto& trackers) {
+    auto it = trackers.find(tracker->id());
+    if (it != trackers.end()) {
+      trackers.erase(it);
+    }
+  });
 }
 
 std::shared_ptr<cache::ScanTracker> Connector::getTracker(
     const std::string& scanId) {
-  std::lock_guard<std::mutex> l(trackerMutex_);
-  auto it = trackers_.find(scanId);
-  if (it == trackers_.end()) {
-    auto newTracker =
-        std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
-    trackers_[newTracker->id()] = newTracker;
-    return newTracker;
-  }
-  std::shared_ptr tracker = it->second.lock();
-  if (tracker) {
-    tracker = std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
-    trackers_[tracker->id()] = tracker;
-  }
-  return tracker;
+  return trackers_.withWLock([&](auto& trackers) -> auto {
+    auto it = trackers.find(scanId);
+    if (it == trackers.end()) {
+      auto newTracker =
+          std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
+      trackers[newTracker->id()] = newTracker;
+      return newTracker;
+    }
+    std::shared_ptr tracker = it->second.lock();
+    if (tracker) {
+      tracker = std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
+      trackers[tracker->id()] = tracker;
+    }
+    return tracker;
+  });
 }
 
 } // namespace facebook::velox::connector

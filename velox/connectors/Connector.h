@@ -20,6 +20,8 @@
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
 
+#include <folly/Synchronized.h>
+
 namespace facebook::velox::common {
 class Filter;
 }
@@ -139,12 +141,12 @@ class ConnectorQueryCtx {
       memory::MemoryPool* pool,
       Config* config,
       ExpressionEvaluator* expressionEvaluator,
-      memory::MappedMemory* _mappedMemory,
+      memory::MappedMemory* mappedMemory,
       std::optional<std::string> scanId = std::nullopt)
       : pool_(pool),
         config_(config),
         expressionEvaluator_(expressionEvaluator),
-        mappedMemory_(_mappedMemory),
+        mappedMemory_(mappedMemory),
         scanId_(scanId) {}
 
   memory::MemoryPool* memoryPool() const {
@@ -163,6 +165,11 @@ class ConnectorQueryCtx {
     return mappedMemory_;
   }
 
+  // Returns an id that allows sharing state between different threads
+  // of the same scan. This is typically a query id plus the scan's
+  // PlanNodeId. This is used for locating a scanTracker, which tracks
+  // the read density of columns for prefetch and other memory
+  // hierarchy purposes.
   const std::optional<std::string>& scanId() const {
     return scanId_;
   }
@@ -224,8 +231,8 @@ class Connector {
 
   const std::string id_;
 
-  static std::mutex trackerMutex_;
-  static std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>
+  static folly::Synchronized<
+      std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>>
       trackers_;
 };
 
@@ -241,7 +248,8 @@ class ConnectorFactory {
 
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
-      std::unique_ptr<DataCache> dataCache = nullptr) = 0;
+      std::unique_ptr<DataCache> dataCache = nullptr,
+      folly::Executor* executor = nullptr) = 0;
 
  private:
   const std::string name_;
