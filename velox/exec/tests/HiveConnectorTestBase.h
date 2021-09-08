@@ -21,6 +21,8 @@
 #include "velox/exec/tests/TempFilePath.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
+#include <folly/executors/IOThreadPoolExecutor.h>
+
 namespace facebook::velox::exec::test {
 
 static const std::string kHiveConnectorId = "test-hive";
@@ -156,6 +158,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
   }
 
   DummyDataCache* dataCache;
+  std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
 };
 
 } // namespace facebook::velox::exec::test

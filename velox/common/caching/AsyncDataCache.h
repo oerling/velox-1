@@ -201,11 +201,12 @@ class AsyncDataCacheEntry {
     return isPrefetch_;
   }
 
-  // distinguishes between a reuse of a cached entry from from first
-  // retrieval of a prefetched entry.
-  bool wasPrefetch() {
-    bool value = wasPrefetch_;
-    wasPrefetch_ = false;
+  // Distinguishes between a reuse of a cached entry from first
+  // retrieval of a prefetched entry. If this is false, we have an
+  // actual reuse of cached data.
+  bool getAndClearFirstUseFlag() {
+    bool value = isFirstUse_;
+    isFirstUse_ = false;
     return value;
   }
 
@@ -258,10 +259,10 @@ class AsyncDataCacheEntry {
   // evicted before they are hit.
   bool isPrefetch_{false};
 
-  // Set after first hit of a prefetched entry. Cleared by
-  // wasPrefetch(). Does not require synchronization since used for
+  // Set after first Use of a prefetched entry. Cleared by
+  // getAndClearFirstUseFlag(). Does not require synchronization since used for
   // statistics only.
-  bool wasPrefetch_{false};
+  bool isFirstUse_{false};
 
   // Represents a pending coalesced IO that is either loading this or
   // scheduled to load this. Setting/clearing requires the shard

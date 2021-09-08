@@ -25,13 +25,15 @@ namespace facebook::velox::exec::test {
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
+  executor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
   auto hiveConnector =
       connector::getConnectorFactory(connector::hive::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, nullptr);
+    ->newConnector(kHiveConnectorId, nullptr, executor_.get());
   connector::registerConnector(hiveConnector);
 }
 
 void HiveConnectorTestBase::TearDown() {
+  executor_->join();
   connector::unregisterConnector(kHiveConnectorId);
   OperatorTestBase::TearDown();
 }

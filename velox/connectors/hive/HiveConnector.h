@@ -114,10 +114,12 @@ class HiveDataSink : public DataSink {
   std::unique_ptr<facebook::velox::dwrf::Writer> writer_;
 };
 
+class HiveConnector;
+  
 class HiveDataSource : public DataSource {
  public:
   HiveDataSource(
-      const std::shared_ptr<const RowType>& outputType,
+		 const std::shared_ptr<const RowType>& outputType,
       const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
@@ -127,7 +129,8 @@ class HiveDataSource : public DataSource {
       DataCache* dataCache,
       ExpressionEvaluator* expressionEvaluator,
       memory::MappedMemory* mappedMemory,
-      const std::string& scanId);
+		 const std::string& scanId,
+		 folly::Executor* FOLLY_NULLABLE executor);
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
@@ -197,14 +200,16 @@ class HiveDataSource : public DataSource {
   exec::FilterEvalCtx filterEvalCtx_;
 
   memory::MappedMemory* const mappedMemory_;
-  std::string scanId_;
+  const std::string scanId_;
+  folly::Executor* executor_;
 };
 
 class HiveConnector final : public Connector {
  public:
   explicit HiveConnector(
       const std::string& id,
-      std::unique_ptr<DataCache> dataCache);
+      std::unique_ptr<DataCache> dataCache,
+      folly::Executor* executor);
 
   std::shared_ptr<DataSource> createDataSource(
       const std::shared_ptr<const RowType>& outputType,
@@ -214,7 +219,7 @@ class HiveConnector final : public Connector {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) override final {
     return std::make_shared<HiveDataSource>(
-        outputType,
+					    outputType,
         tableHandle,
         columnHandles,
         &fileHandleFactory_,
@@ -226,7 +231,8 @@ class HiveConnector final : public Connector {
             : nullptr,
         connectorQueryCtx->expressionEvaluator(),
         connectorQueryCtx->mappedMemory(),
-        connectorQueryCtx->scanId().value());
+					    connectorQueryCtx->scanId().value(),
+					    executor_);
   }
 
   std::shared_ptr<DataSink> createDataSink(
@@ -244,10 +250,13 @@ class HiveConnector final : public Connector {
         connectorQueryCtx->memoryPool());
   }
 
-  static folly::IOThreadPoolExecutor* executor();
+  folly::Executor* executor() {
+    return executor_;
+  }
 
  private:
   std::unique_ptr<DataCache> dataCache_;
+  folly::Executor* executor_;
   FileHandleFactory fileHandleFactory_;
 
   static constexpr const char* kNodeSelectionStrategy =
@@ -256,9 +265,6 @@ class HiveConnector final : public Connector {
       "NO_PREFERENCE";
   static constexpr const char* kNodeSelectionStrategySoftAffinity =
       "SOFT_AFFINITY";
-
-  static std::mutex initMutex_;
-  static std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
 };
 
 class HiveConnectorFactory : public ConnectorFactory {
@@ -269,8 +275,9 @@ class HiveConnectorFactory : public ConnectorFactory {
 
   std::shared_ptr<Connector> newConnector(
       const std::string& id,
-      std::unique_ptr<DataCache> dataCache = nullptr) override {
-    return std::make_shared<HiveConnector>(id, std::move(dataCache));
+      std::unique_ptr<DataCache> dataCache = nullptr,
+      folly::Executor* executor = nullptr) override {
+    return std::make_shared<HiveConnector>(id, std::move(dataCache), executor);
   }
 };
 

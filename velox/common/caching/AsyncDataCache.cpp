@@ -127,7 +127,7 @@ CachePin CacheShard::findOrCreate(
       found->touch();
       // The entry is in a readable state. Add a pin.
       if (found->isPrefetch_) {
-        found->wasPrefetch_ = true;
+        found->isFirstUse_ = true;
         found->setPrefetch(false);
       } else {
         ++numHit_;
@@ -222,7 +222,7 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
   }
   // Outside of 'mutex_'.
   try {
-    // If wait is not set this cunts as prefetch.
+    // If wait is not set this counts as prefetch.
     loadData(!wait);
     for (auto& pin : pins_) {
       pin.entry()->setValid();
