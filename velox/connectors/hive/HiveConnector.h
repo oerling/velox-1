@@ -256,8 +256,8 @@ class HiveConnector final : public Connector {
 
  private:
   std::unique_ptr<DataCache> dataCache_;
-  folly::Executor* executor_;
   FileHandleFactory fileHandleFactory_;
+  folly::Executor* executor_;
 
   static constexpr const char* kNodeSelectionStrategy =
       "node_selection_strategy";
