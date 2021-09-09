@@ -124,11 +124,11 @@ class HiveDataSource : public DataSource {
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      FileHandleFactory* fileHandleFactory,
-      velox::memory::MemoryPool* pool,
-      DataCache* dataCache,
-      ExpressionEvaluator* expressionEvaluator,
-      memory::MappedMemory* mappedMemory,
+      FileHandleFactory* FOLLY_NONNULL fileHandleFactory,
+      velox::memory::MemoryPool* FOLLY_NONNULL pool,
+      DataCache* FOLLY_NULLABLE dataCache,
+      ExpressionEvaluator* FOLLY_NONNULL expressionEvaluator,
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory,
       const std::string& scanId,
       folly::Executor* FOLLY_NULLABLE executor);
 
