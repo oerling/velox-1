@@ -157,10 +157,13 @@ class HiveDataSource : public DataSource {
   // filterEvalCtx_.selectedIndices and selectedBits are not updated.
   vector_size_t evaluateRemainingFilter(RowVectorPtr& rowVector);
 
-  void setConstantValue(common::ScanSpec* FOLLY_NONNULL spec, const velox::variant& value)
-      const;
+  void setConstantValue(
+      common::ScanSpec* FOLLY_NONNULL spec,
+      const velox::variant& value) const;
 
-  void setNullConstantValue(common::ScanSpec* FOLLY_NONNULL spec, const TypePtr& type) const;
+  void setNullConstantValue(
+      common::ScanSpec* FOLLY_NONNULL spec,
+      const TypePtr& type) const;
 
   const std::shared_ptr<const RowType> outputType_;
   FileHandleFactory* FOLLY_NONNULL fileHandleFactory_;
@@ -259,12 +262,12 @@ class HiveConnector final : public Connector {
   FileHandleFactory fileHandleFactory_;
   folly::Executor* FOLLY_NULLABLE executor_;
 
-  static constexpr const char* FOLLY_NONNULL  kNodeSelectionStrategy =
+  static constexpr const char* FOLLY_NONNULL kNodeSelectionStrategy =
       "node_selection_strategy";
-  static constexpr const char* FOLLY_NONNULL  kNodeSelectionStrategyNoPreference =
-      "NO_PREFERENCE";
-  static constexpr const char* FOLLY_NONNULL kNodeSelectionStrategySoftAffinity =
-      "SOFT_AFFINITY";
+  static constexpr const char* FOLLY_NONNULL
+      kNodeSelectionStrategyNoPreference = "NO_PREFERENCE";
+  static constexpr const char* FOLLY_NONNULL
+      kNodeSelectionStrategySoftAffinity = "SOFT_AFFINITY";
 };
 
 class HiveConnectorFactory : public ConnectorFactory {
