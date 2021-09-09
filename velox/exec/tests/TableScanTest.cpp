@@ -63,17 +63,6 @@ class TableScanTest : public HiveConnectorTestBase {
     return HiveConnectorTestBase::makeVectors(inputs, count, rowsPerVector);
   }
 
-  std::shared_ptr<core::QueryCtx> queryCtxWithCache() {
-    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
-    std::unordered_map<std::string, std::string> hiveConnectorConfigs;
-    hiveConnectorConfigs.insert({kNodeSelectionStrategy, kSoftAffinity});
-    connectorConfigs.insert(
-        {kHiveConnectorId,
-         std::make_shared<core::MemConfig>(std::move(hiveConnectorConfigs))});
-    return core::QueryCtx::create(
-        std::make_shared<core::MemConfig>(), connectorConfigs, mappedMemory());
-  }
-
   std::shared_ptr<Task> assertQuery(
       const std::shared_ptr<const core::PlanNode>& plan,
       const std::shared_ptr<HiveConnectorSplit>& hiveSplit,

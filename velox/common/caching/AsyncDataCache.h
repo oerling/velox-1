@@ -259,7 +259,7 @@ class AsyncDataCacheEntry {
   // evicted before they are hit.
   bool isPrefetch_{false};
 
-  // Set after first Use of a prefetched entry. Cleared by
+  // Set after first use of a prefetched entry. Cleared by
   // getAndClearFirstUseFlag(). Does not require synchronization since used for
   // statistics only.
   bool isFirstUse_{false};

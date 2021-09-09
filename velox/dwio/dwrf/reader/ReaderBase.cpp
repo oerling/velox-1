@@ -213,15 +213,13 @@ ReaderBase::ReaderBase(
   }
   if (input_->shouldPrefetchStripes()) {
     auto numStripes = getFooter().stripes_size();
-    int32_t numQueued = 0;
     for (auto i = 0; i < numStripes; i++) {
-      auto& stripe = getFooter().stripes(i);
-      ++numQueued;
+      const auto& stripe = getFooter().stripes(i);
       input_->enqueue(
           {stripe.offset() + stripe.indexlength() + stripe.datalength(),
            stripe.footerlength()});
     }
-    if (numQueued) {
+    if (numStripes) {
       input_->load(LogType::FOOTER);
     }
   }
