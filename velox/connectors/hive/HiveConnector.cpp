@@ -242,11 +242,14 @@ bool testFilters(
 
 class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
  public:
-  InputStreamHolder(FileHandleCachedPtr fileHandle)
-      : fileHandle_(std::move(fileHandle)) {
-    static dwio::common::IoStatistics stats;
+  InputStreamHolder(
+      FileHandleCachedPtr fileHandle,
+      std::shared_ptr<dwio::common::IoStatistics> stats)
+      : fileHandle_(std::move(fileHandle)), stats_(std::move(stats)) {
     input_ = std::make_unique<dwio::common::ReadFileInputStream>(
-        fileHandle_->file.get(), dwio::common::MetricsLog::voidLog(), &stats);
+        fileHandle_->file.get(),
+        dwio::common::MetricsLog::voidLog(),
+        stats.get());
   }
 
   dwio::common::InputStream& get() override {
@@ -255,13 +258,17 @@ class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
 
  private:
   FileHandleCachedPtr fileHandle_;
+  // Keeps the pointer alive also in case of cancellation while reads
+  // proceeding on different threads.
+  std::shared_ptr<dwio::common::IoStatistics> stats_;
   std::unique_ptr<dwio::common::InputStream> input_;
 };
 
 std::unique_ptr<InputStreamHolder> makeStreamHolder(
     FileHandleFactory* factory,
-    const std::string& path) {
-  return std::make_unique<InputStreamHolder>(factory->generate(path));
+    const std::string& path,
+    std::shared_ptr<dwio::common::IoStatistics> stats) {
+  return std::make_unique<InputStreamHolder>(factory->generate(path), stats);
 }
 
 } // namespace
@@ -300,6 +307,9 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
   }
   if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
+    VELOX_CHECK(
+        !dataCache_,
+        "DataCache should not be present if the MappedMemory is AsyncDataCache");
     if (!readerOpts_.getDataCacheConfig()) {
       auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
       readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
@@ -309,9 +319,9 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         (asyncCache),
         Connector::getTracker(scanId_),
         fileHandle_->groupId.id(),
-        [factory = fileHandleFactory_, path = split_->filePath]() {
-          return makeStreamHolder(factory, path);
-        },
+        [factory = fileHandleFactory_,
+         path = split_->filePath,
+         stats = ioStats_]() { return makeStreamHolder(factory, path, stats); },
         ioStats_,
         executor_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
@@ -519,5 +529,5 @@ HiveConnector::HiveConnector(
       executor_(executor) {}
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
-
 } // namespace facebook::velox::connector::hive
+  // namespace facebook::velox::connector::hive
