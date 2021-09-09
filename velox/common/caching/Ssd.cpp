@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#pragma once
 
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
@@ -244,10 +243,9 @@ void SsdFile::store(std::vector<CachePin> pins) {
     int32_t bytes = 0;
     std::vector<iovec> iovecs;
     for (auto i = storeIndex; i < pins.size(); ++i) {
-      auto pin = std::move(pins[i]);
-      pin.entry()->setSsdFile(this, offset);
-      addEntryToIovecs(*pin.entry(), iovecs);
-      bytes += pin.entry()->size();
+      pins[i].entry()->setSsdFile(this, offset);
+      addEntryToIovecs(*pins[i].entry(), iovecs);
+      bytes += pins[i].entry()->size();
       ++numWritten;
       if (bytes >= available) {
         break;
@@ -292,8 +290,8 @@ SsdCache::SsdCache(std::string_view filePrefix, uint64_t maxBytes)
     : filePrefix_(filePrefix) {
   files_.reserve(kNumShards);
   constexpr uint64_t kSizeQuantum = kNumShards * SsdFile::kRegionSize;
-  int32_t fileMaxRegions =
-      bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum / kNumShards;
+  int32_t fileMaxRegions = 
+      bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum;
   for (auto i = 0; i < kNumShards; ++i) {
     files_.push_back(std::make_unique<SsdFile>(
         fmt::format("{}{}", filePrefix_, i), *this, i, fileMaxRegions));
