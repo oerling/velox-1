@@ -79,9 +79,7 @@ folly::Synchronized<
 
 // static
 void Connector::unregisterTracker(cache::ScanTracker* tracker) {
-  trackers_.withWLock([&](auto& trackers) {
-      trackers.erase(tracker->id());
-  });
+  trackers_.withWLock([&](auto& trackers) { trackers.erase(tracker->id()); });
 }
 
 std::shared_ptr<cache::ScanTracker> Connector::getTracker(
