@@ -385,7 +385,6 @@ class HashTable : public BaseHashTable {
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
   int64_t numDistinct_ = 0;
-  bool hasTombstones_ = false;
   HashMode hashMode_ = HashMode::kArray;
   // Owns the memory of multiple build side hash join tables that are
   // combined into a single probe hash table.
