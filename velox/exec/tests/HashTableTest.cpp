@@ -87,7 +87,6 @@ class HashTableTest : public testing::Test {
     testProbe();
     testErase();
     testProbe();
-
   }
 
   std::string describeTable() {
