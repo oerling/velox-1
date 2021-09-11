@@ -380,7 +380,7 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
     state4.preProbe(tags_, sizeMask_, lookup.hashes[row], row);
     state1.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
     state2.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
-    state3.firstProbe<ProbeState::kInsert>(table_, 0);
+    state3.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
     state4.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
     fullProbe<false>(lookup, state1, false);
     fullProbe<false>(lookup, state2, true);
@@ -1155,6 +1155,7 @@ void HashTable<ignoreNullKeys>::erase(folly::Range<char**> rows) {
       }
     }
   }
+  numDistinct_ -= numRows;
   if (hashMode_ == HashMode::kNormalizedKey) {
     for (auto i = 0; i < numRows; ++i) {
       hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);

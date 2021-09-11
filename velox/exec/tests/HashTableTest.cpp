@@ -87,6 +87,94 @@ class HashTableTest : public testing::Test {
     testProbe();
     testErase();
     testProbe();
+    testGroupBySpill(size, buildType, numKeys);
+  }
+
+  // Inserts and deletes rows in a HashTable, similarly to a group by
+  // that periodically spills a fraction of the groups.
+  void testGroupBySpill(
+      int32_t size,
+      TypePtr buildType,
+      int32_t numKeys) {
+    constexpr int32_t kBatchSize = 1000;
+    constexpr int32_t kNumErasePerRound = 500;
+    int32_t sequence = 0;
+    std::vector<RowVectorPtr> batches;
+    std::vector<std::unique_ptr<VectorHasher>> keyHashers;
+    for (auto channel = 0; channel < numKeys; ++channel) {
+      keyHashers.emplace_back(
+          std::make_unique<VectorHasher>(buildType->childAt(channel), channel));
+    }
+    auto table = HashTable<false>::createForAggregation(
+        std::move(keyHashers), {}, mappedMemory_);
+    auto lookup = std::make_unique<HashLookup>(table->hashers());
+    auto& hashers = table->hashers();
+    // Set of erased rows. These are expected not to come back even if the same
+    // key is inserted again.
+    std::unordered_set<char*> erased;
+    std::vector<char*> allInserted;
+    int32_t numErased = 0;
+    // We insert 1000 and delete 500.
+    for (auto round = 0; round < size; round += kBatchSize) {
+      makeRows(kBatchSize, 1, sequence, buildType, batches);
+      sequence += kBatchSize;
+      lookup->reset(kBatchSize);
+      insertGroups(*batches.back(), *lookup, *table);
+      for (auto i = 0; i < kBatchSize; ++i) {
+        ASSERT_TRUE(erased.find(lookup->hits[i]) == erased.end());
+      }
+      allInserted.insert(
+          allInserted.end(), lookup->hits.begin(), lookup->hits.end());
+
+      table->erase(folly::Range<char**>(
+          &allInserted[numErased], kNumErasePerRound));
+      for (auto i = 0; i < kNumErasePerRound; ++i) {
+        erased.insert(allInserted[numErased + i]);
+      }
+      numErased += kNumErasePerRound;
+    }
+    int32_t batchStart = 0;
+    // We loop over the keys one more time. The first half will be all
+    // new rows, the second half will be hits of existing ones.
+    int32_t row = 0;
+    for (auto i = 0; i < batches.size(); ++i) {
+      insertGroups(*batches[0], *lookup, *table);
+      for (; row < batchStart + kBatchSize; ++row) {
+	if (row < numErased) {
+	  ASSERT_TRUE(erased.find(lookup->hits[row - batchStart]) == erased.end());
+	} else {
+	  ASSERT_EQ(lookup->hits[row - batchStart], allInserted[row]);
+	}
+      }
+    }
+  }
+
+  void
+  insertGroups(RowVector& input, HashLookup& lookup, HashTable<false>& table) {
+    auto& hashers = table.hashers();
+    SelectivityVector activeRows(input.size());
+    auto mode = table.hashMode();
+    bool rehash = false;
+    for (int32_t i = 0; i < hashers.size(); ++i) {
+      auto key = input.childAt(hashers[i]->channel());
+      if (mode != BaseHashTable::HashMode::kHash) {
+        if (!hashers[i]->computeValueIds(*key, activeRows, &lookup.hashes)) {
+          rehash = true;
+        }
+      } else {
+        hashers[i]->hash(*key, activeRows, i > 0, &lookup.hashes);
+      }
+    }
+    std::iota(lookup.rows.begin(), lookup.rows.end(), 0);
+
+    if (rehash) {
+      if (table.hashMode() != BaseHashTable::HashMode::kHash) {
+        table.decideHashMode(input.size());
+      }
+      insertGroups(input, lookup, table);
+      return;
+    }
+    table.groupProbe(lookup);
   }
 
   std::string describeTable() {
