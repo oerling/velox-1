@@ -169,13 +169,13 @@ class HiveDataSource : public DataSource {
   FileHandleFactory* FOLLY_NONNULL fileHandleFactory_;
   velox::memory::MemoryPool* FOLLY_NONNULL pool_;
   std::vector<std::string> regularColumns_;
+  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   std::unique_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::unique_ptr<dwrf::ColumnReaderFactory> columnReaderFactory_;
   std::unique_ptr<common::ScanSpec> scanSpec_;
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
   dwio::common::RowReaderOptions rowReaderOpts_;
-  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   std::unique_ptr<dwrf::DwrfReader> reader_;
   std::unique_ptr<dwrf::DwrfRowReader> rowReader_;
   std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;

@@ -199,7 +199,7 @@ HiveDataSource::HiveDataSource(
       std::make_unique<dwrf::SelectiveColumnReaderFactory>(scanSpec_.get());
   rowReaderOpts_.setColumnReaderFactory(columnReaderFactory_.get());
 
-  ioStats_ = std::make_unique<dwio::common::IoStatistics>();
+  ioStats_ = std::make_shared<dwio::common::IoStatistics>();
 }
 
 namespace {

@@ -16,6 +16,7 @@
 
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
+#include "velox/common/process/ProcessBase.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 
@@ -67,13 +68,20 @@ void AsyncDataCacheEntry::addReference() {
 }
 
 void AsyncDataCacheEntry::ensureLoaded(bool wait) {
-  auto load = load_;
   VELOX_CHECK(isShared());
+  if (dataValid_) {
+    return;
+  }
+  // Copy the shared_ptr to 'load_' so that another loader will not clear
+  // it if it gets in first. Competing loaders get serialized on the
+  // mutex of 'load'.
+  auto load = load_;
   if (load) {
     if (wait) {
       folly::SemiFuture<bool> waitFuture(false);
       if (!load->loadOrFuture(&waitFuture)) {
         auto& exec = folly::QueuedImmediateExecutor::instance();
+	process::Context w("wait_ensure_load");
         std::move(waitFuture).via(&exec).wait();
         VELOX_CHECK(isShared());
       }
@@ -197,8 +205,12 @@ CachePin CacheShard::initEntry(
   return pin;
 }
 
+//  static
+std::atomic<int32_t> FusedLoad::numFusedLoads_{0};
+
 FusedLoad::~FusedLoad() {
   cancel();
+  --numFusedLoads_;
 }
 
 bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
