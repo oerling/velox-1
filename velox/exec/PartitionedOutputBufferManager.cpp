@@ -534,6 +534,15 @@ void PartitionedOutputBufferManager::removeTask(const std::string& taskId) {
   }
 }
 
+void PartitionedOutputBufferManager::clear() {
+  buffers_.withLock([](auto& buffers) {
+    if (!buffers.empty()) {
+      LOG(INFO) << "Unconsumed shuffle buffers";
+    }
+    buffers.clear();
+  });
+}
+
 std::string PartitionedOutputBufferManager::toString() {
   return buffers_.withLock([](const auto& buffers) {
     std::stringstream out;

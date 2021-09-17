@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 #pragma once
-#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/OperatorTestBase.h"
@@ -35,10 +34,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
   void SetUp() override;
 
 public:
-  static void SetUpTestCase() {
-    OperatorTestBase::SetUpTestCase();
-  }
-  
+
   void TearDown() override;
 
   void writeToFile(

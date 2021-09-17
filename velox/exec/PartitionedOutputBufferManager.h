@@ -243,6 +243,12 @@ class PartitionedOutputBufferManager {
   static std::weak_ptr<PartitionedOutputBufferManager> getInstance(
       const std::string& host = "local");
 
+  // Frees any unclosed output buffers. This is needed for clearing
+  // states of unclosed Tasks before freeing the MappedMemory from
+  // which their data is allocated. Used in tests or when having
+  // multiple MappedMemory instances for resource isolation.
+  void clear();
+  
   std::string toString();
 
  private:

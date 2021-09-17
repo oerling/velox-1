@@ -40,10 +40,6 @@ void HiveConnectorTestBase::SetUp() {
   }
 }
 
-  static void SetUpTestCase() {
-    OperatorTestBase::SetUpTestCase();
-    }
-    
 void HiveConnectorTestBase::TearDown() {
   if (executor_) {
     executor_->join();

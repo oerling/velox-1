@@ -19,12 +19,16 @@
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/dwio/common/DataSink.h"
 #include "velox/exec/Exchange.h"
+#include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/functions/prestosql/CoreFunctions.h"
 #include "velox/functions/prestosql/VectorFunctions.h"
 #include "velox/serializers/PrestoSerializer.h"
 
 namespace facebook::velox::exec::test {
+
+// static
+std::unique_ptr<cache::AsyncDataCache> OperatorTestBase::asyncDataCache_;
 
 OperatorTestBase::OperatorTestBase() {
   using memory::MappedMemory;
@@ -37,19 +41,28 @@ OperatorTestBase::OperatorTestBase() {
 
 OperatorTestBase::~OperatorTestBase() {
   exec::Driver::testingJoinAndReinitializeExecutor();
+  auto buffers = PartitionedOutputBufferManager::getInstance().lock();
+  if (buffers) {
+    buffers->clear();
+  }
+  // Revert to default process-wide MappedMemory.
+  memory::MappedMemory::setDefaultInstance(nullptr);
 }
 
 void OperatorTestBase::SetUp() {
-  // Sets the process MappedMemory according to useAsyncCache_
+  // Sets the process MappedMemory according to 'useAsyncCache_'.
   using namespace memory;
   if (useAsyncCache_) {
     // Sets the process default MappedMemory to an async cache of up
     // to 4GB backed by a default MappedMemory
-    MappedMemory::setDefaultInstance(std::make_unique<cache::AsyncDataCache>(
-        MappedMemory::createDefaultInstance(), 4UL << 30));
+    if (!asyncDataCache_) {
+      asyncDataCache_ = std::make_unique<cache::AsyncDataCache>(
+          MappedMemory::createDefaultInstance(), 4UL << 30);
+    }
+    MappedMemory::setDefaultInstance(asyncDataCache_.get());
   } else {
-    MappedMemory::setDefaultInstance(
-				     MappedMemory::createDefaultInstance());
+    // Revert to initial process-wide default.
+    MappedMemory::setDefaultInstance(nullptr);
   }
 }
 
