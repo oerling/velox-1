@@ -29,8 +29,12 @@ class OperatorTestBase : public testing::Test {
   OperatorTestBase();
   ~OperatorTestBase() override;
 
+  void SetUp();
+  
+public:
   static void SetUpTestCase();
 
+protected:
   void createDuckDbTable(const std::vector<RowVectorPtr>& data) {
     duckDbQueryRunner_.createTable("tmp", data);
   }
@@ -216,5 +220,8 @@ class OperatorTestBase : public testing::Test {
       memory::getDefaultScopedMemoryPool()};
   DuckDbQueryRunner duckDbQueryRunner_;
   velox::test::VectorMaker vectorMaker_{pool_.get()};
+
+  // Parametrized subclasses set this to choose the cache code path.
+  bool useAsyncCache_{true};
 };
 } // namespace facebook::velox::exec::test

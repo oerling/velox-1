@@ -30,41 +30,15 @@ static const std::string kHiveConnectorId = "test-hive";
 using ColumnHandleMap =
     std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>;
 
-// A dummy cache that always misses. This class is for testing purpose only.
-class DummyDataCache : public DataCache {
- public:
-  bool put(std::string_view /* key */, std::string_view /* value */) override {
-    putCount++;
-    return false;
-  }
-
-  bool get(std::string_view /* key */, uint64_t /* size */, void* /* buf */)
-      override {
-    getCount++;
-    return false;
-  }
-
-  bool get(std::string_view /* key */, std::string* /* value */) override {
-    getCount++;
-    return false;
-  }
-
-  int64_t currentSize() const final {
-    return 0;
-  }
-
-  int64_t maxSize() const final {
-    return 0;
-  }
-
-  size_t putCount{0};
-  size_t getCount{0};
-};
-
 class HiveConnectorTestBase : public OperatorTestBase {
  public:
   void SetUp() override;
 
+public:
+  static void SetUpTestCase() {
+    OperatorTestBase::SetUpTestCase();
+  }
+  
   void TearDown() override;
 
   void writeToFile(
@@ -157,7 +131,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
     return memory::MappedMemory::getInstance();
   }
 
-  DummyDataCache* dataCache;
+  SimpleLRUDataCache* dataCache;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
 };
 

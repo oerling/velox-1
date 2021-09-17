@@ -300,16 +300,13 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VLOG(1) << "Adding split " << split_->toString();
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
-  if (dataCache_) {
-    auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
-    dataCacheConfig->cache = dataCache_;
-    dataCacheConfig->filenum = fileHandle_->uuid.id();
-    readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
-  }
+  // Decide between AsyncDataCache, legacy DataCache and no cache. All
+  // three are supported to enable comparison.
   if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
     VELOX_CHECK(
         !dataCache_,
         "DataCache should not be present if the MappedMemory is AsyncDataCache");
+    // Make DataCacheConfig to pass the filenum and a null DataCache.
     if (!readerOpts_.getDataCacheConfig()) {
       auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
       readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
@@ -325,8 +322,13 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         ioStats_,
         executor_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
+  } else if (dataCache_) {
+    auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
+    dataCacheConfig->cache = dataCache_;
+    dataCacheConfig->filenum = fileHandle_->uuid.id();
+    readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
   }
-
+  // We run with the default BufferedInputFactory and no DataCacheConfig if there is no DataCache and the MappedMemory is not an AsyncDataCache.
   reader_ = dwrf::DwrfReader::create(
       std::make_unique<dwio::common::ReadFileInputStream>(
           fileHandle_->file.get(),

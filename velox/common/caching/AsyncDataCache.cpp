@@ -81,7 +81,6 @@ void AsyncDataCacheEntry::ensureLoaded(bool wait) {
       folly::SemiFuture<bool> waitFuture(false);
       if (!load->loadOrFuture(&waitFuture)) {
         auto& exec = folly::QueuedImmediateExecutor::instance();
-	process::Context w("wait_ensure_load");
         std::move(waitFuture).via(&exec).wait();
         VELOX_CHECK(isShared());
       }

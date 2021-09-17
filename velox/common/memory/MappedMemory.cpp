@@ -275,7 +275,6 @@ std::unique_ptr<MappedMemory> MappedMemory::createDefaultInstance() {
 
 // static
 void MappedMemory::setDefaultInstance(std::unique_ptr<MappedMemory> instance) {
-  VELOX_CHECK(!instance_, "Must not change process default MappedMemory");
   instance_ = std::move(instance);
 }
 
