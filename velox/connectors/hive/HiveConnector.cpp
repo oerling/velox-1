@@ -328,7 +328,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     dataCacheConfig->filenum = fileHandle_->uuid.id();
     readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
   }
-  // We run with the default BufferedInputFactory and no DataCacheConfig if there is no DataCache and the MappedMemory is not an AsyncDataCache.
+  // We run with the default BufferedInputFactory and no DataCacheConfig if
+  // there is no DataCache and the MappedMemory is not an AsyncDataCache.
   reader_ = dwrf::DwrfReader::create(
       std::make_unique<dwio::common::ReadFileInputStream>(
           fileHandle_->file.get(),

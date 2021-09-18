@@ -252,8 +252,8 @@ bool MappedMemoryImpl::checkConsistency() {
   throw std::runtime_error("Not implemented");
 }
 
-  MappedMemory* MappedMemory::customInstance_;
-  std::unique_ptr<MappedMemory> MappedMemory::instance_;
+MappedMemory* MappedMemory::customInstance_;
+std::unique_ptr<MappedMemory> MappedMemory::instance_;
 std::mutex MappedMemory::initMutex_;
 
 // static
