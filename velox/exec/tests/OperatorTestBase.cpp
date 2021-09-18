@@ -41,10 +41,6 @@ OperatorTestBase::OperatorTestBase() {
 
 OperatorTestBase::~OperatorTestBase() {
   exec::Driver::testingJoinAndReinitializeExecutor();
-  auto buffers = PartitionedOutputBufferManager::getInstance().lock();
-  if (buffers) {
-    buffers->clear();
-  }
   // Revert to default process-wide MappedMemory.
   memory::MappedMemory::setDefaultInstance(nullptr);
 }
