@@ -1969,6 +1969,19 @@ md5/fast:
 .PHONY : md5/fast
 
 #=============================================================================
+# Target rules for targets named velox_function_registry
+
+# Build rule for target.
+velox_function_registry: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_function_registry
+.PHONY : velox_function_registry
+
+# fast build rule for target.
+velox_function_registry/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/CMakeFiles/velox_function_registry.dir/build.make velox/functions/CMakeFiles/velox_function_registry.dir/build
+.PHONY : velox_function_registry/fast
+
+#=============================================================================
 # Target rules for targets named velox_functions_lib
 
 # Build rule for target.
@@ -2162,6 +2175,19 @@ velox_functions_spark_test: cmake_check_build_system
 velox_functions_spark_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/functions/sparksql/tests/CMakeFiles/velox_functions_spark_test.dir/build.make velox/functions/sparksql/tests/CMakeFiles/velox_functions_spark_test.dir/build
 .PHONY : velox_functions_spark_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_function_registry_test
+
+# Build rule for target.
+velox_function_registry_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_function_registry_test
+.PHONY : velox_function_registry_test
+
+# fast build rule for target.
+velox_function_registry_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/tests/CMakeFiles/velox_function_registry_test.dir/build.make velox/functions/tests/CMakeFiles/velox_function_registry_test.dir/build
+.PHONY : velox_function_registry_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_parse_expression
@@ -2584,6 +2610,8 @@ help:
 	@echo "... velox_expression_test"
 	@echo "... velox_external_date"
 	@echo "... velox_flag_definitions"
+	@echo "... velox_function_registry"
+	@echo "... velox_function_registry_test"
 	@echo "... velox_functions_benchmarks_array_contains"
 	@echo "... velox_functions_benchmarks_not"
 	@echo "... velox_functions_benchmarks_string_ascii_utf_functions"
