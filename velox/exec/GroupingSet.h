@@ -133,7 +133,6 @@ class GroupingSet {
 
   uint64_t spillThreshold_ = 0;
   uint64_t maxBatchBytes_;
-  int32_t numKeys_;
   std::unique_ptr<SpillState> spill_;
   std::unique_ptr<TreeOfLosers<VectorRow, SpillStream>> merge_;
   RowContainerIterator spillIterator_;

@@ -201,8 +201,7 @@ class AggregationTest : public AggregationTestBase {
         rows->type(),
         BufferPtr(nullptr),
         count,
-        children,
-        folly::none));
+        children));
     dictionary = AlignedBuffer::allocate<vector_size_t>(
         dictionary->capacity() / sizeof(vector_size_t), rows->pool());
   }

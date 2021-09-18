@@ -579,6 +579,7 @@ void RowContainer::extractSpill(folly::Range<char**> rows, RowVector* result) {
     extractColumn(rows.data(), rows.size(), i, result->childAt(i));
   }
   for (auto i = 0; i < aggregates_.size(); ++i) {
+    aggregates_[i]->finalize(        rows.data(), rows.size());
     aggregates_[i]->extractAccumulators(
         rows.data(), rows.size(), &result->childAt(i + keyTypes_.size()));
   }
