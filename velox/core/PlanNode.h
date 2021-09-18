@@ -734,6 +734,30 @@ class PartitionedOutputNode : public PlanNode {
 
 enum class JoinType { kInner, kLeft, kRight, kFull, kSemi, kAnti };
 
+inline bool isInnerJoin(JoinType joinType) {
+  return joinType == JoinType::kInner;
+}
+
+inline bool isLeftJoin(JoinType joinType) {
+  return joinType == JoinType::kLeft;
+}
+
+inline bool isRightJoin(JoinType joinType) {
+  return joinType == JoinType::kRight;
+}
+
+inline bool isFullJoin(JoinType joinType) {
+  return joinType == JoinType::kFull;
+}
+
+inline bool isSemiJoin(JoinType joinType) {
+  return joinType == JoinType::kSemi;
+}
+
+inline bool isAntiJoin(JoinType joinType) {
+  return joinType == JoinType::kAnti;
+}
+
 // Represents inner/outer/semi/anti join hash
 // joins. Translates to an exec::HashBuild and exec::HashProbe. A
 // separate pipeline is produced for the build side when generating
@@ -1040,6 +1064,34 @@ class UnnestNode : public PlanNode {
   const bool withOrdinality_;
   const std::vector<std::shared_ptr<const PlanNode>> sources_;
   RowTypePtr outputType_;
+};
+
+/// Checks that input contains at most one row. Return that row as is. If input
+/// is empty, returns a single row with all values set to null. If input
+/// contains more than one row raises an exception.
+///
+/// This plan node is used in query plans that use non-correlated sub-queries.
+class EnforceSingleRowNode : public PlanNode {
+ public:
+  EnforceSingleRowNode(
+      const PlanNodeId& id,
+      std::shared_ptr<const PlanNode> source)
+      : PlanNode(id), sources_{std::move(source)} {}
+
+  const RowTypePtr& outputType() const override {
+    return sources_[0]->outputType();
+  }
+
+  const std::vector<std::shared_ptr<const PlanNode>>& sources() const override {
+    return sources_;
+  }
+
+  std::string_view name() const override {
+    return "enforce single row";
+  }
+
+ private:
+  const std::vector<std::shared_ptr<const PlanNode>> sources_;
 };
 
 } // namespace facebook::velox::core

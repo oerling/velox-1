@@ -11,18 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+add_executable(velox_function_registry_test FunctionRegistryTest.cpp)
 
-add_executable(velox_dwio_dwrf_utils_test ProtoUtilsTests.cpp
-                                          BitIteratorTests.cpp)
+add_test(NAME velox_function_registry_test COMMAND velox_function_registry_test)
 
-add_test(velox_dwio_dwrf_utils_test velox_dwio_dwrf_utils_test)
-
-target_link_libraries(
-  velox_dwio_dwrf_utils_test
-  velox_dwio_common
-  velox_dwio_dwrf_utils
-  velox_dwio_common_exception
-  velox_dwio_type_fbhive
-  ${gflags_LIBRARIES}
-  ${GTEST_BOTH_LIBRARIES}
-  ${GLOG})
+target_link_libraries(velox_function_registry_test velox_function_registry
+                      ${GTEST_BOTH_LIBRARIES})

@@ -13,17 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/aggregates/SumAggregate.h"
+#include "velox/aggregates/AggregateNames.h"
 
-#pragma once
+namespace facebook::velox::aggregate {
 
-#include <string>
+static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
+    registerSumAggregate<SumAggregate>(kSum);
 
-namespace facebook::velox::util {
-
-// Returns the timezone name associated with timeZoneID.
-std::string getTimeZoneName(int64_t timeZoneID);
-
-// Returns the timeZoneID for the timezone name.
-int64_t getTimeZoneID(std::string_view timeZone);
-
-} // namespace facebook::velox::util
+} // namespace facebook::velox::aggregate
