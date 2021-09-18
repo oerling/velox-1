@@ -51,7 +51,7 @@ class Instr : public exec::VectorFunction {
     BaseVector::ensureWritable(selected, INTEGER(), context->pool(), result);
     auto* output = (*result)->as<FlatVector<int32_t>>();
 
-    if (getStringEncodingOrUTF8(args[0].get()) == StringEncodingMode::ASCII) {
+    if (isAscii(args[0].get(), selected)) {
       selected.applyToSelected([&](vector_size_t row) {
         output->set(
             row,
@@ -91,7 +91,7 @@ class Length : public exec::VectorFunction {
     auto* output = (*result)->as<FlatVector<int32_t>>();
 
     if (args[0]->typeKind() == TypeKind::VARCHAR &&
-        getStringEncodingOrUTF8(args[0].get()) != StringEncodingMode::ASCII) {
+        !isAscii(args[0].get(), selected)) {
       selected.applyToSelected([&](vector_size_t row) {
         const StringView str = input->valueAt<StringView>(row);
         output->set(row, lengthUnicode(str.data(), str.size()));

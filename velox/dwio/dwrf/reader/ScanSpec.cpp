@@ -89,7 +89,7 @@ void ScanSpec::reorder() {
 }
 
 bool ScanSpec::hasFilter() const {
-  if (hasFilter_.hasValue()) {
+  if (hasFilter_.has_value()) {
     return hasFilter_.value();
   }
   if (!isConstant() && filter_) {
@@ -283,6 +283,15 @@ bool testFilter(
   }
 
   return true;
+}
+
+ScanSpec& ScanSpec::getChildByChannel(ChannelIndex channel) {
+  for (auto& child : children_) {
+    if (child->channel_ == channel) {
+      return *child;
+    }
+  }
+  VELOX_FAIL("No ScanSpec produces channel {}", channel);
 }
 
 } // namespace facebook::velox::common

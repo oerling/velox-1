@@ -46,7 +46,9 @@ void applyCastKernel(
     auto proxy =
         exec::StringProxy<FlatVector<StringView>>(resultFlatVector, row);
     proxy.resize(output.size());
-    std::memcpy(proxy.data(), output.data(), output.size());
+    if (output.size()) {
+      std::memcpy(proxy.data(), output.data(), output.size());
+    }
     proxy.finalize();
   } else {
     auto result =
@@ -348,7 +350,7 @@ void CastExpr::applyRow(
 
     if (matchNotFound) {
       if (nullOnFailure_) {
-        VELOX_USER_THROW(
+        VELOX_USER_FAIL(
             "Invalid complex cast the match is not found for the field {}",
             toFieldName)
       }

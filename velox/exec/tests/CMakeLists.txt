@@ -33,6 +33,7 @@ target_link_libraries(
 add_executable(
   velox_exec_test
   DriverTest.cpp
+  EnforceSingleRowTest.cpp
   FilterProjectTest.cpp
   TableScanTest.cpp
   TaskTest.cpp
@@ -84,6 +85,7 @@ target_link_libraries(
   velox_memory
   velox_parse_parser
   velox_dwio_type_fbhive
+  velox_dwio_common_exception
   velox_dwrf_test_utils
   velox_presto_serializer
   ${Boost_ATOMIC_LIBRARIES}

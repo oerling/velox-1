@@ -14,17 +14,12 @@
  * limitations under the License.
  */
 
-#include <folly/Optional.h>
-
-#include "velox/core/Expressions.h"
 #include "velox/expression/ControlExpr.h"
+#include "velox/core/Expressions.h"
 #include "velox/expression/VarSetter.h"
 #include "velox/functions/lib/string/StringCore.h"
 
 namespace facebook::velox::exec {
-
-using functions::stringCore::maxEncoding;
-using functions::stringCore::StringEncodingMode;
 
 void ConstantExpr::evalSpecialForm(
     const SelectivityVector& rows,
@@ -38,18 +33,13 @@ void ConstantExpr::evalSpecialForm(
   if (isString()) {
     auto* vector =
         sharedSubexprValues_->asUnchecked<SimpleVector<StringView>>();
-    determineStringEncoding(context, vector, rows);
+    vector->computeAndSetIsAscii(rows);
   }
 
   context->moveOrCopyResult(
       BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
       rows,
       result);
-
-  if (isString()) {
-    (*result)->asUnchecked<SimpleVector<StringView>>()->copyStringEncodingFrom(
-        sharedSubexprValues_.get());
-  }
 }
 
 void ConstantExpr::evalSpecialFormSimplified(
@@ -113,12 +103,6 @@ void FieldReference::evalSpecialForm(
   if (result->get()) {
     auto indices = useDecode ? decoded.indices() : nullptr;
     (*result)->copy(child.get(), rows, indices);
-
-    if (isString()) {
-      (*result)->as<SimpleVector<StringView>>()->copyStringEncodingFrom(
-          child.get());
-    }
-
   } else {
     if (child->encoding() == VectorEncoding::Simple::LAZY) {
       child = BaseVector::loadedVectorShared(child);
@@ -136,39 +120,6 @@ void FieldReference::evalSpecialFormSimplified(
   *result = row->childAt(index(context));
   BaseVector::flattenVector(result, rows.end());
 }
-
-namespace {
-
-/// Calculates the string encoding of the result of a switch expression by
-/// combining string encodings of the results of individual "then" clauses and
-/// an optional "else" clause.
-class StringEncodingTracker {
- public:
-  /// Accepts the result of a "then" or "else" clause.
-  void addEncoding(const VectorPtr& source) {
-    if (encoding_.has_value()) {
-      auto encoding =
-          source->asUnchecked<SimpleVector<StringView>>()->getStringEncoding();
-      if (encoding.has_value()) {
-        encoding_ = maxEncoding(encoding_.value(), encoding.value());
-      } else {
-        encoding_.reset();
-      }
-    }
-  }
-
-  /// Updates input vector with the final encoding of the "switch" expression.
-  void setEncoding(const VectorPtr& vector) const {
-    if (encoding_.has_value()) {
-      vector->asUnchecked<SimpleVector<StringView>>()->setStringEncoding(
-          encoding_.value());
-    }
-  }
-
- private:
-  folly::Optional<StringEncodingMode> encoding_{StringEncodingMode::ASCII};
-};
-} // namespace
 
 void SwitchExpr::evalSpecialForm(
     const SelectivityVector& rows,
@@ -188,7 +139,6 @@ void SwitchExpr::evalSpecialForm(
   VarSetter isFinalSelection(context->mutableIsFinalSelection(), false);
 
   const bool isString = type()->kind() == TypeKind::VARCHAR;
-  StringEncodingTracker stringEncodingTracker;
 
   for (auto i = 0; i < numCases_; i++) {
     if (!remainingRows.get()->hasSelections()) {
@@ -210,10 +160,6 @@ void SwitchExpr::evalSpecialForm(
     switch (booleanMix) {
       case BooleanMix::kAllTrue:
         inputs_[2 * i + 1]->eval(*remainingRows.get(), context, result);
-        if (isString) {
-          stringEncodingTracker.addEncoding(*result);
-          stringEncodingTracker.setEncoding(*result);
-        }
         return;
       case BooleanMix::kAllNull:
       case BooleanMix::kAllFalse:
@@ -235,10 +181,6 @@ void SwitchExpr::evalSpecialForm(
 
           inputs_[2 * i + 1]->eval(*thenRows.get(), context, result);
           remainingRows.get()->deselect(*thenRows.get());
-
-          if (isString) {
-            stringEncodingTracker.addEncoding(*result);
-          }
         }
       }
     }
@@ -254,18 +196,11 @@ void SwitchExpr::evalSpecialForm(
     if (hasElseClause_) {
       inputs_.back()->eval(*remainingRows.get(), context, result);
 
-      if (isString) {
-        stringEncodingTracker.addEncoding(*result);
-      }
     } else {
       // fill in nulls for remainingRows
       remainingRows.get()->applyToSelected(
           [&](auto row) { (*result)->setNull(row, true); });
     }
-  }
-
-  if (isString) {
-    stringEncodingTracker.setEncoding(*result);
   }
 }
 

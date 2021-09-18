@@ -124,7 +124,7 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
 
 template <typename T>
 void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
-  if (values_ &&
+  if (values_ && values_->unique() &&
       values_->capacity() >=
           BaseVector::byteSize<T>(numRows) + simd::kPadding) {
     return;
@@ -203,11 +203,6 @@ void SelectiveColumnReader::prepareRead(
   }
   ensureValuesCapacity<T>(rows.size());
   if (scanSpec_->keepValues() && !scanSpec_->valueHook()) {
-    // Can't re-use if someone else has a reference
-    if (values_ && !values_->unique()) {
-      values_.reset();
-    }
-    ensureValuesCapacity<T>(rows.size());
     valueRows_.clear();
     prepareNulls(rows, nullsInReadRange_ != nullptr);
   }
@@ -3371,7 +3366,8 @@ class StringDictionaryColumnVisitor
       int32_t* filterHits,
       int32_t* values,
       int32_t& numValues) {
-    setByInDict(values, numInput);
+    DCHECK(input == values + numValues);
+    setByInDict(values + numValues, numInput);
     if (!hasFilter) {
       if (hasHook) {
         for (auto i = 0; i < numInput; ++i) {
@@ -4067,7 +4063,7 @@ void SelectiveStructColumnReader::read(
       continue;
     }
     auto fieldIndex = childSpec->subscript();
-    auto reader = children_[fieldIndex].get();
+    auto reader = children_.at(fieldIndex).get();
     advanceFieldReader(reader, offset);
     if (childSpec->filter()) {
       hasFilter = true;
