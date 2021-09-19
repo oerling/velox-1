@@ -29,9 +29,6 @@ DEFINE_bool(
 
 namespace facebook::velox::exec {
 
-using functions::stringCore::maxEncoding;
-using functions::stringCore::StringEncodingMode;
-
 namespace {
 
 bool isMember(
@@ -659,12 +656,10 @@ void Expr::evalWithNulls(
       }
     }
 
-    VarSetter scopedMayHaveNulls(context->mutableMayHaveNulls(), mayHaveNulls);
-
     if (mayHaveNulls && !distinctFields_.empty()) {
       LocalSelectivityVector nonNullHolder(context);
       if (removeSureNulls(rows, context, nonNullHolder)) {
-        VarSetter noMoreNulls(context->mutableMayHaveNulls(), false);
+        VarSetter noMoreNulls(context->mutableNullsPruned(), true);
         if (nonNullHolder.get()->hasSelections()) {
           evalAll(*nonNullHolder.get(), context, result);
         }
@@ -722,7 +717,7 @@ void Expr::evalWithMemo(
       VarSetter isFinalSelectionMemo(
           context->mutableIsFinalSelection(), false, updateFinalSelection);
 
-      evalAll(*uncached, context, result);
+      evalWithNulls(*uncached, context, result);
       deselectErrors(context, *uncached);
       context->exprSet()->addToMemo(this);
       auto newCacheSize = uncached->end();
@@ -749,7 +744,7 @@ void Expr::evalWithMemo(
     return;
   }
   baseDictionary_ = base;
-  evalAll(rows, context, result);
+  evalWithNulls(rows, context, result);
   dictionaryCache_ = *result;
   if (!cachedDictionaryIndices_) {
     cachedDictionaryIndices_ =

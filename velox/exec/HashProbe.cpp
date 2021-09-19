@@ -93,14 +93,19 @@ HashProbe::HashProbe(
     initializeFilter(joinNode->filter(), probeType, tableType);
   }
 
+  bool isIdentityProjection = true;
   for (auto i = 0; i < probeType->size(); ++i) {
     auto input = probeType->childAt(i);
     auto name = probeType->nameOf(i);
     auto outIndex = childIndex(outputType_.get(), name);
     if (outIndex != kNoChannel) {
       identityProjections_.emplace_back(i, outIndex);
+      if (outIndex != i) {
+        isIdentityProjection = false;
+      }
     }
   }
+
   for (ChannelIndex i = 0; i < outputType_->size(); ++i) {
     auto tableChannel = childIndex(tableType.get(), outputType_->nameOf(i));
     if (tableChannel != kNoChannel) {
@@ -108,7 +113,9 @@ HashProbe::HashProbe(
     }
   }
 
-  // mbasmanova Use member initializer list for outputRows_ perhaps.
+  if (isIdentityProjection && tableResultProjections_.empty()) {
+    isIdentityProjection_ = true;
+  }
 }
 
 void HashProbe::initializeFilter(
@@ -164,19 +171,18 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
 
   if (hashBuildResult->antiJoinHashNullKeys) {
     // Anti join with null keys on the build side always returns nothing.
-    VELOX_CHECK(joinType_ == core::JoinType::kAnti);
+    VELOX_CHECK(isAntiJoin(joinType_));
     isFinishing_ = true;
   } else {
     table_ = hashBuildResult->table;
     if (table_->numDistinct() == 0) {
       // Build side is empty. Inner and semi joins return nothing in this case,
       // hence, we can terminate the pipeline early.
-      if (joinType_ == core::JoinType::kInner ||
-          joinType_ == core::JoinType::kSemi) {
+      if (isInnerJoin(joinType_) || isSemiJoin(joinType_)) {
         isFinishing_ = true;
       }
     } else if (
-        joinType_ == core::JoinType::kInner &&
+        (isInnerJoin(joinType_) || isSemiJoin(joinType_)) &&
         table_->hashMode() != BaseHashTable::HashMode::kHash) {
       // Find out whether there are any upstream operators that can accept
       // dynamic filters on all or a subset of the join keys. Setup dynamic
@@ -199,13 +205,31 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
+void HashProbe::clearDynamicFilters() {
+  // The join can be completely replaced with a pushed down
+  // filter when the following conditions are met:
+  //  * hash table has a single key with unique values,
+  //  * build side has no dependent columns.
+  if (keyChannels_.size() == 1 && !table_->hasDuplicateKeys() &&
+      tableResultProjections_.empty() && !filter_ && !dynamicFilters_.empty()) {
+    canReplaceWithDynamicFilter_ = true;
+  }
+
+  Operator::clearDynamicFilters();
+}
+
 void HashProbe::addInput(RowVectorPtr input) {
   input_ = std::move(input);
+
+  if (canReplaceWithDynamicFilter_) {
+    replacedWithDynamicFilter_ = true;
+    return;
+  }
 
   if (table_->numDistinct() == 0) {
     // Build side is empty. This state is valid only for anti join which returns
     // all probe rows.
-    VELOX_CHECK(joinType_ == core::JoinType::kAnti);
+    VELOX_CHECK(isAntiJoin(joinType_));
     return;
   }
 
@@ -309,33 +333,42 @@ RowVectorPtr HashProbe::getOutput() {
     return nullptr;
   }
 
+  const auto inputSize = input_->size();
+
+  if (replacedWithDynamicFilter_) {
+    stats_.addRuntimeStat("replacedWithDynamicFilterRows", inputSize);
+    auto output = fillOutput(inputSize, nullptr);
+    input_ = nullptr;
+    return output;
+  }
+
   const bool isSemiOrAntiJoin =
-      joinType_ == core::JoinType::kSemi || joinType_ == core::JoinType::kAnti;
+      core::isSemiJoin(joinType_) || core::isAntiJoin(joinType_);
 
   // Semi and anti joins are always cardinality reducing, e.g. for a given row
   // of input they produce zero or 1 row of output. Therefore, we can process
   // each batch of input in one go.
   auto mapping = initializeRowNumberMapping(
       rowNumberMapping_,
-      isSemiOrAntiJoin ? input_->size() : kOutputBatchSize,
+      isSemiOrAntiJoin ? inputSize : kOutputBatchSize,
       pool());
 
   if (isSemiOrAntiJoin) {
-    outputRows_.resize(input_->size());
+    outputRows_.resize(inputSize);
   }
 
   for (;;) {
     int numOut = 0;
-    if (joinType_ == core::JoinType::kAnti) {
+    if (isAntiJoin(joinType_)) {
       if (table_->numDistinct() == 0) {
         // When build side is empty, anti join returns all probe side rows,
         // including ones with null join keys.
         std::iota(mapping.begin(), mapping.end(), 0);
-        numOut = input_->size();
+        numOut = inputSize;
       } else {
         // When build side is not empty, anti join returns probe rows with no
         // nulls in the join key and no match in the build side.
-        for (auto i = 0; i < input_->size(); i++) {
+        for (auto i = 0; i < inputSize; i++) {
           if (nonNullRows_.isValid(i) &&
               (!activeRows_.isValid(i) || !lookup_->hits[i])) {
             mapping[numOut] = i;

@@ -18,7 +18,6 @@
 #include <cctype>
 #include <random>
 #include "velox/common/base/VeloxException.h"
-#include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/expression/Expr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/lib/StringEncodingUtils.h"
@@ -29,7 +28,6 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::functions::test;
-using facebook::velox::functions::stringCore::StringEncodingMode;
 
 namespace {
 /// Generate an ascii random string of size length
@@ -125,14 +123,18 @@ class StringFunctionsTest : public FunctionBaseTest {
 
   void testUpperFlatVector(
       const std::vector<std::tuple<std::string, std::string>>& tests,
-      folly::Optional<StringEncodingMode> stringEncoding,
+      std::optional<bool> ascii,
       bool multiReferenced,
-      StringEncodingMode expectedResultEncoding) {
+      bool expectedAscii) {
     auto inputsFlatVector = std::dynamic_pointer_cast<FlatVector<StringView>>(
         BaseVector::create(VARCHAR(), tests.size(), execCtx_.pool()));
 
     for (int i = 0; i < tests.size(); i++) {
       inputsFlatVector->set(i, StringView(std::get<0>(tests[i])));
+    }
+
+    if (ascii.has_value()) {
+      inputsFlatVector->setAllIsAscii(ascii.value());
     }
 
     auto crossRefVector = std::dynamic_pointer_cast<FlatVector<StringView>>(
@@ -145,6 +147,9 @@ class StringFunctionsTest : public FunctionBaseTest {
     auto result = evaluate<FlatVector<StringView>>(
         "upper(c0)", makeRowVector({inputsFlatVector}));
 
+    SelectivityVector all(tests.size());
+    ASSERT_EQ(result->isAscii(all), expectedAscii);
+
     for (int32_t i = 0; i < tests.size(); ++i) {
       ASSERT_EQ(result->valueAt(i), StringView(std::get<1>(tests[i])));
     }
@@ -152,14 +157,18 @@ class StringFunctionsTest : public FunctionBaseTest {
 
   void testLowerFlatVector(
       const std::vector<std::tuple<std::string, std::string>>& tests,
-      folly::Optional<StringEncodingMode> stringEncoding,
+      std::optional<bool> ascii,
       bool multiReferenced,
-      StringEncodingMode expectedResultEncoding) {
+      bool expectedAscii) {
     auto inputsFlatVector = std::dynamic_pointer_cast<FlatVector<StringView>>(
         BaseVector::create(VARCHAR(), tests.size(), execCtx_.pool()));
 
     for (int i = 0; i < tests.size(); i++) {
       inputsFlatVector->set(i, StringView(std::get<0>(tests[i])));
+    }
+
+    if (ascii.has_value()) {
+      inputsFlatVector->setAllIsAscii(ascii.value());
     }
 
     auto crossRefVector = std::dynamic_pointer_cast<FlatVector<StringView>>(
@@ -171,6 +180,9 @@ class StringFunctionsTest : public FunctionBaseTest {
     auto testQuery = [&](const std::string& query) {
       auto result = evaluate<FlatVector<StringView>>(
           query, makeRowVector({inputsFlatVector}));
+
+      SelectivityVector all(tests.size());
+      ASSERT_EQ(result->isAscii(all), expectedAscii);
 
       for (int32_t i = 0; i < tests.size(); ++i) {
         ASSERT_EQ(result->valueAt(i), StringView(std::get<1>(tests[i])));
@@ -226,13 +238,17 @@ class StringFunctionsTest : public FunctionBaseTest {
 
   void testLengthFlatVector(
       const std::vector<std::tuple<std::string, int64_t>>& tests,
-      folly::Optional<StringEncodingMode> stringEncoding) {
+      std::optional<bool> setAscii) {
     auto inputsFlatVector = std::dynamic_pointer_cast<FlatVector<StringView>>(
         BaseVector::create(VARCHAR(), tests.size(), execCtx_.pool()));
 
     for (int i = 0; i < tests.size(); i++) {
       inputsFlatVector->set(i, StringView(std::get<0>(tests[i])));
     }
+    if (setAscii.has_value()) {
+      inputsFlatVector->setAllIsAscii(setAscii.value());
+    }
+
     auto result = evaluate<FlatVector<int64_t>>(
         "length(c0)", makeRowVector({inputsFlatVector}));
 
@@ -276,7 +292,7 @@ class StringFunctionsTest : public FunctionBaseTest {
 
   void testStringPositionAllFlatVector(
       const strpos_input_test_t& tests,
-      const std::vector<folly::Optional<StringEncodingMode>>& stringEncodings,
+      const std::vector<std::optional<bool>>& stringEncodings,
       bool withInstanceArgument);
 
   void testChrFlatVector(
@@ -303,11 +319,6 @@ class StringFunctionsTest : public FunctionBaseTest {
       const std::string& search,
       const std::string& replace,
       bool multiReferenced);
-
-  void testStringEncodingResolution(
-      const std::vector<std::vector<std::string>>& content,
-      const std::vector<folly::Optional<StringEncodingMode>>& encodings,
-      bool isAscii);
 
   void testXXHash64(
       const std::vector<std::tuple<std::string, int64_t, int64_t>>& tests);
@@ -661,26 +672,19 @@ TEST_F(StringFunctionsTest, upper) {
 
   // Test ascii fast paths
   testUpperFlatVector(
-      allTests,
-      StringEncodingMode::ASCII,
-      true /*multiRef*/,
-      StringEncodingMode::ASCII);
+      allTests, true /*ascii*/, true /*multiRef*/, true /*expectedAscii*/);
   testUpperFlatVector(
-      allTests, StringEncodingMode::ASCII, false, StringEncodingMode::ASCII);
+      allTests, true /*ascii*/, false /*multiRef*/, true /*expectedAscii*/);
 
   auto&& unicodeTests = getUpperUnicodeTestData();
   allTests.insert(allTests.end(), unicodeTests.begin(), unicodeTests.end());
 
   // Test unicode
   testUpperFlatVector(
-      allTests, StringEncodingMode::UTF8, false, StringEncodingMode::UTF8);
+      allTests, false /*ascii*/, false, false /*expectedAscii*/);
   testUpperFlatVector(
-      allTests,
-      StringEncodingMode::MOSTLY_ASCII,
-      false,
-      StringEncodingMode::MOSTLY_ASCII);
-  testUpperFlatVector(
-      allTests, folly::none, false, StringEncodingMode::MOSTLY_ASCII);
+      allTests, false /*ascii*/, false, false /*expectedAscii*/);
+  testUpperFlatVector(allTests, std::nullopt, false, false /*expectedAscii*/);
 
   // Test constant vectors
   auto rows = makeRowVector(
@@ -714,24 +718,16 @@ TEST_F(StringFunctionsTest, lower) {
   auto asciiTests = getLowerAsciiTestData();
   allTests.insert(allTests.end(), asciiTests.begin(), asciiTests.end());
 
-  testLowerFlatVector(
-      allTests, StringEncodingMode::ASCII, true, StringEncodingMode::ASCII);
-  testLowerFlatVector(
-      allTests, StringEncodingMode::ASCII, false, StringEncodingMode::ASCII);
+  testLowerFlatVector(allTests, true /*ascii*/, true, true /*expectedAscii*/);
+  testLowerFlatVector(allTests, true /*ascii*/, false, true /*expectedAscii*/);
 
   auto&& unicodeTests = getLowerUnicodeTestData();
   allTests.insert(allTests.end(), unicodeTests.begin(), unicodeTests.end());
 
   // Test unicode
   testLowerFlatVector(
-      allTests, StringEncodingMode::UTF8, false, StringEncodingMode::UTF8);
-  testLowerFlatVector(
-      allTests,
-      StringEncodingMode::MOSTLY_ASCII,
-      false,
-      StringEncodingMode::MOSTLY_ASCII);
-  testLowerFlatVector(
-      allTests, folly::none, false, StringEncodingMode::MOSTLY_ASCII);
+      allTests, false /*ascii*/, false, false /*expectedAscii*/);
+  testLowerFlatVector(allTests, std::nullopt, false, false /*expectedAscii*/);
 
   // Test constant vectors
   auto rows = makeRowVector({makeRowVector(
@@ -796,10 +792,9 @@ TEST_F(StringFunctionsTest, length) {
   auto emptyString = "";
   tests.push_back(std::make_tuple(emptyString, 0));
 
-  testLengthFlatVector(tests, StringEncodingMode::ASCII);
-  testLengthFlatVector(tests, StringEncodingMode::MOSTLY_ASCII);
-  testLengthFlatVector(tests, StringEncodingMode::UTF8);
-  testLengthFlatVector(tests, folly::none);
+  testLengthFlatVector(tests, true /*setAscii*/);
+  testLengthFlatVector(tests, false /*setAscii*/);
+  testLengthFlatVector(tests, std::nullopt);
 
   // Test unicode
   for (auto& pair : getUpperUnicodeTestData()) {
@@ -807,8 +802,8 @@ TEST_F(StringFunctionsTest, length) {
     tests.push_back(std::make_tuple(string, lengthUtf8Ref(string)));
   };
 
-  testLengthFlatVector(tests, StringEncodingMode::UTF8);
-  testLengthFlatVector(tests, folly::none);
+  testLengthFlatVector(tests, false /*setAscii*/);
+  testLengthFlatVector(tests, std::nullopt);
 
   // Test constant vectors
   auto rows = makeRowVector({makeRowVector(
@@ -822,7 +817,7 @@ TEST_F(StringFunctionsTest, length) {
 // Test strpos function
 void StringFunctionsTest::testStringPositionAllFlatVector(
     const strpos_input_test_t& tests,
-    const std::vector<folly::Optional<StringEncodingMode>>& stringEncodings,
+    const std::vector<std::optional<bool>>& asciiEncodings,
     bool withInstanceArgument) {
   auto stringVector = makeFlatVector<StringView>(tests.size());
   auto subStringVector = makeFlatVector<StringView>(tests.size());
@@ -835,6 +830,13 @@ void StringFunctionsTest::testStringPositionAllFlatVector(
     if (instanceVector) {
       instanceVector->set(i, std::get<2>(tests[i].first));
     }
+  }
+
+  if (asciiEncodings[0].has_value()) {
+    stringVector->setAllIsAscii(asciiEncodings[0].value());
+  }
+  if (asciiEncodings[1].has_value()) {
+    subStringVector->setAllIsAscii(asciiEncodings[1].value());
   }
 
   FlatVectorPtr<int64_t> result;
@@ -871,20 +873,9 @@ TEST_F(StringFunctionsTest, stringPosition) {
   // We dont have to try all encoding combinations here since there is a test
   // that test the encoding resolution but we want to to have a test for each
   // possible resolution
-  testStringPositionAllFlatVector(
-      testsAscii,
-      {StringEncodingMode::ASCII, StringEncodingMode::ASCII},
-      false);
+  testStringPositionAllFlatVector(testsAscii, {true, true}, false);
 
-  testStringPositionAllFlatVector(
-      testsAsciiWithPosition,
-      {StringEncodingMode::MOSTLY_ASCII, StringEncodingMode::MOSTLY_ASCII},
-      true);
-
-  testStringPositionAllFlatVector(
-      testsUnicodeWithPosition,
-      {StringEncodingMode::UTF8, StringEncodingMode::UTF8},
-      true);
+  testStringPositionAllFlatVector(testsAsciiWithPosition, {false, false}, true);
 
   // Test constant vectors
   auto rows = makeRowVector(makeRowType({BIGINT()}), 10);
@@ -977,47 +968,16 @@ TEST_F(StringFunctionsTest, codePoint) {
 }
 
 TEST_F(StringFunctionsTest, md5) {
-  {
-    const auto md5 = [&](std::optional<std::string> key,
-                         std::optional<int32_t> radix) {
-      return evaluateOnce<std::string>("md5(c0, c1)", key, radix);
-    };
-    EXPECT_EQ("533f6357e0210e67d91f651bc49e1278", md5("hashme", 16));
-    EXPECT_EQ("110655053273001216628802061412889137784", md5("hashme", 10));
-    EXPECT_EQ("d41d8cd98f00b204e9800998ecf8427e", md5("", 16));
-    EXPECT_EQ("281949768489412648962353822266799178366", md5("", 10));
+  const auto md5 = [&](std::optional<std::string> arg) {
+    return evaluateOnce<std::string, std::string>(
+        "md5(c0)", {arg}, {VARBINARY()});
+  };
 
-    EXPECT_THROW(
-        try {
-          md5("hashme", 2);
-        } catch (const facebook::velox::VeloxUserError& err) {
-          EXPECT_NE(
-              err.message().find(
-                  "Not a valid radix for md5: 2. Supported values are 10 or 16"),
-              std::string::npos);
-          throw;
-        },
-        facebook::velox::VeloxUserError);
-  }
+  EXPECT_EQ(hexToDec("533f6357e0210e67d91f651bc49e1278"), md5("hashme"));
+  EXPECT_EQ(hexToDec("eb2ac5b04180d8d6011a016aeb8f75b3"), md5("Infinity"));
+  EXPECT_EQ(hexToDec("d41d8cd98f00b204e9800998ecf8427e"), md5(""));
 
-  {
-    const auto md5 = [&](const std::string& key) {
-      return evaluateOnce<std::string>(
-          "md5(c0)",
-          std::vector<std::optional<StringView>>{StringView(key)},
-          {VARBINARY()});
-    };
-
-    EXPECT_EQ(hexToDec("533f6357e0210e67d91f651bc49e1278"), md5("hashme"));
-    EXPECT_EQ(hexToDec("D41D8CD98F00B204E9800998ECF8427E"), md5(""));
-  }
-
-  // Test null input
-  {
-    auto result = evaluateOnce<std::string>(
-        "md5(c0)", std::optional<std::string>(std::nullopt));
-    ASSERT_EQ(result, std::nullopt);
-  }
+  EXPECT_EQ(std::nullopt, md5(std::nullopt));
 }
 
 void StringFunctionsTest::testReplaceInPlace(
@@ -1122,43 +1082,6 @@ TEST_F(StringFunctionsTest, replace) {
   }
 }
 
-void StringFunctionsTest::testStringEncodingResolution(
-    const std::vector<std::vector<std::string>>& content,
-    const std::vector<folly::Optional<StringEncodingMode>>& encodings,
-    bool isAscii) {
-  std::vector<FlatVectorPtr<StringView>> inputVectors;
-  inputVectors.resize(content.size());
-
-  for (int i = 0; i < content.size(); i++) {
-    inputVectors[i] = makeFlatVector<StringView>(content[i].size());
-    for (int j = 0; j < content[i].size(); j++) {
-      inputVectors[i]->set(j, StringView(content[i][j]));
-    }
-  }
-
-  SelectivityVector rows(content[0].size());
-  rows.setAll();
-
-  std::vector<BaseVector*> baseVectors;
-  for (auto vector : inputVectors) {
-    baseVectors.push_back(vector.get());
-  }
-
-  auto resolvedEncoding = StringEncodingMode::ASCII;
-  for (auto vector : baseVectors) {
-    auto simpleVector = vector->as<SimpleVector<StringView>>();
-    SelectivityVector allRows(simpleVector->size());
-    simpleVector->computeAndSetIsAscii(rows);
-    resolvedEncoding = functions::maxEncoding(
-        resolvedEncoding,
-        simpleVector->isAscii(allRows).value() ? StringEncodingMode::ASCII
-                                               : StringEncodingMode::UTF8);
-  }
-  ASSERT_EQ(
-      resolvedEncoding,
-      isAscii ? StringEncodingMode::ASCII : StringEncodingMode::UTF8);
-}
-
 TEST_F(StringFunctionsTest, controlExprEncodingPropagation) {
   std::vector<std::string> dataASCII({"ali", "ali", "ali"});
   std::vector<std::string> dataUTF8({"àáâãäåæçè", "àáâãäåæçè", "àáâãäå"});
@@ -1185,172 +1108,22 @@ TEST_F(StringFunctionsTest, controlExprEncodingPropagation) {
   test("if(1!=1, lower(C1), lower(C2))", false);
 }
 
-// Test the string encoding reselution
-TEST_F(StringFunctionsTest, findCommonEncoding) {
-  std::vector<std::string> asciiCol = {
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-  };
-
-  std::vector<std::string> utf8Col = {
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-  };
-
-  std::vector<std::string> mixUTF8Col = {
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "aa",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "aa",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "aa",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-  };
-
-  std::vector<std::string> mostlyAsciiCol = {
-      "aa",
-      "\u4FE1\u5FF5,\u7231,\u5E0C\u671B",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-      "aa",
-  };
-
-  // Test identifying ascii
-  testStringEncodingResolution({asciiCol}, {folly::none}, true);
-
-  testStringEncodingResolution({asciiCol}, {StringEncodingMode::ASCII}, true);
-
-  testStringEncodingResolution(
-      {asciiCol, asciiCol}, {folly::none, folly::none}, true);
-
-  testStringEncodingResolution(
-      {asciiCol, asciiCol, asciiCol},
-      {folly::none, folly::none, folly::none},
-      true);
-
-  // Test identifying UTF8
-  testStringEncodingResolution({utf8Col}, {folly::none}, false);
-
-  testStringEncodingResolution({mixUTF8Col}, {folly::none}, false);
-
-  testStringEncodingResolution(
-      {asciiCol, mostlyAsciiCol, utf8Col},
-      {folly::none, folly::none, folly::none},
-      false);
-
-  testStringEncodingResolution(
-      {asciiCol, mostlyAsciiCol, utf8Col},
-      {StringEncodingMode::ASCII,
-       StringEncodingMode::MOSTLY_ASCII,
-       folly::none},
-      false);
-
-  testStringEncodingResolution(
-      {asciiCol, mostlyAsciiCol, utf8Col},
-      {StringEncodingMode::ASCII,
-       StringEncodingMode::MOSTLY_ASCII,
-       StringEncodingMode::UTF8},
-      false);
-}
-
-void StringFunctionsTest::testXXHash64(
-    const std::vector<std::tuple<std::string, int64_t, int64_t>>& tests) {
-  // Creating vectors for input strings and seed values
-  auto inputString = makeFlatVector<StringView>(tests.size());
-  auto inputSeed = makeFlatVector<int64_t>(tests.size());
-  for (int i = 0; i < tests.size(); i++) {
-    inputString->set(i, StringView(std::get<0>(tests[i])));
-    inputSeed->set(i, std::get<1>(tests[i]));
-  }
-  auto rowVector = makeRowVector({inputString, inputSeed});
-
-  // Evaluating the function for each input and seed
-  auto result = evaluate<FlatVector<int64_t>>("xxhash64(c0, c1)", rowVector);
-
-  // Checking the results
-  for (int32_t i = 0; i < tests.size(); ++i) {
-    ASSERT_EQ(result->valueAt(i), std::get<2>(tests[i]));
-  }
-}
-
-void StringFunctionsTest::testXXHash64(
-    const std::vector<std::pair<std::string, int64_t>>& tests,
-    bool stringVariant) {
-  auto type = stringVariant ? std::dynamic_pointer_cast<const Type>(VARCHAR())
-                            : VARBINARY();
-  // Creating vectors for input strings
-  auto inputString = makeFlatVector<StringView>(tests.size(), type);
-  for (int i = 0; i < tests.size(); i++) {
-    inputString->set(i, StringView(tests[i].first));
-  }
-  auto rowVector = makeRowVector({inputString});
-
-  // Evaluate and compare results
-  if (stringVariant) {
-    auto result = evaluate<FlatVector<int64_t>>("xxhash64(c0)", rowVector);
-    for (int32_t i = 0; i < tests.size(); ++i) {
-      ASSERT_EQ(result->valueAt(i), tests[i].second);
-    }
-  } else {
-    auto result = evaluate<FlatVector<StringView>>("xxhash64(c0)", rowVector);
-    for (int32_t i = 0; i < tests.size(); ++i) {
-      ASSERT_EQ(
-          std::memcmp(
-              result->valueAt(i).data(),
-              &tests[i].second,
-              sizeof(tests[i].second)),
-          0);
-    }
-  }
-}
-
 TEST_F(StringFunctionsTest, xxhash64) {
-  // The first two cases are borrowed from the original HIVE implementation
-  // unittests and the last two are corner cases
-  // fbcode/fbjava/hive-udfs/core-udfs/src/main/java/com/facebook/hive/udf/UDFXxhash64.java
-  {
-    std::vector<std::tuple<std::string, int64_t, int64_t>> validInputTest = {
-        {"hashmes", 0, 4920146668586838293},
-        {"hashme", 1, 1571629256661355178},
-        {"", 0, 0xEF46DB3751D8E999}};
+  const auto xxhash64 = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string, std::string>(
+        "xxhash64(c0)", {value}, {VARBINARY()});
+  };
 
-    testXXHash64(validInputTest);
-  }
+  const auto toVarbinary = [](const int64_t input) {
+    std::string out;
+    out.resize(sizeof(input));
+    std::memcpy(out.data(), &input, sizeof(input));
+    return out;
+  };
 
-  // Similar tests for the Presto variant
-  {
-    std::vector<std::pair<std::string, int64_t>> validInputTest = {
-        {"hashmes", 4920146668586838293}, {"", 0xEF46DB3751D8E999}};
-
-    testXXHash64(validInputTest, false);
-
-    // Default value seed for string inputs
-    testXXHash64(validInputTest, true);
-  }
+  EXPECT_EQ(std::nullopt, xxhash64(std::nullopt));
+  EXPECT_EQ(toVarbinary(-1205034819632174695L), xxhash64(""));
+  EXPECT_EQ(toVarbinary(-443202081618794350L), xxhash64("hashme"));
 }
 
 TEST_F(StringFunctionsTest, toHex) {
@@ -1366,6 +1139,14 @@ TEST_F(StringFunctionsTest, toHex) {
   EXPECT_EQ(
       "48656C6C6F20576F726C642066726F6D2056656C6F7821",
       toHex("Hello World from Velox!"));
+
+  const auto toHexFromBase64 = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("to_hex(from_base64(c0))", value);
+  };
+
+  EXPECT_EQ(
+      "D763DAB175DA5814349354FCF23885",
+      toHexFromBase64("12PasXXaWBQ0k1T88jiF"));
 }
 
 TEST_F(StringFunctionsTest, fromHex) {
@@ -1391,6 +1172,98 @@ TEST_F(StringFunctionsTest, fromHex) {
   EXPECT_THROW(fromHex("f`"), VeloxUserError);
   EXPECT_THROW(fromHex("fg"), VeloxUserError);
   EXPECT_THROW(fromHex("fff"), VeloxUserError);
+
+  const auto fromHexToBase64 = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("to_base64(from_hex(c0))", value);
+  };
+  EXPECT_EQ(
+      "12PasXXaWBQ0k1T88jiF",
+      fromHexToBase64("D763DAB175DA5814349354FCF23885"));
+}
+
+TEST_F(StringFunctionsTest, toBase64) {
+  const auto toBase64 = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("to_base64(cast(c0 as varbinary))", value);
+  };
+
+  EXPECT_EQ(std::nullopt, toBase64(std::nullopt));
+  EXPECT_EQ("", toBase64(""));
+  EXPECT_EQ("YQ==", toBase64("a"));
+  EXPECT_EQ("YWJj", toBase64("abc"));
+  EXPECT_EQ("aGVsbG8gd29ybGQ=", toBase64("hello world"));
+  EXPECT_EQ(
+      "SGVsbG8gV29ybGQgZnJvbSBWZWxveCE=", toBase64("Hello World from Velox!"));
+}
+
+TEST_F(StringFunctionsTest, fromBase64) {
+  const auto fromBase64 = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("from_base64(c0)", value);
+  };
+
+  EXPECT_EQ(std::nullopt, fromBase64(std::nullopt));
+  EXPECT_EQ("", fromBase64(""));
+  EXPECT_EQ("a", fromBase64("YQ=="));
+  EXPECT_EQ("abc", fromBase64("YWJj"));
+  EXPECT_EQ("hello world", fromBase64("aGVsbG8gd29ybGQ="));
+  EXPECT_EQ(
+      "Hello World from Velox!",
+      fromBase64("SGVsbG8gV29ybGQgZnJvbSBWZWxveCE="));
+
+  EXPECT_THROW(fromBase64("YQ="), VeloxUserError);
+  EXPECT_THROW(fromBase64("YQ==="), VeloxUserError);
+}
+
+TEST_F(StringFunctionsTest, urlEncode) {
+  const auto urlEncode = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("url_encode(c0)", value);
+  };
+
+  EXPECT_EQ(std::nullopt, urlEncode(std::nullopt));
+  EXPECT_EQ("", urlEncode(""));
+  EXPECT_EQ("http%3A%2F%2Ftest", urlEncode("http://test"));
+  EXPECT_EQ(
+      "http%3A%2F%2Ftest%3Fa%3Db%26c%3Dd", urlEncode("http://test?a=b&c=d"));
+  EXPECT_EQ(
+      "http%3A%2F%2F%E3%83%86%E3%82%B9%E3%83%88",
+      urlEncode("http://\u30c6\u30b9\u30c8"));
+  EXPECT_EQ("%7E%40%3A.-*_%2B+%E2%98%83", urlEncode("~@:.-*_+ \u2603"));
+  EXPECT_EQ("test", urlEncode("test"));
+}
+
+TEST_F(StringFunctionsTest, urlDecode) {
+  const auto urlDecode = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("url_decode(c0)", value);
+  };
+
+  EXPECT_EQ(std::nullopt, urlDecode(std::nullopt));
+  EXPECT_EQ("", urlDecode(""));
+  EXPECT_EQ("http://test", urlDecode("http%3A%2F%2Ftest"));
+  EXPECT_EQ(
+      "http://test?a=b&c=d", urlDecode("http%3A%2F%2Ftest%3Fa%3Db%26c%3Dd"));
+  EXPECT_EQ(
+      "http://\u30c6\u30b9\u30c8",
+      urlDecode("http%3A%2F%2F%E3%83%86%E3%82%B9%E3%83%88"));
+  EXPECT_EQ("~@:.-*_+ \u2603", urlDecode("%7E%40%3A.-*_%2B+%E2%98%83"));
+  EXPECT_EQ("test", urlDecode("test"));
+
+  EXPECT_THROW(urlDecode("http%3A%2F%2"), VeloxUserError);
+  EXPECT_THROW(urlDecode("http%3A%2F%"), VeloxUserError);
+  EXPECT_THROW(urlDecode("http%3A%2F%2H"), VeloxUserError);
+}
+
+TEST_F(StringFunctionsTest, toUtf8) {
+  const auto toUtf8 = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("to_utf8(c0)", value);
+  };
+
+  EXPECT_EQ(std::nullopt, toUtf8(std::nullopt));
+  EXPECT_EQ("", toUtf8(""));
+  EXPECT_EQ("test", toUtf8("test"));
+
+  EXPECT_EQ(
+      "abc",
+      evaluateOnce<std::string>(
+          "from_hex(to_hex(to_utf8(c0)))", std::optional<std::string>("abc")));
 }
 
 namespace {
