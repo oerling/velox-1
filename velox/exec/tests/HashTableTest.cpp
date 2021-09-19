@@ -109,9 +109,7 @@ class HashTableTest : public testing::Test {
         std::move(keyHashers), {}, mappedMemory_);
     auto lookup = std::make_unique<HashLookup>(table->hashers());
     auto& hashers = table->hashers();
-    // Set of erased rows. These are expected not to come back even if the same
-    // key is inserted again.
-    std::unordered_set<char*> erased;
+    std::vector<char*> erased;
     std::vector<char*> allInserted;
     int32_t numErased = 0;
     // We insert 1000 and delete 500.
@@ -121,16 +119,13 @@ class HashTableTest : public testing::Test {
       lookup->reset(kBatchSize);
       insertGroups(*batches.back(), *lookup, *table);
       for (auto i = 0; i < kBatchSize; ++i) {
-        ASSERT_TRUE(erased.find(lookup->hits[i]) == erased.end());
+
       }
       allInserted.insert(
           allInserted.end(), lookup->hits.begin(), lookup->hits.end());
 
       table->erase(folly::Range<char**>(
           &allInserted[numErased], kNumErasePerRound));
-      for (auto i = 0; i < kNumErasePerRound; ++i) {
-        erased.insert(allInserted[numErased + i]);
-      }
       numErased += kNumErasePerRound;
     }
     int32_t batchStart = 0;
@@ -141,7 +136,7 @@ class HashTableTest : public testing::Test {
       insertGroups(*batches[0], *lookup, *table);
       for (; row < batchStart + kBatchSize; ++row) {
 	if (row < numErased) {
-	  ASSERT_TRUE(erased.find(lookup->hits[row - batchStart]) == erased.end());
+	  ASSERT_NE(lookup->hits[row - batchStart], allInserted[row]);
 	} else {
 	  ASSERT_EQ(lookup->hits[row - batchStart], allInserted[row]);
 	}

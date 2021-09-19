@@ -141,8 +141,8 @@ class BaseHashTable {
   /// distinct entries before needing to rehash.
   virtual void decideHashMode(int32_t numNew) = 0;
 
-  // Removes the reference to 'rows' from the hash table. Does not
-  // affect the RowContainer. 'rows' must exist and be unique.
+  // Removes 'rows'  from the hash table and its RowContainer. 'rows' must exist
+  // and be unique.
   virtual void erase(folly::Range<char**> rows) = 0;
 
   /// Returns a brief description for use in debugging.
@@ -369,6 +369,10 @@ class HashTable : public BaseHashTable {
   // content. Returns true if all hashers offer a mapping to value ids
   // for array or normalized key.
   bool analyze();
+  // Erases the entries of rows from the hash table and its RowContainer.
+  // 'hashes' must be computed according to 'hashMode_'.
+  void eraseWithHashes(folly::Range<char**> rows, uint64_t* hashes);
+
   const std::vector<std::unique_ptr<Aggregate>>& aggregates_;
   int8_t sizeBits_;
   bool isJoinBuild_ = false;

@@ -1155,33 +1155,43 @@ void HashTable<ignoreNullKeys>::erase(folly::Range<char**> rows) {
       }
     }
   }
-  numDistinct_ -= numRows;
-  if (hashMode_ == HashMode::kNormalizedKey) {
-    for (auto i = 0; i < numRows; ++i) {
-      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
-    }
-  }
+  eraseWithHashes(rows, hashes.data());
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::eraseWithHashes(
+    folly::Range<char**> rows,
+    uint64_t* hashes) {
+  auto numRows =  rows.size();
   if (hashMode_ == HashMode::kArray) {
     for (auto i = 0; i < numRows; ++i) {
       VELOX_CHECK(hashes[i] < size_);
       table_[hashes[i]] = nullptr;
     }
-    return;
-  }
-  ProbeState state;
-  for (auto i = 0; i < numRows; ++i) {
-    state.preProbe(tags_, sizeMask_, hashes[i], i);
+  } else {
+    if (hashMode_ == HashMode::kNormalizedKey) {
+      for (auto i = 0; i < numRows; ++i) {
+        hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
+      }
+    }
 
-    state.firstProbe<ProbeState::Operation::kErase>(table_, 0);
-    state.fullProbe<ProbeState::Operation::kErase>(
-        tags_,
-        table_,
-        sizeMask_,
-        0,
-        [&](char* group, int32_t row) { return rows[row] == group; },
-        [&](int32_t index, int32_t row) { return nullptr; },
-        false);
+    ProbeState state;
+    for (auto i = 0; i < numRows; ++i) {
+      state.preProbe(tags_, sizeMask_, hashes[i], i);
+
+      state.firstProbe<ProbeState::Operation::kErase>(table_, 0);
+      state.fullProbe<ProbeState::Operation::kErase>(
+          tags_,
+          table_,
+          sizeMask_,
+          0,
+          [&](char* group, int32_t row) { return rows[row] == group; },
+          [&](int32_t index, int32_t row) { return nullptr; },
+          false);
+    }
   }
+  numDistinct_ -= numRows;
+  rows_->eraseRows(rows);
 }
 
 template class HashTable<true>;
