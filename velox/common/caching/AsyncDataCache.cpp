@@ -16,7 +16,6 @@
 
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
-#include "velox/common/process/ProcessBase.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 
