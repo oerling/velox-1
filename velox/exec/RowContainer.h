@@ -130,7 +130,7 @@ class RowContainer {
   // Adds 'rows' to the free rows list and frees any associated
   // variable length data.
   void eraseRows(folly::Range<char**> rows);
-  
+
   // Initialize row. 'reuse' specifies whether the 'row' is reused or
   // not. If it is reused, it will free memory associated with the row
   // elsewhere (such as in HashStringAllocator).
@@ -289,7 +289,7 @@ class RowContainer {
   }
 
   void checkConsistency();
-  
+
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
@@ -336,7 +336,6 @@ class RowContainer {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
-  
   template <TypeKind Kind>
   inline void storeWithNulls(
       const DecodedVector& decoded,

@@ -1164,7 +1164,7 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::eraseWithHashes(
     folly::Range<char**> rows,
     uint64_t* hashes) {
-  auto numRows =  rows.size();
+  auto numRows = rows.size();
   if (hashMode_ == HashMode::kArray) {
     for (auto i = 0; i < numRows; ++i) {
       VELOX_CHECK(hashes[i] < size_);

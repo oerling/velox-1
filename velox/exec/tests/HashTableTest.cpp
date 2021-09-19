@@ -94,10 +94,7 @@ class HashTableTest : public testing::Test {
 
   // Inserts and deletes rows in a HashTable, similarly to a group by
   // that periodically spills a fraction of the groups.
-  void testGroupBySpill(
-      int32_t size,
-      TypePtr buildType,
-      int32_t numKeys) {
+  void testGroupBySpill(int32_t size, TypePtr buildType, int32_t numKeys) {
     constexpr int32_t kBatchSize = 1000;
     constexpr int32_t kNumErasePerRound = 500;
     int32_t sequence = 0;
@@ -121,13 +118,12 @@ class HashTableTest : public testing::Test {
       lookup->reset(kBatchSize);
       insertGroups(*batches.back(), *lookup, *table);
       for (auto i = 0; i < kBatchSize; ++i) {
-
       }
       allInserted.insert(
           allInserted.end(), lookup->hits.begin(), lookup->hits.end());
 
-      table->erase(folly::Range<char**>(
-          &allInserted[numErased], kNumErasePerRound));
+      table->erase(
+          folly::Range<char**>(&allInserted[numErased], kNumErasePerRound));
       numErased += kNumErasePerRound;
     }
     int32_t batchStart = 0;
@@ -137,11 +133,11 @@ class HashTableTest : public testing::Test {
     for (auto i = 0; i < batches.size(); ++i) {
       insertGroups(*batches[0], *lookup, *table);
       for (; row < batchStart + kBatchSize; ++row) {
-	if (row < numErased) {
-	  ASSERT_NE(lookup->hits[row - batchStart], allInserted[row]);
-	} else {
-	  ASSERT_EQ(lookup->hits[row - batchStart], allInserted[row]);
-	}
+        if (row < numErased) {
+          ASSERT_NE(lookup->hits[row - batchStart], allInserted[row]);
+        } else {
+          ASSERT_EQ(lookup->hits[row - batchStart], allInserted[row]);
+        }
       }
     }
   }

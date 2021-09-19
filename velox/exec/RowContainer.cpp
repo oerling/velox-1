@@ -117,7 +117,6 @@ RowContainer::RowContainer(
     nullOffsets_[i] += firstAggregateOffset * 8;
   }
 
-
   // Fixup the offset of aggregates to make space for null flags.
   int32_t nullBytes = bits::nbytes(nullOffsets_.size());
   for (int32_t i = 0; i < aggregates_.size() + dependentTypes.size(); ++i) {
@@ -143,7 +142,8 @@ RowContainer::RowContainer(
     // Aggregates start life as null, join dependent columns as non-null.
     initialNulls_.resize(nullBytes, isJoinBuild_ ? 0x0 : 0xff);
     // The free flag has an initial value of 0.
-    bits::clearBit(initialNulls_.data(), freeFlagOffset_ - nullOffsets_.front());
+    bits::clearBit(
+        initialNulls_.data(), freeFlagOffset_ - nullOffsets_.front());
     if (nullableKeys) {
       for (int32_t i = 0; i < keyTypes_.size(); ++i) {
         bits::clearBit(initialNulls_.data(), i);
@@ -258,14 +258,13 @@ void RowContainer::checkConsistency() {
   VELOX_CHECK_EQ(allocatedRows, numRows_);
 }
 
-  
 void RowContainer::freeAggregates(folly::Range<char**> rows) {
   for (auto& aggregate : aggregates_) {
     aggregate->destroy(rows);
   }
 }
 
-  int32_t RowContainer::listRows(
+int32_t RowContainer::listRows(
     RowContainerIterator* iter,
     int32_t maxRows,
     char** rows) {
@@ -317,7 +316,6 @@ void RowContainer::freeAggregates(folly::Range<char**> rows) {
   return count;
 }
 
-  
 void RowContainer::store(
     const DecodedVector& decoded,
     vector_size_t index,
