@@ -11,9 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+add_executable(velox_prestosql_coverage Coverage.cpp)
 
-add_executable(velox_core_test TestMap.cpp TestMetafunctions.cpp TestString.cpp
-                               ScalarFunctionTest.cpp)
-add_test(velox_core_test velox_core_test)
-
-target_link_libraries(velox_core_test velox_core ${GTEST_BOTH_LIBRARIES})
+target_link_libraries(velox_prestosql_coverage velox_functions_prestosql
+                      velox_function_registry velox_aggregates)

@@ -80,3 +80,24 @@ Mathematical Functions
 
     For example, if ``bins`` is ``ARRAY[0, 2, 4]``, then we have four bins:
     ``(-infinity(), 0)``, ``[0, 2)``, ``[2, 4)`` and ``[4, infinity())``.
+
+
+====================================
+Trigonometric Functions
+====================================
+
+.. function:: acos(x) -> double
+
+    Returns the arc cosine of ``x``.
+
+.. function:: asin(x) -> double
+
+    Returns the arc sine of ``x``.
+
+.. function:: atan(x) -> double
+
+    Returns the arc tangent of ``x``.
+
+.. function:: atan2(y, x) -> double
+
+    Returns the arc tangent of ``y / x``.
