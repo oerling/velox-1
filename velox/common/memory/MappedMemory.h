@@ -158,20 +158,19 @@ class MappedMemory {
 
   virtual ~MappedMemory() {}
 
-  // Returns the process-wide default instance.
+  // Returns the process-wide default instance or an application-supplied custom
+  // instance set via setDefaultInstance().
   static MappedMemory* getInstance();
 
   // Creates a default MappedMemory instance but does not set this to process
   // default.
   static std::unique_ptr<MappedMemory> createDefaultInstance();
 
-  // Sets the process-wide default instance. Throws if one is already set.
-  static void setDefaultInstance(std::unique_ptr<MappedMemory> instance);
-
-  // Returns true if a default instance is already set.
-  static bool hasDefaultInstance() {
-    return instance_ != nullptr;
-  }
+  // Overrides the process-wide default instance. The caller keeps
+  // ownership and must not destroy the instance until it is
+  // empty. Calling this with nullptr restores the initial
+  // process-wide default instance.
+  static void setDefaultInstance(MappedMemory* instance);
 
   /// Allocates one or more runs that add up to at least 'numPages',
   /// with the smallest run being at least 'minSizeClass'
@@ -211,6 +210,9 @@ class MappedMemory {
  private:
   // Singleton instance.
   static std::unique_ptr<MappedMemory> instance_;
+  // Application-supplied custom implementation of MappedMemory to be returned
+  // by getInstance().
+  static MappedMemory* customInstance_;
   static std::mutex initMutex_;
 };
 

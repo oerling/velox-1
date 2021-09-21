@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/common/base/test_utils/GTestUtils.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
@@ -40,9 +41,11 @@ static const std::string kNodeSelectionStrategy = "node_selection_strategy";
 static const std::string kSoftAffinity = "SOFT_AFFINITY";
 static const std::string kTableScanTest = "TableScanTest.Writer";
 
-class TableScanTest : public HiveConnectorTestBase {
+class TableScanTest : public virtual HiveConnectorTestBase,
+                      public testing::WithParamInterface<bool> {
  protected:
   void SetUp() override {
+    useAsyncCache_ = GetParam();
     HiveConnectorTestBase::SetUp();
     rowType_ =
         ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
@@ -55,23 +58,16 @@ class TableScanTest : public HiveConnectorTestBase {
              TINYINT()});
   }
 
+  static void SetUpTestCase() {
+    HiveConnectorTestBase::SetUpTestCase();
+  }
+
   std::vector<RowVectorPtr> makeVectors(
       int32_t count,
       int32_t rowsPerVector,
       const std::shared_ptr<const RowType>& rowType = nullptr) {
     auto inputs = rowType ? rowType : rowType_;
     return HiveConnectorTestBase::makeVectors(inputs, count, rowsPerVector);
-  }
-
-  std::shared_ptr<core::QueryCtx> queryCtxWithCache() {
-    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
-    std::unordered_map<std::string, std::string> hiveConnectorConfigs;
-    hiveConnectorConfigs.insert({kNodeSelectionStrategy, kSoftAffinity});
-    connectorConfigs.insert(
-        {kHiveConnectorId,
-         std::make_shared<core::MemConfig>(std::move(hiveConnectorConfigs))});
-    return core::QueryCtx::create(
-        std::make_shared<core::MemConfig>(), connectorConfigs, mappedMemory());
   }
 
   std::shared_ptr<Task> assertQuery(
@@ -129,7 +125,12 @@ class TableScanTest : public HiveConnectorTestBase {
     std::unordered_map<std::string, std::string> partitionKeys = {
         {"ds", "2020-11-01"}};
     auto split = std::make_shared<HiveConnectorSplit>(
-        kHiveConnectorId, filePath, 0, fs::file_size(filePath), partitionKeys);
+        kHiveConnectorId,
+        filePath,
+        facebook::dwio::common::FileFormat::ORC,
+        0,
+        fs::file_size(filePath),
+        partitionKeys);
 
     auto op = PlanBuilder()
                   .tableScan(outputType, tableHandle, assignments)
@@ -162,7 +163,7 @@ class TableScanTest : public HiveConnectorTestBase {
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
 };
 
-TEST_F(TableScanTest, allColumns) {
+TEST_P(TableScanTest, allColumns) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -171,7 +172,7 @@ TEST_F(TableScanTest, allColumns) {
   assertQuery(tableScanNode(), {filePath}, "SELECT * FROM tmp");
 }
 
-TEST_F(TableScanTest, columnAliases) {
+TEST_P(TableScanTest, columnAliases) {
   auto vectors = makeVectors(1, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -205,7 +206,7 @@ TEST_F(TableScanTest, columnAliases) {
   assertQuery(op, {filePath}, "SELECT c0 FROM tmp WHERE c0 % 2 = 1");
 }
 
-TEST_F(TableScanTest, columnPruning) {
+TEST_P(TableScanTest, columnPruning) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -232,7 +233,7 @@ TEST_F(TableScanTest, columnPruning) {
 
 // Test reading files written before schema change, e.g. missing newly added
 // columns.
-TEST_F(TableScanTest, missingColumns) {
+TEST_P(TableScanTest, missingColumns) {
   // Simulate schema change of adding a new column.
   // - Create an "old" file with one column.
   // - Create a "new" file with two columns.
@@ -283,7 +284,7 @@ TEST_F(TableScanTest, missingColumns) {
 }
 
 // Tests queries that use Lazy vectors with multiple layers of wrapping.
-TEST_F(TableScanTest, constDictLazy) {
+TEST_P(TableScanTest, constDictLazy) {
   vector_size_t size = 1'000;
   auto rowVector = makeRowVector(
       {makeFlatVector<int64_t>(size, [](auto row) { return row; }),
@@ -335,7 +336,7 @@ TEST_F(TableScanTest, constDictLazy) {
   assertQuery(op, {filePath}, "SELECT 2 FROM tmp WHERE c0 = 5");
 }
 
-TEST_F(TableScanTest, count) {
+TEST_P(TableScanTest, count) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -360,7 +361,7 @@ TEST_F(TableScanTest, count) {
 
 // Test that adding the same split with the same sequence id does not cause
 // double read and the 2nd split is ignored.
-TEST_F(TableScanTest, sequentialSplitNoDoubleRead) {
+TEST_P(TableScanTest, sequentialSplitNoDoubleRead) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -390,7 +391,7 @@ TEST_F(TableScanTest, sequentialSplitNoDoubleRead) {
 
 // Test that adding the splits out of order does not result in splits being
 // ignored.
-TEST_F(TableScanTest, outOfOrderSplits) {
+TEST_P(TableScanTest, outOfOrderSplits) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -420,7 +421,7 @@ TEST_F(TableScanTest, outOfOrderSplits) {
 
 // Test that adding the same split, disregarding the sequence id, causes
 // double read, as expected.
-TEST_F(TableScanTest, splitDoubleRead) {
+TEST_P(TableScanTest, splitDoubleRead) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -447,7 +448,7 @@ TEST_F(TableScanTest, splitDoubleRead) {
   }
 }
 
-TEST_F(TableScanTest, multipleSplits) {
+TEST_P(TableScanTest, multipleSplits) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000);
   for (int32_t i = 0; i < vectors.size(); i++) {
@@ -458,7 +459,7 @@ TEST_F(TableScanTest, multipleSplits) {
   assertQuery(tableScanNode(), filePaths, "SELECT * FROM tmp");
 }
 
-TEST_F(TableScanTest, waitForSplit) {
+TEST_P(TableScanTest, waitForSplit) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000);
   for (int32_t i = 0; i < vectors.size(); i++) {
@@ -481,7 +482,7 @@ TEST_F(TableScanTest, waitForSplit) {
       duckDbQueryRunner_);
 }
 
-TEST_F(TableScanTest, splitOffsetAndLength) {
+TEST_P(TableScanTest, splitOffsetAndLength) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -498,7 +499,7 @@ TEST_F(TableScanTest, splitOffsetAndLength) {
       "SELECT * FROM tmp LIMIT 0");
 }
 
-TEST_F(TableScanTest, fileNotFound) {
+TEST_P(TableScanTest, fileNotFound) {
   CursorParameters params;
   params.planNode = tableScanNode();
 
@@ -508,20 +509,24 @@ TEST_F(TableScanTest, fileNotFound) {
 }
 
 // A valid ORC file (containing headers) but no data.
-TEST_F(TableScanTest, validFileNoData) {
+TEST_P(TableScanTest, validFileNoData) {
   auto rowType = ROW({"c0", "c1", "c2"}, {DOUBLE(), VARCHAR(), BIGINT()});
 
   auto filePath = facebook::velox::test::getDataFilePath(
       "velox/exec/tests", "data/emptyPresto.dwrf");
   auto split = std::make_shared<HiveConnectorSplit>(
-      kHiveConnectorId, "file:" + filePath, 0, fs::file_size(filePath) / 2);
+      kHiveConnectorId,
+      "file:" + filePath,
+      facebook::dwio::common::FileFormat::ORC,
+      0,
+      fs::file_size(filePath) / 2);
 
   auto op = tableScanNode(rowType);
   assertQuery(op, split, "");
 }
 
 // An invalid (size = 0) file.
-TEST_F(TableScanTest, emptyFile) {
+TEST_P(TableScanTest, emptyFile) {
   auto filePath = TempFilePath::create();
 
   try {
@@ -533,7 +538,7 @@ TEST_F(TableScanTest, emptyFile) {
   }
 }
 
-TEST_F(TableScanTest, partitionedTable) {
+TEST_P(TableScanTest, partitionedTable) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
@@ -552,7 +557,7 @@ std::vector<StringView> toStringViews(const std::vector<std::string>& values) {
   return views;
 }
 
-TEST_F(TableScanTest, statsBasedSkippingBool) {
+TEST_P(TableScanTest, statsBasedSkippingBool) {
   auto rowType = ROW({"c0", "c1"}, {INTEGER(), BOOLEAN()});
   auto filePaths = makeFilePaths(1);
   auto size = 31'234;
@@ -586,7 +591,7 @@ TEST_F(TableScanTest, statsBasedSkippingBool) {
   EXPECT_EQ(2, getSkippedStridesStat(task));
 }
 
-TEST_F(TableScanTest, statsBasedSkippingDouble) {
+TEST_P(TableScanTest, statsBasedSkippingDouble) {
   auto filePaths = makeFilePaths(1);
   auto size = 31'234;
   auto rowVector = makeRowVector({makeFlatVector<double>(
@@ -639,7 +644,7 @@ TEST_F(TableScanTest, statsBasedSkippingDouble) {
   EXPECT_EQ(3, getSkippedStridesStat(task));
 }
 
-TEST_F(TableScanTest, statsBasedSkippingFloat) {
+TEST_P(TableScanTest, statsBasedSkippingFloat) {
   auto filePaths = makeFilePaths(1);
   auto size = 31'234;
   auto rowVector = makeRowVector({makeFlatVector<float>(
@@ -692,7 +697,7 @@ TEST_F(TableScanTest, statsBasedSkippingFloat) {
 }
 
 // Test skipping whole file based on statistics
-TEST_F(TableScanTest, statsBasedSkipping) {
+TEST_P(TableScanTest, statsBasedSkipping) {
   auto filePaths = makeFilePaths(1);
   const vector_size_t size = 31'234;
   std::vector<std::string> fruits = {"apple", "banana", "cherry", "grapes"};
@@ -821,7 +826,7 @@ TEST_F(TableScanTest, statsBasedSkipping) {
 
 // Test skipping files and row groups containing constant values based on
 // statistics
-TEST_F(TableScanTest, statsBasedSkippingConstants) {
+TEST_P(TableScanTest, statsBasedSkippingConstants) {
   auto filePaths = makeFilePaths(1);
   const vector_size_t size = 31'234;
   std::vector<std::string> fruits = {"apple", "banana", "cherry", "grapes"};
@@ -882,7 +887,7 @@ TEST_F(TableScanTest, statsBasedSkippingConstants) {
 }
 
 // Test stats-based skipping for the IS NULL filter.
-TEST_F(TableScanTest, statsBasedSkippingNulls) {
+TEST_P(TableScanTest, statsBasedSkippingNulls) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), INTEGER()});
   auto filePaths = makeFilePaths(1);
   const vector_size_t size = 31'234;
@@ -937,7 +942,7 @@ TEST_F(TableScanTest, statsBasedSkippingNulls) {
 }
 
 // Test skipping whole compression blocks without decompressing these.
-TEST_F(TableScanTest, statsBasedSkippingWithoutDecompression) {
+TEST_P(TableScanTest, statsBasedSkippingWithoutDecompression) {
   const vector_size_t size = 31'234;
 
   // Use long, non-repeating strings to ensure there will be multiple
@@ -992,7 +997,7 @@ TEST_F(TableScanTest, statsBasedSkippingWithoutDecompression) {
 }
 
 // Test skipping whole compression blocks without decompressing these.
-TEST_F(TableScanTest, filterBasedSkippingWithoutDecompression) {
+TEST_P(TableScanTest, filterBasedSkippingWithoutDecompression) {
   const vector_size_t size = 31'234;
 
   // Use long, non-repeating strings to ensure there will be multiple
@@ -1032,7 +1037,7 @@ TEST_F(TableScanTest, filterBasedSkippingWithoutDecompression) {
 // Test stats-based skipping for numeric columns (integers, floats and booleans)
 // that don't have filters themselves. Skipping is driven by a single bigint
 // column.
-TEST_F(TableScanTest, statsBasedSkippingNumerics) {
+TEST_P(TableScanTest, statsBasedSkippingNumerics) {
   const vector_size_t size = 31'234;
 
   // Make a vector of all possible integer and floating point types.
@@ -1102,7 +1107,7 @@ TEST_F(TableScanTest, statsBasedSkippingNumerics) {
 
 // Test stats-based skipping for list and map columns that don't have
 // filters themselves. Skipping is driven by a single bigint column.
-TEST_F(TableScanTest, statsBasedSkippingComplexTypes) {
+TEST_P(TableScanTest, statsBasedSkippingComplexTypes) {
   const vector_size_t size = 31'234;
 
   // Make a vector of all possible integer and floating point types.
@@ -1187,7 +1192,7 @@ TEST_F(TableScanTest, statsBasedSkippingComplexTypes) {
 
 /// Test the interaction between stats-based and regular skipping for lists and
 /// maps.
-TEST_F(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
+TEST_P(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
   const vector_size_t size = 31'234;
 
   // Orchestrate the case where the nested reader of a list/map gets behind the
@@ -1244,7 +1249,7 @@ TEST_F(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
       "SELECT * FROM tmp WHERE c0 <= 10 OR c0 between 600 AND 650 OR c0 >= 21234");
 }
 
-TEST_F(TableScanTest, filterPushdown) {
+TEST_P(TableScanTest, filterPushdown) {
   auto rowType =
       ROW({"c0", "c1", "c2", "c3"}, {TINYINT(), BIGINT(), DOUBLE(), BOOLEAN()});
   auto filePaths = makeFilePaths(10);
@@ -1311,7 +1316,7 @@ TEST_F(TableScanTest, filterPushdown) {
       "SELECT count(*) FROM tmp");
 }
 
-TEST_F(TableScanTest, path) {
+TEST_P(TableScanTest, path) {
   auto rowType = ROW({"a"}, {BIGINT()});
   auto filePath = makeFilePaths(1)[0];
   auto vector = makeVectors(1, 1'000, rowType)[0];
@@ -1349,7 +1354,7 @@ TEST_F(TableScanTest, path) {
       op, {filePath}, fmt::format("SELECT '{}', * FROM tmp", pathValue));
 }
 
-TEST_F(TableScanTest, bucket) {
+TEST_P(TableScanTest, bucket) {
   vector_size_t size = 1'000;
   int numBatches = 5;
 
@@ -1375,6 +1380,7 @@ TEST_F(TableScanTest, bucket) {
     splits.emplace_back(std::make_shared<HiveConnectorSplit>(
         kHiveConnectorId,
         filePaths[i]->path,
+        facebook::dwio::common::FileFormat::ORC,
         0,
         fs::file_size(filePaths[i]->path),
         std::unordered_map<std::string, std::string>(),
@@ -1426,7 +1432,7 @@ TEST_F(TableScanTest, bucket) {
   }
 }
 
-TEST_F(TableScanTest, remainingFilter) {
+TEST_P(TableScanTest, remainingFilter) {
   auto rowType = ROW(
       {"c0", "c1", "c2", "c3"}, {INTEGER(), INTEGER(), DOUBLE(), BOOLEAN()});
   auto filePaths = makeFilePaths(10);
@@ -1493,7 +1499,7 @@ TEST_F(TableScanTest, remainingFilter) {
       "SELECT c1, c2 FROM tmp WHERE c1 > c0");
 }
 
-TEST_F(TableScanTest, aggregationPushdown) {
+TEST_P(TableScanTest, aggregationPushdown) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -1574,7 +1580,7 @@ TEST_F(TableScanTest, aggregationPushdown) {
       op, {filePath}, "SELECT c5, min(c0), max(c0 + c1) FROM tmp GROUP BY 1");
 }
 
-TEST_F(TableScanTest, bitwiseAggregationPushdown) {
+TEST_P(TableScanTest, bitwiseAggregationPushdown) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -1613,3 +1619,8 @@ TEST_F(TableScanTest, bitwiseAggregationPushdown) {
       {filePath},
       "SELECT c5, bit_or(c0), bit_or(c1), bit_or(c2), bit_or(c6) FROM tmp group by c5");
 }
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    TableScanTests,
+    TableScanTest,
+    testing::Values(true, false));

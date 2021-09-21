@@ -144,12 +144,10 @@ TEST(DuckParserTest, expressions) {
 }
 
 TEST(DuckParserTest, between) {
-  EXPECT_EQ(
-      "and(gte(\"c0\",0),lte(\"c0\",1))",
-      parseExpr("c0 between 0 and 1")->toString());
+  EXPECT_EQ("between(\"c0\",0,1)", parseExpr("c0 between 0 and 1")->toString());
 
   EXPECT_EQ(
-      "and(and(gte(\"c0\",0),lte(\"c0\",1)),gt(\"c0\",10))",
+      "and(between(\"c0\",0,1),gt(\"c0\",10))",
       parseExpr("c0 between 0 and 1 and c0 > 10")->toString());
 }
 
@@ -171,6 +169,9 @@ TEST(DuckParserTest, cast) {
       "cast(0.99, VARCHAR)", parseExpr("cast(0.99 as string)")->toString());
   EXPECT_EQ(
       "cast(0.99, VARCHAR)", parseExpr("cast(0.99 as varchar)")->toString());
+  // Cast varchar to varbinary produces a varbinary value which is serialized
+  // using base64 encoding.
+  EXPECT_EQ("\"YWJj\"", parseExpr("cast('abc' as varbinary)")->toString());
   EXPECT_EQ(
       "cast(\"str_col\", TIMESTAMP)",
       parseExpr("cast(str_col as timestamp)")->toString());

@@ -79,12 +79,7 @@ folly::Synchronized<
 
 // static
 void Connector::unregisterTracker(cache::ScanTracker* tracker) {
-  trackers_.withWLock([&](auto& trackers) {
-    auto it = trackers.find(tracker->id());
-    if (it != trackers.end()) {
-      trackers.erase(it);
-    }
-  });
+  trackers_.withWLock([&](auto& trackers) { trackers.erase(tracker->id()); });
 }
 
 std::shared_ptr<cache::ScanTracker> Connector::getTracker(
@@ -98,7 +93,7 @@ std::shared_ptr<cache::ScanTracker> Connector::getTracker(
       return newTracker;
     }
     std::shared_ptr tracker = it->second.lock();
-    if (tracker) {
+    if (!tracker) {
       tracker = std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
       trackers[tracker->id()] = tracker;
     }

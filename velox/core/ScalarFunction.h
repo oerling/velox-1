@@ -16,7 +16,6 @@
 #pragma once
 
 #include "folly/Likely.h"
-#include "folly/Optional.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/core/Metaprogramming.h"
@@ -37,6 +36,8 @@ class ArgumentsCtx {
   }
 
   bool operator==(const ArgumentsCtx& rhs) const {
+    if (types_.size() != rhs.types_.size())
+      return false;
     return std::equal(
         std::begin(types_),
         std::end(types_),
@@ -221,13 +222,13 @@ class UDFHolder final
   using Metadata = core::ScalarFunctionMetadata<Fun, TReturn, TArgs...>;
 
   using exec_return_type = typename Exec::template resolver<TReturn>::out_type;
-  using optional_exec_return_type = folly::Optional<exec_return_type>;
+  using optional_exec_return_type = std::optional<exec_return_type>;
   template <typename T>
   using exec_arg_type = typename Exec::template resolver<T>::in_type;
   using exec_arg_types =
       std::tuple<typename Exec::template resolver<TArgs>::in_type...>;
   template <typename T>
-  using optional_exec_arg_type = folly::Optional<exec_arg_type<T>>;
+  using optional_exec_arg_type = std::optional<exec_arg_type<T>>;
 
   template <typename T>
   struct ptrfy {
@@ -235,7 +236,7 @@ class UDFHolder final
   };
   template <typename T>
   struct optify {
-    using type = folly::Optional<T>;
+    using type = std::optional<T>;
   };
 
   using nullable_exec_arg_types =

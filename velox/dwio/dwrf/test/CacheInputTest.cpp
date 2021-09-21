@@ -107,7 +107,7 @@ class CacheTest : public testing::Test {
       uint64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssd;
     if (!file.empty()) {
-      ssd = std::make_unique<SsdCache>(file, ssdBytes);
+      ssd = std::make_unique<SsdCache>(file, ssdBytes, 1);
     }
     cache_ = std::make_unique<AsyncDataCache>(
         MappedMemory::createDefaultInstance(), maxBytes, std::move(ssd));

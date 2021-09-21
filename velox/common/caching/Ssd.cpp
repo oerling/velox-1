@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
 #include "velox/common/caching/AsyncDataCache.h"
@@ -203,10 +202,12 @@ bool SsdFile::evictLocked() {
       candidates.begin(), candidates.end(), [&](int32_t left, int32_t right) {
         return regionScore_[left] < regionScore_[right];
       });
+  // Free up to 3 lowest score regions.
   if (candidates.size() > 3) {
     candidates.resize(3);
   }
   clearRegionEntriesLocked(candidates);
+  writableRegions_ = std::move(candidates);
   suspended_ = false;
   return true;
 }
@@ -223,7 +224,7 @@ void SsdFile::clearRegionEntriesLocked(const std::vector<int32_t>& toErase) {
   }
 }
 
-void SsdFile::store(std::vector<CachePin> pins) {
+void SsdFile::store(std::vector<CachePin>& pins) {
   std::sort(pins.begin(), pins.end());
   uint64_t total = 0;
   for (auto& pin : pins) {
@@ -233,10 +234,7 @@ void SsdFile::store(std::vector<CachePin> pins) {
   while (storeIndex < pins.size()) {
     auto [offset, available] = getSpace(pins, storeIndex);
     if (!available) {
-      // No space can be reclaimed. Free the pins.
-      for (int32_t i = storeIndex; i < pins.size(); ++i) {
-        pins[i].clear();
-      }
+      // No space can be reclaimed. The pins are freed when the caller is freed.
       return;
     }
     int32_t numWritten = 0;
@@ -258,10 +256,6 @@ void SsdFile::store(std::vector<CachePin> pins) {
     int32_t rc = folly::pwritev(fd_, iovecs.data(), iovecs.size(), offset);
     if (rc != bytes) {
       LOG(ERROR) << "Failed to write to SSD " << errno;
-      // Unpin without marking as resident in SSD.
-      for (auto i = storeIndex; i < pins.size(); ++i) {
-        pins[i].clear();
-      }
       return;
     }
     if (offset == fileSize_) {
@@ -278,28 +272,23 @@ void SsdFile::store(std::vector<CachePin> pins) {
         offset += size;
       }
     }
-    // Unpin the written entries.
-    for (auto i = storeIndex; i < storeIndex + numWritten; ++i) {
-      pins[i].clear();
-    }
     storeIndex += numWritten;
   }
 }
 
-SsdCache::SsdCache(std::string_view filePrefix, uint64_t maxBytes)
-    : filePrefix_(filePrefix) {
-  files_.reserve(kNumShards);
-  constexpr uint64_t kSizeQuantum = kNumShards * SsdFile::kRegionSize;
-  int32_t fileMaxRegions = 
-      bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum;
-  for (auto i = 0; i < kNumShards; ++i) {
+  SsdCache::SsdCache(std::string_view filePrefix, uint64_t maxBytes, int32_t numShards)
+  : filePrefix_(filePrefix), numShards_(numShards) {
+  files_.reserve(numShards_);
+  uint64_t kSizeQuantum = numShards_ * SsdFile::kRegionSize;
+  int32_t fileMaxRegions = bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum;
+  for (auto i = 0; i < numShards_; ++i) {
     files_.push_back(std::make_unique<SsdFile>(
         fmt::format("{}{}", filePrefix_, i), *this, i, fileMaxRegions));
   }
 }
 
 SsdFile& SsdCache::file(uint64_t fileId) {
-  auto index = fileId % kNumShards;
+  auto index = fileId % numShards_;
   return *files_[index];
 }
 
@@ -311,27 +300,37 @@ folly::IOThreadPoolExecutor* ssdStoreExecutor() {
 } // namespace
 
 bool SsdCache::startStore() {
-  if (0 == storesInProgress_.fetch_add(kNumShards)) {
+  if (0 == storesInProgress_.fetch_add(numShards_)) {
     return true;
   }
-  storesInProgress_.fetch_sub(kNumShards);
+  storesInProgress_.fetch_sub(numShards_);
   return false;
 }
 
 void SsdCache::store(std::vector<CachePin> pins) {
-  std::vector<std::vector<CachePin>> shards(kNumShards);
+  std::vector<std::vector<CachePin>> shards(numShards_);
   for (auto& pin : pins) {
     auto& target = file(pin.entry()->key().fileNum.id());
     shards[target.ordinal()].push_back(std::move(pin));
   }
   int32_t numNoStore = 0;
-  for (auto i = 0; i < kNumShards; ++i) {
+  for (auto i = 0; i < numShards_; ++i) {
     if (shards[i].empty()) {
       ++numNoStore;
       continue;
     }
-    ssdStoreExecutor()->add([this, i, pinsForShard = std::move(shards[i])]() {
-      files_[i]->store(std::move(pinsForShard));
+    struct PinHolder {
+      std::vector<CachePin> pins;
+      
+      PinHolder(std::vector<CachePin>&& _pins) : pins(std::move(_pins)) {}
+    };
+
+    // We move the mutavle vector of pins to the executor. These must
+    // be wrapped in a shared struct to be passed via lambda capture.
+    auto pinHolder = std::make_shared<PinHolder>(std::move(shards[i]));
+    ssdStoreExecutor()->add([this, i, pinHolder]() {
+      files_[i]->store(pinHolder->pins);
+      --storesInProgress_;
     });
   }
   storesInProgress_.fetch_sub(numNoStore);

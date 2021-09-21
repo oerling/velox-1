@@ -68,8 +68,14 @@ void AsyncDataCacheEntry::addReference() {
 }
 
 void AsyncDataCacheEntry::ensureLoaded(bool wait) {
-  auto load = load_;
   VELOX_CHECK(isShared());
+  if (dataValid_) {
+    return;
+  }
+  // Copy the shared_ptr to 'load_' so that another loader will not clear
+  // it if it gets in first. Competing loaders get serialized on the
+  // mutex of 'load'.
+  auto load = load_;
   if (load) {
     if (wait) {
       folly::SemiFuture<bool> waitFuture(false);
@@ -210,8 +216,12 @@ CachePin CacheShard::initEntry(
   return pin;
 }
 
+//  static
+std::atomic<int32_t> FusedLoad::numFusedLoads_{0};
+
 FusedLoad::~FusedLoad() {
   cancel();
+  --numFusedLoads_;
 }
 
 bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
@@ -427,6 +437,7 @@ void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
         GroupStats::instance().shouldSaveToSsd(
             entry->key_.fileNum.id(), entry->trackingId_)) {
       CachePin pin;
+      ++entry->numPins_;
       pin.setEntry(entry.get());
       pins.push_back(std::move(pin));
     }
@@ -495,11 +506,12 @@ void AsyncDataCache::incrementNew(uint64_t size) {
 }
 
 void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
+  constexpr int32_t kMinSavePages = 4096; // Save at least 16MB at a time.
   if (!ssdCache_) {
     return;
   }
   ssdSaveable_ += bytes;
-  if (ssdSaveable_ / MappedMemory::kPageSize > cachedPages_ / 8) {
+  if (ssdSaveable_ / MappedMemory::kPageSize > std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
     ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
     if (!ssdCache_->startStore()) {
@@ -510,7 +522,7 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
     for (auto& shard : shards_) {
       shard->getSsdSaveable(pins);
     }
-    ssdCache_->store(pins);
+    ssdCache_->store(std::move(pins));
   }
 }
 
@@ -526,6 +538,7 @@ std::string AsyncDataCache::toString() const {
   auto stats = refreshStats();
   std::stringstream out;
   out << "AsyncDataCache: "
+
       << stats.tinySize + stats.largeSize + stats.tinyPadding +
           stats.largePadding
       << " / " << maxBytes_ << " bytes\n"

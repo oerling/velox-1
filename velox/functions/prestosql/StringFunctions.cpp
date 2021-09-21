@@ -23,6 +23,7 @@
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::functions {
+
 namespace {
 
 /// Check if the input vector's  buffers are single referenced
@@ -114,7 +115,7 @@ class SubstrFunction : public exec::VectorFunction {
       I length,
       const StringView& input,
       StringView& output,
-      StringEncodingMode stringEncoding) const {
+      bool isAscii) const {
     // Following Presto semantics
     if (start == 0) {
       output = StringView("");
@@ -122,10 +123,10 @@ class SubstrFunction : public exec::VectorFunction {
     }
 
     I numCharacters;
-    if (stringEncoding == StringEncodingMode::ASCII) {
-      numCharacters = stringImpl::length<StringEncodingMode::ASCII>(input);
+    if (isAscii) {
+      numCharacters = stringImpl::length</*isAscii*/ true>(input);
     } else {
-      numCharacters = stringImpl::length<StringEncodingMode::UTF8>(input);
+      numCharacters = stringImpl::length</*isAscii*/ false>(input);
     }
 
     // Adjusting start
@@ -147,12 +148,10 @@ class SubstrFunction : public exec::VectorFunction {
     }
 
     std::pair<size_t, size_t> byteRange;
-    if (stringEncoding == StringEncodingMode::ASCII) {
-      byteRange =
-          getByteRange<StringEncodingMode::ASCII>(input.data(), start, length);
+    if (isAscii) {
+      byteRange = getByteRange</*isAscii*/ true>(input.data(), start, length);
     } else {
-      byteRange =
-          getByteRange<StringEncodingMode::UTF8>(input.data(), start, length);
+      byteRange = getByteRange</*isAscii*/ false>(input.data(), start, length);
     }
 
     // Generating output string
@@ -198,7 +197,7 @@ class SubstrFunction : public exec::VectorFunction {
     BaseVector* stringsVector = args[0].get();
     BaseVector* startsVector = args[1].get();
     BaseVector* lengthsVector = noLengthVector ? nullptr : args[2].get();
-    auto stringArgStringEncoding = getStringEncodingOrUTF8(stringsVector);
+    auto ascii = isAscii(stringsVector, rows);
 
     auto stringArgVectorEncoding = stringsVector->encoding();
     auto startArgVectorEncoding = startsVector->encoding();
@@ -244,7 +243,7 @@ class SubstrFunction : public exec::VectorFunction {
                   std::numeric_limits<I>::max(),
                   rawStrings[row],
                   rawResult[row],
-                  stringArgStringEncoding);
+                  ascii);
             });
           } else {
             rows.applyToSelected([&](int row) {
@@ -253,7 +252,7 @@ class SubstrFunction : public exec::VectorFunction {
                   rawLengths[row],
                   rawStrings[row],
                   rawResult[row],
-                  stringArgStringEncoding);
+                  ascii);
             });
           }
           return;
@@ -273,11 +272,7 @@ class SubstrFunction : public exec::VectorFunction {
         // Fast path 2 (Constant start and length):
         rows.applyToSelected([&](int row) {
           applyInner<I>(
-              startIndex,
-              length,
-              rawStrings[row],
-              rawResult[row],
-              stringArgStringEncoding);
+              startIndex, length, rawStrings[row], rawResult[row], ascii);
         });
         return;
       }
@@ -305,7 +300,7 @@ class SubstrFunction : public exec::VectorFunction {
             std::numeric_limits<I>::max(),
             strings->valueAt<StringView>(row),
             rawResult[row],
-            stringArgStringEncoding);
+            ascii);
       });
     } else {
       rows.applyToSelected([&](int row) {
@@ -314,7 +309,7 @@ class SubstrFunction : public exec::VectorFunction {
             lengths->valueAt<I>(row),
             strings->valueAt<StringView>(row),
             rawResult[row],
-            stringArgStringEncoding);
+            ascii);
       });
     }
   }
@@ -336,7 +331,7 @@ template <bool isLower /*instantiate for upper or lower*/>
 class UpperLowerTemplateFunction : public exec::VectorFunction {
  private:
   /// String encoding wrappable function
-  template <StringEncodingMode stringEncoding>
+  template <bool isAscii>
   struct ApplyInternal {
     static void apply(
         const SelectivityVector& rows,
@@ -345,10 +340,10 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
       rows.applyToSelected([&](int row) {
         auto proxy = exec::StringProxy<FlatVector<StringView>>(results, row);
         if constexpr (isLower) {
-          stringImpl::lower<stringEncoding>(
+          stringImpl::lower<isAscii>(
               proxy, decodedInput->valueAt<StringView>(row));
         } else {
-          stringImpl::upper<stringEncoding>(
+          stringImpl::upper<isAscii>(
               proxy, decodedInput->valueAt<StringView>(row));
         }
         proxy.finalize();
@@ -395,9 +390,9 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
     exec::LocalDecodedVector inputHolder(context, *inputStringsVector, rows);
     auto decodedInput = inputHolder.get();
 
-    auto stringEncoding = getStringEncodingOrUTF8(inputStringsVector);
+    auto ascii = isAscii(inputStringsVector, rows);
 
-    bool inPlace = (stringEncoding == StringEncodingMode::ASCII) &&
+    bool inPlace = ascii &&
         (inputStringsVector->encoding() == VectorEncoding::Simple::FLAT) &&
         hasSingleReferencedBuffers(
                        args.at(0).get()->as<FlatVector<StringView>>());
@@ -422,7 +417,7 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
     auto* resultFlatVector = (*result)->as<FlatVector<StringView>>();
 
     StringEncodingTemplateWrapper<ApplyInternal>::apply(
-        stringEncoding, rows, decodedInput, resultFlatVector);
+        ascii, rows, decodedInput, resultFlatVector);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -505,7 +500,7 @@ class ConcatFunction : public exec::VectorFunction {
 class StringPosition : public exec::VectorFunction {
  private:
   /// A function that can be wrapped with ascii mode
-  template <StringEncodingMode stringEncoding>
+  template <bool isAscii>
   struct ApplyInternal {
     template <
         typename StringReader,
@@ -518,7 +513,7 @@ class StringPosition : public exec::VectorFunction {
         const SelectivityVector& rows,
         FlatVector<int64_t>* resultFlatVector) {
       rows.applyToSelected([&](int row) {
-        auto result = stringImpl::stringPosition<stringEncoding>(
+        auto result = stringImpl::stringPosition<isAscii>(
             stringReader(row), subStringReader(row), instanceReader(row));
         resultFlatVector->set(row, result);
       });
@@ -544,7 +539,7 @@ class StringPosition : public exec::VectorFunction {
     exec::LocalDecodedVector decodedInstanceHolder(context);
     auto decodedInstanceInput = decodedInstanceHolder.get();
 
-    folly::Optional<int64_t> instanceArgValue;
+    std::optional<int64_t> instanceArgValue;
     if (args.size() <= 2) {
       instanceArgValue = 1;
     } else {
@@ -554,7 +549,7 @@ class StringPosition : public exec::VectorFunction {
       }
     }
 
-    auto stringArgStringEncoding = getStringEncodingOrUTF8(args.at(0).get());
+    auto stringArgStringEncoding = isAscii(args.at(0).get(), rows);
     BaseVector::ensureWritable(rows, BIGINT(), context->pool(), result);
 
     auto* resultFlatVector = (*result)->as<FlatVector<int64_t>>();
@@ -676,7 +671,7 @@ class Replace : public exec::VectorFunction {
     exec::LocalDecodedVector decodedSearchHolder(context, *args[1], rows);
     auto decodedSearchInput = decodedSearchHolder.get();
 
-    folly::Optional<StringView> searchArgValue;
+    std::optional<StringView> searchArgValue;
     if (decodedSearchInput->isConstantMapping()) {
       searchArgValue = decodedSearchInput->valueAt<StringView>(0);
     }
@@ -684,7 +679,7 @@ class Replace : public exec::VectorFunction {
     // Read replace argument
     exec::LocalDecodedVector decodedReplaceHolder(context);
     auto decodedReplaceInput = decodedReplaceHolder.get();
-    folly::Optional<StringView> replaceArgValue;
+    std::optional<StringView> replaceArgValue;
 
     if (args.size() <= 2) {
       replaceArgValue = StringView("");
@@ -763,11 +758,11 @@ class Replace : public exec::VectorFunction {
     };
   }
 
-  // Only the original string and the replacement are relevent to the result
+  // Only the original string and the replacement are relevant to the result
   // encoding.
   // TODO: The propagation is a safe approximation here, it might be better
   // for some cases to keep it unset and then rescan.
-  folly::Optional<std::vector<size_t>> propagateStringEncodingFrom()
+  std::optional<std::vector<size_t>> propagateStringEncodingFrom()
       const override {
     return {{0, 2}};
   }

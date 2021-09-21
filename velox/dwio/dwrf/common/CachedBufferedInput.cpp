@@ -181,8 +181,10 @@ class DwrfFusedLoad : public cache::FusedLoad {
       std::unique_ptr<AbstractInputStreamHolder> input,
       std::shared_ptr<dwio::common::IoStatistics> ioStats) {
     input_ = std::move(input);
-    cache::FusedLoad::initialize(std::move(pins));
     ioStats_ = std::move(ioStats);
+    // Initialize the base class last because as soon as the pins are
+    // placed and set to shared mode other threads can load 'this'.
+    cache::FusedLoad::initialize(std::move(pins));
   }
 
   void loadData(bool isPrefetch) override {
