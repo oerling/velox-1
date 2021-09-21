@@ -110,7 +110,7 @@ class CacheTest : public testing::Test {
       ssd = std::make_unique<SsdCache>(file, ssdBytes, 1);
     }
     cache_ = std::make_unique<AsyncDataCache>(
-        MappedMemory::createDefaultInstance(), maxBytes, std::move(ssd));
+					      MappedMemory::createDefaultInstance(), maxBytes, std::move(ssd));
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));

@@ -276,8 +276,11 @@ void SsdFile::store(std::vector<CachePin>& pins) {
   }
 }
 
-  SsdCache::SsdCache(std::string_view filePrefix, uint64_t maxBytes, int32_t numShards)
-  : filePrefix_(filePrefix), numShards_(numShards) {
+SsdCache::SsdCache(
+    std::string_view filePrefix,
+    uint64_t maxBytes,
+    int32_t numShards)
+    : filePrefix_(filePrefix), numShards_(numShards) {
   files_.reserve(numShards_);
   uint64_t kSizeQuantum = numShards_ * SsdFile::kRegionSize;
   int32_t fileMaxRegions = bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum;
@@ -321,7 +324,7 @@ void SsdCache::store(std::vector<CachePin> pins) {
     }
     struct PinHolder {
       std::vector<CachePin> pins;
-      
+
       PinHolder(std::vector<CachePin>&& _pins) : pins(std::move(_pins)) {}
     };
 
