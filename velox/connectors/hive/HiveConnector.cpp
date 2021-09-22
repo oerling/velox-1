@@ -521,9 +521,10 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
 
 HiveConnector::HiveConnector(
     const std::string& id,
+    std::shared_ptr<const Config> properties,
     std::unique_ptr<DataCache> dataCache,
-    folly::Executor* executor)
-    : Connector(id),
+    folly::Executor* FOLLY_NULLABLE executor)
+    : Connector(id, properties),
       dataCache_(std::move(dataCache)),
       fileHandleFactory_(
           std::make_unique<SimpleLRUCache<std::string, FileHandle>>(

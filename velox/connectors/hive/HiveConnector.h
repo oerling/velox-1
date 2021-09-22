@@ -211,8 +211,9 @@ class HiveConnector final : public Connector {
  public:
   explicit HiveConnector(
       const std::string& id,
+      std::shared_ptr<const Config> properties,
       std::unique_ptr<DataCache> dataCache,
-      folly::Executor* FOLLY_NONNULL executor);
+      folly::Executor* FOLLY_NULLABLE executor);
 
   std::shared_ptr<DataSource> createDataSource(
       const std::shared_ptr<const RowType>& outputType,
@@ -278,9 +279,11 @@ class HiveConnectorFactory : public ConnectorFactory {
 
   std::shared_ptr<Connector> newConnector(
       const std::string& id,
+      std::shared_ptr<const Config> properties,
       std::unique_ptr<DataCache> dataCache = nullptr,
       folly::Executor* FOLLY_NULLABLE executor = nullptr) override {
-    return std::make_shared<HiveConnector>(id, std::move(dataCache), executor);
+    return std::make_shared<HiveConnector>(
+        id, properties, std::move(dataCache), executor);
   }
 };
 

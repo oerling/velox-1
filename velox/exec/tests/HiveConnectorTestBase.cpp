@@ -29,13 +29,13 @@ void HiveConnectorTestBase::SetUp() {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
     auto hiveConnector =
         connector::getConnectorFactory(connector::hive::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, nullptr, executor_.get());
+      ->newConnector(kHiveConnectorId, nullptr, nullptr, executor_.get());
     connector::registerConnector(hiveConnector);
   } else {
     auto dataCache = std::make_unique<SimpleLRUDataCache>(1UL << 30);
     auto hiveConnector =
         connector::getConnectorFactory(connector::hive::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, std::move(dataCache));
+      ->newConnector(kHiveConnectorId, nullptr, std::move(dataCache));
     connector::registerConnector(hiveConnector);
   }
 }
