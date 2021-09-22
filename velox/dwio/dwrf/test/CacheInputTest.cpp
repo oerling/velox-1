@@ -58,7 +58,8 @@ class TestInputStream : public common::InputStream {
   void checkData(const void* bytes, uint64_t offset, int32_t size) {
     for (auto i = 0; i < size; ++i) {
       char expected = seed_ + offset + i;
-      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i]) << " at " << offset + i;
+      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i])
+          << " at " << offset + i;
     }
   }
 
