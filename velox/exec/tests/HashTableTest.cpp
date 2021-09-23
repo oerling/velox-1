@@ -138,8 +138,10 @@ class HashTableTest : public testing::Test {
     }
   }
 
-  void
-  insertGroups(const RowVector& input, HashLookup& lookup, HashTable<false>& table) {
+  void insertGroups(
+      const RowVector& input,
+      HashLookup& lookup,
+      HashTable<false>& table) {
     auto& hashers = table.hashers();
     SelectivityVector activeRows(input.size());
     auto mode = table.hashMode();
