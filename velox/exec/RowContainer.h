@@ -290,6 +290,8 @@ class RowContainer {
     }
   }
 
+  // Checks that row and free row counts match and that free list
+  // membership is consistent with free flag.
   void checkConsistency();
 
  private:

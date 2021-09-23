@@ -66,8 +66,16 @@ HashTable<ignoreNullKeys>::HashTable(
 class ProbeState {
  public:
   enum class Operation { kProbe, kInsert, kErase };
-  // Special tag for an erased entry. This counts as occupied for probe and as
-  // empty for insert.
+  // Special tag for an erased entry. This counts as occupied for
+  // probe and as empty for insert. If a tag word with empties gets an
+  // erase, we make the erased tag empty. If the tag word getting the
+  // erase has no empties, the erase is marked with a tombstone. A
+  // probe always stops with a tag word with empties. Adding an empty
+  // to a tag word with no empties would break probes that needed to
+  // skip this tag word. This is standard practice for open addressing
+  // hash tables. F14 has more sophistication in this but we do not
+  // need it here since erase is very rare and is not expected to
+  // change the load factor by much in the expected uses.
   static constexpr uint8_t kTombstoneTag = 0x7f;
   static constexpr int32_t kFullMask = 0xffff;
   static constexpr BaseHashTable::TagVector kTombstoneGroup = {
@@ -1167,7 +1175,7 @@ void HashTable<ignoreNullKeys>::eraseWithHashes(
   auto numRows = rows.size();
   if (hashMode_ == HashMode::kArray) {
     for (auto i = 0; i < numRows; ++i) {
-      VELOX_CHECK(hashes[i] < size_);
+      DCHECK(hashes[i] < size_);
       table_[hashes[i]] = nullptr;
     }
   } else {

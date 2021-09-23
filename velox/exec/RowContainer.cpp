@@ -54,15 +54,17 @@ RowContainer::RowContainer(
       stringAllocator_(mappedMemory),
       serde_(serde) {
   // Compute the layout of the payload row.  The row has keys, null
-  // flags, accumulators, dependent fields. All fields are fixed width. If
-  // variable width data is referenced, this is done with StringView that
-  // inlines or points to the data.  The number of bytes used by each
-  // key is determined by keyTypes[i].  Null flags are one
-  // bit per field. If nullableKeys is true there is a null flag
-  // for each key. A null bit for each accumulator and dependent field follows.
-  // If hasProbedFlag is true, there is an extra bit to track if the row has
-  // been selected  by a hash join probe.  The accumulators come next, with size
-  // given by Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
+  // flags, accumulators, dependent fields. All fields are fixed
+  // width. If variable width data is referenced, this is done with
+  // StringView that inlines or points to the data.  The number of
+  // bytes used by each key is determined by keyTypes[i].  Null flags
+  // are one bit per field. If nullableKeys is true there is a null
+  // flag for each key. A null bit for each accumulator and dependent
+  // field follows.  If hasProbedFlag is true, there is an extra bit
+  // to track if the row has been selected by a hash join probe. This
+  // is followed by a free bit which is set if the row is in a free
+  // list. The accumulators come next, with size given by
+  // Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
   // These are non-key columns for hash join or order by.
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
@@ -85,7 +87,7 @@ RowContainer::RowContainer(
     }
   }
   // Make offset at least sizeof pointer so that there is space for a
-  // free list next pointer below The bit at 'freeFlagOffset_'.
+  // free list next pointer below the bit at 'freeFlagOffset_'.
   offset = std::max<int32_t>(offset, sizeof(void*));
   int32_t firstAggregate = offsets_.size();
   int32_t firstAggregateOffset = offset;

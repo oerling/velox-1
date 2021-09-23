@@ -85,16 +85,16 @@ class HashTableTest : public testing::Test {
     EXPECT_EQ(topTable_->hashMode(), mode);
     LOG(INFO) << "Made table " << describeTable();
     testProbe();
-    testErase();
+    testEraseEveryN(3);
     testProbe();
-    testErase();
+    testEraseEveryN(4);
     testProbe();
     testGroupBySpill(size, buildType, numKeys);
   }
 
   // Inserts and deletes rows in a HashTable, similarly to a group by
   // that periodically spills a fraction of the groups.
-  void testGroupBySpill(int32_t size, TypePtr buildType, int32_t numKeys) {
+  void testGroupBySpill(int32_t size, TypePtr tableType, int32_t numKeys) {
     constexpr int32_t kBatchSize = 1000;
     constexpr int32_t kNumErasePerRound = 500;
     int32_t sequence = 0;
@@ -102,23 +102,19 @@ class HashTableTest : public testing::Test {
     std::vector<std::unique_ptr<VectorHasher>> keyHashers;
     for (auto channel = 0; channel < numKeys; ++channel) {
       keyHashers.emplace_back(
-          std::make_unique<VectorHasher>(buildType->childAt(channel), channel));
+          std::make_unique<VectorHasher>(tableType->childAt(channel), channel));
     }
     auto table = HashTable<false>::createForAggregation(
         std::move(keyHashers), {}, mappedMemory_);
     auto lookup = std::make_unique<HashLookup>(table->hashers());
-    auto& hashers = table->hashers();
-    std::vector<char*> erased;
     std::vector<char*> allInserted;
     int32_t numErased = 0;
     // We insert 1000 and delete 500.
     for (auto round = 0; round < size; round += kBatchSize) {
-      makeRows(kBatchSize, 1, sequence, buildType, batches);
+      makeRows(kBatchSize, 1, sequence, tableType, batches);
       sequence += kBatchSize;
       lookup->reset(kBatchSize);
       insertGroups(*batches.back(), *lookup, *table);
-      for (auto i = 0; i < kBatchSize; ++i) {
-      }
       allInserted.insert(
           allInserted.end(), lookup->hits.begin(), lookup->hits.end());
 
@@ -143,7 +139,7 @@ class HashTableTest : public testing::Test {
   }
 
   void
-  insertGroups(RowVector& input, HashLookup& lookup, HashTable<false>& table) {
+  insertGroups(const RowVector& input, HashLookup& lookup, HashTable<false>& table) {
     auto& hashers = table.hashers();
     SelectivityVector activeRows(input.size());
     auto mode = table.hashMode();
@@ -393,12 +389,12 @@ class HashTableTest : public testing::Test {
         << std::endl;
   }
 
-  // Erases every third item in the hash table.
-  void testErase() {
+  // Erases every strideth non-erased item in the hash table.
+  void testEraseEveryN(int32_t stride) {
     std::vector<char*> toErase;
     int32_t counter = 0;
     for (auto i = 0; i < rowOfKey_.size(); ++i) {
-      if (rowOfKey_[i] && ++counter % 3 == 0) {
+      if (rowOfKey_[i] && ++counter % stride == 0) {
         toErase.push_back(rowOfKey_[i]);
         rowOfKey_[i] = nullptr;
       }

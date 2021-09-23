@@ -318,23 +318,14 @@ TEST_F(RowContainerTest, types) {
 
 TEST_F(RowContainerTest, erase) {
   constexpr int32_t kNumRows = 100;
-  std::vector<TypePtr> keys = {SMALLINT()};
-  std::vector<TypePtr> dependents = {SMALLINT()};
-  std::vector<std::unique_ptr<Aggregate>> emptyAggregates;
-  auto data = std::make_unique<RowContainer>(
-      keys,
-      true,
-      emptyAggregates,
-      dependents,
-      false,
-      false,
-      false,
-      true,
-      mappedMemory_,
-      ContainerRowSerde::instance());
+  auto data = makeRowContainer({SMALLINT()}, {SMALLINT()});
 
-  EXPECT_EQ(data->nextOffset(), 0);
-  EXPECT_EQ(data->probedFlagOffset(), 0);
+  // The layout is expected to be smallint - 6 bytes of padding - 1 byte of bits
+  // - smallint - next pointer. The bits are a null flag for the second
+  // smallint, a probed flag and a free flag.
+  EXPECT_EQ(data->nextOffset(), 11);
+  // 2nd bit in first byte of flags.
+  EXPECT_EQ(data->probedFlagOffset(), 8 * 8 + 1);
   std::unordered_set<char*> rowSet;
   std::vector<char*> rows;
   for (int i = 0; i < kNumRows; ++i) {
@@ -349,18 +340,18 @@ TEST_F(RowContainerTest, erase) {
   EXPECT_EQ(0, data->listRows(&iter, kNumRows, rows.data()));
   EXPECT_EQ(rows, rowsFromContainer);
 
-  std::vector<char*> deleted;
+  std::vector<char*> erased;
   for (auto i = 0; i < rows.size(); i += 2) {
-    deleted.push_back(rows[i]);
+    erased.push_back(rows[i]);
   }
-  data->eraseRows(folly::Range<char**>(deleted.data(), deleted.size()));
+  data->eraseRows(folly::Range<char**>(erased.data(), erased.size()));
   std::vector<char*> remaining(data->numRows());
   iter.reset();
   EXPECT_EQ(
       remaining.size(),
       data->listRows(&iter, data->numRows(), remaining.data()));
   // We check that the next new rows reuse the erased rows.
-  for (auto i = 0; i < deleted.size(); ++i) {
+  for (auto i = 0; i < erased.size(); ++i) {
     auto reused = data->newRow();
     EXPECT_NE(rowSet.end(), rowSet.find(reused));
   }
