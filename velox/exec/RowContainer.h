@@ -155,7 +155,8 @@ class RowContainer {
   }
 
   // Copies the values at 'col' into 'result' for the
-  // 'numRows' rows pointed to by 'rows'.
+  // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
+  // corresponding row in 'result' to null.
   static void extractColumn(
       const char* const* rows,
       int32_t numRows,
@@ -163,7 +164,8 @@ class RowContainer {
       VectorPtr result);
 
   // Copies the values at 'columnIndex' into 'result' for the
-  // 'numRows' rows pointed to by 'rows'.
+  // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
+  //  corresponding row in 'result' to null.
   void extractColumn(
       const char* const* rows,
       int32_t numRows,
@@ -385,8 +387,12 @@ class RowContainer {
     BufferPtr valuesBuffer = result->mutableValues(numRows);
     auto values = valuesBuffer->asMutableRange<T>();
     for (int32_t i = 0; i < numRows; ++i) {
-      bits::setNull(nulls, i, isNullAt(rows[i], nullByte, nullMask));
-      values[i] = valueAt<T>(rows[i], offset);
+      if (rows[i] == nullptr) {
+        bits::setNull(nulls, i, true);
+      } else {
+        bits::setNull(nulls, i, isNullAt(rows[i], nullByte, nullMask));
+        values[i] = valueAt<T>(rows[i], offset);
+      }
     }
   }
 
@@ -400,8 +406,13 @@ class RowContainer {
     BufferPtr valuesBuffer = result->mutableValues(numRows);
     auto values = valuesBuffer->asMutableRange<T>();
     for (int32_t i = 0; i < numRows; ++i) {
-      // Here a StringView will reference the hash table, not copy.
-      values[i] = valueAt<T>(rows[i], offset);
+      if (rows[i] == nullptr) {
+        result->setNull(i, true);
+      } else {
+        result->setNull(i, false);
+        // Here a StringView will reference the hash table, not copy.
+        values[i] = valueAt<T>(rows[i], offset);
+      }
     }
   }
 
@@ -696,7 +707,12 @@ inline void RowContainer::extractValuesNoNulls<StringView>(
     FlatVector<StringView>* result) {
   result->resize(numRows);
   for (int32_t i = 0; i < numRows; ++i) {
-    extractString(valueAt<StringView>(rows[i], offset), result, i);
+    if (rows[i] == nullptr) {
+      result->setNull(i, true);
+    } else {
+      result->setNull(i, false);
+      extractString(valueAt<StringView>(rows[i], offset), result, i);
+    }
   }
 }
 
@@ -710,7 +726,7 @@ inline void RowContainer::extractValuesWithNulls<StringView>(
     FlatVector<StringView>* result) {
   result->resize(numRows);
   for (int32_t i = 0; i < numRows; ++i) {
-    if (isNullAt(rows[i], nullByte, nullMask)) {
+    if (!rows[i] || isNullAt(rows[i], nullByte, nullMask)) {
       result->setNull(i, true);
     } else {
       extractString(valueAt<StringView>(rows[i], offset), result, i);

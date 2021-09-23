@@ -48,6 +48,7 @@ void registerArithmeticFunctions() {
   registerUnaryNumeric<udf_floor>({});
   registerUnaryNumeric<udf_abs>({});
   registerUnaryFloatingPoint<udf_negate>({});
+  registerFunction<udf_radians, double, double>({"radians"});
   registerUnaryNumeric<udf_round>({"round"});
   registerFunction<udf_round<int8_t>, int8_t, int8_t, int32_t>({"round"});
   registerFunction<udf_round<int16_t>, int16_t, int16_t, int32_t>({"round"});
@@ -71,6 +72,10 @@ void registerArithmeticFunctions() {
       {"clamp"});
   registerFunction<udf_clamp<float>, float, float, float, float>({"clamp"});
   registerFunction<udf_ln, double, double>({"ln"});
+  registerFunction<udf_acos, double, double>({"acos"});
+  registerFunction<udf_asin, double, double>({"asin"});
+  registerFunction<udf_atan, double, double>({"atan"});
+  registerFunction<udf_atan2, double, double, double>({"atan2"});
   registerFunction<udf_sqrt, double, double>({"sqrt"});
   registerFunction<udf_cbrt, double, double>({"cbrt"});
   registerFunction<udf_width_bucket, int64_t, double, double, double, int64_t>(
