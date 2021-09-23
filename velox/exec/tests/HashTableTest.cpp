@@ -100,8 +100,7 @@ class HashTableTest : public testing::Test {
     int32_t sequence = 0;
     std::vector<RowVectorPtr> batches;
     auto table = createHashTableForAggregation(tableType, numKeys);
-    auto lookup =
-        std::make_unique<HashLookup>(table->hashers());
+    auto lookup = std::make_unique<HashLookup>(table->hashers());
     std::vector<char*> allInserted;
     int32_t numErased = 0;
     // We insert 1000 and delete 500.
