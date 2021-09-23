@@ -99,14 +99,9 @@ class HashTableTest : public testing::Test {
     constexpr int32_t kNumErasePerRound = 500;
     int32_t sequence = 0;
     std::vector<RowVectorPtr> batches;
-    std::vector<std::unique_ptr<VectorHasher>> keyHashers;
-    for (auto channel = 0; channel < numKeys; ++channel) {
-      keyHashers.emplace_back(
-          std::make_unique<VectorHasher>(tableType->childAt(channel), channel));
-    }
-    auto table = HashTable<false>::createForAggregation(
-        std::move(keyHashers), {}, mappedMemory_);
-    auto lookup = std::make_unique<HashLookup>(table->hashers());
+    auto table = createHashTableForAggregation(tableType, numKeys);
+    auto lookup =
+        std::make_unique<HashLookup>(table->hashers());
     std::vector<char*> allInserted;
     int32_t numErased = 0;
     // We insert 1000 and delete 500.
@@ -136,6 +131,18 @@ class HashTableTest : public testing::Test {
         }
       }
     }
+  }
+
+  std::unique_ptr<HashTable<false>> createHashTableForAggregation(
+      const TypePtr& tableType,
+      int numKeys) {
+    std::vector<std::unique_ptr<VectorHasher>> keyHashers;
+    for (auto channel = 0; channel < numKeys; ++channel) {
+      keyHashers.emplace_back(
+          std::make_unique<VectorHasher>(tableType->childAt(channel), channel));
+    }
+    return HashTable<false>::createForAggregation(
+        std::move(keyHashers), {}, mappedMemory_);
   }
 
   void insertGroups(
