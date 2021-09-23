@@ -140,8 +140,9 @@ class HashTableTest : public testing::Test {
       keyHashers.emplace_back(
           std::make_unique<VectorHasher>(tableType->childAt(channel), channel));
     }
+    static std::vector<std::unique_ptr<Aggregate>> empty;
     return HashTable<false>::createForAggregation(
-        std::move(keyHashers), {}, mappedMemory_);
+        std::move(keyHashers), empty, mappedMemory_);
   }
 
   void insertGroups(
