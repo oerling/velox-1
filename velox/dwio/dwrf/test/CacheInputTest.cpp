@@ -58,7 +58,8 @@ class TestInputStream : public common::InputStream {
   void checkData(const void* bytes, uint64_t offset, int32_t size) {
     for (auto i = 0; i < size; ++i) {
       char expected = seed_ + offset + i;
-      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i]);
+      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i])
+          << " at " << offset + i;
     }
   }
 
@@ -137,6 +138,7 @@ class CacheTest : public testing::Test {
 
   std::shared_ptr<common::InputStream>
   inputByPath(const std::string& path, uint64_t& fileId, uint64_t& groupId) {
+    std::lock_guard<std::mutex> l(mutex_);
     StringIdLease lease(fileIds(), path);
     fileId = lease.id();
     // 2 files in a group.
@@ -299,6 +301,8 @@ class CacheTest : public testing::Test {
     }
   }
 
+  // Serializes 'pathToInput_' and 'fileIds_' in multithread test.
+  std::mutex mutex_;
   std::vector<StringIdLease> fileIds_;
   folly::F14FastMap<uint64_t, std::shared_ptr<common::InputStream>>
       pathToInput_;

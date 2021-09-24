@@ -378,7 +378,7 @@ enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
 // thread gets there first, then the query thread will do the
 // IO. The IO is also cancelled as a unit. FusedLoad holds a pin on
 // all the entries it concerns. The pins are released after the IO
-// completes or is cpriancelled. An entry that references a FusedLoad
+// completes or is cancelled. An entry that references a FusedLoad
 // is not readable until the FusedLoad is complete.
 class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
  public:

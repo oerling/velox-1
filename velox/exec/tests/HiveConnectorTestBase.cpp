@@ -19,8 +19,6 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/tests/QueryAssertions.h"
-DEFINE_int32(cache_mb, 1024, "File cache size for testing");
-
 namespace facebook::velox::exec::test {
 
 void HiveConnectorTestBase::SetUp() {

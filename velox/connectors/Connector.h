@@ -212,19 +212,6 @@ class Connector {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
-  // Schedules 'split' for async prefetching. The default is
-  // no-op. Supporting connectors may prime caches and pre-build a
-  // DataSource. Supporting connectors must synchronize the processing
-  // with a possible prefetch.
-  virtual void prefetchSplit(
-      const std::shared_ptr<const RowType>& outputType,
-      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
-      const std::unordered_map<
-          std::string,
-          std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx,
-      std::shared_ptr<ConnectorSplit> split) {}
-
   virtual std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
@@ -258,7 +245,6 @@ class ConnectorFactory {
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
       std::shared_ptr<const Config> properties,
-
       std::unique_ptr<DataCache> dataCache = nullptr,
       folly::Executor* executor = nullptr) = 0;
 
