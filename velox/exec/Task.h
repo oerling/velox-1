@@ -63,6 +63,7 @@ struct TaskStats {
 };
 
 class JoinBridge;
+class HashJoinBridge;
 
 class Task {
  public:
@@ -228,8 +229,6 @@ class Task {
     return message;
   }
 
-  void driverClosed(Driver* FOLLY_NONNULL instance);
-
   std::shared_ptr<core::QueryCtx> queryCtx() const {
     return queryCtx_;
   }
@@ -259,12 +258,14 @@ class Task {
       std::vector<VeloxPromise<bool>>& promises,
       std::vector<std::shared_ptr<Driver>>& peers);
 
-  // Returns a JoinBridge for 'planNodeId'. This is used for synchronizing
+  // Adds HashJoinBridge's for all the specified plan node IDs.
+  void addHashJoinBridges(const std::vector<core::PlanNodeId>& planNodeIds);
+
+  // Returns a HashJoinBridge for 'planNodeId'. This is used for synchronizing
   // start of probe with completion of build for a join that has a
   // separate probe and build. 'id' is the PlanNodeId shared between
-  // the probe and build Operators of the join. The JoinBridge is
-  // created on first call with any given 'id'.
-  std::shared_ptr<JoinBridge> findOrCreateJoinBridge(
+  // the probe and build Operators of the join.
+  std::shared_ptr<HashJoinBridge> getHashJoinBridge(
       const core::PlanNodeId& planNodeId);
 
   // Sets the CancelPool of the QueryCtx to a terminate requested
@@ -398,7 +399,8 @@ class Task {
     SplitsState& operator=(SplitsState const&) = delete;
   };
 
- private:
+  void driverClosed();
+
   std::shared_ptr<ExchangeClient> addExchangeClient();
 
   void stateChangedLocked();

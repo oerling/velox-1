@@ -20,6 +20,8 @@
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
 
+#include <folly/Synchronized.h>
+
 namespace facebook::velox::common {
 class Filter;
 }
@@ -139,12 +141,12 @@ class ConnectorQueryCtx {
       memory::MemoryPool* pool,
       Config* config,
       ExpressionEvaluator* expressionEvaluator,
-      memory::MappedMemory* _mappedMemory,
+      memory::MappedMemory* mappedMemory,
       std::optional<std::string> scanId = std::nullopt)
       : pool_(pool),
         config_(config),
         expressionEvaluator_(expressionEvaluator),
-        mappedMemory_(_mappedMemory),
+        mappedMemory_(mappedMemory),
         scanId_(scanId) {}
 
   memory::MemoryPool* memoryPool() const {
@@ -163,6 +165,11 @@ class ConnectorQueryCtx {
     return mappedMemory_;
   }
 
+  // Returns an id that allows sharing state between different threads
+  // of the same scan. This is typically a query id plus the scan's
+  // PlanNodeId. This is used for locating a scanTracker, which tracks
+  // the read density of columns for prefetch and other memory
+  // hierarchy purposes.
   const std::optional<std::string>& scanId() const {
     return scanId_;
   }
@@ -177,12 +184,19 @@ class ConnectorQueryCtx {
 
 class Connector {
  public:
-  explicit Connector(const std::string& id) : id_(id) {}
+  explicit Connector(
+      const std::string& id,
+      std::shared_ptr<const Config> properties)
+      : id_(id), properties_(std::move(properties)) {}
 
   virtual ~Connector() = default;
 
   const std::string& connectorId() const {
     return id_;
+  }
+
+  const std::shared_ptr<const Config>& connectorProperties() const {
+    return properties_;
   }
 
   // TODO Generalize to specify TableHandle/Layout and ColumnHandles.
@@ -198,34 +212,24 @@ class Connector {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
-  // Schedules 'split' for async prefetching. The default is
-  // no-op. Supporting connectors may prime caches and pre-build a
-  // DataSource. Supporting connectors must synchronize the processing
-  // with a possible prefetch.
-  virtual void prefetchSplit(
-      const std::shared_ptr<const RowType>& outputType,
-      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
-      const std::unordered_map<
-          std::string,
-          std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx,
-      std::shared_ptr<ConnectorSplit> split) {}
-
   virtual std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
-  static std::shared_ptr<cache::ScanTracker> getTracker(const std::string& scanId);
+  static std::shared_ptr<cache::ScanTracker> getTracker(
+      const std::string& scanId);
 
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
 
   const std::string id_;
 
-  static std::mutex trackerMutex_;
-  static std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>
+  static folly::Synchronized<
+      std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>>
       trackers_;
+
+  const std::shared_ptr<const Config> properties_;
 };
 
 class ConnectorFactory {
@@ -240,7 +244,22 @@ class ConnectorFactory {
 
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
-      std::unique_ptr<DataCache> dataCache = nullptr) = 0;
+      std::shared_ptr<const Config> properties,
+      std::unique_ptr<DataCache> dataCache = nullptr,
+      folly::Executor* executor = nullptr) = 0;
+
+    // Schedules 'split' for async prefetching. The default is
+  // no-op. Supporting connectors may prime caches and pre-build a
+  // DataSource. Supporting connectors must synchronize the processing
+  // with a possible prefetch.
+  virtual void prefetchSplit(
+      const std::shared_ptr<const RowType>& outputType,
+      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
+      const std::unordered_map<
+          std::string,
+          std::shared_ptr<connector::ColumnHandle>>& columnHandles,
+      ConnectorQueryCtx* connectorQueryCtx,
+      std::shared_ptr<ConnectorSplit> split) {}
 
  private:
   const std::string name_;
@@ -257,9 +276,9 @@ bool unregisterConnector(const std::string& connectorId);
 
 std::shared_ptr<Connector> getConnector(const std::string& connectorId);
 
-#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                    \
-  namespace {                                                           \
-  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =               \
+#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                      \
+  namespace {                                                             \
+  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =                 \
       facebook::velox::connector::registerConnectorFactory((theFactory)); \
   }
 } // namespace facebook::velox::connector

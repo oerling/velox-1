@@ -17,6 +17,7 @@ add_library(
   AllocationPool.cpp
   ContainerRowSerde.cpp
   Driver.cpp
+  EnforceSingleRow.cpp
   Exchange.cpp
   FilterProject.cpp
   GroupingSet.cpp
@@ -25,6 +26,7 @@ add_library(
   HashProbe.cpp
   HashStringAllocator.cpp
   HashTable.cpp
+  JoinBridge.cpp
   Limit.cpp
   LocalPartition.cpp
   LocalPlanner.cpp

@@ -35,7 +35,7 @@ std::vector<CallableSignature> getAllSignatures() {
   std::vector<CallableSignature> functions;
 
   // TODO: Skipping buggy functions for now.
-  std::unordered_set<std::string> skipFunctions = {"xxhash64", "from_unixtime"};
+  std::unordered_set<std::string> skipFunctions = {};
   auto keys = exec::AdaptedVectorFunctions().Keys();
 
   for (const auto& key : keys) {
@@ -63,6 +63,7 @@ using namespace facebook::velox;
 
 int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
+  google::InitGoogleLogging(argv[0]);
 
   // TODO: Only simple functions for now.
   functions::registerFunctions();

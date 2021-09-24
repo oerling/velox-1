@@ -211,7 +211,18 @@ ReaderBase::ReaderBase(
     const std::string tailKey = TailKey(dataCacheConfig->filenum);
     dataCacheConfig->cache->put(tailKey, {tail.get(), tailSize});
   }
-
+  if (input_->shouldPrefetchStripes()) {
+    auto numStripes = getFooter().stripes_size();
+    for (auto i = 0; i < numStripes; i++) {
+      const auto& stripe = getFooter().stripes(i);
+      input_->enqueue(
+          {stripe.offset() + stripe.indexlength() + stripe.datalength(),
+           stripe.footerlength()});
+    }
+    if (numStripes) {
+      input_->load(LogType::FOOTER);
+    }
+  }
   // initialize file decrypter
   handler_ = DecryptionHandler::create(*footer_, factory);
 }
@@ -220,19 +231,8 @@ std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
   std::vector<uint64_t> rowsPerStripe;
   auto numStripes = getFooter().stripes_size();
   rowsPerStripe.reserve(numStripes);
-  int32_t numQueued = 0;
   for (auto i = 0; i < numStripes; i++) {
-    auto& stripe = getFooter().stripes(i);
-    rowsPerStripe.push_back(stripe.numberofrows());
-    if (input_->shouldPrefetchStripes()) {
-      ++numQueued;
-      input_->enqueue(
-          {stripe.offset() + stripe.indexlength() + stripe.datalength(),
-           stripe.footerlength()});
-    }
-  }
-  if (numQueued) {
-    input_->load(LogType::FOOTER);
+    rowsPerStripe.push_back(getFooter().stripes(i).numberofrows());
   }
   return rowsPerStripe;
 }

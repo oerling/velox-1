@@ -17,21 +17,24 @@ add_subdirectory(benchmarks)
 
 add_library(
   velox_aggregates OBJECT
-  ApproxDistinct.cpp
-  ApproxPercentile.cpp
-  Arbitrary.cpp
   AggregateNames.h
-  ArrayAgg.cpp
-  AverageAggregates.cpp
+  ApproxDistinctAggregate.cpp
+  ApproxPercentileAggregate.cpp
+  ArbitraryAggregate.cpp
+  ArrayAggAggregate.cpp
+  AverageAggregate.cpp
   BitwiseAggregates.cpp
   BoolAggregates.cpp
   CountIfAggregate.cpp
-  MapAgg.cpp
+  MapAggAggregate.cpp
   MinMaxAggregates.cpp
   MinMaxByAggregates.cpp
-  SimpleNumerics.cpp
+  CountAggregate.cpp
   SingleValueAccumulator.cpp
-  ValueList.cpp)
+  SumAggregate.cpp
+  SumAggregate.h
+  ValueList.cpp
+  VarianceAggregates.cpp)
 
 target_link_libraries(velox_aggregates velox_aggregates_hyperloglog velox_exec
                       ${FOLLY_WITH_DEPENDENCIES})

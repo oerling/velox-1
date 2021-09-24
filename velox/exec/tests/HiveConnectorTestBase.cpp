@@ -25,13 +25,25 @@ namespace facebook::velox::exec::test {
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
-  auto hiveConnector =
-      connector::getConnectorFactory(connector::hive::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, nullptr);
-  connector::registerConnector(hiveConnector);
+  if (useAsyncCache_) {
+    executor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
+    auto hiveConnector =
+        connector::getConnectorFactory(connector::hive::kHiveConnectorName)
+            ->newConnector(kHiveConnectorId, nullptr, nullptr, executor_.get());
+    connector::registerConnector(hiveConnector);
+  } else {
+    auto dataCache = std::make_unique<SimpleLRUDataCache>(1UL << 30);
+    auto hiveConnector =
+        connector::getConnectorFactory(connector::hive::kHiveConnectorName)
+            ->newConnector(kHiveConnectorId, nullptr, std::move(dataCache));
+    connector::registerConnector(hiveConnector);
+  }
 }
 
 void HiveConnectorTestBase::TearDown() {
+  if (executor_) {
+    executor_->join();
+  }
   connector::unregisterConnector(kHiveConnectorId);
   OperatorTestBase::TearDown();
 }
@@ -135,7 +147,11 @@ HiveConnectorTestBase::makeHiveConnectorSplit(
     uint64_t start,
     uint64_t length) {
   return std::make_shared<connector::hive::HiveConnectorSplit>(
-      kHiveConnectorId, "file:" + filePath, start, length);
+      kHiveConnectorId,
+      "file:" + filePath,
+      dwio::common::FileFormat::ORC,
+      start,
+      length);
 }
 
 exec::Split HiveConnectorTestBase::makeHiveSplit(
@@ -143,7 +159,11 @@ exec::Split HiveConnectorTestBase::makeHiveSplit(
     uint64_t start,
     uint64_t length) {
   return exec::Split(std::make_shared<connector::hive::HiveConnectorSplit>(
-      kHiveConnectorId, "file:" + filePath, start, length));
+      kHiveConnectorId,
+      "file:" + filePath,
+      dwio::common::FileFormat::ORC,
+      start,
+      length));
 }
 
 std::shared_ptr<connector::hive::HiveColumnHandle>

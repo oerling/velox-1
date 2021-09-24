@@ -25,6 +25,24 @@
 namespace facebook::velox::functions::test {
 
 class FunctionBaseTest : public testing::Test {
+ public:
+  // This class generates test name suffixes based on the type.
+  // We use the type's toString() return value as the test name.
+  // Used as the third argument for GTest TYPED_TEST_SUITE.
+  class TypeNames {
+   public:
+    template <typename T>
+    static std::string GetName(int) {
+      T type;
+      return type.toString();
+    }
+  };
+
+  using IntegralTypes =
+      ::testing::Types<TinyintType, SmallintType, IntegerType, BigintType>;
+
+  using FloatingPointTypes = ::testing::Types<DoubleType, RealType>;
+
  protected:
   static void SetUpTestCase();
 
@@ -193,6 +211,17 @@ class FunctionBaseTest : public testing::Test {
   template <typename T>
   ArrayVectorPtr makeNullableArrayVector(
       const std::vector<std::vector<std::optional<T>>>& data) {
+    std::vector<std::optional<std::vector<std::optional<T>>>> convData;
+    convData.reserve(data.size());
+    for (auto& array : data) {
+      convData.push_back(array);
+    }
+    return vectorMaker_.arrayVectorNullable<T>(convData);
+  }
+
+  template <typename T>
+  ArrayVectorPtr makeVectorWithNullArrays(
+      const std::vector<std::optional<std::vector<std::optional<T>>>>& data) {
     return vectorMaker_.arrayVectorNullable<T>(data);
   }
 
@@ -256,6 +285,10 @@ class FunctionBaseTest : public testing::Test {
     return BaseVector::createConstant(variant(typeKind), size, execCtx_.pool());
   }
 
+  BufferPtr makeIndices(
+      vector_size_t size,
+      std::function<vector_size_t(vector_size_t)> indexAt);
+
   BufferPtr makeOddIndices(vector_size_t size);
 
   BufferPtr makeEvenIndices(vector_size_t size);
@@ -272,11 +305,6 @@ class FunctionBaseTest : public testing::Test {
 
   static VectorPtr
   wrapInDictionary(BufferPtr indices, vector_size_t size, VectorPtr vector);
-
-  static BufferPtr makeIndices(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t)> indexAt,
-      memory::MemoryPool* pool);
 
   static VectorPtr flatten(const VectorPtr& vector) {
     return velox::test::VectorMaker::flatten(vector);

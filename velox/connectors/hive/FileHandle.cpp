@@ -28,10 +28,10 @@ uint64_t FileHandleSizer::operator()(const FileHandle& fileHandle) {
 
 namespace {
 // The group tracking is at the level of the directory, i.e. Hive partition.
-std::string groupName(std::string filename) {
+std::string groupName(const std::string& filename) {
   const char* slash = strrchr(filename.c_str(), '/');
-  return slash
-    ? std::string(filename.data(), slash - filename.data()) : filename;
+  return slash ? std::string(filename.data(), slash - filename.data())
+               : filename;
 }
 } // namespace
 

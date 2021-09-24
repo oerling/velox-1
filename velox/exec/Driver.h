@@ -82,25 +82,17 @@ struct DriverCtx {
       int _pipelineId,
       int32_t numDrivers);
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorUserPool() {
+  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool() {
     opMemPools_.push_back(execCtx->pool()->addScopedChild("operator_ctx"));
     return opMemPools_.back().get();
   }
 
-  velox::memory::MemoryPool* FOLLY_NONNULL
-  addOperatorSystemPool(velox::memory::MemoryPool* FOLLY_NONNULL userPool) {
-    auto poolPtr = userPool->addScopedChild("operator_ctx");
-    poolPtr->setMemoryUsageTracker(
-        userPool->getMemoryUsageTracker()->addChild(true));
-    auto pool = poolPtr.get();
-    opMemPools_.push_back(std::move(poolPtr));
-
-    return pool;
-  }
-
+  // Makes an extract of QueryCtx for use in a connector. 'planNodeId'
+  // is the id of the calling TableScan. This and the task id identify
+  // the scan for column access tracking.
   std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
       const std::string& connectorId,
-      const std::string& nodeId = "unnamed") const;
+      const std::string& planNodeId) const;
 
  private:
   // Lifetime of operator memory pools is same as the driverCtx, since some
@@ -262,6 +254,17 @@ struct DriverFactory {
     }
 
     return std::nullopt;
+  }
+
+  std::vector<core::PlanNodeId> needsHashJoinBridges() const {
+    std::vector<core::PlanNodeId> planNodeIds;
+    for (const auto& planNode : planNodes) {
+      if (auto joinNode =
+              std::dynamic_pointer_cast<const core::HashJoinNode>(planNode)) {
+        planNodeIds.emplace_back(joinNode->id());
+      }
+    }
+    return planNodeIds;
   }
 };
 

@@ -125,6 +125,8 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
       self->createLocalExchangeSources(exchangeId.value(), numDrivers);
     }
 
+    self->addHashJoinBridges(factory->needsHashJoinBridges());
+
     for (int32_t i = 0; i < numDrivers; ++i) {
       drivers.push_back(factory->createDriver(
           std::make_unique<DriverCtx>(self, i, pipeline, numDrivers),
@@ -187,14 +189,15 @@ void Task::resume(std::shared_ptr<Task> self) {
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
+  std::lock_guard<std::mutex> cancelPoolLock(*self->cancelPool()->mutex());
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() == driver) {
       driverPtr = nullptr;
-      self->driverClosed(driver);
+      self->driverClosed();
       return;
     }
   }
-  VELOX_CHECK(false, "Trying to delete a Driver twice from its Task");
+  VELOX_FAIL("Trying to delete a Driver twice from its Task");
 }
 
 void Task::setMaxSplitSequenceId(
@@ -387,8 +390,7 @@ void Task::setAllOutputConsumed() {
   }
 }
 
-void Task::driverClosed(Driver* /* unused */) {
-  std::lock_guard<std::mutex> cancelPoolLock(*cancelPool()->mutex());
+void Task::driverClosed() {
   --numDrivers_;
   if ((numDrivers_ == 0) && (state_ == kRunning)) {
     std::lock_guard<std::mutex> l(mutex_);
@@ -444,14 +446,27 @@ bool Task::allPeersFinished(
   return false;
 }
 
-std::shared_ptr<JoinBridge> Task::findOrCreateJoinBridge(
+void Task::addHashJoinBridges(
+    const std::vector<core::PlanNodeId>& planNodeIds) {
+  std::lock_guard<std::mutex> l(mutex_);
+  for (const auto& planNodeId : planNodeIds) {
+    bridges_.emplace(planNodeId, std::make_shared<HashJoinBridge>());
+  }
+}
+
+std::shared_ptr<HashJoinBridge> Task::getHashJoinBridge(
     const core::PlanNodeId& planNodeId) {
   std::lock_guard<std::mutex> l(mutex_);
-  auto& bridge = bridges_[planNodeId];
-  if (!bridge) {
-    bridge = std::make_shared<JoinBridge>();
-    bridges_[planNodeId] = bridge;
-  }
+  auto it = bridges_.find(planNodeId);
+  VELOX_CHECK(
+      it != bridges_.end(),
+      "Hash join bridge for plan node ID not found: {}",
+      planNodeId);
+  auto bridge = std::dynamic_pointer_cast<HashJoinBridge>(it->second);
+  VELOX_CHECK_NOT_NULL(
+      bridge,
+      "Join bridge for plan node ID is not a hash join bridge: {}",
+      planNodeId);
   return bridge;
 }
 

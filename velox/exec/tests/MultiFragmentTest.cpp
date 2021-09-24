@@ -40,7 +40,7 @@ class MultiFragmentTest : public OperatorTestBase {
     auto dataCache = std::make_unique<SimpleLRUDataCache>(/*size=*/1 << 30);
     auto hiveConnector =
         connector::getConnectorFactory(kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, std::move(dataCache));
+            ->newConnector(kHiveConnectorId, nullptr, std::move(dataCache));
     connector::registerConnector(hiveConnector);
   }
 
@@ -113,7 +113,9 @@ class MultiFragmentTest : public OperatorTestBase {
     for (auto& filePath : filePaths) {
       auto split = exec::Split(
           std::make_shared<HiveConnectorSplit>(
-              kHiveConnectorId, "file:" + filePath->path),
+              kHiveConnectorId,
+              "file:" + filePath->path,
+              facebook::dwio::common::FileFormat::ORC),
           -1);
       task->addSplit("0", std::move(split));
       VLOG(1) << filePath->path << "\n";
