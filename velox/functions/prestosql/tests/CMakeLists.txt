@@ -47,7 +47,8 @@ add_executable(
   MapFilterTest.cpp
   TransformTest.cpp
   ElementAtTest.cpp
-  WidthBucketArrayTest.cpp)
+  WidthBucketArrayTest.cpp
+  ReverseTest.cpp)
 
 add_test(velox_functions_test velox_functions_test)
 
@@ -55,6 +56,7 @@ target_link_libraries(
   velox_functions_test
   velox_functions_test_lib
   velox_exec
+  velox_expression
   velox_functions_prestosql
   velox_functions_lib
   velox_exec_test_util

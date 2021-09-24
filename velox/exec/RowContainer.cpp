@@ -54,15 +54,17 @@ RowContainer::RowContainer(
       stringAllocator_(mappedMemory),
       serde_(serde) {
   // Compute the layout of the payload row.  The row has keys, null
-  // flags, accumulators, dependent fields. All fields are fixed width. If
-  // variable width data is referenced, this is done with StringView that
-  // inlines or points to the data.  The number of bytes used by each
-  // key is determined by keyTypes[i].  Null flags are one
-  // bit per field. If nullableKeys is true there is a null flag
-  // for each key. A null bit for each accumulator and dependent field follows.
-  // If hasProbedFlag is true, there is an extra bit to track if the row has
-  // been selected  by a hash join probe.  The accumulators come next, with size
-  // given by Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
+  // flags, accumulators, dependent fields. All fields are fixed
+  // width. If variable width data is referenced, this is done with
+  // StringView that inlines or points to the data.  The number of
+  // bytes used by each key is determined by keyTypes[i].  Null flags
+  // are one bit per field. If nullableKeys is true there is a null
+  // flag for each key. A null bit for each accumulator and dependent
+  // field follows.  If hasProbedFlag is true, there is an extra bit
+  // to track if the row has been selected by a hash join probe. This
+  // is followed by a free bit which is set if the row is in a free
+  // list. The accumulators come next, with size given by
+  // Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
   // These are non-key columns for hash join or order by.
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
@@ -86,7 +88,9 @@ RowContainer::RowContainer(
       ++nullOffset;
     }
   }
-
+  // Make offset at least sizeof pointer so that there is space for a
+  // free list next pointer below the bit at 'freeFlagOffset_'.
+  offset = std::max<int32_t>(offset, sizeof(void*));
   int32_t firstAggregate = offsets_.size();
   int32_t firstAggregateOffset = offset;
   for (auto& aggregate : aggregates) {
@@ -112,10 +116,12 @@ RowContainer::RowContainer(
 
   if (hasProbedFlag) {
     nullOffsets_.push_back(nullOffset);
+    probedFlagOffset_ = nullOffset + firstAggregateOffset * 8;
     ++nullOffset;
   }
   // Free flag.
   nullOffsets_.push_back(nullOffset);
+  freeFlagOffset_ = nullOffset + firstAggregateOffset * 8;
   ++nullOffset;
   // Fixup nullOffsets_ to be the bit number from the start of the row.
   for (int32_t i = 0; i < nullOffsets_.size(); ++i) {
@@ -145,23 +151,25 @@ RowContainer::RowContainer(
   }
   fixedRowSize_ = offset + nullBytes;
 
-  // Aggregates start life as null, join dependent columns as
-  // non-null. The free and optional probed flag start as 0.
-  initialNulls_.resize(nullBytes, isJoinBuild_ ? 0x0 : 0xff);
-  if (nullableKeys) {
-    for (int32_t i = 0; i < keyTypes_.size(); ++i) {
-      bits::clearBit(initialNulls_.data(), i);
+  // A distinct hash table has no aggregates and if the hash table has
+  // no nulls, it may be that there are no null flags.
+  if (!nullOffsets_.empty()) {
+    // Aggregates start life as null, join dependent columns as non-null.
+    initialNulls_.resize(nullBytes, isJoinBuild_ ? 0x0 : 0xff);
+    // The free flag has an initial value of 0.
+    bits::clearBit(
+        initialNulls_.data(), freeFlagOffset_ - nullOffsets_.front());
+    if (nullableKeys) {
+      for (int32_t i = 0; i < keyTypes_.size(); ++i) {
+        bits::clearBit(initialNulls_.data(), i);
+      }
     }
   }
-  // Free flag
-  bits::clearBit(initialNulls_.data(), nullOffsets_.back() - nullOffsets_[0]);
   if (hasProbedFlag) {
     bits::clearBit(
         initialNulls_.data(),
         nullOffsets_[nullOffsets_.size() - 2] - nullOffsets_[0]);
-    probedFlagOffset_ = nullOffsets_[nullOffsets_.size() - 2];
   }
-  freeFlagOffset_ = nullOffsets_.back();
   normalizedKeySize_ = hasNormalizedKeys_ ? sizeof(normalized_key_t) : 0;
   for (auto i = 0; i < offsets_.size(); ++i) {
     rowColumns_.emplace_back(
@@ -169,13 +177,7 @@ RowContainer::RowContainer(
         (nullableKeys_ || i >= keyTypes_.size()) ? nullOffsets_[i]
                                                  : RowColumn::kNotNullOffset);
   }
-  // Set nextFreeOffset_ so it does not overlap with the free flag.
-  if (freeFlagOffset_ < 64) {
-    nextFreeOffset_ = bits::roundUp((freeFlagOffset_ + 1), 8) / 8;
-    fixedRowSize_ =
-        std::max<int32_t>(fixedRowSize_, nextFreeOffset_ + sizeof(void*));
   }
-}
 
 char* RowContainer::newRow() {
   char* row;
@@ -214,8 +216,9 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
   return row;
 }
 
-
-void RowContainer::deleteRows(folly::Range<char**> rows) {
+void RowContainer::eraseRows(folly::Range<char**> rows) {
+  freeVariableWidthFields(rows);
+  freeAggregates(rows);
   numRows_ -= rows.size();
   for (auto* row : rows) {
     VELOX_CHECK(!bits::isBitSet(row, freeFlagOffset_), "Double free of row");
@@ -252,11 +255,11 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
 void RowContainer::checkConsistency() {
   constexpr int32_t kBatch = 1000;
   std::vector<char*> rows(kBatch);
-  uint64_t count = 0;
+
   RowContainerIterator iter;
   int64_t allocatedRows = 0;
   for (;;) {
-    int64_t numRows = listRows(&iter, kBatch, kUnlimited, rows.data());
+    int64_t numRows = listRows(&iter, kBatch, rows.data());
     if (!numRows) {
       break;
     }
@@ -440,7 +443,7 @@ void RowContainer::extractComplexType(
   result->resize(numRows);
   for (int i = 0; i < numRows; ++i) {
     auto row = rows[i];
-    if (row[nullByte] & nullMask) {
+    if (!row || row[nullByte] & nullMask) {
       result->setNull(i, true);
     } else {
       prepareRead(row, offset, stream);
@@ -668,7 +671,6 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
     if (eraser) {
       eraser(spilled);
     }
-    deleteRows(spilled);
     run.rows.erase(run.rows.begin(), run.rows.begin() + i);
     if (run.rows.empty()) {
       // Sorted run ends, start with a new file next time.

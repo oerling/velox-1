@@ -659,6 +659,8 @@ class RowType : public TypeBase<TypeKind::ROW> {
 
   uint32_t getChildIdx(const std::string& name) const;
 
+  std::optional<uint32_t> getChildIdxIfExists(const std::string& name) const;
+
   const std::string& nameOf(uint32_t idx) const {
     return names_.at(idx);
   }
@@ -1436,6 +1438,18 @@ template <>
 inline ComplexType to(std::string value) {
   return ComplexType();
 }
+
+/// Adds custom type to the registry. Type names must be unique.
+void registerType(
+    const std::string& name,
+    std::function<TypePtr(std::vector<TypePtr> childTypes)> factory);
+
+/// Return true if customer type with specified name exists.
+bool typeExists(const std::string& name);
+
+/// Returns an instance of a custom type with the specified name and specified
+/// child types.
+TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes);
 
 } // namespace facebook::velox
 

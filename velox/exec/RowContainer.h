@@ -132,8 +132,6 @@ class RowContainer {
   // Allocates a new row and initializes possible aggregates to null.
   char* newRow();
 
-  void deleteRows(folly::Range<char**> rows);
-
   uint32_t rowSize(const char* row) const {
     return fixedRowSize_ +
         (rowSizeOffset_
@@ -141,13 +139,15 @@ class RowContainer {
              : 0);
   }
 
+  // Adds 'rows' to the free rows list and frees any associated
+  // variable length data.
+  void eraseRows(folly::Range<char**> rows);
+
   void incrementRowSize(char* row, uint64_t bytes) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
     uint64_t size = *ptr + bytes;
     *ptr = std::min<uint64_t>(bytes, std::numeric_limits<uint32_t>::max());
   }
-
-
 
   // Initialize row. 'reuse' specifies whether the 'row' is reused or
   // not. If it is reused, it will free memory associated with the row
@@ -173,7 +173,8 @@ class RowContainer {
   }
 
   // Copies the values at 'col' into 'result' for the
-  // 'numRows' rows pointed to by 'rows'.
+  // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
+  // corresponding row in 'result' to null.
   static void extractColumn(
       const char* const* rows,
       int32_t numRows,
@@ -181,7 +182,8 @@ class RowContainer {
       VectorPtr result);
 
   // Copies the values at 'columnIndex' into 'result' for the
-  // 'numRows' rows pointed to by 'rows'.
+  // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
+  //  corresponding row in 'result' to null.
   void extractColumn(
       const char* const* rows,
       int32_t numRows,
@@ -208,6 +210,10 @@ class RowContainer {
       int32_t maxRows,
       uint64_t maxBytes,
       char** rows);
+
+  int32_t listRows(RowContainerIterator* iter, int32_t maxRows, char** rows) {
+    return listRows(iter, maxRows, kUnlimited, rows);
+  }
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
   // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
@@ -368,7 +374,14 @@ class RowContainer {
     }
   }
 
+  // Checks that row and free row counts match and that free list
+  // membership is consistent with free flag.
+  void checkConsistency();
+
  private:
+  // Offset of the pointer to the next free row on a free row.
+  static constexpr int32_t kNextFreeOffset = 0;
+
   struct SpillRun {
     std::vector<char*> rows;
     std::vector<uint64_t> hashes;
@@ -414,7 +427,7 @@ class RowContainer {
   }
 
   char*& nextFree(char* row) {
-    return *reinterpret_cast<char**>(row + nextFreeOffset_);
+    return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
   template <TypeKind Kind>
@@ -466,8 +479,12 @@ class RowContainer {
     BufferPtr valuesBuffer = result->mutableValues(numRows);
     auto values = valuesBuffer->asMutableRange<T>();
     for (int32_t i = 0; i < numRows; ++i) {
-      bits::setNull(nulls, i, isNullAt(rows[i], nullByte, nullMask));
-      values[i] = valueAt<T>(rows[i], offset);
+      if (rows[i] == nullptr) {
+        bits::setNull(nulls, i, true);
+      } else {
+        bits::setNull(nulls, i, isNullAt(rows[i], nullByte, nullMask));
+        values[i] = valueAt<T>(rows[i], offset);
+      }
     }
   }
 
@@ -481,8 +498,13 @@ class RowContainer {
     BufferPtr valuesBuffer = result->mutableValues(numRows);
     auto values = valuesBuffer->asMutableRange<T>();
     for (int32_t i = 0; i < numRows; ++i) {
-      // Here a StringView will reference the hash table, not copy.
-      values[i] = valueAt<T>(rows[i], offset);
+      if (rows[i] == nullptr) {
+        result->setNull(i, true);
+      } else {
+        result->setNull(i, false);
+        // Here a StringView will reference the hash table, not copy.
+        values[i] = valueAt<T>(rows[i], offset);
+      }
     }
   }
 
@@ -679,9 +701,12 @@ class RowContainer {
   std::vector<RowColumn> rowColumns_;
   // Bit position of probed flag, 0 if none.
   int32_t probedFlagOffset_ = 0;
+
+  // Bit position of free bit.
   int32_t freeFlagOffset_ = 0;
   int32_t nextFreeOffset_ = 0;
   int32_t rowSizeOffset_ = 0;
+
   int32_t fixedRowSize_;
   // True if normalized keys are enabled in initial state.
   const bool hasNormalizedKeys_;
@@ -698,6 +723,7 @@ class RowContainer {
   // Head of linked list of free rows.
   char* firstFreeRow_ = nullptr;
   uint64_t numFreeRows_ = 0;
+
   AllocationPool rows_;
   HashStringAllocator stringAllocator_;
   const RowSerde& serde_;
@@ -784,7 +810,12 @@ inline void RowContainer::extractValuesNoNulls<StringView>(
     FlatVector<StringView>* result) {
   result->resize(numRows);
   for (int32_t i = 0; i < numRows; ++i) {
-    extractString(valueAt<StringView>(rows[i], offset), result, i);
+    if (rows[i] == nullptr) {
+      result->setNull(i, true);
+    } else {
+      result->setNull(i, false);
+      extractString(valueAt<StringView>(rows[i], offset), result, i);
+    }
   }
 }
 
@@ -798,7 +829,7 @@ inline void RowContainer::extractValuesWithNulls<StringView>(
     FlatVector<StringView>* result) {
   result->resize(numRows);
   for (int32_t i = 0; i < numRows; ++i) {
-    if (isNullAt(rows[i], nullByte, nullMask)) {
+    if (!rows[i] || isNullAt(rows[i], nullByte, nullMask)) {
       result->setNull(i, true);
     } else {
       extractString(valueAt<StringView>(rows[i], offset), result, i);

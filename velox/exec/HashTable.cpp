@@ -65,7 +65,17 @@ HashTable<ignoreNullKeys>::HashTable(
 
 class ProbeState {
  public:
-  enum Operation { kProbe, kInsert, kErase };
+  enum class Operation { kProbe, kInsert, kErase };
+  // Special tag for an erased entry. This counts as occupied for
+  // probe and as empty for insert. If a tag word with empties gets an
+  // erase, we make the erased tag empty. If the tag word getting the
+  // erase has no empties, the erase is marked with a tombstone. A
+  // probe always stops with a tag word with empties. Adding an empty
+  // to a tag word with no empties would break probes that needed to
+  // skip this tag word. This is standard practice for open addressing
+  // hash tables. F14 has more sophistication in this but we do not
+  // need it here since erase is very rare and is not expected to
+  // change the load factor by much in the expected uses.
   static constexpr uint8_t kTombstoneTag = 0x7f;
   static constexpr int32_t kFullMask = 0xffff;
   static constexpr BaseHashTable::TagVector kTombstoneGroup = {
@@ -96,7 +106,7 @@ class ProbeState {
 
   // Use one instruction to compare the tag being searched for to 16 tags
   // If there is a match, load corresponding data from the table
-  template <Operation op = kProbe>
+  template <Operation op = Operation::kProbe>
   inline void firstProbe(char** table, int32_t firstKey) {
     auto tagMatches = _mm_cmpeq_epi8(tagsInTable_, wantedTags_);
     hits_ = _mm_movemask_epi8(tagMatches);
@@ -106,7 +116,7 @@ class ProbeState {
   }
 
   template <Operation op, typename Compare, typename Insert>
-  inline char* fullProbe(
+  inline char* FOLLY_NULLABLE fullProbe(
       uint8_t* tags,
       char** table,
       uint64_t sizeMask,
@@ -115,7 +125,7 @@ class ProbeState {
       Insert insert,
       bool extraCheck = false) {
     if (group_ && compare(group_, row_)) {
-      if (op == kErase) {
+      if (op == Operation::kErase) {
         eraseHit(tags);
       }
       return group_;
@@ -135,10 +145,10 @@ class ProbeState {
             _mm_movemask_epi8(_mm_cmpeq_epi8(tagsInTable_, kEmptyGroup)) &
             kFullMask;
         if (empty) {
-          if (op == kProbe) {
+          if (op == Operation::kProbe) {
             return nullptr;
           }
-          if (op == kErase) {
+          if (op == Operation::kErase) {
             VELOX_FAIL("Erasing non-existing entry");
           }
           if (indexInTags_ != kNotSet) {
@@ -148,7 +158,7 @@ class ProbeState {
           }
           auto pos = bits::getAndClearLastSetBit(empty);
           return insert(row_, tagIndex_ + pos);
-        } else if (op == kInsert && indexInTags_ == kNotSet) {
+        } else if (op == Operation::kInsert && indexInTags_ == kNotSet) {
           // We passed through a full group.
           uint16_t tombstones =
               _mm_movemask_epi8(_mm_cmpeq_epi8(tagsInTable_, kTombstoneGroup)) &
@@ -162,7 +172,7 @@ class ProbeState {
         loadNextHit<op>(table, firstKey);
         if (!(extraCheck && group_ == alreadyChecked) &&
             compare(group_, row_)) {
-          if (op == kErase) {
+          if (op == Operation::kErase) {
             eraseHit(tags);
           }
           return group_;
@@ -177,13 +187,13 @@ class ProbeState {
   }
 
  private:
-  static constexpr uint8_t kNotSet = 255;
+  static constexpr uint8_t kNotSet = 0xff;
 
   template <Operation op>
   inline void loadNextHit(char** table, int32_t firstKey) {
     int32_t hit = bits::getAndClearLastSetBit(hits_);
 
-    if (op == kErase) {
+    if (op == Operation::kErase) {
       indexInTags_ = hit;
     }
     group_ = BaseHashTable::loadRow(table, tagIndex_ + hit);
@@ -206,7 +216,12 @@ class ProbeState {
 
   // If op is kErase, this is the index of the current hit within the
   // group of 'tagIndex_'. If op is kInsert, this is the index of the
-  // first tombstone in the group of 'insertTagIndex_'.
+  // first tombstone in the group of 'insertTagIndex_'. Insert
+  // replaces the first tombstone it finds. If it finds an empty
+  // before finding a tombstone, it replaces the empty as soon as it
+  // sees it. But the tombstone can be replaced only after finding an
+  // empty and thus determining that the item being inserted is not in
+  // the table.
   uint8_t indexInTags_ = kNotSet;
 };
 
@@ -291,8 +306,9 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::fullProbe(
     ProbeState& state,
     bool extraCheck) {
   constexpr ProbeState::Operation op =
-      isJoin ? ProbeState::kProbe : ProbeState::kInsert;
+      isJoin ? ProbeState::Operation::kProbe : ProbeState::Operation::kInsert;
   if (hashMode_ == HashMode::kNormalizedKey) {
+    // NOLINT
     lookup.hits[state.row()] = state.fullProbe<op>(
         tags_,
         table_,
@@ -308,6 +324,7 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::fullProbe(
         !isJoin && extraCheck);
     return;
   }
+  // NOLINT
   lookup.hits[state.row()] = state.fullProbe<op>(
       tags_,
       table_,
@@ -371,10 +388,10 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
     state3.preProbe(tags_, sizeMask_, lookup.hashes[row], row);
     row = rows[probeIndex + 3];
     state4.preProbe(tags_, sizeMask_, lookup.hashes[row], row);
-    state1.firstProbe<ProbeState::kInsert>(table_, 0);
-    state2.firstProbe<ProbeState::kInsert>(table_, 0);
-    state3.firstProbe<ProbeState::kInsert>(table_, 0);
-    state4.firstProbe<ProbeState::kInsert>(table_, 0);
+    state1.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
+    state2.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
+    state3.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
+    state4.firstProbe<ProbeState::Operation::kInsert>(table_, 0);
     fullProbe<false>(lookup, state1, false);
     fullProbe<false>(lookup, state2, true);
     fullProbe<false>(lookup, state3, true);
@@ -493,7 +510,7 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   }
 }
 
-  template <bool ignoreNullKeys>
+template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::initializeNewGroups(HashLookup& lookup) {
   if (lookup.newGroups.empty()) {
     return;
@@ -510,7 +527,6 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
     free(tags_);
     tags_ = nullptr;
   }
-  hasTombstones_ = false;
   if (table_) {
     free(table_);
     table_ = nullptr;
@@ -651,7 +667,6 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
   }
 }
 
-
 template <bool ignoreNullKeys>
 bool HashTable<ignoreNullKeys>::arrayPushRow(char* row, int32_t index) {
   auto existing = table_[index];
@@ -685,12 +700,12 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
     char* inserted,
     bool extraCheck) {
   if (hashMode_ == HashMode::kNormalizedKey) {
-    state.fullProbe<ProbeState::kInsert>(
+    state.fullProbe<ProbeState::Operation::kInsert>(
         tags_,
         table_,
         sizeMask_,
         -static_cast<int32_t>(sizeof(normalized_key_t)),
-        [&](char* group, int32_t row) {
+        [&](char* group, int32_t /*row*/) {
           if (RowContainer::normalizedKey(group) ==
               RowContainer::normalizedKey(inserted)) {
             if (nextOffset_) {
@@ -700,18 +715,18 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
           }
           return false;
         },
-        [&](int32_t row, int32_t index) {
+        [&](int32_t /*row*/, int32_t index) {
           storeRowPointer(index, hash, inserted);
           return nullptr;
         },
         extraCheck);
   } else {
-    state.fullProbe<ProbeState::kInsert>(
+    state.fullProbe<ProbeState::Operation::kInsert>(
         tags_,
         table_,
         sizeMask_,
         0,
-        [&](char* group, int32_t row) {
+        [&](char* group, int32_t /*row*/) {
           if (compareKeys(group, inserted)) {
             if (nextOffset_) {
               pushNext(group, inserted);
@@ -720,7 +735,7 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
           }
           return false;
         },
-        [&](int32_t row, int32_t index) {
+        [&](int32_t /*row*/, int32_t index) {
           storeRowPointer(index, hash, inserted);
           return nullptr;
         },
@@ -776,7 +791,7 @@ void HashTable<ignoreNullKeys>::rehash() {
     do {
       numGroups = (i == 0 ? this : otherTables_[i - 1].get())
                       ->rows()
-	->listRows(&iterator, kHashBatchSize, RowContainer::kUnlimited, groups);
+                      ->listRows(&iterator, kHashBatchSize, groups);
       if (!insertBatch(groups, hashes, numGroups)) {
         VELOX_CHECK(hashMode_ != HashMode::kHash);
         setHashMode(HashMode::kHash, 0);
@@ -833,8 +848,7 @@ bool HashTable<ignoreNullKeys>::analyze() {
   RowContainerIterator iterator;
   int32_t numGroups;
   do {
-    numGroups = rows_->listRows(
-        &iterator, kHashBatchSize, RowContainer::kUnlimited, groups);
+    numGroups = rows_->listRows(&iterator, kHashBatchSize, groups);
     for (int32_t i = 0; i < hashers_.size(); ++i) {
       auto& hasher = hashers_[i];
       if (!hasher->isRange()) {
@@ -1097,7 +1111,7 @@ int32_t HashTable<ignoreNullKeys>::listJoinResults(
     JoinResultIterator& iter,
     folly::Range<vector_size_t*> inputRows,
     folly::Range<char**> hits) {
-  VELOX_CHECK_EQ(inputRows.size(), hits.size());
+  VELOX_CHECK_LE(inputRows.size(), hits.size());
   int numOut = 0;
   auto maxOut = inputRows.size();
   while (iter.lastRow < iter.rows->size()) {
@@ -1153,32 +1167,43 @@ void HashTable<ignoreNullKeys>::erase(folly::Range<char**> rows) {
       }
     }
   }
-  if (hashMode_ == HashMode::kNormalizedKey) {
-    for (auto i = 0; i < numRows; ++i) {
-      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
-    }
-  }
+  eraseWithHashes(rows, hashes.data());
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::eraseWithHashes(
+    folly::Range<char**> rows,
+    uint64_t* hashes) {
+  auto numRows = rows.size();
   if (hashMode_ == HashMode::kArray) {
     for (auto i = 0; i < numRows; ++i) {
-      VELOX_CHECK(hashes[i] < size_);
+      DCHECK(hashes[i] < size_);
       table_[hashes[i]] = nullptr;
     }
-    return;
-  }
-  ProbeState state;
-  for (auto i = 0; i < numRows; ++i) {
-    state.preProbe(tags_, sizeMask_, hashes[i], i);
+  } else {
+    if (hashMode_ == HashMode::kNormalizedKey) {
+      for (auto i = 0; i < numRows; ++i) {
+        hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
+      }
+    }
 
-    state.firstProbe<ProbeState::kErase>(table_, 0);
-    state.fullProbe<ProbeState::kErase>(
-        tags_,
-        table_,
-        sizeMask_,
-        0,
-        [&](char* group, int32_t row) { return rows[row] == group; },
-        [&](int32_t index, int32_t row) { return nullptr; },
-        false);
+    ProbeState state;
+    for (auto i = 0; i < numRows; ++i) {
+      state.preProbe(tags_, sizeMask_, hashes[i], i);
+
+      state.firstProbe<ProbeState::Operation::kErase>(table_, 0);
+      state.fullProbe<ProbeState::Operation::kErase>(
+          tags_,
+          table_,
+          sizeMask_,
+          0,
+          [&](char* group, int32_t row) { return rows[row] == group; },
+          [&](int32_t /*index*/, int32_t /*row*/) { return nullptr; },
+          false);
+    }
   }
+  numDistinct_ -= numRows;
+  rows_->eraseRows(rows);
 }
 
 template class HashTable<true>;

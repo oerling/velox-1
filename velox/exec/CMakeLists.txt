@@ -27,6 +27,7 @@ add_library(
   HashStringAllocator.cpp
   Spill.cpp
   HashTable.cpp
+  JoinBridge.cpp
   Limit.cpp
   LocalPartition.cpp
   LocalPlanner.cpp

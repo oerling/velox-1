@@ -15,6 +15,7 @@
  */
 
 #include "velox/type/Type.h"
+#include <boost/algorithm/string.hpp>
 #include <boost/regex.hpp>
 #include <folly/Demangle.h>
 #include <sstream>
@@ -257,12 +258,19 @@ bool RowType::containsChild(std::string_view name) const {
 }
 
 uint32_t RowType::getChildIdx(const std::string& name) const {
+  auto index = getChildIdxIfExists(name);
+  VELOX_USER_CHECK(index.has_value(), "Field not found: {}", name);
+  return index.value();
+}
+
+std::optional<uint32_t> RowType::getChildIdxIfExists(
+    const std::string& name) const {
   for (uint32_t i = 0; i < names_.size(); i++) {
     if (names_.at(i) == name) {
       return i;
     }
   }
-  VELOX_USER_FAIL("Field not found: {}", name);
+  return std::nullopt;
 }
 
 bool RowType::operator==(const Type& other) const {
@@ -587,6 +595,37 @@ bool Type::containsUnknown() const {
     }
   }
   return false;
+}
+
+namespace {
+
+using CustomTypeFactory =
+    std::function<TypePtr(std::vector<TypePtr> childTypes)>;
+
+std::unordered_map<std::string, CustomTypeFactory>& typeFactories() {
+  static std::unordered_map<std::string, CustomTypeFactory> factories;
+  return factories;
+}
+} // namespace
+
+void registerType(const std::string& name, CustomTypeFactory factory) {
+  auto uppercaseName = boost::algorithm::to_upper_copy(name);
+  typeFactories().emplace(uppercaseName, factory);
+}
+
+bool typeExists(const std::string& name) {
+  auto uppercaseName = boost::algorithm::to_upper_copy(name);
+  return typeFactories().count(uppercaseName) > 0;
+}
+
+TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes) {
+  auto uppercaseName = boost::algorithm::to_upper_copy(name);
+  auto it = typeFactories().find(uppercaseName);
+  if (it == typeFactories().end()) {
+    return nullptr;
+  }
+
+  return it->second(std::move(childTypes));
 }
 
 } // namespace facebook::velox
