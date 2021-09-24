@@ -340,8 +340,6 @@ class RowContainer {
 
   void extractSpill(folly::Range<char**> rows, RowVector* result);
 
-  void checkConsistency();
-
   // Returns estimated number of rows a batch can support for
   // the given batchSizeInBytes.
   // FIXME(venkatra): estimate num rows for variable length fields.
