@@ -26,7 +26,7 @@
 namespace facebook::velox::cache {
 
 SsdPin::SsdPin(SsdFile& file, SsdRun run) : file_(&file), run_(run) {
-  file_->pinRegion(run_.offset());
+  file_->checkPinned(run_.offset());
 }
 
 SsdPin::~SsdPin() {
@@ -49,7 +49,10 @@ SsdFile::SsdFile(
     SsdCache& cache,
     int32_t ordinal,
     int32_t maxRegions)
-    : cache_(cache), ordinal_(ordinal), maxRegions_(maxRegions) {
+    : cache_(cache),
+      ordinal_(ordinal),
+      maxRegions_(maxRegions),
+      filename_(filename) {
   fd_ = open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
     LOG(ERROR) << "Cannot open or create " << filename << " error " << errno
@@ -61,6 +64,10 @@ SsdFile::SsdFile(
   if (size % kRegionSize > 0) {
     ftruncate(fd_, numRegions_ * kRegionSize);
   }
+  // The existing regions in the file are writable.
+  for (auto i = 0; i < numRegions_; ++i) {
+    writableRegions_.push_back(i);
+  }
   fileSize_ = numRegions_ * kRegionSize;
   regionScore_.resize(maxRegions_);
   regionSize_.resize(maxRegions_);
@@ -69,7 +76,7 @@ SsdFile::SsdFile(
 
 void SsdFile::pinRegion(uint64_t offset) {
   std::lock_guard<std::mutex> l(mutex_);
-  ++regionPins_[regionIndex(offset)];
+  pinRegionLocked(offset);
 }
 
 void SsdFile::unpinRegion(uint64_t offset) {
@@ -103,16 +110,21 @@ void addEntryToIovecs(AsyncDataCacheEntry& entry, std::vector<iovec>& iovecs) {
 
 SsdPin SsdFile::find(RawFileCacheKey key) {
   SsdKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
-  std::lock_guard<std::mutex> l(mutex_);
-  if (suspended_) {
-    return SsdPin();
+  SsdRun run;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (suspended_) {
+      return SsdPin();
+    }
+    newEventLocked();
+    auto it = entries_.find(ssdKey);
+    if (it == entries_.end()) {
+      return SsdPin();
+    }
+    run = it->second;
+    pinRegionLocked(run.offset());
   }
-  newEventLocked();
-  auto it = entries_.find(ssdKey);
-  if (it == entries_.end()) {
-    return SsdPin();
-  }
-  return SsdPin(*this, it->second);
+  return SsdPin(*this, run);
 }
 
 void SsdFile::newEventLocked() {
@@ -128,8 +140,11 @@ void SsdFile::newEventLocked() {
 void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
   VELOX_CHECK_EQ(run.size(), entry.size());
   regionScore_[regionIndex(run.offset())] += run.size();
+  ++stats_.entriesRead;
+  stats_.bytesRead += run.size();
   if (entry.tinyData()) {
-    load(run, entry.tinyData());
+    auto rc = pread(fd_, entry.tinyData(), run.size(), run.offset());
+    VELOX_CHECK_EQ(rc, run.size());
   } else {
     std::vector<struct iovec> iovecs;
     addEntryToIovecs(entry, iovecs);
@@ -138,12 +153,6 @@ void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
     VELOX_CHECK_EQ(rc, run.size());
   }
   entry.setSsdFile(this, regionIndex(run.offset()));
-}
-
-void SsdFile::load(SsdRun run, char* data) {
-  regionScore_[regionIndex(run.offset())] += run.size();
-  auto rc = pread(fd_, data, run.size(), run.offset());
-  VELOX_CHECK_EQ(rc, run.size());
 }
 
 std::pair<uint64_t, int32_t> SsdFile::getSpace(
@@ -170,7 +179,7 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
     }
     if (toWrite) {
       regionSize_[region] += toWrite;
-      return {offset, toWrite};
+      return {region * kRegionSize + offset, toWrite};
     }
     writableRegions_.erase(writableRegions_.begin());
   }
@@ -178,10 +187,19 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
 
 bool SsdFile::evictLocked() {
   if (numRegions_ < maxRegions_) {
-    writableRegions_.push_back(numRegions_);
-    regionSize_[numRegions_ - 1] = 0;
-    ++numRegions_;
-    return true;
+    auto newSize = (numRegions_ + 1) * kRegionSize;
+    auto rc = ftruncate(fd_, newSize);
+    if (rc >= 0) {
+      fileSize_ = newSize;
+
+      writableRegions_.push_back(numRegions_);
+      regionSize_[numRegions_] = 0;
+      ++numRegions_;
+      return true;
+    } else {
+      LOG(ERROR) << "Failed to grow cache file " << filename_ << " to "
+                 << newSize;
+    }
   }
   std::vector<int32_t> candidates;
   int64_t scoreSum = 0;
@@ -241,25 +259,20 @@ void SsdFile::store(std::vector<CachePin>& pins) {
     int32_t bytes = 0;
     std::vector<iovec> iovecs;
     for (auto i = storeIndex; i < pins.size(); ++i) {
+      auto entrySize = pins[i].entry()->size();
+      if (bytes + entrySize > available) {
+	break;
+      }
       pins[i].entry()->setSsdFile(this, offset);
       addEntryToIovecs(*pins[i].entry(), iovecs);
-      bytes += pins[i].entry()->size();
+      bytes += entrySize;
       ++numWritten;
-      if (bytes >= available) {
-        break;
-      }
     }
-    if (offset > fileSize_) {
-      ftruncate(fd_, offset);
-      fileSize_ = offset;
-    }
-    int32_t rc = folly::pwritev(fd_, iovecs.data(), iovecs.size(), offset);
+    VELOX_CHECK_GE(fileSize_, offset + bytes);
+    auto rc = folly::pwritev(fd_, iovecs.data(), iovecs.size(), offset);
     if (rc != bytes) {
       LOG(ERROR) << "Failed to write to SSD " << errno;
       return;
-    }
-    if (offset == fileSize_) {
-      fileSize_ += bytes;
     }
     {
       std::lock_guard<std::mutex> l(mutex_);
@@ -267,12 +280,25 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         auto entry = pins[i].entry();
         entry->setSsdFile(this, offset);
         auto size = entry->size();
-        SsdKey key = {entry->key().fileNum, offset};
+        SsdKey key = {entry->key().fileNum, entry->offset()};
         entries_[std::move(key)] = SsdRun(offset, size);
         offset += size;
+	++stats_.entriesWritten;
+      stats_.bytesWritten += size;
       }
     }
     storeIndex += numWritten;
+  }
+}
+
+void SsdFile::updateStats(SsdCacheStats& stats) {
+  stats.entriesWritten += stats_.entriesWritten;
+  stats.bytesWritten += stats_.bytesWritten;
+  stats.entriesRead += stats_.entriesRead;
+  stats.bytesRead += stats_.bytesRead;
+  stats.entriesCached += entries_.size();
+  for (auto& regionSize : regionSize_) {
+    stats.bytesCached += regionSize;
   }
 }
 
@@ -337,6 +363,14 @@ void SsdCache::store(std::vector<CachePin> pins) {
     });
   }
   storesInProgress_.fetch_sub(numNoStore);
+}
+
+SsdCacheStats SsdCache::stats() const {
+  SsdCacheStats stats;
+  for (auto& file : files_) {
+    file->updateStats(stats);
+  }
+  return stats;
 }
 
 } // namespace facebook::velox::cache

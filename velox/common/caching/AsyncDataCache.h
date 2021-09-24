@@ -603,12 +603,14 @@ class CacheShard {
 // 8MB in entry size for a total of 2TB. Larger capacities need more bits.
 class SsdRun {
  public:
+  static constexpr int32_t kSizeBits = 23;
+
   SsdRun() : bits_(0) {}
 
   SsdRun(uint64_t offset, uint32_t size)
-      : bits_((offset << 23) | ((size - 1))) {
-    VELOX_CHECK_LT(offset, 1L << 36); // 64G
-    VELOX_CHECK_LT(size - 1, 1 << 23); // 8MB
+      : bits_((offset << kSizeBits) | ((size - 1))) {
+    VELOX_CHECK_LT(offset, 1L << (64 - kSizeBits));
+    VELOX_CHECK_LT(size - 1, 1 << kSizeBits);
   }
 
   SsdRun(const SsdRun& other) = default;
@@ -622,11 +624,11 @@ class SsdRun {
   }
 
   uint64_t offset() const {
-    return (bits_ >> 23);
+    return (bits_ >> kSizeBits);
   }
 
   uint32_t size() const {
-    return bits_ & ((1 << 23) - 1);
+    return (bits_ & ((1 << kSizeBits) - 1)) + 1;
   }
 
  private:
@@ -655,12 +657,15 @@ struct hash<::facebook::velox::cache::SsdKey> {
 
 namespace facebook::velox::cache {
 
-// Represents an SsdFile entry that is planned for load or being loaded. This
-// is destroyed after load.
+// Represents an SsdFile entry that is planned for load or being
+// loaded. This is destroyed after load. Destruction decrements the
+// pin count of the corresponding region of 'file_'.
 class SsdPin {
  public:
   SsdPin() : file_(nullptr) {}
 
+  // Constructs a pin referencing 'run' in 'file'. The region must be
+  // pinned before constructing the pin.
   SsdPin(SsdFile& file, SsdRun run);
 
   SsdPin(const SsdPin& other) = delete;
@@ -691,7 +696,17 @@ class SsdPin {
   SsdRun run_;
 };
 
-class SsdFile {
+  // Metrics for SSD cache. Maintained by SsdFile and aggregated by SsdCache.
+struct SsdCacheStats {
+  uint64_t entriesWritten{0};
+  uint64_t bytesWritten{0};
+  uint64_t entriesRead{0};
+  uint64_t bytesRead{0};
+  uint64_t entriesCached{0};
+  uint64_t bytesCached{0};
+};
+
+  class SsdFile {
  public:
   static constexpr uint64_t kMaxSize = 1UL << 36; // 64G
   static constexpr uint64_t kRegionSize = 1 << 26; // 64MB
@@ -712,19 +727,31 @@ class SsdFile {
 
   SsdPin find(RawFileCacheKey key);
 
-  void load(SsdRun run, AsyncDataCacheEntry& entry);
+    // Copies the data at 'run' into 'entry'. Checks that the entry
+    // and run sizes match. The quantization of SSD cache matches that
+    // of the memory cache.
+    void load(SsdRun run, AsyncDataCacheEntry& entry);
 
-  void load(SsdRun run, char* data);
-
-  // Increments the pin count of the region of 'offset'.
-  void pinRegion(uint64_t offset);
+    // Increments the pin count of the region of 'offset'.
+    void pinRegion(uint64_t offset);
+    
+  // Increments the pin count of the region of 'offset'. Caller must hold 'mutex_'.
+  void pinRegionLocked(uint64_t offset) {
+    ++regionPins_[regionIndex(offset)];
+  }
 
   // Decrements the pin count of the region of 'offset'. If the pin
   // count goes to zero and evict is due, starts the evict.
   void unpinRegion(uint64_t offset);
 
+  // Asserts that the region of 'offset' is pinned. This is called by
+  // the pin holder. The pin count can be read without mutex.
+    void checkPinned(uint64_t offset) const {
+    VELOX_CHECK_LT(0, regionPins_[regionIndex(offset)]);
+  }
+
   // Returns the region number corresponding to offset.
-  int32_t regionIndex(uint64_t offset) {
+  static int32_t regionIndex(uint64_t offset) {
     return offset / kRegionSize;
   }
 
@@ -739,6 +766,9 @@ class SsdFile {
   int32_t ordinal() const {
     return ordinal_;
   }
+
+      // Adds 'stats_' to 'stats'.
+    void updateStats(SsdCacheStats& stats);
 
  private:
   static constexpr int32_t kDecayInterval = 1000;
@@ -799,14 +829,21 @@ class SsdFile {
   // over kDecayInterval or half 'entries_' size, wichever comes first.
   uint64_t numEvents_{0};
 
-  // File descriptor.
+    const std::string filename_;
+
+    // File descriptor.
   int32_t fd_;
   uint64_t fileSize_{0};
-};
+    // Counters.
+    SsdCacheStats stats_;
+  };
 
 class SsdCache {
  public:
-  SsdCache(std::string_view filePrefix, uint64_t maxBytes, int32_t numShards_ = 32);
+  SsdCache(
+      std::string_view filePrefix,
+      uint64_t maxBytes,
+      int32_t numShards_ = 32);
 
   // Returns the shard corresponding to 'fileId'.
   SsdFile& file(uint64_t fileId);
@@ -820,8 +857,13 @@ class SsdCache {
   // state is reset asynchronously after writing to SSD finishes.
   bool startStore();
 
+  // Stores the entries of 'pins' into the corresponding files. Sets
+  // the file for the successfully stored entries. May evict existing
+  // entries from unpinned regions.
   void store(std::vector<CachePin> pins);
 
+  SsdCacheStats stats() const;
+  
  private:
   std::string filePrefix_;
   const int32_t numShards_;
@@ -909,7 +951,7 @@ class AsyncDataCache : public memory::MappedMemory,
   void possibleSsdSave(uint64_t bytes);
 
  private:
-  static constexpr int32_t kNumShards= 4; // Must be power of 2.
+  static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
   // Keeps the id to file map alive as long as 'this' is live.
   std::shared_ptr<StringIdMap> fileIds_;

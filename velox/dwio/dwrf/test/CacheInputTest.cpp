@@ -333,7 +333,8 @@ TEST_F(CacheTest, ssd) {
   readLoop("testfile", 30, 100, 1, 40);
   // Read the same but with 70 to 7% of each column read.
   readLoop("testfile", 30, 70, 10, 40);
-  readLoop("testfile2", 30, 70, 70, 20);
+  readLoop("testfile2", 30, 70, 70, 80);
+  readLoop("testfile2", 40, 70, 70, 80);
 }
 
 TEST_F(CacheTest, TestSingleFileThreads) {
