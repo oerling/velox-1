@@ -52,8 +52,8 @@ class IoCounter {
   }
 
  private:
-  std::atomic<uint64_t> count_;
-  std::atomic<uint64_t> bytes_;
+  std::atomic<uint64_t> count_{0};
+  std::atomic<uint64_t> bytes_{0};
 };
 
 class IoStatistics {
