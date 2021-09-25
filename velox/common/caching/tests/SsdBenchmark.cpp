@@ -16,6 +16,7 @@
 
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
+#include <folly/Random.h>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -64,13 +65,35 @@ public:
     executor->join();
   }
 
+  // Writes 'region' full of words that are the offset from the beginning of the file.
   void initRegion(int region) {
+    uint64_t offset = region * kRegionSize;
+    writeBatch_.resize(writeBatchSize_);
     
+    for (auto i = 0; i < kRegionSize / batchSize; ++i) {
+
+      for (auto i = 0; i < writeBatch_.size(); i += sizeof(uint64_t)) {
+	*reinterpret_cast<uint64_t*>(writeBatch_.data() + i) = offset + i;
+      }
+      std::vector<struct iovec> iovecs;
+      fillIovecs(writeBatch>.data(), wirteBatch_.size(), iovecs);
+	   auto rc = folly::pwritev(&iovecs[0], iovecs.size(), offset);
+      DCHECK_EQ(rc == writeBatchSize_);
+      offset += writeBatchSize_;
+    }
   }
 
-  void run() {
-    
+  void fillIovecs(char* data, int32_t bytes, std::vector<struct iovec>& iovecs) {
+    int unit = 100;
+    int32_t position = 0;
+    while (position < size) {
+      iovecs.push_back({data + position, std::min (size - position, unit)});
+      position += unit;
+      unit *= 2;
+    }
   }
+
+
   
 private:
   static constexpr int64_t kRegionSize = 64 << 20; // 64MB
@@ -78,15 +101,13 @@ private:
   // 0 means no op, kWrite means being written, other numbers are reader counts.
   std::vector<int32_t> pins_;
   int32_t numRegions_;
+  int32_t writeBatchSize_{4 << 20};
+  std::string writeBatch_;
   int32_t fd_;
   std::unique_ptr<folly::IoThreadPoolExecutor> executor_;
-  
+   folly::Random::DefaultGenerator rng_;
+ 
 };
-
-
-
-
-
 
 
 
@@ -95,5 +116,6 @@ private:
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv, false);
-  run();
+  Bm bm;
+  bm.run();
 }
