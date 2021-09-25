@@ -250,7 +250,7 @@ class SsdLoad : public cache::FusedLoad {
     auto* entry = pins_[0].entry();
     ssdPin_.file()->load(ssdPin_.run(), *entry);
     if (isPrefetch) {
-            ioStats_->prefetch().increment(entry->size());
+      ioStats_->prefetch().increment(entry->size());
     }
     ioStats_->ssdRead().increment(entry->size());
   }

@@ -511,7 +511,8 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
     return;
   }
   ssdSaveable_ += bytes;
-  if (ssdSaveable_ / MappedMemory::kPageSize > std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
+  if (ssdSaveable_ / MappedMemory::kPageSize >
+      std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
     ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
     if (!ssdCache_->startStore()) {
