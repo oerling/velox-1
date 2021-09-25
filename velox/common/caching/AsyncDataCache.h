@@ -696,7 +696,7 @@ class SsdPin {
   SsdRun run_;
 };
 
-  // Metrics for SSD cache. Maintained by SsdFile and aggregated by SsdCache.
+// Metrics for SSD cache. Maintained by SsdFile and aggregated by SsdCache.
 struct SsdCacheStats {
   uint64_t entriesWritten{0};
   uint64_t bytesWritten{0};
@@ -706,7 +706,7 @@ struct SsdCacheStats {
   uint64_t bytesCached{0};
 };
 
-  class SsdFile {
+class SsdFile {
  public:
   static constexpr uint64_t kMaxSize = 1UL << 36; // 64G
   static constexpr uint64_t kRegionSize = 1 << 26; // 64MB
@@ -727,15 +727,16 @@ struct SsdCacheStats {
 
   SsdPin find(RawFileCacheKey key);
 
-    // Copies the data at 'run' into 'entry'. Checks that the entry
-    // and run sizes match. The quantization of SSD cache matches that
-    // of the memory cache.
-    void load(SsdRun run, AsyncDataCacheEntry& entry);
+  // Copies the data at 'run' into 'entry'. Checks that the entry
+  // and run sizes match. The quantization of SSD cache matches that
+  // of the memory cache.
+  void load(SsdRun run, AsyncDataCacheEntry& entry);
 
-    // Increments the pin count of the region of 'offset'.
-    void pinRegion(uint64_t offset);
-    
-  // Increments the pin count of the region of 'offset'. Caller must hold 'mutex_'.
+  // Increments the pin count of the region of 'offset'.
+  void pinRegion(uint64_t offset);
+
+  // Increments the pin count of the region of 'offset'. Caller must hold
+  // 'mutex_'.
   void pinRegionLocked(uint64_t offset) {
     ++regionPins_[regionIndex(offset)];
   }
@@ -746,7 +747,7 @@ struct SsdCacheStats {
 
   // Asserts that the region of 'offset' is pinned. This is called by
   // the pin holder. The pin count can be read without mutex.
-    void checkPinned(uint64_t offset) const {
+  void checkPinned(uint64_t offset) const {
     VELOX_CHECK_LT(0, regionPins_[regionIndex(offset)]);
   }
 
@@ -767,8 +768,8 @@ struct SsdCacheStats {
     return ordinal_;
   }
 
-      // Adds 'stats_' to 'stats'.
-    void updateStats(SsdCacheStats& stats);
+  // Adds 'stats_' to 'stats'.
+  void updateStats(SsdCacheStats& stats);
 
  private:
   static constexpr int32_t kDecayInterval = 1000;
@@ -790,6 +791,8 @@ struct SsdCacheStats {
 
   // Increments event count and periodically decays scores.
   void newEventLocked();
+
+  void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
 
   std::mutex mutex_;
 
@@ -829,14 +832,14 @@ struct SsdCacheStats {
   // over kDecayInterval or half 'entries_' size, wichever comes first.
   uint64_t numEvents_{0};
 
-    const std::string filename_;
+  const std::string filename_;
 
-    // File descriptor.
+  // File descriptor.
   int32_t fd_;
   uint64_t fileSize_{0};
-    // Counters.
-    SsdCacheStats stats_;
-  };
+  // Counters.
+  SsdCacheStats stats_;
+};
 
 class SsdCache {
  public:
@@ -863,7 +866,7 @@ class SsdCache {
   void store(std::vector<CachePin> pins);
 
   SsdCacheStats stats() const;
-  
+
  private:
   std::string filePrefix_;
   const int32_t numShards_;

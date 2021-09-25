@@ -116,9 +116,9 @@ class CachedBufferedInput : public BufferedInput {
   // excessive gaps between the end of one and the start of the next.
   void readRegion(std::vector<cache::CachePin> pins);
 
-  // Removes the requests from 'toLoad' if they hit SSD cache. May start
+  // Removes the requests from 'requests' if they hit SSD cache. May start
   // background load from SSD.
-  void loadFromSsd(std::vector<CacheRequest*> requests);
+  void loadFromSsd(std::vector<CacheRequest*>& requests);
 
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;

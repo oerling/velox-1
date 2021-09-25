@@ -282,7 +282,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
       0);
 }
 
-void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*> requests) {
+void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*>& requests) {
   auto* ssdCache = cache_->ssdCache();
   if (!ssdCache) {
     return;

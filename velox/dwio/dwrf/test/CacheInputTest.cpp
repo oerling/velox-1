@@ -332,7 +332,7 @@ TEST_F(CacheTest, bufferedInput) {
 TEST_F(CacheTest, ssd) {
   // Size 160 MB. Frequent evictions and not everything fits in
   // prefetch window. SSD size 2GB, not everything fits.
-  initializeCache(160 << 20, "/tmp/testssd", 2UL << 30);
+  initializeCache(160 << 20, "/home/oerling/testssd", 2UL << 30);
   // Read all columns with no skips for 40 stripes.
   readLoop("testfile", 30, 100, 1, 40);
   // Read the same but with 70 to 7% of each column read.

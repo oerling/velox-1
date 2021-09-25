@@ -96,7 +96,7 @@ void addEntryToIovecs(AsyncDataCacheEntry& entry, std::vector<iovec>& iovecs) {
   auto& data = entry.data();
   iovecs.reserve(iovecs.size() + data.numRuns());
   int64_t bytesLeft = entry.size();
-  for (auto i = 0; i < data.numPages(); ++i) {
+  for (auto i = 0; i < data.numRuns(); ++i) {
     auto run = data.runAt(i);
     iovecs.push_back(
         {run.data<char>(), std::min<int64_t>(bytesLeft, run.numBytes())});
@@ -139,6 +139,11 @@ void SsdFile::newEventLocked() {
 
 void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
   VELOX_CHECK_EQ(run.size(), entry.size());
+  printf(
+      "Loading %ld size %d from %ld\n",
+      entry.offset(),
+      entry.size(),
+      run.offset());
   regionScore_[regionIndex(run.offset())] += run.size();
   ++stats_.entriesRead;
   stats_.bytesRead += run.size();
@@ -184,12 +189,23 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
     writableRegions_.erase(writableRegions_.begin());
   }
 }
+  void preFill(int32_t fd, int64_t from, int64_t to) {
+    auto data = std::make_unique<char[]>(to - from);
+    memset(data.get(), 0xaa, to - from);
+    auto rc = pwrite(fd, data.get(), to - from, from);
+    VELOX_CHECK_EQ(rc,to - from);
+    rc = pread(fd, data.get(), to - from, from);
+    VELOX_CHECK_EQ(rc,to - from);
 
+  }
+  
 bool SsdFile::evictLocked() {
   if (numRegions_ < maxRegions_) {
     auto newSize = (numRegions_ + 1) * kRegionSize;
     auto rc = ftruncate(fd_, newSize);
     if (rc >= 0) {
+    preFill(fd_, fileSize_, newSize);
+
       fileSize_ = newSize;
 
       writableRegions_.push_back(numRegions_);
@@ -261,7 +277,7 @@ void SsdFile::store(std::vector<CachePin>& pins) {
     for (auto i = storeIndex; i < pins.size(); ++i) {
       auto entrySize = pins[i].entry()->size();
       if (bytes + entrySize > available) {
-	break;
+        break;
       }
       pins[i].entry()->setSsdFile(this, offset);
       addEntryToIovecs(*pins[i].entry(), iovecs);
@@ -279,15 +295,69 @@ void SsdFile::store(std::vector<CachePin>& pins) {
       for (auto i = storeIndex; i < storeIndex + numWritten; ++i) {
         auto entry = pins[i].entry();
         entry->setSsdFile(this, offset);
+        char first = entry->tinyData() ? entry->tinyData()[0]
+                                       : entry->data().runAt(0).data<char>()[0];
+        printf(
+            "adding %ld = %d start %d to %ld\n",
+            entry->offset(),
+            (int)entry->size(),
+            (int)first,
+            offset);
         auto size = entry->size();
         SsdKey key = {entry->key().fileNum, entry->offset()};
         entries_[std::move(key)] = SsdRun(offset, size);
+        verifyWrite(*entry, SsdRun(offset, size));
         offset += size;
-	++stats_.entriesWritten;
-      stats_.bytesWritten += size;
+        ++stats_.entriesWritten;
+        stats_.bytesWritten += size;
       }
+      printf("Done %d to %d\n", storeIndex, storeIndex + numWritten);
     }
     storeIndex += numWritten;
+  }
+}
+
+char* readBytes(int fd, int64_t offset, int32_t size) {
+  char* data = (char*)malloc(size);
+  pread(fd, data, size, offset);
+  return data;
+}
+
+int32_t firstDiff(char* x, char* y, int n) {
+  for (auto i = 0; i < n; ++i) {
+    if (x[i] != y[i]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+void SsdFile::verifyWrite(AsyncDataCacheEntry& entry, SsdRun ssdRun) {
+  auto testData = std::make_unique<char[]>(entry.size());
+  auto rc = pread(fd_, testData.get(), entry.size(), ssdRun.offset());
+  VELOX_CHECK_EQ(rc, entry.size());
+  if (entry.tinyData()) {
+    if (0 != memcmp(testData.get(), entry.tinyData(), entry.size())) {
+      VELOX_FAIL("bad read back");
+    }
+  } else {
+    auto& data = entry.data();
+    int64_t bytesLeft = entry.size();
+    int64_t offset = 0;
+    for (auto i = 0; i < data.numRuns(); ++i) {
+      auto run = data.runAt(i);
+      auto compareSize = std::min<int64_t>(bytesLeft, run.numBytes());
+      auto badIndex =
+          firstDiff(run.data<char>(), testData.get() + offset, compareSize);
+      if (badIndex != -1) {
+        VELOX_FAIL("Bad read back");
+      }
+      bytesLeft -= run.numBytes();
+      offset += run.numBytes();
+      if (bytesLeft <= 0) {
+        break;
+      };
+    }
   }
 }
 
