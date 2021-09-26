@@ -323,6 +323,7 @@ int32_t RowContainer::listRows(
           --count;
           continue;
         }
+	totalBytes += rowSize;
         if (rowSizeOffset_) {
           totalBytes +=
               *reinterpret_cast<uint32_t*>(rows[count - 1] + rowSizeOffset_);
