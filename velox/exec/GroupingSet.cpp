@@ -180,8 +180,10 @@ void GroupingSet::initializeGlobalAggregation() {
 
   // Row layout is:
   //  - null flags - one bit per aggregate,
+  // int32_t row size,
   //  - fixed-width accumulators - one per aggregate
-  int32_t offset = bits::nbytes(aggregates_.size());
+  int32_t rowSizeOffset = bits::nbytes(aggregates_.size());
+    int32_t offset = rowSizeOffset + sizeof(int32_t);
   int32_t nullOffset = 0;
 
   for (auto& aggregate : aggregates_) {
@@ -189,7 +191,8 @@ void GroupingSet::initializeGlobalAggregation() {
     aggregate->setOffsets(
         offset,
         RowContainer::nullByte(nullOffset),
-        RowContainer::nullMask(nullOffset));
+        RowContainer::nullMask(nullOffset),
+	rowSizeOffset);
     offset += aggregate->accumulatorFixedWidthSize();
     ++nullOffset;
   }

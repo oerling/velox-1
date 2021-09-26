@@ -38,6 +38,7 @@ add_library(
   PartitionedOutput.cpp
   PartitionedOutputBufferManager.cpp
   RowContainer.cpp
+    Spiller.cpp
   TableScan.cpp
   TableWriter.cpp
   Task.cpp

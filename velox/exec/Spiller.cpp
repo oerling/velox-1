@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 
-#include "velox/exec/Spill.h"
+#include "velox/exec/Spiller.h"
 
 namespace facebook::velox::exec {
 
