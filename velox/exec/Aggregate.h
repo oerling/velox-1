@@ -48,6 +48,12 @@ class Aggregate {
   // width part of the state from the fixed part.
   virtual int32_t accumulatorFixedWidthSize() const = 0;
 
+  // Returns true if the accumulator never takes more than
+  // accumulatorFixedWidthSize() bytes.
+  virtual bool isFixedSize() const {
+    return true;
+  }
+  
   void setAllocator(HashStringAllocator* allocator) {
     allocator_ = allocator;
   }
@@ -56,10 +62,11 @@ class Aggregate {
   // @param offset Offset in bytes from the start of the row of the accumulator
   // @param nullByte Offset in bytes from the start of the row of the null flag
   // @param nullMask The specific bit in the nullByte that stores the null flag
-  void setOffsets(int32_t offset, int32_t nullByte, uint8_t nullMask) {
+  void setOffsets(int32_t offset, int32_t nullByte, uint8_t nullMask, int32_t rowSizeOffset) {
     nullByte_ = nullByte;
     nullMask_ = nullMask;
     offset_ = offset;
+    rowSizeOffset_ = rowSizeOffset;
   }
 
   // Initializes null flags and accumulators for newly encountered groups.
@@ -139,6 +146,13 @@ class Aggregate {
   // 'groups'. No-op for fixed length accumulators.
   virtual void destroy(folly::Range<char**> /*groups*/) {}
 
+  // Returns the type that extractAccumulator will produce. This is
+  // different from resultType_ for complex final aggregations. Needed
+  // for e.g. spilling.
+  virtual TypePtr accumulatorType() const {
+    return resultType_;
+}
+  
   // Clears state between reuses, e.g. this is called before reusing
   // the aggregation operator's state after flushing a partial
   // aggregation.
@@ -190,7 +204,18 @@ class Aggregate {
     return numNulls_ && (group[nullByte_] & nullMask_);
   }
 
-  // Sets null flag for all specified groups to true.
+  void incrementRowSize(char* row, uint64_t bytes) {
+    VELOX_DCHECK(rowSizeOffset_);
+    uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
+    uint64_t size = *ptr + bytes;
+    *ptr = std::min<uint64_t>(bytes, std::numeric_limits<uint32_t>::max());
+}
+  
+  void setNull(char* group) {
+    group[nullByte_] |= nullMask_;
+  }
+  
+    // Sets null flag for all specified groups to true.
   // For any given group, this method can be called at most once.
   void setAllNulls(char** groups, folly::Range<const vector_size_t*> indices) {
     for (auto i : indices) {
@@ -240,6 +265,11 @@ class Aggregate {
   uint8_t nullMask_;
   // Offset of fixed length accumulator state in group row.
   int32_t offset_;
+
+  // Offset of uint32_t row byte size of row. 0 if accumulator is
+  // fixed width. The size is capped at 4G and will stay at 4G and not
+  // wrap around if growing past this.
+  int32_t rowSizeOffset_ = 0;
 
   // Number of null accumulators in the current state of the aggregation
   // operator for this aggregate. If 0, clearing the null as part of update
