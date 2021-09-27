@@ -214,6 +214,7 @@ ReaderBase::ReaderBase(
 
   if (input_->shouldPrefetchStripes()) {
     auto numStripes = getFooter().stripes_size();
+    input_->setNumStripes(numStripes);
     for (auto i = 0; i < numStripes; i++) {
       const auto& stripe = getFooter().stripes(i);
       input_->enqueue(

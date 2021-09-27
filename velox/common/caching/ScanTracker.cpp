@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/caching/ScanTracker.h"
+#include "velox/common/caching/GroupTracker.h"
 
 #include <sstream>
 
@@ -25,6 +26,7 @@ void ScanTracker::recordReference(
     uint64_t bytes,
     uint64_t fileId,
     uint64_t groupId) {
+  GroupStats::instance().recordReference(fileId, groupId, id, bytes);
   std::lock_guard<std::mutex> l(mutex_);
   data_[id].incrementReference(bytes);
   sum_.incrementReference(bytes);
@@ -35,6 +37,7 @@ void ScanTracker::recordRead(
     uint64_t bytes,
     uint64_t fileId,
     uint64_t groupId) {
+  GroupStats::instance().recordRead(fileId, groupId, id, bytes);
   std::lock_guard<std::mutex> l(mutex_);
   data_[id].incrementRead(bytes);
   sum_.incrementRead(bytes);

@@ -130,6 +130,7 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
 void SsdFile::newEventLocked() {
   ++numEvents_;
   if (numEvents_ > kDecayInterval && numEvents_ > entries_.size() / 2) {
+    numEvents_ = 0;
     for (auto i = 0; i < numRegions_; ++i) {
       int64_t score = regionScore_[i];
       regionScore_[i] = (score * 15) / 16;
@@ -181,6 +182,15 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
       regionSize_[region] += toWrite;
       return {region * kRegionSize + offset, toWrite};
     }
+    // A region has been filled. Set its score to be at least the best
+    // score + kRegionSize so that it gets time to live. Otherwise it
+    // has had the least time to get hits and would be the first
+    // evicted.
+    uint64_t best = 0;
+    for (auto& score : regionScore_) {
+      best = std::max<uint64_t>(best, score);
+    }
+    regionScore_[region] = std::max(regionScore_[region], best + kRegionSize);
     writableRegions_.erase(writableRegions_.begin());
   }
 }
@@ -240,6 +250,7 @@ bool SsdFile::evictLocked() {
 }
 
 void SsdFile::clearRegionEntriesLocked(const std::vector<int32_t>& toErase) {
+  // Remove all 'entries_' where the dependent points one of 'toErase'.
   auto it = entries_.begin();
   while (it != entries_.end()) {
     auto region = regionIndex(it->second.offset());
@@ -248,6 +259,13 @@ void SsdFile::clearRegionEntriesLocked(const std::vector<int32_t>& toErase) {
     } else {
       ++it;
     }
+  }
+  for (auto region : toErase) {
+    // While the region is being filled it may get score from
+    // hits. When it is full, it will get a score boost to be a little
+    // ahead of the best.
+    regionScore_[region] = 0;
+    regionSize_[region] = 0;
   }
 }
 
