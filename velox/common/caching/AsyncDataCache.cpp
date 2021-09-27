@@ -433,7 +433,7 @@ void CacheShard::updateStats(CacheStats& stats) {
 void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
   std::lock_guard<std::mutex> l(mutex_);
   for (auto& entry : entries_) {
-    if (entry && !entry->ssdFile_ && !entry->isExclusive() &&
+    if (entry && !entry->ssdFile_ && !entry->isExclusive() && entry->dataValid() &&
         GroupStats::instance().shouldSaveToSsd(
             entry->key_.fileNum.id(), entry->trackingId_)) {
       CachePin pin;

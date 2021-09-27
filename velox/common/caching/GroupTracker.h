@@ -54,16 +54,18 @@ struct ReadCounts {
   uint32_t referenceCount;
 };
 
-// Represents a groupId, column and its size and score.
+// Represents a groupId, column and its size and score. These are
+// sorted and as many are selected from the top as will fit on SSD.
 struct SsdScore {
   //
   float score;
 
   // Expected size in bytes for caching to SSD
   float size;
-
-  // Represents the groupId and TrackingId of the group, column pair.
-  uint64_t hash;
+  // Recorded read activity, with older reads decayed.
+  float readBytes;
+  uint64_t groupId;
+  TrackingId trackingId;
 };
 
 class GroupTracker {
@@ -119,7 +121,12 @@ class GroupStats {
   // selected.
   void updateSsdFilter(uint64_t ssdSize);
 
- private:
+  // Recalculates the best groups and makes a human readable
+  // summary. 'cacheBytes' is used to compute what fraction of the tracked
+  // working set can be cached in 'cacheBytes'.
+  std::string toString(uint64_t cacheBytes);
+
+private:
   void decay();
   GroupTracker& group(uint64_t id) {
     auto it = groups_.find(id);
@@ -130,6 +137,8 @@ class GroupStats {
     }
     return *it->second;
   }
+
+  std::vector<SsdScore> ssdScoresLocked();
 
   std::mutex mutex_;
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;

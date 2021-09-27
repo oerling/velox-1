@@ -139,11 +139,6 @@ void SsdFile::newEventLocked() {
 
 void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
   VELOX_CHECK_EQ(run.size(), entry.size());
-  printf(
-      "Loading %ld size %d from %ld\n",
-      entry.offset(),
-      entry.size(),
-      run.offset());
   regionScore_[regionIndex(run.offset())] += run.size();
   ++stats_.entriesRead;
   stats_.bytesRead += run.size();
@@ -203,8 +198,7 @@ bool SsdFile::evictLocked() {
     auto newSize = (numRegions_ + 1) * kRegionSize;
     auto rc = ftruncate(fd_, newSize);
     if (rc >= 0) {
-      preFill(fd_, fileSize_, newSize);
-
+      //preFill(fd_, fileSize_, newSize);
       fileSize_ = newSize;
 
       writableRegions_.push_back(numRegions_);
@@ -296,21 +290,14 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         entry->setSsdFile(this, offset);
         char first = entry->tinyData() ? entry->tinyData()[0]
                                        : entry->data().runAt(0).data<char>()[0];
-        printf(
-            "adding %ld = %d start %d to %ld\n",
-            entry->offset(),
-            (int)entry->size(),
-            (int)first,
-            offset);
         auto size = entry->size();
         SsdKey key = {entry->key().fileNum, entry->offset()};
         entries_[std::move(key)] = SsdRun(offset, size);
-        verifyWrite(*entry, SsdRun(offset, size));
+        //verifyWrite(*entry, SsdRun(offset, size));
         offset += size;
         ++stats_.entriesWritten;
         stats_.bytesWritten += size;
       }
-      printf("Done %d to %d\n", storeIndex, storeIndex + numWritten);
     }
     storeIndex += numWritten;
   }

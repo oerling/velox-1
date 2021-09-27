@@ -33,8 +33,15 @@ using memory::MappedMemory;
 // the low byte of 'seed_' + offset.
 class TestInputStream : public common::InputStream {
  public:
-  TestInputStream(const std::string& path, uint64_t seed, uint64_t length)
-      : InputStream(path), seed_(seed), length_(length) {}
+  TestInputStream(
+      const std::string& path,
+      uint64_t seed,
+      uint64_t length,
+      std::shared_ptr<common::IoStatistics> ioStats)
+      : InputStream(path),
+        seed_(seed),
+        length_(length),
+        ioStats_(std::move(ioStats)) {}
 
   uint64_t getLength() const override {
     return length_;
@@ -52,6 +59,7 @@ class TestInputStream : public common::InputStream {
     for (fill = 0; fill < (available); ++fill) {
       reinterpret_cast<char*>(buffer)[fill] = content + fill;
     }
+    ioStats_->incRawBytesRead(length);
   }
 
   // Asserts that 'bytes' is as would be read from 'offset'.
@@ -66,7 +74,9 @@ class TestInputStream : public common::InputStream {
  private:
   const uint64_t seed_;
   const uint64_t length_;
+  std::shared_ptr<common::IoStatistics> ioStats_;
 };
+
 class TestInputStreamHolder : public dwrf::AbstractInputStreamHolder {
  public:
   explicit TestInputStreamHolder(std::shared_ptr<common::InputStream> stream)
@@ -82,7 +92,7 @@ class TestInputStreamHolder : public dwrf::AbstractInputStreamHolder {
 
 class CacheTest : public testing::Test {
  protected:
-  static constexpr int32_t kMaxStreams = 100;
+  static constexpr int32_t kMaxStreams = 50;
 
   // Describes a piece of file potentially read by this test.
   struct StripeData {
@@ -124,9 +134,9 @@ class CacheTest : public testing::Test {
       if (i < kMaxStreams / 3) {
         spacing += 1000;
       } else if (i < kMaxStreams / 3 * 2) {
-        spacing += 10000;
-      } else {
-        spacing += 100000;
+        spacing += 20000;
+      } else if (i > kMaxStreams - 5) {
+        spacing += 2000000;
       }
     }
   }
@@ -141,21 +151,25 @@ class CacheTest : public testing::Test {
     std::lock_guard<std::mutex> l(mutex_);
     StringIdLease lease(fileIds(), path);
     fileId = lease.id();
-    // 2 files in a group.
-    groupId = fileId / 2;
+    // Group per file.
+    groupId = fileId;
     auto it = pathToInput_.find(lease.id());
     if (it == pathToInput_.end()) {
       fileIds_.push_back(lease);
-      auto stream =
-          std::make_shared<TestInputStream>(path, lease.id(), 1UL << 63);
+      auto stream = std::make_shared<TestInputStream>(
+          path, lease.id(), 1UL << 63, ioStats_);
       pathToInput_[lease.id()] = stream;
       return stream;
     }
     return it->second;
   }
 
+  // Makes a CachedBufferedInput with a subset of the testing streams
+  // enqueued. 'numColumns' streams are evenly selected from
+  // kMaxStreams.
   std::unique_ptr<StripeData> makeStripeData(
       std::shared_ptr<common::InputStream> inputStream,
+      int32_t numColumns,
       std::shared_ptr<ScanTracker> tracker,
       uint64_t fileId,
       uint64_t groupId,
@@ -175,15 +189,17 @@ class CacheTest : public testing::Test {
         ioStats_,
         executor_.get());
     data->file = dynamic_cast<TestInputStream*>(inputStream.get());
-    for (auto i = 0; i < streamStarts_.size() - 1; ++i) {
-      // Each region is covers half the space from its start to the
+    for (auto i = 0; i < numColumns; ++i) {
+              int32_t streamIndex = i * (kMaxStreams / numColumns);
+
+      // Each region covers half the space from its start to the
       // start of the next or at max a little under 20MB.
       Region region{
-          offset + streamStarts_[i],
+          offset + streamStarts_[streamIndex],
           std::min<uint64_t>(
-              (1 << 20) - 11, (streamStarts_[i + 1] - streamStarts_[i]) / 2)};
+              (1 << 20) - 11, (streamStarts_[streamIndex + 1] - streamStarts_[streamIndex]) / 2)};
       data->streams.push_back(
-          data->input->enqueue(region, streamIds_[i].get()));
+          data->input->enqueue(region, streamIds_[streamIndex].get()));
       data->regions.push_back(region);
     }
     return data;
@@ -206,16 +222,17 @@ class CacheTest : public testing::Test {
       numRead += size;
     } while (size > 0);
     EXPECT_EQ(numRead, region.length);
-    // Test random access
-    std::vector<uint64_t> offsets = {
+    if (testRandomSeek_) {
+      // Test random access
+      std::vector<uint64_t> offsets = {
         0, region.length / 3, region.length * 2 / 3};
-    dwrf::PositionProvider positions(offsets);
-    for (auto i = 0; i < offsets.size(); ++i) {
-      stream.seekToRowGroup(positions);
+      dwrf::PositionProvider positions(offsets);
+      for (auto i = 0; i < offsets.size(); ++i) {
+	stream.seekToRowGroup(positions);
       checkRandomRead(stripe, stream, offsets, i, region);
+      }
     }
   }
-
   void checkRandomRead(
       const StripeData& stripe,
       dwrf::SeekableInputStream& stream,
@@ -244,9 +261,11 @@ class CacheTest : public testing::Test {
 
   // Makes a series of kReadAhead CachedBufferedInputs for consecutive
   // stripes and starts background load guided by the load frequency
-  // in the previous stripes. When at end, destroys a set of
-  // CachedBufferedInputs and their streams while they are in a
-  // background loading state.
+  // in the previous stripes for 'stripeWindow' ahead of the stripe
+  // being read. When at end, destroys the CachedBufferedInput for the
+  // pre-read stripes while they are in a background loading state. A
+  // window size of 1 means that only one CachedbufferedInput is
+  // active at a time.
   //
   // 'readPct' is the probability any given
   // stripe will access any given column. 'readPctModulo' biases the
@@ -260,10 +279,10 @@ class CacheTest : public testing::Test {
       int numColumns,
       int32_t readPct,
       int32_t readPctModulo,
-      int32_t numStripes) {
+      int32_t numStripes,
+      int32_t stripeWindow = 8) {
     auto tracker = std::make_shared<ScanTracker>();
     std::deque<std::unique_ptr<StripeData>> stripes;
-    constexpr int32_t kReadAhead = 8;
     uint64_t fileId;
     uint64_t groupId;
     std::shared_ptr<common::InputStream> input =
@@ -271,15 +290,17 @@ class CacheTest : public testing::Test {
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
       stripes.push_back(makeStripeData(
           input,
+	  numColumns,
           tracker,
           fileId,
           groupId,
           stripeIndex * streamStarts_[kMaxStreams - 1]));
       stripes.back()->input->load(common::LogType::TEST);
       if (stripeIndex > 0) {
-        while (stripes.size() < kReadAhead) {
+        while (stripes.size() < stripeWindow) {
           stripes.push_back(makeStripeData(
               input,
+	      numColumns,
               tracker,
               fileId,
               groupId,
@@ -292,12 +313,33 @@ class CacheTest : public testing::Test {
       auto currentStripe = std::move(stripes.front());
       stripes.pop_front();
       currentStripe->input->load(common::LogType::TEST);
-      for (auto i = 0; i < numColumns; ++i) {
-        int32_t columnIndex = i * (kMaxStreams / numColumns);
+      for (auto columnIndex = 0; columnIndex < numColumns; ++columnIndex) {
         if (shouldRead(columnIndex, readPct, readPctModulo)) {
           readStream(*currentStripe, columnIndex);
         }
       }
+    }
+  }
+
+  // Reads a files from prefix<from> to prefix<to>. The other
+  // parameters have the same meaning as with readLoop().
+  void readFiles(
+      const std::string& prefix,
+      int32_t from,
+      int32_t to,
+      int numColumns,
+      int32_t readPct,
+      int32_t readPctModulo,
+      int32_t numStripes,
+      int32_t stripeWindow = 8) {
+    for (auto i = from; i < to; ++i) {
+      readLoop(
+          fmt::format("{}{}", prefix, i),
+          numColumns,
+          readPct,
+          readPctModulo,
+          numStripes,
+          stripeWindow);
     }
   }
 
@@ -319,6 +361,10 @@ class CacheTest : public testing::Test {
   // Start offset of each simulated stream in a simulated stripe.
   std::vector<uint64_t> streamStarts_;
   folly::Random::DefaultGenerator rng_;
+
+  // Specifies if random seek follows bulk read in tests. We turn this
+  // off so as not to inflate cache hits.
+  bool testRandomSeek_{true};
 };
 
 TEST_F(CacheTest, bufferedInput) {
@@ -329,19 +375,53 @@ TEST_F(CacheTest, bufferedInput) {
   readLoop("testfile2", 30, 70, 70, 20);
 }
 
+// Calibrates the data read for a densely and sparsely read stripe of
+// test data. Fills the SSD cache with test data. Reads 2x cache size
+// worth of data and checks that the cache population settles to a
+// stable state.  Shifts the reading pattern so that half the working
+// set drops out and another half is added. Checks that the
+// working set stabilizes again.
 TEST_F(CacheTest, ssd) {
-  // Size 160 MB. Frequent evictions and not everything fits in
-  // prefetch window. SSD size 2GB, not everything fits.
-  initializeCache(160 << 20, "/home/oerling/testssd", 2UL << 30);
-  // Read all columns with no skips for 40 stripes.
-  readLoop("testfile", 30, 100, 1, 40);
-  // Read the same but with 70 to 7% of each column read.
-  readLoop("testfile", 30, 70, 10, 40);
-  readLoop("testfile2", 30, 70, 70, 80);
-  readLoop("testfile2", 40, 70, 70, 80);
+  constexpr int64_t kSsdBytes = 2UL << 30;
+  initializeCache(160 << 20, "/tmp/ssdtest", kSsdBytes);
+  testRandomSeek_ = false;
+  
+  // We measure bytes read for a full and sparse read of a stripe.
+  auto bytes = ioStats_->rawBytesRead();
+  readLoop("testfile", 30, 100, 1, 1);
+  auto fullStripeBytes = ioStats_->rawBytesRead() - bytes;
+  auto fullStripesOnSsd = kSsdBytes / fullStripeBytes;
+  bytes = ioStats_->rawBytesRead();
+  // We read 4 more stripes. The first will be read fully, the next
+  // ones only for dense and actually accessed sparse columns.  The first stripe
+  // comes from RAM, so we count new reads and divide by 4.
+  readLoop("testfile", 30, 70, 10, 5, 1);
+  auto ramBytes = ioStats_->ramHit().bytes();
+  EXPECT_TRUE(
+      ramBytes > fullStripeBytes / 2 && ramBytes < fullStripeBytes * 1.2)
+      << " ramBytes = " << ramBytes
+      << "fullStripeBytes =  " << fullStripeBytes;
+  auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 4;
+
+  // Read files of 20 stripes each to prime SSD cache.
+  readFiles("prefix1_", 0, fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
+
+  auto ssdStats = cache_->ssdCache()->stats();
+  LOG(INFO) << "Wrote " << ssdStats.bytesWritten << " to SSD";
+
+  // Read the same and 50% more to trigger selection of what gets written.
+  readFiles("prefix1_", 0, 1.5 * fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
+
+  ssdStats = cache_->ssdCache()->stats();
+  LOG(INFO) << "Wrote " << ssdStats.bytesWritten << " to SSD";
+
+  readFiles("prefix1_", 0, 1.5 * fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
+
+
+
 }
 
-TEST_F(CacheTest, TestSingleFileThreads) {
+TEST_F(CacheTest, singleFileThreads) {
   initializeCache(1 << 30);
 
   const int numThreads = 4;
@@ -357,7 +437,7 @@ TEST_F(CacheTest, TestSingleFileThreads) {
   }
 }
 
-TEST_F(CacheTest, TestSsdThreads) {
+TEST_F(CacheTest, ssdThreads) {
   initializeCache(1 << 28, "/tmp/ssdtest");
 
   const int numThreads = 4;

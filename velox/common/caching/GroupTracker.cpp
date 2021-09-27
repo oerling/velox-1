@@ -77,7 +77,7 @@ void GroupTracker::addColumnScores(std::vector<SsdScore>& scores) const {
     float readFraction = readSize / size;
     float score = data.numReads * sizeFactor(size) * readFraction;
     scores.push_back(
-        SsdScore{score, size, ssdFilterHash(name_.id(), pair.first)});
+        SsdScore{score, size, data.readBytes, name_.id(), pair.first});
   }
 }
 
@@ -119,7 +119,7 @@ bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
   return Bloom::test(saveToSsd_.data(), saveToSsd_.size(), hash);
 }
 
-void GroupStats::updateSsdFilter(uint64_t ssdSize) {
+std::vector<SsdScore> GroupStats::ssdScoresLocked() {
   std::vector<SsdScore> scores;
   for (auto& pair : groups_) {
     pair.second->addColumnScores(scores);
@@ -131,6 +131,12 @@ void GroupStats::updateSsdFilter(uint64_t ssdSize) {
       [](const SsdScore& left, const SsdScore& right) {
         return left.score > right.score;
       });
+  return scores;
+}
+
+void GroupStats::updateSsdFilter(uint64_t ssdSize) {
+  std::lock_guard<std::mutex> l(mutex_);
+  auto scores = ssdScoresLocked();
   float size = 0;
 
   int32_t i = 0;
@@ -147,9 +153,47 @@ void GroupStats::updateSsdFilter(uint64_t ssdSize) {
     saveToSsd_.clear();
     saveToSsd_.resize(bits::nextPowerOfTwo(4 + (i / 8)));
     for (auto included = 0; included < i; ++included) {
-      Bloom::set(saveToSsd_.data(), saveToSsd_.size(), scores[i].hash);
+      auto hash = ssdFilterHash(scores[i].groupId, scores[i].trackingId);
+      Bloom::set(saveToSsd_.data(), saveToSsd_.size(), hash);
     }
   }
+}
+
+std::string GroupStats::toString(uint64_t cacheBytes) {
+  std::stringstream out;
+  std::vector<SsdScore> scores;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    scores = ssdScoresLocked();
+  }
+  float totalSize = 0;
+  float totalRead = 0;
+  int32_t numCachable = -1;
+  float cachableReads = 0;
+  for (auto i = 0; i < scores.size(); ++i) {
+    totalSize = scores[i].size;
+    totalRead = scores[i].readBytes;
+    if (totalSize < cacheBytes) {
+      cachableReads += scores[i].readBytes;
+    } else if (numCachable == -1) {
+      numCachable = i;
+    }
+  }
+  out << fmt::format(
+      "Group tracking: {} groups, {} bytes, {} bytes read\n",
+      scores.size(),
+      totalSize,
+      totalRead);
+  if (numCachable == -1) {
+    out << "All cachable";
+  } else {
+    out << fmt::format(
+        "Cache covers {}% of data and {}% of reads\n",
+        100 * cacheBytes / totalSize,
+        100 * cachableReads / totalRead);
+  }
+
+  return out.str();
 }
 
 GroupStats& GroupStats::instance() {
