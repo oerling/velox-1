@@ -190,14 +190,16 @@ class CacheTest : public testing::Test {
         executor_.get());
     data->file = dynamic_cast<TestInputStream*>(inputStream.get());
     for (auto i = 0; i < numColumns; ++i) {
-              int32_t streamIndex = i * (kMaxStreams / numColumns);
+      int32_t streamIndex = i * (kMaxStreams / numColumns);
 
       // Each region covers half the space from its start to the
       // start of the next or at max a little under 20MB.
       Region region{
           offset + streamStarts_[streamIndex],
           std::min<uint64_t>(
-              (1 << 20) - 11, (streamStarts_[streamIndex + 1] - streamStarts_[streamIndex]) / 2)};
+              (1 << 20) - 11,
+              (streamStarts_[streamIndex + 1] - streamStarts_[streamIndex]) /
+                  2)};
       data->streams.push_back(
           data->input->enqueue(region, streamIds_[streamIndex].get()));
       data->regions.push_back(region);
@@ -225,11 +227,11 @@ class CacheTest : public testing::Test {
     if (testRandomSeek_) {
       // Test random access
       std::vector<uint64_t> offsets = {
-        0, region.length / 3, region.length * 2 / 3};
+          0, region.length / 3, region.length * 2 / 3};
       dwrf::PositionProvider positions(offsets);
       for (auto i = 0; i < offsets.size(); ++i) {
-	stream.seekToRowGroup(positions);
-      checkRandomRead(stripe, stream, offsets, i, region);
+        stream.seekToRowGroup(positions);
+        checkRandomRead(stripe, stream, offsets, i, region);
       }
     }
   }
@@ -291,7 +293,7 @@ class CacheTest : public testing::Test {
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
       stripes.push_back(makeStripeData(
           input,
-	  numColumns,
+          numColumns,
           tracker,
           fileId,
           groupId,
@@ -301,7 +303,7 @@ class CacheTest : public testing::Test {
         while (stripes.size() < stripeWindow) {
           stripes.push_back(makeStripeData(
               input,
-	      numColumns,
+              numColumns,
               tracker,
               fileId,
               groupId,
@@ -386,7 +388,7 @@ TEST_F(CacheTest, ssd) {
   constexpr int64_t kSsdBytes = 2UL << 30;
   initializeCache(160 << 20, "/tmp/ssdtest", kSsdBytes);
   testRandomSeek_ = false;
-  
+
   // We measure bytes read for a full and sparse read of a stripe.
   auto bytes = ioStats_->rawBytesRead();
   readLoop("testfile", 30, 100, 1, 1);
@@ -400,9 +402,9 @@ TEST_F(CacheTest, ssd) {
   auto ramBytes = ioStats_->ramHit().bytes();
   auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 4;
   EXPECT_TRUE(
-	      ramBytes > sparseStripeBytes / 2 && ramBytes < sparseStripeBytes * 1.2)
-    << " ramBytes = " << ramBytes
-    << " sparseStripeBytes = " << sparseStripeBytes;
+      ramBytes > sparseStripeBytes / 2 && ramBytes < sparseStripeBytes * 1.2)
+      << " ramBytes = " << ramBytes
+      << " sparseStripeBytes = " << sparseStripeBytes;
 
   // Read files of 20 stripes each to prime SSD cache.
   readFiles("prefix1_", 0, fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
@@ -417,9 +419,6 @@ TEST_F(CacheTest, ssd) {
   LOG(INFO) << "Wrote " << ssdStats.bytesWritten << " to SSD";
 
   readFiles("prefix1_", 0, 1.5 * fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
-
-
-
 }
 
 TEST_F(CacheTest, singleFileThreads) {

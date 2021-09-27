@@ -126,7 +126,7 @@ class GroupStats {
   // working set can be cached in 'cacheBytes'.
   std::string toString(uint64_t cacheBytes);
 
-private:
+ private:
   void decay();
   GroupTracker& group(uint64_t id) {
     auto it = groups_.find(id);

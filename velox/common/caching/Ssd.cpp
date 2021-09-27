@@ -208,7 +208,7 @@ bool SsdFile::evictLocked() {
     auto newSize = (numRegions_ + 1) * kRegionSize;
     auto rc = ftruncate(fd_, newSize);
     if (rc >= 0) {
-      //preFill(fd_, fileSize_, newSize);
+      // preFill(fd_, fileSize_, newSize);
       fileSize_ = newSize;
 
       writableRegions_.push_back(numRegions_);
@@ -311,7 +311,7 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         auto size = entry->size();
         SsdKey key = {entry->key().fileNum, entry->offset()};
         entries_[std::move(key)] = SsdRun(offset, size);
-        //verifyWrite(*entry, SsdRun(offset, size));
+        // verifyWrite(*entry, SsdRun(offset, size));
         offset += size;
         ++stats_.entriesWritten;
         stats_.bytesWritten += size;
