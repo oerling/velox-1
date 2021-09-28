@@ -31,6 +31,11 @@ using memory::MappedMemory;
 std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
     dwio::common::Region region,
     const StreamIdentifier* si = nullptr) {
+  if (region.length == 0) {
+    return std::make_unique<SeekableArrayInputStream>(
+        static_cast<const char*>(nullptr), 0);
+  }
+
   TrackingId id;
   if (si) {
     id = TrackingId(si->node, si->kind);
@@ -292,8 +297,8 @@ void CachedBufferedInput::loadFromSsd(std::vector<CacheRequest*>& requests) {
   // found items.
   for (int32_t i = requests.size() - 1; i >= 0; --i) {
     auto request = requests[i];
-    auto ssdPin =
-        file.find(RawFileCacheKey{fileNum_, request->pin.entry()->offset()});
+    auto ssdPin = file.find(RawFileCacheKey{
+        fileNum_, static_cast<uint64_t>(request->pin.entry()->offset())});
     if (!ssdPin.empty()) {
       auto load = std::make_shared<SsdLoad>();
       load->initialize(

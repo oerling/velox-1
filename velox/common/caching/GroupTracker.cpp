@@ -76,8 +76,12 @@ void GroupTracker::addColumnScores(std::vector<SsdScore>& scores) const {
     float readSize = data.readBytes / data.numReads;
     float readFraction = readSize / size;
     float score = data.numReads * sizeFactor(size) * readFraction;
-    scores.push_back(
-        SsdScore{score, size, data.readBytes, name_.id(), pair.first});
+    scores.push_back(SsdScore{
+        score,
+        static_cast<float>(size),
+        static_cast<float>(data.readBytes),
+        name_.id(),
+        pair.first});
   }
 }
 

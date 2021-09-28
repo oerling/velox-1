@@ -90,7 +90,7 @@ void SsdFile::unpinRegion(uint64_t offset) {
 namespace {
 void addEntryToIovecs(AsyncDataCacheEntry& entry, std::vector<iovec>& iovecs) {
   if (entry.tinyData()) {
-    iovecs.push_back({entry.tinyData(), entry.size()});
+    iovecs.push_back({entry.tinyData(), static_cast<size_t>(entry.size())});
     return;
   }
   auto& data = entry.data();
@@ -99,7 +99,7 @@ void addEntryToIovecs(AsyncDataCacheEntry& entry, std::vector<iovec>& iovecs) {
   for (auto i = 0; i < data.numRuns(); ++i) {
     auto run = data.runAt(i);
     iovecs.push_back(
-        {run.data<char>(), std::min<int64_t>(bytesLeft, run.numBytes())});
+        {run.data<char>(), std::min<size_t>(bytesLeft, run.numBytes())});
     bytesLeft -= run.numBytes();
     if (bytesLeft <= 0) {
       break;
@@ -309,7 +309,8 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         char first = entry->tinyData() ? entry->tinyData()[0]
                                        : entry->data().runAt(0).data<char>()[0];
         auto size = entry->size();
-        SsdKey key = {entry->key().fileNum, entry->offset()};
+        SsdKey key = {
+            entry->key().fileNum, static_cast<uint64_t>(entry->offset())};
         entries_[std::move(key)] = SsdRun(offset, size);
         // verifyWrite(*entry, SsdRun(offset, size));
         offset += size;
