@@ -24,8 +24,7 @@ namespace facebook::velox::aggregate {
 
 class CountIfAggregate : public exec::Aggregate {
  public:
-  explicit CountIfAggregate(core::AggregationNode::Step step)
-      : exec::Aggregate(step, BIGINT()) {}
+  explicit CountIfAggregate() : exec::Aggregate(BIGINT()) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(int64_t);
@@ -37,13 +36,6 @@ class CountIfAggregate : public exec::Aggregate {
     for (auto i : indices) {
       *value<int64_t>(groups[i]) = 0;
     }
-  }
-
-  void initializeNewGroups(
-      char** /*groups*/,
-      folly::Range<const vector_size_t*> /*indices*/,
-      const VectorPtr& /*initialState*/) override {
-    VELOX_NYI();
   }
 
   void finalize(char** /* groups */, int32_t /* numGroups */) override {}
@@ -191,7 +183,7 @@ bool registerCountIfAggregate(const std::string& name) {
               name);
         }
 
-        return std::make_unique<CountIfAggregate>(step);
+        return std::make_unique<CountIfAggregate>();
       });
   return true;
 }
