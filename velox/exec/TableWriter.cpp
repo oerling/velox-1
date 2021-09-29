@@ -29,7 +29,7 @@ TableWriter::TableWriter(
           tableWriteNode->outputType(),
           operatorId,
           tableWriteNode->id(),
-          "TableWriter"),
+          stats_.planNodeId),
       numWrittenRows_(0),
       finished_(false),
       closed_(false),

@@ -235,7 +235,7 @@ class HiveConnector final : public Connector {
             : nullptr,
         connectorQueryCtx->expressionEvaluator(),
         connectorQueryCtx->mappedMemory(),
-        connectorQueryCtx->scanId().value(),
+        connectorQueryCtx->scanId(),
         executor_);
   }
 

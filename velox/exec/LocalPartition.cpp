@@ -227,7 +227,6 @@ LocalPartition::LocalPartition(
           planNode->outputType())},
       blockingReasons_{numPartitions_} {
   VELOX_CHECK(numPartitions_ == 1 || !keyChannels_.empty());
-  VELOX_CHECK_GT(outputType_->size(), 0);
 
   const auto& inputType = planNode->inputType();
   hashers_.reserve(keyChannels_.size());
