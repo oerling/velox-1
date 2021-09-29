@@ -394,22 +394,22 @@ TEST_F(MultiFragmentTest, partitionedOutput) {
     Task::start(leafTask, 4);
 
     auto intermediatePlan = PlanBuilder()
-      .exchange(leafPlan->outputType())
-                        .partitionedOutput({}, 1, {2, 1, 0})
-                        .planNode();
+                                .exchange(leafPlan->outputType())
+                                .partitionedOutput({}, 1, {2, 1, 0})
+                                .planNode();
     std::vector<std::string> intermediateTaskIds;
     for (auto i = 0; i < kFanout; ++i) {
       intermediateTaskIds.push_back(makeTaskId("intermediate", 1));
-      auto intermediateTask = makeTask(intermediateTaskIds.back(), intermediatePlan, 0);
+      auto intermediateTask =
+          makeTask(intermediateTaskIds.back(), intermediatePlan, 0);
       Task::start(intermediateTask, 1);
       addRemoteSplits(intermediateTask, {leafTaskId});
     }
-        
+
     auto op = PlanBuilder().exchange(intermediatePlan->outputType()).planNode();
 
     assertQuery(op, intermediateTaskIds, "SELECT c3, c0, c2 FROM tmp");
   }
-
 }
 
 TEST_F(MultiFragmentTest, broadcast) {
