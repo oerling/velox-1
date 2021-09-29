@@ -70,6 +70,45 @@ void MappedMemory::destroyTestOnly() {
   instance_ = nullptr;
 }
 
+MachinePageCount MappedMemory::allocationSize(
+    MachinePageCount numPages,
+    MachinePageCount minSizeClass,
+    std::array<int32_t, kMaxSizeClasses>* sizeIndices,
+    std::array<int32_t, kMaxSizeClasses>* sizeCounts,
+    int32_t* numSizes) const {
+  int32_t needed = numPages;
+  int32_t pagesToAlloc = 0;
+  *numSizes = 0;
+  VELOX_CHECK_LE(
+      minSizeClass,
+      sizes_.back(),
+      "Requesting minimum size larger than largest size class");
+  for (int32_t sizeIndex = sizes_.size() - 1; sizeIndex >= 0; sizeIndex--) {
+    int32_t size = sizes_[sizeIndex];
+    bool isSmallest = sizeIndex == 0 || sizes_[sizeIndex - 1] < minSizeClass;
+    // If the size is less than 1/8 of the size from the next larger,
+    // use the next larger size.
+    if (size > (needed + (needed / 8)) && !isSmallest) {
+      continue;
+    }
+    int32_t numUnits = std::max(1, needed / size);
+    needed -= numUnits * size;
+    if (isSmallest && needed > 0) {
+      // If needed / size had a remainder, add one unit of smallest class.
+      numUnits++;
+      needed -= size;
+    }
+    (*sizeCounts)[*numSizes] = numUnits;
+    pagesToAlloc += numUnits * size;
+    (*sizeIndices)[(*numSizes)++] = sizeIndex;
+    if (needed <= 0) {
+      break;
+    }
+  }
+  return pagesToAlloc;
+}
+
+  
 namespace {
 // Actual Implementation of MappedMemory.
 class MappedMemoryImpl : public MappedMemory {
@@ -96,20 +135,10 @@ class MappedMemoryImpl : public MappedMemory {
     return numMapped_;
   }
 
-  MachinePageCount allocationSize(
-      MachinePageCount numPages,
-      MachinePageCount minSizeClass,
-      std::array<int32_t, kMaxSizeClasses>* sizeIndices,
-      std::array<int32_t, kMaxSizeClasses>* sizeCounts,
-      int32_t* numSizes) const;
-
  private:
   std::atomic<MachinePageCount> numAllocated_;
   // When using mmap/madvise, the current of number pages backed by memory.
   std::atomic<MachinePageCount> numMapped_;
-  // The machine page counts corresponding to different sizes in order
-  // of increasing size.
-  std::vector<MachinePageCount> sizes_;
 
   std::mutex mallocsMutex_;
   // Tracks malloc'd pointers to detect bad frees.
@@ -119,7 +148,7 @@ class MappedMemoryImpl : public MappedMemory {
 } // namespace
 
 MappedMemoryImpl::MappedMemoryImpl() : numAllocated_(0), numMapped_(0) {
-  sizes_ = {4, 8, 16, 32, 64, 128, 256};
+
 }
 
 bool MappedMemoryImpl::allocate(
@@ -178,44 +207,6 @@ bool MappedMemoryImpl::allocate(
     return true;
   }
   throw std::runtime_error("Not implemented");
-}
-
-MachinePageCount MappedMemoryImpl::allocationSize(
-    MachinePageCount numPages,
-    MachinePageCount minSizeClass,
-    std::array<int32_t, kMaxSizeClasses>* sizeIndices,
-    std::array<int32_t, kMaxSizeClasses>* sizeCounts,
-    int32_t* numSizes) const {
-  int32_t needed = numPages;
-  int32_t pagesToAlloc = 0;
-  *numSizes = 0;
-  VELOX_CHECK_LE(
-      minSizeClass,
-      sizes_.back(),
-      "Requesting minimum size larger than largest size class");
-  for (int32_t sizeIndex = sizes_.size() - 1; sizeIndex >= 0; sizeIndex--) {
-    int32_t size = sizes_[sizeIndex];
-    bool isSmallest = sizeIndex == 0 || sizes_[sizeIndex - 1] < minSizeClass;
-    // If the size is less than 1/8 of the size from the next larger,
-    // use the next larger size.
-    if (size > (needed + (needed / 8)) && !isSmallest) {
-      continue;
-    }
-    int32_t numUnits = std::max(1, needed / size);
-    needed -= numUnits * size;
-    if (isSmallest && needed > 0) {
-      // If needed / size had a remainder, add one unit of smallest class.
-      numUnits++;
-      needed -= size;
-    }
-    (*sizeCounts)[*numSizes] = numUnits;
-    pagesToAlloc += numUnits * size;
-    (*sizeIndices)[(*numSizes)++] = sizeIndex;
-    if (needed <= 0) {
-      break;
-    }
-  }
-  return pagesToAlloc;
 }
 
 int64_t MappedMemoryImpl::free(Allocation& allocation) {

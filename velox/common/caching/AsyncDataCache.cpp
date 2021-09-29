@@ -540,14 +540,15 @@ std::string AsyncDataCache::toString() const {
   auto stats = refreshStats();
   std::stringstream out;
   out << "AsyncDataCache: "
-
       << stats.tinySize + stats.largeSize + stats.tinyPadding +
           stats.largePadding
       << " / " << maxBytes_ << " bytes\n"
       << "Miss: " << stats.numNew << " Hit " << stats.numHit << " evict "
       << stats.numEvict << "\n"
       << " read pins " << stats.numShared << " unused prefetch "
-      << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20);
+      << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20)
+      << " allocated pages " << numAllocated() << " cached pages "
+      << cachedPages_;
   return out.str();
 }
 

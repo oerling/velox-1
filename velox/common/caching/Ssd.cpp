@@ -194,23 +194,13 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
     writableRegions_.erase(writableRegions_.begin());
   }
 }
-void preFill(int32_t fd, int64_t from, int64_t to) {
-  auto data = std::make_unique<char[]>(to - from);
-  memset(data.get(), 0xaa, to - from);
-  auto rc = pwrite(fd, data.get(), to - from, from);
-  VELOX_CHECK_EQ(rc, to - from);
-  rc = pread(fd, data.get(), to - from, from);
-  VELOX_CHECK_EQ(rc, to - from);
-}
 
-bool SsdFile::evictLocked() {
+  bool SsdFile::evictLocked() {
   if (numRegions_ < maxRegions_) {
     auto newSize = (numRegions_ + 1) * kRegionSize;
     auto rc = ftruncate(fd_, newSize);
     if (rc >= 0) {
-      // preFill(fd_, fileSize_, newSize);
       fileSize_ = newSize;
-
       writableRegions_.push_back(numRegions_);
       regionSize_[numRegions_] = 0;
       ++numRegions_;
