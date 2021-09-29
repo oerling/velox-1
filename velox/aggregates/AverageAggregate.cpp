@@ -95,8 +95,7 @@ class AverageAggregate : public exec::Aggregate {
     }
   }
 
- protected:
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -127,7 +126,7 @@ class AverageAggregate : public exec::Aggregate {
     }
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -159,7 +158,7 @@ class AverageAggregate : public exec::Aggregate {
     }
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -201,7 +200,7 @@ class AverageAggregate : public exec::Aggregate {
     }
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
