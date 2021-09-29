@@ -96,10 +96,8 @@ RowVectorPtr TableWriter::getOutput() {
   }
   finished_ = true;
 
-  auto pool = driverCtx_->execCtx->pool();
-
   auto rowsWritten = std::dynamic_pointer_cast<FlatVector<int64_t>>(
-      BaseVector::create(BIGINT(), 1, pool));
+      BaseVector::create(BIGINT(), 1, pool()));
   rowsWritten->set(0, numWrittenRows_);
 
   std::vector<VectorPtr> columns = {rowsWritten};
@@ -107,7 +105,7 @@ RowVectorPtr TableWriter::getOutput() {
   // TODO Find a way to not have this Presto-specific logic in here.
   if (outputType_->size() > 1) {
     auto fragments = std::dynamic_pointer_cast<FlatVector<StringView>>(
-        BaseVector::create(VARBINARY(), 1, pool));
+        BaseVector::create(VARBINARY(), 1, pool()));
     fragments->setNull(0, true);
     columns.emplace_back(fragments);
 
@@ -121,11 +119,11 @@ RowVectorPtr TableWriter::getOutput() {
     // clang-format on
 
     auto commitContext = std::make_shared<ConstantVector<StringView>>(
-        pool, 1, false, VARBINARY(), StringView(commitContextJson));
+        pool(), 1, false, VARBINARY(), StringView(commitContextJson));
     columns.emplace_back(commitContext);
   }
 
   return std::make_shared<RowVector>(
-      pool, outputType_, BufferPtr(nullptr), 1, columns);
+      pool(), outputType_, BufferPtr(nullptr), 1, columns);
 }
 } // namespace facebook::velox::exec

@@ -27,10 +27,7 @@ struct ArrayAccumulator {
 
 class ArrayAggAggregate : public exec::Aggregate {
  public:
-  explicit ArrayAggAggregate(
-      core::AggregationNode::Step step,
-      TypePtr resultType)
-      : Aggregate(step, resultType) {}
+  explicit ArrayAggAggregate(TypePtr resultType) : Aggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(ArrayAccumulator);
@@ -42,13 +39,6 @@ class ArrayAggAggregate : public exec::Aggregate {
     for (auto index : indices) {
       new (groups[index] + offset_) ArrayAccumulator();
     }
-  }
-
-  void initializeNewGroups(
-      char** /*groups*/,
-      folly::Range<const vector_size_t*> /*indices*/,
-      const VectorPtr& /*initialState*/) override {
-    VELOX_NYI();
   }
 
   void finalize(char** groups, int32_t numGroups) override {
@@ -181,7 +171,7 @@ bool registerArrayAggregate(const std::string& name) {
             argTypes.size(), 1, "{} takes at most one argument", name);
         auto rawInput = exec::isRawInput(step);
         TypePtr returnType = rawInput ? ARRAY(argTypes[0]) : argTypes[0];
-        return std::make_unique<ArrayAggAggregate>(step, returnType);
+        return std::make_unique<ArrayAggAggregate>(returnType);
       });
   return true;
 }
