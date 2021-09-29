@@ -108,7 +108,6 @@ MachinePageCount MappedMemory::allocationSize(
   return pagesToAlloc;
 }
 
-  
 namespace {
 // Actual Implementation of MappedMemory.
 class MappedMemoryImpl : public MappedMemory {

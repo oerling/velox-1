@@ -46,7 +46,7 @@ class MappedMemory {
   static constexpr uint64_t kPageSize = 4096;
   static constexpr int32_t kMaxSizeClasses = 12;
   static constexpr int32_t kNoOwner = -1;
-  
+
   // Represents a number of consecutive pages of kPageSize bytes.
   class PageRun {
    public:
@@ -158,9 +158,9 @@ class MappedMemory {
   };
 
   MappedMemory() {
-      sizes_ = {4, 8, 16, 32, 64, 128, 256};
+    sizes_ = {4, 8, 16, 32, 64, 128, 256};
   }
-  
+
   virtual ~MappedMemory() {}
 
   // Returns the process-wide default instance or an application-supplied custom
@@ -214,18 +214,17 @@ class MappedMemory {
     return nullptr;
   }
 
-protected:
+ protected:
   MachinePageCount allocationSize(
-    MachinePageCount numPages,
-    MachinePageCount minSizeClass,
-    std::array<int32_t, kMaxSizeClasses>* sizeIndices,
-    std::array<int32_t, kMaxSizeClasses>* sizeCounts,
-    int32_t* numSizes) const; 
+      MachinePageCount numPages,
+      MachinePageCount minSizeClass,
+      std::array<int32_t, kMaxSizeClasses>* sizeIndices,
+      std::array<int32_t, kMaxSizeClasses>* sizeCounts,
+      int32_t* numSizes) const;
   // The machine page counts corresponding to different sizes in order
   // of increasing size.
   std::vector<MachinePageCount> sizes_;
 
-  
  private:
   // Singleton instance.
   static std::unique_ptr<MappedMemory> instance_;

@@ -341,7 +341,8 @@ bool MmapAllocator::SizeClass::allocateLocked(
 }
 
 MachinePageCount MmapAllocator::SizeClass::adviseAway(
-						      MachinePageCount numPages, MmapAllocator* allocator) {
+    MachinePageCount numPages,
+    MmapAllocator* allocator) {
   // Allocate as many mapped free pages as needed and advise them away.
   ClassPageCount target = bits::roundUp(numPages, pageSize_) / pageSize_;
   Allocation allocation(allocator);

@@ -31,7 +31,6 @@ using namespace facebook::velox;
 using namespace facebook::velox::memory;
 
 struct Block {
-
   ~Block() {
     if (data) {
       free(data);
@@ -84,7 +83,8 @@ class FragmentationTest {
     block->size = size;
     if (memory_) {
       if (size <= 8 << 20) {
-	block->allocation = std::make_unique<MappedMemory::Allocation>(memory_.get());
+        block->allocation =
+            std::make_unique<MappedMemory::Allocation>(memory_.get());
         if (!memory_->allocate(size / 4096, 0, *block->allocation)) {
           VELOX_FAIL("allocate() faild");
         }

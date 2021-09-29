@@ -21,8 +21,8 @@
 #include <mutex>
 #include <unordered_set>
 
-#include "velox/common/memory/MappedMemory.h"
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/memory/MappedMemory.h"
 
 namespace facebook::velox::memory {
 
@@ -156,7 +156,9 @@ class MmapAllocator : public MappedMemory {
 
     ClassPageCount checkConsistency(ClassPageCount* numMapped);
 
-    MachinePageCount adviseAway(MachinePageCount numPages, MmapAllocator* allocator);
+    MachinePageCount adviseAway(
+        MachinePageCount numPages,
+        MmapAllocator* allocator);
 
     void setAllMapped(Allocation* allocation, bool value);
     void setMappedBits(MappedMemory::PageRun run, bool value);

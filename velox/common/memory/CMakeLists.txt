@@ -13,8 +13,8 @@
 #limitations under the License.
 add_subdirectory(tests)
 
-    add_library(velox_memory Memory.cpp MemoryUsage.cpp MappedMemory.cpp
-                     MmapAllocator.cpp MemoryUsageTracker.cpp)
+add_library(velox_memory Memory.cpp MemoryUsage.cpp MappedMemory.cpp
+                         MmapAllocator.cpp MemoryUsageTracker.cpp)
 
-        target_link_libraries(velox_memory velox_flag_definitions
-                                  velox_exception ${FOLLY_WITH_DEPENDENCIES})
+target_link_libraries(velox_memory velox_flag_definitions velox_exception
+                      ${FOLLY_WITH_DEPENDENCIES})

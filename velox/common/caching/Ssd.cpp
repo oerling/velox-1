@@ -195,7 +195,7 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
   }
 }
 
-  bool SsdFile::evictLocked() {
+bool SsdFile::evictLocked() {
   if (numRegions_ < maxRegions_) {
     auto newSize = (numRegions_ + 1) * kRegionSize;
     auto rc = ftruncate(fd_, newSize);
