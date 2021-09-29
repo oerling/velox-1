@@ -534,4 +534,4 @@ HiveConnector::HiveConnector(
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
 } // namespace facebook::velox::connector::hive
-  // namespace facebook::velox::connector::hive
+

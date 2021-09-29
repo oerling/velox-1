@@ -92,7 +92,7 @@ std::shared_ptr<cache::ScanTracker> Connector::getTracker(
       trackers[newTracker->id()] = newTracker;
       return newTracker;
     }
-    std::shared_ptr tracker = it->second.lock();
+    std::shared_ptr<cache::ScanTracker> tracker = it->second.lock();
     if (!tracker) {
       tracker = std::make_shared<cache::ScanTracker>(scanId, unregisterTracker);
       trackers[tracker->id()] = tracker;
