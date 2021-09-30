@@ -122,8 +122,8 @@ class TableScanTest : public virtual HiveConnectorTestBase,
         {"c0", regularColumn("c0")},
         {"c1", regularColumn("c1")}};
 
-    std::unordered_map<std::string, std::string> partitionKeys = {
-        {"ds", "2020-11-01"}};
+    std::unordered_map<std::string, std::optional<std::string>> partitionKeys =
+        {{"ds", {"2020-11-01"}}};
     auto split = std::make_shared<HiveConnectorSplit>(
         kHiveConnectorId,
         filePath,
@@ -1383,7 +1383,7 @@ TEST_P(TableScanTest, bucket) {
         facebook::dwio::common::FileFormat::ORC,
         0,
         fs::file_size(filePaths[i]->path),
-        std::unordered_map<std::string, std::string>(),
+        std::unordered_map<std::string, std::optional<std::string>>(),
         bucket));
   }
 
