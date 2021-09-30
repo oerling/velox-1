@@ -58,6 +58,15 @@ bool MmapAllocator::allocate(
   }
   ++numAllocations_;
   numAllocatedPages_ += pagesToAlloc;
+  if (beforeAllocCB) {
+    try {
+      beforeAllocCB(pagesToAlloc * kPageSize);
+    } catch (const std::exception& e) {
+          numAllocated_.fetch_sub(pagesToAlloc);
+
+      throw std::current_exception();
+    }
+  }
   MachinePageCount newMapsNeeded = 0;
   for (int i = 0; i < numSizes; ++i) {
     if (!sizeClasses_[sizeIndices[i]]->allocate(
@@ -108,7 +117,6 @@ bool MmapAllocator::ensureEnoughMappedPages(
 }
 
 int64_t MmapAllocator::free(Allocation& allocation) {
-  ++numFrees_;
   auto numFreed = freeInternal(allocation);
   numAllocated_.fetch_sub(numFreed);
   return numFreed * kPageSize;
