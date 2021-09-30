@@ -109,7 +109,9 @@ bool MmapAllocator::ensureEnoughMappedPages(
 
 int64_t MmapAllocator::free(Allocation& allocation) {
   ++numFrees_;
-  numAllocated_.fetch_sub(freeInternal(allocation));
+  auto numFreed = freeInternal(allocation);
+  numAllocated_.fetch_sub(numFreed);
+  return numFreed * kPageSize;
 }
 
 MachinePageCount MmapAllocator::freeInternal(Allocation& allocation) {
