@@ -32,7 +32,7 @@ using ClassPageCount = int32_t;
 
 struct MmapAllocatorOptions {
   //  Capacity in bytes, defult 512MB
-  size_t capacity = 1L << 29;
+  uint64_t capacity = 1L << 29;
 };
 
 class MmapAllocator : public MappedMemory {

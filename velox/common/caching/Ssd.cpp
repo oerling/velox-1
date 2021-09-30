@@ -18,6 +18,7 @@
 #include <folly/portability/SysUio.h>
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
+#include "velox/common/caching/GroupTracker.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -440,12 +441,14 @@ SsdCacheStats SsdCache::stats() const {
 
 std::string SsdCache::toString() const {
   auto data = stats();
+  uint64_t capacity =
+      files_.size() * files_[0]->maxRegions() * SsdFile::kRegionSize;
   std::stringstream out;
   out << "Ssd cache traffic: Write " << (data.bytesWritten >> 20) << "MB read "
-      << (data.bytesRead >> 20) << "MB Size "
-      << ((files_.size() * files_[0]->maxRegions() * SsdFile::kRegionSize) >>
-          30)
+      << (data.bytesRead >> 20) << "MB Size " << (capacity >> 30)
       << "GB Occupied " << (data.bytesCached >> 30) << "GB";
+  out << (data.entriesCached >> 10) << "K entries.";
+  out << "\nGroupStats: " << GroupStats::instance().toString(capacity);
   return out.str();
 }
 

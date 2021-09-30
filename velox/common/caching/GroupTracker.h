@@ -44,14 +44,14 @@ class ApproxCounter {
 
  private:
   std::vector<uint64_t> bits_;
-  int32_t count_;
+  int32_t count_{0};
 };
 
 struct ReadCounts {
-  uint64_t referenceBytes;
-  uint64_t readBytes;
-  uint32_t readCount;
-  uint32_t referenceCount;
+  uint64_t referenceBytes{0};
+  uint64_t readBytes{0};
+  uint32_t readCount{0};
+  uint32_t referenceCount{0};
 };
 
 // Represents a groupId, column and its size and score. These are

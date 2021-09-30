@@ -18,6 +18,7 @@
 #include <folly/container/F14Map.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include "velox/common/caching/FileIds.h"
+#include "velox/common/memory/MmapAllocator.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 
 #include <gtest/gtest.h>
@@ -120,8 +121,11 @@ class CacheTest : public testing::Test {
     if (!file.empty()) {
       ssd = std::make_unique<SsdCache>(file, ssdBytes, 1);
     }
+    memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_unique<AsyncDataCache>(
-        MappedMemory::createDefaultInstance(), maxBytes, std::move(ssd));
+					      std::make_unique<memory::MmapAllocator>(options),
+        maxBytes,
+        std::move(ssd));
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));
@@ -406,19 +410,22 @@ TEST_F(CacheTest, ssd) {
       << " ramBytes = " << ramBytes
       << " sparseStripeBytes = " << sparseStripeBytes;
 
-  // Read files of 20 stripes each to prime SSD cache.
-  readFiles("prefix1_", 0, fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
 
-  auto ssdStats = cache_->ssdCache()->stats();
-  LOG(INFO) << "Wrote " << ssdStats.bytesWritten << " to SSD";
+  constexpr int32_t kStripesPerFile = 20;
+  auto bytesPerFile =  fullStripeBytes * kStripesPerFile;
+  auto filesPerGb = 1UL << 30 / bytesPerFile;
+  // Read files of 20 stripes each to prime SSD cache.
+  readFiles("prefix1_", 0, filesPerGb * 2, 30, 100, 1, kStripesPerFile, 4);
+
+  LOG(INFO) << cache_->toString();
 
   // Read the same and 50% more to trigger selection of what gets written.
-  readFiles("prefix1_", 0, 1.5 * fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
+  readFiles("prefix1_", 0, 3 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
 
-  ssdStats = cache_->ssdCache()->stats();
-  LOG(INFO) << "Wrote " << ssdStats.bytesWritten << " to SSD";
+  LOG(INFO) << cache_->toString();
 
-  readFiles("prefix1_", 0, 1.5 * fullStripesOnSsd / 20, 30, 100, 1, 20, 4);
+  readFiles("prefix1_", filesPerGb, 4 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
+  LOG(INFO) << cache_->toString();
 }
 
 TEST_F(CacheTest, singleFileThreads) {
