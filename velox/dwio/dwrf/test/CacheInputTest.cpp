@@ -123,7 +123,7 @@ class CacheTest : public testing::Test {
     }
     memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_unique<AsyncDataCache>(
-					      std::make_unique<memory::MmapAllocator>(options),
+        std::make_unique<memory::MmapAllocator>(options),
         maxBytes,
         std::move(ssd));
     for (auto i = 0; i < kMaxStreams; ++i) {
@@ -410,9 +410,8 @@ TEST_F(CacheTest, ssd) {
       << " ramBytes = " << ramBytes
       << " sparseStripeBytes = " << sparseStripeBytes;
 
-
   constexpr int32_t kStripesPerFile = 20;
-  auto bytesPerFile =  fullStripeBytes * kStripesPerFile;
+  auto bytesPerFile = fullStripeBytes * kStripesPerFile;
   auto filesPerGb = 1UL << 30 / bytesPerFile;
   // Read files of 20 stripes each to prime SSD cache.
   readFiles("prefix1_", 0, filesPerGb * 2, 30, 100, 1, kStripesPerFile, 4);
@@ -424,7 +423,8 @@ TEST_F(CacheTest, ssd) {
 
   LOG(INFO) << cache_->toString();
 
-  readFiles("prefix1_", filesPerGb, 4 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
+  readFiles(
+      "prefix1_", filesPerGb, 4 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
   LOG(INFO) << cache_->toString();
 }
 

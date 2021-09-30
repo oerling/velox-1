@@ -269,8 +269,8 @@ std::string MmapAllocator::SizeClass::toString() const {
         __builtin_popcountll(~pageAllocated_[i] & pageMapped_[i]);
   }
   auto mb = (count * MappedMemory::kPageSize * pageSize_) >> 20;
-  out << "[size " << pageSize_ << ": " << count << "(" << mb 
-      << "MB) allocated " << mb << mappedCount << " mapped";
+  out << "[size " << pageSize_ << ": " << count << "(" << mb << "MB) allocated "
+      << mb << mappedCount << " mapped";
   if (mappedFreeCount != numMappedFreePages_) {
     out << "Mismatched count of mapped free pages "
         << ". Actual= " << mappedFreeCount
