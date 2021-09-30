@@ -522,5 +522,5 @@ std::string MmapAllocator::toString() const {
   out << "]" << std::endl;
   return out.str();
 }
-  
+
 } // namespace facebook::velox::memory

@@ -72,7 +72,7 @@ class MmapAllocator : public MappedMemory {
       size_ = size;
     }
 
-  private:
+   private:
     MappedMemory* mappedMemory_ = nullptr;
     void* data_ = nullptr;
     uint64_t size_ = 0;

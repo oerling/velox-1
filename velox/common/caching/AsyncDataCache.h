@@ -868,8 +868,8 @@ class SsdCache {
   SsdCacheStats stats() const;
 
   std::string toString() const;
-  
-private:
+
+ private:
   std::string filePrefix_;
   const int32_t numShards_;
 

@@ -215,7 +215,7 @@ class MappedMemory {
   }
 
   virtual std::string toString() const;
-  
+
  protected:
   MachinePageCount allocationSize(
       MachinePageCount numPages,
