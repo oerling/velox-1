@@ -438,4 +438,15 @@ SsdCacheStats SsdCache::stats() const {
   return stats;
 }
 
+std::string SsdCache::toString() const {
+  auto data = stats();
+  std::stringstream out;
+  out << "Ssd cache traffic: Write " << (data.bytesWritten >> 20) << "MB read "
+      << (data.bytesRead >> 20) << "MB Size "
+      << ((files_.size() * files_[0]->maxRegions() * SsdFile::kRegionSize) >>
+          30)
+      << "GB Occupied " << (data.bytesCached >> 30) << "GB";
+  return out.str();
+}
+
 } // namespace facebook::velox::cache

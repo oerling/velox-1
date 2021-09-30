@@ -549,6 +549,10 @@ std::string AsyncDataCache::toString() const {
       << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20)
       << " allocated pages " << numAllocated() << " cached pages "
       << cachedPages_;
+  out << "\nBacking: " << mappedMemory_->toString();
+  if (ssdCache_) {
+    out << "\nSSD: " << ssdCache_->toString();
+  }
   return out.str();
 }
 

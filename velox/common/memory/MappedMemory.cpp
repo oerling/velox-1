@@ -70,6 +70,10 @@ void MappedMemory::destroyTestOnly() {
   instance_ = nullptr;
 }
 
+  std::string MappedMemory::toString() const {
+    return fmt::format("MappedMemory: Allocated pages {}", numAllocated()); 
+  }
+  
 MachinePageCount MappedMemory::allocationSize(
     MachinePageCount numPages,
     MachinePageCount minSizeClass,

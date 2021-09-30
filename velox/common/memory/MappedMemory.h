@@ -158,7 +158,7 @@ class MappedMemory {
   };
 
   MappedMemory() {
-    sizes_ = {4, 8, 16, 32, 64, 128, 256};
+    sizes_ = {1, 2, 4, 8, 16, 32, 64, 128, 256};
   }
 
   virtual ~MappedMemory() {}
@@ -214,6 +214,8 @@ class MappedMemory {
     return nullptr;
   }
 
+  virtual std::string toString() const;
+  
  protected:
   MachinePageCount allocationSize(
       MachinePageCount numPages,

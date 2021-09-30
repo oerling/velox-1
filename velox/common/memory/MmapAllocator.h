@@ -72,7 +72,7 @@ class MmapAllocator : public MappedMemory {
       size_ = size;
     }
 
-   private:
+  private:
     MappedMemory* mappedMemory_ = nullptr;
     void* data_ = nullptr;
     uint64_t size_ = 0;
@@ -126,7 +126,7 @@ class MmapAllocator : public MappedMemory {
     return numMapped_;
   }
 
-  virtual std::string toString() const;
+  std::string toString() const override;
 
  private:
   static constexpr uint64_t kAllSet = 0xffffffffffffffff;
