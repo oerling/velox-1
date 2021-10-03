@@ -114,7 +114,7 @@ class CacheTest : public testing::Test {
   }
 
   void initializeCache(
-      int64_t maxBytes,
+      uint64_t maxBytes,
       const std::string& file = "",
       uint64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssd;
