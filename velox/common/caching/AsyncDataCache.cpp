@@ -437,7 +437,7 @@ CachePin AsyncDataCache::findOrCreate(
   return shards_[shard]->findOrCreate(key, size, wait);
 }
 
-  bool AsyncDataCache::makeSpace(
+bool AsyncDataCache::makeSpace(
     MachinePageCount numPages,
     std::function<bool()> allocate) {
   constexpr int32_t kMaxAttempts = kNumShards * 4;

@@ -598,7 +598,7 @@ class AsyncDataCache : public memory::MappedMemory,
     return mappedMemory_->free(allocation);
   }
 
-    bool allocateContiguous(
+  bool allocateContiguous(
       memory::MachinePageCount numPages,
       Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
@@ -647,9 +647,9 @@ class AsyncDataCache : public memory::MappedMemory,
   static constexpr int32_t kShardMask = kNumShards - 1;
 
   bool makeSpace(
-		 memory::MachinePageCount numPages,
-    std::function<bool()> allocate);
-  
+      memory::MachinePageCount numPages,
+      std::function<bool()> allocate);
+
   // Keeps the id to file map alive as long as 'this' is live.
   std::shared_ptr<StringIdMap> fileIds_;
   std::unique_ptr<memory::MappedMemory> mappedMemory_;
