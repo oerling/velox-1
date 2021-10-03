@@ -45,6 +45,7 @@ class MappedMemory {
  public:
   static constexpr uint64_t kPageSize = 4096;
   static constexpr int32_t kMaxSizeClasses = 12;
+  static constexpr int32_t kNoOwner = -1;
 
   // Represents a number of consecutive pages of kPageSize bytes.
   class PageRun {
@@ -156,6 +157,48 @@ class MappedMemory {
     int32_t numPages_ = 0;
   };
 
+  class ContiguousAllocation {
+   public:
+    ContiguousAllocation() = default;
+    ~ContiguousAllocation() {
+      if (data_ && mappedMemory_) {
+	mappedMemory_->freeContiguous(*this);
+      }
+      data_ = nullptr;
+    }
+
+    MappedMemory* mappedMemory() const {
+      return mappedMemory_;
+    }
+
+    MachinePageCount numPages() const;
+
+    template <typename T = uint8_t>
+    T* data() const {
+      return reinterpret_cast<T*>(data_);
+    }
+
+    uint64_t size() const {
+      return size_;
+    }
+
+    void reset(MappedMemory* mappedMemory, void* data, uint64_t size) {
+      mappedMemory_ = mappedMemory;
+      data_ = data;
+      size_ = size;
+    }
+
+   private:
+    MappedMemory* mappedMemory_ = nullptr;
+    void* data_ = nullptr;
+    uint64_t size_ = 0;
+  };
+
+
+  MappedMemory() {
+    sizes_ = {1, 2, 4, 8, 16, 32, 64, 128, 256};
+  }
+
   virtual ~MappedMemory() {}
 
   // Returns the process-wide default instance or an application-supplied custom
@@ -190,13 +233,31 @@ class MappedMemory {
   // Returns the number of freed bytes.
   virtual int64_t free(Allocation& allocation) = 0;
 
+  // Makes a contiguous mmap of 'numPages'. Advises away the required
+  // number of free pages so as not to have resident size exceed the
+  // capacity if capacity is bounded. Returns false if sufficient free
+  // pages do not exist. If 'collateral' or 'largeCollateral' are
+  // non-null their contents are freed to provide building materials
+  // for the new allocation. In all cases these will be empty before
+  // return, regardless of success.
+  virtual bool allocateContiguous(
+      MachinePageCount numPages,
+      Allocation* collateral,
+      ContiguousAllocation* largeCollateral,
+      ContiguousAllocation& allocation,
+				      std::function<void(int64_t)> beforeAllocCB = nullptr) = 0;
+
+  virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
+
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
   virtual bool checkConsistency() = 0;
 
   static void destroyTestOnly();
 
-  virtual const std::vector<MachinePageCount>& sizes() const = 0;
+  virtual const std::vector<MachinePageCount>& sizes() const {
+    return sizes_;
+  }
   virtual MachinePageCount numAllocated() const = 0;
   virtual MachinePageCount numMapped() const = 0;
 
@@ -206,6 +267,19 @@ class MappedMemory {
   virtual std::shared_ptr<MappedMemory> sharedPtr() {
     return nullptr;
   }
+
+  virtual std::string toString() const;
+
+ protected:
+  MachinePageCount allocationSize(
+      MachinePageCount numPages,
+      MachinePageCount minSizeClass,
+      std::array<int32_t, kMaxSizeClasses>* sizeIndices,
+      std::array<int32_t, kMaxSizeClasses>* sizeCounts,
+      int32_t* numSizes) const;
+  // The machine page counts corresponding to different sizes in order
+  // of increasing size.
+  std::vector<MachinePageCount> sizes_;
 
  private:
   // Singleton instance.
@@ -253,6 +327,22 @@ class ScopedMappedMemory final
     return freed;
   }
 
+    bool allocateContiguous(
+			  MachinePageCount numPages,
+			  Allocation* collateral,
+			  ContiguousAllocation* largeCollateral,
+			  ContiguousAllocation& allocation,
+			  std::function<void(int64_t)> beforeAllocCB = nullptr) override;
+
+  void freeContiguous(ContiguousAllocation& allocation) override {
+    int64_t size = allocation.size();
+    parent_->freeContiguous(allocation);
+    if (tracker_) {
+      tracker_->update(-size);
+    }
+  }
+
+  
   bool checkConsistency() override {
     return parent_->checkConsistency();
   }
