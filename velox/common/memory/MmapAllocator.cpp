@@ -47,8 +47,8 @@ bool MmapAllocator::allocate(
   std::array<int32_t, kMaxSizeClasses> sizeIndices = {};
   std::array<int32_t, kMaxSizeClasses> sizeCounts = {};
   int32_t numSizes = 0;
-  int32_t pagesToAlloc = allocationSize(
-      numPages, minSizeClass, sizeIndices, sizeCounts, numSizes);
+  int32_t pagesToAlloc =
+      allocationSize(numPages, minSizeClass, sizeIndices, sizeCounts, numSizes);
   if (numAllocated_ + pagesToAlloc > capacity_) {
     return false;
   }
