@@ -503,10 +503,9 @@ bool AsyncDataCache::allocate(
   bool AsyncDataCache::allocateContiguous(
 			  MachinePageCount numPages,
 			  Allocation* collateral,
-			  ContiguousAllocation* largeCollateral,
 			  ContiguousAllocation& allocation,
 			  std::function<void(int64_t)> beforeAllocCB) {
-    return makeSpace(numPages, [&]() { return mappedMemory_->allocateContiguous(numPages, collateral, largeCollateral, allocation, beforeAllocCB); });
+    return makeSpace(numPages, [&]() { return mappedMemory_->allocateContiguous(numPages, collateral, allocation, beforeAllocCB); });
 
     }
 

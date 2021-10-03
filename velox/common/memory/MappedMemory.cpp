@@ -126,8 +126,8 @@ class MappedMemoryImpl : public MappedMemory {
 
   bool allocateContiguous(
       MachinePageCount numPages,
-      Allocation* collateral,
-      ContiguousAllocation* largeCollateral,
+      Allocation* FOLLY_NULLABLE collateral,
+
       ContiguousAllocation& allocation,
       std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
@@ -221,22 +221,20 @@ bool MappedMemoryImpl::allocate(
 
 bool MappedMemoryImpl::allocateContiguous(
     MachinePageCount numPages,
-    Allocation* collateral,
-    ContiguousAllocation* largeCollateral,
+    Allocation* FOLLY_NULLABLE collateral,
     ContiguousAllocation& allocation,
     std::function<void(int64_t)> beforeAllocCB) {
   MachinePageCount collateralSize = 0;
-  MachinePageCount largeCollateralSize = 0;
   if (collateral) {
     collateralSize = free(*collateral) / kPageSize;
   }
-  if (largeCollateral && largeCollateral->data()) {
-    largeCollateralSize = largeCollateral->numPages();
-    if (munmap(largeCollateral->data(), largeCollateral->size()) < 0) {
-      LOG(ERROR) << "munmap got " << errno << "for " << largeCollateral->data()
-                 << ", " << largeCollateral->size();
+  auto largeCollateralSize = allocation.numPages();
+  if (largeCollateralSize) {
+    if (munmap(allocation.data(), allocation.size()) < 0) {
+      LOG(ERROR) << "munmap got " << errno << "for " << allocation.data()
+                 << ", " << allocation.size();
     }
-    largeCollateral->reset(nullptr, nullptr, 0);
+    allocation.reset(nullptr, nullptr, 0);
   }
   int64_t needed = numPages - collateralSize - largeCollateralSize;
   if (beforeAllocCB) {
@@ -364,14 +362,12 @@ bool ScopedMappedMemory::allocate(
 
 bool ScopedMappedMemory::allocateContiguous(
     MachinePageCount numPages,
-    Allocation* collateral,
-    ContiguousAllocation* largeCollateral,
+    Allocation* FOLLY_NULLABLE collateral,
     ContiguousAllocation& allocation,
     std::function<void(int64_t)> beforeAllocCB) {
   bool success = parent_->allocateContiguous(
       numPages,
       collateral,
-      largeCollateral,
       allocation,
       [this, beforeAllocCB](int64_t allocated) {
         if (tracker_) {

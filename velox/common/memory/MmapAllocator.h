@@ -53,11 +53,10 @@ class MmapAllocator : public MappedMemory {
   int64_t free(Allocation& allocation) override;
 
   bool allocateContiguous(
-			  MachinePageCount numPages,
-			  Allocation* collateral,
-			  ContiguousAllocation* largeCollateral,
-			  ContiguousAllocation& allocation,
-			  std::function<void(int64_t)> beforeAllocCB = nullptr) override;
+      MachinePageCount numPages,
+      Allocation* collateral,
+      ContiguousAllocation& allocation,
+      std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
   void freeContiguous(ContiguousAllocation& allocation) override;
 
@@ -199,10 +198,13 @@ class MmapAllocator : public MappedMemory {
   // Number of allocated pages. Allocation succeeds if an atomic
   // increment of this by the desired amount is <= 'capacity_'.
   std::atomic<MachinePageCount> numAllocated_;
-  // When using mmap/madvise, the current number pages backed by memory in the address ranges in 'sizeClasses_'
+  // When using mmap/madvise, the current number pages backed by memory in the
+  // address ranges in 'sizeClasses_'
   std::atomic<MachinePageCount> numMapped_;
-  // Number of pages allocated via allocateContiguous(). These count towards 'numAllocated_' but not towards 'numMapped_'. 
-  std::atomic<MachinePageCount> contiguousAllocated_{0};
+  // Number of pages allocated and explicitly mmap'd by the
+  // application, outside of 'sizeClasses'. These count towards 'numAllocated_' but not towards
+  // 'numMapped_'.
+  std::atomic<MachinePageCount> numExternalMapped_{0};
   MachinePageCount capacity_ = 0;
   // The machine page counts corresponding to different sizes in order
   // of increasing size.

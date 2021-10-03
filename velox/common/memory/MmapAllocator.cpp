@@ -136,22 +136,20 @@ MachinePageCount MmapAllocator::freeInternal(Allocation& allocation) {
 
 bool MmapAllocator::allocateContiguous(
     MachinePageCount numPages,
-    MmapAllocator::Allocation* collateral,
-    MmapAllocator::ContiguousAllocation* largeCollateral,
+    MmapAllocator::Allocation* FOLLY_NULLABLE collateral,
     MmapAllocator::ContiguousAllocation& allocation,
     std::function<void(int64_t)> beforeAllocCB) {
   MachinePageCount collateralSize = 0;
-  MachinePageCount largeCollateralSize = 0;
   if (collateral) {
     collateralSize = freeInternal(*collateral);
   }
-  if (largeCollateral && largeCollateral->data()) {
-    largeCollateralSize = largeCollateral->numPages();
-    if (munmap(largeCollateral->data(), largeCollateral->size()) < 0) {
-      LOG(ERROR) << "munmap got " << errno << "for " << largeCollateral->data()
-                 << ", " << largeCollateral->size();
+  int64_t largeCollateralSize = allocation.numPages();
+  if (largeCollateralSize) {
+    if (munmap(allocation.data(), allocation.size()) < 0) {
+      LOG(ERROR) << "munmap got " << errno << "for " << allocation.data()
+                 << ", " << allocation.size();
     }
-    largeCollateral->reset(nullptr, nullptr, 0);
+    allocation.reset(nullptr, nullptr, 0);
   }
   int64_t newPages = numPages - collateralSize - largeCollateralSize;
   if (beforeAllocCB) {
@@ -162,14 +160,14 @@ bool MmapAllocator::allocateContiguous(
       beforeAllocCB(
           -static_cast<int64_t>(collateralSize + largeCollateralSize) *
           kPageSize);
-      contiguousAllocated_ -= largeCollateralSize;
+      numExternalMapped_ -= largeCollateralSize;
       std::rethrow_exception(std::current_exception());
     }
   }
   int numAllocated = numAllocated_.fetch_add(newPages) + newPages;
   if (numAllocated > capacity_) {
     numAllocated_ -= newPages + collateralSize + largeCollateralSize;
-    contiguousAllocated_ -= largeCollateralSize;
+    numExternalMapped_ -= largeCollateralSize;
     return false;
   }
   int toAdvise = 0;
@@ -182,14 +180,14 @@ bool MmapAllocator::allocateContiguous(
       }
       if (advised < toAdvise) {
 	LOG(WARNING) << "Could not advise away " << toAdvise << " pages";
-	contiguousAllocated_ -= largeCollateralSize;
+	numExternalMapped_ -= largeCollateralSize;
         numMapped_ -= advised;
         numAllocated_ -= newPages + collateralSize + largeCollateralSize;
         return false;
       }
       numMapped_ -= advised;
     }
-  contiguousAllocated_ += numPages - largeCollateralSize;
+  numExternalMapped_ += numPages - largeCollateralSize;
   void* data = mmap(
       nullptr,
       numPages * kPageSize,
@@ -207,7 +205,7 @@ void MmapAllocator::freeContiguous(ContiguousAllocation& allocation) {
       LOG(ERROR) << "munmap returned " << errno << "for " << allocation.data()
                  << ", " << allocation.size();
     }
-    contiguousAllocated_ -= allocation.numPages();
+    numExternalMapped_ -= allocation.numPages();
     numAllocated_ -= allocation.numPages();
     allocation.reset(nullptr, nullptr, 0);
   }
@@ -523,10 +521,10 @@ bool MmapAllocator::checkConsistency() {
     mappedCount += mapped * sizeClass->pageSize();
   }
   bool ok = true;
-  if (count != numAllocated_ - contiguousAllocated_) {
+  if (count != numAllocated_ - numExternalMapped_) {
     ok = false;
     LOG(WARNING) << "Allocated count out of sync. Actual= " << count
-                 << " recorded= " << numAllocated_ - contiguousAllocated_;
+                 << " recorded= " << numAllocated_ - numExternalMapped_;
   }
   if (mappedCount != numMapped_) {
     ok = false;

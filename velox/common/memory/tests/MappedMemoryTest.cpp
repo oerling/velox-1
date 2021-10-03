@@ -175,7 +175,7 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
         if (available <= kCapacity / 2 && !largeTested) {
           largeTested = true;
           MappedMemory::ContiguousAllocation large;
-          if (!allocateContiguous(available / 2, nullptr, nullptr, large)) {
+          if (!allocateContiguous(available / 2, nullptr, large)) {
             FAIL() << "Could not allocate half the available";
             return;
           }
@@ -185,20 +185,18 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
             return;
           }
           // Try to allocate more than available;
-          MappedMemory::ContiguousAllocation larger;
           EXPECT_THROW(
               instance_->allocateContiguous(
-                  available + 1, &small, &large, larger),
+                  available + 1, &small, large),
               VeloxRuntimeError);
 
           // Check The failed allocation freed the collateral.
           EXPECT_EQ(small.numPages(), 0);
           EXPECT_EQ(large.numPages(), 0);
-          if (!allocateContiguous(available, nullptr, nullptr, larger)) {
+          if (!allocateContiguous(available, nullptr, large)) {
             FAIL() << "Could not allocate rest of capacity";
           }
-          EXPECT_GE(larger.numPages(), available);
-          EXPECT_EQ(large.numPages(), 0);
+          EXPECT_GE(large.numPages(), available);
           EXPECT_EQ(small.numPages(), 0);
           EXPECT_EQ(kCapacity, instance_->numAllocated());
           if (useMmap_) {
@@ -206,13 +204,11 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
             // other half mapped by the contiguous allocation.
             EXPECT_EQ(kCapacity / 2, instance_->numMapped());
           }
-          MappedMemory::ContiguousAllocation smaller;
-          if (!allocateContiguous(available / 2, nullptr, &larger, smaller)) {
+          if (!allocateContiguous(available / 2, nullptr, large)) {
             FAIL()
                 << "Could not exchange all of available for half of available";
           }
-          EXPECT_GE(smaller.numPages(), available / 2);
-          EXPECT_EQ(larger.numPages(), 0);
+          EXPECT_GE(large.numPages(), available / 2);
         }
       }
     }
@@ -220,11 +216,10 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
 
   bool allocateContiguous(
       int numPages,
-      MappedMemory::Allocation* collateral,
-      MappedMemory::ContiguousAllocation* largeCollateral,
+      MappedMemory::Allocation* FOLLY_NULLABLE collateral,
       MappedMemory::ContiguousAllocation& allocation) {
     bool success = instance_->allocateContiguous(
-        numPages, collateral, largeCollateral, allocation);
+        numPages, collateral, allocation);
     if (success) {
       initializeContents(allocation);
     }

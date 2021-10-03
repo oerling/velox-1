@@ -915,8 +915,7 @@ class AsyncDataCache : public memory::MappedMemory,
 
     bool allocateContiguous(
 			    memory::MachinePageCount numPages,
-			  Allocation* collateral,
-			  ContiguousAllocation* largeCollateral,
+			  Allocation* FOLLY_NULLABLE collateral,
 			  ContiguousAllocation& allocation,
 			  std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
