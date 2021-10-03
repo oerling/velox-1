@@ -186,8 +186,7 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
           }
           // Try to allocate more than available;
           EXPECT_THROW(
-              instance_->allocateContiguous(
-                  available + 1, &small, large),
+              instance_->allocateContiguous(available + 1, &small, large),
               VeloxRuntimeError);
 
           // Check The failed allocation freed the collateral.
@@ -218,8 +217,8 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
       int numPages,
       MappedMemory::Allocation* FOLLY_NULLABLE collateral,
       MappedMemory::ContiguousAllocation& allocation) {
-    bool success = instance_->allocateContiguous(
-        numPages, collateral, allocation);
+    bool success =
+        instance_->allocateContiguous(numPages, collateral, allocation);
     if (success) {
       initializeContents(allocation);
     }

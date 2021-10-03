@@ -489,27 +489,29 @@ bool AsyncDataCache::makeSpace(
   return false;
 }
 
-
 bool AsyncDataCache::allocate(
-			      MachinePageCount numPages,
+    MachinePageCount numPages,
     int32_t owner,
     Allocation& out,
     std::function<void(int64_t)> beforeAllocCB,
     MachinePageCount minSizeClass) {
-    free(out);
-  return makeSpace(numPages, [&]() {return mappedMemory_->allocate(numPages, owner, out); });
+  free(out);
+  return makeSpace(numPages, [&]() {
+    return mappedMemory_->allocate(numPages, owner, out);
+  });
 }
-  
-  bool AsyncDataCache::allocateContiguous(
-			  MachinePageCount numPages,
-			  Allocation* collateral,
-			  ContiguousAllocation& allocation,
-			  std::function<void(int64_t)> beforeAllocCB) {
-    return makeSpace(numPages, [&]() { return mappedMemory_->allocateContiguous(numPages, collateral, allocation, beforeAllocCB); });
 
-    }
+bool AsyncDataCache::allocateContiguous(
+    MachinePageCount numPages,
+    Allocation* collateral,
+    ContiguousAllocation& allocation,
+    std::function<void(int64_t)> beforeAllocCB) {
+  return makeSpace(numPages, [&]() {
+    return mappedMemory_->allocateContiguous(
+        numPages, collateral, allocation, beforeAllocCB);
+  });
+}
 
-  
 void AsyncDataCache::incrementNew(uint64_t size) {
   newBytes_ += size;
   if (!ssdCache_) {

@@ -202,8 +202,8 @@ class MmapAllocator : public MappedMemory {
   // address ranges in 'sizeClasses_'
   std::atomic<MachinePageCount> numMapped_;
   // Number of pages allocated and explicitly mmap'd by the
-  // application, outside of 'sizeClasses'. These count towards 'numAllocated_' but not towards
-  // 'numMapped_'.
+  // application, outside of 'sizeClasses'. These count towards 'numAllocated_'
+  // but not towards 'numMapped_'.
   std::atomic<MachinePageCount> numExternalMapped_{0};
   MachinePageCount capacity_ = 0;
   // The machine page counts corresponding to different sizes in order

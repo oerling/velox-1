@@ -165,7 +165,7 @@ class MappedMemory {
     ContiguousAllocation() = default;
     ~ContiguousAllocation() {
       if (data_ && mappedMemory_) {
-	mappedMemory_->freeContiguous(*this);
+        mappedMemory_->freeContiguous(*this);
       }
       data_ = nullptr;
     }
@@ -196,7 +196,7 @@ class MappedMemory {
     void* data_{nullptr};
     uint64_t size_{0};
   };
-  
+
   MappedMemory() {
     sizes_ = {1, 2, 4, 8, 16, 32, 64, 128, 256};
   }
@@ -252,7 +252,7 @@ class MappedMemory {
       MachinePageCount numPages,
       Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
-				      std::function<void(int64_t)> beforeAllocCB = nullptr) = 0;
+      std::function<void(int64_t)> beforeAllocCB = nullptr) = 0;
 
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
 
@@ -334,11 +334,11 @@ class ScopedMappedMemory final
     return freed;
   }
 
-    bool allocateContiguous(
-			  MachinePageCount numPages,
-			  Allocation* FOLLY_NULLABLE collateral,
-			  ContiguousAllocation& allocation,
-			  std::function<void(int64_t)> beforeAllocCB = nullptr) override;
+  bool allocateContiguous(
+      MachinePageCount numPages,
+      Allocation* FOLLY_NULLABLE collateral,
+      ContiguousAllocation& allocation,
+      std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
   void freeContiguous(ContiguousAllocation& allocation) override {
     int64_t size = allocation.size();
@@ -347,7 +347,7 @@ class ScopedMappedMemory final
       tracker_->update(-size);
     }
   }
-  
+
   bool checkConsistency() override {
     return parent_->checkConsistency();
   }
