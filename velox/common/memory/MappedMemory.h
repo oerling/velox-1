@@ -157,6 +157,9 @@ class MappedMemory {
     int32_t numPages_ = 0;
   };
 
+  // Represents a mmap'd run of contiguous pages that do not belong to
+  // any size class but are still accounted by the owning
+  // MappedMemory.
   class ContiguousAllocation {
    public:
     ContiguousAllocation() = default;
@@ -189,9 +192,9 @@ class MappedMemory {
     }
 
    private:
-    MappedMemory* mappedMemory_ = nullptr;
-    void* data_ = nullptr;
-    uint64_t size_ = 0;
+    MappedMemory* mappedMemory_{nullptr};
+    void* data_{nullptr};
+    uint64_t size_{0};
   };
 
   MappedMemory() {
@@ -235,14 +238,19 @@ class MappedMemory {
   // Makes a contiguous mmap of 'numPages'. Advises away the required
   // number of free pages so as not to have resident size exceed the
   // capacity if capacity is bounded. Returns false if sufficient free
-  // pages do not exist. If 'collateral' or 'largeCollateral' are
-  // non-null their contents are freed to provide building materials
-  // for the new allocation. In all cases these will be empty before
-  // return, regardless of success.
+  // pages do not exist. 'collateral' and 'allocation' are freed and
+  // unmapped or advised away to provide pages to back the new
+  // 'allocation'. This will always succeed if collateral and
+  // allocation together cover the new size of
+  // allocation. 'allocation' is newly mapped and hence zeroed. The
+  // contents of 'allocation' and 'collateral' are freed in all cases,
+  // also if the allocation fails. 'beforeAllocCB can be used to
+  // update trackers. It may throw and the end state will be
+  // consistent, with no new allocation and 'allocation' and
+  // 'collateral' cleared.
   virtual bool allocateContiguous(
       MachinePageCount numPages,
-      Allocation* collateral,
-      ContiguousAllocation* largeCollateral,
+      Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
       std::function<void(int64_t)> beforeAllocCB = nullptr) = 0;
 
@@ -328,8 +336,7 @@ class ScopedMappedMemory final
 
   bool allocateContiguous(
       MachinePageCount numPages,
-      Allocation* collateral,
-      ContiguousAllocation* largeCollateral,
+      Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
       std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
