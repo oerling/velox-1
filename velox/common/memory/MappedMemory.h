@@ -55,7 +55,7 @@ class MappedMemory {
     static constexpr uint32_t kMaxPagesInRun =
         (1UL << (64U - kPointerSignificantBits)) - 1;
 
-    PageRun(void* address, MachinePageCount numPages) {
+    PageRun(void* FOLLY_NONNULL address, MachinePageCount numPages) {
       auto word = reinterpret_cast<uint64_t>(address); // NOLINT
       if (!FLAGS_velox_use_malloc) {
         VELOX_CHECK(
@@ -281,9 +281,9 @@ class MappedMemory {
   MachinePageCount allocationSize(
       MachinePageCount numPages,
       MachinePageCount minSizeClass,
-      std::array<int32_t, kMaxSizeClasses>* sizeIndices,
-      std::array<int32_t, kMaxSizeClasses>* sizeCounts,
-      int32_t* numSizes) const;
+      std::array<int32_t, kMaxSizeClasses>& sizeIndices,
+      std::array<int32_t, kMaxSizeClasses>& sizeCounts,
+      int32_t& numSizes) const;
   // The machine page counts corresponding to different sizes in order
   // of increasing size.
   std::vector<MachinePageCount> sizes_;
@@ -293,7 +293,7 @@ class MappedMemory {
   static std::unique_ptr<MappedMemory> instance_;
   // Application-supplied custom implementation of MappedMemory to be returned
   // by getInstance().
-  static MappedMemory* customInstance_;
+  static MappedMemory* FOLLY_NULLABLE customInstance_;
   static std::mutex initMutex_;
 };
 
@@ -308,7 +308,7 @@ class ScopedMappedMemory final
       public std::enable_shared_from_this<ScopedMappedMemory> {
  public:
   ScopedMappedMemory(
-      MappedMemory* parent,
+      MappedMemory* FOLLY_NONNULL parent,
       std::shared_ptr<MemoryUsageTracker> tracker)
       : parent_(parent), tracker_(std::move(tracker)) {}
 

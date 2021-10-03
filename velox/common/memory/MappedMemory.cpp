@@ -76,12 +76,12 @@ std::string MappedMemory::toString() const {
 MachinePageCount MappedMemory::allocationSize(
     MachinePageCount numPages,
     MachinePageCount minSizeClass,
-    std::array<int32_t, kMaxSizeClasses>* sizeIndices,
-    std::array<int32_t, kMaxSizeClasses>* sizeCounts,
-    int32_t* numSizes) const {
+    std::array<int32_t, kMaxSizeClasses>& sizeIndices,
+    std::array<int32_t, kMaxSizeClasses>& sizeCounts,
+    int32_t& numSizes) const {
   int32_t needed = numPages;
   int32_t pagesToAlloc = 0;
-  *numSizes = 0;
+  numSizes = 0;
   VELOX_CHECK_LE(
       minSizeClass,
       sizes_.back(),
@@ -101,9 +101,9 @@ MachinePageCount MappedMemory::allocationSize(
       numUnits++;
       needed -= size;
     }
-    (*sizeCounts)[*numSizes] = numUnits;
+    sizeCounts[numSizes] = numUnits;
     pagesToAlloc += numUnits * size;
-    (*sizeIndices)[(*numSizes)++] = sizeIndex;
+    sizeIndices[numSizes++] = sizeIndex;
     if (needed <= 0) {
       break;
     }
@@ -173,7 +173,7 @@ bool MappedMemoryImpl::allocate(
   std::array<int32_t, kMaxSizeClasses> sizeCounts = {};
   int32_t numSizes = 0;
   int32_t pagesToAlloc = allocationSize(
-      numPages, minSizeClass, &sizeIndices, &sizeCounts, &numSizes);
+      numPages, minSizeClass, sizeIndices, sizeCounts, numSizes);
 
   if (FLAGS_velox_use_malloc) {
     if (beforeAllocCB) {
