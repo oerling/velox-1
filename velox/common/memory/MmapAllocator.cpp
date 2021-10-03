@@ -178,17 +178,17 @@ bool MmapAllocator::allocateContiguous(
     int64_t toAdvise = numMapped_ + newPages - capacity_;
 
     if (toAdvise > 0) {
-        advised = adviseAway(toAdvise);
-      }
-      if (advised < toAdvise) {
-	LOG(WARNING) << "Could not advise away " << toAdvise << " pages";
-	contiguousAllocated_ -= largeCollateralSize;
-        numMapped_ -= advised;
-        numAllocated_ -= newPages + collateralSize + largeCollateralSize;
-        return false;
-      }
-      numMapped_ -= advised;
+      advised = adviseAway(toAdvise);
     }
+    if (advised < toAdvise) {
+      LOG(WARNING) << "Could not advise away " << toAdvise << " pages";
+      contiguousAllocated_ -= largeCollateralSize;
+      numMapped_ -= advised;
+      numAllocated_ -= newPages + collateralSize + largeCollateralSize;
+      return false;
+    }
+    numMapped_ -= advised;
+  }
   contiguousAllocated_ += numPages - largeCollateralSize;
   void* data = mmap(
       nullptr,
