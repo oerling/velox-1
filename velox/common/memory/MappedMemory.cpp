@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/memory/MappedMemory.h"
+#include "velox/common/base/BitUtil.h"
 
 #include <sys/mman.h>
 
@@ -59,10 +60,8 @@ void MappedMemory::Allocation::findRun(
   VELOX_CHECK(false, "Seeking to an out of range offset in Allocation");
 }
 
-// Rounds 'value' to the next multiple of 'factor'.
-template <typename T, typename U>
-static inline T roundUp(T value, U factor) {
-  return (value + (factor - 1)) / factor * factor;
+MachinePageCount MappedMemory::ContiguousAllocation::numPages() const {
+  return bits::roundUp(size_, kPageSize) / kPageSize;
 }
 
 // static
@@ -124,6 +123,16 @@ class MappedMemoryImpl : public MappedMemory {
       std::function<void(int64_t)> beforeAllocCB = nullptr,
       MachinePageCount minSizeClass = 0) override;
   int64_t free(Allocation& allocation) override;
+
+  bool allocateContiguous(
+      MachinePageCount numPages,
+      Allocation* collateral,
+      ContiguousAllocation* largeCollateral,
+      ContiguousAllocation& allocation,
+      std::function<void(int64_t)> beforeAllocCB = nullptr) override;
+
+  void freeContiguous(ContiguousAllocation& allocation) override;
+
   bool checkConsistency() override;
 
   const std::vector<MachinePageCount>& sizes() const override {
@@ -150,9 +159,7 @@ class MappedMemoryImpl : public MappedMemory {
 
 } // namespace
 
-MappedMemoryImpl::MappedMemoryImpl() : numAllocated_(0), numMapped_(0) {
-
-}
+MappedMemoryImpl::MappedMemoryImpl() : numAllocated_(0), numMapped_(0) {}
 
 bool MappedMemoryImpl::allocate(
     MachinePageCount numPages,
@@ -212,6 +219,47 @@ bool MappedMemoryImpl::allocate(
   throw std::runtime_error("Not implemented");
 }
 
+bool MappedMemoryImpl::allocateContiguous(
+    MachinePageCount numPages,
+    Allocation* collateral,
+    ContiguousAllocation* largeCollateral,
+    ContiguousAllocation& allocation,
+    std::function<void(int64_t)> beforeAllocCB) {
+  MachinePageCount collateralSize = 0;
+  MachinePageCount largeCollateralSize = 0;
+  if (collateral) {
+    collateralSize = free(*collateral) / kPageSize;
+  }
+  if (largeCollateral && largeCollateral->data()) {
+    largeCollateralSize = largeCollateral->numPages();
+    if (munmap(largeCollateral->data(), largeCollateral->size()) < 0) {
+      LOG(ERROR) << "munmap got " << errno << "for " << largeCollateral->data()
+                 << ", " << largeCollateral->size();
+    }
+    largeCollateral->reset(nullptr, nullptr, 0);
+  }
+  int64_t needed = numPages - collateralSize - largeCollateralSize;
+  if (beforeAllocCB) {
+    try {
+      beforeAllocCB(needed * kPageSize);
+    } catch (std::exception& e) {
+      beforeAllocCB(-(collateralSize + largeCollateralSize) * kPageSize);
+      numAllocated_ -= largeCollateralSize;
+      std::rethrow_exception(std::current_exception());
+    }
+  }
+  numAllocated_.fetch_add(needed);
+  void* data = mmap(
+      nullptr,
+      numPages * kPageSize,
+      PROT_READ | PROT_WRITE,
+      MAP_PRIVATE | MAP_ANONYMOUS,
+      -1,
+      0);
+  allocation.reset(this, data, numPages * kPageSize);
+  return true;
+}
+
 int64_t MappedMemoryImpl::free(Allocation& allocation) {
   if (allocation.numRuns() == 0) {
     return 0;
@@ -237,6 +285,17 @@ int64_t MappedMemoryImpl::free(Allocation& allocation) {
   numAllocated_.fetch_sub(numFreed);
   allocation.clear();
   return numFreed * kPageSize;
+}
+void MappedMemoryImpl::freeContiguous(ContiguousAllocation& allocation) {
+  if (allocation.data()) {
+    if (munmap(allocation.data(), allocation.size()) < 0) {
+      LOG(ERROR) << "munmap returned " << errno << "for " << allocation.data()
+                 << ", " << allocation.size();
+    }
+    numMapped_.fetch_sub(allocation.numPages());
+    numAllocated_.fetch_sub(allocation.numPages());
+    allocation.reset(nullptr, nullptr, 0);
+  }
 }
 
 bool MappedMemoryImpl::checkConsistency() {
@@ -301,6 +360,31 @@ bool ScopedMappedMemory::allocate(
         }
       },
       minSizeClass);
+}
+
+bool ScopedMappedMemory::allocateContiguous(
+    MachinePageCount numPages,
+    Allocation* collateral,
+    ContiguousAllocation* largeCollateral,
+    ContiguousAllocation& allocation,
+    std::function<void(int64_t)> beforeAllocCB) {
+  bool success = parent_->allocateContiguous(
+      numPages,
+      collateral,
+      largeCollateral,
+      allocation,
+      [this, beforeAllocCB](int64_t allocated) {
+        if (tracker_) {
+          tracker_->update(allocated);
+        }
+        if (beforeAllocCB) {
+          beforeAllocCB(allocated);
+        }
+      });
+  if (success) {
+    allocation.reset(this, allocation.data(), allocation.size());
+  }
+  return success;
 }
 
 } // namespace facebook::velox::memory

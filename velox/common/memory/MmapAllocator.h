@@ -39,47 +39,6 @@ struct MmapAllocatorOptions {
 
 class MmapAllocator : public MappedMemory {
  public:
-  class ContiguousAllocation {
-   public:
-    ContiguousAllocation() = default;
-    ~ContiguousAllocation() {
-      if (auto allocator = dynamic_cast<MmapAllocator*>(mappedMemory_)) {
-        allocator->freeContiguous(*this);
-      } else {
-        ::free(data_);
-      }
-      data_ = nullptr;
-    }
-
-    MappedMemory* mappedMemory() const {
-      return mappedMemory_;
-    }
-
-    MachinePageCount numPages() {
-      return bits::roundUp(size_, kPageSize) / kPageSize;
-    }
-
-    template <typename T = uint8_t>
-    T* data() {
-      return reinterpret_cast<T*>(data_);
-    }
-
-    uint64_t size() const {
-      return size_;
-    }
-
-    void reset(MappedMemory* mappedMemory, void* data, uint64_t size) {
-      mappedMemory_ = mappedMemory;
-      data_ = data;
-      size_ = size;
-    }
-
-   private:
-    MappedMemory* mappedMemory_ = nullptr;
-    void* data_ = nullptr;
-    uint64_t size_ = 0;
-  };
-
   explicit MmapAllocator(const MmapAllocatorOptions& options);
 
   virtual ~MmapAllocator() = default;
@@ -93,20 +52,14 @@ class MmapAllocator : public MappedMemory {
 
   int64_t free(Allocation& allocation) override;
 
-  // Makes a contiguous mmap of 'numPages'. Advises away the required
-  // number of free pages so as not to have resident size exceed
-  // 'capacity_'. Returns false if sufficient free pages do not
-  // exist. If 'collateral' or 'largeCollateral' are non-null their
-  // contents are freed to provide building materials for the new
-  // allocation. In all cases these will be empty before return,
-  // regardless of success.
-  virtual bool allocateContiguous(
-      MachinePageCount numPages,
-      Allocation* collateral,
-      ContiguousAllocation* largeCollateral,
-      ContiguousAllocation& allocation);
+  bool allocateContiguous(
+			  MachinePageCount numPages,
+			  Allocation* collateral,
+			  ContiguousAllocation* largeCollateral,
+			  ContiguousAllocation& allocation,
+			  std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
-  virtual void freeContiguous(ContiguousAllocation& allocation);
+  void freeContiguous(ContiguousAllocation& allocation) override;
 
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
@@ -243,9 +196,13 @@ class MmapAllocator : public MappedMemory {
 
   MachinePageCount adviseAway(MachinePageCount target);
 
+  // Number of allocated pages. Allocation succeeds if an atomic
+  // increment of this by the desired amount is <= 'capacity_'.
   std::atomic<MachinePageCount> numAllocated_;
-  // When using mmap/madvise, the current number pages backed by memory.
+  // When using mmap/madvise, the current number pages backed by memory in the address ranges in 'sizeClasses_'
   std::atomic<MachinePageCount> numMapped_;
+  // Number of pages allocated via allocateContiguous(). These count towards 'numAllocated_' but not towards 'numMapped_'. 
+  std::atomic<MachinePageCount> contiguousAllocated_{0};
   MachinePageCount capacity_ = 0;
   // The machine page counts corresponding to different sizes in order
   // of increasing size.
