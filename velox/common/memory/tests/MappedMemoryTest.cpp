@@ -140,22 +140,6 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
     instance_->free(alloc);
   }
 
-  void allocateMultiple_bak(
-      MachinePageCount numPages,
-      int32_t numAllocs,
-      std::vector<std::unique_ptr<MappedMemory::Allocation>>& allocations) {
-    allocations.clear();
-    allocations.reserve(numAllocs);
-    allocations.push_back(
-        std::make_unique<MappedMemory::Allocation>(instance_));
-    for (int32_t i = 0; i < numAllocs; ++i) {
-      if (allocate(numPages, *allocations.back().get())) {
-        allocations.push_back(
-            std::make_unique<MappedMemory::Allocation>(instance_));
-      }
-    }
-  }
-
   void allocateMultiple(
       MachinePageCount numPages,
       int32_t numAllocs,
