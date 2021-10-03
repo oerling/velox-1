@@ -99,7 +99,7 @@ class FragmentationTest {
         }
       } else {
         if (!memory_->allocateContiguous(
-                size / 4096, nullptr, nullptr, block->contiguous)) {
+                size / 4096, nullptr, block->contiguous)) {
           VELOX_FAIL();
         }
         for (auto offset = 0; offset < block->contiguous.numPages() * 4096;
