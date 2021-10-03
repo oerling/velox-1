@@ -913,6 +913,18 @@ class AsyncDataCache : public memory::MappedMemory,
     return mappedMemory_->free(allocation);
   }
 
+    bool allocateContiguous(
+			    memory::MachinePageCount numPages,
+			  Allocation* collateral,
+			  ContiguousAllocation* largeCollateral,
+			  ContiguousAllocation& allocation,
+			  std::function<void(int64_t)> beforeAllocCB = nullptr) override;
+
+  void freeContiguous(ContiguousAllocation& allocation) override {
+    mappedMemory_->freeContiguous(allocation);
+  }
+
+  
   bool checkConsistency() override {
     return mappedMemory_->checkConsistency();
   }
@@ -958,6 +970,10 @@ class AsyncDataCache : public memory::MappedMemory,
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
+
+  bool makeSpace(
+		 memory::MachinePageCount numPages,
+    std::function<bool()> allocate); 
   // Keeps the id to file map alive as long as 'this' is live.
   std::shared_ptr<StringIdMap> fileIds_;
   std::unique_ptr<memory::MappedMemory> mappedMemory_;

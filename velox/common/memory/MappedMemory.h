@@ -341,7 +341,6 @@ class ScopedMappedMemory final
       tracker_->update(-size);
     }
   }
-
   
   bool checkConsistency() override {
     return parent_->checkConsistency();
