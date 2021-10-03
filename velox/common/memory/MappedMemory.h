@@ -154,7 +154,7 @@ class MappedMemory {
         int32_t* FOLLY_NONNULL offsetInRun);
 
    private:
-    MappedMemory* mappedMemory_;
+    MappedMemory* FOLLY_NONNULL mappedMemory_;
     std::shared_ptr<MappedMemory> mappedMemoryPtr_;
     std::vector<PageRun> runs_;
     int32_t numPages_ = 0;
