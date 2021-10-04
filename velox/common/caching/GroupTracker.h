@@ -47,13 +47,6 @@ class ApproxCounter {
   int32_t count_{0};
 };
 
-struct ReadCounts {
-  uint64_t referenceBytes{0};
-  uint64_t readBytes{0};
-  uint32_t readCount{0};
-  uint32_t referenceCount{0};
-};
-
 // Represents a groupId, column and its size and score. These are
 // sorted and as many are selected from the top as will fit on SSD.
 struct SsdScore {
@@ -65,7 +58,7 @@ struct SsdScore {
   // Recorded read activity, with older reads decayed.
   float readBytes;
   uint64_t groupId;
-  TrackingId trackingId;
+  int32_t columnId;
 };
 
 class GroupTracker {
@@ -77,17 +70,27 @@ class GroupTracker {
 
   void recordFile(uint64_t fileId, int32_t numStripes);
 
-  void recordReference(uint64_t fileId, TrackingId trackingId, int32_t bytes);
-  void recordRead(uint64_t fileId, TrackingId trackingId, int32_t bytes);
+  void recordReference(uint64_t fileId, int32_t columnId, int32_t bytes);
+  void recordRead(uint64_t fileId, int32_t columnId, int32_t bytes);
 
-  void addColumnScores(std::vector<SsdScore>& scores) const;
+  // Adds the column scores to 'scores'. If 'decayPct' is non-0,
+  // decays the recorded accesses by 'decayPct'% but at least by one
+  // whole access.
+  void addColumnScores(int32_t decayPct, std::vector<SsdScore>& scores);
 
+  bool eraseColumn(int32_t columnId) {
+    columns_.erase(columnId);
+    return columns_.empty();
+  }
+    
  private:
   StringIdLease name_;
   std::mutex mutex_;
 
-  //
-  folly::F14FastMap<TrackingId, TrackingData> columns_;
+  //Map of column to access data.
+  folly::F14FastMap<int32_t, TrackingData> columns_;
+
+  // Count of distinct files seen in recordFile().
   ApproxCounter numFiles_;
 
   uint64_t numOpens_{0};
@@ -118,8 +121,29 @@ class GroupStats {
 
   // Updates the SSD selection criteria. The group. trackingId pairs
   // that account for the top 'ssdSize' bytes of reported IO are
-  // selected.
-  void updateSsdFilter(uint64_t ssdSize);
+  // selected. If 'decayPct' is non-0, old stats are decayed and
+  // removed if counts go to zero.
+  void updateSsdFilter(uint64_t ssdSize, int32_t decayPct = 0);
+
+  // Returns an estimate of the total size of the dataset based of the
+  // groups, files and columns referenced to data.
+  float dataSize() const {
+    return dataSize_;
+  }
+
+  // Returns the percentage of historical reads that hit the currently SSD
+  // cachable fraction of the data.
+  float cachableReadPct() const {
+    return cachableReadPct_;
+  }
+
+  // Returns percent of all seen data that fits in the SSD cachable fraction.
+  float cachableDataPct() const {
+    return cachableDataPct_;
+  }
+
+  // Clears the state to be as after default construction.
+  void clear();
 
   // Recalculates the best groups and makes a human readable
   // summary. 'cacheBytes' is used to compute what fraction of the tracked
@@ -127,7 +151,6 @@ class GroupStats {
   std::string toString(uint64_t cacheBytes);
 
  private:
-  void decay();
   GroupTracker& group(uint64_t id) {
     auto it = groups_.find(id);
     if (it == groups_.end()) {
@@ -138,14 +161,27 @@ class GroupStats {
     return *it->second;
   }
 
-  std::vector<SsdScore> ssdScoresLocked();
+  // Returns the tracked group/column pairs best score first. Sets the
+  // 'dataSize_', 'cachableReadPct_' and 'cachableDataPct_' according
+  // to 'cacheBytes'. access counts by decayPct if decayPct% is
+  // non-0. Trims away scores that fall to zero accesses by decay or
+  // fall outside of the top FLAGS_max_group_stats top scores.
+  std::vector<SsdScore> ssdScoresLocked(uint64_t cacheBytes, int32_t decayPct = 0);
+
+  //  Removes the information on groupId/id.
+  void eraseStatLocked(uint64_t groupId, int32_t columnId);
 
   std::mutex mutex_;
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
-  // Bloom filter of groupId, trackingId hashes for streams that should be saved
+  // Bloom filter of groupId, columnId hashes for streams that should be saved
   // to SSD.
   std::vector<uint64_t> saveToSsd_;
   bool allFitOnSsd_{false};
+  double dataSize_{0};
+  double totalRead_{0};
+  float cachableDataPct_{0};
+  float cachableReadPct_{0};
+  
 };
 
 } // namespace facebook::velox::cache

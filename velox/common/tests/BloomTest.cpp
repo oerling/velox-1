@@ -16,12 +16,13 @@
 
 #include "velox/common/base/Bloom.h"
 #include <folly/Random.h>
+#include <unordered_set>
 
 #include <gtest/gtest.h>
 
 using namespace facebook::velox;
 TEST(BloomTest, basic) {
-  constexpr int32_t kWords 128;
+  constexpr int32_t kWords = 128;
   constexpr int32_t kSize = kWords * 8;
   folly::Random::DefaultGenerator rng;
   rng.seed(1);
@@ -30,20 +31,31 @@ TEST(BloomTest, basic) {
   // We insert kSize random values and check that they are there.
   for (auto i = 0; i < kSize; ++i) {
     auto value = folly::Random::rand64(rng);
-    Bloom::set(bits, kWords, value);
+    Bloom::set(bits.data(), kWords, value);
     reference.insert(value);
   }
   for (auto value : reference) {
-    EXPECT_TRUE(Bloom::test(bits, kWords, value));
+    EXPECT_TRUE(Bloom::test(bits.data(), kWords, value));
   }
   int32_t hits = 0;
   for (auto i = 0; i < kSize; ++i) {
     auto value = folly::Random::rand64(rng);
-    hits += Bloom::test(bits, kWords, value);
+    hits += Bloom::test(bits.data(), kWords, value);
   }
-  EXPECT_GT(20, hits);
+  EXPECT_GT(45, hits);
 }
-  
 
-
-
+TEST(BloomTest, precision) {
+  constexpr int32_t kSize = 1024;
+  Bloom bloom(kSize);
+  for (auto i = 0; i < kSize; ++i) {
+    bloom.insert(i);
+  }
+  int32_t numFalsePositives = 0;
+  for (auto i = 0; i < kSize; ++i) {
+    EXPECT_TRUE(bloom.mayContain(i));
+    numFalsePositives += bloom.mayContain(i + kSize);
+    numFalsePositives += bloom.mayContain((i + kSize) * 123451);
+  }
+  EXPECT_GT(kSize / 50, numFalsePositives / 2);
+}

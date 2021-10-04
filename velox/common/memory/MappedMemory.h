@@ -55,7 +55,7 @@ class MappedMemory {
     static constexpr uint32_t kMaxPagesInRun =
         (1UL << (64U - kPointerSignificantBits)) - 1;
 
-    PageRun(void* address, MachinePageCount numPages) {
+    PageRun(void* FOLLY_NONNULL address, MachinePageCount numPages) {
       auto word = reinterpret_cast<uint64_t>(address); // NOLINT
       if (!FLAGS_velox_use_malloc) {
         VELOX_CHECK(
@@ -71,7 +71,7 @@ class MappedMemory {
     }
 
     template <typename T = uint8_t>
-    T* data() const {
+    T* FOLLY_NONNULL data() const {
       return reinterpret_cast<T*>(data_ & kPointerMask); // NOLINT
     }
 
@@ -90,7 +90,7 @@ class MappedMemory {
   // Represents a set of PageRuns that are allocated together.
   class Allocation {
    public:
-    explicit Allocation(MappedMemory* mappedMemory)
+    explicit Allocation(MappedMemory* FOLLY_NONNULL mappedMemory)
         : mappedMemory_(mappedMemory) {
       VELOX_CHECK(mappedMemory);
       // We keep reference to mappedMemory's shared pointer to prevent
@@ -139,7 +139,7 @@ class MappedMemory {
       return numPages_ * kPageSize;
     }
 
-    void append(uint8_t* address, int32_t numPages);
+    void append(uint8_t* FOLLY_NONNULL address, int32_t numPages);
 
     void clear() {
       runs_.clear();
@@ -148,10 +148,13 @@ class MappedMemory {
 
     // Returns the run number and the position within the run
     // corresponding to 'offset' from the start of 'this'.
-    void findRun(uint64_t offset, int32_t* index, int32_t* offsetInRun);
+    void findRun(
+        uint64_t offset,
+        int32_t* FOLLY_NONNULL index,
+        int32_t* FOLLY_NONNULL offsetInRun);
 
    private:
-    MappedMemory* mappedMemory_;
+    MappedMemory* FOLLY_NONNULL mappedMemory_;
     std::shared_ptr<MappedMemory> mappedMemoryPtr_;
     std::vector<PageRun> runs_;
     int32_t numPages_ = 0;
@@ -170,14 +173,14 @@ class MappedMemory {
       data_ = nullptr;
     }
 
-    MappedMemory* mappedMemory() const {
+    MappedMemory* FOLLY_NULLABLE mappedMemory() const {
       return mappedMemory_;
     }
 
     MachinePageCount numPages() const;
 
     template <typename T = uint8_t>
-    T* data() const {
+    T* FOLLY_NULLABLE data() const {
       return reinterpret_cast<T*>(data_);
     }
 
@@ -185,15 +188,18 @@ class MappedMemory {
       return size_;
     }
 
-    void reset(MappedMemory* mappedMemory, void* data, uint64_t size) {
+    void reset(
+        MappedMemory* FOLLY_NULLABLE mappedMemory,
+        void* FOLLY_NULLABLE data,
+        uint64_t size) {
       mappedMemory_ = mappedMemory;
       data_ = data;
       size_ = size;
     }
 
    private:
-    MappedMemory* mappedMemory_{nullptr};
-    void* data_{nullptr};
+    MappedMemory* FOLLY_NULLABLE mappedMemory_{nullptr};
+    void* FOLLY_NULLABLE data_{nullptr};
     uint64_t size_{0};
   };
 
@@ -205,7 +211,7 @@ class MappedMemory {
 
   // Returns the process-wide default instance or an application-supplied custom
   // instance set via setDefaultInstance().
-  static MappedMemory* getInstance();
+  static MappedMemory* FOLLY_NONNULL getInstance();
 
   // Creates a default MappedMemory instance but does not set this to process
   // default.
@@ -215,7 +221,7 @@ class MappedMemory {
   // ownership and must not destroy the instance until it is
   // empty. Calling this with nullptr restores the initial
   // process-wide default instance.
-  static void setDefaultInstance(MappedMemory* instance);
+  static void setDefaultInstance(MappedMemory* FOLLY_NULLABLE instance);
 
   /// Allocates one or more runs that add up to at least 'numPages',
   /// with the smallest run being at least 'minSizeClass'
@@ -281,9 +287,9 @@ class MappedMemory {
   MachinePageCount allocationSize(
       MachinePageCount numPages,
       MachinePageCount minSizeClass,
-      std::array<int32_t, kMaxSizeClasses>* sizeIndices,
-      std::array<int32_t, kMaxSizeClasses>* sizeCounts,
-      int32_t* numSizes) const;
+      std::array<int32_t, kMaxSizeClasses>& sizeIndices,
+      std::array<int32_t, kMaxSizeClasses>& sizeCounts,
+      int32_t& numSizes) const;
   // The machine page counts corresponding to different sizes in order
   // of increasing size.
   std::vector<MachinePageCount> sizes_;
@@ -293,7 +299,7 @@ class MappedMemory {
   static std::unique_ptr<MappedMemory> instance_;
   // Application-supplied custom implementation of MappedMemory to be returned
   // by getInstance().
-  static MappedMemory* customInstance_;
+  static MappedMemory* FOLLY_NULLABLE customInstance_;
   static std::mutex initMutex_;
 };
 
@@ -308,7 +314,7 @@ class ScopedMappedMemory final
       public std::enable_shared_from_this<ScopedMappedMemory> {
  public:
   ScopedMappedMemory(
-      MappedMemory* parent,
+      MappedMemory* FOLLY_NONNULL parent,
       std::shared_ptr<MemoryUsageTracker> tracker)
       : parent_(parent), tracker_(std::move(tracker)) {}
 
@@ -375,7 +381,7 @@ class ScopedMappedMemory final
 
  private:
   std::shared_ptr<MappedMemory> parentPtr_;
-  MappedMemory* parent_;
+  MappedMemory* FOLLY_NONNULL parent_;
   std::shared_ptr<MemoryUsageTracker> tracker_;
 };
 

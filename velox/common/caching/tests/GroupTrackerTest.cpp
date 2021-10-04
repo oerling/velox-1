@@ -43,6 +43,7 @@ class GroupTrackerTest : public testing::Test {
  protected:
   void SetUp() override {
     rng_.seed(1);
+    GroupStats::instance().clear();
   }
 
   // Makes a test population of tables. A table has many file groups
@@ -88,17 +89,19 @@ class GroupTrackerTest : public testing::Test {
 
   // Reads a random set of groups from a random table, selecting a biased
   // random set of columns with some being sparsely read.
-  void query() {
-    auto numTables = tables_.size();
-    int32_t tableIndex = random(numTables, numTables);
+  void query(int32_t tableIndex) {
     auto& stats = GroupStats::instance();
     std::vector<int32_t> columns;
     auto& table = tables_[tableIndex];
     auto numColumns = table.groups[0].columnSizes.size();
     std::unordered_set<int32_t> readColumns;
-    int32_t toRead = 5 + random(numColumns > 20 ? 10 : 5);
+    int32_t toRead = readAllColumns_ ? numColumns : 5 + random(numColumns > 20 ? 10 : 5);
     for (auto i = 0; i < toRead; ++i) {
-      readColumns.insert(random(numColumns, numColumns));
+      if (readAllColumns_) {
+	readColumns.insert(i);
+      } else {
+	readColumns.insert(random(numColumns, numColumns));
+      }
     }
     auto numGroups = table.groups.size();
     auto readGroups = std::min<int32_t>(numGroups, 5 + random(numGroups));
@@ -130,6 +133,9 @@ class GroupTrackerTest : public testing::Test {
 
   // For a stable 1/3, read 1/3 of the data.
   int32_t shouldRead(int32_t column, int32_t size) {
+    if (readAll_) {
+      return size;
+    }
     int32_t rnd = random(100);
     if (column % 21 == 0) {
       // 5% are read for 1/10.
@@ -146,9 +152,11 @@ class GroupTrackerTest : public testing::Test {
     return size;
   }
 
+  // A bitwise or of random numbers will make 3/4 of the bits in
+  // common true, giving a biased distribution.
   int32_t random(int32_t range, int32_t maskRange) {
-    return (folly::Random::rand32(rng_) % range) |
-        (folly::Random::rand32(rng_) % maskRange);
+    return ((folly::Random::rand32(rng_) % range) |
+	    (folly::Random::rand32(rng_) % maskRange)) % range;
   }
 
   int32_t random(int32_t pctLow, int32_t lowRange, int32_t highRange) {
@@ -165,16 +173,61 @@ class GroupTrackerTest : public testing::Test {
   uint64_t numFromSsd_{0};
   uint64_t numFromDisk_{0};
   folly::Random::DefaultGenerator rng_;
+bool readAll_{false};
+bool readAllColumns_{false};
 };
 
-TEST_F(GroupTrackerTest, scan) {
+TEST_F(GroupTrackerTest, randomScan) {
+  // Runs 1K random queries on 100 files. The file and column read
+  // probabilities are biased. Checks that cache covers a small
+  // percentage of the data but selects the more frequently hit
+  // columns and groups.
   constexpr int32_t kQueries = 1000;
-  uint64_t ssdSize = 1UL << 30;
+  constexpr uint64_t kSsdSize = 1UL << 30;
   auto& stats = GroupStats::instance();
+  makeTables(101);
+  auto numTables = tables_.size();
   for (auto i = 0; i < kQueries; ++i) {
-    query();
+    int32_t tableIndex = random(numTables, numTables);
+    query(tableIndex);
     if (i % (kQueries / 10) == 0) {
-      GroupStats::instance().updateSsdFilter(ssdSize);
+      GroupStats::instance().updateSsdFilter(kSsdSize);
     }
   }
-}
+  LOG(INFO) << GroupStats::instance().toString(kSsdSize);
+
+  auto dataPct = stats.cachableDataPct();
+  auto readPct = stats.cachableReadPct();
+  EXPECT_LE(3, dataPct);
+  EXPECT_GE(4, dataPct);
+  EXPECT_LE(45, readPct);
+  EXPECT_GE(55, readPct);
+    }
+
+TEST_F(GroupTrackerTest, limitAndDecay) {
+  constexpr uint64_t kSsdSize = 1UL << 30;
+  auto& stats = GroupStats::instance();
+  makeTables(1000);
+  auto numTables = tables_.size();
+  // We read all the  tables once and every 5th twice.
+  readAllColumns_ = true;
+  for (auto i = 0; i < numTables; ++i) {
+    query(i);
+    if (i % 5 == 0) {
+      query(i);
+    }
+    
+    if (i % 20 == 0) {
+      stats.updateSsdFilter(kSsdSize, 2);
+    }
+  }
+  LOG(INFO) << GroupStats::instance().toString(kSsdSize);
+
+  auto dataPct = stats.cachableDataPct();
+  auto readPct = stats.cachableReadPct();
+  EXPECT_LE(0.4, dataPct);
+  EXPECT_GE(1, dataPct);
+  EXPECT_LE(10, readPct);
+  EXPECT_GE(16, readPct);
+    }
+

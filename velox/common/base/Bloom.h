@@ -17,11 +17,27 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
+
+#include <folly/Hash.h>
+
+#include "velox/common/base/BitUtil.h"
 
 namespace facebook::velox {
 
 class Bloom {
  public:
+  Bloom(int32_t capacity) : bits_(bits::nextPowerOfTwo(capacity)) {}
+
+  // Adds 'value'.
+  void insert(uint64_t value) {
+    set(bits_.data(), bits_.size(), folly::hasher<uint64_t>()(value));
+  }
+
+  bool mayContain(uint64_t value) {
+    return test(bits_.data(), bits_.size(), folly::hasher<uint64_t>()(value));
+  }
+
   // We use 4 independent hash functions by taking 24 bits of
   // the hash code and breaking these up into 4 groups of 6 bits. Each group
   // represents a number between 0 and 63 (2^6-1) and maps to one bit in a
@@ -39,18 +55,21 @@ class Bloom {
   }
 
   inline static void
-  set(uint64_t* bloom, int32_t bloomSize, uint64_t hashCode) {
+  set(uint64_t* FOLLY_NONNULL bloom, int32_t bloomSize, uint64_t hashCode) {
     auto mask = bloomMask(hashCode);
     auto index = bloomIndex(bloomSize, hashCode);
     bloom[index] |= mask;
   }
 
   inline static bool
-  test(const uint64_t* bloom, int32_t bloomSize, uint64_t hashCode) {
+  test(const uint64_t* FOLLY_NONNULL bloom, int32_t bloomSize, uint64_t hashCode) {
     auto mask = bloomMask(hashCode);
     auto index = bloomIndex(bloomSize, hashCode);
     return mask == (bloom[index] & mask);
   }
+
+ private:
+  std::vector<uint64_t> bits_;
 };
 
 } // namespace facebook::velox

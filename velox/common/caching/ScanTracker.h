@@ -55,6 +55,10 @@ class TrackingId {
     return id_;
   }
 
+  int32_t columnId() const {
+    return id_ >> kNodeShift;
+  }
+  
  private:
   int32_t id_;
 };
