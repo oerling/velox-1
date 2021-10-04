@@ -118,7 +118,7 @@ class AsyncDataCacheEntry {
   static constexpr int32_t kExclusive = -10000;
   static constexpr int32_t kTinyDataSize = 2048;
 
-  explicit AsyncDataCacheEntry(CacheShard* shard);
+  explicit AsyncDataCacheEntry(CacheShard* FOLLY_NONNULL shard);
 
   memory::MappedMemory::Allocation& data() {
     return data_;
@@ -626,7 +626,7 @@ class AsyncDataCache : public memory::MappedMemory,
 
   CacheStats refreshStats() const;
 
-  std::string toString() const;
+  std::string toString() const override;
 
   memory::MachinePageCount incrementCachedPages(int64_t pages) {
     // The counter is unsigned and the increment is signed.
