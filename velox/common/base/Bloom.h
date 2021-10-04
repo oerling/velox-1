@@ -61,8 +61,10 @@ class Bloom {
     bloom[index] |= mask;
   }
 
-  inline static bool
-  test(const uint64_t* FOLLY_NONNULL bloom, int32_t bloomSize, uint64_t hashCode) {
+  inline static bool test(
+      const uint64_t* FOLLY_NONNULL bloom,
+      int32_t bloomSize,
+      uint64_t hashCode) {
     auto mask = bloomMask(hashCode);
     auto index = bloomIndex(bloomSize, hashCode);
     return mask == (bloom[index] & mask);
