@@ -55,6 +55,10 @@ class TrackingId {
     return id_;
   }
 
+  int32_t columnId() const {
+    return id_ >> kNodeShift;
+  }
+  
  private:
   int32_t id_;
 };
@@ -117,11 +121,19 @@ class ScanTracker {
 
   // Records that a scan references 'bytes' bytes of the stream given
   // by 'id'. This is called when preparing to read a stripe.
-  void recordReference(const TrackingId id, uint64_t bytes, uint64_t groupId);
+  void recordReference(
+      const TrackingId id,
+      uint64_t bytes,
+      uint64_t fileId,
+      uint64_t groupId);
 
   // Records that 'bytes' bytes have actually been read from the stream
   // given by 'id'.
-  void recordRead(const TrackingId id, uint64_t bytes, uint64_t groupId);
+  void recordRead(
+      const TrackingId id,
+      uint64_t bytes,
+      uint64_t fileId,
+      uint64_t groupId);
 
   // True if 'trackingId' is read at least  'minReadPct' % of the time.
   bool shouldPrefetch(TrackingId id, int32_t minReadPct) {
