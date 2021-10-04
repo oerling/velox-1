@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include <unordered_set>
 #include "velox/common/base/Bloom.h"
 #include <folly/Random.h>
+#include <unordered_set>
 
 #include <gtest/gtest.h>
 
@@ -59,7 +59,3 @@ TEST(BloomTest, precision) {
   }
   EXPECT_GT(kSize / 50, numFalsePositives / 2);
 }
-
-
-
-

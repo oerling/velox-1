@@ -27,8 +27,7 @@ namespace facebook::velox {
 
 class Bloom {
  public:
-  Bloom(int32_t capacity)
-    : bits_(bits::nextPowerOfTwo(capacity)) {}
+  Bloom(int32_t capacity) : bits_(bits::nextPowerOfTwo(capacity)) {}
 
   // Adds 'value'.
   void insert(uint64_t value) {
@@ -68,7 +67,8 @@ class Bloom {
     auto index = bloomIndex(bloomSize, hashCode);
     return mask == (bloom[index] & mask);
   }
-private:
+
+ private:
   std::vector<uint64_t> bits_;
 };
 
