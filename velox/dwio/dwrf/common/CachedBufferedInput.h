@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
@@ -92,6 +93,10 @@ class CachedBufferedInput : public BufferedInput {
     return true;
   }
 
+  void setNumStripes(int32_t numStripes) override {
+    cache::GroupStats::instance().recordFile(fileNum_, groupId_, numStripes);
+  }
+  
  private:
   struct CacheRequest {
     cache::RawFileCacheKey key;

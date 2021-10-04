@@ -253,6 +253,7 @@ class CacheTest : public testing::Test {
     uint64_t groupId;
     std::shared_ptr<common::InputStream> input =
         inputByPath(filename, fileId, groupId);
+    GroupStats::instance().recordFile(fileId, groupId, numStripes);
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
       stripes.push_back(makeStripeData(
           input,

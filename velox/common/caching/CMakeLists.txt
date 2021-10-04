@@ -19,8 +19,8 @@ add_library(
   StringIdMap.cpp
   AsyncDataCache.cpp
   ScanTracker.cpp
-  GroupTracker.cpp
-  Ssd.cpp)
+  GroupTracker.cpp)
+
 target_link_libraries(velox_caching velox_memory velox_exception ${GLOG}
                       ${FOLLY_WITH_DEPENDENCIES})
 
