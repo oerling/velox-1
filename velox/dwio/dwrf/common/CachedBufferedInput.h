@@ -96,7 +96,7 @@ class CachedBufferedInput : public BufferedInput {
   void setNumStripes(int32_t numStripes) override {
     cache::GroupStats::instance().recordFile(fileNum_, groupId_, numStripes);
   }
-  
+
  private:
   struct CacheRequest {
     cache::RawFileCacheKey key;

@@ -82,12 +82,12 @@ class GroupTracker {
     columns_.erase(columnId);
     return columns_.empty();
   }
-    
+
  private:
   StringIdLease name_;
   std::mutex mutex_;
 
-  //Map of column to access data.
+  // Map of column to access data.
   folly::F14FastMap<int32_t, TrackingData> columns_;
 
   // Count of distinct files seen in recordFile().
@@ -166,7 +166,9 @@ class GroupStats {
   // to 'cacheBytes'. access counts by decayPct if decayPct% is
   // non-0. Trims away scores that fall to zero accesses by decay or
   // fall outside of the top FLAGS_max_group_stats top scores.
-  std::vector<SsdScore> ssdScoresLocked(uint64_t cacheBytes, int32_t decayPct = 0);
+  std::vector<SsdScore> ssdScoresLocked(
+      uint64_t cacheBytes,
+      int32_t decayPct = 0);
 
   //  Removes the information on groupId/id.
   void eraseStatLocked(uint64_t groupId, int32_t columnId);
@@ -181,7 +183,6 @@ class GroupStats {
   double totalRead_{0};
   float cachableDataPct_{0};
   float cachableReadPct_{0};
-  
 };
 
 } // namespace facebook::velox::cache

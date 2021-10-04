@@ -95,12 +95,13 @@ class GroupTrackerTest : public testing::Test {
     auto& table = tables_[tableIndex];
     auto numColumns = table.groups[0].columnSizes.size();
     std::unordered_set<int32_t> readColumns;
-    int32_t toRead = readAllColumns_ ? numColumns : 5 + random(numColumns > 20 ? 10 : 5);
+    int32_t toRead =
+        readAllColumns_ ? numColumns : 5 + random(numColumns > 20 ? 10 : 5);
     for (auto i = 0; i < toRead; ++i) {
       if (readAllColumns_) {
-	readColumns.insert(i);
+        readColumns.insert(i);
       } else {
-	readColumns.insert(random(numColumns, numColumns));
+        readColumns.insert(random(numColumns, numColumns));
       }
     }
     auto numGroups = table.groups.size();
@@ -156,7 +157,8 @@ class GroupTrackerTest : public testing::Test {
   // common true, giving a biased distribution.
   int32_t random(int32_t range, int32_t maskRange) {
     return ((folly::Random::rand32(rng_) % range) |
-	    (folly::Random::rand32(rng_) % maskRange)) % range;
+            (folly::Random::rand32(rng_) % maskRange)) %
+        range;
   }
 
   int32_t random(int32_t pctLow, int32_t lowRange, int32_t highRange) {
@@ -173,8 +175,8 @@ class GroupTrackerTest : public testing::Test {
   uint64_t numFromSsd_{0};
   uint64_t numFromDisk_{0};
   folly::Random::DefaultGenerator rng_;
-bool readAll_{false};
-bool readAllColumns_{false};
+  bool readAll_{false};
+  bool readAllColumns_{false};
 };
 
 TEST_F(GroupTrackerTest, randomScan) {
@@ -202,7 +204,7 @@ TEST_F(GroupTrackerTest, randomScan) {
   EXPECT_GE(4, dataPct);
   EXPECT_LE(45, readPct);
   EXPECT_GE(55, readPct);
-    }
+}
 
 TEST_F(GroupTrackerTest, limitAndDecay) {
   constexpr uint64_t kSsdSize = 1UL << 30;
@@ -216,7 +218,7 @@ TEST_F(GroupTrackerTest, limitAndDecay) {
     if (i % 5 == 0) {
       query(i);
     }
-    
+
     if (i % 20 == 0) {
       stats.updateSsdFilter(kSsdSize, 2);
     }
@@ -229,5 +231,4 @@ TEST_F(GroupTrackerTest, limitAndDecay) {
   EXPECT_GE(1, dataPct);
   EXPECT_LE(10, readPct);
   EXPECT_GE(16, readPct);
-    }
-
+}
