@@ -24,7 +24,8 @@ using namespace facebook::velox;
 
 TEST(BloomTest, basic) {
   constexpr int32_t kSize = 1024;
-  Bloom bloom(kSize);
+  Bloom bloom;
+  bloom.reset(kSize);
   for (auto i = 0; i < kSize; ++i) {
     bloom.insert(i);
   }
