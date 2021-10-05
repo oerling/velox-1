@@ -24,13 +24,14 @@
 namespace facebook::velox::memory {
 
 MmapAllocator::MmapAllocator(const MmapAllocatorOptions& options)
-  : MappedMemory(), numAllocated_(0),
+    : MappedMemory(),
+      numAllocated_(0),
       numMapped_(0),
       capacity_(options.capacity / kPageSize),
-  capacity_ = bits::roundUp(capacity_, 64 * sizes_.back());
-  for (int size : sizes_) {
-    sizeClasses_.push_back(std::make_unique<SizeClass>(capacity_ / size, size));
-  }
+      capacity_ = bits::roundUp(capacity_, 64 * sizes_.back());
+for (int size : sizes_) {
+  sizeClasses_.push_back(std::make_unique<SizeClass>(capacity_ / size, size));
+}
 }
 
 bool MmapAllocator::allocate(

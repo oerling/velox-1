@@ -37,19 +37,19 @@ class ScopedMappedMemory;
 // Denotes a number of machine pages as in mmap and related functions.
 using MachinePageCount = uint64_t;
 
-  // Base class for allocating runs of machine pages from predefined
-  // size classes. An allocation that does not match a size class is
-  // composed of multiple runs from different size classes. To get 11
-  // pages, one could have a run of 8, one of 2 and one of 1
-  // page. This is intended for all high volume allocations, like
-  // caches, IO buffers and hash tables for join/group
-  // by. Implementations may use malloc or mmap/madvise. Caches
-  // subclass this to provide allocation that is fungible with cached
-  // capacity, i.e. a cache can evict data to make space for non-cache
-  // memory users. The point if to have all large allocation come from
-  // a single source to have dynamic balancing between different
-  // users. Proxy subclasses may provide context specific tracking
-  // while delegating the allocation to a root allocator.
+// Base class for allocating runs of machine pages from predefined
+// size classes. An allocation that does not match a size class is
+// composed of multiple runs from different size classes. To get 11
+// pages, one could have a run of 8, one of 2 and one of 1
+// page. This is intended for all high volume allocations, like
+// caches, IO buffers and hash tables for join/group
+// by. Implementations may use malloc or mmap/madvise. Caches
+// subclass this to provide allocation that is fungible with cached
+// capacity, i.e. a cache can evict data to make space for non-cache
+// memory users. The point if to have all large allocation come from
+// a single source to have dynamic balancing between different
+// users. Proxy subclasses may provide context specific tracking
+// while delegating the allocation to a root allocator.
 class MappedMemory {
  public:
   static constexpr uint64_t kPageSize = 4096;

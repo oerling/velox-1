@@ -526,11 +526,14 @@ class CacheShard {
   // Returns an unused entry if found. 'size' is a hint for selecting an entry
   // that already has the right amount of memory associated with it.
   std::unique_ptr<AsyncDataCacheEntry> getFreeEntryWithSize(uint64_t sizeHint);
-  CachePin
-  initEntry(RawFileCacheKey key, AsyncDataCacheEntry* FOLLY_NONNULL entry, int64_t size);
+  CachePin initEntry(
+      RawFileCacheKey key,
+      AsyncDataCacheEntry* FOLLY_NONNULL entry,
+      int64_t size);
 
   std::mutex mutex_;
-  folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry* FOLLY_NONNULL> entryMap_;
+  folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry * FOLLY_NONNULL>
+      entryMap_;
   // Entries associated to a key.
   std::deque<std::unique_ptr<AsyncDataCacheEntry>> entries_;
   // Unused indices in 'entries_'.
