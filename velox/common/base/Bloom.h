@@ -31,17 +31,17 @@ namespace facebook::velox {
 // expected entry, we get ~2% false positives. 'hashInput' determines
 // if the value added or checked needs to be hashed. If this is false,
 // we assume that the input is already a 64 bit hash number.
-  template <bool hashInput = true>
+template <bool hashInput = true>
 class Bloom {
  public:
-    // Prepares 'this' for use with an expected 'capacity'
-    // entries. Drops any prior content.
-    void reset(int32_t capacity) {
-      bits_.clear();
-      bits_.resize(bits::nextPowerOfTwo(capacity));
-	}
+  // Prepares 'this' for use with an expected 'capacity'
+  // entries. Drops any prior content.
+  void reset(int32_t capacity) {
+    bits_.clear();
+    bits_.resize(bits::nextPowerOfTwo(capacity));
+  }
 
-    // Adds 'value'.
+  // Adds 'value'.
   void insert(uint64_t value) {
     set(bits_.data(),
         bits_.size(),
