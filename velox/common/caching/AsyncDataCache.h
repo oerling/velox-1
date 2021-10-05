@@ -132,7 +132,7 @@ class AsyncDataCacheEntry {
     return tinyData_.empty() ? nullptr : tinyData_.data();
   }
 
-  char* tinyData() {
+  char* FOLLY_NULLABLE tinyData() {
     return tinyData_.empty() ? nullptr : tinyData_.data();
   }
 
@@ -232,7 +232,7 @@ class AsyncDataCacheEntry {
   // Holds an owning reference to the file number.
   FileCacheKey key_;
 
-  CacheShard* const shard_;
+  CacheShard* const FOLLY_NONNULL shard_;
 
   // The data being cached.
   memory::MappedMemory::Allocation data_;
@@ -325,7 +325,7 @@ class CachePin {
     entry_ = nullptr;
   }
 
-  void setEntry(AsyncDataCacheEntry* entry) {
+  void setEntry(AsyncDataCacheEntry* FOLLY_NONNULL entry) {
     release();
     VELOX_CHECK(entry->isExclusive() || entry->isShared());
     entry_ = entry;
@@ -380,7 +380,7 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   // that is realized when the load is ready. The caller must
   // further check that the pin it holds is in a valid state before
   // using the data since the load may have failed.
-  bool loadOrFuture(folly::SemiFuture<bool>* wait);
+  bool loadOrFuture(folly::SemiFuture<bool>* FOLLY_NULLABLE wait);
 
   // Removes 'this' from the affected entries. If 'this' is already
   // loading, takes no action since this indicates that another thread
@@ -479,7 +479,7 @@ class ClockTimer {
   }
 
  private:
-  uint64_t* total_;
+  uint64_t* FOLLY_NONNULL total_;
   uint64_t start_;
 };
 
@@ -491,15 +491,15 @@ class CacheShard {
  public:
   static constexpr int32_t kCacheOwner = -4;
 
-  explicit CacheShard(AsyncDataCache* cache) : cache_(cache) {}
+  explicit CacheShard(AsyncDataCache* FOLLY_NONNULL cache) : cache_(cache) {}
 
   // See AsyncDataCache::findOrCreate.
   CachePin findOrCreate(
       RawFileCacheKey key,
       uint64_t size,
-      folly::SemiFuture<bool>* readyFuture);
+      folly::SemiFuture<bool>* FOLLY_NULLABLE readyFuture);
 
-  AsyncDataCache* cache() {
+  AsyncDataCache* FOLLY_NONNULL cache() {
     return cache_;
   }
   std::mutex& mutex() {
@@ -514,7 +514,7 @@ class CacheShard {
   void evict(uint64_t bytesToFree, bool evictAllUnpinned);
 
   // Removes 'entry' from 'this'.
-  void removeEntry(AsyncDataCacheEntry* entry);
+  void removeEntry(AsyncDataCacheEntry* FOLLY_NONNULL entry);
 
   // Adds the stats of 'this' to 'stats'.
   void updateStats(CacheStats& stats);
@@ -522,15 +522,15 @@ class CacheShard {
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
   void calibrateThreshold();
-  void removeEntryLocked(AsyncDataCacheEntry* entry);
+  void removeEntryLocked(AsyncDataCacheEntry* FOLLY_NONNULL entry);
   // Returns an unused entry if found. 'size' is a hint for selecting an entry
   // that already has the right amount of memory associated with it.
   std::unique_ptr<AsyncDataCacheEntry> getFreeEntryWithSize(uint64_t sizeHint);
   CachePin
-  initEntry(RawFileCacheKey key, AsyncDataCacheEntry* entry, int64_t size);
+  initEntry(RawFileCacheKey key, AsyncDataCacheEntry* FOLLY_NONNULL entry, int64_t size);
 
   std::mutex mutex_;
-  folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry*> entryMap_;
+  folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry* FOLLY_NONNULL> entryMap_;
   // Entries associated to a key.
   std::deque<std::unique_ptr<AsyncDataCacheEntry>> entries_;
   // Unused indices in 'entries_'.
@@ -538,7 +538,7 @@ class CacheShard {
   // A reserve of entries that are not associated to a key. Keeps a
   // few around to avoid allocating one inside 'mutex_'.
   std::vector<std::unique_ptr<AsyncDataCacheEntry>> freeEntries_;
-  AsyncDataCache* const cache_;
+  AsyncDataCache* const FOLLY_NONNULL cache_;
   // Index in 'entries_' for the next eviction candidate.
   uint32_t clockHand_{};
   // Number of gets  since last stats sampling.
@@ -585,7 +585,7 @@ class AsyncDataCache : public memory::MappedMemory,
   CachePin findOrCreate(
       RawFileCacheKey key,
       uint64_t size,
-      folly::SemiFuture<bool>* waitFuture = nullptr);
+      folly::SemiFuture<bool>* FOLLY_NULLABLE waitFuture = nullptr);
 
   bool allocate(
       memory::MachinePageCount numPages,
