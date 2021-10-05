@@ -25,19 +25,20 @@
 
 namespace facebook::velox {
 
-class Bloom {
+  template <bool hash = true>
+  class Bloom {
  public:
   Bloom(int32_t capacity) : bits_(bits::nextPowerOfTwo(capacity)) {}
 
   // Adds 'value'.
   void insert(uint64_t value) {
-    set(bits_.data(), bits_.size(), folly::hasher<uint64_t>()(value));
+    set(bits_.data(), bits_.size(), hash ? folly::hasher<uint64_t>()(value) : value);
   }
 
   bool mayContain(uint64_t value) {
-    return test(bits_.data(), bits_.size(), folly::hasher<uint64_t>()(value));
+    return test(bits_.data(), bits_.size(), hash ? folly::hasher<uint64_t>()(value) : value);
   }
-
+  private:
   // We use 4 independent hash functions by taking 24 bits of
   // the hash code and breaking these up into 4 groups of 6 bits. Each group
   // represents a number between 0 and 63 (2^6-1) and maps to one bit in a
@@ -70,7 +71,6 @@ class Bloom {
     return mask == (bloom[index] & mask);
   }
 
- private:
   std::vector<uint64_t> bits_;
 };
 
