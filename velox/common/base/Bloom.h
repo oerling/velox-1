@@ -38,7 +38,8 @@ class Bloom {
   // entries. Drops any prior content.
   void reset(int32_t capacity) {
     bits_.clear();
-    bits_.resize(bits::nextPowerOfTwo(capacity));
+    // 2 bytes per value.
+    bits_.resize(std::max<int32_t>(4, bits::nextPowerOfTwo(capacity) / 4));
   }
 
   // Adds 'value'.
@@ -48,7 +49,7 @@ class Bloom {
         hashInput ? folly::hasher<uint64_t>()(value) : value);
   }
 
-  bool mayContain(uint64_t value) {
+  bool mayContain(uint64_t value) const {
     return test(
         bits_.data(),
         bits_.size(),
