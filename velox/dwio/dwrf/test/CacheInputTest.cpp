@@ -248,7 +248,8 @@ class CacheTest : public testing::Test {
       int32_t readPct,
       int32_t readPctModulo,
       int32_t numStripes) {
-    auto tracker = std::make_shared<ScanTracker>("testTracker", nullptr, groupStats_.get());
+    auto tracker = std::make_shared<ScanTracker>(
+        "testTracker", nullptr, groupStats_.get());
     std::deque<std::unique_ptr<StripeData>> stripes;
     constexpr int32_t kReadAhead = 8;
     uint64_t fileId;

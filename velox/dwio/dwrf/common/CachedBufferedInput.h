@@ -97,7 +97,7 @@ class CachedBufferedInput : public BufferedInput {
     if (tracker_->groupStats()) {
       tracker_->groupStats()->recordFile(fileNum_, groupId_, numStripes);
     }
-    }
+  }
 
  private:
   struct CacheRequest {

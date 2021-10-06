@@ -76,8 +76,8 @@ struct hash<::facebook::velox::cache::TrackingId> {
 
 namespace facebook::velox::cache {
 
-  class GroupStats;
-  
+class GroupStats;
+
 // Records references and actual uses of a stream.
 struct TrackingData {
   int64_t referencedBytes{};
@@ -113,8 +113,8 @@ class ScanTracker {
   ScanTracker(
       std::string_view id,
       std::function<void(ScanTracker*)> unregisterer,
-	      GroupStats* FOLLY_NULLABLE groupStats = nullptr)
-    : id_(id), unregisterer_(unregisterer), groupStats_(groupStats) {}
+      GroupStats* FOLLY_NULLABLE groupStats = nullptr)
+      : id_(id), unregisterer_(unregisterer), groupStats_(groupStats) {}
 
   ~ScanTracker() {
     if (unregisterer_) {
@@ -156,7 +156,7 @@ class ScanTracker {
   GroupStats* FOLLY_NULLABLE groupStats() const {
     return groupStats_;
   }
-  
+
   std::string toString() const;
 
  private:

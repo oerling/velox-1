@@ -116,7 +116,7 @@ class GroupStats {
   // Records the existence of a distinct file inside 'groupId'
   void recordFile(uint64_t fileId, uint64_t groupId, int32_t numStripes);
 
-    // Records ScanTracker::recordReference at group level
+  // Records ScanTracker::recordReference at group level
   void recordReference(
       uint64_t fileId,
       uint64_t groupId,
