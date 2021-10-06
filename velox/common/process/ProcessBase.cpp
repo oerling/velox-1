@@ -18,6 +18,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <sstream>
 #include <time.h>
 #include <unistd.h>
 
@@ -118,9 +119,9 @@ bool hasBmi2() {
   return bmi2CpuFlag && FLAGS_bmi2;
 }
 
-std::mutex Context::mutex_;
-std::unordered_map<std::string, TraceData> Context::counts_;
-Context::Context(const std::string& label)
+std::mutex TraceContext::mutex_;
+std::unordered_map<std::string, TraceData> TraceContext::counts_;
+TraceContext::TraceContext(const std::string& label)
     : label_(label), enterTime_(std::chrono::steady_clock::now()) {
   std::lock_guard<std::mutex> l(mutex);
   auto& data = counts_[label_];
@@ -128,7 +129,7 @@ Context::Context(const std::string& label)
   ++data.numEnters;
 }
 
-Context::~Context() {
+TraceContext::~TraceContext() {
   std::lock_guard<std::mutex> l(mutex_);
   auto& data = counts_[label_];
   --data.numThreads;
@@ -140,7 +141,7 @@ Context::~Context() {
 }
 
 // static
-std::string Context::statusLine() {
+std::string TraceContext::statusLine() {
   std::stringstream out;
   std::lock_guard<std::mutex> l(mutex_);
   for (auto& pair : counts_) {

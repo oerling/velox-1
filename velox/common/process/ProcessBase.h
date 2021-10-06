@@ -74,11 +74,11 @@ struct TraceData {
   uint64_t maxMs{0};
 };
 
-class Context {
+class TraceContext {
  public:
-  Context(const std::string& label);
+  TraceContext(const std::string& label);
 
-  ~Context();
+  ~TraceContext();
 
   static std::string statusLine();
 
