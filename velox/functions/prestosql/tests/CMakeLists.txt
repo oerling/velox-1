@@ -23,30 +23,33 @@ add_executable(
   ArithmeticTest.cpp
   ArrayConstructorTest.cpp
   ArrayContainsTest.cpp
+  ArrayDistinctTest.cpp
   ArrayExceptTest.cpp
   ArrayFilterTest.cpp
   ArrayIntersectTest.cpp
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
+  CardinalityTest.cpp
+  CeilFloorTest.cpp
   CoalesceTest.cpp
   ComparisonsTest.cpp
-  IsNullTest.cpp
-  NotTest.cpp
-  InPredicateTest.cpp
-  CeilFloorTest.cpp
-  JsonExtractScalarTest.cpp
-  StringFunctionsTest.cpp
   DateTimeFunctionsTest.cpp
-  ReduceTest.cpp
-  RoundTest.cpp
-  CardinalityTest.cpp
-  MapKeysAndValuesTest.cpp
-  MapTest.cpp
+  ElementAtTest.cpp
+  InPredicateTest.cpp
+  IsNullTest.cpp
+  JsonExtractScalarTest.cpp
   MapConcatTest.cpp
   MapEntriesTest.cpp
   MapFilterTest.cpp
+  MapKeysAndValuesTest.cpp
+  MapTest.cpp
+  NotTest.cpp
+  ReduceTest.cpp
+  ReverseTest.cpp
+  RoundTest.cpp
+  SplitTest.cpp
+  StringFunctionsTest.cpp
   TransformTest.cpp
-  ElementAtTest.cpp
   WidthBucketArrayTest.cpp)
 
 add_test(velox_functions_test velox_functions_test)
@@ -55,6 +58,7 @@ target_link_libraries(
   velox_functions_test
   velox_functions_test_lib
   velox_exec
+  velox_expression
   velox_functions_prestosql
   velox_functions_lib
   velox_exec_test_util

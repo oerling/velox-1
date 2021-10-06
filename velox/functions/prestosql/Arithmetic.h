@@ -23,9 +23,7 @@
 #include "velox/functions/Macros.h"
 #include "velox/functions/prestosql/ArithmeticImpl.h"
 
-namespace facebook {
-namespace velox {
-namespace functions {
+namespace facebook::velox::functions {
 
 template <typename T>
 VELOX_UDF_BEGIN(plus)
@@ -152,6 +150,83 @@ FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
 }
 VELOX_UDF_END();
 
+VELOX_UDF_BEGIN(log2)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::log2(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(log10)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::log10(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(cos)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::cos(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(cosh)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::cosh(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(acos)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::acos(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(sin)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::sin(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(asin)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::asin(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(tan)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::tan(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(tanh)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::tanh(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(atan)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::atan(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(atan2)
+FOLLY_ALWAYS_INLINE bool call(double& result, double y, double x) {
+  result = std::atan2(y, x);
+  return true;
+}
+VELOX_UDF_END();
+
 VELOX_UDF_BEGIN(sqrt)
 FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
   result = std::sqrt(a);
@@ -241,6 +316,11 @@ FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
 }
 VELOX_UDF_END();
 
-} // namespace functions
-} // namespace velox
-} // namespace facebook
+VELOX_UDF_BEGIN(radians)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = a * (M_PI / 180);
+  return true;
+}
+VELOX_UDF_END();
+
+} // namespace facebook::velox::functions

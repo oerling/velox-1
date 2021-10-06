@@ -82,30 +82,14 @@ struct DriverCtx {
       int _pipelineId,
       int32_t numDrivers);
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorUserPool() {
-    opMemPools_.push_back(execCtx->pool()->addScopedChild("operator_ctx"));
-    return opMemPools_.back().get();
-  }
+  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
 
-  velox::memory::MemoryPool* FOLLY_NONNULL
-  addOperatorSystemPool(velox::memory::MemoryPool* FOLLY_NONNULL userPool) {
-    auto poolPtr = userPool->addScopedChild("operator_ctx");
-    poolPtr->setMemoryUsageTracker(
-        userPool->getMemoryUsageTracker()->addChild(true));
-    auto pool = poolPtr.get();
-    opMemPools_.push_back(std::move(poolPtr));
-
-    return pool;
-  }
-
+  // Makes an extract of QueryCtx for use in a connector. 'planNodeId'
+  // is the id of the calling TableScan. This and the task id identify
+  // the scan for column access tracking.
   std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
-      const std::string& connectorId) const;
-
- private:
-  // Lifetime of operator memory pools is same as the driverCtx, since some
-  // buffers allocated within an operator context may still be referenced by
-  // other operators.
-  std::vector<std::unique_ptr<velox::memory::MemoryPool>> opMemPools_;
+      const std::string& connectorId,
+      const std::string& planNodeId) const;
 };
 
 class Driver {
@@ -262,6 +246,31 @@ struct DriverFactory {
 
     return std::nullopt;
   }
+
+  /// Returns plan node IDs of all HashJoinNode's in the pipeline.
+  std::vector<core::PlanNodeId> needsHashJoinBridges() const {
+    std::vector<core::PlanNodeId> planNodeIds;
+    for (const auto& planNode : planNodes) {
+      if (auto joinNode =
+              std::dynamic_pointer_cast<const core::HashJoinNode>(planNode)) {
+        planNodeIds.emplace_back(joinNode->id());
+      }
+    }
+    return planNodeIds;
+  }
+
+  /// Returns plan node IDs of all CrossJoinNode's in the pipeline.
+  std::vector<core::PlanNodeId> needsCrossJoinBridges() const {
+    std::vector<core::PlanNodeId> joinNodeIds;
+    for (const auto& planNode : planNodes) {
+      if (auto joinNode =
+              std::dynamic_pointer_cast<const core::CrossJoinNode>(planNode)) {
+        joinNodeIds.emplace_back(joinNode->id());
+      }
+    }
+
+    return joinNodeIds;
+  }
 };
 
 // Begins and ends a section where a thread is running but not
@@ -270,10 +279,10 @@ struct DriverFactory {
 // the contending threads go suspended and each in turn enters a
 // global critical section. When running the arbitration strategy, a
 // thread can stop and restart Tasks, including its own. When a Task
-// is stopped, its drivers are blocked or suspended and the strategy thread can
-// alter the Task's memory including spilling or killing the whole Task. Other
-// threads waiting to run the arbitration, are in a suspended state which also
-// means that they are instantaneously killable or spillable.
+// is stopped, its drivers are blocked or suspended and the strategy thread
+// can alter the Task's memory including spilling or killing the whole Task.
+// Other threads waiting to run the arbitration, are in a suspended state
+// which also means that they are instantaneously killable or spillable.
 class SuspendedSection {
  public:
   explicit SuspendedSection(Driver* FOLLY_NONNULL driver);

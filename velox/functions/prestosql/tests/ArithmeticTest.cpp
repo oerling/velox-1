@@ -13,9 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <optional>
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 
 using namespace facebook::velox;
+
+static std::vector<double> kDoubleValues = {123, -123, 123.45, -123.45, 0};
 
 class ArithmeticTest : public functions::test::FunctionBaseTest {
  protected:
@@ -174,6 +177,154 @@ TEST_F(ArithmeticTest, ln) {
   EXPECT_EQ(std::nullopt, ln(std::nullopt));
 }
 
+TEST_F(ArithmeticTest, log2) {
+  const auto log2 = [&](std::optional<double> a) {
+    return evaluateOnce<double>("log2(c0)", a);
+  };
+
+  EXPECT_EQ(log2(1), 0);
+  EXPECT_TRUE(std::isnan(log2(-1).value()));
+  EXPECT_EQ(log2(std::nullopt), std::nullopt);
+  EXPECT_EQ(log2(kInf), kInf);
+  EXPECT_TRUE(std::isnan(log2(kNan).value()));
+}
+
+TEST_F(ArithmeticTest, log10) {
+  const auto log10 = [&](std::optional<double> a) {
+    return evaluateOnce<double>("log10(c0)", a);
+  };
+
+  EXPECT_EQ(log10(10), 1);
+  EXPECT_EQ(log10(1), 0);
+  EXPECT_EQ(log10(0.1), -1);
+  EXPECT_TRUE(std::isnan(log10(-1).value()));
+  EXPECT_EQ(log10(std::nullopt), std::nullopt);
+  EXPECT_EQ(log10(kInf), kInf);
+  EXPECT_TRUE(std::isnan(log10(kNan).value()));
+}
+
+TEST_F(ArithmeticTest, cos) {
+  const auto cosEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("cos(c0)", a);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::cos(value), cosEval(value));
+  }
+
+  EXPECT_EQ(std::nullopt, cosEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, cosh) {
+  const auto coshEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("cosh(c0)", a);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::cosh(value), coshEval(value));
+  }
+
+  EXPECT_EQ(std::nullopt, coshEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, acos) {
+  const auto acosEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("acos(c0)", a);
+  };
+
+  std::vector<double> values = {-1.0, -0.5, 0, 0.5, 1.0};
+  for (double value : values) {
+    EXPECT_EQ(std::acos(value), acosEval(value));
+  }
+
+  values = {123, -123, 123.45, -123.45};
+  for (double value : values) {
+    EXPECT_TRUE(std::isnan(acosEval(value).value()));
+  }
+
+  EXPECT_EQ(std::nullopt, acosEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, sin) {
+  const auto sinEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("sin(c0)", a);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::sin(value), sinEval(value));
+  }
+
+  EXPECT_EQ(std::nullopt, sinEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, asin) {
+  const auto asinEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("asin(c0)", a);
+  };
+
+  std::vector<double> values = {-1.0, -0.5, 0, 0.5, 1.0};
+  for (double value : values) {
+    EXPECT_EQ(std::asin(value), asinEval(value));
+  }
+
+  values = {123, -123, 123.45, -123.45};
+  for (double value : values) {
+    EXPECT_TRUE(std::isnan(asinEval(value).value()));
+  }
+
+  EXPECT_EQ(std::nullopt, asinEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, tan) {
+  const auto tanEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("tan(c0)", a);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::tan(value), tanEval(value));
+  }
+
+  EXPECT_EQ(std::nullopt, tanEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, tanh) {
+  const auto tanhEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("tanh(c0)", a);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::tanh(value), tanhEval(value));
+  }
+
+  EXPECT_EQ(std::nullopt, tanhEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, atan) {
+  const auto atanEval = [&](std::optional<double> a) {
+    return evaluateOnce<double>("atan(c0)", a);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::atan(value), atanEval(value));
+  }
+
+  EXPECT_EQ(std::nullopt, atanEval(std::nullopt));
+}
+
+TEST_F(ArithmeticTest, atan2) {
+  const auto atan2Eval = [&](std::optional<double> y, std::optional<double> x) {
+    return evaluateOnce<double>("atan2(c0, c1)", y, x);
+  };
+
+  for (double value : kDoubleValues) {
+    EXPECT_EQ(std::atan2(value, value), atan2Eval(value, value));
+  }
+
+  EXPECT_EQ(std::nullopt, atan2Eval(std::nullopt, std::nullopt));
+  EXPECT_EQ(std::nullopt, atan2Eval(1.0E0, std::nullopt));
+  EXPECT_EQ(std::nullopt, atan2Eval(std::nullopt, 1.0E0));
+}
+
 TEST_F(ArithmeticTest, sqrt) {
   constexpr double kDoubleMax = std::numeric_limits<double>::max();
 
@@ -301,4 +452,17 @@ TEST_F(ArithmeticTest, bitwiseXor) {
   EXPECT_EQ(bitwiseXor(3, 8), 11);
   EXPECT_EQ(bitwiseXor(-4, 12), -16);
   EXPECT_EQ(bitwiseXor(60, 21), 41);
+}
+
+TEST_F(ArithmeticTest, radians) {
+  const auto radians = [&](std::optional<double> a) {
+    return evaluateOnce<double>("radians(c0)", a);
+  };
+
+  EXPECT_EQ(std::nullopt, radians(std::nullopt));
+  EXPECT_DOUBLE_EQ(3.1415926535897931, radians(180).value());
+  EXPECT_DOUBLE_EQ(1.0000736613927508, radians(57.3).value());
+  EXPECT_DOUBLE_EQ(0, radians(0).value());
+  EXPECT_DOUBLE_EQ(-3.1415926535897931, radians(-180).value());
+  EXPECT_DOUBLE_EQ(-1.0000736613927508, radians(-57.3).value());
 }

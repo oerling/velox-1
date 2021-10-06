@@ -64,11 +64,13 @@ bool prepareFlatResultsVector(
 /**
  * substr(string, start) -> varchar
  *           Returns the rest of string from the starting position start.
- * Positions start with 1. A negative starting position is interpreted as being
+ * Positions start with 1. A negative starting position is interpreted as
+ being
  * relative to the end of the string.
 
  * substr(string, start, length) -> varchar
- *           Returns a substring from string of length length from the starting
+ *           Returns a substring from string of length length from the
+ starting
  * position start. Positions start with 1. A negative starting position is
  * interpreted as being relative to the end of the string.
  */
@@ -191,8 +193,8 @@ class SubstrFunction : public exec::VectorFunction {
       exec::Expr* caller,
       exec::EvalCtx* context,
       VectorPtr* result) const {
-    // We use this flag to enable the version of the function in which length is
-    // not provided.
+    // We use this flag to enable the version of the function in which length
+    // is not provided.
     bool noLengthVector = (args.size() == 2);
     BaseVector* stringsVector = args[0].get();
     BaseVector* startsVector = args[1].get();
@@ -220,15 +222,16 @@ class SubstrFunction : public exec::VectorFunction {
     // inputs are constant! (2) We are not optimizing a case in which start is
     // constant and length is vector (3) We are not optimizing a case in which
     // start is vector and length is constant
-    // TODO: If turns out case 1..3 are popular we need to optimize them as well
+    // TODO: If turns out case 1..3 are popular we need to optimize them as
+    // well
     if (stringArgVectorEncoding == VectorEncoding::Simple::FLAT) {
       const StringView* rawStrings =
           stringsVector->as<FlatVector<StringView>>()->rawValues();
       if (startArgVectorEncoding == VectorEncoding::Simple::FLAT) {
         if (lengthArgVectorEncoding == VectorEncoding::Simple::FLAT) {
           const I* rawStarts = startsVector->as<FlatVector<I>>()->rawValues();
-          // Incrementing ref count of the string buffer of the input vector so
-          // that if the argument owner goes out of scope the string buffer
+          // Incrementing ref count of the string buffer of the input vector
+          // so that if the argument owner goes out of scope the string buffer
           // still remains in memory.
           (*result)->as<FlatVector<StringView>>()->acquireSharedStringBuffers(
               stringsVector->as<FlatVector<StringView>>());
@@ -767,12 +770,95 @@ class Replace : public exec::VectorFunction {
     return {{0, 2}};
   }
 };
+
+// Trim functions
+// ltrim(string) -> varchar
+//    Removes leading whitespace from string.
+// rtrim(string) -> varchar
+//    Removes trailing whitespace from string.
+// trim(string) -> varchar
+//    Removes leading and trailing whitespace from string.
+template <bool leftTrim, bool rightTrim>
+class TrimTemplateFunction : public exec::VectorFunction {
+ public:
+  static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
+    // varchar -> varchar
+    return {exec::FunctionSignatureBuilder()
+                .returnType("varchar")
+                .argumentType("varchar")
+                .build()};
+  }
+
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      [[maybe_unused]] exec::Expr* caller,
+      exec::EvalCtx* context,
+      VectorPtr* result) const override {
+    VELOX_CHECK_EQ(args.size(), 1);
+    // For a deterministic function that takes a single argument Velox
+    // guaranteed to receive its only input as a flat vector
+    BaseVector* stringsVector = args[0].get();
+    const StringView* rawStrings =
+        stringsVector->as<FlatVector<StringView>>()->rawValues();
+
+    auto ascii = isAscii(stringsVector, rows);
+    prepareFlatResultsVector(result, rows, context, args[0]);
+    BufferPtr resultValues =
+        (*result)->as<FlatVector<StringView>>()->mutableValues(rows.end());
+    StringView* rawResult = resultValues->asMutable<StringView>();
+
+    (*result)->as<FlatVector<StringView>>()->acquireSharedStringBuffers(
+        stringsVector->as<FlatVector<StringView>>());
+
+    // Fast path
+    if (ascii) {
+      rows.applyToSelected([&](int row) {
+        stringImpl::trimAsciiWhiteSpace<leftTrim, rightTrim>(
+            rawResult[row], rawStrings[row]);
+      });
+    } else {
+      rows.applyToSelected([&](int row) {
+        stringImpl::trimUnicodeWhiteSpace<leftTrim, rightTrim>(
+            rawResult[row], rawStrings[row]);
+      });
+    }
+  }
+
+  bool ensureStringEncodingSetAtAllInputs() const override {
+    return true;
+  }
+
+  bool propagateStringEncodingFromAllInputs() const override {
+    return true;
+  }
+};
+
+using TrimFunction = TrimTemplateFunction<true, true>;
+using LtrimFunction = TrimTemplateFunction<true, false>;
+using RtrimFunction = TrimTemplateFunction<false, true>;
+
 } // namespace
 
 VELOX_DECLARE_VECTOR_FUNCTION(
     udf_substr,
     SubstrFunction::signatures(),
     std::make_unique<SubstrFunction>());
+
+VELOX_DECLARE_VECTOR_FUNCTION(
+    udf_trim,
+    TrimFunction::signatures(),
+    std::make_unique<TrimFunction>());
+
+VELOX_DECLARE_VECTOR_FUNCTION(
+    udf_ltrim,
+    LtrimFunction::signatures(),
+    std::make_unique<LtrimFunction>());
+
+VELOX_DECLARE_VECTOR_FUNCTION(
+    udf_rtrim,
+    RtrimFunction::signatures(),
+    std::make_unique<RtrimFunction>());
 
 VELOX_DECLARE_VECTOR_FUNCTION(
     udf_upper,

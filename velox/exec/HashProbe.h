@@ -28,7 +28,7 @@ class HashProbe : public Operator {
   HashProbe(
       int32_t operatorId,
       DriverCtx* driverCtx,
-      std::shared_ptr<const core::HashJoinNode> hashJoinNode);
+      const std::shared_ptr<const core::HashJoinNode>& hashJoinNode);
 
   void addInput(RowVectorPtr input) override;
 
@@ -39,6 +39,8 @@ class HashProbe : public Operator {
   }
 
   BlockingReason isBlocked(ContinueFuture* future) override;
+
+  void finish() override;
 
   void clearDynamicFilters() override;
 
@@ -53,6 +55,19 @@ class HashProbe : public Operator {
       const std::shared_ptr<const core::ITypedExpr>& filter,
       const RowTypePtr& probeType,
       const RowTypePtr& tableType);
+
+  // Check if output_ can be re-used and if not make a new one.
+  void prepareOutput(vector_size_t size);
+
+  // Populate output columns.
+  void fillOutput(vector_size_t size);
+
+  // Populate output columns with build-side rows that didn't match join
+  // condition.
+  RowVectorPtr getNonMatchingOutputForRightJoin();
+
+  // Populate filter input columns.
+  void fillFilterInput(vector_size_t size);
 
   // Applies 'filter_' to 'outputRows_' and updates 'outputRows_' and
   // 'rowNumberMapping_'. Returns the number of passing rows.
@@ -161,6 +176,58 @@ class HashProbe : public Operator {
 
   // Rows of table found by join probe, later filtered by 'filter_'.
   std::vector<char*> outputRows_;
+
+  // Tracks probe side rows which had one or more matches on the build side, but
+  // didn't pass the filter.
+  class LeftJoinTracker {
+   public:
+    // Called for each row that the filter was evaluated on. Expects that probe
+    // side rows with multiple matches on the build side are next to each other.
+    template <typename TOnMiss>
+    void advance(vector_size_t row, bool passed, TOnMiss onMiss) {
+      if (currentRow != row) {
+        if (currentRow != -1 && !currentRowPassed) {
+          onMiss(currentRow);
+        }
+        currentRow = row;
+        currentRowPassed = false;
+      }
+      if (passed) {
+        currentRowPassed = true;
+      }
+    }
+
+    // Called when all rows from the current input batch were processed.
+    template <typename TOnMiss>
+    void finish(TOnMiss onMiss) {
+      if (!currentRowPassed) {
+        onMiss(currentRow);
+      }
+
+      currentRow = -1;
+      currentRowPassed = false;
+    }
+
+   private:
+    // Row number being processed.
+    vector_size_t currentRow{-1};
+
+    // True if currentRow has a match.
+    bool currentRowPassed{false};
+  };
+
+  /// For left join, true if we received new 'input_'.
+  bool newInputForLeftJoin_{false};
+
+  /// True if this is the last HashProbe operator in the pipeline. It is
+  /// responsible for producing non-matching build-side rows for the right join.
+  bool lastRightJoinProbe_{false};
+
+  BaseHashTable::NotProbedRowsIterator rightJoinIterator_;
+
+  /// For left join, tracks the probe side rows which had matches on the build
+  /// side but didn't pass the filter.
+  LeftJoinTracker leftJoinTracker_;
 
   // Keeps track of returned results between successive batches of
   // output for a batch of input.

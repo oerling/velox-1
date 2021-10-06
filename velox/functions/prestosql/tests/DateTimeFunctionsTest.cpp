@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
+#include "velox/functions/prestosql/TimestampWithTimeZoneType.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/type/Timestamp.h"
 
 using namespace facebook::velox;
 
@@ -39,7 +41,7 @@ TEST_F(DateTimeFunctionsTest, toUnixtime) {
   EXPECT_EQ(998423705.321, toUnixtime(Timestamp(998423705, 321000000)));
 }
 
-TEST_F(DateTimeFunctionsTest, fromUnixtime) {
+TEST_F(DateTimeFunctionsTest, fromUnixtimeRountTrip) {
   const auto testRoundTrip = [&](std::optional<Timestamp> t) {
     auto r = evaluateOnce<Timestamp>("from_unixtime(to_unixtime(c0))", t);
     EXPECT_EQ(r->getSeconds(), t->getSeconds()) << "at " << t->toString();
@@ -54,4 +56,77 @@ TEST_F(DateTimeFunctionsTest, fromUnixtime) {
   testRoundTrip(Timestamp(-9999999999, 100000000));
   testRoundTrip(Timestamp(998474645, 321000000));
   testRoundTrip(Timestamp(998423705, 321000000));
+}
+
+TEST_F(DateTimeFunctionsTest, fromUnixtimeWithTimeZone) {
+  vector_size_t size = 37;
+
+  auto unixtimeAt = [](vector_size_t row) -> double {
+    return 1631800000.12345 + row * 11;
+  };
+
+  auto unixtimes = makeFlatVector<double>(size, unixtimeAt);
+
+  // Constant timezone parameter.
+  {
+    auto result = evaluate<RowVector>(
+        "from_unixtime(c0, '+01:00')", makeRowVector({unixtimes}));
+    ASSERT_TRUE(isTimestampWithTimeZoneType(result->type()));
+
+    auto expected = makeRowVector({
+        makeFlatVector<int64_t>(
+            size, [&](auto row) { return unixtimeAt(row) * 1'000; }),
+        makeConstant((int16_t)900, size),
+    });
+    assertEqualVectors(expected, result);
+  }
+
+  // Variable timezone parameter.
+  {
+    std::vector<int16_t> timezoneIds = {900, 960, 1020, 1080, 1140};
+    std::vector<std::string> timezoneNames = {
+        "+01:00", "+02:00", "+03:00", "+04:00", "+05:00"};
+
+    auto timezones = makeFlatVector<StringView>(
+        size, [&](auto row) { return StringView(timezoneNames[row % 5]); });
+
+    auto result = evaluate<RowVector>(
+        "from_unixtime(c0, c1)", makeRowVector({unixtimes, timezones}));
+    ASSERT_TRUE(isTimestampWithTimeZoneType(result->type()));
+
+    auto expected = makeRowVector({
+        makeFlatVector<int64_t>(
+            size, [&](auto row) { return unixtimeAt(row) * 1'000; }),
+        makeFlatVector<int16_t>(
+            size, [&](auto row) { return timezoneIds[row % 5]; }),
+    });
+    assertEqualVectors(expected, result);
+  }
+}
+
+TEST_F(DateTimeFunctionsTest, fromUnixtime) {
+  const auto fromUnixtime = [&](std::optional<double> t) {
+    return evaluateOnce<Timestamp>("from_unixtime(c0)", t);
+  };
+
+  EXPECT_EQ(Timestamp(0, 0), fromUnixtime(0));
+  EXPECT_EQ(Timestamp(-1, 9000), fromUnixtime(-0.999991));
+  EXPECT_EQ(Timestamp(4000000000, 0), fromUnixtime(4000000000));
+  // double(123000000) to uint64_t conversion returns 123000144.
+  EXPECT_EQ(Timestamp(4000000000, 123000144), fromUnixtime(4000000000.123));
+  EXPECT_EQ(
+      std::nullopt, fromUnixtime(std::numeric_limits<double>::infinity()));
+  EXPECT_EQ(
+      std::nullopt, fromUnixtime(std::numeric_limits<double>::quiet_NaN()));
+}
+
+TEST_F(DateTimeFunctionsTest, millisecond) {
+  const auto millisecond = [&](std::optional<Timestamp> timestamp) {
+    return evaluateOnce<int64_t>("millisecond(c0)", timestamp);
+  };
+  EXPECT_EQ(std::nullopt, millisecond(std::nullopt));
+  EXPECT_EQ(0, millisecond(Timestamp(0, 0)));
+  EXPECT_EQ(0, millisecond(Timestamp(4000000000, 0)));
+  EXPECT_EQ(123, millisecond(Timestamp(-1, 123000000)));
+  EXPECT_EQ(12300, millisecond(Timestamp(-1, 12300000000)));
 }

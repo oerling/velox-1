@@ -27,10 +27,7 @@ struct ArrayAccumulator {
 
 class ArrayAggAggregate : public exec::Aggregate {
  public:
-  explicit ArrayAggAggregate(
-      core::AggregationNode::Step step,
-      TypePtr resultType)
-      : Aggregate(step, resultType) {}
+  explicit ArrayAggAggregate(TypePtr resultType) : Aggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(ArrayAccumulator);
@@ -80,7 +77,7 @@ class ArrayAggAggregate : public exec::Aggregate {
     extractValues(groups, numGroups, result);
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -93,7 +90,7 @@ class ArrayAggAggregate : public exec::Aggregate {
     });
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -111,7 +108,7 @@ class ArrayAggAggregate : public exec::Aggregate {
     });
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -124,7 +121,7 @@ class ArrayAggAggregate : public exec::Aggregate {
     });
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -174,7 +171,7 @@ bool registerArrayAggregate(const std::string& name) {
             argTypes.size(), 1, "{} takes at most one argument", name);
         auto rawInput = exec::isRawInput(step);
         TypePtr returnType = rawInput ? ARRAY(argTypes[0]) : argTypes[0];
-        return std::make_unique<ArrayAggAggregate>(step, returnType);
+        return std::make_unique<ArrayAggAggregate>(returnType);
       });
   return true;
 }

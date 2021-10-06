@@ -15,6 +15,7 @@
  */
 #include "velox/expression/SignatureBinder.h"
 #include <boost/algorithm/string.hpp>
+#include "velox/expression/VectorFunction.h"
 
 namespace facebook::velox::exec {
 
@@ -102,23 +103,35 @@ bool SignatureBinder::tryBind(
 
 TypePtr SignatureBinder::tryResolveType(
     const exec::TypeSignature& typeSignature) const {
+  return tryResolveType(typeSignature, bindings_);
+}
+
+// static
+TypePtr SignatureBinder::tryResolveType(
+    const exec::TypeSignature& typeSignature,
+    const std::unordered_map<std::string, TypePtr>& bindings) {
   const auto& params = typeSignature.parameters();
 
   std::vector<TypePtr> children;
   children.reserve(params.size());
   for (auto& param : params) {
-    auto type = tryResolveType(param);
+    auto type = tryResolveType(param, bindings);
     if (!type) {
       return nullptr;
     }
     children.emplace_back(type);
   }
 
-  auto it = bindings_.find(typeSignature.baseType());
-  if (it == bindings_.end()) {
+  auto it = bindings.find(typeSignature.baseType());
+  if (it == bindings.end()) {
     // concrete type
-    auto typeKind = mapNameToTypeKind(
-        boost::algorithm::to_upper_copy(typeSignature.baseType()));
+    auto typeName = boost::algorithm::to_upper_copy(typeSignature.baseType());
+
+    if (auto type = getType(typeName, children)) {
+      return type;
+    }
+
+    auto typeKind = mapNameToTypeKind(typeName);
 
     // createType(kind) function doesn't support ROW, UNKNOWN and OPAQUE type
     // kinds.

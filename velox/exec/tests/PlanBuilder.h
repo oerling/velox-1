@@ -140,7 +140,9 @@ class PlanBuilder {
       int32_t count,
       bool isPartial);
 
-  PlanBuilder& limit(int32_t count, bool isPartial);
+  PlanBuilder& limit(int32_t offset, int32_t count, bool isPartial);
+
+  PlanBuilder& enforceSingleRow();
 
   std::shared_ptr<const core::FieldAccessTypedExpr> field(int index);
 
@@ -179,6 +181,10 @@ class PlanBuilder {
       const std::string& filterText,
       const std::vector<ChannelIndex>& output,
       core::JoinType joinType = core::JoinType::kInner);
+
+  PlanBuilder& crossJoin(
+      const std::shared_ptr<core::PlanNode>& build,
+      const std::vector<ChannelIndex>& output);
 
   PlanBuilder& unnest(
       const std::vector<std::string>& replicateColumns,

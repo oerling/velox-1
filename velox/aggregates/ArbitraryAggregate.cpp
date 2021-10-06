@@ -15,7 +15,7 @@
  */
 
 #include "velox/aggregates/AggregateNames.h"
-#include "velox/aggregates/SimpleNumerics.h"
+#include "velox/aggregates/SimpleNumericAggregate.h"
 #include "velox/aggregates/SingleValueAccumulator.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/vector/DecodedVector.h"
@@ -28,12 +28,11 @@ namespace {
 // Arbitrary aggregate returns any arbitrary non-NULL value.
 // We always keep the first (non-NULL) element seen.
 template <typename T>
-class Arbitrary : public SimpleNumericAggregate<T, T, T> {
+class ArbitraryAggregate : public SimpleNumericAggregate<T, T, T> {
   using BaseAggregate = SimpleNumericAggregate<T, T, T>;
 
  public:
-  explicit Arbitrary(core::AggregationNode::Step step, TypePtr resultType)
-      : BaseAggregate(step, resultType) {}
+  explicit ArbitraryAggregate(TypePtr resultType) : BaseAggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(T);
@@ -52,7 +51,7 @@ class Arbitrary : public SimpleNumericAggregate<T, T, T> {
     });
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -84,15 +83,15 @@ class Arbitrary : public SimpleNumericAggregate<T, T, T> {
     }
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -118,12 +117,12 @@ class Arbitrary : public SimpleNumericAggregate<T, T, T> {
     }
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
  private:
@@ -137,10 +136,8 @@ class Arbitrary : public SimpleNumericAggregate<T, T, T> {
 // seen. Arbitrary (x) will produce partial and final aggregations of type x.
 class NonNumericArbitrary : public exec::Aggregate {
  public:
-  explicit NonNumericArbitrary(
-      core::AggregationNode::Step step,
-      const TypePtr& resultType)
-      : exec::Aggregate(step, resultType) {}
+  explicit NonNumericArbitrary(const TypePtr& resultType)
+      : exec::Aggregate(resultType) {}
 
   // We use singleValueAccumulator to save the results for each group. This
   // struct will allow us to save variable-width value.
@@ -190,7 +187,7 @@ class NonNumericArbitrary : public exec::Aggregate {
     }
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -214,15 +211,15 @@ class NonNumericArbitrary : public exec::Aggregate {
     });
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -246,12 +243,12 @@ class NonNumericArbitrary : public exec::Aggregate {
     });
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 };
 
@@ -267,22 +264,22 @@ bool registerArbitraryAggregate(const std::string& name) {
         auto inputType = argTypes[0];
         switch (inputType->kind()) {
           case TypeKind::TINYINT:
-            return std::make_unique<Arbitrary<int8_t>>(step, inputType);
+            return std::make_unique<ArbitraryAggregate<int8_t>>(inputType);
           case TypeKind::SMALLINT:
-            return std::make_unique<Arbitrary<int16_t>>(step, inputType);
+            return std::make_unique<ArbitraryAggregate<int16_t>>(inputType);
           case TypeKind::INTEGER:
-            return std::make_unique<Arbitrary<int32_t>>(step, inputType);
+            return std::make_unique<ArbitraryAggregate<int32_t>>(inputType);
           case TypeKind::BIGINT:
-            return std::make_unique<Arbitrary<int64_t>>(step, inputType);
+            return std::make_unique<ArbitraryAggregate<int64_t>>(inputType);
           case TypeKind::REAL:
-            return std::make_unique<Arbitrary<float>>(step, inputType);
+            return std::make_unique<ArbitraryAggregate<float>>(inputType);
           case TypeKind::DOUBLE:
-            return std::make_unique<Arbitrary<double>>(step, inputType);
+            return std::make_unique<ArbitraryAggregate<double>>(inputType);
           case TypeKind::VARCHAR:
           case TypeKind::ARRAY:
           case TypeKind::MAP:
           case TypeKind::ROW:
-            return std::make_unique<NonNumericArbitrary>(step, inputType);
+            return std::make_unique<NonNumericArbitrary>(inputType);
           default:
             VELOX_FAIL(
                 "Unknown input type for {} aggregation {}",

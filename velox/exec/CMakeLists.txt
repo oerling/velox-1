@@ -16,15 +16,20 @@ add_library(
   Aggregate.cpp
   AllocationPool.cpp
   ContainerRowSerde.cpp
+  CrossJoinBuild.cpp
+  CrossJoinProbe.cpp
   Driver.cpp
+  EnforceSingleRow.cpp
   Exchange.cpp
   FilterProject.cpp
   GroupingSet.cpp
   HashAggregation.cpp
   HashBuild.cpp
+  HashPartitionFunction.cpp
   HashProbe.cpp
   HashStringAllocator.cpp
   HashTable.cpp
+  JoinBridge.cpp
   Limit.cpp
   LocalPartition.cpp
   LocalPlanner.cpp

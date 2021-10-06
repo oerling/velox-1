@@ -124,10 +124,11 @@ class VectorAdapterFactory {
  public:
   virtual std::unique_ptr<VectorFunction> getVectorInterpreter() const = 0;
   virtual ~VectorAdapterFactory() = default;
+  virtual const TypePtr returnType() const = 0;
 };
 
 /// Returns a list of signatured supposed by VectorFunction with the specified
-/// name. Returns std::nullopt if there is not function with the specified name.
+/// name. Returns std::nullopt if there is no function with the specified name.
 std::optional<std::vector<std::shared_ptr<FunctionSignature>>>
 getVectorFunctionSignatures(const std::string& name);
 
@@ -161,6 +162,17 @@ struct VectorFunctionArg {
 using VectorFunctionFactory = std::function<std::shared_ptr<VectorFunction>(
     const std::string& name,
     const std::vector<VectorFunctionArg>& inputArgs)>;
+
+struct VectorFunctionEntry {
+  std::vector<std::shared_ptr<FunctionSignature>> signatures;
+  VectorFunctionFactory factory;
+};
+
+// TODO: Use folly::Singleton here
+using VectorFunctionMap =
+    folly::Synchronized<std::unordered_map<std::string, VectorFunctionEntry>>;
+
+VectorFunctionMap& vectorFunctionFactories();
 
 // A template to simplify making VectorFunctionFactory for a function that has a
 // constructor that takes inputTypes and constantInputs

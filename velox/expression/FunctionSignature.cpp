@@ -16,6 +16,8 @@
 #include "velox/expression/FunctionSignature.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/trim.hpp>
+#include "velox/common/base/Exceptions.h"
+#include "velox/expression/VectorFunction.h"
 
 namespace facebook::velox::exec {
 
@@ -105,8 +107,11 @@ void validateBaseTypeAndCollectTypeParams(
           arg.parameters().empty(), "Type 'Any' cannot have parameters")
       return;
     }
-    // Check to ensure base type is supported.
-    mapNameToTypeKind(typeName);
+
+    if (!typeExists(typeName)) {
+      // Check to ensure base type is supported.
+      mapNameToTypeKind(typeName);
+    }
 
     // Ensure all params are similarly supported.
     for (auto& param : arg.parameters()) {
@@ -116,7 +121,7 @@ void validateBaseTypeAndCollectTypeParams(
 
   } else {
     // This means base type is a TypeParameter, ensure
-    // it doesnt have parameters, e.g M[T].
+    // it doesn't have parameters, e.g M[T].
     VELOX_USER_CHECK(
         arg.parameters().empty(),
         "Named type cannot have parameters : {}",
@@ -168,4 +173,14 @@ FunctionSignature::FunctionSignature(
       variableArity_{variableArity} {
   validate(typeVariableConstants_, returnType_, argumentTypes_);
 }
+
+std::shared_ptr<FunctionSignature> FunctionSignatureBuilder::build() {
+  VELOX_CHECK(returnType_.has_value());
+  return std::make_shared<FunctionSignature>(
+      std::move(typeVariableConstants_),
+      returnType_.value(),
+      std::move(argumentTypes_),
+      variableArity_);
+}
+
 } // namespace facebook::velox::exec

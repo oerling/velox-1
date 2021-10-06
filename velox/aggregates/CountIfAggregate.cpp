@@ -24,8 +24,7 @@ namespace facebook::velox::aggregate {
 
 class CountIfAggregate : public exec::Aggregate {
  public:
-  explicit CountIfAggregate(core::AggregationNode::Step step)
-      : exec::Aggregate(step, BIGINT()) {}
+  explicit CountIfAggregate() : exec::Aggregate(BIGINT()) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(int64_t);
@@ -58,7 +57,7 @@ class CountIfAggregate : public exec::Aggregate {
     }
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -91,7 +90,7 @@ class CountIfAggregate : public exec::Aggregate {
     }
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -111,7 +110,7 @@ class CountIfAggregate : public exec::Aggregate {
     });
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -149,7 +148,7 @@ class CountIfAggregate : public exec::Aggregate {
     addToGroup(group, numTrue);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& /*rows*/,
       const std::vector<VectorPtr>& args,
@@ -184,7 +183,7 @@ bool registerCountIfAggregate(const std::string& name) {
               name);
         }
 
-        return std::make_unique<CountIfAggregate>(step);
+        return std::make_unique<CountIfAggregate>();
       });
   return true;
 }

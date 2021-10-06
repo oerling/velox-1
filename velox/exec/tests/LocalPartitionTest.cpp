@@ -156,7 +156,7 @@ TEST_F(LocalPartitionTest, partition) {
 
   CursorParameters params;
   params.planNode = op;
-  params.numThreads = 2;
+  params.maxDrivers = 2;
 
   uint32_t fileIndex = 0;
   auto task = ::assertQuery(
@@ -246,7 +246,7 @@ TEST_F(LocalPartitionTest, maxBufferSizePartition) {
 
   CursorParameters params;
   params.planNode = op;
-  params.numThreads = 2;
+  params.maxDrivers = 2;
   params.queryCtx = core::QueryCtx::create();
 
   // Set an artificially low buffer size limit to trigger blocking behavior.
@@ -338,6 +338,23 @@ TEST_F(LocalPartitionTest, outputLayout) {
   task = assertQuery(
       op, std::vector<std::shared_ptr<TempFilePath>>{}, "SELECT 300, -71, 102");
   verifyExchangeSourceOperatorStats(task, 300);
+
+  op = PlanBuilder()
+           .localPartition(
+               {},
+               {
+                   valuesNode(0),
+                   valuesNode(1),
+                   valuesNode(2),
+               },
+               // Drop all columns.
+               {})
+           .singleAggregation({}, {"count(1)"})
+           .planNode();
+
+  task = assertQuery(
+      op, std::vector<std::shared_ptr<TempFilePath>>{}, "SELECT 300");
+  verifyExchangeSourceOperatorStats(task, 300);
 }
 
 TEST_F(LocalPartitionTest, multipleExchanges) {
@@ -388,7 +405,7 @@ TEST_F(LocalPartitionTest, multipleExchanges) {
 
   CursorParameters params;
   params.planNode = op;
-  params.numThreads = 2;
+  params.maxDrivers = 2;
 
   uint32_t fileIndex = 0;
   auto task = ::assertQuery(

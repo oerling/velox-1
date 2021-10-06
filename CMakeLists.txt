@@ -86,6 +86,11 @@ if("${ENABLE_ALL_WARNINGS}")
          -Wno-comment \
          -Wno-int-in-bool-context \
          -Wno-redundant-move \
+         -Wno-array-bounds \
+         -Wno-maybe-uninitialized \
+         -Wno-unused-result \
+         -Wno-format-overflow \
+         -Wno-strict-aliasing \
          -Wno-type-limits")
   endif()
 
@@ -162,7 +167,7 @@ endif()
 
 include_directories(SYSTEM ${FOLLY_INCLUDE_DIRS})
 
-find_package(Protobuf REQUIRED)
+find_package(Protobuf 3.0.0 REQUIRED)
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
 # GCC needs to link a library to enable std::filesystem.

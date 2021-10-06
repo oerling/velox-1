@@ -43,6 +43,7 @@ enum class FileFormat {
   RC_BINARY = 4, // RC with binary serialization
   TEXT = 5,
   JSON = 6,
+  PARQUET = 7,
 };
 
 FileFormat toFileFormat(std::string s);
@@ -281,9 +282,8 @@ enum class PrefetchMode {
  * PReads into the same |cache|.
  */
 struct DataCacheConfig {
-  velox::DataCache* cache;
-  // We identify the file the data belongs to by a 64 bit integer. One
-  // practical option is to use an external filename->incrementing integer map.
+  velox::DataCache* cache{nullptr};
+  // We identify the file the data belongs to by an id from StringIdMap.
   uint64_t filenum;
 };
 

@@ -13,14 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/aggregates/SimpleNumerics.h"
-#include "velox/aggregates/AggregateNames.h"
-#include "velox/aggregates/AggregationHook.h"
-#include "velox/exec/Aggregate.h"
+#pragma once
+
+#include "velox/aggregates/SimpleNumericAggregate.h"
 
 namespace facebook::velox::aggregate {
-
-namespace {
 
 template <typename TInput, typename TAccumulator, typename ResultType>
 class SumAggregate
@@ -29,8 +26,7 @@ class SumAggregate
       SimpleNumericAggregate<TInput, TAccumulator, ResultType>;
 
  public:
-  explicit SumAggregate(core::AggregationNode::Step step, TypePtr resultType)
-      : BaseAggregate(step, resultType) {}
+  explicit SumAggregate(TypePtr resultType) : BaseAggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(TAccumulator);
@@ -61,7 +57,7 @@ class SumAggregate
         });
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -69,7 +65,7 @@ class SumAggregate
     updateInternal<TAccumulator>(groups, rows, args, mayPushdown);
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -77,7 +73,7 @@ class SumAggregate
     updateInternal<ResultType>(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -92,7 +88,7 @@ class SumAggregate
         0);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -142,131 +138,6 @@ class SumAggregate
   }
 };
 
-class CountAggregate : public SimpleNumericAggregate<bool, int64_t, int64_t> {
-  using BaseAggregate = SimpleNumericAggregate<bool, int64_t, int64_t>;
-
- public:
-  explicit CountAggregate(core::AggregationNode::Step step)
-      : BaseAggregate(step, BIGINT()) {}
-
-  int32_t accumulatorFixedWidthSize() const override {
-    return sizeof(int64_t);
-  }
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    for (auto i : indices) {
-      // result of count is never null
-      *value<int64_t>(groups[i]) = (int64_t)0;
-    }
-  }
-
-  void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
-      override {
-    BaseAggregate::doExtractValues(groups, numGroups, result, [&](char* group) {
-      return *value<int64_t>(group);
-    });
-  }
-
-  void updatePartial(
-      char** groups,
-      const SelectivityVector& rows,
-      const std::vector<VectorPtr>& args,
-      bool /*mayPushdown*/) override {
-    if (args.empty()) {
-      rows.applyToSelected([&](vector_size_t i) { addToGroup(groups[i], 1); });
-      return;
-    }
-
-    DecodedVector decoded(*args[0], rows);
-    if (decoded.isConstantMapping()) {
-      if (!decoded.isNullAt(0)) {
-        rows.applyToSelected(
-            [&](vector_size_t i) { addToGroup(groups[i], 1); });
-      }
-    } else if (decoded.mayHaveNulls()) {
-      rows.applyToSelected([&](vector_size_t i) {
-        if (decoded.isNullAt(i)) {
-          return;
-        }
-        addToGroup(groups[i], 1);
-      });
-    } else {
-      rows.applyToSelected([&](vector_size_t i) { addToGroup(groups[i], 1); });
-    }
-  }
-
-  void updateFinal(
-      char** /*groups*/,
-      const SelectivityVector& /*rows*/,
-      const std::vector<VectorPtr>& /*args*/,
-      bool /*mayPushdown*/) override {
-    VELOX_UNREACHABLE();
-  }
-
-  void updateSingleGroupPartial(
-      char* group,
-      const SelectivityVector& rows,
-      const std::vector<VectorPtr>& args,
-      bool /*mayPushdown*/) override {
-    if (args.empty()) {
-      addToGroup(group, rows.size());
-      return;
-    }
-
-    DecodedVector decoded(*args[0], rows);
-    if (decoded.isConstantMapping()) {
-      if (!decoded.isNullAt(0)) {
-        addToGroup(group, rows.size());
-      }
-    } else if (decoded.mayHaveNulls()) {
-      int64_t nonNullCount = 0;
-      rows.applyToSelected([&](vector_size_t i) {
-        if (!decoded.isNullAt(i)) {
-          ++nonNullCount;
-        }
-      });
-      addToGroup(group, nonNullCount);
-    } else {
-      addToGroup(group, rows.size());
-    }
-  }
-
-  void updateSingleGroupFinal(
-      char* /*group*/,
-      const SelectivityVector& /*rows*/,
-      const std::vector<VectorPtr>& /*args*/,
-      bool /*mayPushdown*/) override {
-    VELOX_UNREACHABLE();
-  }
-
- private:
-  inline void addToGroup(char* group, int64_t count) {
-    *value<int64_t>(group) += count;
-  }
-};
-
-bool registerCountAggregate(const std::string& name) {
-  exec::AggregateFunctions().Register(
-      name,
-      [name](
-          core::AggregationNode::Step step,
-          const std::vector<TypePtr>& argTypes,
-          const TypePtr&
-          /*resultType*/) -> std::unique_ptr<exec::Aggregate> {
-        VELOX_CHECK_LE(
-            argTypes.size(), 1, "{} takes at most one argument", name);
-        if (exec::isRawInput(step)) {
-          return std::make_unique<CountAggregate>(step);
-        } else {
-          return std::make_unique<SumAggregate<int64_t, int64_t, int64_t>>(
-              step, BIGINT());
-        }
-      });
-  return true;
-}
-
 template <template <typename U, typename V, typename W> class T>
 bool registerSumAggregate(const std::string& name) {
   exec::AggregateFunctions().Register(
@@ -279,29 +150,23 @@ bool registerSumAggregate(const std::string& name) {
         auto inputType = argTypes[0];
         switch (inputType->kind()) {
           case TypeKind::TINYINT:
-            return std::make_unique<T<int8_t, int64_t, int64_t>>(
-                step, BIGINT());
+            return std::make_unique<T<int8_t, int64_t, int64_t>>(BIGINT());
           case TypeKind::SMALLINT:
-            return std::make_unique<T<int16_t, int64_t, int64_t>>(
-                step, BIGINT());
+            return std::make_unique<T<int16_t, int64_t, int64_t>>(BIGINT());
           case TypeKind::INTEGER:
-            return std::make_unique<T<int32_t, int64_t, int64_t>>(
-                step, BIGINT());
+            return std::make_unique<T<int32_t, int64_t, int64_t>>(BIGINT());
           case TypeKind::BIGINT:
-            return std::make_unique<T<int64_t, int64_t, int64_t>>(
-                step, BIGINT());
+            return std::make_unique<T<int64_t, int64_t, int64_t>>(BIGINT());
           case TypeKind::REAL:
             if (resultType->kind() == TypeKind::REAL) {
-              return std::make_unique<T<float, double, float>>(
-                  step, resultType);
+              return std::make_unique<T<float, double, float>>(resultType);
             }
-            return std::make_unique<T<float, double, double>>(step, DOUBLE());
+            return std::make_unique<T<float, double, double>>(DOUBLE());
           case TypeKind::DOUBLE:
             if (resultType->kind() == TypeKind::REAL) {
-              return std::make_unique<T<double, double, float>>(
-                  step, resultType);
+              return std::make_unique<T<double, double, float>>(resultType);
             }
-            return std::make_unique<T<double, double, double>>(step, DOUBLE());
+            return std::make_unique<T<double, double, double>>(DOUBLE());
           default:
             VELOX_CHECK(
                 false,
@@ -314,10 +179,4 @@ bool registerSumAggregate(const std::string& name) {
   return true;
 }
 
-static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
-    registerSumAggregate<SumAggregate>(kSum);
-static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
-    registerCountAggregate(kCount);
-
-} // namespace
 } // namespace facebook::velox::aggregate

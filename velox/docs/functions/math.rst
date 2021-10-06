@@ -35,6 +35,14 @@ Mathematical Functions
 
     Returns the natural logarithm of ``x``.
 
+.. function:: log2(x) -> double
+
+    Returns the base 2 logarithm of ``x``.
+
+.. function:: log10(x) -> double
+
+    Returns the base 10 logarithm of ``x``.
+
 .. function:: mod(n, m) -> [same as n]
 
     Returns the modulus (remainder) of ``n`` divided by ``m``.
@@ -46,6 +54,10 @@ Mathematical Functions
 .. function:: power(x, p) -> double
 
     Returns ``x`` raised to the power of ``p``.
+
+.. function:: radians(x) -> double
+
+    Converts angle x in degrees to radians.
 
 .. function:: rand() -> double
 
@@ -80,3 +92,44 @@ Mathematical Functions
 
     For example, if ``bins`` is ``ARRAY[0, 2, 4]``, then we have four bins:
     ``(-infinity(), 0)``, ``[0, 2)``, ``[2, 4)`` and ``[4, infinity())``.
+
+
+====================================
+Trigonometric Functions
+====================================
+
+.. function:: acos(x) -> double
+
+    Returns the arc cosine of ``x``.
+
+.. function:: asin(x) -> double
+
+    Returns the arc sine of ``x``.
+
+.. function:: atan(x) -> double
+
+    Returns the arc tangent of ``x``.
+
+.. function:: atan2(y, x) -> double
+
+    Returns the arc tangent of ``y / x``.
+
+.. function:: cos(x) -> double
+
+    Returns the cosine of ``x``.
+
+.. function:: cosh(x) -> double
+
+    Returns the hyperbolic cosine of ``x``.
+
+.. function:: sin(x) -> double
+
+    Returns the sine of ``x``.
+
+.. function:: tan(x) -> double
+
+    Returns the tangent of ``x``.
+
+.. function:: tanh(x) -> double
+
+    Returns the hyperbolic tangent of ``x``.
