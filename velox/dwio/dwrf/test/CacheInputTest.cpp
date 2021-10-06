@@ -96,6 +96,7 @@ class CacheTest : public testing::Test {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
     rng_.seed(1);
     ioStats_ = std::make_shared<common::IoStatistics>();
+    groupStats_ = std::make_unique<cache::GroupStats>();
   }
 
   void TearDown() override {
@@ -134,11 +135,12 @@ class CacheTest : public testing::Test {
     std::lock_guard<std::mutex> l(mutex_);
     StringIdLease lease(fileIds(), path);
     fileId = lease.id();
-    // 2 files in a group.
-    groupId = fileId / 2;
+    StringIdLease groupLease(fileIds(), fmt::format("group{}", fileId / 2));
+    groupId = groupLease.id();
     auto it = pathToInput_.find(lease.id());
     if (it == pathToInput_.end()) {
       fileIds_.push_back(lease);
+      fileIds_.push_back(groupLease);
       auto stream =
           std::make_shared<TestInputStream>(path, lease.id(), 1UL << 63);
       pathToInput_[lease.id()] = stream;
@@ -246,14 +248,14 @@ class CacheTest : public testing::Test {
       int32_t readPct,
       int32_t readPctModulo,
       int32_t numStripes) {
-    auto tracker = std::make_shared<ScanTracker>();
+    auto tracker = std::make_shared<ScanTracker>("testTracker", nullptr, groupStats_.get());
     std::deque<std::unique_ptr<StripeData>> stripes;
     constexpr int32_t kReadAhead = 8;
     uint64_t fileId;
     uint64_t groupId;
     std::shared_ptr<common::InputStream> input =
         inputByPath(filename, fileId, groupId);
-    GroupStats::instance().recordFile(fileId, groupId, numStripes);
+    groupStats_->recordFile(fileId, groupId, numStripes);
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
       stripes.push_back(makeStripeData(
           input,
@@ -293,6 +295,7 @@ class CacheTest : public testing::Test {
   folly::F14FastMap<uint64_t, std::shared_ptr<common::InputStream>>
       pathToInput_;
   common::DataCacheConfig config_;
+  std::unique_ptr<cache::GroupStats> groupStats_;
   std::unique_ptr<AsyncDataCache> cache_;
   std::shared_ptr<common::IoStatistics> ioStats_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;

@@ -28,12 +28,13 @@ namespace facebook::velox::cache {
 
 class ApproxCounter {
  public:
-  ApproxCounter(int32_t range) : bits_(std::max(2, range / 8)) {}
+  ApproxCounter(int32_t range) {
+    bloom_.reset(range);
+  }
 
   void add(uint64_t value) {
-    auto hash = folly::hasher<uint64_t>()(value);
-    if (!Bloom::test(bits_.data(), bits_.size(), hash)) {
-      Bloom::set(bits_.data(), bits_.size(), hash);
+    if (!bloom_.mayContain(value)) {
+      bloom_.insert(value);
       ++count_;
     }
   }
@@ -43,14 +44,15 @@ class ApproxCounter {
   }
 
  private:
-  std::vector<uint64_t> bits_;
+  Bloom<true> bloom_;
   int32_t count_{0};
 };
 
 // Represents a groupId, column and its size and score. These are
 // sorted and as many are selected from the top as will fit on SSD.
 struct SsdScore {
-  //
+  // Number used for ranking. Correlates to access frequency and
+  // inversely to size.
   float score;
 
   // Expected size in bytes for caching to SSD
@@ -61,16 +63,28 @@ struct SsdScore {
   int32_t columnId;
 };
 
+// Tracks usage of different columns of inside a file group. Tracks the number
+// of distinct files in the group and their average number of splits. Produces
+// estimates of the column size for each accessed column in the group.
 class GroupTracker {
  public:
   static constexpr int32_t kExpectedNumFiles = 100;
 
+  // Constructs a tracker for file group 'ame'. 'name' is for example
+  // the directory path of a Hive partition.
   GroupTracker(const StringIdLease& name)
       : name_(name), numFiles_(kExpectedNumFiles) {}
 
+  // Records that 'fileId' belongs to this group and has 'numStripes'
+  // stripes. Used to scale up the column sizes reported by
+  // recordReference().
   void recordFile(uint64_t fileId, int32_t numStripes);
 
+  // Records a sample stripe size for 'columnId'.
   void recordReference(uint64_t fileId, int32_t columnId, int32_t bytes);
+
+  // Records read of 'bytes' from 'columnId' This is compared to the
+  // reference size to get read density.
   void recordRead(uint64_t fileId, int32_t columnId, int32_t bytes);
 
   // Adds the column scores to 'scores'. If 'decayPct' is non-0,
@@ -85,7 +99,6 @@ class GroupTracker {
 
  private:
   StringIdLease name_;
-  std::mutex mutex_;
 
   // Map of column to access data.
   folly::F14FastMap<int32_t, TrackingData> columns_;
@@ -97,24 +110,25 @@ class GroupTracker {
   uint64_t numOpenStripes_{0};
 };
 
-// Singleton for  keeping track of file groups.
+// Set of file group stats. There is one instance per SSD cache.
 class GroupStats {
  public:
+  // Records the existence of a distinct file inside 'groupId'
   void recordFile(uint64_t fileId, uint64_t groupId, int32_t numStripes);
 
+    // Records ScanTracker::recordReference at group level
   void recordReference(
       uint64_t fileId,
       uint64_t groupId,
       TrackingId id,
       int32_t bytes);
 
+  // Records ScanTracker::recordRead at group level
   void recordRead(
       uint64_t fileId,
       uint64_t groupId,
       TrackingId trackingId,
       int32_t bytes);
-
-  static GroupStats& instance();
 
   // Returns true if groupId, trackingId qualify the data to be cached to SSD.
   bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const;
@@ -175,9 +189,15 @@ class GroupStats {
 
   std::mutex mutex_;
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
+
+  // Max number of columns tracked. The default would do for 2K tables
+  // of 100 accessed columns out of a possibly larger schema.
+  int32_t maxColumns_{200000};
+
   // Bloom filter of groupId, columnId hashes for streams that should be saved
   // to SSD.
-  std::vector<uint64_t> saveToSsd_;
+  Bloom<false> saveToSsd_;
+  bool ssdFilterInited_{false};
   bool allFitOnSsd_{false};
   double dataSize_{0};
   double totalRead_{0};

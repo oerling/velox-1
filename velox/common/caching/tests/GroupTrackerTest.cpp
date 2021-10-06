@@ -43,7 +43,7 @@ class GroupTrackerTest : public testing::Test {
  protected:
   void SetUp() override {
     rng_.seed(1);
-    GroupStats::instance().clear();
+    stats_ = std::make_unique<GroupStats>();
   }
 
   // Makes a test population of tables. A table has many file groups
@@ -90,7 +90,6 @@ class GroupTrackerTest : public testing::Test {
   // Reads a random set of groups from a random table, selecting a biased
   // random set of columns with some being sparsely read.
   void query(int32_t tableIndex) {
-    auto& stats = GroupStats::instance();
     std::vector<int32_t> columns;
     auto& table = tables_[tableIndex];
     auto numColumns = table.groups[0].columnSizes.size();
@@ -110,21 +109,21 @@ class GroupTrackerTest : public testing::Test {
          ++groupIndex) {
       auto& group = table.groups[groupIndex];
       for (auto& file : group.files) {
-        stats.recordFile(file.id.id(), group.id.id(), file.numStripes);
+        stats_->recordFile(file.id.id(), group.id.id(), file.numStripes);
         for (auto column : readColumns) {
-          stats.recordReference(
+          stats_->recordReference(
               file.id.id(),
               group.id.id(),
               TrackingId(column, 0),
               group.columnSizes[column]);
           auto readBytes = shouldRead(column, group.columnSizes[column]);
           if (readBytes) {
-            if (stats.shouldSaveToSsd(group.id.id(), TrackingId(column, 0))) {
+            if (stats_->shouldSaveToSsd(group.id.id(), TrackingId(column, 0))) {
               numFromSsd_ += readBytes;
             } else {
               numFromDisk_ += readBytes;
             }
-            stats.recordRead(
+            stats_->recordRead(
                 file.id.id(), group.id.id(), TrackingId(column, 0), readBytes);
           }
         }
@@ -169,6 +168,8 @@ class GroupTrackerTest : public testing::Test {
   int32_t random(int32_t range) {
     return folly::Random::rand32(rng_) % range;
   }
+
+  std::unique_ptr<GroupStats> stats_;
   std::vector<TestTable> tables_;
   std::vector<int32_t>
       columnSizes_{1000, 2000, 3000, 3000, 3000, 4000, 10000, 15000, 100000};
@@ -186,20 +187,19 @@ TEST_F(GroupTrackerTest, randomScan) {
   // columns and groups.
   constexpr int32_t kQueries = 1000;
   constexpr uint64_t kSsdSize = 1UL << 30;
-  auto& stats = GroupStats::instance();
   makeTables(101);
   auto numTables = tables_.size();
   for (auto i = 0; i < kQueries; ++i) {
     int32_t tableIndex = random(numTables, numTables);
     query(tableIndex);
     if (i % (kQueries / 10) == 0) {
-      GroupStats::instance().updateSsdFilter(kSsdSize);
+      stats_->updateSsdFilter(kSsdSize);
     }
   }
-  LOG(INFO) << GroupStats::instance().toString(kSsdSize);
+  LOG(INFO) << stats_->toString(kSsdSize);
 
-  auto dataPct = stats.cachableDataPct();
-  auto readPct = stats.cachableReadPct();
+  auto dataPct = stats_->cachableDataPct();
+  auto readPct = stats_->cachableReadPct();
   EXPECT_LE(3, dataPct);
   EXPECT_GE(4, dataPct);
   EXPECT_LE(45, readPct);
@@ -208,7 +208,6 @@ TEST_F(GroupTrackerTest, randomScan) {
 
 TEST_F(GroupTrackerTest, limitAndDecay) {
   constexpr uint64_t kSsdSize = 1UL << 30;
-  auto& stats = GroupStats::instance();
   makeTables(1000);
   auto numTables = tables_.size();
   // We read all the  tables once and every 5th twice.
@@ -220,13 +219,12 @@ TEST_F(GroupTrackerTest, limitAndDecay) {
     }
 
     if (i % 20 == 0) {
-      stats.updateSsdFilter(kSsdSize, 2);
+      stats_->updateSsdFilter(kSsdSize, 2);
     }
   }
-  LOG(INFO) << GroupStats::instance().toString(kSsdSize);
-
-  auto dataPct = stats.cachableDataPct();
-  auto readPct = stats.cachableReadPct();
+  LOG(INFO) << stats_->toString(kSsdSize);
+  auto dataPct = stats_->cachableDataPct();
+  auto readPct = stats_->cachableReadPct();
   EXPECT_LE(0.4, dataPct);
   EXPECT_GE(1, dataPct);
   EXPECT_LE(10, readPct);

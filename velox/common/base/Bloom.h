@@ -25,19 +25,38 @@
 
 namespace facebook::velox {
 
+// Bloom filter with groups of 64 bits, of which 4 are set. The hash
+// number has 4 6 bit fields that selct the bits in the word and the
+// remaining bits select the word in the filter. With 8 bits per
+// expected entry, we get ~2% false positives. 'hashInput' determines
+// if the value added or checked needs to be hashed. If this is false,
+// we assume that the input is already a 64 bit hash number.
+template <bool hashInput = true>
 class Bloom {
  public:
-  Bloom(int32_t capacity) : bits_(bits::nextPowerOfTwo(capacity)) {}
+  // Prepares 'this' for use with an expected 'capacity'
+  // entries. Drops any prior content.
+  void reset(int32_t capacity) {
+    bits_.clear();
+    // 1 byte per value.
+    bits_.resize(std::max<int32_t>(4, bits::nextPowerOfTwo(capacity) / 8));
+  }
 
   // Adds 'value'.
   void insert(uint64_t value) {
-    set(bits_.data(), bits_.size(), folly::hasher<uint64_t>()(value));
+    set(bits_.data(),
+        bits_.size(),
+        hashInput ? folly::hasher<uint64_t>()(value) : value);
   }
 
-  bool mayContain(uint64_t value) {
-    return test(bits_.data(), bits_.size(), folly::hasher<uint64_t>()(value));
+  bool mayContain(uint64_t value) const {
+    return test(
+        bits_.data(),
+        bits_.size(),
+        hashInput ? folly::hasher<uint64_t>()(value) : value);
   }
 
+ private:
   // We use 4 independent hash functions by taking 24 bits of
   // the hash code and breaking these up into 4 groups of 6 bits. Each group
   // represents a number between 0 and 63 (2^6-1) and maps to one bit in a
@@ -70,7 +89,6 @@ class Bloom {
     return mask == (bloom[index] & mask);
   }
 
- private:
   std::vector<uint64_t> bits_;
 };
 

@@ -21,33 +21,11 @@
 #include <gtest/gtest.h>
 
 using namespace facebook::velox;
-TEST(BloomTest, basic) {
-  constexpr int32_t kWords = 128;
-  constexpr int32_t kSize = kWords * 8;
-  folly::Random::DefaultGenerator rng;
-  rng.seed(1);
-  std::unordered_set<uint64_t> reference;
-  std::vector<uint64_t> bits(128);
-  // We insert kSize random values and check that they are there.
-  for (auto i = 0; i < kSize; ++i) {
-    auto value = folly::Random::rand64(rng);
-    Bloom::set(bits.data(), kWords, value);
-    reference.insert(value);
-  }
-  for (auto value : reference) {
-    EXPECT_TRUE(Bloom::test(bits.data(), kWords, value));
-  }
-  int32_t hits = 0;
-  for (auto i = 0; i < kSize; ++i) {
-    auto value = folly::Random::rand64(rng);
-    hits += Bloom::test(bits.data(), kWords, value);
-  }
-  EXPECT_GT(45, hits);
-}
 
-TEST(BloomTest, precision) {
+TEST(BloomTest, basic) {
   constexpr int32_t kSize = 1024;
-  Bloom bloom(kSize);
+  Bloom bloom;
+  bloom.reset(kSize);
   for (auto i = 0; i < kSize; ++i) {
     bloom.insert(i);
   }
@@ -57,5 +35,5 @@ TEST(BloomTest, precision) {
     numFalsePositives += bloom.mayContain(i + kSize);
     numFalsePositives += bloom.mayContain((i + kSize) * 123451);
   }
-  EXPECT_GT(kSize / 50, numFalsePositives / 2);
+  EXPECT_GT(2, 100 * numFalsePositives / kSize);
 }
