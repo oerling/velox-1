@@ -58,7 +58,7 @@ class TrackingId {
   int32_t columnId() const {
     return id_ >> kNodeShift;
   }
-  
+
  private:
   int32_t id_;
 };
@@ -75,6 +75,8 @@ struct hash<::facebook::velox::cache::TrackingId> {
 } // namespace std
 
 namespace facebook::velox::cache {
+
+class GroupStats;
 
 // Records references and actual uses of a stream.
 struct TrackingData {
@@ -110,8 +112,9 @@ class ScanTracker {
   // remove the weak_ptr from the map of pending trackers.
   ScanTracker(
       std::string_view id,
-      std::function<void(ScanTracker*)> unregisterer)
-      : id_(id), unregisterer_(unregisterer) {}
+      std::function<void(ScanTracker*)> unregisterer,
+      GroupStats* FOLLY_NULLABLE groupStats = nullptr)
+      : id_(id), unregisterer_(unregisterer), groupStats_(groupStats) {}
 
   ~ScanTracker() {
     if (unregisterer_) {
@@ -150,6 +153,10 @@ class ScanTracker {
     return id_;
   }
 
+  GroupStats* FOLLY_NULLABLE groupStats() const {
+    return groupStats_;
+  }
+
   std::string toString() const;
 
  private:
@@ -159,6 +166,7 @@ class ScanTracker {
   std::function<void(ScanTracker*)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
+  GroupStats* FOLLY_NULLABLE groupStats_;
 };
 
 } // namespace facebook::velox::cache

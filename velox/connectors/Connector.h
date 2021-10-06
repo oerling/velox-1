@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/common/caching/DataCache.h"
+#include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
@@ -226,7 +227,8 @@ class Connector {
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
   static std::shared_ptr<cache::ScanTracker> getTracker(
-      const std::string& scanId);
+      const std::string& scanId,
+      cache::GroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);

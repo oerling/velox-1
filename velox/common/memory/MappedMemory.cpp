@@ -172,8 +172,8 @@ bool MappedMemoryImpl::allocate(
   std::array<int32_t, kMaxSizeClasses> sizeIndices = {};
   std::array<int32_t, kMaxSizeClasses> sizeCounts = {};
   int32_t numSizes = 0;
-  int32_t pagesToAlloc = allocationSize(
-      numPages, minSizeClass, sizeIndices, sizeCounts, numSizes);
+  int32_t pagesToAlloc =
+      allocationSize(numPages, minSizeClass, sizeIndices, sizeCounts, numSizes);
 
   if (FLAGS_velox_use_malloc) {
     if (beforeAllocCB) {

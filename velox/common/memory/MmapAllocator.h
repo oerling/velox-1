@@ -36,19 +36,18 @@ struct MmapAllocatorOptions {
   //  Capacity in bytes, defult 512MB
   uint64_t capacity = 1L << 29;
 };
-
-  // Implemantation of MappedMemory with mmap and madvise. Each size
-  // class is mmapped for the whole capacity. Each size class has a
-  // bitmap of allocated entries and entries that are backed by
-  // memory. If a size class does not have an entry that is free and
-  // backed by memory, we allocate an entry that is free and we advise
-  // away pages from other size classes where the corresponding entry
-  // is free. In this way, any combination of sizes that adds up to
-  // the capacity can be allocated without fragmentation. If a size
-  // needs to be allocated that does not correspond to size classes,
-  // we advise away enough pages from other size classes to cover for
-  // it and then make a new mmap of the requested size
-  // (ContiguousAllocation).
+// Implemantation of MappedMemory with mmap and madvise. Each size
+// class is mmapped for the whole capacity. Each size class has a
+// bitmap of allocated entries and entries that are backed by
+// memory. If a size class does not have an entry that is free and
+// backed by memory, we allocate an entry that is free and we advise
+// away pages from other size classes where the corresponding entry
+// is free. In this way, any combination of sizes that adds up to
+// the capacity can be allocated without fragmentation. If a size
+// needs to be allocated that does not correspond to size classes,
+// we advise away enough pages from other size classes to cover for
+// it and then make a new mmap of the requested size
+// (ContiguousAllocation).
 class MmapAllocator : public MappedMemory {
  public:
   explicit MmapAllocator(const MmapAllocatorOptions& options);
