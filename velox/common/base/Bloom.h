@@ -38,8 +38,8 @@ class Bloom {
   // entries. Drops any prior content.
   void reset(int32_t capacity) {
     bits_.clear();
-    // 1 byte per value.
-    bits_.resize(std::max<int32_t>(4, bits::nextPowerOfTwo(capacity) / 8));
+    // 2 bytes per value.
+    bits_.resize(std::max<int32_t>(4, bits::nextPowerOfTwo(capacity) / 4));
   }
 
   // Adds 'value'.
