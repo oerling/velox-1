@@ -37,6 +37,18 @@ struct MmapAllocatorOptions {
   uint64_t capacity = 1L << 29;
 };
 
+  // Implemantation of MappedMemory with mmap and madvise. Each size
+  // class is mmapped for the whole capacity. Each size class has a
+  // bitmap of allocated entries and entries that are backed by
+  // memory. If a size class does not have an entry that is free and
+  // backed by memory, we allocate an entry that is free and we advise
+  // away pages from other size classes where the corresponding entry
+  // is free. In this way, any combination of sizes that adds up to
+  // the capacity can be allocated without fragmentation. If a size
+  // needs to be allocated that does not correspond to size classes,
+  // we advise away enough pages from other size classes to cover for
+  // it and then make a new mmap of the requested size
+  // (ContiguousAllocation).
 class MmapAllocator : public MappedMemory {
  public:
   explicit MmapAllocator(const MmapAllocatorOptions& options);
@@ -63,10 +75,6 @@ class MmapAllocator : public MappedMemory {
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
   bool checkConsistency() override;
-
-  const std::vector<MachinePageCount>& sizes() const override {
-    return sizes_;
-  }
 
   MachinePageCount capacity() const {
     return capacity_;
@@ -206,9 +214,6 @@ class MmapAllocator : public MappedMemory {
   // but not towards 'numMapped_'.
   std::atomic<MachinePageCount> numExternalMapped_{0};
   MachinePageCount capacity_ = 0;
-  // The machine page counts corresponding to different sizes in order
-  // of increasing size.
-  const std::vector<MachinePageCount> sizes_;
 
   std::vector<std::unique_ptr<SizeClass>> sizeClasses_;
   std::mutex mutex_;
