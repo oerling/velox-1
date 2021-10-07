@@ -124,7 +124,7 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
 
 template <typename T>
 void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
-  if (values_ &&
+  if (values_ && values_->unique() &&
       values_->capacity() >=
           BaseVector::byteSize<T>(numRows) + simd::kPadding) {
     return;
@@ -203,11 +203,6 @@ void SelectiveColumnReader::prepareRead(
   }
   ensureValuesCapacity<T>(rows.size());
   if (scanSpec_->keepValues() && !scanSpec_->valueHook()) {
-    // Can't re-use if someone else has a reference
-    if (values_ && !values_->unique()) {
-      values_.reset();
-    }
-    ensureValuesCapacity<T>(rows.size());
     valueRows_.clear();
     prepareNulls(rows, nullsInReadRange_ != nullptr);
   }
@@ -1983,6 +1978,13 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
       common::ScanSpec* scanSpec,
       uint32_t numBytes);
 
+  void resetFilterCaches() override {
+    if (!filterCache_.empty()) {
+      simd::memset(
+          filterCache_.data(), FilterResult::kUnknown, dictionarySize_);
+    }
+  }
+
   bool hasBulkPath() const override {
     return true;
   }
@@ -2709,7 +2711,8 @@ inline bool SelectiveStringDirectColumnReader::try8Consecutive(
       previousRow = targetRow + 1;
     }
     auto length = rawLengths_[rows[i]];
-    if (data + std::max<int32_t>(length, sizeof(__m128_u)) > bufferEnd_) {
+
+    if (data + bits::roundUp(length, 16) > bufferEnd_) {
       // Slow path if the string does not fit whole or if there is no
       // space for a 16 byte load.
       return false;
@@ -2731,10 +2734,9 @@ inline bool SelectiveStringDirectColumnReader::try8Consecutive(
         rawStringBuffer_ + rawUsed;
     *reinterpret_cast<__m128_u*>(rawStringBuffer_ + rawUsed) = first16;
     if (length > 16) {
-      simd::memcpy(
-          rawStringBuffer_ + rawUsed + 16,
-          data + 16,
-          bits::roundUp(length - 16, 16));
+      size_t copySize = bits::roundUp(length - 16, 16);
+      VELOX_CHECK_LE(data + copySize, bufferEnd_);
+      simd::memcpy(rawStringBuffer_ + rawUsed + 16, data + 16, copySize);
     }
     rawUsed += length;
     data += length;
@@ -3002,6 +3004,13 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
       const std::shared_ptr<const TypeWithId>& type,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec);
+
+  void resetFilterCaches() override {
+    if (!filterCache_.empty()) {
+      simd::memset(
+          filterCache_.data(), FilterResult::kUnknown, dictionaryCount_);
+    }
+  }
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
@@ -3357,7 +3366,8 @@ class StringDictionaryColumnVisitor
       int32_t* filterHits,
       int32_t* values,
       int32_t& numValues) {
-    setByInDict(values, numInput);
+    DCHECK(input == values + numValues);
+    setByInDict(values + numValues, numInput);
     if (!hasFilter) {
       if (hasHook) {
         for (auto i = 0; i < numInput; ++i) {
@@ -3785,6 +3795,12 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       StripeStreams& stripe,
       common::ScanSpec* scanSpec);
 
+  void resetFilterCaches() override {
+    for (auto& child : children_) {
+      child->resetFilterCaches();
+    }
+  }
+
   void seekToRowGroup(uint32_t index) override {
     for (auto& child : children_) {
       child->seekToRowGroup(index);
@@ -3934,7 +3950,8 @@ void SelectiveStructColumnReader::next(
     for (auto& childSpec : childSpecs) {
       VELOX_CHECK(childSpec->isConstant());
       auto channel = childSpec->channel();
-      resultRowVector->childAt(channel) = childSpec->constantValue();
+      resultRowVector->childAt(channel) =
+          BaseVector::wrapInConstant(numValues, 0, childSpec->constantValue());
     }
     return;
   }
@@ -4046,7 +4063,7 @@ void SelectiveStructColumnReader::read(
       continue;
     }
     auto fieldIndex = childSpec->subscript();
-    auto reader = children_[fieldIndex].get();
+    auto reader = children_.at(fieldIndex).get();
     advanceFieldReader(reader, offset);
     if (childSpec->filter()) {
       hasFilter = true;
@@ -4106,7 +4123,8 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
     auto index = childSpec->subscript();
     auto channel = childSpec->channel();
     if (childSpec->isConstant()) {
-      resultRow->childAt(channel) = childSpec->constantValue();
+      resultRow->childAt(channel) = BaseVector::wrapInConstant(
+          rows.size(), 0, childSpec->constantValue());
     } else {
       if (!childSpec->extractValues() && !childSpec->filter()) {
         // LazyVector result.
@@ -4276,6 +4294,10 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
       StripeStreams& stripe,
       common::ScanSpec* scanSpec);
 
+  void resetFilterCaches() override {
+    child_->resetFilterCaches();
+  }
+
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
 
@@ -4399,6 +4421,11 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec);
+
+  void resetFilterCaches() override {
+    keyReader_->resetFilterCaches();
+    elementReader_->resetFilterCaches();
+  }
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();

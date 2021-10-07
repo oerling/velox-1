@@ -63,6 +63,7 @@ struct TaskStats {
 };
 
 class JoinBridge;
+class HashJoinBridge;
 
 class Task : public memory::MemoryConsumer {
  public:
@@ -94,6 +95,17 @@ class Task : public memory::MemoryConsumer {
 
   const std::string& taskId() const {
     return taskId_;
+  }
+
+  velox::memory::MemoryPool* FOLLY_NONNULL addDriverPool() {
+    driverPools_.push_back(pool_->addScopedChild("driver_root"));
+    auto* driverPool = driverPools_.back().get();
+    auto parentTracker = pool_->getMemoryUsageTracker();
+    if (parentTracker) {
+      driverPool->setMemoryUsageTracker(parentTracker->addChild());
+    }
+
+    return driverPool;
   }
 
   static void start(std::shared_ptr<Task> self, uint32_t maxDrivers);
@@ -161,7 +173,7 @@ class Task : public memory::MemoryConsumer {
   void createLocalMergeSources(
       unsigned numSources,
       const std::shared_ptr<const RowType>& rowType,
-      memory::MappedMemory* mappedMemory);
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory);
 
   std::shared_ptr<MergeSource> getLocalMergeSource(int sourceId) {
     VELOX_CHECK_LT(sourceId, localMergeSources_.size(), "Incorrect source id ");
@@ -228,8 +240,6 @@ class Task : public memory::MemoryConsumer {
     return message;
   }
 
-  void driverClosed(Driver* instance);
-
   std::shared_ptr<core::QueryCtx> queryCtx() const {
     return queryCtx_;
   }
@@ -254,17 +264,19 @@ class Task : public memory::MemoryConsumer {
   // if 'this' is in an error state.
   bool allPeersFinished(
       const core::PlanNodeId& planNodeId,
-      Driver* caller,
-      ContinueFuture* future,
+      Driver* FOLLY_NONNULL caller,
+      ContinueFuture* FOLLY_NONNULL future,
       std::vector<VeloxPromise<bool>>& promises,
       std::vector<std::shared_ptr<Driver>>& peers);
 
-  // Returns a JoinBridge for 'planNodeId'. This is used for synchronizing
+  // Adds HashJoinBridge's for all the specified plan node IDs.
+  void addHashJoinBridges(const std::vector<core::PlanNodeId>& planNodeIds);
+
+  // Returns a HashJoinBridge for 'planNodeId'. This is used for synchronizing
   // start of probe with completion of build for a join that has a
   // separate probe and build. 'id' is the PlanNodeId shared between
-  // the probe and build Operators of the join. The JoinBridge is
-  // created on first call with any given 'id'.
-  std::shared_ptr<JoinBridge> findOrCreateJoinBridge(
+  // the probe and build Operators of the join.
+  std::shared_ptr<HashJoinBridge> getHashJoinBridge(
       const core::PlanNodeId& planNodeId);
 
   // Sets the CancelPool of the QueryCtx to a terminate requested
@@ -306,6 +318,7 @@ class Task : public memory::MemoryConsumer {
   std::string toString();
 
   TaskState state() const {
+    std::lock_guard<std::mutex> l(mutex_);
     return state_;
   }
 
@@ -320,7 +333,7 @@ class Task : public memory::MemoryConsumer {
     return numDrivers_;
   }
 
-  velox::memory::MemoryPool* pool() const {
+  velox::memory::MemoryPool* FOLLY_NONNULL pool() const {
     return pool_.get();
   }
 
@@ -382,7 +395,8 @@ class Task : public memory::MemoryConsumer {
     SplitsState& operator=(SplitsState const&) = delete;
   };
 
- private:
+  void driverClosed();
+
   std::shared_ptr<ExchangeClient> addExchangeClient();
 
   void stateChangedLocked();
@@ -443,6 +457,11 @@ class Task : public memory::MemoryConsumer {
 
   TaskStats taskStats_;
   std::unique_ptr<velox::memory::MemoryPool> pool_;
+
+  // Keep driver memory pools alive for the duration of the task to allow for
+  // sharing vectors across drivers without copy.
+  std::vector<std::unique_ptr<velox::memory::MemoryPool>> driverPools_;
+
   std::vector<std::shared_ptr<MergeSource>> localMergeSources_;
 
   struct LocalExchange {

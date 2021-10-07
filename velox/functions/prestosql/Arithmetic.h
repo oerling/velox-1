@@ -23,9 +23,7 @@
 #include "velox/functions/Macros.h"
 #include "velox/functions/prestosql/ArithmeticImpl.h"
 
-namespace facebook {
-namespace velox {
-namespace functions {
+namespace facebook::velox::functions {
 
 template <typename T>
 VELOX_UDF_BEGIN(plus)
@@ -62,6 +60,14 @@ FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b)
 #endif
 {
   result = a / b;
+  return true;
+}
+VELOX_UDF_END();
+
+template <typename T>
+VELOX_UDF_BEGIN(modulus)
+FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
+  result = modulus(a, b);
   return true;
 }
 VELOX_UDF_END();
@@ -140,6 +146,34 @@ VELOX_UDF_END();
 VELOX_UDF_BEGIN(ln)
 FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
   result = std::log(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(acos)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::acos(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(asin)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::asin(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(atan)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = std::atan(a);
+  return true;
+}
+VELOX_UDF_END();
+
+VELOX_UDF_BEGIN(atan2)
+FOLLY_ALWAYS_INLINE bool call(double& result, double y, double x) {
+  result = std::atan2(y, x);
   return true;
 }
 VELOX_UDF_END();
@@ -233,6 +267,11 @@ FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
 }
 VELOX_UDF_END();
 
-} // namespace functions
-} // namespace velox
-} // namespace facebook
+VELOX_UDF_BEGIN(radians)
+FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+  result = a * (M_PI / 180);
+  return true;
+}
+VELOX_UDF_END();
+
+} // namespace facebook::velox::functions

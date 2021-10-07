@@ -39,6 +39,14 @@ std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::create(
       parentTracker, type, config);
 }
 
+  //static
+  std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::createRoot() {
+    auto config = MemoryUsageConfigBuilder().forMemoryManager(true).build();
+    return create(nullptr, UsageType::kUserMem, config);
+  }
+  
+
+  
 void MemoryUsageTracker::update(UsageType type, int64_t size) {
   if (size > 0) {
     ++numAllocs_[static_cast<int>(type)];

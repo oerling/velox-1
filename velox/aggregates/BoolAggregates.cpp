@@ -15,7 +15,7 @@
  */
 
 #include "velox/aggregates/AggregateNames.h"
-#include "velox/aggregates/SimpleNumerics.h"
+#include "velox/aggregates/SimpleNumericAggregate.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/vector/FlatVector.h"
 
@@ -69,6 +69,13 @@ class BoolAndOrAggregate : public SimpleNumericAggregate<bool, bool, bool> {
     for (auto i : indices) {
       *value<bool>(groups[i]) = initialValue_;
     }
+  }
+
+  void initializeNewGroups(
+      char** /*groups*/,
+      folly::Range<const vector_size_t*> /*indices*/,
+      const VectorPtr& /*initialState*/) override {
+    VELOX_NYI();
   }
 
  protected:

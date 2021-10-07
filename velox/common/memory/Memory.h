@@ -505,15 +505,15 @@ class MemoryManager final : public IMemoryManager {
   // the process singleton manager will be initialized with the given quota.
   FOLLY_EXPORT static MemoryManager<Allocator, ALIGNMENT>&
   getProcessDefaultManager(
-      int64_t quota = kMaxMemory,
+      int64_t maxBytes = kMaxMemory,
       bool ensureQuota = false) {
     static MemoryManager<Allocator, ALIGNMENT> manager{
-        Allocator::createDefaultAllocator(), quota};
+        Allocator::createDefaultAllocator(), maxBytes};
     auto actualQuota = manager.getMemoryQuota();
     VELOX_USER_CHECK(
-        !ensureQuota || actualQuota == quota,
+        !ensureQuota || actualQuota == maxBytes,
         "Process level manager manager created with input_quota: {}, current_quota: {}",
-        quota,
+        maxBytes,
         actualQuota);
 
     return manager;
@@ -804,7 +804,7 @@ static inline int64_t getTimeInUsec() {
 
 template <typename Allocator, uint16_t ALIGNMENT>
 MemoryManager<Allocator, ALIGNMENT>::MemoryManager(int64_t memoryQuota)
-    : MemoryManager(Allocator::createDefaultAllocator(), memoryQuota) {}
+  : MemoryManager(Allocator::createDefaultAllocator(), memoryQuota) {}
 
 template <typename Allocator, uint16_t ALIGNMENT>
 MemoryManager<Allocator, ALIGNMENT>::MemoryManager(
@@ -816,7 +816,8 @@ MemoryManager<Allocator, ALIGNMENT>::MemoryManager(
           *this,
           kRootNodeName.str(),
           std::weak_ptr<MemoryPool>(),
-          memoryQuota)} {
+          memoryQuota)},
+      tracker_(MemoryUsageTracker::createRoot()) {
   VELOX_USER_CHECK_GE(memoryQuota_, 0);
 }
 

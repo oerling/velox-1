@@ -158,6 +158,9 @@ class MemoryUsageTracker
         getMaxTotalBytes();
   }
 
+  static std::shared_ptr<MemoryUsageTracker> createRoot();
+
+  
   // Increments the reservation for 'this' so that we can allocate
   // at least 'size' bytes on top of the current allocation. This is
   // used when an a memory user needs to allocate more memory and

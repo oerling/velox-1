@@ -15,7 +15,7 @@
  */
 
 #include "velox/aggregates/AggregateNames.h"
-#include "velox/aggregates/SimpleNumerics.h"
+#include "velox/aggregates/SimpleNumericAggregate.h"
 #include "velox/exec/Aggregate.h"
 
 namespace facebook::velox::aggregate {
@@ -44,6 +44,13 @@ class BitwiseAndOrAggregate : public SimpleNumericAggregate<T, T, T> {
     for (auto i : indices) {
       *exec::Aggregate::value<T>(groups[i]) = initialValue_;
     }
+  }
+
+  void initializeNewGroups(
+      char** /*groups*/,
+      folly::Range<const vector_size_t*> /*indices*/,
+      const VectorPtr& /*initialState*/) override {
+    VELOX_NYI();
   }
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)

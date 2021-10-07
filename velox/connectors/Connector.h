@@ -19,6 +19,9 @@
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
 
+namespace facebook::velox::common {
+class Filter;
+}
 namespace facebook::velox::core {
 class ITypedExpr;
 }
@@ -85,6 +88,14 @@ class DataSource {
   // processed.
   virtual RowVectorPtr next(uint64_t size) = 0;
 
+  // Add dynamically generated filter.
+  // @param outputChannel index into outputType specified in
+  // Connector::createDataSource() that identifies the column this filter
+  // applies to.
+  virtual void addDynamicFilter(
+      ChannelIndex outputChannel,
+      const std::shared_ptr<common::Filter>& filter) = 0;
+
   // Returns the number of input bytes processed so far.
   virtual uint64_t getCompletedBytes() = 0;
 
@@ -147,12 +158,19 @@ class ConnectorQueryCtx {
 
 class Connector {
  public:
-  explicit Connector(const std::string& id) : id_(id) {}
+  explicit Connector(
+      const std::string& id,
+      std::shared_ptr<const Config> properties)
+      : id_(id), properties_(std::move(properties)) {}
 
   virtual ~Connector() = default;
 
   const std::string& connectorId() const {
     return id_;
+  }
+
+  const std::shared_ptr<const Config>& connectorProperties() const {
+    return properties_;
   }
 
   // TODO Generalize to specify TableHandle/Layout and ColumnHandles.
@@ -175,6 +193,7 @@ class Connector {
 
  private:
   const std::string id_;
+  const std::shared_ptr<const Config> properties_;
 };
 
 class ConnectorFactory {
@@ -189,6 +208,7 @@ class ConnectorFactory {
 
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
+      std::shared_ptr<const Config> properties,
       std::unique_ptr<DataCache> dataCache = nullptr) = 0;
 
  private:

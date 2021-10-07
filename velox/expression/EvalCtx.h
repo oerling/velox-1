@@ -23,24 +23,8 @@
 namespace facebook::velox::exec {
 
 class Expr;
-class EvalCtx;
-
-struct ContextSaver {
-  ~ContextSaver();
-  // The context to restore. nullptr if nothing to restore.
-  EvalCtx* context = nullptr;
-  std::vector<VectorPtr> peeled;
-  BufferPtr wrap;
-  BufferPtr wrapNulls;
-  VectorEncoding::Simple wrapEncoding;
-  bool mayHaveNulls = false;
-  // The selection of the context being saved.
-  const SelectivityVector* rows;
-  const SelectivityVector* finalSelection;
-  FlatVectorPtr<StringView> errors;
-};
-
 class ExprSet;
+struct ContextSaver;
 
 // Context for holding the base row vector, error state and various
 // flags for Expr interpreter.
@@ -104,22 +88,29 @@ class EvalCtx {
     });
   }
 
+  // Error vector uses an opaque flat vector to store std::exception_ptr.
+  // Since opaque types are stored as shared_ptr<void>, this ends up being a
+  // double pointer in the form of std::shared_ptr<std::exception_ptr>. This is
+  // fine since we only need to actually follow the pointer in failure cases.
+  using ErrorVector = FlatVector<std::shared_ptr<void>>;
+  using ErrorVectorPtr = std::shared_ptr<ErrorVector>;
+
   // Sets the error at 'index' in '*errorPtr' if the value is
   // null. Creates and resizes '*errorPtr' as needed and initializes
   // new positions to null.
   void addError(
       vector_size_t index,
-      StringView string,
-      FlatVectorPtr<StringView>* errorsPtr) const;
+      const std::exception_ptr& exceptionPtr,
+      ErrorVectorPtr* errorsPtr) const;
 
   // Returns the vector of errors or nullptr if no errors. This is
   // intentionally a raw pointer to signify that the caller may not
   // retain references to this.
-  FlatVector<StringView>* errors() const {
+  ErrorVector* errors() const {
     return errors_.get();
   }
 
-  void swapErrors(FlatVectorPtr<StringView>* other) {
+  void swapErrors(ErrorVectorPtr* other) {
     std::swap(errors_, *other);
   }
 
@@ -127,12 +118,12 @@ class EvalCtx {
     return &throwOnError_;
   }
 
-  bool mayHaveNulls() const {
-    return mayHaveNulls_;
+  bool nullsPruned() const {
+    return nullsPruned_;
   }
 
-  bool* mutableMayHaveNulls() {
-    return &mayHaveNulls_;
+  bool* mutableNullsPruned() {
+    return &nullsPruned_;
   }
 
   // Returns true if the set of rows the expressions are evaluated on are
@@ -210,7 +201,10 @@ class EvalCtx {
   VectorEncoding::Simple wrapEncoding_ = VectorEncoding::Simple::FLAT;
   vector_size_t constantWrapIndex_;
 
-  bool mayHaveNulls_{false};
+  // True if nulls in the input vectors were pruned (removed from the current
+  // selectivity vector). Only possible is all expressions have default null
+  // behavior.
+  bool nullsPruned_{false};
   bool throwOnError_{true};
 
   // True if the current set of rows will not grow, e.g. not under and IF or OR.
@@ -220,7 +214,25 @@ class EvalCtx {
   // OR. Used to determine the set of rows for loading lazy vectors.
   const SelectivityVector* finalSelection_;
 
-  FlatVectorPtr<StringView> errors_;
+  // Stores exception found during expression evaluation. Exceptions are stored
+  // in a opaque flat vector, which will translate to a
+  // std::shared_ptr<std::exception_ptr>.
+  ErrorVectorPtr errors_;
+};
+
+struct ContextSaver {
+  ~ContextSaver();
+  // The context to restore. nullptr if nothing to restore.
+  EvalCtx* context = nullptr;
+  std::vector<VectorPtr> peeled;
+  BufferPtr wrap;
+  BufferPtr wrapNulls;
+  VectorEncoding::Simple wrapEncoding;
+  bool nullsPruned = false;
+  // The selection of the context being saved.
+  const SelectivityVector* rows;
+  const SelectivityVector* finalSelection;
+  EvalCtx::ErrorVectorPtr errors;
 };
 
 class LocalSelectivityVector {
@@ -273,6 +285,26 @@ class LocalSelectivityVector {
     return vector_.get();
   }
 
+  SelectivityVector& operator*() {
+    VELOX_DCHECK_NOT_NULL(vector_, "get(size) must be called.");
+    return *vector_;
+  }
+
+  const SelectivityVector& operator*() const {
+    VELOX_DCHECK_NOT_NULL(vector_, "get(size) must be called.");
+    return *vector_;
+  }
+
+  SelectivityVector* operator->() {
+    VELOX_DCHECK_NOT_NULL(vector_, "get(size) must be called.");
+    return vector_.get();
+  }
+
+  const SelectivityVector* operator->() const {
+    VELOX_DCHECK_NOT_NULL(vector_, "get(size) must be called.");
+    return vector_.get();
+  }
+
  private:
   core::ExecCtx* const context_;
   std::unique_ptr<SelectivityVector> vector_ = nullptr;
@@ -314,11 +346,23 @@ class LocalDecodedVector {
   }
 
   // Must either use the constructor that provides data or call get() first.
-  DecodedVector* operator*() const {
+  DecodedVector& operator*() {
+    VELOX_DCHECK_NOT_NULL(vector_, "get() must be called.");
+    return *vector_;
+  }
+
+  const DecodedVector& operator*() const {
+    VELOX_DCHECK_NOT_NULL(vector_, "get() must be called.");
+    return *vector_;
+  }
+
+  DecodedVector* operator->() {
+    VELOX_DCHECK_NOT_NULL(vector_, "get() must be called.");
     return vector_.get();
   }
 
-  DecodedVector* operator->() const {
+  const DecodedVector* operator->() const {
+    VELOX_DCHECK_NOT_NULL(vector_, "get() must be called.");
     return vector_.get();
   }
 

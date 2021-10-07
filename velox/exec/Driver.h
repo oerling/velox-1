@@ -82,20 +82,9 @@ struct DriverCtx {
       int _pipelineId,
       int32_t numDrivers);
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorUserPool() {
+  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool() {
     opMemPools_.push_back(execCtx->pool()->addScopedChild("operator_ctx"));
     return opMemPools_.back().get();
-  }
-
-  velox::memory::MemoryPool* FOLLY_NONNULL
-  addOperatorSystemPool(velox::memory::MemoryPool* FOLLY_NONNULL userPool) {
-    auto poolPtr = userPool->addScopedChild("operator_ctx");
-    poolPtr->setMemoryUsageTracker(
-        userPool->getMemoryUsageTracker()->addChild(true));
-    auto pool = poolPtr.get();
-    opMemPools_.push_back(std::move(poolPtr));
-
-    return pool;
   }
 
   std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
@@ -148,7 +137,7 @@ class Driver {
     return state_;
   }
 
-  core::CancelPool* cancelPool() const {
+  core::CancelPool* FOLLY_NONNULL cancelPool() const {
     return cancelPool_.get();
   }
 
@@ -165,7 +154,13 @@ class Driver {
 
   // Returns true if all operators between the source and 'aggregation' are
   // order-preserving and do not increase cardinality.
-  bool mayPushdownAggregation(Operator* FOLLY_NONNULL aggregation);
+  bool mayPushdownAggregation(Operator* FOLLY_NONNULL aggregation) const;
+
+  // Returns a subset of channels for which there are operators upstream from
+  // filterSource that accept dynamically generated filters.
+  std::unordered_set<ChannelIndex> canPushdownFilters(
+      Operator* FOLLY_NONNULL filterSource,
+      const std::vector<ChannelIndex>& channels) const;
 
   // Returns the Operator with 'planNodeId.' or nullptr if not
   // found. For example, hash join probe accesses the corresponding
@@ -213,6 +208,10 @@ class Driver {
       std::shared_ptr<BlockingState>* FOLLY_NONNULL blockingState);
 
   void close();
+
+  // Push down dynamic filters produced by the operator at the specified
+  // position in the pipeline.
+  void pushdownFilters(int operatorIndex);
 
   std::unique_ptr<DriverCtx> ctx_;
   std::shared_ptr<Task> task_;
@@ -278,6 +277,17 @@ struct DriverFactory {
     }
 
     return std::nullopt;
+  }
+
+  std::vector<core::PlanNodeId> needsHashJoinBridges() const {
+    std::vector<core::PlanNodeId> planNodeIds;
+    for (const auto& planNode : planNodes) {
+      if (auto joinNode =
+              std::dynamic_pointer_cast<const core::HashJoinNode>(planNode)) {
+        planNodeIds.emplace_back(joinNode->id());
+      }
+    }
+    return planNodeIds;
   }
 };
 

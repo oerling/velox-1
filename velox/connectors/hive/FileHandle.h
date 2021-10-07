@@ -32,6 +32,7 @@
 #include "velox/common/caching/CachedFactory.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/file/File.h"
+#include "velox/core/Context.h"
 
 namespace facebook::velox {
 
@@ -40,8 +41,8 @@ struct FileHandle {
   std::unique_ptr<ReadFile> file;
 
   // Each time we make a new FileHandle we assign it a uuid and use that id as
-  // the identifier in downstreamd data caching structures. This saves a lot of
-  // memory compared to using the the filename as the identifier.
+  // the identifier in downstream data caching structures. This saves a lot of
+  // memory compared to using the filename as the identifier.
   StringIdLease uuid;
 
   // We'll want to have a hash map here to record the identifier->byte range
@@ -61,7 +62,13 @@ using FileHandleCache = SimpleLRUCache<std::string, FileHandle>;
 // Creates FileHandles via the Generator interface the CachedFactory requires.
 class FileHandleGenerator {
  public:
+  FileHandleGenerator() {}
+  FileHandleGenerator(std::shared_ptr<const Config> properties)
+      : properties_(std::move(properties)) {}
   std::unique_ptr<FileHandle> operator()(const std::string& filename);
+
+ private:
+  const std::shared_ptr<const Config> properties_;
 };
 
 using FileHandleFactory = CachedFactory<

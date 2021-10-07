@@ -236,6 +236,23 @@ bool testFilters(
 }
 } // namespace
 
+void HiveDataSource::addDynamicFilter(
+    ChannelIndex outputChannel,
+    const std::shared_ptr<common::Filter>& filter) {
+  auto& fieldSpec = scanSpec_->getChildByChannel(outputChannel);
+  if (fieldSpec.filter()) {
+    fieldSpec.setFilter(fieldSpec.filter()->mergeWith(filter.get()));
+  } else {
+    fieldSpec.setFilter(filter->clone());
+  }
+  scanSpec_->resetCachedValues();
+
+  auto columnReader =
+      dynamic_cast<SelectiveColumnReader*>(rowReader_->columnReader());
+  assert(columnReader);
+  columnReader->resetFilterCaches();
+}
+
 void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VELOX_CHECK(
       split_ == nullptr,
@@ -246,6 +263,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VLOG(1) << "Adding split " << split_->toString();
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
+
   if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
     dataCacheConfig->cache = dataCache_;
@@ -395,12 +413,7 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
     }
 
     return std::make_shared<RowVector>(
-        pool_,
-        outputType_,
-        BufferPtr(nullptr),
-        rowsRemaining,
-        outputColumns,
-        folly::none);
+        pool_, outputType_, BufferPtr(nullptr), rowsRemaining, outputColumns);
   }
 
   skippedStrides_ += rowReader_->skippedStrides();
@@ -423,26 +436,25 @@ vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {
 void HiveDataSource::setConstantValue(
     common::ScanSpec* spec,
     const velox::variant& value) const {
-  spec->setConstantValue(
-      BaseVector::createConstant(value, BaseVector::kMaxElements, pool_));
+  spec->setConstantValue(BaseVector::createConstant(value, 1, pool_));
 }
 
 void HiveDataSource::setNullConstantValue(
     common::ScanSpec* spec,
     const TypePtr& type) const {
-  spec->setConstantValue(
-      BaseVector::createNullConstant(type, BaseVector::kMaxElements, pool_));
+  spec->setConstantValue(BaseVector::createNullConstant(type, 1, pool_));
 }
 
 HiveConnector::HiveConnector(
     const std::string& id,
+    std::shared_ptr<const Config> properties,
     std::unique_ptr<DataCache> dataCache)
-    : Connector(id),
+    : Connector(id, properties),
       dataCache_(std::move(dataCache)),
       fileHandleFactory_(
           std::make_unique<SimpleLRUCache<std::string, FileHandle>>(
               FLAGS_file_handle_cache_mb << 20),
-          std::make_unique<FileHandleGenerator>()) {}
+          std::make_unique<FileHandleGenerator>(properties)) {}
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
 

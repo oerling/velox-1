@@ -119,7 +119,14 @@ function install_fmt {
 
 function install_folly {
   github_checkout facebook/folly "${FB_OS_VERSION}"
-  cmake_install -DBUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="$(brew --prefix openssl)"
+  OPENSSL_DIR=$(brew --prefix openssl)
+
+  if [[ ! -d "$OPENSSL_DIR" ]]
+  then
+    OPENSSL_DIR="/usr/local/opt/openssl"
+  fi
+
+  cmake_install -DBUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="${OPENSSL_DIR}"
 }
 
 function install_ranges_v3 {
@@ -154,3 +161,7 @@ function install_velox_deps {
     install_velox_deps
   fi
 )
+
+echo "All deps for Velox installed! Now try \"make\""
+echo 'To add cmake-format bin to your $PATH, consider adding this to your ~/.profile:'
+echo 'export PATH=$HOME/bin:$HOME/Library/Python/3.7/bin:$PATH'
