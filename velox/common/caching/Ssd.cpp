@@ -449,7 +449,7 @@ std::string SsdCache::toString() const {
       << (data.bytesRead >> 20) << "MB Size " << (capacity >> 30)
       << "GB Occupied " << (data.bytesCached >> 30) << "GB";
   out << (data.entriesCached >> 10) << "K entries.";
-  out << "\nGroupStats: " << GroupStats::instance().toString(capacity);
+  out << "\nGroupStats: " << groupStats_->toString(capacity);
   return out.str();
 }
 

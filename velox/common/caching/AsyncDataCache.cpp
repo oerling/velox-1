@@ -105,7 +105,7 @@ void AsyncDataCacheEntry::setValid(bool success) {
   dataValid_ = success;
   load_.reset();
   if (!ssdFile_ &&
-      GroupStats::instance().shouldSaveToSsd(groupId_, trackingId_)) {
+      shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(groupId_, trackingId_)) {
     shard_->cache()->possibleSsdSave(size_);
   }
 }
@@ -431,11 +431,12 @@ void CacheShard::updateStats(CacheStats& stats) {
 }
 
 void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
+  auto& groupStats = cache_->ssdCache()->groupStats();
   std::lock_guard<std::mutex> l(mutex_);
   for (auto& entry : entries_) {
     if (entry && !entry->ssdFile_ && !entry->isExclusive() &&
         entry->dataValid() &&
-        GroupStats::instance().shouldSaveToSsd(
+	groupStats.shouldSaveToSsd(
             entry->key_.fileNum.id(), entry->trackingId_)) {
       CachePin pin;
       ++entry->numPins_;
@@ -521,7 +522,7 @@ void AsyncDataCache::incrementNew(uint64_t size) {
     // Check next time after replacing half the cache.
     nextSsdScoreSize_ = newBytes_ +
         std::max<int64_t>(cachedPages_ * MappedMemory::kPageSize, 1UL << 28);
-    GroupStats::instance().updateSsdFilter(ssdCache_->maxBytes() * 0.9);
+    ssdCache_->groupStats().updateSsdFilter(ssdCache_->maxBytes() * 0.9);
   }
 }
 
