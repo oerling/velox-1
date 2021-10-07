@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-#include "velox/process/TraceContext.h"
-
+#include "velox/common/process/TraceContext.h"
+#include <fmt/format.h>
+#include <gtest/gtest.h>
 #include <thread>
 
 using namespace facebook::velox::process;
@@ -26,20 +27,15 @@ TEST(TraceContextTest, basic) {
   threads.reserve(kNumThreads);
   for (int32_t i = 0; i < kNumThreads; ++i) {
     threads.push_back(std::thread([&]() {
-      TraceContext("process data");
-      TraceContext(fmt::format("Processing chunk {}, i), true);
-          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      TraceContext trace1("process data");
+      TraceContext trace2(fmt::format("Process chunk {}", i), true);
+      std::this_thread::sleep_for(std::chrono::milliseconds(3));
     }));
-
-      }
-      LOG(INFO) << TraceContext::statusLine();
+  }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  LOG(INFO) << TraceContext::statusLine();
   for (auto& thread : threads) {
     thread.join();
   }
-      LOG(INFO) << TraceContext::statusLine();
-
-      }
-
-
-
-
+  LOG(INFO) << TraceContext::statusLine();
+}

@@ -14,21 +14,24 @@
  * limitations under the License.
  */
 
+#include "velox/common/process/TraceContext.h"
+
+#include <sstream>
+
 namespace facebook::velox::process {
 
-folly::synchronized<static std::unordered_map<std::string, TraceData>>&
+folly::Synchronized<std::unordered_map<std::string, TraceData>>&
 TraceContext::traceMap() {
-  static folly::synchronized<static std::unordered_map<std::string, TraceData>>
+  static folly::Synchronized<std::unordered_map<std::string, TraceData>>
       staticTraceMap;
   return staticTraceMap;
 }
 
-TraceContext::TraceContext(const std::string& label, bool isTemporary)
-    : label_(label),
+TraceContext::TraceContext(std::string label, bool isTemporary)
+    : label_(std::move(label)),
       enterTime_(std::chrono::steady_clock::now()),
       isTemporary_(isTemporary) {
-  std::lock_guard<std::mutex> l(mutex);
-  traceData().withWLock([&](auto& counts) {
+  traceMap().withWLock([&](auto& counts) {
     auto& data = counts[label_];
     ++data.numThreads;
     if (data.numThreads == 1) {
@@ -39,7 +42,7 @@ TraceContext::TraceContext(const std::string& label, bool isTemporary)
 }
 
 TraceContext::~TraceContext() {
-  traceData()..withWLock([&](auto& counts) {
+  traceMap().withWLock([&](auto& counts) {
     auto& data = counts[label_];
     --data.numThreads;
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -47,11 +50,8 @@ TraceContext::~TraceContext() {
                   .count();
     data.totalMs += ms;
     data.maxMs = std::max<uint64_t>(data.maxMs, ms);
-    if (!data.numThreads) {
-      data.startTime = 0;
-      if (isTemporary_) {
-        counts.erase[label];
-      }
+    if (!data.numThreads && isTemporary_) {
+      counts.erase(label_);
     }
   });
 }
@@ -59,19 +59,23 @@ TraceContext::~TraceContext() {
 // static
 std::string TraceContext::statusLine() {
   std::stringstream out;
-  std::lock_guard<std::mutex> l(mutex_);
-  int64_t now = std::chrono::steady_clock::now();
-  for (auto& pair : counts_) {
-    if (pair.second.numThreads) {
-      auto continued = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - pair.second.startTime)
-                           .count();
-      out << pair.first << "=" << pair.second.numThreads << " entered "
-          << pair.second.numEnters << " avg ms "
-          << (pair.second.totalMs / (1 + pair.second.numEnters)) << " max ms "
-          << pair.second.maxMs << " continuous for " << continued << std::endl;
+  auto now = std::chrono::steady_clock::now();
+  traceMap().withRLock([&](auto& counts) {
+    for (auto& pair : counts) {
+      if (pair.second.numThreads) {
+        auto continued = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             now - pair.second.startTime)
+                             .count();
+
+        out << pair.first << "=" << pair.second.numThreads << " entered "
+            << pair.second.numEnters << " avg ms "
+            << (pair.second.totalMs / (1 + pair.second.numEnters)) << " max ms "
+            << pair.second.maxMs << " continuous for " << continued
+            << std::endl;
+      }
     }
-    return out.str();
-  }
+  });
+  return out.str();
+}
 
 } // namespace facebook::velox::process

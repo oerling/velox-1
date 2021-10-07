@@ -20,6 +20,9 @@
 #include <string>
 #include <unordered_map>
 
+#include <folly/Synchronized.h>
+
+
 namespace facebook::velox::process {
 
 // Aggregates data for a trace context with a given label.
@@ -36,9 +39,7 @@ struct TraceData {
   uint64_t maxMs{0};
   // Start time of continuous occupancy. This starts when the first
   // thread enters and ends when the last thread leaves.
-  uint64_t startMs{0};
-  // true means that 'this' entry is deleted when the last thread leaves.
-  bool isTemporary{false};
+  std::chrono::steady_clock::time_point startTime;
 };
 
 // Records that a thread has entered a section described by a
@@ -63,7 +64,7 @@ class TraceContext {
   static std::string statusLine();
 
  private:
-  static folly::synchronized<static std::unordered_map<std::string, TraceData>>&
+  static folly::Synchronized<std::unordered_map<std::string, TraceData>>&
     traceMap();
 
   const std::string label_;
