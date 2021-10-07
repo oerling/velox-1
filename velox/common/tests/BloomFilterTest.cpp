@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/common/base/Bloom.h"
+#include "velox/common/base/BloomFilter.h"
 #include <folly/Random.h>
 #include <unordered_set>
 
@@ -22,9 +22,9 @@
 
 using namespace facebook::velox;
 
-TEST(BloomTest, basic) {
+TEST(BloomFilterTest, basic) {
   constexpr int32_t kSize = 1024;
-  Bloom bloom;
+  BloomFilter bloom;
   bloom.reset(kSize);
   for (auto i = 0; i < kSize; ++i) {
     bloom.insert(i);
