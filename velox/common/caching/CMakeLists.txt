@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 add_library(
   velox_caching
   DataCache.cpp
@@ -21,6 +22,7 @@ add_library(
   ScanTracker.cpp
   GroupTracker.cpp
   Ssd.cpp)
+
 target_link_libraries(velox_caching velox_memory velox_exception ${GLOG}
                       ${FOLLY_WITH_DEPENDENCIES})
 

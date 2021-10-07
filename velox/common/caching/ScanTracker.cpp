@@ -26,7 +26,9 @@ void ScanTracker::recordReference(
     uint64_t bytes,
     uint64_t fileId,
     uint64_t groupId) {
-  GroupStats::instance().recordReference(fileId, groupId, id, bytes);
+  if (groupStats_) {
+    groupStats_->recordReference(fileId, groupId, id, bytes);
+  }
   std::lock_guard<std::mutex> l(mutex_);
   data_[id].incrementReference(bytes);
   sum_.incrementReference(bytes);
@@ -37,7 +39,9 @@ void ScanTracker::recordRead(
     uint64_t bytes,
     uint64_t fileId,
     uint64_t groupId) {
-  GroupStats::instance().recordRead(fileId, groupId, id, bytes);
+  if (groupStats_) {
+    groupStats_->recordRead(fileId, groupId, id, bytes);
+  }
   std::lock_guard<std::mutex> l(mutex_);
   data_[id].incrementRead(bytes);
   sum_.incrementRead(bytes);

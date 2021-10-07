@@ -18,11 +18,6 @@
 
 #include "velox/common/base/BitUtil.h"
 
-DEFINE_int32(
-    max_group_stats,
-    200000,
-    "Maximum partition/column access tracking entries");
-
 namespace facebook::velox::cache {
 
 void GroupTracker::recordFile(uint64_t fileId, int32_t numStripes) {
@@ -146,14 +141,14 @@ void GroupStats::recordRead(
 
 bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
     const {
+  if (!ssdFilterInited_) {
+    return false;
+  }
   if (allFitOnSsd_) {
     return true;
   }
-  if (saveToSsd_.empty()) {
-    return false;
-  }
   uint64_t hash = ssdFilterHash(groupId, trackingId.columnId());
-  return Bloom::test(saveToSsd_.data(), saveToSsd_.size(), hash);
+  return saveToSsd_.mayContain(hash);
 }
 
 std::vector<SsdScore> GroupStats::ssdScoresLocked(
@@ -171,12 +166,11 @@ std::vector<SsdScore> GroupStats::ssdScoresLocked(
       [](const SsdScore& left, const SsdScore& right) {
         return left.score > right.score;
       });
-  auto maxScores = FLAGS_max_group_stats;
-  if (scores.size() > maxScores) {
-    for (auto i = maxScores; i < scores.size(); ++i) {
+  if (scores.size() > maxColumns_) {
+    for (auto i = maxColumns_; i < scores.size(); ++i) {
       eraseStatLocked(scores[i].groupId, scores[i].columnId);
     }
-    scores.resize(maxScores);
+    scores.resize(maxColumns_);
   }
   float totalSize = 0;
   totalRead_ = 0;
@@ -221,14 +215,17 @@ void GroupStats::updateSsdFilter(uint64_t ssdSize, int32_t decayPct) {
   }
   if (i == scores.size()) {
     allFitOnSsd_ = true;
+    ssdFilterInited_ = true;
   } else {
-    allFitOnSsd_ = false;
-    saveToSsd_.clear();
-    saveToSsd_.resize(bits::nextPowerOfTwo(4 + (i / 8)));
+    Bloom<false> newFilter;
+    newFilter.reset(i);
     for (auto included = 0; included < i; ++included) {
       auto hash = ssdFilterHash(scores[i].groupId, scores[i].columnId);
-      Bloom::set(saveToSsd_.data(), saveToSsd_.size(), hash);
+      newFilter.insert(hash);
     }
+    saveToSsd_ = std::move(newFilter);
+    ssdFilterInited_ = true;
+    allFitOnSsd_ = false;
   }
 }
 
@@ -259,8 +256,4 @@ std::string GroupStats::toString(uint64_t cacheBytes) {
   return out.str();
 }
 
-GroupStats& GroupStats::instance() {
-  static GroupStats* stats = new GroupStats();
-  return *stats;
-}
 } // namespace facebook::velox::cache

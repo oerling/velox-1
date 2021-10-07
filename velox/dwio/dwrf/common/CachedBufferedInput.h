@@ -94,7 +94,9 @@ class CachedBufferedInput : public BufferedInput {
   }
 
   void setNumStripes(int32_t numStripes) override {
-    cache::GroupStats::instance().recordFile(fileNum_, groupId_, numStripes);
+    if (tracker_->groupStats()) {
+      tracker_->groupStats()->recordFile(fileNum_, groupId_, numStripes);
+    }
   }
 
  private:
