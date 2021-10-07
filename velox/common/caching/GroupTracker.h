@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/common/base/Bloom.h"
+#include "velox/common/base/BloomFilter.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
@@ -44,7 +44,7 @@ class ApproxCounter {
   }
 
  private:
-  Bloom<true> bloom_;
+  BloomFilter<true> bloom_;
   int32_t count_{0};
 };
 
@@ -196,7 +196,7 @@ class GroupStats {
 
   // Bloom filter of groupId, columnId hashes for streams that should be saved
   // to SSD.
-  Bloom<false> saveToSsd_;
+  BloomFilter<false> saveToSsd_;
   bool ssdFilterInited_{false};
   bool allFitOnSsd_{false};
   double dataSize_{0};
