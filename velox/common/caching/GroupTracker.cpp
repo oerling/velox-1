@@ -217,7 +217,7 @@ void GroupStats::updateSsdFilter(uint64_t ssdSize, int32_t decayPct) {
     allFitOnSsd_ = true;
     ssdFilterInited_ = true;
   } else {
-    Bloom<false> newFilter;
+    BloomFilter<false> newFilter;
     newFilter.reset(i);
     for (auto included = 0; included < i; ++included) {
       auto hash = ssdFilterHash(scores[i].groupId, scores[i].columnId);
