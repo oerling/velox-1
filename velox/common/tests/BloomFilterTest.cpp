@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/common/base/Bloom.h"
+#include "velox/common/base/BloomFilter.h"
 #include <folly/Random.h>
 #include <unordered_set>
 
