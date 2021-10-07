@@ -14,7 +14,7 @@
 
 add_executable(
   velox_common_test ExceptionTests.cpp RangeTest.cpp BitUtilTest.cpp
-                    RawVectorTest.cpp StatsReporterTest.cpp SimdUtilTest.cpp)
+                    RawVectorTest.cpp StatsReporterTest.cpp SimdUtilTest.cpp TraceContextTest.cpp)
 
 add_test(velox_common_test velox_common_test)
 
