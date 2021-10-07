@@ -22,7 +22,6 @@
 
 #include <folly/Synchronized.h>
 
-
 namespace facebook::velox::process {
 
 // Aggregates data for a trace context with a given label.
@@ -65,7 +64,7 @@ class TraceContext {
 
  private:
   static folly::Synchronized<std::unordered_map<std::string, TraceData>>&
-    traceMap();
+  traceMap();
 
   const std::string label_;
   const std::chrono::steady_clock::time_point enterTime_;
