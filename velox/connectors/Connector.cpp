@@ -83,12 +83,13 @@ void Connector::unregisterTracker(cache::ScanTracker* tracker) {
 }
 
 std::shared_ptr<cache::ScanTracker> Connector::getTracker(
-							  const std::string& scanId, cache::GroupStats* groupStats) {
+    const std::string& scanId,
+    cache::GroupStats* groupStats) {
   return trackers_.withWLock([&](auto& trackers) -> auto {
     auto it = trackers.find(scanId);
     if (it == trackers.end()) {
-      auto newTracker =
-	std::make_shared<cache::ScanTracker>(scanId, unregisterTracker, groupStats);
+      auto newTracker = std::make_shared<cache::ScanTracker>(
+          scanId, unregisterTracker, groupStats);
       trackers[newTracker->id()] = newTracker;
       return newTracker;
     }

@@ -105,7 +105,8 @@ void AsyncDataCacheEntry::setValid(bool success) {
   dataValid_ = success;
   load_.reset();
   if (!ssdFile_ &&
-      shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(groupId_, trackingId_)) {
+      shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
+          groupId_, trackingId_)) {
     shard_->cache()->possibleSsdSave(size_);
   }
 }
@@ -436,7 +437,7 @@ void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
   for (auto& entry : entries_) {
     if (entry && !entry->ssdFile_ && !entry->isExclusive() &&
         entry->dataValid() &&
-	groupStats.shouldSaveToSsd(
+        groupStats.shouldSaveToSsd(
             entry->key_.fileNum.id(), entry->trackingId_)) {
       CachePin pin;
       ++entry->numPins_;

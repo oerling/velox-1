@@ -844,7 +844,7 @@ class SsdFile {
   // Counters.
   SsdCacheStats stats_;
 };
-  
+
 class SsdCache {
  public:
   SsdCache(
@@ -874,7 +874,7 @@ class SsdCache {
   GroupStats& groupStats() const {
     return *groupStats_;
   }
-  
+
   std::string toString() const;
 
  private:

@@ -30,8 +30,8 @@ MmapAllocator::MmapAllocator(const MmapAllocatorOptions& options)
       capacity_(options.capacity / kPageSize) {
   capacity_ = bits::roundUp(capacity_, 64 * sizes_.back());
   for (int size : sizes_) {
-  sizeClasses_.push_back(std::make_unique<SizeClass>(capacity_ / size, size));
-}
+    sizeClasses_.push_back(std::make_unique<SizeClass>(capacity_ / size, size));
+  }
 }
 
 bool MmapAllocator::allocate(
