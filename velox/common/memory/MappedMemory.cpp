@@ -127,7 +127,6 @@ class MappedMemoryImpl : public MappedMemory {
   bool allocateContiguous(
       MachinePageCount numPages,
       Allocation* FOLLY_NULLABLE collateral,
-
       ContiguousAllocation& allocation,
       std::function<void(int64_t)> beforeAllocCB = nullptr) override;
 
