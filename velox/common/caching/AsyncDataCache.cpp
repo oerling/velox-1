@@ -499,7 +499,8 @@ bool AsyncDataCache::allocate(
     MachinePageCount minSizeClass) {
   free(out);
   return makeSpace(numPages, [&]() {
-    return mappedMemory_->allocate(numPages, owner, out);
+    return mappedMemory_->allocate(
+        numPages, owner, out, beforeAllocCB, minSizeClass);
   });
 }
 
