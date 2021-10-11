@@ -140,15 +140,19 @@ class ScanTracker {
 
   // True if 'trackingId' is read at least  'minReadPct' % of the time.
   bool shouldPrefetch(TrackingId id, int32_t minReadPct) {
+    return readPct() >= minReadPct;
+  }
+
+  // Returns the percentage of referenced columns that are actually read. 100% if no data.
+  int32_t readPct() const {
     std::lock_guard<std::mutex> l(mutex_);
     const auto& data = data_[id];
     if (!data.numReferences) {
-      // Always prefetch first time data is mentioned.
-      return true;
+      return 100;
     }
-    return (100 * data.numReads) / data.numReferences >= minReadPct;
+    return (100 * data.numReads) / data.numReferences;
   }
-
+  
   std::string_view id() const {
     return id_;
   }

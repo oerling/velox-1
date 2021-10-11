@@ -46,6 +46,10 @@ class CacheInputStream : public SeekableInputStream {
   size_t loadIndices(const proto::RowIndex& rowIndex, size_t startIndex)
       override;
 
+  void setLoad(std::shared_ptr<cache::FusedLoad> load) {
+    load_ = load;
+  }
+  
  private:
   void loadPosition();
   void loadSync(dwio::common::Region region);
@@ -80,6 +84,10 @@ class CacheInputStream : public SeekableInputStream {
   uint32_t runSize_ = 0;
   // Position relative to 'region_.offset'.
   uint64_t position_ = 0;
+
+  // If 'this' is correlated with other streams for loding, this
+  // represents the load.
+  std::shared_ptr<cache::FusedLoad> load_;
 };
 
 } // namespace facebook::velox::dwrf

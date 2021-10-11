@@ -429,6 +429,14 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
     return numFusedLoads_;
   }
 
+  // Makes cache entries for the ranges to load if there are no pins
+  // yet. Returns true if pins were made and should be
+  // loaded. Implementations can make a FusedLoad activated ofor on
+  // first access of a correlated sparsely loaded set of
+  // columns. There the cache entries for all will be made on first
+  // access.
+  virtual bool makePins() = 0;
+  
  protected:
   // Performs the data transfer part of the load. Subclasses will
   // specialize this. All pins will be referring to existing entries
@@ -736,6 +744,10 @@ class SsdFile {
   // of the memory cache.
   void load(SsdRun run, AsyncDataCacheEntry& entry);
 
+  void read(uint64_t offset, const std::vector<folly::Range<char*>> buffers) {
+    readFile_->preadv(offset, buffers);
+  }
+  
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
 
@@ -841,6 +853,8 @@ class SsdFile {
   // File descriptor.
   int32_t fd_;
   uint64_t fileSize_{0};
+  // ReadFile made from 'fd_'.
+  std::unique_ptr<ReadFile> readFile_;
   // Counters.
   SsdCacheStats stats_;
 };

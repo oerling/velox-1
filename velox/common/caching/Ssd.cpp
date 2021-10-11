@@ -65,6 +65,7 @@ SsdFile::SsdFile(
                << std::endl;
     exit(1);
   }
+  readFile_ = std::make_unique<LocalReadFile>(fd_);
   uint64_t size = lseek(fd_, 0, SEEK_END);
   numRegions_ = size / kRegionSize;
   if (size % kRegionSize > 0) {

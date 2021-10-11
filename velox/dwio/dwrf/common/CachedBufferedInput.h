@@ -101,10 +101,18 @@ class CachedBufferedInput : public BufferedInput {
 
  private:
   struct CacheRequest {
+    CacheRequest(cache::RawFileCacheKey _key, uint64_t _size,
+                 cache::TrackingId _trackingId)
+        : key(_key), size(_size), trackingId(_trackingId) {}
+
     cache::RawFileCacheKey key;
     uint64_t size;
     cache::TrackingId trackingId;
     cache::CachePin pin;
+    cache::SsdPin ssdPin;
+    cache::SsdRun ssdRun;
+    bool processed{flase};
+    CacheInputStream* stream;
   };
 
   // Updates first  to include second if they are near enough to justify merging

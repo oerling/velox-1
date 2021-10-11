@@ -40,11 +40,13 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   if (si) {
     id = TrackingId(si->node, si->kind);
   }
-  requests_.emplace_back(CacheRequest{
-      RawFileCacheKey{fileNum_, region.offset}, region.length, id, CachePin()});
+  requests_.emplace_back(CacheRequest
+			 RawFileCacheKey{fileNum_, region.offset}, region.length, id);
   tracker_->recordReference(id, region.length, fileNum_, groupId_);
-  return std::make_unique<CacheInputStream>(
+  auto stream = std::make_unique<CacheInputStream>(
       cache_, ioStats_.get(), region, input_, fileNum_, tracker_, id, groupId_);
+  requests.back().stream = stream.get();
+  return stream;
 }
 
 bool CachedBufferedInput::isBuffered(uint64_t /*offset*/, uint64_t /*length*/)
@@ -80,13 +82,15 @@ bool CachedBufferedInput::shouldPreload() {
 }
 
 void CachedBufferedInput::load(const dwio::common::LogType) {
+  static std::vector<int32_t> readPctBuckets = {80, 50, 10, 0};
   std::vector<CacheRequest*> toLoad;
   // 'requests_ is cleared on exit.
   int32_t numNewLoads = 0;
   auto requests = std::move(requests_);
-  for (auto& request : requests) {
-    if (request.trackingId.empty() ||
-        tracker_->shouldPrefetch(request.trackingId, prefetchThreshold_)) {
+  for (auto readPct : readPctBuckets) {
+    for (auto& request : requests) {
+      if (!request.processed && request.trackingId.empty() ||
+	  tracker_->readPct(request.trackingId) >= readPct) {
       request.pin = cache_->findOrCreate(request.key, request.size, nullptr);
       if (request.pin.empty()) {
         // Already loading for another thread.
@@ -179,7 +183,7 @@ bool CachedBufferedInput::tryMerge(
 }
 
   //namespace {
-class DwrfFusedLoad : public cache::FusedLoad {
+class DwrfFusedLoadBase : public cache::FusedLoad {
  public:
   void initialize(
       std::vector<CachePin>&& pins,
@@ -191,8 +195,46 @@ class DwrfFusedLoad : public cache::FusedLoad {
     // placed and set to shared mode other threads can load 'this'.
     cache::FusedLoad::initialize(std::move(pins));
   }
+  initialize(std::vector<CacheRequest*>&& requests) {
+    for (auto request : requests) {
+      requests_.push_back(std::move(*request));
+    }
+  }
+  
+  vool makePins() override {
+    for (auto& request : requests_) {
+      request.pin = cache_->findOrCreate(request.key, request.size, nullptr);
+      if (request.pin.empty()) {
+        // Already loading for another thread.
+        continue;
+      }
+      if (request.pin.entry()->isExclusive()) {
+        // A new entry to be filled.
+	if (prefetch_) {
+	  request.pin.entry()->setPrefetch();
+	}
+	request.pin.entry()->setTrackingId(request.trackingId);
+        request.pin.entry()->setGroupId(groupId_);
+        toLoad.push_back(&request);
+      } else {
+        // Already in cache, access time is refreshed.
+        request.pin.clear();
+      }
+    }
+  }
+  }
+  
 
-  void loadData(bool isPrefetch) override {
+
+ protected:
+ std::vector<CacheRequest> requests_;
+ std::shared_ptr<dwio::common::IoStatistics> ioStats_;
+
+};
+
+  class DwrfFusedLoad : public DwrfFusedLoadBase {
+
+     void loadData(bool isPrefetch) override {
     auto& stream = input_->get();
     std::vector<folly::Range<char*>> buffers;
     uint64_t start = pins_[0].entry()->offset();
@@ -226,29 +268,27 @@ class DwrfFusedLoad : public cache::FusedLoad {
     }
     if (isPrefetch) {
       ioStats_->prefetch().increment(totalRead);
-    } else {
-      ioStats_->read().increment(totalRead);
     }
+    ioStats_->read().increment(totalRead);
+
     stream.read(buffers, start, dwio::common::LogType::FILE);
   }
 
- private:
-  std::unique_ptr<AbstractInputStreamHolder> input_;
-  std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-};
+    std::unique_ptr<AbstractInputStreamHolder> input_;
+  }
 
-class SsdLoad : public cache::FusedLoad {
+    class SsdLoad : public cache::FusedLoad {
  public:
   void initialize(
       SsdFile& file,
-      CachePin&& pin,
+      std::vector<CachePin>&& pins,
+      std::vector<cache::SsdRun>&& runs,
       SsdPin&& ssdPin,
       std::shared_ptr<dwio::common::IoStatistics> ioStats) {
-    std::vector<CachePin> pins;
-    pins.push_back(std::move(pin));
-    cache::FusedLoad::initialize(std::move(pins));
+    runs_ = std::move(runs);
     ssdPin_ = std::move(ssdPin);
     ioStats_ = ioStats;
+    cache::FusedLoad::initialize(std::move(pins));
   }
 
   void loadData(bool isPrefetch) override {
@@ -260,6 +300,46 @@ class SsdLoad : public cache::FusedLoad {
     ioStats_->ssdRead().increment(entry->size());
   }
 
+
+
+    std::vector<folly::Range<char*>> buffers;
+    uint64_t start = pins_[0].entry()->offset();
+    uint64_t lastOffset = start;
+    uint64_t totalRead = 0;
+    for (auto& pin : pins_) {
+      auto& buffer = pin.entry()->data();
+      uint64_t startOffset = pin.entry()->offset();
+      totalRead += pin.entry()->size();
+      if (lastOffset < startOffset) {
+        buffers.push_back(
+            folly::Range<char*>(nullptr, startOffset - lastOffset));
+      }
+
+      auto size = pin.entry()->size();
+      uint64_t offsetInRuns = 0;
+      if (buffer.numPages() == 0) {
+        buffers.push_back(folly::Range<char*>(pin.entry()->tinyData(), size));
+        offsetInRuns = size;
+      } else {
+        for (int i = 0; i < buffer.numRuns(); ++i) {
+          velox::memory::MappedMemory::PageRun run = buffer.runAt(i);
+          uint64_t bytes = run.numBytes();
+          uint64_t readSize = std::min(bytes, size - offsetInRuns);
+          buffers.push_back(folly::Range<char*>(run.data<char>(), readSize));
+          offsetInRuns += readSize;
+        }
+      }
+      DWIO_ENSURE(offsetInRuns == size);
+      lastOffset = startOffset + size;
+    }
+    if (isPrefetch) {
+      ioStats_->prefetch().increment(totalRead);
+    }
+      ioStats_->ssd().increment(totalRead);
+    }
+    stream.read(buffers, start, dwio::common::LogType::FILE);
+  }
+  
  private:
   SsdPin ssdPin_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;

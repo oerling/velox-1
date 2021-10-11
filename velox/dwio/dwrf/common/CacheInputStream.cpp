@@ -172,6 +172,12 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
 void CacheInputStream::loadPosition() {
   auto offset = region_.offset;
   if (pin_.empty()) {
+    if (load_) {
+      if (load_->makePins()) {
+	load_->loadOrFuture(nullptr);
+      }
+	load_ = nullptr;
+    }
     auto loadRegion = region_;
     // Quantize position to previous multiple of 'loadQuantum_'.
     loadRegion.offset += (position_ / loadQuantum_) * loadQuantum_;
