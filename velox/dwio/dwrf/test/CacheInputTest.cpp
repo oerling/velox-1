@@ -107,7 +107,6 @@ class CacheTest : public testing::Test {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
     rng_.seed(1);
     ioStats_ = std::make_shared<common::IoStatistics>();
-    groupStats_ = std::make_unique<cache::GroupStats>();
   }
 
   void TearDown() override {
@@ -121,6 +120,7 @@ class CacheTest : public testing::Test {
     std::unique_ptr<SsdCache> ssd;
     if (!file.empty()) {
       ssd = std::make_unique<SsdCache>(file, ssdBytes, 1);
+      groupStats_ = &ssd->groupStats();
     }
     memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_unique<AsyncDataCache>(
@@ -162,8 +162,8 @@ class CacheTest : public testing::Test {
     if (it == pathToInput_.end()) {
       fileIds_.push_back(lease);
       fileIds_.push_back(groupLease);
-      auto stream =
-          std::make_shared<TestInputStream>(path, lease.id(), 1UL << 63);
+      auto stream = std::make_shared<TestInputStream>(
+          path, lease.id(), 1UL << 63, ioStats_);
       pathToInput_[lease.id()] = stream;
       return stream;
     }
@@ -287,15 +287,18 @@ class CacheTest : public testing::Test {
       int numColumns,
       int32_t readPct,
       int32_t readPctModulo,
-      int32_t numStripes) {
-    auto tracker = std::make_shared<ScanTracker>(
-        "testTracker", nullptr, groupStats_.get());
+      int32_t numStripes,
+      int32_t stripeWindow = 4) {
+    auto tracker =
+        std::make_shared<ScanTracker>("testTracker", nullptr, groupStats_);
     std::deque<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;
     std::shared_ptr<common::InputStream> input =
         inputByPath(filename, fileId, groupId);
-    groupStats_->recordFile(fileId, groupId, numStripes);
+    if (groupStats_) {
+      groupStats_->recordFile(fileId, groupId, numStripes);
+    }
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
       stripes.push_back(makeStripeData(
           input,
@@ -358,7 +361,7 @@ class CacheTest : public testing::Test {
   folly::F14FastMap<uint64_t, std::shared_ptr<common::InputStream>>
       pathToInput_;
   common::DataCacheConfig config_;
-  std::unique_ptr<cache::GroupStats> groupStats_;
+  cache::GroupStats* FOLLY_NULLABLE groupStats_ = nullptr;
   std::unique_ptr<AsyncDataCache> cache_;
   std::shared_ptr<common::IoStatistics> ioStats_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;

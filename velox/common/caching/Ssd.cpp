@@ -24,6 +24,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+DEFINE_bool(ssd_odirect, true, "use O_DIRECT for SSD cache IO");
+
 namespace facebook::velox::cache {
 
 SsdPin::SsdPin(SsdFile& file, SsdRun run) : file_(&file), run_(run) {
@@ -54,7 +56,10 @@ SsdFile::SsdFile(
       ordinal_(ordinal),
       maxRegions_(maxRegions),
       filename_(filename) {
-  fd_ = open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+  fd_ = open(
+      filename.c_str(),
+      O_CREAT | O_RDWR | (FLAGS_ssd_odirect ? O_DIRECT : 0),
+      S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
     LOG(ERROR) << "Cannot open or create " << filename << " error " << errno
                << std::endl;

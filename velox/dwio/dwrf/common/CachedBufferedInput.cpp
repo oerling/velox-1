@@ -178,7 +178,7 @@ bool CachedBufferedInput::tryMerge(
   return false;
 }
 
-namespace {
+  //namespace {
 class DwrfFusedLoad : public cache::FusedLoad {
  public:
   void initialize(
@@ -264,7 +264,7 @@ class SsdLoad : public cache::FusedLoad {
   SsdPin ssdPin_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
 };
-} // namespace
+  //} // namespace
 
 void CachedBufferedInput::readRegion(std::vector<CachePin> pins) {
   auto load = std::make_shared<DwrfFusedLoad>();
