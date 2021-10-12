@@ -22,7 +22,7 @@ add_library(
   GroupTracker.cpp
   Ssd.cpp)
 
-target_link_libraries(velox_caching velox_memory velox_exception ${GLOG}
+target_link_libraries(velox_caching velox_memory velox_exception velox_file ${GLOG}
                       ${FOLLY_WITH_DEPENDENCIES})
 
 if(${VELOX_BUILD_TESTING})

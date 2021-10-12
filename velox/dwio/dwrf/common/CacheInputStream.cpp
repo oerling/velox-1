@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
+#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 #include <folly/executors/QueuedImmediateExecutor.h>
 
 namespace facebook::velox::dwrf {
@@ -24,7 +25,7 @@ using velox::cache::TrackingId;
 using velox::memory::MappedMemory;
 
 CacheInputStream::CacheInputStream(
-    cache::AsyncDataCache* cache,
+				   CachedBufferedInput* bufferedInput,
     dwio::common::IoStatistics* ioStats,
     const dwio::common::Region& region,
     dwio::common::InputStream& input,
@@ -32,7 +33,8 @@ CacheInputStream::CacheInputStream(
     std::shared_ptr<ScanTracker> tracker,
     TrackingId trackingId,
     uint64_t groupId)
-    : cache_(cache),
+  : bufferedInput_(bufferedInput),
+    cache_(bufferedInput_->cache()),
       ioStats_(ioStats),
       input_(input),
       region_(region),
@@ -172,11 +174,11 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
 void CacheInputStream::loadPosition() {
   auto offset = region_.offset;
   if (pin_.empty()) {
-    if (load_) {
+    auto load = bufferedInput_->fusedLoad(this);
+    if (load) {
       if (load_->makePins()) {
 	load_->loadOrFuture(nullptr);
       }
-	load_ = nullptr;
     }
     auto loadRegion = region_;
     // Quantize position to previous multiple of 'loadQuantum_'.

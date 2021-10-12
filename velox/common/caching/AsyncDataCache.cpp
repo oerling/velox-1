@@ -174,6 +174,17 @@ CachePin CacheShard::findOrCreate(
   return initEntry(key, entryToInit, size);
 }
 
+bool CacheShard::exists(
+			    RawFileCacheKey key) {
+  std::lock_guard<std::mutex> l(mutex_);
+    auto it = entryMap_.find(key);
+    if (it != entryMap_.end()) {
+      it->second->touch();
+      return true;
+    }
+    return false;
+}
+  
 CachePin CacheShard::initEntry(
     RawFileCacheKey key,
     AsyncDataCacheEntry* entry,
@@ -245,6 +256,10 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     state_ = LoadState::kLoading;
   }
   // Outside of 'mutex_'.
+    if (pins_.empty()) {
+    makePins();
+    }
+
   try {
     // If wait is not set this counts as prefetch.
     loadData(!wait);
@@ -469,6 +484,11 @@ CachePin AsyncDataCache::findOrCreate(
   return shards_[shard]->findOrCreate(key, size, wait);
 }
 
+bool AsyncDataCache::exists(RawFileCacheKey key) {
+  int shard = std::hash<RawFileCacheKey>()(key) & (kShardMask);
+  return shards_[shard]->exists(key);
+}
+  
 bool AsyncDataCache::makeSpace(
     MachinePageCount numPages,
     std::function<bool()> allocate) {

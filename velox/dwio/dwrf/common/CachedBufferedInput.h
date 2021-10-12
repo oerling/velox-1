@@ -43,6 +43,22 @@ class AbstractInputStreamHolder {
 using StreamSource =
     std::function<std::unique_ptr<AbstractInputStreamHolder>()>;
 
+struct CacheRequest {
+  CacheRequest(
+      cache::RawFileCacheKey _key,
+      uint64_t _size,
+      cache::TrackingId _trackingId)
+      : key(_key), size(_size), trackingId(_trackingId) {}
+
+  cache::RawFileCacheKey key;
+  uint64_t size;
+  cache::TrackingId trackingId;
+  cache::CachePin pin;
+  cache::SsdPin ssdPin;
+  bool processed{false};
+  const SeekableInputStream* stream;
+};
+
 class CachedBufferedInput : public BufferedInput {
  public:
   CachedBufferedInput(
@@ -65,7 +81,7 @@ class CachedBufferedInput : public BufferedInput {
         executor_(executor) {}
 
   ~CachedBufferedInput() override {
-    for (auto& load : fusedLoads_) {
+    for (auto& load : allFusedLoads_) {
       load->cancel();
     }
   }
@@ -99,36 +115,33 @@ class CachedBufferedInput : public BufferedInput {
     }
   }
 
+  cache::AsyncDataCache* cache() const {
+    return cache_;
+  }
+
+  // Returns the FusedLoad that contains the correlated loads for
+  // 'stream' or nullptr if none. Returns nullptr on all but first
+  // call for 'stream' since the load is to be triggered by the first
+  // access.
+  std::shared_ptr<cache::FusedLoad> fusedLoad(
+      const SeekableInputStream* stream);
+
  private:
-  struct CacheRequest {
-    CacheRequest(cache::RawFileCacheKey _key, uint64_t _size,
-                 cache::TrackingId _trackingId)
-        : key(_key), size(_size), trackingId(_trackingId) {}
-
-    cache::RawFileCacheKey key;
-    uint64_t size;
-    cache::TrackingId trackingId;
-    cache::CachePin pin;
-    cache::SsdPin ssdPin;
-    cache::SsdRun ssdRun;
-    bool processed{flase};
-    CacheInputStream* stream;
-  };
-
   // Updates first  to include second if they are near enough to justify merging
   // the IO.
   bool tryMerge(
       dwio::common::Region& first,
-      const dwio::common::Region& second);
+      const dwio::common::Region& second,
+      int32_t maxDistance);
 
-  // Schedules 'pins' to be read in a single IO covering
-  // 'region'. 'pins are sorted and non-overlapping and do not have
+  // Sorts requests and makes FusedLoads for nearby requests. If 'schedule' is
+  // true, starts background loading.
+  void makeLoads(std::vector<CacheRequest*> requests, bool schedule);
+
+  // Schedules 'requests' to be read in a single IO
+  //  'requests' are sorted and non-overlapping and do not have
   // excessive gaps between the end of one and the start of the next.
-  void readRegion(std::vector<cache::CachePin> pins);
-
-  // Removes the requests from 'requests' if they hit SSD cache. May start
-  // background load from SSD.
-  void loadFromSsd(std::vector<CacheRequest*>& requests);
+  void readRegion(std::vector<CacheRequest*> requests);
 
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;
@@ -146,7 +159,12 @@ class CachedBufferedInput : public BufferedInput {
   // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
   // Coalesced loads spanning multiple cache entries in one IO.
-  std::vector<std::shared_ptr<cache::FusedLoad>> fusedLoads_;
+  folly::Synchronized<folly::F14FastMap<
+      const SeekableInputStream*,
+      std::shared_ptr<cache::FusedLoad>>>
+      fusedLoads_;
+  // Distinct fused loads in 'fusedLoads_'.
+  std::vector<std::shared_ptr<cache::FusedLoad>> allFusedLoads_;
 };
 
 class CachedBufferedInputFactory : public BufferedInputFactory {

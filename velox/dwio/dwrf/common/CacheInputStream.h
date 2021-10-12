@@ -24,11 +24,13 @@
 
 namespace facebook::velox::dwrf {
 
+  class CachedBufferedInput;
+  
 class CacheInputStream : public SeekableInputStream {
  public:
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
   CacheInputStream(
-      cache::AsyncDataCache* cache,
+		   CachedBufferedInput* cache,
       dwio::common::IoStatistics* ioStats,
       const dwio::common::Region& region,
       dwio::common::InputStream& input,
@@ -46,13 +48,10 @@ class CacheInputStream : public SeekableInputStream {
   size_t loadIndices(const proto::RowIndex& rowIndex, size_t startIndex)
       override;
 
-  void setLoad(std::shared_ptr<cache::FusedLoad> load) {
-    load_ = load;
-  }
-  
  private:
   void loadPosition();
   void loadSync(dwio::common::Region region);
+  CachedBufferedInput* const bufferedInput_;
   cache::AsyncDataCache* const cache_;
   dwio::common::IoStatistics* ioStats_;
   dwio::common::InputStream& input_;

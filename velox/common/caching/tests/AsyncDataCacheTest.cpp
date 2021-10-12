@@ -123,8 +123,9 @@ class TestingFusedLoad : public FusedLoad {
   bool makePins() override {
     return false;
   }
+};
 
-  void AsyncDataCacheTest::loadLoop() {
+void AsyncDataCacheTest::loadLoop() {
     constexpr int32_t kBatch = 8;
     std::vector<CachePin> batch;
     for (auto file = 0; file < filenames_.size(); ++file) {

@@ -25,6 +25,7 @@
 #include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
+#include "velox/common/file/File.h"
 #include "velox/common/memory/MappedMemory.h"
 
 namespace facebook::velox::cache {
@@ -541,6 +542,8 @@ class CacheShard {
       uint64_t size,
       folly::SemiFuture<bool>* FOLLY_NULLABLE readyFuture);
 
+  bool exists(RawFileCacheKey key);
+  
   AsyncDataCache* FOLLY_NONNULL cache() {
     return cache_;
   }
@@ -692,10 +695,10 @@ class SsdPin {
 
   void operator=(SsdPin&&);
 
-  bool empty() {
+  bool empty() const {
     return file_ == nullptr;
   }
-  SsdFile* file() {
+  SsdFile* file() const {
     return file_;
   }
 
@@ -925,6 +928,9 @@ class AsyncDataCache : public memory::MappedMemory,
       uint64_t size,
       folly::SemiFuture<bool>* FOLLY_NULLABLE waitFuture = nullptr);
 
+  // Returns true if there is an entry for 'key'. Updates access time.
+  bool exists(RawFileCacheKey key);
+  
   bool allocate(
       memory::MachinePageCount numPages,
       int32_t owner,
