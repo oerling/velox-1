@@ -126,40 +126,40 @@ class TestingFusedLoad : public FusedLoad {
 };
 
 void AsyncDataCacheTest::loadLoop() {
-    constexpr int32_t kBatch = 8;
-    std::vector<CachePin> batch;
-    for (auto file = 0; file < filenames_.size(); ++file) {
-      for (uint64_t offset = 100; offset < 10000000; offset += 100000) {
-        RawFileCacheKey key{filenames_[file].id(), offset};
-        for (;;) {
-          folly::SemiFuture<bool> wait(false);
-          auto pin = cache_->findOrCreate(key, offset % 1000000, &wait);
-          if (pin.empty()) {
-            // Another thread has the pin as exclusive.
-            auto& exec = folly::QueuedImmediateExecutor::instance();
-            std::move(wait).via(&exec).wait();
-            continue;
+  constexpr int32_t kBatch = 8;
+  std::vector<CachePin> batch;
+  for (auto file = 0; file < filenames_.size(); ++file) {
+    for (uint64_t offset = 100; offset < 10000000; offset += 100000) {
+      RawFileCacheKey key{filenames_[file].id(), offset};
+      for (;;) {
+        folly::SemiFuture<bool> wait(false);
+        auto pin = cache_->findOrCreate(key, offset % 1000000, &wait);
+        if (pin.empty()) {
+          // Another thread has the pin as exclusive.
+          auto& exec = folly::QueuedImmediateExecutor::instance();
+          std::move(wait).via(&exec).wait();
+          continue;
+        }
+        if (pin.entry()->isExclusive()) {
+          // Entry is new. This thread has it as exclusive.
+          batch.push_back(std::move(pin));
+          if (batch.size() < kBatch) {
+            break; // will load when we have enough entries for a batch.
           }
-          if (pin.entry()->isExclusive()) {
-            // Entry is new. This thread has it as exclusive.
-            batch.push_back(std::move(pin));
-            if (batch.size() < kBatch) {
-              break; // will load when we have enough entries for a batch.
-            }
-            auto load = std::make_shared<TestingFusedLoad>();
-            load->initialize(std::move(batch));
-            // The batch is now loadable. Re-get so it loads.
-            continue;
-          } else {
-            // the pin is in shared mode. Ensure the data is loaded.
-            pin.entry()->ensureLoaded(true);
-            break;
-          }
+          auto load = std::make_shared<TestingFusedLoad>();
+          load->initialize(std::move(batch));
+          // The batch is now loadable. Re-get so it loads.
+          continue;
+        } else {
+          // the pin is in shared mode. Ensure the data is loaded.
+          pin.entry()->ensureLoaded(true);
+          break;
         }
       }
     }
-    // Drop possibly unloaded exclusive entries.
-    batch.clear();
+  }
+  // Drop possibly unloaded exclusive entries.
+  batch.clear();
   }
 
   TEST_F(AsyncDataCacheTest, pin) {

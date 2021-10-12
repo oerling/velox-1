@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include <folly/futures/Future.h>
 #include <folly/executors/QueuedImmediateExecutor.h>
+#include <folly/futures/Future.h>
 
 #include <folly/Random.h>
 #include <folly/Synchronized.h>
@@ -164,10 +164,10 @@ class BM {
       scratch.buffer.resize(rangeSize);
       scratch.bufferCopy.resize(rangeSize);
       for (auto i = 0; i < repeats; ++i) {
-	std::unique_ptr<folly::Promise<bool>> promise;
+        std::unique_ptr<folly::Promise<bool>> promise;
         if (parallel) {
           auto [tempPromise, future] = folly::makePromiseContract<bool>();
-	  promise = std::make_unique<folly::Promise<bool>>();
+          promise = std::make_unique<folly::Promise<bool>>();
           *promise = std::move(tempPromise);
           futures.push_back(std::move(future));
         }
@@ -273,10 +273,10 @@ class BM {
         }
       }
       if (parallel) {
-	auto& exec = folly::QueuedImmediateExecutor::instance();
-	for (int32_t i = futures.size() - 1; i >= 0; --i) {
-      std::move(futures[i]).via(&exec).wait();
-    }
+        auto& exec = folly::QueuedImmediateExecutor::instance();
+        for (int32_t i = futures.size() - 1; i >= 0; --i) {
+          std::move(futures[i]).via(&exec).wait();
+        }
       }
     }
     std::cout << fmt::format(

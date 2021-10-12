@@ -44,7 +44,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id);
   tracker_->recordReference(id, region.length, fileNum_, groupId_);
   auto stream = std::make_unique<CacheInputStream>(
-						   this, ioStats_.get(), region, input_, fileNum_, tracker_, id, groupId_);
+      this, ioStats_.get(), region, input_, fileNum_, tracker_, id, groupId_);
   requests_.back().stream = stream.get();
   return stream;
 }
@@ -362,7 +362,7 @@ void CachedBufferedInput::readRegion(std::vector<CacheRequest*> requests) {
     load = std::make_shared<SsdLoad>(cache_, ioStats_, groupId_, requests);
   } else {
     load = std::make_shared<DwrfFusedLoad>(
-					   cache_, streamSource_(), ioStats_, groupId_, requests);
+        cache_, streamSource_(), ioStats_, groupId_, requests);
   }
   allFusedLoads_.push_back(load);
   fusedLoads_.withWLock([&](auto& loads) {
@@ -394,7 +394,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
     uint64_t length,
     dwio::common::LogType /*logType*/) const {
   return std::make_unique<CacheInputStream>(
-					    const_cast<CachedBufferedInput*>(this),
+      const_cast<CachedBufferedInput*>(this),
       ioStats_.get(),
       dwio::common::Region{offset, length},
       input_,

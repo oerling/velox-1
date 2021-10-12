@@ -24,13 +24,13 @@
 
 namespace facebook::velox::dwrf {
 
-  class CachedBufferedInput;
-  
+class CachedBufferedInput;
+
 class CacheInputStream : public SeekableInputStream {
  public:
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
   CacheInputStream(
-		   CachedBufferedInput* cache,
+      CachedBufferedInput* cache,
       dwio::common::IoStatistics* ioStats,
       const dwio::common::Region& region,
       dwio::common::InputStream& input,

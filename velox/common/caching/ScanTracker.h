@@ -143,7 +143,8 @@ class ScanTracker {
     return readPct(id) >= minReadPct;
   }
 
-  // Returns the percentage of referenced columns that are actually read. 100% if no data.
+  // Returns the percentage of referenced columns that are actually read. 100%
+  // if no data.
   int32_t readPct(TrackingId id) {
     std::lock_guard<std::mutex> l(mutex_);
     const auto& data = data_[id];
@@ -152,7 +153,7 @@ class ScanTracker {
     }
     return (100 * data.numReads) / data.numReferences;
   }
-  
+
   std::string_view id() const {
     return id_;
   }

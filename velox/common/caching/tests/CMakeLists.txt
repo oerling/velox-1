@@ -42,5 +42,12 @@ target_link_libraries(data_cache_test velox_caching ${GTEST_BOTH_LIBRARIES}
 
 add_executable(velox_ssd_benchmark SsdBenchmark.cpp)
 
-target_link_libraries(velox_ssd_benchmark velox_file velox_caching velox_memory ${GLOG}
-                      ${GTEST_BOTH_LIBRARIES} ${gflags_LIBRARIES} pthread)
+target_link_libraries(
+  velox_ssd_benchmark
+  velox_file
+  velox_caching
+  velox_memory
+  ${GLOG}
+  ${GTEST_BOTH_LIBRARIES}
+  ${gflags_LIBRARIES}
+  pthread)

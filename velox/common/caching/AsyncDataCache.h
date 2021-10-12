@@ -437,7 +437,7 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   // columns. There the cache entries for all will be made on first
   // access.
   virtual bool makePins() = 0;
-  
+
  protected:
   // Performs the data transfer part of the load. Subclasses will
   // specialize this. All pins will be referring to existing entries
@@ -543,7 +543,7 @@ class CacheShard {
       folly::SemiFuture<bool>* FOLLY_NULLABLE readyFuture);
 
   bool exists(RawFileCacheKey key);
-  
+
   AsyncDataCache* FOLLY_NONNULL cache() {
     return cache_;
   }
@@ -750,7 +750,7 @@ class SsdFile {
   void read(uint64_t offset, const std::vector<folly::Range<char*>> buffers) {
     readFile_->preadv(offset, buffers);
   }
-  
+
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
 
@@ -930,7 +930,7 @@ class AsyncDataCache : public memory::MappedMemory,
 
   // Returns true if there is an entry for 'key'. Updates access time.
   bool exists(RawFileCacheKey key);
-  
+
   bool allocate(
       memory::MachinePageCount numPages,
       int32_t owner,
