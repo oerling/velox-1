@@ -43,10 +43,11 @@ void AsyncDataCacheEntry::setExclusiveToShared() {
 
 void AsyncDataCacheEntry::release() {
   VELOX_CHECK_NE(0, numPins_);
-  if (!dataValid_) {
-    shard_->removeEntry(this);
-  }
   if (numPins_ == kExclusive) {
+    if (!dataValid_) {
+      shard_->removeEntry(this);
+    }
+
     if (promise_) {
       promise_->setValue(true);
       promise_.reset();
@@ -57,6 +58,9 @@ void AsyncDataCacheEntry::release() {
     auto oldPins = numPins_.fetch_add(-1);
     VELOX_CHECK(oldPins >= 1, "Pin count goes negative");
     if (oldPins == 1) {
+      if (!dataValid_) {
+	shard_->removeEntry(this);
+      }
       load_.reset();
     }
   }
@@ -102,9 +106,14 @@ memory::MachinePageCount AsyncDataCacheEntry::setPrefetch(bool flag) {
 
 void AsyncDataCacheEntry::setValid(bool success) {
   VELOX_CHECK_NE(0, numPins_);
+  auto hook = shard_->cache()->verifyHook();
+  if (hook) {
+    hook(this);
+  }
   dataValid_ = success;
   load_.reset();
   if (!ssdFile_ &&
+      shard_->cache()->ssdCache() &&
       shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
           groupId_, trackingId_)) {
     shard_->cache()->possibleSsdSave(size_);
@@ -219,7 +228,7 @@ CachePin CacheShard::initEntry(
       }
     }
   }
-  entry->touch();
+  entry->accessStats_.reset();
   entry->size_ = size;
   cache_->incrementNew(size);
   CachePin pin;
@@ -257,12 +266,23 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
   // Outside of 'mutex_'.
   if (pins_.empty()) {
     makePins();
+    if (pins_.empty()) {
+      setEndState(LoadState::kLoaded);
+      return true;
+    }
   }
-
+  if (!wait) {
+    // If wait is not set this counts as prefetch.
+    for (auto& pin : pins_) {
+      pin.entry()->setPrefetch(true);
+    }
+  }
+  
   try {
     // If wait is not set this counts as prefetch.
     loadData(!wait);
     for (auto& pin : pins_) {
+      VELOX_CHECK(pin.entry()->key().fileNum.hasValue());
       pin.entry()->setValid();
     }
     {

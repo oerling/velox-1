@@ -127,6 +127,7 @@ class CacheTest : public testing::Test {
         std::make_unique<memory::MmapAllocator>(options),
         maxBytes,
         std::move(ssd));
+    cache_->setVerifyHook(checkEntry);
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));
@@ -146,6 +147,37 @@ class CacheTest : public testing::Test {
     }
   }
 
+  static void checkEntry(cache::AsyncDataCacheEntry* entry) {
+    uint64_t seed = entry->key().fileNum.id();
+    if (entry->tinyData()) {
+      checkData(entry->tinyData(), entry->offset(), entry->size(), seed);
+    } else {
+      int64_t bytesLeft = entry->size();
+      auto runOffset = entry->offset();
+      for (auto i = 0; i < entry->data().numRuns(); ++i) {
+	auto run = entry->data().runAt(i);
+	checkData(run.data<char>(), runOffset, std::min<int64_t>(run.numBytes(), bytesLeft), seed);
+	bytesLeft -= run.numBytes();
+	runOffset += run.numBytes();
+	if (bytesLeft <= 0) {
+	  break;
+	}
+      }
+    }
+  }
+
+
+  static void checkData(const char* data, uint64_t offset, int32_t size, uint64_t seed) {
+    uint8_t expected = seed + offset;
+    for (auto i = 0; i < size; ++i) {
+      auto cached = reinterpret_cast<const uint8_t*>(data)[i];
+      if (cached != expected) {
+	ASSERT_EQ(expected, cached) << " at " << (offset + i);
+      }
+      ++expected;
+    }
+  }
+  
   uint64_t seedByPath(const std::string& path) {
     StringIdLease lease(fileIds(), path);
     return lease.id();
@@ -418,7 +450,7 @@ TEST_F(CacheTest, ssd) {
 
   constexpr int32_t kStripesPerFile = 20;
   auto bytesPerFile = fullStripeBytes * kStripesPerFile;
-  auto filesPerGb = 1UL << 30 / bytesPerFile;
+  auto filesPerGb = (1UL << 30) / bytesPerFile;
   // Read files of 20 stripes each to prime SSD cache.
   readFiles("prefix1_", 0, filesPerGb * 2, 30, 100, 1, kStripesPerFile, 4);
 

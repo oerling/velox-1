@@ -176,11 +176,13 @@ void CacheInputStream::loadPosition() {
   if (pin_.empty()) {
     auto load = bufferedInput_->fusedLoad(this);
     if (load) {
-      if (load_->makePins()) {
-        load_->loadOrFuture(nullptr);
+      folly::SemiFuture<bool> waitFuture(false);
+      if (!load->loadOrFuture(&waitFuture)) {
+        auto& exec = folly::QueuedImmediateExecutor::instance();
+	std::move(waitFuture).via(&exec).wait();
       }
     }
-    auto loadRegion = region_;
+      auto loadRegion = region_;
     // Quantize position to previous multiple of 'loadQuantum_'.
     loadRegion.offset += (position_ / loadQuantum_) * loadQuantum_;
     // Set length to be the lesser of 'loadQuantum_' and distance to end of

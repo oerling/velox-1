@@ -62,6 +62,11 @@ struct AccessStats {
     return (now - lastUse) / (1 + numUses);
   }
 
+  void reset() {
+    lastUse = accessTime();
+    numUses = 0;
+  }
+  
   // Updates the last access.
   void touch() {
     lastUse = accessTime();
@@ -217,9 +222,9 @@ class AsyncDataCacheEntry {
 
   void setExclusiveToShared();
 
-  void setSsdFile(SsdFile* file, int32_t region) {
+  void setSsdFile(SsdFile* file, uint64_t offset) {
     ssdFile_ = file;
-    ssdFileRegion_ = region;
+    ssdOffset_ = offset;
   }
 
   void setTrackingId(TrackingId id) {
@@ -291,8 +296,8 @@ class AsyncDataCacheEntry {
   // SSD file from which this was loaded or nullptr if not backed by SSD.
   SsdFile* ssdFile_{nullptr};
 
-  // Region of 'ssdFile_'. Used for updating SSD cache use counts.
-  int32_t ssdFileRegion_{0};
+  // Offset in 'ssdFile_'.
+  uint64_t ssdOffset_{0};
 
   friend class CacheShard;
   friend class CachePin;
@@ -405,6 +410,7 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& pin : pins_) {
       pin.entry()->setExclusiveToShared();
+      VELOX_CHECK(pin.entry()->key().fileNum.hasValue());
     }
   }
 
@@ -746,10 +752,10 @@ class SsdFile {
   // and run sizes match. The quantization of SSD cache matches that
   // of the memory cache.
   void load(SsdRun run, AsyncDataCacheEntry& entry);
-
-  void read(uint64_t offset, const std::vector<folly::Range<char*>> buffers) {
-    readFile_->preadv(offset, buffers);
-  }
+  void read(
+      uint64_t offset,
+      const std::vector<folly::Range<char*>> buffers,
+      int32_t numEntries);
 
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
@@ -994,6 +1000,13 @@ class AsyncDataCache : public memory::MappedMemory,
 
   void possibleSsdSave(uint64_t bytes);
 
+  void setVerifyHook(std::function<void(AsyncDataCacheEntry*)> hook) {
+    verifyHook_ = hook;
+  }
+  const auto& verifyHook() const {
+    return verifyHook_;
+  }
+
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
@@ -1025,6 +1038,8 @@ class AsyncDataCache : public memory::MappedMemory,
   uint64_t ssdSaveable_{0};
 
   CacheStats stats_;
+
+  std::function<void(AsyncDataCacheEntry*)> verifyHook_;
 };
 
 // Samples a set of values T from 'numSamples' calls of

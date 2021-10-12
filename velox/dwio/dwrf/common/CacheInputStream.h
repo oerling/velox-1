@@ -83,10 +83,6 @@ class CacheInputStream : public SeekableInputStream {
   uint32_t runSize_ = 0;
   // Position relative to 'region_.offset'.
   uint64_t position_ = 0;
-
-  // If 'this' is correlated with other streams for loding, this
-  // represents the load.
-  std::shared_ptr<cache::FusedLoad> load_;
 };
 
 } // namespace facebook::velox::dwrf
