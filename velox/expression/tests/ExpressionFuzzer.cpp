@@ -54,7 +54,6 @@ using exec::SignatureBinder;
 // TODO: List of the functions that at some point crash or fail and need to
 // be fixed before we can enable.
 static std::unordered_set<std::string> kSkipFunctions = {
-    "strpos",
     "replace",
     // Fails because like requires 2nd arg to be a constant of type VARCHAR.
     "like",
@@ -256,6 +255,35 @@ class ExpressionFuzzer {
         }
       }
     }
+
+    // We sort the available signatures to ensure we can deterministically
+    // generate expressions across platforms. We just do this once and the
+    // vector is small, so it doesn't need to be very efficient.
+    std::sort(
+        signatures_.begin(),
+        signatures_.end(),
+        // Returns true if lhs is less (comes before).
+        [](const CallableSignature& lhs, const CallableSignature& rhs) {
+          // The comparison logic is the following:
+          //
+          // 1. Compare based on function name.
+          // 2. If names are the same, compare the number of args.
+          // 3. If number of args are the same, look for any different arg
+          // types.
+          // 4. If all arg types are the same, compare return type.
+          if (lhs.name == rhs.name) {
+            if (lhs.args.size() == rhs.args.size()) {
+              for (size_t i = 0; i < lhs.args.size(); ++i) {
+                if (!lhs.args[i]->kindEquals(rhs.args[i])) {
+                  return lhs.args[i]->toString() < rhs.args[i]->toString();
+                }
+              }
+              return lhs.returnType->toString() < rhs.returnType->toString();
+            }
+            return lhs.args.size() < rhs.args.size();
+          }
+          return lhs.name < rhs.name;
+        });
 
     // Generates signaturesMap, which maps a given type to the function
     // signature that returns it.
