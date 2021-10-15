@@ -17,7 +17,8 @@ add_test(simple_lru_cache_test simple_lru_cache_test)
 target_link_libraries(simple_lru_cache_test ${GTEST_BOTH_LIBRARIES} ${GLOG}
                       ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})
 
-add_executable(velox_cache_test StringIdMapTest.cpp AsyncDataCacheTest.cpp)
+add_executable(velox_cache_test StringIdMapTest.cpp AsyncDataCacheTest.cpp
+                                GroupTrackerTest.cpp)
 add_test(velox_cache_test velox_cache_test)
 target_link_libraries(
   velox_cache_test
@@ -38,3 +39,15 @@ add_executable(data_cache_test DataCacheTest.cpp)
 add_test(data_cache_test data_cache_test)
 target_link_libraries(data_cache_test velox_caching ${GTEST_BOTH_LIBRARIES}
                       ${GLOG} ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})
+
+add_executable(velox_ssd_benchmark SsdBenchmark.cpp)
+
+target_link_libraries(
+  velox_ssd_benchmark
+  velox_file
+  velox_caching
+  velox_memory
+  ${GLOG}
+  ${GTEST_BOTH_LIBRARIES}
+  ${gflags_LIBRARIES}
+  pthread)

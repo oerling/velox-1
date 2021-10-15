@@ -15,13 +15,17 @@
  */
 
 #include "velox/exec/tests/HiveConnectorTestBase.h"
+#include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/tests/QueryAssertions.h"
-DEFINE_int32(cache_mb, 1024, "File cache size for testing");
-
 namespace facebook::velox::exec::test {
+
+HiveConnectorTestBase::HiveConnectorTestBase() {
+  filesystems::registerLocalFileSystem();
+}
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
@@ -38,12 +42,14 @@ void HiveConnectorTestBase::SetUp() {
             ->newConnector(kHiveConnectorId, nullptr, std::move(dataCache));
     connector::registerConnector(hiveConnector);
   }
+  dwrf::registerDwrfReaderFactory();
 }
 
 void HiveConnectorTestBase::TearDown() {
   if (executor_) {
     executor_->join();
   }
+  dwrf::unregisterDwrfReaderFactory();
   connector::unregisterConnector(kHiveConnectorId);
   OperatorTestBase::TearDown();
 }
@@ -63,7 +69,8 @@ void HiveConnectorTestBase::writeToFile(
   facebook::velox::dwrf::WriterOptions options;
   options.config = config;
   options.schema = vectors[0]->type();
-  auto sink = std::make_unique<facebook::dwio::common::FileSink>(filePath);
+  auto sink =
+      std::make_unique<facebook::velox::dwio::common::FileSink>(filePath);
   facebook::velox::dwrf::Writer writer{
       options,
       std::move(sink),

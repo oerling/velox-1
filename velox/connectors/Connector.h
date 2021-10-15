@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/common/caching/DataCache.h"
+#include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
@@ -40,7 +41,7 @@ struct ConnectorSplit {
 
   // true if the Task processing this has aborted. Allows aborting
   // async prefetch for the split.
-  bool cancelled{};
+  bool cancelled{false};
 
   explicit ConnectorSplit(const std::string& _connectorId)
       : connectorId(_connectorId) {}
@@ -68,6 +69,12 @@ class ConnectorTableHandle {
 class ConnectorInsertTableHandle {
  public:
   virtual ~ConnectorInsertTableHandle() {}
+
+  // Whether multi-threaded write is supported by this connector. Planner uses
+  // this flag to determine number of drivers.
+  virtual bool supportsMultiThreading() const {
+    return false;
+  }
 };
 
 class DataSink {
@@ -142,7 +149,7 @@ class ConnectorQueryCtx {
       Config* config,
       ExpressionEvaluator* expressionEvaluator,
       memory::MappedMemory* mappedMemory,
-      std::optional<std::string> scanId = std::nullopt)
+      const std::string& scanId)
       : pool_(pool),
         config_(config),
         expressionEvaluator_(expressionEvaluator),
@@ -161,6 +168,8 @@ class ConnectorQueryCtx {
     return expressionEvaluator_;
   }
 
+  // MappedMemory for large allocations. Used for caching with
+  // CachedBufferedImput if this implements cache::AsyncDataCache.
   memory::MappedMemory* mappedMemory() const {
     return mappedMemory_;
   }
@@ -170,7 +179,7 @@ class ConnectorQueryCtx {
   // PlanNodeId. This is used for locating a scanTracker, which tracks
   // the read density of columns for prefetch and other memory
   // hierarchy purposes.
-  const std::optional<std::string>& scanId() const {
+  const std::string& scanId() const {
     return scanId_;
   }
 
@@ -179,7 +188,7 @@ class ConnectorQueryCtx {
   Config* config_;
   ExpressionEvaluator* expressionEvaluator_;
   memory::MappedMemory* mappedMemory_;
-  std::optional<std::string> scanId_;
+  std::string scanId_;
 };
 
 class Connector {
@@ -218,7 +227,8 @@ class Connector {
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
   static std::shared_ptr<cache::ScanTracker> getTracker(
-      const std::string& scanId);
+      const std::string& scanId,
+      cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
