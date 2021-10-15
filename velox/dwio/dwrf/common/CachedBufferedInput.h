@@ -94,8 +94,8 @@ class CachedBufferedInput : public BufferedInput {
   }
 
   void setNumStripes(int32_t numStripes) override {
-    if (tracker_->groupStats()) {
-      tracker_->groupStats()->recordFile(fileNum_, groupId_, numStripes);
+    if (tracker_->fileGroupStats()) {
+      tracker_->fileGroupStats()->recordFile(fileNum_, groupId_, numStripes);
     }
   }
 
