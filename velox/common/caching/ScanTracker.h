@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <mutex>
 
+#include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
 
 namespace facebook::velox::cache {
