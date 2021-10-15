@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
 #include <folly/executors/QueuedImmediateExecutor.h>
+#include "velox/common/time/Timer.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 
 namespace facebook::velox::dwrf {
@@ -135,7 +136,12 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
     if (pin_.empty()) {
       VELOX_CHECK(wait.valid());
       auto& exec = folly::QueuedImmediateExecutor::instance();
-      std::move(wait).via(&exec).wait();
+      uint64_t usec = 0;
+      {
+        MicrosecondTimer timer(&usec);
+	std::move(wait).via(&exec).wait();
+      }
+      ioStats_->queryThreadIoLatency().increment(usec);
       continue;
     }
     if (pin_.entry()->isExclusive()) {
@@ -148,15 +154,27 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
         auto ssdPin =
             file.find(cache::RawFileCacheKey{fileNum_, region.offset});
         if (!ssdPin.empty()) {
-          file.load(ssdPin.run(), *pin_.entry());
+	  uint64_t usec = 0;
+          {
+            MicrosecondTimer timer(&usec);
+            file.load(ssdPin.run(), *pin_.entry());
+          }
+
+          ioStats_->ssdRead().increment(pin_.entry()->size());
+          ioStats_->queryThreadIoLatency().increment(usec);
           pin_.entry()->setValid(true);
           pin_.entry()->setExclusiveToShared();
           return;
         }
       }
       auto ranges = makeRanges(pin_.entry(), region.length);
-      input_.read(ranges, region.offset, dwio::common::LogType::FILE);
+      uint64_t usec = 0;
+      {
+        MicrosecondTimer timer(&usec);
+        input_.read(ranges, region.offset, dwio::common::LogType::FILE);
+      }
       ioStats_->read().increment(region.length);
+      ioStats_->queryThreadIoLatency().increment(usec);
       pin_.entry()->setValid(true);
       pin_.entry()->setExclusiveToShared();
     } else {
@@ -165,7 +183,12 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
           ioStats_->ramHit().increment(pin_.entry()->size());
         }
       } else {
-        pin_.entry()->ensureLoaded(true);
+        uint64_t usec = 0;
+        {
+          MicrosecondTimer timer(&usec);
+          pin_.entry()->ensureLoaded(true);
+        }
+        ioStats_->queryThreadIoLatency().increment(usec);
       }
     }
   } while (pin_.empty());
@@ -177,12 +200,17 @@ void CacheInputStream::loadPosition() {
     auto load = bufferedInput_->fusedLoad(this);
     if (load) {
       folly::SemiFuture<bool> waitFuture(false);
-      if (!load->loadOrFuture(&waitFuture)) {
-        auto& exec = folly::QueuedImmediateExecutor::instance();
-	std::move(waitFuture).via(&exec).wait();
+      uint64_t usec = 0;
+      {
+        MicrosecondTimer timer(&usec);
+        if (!load->loadOrFuture(&waitFuture)) {
+          auto& exec = folly::QueuedImmediateExecutor::instance();
+          std::move(waitFuture).via(&exec).wait();
+        }
       }
+      ioStats_->queryThreadIoLatency().increment(usec);
     }
-      auto loadRegion = region_;
+    auto loadRegion = region_;
     // Quantize position to previous multiple of 'loadQuantum_'.
     loadRegion.offset += (position_ / loadQuantum_) * loadQuantum_;
     // Set length to be the lesser of 'loadQuantum_' and distance to end of

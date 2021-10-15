@@ -154,6 +154,11 @@ class ScanTracker {
     return (100 * data.numReads) / data.numReferences;
   }
 
+  TrackingData trackingData(TrackingId id) {
+    std::lock_guard<std::mutex> l(mutex_);
+    return data_[id];
+  }
+  
   std::string_view id() const {
     return id_;
   }

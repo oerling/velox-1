@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <iostream>
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
 #include "velox/common/caching/AsyncDataCache.h"
@@ -25,6 +26,7 @@
 #include <sys/types.h>
 
 DEFINE_bool(ssd_odirect, false, "use O_DIRECT for SSD cache IO");
+DEFINE_bool(verify_ssd_write, false, "Read back data after writing to SSD");
 
 namespace facebook::velox::cache {
 
@@ -325,8 +327,10 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         SsdKey key = {
             entry->key().fileNum, static_cast<uint64_t>(entry->offset())};
         entries_[std::move(key)] = SsdRun(offset, size);
-	verifyWrite(*entry, SsdRun(offset, size));
-        offset += size;
+	if (FLAGS_verify_ssd_write) {
+	  verifyWrite(*entry, SsdRun(offset, size));
+	}
+	offset += size;
         ++stats_.entriesWritten;
         stats_.bytesWritten += size;
       }
@@ -444,7 +448,7 @@ void SsdCache::store(std::vector<CachePin> pins) {
       PinHolder(std::vector<CachePin>&& _pins) : pins(std::move(_pins)) {}
     };
 
-    // We move the mutavle vector of pins to the executor. These must
+    // We move the mutable vector of pins to the executor. These must
     // be wrapped in a shared struct to be passed via lambda capture.
     auto pinHolder = std::make_shared<PinHolder>(std::move(shards[i]));
     ssdStoreExecutor()->add([this, i, pinHolder]() {
@@ -468,7 +472,7 @@ std::string SsdCache::toString() const {
   uint64_t capacity =
       files_.size() * files_[0]->maxRegions() * SsdFile::kRegionSize;
   std::stringstream out;
-  out << "Ssd cache traffic: Write " << (data.bytesWritten >> 20) << "MB read "
+  out << "Ssd cache IO: Write " << (data.bytesWritten >> 20) << "MB read "
       << (data.bytesRead >> 20) << "MB Size " << (capacity >> 30)
       << "GB Occupied " << (data.bytesCached >> 30) << "GB";
   out << (data.entriesCached >> 10) << "K entries.";

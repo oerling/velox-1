@@ -56,6 +56,12 @@ struct CacheRequest {
   cache::CachePin pin;
   cache::SsdPin ssdPin;
   bool processed{false};
+
+  // True if this should be coalesced into a FusedLoad with other
+  // nearby requests with a similar load probability. This is false
+  // for sparsely accessed large columns where hitting one piece
+  // should not load the adjacent pieces.
+  bool coalesces{true};
   const SeekableInputStream* stream;
 };
 
@@ -134,14 +140,16 @@ class CachedBufferedInput : public BufferedInput {
       const dwio::common::Region& second,
       int32_t maxDistance);
 
-  // Sorts requests and makes FusedLoads for nearby requests. If 'schedule' is
+  // Sorts requests and makes FusedLoads for nearby requests. If 'prefetch' is
   // true, starts background loading.
-  void makeLoads(std::vector<CacheRequest*> requests, bool schedule);
+  void makeLoads(std::vector<CacheRequest*> requests, bool prefetch);
 
-  // Schedules 'requests' to be read in a single IO
-  //  'requests' are sorted and non-overlapping and do not have
-  // excessive gaps between the end of one and the start of the next.
-  void readRegion(std::vector<CacheRequest*> requests);
+  // Schedules 'requests' to be read in a single IO 'requests' are
+  //  sorted and non-overlapping and do not have excessive gaps
+  //  between the end of one and the start of the next. No action if
+  //  requests is empty or 'prefetch' is false and there is a single
+  //  request.
+  void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;
@@ -155,7 +163,7 @@ class CachedBufferedInput : public BufferedInput {
   //  coalesced with nearby streams and prefetched. Anything read less
   //  frequently will be synchronously read on first use.
   int32_t prefetchThreshold_ = 60;
-
+  
   // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
   // Coalesced loads spanning multiple cache entries in one IO.
