@@ -32,7 +32,7 @@ void GroupTracker::recordFile(uint64_t fileId, int32_t numStripes) {
   if (numFiles_.add(fileId)) {
     numStripes_ += numStripes;
   }
-  }
+}
 
 void GroupTracker::recordReference(
     uint64_t fileId,
@@ -233,7 +233,7 @@ void FileGroupStats::updateSsdFilter(uint64_t ssdSize, int32_t decayPct) {
       auto hash = ssdFilterHash(scores[i].groupId, scores[i].columnId);
       newFilter.insert(hash);
     }
-    saveToSsd_.withWLock([&](auto& set) { set = std::move(newFilter);});
+    saveToSsd_.withWLock([&](auto& set) { set = std::move(newFilter); });
     ssdFilterInited_ = true;
     allFitOnSsd_ = false;
   }

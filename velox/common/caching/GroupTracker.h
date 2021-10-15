@@ -21,20 +21,20 @@
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
 
+#include <folly/Synchronized.h>
 #include <folly/container/F14Map.h>
 #include <folly/container/F14Set.h>
-#include <folly/Synchronized.h>
 
 namespace facebook::velox::cache {
 
-  // Counts distinct integers. 'range' is an estimate of expected distinct 
-  class DistinctCounter {
-public:
-    DistinctCounter(int32_t /*range*/) {}
+// Counts distinct integers. 'range' is an estimate of expected distinct
+class DistinctCounter {
+ public:
+  DistinctCounter(int32_t /*range*/) {}
 
-    //  Adds a value. Returns true if the value is new.
-    bool add(uint64_t value) {
-      return values_.insert(value).second;
+  //  Adds a value. Returns true if the value is new.
+  bool add(uint64_t value) {
+    return values_.insert(value).second;
   }
 
   int32_t count() const {
@@ -187,7 +187,7 @@ class FileGroupStats {
   void eraseStatLocked(uint64_t groupId, int32_t columnId);
   // Serializes access to  all data members and private methods.
   std::mutex mutex_;
-  
+
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
 
   // Max number of columns tracked.
