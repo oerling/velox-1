@@ -39,6 +39,15 @@ void registerFunctions() {
   registerFunction<udf_chr, Varchar, int64_t>();
   registerFunction<udf_codepoint, int32_t, Varchar>();
 
+  registerFunction<udf_substr<int64_t>, Varchar, Varchar, int64_t>();
+  registerFunction<udf_substr<int64_t>, Varchar, Varchar, int64_t, int64_t>();
+  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t>();
+  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t, int32_t>();
+
+  registerFunction<udf_trim<true, true>, Varchar, Varchar>({"trim"});
+  registerFunction<udf_trim<true, false>, Varchar, Varchar>({"ltrim"});
+  registerFunction<udf_trim<false, true>, Varchar, Varchar>({"rtrim"});
+
   // Register hash functions
   registerFunction<udf_xxhash64, Varbinary, Varbinary>({"xxhash64"});
   registerFunction<udf_md5<Varbinary, Varbinary>, Varbinary, Varbinary>(
@@ -54,6 +63,13 @@ void registerFunctions() {
   registerFunction<udf_to_unixtime, double, Timestamp>(
       {"to_unixtime", "to_unix_timestamp"});
   registerFunction<udf_from_unixtime, Timestamp, double>();
+  registerFunction<udf_year, int64_t, Timestamp>();
+  registerFunction<udf_month, int64_t, Timestamp>();
+  registerFunction<udf_day, int64_t, Timestamp>({"day", "day_of_month"});
+  registerFunction<udf_hour, int64_t, Timestamp>();
+  registerFunction<udf_minute, int64_t, Timestamp>();
+  registerFunction<udf_second, int64_t, Timestamp>();
+  registerFunction<udf_millisecond, int64_t, Timestamp>();
 
   registerArithmeticFunctions();
   registerCheckedArithmeticFunctions();
