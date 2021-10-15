@@ -84,9 +84,13 @@ struct TrackingData {
   int64_t readBytes{};
   int32_t numReferences{};
   int32_t numReads{};
-  void incrementReference(uint64_t bytes) {
+  void incrementReference(uint64_t bytes, int32_t quantum = 0) {
     referencedBytes += bytes;
-    ++numReferences;
+    if (!quantum) {
+      ++numReferences;
+    } else {
+      numReferences += bits::roundUp(bytes, quantum) / quantum;
+    }
   }
 
   void incrementRead(uint64_t bytes) {
@@ -167,6 +171,10 @@ class ScanTracker {
     return fileGroupStats_;
   }
 
+  void setLoadQuantum(int32_t bytes) {
+    loadQuantum_ = bytes;
+  }
+  
   std::string toString() const;
 
  private:
@@ -177,6 +185,11 @@ class ScanTracker {
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
   FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
+  // Maximum size of a read. A to 10MB would count as two references
+  // if the quantim were 8MB. At the same time this would count as a
+  // single 10MB reference for 'fileGroupTracker_'. 0 means the read
+  // size is unlimited.
+  int32_t loadQuantum_{0};
 };
 
 } // namespace facebook::velox::cache

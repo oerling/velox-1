@@ -30,8 +30,8 @@ void ScanTracker::recordReference(
     fileGroupStats_->recordReference(fileId, groupId, id, bytes);
   }
   std::lock_guard<std::mutex> l(mutex_);
-  data_[id].incrementReference(bytes);
-  sum_.incrementReference(bytes);
+  data_[id].incrementReference(bytes, loadQuantum_);
+  sum_.incrementReference(bytes, loadQuantum_);
 }
 
 void ScanTracker::recordRead(

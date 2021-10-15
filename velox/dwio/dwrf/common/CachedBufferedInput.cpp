@@ -42,14 +42,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   }
   requests_.emplace_back(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id);
-  const auto quantum = CacheInputStream::kDefaultLoadQuantum;
-  for (auto offset = 0; offset < region.length; offset += quantum) {
-    tracker_->recordReference(
-        id,
-        std::min<uint64_t>(quantum, region.length - offset),
-        fileNum_,
-        groupId_);
-  }
+  tracker_->recordReference(id, region.length, fileNum_, groupId_);
   auto stream = std::make_unique<CacheInputStream>(
       this, ioStats_.get(), region, input_, fileNum_, tracker_, id, groupId_);
   requests_.back().stream = stream.get();

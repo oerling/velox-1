@@ -21,6 +21,7 @@
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
+#include "velox/dwio/dwrf/common/CacheInputStream.h"
 
 #include <folly/Executor.h>
 
@@ -84,7 +85,9 @@ class CachedBufferedInput : public BufferedInput {
         groupId_(groupId),
         streamSource_(streamSource),
         ioStats_(std::move(ioStats)),
-        executor_(executor) {}
+        executor_(executor) {
+    tracker_->setLoadQuantum(CacheInputStream::kDefaultLoadQuantum);
+  }
 
   ~CachedBufferedInput() override {
     for (auto& load : allFusedLoads_) {
