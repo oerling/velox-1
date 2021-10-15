@@ -228,7 +228,7 @@ class Connector {
 
   static std::shared_ptr<cache::ScanTracker> getTracker(
       const std::string& scanId,
-      cache::GroupStats* FOLLY_NULLABLE groupStats = nullptr);
+      cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);

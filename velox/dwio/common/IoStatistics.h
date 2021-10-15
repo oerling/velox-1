@@ -23,6 +23,7 @@
 #include <unordered_map>
 
 namespace facebook {
+namespace velox {
 namespace dwio {
 namespace common {
 
@@ -131,4 +132,5 @@ class IoStatistics {
 
 } // namespace common
 } // namespace dwio
+} // namespace velox
 } // namespace facebook

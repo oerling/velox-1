@@ -894,7 +894,7 @@ class SsdCache {
 
   SsdCacheStats stats() const;
 
-  GroupStats& groupStats() const {
+  FileGroupStats& groupStats() const {
     return *groupStats_;
   }
 
@@ -907,7 +907,7 @@ class SsdCache {
   std::vector<std::unique_ptr<SsdFile>> files_;
   // Count of shards with unfinished stores.
   std::atomic<int32_t> storesInProgress_{0};
-  std::unique_ptr<GroupStats> groupStats_;
+  std::unique_ptr<FileGroupStats> groupStats_;
 };
 
 class AsyncDataCache : public memory::MappedMemory,

@@ -21,31 +21,28 @@
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
 
+#include <folly/Synchronized.h>
 #include <folly/container/F14Map.h>
 #include <folly/container/F14Set.h>
 
 namespace facebook::velox::cache {
 
-class ApproxCounter {
+// Counts distinct integers. 'range' is an estimate of expected distinct
+class DistinctCounter {
  public:
-  ApproxCounter(int32_t range) {
-    bloom_.reset(range);
-  }
+  DistinctCounter(int32_t /*range*/) {}
 
-  void add(uint64_t value) {
-    if (!bloom_.mayContain(value)) {
-      bloom_.insert(value);
-      ++count_;
-    }
+  //  Adds a value. Returns true if the value is new.
+  bool add(uint64_t value) {
+    return values_.insert(value).second;
   }
 
   int32_t count() const {
-    return count_;
+    return values_.size();
   }
 
  private:
-  BloomFilter<true> bloom_;
-  int32_t count_{0};
+  folly::F14FastSet<uint64_t> values_;
 };
 
 // Represents a groupId, column and its size and score. These are
@@ -56,14 +53,16 @@ struct SsdScore {
   float score;
 
   // Expected size in bytes for caching to SSD
-  float size;
+  float totalBytes;
   // Recorded read activity, with older reads decayed.
   float readBytes;
+  // The column and file group. Not const because this struct must be
+  // move assignable as an operand to std::sort.
   uint64_t groupId;
   int32_t columnId;
 };
 
-// Tracks usage of different columns of inside a file group. Tracks the number
+// Tracks usage of different columns inside a file group. Tracks the number
 // of distinct files in the group and their average number of splits. Produces
 // estimates of the column size for each accessed column in the group.
 class GroupTracker {
@@ -104,15 +103,15 @@ class GroupTracker {
   folly::F14FastMap<int32_t, TrackingData> columns_;
 
   // Count of distinct files seen in recordFile().
-  ApproxCounter numFiles_;
+  DistinctCounter numFiles_;
 
-  uint64_t numOpens_{0};
-  uint64_t numOpenStripes_{0};
+  uint64_t numStripes_{0};
 };
 
 // Set of file group stats. There is one instance per SSD cache.
-class GroupStats {
+class FileGroupStats {
  public:
+  FileGroupStats();
   // Records the existence of a distinct file inside 'groupId'
   void recordFile(uint64_t fileId, uint64_t groupId, int32_t numStripes);
 
@@ -165,7 +164,7 @@ class GroupStats {
   std::string toString(uint64_t cacheBytes);
 
  private:
-  GroupTracker& group(uint64_t id) {
+  GroupTracker& groupLocked(uint64_t id) {
     auto it = groups_.find(id);
     if (it == groups_.end()) {
       groups_[id] =
@@ -186,17 +185,17 @@ class GroupStats {
 
   //  Removes the information on groupId/id.
   void eraseStatLocked(uint64_t groupId, int32_t columnId);
-
+  // Serializes access to  all data members and private methods.
   std::mutex mutex_;
+
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
 
-  // Max number of columns tracked. The default would do for 2K tables
-  // of 100 accessed columns out of a possibly larger schema.
-  int32_t maxColumns_{200000};
+  // Max number of columns tracked.
+  const int32_t maxColumns_;
 
-  // Bloom filter of groupId, columnId hashes for streams that should be saved
+  // Set of groupId, columnId combinations for streams that should be saved
   // to SSD.
-  BloomFilter<false> saveToSsd_;
+  folly::Synchronized<folly::F14FastSet<uint64_t>> saveToSsd_;
   bool ssdFilterInited_{false};
   bool allFitOnSsd_{false};
   double dataSize_{0};

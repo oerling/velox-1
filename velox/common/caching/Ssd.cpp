@@ -400,7 +400,7 @@ SsdCache::SsdCache(
     int32_t numShards)
     : filePrefix_(filePrefix),
       numShards_(numShards),
-      groupStats_(std::make_unique<GroupStats>()) {
+      groupStats_(std::make_unique<FileGroupStats>()) {
   files_.reserve(numShards_);
   uint64_t kSizeQuantum = numShards_ * SsdFile::kRegionSize;
   int32_t fileMaxRegions = bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum;
