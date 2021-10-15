@@ -43,7 +43,7 @@ class GroupTrackerTest : public testing::Test {
  protected:
   void SetUp() override {
     rng_.seed(1);
-    stats_ = std::make_unique<GroupStats>();
+    stats_ = std::make_unique<FileGroupStats>();
   }
 
   // Makes a test population of tables. A table has many file groups
@@ -169,7 +169,7 @@ class GroupTrackerTest : public testing::Test {
     return folly::Random::rand32(rng_) % range;
   }
 
-  std::unique_ptr<GroupStats> stats_;
+  std::unique_ptr<FileGroupStats> stats_;
   std::vector<TestTable> tables_;
   std::vector<int32_t>
       columnSizes_{1000, 2000, 3000, 3000, 3000, 4000, 10000, 15000, 100000};

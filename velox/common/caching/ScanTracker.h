@@ -76,7 +76,7 @@ struct hash<::facebook::velox::cache::TrackingId> {
 
 namespace facebook::velox::cache {
 
-class GroupStats;
+class FileGroupStats;
 
 // Records references and actual uses of a stream.
 struct TrackingData {
@@ -113,8 +113,8 @@ class ScanTracker {
   ScanTracker(
       std::string_view id,
       std::function<void(ScanTracker*)> unregisterer,
-      GroupStats* FOLLY_NULLABLE groupStats = nullptr)
-      : id_(id), unregisterer_(unregisterer), groupStats_(groupStats) {}
+      FileGroupStats* FOLLY_NULLABLE fileGroupStats = nullptr)
+      : id_(id), unregisterer_(unregisterer), fileGroupStats_(fileGroupStats) {}
 
   ~ScanTracker() {
     if (unregisterer_) {
@@ -153,8 +153,8 @@ class ScanTracker {
     return id_;
   }
 
-  GroupStats* FOLLY_NULLABLE groupStats() const {
-    return groupStats_;
+  FileGroupStats* FOLLY_NULLABLE fileGroupStats() const {
+    return fileGroupStats_;
   }
 
   std::string toString() const;
@@ -166,7 +166,7 @@ class ScanTracker {
   std::function<void(ScanTracker*)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
-  GroupStats* FOLLY_NULLABLE groupStats_;
+  FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
 };
 
 } // namespace facebook::velox::cache

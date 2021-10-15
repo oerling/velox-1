@@ -18,13 +18,21 @@
 
 #include "velox/common/base/BitUtil.h"
 
+#include <gflags/gflags.h>
+
+DEFINE_int32(
+    max_tracked_columns,
+    200000,
+    "Max number of columns*partitions tracked for possible staging "
+    "on SSD");
+
 namespace facebook::velox::cache {
 
 void GroupTracker::recordFile(uint64_t fileId, int32_t numStripes) {
-  numFiles_.add(fileId);
-  ++numOpens_;
-  numOpenStripes_ += numStripes;
-}
+  if (numFiles_.add(fileId)) {
+    numStripes_ += numStripes;
+  }
+  }
 
 void GroupTracker::recordReference(
     uint64_t fileId,
@@ -81,12 +89,12 @@ void decay(int32_t decayPct, TrackingData& data) {
 void GroupTracker::addColumnScores(
     int32_t decayPct,
     std::vector<SsdScore>& scores) {
-  if (!numOpens_) {
+  int32_t numFiles = numFiles_.count();
+  if (!numFiles) {
     return;
   }
   std::vector<int32_t> toErase;
-  int32_t numFiles = numFiles_.count();
-  auto stripesInFile = numOpenStripes_ / numOpens_;
+  auto stripesInFile = numStripes_ / numFiles;
   auto numStripes = numFiles * stripesInFile;
   for (auto& pair : columns_) {
     auto& data = pair.second;
@@ -113,33 +121,35 @@ void GroupTracker::addColumnScores(
   }
 }
 
-void GroupStats::recordFile(
+FileGroupStats::FileGroupStats() : maxColumns_(FLAGS_max_tracked_columns) {}
+
+void FileGroupStats::recordFile(
     uint64_t fileId,
     uint64_t groupId,
     int32_t numStripes) {
   std::lock_guard<std::mutex> l(mutex_);
-  group(groupId).recordFile(fileId, numStripes);
+  groupLocked(groupId).recordFile(fileId, numStripes);
 }
 
-void GroupStats::recordReference(
+void FileGroupStats::recordReference(
     uint64_t fileId,
     uint64_t groupId,
     TrackingId trackingId,
     int32_t bytes) {
   std::lock_guard<std::mutex> l(mutex_);
-  group(groupId).recordReference(fileId, trackingId.columnId(), bytes);
+  groupLocked(groupId).recordReference(fileId, trackingId.columnId(), bytes);
 }
 
-void GroupStats::recordRead(
+void FileGroupStats::recordRead(
     uint64_t fileId,
     uint64_t groupId,
     TrackingId trackingId,
     int32_t bytes) {
   std::lock_guard<std::mutex> l(mutex_);
-  group(groupId).recordRead(fileId, trackingId.columnId(), bytes);
+  groupLocked(groupId).recordRead(fileId, trackingId.columnId(), bytes);
 }
 
-bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
+bool FileGroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
     const {
   if (!ssdFilterInited_) {
     return false;
@@ -148,10 +158,11 @@ bool GroupStats::shouldSaveToSsd(uint64_t groupId, TrackingId trackingId)
     return true;
   }
   uint64_t hash = ssdFilterHash(groupId, trackingId.columnId());
-  return saveToSsd_.mayContain(hash);
+  return saveToSsd_.withRLock(
+      [&](auto& set) { return set.find(hash) != set.end(); });
 }
 
-std::vector<SsdScore> GroupStats::ssdScoresLocked(
+std::vector<SsdScore> FileGroupStats::ssdScoresLocked(
     uint64_t cacheBytes,
     int32_t decayPct) {
   std::vector<SsdScore> scores;
@@ -177,7 +188,7 @@ std::vector<SsdScore> GroupStats::ssdScoresLocked(
   int32_t numCachable = -1;
   float cachableReads = 0;
   for (auto i = 0; i < scores.size(); ++i) {
-    totalSize += scores[i].size;
+    totalSize += scores[i].totalBytes;
     totalRead_ += scores[i].readBytes;
     if (totalSize < cacheBytes) {
       cachableReads += scores[i].readBytes;
@@ -192,7 +203,7 @@ std::vector<SsdScore> GroupStats::ssdScoresLocked(
   return scores;
 }
 
-void GroupStats::eraseStatLocked(uint64_t groupId, int32_t columnId) {
+void FileGroupStats::eraseStatLocked(uint64_t groupId, int32_t columnId) {
   auto it = groups_.find(groupId);
   if (it != groups_.end()) {
     if (it->second->eraseColumn(columnId)) {
@@ -201,14 +212,14 @@ void GroupStats::eraseStatLocked(uint64_t groupId, int32_t columnId) {
   }
 }
 
-void GroupStats::updateSsdFilter(uint64_t ssdSize, int32_t decayPct) {
+void FileGroupStats::updateSsdFilter(uint64_t ssdSize, int32_t decayPct) {
   std::lock_guard<std::mutex> l(mutex_);
   auto scores = ssdScoresLocked(ssdSize, decayPct);
   float size = 0;
 
   int32_t i = 0;
   for (; i < scores.size(); ++i) {
-    size += scores[i].size;
+    size += scores[i].totalBytes;
     if (size > ssdSize) {
       break;
     }
@@ -217,26 +228,25 @@ void GroupStats::updateSsdFilter(uint64_t ssdSize, int32_t decayPct) {
     allFitOnSsd_ = true;
     ssdFilterInited_ = true;
   } else {
-    BloomFilter<false> newFilter;
-    newFilter.reset(i);
+    folly::F14FastSet<uint64_t> newFilter;
     for (auto included = 0; included < i; ++included) {
       auto hash = ssdFilterHash(scores[i].groupId, scores[i].columnId);
       newFilter.insert(hash);
     }
-    saveToSsd_ = std::move(newFilter);
+    saveToSsd_.withWLock([&](auto& set) { set = std::move(newFilter);});
     ssdFilterInited_ = true;
     allFitOnSsd_ = false;
   }
 }
 
-void GroupStats::clear() {
+void FileGroupStats::clear() {
   groups_.clear();
   dataSize_ = 0;
   cachableDataPct_ = 0;
   cachableReadPct_ = 0;
 }
 
-std::string GroupStats::toString(uint64_t cacheBytes) {
+std::string FileGroupStats::toString(uint64_t cacheBytes) {
   std::stringstream out;
   std::vector<SsdScore> scores;
   {
