@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include <iostream>
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
+#include <iostream>
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
@@ -165,21 +165,23 @@ void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
   entry.setSsdFile(this, run.offset());
 }
 
-  
-  void SsdFile::read(uint64_t offset, const std::vector<folly::Range<char*>> buffers,  int32_t numEntries) {
-    stats_.entriesRead += numEntries;
-    uint64_t regionBytes = 0;
-    uint64_t regionOffset = offset;
-    for (auto range : buffers) {
-      if (range.data()) {
-	regionBytes += range.size();
-      }
-      regionOffset += range.size();
+void SsdFile::read(
+    uint64_t offset,
+    const std::vector<folly::Range<char*>> buffers,
+    int32_t numEntries) {
+  stats_.entriesRead += numEntries;
+  uint64_t regionBytes = 0;
+  uint64_t regionOffset = offset;
+  for (auto range : buffers) {
+    if (range.data()) {
+      regionBytes += range.size();
     }
-    regionUsed(regionIndex(offset), regionBytes);
-    stats_.bytesRead += regionBytes;
-    readFile_->preadv(offset, buffers);
+    regionOffset += range.size();
   }
+  regionUsed(regionIndex(offset), regionBytes);
+  stats_.bytesRead += regionBytes;
+  readFile_->preadv(offset, buffers);
+}
 
 std::pair<uint64_t, int32_t> SsdFile::getSpace(
     const std::vector<CachePin>& pins,
@@ -327,10 +329,10 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         SsdKey key = {
             entry->key().fileNum, static_cast<uint64_t>(entry->offset())};
         entries_[std::move(key)] = SsdRun(offset, size);
-	if (FLAGS_verify_ssd_write) {
-	  verifyWrite(*entry, SsdRun(offset, size));
-	}
-	offset += size;
+        if (FLAGS_verify_ssd_write) {
+          verifyWrite(*entry, SsdRun(offset, size));
+        }
+        offset += size;
         ++stats_.entriesWritten;
         stats_.bytesWritten += size;
       }

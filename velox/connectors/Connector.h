@@ -125,7 +125,7 @@ class DataSource {
   virtual bool isPrefetchComplete() {
     return false;
   }
-  
+
   // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)
   // to avoid holding up the thread.
 };

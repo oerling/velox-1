@@ -66,7 +66,7 @@ struct AccessStats {
     lastUse = accessTime();
     numUses = 0;
   }
-  
+
   // Updates the last access.
   void touch() {
     lastUse = accessTime();

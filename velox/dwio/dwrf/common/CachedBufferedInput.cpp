@@ -385,15 +385,15 @@ class DwrfFusedLoad : public DwrfFusedLoadBase {
             std::vector<folly::Range<char*>>& buffers,
             int32_t /*numEntries*/) {
           stream.read(buffers, start, dwio::common::LogType::FILE);
-	  auto stats = stream.getStats();
-	  if (stats) {
-	    int64_t size = 0;
-    for (auto& range : buffers) {
-      size += range.size();
-    }
-    // The bytes get accounted when the data is hit by the reader.
-    stats->incRawBytesRead(-size);
-	  }
+          auto stats = stream.getStats();
+          if (stats) {
+            int64_t size = 0;
+            for (auto& range : buffers) {
+              size += range.size();
+            }
+            // The bytes get accounted when the data is hit by the reader.
+            stats->incRawBytesRead(-size);
+          }
         },
         [&]() { return &ioStats_->read(); });
   }

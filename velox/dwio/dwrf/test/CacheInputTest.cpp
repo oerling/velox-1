@@ -159,29 +159,33 @@ class CacheTest : public testing::Test {
       int64_t bytesLeft = entry->size();
       auto runOffset = entry->offset();
       for (auto i = 0; i < entry->data().numRuns(); ++i) {
-	auto run = entry->data().runAt(i);
-	checkData(run.data<char>(), runOffset, std::min<int64_t>(run.numBytes(), bytesLeft), seed);
-	bytesLeft -= run.numBytes();
-	runOffset += run.numBytes();
-	if (bytesLeft <= 0) {
-	  break;
-	}
+        auto run = entry->data().runAt(i);
+        checkData(
+            run.data<char>(),
+            runOffset,
+            std::min<int64_t>(run.numBytes(), bytesLeft),
+            seed);
+        bytesLeft -= run.numBytes();
+        runOffset += run.numBytes();
+        if (bytesLeft <= 0) {
+          break;
+        }
       }
     }
   }
 
-
-  static void checkData(const char* data, uint64_t offset, int32_t size, uint64_t seed) {
+  static void
+  checkData(const char* data, uint64_t offset, int32_t size, uint64_t seed) {
     uint8_t expected = seed + offset;
     for (auto i = 0; i < size; ++i) {
       auto cached = reinterpret_cast<const uint8_t*>(data)[i];
       if (cached != expected) {
-	ASSERT_EQ(expected, cached) << " at " << (offset + i);
+        ASSERT_EQ(expected, cached) << " at " << (offset + i);
       }
       ++expected;
     }
   }
-  
+
   uint64_t seedByPath(const std::string& path) {
     StringIdLease lease(fileIds(), path);
     return lease.id();
@@ -210,7 +214,7 @@ class CacheTest : public testing::Test {
   // enqueued. 'numColumns' streams are evenly selected from
   // kMaxStreams.
   std::unique_ptr<StripeData> makeStripeData(
-					     std::shared_ptr<facebook::velox::dwio::common::InputStream> inputStream,
+      std::shared_ptr<facebook::velox::dwio::common::InputStream> inputStream,
       int32_t numColumns,
       std::shared_ptr<ScanTracker> tracker,
       uint64_t fileId,

@@ -338,13 +338,14 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   // We run with the default BufferedInputFactory and no DataCacheConfig if
   // there is no DataCache and the MappedMemory is not an AsyncDataCache.
-  auto uniqueReader = dwio::common::getReaderFactory(readerOpts_.getFileFormat())
-                ->createReader(
-                    std::make_unique<dwio::common::ReadFileInputStream>(
-                        fileHandle_->file.get(),
-                        dwio::common::MetricsLog::voidLog(),
-                        ioStats_.get()),
-                    readerOpts_);
+  auto uniqueReader =
+      dwio::common::getReaderFactory(readerOpts_.getFileFormat())
+          ->createReader(
+              std::make_unique<dwio::common::ReadFileInputStream>(
+                  fileHandle_->file.get(),
+                  dwio::common::MetricsLog::voidLog(),
+                  ioStats_.get()),
+              readerOpts_);
   reader_.reset(uniqueReader_.release());
   emptySplit_ = false;
   if (reader_->numberOfRows() == 0) {
