@@ -346,7 +346,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
                   dwio::common::MetricsLog::voidLog(),
                   ioStats_.get()),
               readerOpts_);
-  reader_.reset(uniqueReader_.release());
+  reader_.reset(uniqueReader.release());
   emptySplit_ = false;
   if (reader_->numberOfRows() == 0) {
     emptySplit_ = true;
