@@ -118,6 +118,14 @@ class DataSource {
 
   virtual std::unordered_map<std::string, int64_t> runtimeStats() = 0;
 
+  // Returns true if 'this' has initiated all the prefetch this will
+  // initiate. This means that the caller should schedule next splits
+  // to prefetch in the background. false if the source does not
+  // prefetch.
+  virtual bool isPrefetchComplete() {
+    return false;
+  }
+  
   // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)
   // to avoid holding up the thread.
 };

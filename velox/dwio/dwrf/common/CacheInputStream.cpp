@@ -128,6 +128,12 @@ std::vector<folly::Range<char*>> makeRanges(
 } // namespace
 
 void CacheInputStream::loadSync(dwio::common::Region region) {
+  // rawBytesRead is the number of bytes touched. Whether they come
+  // from disk, ssd or memory is itemized in different counters. A
+  // coalesced red from InputStream removes itself from this count
+  // so as not to double count when the individual parts are
+  // hit.
+  ioStats_->incRawBytesRead(region.length);
   do {
     folly::SemiFuture<bool> wait(false);
     cache::RawFileCacheKey key{fileNum_, region.offset};
@@ -139,7 +145,7 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       uint64_t usec = 0;
       {
         MicrosecondTimer timer(&usec);
-	std::move(wait).via(&exec).wait();
+        std::move(wait).via(&exec).wait();
       }
       ioStats_->queryThreadIoLatency().increment(usec);
       continue;
@@ -154,12 +160,11 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
         auto ssdPin =
             file.find(cache::RawFileCacheKey{fileNum_, region.offset});
         if (!ssdPin.empty()) {
-	  uint64_t usec = 0;
+          uint64_t usec = 0;
           {
             MicrosecondTimer timer(&usec);
             file.load(ssdPin.run(), *pin_.entry());
           }
-
           ioStats_->ssdRead().increment(pin_.entry()->size());
           ioStats_->queryThreadIoLatency().increment(usec);
           pin_.entry()->setValid(true);
@@ -173,6 +178,10 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
         MicrosecondTimer timer(&usec);
         input_.read(ranges, region.offset, dwio::common::LogType::FILE);
       }
+      // Already incremented at on entry, so revert the increment by read()
+      // above.
+      ioStats_->incRawBytesRead(-region.length);
+
       ioStats_->read().increment(region.length);
       ioStats_->queryThreadIoLatency().increment(usec);
       pin_.entry()->setValid(true);
