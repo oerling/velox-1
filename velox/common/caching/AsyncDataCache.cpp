@@ -351,6 +351,7 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t largeFreed = 0;
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
+  int32_t orgNumEvictChecks = numEvictChecks_;
   {
     std::lock_guard<std::mutex> l(mutex_);
     int size = entries_.size();
@@ -480,7 +481,7 @@ void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
   }
 }
 
-AsyncDataCache::AsyncDataCache(
+  AsyncDataCache::AsyncDataCache(
     std::unique_ptr<MappedMemory> mappedMemory,
     uint64_t maxBytes,
     std::unique_ptr<SsdCache> ssdCache)
@@ -595,6 +596,12 @@ CacheStats AsyncDataCache::refreshStats() const {
   return stats;
 }
 
+void AsyncDataCache::clear() {
+    for (auto& shard : shards_) {
+      shard->evict(std::numeric_limits<int32_t>::max(), true);
+    }
+  }
+  
 std::string AsyncDataCache::toString() const {
   auto stats = refreshStats();
   std::stringstream out;

@@ -18,6 +18,7 @@
 #include <folly/executors/task_queue/UnboundedBlockingQueue.h>
 #include <folly/executors/thread_factory/InitThreadFactory.h>
 #include <gflags/gflags.h>
+#include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/Task.h"
@@ -316,6 +317,7 @@ core::StopReason Driver::runInternal(
         (getCurrentTimeMicro() - queueTimeStartMicros_) * 1'000);
   }
 
+  process::TraceContext trace(fmt::format("driver {}", self->ctx_->task->taskId()), true); 
   auto stop = cancelPool_->enter(state_);
   if (stop != core::StopReason::kNone) {
     if (stop == core::StopReason::kTerminate) {

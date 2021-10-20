@@ -15,6 +15,8 @@
  */
 #include "velox/exec/Task.h"
 #include "velox/codegen/Codegen.h"
+#include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/CrossJoinBuild.h"
 #include "velox/exec/Exchange.h"
@@ -26,7 +28,13 @@
 #include "velox/experimental/codegen/CodegenLogger.h"
 #endif
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
 namespace facebook::velox::exec {
+
+static void checkTraceCommand();
 
 Task::Task(
     const std::string& taskId,
@@ -43,7 +51,9 @@ Task::Task(
       onError_(onError),
       pool_(queryCtx_->pool()->addScopedChild("task_root")),
       bufferManager_(
-          PartitionedOutputBufferManager::getInstance(queryCtx_->host())) {}
+          PartitionedOutputBufferManager::getInstance(queryCtx_->host())) {
+  checkTraceCommand();
+}
 
 Task::~Task() {
   try {
@@ -85,7 +95,14 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   for (auto& factory : self->driverFactories_) {
     self->numDrivers_ += std::min(factory->maxDrivers, maxDrivers);
   }
-  self->taskStats_.pipelineStats.resize(self->driverFactories_.size());
+
+  const auto numDriverFactories = self->driverFactories_.size();
+  self->taskStats_.pipelineStats.reserve(numDriverFactories);
+  for (const auto& driverFactory : self->driverFactories_) {
+    self->taskStats_.pipelineStats.emplace_back(
+        driverFactory->inputDriver, driverFactory->outputDriver);
+  }
+
   // Register self for possible memory recovery callback. Do this
   // after sizing 'drivers_' but before starting the
   // Drivers. 'drivers_' can be read by memory recovery or
@@ -718,6 +735,43 @@ Task::getLocalExchangeSources(const core::PlanNodeId& planNodeId) {
       "Incorrect local exchange ID: {}",
       planNodeId);
   return it->second.sources;
+}
+
+static void checkTraceCommand() {
+  constexpr auto kCmdFile = "/tmp/veloxcmd.txt";
+  static std::mutex mutex;
+  static bool firstTime = true;
+  static   std::chrono::steady_clock::time_point lastTime;
+  auto now = std::chrono::steady_clock::now();
+  if (firstTime || 
+      std::chrono::duration_cast<std::chrono::microseconds>(now - lastTime).count() > 1000000) {
+    std::lock_guard<std::mutex> l(mutex);
+    lastTime = now;
+    firstTime = false;
+    int32_t fd = open(kCmdFile, O_RDWR);
+    if (fd < 0) {
+      return;
+    }
+    char buffer[100];
+    int32_t length = read(fd, buffer, sizeof(buffer));
+    unlink(kCmdFile);
+    auto cache = dynamic_cast<cache::AsyncDataCache*>(memory::MappedMemory::getInstance());
+    if (cache) {
+      if (strncmp(buffer, "dropram", 7) == 0) {
+	LOG(INFO) << "Dropping RAM cache";
+	cache->clear();
+      } else if (strncmp(buffer, "dropssd", 7) == 0) {
+	LOG(INFO) << "Dropping SSD and RAM cache";
+	if (cache->ssdCache()) {
+	  cache->ssdCache()->clear();
+	}
+	cache->clear();
+      }
+    }
+    if (strncmp(buffer, "status", 6) == 0) {
+      LOG(INFO) << process::TraceContext::statusLine();
+    }
+  }
 }
 
 } // namespace facebook::velox::exec

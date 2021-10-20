@@ -796,6 +796,9 @@ class SsdFile {
   // Adds 'stats_' to 'stats'.
   void updateStats(SsdCacheStats& stats);
 
+  // Resets [this' to a post-construction empty state. See SsdCache::clear().
+  void clear();
+  
  private:
   static constexpr int32_t kDecayInterval = 1000;
 
@@ -898,6 +901,11 @@ class SsdCache {
     return *groupStats_;
   }
 
+  // Drops all entries. Outstanding pins become invalid but reading
+  // them will mostly succeed since the files will not be rewritten
+  // until new content is stord.
+  void clear();
+  
   std::string toString() const;
 
  private:
@@ -1007,6 +1015,10 @@ class AsyncDataCache : public memory::MappedMemory,
     return verifyHook_;
   }
 
+
+  // Drops all unpinned entries. Pins stay valid.
+  void clear();
+  
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;

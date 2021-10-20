@@ -21,6 +21,7 @@
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
 
+#include <numeric>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -396,6 +397,15 @@ void SsdFile::updateStats(SsdCacheStats& stats) {
   }
 }
 
+  void SsdFile::clear() {
+    std::lock_guard<std::mutex> l(mutex_);
+    entries_.clear();
+    std::fill(regionSize_.begin(), regionSize_.end(), 0);
+    writableRegions_.resize(numRegions_);
+    std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
+    std::fill(regionScore_.begin(), regionScore_.end(), 0);
+  }
+  
 SsdCache::SsdCache(
     std::string_view filePrefix,
     uint64_t maxBytes,
@@ -469,6 +479,12 @@ SsdCacheStats SsdCache::stats() const {
   return stats;
 }
 
+  void SsdCache::clear() {
+    for (auto& file : files_) {
+      file->clear();
+    }
+  }
+  
 std::string SsdCache::toString() const {
   auto data = stats();
   uint64_t capacity =
