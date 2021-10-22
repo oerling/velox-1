@@ -631,6 +631,12 @@ std::string Driver::toString() {
   return out.str();
 }
 
+void Driver::checkTerminate() {
+  if (cancelPool()->shouldStop() == core::StopReason::kTerminate) {
+    VELOX_FAIL("Cancelled");
+  }
+}
+
 SuspendedSection::SuspendedSection(Driver* FOLLY_NONNULL driver)
     : driver_(driver) {
   if (driver->cancelPool()->enterSuspended(driver->state()) !=
@@ -640,11 +646,9 @@ SuspendedSection::SuspendedSection(Driver* FOLLY_NONNULL driver)
 }
 
 SuspendedSection::~SuspendedSection() {
-  if (driver_->cancelPool()->leaveSuspended(driver_->state()) !=
-      core::StopReason::kNone) {
-    VELOX_FAIL("Terminate detected when leaving suspended section");
-  }
+  driver_->cancelPool()->leaveSuspended(driver_->state());
 }
+
 
 std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
@@ -654,22 +658,22 @@ bool Driver::growTaskMemory(
     memory::UsageType type,
     int64_t size,
     memory::MemoryUsageTracker* /*tracker*/) {
-  SuspendedSection guard(this);
-  return memory::MemoryManagerStrategy::instance()->recover(
-      driverCtx()->task, type, size);
+  SuspendedSection::suspended(this, [&]() {
+    return memory::MemoryManagerStrategy::instance()->recover(
+        driverCtx()->task, type, size);
+  });
 }
-
 int64_t Driver::spill(int64_t size) {
   int64_t spilled = 0;
   if (size > 0) {
     // Prefer to spill last operator first, e.g. group by should spill
     // before a colocated hash probe. Most often there will only be
     // one spillable operator.
-    for (int32_t i = operators_.size() - 1; i>= 0; --i) {
+    for (int32_t i = operators_.size() - 1; i >= 0; --i) {
       auto op = operators_[i].get();
       spilled += op->spill(std::max(size - spilled, int64_t{}));
       if (spilled >= size) {
-	break;
+        break;
       }
     }
   }

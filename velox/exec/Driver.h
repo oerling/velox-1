@@ -164,6 +164,9 @@ class Driver {
     return ctx_.get();
   }
 
+  // Checks terminate in the Task's CancelPool and throws if needed.
+  void checkTerminate();
+  
   // Requests 'size' bytes of memory from the process memory manager,
   // to be added to the limit of 'tracker'. If tracker is
   // revocable and there is no ready supply, the reservation may be
@@ -314,10 +317,21 @@ struct DriverFactory {
 // which also means that they are instantaneously killable or spillable.
 class SuspendedSection {
  public:
+  // Runs 'body' as a suspended section. Checks for termination requested after exiting the section.
+  template <typename Body>
+  static void suspended(Driver* driver, Body body) {
+    {
+      SuspendedSection section(driver);
+      body();
+    }
+    driver->checkTerminate();
+  }
+  
+ private:
   explicit SuspendedSection(Driver* FOLLY_NONNULL driver);
   ~SuspendedSection();
 
- private:
+
   Driver* FOLLY_NONNULL driver_;
 };
 

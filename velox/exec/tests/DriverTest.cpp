@@ -48,7 +48,7 @@ class TestingConsumerNode : public core::PlanNode {
   std::vector<std::shared_ptr<const core::PlanNode>> sources_;
 };
 
- // A PlanNode that passes its input to its output and periodically
+// A PlanNode that passes its input to its output and periodically
 // pauses and resumes other Tasks.
 class TestingPauserNode : public core::PlanNode {
  public:
@@ -155,9 +155,10 @@ class DriverTest : public OperatorTestBase {
       planBuilder.project(expressions, projectNames);
     }
     if (addTestingConsumer) {
-      planBuilder.addNode([](std::string /*id*/, std::shared_ptr<const core::PlanNode> input) {
-        return std::make_shared<TestingConsumerNode>(input);
-      });
+      planBuilder.addNode(
+          [](std::string /*id*/, std::shared_ptr<const core::PlanNode> input) {
+            return std::make_shared<TestingConsumerNode>(input);
+          });
     }
     if (addTestingPauser) {
       planBuilder.addNode(
@@ -542,27 +543,28 @@ class TestingPauser : public Operator {
       return nullptr;
     }
     {
-      SuspendedSection noCancel(operatorCtx_->driver());
-      sleep(1);
-      if (counter_ % 7 == 0) {
-        // Every 7th time, stop and resume other Tasks. This operation is
-        // globally serilized.
-        std::lock_guard<std::mutex> l(pauseMutex_);
+      SuspendedSection::suspended(operatorCtx_->driver(), [&]() {
+        sleep(1);
+        if (counter_ % 7 == 0) {
+          // Every 7th time, stop and resume other Tasks. This operation is
+          // globally serilized.
+          std::lock_guard<std::mutex> l(pauseMutex_);
 
-        for (auto i = 0; i <= counter_ % 3; ++i) {
-          auto task = test_->randomTask();
-          if (!task) {
-            continue;
+          for (auto i = 0; i <= counter_ % 3; ++i) {
+            auto task = test_->randomTask();
+            if (!task) {
+              continue;
+            }
+            auto cancelPool = task->cancelPool();
+            cancelPool->requestPause(true);
+            auto& executor = folly::QueuedImmediateExecutor::instance();
+            auto future = cancelPool->finishFuture().via(&executor);
+            future.wait();
+            sleep(2);
+            Task::resume(task);
           }
-          auto cancelPool = task->cancelPool();
-          cancelPool->requestPause(true);
-          auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = cancelPool->finishFuture().via(&executor);
-          future.wait();
-          sleep(2);
-          Task::resume(task);
         }
-      }
+      });
     }
 
     return std::move(input_);
