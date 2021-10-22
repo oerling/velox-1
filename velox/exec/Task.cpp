@@ -741,10 +741,11 @@ static void checkTraceCommand() {
   constexpr auto kCmdFile = "/tmp/veloxcmd.txt";
   static std::mutex mutex;
   static bool firstTime = true;
-  static   std::chrono::steady_clock::time_point lastTime;
+  static std::chrono::steady_clock::time_point lastTime;
   auto now = std::chrono::steady_clock::now();
-  if (firstTime || 
-      std::chrono::duration_cast<std::chrono::microseconds>(now - lastTime).count() > 1000000) {
+  if (firstTime ||
+      std::chrono::duration_cast<std::chrono::microseconds>(now - lastTime)
+              .count() > 1000000) {
     std::lock_guard<std::mutex> l(mutex);
     lastTime = now;
     firstTime = false;
@@ -752,25 +753,36 @@ static void checkTraceCommand() {
     if (fd < 0) {
       return;
     }
-    char buffer[100];
+    char buffer[100] = {};
     int32_t length = read(fd, buffer, sizeof(buffer));
-    unlink(kCmdFile);
-    auto cache = dynamic_cast<cache::AsyncDataCache*>(memory::MappedMemory::getInstance());
+    close(fd);
+    if (unlink(kCmdFile) < 0) {
+      LOG(ERROR) << "VELOXCMD: Failed to rm " << kCmdFile << " with " << buffer
+                 << " - no action taken";
+      return;
+    }
+    auto cache = dynamic_cast<cache::AsyncDataCache*>(
+        memory::MappedMemory::getInstance());
     if (cache) {
       if (strncmp(buffer, "dropram", 7) == 0) {
-	LOG(INFO) << "Dropping RAM cache";
-	cache->clear();
+        LOG(INFO) << "VELOXCMD: Dropping RAM cache";
+        cache->clear();
+        return;
       } else if (strncmp(buffer, "dropssd", 7) == 0) {
-	LOG(INFO) << "Dropping SSD and RAM cache";
-	if (cache->ssdCache()) {
-	  cache->ssdCache()->clear();
-	}
-	cache->clear();
+        LOG(INFO) << "VELOXCMD: Dropping SSD and RAM cache";
+        if (cache->ssdCache()) {
+          cache->ssdCache()->clear();
+        }
+        cache->clear();
+        return;
       }
     }
     if (strncmp(buffer, "status", 6) == 0) {
-      LOG(INFO) << process::TraceContext::statusLine();
+      LOG(INFO) << "VELOXCMD: " << process::TraceContext::statusLine();
+      return;
     }
+
+    LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << buffer;
   }
 }
 
