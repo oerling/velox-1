@@ -22,6 +22,7 @@
 #include <folly/CPortability.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include "folly/Random.h"
 
 #include "velox/common/memory/MmapAllocator.h"
 
@@ -48,7 +49,7 @@ struct Block {
 class FragmentationTest {
  public:
   void SetUp() {
-    std::srand(1); // Make tests deterministic
+    rng_.seed(1);
     // 2G between 4K an 100K
     // 2G exactly 128K
     addSizes(2L << 30, 128 << 10, 128 << 10);
@@ -73,7 +74,9 @@ class FragmentationTest {
     while (total < totalBytes) {
       size_t size = bits::roundUp(
           smallest +
-              (smallest == largest ? 0 : (std::rand() % (largest - smallest))),
+              (smallest == largest
+                   ? 0
+                   : (folly::Random::rand32(rng_) % (largest - smallest))),
           4096);
       sizes_.push_back(size);
       total += size;
@@ -120,7 +123,7 @@ class FragmentationTest {
   void makeSpace(size_t size) {
     while (outstanding_ + size > sizeCap_) {
       size_t numBlocks = blocks_.size();
-      size_t candidate = std::rand() % (1 + numBlocks / 10);
+      size_t candidate = folly::Random::rand32(rng_) % (1 + numBlocks / 10);
       outstanding_ -= blocks_[candidate]->size;
       blocks_.erase(blocks_.begin() + candidate);
     }
@@ -129,7 +132,7 @@ class FragmentationTest {
   size_t sizeBucket(size_t size) {
     auto it = std::lower_bound(buckets_.begin(), buckets_.end(), size);
     if (it == buckets_.end()) {
-      return -1;
+      return static_cast<size_t>(-1);
     }
     if (it == buckets_.begin() || *it == size) {
       return *it >> 10;
@@ -151,7 +154,7 @@ class FragmentationTest {
     sizeCap_ = sizeCap;
     uint64_t allocated = 0;
     while (allocated < total) {
-      auto size = sizes_[std::rand() % sizes_.size()];
+      auto size = sizes_[folly::Random::rand32(rng_) % sizes_.size()];
       makeSpace(size);
       allocate(size);
       stats_[sizeBucket(size)] += size >> 10;
@@ -185,6 +188,7 @@ class FragmentationTest {
   size_t outstanding_ = 0;
   size_t sizeCap_;
   std::map<size_t, size_t> stats_;
+  folly::Random::DefaultGenerator rng_;
 };
 
 int main(int argc, char* argv[]) {

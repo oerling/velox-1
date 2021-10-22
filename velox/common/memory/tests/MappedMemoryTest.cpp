@@ -310,7 +310,7 @@ TEST_P(MappedMemoryTest, allocationTest) {
 }
 
 TEST_P(MappedMemoryTest, singleAllocationTest) {
-  const std::vector<MachinePageCount>& sizes = instance_->sizes();
+  const std::vector<MachinePageCount>& sizes = instance_->sizeClasses();
   MachinePageCount capacity = kCapacity;
   std::vector<std::unique_ptr<MappedMemory::Allocation>> allocations;
   for (auto& size : sizes) {
@@ -426,7 +426,7 @@ TEST_P(MappedMemoryTest, minSizeClass) {
 
   MappedMemory::Allocation result(mappedMemory.get());
 
-  int32_t sizeClass = mappedMemory->sizes().back();
+  int32_t sizeClass = mappedMemory->sizeClasses().back();
   int32_t numPages = sizeClass + 1;
   mappedMemory->allocate(numPages, 0, result, nullptr, sizeClass);
   EXPECT_GE(result.numPages(), sizeClass * 2);

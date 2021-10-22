@@ -193,6 +193,7 @@ class MappedMemory {
       return reinterpret_cast<T*>(data_);
     }
 
+    // size in bytes.
     uint64_t size() const {
       return size_;
     }
@@ -212,9 +213,7 @@ class MappedMemory {
     uint64_t size_{0};
   };
 
-  MappedMemory() {
-    sizes_ = {1, 2, 4, 8, 16, 32, 64, 128, 256};
-  }
+  MappedMemory() {}
 
   virtual ~MappedMemory() {}
 
@@ -273,12 +272,12 @@ class MappedMemory {
 
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
-  virtual bool checkConsistency() = 0;
+  virtual bool checkConsistency() const = 0;
 
   static void destroyTestOnly();
 
-  virtual const std::vector<MachinePageCount>& sizes() const {
-    return sizes_;
+  virtual const std::vector<MachinePageCount>& sizeClasses() const {
+    return sizeClassSizes_;
   }
   virtual MachinePageCount numAllocated() const = 0;
   virtual MachinePageCount numMapped() const = 0;
@@ -293,16 +292,31 @@ class MappedMemory {
   virtual std::string toString() const;
 
  protected:
-  MachinePageCount allocationSize(
+  // Represents a mix of blocks of different sizes for covering a single
+  // allocation.
+  struct SizeMix {
+    // Index into 'sizeClassSizes_'
+    std::array<int32_t, kMaxSizeClasses> sizeIndices{};
+    // Number of items of the class of the corresponding element in
+    // '"sizeIndices'.
+    std::array<int32_t, kMaxSizeClasses> sizeCounts{};
+    // Number of valid elements in 'sizeCounts' and 'sizeIndices'.
+    int32_t numSizes{0};
+    // Total number of pages.
+    int32_t totalPages{0};
+  };
+
+  // Returns a mix of standard sizes and allocation counts for
+  // covering 'numPages' worth of memory. 'minSizeClass' is the size
+  // of the smallest usable size class.
+  SizeMix allocationSize(
       MachinePageCount numPages,
-      MachinePageCount minSizeClass,
-      std::array<int32_t, kMaxSizeClasses>& sizeIndices,
-      std::array<int32_t, kMaxSizeClasses>& sizeCounts,
-      int32_t& numSizes) const;
+      MachinePageCount minSizeClass) const;
 
   // The machine page counts corresponding to different sizes in order
   // of increasing size.
-  std::vector<MachinePageCount> sizes_;
+  const std::vector<MachinePageCount>
+      sizeClassSizes_{1, 2, 4, 8, 16, 32, 64, 128, 256};
 
  private:
   // Singleton instance.
@@ -364,12 +378,12 @@ class ScopedMappedMemory final
     }
   }
 
-  bool checkConsistency() override {
+  bool checkConsistency() const override {
     return parent_->checkConsistency();
   }
 
-  const std::vector<MachinePageCount>& sizes() const override {
-    return parent_->sizes();
+  const std::vector<MachinePageCount>& sizeClasses() const override {
+    return parent_->sizeClasses();
   }
 
   MachinePageCount numAllocated() const override {
