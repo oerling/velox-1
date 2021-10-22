@@ -165,15 +165,20 @@ class Task {
   // corresponding to plan node with specified ID.
   void noMoreSplits(const core::PlanNodeId& planNodeId);
 
-  // Returns a split for the source operator corresponding to plan node with
-  // specified ID. If there are no splits and no-more-splits signal has been
-  // received, sets split to null and returns kNotBlocked. Otherwise, returns
-  // kWaitForSplit and sets a future that will complete when split becomes
-  // available or no-more-splits signal is received.
+  // Returns a split for the source operator corresponding to plan
+  // node with specified ID. If there are no splits and no-more-splits
+  // signal has been received, sets split to null and returns
+  // kNotBlocked. Otherwise, returns kWaitForSplit and sets a future
+  // that will complete when split becomes available or no-more-splits
+  // signal is received. If 'maxPreloadSplits' is given, ensures that
+  // so many of splits at the head of the queue are preloading. If
+  // they are not, calls preload on them to start preload.
   BlockingReason getSplitOrFuture(
       const core::PlanNodeId& planNodeId,
       exec::Split& split,
-      ContinueFuture& future);
+      ContinueFuture& future,
+      int32_t maxPreloadSplits = 0,
+      std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload = nullptr); 
 
   void splitFinished(const core::PlanNodeId& planNodeId, int32_t splitGroupId);
 
@@ -363,19 +368,6 @@ class Task {
   // thread is not running a Driver of 'this'.
   Driver* FOLLY_NULLABLE thisDriver() const;
 
-  // True if registerSplitPrefeatch() has been called on 'id'.
-  bool hasSplitPrefetch(const core::PlanNodeId& id) {
-    return true; // Never prefetch. This s a placeholder.
-  }
-
-  // Registers 'prefetch' to be called on all splits intended for 'id' when
-  // first queued.
-  void registerSplitPrefetch(
-      const core::PlanNodeId& id,
-      std::function<void(
-          std::shared_ptr<connector::ConnectorSplit> prefetch)>) { /*no op*/
-  }
-
  private:
   struct BarrierState {
     int32_t numRequested;
@@ -405,11 +397,6 @@ class Task {
 
     // Keep the max added split's sequence id to deduplicate incoming splits.
     long maxSequenceId{std::numeric_limits<long>::min()};
-
-    // Optional function to call when first receiving a split. Allows
-    // initiating async prefetch of file footers or
-    // similar. Optionally registered by the split consumer.
-    std::function<void(std::shared_ptr<connector::ConnectorSplit>)> prefetch;
 
     // We need these due to having promises in the structure.
     SplitsState() = default;

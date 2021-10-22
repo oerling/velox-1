@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include "velox/common/base/AsyncSource.h"
 #include "velox/common/caching/DataCache.h"
 #include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
@@ -34,6 +35,8 @@ class ExprSet;
 }
 namespace facebook::velox::connector {
 
+  class DataSource;
+  
 // A split represents a chunk of data that a connector should load and return
 // as a RowVectorPtr, potentially after processing pushdowns.
 struct ConnectorSplit {
@@ -42,6 +45,8 @@ struct ConnectorSplit {
   // true if the Task processing this has aborted. Allows aborting
   // async prefetch for the split.
   bool cancelled{false};
+
+  std::shared_ptr<AsyncSource<DataSource>> dataSource;
 
   explicit ConnectorSplit(const std::string& _connectorId)
       : connectorId(_connectorId) {}
@@ -118,6 +123,10 @@ class DataSource {
 
   virtual std::unordered_map<std::string, int64_t> runtimeStats() = 0;
 
+  virtual bool allPrefetchIssued() const {
+    return false;
+  }
+  
   // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)
   // to avoid holding up the thread.
 };
@@ -221,6 +230,14 @@ class Connector {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
+  // Returns true if addSplit of DataSource can use 'dataSource' from
+  // ConnectorSplit in addSplit(). If so, TableScan can preload splits
+  // so that file opening and metadata operations are off the Driver'
+  // thread.
+  virtual bool supportsSplitPreload() {
+    return false;
+  }
+  
   virtual std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
@@ -230,6 +247,10 @@ class Connector {
       const std::string& scanId,
       cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
+  folly::Executor* FOLLY_NULLABLE executor() const {
+    return nullptr;
+  }
+  
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
 
@@ -258,20 +279,7 @@ class ConnectorFactory {
       std::unique_ptr<DataCache> dataCache = nullptr,
       folly::Executor* executor = nullptr) = 0;
 
-    // Schedules 'split' for async prefetching. The default is
-  // no-op. Supporting connectors may prime caches and pre-build a
-  // DataSource. Supporting connectors must synchronize the processing
-  // with a possible prefetch.
-  virtual void prefetchSplit(
-      const std::shared_ptr<const RowType>& outputType,
-      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
-      const std::unordered_map<
-          std::string,
-          std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx,
-      std::shared_ptr<ConnectorSplit> split) {}
-
- private:
+private:
   const std::string name_;
 };
 

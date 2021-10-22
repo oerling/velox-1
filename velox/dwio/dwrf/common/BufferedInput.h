@@ -145,6 +145,10 @@ class BufferedInputFactory {
     return std::make_unique<BufferedInput>(input, pool, dataCacheConfig);
   }
 
+  virtual folly::Executor* FOLLY_NULLABLE executor() const {
+    return nullptr;
+  }
+
   static BufferedInputFactory* baseFactory();
 };
 

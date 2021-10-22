@@ -65,6 +65,24 @@ void DwrfRowReader::checkSkipStrides(
 }
 
 uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
+  for (;;) {
+    DwrfRowReader* rowReader =
+        currentStripe == firstStripe ? this : delegate_.get();
+    auto numRows = rowReader->nextInternal(size, result);
+    if (currentStripe + 1 < lastStripe) {
+      preloadStripe(currentStripe + 1);
+    }
+    if (numRows == 0) {
+      ++currentStripe;
+      if (currentStripe >= lastStripe) {
+        return 0;
+      }
+      delegate_ = readerForStripe(currentStripe);
+    }
+  }
+}
+
+uint64_t DwrfRowReader::nextInternal(uint64_t size, VectorPtr& result) {
   DWIO_ENSURE_GT(size, 0);
   auto& footer = getReader().getFooter();
   StatsContext context(
@@ -122,8 +140,50 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
   }
 }
 
+void DwrfRowReader::preloadStripe(int32_t stripeIndex) {
+  auto it = prefetchedStripeReaders_.find(stripeIndex);
+  if (it != prefetchedStripeReaders_.end()) {
+    return;
+  }
+  auto executor = getReader().bufferedInputFactory().executor();
+  if (!executor) {
+    return;
+  }
+  auto& footer = getReader().getFooter();
+  DWIO_ENSURE_LT(stripeIndex, footer.stripes_size(), "invalid stripe index");
+  auto& stripe = footer.stripes(stripeIndex);
+
+  auto newOpts = options_;
+  newOpts.range(stripe.offset(), stripe.offset() + 1);
+  auto readerBase = readerBaseShared();
+  auto source = std::make_shared<AsyncSource<DwrfRowReader>>(
+      [readerBase, stripeIndex, newOpts]() {
+        auto stripeReader =
+            std::make_unique<DwrfRowReader>(readerBase, newOpts);
+        stripeReader->startNextStripe();
+        return stripeReader;
+      });
+  executor->add([source]() { source->prepare(); });
+  prefetchedStripeReaders_[stripeIndex] = std::move(source);
+}
+
+std::unique_ptr<DwrfRowReader> DwrfRowReader::readerForStripe(
+    int32_t stripeIndex) {
+  auto it = prefetchedStripeReaders_.find(stripeIndex);
+  if (it == prefetchedStripeReaders_.end()) {
+    return nullptr;
+  }
+  return it->second->move();
+}
+
 void DwrfRowReader::resetFilterCaches() {
   dynamic_cast<SelectiveColumnReader*>(columnReader())->resetFilterCaches();
+}
+
+bool DwrfRowReader::allPrefetchIssued() const {
+  return currentStripe + 1 >= lastStripe ||
+      prefetchedStripeReaders_.find(lastStripe - 1) !=
+      prefetchedStripeReaders_.end();
 }
 
 std::unique_ptr<DwrfReader> DwrfReader::create(

@@ -14,47 +14,53 @@
  * limitations under the License.
  */
 
-#include <folly/executors/QueuedImmediateExecutor.h>
-#include <folly/futures/Future.h>
-
-#include <folly/Random.h>
-#include <folly/Synchronized.h>
-#include <folly/executors/IOThreadPoolExecutor.h>
-#include <folly/init/Init.h>
-#include <folly/portability/SysUio.h>
-#include "velox/common/file/File.h"
+#include <iostream>
 
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "velox/common/time/Timer.h"
 
+#include <folly/executors/QueuedImmediateExecutor.h>
+#include <folly/futures/Future.h>
+#include <folly/Random.h>
+#include <folly/Synchronized.h>
+#include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/init/Init.h>
+#include <folly/portability/SysUio.h>
 #include <gflags/gflags.h>
 
-#include <iostream>
 
-DEFINE_string(path, "ssdmeter.tmp", "Path of test file");
+
+
+#include "velox/common/file/File.h"
+#include "velox/common/time/Timer.h"
+
+DEFINE_string(path, "unspecified", "Path of test file");
 DEFINE_int64(size_gb, 2, "Test file size in GB");
 DEFINE_int32(num_threads, 16, "Test paralelism");
-DEFINE_bool(init_file, false, "Write initial contents to file");
 DEFINE_int32(seed, 0, "Random seed, 0 means no seed");
-DEFINE_bool(odirect, true, "Use O_DIRECT");
+DEFINE_bool(odirect, false, "Use O_DIRECT");
 
 enum class Mode { Pread = 0, Preadv = 1, Multiple = 2 };
 
 using namespace facebook::velox;
 
+
+// Struct to read data into. If we read contiguous and then copy to
+// non-contiguous buffers, we read to 'buffer' and copy to
+// 'bufferCopy'.
 struct Scratch {
   std::string buffer;
   std::string bufferCopy;
 };
 
-class BM {
+class ReadBenchmark {
  public:
-  BM() {
+  ReadBenchmark() {
     executor_ =
         std::make_unique<folly::IOThreadPoolExecutor>(FLAGS_num_threads);
+    if (FLAGS_odirect) {
     fd_ = open(
         FLAGS_path.c_str(),
         O_CREAT | O_RDWR | (FLAGS_odirect ? O_DIRECT : 0),
@@ -63,73 +69,25 @@ class BM {
       LOG(ERROR) << "Could not open " << FLAGS_path;
       exit(1);
     }
-    fileSize_ = FLAGS_size_gb << 30;
-    numRegions_ = fileSize_ / kRegionSize;
-    if (FLAGS_init_file) {
-      auto rc = ftruncate(fd_, fileSize_);
-      if (rc < 0) {
-        LOG(ERROR) << "Could not resize file";
-        exit(1);
-      }
+        readFile_ = std::make_unique<LocalReadFile>(fd_);
+
+    } else {
+      filesystems::registerLocalFileSystem();
+      auto lfs = filesystems::getFileSystem(FLAGS_path, nullptr);
+      readFile_ = lfs->openFileForRead(FLAGS_path);
     }
-    auto actualSize = lseek(fd_, 0, SEEK_END);
+    fileSize_ = FLAGS_size_gb << 30;
+    auto actualSize = readFile_->size();
     fileSize_ = std::min(fileSize_, actualSize);
-    readFile_ = std::make_unique<LocalReadFile>(fd_);
     if (FLAGS_seed) {
       rng_.seed(FLAGS_seed);
     }
-    pins_.resize(numRegions_);
-    if (FLAGS_init_file) {
-      initFile();
-    }
-  }
-
-  void initFile() {
-#if 0
-    for (int i = 0; i < numRegions_; ++i) {
-      executor_->add([&]() { initRegion(i); });
-    }
-    auto& exec = folly::QueuedImmediateExecutor::instance();
-    for (int32_t i = futures.size() - 1; i >= 0; --i) {
-      std::move(futures[i]).via(&exec).wait();
-    }
-#endif
-  }
-
-  // Writes 'region' full of words that are the offset from the beginning of the
-  // file.
-  void initRegion(int region) {
-    uint64_t offset = region * kRegionSize;
-    writeBatch_.resize(writeBatchSize_);
-
-    for (auto i = 0; i < kRegionSize / writeBatchSize_; ++i) {
-      for (auto i = 0; i < writeBatch_.size(); i += sizeof(uint64_t)) {
-        *reinterpret_cast<uint64_t*>(writeBatch_.data() + i) = offset + i;
-      }
-      std::vector<struct iovec> iovecs;
-      fillIovecs(writeBatch_.data(), writeBatch_.size(), iovecs);
-      auto rc = folly::pwritev(fd_, &iovecs[0], iovecs.size(), offset);
-      DCHECK_EQ(rc, writeBatchSize_);
-      offset += writeBatchSize_;
-    }
-  }
-
-  void
-  fillIovecs(char* data, int32_t bytes, std::vector<struct iovec>& iovecs) {
-    LOG(FATAL) << "NYI";
-#if 0
-    int unit = 100;
-    int32_t position = 0;
-    while (position < size) {
-      iovecs.push_back({data + position, std::min(size - position, unit)});
-      position += unit;
-      unit *= 2;
-    }
-#endif
   }
 
   void clearCache() {
+#ifdef linux
     system("echo 3 >/proc/sys/vm/drop_caches");
+#endif
   }
 
   Scratch& getScratch(int32_t size) {
@@ -317,7 +275,6 @@ class BM {
   static constexpr int64_t kRegionSize = 64 << 20; // 64MB
   static constexpr int32_t kWrite = -10000;
   // 0 means no op, kWrite means being written, other numbers are reader counts.
-  std::vector<int32_t> pins_;
   int32_t numRegions_;
   int32_t writeBatchSize_{4 << 20};
   std::string writeBatch_;
@@ -334,6 +291,6 @@ class BM {
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv, false);
-  BM bm;
+  ReadBenchmark bm;
   bm.run();
 }

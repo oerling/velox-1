@@ -57,7 +57,10 @@ class TableScan : public SourceOperator {
 
  private:
   static constexpr int32_t kDefaultBatchSize = 1024;
-
+  // Sets 'maxPreloadSplits' and 'splitPreloader' if prefetching
+  // splits is appropriate.
+  void checkPreload();
+  
   const core::PlanNodeId planNodeId_;
   const std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
   const std::
@@ -76,5 +79,10 @@ class TableScan : public SourceOperator {
   // Dynamic filters to add to the data source when it gets created.
   std::unordered_map<ChannelIndex, std::shared_ptr<common::Filter>>
       pendingDynamicFilters_;
+
+  int32_t maxPreloadedSplits_{0};
+
+  std::function<void(std::shared_ptr<connector::ConnectorSplit>)>
+      splitPreloader_{nullptr};
 };
 } // namespace facebook::velox::exec

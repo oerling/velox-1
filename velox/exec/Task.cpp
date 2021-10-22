@@ -297,7 +297,9 @@ bool Task::isAllSplitsFinishedLocked() {
 BlockingReason Task::getSplitOrFuture(
     const core::PlanNodeId& planNodeId,
     exec::Split& split,
-    ContinueFuture& future) {
+    ContinueFuture& future,
+    int32_t maxPreload,
+    std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload) {
   std::lock_guard<std::mutex> l(mutex_);
 
   auto& splitsState = splitsStates_[planNodeId];
@@ -311,9 +313,22 @@ BlockingReason Task::getSplitOrFuture(
     splitsState.splitPromises.push_back(std::move(splitPromise));
     return BlockingReason::kWaitForSplit;
   }
-
-  split = std::move(splitsState.splits.front());
-  splitsState.splits.pop_front();
+  int32_t readySplitIndex = -1;
+  if (maxPreloadSplits) {
+    for (auto i = 0; i < splitState.splits.size() && i < maxPreloadSplits; ++i) {
+      auto& split = splitState.splits[i]->connectorSplit;
+      if (!split->dataSource) {
+	// Initializes split->dataSource
+	preloader(split->connectorSplit);
+      } else if (readySplit == -1 && split->connectorSplit->dataSource->hasItem()) {
+      readySplitIndex = i;
+      }
+    }
+    if (readySplitIndex == -1) {
+      readySplitIndex = 0;
+    }
+    split = std::move(splitsState.splits[readySplitIndex]);
+    splitsState.splits.erase(splitState.splits.begin() + readySplitIndex);
 
   --taskStats_.numQueuedSplits;
   ++taskStats_.numRunningSplits;
@@ -326,6 +341,7 @@ BlockingReason Task::getSplitOrFuture(
   return BlockingReason::kNotBlocked;
 }
 
+  
 void Task::splitFinished(
     const core::PlanNodeId& planNodeId,
     int32_t splitGroupId) {

@@ -429,6 +429,9 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       rowReaderOpts_.select(cs).range(split_->start, split_->length));
 }
 
+  HiveDataSource::setFromDataSource(DataSource* source) {
+  }
+  
 RowVectorPtr HiveDataSource::next(uint64_t size) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {

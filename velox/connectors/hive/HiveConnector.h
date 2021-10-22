@@ -150,7 +150,12 @@ class HiveDataSource : public DataSource {
 
   std::unordered_map<std::string, int64_t> runtimeStats() override;
 
- private:
+
+  bool allPrefetchIssued() const override {
+    return rowReader_ && rowReader_->allPrefetchIssued();
+  }
+
+private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
   // some rows passed the filter. If no or all rows passed
@@ -231,6 +236,10 @@ class HiveConnector final : public Connector {
         executor_);
   }
 
+  bool supportsSplitPreload() override {
+    return true;
+  }
+  
   std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
@@ -246,7 +255,7 @@ class HiveConnector final : public Connector {
         connectorQueryCtx->memoryPool());
   }
 
-  folly::Executor* FOLLY_NULLABLE executor() {
+  folly::Executor* FOLLY_NULLABLE executor() const override {
     return executor_;
   }
 
