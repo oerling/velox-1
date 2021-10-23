@@ -222,7 +222,7 @@ class AsyncDataCacheEntry {
 
   void setExclusiveToShared();
 
-  void setSsdFile(SsdFile* file, uint64_t offset) {
+  void setSsdFile(SsdFile* FOLLY_NULLABLE file, uint64_t offset) {
     ssdFile_ = file;
     ssdOffset_ = offset;
   }
@@ -294,7 +294,7 @@ class AsyncDataCacheEntry {
   TrackingId trackingId_;
 
   // SSD file from which this was loaded or nullptr if not backed by SSD.
-  SsdFile* ssdFile_{nullptr};
+  SsdFile* FOLLY_NULLABLE ssdFile_{nullptr};
 
   // Offset in 'ssdFile_'.
   uint64_t ssdOffset_{0};
