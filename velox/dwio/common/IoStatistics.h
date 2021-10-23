@@ -91,7 +91,6 @@ class IoStatistics {
     return queryThreadIoLatency_;
   }
 
-  
   void incOperationCounters(
       const std::string& operation,
       const uint64_t resourceThrottleCount,

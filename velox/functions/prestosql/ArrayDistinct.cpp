@@ -28,7 +28,7 @@ namespace {
 template <typename T>
 class ArrayDistinctFunction : public exec::VectorFunction {
  public:
-  /// This class implements the array_distint query function.
+  /// This class implements the array_distinct query function.
   ///
   /// Along with the set, we maintain a `hasNull` flag that indicates whether
   /// null is present in the array.
@@ -49,7 +49,7 @@ class ArrayDistinctFunction : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* caller,
+      const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     // Acquire the array elements vector.
@@ -64,12 +64,9 @@ class ArrayDistinctFunction : public exec::VectorFunction {
 
     // Allocate new vectors for indices, length and offsets.
     memory::MemoryPool* pool = context->pool();
-    BufferPtr newIndices =
-        AlignedBuffer::allocate<vector_size_t>(elementsCount, pool);
-    BufferPtr newLengths =
-        AlignedBuffer::allocate<vector_size_t>(rowCount, pool);
-    BufferPtr newOffsets =
-        AlignedBuffer::allocate<vector_size_t>(rowCount, pool);
+    BufferPtr newIndices = allocateIndices(elementsCount, pool);
+    BufferPtr newLengths = allocateSizes(rowCount, pool);
+    BufferPtr newOffsets = allocateOffsets(rowCount, pool);
 
     // Pointers and cursors to the raw data.
     vector_size_t indicesCursor = 0;
@@ -84,7 +81,7 @@ class ArrayDistinctFunction : public exec::VectorFunction {
       auto size = arrayVector->sizeAt(row);
       auto offset = arrayVector->offsetAt(row);
 
-      *rawOffsets = indicesCursor;
+      rawOffsets[row] = indicesCursor;
       bool hasNulls = false;
       for (vector_size_t i = offset; i < offset + size; ++i) {
         if (elements->isNullAt(i)) {
@@ -102,18 +99,17 @@ class ArrayDistinctFunction : public exec::VectorFunction {
       }
 
       uniqueSet.clear();
-      *rawSizes = indicesCursor - *rawOffsets;
-      ++rawSizes;
-      ++rawOffsets;
+      rawSizes[row] = indicesCursor - rawOffsets[row];
     });
 
+    newIndices->setSize(indicesCursor * sizeof(vector_size_t));
     auto newElements =
         BaseVector::transpose(newIndices, std::move(elementsVector));
 
     // Prepare and return result set.
     auto resultArray = std::make_shared<ArrayVector>(
         pool,
-        caller->type(),
+        outputType,
         nullptr,
         rowCount,
         std::move(newOffsets),

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/functions/prestosql/CoreFunctions.h"
+#include "velox/functions/prestosql/SimpleFunctions.h"
 
 #include "velox/functions/lib/RegistrationHelpers.h"
 #include "velox/functions/prestosql/DateTimeFunctions.h"
@@ -72,6 +72,7 @@ void registerFunctions() {
   registerFunction<udf_minute, int64_t, Timestamp>();
   registerFunction<udf_second, int64_t, Timestamp>();
   registerFunction<udf_millisecond, int64_t, Timestamp>();
+  registerFunction<udf_date_trunc, Timestamp, Varchar, Timestamp>();
 
   registerArithmeticFunctions();
   registerCheckedArithmeticFunctions();

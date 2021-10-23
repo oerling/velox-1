@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/TableScan.h"
+#include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
@@ -89,12 +90,21 @@ RowVectorPtr TableScan::getOutput() {
             "Got splits with different connector IDs");
       }
 
-      dataSource_->addSplit(connectorSplit);
+      if (connectorSplit->dataSource) {
+        auto prepared = *connectorSplit->dataSource->move().release();
+        dataSource_->setFromDataSource(std::move(prepared));
+      } else {
+        dataSource_->addSplit(connectorSplit);
+      }
       ++stats_.numSplits;
     }
 
+    const auto ioTimeStartMicros = getCurrentTimeMicro();
     auto data = dataSource_->next(kDefaultBatchSize);
     checkPreload();
+    stats().addRuntimeStat(
+        "dataSourceWallNanos",
+        (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000);
     stats_.rawInputPositions = dataSource_->getCompletedRows();
     stats_.rawInputBytes = dataSource_->getCompletedBytes();
     if (data) {
@@ -112,20 +122,21 @@ RowVectorPtr TableScan::getOutput() {
   }
 }
 
-void preload(std::shared_ptr<connector::Connector> split) {
-  using DataSourcePtr = std::shared_ptr<connector::Connector>;
+void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
+  using DataSourcePtr = std::shared_ptr<connector::DataSource>;
   split->dataSource = std::make_shared<AsyncSource<DataSourcePtr>>(
-								   auto shared = 	    connector_->createDataSource(
-            outputType_,
-            tableHandle_,
-            columnHandles_,
-            connectorQueryCtx_.get());
-								   std::unique_ptr<DataSourcePtr> value(shared));
-  return  value;
-}
-										   }
+      [type = outputType_,
+       table = tableHandle_,
+       columns = columnHandles_,
+       connector = connector_,
+       ctx = connectorQueryCtx_]() {
+        auto value = std::make_unique<DataSourcePtr>();
 
-  
+        *value = connector->createDataSource(type, table, columns, ctx.get());
+        return value;
+      });
+}
+
 void TableScan::checkPreload() {
   auto executor = connector_->executor();
   if (!executor || !connector_->supportsSplitPreload()) {
@@ -135,37 +146,27 @@ void TableScan::checkPreload() {
     maxPreloadedSplits_ = driverCtx_->numDrivers;
     if (!splitPreloader_) {
       splitPreloader_ =
+          [executor, this](std::shared_ptr<connector::ConnectorSplit> split) {
+            preload(split);
 
-	[executor, this](std::shared_ptr<connector::ConnectorSplit> split) {
-	  split->dataSource = std::make_shared<AsyncSource<std::shared_ptr<DataSource>>> () {
-
-	    auto shared =
-;
-	    std::unique_ptr<std::shared_ptr<DataSource>> value(shared);
-	    return value;
-	  })
-	  )
-	    executor->add([&]() { split->dataSource->prepare(); });
-	  
-	})
-
-	});
-      })
+            executor->add([&]() { split->dataSource->prepare(); });
+          };
     }
   }
+}
 
-  void TableScan::addDynamicFilter(
-      ChannelIndex outputChannel,
-      const std::shared_ptr<common::Filter>& filter) {
-    if (dataSource_) {
-      dataSource_->addDynamicFilter(outputChannel, filter);
-    } else {
-      pendingDynamicFilters_.emplace(outputChannel, filter);
-    }
+void TableScan::addDynamicFilter(
+    ChannelIndex outputChannel,
+    const std::shared_ptr<common::Filter>& filter) {
+  if (dataSource_) {
+    dataSource_->addDynamicFilter(outputChannel, filter);
+  } else {
+    pendingDynamicFilters_.emplace(outputChannel, filter);
   }
+}
 
-  void TableScan::close() {
-    // TODO Implement
-  }
+void TableScan::close() {
+  // TODO Implement
+}
 
 } // namespace facebook::velox::exec

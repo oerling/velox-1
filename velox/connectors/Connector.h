@@ -35,8 +35,8 @@ class ExprSet;
 }
 namespace facebook::velox::connector {
 
-  class DataSource;
-  
+class DataSource;
+
 // A split represents a chunk of data that a connector should load and return
 // as a RowVectorPtr, potentially after processing pushdowns.
 struct ConnectorSplit {
@@ -46,7 +46,7 @@ struct ConnectorSplit {
   // async prefetch for the split.
   bool cancelled{false};
 
-  std::shared_ptr<AsyncSource<DataSource>> dataSource;
+  std::shared_ptr<AsyncSource<std::shared_ptr<DataSource>>> dataSource;
 
   explicit ConnectorSplit(const std::string& _connectorId)
       : connectorId(_connectorId) {}
@@ -123,10 +123,22 @@ class DataSource {
 
   virtual std::unordered_map<std::string, int64_t> runtimeStats() = 0;
 
+  // Returns true if 'this' has initiated all the prefetch this will
+  // initiate. This means that the caller should schedule next splits
+  // to prefetch in the background. false if the source does not
+  // prefetch.
   virtual bool allPrefetchIssued() const {
     return false;
   }
-  
+
+  // Initializes this from 'source'. 'source' is effectively moved
+  // into 'this' Adaptation like dynamic filters stay in effect but
+  // the parts dealing with open files, prefetched data etc. are moved. 'source'
+  // is freed after the move.
+  virtual void setFromDataSource(std::shared_ptr<DataSource> source) {
+    VELOX_UNSUPPORTED("setFromDataSource");
+  }
+
   // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)
   // to avoid holding up the thread.
 };
@@ -237,7 +249,7 @@ class Connector {
   virtual bool supportsSplitPreload() {
     return false;
   }
-  
+
   virtual std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
@@ -247,10 +259,10 @@ class Connector {
       const std::string& scanId,
       cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
-  folly::Executor* FOLLY_NULLABLE executor() const {
+  virtual folly::Executor* FOLLY_NULLABLE executor() const {
     return nullptr;
   }
-  
+
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
 
@@ -279,7 +291,7 @@ class ConnectorFactory {
       std::unique_ptr<DataCache> dataCache = nullptr,
       folly::Executor* executor = nullptr) = 0;
 
-private:
+ private:
   const std::string name_;
 };
 

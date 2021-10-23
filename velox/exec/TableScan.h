@@ -57,9 +57,18 @@ class TableScan : public SourceOperator {
 
  private:
   static constexpr int32_t kDefaultBatchSize = 1024;
+
   // Sets 'maxPreloadSplits' and 'splitPreloader' if prefetching
-  // splits is appropriate.
+  // splits is appropriate. The preloader will be applied to the
+  // 'first 'maxPreloadSplits' of the Tasks's split queue for 'this'
+  // when getting splits.
   void checkPreload();
+
+  // Sets 'split->dataSource' to be a Asyncsource that makes a
+  // DataSource to read 'split'. This source will be prepared in the
+  // background on the executor of the connector. If the DataSource is
+  // needed before prepare is done, it will be made when needed.
+  void preload(std::shared_ptr<connector::ConnectorSplit> split);
   
   const core::PlanNodeId planNodeId_;
   const std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
@@ -71,7 +80,7 @@ class TableScan : public SourceOperator {
   bool hasBlockingFuture_ = false;
   bool needNewSplit_ = true;
   std::shared_ptr<connector::Connector> connector_;
-  std::unique_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
+  std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
   std::shared_ptr<connector::DataSource> dataSource_;
   bool noMoreSplits_ = false;
   // The bucketed group id we are in the middle of processing.

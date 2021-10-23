@@ -85,7 +85,7 @@ struct DriverCtx {
   // Makes an extract of QueryCtx for use in a connector. 'planNodeId'
   // is the id of the calling TableScan. This and the task id identify
   // the scan for column access tracking.
-  std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
+  std::shared_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
       const std::string& connectorId,
       const std::string& planNodeId) const;
 };
@@ -209,6 +209,12 @@ struct DriverFactory {
   // constructed.
   OperatorSupplier consumerSupplier;
   uint32_t maxDrivers;
+  // True if 'planNodes' contains a source node for the task, e.g. TableScan or
+  // Exchange.
+  bool inputDriver{false};
+  // True if 'planNodes' contains a sync node for the task, e.g.
+  // PartitionedOutput.
+  bool outputDriver{false};
 
   std::shared_ptr<Driver> createDriver(
       std::unique_ptr<DriverCtx> ctx,

@@ -166,7 +166,7 @@ class CachedBufferedInput : public BufferedInput {
   //  coalesced with nearby streams and prefetched. Anything read less
   //  frequently will be synchronously read on first use.
   int32_t prefetchThreshold_ = 60;
-  
+
   // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
   // Coalesced loads spanning multiple cache entries in one IO.

@@ -66,7 +66,7 @@ struct AccessStats {
     lastUse = accessTime();
     numUses = 0;
   }
-  
+
   // Updates the last access.
   void touch() {
     lastUse = accessTime();
@@ -138,7 +138,7 @@ class AsyncDataCacheEntry {
     return data_;
   }
 
-  const char* tinyData() const {
+  const char* FOLLY_NULLABLE tinyData() const {
     return tinyData_.empty() ? nullptr : tinyData_.data();
   }
 
@@ -339,7 +339,7 @@ class CachePin {
     release();
     entry_ = nullptr;
   }
-  AsyncDataCacheEntry* entry() const {
+  AsyncDataCacheEntry* FOLLY_NULLABLE entry() const {
     return entry_;
   }
 
@@ -371,7 +371,7 @@ class CachePin {
     entry_ = entry;
   }
 
-  AsyncDataCacheEntry* entry_{nullptr};
+  AsyncDataCacheEntry* FOLLY_NULLABLE entry_{nullptr};
 
   friend class CacheShard;
 };
@@ -796,6 +796,9 @@ class SsdFile {
   // Adds 'stats_' to 'stats'.
   void updateStats(SsdCacheStats& stats);
 
+  // Resets [this' to a post-construction empty state. See SsdCache::clear().
+  void clear();
+  
  private:
   static constexpr int32_t kDecayInterval = 1000;
 
@@ -898,6 +901,11 @@ class SsdCache {
     return *groupStats_;
   }
 
+  // Drops all entries. Outstanding pins become invalid but reading
+  // them will mostly succeed since the files will not be rewritten
+  // until new content is stord.
+  void clear();
+  
   std::string toString() const;
 
  private:
@@ -958,12 +966,12 @@ class AsyncDataCache : public memory::MappedMemory,
     mappedMemory_->freeContiguous(allocation);
   }
 
-  bool checkConsistency() override {
+  bool checkConsistency() const override {
     return mappedMemory_->checkConsistency();
   }
 
-  const std::vector<memory::MachinePageCount>& sizes() const override {
-    return mappedMemory_->sizes();
+  const std::vector<memory::MachinePageCount>& sizeClasses() const override {
+    return mappedMemory_->sizeClasses();
   }
 
   memory::MachinePageCount numAllocated() const override {
@@ -1007,6 +1015,10 @@ class AsyncDataCache : public memory::MappedMemory,
     return verifyHook_;
   }
 
+
+  // Drops all unpinned entries. Pins stay valid.
+  void clear();
+  
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
@@ -1015,8 +1027,6 @@ class AsyncDataCache : public memory::MappedMemory,
       memory::MachinePageCount numPages,
       std::function<bool()> allocate);
 
-  // Keeps the id to file map alive as long as 'this' is live.
-  std::shared_ptr<StringIdMap> fileIds_;
   std::unique_ptr<memory::MappedMemory> mappedMemory_;
   std::unique_ptr<SsdCache> ssdCache_;
   std::vector<std::unique_ptr<CacheShard>> shards_;

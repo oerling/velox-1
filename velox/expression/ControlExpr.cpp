@@ -35,7 +35,12 @@ void ConstantExpr::evalSpecialForm(
         sharedSubexprValues_->asUnchecked<SimpleVector<StringView>>();
     vector->computeAndSetIsAscii(rows);
   }
-
+  if (sharedSubexprValues_.unique() && !*result) {
+    sharedSubexprValues_->resize(rows.end());
+    *result = sharedSubexprValues_;
+    return;
+  }
+  
   context->moveOrCopyResult(
       BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
       rows,

@@ -155,6 +155,8 @@ class HiveDataSource : public DataSource {
     return rowReader_ && rowReader_->allPrefetchIssued();
   }
 
+  void setFromDataSource(std::shared_ptr<DataSource> source) override;
+
 private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
@@ -180,7 +182,7 @@ private:
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
   dwio::common::RowReaderOptions rowReaderOpts_;
-  std::unique_ptr<dwio::common::Reader> reader_;
+  std::shared_ptr<dwio::common::Reader> reader_;
   std::unique_ptr<dwio::common::RowReader> rowReader_;
   std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;
   std::shared_ptr<const RowType> readerOutputType_;

@@ -59,7 +59,7 @@ void AsyncDataCacheEntry::release() {
     VELOX_CHECK(oldPins >= 1, "Pin count goes negative");
     if (oldPins == 1) {
       if (!dataValid_) {
-	shard_->removeEntry(this);
+        shard_->removeEntry(this);
       }
       load_.reset();
     }
@@ -112,8 +112,7 @@ void AsyncDataCacheEntry::setValid(bool success) {
   }
   dataValid_ = success;
   load_.reset();
-  if (!ssdFile_ &&
-      shard_->cache()->ssdCache() &&
+  if (!ssdFile_ && shard_->cache()->ssdCache() &&
       shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
           groupId_, trackingId_)) {
     shard_->cache()->possibleSsdSave(size_);
@@ -277,7 +276,7 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
       pin.entry()->setPrefetch(true);
     }
   }
-  
+
   try {
     // If wait is not set this counts as prefetch.
     loadData(!wait);
@@ -352,6 +351,7 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t largeFreed = 0;
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
+  int32_t orgNumEvictChecks = numEvictChecks_;
   {
     std::lock_guard<std::mutex> l(mutex_);
     int size = entries_.size();
@@ -481,14 +481,14 @@ void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
   }
 }
 
-AsyncDataCache::AsyncDataCache(
+  AsyncDataCache::AsyncDataCache(
     std::unique_ptr<MappedMemory> mappedMemory,
     uint64_t maxBytes,
     std::unique_ptr<SsdCache> ssdCache)
-  : mappedMemory_(std::move(mappedMemory)),
-    ssdCache_(std::move(ssdCache)),
-    cachedPages_(0),
-    maxBytes_(maxBytes) {
+    : mappedMemory_(std::move(mappedMemory)),
+      ssdCache_(std::move(ssdCache)),
+      cachedPages_(0),
+      maxBytes_(maxBytes) {
   for (auto i = 0; i < kNumShards; ++i) {
     shards_.push_back(std::make_unique<CacheShard>(this));
   }
@@ -596,6 +596,12 @@ CacheStats AsyncDataCache::refreshStats() const {
   return stats;
 }
 
+void AsyncDataCache::clear() {
+    for (auto& shard : shards_) {
+      shard->evict(std::numeric_limits<int32_t>::max(), true);
+    }
+  }
+  
 std::string AsyncDataCache::toString() const {
   auto stats = refreshStats();
   std::stringstream out;

@@ -71,9 +71,7 @@ static void makeFieldSpecs(
     common::Subfield subfield(path);
     common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
     fieldSpec->setProjectOut(true);
-    if (level == 0) {
-      fieldSpec->setChannel(i);
-    }
+    fieldSpec->setChannel(i);
     auto fieldType = type->childAt(i);
     if (fieldType->kind() == TypeKind::ROW) {
       makeFieldSpecs(
@@ -338,14 +336,15 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   // We run with the default BufferedInputFactory and no DataCacheConfig if
   // there is no DataCache and the MappedMemory is not an AsyncDataCache.
-  reader_ = dwio::common::getReaderFactory(readerOpts_.getFileFormat())
-                ->createReader(
-                    std::make_unique<dwio::common::ReadFileInputStream>(
-                        fileHandle_->file.get(),
-                        dwio::common::MetricsLog::voidLog(),
-                        ioStats_.get()),
-                    readerOpts_);
-
+  auto uniqueReader =
+      dwio::common::getReaderFactory(readerOpts_.getFileFormat())
+          ->createReader(
+              std::make_unique<dwio::common::ReadFileInputStream>(
+                  fileHandle_->file.get(),
+                  dwio::common::MetricsLog::voidLog(),
+                  ioStats_.get()),
+              readerOpts_);
+  reader_.reset(uniqueReader.release());
   emptySplit_ = false;
   if (reader_->numberOfRows() == 0) {
     emptySplit_ = true;
@@ -429,9 +428,19 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       rowReaderOpts_.select(cs).range(split_->start, split_->length));
 }
 
-  HiveDataSource::setFromDataSource(DataSource* source) {
+void HiveDataSource::setFromDataSource(
+    std::shared_ptr<DataSource> sourceShared) {
+  auto source = dynamic_cast<HiveDataSource*>(sourceShared.get());
+  emptySplit_ = source->emptySplit_;
+  if (emptySplit_) {
+    reader_.reset();
+    rowReader_.reset();
+    return;
   }
-  
+  reader_ = std::move(source->reader_);
+  rowReader_ = std::move(source->rowReader_);
+}
+
 RowVectorPtr HiveDataSource::next(uint64_t size) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {

@@ -163,7 +163,7 @@ class ScanTracker {
     std::lock_guard<std::mutex> l(mutex_);
     return data_[id];
   }
-  
+
   std::string_view id() const {
     return id_;
   }
@@ -175,7 +175,7 @@ class ScanTracker {
   void setLoadQuantum(int32_t bytes) {
     loadQuantum_ = bytes;
   }
-  
+
   std::string toString() const;
 
  private:
