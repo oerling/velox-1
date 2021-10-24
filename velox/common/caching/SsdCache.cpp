@@ -17,7 +17,6 @@
 #include "velox/common/caching/SsdCache.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
-#include <iostream>
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
 
