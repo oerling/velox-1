@@ -20,7 +20,7 @@ add_library(
   AsyncDataCache.cpp
   ScanTracker.cpp
   GroupTracker.cpp
-  Ssd.cpp)
+  SsdCache.cpp)
 
 target_link_libraries(velox_caching velox_memory velox_exception velox_file
                       ${GLOG} ${FOLLY_WITH_DEPENDENCIES})

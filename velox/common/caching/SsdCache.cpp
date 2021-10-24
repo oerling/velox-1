@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
+#include "velox/common/caching/SsdCache.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/portability/SysUio.h>
 #include <iostream>
-#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
 
-#include <numeric>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <numeric>
 
-DEFINE_bool(ssd_odirect, false, "use O_DIRECT for SSD cache IO");
+DEFINE_bool(ssd_odirect, true, "use O_DIRECT for SSD cache IO");
 DEFINE_bool(verify_ssd_write, false, "Read back data after writing to SSD");
 
 namespace facebook::velox::cache {
@@ -64,8 +64,7 @@ SsdFile::SsdFile(
       O_CREAT | O_RDWR | (FLAGS_ssd_odirect ? O_DIRECT : 0),
       S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
-    LOG(ERROR) << "Cannot open or create " << filename << " error " << errno
-               << std::endl;
+    LOG(ERROR) << "Cannot open or create " << filename << " error " << errno;
     exit(1);
   }
   readFile_ = std::make_unique<LocalReadFile>(fd_);
@@ -348,7 +347,8 @@ char* readBytes(int fd, int64_t offset, int32_t size) {
   return data;
 }
 
-int32_t firstDiff(char* x, char* y, int n) {
+namespace {
+int32_t indexOfFirstMismatch(char* x, char* y, int n) {
   for (auto i = 0; i < n; ++i) {
     if (x[i] != y[i]) {
       return i;
@@ -356,6 +356,7 @@ int32_t firstDiff(char* x, char* y, int n) {
   }
   return -1;
 }
+} // namespace
 
 void SsdFile::verifyWrite(AsyncDataCacheEntry& entry, SsdRun ssdRun) {
   auto testData = std::make_unique<char[]>(entry.size());
@@ -372,8 +373,8 @@ void SsdFile::verifyWrite(AsyncDataCacheEntry& entry, SsdRun ssdRun) {
     for (auto i = 0; i < data.numRuns(); ++i) {
       auto run = data.runAt(i);
       auto compareSize = std::min<int64_t>(bytesLeft, run.numBytes());
-      auto badIndex =
-          firstDiff(run.data<char>(), testData.get() + offset, compareSize);
+      auto badIndex = indexOfFirstMismatch(
+          run.data<char>(), testData.get() + offset, compareSize);
       if (badIndex != -1) {
         VELOX_FAIL("Bad read back");
       }
@@ -397,15 +398,15 @@ void SsdFile::updateStats(SsdCacheStats& stats) {
   }
 }
 
-  void SsdFile::clear() {
-    std::lock_guard<std::mutex> l(mutex_);
-    entries_.clear();
-    std::fill(regionSize_.begin(), regionSize_.end(), 0);
-    writableRegions_.resize(numRegions_);
-    std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
-    std::fill(regionScore_.begin(), regionScore_.end(), 0);
-  }
-  
+void SsdFile::clear() {
+  std::lock_guard<std::mutex> l(mutex_);
+  entries_.clear();
+  std::fill(regionSize_.begin(), regionSize_.end(), 0);
+  writableRegions_.resize(numRegions_);
+  std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
+  std::fill(regionScore_.begin(), regionScore_.end(), 0);
+}
+
 SsdCache::SsdCache(
     std::string_view filePrefix,
     uint64_t maxBytes,
@@ -479,12 +480,12 @@ SsdCacheStats SsdCache::stats() const {
   return stats;
 }
 
-  void SsdCache::clear() {
-    for (auto& file : files_) {
-      file->clear();
-    }
+void SsdCache::clear() {
+  for (auto& file : files_) {
+    file->clear();
   }
-  
+}
+
 std::string SsdCache::toString() const {
   auto data = stats();
   uint64_t capacity =

@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
 
@@ -108,7 +109,7 @@ void AsyncDataCacheEntry::setValid(bool success) {
   VELOX_CHECK_NE(0, numPins_);
   auto hook = shard_->cache()->verifyHook();
   if (hook) {
-    hook(this);
+    hook(*this);
   }
   dataValid_ = success;
   load_.reset();
@@ -611,7 +612,7 @@ std::string AsyncDataCache::toString() const {
       << " / " << maxBytes_ << " bytes\n"
       << "Miss: " << stats.numNew << " Hit " << stats.numHit << " evict "
       << stats.numEvict << "\n"
-      << " read pins " << stats.numShared << " unused prefetch "
+      << " read pins " << stats.numShared << " write pins " << stats.numExclusive << " unused prefetch "
       << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20)
       << " allocated pages " << numAllocated() << " cached pages "
       << cachedPages_;
