@@ -29,7 +29,7 @@
 
 #pragma once
 
-#include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/dwio/common/InputStream.h"

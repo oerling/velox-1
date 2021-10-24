@@ -20,15 +20,15 @@
 
 namespace facebook::velox::cache {
 
-  // Dummy implementation of SsdCache admission stats.
+// Dummy implementation of SsdCache admission stats.
 class FileGroupStats {
  public:
   // Returns true if groupId, trackingId qualify the data to be cached to SSD.
   bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const {
     return true;
   }
-// Updates the SSD selection criteria. If 'decayPct' is non-0, old
-// stats are decayed and
+  // Updates the SSD selection criteria. If 'decayPct' is non-0, old
+  // stats are decayed and
   // removed if counts go to zero.
   void updateSsdFilter(uint64_t ssdSize, int32_t decayPct = 0) {}
 
