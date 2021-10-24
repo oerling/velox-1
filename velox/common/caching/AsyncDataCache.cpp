@@ -15,9 +15,9 @@
  */
 
 #include "velox/common/caching/AsyncDataCache.h"
-#include "velox/common/caching/SsdCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
+#include "velox/common/caching/SsdCache.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 
@@ -482,7 +482,7 @@ void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
   }
 }
 
-  AsyncDataCache::AsyncDataCache(
+AsyncDataCache::AsyncDataCache(
     std::unique_ptr<MappedMemory> mappedMemory,
     uint64_t maxBytes,
     std::unique_ptr<SsdCache> ssdCache)
@@ -598,11 +598,11 @@ CacheStats AsyncDataCache::refreshStats() const {
 }
 
 void AsyncDataCache::clear() {
-    for (auto& shard : shards_) {
-      shard->evict(std::numeric_limits<int32_t>::max(), true);
-    }
+  for (auto& shard : shards_) {
+    shard->evict(std::numeric_limits<int32_t>::max(), true);
   }
-  
+}
+
 std::string AsyncDataCache::toString() const {
   auto stats = refreshStats();
   std::stringstream out;
@@ -612,10 +612,10 @@ std::string AsyncDataCache::toString() const {
       << " / " << maxBytes_ << " bytes\n"
       << "Miss: " << stats.numNew << " Hit " << stats.numHit << " evict "
       << stats.numEvict << "\n"
-      << " read pins " << stats.numShared << " write pins " << stats.numExclusive << " unused prefetch "
-      << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20)
-      << " allocated pages " << numAllocated() << " cached pages "
-      << cachedPages_;
+      << " read pins " << stats.numShared << " write pins "
+      << stats.numExclusive << " unused prefetch " << stats.numPrefetch
+      << " Alloc Mclks " << (stats.allocClocks >> 20) << " allocated pages "
+      << numAllocated() << " cached pages " << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {
     out << "\nSSD: " << ssdCache_->toString();

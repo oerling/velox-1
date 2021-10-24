@@ -23,7 +23,7 @@ namespace facebook::velox::cache {
 // A 64 bit word describing a SSD cache entry in an SsdFile. The low
 // 23 bits are the size, for a maximum entry size of 8MB. The high
 // bits are the offset.
-  class SsdRun {
+class SsdRun {
  public:
   static constexpr int32_t kSizeBits = 23;
 
@@ -57,10 +57,10 @@ namespace facebook::velox::cache {
   uint64_t bits_;
 };
 
-  // Key for SsdFile lookup. The key is the file number in storage and
-  // the offset in the file. SSD cache sizes align to the RAM cache
-  // quantized sizes for cached streams from the original file.
-  struct SsdKey {
+// Key for SsdFile lookup. The key is the file number in storage and
+// the offset in the file. SSD cache sizes align to the RAM cache
+// quantized sizes for cached streams from the original file.
+struct SsdKey {
   StringIdLease file;
   uint64_t offset;
 
@@ -167,7 +167,6 @@ class SsdFile {
   // of the memory cache.
   void load(SsdRun run, AsyncDataCacheEntry& entry);
 
-
   // Reads the backing file as per ReadFile::preadv(). 'numEntries' is
   // used only for updating statistics. Allows implementing coalesced
   // read of nearby entries.
@@ -229,7 +228,8 @@ class SsdFile {
       const std::vector<CachePin>& pins,
       int32_t begin);
 
-  // Removes all 'entries_' that reference data in 'toErase'. 'toErase is a set of region indices.
+  // Removes all 'entries_' that reference data in 'toErase'. 'toErase is a set
+  // of region indices.
   void clearRegionEntriesLocked(const std::vector<int32_t>& toErase);
 
   // Clears one or more  regions for accommodating new entries. The regions are

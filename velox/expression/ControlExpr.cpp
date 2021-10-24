@@ -40,7 +40,7 @@ void ConstantExpr::evalSpecialForm(
     *result = sharedSubexprValues_;
     return;
   }
-  
+
   context->moveOrCopyResult(
       BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
       rows,

@@ -318,7 +318,8 @@ core::StopReason Driver::runInternal(
         (getCurrentTimeMicro() - queueTimeStartMicros_) * 1'000);
   }
 
-  process::TraceContext trace(fmt::format("driver {}", self->ctx_->task->taskId()), true); 
+  process::TraceContext trace(
+      fmt::format("driver {}", self->ctx_->task->taskId()), true);
   auto stop = cancelPool_->enter(state_);
   if (stop != core::StopReason::kNone) {
     if (stop == core::StopReason::kTerminate) {

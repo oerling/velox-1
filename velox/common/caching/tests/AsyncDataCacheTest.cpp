@@ -89,7 +89,9 @@ class AsyncDataCacheTest : public testing::Test {
 
   // Checks that the contents are consistent with what is set in
   // initializeContents.
-  static void checkContents(const MappedMemory::Allocation& alloc, int32_t numBytes) {
+  static void checkContents(
+      const MappedMemory::Allocation& alloc,
+      int32_t numBytes) {
     bool first = true;
     int64_t sequence;
     int32_t bytesChecked = sizeof(int64_t);
@@ -103,17 +105,16 @@ class AsyncDataCacheTest : public testing::Test {
           sequence = ptr[offset];
           first = false;
         } else {
-	  bytesChecked += sizeof(int64_t);
-	  if (bytesChecked >= numBytes) {
-	    return;
-	  }
-	    ASSERT_EQ(ptr[offset], offset + sequence);
+          bytesChecked += sizeof(int64_t);
+          if (bytesChecked >= numBytes) {
+            return;
+          }
+          ASSERT_EQ(ptr[offset], offset + sequence);
         }
       }
     }
   }
 
-  
   CachePin newEntry(uint64_t offset, int32_t size) {
     folly::SemiFuture<bool> wait(false);
     try {
@@ -335,8 +336,9 @@ TEST_F(AsyncDataCacheTest, ssd) {
   constexpr uint64_t kRamBytes = 32 << 20;
   constexpr uint64_t kSsdBytes = 512UL << 20;
   initializeCache(kRamBytes, kSsdBytes);
-  cache_->setVerifyHook(
-			[&](const AsyncDataCacheEntry& entry) { checkContents(entry.data(), entry.size()); });
+  cache_->setVerifyHook([&](const AsyncDataCacheEntry& entry) {
+    checkContents(entry.data(), entry.size());
+  });
 
   // Read back all writes. This increases the chance of writes falling behind
   // new entry creation.

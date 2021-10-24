@@ -39,4 +39,3 @@ add_executable(data_cache_test DataCacheTest.cpp)
 add_test(data_cache_test data_cache_test)
 target_link_libraries(data_cache_test velox_caching ${GTEST_BOTH_LIBRARIES}
                       ${GLOG} ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})
-

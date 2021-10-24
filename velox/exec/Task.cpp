@@ -15,7 +15,7 @@
  */
 #include "velox/exec/Task.h"
 #include "velox/codegen/Codegen.h"
-#include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdCache.h"
 #include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/CrossJoinBuild.h"

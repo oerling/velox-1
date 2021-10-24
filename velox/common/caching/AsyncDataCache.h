@@ -717,10 +717,9 @@ class AsyncDataCache : public memory::MappedMemory,
     return verifyHook_;
   }
 
-
   // Drops all unpinned entries. Pins stay valid.
   void clear();
-  
+
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
