@@ -112,7 +112,7 @@ class MapResolverFunction : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* caller,
+      const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     // We cannot make any assumptions about the encoding of the input vectors.
@@ -131,7 +131,7 @@ class MapResolverFunction : public exec::VectorFunction {
 
     // Ensure we have an output vector where we can write the output opaqued
     // values.
-    BaseVector::ensureWritable(rows, caller->type(), context->pool(), result);
+    BaseVector::ensureWritable(rows, outputType, context->pool(), result);
     auto* output = (*result)->as<KindToFlatVector<TypeKind::OPAQUE>::type>();
 
     // `applyToSelected()` will execute the lambda below on each row enabled in
@@ -309,16 +309,10 @@ VectorPtr evaluate(
 
   auto rowType = rowVector->type()->as<TypeKind::ROW>();
 
-  auto inputExprNode =
-      std::make_shared<const core::InputTypedExpr>(rowVector->type());
   auto fieldAccessExprNode1 = std::make_shared<core::FieldAccessTypedExpr>(
-      rowType.findChild(argName1),
-      std::vector<core::TypedExprPtr>{inputExprNode},
-      argName1);
+      rowType.findChild(argName1), argName1);
   auto fieldAccessExprNode2 = std::make_shared<core::FieldAccessTypedExpr>(
-      rowType.findChild(argName2),
-      std::vector<core::TypedExprPtr>{inputExprNode},
-      argName2);
+      rowType.findChild(argName2), argName2);
 
   auto exprPlan = std::make_shared<core::CallTypedExpr>(
       OPAQUE<UserDefinedOutput>(),

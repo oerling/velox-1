@@ -65,7 +65,11 @@ RowContainer::RowContainer(
   // is followed by a free bit which is set if the row is in a free
   // list. The accumulators come next, with size given by
   // Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
-  // These are non-key columns for hash join or order by.
+  // These are non-key columns for hash join or order by. If there are variable
+  // length columns or accumulators, i.e. ones that allocate extra space, this
+  // space is tracked by a uint32_t after the dependent columns. If this is a
+  // hash join build side, the pointer to the next row with the same key is
+  // after the optional row size.
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
   // -1, 8 bytes below the pointer. This space is reserved for a 64
@@ -166,9 +170,7 @@ RowContainer::RowContainer(
     }
   }
   if (hasProbedFlag) {
-    bits::clearBit(
-        initialNulls_.data(),
-        nullOffsets_[nullOffsets_.size() - 2] - nullOffsets_[0]);
+    bits::clearBit(initialNulls_.data(), probedFlagOffset_ - nullOffsets_[0]);
   }
   normalizedKeySize_ = hasNormalizedKeys_ ? sizeof(normalized_key_t) : 0;
   for (auto i = 0; i < offsets_.size(); ++i) {
@@ -177,7 +179,7 @@ RowContainer::RowContainer(
         (nullableKeys_ || i >= keyTypes_.size()) ? nullOffsets_[i]
                                                  : RowColumn::kNotNullOffset);
   }
-  }
+}
 
 char* RowContainer::newRow() {
   char* row;
@@ -211,7 +213,7 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
         initialNulls_.size());
   }
   if (rowSizeOffset_) {
-    *reinterpret_cast<uint32_t*>(row + rowSizeOffset_) = 0;
+    variableRowSize(row) = 0;
   }
   return row;
 }
@@ -283,63 +285,6 @@ void RowContainer::freeAggregates(folly::Range<char**> rows) {
   for (auto& aggregate : aggregates_) {
     aggregate->destroy(rows);
   }
-}
-
-int32_t RowContainer::listRows(
-    RowContainerIterator* iter,
-    int32_t maxRows,
-    uint64_t maxBytes,
-    char** rows) {
-  int32_t count = 0;
-  uint64_t totalBytes = 0;
-  auto numAllocations = rows_.numAllocations();
-  if (iter->allocationIndex == 0 && iter->runIndex == 0 &&
-      iter->rowOffset == 0) {
-    iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
-  }
-  int32_t rowSize = fixedRowSize_ +
-      (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
-  for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
-    auto allocation = rows_.allocationAt(i);
-    auto numRuns = allocation->numRuns();
-    for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
-      memory::MappedMemory::PageRun run = allocation->runAt(runIndex);
-      auto data = run.data<char>();
-      int64_t limit;
-      if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
-        limit = rows_.currentOffset();
-      } else {
-        limit = run.numPages() * memory::MappedMemory::kPageSize;
-      }
-      auto row = iter->rowOffset;
-      while (row + rowSize <= limit) {
-        rows[count++] = data + row +
-            (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
-        row += rowSize;
-        if (--iter->normalizedKeysLeft == 0) {
-          rowSize -= sizeof(normalized_key_t);
-        }
-        if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
-          --count;
-          continue;
-        }
-        if (rowSizeOffset_) {
-          totalBytes +=
-              *reinterpret_cast<uint32_t*>(rows[count - 1] + rowSizeOffset_);
-        }
-        if (count == maxRows || totalBytes > maxBytes) {
-          iter->rowOffset = row;
-          iter->runIndex = runIndex;
-          iter->allocationIndex = i;
-          return count;
-        }
-      }
-      iter->rowOffset = 0;
-    }
-    iter->runIndex = 0;
-  }
-  iter->allocationIndex = std::numeric_limits<int32_t>::max();
-  return count;
 }
 
 void RowContainer::store(
@@ -560,6 +505,12 @@ void RowContainer::clear() {
   }
 }
 
+void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
+  for (auto i = 0; i < numRows; i++) {
+    bits::setBit(rows[i], probedFlagOffset_);
+  }
+}
+
 TypePtr RowContainer::spillType() {
   if (spillType_) {
     return spillType_;
@@ -582,7 +533,7 @@ void RowContainer::extractSpill(folly::Range<char**> rows, RowVector* result) {
     extractColumn(rows.data(), rows.size(), i, result->childAt(i));
   }
   for (auto i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(        rows.data(), rows.size());
+    aggregates_[i]->finalize(rows.data(), rows.size());
     aggregates_[i]->extractAccumulators(
         rows.data(), rows.size(), &result->childAt(i + keyTypes_.size()));
   }

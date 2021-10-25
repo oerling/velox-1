@@ -53,9 +53,9 @@ target_link_libraries(velox_vector_fuzzer velox_type velox_vector)
 add_library(velox_expression_fuzzer ExpressionFuzzer.cpp)
 
 target_link_libraries(velox_expression_fuzzer velox_type velox_vector_fuzzer
-                      velox_vector_test_lib)
+                      velox_vector_test_lib velox_function_registry)
 
-add_executable(velox_expression_fuzzer_main ExpressionFuzzerMain.cpp)
+add_executable(velox_expression_fuzzer_test ExpressionFuzzerTest.cpp)
 
-target_link_libraries(velox_expression_fuzzer_main velox_expression_fuzzer
-                      velox_functions_prestosql)
+target_link_libraries(velox_expression_fuzzer_test velox_expression_fuzzer
+                      velox_functions_prestosql ${GTEST_BOTH_LIBRARIES})

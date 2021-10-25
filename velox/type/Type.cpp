@@ -196,6 +196,17 @@ folly::dynamic ArrayType::serialize() const {
   return obj;
 }
 
+FixedSizeArrayType::FixedSizeArrayType(
+    FixedSizeArrayType::size_type len,
+    std::shared_ptr<const Type> child)
+    : ArrayType(child), len_(len) {}
+
+std::string FixedSizeArrayType::toString() const {
+  std::stringstream ss;
+  ss << "FIXED_SIZE_ARRAY(" << len_ << ")<" << child_->toString() << ">";
+  return ss.str();
+}
+
 const std::shared_ptr<const Type>& MapType::childAt(uint32_t idx) const {
   if (idx == 0) {
     return keyType();
@@ -475,6 +486,13 @@ std::shared_ptr<const ArrayType> ARRAY(
   return std::make_shared<const ArrayType>(std::move(elementType));
 }
 
+std::shared_ptr<const FixedSizeArrayType> FIXED_SIZE_ARRAY(
+    FixedSizeArrayType::size_type len,
+    std::shared_ptr<const Type> elementType) {
+  return std::make_shared<const FixedSizeArrayType>(
+      len, std::move(elementType));
+}
+
 std::shared_ptr<const RowType> ROW(
     std::vector<std::string>&& names,
     std::vector<std::shared_ptr<const Type>>&& types) {
@@ -512,10 +530,6 @@ std::shared_ptr<const MapType> MAP(
       std::move(keyType), std::move(valType));
 };
 
-std::shared_ptr<const TimestampType> TIMESTAMP() {
-  return std::make_shared<const TimestampType>();
-};
-
 std::shared_ptr<const FunctionType> FUNCTION(
     std::vector<std::shared_ptr<const Type>>&& argumentTypes,
     std::shared_ptr<const Type> returnType) {
@@ -535,6 +549,7 @@ KOSKI_DEFINE_SCALAR_ACCESSOR(SMALLINT);
 KOSKI_DEFINE_SCALAR_ACCESSOR(BIGINT);
 KOSKI_DEFINE_SCALAR_ACCESSOR(REAL);
 KOSKI_DEFINE_SCALAR_ACCESSOR(DOUBLE);
+KOSKI_DEFINE_SCALAR_ACCESSOR(TIMESTAMP);
 KOSKI_DEFINE_SCALAR_ACCESSOR(VARCHAR);
 KOSKI_DEFINE_SCALAR_ACCESSOR(VARBINARY);
 KOSKI_DEFINE_SCALAR_ACCESSOR(UNKNOWN);
@@ -549,12 +564,6 @@ std::shared_ptr<const Type> createType(
     TypeKind kind,
     std::vector<std::shared_ptr<const Type>>&& children) {
   return VELOX_DYNAMIC_TYPE_DISPATCH(createType, kind, std::move(children));
-}
-
-template <>
-std::shared_ptr<const Type> createType<TypeKind::TIMESTAMP>(
-    std::vector<std::shared_ptr<const Type>>&& /*children*/) {
-  return TIMESTAMP();
 }
 
 template <>

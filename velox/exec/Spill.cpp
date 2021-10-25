@@ -13,6 +13,7 @@
  */
 
 #include "velox/exec/Spill.h"
+#include "velox/common/file/FileSystems.h"
 
 namespace facebook::velox::exec {
 
@@ -29,6 +30,28 @@ SpillFile::~SpillFile() {
   }
 }
 
+  WriteFile& SpillFile::output() {
+    if (!output_) {
+      auto fs = filesystems::getFileSystem(path_, nullptr);
+      output_ = fs->openFileForWrite(path_);
+    }
+    return *output_;
+  }
+
+  void SpillFile::startRead() {
+    constexpr uint64_t kMaxReadBufferSize = 1 << 20; // 1MB
+    VELOX_CHECK(!output_);
+    auto fs = filesystems::getFileSystem(path_, nullptr);
+    auto file = fs->openFileForRead(path_);
+    auto buffer = AlignedBuffer::allocate<char>(
+        std::min<uint64_t>(size_, kMaxReadBufferSize), &pool_);
+    stream_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
+    next();
+    index_ = 0;
+  }
+
+  
+  
 void FileList::flush(bool close) {
   std::string str;
   {
@@ -45,7 +68,7 @@ void FileList::flush(bool close) {
             type_, fmt::format("{}-{}", path_, files_.size()), pool_));
         isOpen_ = true;
       }
-      files_.back()->output()->append(str);
+      files_.back()->output().append(str);
     }
   }
   if (close && isOpen_) {

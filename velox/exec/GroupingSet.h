@@ -35,6 +35,7 @@ class GroupingSet {
       std::vector<std::vector<VectorPtr>>&& constantLists,
       bool ignoreNullKeys,
       bool isPartial,
+      bool isRawInput,
       OperatorCtx* driverCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
@@ -91,6 +92,7 @@ class GroupingSet {
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   const bool isGlobal_;
   const bool isPartial_;
+  const bool isRawInput_;
   std::vector<std::unique_ptr<Aggregate>> aggregates_;
   // For each aggregation, can hold an index to a boolean channel (projection in
   // the input row vector), that acts as row mask for the aggregation.

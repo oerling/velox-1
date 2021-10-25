@@ -117,29 +117,14 @@ class SpillFile : public SpillStream {
 
   ~SpillFile();
 
-  WriteFile* output() {
-    if (!output_) {
-      output_ = generateWriteFile(path_);
-    }
-    return output_.get();
-  }
+  WriteFile& output();
 
   void finishWrite() {
     VELOX_CHECK(output_);
     size_ = output_->size();
     output_ = nullptr;
   }
-
-  void startRead() {
-    constexpr uint64_t kMaxReadBufferSize = 1 << 20; // 1MB
-    VELOX_CHECK(!output_);
-    auto file = generateReadFile(path_);
-    auto buffer = AlignedBuffer::allocate<char>(
-        std::min<uint64_t>(size_, kMaxReadBufferSize), &pool_);
-    stream_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
-    next();
-    index_ = 0;
-  }
+  void startRead();
 
   uint64_t size() const override {
     if (output_) {

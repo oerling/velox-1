@@ -146,7 +146,7 @@ class RowContainer {
   void incrementRowSize(char* row, uint64_t bytes) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
     uint64_t size = *ptr + bytes;
-    *ptr = std::min<uint64_t>(bytes, std::numeric_limits<uint32_t>::max());
+    *ptr = std::min<uint64_t>(size, std::numeric_limits<uint32_t>::max());
   }
 
   // Initialize row. 'reuse' specifies whether the 'row' is reused or
@@ -199,25 +199,39 @@ class RowContainer {
   static inline uint8_t nullMask(int32_t nullOffset) {
     return 1 << (nullOffset & 7);
   }
-
   // Extracts up to 'maxRows' rows starting at the position of
   // 'iter'. A default constructed or reset iter starts at the
   // beginning. Returns the number of rows written to 'rows'. Returns
-  // 0 when at end. Stops after te total size of returned rows exceeds
+  // 0 when at end. Stops after the total size of returned rows exceeds
   // maxBytes.
   int32_t listRows(
       RowContainerIterator* iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows);
+      char** rows) {
+    return listRows<false>(iter, maxRows, maxBytes, rows);
+  }
 
   int32_t listRows(RowContainerIterator* iter, int32_t maxRows, char** rows) {
-    return listRows(iter, maxRows, kUnlimited, rows);
+    return listRows<false>(iter, maxRows, kUnlimited, rows);
+  }
+
+  /// Sets 'probed' flag for the specified rows. Used by the right join to
+  /// mark build-side rows that matches join condition.
+  void setProbedFlag(char** rows, int32_t numRows);
+
+  /// Returns rows with 'probed' flag unset. Used by the right join.
+  int32_t listNotProbedRows(
+      RowContainerIterator* iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char** rows) {
+    return listRows<true>(iter, maxRows, maxBytes, rows);
   }
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
-  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
-  // a fast path for compare().
+  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This
+  // is a fast path for compare().
   template <bool mayHaveNulls>
   bool equals(
       const char* row,
@@ -235,8 +249,8 @@ class RowContainer {
       vector_size_t index,
       CompareFlags flags = CompareFlags());
 
-  // Compares the value at 'columnIndex' between 'left' and 'right'. Returns 0
-  // for equal, < 0 for left < right, > 0 otherwise.
+  // Compares the value at 'columnIndex' between 'left' and 'right'. Returns
+  // 0 for equal, < 0 for left < right, > 0 otherwise.
   int32_t compare(
       const char* left,
       const char* right,
@@ -258,8 +272,8 @@ class RowContainer {
     return rowColumns_[index];
   }
 
-  // Bit offset of the probed flag for a full or right outer join  payload. 0 if
-  // not applicable.
+  // Bit offset of the probed flag for a full or right outer join  payload.
+  // 0 if not applicable.
   int32_t probedFlagOffset() const {
     return probedFlagOffset_;
   }
@@ -348,7 +362,8 @@ class RowContainer {
         ((batchSizeInBytes % fixedRowSize_) ? 1 : 0);
   }
 
-  // Adds new row to the row container and copy the 'srcRow' into the new row.
+  // Adds new row to the row container and copy the 'srcRow' into the new
+  // row.
   char* addRow(const char* srcRow, const RowVectorPtr& extractedCols) {
     static const SelectivityVector kOneRow(1);
 
@@ -426,6 +441,11 @@ class RowContainer {
 
   char*& nextFree(char* row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
+  }
+
+  uint32_t& variableRowSize(char* row) {
+    DCHECK(rowSizeOffset_);
+    return *reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
   }
 
   template <TypeKind Kind>
@@ -636,6 +656,70 @@ class RowContainer {
       int32_t nullByte = 0,
       uint8_t nullMask = 0);
 
+  template <bool nonProbedRowsOnly>
+  int32_t listRows(
+      RowContainerIterator* iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char** rows) {
+    int32_t count = 0;
+    uint64_t totalBytes = 0;
+    auto numAllocations = rows_.numAllocations();
+    if (iter->allocationIndex == 0 && iter->runIndex == 0 &&
+        iter->rowOffset == 0) {
+      iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
+    }
+    int32_t rowSize = fixedRowSize_ +
+        (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
+    for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
+      auto allocation = rows_.allocationAt(i);
+      auto numRuns = allocation->numRuns();
+      for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
+        memory::MappedMemory::PageRun run = allocation->runAt(runIndex);
+        auto data = run.data<char>();
+        int64_t limit;
+        if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
+          limit = rows_.currentOffset();
+        } else {
+          limit = run.numPages() * memory::MappedMemory::kPageSize;
+        }
+        auto row = iter->rowOffset;
+        while (row + rowSize <= limit) {
+          rows[count++] = data + row +
+              (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
+          row += rowSize;
+          if (--iter->normalizedKeysLeft == 0) {
+            rowSize -= sizeof(normalized_key_t);
+          }
+          if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
+            --count;
+            continue;
+          }
+          if constexpr (nonProbedRowsOnly) {
+            if (bits::isBitSet(rows[count - 1], probedFlagOffset_)) {
+              --count;
+              continue;
+            }
+          }
+          totalBytes += rowSize;
+          if (rowSizeOffset_) {
+            totalBytes += variableRowSize(rows[count - 1]);
+          }
+          if (count == maxRows || totalBytes > maxBytes) {
+            iter->rowOffset = row;
+            iter->runIndex = runIndex;
+            iter->allocationIndex = i;
+            return count;
+          }
+        }
+        iter->rowOffset = 0;
+      }
+      iter->runIndex = 0;
+    }
+    iter->allocationIndex = std::numeric_limits<int32_t>::max();
+    return count;
+  }
+
   static void extractComplexType(
       const char* const* rows,
       int32_t numRows,
@@ -694,15 +778,14 @@ class RowContainer {
   std::vector<int32_t> nullOffsets_;
   // Position of field or accumulator. Corresponds 1:1 to 'nullOffset_'.
   std::vector<int32_t> offsets_;
-  // Offset and null indicator offset of non-aggregate fields as a single word.
-  // Corresponds pairwise to 'types_'.
+  // Offset and null indicator offset of non-aggregate fields as a single
+  // word. Corresponds pairwise to 'types_'.
   std::vector<RowColumn> rowColumns_;
   // Bit position of probed flag, 0 if none.
   int32_t probedFlagOffset_ = 0;
 
   // Bit position of free bit.
   int32_t freeFlagOffset_ = 0;
-  int32_t nextFreeOffset_ = 0;
   int32_t rowSizeOffset_ = 0;
 
   int32_t fixedRowSize_;
@@ -711,8 +794,8 @@ class RowContainer {
   // The count of entries that have an extra normalized_key_t before the
   // start.
   int64_t numRowsWithNormalizedKey_ = 0;
-  // Extra bytes to reserve before  each added row for a normalized key. Set to
-  // 0 after deciding not to use normalized keys.
+  // Extra bytes to reserve before  each added row for a normalized key. Set
+  // to 0 after deciding not to use normalized keys.
   int8_t normalizedKeySize_ = sizeof(normalized_key_t);
   // Copied over the null bits of each row on initialization. Keys are
   // not null, aggregates are null.
@@ -725,14 +808,15 @@ class RowContainer {
   AllocationPool rows_;
   HashStringAllocator stringAllocator_;
   const RowSerde& serde_;
+
   std::vector<SpillRun> spillRuns_;
   // Indices into 'spillRuns_' that are currently getting spilled.
   std::unordered_set<int32_t> spillingRuns_;
   TypePtr spillType_;
   RowVectorPtr spillVector_;
 
-  // RowContainer requires a valid reference to a vector of aggregates. We use
-  // a static constant to ensure the aggregates_ is valid throughout the
+  // RowContainer requires a valid reference to a vector of aggregates. We
+  // use a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.
   static const std::vector<std::unique_ptr<Aggregate>>& emptyAggregates() {
     static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;

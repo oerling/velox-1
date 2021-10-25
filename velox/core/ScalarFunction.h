@@ -19,12 +19,11 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/core/Metaprogramming.h"
+#include "velox/core/QueryConfig.h"
 #include "velox/type/Type.h"
 #include "velox/type/Variant.h"
 
-namespace facebook {
-namespace velox {
-namespace core {
+namespace facebook::velox::core {
 
 class ArgumentsCtx {
  public:
@@ -65,8 +64,25 @@ struct udf_is_deterministic<
     util::detail::void_t<decltype(T::is_deterministic)>>
     : std::integral_constant<bool, T::is_deterministic> {};
 
-KOKSI_MEMBER_CHECKER(udf_has_call, &T::call)
-KOKSI_MEMBER_CHECKER(udf_has_callNullable, &T::callNullable)
+// Most functions are producing ASCII results for ASCII inputs, but we assume
+// they are not unless specified explicitly.
+template <class T, class = void>
+struct udf_is_default_ascii_behavior : std::false_type {};
+
+template <class T>
+struct udf_is_default_ascii_behavior<
+    T,
+    util::detail::void_t<decltype(T::is_default_ascii_behavior)>>
+    : std::integral_constant<bool, T::is_default_ascii_behavior> {};
+
+template <class T, class = void>
+struct udf_reuse_strings_from_arg : std::integral_constant<int32_t, -1> {};
+
+template <class T>
+struct udf_reuse_strings_from_arg<
+    T,
+    util::detail::void_t<decltype(T::reuse_strings_from_arg)>>
+    : std::integral_constant<int32_t, T::reuse_strings_from_arg> {};
 
 // If a UDF doesn't declare a default help(),
 template <class T, class = void>
@@ -149,13 +165,20 @@ class IScalarFunction {
   virtual std::vector<std::shared_ptr<const Type>> argTypes() const = 0;
   virtual std::string getName() const = 0;
   virtual bool isDeterministic() const = 0;
+  virtual int32_t reuseStringsFromArg() const = 0;
   virtual variant callDynamic(const std::vector<variant>& inputs) = 0;
 
   FunctionKey key() const;
-  std::string signature() const;
+  std::string signature(const std::string& name) const;
 
   virtual ~IScalarFunction() = default;
 };
+
+template <typename T, typename = int32_t>
+struct udf_has_name : std::false_type {};
+
+template <typename T>
+struct udf_has_name<T, decltype(&T::name, 0)> : std::true_type {};
 
 template <typename Fun, typename TReturn, typename... Args>
 class ScalarFunctionMetadata : public IScalarFunction {
@@ -168,11 +191,22 @@ class ScalarFunctionMetadata : public IScalarFunction {
 
  public:
   std::string getName() const final {
-    return Fun::name;
+    if constexpr (udf_has_name<Fun>::value) {
+      return Fun::name;
+    } else {
+      throw std::runtime_error(
+          "Unable to find simple function name. Either define a 'name' "
+          "member in the function class, or specify a function alias at "
+          "registration time.");
+    }
   }
 
   bool isDeterministic() const final {
     return udf_is_deterministic<Fun>();
+  }
+
+  int32_t reuseStringsFromArg() const final {
+    return udf_reuse_strings_from_arg<Fun>();
   }
 
   std::shared_ptr<const Type> returnType() const final {
@@ -218,22 +252,61 @@ class UDFHolder final
   Fun instance_;
 
  public:
-  static_assert(
-      udf_has_call<Fun>::value || udf_has_callNullable<Fun>::value,
-      "UDF must implement at least one of `call` or `callNullable`");
-  static constexpr bool is_default_null_behavior =
-      !udf_has_callNullable<Fun>::value;
-
   using Metadata = core::ScalarFunctionMetadata<Fun, TReturn, TArgs...>;
 
   using exec_return_type = typename Exec::template resolver<TReturn>::out_type;
   using optional_exec_return_type = std::optional<exec_return_type>;
+
   template <typename T>
   using exec_arg_type = typename Exec::template resolver<T>::in_type;
   using exec_arg_types =
       std::tuple<typename Exec::template resolver<TArgs>::in_type...>;
   template <typename T>
   using optional_exec_arg_type = std::optional<exec_arg_type<T>>;
+
+  DECLARE_METHOD_RESOLVER(call_method_resolver, call);
+  DECLARE_METHOD_RESOLVER(callNullable_method_resolver, callNullable);
+  DECLARE_METHOD_RESOLVER(callAscii_method_resolver, callAscii);
+  DECLARE_METHOD_RESOLVER(initialize_method_resolver, initialize);
+
+  // Check which of the call(), callNullable(), callAscii(), and initialize()
+  // methods are available in the UDF object.
+  static constexpr bool udf_has_call = util::has_method<
+      Fun,
+      call_method_resolver,
+      bool,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+
+  static constexpr bool udf_has_callNullable = util::has_method<
+      Fun,
+      callNullable_method_resolver,
+      bool,
+      exec_return_type,
+      const exec_arg_type<TArgs>*...>::value;
+
+  static constexpr bool udf_has_callAscii = util::has_method<
+      Fun,
+      callAscii_method_resolver,
+      bool,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+
+  static constexpr bool udf_has_initialize = util::has_method<
+      Fun,
+      initialize_method_resolver,
+      void,
+      const core::QueryConfig&,
+      const exec_arg_type<TArgs>*...>::value;
+
+  static_assert(
+      udf_has_call || udf_has_callNullable,
+      "UDF must implement at least one of `call` or `callNullable`");
+
+  static constexpr bool is_default_null_behavior = !udf_has_callNullable;
+  static constexpr bool has_ascii = udf_has_callAscii;
+  static constexpr bool is_default_ascii_behavior =
+      udf_is_default_ascii_behavior<Fun>();
 
   template <typename T>
   struct ptrfy {
@@ -255,10 +328,18 @@ class UDFHolder final
   explicit UDFHolder(std::shared_ptr<const Type> returnType)
       : Metadata(std::move(returnType)), instance_{} {}
 
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const typename Exec::template resolver<TArgs>::in_type*... constantArgs) {
+    if constexpr (udf_has_initialize) {
+      return instance_.initialize(config, constantArgs...);
+    }
+  }
+
   FOLLY_ALWAYS_INLINE bool call(
       typename Exec::template resolver<TReturn>::out_type& out,
       const typename Exec::template resolver<TArgs>::in_type&... args) {
-    if constexpr (udf_has_call<Fun>::value) {
+    if constexpr (udf_has_call) {
       return instance_.call(out, args...);
     } else {
       return instance_.callNullable(out, (&args)...);
@@ -268,7 +349,7 @@ class UDFHolder final
   FOLLY_ALWAYS_INLINE bool callNullable(
       exec_return_type& out,
       const typename Exec::template resolver<TArgs>::in_type*... args) {
-    if constexpr (udf_has_callNullable<Fun>::value) {
+    if constexpr (udf_has_callNullable) {
       return instance_.callNullable(out, args...);
     } else {
       // default null behavior
@@ -278,6 +359,18 @@ class UDFHolder final
       } else {
         return false;
       }
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callAscii(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const typename Exec::template resolver<TArgs>::in_type&... args) {
+    if constexpr (udf_has_callAscii) {
+      return instance_.callAscii(out, args...);
+    } else if constexpr (udf_has_call) {
+      return instance_.call(out, args...);
+    } else {
+      return instance_.callNullable(out, (&args)...);
     }
   }
 
@@ -323,9 +416,7 @@ class UDFHolder final
   }
 };
 
-} // namespace core
-} // namespace velox
-} // namespace facebook
+} // namespace facebook::velox::core
 
 namespace std {
 template <>

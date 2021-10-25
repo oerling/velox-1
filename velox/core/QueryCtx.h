@@ -20,6 +20,7 @@
 #include "velox/common/memory/Memory.h"
 #include "velox/core/CancelPool.h"
 #include "velox/core/Context.h"
+#include "velox/core/QueryConfig.h"
 #include "velox/vector/DecodedVector.h"
 
 namespace facebook::velox::core {
@@ -77,7 +78,8 @@ class QueryCtx : public Context {
         pool_(std::move(pool)),
         mappedMemory_(mappedMemory),
         connectorConfigs_(connectorConfigs),
-        executor_{std::move(executor)} {
+        executor_{std::move(executor)},
+        config_{this} {
     setConfigOverrides(config);
   }
 
@@ -91,6 +93,10 @@ class QueryCtx : public Context {
 
   folly::Executor* executor() const {
     return executor_.get();
+  }
+
+  const QueryConfig& config() const {
+    return config_;
   }
 
   Config* getConnectorConfig(const std::string& connectorId) const {
@@ -280,6 +286,7 @@ class QueryCtx : public Context {
   memory::MappedMemory* mappedMemory_;
   std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs_;
   std::shared_ptr<folly::Executor> executor_;
+  QueryConfig config_;
 };
 
 // Represents the state of one thread of query execution.
