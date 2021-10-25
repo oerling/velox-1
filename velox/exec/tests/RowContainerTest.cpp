@@ -338,7 +338,7 @@ TEST_F(RowContainerTest, erase) {
   std::vector<char*> rowsFromContainer(kNumRows);
   RowContainerIterator iter;
   EXPECT_EQ(
-	    data->listRows(&iter, kNumRows, rowsFromContainer.data()), kNumRows);
+      data->listRows(&iter, kNumRows, rowsFromContainer.data()), kNumRows);
   EXPECT_EQ(0, data->listRows(&iter, kNumRows, rows.data()));
   EXPECT_EQ(rows, rowsFromContainer);
 
@@ -405,7 +405,7 @@ TEST_F(RowContainerTest, rowSize) {
   EXPECT_EQ(rows, rowsFromContainer);
 }
 
-TEST_F(RowContainerTest, types) {
+TEST_F(RowContainerTest, spill) {
   constexpr int32_t kNumRows = 10000;
   auto batch = makeDataset(
       "bool_val:boolean,"
@@ -418,7 +418,7 @@ TEST_F(RowContainerTest, types) {
       "string_val:string,"
       "array_val:array<array<string>>,"
       "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>"
+      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>",
       kNumRows,
       [](RowVectorPtr rows) {
         auto strings =
@@ -435,18 +435,13 @@ TEST_F(RowContainerTest, types) {
   std::vector<TypePtr> keys;
   keys.insert(keys.begin(), types.begin(), types.begin() + 5);
 
-
   std::vector<TypePtr> dependents;
-  dependents.insert(
-      dependents.begin(), types.begin() + 5, types.end());
+  dependents.insert(dependents.begin(), types.begin() + 5, types.end());
   auto data = makeRowContainer(keys, dependents);
-
-
-
-  for (int i = 0; i < kNumRows; ++i) {
-    auto row = data->newRow();
-  }
   std::vector<char*> rows(kNumRows);
+  for (int i = 0; i < kNumRows; ++i) {
+    rows[i] = data->newRow();
+  }
 
   SelectivityVector allRows(kNumRows);
   for (auto column = 0; column < batch->childrenSize(); ++column) {
@@ -456,7 +451,45 @@ TEST_F(RowContainerTest, types) {
     }
   }
 
-  auto state = std::make_unique<SpillState>(batch->type(), "/tmp/spill", 0, 100000, 100, pool_.get(), memory::MappedMemory::getInstance());
+  auto spillState = std::make_unique<SpillState>(
+      batch->type(),
+      "/tmp/spill",
+      HashBitField{0, 0},
+      100000,
+      100,
+      *pool_,
+      mappedMemory_);
+  RowContainerIterator iter;
+  data->spill(
+      *spillState,
+      kNumRows,
+      std::numeric_limits<int64_t>::max(),
+      iter,
+      [&](folly::Range<char**> rows) { data->eraseRows(rows); });
+  std::vector<int32_t> sortedIndices(kNumRows);
+  std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+  std::sort(
+      sortedIndices.begin(),
+      sortedIndices.end(),
+      [&](int32_t leftIndex, int32_t rightIndex) {
+        for (auto k = 0; k < keys.size(); ++k) {
+          auto rc = data->compare(rows[leftIndex], rows[rightIndex], k);
+          if (rc == 0) {
+            continue;
+          }
+          if (rc < 0) {
+            return true;
+          }
+        }
+        return false;
+      });
 
-  
+  auto merge = spillState->startMerge(0, nullptr);
+  for (auto i = 0; i < kNumRows; ++i) {
+    auto row = merge->next([&](const VectorRow& left, const VectorRow& right) {
+      return SpillState::compareSpilled(left, right, keys.size());
+    });
+    EXPECT_TRUE(batch->equalValueAt(
+        row.value().rowVector, sortedIndices[i], row.value().index));
+  }
 }

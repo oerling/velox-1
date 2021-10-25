@@ -30,28 +30,26 @@ SpillFile::~SpillFile() {
   }
 }
 
-  WriteFile& SpillFile::output() {
-    if (!output_) {
-      auto fs = filesystems::getFileSystem(path_, nullptr);
-      output_ = fs->openFileForWrite(path_);
-    }
-    return *output_;
-  }
-
-  void SpillFile::startRead() {
-    constexpr uint64_t kMaxReadBufferSize = 1 << 20; // 1MB
-    VELOX_CHECK(!output_);
+WriteFile& SpillFile::output() {
+  if (!output_) {
     auto fs = filesystems::getFileSystem(path_, nullptr);
-    auto file = fs->openFileForRead(path_);
-    auto buffer = AlignedBuffer::allocate<char>(
-        std::min<uint64_t>(size_, kMaxReadBufferSize), &pool_);
-    stream_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
-    next();
-    index_ = 0;
+    output_ = fs->openFileForWrite(path_);
   }
+  return *output_;
+}
 
-  
-  
+void SpillFile::startRead() {
+  constexpr uint64_t kMaxReadBufferSize = 1 << 20; // 1MB
+  VELOX_CHECK(!output_);
+  auto fs = filesystems::getFileSystem(path_, nullptr);
+  auto file = fs->openFileForRead(path_);
+  auto buffer = AlignedBuffer::allocate<char>(
+      std::min<uint64_t>(size_, kMaxReadBufferSize), &pool_);
+  stream_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
+  next();
+  index_ = 0;
+}
+
 void FileList::flush(bool close) {
   std::string str;
   {
@@ -87,6 +85,25 @@ void FileList::write(
   }
   batch_->append(rows, indices);
   flush(false);
+}
+
+// static
+int32_t SpillState::compareSpilled(
+				   const VectorRow& left,
+    const VectorRow& right,
+    int32_t numKeys) {
+  for (auto i = 0; i < numKeys; ++i) {
+    auto leftDecoded = (*left.decoded)[i].get();
+    auto rightDecoded = (*right.decoded)[i].get();
+    auto result = leftDecoded->base()->compare(
+        rightDecoded->base(),
+        leftDecoded->index(left.index),
+        rightDecoded->index(right.index));
+    if (result) {
+      return result;
+    }
+  }
+  return 0;
 }
 
 void SpillState::setNumWays(int32_t numWays) {

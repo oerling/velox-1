@@ -273,6 +273,11 @@ class SpillState {
       uint16_t way,
       std::unique_ptr<SpillStream>&& extra);
 
+  static int32_t compareSpilled(
+      const VectorRow& left,
+      const VectorRow& right,
+      int32_t numKeys);
+
  private:
   const TypePtr type_;
   const std::string path_;

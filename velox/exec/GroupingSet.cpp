@@ -114,7 +114,7 @@ void GroupingSet::addInput(const RowVectorPtr& input, bool mayPushdown) {
     return;
   }
 
-checkSpill(input);
+  checkSpill(input);
   bool rehash = false;
   if (!table_) {
     rehash = true;
@@ -310,7 +310,7 @@ void GroupingSet::extractGroups(
     }
   }
 }
-  
+
 bool GroupingSet::getOutput(
     int32_t batchSize,
     bool isPartial,
@@ -364,14 +364,13 @@ int32_t GroupingSet::listRowsNoSpill(
   }
 }
 
-  
 void GroupingSet::resetPartial() {
   if (table_) {
     table_->clear();
   }
 }
 
-    bool GroupingSet::getSpilledOutput(RowVectorPtr result) {
+bool GroupingSet::getSpilledOutput(RowVectorPtr result) {
   if (!spill_) {
     return false;
   }
@@ -445,7 +444,7 @@ bool GroupingSet::mergeNext(RowVectorPtr& result) {
   for (;;) {
     auto next =
         merge_->next([&](const VectorRow& left, const VectorRow& right) {
-          return compareSpilled(left, right);
+          return SpillState::compareSpilled(left, right, keyChannels_.size());
         });
     if (!next.has_value()) {
       extractSpillResult(result);
@@ -474,28 +473,14 @@ bool GroupingSet::mergeNext(RowVectorPtr& result) {
   }
 }
 
-int32_t GroupingSet::compareSpilled(VectorRow left, VectorRow right) {
-  for (auto i = 0; i < keyChannels_.size(); ++i) {
-    auto leftDecoded = (*left.decoded)[i].get();
-    auto rightDecoded = (*right.decoded)[i].get();
-    auto result = leftDecoded->base()->compare(
-        rightDecoded->base(),
-        leftDecoded->index(left.index),
-        rightDecoded->index(right.index));
-    if (result) {
-      return result;
-    }
-  }
-  return 0;
-}
-
 void GroupingSet::initializeRow(VectorRow& keys, char* row) {
   for (auto i = 0; i < keyChannels_.size(); ++i) {
     mergeRows_->store(*(*keys.decoded)[i], keys.index, mergeState_, i);
   }
   vector_size_t zero = 0;
   for (auto& aggregate : aggregates_) {
-    aggregate->initializeNewGroups(&row, folly::Range<const vector_size_t*>(&zero, 1));
+    aggregate->initializeNewGroups(
+        &row, folly::Range<const vector_size_t*>(&zero, 1));
   }
 }
 
@@ -521,10 +506,7 @@ void GroupingSet::updateRow(VectorRow& input, char* row) {
   for (auto i = 0; i < aggregates_.size(); ++i) {
     mergeArgs_[0] = input.rowVector->childAt(i + keyChannels_.size());
     aggregates_[i]->addSingleGroupIntermediateResults(
-        row,
-        mergeSelection_,
-        mergeArgs_,
-        false);
+        row, mergeSelection_, mergeArgs_, false);
   }
   mergeSelection_.setValid(input.index, false);
 }
@@ -547,7 +529,6 @@ void GroupingSet::extractSpillResult(RowVectorPtr& result) {
   mergeRows_->clear();
 }
 
-  
 uint64_t GroupingSet::allocatedBytes() const {
   if (table_) {
     return table_->allocatedBytes();
@@ -605,5 +586,4 @@ void GroupingSet::checkSpill(const RowVectorPtr& input) {
       [&](folly::Range<char**> rows) { table_->erase(rows); });
 }
 
-  
 } // namespace facebook::velox::exec

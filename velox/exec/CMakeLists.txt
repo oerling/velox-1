@@ -52,7 +52,7 @@ add_library(
 
 target_link_libraries(
   velox_exec
-  file
+  velox_file
 velox_core
   velox_vector
   velox_connector
