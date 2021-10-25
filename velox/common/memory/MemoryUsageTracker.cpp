@@ -39,14 +39,12 @@ std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::create(
       parentTracker, type, config);
 }
 
-  //static
-  std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::createRoot() {
-    auto config = MemoryUsageConfigBuilder().forMemoryManager(true).build();
-    return create(nullptr, UsageType::kUserMem, config);
-  }
-  
+// static
+std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::createRoot() {
+  auto config = MemoryUsageConfigBuilder().forMemoryManager(true).build();
+  return create(nullptr, UsageType::kUserMem, config);
+}
 
-  
 void MemoryUsageTracker::update(UsageType type, int64_t size) {
   if (size > 0) {
     ++numAllocs_[static_cast<int>(type)];
@@ -55,15 +53,21 @@ void MemoryUsageTracker::update(UsageType type, int64_t size) {
     cumulativeBytes_[static_cast<int>(UsageType::kTotalMem)] += size;
   }
 
+  auto typeIndex = static_cast<int32_t>(type);
   auto currentOfType =
-      currentUsageInBytes_[static_cast<int32_t>(type)].fetch_add(size);
+      currentUsageInBytes_[typeIndex].fetch_add(size) + size;
   auto currentTotal =
       currentUsageInBytes_[static_cast<int32_t>(UsageType::kTotalMem)]
-          .fetch_add(size);
-
+          .fetch_add(size) +
+      size;
+  VELOX_CHECK_LE(0, currentTotal);
+  VELOX_CHECK_LE(0, currentOfType);
+  
   try {
+    constexpr int32_t kNumMaxSizes = sizeof(maxMemory_) / sizeof(maxMemory_[0]);
     if (size > 0 &&
-        currentTotal > maxMemory_[static_cast<int>(UsageType::kTotalMem)]) {
+        (currentTotal > maxMemory_[static_cast<int>(UsageType::kTotalMem)] ||
+         (typeIndex < kNumMaxSizes && currentOfType > maxMemory_[typeIndex]))) {
       if (growCallback_) {
         if (growCallback_(type, size, this)) {
           return;

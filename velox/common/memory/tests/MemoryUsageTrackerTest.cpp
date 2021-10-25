@@ -149,41 +149,42 @@ TEST(MemoryUsageTrackerTest, reserve) {
 
   EXPECT_THROW(child->reserve(2 * kMaxSize), VeloxRuntimeError);
 
+  child->update(512);
   child->reserve(1024);
   EXPECT_THROW(child->update(2 * kMaxSize), VeloxRuntimeError);
   EXPECT_EQ(child->getAvailableReservation(), 1024);
-  EXPECT_EQ(child->getCurrentTotalBytes(), 1024);
-  EXPECT_EQ(parent->getCurrentTotalBytes(), 1024);
-
-  child->update(512);
-  EXPECT_EQ(child->getAvailableReservation(), 512);
-  EXPECT_EQ(child->getCurrentTotalBytes(), 1024);
-  EXPECT_EQ(parent->getCurrentTotalBytes(), 1024);
-
-  child->update(1024);
-  EXPECT_EQ(child->getAvailableReservation(), 0);
   EXPECT_EQ(child->getCurrentTotalBytes(), 1536);
   EXPECT_EQ(parent->getCurrentTotalBytes(), 1536);
 
   child->update(512);
+  EXPECT_EQ(child->getAvailableReservation(), 512);
+  EXPECT_EQ(child->getCurrentTotalBytes(), 1536);
+  EXPECT_EQ(parent->getCurrentTotalBytes(), 1536);
+
+  child->update(1024);
   EXPECT_EQ(child->getAvailableReservation(), 0);
   EXPECT_EQ(child->getCurrentTotalBytes(), 2048);
   EXPECT_EQ(parent->getCurrentTotalBytes(), 2048);
 
+  child->update(512);
+  EXPECT_EQ(child->getAvailableReservation(), 0);
+  EXPECT_EQ(child->getCurrentTotalBytes(), 2560);
+  EXPECT_EQ(parent->getCurrentTotalBytes(), 2560);
+
   child->update(-512);
   EXPECT_EQ(child->getAvailableReservation(), 0);
-  EXPECT_EQ(child->getCurrentTotalBytes(), 1536);
-  EXPECT_EQ(parent->getCurrentTotalBytes(), 1536);
+  EXPECT_EQ(child->getCurrentTotalBytes(), 2048);
+  EXPECT_EQ(parent->getCurrentTotalBytes(), 2048);
 
   child->update(-1024);
   EXPECT_EQ(child->getAvailableReservation(), 512);
-  EXPECT_EQ(child->getCurrentTotalBytes(), 1024);
-  EXPECT_EQ(parent->getCurrentTotalBytes(), 1024);
+  EXPECT_EQ(child->getCurrentTotalBytes(), 1536);
+  EXPECT_EQ(parent->getCurrentTotalBytes(), 1536);
 
   child->update(-512);
   EXPECT_EQ(child->getAvailableReservation(), 1024);
-  EXPECT_EQ(child->getCurrentTotalBytes(), 1024);
-  EXPECT_EQ(parent->getCurrentTotalBytes(), 1024);
+  EXPECT_EQ(child->getCurrentTotalBytes(), 1536);
+  EXPECT_EQ(parent->getCurrentTotalBytes(), 1536);
 
   // We free past the allocated size at reservation time. 'usedReservation_'
   // goes negative.
@@ -192,6 +193,15 @@ TEST(MemoryUsageTrackerTest, reserve) {
 
   child->release();
   EXPECT_EQ(child->getAvailableReservation(), 0);
-  EXPECT_EQ(child->getCurrentTotalBytes(), -512);
-  EXPECT_EQ(parent->getCurrentTotalBytes(), -512);
+  EXPECT_EQ(child->getCurrentTotalBytes(), 0);
+  EXPECT_EQ(parent->getCurrentTotalBytes(), 0);
+
+  // Reserve, allocate part, release unneeded.
+  child->reserve(1024);
+  child->update(768);
+  EXPECT_EQ(1024, parent->getCurrentTotalBytes());
+  // Used 3/4 of 1K
+  child->release();
+  EXPECT_EQ(768, child->getCurrentTotalBytes());
+  EXPECT_EQ(768, parent->getCurrentTotalBytes());
 }

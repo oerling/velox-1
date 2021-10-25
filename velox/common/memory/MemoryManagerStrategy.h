@@ -33,9 +33,6 @@ class MemoryConsumer {
 
   virtual void updateMemoryUsageConfig(const MemoryUsageConfig& config) = 0;
 
-  // Returns the number of bytes that this memory consumer overcomitted.
-  virtual int64_t getOvercommittedMemory() const = 0;
-
   // Returns the number of bytes that may be recoverable with
   // tryRecoverMemory().
   virtual int64_t getRecoverableMemory() const = 0;

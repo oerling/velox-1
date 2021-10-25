@@ -153,11 +153,6 @@ class MemoryUsageTracker
       UsageType type,
       const MemoryUsageConfig& config);
 
-  int64_t getOvercommittedMemory() const {
-    return getCurrentTotalBytes() + getCurrentRecoverableBytes() -
-        getMaxTotalBytes();
-  }
-
   static std::shared_ptr<MemoryUsageTracker> createRoot();
 
   

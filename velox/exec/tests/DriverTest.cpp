@@ -717,10 +717,10 @@ class TestingConsumer : public Operator {
   }
 
   int64_t spill(int64_t size) override {
+    recoverableTracker_->release();
     int64_t freed =
         std::min(size, recoverableTracker_->getCurrentRecoverableBytes());
     recoverableTracker_->update(-freed);
-    recoverableTracker_->release();
     return freed;
   }
 

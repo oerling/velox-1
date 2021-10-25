@@ -178,7 +178,7 @@ class Driver {
 
   // Tries to spill 'size' or more bytes of revocable memory from any
   // of the operators in 'this'. Returns the amount of memory
-  // freed. 'this' must be off thread or in a cancel-free state.
+  // freed. 'this' must be off thread or in a suspended state.
   int64_t spill(int64_t size);
 
   // Attempts to increase the limit of 'tracker' by 'size'.  If 'type'
@@ -239,6 +239,12 @@ struct DriverFactory {
   // constructed.
   OperatorSupplier consumerSupplier;
   uint32_t maxDrivers;
+  // True if 'planNodes' contains a source node for the task, e.g. TableScan or
+  // Exchange.
+  bool inputDriver{false};
+  // True if 'planNodes' contains a sync node for the task, e.g.
+  // PartitionedOutput.
+  bool outputDriver{false};
 
   std::shared_ptr<Driver> createDriver(
       std::unique_ptr<DriverCtx> ctx,

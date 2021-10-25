@@ -16,7 +16,8 @@ if(${VELOX_BUILD_TESTING})
 endif()
 
 add_library(velox_memory Memory.cpp MemoryUsage.cpp MappedMemory.cpp
-                         MemoryUsageTracker.cpp MemoryManagerStrategy.cpp)
+  MemoryUsageTracker.cpp MemoryManagerStrategy.cpp
+  MmapAllocator.cpp)
 
 target_link_libraries(velox_memory velox_flag_definitions velox_exception
                       ${FOLLY_WITH_DEPENDENCIES})

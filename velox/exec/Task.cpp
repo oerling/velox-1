@@ -54,7 +54,8 @@ Task::Task(
           memory::UsageType::kUserMem,
           memory::MemoryUsageConfigBuilder()
               .maxTotalMemory(kInitialTaskMemory)
-              .build());
+	  .forMemoryManager(true)
+	  .build());
       pool_->setMemoryUsageTracker(tracker);
     }
     tracker->setGrowCallback([&](memory::UsageType type,
@@ -105,19 +106,23 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   LocalPlanner::plan(
       self->planNode_, self->consumerSupplier(), &self->driverFactories_);
 
-  for (auto& factory : self->driverFactories_) {
-    self->numDrivers_ += std::min(factory->maxDrivers, maxDrivers);
-  }
-  self->taskStats_.pipelineStats.resize(self->driverFactories_.size());
-
-  // Register self for possible memory recovery callback.
-  memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
-
   auto bufferManager = self->bufferManager_.lock();
   VELOX_CHECK_NOT_NULL(
       bufferManager,
       "Unable to initialize task. "
       "PartitionedOutputBufferManager was already destructed");
+
+  for (auto& factory : self->driverFactories_) {
+    self->numDrivers_ += std::min(factory->maxDrivers, maxDrivers);
+  }
+
+
+  const auto numDriverFactories = self->driverFactories_.size();
+  self->taskStats_.pipelineStats.reserve(numDriverFactories);
+  for (const auto& driverFactory : self->driverFactories_) {
+    self->taskStats_.pipelineStats.emplace_back(
+        driverFactory->inputDriver, driverFactory->outputDriver);
+  }
 
   std::vector<std::shared_ptr<Driver>> drivers;
   drivers.reserve(self->numDrivers_);
@@ -167,12 +172,17 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
     }
   }
   self->noMoreLocalExchangeProducers();
+
   // Set and start all Drivers together inside the CancelPool so that
   // cancellations and pauses have well
   // defined timing. For example, do not pause and restart a task
   // while it is still adding Drivers.
   std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
   self->drivers_ = std::move(drivers);
+  // Register self for possible memory recovery callback. Do this
+  // after creating the drivers but before starting them.
+  memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
+
   for (auto& driver : self->drivers_) {
     if (driver) {
       Driver::enqueue(driver);
