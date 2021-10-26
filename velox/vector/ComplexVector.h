@@ -278,11 +278,6 @@ class ArrayVector : public BaseVector {
     BaseVector::resize(size);
   }
 
-  void clear() override {
-    elements_->clear();
-    resize(0);
-  }
-  
   void
   setOffsetAndSize(vector_size_t i, vector_size_t offset, vector_size_t size) {
     offsets_->asMutable<vector_size_t>()[i] = offset;
