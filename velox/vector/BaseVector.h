@@ -331,6 +331,9 @@ class BaseVector {
 
   virtual void clearNulls(vector_size_t begin, vector_size_t end);
 
+  // Sets 'this' to state after construction with size 0. All null
+  // flags, sizes, contained vectors and their nulls and sizes are
+  // cleared. Call this before reusing a vector of complex type.
   virtual void clear() {
     resize(0);
   }
