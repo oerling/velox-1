@@ -142,11 +142,6 @@ class SpillFile : public SpillStream {
  protected:
   void nextBatch() override {
     VectorStreamGroup::read(stream_.get(), &pool_, type_, &rowVector_);
-    if (rowVector_->size() &&
-        rowVector_->childAt(0)->as<FlatVector<int32_t>>()->valueAt(0) ==
-            199419) {
-      LOG(INFO) << "Read 199419 as first";
-    }
     index_ = 0;
     numRows_ = rowVector_->size();
   }
@@ -207,7 +202,7 @@ class SpillState {
       TypePtr type,
       const std::string& path,
       HashBitField bits,
-      uint64_t targetSize,
+      uint64_t targetFileSize,
       uint64_t targetBatchSize,
       memory::MemoryPool& pool,
       memory::MappedMemory* mappedMemory)
@@ -215,7 +210,7 @@ class SpillState {
         path_(path),
         bits_(bits),
         fieldMask_(((1UL << bits_.end - bits_.begin)) - 1),
-        targetSize_(targetSize),
+        targetFileSize_(targetFileSize),
         targetBatchSize_(targetBatchSize),
         pool_(pool),
         mappedMemory_(mappedMemory) {}
@@ -235,8 +230,8 @@ class SpillState {
     return 1 << bits_.end - bits_.begin;
   }
 
-  uint64_t targetSize() const {
-    return targetSize_;
+  uint64_t targetFileSize() const {
+    return targetFileSize_;
   }
 
   uint64_t targetBatchSize() const {
@@ -287,7 +282,7 @@ class SpillState {
   // numSpilledRanges spill to the file list in the corresponding
   // place in 'files_'.
   int32_t numWays_ = 0;
-  const uint64_t targetSize_;
+  const uint64_t targetFileSize_;
   const uint64_t targetBatchSize_;
   // A file list for each spilled range.
   std::vector<std::unique_ptr<FileList>> files_;

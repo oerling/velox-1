@@ -113,7 +113,7 @@ void SpillState::setNumWays(int32_t numWays) {
         type_,
         fmt::format("{}-{}", path_, newWay),
         1 << 20,
-        targetSize_,
+        targetFileSize_,
         pool_,
         mappedMemory_));
   }

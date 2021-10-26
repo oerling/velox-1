@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/RowContainer.h"
+#include "velox/serializers/PrestoSerializer.h"
 #include <gtest/gtest.h>
 #include <array>
 #include <random>
@@ -22,6 +23,7 @@
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/VectorHasher.h"
 #include "velox/vector/tests/VectorMaker.h"
+#include "velox/common/file/FileSystems.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -33,6 +35,11 @@ class RowContainerTest : public testing::Test {
   void SetUp() override {
     pool_ = memory::getDefaultScopedMemoryPool();
     mappedMemory_ = memory::MappedMemory::getInstance();
+    if (!isRegisteredVectorSerde()) {
+      facebook::velox::serializer::presto::PrestoVectorSerde::
+	registerVectorSerde();
+    }
+    filesystems::registerLocalFileSystem();
   }
 
   RowVectorPtr makeDataset(
@@ -53,15 +60,16 @@ class RowContainerTest : public testing::Test {
 
   std::unique_ptr<RowContainer> makeRowContainer(
       const std::vector<TypePtr>& keyTypes,
-      const std::vector<TypePtr>& dependentTypes) {
+      const std::vector<TypePtr>& dependentTypes,
+						 bool isJoinBuild = true) {
     static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;
     return std::make_unique<RowContainer>(
         keyTypes,
-        false,
+        !isJoinBuild,
         kEmptyAggregates,
         dependentTypes,
-        true,
-        true,
+        isJoinBuild,
+        isJoinBuild,
         true,
         true,
         mappedMemory_,
@@ -420,24 +428,15 @@ TEST_F(RowContainerTest, spill) {
       "struct_val:struct<s_int:int, s_array:array<float>>,"
       "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>",
       kNumRows,
-      [](RowVectorPtr rows) {
-        auto strings =
-            rows->childAt(
-                    rows->type()->as<TypeKind::ROW>().getChildIdx("string_val"))
-                ->as<FlatVector<StringView>>();
-        for (auto i = 0; i < strings->size(); i += 11) {
-          std::string chars;
-          makeLargeString(i * 10000, chars);
-          strings->set(i, StringView(chars));
-        }
-      });
+      [](RowVectorPtr rows) {});
   const auto& types = batch->type()->as<TypeKind::ROW>().children();
   std::vector<TypePtr> keys;
   keys.insert(keys.begin(), types.begin(), types.begin() + 5);
 
   std::vector<TypePtr> dependents;
   dependents.insert(dependents.begin(), types.begin() + 5, types.end());
-  auto data = makeRowContainer(keys, dependents);
+  // Make non-join build container so that spill runs are sorted.
+  auto data = makeRowContainer(keys, dependents, false);
   std::vector<char*> rows(kNumRows);
   for (int i = 0; i < kNumRows; ++i) {
     rows[i] = data->newRow();
@@ -450,13 +449,21 @@ TEST_F(RowContainerTest, spill) {
       data->store(decoded, index, rows[index], column);
     }
   }
+  std::vector<int32_t> sortedIndices(kNumRows);
+  std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+  std::sort(
+      sortedIndices.begin(),
+      sortedIndices.end(),
+      [&](int32_t leftIndex, int32_t rightIndex) {
+	return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
+      });
 
   auto spillState = std::make_unique<SpillState>(
       batch->type(),
       "/tmp/spill",
       HashBitField{0, 0},
-      100000,
-      100,
+      2000000,
+      1000,
       *pool_,
       mappedMemory_);
   RowContainerIterator iter;
@@ -466,23 +473,6 @@ TEST_F(RowContainerTest, spill) {
       std::numeric_limits<int64_t>::max(),
       iter,
       [&](folly::Range<char**> rows) { data->eraseRows(rows); });
-  std::vector<int32_t> sortedIndices(kNumRows);
-  std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
-  std::sort(
-      sortedIndices.begin(),
-      sortedIndices.end(),
-      [&](int32_t leftIndex, int32_t rightIndex) {
-        for (auto k = 0; k < keys.size(); ++k) {
-          auto rc = data->compare(rows[leftIndex], rows[rightIndex], k);
-          if (rc == 0) {
-            continue;
-          }
-          if (rc < 0) {
-            return true;
-          }
-        }
-        return false;
-      });
 
   auto merge = spillState->startMerge(0, nullptr);
   for (auto i = 0; i < kNumRows; ++i) {
