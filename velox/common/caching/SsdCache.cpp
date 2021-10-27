@@ -266,12 +266,14 @@ bool SsdFile::evictLocked() {
   return true;
 }
 
-void SsdFile::clearRegionEntriesLocked(const std::vector<int32_t>& regionIndices) {
+void SsdFile::clearRegionEntriesLocked(
+    const std::vector<int32_t>& regionIndices) {
   // Remove all 'entries_' where the dependent points one of 'regionIndices'.
   auto it = entries_.begin();
   while (it != entries_.end()) {
     auto region = regionIndex(it->second.offset());
-    if (std::find(regionIndices.begin(), toErase.begin(), region) != toErase.end()) {
+    if (std::find(regionIndices.begin(), toErase.begin(), region) !=
+        toErase.end()) {
       it = entries_.erase(it);
     } else {
       ++it;

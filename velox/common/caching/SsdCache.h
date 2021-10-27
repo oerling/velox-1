@@ -228,7 +228,8 @@ class SsdFile {
       const std::vector<CachePin>& pins,
       int32_t begin);
 
-  // Removes all 'entries_' that reference data in regions described by 'regionIndices'.
+  // Removes all 'entries_' that reference data in regions described by
+  // 'regionIndices'.
   void clearRegionEntriesLocked(const std::vector<int32_t>& regionIndices);
 
   // Clears one or more  regions for accommodating new entries. The regions are
