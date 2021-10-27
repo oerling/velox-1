@@ -514,7 +514,7 @@ bool VectorHasher::tryMapToRange(
     const StringView* values,
     const SelectivityVector& rows,
     uint64_t* result) {
-  if (!rows.isAllSelected()) {
+  if (process::hasAvx2() && !rows.isAllSelected()) {
     return false;
   }
   auto end = rows.end();
