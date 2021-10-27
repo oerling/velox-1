@@ -272,8 +272,8 @@ void SsdFile::clearRegionEntriesLocked(
   auto it = entries_.begin();
   while (it != entries_.end()) {
     auto region = regionIndex(it->second.offset());
-    if (std::find(regionIndices.begin(), toErase.begin(), region) !=
-        toErase.end()) {
+    if (std::find(regionIndices.begin(), regionIndices.end(), region) !=
+        regionIndices.end()) {
       it = entries_.erase(it);
     } else {
       ++it;

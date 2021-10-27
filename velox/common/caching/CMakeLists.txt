@@ -14,7 +14,7 @@
 
 add_library(velox_caching DataCache.cpp FileIds.cpp StringIdMap.cpp
                           AsyncDataCache.cpp ScanTracker.cpp SsdCache.cpp)
-target_link_libraries(velox_caching velox_memory velox_exception glog::glog
+target_link_libraries(velox_caching velox_memory velox_exception velox_file glog::glog
                       ${FOLLY_WITH_DEPENDENCIES})
 
 if(${VELOX_BUILD_TESTING})
