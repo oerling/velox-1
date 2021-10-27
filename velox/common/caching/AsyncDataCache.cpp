@@ -352,7 +352,6 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t largeFreed = 0;
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
-  int32_t orgNumEvictChecks = numEvictChecks_;
   {
     std::lock_guard<std::mutex> l(mutex_);
     int size = entries_.size();
@@ -466,7 +465,7 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.allocClocks += allocClocks_;
 }
 
-void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
+void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
   auto& groupStats = cache_->ssdCache()->groupStats();
   std::lock_guard<std::mutex> l(mutex_);
   for (auto& entry : entries_) {
@@ -583,7 +582,7 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
 
     std::vector<CachePin> pins;
     for (auto& shard : shards_) {
-      shard->getSsdSaveable(pins);
+      shard->appendSsdSaveable(pins);
     }
     ssdCache_->store(std::move(pins));
   }
@@ -614,7 +613,7 @@ std::string AsyncDataCache::toString() const {
       << stats.numEvict << "\n"
       << " read pins " << stats.numShared << " write pins "
       << stats.numExclusive << " unused prefetch " << stats.numPrefetch
-      << " Alloc Mclks " << (stats.allocClocks >> 20) << " allocated pages "
+      << " Alloc Mclocks " << (stats.allocClocks >> 20) << " allocated pages "
       << numAllocated() << " cached pages " << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {

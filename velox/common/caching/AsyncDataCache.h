@@ -438,8 +438,8 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
 
   // Makes cache entries for the ranges to load if there are no pins
   // yet. Returns true if pins were made and should be
-  // loaded. Implementations can make a FusedLoad activated ofor on
-  // first access of a correlated sparsely loaded set of
+  // loaded. Implementations can make a FusedLoad activated on
+  // first access of a correlated sparsely accessed set of
   // columns. There the cache entries for all will be made on first
   // access.
   virtual bool makePins() {
@@ -572,7 +572,7 @@ class CacheShard {
   // Adds the stats of 'this' to 'stats'.
   void updateStats(CacheStats& stats);
 
-  void getSsdSaveable(std::vector<CachePin>& pins);
+  void appendSsdSaveable(std::vector<CachePin>& pins);
 
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
@@ -708,13 +708,23 @@ class AsyncDataCache : public memory::MappedMemory,
     return ssdCache_.get();
   }
 
+  // Updates stats for creation of a new cache entry of 'size' bytes,
+  // i.e. a cache miss. Periodically updates SSD admission criteria,
+  // i.e. reconsider criteria every half cache capacity worth of misses.
   void incrementNew(uint64_t size);
 
+  // Updates statistics after bringing in 'bytes' worth of data that
+  // qualifies for SSD save and is not backed by SSD. Periodically
+  // triggers a background write of eligible entries to SSD.
   void possibleSsdSave(uint64_t bytes);
 
+  // Sets a callback applied to new entries at the point where
+  // 'dataValid_' is set to true. Used for testing and can be used for
+  // e.g. checking checksums.
   void setVerifyHook(std::function<void(const AsyncDataCacheEntry&)> hook) {
     verifyHook_ = hook;
   }
+
   const auto& verifyHook() const {
     return verifyHook_;
   }

@@ -266,18 +266,18 @@ bool SsdFile::evictLocked() {
   return true;
 }
 
-void SsdFile::clearRegionEntriesLocked(const std::vector<int32_t>& toErase) {
-  // Remove all 'entries_' where the dependent points one of 'toErase'.
+void SsdFile::clearRegionEntriesLocked(const std::vector<int32_t>& regionIndices) {
+  // Remove all 'entries_' where the dependent points one of 'regionIndices'.
   auto it = entries_.begin();
   while (it != entries_.end()) {
     auto region = regionIndex(it->second.offset());
-    if (std::find(toErase.begin(), toErase.begin(), region) != toErase.end()) {
+    if (std::find(regionIndices.begin(), toErase.begin(), region) != toErase.end()) {
       it = entries_.erase(it);
     } else {
       ++it;
     }
   }
-  for (auto region : toErase) {
+  for (auto region : regionIndices) {
     // While the region is being filled it may get score from
     // hits. When it is full, it will get a score boost to be a little
     // ahead of the best.

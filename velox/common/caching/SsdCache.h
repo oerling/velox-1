@@ -138,7 +138,7 @@ struct SsdCacheStats {
 // of 64MB regions. Each region has a pin count and an read
 // count. Cache replacement takes place region by region, preferring
 // regions with a smaller read count. Entries do not span
-// regions. Otherwise entries are consecutive byte ranges in side
+// regions. Otherwise entries are consecutive byte ranges inside
 // their region.
 class SsdFile {
  public:
@@ -228,9 +228,8 @@ class SsdFile {
       const std::vector<CachePin>& pins,
       int32_t begin);
 
-  // Removes all 'entries_' that reference data in 'toErase'. 'toErase is a set
-  // of region indices.
-  void clearRegionEntriesLocked(const std::vector<int32_t>& toErase);
+  // Removes all 'entries_' that reference data in regions described by 'regionIndices'.
+  void clearRegionEntriesLocked(const std::vector<int32_t>& regionIndices);
 
   // Clears one or more  regions for accommodating new entries. The regions are
   // added to 'writableRegions_'. Returns true if regions could be cleared.
