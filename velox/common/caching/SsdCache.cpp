@@ -60,13 +60,10 @@ SsdFile::SsdFile(
       maxRegions_(maxRegions),
       filename_(filename) {
   int32_t oDirect = 0;
-  #ifdef linux
+#ifdef linux
   oDirect = FLAGS_ssd_odirect ? O_DIRECT : 0;
 #endif
-  fd_ = open(
-      filename.c_str(),
-      O_CREAT | O_RDWR | oDirect,
-      S_IRUSR | S_IWUSR);
+  fd_ = open(filename.c_str(), O_CREAT | O_RDWR | oDirect, S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
     LOG(ERROR) << "Cannot open or create " << filename << " error " << errno;
     exit(1);
