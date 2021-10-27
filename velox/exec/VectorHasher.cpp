@@ -451,7 +451,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
       return nullptr;
   }
 }
-  
+
 namespace {
 
 V32::TV stringViewOffsets = {0, 4, 8, 12, 16, 20, 24, 28};
