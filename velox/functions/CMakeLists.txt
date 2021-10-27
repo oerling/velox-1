@@ -11,6 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+add_library(velox_function_registry FunctionRegistry.cpp)
+
+target_link_libraries(velox_function_registry velox_expression velox_type
+                      velox_core velox_exception)
+
 add_subdirectory(lib)
 add_subdirectory(prestosql)
 add_subdirectory(sparksql)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()

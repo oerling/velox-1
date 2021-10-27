@@ -314,15 +314,6 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxRuntimeError);
 
 DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
 
-#define VELOX_USER_THROW(...)                                    \
-  _VELOX_THROW_IMPL(                                             \
-      ::facebook::velox::VeloxUserError,                         \
-      "",                                                        \
-      ::facebook::velox::error_source::kErrorSourceUser.c_str(), \
-      ::facebook::velox::error_code::kInvalidArgument.c_str(),   \
-      /* isRetriable */ false,                                   \
-      ##__VA_ARGS__)
-
 // For all below macros, an additional message can be passed using a
 // format string and arguments, as with `fmt::format`.
 #define VELOX_USER_CHECK(expr, ...) \
@@ -339,6 +330,8 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
   _VELOX_USER_CHECK_OP(e1, e2, ==, ##__VA_ARGS__)
 #define VELOX_USER_CHECK_NE(e1, e2, ...) \
   _VELOX_USER_CHECK_OP(e1, e2, !=, ##__VA_ARGS__)
+#define VELOX_USER_CHECK_NULL(e, ...) \
+  VELOX_USER_CHECK(e == nullptr, ##__VA_ARGS__)
 #define VELOX_USER_CHECK_NOT_NULL(e, ...) \
   VELOX_USER_CHECK(e != nullptr, ##__VA_ARGS__)
 
@@ -358,6 +351,7 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
   VELOX_USER_CHECK_NE(e1, e2, ##__VA_ARGS__)
 #define VELOX_USER_DCHECK_NOT_NULL(e, ...) \
   VELOX_USER_CHECK_NOT_NULL(e, ##__VA_ARGS__)
+#define VELOX_USER_DCHECK_NULL(e, ...) VELOX_USER_CHECK_NULL(e, ##__VA_ARGS__)
 #else
 #define VELOX_USER_DCHECK(expr, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_GT(e1, e2, ...) VELOX_USER_CHECK(true)
@@ -366,6 +360,7 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
 #define VELOX_USER_DCHECK_LE(e1, e2, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_EQ(e1, e2, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_NE(e1, e2, ...) VELOX_USER_CHECK(true)
+#define VELOX_USER_DCHECK_NULL(e, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_NOT_NULL(e, ...) VELOX_USER_CHECK(true)
 #endif
 
@@ -373,7 +368,7 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
   _VELOX_THROW(                                                  \
       ::facebook::velox::VeloxUserError,                         \
       ::facebook::velox::error_source::kErrorSourceUser.c_str(), \
-      ::facebook::velox::error_code::kGenericUserError.c_str(),  \
+      ::facebook::velox::error_code::kInvalidArgument.c_str(),   \
       /* isRetriable */ false,                                   \
       ##__VA_ARGS__)
 

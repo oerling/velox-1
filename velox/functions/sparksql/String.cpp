@@ -15,8 +15,11 @@
  */
 #include "velox/expression/VectorFunction.h"
 #include "velox/functions/lib/StringEncodingUtils.h"
+#include "velox/functions/lib/string/StringCore.h"
 
 namespace facebook::velox::functions::sparksql {
+
+using namespace stringCore;
 namespace {
 
 template <bool isAscii>
@@ -40,7 +43,7 @@ class Instr : public exec::VectorFunction {
   void apply(
       const SelectivityVector& selected,
       std::vector<VectorPtr>& args,
-      exec::Expr*,
+      const TypePtr& /* outputType */,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
@@ -51,7 +54,7 @@ class Instr : public exec::VectorFunction {
     BaseVector::ensureWritable(selected, INTEGER(), context->pool(), result);
     auto* output = (*result)->as<FlatVector<int32_t>>();
 
-    if (getStringEncodingOrUTF8(args[0].get()) == StringEncodingMode::ASCII) {
+    if (isAscii(args[0].get(), selected)) {
       selected.applyToSelected([&](vector_size_t row) {
         output->set(
             row,
@@ -79,7 +82,7 @@ class Length : public exec::VectorFunction {
   void apply(
       const SelectivityVector& selected,
       std::vector<VectorPtr>& args,
-      exec::Expr*,
+      const TypePtr& /* outputType */,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     VELOX_CHECK_EQ(args.size(), 1);
@@ -91,7 +94,7 @@ class Length : public exec::VectorFunction {
     auto* output = (*result)->as<FlatVector<int32_t>>();
 
     if (args[0]->typeKind() == TypeKind::VARCHAR &&
-        getStringEncodingOrUTF8(args[0].get()) != StringEncodingMode::ASCII) {
+        !isAscii(args[0].get(), selected)) {
       selected.applyToSelected([&](vector_size_t row) {
         const StringView str = input->valueAt<StringView>(row);
         output->set(row, lengthUnicode(str.data(), str.size()));

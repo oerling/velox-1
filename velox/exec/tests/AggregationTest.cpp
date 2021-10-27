@@ -285,7 +285,7 @@ TEST_F(AggregationTest, aggregateOfNulls) {
   };
 
   auto rowVector = std::make_shared<RowVector>(
-      pool_.get(), rowType, BufferPtr(nullptr), 100, children, folly::none);
+      pool_.get(), rowType, BufferPtr(nullptr), 100, children);
   auto vectors = {rowVector};
   createDuckDbTable(vectors);
 
@@ -416,7 +416,7 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
   params.queryCtx = core::QueryCtx::create();
 
   params.queryCtx->setConfigOverridesUnsafe({
-      {core::QueryCtx::kMaxPartialAggregationMemory, "100"},
+      {core::QueryConfig::kMaxPartialAggregationMemory, "100"},
   });
 
   // Distinct aggregation.

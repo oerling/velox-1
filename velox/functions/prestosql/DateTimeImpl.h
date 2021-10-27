@@ -15,12 +15,14 @@
  */
 #pragma once
 
+#include <optional>
 #include "velox/type/Timestamp.h"
 
 namespace facebook::velox::functions {
 namespace {
 constexpr double kNanosecondsInSecond = 1'000'000'000;
-}
+constexpr int64_t kNanosecondsInMilliseconds = 1'000'000;
+} // namespace
 
 FOLLY_ALWAYS_INLINE double toUnixtime(const Timestamp& timestamp) {
   double result = timestamp.getSeconds();
@@ -28,10 +30,33 @@ FOLLY_ALWAYS_INLINE double toUnixtime(const Timestamp& timestamp) {
   return result;
 }
 
-FOLLY_ALWAYS_INLINE Timestamp fromUnixtime(double unixtime) {
+FOLLY_ALWAYS_INLINE std::optional<Timestamp> fromUnixtime(double unixtime) {
+  if (UNLIKELY(std::isnan(unixtime))) {
+    return Timestamp(0, 0);
+  }
+
+  static const int64_t kMax = std::numeric_limits<int64_t>::max();
+  static const int64_t kMin = std::numeric_limits<int64_t>::min();
+
+  static const Timestamp kMaxTimestamp(
+      kMax / 1000, kMax % 1000 * kNanosecondsInMilliseconds);
+  static const Timestamp kMinTimestamp(
+      kMin / 1000 - 1, (kMin % 1000 + 1000) * kNanosecondsInMilliseconds);
+
+  if (UNLIKELY(unixtime >= kMax)) {
+    return kMaxTimestamp;
+  }
+
+  if (UNLIKELY(unixtime <= kMin)) {
+    return kMinTimestamp;
+  }
+
+  if (UNLIKELY(std::isinf(unixtime))) {
+    return unixtime < 0 ? kMinTimestamp : kMaxTimestamp;
+  }
+
   auto seconds = std::floor(unixtime);
   auto nanos = unixtime - seconds;
   return Timestamp(seconds, nanos * kNanosecondsInSecond);
 }
-
 } // namespace facebook::velox::functions

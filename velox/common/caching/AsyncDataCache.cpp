@@ -67,8 +67,14 @@ void AsyncDataCacheEntry::addReference() {
 }
 
 void AsyncDataCacheEntry::ensureLoaded(bool wait) {
-  auto load = load_;
   VELOX_CHECK(isShared());
+  if (dataValid_) {
+    return;
+  }
+  // Copy the shared_ptr to 'load_' so that another loader will not clear
+  // it if it gets in first. Competing loaders get serialized on the
+  // mutex of 'load'.
+  auto load = load_;
   if (load) {
     if (wait) {
       folly::SemiFuture<bool> waitFuture(false);
@@ -127,6 +133,7 @@ CachePin CacheShard::findOrCreate(
       found->touch();
       // The entry is in a readable state. Add a pin.
       if (found->isPrefetch_) {
+        found->isFirstUse_ = true;
         found->setPrefetch(false);
       } else {
         ++numHit_;
@@ -196,8 +203,12 @@ CachePin CacheShard::initEntry(
   return pin;
 }
 
+//  static
+std::atomic<int32_t> FusedLoad::numFusedLoads_{0};
+
 FusedLoad::~FusedLoad() {
   cancel();
+  --numFusedLoads_;
 }
 
 bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
@@ -221,7 +232,8 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
   }
   // Outside of 'mutex_'.
   try {
-    loadData();
+    // If wait is not set this counts as prefetch.
+    loadData(!wait);
     for (auto& pin : pins_) {
       pin.entry()->setValid();
     }
@@ -405,8 +417,12 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.allocClocks += allocClocks_;
 }
 
-AsyncDataCache::AsyncDataCache(MappedMemory* mappedMemory, uint64_t maxBytes)
-    : mappedMemory_(mappedMemory), cachedPages_(0), maxBytes_(maxBytes) {
+AsyncDataCache::AsyncDataCache(
+    std::unique_ptr<MappedMemory> mappedMemory,
+    uint64_t maxBytes)
+    : mappedMemory_(std::move(mappedMemory)),
+      cachedPages_(0),
+      maxBytes_(maxBytes) {
   for (auto i = 0; i < kNumShards; ++i) {
     shards_.push_back(std::make_unique<CacheShard>(this));
   }
@@ -420,19 +436,15 @@ CachePin AsyncDataCache::findOrCreate(
   return shards_[shard]->findOrCreate(key, size, wait);
 }
 
-bool AsyncDataCache::allocate(
+bool AsyncDataCache::makeSpace(
     MachinePageCount numPages,
-    int32_t owner,
-    Allocation& out,
-    std::function<void(int64_t)> beforeAllocCB,
-    MachinePageCount minSizeClass) {
+    std::function<bool()> allocate) {
   constexpr int32_t kMaxAttempts = kNumShards * 4;
-  free(out);
+
   for (auto nthAttempt = 0; nthAttempt < kMaxAttempts; ++nthAttempt) {
     if (mappedMemory_->numAllocated() + numPages <
         maxBytes_ / MappedMemory::kPageSize) {
-      if (mappedMemory_->allocate(
-              numPages, owner, out, beforeAllocCB, minSizeClass)) {
+      if (allocate()) {
         return true;
       }
     }
@@ -444,6 +456,30 @@ bool AsyncDataCache::allocate(
         numPages * MappedMemory::kPageSize, nthAttempt >= kNumShards);
   }
   return false;
+}
+
+bool AsyncDataCache::allocate(
+    MachinePageCount numPages,
+    int32_t owner,
+    Allocation& out,
+    std::function<void(int64_t)> beforeAllocCB,
+    MachinePageCount minSizeClass) {
+  free(out);
+  return makeSpace(numPages, [&]() {
+    return mappedMemory_->allocate(
+        numPages, owner, out, beforeAllocCB, minSizeClass);
+  });
+}
+
+bool AsyncDataCache::allocateContiguous(
+    MachinePageCount numPages,
+    Allocation* collateral,
+    ContiguousAllocation& allocation,
+    std::function<void(int64_t)> beforeAllocCB) {
+  return makeSpace(numPages, [&]() {
+    return mappedMemory_->allocateContiguous(
+        numPages, collateral, allocation, beforeAllocCB);
+  });
 }
 
 CacheStats AsyncDataCache::refreshStats() const {

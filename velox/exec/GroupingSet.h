@@ -31,6 +31,7 @@ class GroupingSet {
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
       bool ignoreNullKeys,
+      bool isRawInput,
       OperatorCtx* driverCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
@@ -52,17 +53,21 @@ class GroupingSet {
 
   void populateTempVectors(int32_t aggregateIndex, const RowVectorPtr& input);
 
-  // If the given aggregation has mask, the method copies the activeRows_ to
-  // maskedActiveRows_, updates maskedActiveRows_ from the mask column and
-  // returns pointer to the maskedActiveRows_. Otherwise it simply returns
-  // pointer to activeRows_.
-  const SelectivityVector* prepareSelectivityVector(
-      size_t aggregateIndex,
-      const RowVectorPtr& input);
+  // For each aggregation, if that aggregation has mask, the method prepares the
+  // selectivity vector by copying activeRows_ and then updating it from the
+  // mask column. The selectivity vectors are reused, if more than one
+  // aggregation is using it (we keep the map keyed by channel index).
+  void prepareMaskedSelectivityVectors(const RowVectorPtr& input);
+
+  // If the given aggregation has mask, the method returns reference to the
+  // selectivity vector from the maskedActiveRows_ (based on the mask channel
+  // index for this aggregation), otherwise it returns reference to activeRows_.
+  const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
   std::vector<ChannelIndex> keyChannels_;
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   const bool isGlobal_;
+  const bool isRawInput_;
   std::vector<std::unique_ptr<Aggregate>> aggregates_;
   // For each aggregation, can hold an index to a boolean channel (projection in
   // the input row vector), that acts as row mask for the aggregation.
@@ -85,10 +90,13 @@ class GroupingSet {
   std::unique_ptr<HashLookup> lookup_;
   uint64_t numAdded_ = 0;
   SelectivityVector activeRows_;
-  // In case of an aggregation using a mask, this selectivity vector is updated
-  // from the mask boolean projection and is used to run aggregations, instead
-  // of the activeRows_.
-  SelectivityVector maskedActiveRows_;
+  // For aggregations that use masks we keep selectivity vectors in this map,
+  // keyed by the channel index, so the selectivity vectors can be reused.
+  struct MaskedRows {
+    bool prepared{false}; // true, if already prepared for the current batch.
+    SelectivityVector rows;
+  };
+  std::unordered_map<ChannelIndex, MaskedRows> maskedActiveRows_;
 
   // We use this vector to decode mask boolean projections to update aggregation
   // masks.

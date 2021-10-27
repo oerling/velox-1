@@ -17,6 +17,7 @@
 #pragma once
 
 #include <folly/Random.h>
+#include <random>
 
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
@@ -25,6 +26,16 @@ namespace facebook::velox {
 
 // Helper class to generate randomized vectors with random (and potentially
 // nested) encodings. Use the constructor seed to make it deterministic.
+
+using FuzzerGenerator = std::mt19937;
+
+enum UTF8CharList {
+  ASCII, /* Ascii character set.*/
+  UNICODE_CASE_SENSITIVE, /* Unicode scripts that support case.*/
+  EXTENDED_UNICODE, /* Extended Unicode: Arabic, Devanagiri etc*/
+  MATHEMATICAL_SYMBOLS /* Mathematical Symbols.*/
+};
+
 class VectorFuzzer {
  public:
   struct Options {
@@ -35,15 +46,25 @@ class VectorFuzzer {
     size_t nullChance{0};
 
     // Size of the generated strings. If `stringVariableLength` is true, the
-    // semantic of this option becomes "string maximum length".
+    // semantic of this option becomes "string maximum length". Here this
+    // represents number of characters and not bytes.
     size_t stringLength{50};
 
-    // Whether generated strings should include UTF8 characters.
-    bool stringUtf8{false};
+    // Vector of String charsets to choose from; bias a charset by including it
+    // multiple times.
+    std::vector<UTF8CharList> charEncodings{ASCII};
 
     // If true, the length of strings are randomly generated and `stringLength`
     // is treated as maximum length.
     bool stringVariableLength{false};
+
+    // Size of the generated array/map. If `containerVariableLength` is true,
+    // the semantic of this option becomes "container maximum length".
+    size_t containerLength{10};
+
+    // If true, the length of array/map are randomly generated and
+    // `containerLength` is treated as maximum length.
+    bool containerVariableLength{false};
   };
 
   VectorFuzzer(
@@ -63,6 +84,12 @@ class VectorFuzzer {
   // DictionaryVector.
   VectorPtr fuzzDictionary(const VectorPtr& vector);
 
+  // Returns a complex vector with randomized data and nulls.
+  VectorPtr fuzzComplex(const TypePtr& type);
+
+  // Returns a "fuzzed" row vector with randomized data and nulls.
+  VectorPtr fuzzRow(const RowTypePtr& rowType);
+
   variant randVariant(const TypePtr& arg);
 
   void reSeed(size_t seed) {
@@ -75,11 +102,19 @@ class VectorFuzzer {
     return folly::Random::oneIn(n, rng_);
   }
 
+  VectorPtr fuzz(const TypePtr& type, vector_size_t size);
+
+  VectorPtr fuzzFlat(const TypePtr& type, vector_size_t size);
+
+  VectorPtr fuzzComplex(const TypePtr& type, vector_size_t size);
+
+  VectorPtr fuzzRow(const RowTypePtr& rowType, vector_size_t size);
+
   const VectorFuzzer::Options opts_;
 
   memory::MemoryPool* pool_;
 
-  folly::Random::DefaultGenerator rng_;
+  FuzzerGenerator rng_;
 };
 
 } // namespace facebook::velox

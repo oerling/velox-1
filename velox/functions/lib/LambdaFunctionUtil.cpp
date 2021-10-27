@@ -47,11 +47,11 @@ void flattenBuffers(
   newNulls = flattenNulls(rows, decodedVector);
   uint64_t* rawNewNulls = newNulls ? newNulls->asMutable<uint64_t>() : nullptr;
 
-  elementIndices = AlignedBuffer::allocate<vector_size_t>(newNumElements, pool);
+  elementIndices = allocateIndices(newNumElements, pool);
   auto rawElementIndices = elementIndices->asMutable<vector_size_t>();
-  newSizes = AlignedBuffer::allocate<vector_size_t>(rows.end(), pool);
+  newSizes = allocateSizes(rows.end(), pool);
   auto rawNewSizes = newSizes->asMutable<vector_size_t>();
-  newOffsets = AlignedBuffer::allocate<vector_size_t>(rows.end(), pool);
+  newOffsets = allocateOffsets(rows.end(), pool);
   auto rawNewOffsets = newOffsets->asMutable<vector_size_t>();
 
   auto indices = decodedVector.indices();
@@ -111,8 +111,7 @@ ArrayVectorPtr flattenArray(
           BufferPtr(nullptr),
           elementIndices,
           newNumElements,
-          array->elements()),
-      folly::none);
+          array->elements()));
 }
 
 MapVectorPtr flattenMap(
@@ -149,8 +148,10 @@ MapVectorPtr flattenMap(
       BaseVector::wrapInDictionary(
           BufferPtr(nullptr), elementIndices, newNumElements, map->mapKeys()),
       BaseVector::wrapInDictionary(
-          BufferPtr(nullptr), elementIndices, newNumElements, map->mapValues()),
-      folly::none);
+          BufferPtr(nullptr),
+          elementIndices,
+          newNumElements,
+          map->mapValues()));
 }
 
 } // namespace facebook::velox::functions

@@ -18,7 +18,7 @@
 #include <gtest/gtest.h>
 
 #include "velox/common/time/Timer.h"
-#include "velox/dwio/dwrf/reader/ScanSpec.h"
+#include "velox/dwio/common/ScanSpec.h"
 #include "velox/type/Filter.h"
 #include "velox/type/Subfield.h"
 #include "velox/vector/FlatVector.h"
@@ -33,10 +33,10 @@
 
 DEFINE_int32(timing_repeats, 0, "Count of repeats for timing filter tests");
 
-namespace facebook::dwio::dwrf {
+namespace facebook::velox::dwio::dwrf {
 using namespace facebook::velox::test;
 using namespace facebook::velox::dwrf;
-using namespace facebook::dwio::type::fbhive;
+using namespace facebook::velox::dwio::type::fbhive;
 using namespace facebook::velox;
 using namespace facebook::velox::common;
 
@@ -485,7 +485,8 @@ class E2EFilterTest : public testing::Test {
   void makeStringDistribution(
       const Subfield& field,
       int cardinality,
-      bool keepNulls) {
+      bool keepNulls,
+      bool addOneOffs) {
     int counter = 0;
     for (RowVectorPtr batch : batches_) {
       auto strings =
@@ -500,6 +501,10 @@ class E2EFilterTest : public testing::Test {
           strings->set(row, StringView(value));
         } else if (counter % 100 > 90 && row > 0) {
           strings->copy(strings, row - 1, row, 1);
+        } else if (addOneOffs && counter % 234 == 0) {
+          value = fmt::format(
+              "s{}", folly::Random::rand32(rng_) % (111 * cardinality));
+
         } else {
           value = fmt::format("s{}", folly::Random::rand32(rng_) % cardinality);
           strings->set(row, StringView(value));
@@ -571,9 +576,8 @@ class E2EFilterTest : public testing::Test {
     dwio::common::ReaderOptions readerOpts;
     dwio::common::RowReaderOptions rowReaderOpts;
     auto reader = std::make_unique<DwrfReader>(readerOpts, std::move(input));
-    auto factory = std::make_unique<SelectiveColumnReaderFactory>(spec);
-    // The factory and spec must stay live over the lifetime of the reader.
-    rowReaderOpts.setColumnReaderFactory(factory.get());
+    // The spec must stay live over the lifetime of the reader.
+    rowReaderOpts.setScanSpec(spec);
     auto rowReader = reader->createRowReader(rowReaderOpts);
 
     auto batchIndex = 0;
@@ -620,8 +624,8 @@ class E2EFilterTest : public testing::Test {
     dwio::common::RowReaderOptions rowReaderOpts;
     auto reader = std::make_unique<DwrfReader>(readerOpts, std::move(input));
     auto factory = std::make_unique<SelectiveColumnReaderFactory>(spec);
-    // The factory and spec must stay live over the lifetime of the reader.
-    rowReaderOpts.setColumnReaderFactory(factory.get());
+    // The  spec must stay live over the lifetime of the reader.
+    rowReaderOpts.setScanSpec(spec);
     auto rowReader = reader->createRowReader(rowReaderOpts);
 
     auto rowIndex = 0;
@@ -894,7 +898,7 @@ class E2EFilterTest : public testing::Test {
   std::unordered_map<std::string, std::array<int32_t, 2>> filterCoverage_;
   folly::Random::DefaultGenerator rng_;
   bool useVInts_ = true;
-}; // namespace facebook::dwio::dwrf
+}; // namespace facebook::velox::dwio::dwrf
 
 TEST_F(E2EFilterTest, integerDirect) {
   testWithTypes(
@@ -994,8 +998,8 @@ TEST_F(E2EFilterTest, stringDictionary) {
       "string_val:string,"
       "string_val_2:string",
       [&]() {
-        makeStringDistribution(Subfield("string_val"), 100, true);
-        makeStringDistribution(Subfield("string_val_2"), 170, false);
+        makeStringDistribution(Subfield("string_val"), 100, true, false);
+        makeStringDistribution(Subfield("string_val_2"), 170, false, true);
       },
       true,
       {"string_val", "string_val_2"},
@@ -1017,4 +1021,4 @@ TEST_F(E2EFilterTest, listAndMap) {
       10);
 }
 
-} // namespace facebook::dwio::dwrf
+} // namespace facebook::velox::dwio::dwrf

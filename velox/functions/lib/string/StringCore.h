@@ -43,36 +43,10 @@
 namespace facebook::velox::functions {
 namespace stringCore {
 
-/// Encoding of input string
-enum class StringEncodingMode {
-  UTF8 = 0,
-  ASCII = 1,
-  MOSTLY_ASCII = 2,
-};
-
-// Define ordering on string encodings UTF8 > MOSTLY_ASCII > ASCII
-FOLLY_ALWAYS_INLINE StringEncodingMode
-maxEncoding(const StringEncodingMode& lhs, const StringEncodingMode& rhs) {
-  if (lhs == StringEncodingMode::UTF8 || rhs == StringEncodingMode::UTF8) {
-    return StringEncodingMode::UTF8;
-  }
-
-  if (lhs == StringEncodingMode::MOSTLY_ASCII ||
-      rhs == StringEncodingMode::MOSTLY_ASCII) {
-    return StringEncodingMode::MOSTLY_ASCII;
-  }
-
-  return StringEncodingMode::ASCII;
-};
-
 /// Check if a given string is ascii
-template <StringEncodingMode mode = StringEncodingMode::MOSTLY_ASCII>
 static bool isAscii(const char* str, size_t length);
 
-template <>
-FOLLY_ALWAYS_INLINE bool isAscii<StringEncodingMode::MOSTLY_ASCII>(
-    const char* str,
-    size_t length) {
+FOLLY_ALWAYS_INLINE bool isAscii(const char* str, size_t length) {
   for (auto i = 0; i < length; i++) {
     if (str[i] & 0x80) {
       return false;
@@ -81,18 +55,33 @@ FOLLY_ALWAYS_INLINE bool isAscii<StringEncodingMode::MOSTLY_ASCII>(
   return true;
 }
 
-template <>
-FOLLY_ALWAYS_INLINE bool isAscii<StringEncodingMode::UTF8>(
-    const char* str,
-    size_t length) {
-  return false;
+/// Perform reverse for ascii string input
+FOLLY_ALWAYS_INLINE static void
+reverseAscii(char* output, const char* input, size_t length) {
+  auto j = length - 1;
+  VECTORIZE_LOOP_IF_POSSIBLE for (auto i = 0; i < length; ++i, --j) {
+    output[i] = input[j];
+  }
 }
 
-template <>
-FOLLY_ALWAYS_INLINE bool isAscii<StringEncodingMode::ASCII>(
-    const char* str,
-    size_t length) {
-  return true;
+/// Perform reverse for utf8 string input
+FOLLY_ALWAYS_INLINE static void
+reverseUnicode(char* output, const char* input, size_t length) {
+  auto inputIdx = 0;
+  auto outputIdx = length;
+  while (inputIdx < length) {
+    int size;
+    utf8proc_codepoint(&input[inputIdx], size);
+    // invalid utf8 gets byte sequence with nextCodePoint==-1 and size==1,
+    // continue reverse invalid sequence byte by byte.
+    assert(
+        size > 0 && "UNLIKELY: could not get size of invalid utf8 code point");
+    outputIdx -= size;
+
+    assert(outputIdx >= 0 && outputIdx < length && "access out of bound");
+    std::memcpy(&output[outputIdx], &input[inputIdx], size);
+    inputIdx += size;
+  }
 }
 
 /// Perform upper for ascii string input
@@ -226,7 +215,9 @@ lengthUnicode(const char* inputBuffer, size_t bufferLength) {
   auto currentChar = inputBuffer;
   int64_t size = 0;
   while (currentChar < buffEndAddress) {
-    currentChar += utf8proc_char_length(currentChar);
+    auto chrOffset = utf8proc_char_length(currentChar);
+    // Skip bad byte if we get utf length < 0.
+    currentChar += UNLIKELY(chrOffset < 0) ? 1 : chrOffset;
     size++;
   }
   return size;
@@ -369,14 +360,14 @@ inline static size_t replace(
 /// Given a utf8 string, a starting position and length returns the
 /// corresponding underlying byte range [startByteIndex, endByteIndex).
 /// Byte indicies starts from 0, UTF8 character positions starts from 1.
-template <StringEncodingMode mode>
+template <bool isAscii>
 static inline std::pair<size_t, size_t>
 getByteRange(const char* str, size_t startCharPosition, size_t length) {
   if (startCharPosition < 1 && length > 0) {
     throw std::invalid_argument(
         "start position must be >= 1 and length must be > 0");
   }
-  if constexpr (mode == StringEncodingMode::ASCII) {
+  if constexpr (isAscii) {
     return std::make_pair(
         startCharPosition - 1, startCharPosition + length - 1);
   } else {

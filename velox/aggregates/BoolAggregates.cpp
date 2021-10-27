@@ -15,7 +15,7 @@
  */
 
 #include "velox/aggregates/AggregateNames.h"
-#include "velox/aggregates/SimpleNumerics.h"
+#include "velox/aggregates/SimpleNumericAggregate.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/vector/FlatVector.h"
 
@@ -28,10 +28,8 @@ class BoolAndOrAggregate : public SimpleNumericAggregate<bool, bool, bool> {
   using BaseAggregate = SimpleNumericAggregate<bool, bool, bool>;
 
  public:
-  explicit BoolAndOrAggregate(
-      core::AggregationNode::Step step,
-      bool initialValue)
-      : BaseAggregate(step, BOOLEAN()), initialValue_(initialValue) {}
+  explicit BoolAndOrAggregate(bool initialValue)
+      : BaseAggregate(BOOLEAN()), initialValue_(initialValue) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(bool);
@@ -77,10 +75,9 @@ class BoolAndOrAggregate : public SimpleNumericAggregate<bool, bool, bool> {
 
 class BoolAndAggregate final : public BoolAndOrAggregate {
  public:
-  explicit BoolAndAggregate(core::AggregationNode::Step step)
-      : BoolAndOrAggregate(step, /* initialValue = */ true) {}
+  explicit BoolAndAggregate() : BoolAndOrAggregate(/* initialValue = */ true) {}
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -93,15 +90,15 @@ class BoolAndAggregate final : public BoolAndOrAggregate {
         mayPushdown);
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    return updatePartial(groups, rows, args, mayPushdown);
+    return addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -118,21 +115,20 @@ class BoolAndAggregate final : public BoolAndOrAggregate {
         this->initialValue_);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 };
 
 class BoolOrAggregate final : public BoolAndOrAggregate {
  public:
-  explicit BoolOrAggregate(core::AggregationNode::Step step)
-      : BoolAndOrAggregate(step, /* initialValue = */ false) {}
+  explicit BoolOrAggregate() : BoolAndOrAggregate(/* initialValue = */ false) {}
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -145,15 +141,15 @@ class BoolOrAggregate final : public BoolAndOrAggregate {
         mayPushdown);
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -170,12 +166,12 @@ class BoolOrAggregate final : public BoolAndOrAggregate {
         this->initialValue_);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 };
 
@@ -196,7 +192,7 @@ bool registerBoolAggregate(const std::string& name) {
             "Unknown input type for {} aggregation {}",
             name,
             inputType->kindName());
-        return std::make_unique<T>(step);
+        return std::make_unique<T>();
       });
   return true;
 }

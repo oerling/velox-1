@@ -28,32 +28,33 @@ std::shared_ptr<const RowType> VectorMaker::rowType(
 }
 
 RowVectorPtr VectorMaker::rowVector(const std::vector<VectorPtr>& children) {
+  std::vector<std::string> names;
+  for (int32_t i = 0; i < children.size(); ++i) {
+    names.push_back(fmt::format("c{}", i));
+  }
+
+  return rowVector(std::move(names), children);
+}
+
+RowVectorPtr VectorMaker::rowVector(
+    std::vector<std::string> childNames,
+    const std::vector<VectorPtr>& children) {
   std::vector<std::shared_ptr<const Type>> childTypes;
   childTypes.resize(children.size());
   for (int i = 0; i < children.size(); i++) {
     childTypes[i] = children[i]->type();
   }
-  auto rowType = this->rowType(std::move(childTypes));
+  auto rowType = ROW(std::move(childNames), std::move(childTypes));
 
   return std::make_shared<RowVector>(
-      pool_,
-      rowType,
-      BufferPtr(nullptr),
-      children[0]->size(),
-      children,
-      folly::none);
+      pool_, rowType, BufferPtr(nullptr), children[0]->size(), children);
 }
 
 RowVectorPtr VectorMaker::rowVector(
     const std::shared_ptr<const RowType>& rowType,
     vector_size_t size) {
   return std::make_shared<RowVector>(
-      pool_,
-      rowType,
-      BufferPtr(nullptr),
-      size,
-      std::vector<VectorPtr>{},
-      folly::none);
+      pool_, rowType, BufferPtr(nullptr), size, std::vector<VectorPtr>{});
 }
 
 vector_size_t VectorMaker::createOffsetsAndSizes(

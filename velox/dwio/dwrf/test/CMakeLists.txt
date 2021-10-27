@@ -14,16 +14,13 @@
 
 add_subdirectory(utils)
 
-# for generated headers
-include_directories(${CMAKE_BINARY_DIR})
-
 set(VELOX_LINK_LIBS
     velox_dwio_common
-    velox_dwio_common_exception
     velox_dwio_dwrf_reader
     velox_dwio_dwrf_common
     velox_dwio_dwrf_utils
     velox_dwio_dwrf_writer
+    velox_dwio_common_exception
     velox_dwio_type_fbhive
     velox_vector
     velox_exception
@@ -35,7 +32,7 @@ set(VELOX_LINK_LIBS
     velox_caching)
 
 set(TEST_LINK_LIBS velox_dwrf_test_utils ${gflags_LIBRARIES}
-                   ${GTEST_BOTH_LIBRARIES} ${GMock} ${GLOG} ${FILESYSTEM})
+                   ${GTEST_BOTH_LIBRARIES} ${GMock} glog::glog ${FILESYSTEM})
 
 add_executable(velox_dwio_dwrf_buffered_output_stream_test
                TestBufferedOutputStream.cpp)
@@ -60,7 +57,7 @@ target_link_libraries(
   velox_dwio_dwrf_compression_test
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
-  ${GLOG}
+  glog::glog
   ${LZ4}
   ${LZO}
   ${ZSTD}
@@ -258,7 +255,7 @@ target_link_libraries(
   velox_dwio_dwrf_reader_base_test
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
-  ${GLOG}
+  glog::glog
   ${LZ4}
   ${LZO}
   ${ZSTD}
@@ -375,7 +372,6 @@ add_test(velox_dwrf_column_writer_test velox_dwrf_column_writer_test)
 
 target_link_libraries(
   velox_dwrf_column_writer_test
-  velox_dwio_common
   velox_dwrf_test_utils
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
@@ -465,7 +461,7 @@ target_link_libraries(
 add_executable(velox_dwrf_int_decoder_benchmark IntDecoderBenchmark.cpp)
 target_link_libraries(
   velox_dwrf_int_decoder_benchmark velox_dwio_common_exception velox_exception
-  ${FOLLY} ${FOLLY_BENCHMARK})
+  velox_dwio_dwrf_common ${FOLLY} ${FOLLY_BENCHMARK})
 
 add_executable(velox_dwrf_int_encoder_benchmark IntEncoderBenchmark.cpp)
 target_link_libraries(
@@ -474,5 +470,11 @@ target_link_libraries(
 
 add_executable(velox_dwrf_float_column_writer_benchmark
                FloatColumnWriterBenchmark.cpp)
-target_link_libraries(velox_dwrf_float_column_writer_benchmark velox_vector
-                      velox_dwio_dwrf_writer ${FOLLY} ${FOLLY_BENCHMARK} ${FMT})
+target_link_libraries(
+  velox_dwrf_float_column_writer_benchmark
+  velox_vector
+  velox_dwio_common_exception
+  velox_dwio_dwrf_writer
+  ${FOLLY}
+  ${FOLLY_BENCHMARK}
+  ${FMT})

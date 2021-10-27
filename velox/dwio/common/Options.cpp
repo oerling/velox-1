@@ -17,6 +17,7 @@
 #include "velox/dwio/common/Options.h"
 
 namespace facebook {
+namespace velox {
 namespace dwio {
 namespace common {
 
@@ -33,6 +34,8 @@ FileFormat toFileFormat(std::string s) {
     return FileFormat::TEXT;
   } else if (s == "json") {
     return FileFormat::JSON;
+  } else if (s == "parquet") {
+    return FileFormat::PARQUET;
   }
   return FileFormat::UNKNOWN;
 }
@@ -51,6 +54,8 @@ std::string toString(FileFormat fmt) {
       return "text";
     case FileFormat::JSON:
       return "json";
+    case FileFormat::PARQUET:
+      return "parquet";
     default:
       return "unknown";
   }
@@ -58,4 +63,5 @@ std::string toString(FileFormat fmt) {
 
 } // namespace common
 } // namespace dwio
+} // namespace velox
 } // namespace facebook

@@ -97,7 +97,7 @@ std::unique_ptr<SimpleVector<uint64_t>> FlatVector<T>::hashAll() const {
   }
 
   // overwrite the null hash values
-  if (!BaseVector::nullCount_.hasValue() ||
+  if (!BaseVector::nullCount_.has_value() ||
       BaseVector::nullCount_.value() > 0) {
     for (size_t i = 0; i < BaseVector::length_; ++i) {
       if (bits::isBitNull(BaseVector::rawNulls_, i)) {
@@ -112,7 +112,7 @@ std::unique_ptr<SimpleVector<uint64_t>> FlatVector<T>::hashAll() const {
       std::move(hashBuffer),
       std::vector<BufferPtr>() /*stringBuffers*/,
       folly::F14FastMap<std::string, std::string>(),
-      folly::none /*distinctValueCount*/,
+      std::nullopt /*distinctValueCount*/,
       0 /*nullCount*/,
       false /*sorted*/,
       sizeof(uint64_t) * BaseVector::length_ /*representedBytes*/);
@@ -179,11 +179,11 @@ void FlatVector<T>::copyValuesAndNulls(
       }
     }
   } else if (source->isConstantEncoding()) {
-    auto constant = source->as<ConstantVector<T>>();
-    if (constant->isNullAt(0)) {
+    if (source->isNullAt(0)) {
       BaseVector::addNulls(nullptr, rows);
       return;
     }
+    auto constant = source->as<ConstantVector<T>>();
     T value = constant->valueAt(0);
     while (iter.next(row)) {
       rawValues_[row] = value;
@@ -252,11 +252,11 @@ void FlatVector<T>::copyValuesAndNulls(
       }
     }
   } else if (source->isConstantEncoding()) {
-    auto constant = source->as<ConstantVector<T>>();
-    if (constant->isNullAt(0)) {
+    if (source->isNullAt(0)) {
       bits::fillBits(rawNulls, targetIndex, targetIndex + count, bits::kNull);
       return;
     }
+    auto constant = source->as<ConstantVector<T>>();
     T value = constant->valueAt(0);
     for (auto row = targetIndex; row < targetIndex + count; ++row) {
       rawValues_[row] = value;
@@ -287,7 +287,7 @@ void FlatVector<T>::resize(vector_size_t size) {
   if (!values_) {
     return;
   }
-  vector_size_t minBytes = BaseVector::byteSize<T>(size);
+  const uint64_t minBytes = BaseVector::byteSize<T>(size);
   if (values_->capacity() < minBytes) {
     AlignedBuffer::reallocate<T>(&values_, size);
     rawValues_ = values_->asMutable<T>();
@@ -295,6 +295,10 @@ void FlatVector<T>::resize(vector_size_t size) {
   values_->setSize(minBytes);
 
   if (std::is_same<T, StringView>::value) {
+    if (size < previousSize) {
+      auto vector = this->template as<SimpleVector<StringView>>();
+      vector->invalidateIsAscii();
+    }
     if (size == 0) {
       stringBuffers_.clear();
     }

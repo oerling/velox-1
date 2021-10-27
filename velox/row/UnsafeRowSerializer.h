@@ -19,7 +19,6 @@
 #include "velox/row/UnsafeRow.h"
 #include "velox/row/UnsafeRowParser.h"
 #include "velox/vector/ComplexVector.h"
-#include "velox/vector/DecodedVector.h"
 
 namespace facebook::velox::row {
 
@@ -86,8 +85,8 @@ struct UnsafeRowSerializer {
   serialize(const DataType& data, char* buffer, size_t idx = 0) {
     VELOX_CHECK_NOT_NULL(buffer);
     if constexpr (std::is_same<SqlType, TimestampType>::value) {
-      // Follow Spark, serialize timestamp as seconds
-      return serializeTimestampSeconds(data, buffer, idx);
+      // Follow Spark, serialize timestamp as micros.
+      return serializeTimestampMicros(data, buffer, idx);
     } else if constexpr (UnsafeRowStaticUtilities::isFixedWidth<SqlType>()) {
       return serializeFixedLength<
           UnsafeRowStaticUtilities::simpleSqlTypeToTypeKind<SqlType>()>(
@@ -185,31 +184,19 @@ struct UnsafeRowSerializer {
   template <TypeKind Kind>
   inline static std::optional<size_t>
   serializeFixedLength(const VectorPtr& data, char* buffer, size_t idx) {
+    auto* rawData = data->loadedVector();
     // TODO: refactor to merge the decoding of a vector of fixed length,
     // Timestamp and StringView data.
     using NativeType = typename TypeTraits<Kind>::NativeType;
+    DCHECK_EQ(data->type()->kind(), Kind);
+    const auto& simple = static_cast<const SimpleVector<NativeType>&>(*rawData);
 
     VELOX_CHECK(data->isIndexInRange(idx));
 
-    NativeType val;
-    if (data->encoding() == VectorEncoding::Simple::FLAT) {
-      const auto& vec = *data->asFlatVector<NativeType>();
-      if (vec.isNullAt(idx)) {
-        return std::nullopt;
-      }
-      val = vec.valueAt(idx);
-    } else {
-      DecodedVector decoded;
-      SelectivityVector rows(data->size(), false);
-      rows.setValid(idx, true); // only validate the element at `idx`
-      decoded.decode(*data, rows);
-      if (decoded.isNullAt(idx)) {
-        return std::nullopt;
-      }
-      val = decoded.valueAt<NativeType>(idx);
+    if (simple.isNullAt(idx)) {
+      return std::nullopt;
     }
-
-    reinterpret_cast<NativeType*>(buffer)[0] = val;
+    *reinterpret_cast<NativeType*>(buffer) = simple.valueAt(idx);
     return 0;
   }
 
@@ -223,13 +210,8 @@ struct UnsafeRowSerializer {
   /// otherwise
   inline static std::optional<size_t>
   serializeStringView(const StringView& data, char* buffer, size_t idx = 0) {
-    // If either dest or src is an invalid or null pointer, the behavior of
-    // memcpy is undefined, even if count is zero, so check that data pointer
-    // is not null.
-    if (data.begin() == nullptr) {
-      return 0;
-    }
-    std::memcpy(buffer, data.begin(), data.size());
+    const char* const begin = data.data();
+    std::copy(begin, begin + data.size(), buffer);
     return data.size();
   }
 
@@ -243,31 +225,15 @@ struct UnsafeRowSerializer {
   /// otherwise
   inline static std::optional<size_t>
   serializeStringView(const VectorPtr& data, char* buffer, size_t idx) {
+    auto* rawData = data->loadedVector();
+
     VELOX_CHECK(data->isIndexInRange(idx));
+    const auto& simple = static_cast<const SimpleVector<StringView>&>(*rawData);
 
-    StringView val;
-    if (data->encoding() == VectorEncoding::Simple::FLAT) {
-      const auto& vec = *data->asFlatVector<StringView>();
-      if (vec.isNullAt(idx)) {
-        return std::nullopt;
-      }
-      val = vec.valueAt(idx);
-    } else {
-      DecodedVector decoded;
-      SelectivityVector rows(data->size(), false);
-      rows.setValid(idx, true);
-      decoded.decode(*data, rows);
-      if (decoded.isNullAt(idx)) {
-        return std::nullopt;
-      }
-      val = decoded.valueAt<StringView>(idx);
+    if (simple.isNullAt(idx)) {
+      return std::nullopt;
     }
-
-    auto size = val.size();
-    if (size > 0) {
-      std::memcpy(buffer, val.begin(), size);
-    }
-    return size;
+    return serializeStringView(simple.valueAt(idx), buffer, idx);
   }
 
   /// Template definition for unsupported types.
@@ -277,7 +243,7 @@ struct UnsafeRowSerializer {
     throw("Unsupported data type for serializeStringView()");
   }
 
-  /// Serializes a Timestamp as seconds.
+  /// Serializes a Timestamp as microseconds since the epoch.
   /// \param data
   /// \param buffer Pre allocated buffer for the return value
   /// \param idx This argument is ignored because data is not a Vector.
@@ -285,16 +251,12 @@ struct UnsafeRowSerializer {
   /// is written or only fixed data length data is written, std::nullopt
   /// otherwise
   inline static std::optional<size_t>
-  serializeTimestampSeconds(const Timestamp& data, char* buffer, size_t idx) {
-    // Spark Java writes the timestamp in seconds as a Long
-    TypeTraits<TypeKind::BIGINT>::NativeType seconds = data.getSeconds();
-    return serializeFixedLength<TypeKind::BIGINT>(
-        (typename TypeTraits<TypeKind::BIGINT>::NativeType)data.getSeconds(),
-        buffer,
-        idx);
+  serializeTimestampMicros(const Timestamp data, char* buffer, size_t idx) {
+    // Spark Java writes the timestamp in micros as a Long.
+    return serializeFixedLength<TypeKind::BIGINT>(data.toMicros(), buffer, idx);
   }
 
-  /// Serializes an element in a VectorPtr of Timestamps as seconds.
+  /// Serializes an element in a VectorPtr of Timestamps as microseconds.
   /// \param data
   /// \param buffer Pre allocated buffer for the return value
   /// \param idx
@@ -302,38 +264,21 @@ struct UnsafeRowSerializer {
   /// is written or only fixed data length data is written, std::nullopt
   /// otherwise
   inline static std::optional<size_t>
-  serializeTimestampSeconds(const VectorPtr& data, char* buffer, size_t idx) {
-    using NativeType = typename TypeTraits<TypeKind::BIGINT>::NativeType;
-
-    VELOX_CHECK(data->isIndexInRange(idx));
-
-    NativeType seconds;
-    if (data->encoding() == VectorEncoding::Simple::FLAT) {
-      const auto& vec = *data->asFlatVector<Timestamp>();
-      if (vec.isNullAt(idx)) {
-        return std::nullopt;
-      }
-      seconds = vec.valueAt(idx).getSeconds();
-    } else {
-      DecodedVector decoded;
-      SelectivityVector rows(data->size(), false);
-      rows.setValid(idx, true); // only validate the element at `idx`
-      decoded.decode(*data, rows);
-      if (decoded.isNullAt(idx)) {
-        return std::nullopt;
-      }
-      seconds = decoded.valueAt<Timestamp>(idx).getSeconds();
+  serializeTimestampMicros(const VectorPtr& data, char* buffer, size_t idx) {
+    const auto& simple =
+        static_cast<SimpleVector<Timestamp>&>(*data->loadedVector());
+    VELOX_DCHECK(data->isIndexInRange(idx));
+    if (simple.isNullAt(idx)) {
+      return std::nullopt;
     }
-
-    reinterpret_cast<NativeType*>(buffer)[0] = seconds;
-    return 0;
+    return serializeTimestampMicros(simple.valueAt(idx), buffer, idx);
   }
 
   /// Template definition for unsupported types.
   template <typename T>
   inline static std::optional<size_t>
-  serializeTimestampSeconds(const T& data, char* buffer, size_t idx) {
-    throw("Unsupported data type for serializeTimestampSeconds()");
+  serializeTimestampMicros(const T& data, char* buffer, size_t idx) {
+    throw("Unsupported data type for serializeTimestampMicros()");
   }
 
   /// Write the data as a uint64_t at the given location.

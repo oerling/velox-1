@@ -15,94 +15,160 @@
  */
 
 #include "velox/expression/tests/VectorFuzzer.h"
+#include <codecvt>
+#include <locale>
 #include "velox/type/Timestamp.h"
 #include "velox/vector/FlatVector.h"
+#include "velox/vector/NullsBuilder.h"
 #include "velox/vector/VectorTypeUtils.h"
 
 namespace facebook::velox {
 
 namespace {
 
+// DWRF requires nano to be in a certain range. Hardcode the value here to avoid
+// the dependency on DWRF.
+constexpr int64_t MAX_NANOS = 1'000'000'000;
+
 // Generate random values for the different supported types.
 template <typename T>
-T rand(folly::Random::DefaultGenerator&) {
+T rand(FuzzerGenerator&) {
   VELOX_NYI();
 }
 
 template <>
-int8_t rand(folly::Random::DefaultGenerator& rng) {
+int8_t rand(FuzzerGenerator& rng) {
   return folly::Random::rand32(rng);
 }
 
 template <>
-int16_t rand(folly::Random::DefaultGenerator& rng) {
+int16_t rand(FuzzerGenerator& rng) {
   return folly::Random::rand32(rng);
 }
 
 template <>
-int32_t rand(folly::Random::DefaultGenerator& rng) {
+int32_t rand(FuzzerGenerator& rng) {
   return folly::Random::rand32(rng);
 }
 
 template <>
-int64_t rand(folly::Random::DefaultGenerator& rng) {
+int64_t rand(FuzzerGenerator& rng) {
   return folly::Random::rand32(rng);
 }
 
 template <>
-double rand(folly::Random::DefaultGenerator& rng) {
+double rand(FuzzerGenerator& rng) {
   return folly::Random::randDouble01(rng);
 }
 
 template <>
-float rand(folly::Random::DefaultGenerator& rng) {
+float rand(FuzzerGenerator& rng) {
   return folly::Random::randDouble01(rng);
 }
 
 template <>
-bool rand(folly::Random::DefaultGenerator& rng) {
+bool rand(FuzzerGenerator& rng) {
   return folly::Random::oneIn(2, rng);
 }
 
 template <>
-Timestamp rand(folly::Random::DefaultGenerator& rng) {
-  return Timestamp(folly::Random::rand32(rng), folly::Random::rand32(rng));
+Timestamp rand(FuzzerGenerator& rng) {
+  return Timestamp(
+      folly::Random::rand32(rng), folly::Random::rand32(rng) % MAX_NANOS);
 }
 
-constexpr folly::StringPiece kAsciiChars{
-    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"};
+template <>
+uint32_t rand(FuzzerGenerator& rng) {
+  return folly::Random::rand32(rng);
+}
 
-// TODO: Improve the random utf8 char generation.
-constexpr folly::StringPiece kUtf8Chars{
-    u8"0123456789\u0041\u0042\u0043\u0044\u0045\u0046\u0047\u0048"
-    "\u0049\u0050\u0051\u0052\u0053\u0054\u0056\u0057"};
+/// Unicode character ranges.
+/// Source: https://jrgraphix.net/research/unicode_blocks.php
+const std::map<UTF8CharList, std::vector<std::pair<char16_t, char16_t>>>
+    kUTFChatSetMap{
+        {UTF8CharList::ASCII,
+         {
+             /*Numbers*/ {'0', '9'},
+             /*Upper*/ {'A', 'Z'},
+             /*Lower*/ {'a', 'z'},
+         }},
+        {UTF8CharList::UNICODE_CASE_SENSITIVE,
+         {
+             /*Basic Latin*/ {u'\u0020', u'\u007F'},
+             /*Cyrillic*/ {u'\u0400', u'\u04FF'},
+         }},
+        {UTF8CharList::EXTENDED_UNICODE,
+         {
+             /*Greek*/ {u'\u03F0', u'\u03FF'},
+             /*Latin Extended A*/ {u'\u0100', u'\u017F'},
+             /*Arabic*/ {u'\u0600', u'\u06FF'},
+             /*Devanagari*/ {u'\u0900', u'\u097F'},
+             /*Hebrew*/ {u'\u0600', u'\u06FF'},
+             /*Hiragana*/ {u'\u3040', u'\u309F'},
+             /*Punctuation*/ {u'\u2000', u'\u206F'},
+             /*Sub/Super Script*/ {u'\u2070', u'\u209F'},
+             /*Currency*/ {u'\u20A0', u'\u20CF'},
+         }},
+        {UTF8CharList::MATHEMATICAL_SYMBOLS,
+         {
+             /*Math Operators*/ {u'\u2200', u'\u22FF'},
+             /*Number Forms*/ {u'\u2150', u'\u218F'},
+             /*Geometric Shapes*/ {u'\u25A0', u'\u25FF'},
+             /*Math Symbols*/ {u'\u27C0', u'\u27EF'},
+             /*Supplemental*/ {u'\u2A00', u'\u2AFF'},
+         }}};
+
+FOLLY_ALWAYS_INLINE char16_t getRandomChar(
+    FuzzerGenerator& rng,
+    const std::vector<std::pair<char16_t, char16_t>>& charSet) {
+  const auto& chars = charSet[rand<uint32_t>(rng) % charSet.size()];
+  auto size = chars.second - chars.first;
+  auto inc = (rand<uint32_t>(rng) % size);
+  char16_t res = chars.first + inc;
+  return res;
+}
 
 /// Generates a random string (string size and encoding are passed through
 /// Options). Returns a StringView which uses `buf` as the underlying buffer.
 StringView randString(
-    folly::Random::DefaultGenerator& rng,
+    FuzzerGenerator& rng,
     const VectorFuzzer::Options& opts,
-    std::string& buf) {
+    std::string& buf,
+    std::wstring_convert<std::codecvt_utf8<char16_t>, char16_t>& converter) {
+  buf.clear();
+  std::u16string wbuf;
   const size_t stringLength = opts.stringVariableLength
       ? folly::Random::rand32(rng) % opts.stringLength
       : opts.stringLength;
-  buf.resize(stringLength);
-  auto chars = opts.stringUtf8 ? kUtf8Chars : kAsciiChars;
+  wbuf.resize(stringLength);
 
   for (size_t i = 0; i < stringLength; ++i) {
-    buf[i] = chars[folly::Random::rand32(rng) % chars.size()];
+    auto encoding =
+        opts.charEncodings[rand<uint32_t>(rng) % opts.charEncodings.size()];
+    wbuf[i] = getRandomChar(rng, kUTFChatSetMap.at(encoding));
   }
+
+  buf.append(converter.to_bytes(wbuf));
   return StringView(buf);
 }
 
 template <TypeKind kind>
 variant randVariantImpl(
-    folly::Random::DefaultGenerator& rng,
+    FuzzerGenerator& rng,
     const VectorFuzzer::Options& opts) {
   using TCpp = typename TypeTraits<kind>::NativeType;
   if constexpr (std::is_same_v<TCpp, StringView>) {
+    std::wstring_convert<std::codecvt_utf8<char16_t>, char16_t> converter;
     std::string buf;
-    return variant(randString(rng, opts, buf));
+    auto stringView = randString(rng, opts, buf, converter);
+
+    if constexpr (kind == TypeKind::VARCHAR) {
+      return variant(stringView);
+    } else if constexpr (kind == TypeKind::VARBINARY) {
+      return variant::binary(stringView);
+    } else {
+      VELOX_UNREACHABLE();
+    }
   } else {
     return variant(rand<TCpp>(rng));
   }
@@ -111,18 +177,18 @@ variant randVariantImpl(
 template <TypeKind kind>
 void fuzzFlatImpl(
     const VectorPtr& vector,
-    folly::Random::DefaultGenerator& rng,
+    FuzzerGenerator& rng,
     const VectorFuzzer::Options& opts) {
   using TFlat = typename KindToFlatVector<kind>::type;
   using TCpp = typename TypeTraits<kind>::NativeType;
 
   auto flatVector = vector->as<TFlat>();
-  auto* rawValues = flatVector->mutableRawValues();
   std::string strBuf;
 
+  std::wstring_convert<std::codecvt_utf8<char16_t>, char16_t> converter;
   for (size_t i = 0; i < vector->size(); ++i) {
     if constexpr (std::is_same_v<TCpp, StringView>) {
-      flatVector->set(i, randString(rng, opts, strBuf));
+      flatVector->set(i, randString(rng, opts, strBuf, converter));
     } else {
       flatVector->set(i, rand<TCpp>(rng));
     }
@@ -132,19 +198,22 @@ void fuzzFlatImpl(
 } // namespace
 
 VectorPtr VectorFuzzer::fuzz(const TypePtr& type) {
+  return fuzz(type, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzz(const TypePtr& type, vector_size_t size) {
   VectorPtr vector;
 
   // One in 5 chance of adding a constant vector.
   if (oneIn(5)) {
-    // One in 5 chance of adding a NULL constant vector.
-    if (oneIn(5)) {
-      vector = BaseVector::createNullConstant(type, opts_.vectorSize, pool_);
+    // One in <nullChance> chance of adding a NULL constant vector.
+    if (oneIn(opts_.nullChance)) {
+      vector = BaseVector::createNullConstant(type, size, pool_);
     } else {
-      vector = BaseVector::createConstant(
-          randVariant(type), opts_.vectorSize, pool_);
+      vector = BaseVector::wrapInConstant(size, 0, fuzz(type, 1));
     }
   } else {
-    vector = fuzzFlat(type);
+    vector = type->size() > 0 ? fuzzComplex(type, size) : fuzzFlat(type, size);
   }
 
   // Toss a coin and add dictionary indirections.
@@ -155,7 +224,11 @@ VectorPtr VectorFuzzer::fuzz(const TypePtr& type) {
 }
 
 VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type) {
-  auto vector = BaseVector::create(type, opts_.vectorSize, pool_);
+  return fuzzFlat(type, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type, vector_size_t size) {
+  auto vector = BaseVector::create(type, size, pool_);
 
   // First, fill it with random values.
   // TODO: We should bias towards edge cases (min, max, Nan, etc).
@@ -166,6 +239,66 @@ VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type) {
   for (size_t i = 0; i < vector->size(); ++i) {
     if (oneIn(opts_.nullChance)) {
       vector->setNull(i, true);
+    }
+  }
+  return vector;
+}
+
+VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type) {
+  return fuzzComplex(type, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type, vector_size_t size) {
+  VectorPtr vector;
+  if (type->kind() == TypeKind::ROW) {
+    vector = fuzzRow(std::dynamic_pointer_cast<const RowType>(type), size);
+  } else {
+    auto offsets = allocateOffsets(size, pool_);
+    auto rawOffsets = offsets->asMutable<vector_size_t>();
+    auto sizes = allocateSizes(size, pool_);
+    auto rawSizes = sizes->asMutable<vector_size_t>();
+    vector_size_t childSize = 0;
+    // Randomly creates container size.
+    for (auto i = 0; i < size; ++i) {
+      rawOffsets[i] = childSize;
+      auto length = opts_.containerVariableLength
+          ? folly::Random::rand32(rng_) % opts_.containerLength
+          : opts_.containerLength;
+      rawSizes[i] = length;
+      childSize += length;
+    }
+
+    // Generate a random null vector.
+    NullsBuilder builder{size, pool_};
+    for (size_t i = 0; i < size; ++i) {
+      if (oneIn(opts_.nullChance)) {
+        builder.setNull(i);
+      }
+    }
+    auto nulls = builder.build();
+
+    if (type->kind() == TypeKind::ARRAY) {
+      vector = std::make_shared<ArrayVector>(
+          pool_,
+          type,
+          nulls,
+          size,
+          offsets,
+          sizes,
+          fuzz(type->asArray().elementType(), childSize));
+    } else if (type->kind() == TypeKind::MAP) {
+      auto& mapType = type->asMap();
+      vector = std::make_shared<MapVector>(
+          pool_,
+          type,
+          nulls,
+          size,
+          offsets,
+          sizes,
+          fuzz(mapType.keyType(), childSize),
+          fuzz(mapType.valueType(), childSize));
+    } else {
+      VELOX_UNREACHABLE();
     }
   }
   return vector;
@@ -183,6 +316,19 @@ VectorPtr VectorFuzzer::fuzzDictionary(const VectorPtr& vector) {
   // TODO: We can fuzz nulls here as well.
   return BaseVector::wrapInDictionary(
       BufferPtr(nullptr), indices, vectorSize, vector);
+}
+
+VectorPtr VectorFuzzer::fuzzRow(const RowTypePtr& rowType) {
+  return fuzzRow(rowType, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzzRow(const RowTypePtr& rowType, vector_size_t size) {
+  std::vector<VectorPtr> children;
+  for (auto i = 0; i < rowType->size(); ++i) {
+    children.push_back(fuzz(rowType->childAt(i), size));
+  }
+  return std::make_shared<RowVector>(
+      pool_, rowType, nullptr, size, std::move(children));
 }
 
 variant VectorFuzzer::randVariant(const TypePtr& arg) {

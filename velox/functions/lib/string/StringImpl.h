@@ -15,12 +15,6 @@
  */
 #pragma once
 
-// The cpp library for xxhash requires one of the few macros to be set in
-// order to get the library to even work (there's no default mode set).
-// This macro forces the hash function to be inlined and is not set by default.
-// We do not want to change the external library to set this default behavior.
-#define XXH_INLINE_ALL
-
 #include <assert.h>
 #include <fmt/format.h>
 #include <stdio.h>
@@ -32,25 +26,20 @@
 #include <string_view>
 #include <vector>
 #include "folly/CPortability.h"
+#include "folly/Likely.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/encode/Base64.h"
 #include "velox/external/md5/md5.h"
-#include "velox/external/xxhash.h"
 #include "velox/functions/lib/string/StringCore.h"
+#include "velox/type/StringView.h"
 
-namespace facebook {
-namespace velox {
-namespace functions {
-namespace stringImpl {
+namespace facebook::velox::functions::stringImpl {
 using namespace stringCore;
 
-/// Perfrom upper for a UTF8 string
-template <
-    StringEncodingMode stringEncoding,
-    typename TOutString,
-    typename TInString>
+/// Perform upper for a UTF8 string
+template <bool ascii, typename TOutString, typename TInString>
 FOLLY_ALWAYS_INLINE bool upper(TOutString& output, const TInString& input) {
-  bool isAsciiInput = isAscii<stringEncoding>(input.data(), input.size());
-  if (isAsciiInput) {
+  if constexpr (ascii) {
     output.resize(input.size());
     upperAscii(output.data(), input.data(), input.size());
   } else {
@@ -62,14 +51,10 @@ FOLLY_ALWAYS_INLINE bool upper(TOutString& output, const TInString& input) {
   return true;
 }
 
-/// Perfrom lower for a UTF8 string
-template <
-    StringEncodingMode stringEncoding,
-    typename TOutString,
-    typename TInString>
+/// Perform lower for a UTF8 string
+template <bool ascii, typename TOutString, typename TInString>
 FOLLY_ALWAYS_INLINE bool lower(TOutString& output, const TInString& input) {
-  bool isAsciiInput = isAscii<stringEncoding>(input.data(), input.size());
-  if (isAsciiInput) {
+  if constexpr (ascii) {
     output.resize(input.size());
     lowerAscii(output.data(), input.data(), input.size());
   } else {
@@ -133,9 +118,9 @@ void concatDynamic(TOutString& output, const std::vector<TInString>& inputs) {
 }
 
 /// Return length of the input string in chars
-template <StringEncodingMode stringEncoding, typename T>
+template <bool isAscii, typename T>
 FOLLY_ALWAYS_INLINE int64_t length(const T& input) {
-  if constexpr (stringEncoding == StringEncodingMode::ASCII) {
+  if constexpr (isAscii) {
     return input.size();
   } else {
     return lengthUnicode(input.data(), input.size());
@@ -165,7 +150,7 @@ FOLLY_ALWAYS_INLINE void codePointToString(
 /// string. Implements the logic of presto codepoint function.
 template <typename T>
 FOLLY_ALWAYS_INLINE int32_t charToCodePoint(const T& inputString) {
-  auto length = stringImpl::length<StringEncodingMode::UTF8>(inputString);
+  auto length = stringImpl::length</*isAscii*/ false>(inputString);
   VELOX_USER_CHECK_EQ(
       length,
       1,
@@ -180,7 +165,7 @@ FOLLY_ALWAYS_INLINE int32_t charToCodePoint(const T& inputString) {
 /// Returns the starting position in characters of the Nth instance of the
 /// substring in string. Positions start with 1. If not found, 0 is returned. If
 /// subString is empty result is 1.
-template <StringEncodingMode stringEncoding, typename T>
+template <bool isAscii, typename T>
 FOLLY_ALWAYS_INLINE int64_t
 stringPosition(const T& string, const T& subString, int64_t instance = 0) {
   if (subString.size() == 0) {
@@ -200,7 +185,7 @@ stringPosition(const T& string, const T& subString, int64_t instance = 0) {
 
   // Return the number of characters from the beginning of the string to
   // byteIndex.
-  return length<stringEncoding>(std::string_view(string.data(), byteIndex)) + 1;
+  return length<isAscii>(std::string_view(string.data(), byteIndex)) + 1;
 }
 
 /// Replace replaced with replacement in inputString and write results to
@@ -238,7 +223,7 @@ FOLLY_ALWAYS_INLINE void replaceInPlace(
     TInOutString& string,
     const TInString& replaced,
     const TInString& replacement) {
-  assert(replacement.size() <= replaced.size() && "invlaid inplace replace");
+  assert(replacement.size() <= replaced.size() && "invalid inplace replace");
 
   auto outputSize = stringCore::replace(
       string.data(),
@@ -248,34 +233,6 @@ FOLLY_ALWAYS_INLINE void replaceInPlace(
       true);
 
   string.resize(outputSize);
-}
-
-/// Extract the hash for a given string
-/// Following the implementation in HIVE UDF
-/// fbcode/fbjava/hive-udfs/core-udfs/src/main/java/com/facebook/hive/udf/UDFXxhash64.java
-template <typename TInString>
-FOLLY_ALWAYS_INLINE bool
-xxhash64int(int64_t& result, const TInString& input, const int64_t seed = 0) {
-  // Following the implementation in Hive
-  // They use utf8Slice constructor which is not necessary for correctness
-  result = XXH64(input.data(), input.size(), seed);
-  return true;
-}
-
-/// Extract the hash for a given string as string
-/// Following the implementation in Presto
-/// presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/VarbinaryFunctions.java
-template <typename TOutString, typename TInString>
-FOLLY_ALWAYS_INLINE bool xxhash64(TOutString& output, const TInString& input) {
-  // Following the implementation in Presto (seed is set to 0)
-  int64_t hash;
-  xxhash64int(hash, input, 0);
-  static const auto kLen = sizeof(int64_t);
-
-  // Resizing output and copy
-  output.resize(kLen);
-  std::memcpy(output.data(), &hash, kLen);
-  return true;
 }
 
 /// Compute the MD5 Hash.
@@ -317,7 +274,299 @@ FOLLY_ALWAYS_INLINE bool md5_radix(
   output.resize(size);
   return true;
 }
-} // namespace stringImpl
-} // namespace functions
-} // namespace velox
-} // namespace facebook
+
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool toHex(TOutString& output, const TInString& input) {
+  static const char* const kHexTable =
+      "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
+      "202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F"
+      "404142434445464748494A4B4C4D4E4F505152535455565758595A5B5C5D5E5F"
+      "606162636465666768696A6B6C6D6E6F707172737475767778797A7B7C7D7E7F"
+      "808182838485868788898A8B8C8D8E8F909192939495969798999A9B9C9D9E9F"
+      "A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF"
+      "C0C1C2C3C4C5C6C7C8C9CACBCCCDCECFD0D1D2D3D4D5D6D7D8D9DADBDCDDDEDF"
+      "E0E1E2E3E4E5E6E7E8E9EAEBECEDEEEFF0F1F2F3F4F5F6F7F8F9FAFBFCFDFEFF";
+
+  const auto inputSize = input.size();
+  output.resize(inputSize * 2);
+
+  const unsigned char* inputBuffer =
+      reinterpret_cast<const unsigned char*>(input.data());
+  char* resultBuffer = output.data();
+
+  for (auto i = 0; i < inputSize; ++i) {
+    resultBuffer[i * 2] = kHexTable[inputBuffer[i] * 2];
+    resultBuffer[i * 2 + 1] = kHexTable[inputBuffer[i] * 2 + 1];
+  }
+
+  return true;
+}
+
+FOLLY_ALWAYS_INLINE static uint8_t fromHex(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+
+  if (c >= 'A' && c <= 'F') {
+    return 10 + c - 'A';
+  }
+
+  if (c >= 'a' && c <= 'f') {
+    return 10 + c - 'a';
+  }
+
+  VELOX_USER_FAIL("Invalid hex character: {}", c);
+}
+
+FOLLY_ALWAYS_INLINE unsigned char toHex(unsigned char c) {
+  return c < 10 ? (c + '0') : (c + 'A' - 10);
+}
+
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool fromHex(TOutString& output, const TInString& input) {
+  VELOX_USER_CHECK_EQ(
+      input.size() % 2,
+      0,
+      "Invalid input length for from_hex(): {}",
+      input.size());
+
+  const auto resultSize = input.size() / 2;
+  output.resize(resultSize);
+
+  const char* inputBuffer = input.data();
+  char* resultBuffer = output.data();
+
+  for (auto i = 0; i < resultSize; ++i) {
+    resultBuffer[i] =
+        (fromHex(inputBuffer[i * 2]) << 4) | fromHex(inputBuffer[i * 2 + 1]);
+  }
+
+  return true;
+}
+
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool toBase64(TOutString& output, const TInString& input) {
+  output.resize(encoding::Base64::calculateEncodedSize(input.size()));
+  encoding::Base64::encode(input.data(), input.size(), output.data());
+  return true;
+}
+
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool fromBase64(
+    TOutString& output,
+    const TInString& input) {
+  try {
+    auto inputSize = input.size();
+    output.resize(
+        encoding::Base64::calculateDecodedSize(input.data(), inputSize));
+    encoding::Base64::decode(input.data(), input.size(), output.data());
+  } catch (const encoding::Base64Exception& e) {
+    VELOX_USER_FAIL(e.what());
+  }
+  return true;
+}
+
+FOLLY_ALWAYS_INLINE void charEscape(unsigned char c, char* output) {
+  output[0] = '%';
+  output[1] = toHex(c / 16);
+  output[2] = toHex(c % 16);
+}
+
+/// Escapes ``input`` by encoding it so that it can be safely included in
+/// URL query parameter names and values:
+///
+///  * Alphanumeric characters are not encoded.
+///  * The characters ``.``, ``-``, ``*`` and ``_`` are not encoded.
+///  * The ASCII space character is encoded as ``+``.
+///  * All other characters are converted to UTF-8 and the bytes are encoded
+///    as the string ``%XX`` where ``XX`` is the uppercase hexadecimal
+///    value of the UTF-8 byte.
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool urlEscape(TOutString& output, const TInString& input) {
+  auto inputSize = input.size();
+  output.reserve(inputSize * 3);
+
+  auto inputBuffer = input.data();
+  auto outputBuffer = output.data();
+
+  size_t outIndex = 0;
+  for (auto i = 0; i < inputSize; ++i) {
+    unsigned char p = inputBuffer[i];
+
+    if ((p >= 'a' && p <= 'z') || (p >= 'A' && p <= 'Z') ||
+        (p >= '0' && p <= '9') || p == '-' || p == '_' || p == '.' ||
+        p == '*') {
+      outputBuffer[outIndex++] = p;
+    } else if (p == ' ') {
+      outputBuffer[outIndex++] = '+';
+    } else {
+      charEscape(p, outputBuffer + outIndex);
+      outIndex += 3;
+    }
+  }
+  output.resize(outIndex);
+  return true;
+}
+
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool urlUnescape(
+    TOutString& output,
+    const TInString& input) {
+  auto inputSize = input.size();
+  output.reserve(inputSize);
+
+  auto outputBuffer = output.data();
+  const char* p = input.data();
+  const char* end = p + inputSize;
+  char buf[3];
+  buf[2] = '\0';
+  char* endptr;
+  for (; p < end; ++p) {
+    if (*p == '+') {
+      *outputBuffer++ = ' ';
+    } else if (*p == '%') {
+      if (p + 2 < end) {
+        buf[0] = p[1];
+        buf[1] = p[2];
+        int val = strtol(buf, &endptr, 16);
+        if (endptr == buf + 2) {
+          *outputBuffer++ = (char)val;
+          p += 2;
+        } else {
+          VELOX_USER_FAIL(
+              "Illegal hex characters in escape (%) pattern: {}", buf);
+        }
+      } else {
+        VELOX_USER_FAIL("Incomplete trailing escape (%) pattern");
+      }
+    } else {
+      *outputBuffer++ = *p;
+    }
+  }
+  output.resize(outputBuffer - output.data());
+  return true;
+}
+
+// Presto supports both ascii whitespace and unicode line separator \u2028
+FOLLY_ALWAYS_INLINE bool isUnicodeWhiteSpace(utf8proc_int32_t codePoint) {
+  // 9 -> \t, 10 -> \n, 13 -> \r, 32 -> ' ', 8232 -> \u2028
+  return codePoint == 9 || codePoint == 10 || codePoint == 13 ||
+      codePoint == 8232 || codePoint == 32;
+}
+
+FOLLY_ALWAYS_INLINE bool isAsciiWhiteSpace(char ch) {
+  return ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ';
+}
+
+template <
+    bool leftTrim,
+    bool rightTrim,
+    typename TOutString,
+    typename TInString>
+FOLLY_ALWAYS_INLINE void trimAsciiWhiteSpace(
+    TOutString& output,
+    const TInString& input) {
+  if (input.empty()) {
+    output.setEmpty();
+    return;
+  }
+
+  auto curPos = input.begin();
+  if constexpr (leftTrim) {
+    while (curPos < input.end() && isAsciiWhiteSpace(*curPos)) {
+      curPos++;
+    }
+  }
+  if (curPos >= input.end()) {
+    output.setEmpty();
+    return;
+  }
+  auto start = curPos;
+  curPos = input.end() - 1;
+  if constexpr (rightTrim) {
+    while (curPos > start && isAsciiWhiteSpace(*curPos)) {
+      curPos--;
+    }
+  }
+  output.setNoCopy(StringView(start, curPos - start + 1));
+}
+
+template <
+    bool leftTrim,
+    bool rightTrim,
+    typename TOutString,
+    typename TInString>
+FOLLY_ALWAYS_INLINE void trimUnicodeWhiteSpace(
+    TOutString& output,
+    const TInString& input) {
+  if (input.empty()) {
+    output.setEmpty();
+    return;
+  }
+
+  auto curPos = 0;
+  int codePointSize = 0;
+  if constexpr (leftTrim) {
+    while (curPos < input.size()) {
+      auto codePoint = utf8proc_codepoint(input.data() + curPos, codePointSize);
+      // Invalid encoding, return the remaining of the input
+      if (UNLIKELY(-1 == codePoint)) {
+        output.setNoCopy(
+            StringView(input.data() + curPos, input.size() - curPos));
+        break;
+      }
+
+      if (isUnicodeWhiteSpace(codePoint)) {
+        curPos += codePointSize;
+      } else {
+        break;
+      }
+    }
+  }
+  if (curPos >= input.size()) {
+    output.setEmpty();
+    return;
+  }
+  size_t start = curPos;
+
+  // Right trim for unicode input requires to traverse the whole string
+  size_t lastNonWhiteSpace = input.size();
+  bool hasWhiteSpace = false;
+  if constexpr (rightTrim) {
+    while (curPos < input.size()) {
+      auto codePoint = utf8proc_codepoint(input.data() + curPos, codePointSize);
+      // Invalid encoding, return the remaining of the input
+      if (UNLIKELY(-1 == codePoint)) {
+        output.setNoCopy(
+            StringView(input.data() + start, input.size() - start));
+        return;
+      }
+
+      if (isUnicodeWhiteSpace(codePoint)) {
+        if (!hasWhiteSpace) {
+          lastNonWhiteSpace = curPos;
+          hasWhiteSpace = true;
+        }
+      } else {
+        // reset if the next one is not a white space
+        lastNonWhiteSpace = input.size();
+        hasWhiteSpace = false;
+      }
+      curPos += codePointSize;
+    }
+  }
+  output.setNoCopy(StringView(input.data() + start, lastNonWhiteSpace - start));
+}
+
+template <bool ascii, typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE void reverse(TOutString& output, const TInString& input) {
+  auto inputSize = input.size();
+  output.resize(inputSize);
+
+  if constexpr (ascii) {
+    reverseAscii(output.data(), input.data(), inputSize);
+  } else {
+    reverseUnicode(output.data(), input.data(), inputSize);
+  }
+}
+} // namespace facebook::velox::functions::stringImpl

@@ -15,40 +15,55 @@ add_subdirectory(json)
 
 add_library(
   velox_functions_prestosql OBJECT
-  CoreFunctions.cpp
-  Reduce.cpp
-  RegisterArithmetic.cpp
-  RegisterCheckedArithmetic.cpp
-  RegisterComparisons.cpp
-  VectorFunctions.cpp
-  RowFunction.cpp
-  Coalesce.cpp
-  IsNull.cpp
-  InPredicate.cpp
-  StringFunctions.cpp
-  Length.cpp
+  ArrayConstructor.cpp
+  ArrayContains.cpp
+  ArrayDistinct.cpp
+  ArrayIntersectExcept.cpp
+  ArrayMinMax.cpp
   Cardinality.cpp
+  Coalesce.cpp
+  SimpleFunctions.cpp
+  ElementAt.cpp
+  FilterFunctions.cpp
+  FromUnixTime.cpp
+  InPredicate.cpp
+  IsNull.cpp
+  Length.cpp
   Map.cpp
   MapConcat.cpp
   MapEntries.cpp
   MapKeysAndValues.cpp
   Not.cpp
-  ArrayConstructor.cpp
-  ArrayContains.cpp
-  ArrayIntersect.cpp
-  ArrayMinMax.cpp
-  FilterFunctions.cpp
-  Transform.cpp
-  ElementAt.cpp
+  Reduce.cpp
+  RegisterArithmetic.cpp
+  RegisterCheckedArithmetic.cpp
+  RegisterComparisons.cpp
+  Reverse.cpp
+  RowFunction.cpp
+  Split.cpp
+  StringFunctions.cpp
   Subscript.cpp
+  ToUtf8.cpp
+  Transform.cpp
   VectorArithmetic.cpp
-  WidthBucketArray.cpp)
+  VectorFunctions.cpp
+  WidthBucketArray.cpp
+  GreatestLeast.cpp)
 
-target_link_libraries(velox_functions_prestosql velox_exec velox_functions_json
-                      velox_functions_lib velox_expression md5)
+target_link_libraries(
+  velox_functions_prestosql
+  velox_exec
+  velox_functions_json
+  velox_functions_lib
+  velox_expression
+  md5
+  velox_type_tz)
 
 set_property(TARGET velox_functions_prestosql PROPERTY JOB_POOL_COMPILE
                                                        high_memory_pool)
 
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+  add_subdirectory(benchmarks)
+  add_subdirectory(coverage)
+endif()

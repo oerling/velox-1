@@ -22,7 +22,6 @@
 #include <folly/hash/Hash.h>
 #include <glog/logging.h>
 
-#include <folly/Optional.h>
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/LazyVector.h"
@@ -40,8 +39,8 @@ class RowVector : public BaseVector {
       BufferPtr nulls,
       size_t length,
       std::vector<VectorPtr> children,
-      folly::Optional<vector_size_t> nullCount = folly::none)
-      : BaseVector(pool, type, nulls, length, folly::none, nullCount, 1),
+      std::optional<vector_size_t> nullCount = std::nullopt)
+      : BaseVector(pool, type, nulls, length, std::nullopt, nullCount, 1),
         childrenSize_(children.size()),
         children_(std::move(children)) {
     // Some columns may not be projected out
@@ -183,15 +182,14 @@ class ArrayVector : public BaseVector {
       BufferPtr offsets,
       BufferPtr lengths,
       VectorPtr elements,
-      folly::Optional<vector_size_t> nullCount = folly::none)
+      std::optional<vector_size_t> nullCount = std::nullopt)
       : BaseVector(
             pool,
             type,
             nulls,
             length,
-            folly::none /*distinctValueCount*/,
-            nullCount,
-            folly::none /*representedByteCount*/),
+            std::nullopt /*distinctValueCount*/,
+            nullCount),
         offsets_(std::move(offsets)),
         rawOffsets_(offsets_->as<vector_size_t>()),
         sizes_(std::move(lengths)),
@@ -206,6 +204,49 @@ class ArrayVector : public BaseVector {
         "Unexpected element type: {}. Expected: {}",
         elements_->type()->toString(),
         type->childAt(0)->toString());
+
+    if (type->isFixedWidth()) { // and thus must be FixedSizeArrayType
+      // Ensure all elements have the same width as our type.
+      //
+      // ARROW COMPATIBILITY:
+      //
+      // Non-nullable FixedSizeArrays are Arrow compatible.
+      //
+      // Nullable FixedSizeArrays are not Arrow compatible. Currently
+      // the Presto page serializer uses a "sparse" format to
+      // represent null entries where they are not allocated space in
+      // the vector. This is a divergence from Arrow, see
+      // https://arrow.apache.org/docs/format/Columnar.html#fixed-size-list-layout
+      // Moving to the Arrow compatible data layout for fixed size
+      // arrays requires a format change in Presto & migration. For
+      // now, we stay with the existing physical layout. This allows
+      // us to deserialize data from Presto Page without needing to
+      // first copy the array. Instead we would need to do this copy
+      // when serializing to an arrow compatible vector.
+      //
+      // FUTURE OPTIMIZATION:
+      //
+      // Once we make nullable FixedSizeArrays arrow compatible
+      // (non-sparse), we no longer need to populate the backing
+      // arrays for rawOffsets_ and rawSizes_, but can directly
+      // calculate them as width * index. We could do this for
+      // non-nullable FixedSizedArrays now, but it is unclear at this
+      // point if this is worth it so we keep the simple code path for
+      // now.
+      const vector_size_t wantWidth = type->fixedElementsWidth();
+      for (vector_size_t i = 0; i < length; ++i) {
+        VELOX_CHECK(
+            /* Note: null entries are likely have a size of 0,
+               but this is not a guaranteed invariant.  So we
+               only enforce the length check for non-nullable
+               entries. */
+            isNullAt(i) || rawSizes_[i] == wantWidth,
+            "Invalid length element at index {}, got length {}, want length {}",
+            i,
+            rawSizes_[i],
+            wantWidth);
+      }
+    }
   }
 
   virtual ~ArrayVector() override {}
@@ -328,15 +369,15 @@ class MapVector : public BaseVector {
       BufferPtr sizes,
       VectorPtr keys,
       VectorPtr values,
-      folly::Optional<vector_size_t> nullCount = folly::none)
+      std::optional<vector_size_t> nullCount = std::nullopt)
       : BaseVector(
             pool,
             type,
             nulls,
             length,
-            folly::none /*distinctValueCount*/,
+            std::nullopt /*distinctValueCount*/,
             nullCount,
-            folly::none /*representedByteCount*/),
+            std::nullopt /*representedByteCount*/),
         offsets_(std::move(offsets)),
         rawOffsets_(offsets_->as<vector_size_t>()),
         sizes_(std::move(sizes)),
@@ -500,4 +541,15 @@ using RowVectorPtr = std::shared_ptr<RowVector>;
 using ArrayVectorPtr = std::shared_ptr<ArrayVector>;
 using MapVectorPtr = std::shared_ptr<MapVector>;
 
+// Allocates a buffer to fit at least 'size' offsets and initializes them to
+// zero.
+inline BufferPtr allocateOffsets(vector_size_t size, memory::MemoryPool* pool) {
+  return AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
+}
+
+// Allocates a buffer to fit at least 'size' sizes and initializes them to
+// zero.
+inline BufferPtr allocateSizes(vector_size_t size, memory::MemoryPool* pool) {
+  return AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
+}
 } // namespace facebook::velox

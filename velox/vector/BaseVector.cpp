@@ -31,10 +31,10 @@ BaseVector::BaseVector(
     std::shared_ptr<const Type> type,
     BufferPtr nulls,
     size_t length,
-    folly::Optional<vector_size_t> distinctValueCount,
-    folly::Optional<vector_size_t> nullCount,
-    folly::Optional<ByteCount> representedByteCount,
-    folly::Optional<ByteCount> storageByteCount)
+    std::optional<vector_size_t> distinctValueCount,
+    std::optional<vector_size_t> nullCount,
+    std::optional<ByteCount> representedByteCount,
+    std::optional<ByteCount> storageByteCount)
     : type_(std::move(type)),
       typeKind_(type_->kind()),
       nulls_(std::move(nulls)),
@@ -68,7 +68,7 @@ void BaseVector::allocateNulls() {
 }
 
 template <>
-vector_size_t BaseVector::byteSize<bool>(vector_size_t count) {
+uint64_t BaseVector::byteSize<bool>(vector_size_t count) {
   return bits::nbytes(count);
 }
 
@@ -112,10 +112,10 @@ static VectorPtr addDictionary(
       indicesBuffer->size() / sizeof(vector_size_t) /*distinctValueCount*/,
       base->getNullCount(),
       false /*isSorted*/,
-      base->representedBytes().hasValue()
-          ? folly::Optional<ByteCount>(
+      base->representedBytes().has_value()
+          ? std::optional<ByteCount>(
                 base->representedBytes().value() * size / (1 + vsize))
-          : folly::none);
+          : std::nullopt);
 }
 
 // static
@@ -142,14 +142,14 @@ addSequence(BufferPtr lengths, vector_size_t size, VectorPtr vector) {
       std::move(vector),
       std::move(lengths),
       cdvi::EMPTY_METADATA,
-      folly::none /*distinctCount*/,
-      folly::none,
+      std::nullopt /*distinctCount*/,
+      std::nullopt,
       false /*sorted*/,
       base->representedBytes().has_value()
-          ? folly::Optional<ByteCount>(
+          ? std::optional<ByteCount>(
                 base->representedBytes().value() * size /
                 (1 + (lsize / sizeof(vector_size_t))))
-          : folly::none);
+          : std::nullopt);
 }
 
 // static
@@ -264,6 +264,33 @@ VectorPtr BaseVector::create(
     case TypeKind::ARRAY: {
       BufferPtr sizes = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
       BufferPtr offsets = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
+      // When constructing FixedSizeArray types we validate the
+      // provided lengths are of the expected size. But
+      // BaseVector::create constructs the array with the
+      // sizes/offsets all set to zero -- presumably because the
+      // caller will fill them in later by directly manipulating
+      // rawSizes/rawOffsets. This makes the sanity check in the
+      // FixedSizeArray constructor less powerful than it would be if
+      // we knew the sizes / offsets were going to populate them with
+      // in advance and they were immutable after constructing the
+      // array.
+      //
+      // For now to support the current code structure of "create then
+      // populate" for BaseVector::create(), in the case of
+      // FixedSizeArrays we pre-initialize the sizes / offsets here
+      // with what we expect them to be so the constructor validation
+      // passes. The code that subsequently manipulates the
+      // sizes/offsets directly should also validate they are
+      // continuing to upload the fixedSize constraint.
+      if (type->isFixedWidth()) {
+        auto rawOffsets = offsets->asMutable<vector_size_t>();
+        auto rawSizes = sizes->asMutable<vector_size_t>();
+        const auto width = type->fixedElementsWidth();
+        for (vector_size_t i = 0; i < size; ++i) {
+          *rawSizes++ = width;
+          *rawOffsets++ = width * i;
+        }
+      }
       auto elementType = type->as<TypeKind::ARRAY>().elementType();
       auto elements = create(elementType, 0, pool);
       return std::make_shared<ArrayVector>(
@@ -356,7 +383,7 @@ void BaseVector::clearNulls(const SelectivityVector& rows) {
       rows.asRange().bits(),
       std::min(length_, rows.begin()),
       std::min(length_, rows.end()));
-  nullCount_ = folly::none;
+  nullCount_ = std::nullopt;
 }
 
 void BaseVector::clearNulls(vector_size_t begin, vector_size_t end) {
@@ -374,7 +401,7 @@ void BaseVector::clearNulls(vector_size_t begin, vector_size_t end) {
 
   auto rawNulls = nulls_->asMutable<uint64_t>();
   bits::fillBits(rawNulls, begin, end, true);
-  nullCount_ = folly::none;
+  nullCount_ = std::nullopt;
 }
 
 // static
@@ -507,7 +534,7 @@ VectorPtr newConstant(
       pool,
       size,
       value.isNull(),
-      CppToType<T>::create(),
+      Type::create<kind>(),
       std::move(copy),
       cdvi::EMPTY_METADATA,
       sizeof(T) /*representedByteCount*/);
@@ -589,13 +616,18 @@ bool isLazyNotLoaded(const BaseVector& vector) {
 
 // static
 bool BaseVector::isReusableFlatVector(const VectorPtr& vector) {
-  if (!vector.unique()) {
+  // If the main shared_ptr has more than one references, or if it's not a flat
+  // vector, can't reuse.
+  if (!vector.unique() || !isFlat(vector->encoding())) {
     return false;
   }
-  if (vector->encoding() == VectorEncoding::Simple::FLAT &&
-      (!vector->nulls() || vector->nulls()->unique())) {
-    auto& values = vector->values();
-    if (!values || values->unique()) {
+
+  // Now check if nulls and values buffers also have a single reference and are
+  // mutable.
+  const auto& nulls = vector->nulls();
+  if (!nulls || (vector->nulls()->unique() && vector->nulls()->isMutable())) {
+    const auto& values = vector->values();
+    if (!values || (values->unique() && values->isMutable())) {
       return true;
     }
   }

@@ -16,15 +16,20 @@ add_library(
   Aggregate.cpp
   AllocationPool.cpp
   ContainerRowSerde.cpp
+  CrossJoinBuild.cpp
+  CrossJoinProbe.cpp
   Driver.cpp
+  EnforceSingleRow.cpp
   Exchange.cpp
   FilterProject.cpp
   GroupingSet.cpp
   HashAggregation.cpp
   HashBuild.cpp
+  HashPartitionFunction.cpp
   HashProbe.cpp
   HashStringAllocator.cpp
   HashTable.cpp
+  JoinBridge.cpp
   Limit.cpp
   LocalPartition.cpp
   LocalPlanner.cpp
@@ -53,5 +58,7 @@ target_link_libraries(
   velox_codegen
   velox_common_base)
 
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+  add_subdirectory(benchmarks)
+endif()

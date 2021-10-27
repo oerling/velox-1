@@ -43,10 +43,12 @@ void registerArithmeticFunctions() {
   registerBinaryFloatingPoint<udf_minus>({});
   registerBinaryFloatingPoint<udf_multiply>({});
   registerBinaryFloatingPoint<udf_divide>({});
+  registerBinaryFloatingPoint<udf_modulus>({});
   registerUnaryNumeric<udf_ceil>({"ceil", "ceiling"});
   registerUnaryNumeric<udf_floor>({});
   registerUnaryNumeric<udf_abs>({});
   registerUnaryFloatingPoint<udf_negate>({});
+  registerFunction<udf_radians, double, double>({"radians"});
   registerUnaryNumeric<udf_round>({"round"});
   registerFunction<udf_round<int8_t>, int8_t, int8_t, int32_t>({"round"});
   registerFunction<udf_round<int16_t>, int16_t, int16_t, int32_t>({"round"});
@@ -70,6 +72,17 @@ void registerArithmeticFunctions() {
       {"clamp"});
   registerFunction<udf_clamp<float>, float, float, float, float>({"clamp"});
   registerFunction<udf_ln, double, double>({"ln"});
+  registerFunction<udf_log2, double, double>({"log2"});
+  registerFunction<udf_log10, double, double>({"log10"});
+  registerFunction<udf_cos, double, double>({"cos"});
+  registerFunction<udf_cosh, double, double>({"cosh"});
+  registerFunction<udf_acos, double, double>({"acos"});
+  registerFunction<udf_sin, double, double>({"sin"});
+  registerFunction<udf_asin, double, double>({"asin"});
+  registerFunction<udf_tan, double, double>({"tan"});
+  registerFunction<udf_tanh, double, double>({"tanh"});
+  registerFunction<udf_atan, double, double>({"atan"});
+  registerFunction<udf_atan2, double, double, double>({"atan2"});
   registerFunction<udf_sqrt, double, double>({"sqrt"});
   registerFunction<udf_cbrt, double, double>({"cbrt"});
   registerFunction<udf_width_bucket, int64_t, double, double, double, int64_t>(

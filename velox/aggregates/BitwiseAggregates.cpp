@@ -15,7 +15,7 @@
  */
 
 #include "velox/aggregates/AggregateNames.h"
-#include "velox/aggregates/SimpleNumerics.h"
+#include "velox/aggregates/SimpleNumericAggregate.h"
 #include "velox/exec/Aggregate.h"
 
 namespace facebook::velox::aggregate {
@@ -27,11 +27,8 @@ class BitwiseAndOrAggregate : public SimpleNumericAggregate<T, T, T> {
   using BaseAggregate = SimpleNumericAggregate<T, T, T>;
 
  public:
-  BitwiseAndOrAggregate(
-      core::AggregationNode::Step step,
-      TypePtr resultType,
-      T initialValue)
-      : BaseAggregate(step, resultType), initialValue_(initialValue) {}
+  BitwiseAndOrAggregate(TypePtr resultType, T initialValue)
+      : BaseAggregate(resultType), initialValue_(initialValue) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(T);
@@ -53,20 +50,20 @@ class BitwiseAndOrAggregate : public SimpleNumericAggregate<T, T, T> {
     });
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    this->updatePartial(groups, rows, args, mayPushdown);
+    this->addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    this->updateSingleGroupPartial(group, rows, args, mayPushdown);
+    this->addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
  protected:
@@ -76,15 +73,12 @@ class BitwiseAndOrAggregate : public SimpleNumericAggregate<T, T, T> {
 template <typename T>
 class BitwiseOrAggregate : public BitwiseAndOrAggregate<T> {
  public:
-  explicit BitwiseOrAggregate(
-      core::AggregationNode::Step step,
-      TypePtr resultType)
+  explicit BitwiseOrAggregate(TypePtr resultType)
       : BitwiseAndOrAggregate<T>(
-            step,
             resultType,
             /* initialValue = */ 0) {}
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -97,7 +91,7 @@ class BitwiseOrAggregate : public BitwiseAndOrAggregate<T> {
         mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -117,15 +111,12 @@ class BitwiseOrAggregate : public BitwiseAndOrAggregate<T> {
 template <typename T>
 class BitwiseAndAggregate : public BitwiseAndOrAggregate<T> {
  public:
-  explicit BitwiseAndAggregate(
-      core::AggregationNode::Step step,
-      TypePtr resultType)
+  explicit BitwiseAndAggregate(TypePtr resultType)
       : BitwiseAndOrAggregate<T>(
-            step,
             resultType,
             /* initialValue = */ -1) {}
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -138,7 +129,7 @@ class BitwiseAndAggregate : public BitwiseAndOrAggregate<T> {
         mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -168,13 +159,13 @@ bool registerBitwiseAggregate(const std::string& name) {
         auto inputType = argTypes[0];
         switch (inputType->kind()) {
           case TypeKind::TINYINT:
-            return std::make_unique<T<int8_t>>(step, inputType);
+            return std::make_unique<T<int8_t>>(inputType);
           case TypeKind::SMALLINT:
-            return std::make_unique<T<int16_t>>(step, inputType);
+            return std::make_unique<T<int16_t>>(inputType);
           case TypeKind::INTEGER:
-            return std::make_unique<T<int32_t>>(step, inputType);
+            return std::make_unique<T<int32_t>>(inputType);
           case TypeKind::BIGINT:
-            return std::make_unique<T<int64_t>>(step, inputType);
+            return std::make_unique<T<int64_t>>(inputType);
           default:
             VELOX_CHECK(
                 false,

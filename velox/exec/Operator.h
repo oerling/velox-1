@@ -21,9 +21,6 @@
 
 namespace facebook::velox::exec {
 
-using OperationTimer = CpuWallTimer;
-using OperationTiming = CpuWallTiming;
-
 // Represents a column that is copied from input to output, possibly
 // with cardinality change, i.e. values removed or duplicated.
 struct IdentityProjection {
@@ -42,7 +39,7 @@ struct MemoryStats {
   uint64_t peakSystemMemoryReservation = {};
   uint64_t peakTotalMemoryReservation = {};
 
-  void update(std::shared_ptr<memory::MemoryUsageTracker> tracker) {
+  void update(const std::shared_ptr<memory::MemoryUsageTracker>& tracker) {
     if (!tracker) {
       return;
     }
@@ -113,12 +110,12 @@ struct OperatorStats {
   uint64_t rawInputBytes = 0;
   uint64_t rawInputPositions = 0;
 
-  OperationTiming addInputTiming;
+  CpuWallTiming addInputTiming;
   // Bytes of input in terms of retained size of input vectors.
   uint64_t inputBytes = 0;
   uint64_t inputPositions = 0;
 
-  OperationTiming getOutputTiming;
+  CpuWallTiming getOutputTiming;
   // Bytes of output in terms of retained size of vectors.
   uint64_t outputBytes = 0;
   uint64_t outputPositions = 0;
@@ -127,7 +124,7 @@ struct OperatorStats {
 
   uint64_t blockedWallNanos = 0;
 
-  OperationTiming finishTiming;
+  CpuWallTiming finishTiming;
 
   MemoryStats memoryStats;
 
@@ -136,12 +133,12 @@ struct OperatorStats {
   OperatorStats(
       int32_t _operatorId,
       int32_t _pipelineId,
-      const std::string& _planNodeId,
-      const std::string& _operatorType)
+      std::string _planNodeId,
+      std::string _operatorType)
       : operatorId(_operatorId),
         pipelineId(_pipelineId),
-        planNodeId(_planNodeId),
-        operatorType(_operatorType) {}
+        planNodeId(std::move(_planNodeId)),
+        operatorType(std::move(_operatorType)) {}
 
   void addRuntimeStat(const std::string& name, int64_t value) {
     runtimeStats[name].addValue(value);
@@ -153,18 +150,10 @@ struct OperatorStats {
 
 class OperatorCtx {
  public:
-  explicit OperatorCtx(DriverCtx* driverCtx)
-      : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorUserPool()) {}
+  explicit OperatorCtx(DriverCtx* driverCtx);
 
   velox::memory::MemoryPool* pool() const {
     return pool_;
-  }
-
-  velox::memory::MemoryPool* systemPool() const {
-    if (!systemMemPool_) {
-      systemMemPool_ = driverCtx_->addOperatorSystemPool(pool_);
-    }
-    return systemMemPool_;
   }
 
   memory::MappedMemory* mappedMemory() const;
@@ -196,9 +185,7 @@ class OperatorCtx {
   velox::memory::MemoryPool* pool_;
 
   // These members are created on demand.
-  mutable velox::memory::MemoryPool* systemMemPool_{nullptr};
   mutable std::shared_ptr<memory::MappedMemory> mappedMemory_;
-  mutable std::shared_ptr<memory::MappedMemory> recoverableMappedMemory_;
 };
 
 // Query operator
@@ -220,13 +207,17 @@ class Operator {
       DriverCtx* driverCtx,
       std::shared_ptr<const RowType> outputType,
       int32_t operatorId,
-      const std::string& planNodeId,
-      const std::string& operatorType)
+      std::string planNodeId,
+      std::string operatorType)
       : operatorCtx_(std::make_unique<OperatorCtx>(driverCtx)),
-        stats_(operatorId, driverCtx->pipelineId, planNodeId, operatorType),
-        outputType_(outputType) {}
+        stats_(
+            operatorId,
+            driverCtx->pipelineId,
+            std::move(planNodeId),
+            std::move(operatorType)),
+        outputType_(std::move(outputType)) {}
 
-  virtual ~Operator() {}
+  virtual ~Operator() = default;
 
   // Returns true if can accept input.
   virtual bool needsInput() const = 0;
@@ -332,16 +323,16 @@ class Operator {
   // Registers 'translator' for mapping user defined PlanNode subclass instances
   // to user-defined Operators.
   static void registerOperator(PlanNodeTranslator translator) {
-    translators().push_back(translator);
+    translators().emplace_back(std::move(translator));
   }
 
   // Calls all the registered PlanNodeTranslators on 'planNode' and
-  // returns the the result of the first one that returns non-nullptr
+  // returns the result of the first one that returns non-nullptr
   // or nullptr if all return nullptr.
   static std::unique_ptr<Operator> fromPlanNode(
       DriverCtx* ctx,
       int32_t id,
-      std::shared_ptr<const core::PlanNode> planNode);
+      const std::shared_ptr<const core::PlanNode>& planNode);
 
  protected:
   static std::vector<PlanNodeTranslator>& translators();
@@ -398,7 +389,7 @@ class Operator {
 
   std::unordered_map<ChannelIndex, std::shared_ptr<common::Filter>>
       dynamicFilters_;
-}; // namespace facebook::velox::exec
+};
 
 constexpr ChannelIndex kConstantChannel =
     std::numeric_limits<ChannelIndex>::max();
@@ -427,7 +418,12 @@ class SourceOperator : public Operator {
       int32_t operatorId,
       const std::string& planNodeId,
       const std::string& operatorType)
-      : Operator(driverCtx, outputType, operatorId, planNodeId, operatorType) {}
+      : Operator(
+            driverCtx,
+            std::move(outputType),
+            operatorId,
+            planNodeId,
+            operatorType) {}
 
   bool needsInput() const override {
     return false;
@@ -436,6 +432,23 @@ class SourceOperator : public Operator {
   void addInput(RowVectorPtr /* unused */) override {
     VELOX_CHECK(false, "SourceOperator does not support addInput()");
   }
+};
+
+// Concrete class implementing the base runtime stats writer. Wraps around
+// operator pointer to be called at any time to updated runtime stats.
+// Used for reporting IO wall time from lazy vectors, for example.
+class OperatorRuntimeStatWriter : public BaseRuntimeStatWriter {
+ public:
+  explicit OperatorRuntimeStatWriter(Operator* op) : operator_{op} {}
+
+  void addRuntimeStat(const std::string& name, int64_t value) override {
+    if (operator_) {
+      operator_->stats().addRuntimeStat(name, value);
+    }
+  }
+
+ private:
+  Operator* operator_;
 };
 
 } // namespace facebook::velox::exec

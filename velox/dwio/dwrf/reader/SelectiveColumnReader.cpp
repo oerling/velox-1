@@ -98,7 +98,8 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   std::vector<uint32_t> stridesToSkip;
   for (auto i = 0; i < index_->entry_size(); i++) {
     const auto& entry = index_->entry(i);
-    auto columnStats = ColumnStatistics::fromProto(entry.statistics(), context);
+    auto columnStats =
+        buildColumnStatisticsFromProto(entry.statistics(), context);
     if (!testFilter(filter, columnStats.get(), rowGroupSize, type_)) {
       stridesToSkip.push_back(i); // Skipping stride based on column stats.
     }
@@ -124,7 +125,7 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
 
 template <typename T>
 void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
-  if (values_ &&
+  if (values_ && values_->unique() &&
       values_->capacity() >=
           BaseVector::byteSize<T>(numRows) + simd::kPadding) {
     return;
@@ -203,11 +204,6 @@ void SelectiveColumnReader::prepareRead(
   }
   ensureValuesCapacity<T>(rows.size());
   if (scanSpec_->keepValues() && !scanSpec_->valueHook()) {
-    // Can't re-use if someone else has a reference
-    if (values_ && !values_->unique()) {
-      values_.reset();
-    }
-    ensureValuesCapacity<T>(rows.size());
     valueRows_.clear();
     prepareNulls(rows, nullsInReadRange_ != nullptr);
   }
@@ -2716,7 +2712,8 @@ inline bool SelectiveStringDirectColumnReader::try8Consecutive(
       previousRow = targetRow + 1;
     }
     auto length = rawLengths_[rows[i]];
-    if (data + std::max<int32_t>(length, sizeof(__m128_u)) > bufferEnd_) {
+
+    if (data + bits::roundUp(length, 16) > bufferEnd_) {
       // Slow path if the string does not fit whole or if there is no
       // space for a 16 byte load.
       return false;
@@ -2738,10 +2735,9 @@ inline bool SelectiveStringDirectColumnReader::try8Consecutive(
         rawStringBuffer_ + rawUsed;
     *reinterpret_cast<__m128_u*>(rawStringBuffer_ + rawUsed) = first16;
     if (length > 16) {
-      simd::memcpy(
-          rawStringBuffer_ + rawUsed + 16,
-          data + 16,
-          bits::roundUp(length - 16, 16));
+      size_t copySize = bits::roundUp(length - 16, 16);
+      VELOX_CHECK_LE(data + copySize, bufferEnd_);
+      simd::memcpy(rawStringBuffer_ + rawUsed + 16, data + 16, copySize);
     }
     rawUsed += length;
     data += length;
@@ -3371,7 +3367,8 @@ class StringDictionaryColumnVisitor
       int32_t* filterHits,
       int32_t* values,
       int32_t& numValues) {
-    setByInDict(values, numInput);
+    DCHECK(input == values + numValues);
+    setByInDict(values + numValues, numInput);
     if (!hasFilter) {
       if (hasHook) {
         for (auto i = 0; i < numInput; ++i) {
@@ -3978,7 +3975,8 @@ class ColumnLoader : public velox::VectorLoader {
         fieldReader_(fieldReader),
         version_(version) {}
 
-  void load(RowSet rows, ValueHook* hook, VectorPtr* result) override;
+ protected:
+  void loadInternal(RowSet rows, ValueHook* hook, VectorPtr* result) override;
 
  private:
   SelectiveStructColumnReader* structReader_;
@@ -4006,7 +4004,10 @@ static void scatter(RowSet rows, VectorPtr* result) {
       BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, end, *result);
 }
 
-void ColumnLoader::load(RowSet rows, ValueHook* hook, VectorPtr* result) {
+void ColumnLoader::loadInternal(
+    RowSet rows,
+    ValueHook* hook,
+    VectorPtr* result) {
   VELOX_CHECK_EQ(
       version_,
       structReader_->numReads(),
@@ -4067,7 +4068,7 @@ void SelectiveStructColumnReader::read(
       continue;
     }
     auto fieldIndex = childSpec->subscript();
-    auto reader = children_[fieldIndex].get();
+    auto reader = children_.at(fieldIndex).get();
     advanceFieldReader(reader, offset);
     if (childSpec->filter()) {
       hasFilter = true;

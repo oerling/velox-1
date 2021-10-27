@@ -23,10 +23,6 @@
 //
 // All functions are not threadsafe -- external locking is required, even
 // for const member functions.
-//
-// We provide a registration method for read and write files so the appropriate
-// type of file can be constructed based on a filename. See the
-// (register|generate)ReadFile and (register|generate)WriteFile functions.
 
 #pragma once
 
@@ -93,6 +89,10 @@ class ReadFile {
     return false;
   }
 
+  // Whether preads should be coalesced where possible. E.g. remote disk would
+  // set to true, in-memory to false.
+  virtual bool shouldCoalesce() const = 0;
+
   // Number of bytes in the file.
   virtual uint64_t size() const = 0;
 
@@ -124,33 +124,13 @@ class WriteFile {
   // Appends data to the end of the file.
   virtual void append(std::string_view data) = 0;
 
+  // Flushes any local buffers, i.e. ensures the backing medium received
+  // all data that has been appended.
+  virtual void flush() = 0;
+
   // Current file size, i.e. the sum of all previous Appends.
   virtual uint64_t size() const = 0;
 };
-
-// We expect that programs will perform these registrations lazily at static
-// link time, e.g. via the lazyRegisterFileClass function. This function takes
-// a std::function that will itself call the registerFileClass function. We do
-// it lazily to get around the fact that many libraries need folly::init to
-// have been called before they will work properly. Basically as a user you
-// shouldn't have to worry about these register functions -- all you will need
-// to use is the generate functions below.
-//
-// The registration function take three parameters: a
-// std::function<bool(std::string_view)> that says whether the registered
-// File subclass should be used for that filename, and lambdas that generate
-// the actual Read/Write file. Each registered type is tried in the order it was
-// registered, so keep this in mind if multiple types could match the same
-// filename.
-void lazyRegisterFileClass(std::function<void()> lazy_registration);
-void registerFileClass(
-    std::function<bool(std::string_view)> filenameMatcher,
-    std::function<std::unique_ptr<ReadFile>(std::string_view)> readGenerator,
-    std::function<std::unique_ptr<WriteFile>(std::string_view)> writeGenerator);
-
-// Returns a read/write file of type appropriate for filename.
-std::unique_ptr<ReadFile> generateReadFile(std::string_view filename);
-std::unique_ptr<WriteFile> generateWriteFile(std::string_view filename);
 
 // We currently do a simple implementation for the in-memory files
 // that simply resizes a string as needed. If there ever gets used in
@@ -163,6 +143,9 @@ std::unique_ptr<WriteFile> generateWriteFile(std::string_view filename);
 class InMemoryReadFile final : public ReadFile {
  public:
   explicit InMemoryReadFile(std::string_view file) : file_(file) {}
+
+  explicit InMemoryReadFile(std::string file)
+      : ownedFile_(std::move(file)), file_(ownedFile_) {}
 
   std::string_view pread(uint64_t offset, uint64_t length, Arena* arena)
       const final;
@@ -179,8 +162,18 @@ class InMemoryReadFile final : public ReadFile {
     return size();
   }
 
+  // Mainly for testing. Coalescing isn't helpful for in memory data.
+  void setShouldCoalesce(bool shouldCoalesce) {
+    shouldCoalesce_ = shouldCoalesce;
+  }
+  bool shouldCoalesce() const final {
+    return shouldCoalesce_;
+  }
+
  private:
+  const std::string ownedFile_;
   const std::string_view file_;
+  bool shouldCoalesce_ = false;
 };
 
 class InMemoryWriteFile final : public WriteFile {
@@ -188,6 +181,7 @@ class InMemoryWriteFile final : public WriteFile {
   explicit InMemoryWriteFile(std::string* file) : file_(file) {}
 
   void append(std::string_view data) final;
+  void flush() final {}
   uint64_t size() const final;
 
  private:
@@ -212,6 +206,9 @@ class LocalReadFile final : public ReadFile {
       uint64_t offset,
       const std::vector<folly::Range<char*>>& buffers) final;
   uint64_t memoryUsage() const final;
+  bool shouldCoalesce() const final {
+    return false;
+  }
 
  private:
   void preadInternal(uint64_t offset, uint64_t length, char* pos) const;
@@ -227,6 +224,7 @@ class LocalWriteFile final : public WriteFile {
   ~LocalWriteFile();
 
   void append(std::string_view data) final;
+  void flush() final;
   uint64_t size() const final;
 
  private:

@@ -15,6 +15,7 @@
  */
 
 #include "velox/expression/CastExpr.h"
+#include <fmt/format.h>
 #include <stdexcept>
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/expression/VectorUdfTypeSystem.h"
@@ -36,23 +37,34 @@ template <typename To, typename From, bool Truncate>
 void applyCastKernel(
     vector_size_t row,
     const DecodedVector& input,
-    FlatVector<To>* resultFlatVector) {
+    FlatVector<To>* resultFlatVector,
+    bool& nullOutput) {
   // Special handling for string target type
   if constexpr (CppToType<To>::typeKind == TypeKind::VARCHAR) {
-    auto output =
-        util::Converter<CppToType<To>::typeKind, void, Truncate>::cast(
-            input.valueAt<From>(row));
-    // Write the result output to the output vector
-    auto proxy =
-        exec::StringProxy<FlatVector<StringView>>(resultFlatVector, row);
-    proxy.resize(output.size());
-    std::memcpy(proxy.data(), output.data(), output.size());
-    proxy.finalize();
+    if (nullOutput) {
+      resultFlatVector->setNull(row, true);
+    } else {
+      auto output =
+          util::Converter<CppToType<To>::typeKind, void, Truncate>::cast(
+              input.valueAt<From>(row), nullOutput);
+      // Write the result output to the output vector
+      auto proxy =
+          exec::StringProxy<FlatVector<StringView>>(resultFlatVector, row);
+      proxy.resize(output.size());
+      if (output.size()) {
+        std::memcpy(proxy.data(), output.data(), output.size());
+      }
+      proxy.finalize();
+    }
   } else {
     auto result =
         util::Converter<CppToType<To>::typeKind, void, Truncate>::cast(
-            input.valueAt<From>(row));
-    resultFlatVector->set(row, result);
+            input.valueAt<From>(row), nullOutput);
+    if (nullOutput) {
+      resultFlatVector->setNull(row, true);
+    } else {
+      resultFlatVector->set(row, result);
+    }
   }
 }
 
@@ -77,24 +89,40 @@ void CastExpr::applyCastWithTry(
     exec::EvalCtx* context,
     const DecodedVector& input,
     FlatVector<To>* resultFlatVector) {
-  const auto& queryCtx = context->execCtx()->queryCtx();
-  auto isCastIntByTruncate = queryCtx->isCastIntByTruncate();
+  const auto& queryConfig = context->execCtx()->queryCtx()->config();
+  auto isCastIntByTruncate = queryConfig.isCastIntByTruncate();
 
   if (!nullOnFailure_) {
     if (!isCastIntByTruncate) {
       rows.applyToSelected([&](int row) {
         // Passing a false truncate flag
         try {
-          applyCastKernel<To, From, false>(row, input, resultFlatVector);
+          bool nullOutput = false;
+          applyCastKernel<To, From, false>(
+              row, input, resultFlatVector, nullOutput);
+          if (nullOutput) {
+            context->setError(
+                row,
+                std::make_exception_ptr(std::invalid_argument(
+                    "Cast error for input #" + std::to_string(row))));
+          }
         } catch (const std::exception& e) {
-          context->setError(row, std::current_exception());
+          context->setError(
+              row,
+              std::make_exception_ptr(std::invalid_argument(
+                  "Cast error for input #" + std::to_string(row))));
         }
       });
     } else {
       rows.applyToSelected([&](int row) {
         // Passing a true truncate flag
         try {
-          applyCastKernel<To, From, true>(row, input, resultFlatVector);
+          bool nullOutput = false;
+          applyCastKernel<To, From, true>(
+              row, input, resultFlatVector, nullOutput);
+          if (nullOutput) {
+            context->setError(row, std::current_exception());
+          }
         } catch (const std::exception& e) {
           context->setError(row, std::current_exception());
         }
@@ -105,7 +133,12 @@ void CastExpr::applyCastWithTry(
       rows.applyToSelected([&](int row) {
         // TRY_CAST implementation
         try {
-          applyCastKernel<To, From, false>(row, input, resultFlatVector);
+          bool nullOutput = false;
+          applyCastKernel<To, From, false>(
+              row, input, resultFlatVector, nullOutput);
+          if (nullOutput) {
+            resultFlatVector->setNull(row, true);
+          }
         } catch (...) {
           resultFlatVector->setNull(row, true);
         }
@@ -114,7 +147,12 @@ void CastExpr::applyCastWithTry(
       rows.applyToSelected([&](int row) {
         // TRY_CAST implementation
         try {
-          applyCastKernel<To, From, true>(row, input, resultFlatVector);
+          bool nullOutput = false;
+          applyCastKernel<To, From, true>(
+              row, input, resultFlatVector, nullOutput);
+          if (nullOutput) {
+            resultFlatVector->setNull(row, true);
+          }
         } catch (...) {
           resultFlatVector->setNull(row, true);
         }
@@ -126,8 +164,8 @@ void CastExpr::applyCastWithTry(
   // GMT timezone to the user provided session timezone.
   if constexpr (CppToType<To>::typeKind == TypeKind::TIMESTAMP) {
     // If user explicitly asked us to adjust the timezone.
-    if (queryCtx->adjustTimestampToTimezone()) {
-      auto sessionTzName = queryCtx->sessionTimezone();
+    if (queryConfig.adjustTimestampToTimezone()) {
+      auto sessionTzName = queryConfig.sessionTimezone();
       if (!sessionTzName.empty()) {
         // locate_zone throws runtime_error if the timezone couldn't be found
         // (so we're safe to dereference the pointer).
@@ -313,7 +351,8 @@ void CastExpr::applyRow(
 
   // Extract the flag indicating matching of children must be done by name or
   // position
-  auto matchByName = context->execCtx()->queryCtx()->isMatchStructByName();
+  auto matchByName =
+      context->execCtx()->queryCtx()->config().isMatchStructByName();
 
   // Cast each row child to its corresponding output child
   std::vector<VectorPtr> newChildren;
@@ -348,7 +387,7 @@ void CastExpr::applyRow(
 
     if (matchNotFound) {
       if (nullOnFailure_) {
-        VELOX_USER_THROW(
+        VELOX_USER_FAIL(
             "Invalid complex cast the match is not found for the field {}",
             toFieldName)
       }

@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <folly/Optional.h>
 #include <vector>
 #include "velox/expression/EvalCtx.h"
 #include "velox/expression/FunctionSignature.h"
@@ -77,7 +76,7 @@ class VectorFunction {
   virtual void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args, // Not using const ref so we can reuse args
-      Expr* caller,
+      const TypePtr& outputType,
       EvalCtx* context,
       VectorPtr* result) const = 0;
 
@@ -112,23 +111,26 @@ class VectorFunction {
 
   // If set, the string encoding of the results will be set by propagating
   // the specified inputs string encodings if presented.
-  // If one of the specififed inputs have its encoding not determined, the
+  // If one of the specified inputs have its encoding not determined, the
   // encoding of the result is not determined.
-  virtual folly::Optional<std::vector<size_t>> propagateStringEncodingFrom()
+  virtual std::optional<std::vector<size_t>> propagateStringEncodingFrom()
       const {
-    return folly::none;
+    return std::nullopt;
   }
 };
 
 // Factory for functions which are template generated from scalar functions.
 class VectorAdapterFactory {
  public:
-  virtual std::unique_ptr<VectorFunction> getVectorInterpreter() const = 0;
+  virtual std::unique_ptr<VectorFunction> getVectorInterpreter(
+      const core::QueryConfig& config,
+      const std::vector<VectorPtr>& constantInputs) const = 0;
   virtual ~VectorAdapterFactory() = default;
+  virtual const TypePtr returnType() const = 0;
 };
 
-/// Returns a list of signatured supposed by VectorFunction with the specified
-/// name. Returns std::nullopt if there is not function with the specified name.
+/// Returns a list of signatures supposed by VectorFunction with the specified
+/// name. Returns std::nullopt if there is no function with the specified name.
 std::optional<std::vector<std::shared_ptr<FunctionSignature>>>
 getVectorFunctionSignatures(const std::string& name);
 
@@ -162,6 +164,17 @@ struct VectorFunctionArg {
 using VectorFunctionFactory = std::function<std::shared_ptr<VectorFunction>(
     const std::string& name,
     const std::vector<VectorFunctionArg>& inputArgs)>;
+
+struct VectorFunctionEntry {
+  std::vector<std::shared_ptr<FunctionSignature>> signatures;
+  VectorFunctionFactory factory;
+};
+
+// TODO: Use folly::Singleton here
+using VectorFunctionMap =
+    folly::Synchronized<std::unordered_map<std::string, VectorFunctionEntry>>;
+
+VectorFunctionMap& vectorFunctionFactories();
 
 // A template to simplify making VectorFunctionFactory for a function that has a
 // constructor that takes inputTypes and constantInputs

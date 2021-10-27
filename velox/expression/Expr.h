@@ -18,7 +18,6 @@
 
 #include <vector>
 
-#include <folly/Optional.h>
 #include <folly/container/F14Map.h>
 
 #include "velox/core/Expressions.h"
@@ -258,7 +257,6 @@ class Expr {
   // 'inputValues_'. Handles cases of VectorFunction and VectorAdapter.
   void applyFunction(
       const SelectivityVector& rows,
-      const SelectivityVector& applyRows,
       EvalCtx* context,
       VectorPtr* result);
 
@@ -293,6 +291,11 @@ class Expr {
       const SelectivityVector& rows,
       EvalCtx* context,
       const VectorPtr& result);
+
+  void evalSimplifiedImpl(
+      const SelectivityVector& rows,
+      EvalCtx* context,
+      VectorPtr* result);
 
  protected:
   const std::shared_ptr<const Type> type_;
@@ -447,13 +450,5 @@ class ExprSetSimplified : public ExprSet {
 std::unique_ptr<ExprSet> makeExprSetFromFlag(
     std::vector<std::shared_ptr<const core::ITypedExpr>>&& source,
     core::ExecCtx* execCtx);
-
-/// Enabled for string vectors. Computes the ascii status of the vector by
-/// scanning all the vector values. No-op if rows doesn't include all rows in
-/// the vector.
-void determineStringEncoding(
-    exec::EvalCtx* context,
-    SimpleVector<StringView>* vector,
-    const SelectivityVector& rows);
 
 } // namespace facebook::velox::exec

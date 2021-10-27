@@ -39,23 +39,27 @@ vector_size_t countElements(
 }
 
 // Returns SelectivityVector for the nested vector with all rows corresponding
-// to specified top-level rows selected.
+// to specified top-level rows selected. The optional topLevelRowMapping is
+// used to pass the dictionary indices if the topLevelVector is dictionary
+// encoded.
 template <typename T>
 SelectivityVector toElementRows(
     vector_size_t size,
     const SelectivityVector& topLevelRows,
-    const T* topLevelVector) {
+    const T* topLevelVector,
+    const vector_size_t* topLevelRowMapping = nullptr) {
   auto rawNulls = topLevelVector->rawNulls();
   auto rawSizes = topLevelVector->rawSizes();
   auto rawOffsets = topLevelVector->rawOffsets();
 
   SelectivityVector elementRows(size, false);
   topLevelRows.applyToSelected([&](vector_size_t row) {
-    if (rawNulls && bits::isBitNull(rawNulls, row)) {
+    auto index = topLevelRowMapping ? topLevelRowMapping[row] : row;
+    if (rawNulls && bits::isBitNull(rawNulls, index)) {
       return;
     }
-    auto size = rawSizes[row];
-    auto offset = rawOffsets[row];
+    auto size = rawSizes[index];
+    auto offset = rawOffsets[index];
     elementRows.setValidRange(offset, offset + size, true);
   });
   elementRows.updateBounds();
@@ -79,8 +83,7 @@ BufferPtr toWrapCapture(
   auto rawSizes = topLevelVector->rawSizes();
   auto rawOffsets = topLevelVector->rawOffsets();
 
-  BufferPtr wrapCapture =
-      AlignedBuffer::allocate<vector_size_t>(size, topLevelVector->pool(), 0);
+  BufferPtr wrapCapture = allocateIndices(size, topLevelVector->pool());
   auto rawWrapCapture = wrapCapture->asMutable<vector_size_t>();
   topLevelRows.applyToSelected([&](vector_size_t row) {
     if (rawNulls && bits::isBitNull(rawNulls, row)) {

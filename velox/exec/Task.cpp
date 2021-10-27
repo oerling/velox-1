@@ -16,6 +16,7 @@
 #include "velox/exec/Task.h"
 #include "velox/codegen/Codegen.h"
 #include "velox/common/time/Timer.h"
+#include "velox/exec/CrossJoinBuild.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/LocalPlanner.h"
@@ -64,14 +65,15 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   }
 
 #if CODEGEN_ENABLED == 1
-  if (self->queryCtx()->codegenEnabled() &&
-      self->queryCtx()->codegenConfigurationFilePath().length() != 0) {
+  const auto& config = self->queryCtx()->config();
+  if (config.codegenEnabled() &&
+      config.codegenConfigurationFilePath().length() != 0) {
     auto codegenLogger =
         std::make_shared<codegen::DefaultLogger>(self->taskId_);
     auto codegen = codegen::Codegen(codegenLogger);
-    auto lazyLoading = self->queryCtx()->codegenLazyLoading();
+    auto lazyLoading = config.codegenLazyLoading();
     codegen.initializeFromFile(
-        self->queryCtx()->codegenConfigurationFilePath(), lazyLoading);
+        config.codegenConfigurationFilePath(), lazyLoading);
     auto newPlanNode = codegen.compile(*(self->planNode_));
     self->planNode_ = newPlanNode != nullptr ? newPlanNode : self->planNode_;
   }
@@ -83,7 +85,14 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   for (auto& factory : self->driverFactories_) {
     self->numDrivers_ += std::min(factory->maxDrivers, maxDrivers);
   }
-  self->taskStats_.pipelineStats.resize(self->driverFactories_.size());
+
+  const auto numDriverFactories = self->driverFactories_.size();
+  self->taskStats_.pipelineStats.reserve(numDriverFactories);
+  for (const auto& driverFactory : self->driverFactories_) {
+    self->taskStats_.pipelineStats.emplace_back(
+        driverFactory->inputDriver, driverFactory->outputDriver);
+  }
+
   // Register self for possible memory recovery callback. Do this
   // after sizing 'drivers_' but before starting the
   // Drivers. 'drivers_' can be read by memory recovery or
@@ -124,6 +133,9 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
     if (exchangeId.has_value()) {
       self->createLocalExchangeSources(exchangeId.value(), numDrivers);
     }
+
+    self->addHashJoinBridges(factory->needsHashJoinBridges());
+    self->addCrossJoinBridges(factory->needsCrossJoinBridges());
 
     for (int32_t i = 0; i < numDrivers; ++i) {
       drivers.push_back(factory->createDriver(
@@ -187,14 +199,15 @@ void Task::resume(std::shared_ptr<Task> self) {
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
+  std::lock_guard<std::mutex> cancelPoolLock(*self->cancelPool()->mutex());
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() == driver) {
       driverPtr = nullptr;
-      self->driverClosed(driver);
+      self->driverClosed();
       return;
     }
   }
-  VELOX_CHECK(false, "Trying to delete a Driver twice from its Task");
+  VELOX_FAIL("Trying to delete a Driver twice from its Task");
 }
 
 void Task::setMaxSplitSequenceId(
@@ -383,12 +396,12 @@ void Task::setAllOutputConsumed() {
   partitionedOutputConsumed_ = true;
   if (!numDrivers_ && state_ == kRunning) {
     state_ = kFinished;
+    taskStats_.endTimeMs = getCurrentTimeMs();
     stateChangedLocked();
   }
 }
 
-void Task::driverClosed(Driver* /* unused */) {
-  std::lock_guard<std::mutex> cancelPoolLock(*cancelPool()->mutex());
+void Task::driverClosed() {
   --numDrivers_;
   if ((numDrivers_ == 0) && (state_ == kRunning)) {
     std::lock_guard<std::mutex> l(mutex_);
@@ -444,14 +457,51 @@ bool Task::allPeersFinished(
   return false;
 }
 
-std::shared_ptr<JoinBridge> Task::findOrCreateJoinBridge(
+void Task::addHashJoinBridges(
+    const std::vector<core::PlanNodeId>& planNodeIds) {
+  std::lock_guard<std::mutex> l(mutex_);
+  for (const auto& planNodeId : planNodeIds) {
+    bridges_.emplace(planNodeId, std::make_shared<HashJoinBridge>());
+  }
+}
+
+void Task::addCrossJoinBridges(
+    const std::vector<core::PlanNodeId>& planNodeIds) {
+  std::lock_guard<std::mutex> l(mutex_);
+  for (const auto& planNodeId : planNodeIds) {
+    bridges_.emplace(planNodeId, std::make_shared<CrossJoinBridge>());
+  }
+}
+
+std::shared_ptr<HashJoinBridge> Task::getHashJoinBridge(
     const core::PlanNodeId& planNodeId) {
   std::lock_guard<std::mutex> l(mutex_);
-  auto& bridge = bridges_[planNodeId];
-  if (!bridge) {
-    bridge = std::make_shared<JoinBridge>();
-    bridges_[planNodeId] = bridge;
-  }
+  auto it = bridges_.find(planNodeId);
+  VELOX_CHECK(
+      it != bridges_.end(),
+      "Hash join bridge for plan node ID not found: {}",
+      planNodeId);
+  auto bridge = std::dynamic_pointer_cast<HashJoinBridge>(it->second);
+  VELOX_CHECK_NOT_NULL(
+      bridge,
+      "Join bridge for plan node ID is not a hash join bridge: {}",
+      planNodeId);
+  return bridge;
+}
+
+std::shared_ptr<CrossJoinBridge> Task::getCrossJoinBridge(
+    const core::PlanNodeId& planNodeId) {
+  std::lock_guard<std::mutex> l(mutex_);
+  auto it = bridges_.find(planNodeId);
+  VELOX_CHECK(
+      it != bridges_.end(),
+      "Join bridge for plan node ID not found:{}",
+      planNodeId);
+  auto bridge = std::dynamic_pointer_cast<CrossJoinBridge>(it->second);
+  VELOX_CHECK_NOT_NULL(
+      bridge,
+      "Join bridge for plan node ID is not a cross join bridge: {}",
+      planNodeId);
   return bridge;
 }
 
@@ -636,7 +686,7 @@ void Task::createLocalExchangeSources(
 
   LocalExchange exchange;
   exchange.memoryManager = std::make_unique<LocalExchangeMemoryManager>(
-      queryCtx_->maxLocalExchangeBufferSize());
+      queryCtx_->config().maxLocalExchangeBufferSize());
 
   exchange.sources.reserve(numPartitions);
   for (auto i = 0; i < numPartitions; ++i) {

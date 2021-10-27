@@ -29,15 +29,15 @@ namespace {
 class LengthFunction : public exec::VectorFunction {
  private:
   // String encoding wrappable function
-  template <StringEncodingMode stringEncoding>
+  template <bool isAscii>
   struct ApplyInternalString {
     static void apply(
         const SelectivityVector& rows,
         const DecodedVector* decodedInput,
         FlatVector<int64_t>* resultFlatVector) {
       rows.applyToSelected([&](int row) {
-        auto result = stringImpl::length<stringEncoding>(
-            decodedInput->valueAt<StringView>(row));
+        auto result =
+            stringImpl::length<isAscii>(decodedInput->valueAt<StringView>(row));
         resultFlatVector->set(row, result);
       });
     }
@@ -51,7 +51,7 @@ class LengthFunction : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* /* unused */,
+      const TypePtr& /* outputType */,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     auto inputArg = args.at(0);
@@ -64,9 +64,9 @@ class LengthFunction : public exec::VectorFunction {
     auto* resultFlatVector = (*result)->as<FlatVector<int64_t>>();
 
     if (inputArg->typeKind() == TypeKind::VARCHAR) {
-      auto stringEncoding = getStringEncodingOrUTF8(inputArg.get());
+      auto ascii = isAscii(inputArg.get(), rows);
       StringEncodingTemplateWrapper<ApplyInternalString>::apply(
-          stringEncoding, rows, decodedInput, resultFlatVector);
+          ascii, rows, decodedInput, resultFlatVector);
       return;
     }
     VELOX_UNREACHABLE();

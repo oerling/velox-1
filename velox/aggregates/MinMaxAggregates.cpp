@@ -17,7 +17,7 @@
 #include <limits>
 #include "velox/aggregates/AggregateNames.h"
 #include "velox/aggregates/AggregationHook.h"
-#include "velox/aggregates/SimpleNumerics.h"
+#include "velox/aggregates/SimpleNumericAggregate.h"
 #include "velox/aggregates/SingleValueAccumulator.h"
 #include "velox/exec/Aggregate.h"
 
@@ -44,8 +44,7 @@ class MinMaxAggregate : public SimpleNumericAggregate<T, T, ResultType> {
   using BaseAggregate = SimpleNumericAggregate<T, T, ResultType>;
 
  public:
-  MinMaxAggregate(core::AggregationNode::Step step, TypePtr resultType)
-      : BaseAggregate(step, resultType) {}
+  explicit MinMaxAggregate(TypePtr resultType) : BaseAggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(T);
@@ -64,10 +63,11 @@ void MinMaxAggregate<int64_t, Timestamp>::extractValues(
     char** groups,
     int32_t numGroups,
     VectorPtr* result) {
-  BaseAggregate::doExtractValues(groups, numGroups, result, [&](char* group) {
-    auto millis = *BaseAggregate::Aggregate::template value<int64_t>(group);
-    return Timestamp::fromMillis(millis);
-  });
+  BaseAggregate::template doExtractValues<Timestamp>(
+      groups, numGroups, result, [&](char* group) {
+        auto millis = *BaseAggregate::Aggregate::template value<int64_t>(group);
+        return Timestamp::fromMillis(millis);
+      });
 }
 
 template <>
@@ -75,10 +75,11 @@ void MinMaxAggregate<Timestamp, int64_t>::extractValues(
     char** groups,
     int32_t numGroups,
     VectorPtr* result) {
-  BaseAggregate::doExtractValues(groups, numGroups, result, [&](char* group) {
-    auto ts = *BaseAggregate::Aggregate::template value<Timestamp>(group);
-    return ts.toMillis();
-  });
+  BaseAggregate::template doExtractValues<int64_t>(
+      groups, numGroups, result, [&](char* group) {
+        auto ts = *BaseAggregate::Aggregate::template value<Timestamp>(group);
+        return ts.toMillis();
+      });
 }
 
 template <typename T, typename ResultType>
@@ -86,8 +87,8 @@ class MaxAggregate : public MinMaxAggregate<T, ResultType> {
   using BaseAggregate = SimpleNumericAggregate<T, T, ResultType>;
 
  public:
-  MaxAggregate(core::AggregationNode::Step step, TypePtr resultType)
-      : MinMaxAggregate<T, ResultType>(step, resultType) {}
+  explicit MaxAggregate(TypePtr resultType)
+      : MinMaxAggregate<T, ResultType>(resultType) {}
 
   void initializeNewGroups(
       char** groups,
@@ -98,7 +99,7 @@ class MaxAggregate : public MinMaxAggregate<T, ResultType> {
     }
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -108,7 +109,7 @@ class MaxAggregate : public MinMaxAggregate<T, ResultType> {
           groups, rows, args[0]);
       return;
     }
-    BaseAggregate::template updateGroups<true>(
+    BaseAggregate::template updateGroups<true, T>(
         groups,
         rows,
         args[0],
@@ -120,15 +121,15 @@ class MaxAggregate : public MinMaxAggregate<T, ResultType> {
         mayPushdown);
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -143,12 +144,12 @@ class MaxAggregate : public MinMaxAggregate<T, ResultType> {
         kInitialValue_);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
  private:
@@ -160,8 +161,8 @@ class MinAggregate : public MinMaxAggregate<T, ResultType> {
   using BaseAggregate = SimpleNumericAggregate<T, T, ResultType>;
 
  public:
-  MinAggregate(core::AggregationNode::Step step, TypePtr resultType)
-      : MinMaxAggregate<T, ResultType>(step, resultType) {}
+  explicit MinAggregate(TypePtr resultType)
+      : MinMaxAggregate<T, ResultType>(resultType) {}
 
   void initializeNewGroups(
       char** groups,
@@ -172,7 +173,7 @@ class MinAggregate : public MinMaxAggregate<T, ResultType> {
     }
   }
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -182,7 +183,7 @@ class MinAggregate : public MinMaxAggregate<T, ResultType> {
           groups, rows, args[0]);
       return;
     }
-    BaseAggregate::template updateGroups<true>(
+    BaseAggregate::template updateGroups<true, T>(
         groups,
         rows,
         args[0],
@@ -194,15 +195,15 @@ class MinAggregate : public MinMaxAggregate<T, ResultType> {
         mayPushdown);
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -217,12 +218,12 @@ class MinAggregate : public MinMaxAggregate<T, ResultType> {
         kInitialValue_);
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
  private:
@@ -231,10 +232,8 @@ class MinAggregate : public MinMaxAggregate<T, ResultType> {
 
 class NonNumericMinMaxAggregateBase : public exec::Aggregate {
  public:
-  NonNumericMinMaxAggregateBase(
-      core::AggregationNode::Step step,
-      const TypePtr& resultType)
-      : exec::Aggregate(step, resultType) {}
+  explicit NonNumericMinMaxAggregateBase(const TypePtr& resultType)
+      : exec::Aggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(SingleValueAccumulator);
@@ -357,12 +356,10 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
 
 class NonNumericMaxAggregate : public NonNumericMinMaxAggregateBase {
  public:
-  NonNumericMaxAggregate(
-      core::AggregationNode::Step step,
-      const TypePtr& resultType)
-      : NonNumericMinMaxAggregateBase(step, resultType) {}
+  explicit NonNumericMaxAggregate(const TypePtr& resultType)
+      : NonNumericMinMaxAggregateBase(resultType) {}
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -372,15 +369,15 @@ class NonNumericMaxAggregate : public NonNumericMinMaxAggregateBase {
     });
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -390,23 +387,21 @@ class NonNumericMaxAggregate : public NonNumericMinMaxAggregateBase {
     });
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 };
 
 class NonNumericMinAggregate : public NonNumericMinMaxAggregateBase {
  public:
-  NonNumericMinAggregate(
-      core::AggregationNode::Step step,
-      const TypePtr& resultType)
-      : NonNumericMinMaxAggregateBase(step, resultType) {}
+  explicit NonNumericMinAggregate(const TypePtr& resultType)
+      : NonNumericMinMaxAggregateBase(resultType) {}
 
-  void updatePartial(
+  void addRawInput(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -416,15 +411,15 @@ class NonNumericMinAggregate : public NonNumericMinMaxAggregateBase {
     });
   }
 
-  void updateFinal(
+  void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updatePartial(groups, rows, args, mayPushdown);
+    addRawInput(groups, rows, args, mayPushdown);
   }
 
-  void updateSingleGroupPartial(
+  void addSingleGroupRawInput(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
@@ -434,33 +429,32 @@ class NonNumericMinAggregate : public NonNumericMinMaxAggregateBase {
     });
   }
 
-  void updateSingleGroupFinal(
+  void addSingleGroupIntermediateResults(
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    updateSingleGroupPartial(group, rows, args, mayPushdown);
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 };
 
 template <typename TInput, template <typename U, typename V> class TNumeric>
 std::unique_ptr<exec::Aggregate> createMinMaxIntegralAggregate(
     const std::string& name,
-    core::AggregationNode::Step step,
     const TypePtr& resultType) {
   switch (resultType->kind()) {
     case TypeKind::TINYINT:
-      return std::make_unique<TNumeric<TInput, int8_t>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, int8_t>>(resultType);
     case TypeKind::SMALLINT:
-      return std::make_unique<TNumeric<TInput, int16_t>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, int16_t>>(resultType);
     case TypeKind::INTEGER:
-      return std::make_unique<TNumeric<TInput, int32_t>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, int32_t>>(resultType);
     case TypeKind::BIGINT:
-      return std::make_unique<TNumeric<TInput, int64_t>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, int64_t>>(resultType);
     case TypeKind::REAL:
-      return std::make_unique<TNumeric<TInput, float>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, float>>(resultType);
     case TypeKind::DOUBLE:
-      return std::make_unique<TNumeric<TInput, double>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, double>>(resultType);
     default:
       VELOX_FAIL(
           "Unknown result type for {} aggregation with integral input type: {}",
@@ -472,13 +466,12 @@ std::unique_ptr<exec::Aggregate> createMinMaxIntegralAggregate(
 template <typename TInput, template <typename U, typename V> class TNumeric>
 std::unique_ptr<exec::Aggregate> createMinMaxTimestampAggregate(
     const std::string& name,
-    core::AggregationNode::Step step,
     const TypePtr& resultType) {
   switch (resultType->kind()) {
     case TypeKind::BIGINT:
-      return std::make_unique<TNumeric<TInput, int64_t>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, int64_t>>(resultType);
     case TypeKind::TIMESTAMP:
-      return std::make_unique<TNumeric<TInput, Timestamp>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, Timestamp>>(resultType);
     default:
       VELOX_FAIL(
           "Unknown result type for {} aggregation with timestamp input type: {}",
@@ -490,15 +483,14 @@ std::unique_ptr<exec::Aggregate> createMinMaxTimestampAggregate(
 template <typename TInput, template <typename U, typename V> class TNumeric>
 std::unique_ptr<exec::Aggregate> createMinMaxFloatingPointAggregate(
     const std::string& name,
-    core::AggregationNode::Step step,
     const TypePtr& resultType) {
   switch (resultType->kind()) {
     case TypeKind::REAL:
-      return std::make_unique<TNumeric<TInput, float>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, float>>(resultType);
     case TypeKind::DOUBLE:
-      return std::make_unique<TNumeric<TInput, double>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, double>>(resultType);
     case TypeKind::BIGINT:
-      return std::make_unique<TNumeric<TInput, int64_t>>(step, resultType);
+      return std::make_unique<TNumeric<TInput, int64_t>>(resultType);
     default:
       VELOX_FAIL(
           "Unknown result type for {} aggregation with floating point input type: {}",
@@ -527,34 +519,34 @@ bool registerMinMaxAggregate(const std::string& name) {
         switch (inputType->kind()) {
           case TypeKind::TINYINT:
             return createMinMaxIntegralAggregate<int8_t, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::SMALLINT:
             return createMinMaxIntegralAggregate<int16_t, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::INTEGER:
             return createMinMaxIntegralAggregate<int32_t, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::BIGINT:
             if (adjustedResultType->isTimestamp()) {
               return std::make_unique<TNumeric<int64_t, Timestamp>>(
-                  step, adjustedResultType);
+                  adjustedResultType);
             }
             return createMinMaxIntegralAggregate<int64_t, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::REAL:
             return createMinMaxFloatingPointAggregate<float, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::DOUBLE:
             return createMinMaxFloatingPointAggregate<double, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::TIMESTAMP:
             return createMinMaxTimestampAggregate<Timestamp, TNumeric>(
-                name, step, adjustedResultType);
+                name, adjustedResultType);
           case TypeKind::VARCHAR:
           case TypeKind::ARRAY:
           case TypeKind::MAP:
           case TypeKind::ROW:
-            return std::make_unique<TNonNumeric>(step, inputType);
+            return std::make_unique<TNonNumeric>(inputType);
           default:
             VELOX_CHECK(
                 false,

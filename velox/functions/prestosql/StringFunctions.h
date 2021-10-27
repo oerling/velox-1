@@ -15,88 +15,259 @@
  */
 #pragma once
 
+#define XXH_INLINE_ALL
+
+#include "velox/external/xxhash.h"
 #include "velox/functions/Udf.h"
+#include "velox/functions/lib/string/StringCore.h"
 #include "velox/functions/lib/string/StringImpl.h"
 
 namespace facebook::velox::functions {
-/**
- * chr(n) → varchar
- * Returns the Unicode code point n as a single character string.
- **/
-VELOX_UDF_BEGIN(chr)
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<Varchar>& result,
-    const int64_t& codePoint) {
-  stringImpl::codePointToString(result, codePoint);
-  return true;
-}
-VELOX_UDF_END();
 
-/**
- * codepoint(string) → integer
- * Returns the Unicode code point of the only character of string.
- **/
-VELOX_UDF_BEGIN(codepoint)
-FOLLY_ALWAYS_INLINE bool call(
-    int32_t& result,
-    const arg_type<Varchar>& inputChar) {
-  result = stringImpl::charToCodePoint(inputChar);
-  return true;
-}
-VELOX_UDF_END();
+/// chr(n) → varchar
+/// Returns the Unicode code point n as a single character string.
+template <typename T>
+struct ChrFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-/**
- * Presto variant
- * xxhash64(varbinary) → varbinary
- * Return an 8-byte binary to hash64 of input (varbinary such as string)
- * Always returns true since this function is not null sensitive
- */
-template <typename To, typename From>
-VELOX_UDF_BEGIN(xxhash64)
-FOLLY_ALWAYS_INLINE
-    bool call(out_type<To>& result, const arg_type<From>& input) {
-  return stringImpl::xxhash64(result, input);
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const int64_t& codePoint) {
+    stringImpl::codePointToString(result, codePoint);
+    return true;
+  }
+};
 
-/**
- * HIVE variant
- * xxhash64(string) → bigint
- * Return an 64-bit integer equal to hash64 of input
- * Always returns true since this function is not null sensitive
- */
-template <typename To, typename From>
-VELOX_UDF_BEGIN(xxhash64int)
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<To>& result,
-    const arg_type<From>& input,
-    const int64_t seed = 0) {
-  return stringImpl::xxhash64int(result, input, seed);
-}
-VELOX_UDF_END();
+/// codepoint(string) → integer
+/// Returns the Unicode code point of the only character of string.
+template <typename T>
+struct CodePointFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-// md5(varbinary) → varbinary
-template <typename To, typename From>
-VELOX_UDF_BEGIN(md5)
-FOLLY_ALWAYS_INLINE
-    bool call(out_type<To>& result, const arg_type<From>& input) {
-  return stringImpl::md5(result, input);
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(
+      int32_t& result,
+      const arg_type<Varchar>& inputChar) {
+    result = stringImpl::charToCodePoint(inputChar);
+    return true;
+  }
+};
 
-/**
- * md5(varchar, int) → varchar
- * generate the md5 in varchar, the result is based on the given radix (we only
- * supports radix=16 or radix=10 for now).
- **/
-template <typename To, typename From>
-VELOX_UDF_BEGIN(md5_radix)
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<To>& result,
-    const arg_type<From>& input,
-    const int32_t radix = 16) {
-  stringImpl::md5_radix(result, input, radix);
-  return true;
-}
-VELOX_UDF_END();
+/// xxhash64(varbinary) → varbinary
+/// Return an 8-byte binary to hash64 of input (varbinary such as string)
+template <typename T>
+struct XxHash64Function {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE
+  bool call(out_type<Varbinary>& result, const arg_type<Varbinary>& input) {
+    // Seed is set to 0.
+    int64_t hash = XXH64(input.data(), input.size(), 0);
+    static const auto kLen = sizeof(int64_t);
+
+    // Resizing output and copy
+    result.resize(kLen);
+    std::memcpy(result.data(), &hash, kLen);
+    return true;
+  }
+};
+
+/// md5(varbinary) → varbinary
+template <typename T>
+struct Md5Function {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  template <typename TTo, typename TFrom>
+  FOLLY_ALWAYS_INLINE bool call(TTo& result, const TFrom& input) {
+    return stringImpl::md5(result, input);
+  }
+};
+
+template <typename T>
+struct ToHexFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varbinary>& result,
+      const arg_type<Varchar>& input) {
+    return stringImpl::toHex(result, input);
+  }
+};
+
+template <typename T>
+struct FromHexFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varbinary>& input) {
+    return stringImpl::fromHex(result, input);
+  }
+};
+
+template <typename T>
+struct ToBase64Function {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varbinary>& input) {
+    return stringImpl::toBase64(result, input);
+  }
+};
+
+template <typename T>
+struct FromBase64Function {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varbinary>& result,
+      const arg_type<Varchar>& input) {
+    return stringImpl::fromBase64(result, input);
+  }
+};
+
+template <typename T>
+struct UrlEncodeFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varbinary>& input) {
+    return stringImpl::urlEscape(result, input);
+  }
+};
+
+template <typename T>
+struct UrlDecodeFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varbinary>& input) {
+    return stringImpl::urlUnescape(result, input);
+  }
+};
+
+/// substr(string, start) -> varchar
+///
+///     Returns the rest of string from the starting position start.
+///     Positions start with 1. A negative starting position is interpreted as
+///     being relative to the end of the string.
+///
+/// substr(string, start, length) -> varchar
+///
+///     Returns a substring from string of length length from the
+///     starting position start. Positions start with 1. A negative starting
+///     position is interpreted as being relative to the end of the string.
+template <typename T>
+struct SubstrFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // Results refer to strings in the first argument.
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  // ASCII input always produces ASCII result.
+  static constexpr bool is_default_ascii_behavior = true;
+
+  template <typename I>
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      I start,
+      I length = std::numeric_limits<I>::max()) {
+    return doCall<false>(result, input, start, length);
+  }
+
+  template <typename I>
+  FOLLY_ALWAYS_INLINE bool callAscii(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      I start,
+      I length = std::numeric_limits<I>::max()) {
+    return doCall<true>(result, input, start, length);
+  }
+
+  template <bool isAscii, typename I>
+  FOLLY_ALWAYS_INLINE bool doCall(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      I start,
+      I length = std::numeric_limits<I>::max()) {
+    // Following Presto semantics
+    if (start == 0) {
+      result.setEmpty();
+      return true;
+    }
+
+    I numCharacters = stringImpl::length<isAscii>(input);
+
+    // Adjusting start
+    if (start < 0) {
+      start = numCharacters + start + 1;
+    }
+
+    // Following Presto semantics
+    if (start <= 0 || start > numCharacters || length <= 0) {
+      result.setEmpty();
+      return true;
+    }
+
+    // Adjusting length
+    if (length == std::numeric_limits<I>::max() ||
+        length + start - 1 > numCharacters) {
+      // set length to the max valid length
+      length = numCharacters - start + 1;
+    }
+
+    auto byteRange =
+        stringCore::getByteRange<isAscii>(input.data(), start, length);
+
+    // Generating output string
+    result.setNoCopy(StringView(
+        input.data() + byteRange.first, byteRange.second - byteRange.first));
+    return true;
+  }
+};
+
+/// Trim functions
+/// ltrim(string) -> varchar
+///    Removes leading whitespaces from the string.
+/// rtrim(string) -> varchar
+///    Removes trailing whitespaces from the string.
+/// trim(string) -> varchar
+///    Removes leading and trailing whitespaces from the string.
+template <typename T, bool leftTrim, bool rightTrim>
+struct TrimFunctionBase {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // Results refer to strings in the first argument.
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  // ASCII input always produces ASCII result.
+  static constexpr bool is_default_ascii_behavior = true;
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input) {
+    stringImpl::trimUnicodeWhiteSpace<leftTrim, rightTrim>(result, input);
+    return true;
+  }
+
+  FOLLY_ALWAYS_INLINE bool callAscii(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input) {
+    stringImpl::trimAsciiWhiteSpace<leftTrim, rightTrim>(result, input);
+    return true;
+  }
+};
+
+template <typename T>
+struct TrimFunction : public TrimFunctionBase<T, true, true> {};
+
+template <typename T>
+struct LTrimFunction : public TrimFunctionBase<T, true, false> {};
+
+template <typename T>
+struct RTrimFunction : public TrimFunctionBase<T, false, true> {};
+
 } // namespace facebook::velox::functions

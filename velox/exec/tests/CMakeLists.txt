@@ -13,10 +13,8 @@
 # limitations under the License.
 add_subdirectory(utils)
 
-add_library(
-  velox_exec_test_lib
-  PlanBuilder.cpp QueryAssertions.cpp Cursor.cpp OperatorTestBase.cpp
-  HiveConnectorTestBase.cpp TempFilePath.cpp)
+add_library(velox_exec_test_lib PlanBuilder.cpp QueryAssertions.cpp Cursor.cpp
+                                OperatorTestBase.cpp HiveConnectorTestBase.cpp)
 
 target_link_libraries(
   velox_exec_test_lib
@@ -27,12 +25,16 @@ target_link_libraries(
   velox_duckdb_conversion
   velox_dwio_common
   velox_dwio_type_fbhive
+  velox_dwio_dwrf_reader
   velox_dwrf_test_utils
-  velox_presto_serializer)
+  velox_presto_serializer
+  ${GTEST_BOTH_LIBRARIES})
 
 add_executable(
   velox_exec_test
+  CrossJoinTest.cpp
   DriverTest.cpp
+  EnforceSingleRowTest.cpp
   FilterProjectTest.cpp
   TableScanTest.cpp
   TaskTest.cpp
@@ -47,10 +49,12 @@ add_executable(
   MultiFragmentTest.cpp
   ParseTypeSignatureTest.cpp
   PartitionedOutputBufferManagerTest.cpp
+  RoundRobinPartitionFunctionTest.cpp
   TableWriteTest.cpp
   TopNTest.cpp
   LimitTest.cpp
   OrderByTest.cpp
+  OperatorUtilsTest.cpp
   MergeTest.cpp
   HashJoinTest.cpp
   PlanNodeToStringTest.cpp
@@ -67,7 +71,6 @@ target_link_libraries(
   velox_exec_test_lib
   velox_functions_test_lib
   velox_exec
-  velox_dwio_dwrf_reader
   velox_dwio_dwrf_writer
   velox_dwio_common
   velox_aggregates
@@ -84,6 +87,7 @@ target_link_libraries(
   velox_memory
   velox_parse_parser
   velox_dwio_type_fbhive
+  velox_dwio_common_exception
   velox_dwrf_test_utils
   velox_presto_serializer
   ${Boost_ATOMIC_LIBRARIES}
@@ -98,6 +102,6 @@ target_link_libraries(
   ${FOLLY_WITH_DEPENDENCIES}
   ${DOUBLE_CONVERSION}
   ${gflags_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${FMT}
   ${FILESYSTEM})

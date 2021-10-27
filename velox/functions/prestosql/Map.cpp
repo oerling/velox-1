@@ -24,19 +24,17 @@ class MapFunction : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* caller,
+      const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
-    VELOX_CHECK(args.size() == 2);
+    VELOX_CHECK_EQ(args.size(), 2);
 
     auto keys = args[0];
     auto values = args[1];
 
-    exec::LocalDecodedVector keysHolder(context, *keys, rows);
-    auto decodedKeys = keysHolder.get();
-
-    exec::LocalDecodedVector valuesHolder(context, *values, rows);
-    auto decodedValues = valuesHolder.get();
+    exec::DecodedArgs decodedArgs(rows, args, context);
+    auto decodedKeys = decodedArgs.at(0);
+    auto decodedValues = decodedArgs.at(1);
 
     static const char* kArrayLengthsMismatch =
         "Key and value arrays must be the same length";
@@ -50,22 +48,22 @@ class MapFunction : public exec::VectorFunction {
 
       // Check array lengths
       rows.applyToSelected([&](vector_size_t row) {
-        VELOX_USER_CHECK(
-            keysArray->sizeAt(row) == valuesArray->sizeAt(row),
+        VELOX_USER_CHECK_EQ(
+            keysArray->sizeAt(row),
+            valuesArray->sizeAt(row),
             "{}",
             kArrayLengthsMismatch);
       });
 
       mapVector = std::make_shared<MapVector>(
           context->pool(),
-          caller->type(),
+          outputType,
           BufferPtr(nullptr),
           rows.size(),
           keysArray->offsets(),
           keysArray->sizes(),
           keysArray->elements(),
-          valuesArray->elements(),
-          folly::none);
+          valuesArray->elements());
     } else {
       auto keyIndices = decodedKeys->indices();
       auto valueIndices = decodedValues->indices();
@@ -75,23 +73,21 @@ class MapFunction : public exec::VectorFunction {
 
       // Check array lengths
       rows.applyToSelected([&](vector_size_t row) {
-        VELOX_USER_CHECK(
-            keysArray->sizeAt(keyIndices[row]) ==
-                valuesArray->sizeAt(valueIndices[row]),
+        VELOX_USER_CHECK_EQ(
+            keysArray->sizeAt(keyIndices[row]),
+            valuesArray->sizeAt(valueIndices[row]),
             "{}",
             kArrayLengthsMismatch);
       });
 
-      BufferPtr offsets = AlignedBuffer::allocate<vector_size_t>(
-          rows.size(), context->pool(), 0);
+      BufferPtr offsets = allocateOffsets(rows.size(), context->pool());
       auto rawOffsets = offsets->asMutable<vector_size_t>();
 
-      BufferPtr sizes = AlignedBuffer::allocate<vector_size_t>(
-          rows.size(), context->pool(), 0);
+      BufferPtr sizes = allocateSizes(rows.size(), context->pool());
       auto rawSizes = sizes->asMutable<vector_size_t>();
 
-      BufferPtr valuesIndices = AlignedBuffer::allocate<vector_size_t>(
-          keysArray->elements()->size(), context->pool(), 0);
+      BufferPtr valuesIndices =
+          allocateIndices(keysArray->elements()->size(), context->pool());
       auto rawValuesIndices = valuesIndices->asMutable<vector_size_t>();
 
       rows.applyToSelected([&](vector_size_t row) {
@@ -114,14 +110,13 @@ class MapFunction : public exec::VectorFunction {
 
       mapVector = std::make_shared<MapVector>(
           context->pool(),
-          caller->type(),
+          outputType,
           BufferPtr(nullptr),
           rows.size(),
           offsets,
           sizes,
           keysArray->elements(),
-          wrappedValues,
-          folly::none);
+          wrappedValues);
     }
 
     mapVector->canonicalize();
@@ -136,7 +131,7 @@ class MapFunction : public exec::VectorFunction {
       auto size = sizes[row];
       for (vector_size_t i = 1; i < size; i++) {
         if (mapKeys->equalValueAt(mapKeys.get(), offset + i, offset + i - 1)) {
-          VELOX_USER_CHECK(false, "{}", kDuplicateKey);
+          VELOX_USER_FAIL("{}", kDuplicateKey);
         }
       }
     });

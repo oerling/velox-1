@@ -632,7 +632,7 @@ void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
   asDistincts = uniqueValues_.size() + 1;
 }
 
-uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int32_t reserve) {
+uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int64_t reserve) {
   multiplier_ = multiplier;
   rangeSize_ = uniqueValues_.size() + 1 + reserve;
   isRange_ = false;
@@ -643,7 +643,7 @@ uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int32_t reserve) {
   return result;
 }
 
-uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int32_t reserve) {
+uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int64_t reserve) {
   static constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
   static constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
   // Use reserve as padding above and below the range.

@@ -91,8 +91,8 @@ struct resolver<Array<V>> {
     using childType = typename resolver<V>::in_type;
     std::vector<variant> v(t.size());
     std::transform(
-        t.begin(), t.end(), v.begin(), [](const folly::Optional<childType>& v) {
-          return v.hasValue()
+        t.begin(), t.end(), v.begin(), [](const std::optional<childType>& v) {
+          return v.has_value()
               ? resolver<childType>::toVariant(v)
               : variant::null(in_type::veloxType()->childAt(0)->kind());
         });
@@ -111,8 +111,8 @@ struct resolver<Array<V>> {
     in_type retVal;
     for (auto& v : values) {
       auto convertedVal = v.isNull()
-          ? folly::Optional<childType>{}
-          : folly::Optional<childType>{resolver<V>::fromVariant(v)};
+          ? std::optional<childType>{}
+          : std::optional<childType>{resolver<V>::fromVariant(v)};
       retVal.append(std::move(convertedVal));
     }
 
@@ -300,7 +300,7 @@ struct VectorWriter<Map<K, V>> {
       keyWriter_.setOffset(childSize);
       valWriter_.setOffset(childSize);
       keyWriter_.copyCommit(pair.first);
-      if (pair.second.hasValue()) {
+      if (pair.second.has_value()) {
         valWriter_.copyCommit(pair.second.value());
       } else {
         valWriter_.commitNull();
@@ -397,9 +397,9 @@ struct VectorReader<Map<K, V>> {
       }
       const bool isSet = valReader_.doLoad(i, val);
       if (LIKELY(isSet)) {
-        target.emplace(key, folly::Optional<exec_in_val_t>{std::move(val)});
+        target.emplace(key, std::optional<exec_in_val_t>{std::move(val)});
       } else {
-        target.emplace(key, folly::Optional<exec_in_val_t>{});
+        target.emplace(key, std::optional<exec_in_val_t>{});
       }
     }
     return true;
@@ -522,7 +522,7 @@ struct VectorWriter<Array<V>> {
     for (auto& val : data) {
       childWriter_.setOffset(childSize);
       ++childSize;
-      if (val.hasValue()) {
+      if (val.has_value()) {
         childWriter_.copyCommit(val.value());
       } else {
         childWriter_.commitNull();
@@ -728,7 +728,7 @@ struct VectorWriter<Row<T...>> {
   template <size_t N>
   void copyCommitInternal(const exec_out_t& data) {
     const auto& value = data.template at<N>();
-    if (value.hasValue()) {
+    if (value.has_value()) {
       std::get<N>(writers_).copyCommit(value.value());
     } else {
       std::get<N>(writers_).commitNull();
@@ -759,10 +759,26 @@ class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
  public:
   StringProxy() : vector_(nullptr), offset_(-1) {}
 
+  // Used to initialize top-level strings and allow zero-copy writes.
   StringProxy(FlatVector<StringView>* vector, int32_t offset)
       : vector_(vector), offset_(offset) {}
 
+  // Used to initialize nested strings and requires a copy on write.
+  explicit StringProxy(StringView value)
+      : vector_(nullptr), offset_(-1), value_{value.str()} {}
+
  public:
+  // Returns true if initialized for zero-copy write. False, otherwise.
+  bool initialized() const {
+    return offset_ >= 0;
+  }
+
+  // If not initialized for zero-copy write, returns a string to copy into the
+  // target vector on commit.
+  const std::string& value() const {
+    return value_;
+  }
+
   /// Reserve a space for the output string with size of at least newCapacity
   void reserve(size_t newCapacity) override {
     if (newCapacity <= capacity()) {
@@ -792,14 +808,29 @@ class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
   /// Not called by the UDF Implementation. Should be called at the end to
   /// finalize the allocation and the string writing
   void finalize() {
-    VELOX_CHECK(size() == 0 || data());
-    if (dataBuffer_) {
-      dataBuffer_->setSize(dataBuffer_->size() + size());
+    if (!finalized_) {
+      VELOX_CHECK(size() == 0 || data());
+      if (dataBuffer_) {
+        dataBuffer_->setSize(dataBuffer_->size() + size());
+      }
+      vector_->setNoCopy(offset_, StringView(data(), size()));
     }
-    vector_->setNoCopy(offset_, StringView(data(), size()));
+  }
+
+  void setEmpty() {
+    static const StringView kEmpty("");
+    vector_->setNoCopy(offset_, kEmpty);
+    finalized_ = true;
+  }
+
+  void setNoCopy(StringView value) {
+    vector_->setNoCopy(offset_, value);
+    finalized_ = true;
   }
 
  private:
+  bool finalized_{false};
+
   /// The buffer that the output string uses for its allocation set during
   /// reserve() call
   Buffer* dataBuffer_ = nullptr;
@@ -807,6 +838,8 @@ class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
   FlatVector<StringView>* vector_;
 
   int32_t offset_;
+
+  std::string value_;
 };
 
 // A string proxy with UDFOutputString semantics that utilizes a pre-allocated
@@ -885,8 +918,13 @@ struct VectorWriter<
   }
 
   void copyCommit(const proxy_t& data) {
-    // Not really copying.
-    proxy_.finalize();
+    // If not initialized for zero-copy writes, copy the value into the vector.
+    if (!proxy_.initialized()) {
+      vector_->set(offset_, StringView(data.value()));
+    } else {
+      // Not really copying.
+      proxy_.finalize();
+    }
   }
 
   void commitNull() {
@@ -974,6 +1012,13 @@ struct VectorWriter<std::shared_ptr<T>> {
 
   void init(vector_t& vector) {
     vector_ = &vector;
+  }
+
+  void ensureSize(size_t size) {
+    if (size != vector_->size()) {
+      vector_->resize(size);
+      init(*vector_);
+    }
   }
 
   VectorWriter() {}

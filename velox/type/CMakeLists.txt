@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_subdirectory(tests)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()
 add_subdirectory(tz)
 
 add_library(
@@ -29,9 +31,7 @@ target_link_libraries(
   velox_type
   velox_encode
   velox_exception
-  velox_dwio_common_exception
   velox_serialization
   velox_external_date
   ${Boost_REGEX_LIBRARIES}
-  ${FOLLY_WITH_DEPENDENCIES}
-  ${fmt})
+  ${FOLLY_WITH_DEPENDENCIES})

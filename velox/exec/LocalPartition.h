@@ -85,6 +85,14 @@ class LocalExchangeSource {
   /// copied into the consumers memory pool.
   BlockingReason isFinished(ContinueFuture* future);
 
+  void close() {
+    queue_.withWLock([](auto& queue) {
+      while (!queue.empty()) {
+        queue.pop();
+      }
+    });
+  }
+
  private:
   LocalExchangeMemoryManager* memoryManager_;
   const int partition_;
@@ -156,12 +164,17 @@ class LocalPartition : public Operator {
 
   void finish() override;
 
- private:
-  void calculateHashes();
+  void close() override {
+    Operator::close();
+    for (auto& source : localExchangeSources_) {
+      source->close();
+    }
+  }
 
+ private:
   const std::vector<std::shared_ptr<LocalExchangeSource>> localExchangeSources_;
   const size_t numPartitions_;
-  const std::vector<ChannelIndex> keyChannels_;
+  std::unique_ptr<core::PartitionFunction> partitionFunction_;
   // Empty if column order in the output is exactly the same as in input.
   const std::vector<ChannelIndex> outputChannels_;
 
@@ -169,11 +182,9 @@ class LocalPartition : public Operator {
   std::vector<BlockingReason> blockingReasons_;
   std::vector<ContinueFuture> futures_;
 
-  std::vector<std::unique_ptr<VectorHasher>> hashers_;
-
   /// Reusable memory for hash calculation.
   SelectivityVector allRows_;
-  std::vector<uint64_t> hashes_;
+  std::vector<uint32_t> partitions_;
 };
 
 } // namespace facebook::velox::exec

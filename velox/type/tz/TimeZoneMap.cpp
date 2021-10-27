@@ -16,7 +16,7 @@
 
 #include "velox/type/tz/TimeZoneMap.h"
 #include <fmt/core.h>
-#include <unordered_map>
+#include <folly/container/F14Map.h>
 
 namespace facebook::velox::util {
 
@@ -30,6 +30,30 @@ std::string getTimeZoneName(int64_t timeZoneID) {
     throw std::runtime_error(
         fmt::format("Unable to resolve timeZoneID '{}'.", timeZoneID));
   }
+  return it->second;
+}
+
+namespace {
+folly::F14FastMap<std::string_view, int64_t> makeReverseMap(
+    const std::unordered_map<int64_t, std::string>& map) {
+  folly::F14FastMap<std::string_view, int64_t> reversed;
+  reversed.reserve(map.size());
+  for (const auto& entry : map) {
+    reversed.emplace(entry.second, entry.first);
+  }
+  return reversed;
+}
+} // namespace
+
+int64_t getTimeZoneID(std::string_view timeZone) {
+  static folly::F14FastMap<std::string_view, int64_t> nameToIdMap =
+      makeReverseMap(getTimeZoneDB());
+
+  auto it = nameToIdMap.find(timeZone);
+  if (it == nameToIdMap.end()) {
+    throw std::runtime_error(fmt::format("Unknown time zone: {}", timeZone));
+  }
+
   return it->second;
 }
 

@@ -20,7 +20,7 @@
 
 namespace facebook::velox::exec {
 
-void JoinBridge::setHashTable(std::unique_ptr<BaseHashTable> table) {
+void HashJoinBridge::setHashTable(std::unique_ptr<BaseHashTable> table) {
   VELOX_CHECK(table, "setHashTable called with null table");
 
   std::lock_guard<std::mutex> l(mutex_);
@@ -30,38 +30,25 @@ void JoinBridge::setHashTable(std::unique_ptr<BaseHashTable> table) {
   notifyConsumersLocked();
 }
 
-void JoinBridge::setAntiJoinHasNullKeys() {
+void HashJoinBridge::setAntiJoinHasNullKeys() {
   std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(
       !table_,
       "Only one of setAntiJoinHasNullKeys or setHashTable may be called");
 
-  antiJoinHashNullKeys_ = true;
+  antiJoinHasNullKeys_ = true;
   notifyConsumersLocked();
 }
 
-void JoinBridge::notifyConsumersLocked() {
-  for (auto& promise : promises_) {
-    promise.setValue(true);
-  }
-  promises_.clear();
-}
-
-void JoinBridge::cancel() {
-  std::lock_guard<std::mutex> l(mutex_);
-  cancelled_ = true;
-  notifyConsumersLocked();
-}
-
-std::optional<JoinBridge::HashBuildResult> JoinBridge::tableOrFuture(
+std::optional<HashJoinBridge::HashBuildResult> HashJoinBridge::tableOrFuture(
     ContinueFuture* future) {
   std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(
       !cancelled_, "Getting hash table after the build side is aborted");
-  if (table_ || antiJoinHashNullKeys_) {
-    return HashBuildResult{table_, antiJoinHashNullKeys_};
+  if (table_ || antiJoinHasNullKeys_) {
+    return HashBuildResult{table_, antiJoinHasNullKeys_};
   }
-  promises_.emplace_back("JoinBridge::tableOrFuture");
+  promises_.emplace_back("HashJoinBridge::tableOrFuture");
   *future = promises_.back().getSemiFuture();
   return std::nullopt;
 }
@@ -103,20 +90,36 @@ HashBuild::HashBuild(
     }
   }
 
-  // Semi and anti join only needs to know whether there is a match. Hence, no
-  // need to store entries with duplicate keys.
-  const bool allowDuplicates =
-      !joinNode->isSemiJoin() && !joinNode->isAntiJoin();
+  if (joinNode->isRightJoin()) {
+    // Do not ignore null keys.
+    table_ = HashTable<false>::createForJoin(
+        std::move(keyHashers),
+        dependentTypes,
+        true, // allowDuplicates
+        true, // hasProbedFlag
+        mappedMemory_);
+  } else {
+    // Semi and anti join only needs to know whether there is a match. Hence, no
+    // need to store entries with duplicate keys.
+    const bool allowDuplicates =
+        !joinNode->isSemiJoin() && !joinNode->isAntiJoin();
 
-  table_ = HashTable<true>::createForJoin(
-      std::move(keyHashers), dependentTypes, allowDuplicates, mappedMemory_);
+    table_ = HashTable<true>::createForJoin(
+        std::move(keyHashers),
+        dependentTypes,
+        allowDuplicates,
+        false, // hasProbedFlag
+        mappedMemory_);
+  }
   analyzeKeys_ = table_->hashMode() != BaseHashTable::HashMode::kHash;
 }
 
 void HashBuild::addInput(RowVectorPtr input) {
   activeRows_.resize(input->size());
   activeRows_.setAll();
-  deselectRowsWithNulls(*input, keyChannels_, activeRows_);
+  if (!isRightJoin(joinType_)) {
+    deselectRowsWithNulls(*input, keyChannels_, activeRows_);
+  }
 
   if (joinType_ == core::JoinType::kAnti) {
     // Anti join returns no rows if build side has nulls in join keys. Hence, we
@@ -188,7 +191,7 @@ void HashBuild::finish() {
     return;
   }
 
-  std::vector<std::unique_ptr<HashTable<true>>> otherTables;
+  std::vector<std::unique_ptr<BaseHashTable>> otherTables;
   otherTables.reserve(peers.size());
 
   if (!antiJoinHasNullKeys_) {
@@ -213,7 +216,7 @@ void HashBuild::finish() {
 
   if (antiJoinHasNullKeys_) {
     operatorCtx_->task()
-        ->findOrCreateJoinBridge(planNodeId())
+        ->getHashJoinBridge(planNodeId())
         ->setAntiJoinHasNullKeys();
   } else {
     table_->prepareJoinTable(std::move(otherTables));
@@ -221,7 +224,7 @@ void HashBuild::finish() {
     addRuntimeStats();
 
     operatorCtx_->task()
-        ->findOrCreateJoinBridge(planNodeId())
+        ->getHashJoinBridge(planNodeId())
         ->setHashTable(std::move(table_));
   }
 }

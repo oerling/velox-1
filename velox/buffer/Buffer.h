@@ -19,7 +19,6 @@
 #include <iomanip>
 
 #include <boost/intrusive_ptr.hpp>
-#include "folly/Optional.h"
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Range.h"
@@ -89,7 +88,7 @@ class Buffer {
 
   template <typename T>
   Range<T> asRange() {
-    return Range(as<T>(), 0, size() / sizeof(T));
+    return Range<T>(as<T>(), 0, size() / sizeof(T));
   }
 
   template <typename T>
@@ -103,7 +102,7 @@ class Buffer {
 
   template <typename T>
   MutableRange<T> asMutableRange() {
-    return MutableRange(asMutable<T>(), 0, size() / sizeof(T));
+    return MutableRange<T>(asMutable<T>(), 0, size() / sizeof(T));
   }
 
   size_t size() const {
@@ -303,7 +302,7 @@ class AlignedBuffer : public Buffer {
   static BufferPtr allocate(
       size_t numElements,
       velox::memory::MemoryPool* pool,
-      const folly::Optional<T>& initValue = folly::none) {
+      const std::optional<T>& initValue = std::nullopt) {
     size_t size = numElements * sizeof(T);
     size_t preferredSize = pool->getPreferredSize(size + kPaddedSize);
     void* memory = pool->allocate(preferredSize);
@@ -324,7 +323,7 @@ class AlignedBuffer : public Buffer {
   static void reallocate(
       BufferPtr* buffer,
       size_t numElements,
-      const folly::Optional<T>& initValue = folly::none) {
+      const std::optional<T>& initValue = std::nullopt) {
     auto size = numElements * sizeof(T);
     Buffer* old = buffer->get();
     VELOX_CHECK(old, "Buffer doesn't exist in reallocate");
@@ -455,7 +454,7 @@ class AlignedBuffer : public Buffer {
   void fillNewMemory(
       size_t oldBytes,
       size_t newBytes,
-      const folly::Optional<RawT>& initValue) {
+      const std::optional<RawT>& initValue) {
     VELOX_CHECK_LE(newBytes, capacity());
     if (newBytes <= oldBytes) {
       return;
@@ -497,24 +496,22 @@ template <>
 inline BufferPtr AlignedBuffer::allocate<bool>(
     size_t numElements,
     velox::memory::MemoryPool* pool,
-    const folly::Optional<bool>& initValue) {
+    const std::optional<bool>& initValue) {
   return allocate<char>(
       bits::nbytes(numElements),
       pool,
-      initValue ? folly::make_optional<char>(*initValue ? -1 : 0)
-                : folly::none);
+      initValue ? std::optional<char>(*initValue ? -1 : 0) : std::nullopt);
 }
 
 template <>
 inline void AlignedBuffer::reallocate<bool>(
     BufferPtr* buffer,
     size_t numElements,
-    const folly::Optional<bool>& initValue) {
+    const std::optional<bool>& initValue) {
   reallocate<char>(
       buffer,
       bits::nbytes(numElements),
-      initValue ? folly::make_optional<char>(*initValue ? -1 : 0)
-                : folly::none);
+      initValue ? std::optional<char>(*initValue ? -1 : 0) : std::nullopt);
 }
 
 template <typename T>
@@ -583,7 +580,7 @@ class NonPODAlignedBuffer : public Buffer {
   void fillNewMemory(
       size_t oldBytes,
       size_t newBytes,
-      const folly::Optional<RawT>& initValue) {
+      const std::optional<RawT>& initValue) {
     static_assert(std::is_same_v<T, RawT>);
     VELOX_CHECK_LE(newBytes, capacity());
     VELOX_CHECK_GE(
@@ -606,7 +603,7 @@ class NonPODAlignedBuffer : public Buffer {
   }
 
   void freeToPool() override {
-    pool_->free(this, sizeof(this) + capacity_);
+    pool_->free(this, AlignedBuffer::kPaddedSize + capacity_);
   }
 
   // Needs to use this class from static methods of AlignedBuffer

@@ -22,6 +22,7 @@
 #include "velox/functions/prestosql/Rand.h"
 #include "velox/functions/prestosql/StringFunctions.h"
 #include "velox/functions/sparksql/Hash.h"
+#include "velox/functions/sparksql/In.h"
 #include "velox/functions/sparksql/LeastGreatest.h"
 #include "velox/functions/sparksql/RegexFunctions.h"
 #include "velox/functions/sparksql/RegisterArithmetic.h"
@@ -47,11 +48,9 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat, prefix + "concat");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_lower, prefix + "lower");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_replace, prefix + "replace");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_substr, prefix + "substring");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_upper, prefix + "upper");
   // Logical.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_coalesce, prefix + "coalesce");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_in, prefix + "in");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_is_null, prefix + "isnull");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_not, prefix + "not");
 }
@@ -67,19 +66,17 @@ void registerFunctions(const std::string& prefix) {
   // Register string functions.
   registerFunction<udf_chr, Varchar, int64_t>();
   registerFunction<udf_ascii, int32_t, Varchar>();
-  registerFunction<
-      udf_xxhash64int<int64_t, Varchar>,
-      int64_t,
-      Varchar,
-      int64_t>({prefix + "xxhash64"});
-  registerFunction<udf_xxhash64int<int64_t, Varchar>, int64_t, Varchar>(
-      {prefix + "xxhash64"});
-  registerFunction<udf_xxhash64<Varbinary, Varbinary>, Varbinary, Varbinary>(
-      {prefix + "xxhash64"});
+
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t>(
+      {prefix + "substring"});
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
+      {prefix + "substring"});
+
   exec::registerStatefulVectorFunction("instr", instrSignatures(), makeInstr);
   exec::registerStatefulVectorFunction(
       "length", lengthSignatures(), makeLength);
-  registerFunction<udf_md5_radix<Varchar, Varbinary>, Varchar, Varbinary>(
+
+  registerFunction<udf_md5<Varchar, Varbinary>, Varchar, Varbinary>(
       {prefix + "md5"});
 
   exec::registerStatefulVectorFunction(
@@ -98,6 +95,7 @@ void registerFunctions(const std::string& prefix) {
       prefix + "greatest", greatestSignatures(), makeGreatest);
   exec::registerStatefulVectorFunction(
       prefix + "hash", hashSignatures(), makeHash);
+  exec::registerStatefulVectorFunction(prefix + "in", inSignatures(), makeIn);
 
   // These vector functions are only accessible via the
   // VELOX_REGISTER_VECTOR_FUNCTION macro, which must be invoked in the same
@@ -108,6 +106,13 @@ void registerFunctions(const std::string& prefix) {
   // broken out into a separate compilation unit to improve build latency.
   registerArithmeticFunctions(prefix);
   registerCompareFunctions(prefix);
+
+  // String sreach function
+  registerFunction<udf_starts_with, bool, Varchar, Varchar>(
+      {prefix + "startswith"});
+  registerFunction<udf_ends_with, bool, Varchar, Varchar>(
+      {prefix + "endswith"});
+  registerFunction<udf_contains, bool, Varchar, Varchar>({prefix + "contains"});
 }
 
 } // namespace sparksql

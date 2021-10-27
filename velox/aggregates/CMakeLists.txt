@@ -12,26 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 add_subdirectory(hyperloglog)
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+  add_subdirectory(benchmarks)
+endif()
 
 add_library(
   velox_aggregates OBJECT
-  ApproxDistinct.cpp
-  ApproxPercentile.cpp
-  Arbitrary.cpp
   AggregateNames.h
-  ArrayAgg.cpp
-  AverageAggregates.cpp
+  ApproxDistinctAggregate.cpp
+  ApproxPercentileAggregate.cpp
+  ArbitraryAggregate.cpp
+  ArrayAggAggregate.cpp
+  AverageAggregate.cpp
   BitwiseAggregates.cpp
   BoolAggregates.cpp
   CountIfAggregate.cpp
-  MapAgg.cpp
+  MapAggAggregate.cpp
   MinMaxAggregates.cpp
   MinMaxByAggregates.cpp
-  SimpleNumerics.cpp
+  CountAggregate.cpp
   SingleValueAccumulator.cpp
-  ValueList.cpp)
+  SumAggregate.cpp
+  SumAggregate.h
+  ValueList.cpp
+  VarianceAggregates.cpp)
 
 target_link_libraries(velox_aggregates velox_aggregates_hyperloglog velox_exec
                       ${FOLLY_WITH_DEPENDENCIES})

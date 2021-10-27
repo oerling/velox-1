@@ -2,17 +2,35 @@
 Array Functions
 =============================
 
-.. function:: array_intersect(array(X), array(Y)) -> array(Z)
+.. function:: array_intersect(array(E) x, array(E) y) -> array(E)
 
-    Returns an array of the elements in the intersection of ``X`` and ``Y``, without duplicates.
+    Returns an array of the elements in the intersection of array ``x`` and array ``y``, without duplicates. ::
 
         SELECT array_intersect(ARRAY [1, 2, 3], ARRAY[4, 5, 6]); -- []
         SELECT array_intersect(ARRAY [1, 2, 2], ARRAY[1, 1, 2]); -- [1, 2]
         SELECT array_intersect(ARRAY [1, NULL, NULL], ARRAY[1, 1, NULL]); -- [1, NULL]
 
+.. function:: array_except(array(E) x, array(E) y) -> array(E)
+
+    Returns an array of the elements in array ``x`` but not in array ``y``, without duplicates. ::
+
+        SELECT array_except(ARRAY [1, 2, 3], ARRAY [4, 5, 6]); -- [1, 2, 3]
+        SELECT array_except(ARRAY [1, 2, 3], ARRAY [1, 2]); -- [3]
+        SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 1, 2]); -- []
+        SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 3, 4]); -- [2]
+        SELECT array_except(ARRAY [1, NULL, NULL], ARRAY [1, 1, NULL]); -- []
+
+.. function:: array_distinct(array(E)) -> array(E)
+
+    Remove duplicate values from the input array. ::
+
+        SELECT array_distinct(ARRAY [1, 2, 3]); -- [1, 2, 3]
+        SELECT array_distinct(ARRAY [1, 2, 1]); -- [1, 2]
+        SELECT array_distinct(ARRAY [1, NULL, NULL]); -- [1, NULL]
+
 .. function:: array_max(array(E)) -> E
 
-    Returns the maximum value of input array.
+    Returns the maximum value of input array. ::
 
         SELECT array_max(ARRAY [1, 2, 3]); -- 3
         SELECT array_max(ARRAY [-1, -2, -2]); -- -1
@@ -21,7 +39,7 @@ Array Functions
 
 .. function:: array_min(array(E)) -> E
 
-    Returns the minimum value of input array.
+    Returns the minimum value of input array. ::
 
         SELECT array_min(ARRAY [1, 2, 3]); -- 1
         SELECT array_min(ARRAY [-1, -2, -2]); -- -2
@@ -69,6 +87,10 @@ Array Functions
                       CAST(ROW(0.0, 0) AS ROW(sum DOUBLE, count INTEGER)),
                       (s, x) -> CAST(ROW(x + s.sum, s.count + 1) AS ROW(sum DOUBLE, count INTEGER)),
                       s -> IF(s.count = 0, NULL, s.sum / s.count));
+
+.. function:: reverse(array(E)) -> array(E)
+
+    Returns an array which has the reversed order of the input array.
 
 .. function:: subscript(array(E), index) -> E
 

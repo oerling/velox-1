@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <stdio.h>
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <stdio.h>
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/BiasVector.h"
 #include "velox/vector/ComplexVector.h"
@@ -34,7 +34,7 @@ class TestingLoader : public VectorLoader {
  public:
   explicit TestingLoader(VectorPtr data) : data_(data) {}
 
-  void load(RowSet rows, ValueHook* hook, VectorPtr* result) override {
+  void loadInternal(RowSet rows, ValueHook* hook, VectorPtr* result) override {
     if (hook) {
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           applyHook, data_->typeKind(), rows, hook);
@@ -153,7 +153,7 @@ class VectorTest : public testing::Test {
         BiasKind,
         std::move(values),
         std::move(metadata),
-        folly::none,
+        std::nullopt,
         numNulls,
         false,
         size * sizeof(T));
@@ -234,7 +234,8 @@ class VectorTest : public testing::Test {
       bool withNulls,
       BufferPtr* nulls,
       BufferPtr* offsets,
-      BufferPtr* sizes) {
+      BufferPtr* sizes,
+      int forceWidth) {
     int32_t offsetBytes = numRows * sizeof(vector_size_t);
     *offsets = AlignedBuffer::allocate<char>(offsetBytes, pool_.get());
     *sizes = AlignedBuffer::allocate<char>(offsetBytes, pool_.get());
@@ -251,18 +252,21 @@ class VectorTest : public testing::Test {
       (*nulls)->setSize(bytes);
     }
     for (int32_t i = 0; i < numRows; ++i) {
-      int32_t size = i % 7;
+      int32_t size = (forceWidth > 0) ? forceWidth : i % 7;
       if (withNulls && i % 5 == 0) {
         bits::setNull((*nulls)->asMutable<uint64_t>(), i, true);
-        (*offsets)->asMutable<vector_size_t>()[i] = 0;
-        (*sizes)->asMutable<vector_size_t>()[i] = 0;
-        continue;
+        if (forceWidth == 0) {
+          // in forceWidth case, the size of a null element is still
+          // the same as a non-null element.
+          (*offsets)->asMutable<vector_size_t>()[i] = 0;
+          (*sizes)->asMutable<vector_size_t>()[i] = 0;
+          continue;
+        }
       }
       (*offsets)->asMutable<vector_size_t>()[i] = offset;
       (*sizes)->asMutable<vector_size_t>()[i] = size;
       offset += size;
     }
-    setOffsetsAndSizesByNulls(numRows, nulls, offsets, sizes);
     return offset;
   }
 
@@ -271,11 +275,29 @@ class VectorTest : public testing::Test {
     BufferPtr offsets;
     BufferPtr sizes;
     int32_t numElements =
-        createRepeated(numRows, withNulls, &nulls, &offsets, &sizes);
+        createRepeated(numRows, withNulls, &nulls, &offsets, &sizes, 0);
     VectorPtr elements = createRow(numElements, withNulls);
     return std::make_shared<ArrayVector>(
         pool_.get(),
         ARRAY(elements->type()),
+        nulls,
+        numRows,
+        offsets,
+        sizes,
+        elements,
+        BaseVector::countNulls(nulls, numRows));
+  }
+
+  VectorPtr createFixedSizeArray(int32_t numRows, bool withNulls, int width) {
+    BufferPtr nulls;
+    BufferPtr offsets;
+    BufferPtr sizes;
+    int32_t numElements =
+        createRepeated(numRows, withNulls, &nulls, &offsets, &sizes, width);
+    VectorPtr elements = createRow(numElements, withNulls);
+    return std::make_shared<ArrayVector>(
+        pool_.get(),
+        FIXED_SIZE_ARRAY(width, elements->type()),
         nulls,
         numRows,
         offsets,
@@ -755,7 +777,7 @@ VectorPtr VectorTest::createMap(int32_t numRows, bool withNulls) {
   BufferPtr offsets;
   BufferPtr sizes;
   int32_t numElements =
-      createRepeated(numRows, withNulls, &nulls, &offsets, &sizes);
+      createRepeated(numRows, withNulls, &nulls, &offsets, &sizes, 0);
   VectorPtr elements = createRow(numElements, withNulls);
   auto keysBase = BaseVector::create(VARCHAR(), 7, pool_.get());
   auto flatKeys = keysBase->as<FlatVector<StringView>>();
@@ -860,6 +882,19 @@ TEST_F(VectorTest, array) {
   testMove(baseArray, 5, 23);
 }
 
+TEST_F(VectorTest, fixedSizeArray) {
+  const int width = 7;
+  auto baseArray = createFixedSizeArray(vectorSize_, false, width);
+  testCopy(baseArray, numIterations_);
+  baseArray = createFixedSizeArray(vectorSize_, true, width);
+  testCopy(baseArray, numIterations_);
+  auto allNull =
+      BaseVector::createNullConstant(baseArray->type(), 50, pool_.get());
+  testCopy(allNull, numIterations_);
+
+  testMove(baseArray, 5, 23);
+}
+
 TEST_F(VectorTest, map) {
   auto baseMap = createMap(vectorSize_, false);
   testCopy(baseMap, numIterations_);
@@ -880,6 +915,12 @@ TEST_F(VectorTest, unknown) {
   for (auto i = 0; i < vector->size(); i++) {
     ASSERT_TRUE(vector->isNullAt(i));
   }
+
+  auto copy = BaseVector::create(BIGINT(), 10, pool_.get());
+  copy->copy(vector.get(), 0, 0, 1);
+
+  SelectivityVector rows(1);
+  copy->copy(vector.get(), rows, nullptr);
 }
 
 TEST_F(VectorTest, copyBoolAllNullFlatVector) {
@@ -999,6 +1040,63 @@ TEST_F(VectorTest, resizeAtConstruction) {
   EXPECT_EQ(oldByteSize, flat->values()->size());
 }
 
+TEST_F(VectorTest, resizeStringAsciiness) {
+  auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
+  std::vector<std::string> stringInput = {"hellow", "how", "are"};
+  auto flatVector = vectorMaker->flatVector(stringInput);
+  auto stringVector = flatVector->as<SimpleVector<StringView>>();
+  SelectivityVector rows(stringInput.size());
+  stringVector->computeAndSetIsAscii(rows);
+  ASSERT_TRUE(stringVector->isAscii(rows).value());
+  stringVector->resize(2);
+  ASSERT_FALSE(stringVector->isAscii(rows));
+}
+
+TEST_F(VectorTest, copyAscii) {
+  auto maker = std::make_unique<test::VectorMaker>(pool_.get());
+  std::vector<std::string> stringData = {"a", "b", "c"};
+  auto source = maker->flatVector(stringData);
+  SelectivityVector all(stringData.size());
+  source->setAllIsAscii(true);
+
+  auto other = maker->flatVector(stringData);
+  other->copy(source.get(), all, nullptr);
+  auto ascii = other->isAscii(all);
+  ASSERT_TRUE(ascii.has_value());
+  ASSERT_TRUE(ascii.value());
+
+  // Copy over asciness from a vector without asciiness set.
+  source->invalidateIsAscii();
+  other->copy(source.get(), all, nullptr);
+  // Ensure isAscii returns nullopt
+  ascii = other->isAscii(all);
+  ASSERT_FALSE(ascii.has_value());
+
+  // Now copy over some rows from vector without ascii compute on it.
+  other->setAllIsAscii(false);
+  SelectivityVector some(all.size(), false);
+  some.setValid(1, true);
+  some.updateBounds();
+  other->copy(source.get(), some, nullptr);
+  // We will have invalidated all.
+  ascii = other->isAscii(all);
+  ASSERT_FALSE(ascii.has_value());
+
+  std::vector<std::string> moreData = {"a", "b", "c", "d"};
+  auto largerSource = maker->flatVector(moreData);
+  vector_size_t sourceMappings[] = {3, 2, 1, 0};
+  some.setAll();
+  some.setValid(0, false);
+  some.updateBounds();
+
+  other->setAllIsAscii(false);
+  largerSource->setAllIsAscii(true);
+  other->copy(largerSource.get(), some, sourceMappings);
+  ascii = other->isAscii(all);
+  ASSERT_TRUE(ascii.has_value());
+  ASSERT_FALSE(ascii.value());
+}
+
 TEST_F(VectorTest, compareNan) {
   auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
 
@@ -1081,6 +1179,7 @@ TEST_F(VectorCreateConstantTest, scalar) {
   testCreateConstant<TypeKind::DOUBLE>(12.345);
 
   testCreateConstant<TypeKind::VARCHAR>(StringView("hello world"));
+  testCreateConstant<TypeKind::VARBINARY>(StringView("my binary buffer"));
 }
 
 TEST_F(VectorCreateConstantTest, scalarNull) {
@@ -1094,6 +1193,9 @@ TEST_F(VectorCreateConstantTest, scalarNull) {
 
   testCreateConstant<TypeKind::REAL>(std::nullopt);
   testCreateConstant<TypeKind::DOUBLE>(std::nullopt);
+
+  testCreateConstant<TypeKind::VARCHAR>(std::nullopt);
+  testCreateConstant<TypeKind::VARBINARY>(std::nullopt);
 }
 
 class TestingHook : public ValueHook {
@@ -1148,4 +1250,10 @@ TEST_F(VectorTest, valueHook) {
   // subset of rows and the position of each row within this set.
   lazy->load(rows, &hook);
   EXPECT_EQ(hook.errors(), 0);
+}
+
+TEST_F(VectorTest, byteSize) {
+  constexpr vector_size_t count = std::numeric_limits<vector_size_t>::max();
+  constexpr uint64_t expected = count * sizeof(int64_t);
+  EXPECT_EQ(BaseVector::byteSize<int64_t>(count), expected);
 }

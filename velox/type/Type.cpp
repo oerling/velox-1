@@ -15,6 +15,7 @@
  */
 
 #include "velox/type/Type.h"
+#include <boost/algorithm/string.hpp>
 #include <boost/regex.hpp>
 #include <folly/Demangle.h>
 #include <sstream>
@@ -62,7 +63,7 @@ TypeKind mapNameToTypeKind(const std::string& name) {
   auto found = typeStringMap.find(name);
 
   if (found == typeStringMap.end()) {
-    VELOX_USER_THROW("Specified element is not found : {}", name);
+    VELOX_USER_FAIL("Specified element is not found : {}", name);
   }
 
   return found->second;
@@ -91,7 +92,7 @@ std::string mapTypeKindToName(const TypeKind& typeKind) {
   auto found = typeEnumMap.find(typeKind);
 
   if (found == typeEnumMap.end()) {
-    VELOX_USER_THROW("Specified element is not found : {}", (int32_t)typeKind);
+    VELOX_USER_FAIL("Specified element is not found : {}", (int32_t)typeKind);
   }
 
   return found->second;
@@ -195,13 +196,24 @@ folly::dynamic ArrayType::serialize() const {
   return obj;
 }
 
+FixedSizeArrayType::FixedSizeArrayType(
+    FixedSizeArrayType::size_type len,
+    std::shared_ptr<const Type> child)
+    : ArrayType(child), len_(len) {}
+
+std::string FixedSizeArrayType::toString() const {
+  std::stringstream ss;
+  ss << "FIXED_SIZE_ARRAY(" << len_ << ")<" << child_->toString() << ">";
+  return ss.str();
+}
+
 const std::shared_ptr<const Type>& MapType::childAt(uint32_t idx) const {
   if (idx == 0) {
     return keyType();
   } else if (idx == 1) {
     return valueType();
   }
-  VELOX_USER_THROW("Map type should have only two children");
+  VELOX_USER_FAIL("Map type should have only two children");
 }
 
 MapType::MapType(
@@ -249,7 +261,7 @@ const std::shared_ptr<const Type>& RowType::findChild(
       return children_.at(i);
     }
   }
-  VELOX_USER_THROW("Field not found: {}", name);
+  VELOX_USER_FAIL("Field not found: {}", name);
 }
 
 bool RowType::containsChild(std::string_view name) const {
@@ -257,12 +269,19 @@ bool RowType::containsChild(std::string_view name) const {
 }
 
 uint32_t RowType::getChildIdx(const std::string& name) const {
+  auto index = getChildIdxIfExists(name);
+  VELOX_USER_CHECK(index.has_value(), "Field not found: {}", name);
+  return index.value();
+}
+
+std::optional<uint32_t> RowType::getChildIdxIfExists(
+    const std::string& name) const {
   for (uint32_t i = 0; i < names_.size(); i++) {
     if (names_.at(i) == name) {
       return i;
     }
   }
-  VELOX_USER_THROW("Field not found: {}", name);
+  return std::nullopt;
 }
 
 bool RowType::operator==(const Type& other) const {
@@ -467,6 +486,13 @@ std::shared_ptr<const ArrayType> ARRAY(
   return std::make_shared<const ArrayType>(std::move(elementType));
 }
 
+std::shared_ptr<const FixedSizeArrayType> FIXED_SIZE_ARRAY(
+    FixedSizeArrayType::size_type len,
+    std::shared_ptr<const Type> elementType) {
+  return std::make_shared<const FixedSizeArrayType>(
+      len, std::move(elementType));
+}
+
 std::shared_ptr<const RowType> ROW(
     std::vector<std::string>&& names,
     std::vector<std::shared_ptr<const Type>>&& types) {
@@ -504,10 +530,6 @@ std::shared_ptr<const MapType> MAP(
       std::move(keyType), std::move(valType));
 };
 
-std::shared_ptr<const TimestampType> TIMESTAMP() {
-  return std::make_shared<const TimestampType>();
-};
-
 std::shared_ptr<const FunctionType> FUNCTION(
     std::vector<std::shared_ptr<const Type>>&& argumentTypes,
     std::shared_ptr<const Type> returnType) {
@@ -527,6 +549,7 @@ KOSKI_DEFINE_SCALAR_ACCESSOR(SMALLINT);
 KOSKI_DEFINE_SCALAR_ACCESSOR(BIGINT);
 KOSKI_DEFINE_SCALAR_ACCESSOR(REAL);
 KOSKI_DEFINE_SCALAR_ACCESSOR(DOUBLE);
+KOSKI_DEFINE_SCALAR_ACCESSOR(TIMESTAMP);
 KOSKI_DEFINE_SCALAR_ACCESSOR(VARCHAR);
 KOSKI_DEFINE_SCALAR_ACCESSOR(VARBINARY);
 KOSKI_DEFINE_SCALAR_ACCESSOR(UNKNOWN);
@@ -544,16 +567,10 @@ std::shared_ptr<const Type> createType(
 }
 
 template <>
-std::shared_ptr<const Type> createType<TypeKind::TIMESTAMP>(
-    std::vector<std::shared_ptr<const Type>>&& /*children*/) {
-  return TIMESTAMP();
-}
-
-template <>
 std::shared_ptr<const Type> createType<TypeKind::ROW>(
     std::vector<std::shared_ptr<const Type>>&& /*children*/) {
   std::string name{TypeTraits<TypeKind::ROW>::name};
-  VELOX_USER_THROW("Not supported for kind: {}", name);
+  VELOX_USER_FAIL("Not supported for kind: {}", name);
 }
 
 template <>
@@ -574,7 +591,7 @@ template <>
 std::shared_ptr<const Type> createType<TypeKind::OPAQUE>(
     std::vector<std::shared_ptr<const Type>>&& /*children*/) {
   std::string name{TypeTraits<TypeKind::OPAQUE>::name};
-  VELOX_USER_THROW("Not supported for kind: {}", name);
+  VELOX_USER_FAIL("Not supported for kind: {}", name);
 }
 
 bool Type::containsUnknown() const {
@@ -587,6 +604,37 @@ bool Type::containsUnknown() const {
     }
   }
   return false;
+}
+
+namespace {
+
+using CustomTypeFactory =
+    std::function<TypePtr(std::vector<TypePtr> childTypes)>;
+
+std::unordered_map<std::string, CustomTypeFactory>& typeFactories() {
+  static std::unordered_map<std::string, CustomTypeFactory> factories;
+  return factories;
+}
+} // namespace
+
+void registerType(const std::string& name, CustomTypeFactory factory) {
+  auto uppercaseName = boost::algorithm::to_upper_copy(name);
+  typeFactories().emplace(uppercaseName, factory);
+}
+
+bool typeExists(const std::string& name) {
+  auto uppercaseName = boost::algorithm::to_upper_copy(name);
+  return typeFactories().count(uppercaseName) > 0;
+}
+
+TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes) {
+  auto uppercaseName = boost::algorithm::to_upper_copy(name);
+  auto it = typeFactories().find(uppercaseName);
+  if (it == typeFactories().end()) {
+    return nullptr;
+  }
+
+  return it->second(std::move(childTypes));
 }
 
 } // namespace facebook::velox
