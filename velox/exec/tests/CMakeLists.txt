@@ -54,6 +54,7 @@ add_executable(
   TopNTest.cpp
   LimitTest.cpp
   OrderByTest.cpp
+  OperatorUtilsTest.cpp
   MergeTest.cpp
   HashJoinTest.cpp
   PlanNodeToStringTest.cpp
@@ -101,6 +102,6 @@ target_link_libraries(
   ${FOLLY_WITH_DEPENDENCIES}
   ${DOUBLE_CONVERSION}
   ${gflags_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${FMT}
   ${FILESYSTEM})

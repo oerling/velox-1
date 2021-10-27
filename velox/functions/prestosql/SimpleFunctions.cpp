@@ -36,43 +36,48 @@ void registerFunctions() {
   registerFunction<udf_json_extract_scalar, Varchar, Varchar, Varchar>();
 
   // Register string functions.
-  registerFunction<udf_chr, Varchar, int64_t>();
-  registerFunction<udf_codepoint, int32_t, Varchar>();
+  registerFunction<ChrFunction, Varchar, int64_t>({"chr"});
+  registerFunction<CodePointFunction, int32_t, Varchar>({"codepoint"});
 
-  registerFunction<udf_substr<int64_t>, Varchar, Varchar, int64_t>();
-  registerFunction<udf_substr<int64_t>, Varchar, Varchar, int64_t, int64_t>();
-  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t>();
-  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t, int32_t>();
+  registerFunction<SubstrFunction, Varchar, Varchar, int64_t>({"substr"});
+  registerFunction<SubstrFunction, Varchar, Varchar, int64_t, int64_t>(
+      {"substr"});
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t>({"substr"});
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
+      {"substr"});
 
-  registerFunction<udf_trim<true, true>, Varchar, Varchar>({"trim"});
-  registerFunction<udf_trim<true, false>, Varchar, Varchar>({"ltrim"});
-  registerFunction<udf_trim<false, true>, Varchar, Varchar>({"rtrim"});
+  registerFunction<TrimFunction, Varchar, Varchar>({"trim"});
+  registerFunction<LTrimFunction, Varchar, Varchar>({"ltrim"});
+  registerFunction<RTrimFunction, Varchar, Varchar>({"rtrim"});
 
-  // Register hash functions
-  registerFunction<udf_xxhash64, Varbinary, Varbinary>({"xxhash64"});
-  registerFunction<udf_md5<Varbinary, Varbinary>, Varbinary, Varbinary>(
-      {"md5"});
+  // Register hash functions.
+  registerFunction<XxHash64Function, Varbinary, Varbinary>({"xxhash64"});
+  registerFunction<Md5Function, Varbinary, Varbinary>({"md5"});
 
-  registerFunction<udf_to_hex, Varchar, Varbinary>();
-  registerFunction<udf_from_hex, Varbinary, Varchar>();
-  registerFunction<udf_to_base64, Varchar, Varbinary>();
-  registerFunction<udf_from_base64, Varbinary, Varchar>();
-  registerFunction<udf_url_encode, Varchar, Varchar>();
-  registerFunction<udf_url_decode, Varchar, Varchar>();
+  registerFunction<ToHexFunction, Varchar, Varbinary>({"to_hex"});
+  registerFunction<FromHexFunction, Varbinary, Varchar>({"from_hex"});
+  registerFunction<ToBase64Function, Varchar, Varbinary>({"to_base64"});
+  registerFunction<FromBase64Function, Varbinary, Varchar>({"from_base64"});
+  registerFunction<UrlEncodeFunction, Varchar, Varchar>({"url_encode"});
+  registerFunction<UrlDecodeFunction, Varchar, Varchar>({"url_decode"});
 
-  registerFunction<udf_to_unixtime, double, Timestamp>(
+  // Date time functions.
+  registerFunction<ToUnixtimeFunction, double, Timestamp>(
       {"to_unixtime", "to_unix_timestamp"});
-  registerFunction<udf_from_unixtime, Timestamp, double>();
-  registerFunction<udf_year, int64_t, Timestamp>();
-  registerFunction<udf_month, int64_t, Timestamp>();
-  registerFunction<udf_day, int64_t, Timestamp>({"day", "day_of_month"});
-  registerFunction<udf_day_of_week, int64_t, Timestamp>({"dow", "day_of_week"});
-  registerFunction<udf_day_of_year, int64_t, Timestamp>({"doy", "day_of_year"});
-  registerFunction<udf_hour, int64_t, Timestamp>();
-  registerFunction<udf_minute, int64_t, Timestamp>();
-  registerFunction<udf_second, int64_t, Timestamp>();
-  registerFunction<udf_millisecond, int64_t, Timestamp>();
-  registerFunction<udf_date_trunc, Timestamp, Varchar, Timestamp>();
+  registerFunction<FromUnixtimeFunction, Timestamp, double>({"from_unixtime"});
+  registerFunction<YearFunction, int64_t, Timestamp>({"year"});
+  registerFunction<MonthFunction, int64_t, Timestamp>({"month"});
+  registerFunction<DayFunction, int64_t, Timestamp>({"day", "day_of_month"});
+  registerFunction<DayOfWeekFunction, int64_t, Timestamp>(
+      {"dow", "day_of_week"});
+  registerFunction<DayOfYearFunction, int64_t, Timestamp>(
+      {"doy", "day_of_year"});
+  registerFunction<HourFunction, int64_t, Timestamp>({"hour"});
+  registerFunction<MinuteFunction, int64_t, Timestamp>({"minute"});
+  registerFunction<SecondFunction, int64_t, Timestamp>({"second"});
+  registerFunction<MillisecondFunction, int64_t, Timestamp>({"millisecond"});
+  registerFunction<DateTruncFunction, Timestamp, Varchar, Timestamp>(
+      {"date_trunc"});
 
   registerArithmeticFunctions();
   registerCheckedArithmeticFunctions();

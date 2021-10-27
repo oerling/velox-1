@@ -67,9 +67,9 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<udf_chr, Varchar, int64_t>();
   registerFunction<udf_ascii, int32_t, Varchar>();
 
-  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t>(
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t>(
       {prefix + "substring"});
-  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t, int32_t>(
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
       {prefix + "substring"});
 
   exec::registerStatefulVectorFunction("instr", instrSignatures(), makeInstr);
@@ -106,6 +106,13 @@ void registerFunctions(const std::string& prefix) {
   // broken out into a separate compilation unit to improve build latency.
   registerArithmeticFunctions(prefix);
   registerCompareFunctions(prefix);
+
+  // String sreach function
+  registerFunction<udf_starts_with, bool, Varchar, Varchar>(
+      {prefix + "startswith"});
+  registerFunction<udf_ends_with, bool, Varchar, Varchar>(
+      {prefix + "endswith"});
+  registerFunction<udf_contains, bool, Varchar, Varchar>({prefix + "contains"});
 }
 
 } // namespace sparksql

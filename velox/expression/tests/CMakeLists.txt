@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# for generated headers
-include_directories(${CMAKE_BINARY_DIR})
-
 add_executable(
   velox_expression_test ExprTest.cpp CastExprTest.cpp EvalSimplifiedTest.cpp
                         SignatureBinderTest.cpp SimpleFunctionTest.cpp)
@@ -43,7 +40,7 @@ target_link_libraries(
   ${GTEST_BOTH_LIBRARIES}
   ${FOLLY_WITH_DEPENDENCIES}
   ${gflags_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${FMT})
 
 add_library(velox_vector_fuzzer VectorFuzzer.cpp)
