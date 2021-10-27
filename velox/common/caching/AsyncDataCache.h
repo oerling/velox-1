@@ -442,7 +442,9 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   // first access of a correlated sparsely loaded set of
   // columns. There the cache entries for all will be made on first
   // access.
-  virtual bool makePins() = 0;
+  virtual bool makePins() {
+    VELOX_UNSUPPORTED("FusedLoad requires pins to be supplied");
+  }
 
  protected:
   // Performs the data transfer part of the load. Subclasses will
