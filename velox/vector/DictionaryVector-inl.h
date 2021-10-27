@@ -26,6 +26,14 @@ template <typename T>
 void DictionaryVector<T>::setInternalState() {
   VELOX_CHECK(indexType_ == TypeKind::INTEGER);
   rawIndices_ = indices_->as<vector_size_t>();
+  auto valuesSize = dictionaryValues_->size();
+  for (auto i = 0; i < BaseVector::length_; ++i) {
+    auto index = rawIndices_[i];
+    if (BaseVector::rawNulls_ && bits::isBitNull(BaseVector::rawNulls_, i)) {
+      continue;
+    }
+    VELOX_CHECK_GT(valuesSize, rawIndices_[i], "Bad index in DictionaryVector");
+  }
   if (isLazyNotLoaded(*dictionaryValues_)) {
     // Do not load Lazy vector
     return;
