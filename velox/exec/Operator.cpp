@@ -172,7 +172,7 @@ std::string Operator::toString() {
   std::stringstream out;
   if (auto task = operatorCtx_->task()) {
     auto driverCtx = operatorCtx_->driverCtx();
-    out << "<" << task->taskId() << ":" << driverCtx->pipelineId << "."
+    out << "\{" << stats_.operatorType << fmt::format(" (0X{x})", reinterpret_cast<void*>(this)) << "<" << task->taskId() << ":" << driverCtx->pipelineId << "."
         << driverCtx->driverId << " " << this;
   } else {
     out << "<Terminated, no task>";
