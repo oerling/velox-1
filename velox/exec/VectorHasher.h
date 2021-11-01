@@ -17,6 +17,7 @@
 
 #include <folly/container/F14Set.h>
 
+#include "velox/common/base/RawVector.h"
 #include <velox/type/Filter.h>
 #include "velox/exec/Operator.h"
 #include "velox/vector/FlatVector.h"
@@ -172,7 +173,7 @@ class VectorHasher {
       const BaseVector& values,
       const SelectivityVector& rows,
       bool mix,
-      std::vector<uint64_t>* result);
+      raw_vector<uint64_t>* result);
 
   // Computes a normalized key for 'rows' in 'values' and stores this
   // in 'result'. If this is not the first hasher with normalized
@@ -185,7 +186,7 @@ class VectorHasher {
   bool computeValueIds(
       const BaseVector& values,
       SelectivityVector& rows,
-      std::vector<uint64_t>* result);
+      raw_vector<uint64_t>* result);
 
   // Updates the value id in 'result' for values in 'decoded' at
   // positions in 'rows'. If some value does not have an id, result is
@@ -197,8 +198,8 @@ class VectorHasher {
   void lookupValueIds(
       const DecodedVector& decoded,
       SelectivityVector& rows,
-      std::vector<uint64_t>& cachedHashes,
-      std::vector<uint64_t>* result) const;
+      raw_vector<uint64_t>& cachedHashes,
+      raw_vector<uint64_t>* result) const;
 
   // Returns true if either range or distinct values have not overflowed.
   bool mayUseValueIds() const {
@@ -325,7 +326,7 @@ class VectorHasher {
   void lookupValueIdsTyped(
       const DecodedVector& decoded,
       SelectivityVector& rows,
-      std::vector<uint64_t>& cachedHashes,
+      raw_vector<uint64_t>& cachedHashes,
       uint64_t* result) const;
 
   template <typename T>
@@ -451,7 +452,7 @@ class VectorHasher {
   TypePtr type_;
   const TypeKind typeKind_;
   DecodedVector decoded_;
-  std::vector<uint64_t> cachedHashes_;
+  raw_vector<uint64_t> cachedHashes_;
 
   // Members for fast map to int domain for array/normalized key.
   // Maximum integer mapping. If distinct count exceeds this,

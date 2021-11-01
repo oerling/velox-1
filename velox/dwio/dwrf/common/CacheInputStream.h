@@ -22,6 +22,8 @@
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/InputStream.h"
 
+#include <gflags/gflags.h>
+
 namespace facebook::velox::dwrf {
 
 class CachedBufferedInput;
@@ -64,7 +66,7 @@ class CacheInputStream : public SeekableInputStream {
 
   // Maximum number of bytes read from 'input' at a time. This gives the maximum
   // pin_.entry()->size().
-  int32_t loadQuantum_{kDefaultLoadQuantum};
+  const int32_t loadQuantum_;
 
   // Handle of cache entry.
   cache::CachePin pin_;
