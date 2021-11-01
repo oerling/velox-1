@@ -86,7 +86,7 @@ class CachedBufferedInput : public BufferedInput {
         streamSource_(streamSource),
         ioStats_(std::move(ioStats)),
         executor_(executor) {
-    tracker_->setLoadQuantum(CacheInputStream::kDefaultLoadQuantum);
+    tracker_->setLoadQuantum(FLAGS_cache_load_quantum);
   }
 
   ~CachedBufferedInput() override {
@@ -154,6 +154,8 @@ class CachedBufferedInput : public BufferedInput {
   //  request.
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
+    void traceFusedLoads();
+  
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;
   std::shared_ptr<cache::ScanTracker> tracker_;
