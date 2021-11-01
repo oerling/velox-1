@@ -24,8 +24,6 @@
 
 #include <gflags/gflags.h>
 
-DECLARE_int32(cache_load_quantum);
-
 namespace facebook::velox::dwrf {
 
 class CachedBufferedInput;
@@ -68,7 +66,7 @@ class CacheInputStream : public SeekableInputStream {
 
   // Maximum number of bytes read from 'input' at a time. This gives the maximum
   // pin_.entry()->size().
-  int32_t loadQuantum_{FLAGS_cache_load_quantum};
+  const int32_t loadQuantum_;
 
   // Handle of cache entry.
   cache::CachePin pin_;

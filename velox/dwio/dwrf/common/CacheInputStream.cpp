@@ -19,6 +19,8 @@
 #include "velox/common/time/Timer.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 
+DECLARE_int32(cache_load_quantum);
+
 namespace facebook::velox::dwrf {
 
 using velox::cache::ScanTracker;
@@ -42,7 +44,8 @@ CacheInputStream::CacheInputStream(
       fileNum_(fileNum),
       tracker_(std::move(tracker)),
       trackingId_(trackingId),
-      groupId_(groupId) {}
+      groupId_(groupId),
+      loadQuantum_(FLAGS_cache_load_quantum){}
 
 bool CacheInputStream::Next(const void** buffer, int32_t* size) {
   if (position_ >= region_.length) {

@@ -25,6 +25,9 @@
 
 #include <folly/Executor.h>
 
+
+DECLARE_int32(cache_load_quantum);
+
 namespace facebook::velox::dwrf {
 
 // Abstract class for owning an InputStream and related structures
