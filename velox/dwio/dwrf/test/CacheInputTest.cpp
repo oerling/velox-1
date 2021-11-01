@@ -151,15 +151,15 @@ class CacheTest : public testing::Test {
     }
   }
 
-  static void checkEntry(cache::AsyncDataCacheEntry* entry) {
-    uint64_t seed = entry->key().fileNum.id();
-    if (entry->tinyData()) {
-      checkData(entry->tinyData(), entry->offset(), entry->size(), seed);
+  static void checkEntry(const cache::AsyncDataCacheEntry& entry) {
+    uint64_t seed = entry.key().fileNum.id();
+    if (entry.tinyData()) {
+      checkData(entry.tinyData(), entry.offset(), entry.size(), seed);
     } else {
-      int64_t bytesLeft = entry->size();
-      auto runOffset = entry->offset();
-      for (auto i = 0; i < entry->data().numRuns(); ++i) {
-        auto run = entry->data().runAt(i);
+      int64_t bytesLeft = entry.size();
+      auto runOffset = entry.offset();
+      for (auto i = 0; i < entry.data().numRuns(); ++i) {
+        auto run = entry.data().runAt(i);
         checkData(
             run.data<char>(),
             runOffset,
