@@ -125,7 +125,23 @@ class raw_vector {
     }
   }
 
- private:
+  auto begin() const {
+    return &data_[0];
+  }
+
+  auto end() const {
+    return &data_[size_];
+  }
+
+  T& back() {
+    return data_[size_ - 1];
+  }
+  const T& back() const {
+    return data_[size_ - 1];
+  }
+
+  
+private:
   // Adds 'bytes' to the address 'pointer'.
   inline T* addBytes(T* pointer, int32_t bytes) {
     return reinterpret_cast<T*>(reinterpret_cast<uint64_t>(pointer) + bytes);

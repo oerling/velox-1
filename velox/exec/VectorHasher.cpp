@@ -257,7 +257,7 @@ bool VectorHasher::makeValueIdsDecoded(
 bool VectorHasher::computeValueIds(
     const BaseVector& values,
     SelectivityVector& rows,
-    std::vector<uint64_t>* result) {
+    raw_vector<uint64_t>* result) {
   decoded_.decode(values, rows);
   return VALUE_ID_TYPE_DISPATCH(
       makeValueIds, values.typeKind(), rows, result->data());
@@ -293,7 +293,7 @@ template <TypeKind Kind>
 void VectorHasher::lookupValueIdsTyped(
     const DecodedVector& decoded,
     SelectivityVector& rows,
-    std::vector<uint64_t>& cachedHashes,
+    raw_vector<uint64_t>& cachedHashes,
     uint64_t* result) const {
   using T = typename TypeTraits<Kind>::NativeType;
   if (decoded.isConstantMapping()) {
@@ -354,8 +354,8 @@ void VectorHasher::lookupValueIdsTyped(
 void VectorHasher::lookupValueIds(
     const DecodedVector& decoded,
     SelectivityVector& rows,
-    std::vector<uint64_t>& cachedHashes,
-    std::vector<uint64_t>* result) const {
+    raw_vector<uint64_t>& cachedHashes,
+    raw_vector<uint64_t>* result) const {
   VALUE_ID_TYPE_DISPATCH(
       lookupValueIdsTyped,
       decoded.base()->typeKind(),
@@ -369,7 +369,7 @@ void VectorHasher::hash(
     const BaseVector& values,
     const SelectivityVector& rows,
     bool mix,
-    std::vector<uint64_t>* result) {
+    raw_vector<uint64_t>* result) {
   decoded_.decode(values, rows);
   return VELOX_DYNAMIC_TYPE_DISPATCH(
       hashValues, values.typeKind(), rows, mix, result->data());
@@ -437,7 +437,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     case TypeKind::INTEGER:
     case TypeKind::BIGINT: {
       if (!distinctOverflow_) {
-        std::vector<int64_t> values;
+	std::vector<int64_t> values;
         values.reserve(uniqueValues_.size());
         for (const auto& value : uniqueValues_) {
           values.emplace_back(value.data());
@@ -660,7 +660,7 @@ uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int64_t reserve) {
   } else {
     max_ += reserve;
   }
-  rangeMaxChars_ = (63 - __builtin_clzll(max_)) / 8;
+  rangeMaxChars_ = (64 - __builtin_clzll(max_)) / 8;
   isRange_ = true;
   uint64_t result;
   // No overflow because max range is under 63 bits.
