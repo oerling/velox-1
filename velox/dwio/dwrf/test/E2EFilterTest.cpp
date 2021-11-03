@@ -287,21 +287,20 @@ class ColumnStats : public AbstractColumnStats {
     T max;
     bool hasMax = false;
     for (auto batch : batches) {
-      auto values = getChildBySubfield(batch.get(), subfield)
-                     ->as<SimpleVector<T>>();
+      auto values =
+          getChildBySubfield(batch.get(), subfield)->as<SimpleVector<T>>();
 
-      for (auto i = 0; i< values->size(); ++i) {
+      for (auto i = 0; i < values->size(); ++i) {
         if (values->isNullAt(i)) {
           continue;
         }
         if (hasMax && max < values->valueAt(i)) {
           max = values->valueAt(i);
         } else if (!hasMax) {
-	  max = values->valueAt(i);
-	  hasMax = true;
-	}
+          max = values->valueAt(i);
+          hasMax = true;
+        }
       }
-
     }
 
     return std::make_unique<velox::common::BigintRange>(max, max, false);
@@ -448,30 +447,36 @@ class E2EFilterTest : public testing::Test {
     auto type = batches_[0]->type();
     for (auto i = 0; i < type->size(); ++i) {
       if (type->childAt(i)->kind() == TypeKind::BIGINT) {
-	setRowGroupMarkers<int64_t>(batches_, i, std::numeric_limits<int64_t>::max());
-	return;
+        setRowGroupMarkers<int64_t>(
+            batches_, i, std::numeric_limits<int64_t>::max());
+        return;
       }
     }
   }
 
-  // Adds 'marker' to random places in selectable  row groups for 'i'th child in 'batches' If 'marker' occurs in skippable row groups, sets the element to T(). Row group numbers that are multiples of 3 are skippable.
+  // Adds 'marker' to random places in selectable  row groups for 'i'th child in
+  // 'batches' If 'marker' occurs in skippable row groups, sets the element to
+  // T(). Row group numbers that are multiples of 3 are skippable.
   template <typename T>
-  void setRowGroupMarkers(const std::vector<RowVectorPtr>& batches, int32_t child, T marker) {
+  void setRowGroupMarkers(
+      const std::vector<RowVectorPtr>& batches,
+      int32_t child,
+      T marker) {
     int32_t row = 0;
     for (auto& batch : batches) {
       auto values = batch->childAt(child)->as<FlatVector<T>>();
       for (auto i = 0; i < values->size(); ++i) {
-	auto rowGroup = row++ / kRowsInGroup;
-	bool isIn = (rowGroup % 3) != 0;
-	if (isIn) {
-	  if (folly::Random::rand32(rng_) % 100 == 0) {
-	    values->set(i, marker);
-	  }
-	} else {
-	  if (!values->isNullAt(i) && values->valueAt(i) == marker) {
-	    values->set(i, T());
-	  }
-	}
+        auto rowGroup = row++ / kRowsInGroup;
+        bool isIn = (rowGroup % 3) != 0;
+        if (isIn) {
+          if (folly::Random::rand32(rng_) % 100 == 0) {
+            values->set(i, marker);
+          }
+        } else {
+          if (!values->isNullAt(i) && values->valueAt(i) == marker) {
+            values->set(i, T());
+          }
+        }
       }
     }
   }
@@ -667,7 +672,7 @@ class E2EFilterTest : public testing::Test {
   void writeToMemory(
       const TypePtr& type,
       const std::vector<RowVectorPtr>& batches,
-		     bool forRowGroupSkip) {
+      bool forRowGroupSkip) {
     auto config = std::make_shared<dwrf::Config>();
     config->set(dwrf::Config::COMPRESSION, dwrf::CompressionKind_NONE);
     config->set(dwrf::Config::USE_VINTS, useVInts_);
@@ -983,17 +988,18 @@ class E2EFilterTest : public testing::Test {
     for (auto& field : filterable) {
       VectorPtr child = getChildBySubfield(batches_[0].get(), Subfield(field));
       if (TypeKind::BIGINT == child->typeKind()) {
-	specs.emplace_back();
-	specs.back().field = field;
-	specs.back().isForRowGroupSkip = true;
-	break;
+        specs.emplace_back();
+        specs.back().field = field;
+        specs.back().isForRowGroupSkip = true;
+        break;
       }
     }
     if (specs.empty()) {
       // No suitable column.
       return;
     }
-    std::cout << ": Testing with row group skip " << specsToString(specs) << std::endl;
+    std::cout << ": Testing with row group skip " << specsToString(specs)
+              << std::endl;
     testFilterSpecs(specs);
     EXPECT_LT(0, runtimeStats_.skippedStrides);
   }

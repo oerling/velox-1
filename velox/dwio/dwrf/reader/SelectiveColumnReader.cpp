@@ -3808,7 +3808,9 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       child->setReadOffset(index * rowsPerRowGroup_);
     }
     if (notNullDecoder) {
-      VELOX_CHECK(!indexStream_, "Struct columns are expected not to have an index stream");
+      VELOX_CHECK(
+          !indexStream_,
+          "Struct columns are expected not to have an index stream");
       notNullDecoder->skip(index * rowsPerRowGroup_ - readOffset_);
     }
     setReadOffset(index * rowsPerRowGroup_);
