@@ -80,7 +80,7 @@ SelectiveColumnReader::SelectiveColumnReader(
       scanSpec_(scanSpec),
       type_{type},
       rowsPerRowGroup_{stripe.rowsPerRowGroup()} {
-  if (scanSpec->filter() || loadIndex) {
+  if (loadIndex) {
     indexStream_ =
         stripe.getStream(ek.forKind(proto::Stream_Kind_ROW_INDEX), false);
   }
@@ -3803,15 +3803,17 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
+    if (notNullDecoder) {
+      ensureRowGroupIndex();
+
+      auto positions = toPositions(index_->entry(index));
+      PositionProvider positionsProvider(positions);
+
+      notNullDecoder->seekToRowGroup(positionsProvider);
+    }
     for (auto& child : children_) {
       child->seekToRowGroup(index);
       child->setReadOffset(index * rowsPerRowGroup_);
-    }
-    if (notNullDecoder) {
-      VELOX_CHECK(
-          !indexStream_,
-          "Struct columns are expected not to have an index stream");
-      notNullDecoder->skip(index * rowsPerRowGroup_ - readOffset_);
     }
     setReadOffset(index * rowsPerRowGroup_);
   }
@@ -3873,7 +3875,7 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec)
-    : SelectiveColumnReader(ek, stripe, scanSpec, dataType->type) {
+    : SelectiveColumnReader(ek, stripe, scanSpec, dataType->type, true) {
   DWIO_ENSURE_EQ(ek.node, dataType->id, "working on the same node");
   auto encoding = static_cast<int64_t>(stripe.getEncoding(encodingKey).kind());
   DWIO_ENSURE_EQ(

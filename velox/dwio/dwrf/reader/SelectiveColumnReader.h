@@ -278,6 +278,8 @@ class SelectiveColumnReader : public ColumnReader {
   char* copyStringValue(folly::StringPiece value);
 
   void ensureRowGroupIndex() const {
+    VELOX_CHECK(index_ || indexStream_,
+		"Reader needs to have an index stream");
     if (indexStream_) {
       index_ = ProtoUtils::readProto<proto::RowIndex>(std::move(indexStream_));
     }
