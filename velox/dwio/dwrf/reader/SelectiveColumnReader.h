@@ -38,8 +38,7 @@ class SelectiveColumnReader : public ColumnReader {
       const EncodingKey& ek,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
-      const TypePtr& type,
-      bool loadIndex = false);
+      const TypePtr& type);
 
   /**
    * Read the next group of values into a RowVector.
@@ -188,6 +187,10 @@ class SelectiveColumnReader : public ColumnReader {
     readOffset_ = readOffset;
   }
 
+  virtual void setReadOffsetRecursive(int32_t readOffset) {
+    setReadOffset(readOffset);
+  }
+  
   uint64_t initTimeClocks() const {
     return initTimeClocks_;
   }

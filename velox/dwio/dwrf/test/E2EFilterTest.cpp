@@ -860,24 +860,50 @@ class E2EFilterTest : public testing::Test {
   static void makeFieldSpecs(
       const std::string& pathPrefix,
       int32_t level,
-      const std::shared_ptr<const RowType>& type,
+      const std::shared_ptr<const Type>& type,
       ScanSpec* spec) {
-    for (auto i = 0; i < type->size(); ++i) {
-      std::string path =
-          level == 0 ? type->nameOf(i) : pathPrefix + "." + type->nameOf(i);
-      Subfield subfield(path);
-      ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
-      fieldSpec->setProjectOut(true);
-      fieldSpec->setExtractValues(true);
-      fieldSpec->setChannel(i);
-      auto fieldType = type->childAt(i);
-      if (fieldType->kind() == TypeKind::ROW) {
-        makeFieldSpecs(
-            path,
-            level + 1,
-            std::static_pointer_cast<const RowType>(fieldType),
-            spec);
+    switch (type->kind()) {
+      case TypeKind::ROW: {
+        auto rowType = dynamic_cast<const RowType*>(type.get());
+        for (auto i = 0; i < type->size(); ++i) {
+          std::string path = level == 0 ? rowType->nameOf(i)
+                                        : pathPrefix + "." + rowType->nameOf(i);
+          Subfield subfield(path);
+          ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
+          fieldSpec->setProjectOut(true);
+          fieldSpec->setExtractValues(true);
+          fieldSpec->setChannel(i);
+          makeFieldSpecs(path, level + 1, type->childAt(i), spec);
+        }
+        break;
       }
+      case TypeKind::MAP: {
+        auto keySpec =
+	  spec->getOrCreateChild(Subfield(pathPrefix + ".keys"));
+        keySpec->setProjectOut(true);
+        keySpec->setExtractValues(true);
+        makeFieldSpecs(pathPrefix + ".keys", level + 1, type->childAt(0), spec);
+        auto valueSpec =
+            spec->getOrCreateChild(Subfield(pathPrefix + ".values"));
+        valueSpec->setProjectOut(true);
+        valueSpec->setExtractValues(true);
+        makeFieldSpecs(pathPrefix + ".values", level + 1, type->childAt(0), spec);
+        break;
+
+        break;
+      }
+
+      case TypeKind::ARRAY: {
+        auto childSpec =
+            spec->getOrCreateChild(Subfield(pathPrefix + ".elements"));
+        childSpec->setProjectOut(true);
+        childSpec->setExtractValues(true);
+        makeFieldSpecs(pathPrefix + ".elements", level + 1, type->childAt(0), spec);
+        break;
+      }
+
+      default:
+        break;
     }
   }
 
@@ -1167,7 +1193,7 @@ TEST_F(E2EFilterTest, listAndMap) {
       "long_val:bigint,"
       "long_val_2:bigint,"
       "int_val:int,"
-      "array_val:array<array<int>>,"
+      "array_val:array<struct<array_member: array<int>>>,"
       "map_val:map<bigint,map<int, int>>",
       [&]() {},
       true,
@@ -1176,3 +1202,7 @@ TEST_F(E2EFilterTest, listAndMap) {
 }
 
 } // namespace facebook::velox::dwio::dwrf
+
+void pv(facebook::velox::BaseVector* vec, int from, int to) {
+  std::cout << vec->toString(from, to);
+}
