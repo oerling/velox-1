@@ -171,6 +171,7 @@ class ArrayValWriter {
   const_iterator end() const {
     return values_.end();
   }
+
   const_reference at(size_t index) const {
     return values_.at(index);
   }
@@ -191,6 +192,18 @@ class ArrayValReader : public ArrayValWriter<VAL> {
     for (auto& val : vals) {
       append(std::move(val));
     }
+  }
+
+  bool mayHaveNulls() const {
+    return false;
+  }
+
+  std::optional<VAL> operator[](size_t index) const {
+    return {ArrayValWriter<VAL>::at(index)};
+  }
+
+  std::optional<VAL> at(size_t index) const {
+    return {ArrayValWriter<VAL>::at(index)};
   }
 };
 
@@ -241,7 +254,7 @@ struct IMapVal {
   static std::shared_ptr<const Type> veloxType() {
     return MAP(UdfToType<KEY>::veloxType(), UdfToType<VAL>::veloxType());
   }
-  using container_t = typename std::unordered_map<KEY, std::optional<VAL>>;
+  using container_t = typename folly::F14FastMap<KEY, std::optional<VAL>>;
   using iterator = typename container_t::iterator;
   using reference = typename container_t::reference;
   using const_iterator = typename container_t::const_iterator;
