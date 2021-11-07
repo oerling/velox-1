@@ -905,7 +905,7 @@ class E2EFilterTest : public testing::Test {
             pathPrefix + ".elements", level + 1, type->childAt(1), spec);
         break;
       }
-    case TypeKind::ARRAY: {
+      case TypeKind::ARRAY: {
         auto childSpec =
             spec->getOrCreateChild(Subfield(pathPrefix + ".elements"));
         childSpec->setProjectOut(true);
