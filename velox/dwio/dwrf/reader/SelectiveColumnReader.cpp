@@ -135,7 +135,15 @@ void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
   rawValues_ = values_->asMutable<char>();
 }
 
-void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
+void SelectiveColumnReader::ensureAtTargetRowGroup() {
+  ensureRowGroupIndex();
+  if (targetRowGroup_ != kRowGroupNotSet) {
+    seekToRowGroup(targetRowGroup_);
+    targetRowGroup_ = kRowGroupNotSet;
+  }
+}
+
+  void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
   if (!hasNulls) {
     anyNulls_ = false;
     return;
@@ -173,6 +181,7 @@ void SelectiveColumnReader::prepareRead(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
+  ensureAtTargetRowGroup();
   seekTo(offset, scanSpec_->readsNullsOnly());
   vector_size_t numRows = rows.back() + 1;
   readNulls(numRows, incomingNulls, nullptr, nullsInReadRange_);
@@ -1065,8 +1074,6 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
-    ensureRowGroupIndex();
-
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
@@ -3802,13 +3809,29 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     }
   }
 
-  void seekToRowGroup(uint32_t index) override {
+  void setRowGroup(uint32_t index) override {
+    if (notNullDecoder) {
+      if (nullsPositionBeforeSeek_ == kPositionUnset) {
+	nullsPositionBeforeSeek_ = readOffset_;
+      }
+    }
+    readOffset_ = index * rowsPerRowGroup_;
     for (auto& child : children_) {
-      child->seekToRowGroup(index);
+      child->setRowGroup(index);
       child->setReadOffset(index * rowsPerRowGroup_);
     }
+  }
 
-    setReadOffset(index * rowsPerRowGroup_);
+  void seekToRowGroup(uint32_t index) override {
+    // The children have the row group set to the target and will seek
+    // on first read. The struct has a nulls stream that must seek to
+    // the row group before children can be read since some child
+    // nulls come from the struct nulls if there are any.
+    if (notNullDecoder) {
+      VELOX_CHECK(!indexStream_, "Struct columns are expected not to have an index stream");
+      notNullDecoder->skip(readOffset_ - nullsPositionBeforeSeek_);
+      nullsPositionBeforeSeek_ = kPositionUnset;
+    }
   }
 
   uint64_t skip(uint64_t numValues) override;
@@ -3852,6 +3875,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
  private:
+  static constexpr int32_t kPositionUnset = -1;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
   // created by 'this' to verify they are still valid at load.
@@ -3860,6 +3884,11 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   // Dense set of rows to read in next().
   raw_vector<vector_size_t> rows_;
+
+  // Position in nulls stream after last read. Used to skip to another
+  // row group on first read after setRowGroup(). This is needed
+  // becausse top level struct readers have no index stream.
+  int32_t nullsPositionBeforeSeek_{kPositionUnset};
 };
 
 SelectiveStructColumnReader::SelectiveStructColumnReader(
@@ -4547,6 +4576,7 @@ void SelectiveMapColumnReader::read(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
+  ensureAtTargetRowGroup();
   // Catch up if child readers are behind the length stream.
   if (keyReader_) {
     keyReader_->seekTo(childTargetReadOffset_, false);

@@ -118,11 +118,12 @@ BigintValuesUsingHashTable::BigintValuesUsingHashTable(
     bool nullAllowed)
     : Filter(true, nullAllowed, FilterKind::kBigintValuesUsingHashTable),
       min_(min),
-      max_(max) {
+      max_(max),
+      values_(values){
   VELOX_CHECK(min < max, "min must be less than max");
   VELOX_CHECK(values.size() > 1, "values must contain at least 2 entries");
 
-  auto size = 1u << (uint32_t)std::log2(values.size() * 3);
+  auto size = 1u << (uint32_t)std::log2(values.size() * 5);
   hashTable_.resize(size);
   for (auto i = 0; i < size; ++i) {
     hashTable_[i] = kEmptyMarker;
@@ -141,6 +142,7 @@ BigintValuesUsingHashTable::BigintValuesUsingHashTable(
       }
     }
   }
+  std::sort(values_.begin(), values_.end());
 }
 
 bool BigintValuesUsingHashTable::testInt64(int64_t value) const {
@@ -177,7 +179,15 @@ bool BigintValuesUsingHashTable::testInt64Range(
     return testInt64(min);
   }
 
-  return !(min > max_ || max < min_);
+  if(min > max_ || max < min_) {
+    return false;
+  }
+  for (auto value : values_) {
+    if (min <= value && max >= value){
+      return true;
+    }
+  }
+  return false;
 }
 
 namespace {

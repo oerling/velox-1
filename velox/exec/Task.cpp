@@ -771,7 +771,7 @@ void doCommand(std::string command) {
       int32_t equalsOffset = equals - command.c_str();
       std::string flag(command.data(), equalsOffset);
       std::string value(command.data() + equalsOffset + 1, command.size() - equalsOffset);
-      LOG(INFO) << gflags::SetCommandLineOption(flag.c_str(), value.c_str()); 
+      LOG(INFO) << "VELOXCMD set " << flag << "=" << value << ": " << gflags::SetCommandLineOption(flag.c_str(), value.c_str()); 
       return;
   }
   LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << command;

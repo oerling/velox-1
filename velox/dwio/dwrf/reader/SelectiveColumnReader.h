@@ -91,6 +91,11 @@ class SelectiveColumnReader : public ColumnReader {
     return inputRows_;
   }
 
+  void setRowGroup(uint32_t index) override {
+    targetRowGroup_ = index;
+    readOffset_ = index * rowsPerRowGroup_;
+  }
+  
   // Advances to 'offset', so that the next item to be read is the
   // offset-th from the start of stripe.
   void seekTo(vector_size_t offset, bool readsNullsOnly);
@@ -229,10 +234,14 @@ class SelectiveColumnReader : public ColumnReader {
 
  protected:
   static constexpr int8_t kNoValueSize = -1;
-
+  static constexpr uint32_t kRowGroupNotSet = ~0;
+  
   template <typename T>
   void ensureValuesCapacity(vector_size_t numRows);
 
+  // Calls seekToRowGroup if 'targetRowGroup_' is set.
+  void ensureAtTargetRowGroup();
+  
   void prepareNulls(RowSet rows, bool hasNulls);
 
   template <typename T>
@@ -292,6 +301,12 @@ class SelectiveColumnReader : public ColumnReader {
   mutable std::unique_ptr<proto::RowIndex> index_;
   // Number of rows in a row group. Last row group may have fewer rows.
   uint32_t rowsPerRowGroup_;
+
+  // Row group index to seek to with seekToRowGroup() on next
+  // read(). kRowGroupNotSet if already positioned at start of the
+  // next row group or inside the previous one.
+  uint32_t targetRowGroup_{kRowGroupNotSet};
+
   // Row number after last read row, relative to stripe start.
   vector_size_t readOffset_ = 0;
   // The rows to process in read(). References memory supplied by
