@@ -88,7 +88,11 @@ TEST(RawVectorTest, iota) {
   EXPECT_FALSE(storage.empty());
 }
 
+<<<<<<< HEAD
 TEST(RawVectorTest, iter) {
+=======
+TEST(RawVectorTest, iterator) {
+>>>>>>> stride-skip-test-dev
   raw_vector<int> data;
   data.push_back(11);
   data.push_back(22);
@@ -99,3 +103,19 @@ TEST(RawVectorTest, iter) {
   }
   EXPECT_EQ(66, sum);
 }
+<<<<<<< HEAD
+=======
+
+TEST(RawVectorTest, toStdVector) {
+  raw_vector<int> data;
+  data.push_back(11);
+  data.push_back(22);
+  data.push_back(33);
+  std::vector<int32_t> converted = data;
+  EXPECT_EQ(3, converted.size());
+  for (auto i = 0; i < converted.size(); ++i) {
+    EXPECT_EQ(data[i], converted[i]);
+    ;
+  }
+}
+>>>>>>> stride-skip-test-dev

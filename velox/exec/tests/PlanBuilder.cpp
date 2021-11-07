@@ -37,9 +37,10 @@ std::vector<std::string> makeNames(const std::string& prefix, int size) {
 
 std::shared_ptr<const core::ITypedExpr> parseExpr(
     const std::string& text,
-    std::shared_ptr<const RowType> rowType) {
+    std::shared_ptr<const RowType> rowType,
+    memory::MemoryPool* pool) {
   auto untyped = parse::parseExpr(text);
-  return core::Expressions::inferTypes(untyped, rowType, nullptr);
+  return core::Expressions::inferTypes(untyped, rowType, pool);
 }
 } // namespace
 
@@ -47,11 +48,13 @@ PlanBuilder& PlanBuilder::tableScan(
     const std::shared_ptr<const RowType>& outputType) {
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
-  for (auto& name : outputType->names()) {
+  for (uint32_t i = 0; i < outputType->size(); ++i) {
+    const auto& name = outputType->nameOf(i);
+    const auto& type = outputType->childAt(i);
     assignments.insert(
         {name,
          std::make_shared<HiveColumnHandle>(
-             name, HiveColumnHandle::ColumnType::kRegular)});
+             name, HiveColumnHandle::ColumnType::kRegular, type)});
   }
 
   auto tableHandle =
@@ -114,7 +117,8 @@ PlanBuilder& PlanBuilder::project(
   }
   std::vector<std::shared_ptr<const core::ITypedExpr>> expressions;
   for (auto& projection : projections) {
-    expressions.push_back(parseExpr(projection, planNode_->outputType()));
+    expressions.push_back(
+        parseExpr(projection, planNode_->outputType(), pool_));
   }
   planNode_ = std::make_shared<core::ProjectNode>(
       nextPlanNodeId(),
@@ -126,7 +130,9 @@ PlanBuilder& PlanBuilder::project(
 
 PlanBuilder& PlanBuilder::filter(const std::string& filter) {
   planNode_ = std::make_shared<core::FilterNode>(
-      nextPlanNodeId(), parseExpr(filter, planNode_->outputType()), planNode_);
+      nextPlanNodeId(),
+      parseExpr(filter, planNode_->outputType(), pool_),
+      planNode_);
   return *this;
 }
 
@@ -228,7 +234,7 @@ PlanBuilder& PlanBuilder::aggregation(
     }
 
     auto expr = std::dynamic_pointer_cast<const core::CallTypedExpr>(
-        parseExpr(agg, planNode_->outputType()));
+        parseExpr(agg, planNode_->outputType(), pool_));
     aggregateExprs.emplace_back(expr);
   }
 
@@ -448,7 +454,7 @@ PlanBuilder& PlanBuilder::hashJoin(
   auto resultType = concat(leftType, rightType);
   std::shared_ptr<const core::ITypedExpr> filterExpr;
   if (!filterText.empty()) {
-    filterExpr = parseExpr(filterText, resultType);
+    filterExpr = parseExpr(filterText, resultType, pool_);
   }
   auto outputType = extract(resultType, output);
   auto leftKeyFields = fields(leftType, leftKeys);

@@ -19,6 +19,7 @@
 
 #include "velox/common/base/RawVector.h"
 #include <velox/type/Filter.h>
+#include "velox/common/base/RawVector.h"
 #include "velox/exec/Operator.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -498,7 +499,6 @@ bool VectorHasher::computeValueIdForRows<StringView>(
 
 template <>
 void VectorHasher::analyzeValue(StringView value);
-
 template <>
 bool VectorHasher::tryMapToRange(
     const StringView* /*values*/,
@@ -577,6 +577,12 @@ inline bool VectorHasher::tryMapToRange(
   });
   return true;
 }
+
+template <>
+bool VectorHasher::tryMapToRange(
+    const StringView* /*values*/,
+    const SelectivityVector& /*rows*/,
+    uint64_t* /*result*/);
 
 template <>
 bool VectorHasher::makeValueIdsFlatNoNulls<bool>(

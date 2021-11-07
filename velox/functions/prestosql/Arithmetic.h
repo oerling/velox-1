@@ -284,41 +284,25 @@ FOLLY_ALWAYS_INLINE bool call(
 }
 VELOX_UDF_END();
 
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_and)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
-  result = a & b;
-  return true;
-}
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_not)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a) {
-  result = ~a;
-  return true;
-}
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_or)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
-  result = a | b;
-  return true;
-}
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_xor)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
-  result = a ^ b;
-  return true;
-}
-VELOX_UDF_END();
-
 VELOX_UDF_BEGIN(radians)
 FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
   result = a * (M_PI / 180);
+  return true;
+}
+VELOX_UDF_END();
+
+template <typename T>
+VELOX_UDF_BEGIN(sign)
+FOLLY_ALWAYS_INLINE bool call(T& result, const T& a) {
+  if constexpr (std::is_floating_point<T>::value) {
+    if (std::isnan(a)) {
+      result = std::numeric_limits<T>::quiet_NaN();
+    } else {
+      result = (a == 0.0) ? 0.0 : (a > 0.0) ? 1.0 : -1.0;
+    }
+  } else {
+    result = (a == 0) ? 0 : (a > 0) ? 1 : -1;
+  }
   return true;
 }
 VELOX_UDF_END();

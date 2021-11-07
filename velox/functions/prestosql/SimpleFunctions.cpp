@@ -29,15 +29,13 @@ namespace facebook::velox::functions {
 
 void registerFunctions() {
   // Register functions here.
-  static const std::vector<std::string> EMPTY{};
-
-  registerFunction<udf_rand, double>(EMPTY);
-
-  registerFunction<udf_json_extract_scalar, Varchar, Varchar, Varchar>();
+  registerFunction<JsonExtractScalarFunction, Varchar, Varchar, Varchar>(
+      {"json_extract_scalar"});
 
   // Register string functions.
   registerFunction<ChrFunction, Varchar, int64_t>({"chr"});
   registerFunction<CodePointFunction, int32_t, Varchar>({"codepoint"});
+  registerFunction<LengthFunction, int64_t, Varchar>({"length"});
 
   registerFunction<SubstrFunction, Varchar, Varchar, int64_t>({"substr"});
   registerFunction<SubstrFunction, Varchar, Varchar, int64_t, int64_t>(
@@ -60,6 +58,8 @@ void registerFunctions() {
   registerFunction<FromBase64Function, Varbinary, Varchar>({"from_base64"});
   registerFunction<UrlEncodeFunction, Varchar, Varchar>({"url_encode"});
   registerFunction<UrlDecodeFunction, Varchar, Varchar>({"url_decode"});
+
+  registerFunction<RandFunction, double>({"rand"});
 
   // Date time functions.
   registerFunction<ToUnixtimeFunction, double, Timestamp>(

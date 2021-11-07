@@ -384,52 +384,6 @@ TEST_F(ArithmeticTest, widthBucket) {
       "Bucket for value inf is out of range");
 }
 
-TEST_F(ArithmeticTest, bitwiseAnd) {
-  const auto bitwiseAnd = [&](std::optional<int32_t> a,
-                              std::optional<int32_t> b) {
-    return evaluateOnce<int64_t>("bitwise_and(c0, c1)", a, b);
-  };
-
-  EXPECT_EQ(bitwiseAnd(0, -1), 0);
-  EXPECT_EQ(bitwiseAnd(3, 8), 0);
-  EXPECT_EQ(bitwiseAnd(-4, 12), 12);
-  EXPECT_EQ(bitwiseAnd(60, 21), 20);
-}
-
-TEST_F(ArithmeticTest, bitwiseNot) {
-  const auto bitwiseNot = [&](std::optional<int32_t> a) {
-    return evaluateOnce<int64_t>("bitwise_not(c0)", a);
-  };
-
-  EXPECT_EQ(bitwiseNot(-1), 0);
-  EXPECT_EQ(bitwiseNot(0), -1);
-  EXPECT_EQ(bitwiseNot(2), -3);
-}
-
-TEST_F(ArithmeticTest, bitwiseOr) {
-  const auto bitwiseOr = [&](std::optional<int32_t> a,
-                             std::optional<int32_t> b) {
-    return evaluateOnce<int64_t>("bitwise_or(c0, c1)", a, b);
-  };
-
-  EXPECT_EQ(bitwiseOr(0, -1), -1);
-  EXPECT_EQ(bitwiseOr(3, 8), 11);
-  EXPECT_EQ(bitwiseOr(-4, 12), -4);
-  EXPECT_EQ(bitwiseOr(60, 21), 61);
-}
-
-TEST_F(ArithmeticTest, bitwiseXor) {
-  const auto bitwiseXor = [&](std::optional<int32_t> a,
-                              std::optional<int32_t> b) {
-    return evaluateOnce<int64_t>("bitwise_xor(c0, c1)", a, b);
-  };
-
-  EXPECT_EQ(bitwiseXor(0, -1), -1);
-  EXPECT_EQ(bitwiseXor(3, 8), 11);
-  EXPECT_EQ(bitwiseXor(-4, 12), -16);
-  EXPECT_EQ(bitwiseXor(60, 21), 41);
-}
-
 TEST_F(ArithmeticTest, radians) {
   const auto radians = [&](std::optional<double> a) {
     return evaluateOnce<double>("radians(c0)", a);
@@ -441,6 +395,29 @@ TEST_F(ArithmeticTest, radians) {
   EXPECT_DOUBLE_EQ(0, radians(0).value());
   EXPECT_DOUBLE_EQ(-3.1415926535897931, radians(-180).value());
   EXPECT_DOUBLE_EQ(-1.0000736613927508, radians(-57.3).value());
+}
+
+TEST_F(ArithmeticTest, signFloatingPoint) {
+  const auto sign = [&](std::optional<double> a) {
+    return evaluateOnce<double>("sign(c0)", a);
+  };
+
+  EXPECT_FLOAT_EQ(0.0, sign(0.0).value_or(-1));
+  EXPECT_FLOAT_EQ(1.0, sign(10.1).value_or(-1));
+  EXPECT_FLOAT_EQ(-1.0, sign(-10.1).value_or(1));
+  EXPECT_FLOAT_EQ(1.0, sign(kInf).value_or(-1));
+  EXPECT_FLOAT_EQ(-1.0, sign(-kInf).value_or(1));
+  EXPECT_THAT(sign(kNan), IsNan());
+}
+
+TEST_F(ArithmeticTest, signIntegral) {
+  const auto sign = [&](std::optional<int64_t> a) {
+    return evaluateOnce<int64_t>("sign(c0)", a);
+  };
+
+  EXPECT_EQ(0, sign(0));
+  EXPECT_EQ(1, sign(10));
+  EXPECT_EQ(-1, sign(-10));
 }
 
 } // namespace
