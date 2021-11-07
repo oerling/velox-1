@@ -190,7 +190,17 @@ class SelectiveColumnReader : public ColumnReader {
   virtual void setReadOffsetRecursive(int32_t readOffset) {
     setReadOffset(readOffset);
   }
-  
+
+  // Recursively sets 'isTopLevel_'. Recurses down non-nullable structs,
+  // otherwise only sets 'isTopLevel_' of 'this'
+  virtual void setIsTopLevel() {
+    isTopLevel_ = true;
+  }
+
+  bool isTopLevel() const {
+    return isTopLevel_;
+  }
+
   uint64_t initTimeClocks() const {
     return initTimeClocks_;
   }
@@ -331,6 +341,13 @@ class SelectiveColumnReader : public ColumnReader {
   // true if 'this' is in a state where gatValues can be called.
   bool mayGetValues_ = false;
 
+  // True if row numbers of 'this' correspond 1:1 to row numbers in
+  // the file. This is false inside lists, maps and nullable
+  // structs. If true, a skip of n rows can use row group indices to
+  // skip long distances. Lazy vectors will only be made for results
+  // of top level readers.
+  bool isTopLevel_{false};
+
   // Maps from position in non-null rows to a position in value
   // sequence with nulls included. Empty if no nulls.
   raw_vector<int32_t> outerNonNullRows_;
@@ -388,8 +405,10 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       uint32_t sequence) override {
-    return SelectiveColumnReader::build(
+    auto reader = SelectiveColumnReader::build(
         requestedType, dataType, stripe, scanSpec_, sequence);
+    reader->setIsTopLevel();
+    return reader;
   }
 
  private:

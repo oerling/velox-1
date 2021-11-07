@@ -95,6 +95,9 @@ struct FilterSpec {
 
 class AbstractColumnStats {
  public:
+  // ASCII string greater than test data values. Used for row group skipping
+  // tests.
+  static constexpr const char* kMaxString = "~~~~~";
   explicit AbstractColumnStats(TypePtr type) : type_(type) {}
 
   virtual ~AbstractColumnStats() = default;
@@ -370,7 +373,9 @@ std::unique_ptr<velox::common::Filter>
 ColumnStats<StringView>::makeRowGroupSkipRangeFilter(
     const std::vector<RowVectorPtr>& batches,
     const Subfield& subfield) {
-  VELOX_NYI();
+  static std::string max = kMaxString;
+  return std::make_unique<velox::common::BytesRange>(
+      max, false, false, max, false, false, false);
 }
 
 template <TypeKind Kind>
@@ -449,6 +454,13 @@ class E2EFilterTest : public testing::Test {
       if (type->childAt(i)->kind() == TypeKind::BIGINT) {
         setRowGroupMarkers<int64_t>(
             batches_, i, std::numeric_limits<int64_t>::max());
+        return;
+      }
+      if (type->childAt(i)->kind() == TypeKind::VARCHAR) {
+        static StringView marker(
+            AbstractColumnStats::kMaxString,
+            strlen(AbstractColumnStats::kMaxString));
+        setRowGroupMarkers<StringView>(batches_, i, marker);
         return;
       }
     }
@@ -682,8 +694,11 @@ class E2EFilterTest : public testing::Test {
     WriterOptions options;
     options.config = config;
     options.schema = type;
+    int32_t flushCounter = 0;
+    // If we test row group skip, we have all the data in one stripe. For scan,
+    // we start  a stripe every 10 batches.
     options.flushPolicy = [&](auto /* unused */, auto& /* unused */) {
-      return forRowGroupSkip ? false : true;
+      return forRowGroupSkip ? false : (++flushCounter % 10 == 0);
     };
     sink_ = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
     sinkPtr_ = sink_.get();
@@ -878,27 +893,25 @@ class E2EFilterTest : public testing::Test {
         break;
       }
       case TypeKind::MAP: {
-        auto keySpec =
-	  spec->getOrCreateChild(Subfield(pathPrefix + ".keys"));
+        auto keySpec = spec->getOrCreateChild(Subfield(pathPrefix + ".keys"));
         keySpec->setProjectOut(true);
         keySpec->setExtractValues(true);
         makeFieldSpecs(pathPrefix + ".keys", level + 1, type->childAt(0), spec);
         auto valueSpec =
-            spec->getOrCreateChild(Subfield(pathPrefix + ".values"));
+            spec->getOrCreateChild(Subfield(pathPrefix + ".elements"));
         valueSpec->setProjectOut(true);
         valueSpec->setExtractValues(true);
-        makeFieldSpecs(pathPrefix + ".values", level + 1, type->childAt(0), spec);
-        break;
-
+        makeFieldSpecs(
+            pathPrefix + ".elements", level + 1, type->childAt(1), spec);
         break;
       }
-
-      case TypeKind::ARRAY: {
+    case TypeKind::ARRAY: {
         auto childSpec =
             spec->getOrCreateChild(Subfield(pathPrefix + ".elements"));
         childSpec->setProjectOut(true);
         childSpec->setExtractValues(true);
-        makeFieldSpecs(pathPrefix + ".elements", level + 1, type->childAt(0), spec);
+        makeFieldSpecs(
+            pathPrefix + ".elements", level + 1, type->childAt(0), spec);
         break;
       }
 
@@ -1078,7 +1091,7 @@ class E2EFilterTest : public testing::Test {
   folly::Random::DefaultGenerator rng_;
   bool useVInts_ = true;
   dwio::common::RuntimeStatistics runtimeStats_;
-}; // namespace facebook::velox::dwio::dwrf
+};
 
 TEST_F(E2EFilterTest, integerDirect) {
   testWithTypes(
@@ -1194,7 +1207,7 @@ TEST_F(E2EFilterTest, listAndMap) {
       "long_val_2:bigint,"
       "int_val:int,"
       "array_val:array<struct<array_member: array<int>>>,"
-      "map_val:map<bigint,map<int, int>>",
+      "map_val:map<bigint,struct<nested_map: map<int, int>>>",
       [&]() {},
       true,
       {"long_val", "long_val_2", "int_val"},
@@ -1202,7 +1215,3 @@ TEST_F(E2EFilterTest, listAndMap) {
 }
 
 } // namespace facebook::velox::dwio::dwrf
-
-void pv(facebook::velox::BaseVector* vec, int from, int to) {
-  std::cout << vec->toString(from, to);
-}

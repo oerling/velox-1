@@ -1988,10 +1988,6 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
     }
   }
 
-  bool hasBulkPath() const override {
-    return true;
-  }
-
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
 
@@ -2489,6 +2485,10 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
       const std::shared_ptr<const TypeWithId>& type,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec);
+
+  bool hasBulkPath() const override {
+    return false;
+  }
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
@@ -3547,12 +3547,16 @@ class ExtractStringDictionaryToGenericHook {
   }
 
   void addValue(vector_size_t rowIndex, int32_t value) {
-    if (!inDict_ || bits::isBitSet(inDict_, rows_[rowIndex])) {
+    // We take the string from the stripe or stride dictionary
+    // according to the index. Stride dictionary indices are offset up
+    // by the stripe dict size.
+    if (value < baseDictSize_) {
       folly::StringPiece view(
           dictBlob_ + dictOffset_[value],
           dictOffset_[value + 1] - dictOffset_[value]);
       hook_->addValue(rowIndex, &view);
     } else {
+      VELOX_DCHECK(inDict_);
       auto index = value - baseDictSize_;
       folly::StringPiece view(
           strideDictBlob_ + strideDictOffset_[index],
@@ -3842,6 +3846,9 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   /// Advance field reader to the row group closest to specified offset by
   /// calling seekToRowGroup.
   void advanceFieldReader(SelectiveColumnReader* reader, vector_size_t offset) {
+    if (!reader->isTopLevel()) {
+      return;
+    }
     auto rowGroup = reader->readOffset() / rowsPerRowGroup_;
     auto nextRowGroup = offset / rowsPerRowGroup_;
     if (nextRowGroup > rowGroup) {
@@ -3859,6 +3866,15 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     readOffset_ = readOffset;
     for (auto& child : children_) {
       child->setReadOffsetRecursive(readOffset);
+    }
+  }
+
+  void setIsTopLevel() override {
+    isTopLevel_ = true;
+    if (!notNullDecoder) {
+      for (auto& child : children_) {
+        child->setIsTopLevel();
+      }
     }
   }
 
@@ -4073,13 +4089,13 @@ void SelectiveStructColumnReader::read(
     if (childSpec->isConstant()) {
       continue;
     }
-    if (childSpec->projectOut() && !childSpec->filter() &&
-        !childSpec->extractValues()) {
+    auto fieldIndex = childSpec->subscript();
+    auto reader = children_.at(fieldIndex).get();
+    if (reader->isTopLevel() && childSpec->projectOut() &&
+        !childSpec->filter() && !childSpec->extractValues()) {
       // Will make a LazyVector.
       continue;
     }
-    auto fieldIndex = childSpec->subscript();
-    auto reader = children_.at(fieldIndex).get();
     advanceFieldReader(reader, offset);
     if (childSpec->filter()) {
       hasFilter = true;
@@ -4142,7 +4158,8 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
       resultRow->childAt(channel) = BaseVector::wrapInConstant(
           rows.size(), 0, childSpec->constantValue());
     } else {
-      if (!childSpec->extractValues() && !childSpec->filter()) {
+      if (!childSpec->extractValues() && !childSpec->filter() &&
+          children_[index]->isTopLevel()) {
         // LazyVector result.
         if (!lazyPrepared) {
           if (rows.size() != outputRows_.size()) {
@@ -4501,7 +4518,7 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
   scanSpec->children()[0]->setProjectOut(true);
   scanSpec->children()[0]->setExtractValues(true);
   scanSpec->children()[1]->setProjectOut(true);
-  scanSpec_->children()[0]->setExtractValues(true);
+  scanSpec_->children()[1]->setExtractValues(true);
 
   const auto& cs = stripe.getColumnSelector();
   auto& keyType = requestedType->childAt(0);
@@ -4523,7 +4540,7 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
       valueType,
       dataType->childAt(1),
       stripe,
-      scanSpec_->children()[0].get(),
+      scanSpec_->children()[1].get(),
       ek.sequence);
 
   VLOG(1) << "[Map] Initialized map column reader for node " << dataType->id;
@@ -4593,6 +4610,7 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
       "SelectiveMapColumnReader::getValues");
   if (!nestedRows_.empty()) {
     keyReader_->getValues(nestedRows_, &keys);
+    prepareStructResult(type_->childAt(1), &values);
     elementReader_->getValues(nestedRows_, &values);
   }
   *result = std::make_shared<MapVector>(

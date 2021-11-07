@@ -125,14 +125,8 @@ class ScanSpec {
     return extractValues_;
   }
 
-  // Sets 'extractValues_' recursively. A true means that LazyVectors
-  // will not be produced for 'this' or subfields of 'this'. This is
-  // important for structs inside repeated types.
   void setExtractValues(bool extractValues) {
     extractValues_ = extractValues;
-    for (auto& child : children_) {
-      child->setExtractValues(extractValues);
-    }
   }
 
   bool keepValues() const {
