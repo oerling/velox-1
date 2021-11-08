@@ -1849,6 +1849,11 @@ class DictionaryColumnVisitor
       int32_t* filterHits,
       T* values,
       int32_t& numValues) {
+#if 0
+    if (hasFilter && delta == 0 && !testRleFilter(value, numRows)) {
+      super::rowIndex_ += numRows;
+    }
+#endif
     if (sizeof(T) == 8) {
       constexpr int32_t kWidth = V64::VSize;
       for (auto i = 0; i < numRows; i += kWidth) {
@@ -1886,6 +1891,15 @@ class DictionaryColumnVisitor
   }
 
  private:
+#if 0
+  bool testRleFilter(T value, int32_t numRows) {
+    if (!super::inDict_ || bits::isBitSet(inDict_, super::rows_[super::rowIndex_])) {
+	value = dict_[static_cast<U>(value)];
+      if (!bits::isAllSet(super::inDict_,!!)
+      return true;
+  }
+#endif
+
   template <bool hasInDict, bool scatter>
   void translateScatter(
       const T* input,

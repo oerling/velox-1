@@ -88,11 +88,7 @@ TEST(RawVectorTest, iota) {
   EXPECT_FALSE(storage.empty());
 }
 
-<<<<<<< HEAD
-TEST(RawVectorTest, iter) {
-=======
 TEST(RawVectorTest, iterator) {
->>>>>>> stride-skip-test-dev
   raw_vector<int> data;
   data.push_back(11);
   data.push_back(22);
@@ -103,8 +99,6 @@ TEST(RawVectorTest, iterator) {
   }
   EXPECT_EQ(66, sum);
 }
-<<<<<<< HEAD
-=======
 
 TEST(RawVectorTest, toStdVector) {
   raw_vector<int> data;
@@ -118,4 +112,3 @@ TEST(RawVectorTest, toStdVector) {
     ;
   }
 }
->>>>>>> stride-skip-test-dev
