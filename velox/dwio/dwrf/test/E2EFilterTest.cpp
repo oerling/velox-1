@@ -651,17 +651,14 @@ class E2EFilterTest : public testing::Test {
   }
 
   // Makes non-null strings unique by appending a row number.
-  void makeStringsUnique(
-      const Subfield& field,
-      int cardinality,
-      bool keepNulls,
-      bool addOneOffs) {
+  void makeStringUnique(
+      const Subfield& field) {
     int counter = 0;
     for (RowVectorPtr batch : batches_) {
       auto strings =
           getChildBySubfield(batch.get(), field)->as<FlatVector<StringView>>();
       for (auto row = 0; row < strings->size(); ++row) {
-        if (keepNulls && strings->isNullAt(row)) {
+        if (strings->isNullAt(row)) {
           continue;
         }
         std::string value = strings->valueAt(row);
@@ -702,7 +699,6 @@ class E2EFilterTest : public testing::Test {
       }
     }
   }
-
   
   void writeToMemory(
       const TypePtr& type,
@@ -711,17 +707,14 @@ class E2EFilterTest : public testing::Test {
     auto config = std::make_shared<dwrf::Config>();
     config->set(dwrf::Config::COMPRESSION, dwrf::CompressionKind_NONE);
     config->set(dwrf::Config::USE_VINTS, useVInts_);
-    if (forRowGroupSkip) {
-      config->set(dwrf::Config::STRIPE_SIZE, 1000000UL);
-    }
     WriterOptions options;
     options.config = config;
     options.schema = type;
     int32_t flushCounter = 0;
     // If we test row group skip, we have all the data in one stripe. For scan,
-    // we start  a stripe every 10 batches.
+    // we start  a stripe every 'flushEveryNBatches_' batches.
     options.flushPolicy = [&](auto /* unused */, auto& /* unused */) {
-      return forRowGroupSkip ? false : (++flushCounter % 10 == 0);
+      return forRowGroupSkip ? false : (++flushCounter % flushEveryNBatches_ == 0);
     };
     sink_ = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
     sinkPtr_ = sink_.get();
@@ -1049,7 +1042,7 @@ class E2EFilterTest : public testing::Test {
     // Makes a row group skipping filter for the first bigint column.
     for (auto& field : filterable) {
       VectorPtr child = getChildBySubfield(batches_[0].get(), Subfield(field));
-      if (TypeKind::BIGINT == child->typeKind()) {
+      if (child->typeKind() == TypeKind::BIGINT || child->typeKind() == TypeKind::VARCHAR) {
         specs.emplace_back();
         specs.back().field = field;
         specs.back().isForRowGroupSkip = true;
@@ -1114,6 +1107,8 @@ class E2EFilterTest : public testing::Test {
   folly::Random::DefaultGenerator rng_;
   bool useVInts_ = true;
   dwio::common::RuntimeStatistics runtimeStats_;
+  // Number of calls to flush policy between starting new stripes.
+  int32_t flushEveryNBatches_{10};
 };
 
 TEST_F(E2EFilterTest, integerDirect) {
@@ -1200,15 +1195,21 @@ TEST_F(E2EFilterTest, floatAndDouble) {
 }
 
 TEST_F(E2EFilterTest, stringDirect) {
+  flushEveryNBatches_ = 1;
   testWithTypes(
       "string_val:string,"
       "string_val_2:string",
-      [&]() {},
+      [&]() {
+        makeStringUnique(Subfield("string_val"));
+        makeStringUnique(Subfield("string_val_2"));
+      },
+
       true,
       {"string_val", "string_val_2"},
       20,
       true);
 }
+
 TEST_F(E2EFilterTest, stringDictionary) {
   testWithTypes(
       "string_val:string,"
