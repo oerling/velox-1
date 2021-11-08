@@ -650,6 +650,28 @@ class E2EFilterTest : public testing::Test {
     }
   }
 
+  // Makes non-null strings unique by appending a row number.
+  void makeStringsUnique(
+      const Subfield& field,
+      int cardinality,
+      bool keepNulls,
+      bool addOneOffs) {
+    int counter = 0;
+    for (RowVectorPtr batch : batches_) {
+      auto strings =
+          getChildBySubfield(batch.get(), field)->as<FlatVector<StringView>>();
+      for (auto row = 0; row < strings->size(); ++row) {
+        if (keepNulls && strings->isNullAt(row)) {
+          continue;
+        }
+        std::string value = strings->valueAt(row);
+	value += fmt::format("{}", row);
+	strings->set(row, StringView(value));
+      }
+    }
+  }
+
+  
   // Makes all data in 'batches_' non-null. This finds a sampling of
   // non-null values from each column and replaces nulls in the column
   // in question with one of these. A column where only nulls are
@@ -681,6 +703,7 @@ class E2EFilterTest : public testing::Test {
     }
   }
 
+  
   void writeToMemory(
       const TypePtr& type,
       const std::vector<RowVectorPtr>& batches,
