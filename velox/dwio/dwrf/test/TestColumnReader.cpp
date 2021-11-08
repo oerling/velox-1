@@ -297,10 +297,10 @@ TEST_P(TestColumnReader, testBooleanWithNulls) {
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
-    .WillRepeatedly(Return (nullptr));
+      .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
-    .WillRepeatedly(Return (nullptr));
+      .WillRepeatedly(Return(nullptr));
   // alternate 4 non-null and 4 null via [0xf0 for x in range(512 / 8)]
   const unsigned char buffer1[] = {0x3d, 0xf0};
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_PRESENT, false))

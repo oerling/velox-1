@@ -651,8 +651,7 @@ class E2EFilterTest : public testing::Test {
   }
 
   // Makes non-null strings unique by appending a row number.
-  void makeStringUnique(
-      const Subfield& field) {
+  void makeStringUnique(const Subfield& field) {
     int counter = 0;
     for (RowVectorPtr batch : batches_) {
       auto strings =
@@ -662,13 +661,12 @@ class E2EFilterTest : public testing::Test {
           continue;
         }
         std::string value = strings->valueAt(row);
-	value += fmt::format("{}", row);
-	strings->set(row, StringView(value));
+        value += fmt::format("{}", row);
+        strings->set(row, StringView(value));
       }
     }
   }
 
-  
   // Makes all data in 'batches_' non-null. This finds a sampling of
   // non-null values from each column and replaces nulls in the column
   // in question with one of these. A column where only nulls are
@@ -699,7 +697,7 @@ class E2EFilterTest : public testing::Test {
       }
     }
   }
-  
+
   void writeToMemory(
       const TypePtr& type,
       const std::vector<RowVectorPtr>& batches,
@@ -714,7 +712,8 @@ class E2EFilterTest : public testing::Test {
     // If we test row group skip, we have all the data in one stripe. For scan,
     // we start  a stripe every 'flushEveryNBatches_' batches.
     options.flushPolicy = [&](auto /* unused */, auto& /* unused */) {
-      return forRowGroupSkip ? false : (++flushCounter % flushEveryNBatches_ == 0);
+      return forRowGroupSkip ? false
+                             : (++flushCounter % flushEveryNBatches_ == 0);
     };
     sink_ = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
     sinkPtr_ = sink_.get();
@@ -1042,7 +1041,8 @@ class E2EFilterTest : public testing::Test {
     // Makes a row group skipping filter for the first bigint column.
     for (auto& field : filterable) {
       VectorPtr child = getChildBySubfield(batches_[0].get(), Subfield(field));
-      if (child->typeKind() == TypeKind::BIGINT || child->typeKind() == TypeKind::VARCHAR) {
+      if (child->typeKind() == TypeKind::BIGINT ||
+          child->typeKind() == TypeKind::VARCHAR) {
         specs.emplace_back();
         specs.back().field = field;
         specs.back().isForRowGroupSkip = true;
