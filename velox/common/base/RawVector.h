@@ -30,7 +30,9 @@ namespace facebook::velox {
 template <typename T>
 class raw_vector {
  public:
-  raw_vector() {}
+  raw_vector() {
+    static_assert(std::is_trivially_destructible<T>::value);
+  }
 
   explicit raw_vector(int32_t size) {
     resize(size);
@@ -55,8 +57,12 @@ class raw_vector {
   // construction.
   void operator=(const raw_vector<T>& other) {
     resize(other.size());
-    memcpy(
-        data_, other.data(), bits::roundUp(size_ * sizeof(T), simd::kPadding));
+    if (other.data_) {
+      memcpy(
+          data_,
+          other.data(),
+          bits::roundUp(size_ * sizeof(T), simd::kPadding));
+    }
   }
 
   void operator=(raw_vector<T>&& other) noexcept {
@@ -140,8 +146,12 @@ class raw_vector {
     return data_[size_ - 1];
   }
 
-  
-private:
+  operator std::vector<T>() {
+    std::vector<T> copy(begin(), end());
+    return copy;
+  }
+
+ private:
   // Adds 'bytes' to the address 'pointer'.
   inline T* addBytes(T* pointer, int32_t bytes) {
     return reinterpret_cast<T*>(reinterpret_cast<uint64_t>(pointer) + bytes);

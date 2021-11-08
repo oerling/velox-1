@@ -55,16 +55,33 @@ class FunctionBaseTest : public testing::Test {
         std::forward<std::vector<std::shared_ptr<const Type>>&&>(types));
   }
 
+  void setNulls(
+      const VectorPtr& vector,
+      std::function<bool(vector_size_t /*row*/)> isNullAt) {
+    for (vector_size_t i = 0; i < vector->size(); i++) {
+      if (isNullAt(i)) {
+        vector->setNull(i, true);
+      }
+    }
+  }
+
+  RowVectorPtr makeRowVector(
+      const std::vector<std::string>& childNames,
+      const std::vector<VectorPtr>& children,
+      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
+    auto rowVector = vectorMaker_.rowVector(childNames, children);
+    if (isNullAt) {
+      setNulls(rowVector, isNullAt);
+    }
+    return rowVector;
+  }
+
   RowVectorPtr makeRowVector(
       const std::vector<VectorPtr>& children,
       std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
     auto rowVector = vectorMaker_.rowVector(children);
     if (isNullAt) {
-      for (vector_size_t i = 0; i < rowVector->size(); i++) {
-        if (isNullAt(i)) {
-          rowVector->setNull(i, true);
-        }
-      }
+      setNulls(rowVector, isNullAt);
     }
     return rowVector;
   }
@@ -457,6 +474,17 @@ class FunctionBaseTest : public testing::Test {
     }
   }
 
+  /// Register a lambda expression with a name that can later be used to refer
+  /// to the lambda in a function call, e.g. foo(a, b,
+  /// function('<lanbda-name>')).
+  ///
+  /// @param name Name to use when referring to the lambda expression from a
+  /// function call.
+  /// @param signature A list of names and types of inputs for the lambda
+  /// expression.
+  /// @param rowType The type of the input data used to resolve types of
+  /// captures used in the lambda expression.
+  /// @param body Body of the lambda as SQL expression.
   void registerLambda(
       const std::string& name,
       const std::shared_ptr<const RowType>& signature,

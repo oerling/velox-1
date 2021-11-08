@@ -36,7 +36,6 @@ add_executable(
   DateTimeFunctionsTest.cpp
   ElementAtTest.cpp
   InPredicateTest.cpp
-  IsNullTest.cpp
   JsonExtractScalarTest.cpp
   MapConcatTest.cpp
   MapEntriesTest.cpp
@@ -51,7 +50,8 @@ add_executable(
   StringFunctionsTest.cpp
   TransformTest.cpp
   WidthBucketArrayTest.cpp
-  GreatestLeastTest.cpp)
+  GreatestLeastTest.cpp
+  BitwiseTest.cpp)
 
 add_test(velox_functions_test velox_functions_test)
 

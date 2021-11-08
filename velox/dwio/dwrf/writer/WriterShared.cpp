@@ -313,7 +313,7 @@ void WriterShared::flushStripe(bool close) {
   resetImpl();
 }
 
-void WriterShared::flush(bool close) {
+void WriterShared::flushInternal(bool close) {
   flushStripe(close);
 
   auto& context = getContext();
@@ -408,12 +408,16 @@ void WriterShared::flush(bool close) {
         context.stripeRowCount,
         context.stripeRawSize,
         context.getStreamCount(),
-        context.getWriterMemoryUsage().getCurrentBytes());
+        context.getTotalMemoryUsage());
   }
 }
 
+void WriterShared::flush() {
+  flushInternal(false);
+}
+
 void WriterShared::close() {
-  flush(true);
+  flushInternal(true);
   WriterBase::close();
 }
 

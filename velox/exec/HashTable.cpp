@@ -415,6 +415,13 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
   assert(!lookup.hits.empty());
   auto hashes = lookup.hashes.data();
   assert(!lookup.hits.empty());
+  for (auto check = 0; check < numProbes; ++check) {
+    if (hashes[rows[check]] >= size_) {
+      VELOX_FAIL("Out of range array group by index {}", hashes[rows[check]]);
+    }
+  }
+
+
   auto groups = lookup.hits.data();
   int32_t i = 0;
   if (process::hasAvx2() && simd::isDense(rows, numProbes)) {
