@@ -91,7 +91,7 @@ SelectiveColumnReader::SelectiveColumnReader(
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const StatsContext& context) const {
-  if ((!index_ && !indexStream_)|| !scanSpec_->filter()) {
+  if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
     return ColumnReader::filterRowGroups(rowGroupSize, context);
   }
 
@@ -4714,4 +4714,3 @@ std::unique_ptr<SelectiveColumnReader> SelectiveColumnReader::build(
 }
 
 } // namespace facebook::velox::dwrf
-
