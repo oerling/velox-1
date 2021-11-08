@@ -119,7 +119,7 @@ BigintValuesUsingHashTable::BigintValuesUsingHashTable(
     : Filter(true, nullAllowed, FilterKind::kBigintValuesUsingHashTable),
       min_(min),
       max_(max),
-      values_(values){
+      values_(values) {
   VELOX_CHECK(min < max, "min must be less than max");
   VELOX_CHECK(values.size() > 1, "values must contain at least 2 entries");
 
@@ -179,15 +179,15 @@ bool BigintValuesUsingHashTable::testInt64Range(
     return testInt64(min);
   }
 
-  if(min > max_ || max < min_) {
+  if (min > max_ || max < min_) {
     return false;
   }
-  for (auto value : values_) {
-    if (min <= value && max >= value){
-      return true;
-    }
+  auto it = std::lower_bound(values_.begin(), values_.end(), min);
+  assert(it != values_.end()); // min is already tested to be <= max_.
+  if (min == *it) {
+    return true;
   }
-  return false;
+  return max >= *it;
 }
 
 namespace {
