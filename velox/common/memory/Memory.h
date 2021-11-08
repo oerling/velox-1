@@ -66,7 +66,7 @@ class AbstractMemoryPool {
     }
   }
 
-private:
+ private:
   uint64_t magic_{kPoolMagic};
 };
 

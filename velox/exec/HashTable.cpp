@@ -421,7 +421,6 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
     }
   }
 
-
   auto groups = lookup.hits.data();
   int32_t i = 0;
   if (process::hasAvx2() && simd::isDense(rows, numProbes)) {

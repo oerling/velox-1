@@ -738,48 +738,48 @@ Task::getLocalExchangeSources(const core::PlanNodeId& planNodeId) {
 }
 
 void doCommand(std::string command) {
-  auto cache = dynamic_cast<cache::AsyncDataCache*>(
-        memory::MappedMemory::getInstance());
+  auto cache =
+      dynamic_cast<cache::AsyncDataCache*>(memory::MappedMemory::getInstance());
   if (command == "dropram") {
     if (!cache) {
       LOG(ERROR) << "No cache to drop";
-	return;
+      return;
     }
     LOG(INFO) << "VELOXCMD: Dropping RAM cache";
     cache->clear();
     return;
-  } if (command == "dropssd") {
-      if (!cache) {
-	LOG(ERROR) << "VELOXCMD: No cache to drop";
-	return;
-      }
+  }
+  if (command == "dropssd") {
+    if (!cache) {
+      LOG(ERROR) << "VELOXCMD: No cache to drop";
+      return;
+    }
 
-      LOG(INFO) << "VELOXCMD: Dropping SSD and RAM cache";
-        if (cache->ssdCache()) {
-          cache->ssdCache()->clear();
-        }
-        cache->clear();
-        return;
+    LOG(INFO) << "VELOXCMD: Dropping SSD and RAM cache";
+    if (cache->ssdCache()) {
+      cache->ssdCache()->clear();
+    }
+    cache->clear();
+    return;
   }
 
   if (command == "status") {
-      LOG(INFO) << "VELOXCMD: " << process::TraceContext::statusLine();
-      return;
+    LOG(INFO) << "VELOXCMD: " << process::TraceContext::statusLine();
+    return;
   }
   auto equals = strchr(command.c_str(), '=');
   if (equals) {
-      int32_t equalsOffset = equals - command.c_str();
-      std::string flag(command.data(), equalsOffset);
-      std::string value(command.data() + equalsOffset + 1, command.size() - equalsOffset);
-      LOG(INFO) << "VELOXCMD set " << flag << "=" << value << ": " << gflags::SetCommandLineOption(flag.c_str(), value.c_str()); 
-      return;
+    int32_t equalsOffset = equals - command.c_str();
+    std::string flag(command.data(), equalsOffset);
+    std::string value(
+        command.data() + equalsOffset + 1, command.size() - equalsOffset);
+    LOG(INFO) << "VELOXCMD set " << flag << "=" << value << ": "
+              << gflags::SetCommandLineOption(flag.c_str(), value.c_str());
+    return;
   }
   LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << command;
 }
 
-
-
-  
 static void checkTraceCommand() {
   constexpr auto kCmdFile = "/tmp/veloxcmd.txt";
   static std::mutex mutex;
@@ -807,8 +807,8 @@ static void checkTraceCommand() {
     int32_t start = 0;
     for (auto i = 0; i < length; ++i) {
       if (buffer[i] == ';') {
-	doCommand(std::string(buffer + start, i - start));
-	start = i + 1;
+        doCommand(std::string(buffer + start, i - start));
+        start = i + 1;
       }
     }
     if (length - start > 0) {
@@ -817,4 +817,4 @@ static void checkTraceCommand() {
   }
 }
 
-  } // namespace facebook::velox::exec
+} // namespace facebook::velox::exec

@@ -17,7 +17,6 @@
 
 #include <folly/container/F14Set.h>
 
-#include "velox/common/base/RawVector.h"
 #include <velox/type/Filter.h>
 #include "velox/common/base/RawVector.h"
 #include "velox/exec/Operator.h"

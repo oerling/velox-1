@@ -18,11 +18,26 @@
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
 
 DEFINE_int32(cache_load_quantum, 8 << 20, "Max size of single IO to cache");
-DEFINE_int32(cache_prefetch_min_pct, 80, "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
-DEFINE_int32(storage_max_coalesce_distance, 1 << 20, "Max gap across wich IOs are coalesced for storage");
-DEFINE_int32(ssd_max_coalesce_distance, (10 << 10), "Max gap across wich IOs are coalesced for SSD");
-DEFINE_int32(coalesce_trace_count, 0, "Number of upcoming coalesces to b traced to LOG(INFO)");
-	     DEFINE_int32(max_coalesced_io_size, (16 << 20), "Maximum size of a single load for coalesced streams");
+DEFINE_int32(
+    cache_prefetch_min_pct,
+    80,
+    "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
+DEFINE_int32(
+    storage_max_coalesce_distance,
+    1 << 20,
+    "Max gap across wich IOs are coalesced for storage");
+DEFINE_int32(
+    ssd_max_coalesce_distance,
+    (10 << 10),
+    "Max gap across wich IOs are coalesced for SSD");
+DEFINE_int32(
+    coalesce_trace_count,
+    0,
+    "Number of upcoming coalesces to b traced to LOG(INFO)");
+DEFINE_int32(
+    max_coalesced_io_size,
+    (16 << 20),
+    "Maximum size of a single load for coalesced streams");
 
 namespace facebook::velox::dwrf {
 
@@ -70,8 +85,7 @@ bool CachedBufferedInput::shouldPreload() {
   int32_t numPages = 0;
   for (auto& request : requests_) {
     numPages += bits::roundUp(
-                    std::min<int32_t>(
-                        request.size, FLAGS_cache_load_quantum),
+                    std::min<int32_t>(request.size, FLAGS_cache_load_quantum),
                     MappedMemory::kPageSize) /
         MappedMemory::kPageSize;
   }
@@ -99,11 +113,11 @@ const static std::vector<int32_t>& readPctBuckets() {
   return buckets;
 }
 
- bool isPrefetchPct(int32_t pct) {
-    return  pct >= FLAGS_cache_prefetch_min_pct;
-  }
-  
-  std::vector<CacheRequest*> makeRequestParts(
+bool isPrefetchPct(int32_t pct) {
+  return pct >= FLAGS_cache_prefetch_min_pct;
+}
+
+std::vector<CacheRequest*> makeRequestParts(
     CacheRequest& request,
     const cache::TrackingData& trackingData,
     int32_t loadQuantum,
@@ -120,7 +134,7 @@ const static std::vector<int32_t>& readPctBuckets() {
   auto readDensity =
       (100 * trackingData.readBytes) / (1 + trackingData.referencedBytes);
   bool prefetch = trackingData.referencedBytes > 0 &&
-    (isPrefetchPct(readPct) && readDensity >= 80);
+      (isPrefetchPct(readPct) && readDensity >= 80);
   std::vector<CacheRequest*> parts;
   for (uint64_t offset = 0; offset < request.size; offset += loadQuantum) {
     int32_t size = std::min<int32_t>(loadQuantum, request.size - offset);
@@ -161,10 +175,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
               readPct) {
         request.processed = true;
         auto parts = makeRequestParts(
-            request,
-            trackingData,
-            FLAGS_cache_load_quantum,
-            extraRequests);
+            request, trackingData, FLAGS_cache_load_quantum, extraRequests);
         for (auto part : parts) {
           if (cache_->exists(part->key)) {
             continue;
@@ -196,7 +207,7 @@ void CachedBufferedInput::makeLoads(
   }
   bool isSsd = !requests[0]->ssdPin.empty();
   int32_t maxDistance = isSsd ? FLAGS_ssd_max_coalesce_distance
-    : FLAGS_storage_max_coalesce_distance;
+                              : FLAGS_storage_max_coalesce_distance;
   std::sort(
       requests.begin(),
       requests.end(),
@@ -228,7 +239,8 @@ void CachedBufferedInput::makeLoads(
       last = entryRegion;
       continue;
     }
-    if (!request->coalesces || last.length >= FLAGS_max_coalesced_io_size || !tryMerge(last, entryRegion, maxDistance)) {
+    if (!request->coalesces || last.length >= FLAGS_max_coalesced_io_size ||
+        !tryMerge(last, entryRegion, maxDistance)) {
       ++numNewLoads;
       readRegion(std::move(readBatch), prefetch);
       last = entryRegion;
@@ -320,11 +332,16 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
 
   std::string toString() const override {
     int32_t payload = 0;
-    int32_t total = requests_.back().key.offset + requests_.back().size - requests_[0].key.offset;
-    for (auto& request : requests_) { 
+    int32_t total = requests_.back().key.offset + requests_.back().size -
+        requests_[0].key.offset;
+    for (auto& request : requests_) {
       payload += request.size;
     }
-    return fmt::format("<FusedLoad: {} entries, {} total {} extra>", requests_.size(), total, total - payload);
+    return fmt::format(
+        "<FusedLoad: {} entries, {} total {} extra>",
+        requests_.size(),
+        total,
+        total - payload);
   }
 
  protected:
@@ -522,6 +539,4 @@ void CachedBufferedInput::traceFusedLoads() {
   LOG(INFO) << "Fused Loads: " << out.str();
 }
 
-
-  
 } // namespace facebook::velox::dwrf

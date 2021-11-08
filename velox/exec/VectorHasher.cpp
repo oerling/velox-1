@@ -437,7 +437,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     case TypeKind::INTEGER:
     case TypeKind::BIGINT: {
       if (!distinctOverflow_) {
-	std::vector<int64_t> values;
+        std::vector<int64_t> values;
         values.reserve(uniqueValues_.size());
         for (const auto& value : uniqueValues_) {
           values.emplace_back(value.data());

@@ -25,7 +25,6 @@
 
 #include <folly/Executor.h>
 
-
 DECLARE_int32(cache_load_quantum);
 
 namespace facebook::velox::dwrf {
@@ -157,8 +156,8 @@ class CachedBufferedInput : public BufferedInput {
   //  request.
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
-    void traceFusedLoads();
-  
+  void traceFusedLoads();
+
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;
   std::shared_ptr<cache::ScanTracker> tracker_;

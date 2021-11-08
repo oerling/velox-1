@@ -449,7 +449,7 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   virtual std::string toString() const {
     return "<FusedLoad>";
   }
-  
+
  protected:
   // Performs the data transfer part of the load. Subclasses will
   // specialize this. All pins will be referring to existing entries

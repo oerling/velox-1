@@ -146,7 +146,7 @@ void SelectiveColumnReader::ensureAtTargetRowGroup() {
   }
 }
 
-  void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
+void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
   if (!hasNulls) {
     anyNulls_ = false;
     return;
@@ -4096,7 +4096,11 @@ void SelectiveStructColumnReader::read(
     const uint64_t* incomingNulls) {
   numReads_ = scanSpec_->newRead();
   if (targetRowGroup_ != kRowGroupNotSet && !notNullDecoder && isTopLevel_) {
-    // If children can be read  independently, defer seeking them to row group to the time of actual read, after filters etc. For nullable structs, we seek all children to the row group even if they are not all loaded because otherwise we would have to remember struct null flags all the way from their last read position, which could be severalrpw 
+    // If children can be read  independently, defer seeking them to row group
+    // to the time of actual read, after filters etc. For nullable structs, we
+    // seek all children to the row group even if they are not all loaded
+    // because otherwise we would have to remember struct null flags all the way
+    // from their last read position, which could be severalrpw
     for (auto& child : children_) {
       child->setRowGroup(targetRowGroup_);
     }

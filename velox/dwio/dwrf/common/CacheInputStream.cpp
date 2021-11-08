@@ -45,7 +45,7 @@ CacheInputStream::CacheInputStream(
       tracker_(std::move(tracker)),
       trackingId_(trackingId),
       groupId_(groupId),
-      loadQuantum_(FLAGS_cache_load_quantum){}
+      loadQuantum_(FLAGS_cache_load_quantum) {}
 
 bool CacheInputStream::Next(const void** buffer, int32_t* size) {
   if (position_ >= region_.length) {

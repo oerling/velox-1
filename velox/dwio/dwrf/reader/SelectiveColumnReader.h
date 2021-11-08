@@ -94,7 +94,7 @@ class SelectiveColumnReader : public ColumnReader {
     targetRowGroup_ = index;
     readOffset_ = rowsPerRowGroup_ * index;
   }
-  
+
   // Advances to 'offset', so that the next item to be read is the
   // offset-th from the start of stripe.
   void seekTo(vector_size_t offset, bool readsNullsOnly);
@@ -248,13 +248,13 @@ class SelectiveColumnReader : public ColumnReader {
  protected:
   static constexpr int8_t kNoValueSize = -1;
   static constexpr uint32_t kRowGroupNotSet = ~0;
-  
+
   template <typename T>
   void ensureValuesCapacity(vector_size_t numRows);
 
   // Calls seekToRowGroup if 'targetRowGroup_' is set.
   void ensureAtTargetRowGroup();
-  
+
   void prepareNulls(RowSet rows, bool hasNulls);
 
   template <typename T>
