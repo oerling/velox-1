@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/common/process/TraceContext.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include <velox/dwio/dwrf/reader/SelectiveColumnReader.h>
 #include "velox/dwio/common/InputStream.h"
@@ -461,6 +462,7 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
   // column, e.g. rand() < 0.1. Evaluate that conjunct first, then scan only
   // rows that passed.
 
+  process::TraceContext trace(fmt::format("Scan: {}", split_->filePath), true);
   auto rowsScanned = rowReader_->next(size, output_);
   completedRows_ += rowsScanned;
 
@@ -549,7 +551,8 @@ void HiveDataSource::setPartitionValue(
 
 std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
   auto res = runtimeStats_.toMap();
-  res.insert(
+  if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
+    res.insert(
       {{"numPrefetch", ioStats_->prefetch().count()},
        {"prefetchBytes", ioStats_->prefetch().bytes()},
        {"numStorageRead", ioStats_->read().count()},
@@ -559,7 +562,8 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
        {"numRamRead", ioStats_->ramHit().count()},
        {"ramReadBytes", ioStats_->ramHit().bytes()},
        {"ioWait", ioStats_->queryThreadIoLatency().bytes()}});
-  return res;
+  }
+    return res;
 }
 
 HiveConnector::HiveConnector(
