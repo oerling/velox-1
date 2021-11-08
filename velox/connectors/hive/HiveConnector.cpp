@@ -13,9 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/common/process/TraceContext.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include <velox/dwio/dwrf/reader/SelectiveColumnReader.h>
+#include "velox/common/process/TraceContext.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
@@ -553,17 +553,17 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
   auto res = runtimeStats_.toMap();
   if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
     res.insert(
-      {{"numPrefetch", ioStats_->prefetch().count()},
-       {"prefetchBytes", ioStats_->prefetch().bytes()},
-       {"numStorageRead", ioStats_->read().count()},
-       {"storageReadBytes", ioStats_->read().bytes()},
-       {"numLocalRead", ioStats_->ssdRead().count()},
-       {"localReadBytes", ioStats_->ssdRead().bytes()},
-       {"numRamRead", ioStats_->ramHit().count()},
-       {"ramReadBytes", ioStats_->ramHit().bytes()},
-       {"ioWait", ioStats_->queryThreadIoLatency().bytes()}});
+        {{"numPrefetch", ioStats_->prefetch().count()},
+         {"prefetchBytes", ioStats_->prefetch().bytes()},
+         {"numStorageRead", ioStats_->read().count()},
+         {"storageReadBytes", ioStats_->read().bytes()},
+         {"numLocalRead", ioStats_->ssdRead().count()},
+         {"localReadBytes", ioStats_->ssdRead().bytes()},
+         {"numRamRead", ioStats_->ramHit().count()},
+         {"ramReadBytes", ioStats_->ramHit().bytes()},
+         {"ioWait", ioStats_->queryThreadIoLatency().bytes()}});
   }
-    return res;
+  return res;
 }
 
 HiveConnector::HiveConnector(
