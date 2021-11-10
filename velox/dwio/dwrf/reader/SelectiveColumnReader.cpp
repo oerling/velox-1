@@ -1888,7 +1888,6 @@ class DictionaryColumnVisitor
   }
 
  private:
-
   template <bool hasInDict, bool scatter>
   void translateScatter(
       const T* input,
@@ -2129,7 +2128,7 @@ void SelectiveIntegerDictionaryColumnReader::readHelper(
               extractValues,
               dictionary_->as<int16_t>(),
               inDictionary_ ? inDictionary_->as<uint64_t>() : nullptr,
-	      filterCache_.data()));
+              filterCache_.data()));
       break;
     case 4:
       readWithVisitor(
@@ -2141,7 +2140,7 @@ void SelectiveIntegerDictionaryColumnReader::readHelper(
               extractValues,
               dictionary_->as<int32_t>(),
               inDictionary_ ? inDictionary_->as<uint64_t>() : nullptr,
-	      filterCache_.data()));
+              filterCache_.data()));
       break;
 
     case 8:
@@ -2154,7 +2153,7 @@ void SelectiveIntegerDictionaryColumnReader::readHelper(
               extractValues,
               dictionary_->as<int64_t>(),
               inDictionary_ ? inDictionary_->as<uint64_t>() : nullptr,
-	      filterCache_.data()));
+              filterCache_.data()));
       break;
 
     default:
