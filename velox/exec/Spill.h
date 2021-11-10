@@ -50,6 +50,12 @@ class SpillInput : public ByteStream {
     return offset_ == size_ && ranges()[0].position >= ranges()[0].size;
   }
 
+  Position tellp() const override {
+    return std::make_tuple(nullptr, offset_ + current_->position);
+  }
+
+  void seekp(Position position) override;
+
  private:
   std::unique_ptr<ReadFile> input_;
   uint64_t size_;

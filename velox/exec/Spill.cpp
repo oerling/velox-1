@@ -21,6 +21,23 @@ int SpillStream::ordinalCounter_;
 std::mutex SpillState::mutex_;
 uint64_t SpillState::sequence_ = 0;
 
+void SpillInput::seekp(Position position) {
+  auto target = std::get<1>(position);
+  if (offset_ <= target && offset_ + current_->size < target) {
+    current_->position = target - offset_;
+  } else {
+    // The seek target is not in the buffer. We load a full buffer
+    // starting at the target or if there is less than a full buffer
+    // left, at file size - buffer size. The bytes in the buffer
+    // must all be valid.
+    VELOX_CHECK_GE(size_, current_->size);
+    if (target + current_->size > size_) {
+      target = size_ - current_->size;
+    }
+    input_->pread(offset_, current_->size, current_->buffer);
+  }
+}
+
 SpillFile::~SpillFile() {
   if (path_[0] == '/') {
     if (unlink(path_.c_str()) != 0) {
@@ -89,7 +106,7 @@ void FileList::write(
 
 // static
 int32_t SpillState::compareSpilled(
-				   const VectorRow& left,
+    const VectorRow& left,
     const VectorRow& right,
     int32_t numKeys) {
   for (auto i = 0; i < numKeys; ++i) {
