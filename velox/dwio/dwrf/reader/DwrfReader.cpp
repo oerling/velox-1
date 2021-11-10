@@ -60,7 +60,7 @@ void DwrfRowReader::checkSkipStrides(
     }
   }
   if (foundStridesToSkip && currentRowInStripe < rowsInCurrentStripe) {
-    columnReader_->seekToRowGroup(currentStride);
+    columnReader_->setRowGroup(currentStride);
   }
 }
 
