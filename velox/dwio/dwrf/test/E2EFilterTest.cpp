@@ -116,9 +116,9 @@ class AbstractColumnStats {
       std::vector<uint32_t>& hits) = 0;
 
   virtual std::unique_ptr<velox::common::Filter> rowGroupSkipFilter(
-      const std::vector<RowVectorPtr>& batches,
-      const Subfield& subfield,
-      std::vector<uint32_t>& hits) {
+								    const std::vector<RowVectorPtr>& /*batches*/,
+								    const Subfield& /*subfield*/,
+								    std::vector<uint32_t>& /*hits*/) {
     VELOX_NYI();
   }
 
@@ -371,8 +371,8 @@ std::unique_ptr<Filter> ColumnStats<StringView>::makeRangeFilter(
 template <>
 std::unique_ptr<velox::common::Filter>
 ColumnStats<StringView>::makeRowGroupSkipRangeFilter(
-    const std::vector<RowVectorPtr>& batches,
-    const Subfield& subfield) {
+						     const std::vector<RowVectorPtr>& /*batches*/,
+						     const Subfield& /*subfield*/) {
   static std::string max = kMaxString;
   return std::make_unique<velox::common::BytesRange>(
       max, false, false, max, false, false, false);
@@ -652,7 +652,6 @@ class E2EFilterTest : public testing::Test {
 
   // Makes non-null strings unique by appending a row number.
   void makeStringUnique(const Subfield& field) {
-    int counter = 0;
     for (RowVectorPtr batch : batches_) {
       auto strings =
           getChildBySubfield(batch.get(), field)->as<FlatVector<StringView>>();
