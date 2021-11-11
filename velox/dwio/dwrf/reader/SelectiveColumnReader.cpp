@@ -138,14 +138,6 @@ void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
   rawValues_ = values_->asMutable<char>();
 }
 
-void SelectiveColumnReader::ensureAtTargetRowGroup() {
-  if (targetRowGroup_ != kRowGroupNotSet) {
-    ensureRowGroupIndex();
-    seekToRowGroup(targetRowGroup_);
-    targetRowGroup_ = kRowGroupNotSet;
-  }
-}
-
 void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
   if (!hasNulls) {
     anyNulls_ = false;
@@ -184,7 +176,6 @@ void SelectiveColumnReader::prepareRead(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
-  ensureAtTargetRowGroup();
   seekTo(offset, scanSpec_->readsNullsOnly());
   vector_size_t numRows = rows.back() + 1;
   readNulls(numRows, incomingNulls, nullptr, nullsInReadRange_);
@@ -3812,6 +3803,10 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
+    if (isTopLevel_ && !notNullDecoder) {
+      readOffset_ = index * rowsPerRowGroup_;
+      return;
+    }
     if (notNullDecoder) {
       ensureRowGroupIndex();
       auto positions = toPositions(index_->entry(index));
@@ -4085,17 +4080,6 @@ void SelectiveStructColumnReader::read(
     RowSet rows,
     const uint64_t* incomingNulls) {
   numReads_ = scanSpec_->newRead();
-  if (targetRowGroup_ != kRowGroupNotSet && !notNullDecoder && isTopLevel_) {
-    // If children can be read  independently, defer seeking them to row group
-    // to the time of actual read, after filters etc. For nullable structs, we
-    // seek all children to the row group even if they are not all loaded
-    // because otherwise we would have to remember struct null flags all the way
-    // from their last read position, which could be far behind.
-    for (auto& child : children_) {
-      child->setRowGroup(targetRowGroup_);
-    }
-    targetRowGroup_ = kRowGroupNotSet;
-  }
   prepareRead<char>(offset, rows, incomingNulls);
   RowSet activeRows = rows;
   auto& childSpecs = scanSpec_->children();
@@ -4445,7 +4429,6 @@ void SelectiveListColumnReader::read(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
-  ensureAtTargetRowGroup();
   // Catch up if the child is behind the length stream.
   child_->seekTo(childTargetReadOffset_, false);
   prepareRead<char>(offset, rows, incomingNulls);
@@ -4602,7 +4585,6 @@ void SelectiveMapColumnReader::read(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
-  ensureAtTargetRowGroup();
   // Catch up if child readers are behind the length stream.
   if (keyReader_) {
     keyReader_->seekTo(childTargetReadOffset_, false);
