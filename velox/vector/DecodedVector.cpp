@@ -50,6 +50,7 @@ void DecodedVector::decode(
     const BaseVector& vector,
     const SelectivityVector& rows,
     bool loadLazy) {
+  debugSourceVector_ = &vector;
   reset(rows.end());
   loadLazy_ = loadLazy;
   if (loadLazy_ && (isLazyNotLoaded(vector) || vector.isLazy())) {
@@ -95,6 +96,7 @@ void DecodedVector::makeIndices(
     const BaseVector& vector,
     const SelectivityVector& rows,
     int32_t numLevels) {
+  debugSourceVector_ = &vector;
   VELOX_CHECK_LE(rows.end(), vector.size());
   reset(rows.end());
   combineWrappers(&vector, rows, numLevels);
@@ -220,10 +222,18 @@ void DecodedVector::applyDictionaryWrapper(
   rows.applyToSelected([&](vector_size_t row) {
     if (!nulls_ || !bits::isBitNull(nulls_, row)) {
       auto wrappedIndex = currentIndices[row];
-      VELOX_CHECK_LT(wrappedIndex, valuesSize);
       if (newNulls && bits::isBitNull(newNulls, wrappedIndex)) {
         bits::setNull(copiedNulls, row);
       } else {
+        if (newIndices[wrappedIndex] >= valuesSize) {
+          LOG(ERROR) << "BVEC: Out of range dictionary "
+                     << const_cast<BaseVector*>(debugSourceVector_)
+                            ->toString(0, debugSourceVector_->size());
+          FLAGS_velox_exception_stacktrace = true;
+          FLAGS_velox_exception_stacktrace_rate_limit_ms = 0;
+          VELOX_CHECK_LT(wrappedIndex, valuesSize);
+        }
+
         copiedIndices_[row] = newIndices[wrappedIndex];
       }
     }

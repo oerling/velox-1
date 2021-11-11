@@ -16,13 +16,13 @@
 
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
-#include "velox/aggregates/AggregationHook.h"
 #include "velox/common/base/Portability.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/common/FloatingPointDecoder.h"
 #include "velox/dwio/dwrf/common/RLEv1.h"
 #include "velox/dwio/dwrf/utils/ProtoUtils.h"
+#include "velox/aggregates/AggregationHook.h"
 #include "velox/vector/ConstantVector.h"
 #include "velox/vector/DictionaryVector.h"
 #include "velox/vector/FlatVector.h"
@@ -138,14 +138,6 @@ void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
   rawValues_ = values_->asMutable<char>();
 }
 
-void SelectiveColumnReader::ensureAtTargetRowGroup() {
-  if (targetRowGroup_ != kRowGroupNotSet) {
-    ensureRowGroupIndex();
-    seekToRowGroup(targetRowGroup_);
-    targetRowGroup_ = kRowGroupNotSet;
-  }
-}
-
 void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
   if (!hasNulls) {
     anyNulls_ = false;
@@ -184,7 +176,6 @@ void SelectiveColumnReader::prepareRead(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
-  ensureAtTargetRowGroup();
   seekTo(offset, scanSpec_->readsNullsOnly());
   vector_size_t numRows = rows.back() + 1;
   readNulls(numRows, incomingNulls, nullptr, nullsInReadRange_);
@@ -1077,6 +1068,7 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
+    ensureRowGroupIndex();
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
@@ -1850,11 +1842,6 @@ class DictionaryColumnVisitor
       int32_t* filterHits,
       T* values,
       int32_t& numValues) {
-#if 0
-    if (hasFilter && delta == 0 && !testRleFilter(value, numRows)) {
-      super::rowIndex_ += numRows;
-    }
-#endif
     if (sizeof(T) == 8) {
       constexpr int32_t kWidth = V64::VSize;
       for (auto i = 0; i < numRows; i += kWidth) {
@@ -1892,15 +1879,6 @@ class DictionaryColumnVisitor
   }
 
  private:
-#if 0
-  bool testRleFilter(T value, int32_t numRows) {
-    if (!super::inDict_ || bits::isBitSet(inDict_, super::rows_[super::rowIndex_])) {
-	value = dict_[static_cast<U>(value)];
-      if (!bits::isAllSet(super::inDict_,!!)
-      return true;
-  }
-#endif
-
   template <bool hasInDict, bool scatter>
   void translateScatter(
       const T* input,
@@ -2141,7 +2119,7 @@ void SelectiveIntegerDictionaryColumnReader::readHelper(
               extractValues,
               dictionary_->as<int16_t>(),
               inDictionary_ ? inDictionary_->as<uint64_t>() : nullptr,
-              filterCache_.empty() ? nullptr : filterCache_.data()));
+              filterCache_.data()));
       break;
     case 4:
       readWithVisitor(
@@ -2153,7 +2131,7 @@ void SelectiveIntegerDictionaryColumnReader::readHelper(
               extractValues,
               dictionary_->as<int32_t>(),
               inDictionary_ ? inDictionary_->as<uint64_t>() : nullptr,
-              filterCache_.empty() ? nullptr : filterCache_.data()));
+              filterCache_.data()));
       break;
 
     case 8:
@@ -2166,7 +2144,7 @@ void SelectiveIntegerDictionaryColumnReader::readHelper(
               extractValues,
               dictionary_->as<int64_t>(),
               inDictionary_ ? inDictionary_->as<uint64_t>() : nullptr,
-              filterCache_.empty() ? nullptr : filterCache_.data()));
+              filterCache_.data()));
       break;
 
     default:
@@ -2290,8 +2268,10 @@ void SelectiveIntegerDictionaryColumnReader::ensureInitialized() {
 
   Timer timer;
   dictionary_ = dictInit_();
-
-  filterCache_.resize(dictionarySize_);
+  // Make sure there is a cache even for an empty dictionary because
+  // of asan failure when preparing a gather with all lanes masked
+  // out.
+  filterCache_.resize(std::max<int32_t>(1, dictionarySize_));
   simd::memset(filterCache_.data(), FilterResult::kUnknown, dictionarySize_);
   initialized_ = true;
   initTimeClocks_ = timer.elapsedClocks();
@@ -3022,6 +3002,7 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
       common::ScanSpec* scanSpec);
 
   void resetFilterCaches() override {
+    // 'filterCache_' could be empty before first read.
     if (!filterCache_.empty()) {
       simd::memset(
           filterCache_.data(), FilterResult::kUnknown, dictionaryCount_);
@@ -3822,6 +3803,10 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
+    if (isTopLevel_ && !notNullDecoder) {
+      readOffset_ = index * rowsPerRowGroup_;
+      return;
+    }
     if (notNullDecoder) {
       ensureRowGroupIndex();
       auto positions = toPositions(index_->entry(index));
@@ -4095,17 +4080,6 @@ void SelectiveStructColumnReader::read(
     RowSet rows,
     const uint64_t* incomingNulls) {
   numReads_ = scanSpec_->newRead();
-  if (targetRowGroup_ != kRowGroupNotSet && !notNullDecoder && isTopLevel_) {
-    // If children can be read  independently, defer seeking them to row group
-    // to the time of actual read, after filters etc. For nullable structs, we
-    // seek all children to the row group even if they are not all loaded
-    // because otherwise we would have to remember struct null flags all the way
-    // from their last read position, which could be severalrpw
-    for (auto& child : children_) {
-      child->setRowGroup(targetRowGroup_);
-    }
-    targetRowGroup_ = kRowGroupNotSet;
-  }
   prepareRead<char>(offset, rows, incomingNulls);
   RowSet activeRows = rows;
   auto& childSpecs = scanSpec_->children();
@@ -4455,7 +4429,6 @@ void SelectiveListColumnReader::read(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
-  ensureAtTargetRowGroup();
   // Catch up if the child is behind the length stream.
   child_->seekTo(childTargetReadOffset_, false);
   prepareRead<char>(offset, rows, incomingNulls);
@@ -4612,7 +4585,6 @@ void SelectiveMapColumnReader::read(
     vector_size_t offset,
     RowSet rows,
     const uint64_t* incomingNulls) {
-  ensureAtTargetRowGroup();
   // Catch up if child readers are behind the length stream.
   if (keyReader_) {
     keyReader_->seekTo(childTargetReadOffset_, false);
