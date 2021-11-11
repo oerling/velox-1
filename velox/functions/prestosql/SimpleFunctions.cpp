@@ -24,7 +24,9 @@
 #include "velox/functions/prestosql/RegisterArithmetic.h"
 #include "velox/functions/prestosql/RegisterCheckedArithmetic.h"
 #include "velox/functions/prestosql/RegisterComparisons.h"
+#include "velox/functions/prestosql/SplitPart.h"
 #include "velox/functions/prestosql/StringFunctions.h"
+#include "velox/functions/prestosql/TimestampWithTimeZoneType.h"
 
 namespace facebook::velox::functions {
 
@@ -44,6 +46,9 @@ void registerFunctions() {
   registerFunction<SubstrFunction, Varchar, Varchar, int32_t>({"substr"});
   registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
       {"substr"});
+
+  registerFunction<SplitPart, Varchar, Varchar, Varchar, int64_t>(
+      {"split_part"});
 
   registerFunction<TrimFunction, Varchar, Varchar>({"trim"});
   registerFunction<LTrimFunction, Varchar, Varchar>({"ltrim"});
@@ -83,6 +88,11 @@ void registerFunctions() {
   registerFunction<MillisecondFunction, int64_t, Timestamp>({"millisecond"});
   registerFunction<DateTruncFunction, Timestamp, Varchar, Timestamp>(
       {"date_trunc"});
+  registerFunction<
+      ParseDateTimeFunction,
+      TimestampWithTimezone,
+      Varchar,
+      Varchar>({"parse_datetime"});
 
   registerFunction<CardinalityFunction, int64_t, HyperLogLog>({"cardinality"});
 
