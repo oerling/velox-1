@@ -97,6 +97,7 @@ DictionaryVector<T>::DictionaryVector(
 template <typename T>
 bool DictionaryVector<T>::isNullAt(vector_size_t idx) const {
   VELOX_DCHECK(initialized_);
+  VELOX_CHECK_LT((uint32_t)idx, BaseVector::length_);
   if (BaseVector::isNullAt(idx)) {
     return true;
   }

@@ -295,6 +295,7 @@ wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
       auto copy = BaseVector::create(child->type(), size, input->pool());
       SelectivityVector inputRows(size);
       copy->copy(child.get(), inputRows, indices->as<vector_size_t>());
+      wrappedChildren.emplace_back(copy);
     }
   }
   return std::make_shared<RowVector>(
