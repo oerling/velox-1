@@ -145,7 +145,7 @@ class MemoryUsageTracker
   void update(int64_t size) {
     if (size > 0) {
       if (usedReservation_ + size > reservation_) {
-	reserveInternal(size);
+        reserveInternal(size);
       }
       usedReservation_ += size;
       return;
@@ -162,13 +162,17 @@ class MemoryUsageTracker
   }
 
   int64_t getCurrentUserBytes() const {
-    return adjustByReservation(currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)]);
+    return adjustByReservation(
+        currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)]);
   }
   int64_t getCurrentSystemBytes() const {
-    return adjustByReservation(currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)]);
+    return adjustByReservation(
+        currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)]);
   }
   int64_t getCurrentTotalBytes() const {
-    return adjustByReservation(currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)] + currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)]);
+    return adjustByReservation(
+        currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)] +
+        currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)]);
   }
 
   int64_t getPeakUserBytes() const {
@@ -229,7 +233,8 @@ class MemoryUsageTracker
     return quantizedSize(size + delta) - size;
   }
 
-  // Returns the next higher quantized size. Small sizes are at MB granularity, larger ones at coarser granularity.
+  // Returns the next higher quantized size. Small sizes are at MB granularity,
+  // larger ones at coarser granularity.
   uint64_t quantizedSize(uint64_t size) {
     if (size < 16 << 20) {
       return bits::roundUp(size, 1 << 20);
@@ -243,7 +248,7 @@ class MemoryUsageTracker
   int64_t adjustByReservation(int64_t total) const {
     return reservation_ ? total - getAvailableReservation() : total;
   }
-  
+
   std::shared_ptr<MemoryUsageTracker> parent_;
   UsageType type_;
   std::array<std::atomic<int64_t>, 2> currentUsageInBytes_{};
