@@ -35,7 +35,7 @@ Task::Task(
     std::shared_ptr<core::QueryCtx> queryCtx,
     ConsumerSupplier consumerSupplier,
     std::function<void(std::exception_ptr)> onError)
-    : pool_(queryCtx_->pool()->addScopedChild("task_root")),
+    : pool_(queryCtx->pool()->addScopedChild("task_root")),
       taskId_(taskId),
       planNode_(planNode),
       destination_(destination),
