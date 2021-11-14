@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 
+#include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
 
 namespace facebook::velox::memory {
@@ -122,11 +123,7 @@ class MemoryUsageTracker
   // leaf memory pool or mapped memory, which is accessed within a
   // single thread.
   void reserve(int64_t size) {
-    int64_t actualSize = size - (reservation_ - usedReservation_);
-    if (actualSize > 0) {
-      update(type_, actualSize);
-      reservation_ += actualSize;
-    }
+    minReservation_ += reserveInternal(size);
   }
 
   // Release unused reservation. Used reservation will be released as the
@@ -137,6 +134,7 @@ class MemoryUsageTracker
       update(type_, -remaining);
     }
     reservation_ = 0;
+    minReservation_ = 0;
     usedReservation_ = 0;
   }
 
@@ -145,26 +143,38 @@ class MemoryUsageTracker
   // the new allocated amount exceeds the reservation, propagates the
   // change upward.
   void update(int64_t size) {
-    if (int64_t increment = updateUsed(size)) {
-      try {
-        update(type_, increment);
-      } catch (const VeloxRuntimeError& e) {
-        // Revert the increment to reservation usage.
-        usedReservation_.fetch_sub(size);
-        std::rethrow_exception(std::current_exception());
+    if (size > 0) {
+      if (usedReservation_ + size > reservation_) {
+        reserveInternal(size);
       }
+      usedReservation_ += size;
+      return;
     }
+    auto newUsed = usedReservation_ + size;
+    auto newCap = std::max(minReservation_, newUsed);
+    auto newQuantized = quantizedSize(newCap);
+    if (newQuantized != reservation_) {
+      auto increment = newQuantized - reservation_;
+      update(type_, increment);
+      reservation_ = newQuantized;
+    }
+    usedReservation_ += size;
   }
 
   int64_t getCurrentUserBytes() const {
-    return currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)];
+    return adjustByReservation(
+        currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)]);
   }
   int64_t getCurrentSystemBytes() const {
-    return currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)];
+    return adjustByReservation(
+        currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)]);
   }
   int64_t getCurrentTotalBytes() const {
-    return getCurrentUserBytes() + getCurrentSystemBytes();
+    return adjustByReservation(
+        currentUsageInBytes_[static_cast<int>(UsageType::kSystemMem)] +
+        currentUsageInBytes_[static_cast<int>(UsageType::kUserMem)]);
   }
+
   int64_t getPeakUserBytes() const {
     return peakUsageInBytes_[static_cast<int>(UsageType::kUserMem)];
   }
@@ -201,7 +211,44 @@ class MemoryUsageTracker
   }
 
  private:
+  static constexpr int64_t kMinQuantum = 1 << 20;
+
   enum class UsageType : int { kUserMem = 0, kSystemMem = 1, kTotalMem = 2 };
+
+  int64_t reserveInternal(int64_t size) {
+    int64_t neededSize = size - (reservation_ - usedReservation_);
+    if (neededSize > 0) {
+      auto increment = roundedDelta(reservation_, neededSize);
+      update(type_, increment);
+      reservation_ += increment;
+      return increment;
+    }
+    return 0;
+  }
+
+  // Returns a rounded up delta based on adding 'delta' to
+  // 'size'. Adding the rounded delta to 'size' will result in 'size'
+  // a quantized size, rounded to the MB or 8MB for larger sizes.
+  int64_t roundedDelta(int64_t size, int64_t delta) {
+    return quantizedSize(size + delta) - size;
+  }
+
+  // Returns the next higher quantized size. Small sizes are at MB granularity,
+  // larger ones at coarser granularity.
+  uint64_t quantizedSize(uint64_t size) {
+    if (size < 16 << 20) {
+      return bits::roundUp(size, 1 << 20);
+    }
+    if (size < 64 << 20) {
+      return bits::roundUp(size, 4 << 20);
+    }
+    return bits::roundUp(size, 8 << 20);
+  }
+
+  int64_t adjustByReservation(int64_t total) const {
+    return reservation_ ? total - getAvailableReservation() : total;
+  }
+
   std::shared_ptr<MemoryUsageTracker> parent_;
   UsageType type_;
   std::array<std::atomic<int64_t>, 2> currentUsageInBytes_{};
@@ -211,6 +258,9 @@ class MemoryUsageTracker
   std::array<int64_t, 3> cumulativeBytes_{};
 
   int64_t reservation_{0};
+
+  // Minimum amount of reserved memory to hold until explicit release().
+  int64_t minReservation_{0};
   std::atomic<int64_t> usedReservation_{};
 
   explicit MemoryUsageTracker(
@@ -281,41 +331,5 @@ class MemoryUsageTracker
     maySetMax(UsageType::kTotalMem, total);
   }
 
-  // Increments the amount of 'usedReservation_' by 'size'.  Returns the
-  // amount by which current size must be incremented. If both old and
-  // new values are below the reservation, there is no increment. If
-  // the increment crosses reservation, then the increment is, in the
-  // case of allocation, the amount that goes above the reservation
-  // and for deallocation the amount that takes the current size to
-  // reservation but not below this. If both new and old amounts used
-  // are above reservation, the increment is the delta between the
-  // two.
-  int64_t updateUsed(int64_t size) {
-    int64_t increment = size;
-    int64_t reservation = reservation_;
-    if (reservation > 0) {
-      int64_t oldUsed = 0;
-      int64_t newUsed = 0;
-      do {
-        oldUsed = usedReservation_;
-        newUsed = oldUsed + size;
-        if (newUsed < reservation && oldUsed < reservation_) {
-          // The usage stays below reservation. No change to allocated size.
-          increment = 0;
-        } else if (newUsed < reservation_ && oldUsed > reservation_) {
-          // Usage goes below reservation due to a free.
-          increment = reservation_ - oldUsed;
-        } else if (newUsed > reservation_ && oldUsed < reservation_) {
-          // Usage goes above reservation due to allocation.
-          increment = newUsed - reservation_;
-        } else {
-          // Old and new are both above reservation. The delta is directly
-          // reflected in allocated size.
-          increment = size;
-        }
-      } while (!usedReservation_.compare_exchange_weak(oldUsed, newUsed));
-    }
-    return increment;
-  }
 };
 } // namespace facebook::velox::memory
