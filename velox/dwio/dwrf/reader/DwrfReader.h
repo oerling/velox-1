@@ -76,6 +76,9 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   // Number of skipped strides.
   int64_t skippedStrides_{0};
+
+  // Set True after updating filters.
+  bool recomputeStridesToSkip_{false};
 };
 
 class DwrfReader : public DwrfReaderShared {

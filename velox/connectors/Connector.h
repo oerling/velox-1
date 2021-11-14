@@ -252,7 +252,7 @@ class Connector {
 
 class ConnectorFactory {
  public:
-  explicit ConnectorFactory(const std::string& name) : name_(name) {}
+  explicit ConnectorFactory(const char* name) : name_(name) {}
 
   virtual ~ConnectorFactory() = default;
 
