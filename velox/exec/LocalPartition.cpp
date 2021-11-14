@@ -289,7 +289,7 @@ wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
   for (auto i = 0; i < input->type()->size(); i++) {
     if (!FLAGS_local_partition_copy) {
       wrappedChildren.emplace_back(BaseVector::wrapInDictionary(
-								BufferPtr(nullptr), indices, size, input->childAt(i)));
+          BufferPtr(nullptr), indices, size, input->childAt(i)));
     } else {
       auto child = input->childAt(i);
       auto copy = BaseVector::create(child->type(), size, input->pool());
