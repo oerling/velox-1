@@ -41,27 +41,24 @@ int32_t run1x64(const std::vector<int64_t>& data) {
   return count;
 }
 
-
 int32_t run4x64(const std::vector<int64_t>& data) {
   using TV = simd::Vectors<int64_t>;
   int32_t count = 0;
   assert(data.size() % 4 == 0);
   for (auto i = 0; i < data.size(); i += 4) {
     auto result = filter->test4x64(V64::load(data.data() + i));
-    count +=  TV::compareBitMask(TV::compareResult(result));
+    count += TV::compareBitMask(TV::compareResult(result));
   }
   return count;
 }
 
-// Global counter updated by tests so that counting results does not get optimized away.
+// Global counter updated by tests so that counting results does not get
+// optimized away.
 uint64_t hits = 0;
-
-
 
 BENCHMARK(scalarDense) {
   hits += run1x64(sparseValues);
 }
-
 
 BENCHMARK_RELATIVE(simdDense) {
   hits += run4x64(sparseValues);
@@ -71,11 +68,9 @@ BENCHMARK(scalarSparse) {
   hits += run1x64(sparseValues);
 }
 
-
 BENCHMARK_RELATIVE(simdSparse) {
   hits += run4x64(sparseValues);
 }
-
 
 int32_t main(int32_t argc, char* argv[]) {
   constexpr int32_t kNumValues = 1000000;
@@ -83,10 +78,11 @@ int32_t main(int32_t argc, char* argv[]) {
   folly::init(&argc, &argv);
 
   std::vector<int64_t> filterValues;
-  for (auto i = 0; i < 1000;++i) {
-    filterValues.push_back(i* 1000);
+  for (auto i = 0; i < 1000; ++i) {
+    filterValues.push_back(i * 1000);
   }
-  filter = std::make_unique<BigintValuesUsingHashTable>(filterValues.front(), filterValues.back(), filterValues, false);
+  filter = std::make_unique<BigintValuesUsingHashTable>(
+      filterValues.front(), filterValues.back(), filterValues, false);
   denseValues.resize(kNumValues);
   sparseValues.resize(kNumValues);
   for (auto i = 0; i < kNumValues; ++i) {

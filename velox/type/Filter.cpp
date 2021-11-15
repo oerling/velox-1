@@ -147,7 +147,8 @@ BigintValuesUsingHashTable::BigintValuesUsingHashTable(
       }
     }
   }
-  // Replicate the last element of hashTable kPaddingEntries times at 'size_' so that one can load a full vector of elements past the last used index.
+  // Replicate the last element of hashTable kPaddingEntries times at 'size_' so
+  // that one can load a full vector of elements past the last used index.
   for (auto i = 0; i < kPaddingElements; ++i) {
     hashTable_[sizeMask_ + 1 + i] = hashTable_[sizeMask_];
   }
@@ -177,8 +178,9 @@ bool BigintValuesUsingHashTable::testInt64(int64_t value) const {
 
 __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
   using V64 = simd::Vectors<int64_t>;
-  auto rangeMask = V64::compareGt(V64::setAll(min_), x) | V64::compareGt(x, V64::setAll(max_));
-  if (V64::compareResult(rangeMask)  == V64::kAllTrue) {
+  auto rangeMask = V64::compareGt(V64::setAll(min_), x) |
+      V64::compareGt(x, V64::setAll(max_));
+  if (V64::compareResult(rangeMask) == V64::kAllTrue) {
     return V64::setAll(0);
   }
   if (containsEmptyMarker_) {
@@ -186,18 +188,19 @@ __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
   }
   rangeMask ^= -1;
   auto indices = x * M & sizeMask_;
-  __m256i data = 
-    _mm256_mask_i64gather_epi64(
-				V64::setAll(kEmptyMarker),
-				reinterpret_cast<const long long int*>(hashTable_.data()),
-				indices,
-				rangeMask,
-				8);
-  // The lanes with kEmptyMarker missed, the lanes matching x hit and the other lanes must check next positions.
+  __m256i data = _mm256_mask_i64gather_epi64(
+      V64::setAll(kEmptyMarker),
+      reinterpret_cast<const long long int*>(hashTable_.data()),
+      indices,
+      rangeMask,
+      8);
+  // The lanes with kEmptyMarker missed, the lanes matching x hit and the other
+  // lanes must check next positions.
 
   auto result = V64::compareEq(x, data);
   auto missed = V64::compareEq(data, V64::setAll(kEmptyMarker));
-  uint16_t unresolved = V64::compareBitMask(~V64::compareResult(result) & ~V64::compareResult(missed));
+  uint16_t unresolved = V64::compareBitMask(
+      ~V64::compareResult(result) & ~V64::compareResult(missed));
   if (!unresolved) {
     return result;
   }
@@ -212,23 +215,23 @@ __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
     auto lane = bits::getAndClearLastSetBit(unresolved);
     // Loop for each unresolved (not hit and
     // not empty) until finding hit or empty.
-    int64_t  index = indicesArray[lane];
+    int64_t index = indicesArray[lane];
     int64_t value = valuesArray[lane];
     auto allValue = V64::setAll(value);
     for (;;) {
       auto line = V64::load(hashTable_.data() + index);
 
       if (V64::compareResult(V64::compareEq(line, allValue))) {
-	  resultArray[lane] = -1;
-	  break;
-	}
+        resultArray[lane] = -1;
+        break;
+      }
       if (V64::compareResult(V64::compareEq(line, allEmpty))) {
-	  resultArray[lane] = 0;
-	  break;
-	}
+        resultArray[lane] = 0;
+        break;
+      }
       index += 4;
       if (index > sizeMask_) {
-	index = 0;
+        index = 0;
       }
     }
   }
@@ -239,8 +242,10 @@ __m256si BigintValuesUsingHashTable::test8x32(__m256i x) {
   using V32 = simd::Vectors<int32_t>;
   using V64 = simd::Vectors<int64_t>;
   auto x8x32 = reinterpret_cast<V32::TV>(x);
-  auto first = V64::compareBitMask(V64::compareResult(test4x64(V32::as4x64<0>(x8x32))));
-  auto second = V64::compareBitMask(V64::compareResult(test4x64(V32::as4x64<1>(x8x32))));
+  auto first =
+      V64::compareBitMask(V64::compareResult(test4x64(V32::as4x64<0>(x8x32))));
+  auto second =
+      V64::compareBitMask(V64::compareResult(test4x64(V32::as4x64<1>(x8x32))));
   return V32::mask(first | (second << 4));
 }
 

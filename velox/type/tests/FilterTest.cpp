@@ -265,7 +265,7 @@ TEST(FilterTest, bigintValuesUsingHashTableSimd) {
   auto filter = createBigintValues(numbers, false);
   ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
   __m256i outOfRange{-100, -20000, 0x10000000, 0x20000000};
-  auto verify = [&](int64_t x) {return filter->testInt64(x); };
+  auto verify = [&](int64_t x) { return filter->testInt64(x); };
   checkSimd<int64_t>(filter.get(), &outOfRange, verify);
   for (auto i = 0; i + 4 < numbers.size(); i += 4) {
     int64_t lanes[4];
@@ -275,10 +275,11 @@ TEST(FilterTest, bigintValuesUsingHashTableSimd) {
     memcpy(lanes, numbers.data() + i, sizeof(lanes));
     for (auto lane = 0; lane < 4; ++lane) {
       if (i & (1 << (lane + 2))) {
-	++lanes[lane];
+        ++lanes[lane];
       }
     }
-    checkSimd<int64_t>(filter.get(), reinterpret_cast<__m256i*>(&lanes), verify);
+    checkSimd<int64_t>(
+        filter.get(), reinterpret_cast<__m256i*>(&lanes), verify);
   }
 
   // Make a filter with reasonably distributed entries and retry.
@@ -297,10 +298,11 @@ TEST(FilterTest, bigintValuesUsingHashTableSimd) {
     memcpy(lanes, numbers.data() + i, sizeof(lanes));
     for (auto lane = 0; lane < 4; ++lane) {
       if (i & (1 << (lane + 2))) {
-	++lanes[lane];
+        ++lanes[lane];
       }
     }
-    checkSimd<int64_t>(filter.get(), reinterpret_cast<__m256i*>(&lanes), verify);
+    checkSimd<int64_t>(
+        filter.get(), reinterpret_cast<__m256i*>(&lanes), verify);
   }
 }
 

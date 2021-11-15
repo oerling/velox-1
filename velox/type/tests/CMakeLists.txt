@@ -28,8 +28,7 @@ target_link_libraries(
   ${gflags_LIBRARIES}
   glog::glog)
 
-add_executable(
-  velox_filter_benchmark FilterBenchmark.cpp)
+add_executable(velox_filter_benchmark FilterBenchmark.cpp)
 
 target_link_libraries(
   velox_filter_benchmark
@@ -41,5 +40,3 @@ target_link_libraries(
   ${GTEST_BOTH_LIBRARIES}
   ${gflags_LIBRARIES}
   glog::glog)
-
-

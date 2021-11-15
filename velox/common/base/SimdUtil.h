@@ -376,8 +376,6 @@ struct Vectors<int32_t> {
     return _mm256_cvtepi32_epi64(_mm256_extracti128_si256(to256i(x), i));
   }
 
-
-  
   static const ByteSetBitsType& byteSetBits() {
     return byteSetBits_;
   }

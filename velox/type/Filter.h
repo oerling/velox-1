@@ -667,7 +667,7 @@ class BigintValuesUsingHashTable final : public Filter {
 
   bool testInt64(int64_t value) const final;
   __m256i test4x64(__m256i x) final;
-    
+
   __m256si test8x32(__m256i x) final;
   bool testInt64Range(int64_t min, int64_t max, bool hashNull) const final;
 
