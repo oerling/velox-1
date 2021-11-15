@@ -197,7 +197,7 @@ __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
 
   auto result = V64::compareEq(x, data);
   auto missed = V64::compareEq(data, V64::setAll(kEmptyMarker));
-  uint16_t unresolved = V64::compareBitMask(~V64::compareResult(result) && ~V64::compareResult(missed));
+  uint16_t unresolved = V64::compareBitMask(~V64::compareResult(result) & ~V64::compareResult(missed));
   if (!unresolved) {
     return result;
   }
@@ -207,7 +207,7 @@ __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
   *reinterpret_cast<V64::TV*>(indicesArray) = indices + 1;
   *reinterpret_cast<V64::TV*>(valuesArray) = x;
   *reinterpret_cast<V64::TV*>(resultArray) = result;
-  
+  auto allEmpty = V64::setAll(kEmptyMarker);
   while (unresolved) {
     auto lane = bits::getAndClearLastSetBit(unresolved);
     // Loop for each unresolved (not hit and
@@ -215,7 +215,6 @@ __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
     int64_t  index = indicesArray[lane];
     int64_t value = valuesArray[lane];
     auto allValue = V64::setAll(value);
-    auto allEmpty = V64::setAll(kEmptyMarker);
     for (;;) {
       auto line = V64::load(hashTable_.data() + index);
 

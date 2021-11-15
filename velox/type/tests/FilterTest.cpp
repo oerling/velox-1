@@ -258,15 +258,51 @@ TEST(FilterTest, bigintValuesUsingHashTable) {
 
 TEST(FilterTest, bigintValuesUsingHashTableSimd) {
   std::vector<int64_t> numbers;
+  // make a worst case filter where every item falls on the same slot.
   for (auto i = 0; i < 1000; ++i) {
     numbers.push_back(i * 0x10000);
   }
-  auto filter = createBigintValues({numbers, false);
+  auto filter = createBigintValues(numbers, false);
   ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
-				   __m256i outOfRange{0, 0, 0x10000000, 0x20000000};
-				   checksimd(filter.get(),  outOfRange, [&](int64_t x) {return filter->testInt64(x); });
-				   }
+  __m256i outOfRange{-100, -20000, 0x10000000, 0x20000000};
+  auto verify = [&](int64_t x) {return filter->testInt64(x); };
+  checkSimd<int64_t>(filter.get(), &outOfRange, verify);
+  for (auto i = 0; i + 4 < numbers.size(); i += 4) {
+    int64_t lanes[4];
+    // Get keys to look up from the numbers in the filter. Make 0-4 of
+    // these miss by incrementing different lanes depending on the
+    // loop counter.
+    memcpy(lanes, numbers.data() + i, sizeof(lanes));
+    for (auto lane = 0; lane < 4; ++lane) {
+      if (i & (1 << (lane + 2))) {
+	++lanes[lane];
+      }
+    }
+    checkSimd<int64_t>(filter.get(), reinterpret_cast<__m256i*>(&lanes), verify);
+  }
 
+  // Make a filter with reasonably distributed entries and retry.
+  numbers.clear();
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 1209);
+  }
+  filter = createBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
+
+  for (auto i = 0; i + 4 < numbers.size(); i += 4) {
+    int64_t lanes[4];
+    // Get keys to look up from the numbers in the filter. Make 0-4 of
+    // these miss by incrementing different lanes depending on the
+    // loop counter.
+    memcpy(lanes, numbers.data() + i, sizeof(lanes));
+    for (auto lane = 0; lane < 4; ++lane) {
+      if (i & (1 << (lane + 2))) {
+	++lanes[lane];
+      }
+    }
+    checkSimd<int64_t>(filter.get(), reinterpret_cast<__m256i*>(&lanes), verify);
+  }
+}
 
 TEST(FilterTest, bigintValuesUsingBitmask) {
   auto filter = createBigintValues({1, 10, 100, 1000}, false);
