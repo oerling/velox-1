@@ -666,7 +666,9 @@ class BigintValuesUsingHashTable final : public Filter {
   }
 
   bool testInt64(int64_t value) const final;
-
+  __m256i test4x64(__m256i x) final;
+    
+  __m256si test8x32(__m256i x) final;
   bool testInt64Range(int64_t min, int64_t max, bool hashNull) const final;
 
   std::unique_ptr<Filter> mergeWith(const Filter* other) const final;
@@ -700,6 +702,7 @@ class BigintValuesUsingHashTable final : public Filter {
   std::vector<int64_t> hashTable_;
   bool containsEmptyMarker_ = false;
   std::vector<int64_t> values_;
+  int32_t sizeMask_;
 };
 
 /// IN-list filter for integral data types. Implemented as a bitmask. Offers

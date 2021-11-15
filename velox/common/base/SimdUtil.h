@@ -236,9 +236,14 @@ struct Vectors<int64_t> {
         scale);
   }
 
-  // Widens 4x32 signed values to 4x64.
+  // Widens 4x32 unsigned values to 4x64.
   static auto from32u(__m128si x) {
     return _mm256_cvtepu32_epi64((__m128i)x);
+  }
+
+  // Widens 4x32 signed values to 4x64.
+  static auto from32(__m128si x) {
+    return _mm256_cvtepi32_epi64((__m128i)x);
   }
 
   // Returns the value of the 'ith' lane.
@@ -366,6 +371,13 @@ struct Vectors<int32_t> {
     return _mm256_cvtepu32_epi64(_mm256_extracti128_si256(to256i(x), i));
   }
 
+  template <uint8_t i>
+  static auto as4x64(TV x) {
+    return _mm256_cvtepi32_epi64(_mm256_extracti128_si256(to256i(x), i));
+  }
+
+
+  
   static const ByteSetBitsType& byteSetBits() {
     return byteSetBits_;
   }

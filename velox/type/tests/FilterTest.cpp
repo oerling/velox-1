@@ -256,6 +256,18 @@ TEST(FilterTest, bigintValuesUsingHashTable) {
   EXPECT_TRUE(filter->testInt64Range(0, 1, false));
 }
 
+TEST(FilterTest, bigintValuesUsingHashTableSimd) {
+  std::vector<int64_t> numbers;
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 0x10000);
+  }
+  auto filter = createBigintValues({numbers, false);
+  ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
+				   __m256i outOfRange{0, 0, 0x10000000, 0x20000000};
+				   checksimd(filter.get(),  outOfRange, [&](int64_t x) {return filter->testInt64(x); });
+				   }
+
+
 TEST(FilterTest, bigintValuesUsingBitmask) {
   auto filter = createBigintValues({1, 10, 100, 1000}, false);
   ASSERT_TRUE(dynamic_cast<BigintValuesUsingBitmask*>(filter.get()));
