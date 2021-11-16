@@ -107,6 +107,23 @@ void writeNulls(
   }
 }
 
+void writeNullsIndices(
+    const BaseVector& values,
+    folly::Range<const vector_size_t*> indices,
+    ByteStream& out) {
+  auto size = indices.size();
+  for (auto i = 0; i < size; i += 64) {
+    uint64_t flags = 0;
+    auto end = i + 64 < size ? 64 : size - i;
+    for (auto bit = 0; bit < end; ++bit) {
+      if (values.isNullAt(indices[i + bit])) {
+        bits::setBit(&flags, bit, true);
+      }
+    }
+    out.appendOne<uint64_t>(flags);
+  }
+}
+
 void serializeArray(
     BaseVector& elements,
     vector_size_t offset,
@@ -117,6 +134,19 @@ void serializeArray(
   for (auto i = 0; i < size; ++i) {
     if (!elements.isNullAt(i + offset)) {
       serializeSwitch(elements, i + offset, out);
+    }
+  }
+}
+
+void serializeArrayIndices(
+    BaseVector& elements,
+    folly::Range<const vector_size_t*> indices,
+    ByteStream& out) {
+  out.appendOne<int32_t>(indices.size());
+  writeNullsIndices(elements, indices, out);
+  for (auto i : indices) {
+    if (!elements.isNullAt(i)) {
+      serializeSwitch(elements, i, out);
     }
   }
 }
@@ -142,11 +172,14 @@ void serializeOne<TypeKind::MAP>(
     ByteStream& out) {
   auto map = vector.wrappedVector()->asUnchecked<MapVector>();
   auto wrappedIndex = vector.wrappedIndex(index);
-  map->canonicalize();
-  auto offset = map->offsetAt(wrappedIndex);
   auto size = map->sizeAt(wrappedIndex);
-  serializeArray(*map->mapKeys(), offset, size, out);
-  serializeArray(*map->mapValues(), offset, size, out);
+  auto offset = map->offsetAt(wrappedIndex);
+  std::vector<vector_size_t> indices(size);
+  map->sortedKeyIndices(
+      wrappedIndex,
+      folly::Range<vector_size_t*>(indices.data(), indices.size()));
+  serializeArrayIndices(*map->mapKeys(), indices, out);
+  serializeArrayIndices(*map->mapValues(), indices, out);
 }
 
 void serializeSwitch(
@@ -664,7 +697,7 @@ uint64_t hashArray(ByteStream& in, uint64_t hash, const Type* elementType) {
     } else {
       value = hashSwitch(in, elementType);
     }
-    hash = bits::hashMix(hash, value);
+    hash = folly::hash::commutative_hash_128_to_64(hash, value);
   }
   return hash;
 }

@@ -15,6 +15,7 @@
  */
 
 #include "velox/vector/ComplexVector.h"
+#include <folly/hash/Hash.h>
 #include "velox/vector/SimpleVector.h"
 
 namespace facebook {
@@ -375,7 +376,7 @@ uint64_t hashArray(
     vector_size_t size) {
   for (auto i = 0; i < size; ++i) {
     auto elementHash = elements.hashValueAt(offset + i);
-    hash = bits::hashMix(hash, elementHash);
+    hash = folly::hash::commutative_hash_128_to_64(hash, elementHash);
   }
   return hash;
 }
@@ -776,6 +777,19 @@ void MapVector::canonicalize(bool useStableSort) const {
     values_ = BaseVector::transpose(indices, std::move(values_));
   }
   sortedKeys_ = true;
+}
+
+void MapVector::sortedKeyIndices(
+    vector_size_t index,
+    folly::Range<vector_size_t*> indices) const {
+  VELOX_CHECK_EQ(indices.size(), rawSizes_[index]);
+  std::iota(indices.begin(), indices.end(), rawOffsets_[index]);
+  std::sort(
+      indices.begin(),
+      indices.end(),
+      [&](vector_size_t left, vector_size_t right) {
+        return keys_->compare(keys_.get(), left, right) < 0;
+      });
 }
 
 BufferPtr MapVector::elementIndices() const {
