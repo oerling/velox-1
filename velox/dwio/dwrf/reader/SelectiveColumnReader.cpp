@@ -280,6 +280,21 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
       std::move(stringBuffers_));
 }
 
+bool SelectiveColumnReader::shouldMoveNulls(RowSet rows) {
+  if (rows.size() == numValues_) {
+    // Nulls will only be moved if there is a selection on values. A cast alone does not move nulls.
+    return false;
+  }
+  VELOX_CHECK(!returnReaderNulls_,
+	      "Do not return reader nulls if retrieving a subset of values");
+  if (anyNulls_) {
+    VELOX_CHECK(resultNulls_ && resultNulls_->as<uint64_t>() == rawResultNulls_);
+    VELOX_CHECK_GT(resultNulls_->capacity() * 8, rows.back());
+    return true;
+  }
+  return false;
+}
+  
 template <typename T, typename TVector>
 void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
   VELOX_CHECK_LE(rows.size(), numValues_);
@@ -310,6 +325,7 @@ void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
   }
   vector_size_t rowIndex = 0;
   auto nextRow = rows[rowIndex];
+  bool moveNulls = shouldMoveNulls(rows);
   for (size_t i = 0; i < numValues_; i++) {
     if (sourceRows[i] < nextRow) {
       continue;
@@ -317,7 +333,7 @@ void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
 
     VELOX_DCHECK(sourceRows[i] == nextRow);
     buf[rowIndex] = typedSourceValues[i];
-    if (anyNulls_) {
+    if (moveNulls && rowIndex != i) {
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
@@ -365,6 +381,7 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
   }
   vector_size_t rowIndex = 0;
   auto nextRow = rows[rowIndex];
+  bool moveNulls = shouldMoveNulls(rows);
   for (size_t i = 0; i < numValues_; i++) {
     if (sourceRows[i] < nextRow) {
       continue;
@@ -372,7 +389,7 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
 
     VELOX_DCHECK(sourceRows[i] == nextRow);
     typedDestValues[rowIndex] = typedSourceValues[i];
-    if (anyNulls_) {
+    if (moveNulls && rowIndex != i) {
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
@@ -403,6 +420,7 @@ void SelectiveColumnReader::compactScalarValues<bool, bool>(
   auto rawBits = reinterpret_cast<uint64_t*>(rawValues_);
   vector_size_t rowIndex = 0;
   auto nextRow = rows[rowIndex];
+  bool moveNulls = shouldMoveNulls(rows);
   for (size_t i = 0; i < numValues_; i++) {
     if (outputRows_[i] < nextRow) {
       continue;
@@ -411,7 +429,7 @@ void SelectiveColumnReader::compactScalarValues<bool, bool>(
     VELOX_DCHECK(outputRows_[i] == nextRow);
 
     bits::setBit(rawBits, rowIndex, bits::isBitSet(rawBits, i));
-    if (resultNulls_) {
+    if (moveNulls && rowIndex != i) {
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
