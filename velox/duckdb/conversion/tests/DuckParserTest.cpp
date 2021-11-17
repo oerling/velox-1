@@ -176,9 +176,8 @@ TEST(DuckParserTest, cast) {
       "cast(\"str_col\", TIMESTAMP)",
       parseExpr("cast(str_col as timestamp)")->toString());
 
-  // NB: DuckDB returns TIMESTAMP for `cast as date`.
   EXPECT_EQ(
-      "cast(\"str_col\", TIMESTAMP)",
+      "cast(\"str_col\", DATE)",
       parseExpr("cast(str_col as date)")->toString());
 
   // Unsupported casts for now.
@@ -235,4 +234,13 @@ TEST(DuckParserTest, isNull) {
 
 TEST(DuckParserTest, isNotNull) {
   EXPECT_EQ("not(is_null(\"a\"))", parseExpr("a IS NOT NULL")->toString());
+}
+
+TEST(DuckParserTest, structExtract) {
+  // struct_extract is not the desired parsed function, but it being handled
+  // enables nested dot (e.g. (a).b.c or (a.b).c)
+  EXPECT_EQ("dot(\"a\",\"b\")", parseExpr("(a).b")->toString());
+  EXPECT_EQ("dot(\"a\",\"b\")", parseExpr("(a.b)")->toString());
+  EXPECT_EQ("dot(dot(\"a\",\"b\"),\"c\")", parseExpr("(a).b.c")->toString());
+  EXPECT_EQ("dot(dot(\"a\",\"b\"),\"c\")", parseExpr("(a.b).c")->toString());
 }
