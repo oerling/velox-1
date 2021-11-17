@@ -288,7 +288,7 @@ class SelectiveColumnReader : public ColumnReader {
   // Returns true if compactScalarValues and upcastScalarValues should
   // move null flags. Checks consistency of nulls-related state.
   bool shouldMoveNulls(RowSet rows);
-  
+
   void addStringValue(folly::StringPiece value);
 
   // Copies 'value' to buffers owned by 'this' and returns the start of the

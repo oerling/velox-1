@@ -282,19 +282,22 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
 
 bool SelectiveColumnReader::shouldMoveNulls(RowSet rows) {
   if (rows.size() == numValues_) {
-    // Nulls will only be moved if there is a selection on values. A cast alone does not move nulls.
+    // Nulls will only be moved if there is a selection on values. A cast alone
+    // does not move nulls.
     return false;
   }
-  VELOX_CHECK(!returnReaderNulls_,
-	      "Do not return reader nulls if retrieving a subset of values");
+  VELOX_CHECK(
+      !returnReaderNulls_,
+      "Do not return reader nulls if retrieving a subset of values");
   if (anyNulls_) {
-    VELOX_CHECK(resultNulls_ && resultNulls_->as<uint64_t>() == rawResultNulls_);
+    VELOX_CHECK(
+        resultNulls_ && resultNulls_->as<uint64_t>() == rawResultNulls_);
     VELOX_CHECK_GT(resultNulls_->capacity() * 8, rows.back());
     return true;
   }
   return false;
 }
-  
+
 template <typename T, typename TVector>
 void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
   VELOX_CHECK_LE(rows.size(), numValues_);
