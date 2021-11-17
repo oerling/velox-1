@@ -317,7 +317,7 @@ void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
 
     VELOX_DCHECK(sourceRows[i] == nextRow);
     buf[rowIndex] = typedSourceValues[i];
-    if (resultNulls_) {
+    if (anyNulls_) {
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
@@ -372,7 +372,7 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
 
     VELOX_DCHECK(sourceRows[i] == nextRow);
     typedDestValues[rowIndex] = typedSourceValues[i];
-    if (resultNulls_) {
+    if (anyNulls_) {
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
