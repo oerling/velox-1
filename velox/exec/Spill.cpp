@@ -30,9 +30,14 @@ void SpillInput::seekp(Position position) {
     // starting at the target or if there is less than a full buffer
     // left, at file size - buffer size. The bytes in the buffer
     // must all be valid.
-    VELOX_CHECK_GE(size_, current_->size);
-    if (target + current_->size > size_) {
-      target = size_ - current_->size;
+    auto bufferSize = current_->size;
+    VELOX_CHECK_GE(size_, bufferSize);
+    if (target + bufferSize > size_) {
+      offset_ = size_ - bufferSize;
+      current_->position = bufferSize - (size_ - target);
+    } else {
+      
+      current_->position = 0;
     }
     input_->pread(offset_, current_->size, current_->buffer);
   }
