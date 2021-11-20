@@ -167,6 +167,7 @@ class CancelPool {
   }
 
   void requestTerminate() {
+    std::lock_guard<std::mutex> l(mutex_);
     terminateRequested_ = true;
   }
 
