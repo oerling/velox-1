@@ -21,6 +21,7 @@
 #include "velox/functions/prestosql/JsonExtractScalar.h"
 #include "velox/functions/prestosql/Rand.h"
 #include "velox/functions/prestosql/StringFunctions.h"
+#include "velox/functions/sparksql/CompareFunctionsNullSafe.h"
 #include "velox/functions/sparksql/Hash.h"
 #include "velox/functions/sparksql/In.h"
 #include "velox/functions/sparksql/LeastGreatest.h"
@@ -43,7 +44,8 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_contains, prefix + "array_contains");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_element_at, prefix + "element_at");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat_row, prefix + "named_struct");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_map, prefix + "map_from_arrays");
+  VELOX_REGISTER_VECTOR_FUNCTION(
+      udf_map_allow_duplicates, prefix + "map_from_arrays");
   // String functions.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat, prefix + "concat");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_lower, prefix + "lower");
@@ -52,24 +54,25 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   // Logical.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_coalesce, prefix + "coalesce");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_is_null, prefix + "isnull");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_is_not_null, prefix + "isnotnull");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_not, prefix + "not");
 }
 
 namespace sparksql {
 
 void registerFunctions(const std::string& prefix) {
-  registerFunction<udf_rand, double>({"rand"});
+  registerFunction<RandFunction, double>({"rand"});
 
-  registerFunction<udf_json_extract_scalar, Varchar, Varchar, Varchar>(
+  registerFunction<JsonExtractScalarFunction, Varchar, Varchar, Varchar>(
       {prefix + "get_json_object"});
 
   // Register string functions.
   registerFunction<udf_chr, Varchar, int64_t>();
   registerFunction<udf_ascii, int32_t, Varchar>();
 
-  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t>(
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t>(
       {prefix + "substring"});
-  registerFunction<udf_substr<int32_t>, Varchar, Varchar, int32_t, int32_t>(
+  registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
       {prefix + "substring"});
 
   exec::registerStatefulVectorFunction("instr", instrSignatures(), makeInstr);
@@ -97,6 +100,10 @@ void registerFunctions(const std::string& prefix) {
       prefix + "hash", hashSignatures(), makeHash);
   exec::registerStatefulVectorFunction(prefix + "in", inSignatures(), makeIn);
 
+  // Compare nullsafe functions
+  exec::registerStatefulVectorFunction(
+      prefix + "equalnullsafe", equalNullSafeSignatures(), makeEqualNullSafe);
+
   // These vector functions are only accessible via the
   // VELOX_REGISTER_VECTOR_FUNCTION macro, which must be invoked in the same
   // namespace as the function definition.
@@ -106,6 +113,13 @@ void registerFunctions(const std::string& prefix) {
   // broken out into a separate compilation unit to improve build latency.
   registerArithmeticFunctions(prefix);
   registerCompareFunctions(prefix);
+
+  // String sreach function
+  registerFunction<udf_starts_with, bool, Varchar, Varchar>(
+      {prefix + "startswith"});
+  registerFunction<udf_ends_with, bool, Varchar, Varchar>(
+      {prefix + "endswith"});
+  registerFunction<udf_contains, bool, Varchar, Varchar>({prefix + "contains"});
 }
 
 } // namespace sparksql

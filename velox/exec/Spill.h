@@ -39,19 +39,14 @@ class SpillInput : public ByteStream {
     next(true);
   }
 
-  void next(bool throwIfPastEnd) override {
-    int32_t readBytes = std::min(input_->size() - offset_, buffer_->capacity());
-    setRange({buffer_->asMutable<uint8_t>(), readBytes, 0});
-    input_->pread(offset_, readBytes, buffer_->asMutable<char>());
-    offset_ += readBytes;
-  }
+  void next(bool throwIfPastEnd) override;
 
   bool atEnd() const {
     return offset_ == size_ && ranges()[0].position >= ranges()[0].size;
   }
 
   Position tellp() const override {
-    return std::make_tuple(nullptr, offset_ + current_->position);
+    return std::make_tuple(nullptr, offset_ - current_->size + current_->position);
   }
 
   void seekp(Position position) override;

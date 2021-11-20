@@ -95,15 +95,15 @@ TEST(DuckParserTest, coalesce) {
 }
 
 TEST(DuckParserTest, in) {
-  EXPECT_EQ("in(\"col1\",1,2,3)", parseExpr("col1 in (1, 2, 3)")->toString());
+  EXPECT_EQ("in(\"col1\",[1,2,3])", parseExpr("col1 in (1, 2, 3)")->toString());
   EXPECT_EQ(
-      "in(\"col1\",1,2,null,3)",
+      "in(\"col1\",[1,2,null,3])",
       parseExpr("col1 in (1, 2, null, 3)")->toString());
   EXPECT_EQ(
-      "in(\"col1\",\"a\",\"b\",\"c\")",
+      "in(\"col1\",[\"a\",\"b\",\"c\"])",
       parseExpr("col1 in ('a', 'b', 'c')")->toString());
   EXPECT_EQ(
-      "in(\"col1\",\"a\",null,\"b\",\"c\")",
+      "in(\"col1\",[\"a\",null,\"b\",\"c\"])",
       parseExpr("col1 in ('a', null, 'b', 'c')")->toString());
 }
 
@@ -176,9 +176,8 @@ TEST(DuckParserTest, cast) {
       "cast(\"str_col\", TIMESTAMP)",
       parseExpr("cast(str_col as timestamp)")->toString());
 
-  // NB: DuckDB returns TIMESTAMP for `cast as date`.
   EXPECT_EQ(
-      "cast(\"str_col\", TIMESTAMP)",
+      "cast(\"str_col\", DATE)",
       parseExpr("cast(str_col as date)")->toString());
 
   // Unsupported casts for now.
@@ -235,4 +234,13 @@ TEST(DuckParserTest, isNull) {
 
 TEST(DuckParserTest, isNotNull) {
   EXPECT_EQ("not(is_null(\"a\"))", parseExpr("a IS NOT NULL")->toString());
+}
+
+TEST(DuckParserTest, structExtract) {
+  // struct_extract is not the desired parsed function, but it being handled
+  // enables nested dot (e.g. (a).b.c or (a.b).c)
+  EXPECT_EQ("dot(\"a\",\"b\")", parseExpr("(a).b")->toString());
+  EXPECT_EQ("dot(\"a\",\"b\")", parseExpr("(a.b)")->toString());
+  EXPECT_EQ("dot(dot(\"a\",\"b\"),\"c\")", parseExpr("(a).b.c")->toString());
+  EXPECT_EQ("dot(dot(\"a\",\"b\"),\"c\")", parseExpr("(a.b).c")->toString());
 }

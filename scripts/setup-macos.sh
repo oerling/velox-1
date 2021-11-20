@@ -29,7 +29,7 @@ set -e # Exit on error.
 set -x # Print commands that are executed.
 
 FB_OS_VERSION=v2021.05.10.00
-NPROC=$(sysctl -n hw.physicalcpu)
+NPROC=$(getconf _NPROCESSORS_ONLN)
 COMPILER_FLAGS="-mavx2 -mfma -mavx -mf16c -masm=intel -mlzcnt"
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
 MACOS_DEPS="ninja cmake ccache protobuf icu4c boost gflags glog libevent lz4 lzo snappy xz zstd openssl@1.1"
@@ -102,7 +102,18 @@ function update_brew {
 function install_build_prerequisites {
   for pkg in ${MACOS_DEPS}
   do
-    brew install --formula $pkg && echo "Installation of $pkg is successful" || brew upgrade --formula $pkg
+    if [[ "${pkg}" =~ ^([0-9a-z-]*):([0-9](\.[0-9\])*)$ ]];
+    then
+      pkg=${BASH_REMATCH[1]}
+      ver=${BASH_REMATCH[2]}
+      echo "Installing '${pkg}' at '${ver}'"
+      tap="velox/local-${pkg}"
+      brew tap-new "${tap}"
+      brew extract "--version=${ver}" "${pkg}" "${tap}"
+      brew install "${tap}/${pkg}@${ver}"
+    else
+      brew install --formula "${pkg}" && echo "Installation of ${pkg} is successful" || brew upgrade --formula "$pkg"
+    fi
   done
 
   pip3 install --user cmake-format regex
@@ -125,7 +136,8 @@ function install_double_conversion {
 
 function install_folly {
   github_checkout facebook/folly "${FB_OS_VERSION}"
-  cmake_install -DBUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="$(brew --prefix openssl@1.1)"
+  OPENSSL_ROOT_DIR=$(brew --prefix openssl@1.1) \
+    cmake_install -DBUILD_TESTS=OFF
 }
 
 function install_ranges_v3 {

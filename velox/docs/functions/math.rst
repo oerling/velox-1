@@ -93,6 +93,18 @@ Mathematical Functions
     For example, if ``bins`` is ``ARRAY[0, 2, 4]``, then we have four bins:
     ``(-infinity(), 0)``, ``[0, 2)``, ``[2, 4)`` and ``[4, infinity())``.
 
+.. function:: sign(x) -> [same as x]
+
+    Returns the signum function of ``x``. For both integer and floating point arguments, it returns:
+    * 0 if the argument is 0,
+    * 1 if the argument is greater than 0,
+    * -1 if the argument is less than 0.
+
+    For double arguments, the function additionally return:
+    * NaN if the argument is NaN,
+    * 1 if the argument is +Infinity,
+    * -1 if the argument is -Infinity.
+
 
 ====================================
 Trigonometric Functions
@@ -133,3 +145,28 @@ Trigonometric Functions
 .. function:: tanh(x) -> double
 
     Returns the hyperbolic tangent of ``x``.
+
+
+====================================
+Floating Point Functions
+====================================
+
+.. function:: infinity() -> double
+
+    Returns the constant representing positive infinity.
+
+.. function:: is_finite(x) -> boolean
+
+    Determine if x is finite.
+
+.. function:: is_infinite(x) -> boolean
+
+    Determine if x is infinite.
+
+.. function:: is_nan(x) -> boolean
+
+    Determine if x is not-a-number.
+
+.. function:: nan() -> double
+
+    Returns the constant representing not-a-number.

@@ -26,4 +26,17 @@ target_link_libraries(
   ${DOUBLE_CONVERSION}
   ${GTEST_BOTH_LIBRARIES}
   ${gflags_LIBRARIES}
-  ${GLOG})
+  glog::glog)
+
+add_executable(velox_filter_benchmark FilterBenchmark.cpp)
+
+target_link_libraries(
+  velox_filter_benchmark
+  velox_type
+  velox_serialization
+  ${FOLLY}
+  ${FOLLY_BENCHMARK}
+  ${DOUBLE_CONVERSION}
+  ${GTEST_BOTH_LIBRARIES}
+  ${gflags_LIBRARIES}
+  glog::glog)

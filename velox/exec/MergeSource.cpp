@@ -79,13 +79,13 @@ class LocalMergeSource : public MergeSource {
       : queue_(LocalMergeSourceQueue(rowType, mappedMemory, queueSize)) {}
 
   BlockingReason next(ContinueFuture* future, char** row) override {
-    auto lockedQueue = queue_.wlock();
-    return lockedQueue->next(future, row);
+    return queue_.withWLock(
+        [&](auto& queue) { return queue.next(future, row); });
   }
 
   BlockingReason enqueue(RowVectorPtr input, ContinueFuture* future) override {
-    auto lockedQueue = queue_.wlock();
-    return lockedQueue->enqueue(input, future);
+    return queue_.withWLock(
+        [&](auto& queue) { return queue.enqueue(input, future); });
   }
 
  private:
@@ -272,5 +272,70 @@ std::shared_ptr<MergeSource> MergeSource::createMergeExchangeSource(
     MergeExchange* mergeExchange,
     const std::string& taskId) {
   return std::make_shared<MergeExchangeSource>(mergeExchange, taskId);
+}
+
+namespace {
+void notify(std::optional<VeloxPromise<bool>>& promise) {
+  if (promise) {
+    promise->setValue(true);
+    promise.reset();
+  }
+}
+} // namespace
+
+BlockingReason MergeJoinSource::next(
+    ContinueFuture* future,
+    RowVectorPtr* data) {
+  return state_.withWLock([&](auto& state) {
+    if (state.data != nullptr) {
+      *data = std::move(state.data);
+      notify(producerPromise_);
+      return BlockingReason::kNotBlocked;
+    }
+
+    if (state.atEnd) {
+      data = nullptr;
+      return BlockingReason::kNotBlocked;
+    }
+
+    consumerPromise_ = VeloxPromise<bool>("MergeJoinSource::next");
+    *future = consumerPromise_->getSemiFuture();
+    return BlockingReason::kWaitForExchange;
+  });
+}
+
+BlockingReason MergeJoinSource::enqueue(
+    RowVectorPtr data,
+    ContinueFuture* future) {
+  return state_.withWLock([&](auto& state) {
+    if (state.atEnd) {
+      // This can happen if consumer called close() because it doesn't need any
+      // more data.
+      // TODO Finish the pipeline early and avoid unnecessary computing.
+      return BlockingReason::kNotBlocked;
+    }
+
+    if (data == nullptr) {
+      state.atEnd = true;
+      notify(consumerPromise_);
+      return BlockingReason::kNotBlocked;
+    }
+
+    VELOX_CHECK_NULL(state.data);
+    state.data = std::move(data);
+    notify(consumerPromise_);
+
+    producerPromise_ = VeloxPromise<bool>("MergeJoinSource::enqueue");
+    *future = producerPromise_->getSemiFuture();
+    return BlockingReason::kWaitForConsumer;
+  });
+}
+
+void MergeJoinSource::close() {
+  state_.withWLock([&](auto& state) {
+    state.data = nullptr;
+    state.atEnd = true;
+    notify(producerPromise_);
+  });
 }
 } // namespace facebook::velox::exec

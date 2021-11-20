@@ -21,27 +21,28 @@ int SpillStream::ordinalCounter_;
 std::mutex SpillState::mutex_;
 uint64_t SpillState::sequence_ = 0;
 
+void SpillInput::next(bool throwIfPastEnd) {
+    int32_t readBytes = std::min(input_->size() - offset_, buffer_->capacity());
+    setRange({buffer_->asMutable<uint8_t>(), readBytes, 0});
+    input_->pread(offset_, readBytes, buffer_->asMutable<char>());
+    offset_ += readBytes;
+  }
+
+
 void SpillInput::seekp(Position position) {
   auto target = std::get<1>(position);
-  if (offset_ <= target && offset_ + current_->size < target) {
-    current_->position = target - offset_;
+  auto bufferOffset = offset_ - current_->size;
+  if (bufferOffset <= target && bufferOffset + current_->size < target) {
+    current_->position = target - bufferOffset;
   } else {
-    // The seek target is not in the buffer. We load a full buffer
-    // starting at the target or if there is less than a full buffer
-    // left, at file size - buffer size. The bytes in the buffer
-    // must all be valid.
-    auto bufferSize = current_->size;
-    VELOX_CHECK_GE(size_, bufferSize);
-    if (target + bufferSize > size_) {
-      offset_ = size_ - bufferSize;
-      current_->position = bufferSize - (size_ - target);
-    } else {
-      
-      current_->position = 0;
-    }
-    input_->pread(offset_, current_->size, current_->buffer);
+    // The seek target is not in the buffer.
+    offset_ = target;
+    current_->position = 0;
+    current_->size = 0;
+    next(true);
   }
 }
+  
 
 SpillFile::~SpillFile() {
   if (path_[0] == '/') {

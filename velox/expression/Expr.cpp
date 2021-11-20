@@ -733,6 +733,11 @@ void Expr::evalWithMemo(
       }
 
       cachedDictionaryIndices_->select(*uncached);
+
+      // Resize the dictionaryCache_ to accommodate all the necessary rows.
+      if (dictionaryCache_->size() < uncached->end()) {
+        dictionaryCache_->resize(uncached->end());
+      }
       dictionaryCache_->copy(result->get(), *uncached, nullptr);
     }
     return;
@@ -1009,7 +1014,7 @@ bool Expr::applyFunctionWithPeeling(
   } else {
     auto decoded = localDecoded.get();
     decoded->makeIndices(*firstWrapper, applyRows, numLevels);
-    newRows = translateToInnerRows(rows, *decoded, newRowsHolder);
+    newRows = translateToInnerRows(applyRows, *decoded, newRowsHolder);
     context->saveAndReset(&saver, rows);
     setDictionaryWrapping(*decoded, rows, *firstWrapper, context);
   }
