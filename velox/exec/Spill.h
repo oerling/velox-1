@@ -203,38 +203,43 @@ class FileList {
         pool_(pool),
         mappedMemory_(mappedMemory) {}
 
-      // Adds 'rows' for the positions in 'indices' into 'this'. The indices
-      // must produce a view where the rows are sorted if sorting is desired.
-      // Consecutive calls must have sorted data so that the first row of the
-      // next call is not less than the last row of the previous call.
-      void write(RowVectorPtr rows, const folly::Range<IndexRange*> indices);
-      std::vector<std::unique_ptr<SpillFile>> files() {
-        return std::move(files_);
-      }
+  // Adds 'rows' for the positions in 'indices' into 'this'. The indices
+  // must produce a view where the rows are sorted if sorting is desired.
+  // Consecutive calls must have sorted data so that the first row of the
+  // next call is not less than the last row of the previous call.
+  void write(RowVectorPtr rows, const folly::Range<IndexRange*> indices);
+  std::vector<std::unique_ptr<SpillFile>> files() {
+    return std::move(files_);
+  }
 
-      // Closes one file of output. Subsequent calls to 'write' start a
-      // different sorted run and must be ordered between themselves but not
-      // with respect to calls before flush(). If 'close' is true, write must
-      // not be called and the file set can only be read.
-      void flush(bool close);
+  // Closes one file of output. Subsequent calls to 'write' start a
+  // different sorted run and must be ordered between themselves but not
+  // with respect to calls before flush(). If 'close' is true, write must
+  // not be called and the file set can only be read.
+  void flush(bool close);
 
-     private:
-      const TypePtr type_;
-      const std::string path_;
-      const uint64_t targetBatchSize_;
-      const uint64_t targetFileSize_;
-      memory::MemoryPool& pool_;
-      memory::MappedMemory* const mappedMemory_;
-      std::unique_ptr<VectorStreamGroup> batch_;
-      bool isOpen_ = false;
-      std::vector<std::unique_ptr<SpillFile>> files_;
+ private:
+  const TypePtr type_;
+  const std::string path_;
+  const uint64_t targetBatchSize_;
+  const uint64_t targetFileSize_;
+  memory::MemoryPool& pool_;
+  memory::MappedMemory* const mappedMemory_;
+  std::unique_ptr<VectorStreamGroup> batch_;
+  bool isOpen_ = false;
+  std::vector<std::unique_ptr<SpillFile>> files_;
 };
 
 // Represents all spilled data of an operator, e.g. order by or group
 // by. This has one FileList per partition of spill data.
 class SpillState {
  public:
-  // Constructs a SpillState. 'type' is the content RowType. 'path' is the file system path prefix. 'bits' is the hash bit field for partitioning data between files. This also gives the maximum number of partitions. 'targetFileSize' is the target size of a single file. 'targetBatchSize is the target number of rows in a single RowVector written to a spill file. 'pool' and 'mappedMemory' own the memory for state and results. 
+  // Constructs a SpillState. 'type' is the content RowType. 'path' is the file
+  // system path prefix. 'bits' is the hash bit field for partitioning data
+  // between files. This also gives the maximum number of partitions.
+  // 'targetFileSize' is the target size of a single file. 'targetBatchSize is
+  // the target number of rows in a single RowVector written to a spill file.
+  // 'pool' and 'mappedMemory' own the memory for state and results.
   SpillState(
       TypePtr type,
       const std::string& path,
@@ -283,7 +288,8 @@ class SpillState {
     return pool_;
   }
 
-  // Appends data to 'way'. The rows  given by 'indices'  must be sorted and must hash to 'way'.
+  // Appends data to 'way'. The rows  given by 'indices'  must be sorted and
+  // must hash to 'way'.
   void write(
       uint16_t way,
       RowVectorPtr rows,

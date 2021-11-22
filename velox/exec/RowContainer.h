@@ -779,7 +779,8 @@ class RowContainer {
       uint64_t targetSize,
       std::vector<char*>* nonSpilledRows = nullptr);
 
-  // Creates a vector to append to spilling and erases the coresponding rows after spilling.
+  // Creates a vector to append to spilling and erases the coresponding rows
+  // after spilling.
   void advanceSpill(SpillState& spill, Eraser eraser);
 
   // Free any variable-width fields associated with the 'rows'.

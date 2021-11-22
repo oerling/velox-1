@@ -182,7 +182,7 @@ inline int32_t ByteRange::available<bool>() {
 // for streams in repartitioning or for complex variable length data
 // in hash tables.
 class ByteStream {
-protected:
+ protected:
   using Position = std::tuple<ByteRange*, int64_t>;
 
  public:
@@ -449,7 +449,7 @@ protected:
   // bit order.
   bool isReversed_ = false;
 
-protected:
+ protected:
   std::vector<ByteRange> ranges_;
   // Pointer to the current element of 'ranges_'.
   ByteRange* current_ = nullptr;

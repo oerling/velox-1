@@ -55,7 +55,7 @@ add_library(
 target_link_libraries(
   velox_exec
   velox_file
-velox_core
+  velox_core
   velox_vector
   velox_connector
   velox_time

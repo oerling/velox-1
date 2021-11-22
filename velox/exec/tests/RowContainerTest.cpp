@@ -564,7 +564,6 @@ TEST_F(RowContainerTest, spill) {
       *pool_,
       mappedMemory_);
 
-  
   EXPECT_EQ(1, spillState->maxWays());
   spillState->setNumWays(1);
   EXPECT_EQ(1, spillState->numWays());

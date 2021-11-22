@@ -179,8 +179,8 @@ class Aggregate {
   // for e.g. spilling.
   virtual TypePtr accumulatorType() const {
     return resultType_;
-}
-  
+  }
+
   // Clears state between reuses, e.g. this is called before reusing
   // the aggregation operator's state after flushing a partial
   // aggregation.
