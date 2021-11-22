@@ -28,6 +28,7 @@ add_library(
   HashPartitionFunction.cpp
   HashProbe.cpp
   HashStringAllocator.cpp
+  Spill.cpp
   HashTable.cpp
   JoinBridge.cpp
   Limit.cpp
@@ -53,7 +54,8 @@ add_library(
 
 target_link_libraries(
   velox_exec
-  velox_core
+  velox_file
+velox_core
   velox_vector
   velox_connector
   velox_time

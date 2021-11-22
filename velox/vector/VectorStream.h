@@ -182,7 +182,8 @@ inline int32_t ByteRange::available<bool>() {
 // for streams in repartitioning or for complex variable length data
 // in hash tables.
 class ByteStream {
-  using Position = std::tuple<ByteRange*, int32_t>;
+protected:
+  using Position = std::tuple<ByteRange*, int64_t>;
 
  public:
   // For input.
@@ -223,11 +224,11 @@ class ByteStream {
     current_->position = position;
   }
 
-  Position tellp() const {
+  virtual Position tellp() const {
     return std::make_tuple(current_, current_->position);
   }
 
-  void seekp(Position position) {
+  virtual void seekp(Position position) {
     current_ = std::get<0>(position);
     current_->position = std::get<1>(position);
   }
@@ -447,6 +448,8 @@ class ByteStream {
   // True if the bit order in ranges_ has been inverted. Presto requires reverse
   // bit order.
   bool isReversed_ = false;
+
+protected:
   std::vector<ByteRange> ranges_;
   // Pointer to the current element of 'ranges_'.
   ByteRange* current_ = nullptr;
