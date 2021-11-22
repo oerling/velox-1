@@ -559,13 +559,13 @@ TEST_F(RowContainerTest, spill) {
       });
 
   auto spillState = std::make_unique<SpillState>(
-						 std::dynamic_pointer_cast<const RowType>(batch->type()),
+      std::dynamic_pointer_cast<const RowType>(batch->type()),
       "/tmp/spill",
       HashBitRange{0, 0},
       2000000,
       1000,
       *pool_,
-						 *mappedMemory_);
+      *mappedMemory_);
 
   EXPECT_EQ(1, spillState->maxPartitions());
   spillState->setNumPartitions(1);
@@ -588,9 +588,10 @@ TEST_F(RowContainerTest, spill) {
   // We read the spilled data back and check that it matches the sorted order of
   // the source batch.
   for (auto i = 0; i < kNumRows; ++i) {
-    auto row = merge->next([&](const SpillFileRow& left, const SpillFileRow& right) {
-      return SpillState::compareSpilled(left, right, keys.size());
-    });
+    auto row =
+        merge->next([&](const SpillFileRow& left, const SpillFileRow& right) {
+          return SpillState::compareSpilled(left, right, keys.size());
+        });
     EXPECT_TRUE(batch->equalValueAt(
         row.value().rowVector, sortedIndices[i], row.value().index));
   }

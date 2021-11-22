@@ -130,7 +130,8 @@ int32_t SpillState::compareSpilled(
 
 void SpillState::setNumPartitions(int32_t numPartitions) {
   numPartitions_ = numPartitions;
-  for (auto newPartition = files_.size(); newPartition < numPartitions_; ++newPartition) {
+  for (auto newPartition = files_.size(); newPartition < numPartitions_;
+       ++newPartition) {
     files_.push_back(std::make_unique<SpillFileList>(
         type_,
         fmt::format("{}-{}", path_, newPartition),
@@ -167,4 +168,4 @@ std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> SpillState::startMerge(
       std::move(result));
 }
 
-} // namespace facebook::velox::exe
+} // namespace facebook::velox::exec

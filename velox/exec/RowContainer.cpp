@@ -504,7 +504,7 @@ void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   }
 }
 
-  RowTypePtr RowContainer::spillType() {
+RowTypePtr RowContainer::spillType() {
   if (spillType_) {
     return spillType_;
   }
@@ -617,7 +617,8 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
     folly::Range<char**> spilled(run.rows.data(), i);
     extractSpill(spilled, *spillVector_);
     IndexRange range{0, spillVector_->size()};
-    spill.appendToPartition(runIndex, spillVector_, folly::Range<IndexRange*>(&range, 1));
+    spill.appendToPartition(
+        runIndex, spillVector_, folly::Range<IndexRange*>(&range, 1));
     if (eraser) {
       eraser(spilled);
     }
@@ -657,7 +658,9 @@ void RowContainer::spill(
       return;
     }
     auto targetSize = spill.targetFileSize();
-    for (auto newPartition = spillRuns_.size(); newPartition < spill.numPartitions(); ++newPartition) {
+    for (auto newPartition = spillRuns_.size();
+         newPartition < spill.numPartitions();
+         ++newPartition) {
       spillRuns_.emplace_back();
     }
     clearSpillRuns();

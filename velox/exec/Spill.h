@@ -27,7 +27,8 @@ namespace facebook::velox::exec {
 // A lightweight, non-owning reference to a row in a RowVector read from
 // spill.
 struct SpillFileRow {
-  // Decodes each column of 'rowVector'. The decoding is done right after reading 'rowVector' from a spill file.
+  // Decodes each column of 'rowVector'. The decoding is done right after
+  // reading 'rowVector' from a spill file.
   std::vector<std::unique_ptr<DecodedVector>>* decoded;
   // A batch of rows read from a spill file.
   RowVector* rowVector;
@@ -40,8 +41,9 @@ class SpillInput : public ByteStream {
  public:
   // Reads from 'input' using 'buffer' for buffering reads.
   SpillInput(std::unique_ptr<ReadFile>&& input, BufferPtr buffer)
-    : input_(std::move(input)), buffer_(std::move(buffer)),
-      size_(input_->size()) {
+      : input_(std::move(input)),
+        buffer_(std::move(buffer)),
+        size_(input_->size()) {
     next(true);
   }
 
@@ -110,7 +112,8 @@ class SpillStream {
   }
 
  protected:
-  // Loads the next RowVector from the backing storage, e.g. spill file or RowContainer.
+  // Loads the next RowVector from the backing storage, e.g. spill file or
+  // RowContainer.
   virtual void nextBatch() = 0;
 
   const std::shared_ptr<const RowType> type_;
@@ -195,11 +198,11 @@ struct HashBitRange {
 // by merging the constituent files.
 class SpillFileList {
  public:
-  // Constructs a set of spill files. 'type' is a RowType describing the content.
-  // 'path' is a file path prefix. 'targetBatchSize is the target
-  // size of a single RowVector in rows. 'targetFileSize' is the target byte
-  // size of a single file in the file set. 'pool' and 'mappedMemory' are used
-  // for buffering and constructing the result data read from 'this'.
+  // Constructs a set of spill files. 'type' is a RowType describing the
+  // content. 'path' is a file path prefix. 'targetBatchSize is the target size
+  // of a single RowVector in rows. 'targetFileSize' is the target byte size of
+  // a single file in the file set. 'pool' and 'mappedMemory' are used for
+  // buffering and constructing the result data read from 'this'.
   SpillFileList(
       RowTypePtr type,
       const std::string path,
@@ -252,7 +255,7 @@ class SpillState {
   // the target number of rows in a single RowVector written to a spill file.
   // 'pool' and 'mappedMemory' own the memory for state and results.
   SpillState(
-	     RowTypePtr type,
+      RowTypePtr type,
       const std::string& path,
       HashBitRange bits,
       uint64_t targetFileSize,
@@ -299,8 +302,8 @@ class SpillState {
     return pool_;
   }
 
-  // Appends data to 'partition'. The rows  given by 'indices'  must be sorted and
-  // must hash to 'partition'.
+  // Appends data to 'partition'. The rows  given by 'indices'  must be sorted
+  // and must hash to 'partition'.
   void appendToPartition(
       uint16_t partition,
       const RowVectorPtr& rows,
