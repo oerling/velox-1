@@ -235,26 +235,33 @@ class DriverTest : public OperatorTestBase {
     std::lock_guard<std::mutex> l(wakeupMutex_);
     if (!wakeupInitialized_) {
       wakeupInitialized_ = true;
-      wakeupThread_ = std::thread([&]() {
+      wakeupThread_ = std::thread([this]() {
         int32_t counter = 0;
-        for (;;) {
-          if (wakeupCancelled_) {
-            return;
-          }
-          // Wait a small interval and realize a small number of queued
-          // promises, if any.
+	for (;;) {
+	  {
+	    std::lock_guard<std::mutex> l(wakeupMutex_);
+	    if (wakeupCancelled_) {
+	      return;
+	    }
+	  }
+	    // Wait a small interval and realize a small number of queued
+	    // promises, if any.
           auto units = 1 + (++counter % 5);
+
           // NOLINT
           std::this_thread::sleep_for(std::chrono::milliseconds(units));
-          auto count = 1 + (++counter % 4);
-          for (auto i = 0; i < count; ++i) {
-            if (wakeupPromises_.empty()) {
-              break;
-            }
-            wakeupPromises_.front().setValue(true);
-            wakeupPromises_.pop_front();
-          }
-        }
+	  {
+	    std::lock_guard<std::mutex> l(wakeupMutex_);
+	    auto count = 1 + (++counter % 4);
+	    for (auto i = 0; i < count; ++i) {
+	      if (wakeupPromises_.empty()) {
+		break;
+	      }
+	      wakeupPromises_.front().setValue(true);
+	      wakeupPromises_.pop_front();
+	    }
+	  }
+	  }
       });
     }
     auto [promise, semiFuture] = makeVeloxPromiseContract<bool>("wakeup");
@@ -296,7 +303,7 @@ class DriverTest : public OperatorTestBase {
   std::deque<folly::Promise<bool>> wakeupPromises_;
   bool wakeupInitialized_{false};
   // Set to true when it is time to exit 'wakeupThread_'.
-  bool wakeupCancelled_{false};
+  std::atomic<bool> wakeupCancelled_{false};
 
   std::shared_ptr<const RowType> rowType_;
   std::mutex mutex_;
@@ -596,7 +603,7 @@ TEST_F(DriverTest, pauserNode) {
   constexpr int32_t kThreadsPerTask = 5;
   // Run with a fraction of the testing threads fitting in the executor.
   Driver::testingJoinAndReinitializeExecutor(20);
-  static int32_t sequence = 0;
+  static std::atomic<int32_t> sequence{0};
   // Use a static variable to pass the test instance to the create
   // function of the testing operator. The testing operator registers
   // all its Tasks in the test instance to create inter-Task pauses.

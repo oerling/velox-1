@@ -74,13 +74,13 @@ enum class StopReason {
 // suspended, off thread or blocked.
 struct ThreadState {
   // The thread currently running this.
-  std::thread::id thread;
+  std::atomic<std::thread::id> thread;
   // The tid of 'thread'. Allows finding the thread in a debugger.
-  int32_t tid;
+  std::atomic<int32_t> tid;
   // True if queued on an executor but not on thread.
-  bool isEnqueued{false};
+  std::atomic<bool> isEnqueued{false};
   // True if being terminated or already terminated.
-  bool isTerminated{false};
+  std::atomic<bool> isTerminated{false};
   // True if there is a future outstanding that will schedule this on an
   // executor thread when some promise is realized.
   bool hasBlockingFuture{false};
@@ -229,9 +229,13 @@ class CancelPool {
   }
 
   std::mutex mutex_;
-  bool pauseRequested_ = false;
-  bool terminateRequested_ = false;
-  int32_t toYield_ = 0;
+  // The data members are serialized on 'mutex_'. Some of them are
+  // declared atomic for tsan because they are sometimes tested
+  // outside of 'mutex_' for a value of 0/false, which is safe to
+  // access without acquiring 'nutex_'.
+  std::atomic<bool> pauseRequested_{false};
+  std::atomic<bool> terminateRequested_{false};
+  std::atomic<int32_t> toYield_ = 0;
   int32_t numThreads_ = 0;
   std::vector<VeloxPromise<bool>> finishPromises_;
 };
