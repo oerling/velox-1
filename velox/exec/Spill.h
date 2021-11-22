@@ -276,7 +276,7 @@ class SpillState {
 
   // Returns how many ways spilled data can be partitioned.
   uint16_t maxWays() {
-    return 1 << bits_.end - bits_.begin;
+    return 1 << (bits_.end - bits_.begin);
   }
 
   uint64_t targetFileSize() const {
