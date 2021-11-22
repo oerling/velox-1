@@ -254,7 +254,7 @@ class SpillState {
       : type_(type),
         path_(path),
         bits_(bits),
-        fieldMask_(((1UL << bits_.end - bits_.begin)) - 1),
+        fieldMask_(((1UL << (bits_.end - bits_.begin))) - 1),
         targetFileSize_(targetFileSize),
         targetBatchSize_(targetBatchSize),
         pool_(pool),
