@@ -237,31 +237,31 @@ class DriverTest : public OperatorTestBase {
       wakeupInitialized_ = true;
       wakeupThread_ = std::thread([this]() {
         int32_t counter = 0;
-	for (;;) {
-	  {
-	    std::lock_guard<std::mutex> l(wakeupMutex_);
-	    if (wakeupCancelled_) {
-	      return;
-	    }
-	  }
-	    // Wait a small interval and realize a small number of queued
-	    // promises, if any.
+        for (;;) {
+          {
+            std::lock_guard<std::mutex> l(wakeupMutex_);
+            if (wakeupCancelled_) {
+              return;
+            }
+          }
+          // Wait a small interval and realize a small number of queued
+          // promises, if any.
           auto units = 1 + (++counter % 5);
 
           // NOLINT
           std::this_thread::sleep_for(std::chrono::milliseconds(units));
-	  {
-	    std::lock_guard<std::mutex> l(wakeupMutex_);
-	    auto count = 1 + (++counter % 4);
-	    for (auto i = 0; i < count; ++i) {
-	      if (wakeupPromises_.empty()) {
-		break;
-	      }
-	      wakeupPromises_.front().setValue(true);
-	      wakeupPromises_.pop_front();
-	    }
-	  }
-	  }
+          {
+            std::lock_guard<std::mutex> l(wakeupMutex_);
+            auto count = 1 + (++counter % 4);
+            for (auto i = 0; i < count; ++i) {
+              if (wakeupPromises_.empty()) {
+                break;
+              }
+              wakeupPromises_.front().setValue(true);
+              wakeupPromises_.pop_front();
+            }
+          }
+        }
       });
     }
     auto [promise, semiFuture] = makeVeloxPromiseContract<bool>("wakeup");
