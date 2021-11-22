@@ -17,7 +17,7 @@
 
 namespace facebook::velox::exec {
 
-int SpillStream::ordinalCounter_;
+  std::atomic<int32_t> SpillStream::ordinalCounter_;
 std::mutex SpillState::mutex_;
 uint64_t SpillState::sequence_ = 0;
 

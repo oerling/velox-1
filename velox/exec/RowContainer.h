@@ -325,6 +325,18 @@ class RowContainer {
     return 0;
   }
 
+  // Spills rows from 'this' into 'spill' until there are
+  // 'targetFreeRows' free rows and 'targetFreeBytes' of free space or
+  // everything has been spilled. 'iterator' should be at the start of
+  // 'this' on first call. 'eraser' is called to remove rows after
+  // they are spilled. This may for example remove these from a group
+  // by hash table in addition to removing these from 'this'. 'eraser'
+  // is required and minimally removes the rows it gets from
+  // 'this'. 'spill' may specify multiple spill partitions. spill()
+  // starts with one spill partition and initializes more spill
+  // partitions as needed to hit the size target. If there is no more
+  // data to spill in one hash range, it starts spilling another hash
+  // range until everything is spillable.
   void spill(
       SpillState& spill,
       uint64_t targetFreeRows,
@@ -334,14 +346,6 @@ class RowContainer {
 
   // Clears pending spill state.
   void clearSpillRuns();
-
-  // Prepares spill runs for the spillable hash number ranges in 'spill'.
-  bool fillSpillRuns(
-      SpillState& spill,
-      Eraser eraser,
-      RowContainerIterator& iterator,
-      uint64_t targetSize,
-      std::vector<char*>* nonSpilledRows = nullptr);
 
   // Returns a mergeable stream that goes over unspilled in-memory
   // rows for the spill way 'way'. fillSpillRuns must have been called
@@ -767,6 +771,15 @@ class RowContainer {
       int32_t offset,
       CompareFlags flags);
 
+  // Prepares spill runs for the spillable hash number ranges in 'spill'.
+  bool fillSpillRuns(
+      SpillState& spill,
+      Eraser eraser,
+      RowContainerIterator& iterator,
+      uint64_t targetSize,
+      std::vector<char*>* nonSpilledRows = nullptr);
+
+  // Creates a vector to append to spilling and erases the coresponding rows after spilling.
   void advanceSpill(SpillState& spill, Eraser eraser);
 
   // Free any variable-width fields associated with the 'rows'.
@@ -824,10 +837,16 @@ class RowContainer {
   HashStringAllocator stringAllocator_;
   const RowSerde& serde_;
 
+  // One spill run for each partition of spillable data.
   std::vector<SpillRun> spillRuns_;
+
   // Indices into 'spillRuns_' that are currently getting spilled.
   std::unordered_set<int32_t> spillingRuns_;
+
+  // Type of the row written to spill.
   TypePtr spillType_;
+
+  // Temporary vector for adding to spilled data.
   RowVectorPtr spillVector_;
 
   // RowContainer requires a valid reference to a vector of aggregates. We

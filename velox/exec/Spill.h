@@ -29,10 +29,10 @@ struct VectorRow {
   vector_size_t index;
 };
 
-enum class SpillKind { kGroupBy, kHashBuild, kHashProbe };
-
+// Input stream backed by spill file.
 class SpillInput : public ByteStream {
  public:
+  // Reads from 'input' using 'buffer' for buffering reads.
   SpillInput(std::unique_ptr<ReadFile>&& input, BufferPtr buffer)
       : input_(std::move(input)), buffer_(std::move(buffer)) {
     size_ = input_->size();
@@ -41,14 +41,19 @@ class SpillInput : public ByteStream {
 
   void next(bool throwIfPastEnd) override;
 
+  // True if of the file has been read into vectors.
   bool atEnd() const {
     return offset_ == size_ && ranges()[0].position >= ranges()[0].size;
   }
 
+  // Returns the offset of the first byte of input that is not yet consumed. May
+  // be used with seekp to rewind a read.
   Position tellp() const override {
-    return std::make_tuple(nullptr, offset_ - current_->size + current_->position);
+    return std::make_tuple(
+        nullptr, offset_ - current_->size + current_->position);
   }
 
+  // Positions the file so tht the byte at 'position' is the first to be read.
   void seekp(Position position) override;
 
  private:
@@ -107,10 +112,13 @@ class SpillStream {
   vector_size_t index_ = 0;
   vector_size_t numRows_ = 0;
   std::vector<std::unique_ptr<DecodedVector>> decoded_;
-  int ordinal_;
-  static int ordinalCounter_;
+  int32_t ordinal_;
+  static std::atomic<int32_t> ordinalCounter_;
 };
 
+// Represents a spill file that is first in write mode and then
+// turns into an source of VectorRow. Owns a file system file that
+// contains the spilled data and is live for the duration of 'this'.
 class SpillFile : public SpillStream {
  public:
   SpillFile(TypePtr type, const std::string& path, memory::MemoryPool& pool)
@@ -118,15 +126,21 @@ class SpillFile : public SpillStream {
 
   ~SpillFile();
 
+  // Returns a file for writing spilled data.
   WriteFile& output();
 
+  // Finishes writing and flushes any unwritten data.
   void finishWrite() {
     VELOX_CHECK(output_);
     size_ = output_->size();
     output_ = nullptr;
   }
+
+  // Prepares 'this' for reading. Positions the read at the first row of
+  // content.
   void startRead();
 
+  // Returns the file size in bytes.
   uint64_t size() const override {
     if (output_) {
       return output_->size();
@@ -134,10 +148,12 @@ class SpillFile : public SpillStream {
     return size_;
   }
 
+  // True if no more VectorRows can be read from 'this'.
   bool atEnd() const override {
     return index_ >= numRows_ && stream_->atEnd();
   }
 
+  // Sets 'result' to refer to the next row of content of 'this'.
   void read(RowVector& result);
 
  protected:
@@ -154,6 +170,8 @@ class SpillFile : public SpillStream {
   std::unique_ptr<SpillInput> stream_;
 };
 
+// Describes a bit field inside a 64 bit hash number for use in
+// partitioning data over multiple sets of spill files.
 struct HashBitField {
   // Low bit number of hash number bit field
   uint8_t begin;
@@ -161,9 +179,16 @@ struct HashBitField {
   uint8_t end;
 };
 
-// Sequence of files for one range of hash numbers
+// Sequence of files for one partition of the spilled data. If data is
+// sorted, each file is sorted. The globally sorted order is produced
+// by merging the constituent files.
 class FileList {
  public:
+  // Constructs a set of spill files. 'type' a RowType describing the content.
+  // 'path' is a file path prefix.  FileList( 'targetBatchSize is the target
+  // size of a single RowVector in rows. 'targetFileSize' is the target byte
+  // size of a single file in the file set. 'pool' and 'mappedMemory' are used
+  // for buffering and constructing the result data read from 'this'.
   FileList(
       TypePtr type,
       const std::string path,
@@ -177,28 +202,39 @@ class FileList {
         targetFileSize_(targetFileSize),
         pool_(pool),
         mappedMemory_(mappedMemory) {}
-  void write(RowVectorPtr rows, const folly::Range<IndexRange*> indices);
-  std::vector<std::unique_ptr<SpillFile>> files() {
-    return std::move(files_);
-  }
 
-  void flush(bool close);
+      // Adds 'rows' for the positions in 'indices' into 'this'. The indices
+      // must produce a view where the rows are sorted if sorting is desired.
+      // Consecutive calls must have sorted data so that the first row of the
+      // next call is not less than the last row of the previous call.
+      void write(RowVectorPtr rows, const folly::Range<IndexRange*> indices);
+      std::vector<std::unique_ptr<SpillFile>> files() {
+        return std::move(files_);
+      }
 
- private:
-  const TypePtr type_;
-  const std::string path_;
-  const uint64_t targetBatchSize_;
-  const uint64_t targetFileSize_;
-  memory::MemoryPool& pool_;
-  memory::MappedMemory* const mappedMemory_;
-  std::unique_ptr<VectorStreamGroup> batch_;
-  bool isOpen_ = false;
-  std::vector<std::unique_ptr<SpillFile>> files_;
+      // Closes one file of output. Subsequent calls to 'write' start a
+      // different sorted run and must be ordered between themselves but not
+      // with respect to calls before flush(). If 'close' is true, write must
+      // not be called and the file set can only be read.
+      void flush(bool close);
+
+     private:
+      const TypePtr type_;
+      const std::string path_;
+      const uint64_t targetBatchSize_;
+      const uint64_t targetFileSize_;
+      memory::MemoryPool& pool_;
+      memory::MappedMemory* const mappedMemory_;
+      std::unique_ptr<VectorStreamGroup> batch_;
+      bool isOpen_ = false;
+      std::vector<std::unique_ptr<SpillFile>> files_;
 };
 
-// Set of files keyed by hash number range.
+// Represents all spilled data of an operator, e.g. order by or group
+// by. This has one FileList per partition of spill data.
 class SpillState {
  public:
+  // Constructs a SpillState. 'type' is the content RowType. 'path' is the file system path prefix. 'bits' is the hash bit field for partitioning data between files. This also gives the maximum number of partitions. 'targetFileSize' is the target size of a single file. 'targetBatchSize is the target number of rows in a single RowVector written to a spill file. 'pool' and 'mappedMemory' own the memory for state and results. 
   SpillState(
       TypePtr type,
       const std::string& path,
@@ -216,6 +252,8 @@ class SpillState {
         pool_(pool),
         mappedMemory_(mappedMemory) {}
 
+  // Returns which spill partition 'hash' falls. Returns -1 if the
+  // partition of 'hash' is has not been started.
   int32_t way(uint64_t hash) {
     auto field = (hash >> bits_.begin) & fieldMask_;
     return field < numWays_ ? field : -1;
@@ -225,8 +263,10 @@ class SpillState {
     return numWays_;
   }
 
+  // Sets how many of the spill partitions are in use.
   void setNumWays(int32_t numWays);
 
+  // Returns how many ways spilled data can be partitioned.
   uint16_t maxWays() {
     return 1 << bits_.end - bits_.begin;
   }
@@ -243,32 +283,27 @@ class SpillState {
     return pool_;
   }
 
+  // Appends data to 'way'. The rows  given by 'indices'  must be sorted and must hash to 'way'.
   void write(
       uint16_t way,
       RowVectorPtr rows,
       const folly::Range<IndexRange*> indices);
 
+  // Finishes a sorted run for 'way'. If write is called for 'way'
+  // again, the data does not have to be sorted relative to the data
+  // written so far.
   void finishWrite(uint16_t way) {
     files_[way]->flush(true);
   }
 
-  void finishWrite() {
-    for (auto& file : files_) {
-      file->flush(true);
-    }
-  }
-
-  void merge(std::vector<std::unique_ptr<SpillState>>&& others);
-
-  static uint64_t spillFileId() {
-    std::lock_guard<std::mutex> l(mutex_);
-    return ++sequence_;
-  }
-
+  // Starts reading values for 'way'. If 'extra' is non-null, it can be
+  // a stream of rows from a RowContainer so as to merge unspilled
+  // data with spilled data.
   std::unique_ptr<TreeOfLosers<VectorRow, SpillStream>> startMerge(
       uint16_t way,
       std::unique_ptr<SpillStream>&& extra);
 
+  // Helper function for comparing current elements of streams to merge.
   static int32_t compareSpilled(
       const VectorRow& left,
       const VectorRow& right,

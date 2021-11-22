@@ -563,7 +563,14 @@ TEST_F(RowContainerTest, spill) {
       1000,
       *pool_,
       mappedMemory_);
+
+  
+  EXPECT_EQ(1, spillState->maxWays());
+  spillState->setNumWays(1);
+  EXPECT_EQ(1, spillState->numWays());
+
   RowContainerIterator iter;
+
   // We spill size * 0.8 bytes/rows.
   data->spill(
       *spillState,
