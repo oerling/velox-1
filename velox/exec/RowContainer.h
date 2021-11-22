@@ -306,7 +306,7 @@ class RowContainer {
   // Returns the number of fixed size rows that can be allocated
   // without growing the container and the number of unused bytes of
   // reserved storage for variable length data.
-  std::pair<uint64_t, uint64_t> freeSpace() {
+  std::pair<uint64_t, uint64_t> freeSpace() const {
     return std::make_pair<uint64_t, uint64_t>(
         rows_.availableInRun() / fixedRowSize_ + numFreeRows_,
         stringAllocator_.freeSpace());
@@ -354,9 +354,9 @@ class RowContainer {
       uint16_t way,
       memory::MemoryPool& pool);
 
-  TypePtr spillType();
+  RowTypePtr spillType();
 
-  void extractSpill(folly::Range<char**> rows, RowVector* result);
+  void extractSpill(folly::Range<char**> rows, RowVector& result);
 
   // Returns estimated number of rows a batch can support for
   // the given batchSizeInBytes.
@@ -845,7 +845,7 @@ class RowContainer {
   std::unordered_set<int32_t> spillingRuns_;
 
   // Type of the row written to spill.
-  TypePtr spillType_;
+  RowTypePtr spillType_;
 
   // Temporary vector for adding to spilled data.
   RowVectorPtr spillVector_;

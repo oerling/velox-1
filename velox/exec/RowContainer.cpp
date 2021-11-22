@@ -504,7 +504,7 @@ void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   }
 }
 
-TypePtr RowContainer::spillType() {
+  RowTypePtr RowContainer::spillType() {
   if (spillType_) {
     return spillType_;
   }
@@ -520,20 +520,19 @@ TypePtr RowContainer::spillType() {
   return spillType_ = ROW(std::move(names), std::move(types));
 }
 
-void RowContainer::extractSpill(folly::Range<char**> rows, RowVector* result) {
-  result->resize(rows.size());
+void RowContainer::extractSpill(folly::Range<char**> rows, RowVector& result) {
+  result.resize(rows.size());
   for (auto i = 0; i < keyTypes_.size(); ++i) {
-    extractColumn(rows.data(), rows.size(), i, result->childAt(i));
+    extractColumn(rows.data(), rows.size(), i, result.childAt(i));
   }
   for (auto i = 0; i < aggregates_.size(); ++i) {
     aggregates_[i]->finalize(rows.data(), rows.size());
     aggregates_[i]->extractAccumulators(
-        rows.data(), rows.size(), &result->childAt(i + keyTypes_.size()));
+        rows.data(), rows.size(), &result.childAt(i + keyTypes_.size()));
   }
   if (aggregates_.empty()) {
-    int32_t firstDependentIndex = keyTypes_.size();
     for (auto i = keyTypes_.size(); i < types_.size(); ++i) {
-      extractColumn(rows.data(), rows.size(), i, result->childAt(i));
+      extractColumn(rows.data(), rows.size(), i, result.childAt(i));
     }
   }
 }
@@ -545,7 +544,7 @@ namespace {
 class RowContainerSpillStream : public SpillStream {
  public:
   RowContainerSpillStream(
-      TypePtr type,
+      RowTypePtr type,
       memory::MemoryPool& pool,
       std::vector<char*>&& rows,
       RowContainer* container)
@@ -554,7 +553,7 @@ class RowContainerSpillStream : public SpillStream {
         container_(container) {}
 
   bool atEnd() const override {
-    return index_ >= numRows_ && nextBatchIndex_ == rows_.size();
+    return index_ >= numRowsInVector_ && nextBatchIndex_ == rows_.size();
   }
 
  protected:
@@ -576,8 +575,9 @@ class RowContainerSpillStream : public SpillStream {
       }
     }
     container_->extractSpill(
-        folly::Range(&rows_[nextBatchIndex_], numRows), rowVector_.get());
+        folly::Range(&rows_[nextBatchIndex_], numRows), *rowVector_);
     nextBatchIndex_ += numRows;
+    numRowsInVector_ = rowVector_->size();
   }
 
  private:
@@ -615,9 +615,9 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
       }
     }
     folly::Range<char**> spilled(run.rows.data(), i);
-    extractSpill(spilled, spillVector_.get());
+    extractSpill(spilled, *spillVector_);
     IndexRange range{0, spillVector_->size()};
-    spill.write(runIndex, spillVector_, folly::Range<IndexRange*>(&range, 1));
+    spill.appendToPartition(runIndex, spillVector_, folly::Range<IndexRange*>(&range, 1));
     if (eraser) {
       eraser(spilled);
     }
@@ -639,8 +639,8 @@ void RowContainer::spill(
     Eraser eraser) {
   bool doneFullSweep = false;
   bool startedFullSweep = false;
-  if (!spill.numWays()) {
-    spill.setNumWays(1);
+  if (!spill.numPartitions()) {
+    spill.setNumPartitions(1);
   }
   for (;;) {
     if (numFreeRows_ >= targetFreeRows &&
@@ -657,15 +657,15 @@ void RowContainer::spill(
       return;
     }
     auto targetSize = spill.targetFileSize();
-    for (auto newWay = spillRuns_.size(); newWay < spill.numWays(); ++newWay) {
+    for (auto newPartition = spillRuns_.size(); newPartition < spill.numPartitions(); ++newPartition) {
       spillRuns_.emplace_back();
     }
     clearSpillRuns();
     iterator.reset();
     if (fillSpillRuns(spill, eraser, iterator, spill.targetFileSize())) {
       // Arrived at end of the container. Add more spilled ranges if any left.
-      if (spill.numWays() < spill.maxWays()) {
-        spill.setNumWays(spill.numWays() + 1);
+      if (spill.numPartitions() < spill.maxPartitions()) {
+        spill.setNumPartitions(spill.numPartitions() + 1);
       } else {
         doneFullSweep = startedFullSweep;
         startedFullSweep = true;
@@ -697,15 +697,15 @@ bool RowContainer::fillSpillRuns(
       hash(i, folly::Range<char**>(rows.data(), numRows), i > 0, hashes.data());
     }
     for (auto i = 0; i < numRows; ++i) {
-      auto way = spill.way(hashes[i]);
-      if (way < 0) {
+      auto partition = spill.partition(hashes[i]);
+      if (partition < 0) {
         if (nonSpilledRows) {
           nonSpilledRows->push_back(rows[i]);
         }
         continue;
       }
-      spillRuns_[way].rows.push_back(rows[i]);
-      spillRuns_[way].size += rowSize(rows[i]);
+      spillRuns_[partition].rows.push_back(rows[i]);
+      spillRuns_[partition].size += rowSize(rows[i]);
     }
     int64_t totalSize = 0;
     int64_t totalSpillableSize = 0;

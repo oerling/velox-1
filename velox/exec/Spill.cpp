@@ -20,7 +20,6 @@
 namespace facebook::velox::exec {
 
 std::atomic<int32_t> SpillStream::ordinalCounter_;
-std::mutex SpillState::mutex_;
 uint64_t SpillState::sequence_ = 0;
 
 void SpillInput::next(bool throwIfPastEnd) {
@@ -67,13 +66,13 @@ void SpillFile::startRead() {
   auto fs = filesystems::getFileSystem(path_, nullptr);
   auto file = fs->openFileForRead(path_);
   auto buffer = AlignedBuffer::allocate<char>(
-      std::min<uint64_t>(size_, kMaxReadBufferSize), &pool_);
-  stream_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
+      std::min<uint64_t>(fileSize_, kMaxReadBufferSize), &pool_);
+  input_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
   next();
   index_ = 0;
 }
 
-void FileList::flush(bool close) {
+void SpillFileList::flush(bool close) {
   std::string str;
   {
     if (batch_) {
@@ -98,11 +97,11 @@ void FileList::flush(bool close) {
   }
 }
 
-void FileList::write(
+void SpillFileList::write(
     RowVectorPtr rows,
     const folly::Range<IndexRange*> indices) {
   if (!batch_) {
-    batch_ = std::make_unique<VectorStreamGroup>(mappedMemory_);
+    batch_ = std::make_unique<VectorStreamGroup>(&mappedMemory_);
     batch_->createStreamTree(
         std::static_pointer_cast<const RowType>(rows->type()), 1000);
   }
@@ -112,8 +111,8 @@ void FileList::write(
 
 // static
 int32_t SpillState::compareSpilled(
-    const VectorRow& left,
-    const VectorRow& right,
+    const SpillFileRow& left,
+    const SpillFileRow& right,
     int32_t numKeys) {
   for (auto i = 0; i < numKeys; ++i) {
     auto leftDecoded = (*left.decoded)[i].get();
@@ -129,12 +128,12 @@ int32_t SpillState::compareSpilled(
   return 0;
 }
 
-void SpillState::setNumWays(int32_t numWays) {
-  numWays_ = numWays;
-  for (auto newWay = files_.size(); newWay < numWays_; ++newWay) {
-    files_.push_back(std::make_unique<FileList>(
+void SpillState::setNumPartitions(int32_t numPartitions) {
+  numPartitions_ = numPartitions;
+  for (auto newPartition = files_.size(); newPartition < numPartitions_; ++newPartition) {
+    files_.push_back(std::make_unique<SpillFileList>(
         type_,
-        fmt::format("{}-{}", path_, newWay),
+        fmt::format("{}-{}", path_, newPartition),
         1 << 20,
         targetFileSize_,
         pool_,
@@ -142,18 +141,18 @@ void SpillState::setNumWays(int32_t numWays) {
   }
 }
 
-void SpillState::write(
-    uint16_t way,
-    RowVectorPtr rows,
+void SpillState::appendToPartition(
+    uint16_t partition,
+    const RowVectorPtr& rows,
     const folly::Range<IndexRange*> indices) {
-  files_[way]->write(rows, indices);
+  files_[partition]->write(rows, indices);
 }
 
-std::unique_ptr<TreeOfLosers<VectorRow, SpillStream>> SpillState::startMerge(
-    uint16_t way,
+std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> SpillState::startMerge(
+    uint16_t partition,
     std::unique_ptr<SpillStream>&& extra) {
-  VELOX_CHECK(way < files_.size());
-  auto list = std::move(files_[way]);
+  VELOX_CHECK(partition < files_.size());
+  auto list = std::move(files_[partition]);
   list->flush(true);
   auto files = list->files();
   std::vector<std::unique_ptr<SpillStream>> result;
@@ -164,8 +163,8 @@ std::unique_ptr<TreeOfLosers<VectorRow, SpillStream>> SpillState::startMerge(
   if (extra) {
     result.push_back(std::move(extra));
   }
-  return std::make_unique<TreeOfLosers<VectorRow, SpillStream>>(
+  return std::make_unique<TreeOfLosers<SpillFileRow, SpillStream>>(
       std::move(result));
 }
 
-} // namespace facebook::velox::exec
+} // namespace facebook::velox::exe

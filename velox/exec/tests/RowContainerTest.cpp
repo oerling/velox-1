@@ -532,7 +532,10 @@ TEST_F(RowContainerTest, spill) {
   for (auto i = 0; i < kNumRows; ++i) {
     ordinal->set(i, i);
   }
-  // Make non-join build container so that spill runs are sorted.
+  // Make non-join build container so that spill runs are sorted. Note
+  // that a distinct or group by hash table can have dependents if
+  // some keys are known to be unique by themselves. Aggregation
+  // spilling will be tested separately.
   auto data = makeRowContainer(keys, dependents, false);
   std::vector<char*> rows(kNumRows);
   for (int i = 0; i < kNumRows; ++i) {
@@ -556,17 +559,17 @@ TEST_F(RowContainerTest, spill) {
       });
 
   auto spillState = std::make_unique<SpillState>(
-      batch->type(),
+						 std::dynamic_pointer_cast<const RowType>(batch->type()),
       "/tmp/spill",
-      HashBitField{0, 0},
+      HashBitRange{0, 0},
       2000000,
       1000,
       *pool_,
-      mappedMemory_);
+						 *mappedMemory_);
 
-  EXPECT_EQ(1, spillState->maxWays());
-  spillState->setNumWays(1);
-  EXPECT_EQ(1, spillState->numWays());
+  EXPECT_EQ(1, spillState->maxPartitions());
+  spillState->setNumPartitions(1);
+  EXPECT_EQ(1, spillState->numPartitions());
 
   RowContainerIterator iter;
 
@@ -582,10 +585,10 @@ TEST_F(RowContainerTest, spill) {
   // still in the RowContainer.
   auto merge = spillState->startMerge(0, data->spillStreamOverRows(0, *pool_));
 
-  // We read the spilled data back and chekc that it matches the sorted order of
+  // We read the spilled data back and check that it matches the sorted order of
   // the source batch.
   for (auto i = 0; i < kNumRows; ++i) {
-    auto row = merge->next([&](const VectorRow& left, const VectorRow& right) {
+    auto row = merge->next([&](const SpillFileRow& left, const SpillFileRow& right) {
       return SpillState::compareSpilled(left, right, keys.size());
     });
     EXPECT_TRUE(batch->equalValueAt(
