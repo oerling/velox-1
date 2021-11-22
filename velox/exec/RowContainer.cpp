@@ -730,7 +730,7 @@ bool RowContainer::fillSpillRuns(
                 spillRuns_[j].rows.begin(),
                 spillRuns_[j].rows.end(),
                 [&](const char* left, const char* right) {
-                  return compareRows(left, right) <= 0;
+                  return compareRows(left, right) < 0;
                 });
           }
           spillingRuns_.insert(j);
