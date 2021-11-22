@@ -74,11 +74,18 @@ class QueryConfig {
   static constexpr const char* kMaxPartitionedOutputBufferSize =
       "driver.max-page-partitioning-buffer-size";
 
+  /// Preffered number of rows to be returned by operators from
+  /// Operator::getOutput.
+  static constexpr const char* kPreferredOutputBatchSize =
+      "preferred_output_batch_size";
+
   static constexpr const char* kHashAdaptivityEnabled =
       "driver.hash_adaptivity_enabled";
 
   static constexpr const char* kAdaptiveFilterReorderingEnabled =
       "driver.adaptive_filter_reordering_enabled";
+
+  static constexpr const char* kCreateEmptyFiles = "driver.create_empty_files";
 
   uint64_t maxPartialAggregationMemoryUsage() const {
     static constexpr uint64_t kDefault = 1L << 24;
@@ -93,6 +100,10 @@ class QueryConfig {
   uint64_t maxLocalExchangeBufferSize() const {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kMaxLocalExchangeBufferSize, kDefault);
+  }
+
+  uint32_t preferredOutputBatchSize() const {
+    return get<uint32_t>(kPreferredOutputBatchSize, 1024);
   }
 
   bool hashAdaptivityEnabled() const {
@@ -131,6 +142,10 @@ class QueryConfig {
 
   bool codegenLazyLoading() const {
     return get<bool>(kCodegenLazyLoading, true);
+  }
+
+  bool createEmptyFiles() const {
+    return get<bool>(kCreateEmptyFiles, false);
   }
 
   bool adjustTimestampToTimezone() const {

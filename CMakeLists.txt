@@ -17,10 +17,64 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
 # set the project name
 project(velox)
 
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 # Add all options below
-option(VELOX_BUILD_TESTING "Enable Velox tests" ON)
+option(
+  VELOX_BUILD_TESTING
+  "Enable Velox tests. This will enable all other build options automatically."
+  ON)
+option(
+  VELOX_BUILD_MINIMAL
+  "Build a minimal set of components only. This will override other build options."
+  OFF)
+
 option(VELOX_ENABLE_DUCKDB "Build duckDB to enable differential testing." ON)
+option(VELOX_ENABLE_EXEC "Build exec." ON)
+option(VELOX_ENABLE_AGGREGATES "Build aggregates." ON)
+option(VELOX_ENABLE_HIVE_CONNECTOR "Build Hive connector." ON)
+option(VELOX_ENABLE_PRESTO_FUNCTIONS "Build Presto SQL functions." ON)
+option(VELOX_ENABLE_SPARK_FUNCTIONS "Build Spark SQL functions." ON)
+option(VELOX_ENABLE_EXPRESSION "Build expression." ON)
+option(VELOX_ENABLE_PARSE "Build parser used for unit tests." ON)
+option(VELOX_ENABLE_EXAMPLES
+       "Build examples. This will enable VELOX_ENABLE_EXPRESSION automatically."
+       ON)
 option(VELOX_ENABLE_S3 "Build S3 Connector" OFF)
+option(VELOX_ENABLE_PARQUET "Enable Parquet support" OFF)
+option(VELOX_BUILD_TEST_UTILS "Enable Velox test utilities" OFF)
+
+if(${VELOX_BUILD_MINIMAL})
+  # Enable and disable components for velox base build
+  set(VELOX_BUILD_TESTING OFF)
+  set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
+  set(VELOX_ENABLE_DUCKDB ON)
+  set(VELOX_ENABLE_EXPRESSION ON)
+  set(VELOX_ENABLE_PARSE ON)
+  set(VELOX_ENABLE_EXEC OFF)
+  set(VELOX_ENABLE_AGGREGATES OFF)
+  set(VELOX_ENABLE_HIVE_CONNECTOR OFF)
+  set(VELOX_ENABLE_SPARK_FUNCTIONS OFF)
+  set(VELOX_ENABLE_EXAMPLES OFF)
+  set(VELOX_ENABLE_S3 OFF)
+endif()
+
+if(${VELOX_BUILD_TESTING})
+  # Enable all components to build testing binaries
+  set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
+  set(VELOX_ENABLE_DUCKDB ON)
+  set(VELOX_ENABLE_EXPRESSION ON)
+  set(VELOX_ENABLE_PARSE ON)
+  set(VELOX_ENABLE_EXEC ON)
+  set(VELOX_ENABLE_AGGREGATES ON)
+  set(VELOX_ENABLE_HIVE_CONNECTOR ON)
+  set(VELOX_ENABLE_SPARK_FUNCTIONS ON)
+  set(VELOX_ENABLE_TEST_UTILS OFF)
+endif()
+
+if(${VELOX_ENABLE_EXAMPLES})
+  set(VELOX_ENABLE_EXPRESSION ON)
+endif()
 
 if(VELOX_ENABLE_S3)
   # Set AWS_ROOT_DIR if you have a custom install location of AWS SDK CPP.
@@ -31,18 +85,23 @@ if(VELOX_ENABLE_S3)
   add_definitions(-DVELOX_ENABLE_S3)
 endif()
 
+if(VELOX_ENABLE_PARQUET)
+  add_definitions(-DVELOX_ENABLE_PARQUET)
+endif()
+
 # If CODEGEN support isn't explicitly set, we guestimate the value based on the
 # compiler
-if((NOT DEFINED CODEGEN_SUPPORT) AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+if((NOT DEFINED VELOX_CODEGEN_SUPPORT) AND (CMAKE_CXX_COMPILER_ID MATCHES
+                                            "Clang"))
   message(STATUS "Enabling Codegen")
-  set(CODEGEN_SUPPORT True)
+  set(VELOX_CODEGEN_SUPPORT True)
 else()
   message(STATUS "Disabling Codegen")
-  set(CODEGEN_SUPPORT False)
+  set(VELOX_CODEGEN_SUPPORT False)
 endif()
 
 # define processor variable for conditional compilation
-if(${CODEGEN_SUPPORT})
+if(${VELOX_CODEGEN_SUPPORT})
   add_compile_definitions(CODEGEN_ENABLED=1)
 endif()
 
@@ -64,7 +123,7 @@ set(POSITION_INDEPENDENT_CODE True)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -mavx2 -mfma -mavx -mf16c -mbmi2 -march=native -D USE_VELOX_COMMON_BASE -g"
+    "${CMAKE_CXX_FLAGS} -mavx2 -mfma -mavx -mf16c -mbmi2 -march=native -D USE_VELOX_COMMON_BASE"
 )
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D HAS_UNCAUGHT_EXCEPTIONS")
@@ -143,7 +202,7 @@ find_package(gflags COMPONENTS shared)
 
 find_library(GMock gmock)
 
-find_library(GLOG glog)
+find_package(glog REQUIRED)
 include_directories(SYSTEM ${GTEST_INCLUDE_DIRS})
 
 find_library(FMT fmt)
@@ -182,7 +241,6 @@ endif()
 include_directories(SYSTEM ${FOLLY_INCLUDE_DIRS})
 
 find_package(Protobuf 3.0.0 REQUIRED)
-include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
 # GCC needs to link a library to enable std::filesystem.
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/duckdb/conversion/DuckWrapper.h"
+#include "velox/common/base/BitUtil.h"
 #include "velox/duckdb/conversion/DuckConversion.h"
 #include "velox/external/duckdb/duckdb.hpp"
 #include "velox/external/duckdb/tpch/include/tpch-extension.hpp"
@@ -28,6 +29,35 @@ using ::duckdb::hugeint_t;
 using ::duckdb::LogicalTypeId;
 using ::duckdb::PhysicalType;
 using ::duckdb::QueryResult;
+
+namespace {
+
+class DuckDBBufferReleaser {
+ public:
+  explicit DuckDBBufferReleaser(
+      ::duckdb::buffer_ptr<::duckdb::VectorBuffer> buffer)
+      : buffer_(std::move(buffer)) {}
+
+  void addRef() const {}
+  void release() const {}
+
+ private:
+  const ::duckdb::buffer_ptr<::duckdb::VectorBuffer> buffer_;
+};
+
+class DuckDBValidityReleaser {
+ public:
+  explicit DuckDBValidityReleaser(const ::duckdb::ValidityMask& validity)
+      : validity_(validity) {}
+
+  void addRef() const {}
+  void release() const {}
+
+ private:
+  const ::duckdb::ValidityMask validity_;
+};
+
+} // namespace
 
 DuckDBWrapper::DuckDBWrapper(core::ExecCtx* context, const char* path)
     : context_(context) {
@@ -106,17 +136,15 @@ VectorPtr convert(
     ::duckdb::Vector& duckVector,
     const TypePtr& veloxType,
     size_t size,
-    memory::MemoryPool* pool) {
+    memory::MemoryPool* pool,
+    uint8_t* validity = nullptr) {
   auto vectorType = duckVector.GetVectorType();
   switch (vectorType) {
     case ::duckdb::VectorType::FLAT_VECTOR: {
+      VectorPtr result;
       auto& duckValidity = ::duckdb::FlatVector::Validity(duckVector);
       auto* duckData =
           ::duckdb::FlatVector::GetData<typename OP::DUCK_TYPE>(duckVector);
-
-      // TODO Figure out how to perform a zero-copy conversion.
-      auto result = BaseVector::create(veloxType, size, pool);
-      auto flatResult = result->as<FlatVector<typename OP::VELOX_TYPE>>();
 
       // Some DuckDB vectors have different internal layout and cannot be
       // trivially copied.
@@ -124,20 +152,39 @@ VectorPtr convert(
           duckVector.GetType() == LogicalTypeId::TIMESTAMP ||
           duckVector.GetType() == LogicalTypeId::DATE ||
           duckVector.GetType() == LogicalTypeId::VARCHAR) {
+        // TODO Figure out how to perform a zero-copy conversion.
+        result = BaseVector::create(veloxType, size, pool);
+        auto flatResult = result->as<FlatVector<typename OP::VELOX_TYPE>>();
+
         for (auto i = 0; i < size; i++) {
-          if (duckValidity.RowIsValid(i)) {
+          if (duckValidity.RowIsValid(i) &&
+              (!validity || bits::isBitSet(validity, i))) {
             flatResult->set(i, OP::toVelox(duckData[i]));
           }
         }
+
+        if (!duckValidity.AllValid()) {
+          auto rawNulls = flatResult->mutableRawNulls();
+          memcpy(rawNulls, duckValidity.GetData(), bits::nbytes(size));
+        }
       } else {
-        auto rawValues = flatResult->mutableRawValues();
-        memcpy(rawValues, duckData, size * sizeof(typename OP::VELOX_TYPE));
+        auto valuesView = BufferView<DuckDBBufferReleaser>::create(
+            reinterpret_cast<const uint8_t*>(duckData),
+            size * sizeof(typename OP::VELOX_TYPE),
+            DuckDBBufferReleaser(duckVector.GetBuffer()));
+
+        BufferPtr nullsView(nullptr);
+        if (!duckValidity.AllValid()) {
+          nullsView = BufferView<DuckDBValidityReleaser>::create(
+              reinterpret_cast<const uint8_t*>(duckValidity.GetData()),
+              bits::nbytes(size),
+              DuckDBValidityReleaser(duckValidity));
+        }
+
+        result = std::make_shared<FlatVector<typename OP::VELOX_TYPE>>(
+            pool, nullsView, size, valuesView, std::vector<BufferPtr>());
       }
 
-      if (!duckValidity.AllValid()) {
-        auto rawNulls = flatResult->mutableRawNulls();
-        memcpy(rawNulls, duckValidity.GetData(), bits::nbytes(size));
-      }
       return result;
     }
     case ::duckdb::VectorType::DICTIONARY_VECTOR: {
@@ -151,7 +198,23 @@ VectorPtr convert(
       for (auto i = 0; i < size; i++) {
         maxIndex = std::max(maxIndex, (vector_size_t)selection.get_index(i));
       }
-      auto base = convert<OP>(child, veloxType, maxIndex + 1, pool);
+      VectorPtr base;
+      // Unused dictionary elements can be uninitialized. That can cause
+      // errors if we try to decode them. Here we create a bitmap of
+      // used values to avoid that.
+      if (child.GetType() == LogicalTypeId::HUGEINT ||
+          child.GetType() == LogicalTypeId::TIMESTAMP ||
+          child.GetType() == LogicalTypeId::DATE ||
+          child.GetType() == LogicalTypeId::VARCHAR) {
+        std::vector<uint8_t> validityVector((maxIndex + 7) / 8, 0);
+        auto validity_ptr = validityVector.data();
+        for (auto i = 0; i < size; i++) {
+          bits::setBit(validity_ptr, selection.get_index(i));
+        }
+        base = convert<OP>(child, veloxType, maxIndex + 1, pool, validity_ptr);
+      } else {
+        base = convert<OP>(child, veloxType, maxIndex + 1, pool);
+      }
 
       auto indices = AlignedBuffer::allocate<vector_size_t>(size, pool);
       memcpy(

@@ -15,107 +15,64 @@
  */
 
 #include "velox/common/memory/MemoryUsageTracker.h"
-#include "velox/common/memory/Memory.h"
 
 namespace facebook::velox::memory {
 std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::create(
     const std::shared_ptr<MemoryUsageTracker>& parent,
-    UsageType type,
+    MemoryUsageTracker::UsageType type,
     const MemoryUsageConfig& config) {
   struct SharedMemoryUsageTracker : public MemoryUsageTracker {
     SharedMemoryUsageTracker(
         const std::shared_ptr<MemoryUsageTracker>& parent,
-        UsageType type,
+        MemoryUsageTracker::UsageType type,
         const MemoryUsageConfig& config)
         : MemoryUsageTracker(parent, type, config) {}
   };
 
-  // If it is not forMemoryManager and parent is null, set the parent
-  // to MemoryManager's usage tracker.
-  auto parentTracker = (!config.forMemoryManager && parent == nullptr)
-      ? MemoryManager<>::getProcessDefaultManager().getMemoryUsageTracker()
-      : parent;
-  return std::make_shared<SharedMemoryUsageTracker>(
-      parentTracker, type, config);
+  return std::make_shared<SharedMemoryUsageTracker>(parent, type, config);
 }
 
-// static
-std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::createRoot() {
-  auto config = MemoryUsageConfigBuilder().forMemoryManager(true).build();
-  return create(nullptr, UsageType::kUserMem, config);
-}
-
-void MemoryUsageTracker::update(UsageType type, int64_t size) {
-  if (size > 0) {
-    ++numAllocs_[static_cast<int>(type)];
-    cumulativeBytes_[static_cast<int>(type)] += size;
-    ++numAllocs_[static_cast<int>(UsageType::kTotalMem)];
-    cumulativeBytes_[static_cast<int>(UsageType::kTotalMem)] += size;
+void MemoryUsageTracker::updateInternal(UsageType type, int64_t size) {
+  // Update parent first. If one of the ancestor's limits are exceeded, it
+  // will throw VeloxMemoryCapExceeded exception.
+  if (parent_) {
+    parent_->updateInternal(type, size);
   }
 
-  auto typeIndex = static_cast<int32_t>(type);
-  auto currentOfType =
-      currentUsageInBytes_[typeIndex].fetch_add(size) + size;
-  auto currentTotal =
-      currentUsageInBytes_[static_cast<int32_t>(UsageType::kTotalMem)]
-          .fetch_add(size) +
+  auto newPeak = usage(currentUsageInBytes_, type)
+                     .fetch_add(size, std::memory_order_relaxed) +
       size;
-  VELOX_CHECK_LE(0, currentTotal);
-  VELOX_CHECK_LE(0, currentOfType);
-  
-  try {
-    constexpr int32_t kNumMaxSizes = sizeof(maxMemory_) / sizeof(maxMemory_[0]);
-    if (size > 0 &&
-        (currentTotal > maxMemory_[static_cast<int>(UsageType::kTotalMem)] ||
-         (typeIndex < kNumMaxSizes && currentOfType > maxMemory_[typeIndex]))) {
-      if (growCallback_) {
-        if (growCallback_(type, size, this)) {
-          return;
-        }
-      }
 
-      VELOX_MEM_CAP_EXCEEDED();
-    }
+  if (size > 0) {
+    ++usage(numAllocs_, type);
+    usage(cumulativeBytes_, type) += size;
+    ++usage(numAllocs_, type);
+    usage(cumulativeBytes_, type) += size;
+  }
+
+  // We track the peak usage of total memory independent of user and
+  // system memory since freed user memory can be reallocated as system
+  // memory and vice versa.
+  int64_t totalBytes = getCurrentUserBytes() + getCurrentSystemBytes();
+
+  // Enforce the limit. Throw VeloxMemoryCapException exception if the limits
+  // are exceeded.
+  if (size > 0 &&
+      (newPeak > usage(maxMemory_, type) || totalBytes > total(maxMemory_))) {
+    // Exceeded the limit. Fail allocation after reverting changes to
+    // parent and currentUsageInBytes_.
     if (parent_) {
-      parent_->update(type, size);
+      parent_->updateInternal(type, -size);
     }
-  } catch (const std::exception& e) {
-    currentUsageInBytes_[static_cast<int32_t>(type)].fetch_sub(size);
-    currentUsageInBytes_[static_cast<int32_t>(UsageType::kTotalMem)].fetch_sub(
-        size);
-    std::rethrow_exception(std::current_exception());
+    usage(currentUsageInBytes_, type)
+        .fetch_add(-size, std::memory_order_relaxed);
+    checkNonNegativeSizes("after exceeding cap");
+    VELOX_MEM_CAP_EXCEEDED();
   }
-  maySetMax(type, currentOfType);
-  maySetMax(UsageType::kTotalMem, currentTotal);
-}
 
-namespace {
-
-std::string usageString(const std::array<std::atomic<int64_t>, 4>& usage) {
-  std::stringstream out;
-  const char* heading[] = {"user", "sys", "total", "revocable"};
-  for (auto i = 0; i < 4; ++i) {
-    if (usage[i]) {
-      out << heading[i] << usage[i] << " ";
-    }
-  }
-  return out.str();
-}
-
-} // namespace
-
-std::string MemoryUsageTracker::toString() const {
-  std::stringstream out;
-  out << "<tracker current:" << usageString(currentUsageInBytes_);
-  if (reservation_) {
-    out << " used/reserved " << usedReservation_ << "/" << reservation_;
-  }
-  auto max = getMaxTotalBytes();
-  if (max < kMaxMemory) {
-    out << " max " << max;
-  }
-  out << ">";
-  return out.str();
+  maySetMax(type, newPeak);
+  maySetMax(UsageType::kTotalMem, totalBytes);
+  checkNonNegativeSizes("after update");
 }
 
 } // namespace facebook::velox::memory

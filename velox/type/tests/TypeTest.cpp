@@ -107,6 +107,97 @@ TEST(Type, TimestampComparison) {
   EXPECT_GE(t1, t1lessSeconds);
 }
 
+TEST(Type, Date) {
+  auto date = DATE();
+  EXPECT_EQ(date->toString(), "DATE");
+  EXPECT_EQ(date->size(), 0);
+  EXPECT_THROW(date->childAt(0), std::invalid_argument);
+  EXPECT_EQ(date->kind(), TypeKind::DATE);
+  EXPECT_STREQ(date->kindName(), "DATE");
+  EXPECT_EQ(date->begin(), date->end());
+}
+
+TEST(Type, DateToString) {
+  Date epoch(0);
+  EXPECT_EQ(epoch.toString(), "1970-01-01");
+
+  // 50 years after epoch
+  Date jan2020(18262);
+  EXPECT_EQ(jan2020.toString(), "2020-01-01");
+
+  Date beforeEpoch(-5);
+  EXPECT_EQ(beforeEpoch.toString(), "1969-12-27");
+
+  // 50 years before epoch
+  Date wayBeforeEpoch(-18262);
+  EXPECT_EQ(wayBeforeEpoch.toString(), "1920-01-02");
+
+  // Trying a very large -integer for boundary checks. Such values are tested in
+  // ExpressionFuzzer.
+  // Since we use int64 for the intermediate conversion of days to ms,
+  // the large -ve value remains valid. However, gmtime uses int32
+  // for the number of years, so the eventual results might look like garbage.
+  // However, they are consistent with presto java so keeping the same
+  // implementation.
+  Date dateOverflow(-1855961014);
+  EXPECT_EQ(dateOverflow.toString(), "-5079479-05-03");
+}
+
+TEST(Type, DateComparison) {
+  Date epoch(0);
+  Date beforeEpoch(-5);
+  Date jan2020(18262);
+  Date jan2020Copy(18262);
+  Date dec2019(18261);
+
+  EXPECT_EQ(jan2020, jan2020Copy);
+  EXPECT_EQ(jan2020Copy, jan2020);
+
+  EXPECT_NE(jan2020, dec2019);
+  EXPECT_NE(dec2019, jan2020);
+  EXPECT_NE(epoch, beforeEpoch);
+
+  EXPECT_LT(dec2019, jan2020);
+  EXPECT_LT(beforeEpoch, epoch);
+
+  EXPECT_LE(jan2020, jan2020Copy);
+  EXPECT_LE(dec2019, jan2020);
+  EXPECT_LE(beforeEpoch, epoch);
+
+  EXPECT_GT(jan2020, dec2019);
+  EXPECT_GT(epoch, beforeEpoch);
+
+  EXPECT_GE(jan2020, jan2020Copy);
+  EXPECT_GE(jan2020, dec2019);
+  EXPECT_GE(epoch, beforeEpoch);
+}
+
+TEST(Type, parseStringToDate) {
+  auto parseDate = [](const std::string& dateStr) {
+    Date returnDate;
+    parseTo(dateStr, returnDate);
+    return returnDate;
+  };
+
+  // Epoch.
+  EXPECT_EQ(parseDate("1970-01-01").days(), 0);
+
+  // 50 years after epoch.
+  EXPECT_EQ(parseDate("2020-01-01").days(), 18262);
+
+  // Before epoch.
+  EXPECT_EQ(parseDate("1969-12-27").days(), -5);
+
+  // 50 years before epoch.
+  EXPECT_EQ(parseDate("1920-01-02").days(), -18262);
+
+  // Century before epoch.
+  EXPECT_EQ(parseDate("1812-04-15").days(), -57604);
+
+  // Century after epoch.
+  EXPECT_EQ(parseDate("2135-11-09").days(), 60577);
+}
+
 TEST(Type, Map) {
   auto map0 = MAP(INTEGER(), ARRAY(BIGINT()));
   EXPECT_EQ(map0->toString(), "MAP<INTEGER,ARRAY<BIGINT>>");
@@ -357,6 +448,7 @@ TEST(Type, Cpp2Type) {
   EXPECT_EQ(*CppToType<double>::create(), *DOUBLE());
   EXPECT_EQ(*CppToType<bool>::create(), *BOOLEAN());
   EXPECT_EQ(*CppToType<Timestamp>::create(), *TIMESTAMP());
+  EXPECT_EQ(*CppToType<Date>::create(), *DATE());
   EXPECT_EQ(*CppToType<Array<int32_t>>::create(), *ARRAY(INTEGER()));
   auto type = CppToType<Map<int32_t, Map<int64_t, float>>>::create();
   EXPECT_EQ(*type, *MAP(INTEGER(), MAP(BIGINT(), REAL())));
@@ -365,6 +457,7 @@ TEST(Type, Cpp2Type) {
 TEST(Type, KindHash) {
   EXPECT_EQ(BIGINT()->hashKind(), BIGINT()->hashKind());
   EXPECT_EQ(TIMESTAMP()->hashKind(), TIMESTAMP()->hashKind());
+  EXPECT_EQ(DATE()->hashKind(), DATE()->hashKind());
   EXPECT_NE(BIGINT()->hashKind(), INTEGER()->hashKind());
   EXPECT_EQ(
       ROW({{"a", BIGINT()}})->hashKind(), ROW({{"b", BIGINT()}})->hashKind());
@@ -429,6 +522,7 @@ TEST(Type, follySformat) {
   EXPECT_EQ("VARCHAR", folly::sformat("{}", VARCHAR()));
   EXPECT_EQ("VARBINARY", folly::sformat("{}", VARBINARY()));
   EXPECT_EQ("TIMESTAMP", folly::sformat("{}", TIMESTAMP()));
+  EXPECT_EQ("DATE", folly::sformat("{}", DATE()));
 
   EXPECT_EQ("ARRAY<VARCHAR>", folly::sformat("{}", ARRAY(VARCHAR())));
   EXPECT_EQ(

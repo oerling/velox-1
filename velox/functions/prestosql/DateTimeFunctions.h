@@ -15,33 +15,44 @@
  */
 #include "velox/external/date/tz.h"
 #include "velox/functions/Macros.h"
+#include "velox/functions/lib/JodaDateTime.h"
 #include "velox/functions/prestosql/DateTimeImpl.h"
+#include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
+#include "velox/type/tz/TimeZoneMap.h"
 
 namespace facebook::velox::functions {
 
-VELOX_UDF_BEGIN(to_unixtime)
-FOLLY_ALWAYS_INLINE bool call(
-    double& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = toUnixtime(timestamp);
-  return true;
-}
-VELOX_UDF_END();
+template <typename T>
+struct ToUnixtimeFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-VELOX_UDF_BEGIN(from_unixtime)
-FOLLY_ALWAYS_INLINE bool call(
-    Timestamp& result,
-    const arg_type<double>& unixtime) {
-  auto resultOptional = fromUnixtime(unixtime);
-  if (LIKELY(resultOptional.has_value())) {
-    result = resultOptional.value();
+  FOLLY_ALWAYS_INLINE bool call(
+      double& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = toUnixtime(timestamp);
     return true;
   }
-  return false;
-}
-VELOX_UDF_END();
+};
+
+template <typename T>
+struct FromUnixtimeFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      Timestamp& result,
+      const arg_type<double>& unixtime) {
+    auto resultOptional = fromUnixtime(unixtime);
+    if (LIKELY(resultOptional.has_value())) {
+      result = resultOptional.value();
+      return true;
+    }
+    return false;
+  }
+};
 
 namespace {
+inline constexpr int64_t kSecondsInDay = 86'400;
+
 FOLLY_ALWAYS_INLINE const date::time_zone* getTimeZoneFromConfig(
     const core::QueryConfig& config) {
   if (config.adjustTimestampToTimezone()) {
@@ -70,145 +81,186 @@ std::tm getDateTime(Timestamp timestamp, const date::time_zone* timeZone) {
   gmtime_r((const time_t*)&seconds, &dateTime);
   return dateTime;
 }
+
+FOLLY_ALWAYS_INLINE
+std::tm getDateTime(Date date) {
+  int64_t seconds = date.days() * kSecondsInDay;
+  std::tm dateTime;
+  gmtime_r((const time_t*)&seconds, &dateTime);
+  return dateTime;
+}
+
+template <typename T>
+struct InitSessionTimezone {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+  const date::time_zone* timeZone_{nullptr};
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Timestamp>* /*timestamp*/) {
+    timeZone_ = getTimeZoneFromConfig(config);
+  }
+};
+
 } // namespace
 
-VELOX_UDF_BEGIN(year)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct YearFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = 1900 + getDateTime(timestamp, this->timeZone_).tm_year;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = 1900 + getDateTime(timestamp, timeZone_).tm_year;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = 1900 + getDateTime(date).tm_year;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(month)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct MonthFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = 1 + getDateTime(timestamp, this->timeZone_).tm_mon;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = 1 + getDateTime(timestamp, timeZone_).tm_mon;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = 1 + getDateTime(date).tm_mon;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(day)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct DayFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = getDateTime(timestamp, this->timeZone_).tm_mday;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = getDateTime(timestamp, timeZone_).tm_mday;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = getDateTime(date).tm_mday;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(day_of_week)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct DayOfWeekFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    std::tm dateTime = getDateTime(timestamp, this->timeZone_);
+    result = dateTime.tm_wday == 0 ? 7 : dateTime.tm_wday;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  std::tm dateTime = getDateTime(timestamp, timeZone_);
-  result = dateTime.tm_wday == 0 ? 7 : dateTime.tm_wday;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    std::tm dateTm = getDateTime(date);
+    result = dateTm.tm_wday == 0 ? 7 : dateTm.tm_wday;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(day_of_year)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct DayOfYearFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = 1 + getDateTime(timestamp, this->timeZone_).tm_yday;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = 1 + getDateTime(timestamp, timeZone_).tm_yday;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = 1 + getDateTime(date).tm_yday;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(hour)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct HourFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = getDateTime(timestamp, this->timeZone_).tm_hour;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = getDateTime(timestamp, timeZone_).tm_hour;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = getDateTime(date).tm_hour;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(minute)
-const date::time_zone* timeZone_ = nullptr;
+template <typename T>
+struct MinuteFunction : public InitSessionTimezone<T> {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-}
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = getDateTime(timestamp, this->timeZone_).tm_min;
+    return true;
+  }
 
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = getDateTime(timestamp, timeZone_).tm_min;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = getDateTime(date).tm_min;
+    return true;
+  }
+};
 
-VELOX_UDF_BEGIN(second)
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = getDateTime(timestamp, nullptr).tm_sec;
-  return true;
-}
-VELOX_UDF_END();
+template <typename T>
+struct SecondFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-VELOX_UDF_BEGIN(millisecond)
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    const arg_type<Timestamp>& timestamp) {
-  result = timestamp.getNanos() / kNanosecondsInMilliseconds;
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = getDateTime(timestamp, nullptr).tm_sec;
+    return true;
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
+    result = getDateTime(date).tm_sec;
+    return true;
+  }
+};
+
+template <typename T>
+struct MillisecondFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Timestamp>& timestamp) {
+    result = timestamp.getNanos() / kNanosecondsInMilliseconds;
+    return true;
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Date>& /*date*/) {
+    // Dates do not have millisecond granularity.
+    result = 0;
+    return true;
+  }
+};
 
 namespace {
 enum class DateTimeUnit { kSecond, kMinute, kHour, kDay, kMonth, kYear };
@@ -249,59 +301,139 @@ inline std::optional<DateTimeUnit> fromDateTimeUnitString(
 }
 } // namespace
 
-VELOX_UDF_BEGIN(date_trunc)
-const date::time_zone* timeZone_ = nullptr;
-std::optional<DateTimeUnit> unit_;
+template <typename T>
+struct DateTruncFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-FOLLY_ALWAYS_INLINE void initialize(
-    const core::QueryConfig& config,
-    const arg_type<Varchar>* unitString,
-    const arg_type<Timestamp>* /*timestamp*/) {
-  timeZone_ = getTimeZoneFromConfig(config);
-  if (unitString != nullptr) {
-    unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
+  const date::time_zone* timeZone_ = nullptr;
+  std::optional<DateTimeUnit> unit_;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* unitString,
+      const arg_type<Timestamp>* /*timestamp*/) {
+    timeZone_ = getTimeZoneFromConfig(config);
+    if (unitString != nullptr) {
+      unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
+    }
   }
-}
 
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<Timestamp>& result,
-    const arg_type<Varchar>& unitString,
-    const arg_type<Timestamp>& timestamp) {
-  const auto unit = unit_.has_value()
-      ? unit_.value()
-      : fromDateTimeUnitString(unitString, true /*throwIfInvalid*/).value();
-  if (unit == DateTimeUnit::kSecond) {
-    result = Timestamp(timestamp.getSeconds(), 0);
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& /*config*/,
+      const arg_type<Varchar>* unitString,
+      const arg_type<Date>* /*date*/) {
+    if (unitString != nullptr) {
+      unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE void adjustDateTime(
+      std::tm& dateTime,
+      const DateTimeUnit& unit) {
+    switch (unit) {
+      case DateTimeUnit::kYear:
+        dateTime.tm_mon = 0;
+        dateTime.tm_yday = 0;
+        FMT_FALLTHROUGH;
+      case DateTimeUnit::kMonth:
+        dateTime.tm_mday = 1;
+        FMT_FALLTHROUGH;
+      case DateTimeUnit::kDay:
+        dateTime.tm_hour = 0;
+        FMT_FALLTHROUGH;
+      case DateTimeUnit::kHour:
+        dateTime.tm_min = 0;
+        FMT_FALLTHROUGH;
+      case DateTimeUnit::kMinute:
+        dateTime.tm_sec = 0;
+        break;
+      default:
+        VELOX_UNREACHABLE();
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Timestamp>& result,
+      const arg_type<Varchar>& unitString,
+      const arg_type<Timestamp>& timestamp) {
+    const auto unit = unit_.has_value()
+        ? unit_.value()
+        : fromDateTimeUnitString(unitString, true /*throwIfInvalid*/).value();
+    if (unit == DateTimeUnit::kSecond) {
+      result = Timestamp(timestamp.getSeconds(), 0);
+      return true;
+    }
+
+    auto dateTime = getDateTime(timestamp, timeZone_);
+    adjustDateTime(dateTime, unit);
+
+    result = Timestamp(timegm(&dateTime), 0);
+    if (timeZone_ != nullptr) {
+      result.toTimezone(*timeZone_);
+    }
     return true;
   }
 
-  auto dateTime = getDateTime(timestamp, timeZone_);
-  switch (unit) {
-    case DateTimeUnit::kYear:
-      dateTime.tm_mon = 0;
-      dateTime.tm_yday = 0;
-      FMT_FALLTHROUGH;
-    case DateTimeUnit::kMonth:
-      dateTime.tm_mday = 1;
-      FMT_FALLTHROUGH;
-    case DateTimeUnit::kDay:
-      dateTime.tm_hour = 0;
-      FMT_FALLTHROUGH;
-    case DateTimeUnit::kHour:
-      dateTime.tm_min = 0;
-      FMT_FALLTHROUGH;
-    case DateTimeUnit::kMinute:
-      dateTime.tm_sec = 0;
-      break;
-    default:
-      VELOX_UNREACHABLE();
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Date>& result,
+      const arg_type<Varchar>& unitString,
+      const arg_type<Date>& date) {
+    const auto unit = unit_.has_value()
+        ? unit_.value()
+        : fromDateTimeUnitString(unitString, true /*throwIfInvalid*/).value();
+    if (unit == DateTimeUnit::kSecond || unit == DateTimeUnit::kMinute ||
+        unit == DateTimeUnit::kHour) {
+      VELOX_USER_FAIL("{} is not a valid DATE field", unitString);
+    }
+
+    if (unit == DateTimeUnit::kDay) {
+      result = Date(date.days());
+      return true;
+    }
+
+    auto dateTime = getDateTime(date);
+    adjustDateTime(dateTime, unit);
+
+    result = Date(timegm(&dateTime) / kSecondsInDay);
+    return true;
+  }
+};
+
+template <typename T>
+struct ParseDateTimeFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  std::optional<JodaFormatter> format_;
+  std::optional<int64_t> sessionTzID_;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* /*input*/,
+      const arg_type<Varchar>* format) {
+    if (format != nullptr) {
+      format_.emplace(*format);
+    }
+
+    auto sessionTzName = config.sessionTimezone();
+    if (!sessionTzName.empty()) {
+      sessionTzID_ = util::getTimeZoneID(sessionTzName);
+    }
   }
 
-  result = Timestamp(timegm(&dateTime), 0);
-  if (timeZone_ != nullptr) {
-    result.toTimezone(*timeZone_);
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<Varchar>& input,
+      const arg_type<Varchar>& format) {
+    auto jodaResult = format_.has_value() ? format_->parse(input)
+                                          : JodaFormatter(format).parse(input);
+
+    // If timezone was not parsed, fallback to the session timezone. If there's
+    // no session timezone, fallback to 0 (GMT).
+    int16_t timezoneId = jodaResult.timezoneId != -1 ? jodaResult.timezoneId
+                                                     : sessionTzID_.value_or(0);
+    result = std::make_tuple(jodaResult.timestamp.toMillis(), timezoneId);
+    return true;
   }
-  return true;
-}
-VELOX_UDF_END();
+};
+
 } // namespace facebook::velox::functions

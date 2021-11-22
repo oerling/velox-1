@@ -19,8 +19,12 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <optional>
 
 #include "velox/type/Variant.h"
+#include "velox/vector/BaseVector.h"
+#include "velox/vector/SelectivityVector.h"
+#include "velox/vector/TypeAliases.h"
 #include "velox/vector/tests/VectorMaker.h"
 #include "velox/vector/tests/VectorTestUtils.h"
 
@@ -43,7 +47,6 @@ class DecodedVectorTest : public testing::Test {
       SimpleVector<T>* outVector,
       bool dbgPrintVec) {
     DecodedVector decoded(*outVector, selection);
-    auto decodedResult = decoded.as<T>();
     auto end = selection.end();
     ASSERT_EQ(expected.size(), end);
 
@@ -53,9 +56,10 @@ class DecodedVectorTest : public testing::Test {
       }
       bool actualIsNull = outVector->isNullAt(index);
       auto actualValue = outVector->valueAt(index);
-      ASSERT_EQ(actualIsNull, decodedResult.isNullAt(index));
+      ASSERT_EQ(actualIsNull, decoded.isNullAt(index));
       if (!actualIsNull) {
-        ASSERT_EQ(actualValue, decodedResult[index]);
+        auto decodedValue = decoded.template valueAt<T>(index);
+        ASSERT_EQ(actualValue, decodedValue);
       }
       const bool isNull = (expected[index] == std::nullopt);
       if (dbgPrintVec) {
@@ -143,11 +147,20 @@ class DecodedVectorTest : public testing::Test {
     EXPECT_EQ(decoded.base()->type(), OpaqueType::create<T>());
   }
 
-  void testConstantNull(TypeKind typeKind) {
+  void testConstantNull(const TypePtr& type) {
     auto constantVector =
-        BaseVector::createConstant(variant(typeKind), 100, pool_.get());
+        BaseVector::createNullConstant(type, 100, pool_.get());
+    EXPECT_EQ(constantVector->isScalar(), type->isPrimitiveType());
     SelectivityVector selection(100);
     DecodedVector decoded(*constantVector, selection);
+    EXPECT_EQ(*decoded.base()->type(), *type);
+    // Decoded vector doesn't ensure base() has "FLAT" encoding for primitive
+    // types.
+    if (!type->isPrimitiveType()) {
+      EXPECT_EQ(
+          decoded.base()->encoding(),
+          BaseVector::create(type, 1, pool_.get())->encoding());
+    }
     EXPECT_TRUE(decoded.isConstantMapping());
     EXPECT_FALSE(decoded.isIdentityMapping());
     for (int32_t i = 0; i < 100; i++) {
@@ -241,23 +254,35 @@ class DecodedVectorTest : public testing::Test {
     }
   }
 
-  BufferPtr evenIndices(vector_size_t size) {
+  BufferPtr indicesBuffer(
+      vector_size_t size,
+      std::function<vector_size_t(vector_size_t /*row*/)> indexAt) {
     BufferPtr indices =
-        AlignedBuffer::allocate<vector_size_t>(size / 2, pool_.get());
+        AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
     auto rawIndices = indices->asMutable<vector_size_t>();
-    for (int i = 0; i < size / 2; i++) {
-      rawIndices[i] = i * 2;
+    for (int i = 0; i < size; i++) {
+      rawIndices[i] = indexAt(i);
     }
     return indices;
   }
 
-  BufferPtr evenNulls(vector_size_t size) {
+  BufferPtr nullsBuffer(
+      vector_size_t size,
+      std::function<bool(vector_size_t /*row*/)> isNullAt) {
     BufferPtr nulls =
         AlignedBuffer::allocate<uint64_t>(bits::nwords(size), pool_.get());
     for (auto i = 0; i < size; i++) {
-      bits::setNull(nulls->asMutable<uint64_t>(), i, i % 2 == 0);
+      bits::setNull(nulls->asMutable<uint64_t>(), i, isNullAt(i));
     }
     return nulls;
+  }
+
+  BufferPtr evenIndices(vector_size_t size) {
+    return indicesBuffer(size, [](auto row) { return row * 2; });
+  }
+
+  BufferPtr evenNulls(vector_size_t size) {
+    return nullsBuffer(size, VectorMaker::nullEvery(2));
   }
 
   template <typename T>
@@ -371,14 +396,20 @@ TEST_F(DecodedVectorTest, constant) {
 }
 
 TEST_F(DecodedVectorTest, constantNull) {
-  testConstantNull(TypeKind::BOOLEAN);
-  testConstantNull(TypeKind::TINYINT);
-  testConstantNull(TypeKind::SMALLINT);
-  testConstantNull(TypeKind::INTEGER);
-  testConstantNull(TypeKind::BIGINT);
-  testConstantNull(TypeKind::REAL);
-  testConstantNull(TypeKind::DOUBLE);
-  testConstantNull(TypeKind::VARCHAR);
+  testConstantNull(BOOLEAN());
+  testConstantNull(TINYINT());
+  testConstantNull(SMALLINT());
+  testConstantNull(INTEGER());
+  testConstantNull(BIGINT());
+  testConstantNull(REAL());
+  testConstantNull(DOUBLE());
+  testConstantNull(VARCHAR());
+  testConstantNull(VARBINARY());
+  testConstantNull(TIMESTAMP());
+  testConstantNull(DATE());
+  testConstantNull(ARRAY(INTEGER()));
+  testConstantNull(MAP(INTEGER(), INTEGER()));
+  testConstantNull(ROW({INTEGER()}));
 }
 
 TEST_F(DecodedVectorTest, constantComplexType) {
@@ -451,6 +482,78 @@ TEST_F(DecodedVectorTest, dictionaryOverConstant) {
   testDictionaryOverConstant(arrayVector, 0);
   testDictionaryOverConstant(arrayVector, 3);
   testDictionaryOverConstant(arrayVector, 5); // null
+}
+
+TEST_F(DecodedVectorTest, wrapOnDictionaryEncoding) {
+  const int kSize = 12;
+  auto intVector =
+      vectorMaker_->flatVector<int32_t>(kSize, [](auto row) { return row; });
+  auto rowVector = vectorMaker_->rowVector({intVector});
+
+  // Test dictionary with depth one
+  auto indicesOne =
+      indicesBuffer(kSize, [](auto row) { return kSize - row - 1; });
+  auto nullsOne = nullsBuffer(kSize, [](auto row) { return row < 2; });
+  auto dictionaryVector =
+      BaseVector::wrapInDictionary(nullsOne, indicesOne, kSize, rowVector);
+  SelectivityVector allRows(kSize);
+  DecodedVector decoded(*dictionaryVector, allRows);
+  auto wrappedVector = decoded.wrap(intVector, *dictionaryVector, allRows);
+  for (auto i = 0; i < kSize; i++) {
+    if (i < 2) {
+      ASSERT_TRUE(wrappedVector->isNullAt(i));
+    } else {
+      ASSERT_TRUE(
+          wrappedVector->equalValueAt(intVector.get(), i, decoded.index(i)));
+    }
+  }
+
+  // Test dictionary with depth two
+  auto nullsTwo =
+      nullsBuffer(kSize, [](auto row) { return row >= 2 && row < 4; });
+  auto indicesTwo = indicesBuffer(kSize, [](vector_size_t i) { return i; });
+  auto dictionaryOverDictionaryVector = BaseVector::wrapInDictionary(
+      nullsTwo, indicesTwo, kSize, dictionaryVector);
+  decoded.decode(*dictionaryOverDictionaryVector, allRows);
+  wrappedVector =
+      decoded.wrap(intVector, *dictionaryOverDictionaryVector, allRows);
+  for (auto i = 0; i < kSize; i++) {
+    if (i < 4) {
+      ASSERT_TRUE(wrappedVector->isNullAt(i));
+    } else {
+      ASSERT_TRUE(
+          wrappedVector->equalValueAt(intVector.get(), i, decoded.index(i)));
+    }
+  }
+
+  // Test dictionrary with depth two and no nulls
+  auto noNullDictionaryVector =
+      BaseVector::wrapInDictionary(nullptr, indicesOne, kSize, rowVector);
+  auto noNullDictionaryOverDictionaryVector = BaseVector::wrapInDictionary(
+      nullptr, indicesTwo, kSize, noNullDictionaryVector);
+  decoded.decode(*noNullDictionaryOverDictionaryVector, allRows);
+  wrappedVector =
+      decoded.wrap(intVector, *noNullDictionaryOverDictionaryVector, allRows);
+  for (auto i = 0; i < kSize; i++) {
+    ASSERT_TRUE(
+        wrappedVector->equalValueAt(intVector.get(), i, decoded.index(i)));
+    ASSERT_FALSE(wrappedVector->isNullAt(i));
+  }
+}
+
+TEST_F(DecodedVectorTest, wrapOnConstantEncoding) {
+  const int kSize = 12;
+  auto intVector =
+      vectorMaker_->flatVector<int32_t>(kSize, [](auto row) { return row; });
+  auto rowVector = vectorMaker_->rowVector({intVector});
+  auto constantVector = BaseVector::wrapInConstant(kSize, 1, rowVector);
+  SelectivityVector allRows(kSize);
+  DecodedVector decoded(*constantVector, allRows);
+  auto wrappedVector = decoded.wrap(intVector, *constantVector, allRows);
+  for (auto i = 0; i < kSize; i++) {
+    ASSERT_TRUE(
+        wrappedVector->equalValueAt(intVector.get(), i, decoded.index(i)));
+  }
 }
 
 } // namespace facebook::velox::test
