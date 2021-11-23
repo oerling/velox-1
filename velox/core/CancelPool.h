@@ -76,7 +76,7 @@ struct ThreadState {
   // The thread currently running this.
   std::atomic<std::thread::id> thread;
   // The tid of 'thread'. Allows finding the thread in a debugger.
-  std::atomic<int32_t> tid;
+  std::atomic<int32_t> tid{0};
   // True if queued on an executor but not on thread.
   std::atomic<bool> isEnqueued{false};
   // True if being terminated or already terminated.

@@ -239,7 +239,7 @@ class DriverTest : public OperatorTestBase {
         int32_t counter = 0;
         for (;;) {
           {
-            std::lock_guard<std::mutex> l(wakeupMutex_);
+            std::lock_guard<std::mutex> l2(wakeupMutex_);
             if (wakeupCancelled_) {
               return;
             }
