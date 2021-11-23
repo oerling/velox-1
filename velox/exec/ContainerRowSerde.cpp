@@ -462,7 +462,40 @@ int32_t compareArrays(
   return flags.ascending ? (leftSize - rightSize) : (rightSize - leftSize);
 }
 
-template <>
+  int32_t compareArrayIndices(
+    ByteStream& left,
+    BaseVector& elements,
+    folly::Range<const vector_size_t*> rightIndices,
+    CompareFlags flags) {
+    int32_t leftSize = left.read<int32_t>();
+    int32_t rightSize = rightIndices.size();
+  if (leftSize != rightSize && flags.equalsOnly) {
+    return flags.ascending ? 1 : -1;
+  }
+  auto compareSize = std::min(leftSize, rightSize);
+  auto leftNulls = readNulls(left, leftSize);
+  auto wrappedElements = elements.wrappedVector();
+  for (auto i = 0; i < compareSize; ++i) {
+    auto elementIndex = elements.wrappedIndex(rightIndices [i]);
+    bool leftNull = bits::isBitSet(leftNulls.data(), i);
+    bool rightNull = wrappedElements->isNullAt(elementIndex);
+    if (leftNull) {
+      if (rightNull) {
+        continue;
+      }
+      return flags.nullsFirst ? -1 : 1;
+    } else if (rightNull) {
+      return flags.nullsFirst ? 1 : -1;
+    }
+    int result = compareSwitch(left, *wrappedElements, elementIndex, flags);
+    if (result) {
+      return result;
+    }
+  }
+  return flags.ascending ? (leftSize - rightSize) : (rightSize - leftSize);
+}
+
+  template <>
 int compare<TypeKind::ARRAY>(
     ByteStream& left,
     const BaseVector& right,
@@ -488,13 +521,15 @@ int compare<TypeKind::MAP>(
   auto map = right.wrappedVector()->asUnchecked<MapVector>();
   VELOX_CHECK(map->encoding() == VectorEncoding::Simple::MAP);
   auto wrappedIndex = right.wrappedIndex(index);
-  auto offset = map->offsetAt(wrappedIndex);
   auto size = map->sizeAt(wrappedIndex);
-  auto result = compareArrays(left, *map->mapKeys(), offset, size, flags);
+  std::vector<vector_size_t> indices(size);
+  auto rightIndices = folly::Range<vector_size_t*>(indices.data(), indices.size());
+  map->sortedKeyIndices(wrappedIndex, rightIndices);
+  auto result = compareArrayIndices(left, *map->mapKeys(), rightIndices, flags);
   if (result) {
     return result;
   }
-  return compareArrays(left, *map->mapValues(), offset, size, flags);
+  return compareArrayIndices(left, *map->mapValues(), rightIndices, flags);
 }
 
 int32_t compareSwitch(

@@ -516,8 +516,8 @@ class MapVector : public BaseVector {
   void canonicalize(bool useStableSort = false) const;
 
   // Sets indices to be a set of indices into the map at 'index' such
-  // that keys[indices[i]] < keys[indices[i + 1]].
-  void sortedKeyIndices(vector_size_t index, folly::Range<vector_size_t*> indices) const;
+  // that keys[indices[i]] < keys[indices[i + 1]]. Returns 'indices'.
+  folly::Range<vector_size_t*> sortedKeyIndices(vector_size_t index, folly::Range<vector_size_t*> indices) const;
 
   void ensureWritable(const SelectivityVector& rows) override;
 
