@@ -556,7 +556,11 @@ class RowContainerSpillStream : public SpillStream {
     return index_ >= numRowsInVector_ && nextBatchIndex_ == rows_.size();
   }
 
- protected:
+  uint64_t size() const override {
+    return 0;
+  }
+
+protected:
   void nextBatch() override {
     constexpr vector_size_t kMaxRows = 64;
     constexpr uint64_t kMaxBytes = 4 << 20;
