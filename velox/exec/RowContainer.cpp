@@ -560,7 +560,7 @@ class RowContainerSpillStream : public SpillStream {
     return 0;
   }
 
-protected:
+ protected:
   void nextBatch() override {
     constexpr vector_size_t kMaxRows = 64;
     constexpr uint64_t kMaxBytes = 4 << 20;

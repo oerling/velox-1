@@ -79,8 +79,7 @@ class SpillInput : public ByteStream {
 class SpillStream {
  public:
   SpillStream(RowTypePtr type, memory::MemoryPool& pool)
-    : type_(type), pool_(pool),
-      ordinal_(++ordinalCounter_) {
+      : type_(type), pool_(pool), ordinal_(++ordinalCounter_) {
     auto width = type_->size();
     decoded_.resize(width);
     for (auto i = 0; i < width; ++i) {
@@ -138,7 +137,7 @@ class SpillFile : public SpillStream {
   bool isWritable() const {
     return output_ != nullptr;
   }
-  
+
   // Finishes writing and flushes any unwritten data.
   void finishWrite() {
     VELOX_CHECK(output_);
@@ -203,7 +202,8 @@ class SpillFileList {
   // a single file in the file set. 'pool' and 'mappedMemory' are used for
   // buffering and constructing the result data read from 'this'.
   //
-  // When writing sorted spill runs, the caller is responsible for buffering and sorting the data. write is called multiple times, followed by flush(). 
+  // When writing sorted spill runs, the caller is responsible for buffering and
+  // sorting the data. write is called multiple times, followed by flush().
   SpillFileList(
       RowTypePtr type,
       const std::string path,
@@ -224,14 +224,14 @@ class SpillFileList {
   // next call is not less than the last row of the previous call.
   void write(const RowVectorPtr& rows, const folly::Range<IndexRange*> indices);
 
-  // Closes the current output file if any. Subsequent calls to write will start a new one.
+  // Closes the current output file if any. Subsequent calls to write will start
+  // a new one.
   void finishFile();
-  
+
   std::vector<std::unique_ptr<SpillFile>> files() {
     finishFile();
     return std::move(files_);
   }
-
 
  private:
   // Returns the current file to write to and creates one if needed.
@@ -306,8 +306,8 @@ class SpillState {
     return pool_;
   }
 
-  // Appends data to 'partition'. The rows  given by 'indices'  must be sorted for a sorted spill 
-  // and must hash to 'partition'.
+  // Appends data to 'partition'. The rows  given by 'indices'  must be sorted
+  // for a sorted spill and must hash to 'partition'.
   void appendToPartition(
       uint16_t partition,
       const RowVectorPtr& rows,
@@ -338,7 +338,8 @@ class SpillState {
   const std::string path_;
   const HashBitRange hashBits_;
   const uint64_t fieldMask_;
-  // Number of spilled ranges. This is 2** the number of bits in the range of 'hashBits_'
+  // Number of spilled ranges. This is 2** the number of bits in the range of
+  // 'hashBits_'
   int32_t numPartitions_ = 0;
   const uint64_t targetFileSize_;
   const uint64_t targetBatchSize_;

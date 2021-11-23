@@ -47,27 +47,30 @@ SpillFileRow SpillStream::next() {
     nextBatch();
     decodeRowVector();
   }
-    return {rowVector_.get(), index_++, &decoded_};
+  return {rowVector_.get(), index_++, &decoded_};
 }
 
-void  SpillStream::decodeRowVector() {
+void SpillStream::decodeRowVector() {
   index_ = 0;
   numRowsInVector_ = rowVector_->size();
-    SelectivityVector allRows(numRowsInVector_);
-    auto width = rowVector_->childrenSize();
-    for (auto i = 0; i < width; ++i) {
-      decoded_[i]->decode(*rowVector_->childAt(i), allRows);
-    }
+  SelectivityVector allRows(numRowsInVector_);
+  auto width = rowVector_->childrenSize();
+  for (auto i = 0; i < width; ++i) {
+    decoded_[i]->decode(*rowVector_->childAt(i), allRows);
   }
- 
+}
+
 SpillFile::~SpillFile() {
   // TBD: FileSystem must have a file deletion method.
-  VELOX_CHECK_EQ(path_[0], '/', "Spill only supports absolute paths to local fil, not {}.", path_);
-    if (unlink(path_.c_str()) != 0) {
-      LOG(ERROR) << "Error deleting spill file " << path_
-                 << " errno: " << errno;
-    }
+  VELOX_CHECK_EQ(
+      path_[0],
+      '/',
+      "Spill only supports absolute paths to local fil, not {}.",
+      path_);
+  if (unlink(path_.c_str()) != 0) {
+    LOG(ERROR) << "Error deleting spill file " << path_ << " errno: " << errno;
   }
+}
 }
 
 WriteFile& SpillFile::output() {
@@ -197,4 +200,3 @@ std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> SpillState::startMerge(
 }
 
 } // namespace facebook::velox::exec
-
