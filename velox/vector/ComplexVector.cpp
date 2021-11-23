@@ -396,7 +396,7 @@ uint64_t hashArray(
     vector_size_t size) {
   for (auto i = 0; i < size; ++i) {
     auto elementHash = elements.hashValueAt(offset + i);
-    hash = folly::hash::commutative_hash_128_to_64(hash, elementHash);
+    hash = folly::hash::commutative_hash_combine(hash, elementHash);
   }
   return hash;
 }
