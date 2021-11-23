@@ -462,13 +462,13 @@ int32_t compareArrays(
   return flags.ascending ? (leftSize - rightSize) : (rightSize - leftSize);
 }
 
-  int32_t compareArrayIndices(
+int32_t compareArrayIndices(
     ByteStream& left,
     BaseVector& elements,
     folly::Range<const vector_size_t*> rightIndices,
     CompareFlags flags) {
-    int32_t leftSize = left.read<int32_t>();
-    int32_t rightSize = rightIndices.size();
+  int32_t leftSize = left.read<int32_t>();
+  int32_t rightSize = rightIndices.size();
   if (leftSize != rightSize && flags.equalsOnly) {
     return flags.ascending ? 1 : -1;
   }
@@ -476,7 +476,7 @@ int32_t compareArrays(
   auto leftNulls = readNulls(left, leftSize);
   auto wrappedElements = elements.wrappedVector();
   for (auto i = 0; i < compareSize; ++i) {
-    auto elementIndex = elements.wrappedIndex(rightIndices [i]);
+    auto elementIndex = elements.wrappedIndex(rightIndices[i]);
     bool leftNull = bits::isBitSet(leftNulls.data(), i);
     bool rightNull = wrappedElements->isNullAt(elementIndex);
     if (leftNull) {
@@ -495,7 +495,7 @@ int32_t compareArrays(
   return flags.ascending ? (leftSize - rightSize) : (rightSize - leftSize);
 }
 
-  template <>
+template <>
 int compare<TypeKind::ARRAY>(
     ByteStream& left,
     const BaseVector& right,
@@ -523,7 +523,8 @@ int compare<TypeKind::MAP>(
   auto wrappedIndex = right.wrappedIndex(index);
   auto size = map->sizeAt(wrappedIndex);
   std::vector<vector_size_t> indices(size);
-  auto rightIndices = folly::Range<vector_size_t*>(indices.data(), indices.size());
+  auto rightIndices =
+      folly::Range<vector_size_t*>(indices.data(), indices.size());
   map->sortedKeyIndices(wrappedIndex, rightIndices);
   auto result = compareArrayIndices(left, *map->mapKeys(), rightIndices, flags);
   if (result) {
