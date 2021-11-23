@@ -76,5 +76,6 @@ class TableScan : public SourceOperator {
   // Dynamic filters to add to the data source when it gets created.
   std::unordered_map<ChannelIndex, std::shared_ptr<common::Filter>>
       pendingDynamicFilters_;
+  int32_t batch_size_{kDefaultBatchSize};
 };
 } // namespace facebook::velox::exec

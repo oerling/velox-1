@@ -365,14 +365,19 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
   }
   vector_size_t rowIndex = 0;
   auto nextRow = rows[rowIndex];
+  VELOX_CHECK(!returnReaderNulls_);
   for (size_t i = 0; i < numValues_; i++) {
     if (sourceRows[i] < nextRow) {
       continue;
     }
 
-    VELOX_DCHECK(sourceRows[i] == nextRow);
+    VELOX_CHECK(sourceRows[i] == nextRow);
     typedDestValues[rowIndex] = typedSourceValues[i];
-    if (resultNulls_) {
+    VELOX_CHECK_LE(rowIndex, i);
+    if (anyNulls_ && resultNulls_) {
+
+      VELOX_CHECK(rawResultNulls_ == resultNulls_->as<uint64_t>());
+      VELOX_CHECK_LT(i, resultNulls_->capacity() * 8);
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
@@ -411,7 +416,7 @@ void SelectiveColumnReader::compactScalarValues<bool, bool>(
     VELOX_DCHECK(outputRows_[i] == nextRow);
 
     bits::setBit(rawBits, rowIndex, bits::isBitSet(rawBits, i));
-    if (resultNulls_) {
+    if (anyNulls_ && resultNulls_) {
       bits::setBit(
           rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
     }
