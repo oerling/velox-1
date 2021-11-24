@@ -91,7 +91,7 @@ class MapConcatFunction : public exec::VectorFunction {
         combinedKeys,
         combinedValues);
 
-    combinedMap->canonicalize(true);
+    MapVector::canonicalize(combinedMap, true);
 
     combinedKeys = combinedMap->mapKeys();
     combinedValues = combinedMap->mapValues();

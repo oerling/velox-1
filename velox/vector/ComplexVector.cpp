@@ -396,7 +396,7 @@ uint64_t hashArray(
     vector_size_t size) {
   for (auto i = 0; i < size; ++i) {
     auto elementHash = elements.hashValueAt(offset + i);
-    hash = folly::hash::commutative_hash_combine(hash, elementHash);
+    hash = bits::commutativeHashMix(hash, elementHash);
   }
   return hash;
 }
@@ -759,44 +759,50 @@ bool MapVector::isSorted(vector_size_t index) const {
   return true;
 }
 
-void MapVector::canonicalize(bool useStableSort) const {
-  if (sortedKeys_) {
+  // static
+  void MapVector::canonicalize(const std::shared_ptr<MapVector>& map, bool useStableSort) {
+    if (map->sortedKeys_) {
     return;
   }
-  BufferPtr indices;
+    // This is not safe if 'this' is referenced from other
+    // threads. The keys and values do not have to be uniquely owned
+    // since they are not mutated but rather transposed, which is
+    // non-destructive.
+    VELOX_CHECK(map.unique());
+    BufferPtr indices;
   folly::Range<vector_size_t*> indicesRange;
-  for (auto i = 0; i < BaseVector::length_; ++i) {
-    if (isSorted(i)) {
+  for (auto i = 0; i < map->BaseVector::length_; ++i) {
+    if (map->isSorted(i)) {
       continue;
     }
     if (!indices) {
-      indices = elementIndices();
+      indices = map->elementIndices();
       indicesRange = folly::Range<vector_size_t*>(
-          indices->asMutable<vector_size_t>(), keys_->size());
+          indices->asMutable<vector_size_t>(), map->keys_->size());
     }
-    auto offset = rawOffsets_[i];
-    auto size = rawSizes_[i];
+    auto offset = map->rawOffsets_[i];
+    auto size = map->rawSizes_[i];
     if (useStableSort) {
       std::stable_sort(
           indicesRange.begin() + offset,
           indicesRange.begin() + offset + size,
           [&](vector_size_t left, vector_size_t right) {
-            return keys_->compare(keys_.get(), left, right) < 0;
+            return map->keys_->compare(map->keys_.get(), left, right) < 0;
           });
     } else {
       std::sort(
           indicesRange.begin() + offset,
           indicesRange.begin() + offset + size,
           [&](vector_size_t left, vector_size_t right) {
-            return keys_->compare(keys_.get(), left, right) < 0;
+            return map->keys_->compare(map->keys_.get(), left, right) < 0;
           });
     }
   }
   if (indices) {
-    keys_ = BaseVector::transpose(indices, std::move(keys_));
-    values_ = BaseVector::transpose(indices, std::move(values_));
+    map->keys_ = BaseVector::transpose(indices, std::move(map->keys_));
+    map->values_ = BaseVector::transpose(indices, std::move(map->values_));
   }
-  sortedKeys_ = true;
+  map->sortedKeys_ = true;
 }
 
 folly::Range<vector_size_t*> MapVector::sortedKeyIndices(

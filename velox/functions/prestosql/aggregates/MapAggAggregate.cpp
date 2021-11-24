@@ -186,7 +186,7 @@ class MapAggAggregate : public exec::Aggregate {
   }
 
   VectorPtr removeDuplicates(MapVectorPtr mapVector) const {
-    mapVector->canonicalize();
+    MapVector::canonicalize(mapVector);
 
     auto offsets = mapVector->rawOffsets();
     auto sizes = mapVector->rawSizes();

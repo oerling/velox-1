@@ -733,7 +733,7 @@ uint64_t hashArray(ByteStream& in, uint64_t hash, const Type* elementType) {
     } else {
       value = hashSwitch(in, elementType);
     }
-    hash = folly::hash::commutative_hash_combine(hash, value);
+    hash = bits::commutativeHashMix(hash, value);
   }
   return hash;
 }
