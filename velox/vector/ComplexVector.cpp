@@ -663,7 +663,7 @@ uint64_t MapVector::hashValueAt(vector_size_t index) const {
   }
   auto offset = rawOffsets_[index];
   auto size = rawSizes_[index];
-  // hashMix is commutative, thus we do not sort first.
+  // We use a commutative hash mix, thus we do not sort first.
   return hashArray(
       hashArray(BaseVector::kNullHash, *keys_, offset, size),
       *values_,

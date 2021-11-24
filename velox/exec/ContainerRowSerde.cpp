@@ -107,7 +107,7 @@ void writeNulls(
   }
 }
 
-void writeNullsIndices(
+void writeNulls(
     const BaseVector& values,
     folly::Range<const vector_size_t*> indices,
     ByteStream& out) {
@@ -138,12 +138,12 @@ void serializeArray(
   }
 }
 
-void serializeArrayIndices(
+void serializeArray(
     BaseVector& elements,
     folly::Range<const vector_size_t*> indices,
     ByteStream& out) {
   out.appendOne<int32_t>(indices.size());
-  writeNullsIndices(elements, indices, out);
+  writeNulls(elements, indices, out);
   for (auto i : indices) {
     if (!elements.isNullAt(i)) {
       serializeSwitch(elements, i, out);
@@ -178,8 +178,8 @@ void serializeOne<TypeKind::MAP>(
   map->sortedKeyIndices(
       wrappedIndex,
       folly::Range<vector_size_t*>(indices.data(), indices.size()));
-  serializeArrayIndices(*map->mapKeys(), indices, out);
-  serializeArrayIndices(*map->mapValues(), indices, out);
+  serializeArray(*map->mapKeys(), indices, out);
+  serializeArray(*map->mapValues(), indices, out);
 }
 
 void serializeSwitch(
