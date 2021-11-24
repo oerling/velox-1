@@ -367,7 +367,7 @@ TEST_F(RowContainerTest, types) {
         rowHashes.data());
     for (auto i = 0; i < kNumRows; ++i) {
       if (column) {
-	EXPECT_EQ(hashes[i], rowHashes[i]);
+        EXPECT_EQ(hashes[i], rowHashes[i]);
       }
       EXPECT_TRUE(source->equalValueAt(extracted.get(), i, i));
       EXPECT_EQ(source->compare(extracted.get(), i, i), 0);

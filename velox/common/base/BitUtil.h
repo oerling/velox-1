@@ -667,12 +667,13 @@ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) noexcept {
 FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER("unsigned-integer-overflow")
 #endif
 constexpr uint64_t commutativeHashMix(
-    const uint64_t upper, const uint64_t lower) noexcept {
+    const uint64_t upper,
+    const uint64_t lower) noexcept {
   // Commutative accumulator taken from this paper:
   // https://www.preprints.org/manuscript/201710.0192/v1/download
   return 3860031 + (upper + lower) * 2779 + (upper * lower * 2);
 }
-  
+
 inline uint64_t loadPartialWord(const uint8_t* data, int32_t size) {
   // Must be declared volatile, else gcc misses aliasing in optimized mode.
   volatile uint64_t result = 0;

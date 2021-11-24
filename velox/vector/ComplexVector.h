@@ -515,7 +515,9 @@ class MapVector : public BaseVector {
   // comparison and log time lookup.  This may only be done if there
   // are no other references to 'map'. Checks that 'map' is uniquely
   // referenced. Do not euse except right after construction.
-  static void canonicalize(const std::shared_ptr<MapVector>& map, bool useStableSort = false);
+  static void canonicalize(
+      const std::shared_ptr<MapVector>& map,
+      bool useStableSort = false);
 
   // Sets indices to be a set of indices into the map at 'index' such
   // that keys[indices[i]] < keys[indices[i + 1]]. Returns 'indices'.

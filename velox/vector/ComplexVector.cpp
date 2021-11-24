@@ -759,17 +759,19 @@ bool MapVector::isSorted(vector_size_t index) const {
   return true;
 }
 
-  // static
-  void MapVector::canonicalize(const std::shared_ptr<MapVector>& map, bool useStableSort) {
-    if (map->sortedKeys_) {
+// static
+void MapVector::canonicalize(
+    const std::shared_ptr<MapVector>& map,
+    bool useStableSort) {
+  if (map->sortedKeys_) {
     return;
   }
-    // This is not safe if 'this' is referenced from other
-    // threads. The keys and values do not have to be uniquely owned
-    // since they are not mutated but rather transposed, which is
-    // non-destructive.
-    VELOX_CHECK(map.unique());
-    BufferPtr indices;
+  // This is not safe if 'this' is referenced from other
+  // threads. The keys and values do not have to be uniquely owned
+  // since they are not mutated but rather transposed, which is
+  // non-destructive.
+  VELOX_CHECK(map.unique());
+  BufferPtr indices;
   folly::Range<vector_size_t*> indicesRange;
   for (auto i = 0; i < map->BaseVector::length_; ++i) {
     if (map->isSorted(i)) {
