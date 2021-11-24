@@ -149,7 +149,9 @@ class PlanBuilder {
 
   PlanBuilder& enforceSingleRow();
 
-  PlanBuilder& assignUniqueId();
+  PlanBuilder& assignUniqueId(
+      const std::string& idName = "unique",
+      const int32_t taskUniqueId = 1);
 
   std::shared_ptr<const core::FieldAccessTypedExpr> field(int index);
 
@@ -182,6 +184,14 @@ class PlanBuilder {
   // the concatenation of columns of the previous PlanNode and
   // 'build'. This may be wider than output.
   PlanBuilder& hashJoin(
+      const std::vector<ChannelIndex>& leftKeys,
+      const std::vector<ChannelIndex>& rightKeys,
+      const std::shared_ptr<core::PlanNode>& build,
+      const std::string& filterText,
+      const std::vector<ChannelIndex>& output,
+      core::JoinType joinType = core::JoinType::kInner);
+
+  PlanBuilder& mergeJoin(
       const std::vector<ChannelIndex>& leftKeys,
       const std::vector<ChannelIndex>& rightKeys,
       const std::shared_ptr<core::PlanNode>& build,

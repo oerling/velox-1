@@ -28,14 +28,16 @@ Unit        Example Truncated Value
 ``hour``    ``2001-08-22 03:00:00.000``
 ``day``     ``2001-08-22 00:00:00.000``
 ``month``   ``2001-08-01 00:00:00.000``
+``quarter`` ``2001-07-01 00:00:00.000``
 ``year``    ``2001-01-01 00:00:00.000``
 =========== ===========================
 
 The above examples use the timestamp ``2001-08-22 03:04:05.321`` as the input.
 
-.. function:: date_trunc(unit, timestamp) -> timestamp
+.. function:: date_trunc(unit, x) -> x
 
-    Returns ``timestamp`` truncated to ``unit``.
+    Returns ``x`` truncated to ``unit``. The supported types for ``x`` are TIMESTAMP and DATE.
+
 
 Java Date Functions
 -------------------
@@ -52,52 +54,66 @@ pattern format.
 Convenience Extraction Functions
 --------------------------------
 
-.. function:: day(timestamp) -> bigint
+These functions are supported for TIMESTAMP and DATE values.
 
-    Returns the day of the month from ``timestamp``.
+.. function:: day(x) -> bigint
 
-.. function:: day_of_month(timestamp) -> bigint
+    Returns the day of the month from ``x``.
+
+.. function:: day_of_month(x) -> bigint
 
     This is an alias for :func:`day`.
 
-.. function:: day_of_week(timestamp) -> bigint
+.. function:: day_of_week(x) -> bigint
 
-    Returns the ISO day of the week from ``timestamp``.
+    Returns the ISO day of the week from ``x``.
     The value ranges from ``1`` (Monday) to ``7`` (Sunday).
 
-.. function:: day_of_year(timestamp) -> bigint
+.. function:: day_of_year(x) -> bigint
 
-    Returns the day of the year from ``timestamp``.
+    Returns the day of the year from ``x``.
     The value ranges from ``1`` to ``366``.
 
-.. function:: dow(timestamp) -> bigint
+.. function:: dow(x) -> bigint
 
     This is an alias for :func:`day_of_week`.
 
-.. function:: doy(timestamp) -> bigint
+.. function:: doy(x) -> bigint
 
     This is an alias for :func:`day_of_year`.
 
-.. function:: hour(timestamp) -> bigint
+.. function:: hour(x) -> bigint
 
-    Returns the hour of the day from ``timestamp``. The value ranges from 0 to 23.
+    Returns the hour of the day from ``x``. The value ranges from 0 to 23.
 
-.. function:: millisecond(timestamp) -> int64
+.. function:: millisecond(x) -> int64
 
-    Returns the millisecond of the second from ``timestamp``.
+    Returns the millisecond of the second from ``x``.
 
-.. function:: minute(timestamp) -> bigint
+.. function:: minute(x) -> bigint
 
-    Returns the minute of the hour from ``timestamp``.
+    Returns the minute of the hour from ``x``.
 
-.. function:: month(timestamp) -> bigint
+.. function:: month(x) -> bigint
 
-    Returns the month of the year from ``timestamp``.
+    Returns the month of the year from ``x``.
 
-.. function:: second(timestamp) -> bigint
+.. function:: quarter(x) -> bigint
 
-    Returns the second of the minute from ``timestamp``.
+    Returns the quarter of the year from ``x``. The value ranges from ``1`` to ``4``.
 
-.. function:: year(timestamp) -> bigint
+.. function:: second(x) -> bigint
 
-    Returns the year from ``timestamp``.
+    Returns the second of the minute from ``x``.
+
+.. function:: year(x) -> bigint
+
+    Returns the year from ``x``.
+
+.. function:: year_of_week(x) -> bigint
+
+    Returns the year of the ISO week from ``x``.
+
+.. function:: yow(x) -> bigint
+
+    This is an alias for :func:`year_of_week`.

@@ -19,7 +19,7 @@
 #include "velox/common/caching/SsdCache.h"
 #include "velox/core/Expressions.h"
 #include "velox/core/PlanNode.h"
-#include "velox/exec/tests/QueryAssertions.h"
+#include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/type/Variant.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/tests/VectorMaker.h"
@@ -99,6 +99,12 @@ class OperatorTestBase : public testing::Test {
 
   RowVectorPtr makeRowVector(const std::vector<VectorPtr>& children) {
     return vectorMaker_.rowVector(children);
+  }
+
+  RowVectorPtr makeRowVector(
+      const std::vector<std::string>& childNames,
+      const std::vector<VectorPtr>& children) {
+    return vectorMaker_.rowVector(childNames, children);
   }
 
   template <typename T>

@@ -116,9 +116,9 @@ class AbstractColumnStats {
       std::vector<uint32_t>& hits) = 0;
 
   virtual std::unique_ptr<velox::common::Filter> rowGroupSkipFilter(
-      const std::vector<RowVectorPtr>& batches,
-      const Subfield& subfield,
-      std::vector<uint32_t>& hits) {
+      const std::vector<RowVectorPtr>& /*batches*/,
+      const Subfield& /*subfield*/,
+      std::vector<uint32_t>& /*hits*/) {
     VELOX_NYI();
   }
 
@@ -371,8 +371,8 @@ std::unique_ptr<Filter> ColumnStats<StringView>::makeRangeFilter(
 template <>
 std::unique_ptr<velox::common::Filter>
 ColumnStats<StringView>::makeRowGroupSkipRangeFilter(
-    const std::vector<RowVectorPtr>& batches,
-    const Subfield& subfield) {
+    const std::vector<RowVectorPtr>& /*batches*/,
+    const Subfield& /*subfield*/) {
   static std::string max = kMaxString;
   return std::make_unique<velox::common::BytesRange>(
       max, false, false, max, false, false, false);
@@ -652,7 +652,6 @@ class E2EFilterTest : public testing::Test {
 
   // Makes non-null strings unique by appending a row number.
   void makeStringUnique(const Subfield& field) {
-    int counter = 0;
     for (RowVectorPtr batch : batches_) {
       auto strings =
           getChildBySubfield(batch.get(), field)->as<FlatVector<StringView>>();
@@ -671,7 +670,7 @@ class E2EFilterTest : public testing::Test {
   // non-null values from each column and replaces nulls in the column
   // in question with one of these. A column where only nulls are
   // found in sampling is not changed.
-  void makeNotNull() {
+  void makeNotNull(int32_t firstRow = 0) {
     for (RowVectorPtr batch : batches_) {
       for (auto& data : batch->children()) {
         std::vector<vector_size_t> nonNulls;
@@ -687,7 +686,7 @@ class E2EFilterTest : public testing::Test {
           continue;
         }
         int32_t nonNullCounter = 0;
-        for (auto row = 0; row < data->size(); ++row) {
+        for (auto row = firstRow; row < data->size(); ++row) {
           if (data->isNullAt(row)) {
             data->copy(
                 data.get(), row, nonNulls[nonNullCounter % nonNulls.size()], 1);
@@ -788,15 +787,16 @@ class E2EFilterTest : public testing::Test {
     runtimeStats_ = dwio::common::RuntimeStatistics();
     auto rowIndex = 0;
     auto batch = BaseVector::create(rowType_, 1, pool_.get());
+    resetReadBatchSizes();
     while (true) {
       {
         MicrosecondTimer timer(&time);
-        bool hasData = rowReader->next(1000, batch);
+        bool hasData = rowReader->next(nextReadBatchSize(), batch);
         if (!hasData) {
           break;
         }
         if (batch->size() == 0) {
-          // No hits in the last 1000 rows.
+          // No hits in the last batch of rows.
           continue;
         }
         if (useValueHook) {
@@ -1097,6 +1097,18 @@ class E2EFilterTest : public testing::Test {
     }
   }
 
+  // Allows testing reading with different batch sizes.
+  void resetReadBatchSizes() {
+    nextReadSizeIndex_ = 0;
+  }
+
+  int32_t nextReadBatchSize() {
+    if (nextReadSizeIndex_ >= readSizes_.size()) {
+      return 1000;
+    }
+    return readSizes_[nextReadSizeIndex_++];
+  }
+
   std::unique_ptr<memory::MemoryPool> pool_;
   std::shared_ptr<const RowType> rowType_;
   std::unique_ptr<MemorySink> sink_;
@@ -1109,6 +1121,8 @@ class E2EFilterTest : public testing::Test {
   dwio::common::RuntimeStatistics runtimeStats_;
   // Number of calls to flush policy between starting new stripes.
   int32_t flushEveryNBatches_{10};
+  int32_t nextReadSizeIndex_{0};
+  std::vector<int32_t> readSizes_;
 };
 
 TEST_F(E2EFilterTest, integerDirect) {
@@ -1236,6 +1250,28 @@ TEST_F(E2EFilterTest, listAndMap) {
       true,
       {"long_val", "long_val_2", "int_val"},
       10);
+}
+
+TEST_F(E2EFilterTest, nullCompactRanges) {
+  // Makes a dataset with nulls at the beginning. Tries different
+  // filter ombinations on progressively larger batches. tests for a
+  // bug in null compaction where null bits past end of nulls buffer
+  // were compacted while there actually were no nulls.
+
+  readSizes_ = {10, 100, 1000, 10000, 10000, 10000};
+  testWithTypes(
+      "tiny_val:tinyint,"
+      "bool_val:boolean,"
+      "long_val:bigint,"
+      "tiny_null:bigint",
+
+      [&]() { makeNotNull(500); },
+
+      true,
+      {"tiny_val", "bool_val", "long_val", "tiny_null"},
+      20,
+      false,
+      false);
 }
 
 } // namespace facebook::velox::dwio::dwrf

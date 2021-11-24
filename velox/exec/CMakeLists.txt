@@ -34,6 +34,7 @@ add_library(
   LocalPartition.cpp
   LocalPlanner.cpp
   Merge.cpp
+  MergeJoin.cpp
   MergeSource.cpp
   Operator.cpp
   OperatorUtils.cpp
@@ -62,4 +63,6 @@ target_link_libraries(
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
   add_subdirectory(benchmarks)
+elseif(${VELOX_BUILD_TEST_UTILS})
+  add_subdirectory(tests/utils)
 endif()

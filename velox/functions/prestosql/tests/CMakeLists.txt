@@ -49,12 +49,14 @@ add_executable(
   ReduceTest.cpp
   ReverseTest.cpp
   RoundTest.cpp
+  SliceTest.cpp
   SplitTest.cpp
   StringFunctionsTest.cpp
   TransformTest.cpp
   URLFunctionsTest.cpp
   WidthBucketArrayTest.cpp
-  GreatestLeastTest.cpp)
+  GreatestLeastTest.cpp
+  ZipTest.cpp)
 
 add_test(velox_functions_test velox_functions_test)
 

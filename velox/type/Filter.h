@@ -653,7 +653,9 @@ class BigintValuesUsingHashTable final : public Filter {
         min_(other.min_),
         max_(other.max_),
         hashTable_(other.hashTable_),
-        containsEmptyMarker_(other.containsEmptyMarker_) {}
+        containsEmptyMarker_(other.containsEmptyMarker_),
+        values_(other.values_),
+        sizeMask_(other.sizeMask_) {}
 
   std::unique_ptr<Filter> clone(
       std::optional<bool> nullAllowed = std::nullopt) const final {

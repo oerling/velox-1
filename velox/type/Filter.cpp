@@ -130,9 +130,7 @@ BigintValuesUsingHashTable::BigintValuesUsingHashTable(
   auto size = 1u << (uint32_t)std::log2(values.size() * 5);
   hashTable_.resize(size + kPaddingElements);
   sizeMask_ = size - 1;
-  for (auto i = 0; i < size; ++i) {
-    hashTable_[i] = kEmptyMarker;
-  }
+  std::fill(hashTable_.begin(), hashTable_.end(), kEmptyMarker);
   for (auto value : values) {
     if (value == kEmptyMarker) {
       containsEmptyMarker_ = true;
@@ -239,6 +237,9 @@ __m256i BigintValuesUsingHashTable::test4x64(__m256i x) {
 }
 
 __m256si BigintValuesUsingHashTable::test8x32(__m256i x) {
+  // Calls 4x64 twice since the hash table is 64 bits wide in any
+  // case. A 32-bit hash table would be possible but all the use
+  // cases seen are in the 64 bit range.
   using V32 = simd::Vectors<int32_t>;
   using V64 = simd::Vectors<int64_t>;
   auto x8x32 = reinterpret_cast<V32::TV>(x);
@@ -794,8 +795,8 @@ std::unique_ptr<Filter> BigintValuesUsingHashTable::mergeWith(
         auto max = std::min(max_, range->upper());
 
         if (min <= max) {
-          for (int64_t v : hashTable_) {
-            if (v != kEmptyMarker && range->testInt64(v)) {
+          for (int64_t v : values_) {
+            if (range->testInt64(v)) {
               valuesToKeep.emplace_back(v);
             }
           }

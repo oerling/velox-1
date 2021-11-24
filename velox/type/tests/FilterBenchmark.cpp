@@ -52,24 +52,20 @@ int32_t run4x64(const std::vector<int64_t>& data) {
   return count;
 }
 
-// Global counter updated by tests so that counting results does not get
-// optimized away.
-uint64_t hits = 0;
-
 BENCHMARK(scalarDense) {
-  hits += run1x64(sparseValues);
+  folly::doNotOptimizeAway(run1x64(sparseValues));
 }
 
 BENCHMARK_RELATIVE(simdDense) {
-  hits += run4x64(sparseValues);
+  folly::doNotOptimizeAway(run4x64(sparseValues));
 }
 
 BENCHMARK(scalarSparse) {
-  hits += run1x64(sparseValues);
+  folly::doNotOptimizeAway(run1x64(sparseValues));
 }
 
 BENCHMARK_RELATIVE(simdSparse) {
-  hits += run4x64(sparseValues);
+  folly::doNotOptimizeAway(run4x64(sparseValues));
 }
 
 int32_t main(int32_t argc, char* argv[]) {
@@ -78,7 +74,8 @@ int32_t main(int32_t argc, char* argv[]) {
   folly::init(&argc, &argv);
 
   std::vector<int64_t> filterValues;
-  for (auto i = 0; i < 1000; ++i) {
+  filterValues.reserve(kFilterValues);
+  for (auto i = 0; i < kFilterValues; ++i) {
     filterValues.push_back(i * 1000);
   }
   filter = std::make_unique<BigintValuesUsingHashTable>(

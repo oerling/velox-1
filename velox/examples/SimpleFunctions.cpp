@@ -93,37 +93,25 @@ struct MyPlusTemplatedFunction {
     return true;
   }
 
-  // One could also provide full or partial template specializations, if one
-  // needs special treatment for different types:
-  template <typename TInput>
-  FOLLY_ALWAYS_INLINE bool call(double& out, const double& a, const double& b);
+  // You can overload for specific types to specialize.
+  FOLLY_ALWAYS_INLINE bool call(double& out, const double& a, const double& b) {
+    out = (std::isnan(a) ? 0 : a) + (std::isnan(b) ? 0 : b);
+    return true;
+  }
 };
-
-// GCC doesn't like template specialization outside of namespace scopes, so we
-// need to move the implementation outside of the class definition.
-template <typename T>
-template <typename TInput>
-FOLLY_ALWAYS_INLINE bool MyPlusTemplatedFunction<T>::call(
-    double& out,
-    const double& a,
-    const double& b) {
-  out = (std::isnan(a) ? 0 : a) + (std::isnan(b) ? 0 : b);
-  return true;
-}
 
 // And again, registration is where template instantiation happens.
 void register2() {
   registerFunction<MyPlusTemplatedFunction, double, double, double>(
       {"my_plus_double"});
+
   registerFunction<MyPlusTemplatedFunction, int16_t, int16_t, int16_t>(
       {"my_plus_smallint"});
 
   // `velox/functions/lib/RegistrationHelpers.h` provides helper functions to
   // prevent users from repeating tedious type combinations when instantiating
   // templates. In this particular case, one could just:
-  //
-  // TODO: Fix the function API first.
-  // registerBinaryNumeric<MyPlusTemplatedFunction>({"my_other_plus"});
+  functions::registerBinaryNumeric<MyPlusTemplatedFunction>({"my_other_plus"});
 }
 
 //
@@ -220,7 +208,7 @@ struct MyGenericStringConcatFunction {
   call(TResult& result, const TInput1& input1, const TInput2& input2) {
     result.resize(input1.size() + input2.size());
     std::memcpy(result.data(), input1.data(), input1.size());
-    std::memcpy(result.data(), input2.data(), input2.size());
+    std::memcpy(result.data() + input1.size(), input2.data(), input2.size());
     return true;
   }
 };
@@ -238,7 +226,6 @@ void register5() {
       Varbinary,
       Varchar>({"my_generic_string_concat"});
 
-  // This will end up calling the partially specialized method.
   registerFunction<MyGenericStringConcatFunction, Varbinary, Varchar, Varchar>(
       {"my_generic_string_concat"});
 }
@@ -267,8 +254,8 @@ struct MyAsciiAwareFunction {
     return true;
   }
 
-  // Optionally, a function can declare "default ascii behavior", indicating the
-  // engine that any produced output strings will be ascii-only, in case all
+  // Optionally, a function can declare "default ascii behavior", indicating
+  // that any produced output strings will be ascii-only, in case all
   // inputs are ascii-only. This hint allows the engine to avoid running
   // character set detection on the output of this function.
   static constexpr bool is_default_ascii_behavior = true;
@@ -276,20 +263,37 @@ struct MyAsciiAwareFunction {
 
 // In some cases, the user might want to reuse the String buffer from one of
 // the inputs in the output, making the function zero-copy. Some compelling
-// examples are trim (ltrim and rtrim) and substr. One can do that by setting
-// the flag below, which specifies the index of the argument whose strings
-// are being re-used in the output:
+// examples are trim (ltrim and rtrim), substr, and split. One can do that by
+// setting the flag below, which specifies the index of the argument whose
+// strings are being re-used in the output. Valid output types are VARCHAR and
+// ARRAY<VARCHAR>.
+//
+// This example implements a simple split function that tokenizes the input
+// string based on empty spaces (' '), returning an array of strings that reuse
+// the same buffer as the first parameter (zero-copy). Check the "Complex Types"
+// section below for more examples about arrays, maps, rows and other complex
+// types.
 template <typename T>
-struct MyZeroCopyStringFunction {
+struct MySimpleSplitFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  // Results refer to the first input strings parameter.
+  // Results refer to the first input strings parameter buffer.
   static constexpr int32_t reuse_strings_from_arg = 0;
 
+  const char splitChar{' '};
+
   FOLLY_ALWAYS_INLINE bool call(
-      out_type<Varchar>& result,
+      out_type<Array<Varchar>>& out,
       const arg_type<Varchar>& input) {
-    result.setNoCopy(input);
+    auto start = input.begin();
+    auto cur = start;
+
+    // This code doesn't copy the string contents.
+    do {
+      cur = std::find(start, input.end(), splitChar);
+      out.append(out_type<Varchar>(StringView(start, cur - start)));
+      start = cur + 1;
+    } while (cur < input.end());
     return true;
   }
 };
@@ -298,8 +302,8 @@ void register6() {
   registerFunction<MyAsciiAwareFunction, Varchar, Varchar>(
       {"my_ascii_aware_func"});
 
-  registerFunction<MyZeroCopyStringFunction, Varchar, Varchar>(
-      {"my_zero_copy_string_func"});
+  registerFunction<MySimpleSplitFunction, Array<Varchar>, Varchar>(
+      {"my_simple_split_func"});
 }
 
 //
@@ -308,10 +312,10 @@ void register6() {
 
 // It is possible for simple functions to pre-process session/query configs and
 // constant inputs, and possibly hold state by providing an `initialize()`
-// method. This method must return void, and take a QueryConfig in addition to
-// pointers to the input parameters declared during function registration. The
-// pointers will carry the constant values (for any inputs containing constant
-// values), or null in case the inputs are not constant.
+// method. This method has void return type, and takes a QueryConfig in addition
+// to pointers to the input parameters declared during function registration.
+// The pointers will carry the constant values (for any inputs containing
+// constant values), or null in case the inputs are not constant.
 //
 // The example below illustrates a toy implementation of an RE2-based regular
 // expression function, which compiles the regexp pattern only once if the
@@ -329,7 +333,7 @@ struct MyRegexpMatchFunction {
     // quite expensive to compile it on a per-row basis. In this example we
     // support both modes (const and non-const).
     if (pattern != nullptr) {
-      re_ = std::make_unique<::re2::RE2>(*pattern);
+      re_.emplace(*pattern);
     }
 
     // Optionally, one could also inspect the session configs in `QueryConfig`.
@@ -341,16 +345,13 @@ struct MyRegexpMatchFunction {
       bool& result,
       const arg_type<Varchar>& input,
       const arg_type<Varchar>& pattern) {
-    // In case the pattern is constant and was already initialized, e.g,
-    // `my_regexp_match(col1, "^.*$")`
-    if (re_) {
-      result = RE2::PartialMatch(toStringPiece(input), *re_);
-    }
-    // In case the pattern is not constant, we need to compile it for each row,
-    // e.g, `my_regexp_match(col1, col2)`
-    else {
-      result = RE2::PartialMatch(toStringPiece(input), ::re2::RE2(pattern));
-    }
+    // Check if the pattern is constant and was already initialized, e.g:
+    // >  `my_regexp_match(col1, "^.*$")`
+    // or, if it is not constant, we need to compile it for each row, e.g:
+    // > `my_regexp_match(col1, col2)`
+    result = re_.has_value()
+        ? RE2::PartialMatch(toStringPiece(input), *re_)
+        : RE2::PartialMatch(toStringPiece(input), ::re2::RE2(pattern));
     return true;
   }
 
@@ -359,7 +360,7 @@ struct MyRegexpMatchFunction {
     return re2::StringPiece(input.data(), input.size());
   }
 
-  std::unique_ptr<::re2::RE2> re_;
+  std::optional<::re2::RE2> re_;
 };
 
 void register7() {
@@ -465,7 +466,6 @@ void register8() {
       std::shared_ptr<UserDefinedObject>,
       std::shared_ptr<UserDefinedObject>>({"my_opaque_func"});
 }
-
 } // namespace
 
 int main(int argc, char** argv) {
