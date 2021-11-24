@@ -185,15 +185,15 @@ class DriverTest : public OperatorTestBase {
           LOG(INFO) << "Task::toString() while probably blocked: "
                     << tasks_[0]->toString();
         } else if (operation == ResultOperation::kCancel) {
-          cursor->cancelPool()->requestTerminate();
+          cursor->task()->requestTerminate();
         } else if (operation == ResultOperation::kTerminate) {
           cursor->task()->terminate(kAborted);
         } else if (operation == ResultOperation::kYield) {
-          cursor->cancelPool()->requestYield();
+          cursor->task()->requestYield();
         } else if (operation == ResultOperation::kPause) {
-          cursor->cancelPool()->requestPause(true);
+          cursor->task()->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = cursor->cancelPool()->finishFuture().via(&executor);
+          auto future = cursor->task()->finishFuture().via(&executor);
           future.wait();
           paused = true;
         }
@@ -360,7 +360,7 @@ TEST_F(DriverTest, cancel) {
   }
   EXPECT_GE(numRead, 1'000'000);
   auto& executor = folly::QueuedImmediateExecutor::instance();
-  auto future = tasks_[0]->cancelPool()->finishFuture().via(&executor);
+  auto future = tasks_[0]->finishFuture().via(&executor);
   future.wait();
   EXPECT_TRUE(stateFutures_.at(0).isReady());
   EXPECT_EQ(tasks_[0]->numDrivers(), 0);
@@ -407,7 +407,7 @@ TEST_F(DriverTest, slow) {
   // are updated some tens of instructions after this. Determinism
   // requires a barrier.
   auto& executor = folly::QueuedImmediateExecutor::instance();
-  auto future = tasks_[0]->cancelPool()->finishFuture().via(&executor);
+  auto future = tasks_[0]->finishFuture().via(&executor);
   future.wait();
   // Note that the driver count drops after the last thread stops and
   // realizes the future.
@@ -549,10 +549,9 @@ class TestingPauser : public Operator {
           if (!task) {
             continue;
           }
-          auto cancelPool = task->cancelPool();
-          cancelPool->requestPause(true);
+          task->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = cancelPool->finishFuture().via(&executor);
+          auto future = task->finishFuture().via(&executor);
           future.wait();
           sleep(2);
           Task::resume(task);

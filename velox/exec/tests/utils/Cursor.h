@@ -91,7 +91,7 @@ class TaskCursor {
   ~TaskCursor() {
     queue_->close();
     if (task_) {
-      task_->cancelPool()->requestTerminate();
+      task_->requestTerminate();
     }
   }
 
@@ -139,10 +139,6 @@ class RowCursor {
 
   std::shared_ptr<Task> task() const {
     return cursor_->task();
-  }
-
-  std::shared_ptr<core::CancelPool> cancelPool() const {
-    return task()->cancelPool();
   }
 
  private:

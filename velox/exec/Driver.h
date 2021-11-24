@@ -126,14 +126,10 @@ class Driver {
     return state_;
   }
 
-  core::CancelPool* FOLLY_NONNULL cancelPool() const {
-    return cancelPool_.get();
-  }
-
   // Frees the resources associated with this if this is
   // off-thread. Returns true if resources are freed. If this is on
   // thread, returns false. In this case the Driver's thread will see
-  // that the CancelPool is set to terminate and will free the
+  // that the Task is set to terminate and will free the
   // resources on the thread.
   bool terminate();
 
@@ -164,6 +160,10 @@ class Driver {
     return ctx_.get();
   }
 
+  std::shared_ptr<Task> task() const {
+    return task_;
+  }
+  
  private:
   void enqueueInternal();
 
@@ -179,9 +179,8 @@ class Driver {
 
   std::unique_ptr<DriverCtx> ctx_;
   std::shared_ptr<Task> task_;
-  core::CancelPoolPtr cancelPool_;
 
-  // Set via 'cancelPool_' and serialized by 'cancelPool_'s mutex.
+  // Set via Task_ and serialized by 'task_'s mutex.
   core::ThreadState state_;
 
   // Timer used to track down the time we are sitting in the driver queue.
@@ -282,7 +281,7 @@ struct DriverFactory {
 };
 
 // Begins and ends a section where a thread is running but not
-// counted in its CancelPool. Using this, a Driver thread can for
+// counted in its Task. Using this, a Driver thread can for
 // example stop its own Task. For arbitrating memory overbooking,
 // the contending threads go suspended and each in turn enters a
 // global critical section. When running the arbitration strategy, a

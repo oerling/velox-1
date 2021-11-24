@@ -120,11 +120,11 @@ void BlockingState::setResume(std::shared_ptr<BlockingState> state) {
         state->operator_->recordBlockingTime(state->sinceMicros_);
         auto driver = state->driver_;
         {
-          std::lock_guard<std::mutex> l(*driver->cancelPool()->mutex());
+          std::lock_guard<std::mutex> l(driver->task()->mutex());
           VELOX_CHECK(!driver->state().isSuspended);
           VELOX_CHECK(driver->state().hasBlockingFuture);
           driver->state().hasBlockingFuture = false;
-          if (driver->cancelPool()->pauseRequested()) {
+          if (driver->task()->pauseRequested()) {
             // The thread will be enqueued at resume.
             return;
           }
@@ -142,20 +142,20 @@ void BlockingState::setResume(std::shared_ptr<BlockingState> state) {
 
 namespace {
 
-// Ensures that the thread is removed from a CancelPool on exit.
-class CancelPoolGuard {
+// Ensures that the thread is removed from its Task's thread count on exit.
+class CancelGuard {
  public:
-  CancelPoolGuard(
-      core::CancelPool* cancelPool,
+  CancelGuard(
+	      Task* task,
       core::ThreadState* state,
       std::function<void(core::StopReason)> onTerminate)
-      : cancelPool_(cancelPool), state_(state), onTerminate_(onTerminate) {}
+      : task_(task), state_(state), onTerminate_(onTerminate) {}
 
   void notThrown() {
     isThrow_ = false;
   }
 
-  ~CancelPoolGuard() {
+  ~CancelGuard() {
     bool onTerminateCalled = false;
     if (isThrow_) {
       // Runtime error. Driver is on thread, hence safe.
@@ -163,9 +163,9 @@ class CancelPoolGuard {
       onTerminate_(core::StopReason::kNone);
       onTerminateCalled = true;
     }
-    auto reason = cancelPool_->leave(*state_);
+    auto reason = task_->leave(*state_);
     if (reason == core::StopReason::kTerminate) {
-      // Terminate requested via cancelPool. The Driver is not on
+      // Terminate requested via Task. The Driver is not on
       // thread but 'terminated_' is set, hence no other threads will
       // enter. onTerminateCalled will be true if both runtime error and
       // terminate requested via CancelPool.
@@ -176,7 +176,7 @@ class CancelPoolGuard {
   }
 
  private:
-  core::CancelPool* cancelPool_;
+  Task* task_;
   core::ThreadState* state_;
   std::function<void(core::StopReason reason)> onTerminate_;
   bool isThrow_ = true;
@@ -216,7 +216,7 @@ void Driver::testingJoinAndReinitializeExecutor(int32_t threads) {
 
 // static
 void Driver::enqueue(std::shared_ptr<Driver> driver) {
-  // This is expected to be called inside the Driver's CancelPool mutex.
+  // This is expected to be called inside the Driver's Tasks's mutex.
   driver->enqueueInternal();
   auto& task = driver->task_;
   auto executor = task ? task->queryCtx()->executor() : nullptr;
@@ -231,7 +231,6 @@ Driver::Driver(
     std::vector<std::unique_ptr<Operator>>&& operators)
     : ctx_(std::move(ctx)),
       task_(ctx_->task),
-      cancelPool_(ctx_->task->cancelPool()),
       operators_(std::move(operators)) {
   curOpIndex_ = operators_.size() - 1;
   // Operators need access to their Driver for adaptation.
@@ -317,7 +316,7 @@ core::StopReason Driver::runInternal(
         (getCurrentTimeMicro() - queueTimeStartMicros_) * 1'000);
   }
 
-  auto stop = cancelPool_->enter(state_);
+  auto stop = task_->enter(state_);
   if (stop != core::StopReason::kNone) {
     if (stop == core::StopReason::kTerminate) {
       task_->setError(std::make_exception_ptr(VeloxRuntimeError(
@@ -334,8 +333,8 @@ core::StopReason Driver::runInternal(
     return stop;
   }
 
-  CancelPoolGuard guard(
-      cancelPool_.get(), &state_, [this](core::StopReason reason) {
+  CancelGuard guard(
+		    task_.get(), &state_, [this](core::StopReason reason) {
         auto task = task_.get();
         if (task && reason == core::StopReason::kTerminate) {
           task_->setError(std::make_exception_ptr(VeloxRuntimeError(
@@ -362,7 +361,7 @@ core::StopReason Driver::runInternal(
 
     for (;;) {
       for (int32_t i = numOperators - 1; i >= 0; --i) {
-        stop = cancelPool_->shouldStop();
+        stop = task_->shouldStop();
         if (stop != core::StopReason::kNone) {
           guard.notThrown();
           return stop;
@@ -417,7 +416,7 @@ core::StopReason Driver::runInternal(
               i += 2;
               continue;
             } else {
-              stop = cancelPool_->shouldStop();
+              stop = task_->shouldStop();
               if (stop != core::StopReason::kNone) {
                 guard.notThrown();
                 return stop;
@@ -475,7 +474,7 @@ core::StopReason Driver::runInternal(
     return core::StopReason::kAlreadyTerminated;
   } catch (std::exception& e) {
     task_->setError(std::current_exception());
-    // The CancelPoolGuard will close 'self' and remove from task_.
+    // The CancelGuard will close 'self' and remove from task_.
     return core::StopReason::kAlreadyTerminated;
   }
 }
@@ -486,7 +485,7 @@ void Driver::run(std::shared_ptr<Driver> self) {
   auto reason = self->runInternal(self, &blockingState);
   switch (reason) {
     case core::StopReason::kBlock:
-      // Set the resume action outside of the CancelPool so that, if the
+      // Set the resume action outside of the Task so that, if the
       // future is already realized we do not have a second thread
       // entering the same Driver.
       BlockingState::setResume(blockingState);
@@ -543,7 +542,7 @@ void Driver::close() {
 }
 
 bool Driver::terminate() {
-  auto stop = cancelPool_->enterForTerminate(state_);
+  auto stop = task_->enterForTerminate(state_);
   if (stop == core::StopReason::kTerminate) {
     close();
     return true;
@@ -645,14 +644,14 @@ std::string Driver::toString() {
 }
 SuspendedSection::SuspendedSection(Driver* FOLLY_NONNULL driver)
     : driver_(driver) {
-  if (driver->cancelPool()->enterSuspended(driver->state()) !=
+  if (driver->task()->enterSuspended(driver->state()) !=
       core::StopReason::kNone) {
     VELOX_FAIL("Terminate detected when entering suspended section");
   }
 }
 
 SuspendedSection::~SuspendedSection() {
-  if (driver_->cancelPool()->leaveSuspended(driver_->state()) !=
+  if (driver_->task()->leaveSuspended(driver_->state()) !=
       core::StopReason::kNone) {
     VELOX_FAIL("Terminate detected when leaving suspended section");
   }

@@ -157,7 +157,7 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
   // cancellations and pauses have well
   // defined timing. For example, do not pause and restart a task
   // while it is still adding Drivers.
-  std::lock_guard<std::mutex> l(*self->mutex_);
+  std::lock_guard<std::mutex> l(self->mutex_);
   self->drivers_ = std::move(drivers);
   for (auto& driver : self->drivers_) {
     if (driver) {
@@ -169,7 +169,7 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
 // static
 void Task::resume(std::shared_ptr<Task> self) {
   VELOX_CHECK(!self->exception_, "Cannot resume failed task");
-  std::lock_guard<std::mutex> l(*self->mutex_);
+  std::lock_guard<std::mutex> l(self->mutex_);
   // Setting pause requested must be atomic with the resuming so that
   // suspended sections do not go back on thread during resume.
   self->requestPauseLocked(false);
@@ -198,11 +198,11 @@ void Task::resume(std::shared_ptr<Task> self) {
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
-  std::lock_guard<std::mutex> cancelPoolLock(*self->mutex_);
+  std::lock_guard<std::mutex> taskLock(self->mutex_);
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() == driver) {
       driverPtr = nullptr;
-      self->driverClosed();
+      self->driverClosedLocked();
       return;
     }
   }
@@ -226,6 +226,9 @@ bool Task::addSplitWithSequence(
     const core::PlanNodeId& planNodeId,
     exec::Split&& split,
     long sequenceId) {
+  ContinuePromise promise;
+  bool added = false;
+  {
   std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(state_ == kRunning);
 
@@ -234,24 +237,34 @@ bool Task::addSplitWithSequence(
   // would be ignored.
   auto& splitsState = splitsStates_[planNodeId];
   if (sequenceId > splitsState.maxSequenceId) {
-    addSplitLocked(splitsState, std::move(split));
-    return true;
+    promise = addSplitLocked(splitsState, std::move(split));
+    added = true;
   }
-
-  return false;
+  }
+  if (promise.valid()) {
+    promise.setValue(false);
+  }
+  return added;
 }
 
 void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
+  ContinuePromise promise;
+  {
   std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(state_ == kRunning);
 
-  addSplitLocked(splitsStates_[planNodeId], std::move(split));
-}
+  promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
+  }
+  if (promise.valid()) {
+    promise.setValue(false);
+  }
+  }
 
-void Task::addSplitLocked(SplitsState& splitsState, exec::Split&& split) {
+ContinuePromise&& Task::addSplitLocked(SplitsState& splitsState, exec::Split&& split) {
   ++taskStats_.numTotalSplits;
   ++taskStats_.numQueuedSplits;
-
+  ContinuePromise promise;
+  
   splitsState.splits.push_back(split);
 
   if (split.hasGroup()) {
@@ -259,9 +272,10 @@ void Task::addSplitLocked(SplitsState& splitsState, exec::Split&& split) {
   }
 
   if (not splitsState.splitPromises.empty()) {
-    splitsState.splitPromises.back().setValue(false);
+    promise = std::move(splitsState.splitPromises.back());
     splitsState.splitPromises.pop_back();
   }
+  return std::move(promise);
 }
 
 void Task::noMoreSplitsForGroup(
@@ -278,14 +292,17 @@ void Task::noMoreSplitsForGroup(
 }
 
 void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
+  std::vector<ContinuePromise> promises; 
+  {
   std::lock_guard<std::mutex> l(mutex_);
 
   auto& splitsState = splitsStates_[planNodeId];
   splitsState.noMoreSplits = true;
-  for (auto& promise : splitsState.splitPromises) {
+  promises = std::move(splitsState.splitPromises);
+  }
+  for (auto& promise : promises) {
     promise.setValue(false);
   }
-  splitsState.splitPromises.clear();
 }
 
 bool Task::isAllSplitsFinishedLocked() {
@@ -400,10 +417,9 @@ void Task::setAllOutputConsumed() {
   }
 }
 
-void Task::driverClosed() {
+void Task::driverClosedLocked() {
   --numDrivers_;
   if ((numDrivers_ == 0) && (state_ == kRunning)) {
-    std::lock_guard<std::mutex> l(mutex_);
     if (taskStats_.executionEndTimeMs == 0) {
       // In case we haven't set executionEndTimeMs due to all splits depleted,
       // we set it here.
@@ -546,16 +562,24 @@ void Task::terminate(TaskState terminalState) {
   }
   // Release reference to exchange client, so that it will close exchange
   // sources and prevent resending requests for data.
+  std::vector<ContinuePromise> promises;
+  std::unordered_map<std::string, std::shared_ptr<JoinBridge>> oldBridges;
+  {
   std::lock_guard<std::mutex> l(mutex_);
   exchangeClients_.clear();
+  oldBridges = std::move(bridges_);
   for (auto& pair : splitsStates_) {
     for (auto& promise : pair.second.splitPromises) {
-      promise.setValue(true);
+      promises.push_back(std::move(promise));
     }
     pair.second.splitPromises.clear();
   }
 
-  for (auto& pair : bridges_) {
+  }
+  for (auto& promise : promises) {
+    promise.setValue(true);
+  }
+  for (auto& pair : oldBridges) {
     pair.second->cancel();
   }
   stateChangedLocked();
@@ -744,8 +768,9 @@ Task::getLocalExchangeSources(const core::PlanNodeId& planNodeId) {
       planNodeId);
   return it->second.sources;
 }
-
-
+  using core::StopReason;
+  using core::ThreadState;
+  
   StopReason Task::enter(ThreadState& state) {
   std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(state.isEnqueued);
@@ -850,6 +875,19 @@ StopReason Task::leaveSuspended(ThreadState& state) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
   }
 }
+
+  folly::SemiFuture<bool> Task::finishFuture() {
+    auto [promise, future] =
+        makeVeloxPromiseContract<bool>("CancelPool::finishFuture");
+    std::lock_guard<std::mutex> l(mutex_);
+    if (numThreads_ == 0) {
+      promise.setValue(true);
+      return std::move(future);
+    }
+    finishPromises_.push_back(std::move(promise));
+    return std::move(future);
+  }
+
 
 
   
