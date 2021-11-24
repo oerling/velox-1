@@ -153,11 +153,11 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
     }
   }
   self->noMoreLocalExchangeProducers();
-  // Set and start all Drivers together inside the CancelPool so that
+  // Set and start all Drivers together inside 'mutex_' so that
   // cancellations and pauses have well
   // defined timing. For example, do not pause and restart a task
   // while it is still adding Drivers.
-  std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
+  std::lock_guard<std::mutex> l(*self->mutex_);
   self->drivers_ = std::move(drivers);
   for (auto& driver : self->drivers_) {
     if (driver) {
@@ -169,16 +169,15 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
 // static
 void Task::resume(std::shared_ptr<Task> self) {
   VELOX_CHECK(!self->exception_, "Cannot resume failed task");
-  std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
+  std::lock_guard<std::mutex> l(*self->mutex_);
   // Setting pause requested must be atomic with the resuming so that
   // suspended sections do not go back on thread during resume.
-  self->cancelPool_->requestPauseLocked(false);
+  self->requestPauseLocked(false);
   for (auto& driver : self->drivers_) {
     if (driver) {
       if (driver->state().isSuspended) {
         // The Driver will come on thread in its own time as long as
-        // the cancel flag is reset. This check needs to be inside the
-        // CancelPool mutex.
+        // the cancel flag is reset. This check needs to be inside 'mutex_'.
         continue;
       }
       if (driver->state().isEnqueued) {
@@ -199,7 +198,7 @@ void Task::resume(std::shared_ptr<Task> self) {
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
-  std::lock_guard<std::mutex> cancelPoolLock(*self->cancelPool()->mutex());
+  std::lock_guard<std::mutex> cancelPoolLock(*self->mutex_);
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() == driver) {
       driverPtr = nullptr;
@@ -530,7 +529,7 @@ void Task::terminate(TaskState terminalState) {
     }
     state_ = terminalState;
   }
-  cancelPool()->requestTerminate();
+  requestTerminate();
   for (auto driver : drivers_) {
     // 'driver' is a  copy of the shared_ptr in
     // 'drivers_'. This is safe against a concurrent remove of the
@@ -746,4 +745,112 @@ Task::getLocalExchangeSources(const core::PlanNodeId& planNodeId) {
   return it->second.sources;
 }
 
+
+  StopReason Task::enter(ThreadState& state) {
+  std::lock_guard<std::mutex> l(mutex_);
+  VELOX_CHECK(state.isEnqueued);
+  state.isEnqueued = false;
+  if (state.isTerminated) {
+    return StopReason::kAlreadyTerminated;
+  }
+  if (state.isOnThread()) {
+    return StopReason::kAlreadyOnThread;
+  }
+  auto reason = shouldStopLocked();
+  if (reason == StopReason::kTerminate) {
+    state.isTerminated = true;
+  }
+  if (reason == StopReason::kNone) {
+    ++numThreads_;
+    state.setThread();
+    state.hasBlockingFuture = false;
+  }
+  return reason;
+}
+
+StopReason Task::enterForTerminate(ThreadState& state) {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (state.isOnThread() || state.isTerminated) {
+    state.isTerminated = true;
+    return StopReason::kAlreadyOnThread;
+  }
+  state.isTerminated = true;
+  state.setThread();
+  return StopReason::kTerminate;
+}
+
+StopReason Task::leave(ThreadState& state) {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (--numThreads_ == 0) {
+    finished();
+  }
+  state.clearThread();
+  if (state.isTerminated) {
+    return StopReason::kTerminate;
+  }
+  auto reason = shouldStopLocked();
+  if (reason == StopReason::kTerminate) {
+    state.isTerminated = true;
+  }
+  return reason;
+}
+
+StopReason Task::enterSuspended(ThreadState& state) {
+  VELOX_CHECK(!state.hasBlockingFuture);
+  VELOX_CHECK(state.isOnThread());
+  std::lock_guard<std::mutex> l(mutex_);
+  if (state.isTerminated) {
+    return StopReason::kAlreadyTerminated;
+  }
+  if (!state.isOnThread()) {
+    return StopReason::kAlreadyTerminated;
+  }
+  auto reason = shouldStopLocked();
+  if (reason == StopReason::kTerminate) {
+    state.isTerminated = true;
+  }
+  // A pause will not stop entering the suspended section. It will
+  // just ack that the thread is no longer in inside the
+  // CancelPool. The pause can wait at the exit of the suspended
+  // section.
+  if (reason == StopReason::kNone || reason == StopReason::kPause) {
+    state.isSuspended = true;
+    if (--numThreads_ == 0) {
+      finished();
+    }
+  }
+  return StopReason::kNone;
+}
+
+StopReason Task::leaveSuspended(ThreadState& state) {
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      ++numThreads_;
+      state.isSuspended = false;
+      if (state.isTerminated) {
+        return StopReason::kAlreadyTerminated;
+      }
+      if (terminateRequested_) {
+        state.isTerminated = true;
+        return StopReason::kTerminate;
+      }
+      if (!pauseRequested_) {
+        // For yield or anything but pause  we return here.
+        return StopReason::kNone;
+      }
+      --numThreads_;
+      state.isSuspended = true;
+    }
+    // If the pause flag is on when trying to reenter, sleep a while
+    // outside of the mutex and recheck. This is rare and not time
+    // critical. Can happen if memory interrupt sets pause while
+    // already inside a suspended section for other reason, like
+    // IO.
+    std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
+  }
+}
+
+
+  
 } // namespace facebook::velox::exec
