@@ -114,7 +114,7 @@ UnnestNode::UnnestNode(
   outputType_ = ROW(std::move(names), std::move(types));
 }
 
-HashJoinNode::HashJoinNode(
+AbstractJoinNode::AbstractJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
     const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
@@ -191,6 +191,7 @@ AssignUniqueIdNode::AssignUniqueIdNode(
   names.emplace_back(idName);
   types.emplace_back(BIGINT());
   outputType_ = ROW(std::move(names), std::move(types));
+  uniqueIdCounter_ = std::make_shared<std::atomic_int64_t>();
 }
 
 } // namespace facebook::velox::core

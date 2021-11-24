@@ -90,6 +90,7 @@ class DataSink {
 
 class DataSource {
  public:
+  static constexpr int64_t kUnknownRowSize = -1;
   virtual ~DataSource() = default;
 
   // Add split to process, then call next multiple times to process the split.
@@ -124,6 +125,16 @@ class DataSource {
   // prefetch.
   virtual bool isPrefetchComplete() {
     return false;
+}
+
+  // Returns a connector dependent row size if available. This can be
+  // called after addSplit().  This estimates uncompressed data
+  // sizes. This is better than getCompletedBytes()/getCompletedRows()
+  // since these track sizes before decompression and may include
+  // read-ahead and extra IO from coalescing reads and  will not
+  // fully account for size of sparsely accessed columns.
+  virtual int64_t estimatedRowSize() {
+    return kUnknownRowSize;
   }
 
   // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)

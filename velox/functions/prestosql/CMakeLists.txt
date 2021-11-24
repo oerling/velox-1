@@ -41,6 +41,7 @@ add_library(
   RegisterComparisons.cpp
   Reverse.cpp
   RowFunction.cpp
+  Slice.cpp
   Split.cpp
   StringFunctions.cpp
   Subscript.cpp
@@ -49,7 +50,8 @@ add_library(
   URLFunctions.cpp
   VectorArithmetic.cpp
   VectorFunctions.cpp
-  WidthBucketArray.cpp)
+  WidthBucketArray.cpp
+  Zip.cpp)
 
 target_link_libraries(
   velox_functions_prestosql

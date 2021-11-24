@@ -13,7 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/tests/PlanBuilder.h"
+
+#include "velox/exec/tests/utils/PlanBuilder.h"
 #include <velox/exec/Aggregate.h>
 #include <velox/exec/HashPartitionFunction.h>
 #include "velox/connectors/hive/HiveConnector.h"
@@ -327,9 +328,11 @@ PlanBuilder& PlanBuilder::enforceSingleRow() {
   return *this;
 }
 
-PlanBuilder& PlanBuilder::assignUniqueId() {
+PlanBuilder& PlanBuilder::assignUniqueId(
+    const std::string& idName,
+    const int32_t taskUniqueId) {
   planNode_ = std::make_shared<core::AssignUniqueIdNode>(
-      nextPlanNodeId(), "unique", 1, planNode_);
+      nextPlanNodeId(), idName, taskUniqueId, planNode_);
   return *this;
 }
 
@@ -467,6 +470,38 @@ PlanBuilder& PlanBuilder::hashJoin(
   auto rightKeyFields = fields(rightType, rightKeys);
 
   planNode_ = std::make_shared<core::HashJoinNode>(
+      nextPlanNodeId(),
+      joinType,
+      leftKeyFields,
+      rightKeyFields,
+      std::move(filterExpr),
+      std::move(planNode_),
+      build,
+      outputType);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::mergeJoin(
+    const std::vector<ChannelIndex>& leftKeys,
+    const std::vector<ChannelIndex>& rightKeys,
+    const std::shared_ptr<facebook::velox::core::PlanNode>& build,
+    const std::string& filterText,
+    const std::vector<ChannelIndex>& output,
+    core::JoinType joinType) {
+  VELOX_CHECK_EQ(leftKeys.size(), rightKeys.size());
+
+  auto leftType = planNode_->outputType();
+  auto rightType = build->outputType();
+  auto resultType = concat(leftType, rightType);
+  std::shared_ptr<const core::ITypedExpr> filterExpr;
+  if (!filterText.empty()) {
+    filterExpr = parseExpr(filterText, resultType, pool_);
+  }
+  auto outputType = extract(resultType, output);
+  auto leftKeyFields = fields(leftType, leftKeys);
+  auto rightKeyFields = fields(rightType, rightKeys);
+
+  planNode_ = std::make_shared<core::MergeJoinNode>(
       nextPlanNodeId(),
       joinType,
       leftKeyFields,

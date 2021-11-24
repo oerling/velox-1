@@ -390,7 +390,7 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
       continue;
     }
 
-    VELOX_DCHECK(sourceRows[i] == nextRow);
+    VELOX_CHECK(sourceRows[i] == nextRow);
     typedDestValues[rowIndex] = typedSourceValues[i];
     if (moveNulls && rowIndex != i) {
       bits::setBit(
@@ -4293,8 +4293,6 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
   void compactOffsets(RowSet rows) {
     auto rawOffsets = offsets_->asMutable<vector_size_t>();
     auto rawSizes = sizes_->asMutable<vector_size_t>();
-    auto nulls =
-        nullsInReadRange_ ? nullsInReadRange_->asMutable<uint64_t>() : nullptr;
     VELOX_CHECK(
         outputRows_.empty(), "Repeated reader does not support filters");
     RowSet rowsToCompact;
@@ -4309,6 +4307,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
     }
 
     int32_t current = 0;
+    bool moveNulls = shouldMoveNulls(rows);
     for (int i = 0; i < rows.size(); ++i) {
       auto row = rows[i];
       while (rowsToCompact[current] < row) {
@@ -4318,7 +4317,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
       valueRows_[i] = row;
       rawOffsets[i] = rawOffsets[current];
       rawSizes[i] = rawSizes[current];
-      if (nulls) {
+      if (moveNulls && i != current) {
         bits::setBit(
             rawResultNulls_, i, bits::isBitSet(rawResultNulls_, current));
       }
