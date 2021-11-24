@@ -566,7 +566,8 @@ int64_t HiveDataSource::estimatedRowSize() {
     // Remember the error and do not try the other splits, they are
     // likely to be broken the same way.
     errorInRowSize_ = true;
-    LOG_EVERY_N(WARNING, 1000) << "failed to get row size estimate for " << split_->toString();
+    LOG_EVERY_N(WARNING, 1000)
+        << "failed to get row size estimate for " << split_->toString();
     return kUnknownRowSize;
   }
 }
