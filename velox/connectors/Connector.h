@@ -125,7 +125,7 @@ class DataSource {
   // prefetch.
   virtual bool isPrefetchComplete() {
     return false;
-}
+  }
 
   // Returns a connector dependent row size if available. This can be
   // called after addSplit().  This estimates uncompressed data
