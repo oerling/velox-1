@@ -204,6 +204,43 @@ TEST_F(DateTimeFunctionsTest, yearDate) {
   EXPECT_EQ(1920, year(Date(-18262)));
 }
 
+TEST_F(DateTimeFunctionsTest, quarter) {
+  const auto quarter = [&](std::optional<Timestamp> date) {
+    return evaluateOnce<int64_t>("quarter(c0)", date);
+  };
+  EXPECT_EQ(std::nullopt, quarter(std::nullopt));
+  EXPECT_EQ(1, quarter(Timestamp(0, 0)));
+  EXPECT_EQ(4, quarter(Timestamp(-1, 9000)));
+  EXPECT_EQ(4, quarter(Timestamp(4000000000, 0)));
+  EXPECT_EQ(4, quarter(Timestamp(4000000000, 123000000)));
+  EXPECT_EQ(2, quarter(Timestamp(990000000, 321000000)));
+  EXPECT_EQ(3, quarter(Timestamp(998423705, 321000000)));
+
+  setQueryTimeZone("Pacific/Apia");
+
+  EXPECT_EQ(std::nullopt, quarter(std::nullopt));
+  EXPECT_EQ(4, quarter(Timestamp(0, 0)));
+  EXPECT_EQ(4, quarter(Timestamp(-1, 12300000000)));
+  EXPECT_EQ(4, quarter(Timestamp(4000000000, 0)));
+  EXPECT_EQ(4, quarter(Timestamp(4000000000, 123000000)));
+  EXPECT_EQ(2, quarter(Timestamp(990000000, 321000000)));
+  EXPECT_EQ(3, quarter(Timestamp(998423705, 321000000)));
+}
+
+TEST_F(DateTimeFunctionsTest, quarterDate) {
+  const auto quarter = [&](std::optional<Date> date) {
+    return evaluateOnce<int64_t>("quarter(c0)", date);
+  };
+  EXPECT_EQ(std::nullopt, quarter(std::nullopt));
+  EXPECT_EQ(1, quarter(Date(0)));
+  EXPECT_EQ(4, quarter(Date(-1)));
+  EXPECT_EQ(4, quarter(Date(-40)));
+  EXPECT_EQ(2, quarter(Date(110)));
+  EXPECT_EQ(3, quarter(Date(200)));
+  EXPECT_EQ(1, quarter(Date(18262)));
+  EXPECT_EQ(1, quarter(Date(-18262)));
+}
+
 TEST_F(DateTimeFunctionsTest, month) {
   const auto month = [&](std::optional<Timestamp> date) {
     return evaluateOnce<int64_t>("month(c0)", date);
@@ -390,6 +427,48 @@ TEST_F(DateTimeFunctionsTest, dayOfYearDate) {
   EXPECT_EQ(2, day(Date(-18262)));
 }
 
+TEST_F(DateTimeFunctionsTest, yearOfWeek) {
+  const auto yow = [&](std::optional<Timestamp> date) {
+    return evaluateOnce<int64_t>("year_of_week(c0)", date);
+  };
+  EXPECT_EQ(std::nullopt, yow(std::nullopt));
+  EXPECT_EQ(1970, yow(Timestamp(0, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(-1, 0)));
+  EXPECT_EQ(1969, yow(Timestamp(-345600, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(-259200, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(31536000, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(31708800, 0)));
+  EXPECT_EQ(1971, yow(Timestamp(31795200, 0)));
+  EXPECT_EQ(2021, yow(Timestamp(1632989700, 0)));
+
+  setQueryTimeZone("Pacific/Apia");
+
+  EXPECT_EQ(std::nullopt, yow(std::nullopt));
+  EXPECT_EQ(1970, yow(Timestamp(0, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(-1, 0)));
+  EXPECT_EQ(1969, yow(Timestamp(-345600, 0)));
+  EXPECT_EQ(1969, yow(Timestamp(-259200, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(31536000, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(31708800, 0)));
+  EXPECT_EQ(1970, yow(Timestamp(31795200, 0)));
+  EXPECT_EQ(2021, yow(Timestamp(1632989700, 0)));
+}
+
+TEST_F(DateTimeFunctionsTest, yearOfWeekDate) {
+  const auto yow = [&](std::optional<Date> date) {
+    return evaluateOnce<int64_t>("year_of_week(c0)", date);
+  };
+  EXPECT_EQ(std::nullopt, yow(std::nullopt));
+  EXPECT_EQ(1970, yow(Date(0)));
+  EXPECT_EQ(1970, yow(Date(-1)));
+  EXPECT_EQ(1969, yow(Date(-4)));
+  EXPECT_EQ(1970, yow(Date(-3)));
+  EXPECT_EQ(1970, yow(Date(365)));
+  EXPECT_EQ(1970, yow(Date(367)));
+  EXPECT_EQ(1971, yow(Date(368)));
+  EXPECT_EQ(2021, yow(Date(18900)));
+}
+
 TEST_F(DateTimeFunctionsTest, minute) {
   const auto minute = [&](std::optional<Timestamp> date) {
     return evaluateOnce<int64_t>("minute(c0)", date);
@@ -502,6 +581,9 @@ TEST_F(DateTimeFunctionsTest, dateTrunc) {
       Timestamp(996649200, 0),
       dateTrunc("month", Timestamp(998'474'645, 321'001'234)));
   EXPECT_EQ(
+      Timestamp(993970800, 0),
+      dateTrunc("quarter", Timestamp(998'474'645, 321'001'234)));
+  EXPECT_EQ(
       Timestamp(978336000, 0),
       dateTrunc("year", Timestamp(998'474'645, 321'001'234)));
 
@@ -526,6 +608,9 @@ TEST_F(DateTimeFunctionsTest, dateTrunc) {
       Timestamp(996604200, 0),
       dateTrunc("month", Timestamp(998'474'645, 321'001'234)));
   EXPECT_EQ(
+      Timestamp(993925800, 0),
+      dateTrunc("quarter", Timestamp(998'474'645, 321'001'234)));
+  EXPECT_EQ(
       Timestamp(978287400, 0),
       dateTrunc("year", Timestamp(998'474'645, 321'001'234)));
 }
@@ -540,6 +625,7 @@ TEST_F(DateTimeFunctionsTest, dateTruncDate) {
 
   EXPECT_EQ(Date(0), dateTrunc("day", Date(0)));
   EXPECT_EQ(Date(0), dateTrunc("year", Date(0)));
+  EXPECT_EQ(Date(0), dateTrunc("quarter", Date(0)));
   EXPECT_EQ(Date(0), dateTrunc("month", Date(0)));
   EXPECT_THROW(dateTrunc("second", Date(0)), VeloxUserError);
   EXPECT_THROW(dateTrunc("minute", Date(0)), VeloxUserError);
@@ -548,6 +634,7 @@ TEST_F(DateTimeFunctionsTest, dateTruncDate) {
   // Date(18297) is 2020-02-04
   EXPECT_EQ(Date(18297), dateTrunc("day", Date(18297)));
   EXPECT_EQ(Date(18293), dateTrunc("month", Date(18297)));
+  EXPECT_EQ(Date(18262), dateTrunc("quarter", Date(18297)));
   EXPECT_EQ(Date(18262), dateTrunc("year", Date(18297)));
   EXPECT_THROW(dateTrunc("second", Date(18297)), VeloxUserError);
   EXPECT_THROW(dateTrunc("minute", Date(18297)), VeloxUserError);
@@ -556,6 +643,7 @@ TEST_F(DateTimeFunctionsTest, dateTruncDate) {
   // Date(-18297) is 1919-11-27
   EXPECT_EQ(Date(-18297), dateTrunc("day", Date(-18297)));
   EXPECT_EQ(Date(-18324), dateTrunc("month", Date(-18297)));
+  EXPECT_EQ(Date(-18355), dateTrunc("quarter", Date(-18297)));
   EXPECT_EQ(Date(-18628), dateTrunc("year", Date(-18297)));
   EXPECT_THROW(dateTrunc("second", Date(-18297)), VeloxUserError);
   EXPECT_THROW(dateTrunc("minute", Date(-18297)), VeloxUserError);

@@ -28,6 +28,7 @@ Unit        Example Truncated Value
 ``hour``    ``2001-08-22 03:00:00.000``
 ``day``     ``2001-08-22 00:00:00.000``
 ``month``   ``2001-08-01 00:00:00.000``
+``quarter`` ``2001-07-01 00:00:00.000``
 ``year``    ``2001-01-01 00:00:00.000``
 =========== ===========================
 
@@ -97,6 +98,10 @@ These functions are supported for TIMESTAMP and DATE values.
 
     Returns the month of the year from ``x``.
 
+.. function:: quarter(x) -> bigint
+
+    Returns the quarter of the year from ``x``. The value ranges from ``1`` to ``4``.
+
 .. function:: second(x) -> bigint
 
     Returns the second of the minute from ``x``.
@@ -104,3 +109,11 @@ These functions are supported for TIMESTAMP and DATE values.
 .. function:: year(x) -> bigint
 
     Returns the year from ``x``.
+
+.. function:: year_of_week(x) -> bigint
+
+    Returns the year of the ISO week from ``x``.
+
+.. function:: yow(x) -> bigint
+
+    This is an alias for :func:`year_of_week`.

@@ -79,6 +79,8 @@ void registerFunctions() {
 
   registerFunction<YearFunction, int64_t, Timestamp>({"year"});
   registerFunction<YearFunction, int64_t, Date>({"year"});
+  registerFunction<QuarterFunction, int64_t, Timestamp>({"quarter"});
+  registerFunction<QuarterFunction, int64_t, Date>({"quarter"});
   registerFunction<MonthFunction, int64_t, Timestamp>({"month"});
   registerFunction<MonthFunction, int64_t, Date>({"month"});
   registerFunction<DayFunction, int64_t, Timestamp>({"day", "day_of_month"});
@@ -89,6 +91,9 @@ void registerFunctions() {
   registerFunction<DayOfYearFunction, int64_t, Timestamp>(
       {"doy", "day_of_year"});
   registerFunction<DayOfYearFunction, int64_t, Date>({"doy", "day_of_year"});
+  registerFunction<YearOfWeekFunction, int64_t, Timestamp>(
+      {"yow", "year_of_week"});
+  registerFunction<YearOfWeekFunction, int64_t, Date>({"yow", "year_of_week"});
   registerFunction<HourFunction, int64_t, Timestamp>({"hour"});
   registerFunction<HourFunction, int64_t, Date>({"hour"});
   registerFunction<MinuteFunction, int64_t, Timestamp>({"minute"});
