@@ -73,6 +73,16 @@ class Filter {
   virtual std::unique_ptr<Filter> clone(
       std::optional<bool> nullAllowed = std::nullopt) const = 0;
 
+  // Returns an integer filter that is equivalent to 'this' for
+  // testInt64 between 'min' and 'max'. If there is no more efficient
+  // filter for the range, returns nullptr. For example, an IN filter
+  // can become an equality if only one of the values is in
+  // range. Cases where no value is in range will be caught by
+  // testInt64Range.
+  virtual std::unique_ptr<Filter> filterForRange(int64_t min, int64_t max) const {
+    return nullptr;
+  }
+  
   /**
    * A filter becomes non-deterministic when applies to nested column,
    * e.g. a[1] > 10 is non-deterministic because > 10 filter applies only to
@@ -675,6 +685,8 @@ class BigintValuesUsingHashTable final : public Filter {
 
   std::unique_ptr<Filter> mergeWith(const Filter* other) const final;
 
+  std::unique_ptr<Filter> filterForRange(int64_t min, int64_t max) const override;
+  
   int64_t min() const {
     return min_;
   }

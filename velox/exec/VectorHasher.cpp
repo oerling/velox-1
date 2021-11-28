@@ -476,7 +476,7 @@ inline bool processPrefix64(
     bool multiply,
     __m256i multiplier,
     uint64_t* result) {
-  int64_t lengthMasks64[8] = {
+  static int64_t lengthMasks64[8] = {
       0,
       1UL << 8,
       1UL << 16,
@@ -574,20 +574,20 @@ bool VectorHasher::tryMapToRange(
           multiply, multiplier, V32::as4x64u<1>(prefixes), result + i + 4);
     } else {
       if (!processPrefix64(
-              loadPrefixes64(first, min_, i, end),
+			   loadPrefixes64(values, min_, i, end),
               V32::as4x64u<0>(lengths),
               min,
               max,
-              multiply,
+			   multiply,
               multiplier,
               result + i)) {
         return false;
       }
-      if (processPrefix64(
+      if (!processPrefix64(
               loadPrefixes64(
-                  first + 4 * (sizeof(StringView) / sizeof(int32_t)),
+			     values,
                   min_,
-                  i,
+                  i + 4,
                   end),
               V32::as4x64u<1>(lengths),
               min,
@@ -696,6 +696,15 @@ void VectorHasher::merge(const VectorHasher& other) {
   } else {
     distinctOverflow_ = true;
   }
+}
+
+std::string VectorHasher::toString() const {
+  std::stringstream out;
+  out << "<VectorHasher type=" << type_->toString() << "  isRange_=" << isRange_
+      << " rangeSize= " << rangeSize_ << " min=" << min_ << " max=" << max_
+      << " multiplier=" << multiplier_
+      << " numDistinct=" << uniqueValues_.size() << ">";
+  return out.str();
 }
 
 } // namespace facebook::velox::exec

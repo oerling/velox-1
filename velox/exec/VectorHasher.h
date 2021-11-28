@@ -294,6 +294,29 @@ class VectorHasher {
   // and distinct values are unioned.
   void merge(const VectorHasher& other);
 
+  std::string toString() const;
+
+  template <typename T>
+  uint64_t valueId(T value) {
+    if (isRange_) {
+      if (value > max_ || value < min_) {
+        return kUnmappable;
+      }
+      return value - min_ + 1;
+    }
+    UniqueValue unique(value);
+    unique.setId(uniqueValues_.size() + 1);
+    auto pair = uniqueValues_.insert(unique);
+    if (!pair.second) {
+      return pair.first->id();
+    }
+    updateRange(value);
+    if (uniqueValues_.size() >= rangeSize_) {
+      return kUnmappable;
+    }
+    return unique.id();
+  }
+  
  private:
   static constexpr uint32_t kStringASRangeMaxSize = 7;
   static constexpr uint32_t kStringBufferUnitSize = 1024;
@@ -357,9 +380,6 @@ class VectorHasher {
       const T* values,
       const SelectivityVector& rows,
       uint64_t* result) {
-    if (!isRange_) {
-      return false;
-    }
 
     if constexpr (
         std::is_same_v<T, std::int64_t> || std::is_same_v<T, std::int32_t> ||
@@ -381,27 +401,6 @@ class VectorHasher {
     });
 
     return inRange;
-  }
-
-  template <typename T>
-  uint64_t valueId(T value) {
-    if (isRange_) {
-      if (value > max_ || value < min_) {
-        return kUnmappable;
-      }
-      return value - min_ + 1;
-    }
-    UniqueValue unique(value);
-    unique.setId(uniqueValues_.size() + 1);
-    auto pair = uniqueValues_.insert(unique);
-    if (!pair.second) {
-      return pair.first->id();
-    }
-    updateRange(value);
-    if (uniqueValues_.size() >= rangeSize_) {
-      return kUnmappable;
-    }
-    return unique.id();
   }
 
   template <typename T>

@@ -417,7 +417,11 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
   assert(!lookup.hits.empty());
   for (auto check = 0; check < numProbes; ++check) {
     if (hashes[rows[check]] >= size_) {
-      VELOX_FAIL("Out of range array group by index {}", hashes[rows[check]]);
+      std::stringstream out;
+      for (auto& h : lookup.hashers) {
+	out << h->toString();
+      }
+      VELOX_FAIL("ARRGB: Out of range array group by index at {}:  {}/{} {}", check, hashes[rows[check]], size_, out.str());
     }
   }
 
