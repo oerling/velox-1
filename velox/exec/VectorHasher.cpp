@@ -19,6 +19,8 @@
 #include "velox/common/base/SimdUtil.h"
 #include "velox/exec/HashStringAllocator.h"
 
+DEFINE_bool(enable_str_simd, true, "Enable StringView SIMD hash");
+
 namespace facebook::velox::exec {
 
 using V32 = simd::Vectors<int32_t>;
@@ -502,6 +504,8 @@ loadPrefixes64(const void* base, int64_t min, int32_t i, int32_t end) {
   auto indices = *reinterpret_cast<const __m128si_u*>(&stringViewOffsets);
   if (i + 4 <= end) {
     return V64::gather32<4>(start, indices);
+  } else if (i >= end) {
+    return V64::setAll(min);
   } else {
     return V64::maskGather32<4>(
         V64::setAll(min), V64::leadingMask(end - i), start, indices);
@@ -514,7 +518,7 @@ bool VectorHasher::tryMapToRange(
     const StringView* values,
     const SelectivityVector& rows,
     uint64_t* result) {
-  if (!process::hasAvx2() || !rows.isAllSelected()) {
+  if (!FLAGS_enable_str_simd || !process::hasAvx2() || !rows.isAllSelected()) {
     return false;
   }
   auto end = rows.end();
@@ -574,21 +578,17 @@ bool VectorHasher::tryMapToRange(
           multiply, multiplier, V32::as4x64u<1>(prefixes), result + i + 4);
     } else {
       if (!processPrefix64(
-			   loadPrefixes64(values, min_, i, end),
+              loadPrefixes64(values, min_, i, end),
               V32::as4x64u<0>(lengths),
               min,
               max,
-			   multiply,
+              multiply,
               multiplier,
               result + i)) {
         return false;
       }
       if (!processPrefix64(
-              loadPrefixes64(
-			     values,
-                  min_,
-                  i + 4,
-                  end),
+              loadPrefixes64(values, min_, i + 4, end),
               V32::as4x64u<1>(lengths),
               min,
               max,

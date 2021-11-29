@@ -537,7 +537,7 @@ struct DateFormatFunction {
 
     if (isYMD_) {
       auto str = fmt::format(
-"{:02d}-{:02d}-{:02d}", dateTime.tm_year % 100, dateTime.tm_mon, dateTime.tm_mday);
+"{:02d}-{:02d}-{:02d}", dateTime.tm_year, dateTime.tm_mon, dateTime.tm_mday);
       result.reserve(str.size());
       result.resize(str.size());
       memcpy(result.data(), str.data(), str.size());
