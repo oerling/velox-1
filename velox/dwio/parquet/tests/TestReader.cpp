@@ -52,6 +52,24 @@ class ParquetReaderTest : public testing::Test {
     return rowReaderOpts;
   }
 
+  RowReaderOptions getDateReaderOpts() {
+    RowReaderOptions rowReaderOpts;
+    auto rowType = ROW({"date"}, {DATE()});
+    auto cs = std::make_shared<ColumnSelector>(
+        rowType, std::vector<std::string>{"date"});
+    rowReaderOpts.select(cs);
+    return rowReaderOpts;
+  }
+
+  RowReaderOptions getIntReaderOpts() {
+    RowReaderOptions rowReaderOpts;
+    auto rowType = ROW({"int", "bigint"}, {INTEGER(), BIGINT()});
+    auto cs = std::make_shared<ColumnSelector>(
+        rowType, std::vector<std::string>{"int", "bigint"});
+    rowReaderOpts.select(cs);
+    return rowReaderOpts;
+  }
+
   template <typename T>
   VectorPtr rangeVector(size_t size, T start) {
     std::vector<T> vals(size);
@@ -95,6 +113,12 @@ class ParquetReaderTest : public testing::Test {
   std::unique_ptr<test::VectorMaker> vectorMaker_{
       std::make_unique<test::VectorMaker>(pool_.get())};
 };
+
+template <>
+VectorPtr ParquetReaderTest::rangeVector<Date>(size_t size, Date start) {
+  return vectorMaker_->flatVector<Date>(
+      size, [&](auto row) { return Date(start.days() + row); });
+}
 
 TEST_F(ParquetReaderTest, testReadSampleFull) {
   // sample.parquet holds two columns (a: BIGINT, b: DOUBLE) and
@@ -206,5 +230,98 @@ TEST_F(ParquetReaderTest, testReadSampleEqualFilter) {
   auto rowReader = reader.createRowReader(rowReaderOpts);
   auto expected = vectorMaker_->rowVector(
       {rangeVector<int64_t>(1, 16), rangeVector<double>(1, 16)});
+  assertReadExpected(*rowReader, expected);
+}
+
+TEST_F(ParquetReaderTest, testDateRead) {
+  // date.parquet holds a single column (date: DATE) and
+  // 25 rows.
+  // Data is in plain uncompressed format:
+  //   date: [1969-12-27 .. 1970-01-20]
+  const std::string sample(getExampleFilePath("date.parquet"));
+
+  ReaderOptions readerOptions;
+  ParquetReader reader(
+      std::make_unique<FileInputStream>(sample), readerOptions);
+
+  EXPECT_EQ(reader.numberOfRows(), 25ULL);
+
+  auto type = reader.typeWithId();
+  EXPECT_EQ(type->size(), 1ULL);
+  auto col0 = type->childAt(0);
+  EXPECT_EQ(col0->type->kind(), TypeKind::DATE);
+
+  RowReaderOptions rowReaderOpts = getDateReaderOpts();
+  auto rowReader = reader.createRowReader(rowReaderOpts);
+
+  auto expected = vectorMaker_->rowVector({rangeVector<Date>(25, -5)});
+  assertReadExpected(*rowReader, expected);
+}
+
+TEST_F(ParquetReaderTest, testDateFilter) {
+  const std::string sample(getExampleFilePath("date.parquet"));
+
+  ReaderOptions readerOptions;
+  ParquetReader reader(
+      std::make_unique<FileInputStream>(sample), readerOptions);
+
+  RowReaderOptions rowReaderOpts = getDateReaderOpts();
+  common::ScanSpec scanSpec("");
+  scanSpec.getOrCreateChild(common::Subfield("date"))
+      ->setFilter(common::test::between(5, 14));
+  rowReaderOpts.setScanSpec(&scanSpec);
+  auto rowReader = reader.createRowReader(rowReaderOpts);
+
+  auto expected = vectorMaker_->rowVector({rangeVector<Date>(10, 5)});
+  assertReadExpected(*rowReader, expected);
+}
+
+TEST_F(ParquetReaderTest, testIntRead) {
+  // int.parquet holds integer columns (int: INTEGER, bigint: BIGINT)
+  // and 10 rows.
+  // Data is in plain uncompressed format:
+  //   int: [100 .. 109]
+  //   bigint: [1000 .. 1009]
+  const std::string sample(getExampleFilePath("int.parquet"));
+
+  ReaderOptions readerOptions;
+  ParquetReader reader(
+      std::make_unique<FileInputStream>(sample), readerOptions);
+
+  EXPECT_EQ(reader.numberOfRows(), 10ULL);
+
+  auto type = reader.typeWithId();
+  EXPECT_EQ(type->size(), 2ULL);
+  auto col0 = type->childAt(0);
+  EXPECT_EQ(col0->type->kind(), TypeKind::INTEGER);
+  auto col1 = type->childAt(1);
+  EXPECT_EQ(col1->type->kind(), TypeKind::BIGINT);
+
+  RowReaderOptions rowReaderOpts = getIntReaderOpts();
+  auto rowReader = reader.createRowReader(rowReaderOpts);
+
+  auto expected = vectorMaker_->rowVector(
+      {rangeVector<int32_t>(10, 100), rangeVector<int64_t>(10, 1000)});
+  assertReadExpected(*rowReader, expected);
+}
+
+TEST_F(ParquetReaderTest, testIntMultipleFilters) {
+  const std::string sample(getExampleFilePath("int.parquet"));
+
+  ReaderOptions readerOptions;
+  ParquetReader reader(
+      std::make_unique<FileInputStream>(sample), readerOptions);
+
+  RowReaderOptions rowReaderOpts = getIntReaderOpts();
+  common::ScanSpec scanSpec("");
+  scanSpec.getOrCreateChild(common::Subfield("int"))
+      ->setFilter(common::test::between(102, 120));
+  scanSpec.getOrCreateChild(common::Subfield("bigint"))
+      ->setFilter(common::test::between(900, 1006));
+  rowReaderOpts.setScanSpec(&scanSpec);
+  auto rowReader = reader.createRowReader(rowReaderOpts);
+
+  auto expected = vectorMaker_->rowVector(
+      {rangeVector<int32_t>(5, 102), rangeVector<int64_t>(5, 1002)});
   assertReadExpected(*rowReader, expected);
 }
