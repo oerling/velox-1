@@ -65,12 +65,11 @@ SpillFile::~SpillFile() {
   VELOX_CHECK_EQ(
       path_[0],
       '/',
-      "Spill only supports absolute paths to local fil, not {}.",
+      "Spill only supports absolute paths to local files, not {}.",
       path_);
   if (unlink(path_.c_str()) != 0) {
     LOG(ERROR) << "Error deleting spill file " << path_ << " errno: " << errno;
   }
-}
 }
 
 WriteFile& SpillFile::output() {
@@ -160,7 +159,7 @@ int32_t SpillState::compareSpilled(
 }
 
 void SpillState::setNumPartitions(int32_t numPartitions) {
-  VELOX_CHECK_LT(numPartitions, maxPartitions_);
+  VELOX_CHECK_LE(numPartitions, maxPartitions());
   numPartitions_ = numPartitions;
   for (auto newPartition = files_.size(); newPartition < numPartitions_;
        ++newPartition) {
