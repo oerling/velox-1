@@ -20,7 +20,6 @@
 #include <random>
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/dwio/type/fbhive/HiveTypeParser.h"
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/VectorHasher.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -29,7 +28,6 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
-using namespace facebook::velox::dwio;
 
 namespace {
 static void assertEqualVectors(
@@ -59,13 +57,9 @@ class RowContainerTest : public testing::Test {
   }
 
   RowVectorPtr makeDataset(
-      const std::string& columns,
+      const TypePtr rowType,
       const size_t size,
       std::function<void(RowVectorPtr)> customizeData) {
-    std::string schema = fmt::format("struct<{}>", columns);
-    facebook::velox::dwio::type::fbhive::HiveTypeParser parser;
-    auto rowType =
-        std::dynamic_pointer_cast<const RowType>(parser.parse(schema));
     auto batch = std::static_pointer_cast<RowVector>(
         BatchMaker::createBatch(rowType, size, *pool_));
     if (customizeData) {
@@ -278,28 +272,39 @@ TEST_F(RowContainerTest, storeExtractArrayOfVarchar) {
 TEST_F(RowContainerTest, types) {
   constexpr int32_t kNumRows = 100;
   auto batch = makeDataset(
-      "bool_val:boolean,"
-      "tiny_val:tinyint,"
-      "small_val:bigint,"
-      "int_val:int,"
-      "long_val:bigint,"
-      "float_val:float,"
-      "double_val:double,"
-      "string_val:string,"
-      "array_val:array<array<string>>,"
-      "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>"
-      "bool_val:boolean,"
-      "tiny_val:tinyint,"
-      "small_val:bigint,"
-      "int_val:int,"
-      "long_val:bigint,"
-      "float_val:float,"
-      "double_val:double,"
-      "string_val:string,"
-      "array_val:array<array<string>>,"
-      "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>",
+      ROW(
+          {{"bool_val", BOOLEAN()},
+           {"tiny_val", TINYINT()},
+           {"small_val", SMALLINT()},
+           {"int_val", INTEGER()},
+           {"long_val", BIGINT()},
+           {"float_val", REAL()},
+           {"double_val", DOUBLE()},
+           {"string_val", VARCHAR()},
+           {"array_val", ARRAY(VARCHAR())},
+           {"struct_val",
+            ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+           {"map_val",
+            MAP(VARCHAR(),
+                MAP(BIGINT(),
+                    ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
+
+           {"bool_val2", BOOLEAN()},
+           {"tiny_val2", TINYINT()},
+           {"small_val2", SMALLINT()},
+           {"int_val2", INTEGER()},
+           {"long_val2", BIGINT()},
+           {"float_val2", REAL()},
+           {"double_val2", DOUBLE()},
+           {"string_val2", VARCHAR()},
+           {"array_val2", ARRAY(VARCHAR())},
+           {"struct_val2",
+            ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+           {"map_val2",
+            MAP(VARCHAR(),
+                MAP(BIGINT(),
+                    ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}}),
+
       kNumRows,
       [](RowVectorPtr rows) {
         auto strings =
@@ -506,18 +511,24 @@ TEST_F(RowContainerTest, compareDouble) {
 TEST_F(RowContainerTest, spill) {
   constexpr int32_t kNumRows = 100000;
   auto batch = makeDataset(
-      "bool_val:boolean,"
-      "tiny_val:tinyint,"
-      "small_val:bigint,"
-      "int_val:int,"
-      "long_val: bigint,"
-      "ordinal: bigint,"
-      "float_val:float,"
-      "double_val:double,"
-      "string_val:string,"
-      "array_val:array<array<string>>,"
-      "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>",
+      ROW({
+          {"bool_val", BOOLEAN()},
+          {"tiny_val", TINYINT()},
+          {"small_val", SMALLINT()},
+          {"int_val", INTEGER()},
+          {"long_val", BIGINT()},
+          {"ordinal", BIGINT()},
+          {"float_val", REAL()},
+          {"double_val", DOUBLE()},
+          {"string_val", VARCHAR()},
+          {"array_val", ARRAY(VARCHAR())},
+          {"struct_val",
+           ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+          {"map_val",
+           MAP(VARCHAR(),
+               MAP(BIGINT(),
+                   ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
+      }),
       kNumRows,
       [](RowVectorPtr rows) {});
   const auto& types = batch->type()->as<TypeKind::ROW>().children();
@@ -549,25 +560,43 @@ TEST_F(RowContainerTest, spill) {
       data->store(decoded, index, rows[index], column);
     }
   }
-  std::vector<int32_t> sortedIndices(kNumRows);
-  std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
-  std::sort(
-      sortedIndices.begin(),
-      sortedIndices.end(),
-      [&](int32_t leftIndex, int32_t rightIndex) {
-        return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
-      });
+  std::vector<uint64_t> hashes(kNumRows);
+  // Calculate a hash for every key in 'rows'.
+  for (auto i = 0; i < keys.size(); ++i) {
+    data->hash(
+        i, folly::Range<char**>(rows.data(), kNumRows), i > 0, hashes.data());
+  }
 
+  // We divide the rows in 4 partitions according to 2 low bits of the hash.
+  std::vector<std::vector<int32_t>> partitions(4);
+  for (auto i = 0; i < kNumRows; ++i) {
+    partitions[hashes[i] & 3].push_back(i);
+  }
+
+  // We sort the rows in each partition in key order.
+  for (auto& partition : partitions) {
+    std::sort(
+        partition.begin(),
+        partition.end(),
+        [&](int32_t leftIndex, int32_t rightIndex) {
+          return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
+        });
+  }
+
+  // We spill 'data' in 4 sorted partitions.
   auto spillState = std::make_unique<SpillState>(
       std::dynamic_pointer_cast<const RowType>(batch->type()),
       "/tmp/spill",
-      HashBitRange{0, 0},
+      HashBitRange{0, 2},
       2000000,
       1000,
       *pool_,
       *mappedMemory_);
 
-  EXPECT_EQ(1, spillState->maxPartitions());
+  // We have a bit range of two bits , so up to 4 spilled partitions.
+  EXPECT_EQ(4, spillState->maxPartitions());
+  // We start spilling  in the first partition, if enough data does not get up
+  // to all partitions will start spilling.
   spillState->setNumPartitions(1);
   EXPECT_EQ(1, spillState->numPartitions());
 
@@ -580,19 +609,24 @@ TEST_F(RowContainerTest, spill) {
       data->allocatedBytes() * 0.8,
       iter,
       [&](folly::Range<char**> rows) { data->eraseRows(rows); });
+  // We read back the spilled and not spilled data in each of the
+  // partitions. We check that the data comes back in key order.
+  for (auto partitionIndex = 0; partitionIndex < 4; ++partitionIndex) {
+    // We make a merge reader that merges the spill files and the rows that are
+    // still in the RowContainer.
+    auto merge = spillState->startMerge(
+        partitionIndex, data->spillStreamOverRows(partitionIndex, *pool_));
 
-  // We make a merge reader that merges the spill files and the rows that are
-  // still in the RowContainer.
-  auto merge = spillState->startMerge(0, data->spillStreamOverRows(0, *pool_));
-
-  // We read the spilled data back and check that it matches the sorted order of
-  // the source batch.
-  for (auto i = 0; i < kNumRows; ++i) {
-    auto row =
-        merge->next([&](const SpillFileRow& left, const SpillFileRow& right) {
-          return SpillState::compareSpilled(left, right, keys.size());
-        });
-    EXPECT_TRUE(batch->equalValueAt(
-        row.value().rowVector, sortedIndices[i], row.value().index));
+    // We read the spilled data back and check that it matches the sorted order
+    // of the partition.
+    auto& indices = partitions[partitionIndex];
+    for (auto i = 0; i < indices.size(); ++i) {
+      auto row =
+          merge->next([&](const SpillFileRow& left, const SpillFileRow& right) {
+            return SpillState::compareSpilled(left, right, keys.size());
+          });
+      EXPECT_TRUE(batch->equalValueAt(
+          row.value().rowVector, indices[i], row.value().index));
+    }
   }
 }
