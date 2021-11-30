@@ -599,8 +599,8 @@ TEST_F(RowContainerTest, spill) {
   // We spill size * 0.8 bytes/rows.
   data->spill(
       *spillState,
-      kNumRows * 0.8,
-      data->allocatedBytes() * 0.8,
+      RowContainer::kUnlimited,
+      RowContainer::kUnlimited,
       iter,
       [&](folly::Range<char**> rows) { data->eraseRows(rows); });
   // We read back the spilled and not spilled data in each of the
