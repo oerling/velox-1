@@ -354,7 +354,10 @@ class RowContainer {
       uint16_t way,
       memory::MemoryPool& pool);
 
-  void extractSpill(folly::Range<char**> rows, memory::MemoryPool& pool, RowVectorPtr* result);
+  void extractSpill(
+      folly::Range<char**> rows,
+      memory::MemoryPool& pool,
+      RowVectorPtr* result);
 
   // Returns estimated number of rows a batch can support for
   // the given batchSizeInBytes.
@@ -411,7 +414,7 @@ class RowContainer {
 
   // Returns the type of a row of content.
   RowTypePtr rowType() const;
-  
+
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
     return (row[nullByte] & nullMask) != 0;
@@ -780,7 +783,8 @@ class RowContainer {
 
   // Prepares spill runs for the spillable hash number ranges in
   // 'spill'. Returns true if at end of 'iterator'. Returns false
-  // before reaching end of iterator if found enough to spill. Adds spillable runs to 'pendingSpillPartitions_'.
+  // before reaching end of iterator if found enough to spill. Adds spillable
+  // runs to 'pendingSpillPartitions_'.
   bool fillSpillRuns(
       SpillState& spill,
       Eraser eraser,
@@ -789,7 +793,7 @@ class RowContainer {
       std::vector<char*>* rowsFromNonSpillingPartitions = nullptr);
 
   void clearNonSpillingRuns();
-  
+
   // Creates a vector to append to spilling and erases the coresponding rows
   // after spilling.
   void advanceSpill(SpillState& spill, Eraser eraser);

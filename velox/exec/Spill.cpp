@@ -171,7 +171,7 @@ void SpillState::appendToPartition(
   for (auto newPartition = files_.size(); newPartition < numPartitions_;
        ++newPartition) {
     files_.push_back(std::make_unique<SpillFileList>(
-						     std::static_pointer_cast<const RowType>(rows->type()),
+        std::static_pointer_cast<const RowType>(rows->type()),
         fmt::format("{}-{}", path_, newPartition),
         1 << 20,
         targetFileSize_,
@@ -184,7 +184,7 @@ void SpillState::appendToPartition(
 }
 
 std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> SpillState::startMerge(
-										int32_t partition,
+    int32_t partition,
     std::unique_ptr<SpillStream>&& extra) {
   VELOX_CHECK_LT(partition, files_.size());
   auto list = std::move(files_[partition]);

@@ -585,12 +585,7 @@ TEST_F(RowContainerTest, spill) {
 
   // We spill 'data' in 4 sorted partitions.
   auto spillState = std::make_unique<SpillState>(
-      "/tmp/spill",
-      HashBitRange{0, 2},
-      2000000,
-      1000,
-      *pool_,
-      *mappedMemory_);
+      "/tmp/spill", HashBitRange{0, 2}, 2000000, 1000, *pool_, *mappedMemory_);
 
   // We have a bit range of two bits , so up to 4 spilled partitions.
   EXPECT_EQ(4, spillState->maxPartitions());

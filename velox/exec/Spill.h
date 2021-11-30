@@ -307,9 +307,7 @@ class SpillState {
 
   // Appends data to 'partition'. The rows  given by 'indices'  must be sorted
   // for a sorted spill and must hash to 'partition'.
-  void appendToPartition(
-      int32_t partition,
-      const RowVectorPtr& rows);
+  void appendToPartition(int32_t partition, const RowVectorPtr& rows);
 
   // Finishes a sorted run for 'partition'. If write is called for 'partition'
   // again, the data does not have to be sorted relative to the data
