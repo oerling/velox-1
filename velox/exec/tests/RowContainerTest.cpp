@@ -585,7 +585,6 @@ TEST_F(RowContainerTest, spill) {
 
   // We spill 'data' in 4 sorted partitions.
   auto spillState = std::make_unique<SpillState>(
-      std::dynamic_pointer_cast<const RowType>(batch->type()),
       "/tmp/spill",
       HashBitRange{0, 2},
       2000000,

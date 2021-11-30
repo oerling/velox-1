@@ -229,6 +229,7 @@ class SpillFileList {
   void finishFile();
 
   std::vector<std::unique_ptr<SpillFile>> files() {
+    VELOX_CHECK(!files_.empty());
     finishFile();
     return std::move(files_);
   }
@@ -259,15 +260,13 @@ class SpillState {
   // the target number of rows in a single RowVector written to a spill file.
   // 'pool' and 'mappedMemory' own the memory for state and results.
   SpillState(
-      RowTypePtr type,
       const std::string& path,
       HashBitRange bits,
       uint64_t targetFileSize,
       uint64_t targetBatchSize,
       memory::MemoryPool& pool,
       memory::MappedMemory& mappedMemory)
-      : type_(type),
-        path_(path),
+      : path_(path),
         hashBits_(bits),
         fieldMask_(((1UL << (hashBits_.end - hashBits_.begin))) - 1),
         targetFileSize_(targetFileSize),
@@ -290,7 +289,7 @@ class SpillState {
   void setNumPartitions(int32_t numPartitions);
 
   // Returns how many ways spilled data can be partitioned.
-  uint16_t maxPartitions() const {
+  int32_t maxPartitions() const {
     return 1 << (hashBits_.end - hashBits_.begin);
   }
 
@@ -309,14 +308,13 @@ class SpillState {
   // Appends data to 'partition'. The rows  given by 'indices'  must be sorted
   // for a sorted spill and must hash to 'partition'.
   void appendToPartition(
-      uint16_t partition,
-      const RowVectorPtr& rows,
-      const folly::Range<IndexRange*> indices);
+      int32_t partition,
+      const RowVectorPtr& rows);
 
   // Finishes a sorted run for 'partition'. If write is called for 'partition'
   // again, the data does not have to be sorted relative to the data
   // written so far.
-  void finishWrite(uint16_t partition) {
+  void finishWrite(int32_t partition) {
     files_[partition]->finishFile();
   }
 
@@ -324,7 +322,7 @@ class SpillState {
   // a stream of rows from a RowContainer so as to merge unspilled
   // data with spilled data.
   std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> startMerge(
-      uint16_t partition,
+      int32_t partition,
       std::unique_ptr<SpillStream>&& extra);
 
   // Helper function for comparing current elements of streams to merge.

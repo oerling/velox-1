@@ -174,13 +174,6 @@ class Aggregate {
   // 'groups'. No-op for fixed length accumulators.
   virtual void destroy(folly::Range<char**> /*groups*/) {}
 
-  // Returns the type that extractAccumulator will produce. This is
-  // different from resultType_ for complex final aggregations. Needed
-  // for e.g. spilling.
-  virtual TypePtr accumulatorType() const {
-    return resultType_;
-  }
-
   // Clears state between reuses, e.g. this is called before reusing
   // the aggregation operator's state after flushing a partial
   // aggregation.

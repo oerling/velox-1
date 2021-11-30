@@ -504,43 +504,36 @@ void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   }
 }
 
-RowTypePtr RowContainer::spillType() {
-  if (spillType_) {
-    return spillType_;
-  }
-  std::vector<std::string> names;
-  std::vector<TypePtr> types = keyTypes_;
-  for (auto& aggregate : aggregates_) {
-    types.push_back(aggregate->accumulatorType());
-  }
-  types.insert(types.end(), types_.begin() + keyTypes_.size(), types_.end());
-  for (auto i = 0; i < types.size(); ++i) {
-    names.push_back(fmt::format("c{}", i));
-  }
-  return spillType_ = ROW(std::move(names), std::move(types));
+RowTypePtr RowContainer::rowType() const {
+  VELOX_CHECK(aggregates_.empty(), "Aggregate type info not yet implemented");
+  auto copy = types_;
+  return ROW(std::move(copy));
 }
 
-void RowContainer::extractSpill(folly::Range<char**> rows, RowVector& result) {
-  result.resize(rows.size());
-  for (auto i = 0; i < keyTypes_.size(); ++i) {
-    extractColumn(rows.data(), rows.size(), i, result.childAt(i));
+void RowContainer::extractSpill(
+    folly::Range<char**> rows,
+    memory::MemoryPool& pool,
+    RowVectorPtr* resultPtr) {
+  RowVector* result = resultPtr->get();
+  if (!result) {
+    *resultPtr = std::static_pointer_cast<RowVector>(
+        BaseVector::create(rowType(), rows.size(), &pool));
+    result = resultPtr->get();
+  } else {
+    result->resize(rows.size());
   }
-  for (auto i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(rows.data(), rows.size());
-    aggregates_[i]->extractAccumulators(
-        rows.data(), rows.size(), &result.childAt(i + keyTypes_.size()));
-  }
-  if (aggregates_.empty()) {
-    for (auto i = keyTypes_.size(); i < types_.size(); ++i) {
-      extractColumn(rows.data(), rows.size(), i, result.childAt(i));
-    }
+  VELOX_CHECK(aggregates_.empty());
+  for (auto i = 0; i < types_.size(); ++i) {
+    extractColumn(rows.data(), rows.size(), i, result->childAt(i));
   }
 }
 
 namespace {
-// A stream of ordered groups being read from the in memory
+// A stream of ordered rows being read from the in memory
 // container. This is the part of a spillable range that is not yet
-// spilled when starting to produce output.
+// spilled when starting to produce output. This is only used for
+// sorted spills since for hash join spilling we just use the data in
+// the RowContainer as is.
 class RowContainerSpillStream : public SpillStream {
  public:
   RowContainerSpillStream(
@@ -564,10 +557,6 @@ class RowContainerSpillStream : public SpillStream {
   void nextBatch() override {
     constexpr vector_size_t kMaxRows = 64;
     constexpr uint64_t kMaxBytes = 4 << 20;
-    if (!rowVector_) {
-      rowVector_ = std::static_pointer_cast<RowVector>(
-          BaseVector::create(container_->spillType(), kMaxRows, &pool_));
-    }
     size_t bytes = 0;
     vector_size_t numRows = 0;
     auto limit = std::min<size_t>(rows_.size() - nextBatchIndex_, kMaxRows);
@@ -579,7 +568,7 @@ class RowContainerSpillStream : public SpillStream {
       }
     }
     container_->extractSpill(
-        folly::Range(&rows_[nextBatchIndex_], numRows), *rowVector_);
+        folly::Range(&rows_[nextBatchIndex_], numRows), pool_, &rowVector_);
     nextBatchIndex_ += numRows;
     numRowsInVector_ = rowVector_->size();
   }
@@ -592,23 +581,20 @@ class RowContainerSpillStream : public SpillStream {
 } // namespace
 
 std::unique_ptr<SpillStream> RowContainer::spillStreamOverRows(
-    uint16_t way,
+    uint16_t partition,
     memory::MemoryPool& pool) {
-  VELOX_CHECK(way < spillRuns_.size());
+  VELOX_CHECK_LT(partition, spillRuns_.size());
   return std::make_unique<RowContainerSpillStream>(
-      spillType(), pool, std::move(spillRuns_[way].rows), this);
+      rowType(), pool, std::move(spillRuns_[partition].rows), this);
 }
 
 void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
-  if (!spillVector_) {
-    spillVector_ = std::static_pointer_cast<RowVector>(
-        BaseVector::create(spillType(), 1, &spill.pool()));
-  }
-  for (auto runIndex = 0; runIndex < spillRuns_.size(); ++runIndex) {
-    if (spillingRuns_.find(runIndex) == spillingRuns_.end()) {
+  for (auto partition = 0; partition < spillRuns_.size(); ++partition) {
+    if (pendingSpillPartitions_.find(partition) ==
+        pendingSpillPartitions_.end()) {
       continue;
     }
-    auto& run = spillRuns_[runIndex];
+    auto& run = spillRuns_[partition];
     uint64_t bytes = 0;
     int32_t i = 0;
     int32_t limit = std::min<uint64_t>(128, run.rows.size());
@@ -619,19 +605,16 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
       }
     }
     folly::Range<char**> spilled(run.rows.data(), i);
-    extractSpill(spilled, *spillVector_);
+    extractSpill(spilled, spill.pool(), &spillVector_);
     IndexRange range{0, spillVector_->size()};
-    spill.appendToPartition(
-        runIndex, spillVector_, folly::Range<IndexRange*>(&range, 1));
-    if (eraser) {
-      eraser(spilled);
-    }
+    spill.appendToPartition(partition, spillVector_);
+    eraser(spilled);
     run.rows.erase(run.rows.begin(), run.rows.begin() + i);
     if (run.rows.empty()) {
-      // Sorted run ends, start with a new file next time.
-      run.size = 0;
-      spill.finishWrite(runIndex);
-      spillingRuns_.erase(runIndex);
+      // Run ends, start with a new file next time.
+      run.clear();
+      spill.finishWrite(partition);
+      pendingSpillPartitions_.erase(partition);
     }
   }
 }
@@ -652,9 +635,9 @@ void RowContainer::spill(
         stringAllocator_.freeSpace() > targetFreeSpace) {
       return;
     }
-    if (!spillingRuns_.empty()) {
+    if (!pendingSpillPartitions_.empty()) {
       advanceSpill(spill, eraser);
-      if (!spillingRuns_.empty()) {
+      if (!pendingSpillPartitions_.empty()) {
         continue;
       }
     }
@@ -694,56 +677,69 @@ bool RowContainer::fillSpillRuns(
     Eraser eraser,
     RowContainerIterator& iterator,
     uint64_t targetSize,
-    std::vector<char*>* nonSpilledRows) {
-  constexpr int32_t kRowsInBatch = 1024;
-  std::vector<uint64_t> hashes(kRowsInBatch);
-  std::vector<char*> rows(kRowsInBatch);
+    std::vector<char*>* FOLLY_NULLABLE rowsFromNonSpillingPartitions) {
+  // Number of rows to hash and divide into spill partitions at a time.
+  constexpr int32_t kHashBatchSize = 1024;
+  if (rowsFromNonSpillingPartitions) {
+    VELOX_CHECK_EQ(
+        targetSize,
+        kUnlimited,
+        "Retrieving rows of non-spilling partitions is only "
+        "allowed if retrieving the whole container");
+  }
+  std::vector<uint64_t> hashes(kHashBatchSize);
+  std::vector<char*> rows(kHashBatchSize);
   for (;;) {
     auto numRows = listRows(&iterator, rows.size(), targetSize, rows.data());
     for (auto i = 0; i < keyTypes_.size(); ++i) {
       hash(i, folly::Range<char**>(rows.data(), numRows), i > 0, hashes.data());
     }
+    // Calculate hashes for this batch of spill candidates and put each in its
+    // run.
     for (auto i = 0; i < numRows; ++i) {
       auto partition = spill.partition(hashes[i]);
-      if (partition < 0) {
-        if (nonSpilledRows) {
-          nonSpilledRows->push_back(rows[i]);
+      if (partition == -1) {
+        if (rowsFromNonSpillingPartitions) {
+          rowsFromNonSpillingPartitions->push_back(rows[i]);
         }
         continue;
       }
       spillRuns_[partition].rows.push_back(rows[i]);
       spillRuns_[partition].size += rowSize(rows[i]);
     }
-    int64_t totalSize = 0;
-    int64_t totalSpillableSize = 0;
+    // Start the ones that are large enough or if at end and we are finishing
+    // (kUnlimited), start all.
+    bool anyStarted = false;
     for (auto i = 0; i < spillRuns_.size(); ++i) {
-      totalSpillableSize += spillRuns_[i].size;
-    }
-    for (auto i = 0; i < spillRuns_.size(); ++i) {
-      if (!numRows || spillRuns_[i].size > targetSize) {
-        for (auto j = 0; j < spillRuns_.size(); ++j) {
-          if (!isJoinBuild_) {
-            if (targetSize != kUnlimited &&
-                spillRuns_[j].size < totalSpillableSize / spillRuns_.size()) {
-              // Do not start spilling if the run would be below
-              // average size.  Avoid making sorted runs that are too
-              // small and blow up the fanout. If called with
-              // unlimited targetSize, include all runs.
-              spillRuns_[j].rows.clear();
-              spillRuns_[j].size = 0;
-              continue;
-            }
-            std::sort(
-                spillRuns_[j].rows.begin(),
-                spillRuns_[j].rows.end(),
-                [&](const char* left, const char* right) {
-                  return compareRows(left, right) < 0;
-                });
-          }
-          spillingRuns_.insert(j);
+      auto& run = spillRuns_[i];
+      if (run.size > targetSize || (!numRows && targetSize == kUnlimited)) {
+        pendingSpillPartitions_.insert(i);
+        anyStarted = true;
+        if (!isJoinBuild_) {
+          std::sort(
+              run.rows.begin(),
+              run.rows.end(),
+              [&](const char* left, const char* right) {
+                return compareRows(left, right) < 0;
+              });
         }
-        return numRows == 0;
       }
+    }
+    if (!numRows) {
+      clearNonSpillingRuns();
+      return true;
+    }
+    if (anyStarted) {
+      clearNonSpillingRuns();
+      return false;
+    }
+  }
+}
+
+void RowContainer::clearNonSpillingRuns() {
+  for (auto i = 0; i < spillRuns_.size(); ++i) {
+    if (pendingSpillPartitions_.find(i) == pendingSpillPartitions_.end()) {
+      spillRuns_[i].clear();
     }
   }
 }

@@ -336,7 +336,7 @@ class RowContainer {
   // starts with one spill partition and initializes more spill
   // partitions as needed to hit the size target. If there is no more
   // data to spill in one hash range, it starts spilling another hash
-  // range until everything is spillable.
+  // range until all hash ranges are spilling.
   void spill(
       SpillState& spill,
       uint64_t targetFreeRows,
@@ -354,9 +354,7 @@ class RowContainer {
       uint16_t way,
       memory::MemoryPool& pool);
 
-  RowTypePtr spillType();
-
-  void extractSpill(folly::Range<char**> rows, RowVector& result);
+  void extractSpill(folly::Range<char**> rows, memory::MemoryPool& pool, RowVectorPtr* result);
 
   // Returns estimated number of rows a batch can support for
   // the given batchSizeInBytes.
@@ -403,8 +401,17 @@ class RowContainer {
     std::vector<char*> rows;
     std::vector<uint64_t> hashes;
     uint64_t size = 0;
+
+    void clear() {
+      rows.clear();
+      hashes.clear();
+      size = 0;
+    }
   };
 
+  // Returns the type of a row of content.
+  RowTypePtr rowType() const;
+  
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
     return (row[nullByte] & nullMask) != 0;
@@ -771,14 +778,18 @@ class RowContainer {
       int32_t offset,
       CompareFlags flags);
 
-  // Prepares spill runs for the spillable hash number ranges in 'spill'.
+  // Prepares spill runs for the spillable hash number ranges in
+  // 'spill'. Returns true if at end of 'iterator'. Returns false
+  // before reaching end of iterator if found enough to spill. Adds spillable runs to 'pendingSpillPartitions_'.
   bool fillSpillRuns(
       SpillState& spill,
       Eraser eraser,
       RowContainerIterator& iterator,
       uint64_t targetSize,
-      std::vector<char*>* nonSpilledRows = nullptr);
+      std::vector<char*>* rowsFromNonSpillingPartitions = nullptr);
 
+  void clearNonSpillingRuns();
+  
   // Creates a vector to append to spilling and erases the coresponding rows
   // after spilling.
   void advanceSpill(SpillState& spill, Eraser eraser);
@@ -842,7 +853,7 @@ class RowContainer {
   std::vector<SpillRun> spillRuns_;
 
   // Indices into 'spillRuns_' that are currently getting spilled.
-  std::unordered_set<int32_t> spillingRuns_;
+  std::unordered_set<int32_t> pendingSpillPartitions_;
 
   // Type of the row written to spill.
   RowTypePtr spillType_;

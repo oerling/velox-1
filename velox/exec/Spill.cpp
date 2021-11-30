@@ -160,30 +160,33 @@ int32_t SpillState::compareSpilled(
 
 void SpillState::setNumPartitions(int32_t numPartitions) {
   VELOX_CHECK_LE(numPartitions, maxPartitions());
+  VELOX_CHECK_GT(numPartitions, numPartitions_, "May only add partitions");
   numPartitions_ = numPartitions;
+}
+
+void SpillState::appendToPartition(
+    int32_t partition,
+    const RowVectorPtr& rows) {
+  // Ensure that all partitions exist before writing.
   for (auto newPartition = files_.size(); newPartition < numPartitions_;
        ++newPartition) {
     files_.push_back(std::make_unique<SpillFileList>(
-        type_,
+						     std::static_pointer_cast<const RowType>(rows->type()),
         fmt::format("{}-{}", path_, newPartition),
         1 << 20,
         targetFileSize_,
         pool_,
         mappedMemory_));
   }
-}
 
-void SpillState::appendToPartition(
-    uint16_t partition,
-    const RowVectorPtr& rows,
-    const folly::Range<IndexRange*> indices) {
-  files_[partition]->write(rows, indices);
+  IndexRange range{0, rows->size()};
+  files_[partition]->write(rows, folly::Range<IndexRange*>(&range, 1));
 }
 
 std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> SpillState::startMerge(
-    uint16_t partition,
+										int32_t partition,
     std::unique_ptr<SpillStream>&& extra) {
-  VELOX_CHECK(partition < files_.size());
+  VELOX_CHECK_LT(partition, files_.size());
   auto list = std::move(files_[partition]);
   auto files = list->files();
   std::vector<std::unique_ptr<SpillStream>> result;
