@@ -808,7 +808,7 @@ class RowContainer {
 
   // Clears pending spill state.
   void clearSpillRuns();
-  
+
   void clearNonSpillingRuns();
 
   // Creates a vector to append to spilling and erases the coresponding rows

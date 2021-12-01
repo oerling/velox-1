@@ -682,7 +682,6 @@ std::vector<char*> RowContainer::finishSpill(SpillState& spill) {
   return rowsFromNonSpillingPartitions;
 }
 
-  
 void RowContainer::clearSpillRuns() {
   for (auto& run : spillRuns_) {
     run.clear();
