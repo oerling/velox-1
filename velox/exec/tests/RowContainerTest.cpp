@@ -595,15 +595,21 @@ TEST_F(RowContainerTest, spill) {
   EXPECT_EQ(1, spillState->numPartitions());
 
   RowContainerIterator iter;
-
-  // We spill size * 0.8 bytes/rows.
-  data->spill(
-      *spillState,
-      RowContainer::kUnlimited,
-      RowContainer::kUnlimited,
-      iter,
+  
+  // We spill 90% of the data in 10% increments.
+  auto initialBytes = data->allocatedBytes();
+  auto initialRows = data->numRows();
+  for (auto pct = 10; pct <= 90; pct += 10) {
+    data->spill(
+		*spillState,
+		initialRows * 100 / pct,
+      initialBytes * 100 / pct,
+		iter,
       [&](folly::Range<char**> rows) { data->eraseRows(rows); });
-  // We read back the spilled and not spilled data in each of the
+  }
+  auto unspilledPartitionRows = data->finishSpill(*spillState);
+  EXPECT_TRUE(unspilledPartitionRows.empty());
+    // We read back the spilled and not spilled data in each of the
   // partitions. We check that the data comes back in key order.
   for (auto partitionIndex = 0; partitionIndex < 4; ++partitionIndex) {
     // We make a merge reader that merges the spill files and the rows that are
