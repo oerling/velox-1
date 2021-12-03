@@ -111,9 +111,9 @@ void registerFunctions() {
       Varchar,
       Varchar>({"parse_datetime"});
 
-  registerFunction<DateFormatFunction,  Varchar, Timestamp, Varchar>(
+  registerFunction<DateFormatFunction, Varchar, Timestamp, Varchar>(
       {"date_format"});
-  registerFunction<DateDiffFunction,  int64_t, Varchar, Timestamp, Timestamp>(
+  registerFunction<DateDiffFunction, int64_t, Varchar, Timestamp, Timestamp>(
       {"date_diff"});
 
   registerFunction<CardinalityFunction, int64_t, HyperLogLog>({"cardinality"});

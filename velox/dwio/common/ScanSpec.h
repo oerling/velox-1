@@ -65,7 +65,7 @@ class ScanSpec {
   void setLocalFilter(std::unique_ptr<Filter> localFilter) {
     localFilter_ = std::move(localFilter);
   }
-  
+
   // Sets 'filter_'. May be used at initialization or when adding a
   // pushed down filter, e.g. top k cutoff.
   void setFilter(std::unique_ptr<Filter> filter) {

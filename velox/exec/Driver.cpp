@@ -322,7 +322,7 @@ StopReason Driver::runInternal(
   process::TraceContext trace(
       fmt::format("driver {}", self->ctx_->task->taskId()), true);
 
-// Get 'task_' into a local because this could be unhooked from it on another
+  // Get 'task_' into a local because this could be unhooked from it on another
   // thread.
   auto task = task_;
   auto stop = !task ? StopReason::kTerminate : task->enter(state_);

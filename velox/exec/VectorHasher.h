@@ -285,7 +285,7 @@ class VectorHasher {
     }
     return unique.id();
   }
-  
+
  private:
   static constexpr uint32_t kStringASRangeMaxSize = 7;
   static constexpr uint32_t kStringBufferUnitSize = 1024;

@@ -226,15 +226,15 @@ TEST(FilterTest, bigIntRange) {
 }
 
 namespace {
-  // True if 'filter' is an equality test for 'value'.
-  bool isBigintEq(std::unique_ptr<Filter> filter, int64_t value) {
-    if (!filter) {
-      return false;
-    }
-    auto range = dynamic_cast<const BigintRange*>(filter.get());
-    return range && range->lower() == range->upper() && range->lower() == value;
+// True if 'filter' is an equality test for 'value'.
+bool isBigintEq(std::unique_ptr<Filter> filter, int64_t value) {
+  if (!filter) {
+    return false;
+  }
+  auto range = dynamic_cast<const BigintRange*>(filter.get());
+  return range && range->lower() == range->upper() && range->lower() == value;
 }
-}
+} // namespace
 
 TEST(FilterTest, bigintValuesUsingHashTable) {
   auto filter = createBigintValues({1, 10, 100, 10'000}, false);
@@ -269,8 +269,7 @@ TEST(FilterTest, bigintValuesUsingHashTable) {
   auto rangeFilter = filter->filterForRange(1, 1);
   EXPECT_EQ(FilterKind::kIsNotNull, rangeFilter->kind());
 
-
-    // The range has two values.
+  // The range has two values.
   EXPECT_EQ(nullptr, filter->filterForRange(1, 10));
   EXPECT_EQ(nullptr, filter->filterForRange(11, 11100));
   EXPECT_TRUE(isBigintEq(filter->filterForRange(9999, 10000), 10000));

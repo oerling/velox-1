@@ -507,10 +507,9 @@ struct ParseDateTimeFunction {
     result = std::make_tuple(jodaResult.timestamp.toMillis(), timezoneId);
     return true;
   }
-
 };
 
-  template <typename T>
+template <typename T>
 struct DateFormatFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -538,7 +537,10 @@ struct DateFormatFunction {
 
     if (isYMD_) {
       auto str = fmt::format(
-"{:02d}-{:02d}-{:02d}", dateTime.tm_year, dateTime.tm_mon, dateTime.tm_mday);
+          "{:02d}-{:02d}-{:02d}",
+          dateTime.tm_year,
+          dateTime.tm_mon,
+          dateTime.tm_mday);
       result.reserve(str.size());
       result.resize(str.size());
       memcpy(result.data(), str.data(), str.size());
@@ -560,7 +562,6 @@ struct DateDiffFunction {
       const arg_type<Timestamp>* /*timestamp*/,
       const arg_type<Timestamp>* /*timestamp*/) {
     if (unitString != nullptr) {
-
       unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
     }
   }
@@ -570,11 +571,13 @@ struct DateDiffFunction {
       const arg_type<Varchar>& /*unitString*/,
       const arg_type<Timestamp>& before,
       const arg_type<Timestamp>& after) {
-    VELOX_CHECK(unit_.has_value() && unit_.value() == DateTimeUnit::kDay, "date_diff is only defined for unit of day");
-    result =(after.toMicros() - before.toMicros()) / (24 * 60 * 60 * 1'000'000LL);
+    VELOX_CHECK(
+        unit_.has_value() && unit_.value() == DateTimeUnit::kDay,
+        "date_diff is only defined for unit of day");
+    result =
+        (after.toMicros() - before.toMicros()) / (24 * 60 * 60 * 1'000'000LL);
     return true;
   }
 };
 
-  
 } // namespace facebook::velox::functions
