@@ -23,23 +23,17 @@ namespace {
 bool allAreSinglyReferenced(
     const std::vector<ChannelIndex>& argList,
     const std::unordered_map<ChannelIndex, int>& channelUseCount) {
-  for (auto channel : argList) {
-    if (channelUseCount.find(channel)->second > 1) {
-      return false;
-    }
-  }
-  return true;
+  return std::all_of(argList.begin(), argList.end(), [&](auto channel) {
+    return channelUseCount.find(channel)->second == 1;
+  });
 }
 
 // Returns true if all vectors are Lazy vectors, possibly wrapped, that haven't
 // been loaded yet.
 bool areAllLazyNotLoaded(const std::vector<VectorPtr>& vectors) {
-  for (const auto& vector : vectors) {
-    if (!isLazyNotLoaded(*vector)) {
-      return false;
-    }
-  }
-  return true;
+  return std::all_of(vectors.begin(), vectors.end(), [](const auto& vector) {
+    return isLazyNotLoaded(*vector);
+  });
 }
 } // namespace
 
@@ -60,7 +54,6 @@ GroupingSet::GroupingSet(
       channelLists_(std::move(channelLists)),
       constantLists_(std::move(constantLists)),
       ignoreNullKeys_(ignoreNullKeys),
-      driverCtx_(operatorCtx->driverCtx()),
       mappedMemory_(operatorCtx->mappedMemory()),
       stringAllocator_(mappedMemory_),
       rows_(mappedMemory_),
@@ -142,11 +135,11 @@ void GroupingSet::addInput(
     for (int32_t i = 0; i < hashers.size(); ++i) {
       auto key = input->loadedChildAt(hashers[i]->channel());
       if (mode != BaseHashTable::HashMode::kHash) {
-        if (!hashers[i]->computeValueIds(*key, activeRows_, &lookup_->hashes)) {
+        if (!hashers[i]->computeValueIds(*key, activeRows_, lookup_->hashes)) {
           rehash = true;
         }
       } else {
-        hashers[i]->hash(*key, activeRows_, i > 0, &lookup_->hashes);
+        hashers[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
       }
     }
     lookup_->rows.clear();
@@ -159,11 +152,11 @@ void GroupingSet::addInput(
     for (int32_t i = 0; i < hashers.size(); ++i) {
       auto key = input->loadedChildAt(hashers[i]->channel());
       if (mode != BaseHashTable::HashMode::kHash) {
-        if (!hashers[i]->computeValueIds(*key, activeRows_, &lookup_->hashes)) {
+        if (!hashers[i]->computeValueIds(*key, activeRows_, lookup_->hashes)) {
           rehash = true;
         }
       } else {
-        hashers[i]->hash(*key, activeRows_, i > 0, &lookup_->hashes);
+        hashers[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
       }
     }
     std::iota(lookup_->rows.begin(), lookup_->rows.end(), 0);
@@ -252,11 +245,11 @@ void GroupingSet::prepareMaskedSelectivityVectors(const RowVectorPtr& input) {
   for (auto& it : maskedActiveRows_) {
     it.second.prepared = false;
   }
-  for (auto aggrIndex = 0; aggrIndex < aggrMaskChannels_.size(); ++aggrIndex) {
-    if (not aggrMaskChannels_[aggrIndex].has_value()) {
+  for (const auto& maskChannel : aggrMaskChannels_) {
+    if (not maskChannel.has_value()) {
       continue;
     }
-    const auto maskChannelIndex = aggrMaskChannels_[aggrIndex].value();
+    const auto maskChannelIndex = maskChannel.value();
 
     // See, if we already prepared 'rows' for this channel or not.
     MaskedRows& maskedRows = maskedActiveRows_[maskChannelIndex];

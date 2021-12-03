@@ -15,6 +15,7 @@
  */
 #include "velox/exec/VectorHasher.h"
 #include <gtest/gtest.h>
+#include "velox/type/Type.h"
 #include "velox/vector/tests/VectorMaker.h"
 
 using namespace facebook::velox;
@@ -85,7 +86,7 @@ class VectorHasherTest : public testing::Test {
     auto hasher = exec::VectorHasher::create(vector->type(), 0);
     raw_vector<uint64_t> result(size);
     std::fill(result.begin(), result.end(), 0);
-    auto ok = hasher->computeValueIds(*vector, allRows, &result);
+    auto ok = hasher->computeValueIds(*vector, allRows, result);
     ASSERT_FALSE(ok);
 
     uint64_t asRange;
@@ -97,7 +98,7 @@ class VectorHasherTest : public testing::Test {
     auto rangeSize = hasher->enableValueRange(multiplier, 0);
     ASSERT_EQ(18 * multiplier, rangeSize);
 
-    ok = hasher->computeValueIds(*vector, allRows, &result);
+    ok = hasher->computeValueIds(*vector, allRows, result);
     ASSERT_TRUE(ok);
     for (auto i = 0; i < size; i++) {
       if (vector->isNullAt(i)) {
@@ -109,7 +110,7 @@ class VectorHasherTest : public testing::Test {
 
     auto oddRows = makeOddRows(size);
     memset(result.data(), 0, sizeof(uint64_t) * size);
-    ok = hasher->computeValueIds(*vector, oddRows, &result);
+    ok = hasher->computeValueIds(*vector, oddRows, result);
     ASSERT_TRUE(ok);
     for (auto i = 0; i < size; i++) {
       if (i % 2 == 0 || vector->isNullAt(i)) {
@@ -120,7 +121,7 @@ class VectorHasherTest : public testing::Test {
     }
 
     if (outOfRangeVector) {
-      ok = hasher->computeValueIds(*outOfRangeVector, allRows, &result);
+      ok = hasher->computeValueIds(*outOfRangeVector, allRows, result);
       ASSERT_FALSE(ok);
 
       hasher->cardinality(asRange, asDistinct);
@@ -157,7 +158,7 @@ void testStringSimd(
     bool expectRange) {
   auto hasher = std::make_unique<VectorHasher>(VARCHAR(), 0);
   raw_vector<uint64_t> hashes(rows.end());
-  EXPECT_FALSE(hasher->computeValueIds(vector, rows, &hashes));
+  EXPECT_FALSE(hasher->computeValueIds(vector, rows, hashes));
   uint64_t rangeSize;
   uint64_t distinctSize;
   hasher->cardinality(rangeSize, distinctSize);
@@ -168,7 +169,7 @@ void testStringSimd(
     EXPECT_EQ(VectorHasher::kRangeTooLarge, rangeSize);
     hasher->enableValueIds(1, 0);
   }
-  EXPECT_TRUE(hasher->computeValueIds(vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(vector, rows, hashes));
   rows.applyToSelected([&](vector_size_t row) {
     EXPECT_EQ(hashes[row], hasher->valueId(vector.valueAt(row)));
   });
@@ -198,7 +199,7 @@ TEST_F(VectorHasherTest, flat) {
 
   raw_vector<uint64_t> hashes(100);
   std::fill(hashes.begin(), hashes.end(), 0);
-  hasher->hash(*vector, oddRows_, false, &hashes);
+  hasher->hash(*vector, oddRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     if (i % 2 == 0) {
       EXPECT_EQ(hashes[i], 0);
@@ -209,7 +210,7 @@ TEST_F(VectorHasherTest, flat) {
     }
   }
 
-  hasher->hash(*vector, allRows_, false, &hashes);
+  hasher->hash(*vector, allRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     if (i % 5 == 0) {
       EXPECT_EQ(hashes[i], exec::VectorHasher::kNullHash) << "at " << i;
@@ -227,12 +228,12 @@ TEST_F(VectorHasherTest, nonNullConstant) {
 
   raw_vector<uint64_t> hashes(100);
   std::fill(hashes.begin(), hashes.end(), 0);
-  hasher->hash(*vector, oddRows_, false, &hashes);
+  hasher->hash(*vector, oddRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     EXPECT_EQ(hashes[i], (i % 2 == 0) ? 0 : hash) << "at " << i;
   }
 
-  hasher->hash(*vector, allRows_, false, &hashes);
+  hasher->hash(*vector, allRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     EXPECT_EQ(hashes[i], hash) << "at " << i;
   }
@@ -245,13 +246,13 @@ TEST_F(VectorHasherTest, nullConstant) {
 
   raw_vector<uint64_t> hashes(100);
   std::fill(hashes.begin(), hashes.end(), 0);
-  hasher->hash(*vector, oddRows_, false, &hashes);
+  hasher->hash(*vector, oddRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     EXPECT_EQ(hashes[i], (i % 2 == 0) ? 0 : exec::VectorHasher::kNullHash)
         << "at " << i;
   }
 
-  hasher->hash(*vector, allRows_, false, &hashes);
+  hasher->hash(*vector, allRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     EXPECT_EQ(hashes[i], exec::VectorHasher::kNullHash) << "at " << i;
   }
@@ -278,7 +279,7 @@ TEST_F(VectorHasherTest, dictionary) {
 
   raw_vector<uint64_t> hashes(100);
   std::fill(hashes.begin(), hashes.end(), 0);
-  hasher->hash(*dictionaryVector, oddRows_, false, &hashes);
+  hasher->hash(*dictionaryVector, oddRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     if (i % 2 == 0) {
       EXPECT_EQ(hashes[i], 0) << "at " << i;
@@ -287,7 +288,7 @@ TEST_F(VectorHasherTest, dictionary) {
     }
   }
 
-  hasher->hash(*dictionaryVector, allRows_, false, &hashes);
+  hasher->hash(*dictionaryVector, allRows_, false, hashes);
   for (int32_t i = 0; i < 100; i++) {
     EXPECT_EQ(hashes[i], folly::hasher<int64_t>()(i % 10 + 3)) << "at " << i;
   }
@@ -321,7 +322,7 @@ TEST_F(VectorHasherTest, stringIds) {
   // 0-10 digits. The elements where size <= 7 are in 'rows'. These
   // values have an integer range mapping.  We run these elements
   // through the hasher.
-  EXPECT_FALSE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_FALSE(hasher->computeValueIds(*vector, rows, hashes));
   uint64_t asRange;
   uint64_t asDistincts;
   // Get the range of ids as min-max range and as count of distincts.
@@ -332,13 +333,13 @@ TEST_F(VectorHasherTest, stringIds) {
   // digits.
   EXPECT_EQ(asDistincts, 16);
   hasher->enableValueIds(1, 10);
-  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, hashes));
   // The 8 first have sequential ids.
   for (auto i = 0; i < 8; ++i) {
     EXPECT_EQ(hashes[i], i + 1);
   }
   hasher->enableValueRange(1, 200);
-  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, hashes));
   for (auto i = 0; i < 8; ++i) {
     // Since the range is padded with 100 values above and below, all
     // the values should be >= 101 (0 stands for null).
@@ -356,9 +357,8 @@ TEST_F(VectorHasherTest, stringIds) {
     }
   }
   rows.updateBounds();
-  DecodedVector decoded(*vector, rows);
-  raw_vector<uint64_t> scratch;
-  hasher->lookupValueIds(decoded, rows, scratch, &hashes);
+  VectorHasher::ScratchMemory scratchMemory;
+  hasher->lookupValueIds(*vector, rows, scratchMemory, hashes);
   // Since none of the values fit the range, all bits should be clear in rows.
   EXPECT_EQ(rows.countSelected(), 0);
   // We expect a multiplier of 1 * (15 distinct values + 1 for null + 10 for
@@ -368,8 +368,7 @@ TEST_F(VectorHasherTest, stringIds) {
   rows.updateBounds();
   // We get ids for values that have been seen, we expect found for all in
   // range.
-  decoded.decode(*vector, rows);
-  hasher->lookupValueIds(decoded, rows, scratch, &hashes);
+  hasher->lookupValueIds(*vector, rows, scratchMemory, hashes);
   EXPECT_EQ(numInRange, rows.countSelected());
 }
 
@@ -404,9 +403,9 @@ TEST_F(VectorHasherTest, integerIds) {
   auto hasher = exec::VectorHasher::create(BIGINT(), 1);
   raw_vector<uint64_t> hashes(ints->size());
   SelectivityVector rows(ints->size());
-  EXPECT_FALSE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_FALSE(hasher->computeValueIds(*vector, rows, hashes));
   hasher->enableValueRange(1, 2000);
-  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, hashes));
   // null is always 0
   EXPECT_EQ(hashes[0], 0);
   // min int64_t should be 1.
@@ -419,7 +418,7 @@ TEST_F(VectorHasherTest, integerIds) {
   EXPECT_GT(numRange, 1001);
   ints->set(10, 10000);
 
-  EXPECT_FALSE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_FALSE(hasher->computeValueIds(*vector, rows, hashes));
   hasher->cardinality(numRange, numDistinct);
   EXPECT_EQ(numRange, VectorHasher::kRangeTooLarge);
 
@@ -436,7 +435,7 @@ TEST_F(VectorHasherTest, integerIds) {
   hasher = exec::VectorHasher::create(BIGINT(), 1);
   hasher->enableValueIds(1, 100000);
   // We add values that are over 100K distinct and withmax - min > int64_t max.
-  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, hashes));
   // null is still 0.
   EXPECT_EQ(hashes[0], 0);
   for (int count = 0; count < 1000; ++count) {
@@ -444,7 +443,7 @@ TEST_F(VectorHasherTest, integerIds) {
     for (int64_t value = count * 100; value < count * 100 + 100; ++value) {
       ints->set(index++, value);
     }
-    hasher->computeValueIds(*vector, rows, &hashes);
+    hasher->computeValueIds(*vector, rows, hashes);
   }
 
   hasher->cardinality(numRange, numDistinct);
@@ -464,7 +463,7 @@ TEST_F(VectorHasherTest, boolNoNulls) {
   SelectivityVector rows(bools->size());
   auto hasher = exec::VectorHasher::create(BOOLEAN(), 1);
   hasher->enableValueRange(2, 2000);
-  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, hashes));
   // We expect false is 1, true is 2 times 2 because of the
   // multiplier passed to enableValueRange().
   EXPECT_EQ(4, hashes[0]);
@@ -489,7 +488,7 @@ TEST_F(VectorHasherTest, boolWithNulls) {
   SelectivityVector rows(bools->size());
   auto hasher = exec::VectorHasher::create(BOOLEAN(), 1);
   hasher->enableValueRange(2, 2000);
-  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, &hashes));
+  EXPECT_TRUE(hasher->computeValueIds(*vector, rows, hashes));
   // We expect null is 0, false is 2, true is 2 times 2 because of the
   // multiplier passed to enableValueRange().
   EXPECT_EQ(hashes[0], 0);
@@ -510,12 +509,12 @@ TEST_F(VectorHasherTest, merge) {
   VectorHasher hasher(BIGINT(), 0);
   SelectivityVector rows(kSize);
   raw_vector<uint64_t> hashes(kSize);
-  hasher.computeValueIds(*vector, rows, &hashes);
+  hasher.computeValueIds(*vector, rows, hashes);
   auto otherVector = vectorMaker_->flatVector<int64_t>(
       kSize,
       [](vector_size_t row) { return row < kSize / 2 ? row : row + 1000; });
   VectorHasher otherHasher(BIGINT(), 0);
-  otherHasher.computeValueIds(*otherVector, rows, &hashes);
+  otherHasher.computeValueIds(*otherVector, rows, hashes);
   // hasher has 0..99 and otherHasher has 0..49, 1050..1099.
   hasher.merge(otherHasher);
   uint64_t numRange;
@@ -539,11 +538,11 @@ TEST_F(VectorHasherTest, merge) {
 
   std::unordered_set<uint64_t> ids;
   hasher.enableValueIds(1, 0);
-  hasher.computeValueIds(*vector, rows, &hashes);
+  hasher.computeValueIds(*vector, rows, hashes);
   for (auto& h : hashes) {
     ids.insert(h);
   }
-  hasher.computeValueIds(*otherVector, rows, &hashes);
+  hasher.computeValueIds(*otherVector, rows, hashes);
   for (auto& h : hashes) {
     ids.insert(h);
   }
@@ -571,6 +570,21 @@ TEST_F(VectorHasherTest, computeValueIdsSmallint) {
 TEST_F(VectorHasherTest, computeValueIdsTinyint) {
   testComputeValueIds<int8_t>(false);
   testComputeValueIds<int8_t>(true);
+}
+
+TEST_F(VectorHasherTest, computeValueIdsBoolDictionary) {
+  vector_size_t size = 1'000;
+  auto vector =
+      makeDictionary(size, vectorMaker_->flatVector<bool>(11, [](auto row) {
+        return row % 2 == 0;
+      }));
+
+  SelectivityVector allRows(size);
+  auto hasher = exec::VectorHasher::create(BOOLEAN(), 0);
+  raw_vector<uint64_t> result(size);
+  std::fill(result.begin(), result.end(), 0);
+  auto ok = hasher->computeValueIds(*vector, allRows, result);
+  ASSERT_TRUE(ok);
 }
 
 TEST_F(VectorHasherTest, computeValueIdsStrings) {
@@ -603,7 +617,7 @@ TEST_F(VectorHasherTest, computeValueIdsStrings) {
   for (int i = 0; i < 4; i++) {
     auto hasher = hashers[i].get();
     raw_vector<uint64_t> result(size);
-    auto ok = hasher->computeValueIds(*dictionaryVectors[i], allRows, &result);
+    auto ok = hasher->computeValueIds(*dictionaryVectors[i], allRows, result);
     ASSERT_FALSE(ok);
 
     uint64_t asRange;
@@ -617,7 +631,7 @@ TEST_F(VectorHasherTest, computeValueIdsStrings) {
   raw_vector<uint64_t> result(size);
   for (int i = 0; i < 4; i++) {
     auto hasher = hashers[i].get();
-    bool ok = hasher->computeValueIds(*dictionaryVectors[i], allRows, &result);
+    bool ok = hasher->computeValueIds(*dictionaryVectors[i], allRows, result);
     ASSERT_TRUE(ok);
   }
 

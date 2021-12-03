@@ -514,16 +514,15 @@ class MapVector : public BaseVector {
   // Sorts all maps smallest key first. This enables linear time
   // comparison and log time lookup.  This may only be done if there
   // are no other references to 'map'. Checks that 'map' is uniquely
-  // referenced. Do not euse except right after construction.
+  // referenced. This is guaranteed after construction or when
+  // retrieving values from aggregation or join row containers.
   static void canonicalize(
       const std::shared_ptr<MapVector>& map,
       bool useStableSort = false);
 
-  // Sets indices to be a set of indices into the map at 'index' such
-  // that keys[indices[i]] < keys[indices[i + 1]]. Returns 'indices'.
-  folly::Range<vector_size_t*> sortedKeyIndices(
-      vector_size_t index,
-      folly::Range<vector_size_t*> indices) const;
+  // Returns indices into the map at 'index' such
+  // that keys[indices[i]] < keys[indices[i + 1]].
+  std::vector<vector_size_t> sortedKeyIndices(vector_size_t index) const;
 
   void ensureWritable(const SelectivityVector& rows) override;
 

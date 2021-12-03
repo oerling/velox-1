@@ -15,7 +15,6 @@
  */
 
 #include "velox/vector/ComplexVector.h"
-#include <folly/hash/Hash.h>
 #include "velox/vector/SimpleVector.h"
 
 namespace facebook {
@@ -600,14 +599,6 @@ bool MapVector::equalValueAt(
   return true;
 }
 
-namespace {
-template <typename T>
-folly::Range<T*> toRange(int32_t size, std::vector<T>& data) {
-  data.resize(size);
-  return folly::Range<T*>(data.data(), data.size());
-}
-} // namespace
-
 int32_t MapVector::compare(
     const BaseVector* other,
     vector_size_t index,
@@ -642,12 +633,8 @@ int32_t MapVector::compare(
         BaseVector::toString(),
         otherMap->BaseVector::toString());
   }
-  std::vector<vector_size_t> leftData;
-  std::vector<vector_size_t> rightData;
-  auto leftIndices = sortedKeyIndices(index, toRange(sizeAt(index), leftData));
-  auto rightIndices = otherMap->sortedKeyIndices(
-      wrappedOtherIndex,
-      toRange(otherMap->sizeAt(wrappedOtherIndex), rightData));
+  auto leftIndices = sortedKeyIndices(index);
+  auto rightIndices = otherMap->sortedKeyIndices(wrappedOtherIndex);
   auto result =
       compareArrays(*keys_, *otherMap->keys_, leftIndices, rightIndices, flags);
   if (result) {
@@ -807,10 +794,9 @@ void MapVector::canonicalize(
   map->sortedKeys_ = true;
 }
 
-folly::Range<vector_size_t*> MapVector::sortedKeyIndices(
-    vector_size_t index,
-    folly::Range<vector_size_t*> indices) const {
-  VELOX_CHECK_EQ(indices.size(), rawSizes_[index]);
+std::vector<vector_size_t> MapVector::sortedKeyIndices(
+    vector_size_t index) const {
+  std::vector<vector_size_t> indices(rawSizes_[index]);
   std::iota(indices.begin(), indices.end(), rawOffsets_[index]);
   if (!sortedKeys_) {
     std::sort(

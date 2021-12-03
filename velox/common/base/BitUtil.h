@@ -666,7 +666,7 @@ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) noexcept {
 #if defined(FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER)
 FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER("unsigned-integer-overflow")
 #endif
-constexpr uint64_t commutativeHashMix(
+inline uint64_t commutativeHashMix(
     const uint64_t upper,
     const uint64_t lower) noexcept {
   // Commutative accumulator taken from this paper:

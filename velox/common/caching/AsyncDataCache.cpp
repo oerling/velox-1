@@ -179,6 +179,7 @@ CachePin CacheShard::findOrCreate(
         entries_[index] = std::move(newEntry);
       }
     }
+    ++numNew_;
   }
   return initEntry(key, entryToInit, size);
 }

@@ -174,10 +174,7 @@ void serializeOne<TypeKind::MAP>(
   auto wrappedIndex = vector.wrappedIndex(index);
   auto size = map->sizeAt(wrappedIndex);
   auto offset = map->offsetAt(wrappedIndex);
-  std::vector<vector_size_t> indices(size);
-  map->sortedKeyIndices(
-      wrappedIndex,
-      folly::Range<vector_size_t*>(indices.data(), indices.size()));
+  auto indices = map->sortedKeyIndices(wrappedIndex);
   serializeArray(*map->mapKeys(), indices, out);
   serializeArray(*map->mapValues(), indices, out);
 }
@@ -525,9 +522,7 @@ int compare<TypeKind::MAP>(
   auto wrappedIndex = right.wrappedIndex(index);
   auto size = map->sizeAt(wrappedIndex);
   std::vector<vector_size_t> indices(size);
-  auto rightIndices =
-      folly::Range<vector_size_t*>(indices.data(), indices.size());
-  map->sortedKeyIndices(wrappedIndex, rightIndices);
+  auto rightIndices = map->sortedKeyIndices(wrappedIndex);
   auto result = compareArrayIndices(left, *map->mapKeys(), rightIndices, flags);
   if (result) {
     return result;
