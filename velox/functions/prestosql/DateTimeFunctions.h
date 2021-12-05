@@ -566,6 +566,17 @@ struct DateDiffFunction {
     }
   }
 
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* unitString,
+      const arg_type<Date>* /*after*/,
+      const arg_type<Date>* /*before*/) {
+    if (unitString != nullptr) {
+      unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
+    }
+  }
+
+  
   FOLLY_ALWAYS_INLINE bool call(
       int64_t& result,
       const arg_type<Varchar>& /*unitString*/,
@@ -576,6 +587,18 @@ struct DateDiffFunction {
         "date_diff is only defined for unit of day");
     result =
         (after.toMicros() - before.toMicros()) / (24 * 60 * 60 * 1'000'000LL);
+    return true;
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Varchar>& /*unitString*/,
+      const arg_type<Date>& before,
+      const arg_type<Date>& after) {
+    VELOX_CHECK(
+        unit_.has_value() && unit_.value() == DateTimeUnit::kDay,
+        "date_diff is only defined for unit of day");
+    result = after.days() - before.days();
     return true;
   }
 };
