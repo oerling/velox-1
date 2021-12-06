@@ -101,7 +101,9 @@ class VectorAdapter : public VectorFunction {
       const std::vector<VectorPtr>& constantInputs,
       std::shared_ptr<const Type> returnType)
       : fn_{std::make_unique<FUNC>(move(returnType))} {
-    unpack<0>(config, constantInputs);
+    if constexpr (FUNC::udf_has_initialize) {
+      unpack<0>(config, constantInputs);
+    }
   }
 
   void apply(
@@ -121,16 +123,32 @@ class VectorAdapter : public VectorFunction {
 
     unpack<0>(applyContext, true, decodedArgs);
 
-    // Check if the function reuses input strings for the result and add
-    // references to input string buffers to result vector.
+    // Check if the function reuses input strings for the result, and add
+    // references to input string buffers to all result vectors.
     auto reuseStringsFromArg = fn_->reuseStringsFromArg();
     if (reuseStringsFromArg >= 0) {
-      VELOX_CHECK_EQ((*result)->typeKind(), TypeKind::VARCHAR);
       VELOX_CHECK_LT(reuseStringsFromArg, args.size());
       VELOX_CHECK_EQ(args[reuseStringsFromArg]->typeKind(), TypeKind::VARCHAR);
 
-      (*result)->as<FlatVector<StringView>>()->acquireSharedStringBuffers(
-          decodedArgs.at(reuseStringsFromArg)->base());
+      tryAcquireStringBuffer(
+          result->get(), decodedArgs.at(reuseStringsFromArg)->base());
+    }
+  }
+
+  // Acquire string buffer from source if vector is a string flat vector.
+  void tryAcquireStringBuffer(BaseVector* vector, const BaseVector* source)
+      const {
+    if (auto* flatVector = vector->asFlatVector<StringView>()) {
+      flatVector->acquireSharedStringBuffers(source);
+    } else if (auto* arrayVector = vector->as<ArrayVector>()) {
+      tryAcquireStringBuffer(arrayVector->elements().get(), source);
+    } else if (auto* mapVector = vector->as<MapVector>()) {
+      tryAcquireStringBuffer(mapVector->mapKeys().get(), source);
+      tryAcquireStringBuffer(mapVector->mapValues().get(), source);
+    } else if (auto* rowVector = vector->as<RowVector>()) {
+      for (auto& it : rowVector->children()) {
+        tryAcquireStringBuffer(it.get(), source);
+      }
     }
   }
 
@@ -183,13 +201,13 @@ class VectorAdapter : public VectorFunction {
               bool allNotNull,
               const DecodedArgs& packed,
               TReader&... readers) const {
-    auto oneUnpacked = packed.at(POSITION)->as<exec_arg_at<POSITION>>();
+    auto* oneUnpacked = packed.at(POSITION);
     auto oneReader = VectorReader<arg_at<POSITION>>(oneUnpacked);
 
     // context->nullPruned() is true after rows with nulls have been
     // pruned out of 'rows', so we won't be seeing any more nulls here.
     bool nextNonNull = applyContext.context->nullsPruned() ||
-        (allNotNull && !oneUnpacked.mayHaveNulls());
+        (allNotNull && !oneUnpacked->mayHaveNulls());
     unpack<POSITION + 1>(
         applyContext, nextNonNull, packed, readers..., oneReader);
   }

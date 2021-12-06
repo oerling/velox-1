@@ -82,7 +82,7 @@ Aggregate functions can be classified by the type of their accumulators into thr
     * :func:`approx_distinct`
 
 Fixed-width part of the accumulator is stored in the row. Variable-width
-part (if exists) is allocated using HashStringAllocator and a pointer is
+part (if exists) is allocated using :doc:`HashStringAllocator <arena>` and a pointer is
 stored in the fixed-width part.
 
 A row is a contiguous byte buffer. Given N aggregates, first N / 8 bytes
@@ -183,15 +183,15 @@ GroupBy aggregation
 At this point you have accumulatorFixedWidthSize() and initializeNewGroups() methods implemented. Now, we can proceed to implementing the end-to-end group-by aggregation. We need the following pieces:
 
 * Logic for adding raw input to the partial accumulator:
-    * updatePartial() method.
+    * addRawInput() method.
 * Logic for producing intermediate results from the partial accumulator:
     * extractAccumulators() method.
 * Logic for adding intermediate results to the final accumulator:
-    * updateFinal() method.
+    * addIntermediateResults() method.
 * Logic for producing final results from the final accumulator:
     * extractValues() method.
 
-We start with the updatePartial() method which receives raw input vectors and adds the data to partial accumulators.
+We start with the addRawInput() method which receives raw input vectors and adds the data to partial accumulators.
 
 .. code-block:: c++
 
@@ -207,15 +207,15 @@ We start with the updatePartial() method which receives raw input vectors and ad
       // @param mayPushdown True if aggregation can be pushdown down via LazyVector.
       // The pushdown can happen only if this flag is true and 'args' is a single
       // LazyVector.
-      virtual void updatePartial(
+      virtual void addRawInput(
           char** groups,
           const SelectivityVector& rows,
           const std::vector<VectorPtr>& args,
           bool mayPushdown = false) = 0;
 
-UpdatePartial() method would use DecodedVector’s to decode the input data. Then, loop over rows to update the accumulators. I recommend defining a member variable of type DecodedVector for each input vector. This allows for reusing the memory needed to decode the inputs between batches of input.
+addRawInput() method would use DecodedVector’s to decode the input data. Then, loop over rows to update the accumulators. I recommend defining a member variable of type DecodedVector for each input vector. This allows for reusing the memory needed to decode the inputs between batches of input.
 
-After implementing the updatePartial() method, we proceed to adding logic for extracting intermediate results.
+After implementing the addRawInput() method, we proceed to adding logic for extracting intermediate results.
 
 .. code-block:: c++
 
@@ -226,11 +226,11 @@ After implementing the updatePartial() method, we proceed to adding logic for ex
       virtual void
       extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result) = 0;
 
-Next, we implement the updateFinal() method that receives intermediate results and updates final accumulators.
+Next, we implement the addIntermediateResults() method that receives intermediate results and updates final accumulators.
 
 .. code-block:: c++
 
-      virtual void updateFinal(
+      virtual void addIntermediateResults(
           char** groups,
           const SelectivityVector& rows,
           const std::vector<VectorPtr>& args,
@@ -252,7 +252,7 @@ GroupBy aggregation code path is done. We proceed to global aggregation.
 Global aggregation
 ------------------
 
-Global aggregation is similar to group-by aggregation, but there is only one group and one accumulator. After implementing group-by aggregation, the only thing needed to enable global aggregation is to implement updateSingleGroupPartial() and updateSingleGroupFinal() methods.
+Global aggregation is similar to group-by aggregation, but there is only one group and one accumulator. After implementing group-by aggregation, the only thing needed to enable global aggregation is to implement addSingleGroupRawInput() and addSingleGroupIntermediateResults() methods.
 
 .. code-block:: c++
 
@@ -263,7 +263,7 @@ Global aggregation is similar to group-by aggregation, but there is only one gro
       // @param mayPushdown True if aggregation can be pushdown down via LazyVector.
       // The pushdown can happen only if this flag is true and 'args' is a single
       // LazyVector.
-      virtual void updateSingleGroupPartial(
+      virtual void addSingleGroupRawInput(
           char* group,
           const SelectivityVector& allRows,
           const std::vector<VectorPtr>& args,
@@ -443,12 +443,12 @@ Documentation
 
 Finally, document the new function by adding an entry to velox/docs/functions/aggregate.rst
 
-You can see the documentation for all functions at https://fburl.com/velox-doc and read about how documentation is generated at https://github.com/facebookexternal/velox/tree/master/velox/docs#velox-documentation
+You can see the documentation for all functions at :doc:`../functions/aggregate` and read about how documentation is generated at https://github.com/facebookincubator/velox/tree/main/velox/docs#velox-documentation
 
 Accumulator
 -----------
 
-Variable-width accumulators need to use HashStringAllocator to allocate memory. An instance of the allocator is available in the base class: *f4d::exec::Aggregate::allocator_*.
+Variable-width accumulators need to use :doc:`HashStringAllocator <arena>` to allocate memory. An instance of the allocator is available in the base class: *f4d::exec::Aggregate::allocator_*.
 
 Sometimes you’ll need to create a custom accumulator. Sometimes one of the existing accumulators would do the jobs.
 
@@ -473,7 +473,7 @@ Memory allocated from the HashStringAllocator needs to be released in the destro
 End-to-End Testing
 ------------------
 
-To confirm that aggregate function works end to end as part of query, update testAggregations() test in TestHiveQueries.java in presto_cpp repo to add a query that uses the new function.
+To confirm that aggregate function works end to end as part of query, update testAggregations() test in TestHiveAggregationQueries.java in presto_cpp repo to add a query that uses the new function.
 
 .. code-block:: java
 

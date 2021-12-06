@@ -179,6 +179,7 @@ CachePin CacheShard::findOrCreate(
         entries_[index] = std::move(newEntry);
       }
     }
+    ++numNew_;
   }
   return initEntry(key, entryToInit, size);
 }
@@ -203,7 +204,6 @@ CachePin CacheShard::initEntry(
   // one has added. The new entry is otherwise volatile and
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
-  ++numNew_;
   entry->setSsdFile(nullptr, 0);
   entry->key_ = FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset};
   if (entry->size() < size) {

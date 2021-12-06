@@ -55,16 +55,33 @@ class FunctionBaseTest : public testing::Test {
         std::forward<std::vector<std::shared_ptr<const Type>>&&>(types));
   }
 
+  void setNulls(
+      const VectorPtr& vector,
+      std::function<bool(vector_size_t /*row*/)> isNullAt) {
+    for (vector_size_t i = 0; i < vector->size(); i++) {
+      if (isNullAt(i)) {
+        vector->setNull(i, true);
+      }
+    }
+  }
+
+  RowVectorPtr makeRowVector(
+      const std::vector<std::string>& childNames,
+      const std::vector<VectorPtr>& children,
+      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
+    auto rowVector = vectorMaker_.rowVector(childNames, children);
+    if (isNullAt) {
+      setNulls(rowVector, isNullAt);
+    }
+    return rowVector;
+  }
+
   RowVectorPtr makeRowVector(
       const std::vector<VectorPtr>& children,
       std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
     auto rowVector = vectorMaker_.rowVector(children);
     if (isNullAt) {
-      for (vector_size_t i = 0; i < rowVector->size(); i++) {
-        if (isNullAt(i)) {
-          rowVector->setNull(i, true);
-        }
-      }
+      setNulls(rowVector, isNullAt);
     }
     return rowVector;
   }
@@ -256,6 +273,35 @@ class FunctionBaseTest : public testing::Test {
         size, sizeAt, keyAt, valueAt, isNullAt, valueIsNullAt);
   }
 
+  // Create map vector from nested std::vector representation.
+  template <typename TKey, typename TValue>
+  MapVectorPtr makeMapVector(
+      const std::vector<std::vector<std::pair<TKey, std::optional<TValue>>>>&
+          maps) {
+    std::vector<vector_size_t> lengths;
+    std::vector<TKey> keys;
+    std::vector<TValue> values;
+    std::vector<bool> nullValues;
+    auto undefined = TValue();
+
+    for (const auto& map : maps) {
+      lengths.push_back(map.size());
+      for (const auto& [key, value] : map) {
+        keys.push_back(key);
+        values.push_back(value.value_or(undefined));
+        nullValues.push_back(!value.has_value());
+      }
+    }
+
+    return makeMapVector<TKey, TValue>(
+        maps.size(),
+        [&](vector_size_t row) { return lengths[row]; },
+        [&](vector_size_t idx) { return keys[idx]; },
+        [&](vector_size_t idx) { return values[idx]; },
+        nullptr,
+        [&](vector_size_t idx) { return nullValues[idx]; });
+  }
+
   template <typename T>
   VectorPtr makeConstant(T value, vector_size_t size) {
     return BaseVector::createConstant(value, size, execCtx_.pool());
@@ -327,10 +373,8 @@ class FunctionBaseTest : public testing::Test {
         0);
   }
 
-  template <typename T>
-  std::shared_ptr<T> evaluate(
-      const std::string& expression,
-      const RowVectorPtr& data) {
+  // Use this directly if you don't want it to cast the returned vector.
+  VectorPtr evaluate(const std::string& expression, const RowVectorPtr& data) {
     auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
     exec::ExprSet exprSet({makeTypedExpr(expression, rowType)}, &execCtx_);
 
@@ -338,8 +382,14 @@ class FunctionBaseTest : public testing::Test {
     exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
     std::vector<VectorPtr> results(1);
     exprSet.eval(*rows, &evalCtx, &results);
+    return results[0];
+  }
 
-    auto result = results[0];
+  template <typename T>
+  std::shared_ptr<T> evaluate(
+      const std::string& expression,
+      const RowVectorPtr& data) {
+    auto result = evaluate(expression, data);
     VELOX_CHECK(result, "Expression evaluation result is null: {}", expression);
 
     auto castedResult = std::dynamic_pointer_cast<T>(result);
@@ -412,7 +462,7 @@ class FunctionBaseTest : public testing::Test {
   }
 
   // TODO: Enable ASSERT_EQ for vectors
-  void assertEqualVectors(
+  static void assertEqualVectors(
       const VectorPtr& expected,
       const VectorPtr& actual,
       const std::string& additionalContext = "") {
@@ -457,6 +507,17 @@ class FunctionBaseTest : public testing::Test {
     }
   }
 
+  /// Register a lambda expression with a name that can later be used to refer
+  /// to the lambda in a function call, e.g. foo(a, b,
+  /// function('<lanbda-name>')).
+  ///
+  /// @param name Name to use when referring to the lambda expression from a
+  /// function call.
+  /// @param signature A list of names and types of inputs for the lambda
+  /// expression.
+  /// @param rowType The type of the input data used to resolve types of
+  /// captures used in the lambda expression.
+  /// @param body Body of the lambda as SQL expression.
   void registerLambda(
       const std::string& name,
       const std::shared_ptr<const RowType>& signature,

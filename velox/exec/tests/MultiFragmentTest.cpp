@@ -21,9 +21,9 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/Exchange.h"
-#include "velox/exec/tests/HiveConnectorTestBase.h"
-#include "velox/exec/tests/OperatorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -42,7 +42,7 @@ class MultiFragmentTest : public OperatorTestBase {
     filesystems::registerLocalFileSystem();
     auto dataCache = std::make_unique<SimpleLRUDataCache>(/*size=*/1 << 30);
     auto hiveConnector =
-        connector::getConnectorFactory(kHiveConnectorName)
+        connector::getConnectorFactory(HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, nullptr, std::move(dataCache));
     connector::registerConnector(hiveConnector);
     dwrf::registerDwrfReaderFactory();
@@ -434,7 +434,7 @@ TEST_F(MultiFragmentTest, broadcast) {
   for (int i = 0; i < 3; i++) {
     finalAggPlan = PlanBuilder()
                        .exchange(leafPlan->outputType())
-                       .finalAggregation({}, {"count(1)"})
+                       .singleAggregation({}, {"count(1)"})
                        .partitionedOutput({}, 1)
                        .planNode();
 

@@ -18,8 +18,37 @@
 namespace facebook::velox::core {
 
 namespace {
-const std::vector<std::shared_ptr<const PlanNode>> EMPTY_SOURCES;
+const std::vector<std::shared_ptr<const PlanNode>> kEmptySources;
+
+std::shared_ptr<RowType> getAggregationOutputType(
+    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
+        groupingKeys,
+    const std::vector<std::string>& aggregateNames,
+    const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates) {
+  VELOX_CHECK_EQ(
+      aggregateNames.size(),
+      aggregates.size(),
+      "Number of aggregate names must be equal to number of aggregates");
+
+  std::vector<std::string> names;
+  std::vector<std::shared_ptr<const Type>> types;
+
+  for (auto& key : groupingKeys) {
+    auto field =
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(key);
+    VELOX_CHECK(field, "Grouping key must be a field reference");
+    names.push_back(field->name());
+    types.push_back(field->type());
+  }
+
+  for (int32_t i = 0; i < aggregateNames.size(); i++) {
+    names.push_back(aggregateNames[i]);
+    types.push_back(aggregates[i]->type());
+  }
+
+  return std::make_shared<RowType>(std::move(names), std::move(types));
 }
+} // namespace
 
 AggregationNode::AggregationNode(
     const PlanNodeId& id,
@@ -40,7 +69,10 @@ AggregationNode::AggregationNode(
       aggregateMasks_(aggregateMasks),
       ignoreNullKeys_(ignoreNullKeys),
       sources_{source},
-      outputType_(getOutputType(groupingKeys_, aggregateNames_, aggregates_)) {
+      outputType_(getAggregationOutputType(
+          groupingKeys_,
+          aggregateNames_,
+          aggregates_)) {
   // Empty grouping keys are used in global aggregation:
   //    SELECT sum(c) FROM t
   // Empty aggregates are used in distinct:
@@ -52,17 +84,17 @@ AggregationNode::AggregationNode(
 
 const std::vector<std::shared_ptr<const PlanNode>>& ValuesNode::sources()
     const {
-  return EMPTY_SOURCES;
+  return kEmptySources;
 }
 
 const std::vector<std::shared_ptr<const PlanNode>>& TableScanNode::sources()
     const {
-  return EMPTY_SOURCES;
+  return kEmptySources;
 }
 
 const std::vector<std::shared_ptr<const PlanNode>>& ExchangeNode::sources()
     const {
-  return EMPTY_SOURCES;
+  return kEmptySources;
 }
 
 UnnestNode::UnnestNode(
@@ -114,7 +146,7 @@ UnnestNode::UnnestNode(
   outputType_ = ROW(std::move(names), std::move(types));
 }
 
-HashJoinNode::HashJoinNode(
+AbstractJoinNode::AbstractJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
     const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
@@ -150,6 +182,12 @@ HashJoinNode::HashJoinNode(
         "Build side join key not found in build side output: {}",
         key->name());
   }
+  for (auto i = 0; i < leftKeys_.size(); ++i) {
+    VELOX_CHECK_EQ(
+        leftKeys_[i]->type()->kind(),
+        rightKeys_[i]->type()->kind(),
+        "Join key types on the probe and build sides must match");
+  }
   for (auto i = 0; i < outputType_->size(); ++i) {
     auto name = outputType_->nameOf(i);
     if (leftType->containsChild(name)) {
@@ -178,4 +216,20 @@ CrossJoinNode::CrossJoinNode(
     : PlanNode(id),
       sources_({std::move(left), std::move(right)}),
       outputType_(std::move(outputType)) {}
+
+AssignUniqueIdNode::AssignUniqueIdNode(
+    const PlanNodeId& id,
+    const std::string& idName,
+    const int32_t taskUniqueId,
+    std::shared_ptr<const PlanNode> source)
+    : PlanNode(id), taskUniqueId_(taskUniqueId), sources_{std::move(source)} {
+  std::vector<std::string> names(sources_[0]->outputType()->names());
+  std::vector<TypePtr> types(sources_[0]->outputType()->children());
+
+  names.emplace_back(idName);
+  types.emplace_back(BIGINT());
+  outputType_ = ROW(std::move(names), std::move(types));
+  uniqueIdCounter_ = std::make_shared<std::atomic_int64_t>();
+}
+
 } // namespace facebook::velox::core

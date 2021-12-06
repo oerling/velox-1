@@ -16,8 +16,9 @@
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 #include "velox/functions/Macros.h"
+#include "velox/functions/Registerer.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
-#include "velox/functions/prestosql/VectorFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -25,18 +26,19 @@ using namespace facebook::velox::test;
 
 namespace {
 
-VELOX_UDF_BEGIN(not_scalar)
-bool call(bool& result, const bool& arg) {
-  result = !arg;
-  return true;
-}
-VELOX_UDF_END()
+template <typename T>
+struct NotScalarFunction {
+  bool call(bool& result, const bool& arg) {
+    result = !arg;
+    return true;
+  }
+};
 
 class NotBenchmark : public functions::test::FunctionBenchmarkBase {
  public:
   NotBenchmark() : FunctionBenchmarkBase() {
-    functions::registerVectorFunctions();
-    registerFunction<udf_not_scalar, bool, bool>({"not_scalar"});
+    functions::prestosql::registerArithmeticFunctions();
+    registerFunction<NotScalarFunction, bool, bool>({"not_scalar"});
   }
 
   void run(const std::string& functionName) {

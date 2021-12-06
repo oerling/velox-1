@@ -20,8 +20,8 @@
 #include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/functions/Udf.h"
-#include "velox/functions/prestosql/SimpleFunctions.h"
-#include "velox/functions/prestosql/VectorFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/vector/tests/VectorMaker.h"
@@ -102,8 +102,7 @@ struct TestData {
 class ExprTest : public testing::Test {
  protected:
   void SetUp() override {
-    functions::registerFunctions();
-    functions::registerVectorFunctions();
+    functions::prestosql::registerAllFunctions();
     exec::test::registerTypeResolver();
 
     testDataType_ =
@@ -1683,36 +1682,42 @@ struct OpaqueState {
 int OpaqueState::constructed = 0;
 int OpaqueState::destructed = 0;
 
-VELOX_UDF_BEGIN(test_opaque_create)
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<std::shared_ptr<OpaqueState>>& out,
-    const arg_type<int64_t>& x) {
-  out = std::make_shared<OpaqueState>(x);
-  return true;
-}
-VELOX_UDF_END()
+template <typename T>
+struct TestOpaqueCreateFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-VELOX_UDF_BEGIN(test_opaque_add)
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& out,
-    const arg_type<std::shared_ptr<OpaqueState>>& state,
-    const arg_type<int64_t>& y) {
-  out = state->x + y;
-  return true;
-}
-VELOX_UDF_END()
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<std::shared_ptr<OpaqueState>>& out,
+      const arg_type<int64_t>& x) {
+    out = std::make_shared<OpaqueState>(x);
+    return true;
+  }
+};
+
+template <typename T>
+struct TestOpaqueAddFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& out,
+      const arg_type<std::shared_ptr<OpaqueState>>& state,
+      const arg_type<int64_t>& y) {
+    out = state->x + y;
+    return true;
+  }
+};
 
 bool registerTestUDFs() {
   static bool once = [] {
     registerFunction<
-        udf_test_opaque_create,
+        TestOpaqueCreateFunction,
         std::shared_ptr<OpaqueState>,
-        int64_t>({});
+        int64_t>({"test_opaque_create"});
     registerFunction<
-        udf_test_opaque_add,
+        TestOpaqueAddFunction,
         int64_t,
         std::shared_ptr<OpaqueState>,
-        int64_t>({});
+        int64_t>({"test_opaque_add"});
     return true;
   }();
   return once;
@@ -2167,25 +2172,25 @@ TEST_F(ExprTest, memo) {
   auto oddIndices = makeIndices(100, [](auto row) { return 9 + row * 2; });
 
   auto rowType = ROW({"c0"}, {base->type()});
-  auto exprSet = compileExpression("c0[1]", rowType);
+  auto exprSet = compileExpression("c0[1] = 1", rowType);
 
   auto result = evaluate(
       exprSet.get(), makeRowVector({wrapInDictionary(evenIndices, 100, base)}));
-  auto expectedResult =
-      makeFlatVector<int64_t>(100, [](auto row) { return (8 + row * 2) % 3; });
+  auto expectedResult = makeFlatVector<bool>(
+      100, [](auto row) { return (8 + row * 2) % 3 == 1; });
   assertEqualVectors(expectedResult, result);
 
   result = evaluate(
       exprSet.get(), makeRowVector({wrapInDictionary(oddIndices, 100, base)}));
-  expectedResult =
-      makeFlatVector<int64_t>(100, [](auto row) { return (9 + row * 2) % 3; });
+  expectedResult = makeFlatVector<bool>(
+      100, [](auto row) { return (9 + row * 2) % 3 == 1; });
   assertEqualVectors(expectedResult, result);
 
   auto everyFifth = makeIndices(100, [](auto row) { return row * 5; });
   result = evaluate(
       exprSet.get(), makeRowVector({wrapInDictionary(everyFifth, 100, base)}));
   expectedResult =
-      makeFlatVector<int64_t>(100, [](auto row) { return (row * 5) % 3; });
+      makeFlatVector<bool>(100, [](auto row) { return (row * 5) % 3 == 1; });
   assertEqualVectors(expectedResult, result);
 }
 
@@ -2223,4 +2228,147 @@ TEST_F(ExprTest, memoNulls) {
   // Expecting 5 trues.
   expectedResult = BaseVector::createConstant(true, 5, execCtx_->pool());
   assertEqualVectors(expectedResult, result);
+}
+
+// This test is carefully constructed to exercise calling
+// applyFunctionWithPeeling in a situation where inputValues_ can be peeled
+// and applyRows and rows are distinct SelectivityVectors.  This test ensures
+// we're using applyRows and rows in the right places, if not we should see a
+// SIGSEGV.
+TEST_F(ExprTest, peelNulls) {
+  // Generate 5 distinct values for the c0 column.
+  auto c0 = makeFlatVector<StringView>(5, [](vector_size_t row) {
+    std::string val = "abcdefg";
+    val.append(2, 'a' + row);
+    return StringView(val);
+  });
+  // Generate 5 values for the c1 column.
+  auto c1 = makeFlatVector<StringView>(
+      5, [](vector_size_t /*row*/) { return StringView("xyz"); });
+
+  // One batch of 5 rows.
+  auto c0Indices = makeIndices(5, [](auto row) { return row; });
+  auto c1Indices = makeIndices(5, [](auto row) { return row; });
+
+  auto rowType = ROW({"c0", "c1"}, {c0->type(), c1->type()});
+  // This expression is very deliberately written this way.
+  // REGEXP_EXTRACT will return null for all but row 2, it is important we
+  // get nulls and non-nulls so applyRows and rows will be distinct.
+  // The result of REVERSE will be collapsed into a constant vector, which
+  // is necessary so that the inputValues_ can be peeled.
+  // REGEXP_LIKE is the function for which applyFunctionWithPeeling will be
+  // called.
+  auto exprSet = compileExpression(
+      "REGEXP_LIKE(REGEXP_EXTRACT(c0, 'cc'), REVERSE(c1))", rowType);
+
+  // It is important that both columns be wrapped in DictionaryVectors so
+  // that they are not peeled until REGEXP_LIKE's children have been
+  // evaluated.
+  auto result = evaluate(
+      exprSet.get(),
+      makeRowVector(
+          {BaseVector::wrapInDictionary(nullptr, c0Indices, 5, c0),
+           BaseVector::wrapInDictionary(nullptr, c1Indices, 5, c1)}));
+
+  // Since c0 only has 'cc' as a substring in row 2, all other rows should be
+  // null.
+  auto expectedResult = makeFlatVector<bool>(
+      5,
+      [](vector_size_t /*row*/) { return false; },
+      [](vector_size_t row) { return row != 2; });
+  assertEqualVectors(expectedResult, result);
+}
+
+TEST_F(ExprTest, accessNested) {
+  // Construct Row(Row(Row(int))) vector
+  auto base = makeFlatVector<int32_t>({1, 2, 3, 4, 5});
+  auto level1 = makeRowVector({base});
+  auto level2 = makeRowVector({level1});
+  auto level3 = makeRowVector({level2});
+
+  auto level1Type = ROW({"c0"}, {base->type()});
+  auto level2Type = ROW({"c0"}, {level1Type});
+  auto level3Type = ROW({"c0"}, {level2Type});
+
+  // Access level3->level2->level1->base
+  // TODO: Expression "c0.c0.c0" currently not supported by DuckDB
+  // So we wrap with parentheses to force parsing as struct extract
+  // Track https://github.com/duckdb/duckdb/issues/2568
+  auto exprSet = compileExpression("(c0).c0.c0", level3Type);
+
+  auto result = evaluate(exprSet.get(), level3);
+
+  assertEqualVectors(base, result);
+}
+
+TEST_F(ExprTest, accessNestedNull) {
+  // Construct Row(Row(Row(int))) vector
+  auto base = makeFlatVector<int32_t>({1, 2, 3, 4, 5});
+  auto level1 = makeRowVector({base});
+
+  auto level1Type = ROW({"c0"}, {base->type()});
+  auto level2Type = ROW({"c0"}, {level1Type});
+  auto level3Type = ROW({"c0"}, {level2Type});
+
+  BufferPtr nulls =
+      AlignedBuffer::allocate<bool>(5, execCtx_->pool(), bits::kNull);
+  // Construct level 2 row with nulls
+  auto level2 = std::make_shared<RowVector>(
+      execCtx_->pool(),
+      level2Type,
+      nulls,
+      level1->size(),
+      std::vector<VectorPtr>{level1});
+  auto level3 = makeRowVector({level2});
+
+  auto exprSet = compileExpression("(c0).c0.c0", level3Type);
+
+  auto result = evaluate(exprSet.get(), level3);
+
+  auto nullVector = makeAllNullFlatVector<int32_t>(5);
+
+  assertEqualVectors(nullVector, result);
+}
+
+TEST_F(ExprTest, accessNestedDictionaryEncoding) {
+  // Construct Row(Row(Row(int))) vector
+  auto base = makeFlatVector<int32_t>({1, 2, 3, 4, 5});
+
+  // Reverse order in dictionary encoding
+  auto indices = makeIndices(5, [](auto row) { return 4 - row; });
+
+  auto level1 = makeRowVector({base});
+  auto level2 = makeRowVector({wrapInDictionary(indices, 5, level1)});
+  auto level3 = makeRowVector({level2});
+
+  auto level1Type = ROW({"c0"}, {base->type()});
+  auto level2Type = ROW({"c0"}, {level1Type});
+  auto level3Type = ROW({"c0"}, {level2Type});
+
+  auto exprSet = compileExpression("(c0).c0.c0", level3Type);
+
+  auto result = evaluate(exprSet.get(), level3);
+
+  assertEqualVectors(makeFlatVector<int32_t>({5, 4, 3, 2, 1}), result);
+}
+
+TEST_F(ExprTest, accessNestedConstantEncoding) {
+  // Construct Row(Row(Row(int))) vector
+  VectorPtr base = makeFlatVector<int32_t>({1, 2, 3, 4, 5});
+  // Wrap base in constant
+  base = BaseVector::wrapInConstant(5, 2, base);
+
+  auto level1 = makeRowVector({base});
+  auto level2 = makeRowVector({level1});
+  auto level3 = makeRowVector({level2});
+
+  auto level1Type = ROW({"c0"}, {base->type()});
+  auto level2Type = ROW({"c0"}, {level1Type});
+  auto level3Type = ROW({"c0"}, {level2Type});
+
+  auto exprSet = compileExpression("(c0).c0.c0", level3Type);
+
+  auto result = evaluate(exprSet.get(), level3);
+
+  assertEqualVectors(makeConstantVector(3, 5), result);
 }

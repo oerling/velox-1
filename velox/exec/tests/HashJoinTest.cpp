@@ -15,9 +15,9 @@
  */
 
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/exec/tests/Cursor.h"
-#include "velox/exec/tests/HiveConnectorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/tests/utils/Cursor.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/type/tests/FilterBuilder.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
@@ -546,8 +546,8 @@ TEST_F(HashJoinTest, dynamicFilters) {
   {
     auto scanOutputType = ROW({"a", "b"}, {INTEGER(), BIGINT()});
     ColumnHandleMap assignments;
-    assignments["a"] = regularColumn("c0");
-    assignments["b"] = regularColumn("c1");
+    assignments["a"] = regularColumn("c0", INTEGER());
+    assignments["b"] = regularColumn("c1", BIGINT());
 
     auto op =
         PlanBuilder(10)
@@ -689,7 +689,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   {
     auto op = PlanBuilder(10)
                   .tableScan(probeType)
-                  .project({"c0 + 1", "c1"})
+                  .project({"cast(c0 + 1 as integer)", "c1"})
                   .hashJoin({0}, {0}, buildSide, "", {1})
                   .project({"p1 + 1"})
                   .planNode();

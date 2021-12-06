@@ -21,6 +21,163 @@
 
 namespace facebook::velox::dwrf {
 
+EncodingIter::EncodingIter(
+    const proto::StripeFooter& footer,
+    const std::vector<proto::StripeEncryptionGroup>& encryptionGroups,
+    int32_t encryptionGroupIndex,
+    google::protobuf::RepeatedPtrField<proto::ColumnEncoding>::const_iterator
+        current,
+    google::protobuf::RepeatedPtrField<proto::ColumnEncoding>::const_iterator
+        currentEnd)
+    : footer_{footer},
+      encryptionGroups_{encryptionGroups},
+      encryptionGroupIndex_{encryptionGroupIndex},
+      current_{std::move(current)},
+      currentEnd_{std::move(currentEnd)} {
+  // Move to the end or a valid position.
+  if (current_ == currentEnd_) {
+    next();
+  }
+}
+
+/* static */ EncodingIter EncodingIter::begin(
+    const proto::StripeFooter& footer,
+    const std::vector<proto::StripeEncryptionGroup>& encryptionGroups) {
+  return EncodingIter{
+      footer,
+      encryptionGroups,
+      -1,
+      footer.encoding().begin(),
+      footer.encoding().end()};
+}
+
+/* static */ EncodingIter EncodingIter::end(
+    const proto::StripeFooter& footer,
+    const std::vector<proto::StripeEncryptionGroup>& encryptionGroups) {
+  if (encryptionGroups.empty()) {
+    const auto& footerEncodings = footer.encoding();
+    return EncodingIter{
+        footer,
+        encryptionGroups,
+        -1,
+        footerEncodings.end(),
+        footerEncodings.end()};
+  }
+  const auto lastEncryptionGroupIndex =
+      folly::to<int32_t>(encryptionGroups.size()) - 1;
+  const auto& lastEncryptionGroupEncodings = encryptionGroups.back().encoding();
+  return EncodingIter{
+      footer,
+      encryptionGroups,
+      lastEncryptionGroupIndex,
+      lastEncryptionGroupEncodings.end(),
+      lastEncryptionGroupEncodings.end()};
+}
+
+void EncodingIter::next() {
+  // The check is needed for the initial position
+  // if footer is empty but encryption groups are not.
+  if (current_ != currentEnd_) {
+    ++current_;
+  }
+  // Get to the absolute end or a valid position.
+  while (current_ == currentEnd_) {
+    if (encryptionGroupIndex_ == encryptionGroups_.size() - 1) {
+      return;
+    }
+    const auto& encryptionGroup = encryptionGroups_.at(++encryptionGroupIndex_);
+    current_ = encryptionGroup.encoding().begin();
+    currentEnd_ = encryptionGroup.encoding().end();
+  }
+  return;
+}
+
+EncodingIter& EncodingIter::operator++() {
+  next();
+  return *this;
+}
+
+EncodingIter EncodingIter::operator++(int) {
+  auto current = *this;
+  next();
+  return current;
+}
+
+bool EncodingIter::operator==(const EncodingIter& other) const {
+  return current_ == other.current_;
+}
+
+bool EncodingIter::operator!=(const EncodingIter& other) const {
+  return current_ != other.current_;
+}
+
+EncodingIter::reference EncodingIter::operator*() const {
+  return *current_;
+}
+
+EncodingIter::pointer EncodingIter::operator->() const {
+  return &(*current_);
+}
+
+EncodingManager::EncodingManager(
+    const encryption::EncryptionHandler& encryptionHandler)
+    : encryptionHandler_{encryptionHandler} {
+  initEncryptionGroups();
+}
+
+proto::ColumnEncoding& EncodingManager::addEncodingToFooter(uint32_t nodeId) {
+  if (encryptionHandler_.isEncrypted(nodeId)) {
+    auto index = encryptionHandler_.getEncryptionGroupIndex(nodeId);
+    return *encryptionGroups_.at(index).add_encoding();
+  } else {
+    return *footer_.add_encoding();
+  }
+}
+
+proto::Stream* EncodingManager::addStreamToFooter(
+    uint32_t nodeId,
+    uint32_t& currentIndex) {
+  if (encryptionHandler_.isEncrypted(nodeId)) {
+    currentIndex = encryptionHandler_.getEncryptionGroupIndex(nodeId);
+    return encryptionGroups_.at(currentIndex).add_streams();
+  } else {
+    currentIndex = std::numeric_limits<uint32_t>::max();
+    return footer_.add_streams();
+  }
+}
+
+std::string* EncodingManager::addEncryptionGroupToFooter() {
+  return footer_.add_encryptiongroups();
+}
+
+proto::StripeEncryptionGroup EncodingManager::getEncryptionGroup(uint32_t i) {
+  return encryptionGroups_.at(i);
+}
+
+const proto::StripeFooter& EncodingManager::getFooter() const {
+  return footer_;
+}
+
+EncodingIter EncodingManager::begin() const {
+  return EncodingIter::begin(footer_, encryptionGroups_);
+}
+
+EncodingIter EncodingManager::end() const {
+  return EncodingIter::end(footer_, encryptionGroups_);
+}
+
+void EncodingManager::initEncryptionGroups() {
+  // initialize encryption groups
+  if (encryptionHandler_.isEncrypted()) {
+    auto count = encryptionHandler_.getEncryptionGroupCount();
+    // We use uint32_t::max to represent non-encrypted when adding streams, so
+    // make sure number of encryption groups is smaller than that
+    DWIO_ENSURE_LT(count, std::numeric_limits<uint32_t>::max());
+    encryptionGroups_.resize(count);
+  }
+}
+
+namespace {
 // We currently use previous stripe raw size as the proxy for the expected
 // stripe raw size. For the first stripe, we are more conservative about
 // flush overhead memory unless we know otherwise, e.g. perhaps from
@@ -45,6 +202,7 @@ int64_t getTotalMemoryUsage(const WriterContext& context) {
   return outputStreamPool.getCurrentBytes() + dictionaryPool.getCurrentBytes() +
       generalPool.getCurrentBytes();
 }
+} // namespace
 
 uint64_t WriterShared::flushTimeMemoryUsageEstimate(
     const WriterContext& context,
@@ -145,25 +303,10 @@ void WriterShared::flushStripe(bool close) {
   }
 
   auto& handler = context.getEncryptionHandler();
-  proto::StripeFooter footer;
-  std::vector<proto::StripeEncryptionGroup> groups;
-
-  // initialize encryption groups
-  if (handler.isEncrypted()) {
-    auto count = handler.getEncryptionGroupCount();
-    // We use uint32_t::max to represent non-encrypted when adding streams, so
-    // make sure number of encryption groups is smaller than that
-    DWIO_ENSURE_LT(count, std::numeric_limits<uint32_t>::max());
-    groups.resize(count);
-  }
+  EncodingManager encodingManager{handler};
 
   flushImpl([&](uint32_t nodeId) -> proto::ColumnEncoding& {
-    if (handler.isEncrypted(nodeId)) {
-      auto index = handler.getEncryptionGroupIndex(nodeId);
-      return *groups.at(index).add_encoding();
-    } else {
-      return *footer.add_encoding();
-    }
+    return encodingManager.addEncodingToFooter(nodeId);
   });
 
   // Collects the memory increment from flushing data to output streams.
@@ -183,13 +326,7 @@ void WriterShared::flushStripe(bool close) {
     proto::Stream* s;
     uint32_t currentIndex;
     auto nodeId = stream.node;
-    if (handler.isEncrypted(nodeId)) {
-      currentIndex = handler.getEncryptionGroupIndex(nodeId);
-      s = groups.at(currentIndex).add_streams();
-    } else {
-      s = footer.add_streams();
-      currentIndex = std::numeric_limits<uint32_t>::max();
-    }
+    s = encodingManager.addStreamToFooter(nodeId, currentIndex);
 
     // set offset only when needed, ie. when offset of current stream cannot be
     // calculated based on offset and length of previous stream. In that case,
@@ -219,8 +356,9 @@ void WriterShared::flushStripe(bool close) {
   // deals with streams
   uint64_t indexLength = 0;
   sink.setMode(WriterSink::Mode::Index);
-  LayoutPlanner planner(context);
-  planner.iterateIndexStreams([&](auto& streamId, auto& content) {
+  auto planner = layoutPlannerFactory_(getStreamList(context), encodingManager);
+  planner->plan();
+  planner->iterateIndexStreams([&](auto& streamId, auto& content) {
     DWIO_ENSURE_EQ(
         streamId.kind,
         StreamKind::StreamKind_ROW_INDEX,
@@ -233,7 +371,7 @@ void WriterShared::flushStripe(bool close) {
 
   uint64_t dataLength = 0;
   sink.setMode(WriterSink::Mode::Data);
-  planner.iterateDataStreams([&](auto& streamId, auto& content) {
+  planner->iterateDataStreams([&](auto& streamId, auto& content) {
     DWIO_ENSURE_NE(
         streamId.kind,
         StreamKind::StreamKind_ROW_INDEX,
@@ -249,10 +387,10 @@ void WriterShared::flushStripe(bool close) {
   if (handler.isEncrypted()) {
     // fill encryption metadata
     for (uint32_t i = 0; i < handler.getEncryptionGroupCount(); ++i) {
-      auto group = footer.add_encryptiongroups();
+      auto group = encodingManager.addEncryptionGroupToFooter();
       writeProtoAsString(
           *group,
-          groups.at(i),
+          encodingManager.getEncryptionGroup(i),
           std::addressof(handler.getEncryptionProviderByIndex(i)));
     }
   }
@@ -262,7 +400,7 @@ void WriterShared::flushStripe(bool close) {
   DWIO_ENSURE_EQ(footerOffset, stripeOffset + dataLength + indexLength);
 
   sink.setMode(WriterSink::Mode::Footer);
-  writeProto(footer);
+  writeProto(encodingManager.getFooter());
   sink.setMode(WriterSink::Mode::None);
 
   auto& stripe = addStripeInfo();
@@ -313,7 +451,7 @@ void WriterShared::flushStripe(bool close) {
   resetImpl();
 }
 
-void WriterShared::flush(bool close) {
+void WriterShared::flushInternal(bool close) {
   flushStripe(close);
 
   auto& context = getContext();
@@ -408,12 +546,16 @@ void WriterShared::flush(bool close) {
         context.stripeRowCount,
         context.stripeRawSize,
         context.getStreamCount(),
-        context.getWriterMemoryUsage().getCurrentBytes());
+        context.getTotalMemoryUsage());
   }
 }
 
+void WriterShared::flush() {
+  flushInternal(false);
+}
+
 void WriterShared::close() {
-  flush(true);
+  flushInternal(true);
   WriterBase::close();
 }
 

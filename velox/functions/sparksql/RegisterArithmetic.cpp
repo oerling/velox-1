@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 #include "velox/functions/sparksql/RegisterArithmetic.h"
-
 #include "velox/functions/lib/RegistrationHelpers.h"
 #include "velox/functions/prestosql/Arithmetic.h"
 #include "velox/functions/prestosql/CheckedArithmetic.h"
@@ -24,16 +23,16 @@ namespace facebook::velox::functions::sparksql {
 
 void registerArithmeticFunctions(const std::string& prefix) {
   // Operators.
-  registerBinaryNumeric<udf_plus>({prefix + "add"});
-  registerBinaryNumeric<udf_minus>({prefix + "subtract"});
-  registerBinaryNumeric<udf_multiply>({prefix + "multiply"});
+  registerBinaryNumeric<PlusFunction>({prefix + "add"});
+  registerBinaryNumeric<MinusFunction>({prefix + "subtract"});
+  registerBinaryNumeric<MultiplyFunction>({prefix + "multiply"});
   registerFunction<udf_divide, double, double, double>({prefix + "divide"});
-  registerBinaryIntegral<udf_remainder>({prefix + "remainder"});
+  registerBinaryIntegral<RemainderFunction>({prefix + "remainder"});
   registerUnaryNumeric<udf_unaryminus>({prefix + "unaryminus"});
   // Math functions.
   registerUnaryNumeric<udf_abs>({prefix + "abs"});
   registerFunction<udf_exp, double, double>({prefix + "exp"});
-  registerBinaryIntegral<udf_pmod>({prefix + "pmod"});
+  registerBinaryIntegral<PModFunction>({prefix + "pmod"});
   registerFunction<udf_power<double>, double, double, double>(
       {prefix + "power"});
   registerUnaryNumeric<udf_round>({prefix + "round"});

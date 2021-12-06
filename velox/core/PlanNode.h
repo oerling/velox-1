@@ -65,6 +65,13 @@ class SortOrder {
     return nullsFirst_;
   }
 
+  std::string toString() const {
+    return fmt::format(
+        "{} NULLS {}",
+        (ascending_ ? "ASC" : "DESC"),
+        (nullsFirst_ ? "FIRST" : "LAST"));
+  }
+
  private:
   const bool ascending_;
   const bool nullsFirst_;
@@ -459,35 +466,6 @@ class AggregationNode : public PlanNode {
   }
 
  private:
-  static std::shared_ptr<RowType> getOutputType(
-      const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-          groupingKeys,
-      const std::vector<std::string>& aggregateNames,
-      const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates) {
-    VELOX_CHECK_EQ(
-        aggregateNames.size(),
-        aggregates.size(),
-        "Number of aggregate names must be equal to number of aggregates");
-
-    std::vector<std::string> names;
-    std::vector<std::shared_ptr<const Type>> types;
-
-    for (auto& key : groupingKeys) {
-      auto field =
-          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(key);
-      VELOX_CHECK(field, "Grouping key must be a field reference");
-      names.push_back(field->name());
-      types.push_back(field->type());
-    }
-
-    for (int32_t i = 0; i < aggregateNames.size(); i++) {
-      names.push_back(aggregateNames[i]);
-      types.push_back(aggregates[i]->type());
-    }
-
-    return std::make_shared<RowType>(std::move(names), std::move(types));
-  }
-
   const Step step_;
   const std::vector<std::shared_ptr<const FieldAccessTypedExpr>> groupingKeys_;
   const std::vector<std::string> aggregateNames_;
@@ -833,13 +811,11 @@ inline bool isAntiJoin(JoinType joinType) {
   return joinType == JoinType::kAnti;
 }
 
-// Represents inner/outer/semi/anti join hash
-// joins. Translates to an exec::HashBuild and exec::HashProbe. A
-// separate pipeline is produced for the build side when generating
-// exec::Operators.
-class HashJoinNode : public PlanNode {
+/// Abstract class representing inner/outer/semi/anti joins. Used as a base
+/// class for specific join implementations, e.g. hash and merge joins.
+class AbstractJoinNode : public PlanNode {
  public:
-  HashJoinNode(
+  AbstractJoinNode(
       const PlanNodeId& id,
       JoinType joinType,
       const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
@@ -899,10 +875,6 @@ class HashJoinNode : public PlanNode {
     return filter_;
   }
 
-  std::string_view name() const override {
-    return "hash join";
-  }
-
  private:
   const JoinType joinType_;
   const std::vector<std::shared_ptr<const FieldAccessTypedExpr>> leftKeys_;
@@ -914,6 +886,66 @@ class HashJoinNode : public PlanNode {
   const std::shared_ptr<const ITypedExpr> filter_;
   const std::vector<std::shared_ptr<const PlanNode>> sources_;
   const RowTypePtr outputType_;
+};
+
+/// Represents inner/outer/semi/anti hash joins. Translates to an
+/// exec::HashBuild and exec::HashProbe. A separate pipeline is produced for the
+/// build side when generating exec::Operators.
+class HashJoinNode : public AbstractJoinNode {
+ public:
+  HashJoinNode(
+      const PlanNodeId& id,
+      JoinType joinType,
+      const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
+      const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& rightKeys,
+      std::shared_ptr<const ITypedExpr> filter,
+      std::shared_ptr<const PlanNode> left,
+      std::shared_ptr<const PlanNode> right,
+      const RowTypePtr outputType)
+      : AbstractJoinNode(
+            id,
+            joinType,
+            leftKeys,
+            rightKeys,
+            filter,
+            left,
+            right,
+            outputType) {}
+
+  std::string_view name() const override {
+    return "hash join";
+  }
+};
+
+/// Represents inner/outer/semi/anti merge joins. Translates to an
+/// exec::MergeJoin operator. Assumes that both left and right input data is
+/// sorted on the join keys. A separate pipeline that puts its output into
+/// exec::MergeJoinSource is produced for the right side when generating
+/// exec::Operators.
+class MergeJoinNode : public AbstractJoinNode {
+ public:
+  MergeJoinNode(
+      const PlanNodeId& id,
+      JoinType joinType,
+      const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
+      const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& rightKeys,
+      std::shared_ptr<const ITypedExpr> filter,
+      std::shared_ptr<const PlanNode> left,
+      std::shared_ptr<const PlanNode> right,
+      const RowTypePtr outputType)
+      : AbstractJoinNode(
+            id,
+            joinType,
+            leftKeys,
+            rightKeys,
+            filter,
+            left,
+            right,
+            outputType) {}
+
+  std::string_view name() const override {
+    return "merge join";
+  }
 };
 
 // Cross join.
@@ -993,6 +1025,14 @@ class OrderByNode : public PlanNode {
   }
 
  private:
+  void addDetails(std::stringstream& stream) const override {
+    stream << "sort keys: ";
+    for (auto i = 0; i < sortingKeys_.size(); ++i) {
+      stream << "(" << sortingKeys_[i]->toString() << " "
+             << sortingOrders_[i].toString() << "), ";
+    }
+  }
+
   const std::vector<std::shared_ptr<const FieldAccessTypedExpr>> sortingKeys_;
   const std::vector<SortOrder> sortingOrders_;
   const bool isPartial_;
@@ -1203,6 +1243,51 @@ class EnforceSingleRowNode : public PlanNode {
 
  private:
   const std::vector<std::shared_ptr<const PlanNode>> sources_;
+};
+
+/// Adds a new column named `idName` at the end of the input columns
+/// with unique int64_t value per input row.
+///
+/// 64-bit unique id is built in following way:
+///  - first 24 bits - task unique id
+///  - next 40 bits - operator counter value
+///
+/// The task unique id is added to ensure the generated id is unique
+/// across all the nodes executing the same query stage in a distributed
+/// query execution.
+class AssignUniqueIdNode : public PlanNode {
+ public:
+  AssignUniqueIdNode(
+      const PlanNodeId& id,
+      const std::string& idName,
+      const int32_t taskUniqueId,
+      std::shared_ptr<const PlanNode> source);
+
+  const RowTypePtr& outputType() const override {
+    return outputType_;
+  }
+
+  const std::vector<std::shared_ptr<const PlanNode>>& sources() const override {
+    return sources_;
+  }
+
+  std::string_view name() const override {
+    return "assign unique id";
+  }
+
+  int32_t taskUniqueId() const {
+    return taskUniqueId_;
+  }
+
+  const std::shared_ptr<std::atomic_int64_t>& uniqueIdCounter() const {
+    return uniqueIdCounter_;
+  };
+
+ private:
+  const int32_t taskUniqueId_;
+  const std::vector<std::shared_ptr<const PlanNode>> sources_;
+  RowTypePtr outputType_;
+  std::shared_ptr<std::atomic_int64_t> uniqueIdCounter_;
 };
 
 } // namespace facebook::velox::core
