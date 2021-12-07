@@ -64,7 +64,14 @@ void registerSimpleFunctions() {
       {"date_format"});
   registerFunction<DateDiffFunction, int64_t, Varchar, Timestamp, Timestamp>(
       {"date_diff"});
+
+  registerFunction<DateDiffFunction, int64_t, Varchar, Date, Date>(
+      {"date_diff"});
+  registerFunction<DateParseFunction, Date, Varchar, Varchar>(
+      {"date_parse"});
+
 }
+
 } // namespace
 
 void registerDateTimeFunctions() {
