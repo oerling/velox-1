@@ -104,7 +104,8 @@ HashAggregation::HashAggregation(
         aggResultType->kindEquals(expectedType),
         "Unexpected result type for an aggregation: {}, expected {} step {}",
         aggResultType->toString(),
-        expectedType->toString(), static_cast<int32_t>(aggregationNode->step()));
+        expectedType->toString(),
+        static_cast<int32_t>(aggregationNode->step()));
   }
 
   if (isDistinct_) {

@@ -29,7 +29,10 @@
 
 #include <numeric>
 
-DEFINE_bool(enable_specialize_filters, true, "Specialize filters based on row group stats");
+DEFINE_bool(
+    enable_specialize_filters,
+    true,
+    "Specialize filters based on row group stats");
 
 namespace facebook::velox::dwrf {
 
@@ -3907,7 +3910,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void setRowGroupSpecificFilters();
-  
+
  private:
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
@@ -4024,7 +4027,8 @@ void SelectiveStructColumnReader::next(
 }
 
 void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
-  if (!FLAGS_enable_specialize_filters || (readOffset_ % rowsPerRowGroup_) != 0) {
+  if (!FLAGS_enable_specialize_filters ||
+      (readOffset_ % rowsPerRowGroup_) != 0) {
     return;
   }
 
@@ -4035,13 +4039,13 @@ void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
       auto rowGroupIndex = readOffset_ / rowsPerRowGroup_;
       auto stats = reader->rowGroupStats(rowGroupIndex);
       if (stats) {
-	childSpec->specializeFilter(reader->type(), stats);
+        childSpec->specializeFilter(reader->type(), stats);
       }
     }
   }
 }
 
-  class ColumnLoader : public velox::VectorLoader {
+class ColumnLoader : public velox::VectorLoader {
  public:
   ColumnLoader(
       SelectiveStructColumnReader* structReader,

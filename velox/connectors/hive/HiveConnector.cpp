@@ -76,8 +76,8 @@ static void makeFieldSpecs(
       for (auto i = 0; i < type->size(); ++i) {
         std::string path = level == 0 ? rowType->nameOf(i)
                                       : pathPrefix + "." + rowType->nameOf(i);
-	common::Subfield subfield(path);
-	common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
+        common::Subfield subfield(path);
+        common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
         fieldSpec->setProjectOut(true);
         fieldSpec->setChannel(i);
         makeFieldSpecs(path, level + 1, type->childAt(i), spec);
@@ -85,12 +85,13 @@ static void makeFieldSpecs(
       break;
     }
     case TypeKind::MAP: {
-      auto keySpec = spec->getOrCreateChild(common::Subfield(pathPrefix + ".keys"));
+      auto keySpec =
+          spec->getOrCreateChild(common::Subfield(pathPrefix + ".keys"));
       keySpec->setProjectOut(true);
       keySpec->setExtractValues(true);
       makeFieldSpecs(pathPrefix + ".keys", level + 1, type->childAt(0), spec);
       auto valueSpec =
-	spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
+          spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
       valueSpec->setProjectOut(true);
       valueSpec->setExtractValues(true);
       makeFieldSpecs(
@@ -99,7 +100,7 @@ static void makeFieldSpecs(
     }
     case TypeKind::ARRAY: {
       auto childSpec =
-	spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
+          spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
       childSpec->setProjectOut(true);
       childSpec->setExtractValues(true);
       makeFieldSpecs(

@@ -576,7 +576,6 @@ struct DateDiffFunction {
     }
   }
 
-  
   FOLLY_ALWAYS_INLINE bool call(
       int64_t& result,
       const arg_type<Varchar>& /*unitString*/,
@@ -628,7 +627,8 @@ struct DateParseFunction {
       const arg_type<Varchar>& string,
       const arg_type<Varchar>& formatString) {
     if (isYMD_) {
-      result = util::fromDatetime(util::fromDateString(string.data(), string.size()), 0);
+      result = util::fromDatetime(
+          util::fromDateString(string.data(), string.size()), 0);
       return true;
     }
     VELOX_FAIL("date_parse only defined for %y-%m-%d");

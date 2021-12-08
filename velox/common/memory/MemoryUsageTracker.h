@@ -27,12 +27,12 @@
 namespace facebook::velox::memory {
 constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
 
-#define VELOX_MEM_CAP_EXCEEDED(name, cap)			    \
+#define VELOX_MEM_CAP_EXCEEDED(name, cap)                           \
   _VELOX_THROW(                                                     \
       ::facebook::velox::VeloxRuntimeError,                         \
       ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
       ::facebook::velox::error_code::kMemCapExceeded.c_str(),       \
-      /* isRetriable */ true, \
+      /* isRetriable */ true,                                       \
       fmt::format("Exceeded memory cap of {} = {} KB", name, cap / 1024));
 
 struct MemoryUsageConfig {

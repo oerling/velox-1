@@ -301,7 +301,7 @@ void ScanSpec::specializeFilter(
           dynamic_cast<const dwio::common::IntegerColumnStatistics*>(stats);
       if (!intStats) {
         localFilter_ = nullptr;
-	return;
+        return;
       }
       if (intStats->getMinimum().has_value() &&
           intStats->getMaximum().has_value()) {
