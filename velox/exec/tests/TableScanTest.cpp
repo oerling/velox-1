@@ -1735,16 +1735,16 @@ TEST_P(TableScanTest, structLazy) {
   assertQuery(op, {filePath}, "select c0 % 3 from tmp");
 }
 
-TEST_P(TableScanTest, structInMap) {
+TEST_P(TableScanTest, structInArrayOrMap) {
   vector_size_t size = 1'000;
 
   auto rowNumbers = makeFlatVector<int64_t>(size, [](auto row) { return row; });
-  auto innerRow = vectorMaker_.rowVector({rowNumbers});
+  auto innerRow = makeRowVector({rowNumbers});
   auto offsets = AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
   auto rawOffsets = offsets->asMutable<vector_size_t>();
   std::iota(rawOffsets, rawOffsets + size, 0);
   auto sizes = AlignedBuffer::allocate<vector_size_t>(size, pool_.get(), 1);
-  auto rowVector = vectorMaker_.rowVector(
+  auto rowVector = makeRowVector(
       {rowNumbers,
        rowNumbers,
        std::make_shared<MapVector>(
@@ -1754,8 +1754,15 @@ TEST_P(TableScanTest, structInMap) {
            size,
            offsets,
            sizes,
-           vectorMaker_.flatVector<int64_t>(
-               size, [](int32_t /*row*/) { return 1; }),
+           makeFlatVector<int64_t>(size, [](int32_t /*row*/) { return 1; }),
+           innerRow),
+       std::make_shared<ArrayVector>(
+           pool_.get(),
+           ARRAY(innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
            innerRow)});
 
   auto filePath = TempFilePath::create();
@@ -1766,15 +1773,12 @@ TEST_P(TableScanTest, structInMap) {
       {makeRowVector({rowVector->childAt(0), rowVector->childAt(1)})});
 
   auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
-  auto assignments = allRegularColumns(rowType);
-
-  auto tableHandle = makeTableHandle(SubfieldFilters{});
   auto op = PlanBuilder()
-                .tableScan(rowType, tableHandle, assignments)
-                .project({"c2[1].c0"})
+                .tableScan(rowType)
+                .project({"c2[1].c0", "c3[1].c0"})
                 .planNode();
 
-  assertQuery(op, {filePath}, "select c0 from tmp");
+  assertQuery(op, {filePath}, "select c0, c0 from tmp");
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

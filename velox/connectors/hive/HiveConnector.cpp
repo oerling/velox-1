@@ -68,43 +68,50 @@ namespace {
 static void makeFieldSpecs(
     const std::string& pathPrefix,
     int32_t level,
-    const std::shared_ptr<const Type>& type,
+    const TypePtr& type,
     common::ScanSpec* spec) {
+  constexpr int32_t kNoChannel = -1;
+  auto makeNestedSpec = [&](const std::string& name, int32_t channel) {
+    std::string path = level == 0 ? name : pathPrefix + "." + name;
+    auto fieldSpec = spec->getOrCreateChild(common::Subfield(path));
+    fieldSpec->setProjectOut(true);
+    if (channel != kNoChannel) {
+      fieldSpec->setChannel(channel);
+    }
+    return path;
+  };
+
   switch (type->kind()) {
     case TypeKind::ROW: {
-      auto rowType = dynamic_cast<const RowType*>(type.get());
+      auto rowType = type->as<TypeKind::ROW>();
       for (auto i = 0; i < type->size(); ++i) {
-        std::string path = level == 0 ? rowType->nameOf(i)
-                                      : pathPrefix + "." + rowType->nameOf(i);
-        common::Subfield subfield(path);
-        common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
-        fieldSpec->setProjectOut(true);
-        fieldSpec->setChannel(i);
-        makeFieldSpecs(path, level + 1, type->childAt(i), spec);
+        makeFieldSpecs(
+            makeNestedSpec(rowType.nameOf(i), i),
+            level + 1,
+            type->childAt(i),
+            spec);
       }
       break;
     }
     case TypeKind::MAP: {
-      auto keySpec =
-          spec->getOrCreateChild(common::Subfield(pathPrefix + ".keys"));
-      keySpec->setProjectOut(true);
-      keySpec->setExtractValues(true);
-      makeFieldSpecs(pathPrefix + ".keys", level + 1, type->childAt(0), spec);
-      auto valueSpec =
-          spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
-      valueSpec->setProjectOut(true);
-      valueSpec->setExtractValues(true);
       makeFieldSpecs(
-          pathPrefix + ".elements", level + 1, type->childAt(1), spec);
+          makeNestedSpec("keys", kNoChannel),
+          level + 1,
+          type->childAt(0),
+          spec);
+      makeFieldSpecs(
+          makeNestedSpec("elements", kNoChannel),
+          level + 1,
+          type->childAt(1),
+          spec);
       break;
     }
     case TypeKind::ARRAY: {
-      auto childSpec =
-          spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
-      childSpec->setProjectOut(true);
-      childSpec->setExtractValues(true);
       makeFieldSpecs(
-          pathPrefix + ".elements", level + 1, type->childAt(0), spec);
+          makeNestedSpec("elements", kNoChannel),
+          level + 1,
+          type->childAt(0),
+          spec);
       break;
     }
 
