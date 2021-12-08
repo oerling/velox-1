@@ -1735,6 +1735,48 @@ TEST_P(TableScanTest, structLazy) {
   assertQuery(op, {filePath}, "select c0 % 3 from tmp");
 }
 
+TEST_P(TableScanTest, structInMap) {
+  vector_size_t size = 1'000;
+
+  auto rowNumbers = makeFlatVector<int64_t>(size, [](auto row) { return row; });
+  auto innerRow = vectorMaker_.rowVector({rowNumbers});
+  auto offsets = AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
+  auto rawOffsets = offsets->asMutable<vector_size_t>();
+  std::iota(rawOffsets, rawOffsets + size, 0);
+  auto sizes = AlignedBuffer::allocate<vector_size_t>(size, pool_.get(), 1);
+  auto rowVector = vectorMaker_.rowVector(
+      {rowNumbers,
+       rowNumbers,
+       std::make_shared<MapVector>(
+           pool_.get(),
+           MAP(BIGINT(), innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           vectorMaker_.flatVector<int64_t>(
+               size, [](int32_t /*row*/) { return 1; }),
+           innerRow)});
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, {rowVector});
+
+  // Exclude struct columns as DuckDB doesn't support complex types yet.
+  createDuckDbTable(
+      {makeRowVector({rowVector->childAt(0), rowVector->childAt(1)})});
+
+  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+  auto assignments = allRegularColumns(rowType);
+
+  auto tableHandle = makeTableHandle(SubfieldFilters{});
+  auto op = PlanBuilder()
+                .tableScan(rowType, tableHandle, assignments)
+                .project({"c2[1].c0"})
+                .planNode();
+
+  assertQuery(op, {filePath}, "select c0 from tmp");
+}
+
 VELOX_INSTANTIATE_TEST_SUITE_P(
     TableScanTests,
     TableScanTest,

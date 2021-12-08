@@ -4031,7 +4031,7 @@ void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
   auto& childSpecs = scanSpec_->children();
   for (auto& childSpec : childSpecs) {
     if (childSpec->filter()) {
-      auto& reader = children_[childSpec->channel()];
+      auto& reader = children_[childSpec->subscript()];
       auto rowGroupIndex = readOffset_ / rowsPerRowGroup_;
       auto stats = reader->rowGroupStats(rowGroupIndex);
       if (stats) {
