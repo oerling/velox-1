@@ -67,6 +67,9 @@ void registerSimpleFunctions() {
 
   registerFunction<DateDiffFunction, int64_t, Varchar, Date, Date>(
       {"date_diff"});
+  registerFunction<DateParseFunction, Date, Varchar, Varchar>(
+      {"date_parse"});
+
 }
 
 } // namespace

@@ -997,7 +997,7 @@ TEST(FilterTest, mergeWithBigint) {
   filters.push_back(between(150, 500, true));
 
   // IN-list.
-  filters.push_back(in({1, 2, 3, 670'000'000'000, 134}));
+  filters.push_back(in({1, 2, 3, 67'000'000'000, 134}));
   filters.push_back(in({1, 2, 3, 67'000'000'000, 134}, true));
   filters.push_back(in({-7, -6, -5, -4, -3, -2}));
   filters.push_back(in({-7, -6, -5, -4, -3, -2}, true));

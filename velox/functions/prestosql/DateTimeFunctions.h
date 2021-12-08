@@ -603,4 +603,36 @@ struct DateDiffFunction {
   }
 };
 
+template <typename T>
+struct DateParseFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  const date::time_zone* timeZone_ = nullptr;
+  std::optional<std::string> format_;
+  bool isYMD_ = false;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* /*timestamp*/,
+      const arg_type<Varchar>* formatString) {
+    timeZone_ = getTimeZoneFromConfig(config);
+    if (formatString != nullptr) {
+      std::string str(formatString->data(), formatString->size());
+      VELOX_CHECK_EQ(str, "%Y-%m-%d");
+      isYMD_ = true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      Timestamp& result,
+      const arg_type<Varchar>& string,
+      const arg_type<Varchar>& formatString) {
+    if (isYMD_) {
+      result = util::fromDatetime(util::fromDateString(string.data(), string.size()), 0);
+      return true;
+    }
+    VELOX_FAIL("date_parse only defined for %y-%m-%d");
+  }
+};
+
 } // namespace facebook::velox::functions

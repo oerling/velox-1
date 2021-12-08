@@ -29,6 +29,8 @@
 
 #include <numeric>
 
+DEFINE_bool(enable_specialize_filters, true, "Specialize filters based on row group stats");
+
 namespace facebook::velox::dwrf {
 
 using common::FilterKind;
@@ -105,8 +107,10 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
         buildColumnStatisticsFromProto(entry.statistics(), context);
     if (!testFilter(filter, columnStats.get(), rowGroupSize, type_)) {
       stridesToSkip.push_back(i); // Skipping stride based on column stats.
+    } else {
+      rowGroupStats_[i] = std::move(columnStats);
     }
-  }
+    }
   return stridesToSkip;
 }
 
@@ -3902,6 +3906,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     }
   }
 
+  void setRowGroupSpecificFilters();
+  
  private:
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
@@ -4012,11 +4018,30 @@ void SelectiveStructColumnReader::next(
   if (numValues > oldSize) {
     std::iota(&rows_[oldSize], &rows_[rows_.size()], oldSize);
   }
+  setRowGroupSpecificFilters();
   read(readOffset_, rows_, nullptr);
   getValues(outputRows(), &result);
 }
 
-class ColumnLoader : public velox::VectorLoader {
+void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
+  if (!FLAGS_enable_specialize_filters || (readOffset_ % rowsPerRowGroup_) != 0) {
+    return;
+  }
+
+  auto& childSpecs = scanSpec_->children();
+  for (auto& childSpec : childSpecs) {
+    if (childSpec->filter()) {
+      auto& reader = children_[childSpec->subscript()];
+      auto rowGroupIndex = readOffset_ / rowsPerRowGroup_;
+      auto stats = reader->rowGroupStats(rowGroupIndex);
+      if (stats) {
+	childSpec->specializeFilter(reader->type(), stats);
+      }
+    }
+  }
+}
+
+  class ColumnLoader : public velox::VectorLoader {
  public:
   ColumnLoader(
       SelectiveStructColumnReader* structReader,

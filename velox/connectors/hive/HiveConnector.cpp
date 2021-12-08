@@ -68,23 +68,47 @@ namespace {
 static void makeFieldSpecs(
     const std::string& pathPrefix,
     int32_t level,
-    const std::shared_ptr<const RowType>& type,
+    const std::shared_ptr<const Type>& type,
     common::ScanSpec* spec) {
-  for (auto i = 0; i < type->size(); ++i) {
-    std::string path =
-        level == 0 ? type->nameOf(i) : pathPrefix + "." + type->nameOf(i);
-    common::Subfield subfield(path);
-    common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
-    fieldSpec->setProjectOut(true);
-    fieldSpec->setChannel(i);
-    auto fieldType = type->childAt(i);
-    if (fieldType->kind() == TypeKind::ROW) {
-      makeFieldSpecs(
-          path,
-          level + 1,
-          std::static_pointer_cast<const RowType>(fieldType),
-          spec);
+  switch (type->kind()) {
+    case TypeKind::ROW: {
+      auto rowType = dynamic_cast<const RowType*>(type.get());
+      for (auto i = 0; i < type->size(); ++i) {
+        std::string path = level == 0 ? rowType->nameOf(i)
+                                      : pathPrefix + "." + rowType->nameOf(i);
+	common::Subfield subfield(path);
+	common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
+        fieldSpec->setProjectOut(true);
+        fieldSpec->setChannel(i);
+        makeFieldSpecs(path, level + 1, type->childAt(i), spec);
+      }
+      break;
     }
+    case TypeKind::MAP: {
+      auto keySpec = spec->getOrCreateChild(common::Subfield(pathPrefix + ".keys"));
+      keySpec->setProjectOut(true);
+      keySpec->setExtractValues(true);
+      makeFieldSpecs(pathPrefix + ".keys", level + 1, type->childAt(0), spec);
+      auto valueSpec =
+	spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
+      valueSpec->setProjectOut(true);
+      valueSpec->setExtractValues(true);
+      makeFieldSpecs(
+          pathPrefix + ".elements", level + 1, type->childAt(1), spec);
+      break;
+    }
+    case TypeKind::ARRAY: {
+      auto childSpec =
+	spec->getOrCreateChild(common::Subfield(pathPrefix + ".elements"));
+      childSpec->setProjectOut(true);
+      childSpec->setExtractValues(true);
+      makeFieldSpecs(
+          pathPrefix + ".elements", level + 1, type->childAt(0), spec);
+      break;
+    }
+
+    default:
+      break;
   }
 }
 
