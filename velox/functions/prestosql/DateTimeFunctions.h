@@ -624,17 +624,15 @@ struct DateParseFunction {
   }
 
   FOLLY_ALWAYS_INLINE bool call(
-      out_type<Date>& result,
+      Timestamp& result,
       const arg_type<Varchar>& string,
       const arg_type<Varchar>& formatString) {
     if (isYMD_) {
-      result = util::fromDateString(string.data(), string.size());
+      result = util::fromDatetime(util::fromDateString(string.data(), string.size()), 0);
       return true;
     }
     VELOX_FAIL("date_parse only defined for %y-%m-%d");
   }
 };
 
-
-  
 } // namespace facebook::velox::functions

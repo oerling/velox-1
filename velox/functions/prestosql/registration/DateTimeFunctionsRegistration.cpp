@@ -67,7 +67,7 @@ void registerSimpleFunctions() {
 
   registerFunction<DateDiffFunction, int64_t, Varchar, Date, Date>(
       {"date_diff"});
-  registerFunction<DateParseFunction, Date, Varchar, Varchar>(
+  registerFunction<DateParseFunction, Timestamp, Varchar, Varchar>(
       {"date_parse"});
 
 }
