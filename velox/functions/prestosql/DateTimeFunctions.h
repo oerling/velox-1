@@ -629,6 +629,9 @@ struct DateParseFunction {
     if (isYMD_) {
       result = util::fromDatetime(
           util::fromDateString(string.data(), string.size()), 0);
+      if (timeZone_ != nullptr) {
+        result.toTimezone(*timeZone_);
+      }
       return true;
     }
     VELOX_FAIL("date_parse only defined for %y-%m-%d");
