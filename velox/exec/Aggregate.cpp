@@ -15,6 +15,7 @@
  */
 
 #include "velox/exec/Aggregate.h"
+#include "velox/expression/FunctionSignature.h"
 
 namespace facebook::velox::exec {
 
@@ -28,11 +29,52 @@ bool isPartialOutput(core::AggregationNode::Step step) {
       step == core::AggregationNode::Step::kIntermediate;
 }
 
+AggregateFunctionMap& aggregateFunctions() {
+  static AggregateFunctionMap functions;
+  return functions;
+}
+
+namespace {
+std::optional<const AggregateFunctionEntry*> getAggregateFunctionEntry(
+    const std::string& name) {
+  auto& functionsMap = aggregateFunctions();
+  auto it = functionsMap.find(name);
+  if (it != functionsMap.end()) {
+    return &it->second;
+  }
+
+  return std::nullopt;
+}
+} // namespace
+
+bool registerAggregateFunction(
+    const std::string& name,
+    std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures,
+    AggregateFunctionFactory factory) {
+  aggregateFunctions()[name] = {std::move(signatures), std::move(factory)};
+  return true;
+}
+
+std::optional<std::vector<std::shared_ptr<AggregateFunctionSignature>>>
+getAggregateFunctionSignatures(const std::string& name) {
+  if (auto func = getAggregateFunctionEntry(name)) {
+    return func.value()->signatures;
+  }
+
+  return std::nullopt;
+}
+
 std::unique_ptr<Aggregate> Aggregate::create(
     const std::string& name,
     core::AggregationNode::Step step,
     const std::vector<TypePtr>& argTypes,
     const TypePtr& resultType) {
+  // Lookup the function in the new registry first.
+  if (auto func = getAggregateFunctionEntry(name)) {
+    return func.value()->factory(step, argTypes, resultType);
+  }
+
+  // Now check the legacy registry.
   auto func = AggregateFunctions().Create(name, step, argTypes, resultType);
   if (func.get() == nullptr) {
     std::ostringstream message;

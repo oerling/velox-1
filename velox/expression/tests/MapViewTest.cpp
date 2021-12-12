@@ -19,6 +19,7 @@
 #include "gtest/gtest.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/expression/VectorUdfTypeSystem.h"
+#include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 
 namespace {
@@ -124,6 +125,28 @@ TEST_F(MapViewTest, testIndexedLoop) {
     }
     ASSERT_EQ(count, mapsData[i].size());
   }
+}
+
+TEST_F(MapViewTest, encoded) {
+  VectorPtr mapVector = createTestMapVector();
+  // Wrap in dictionary.
+  auto vectorSize = mapVector->size();
+  BufferPtr indices =
+      AlignedBuffer::allocate<vector_size_t>(vectorSize, pool_.get());
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  // Assign indices such that array is reversed.
+  for (size_t i = 0; i < vectorSize; ++i) {
+    rawIndices[i] = vectorSize - 1 - i;
+  }
+  mapVector = BaseVector::wrapInDictionary(
+      BufferPtr(nullptr), indices, vectorSize, mapVector);
+
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(decode(decoded, *mapVector));
+
+  ASSERT_EQ(reader[0].size(), 5);
+  ASSERT_EQ(reader[1].size(), 3);
+  ASSERT_EQ(reader[2].size(), 0);
 }
 
 TEST_F(MapViewTest, testCompareLazyValueAccess) {
@@ -268,6 +291,63 @@ TEST_F(MapViewTest, testValueOr) {
 
   ASSERT_EQ(reader[1].at(4).value_or(10), 10);
   ASSERT_EQ(reader[1].at(3).value_or(10), 3);
+}
+
+// Function that takes a map from array of doubles to integer as input.
+template <typename T>
+struct MapComplexKeyF {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      double& out,
+      const arg_type<Map<Array<double>, double>>& input) {
+    out = 0;
+    for (const auto& entry : input) {
+      for (auto v : entry.first) {
+        out += v.value();
+      }
+    }
+
+    double outTest = 0;
+    // Test operator-> on MapView::Iterator.
+    for (auto it = input.begin(); it != input.end(); it++) {
+      auto keyArray = it->first;
+      for (auto v : keyArray) {
+        outTest += v.value();
+      }
+    }
+
+    EXPECT_EQ(out, outTest);
+    return true;
+  }
+};
+
+TEST_F(MapViewTest, mapCoplexKey) {
+  registerFunction<MapComplexKeyF, double, Map<Array<double>, double>>(
+      {"func"});
+
+  const vector_size_t size = 10;
+  auto values1 = makeArrayVector<double>(
+      size,
+      [](auto /*row*/) { return 10; },
+      [](auto row, auto /*index*/) { return row; });
+
+  auto values2 = makeArrayVector<double>(
+      size,
+      [](auto /*row*/) { return 1; },
+      [](auto /*row*/, auto index) { return 1.2 * index; });
+
+  auto result = evaluate<FlatVector<double>>(
+      "func(map(array_constructor(c0), c1))",
+      makeRowVector({values1, values2}));
+
+  auto expected =
+      makeFlatVector<double>(size, [](auto row) { return row * 10; });
+
+  ASSERT_EQ(size, result->size());
+  for (auto i = 0; i < size; i++) {
+    EXPECT_NEAR(expected->valueAt(i), result->valueAt(i), 0.0000001);
+  }
 }
 
 } // namespace

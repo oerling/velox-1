@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/Aggregate.h"
+#include "velox/expression/FunctionSignature.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/FlatVector.h"
@@ -159,10 +160,8 @@ class CovarIntermediateResult {
         meanY_{mutableRawValues<double>(rowVector, indices.meanY)},
         c2_{mutableRawValues<double>(rowVector, indices.c2)} {}
 
-  static RowTypePtr resultType() {
-    return ROW(
-        {"c2", "count", "meanX", "meanY"},
-        {DOUBLE(), BIGINT(), DOUBLE(), DOUBLE()});
+  static std::string type() {
+    return "row(double,bigint,double,double)";
   }
 
   void set(vector_size_t row, const CovarAccumulator& accumulator) {
@@ -264,10 +263,8 @@ class CorrIntermediateResult : public CovarIntermediateResult {
         m2X_{mutableRawValues<double>(rowVector, kCorrIndices.m2X)},
         m2Y_{mutableRawValues<double>(rowVector, kCorrIndices.m2Y)} {}
 
-  static RowTypePtr resultType() {
-    return ROW(
-        {"c2", "count", "m2X", "m2Y", "meanX", "meanY"},
-        {DOUBLE(), BIGINT(), DOUBLE(), DOUBLE(), DOUBLE(), DOUBLE()});
+  static std::string type() {
+    return "row(double,bigint,double,double,double,double)";
   }
 
   void set(vector_size_t row, const CorrAccumulator& accumulator) {
@@ -281,7 +278,9 @@ class CorrIntermediateResult : public CovarIntermediateResult {
   double* m2Y_;
 };
 
+// @tparam T Type of the raw input and final result. Can be double or float.
 template <
+    typename T,
     typename TAccumulator,
     typename TIntermediateInput,
     typename TIntermediateResult,
@@ -319,7 +318,7 @@ class CovarianceAggregate : public exec::Aggregate {
       auto* group = groups[row];
       exec::Aggregate::clearNull(group);
       accumulator(group)->update(
-          decodedX_.valueAt<double>(row), decodedY_.valueAt<double>(row));
+          decodedX_.valueAt<T>(row), decodedY_.valueAt<T>(row));
     });
   }
 
@@ -359,8 +358,7 @@ class CovarianceAggregate : public exec::Aggregate {
       if (decodedX_.isNullAt(row) || decodedY_.isNullAt(row)) {
         return;
       }
-      accumulator->update(
-          decodedX_.valueAt<double>(row), decodedY_.valueAt<double>(row));
+      accumulator->update(decodedX_.valueAt<T>(row), decodedY_.valueAt<T>(row));
     });
   }
 
@@ -390,12 +388,12 @@ class CovarianceAggregate : public exec::Aggregate {
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
       override {
-    auto vector = (*result)->as<FlatVector<double>>();
+    auto vector = (*result)->as<FlatVector<T>>();
     VELOX_CHECK(vector);
     vector->resize(numGroups);
     uint64_t* rawNulls = getRawNulls(vector);
 
-    double* rawValues = vector->mutableRawValues();
+    T* rawValues = vector->mutableRawValues();
     for (auto i = 0; i < numGroups; ++i) {
       char* group = groups[i];
       if (isNull(group)) {
@@ -404,7 +402,7 @@ class CovarianceAggregate : public exec::Aggregate {
         auto* accumulator = this->accumulator(group);
         if (TResultAccessor::hasResult(*accumulator)) {
           clearNull(rawNulls, i);
-          rawValues[i] = TResultAccessor::result(*accumulator);
+          rawValues[i] = (T)TResultAccessor::result(*accumulator);
         } else {
           vector->setNull(i, true);
         }
@@ -448,25 +446,53 @@ template <
     typename TIntermediateResult,
     typename TResultAccessor>
 bool registerCovarianceAggregate(const std::string& name) {
-  exec::AggregateFunctions().Register(
+  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures = {
+      // (double, double) -> double
+      exec::AggregateFunctionSignatureBuilder()
+          .returnType("double")
+          .intermediateType(TIntermediateResult::type())
+          .argumentType("double")
+          .argumentType("double")
+          .build(),
+      // (real, real) -> real
+      exec::AggregateFunctionSignatureBuilder()
+          .returnType("real")
+          .intermediateType(TIntermediateResult::type())
+          .argumentType("real")
+          .argumentType("real")
+          .build(),
+  };
+
+  return exec::registerAggregateFunction(
       name,
-      [name](
-          core::AggregationNode::Step step,
-          const std::vector<TypePtr>& /* argTypes */,
-          const TypePtr& /*resultType*/) -> std::unique_ptr<exec::Aggregate> {
-        TypePtr resultType;
-        if (exec::isPartialOutput(step)) {
-          resultType = TIntermediateResult::resultType();
-        } else {
-          resultType = DOUBLE();
+      std::move(signatures),
+      [](core::AggregationNode::Step step,
+         const std::vector<TypePtr>& argTypes,
+         const TypePtr& resultType) -> std::unique_ptr<exec::Aggregate> {
+        auto rawInputType = exec::isRawInput(step)
+            ? argTypes[0]
+            : (exec::isPartialOutput(step) ? DOUBLE() : resultType);
+        switch (rawInputType->kind()) {
+          case TypeKind::DOUBLE:
+            return std::make_unique<CovarianceAggregate<
+                double,
+                TAccumulator,
+                TIntermediateInput,
+                TIntermediateResult,
+                TResultAccessor>>(resultType);
+          case TypeKind::REAL:
+            return std::make_unique<CovarianceAggregate<
+                float,
+                TAccumulator,
+                TIntermediateInput,
+                TIntermediateResult,
+                TResultAccessor>>(resultType);
+          default:
+            VELOX_UNSUPPORTED(
+                "Unsupported raw input type: {}. Expected DOUBLE or REAL.",
+                rawInputType->toString())
         }
-        return std::make_unique<CovarianceAggregate<
-            TAccumulator,
-            TIntermediateInput,
-            TIntermediateResult,
-            TResultAccessor>>(resultType);
       });
-  return true;
 }
 
 static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
