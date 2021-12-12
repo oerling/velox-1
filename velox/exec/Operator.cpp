@@ -68,7 +68,7 @@ memory::MappedMemory* OperatorCtx::recoverableMappedMemory() const {
   if (!recoverableMappedMemory_) {
     auto parent = driverCtx_->task->queryCtx()->mappedMemory();
     auto tracker = pool_->getMemoryUsageTracker()->addChild(
-        false, memory::MemoryUsageConfigBuilder().isRecoverable(true).build());
+        false, memory::MemoryUsageConfigBuilder().build());
     recoverableMappedMemory_ = parent->addChild(tracker);
   }
   return recoverableMappedMemory_.get();
@@ -299,7 +299,6 @@ void OperatorStats::clear() {
   runtimeStats.clear();
 }
 
-
 namespace {
 bool tryReserveAndRun(
     const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
@@ -342,7 +341,7 @@ bool Operator::reserveAndRun(
   }
 
   if (operatorCtx_->driverCtx()->driver->growTaskMemory(
-          tracker->type(),
+							memory::MemoryUsageTracker::UsageType::kUserMem,
           reservationSize,
           operatorCtx_->task()->pool()->getMemoryUsageTracker().get())) {
     runFunc();
