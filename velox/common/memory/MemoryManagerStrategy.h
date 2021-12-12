@@ -80,7 +80,7 @@ class MemoryManagerStrategy {
   // increased by at least 'size'.
   virtual bool recover(
       std::shared_ptr<MemoryConsumer> requester,
-      UsageType type,
+      MemoryUsageTracker::UsageType type,
       int64_t size) = 0;
 
   static MemoryManagerStrategy* instance();
@@ -148,7 +148,7 @@ class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
   // No op.
   bool recover(
       std::shared_ptr<MemoryConsumer> /*requester*/,
-      UsageType /*type*/,
+      MemoryUsageTracker::UsageType /*type*/,
       int64_t /*size*/) override {
     return false;
   }

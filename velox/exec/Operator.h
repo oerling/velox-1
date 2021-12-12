@@ -181,7 +181,7 @@ class OperatorCtx {
   DriverCtx* driverCtx() const {
     return driverCtx_;
   }
-
+  
  private:
   DriverCtx* driverCtx_;
   velox::memory::MemoryPool* pool_;
@@ -194,12 +194,26 @@ class OperatorCtx {
 // Query operator
 class Operator {
  public:
-  // Function for mapping a user-registered PlanNode into the corresponding
+  // Factory class for mapping a user-registered PlanNode into the corresponding
   // Operator.
-  using PlanNodeTranslator = std::function<std::unique_ptr<Operator>(
-      DriverCtx* ctx,
-      int32_t id,
-      const std::shared_ptr<const core::PlanNode>& node)>;
+  class PlanNodeTranslator {
+   public:
+    virtual ~PlanNodeTranslator() = default;
+
+    // Translates plan node to operator. Returns nullptr if the plan node cannot
+    // be handled by this factory.
+    virtual std::unique_ptr<Operator> translate(
+        DriverCtx* ctx,
+        int32_t id,
+        const std::shared_ptr<const core::PlanNode>& node) = 0;
+
+    // Returns max driver count for the plan node. Returns std::nullopt if the
+    // plan node cannot be handled by this factory.
+    virtual std::optional<uint32_t> maxDrivers(
+        const std::shared_ptr<const core::PlanNode>& /* node */) {
+      return std::nullopt;
+    }
+  };
 
 
   // 'operatorId' is the initial index of the 'this' in the Driver's
@@ -330,6 +344,12 @@ class Operator {
       std::function<int64_t(int64_t)> spillFunc,
       std::function<void(void)> runFunc);
 
+  // Returns an estimate of the maximum number of bytes tat could be
+  // freed by calling spill().
+  virtual int64_t recoverableMemory() const {
+    return 0;
+  }
+  
   // Tries to shrink the memory footprint of 'this' by at least
   // 'minMemoryToRecover' bytes. Returns the approximate amount that
   // was freed. The trackers of the different pools will have
@@ -337,10 +357,10 @@ class Operator {
   virtual int64_t spill(int64_t /* minMemoryToRecover */) {
     return 0;
   }
-
+  
   // Registers 'translator' for mapping user defined PlanNode subclass instances
   // to user-defined Operators.
-  static void registerOperator(PlanNodeTranslator translator) {
+  static void registerOperator(std::unique_ptr<PlanNodeTranslator> translator) {
     translators().emplace_back(std::move(translator));
   }
 
@@ -352,8 +372,13 @@ class Operator {
       int32_t id,
       const std::shared_ptr<const core::PlanNode>& planNode);
 
+  // Calls `maxDrivers` on all the registered PlanNodeTranslators and returns
+  // the first one that is not std::nullopt or std::nullopt otherwise.
+  static std::optional<uint32_t> maxDrivers(
+      const std::shared_ptr<const core::PlanNode>& planNode);
+
  protected:
-  static std::vector<PlanNodeTranslator>& translators();
+  static std::vector<std::unique_ptr<PlanNodeTranslator>>& translators();
 
   // Clears the columns of 'output_' that are projected from
   // 'input_'. This should be done when preparing to produce a next

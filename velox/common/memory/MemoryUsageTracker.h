@@ -90,6 +90,9 @@ struct MemoryUsageConfigBuilder {
 class MemoryUsageTracker
     : public std::enable_shared_from_this<MemoryUsageTracker> {
  public:
+  enum class UsageType : int { kUserMem = 0, kSystemMem = 1, kTotalMem = 2 };
+
+
   // Create default usage tracker. It aggregates both 'user' and 'system' memory
   // from its children and tracks the allocations as 'user' memory. It returns a
   // 'root' tracker.
@@ -214,10 +217,20 @@ class MemoryUsageTracker
     return user(maxMemory_);
   }
 
+  void updateConfig(const MemoryUsageConfig& config) {
+    if (config.maxUserMemory.has_value()) {
+      usage(maxMemory_, UsageType::kUserMem) = config.maxUserMemory.value();
+    }
+    if (config.maxSystemMemory.has_value()) {
+      usage(maxMemory_, UsageType::kSystemMem) = config.maxSystemMemory.value();
+    }
+    if (config.maxTotalMemory.has_value()) {
+      usage(maxMemory_, UsageType::kTotalMem) = config.maxTotalMemory.value();
+    }
+  }
+
  private:
   static constexpr int64_t kMB = 1 << 20;
-
-  enum class UsageType : int { kUserMem = 0, kSystemMem = 1, kTotalMem = 2 };
 
   template <typename T, size_t size>
   static T& usage(std::array<T, size>& array, UsageType type) {

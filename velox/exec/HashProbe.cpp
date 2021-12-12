@@ -75,9 +75,11 @@ HashProbe::HashProbe(
           operatorId,
           joinNode->id(),
           "HashProbe"),
+      outputBatchSize_{
+          driverCtx->execCtx->queryCtx()->config().preferredOutputBatchSize()},
       joinType_{joinNode->joinType()},
       filterResult_(1),
-      outputRows_(kOutputBatchSize) {
+      outputRows_(outputBatchSize_) {
   checkJoinType(joinType_);
   auto probeType = joinNode->sources()[0]->outputType();
   auto numKeys = joinNode->leftKeys().size();
@@ -262,15 +264,14 @@ void HashProbe::addInput(RowVectorPtr input) {
         dynamicFilterBuilder->addInput(activeRows_.countSelected());
       }
 
-      valueIdDecoder_.decode(*key, activeRows_);
       buildHashers[i]->lookupValueIds(
-          valueIdDecoder_, activeRows_, deduppedHashes_, &lookup_->hashes);
+          *key, activeRows_, scratchMemory_, lookup_->hashes);
 
       if (dynamicFilterBuilder) {
         dynamicFilterBuilder->addOutput(activeRows_.countSelected());
       }
     } else {
-      hashers_[i]->hash(*key, activeRows_, i > 0, &lookup_->hashes);
+      hashers_[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
     }
   }
   lookup_->rows.clear();
@@ -373,10 +374,10 @@ RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
     return nullptr;
   }
 
-  outputRows_.resize(kOutputBatchSize);
+  outputRows_.resize(outputBatchSize_);
   auto numOut = table_->listNotProbedRows(
       &rightJoinIterator_,
-      kOutputBatchSize,
+      outputBatchSize_,
       RowContainer::kUnlimited,
       outputRows_.data());
   if (!numOut) {
@@ -427,7 +428,7 @@ RowVectorPtr HashProbe::getOutput() {
   // of input they produce zero or 1 row of output. Therefore, we can process
   // each batch of input in one go.
   auto outputBatchSize =
-      (isSemiOrAntiJoin || newInputForLeftJoin_) ? inputSize : kOutputBatchSize;
+      (isSemiOrAntiJoin || newInputForLeftJoin_) ? inputSize : outputBatchSize_;
   auto mapping =
       initializeRowNumberMapping(rowNumberMapping_, outputBatchSize, pool());
   outputRows_.resize(outputBatchSize);

@@ -817,7 +817,7 @@ MemoryManager<Allocator, ALIGNMENT>::MemoryManager(
           kRootNodeName.str(),
           std::weak_ptr<MemoryPool>(),
           memoryQuota)},
-      tracker_(MemoryUsageTracker::createRoot()) {
+      tracker_(MemoryUsageTracker::create()) {
   VELOX_USER_CHECK_GE(memoryQuota_, 0);
 }
 
