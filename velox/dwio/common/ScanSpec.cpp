@@ -323,7 +323,7 @@ void ScanSpec::specializeFilter(
         localFilter_ = filter_->filterForRange(
             std::numeric_limits<int64_t>::min(),
             intStats->getMaximum().value());
-        return;
+		return;
       }
       localFilter_ = nullptr;
       break;

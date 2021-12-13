@@ -76,6 +76,10 @@ class ScanSpec {
       const TypePtr& type,
       const dwio::common::ColumnStatistics* stats);
 
+  void clearSpecializedFilter() {
+    localFilter_ = nullptr;
+  }
+  
   // Returns a constant vector if 'this' corresponds to a partitioning
   // column or to a missing column. These change from split to split.
   VectorPtr constantValue() const {

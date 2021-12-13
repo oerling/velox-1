@@ -101,6 +101,7 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   }
 
   ensureRowGroupIndex();
+  scanSpec_->clearSpecializedFilter();
   auto filter = scanSpec_->filter();
 
   std::vector<uint32_t> stridesToSkip;
@@ -113,7 +114,7 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     } else {
       rowGroupStats_[i] = std::move(columnStats);
     }
-    }
+  }
   return stridesToSkip;
 }
 
@@ -3920,6 +3921,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   // Dense set of rows to read in next().
   raw_vector<vector_size_t> rows_;
+  int32_t previousRowGroup_{-1};
 };
 
 SelectiveStructColumnReader::SelectiveStructColumnReader(
@@ -4027,18 +4029,21 @@ void SelectiveStructColumnReader::next(
 }
 
 void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
-  if (!FLAGS_enable_specialize_filters ||
-      (readOffset_ % rowsPerRowGroup_) != 0) {
+  if (!FLAGS_enable_specialize_filters) {
     return;
   }
-
+  auto rowGroup = readOffset_ / rowsPerRowGroup_;
+  if (rowGroup == previousRowGroup_) {
+    return;
+  }
+  previousRowGroup_ = rowGroup;
   auto& childSpecs = scanSpec_->children();
   for (auto& childSpec : childSpecs) {
     if (childSpec->filter()) {
       auto& reader = children_[childSpec->subscript()];
       auto rowGroupIndex = readOffset_ / rowsPerRowGroup_;
       auto stats = reader->rowGroupStats(rowGroupIndex);
-      if (stats) {
+      if (stats && dynamic_cast<SelectiveIntegerDirectColumnReader*>(reader.get())) {
         childSpec->specializeFilter(reader->type(), stats);
       }
     }
