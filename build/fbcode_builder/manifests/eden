@@ -62,11 +62,16 @@ fbcode/thrift/lib/rust = thrift/lib/rust
 \.pyc$
 
 [cmake.defines.all(fb=on,os=windows)]
+ENABLE_GIT=OFF
 INSTALL_PYTHON_LIB=ON
+
+[cmake.defines.all(not(fb=on),os=windows)]
+ENABLE_GIT=OFF
 
 [cmake.defines.fb=on]
 USE_CARGO_VENDOR=ON
 INCLUDE_FB_INTEGRATION_LIB=ON
+INCLUDE_FB_DOCTOR_LIB=ON
 
 [depends.environment]
 EDEN_VERSION_OVERRIDE

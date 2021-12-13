@@ -21,6 +21,7 @@
 #include "velox/functions/prestosql/JsonExtractScalar.h"
 #include "velox/functions/prestosql/Rand.h"
 #include "velox/functions/prestosql/StringFunctions.h"
+#include "velox/functions/sparksql/ArraySort.h"
 #include "velox/functions/sparksql/CompareFunctionsNullSafe.h"
 #include "velox/functions/sparksql/Hash.h"
 #include "velox/functions/sparksql/In.h"
@@ -38,10 +39,12 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   // Higher order functions.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_transform, prefix + "transform");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_reduce, prefix + "aggregate");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_filter, prefix + "filter");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_filter, prefix + "filter");
   // Complex types.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_constructor, prefix + "array");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_contains, prefix + "array_contains");
+  VELOX_REGISTER_VECTOR_FUNCTION(
+      udf_array_intersect, prefix + "array_intersect");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_element_at, prefix + "element_at");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat_row, prefix + "named_struct");
   VELOX_REGISTER_VECTOR_FUNCTION(
@@ -98,6 +101,8 @@ void registerFunctions(const std::string& prefix) {
       prefix + "greatest", greatestSignatures(), makeGreatest);
   exec::registerStatefulVectorFunction(
       prefix + "hash", hashSignatures(), makeHash);
+  exec::registerStatefulVectorFunction(
+      prefix + "murmur3hash", hashSignatures(), makeHash);
   exec::registerStatefulVectorFunction(prefix + "in", inSignatures(), makeIn);
 
   // Compare nullsafe functions
@@ -120,6 +125,12 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<udf_ends_with, bool, Varchar, Varchar>(
       {prefix + "endswith"});
   registerFunction<udf_contains, bool, Varchar, Varchar>({prefix + "contains"});
+
+  // Register array sort functions.
+  exec::registerStatefulVectorFunction(
+      prefix + "array_sort", arraySortSignatures(), makeArraySort);
+  exec::registerStatefulVectorFunction(
+      prefix + "sort_array", sortArraySignatures(), makeSortArray);
 }
 
 } // namespace sparksql

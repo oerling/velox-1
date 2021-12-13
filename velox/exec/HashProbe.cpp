@@ -75,9 +75,11 @@ HashProbe::HashProbe(
           operatorId,
           joinNode->id(),
           "HashProbe"),
+      outputBatchSize_{
+          driverCtx->execCtx->queryCtx()->config().preferredOutputBatchSize()},
       joinType_{joinNode->joinType()},
       filterResult_(1),
-      outputRows_(kOutputBatchSize) {
+      outputRows_(outputBatchSize_) {
   checkJoinType(joinType_);
   auto probeType = joinNode->sources()[0]->outputType();
   auto numKeys = joinNode->leftKeys().size();
@@ -127,35 +129,35 @@ void HashProbe::initializeFilter(
   std::vector<std::shared_ptr<const core::ITypedExpr>> filters = {filter};
   filter_ =
       std::make_unique<ExprSet>(std::move(filters), operatorCtx_->execCtx());
+
   ChannelIndex filterChannel = 0;
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  auto numFields = filter_->expr(0)->distinctFields().size();
+  names.reserve(numFields);
+  types.reserve(numFields);
   for (auto& field : filter_->expr(0)->distinctFields()) {
     const auto& name = field->field();
     auto channel = probeType->getChildIdxIfExists(name);
     if (channel.has_value()) {
-      filterProbeInputs_.emplace_back(channel.value(), filterChannel++);
+      auto channelValue = channel.value();
+      filterProbeInputs_.emplace_back(channelValue, filterChannel++);
+      names.emplace_back(probeType->nameOf(channelValue));
+      types.emplace_back(probeType->childAt(channelValue));
       continue;
     }
     channel = tableType->getChildIdxIfExists(name);
     if (channel.has_value()) {
-      filterBuildInputs_.emplace_back(channel.value(), filterChannel++);
+      auto channelValue = channel.value();
+      filterBuildInputs_.emplace_back(channelValue, filterChannel++);
+      names.emplace_back(tableType->nameOf(channelValue));
+      types.emplace_back(tableType->childAt(channelValue));
       continue;
     }
     VELOX_FAIL(
         "Join filter field {} not in probe or build input", field->toString());
   }
-  std::vector<std::string> names;
-  std::vector<TypePtr> types;
-  auto numFields = filterProbeInputs_.size() + filterBuildInputs_.size();
-  names.reserve(numFields);
-  types.reserve(numFields);
-  for (auto projection : filterProbeInputs_) {
-    names.emplace_back(probeType->nameOf(projection.inputChannel));
-    types.emplace_back(probeType->childAt(projection.inputChannel));
-  }
-  for (auto projection : filterBuildInputs_) {
-    names.emplace_back(tableType->nameOf(projection.inputChannel));
-    types.emplace_back(tableType->childAt(projection.inputChannel));
-  }
+
   filterInputType_ = ROW(std::move(names), std::move(types));
 }
 
@@ -262,15 +264,14 @@ void HashProbe::addInput(RowVectorPtr input) {
         dynamicFilterBuilder->addInput(activeRows_.countSelected());
       }
 
-      valueIdDecoder_.decode(*key, activeRows_);
       buildHashers[i]->lookupValueIds(
-          valueIdDecoder_, activeRows_, deduppedHashes_, &lookup_->hashes);
+          *key, activeRows_, scratchMemory_, lookup_->hashes);
 
       if (dynamicFilterBuilder) {
         dynamicFilterBuilder->addOutput(activeRows_.countSelected());
       }
     } else {
-      hashers_[i]->hash(*key, activeRows_, i > 0, &lookup_->hashes);
+      hashers_[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
     }
   }
   lookup_->rows.clear();
@@ -373,10 +374,10 @@ RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
     return nullptr;
   }
 
-  outputRows_.resize(kOutputBatchSize);
+  outputRows_.resize(outputBatchSize_);
   auto numOut = table_->listNotProbedRows(
       &rightJoinIterator_,
-      kOutputBatchSize,
+      outputBatchSize_,
       RowContainer::kUnlimited,
       outputRows_.data());
   if (!numOut) {
@@ -427,7 +428,7 @@ RowVectorPtr HashProbe::getOutput() {
   // of input they produce zero or 1 row of output. Therefore, we can process
   // each batch of input in one go.
   auto outputBatchSize =
-      (isSemiOrAntiJoin || newInputForLeftJoin_) ? inputSize : kOutputBatchSize;
+      (isSemiOrAntiJoin || newInputForLeftJoin_) ? inputSize : outputBatchSize_;
   auto mapping =
       initializeRowNumberMapping(rowNumberMapping_, outputBatchSize, pool());
   outputRows_.resize(outputBatchSize);

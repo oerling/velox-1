@@ -226,6 +226,27 @@ TEST_P(TableScanTest, columnAliases) {
   assertQuery(op, {filePath}, "SELECT c0 FROM tmp WHERE c0 % 2 = 1");
 }
 
+TEST_P(TableScanTest, partitionKeyAlias) {
+  auto vectors = makeVectors(1, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+
+  ColumnHandleMap assignments = {
+      {"a", regularColumn("c0", BIGINT())},
+      {"ds_alias", partitionKey("ds", VARCHAR())}};
+
+  auto split = makeHiveConnectorSplit(filePath->path, {{"ds", "2021-12-02"}});
+
+  auto outputType = ROW({"a", "ds_alias"}, {BIGINT(), VARCHAR()});
+  auto op = PlanBuilder()
+                .tableScan(
+                    outputType, makeTableHandle(SubfieldFilters{}), assignments)
+                .planNode();
+
+  assertQuery(op, split, "SELECT c0, '2021-12-02' FROM tmp");
+}
+
 TEST_P(TableScanTest, columnPruning) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
@@ -525,7 +546,7 @@ TEST_P(TableScanTest, fileNotFound) {
 
   auto cursor = std::make_unique<TaskCursor>(params);
   cursor->task()->addSplit("0", makeHiveSplit("file:/path/to/nowhere.orc"));
-  EXPECT_THROW(cursor->moveNext(), std::runtime_error);
+  EXPECT_THROW(cursor->moveNext(), VeloxRuntimeError);
 }
 
 // A valid ORC file (containing headers) but no data.
@@ -1733,6 +1754,52 @@ TEST_P(TableScanTest, structLazy) {
                 .planNode();
 
   assertQuery(op, {filePath}, "select c0 % 3 from tmp");
+}
+
+TEST_P(TableScanTest, structInArrayOrMap) {
+  vector_size_t size = 1'000;
+
+  auto rowNumbers = makeFlatVector<int64_t>(size, [](auto row) { return row; });
+  auto innerRow = makeRowVector({rowNumbers});
+  auto offsets = AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
+  auto rawOffsets = offsets->asMutable<vector_size_t>();
+  std::iota(rawOffsets, rawOffsets + size, 0);
+  auto sizes = AlignedBuffer::allocate<vector_size_t>(size, pool_.get(), 1);
+  auto rowVector = makeRowVector(
+      {rowNumbers,
+       rowNumbers,
+       std::make_shared<MapVector>(
+           pool_.get(),
+           MAP(BIGINT(), innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           makeFlatVector<int64_t>(size, [](int32_t /*row*/) { return 1; }),
+           innerRow),
+       std::make_shared<ArrayVector>(
+           pool_.get(),
+           ARRAY(innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           innerRow)});
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, {rowVector});
+
+  // Exclude struct columns as DuckDB doesn't support complex types yet.
+  createDuckDbTable(
+      {makeRowVector({rowVector->childAt(0), rowVector->childAt(1)})});
+
+  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+  auto op = PlanBuilder()
+                .tableScan(rowType)
+                .project({"c2[1].c0", "c3[1].c0"})
+                .planNode();
+
+  assertQuery(op, {filePath}, "select c0, c0 from tmp");
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

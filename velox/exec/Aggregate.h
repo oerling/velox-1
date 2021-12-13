@@ -21,6 +21,7 @@
 
 namespace facebook::velox::exec {
 
+class AggregateFunctionSignature;
 class HashStringAllocator;
 
 // Returns true if aggregation receives raw (unprocessed) input, e.g. partial
@@ -160,6 +161,10 @@ class Aggregate {
   // @param groups Pointers to the start of the group rows.
   // @param numGroups Number of groups to extract results from.
   // @param result The result vector to store the results in.
+  //
+  // 'result' and its parts are expected to be singly referenced. If
+  // other threads or operators hold references that they would use
+  // after 'result' has been updated by this, effects will b unpredictable.
   virtual void
   extractValues(char** groups, int32_t numGroups, VectorPtr* result) = 0;
 
@@ -167,6 +172,8 @@ class Aggregate {
   // @param groups Pointers to the start of the group rows.
   // @param numGroups Number of groups to extract results from.
   // @param result The result vector to store the results in.
+  //
+  // See comment on 'result' in extractValues().
   virtual void
   extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result) = 0;
 
@@ -269,6 +276,9 @@ class Aggregate {
   std::vector<vector_size_t> pushdownCustomIndices_;
 };
 
+/// This registry is deprecated. Use registerAggregateFunction() instead.
+/// TODO Migrate all aggregate functions to the new registry and delete this
+/// one.
 using AggregateFunctionRegistry = Registry<
     std::string,
     std::unique_ptr<Aggregate>(
@@ -277,4 +287,30 @@ using AggregateFunctionRegistry = Registry<
         const TypePtr& resultType)>;
 
 AggregateFunctionRegistry& AggregateFunctions();
+
+using AggregateFunctionFactory = std::function<std::unique_ptr<Aggregate>(
+    core::AggregationNode::Step step,
+    const std::vector<TypePtr>& argTypes,
+    const TypePtr& resultType)>;
+
+/// Register an aggregate function with the specified name and signatures.
+bool registerAggregateFunction(
+    const std::string& name,
+    std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures,
+    AggregateFunctionFactory factory);
+
+/// Returns signatures of the aggregate function with the specified name.
+/// Returns empty std::optional if function with that name is not found.
+std::optional<std::vector<std::shared_ptr<AggregateFunctionSignature>>>
+getAggregateFunctionSignatures(const std::string& name);
+
+struct AggregateFunctionEntry {
+  std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures;
+  AggregateFunctionFactory factory;
+};
+
+using AggregateFunctionMap =
+    std::unordered_map<std::string, AggregateFunctionEntry>;
+
+AggregateFunctionMap& aggregateFunctions();
 } // namespace facebook::velox::exec

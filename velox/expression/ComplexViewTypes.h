@@ -15,44 +15,71 @@
  */
 
 #pragma once
+#include <iterator>
 #include <optional>
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/vector/TypeAliases.h"
 
 namespace facebook::velox::exec {
-template <typename T, typename U>
+template <typename T>
 struct VectorReader;
 
-// Implements an iterator for T that moves by calling incrementIndex(). T must
-// implement index() and incrementIndex(). Two iterators from the same
-// "container" points to the same element if they have the same index.
+// Pointer wrapper used to convert r-values to valid return type for operator->.
 template <typename T>
-class IndexBasedIterator
-    : public std::iterator<std::input_iterator_tag, T, size_t> {
+class PointerWrapper {
+ public:
+  explicit PointerWrapper(T&& t) : t_(t) {}
+
+  const T* operator->() const {
+    return &t_;
+  }
+
+  T* operator->() {
+    return &t_;
+  }
+
+ private:
+  T t_;
+};
+
+// Base class for ArrayView::Iterator and MapView::Iterator. The missing parts
+// to be implemented by deriving classes are: operator*() and operator->().
+template <typename T>
+class IndexBasedIterator {
  public:
   using Iterator = IndexBasedIterator<T>;
+  using iterator_category = std::input_iterator_tag;
+  using value_type = T;
+  using difference_type = int;
+  using pointer = PointerWrapper<value_type>;
+  using reference = T;
 
-  explicit IndexBasedIterator<T>(const T& element) : element_(element) {}
+  explicit IndexBasedIterator<value_type>(vector_size_t index)
+      : index_(index) {}
 
   bool operator!=(const Iterator& rhs) const {
-    return element_.index() != rhs.element_.index();
+    return index_ != rhs.index_;
   }
 
   bool operator==(const Iterator& rhs) const {
-    return element_.index() == rhs.element_.index();
-  }
-
-  const T& operator*() const {
-    return element_;
-  }
-
-  const T* operator->() const {
-    return &element_;
+    return index_ == rhs.index_;
   }
 
   bool operator<(const Iterator& rhs) const {
-    return element_.index() < rhs.element_.index();
+    return index_ < rhs.index_;
+  }
+
+  bool operator>(const Iterator& rhs) const {
+    return index_ > rhs.index_;
+  }
+
+  bool operator<=(const Iterator& rhs) const {
+    return index_ <= rhs.index_;
+  }
+
+  bool operator>=(const Iterator& rhs) const {
+    return index_ >= rhs.index_;
   }
 
   // Implement post increment.
@@ -64,65 +91,77 @@ class IndexBasedIterator
 
   // Implement pre increment.
   Iterator& operator++() {
-    element_.incrementIndex();
+    index_++;
     return *this;
   }
 
  protected:
-  T element_;
+  vector_size_t index_;
 };
 
-// Implements an iterator for T::element_t that moves by calling
-// incrementIndex() until it points to the next not-null element. T is expected
-// to have index(), incrementIndex(), value(), and has_value().
-template <typename T>
-class SkipNullsIterator
-    : public std::
-          iterator<std::input_iterator_tag, typename T::element_t, size_t> {
-  using Iterator = SkipNullsIterator<T>;
-  using value_type = typename T::element_t;
+// Implements an iterator for values that skips nulls and provides direct access
+// to those values by wrapping another iterator of type BaseIterator.
+//
+// BaseIterator must implement the following functions:
+//   hasValue() : Returns whether the current value pointed at by the iterator
+//                is a null.
+//   value()    : Returns the non-null value pointed at by the iterator.
+template <typename BaseIterator>
+class SkipNullsIterator {
+  using Iterator = SkipNullsIterator<BaseIterator>;
+  using iterator_category = std::input_iterator_tag;
+  using value_type = typename std::result_of<decltype (&BaseIterator::value)(
+      BaseIterator)>::type;
+  using difference_type = int;
+  using pointer = PointerWrapper<value_type>;
+  using reference = value_type;
 
  public:
-  SkipNullsIterator<T>(const T& element, vector_size_t lasIndex)
-      : element_(element), endIndex_(lasIndex) {}
+  SkipNullsIterator<BaseIterator>(
+      const BaseIterator& begin,
+      const BaseIterator& end)
+      : iter_(begin), end_(end) {}
 
   // Given an element, return an iterator to the first not-null element starting
   // from the element itself.
-  static Iterator initialize(const T& element, vector_size_t endIndex) {
-    auto it = Iterator{element, endIndex};
+  static Iterator initialize(
+      const BaseIterator& begin,
+      const BaseIterator& end) {
+    auto it = Iterator{begin, end};
 
-    // The containier is empty.
-    if (element.index() >= endIndex) {
+    // The container is empty.
+    if (begin >= end) {
       return it;
     }
 
-    if (element.has_value()) {
-      it.currentValue_ = element.value();
+    if (begin.hasValue()) {
       return it;
     }
 
+    // Move to next not null.
     it++;
     return it;
   }
 
-  const value_type& operator*() const {
-    return currentValue_;
+  value_type operator*() const {
+    // Always return a copy, it's guaranteed to be cheap object.
+    return iter_.value();
   }
 
-  const value_type* operator->() const {
-    return &currentValue_;
+  PointerWrapper<value_type> operator->() const {
+    return PointerWrapper(iter_.value());
   }
 
   bool operator<(const Iterator& rhs) const {
-    return this->element_.index() < rhs.element_.index();
+    return iter_ < rhs.iter_;
   }
 
   bool operator!=(const Iterator& rhs) const {
-    return element_.index() != rhs.element_.index();
+    return iter_ != rhs.iter_;
   }
 
   bool operator==(const Iterator& rhs) const {
-    return element_.index() == rhs.element_.index();
+    return iter_ == rhs.iter_;
   }
 
   // Implement post increment.
@@ -134,54 +173,25 @@ class SkipNullsIterator
 
   // Implement pre increment.
   Iterator& operator++() {
-    element_.incrementIndex();
-    while (element_.index() != endIndex_) {
-      if (element_.has_value()) {
-        currentValue_ = element_.value();
+    iter_++;
+    while (iter_ != end_) {
+      if (iter_.hasValue()) {
         break;
       }
-      element_.incrementIndex();
+      iter_++;
     }
     return *this;
   }
 
  private:
-  T element_;
-  value_type currentValue_;
-  // First index outside the container.
-  vector_size_t endIndex_;
+  BaseIterator iter_;
+  // Iterator pointing just beyond the range to expose.
+  const BaseIterator end_;
 };
 
-// This class represents a lazy access wrapper around the T members at a
-// specific index.
+// TODO: evaluate wrapping primitives with lazy access using benchmarks
 template <typename T>
-struct VectorValueAccessor {
-  using element_t = typename T::exec_in_t;
-  operator element_t() const {
-    return (*reader_)[index_];
-  }
-
-  bool operator==(const VectorValueAccessor<T>& other) const {
-    return element_t(other) == element_t(*this);
-  }
-
-  vector_size_t index() const {
-    return index_;
-  }
-
-  void setIndex(vector_size_t index) const {
-    index_ = index;
-  }
-
- private:
-  VectorValueAccessor(const T* reader, vector_size_t index)
-      : reader_(reader), index_(index) {}
-
-  const T* reader_;
-  mutable vector_size_t index_;
-  template <typename K, typename V>
-  friend class MapView;
-};
+using VectorValueAccessor = typename T::exec_in_t;
 
 // Given a vectorReader T, this class represents a lazy access optional wrapper
 // around an element in the vectorReader with interface similar to
@@ -189,11 +199,11 @@ struct VectorValueAccessor {
 // and values of MapView. VectorOptionalValueAccessor can be compared with and
 // assigned to std::optional.
 template <typename T>
-class VectorOptionalValueAccessor final {
+class VectorOptionalValueAccessor {
  public:
   using element_t = typename T::exec_in_t;
 
-  operator bool() const {
+  explicit operator bool() const {
     return has_value();
   }
 
@@ -241,34 +251,27 @@ class VectorOptionalValueAccessor final {
     return value();
   }
 
-  void incrementIndex() const {
-    index_++;
-  }
-
-  vector_size_t index() const {
-    return index_;
-  }
-
-  void setIndex(vector_size_t index) const {
-    index_ = index;
+  PointerWrapper<element_t> operator->() const {
+    return PointerWrapper(value());
   }
 
  private:
   VectorOptionalValueAccessor<T>(const T* reader, vector_size_t index)
       : reader_(reader), index_(index) {}
-
   const T* reader_;
   // Index of element within the reader.
-  mutable vector_size_t index_;
+  vector_size_t index_;
 
   template <typename V>
   friend class ArrayView;
 
   template <typename K, typename V>
   friend class MapView;
+
+  template <typename... U>
+  friend class RowView;
 };
 
-// Allow comparing VectorOptionalValueAccessor with std::optional.
 template <typename T, typename U>
 typename std::enable_if<
     std::is_trivially_constructible<typename U::exec_in_t, T>::value,
@@ -373,43 +376,70 @@ operator!=(const VectorOptionalValueAccessor<U>& lhs, const T& rhs) {
 // Represents an array of elements with an interface similar to std::vector.
 template <typename V>
 class ArrayView {
-  using reader_t = VectorReader<V, void>;
+  using reader_t = VectorReader<V>;
   using element_t = typename reader_t::exec_in_t;
 
  public:
   ArrayView(const reader_t* reader, vector_size_t offset, vector_size_t size)
       : reader_(reader), offset_(offset), size_(size) {}
 
-  // The previous doLoad protocol creates a value and then assigns to it.
-  // TODO: this should deprecated once we deprecate the doLoad protocol.
-  ArrayView() : reader_(nullptr), offset_(0), size_(0) {}
-
   using Element = VectorOptionalValueAccessor<reader_t>;
 
-  using Iterator = IndexBasedIterator<Element>;
+  class Iterator : public IndexBasedIterator<Element> {
+   public:
+    Iterator(const reader_t* reader, vector_size_t index)
+        : IndexBasedIterator<Element>(index), reader_(reader) {}
+
+    PointerWrapper<Element> operator->() const {
+      return PointerWrapper(Element{reader_, this->index_});
+    }
+
+    Element operator*() const {
+      return Element{reader_, this->index_};
+    }
+
+   protected:
+    const reader_t* reader_;
+  };
 
   Iterator begin() const {
-    return Iterator{Element{reader_, offset_}};
+    return Iterator{reader_, offset_};
   }
 
   Iterator end() const {
-    return Iterator{Element{reader_, offset_ + size_}};
+    return Iterator{reader_, offset_ + size_};
   }
 
   struct SkipNullsContainer {
-    using Iterator = SkipNullsIterator<Element>;
+    class SkipNullsBaseIterator : public Iterator {
+     public:
+      SkipNullsBaseIterator(const reader_t* reader, vector_size_t index)
+          : Iterator(reader, index) {}
+
+      bool hasValue() const {
+        return this->reader_->isSet(this->index_);
+      }
+
+      element_t value() const {
+        return (*this->reader_)[this->index_];
+      }
+    };
 
     explicit SkipNullsContainer(const ArrayView* array_) : array_(array_) {}
 
-    Iterator begin() {
-      auto endIndex = array_->offset_ + array_->size_;
-      return Iterator::initialize(
-          Element{array_->reader_, array_->offset_}, endIndex);
+    SkipNullsIterator<SkipNullsBaseIterator> begin() {
+      return SkipNullsIterator<SkipNullsBaseIterator>::initialize(
+          SkipNullsBaseIterator{array_->reader_, array_->offset_},
+          SkipNullsBaseIterator{
+              array_->reader_, array_->offset_ + array_->size_});
     }
 
-    Iterator end() {
-      auto endIndex = array_->offset_ + array_->size_;
-      return Iterator{Element{array_->reader_, endIndex}, endIndex};
+    SkipNullsIterator<SkipNullsBaseIterator> end() {
+      return SkipNullsIterator<SkipNullsBaseIterator>{
+          SkipNullsBaseIterator{
+              array_->reader_, array_->offset_ + array_->size_},
+          SkipNullsBaseIterator{
+              array_->reader_, array_->offset_ + array_->size_}};
     }
 
    private:
@@ -430,11 +460,11 @@ class ArrayView {
     return (*this)[index];
   }
 
-  size_t size() const {
+  vector_size_t size() const {
     return size_;
   }
 
-  SkipNullsContainer skipNulls() {
+  SkipNullsContainer skipNulls() const {
     return SkipNullsContainer{this};
   }
 
@@ -449,8 +479,8 @@ class ArrayView {
 template <typename K, typename V>
 class MapView {
  public:
-  using key_reader_t = VectorReader<K, void>;
-  using value_reader_t = VectorReader<V, void>;
+  using key_reader_t = VectorReader<K>;
+  using value_reader_t = VectorReader<V>;
   using key_element_t = typename key_reader_t::exec_in_t;
 
   MapView(
@@ -463,13 +493,7 @@ class MapView {
         offset_(offset),
         size_(size) {}
 
-  MapView()
-      : keyReader_(nullptr), valueReader_(nullptr), offset_(0), size_(0) {}
-
-  class Element;
   using ValueAccessor = VectorOptionalValueAccessor<value_reader_t>;
-
-  // Lazy access wrapper around the key.
   using KeyAccessor = VectorValueAccessor<key_reader_t>;
 
   class Element {
@@ -478,7 +502,10 @@ class MapView {
         const key_reader_t* keyReader,
         const value_reader_t* valueReader,
         vector_size_t index)
-        : first(keyReader, index), second(valueReader, index), index_(index) {}
+        : first((*keyReader)[index]),
+          second(valueReader, index),
+          keyReader_(keyReader),
+          index_(index) {}
     const KeyAccessor first;
     const ValueAccessor second;
 
@@ -487,6 +514,7 @@ class MapView {
     }
 
     // T is pair like object.
+    // TODO: compare is not defined for view types yet
     template <typename T>
     bool operator==(const T& other) const {
       return first == other.first && second == other.second;
@@ -497,47 +525,54 @@ class MapView {
       return !(*this == other);
     }
 
-    void incrementIndex() {
-      index_++;
-      first.setIndex(index_);
-      second.setIndex(index_);
-    }
-
-    vector_size_t index() const {
-      return index_;
-    }
-
    private:
+    const key_reader_t* keyReader_;
     vector_size_t index_;
   };
 
-  using Iterator = IndexBasedIterator<Element>;
+  class Iterator : public IndexBasedIterator<Element> {
+   public:
+    Iterator(
+        const key_reader_t* keyReader,
+        const value_reader_t* valueReader,
+        vector_size_t index)
+        : IndexBasedIterator<Element>(index),
+          keyReader_(keyReader),
+          valueReader_(valueReader) {}
+
+    PointerWrapper<Element> operator->() const {
+      return PointerWrapper(Element{keyReader_, valueReader_, this->index_});
+    }
+
+    Element operator*() const {
+      return Element{keyReader_, valueReader_, this->index_};
+    }
+
+   private:
+    const key_reader_t* keyReader_;
+    const value_reader_t* valueReader_;
+  };
 
   Iterator begin() const {
-    return Iterator{Element{keyReader_, valueReader_, 0 + offset_}};
+    return Iterator{keyReader_, valueReader_, offset_};
   }
 
   Iterator end() const {
-    return Iterator{Element{keyReader_, valueReader_, size_ + offset_}};
+    return Iterator{keyReader_, valueReader_, size_ + offset_};
   }
 
   const Element operator[](vector_size_t index) const {
     return Element{keyReader_, valueReader_, index + offset_};
   }
 
-  size_t size() const {
+  vector_size_t size() const {
     return size_;
   }
 
   Iterator find(const key_element_t& key) const {
-    auto it = begin();
-    while (it != end()) {
-      if (it->first == key) {
-        break;
-      }
-      it++;
-    }
-    return it;
+    return std::find_if(begin(), end(), [&key](const auto& current) {
+      return current.first == key;
+    });
   }
 
   ValueAccessor at(const key_element_t& key) const {
@@ -546,22 +581,32 @@ class MapView {
     return it->second;
   }
 
-  // Cast to SlowMapVal<K,V> used to allow this to be written to current writer.
-  // This should change once we implement writer proxies.
-  operator core::SlowMapVal<K, V>() const {
-    core::SlowMapVal<K, V> map;
-    for (const auto& entry : map) {
-      // Note: This does not handle nested maps, but since it's just workaround
-      // its ok for now.
-      map.appendNullable(entry.first) = entry.second;
-    }
-    return map;
-  }
-
  private:
   const key_reader_t* keyReader_;
   const value_reader_t* valueReader_;
   vector_size_t offset_;
   vector_size_t size_;
 };
+
+template <typename... T>
+class RowView {
+  using reader_t = std::tuple<std::unique_ptr<VectorReader<T>>...>;
+  template <size_t N>
+  using elem_n_t = VectorOptionalValueAccessor<
+      typename std::tuple_element<N, reader_t>::type::element_type>;
+
+ public:
+  RowView(const reader_t* childReaders, vector_size_t offset)
+      : childReaders_{childReaders}, offset_{offset} {}
+
+  template <size_t N>
+  elem_n_t<N> at() const {
+    return elem_n_t<N>{std::get<N>(*childReaders_).get(), offset_};
+  }
+
+ private:
+  const reader_t* childReaders_;
+  vector_size_t offset_;
+};
+
 } // namespace facebook::velox::exec

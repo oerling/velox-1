@@ -368,7 +368,8 @@ class HashTable : public BaseHashTable {
   // Computes hash numbers of the appropriate hash mode for 'groups',
   // stores these in 'hashes' and inserts the groups using
   // insertForJoin or insertForGroupBy.
-  bool insertBatch(char** groups, uint64_t* hashes, int32_t numGroups);
+  bool
+  insertBatch(char** groups, int32_t numGroups, raw_vector<uint64_t>& hashes);
 
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
   // contents in a RowContainer owned by 'this'. 'hashes' are te hash
@@ -384,8 +385,11 @@ class HashTable : public BaseHashTable {
   void insertForGroupBy(char** groups, uint64_t* hashes, int32_t numGroups);
 
   char* insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
-  bool compareKeys(char* group, HashLookup& lookup, vector_size_t row);
+
+  bool compareKeys(const char* group, HashLookup& lookup, vector_size_t row);
+
   bool compareKeys(const char* group, const char* inserted);
+
   template <bool isJoin>
   void fullProbe(HashLookup& lookup, ProbeState& state, bool extraCheck);
 
