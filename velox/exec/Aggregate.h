@@ -53,6 +53,7 @@ class Aggregate {
   virtual bool isFixedSize() const {
     return true;
   }
+
   void setAllocator(HashStringAllocator* allocator) {
     allocator_ = allocator;
   }
