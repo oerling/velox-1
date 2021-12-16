@@ -15,6 +15,7 @@
  */
 
 #include "velox/exec/Aggregate.h"
+#include "velox/expression/FunctionSignature.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
 #include "velox/functions/prestosql/aggregates/SimpleNumericAggregate.h"
 #include "velox/vector/FlatVector.h"
@@ -177,8 +178,17 @@ class BoolOrAggregate final : public BoolAndOrAggregate {
 
 template <class T>
 bool registerBoolAggregate(const std::string& name) {
-  exec::AggregateFunctions().Register(
+  // TODO Fix signature to match Presto.
+  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures = {
+      exec::AggregateFunctionSignatureBuilder()
+          .returnType("boolean")
+          .intermediateType("boolean")
+          .argumentType("boolean")
+          .build()};
+
+  exec::registerAggregateFunction(
       name,
+      std::move(signatures),
       [name](
           core::AggregationNode::Step step,
           const std::vector<TypePtr>& argTypes,
@@ -199,6 +209,10 @@ bool registerBoolAggregate(const std::string& name) {
 
 static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
     registerBoolAggregate<BoolAndAggregate>(kBoolAnd);
+
+static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
+    registerBoolAggregate<BoolAndAggregate>(kEvery);
+
 static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
     registerBoolAggregate<BoolOrAggregate>(kBoolOr);
 

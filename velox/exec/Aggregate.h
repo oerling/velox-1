@@ -19,9 +19,13 @@
 #include "velox/core/PlanNode.h"
 #include "velox/vector/BaseVector.h"
 
+namespace facebook::velox {
+class HashStringAllocator;
+}
+
 namespace facebook::velox::exec {
 
-class HashStringAllocator;
+class AggregateFunctionSignature;
 
 // Returns true if aggregation receives raw (unprocessed) input, e.g. partial
 // and single aggregation.
@@ -276,12 +280,29 @@ class Aggregate {
   std::vector<vector_size_t> pushdownCustomIndices_;
 };
 
-using AggregateFunctionRegistry = Registry<
-    std::string,
-    std::unique_ptr<Aggregate>(
-        core::AggregationNode::Step step,
-        const std::vector<TypePtr>& argTypes,
-        const TypePtr& resultType)>;
+using AggregateFunctionFactory = std::function<std::unique_ptr<Aggregate>(
+    core::AggregationNode::Step step,
+    const std::vector<TypePtr>& argTypes,
+    const TypePtr& resultType)>;
 
-AggregateFunctionRegistry& AggregateFunctions();
+/// Register an aggregate function with the specified name and signatures.
+bool registerAggregateFunction(
+    const std::string& name,
+    std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures,
+    AggregateFunctionFactory factory);
+
+/// Returns signatures of the aggregate function with the specified name.
+/// Returns empty std::optional if function with that name is not found.
+std::optional<std::vector<std::shared_ptr<AggregateFunctionSignature>>>
+getAggregateFunctionSignatures(const std::string& name);
+
+struct AggregateFunctionEntry {
+  std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures;
+  AggregateFunctionFactory factory;
+};
+
+using AggregateFunctionMap =
+    std::unordered_map<std::string, AggregateFunctionEntry>;
+
+AggregateFunctionMap& aggregateFunctions();
 } // namespace facebook::velox::exec

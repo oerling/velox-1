@@ -127,6 +127,28 @@ TEST_F(MapViewTest, testIndexedLoop) {
   }
 }
 
+TEST_F(MapViewTest, encoded) {
+  VectorPtr mapVector = createTestMapVector();
+  // Wrap in dictionary.
+  auto vectorSize = mapVector->size();
+  BufferPtr indices =
+      AlignedBuffer::allocate<vector_size_t>(vectorSize, pool_.get());
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  // Assign indices such that array is reversed.
+  for (size_t i = 0; i < vectorSize; ++i) {
+    rawIndices[i] = vectorSize - 1 - i;
+  }
+  mapVector = BaseVector::wrapInDictionary(
+      BufferPtr(nullptr), indices, vectorSize, mapVector);
+
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(decode(decoded, *mapVector));
+
+  ASSERT_EQ(reader[0].size(), 5);
+  ASSERT_EQ(reader[1].size(), 3);
+  ASSERT_EQ(reader[2].size(), 0);
+}
+
 TEST_F(MapViewTest, testCompareLazyValueAccess) {
   auto mapVector = createTestMapVector();
   DecodedVector decoded;
@@ -325,6 +347,31 @@ TEST_F(MapViewTest, mapCoplexKey) {
   ASSERT_EQ(size, result->size());
   for (auto i = 0; i < size; i++) {
     EXPECT_NEAR(expected->valueAt(i), result->valueAt(i), 0.0000001);
+  }
+}
+
+TEST_F(MapViewTest, testReadingStructureBindingLoop) {
+  auto mapVector = createTestMapVector();
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(
+      decode(decoded, *mapVector.get()));
+
+  for (auto i = 0; i < mapsData.size(); i++) {
+    auto mapView = reader[i];
+    auto it = mapsData[i].begin();
+    int count = 0;
+    ASSERT_EQ(mapsData[i].size(), mapView.size());
+    for (const auto& [key, value] : mapView) {
+      ASSERT_EQ(key, it->first);
+      ASSERT_EQ(value.has_value(), it->second.has_value());
+      if (it->second.has_value()) {
+        ASSERT_EQ(value.value(), it->second.value());
+      }
+      ASSERT_EQ(value, it->second);
+      it++;
+      count++;
+    }
+    ASSERT_EQ(count, mapsData[i].size());
   }
 }
 
