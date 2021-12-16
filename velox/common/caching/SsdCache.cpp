@@ -15,7 +15,7 @@
  */
 
 #include "velox/common/caching/SsdCache.h"
-#include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/Executor.h>
 #include <folly/portability/SysUio.h>
 #include <iostream>
 #include "velox/common/caching/FileIds.h"
@@ -27,7 +27,7 @@
 #include <numeric>
 
 DEFINE_bool(ssd_odirect, true, "use O_DIRECT for SSD cache IO");
-DEFINE_bool(verify_ssd_write, false, "Read back data after writing to SSD");
+DEFINE_bool(ssd_verify_write, false, "Read back data after writing to SSD");
 
 namespace facebook::velox::cache {
 
@@ -53,10 +53,10 @@ void SsdPin::operator=(SsdPin&& other) {
 SsdFile::SsdFile(
     const std::string& filename,
     SsdCache& cache,
-    int32_t ordinal,
+    int32_t shardId,
     int32_t maxRegions)
     : cache_(cache),
-      ordinal_(ordinal),
+      shardId_(shardId),
       maxRegions_(maxRegions),
       filename_(filename) {
   int32_t oDirect = 0;
@@ -71,14 +71,13 @@ SsdFile::SsdFile(
   readFile_ = std::make_unique<LocalReadFile>(fd_);
   uint64_t size = lseek(fd_, 0, SEEK_END);
   numRegions_ = size / kRegionSize;
+  fileSize_ = numRegions_ * kRegionSize;
   if (size % kRegionSize > 0) {
-    ftruncate(fd_, numRegions_ * kRegionSize);
+    ftruncate(fd_, fileSize_);
   }
   // The existing regions in the file are writable.
-  for (auto i = 0; i < numRegions_; ++i) {
-    writableRegions_.push_back(i);
-  }
-  fileSize_ = numRegions_ * kRegionSize;
+  writableRegions_.resize(numRegions_);
+  std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
   regionScore_.resize(maxRegions_);
   regionSize_.resize(maxRegions_);
   regionPins_.resize(maxRegions_);
@@ -92,8 +91,9 @@ void SsdFile::pinRegion(uint64_t offset) {
 void SsdFile::unpinRegion(uint64_t offset) {
   std::lock_guard<std::mutex> l(mutex_);
   auto count = --regionPins_[regionIndex(offset)];
+  VELOX_CHECK_LE(0, count);
   if (suspended_ && count == 0) {
-    evictLocked();
+    growOrEvictLocked();
   }
 }
 
@@ -173,12 +173,18 @@ void SsdFile::read(
   stats_.entriesRead += numEntries;
   uint64_t regionBytes = 0;
   uint64_t regionOffset = offset;
+  // Calculate the span from first to last and the number of bytes
+  // that are used out of these. 'regionBytes' do not include
+  // gaps in the coalesced read.
   for (auto range : buffers) {
     if (range.data()) {
       regionBytes += range.size();
     }
     regionOffset += range.size();
   }
+  // Attribute the read bytes to the region where the read
+  // ends. Coalesced reads crossing regions are be rare and we do not
+  // consider this in tracking region read volumes.
   regionUsed(regionIndex(offset), regionBytes);
   stats_.bytesRead += regionBytes;
   readFile_->preadv(offset, buffers);
@@ -190,7 +196,7 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
   std::lock_guard<std::mutex> l(mutex_);
   for (;;) {
     if (writableRegions_.empty()) {
-      if (!evictLocked()) {
+      if (!growOrEvictLocked()) {
         return {0, 0};
       }
     }
@@ -207,13 +213,14 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
       toWrite += entry->size();
     }
     if (toWrite) {
+      // At least some pins got space from this region. If the region is is full the next call will get space from another region.
       regionSize_[region] += toWrite;
       return {region * kRegionSize + offset, toWrite};
     }
-    // A region has been filled. Set its score to be at least the best
-    // score + kRegionSize so that it gets time to live. Otherwise it
-    // has had the least time to get hits and would be the first
-    // evicted.
+    // A region has been filled and transits from writable to
+    // evictable. Set its score to be at least the best score +
+    // kRegionSize so that it gets time to live. Otherwise it has had
+    // the least time to get hits and would be the first evicted.
     uint64_t best = 0;
     for (auto& score : regionScore_) {
       best = std::max<uint64_t>(best, score);
@@ -223,7 +230,7 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
   }
 }
 
-bool SsdFile::evictLocked() {
+bool SsdFile::growOrEvictLocked() {
   if (numRegions_ < maxRegions_) {
     auto newSize = (numRegions_ + 1) * kRegionSize;
     auto rc = ftruncate(fd_, newSize);
@@ -253,6 +260,7 @@ bool SsdFile::evictLocked() {
     suspended_ = true;
     return false;
   }
+  // Sort by score to evict less read regions first.
   std::sort(
       candidates.begin(), candidates.end(), [&](int32_t left, int32_t right) {
         return regionScore_[left] < regionScore_[right];
@@ -289,7 +297,7 @@ void SsdFile::clearRegionEntriesLocked(
   }
 }
 
-void SsdFile::store(std::vector<CachePin>& pins) {
+void SsdFile::write(std::vector<CachePin>& pins) {
   std::sort(pins.begin(), pins.end());
   uint64_t total = 0;
   for (auto& pin : pins) {
@@ -310,7 +318,6 @@ void SsdFile::store(std::vector<CachePin>& pins) {
       if (bytes + entrySize > available) {
         break;
       }
-      pins[i].entry()->setSsdFile(this, offset);
       addEntryToIovecs(*pins[i].entry(), iovecs);
       bytes += entrySize;
       ++numWritten;
@@ -319,6 +326,7 @@ void SsdFile::store(std::vector<CachePin>& pins) {
     auto rc = folly::pwritev(fd_, iovecs.data(), iovecs.size(), offset);
     if (rc != bytes) {
       LOG(ERROR) << "Failed to write to SSD " << errno;
+      // If the write fails we return without adding the pins to the cache. The entries are unchanged.
       return;
     }
     {
@@ -332,7 +340,7 @@ void SsdFile::store(std::vector<CachePin>& pins) {
         SsdKey key = {
             entry->key().fileNum, static_cast<uint64_t>(entry->offset())};
         entries_[std::move(key)] = SsdRun(offset, size);
-        if (FLAGS_verify_ssd_write) {
+        if (FLAGS_ssd_verify_write) {
           verifyWrite(*entry, SsdRun(offset, size));
         }
         offset += size;
@@ -342,12 +350,6 @@ void SsdFile::store(std::vector<CachePin>& pins) {
     }
     storeIndex += numWritten;
   }
-}
-
-char* readBytes(int fd, int64_t offset, int32_t size) {
-  char* data = (char*)malloc(size);
-  pread(fd, data, size, offset);
-  return data;
 }
 
 namespace {
@@ -390,7 +392,7 @@ void SsdFile::verifyWrite(AsyncDataCacheEntry& entry, SsdRun ssdRun) {
   }
 }
 
-void SsdFile::updateStats(SsdCacheStats& stats) {
+void SsdFile::updateStats(SsdCacheStats& stats) const {
   stats.entriesWritten += stats_.entriesWritten;
   stats.bytesWritten += stats_.bytesWritten;
   stats.entriesRead += stats_.entriesRead;
@@ -413,13 +415,16 @@ void SsdFile::clear() {
 SsdCache::SsdCache(
     std::string_view filePrefix,
     uint64_t maxBytes,
-    int32_t numShards)
+    int32_t numShards,
+    folly::Executor* executor)
     : filePrefix_(filePrefix),
       numShards_(numShards),
-      groupStats_(std::make_unique<FileGroupStats>()) {
+      groupStats_(std::make_unique<FileGroupStats>()),
+      executor_(executor) {
   files_.reserve(numShards_);
-  uint64_t kSizeQuantum = numShards_ * SsdFile::kRegionSize;
-  int32_t fileMaxRegions = bits::roundUp(maxBytes, kSizeQuantum) / kSizeQuantum;
+  // Cache size must be a multiple of this so that each shard has te same max size.
+  uint64_t sizeQuantum = numShards_ * SsdFile::kRegionSize;
+  int32_t fileMaxRegions = bits::roundUp(maxBytes, sizeQuantum) / sizeQuantum;
   for (auto i = 0; i < numShards_; ++i) {
     files_.push_back(std::make_unique<SsdFile>(
         fmt::format("{}{}", filePrefix_, i), *this, i, fileMaxRegions));
@@ -431,26 +436,21 @@ SsdFile& SsdCache::file(uint64_t fileId) {
   return *files_[index];
 }
 
-namespace {
-folly::IOThreadPoolExecutor* ssdStoreExecutor() {
-  static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(4);
-  return executor.get();
-}
-} // namespace
-
-bool SsdCache::startStore() {
-  if (0 == storesInProgress_.fetch_add(numShards_)) {
+bool SsdCache::startWrite() {
+  if (0 == writesInProgress_.fetch_add(numShards_)) {
+    // No write was pending, so now all shards are counted as writing.
     return true;
   }
-  storesInProgress_.fetch_sub(numShards_);
+  // There were writes in progress, so compensate for the increment.
+  writesInProgress_.fetch_sub(numShards_);
   return false;
 }
 
-void SsdCache::store(std::vector<CachePin> pins) {
+void SsdCache::write(std::vector<CachePin> pins) {
   std::vector<std::vector<CachePin>> shards(numShards_);
   for (auto& pin : pins) {
     auto& target = file(pin.entry()->key().fileNum.id());
-    shards[target.ordinal()].push_back(std::move(pin));
+    shards[target.shardId()].push_back(std::move(pin));
   }
   int32_t numNoStore = 0;
   for (auto i = 0; i < numShards_; ++i) {
@@ -467,12 +467,12 @@ void SsdCache::store(std::vector<CachePin> pins) {
     // We move the mutable vector of pins to the executor. These must
     // be wrapped in a shared struct to be passed via lambda capture.
     auto pinHolder = std::make_shared<PinHolder>(std::move(shards[i]));
-    ssdStoreExecutor()->add([this, i, pinHolder]() {
-      files_[i]->store(pinHolder->pins);
-      --storesInProgress_;
+    executor_->add([this, i, pinHolder]() {
+      files_[i]->write(pinHolder->pins);
+      --writesInProgress_;
     });
   }
-  storesInProgress_.fetch_sub(numNoStore);
+  writesInProgress_.fetch_sub(numNoStore);
 }
 
 SsdCacheStats SsdCache::stats() const {

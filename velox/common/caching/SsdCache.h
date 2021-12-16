@@ -142,9 +142,7 @@ struct SsdCacheStats {
 // their region.
 class SsdFile {
  public:
-  static constexpr uint64_t kMaxSize = 1UL << 36; // 64G
   static constexpr uint64_t kRegionSize = 1 << 26; // 64MB
-  static constexpr int32_t kNumRegions = kMaxSize / kRegionSize;
 
   // Constructs a cache backed by filename. Discards any previous
   // contents of filename.
@@ -157,7 +155,7 @@ class SsdFile {
   // Adds entries of  'pins'  to this file. 'pins' must be in read mode and
   // those pins that are successfully added to SSD are marked as being on SSD.
   // The file of the entries must be a file that is backed by 'this'.
-  void store(std::vector<CachePin>& pins);
+  void write(std::vector<CachePin>& pins);
 
   // Finds an entry for 'key'. If no entry is found, the returned pin is empty.
   SsdPin find(RawFileCacheKey key);
@@ -177,12 +175,6 @@ class SsdFile {
 
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
-
-  // Increments the pin count of the region of 'offset'. Caller must hold
-  // 'mutex_'.
-  void pinRegionLocked(uint64_t offset) {
-    ++regionPins_[regionIndex(offset)];
-  }
 
   // Decrements the pin count of the region of 'offset'. If the pin
   // count goes to zero and evict is due, starts the evict.
@@ -208,22 +200,30 @@ class SsdFile {
     return maxRegions_;
   }
 
-  int32_t ordinal() const {
-    return ordinal_;
+  int32_t shardId() const {
+    return shardId_;
   }
 
   // Adds 'stats_' to 'stats'.
-  void updateStats(SsdCacheStats& stats);
+  void updateStats(SsdCacheStats& stats) const;
 
-  // Resets [this' to a post-construction empty state. See SsdCache::clear().
+  // Resets this' to a post-construction empty state. See SsdCache::clear().
   void clear();
 
  private:
   static constexpr int32_t kDecayInterval = 1000;
 
+  // Increments the pin count of the region of 'offset'. Caller must hold
+  // 'mutex_'.
+  void pinRegionLocked(uint64_t offset) {
+    ++regionPins_[regionIndex(offset)];
+  }
+  
   // Returns [start, size] of contiguous space for storing data of a
-  // number of contiguous 'pins' starting at 'startIndex'.  Returns a
-  // run of 0 bytes if there is no space
+  // number of contiguous 'pins' starting with the pin at index
+  // 'begin'.  Returns a run of 0 bytes if there is no space. The
+  // space does not necessarily cover all the pins, so multiple calls
+  // starting at the first unwritten pin may be needed.
   std::pair<uint64_t, int32_t> getSpace(
       const std::vector<CachePin>& pins,
       int32_t begin);
@@ -234,7 +234,7 @@ class SsdFile {
 
   // Clears one or more  regions for accommodating new entries. The regions are
   // added to 'writableRegions_'. Returns true if regions could be cleared.
-  bool evictLocked();
+  bool growOrEvictLocked();
 
   // Increments event count and periodically decays scores.
   void newEventLocked();
@@ -248,8 +248,8 @@ class SsdFile {
   // The containing SsdCache.
   SsdCache& cache_;
 
-  // Stripe number within 'cache_'.
-  int32_t ordinal_;
+  // Shard index within 'cache_'.
+  int32_t shardId_;
 
   // Number of kRegionSize regions in the file.
   int32_t numRegions_{0};
@@ -263,10 +263,12 @@ class SsdFile {
   const int32_t maxRegions_;
 
   // Number of used bytes in in each region. A new entry must fit
-  // between the offset and the end of the region.
+  // between the offset and the end of the region. This is subscripted
+  // with the region index. The regionIndex times kRegionSize is an
+  // offset into the file.
   std::vector<uint32_t> regionSize_;
 
-  // Region numbers available for writing new entries.
+  // Indices of regions available for writing new entries.
   std::vector<int32_t> writableRegions_;
 
   // Count of bytes read from the corresponding region. Decays with time.
@@ -278,8 +280,8 @@ class SsdFile {
   // Map of file number and offset to location in file.
   folly::F14FastMap<SsdKey, SsdRun> entries_;
 
-  // Count of reads and writes. The scores are decayed every time e count goes
-  // over kDecayInterval or half 'entries_' size, wichever comes first.
+  // Count of reads and writes. The scores are decayed every time the count goes
+  // over kDecayInterval or half 'entries_' size, whichever comes first.
   uint64_t numEvents_{0};
 
   // Name of backing file.
@@ -302,29 +304,34 @@ class SsdCache {
  public:
   //  Constructs a cache with backing files at path
   //  'filePrefix'.<ordinal>. <ordinal> ranges from 0 to 'numShards' -
-  //  1.. '. 'maxBytes' is the total capacity of the cache. This is
-  //  rounded up to the next multiple of kRegionSize * 'numShards'.
+  //  1. '. 'maxBytes' is the total capacity of the cache. This is
+  //  rounded up to the next multiple of kRegionSize *
+  //  'numShards'. This means that all the shards have an equal number
+  //  of regions. For 2 shards and 200MB size, the size rounds up to
+  //  256M with 2 shards each of 128M (2 regions).
   SsdCache(
       std::string_view filePrefix,
       uint64_t maxBytes,
-      int32_t numShards_ = 32);
+      int32_t numShards,
+      folly::Executor* executor);
 
-  // Returns the shard corresponding to 'fileId'.
+  // Returns the shard corresponding to 'fileId'. 'fileId' is a
+  //  file id from e.g. FileCacheKey.
   SsdFile& file(uint64_t fileId);
 
   uint64_t maxBytes() const {
     return files_[0]->maxRegions() * files_.size() * SsdFile::kRegionSize;
   }
 
-  // Returns true if no store s in progress. Atomically sets a store
-  // to be in progress. store() must be called after this. The storing
+  // Returns true if no write is in progress. Atomically sets a write
+  // to be in progress. store() must be called after this. The writing
   // state is reset asynchronously after writing to SSD finishes.
-  bool startStore();
+  bool startWrite();
 
   // Stores the entries of 'pins' into the corresponding files. Sets
   // the file for the successfully stored entries. May evict existing
   // entries from unpinned regions.
-  void store(std::vector<CachePin> pins);
+  void write(std::vector<CachePin> pins);
 
   // Returns  stats aggregated from all shards.
   SsdCacheStats stats() const;
@@ -335,21 +342,22 @@ class SsdCache {
 
   // Drops all entries. Outstanding pins become invalid but reading
   // them will mostly succeed since the files will not be rewritten
-  // until new content is stord.
+  // until new content is stored.
   void clear();
 
   std::string toString() const;
 
  private:
-  std::string filePrefix_;
+  const std::string filePrefix_;
   const int32_t numShards_;
   std::vector<std::unique_ptr<SsdFile>> files_;
 
-  // Count of shards with unfinished stores.
-  std::atomic<int32_t> storesInProgress_{0};
+  // Count of shards with unfinished writes.
+  std::atomic<int32_t> writesInProgress_{0};
 
   // Stats for selecting entries to save from AsyncDataCache.
   std::unique_ptr<FileGroupStats> groupStats_;
+  folly::Executor* executor_;
 };
 
 } // namespace facebook::velox::cache

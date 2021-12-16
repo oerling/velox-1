@@ -576,7 +576,7 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
       std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
     ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
-    if (!ssdCache_->startStore()) {
+    if (!ssdCache_->startWrite()) {
       return;
     }
 
@@ -584,7 +584,7 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
     for (auto& shard : shards_) {
       shard->appendSsdSaveable(pins);
     }
-    ssdCache_->store(std::move(pins));
+    ssdCache_->write(std::move(pins));
   }
 }
 
