@@ -17,8 +17,8 @@
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/SsdCache.h"
 
-#include <folly/executors/QueuedImmediateExecutor.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/executors/QueuedImmediateExecutor.h>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
@@ -38,7 +38,8 @@ class AsyncDataCacheTest : public testing::Test {
     if (ssdBytes) {
       // tmpfs does not support O_DIRECT, so turn this off for testing.
       FLAGS_ssd_odirect = false;
-      ssdCache = std::make_unique<SsdCache>("/tmp/testcache", ssdBytes, 1, executor());
+      ssdCache =
+          std::make_unique<SsdCache>("/tmp/testcache", ssdBytes, 1, executor());
     }
     cache_ = std::make_shared<AsyncDataCache>(
         MappedMemory::createDefaultInstance(), maxBytes, std::move(ssdCache));
@@ -133,11 +134,9 @@ class AsyncDataCacheTest : public testing::Test {
  protected:
   static folly::Executor* executor() {
     static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(4);
-  return executor.get();
+    return executor.get();
   }
 
-
-  
   std::shared_ptr<AsyncDataCache> cache_;
   std::vector<StringIdLease> filenames_;
 };
@@ -347,7 +346,7 @@ TEST_F(AsyncDataCacheTest, ssd) {
   cache_->setVerifyHook([&](const AsyncDataCacheEntry& entry) {
     checkContents(entry.data(), entry.size());
   });
- 
+
   // Read back all writes. This increases the chance of writes falling behind
   // new entry creation.
   FLAGS_ssd_verify_write = true;

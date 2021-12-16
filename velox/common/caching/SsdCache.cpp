@@ -213,7 +213,8 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
       toWrite += entry->size();
     }
     if (toWrite) {
-      // At least some pins got space from this region. If the region is is full the next call will get space from another region.
+      // At least some pins got space from this region. If the region is is full
+      // the next call will get space from another region.
       regionSize_[region] += toWrite;
       return {region * kRegionSize + offset, toWrite};
     }
@@ -326,7 +327,8 @@ void SsdFile::write(std::vector<CachePin>& pins) {
     auto rc = folly::pwritev(fd_, iovecs.data(), iovecs.size(), offset);
     if (rc != bytes) {
       LOG(ERROR) << "Failed to write to SSD " << errno;
-      // If the write fails we return without adding the pins to the cache. The entries are unchanged.
+      // If the write fails we return without adding the pins to the cache. The
+      // entries are unchanged.
       return;
     }
     {
@@ -422,7 +424,8 @@ SsdCache::SsdCache(
       groupStats_(std::make_unique<FileGroupStats>()),
       executor_(executor) {
   files_.reserve(numShards_);
-  // Cache size must be a multiple of this so that each shard has te same max size.
+  // Cache size must be a multiple of this so that each shard has te same max
+  // size.
   uint64_t sizeQuantum = numShards_ * SsdFile::kRegionSize;
   int32_t fileMaxRegions = bits::roundUp(maxBytes, sizeQuantum) / sizeQuantum;
   for (auto i = 0; i < numShards_; ++i) {

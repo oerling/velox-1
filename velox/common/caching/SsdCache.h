@@ -218,7 +218,7 @@ class SsdFile {
   void pinRegionLocked(uint64_t offset) {
     ++regionPins_[regionIndex(offset)];
   }
-  
+
   // Returns [start, size] of contiguous space for storing data of a
   // number of contiguous 'pins' starting with the pin at index
   // 'begin'.  Returns a run of 0 bytes if there is no space. The
