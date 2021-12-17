@@ -240,7 +240,7 @@ class MemoryUsageTracker
   int64_t totalReservedBytes() {
     return user(currentUsageInBytes_) + system(currentUsageInBytes_);
   }
-  
+
   std::shared_ptr<MemoryUsageTracker> addChild(
       bool trackSystemMem = false,
       const MemoryUsageConfig& config = MemoryUsageConfig()) {

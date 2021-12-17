@@ -109,13 +109,18 @@ TEST(MemoryUsageTrackerTest, reserve) {
 }
 
 namespace {
-  // Model implementation of a GrowCallback. 
-  bool grow(MemoryUsageTracker::UsageType /*type*/, int64_t /*size*/, int64_t hardLimit, MemoryUsageTracker& tracker) {
-    static std::mutex mutex;
-    // The calls from different threads on the same tracker must be serialized.
-    std::lock_guard<std::mutex> l(mutex);
-    // The total includes the allocation that exceeded the limit. This function's job is to raise the limit to >= current.
-    auto current = tracker.totalReservedBytes();
+// Model implementation of a GrowCallback.
+bool grow(
+    MemoryUsageTracker::UsageType /*type*/,
+    int64_t /*size*/,
+    int64_t hardLimit,
+    MemoryUsageTracker& tracker) {
+  static std::mutex mutex;
+  // The calls from different threads on the same tracker must be serialized.
+  std::lock_guard<std::mutex> l(mutex);
+  // The total includes the allocation that exceeded the limit. This function's
+  // job is to raise the limit to >= current.
+  auto current = tracker.totalReservedBytes();
   auto limit = tracker.maxTotalBytes();
   if (current <= limit) {
     // No need to increase. It could be another thread already
@@ -124,15 +129,16 @@ namespace {
     return true;
   }
   if (current > hardLimit) {
-    // The caller will revert the allocation that called this and signal an error.
+    // The caller will revert the allocation that called this and signal an
+    // error.
     return false;
   }
   // We set the new limit to be the requested size.
   auto config = MemoryUsageConfigBuilder().maxTotalMemory(current).build();
   tracker.updateConfig(config);
   return true;
-  }
 }
+} // namespace
 
 TEST(MemoryUsageTrackerTest, grow) {
   constexpr int64_t kMB = 1 << 20;
