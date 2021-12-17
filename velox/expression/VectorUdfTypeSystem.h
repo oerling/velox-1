@@ -19,6 +19,8 @@
 #include <algorithm>
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/expression/ComplexViewTypes.h"
+#include "velox/expression/DecodedArgs.h"
+#include "velox/expression/VariadicView.h"
 #include "velox/functions/UDFOutputString.h"
 #include "velox/type/Type.h"
 #include "velox/vector/DecodedVector.h"
@@ -77,6 +79,12 @@ struct resolver<std::shared_ptr<T>> {
   using in_type = std::shared_ptr<T>;
   using out_type = std::shared_ptr<T>;
 };
+
+template <typename T>
+struct resolver<Variadic<T>> {
+  using in_type = VariadicView<T>;
+  // Variadic cannot be used as an out_type
+};
 } // namespace detail
 
 struct VectorExec {
@@ -114,6 +122,7 @@ struct VectorWriter {
     // in future, we want to eliminate this so all writes go directly to their
     // slice.
     data_[offset_] = data;
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -124,6 +133,8 @@ struct VectorWriter {
     // this code path is called when the slice is top-level
     if (!isSet) {
       vector_->setNull(offset_, true);
+    } else {
+      vector_->setNull(offset_, false);
     }
   }
 
@@ -214,6 +225,7 @@ struct VectorWriter<Map<K, V>> {
       }
       ++childSize;
     }
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -376,6 +388,7 @@ struct VectorWriter<Array<V>> {
         childWriter_.commitNull();
       }
     }
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -567,6 +580,42 @@ struct VectorWriter<Row<T...>> {
   std::tuple<VectorWriter<T>...> writers_;
   exec_out_t execOut_{};
   size_t offset_ = 0;
+};
+
+template <typename T>
+struct VectorReader<Variadic<T>> {
+  using in_vector_t = typename TypeToFlatVector<T>::type;
+  using exec_in_t = VariadicView<T>;
+
+  explicit VectorReader(const DecodedArgs& decodedArgs, int32_t startPosition)
+      : childReaders_{prepareChildReaders(decodedArgs, startPosition)} {}
+
+  exec_in_t operator[](vector_size_t offset) const {
+    return VariadicView<T>{&childReaders_, offset};
+  }
+
+  bool isSet(size_t /*unused*/) const {
+    // The Variadic itself can never be null, only the values of the underlying
+    // Types
+    return true;
+  }
+
+ private:
+  std::vector<std::unique_ptr<VectorReader<T>>> prepareChildReaders(
+      const DecodedArgs& decodedArgs,
+      int32_t startPosition) {
+    std::vector<std::unique_ptr<VectorReader<T>>> childReaders;
+    childReaders.reserve(decodedArgs.size() - startPosition);
+
+    for (int i = startPosition; i < decodedArgs.size(); ++i) {
+      childReaders.emplace_back(
+          std::make_unique<VectorReader<T>>(decodedArgs.at(i)));
+    }
+
+    return childReaders;
+  }
+
+  std::vector<std::unique_ptr<VectorReader<T>>> childReaders_;
 };
 
 template <>

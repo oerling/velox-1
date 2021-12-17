@@ -15,9 +15,18 @@ if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()
 
-add_library(velox_memory Memory.cpp MemoryUsage.cpp MappedMemory.cpp
-  MemoryUsageTracker.cpp MemoryManagerStrategy.cpp
-  MmapAllocator.cpp)
+add_library(
+  velox_memory
+  AllocationPool.cpp
+  ByteStream.cpp
+  HashStringAllocator.cpp
+  Memory.cpp
+  MemoryManagerStrategy.cpp
+MemoryUsage.cpp
+  MappedMemory.cpp
+  MmapAllocator.cpp
+  MemoryUsageTracker.cpp
+  StreamArena.cpp)
 
 target_link_libraries(velox_memory velox_flag_definitions velox_exception
                       ${FOLLY_WITH_DEPENDENCIES})

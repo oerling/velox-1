@@ -19,10 +19,13 @@
 #include "velox/core/PlanNode.h"
 #include "velox/vector/BaseVector.h"
 
+namespace facebook::velox {
+class HashStringAllocator;
+}
+
 namespace facebook::velox::exec {
 
 class AggregateFunctionSignature;
-class HashStringAllocator;
 
 // Returns true if aggregation receives raw (unprocessed) input, e.g. partial
 // and single aggregation.
@@ -276,18 +279,6 @@ class Aggregate {
   // sequential.
   std::vector<vector_size_t> pushdownCustomIndices_;
 };
-
-/// This registry is deprecated. Use registerAggregateFunction() instead.
-/// TODO Migrate all aggregate functions to the new registry and delete this
-/// one.
-using AggregateFunctionRegistry = Registry<
-    std::string,
-    std::unique_ptr<Aggregate>(
-        core::AggregationNode::Step step,
-        const std::vector<TypePtr>& argTypes,
-        const TypePtr& resultType)>;
-
-AggregateFunctionRegistry& AggregateFunctions();
 
 using AggregateFunctionFactory = std::function<std::unique_ptr<Aggregate>(
     core::AggregationNode::Step step,
