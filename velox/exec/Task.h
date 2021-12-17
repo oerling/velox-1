@@ -376,7 +376,7 @@ public:
     pool_->getMemoryUsageTracker()->updateConfig(config);
   }
 
-  int64_t getRecoverableMemory() const override;
+  int64_t recoverableMemory() const override;
 
   int64_t recover(int64_t size) override;
 
@@ -636,7 +636,6 @@ class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
   // in the Task.
   bool recover(
       std::shared_ptr<memory::MemoryConsumer> requester,
-      memory::MemoryUsageTracker::UsageType type,
       int64_t size) override;
 
  private:

@@ -341,7 +341,7 @@ bool Operator::reserveAndRun(
   }
 
   if (operatorCtx_->driverCtx()->driver->growTaskMemory(
-							memory::MemoryUsageTracker::UsageType::kUserMem,
+
           reservationSize,
           operatorCtx_->task()->pool()->getMemoryUsageTracker().get())) {
     runFunc();

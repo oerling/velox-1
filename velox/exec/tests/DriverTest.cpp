@@ -585,15 +585,12 @@ class TestingPauser : public Operator {
             sleep(2);
             Task::resume(task);
           }
-<<<<<<< HEAD
-=======
           task->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
           auto future = task->finishFuture().via(&executor);
           future.wait();
           sleep(2);
           Task::resume(task);
->>>>>>> main
         }
       });
     }

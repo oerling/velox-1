@@ -276,7 +276,6 @@ class Driver {
   // was raised by at least 'size'. The caller must be a thread of the Task of
   // 'this'.
   bool growTaskMemory(
-		      memory::MemoryUsageTracker::UsageType type,
       int64_t size,
       memory::MemoryUsageTracker* tracker);
 
@@ -284,7 +283,8 @@ class Driver {
     return task_;
   }
 
-
+  // Returns an estimate of the bytes that can be recovered by spill().
+  int64_t recoverableMemory() const;  
  private:
   void enqueueInternal();
 

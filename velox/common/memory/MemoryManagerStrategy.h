@@ -35,7 +35,7 @@ class MemoryConsumer {
 
   // Returns the number of bytes that may be recoverable with
   // tryRecoverMemory().
-  virtual int64_t getRecoverableMemory() const = 0;
+  virtual int64_t recoverableMemory() const = 0;
 
   //  Recovers memory. Implementations may for example spill or evict
   //  caches. Returns the number of bytes actually freed.  size
@@ -76,11 +76,10 @@ class MemoryManagerStrategy {
   virtual void unregisterConsumer(MemoryConsumer* consumer) = 0;
 
   // Tries to recover memory so that 'requester' can allocate 'size'
-  // bytes of new memory. Returns true if the limit of 'requester' was
-  // increased by at least 'size'.
+  // bytes of new memory. Returns true if the user memory limit of
+  // 'requester' was increased by at least 'size'.
   virtual bool recover(
       std::shared_ptr<MemoryConsumer> requester,
-      MemoryUsageTracker::UsageType type,
       int64_t size) = 0;
 
   static MemoryManagerStrategy* instance();
@@ -148,7 +147,6 @@ class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
   // No op.
   bool recover(
       std::shared_ptr<MemoryConsumer> /*requester*/,
-      MemoryUsageTracker::UsageType /*type*/,
       int64_t /*size*/) override {
     return false;
   }

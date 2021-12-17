@@ -652,8 +652,8 @@ std::string Driver::toString() {
 }
 
 void Driver::checkTerminate() {
-  if (task_->shouldStop() == core::StopReason::kTerminate) {
-    VELOX_FAIL("Cancelled");
+  if (task_->shouldStop() == StopReason::kTerminate) {
+    VELOX_USER_FAIL("Cancelled");
   }
 }
 
@@ -665,7 +665,7 @@ SuspendedSection::SuspendedSection(Driver* FOLLY_NONNULL driver)
 }
 
 SuspendedSection::~SuspendedSection() {
-  driver_->task_->leaveSuspended(driver_->state());
+  driver_->task()->leaveSuspended(driver_->state());
 }
 
 
@@ -673,26 +673,26 @@ std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
 }
 
-  uint64_t Driver::recoverableMemory() const {
+  int64_t Driver::recoverableMemory() const {
     int64_t total = 0;
-    for (auto& operator : operators_) {
-      total += operator->recoverableMemory();
+    for (auto& op : operators_) {
+      total += op->recoverableMemory();
     }
     return total;
   }
-  
 
-  
 bool Driver::growTaskMemory(
-    memory::UsageType type,
     int64_t size,
     memory::MemoryUsageTracker* /*tracker*/) {
+  bool result;
   SuspendedSection::suspended(this, [&]() {
-    return memory::MemoryManagerStrategy::instance()->recover(
-        driverCtx()->task, type, size);
+    result = memory::MemoryManagerStrategy::instance()->recover(
+							      task(), size);
   });
+  return result;
 }
-int64_t Driver::spill(int64_t size) {
+
+  int64_t Driver::spill(int64_t size) {
   int64_t spilled = 0;
   if (size > 0) {
     // Prefer to spill last operator first, e.g. group by should spill
