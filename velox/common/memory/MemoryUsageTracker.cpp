@@ -59,17 +59,20 @@ void MemoryUsageTracker::updateInternal(UsageType type, int64_t size) {
   // are exceeded.
   if (size > 0 &&
       (newPeak > usage(maxMemory_, type) || totalBytes > total(maxMemory_))) {
-    // Exceeded the limit. Fail allocation after reverting changes to
-    // parent and currentUsageInBytes_.
-    if (parent_) {
-      parent_->updateInternal(type, -size);
-    }
-    usage(currentUsageInBytes_, type)
-        .fetch_add(-size, std::memory_order_relaxed);
-    checkNonNegativeSizes("after exceeding cap");
-    VELOX_MEM_CAP_EXCEEDED();
-  }
 
+    if (!growCallback_ ||
+	!growCallback_(type, size, this)) {
+      // Exceeded the limit and could not raise it. Fail allocation after reverting changes to
+    // parent and currentUsageInBytes_.
+      if (parent_) {
+	parent_->updateInternal(type, -size);
+      }
+      usage(currentUsageInBytes_, type)
+        .fetch_add(-size, std::memory_order_relaxed);
+      checkNonNegativeSizes("after exceeding cap");
+      VELOX_MEM_CAP_EXCEEDED();
+  }
+  }
   maySetMax(type, newPeak);
   maySetMax(UsageType::kTotalMem, totalBytes);
   checkNonNegativeSizes("after update");

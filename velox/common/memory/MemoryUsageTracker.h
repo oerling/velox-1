@@ -92,6 +92,14 @@ class MemoryUsageTracker
  public:
   enum class UsageType : int { kUserMem = 0, kSystemMem = 1, kTotalMem = 2 };
 
+    // Function to increase size limit. Returns true if limit
+  // increased. On success, increases the limits in 'limit' so as to
+  // have 'size' more bytes of 'type'. This is responsible for updating all
+  // parent trackers of 'limit'.
+  using GrowCallback = std::function<
+      bool(UsageType type, int64_t size, MemoryUsageTracker* limit)>;
+
+
 
   // Create default usage tracker. It aggregates both 'user' and 'system' memory
   // from its children and tracks the allocations as 'user' memory. It returns a
@@ -229,6 +237,12 @@ class MemoryUsageTracker
     }
   }
 
+  void setGrowCallback(GrowCallback func) {
+    growCallback_ = func;
+  }
+
+
+  
  private:
   static constexpr int64_t kMB = 1 << 20;
 
@@ -328,6 +342,8 @@ class MemoryUsageTracker
   int64_t minReservation_{0};
   std::atomic<int64_t> usedReservation_{};
 
+  GrowCallback growCallback_{};
+  
   explicit MemoryUsageTracker(
       const std::shared_ptr<MemoryUsageTracker>& parent,
       UsageType type,

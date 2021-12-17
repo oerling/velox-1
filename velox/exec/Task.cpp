@@ -51,7 +51,7 @@ Task::Task(
     if (!tracker) {
       tracker = memory::MemoryUsageTracker::create(
           nullptr,
-          memory::memoryUsageTracker::UsageType::kUserMem,
+          memory::MemoryUsageTracker::UsageType::kUserMem,
           memory::MemoryUsageConfigBuilder()
 	  .maxTotalMemory(kInitialTaskMemory)
 	  .build());
