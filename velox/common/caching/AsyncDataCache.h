@@ -227,6 +227,14 @@ class AsyncDataCacheEntry {
     ssdOffset_ = offset;
   }
 
+  SsdFile* ssdFile() const {
+    return ssdFile_;
+  }
+
+  uint64_t ssdOffset() const {
+    return ssdOffset_;
+  }
+  
   void setTrackingId(TrackingId id) {
     trackingId_ = id;
   }
@@ -778,5 +786,43 @@ T percentile(Next next, int32_t numSamples, int percent) {
   std::sort(values.begin(), values.end());
   return values.empty() ? 0 : values[(values.size() * percent) / 100];
 }
+
+// Describes the outcome of readPins().
+struct ReadPinsResult {
+  // Number of distinct IOs.
+  int32_t numReads{0};
+
+  // Number of bytes read into pins.
+  int64_t readBytes{0};
+  // Number of bytes read and discarded due to coalescing.
+  int64_t extraBytes{0};
+};
+
+  // Utility function for loading multiple pins with coalesced
+// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the largest allowed
+// gap between the end of one entry and the start of the next. If the gap is
+// larger, the entries will be fetched separately.
+//
+//'offsetFunc' returns the starting offset of the data in the
+// file given a pin and the pin's index in 'pins'. The pins are expected to be
+// sorted by this offset. 'readFunc' reads from the appropriate media. It gets
+// the 'pins' and the index of the first pin included in the read and the index
+// of the first pin not included. It gets the starting offset of the read and a
+// vector of memory ranges to fill by ReadFile::preadv or a similar
+// function.
+// The caller is responsible for calling setValid on the pins after a successful read.
+//
+// Returns the number of distinct IOs, the number of bytes loaded into pins and
+// the number of extr bytes read.
+ReadPinsResult readPins(
+    const std::vector<CachePin>& pins,
+    int32_t maxGap,
+    std::function<uint64_t(const CachePin& pin, int32_t index)> offsetFunc,
+    std::function < void(
+			 const std::vector<CachePin>& pins,
+                        int32_t begin,
+                        int32_t end,
+                        uint64_t offset,
+			 const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
 } // namespace facebook::velox::cache
