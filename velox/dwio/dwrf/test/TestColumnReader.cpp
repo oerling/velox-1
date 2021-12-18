@@ -104,7 +104,11 @@ class SelectiveColumnReaderBuilder {
     makeFieldSpecs("", 0, rowType, scanSpec_.get());
 
     return SelectiveColumnReader::build(
-        cs.getSchemaWithId(), dataTypeWithId, stripe, scanSpec_.get(), 0);
+        cs.getSchemaWithId(),
+        dataTypeWithId,
+        stripe,
+        scanSpec_.get(),
+        FlatMapContext::nonFlatMapContext());
   }
 
  private:
@@ -4245,8 +4249,10 @@ class SchemaMismatchTest : public TestWithParam<bool> {
       bool returnFlatVector = false,
       const std::shared_ptr<const Type>& dataType = nullptr) {
     if (useSelectiveReader()) {
+      LOG(INFO) << "Using selective reader";
       return builder.build(requestedType, stripe, nodes, dataType);
     } else {
+      LOG(INFO) << "Using normal reader";
       return buildColumnReader(
           requestedType, stripe, nodes, returnFlatVector, dataType);
     }
@@ -4280,8 +4286,8 @@ class SchemaMismatchTest : public TestWithParam<bool> {
     asIsReader->next(size, asIsBatch, nullptr);
 
     ASSERT_EQ(asIsBatch->size(), mismatchBatch->size());
-    auto asIsField = getOnlyChild<SimpleVector<From>>(asIsBatch);
     auto mismatchField = getOnlyChild<SimpleVector<To>>(mismatchBatch);
+    auto asIsField = getOnlyChild<SimpleVector<From>>(asIsBatch);
     for (auto i = 0; i < asIsBatch->size(); ++i) {
       auto isNull = asIsField->isNullAt(i);
       EXPECT_EQ(isNull, mismatchField->isNullAt(i));

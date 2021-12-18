@@ -14,18 +14,23 @@
  * limitations under the License.
  */
 
-#include "velox/functions/lib/RegistrationHelpers.h"
-#include "velox/functions/prestosql/CheckedArithmetic.h"
+#pragma once
 
-namespace facebook::velox::functions {
+#include "velox/dwio/dwrf/common/ByteRLE.h"
 
-void registerCheckedArithmeticFunctions() {
-  registerBinaryIntegral<CheckedPlusFunction>({"plus"});
-  registerBinaryIntegral<CheckedMinusFunction>({"minus"});
-  registerBinaryIntegral<CheckedMultiplyFunction>({"multiply"});
-  registerBinaryIntegral<CheckedModulusFunction>({"mod"});
-  registerBinaryIntegral<CheckedDivideFunction>({"divide"});
-  registerUnaryIntegral<CheckedNegateFunction>({"negate"});
-}
+namespace facebook::velox::dwrf {
+struct FlatMapContext {
+ public:
+  explicit FlatMapContext(uint32_t sequence, BooleanRleDecoder* inMapDecoder)
+      : sequence{sequence}, inMapDecoder{inMapDecoder} {}
 
-} // namespace facebook::velox::functions
+  static FlatMapContext nonFlatMapContext() {
+    return FlatMapContext{0, nullptr};
+  }
+
+  uint32_t sequence;
+  // Kept alive by key nodes
+  BooleanRleDecoder* inMapDecoder;
+};
+
+} // namespace facebook::velox::dwrf
