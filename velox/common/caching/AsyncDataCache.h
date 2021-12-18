@@ -234,7 +234,7 @@ class AsyncDataCacheEntry {
   uint64_t ssdOffset() const {
     return ssdOffset_;
   }
-  
+
   void setTrackingId(TrackingId id) {
     trackingId_ = id;
   }
@@ -798,7 +798,7 @@ struct ReadPinsResult {
   int64_t extraBytes{0};
 };
 
-  // Utility function for loading multiple pins with coalesced
+// Utility function for loading multiple pins with coalesced
 // IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the largest allowed
 // gap between the end of one entry and the start of the next. If the gap is
 // larger, the entries will be fetched separately.
@@ -810,7 +810,8 @@ struct ReadPinsResult {
 // of the first pin not included. It gets the starting offset of the read and a
 // vector of memory ranges to fill by ReadFile::preadv or a similar
 // function.
-// The caller is responsible for calling setValid on the pins after a successful read.
+// The caller is responsible for calling setValid on the pins after a successful
+// read.
 //
 // Returns the number of distinct IOs, the number of bytes loaded into pins and
 // the number of extr bytes read.
@@ -818,11 +819,11 @@ ReadPinsResult readPins(
     const std::vector<CachePin>& pins,
     int32_t maxGap,
     std::function<uint64_t(const CachePin& pin, int32_t index)> offsetFunc,
-    std::function < void(
-			 const std::vector<CachePin>& pins,
-                        int32_t begin,
-                        int32_t end,
-                        uint64_t offset,
-			 const std::vector<folly::Range<char*>>& buffers)> readFunc);
+    std::function<void(
+        const std::vector<CachePin>& pins,
+        int32_t begin,
+        int32_t end,
+        uint64_t offset,
+        const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
 } // namespace facebook::velox::cache

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include "velox/common/caching/SsdCache.h"
 #include "velox/common/caching/FileIds.h"
+#include "velox/common/caching/SsdCache.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 #include <glog/logging.h>
@@ -168,14 +168,14 @@ TEST_F(SsdFileTest, writeAndRead) {
   // We read back the same batches and check
   // contents.
   for (auto startOffset = 0; startOffset <= kSsdSize - SsdFile::kRegionSize;
-       startOffset +=SsdFile::kRegionSize) {
+       startOffset += SsdFile::kRegionSize) {
     auto pins =
         makePins(fileName_.id(), startOffset, 4096, 2048 * 1025, 62 * kMB);
     std::vector<SsdPin> ssdPins;
     ssdPins.reserve(pins.size());
     for (auto& pin : pins) {
       ssdPins.push_back(ssdFile_->find(
-				       RawFileCacheKey{fileName_.id(), pin.entry()->key().offset}));
+          RawFileCacheKey{fileName_.id(), pin.entry()->key().offset}));
       EXPECT_FALSE(ssdPins.back().empty());
     }
     readPins(
@@ -188,7 +188,7 @@ TEST_F(SsdFileTest, writeAndRead) {
             int32_t begin,
             int32_t end,
             uint64_t offset,
-            const std::vector < folly::Range<char*>>& buffers) {
+            const std::vector<folly::Range<char*>>& buffers) {
           ssdFile_->read(offset, buffers, end - begin);
         });
     for (auto& pin : pins) {

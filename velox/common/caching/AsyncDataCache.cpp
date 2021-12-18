@@ -626,12 +626,12 @@ ReadPinsResult readPins(
     const std::vector<CachePin>& pins,
     int32_t maxGap,
     std::function<uint64_t(const CachePin& pin, int32_t index)> offsetFunc,
-    std::function < void(
-			 const std::vector<CachePin>& pins,
-                        int32_t begin,
-                        int32_t end,
-                        uint64_t offset,
-                        const std::vector<folly::Range<char*>>& buffers)> readFunc) {
+    std::function<void(
+        const std::vector<CachePin>& pins,
+        int32_t begin,
+        int32_t end,
+        uint64_t offset,
+        const std::vector<folly::Range<char*>>& buffers)> readFunc) {
   std::vector<folly::Range<char*>> buffers;
   uint64_t start = offsetFunc(pins[0], 0);
   uint64_t lastOffset = start;
