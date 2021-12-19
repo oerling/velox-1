@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/file/File.h"
 
 namespace facebook::velox::cache {
 

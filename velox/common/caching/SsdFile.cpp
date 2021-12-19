@@ -19,7 +19,6 @@
 #include <folly/portability/SysUio.h>
 #include <iostream>
 #include "velox/common/caching/FileIds.h"
-#include "velox/common/caching/GroupTracker.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
