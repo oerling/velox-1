@@ -250,6 +250,7 @@ bool testFilters(
   const auto& rowType = reader->rowType();
   for (const auto& child : scanSpec->children()) {
     if (child->filter()) {
+      child->clearSpecializedFilter();
       const auto& name = child->fieldName();
       if (!rowType->containsChild(name)) {
         // Column is missing. Most likely due to schema evolution.
