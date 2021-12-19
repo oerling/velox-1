@@ -20,7 +20,9 @@ add_executable(
   SignatureBinderTest.cpp
   SimpleFunctionTest.cpp
   ArrayViewTest.cpp
-  MapViewTest.cpp)
+  MapViewTest.cpp
+  RowViewTest.cpp
+  VariadicViewTest.cpp)
 
 add_test(
   NAME velox_expression_test

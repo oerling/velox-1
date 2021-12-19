@@ -69,19 +69,19 @@ class PlanBuilder {
   PlanBuilder& partialAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
       const std::vector<std::string>& aggregates,
-      const std::vector<std::string>& masks = {},
-      const std::vector<TypePtr>& resultTypes = {}) {
+      const std::vector<std::string>& masks = {}) {
     return aggregation(
         groupingKeys,
         aggregates,
         masks,
         core::AggregationNode::Step::kPartial,
-        false,
-        resultTypes);
+        false);
   }
 
   /// Add final aggregation plan node to match the current partial aggregation
-  /// node. Should be called directly after partialAggregation() method.
+  /// node. Should be called directly after partialAggregation() method or
+  /// directly after intermediateAggregation() that follows
+  /// partialAggregation().
   PlanBuilder& finalAggregation();
 
   // @param resultTypes Optional list of result types for the aggregates. Use it
@@ -99,6 +99,11 @@ class PlanBuilder {
         false,
         resultTypes);
   }
+
+  /// Add intermediate aggregation plan node to match the current partial
+  /// aggregation node. Should be called directly after partialAggregation()
+  /// method.
+  PlanBuilder& intermediateAggregation();
 
   PlanBuilder& intermediateAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
@@ -237,6 +242,10 @@ class PlanBuilder {
   std::shared_ptr<const core::FieldAccessTypedExpr> field(
       const RowTypePtr& outputType,
       int index);
+
+  std::shared_ptr<core::PlanNode> createIntermediateOrFinalAggregation(
+      core::AggregationNode::Step step,
+      const core::AggregationNode* partialAggNode);
 
   int planNodeId_;
   std::shared_ptr<core::PlanNode> planNode_;

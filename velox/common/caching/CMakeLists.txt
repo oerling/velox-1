@@ -20,10 +20,10 @@ add_library(
   AsyncDataCache.cpp
   ScanTracker.cpp
   GroupTracker.cpp
-  SsdCache.cpp)
-
+SsdCache.cpp
+  SsdFile.cpp)
 target_link_libraries(velox_caching velox_memory velox_exception velox_file
-                      ${GLOG} ${FOLLY_WITH_DEPENDENCIES})
+                      glog::glog ${FOLLY_WITH_DEPENDENCIES})
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

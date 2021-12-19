@@ -18,7 +18,7 @@
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
-#include "velox/exec/HashStringAllocator.h"
+#include "velox/common/memory/HashStringAllocator.h"
 
 DEFINE_bool(enable_str_simd, true, "Enable StringView SIMD hash");
 

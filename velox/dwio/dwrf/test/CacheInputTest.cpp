@@ -123,7 +123,7 @@ class CacheTest : public testing::Test {
       uint64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssd;
     if (!file.empty()) {
-      ssd = std::make_unique<SsdCache>(file, ssdBytes, 1);
+      ssd = std::make_unique<SsdCache>(file, ssdBytes, 1, executor_.get());
       groupStats_ = &ssd->groupStats();
     }
     memory::MmapAllocatorOptions options = {maxBytes};

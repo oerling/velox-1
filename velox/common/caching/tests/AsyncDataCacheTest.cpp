@@ -17,12 +17,13 @@
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/SsdCache.h"
 
+#include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/executors/QueuedImmediateExecutor.h>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
 DECLARE_bool(ssd_odirect);
-DECLARE_bool(verify_ssd_write);
+DECLARE_bool(ssd_verify_write);
 
 using namespace facebook::velox;
 using namespace facebook::velox::cache;
@@ -37,7 +38,8 @@ class AsyncDataCacheTest : public testing::Test {
     if (ssdBytes) {
       // tmpfs does not support O_DIRECT, so turn this off for testing.
       FLAGS_ssd_odirect = false;
-      ssdCache = std::make_unique<SsdCache>("/tmp/testcache", ssdBytes, 1);
+      ssdCache =
+          std::make_unique<SsdCache>("/tmp/testcache", ssdBytes, 1, executor());
     }
     cache_ = std::make_shared<AsyncDataCache>(
         MappedMemory::createDefaultInstance(), maxBytes, std::move(ssdCache));
@@ -130,6 +132,11 @@ class AsyncDataCacheTest : public testing::Test {
   }
 
  protected:
+  static folly::Executor* executor() {
+    static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(4);
+    return executor.get();
+  }
+
   std::shared_ptr<AsyncDataCache> cache_;
   std::vector<StringIdLease> filenames_;
 };
@@ -342,7 +349,7 @@ TEST_F(AsyncDataCacheTest, ssd) {
 
   // Read back all writes. This increases the chance of writes falling behind
   // new entry creation.
-  FLAGS_verify_ssd_write = true;
+  FLAGS_ssd_verify_write = true;
 
   // We read kSsdBytes worth of data on 4
   // threads. The same data will
@@ -354,7 +361,7 @@ TEST_F(AsyncDataCacheTest, ssd) {
   auto stats = cache_->ssdCache()->stats();
 
   // We allow writes to proceed faster.
-  FLAGS_verify_ssd_write = false;
+  FLAGS_ssd_verify_write = false;
 
   EXPECT_LE(kRamBytes, stats.bytesWritten);
   // We read the data back. The verify hook checks correct values.

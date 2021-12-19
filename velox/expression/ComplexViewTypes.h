@@ -22,7 +22,7 @@
 #include "velox/vector/TypeAliases.h"
 
 namespace facebook::velox::exec {
-template <typename T, typename U>
+template <typename T>
 struct VectorReader;
 
 // Pointer wrapper used to convert r-values to valid return type for operator->.
@@ -55,8 +55,7 @@ class IndexBasedIterator {
   using pointer = PointerWrapper<value_type>;
   using reference = T;
 
-  explicit IndexBasedIterator<value_type>(vector_size_t index)
-      : index_(index) {}
+  explicit IndexBasedIterator<value_type>(int64_t index) : index_(index) {}
 
   bool operator!=(const Iterator& rhs) const {
     return index_ != rhs.index_;
@@ -96,7 +95,7 @@ class IndexBasedIterator {
   }
 
  protected:
-  vector_size_t index_;
+  int64_t index_;
 };
 
 // Implements an iterator for values that skips nulls and provides direct access
@@ -256,17 +255,23 @@ class VectorOptionalValueAccessor {
   }
 
  private:
-  VectorOptionalValueAccessor<T>(const T* reader, vector_size_t index)
+  VectorOptionalValueAccessor<T>(const T* reader, int64_t index)
       : reader_(reader), index_(index) {}
   const T* reader_;
   // Index of element within the reader.
-  vector_size_t index_;
+  int64_t index_;
 
   template <typename V>
   friend class ArrayView;
 
   template <typename K, typename V>
   friend class MapView;
+
+  template <typename... U>
+  friend class RowView;
+
+  template <typename U>
+  friend class VariadicView;
 };
 
 template <typename T, typename U>
@@ -373,16 +378,12 @@ operator!=(const VectorOptionalValueAccessor<U>& lhs, const T& rhs) {
 // Represents an array of elements with an interface similar to std::vector.
 template <typename V>
 class ArrayView {
-  using reader_t = VectorReader<V, void>;
+  using reader_t = VectorReader<V>;
   using element_t = typename reader_t::exec_in_t;
 
  public:
   ArrayView(const reader_t* reader, vector_size_t offset, vector_size_t size)
       : reader_(reader), offset_(offset), size_(size) {}
-
-  // The previous doLoad protocol creates a value and then assigns to it.
-  // TODO: this should deprecated once  we deprecate the doLoad protocol.
-  ArrayView() : reader_(nullptr), offset_(0), size_(0) {}
 
   using Element = VectorOptionalValueAccessor<reader_t>;
 
@@ -480,8 +481,8 @@ class ArrayView {
 template <typename K, typename V>
 class MapView {
  public:
-  using key_reader_t = VectorReader<K, void>;
-  using value_reader_t = VectorReader<V, void>;
+  using key_reader_t = VectorReader<K>;
+  using value_reader_t = VectorReader<V>;
   using key_element_t = typename key_reader_t::exec_in_t;
 
   MapView(
@@ -494,9 +495,6 @@ class MapView {
         offset_(offset),
         size_(size) {}
 
-  MapView()
-      : keyReader_(nullptr), valueReader_(nullptr), offset_(0), size_(0) {}
-
   using ValueAccessor = VectorOptionalValueAccessor<value_reader_t>;
   using KeyAccessor = VectorValueAccessor<key_reader_t>;
 
@@ -505,11 +503,8 @@ class MapView {
     Element(
         const key_reader_t* keyReader,
         const value_reader_t* valueReader,
-        vector_size_t index)
-        : first((*keyReader)[index]),
-          second(valueReader, index),
-          keyReader_(keyReader),
-          index_(index) {}
+        int64_t index)
+        : first((*keyReader)[index]), second(valueReader, index) {}
     const KeyAccessor first;
     const ValueAccessor second;
 
@@ -528,10 +523,6 @@ class MapView {
     bool operator!=(const T& other) const {
       return !(*this == other);
     }
-
-   private:
-    const key_reader_t* keyReader_;
-    vector_size_t index_;
   };
 
   class Iterator : public IndexBasedIterator<Element> {
@@ -591,4 +582,26 @@ class MapView {
   vector_size_t offset_;
   vector_size_t size_;
 };
+
+template <typename... T>
+class RowView {
+  using reader_t = std::tuple<std::unique_ptr<VectorReader<T>>...>;
+  template <size_t N>
+  using elem_n_t = VectorOptionalValueAccessor<
+      typename std::tuple_element<N, reader_t>::type::element_type>;
+
+ public:
+  RowView(const reader_t* childReaders, vector_size_t offset)
+      : childReaders_{childReaders}, offset_{offset} {}
+
+  template <size_t N>
+  elem_n_t<N> at() const {
+    return elem_n_t<N>{std::get<N>(*childReaders_).get(), offset_};
+  }
+
+ private:
+  const reader_t* childReaders_;
+  vector_size_t offset_;
+};
+
 } // namespace facebook::velox::exec

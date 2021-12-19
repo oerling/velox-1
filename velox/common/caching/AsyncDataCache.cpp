@@ -204,7 +204,6 @@ CachePin CacheShard::initEntry(
   // one has added. The new entry is otherwise volatile and
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
-  ++numNew_;
   entry->setSsdFile(nullptr, 0);
   entry->key_ = FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset};
   if (entry->size() < size) {
@@ -353,7 +352,6 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t largeFreed = 0;
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
-  int32_t orgNumEvictChecks = numEvictChecks_;
   {
     std::lock_guard<std::mutex> l(mutex_);
     int size = entries_.size();
@@ -467,7 +465,7 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.allocClocks += allocClocks_;
 }
 
-void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
+void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
   auto& groupStats = cache_->ssdCache()->groupStats();
   std::lock_guard<std::mutex> l(mutex_);
   for (auto& entry : entries_) {
@@ -578,15 +576,15 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
       std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
     ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
-    if (!ssdCache_->startStore()) {
+    if (!ssdCache_->startWrite()) {
       return;
     }
 
     std::vector<CachePin> pins;
     for (auto& shard : shards_) {
-      shard->getSsdSaveable(pins);
+      shard->appendSsdSaveable(pins);
     }
-    ssdCache_->store(std::move(pins));
+    ssdCache_->write(std::move(pins));
   }
 }
 
@@ -615,13 +613,72 @@ std::string AsyncDataCache::toString() const {
       << stats.numEvict << "\n"
       << " read pins " << stats.numShared << " write pins "
       << stats.numExclusive << " unused prefetch " << stats.numPrefetch
-      << " Alloc Mclks " << (stats.allocClocks >> 20) << " allocated pages "
+      << " Alloc Mclocks " << (stats.allocClocks >> 20) << " allocated pages "
       << numAllocated() << " cached pages " << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {
     out << "\nSSD: " << ssdCache_->toString();
   }
   return out.str();
+}
+
+ReadPinsResult readPins(
+    const std::vector<CachePin>& pins,
+    int32_t maxGap,
+    std::function<uint64_t(const CachePin& pin, int32_t index)> offsetFunc,
+    std::function<void(
+        const std::vector<CachePin>& pins,
+        int32_t begin,
+        int32_t end,
+        uint64_t offset,
+        const std::vector<folly::Range<char*>>& buffers)> readFunc) {
+  std::vector<folly::Range<char*>> buffers;
+  uint64_t start = offsetFunc(pins[0], 0);
+  uint64_t lastOffset = start;
+  ReadPinsResult result;
+  int32_t firstPin = 0;
+  for (auto i = 0; i < pins.size(); ++i) {
+    auto& pin = pins[i];
+    VELOX_CHECK(pin.entry()->key().fileNum.hasValue());
+    auto& data = pin.entry()->data();
+    uint64_t startOffset = offsetFunc(pin, i);
+    result.readBytes += pin.entry()->size();
+    if (lastOffset < startOffset) {
+      auto gap = startOffset - lastOffset;
+      if (gap < maxGap) {
+        result.extraBytes += gap;
+        buffers.push_back(
+            folly::Range<char*>(nullptr, startOffset - lastOffset));
+      } else {
+        readFunc(pins, firstPin, i, start, buffers);
+        buffers.clear();
+        firstPin = i;
+        ++result.numReads;
+        start = startOffset;
+      }
+    }
+
+    auto size = pin.entry()->size();
+    uint64_t offsetInRuns = 0;
+    if (data.numPages() == 0) {
+      buffers.push_back(folly::Range<char*>(pin.entry()->tinyData(), size));
+      offsetInRuns = size;
+    } else {
+      for (int i = 0; i < data.numRuns(); ++i) {
+        auto run = data.runAt(i);
+        uint64_t bytes = run.numBytes();
+        uint64_t readSize = std::min(bytes, size - offsetInRuns);
+        buffers.push_back(folly::Range<char*>(run.data<char>(), readSize));
+        offsetInRuns += readSize;
+      }
+    }
+    VELOX_CHECK(offsetInRuns == size);
+    lastOffset = startOffset + size;
+  }
+
+  readFunc(pins, firstPin, pins.size(), start, buffers);
+  ++result.numReads;
+  return result;
 }
 
 } // namespace facebook::velox::cache

@@ -76,21 +76,24 @@ inline RleVersion convertRleVersion(proto::ColumnEncoding_Kind kind) {
 } // namespace
 
 SelectiveColumnReader::SelectiveColumnReader(
-    const EncodingKey& ek,
+    std::shared_ptr<const TypeWithId> requestedType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
-    const TypePtr& type)
-    : ColumnReader(ek, stripe),
+    // TODO: why is data type instead of requested type passed in?
+    const TypePtr& type,
+    FlatMapContext flatMapContext)
+    : ColumnReader(std::move(requestedType), stripe, std::move(flatMapContext)),
       scanSpec_(scanSpec),
       type_{type},
       rowsPerRowGroup_{stripe.rowsPerRowGroup()} {
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
   // We always initialize indexStream_ because indices are needed as
   // soon as there is a single filter that can trigger row group skips
   // anywhere in the reader tree. This is not known at construct time
   // because the first filter can come from a hash join or other run
   // time pushdown.
-  indexStream_ =
-      stripe.getStream(ek.forKind(proto::Stream_Kind_ROW_INDEX), false);
+  indexStream_ = stripe.getStream(
+      encodingKey.forKind(proto::Stream_Kind_ROW_INDEX), false);
 }
 
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
@@ -142,7 +145,7 @@ void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
     return;
   }
   values_ = AlignedBuffer::allocate<T>(
-      numRows + (simd::kPadding / sizeof(T)), &memoryPool);
+      numRows + (simd::kPadding / sizeof(T)), &memoryPool_);
   rawValues_ = values_->asMutable<char>();
 }
 
@@ -174,7 +177,7 @@ void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
 
   anyNulls_ = false;
   resultNulls_ = AlignedBuffer::allocate<bool>(
-      numRows + (simd::kPadding * 8), &memoryPool);
+      numRows + (simd::kPadding * 8), &memoryPool_);
   rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
   simd::memset(rawResultNulls_, bits::kNotNullByte, resultNulls_->capacity());
 }
@@ -233,7 +236,7 @@ void SelectiveColumnReader::getFlatValues(
   }
   if (allNull_) {
     *result = std::make_shared<ConstantVector<TVector>>(
-        &memoryPool,
+        &memoryPool_,
         rows.size(),
         true,
         type,
@@ -254,7 +257,12 @@ void SelectiveColumnReader::getFlatValues(
       ? (returnReaderNulls_ ? nullsInReadRange_ : resultNulls_)
       : nullptr;
   *result = std::make_shared<FlatVector<TVector>>(
-      &memoryPool, type, nulls, numValues_, values_, std::move(stringBuffers_));
+      &memoryPool_,
+      type,
+      nulls,
+      numValues_,
+      values_,
+      std::move(stringBuffers_));
 }
 
 template <>
@@ -268,7 +276,7 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
   VELOX_CHECK_EQ(valueSize_, sizeof(int8_t));
   compactScalarValues<int8_t, int8_t>(rows, isFinal);
   auto boolValues =
-      AlignedBuffer::allocate<bool>(numValues_, &memoryPool, false);
+      AlignedBuffer::allocate<bool>(numValues_, &memoryPool_, false);
   auto rawBits = boolValues->asMutable<uint32_t>();
   auto rawBytes = values_->as<int8_t>();
   auto zero = V8::setAll(0);
@@ -280,7 +288,7 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
       ? (returnReaderNulls_ ? nullsInReadRange_ : resultNulls_)
       : nullptr;
   *result = std::make_shared<FlatVector<bool>>(
-      &memoryPool,
+      &memoryPool_,
       type,
       nulls,
       numValues_,
@@ -535,7 +543,7 @@ void SelectiveColumnReader::filterNulls(
     RowSet rows,
     bool isNull,
     bool extractValues) {
-  if (!notNullDecoder) {
+  if (!notNullDecoder_) {
     if (isNull) {
       // The whole stripe will be empty. We do not update
       // 'readOffset' since nothing is read from either nulls or data.
@@ -605,7 +613,7 @@ char* SelectiveColumnReader::copyStringValue(folly::StringPiece value) {
       stringBuffers_.back()->setSize(rawStringUsed_);
     }
     auto bytes = std::max(size, kStringBufferSize);
-    BufferPtr buffer = AlignedBuffer::allocate<char>(bytes, &memoryPool);
+    BufferPtr buffer = AlignedBuffer::allocate<char>(bytes, &memoryPool_);
     stringBuffers_.push_back(buffer);
     rawStringBuffer_ = buffer->asMutable<char>();
     rawStringUsed_ = 0;
@@ -1079,20 +1087,27 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
   using ValueType = int8_t;
 
   SelectiveByteRleColumnReader(
-      const EncodingKey& ek,
-      const std::shared_ptr<const TypeWithId>& requestedType,
+      std::shared_ptr<const TypeWithId> requestedType,
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
-      bool isBool)
-      : SelectiveColumnReader(ek, stripe, scanSpec, dataType->type),
-        requestedType_(requestedType->type) {
+      bool isBool,
+      FlatMapContext flatMapContext)
+      : SelectiveColumnReader(
+            std::move(requestedType),
+            stripe,
+            scanSpec,
+            dataType->type,
+            std::move(flatMapContext)) {
+    EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
     if (isBool) {
       boolRle_ = createBooleanRleDecoder(
-          stripe.getStream(ek.forKind(proto::Stream_Kind_DATA), true), ek);
+          stripe.getStream(encodingKey.forKind(proto::Stream_Kind_DATA), true),
+          encodingKey);
     } else {
       byteRle_ = createByteRleDecoder(
-          stripe.getStream(ek.forKind(proto::Stream_Kind_DATA), true), ek);
+          stripe.getStream(encodingKey.forKind(proto::Stream_Kind_DATA), true),
+          encodingKey);
     }
   }
 
@@ -1101,8 +1116,8 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     if (boolRle_) {
@@ -1119,7 +1134,7 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
   void read(vector_size_t offset, RowSet rows, const uint64_t* nulls) override;
 
   void getValues(RowSet rows, VectorPtr* result) override {
-    switch (requestedType_->kind()) {
+    switch (nodeType_->type->kind()) {
       case TypeKind::BOOLEAN:
         getFlatValues<int8_t, bool>(rows, result);
         break;
@@ -1138,7 +1153,7 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
       default:
         VELOX_FAIL(
             "Result type not supported in ByteRLE encoding: {}",
-            requestedType_->toString());
+            nodeType_->type->toString());
     }
   }
 
@@ -1165,7 +1180,6 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
 
   std::unique_ptr<ByteRleDecoder> byteRle_;
   std::unique_ptr<BooleanRleDecoder> boolRle_;
-  const TypePtr requestedType_;
 };
 
 uint64_t SelectiveByteRleColumnReader::skip(uint64_t numValues) {
@@ -1300,15 +1314,18 @@ class SelectiveIntegerDirectColumnReader : public SelectiveColumnReader {
   using ValueType = int64_t;
 
   SelectiveIntegerDirectColumnReader(
-      const EncodingKey& ek,
-      const std::shared_ptr<const TypeWithId>& requestedType,
+      std::shared_ptr<const TypeWithId> requestedType,
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
       uint32_t numBytes,
       common::ScanSpec* scanSpec)
-      : SelectiveColumnReader(ek, stripe, scanSpec, dataType->type),
-        requestedType_(requestedType->type) {
-    auto data = ek.forKind(proto::Stream_Kind_DATA);
+      : SelectiveColumnReader(
+            std::move(requestedType),
+            stripe,
+            scanSpec,
+            dataType->type) {
+    EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+    auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
     bool dataVInts = stripe.getUseVInts(data);
     auto decoder = IntDecoder</*isSigned*/ true>::createDirect(
         stripe.getStream(data, true), dataVInts, numBytes);
@@ -1327,8 +1344,8 @@ class SelectiveIntegerDirectColumnReader : public SelectiveColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     ints->seekToRowGroup(positionsProvider);
@@ -1359,11 +1376,10 @@ class SelectiveIntegerDirectColumnReader : public SelectiveColumnReader {
   readHelper(common::Filter* filter, RowSet rows, ExtractValues extractValues);
 
   void getValues(RowSet rows, VectorPtr* result) override {
-    getIntValues(rows, requestedType_.get(), result);
+    getIntValues(rows, nodeType_->type.get(), result);
   }
 
   std::unique_ptr<DirectDecoder</*isSigned*/ true>> ints;
-  const TypePtr requestedType_;
 };
 
 uint64_t SelectiveIntegerDirectColumnReader::skip(uint64_t numValues) {
@@ -2003,8 +2019,7 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
   using ValueType = int64_t;
 
   SelectiveIntegerDictionaryColumnReader(
-      const EncodingKey& ek,
-      const std::shared_ptr<const TypeWithId>& requestedType,
+      std::shared_ptr<const TypeWithId> requestedType,
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
@@ -2023,8 +2038,8 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     if (inDictionaryReader_) {
@@ -2042,7 +2057,7 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
       override;
 
   void getValues(RowSet rows, VectorPtr* result) override {
-    getIntValues(rows, requestedType_.get(), result);
+    getIntValues(rows, nodeType_->type.get(), result);
   }
 
  private:
@@ -2073,38 +2088,42 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
   std::function<BufferPtr()> dictInit_;
   raw_vector<uint8_t> filterCache_;
   RleVersion rleVersion_;
-  const TypePtr requestedType_;
   bool initialized_{false};
 };
 
 SelectiveIntegerDictionaryColumnReader::SelectiveIntegerDictionaryColumnReader(
-    const EncodingKey& ek,
-    const std::shared_ptr<const TypeWithId>& requestedType,
+    std::shared_ptr<const TypeWithId> requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     uint32_t numBytes)
-    : SelectiveColumnReader(ek, stripe, scanSpec, dataType->type),
-      requestedType_(requestedType->type) {
-  auto encoding = stripe.getEncoding(ek);
+    : SelectiveColumnReader(
+          std::move(requestedType),
+          stripe,
+          scanSpec,
+          dataType->type) {
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  auto encoding = stripe.getEncoding(encodingKey);
   dictionarySize_ = encoding.dictionarysize();
   rleVersion_ = convertRleVersion(encoding.kind());
-  auto data = ek.forKind(proto::Stream_Kind_DATA);
+  auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
   bool dataVInts = stripe.getUseVInts(data);
   dataReader_ = IntDecoder</* isSigned = */ false>::createRle(
       stripe.getStream(data, true),
       rleVersion_,
-      memoryPool,
+      memoryPool_,
       dataVInts,
       numBytes);
 
   // make a lazy dictionary initializer
-  dictInit_ = stripe.getIntDictionaryInitializerForNode(ek, numBytes, numBytes);
+  dictInit_ = stripe.getIntDictionaryInitializerForNode(
+      encodingKey, numBytes, numBytes);
 
-  auto inDictStream =
-      stripe.getStream(ek.forKind(proto::Stream_Kind_IN_DICTIONARY), false);
+  auto inDictStream = stripe.getStream(
+      encodingKey.forKind(proto::Stream_Kind_IN_DICTIONARY), false);
   if (inDictStream) {
-    inDictionaryReader_ = createBooleanRleDecoder(std::move(inDictStream), ek);
+    inDictionaryReader_ =
+        createBooleanRleDecoder(std::move(inDictStream), encodingKey);
   }
 }
 
@@ -2255,7 +2274,7 @@ void SelectiveIntegerDictionaryColumnReader::read(
         ? bits::countNonNulls(nullsInReadRange_->as<uint64_t>(), 0, end)
         : end;
     ensureCapacity<uint64_t>(
-        inDictionary_, bits::nwords(numFlags), &memoryPool);
+        inDictionary_, bits::nwords(numFlags), &memoryPool_);
     inDictionaryReader_->next(
         inDictionary_->asMutable<char>(),
         numFlags,
@@ -2311,9 +2330,10 @@ class SelectiveFloatingPointColumnReader : public SelectiveColumnReader {
  public:
   using ValueType = TRequested;
   SelectiveFloatingPointColumnReader(
-      const EncodingKey& ek,
+      std::shared_ptr<const TypeWithId> nodeType,
       StripeStreams& stripe,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec* scanSpec,
+      FlatMapContext flatMapContext);
 
   // Offers fast path only if data and result widths match.
   bool hasBulkPath() const override {
@@ -2326,8 +2346,8 @@ class SelectiveFloatingPointColumnReader : public SelectiveColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     decoder_.seekToRowGroup(positionsProvider);
@@ -2365,11 +2385,20 @@ class SelectiveFloatingPointColumnReader : public SelectiveColumnReader {
 template <typename TData, typename TRequested>
 SelectiveFloatingPointColumnReader<TData, TRequested>::
     SelectiveFloatingPointColumnReader(
-        const EncodingKey& ek,
+        std::shared_ptr<const TypeWithId> requestedType,
         StripeStreams& stripe,
-        common::ScanSpec* scanSpec)
-    : SelectiveColumnReader(ek, stripe, scanSpec, CppToType<TData>::create()),
-      decoder_(stripe.getStream(ek.forKind(proto::Stream_Kind_DATA), true)) {}
+        common::ScanSpec* scanSpec,
+        FlatMapContext flatMapContext)
+    : SelectiveColumnReader(
+          std::move(requestedType),
+          stripe,
+          scanSpec,
+          CppToType<TData>::create(),
+          std::move(flatMapContext)),
+      decoder_(stripe.getStream(
+          EncodingKey{nodeType_->id, flatMapContext_.sequence}.forKind(
+              proto::Stream_Kind_DATA),
+          true)) {}
 
 template <typename TData, typename TRequested>
 uint64_t SelectiveFloatingPointColumnReader<TData, TRequested>::skip(
@@ -2512,10 +2541,10 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
  public:
   using ValueType = StringView;
   SelectiveStringDirectColumnReader(
-      const EncodingKey& ek,
-      const std::shared_ptr<const TypeWithId>& type,
+      const std::shared_ptr<const TypeWithId>& nodeType,
       StripeStreams& stripe,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec* scanSpec,
+      FlatMapContext flatMapContext);
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
@@ -2523,8 +2552,8 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     blobStream_->seekToRowGroup(positionsProvider);
@@ -2602,26 +2631,34 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
 };
 
 SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
-    const EncodingKey& ek,
-    const std::shared_ptr<const TypeWithId>& type,
+    const std::shared_ptr<const TypeWithId>& nodeType,
     StripeStreams& stripe,
-    common::ScanSpec* scanSpec)
-    : SelectiveColumnReader(ek, stripe, scanSpec, type->type) {
-  RleVersion rleVersion = convertRleVersion(stripe.getEncoding(ek).kind());
-  auto lenId = ek.forKind(proto::Stream_Kind_LENGTH);
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+    : SelectiveColumnReader(
+          nodeType,
+          stripe,
+          scanSpec,
+          nodeType->type,
+          std::move(flatMapContext)) {
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  RleVersion rleVersion =
+      convertRleVersion(stripe.getEncoding(encodingKey).kind());
+  auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
   bool lenVInts = stripe.getUseVInts(lenId);
   lengthDecoder_ = IntDecoder</*isSigned*/ false>::createRle(
       stripe.getStream(lenId, true),
       rleVersion,
-      memoryPool,
+      memoryPool_,
       lenVInts,
       INT_BYTE_SIZE);
-  blobStream_ = stripe.getStream(ek.forKind(proto::Stream_Kind_DATA), true);
+  blobStream_ =
+      stripe.getStream(encodingKey.forKind(proto::Stream_Kind_DATA), true);
 }
 
 uint64_t SelectiveStringDirectColumnReader::skip(uint64_t numValues) {
   numValues = ColumnReader::skip(numValues);
-  ensureCapacity<int64_t>(lengths_, numValues, &memoryPool);
+  ensureCapacity<int64_t>(lengths_, numValues, &memoryPool_);
   lengthDecoder_->nextLengths(lengths_->asMutable<int32_t>(), numValues);
   rawLengths_ = lengths_->as<uint32_t>();
   for (auto i = 0; i < numValues; ++i) {
@@ -2987,7 +3024,7 @@ void SelectiveStringDirectColumnReader::read(
   auto end = rows.back() + 1;
   auto numNulls =
       nullsInReadRange_ ? BaseVector::countNulls(nullsInReadRange_, 0, end) : 0;
-  ensureCapacity<int32_t>(lengths_, end - numNulls, &memoryPool);
+  ensureCapacity<int32_t>(lengths_, end - numNulls, &memoryPool_);
   lengthDecoder_->nextLengths(lengths_->asMutable<int32_t>(), end - numNulls);
   rawLengths_ = lengths_->as<uint32_t>();
   lengthIndex_ = 0;
@@ -3025,10 +3062,10 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
   using ValueType = int32_t;
 
   SelectiveStringDictionaryColumnReader(
-      const EncodingKey& ek,
-      const std::shared_ptr<const TypeWithId>& type,
+      const std::shared_ptr<const TypeWithId>& nodeType,
       StripeStreams& stripe,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec* scanSpec,
+      FlatMapContext flatMapContext);
 
   void resetFilterCaches() override {
     // 'filterCache_' could be empty before first read.
@@ -3044,8 +3081,12 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (flatMapContext_.inMapDecoder) {
+      flatMapContext_.inMapDecoder->seekToRowGroup(positionsProvider);
+    }
+
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     if (strideDictStream_) {
@@ -3123,57 +3164,65 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
 };
 
 SelectiveStringDictionaryColumnReader::SelectiveStringDictionaryColumnReader(
-    const EncodingKey& ek,
-    const std::shared_ptr<const TypeWithId>& type,
+    const std::shared_ptr<const TypeWithId>& nodeType,
     StripeStreams& stripe,
-    common::ScanSpec* scanSpec)
-    : SelectiveColumnReader(ek, stripe, scanSpec, type->type),
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+    : SelectiveColumnReader(
+          nodeType,
+          stripe,
+          scanSpec,
+          nodeType->type,
+          std::move(flatMapContext)),
       lastStrideIndex_(-1),
       provider_(stripe.getStrideIndexProvider()) {
-  RleVersion rleVersion = convertRleVersion(stripe.getEncoding(ek).kind());
-  dictionaryCount_ = stripe.getEncoding(ek).dictionarysize();
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  RleVersion rleVersion =
+      convertRleVersion(stripe.getEncoding(encodingKey).kind());
+  dictionaryCount_ = stripe.getEncoding(encodingKey).dictionarysize();
 
-  const auto dataId = ek.forKind(proto::Stream_Kind_DATA);
+  const auto dataId = encodingKey.forKind(proto::Stream_Kind_DATA);
   bool dictVInts = stripe.getUseVInts(dataId);
   dictIndex_ = IntDecoder</*isSigned*/ false>::createRle(
       stripe.getStream(dataId, true),
       rleVersion,
-      memoryPool,
+      memoryPool_,
       dictVInts,
       INT_BYTE_SIZE);
 
-  const auto lenId = ek.forKind(proto::Stream_Kind_LENGTH);
+  const auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
   bool lenVInts = stripe.getUseVInts(lenId);
   lengthDecoder_ = IntDecoder</*isSigned*/ false>::createRle(
       stripe.getStream(lenId, false),
       rleVersion,
-      memoryPool,
+      memoryPool_,
       lenVInts,
       INT_BYTE_SIZE);
 
-  blobStream_ =
-      stripe.getStream(ek.forKind(proto::Stream_Kind_DICTIONARY_DATA), false);
+  blobStream_ = stripe.getStream(
+      encodingKey.forKind(proto::Stream_Kind_DICTIONARY_DATA), false);
 
   // handle in dictionary stream
-  std::unique_ptr<SeekableInputStream> inDictStream =
-      stripe.getStream(ek.forKind(proto::Stream_Kind_IN_DICTIONARY), false);
+  std::unique_ptr<SeekableInputStream> inDictStream = stripe.getStream(
+      encodingKey.forKind(proto::Stream_Kind_IN_DICTIONARY), false);
   if (inDictStream) {
     DWIO_ENSURE_NOT_NULL(indexStream_, "String index is missing");
 
-    inDictionaryReader_ = createBooleanRleDecoder(std::move(inDictStream), ek);
+    inDictionaryReader_ =
+        createBooleanRleDecoder(std::move(inDictStream), encodingKey);
 
     // stride dictionary only exists if in dictionary exists
     strideDictStream_ = stripe.getStream(
-        ek.forKind(proto::Stream_Kind_STRIDE_DICTIONARY), true);
+        encodingKey.forKind(proto::Stream_Kind_STRIDE_DICTIONARY), true);
     DWIO_ENSURE_NOT_NULL(strideDictStream_, "Stride dictionary is missing");
 
     const auto strideDictLenId =
-        ek.forKind(proto::Stream_Kind_STRIDE_DICTIONARY_LENGTH);
+        encodingKey.forKind(proto::Stream_Kind_STRIDE_DICTIONARY_LENGTH);
     bool strideLenVInt = stripe.getUseVInts(strideDictLenId);
     strideDictLengthDecoder_ = IntDecoder</*isSigned*/ false>::createRle(
         stripe.getStream(strideDictLenId, true),
         rleVersion,
-        memoryPool,
+        memoryPool_,
         strideLenVInt,
         INT_BYTE_SIZE);
   }
@@ -3206,7 +3255,7 @@ BufferPtr SelectiveStringDictionaryColumnReader::loadDictionary(
 
   // read bytes from underlying string
   int64_t blobSize = offsetsPtr[count];
-  BufferPtr dictionary = AlignedBuffer::allocate<char>(blobSize, &memoryPool);
+  BufferPtr dictionary = AlignedBuffer::allocate<char>(blobSize, &memoryPool_);
   data.readFully(dictionary->asMutable<char>(), blobSize);
   return dictionary;
 }
@@ -3229,7 +3278,7 @@ void SelectiveStringDictionaryColumnReader::loadStrideDictionary() {
     strideDictLengthDecoder_->seekToRowGroup(pp);
 
     ensureCapacity<int64_t>(
-        strideDictOffset_, strideDictCount_ + 1, &memoryPool);
+        strideDictOffset_, strideDictCount_ + 1, &memoryPool_);
     strideDict_ = loadDictionary(
         strideDictCount_,
         *strideDictStream_,
@@ -3255,7 +3304,7 @@ void SelectiveStringDictionaryColumnReader::makeDictionaryBaseVector() {
   if (strideDictCount_) {
     // TODO Reuse memory
     BufferPtr values = AlignedBuffer::allocate<StringView>(
-        dictionaryCount_ + strideDictCount_, &memoryPool);
+        dictionaryCount_ + strideDictCount_, &memoryPool_);
     auto* valuesPtr = values->asMutable<StringView>();
     for (size_t i = 0; i < dictionaryCount_; i++) {
       valuesPtr[i] = StringView(
@@ -3272,7 +3321,7 @@ void SelectiveStringDictionaryColumnReader::makeDictionaryBaseVector() {
     }
 
     dictionaryValues_ = std::make_shared<FlatVector<StringView>>(
-        &memoryPool,
+        &memoryPool_,
         type_,
         BufferPtr(nullptr), // TODO nulls
         dictionaryCount_ + strideDictCount_ /*length*/,
@@ -3281,7 +3330,7 @@ void SelectiveStringDictionaryColumnReader::makeDictionaryBaseVector() {
   } else {
     // TODO Reuse memory
     BufferPtr values =
-        AlignedBuffer::allocate<StringView>(dictionaryCount_, &memoryPool);
+        AlignedBuffer::allocate<StringView>(dictionaryCount_, &memoryPool_);
     auto* valuesPtr = values->asMutable<StringView>();
     for (size_t i = 0; i < dictionaryCount_; i++) {
       valuesPtr[i] = StringView(
@@ -3290,7 +3339,7 @@ void SelectiveStringDictionaryColumnReader::makeDictionaryBaseVector() {
     }
 
     dictionaryValues_ = std::make_shared<FlatVector<StringView>>(
-        &memoryPool,
+        &memoryPool_,
         type_,
         BufferPtr(nullptr), // TODO nulls
         dictionaryCount_ /*length*/,
@@ -3699,7 +3748,7 @@ void SelectiveStringDictionaryColumnReader::read(
     int32_t numFlags = (isBulk && nullsInReadRange_)
         ? bits::countNonNulls(nullsInReadRange_->as<uint64_t>(), 0, end)
         : end;
-    ensureCapacity<uint64_t>(inDict_, bits::nwords(numFlags), &memoryPool);
+    ensureCapacity<uint64_t>(inDict_, bits::nwords(numFlags), &memoryPool_);
     inDictionaryReader_->next(
         inDict_->asMutable<char>(), numFlags, isBulk ? nullptr : nullsPtr);
     loadStrideDictionary();
@@ -3773,7 +3822,7 @@ void SelectiveStringDictionaryColumnReader::getValues(
   compactScalarValues<int32_t, int32_t>(rows, false);
 
   *result = std::make_shared<DictionaryVector<StringView>>(
-      &memoryPool,
+      &memoryPool_,
       !anyNulls_               ? nullptr
           : returnReaderNulls_ ? nullsInReadRange_
                                : resultNulls_,
@@ -3784,7 +3833,7 @@ void SelectiveStringDictionaryColumnReader::getValues(
 
   if (scanSpec_->makeFlat()) {
     BaseVector::ensureWritable(
-        SelectivityVector::empty(), (*result)->type(), &memoryPool, result);
+        SelectivityVector::empty(), (*result)->type(), &memoryPool_, result);
   }
 }
 
@@ -3795,7 +3844,8 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
 
   Timer timer;
 
-  ensureCapacity<int64_t>(dictionaryOffset_, dictionaryCount_ + 1, &memoryPool);
+  ensureCapacity<int64_t>(
+      dictionaryOffset_, dictionaryCount_ + 1, &memoryPool_);
   dictionaryBlob_ = loadDictionary(
       dictionaryCount_, *blobStream_, *lengthDecoder_, dictionaryOffset_);
   dictionaryValues_.reset();
@@ -3806,8 +3856,12 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
   if (inDictionaryReader_) {
     ensureRowGroupIndex();
     // load stride dictionary offsets
-    positionOffset_ =
-        notNullDecoder ? notNullDecoder->loadIndices(*index_, 0) : 0;
+    auto indexStartOffset = flatMapContext_.inMapDecoder
+        ? flatMapContext_.inMapDecoder->loadIndices(*index_, 0)
+        : 0;
+    positionOffset_ = notNullDecoder_
+        ? notNullDecoder_->loadIndices(*index_, indexStartOffset)
+        : indexStartOffset;
     size_t offset = strideDictStream_->loadIndices(*index_, positionOffset_);
     strideDictSizeOffset_ =
         strideDictLengthDecoder_->loadIndices(*index_, offset);
@@ -3819,11 +3873,11 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
 class SelectiveStructColumnReader : public SelectiveColumnReader {
  public:
   SelectiveStructColumnReader(
-      const EncodingKey& ek,
       const std::shared_ptr<const TypeWithId>& requestedType,
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec* scanSpec,
+      FlatMapContext flatMapContext);
 
   void resetFilterCaches() override {
     for (auto& child : children_) {
@@ -3832,15 +3886,15 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
-    if (isTopLevel_ && !notNullDecoder) {
+    if (isTopLevel_ && !notNullDecoder_) {
       readOffset_ = index * rowsPerRowGroup_;
       return;
     }
-    if (notNullDecoder) {
+    if (notNullDecoder_) {
       ensureRowGroupIndex();
       auto positions = toPositions(index_->entry(index));
       PositionProvider positionsProvider(positions);
-      notNullDecoder->seekToRowGroup(positionsProvider);
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
     // Set the read offset recursively. Do this before seeking the
     // children because list/map children will reset the offsets for
@@ -3903,7 +3957,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   void setIsTopLevel() override {
     isTopLevel_ = true;
-    if (!notNullDecoder) {
+    if (!notNullDecoder_) {
       for (auto& child : children_) {
         child->setIsTopLevel();
       }
@@ -3913,6 +3967,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   void setRowGroupSpecificFilters();
 
  private:
+  const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
   // created by 'this' to verify they are still valid at load.
@@ -3925,13 +3980,20 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 };
 
 SelectiveStructColumnReader::SelectiveStructColumnReader(
-    const EncodingKey& ek,
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
-    common::ScanSpec* scanSpec)
-    : SelectiveColumnReader(ek, stripe, scanSpec, dataType->type) {
-  DWIO_ENSURE_EQ(ek.node, dataType->id, "working on the same node");
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+    : SelectiveColumnReader(
+          dataType,
+          stripe,
+          scanSpec,
+          dataType->type,
+          std::move(flatMapContext)),
+      requestedType_{requestedType} {
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  DWIO_ENSURE_EQ(encodingKey.node, dataType->id, "working on the same node");
   auto encoding = static_cast<int64_t>(stripe.getEncoding(encodingKey).kind());
   DWIO_ENSURE_EQ(
       encoding,
@@ -3945,12 +4007,16 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     if (childSpec->isConstant()) {
       continue;
     }
-    auto childDataType = dataType->childByName(childSpec->fieldName());
+    auto childDataType = nodeType_->childByName(childSpec->fieldName());
     auto childRequestedType =
-        requestedType->childByName(childSpec->fieldName());
+        requestedType_->childByName(childSpec->fieldName());
     VELOX_CHECK(cs.shouldReadNode(childDataType->id));
     children_.push_back(SelectiveColumnReader::build(
-        childRequestedType, childDataType, stripe, childSpec, ek.sequence));
+        childRequestedType,
+        childDataType,
+        stripe,
+        childSpec,
+        FlatMapContext{encodingKey.sequence, nullptr}));
     childSpec->setSubscript(children_.size() - 1);
   }
 }
@@ -4226,7 +4292,7 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
           lazyPrepared = true;
         }
         resultRow->childAt(channel) = std::make_shared<LazyVector>(
-            &memoryPool,
+            &memoryPool_,
             resultRow->type()->childAt(channel),
             rows.size(),
             std::make_unique<ColumnLoader>(
@@ -4251,18 +4317,25 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
   static constexpr size_t kBufferSize = 1024;
 
   SelectiveRepeatedColumnReader(
-      const EncodingKey& ek,
+      std::shared_ptr<const TypeWithId> nodeType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
-      const TypePtr& type)
-      : SelectiveColumnReader(ek, stripe, scanSpec, type) {
+      const TypePtr& type,
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext())
+      : SelectiveColumnReader(
+            std::move(nodeType),
+            stripe,
+            scanSpec,
+            type,
+            flatMapContext) {
+    EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
     auto rleVersion = convertRleVersion(stripe.getEncoding(encodingKey).kind());
     auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
     bool lenVints = stripe.getUseVInts(lenId);
     length_ = IntDecoder</*isSigned*/ false>::createRle(
         stripe.getStream(lenId, true),
         rleVersion,
-        memoryPool,
+        memoryPool_,
         lenVints,
         INT_BYTE_SIZE);
   }
@@ -4275,8 +4348,8 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
     // Reads the lengths, leaves an uninitialized gap for a null
     // map/list. Reading these checks the null nask.
     length_->next(allLengths_.data(), rows.back() + 1, nulls);
-    ensureCapacity<vector_size_t>(offsets_, rows.size(), &memoryPool);
-    ensureCapacity<vector_size_t>(sizes_, rows.size(), &memoryPool);
+    ensureCapacity<vector_size_t>(offsets_, rows.size(), &memoryPool_);
+    ensureCapacity<vector_size_t>(sizes_, rows.size(), &memoryPool_);
     auto rawOffsets = offsets_->asMutable<vector_size_t>();
     auto rawSizes = sizes_->asMutable<vector_size_t>();
     vector_size_t nestedLength = 0;
@@ -4365,7 +4438,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
   // Creates a struct if '*result' is empty and 'type' is a row.
   void prepareStructResult(const TypePtr& type, VectorPtr* result) {
     if (!*result && type->kind() == TypeKind::ROW) {
-      *result = BaseVector::create(type, 0, &memoryPool);
+      *result = BaseVector::create(type, 0, &memoryPool_);
     }
   }
 
@@ -4385,11 +4458,11 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
 class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
  public:
   SelectiveListColumnReader(
-      const EncodingKey& ek,
       const std::shared_ptr<const TypeWithId>& requestedType,
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec* scanSpec,
+      FlatMapContext flatMapContext);
 
   void resetFilterCaches() override {
     child_->resetFilterCaches();
@@ -4401,8 +4474,8 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     length_->seekToRowGroup(positionsProvider);
@@ -4423,21 +4496,27 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
 
  private:
   std::unique_ptr<SelectiveColumnReader> child_;
-  const TypePtr requestedType_;
+  const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
 
 SelectiveListColumnReader::SelectiveListColumnReader(
-    const EncodingKey& ek,
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
-    common::ScanSpec* scanSpec)
-    : SelectiveRepeatedColumnReader(ek, stripe, scanSpec, dataType->type),
-      requestedType_(requestedType->type) {
-  DWIO_ENSURE_EQ(ek.node, dataType->id, "working on the same node");
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+    : SelectiveRepeatedColumnReader(
+          dataType,
+          stripe,
+          scanSpec,
+          dataType->type,
+          std::move(flatMapContext)),
+      requestedType_{requestedType} {
+  DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
   // count the number of selected sub-columns
   const auto& cs = stripe.getColumnSelector();
-  auto& childType = requestedType->childAt(0);
+  auto& childType = requestedType_->childAt(0);
   VELOX_CHECK(
       cs.shouldReadNode(childType->id),
       "SelectiveListColumnReader must select the values stream");
@@ -4449,10 +4528,10 @@ SelectiveListColumnReader::SelectiveListColumnReader(
 
   child_ = SelectiveColumnReader::build(
       childType,
-      dataType->childAt(0),
+      nodeType_->childAt(0),
       stripe,
       scanSpec_->children()[0].get(),
-      ek.sequence);
+      FlatMapContext{encodingKey.sequence, nullptr});
 }
 
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
@@ -4502,8 +4581,8 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
     child_->getValues(nestedRows_, &elements);
   }
   *result = std::make_shared<ArrayVector>(
-      &memoryPool,
-      requestedType_,
+      &memoryPool_,
+      requestedType_->type,
       anyNulls_ ? resultNulls_ : nullptr,
       rows.size(),
       offsets_,
@@ -4514,11 +4593,11 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
 class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
  public:
   SelectiveMapColumnReader(
-      const EncodingKey& ek,
       const std::shared_ptr<const TypeWithId>& requestedType,
       const std::shared_ptr<const TypeWithId>& dataType,
       StripeStreams& stripe,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec* scanSpec,
+      FlatMapContext flatMapContext);
 
   void resetFilterCaches() override {
     keyReader_->resetFilterCaches();
@@ -4531,8 +4610,8 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 
-    if (notNullDecoder) {
-      notNullDecoder->seekToRowGroup(positionsProvider);
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
     }
 
     length_->seekToRowGroup(positionsProvider);
@@ -4556,18 +4635,24 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
  private:
   std::unique_ptr<SelectiveColumnReader> keyReader_;
   std::unique_ptr<SelectiveColumnReader> elementReader_;
-  const TypePtr requestedType_;
+  const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
 
 SelectiveMapColumnReader::SelectiveMapColumnReader(
-    const EncodingKey& ek,
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
-    common::ScanSpec* scanSpec)
-    : SelectiveRepeatedColumnReader(ek, stripe, scanSpec, dataType->type),
-      requestedType_(requestedType->type) {
-  DWIO_ENSURE_EQ(ek.node, dataType->id, "working on the same node");
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+    : SelectiveRepeatedColumnReader(
+          dataType,
+          stripe,
+          scanSpec,
+          dataType->type,
+          std::move(flatMapContext)),
+      requestedType_{requestedType} {
+  DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
   if (scanSpec_->children().empty()) {
     scanSpec->getOrCreateChild(common::Subfield("keys"));
     scanSpec->getOrCreateChild(common::Subfield("elements"));
@@ -4578,29 +4663,29 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
   scanSpec_->children()[1]->setExtractValues(true);
 
   const auto& cs = stripe.getColumnSelector();
-  auto& keyType = requestedType->childAt(0);
+  auto& keyType = requestedType_->childAt(0);
   VELOX_CHECK(
       cs.shouldReadNode(keyType->id),
       "Map key must be selected in SelectiveMapColumnReader");
   keyReader_ = SelectiveColumnReader::build(
       keyType,
-      dataType->childAt(0),
+      nodeType_->childAt(0),
       stripe,
       scanSpec_->children()[0].get(),
-      ek.sequence);
+      FlatMapContext{encodingKey.sequence, nullptr});
 
-  auto& valueType = requestedType->childAt(1);
+  auto& valueType = requestedType_->childAt(1);
   VELOX_CHECK(
       cs.shouldReadNode(valueType->id),
       "Map Values must be selected in SelectiveMapColumnReader");
   elementReader_ = SelectiveColumnReader::build(
       valueType,
-      dataType->childAt(1),
+      nodeType_->childAt(1),
       stripe,
       scanSpec_->children()[1].get(),
-      ek.sequence);
+      FlatMapContext{encodingKey.sequence, nullptr});
 
-  VLOG(1) << "[Map] Initialized map column reader for node " << dataType->id;
+  VLOG(1) << "[Map] Initialized map column reader for node " << nodeType_->id;
 }
 
 uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
@@ -4671,8 +4756,8 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
     elementReader_->getValues(nestedRows_, &values);
   }
   *result = std::make_shared<MapVector>(
-      &memoryPool,
-      requestedType_,
+      &memoryPool_,
+      requestedType_->type,
       anyNulls_ ? resultNulls_ : nullptr,
       rows.size(),
       offsets_,
@@ -4684,19 +4769,20 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
 } // namespace
 
 std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
-    const EncodingKey& ek,
     const std::shared_ptr<const TypeWithId>& requestedType,
+    FlatMapContext flatMapContext,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
     uint32_t numBytes,
     common::ScanSpec* scanSpec) {
+  EncodingKey ek{requestedType->id, flatMapContext.sequence};
   switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
     case proto::ColumnEncoding_Kind_DICTIONARY:
       return std::make_unique<SelectiveIntegerDictionaryColumnReader>(
-          ek, requestedType, dataType, stripe, scanSpec, numBytes);
+          requestedType, dataType, stripe, scanSpec, numBytes);
     case proto::ColumnEncoding_Kind_DIRECT:
       return std::make_unique<SelectiveIntegerDirectColumnReader>(
-          ek, requestedType, dataType, stripe, numBytes, scanSpec);
+          requestedType, dataType, stripe, numBytes, scanSpec);
     default:
       DWIO_RAISE("buildReader unhandled integer encoding");
   }
@@ -4707,62 +4793,87 @@ std::unique_ptr<SelectiveColumnReader> SelectiveColumnReader::build(
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
-    uint32_t sequence) {
+    FlatMapContext flatMapContext) {
   CompatChecker::check(*dataType->type, *requestedType->type);
-  EncodingKey ek(dataType->id, sequence);
+  EncodingKey ek{dataType->id, flatMapContext.sequence};
 
   switch (dataType->type->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(
-          ek, requestedType, dataType, stripe, INT_BYTE_SIZE, scanSpec);
+          requestedType,
+          std::move(flatMapContext),
+          dataType,
+          stripe,
+          INT_BYTE_SIZE,
+          scanSpec);
     case TypeKind::BIGINT:
       return buildIntegerReader(
-          ek, requestedType, dataType, stripe, LONG_BYTE_SIZE, scanSpec);
+          requestedType,
+          std::move(flatMapContext),
+          dataType,
+          stripe,
+          LONG_BYTE_SIZE,
+          scanSpec);
     case TypeKind::SMALLINT:
       return buildIntegerReader(
-          ek, requestedType, dataType, stripe, SHORT_BYTE_SIZE, scanSpec);
+          requestedType,
+          std::move(flatMapContext),
+          dataType,
+          stripe,
+          SHORT_BYTE_SIZE,
+          scanSpec);
     case TypeKind::ARRAY:
       return std::make_unique<SelectiveListColumnReader>(
-          ek, requestedType, dataType, stripe, scanSpec);
+          requestedType, dataType, stripe, scanSpec, flatMapContext);
     case TypeKind::MAP:
       if (stripe.getEncoding(ek).kind() ==
           proto::ColumnEncoding_Kind_MAP_FLAT) {
         VELOX_UNSUPPORTED("SelectiveColumnReader does not support flat maps");
       }
       return std::make_unique<SelectiveMapColumnReader>(
-          ek, requestedType, dataType, stripe, scanSpec);
+          requestedType, dataType, stripe, scanSpec, std::move(flatMapContext));
     case TypeKind::REAL:
       if (requestedType->type->kind() == TypeKind::REAL) {
         return std::make_unique<
             SelectiveFloatingPointColumnReader<float, float>>(
-            ek, stripe, scanSpec);
+            requestedType, stripe, scanSpec, std::move(flatMapContext));
       } else {
         return std::make_unique<
             SelectiveFloatingPointColumnReader<float, double>>(
-            ek, stripe, scanSpec);
+            requestedType, stripe, scanSpec, std::move(flatMapContext));
       }
     case TypeKind::DOUBLE:
       return std::make_unique<
           SelectiveFloatingPointColumnReader<double, double>>(
-          ek, stripe, scanSpec);
+          requestedType, stripe, scanSpec, std::move(flatMapContext));
     case TypeKind::ROW:
       return std::make_unique<SelectiveStructColumnReader>(
-          ek, requestedType, dataType, stripe, scanSpec);
+          requestedType, dataType, stripe, scanSpec, std::move(flatMapContext));
     case TypeKind::BOOLEAN:
       return std::make_unique<SelectiveByteRleColumnReader>(
-          ek, requestedType, dataType, stripe, scanSpec, true);
+          requestedType,
+          dataType,
+          stripe,
+          scanSpec,
+          true,
+          std::move(flatMapContext));
     case TypeKind::TINYINT:
       return std::make_unique<SelectiveByteRleColumnReader>(
-          ek, requestedType, dataType, stripe, scanSpec, false);
+          requestedType,
+          dataType,
+          stripe,
+          scanSpec,
+          false,
+          std::move(flatMapContext));
     case TypeKind::VARBINARY:
     case TypeKind::VARCHAR:
       switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
         case proto::ColumnEncoding_Kind_DIRECT:
           return std::make_unique<SelectiveStringDirectColumnReader>(
-              ek, dataType, stripe, scanSpec);
+              requestedType, stripe, scanSpec, std::move(flatMapContext));
         case proto::ColumnEncoding_Kind_DICTIONARY:
           return std::make_unique<SelectiveStringDictionaryColumnReader>(
-              ek, dataType, stripe, scanSpec);
+              requestedType, stripe, scanSpec, std::move(flatMapContext));
         default:
           DWIO_RAISE("buildReader string unknown encoding");
       }
