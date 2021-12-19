@@ -70,6 +70,7 @@ class ScanSpec {
   // pushed down filter, e.g. top k cutoff.
   void setFilter(std::unique_ptr<Filter> filter) {
     filter_ = std::move(filter);
+    localFilter_ = nullptr;
   }
 
   void specializeFilter(
