@@ -29,9 +29,9 @@ namespace facebook::velox::cache {
 
 class AsyncDataCache;
 class CacheShard;
-  class SsdFile;
+class SsdFile;
 
-  // Type for tracking last access. This is based on CPU clock and
+// Type for tracking last access. This is based on CPU clock and
 // scaled to be around 1ms resolution. This can wrap around and is
 // only comparable to other values of the same type. This is a
 // ballpark figure and factors like variability of clock speed do not
@@ -229,7 +229,7 @@ class AsyncDataCacheEntry {
   uint64_t ssdOffset() const {
     return ssdOffset_;
   }
-  
+
  private:
   void release();
   void addReference();
@@ -287,7 +287,7 @@ class AsyncDataCacheEntry {
 
   // Offset in 'ssdFile_'.
   uint64_t ssdOffset_{0};
-  
+
   friend class CacheShard;
   friend class CachePin;
 };
@@ -332,7 +332,7 @@ class CachePin {
     return entry_;
   }
 
-    bool operator<(const CachePin& other) const {
+  bool operator<(const CachePin& other) const {
     auto id1 = entry_->key_.fileNum.id();
     auto id2 = other.entry_->key_.fileNum.id();
     if (id1 == id2) {
@@ -707,7 +707,7 @@ T percentile(Next next, int32_t numSamples, int percent) {
   return values.empty() ? 0 : values[(values.size() * percent) / 100];
 }
 
-  // Describes the outcome of readPins().
+// Describes the outcome of readPins().
 struct ReadPinsResult {
   // Number of distinct IOs.
   int32_t numReads{0};
