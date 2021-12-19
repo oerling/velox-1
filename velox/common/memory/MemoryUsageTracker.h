@@ -36,7 +36,6 @@ constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
       "Exceeded memory cap of {} MB",                               \
       (cap) / 1024 / 1024);
 
-
 struct MemoryUsageConfig {
   std::optional<int64_t> maxUserMemory;
   std::optional<int64_t> maxSystemMemory;

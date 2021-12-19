@@ -4109,7 +4109,8 @@ void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
       auto& reader = children_[childSpec->subscript()];
       auto rowGroupIndex = readOffset_ / rowsPerRowGroup_;
       auto stats = reader->rowGroupStats(rowGroupIndex);
-      if (stats && dynamic_cast<SelectiveIntegerDirectColumnReader*>(reader.get())) {
+      if (stats &&
+          dynamic_cast<SelectiveIntegerDirectColumnReader*>(reader.get())) {
         childSpec->specializeFilter(reader->type(), stats);
       }
     }
