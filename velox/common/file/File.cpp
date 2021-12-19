@@ -80,6 +80,8 @@ LocalReadFile::LocalReadFile(std::string_view path) {
   VELOX_CHECK_GE(fd_, 0, "open failure in LocalReadFile constructor, {}.", fd_);
 }
 
+LocalReadFile::LocalReadFile(int32_t fd) : fd_(fd) {}
+
 void LocalReadFile::preadInternal(uint64_t offset, uint64_t length, char* pos)
     const {
   bytesRead_ += length;
