@@ -245,7 +245,6 @@ class SsdFile {
   // Map of file number and offset to location in file.
   folly::F14FastMap<FileCacheKey, SsdRun> entries_;
 
-
   // Name of backing file.
   const std::string filename_;
 

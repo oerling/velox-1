@@ -21,7 +21,7 @@
 
 namespace facebook::velox::cache {
 
-  void SsdFileTracker::newEvent(int32_t totalEntries) {
+void SsdFileTracker::newEvent(int32_t totalEntries) {
   ++numEvents_;
   if (numEvents_ > kDecayInterval && numEvents_ > totalEntries / 2) {
     numEvents_ = 0;
@@ -43,7 +43,7 @@ void SsdFileTracker::regionFilled(int32_t region) {
 std::vector<int32_t> SsdFileTracker::evictionCandidates(
     int32_t numCandidates,
     int32_t numRegions,
-    const std::vector < int32_t>& regionPins) {
+    const std::vector<int32_t>& regionPins) {
   // Takes regions with no pins  and below average score and
   int64_t scoreSum = 0;
   for (int i = 0; i < numRegions; ++i) {

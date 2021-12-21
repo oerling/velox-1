@@ -37,7 +37,7 @@ class SsdFileTracker {
   void clearScore(int32_t region) {
     regionScore_[region] = 0;
   }
-  
+
   // Increments event count and periodically decays
   // scores. 'totalEntries' is the count of distinct entries in the
   // tracked file.
