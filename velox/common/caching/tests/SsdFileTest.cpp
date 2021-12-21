@@ -188,7 +188,8 @@ class SsdFileTest : public testing::Test {
     // Only Some pins get written because space cannot be cleared
     // because all regions are pinned. The file will not give out new
     // pins so that this situation is not continued
-    EXPECT_TRUE(ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
+    EXPECT_TRUE(
+        ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
     int32_t numWritten = 0;
     for (auto& pin : pins) {
       if (pin.entry()->ssdFile()) {
@@ -202,7 +203,8 @@ class SsdFileTest : public testing::Test {
 
     // The pins were cleared and the file is no longer suspended. Check that the
     // entry that was not found is found now.
-    EXPECT_FALSE(ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
+    EXPECT_FALSE(
+        ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
 
     pins.erase(pins.begin(), pins.begin() + numWritten);
     ssdFile_->write(pins);

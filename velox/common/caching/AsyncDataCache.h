@@ -795,7 +795,8 @@ CoalescedIoStats coalescedIo(
     if (lastOffset != startOffset || enoughRanges) {
       int64_t gap = startOffset - lastOffset;
       if (gap > 0 && gap < maxGap && !enoughRanges) {
-	// The next one is after the previous and no farther than maxGap bytes, we read the gap but do not retail the bytes.
+        // The next one is after the previous and no farther than maxGap bytes,
+        // we read the gap but do not retail the bytes.
         result.extraBytes += gap;
         skipRange(gap, ranges);
       } else {

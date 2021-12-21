@@ -185,14 +185,15 @@ void SsdFile::read(
   readFile_->preadv(offset, buffers);
 }
 
-  std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
+std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
     const std::vector<CachePin>& pins,
     int32_t begin) {
   std::lock_guard<std::mutex> l(mutex_);
   for (;;) {
     if (writableRegions_.empty()) {
       if (!growOrEvictLocked()) {
-        return std::nullopt;;
+        return std::nullopt;
+        ;
       }
     }
     auto region = writableRegions_[0];
@@ -211,7 +212,8 @@ void SsdFile::read(
       // At least some pins got space from this region. If the region is full
       // the next call will get space from another region.
       regionSize_[region] += toWrite;
-      return std::make_pair<uint64_t, int32_t>(region * kRegionSize + offset, toWrite);
+      return std::make_pair<uint64_t, int32_t>(
+          region * kRegionSize + offset, toWrite);
     }
     // A region has been filled and transits from writable to
     // evictable. Set its score to be at least the best score +

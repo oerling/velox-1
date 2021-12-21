@@ -279,8 +279,8 @@ TEST_F(AsyncDataCacheTest, coalesce) {
   //
   // The first 3 are in close proximity. But the 3rd is apart because
   // bundling this with the 2 first would exceed the batch size of 8.
-  pins.push_back(cache_->findOrCreate(
-      RawFileCacheKey{fileId, 1000}, 100 * kKB, nullptr));
+  pins.push_back(
+      cache_->findOrCreate(RawFileCacheKey{fileId, 1000}, 100 * kKB, nullptr));
   pins.push_back(cache_->findOrCreate(
       RawFileCacheKey{fileId, 130000}, 100 * kKB, nullptr));
   pins.push_back(cache_->findOrCreate(
