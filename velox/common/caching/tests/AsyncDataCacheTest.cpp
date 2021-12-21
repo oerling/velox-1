@@ -321,4 +321,3 @@ TEST_F(AsyncDataCacheTest, coalesce) {
   EXPECT_EQ(3, readBuffers[1].size());
   EXPECT_EQ(3, readBuffers[2].size());
 }
-
