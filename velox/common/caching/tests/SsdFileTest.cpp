@@ -144,7 +144,7 @@ class SsdFileTest : public testing::Test {
     std::vector<SsdPin> pins;
     int32_t lastRegion = -1;
     for (auto& entry : entries) {
-      if (entry.ssdOffset / SsdFile::kRegionSize >= lastRegion) {
+      if (entry.ssdOffset / SsdFile::kRegionSize != lastRegion) {
         lastRegion = entry.key.offset / SsdFile::kRegionSize;
         pins.push_back(
             ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
@@ -184,10 +184,11 @@ class SsdFileTest : public testing::Test {
       int64_t ssdSize) {
     auto ssdPins = pinAllRegions(allEntries);
     auto pins = makePins(fileName_.id(), ssdSize, 4096, 2048 * 1025, 62 * kMB);
-    auto originalPins = pins;
     ssdFile_->write(pins);
-    // Only Some pins get written but space cannot be cleared because all
-    // regions are pinned.
+    // Only Some pins get written because space cannot be cleared
+    // because all regions are pinned. The file will not give out new
+    // pins so that this situation is not continued
+    EXPECT_TRUE(ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
     int32_t numWritten = 0;
     for (auto& pin : pins) {
       if (pin.entry()->ssdFile()) {
@@ -198,6 +199,11 @@ class SsdFileTest : public testing::Test {
     }
     EXPECT_LT(numWritten, pins.size());
     ssdPins.clear();
+
+    // The pins were cleared and the file is no longer suspended. Check that the
+    // entry that was not found is found now.
+    EXPECT_FALSE(ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
+
     pins.erase(pins.begin(), pins.begin() + numWritten);
     ssdFile_->write(pins);
     for (auto& pin : pins) {
@@ -206,7 +212,12 @@ class SsdFileTest : public testing::Test {
             pin.entry()->key(), pin.entry()->ssdOffset(), pin.entry()->size());
       }
     }
-    readAndCheckPins(originalPins);
+    // Clear the pins and read back. Clear must complete before
+    // makePins so that there are no pre-existing exclusive pins for the same
+    // key.
+    pins.clear();
+    pins = makePins(fileName_.id(), ssdSize, 4096, 2048 * 1025, 62 * kMB);
+    readAndCheckPins(pins);
   }
 
   std::shared_ptr<AsyncDataCache> cache_;

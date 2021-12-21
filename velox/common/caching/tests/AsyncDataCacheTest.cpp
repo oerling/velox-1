@@ -270,6 +270,7 @@ TEST_F(AsyncDataCacheTest, outOfCapacity) {
 TEST_F(AsyncDataCacheTest, coalesce) {
   constexpr int32_t kKB = 1024;
   constexpr int32_t kMB = kKB * kKB;
+  initializeCache(10 * kMB);
   auto fileId = filenames_[0].id();
   std::vector<CachePin> pins;
 
@@ -279,14 +280,11 @@ TEST_F(AsyncDataCacheTest, coalesce) {
   // The first 3 are in close proximity. But the 3rd is apart because
   // bundling this with the 2 first would exceed the batch size of 8.
   pins.push_back(cache_->findOrCreate(
-      RawFileCacheKey{fileId, 101000}, 100 * kKB, nullptr));
+      RawFileCacheKey{fileId, 1000}, 100 * kKB, nullptr));
   pins.push_back(cache_->findOrCreate(
-      RawFileCacheKey{fileId, 101000}, 100 * kKB, nullptr));
+      RawFileCacheKey{fileId, 130000}, 100 * kKB, nullptr));
   pins.push_back(cache_->findOrCreate(
-      RawFileCacheKey{fileId, 203000}, 100 * kKB, nullptr));
-  pins.push_back(cache_->findOrCreate(
-      RawFileCacheKey{fileId, 300000}, 100 * kKB, nullptr));
-
+      RawFileCacheKey{fileId, 260000}, 100 * kKB, nullptr));
   pins.push_back(cache_->findOrCreate(
       RawFileCacheKey{fileId, 700000}, 100 * kKB, nullptr));
 
@@ -295,7 +293,7 @@ TEST_F(AsyncDataCacheTest, coalesce) {
 
   auto stats = readPins(
       pins,
-      10000,
+      30000,
       10,
       [&](int32_t index) -> int64_t { return pins[index].entry()->offset(); },
       [&](const std::vector<CachePin>& pin,
@@ -306,5 +304,20 @@ TEST_F(AsyncDataCacheTest, coalesce) {
         readOffsets.push_back(offset);
         readBuffers.push_back(buffers);
       });
-  EXPECT_EQ(3, readBuffers.size());
+
+  // We expect 3 IOs. The two first are coalesced because of a gap of
+  // under 30000. The third is not coalesced even though it is near
+  // because of the ranges per IO limit of 10. The fourth is too far
+  // from the third to coalesce.
+  EXPECT_EQ(3, stats.numIos);
+  EXPECT_EQ(409600, stats.payloadBytes);
+  EXPECT_EQ(26600, stats.extraBytes);
+
+  EXPECT_EQ(3, readOffsets.size());
+  EXPECT_EQ(1000, readOffsets[0]);
+  EXPECT_EQ(260000, readOffsets[1]);
+  EXPECT_EQ(700000, readOffsets[2]);
+  EXPECT_EQ(7, readBuffers[0].size());
+  EXPECT_EQ(3, readBuffers[1].size());
+  EXPECT_EQ(3, readBuffers[2].size());
 }

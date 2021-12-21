@@ -58,31 +58,6 @@ class SsdRun {
   uint64_t bits_;
 };
 
-// Key for SsdFile lookup. The key is the file number in storage and
-// the offset in the file. SSD cache sizes align to the RAM cache
-// quantized sizes for cached streams from the original file.
-struct SsdKey {
-  StringIdLease file;
-  uint64_t offset;
-
-  bool operator==(const SsdKey& other) const {
-    return offset == other.offset && file.id() == other.file.id();
-  }
-};
-
-} // namespace facebook::velox::cache
-namespace std {
-template <>
-struct hash<::facebook::velox::cache::SsdKey> {
-  size_t operator()(const ::facebook::velox::cache::SsdKey& key) const {
-    return facebook::velox::bits::hashMix(key.file.id(), key.offset);
-  }
-};
-
-} // namespace std
-
-namespace facebook::velox::cache {
-
 // Represents an SsdFile entry that is planned for load or being
 // loaded. This is destroyed after load. Destruction decrements the
 // pin count of the corresponding region of 'file_'. While there are
@@ -218,10 +193,10 @@ class SsdFile {
 
   // Returns [start, size] of contiguous space for storing data of a
   // number of contiguous 'pins' starting with the pin at index
-  // 'begin'.  Returns a run of 0 bytes if there is no space. The
-  // space does not necessarily cover all the pins, so multiple calls
-  // starting at the first unwritten pin may be needed.
-  std::pair<uint64_t, int32_t> getSpace(
+  // 'begin'.  Returns nullopt. The space does not necessarily cover
+  // all the pins, so multiple calls starting at the first unwritten
+  // pin may be needed.
+  std::optional<std::pair<uint64_t, int32_t>> getSpace(
       const std::vector<CachePin>& pins,
       int32_t begin);
 
@@ -272,7 +247,7 @@ class SsdFile {
   std::vector<int32_t> regionPins_;
 
   // Map of file number and offset to location in file.
-  folly::F14FastMap<SsdKey, SsdRun> entries_;
+  folly::F14FastMap<FileCacheKey, SsdRun> entries_;
 
   // Count of reads and writes. The scores are decayed every time the count goes
   // over kDecayInterval or half 'entries_' size, whichever comes first.

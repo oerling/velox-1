@@ -293,6 +293,7 @@ void CacheShard::removeEntryLocked(AsyncDataCacheEntry* entry) {
     VELOX_CHECK(removeIter != entryMap_.end());
     entryMap_.erase(removeIter);
     entry->key_.fileNum.clear();
+    entry->setSsdFile(nullptr, 0);
     if (entry->isPrefetch()) {
       entry->setPrefetch(false);
     }
@@ -540,7 +541,7 @@ CoalescedIoStats readPins(
             offsetInRuns += readSize;
           }
         }
-        VELOX_CHECK(offsetInRuns == size);
+        VELOX_CHECK_EQ(offsetInRuns, size);
       },
       [&](int32_t size, std::vector<folly::Range<char*>>& ranges) {
         ranges.push_back(folly::Range<char*>(nullptr, size));

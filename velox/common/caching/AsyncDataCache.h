@@ -69,6 +69,10 @@ struct AccessStats {
 struct FileCacheKey {
   StringIdLease fileNum;
   uint64_t offset;
+
+  bool operator==(const FileCacheKey& other) const {
+    return offset == other.offset && fileNum.id() == other.fileNum.id();
+  }
 };
 
 // Non-owning reference to a file number and offset.
@@ -719,9 +723,10 @@ struct CoalescedIoStats {
 };
 
 // Utility function for loading multiple pins with coalesced
-// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the largest allowed
-// distance in bytes between the end of one entry and the start of the next. If
-// the gap is larger, the entries will be fetched separately.
+// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the
+// largest allowed distance in bytes between the end of one entry and
+// the start of the next. If the gap is larger or the next is before
+// the end of the previous, the entries will be fetched separately.
 //
 //'offsetFunc' returns the starting offset of the data in the
 // file given a pin and the pin's index in 'pins'. The pins are expected to be
@@ -747,12 +752,12 @@ CoalescedIoStats readPins(
         uint64_t offset,
         const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
-// Generic template for grouping sorted IOs into batches of <
+// Generic template for grouping IOs into batches of <
 // rangesPerIo ranges separated by gaps of size >= maxGap. Element
 // represents the object of the IO, Range is the type representing
 // the IO, e.g. pointer + size, offsetFunc and SizeFunc return the
 // offset and size of an Element, AddRange adds the ranges that
-// correspond to an Element, addEmptyRange adds a gap between
+// correspond to an Element, skipRange adds a gap between
 // neighboring items, ioFunc takes the items, the first item to
 // process, the first item not to process, the offset of the first
 // item and a vector of Ranges.
@@ -763,7 +768,7 @@ template <
     typename ItemSize,
     typename ItemNumRanges,
     typename AddRanges,
-    typename AddEmptyRange,
+    typename SkipRange,
     typename IoFunc>
 CoalescedIoStats coalescedIo(
     const std::vector<Item>& items,
@@ -773,7 +778,7 @@ CoalescedIoStats coalescedIo(
     ItemSize sizeFunc,
     ItemNumRanges numRanges,
     AddRanges addRanges,
-    AddEmptyRange addEmptyRange,
+    SkipRange skipRange,
     IoFunc ioFunc) {
   std::vector<Range> buffers;
   auto start = offsetFunc(0);
@@ -784,13 +789,15 @@ CoalescedIoStats coalescedIo(
   for (int32_t i = 0; i < items.size(); ++i) {
     auto& item = items[i];
     auto startOffset = offsetFunc(i);
-    result.payloadBytes += sizeFunc(i);
+    auto size = sizeFunc(i);
+    result.payloadBytes += size;
     bool enoughRanges = ranges.size() + numRanges(item) >= rangesPerIo;
-    if (lastOffset < startOffset || enoughRanges) {
-      auto gap = startOffset - lastOffset;
-      if (gap < maxGap && !enoughRanges) {
+    if (lastOffset != startOffset || enoughRanges) {
+      int64_t gap = startOffset - lastOffset;
+      if (gap > 0 && gap < maxGap && !enoughRanges) {
+	// The next one is after the previous and no farther than maxGap bytes, we read the gap but do not retail the bytes.
         result.extraBytes += gap;
-        addEmptyRange(gap, ranges);
+        skipRange(gap, ranges);
       } else {
         ioFunc(items, firstItem, i, start, ranges);
         ranges.clear();
@@ -800,7 +807,7 @@ CoalescedIoStats coalescedIo(
       }
     }
     addRanges(item, ranges);
-    lastOffset = startOffset + sizeFunc(i);
+    lastOffset = startOffset + size;
   }
   ioFunc(items, firstItem, items.size(), start, ranges);
   ++result.numIos;
