@@ -747,23 +747,22 @@ CoalescedIoStats readPins(
         uint64_t offset,
         const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
-
-  // Generic template for grouping sorted IOs into batches of <
-  // rangesPerIo ranges separated by gaps of size >= maxGap. Element
-  // represents the object of the IO, Range is the type representing
-  // the IO, e.g. pointer + size, offsetFunc and SizeFunc return the
-  // offset and size of an Element, AddRange adds the ranges that
-  // correspond to an Element, addEmptyRange adds a gap between
-  // neighboring items, ioFunc takes the items, the first item to
-  // process, the first item not to process, the offset of the first
-  // item and a vector of Ranges.
+// Generic template for grouping sorted IOs into batches of <
+// rangesPerIo ranges separated by gaps of size >= maxGap. Element
+// represents the object of the IO, Range is the type representing
+// the IO, e.g. pointer + size, offsetFunc and SizeFunc return the
+// offset and size of an Element, AddRange adds the ranges that
+// correspond to an Element, addEmptyRange adds a gap between
+// neighboring items, ioFunc takes the items, the first item to
+// process, the first item not to process, the offset of the first
+// item and a vector of Ranges.
 template <
     typename Item,
     typename Range,
     typename ItemOffset,
     typename ItemSize,
-  typename ItemNumRanges,
-  typename AddRanges,
+    typename ItemNumRanges,
+    typename AddRanges,
     typename AddEmptyRange,
     typename IoFunc>
 CoalescedIoStats coalescedIo(

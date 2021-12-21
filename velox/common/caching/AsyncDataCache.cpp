@@ -542,7 +542,7 @@ CoalescedIoStats readPins(
         }
         VELOX_CHECK(offsetInRuns == size);
       },
-      [&](int32_t size, std::vector < folly::Range<char*>>& ranges) {
+      [&](int32_t size, std::vector<folly::Range<char*>>& ranges) {
         ranges.push_back(folly::Range<char*>(nullptr, size));
       },
       readFunc);

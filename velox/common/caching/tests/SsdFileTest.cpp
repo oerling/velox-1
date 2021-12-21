@@ -145,10 +145,10 @@ class SsdFileTest : public testing::Test {
     int32_t lastRegion = -1;
     for (auto& entry : entries) {
       if (entry.ssdOffset / SsdFile::kRegionSize >= lastRegion) {
-	lastRegion = entry.key.offset / SsdFile::kRegionSize;
-	pins.push_back(
-		       ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
-	EXPECT_FALSE(pins.back().empty());
+        lastRegion = entry.key.offset / SsdFile::kRegionSize;
+        pins.push_back(
+            ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
+        EXPECT_FALSE(pins.back().empty());
       }
     }
     return pins;
@@ -165,10 +165,8 @@ class SsdFileTest : public testing::Test {
     readPins(
         pins,
         10000,
-	1000,
-        [&](int32_t index) {
-          return ssdPins[index].run().offset();
-        },
+        1000,
+        [&](int32_t index) { return ssdPins[index].run().offset(); },
         [&](const std::vector<CachePin>& pins,
             int32_t begin,
             int32_t end,
@@ -181,7 +179,9 @@ class SsdFileTest : public testing::Test {
     }
   }
 
-  void checkEvictionBlocked(std::vector<TestEntry>& allEntries, int64_t ssdSize) {
+  void checkEvictionBlocked(
+      std::vector<TestEntry>& allEntries,
+      int64_t ssdSize) {
     auto ssdPins = pinAllRegions(allEntries);
     auto pins = makePins(fileName_.id(), ssdSize, 4096, 2048 * 1025, 62 * kMB);
     auto originalPins = pins;
@@ -263,14 +263,12 @@ TEST_F(SsdFileTest, writeAndRead) {
   int32_t numFound = 0;
   for (auto& entry : allEntries) {
     auto pin = cache_->findOrCreate(
-        RawFileCacheKey{fileName_.id(), entry.key.offset},
-        entry.size,
-        nullptr);
+        RawFileCacheKey{fileName_.id(), entry.key.offset}, entry.size, nullptr);
     if (pin.entry()->isExclusive()) {
       auto ssdPin =
           ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset});
       if (!ssdPin.empty()) {
-	++numFound;
+        ++numFound;
         ssdFile_->load(ssdPin.run(), *pin.entry());
         checkContents(pin.entry()->data(), pin.entry()->size());
       }

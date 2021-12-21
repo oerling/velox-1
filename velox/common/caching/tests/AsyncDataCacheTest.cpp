@@ -294,7 +294,9 @@ TEST_F(AsyncDataCacheTest, coalesce) {
   std::vector<std::vector<folly::Range<char*>>> readBuffers;
 
   auto stats = readPins(
-      pins, 10000, 10,
+      pins,
+      10000,
+      10,
       [&](int32_t index) -> int64_t { return pins[index].entry()->offset(); },
       [&](const std::vector<CachePin>& pin,
           int32_t begin,
