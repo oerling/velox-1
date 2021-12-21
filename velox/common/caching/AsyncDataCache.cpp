@@ -503,63 +503,49 @@ std::string AsyncDataCache::toString() const {
       << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20);
   return out.str();
 }
-ReadPinsResult readPins(
+
+CoalescedIoStats readPins(
     const std::vector<CachePin>& pins,
     int32_t maxGap,
-    std::function<uint64_t(const CachePin& pin, int32_t index)> offsetFunc,
+    int32_t rangesPerIo,
+    std::function<uint64_t(int32_t index)> offsetFunc,
     std::function<void(
         const std::vector<CachePin>& pins,
         int32_t begin,
         int32_t end,
         uint64_t offset,
         const std::vector<folly::Range<char*>>& buffers)> readFunc) {
-  std::vector<folly::Range<char*>> buffers;
-  uint64_t start = offsetFunc(pins[0], 0);
-  uint64_t lastOffset = start;
-  ReadPinsResult result;
-  int32_t firstPin = 0;
-  for (auto i = 0; i < pins.size(); ++i) {
-    auto& pin = pins[i];
-    VELOX_CHECK(pin.entry()->key().fileNum.hasValue());
-    auto& data = pin.entry()->data();
-    uint64_t startOffset = offsetFunc(pin, i);
-    result.readBytes += pin.entry()->size();
-    if (lastOffset < startOffset) {
-      auto gap = startOffset - lastOffset;
-      if (gap < maxGap) {
-        result.extraBytes += gap;
-        buffers.push_back(
-            folly::Range<char*>(nullptr, startOffset - lastOffset));
-      } else {
-        readFunc(pins, firstPin, i, start, buffers);
-        buffers.clear();
-        firstPin = i;
-        ++result.numReads;
-        start = startOffset;
-      }
-    }
-
-    auto size = pin.entry()->size();
-    uint64_t offsetInRuns = 0;
-    if (data.numPages() == 0) {
-      buffers.push_back(folly::Range<char*>(pin.entry()->tinyData(), size));
-      offsetInRuns = size;
-    } else {
-      for (int i = 0; i < data.numRuns(); ++i) {
-        auto run = data.runAt(i);
-        uint64_t bytes = run.numBytes();
-        uint64_t readSize = std::min(bytes, size - offsetInRuns);
-        buffers.push_back(folly::Range<char*>(run.data<char>(), readSize));
-        offsetInRuns += readSize;
-      }
-    }
-    VELOX_CHECK(offsetInRuns == size);
-    lastOffset = startOffset + size;
-  }
-
-  readFunc(pins, firstPin, pins.size(), start, buffers);
-  ++result.numReads;
-  return result;
+  return coalescedIo<CachePin, folly::Range<char*>>(
+      pins,
+      maxGap,
+      rangesPerIo,
+      offsetFunc,
+      [&](int32_t index) { return pins[index].entry()->size(); },
+      [&](const CachePin& pin) {
+        return std::max<int32_t>(1, pin.entry()->data().numRuns());
+      },
+      [&](const CachePin& pin, std::vector<folly::Range<char*>>& ranges) {
+        auto& data = pin.entry()->data();
+        uint64_t offsetInRuns = 0;
+        auto size = pin.entry()->size();
+        if (data.numPages() == 0) {
+          ranges.push_back(folly::Range<char*>(pin.entry()->tinyData(), size));
+          offsetInRuns = size;
+        } else {
+          for (int i = 0; i < data.numRuns(); ++i) {
+            auto run = data.runAt(i);
+            uint64_t bytes = run.numBytes();
+            uint64_t readSize = std::min(bytes, size - offsetInRuns);
+            ranges.push_back(folly::Range<char*>(run.data<char>(), readSize));
+            offsetInRuns += readSize;
+          }
+        }
+        VELOX_CHECK(offsetInRuns == size);
+      },
+      [&](int32_t size, std::vector < folly::Range<char*>>& ranges) {
+        ranges.push_back(folly::Range<char*>(nullptr, size));
+      },
+      readFunc);
 }
 
 } // namespace facebook::velox::cache

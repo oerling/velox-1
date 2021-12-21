@@ -266,3 +266,43 @@ TEST_F(AsyncDataCacheTest, outOfCapacity) {
   EXPECT_EQ(0, cache_->incrementPrefetchPages(0));
   EXPECT_EQ(4092, cache_->numAllocated());
 }
+
+TEST_F(AsyncDataCacheTest, coalesce) {
+  constexpr int32_t kKB = 1024;
+  constexpr int32_t kMB = kKB * kKB;
+  auto fileId = filenames_[0].id();
+  std::vector<CachePin> pins;
+
+  // We make entries of 100KB, each consisting of 64+32+8 KB, thus 3
+  // ranges to read/write per entry.
+  //
+  // The first 3 are in close proximity. But the 3rd is apart because
+  // bundling this with the 2 first would exceed the batch size of 8.
+  pins.push_back(cache_->findOrCreate(
+      RawFileCacheKey{fileId, 101000}, 100 * kKB, nullptr));
+  pins.push_back(cache_->findOrCreate(
+      RawFileCacheKey{fileId, 101000}, 100 * kKB, nullptr));
+  pins.push_back(cache_->findOrCreate(
+      RawFileCacheKey{fileId, 203000}, 100 * kKB, nullptr));
+  pins.push_back(cache_->findOrCreate(
+      RawFileCacheKey{fileId, 300000}, 100 * kKB, nullptr));
+
+  pins.push_back(cache_->findOrCreate(
+      RawFileCacheKey{fileId, 700000}, 100 * kKB, nullptr));
+
+  std::vector<int64_t> readOffsets;
+  std::vector<std::vector<folly::Range<char*>>> readBuffers;
+
+  auto stats = readPins(
+      pins, 10000, 10,
+      [&](int32_t index) -> int64_t { return pins[index].entry()->offset(); },
+      [&](const std::vector<CachePin>& pin,
+          int32_t begin,
+          int32_t end,
+          uint64_t offset,
+          const std::vector<folly::Range<char*>>& buffers) {
+        readOffsets.push_back(offset);
+        readBuffers.push_back(buffers);
+      });
+  EXPECT_EQ(3, readBuffers.size());
+}
