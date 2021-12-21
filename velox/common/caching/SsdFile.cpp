@@ -73,7 +73,7 @@ SsdFile::SsdFile(
   // The existing regions in the file are writable.
   writableRegions_.resize(numRegions_);
   std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
-  regionScore_.resize(maxRegions_);
+  tracker_.resize(maxRegions_);
   regionSize_.resize(maxRegions_);
   regionPins_.resize(maxRegions_);
 }
@@ -121,7 +121,7 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
     if (suspended_) {
       return SsdPin();
     }
-    newEventLocked();
+    tracker_.newEvent(entries_.size());
     auto it = entries_.find(ssdKey);
     if (it == entries_.end()) {
       return SsdPin();
@@ -130,17 +130,6 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
     pinRegionLocked(run.offset());
   }
   return SsdPin(*this, run);
-}
-
-void SsdFile::newEventLocked() {
-  ++numEvents_;
-  if (numEvents_ > kDecayInterval && numEvents_ > entries_.size() / 2) {
-    numEvents_ = 0;
-    for (auto i = 0; i < numRegions_; ++i) {
-      int64_t score = regionScore_[i];
-      regionScore_[i] = (score * 15) / 16;
-    }
-  }
 }
 
 void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
@@ -215,15 +204,8 @@ std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
       return std::make_pair<uint64_t, int32_t>(
           region * kRegionSize + offset, toWrite);
     }
-    // A region has been filled and transits from writable to
-    // evictable. Set its score to be at least the best score +
-    // kRegionSize so that it gets time to live. Otherwise it has had
-    // the least time to get hits and would be the first evicted.
-    uint64_t best = 0;
-    for (auto& score : regionScore_) {
-      best = std::max<uint64_t>(best, score);
-    }
-    regionScore_[region] = std::max(regionScore_[region], best + kRegionSize);
+
+    tracker_.regionFilled(region);
     writableRegions_.erase(writableRegions_.begin());
   }
 }
@@ -243,29 +225,10 @@ bool SsdFile::growOrEvictLocked() {
                  << newSize;
     }
   }
-  std::vector<int32_t> candidates;
-  int64_t scoreSum = 0;
-  for (int i = 0; i < numRegions_; ++i) {
-    if (regionPins_[i]) {
-      continue;
-    }
-    if (candidates.empty() || regionScore_[i] < scoreSum / candidates.size()) {
-      scoreSum += regionScore_[i];
-      candidates.push_back(i);
-    }
-  }
+  auto candidates = tracker_.evictionCandidates(3, numRegions_, regionPins_);
   if (candidates.empty()) {
     suspended_ = true;
     return false;
-  }
-  // Sort by score to evict less read regions first.
-  std::sort(
-      candidates.begin(), candidates.end(), [&](int32_t left, int32_t right) {
-        return regionScore_[left] < regionScore_[right];
-      });
-  // Free up to 3 lowest score regions.
-  if (candidates.size() > 3) {
-    candidates.resize(3);
   }
   clearRegionEntriesLocked(candidates);
   writableRegions_ = std::move(candidates);
@@ -290,7 +253,7 @@ void SsdFile::clearRegionEntriesLocked(
     // While the region is being filled it may get score from
     // hits. When it is full, it will get a score boost to be a little
     // ahead of the best.
-    regionScore_[region] = 0;
+    tracker_.clearScore(region);
     regionSize_[region] = 0;
   }
 }
@@ -413,7 +376,6 @@ void SsdFile::clear() {
   std::fill(regionSize_.begin(), regionSize_.end(), 0);
   writableRegions_.resize(numRegions_);
   std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
-  std::fill(regionScore_.begin(), regionScore_.end(), 0);
 }
 
 } // namespace facebook::velox::cache

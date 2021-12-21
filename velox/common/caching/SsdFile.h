@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdFileTracker.h"
 #include "velox/common/file/File.h"
 
 namespace facebook::velox::cache {
@@ -165,7 +166,7 @@ class SsdFile {
 
   // Updates the read count of a region.
   void regionUsed(int32_t region, int32_t size) {
-    regionScore_[region] += size;
+    tracker_.recordUse(region, size);
   }
 
   int32_t maxRegions() const {
@@ -183,8 +184,6 @@ class SsdFile {
   void clear();
 
  private:
-  static constexpr int32_t kDecayInterval = 1000;
-
   // Increments the pin count of the region of 'offset'. Caller must hold
   // 'mutex_'.
   void pinRegionLocked(uint64_t offset) {
@@ -207,9 +206,6 @@ class SsdFile {
   // Clears one or more  regions for accommodating new entries. The regions are
   // added to 'writableRegions_'. Returns true if regions could be cleared.
   bool growOrEvictLocked();
-
-  // Increments event count and periodically decays scores.
-  void newEventLocked();
 
   // Verifies that 'entry' has the data at 'run'.
   void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
@@ -240,8 +236,8 @@ class SsdFile {
   // Indices of regions available for writing new entries.
   std::vector<int32_t> writableRegions_;
 
-  // Count of bytes read from the corresponding region. Decays with time.
-  std::vector<uint64_t> regionScore_;
+  // Tracker for access frequencies and eviction.
+  SsdFileTracker tracker_;
 
   // Pin count for each region.
   std::vector<int32_t> regionPins_;
@@ -249,9 +245,6 @@ class SsdFile {
   // Map of file number and offset to location in file.
   folly::F14FastMap<FileCacheKey, SsdRun> entries_;
 
-  // Count of reads and writes. The scores are decayed every time the count goes
-  // over kDecayInterval or half 'entries_' size, whichever comes first.
-  uint64_t numEvents_{0};
 
   // Name of backing file.
   const std::string filename_;
