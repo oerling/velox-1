@@ -145,7 +145,7 @@ void SsdFile::newEventLocked() {
 
 void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
   VELOX_CHECK_EQ(run.size(), entry.size());
-  regionScore_[regionIndex(run.offset())] += run.size();
+  regionUsed(regionIndex(run.offset()), run.size());
   ++stats_.entriesRead;
   stats_.bytesRead += run.size();
   if (entry.tinyData()) {
