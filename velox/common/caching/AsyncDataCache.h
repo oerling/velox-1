@@ -678,7 +678,6 @@ T percentile(Next next, int32_t numSamples, int percent) {
   return values.empty() ? 0 : values[(values.size() * percent) / 100];
 }
 
-
 // Describes the outcome of coalescedIo().
 struct CoalescedIoStats {
   // Number of distinct IOs.
@@ -782,5 +781,5 @@ CoalescedIoStats coalescedIo(
   ++result.numIos;
   return result;
 }
-  
+
 } // namespace facebook::velox::cache

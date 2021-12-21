@@ -547,5 +547,5 @@ CoalescedIoStats readPins(
       },
       readFunc);
 }
-  
+
 } // namespace facebook::velox::cache
