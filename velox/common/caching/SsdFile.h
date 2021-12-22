@@ -135,7 +135,9 @@ class SsdFile {
 
   // Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
   // entries if they are in ascending order and near enough.
-  void load(const std::vector<SsdPin>& ssdPins, const std::vector<CachePin>& pins);
+  void load(
+      const std::vector<SsdPin>& ssdPins,
+      const std::vector<CachePin>& pins);
 
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
@@ -198,12 +200,9 @@ class SsdFile {
   // added to 'writableRegions_'. Returns true if regions could be cleared.
   bool growOrEvictLocked();
 
-  // Reads the backing file with ReadFile::preadv(). 
-  void read(
-      uint64_t offset,
-      const std::vector<folly::Range<char*>> buffers);
+  // Reads the backing file with ReadFile::preadv().
+  void read(uint64_t offset, const std::vector<folly::Range<char*>> buffers);
 
-  
   // Verifies that 'entry' has the data at 'run'.
   void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
 

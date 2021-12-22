@@ -795,7 +795,8 @@ CoalescedIoStats coalescedIo(
     auto startOffset = offsetFunc(i);
     auto size = sizeFunc(i);
     result.payloadBytes += size;
-    bool enoughRanges = ranges.size() + numRanges(item) >= rangesPerIo && !ranges.empty();
+    bool enoughRanges =
+        ranges.size() + numRanges(item) >= rangesPerIo && !ranges.empty();
     if (lastOffset != startOffset || enoughRanges) {
       int64_t gap = startOffset - lastOffset;
       if (gap > 0 && gap < maxGap && !enoughRanges) {

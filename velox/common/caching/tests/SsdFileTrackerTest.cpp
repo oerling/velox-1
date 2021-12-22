@@ -31,8 +31,9 @@ TEST(SsdFileTrackerTest, tracker) {
     for (auto i = 0; i < 2000; ++i) {
       for (auto region = std::max(lastRegion - 3, 0); region <= lastRegion;
            ++region) {
-        // fileTouched means a lookup. This decays scores so that new uses are more
-        // relevant than old ones. The actual read is tracked by regionRead()..
+        // fileTouched means a lookup. This decays scores so that new uses are
+        // more relevant than old ones. The actual read is tracked by
+        // regionRead()..
         tracker.fileTouched(10000);
         tracker.regionRead(region, 100000);
       }

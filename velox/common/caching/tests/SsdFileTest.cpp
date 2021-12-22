@@ -264,16 +264,18 @@ TEST_F(SsdFileTest, writeAndRead) {
   // evicted. We read back the found entries and check their contents.
   int32_t numFound = 0;
   for (auto& entry : allEntries) {
-	std::vector<CachePin> pins;
+    std::vector<CachePin> pins;
 
-	pins.push_back(cache_->findOrCreate(
-					    RawFileCacheKey{fileName_.id(), entry.key.offset}, entry.size, nullptr));
-	if (pins.back().entry()->isExclusive()) {
-      	std::vector<SsdPin> ssdPins;
+    pins.push_back(cache_->findOrCreate(
+        RawFileCacheKey{fileName_.id(), entry.key.offset},
+        entry.size,
+        nullptr));
+    if (pins.back().entry()->isExclusive()) {
+      std::vector<SsdPin> ssdPins;
 
-	ssdPins.push_back(
-			  ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
-	if (!ssdPins.back().empty()) {
+      ssdPins.push_back(
+          ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
+      if (!ssdPins.back().empty()) {
         ++numFound;
         ssdFile_->load(ssdPins, pins);
         checkContents(pins[0].entry()->data(), pins[0].entry()->size());

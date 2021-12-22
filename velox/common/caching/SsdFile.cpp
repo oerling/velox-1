@@ -145,7 +145,7 @@ void SsdFile::load(
   }
   readPins(
       pins,
-      10000,
+      100000,
       1000,
       [&](int32_t index) { return ssdPins[index].run().offset(); },
       [&](const std::vector<CachePin>& pins,

@@ -118,7 +118,7 @@ std::string LocalReadFile::pread(uint64_t offset, uint64_t length) const {
 uint64_t LocalReadFile::preadv(
     uint64_t offset,
     const std::vector<folly::Range<char*>>& buffers) const {
-  static char droppedBytes[8 * 1024];
+  static char droppedBytes[32 * 1024];
   std::vector<struct iovec> iovecs;
   iovecs.reserve(buffers.size());
   for (auto& range : buffers) {
