@@ -795,12 +795,12 @@ CoalescedIoStats coalescedIo(
     auto startOffset = offsetFunc(i);
     auto size = sizeFunc(i);
     result.payloadBytes += size;
-    bool enoughRanges = ranges.size() + numRanges(item) >= rangesPerIo;
+    bool enoughRanges = ranges.size() + numRanges(item) >= rangesPerIo && !ranges.empty();
     if (lastOffset != startOffset || enoughRanges) {
       int64_t gap = startOffset - lastOffset;
       if (gap > 0 && gap < maxGap && !enoughRanges) {
         // The next one is after the previous and no farther than maxGap bytes,
-        // we read the gap but do not retail the bytes.
+        // we read the gap but drop the bytes.
         result.extraBytes += gap;
         skipRange(gap, ranges);
       } else {
