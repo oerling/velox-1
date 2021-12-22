@@ -13,3 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "velox/common/caching/SsdFileTracker.h"
+
+#include <gtest/gtest.h>
+
+using namespace facebook::velox::cache;
+
+TEST(SsdFileTrackerTest, tracker) {
+  constexpr int32_t kNumRegions = 16;
+  SsdFileTracker tracker;
+  tracker.resize(kNumRegions);
+  // Simulate a sequence of access that periodically adds a new region and keeps accessing the 4 most recently added regions. 
+  for (auto lastRegion = 0; lastRegion <= kNumRegions; ++lastRegion) {
+    tracker.regionFilled(lastRegion);
+    for (auto i = 0; i < 2000; ++i) {
+      for (auto region = std::max(lastRegion - 3, 0); region <= lastRegion; ++region) {
+	// newEvent means a lookup. This decays scores so that new uses are more relevant than old ones.
+	tracker.newEvent(10000);
+	// recordUse means a read. This adds to score.
+	tracker.recordUse(region, 100000);
+      }
+    }
+  }
+  std::vector<int32_t> pins(kNumRegions);
+  pins[2] = 1;
+  pins[3] = 2;
+  // Get up to 10 low-use regions out of kNumRegions used regions, excluding regions that have a non-zero in 'pins'.
+  auto candidates = tracker.evictionCandidates(kNumRegions, kNumRegions, pins);
+  std::vector<int32_t> expected{0, 1, 4, 5, 6, 7, 8};
+  EXPECT_EQ(candidates, expected);
+}
