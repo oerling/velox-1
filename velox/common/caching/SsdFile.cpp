@@ -225,7 +225,8 @@ bool SsdFile::growOrEvictLocked() {
                  << newSize;
     }
   }
-  auto candidates = tracker_.findEvictionCandidates(3, numRegions_, regionPins_);
+  auto candidates =
+      tracker_.findEvictionCandidates(3, numRegions_, regionPins_);
   if (candidates.empty()) {
     suspended_ = true;
     return false;

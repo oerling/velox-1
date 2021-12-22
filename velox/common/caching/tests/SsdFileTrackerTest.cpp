@@ -44,7 +44,8 @@ TEST(SsdFileTrackerTest, tracker) {
   pins[3] = 2;
   // Get up to 10 low-use regions out of kNumRegions used regions, excluding
   // regions that have a non-zero in 'pins'.
-  auto candidates = tracker.findEvictionCandidates(kNumRegions, kNumRegions, pins);
+  auto candidates =
+      tracker.findEvictionCandidates(kNumRegions, kNumRegions, pins);
   std::vector<int32_t> expected{0, 1, 4, 5, 6, 7, 8};
   EXPECT_EQ(candidates, expected);
 }

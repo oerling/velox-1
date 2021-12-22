@@ -19,7 +19,7 @@
 
 namespace facebook::velox::cache {
 
-  void SsdFileTracker::fileTouched(int32_t totalEntries) {
+void SsdFileTracker::fileTouched(int32_t totalEntries) {
   ++numTouches_;
   if (numTouches_ > kDecayInterval && numTouches_ > totalEntries / 2) {
     numTouches_ = 0;
@@ -30,8 +30,7 @@ namespace facebook::velox::cache {
 }
 
 void SsdFileTracker::regionFilled(int32_t region) {
-  uint64_t best = *
-    std::max_element(regionScores_.begin(), regionScores_.end());
+  uint64_t best = *std::max_element(regionScores_.begin(), regionScores_.end());
   regionScores_[region] = std::max<int64_t>(regionScores_[region], best * 1.1);
 }
 

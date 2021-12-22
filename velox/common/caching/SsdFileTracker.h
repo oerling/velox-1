@@ -49,7 +49,6 @@ class SsdFileTracker {
   // tracked file.
   void fileTouched(int32_t totalEntries);
 
-
   // Returns up to 'numCandidates' least used regions. 'numRegions' is
   // the count of existing regions. This can be less than the size of
   // the tracker if the file cannot grow to full size. Regions with a
