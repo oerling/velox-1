@@ -166,7 +166,7 @@ class SsdFile {
 
   // Updates the read count of a region.
   void regionUsed(int32_t region, int32_t size) {
-    tracker_.recordUse(region, size);
+    tracker_.recordRead(region, size);
   }
 
   int32_t maxRegions() const {

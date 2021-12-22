@@ -14,56 +14,57 @@
  * limitations under the License.
  */
 
-#pragma once
-
 #include "velox/common/caching/SsdFileTracker.h"
 #include <algorithm>
 
 namespace facebook::velox::cache {
 
-void SsdFileTracker::newEvent(int32_t totalEntries) {
-  ++numEvents_;
-  if (numEvents_ > kDecayInterval && numEvents_ > totalEntries / 2) {
-    numEvents_ = 0;
-    for (auto i = 0; i < regionScore_.size(); ++i) {
-      int64_t score = regionScore_[i];
-      regionScore_[i] = (score * 15) / 16;
+  void SsdFileTracker::fileTouched(int32_t totalEntries) {
+  ++numTouches_;
+  if (numTouches_ > kDecayInterval && numTouches_ > totalEntries / 2) {
+    numTouches_ = 0;
+    for (auto& score : regionScores_) {
+      score = (score * 15) / 16;
     }
   }
 }
 
 void SsdFileTracker::regionFilled(int32_t region) {
-  uint64_t best = 0;
-  for (auto& score : regionScore_) {
-    best = std::max<uint64_t>(best, score);
-  }
-  regionScore_[region] = std::max<int64_t>(regionScore_[region], best * 1.1);
+  uint64_t best = *
+    std::max_element(regionScores_.begin(), regionScores_.end());
+  regionScores_[region] = std::max<int64_t>(regionScores_[region], best * 1.1);
 }
 
-std::vector<int32_t> SsdFileTracker::evictionCandidates(
+std::vector<int32_t> SsdFileTracker::findEvictionCandidates(
     int32_t numCandidates,
     int32_t numRegions,
     const std::vector<int32_t>& regionPins) {
-  // Takes regions with no pins  and below average score and
+  // Calculates average score of regions wiht no pins. Returns up to
+  // 'numCandidates' unpinned regions with score <= average, lowest
+  // scoring region first.
   int64_t scoreSum = 0;
+  int32_t numUnpinned = 0;
   for (int i = 0; i < numRegions; ++i) {
     if (regionPins[i]) {
       continue;
     }
-    scoreSum += regionScore_[i];
+    ++numUnpinned;
+    scoreSum += regionScores_[i];
   }
-  auto avg = scoreSum / numRegions;
+  if (!numUnpinned) {
+    return {};
+  }
+  auto avg = scoreSum / numUnpinned;
   std::vector<int32_t> candidates;
-  for (auto i = 0; i < regionScore_.size(); ++i) {
-    if (!regionPins[i] && regionScore_[i] <= avg) {
+  for (auto i = 0; i < regionScores_.size(); ++i) {
+    if (!regionPins[i] && regionScores_[i] <= avg) {
       candidates.push_back(i);
     }
   }
-  // Sort by score to evict less read regions first. This works also
-  // if 'candidates' is empty.
+  // Sort by score to evict less read regions first.
   std::sort(
       candidates.begin(), candidates.end(), [&](int32_t left, int32_t right) {
-        return regionScore_[left] < regionScore_[right];
+        return regionScores_[left] < regionScores_[right];
       });
   candidates.resize(std::min<int32_t>(candidates.size(), numCandidates));
   return candidates;

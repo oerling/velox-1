@@ -121,7 +121,7 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
     if (suspended_) {
       return SsdPin();
     }
-    tracker_.newEvent(entries_.size());
+    tracker_.fileTouched(entries_.size());
     auto it = entries_.find(ssdKey);
     if (it == entries_.end()) {
       return SsdPin();
@@ -225,7 +225,7 @@ bool SsdFile::growOrEvictLocked() {
                  << newSize;
     }
   }
-  auto candidates = tracker_.evictionCandidates(3, numRegions_, regionPins_);
+  auto candidates = tracker_.findEvictionCandidates(3, numRegions_, regionPins_);
   if (candidates.empty()) {
     suspended_ = true;
     return false;
@@ -253,7 +253,7 @@ void SsdFile::clearRegionEntriesLocked(
     // While the region is being filled it may get score from
     // hits. When it is full, it will get a score boost to be a little
     // ahead of the best.
-    tracker_.clearScore(region);
+    tracker_.regionCleared(region);
     regionSize_[region] = 0;
   }
 }

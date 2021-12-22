@@ -286,7 +286,11 @@ class AsyncDataCacheEntry {
   // mutex. If set, 'this' is pinned for either exclusive or shared.
   std::shared_ptr<FusedLoad> load_;
 
-  // SSD file from which this was loaded or nullptr if not backed by SSD.
+  // SSD file from which this was loaded or nullptr if not backed by
+  // SsdFile. Used to avoid re-adding items that already come from
+  // SSD. The exact file and offset are needed to include uses in RAM
+  // to uses on SSD. Failing this, we could have the hottest data first in
+  // line for eviction from SSD.
   SsdFile* FOLLY_NULLABLE ssdFile_{nullptr};
 
   // Offset in 'ssdFile_'.

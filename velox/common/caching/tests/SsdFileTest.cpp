@@ -181,7 +181,7 @@ class SsdFileTest : public testing::Test {
 
   void checkEvictionBlocked(
       std::vector<TestEntry>& allEntries,
-      int64_t ssdSize) {
+      uint64_t ssdSize) {
     auto ssdPins = pinAllRegions(allEntries);
     auto pins = makePins(fileName_.id(), ssdSize, 4096, 2048 * 1025, 62 * kMB);
     ssdFile_->write(pins);

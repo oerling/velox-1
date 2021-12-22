@@ -22,26 +22,21 @@
 namespace facebook::velox::cache {
 
 // Tracks reads on an SsdFile. Reads are counted for fixed size regions and
-// periodically decayd. Not thread safe, synchronization is the caller's
+// periodically decayed. Not thread safe, synchronization is the caller's
 // responsibility.
 class SsdFileTracker {
  public:
-  void resize(int32_t size) {
-    regionScore_.resize(size);
+  void resize(int32_t numRegions) {
+    regionScores_.resize(numRegions);
   }
 
-  void recordUse(int32_t region, int32_t bytes) {
-    regionScore_[region] += bytes;
+  void recordRead(int32_t region, int32_t bytes) {
+    regionScores_[region] += bytes;
   }
 
-  void clearScore(int32_t region) {
-    regionScore_[region] = 0;
+  void regionCleared(int32_t region) {
+    regionScores_[region] = 0;
   }
-
-  // Increments event count and periodically decays
-  // scores. 'totalEntries' is the count of distinct entries in the
-  // tracked file.
-  void newEvent(int32_t totalEntries);
 
   // Marks that a region has been filled and transits from writable to
   // evictable. Set its score to be at least the best score +
@@ -49,11 +44,17 @@ class SsdFileTracker {
   // the least time to get hits and would be the first evicted.
   void regionFilled(int32_t region);
 
+  // Increments event count and periodically decays
+  // scores. 'totalEntries' is the count of distinct entries in the
+  // tracked file.
+  void fileTouched(int32_t totalEntries);
+
+
   // Returns up to 'numCandidates' least used regions. 'numRegions' is
   // the count of existing regions. This can be less than the size of
   // the tracker if the file cannot grow to full size. Regions with a
   // non-zero count in 'regionPins' are not considered.
-  std::vector<int32_t> evictionCandidates(
+  std::vector<int32_t> findEvictionCandidates(
       int32_t numCandidates,
       int32_t numRegions,
       const std::vector<int32_t>& regionPins);
@@ -61,11 +62,11 @@ class SsdFileTracker {
  private:
   static constexpr int32_t kDecayInterval = 1000;
 
-  std::vector<int64_t> regionScore_;
+  std::vector<int64_t> regionScores_;
 
-  // Count of reads and writes. The scores are decayed every time the count goes
+  // Count of lookups. The scores are decayed every time the count goes
   // over kDecayInterval or half count of cache entries, whichever comes first.
-  uint64_t numEvents_{0};
+  uint64_t numTouches_{0};
 };
 
 } // namespace facebook::velox::cache
