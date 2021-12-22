@@ -30,7 +30,7 @@ class SsdFileTracker {
     regionScores_.resize(numRegions);
   }
 
-  void recordRead(int32_t region, int32_t bytes) {
+  void regionRead(int32_t region, int32_t bytes) {
     regionScores_[region] += bytes;
   }
 

@@ -133,18 +133,9 @@ class SsdFile {
   // Finds an entry for 'key'. If no entry is found, the returned pin is empty.
   SsdPin find(RawFileCacheKey key);
 
-  // Copies the data at 'run' into 'entry'. Checks that the entry
-  // and run sizes match. The quantization of SSD cache matches that
-  // of the memory cache.
-  void load(SsdRun run, AsyncDataCacheEntry& entry);
-
-  // Reads the backing file as per ReadFile::preadv(). 'numEntries' is
-  // used only for updating statistics. Allows implementing coalesced
-  // read of nearby entries.
-  void read(
-      uint64_t offset,
-      const std::vector<folly::Range<char*>> buffers,
-      int32_t numEntries);
+  // Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
+  // entries if they are in ascending order and near enough.
+  void load(const std::vector<SsdPin>& ssdPins, const std::vector<CachePin>& pins);
 
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
@@ -165,8 +156,8 @@ class SsdFile {
   }
 
   // Updates the read count of a region.
-  void regionUsed(int32_t region, int32_t size) {
-    tracker_.recordRead(region, size);
+  void regionRead(int32_t region, int32_t size) {
+    tracker_.regionRead(region, size);
   }
 
   int32_t maxRegions() const {
@@ -190,11 +181,11 @@ class SsdFile {
     ++regionPins_[regionIndex(offset)];
   }
 
-  // Returns [start, size] of contiguous space for storing data of a
+  // Returns [offset, size] of contiguous space for storing data of a
   // number of contiguous 'pins' starting with the pin at index
-  // 'begin'.  Returns nullopt. The space does not necessarily cover
-  // all the pins, so multiple calls starting at the first unwritten
-  // pin may be needed.
+  // 'begin'.  Returns nullopt if there is no space. The space does
+  // not necessarily cover all the pins, so multiple calls starting at
+  // the first unwritten pin may be needed.
   std::optional<std::pair<uint64_t, int32_t>> getSpace(
       const std::vector<CachePin>& pins,
       int32_t begin);
@@ -207,6 +198,12 @@ class SsdFile {
   // added to 'writableRegions_'. Returns true if regions could be cleared.
   bool growOrEvictLocked();
 
+  // Reads the backing file with ReadFile::preadv(). 
+  void read(
+      uint64_t offset,
+      const std::vector<folly::Range<char*>> buffers);
+
+  
   // Verifies that 'entry' has the data at 'run'.
   void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
 

@@ -132,45 +132,38 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
   return SsdPin(*this, run);
 }
 
-void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
-  VELOX_CHECK_EQ(run.size(), entry.size());
-  regionUsed(regionIndex(run.offset()), run.size());
-  ++stats_.entriesRead;
-  stats_.bytesRead += run.size();
-  if (entry.tinyData()) {
-    auto rc = pread(fd_, entry.tinyData(), run.size(), run.offset());
-    VELOX_CHECK_EQ(rc, run.size());
-  } else {
-    std::vector<struct iovec> iovecs;
-    addEntryToIovecs(entry, iovecs);
-
-    auto rc = folly::preadv(fd_, iovecs.data(), iovecs.size(), run.offset());
-    VELOX_CHECK_EQ(rc, run.size());
+void SsdFile::load(
+    const std::vector<SsdPin>& ssdPins,
+    const std::vector<CachePin>& pins) {
+  VELOX_CHECK_EQ(ssdPins.size(), pins.size());
+  for (auto i = 0; i < pins.size(); ++i) {
+    auto runSize = ssdPins[i].run().size();
+    VELOX_CHECK_EQ(runSize, pins[i].entry()->size());
+    regionRead(regionIndex(ssdPins[i].run().offset()), runSize);
+    ++stats_.entriesRead;
+    stats_.bytesRead += runSize;
   }
-  entry.setSsdFile(this, run.offset());
+  readPins(
+      pins,
+      10000,
+      1000,
+      [&](int32_t index) { return ssdPins[index].run().offset(); },
+      [&](const std::vector<CachePin>& pins,
+          int32_t begin,
+          int32_t end,
+          uint64_t offset,
+          const std::vector<folly::Range<char*>>& buffers) {
+        read(offset, buffers);
+      });
+
+  for (auto i = 0; i < ssdPins.size(); ++i) {
+    pins[i].entry()->setSsdFile(this, ssdPins[i].run().offset());
+  }
 }
 
 void SsdFile::read(
     uint64_t offset,
-    const std::vector<folly::Range<char*>> buffers,
-    int32_t numEntries) {
-  stats_.entriesRead += numEntries;
-  uint64_t regionBytes = 0;
-  uint64_t regionOffset = offset;
-  // Calculate the span from first to last and the number of bytes
-  // that are used out of these. 'regionBytes' do not include
-  // gaps in the coalesced read.
-  for (auto range : buffers) {
-    if (range.data()) {
-      regionBytes += range.size();
-    }
-    regionOffset += range.size();
-  }
-  // Attribute the read bytes to the region where the read
-  // starts. Coalesced reads crossing regions are rare and we do not
-  // consider this in tracking region read volumes.
-  regionUsed(regionIndex(offset), regionBytes);
-  stats_.bytesRead += regionBytes;
+    const std::vector<folly::Range<char*>> buffers) {
   readFile_->preadv(offset, buffers);
 }
 

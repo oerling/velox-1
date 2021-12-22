@@ -162,18 +162,7 @@ class SsdFileTest : public testing::Test {
           RawFileCacheKey{fileName_.id(), pin.entry()->key().offset}));
       EXPECT_FALSE(ssdPins.back().empty());
     }
-    readPins(
-        pins,
-        10000,
-        1000,
-        [&](int32_t index) { return ssdPins[index].run().offset(); },
-        [&](const std::vector<CachePin>& pins,
-            int32_t begin,
-            int32_t end,
-            uint64_t offset,
-            const std::vector<folly::Range<char*>>& buffers) {
-          ssdFile_->read(offset, buffers, end - begin);
-        });
+    ssdFile_->load(ssdPins, pins);
     for (auto& pin : pins) {
       checkContents(pin.entry()->data(), pin.entry()->size());
     }
@@ -275,15 +264,19 @@ TEST_F(SsdFileTest, writeAndRead) {
   // evicted. We read back the found entries and check their contents.
   int32_t numFound = 0;
   for (auto& entry : allEntries) {
-    auto pin = cache_->findOrCreate(
-        RawFileCacheKey{fileName_.id(), entry.key.offset}, entry.size, nullptr);
-    if (pin.entry()->isExclusive()) {
-      auto ssdPin =
-          ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset});
-      if (!ssdPin.empty()) {
+	std::vector<CachePin> pins;
+
+	pins.push_back(cache_->findOrCreate(
+					    RawFileCacheKey{fileName_.id(), entry.key.offset}, entry.size, nullptr));
+	if (pins.back().entry()->isExclusive()) {
+      	std::vector<SsdPin> ssdPins;
+
+	ssdPins.push_back(
+			  ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
+	if (!ssdPins.back().empty()) {
         ++numFound;
-        ssdFile_->load(ssdPin.run(), *pin.entry());
-        checkContents(pin.entry()->data(), pin.entry()->size());
+        ssdFile_->load(ssdPins, pins);
+        checkContents(pins[0].entry()->data(), pins[0].entry()->size());
       }
     }
   }

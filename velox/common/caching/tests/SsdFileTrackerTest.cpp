@@ -31,11 +31,10 @@ TEST(SsdFileTrackerTest, tracker) {
     for (auto i = 0; i < 2000; ++i) {
       for (auto region = std::max(lastRegion - 3, 0); region <= lastRegion;
            ++region) {
-        // newEvent means a lookup. This decays scores so that new uses are more
-        // relevant than old ones.
+        // fileTouched means a lookup. This decays scores so that new uses are more
+        // relevant than old ones. The actual read is tracked by regionRead()..
         tracker.fileTouched(10000);
-        // recordUse means a read. This adds to score.
-        tracker.recordRead(region, 100000);
+        tracker.regionRead(region, 100000);
       }
     }
   }
@@ -46,6 +45,6 @@ TEST(SsdFileTrackerTest, tracker) {
   // regions that have a non-zero in 'pins'.
   auto candidates =
       tracker.findEvictionCandidates(kNumRegions, kNumRegions, pins);
-  std::vector<int32_t> expected{0, 1, 4, 5, 6, 7, 8};
+  std::vector<int32_t> expected{0, 1, 4, 5, 6, 7, 8, 9};
   EXPECT_EQ(candidates, expected);
 }
