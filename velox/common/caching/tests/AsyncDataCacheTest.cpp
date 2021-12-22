@@ -274,7 +274,7 @@ TEST_F(AsyncDataCacheTest, coalesce) {
   auto fileId = filenames_[0].id();
   std::vector<CachePin> pins;
 
-  // We make entries of 100KB, each consisting of 64+32+8 KB, thus 3
+  // We make entries of 100KB, each consisting of 64+32+4 KB, thus 3
   // ranges to read/write per entry.
   //
   // The first 3 are in close proximity. But the 3rd is apart because
