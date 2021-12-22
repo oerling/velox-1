@@ -136,17 +136,25 @@ void SsdFile::load(
     const std::vector<SsdPin>& ssdPins,
     const std::vector<CachePin>& pins) {
   VELOX_CHECK_EQ(ssdPins.size(), pins.size());
+  int payloadTotal = 0;
   for (auto i = 0; i < pins.size(); ++i) {
     auto runSize = ssdPins[i].run().size();
     VELOX_CHECK_EQ(runSize, pins[i].entry()->size());
+    payloadTotal += runSize;
     regionRead(regionIndex(ssdPins[i].run().offset()), runSize);
     ++stats_.entriesRead;
     stats_.bytesRead += runSize;
   }
+  // Do coalesced IO for the pins. For short payloads, the break-even
+  // between discrete pread calls and a single preadv that discards
+  // gaps is ~25K per gap. For longer payloads this is ~50-100K.
   readPins(
       pins,
-      100000,
-      1000,
+      payloadTotal / pins.size() < 10000 ? 25000 : 50000,
+      // Max ranges in one preadv call. Longest gap + longest cache
+      // entry are under 12 ranges. If a system has a limit of 1K
+      // ranges, coalesce limit of 1000 is safe.
+      900,
       [&](int32_t index) { return ssdPins[index].run().offset(); },
       [&](const std::vector<CachePin>& pins,
           int32_t begin,
