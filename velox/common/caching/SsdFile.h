@@ -78,7 +78,9 @@ class SsdPin {
 
   SsdPin(const SsdPin& other) = delete;
 
-  SsdPin(SsdPin&& other) {
+  void operator=(const SsdPin OTHER) = delete;
+
+  SsdPin(SsdPin&& other) noexcept {
     run_ = other.run_;
     file_ = other.file_;
     other.file_ = nullptr;
@@ -140,7 +142,7 @@ class SsdFile {
 
   // Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
   // entries if they are in ascending order and near enough.
-  CoalescedIoStats load(
+  CoalesceIoStats load(
       const std::vector<SsdPin>& ssdPins,
       const std::vector<CachePin>& pins);
 
