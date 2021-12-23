@@ -140,7 +140,7 @@ class SsdFile {
 
   // Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
   // entries if they are in ascending order and near enough.
-  void load(
+  CoalescedIoStats load(
       const std::vector<SsdPin>& ssdPins,
       const std::vector<CachePin>& pins);
 
