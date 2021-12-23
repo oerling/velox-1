@@ -20,6 +20,11 @@
 #include "velox/common/caching/SsdFileTracker.h"
 #include "velox/common/file/File.h"
 
+#include <gflags/gflags.h>
+
+DECLARE_bool(ssd_odirect);
+DECLARE_bool(ssd_verify_write);
+
 namespace facebook::velox::cache {
 
 // A 64 bit word describing a SSD cache entry in an SsdFile. The low
@@ -201,7 +206,7 @@ class SsdFile {
   bool growOrEvictLocked();
 
   // Reads the backing file with ReadFile::preadv().
-  void read(uint64_t offset, const std::vector<folly::Range<char*>> buffers);
+  void read(uint64_t offset, const std::vector<folly::Range<char*>>& buffers);
 
   // Verifies that 'entry' has the data at 'run'.
   void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
