@@ -17,7 +17,6 @@
 #include "velox/common/caching/SsdFile.h"
 #include <folly/Executor.h>
 #include <folly/portability/SysUio.h>
-#include <iostream>
 #include "velox/common/caching/FileIds.h"
 
 #include <fcntl.h>
@@ -132,7 +131,7 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
   return SsdPin(*this, run);
 }
 
-CoalescedIoStats SsdFile::load(
+CoalesceIoStats SsdFile::load(
     const std::vector<SsdPin>& ssdPins,
     const std::vector<CachePin>& pins) {
   VELOX_CHECK_EQ(ssdPins.size(), pins.size());
@@ -156,16 +155,16 @@ CoalescedIoStats SsdFile::load(
       // ranges, coalesce limit of 1000 is safe.
       900,
       [&](int32_t index) { return ssdPins[index].run().offset(); },
-      [&](const std::vector<CachePin>& pins,
-          int32_t begin,
-          int32_t end,
+      [&](const std::vector<CachePin>& /*pins*/,
+          int32_t /*begin*/,
+          int32_t /*end*/,
           uint64_t offset,
           const std::vector<folly::Range<char*>>& buffers) {
         read(offset, buffers);
       });
 
   for (auto i = 0; i < ssdPins.size(); ++i) {
-    pins[i].entry()->setSsdFile(this, ssdPins[i].run().offset());
+    pins[i].checkedEntry()->setSsdFile(this, ssdPins[i].run().offset());
   }
   return stats;
 }
@@ -192,7 +191,7 @@ std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
     auto available = kRegionSize - offset;
     int64_t toWrite = 0;
     for (; begin < pins.size(); ++begin) {
-      auto entry = pins[begin].entry();
+      auto entry = pins[begin].checkedEntry();
       if (entry->size() > available) {
         break;
       }
@@ -267,8 +266,9 @@ void SsdFile::write(std::vector<CachePin>& pins) {
   std::sort(pins.begin(), pins.end());
   uint64_t total = 0;
   for (auto& pin : pins) {
-    VELOX_CHECK_NULL(pin.entry()->ssdFile());
-    total += pin.entry()->size();
+    auto entry = pin.checkedEntry();
+    VELOX_CHECK_NULL(entry->ssdFile());
+    total += entry->size();
   }
   int32_t storeIndex = 0;
   while (storeIndex < pins.size()) {
@@ -283,11 +283,12 @@ void SsdFile::write(std::vector<CachePin>& pins) {
     int32_t bytes = 0;
     std::vector<iovec> iovecs;
     for (auto i = storeIndex; i < pins.size(); ++i) {
-      auto entrySize = pins[i].entry()->size();
+      auto entry = pins[i].checkedEntry();
+      auto entrySize = entry->size();
       if (bytes + entrySize > available) {
         break;
       }
-      addEntryToIovecs(*pins[i].entry(), iovecs);
+      addEntryToIovecs(*entry, iovecs);
       bytes += entrySize;
       ++numWritten;
     }
@@ -302,10 +303,8 @@ void SsdFile::write(std::vector<CachePin>& pins) {
     {
       std::lock_guard<std::mutex> l(mutex_);
       for (auto i = storeIndex; i < storeIndex + numWritten; ++i) {
-        auto entry = pins[i].entry();
+        auto entry = pins[i].checkedEntry();
         entry->setSsdFile(this, offset);
-        char first = entry->tinyData() ? entry->tinyData()[0]
-                                       : entry->data().runAt(0).data<char>()[0];
         auto size = entry->size();
         FileCacheKey key = {
             entry->key().fileNum, static_cast<uint64_t>(entry->offset())};

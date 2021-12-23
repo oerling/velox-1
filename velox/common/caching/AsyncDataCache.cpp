@@ -20,6 +20,7 @@
 #include "velox/common/caching/SsdCache.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
+#include "velox/common/caching/FileIds.h"
 
 namespace facebook::velox::cache {
 
@@ -623,7 +624,7 @@ std::string AsyncDataCache::toString() const {
   return out.str();
 }
 
-CoalescedIoStats readPins(
+CoalesceIoStats readPins(
     const std::vector<CachePin>& pins,
     int32_t maxGap,
     int32_t rangesPerIo,
@@ -634,21 +635,24 @@ CoalescedIoStats readPins(
         int32_t end,
         uint64_t offset,
         const std::vector<folly::Range<char*>>& buffers)> readFunc) {
-  return coalescedIo<CachePin, folly::Range<char*>>(
+  return coalesceIo<CachePin, folly::Range<char*>>(
       pins,
       maxGap,
       rangesPerIo,
       offsetFunc,
-      [&](int32_t index) { return pins[index].entry()->size(); },
-      [&](const CachePin& pin) {
-        return std::max<int32_t>(1, pin.entry()->data().numRuns());
+      [&](int32_t index) { return pins[index].checkedEntry()->size(); },
+      [&](int32_t index) {
+        return std::max<int32_t>(
+            1, pins[index].checkedEntry()->data().numRuns());
       },
       [&](const CachePin& pin, std::vector<folly::Range<char*>>& ranges) {
-        auto& data = pin.entry()->data();
+        auto entry = pin.checkedEntry();
+        auto& data = entry->data();
         uint64_t offsetInRuns = 0;
-        auto size = pin.entry()->size();
+        auto size = entry->size();
         if (data.numPages() == 0) {
-          ranges.push_back(folly::Range<char*>(pin.entry()->tinyData(), size));
+          ranges.push_back(
+              folly::Range<char*>(pin.checkedEntry()->tinyData(), size));
           offsetInRuns = size;
         } else {
           for (int i = 0; i < data.numRuns(); ++i) {
