@@ -171,7 +171,7 @@ void SsdFile::load(
 
 void SsdFile::read(
     uint64_t offset,
-    const std::vector<folly::Range<char*>> buffers) {
+    const std::vector<folly::Range<char*>>& buffers) {
   readFile_->preadv(offset, buffers);
 }
 
