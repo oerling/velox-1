@@ -123,6 +123,7 @@ class CacheTest : public testing::Test {
       uint64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssd;
     if (!file.empty()) {
+      FLAGS_ssd_odirect = false;
       ssd = std::make_unique<SsdCache>(file, ssdBytes, 1, executor_.get());
       groupStats_ = &ssd->groupStats();
     }
@@ -454,11 +455,8 @@ TEST_F(CacheTest, ssd) {
   readLoop("testfile", 30, 70, 10, 5, 1);
   auto ramBytes = ioStats_->ramHit().bytes();
   auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 4;
-  EXPECT_TRUE(
-      ramBytes > sparseStripeBytes / 2 && ramBytes < sparseStripeBytes * 1.2)
-      << " ramBytes = " << ramBytes
-      << " sparseStripeBytes = " << sparseStripeBytes;
-
+  EXPECT_LE(sparseStripeBytes, ramBytes);
+  EXPECT_GT(sparseStripeBytes * 2, ramBytes);
   constexpr int32_t kStripesPerFile = 20;
   auto bytesPerFile = fullStripeBytes * kStripesPerFile;
   auto filesPerGb = (1UL << 30) / bytesPerFile;
