@@ -555,13 +555,14 @@ class Task {
   // Holds states for pipelineBarrier(). Guarded by
   // 'mutex_'.
   std::unordered_map<std::string, BarrierState> barriers_;
-  // Map from the plan node id of the join to the corresponding JoinBridge.
-  // Guarded by 'mutex_'.
-  std::unordered_map<std::string, std::shared_ptr<JoinBridge>> bridges_;
 
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
   TaskStats taskStats_;
+
+  // Map from the plan node id of the join to the corresponding JoinBridge.
+  // Guarded by 'mutex_'.
+  std::unordered_map<std::string, std::shared_ptr<JoinBridge>> bridges_;
 
   std::vector<std::shared_ptr<MergeSource>> localMergeSources_;
 

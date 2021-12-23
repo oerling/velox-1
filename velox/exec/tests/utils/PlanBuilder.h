@@ -90,7 +90,7 @@ class PlanBuilder {
   PlanBuilder& finalAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
       const std::vector<std::string>& aggregates,
-      const std::vector<TypePtr>& resultTypes = {}) {
+      const std::vector<TypePtr>& resultTypes) {
     return aggregation(
         groupingKeys,
         aggregates,
@@ -108,7 +108,7 @@ class PlanBuilder {
   PlanBuilder& intermediateAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
       const std::vector<std::string>& aggregates,
-      const std::vector<TypePtr>& resultTypes = {}) {
+      const std::vector<TypePtr>& resultTypes) {
     return aggregation(
         groupingKeys,
         aggregates,
@@ -120,18 +120,51 @@ class PlanBuilder {
 
   PlanBuilder& singleAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
-      const std::vector<std::string>& aggregates,
-      const std::vector<TypePtr>& resultTypes = {}) {
+      const std::vector<std::string>& aggregates) {
     return aggregation(
         groupingKeys,
         aggregates,
         {},
         core::AggregationNode::Step::kSingle,
+        false);
+  }
+
+  PlanBuilder& aggregation(
+      const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<std::string>& aggregates,
+      const std::vector<std::string>& masks,
+      core::AggregationNode::Step step,
+      bool ignoreNullKeys,
+      const std::vector<TypePtr>& resultTypes = {});
+
+  PlanBuilder& partialStreamingAggregation(
+      const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<std::string>& aggregates,
+      const std::vector<std::string>& masks = {}) {
+    return streamingAggregation(
+        groupingKeys,
+        aggregates,
+        masks,
+        core::AggregationNode::Step::kPartial,
+        false);
+  }
+
+  PlanBuilder& finalStreamingAggregation();
+
+  PlanBuilder& finalStreamingAggregation(
+      const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<std::string>& aggregates,
+      const std::vector<TypePtr>& resultTypes = {}) {
+    return streamingAggregation(
+        groupingKeys,
+        aggregates,
+        {},
+        core::AggregationNode::Step::kFinal,
         false,
         resultTypes);
   }
 
-  PlanBuilder& aggregation(
+  PlanBuilder& streamingAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
       const std::vector<std::string>& aggregates,
       const std::vector<std::string>& masks,
@@ -234,7 +267,11 @@ class PlanBuilder {
   std::string nextPlanNodeId();
 
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> fields(
+      const std::vector<std::string>& names);
+
+  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> fields(
       const std::vector<ChannelIndex>& indices);
+
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> fields(
       const RowTypePtr inputType,
       const std::vector<ChannelIndex>& indices);
@@ -245,7 +282,19 @@ class PlanBuilder {
 
   std::shared_ptr<core::PlanNode> createIntermediateOrFinalAggregation(
       core::AggregationNode::Step step,
-      const core::AggregationNode* partialAggNode);
+      const core::AggregationNode* partialAggNode,
+      bool streaming);
+
+  std::vector<std::shared_ptr<const core::CallTypedExpr>>
+  createAggregateExpressions(
+      const std::vector<std::string>& aggregates,
+      core::AggregationNode::Step step,
+      const std::vector<TypePtr>& resultTypes);
+
+  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
+  createAggregateMasks(
+      size_t numAggregates,
+      const std::vector<std::string>& masks);
 
   int planNodeId_;
   std::shared_ptr<core::PlanNode> planNode_;

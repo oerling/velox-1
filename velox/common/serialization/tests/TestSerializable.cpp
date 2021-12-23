@@ -14,21 +14,21 @@
  * limitations under the License.
  */
 
-#include "velox/common/memory/ByteStream.h"
+#include <gtest/gtest.h>
+#include "folly/json.h"
+#include "velox/common/serialization/Serializable.h"
 
-namespace facebook::velox {
-void ByteStream::flush(OutputStream* out) {
-  for (int32_t i = 0; i < ranges_.size(); ++i) {
-    int32_t count = ranges_[i].position;
-    int32_t bytes = isBits_ ? bits::nbytes(count) : count;
-    if (isBits_ && isReverseBitOrder_ && !isReversed_) {
-      bits::reverseBits(ranges_[i].buffer, bytes);
-    }
-    out->write(reinterpret_cast<char*>(ranges_[i].buffer), bytes);
-  }
-  if (isBits_ && isReverseBitOrder_) {
-    isReversed_ = true;
-  }
+using namespace ::facebook::velox;
+
+namespace {
+TEST(Serializable, TestSerializableOpts) {
+  auto opts = getSerializationOptions();
+
+  // A very large negative number that is out of folly Json integer bound.
+  // With opts.double_fallback enabled, it should be correctly handled as double
+  // type.
+  auto largeNumber = folly::parseJson("-21820650861507478000", opts);
+  EXPECT_TRUE(largeNumber.isDouble());
+  EXPECT_EQ(largeNumber, -21820650861507478000.0);
 }
-
-} // namespace facebook::velox
+} // namespace

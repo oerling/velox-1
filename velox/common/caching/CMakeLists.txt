@@ -21,7 +21,8 @@ add_library(
   ScanTracker.cpp
   GroupTracker.cpp
   SsdCache.cpp
-  SsdFile.cpp)
+  SsdFile.cpp
+	SsdFileTracker.cpp)
 target_link_libraries(velox_caching velox_memory velox_exception velox_file
                       glog::glog ${FOLLY_WITH_DEPENDENCIES})
 

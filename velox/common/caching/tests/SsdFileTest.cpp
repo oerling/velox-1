@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/SsdCache.h"
+#include "velox/common/caching/FileIds.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
 #include <glog/logging.h>
@@ -28,6 +28,16 @@ using namespace facebook::velox;
 using namespace facebook::velox::cache;
 
 using facebook::velox::memory::MappedMemory;
+
+// Represents an entry written to SSD.
+struct TestEntry {
+  FileCacheKey key;
+  uint64_t ssdOffset;
+  int32_t size;
+
+  TestEntry(FileCacheKey _key, uint64_t _ssdOffset, int32_t _size)
+      : key(_key), ssdOffset(_ssdOffset), size(_size) {}
+};
 
 class SsdFileTest : public testing::Test {
  protected:
@@ -130,20 +140,81 @@ class SsdFileTest : public testing::Test {
     return pins;
   }
 
+  std::vector<SsdPin> pinAllRegions(const std::vector<TestEntry>& entries) {
+    std::vector<SsdPin> pins;
+    int32_t lastRegion = -1;
+    for (auto& entry : entries) {
+      if (entry.ssdOffset / SsdFile::kRegionSize != lastRegion) {
+        lastRegion = entry.key.offset / SsdFile::kRegionSize;
+        pins.push_back(
+            ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
+        EXPECT_FALSE(pins.back().empty());
+      }
+    }
+    return pins;
+  }
+
+  void readAndCheckPins(const std::vector<CachePin>& pins) {
+    std::vector<SsdPin> ssdPins;
+    ssdPins.reserve(pins.size());
+    for (auto& pin : pins) {
+      ssdPins.push_back(ssdFile_->find(
+          RawFileCacheKey{fileName_.id(), pin.entry()->key().offset}));
+      EXPECT_FALSE(ssdPins.back().empty());
+    }
+    ssdFile_->load(ssdPins, pins);
+    for (auto& pin : pins) {
+      checkContents(pin.entry()->data(), pin.entry()->size());
+    }
+  }
+
+  void checkEvictionBlocked(
+      std::vector<TestEntry>& allEntries,
+      uint64_t ssdSize) {
+    auto ssdPins = pinAllRegions(allEntries);
+    auto pins = makePins(fileName_.id(), ssdSize, 4096, 2048 * 1025, 62 * kMB);
+    ssdFile_->write(pins);
+    // Only Some pins get written because space cannot be cleared
+    // because all regions are pinned. The file will not give out new
+    // pins so that this situation is not continued
+    EXPECT_TRUE(
+        ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
+    int32_t numWritten = 0;
+    for (auto& pin : pins) {
+      if (pin.entry()->ssdFile()) {
+        ++numWritten;
+        allEntries.emplace_back(
+            pin.entry()->key(), pin.entry()->ssdOffset(), pin.entry()->size());
+      }
+    }
+    EXPECT_LT(numWritten, pins.size());
+    ssdPins.clear();
+
+    // The pins were cleared and the file is no longer suspended. Check that the
+    // entry that was not found is found now.
+    EXPECT_FALSE(
+        ssdFile_->find(RawFileCacheKey{fileName_.id(), ssdSize}).empty());
+
+    pins.erase(pins.begin(), pins.begin() + numWritten);
+    ssdFile_->write(pins);
+    for (auto& pin : pins) {
+      if (pin.entry()->ssdFile()) {
+        allEntries.emplace_back(
+            pin.entry()->key(), pin.entry()->ssdOffset(), pin.entry()->size());
+      }
+    }
+    // Clear the pins and read back. Clear must complete before
+    // makePins so that there are no pre-existing exclusive pins for the same
+    // key.
+    pins.clear();
+    pins = makePins(fileName_.id(), ssdSize, 4096, 2048 * 1025, 62 * kMB);
+    readAndCheckPins(pins);
+  }
+
   std::shared_ptr<AsyncDataCache> cache_;
   StringIdLease fileName_;
 
   std::unique_ptr<SsdFile> ssdFile_;
-};
-
-// Represents an entry written to SSD.
-struct TestEntry {
-  FileCacheKey key;
-  uint64_t ssdOffset;
-  int32_t size;
-
-  TestEntry(FileCacheKey _key, uint64_t _ssdOffset, int32_t _size)
-      : key(_key), ssdOffset(_ssdOffset), size(_size) {}
 };
 
 TEST_F(SsdFileTest, writeAndRead) {
@@ -171,28 +242,44 @@ TEST_F(SsdFileTest, writeAndRead) {
        startOffset += SsdFile::kRegionSize) {
     auto pins =
         makePins(fileName_.id(), startOffset, 4096, 2048 * 1025, 62 * kMB);
-    std::vector<SsdPin> ssdPins;
-    ssdPins.reserve(pins.size());
+    readAndCheckPins(pins);
+  }
+  checkEvictionBlocked(allEntries, kSsdSize);
+  // We rewrite the cache with new entries.
+
+  for (auto startOffset = kSsdSize + SsdFile::kRegionSize;
+       startOffset <= kSsdSize * 2;
+       startOffset += SsdFile::kRegionSize) {
+    auto pins =
+        makePins(fileName_.id(), startOffset, 4096, 2048 * 1025, 62 * kMB);
+    ssdFile_->write(pins);
     for (auto& pin : pins) {
-      ssdPins.push_back(ssdFile_->find(
-          RawFileCacheKey{fileName_.id(), pin.entry()->key().offset}));
-      EXPECT_FALSE(ssdPins.back().empty());
+      EXPECT_EQ(ssdFile_.get(), pin.entry()->ssdFile());
+      allEntries.emplace_back(
+          pin.entry()->key(), pin.entry()->ssdOffset(), pin.entry()->size());
     }
-    readPins(
-        pins,
-        10000,
-        [&](const CachePin& pin, int32_t index) {
-          return ssdPins[index].run().offset();
-        },
-        [&](const std::vector<CachePin>& pins,
-            int32_t begin,
-            int32_t end,
-            uint64_t offset,
-            const std::vector<folly::Range<char*>>& buffers) {
-          ssdFile_->read(offset, buffers, end - begin);
-        });
-    for (auto& pin : pins) {
-      checkContents(pin.entry()->data(), pin.entry()->size());
+  }
+
+  // We check howmany entries are found. The earliest writes will have been
+  // evicted. We read back the found entries and check their contents.
+  int32_t numFound = 0;
+  for (auto& entry : allEntries) {
+    std::vector<CachePin> pins;
+
+    pins.push_back(cache_->findOrCreate(
+        RawFileCacheKey{fileName_.id(), entry.key.offset},
+        entry.size,
+        nullptr));
+    if (pins.back().entry()->isExclusive()) {
+      std::vector<SsdPin> ssdPins;
+
+      ssdPins.push_back(
+          ssdFile_->find(RawFileCacheKey{fileName_.id(), entry.key.offset}));
+      if (!ssdPins.back().empty()) {
+        ++numFound;
+        ssdFile_->load(ssdPins, pins);
+        checkContents(pins[0].entry()->data(), pins[0].entry()->size());
+      }
     }
   }
 }
