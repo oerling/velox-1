@@ -19,7 +19,7 @@ add_executable(
   BitUtilTest.cpp
   BloomFilterTest.cpp
   CoalesceIoTest.cpp
-RawVectorTest.cpp
+  RawVectorTest.cpp
   StatsReporterTest.cpp
   SimdUtilTest.cpp
   TraceContextTest.cpp)

@@ -345,7 +345,7 @@ class CachePin {
     assert(entry_);
     return entry_;
   }
-  
+
   bool operator<(const CachePin& other) const {
     auto id1 = entry_->key_.fileNum.id();
     auto id2 = other.entry_->key_.fileNum.id();
