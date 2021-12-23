@@ -531,7 +531,8 @@ CoalesceIoStats readPins(
         uint64_t offsetInRuns = 0;
         auto size = entry->size();
         if (data.numPages() == 0) {
-          ranges.push_back(folly::Range<char*>(pin.checkedEntry()->tinyData(), size));
+          ranges.push_back(
+              folly::Range<char*>(pin.checkedEntry()->tinyData(), size));
           offsetInRuns = size;
         } else {
           for (int i = 0; i < data.numRuns(); ++i) {
