@@ -152,15 +152,15 @@ class TestingFusedLoad : public FusedLoad {
         auto& file = ssd->file(pin.entry()->key().fileNum.id());
         RawFileCacheKey rawKey{
             pin.entry()->key().fileNum.id(), pin.entry()->key().offset};
-	std::vector<SsdPin> ssdPins;
-	ssdPins.push_back(file.find(rawKey));
+        std::vector<SsdPin> ssdPins;
+        ssdPins.push_back(file.find(rawKey));
         if (!ssdPins[0].empty()) {
-	  // Move 'pin' to a temporary vector. 'pin' could be
-	  // exclusive and not copiable. Put it back after use.
-	  std::vector<CachePin> loadPins;
-	  loadPins.push_back(std::move(pin));
+          // Move 'pin' to a temporary vector. 'pin' could be
+          // exclusive and not copiable. Put it back after use.
+          std::vector<CachePin> loadPins;
+          loadPins.push_back(std::move(pin));
           file.load(ssdPins, loadPins);
-	  pin = std::move(loadPins[0]);
+          pin = std::move(loadPins[0]);
           continue;
         }
       }
