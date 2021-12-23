@@ -78,6 +78,10 @@ struct AccessStats {
 struct FileCacheKey {
   StringIdLease fileNum;
   uint64_t offset;
+
+  bool operator==(const FileCacheKey& other) const {
+    return offset == other.offset && fileNum.id() == other.fileNum.id();
+  }
 };
 
 // Non-owning reference to a file number and offset.
@@ -227,7 +231,7 @@ class AsyncDataCacheEntry {
     ssdOffset_ = offset;
   }
 
-  SsdFile* ssdFile() const {
+  SsdFile* FOLLY_NULLABLE ssdFile() const {
     return ssdFile_;
   }
 
@@ -301,7 +305,11 @@ class AsyncDataCacheEntry {
   // Tracking id. Used for deciding if this should be written to SSD.
   TrackingId trackingId_;
 
-  // SSD file from which this was loaded or nullptr if not backed by SSD.
+  // SSD file from which this was loaded or nullptr if not backed by
+  // SsdFile. Used to avoid re-adding items that already come from
+  // SSD. The exact file and offset are needed to include uses in RAM
+  // to uses on SSD. Failing this, we could have the hottest data first in
+  // line for eviction from SSD.
   SsdFile* FOLLY_NULLABLE ssdFile_{nullptr};
 
   // Offset in 'ssdFile_'.
@@ -787,21 +795,22 @@ T percentile(Next next, int32_t numSamples, int percent) {
   return values.empty() ? 0 : values[(values.size() * percent) / 100];
 }
 
-// Describes the outcome of readPins().
-struct ReadPinsResult {
+// Describes the outcome of coalescedIo().
+struct CoalescedIoStats {
   // Number of distinct IOs.
-  int32_t numReads{0};
+  int32_t numIos{0};
 
   // Number of bytes read into pins.
-  int64_t readBytes{0};
+  int64_t payloadBytes{0};
   // Number of bytes read and discarded due to coalescing.
   int64_t extraBytes{0};
 };
 
 // Utility function for loading multiple pins with coalesced
-// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the largest allowed
-// gap between the end of one entry and the start of the next. If the gap is
-// larger, the entries will be fetched separately.
+// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the
+// largest allowed distance in bytes between the end of one entry and
+// the start of the next. If the gap is larger or the next is before
+// the end of the previous, the entries will be fetched separately.
 //
 //'offsetFunc' returns the starting offset of the data in the
 // file given a pin and the pin's index in 'pins'. The pins are expected to be
@@ -815,15 +824,80 @@ struct ReadPinsResult {
 //
 // Returns the number of distinct IOs, the number of bytes loaded into pins and
 // the number of extr bytes read.
-ReadPinsResult readPins(
+CoalescedIoStats readPins(
     const std::vector<CachePin>& pins,
     int32_t maxGap,
-    std::function<uint64_t(const CachePin& pin, int32_t index)> offsetFunc,
+    int32_t maxBatch,
+    std::function<uint64_t(int32_t index)> offsetFunc,
     std::function<void(
         const std::vector<CachePin>& pins,
         int32_t begin,
         int32_t end,
         uint64_t offset,
         const std::vector<folly::Range<char*>>& buffers)> readFunc);
+
+// Generic template for grouping IOs into batches of <
+// rangesPerIo ranges separated by gaps of size >= maxGap. Element
+// represents the object of the IO, Range is the type representing
+// the IO, e.g. pointer + size, offsetFunc and SizeFunc return the
+// offset and size of an Element, AddRange adds the ranges that
+// correspond to an Element, skipRange adds a gap between
+// neighboring items, ioFunc takes the items, the first item to
+// process, the first item not to process, the offset of the first
+// item and a vector of Ranges.
+template <
+    typename Item,
+    typename Range,
+    typename ItemOffset,
+    typename ItemSize,
+    typename ItemNumRanges,
+    typename AddRanges,
+    typename SkipRange,
+    typename IoFunc>
+CoalescedIoStats coalescedIo(
+    const std::vector<Item>& items,
+    int32_t maxGap,
+    int32_t rangesPerIo,
+    ItemOffset offsetFunc,
+    ItemSize sizeFunc,
+    ItemNumRanges numRanges,
+    AddRanges addRanges,
+    SkipRange skipRange,
+    IoFunc ioFunc) {
+  std::vector<Range> buffers;
+  auto start = offsetFunc(0);
+  auto lastOffset = start;
+  std::vector<Range> ranges;
+  CoalescedIoStats result;
+  int32_t firstItem = 0;
+  for (int32_t i = 0; i < items.size(); ++i) {
+    auto& item = items[i];
+    auto startOffset = offsetFunc(i);
+    auto size = sizeFunc(i);
+    result.payloadBytes += size;
+    bool enoughRanges =
+        ranges.size() + numRanges(item) >= rangesPerIo && !ranges.empty();
+    if (lastOffset != startOffset || enoughRanges) {
+      int64_t gap = startOffset - lastOffset;
+      if (gap > 0 && gap < maxGap && !enoughRanges) {
+        // The next one is after the previous and no farther than maxGap bytes,
+        // we read the gap but drop the bytes.
+        result.extraBytes += gap;
+        skipRange(gap, ranges);
+      } else {
+        ioFunc(items, firstItem, i, start, ranges);
+        ranges.clear();
+        firstItem = i;
+        ++result.numIos;
+        start = startOffset;
+      }
+    }
+    addRanges(item, ranges);
+    lastOffset = startOffset + size;
+  }
+  ioFunc(items, firstItem, items.size(), start, ranges);
+  ++result.numIos;
+  return result;
+}
 
 } // namespace facebook::velox::cache

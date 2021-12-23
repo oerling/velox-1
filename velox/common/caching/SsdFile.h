@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdFileTracker.h"
 #include "velox/common/file/File.h"
 
 namespace facebook::velox::cache {
@@ -57,31 +58,6 @@ class SsdRun {
  private:
   uint64_t bits_;
 };
-
-// Key for SsdFile lookup. The key is the file number in storage and
-// the offset in the file. SSD cache sizes align to the RAM cache
-// quantized sizes for cached streams from the original file.
-struct SsdKey {
-  StringIdLease file;
-  uint64_t offset;
-
-  bool operator==(const SsdKey& other) const {
-    return offset == other.offset && file.id() == other.file.id();
-  }
-};
-
-} // namespace facebook::velox::cache
-namespace std {
-template <>
-struct hash<::facebook::velox::cache::SsdKey> {
-  size_t operator()(const ::facebook::velox::cache::SsdKey& key) const {
-    return facebook::velox::bits::hashMix(key.file.id(), key.offset);
-  }
-};
-
-} // namespace std
-
-namespace facebook::velox::cache {
 
 // Represents an SsdFile entry that is planned for load or being
 // loaded. This is destroyed after load. Destruction decrements the
@@ -157,18 +133,11 @@ class SsdFile {
   // Finds an entry for 'key'. If no entry is found, the returned pin is empty.
   SsdPin find(RawFileCacheKey key);
 
-  // Copies the data at 'run' into 'entry'. Checks that the entry
-  // and run sizes match. The quantization of SSD cache matches that
-  // of the memory cache.
-  void load(SsdRun run, AsyncDataCacheEntry& entry);
-
-  // Reads the backing file as per ReadFile::preadv(). 'numEntries' is
-  // used only for updating statistics. Allows implementing coalesced
-  // read of nearby entries.
-  void read(
-      uint64_t offset,
-      const std::vector<folly::Range<char*>> buffers,
-      int32_t numEntries);
+  // Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
+  // entries if they are in ascending order and near enough.
+  void load(
+      const std::vector<SsdPin>& ssdPins,
+      const std::vector<CachePin>& pins);
 
   // Increments the pin count of the region of 'offset'.
   void pinRegion(uint64_t offset);
@@ -189,8 +158,8 @@ class SsdFile {
   }
 
   // Updates the read count of a region.
-  void regionUsed(int32_t region, int32_t size) {
-    regionScore_[region] += size;
+  void regionRead(int32_t region, int32_t size) {
+    tracker_.regionRead(region, size);
   }
 
   int32_t maxRegions() const {
@@ -208,20 +177,18 @@ class SsdFile {
   void clear();
 
  private:
-  static constexpr int32_t kDecayInterval = 1000;
-
   // Increments the pin count of the region of 'offset'. Caller must hold
   // 'mutex_'.
   void pinRegionLocked(uint64_t offset) {
     ++regionPins_[regionIndex(offset)];
   }
 
-  // Returns [start, size] of contiguous space for storing data of a
+  // Returns [offset, size] of contiguous space for storing data of a
   // number of contiguous 'pins' starting with the pin at index
-  // 'begin'.  Returns a run of 0 bytes if there is no space. The
-  // space does not necessarily cover all the pins, so multiple calls
-  // starting at the first unwritten pin may be needed.
-  std::pair<uint64_t, int32_t> getSpace(
+  // 'begin'.  Returns nullopt if there is no space. The space does
+  // not necessarily cover all the pins, so multiple calls starting at
+  // the first unwritten pin may be needed.
+  std::optional<std::pair<uint64_t, int32_t>> getSpace(
       const std::vector<CachePin>& pins,
       int32_t begin);
 
@@ -233,8 +200,8 @@ class SsdFile {
   // added to 'writableRegions_'. Returns true if regions could be cleared.
   bool growOrEvictLocked();
 
-  // Increments event count and periodically decays scores.
-  void newEventLocked();
+  // Reads the backing file with ReadFile::preadv().
+  void read(uint64_t offset, const std::vector<folly::Range<char*>> buffers);
 
   // Verifies that 'entry' has the data at 'run'.
   void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
@@ -265,18 +232,14 @@ class SsdFile {
   // Indices of regions available for writing new entries.
   std::vector<int32_t> writableRegions_;
 
-  // Count of bytes read from the corresponding region. Decays with time.
-  std::vector<uint64_t> regionScore_;
+  // Tracker for access frequencies and eviction.
+  SsdFileTracker tracker_;
 
   // Pin count for each region.
   std::vector<int32_t> regionPins_;
 
   // Map of file number and offset to location in file.
-  folly::F14FastMap<SsdKey, SsdRun> entries_;
-
-  // Count of reads and writes. The scores are decayed every time the count goes
-  // over kDecayInterval or half 'entries_' size, whichever comes first.
-  uint64_t numEvents_{0};
+  folly::F14FastMap<FileCacheKey, SsdRun> entries_;
 
   // Name of backing file.
   const std::string filename_;

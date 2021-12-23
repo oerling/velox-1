@@ -25,7 +25,7 @@
 #include <sys/types.h>
 #include <numeric>
 
-DEFINE_bool(ssd_odirect, true, "use O_DIRECT for SSD cache IO");
+DEFINE_bool(ssd_odirect, true, "Use O_DIRECT for SSD cache IO");
 DEFINE_bool(ssd_verify_write, false, "Read back data after writing to SSD");
 
 namespace facebook::velox::cache {
@@ -73,7 +73,7 @@ SsdFile::SsdFile(
   // The existing regions in the file are writable.
   writableRegions_.resize(numRegions_);
   std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
-  regionScore_.resize(maxRegions_);
+  tracker_.resize(maxRegions_);
   regionSize_.resize(maxRegions_);
   regionPins_.resize(maxRegions_);
 }
@@ -114,14 +114,14 @@ void addEntryToIovecs(AsyncDataCacheEntry& entry, std::vector<iovec>& iovecs) {
 } // namespace
 
 SsdPin SsdFile::find(RawFileCacheKey key) {
-  SsdKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
+  FileCacheKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
   SsdRun run;
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (suspended_) {
       return SsdPin();
     }
-    newEventLocked();
+    tracker_.fileTouched(entries_.size());
     auto it = entries_.find(ssdKey);
     if (it == entries_.end()) {
       return SsdPin();
@@ -132,72 +132,63 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
   return SsdPin(*this, run);
 }
 
-void SsdFile::newEventLocked() {
-  ++numEvents_;
-  if (numEvents_ > kDecayInterval && numEvents_ > entries_.size() / 2) {
-    numEvents_ = 0;
-    for (auto i = 0; i < numRegions_; ++i) {
-      int64_t score = regionScore_[i];
-      regionScore_[i] = (score * 15) / 16;
-    }
+void SsdFile::load(
+    const std::vector<SsdPin>& ssdPins,
+    const std::vector<CachePin>& pins) {
+  VELOX_CHECK_EQ(ssdPins.size(), pins.size());
+  int payloadTotal = 0;
+  for (auto i = 0; i < pins.size(); ++i) {
+    auto runSize = ssdPins[i].run().size();
+    VELOX_CHECK_EQ(runSize, pins[i].entry()->size());
+    payloadTotal += runSize;
+    regionRead(regionIndex(ssdPins[i].run().offset()), runSize);
+    ++stats_.entriesRead;
+    stats_.bytesRead += runSize;
   }
-}
+  // Do coalesced IO for the pins. For short payloads, the break-even
+  // between discrete pread calls and a single preadv that discards
+  // gaps is ~25K per gap. For longer payloads this is ~50-100K.
+  readPins(
+      pins,
+      payloadTotal / pins.size() < 10000 ? 25000 : 50000,
+      // Max ranges in one preadv call. Longest gap + longest cache
+      // entry are under 12 ranges. If a system has a limit of 1K
+      // ranges, coalesce limit of 1000 is safe.
+      900,
+      [&](int32_t index) { return ssdPins[index].run().offset(); },
+      [&](const std::vector<CachePin>& pins,
+          int32_t begin,
+          int32_t end,
+          uint64_t offset,
+          const std::vector<folly::Range<char*>>& buffers) {
+        read(offset, buffers);
+      });
 
-void SsdFile::load(SsdRun run, AsyncDataCacheEntry& entry) {
-  VELOX_CHECK_EQ(run.size(), entry.size());
-  regionScore_[regionIndex(run.offset())] += run.size();
-  ++stats_.entriesRead;
-  stats_.bytesRead += run.size();
-  if (entry.tinyData()) {
-    auto rc = pread(fd_, entry.tinyData(), run.size(), run.offset());
-    VELOX_CHECK_EQ(rc, run.size());
-  } else {
-    std::vector<struct iovec> iovecs;
-    addEntryToIovecs(entry, iovecs);
-
-    auto rc = folly::preadv(fd_, iovecs.data(), iovecs.size(), run.offset());
-    VELOX_CHECK_EQ(rc, run.size());
+  for (auto i = 0; i < ssdPins.size(); ++i) {
+    pins[i].entry()->setSsdFile(this, ssdPins[i].run().offset());
   }
-  entry.setSsdFile(this, run.offset());
 }
 
 void SsdFile::read(
     uint64_t offset,
-    const std::vector<folly::Range<char*>> buffers,
-    int32_t numEntries) {
-  stats_.entriesRead += numEntries;
-  uint64_t regionBytes = 0;
-  uint64_t regionOffset = offset;
-  // Calculate the span from first to last and the number of bytes
-  // that are used out of these. 'regionBytes' do not include
-  // gaps in the coalesced read.
-  for (auto range : buffers) {
-    if (range.data()) {
-      regionBytes += range.size();
-    }
-    regionOffset += range.size();
-  }
-  // Attribute the read bytes to the region where the read
-  // ends. Coalesced reads crossing regions are be rare and we do not
-  // consider this in tracking region read volumes.
-  regionUsed(regionIndex(offset), regionBytes);
-  stats_.bytesRead += regionBytes;
+    const std::vector<folly::Range<char*>> buffers) {
   readFile_->preadv(offset, buffers);
 }
 
-std::pair<uint64_t, int32_t> SsdFile::getSpace(
+std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
     const std::vector<CachePin>& pins,
     int32_t begin) {
   std::lock_guard<std::mutex> l(mutex_);
   for (;;) {
     if (writableRegions_.empty()) {
       if (!growOrEvictLocked()) {
-        return {0, 0};
+        return std::nullopt;
+        ;
       }
     }
     auto region = writableRegions_[0];
     auto offset = regionSize_[region];
-    auto available = kRegionSize - regionSize_[region];
+    auto available = kRegionSize - offset;
     int64_t toWrite = 0;
     for (; begin < pins.size(); ++begin) {
       auto entry = pins[begin].entry();
@@ -208,20 +199,14 @@ std::pair<uint64_t, int32_t> SsdFile::getSpace(
       toWrite += entry->size();
     }
     if (toWrite) {
-      // At least some pins got space from this region. If the region is is full
+      // At least some pins got space from this region. If the region is full
       // the next call will get space from another region.
       regionSize_[region] += toWrite;
-      return {region * kRegionSize + offset, toWrite};
+      return std::make_pair<uint64_t, int32_t>(
+          region * kRegionSize + offset, toWrite);
     }
-    // A region has been filled and transits from writable to
-    // evictable. Set its score to be at least the best score +
-    // kRegionSize so that it gets time to live. Otherwise it has had
-    // the least time to get hits and would be the first evicted.
-    uint64_t best = 0;
-    for (auto& score : regionScore_) {
-      best = std::max<uint64_t>(best, score);
-    }
-    regionScore_[region] = std::max(regionScore_[region], best + kRegionSize);
+
+    tracker_.regionFilled(region);
     writableRegions_.erase(writableRegions_.begin());
   }
 }
@@ -241,29 +226,11 @@ bool SsdFile::growOrEvictLocked() {
                  << newSize;
     }
   }
-  std::vector<int32_t> candidates;
-  int64_t scoreSum = 0;
-  for (int i = 0; i < numRegions_; ++i) {
-    if (regionPins_[i]) {
-      continue;
-    }
-    if (candidates.empty() || regionScore_[i] < scoreSum / candidates.size()) {
-      scoreSum += regionScore_[i];
-      candidates.push_back(i);
-    }
-  }
+  auto candidates =
+      tracker_.findEvictionCandidates(3, numRegions_, regionPins_);
   if (candidates.empty()) {
     suspended_ = true;
     return false;
-  }
-  // Sort by score to evict less read regions first.
-  std::sort(
-      candidates.begin(), candidates.end(), [&](int32_t left, int32_t right) {
-        return regionScore_[left] < regionScore_[right];
-      });
-  // Free up to 3 lowest score regions.
-  if (candidates.size() > 3) {
-    candidates.resize(3);
   }
   clearRegionEntriesLocked(candidates);
   writableRegions_ = std::move(candidates);
@@ -288,24 +255,29 @@ void SsdFile::clearRegionEntriesLocked(
     // While the region is being filled it may get score from
     // hits. When it is full, it will get a score boost to be a little
     // ahead of the best.
-    regionScore_[region] = 0;
+    tracker_.regionCleared(region);
     regionSize_[region] = 0;
   }
 }
 
 void SsdFile::write(std::vector<CachePin>& pins) {
+  // Sorts the pins by their file/offset. In this way what is ajacent
+  // in storage is likely adjacent on SSD.
   std::sort(pins.begin(), pins.end());
   uint64_t total = 0;
   for (auto& pin : pins) {
+    VELOX_CHECK_NULL(pin.entry()->ssdFile());
     total += pin.entry()->size();
   }
   int32_t storeIndex = 0;
   while (storeIndex < pins.size()) {
-    auto [offset, available] = getSpace(pins, storeIndex);
-    if (!available) {
+    auto space = getSpace(pins, storeIndex);
+
+    if (!space.has_value()) {
       // No space can be reclaimed. The pins are freed when the caller is freed.
       return;
     }
+    auto [offset, available] = space.value();
     int32_t numWritten = 0;
     int32_t bytes = 0;
     std::vector<iovec> iovecs;
@@ -334,7 +306,7 @@ void SsdFile::write(std::vector<CachePin>& pins) {
         char first = entry->tinyData() ? entry->tinyData()[0]
                                        : entry->data().runAt(0).data<char>()[0];
         auto size = entry->size();
-        SsdKey key = {
+        FileCacheKey key = {
             entry->key().fileNum, static_cast<uint64_t>(entry->offset())};
         entries_[std::move(key)] = SsdRun(offset, size);
         if (FLAGS_ssd_verify_write) {
@@ -406,7 +378,6 @@ void SsdFile::clear() {
   std::fill(regionSize_.begin(), regionSize_.end(), 0);
   writableRegions_.resize(numRegions_);
   std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
-  std::fill(regionScore_.begin(), regionScore_.end(), 0);
 }
 
 } // namespace facebook::velox::cache
