@@ -138,13 +138,6 @@ class CachedBufferedInput : public BufferedInput {
       const SeekableInputStream* stream);
 
  private:
-  // Updates first  to include second if they are near enough to justify merging
-  // the IO.
-  bool tryMerge(
-      dwio::common::Region& first,
-      const dwio::common::Region& second,
-      int32_t maxDistance);
-
   // Sorts requests and makes FusedLoads for nearby requests. If 'prefetch' is
   // true, starts background loading.
   void makeLoads(std::vector<CacheRequest*> requests, bool prefetch);

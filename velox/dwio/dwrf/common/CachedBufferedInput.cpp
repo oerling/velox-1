@@ -181,7 +181,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
             continue;
           }
           if (ssdFile) {
-            request.ssdPin = ssdFile->find(part->key);
+            part->ssdPin = std::move(ssdFile->find(part->key));
             if (!part->ssdPin.empty()) {
               ssdLoad.push_back(part);
               continue;
@@ -219,36 +219,34 @@ void CachedBufferedInput::makeLoads(
         }
       });
   // Combine adjacent short reads.
-  dwio::common::Region last = {0, 0};
 
-  std::vector<CacheRequest*> readBatch;
   int32_t numNewLoads = 0;
-  for (const auto& request : requests) {
-    VELOX_CHECK_EQ(isSsd, !request->ssdPin.empty());
-    dwio::common::Region entryRegion{
-        static_cast<uint64_t>(
-            isSsd ? request->ssdPin.run().offset() : request->key.offset),
-        static_cast<uint64_t>(request->size)};
 
-    VELOX_CHECK_LT(0, entryRegion.length);
-    if (last.length == 0) {
-      if (!request->coalesces) {
-        continue;
-      }
-      // first region
-      last = entryRegion;
-      continue;
-    }
-    if (!request->coalesces || last.length >= FLAGS_max_coalesced_io_size ||
-        !tryMerge(last, entryRegion, maxDistance)) {
-      ++numNewLoads;
-      readRegion(std::move(readBatch), prefetch);
-      last = entryRegion;
-    }
-    readBatch.push_back(request);
-  }
-  ++numNewLoads;
-  readRegion(std::move(readBatch), prefetch);
+  coalesceIo<CacheRequest*, CacheRequest*>(
+					   requests,
+					   maxDistance,
+      // Break batches up. Better load more short ones i parallel.
+      40,
+      [&](int32_t index) {
+        return isSsd ? requests[index]->ssdPin.run().offset()
+                     : requests[index]->key.offset;
+      },
+      [&](int32_t index) { return requests[index]->size; },
+      [&](int32_t index) {
+        return requests[index]->coalesces ? 1 : kNoCoalesce;
+      },
+      [&](CacheRequest* request, std::vector<CacheRequest*> ranges) {
+        ranges.push_back(request);
+      },
+      [&](int32_t /*gap*/, std::vector<CacheRequest*> /*ranges*/) { /*no op*/ },
+      [&](const std::vector<CacheRequest*>& /*requests*/,
+          int32_t /*begin*/,
+          int32_t /*end*/,
+          uint64_t /*offset*/,
+          const std::vector<CacheRequest*>& ranges) {
+        ++numNewLoads;
+        readRegion(ranges, prefetch);
+      });
   if (prefetch && executor_ && numNewLoads > 1) {
     for (auto& load : allFusedLoads_) {
       if (load->state() == LoadState::kPlanned) {
@@ -257,33 +255,6 @@ void CachedBufferedInput::makeLoads(
       }
     }
   }
-}
-
-bool CachedBufferedInput::tryMerge(
-    dwio::common::Region& first,
-    const dwio::common::Region& second,
-    int32_t maxDistance) {
-  DWIO_ENSURE_GE(second.offset, first.offset, "regions should be sorted.");
-  int64_t gap = second.offset - first.offset - first.length;
-  if (gap < 0) {
-    // We do not support one region going to two target buffers.
-    return false;
-  }
-  // compare with 0 since it's comparison in different types
-  if (gap <= maxDistance) {
-    int64_t extension = gap + second.length;
-
-    if (extension > 0) {
-      first.length += extension;
-      if (gap > 0) {
-        ioStats_->incRawOverreadBytes(gap);
-      }
-    }
-
-    return true;
-  }
-
-  return false;
 }
 
 // namespace {
@@ -346,7 +317,7 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
 
  protected:
   void updateStats(
-      const cache::CoalescedIoStats& stats,
+      const CoalesceIoStats& stats,
       bool isPrefetch,
       bool isSsd) {
     if (ioStats_) {
