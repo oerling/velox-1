@@ -78,7 +78,7 @@ class SsdPin {
 
   SsdPin(const SsdPin& other) = delete;
 
-  void operator=(const SsdPin OTHER) = delete;
+  void operator=(const SsdPin& OTHER) = delete;
 
   SsdPin(SsdPin&& other) noexcept {
     run_ = other.run_;
