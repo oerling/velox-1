@@ -21,66 +21,65 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/functions/Macros.h"
 
-namespace facebook {
-namespace velox {
-namespace functions {
+namespace facebook::velox::functions {
 
 template <typename T>
-VELOX_UDF_BEGIN(checked_plus)
-
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = checkedPlus(a, b);
-  return true;
-}
-
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(checked_minus)
-
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = checkedMinus(a, b);
-  return true;
-}
-
-VELOX_UDF_END();
+struct CheckedPlusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = checkedPlus(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(checked_multiply)
-
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = checkedMultiply(a, b);
-  return true;
-}
-
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(checked_divide)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = checkedDivide(a, b);
-  return true;
-}
-VELOX_UDF_END();
+struct CheckedMinusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = checkedMinus(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(checked_modulus)
-
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = checkedModulus(a, b);
-  return true;
-}
-
-VELOX_UDF_END();
+struct CheckedMultiplyFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = checkedMultiply(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(checked_negate)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a) {
-  result = checkedNegate(a);
-  return true;
-}
-VELOX_UDF_END();
+struct CheckedDivideFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = checkedDivide(a, b);
+    return true;
+  }
+};
 
-} // namespace functions
-} // namespace velox
-} // namespace facebook
+template <typename T>
+struct CheckedModulusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = checkedModulus(a, b);
+    return true;
+  }
+};
+
+template <typename T>
+struct CheckedNegateFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(TInput& result, const TInput& a) {
+    result = checkedNegate(a);
+    return true;
+  }
+};
+
+} // namespace facebook::velox::functions

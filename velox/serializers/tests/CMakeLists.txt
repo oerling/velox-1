@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_executable(velox_presto_serializer_test PrestoSerializerTest.cpp)
+add_executable(velox_presto_serializer_test PrestoOutputStreamListenerTest.cpp
+                                            PrestoSerializerTest.cpp)
 
 add_test(velox_presto_serializer_test velox_presto_serializer_test)
 
 target_link_libraries(
   velox_presto_serializer_test velox_presto_serializer velox_vector_test_lib
-  ${GTEST_BOTH_LIBRARIES} ${gflags_LIBRARIES} ${GLOG})
+  ${GTEST_BOTH_LIBRARIES} ${gflags_LIBRARIES} glog::glog)

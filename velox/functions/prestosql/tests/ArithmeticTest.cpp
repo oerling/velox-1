@@ -53,17 +53,17 @@ class ArithmeticTest : public functions::test::FunctionBaseTest {
     }
   }
 
-  template <typename T>
+  template <typename T, typename U = T, typename V = T>
   void assertError(
       const std::string& expression,
       const std::vector<T>& arg0,
-      const std::vector<T>& arg1,
+      const std::vector<U>& arg1,
       const std::string& errorMessage) {
     auto vector0 = makeFlatVector(arg0);
     auto vector1 = makeFlatVector(arg1);
 
     try {
-      evaluate<SimpleVector<T>>(expression, makeRowVector({vector0, vector1}));
+      evaluate<SimpleVector<V>>(expression, makeRowVector({vector0, vector1}));
       ASSERT_TRUE(false) << "Expected an error";
     } catch (const std::exception& e) {
       ASSERT_TRUE(
@@ -91,29 +91,29 @@ __attribute__((__no_sanitize__("float-divide-by-zero")))
       "c0 / c1", {10.5, 9.2, 0.0}, {2, 0, 0}, {5.25, kInf, kNan});
 }
 
-TEST_F(ArithmeticTest, modulus) {
+TEST_F(ArithmeticTest, mod) {
   std::vector<double> numerDouble = {0, 6, 0, -7, -1, -9, 9, 10.1};
   std::vector<double> denomDouble = {1, 2, -1, 3, -1, -3, -3, -99.9};
   std::vector<double> expectedDouble = {0, 0, 0, -1, 0, 0, 0, 10.1};
 
   // Check using function name and alias.
   assertExpression<double>(
-      "modulus(c0, c1)", numerDouble, denomDouble, expectedDouble);
+      "mod(c0, c1)", numerDouble, denomDouble, expectedDouble);
   assertExpression<double>(
-      "modulus(c0, c1)",
+      "mod(c0, c1)",
       {5.1, kNan, 5.1, kInf, 5.1},
       {0.0, 5.1, kNan, 5.1, kInf},
       {kNan, kNan, kNan, kNan, 5.1});
 }
 
-TEST_F(ArithmeticTest, modulusInt) {
+TEST_F(ArithmeticTest, modInt) {
   std::vector<int64_t> numerInt = {9, 10, 0, -9, -10, -11};
   std::vector<int64_t> denomInt = {3, -3, 11, -1, 199999, 77};
   std::vector<int64_t> expectedInt = {0, 1, 0, 0, -10, -11};
 
   assertExpression<int64_t, int64_t>(
-      "modulus(c0, c1)", numerInt, denomInt, expectedInt);
-  assertError<int64_t>("modulus(c0, c1)", {10}, {0}, "Cannot divide by 0");
+      "mod(c0, c1)", numerInt, denomInt, expectedInt);
+  assertError<int64_t>("mod(c0, c1)", {10}, {0}, "Cannot divide by 0");
 }
 
 TEST_F(ArithmeticTest, power) {
@@ -384,52 +384,6 @@ TEST_F(ArithmeticTest, widthBucket) {
       "Bucket for value inf is out of range");
 }
 
-TEST_F(ArithmeticTest, bitwiseAnd) {
-  const auto bitwiseAnd = [&](std::optional<int32_t> a,
-                              std::optional<int32_t> b) {
-    return evaluateOnce<int64_t>("bitwise_and(c0, c1)", a, b);
-  };
-
-  EXPECT_EQ(bitwiseAnd(0, -1), 0);
-  EXPECT_EQ(bitwiseAnd(3, 8), 0);
-  EXPECT_EQ(bitwiseAnd(-4, 12), 12);
-  EXPECT_EQ(bitwiseAnd(60, 21), 20);
-}
-
-TEST_F(ArithmeticTest, bitwiseNot) {
-  const auto bitwiseNot = [&](std::optional<int32_t> a) {
-    return evaluateOnce<int64_t>("bitwise_not(c0)", a);
-  };
-
-  EXPECT_EQ(bitwiseNot(-1), 0);
-  EXPECT_EQ(bitwiseNot(0), -1);
-  EXPECT_EQ(bitwiseNot(2), -3);
-}
-
-TEST_F(ArithmeticTest, bitwiseOr) {
-  const auto bitwiseOr = [&](std::optional<int32_t> a,
-                             std::optional<int32_t> b) {
-    return evaluateOnce<int64_t>("bitwise_or(c0, c1)", a, b);
-  };
-
-  EXPECT_EQ(bitwiseOr(0, -1), -1);
-  EXPECT_EQ(bitwiseOr(3, 8), 11);
-  EXPECT_EQ(bitwiseOr(-4, 12), -4);
-  EXPECT_EQ(bitwiseOr(60, 21), 61);
-}
-
-TEST_F(ArithmeticTest, bitwiseXor) {
-  const auto bitwiseXor = [&](std::optional<int32_t> a,
-                              std::optional<int32_t> b) {
-    return evaluateOnce<int64_t>("bitwise_xor(c0, c1)", a, b);
-  };
-
-  EXPECT_EQ(bitwiseXor(0, -1), -1);
-  EXPECT_EQ(bitwiseXor(3, 8), 11);
-  EXPECT_EQ(bitwiseXor(-4, 12), -16);
-  EXPECT_EQ(bitwiseXor(60, 21), 41);
-}
-
 TEST_F(ArithmeticTest, radians) {
   const auto radians = [&](std::optional<double> a) {
     return evaluateOnce<double>("radians(c0)", a);
@@ -441,6 +395,140 @@ TEST_F(ArithmeticTest, radians) {
   EXPECT_DOUBLE_EQ(0, radians(0).value());
   EXPECT_DOUBLE_EQ(-3.1415926535897931, radians(-180).value());
   EXPECT_DOUBLE_EQ(-1.0000736613927508, radians(-57.3).value());
+}
+
+TEST_F(ArithmeticTest, signFloatingPoint) {
+  const auto sign = [&](std::optional<double> a) {
+    return evaluateOnce<double>("sign(c0)", a);
+  };
+
+  EXPECT_FLOAT_EQ(0.0, sign(0.0).value_or(-1));
+  EXPECT_FLOAT_EQ(1.0, sign(10.1).value_or(-1));
+  EXPECT_FLOAT_EQ(-1.0, sign(-10.1).value_or(1));
+  EXPECT_FLOAT_EQ(1.0, sign(kInf).value_or(-1));
+  EXPECT_FLOAT_EQ(-1.0, sign(-kInf).value_or(1));
+  EXPECT_THAT(sign(kNan), IsNan());
+}
+
+TEST_F(ArithmeticTest, signIntegral) {
+  const auto sign = [&](std::optional<int64_t> a) {
+    return evaluateOnce<int64_t>("sign(c0)", a);
+  };
+
+  EXPECT_EQ(0, sign(0));
+  EXPECT_EQ(1, sign(10));
+  EXPECT_EQ(-1, sign(-10));
+}
+
+TEST_F(ArithmeticTest, infinity) {
+  const auto infinity = [&]() {
+    return evaluateOnce<double>("infinity()", makeRowVector(ROW({}), 1));
+  };
+
+  EXPECT_EQ(kInf, infinity());
+}
+
+TEST_F(ArithmeticTest, isFinite) {
+  const auto isFinite = [&](std::optional<double> a) {
+    return evaluateOnce<bool>("is_finite(c0)", a);
+  };
+
+  EXPECT_EQ(true, isFinite(0.0));
+  EXPECT_EQ(false, isFinite(kInf));
+  EXPECT_EQ(false, isFinite(-kInf));
+  EXPECT_EQ(false, isFinite(1.0 / 0.0));
+  EXPECT_EQ(false, isFinite(-1.0 / 0.0));
+}
+
+TEST_F(ArithmeticTest, isInfinite) {
+  const auto isInfinite = [&](std::optional<double> a) {
+    return evaluateOnce<bool>("is_infinite(c0)", a);
+  };
+
+  EXPECT_EQ(false, isInfinite(0.0));
+  EXPECT_EQ(true, isInfinite(kInf));
+  EXPECT_EQ(true, isInfinite(-kInf));
+  EXPECT_EQ(true, isInfinite(1.0 / 0.0));
+  EXPECT_EQ(true, isInfinite(-1.0 / 0.0));
+}
+
+TEST_F(ArithmeticTest, isNan) {
+  const auto isNan = [&](std::optional<double> a) {
+    return evaluateOnce<bool>("is_nan(c0)", a);
+  };
+
+  EXPECT_EQ(false, isNan(0.0));
+  EXPECT_EQ(true, isNan(kNan));
+  EXPECT_EQ(true, isNan(0.0 / 0.0));
+}
+
+TEST_F(ArithmeticTest, nan) {
+  const auto nan = [&]() {
+    return evaluateOnce<double>("nan()", makeRowVector(ROW({}), 1));
+  };
+
+  EXPECT_EQ(true, std::isnan(nan().value()));
+}
+
+TEST_F(ArithmeticTest, fromBase) {
+  const auto fromBase = [&](const std::optional<StringView>& a,
+                            std::optional<int64_t> b) {
+    return evaluateOnce<int64_t>("from_base(c0, c1)", a, b);
+  };
+
+  EXPECT_EQ(12, fromBase("12"_sv, 10));
+  EXPECT_EQ(12, fromBase("+12"_sv, 10));
+  EXPECT_EQ(-12, fromBase("-12"_sv, 10));
+  EXPECT_EQ(26, fromBase("1a"_sv, 16));
+  EXPECT_EQ(3, fromBase("11"_sv, 2));
+  EXPECT_EQ(71, fromBase("1z"_sv, 36));
+  EXPECT_EQ(
+      9223372036854775807,
+      fromBase(
+          "111111111111111111111111111111111111111111111111111111111111111"_sv,
+          2));
+
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)", {"0"_sv}, {1}, "Radix must be between 2 and 36.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)", {"0"_sv}, {37}, "Radix must be between 2 and 36.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"0x12"_sv},
+      {16},
+      "Not a valid base-16 number: 0x12.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)", {""_sv}, {10}, "Not a valid base-10 number: .");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {" 12"_sv},
+      {16},
+      "Not a valid base-16 number:  12.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"123xy"_sv},
+      {10},
+      "Not a valid base-10 number: 123xy.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"123456789012xy"_sv},
+      {10},
+      "Not a valid base-10 number: 123456789012xy.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"abc12"_sv},
+      {10},
+      "Not a valid base-10 number: abc12.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"9223372036854775808"_sv},
+      {10},
+      "9223372036854775808 is out of range.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"1111111111111111111111111111111111111111111111111111111111111111111111"_sv},
+      {2},
+      "1111111111111111111111111111111111111111111111111111111111111111111111 is out of range.");
 }
 
 } // namespace

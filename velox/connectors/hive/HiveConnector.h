@@ -33,8 +33,11 @@ class HiveColumnHandle : public ColumnHandle {
  public:
   enum class ColumnType { kPartitionKey, kRegular, kSynthesized };
 
-  HiveColumnHandle(const std::string& name, ColumnType columnType)
-      : name_(name), columnType_(columnType) {}
+  HiveColumnHandle(
+      const std::string& name,
+      ColumnType columnType,
+      TypePtr dataType)
+      : name_(name), columnType_(columnType), dataType_(std::move(dataType)) {}
 
   const std::string& name() const {
     return name_;
@@ -44,9 +47,14 @@ class HiveColumnHandle : public ColumnHandle {
     return columnType_;
   }
 
+  const TypePtr& dataType() const {
+    return dataType_;
+  }
+
  private:
   const std::string name_;
   const ColumnType columnType_;
+  const TypePtr dataType_;
 };
 
 using SubfieldFilters =
@@ -150,12 +158,13 @@ class HiveDataSource : public DataSource {
 
   std::unordered_map<std::string, int64_t> runtimeStats() override;
 
-
   bool allPrefetchIssued() const override {
     return rowReader_ && rowReader_->allPrefetchIssued();
   }
 
   void setFromDataSource(std::shared_ptr<DataSource> source) override;
+
+    int64_t estimatedRowSize() override;
 
 private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
@@ -172,10 +181,18 @@ private:
       common::ScanSpec* FOLLY_NONNULL spec,
       const TypePtr& type) const;
 
+  void setPartitionValue(
+      common::ScanSpec* FOLLY_NONNULL spec,
+      const std::string& partitionKey,
+      const std::optional<std::string>& value) const;
+
   const std::shared_ptr<const RowType> outputType_;
+  // Column handles for the partition key columns keyed on partition key column
+  // name.
+  std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>
+      partitionKeys_;
   FileHandleFactory* FOLLY_NONNULL fileHandleFactory_;
   velox::memory::MemoryPool* FOLLY_NONNULL pool_;
-  std::vector<std::string> regularColumns_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   std::unique_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::unique_ptr<common::ScanSpec> scanSpec_;
@@ -204,6 +221,7 @@ private:
   memory::MappedMemory* const FOLLY_NONNULL mappedMemory_;
   const std::string& scanId_;
   folly::Executor* FOLLY_NULLABLE executor_;
+  bool errorInRowSize_{false};
 };
 
 class HiveConnector final : public Connector {
@@ -276,7 +294,16 @@ class HiveConnector final : public Connector {
 
 class HiveConnectorFactory : public ConnectorFactory {
  public:
+  static constexpr const char* FOLLY_NONNULL kHiveConnectorName = "hive";
+  static constexpr const char* FOLLY_NONNULL kHiveHadoop2ConnectorName =
+      "hive-hadoop2";
+
   HiveConnectorFactory() : ConnectorFactory(kHiveConnectorName) {
+    dwio::common::FileSink::registerFactory();
+  }
+
+  HiveConnectorFactory(const char* FOLLY_NONNULL connectorName)
+      : ConnectorFactory(connectorName) {
     dwio::common::FileSink::registerFactory();
   }
 
@@ -288,6 +315,12 @@ class HiveConnectorFactory : public ConnectorFactory {
     return std::make_shared<HiveConnector>(
         id, properties, std::move(dataCache), executor);
   }
+};
+
+class HiveHadoop2ConnectorFactory : public HiveConnectorFactory {
+ public:
+  HiveHadoop2ConnectorFactory()
+      : HiveConnectorFactory(kHiveHadoop2ConnectorName) {}
 };
 
 } // namespace facebook::velox::connector::hive

@@ -14,11 +14,13 @@
 
 add_executable(simple_lru_cache_test SimpleLRUCacheTest.cpp)
 add_test(simple_lru_cache_test simple_lru_cache_test)
-target_link_libraries(simple_lru_cache_test ${GTEST_BOTH_LIBRARIES} ${GLOG}
+target_link_libraries(simple_lru_cache_test ${GTEST_BOTH_LIBRARIES} glog::glog
                       ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})
 
-add_executable(velox_cache_test StringIdMapTest.cpp AsyncDataCacheTest.cpp
-                                GroupTrackerTest.cpp)
+add_executable(
+  velox_cache_test StringIdMapTest.cpp AsyncDataCacheTest.cpp
+                   GroupTrackerTest.cpp SsdFileTest.cpp SsdFileTrackerTest.cpp)
+
 add_test(velox_cache_test velox_cache_test)
 target_link_libraries(
   velox_cache_test
@@ -26,17 +28,16 @@ target_link_libraries(
   velox_memory
   velox_exception
   ${GTEST_BOTH_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${gflags_LIBRARIES}
   ${FOLLY_WITH_DEPENDENCIES})
 
 add_executable(cached_factory_test CachedFactoryTest.cpp)
 add_test(cached_factory_test cached_factory_test)
-target_link_libraries(cached_factory_test ${GTEST_BOTH_LIBRARIES} ${GLOG}
+target_link_libraries(cached_factory_test ${GTEST_BOTH_LIBRARIES} glog::glog
                       ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})
 
 add_executable(data_cache_test DataCacheTest.cpp)
 add_test(data_cache_test data_cache_test)
 target_link_libraries(data_cache_test velox_caching ${GTEST_BOTH_LIBRARIES}
-                      ${GLOG} ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})
-
+                      glog::glog ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES})

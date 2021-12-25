@@ -50,6 +50,10 @@ General Aggregate Functions
     Returns the number of ``TRUE`` input values.
     This function is equivalent to ``count(CASE WHEN x THEN 1 END)``.
 
+.. function:: every(boolean) -> boolean
+
+    This is an alias for :func:`bool_and`.
+
 .. function:: max_by(x, y) -> [same as x]
 
     Returns the value of ``x`` associated with the maximum value of ``y`` over all input values.
@@ -130,6 +134,18 @@ Approximate Aggregate Functions
 
 Statistical Aggregate Functions
 -------------------------------
+
+.. function:: corr(y, x) -> double
+
+    Returns correlation coefficient of input values.
+
+.. function:: covar_pop(y, x) -> double
+
+    Returns the population covariance of input values.
+
+.. function:: covar_samp(y, x) -> double
+
+    Returns the sample covariance of input values.
 
 .. function:: stddev(x) -> double
 

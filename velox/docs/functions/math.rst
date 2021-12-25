@@ -23,6 +23,14 @@ Mathematical Functions
     Returns ``low`` if ``x`` is less than ``low``. Returns ``high`` if ``x`` is greater than ``high``.
     Returns ``x`` otherwise.
 
+.. function:: divide(x, y) -> [same as x]
+
+    Returns the results of dividing x by y. The types of x and y must be the same.
+    The result of dividing by zero depends on the input types. For integral types,
+    division by zero results in an error. For floating point types,  division by
+    zero returns positive infinity if x is greater than zero, negative infinity if
+    x if less than zero and NaN if x is equal to zero.
+
 .. function:: exp(x) -> double
 
     Returns Euler's number raised to the power of ``x``.
@@ -30,6 +38,10 @@ Mathematical Functions
 .. function:: floor(x) -> [same as x]
 
     Returns ``x`` rounded down to the nearest integer.
+
+.. function:: from_base(string, radix) -> bigint
+
+    Returns the value of ``string`` interpreted as a base-``radix`` number. ``radix`` must be between 2 and 36.
 
 .. function:: ln(x) -> double
 
@@ -43,9 +55,28 @@ Mathematical Functions
 
     Returns the base 10 logarithm of ``x``.
 
+.. function:: minus(x, y) -> [same as x]
+
+    Returns the result of subtracting y from x. The types of x and y must be the same.
+    For integral types, overflow results in an error.
+
 .. function:: mod(n, m) -> [same as n]
 
     Returns the modulus (remainder) of ``n`` divided by ``m``.
+
+.. function:: multiply(x, y) -> [same as x]
+
+    Returns the result of multiplying x by y. The types of x and y must be the same.
+    For integral types, overflow results in an error.
+
+.. function:: negate(x) -> [same as x]
+
+    Returns the additive inverse of x, e.g. the number that, when added to x, yields zero.
+
+.. function:: plus(x, y) -> [same as x]
+
+    Returns the result of adding x to y. The types of x and y must be the same.
+    For integral types, overflow results in an error.
 
 .. function:: pow(x, p) -> double
 
@@ -93,6 +124,18 @@ Mathematical Functions
     For example, if ``bins`` is ``ARRAY[0, 2, 4]``, then we have four bins:
     ``(-infinity(), 0)``, ``[0, 2)``, ``[2, 4)`` and ``[4, infinity())``.
 
+.. function:: sign(x) -> [same as x]
+
+    Returns the signum function of ``x``. For both integer and floating point arguments, it returns:
+    * 0 if the argument is 0,
+    * 1 if the argument is greater than 0,
+    * -1 if the argument is less than 0.
+
+    For double arguments, the function additionally return:
+    * NaN if the argument is NaN,
+    * 1 if the argument is +Infinity,
+    * -1 if the argument is -Infinity.
+
 
 ====================================
 Trigonometric Functions
@@ -133,3 +176,28 @@ Trigonometric Functions
 .. function:: tanh(x) -> double
 
     Returns the hyperbolic tangent of ``x``.
+
+
+====================================
+Floating Point Functions
+====================================
+
+.. function:: infinity() -> double
+
+    Returns the constant representing positive infinity.
+
+.. function:: is_finite(x) -> boolean
+
+    Determine if x is finite.
+
+.. function:: is_infinite(x) -> boolean
+
+    Determine if x is infinite.
+
+.. function:: is_nan(x) -> boolean
+
+    Determine if x is not-a-number.
+
+.. function:: nan() -> double
+
+    Returns the constant representing not-a-number.

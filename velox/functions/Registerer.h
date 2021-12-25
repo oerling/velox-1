@@ -15,7 +15,8 @@
  */
 #pragma once
 
-#include "velox/core/FunctionRegistry.h"
+#include "velox/core/ScalarFunctionRegistry.h"
+#include "velox/expression/VectorFunction.h"
 #include "velox/expression/VectorFunctionBindings.h"
 
 namespace facebook::velox {
@@ -24,19 +25,14 @@ template <typename Func, typename TReturn, typename... TArgs>
 void registerFunction(
     const std::vector<std::string>& aliases = {},
     std::shared_ptr<const Type> returnType = nullptr) {
-  using funcClass = typename Func::template udf<core::DynamicExec>;
+  using funcClass = typename Func::template udf<exec::VectorExec>;
   // register basic
   using holderClass =
-      core::UDFHolder<funcClass, core::DynamicExec, TReturn, TArgs...>;
+      core::UDFHolder<funcClass, exec::VectorExec, TReturn, TArgs...>;
   core::registerFunction<holderClass>(aliases, returnType);
 
   // register Vector
-  using VectorHolderClass = core::UDFHolder<
-      typename Func::template udf<exec::VectorExec>,
-      exec::VectorExec,
-      TReturn,
-      TArgs...>;
-  exec::registerVectorFunction<VectorHolderClass>(aliases, move(returnType));
+  exec::registerVectorFunction<holderClass>(aliases, move(returnType));
 }
 
 // New registration function; mostly a copy from the function above, but taking
@@ -47,13 +43,11 @@ template <template <class> typename Func, typename TReturn, typename... TArgs>
 void registerFunction(
     const std::vector<std::string>& aliases = {},
     std::shared_ptr<const Type> returnType = nullptr) {
-  using funcClass = Func<core::DynamicExec>;
+  using funcClass = Func<exec::VectorExec>;
   using holderClass =
-      core::UDFHolder<funcClass, core::DynamicExec, TReturn, TArgs...>;
+      core::UDFHolder<funcClass, exec::VectorExec, TReturn, TArgs...>;
   core::registerFunction<holderClass>(aliases, returnType);
-  using VectorHolderClass = core::
-      UDFHolder<Func<exec::VectorExec>, exec::VectorExec, TReturn, TArgs...>;
-  exec::registerVectorFunction<VectorHolderClass>(aliases, move(returnType));
+  exec::registerVectorFunction<holderClass>(aliases, move(returnType));
 }
 
 } // namespace facebook::velox

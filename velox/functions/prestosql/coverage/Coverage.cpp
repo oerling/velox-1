@@ -19,8 +19,7 @@
 #include <iostream>
 #include "velox/exec/Aggregate.h"
 #include "velox/functions/FunctionRegistry.h"
-#include "velox/functions/prestosql/SimpleFunctions.h"
-#include "velox/functions/prestosql/VectorFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 
 DEFINE_bool(all, false, "Generate coverage map for all Presto functions");
 DEFINE_bool(
@@ -256,8 +255,7 @@ void printCoverageMap(
 /// Returns alphabetically sorted list of scalar functions available in Velox.
 std::vector<std::string> getSortedScalarNames() {
   // Do not print "internal" functions.
-  static const std::unordered_set<std::string> kBlockList = {
-      "ROW", "concatRow", "concatrow"};
+  static const std::unordered_set<std::string> kBlockList = {"row_constructor"};
 
   auto functions = getFunctionSignatures();
 
@@ -276,11 +274,13 @@ std::vector<std::string> getSortedScalarNames() {
 /// Returns alphabetically sorted list of aggregate functions available in
 /// Velox.
 std::vector<std::string> getSortedAggregateNames() {
-  auto functions = exec::AggregateFunctions().Keys();
+  const auto& functions = exec::aggregateFunctions();
 
   std::vector<std::string> names;
   names.reserve(functions.size());
-  names.insert(names.end(), functions.begin(), functions.end());
+  for (const auto& entry : functions) {
+    names.push_back(entry.first);
+  }
   std::sort(names.begin(), names.end());
   return names;
 }
@@ -294,19 +294,8 @@ void printVeloxFunctions() {
       "checked_multiply",
       "checked_negate",
       "checked_plus",
-      "divide",
-      "minus",
+      "in",
       "modulus",
-      "multiply",
-      "negate",
-      "plus",
-      "lt",
-      "lte",
-      "gt",
-      "gte",
-      "eq",
-      "neq",
-      "negate",
       "not"};
 
   auto scalarNames = getSortedScalarNames();
@@ -362,9 +351,12 @@ void printCoverageMap(
     veloxNames.emplace(func.first);
   }
 
-  auto veloxAggregateFunctions = exec::AggregateFunctions().Keys();
-  std::unordered_set<std::string> veloxAggNames(
-      veloxAggregateFunctions.begin(), veloxAggregateFunctions.end());
+  std::unordered_set<std::string> veloxAggNames;
+
+  const auto& veloxAggregateFunctions = exec::aggregateFunctions();
+  for (const auto& entry : veloxAggregateFunctions) {
+    veloxAggNames.emplace(entry.first);
+  }
 
   printCoverageMap(scalarNames, aggNames, veloxNames, veloxAggNames);
 }
@@ -412,8 +404,7 @@ int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   // Register all simple and vector scalar functions.
-  functions::registerFunctions();
-  functions::registerVectorFunctions();
+  functions::prestosql::registerAllFunctions();
 
   if (FLAGS_all) {
     printCoverageMapForAll();

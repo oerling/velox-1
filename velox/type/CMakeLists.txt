@@ -23,12 +23,15 @@ add_library(
   Variant.cpp
   Timestamp.cpp
   TimestampConversion.cpp
+  Date.cpp
   Filter.cpp
   Subfield.cpp
   Tokenizer.cpp)
 
 target_link_libraries(
   velox_type
+  velox_type_tz
+  velox_common_base
   velox_encode
   velox_exception
   velox_serialization

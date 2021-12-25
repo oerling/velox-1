@@ -30,21 +30,30 @@ void ConstantExpr::evalSpecialForm(
         BaseVector::createConstant(value_, 1, context->execCtx()->pool());
   }
 
-  if (isString()) {
+  if (needToSetIsAscii_) {
     auto* vector =
         sharedSubexprValues_->asUnchecked<SimpleVector<StringView>>();
-    vector->computeAndSetIsAscii(rows);
+    LocalSelectivityVector singleRow(context, 1);
+    singleRow.get()->setAll();
+    bool isAscii = vector->computeAndSetIsAscii(*singleRow.get());
+    vector->setAllIsAscii(isAscii);
+    needToSetIsAscii_ = false;
   }
   if (sharedSubexprValues_.unique() && !*result) {
     sharedSubexprValues_->resize(rows.end());
     *result = sharedSubexprValues_;
     return;
   }
-  
-  context->moveOrCopyResult(
-      BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
-      rows,
-      result);
+
+  if (sharedSubexprValues_.unique()) {
+    sharedSubexprValues_->resize(rows.end());
+    context->moveOrCopyResult(sharedSubexprValues_, rows, result);
+  } else {
+    context->moveOrCopyResult(
+        BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
+        rows,
+        result);
+  }
 }
 
 void ConstantExpr::evalSpecialFormSimplified(

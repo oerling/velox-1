@@ -21,7 +21,6 @@ target_link_libraries(
   velox_codegen_vector_function_test
   velox_codegen_ast
   velox_codegen_external_process
-  velox_exec_test_lib
   velox_exec
   velox_dwio_dwrf_reader
   velox_dwio_dwrf_writer
@@ -56,6 +55,6 @@ target_link_libraries(
   ${FOLLY_WITH_DEPENDENCIES}
   ${DOUBLE_CONVERSION}
   ${GFLAGS_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${FMT}
   dl)

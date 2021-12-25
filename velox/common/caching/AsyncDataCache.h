@@ -21,6 +21,7 @@
 #include <folly/chrono/Hardware.h>
 #include <folly/futures/SharedPromise.h>
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/CoalesceIo.h"
 #include "velox/common/base/SelectivityInfo.h"
 #include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
@@ -78,6 +79,10 @@ struct AccessStats {
 struct FileCacheKey {
   StringIdLease fileNum;
   uint64_t offset;
+
+  bool operator==(const FileCacheKey& other) const {
+    return offset == other.offset && fileNum.id() == other.fileNum.id();
+  }
 };
 
 // Non-owning reference to a file number and offset.
@@ -222,9 +227,17 @@ class AsyncDataCacheEntry {
 
   void setExclusiveToShared();
 
-  void setSsdFile(SsdFile* file, uint64_t offset) {
+  void setSsdFile(SsdFile* FOLLY_NULLABLE file, uint64_t offset) {
     ssdFile_ = file;
     ssdOffset_ = offset;
+  }
+
+  SsdFile* FOLLY_NULLABLE ssdFile() const {
+    return ssdFile_;
+  }
+
+  uint64_t ssdOffset() const {
+    return ssdOffset_;
   }
 
   void setTrackingId(TrackingId id) {
@@ -293,8 +306,12 @@ class AsyncDataCacheEntry {
   // Tracking id. Used for deciding if this should be written to SSD.
   TrackingId trackingId_;
 
-  // SSD file from which this was loaded or nullptr if not backed by SSD.
-  SsdFile* ssdFile_{nullptr};
+  // SSD file from which this was loaded or nullptr if not backed by
+  // SsdFile. Used to avoid re-adding items that already come from
+  // SSD. The exact file and offset are needed to include uses in RAM
+  // to uses on SSD. Failing this, we could have the hottest data first in
+  // line for eviction from SSD.
+  SsdFile* FOLLY_NULLABLE ssdFile_{nullptr};
 
   // Offset in 'ssdFile_'.
   uint64_t ssdOffset_{0};
@@ -340,6 +357,11 @@ class CachePin {
     entry_ = nullptr;
   }
   AsyncDataCacheEntry* FOLLY_NULLABLE entry() const {
+    return entry_;
+  }
+
+  AsyncDataCacheEntry* FOLLY_NONNULL checkedEntry() const {
+    assert(entry_);
     return entry_;
   }
 
@@ -438,11 +460,17 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
 
   // Makes cache entries for the ranges to load if there are no pins
   // yet. Returns true if pins were made and should be
-  // loaded. Implementations can make a FusedLoad activated ofor on
-  // first access of a correlated sparsely loaded set of
+  // loaded. Implementations can make a FusedLoad activated on
+  // first access of a correlated sparsely accessed set of
   // columns. There the cache entries for all will be made on first
   // access.
-  virtual bool makePins() = 0;
+  virtual bool makePins() {
+    VELOX_UNSUPPORTED("FusedLoad requires pins to be supplied");
+  }
+
+  virtual std::string toString() const {
+    return "<FusedLoad>";
+  }
 
  protected:
   // Performs the data transfer part of the load. Subclasses will
@@ -521,14 +549,14 @@ struct CacheStats {
 
 class ClockTimer {
  public:
-  explicit ClockTimer(uint64_t& total)
+  explicit ClockTimer(std::atomic<uint64_t>& total)
       : total_(&total), start_(folly::hardware_timestamp()) {}
   ~ClockTimer() {
     *total_ += folly::hardware_timestamp() - start_;
   }
 
  private:
-  uint64_t* FOLLY_NONNULL total_;
+  std::atomic<uint64_t>* FOLLY_NONNULL total_;
   uint64_t start_;
 };
 
@@ -570,7 +598,7 @@ class CacheShard {
   // Adds the stats of 'this' to 'stats'.
   void updateStats(CacheStats& stats);
 
-  void getSsdSaveable(std::vector<CachePin>& pins);
+  void appendSsdSaveable(std::vector<CachePin>& pins);
 
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
@@ -617,305 +645,7 @@ class CacheShard {
   uint64_t sumEvictScore_{};
   // Tracker of time spent in allocating/freeing MappedMemory space
   // for backing cached data.
-  uint64_t allocClocks_;
-};
-
-// A 64 bit word describing a SSD cache entry. 32 files x 64G per file, up to
-// 8MB in entry size for a total of 2TB. Larger capacities need more bits.
-class SsdRun {
- public:
-  static constexpr int32_t kSizeBits = 23;
-
-  SsdRun() : bits_(0) {}
-
-  SsdRun(uint64_t offset, uint32_t size)
-      : bits_((offset << kSizeBits) | ((size - 1))) {
-    VELOX_CHECK_LT(offset, 1L << (64 - kSizeBits));
-    VELOX_CHECK_LT(size - 1, 1 << kSizeBits);
-  }
-
-  SsdRun(const SsdRun& other) = default;
-  SsdRun(SsdRun&& other) = default;
-
-  void operator=(const SsdRun& other) {
-    bits_ = other.bits_;
-  }
-  void operator=(SsdRun&& other) {
-    bits_ = other.bits_;
-  }
-
-  uint64_t offset() const {
-    return (bits_ >> kSizeBits);
-  }
-
-  uint32_t size() const {
-    return (bits_ & ((1 << kSizeBits) - 1)) + 1;
-  }
-
- private:
-  uint64_t bits_;
-};
-
-struct SsdKey {
-  StringIdLease file;
-  uint64_t offset;
-
-  bool operator==(const SsdKey& other) const {
-    return offset == other.offset && file.id() == other.file.id();
-  }
-};
-
-} // namespace facebook::velox::cache
-namespace std {
-template <>
-struct hash<::facebook::velox::cache::SsdKey> {
-  size_t operator()(const ::facebook::velox::cache::SsdKey& key) const {
-    return facebook::velox::bits::hashMix(key.file.id(), key.offset);
-  }
-};
-
-} // namespace std
-
-namespace facebook::velox::cache {
-
-// Represents an SsdFile entry that is planned for load or being
-// loaded. This is destroyed after load. Destruction decrements the
-// pin count of the corresponding region of 'file_'.
-class SsdPin {
- public:
-  SsdPin() : file_(nullptr) {}
-
-  // Constructs a pin referencing 'run' in 'file'. The region must be
-  // pinned before constructing the pin.
-  SsdPin(SsdFile& file, SsdRun run);
-
-  SsdPin(const SsdPin& other) = delete;
-
-  SsdPin(SsdPin&& other) {
-    run_ = other.run_;
-    file_ = other.file_;
-    other.file_ = nullptr;
-  }
-
-  ~SsdPin();
-
-  void operator=(SsdPin&&);
-
-  bool empty() const {
-    return file_ == nullptr;
-  }
-  SsdFile* file() const {
-    return file_;
-  }
-
-  SsdRun run() const {
-    return run_;
-  }
-
- private:
-  SsdFile* file_;
-  SsdRun run_;
-};
-
-// Metrics for SSD cache. Maintained by SsdFile and aggregated by SsdCache.
-struct SsdCacheStats {
-  uint64_t entriesWritten{0};
-  uint64_t bytesWritten{0};
-  uint64_t entriesRead{0};
-  uint64_t bytesRead{0};
-  uint64_t entriesCached{0};
-  uint64_t bytesCached{0};
-};
-
-class SsdFile {
- public:
-  static constexpr uint64_t kMaxSize = 1UL << 36; // 64G
-  static constexpr uint64_t kRegionSize = 1 << 26; // 64MB
-  static constexpr int32_t kNumRegions = kMaxSize / kRegionSize;
-
-  // Constructs a cache backed by filename. Discards any previous
-  // contents of filename.
-  SsdFile(
-      const std::string& filename,
-      SsdCache& cache,
-      int32_t ordinal,
-      int32_t maxRegions);
-
-  // Adds entries of  'pins'  to this file. 'pins' must be in read mode and
-  // those pins that are successfully added to SSD are marked as being on SSD.
-  // The file of the entries must be a file that is backed by 'this'.
-  void store(std::vector<CachePin>& pins);
-
-  SsdPin find(RawFileCacheKey key);
-
-  // Copies the data at 'run' into 'entry'. Checks that the entry
-  // and run sizes match. The quantization of SSD cache matches that
-  // of the memory cache.
-  void load(SsdRun run, AsyncDataCacheEntry& entry);
-  void read(
-      uint64_t offset,
-      const std::vector<folly::Range<char*>> buffers,
-      int32_t numEntries);
-
-  // Increments the pin count of the region of 'offset'.
-  void pinRegion(uint64_t offset);
-
-  // Increments the pin count of the region of 'offset'. Caller must hold
-  // 'mutex_'.
-  void pinRegionLocked(uint64_t offset) {
-    ++regionPins_[regionIndex(offset)];
-  }
-
-  // Decrements the pin count of the region of 'offset'. If the pin
-  // count goes to zero and evict is due, starts the evict.
-  void unpinRegion(uint64_t offset);
-
-  // Asserts that the region of 'offset' is pinned. This is called by
-  // the pin holder. The pin count can be read without mutex.
-  void checkPinned(uint64_t offset) const {
-    VELOX_CHECK_LT(0, regionPins_[regionIndex(offset)]);
-  }
-
-  // Returns the region number corresponding to offset.
-  static int32_t regionIndex(uint64_t offset) {
-    return offset / kRegionSize;
-  }
-
-  void regionUsed(int32_t region, int32_t size) {
-    regionScore_[region] += size;
-  }
-
-  int32_t maxRegions() const {
-    return maxRegions_;
-  }
-
-  int32_t ordinal() const {
-    return ordinal_;
-  }
-
-  // Adds 'stats_' to 'stats'.
-  void updateStats(SsdCacheStats& stats);
-
-  // Resets [this' to a post-construction empty state. See SsdCache::clear().
-  void clear();
-  
- private:
-  static constexpr int32_t kDecayInterval = 1000;
-
-  // Returns [start, size] of contiguous space for storing data of a
-  // number of contiguous 'pins' starting at 'startIndex'.  Returns a
-  // run of 0 bytes if there is no space
-  std::pair<uint64_t, int32_t> getSpace(
-      const std::vector<CachePin>& pins,
-      int32_t begin);
-
-  // Removes all 'entries_' that reference data in 'toErase'.
-  void clearRegionEntriesLocked(const std::vector<int32_t>& toErase);
-
-  // Clears one or more  regions for accommodating new entries. The regions are
-  // added to 'writableRegions_'. Returns true if regions could be cleared.
-  // cleared.
-  bool evictLocked();
-
-  // Increments event count and periodically decays scores.
-  void newEventLocked();
-
-  void verifyWrite(AsyncDataCacheEntry& entry, SsdRun run);
-
-  std::mutex mutex_;
-
-  // The containing SsdCache.
-  SsdCache& cache_;
-
-  // Stripe number within 'cache_'.
-  int32_t ordinal_;
-
-  // Number of kRegionSize regions in the file.
-  int32_t numRegions_{0};
-
-  // True if stopped serving traffic. Happens if no evictions are
-  // possible due to everything being pinned. Clears when pins
-  // decrease and space can be cleared.
-  bool suspended_{false};
-
-  // Maximum size of the backing file in kRegionSize units.
-  const int32_t maxRegions_;
-
-  // Number of used bytes in in each region. A new entry must fit
-  // between the offset and the end of the region.
-  std::vector<uint32_t> regionSize_;
-
-  // Region numbers available for writing new entries.
-  std::vector<int32_t> writableRegions_;
-
-  // Count of KB used from the corresponding region. Decays with time.
-  std::vector<uint64_t> regionScore_;
-
-  std::vector<int32_t> regionPins_;
-
-  // Map of file number and offset to location in file.
-  folly::F14FastMap<SsdKey, SsdRun> entries_;
-
-  // Count of reads and writes. The scores are decayed every time e count goes
-  // over kDecayInterval or half 'entries_' size, wichever comes first.
-  uint64_t numEvents_{0};
-
-  const std::string filename_;
-
-  // File descriptor.
-  int32_t fd_;
-  uint64_t fileSize_{0};
-  // ReadFile made from 'fd_'.
-  std::unique_ptr<ReadFile> readFile_;
-  // Counters.
-  SsdCacheStats stats_;
-};
-
-class SsdCache {
- public:
-  SsdCache(
-      std::string_view filePrefix,
-      uint64_t maxBytes,
-      int32_t numShards_ = 32);
-
-  // Returns the shard corresponding to 'fileId'.
-  SsdFile& file(uint64_t fileId);
-
-  uint64_t maxBytes() const {
-    return files_[0]->maxRegions() * files_.size() * SsdFile::kRegionSize;
-  }
-
-  // Returns true if no store s in progress. Atomically sets a store
-  // to be in progress. store() must be called after this. The storing
-  // state is reset asynchronously after writing to SSD finishes.
-  bool startStore();
-
-  // Stores the entries of 'pins' into the corresponding files. Sets
-  // the file for the successfully stored entries. May evict existing
-  // entries from unpinned regions.
-  void store(std::vector<CachePin> pins);
-
-  SsdCacheStats stats() const;
-
-  FileGroupStats& groupStats() const {
-    return *groupStats_;
-  }
-
-  // Drops all entries. Outstanding pins become invalid but reading
-  // them will mostly succeed since the files will not be rewritten
-  // until new content is stord.
-  void clear();
-  
-  std::string toString() const;
-
- private:
-  std::string filePrefix_;
-  const int32_t numShards_;
-
-  std::vector<std::unique_ptr<SsdFile>> files_;
-  // Count of shards with unfinished stores.
-  std::atomic<int32_t> storesInProgress_{0};
-  std::unique_ptr<FileGroupStats> groupStats_;
+  std::atomic<uint64_t> allocClocks_;
 };
 
 class AsyncDataCache : public memory::MappedMemory,
@@ -1004,21 +734,30 @@ class AsyncDataCache : public memory::MappedMemory,
     return ssdCache_.get();
   }
 
+  // Updates stats for creation of a new cache entry of 'size' bytes,
+  // i.e. a cache miss. Periodically updates SSD admission criteria,
+  // i.e. reconsider criteria every half cache capacity worth of misses.
   void incrementNew(uint64_t size);
 
+  // Updates statistics after bringing in 'bytes' worth of data that
+  // qualifies for SSD save and is not backed by SSD. Periodically
+  // triggers a background write of eligible entries to SSD.
   void possibleSsdSave(uint64_t bytes);
 
-  void setVerifyHook(std::function<void(AsyncDataCacheEntry*)> hook) {
+  // Sets a callback applied to new entries at the point where
+  // 'dataValid_' is set to true. Used for testing and can be used for
+  // e.g. checking checksums.
+  void setVerifyHook(std::function<void(const AsyncDataCacheEntry&)> hook) {
     verifyHook_ = hook;
   }
+
   const auto& verifyHook() const {
     return verifyHook_;
   }
 
-
   // Drops all unpinned entries. Pins stay valid.
   void clear();
-  
+
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
@@ -1049,7 +788,7 @@ class AsyncDataCache : public memory::MappedMemory,
 
   CacheStats stats_;
 
-  std::function<void(AsyncDataCacheEntry*)> verifyHook_;
+  std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
 };
 
 // Samples a set of values T from 'numSamples' calls of
@@ -1065,5 +804,35 @@ T percentile(Next next, int32_t numSamples, int percent) {
   std::sort(values.begin(), values.end());
   return values.empty() ? 0 : values[(values.size() * percent) / 100];
 }
+
+// Utility function for loading multiple pins with coalesced
+// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the
+// largest allowed distance in bytes between the end of one entry and
+// the start of the next. If the gap is larger or the next is before
+// the end of the previous, the entries will be fetched separately.
+//
+//'offsetFunc' returns the starting offset of the data in the
+// file given a pin and the pin's index in 'pins'. The pins are expected to be
+// sorted by this offset. 'readFunc' reads from the appropriate media. It gets
+// the 'pins' and the index of the first pin included in the read and the index
+// of the first pin not included. It gets the starting offset of the read and a
+// vector of memory ranges to fill by ReadFile::preadv or a similar
+// function.
+// The caller is responsible for calling setValid on the pins after a successful
+// read.
+//
+// Returns the number of distinct IOs, the number of bytes loaded into pins and
+// the number of extr bytes read.
+CoalesceIoStats readPins(
+    const std::vector<CachePin>& pins,
+    int32_t maxGap,
+    int32_t maxBatch,
+    std::function<uint64_t(int32_t index)> offsetFunc,
+    std::function<void(
+        const std::vector<CachePin>& pins,
+        int32_t begin,
+        int32_t end,
+        uint64_t offset,
+        const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
 } // namespace facebook::velox::cache

@@ -14,7 +14,7 @@
 add_library(
   velox_exec
   Aggregate.cpp
-  AllocationPool.cpp
+  AggregationMasks.cpp
   ContainerRowSerde.cpp
   CrossJoinBuild.cpp
   CrossJoinProbe.cpp
@@ -27,13 +27,13 @@ add_library(
   HashBuild.cpp
   HashPartitionFunction.cpp
   HashProbe.cpp
-  HashStringAllocator.cpp
   HashTable.cpp
   JoinBridge.cpp
   Limit.cpp
   LocalPartition.cpp
   LocalPlanner.cpp
   Merge.cpp
+  MergeJoin.cpp
   MergeSource.cpp
   Operator.cpp
   OperatorUtils.cpp
@@ -41,13 +41,15 @@ add_library(
   PartitionedOutput.cpp
   PartitionedOutputBufferManager.cpp
   RowContainer.cpp
+  StreamingAggregation.cpp
   TableScan.cpp
   TableWriter.cpp
   Task.cpp
   TopN.cpp
   Unnest.cpp
   Values.cpp
-  VectorHasher.cpp)
+  VectorHasher.cpp
+  AssignUniqueId.cpp)
 
 target_link_libraries(
   velox_exec
@@ -61,4 +63,6 @@ target_link_libraries(
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
   add_subdirectory(benchmarks)
+elseif(${VELOX_BUILD_TEST_UTILS})
+  add_subdirectory(tests/utils)
 endif()

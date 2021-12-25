@@ -11,15 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_executable(velox_functions_lib_test Re2FunctionsTest.cpp
-                                        ArrayBuilderTest.cpp)
+add_executable(
+  velox_functions_lib_test
+  IsNullTest.cpp IsNotNullTest.cpp JodaDateTimeTest.cpp Re2FunctionsTest.cpp
+  ArrayBuilderTest.cpp)
 
 add_test(velox_functions_lib_test velox_functions_lib_test)
 
 target_link_libraries(
   velox_functions_lib_test
   velox_functions_lib
-  velox_exec_test_lib
+  velox_functions_test_lib
   velox_exec_test_util
   velox_expression
   ${GTEST_BOTH_LIBRARIES}

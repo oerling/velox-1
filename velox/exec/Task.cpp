@@ -15,7 +15,7 @@
  */
 #include "velox/exec/Task.h"
 #include "velox/codegen/Codegen.h"
-#include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdCache.h"
 #include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/CrossJoinBuild.h"
@@ -43,13 +43,13 @@ Task::Task(
     std::shared_ptr<core::QueryCtx> queryCtx,
     ConsumerSupplier consumerSupplier,
     std::function<void(std::exception_ptr)> onError)
-    : taskId_(taskId),
+    : pool_(queryCtx->pool()->addScopedChild("task_root")),
+      taskId_(taskId),
       planNode_(planNode),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
-      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       bufferManager_(
           PartitionedOutputBufferManager::getInstance(queryCtx_->host())) {
   checkTraceCommand();
@@ -163,11 +163,11 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
     }
   }
   self->noMoreLocalExchangeProducers();
-  // Set and start all Drivers together inside the CancelPool so that
+  // Set and start all Drivers together inside 'mutex_' so that
   // cancellations and pauses have well
   // defined timing. For example, do not pause and restart a task
   // while it is still adding Drivers.
-  std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
+  std::lock_guard<std::mutex> l(self->mutex_);
   self->drivers_ = std::move(drivers);
   for (auto& driver : self->drivers_) {
     if (driver) {
@@ -179,16 +179,15 @@ void Task::start(std::shared_ptr<Task> self, uint32_t maxDrivers) {
 // static
 void Task::resume(std::shared_ptr<Task> self) {
   VELOX_CHECK(!self->exception_, "Cannot resume failed task");
-  std::lock_guard<std::mutex> l(*self->cancelPool()->mutex());
+  std::lock_guard<std::mutex> l(self->mutex_);
   // Setting pause requested must be atomic with the resuming so that
   // suspended sections do not go back on thread during resume.
-  self->cancelPool_->requestPauseLocked(false);
+  self->requestPauseLocked(false);
   for (auto& driver : self->drivers_) {
     if (driver) {
       if (driver->state().isSuspended) {
         // The Driver will come on thread in its own time as long as
-        // the cancel flag is reset. This check needs to be inside the
-        // CancelPool mutex.
+        // the cancel flag is reset. This check needs to be inside 'mutex_'.
         continue;
       }
       if (driver->state().isEnqueued) {
@@ -209,15 +208,16 @@ void Task::resume(std::shared_ptr<Task> self) {
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
-  std::lock_guard<std::mutex> cancelPoolLock(*self->cancelPool()->mutex());
+  std::lock_guard<std::mutex> taskLock(self->mutex_);
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() == driver) {
       driverPtr = nullptr;
-      self->driverClosed();
+      self->driverClosedLocked();
       return;
     }
   }
-  VELOX_FAIL("Trying to delete a Driver twice from its Task");
+  LOG(WARNING) << "Trying to delete a Driver twice from its :"
+               << self->taskId();
 }
 
 void Task::setMaxSplitSequenceId(
@@ -237,29 +237,43 @@ bool Task::addSplitWithSequence(
     const core::PlanNodeId& planNodeId,
     exec::Split&& split,
     long sequenceId) {
-  std::lock_guard<std::mutex> l(mutex_);
-  VELOX_CHECK(state_ == kRunning);
+  std::unique_ptr<ContinuePromise> promise;
+  bool added = false;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_CHECK(state_ == kRunning);
 
-  // The same split can be added again in some systems. The systems that want
-  // 'one split processed once only' would use this method and duplicate splits
-  // would be ignored.
-  auto& splitsState = splitsStates_[planNodeId];
-  if (sequenceId > splitsState.maxSequenceId) {
-    addSplitLocked(splitsState, std::move(split));
-    return true;
+    // The same split can be added again in some systems. The systems that want
+    // 'one split processed once only' would use this method and duplicate
+    // splits would be ignored.
+    auto& splitsState = splitsStates_[planNodeId];
+    if (sequenceId > splitsState.maxSequenceId) {
+      promise = addSplitLocked(splitsState, std::move(split));
+      added = true;
+    }
   }
-
-  return false;
+  if (promise) {
+    promise->setValue(false);
+  }
+  return added;
 }
 
 void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
-  std::lock_guard<std::mutex> l(mutex_);
-  VELOX_CHECK(state_ == kRunning);
+  std::unique_ptr<ContinuePromise> promise;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_CHECK(state_ == kRunning);
 
-  addSplitLocked(splitsStates_[planNodeId], std::move(split));
+    promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
+  }
+  if (promise) {
+    promise->setValue(false);
+  }
 }
 
-void Task::addSplitLocked(SplitsState& splitsState, exec::Split&& split) {
+std::unique_ptr<ContinuePromise> Task::addSplitLocked(
+    SplitsState& splitsState,
+    exec::Split&& split) {
   ++taskStats_.numTotalSplits;
   ++taskStats_.numQueuedSplits;
 
@@ -270,9 +284,12 @@ void Task::addSplitLocked(SplitsState& splitsState, exec::Split&& split) {
   }
 
   if (not splitsState.splitPromises.empty()) {
-    splitsState.splitPromises.back().setValue(false);
+    auto promise = std::make_unique<ContinuePromise>(
+        std::move(splitsState.splitPromises.back()));
     splitsState.splitPromises.pop_back();
+    return promise;
   }
+  return nullptr;
 }
 
 void Task::noMoreSplitsForGroup(
@@ -289,14 +306,17 @@ void Task::noMoreSplitsForGroup(
 }
 
 void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
-  std::lock_guard<std::mutex> l(mutex_);
+  std::vector<ContinuePromise> promises;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
 
-  auto& splitsState = splitsStates_[planNodeId];
-  splitsState.noMoreSplits = true;
-  for (auto& promise : splitsState.splitPromises) {
+    auto& splitsState = splitsStates_[planNodeId];
+    splitsState.noMoreSplits = true;
+    promises = std::move(splitsState.splitPromises);
+  }
+  for (auto& promise : promises) {
     promise.setValue(false);
   }
-  splitsState.splitPromises.clear();
 }
 
 bool Task::isAllSplitsFinishedLocked() {
@@ -428,10 +448,9 @@ void Task::setAllOutputConsumed() {
   }
 }
 
-void Task::driverClosed() {
+void Task::driverClosedLocked() {
   --numDrivers_;
   if ((numDrivers_ == 0) && (state_ == kRunning)) {
-    std::lock_guard<std::mutex> l(mutex_);
     if (taskStats_.executionEndTimeMs == 0) {
       // In case we haven't set executionEndTimeMs due to all splits depleted,
       // we set it here.
@@ -557,7 +576,7 @@ void Task::terminate(TaskState terminalState) {
     }
     state_ = terminalState;
   }
-  cancelPool()->requestTerminate();
+  requestTerminate();
   for (auto driver : drivers_) {
     // 'driver' is a  copy of the shared_ptr in
     // 'drivers_'. This is safe against a concurrent remove of the
@@ -574,18 +593,26 @@ void Task::terminate(TaskState terminalState) {
   }
   // Release reference to exchange client, so that it will close exchange
   // sources and prevent resending requests for data.
-  std::lock_guard<std::mutex> l(mutex_);
-  exchangeClients_.clear();
-  for (auto& pair : splitsStates_) {
-    for (auto& promise : pair.second.splitPromises) {
-      promise.setValue(true);
+  std::vector<ContinuePromise> promises;
+  std::unordered_map<std::string, std::shared_ptr<JoinBridge>> oldBridges;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    exchangeClients_.clear();
+    oldBridges = std::move(bridges_);
+    for (auto& pair : splitsStates_) {
+      for (auto& promise : pair.second.splitPromises) {
+        promises.push_back(std::move(promise));
+      }
+      pair.second.splitPromises.clear();
     }
-    pair.second.splitPromises.clear();
   }
-
-  for (auto& pair : bridges_) {
+  for (auto& promise : promises) {
+    promise.setValue(true);
+  }
+  for (auto& pair : oldBridges) {
     pair.second->cancel();
   }
+  std::lock_guard<std::mutex> l(mutex_);
   stateChangedLocked();
 }
 
@@ -703,6 +730,25 @@ void Task::createLocalMergeSources(
   }
 }
 
+void Task::createMergeJoinSource(const core::PlanNodeId& planNodeId) {
+  VELOX_CHECK(
+      mergeJoinSources_.find(planNodeId) == mergeJoinSources_.end(),
+      "Merge join sources already exist: {}",
+      planNodeId);
+
+  mergeJoinSources_.insert({planNodeId, std::make_shared<MergeJoinSource>()});
+}
+
+std::shared_ptr<MergeJoinSource> Task::getMergeJoinSource(
+    const core::PlanNodeId& planNodeId) {
+  auto it = mergeJoinSources_.find(planNodeId);
+  VELOX_CHECK(
+      it != mergeJoinSources_.end(),
+      "Merge join source for specified plan node doesn't exist: {}",
+      planNodeId);
+  return it->second;
+}
+
 void Task::createLocalExchangeSources(
     const core::PlanNodeId& planNodeId,
     int numPartitions) {
@@ -754,6 +800,49 @@ Task::getLocalExchangeSources(const core::PlanNodeId& planNodeId) {
   return it->second.sources;
 }
 
+void doCommand(std::string command) {
+  auto cache =
+      dynamic_cast<cache::AsyncDataCache*>(memory::MappedMemory::getInstance());
+  if (command == "dropram") {
+    if (!cache) {
+      LOG(ERROR) << "No cache to drop";
+      return;
+    }
+    LOG(INFO) << "VELOXCMD: Dropping RAM cache";
+    cache->clear();
+    return;
+  }
+  if (command == "dropssd") {
+    if (!cache) {
+      LOG(ERROR) << "VELOXCMD: No cache to drop";
+      return;
+    }
+
+    LOG(INFO) << "VELOXCMD: Dropping SSD and RAM cache";
+    if (cache->ssdCache()) {
+      cache->ssdCache()->clear();
+    }
+    cache->clear();
+    return;
+  }
+
+  if (command == "status") {
+    LOG(INFO) << "VELOXCMD: " << process::TraceContext::statusLine();
+    return;
+  }
+  auto equals = strchr(command.c_str(), '=');
+  if (equals) {
+    int32_t equalsOffset = equals - command.c_str();
+    std::string flag(command.data(), equalsOffset);
+    std::string value(
+        command.data() + equalsOffset + 1, command.size() - equalsOffset);
+    LOG(INFO) << "VELOXCMD set " << flag << "=" << value << ": "
+              << gflags::SetCommandLineOption(flag.c_str(), value.c_str());
+    return;
+  }
+  LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << command;
+}
+
 static void checkTraceCommand() {
   constexpr auto kCmdFile = "/tmp/veloxcmd.txt";
   static std::mutex mutex;
@@ -770,7 +859,7 @@ static void checkTraceCommand() {
     if (fd < 0) {
       return;
     }
-    char buffer[100] = {};
+    static char buffer[10000] = {};
     int32_t length = read(fd, buffer, sizeof(buffer));
     close(fd);
     if (unlink(kCmdFile) < 0) {
@@ -778,29 +867,134 @@ static void checkTraceCommand() {
                  << " - no action taken";
       return;
     }
-    auto cache = dynamic_cast<cache::AsyncDataCache*>(
-        memory::MappedMemory::getInstance());
-    if (cache) {
-      if (strncmp(buffer, "dropram", 7) == 0) {
-        LOG(INFO) << "VELOXCMD: Dropping RAM cache";
-        cache->clear();
-        return;
-      } else if (strncmp(buffer, "dropssd", 7) == 0) {
-        LOG(INFO) << "VELOXCMD: Dropping SSD and RAM cache";
-        if (cache->ssdCache()) {
-          cache->ssdCache()->clear();
-        }
-        cache->clear();
-        return;
+    int32_t start = 0;
+    for (auto i = 0; i < length; ++i) {
+      if (buffer[i] == ';') {
+        doCommand(std::string(buffer + start, i - start));
+        start = i + 1;
       }
     }
-    if (strncmp(buffer, "status", 6) == 0) {
-      LOG(INFO) << "VELOXCMD: " << process::TraceContext::statusLine();
-      return;
+    if (length - start > 0) {
+      doCommand(std::string(buffer + start, length - start));
     }
-
-    LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << buffer;
   }
+}
+
+StopReason Task::enter(ThreadState& state) {
+  std::lock_guard<std::mutex> l(mutex_);
+  VELOX_CHECK(state.isEnqueued);
+  state.isEnqueued = false;
+  if (state.isTerminated) {
+    return StopReason::kAlreadyTerminated;
+  }
+  if (state.isOnThread()) {
+    return StopReason::kAlreadyOnThread;
+  }
+  auto reason = shouldStopLocked();
+  if (reason == StopReason::kTerminate) {
+    state.isTerminated = true;
+  }
+  if (reason == StopReason::kNone) {
+    ++numThreads_;
+    state.setThread();
+    state.hasBlockingFuture = false;
+  }
+  return reason;
+}
+
+StopReason Task::enterForTerminate(ThreadState& state) {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (state.isOnThread() || state.isTerminated) {
+    state.isTerminated = true;
+    return StopReason::kAlreadyOnThread;
+  }
+  state.isTerminated = true;
+  state.setThread();
+  return StopReason::kTerminate;
+}
+
+StopReason Task::leave(ThreadState& state) {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (--numThreads_ == 0) {
+    finished();
+  }
+  state.clearThread();
+  if (state.isTerminated) {
+    return StopReason::kTerminate;
+  }
+  auto reason = shouldStopLocked();
+  if (reason == StopReason::kTerminate) {
+    state.isTerminated = true;
+  }
+  return reason;
+}
+
+StopReason Task::enterSuspended(ThreadState& state) {
+  VELOX_CHECK(!state.hasBlockingFuture);
+  VELOX_CHECK(state.isOnThread());
+  std::lock_guard<std::mutex> l(mutex_);
+  if (state.isTerminated) {
+    return StopReason::kAlreadyTerminated;
+  }
+  if (!state.isOnThread()) {
+    return StopReason::kAlreadyTerminated;
+  }
+  auto reason = shouldStopLocked();
+  if (reason == StopReason::kTerminate) {
+    state.isTerminated = true;
+  }
+  // A pause will not stop entering the suspended section. It will
+  // just ack that the thread is no longer in inside the
+  // CancelPool. The pause can wait at the exit of the suspended
+  // section.
+  if (reason == StopReason::kNone || reason == StopReason::kPause) {
+    state.isSuspended = true;
+    if (--numThreads_ == 0) {
+      finished();
+    }
+  }
+  return StopReason::kNone;
+}
+
+StopReason Task::leaveSuspended(ThreadState& state) {
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      ++numThreads_;
+      state.isSuspended = false;
+      if (state.isTerminated) {
+        return StopReason::kAlreadyTerminated;
+      }
+      if (terminateRequested_) {
+        state.isTerminated = true;
+        return StopReason::kTerminate;
+      }
+      if (!pauseRequested_) {
+        // For yield or anything but pause  we return here.
+        return StopReason::kNone;
+      }
+      --numThreads_;
+      state.isSuspended = true;
+    }
+    // If the pause flag is on when trying to reenter, sleep a while
+    // outside of the mutex and recheck. This is rare and not time
+    // critical. Can happen if memory interrupt sets pause while
+    // already inside a suspended section for other reason, like
+    // IO.
+    std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
+  }
+}
+
+folly::SemiFuture<bool> Task::finishFuture() {
+  auto [promise, future] =
+      makeVeloxPromiseContract<bool>("CancelPool::finishFuture");
+  std::lock_guard<std::mutex> l(mutex_);
+  if (numThreads_ == 0) {
+    promise.setValue(true);
+    return std::move(future);
+  }
+  finishPromises_.push_back(std::move(promise));
+  return std::move(future);
 }
 
 } // namespace facebook::velox::exec

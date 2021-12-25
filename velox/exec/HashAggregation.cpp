@@ -31,14 +31,15 @@ HashAggregation::HashAggregation(
           aggregationNode->step() == core::AggregationNode::Step::kPartial
               ? "PartialAggregation"
               : "Aggregation"),
+      outputBatchSize_{
+          driverCtx->execCtx->queryCtx()->config().preferredOutputBatchSize()},
+      maxPartialAggregationMemoryUsage_(
+          driverCtx->execCtx->queryCtx()
+              ->config()
+              .maxPartialAggregationMemoryUsage()),
       isPartialOutput_(isPartialOutput(aggregationNode->step())),
       isDistinct_(aggregationNode->aggregates().empty()),
-      isGlobal_(aggregationNode->groupingKeys().empty()),
-      maxPartialAggregationMemoryUsage_(
-          operatorCtx_->task()
-              ->queryCtx()
-              ->config()
-              .maxPartialAggregationMemoryUsage()) {
+      isGlobal_(aggregationNode->groupingKeys().empty()) {
   auto inputType = aggregationNode->sources()[0]->outputType();
 
   auto numHashers = aggregationNode->groupingKeys().size();
@@ -101,9 +102,10 @@ HashAggregation::HashAggregation(
     const auto& expectedType = outputType_->childAt(numHashers + i);
     VELOX_CHECK(
         aggResultType->kindEquals(expectedType),
-        "Unexpected result type for an aggregation: {}, expected {}",
+        "Unexpected result type for an aggregation: {}, expected {} step {}",
         aggResultType->toString(),
-        expectedType->toString());
+        expectedType->toString(),
+        static_cast<int32_t>(aggregationNode->step()));
   }
 
   if (isDistinct_) {
@@ -129,7 +131,7 @@ void HashAggregation::addInput(RowVectorPtr input) {
     mayPushdown_ = operatorCtx_->driver()->mayPushdownAggregation(this);
     pushdownChecked_ = true;
   }
-  groupingSet_->addInput(input_, mayPushdown_);
+  groupingSet_->addInput(input_, mayPushdown_, 0);
   if (isPartialOutput_ &&
       groupingSet_->allocatedBytes() > maxPartialAggregationMemoryUsage_) {
     partialFull_ = true;
@@ -170,7 +172,7 @@ RowVectorPtr HashAggregation::getOutput() {
     return output;
   }
 
-  auto batchSize = isGlobal_ ? 1 : kOutputBatchSize;
+  auto batchSize = isGlobal_ ? 1 : outputBatchSize_;
 
   // TODO Figure out how to re-use 'result' safely.
   auto result = std::static_pointer_cast<RowVector>(

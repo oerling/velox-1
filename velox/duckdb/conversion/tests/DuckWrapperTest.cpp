@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 #include "velox/duckdb/conversion/DuckWrapper.h"
+#include "velox/external/duckdb/duckdb.hpp"
+#include "velox/vector/tests/VectorMaker.h"
+
 #include <gtest/gtest.h>
 
 using namespace facebook::velox;
@@ -105,8 +108,7 @@ TEST_F(BaseDuckWrapperTest, scalarTypes) {
   verifyUnaryResult<double>("SELECT 1::DOUBLE", {1.0});
 
   // date/timestamp
-  verifyUnaryResult<Timestamp>(
-      "SELECT DATE '1992-01-01'", {Timestamp(694224000, 0)});
+  verifyUnaryResult<Date>("SELECT DATE '1992-01-01'", {Date(8035)});
   verifyUnaryResult<Timestamp>(
       "SELECT TIMESTAMP '1992-01-01 13:04:20'", {Timestamp(694271060, 0)});
 
@@ -156,9 +158,9 @@ TEST_F(BaseDuckWrapperTest, types) {
       {false, false, false, true});
 
   // date/timestamp
-  verifyUnaryResult<Timestamp>(
+  verifyUnaryResult<Date>(
       "SELECT i FROM (VALUES (DATE '1992-01-01'), (NULL)) tbl(i)",
-      {Timestamp(694224000, 0), Timestamp(0, 0)},
+      {Date(8035), Date(0)},
       {false, true});
   verifyUnaryResult<Timestamp>(
       "SELECT i FROM (VALUES (TIMESTAMP '1992-01-01 13:04:20'), (NULL)) tbl(i)",
@@ -187,9 +189,38 @@ TEST_F(BaseDuckWrapperTest, tpchSF1) {
   execute("CALL dbgen(sf=0.01)");
   // test conversion of date, decimal and string
   verifyUnaryResult<double>("SELECT l_discount FROM lineitem LIMIT 1", {0.04});
-  verifyUnaryResult<Timestamp>(
-      "SELECT l_shipdate FROM lineitem LIMIT 1", {Timestamp(826675200, 0)});
+  verifyUnaryResult<Date>(
+      "SELECT l_shipdate FROM lineitem LIMIT 1", {Date(9568)});
   verifyUnaryResult<StringView>(
       "SELECT l_comment FROM lineitem LIMIT 1",
       {StringView("egular courts above the")});
+}
+
+TEST_F(BaseDuckWrapperTest, dictConversion) {
+  ::duckdb::Vector data(::duckdb::LogicalTypeId::VARCHAR, 5);
+  auto dataPtr =
+      reinterpret_cast<::duckdb::string_t*>(data.GetBuffer()->GetData());
+  // Make dirty data which shouldn't be accessed.
+  memset(dataPtr, 0xAB, sizeof(::duckdb::string_t) * 5);
+  dataPtr[2] = ::duckdb::string_t("value1");
+  dataPtr[4] = ::duckdb::string_t("value2");
+
+  // Turn vector into dictionary.
+  ::duckdb::SelectionVector sel(5);
+  sel.set_index(0, 2);
+  sel.set_index(1, 4);
+  sel.set_index(2, 2);
+  sel.set_index(3, 4);
+  sel.set_index(4, 2);
+  data.Slice(sel, 5);
+
+  auto actual = toVeloxVector(5, data, VarcharType::create(), pool_.get());
+
+  test::VectorMaker maker(pool_.get());
+  std::vector<std::string> expectedData(
+      {"value1", "value2", "value1", "value2", "value1"});
+  auto expected = maker.flatVector(expectedData);
+  for (auto i = 0; i < actual->size(); i++) {
+    ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i));
+  }
 }

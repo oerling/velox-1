@@ -73,6 +73,17 @@ class Filter {
   virtual std::unique_ptr<Filter> clone(
       std::optional<bool> nullAllowed = std::nullopt) const = 0;
 
+  // Returns an integer filter that is equivalent to 'this' for
+  // testInt64 between 'min' and 'max'. If there is no more efficient
+  // filter for the range, returns nullptr. For example, an IN filter
+  // can become an equality if only one of the values is in
+  // range. Cases where no value is in range will be caught by
+  // testInt64Range.
+  virtual std::unique_ptr<Filter> filterForRange(int64_t min, int64_t max)
+      const {
+    return nullptr;
+  }
+
   /**
    * A filter becomes non-deterministic when applies to nested column,
    * e.g. a[1] > 10 is non-deterministic because > 10 filter applies only to
@@ -653,7 +664,9 @@ class BigintValuesUsingHashTable final : public Filter {
         min_(other.min_),
         max_(other.max_),
         hashTable_(other.hashTable_),
-        containsEmptyMarker_(other.containsEmptyMarker_) {}
+        containsEmptyMarker_(other.containsEmptyMarker_),
+        values_(other.values_),
+        sizeMask_(other.sizeMask_) {}
 
   std::unique_ptr<Filter> clone(
       std::optional<bool> nullAllowed = std::nullopt) const final {
@@ -666,10 +679,15 @@ class BigintValuesUsingHashTable final : public Filter {
   }
 
   bool testInt64(int64_t value) const final;
+  __m256i test4x64(__m256i x) final;
 
+  __m256si test8x32(__m256i x) final;
   bool testInt64Range(int64_t min, int64_t max, bool hashNull) const final;
 
   std::unique_ptr<Filter> mergeWith(const Filter* other) const final;
+
+  std::unique_ptr<Filter> filterForRange(int64_t min, int64_t max)
+      const override;
 
   int64_t min() const {
     return min_;
@@ -699,6 +717,8 @@ class BigintValuesUsingHashTable final : public Filter {
   const int64_t max_;
   std::vector<int64_t> hashTable_;
   bool containsEmptyMarker_ = false;
+  std::vector<int64_t> values_;
+  int32_t sizeMask_;
 };
 
 /// IN-list filter for integral data types. Implemented as a bitmask. Offers

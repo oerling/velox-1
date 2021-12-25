@@ -16,14 +16,16 @@
 
 #pragma once
 
-#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/ScanTracker.h"
+#include "velox/common/caching/SsdCache.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
 
 #include <folly/Executor.h>
+
+DECLARE_int32(cache_load_quantum);
 
 namespace facebook::velox::dwrf {
 
@@ -86,7 +88,7 @@ class CachedBufferedInput : public BufferedInput {
         streamSource_(streamSource),
         ioStats_(std::move(ioStats)),
         executor_(executor) {
-    tracker_->setLoadQuantum(CacheInputStream::kDefaultLoadQuantum);
+    tracker_->setLoadQuantum(FLAGS_cache_load_quantum);
   }
 
   ~CachedBufferedInput() override {
@@ -136,13 +138,6 @@ class CachedBufferedInput : public BufferedInput {
       const SeekableInputStream* stream);
 
  private:
-  // Updates first  to include second if they are near enough to justify merging
-  // the IO.
-  bool tryMerge(
-      dwio::common::Region& first,
-      const dwio::common::Region& second,
-      int32_t maxDistance);
-
   // Sorts requests and makes FusedLoads for nearby requests. If 'prefetch' is
   // true, starts background loading.
   void makeLoads(std::vector<CacheRequest*> requests, bool prefetch);
@@ -153,6 +148,8 @@ class CachedBufferedInput : public BufferedInput {
   //  requests is empty or 'prefetch' is false and there is a single
   //  request.
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
+
+  void traceFusedLoads();
 
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;

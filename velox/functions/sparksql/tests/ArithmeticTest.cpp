@@ -177,7 +177,7 @@ TEST_F(ArithmeticTest, Divide) {
   EXPECT_TRUE(std::isnan(divide(kInf, -kInf).value_or(0)));
 }
 
-class CeilFllorTest : public SparkFunctionBaseTest {
+class CeilFloorTest : public SparkFunctionBaseTest {
  protected:
   template <typename T>
   std::optional<int64_t> ceil(std::optional<T> a) {
@@ -188,7 +188,8 @@ class CeilFllorTest : public SparkFunctionBaseTest {
     return evaluateOnce<int64_t, T>("floor(c0)", a);
   }
 };
-TEST_F(CeilFllorTest, Limits) {
+
+TEST_F(CeilFloorTest, Limits) {
   EXPECT_EQ(1, ceil<int64_t>(1));
   EXPECT_EQ(-1, ceil<int64_t>(-1));
   EXPECT_EQ(3, ceil<double>(2.878));
@@ -200,6 +201,21 @@ TEST_F(CeilFllorTest, Limits) {
   EXPECT_EQ(
       std::numeric_limits<int64_t>::min(),
       floor<int64_t>(std::numeric_limits<int64_t>::min()));
+
+  // Very large double values are truncated to int64_t::max/min.
+  EXPECT_EQ(
+      std::numeric_limits<int64_t>::max(),
+      ceil<double>(std::numeric_limits<double>::infinity()));
+  EXPECT_EQ(
+      std::numeric_limits<int64_t>::max(),
+      floor<double>(std::numeric_limits<double>::infinity()));
+
+  EXPECT_EQ(
+      std::numeric_limits<int64_t>::min(),
+      ceil<double>(-std::numeric_limits<double>::infinity()));
+  EXPECT_EQ(
+      std::numeric_limits<int64_t>::min(),
+      floor<double>(-std::numeric_limits<double>::infinity()));
 }
 
 } // namespace

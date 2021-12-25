@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 
 using namespace facebook::velox;
@@ -103,6 +105,14 @@ TEST_F(MapTest, duplicateKeys) {
   } catch (const VeloxUserError& e) {
     ASSERT_EQ(e.message(), "Duplicate map keys are not allowed");
   }
+  // Trying the map version with allowing duplicates
+  facebook::velox::functions::prestosql::registerMapAllowingDuplicates(
+      std::string("map2"));
+  try {
+    evaluate<MapVector>("map2(c0, c1)", makeRowVector({keys, values}));
+  } catch (const VeloxUserError& e) {
+    ASSERT_TRUE(false) << "No error expected";
+  }
 }
 
 TEST_F(MapTest, differentArraySizes) {
@@ -121,7 +131,8 @@ TEST_F(MapTest, differentArraySizes) {
     evaluate<MapVector>("map(c0, c1)", makeRowVector({keys, values}));
     ASSERT_TRUE(false) << "Expected an error";
   } catch (const VeloxUserError& e) {
-    ASSERT_EQ(e.message(), "Key and value arrays must be the same length");
+    ASSERT_EQ(
+        e.message(), "(0 vs. 5) Key and value arrays must be the same length");
   }
 }
 

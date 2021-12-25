@@ -30,7 +30,7 @@ namespace {
 
 /// Check if the input vector's  buffers are single referenced
 bool hasSingleReferencedBuffers(const FlatVector<StringView>* vec) {
-  for (auto& buffer : vec->getStringBuffers()) {
+  for (auto& buffer : vec->stringBuffers()) {
     if (buffer->refCount() > 1) {
       return false;
     }
@@ -38,30 +38,6 @@ bool hasSingleReferencedBuffers(const FlatVector<StringView>* vec) {
   return true;
 };
 } // namespace
-
-/// Helper function that prepares a string result vector and initializes it.
-/// It will use the input argToReuse vector instead of creating new one when
-/// possible. Returns true if argToReuse vector was moved to results
-VectorPtr emptyVectorPtr;
-bool prepareFlatResultsVector(
-    VectorPtr* result,
-    const SelectivityVector& rows,
-    exec::EvalCtx* context,
-    VectorPtr& argToReuse = emptyVectorPtr) {
-  if (!*result && argToReuse && argToReuse.unique()) {
-    // Move input vector to result
-    VELOX_CHECK(
-        argToReuse.get()->encoding() == VectorEncoding::Simple::FLAT &&
-        argToReuse.get()->typeKind() == TypeKind::VARCHAR);
-    *result = std::move(argToReuse);
-    return true;
-  }
-  // This will allocate results if not allocated
-  BaseVector::ensureWritable(rows, VARCHAR(), context->pool(), result);
-
-  VELOX_CHECK_EQ((*result).get()->encoding(), VectorEncoding::Simple::FLAT);
-  return false;
-}
 
 namespace {
 /**

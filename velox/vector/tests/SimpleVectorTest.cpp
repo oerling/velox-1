@@ -65,9 +65,8 @@ void assertIsAscii(
 
 class SimpleVectorNonParameterizedTest : public SimpleVectorTest {
  protected:
-  using S = StringView;
   ExpectedData<StringView> stringData_ =
-      {S("àá"), S("abc"), S("xyz"), S("mno"), S("wv"), S("abc"), S("xyz")};
+      {"àá"_sv, "abc"_sv, "xyz"_sv, "mno"_sv, "wv"_sv, "abc"_sv, "xyz"_sv};
 };
 
 TEST_F(SimpleVectorNonParameterizedTest, ConstantVectorTest) {
@@ -130,18 +129,9 @@ TEST_F(SimpleVectorNonParameterizedTest, BasicRoundTrip) {
   assertVectorAndProperties<int64_t>(expected.data(), vector);
 }
 
-using SimpleTypes = ::testing::Types<
-    uint8_t,
-    int8_t,
-    uint16_t,
-    int16_t,
-    uint32_t,
-    int32_t,
-    uint64_t,
-    int64_t,
-    double,
-    StringView,
-    bool>;
+// Only signed types are supported.
+using SimpleTypes = ::testing::
+    Types<int8_t, int16_t, int32_t, int64_t, double, StringView, bool>;
 
 template <typename T>
 class SimpleVectorTypedTest : public SimpleVectorTest {

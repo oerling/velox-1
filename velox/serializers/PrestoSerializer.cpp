@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 #include "velox/serializers/PrestoSerializer.h"
-#include <boost/crc.hpp>
-#include "velox/functions/prestosql/TimestampWithTimeZoneType.h"
+#include "velox/common/memory/ByteStream.h"
+#include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
+#include "velox/type/Date.h"
 #include "velox/vector/BiasVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/FlatVector.h"
@@ -28,12 +29,11 @@ static int8_t kEncryptedBitMask = 2;
 static int8_t kCheckSumBitMask = 4;
 
 int64_t computeChecksum(
-    const std::string& stringData,
+    PrestoOutputStreamListener* listener,
     int codecMarker,
     int numRows,
     int uncompressedSize) {
-  boost::crc_32_type result;
-  result.process_bytes(stringData.data(), stringData.length());
+  boost::crc_32_type result = listener->crc();
   result.process_bytes(&codecMarker, 1);
   result.process_bytes(&numRows, 4);
   result.process_bytes(&uncompressedSize, 4);
@@ -105,6 +105,8 @@ std::string typeToEncodingName(const TypePtr& type) {
       return "VARIABLE_WIDTH";
     case TypeKind::TIMESTAMP:
       return "LONG_ARRAY";
+    case TypeKind::DATE:
+      return "INT_ARRAY";
     case TypeKind::ARRAY:
       return "ARRAY";
     case TypeKind::MAP:
@@ -192,6 +194,36 @@ void readValues<Timestamp>(
   } else {
     for (int32_t row = 0; row < size; ++row) {
       rawValues[row] = readTimestamp(source);
+    }
+  }
+}
+
+Date readDate(ByteStream* source) {
+  int32_t days = source->read<int32_t>();
+  return Date(days);
+}
+
+template <>
+void readValues<Date>(
+    ByteStream* source,
+    vector_size_t size,
+    BufferPtr nulls,
+    vector_size_t nullCount,
+    BufferPtr values) {
+  auto rawValues = values->asMutable<Date>();
+  if (nullCount) {
+    int32_t toClear = 0;
+    bits::forEachSetBit(nulls->as<uint64_t>(), 0, size, [&](int32_t row) {
+      // Set the values between the last non-null and this to type default.
+      for (; toClear < row; ++toClear) {
+        rawValues[toClear] = Date();
+      }
+      rawValues[row] = readDate(source);
+      toClear = row + 1;
+    });
+  } else {
+    for (int32_t row = 0; row < size; ++row) {
+      rawValues[row] = readDate(source);
     }
   }
 }
@@ -573,6 +605,7 @@ void readColumns(
           {TypeKind::REAL, &read<float>},
           {TypeKind::DOUBLE, &read<double>},
           {TypeKind::TIMESTAMP, &read<Timestamp>},
+          {TypeKind::DATE, &read<Date>},
           {TypeKind::VARCHAR, &read<StringView>},
           {TypeKind::VARBINARY, &read<StringView>},
           {TypeKind::ARRAY, &readArrayVector},
@@ -592,11 +625,11 @@ void readColumns(
   }
 }
 
-void writeInt32(std::ostream* out, int32_t value) {
+void writeInt32(OutputStream* out, int32_t value) {
   out->write(reinterpret_cast<char*>(&value), sizeof(value));
 }
 
-void writeInt64(std::ostream* out, int64_t value) {
+void writeInt64(OutputStream* out, int64_t value) {
   out->write(reinterpret_cast<char*>(&value), sizeof(value));
 }
 
@@ -698,7 +731,7 @@ class VectorStream {
   }
 
   // Writes out the accumulated contents. Does not change the state.
-  void flush(std::ostream* out) {
+  void flush(OutputStream* out) {
     out->write(reinterpret_cast<char*>(header_.buffer), header_.size);
     switch (type_->kind()) {
       case TypeKind::ROW:
@@ -765,7 +798,7 @@ class VectorStream {
     }
   }
 
-  void flushNulls(std::ostream* out) {
+  void flushNulls(OutputStream* out) {
     if (!nullCount_) {
       char zero = 0;
       out->write(&zero, 1);
@@ -802,6 +835,13 @@ template <>
 void VectorStream::append(folly::Range<const Timestamp*> values) {
   for (auto& value : values) {
     appendOne(value.toMillis());
+  }
+}
+
+template <>
+void VectorStream::append(folly::Range<const Date*> values) {
+  for (auto& value : values) {
+    appendOne(value.days());
   }
 }
 
@@ -1428,35 +1468,55 @@ class PrestoVectorSerializer : public VectorSerializer {
     }
   }
 
-  void flush(std::ostream* out) override {
-    char codec = getCodecMarker();
-    std::stringstream data;
-    // number of columns
-    writeInt32(&data, streams_.size());
-
-    // TODO (Remove extra copy here)
-    for (auto& stream : streams_) {
-      stream->flush(&data);
+  // Writes the contents to 'stream' in wire format
+  void flush(OutputStream* out) override {
+    auto listener = dynamic_cast<PrestoOutputStreamListener*>(out->listener());
+    // Reset CRC computation
+    if (listener) {
+      listener->reset();
     }
-    auto stringData = data.str();
+
+    char codec = 0;
+    if (listener) {
+      codec = getCodecMarker();
+    }
+
     int32_t offset = out->tellp();
+
+    // Pause CRC computation
+    if (listener) {
+      listener->pause();
+    }
 
     writeInt32(out, numRows_);
     out->write(&codec, 1);
 
-    // make space for uncompressedSizeInBytes & sizeInBytes
+    // Make space for uncompressedSizeInBytes & sizeInBytes
     writeInt32(out, 0);
     writeInt32(out, 0);
-    writeInt64(out, 0); // checksum
+    writeInt64(out, 0); // Write zero checksum
 
-    out->write(stringData.data(), stringData.size());
+    // Number of columns and stream content. Unpause CRC.
+    if (listener) {
+      listener->resume();
+    }
+    writeInt32(out, streams_.size());
+    for (auto& stream : streams_) {
+      stream->flush(out);
+    }
 
-    // fill in uncompressedSizeInBytes & sizeInBytes
+    // Pause CRC computation
+    if (listener) {
+      listener->pause();
+    }
+
+    // Fill in uncompressedSizeInBytes & sizeInBytes
     int32_t size = (int32_t)out->tellp() - offset;
     int32_t uncompressedSize = size - kHeaderSize;
-
-    int64_t crc =
-        computeChecksum(stringData, codec, numRows_, uncompressedSize);
+    int64_t crc = 0;
+    if (listener) {
+      crc = computeChecksum(listener, codec, numRows_, uncompressedSize);
+    }
 
     out->seekp(offset + kSizeInBytesOffset);
     writeInt32(out, uncompressedSize);
@@ -1512,6 +1572,7 @@ void PrestoVectorSerde::deserialize(
     actualCheckSum =
         computeChecksum(source, pageCodecMarker, numRows, uncompressedSize);
   }
+
   VELOX_CHECK_EQ(
       checksum, actualCheckSum, "Received corrupted serialized page.");
 

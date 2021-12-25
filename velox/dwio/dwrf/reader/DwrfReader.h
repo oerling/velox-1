@@ -110,6 +110,11 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   // Map from stripe number to prepared stripe reader.
   folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>prefetchedStripeReaders_; 
+
+  // Set to true after clearing filter caches, i.e.  adding a dynamic
+  // filter. Causes filters to be re-evaluated against stride stats on
+  // next stride instead of next stripe.
+  bool recomputeStridesToSkip_{false};
 };
 
 class DwrfReader : public DwrfReaderShared {

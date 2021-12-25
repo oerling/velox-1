@@ -29,6 +29,7 @@ using namespace facebook::velox::cache;
 
 using facebook::velox::dwio::common::Region;
 using memory::MappedMemory;
+using facebook::velox::dwio::common::IoStatistics;
 
 // Testing stream producing deterministic data. The byte at offset is
 // the low byte of 'seed_' + offset.
@@ -123,7 +124,8 @@ class CacheTest : public testing::Test {
       uint64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssd;
     if (!file.empty()) {
-      ssd = std::make_unique<SsdCache>(file, ssdBytes, 1);
+      FLAGS_ssd_odirect = false;
+      ssd = std::make_unique<SsdCache>(file, ssdBytes, 1, executor_.get());
       groupStats_ = &ssd->groupStats();
     }
     memory::MmapAllocatorOptions options = {maxBytes};
@@ -151,15 +153,15 @@ class CacheTest : public testing::Test {
     }
   }
 
-  static void checkEntry(cache::AsyncDataCacheEntry* entry) {
-    uint64_t seed = entry->key().fileNum.id();
-    if (entry->tinyData()) {
-      checkData(entry->tinyData(), entry->offset(), entry->size(), seed);
+  static void checkEntry(const cache::AsyncDataCacheEntry& entry) {
+    uint64_t seed = entry.key().fileNum.id();
+    if (entry.tinyData()) {
+      checkData(entry.tinyData(), entry.offset(), entry.size(), seed);
     } else {
-      int64_t bytesLeft = entry->size();
-      auto runOffset = entry->offset();
-      for (auto i = 0; i < entry->data().numRuns(); ++i) {
-        auto run = entry->data().runAt(i);
+      int64_t bytesLeft = entry.size();
+      auto runOffset = entry.offset();
+      for (auto i = 0; i < entry.data().numRuns(); ++i) {
+        auto run = entry.data().runAt(i);
         checkData(
             run.data<char>(),
             runOffset,
@@ -445,20 +447,14 @@ TEST_F(CacheTest, ssd) {
   // We measure bytes read for a full and sparse read of a stripe.
   auto bytes = ioStats_->rawBytesRead();
   readLoop("testfile", 30, 100, 1, 1);
+    auto ramBytes = ioStats_->ramHit().bytes();
+
   auto fullStripeBytes = ioStats_->rawBytesRead() - bytes;
   auto fullStripesOnSsd = kSsdBytes / fullStripeBytes;
   bytes = ioStats_->rawBytesRead();
-  // We read 4 more stripes. The first will be read fully, the next
-  // ones only for dense and actually accessed sparse columns.  The first stripe
-  // comes from RAM, so we count new reads and divide by 4.
+  cache_->clear();
   readLoop("testfile", 30, 70, 10, 5, 1);
-  auto ramBytes = ioStats_->ramHit().bytes();
-  auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 4;
-  EXPECT_TRUE(
-      ramBytes > sparseStripeBytes / 2 && ramBytes < sparseStripeBytes * 1.2)
-      << " ramBytes = " << ramBytes
-      << " sparseStripeBytes = " << sparseStripeBytes;
-
+  auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 5;
   constexpr int32_t kStripesPerFile = 20;
   auto bytesPerFile = fullStripeBytes * kStripesPerFile;
   auto filesPerGb = (1UL << 30) / bytesPerFile;

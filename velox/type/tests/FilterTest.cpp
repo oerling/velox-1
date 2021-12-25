@@ -225,6 +225,17 @@ TEST(FilterTest, bigIntRange) {
   EXPECT_TRUE(filter->testInt64Range(-100, 10, true));
 }
 
+namespace {
+// True if 'filter' is an equality test for 'value'.
+bool isBigintEq(std::unique_ptr<Filter> filter, int64_t value) {
+  if (!filter) {
+    return false;
+  }
+  auto range = dynamic_cast<const BigintRange*>(filter.get());
+  return range && range->lower() == range->upper() && range->lower() == value;
+}
+} // namespace
+
 TEST(FilterTest, bigintValuesUsingHashTable) {
   auto filter = createBigintValues({1, 10, 100, 10'000}, false);
   ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
@@ -244,6 +255,93 @@ TEST(FilterTest, bigintValuesUsingHashTable) {
   EXPECT_FALSE(filter->testInt64Range(11, 11, false));
   EXPECT_FALSE(filter->testInt64Range(-10, -5, false));
   EXPECT_FALSE(filter->testInt64Range(10'234, 20'000, false));
+  EXPECT_FALSE(filter->testInt64(102));
+  EXPECT_FALSE(filter->testInt64(INT64_MAX));
+
+  EXPECT_TRUE(filter->testInt64Range(5, 50, false));
+  EXPECT_FALSE(filter->testInt64Range(11, 11, false));
+  EXPECT_FALSE(filter->testInt64Range(-10, -5, false));
+  EXPECT_TRUE(filter->testInt64Range(10'000, 20'000, false));
+  EXPECT_FALSE(filter->testInt64Range(9'000, 9'999, false));
+  EXPECT_TRUE(filter->testInt64Range(9'000, 10'000, false));
+  EXPECT_TRUE(filter->testInt64Range(0, 1, false));
+
+  auto rangeFilter = filter->filterForRange(1, 1);
+  EXPECT_EQ(FilterKind::kIsNotNull, rangeFilter->kind());
+
+  // The range has two values.
+  EXPECT_EQ(nullptr, filter->filterForRange(1, 10));
+  EXPECT_EQ(nullptr, filter->filterForRange(11, 11100));
+  EXPECT_TRUE(isBigintEq(filter->filterForRange(9999, 10000), 10000));
+  EXPECT_TRUE(isBigintEq(filter->filterForRange(10000, 10002), 10000));
+  EXPECT_TRUE(isBigintEq(filter->filterForRange(99, 110), 100));
+}
+
+template <typename T, typename Verify>
+void applySimdTestToVector(
+    std::vector<T> numbers,
+    Filter& filter,
+    Verify verify) {
+  int32_t numLanes = 32 / sizeof(T);
+  for (auto i = 0; i + numLanes < numbers.size(); i += numLanes) {
+    if (numLanes == 4) {
+      int64_t lanes[4];
+      // Get keys to look up from the numbers in the filter. Make 0-4 of
+      // these miss by incrementing different lanes depending on the
+      // loop counter.
+      memcpy(lanes, numbers.data() + i, sizeof(lanes));
+
+      for (auto lane = 0; lane < 4; ++lane) {
+        if (i & (1 << (lane + 2))) {
+          ++lanes[lane];
+        }
+      }
+      checkSimd<int64_t>(&filter, reinterpret_cast<__m256i*>(&lanes), verify);
+    } else {
+      VELOX_CHECK_EQ(numLanes, 8, "Must be either 4 or 8 lanes");
+      int32_t lanes[8];
+      // Get keys to look up from the numbers in the filter. Make 0-8 of
+      // these miss by incrementing different lanes depending on the
+      // loop counter.
+      memcpy(lanes, numbers.data() + i, sizeof(lanes));
+
+      for (auto lane = 0; lane < 8; ++lane) {
+        if (i & (1 << (lane + 3))) {
+          ++lanes[lane];
+        }
+      }
+      checkSimd<int32_t>(&filter, reinterpret_cast<__m256si*>(&lanes), verify);
+    }
+  }
+}
+
+TEST(FilterTest, bigintValuesUsingHashTableSimd) {
+  std::vector<int64_t> numbers;
+  // make a worst case filter where every item falls on the same slot.
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 0x10000);
+  }
+  auto filter = createBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
+  __m256i outOfRange{-100, -20000, 0x10000000, 0x20000000};
+  auto verify = [&](int64_t x) { return filter->testInt64(x); };
+  checkSimd<int64_t>(filter.get(), &outOfRange, verify);
+  applySimdTestToVector(numbers, *filter, verify);
+  // Make a filter with reasonably distributed entries and retry.
+  numbers.clear();
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 1209);
+  }
+  filter = createBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
+  applySimdTestToVector(numbers, *filter, verify);
+
+  std::vector<int32_t> numbers32(numbers.size());
+  for (auto n : numbers) {
+    numbers32.push_back(n);
+  }
+
+  applySimdTestToVector(numbers32, *filter, verify);
 }
 
 TEST(FilterTest, bigintValuesUsingBitmask) {
@@ -899,8 +997,8 @@ TEST(FilterTest, mergeWithBigint) {
   filters.push_back(between(150, 500, true));
 
   // IN-list.
-  filters.push_back(in({1, 2, 3, 67, 134}));
-  filters.push_back(in({1, 2, 3, 67, 134}, true));
+  filters.push_back(in({1, 2, 3, 67'000'000'000, 134}));
+  filters.push_back(in({1, 2, 3, 67'000'000'000, 134}, true));
   filters.push_back(in({-7, -6, -5, -4, -3, -2}));
   filters.push_back(in({-7, -6, -5, -4, -3, -2}, true));
   filters.push_back(in({1, 2, 3, 67, 10'134}));

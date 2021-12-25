@@ -19,6 +19,7 @@
 namespace facebook::velox::functions {
 namespace {
 
+template <bool AllowDuplicateKeys>
 class MapFunction : public exec::VectorFunction {
  public:
   void apply(
@@ -27,16 +28,14 @@ class MapFunction : public exec::VectorFunction {
       const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
-    VELOX_CHECK(args.size() == 2);
+    VELOX_CHECK_EQ(args.size(), 2);
 
     auto keys = args[0];
     auto values = args[1];
 
-    exec::LocalDecodedVector keysHolder(context, *keys, rows);
-    auto decodedKeys = keysHolder.get();
-
-    exec::LocalDecodedVector valuesHolder(context, *values, rows);
-    auto decodedValues = valuesHolder.get();
+    exec::DecodedArgs decodedArgs(rows, args, context);
+    auto decodedKeys = decodedArgs.at(0);
+    auto decodedValues = decodedArgs.at(1);
 
     static const char* kArrayLengthsMismatch =
         "Key and value arrays must be the same length";
@@ -50,8 +49,9 @@ class MapFunction : public exec::VectorFunction {
 
       // Check array lengths
       rows.applyToSelected([&](vector_size_t row) {
-        VELOX_USER_CHECK(
-            keysArray->sizeAt(row) == valuesArray->sizeAt(row),
+        VELOX_USER_CHECK_EQ(
+            keysArray->sizeAt(row),
+            valuesArray->sizeAt(row),
             "{}",
             kArrayLengthsMismatch);
       });
@@ -74,9 +74,9 @@ class MapFunction : public exec::VectorFunction {
 
       // Check array lengths
       rows.applyToSelected([&](vector_size_t row) {
-        VELOX_USER_CHECK(
-            keysArray->sizeAt(keyIndices[row]) ==
-                valuesArray->sizeAt(valueIndices[row]),
+        VELOX_USER_CHECK_EQ(
+            keysArray->sizeAt(keyIndices[row]),
+            valuesArray->sizeAt(valueIndices[row]),
             "{}",
             kArrayLengthsMismatch);
       });
@@ -120,23 +120,24 @@ class MapFunction : public exec::VectorFunction {
           wrappedValues);
     }
 
-    mapVector->canonicalize();
+    if constexpr (!AllowDuplicateKeys) {
+      // Check for duplicate keys
+      MapVector::canonicalize(mapVector);
 
-    auto offsets = mapVector->rawOffsets();
-    auto sizes = mapVector->rawSizes();
-    auto mapKeys = mapVector->mapKeys();
-
-    // Check for duplicate keys
-    rows.applyToSelected([&](vector_size_t row) {
-      auto offset = offsets[row];
-      auto size = sizes[row];
-      for (vector_size_t i = 1; i < size; i++) {
-        if (mapKeys->equalValueAt(mapKeys.get(), offset + i, offset + i - 1)) {
-          VELOX_USER_CHECK(false, "{}", kDuplicateKey);
+      auto offsets = mapVector->rawOffsets();
+      auto sizes = mapVector->rawSizes();
+      auto mapKeys = mapVector->mapKeys();
+      rows.applyToSelected([&](vector_size_t row) {
+        auto offset = offsets[row];
+        auto size = sizes[row];
+        for (vector_size_t i = 1; i < size; i++) {
+          if (mapKeys->equalValueAt(
+                  mapKeys.get(), offset + i, offset + i - 1)) {
+            VELOX_USER_FAIL("{}", kDuplicateKey);
+          }
         }
-      }
-    });
-
+      });
+    }
     context->moveOrCopyResult(mapVector, rows, result);
   }
 
@@ -155,6 +156,11 @@ class MapFunction : public exec::VectorFunction {
 
 VELOX_DECLARE_VECTOR_FUNCTION(
     udf_map,
-    MapFunction::signatures(),
-    std::make_unique<MapFunction>());
+    MapFunction</*AllowDuplicateKeys=*/false>::signatures(),
+    std::make_unique<MapFunction</*AllowDuplicateKeys=*/false>>());
+
+VELOX_DECLARE_VECTOR_FUNCTION(
+    udf_map_allow_duplicates,
+    MapFunction</*AllowDuplicateKeys=*/true>::signatures(),
+    std::make_unique<MapFunction</*AllowDuplicateKeys=*/true>>());
 } // namespace facebook::velox::functions

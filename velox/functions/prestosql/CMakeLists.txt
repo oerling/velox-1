@@ -12,57 +12,63 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 add_subdirectory(json)
+add_subdirectory(hyperloglog)
 
 add_library(
-  velox_functions_prestosql OBJECT
+  velox_functions_prestosql_impl OBJECT
   ArrayConstructor.cpp
   ArrayContains.cpp
   ArrayDistinct.cpp
+  ArrayDuplicates.cpp
   ArrayIntersectExcept.cpp
   ArrayMinMax.cpp
+  ArrayPosition.cpp
   Cardinality.cpp
   Coalesce.cpp
-  SimpleFunctions.cpp
   ElementAt.cpp
   FilterFunctions.cpp
   FromUnixTime.cpp
+  GreatestLeast.cpp
   InPredicate.cpp
-  IsNull.cpp
-  Length.cpp
   Map.cpp
   MapConcat.cpp
   MapEntries.cpp
   MapKeysAndValues.cpp
   Not.cpp
   Reduce.cpp
-  RegisterArithmetic.cpp
-  RegisterCheckedArithmetic.cpp
-  RegisterComparisons.cpp
   Reverse.cpp
   RowFunction.cpp
+  Slice.cpp
   Split.cpp
   StringFunctions.cpp
   Subscript.cpp
   ToUtf8.cpp
   Transform.cpp
+  URLFunctions.cpp
   VectorArithmetic.cpp
-  VectorFunctions.cpp
-  WidthBucketArray.cpp)
+  WidthBucketArray.cpp
+  Zip.cpp)
 
 target_link_libraries(
-  velox_functions_prestosql
-  velox_exec
+  velox_functions_prestosql_impl
   velox_functions_json
+  velox_functions_hyperloglog
   velox_functions_lib
   velox_expression
   md5
   velox_type_tz)
 
-set_property(TARGET velox_functions_prestosql PROPERTY JOB_POOL_COMPILE
-                                                       high_memory_pool)
+set_property(TARGET velox_functions_prestosql_impl PROPERTY JOB_POOL_COMPILE
+                                                            high_memory_pool)
+
+if(${VELOX_ENABLE_AGGREGATES})
+  add_subdirectory(aggregates)
+endif()
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
   add_subdirectory(benchmarks)
   add_subdirectory(coverage)
 endif()
+
+add_subdirectory(registration)

@@ -19,6 +19,8 @@
 #include "velox/common/time/Timer.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 
+DECLARE_int32(cache_load_quantum);
+
 namespace facebook::velox::dwrf {
 
 using velox::cache::ScanTracker;
@@ -42,7 +44,8 @@ CacheInputStream::CacheInputStream(
       fileNum_(fileNum),
       tracker_(std::move(tracker)),
       trackingId_(trackingId),
-      groupId_(groupId) {}
+      groupId_(groupId),
+      loadQuantum_(FLAGS_cache_load_quantum) {}
 
 bool CacheInputStream::Next(const void** buffer, int32_t* size) {
   if (position_ >= region_.length) {
@@ -162,10 +165,18 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
         if (!ssdPin.empty()) {
           uint64_t usec = 0;
           {
+	    // SsdFile::load wants vectors of pins. Put the pins in a
+	    // temp vector and then put 'pin_' back in 'this'. 'pin_'
+	    // is exclusive and not movable.
+	    std::vector<cache::SsdPin> ssdPins;
+	    ssdPins.push_back(std::move(ssdPin));
+	    std::vector<cache::CachePin> pins;
+	    pins.push_back(std::move(pin_));
             MicrosecondTimer timer(&usec);
-            file.load(ssdPin.run(), *pin_.entry());
-          }
-          ioStats_->ssdRead().increment(pin_.entry()->size());
+            file.load(ssdPins, pins);
+	    pin_ = std::move(pins[0]);
+	  }
+	    ioStats_->ssdRead().increment(pin_.entry()->size());
           ioStats_->queryThreadIoLatency().increment(usec);
           pin_.entry()->setValid(true);
           pin_.entry()->setExclusiveToShared();

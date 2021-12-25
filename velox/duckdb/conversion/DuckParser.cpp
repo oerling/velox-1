@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include "velox/duckdb/conversion/DuckParser.h"
+#include "velox/common/base/Exceptions.h"
+#include "velox/core/Expressions.h"
 #include "velox/duckdb/conversion/DuckConversion.h"
 #include "velox/expression/CastExpr.h"
 #include "velox/external/duckdb/duckdb.hpp"
@@ -50,7 +52,7 @@ std::string normalizeFuncName(std::string input) {
       {"-", "minus"},
       {"*", "multiply"},
       {"/", "divide"},
-      {"%", "modulus"},
+      {"%", "mod"},
       {"<", "lt"},
       {"<=", "lte"},
       {">", "gt"},
@@ -117,15 +119,15 @@ std::shared_ptr<const core::IExpr> parseConstantExpr(ParsedExpression& expr) {
 // Parse a column reference (col1, "col2", tbl.col, etc).
 std::shared_ptr<const core::IExpr> parseColumnRefExpr(ParsedExpression& expr) {
   const auto& colRefExpr = dynamic_cast<ColumnRefExpression&>(expr);
-  if (colRefExpr.table_name.empty()) {
+  if (!colRefExpr.IsQualified()) {
     return std::make_shared<const core::FieldAccessExpr>(
-        colRefExpr.column_name);
+        colRefExpr.GetColumnName());
   }
   return std::make_shared<const core::FieldAccessExpr>(
-      colRefExpr.column_name,
+      colRefExpr.GetColumnName(),
       std::vector<std::shared_ptr<const core::IExpr>>{
           std::make_shared<const core::FieldAccessExpr>(
-              colRefExpr.table_name)});
+              colRefExpr.GetTableName())});
 }
 
 // Parse a function call (avg(a), func(1, b), etc).
@@ -217,11 +219,49 @@ std::shared_ptr<const core::IExpr> parseOperatorExpr(ParsedExpression& expr) {
         variant::array(arrayElements));
   }
 
+  if (expr.GetExpressionType() == ExpressionType::COMPARE_IN) {
+    auto numValues = operExpr.children.size() - 1;
+
+    std::vector<variant> values;
+    values.reserve(numValues);
+    for (auto i = 0; i < numValues; i++) {
+      if (auto constantExpr = dynamic_cast<ConstantExpression*>(
+              operExpr.children[i + 1].get())) {
+        values.emplace_back(duckValueToVariant(constantExpr->value));
+      } else {
+        VELOX_UNSUPPORTED("IN list values need to be constant");
+      }
+    }
+
+    std::vector<std::shared_ptr<const core::IExpr>> params;
+    params.emplace_back(parseExpr(*operExpr.children[0]));
+    params.emplace_back(
+        std::make_shared<const core::ConstantExpr>(variant::array(values)));
+    return callExpr("in", std::move(params));
+  }
+
   std::vector<std::shared_ptr<const core::IExpr>> params;
   params.reserve(operExpr.children.size());
 
   for (const auto& c : operExpr.children) {
     params.emplace_back(parseExpr(*c));
+  }
+
+  // STRUCT_EXTRACT(struct, 'entry') resolves nested field access such as
+  // (a).b.c, (a.b).c
+  if (expr.GetExpressionType() == ExpressionType::STRUCT_EXTRACT) {
+    VELOX_CHECK_EQ(params.size(), 2);
+    std::vector<std::shared_ptr<const core::IExpr>> input = {params[0]};
+
+    if (auto constantExpr =
+            std::dynamic_pointer_cast<const core::ConstantExpr>(params[1])) {
+      auto fieldName = constantExpr->value().value<std::string>();
+
+      return std::make_shared<const core::FieldAccessExpr>(
+          fieldName, std::move(input));
+    } else {
+      VELOX_UNSUPPORTED("STRUCT_EXTRACT field name must be constant");
+    }
   }
 
   if (expr.GetExpressionType() == ExpressionType::OPERATOR_IS_NOT_NULL) {

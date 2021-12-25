@@ -15,12 +15,16 @@
  */
 
 #pragma once
-#include <algorithm>
 
+#include <algorithm>
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/expression/ComplexViewTypes.h"
+#include "velox/expression/DecodedArgs.h"
+#include "velox/expression/VariadicView.h"
 #include "velox/functions/UDFOutputString.h"
 #include "velox/type/Type.h"
 #include "velox/vector/DecodedVector.h"
+#include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 
 namespace facebook::velox::exec {
@@ -28,146 +32,58 @@ namespace facebook::velox::exec {
 template <typename VectorType = FlatVector<StringView>, bool reuseInput = false>
 class StringProxy;
 
+template <typename T>
+struct VectorReader;
+
 namespace detail {
 template <typename T>
 struct resolver {
   using in_type = typename CppToType<T>::NativeType;
   using out_type = typename CppToType<T>::NativeType;
-
-  static variant toVariant(const in_type& t) {
-    return variant{t};
-  }
-
-  static in_type fromVariant(const variant& v) {
-    return v.value<in_type>();
-  }
 };
 
 template <typename K, typename V>
 struct resolver<Map<K, V>> {
-  using in_type = core::
-      SlowMapVal<typename resolver<K>::in_type, typename resolver<V>::in_type>;
+  using in_type = MapView<K, V>;
   using out_type = core::SlowMapWriter<
       typename resolver<K>::out_type,
       typename resolver<V>::out_type>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& v) {
-    VELOX_NYI();
-  }
 };
 
 template <typename... T>
 struct resolver<Row<T...>> {
-  using in_type = core::RowReader<typename resolver<T>::in_type...>;
+  using in_type = RowView<T...>;
   using out_type = core::RowWriter<typename resolver<T>::out_type...>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& t) {
-    VELOX_NYI();
-  }
 };
 
 template <typename V>
 struct resolver<Array<V>> {
-  using in_type = core::ArrayValReader<typename resolver<V>::in_type>;
+  using in_type = ArrayView<V>;
   using out_type = core::ArrayValWriter<typename resolver<V>::out_type>;
-
-  static variant toVariant(const in_type& t) {
-    using childType = typename resolver<V>::in_type;
-    std::vector<variant> v(t.size());
-    std::transform(
-        t.begin(), t.end(), v.begin(), [](const std::optional<childType>& v) {
-          return v.has_value()
-              ? resolver<childType>::toVariant(v)
-              : variant::null(in_type::veloxType()->childAt(0)->kind());
-        });
-
-    return variant::array(std::move(v));
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& t) {
-    using childType = typename resolver<V>::in_type;
-    VELOX_CHECK_EQ(t.kind(), TypeKind::ARRAY);
-    const auto& values = t.array();
-    in_type retVal;
-    for (auto& v : values) {
-      auto convertedVal = v.isNull()
-          ? std::optional<childType>{}
-          : std::optional<childType>{resolver<V>::fromVariant(v)};
-      retVal.append(std::move(convertedVal));
-    }
-
-    return retVal;
-  }
 };
 
 template <>
 struct resolver<Varchar> {
   using in_type = StringView;
   using out_type = StringProxy<>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& v) {
-    VELOX_NYI();
-  }
 };
 
 template <>
 struct resolver<Varbinary> {
   using in_type = StringView;
   using out_type = StringProxy<>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& v) {
-    VELOX_NYI();
-  }
 };
 
 template <typename T>
 struct resolver<std::shared_ptr<T>> {
   using in_type = std::shared_ptr<T>;
   using out_type = std::shared_ptr<T>;
+};
 
-  static variant toVariant(const in_type& t) {
-    return variant::opaque(t);
-  }
-
-  static in_type fromVariant(const variant& v) {
-    return v.opaque<T>();
-  }
+template <typename T>
+struct resolver<Variadic<T>> {
+  using in_type = VariadicView<T>;
+  // Variadic cannot be used as an out_type
 };
 } // namespace detail
 
@@ -189,7 +105,7 @@ struct VectorWriter {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
       init(*vector_);
     }
@@ -206,6 +122,7 @@ struct VectorWriter {
     // in future, we want to eliminate this so all writes go directly to their
     // slice.
     data_[offset_] = data;
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -216,8 +133,11 @@ struct VectorWriter {
     // this code path is called when the slice is top-level
     if (!isSet) {
       vector_->setNull(offset_, true);
+    } else {
+      vector_->setNull(offset_, false);
     }
   }
+
   void setOffset(int32_t offset) {
     offset_ = offset;
   }
@@ -231,30 +151,28 @@ struct VectorWriter {
   size_t offset_ = 0;
 };
 
-template <typename T, typename = void>
+template <typename T>
 struct VectorReader {
   using exec_in_t = typename VectorExec::template resolver<T>::in_type;
 
-  VectorReader(const DecodeResult<exec_in_t>& decoded) : decoded_{decoded} {}
+  explicit VectorReader(const DecodedVector* decoded) : decoded_(*decoded) {}
 
-  const exec_in_t& operator[](size_t offset) const {
-    return decoded_[offset];
+  explicit VectorReader(const VectorReader<T>&) = delete;
+  VectorReader<T>& operator=(const VectorReader<T>&) = delete;
+
+  exec_in_t operator[](size_t offset) const {
+    return decoded_.template valueAt<exec_in_t>(offset);
   }
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  bool doLoad(size_t offset, exec_in_t& v) const {
-    if (isSet(offset)) {
-      v = decoded_[offset];
-      return true;
-    } else {
-      return false;
-    }
+  bool mayHaveNulls() const {
+    return decoded_.mayHaveNulls();
   }
 
-  const DecodeResult<exec_in_t> decoded_;
+  const DecodedVector& decoded_;
 };
 
 template <typename K, typename V>
@@ -283,7 +201,7 @@ struct VectorWriter<Map<K, V>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
       init(*vector_);
     }
@@ -307,6 +225,7 @@ struct VectorWriter<Map<K, V>> {
       }
       ++childSize;
     }
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -342,86 +261,48 @@ struct VectorWriter<Map<K, V>> {
 
 namespace detail {
 
-template <typename TOut, typename TIn>
-const TOut& getDecoded(const DecodeResult<TIn>& decoded) {
+template <typename TOut>
+const TOut& getDecoded(const DecodedVector& decoded) {
   auto base = decoded.base();
   return *base->template as<TOut>();
 }
 
-template <typename T>
-DecodeResult<T> decode(DecodedVector& decoder, const BaseVector& vector) {
+inline DecodedVector* decode(DecodedVector& decoder, const BaseVector& vector) {
   SelectivityVector rows(vector.size());
   decoder.decode(vector, rows);
-  return decoder.as<T>();
+  return &decoder;
 }
-
-}; // namespace detail
+} // namespace detail
 
 template <typename K, typename V>
 struct VectorReader<Map<K, V>> {
-  // todo(youknowjack): in future, directly expose the slice data
-
   using in_vector_t = typename TypeToFlatVector<Map<K, V>>::type;
-  using key_vector_t = typename TypeToFlatVector<K>::type;
-  using val_vector_t = typename TypeToFlatVector<V>::type;
   using exec_in_t = typename VectorExec::template resolver<Map<K, V>>::in_type;
-  using exec_in_key_t = typename VectorExec::template resolver<K>::in_type;
-  using exec_in_val_t = typename VectorExec::template resolver<V>::in_type;
 
-  explicit VectorReader(const DecodeResult<exec_in_t>& decoded)
-      : decoded_{decoded},
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_{*decoded},
         vector_(detail::getDecoded<in_vector_t>(decoded_)),
         offsets_(vector_.rawOffsets()),
         lengths_(vector_.rawSizes()),
-        keyReader_{
-            detail::decode<exec_in_key_t>(decodedKeys_, *vector_.mapKeys())},
-        valReader_{
-            detail::decode<exec_in_val_t>(decodedVals_, *vector_.mapValues())} {
-  }
+        keyReader_{detail::decode(decodedKeys_, *vector_.mapKeys())},
+        valReader_{detail::decode(decodedVals_, *vector_.mapValues())} {}
 
-  bool doLoad(size_t outerOffset, exec_in_t& target) const {
-    if (UNLIKELY(!isSet(outerOffset))) {
-      return false;
-    }
-    vector_size_t offset = decoded_.decodedIndex(outerOffset);
-    const size_t offsetStart = offsets_[offset];
-    const size_t offsetEnd = offsetStart + lengths_[offset];
+  explicit VectorReader(const VectorReader<Map<K, V>>&) = delete;
+  VectorReader<Map<K, V>>& operator=(const VectorReader<Map<K, V>>&) = delete;
 
-    target.reserve(target.size() + offsetEnd - offsetStart);
-
-    for (size_t i = offsetStart; i != offsetEnd; ++i) {
-      exec_in_key_t key{};
-      exec_in_val_t val{};
-      if (UNLIKELY(!keyReader_.doLoad(i, key))) {
-        VELOX_USER_CHECK(false, "null map key not allowed");
-      }
-      const bool isSet = valReader_.doLoad(i, val);
-      if (LIKELY(isSet)) {
-        target.emplace(key, std::optional<exec_in_val_t>{std::move(val)});
-      } else {
-        target.emplace(key, std::optional<exec_in_val_t>{});
-      }
-    }
-    return true;
-  }
-
-  // note: because it uses a cached map; it is only valid until a new offset
-  // is fetched!! scary
-  exec_in_t& operator[](size_t offset) const {
-    m_.clear();
-    doLoad(offset, m_);
-    return m_;
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return MapView{&keyReader_, &valReader_, offsets_[index], lengths_[index]};
   }
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  DecodeResult<exec_in_t> decoded_;
+  const DecodedVector& decoded_;
   const MapVector& vector_;
   DecodedVector decodedKeys_;
   DecodedVector decodedVals_;
-  mutable exec_in_t m_{};
 
   const vector_size_t* offsets_;
   const vector_size_t* lengths_;
@@ -436,53 +317,32 @@ struct VectorReader<Array<V>> {
   using exec_in_t = typename VectorExec::template resolver<Array<V>>::in_type;
   using exec_in_child_t = typename VectorExec::template resolver<V>::in_type;
 
-  explicit VectorReader(const DecodeResult<exec_in_t>& decoded)
-      : decoded_(decoded),
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_(*decoded),
         vector_(detail::getDecoded<in_vector_t>(decoded_)),
         offsets_{vector_.rawOffsets()},
         lengths_{vector_.rawSizes()},
-        childReader_{
-            detail::decode<exec_in_child_t>(decoder_, *vector_.elements())} {}
-
-  bool doLoad(size_t outerOffset, exec_in_t& results) const {
-    if (!isSet(outerOffset)) {
-      return false;
-    }
-    vector_size_t offset = decoded_.decodedIndex(outerOffset);
-    const size_t offsetStart = offsets_[offset];
-    const size_t offsetEnd = offsetStart + lengths_[offset];
-
-    results.reserve(results.size() + offsetEnd - offsetStart);
-
-    for (size_t i = offsetStart; i < offsetEnd; ++i) {
-      exec_in_child_t childval{};
-      if (childReader_.doLoad(i, childval)) {
-        results.append(std::move(childval));
-      } else {
-        results.appendNullable();
-      }
-    }
-
-    return true;
+        childReader_{detail::decode(arrayValuesDecoder_, *vector_.elements())} {
   }
+
+  explicit VectorReader(const VectorReader<Array<V>>&) = delete;
+  VectorReader<Array<V>>& operator=(const VectorReader<Array<V>>&) = delete;
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  exec_in_t& operator[](size_t offset) const {
-    returnval_.clear();
-    doLoad(offset, returnval_);
-    return returnval_;
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return ArrayView{&childReader_, offsets_[index], lengths_[index]};
   }
 
-  DecodedVector decoder_;
-  DecodeResult<exec_in_t> decoded_;
+  DecodedVector arrayValuesDecoder_;
+  const DecodedVector& decoded_;
   const ArrayVector& vector_;
   const vector_size_t* offsets_;
   const vector_size_t* lengths_;
   VectorReader<V> childReader_;
-  mutable exec_in_t returnval_;
 };
 
 template <typename V>
@@ -509,7 +369,7 @@ struct VectorWriter<Array<V>> {
 
   void ensureSize(size_t size) {
     // todo(youknowjack): optimize the excessive ensureSize calls
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
       init(*vector_);
     }
@@ -528,6 +388,7 @@ struct VectorWriter<Array<V>> {
         childWriter_.commitNull();
       }
     }
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -552,6 +413,7 @@ struct VectorWriter<Array<V>> {
     m_.clear();
     childWriter_.reset();
   }
+
   vector_t* vector_ = nullptr;
   exec_out_t m_{};
 
@@ -564,70 +426,36 @@ struct VectorReader<Row<T...>> {
   using in_vector_t = typename TypeToFlatVector<Row<T...>>::type;
   using exec_in_t = typename VectorExec::resolver<Row<T...>>::in_type;
 
-  explicit VectorReader(const DecodeResult<exec_in_t>& decoded)
-      : decoded_(decoded),
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_(*decoded),
         vector_(detail::getDecoded<in_vector_t>(decoded_)),
-        decoders_{vector_.childrenSize()},
-        childReader_{prepareChildReaders(
+        childrenDecoders_{vector_.childrenSize()},
+        childReaders_{prepareChildReaders(
             vector_,
             std::make_index_sequence<sizeof...(T)>{})} {}
 
-  exec_in_t& operator[](size_t offset) const {
-    returnval_.clear();
-    doLoad(offset, returnval_);
-    return returnval_;
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return RowView{&childReaders_, index};
   }
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  bool doLoad(size_t offset, exec_in_t& results) const {
-    if (!isSet(offset)) {
-      return false;
-    }
-
-    doLoadInternal<0, T...>(offset, results);
-    return true;
-  }
-
  private:
   template <size_t... I>
-  std::tuple<VectorReader<T>...> prepareChildReaders(
+  std::tuple<std::unique_ptr<VectorReader<T>>...> prepareChildReaders(
       const in_vector_t& vector,
       std::index_sequence<I...>) {
-    return {childReader<T, I>()...};
+    return {std::make_unique<VectorReader<T>>(
+        detail::decode(childrenDecoders_[I], *vector_.childAt(I)))...};
   }
 
-  template <typename CHILD_T, size_t I>
-  VectorReader<CHILD_T> childReader() {
-    auto& decoder = decoders_[I];
-    return VectorReader<CHILD_T>(
-        detail::decode<
-            typename VectorExec::template resolver<CHILD_T>::in_type>(
-            decoder, *vector_.childAt(I)));
-  }
-
-  template <size_t N, typename Type, typename... Types>
-  void doLoadInternal(size_t offset, exec_in_t& results) const {
-    using exec_child_in_t = typename VectorExec::resolver<Type>::in_type;
-
-    exec_child_in_t childval{};
-
-    if (std::get<N>(childReader_).doLoad(offset, childval)) {
-      results.template at<N>() = childval;
-    }
-
-    if constexpr (sizeof...(Types) > 0) {
-      doLoadInternal<N + 1, Types...>(offset, results);
-    }
-  }
-
-  DecodeResult<exec_in_t> decoded_;
+  const DecodedVector& decoded_;
   const in_vector_t& vector_;
-  std::vector<DecodedVector> decoders_;
-  std::tuple<VectorReader<T>...> childReader_;
-  mutable exec_in_t returnval_;
+  std::vector<DecodedVector> childrenDecoders_;
+  std::tuple<std::unique_ptr<VectorReader<T>>...> childReaders_;
 };
 
 template <typename... T>
@@ -639,7 +467,9 @@ struct VectorWriter<Row<T...>> {
 
   void init(vector_t& vector) {
     vector_ = &vector;
+    // Ensure that children vectors are at least of same size as top row vector.
     initVectorWritersInternal<0, T...>();
+    resizeVectorWritersInternal<0>(vector_->size());
   }
 
   exec_out_t& current() {
@@ -652,10 +482,9 @@ struct VectorWriter<Row<T...>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
-      resizeVectorWritersInternal<0>(size);
-      init(*vector_);
+      resizeVectorWritersInternal<0>(vector_->size());
     }
   }
 
@@ -751,6 +580,42 @@ struct VectorWriter<Row<T...>> {
   std::tuple<VectorWriter<T>...> writers_;
   exec_out_t execOut_{};
   size_t offset_ = 0;
+};
+
+template <typename T>
+struct VectorReader<Variadic<T>> {
+  using in_vector_t = typename TypeToFlatVector<T>::type;
+  using exec_in_t = VariadicView<T>;
+
+  explicit VectorReader(const DecodedArgs& decodedArgs, int32_t startPosition)
+      : childReaders_{prepareChildReaders(decodedArgs, startPosition)} {}
+
+  exec_in_t operator[](vector_size_t offset) const {
+    return VariadicView<T>{&childReaders_, offset};
+  }
+
+  bool isSet(size_t /*unused*/) const {
+    // The Variadic itself can never be null, only the values of the underlying
+    // Types
+    return true;
+  }
+
+ private:
+  std::vector<std::unique_ptr<VectorReader<T>>> prepareChildReaders(
+      const DecodedArgs& decodedArgs,
+      int32_t startPosition) {
+    std::vector<std::unique_ptr<VectorReader<T>>> childReaders;
+    childReaders.reserve(decodedArgs.size() - startPosition);
+
+    for (int i = startPosition; i < decodedArgs.size(); ++i) {
+      childReaders.emplace_back(
+          std::make_unique<VectorReader<T>>(decodedArgs.at(i)));
+    }
+
+    return childReaders;
+  }
+
+  std::vector<std::unique_ptr<VectorReader<T>>> childReaders_;
 };
 
 template <>
@@ -904,9 +769,8 @@ struct VectorWriter<
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
-      init(*vector_);
     }
   }
 
@@ -962,9 +826,8 @@ struct VectorWriter<T, std::enable_if_t<std::is_same_v<T, bool>>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
-      init(*vector_);
     }
   }
 
@@ -1015,9 +878,8 @@ struct VectorWriter<std::shared_ptr<T>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
+    if (size > vector_->size()) {
       vector_->resize(size);
-      init(*vector_);
     }
   }
 

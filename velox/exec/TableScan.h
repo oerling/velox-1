@@ -38,11 +38,6 @@ class TableScan : public SourceOperator {
     return BlockingReason::kNotBlocked;
   }
 
-  void finish() override {
-    Operator::finish();
-    close();
-  }
-
   bool canAddDynamicFilter() const override {
     // TODO Consult with the connector. Return true only if connector can accept
     // dynamic filters.
@@ -52,8 +47,6 @@ class TableScan : public SourceOperator {
   void addDynamicFilter(
       ChannelIndex outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
-
-  void close() override;
 
  private:
   static constexpr int32_t kDefaultBatchSize = 1024;
@@ -70,6 +63,8 @@ class TableScan : public SourceOperator {
   // needed before prepare is done, it will be made when needed.
   void preload(std::shared_ptr<connector::ConnectorSplit> split);
   
+  // Adjust batch size according to split information.
+  void setBatchSize();
   const core::PlanNodeId planNodeId_;
   const std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
   const std::
@@ -93,5 +88,7 @@ class TableScan : public SourceOperator {
 
   std::function<void(std::shared_ptr<connector::ConnectorSplit>)>
       splitPreloader_{nullptr};
+
+  int32_t readBatchSize_{kDefaultBatchSize};
 };
 } // namespace facebook::velox::exec

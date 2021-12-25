@@ -22,6 +22,7 @@
 #include "velox/vector/SelectivityVector.h"
 #include "velox/vector/SimpleVector.h"
 
+#include <folly/Synchronized.h>
 namespace facebook::velox::exec {
 
 class Expr;
@@ -111,7 +112,7 @@ class VectorFunction {
 
   // If set, the string encoding of the results will be set by propagating
   // the specified inputs string encodings if presented.
-  // If one of the specififed inputs have its encoding not determined, the
+  // If one of the specified inputs have its encoding not determined, the
   // encoding of the result is not determined.
   virtual std::optional<std::vector<size_t>> propagateStringEncodingFrom()
       const {
@@ -129,7 +130,7 @@ class VectorAdapterFactory {
   virtual const TypePtr returnType() const = 0;
 };
 
-/// Returns a list of signatured supposed by VectorFunction with the specified
+/// Returns a list of signatures supported by VectorFunction with the specified
 /// name. Returns std::nullopt if there is no function with the specified name.
 std::optional<std::vector<std::shared_ptr<FunctionSignature>>>
 getVectorFunctionSignatures(const std::string& name);
@@ -222,6 +223,7 @@ bool registerStatefulVectorFunction(
   }
 
 // Registers a vectorized UDF associated with a given tag.
+// This should be used in the same namespace the declare macro is used in.
 #define VELOX_REGISTER_VECTOR_FUNCTION(tag, name)                   \
   {                                                                 \
     extern void _VELOX_REGISTER_FUNC_NAME(tag)(const std::string&); \

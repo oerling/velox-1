@@ -229,6 +229,10 @@ class SimpleVector : public BaseVector {
 
   std::string toString(vector_size_t index) const override {
     std::stringstream out;
+    if (index >= BaseVector::length_) {
+      out << "[***index " << index << " >= size " << BaseVector::length_ << "]";
+      return out.str();
+    }
     if (isNullAt(index)) {
       out << "null";
     } else {
@@ -286,12 +290,12 @@ class SimpleVector : public BaseVector {
   }
 
   /// Computes and saves is-ascii flag for a given set of rows if not already
-  /// present.
+  /// present. Returns computed value.
   template <typename U = T>
-  typename std::enable_if<std::is_same<U, StringView>::value, void>::type
+  typename std::enable_if<std::is_same<U, StringView>::value, bool>::type
   computeAndSetIsAscii(const SelectivityVector& rows) {
     if (rows.isSubset(asciiSetRows_)) {
-      return;
+      return isAllAscii_;
     }
     ensureIsAsciiCapacity(rows.end());
     bool isAllAscii = true;
@@ -311,6 +315,7 @@ class SimpleVector : public BaseVector {
     }
 
     asciiSetRows_.select(rows);
+    return isAllAscii_;
   }
 
   /// Clears asciiness state.

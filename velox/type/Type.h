@@ -32,17 +32,16 @@
 #include "folly/CPortability.h"
 #include "velox/common/base/ClassName.h"
 #include "velox/common/serialization/Serializable.h"
+#include "velox/type/Date.h"
 #include "velox/type/StringView.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/Tree.h"
-
-using facebook::velox::Timestamp;
 
 namespace facebook::velox {
 
 // Velox type system supports a small set of SQL-compatible composeable types:
 // BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, REAL, DOUBLE, VARCHAR,
-// VARBINARY, TIMESTAMP, ARRAY, MAP, ROW
+// VARBINARY, TIMESTAMP, DATE, ARRAY, MAP, ROW
 //
 // This file has multiple C++ type definitions for each of these logical types.
 // These logical definitions each serve slightly different purposes.
@@ -65,6 +64,7 @@ enum class TypeKind : int8_t {
   VARCHAR = 7,
   VARBINARY = 8,
   TIMESTAMP = 9,
+  DATE = 10,
 
   // Enum values for ComplexTypes start after 30 to leave
   // some values space to accommodate adding new scalar/native
@@ -247,6 +247,20 @@ struct TypeTraits<TypeKind::TIMESTAMP> {
   static constexpr bool isPrimitiveType = true;
   static constexpr bool isFixedWidth = true;
   static constexpr const char* name = "TIMESTAMP";
+};
+
+// Date is internally an int32_t that represents the days since the epoch
+template <>
+struct TypeTraits<TypeKind::DATE> {
+  using ImplType = ScalarType<TypeKind::DATE>;
+  using NativeType = Date;
+  using DeepCopiedType = Date;
+  static constexpr uint32_t minSubTypes = 0;
+  static constexpr uint32_t maxSubTypes = 0;
+  static constexpr TypeKind typeKind = TypeKind::DATE;
+  static constexpr bool isPrimitiveType = true;
+  static constexpr bool isFixedWidth = true;
+  static constexpr const char* name = "DATE";
 };
 
 template <>
@@ -444,6 +458,7 @@ class Type : public Tree<const std::shared_ptr<const Type>>,
   VELOX_FLUENT_CAST(Varchar, VARCHAR)
   VELOX_FLUENT_CAST(Varbinary, VARBINARY)
   VELOX_FLUENT_CAST(Timestamp, TIMESTAMP)
+  VELOX_FLUENT_CAST(Date, DATE)
   VELOX_FLUENT_CAST(Array, ARRAY)
   VELOX_FLUENT_CAST(Map, MAP)
   VELOX_FLUENT_CAST(Row, ROW)
@@ -827,6 +842,7 @@ using DoubleType = ScalarType<TypeKind::DOUBLE>;
 using TimestampType = ScalarType<TypeKind::TIMESTAMP>;
 using VarcharType = ScalarType<TypeKind::VARCHAR>;
 using VarbinaryType = ScalarType<TypeKind::VARBINARY>;
+using DateType = ScalarType<TypeKind::DATE>;
 
 // Used as T for SimpleVector subclasses that wrap another vector when
 // the wrapped vector is of a complex type. Applies to
@@ -906,6 +922,8 @@ std::shared_ptr<const MapType> MAP(
 
 std::shared_ptr<const TimestampType> TIMESTAMP();
 
+std::shared_ptr<const DateType> DATE();
+
 template <typename Class>
 std::shared_ptr<const OpaqueType> OPAQUE() {
   return OpaqueType::create<Class>();
@@ -952,6 +970,9 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::TIMESTAMP: {                          \
         return TEMPLATE_FUNC<::facebook::velox::TypeKind::TIMESTAMP>(         \
             __VA_ARGS__);                                                     \
+      }                                                                       \
+      case ::facebook::velox::TypeKind::DATE: {                               \
+        return TEMPLATE_FUNC<::facebook::velox::TypeKind::DATE>(__VA_ARGS__); \
       }                                                                       \
       default:                                                                \
         VELOX_FAIL(                                                           \
@@ -1001,6 +1022,10 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       }                                                                  \
       case ::facebook::velox::TypeKind::TIMESTAMP: {                     \
         return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::TIMESTAMP>( \
+            __VA_ARGS__);                                                \
+      }                                                                  \
+      case ::facebook::velox::TypeKind::DATE: {                          \
+        return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::DATE>(      \
             __VA_ARGS__);                                                \
       }                                                                  \
       default:                                                           \
@@ -1062,6 +1087,9 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::TIMESTAMP: {                           \
         return PREFIX<::facebook::velox::TypeKind::TIMESTAMP> SUFFIX(          \
             __VA_ARGS__);                                                      \
+      }                                                                        \
+      case ::facebook::velox::TypeKind::DATE: {                                \
+        return PREFIX<::facebook::velox::TypeKind::DATE> SUFFIX(__VA_ARGS__);  \
       }                                                                        \
       case ::facebook::velox::TypeKind::ARRAY: {                               \
         return PREFIX<::facebook::velox::TypeKind::ARRAY> SUFFIX(__VA_ARGS__); \
@@ -1148,6 +1176,9 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::TIMESTAMP: {                          \
         return CLASS<::facebook::velox::TypeKind::TIMESTAMP>::FIELD;          \
       }                                                                       \
+      case ::facebook::velox::TypeKind::DATE: {                               \
+        return CLASS<::facebook::velox::TypeKind::TIMESTAMP>::FIELD;          \
+      }                                                                       \
       case ::facebook::velox::TypeKind::ARRAY: {                              \
         return CLASS<::facebook::velox::TypeKind::ARRAY>::FIELD;              \
       }                                                                       \
@@ -1185,6 +1216,7 @@ VELOX_SCALAR_ACCESSOR(DOUBLE);
 VELOX_SCALAR_ACCESSOR(TIMESTAMP);
 VELOX_SCALAR_ACCESSOR(VARCHAR);
 VELOX_SCALAR_ACCESSOR(VARBINARY);
+VELOX_SCALAR_ACCESSOR(DATE);
 VELOX_SCALAR_ACCESSOR(UNKNOWN);
 
 template <TypeKind KIND>
@@ -1226,10 +1258,31 @@ std::shared_ptr<const Type> createType<TypeKind::OPAQUE>(
 
 #undef VELOX_SCALAR_ACCESSOR
 
+template <typename UNDERLYING_TYPE>
+struct Variadic {
+  using underlying_type = UNDERLYING_TYPE;
+
+ private:
+  Variadic() {}
+};
+
+template <typename>
+struct isVariadicType : public std::false_type {};
+
+template <typename T>
+struct isVariadicType<Variadic<T>> : public std::true_type {};
+
 template <typename KEY, typename VALUE>
 struct Map {
   using key_type = KEY;
   using value_type = VALUE;
+
+  static_assert(
+      !isVariadicType<key_type>::value,
+      "Map keys cannot be Variadic");
+  static_assert(
+      !isVariadicType<value_type>::value,
+      "Map values cannot be Variadic");
 
  private:
   Map() {}
@@ -1239,6 +1292,10 @@ template <typename ELEMENT>
 struct Array {
   using element_type = ELEMENT;
 
+  static_assert(
+      !isVariadicType<element_type>::value,
+      "Array elements cannot be Variadic");
+
  private:
   Array() {}
 };
@@ -1247,6 +1304,10 @@ template <typename... T>
 struct Row {
   template <size_t idx>
   using type_at = typename std::tuple_element<idx, std::tuple<T...>>::type;
+
+  static_assert(
+      std::conjunction<std::bool_constant<!isVariadicType<T>::value>...>::value,
+      "Struct fields cannot be Variadic");
 
  private:
   Row() {}
@@ -1314,6 +1375,9 @@ struct CppToType<velox::StringView> : public CppToTypeBase<TypeKind::VARCHAR> {
 };
 
 template <>
+struct CppToType<std::string_view> : public CppToTypeBase<TypeKind::VARCHAR> {};
+
+template <>
 struct CppToType<std::string> : public CppToTypeBase<TypeKind::VARCHAR> {};
 
 template <>
@@ -1334,6 +1398,9 @@ struct CppToType<double> : public CppToTypeBase<TypeKind::DOUBLE> {};
 
 template <>
 struct CppToType<Timestamp> : public CppToTypeBase<TypeKind::TIMESTAMP> {};
+
+template <>
+struct CppToType<Date> : public CppToTypeBase<TypeKind::DATE> {};
 
 // TODO: maybe do something smarter than just matching any shared_ptr, e.g. we
 // can declare "registered" types explicitly

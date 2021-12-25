@@ -17,8 +17,10 @@
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/GroupTracker.h"
+#include "velox/common/caching/SsdCache.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
+#include "velox/common/caching/FileIds.h"
 
 namespace facebook::velox::cache {
 
@@ -108,7 +110,7 @@ void AsyncDataCacheEntry::setValid(bool success) {
   VELOX_CHECK_NE(0, numPins_);
   auto hook = shard_->cache()->verifyHook();
   if (hook) {
-    hook(this);
+    hook(*this);
   }
   dataValid_ = success;
   load_.reset();
@@ -178,6 +180,7 @@ CachePin CacheShard::findOrCreate(
         entries_[index] = std::move(newEntry);
       }
     }
+    ++numNew_;
   }
   return initEntry(key, entryToInit, size);
 }
@@ -202,7 +205,6 @@ CachePin CacheShard::initEntry(
   // one has added. The new entry is otherwise volatile and
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
-  ++numNew_;
   entry->setSsdFile(nullptr, 0);
   entry->key_ = FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset};
   if (entry->size() < size) {
@@ -340,6 +342,7 @@ void CacheShard::removeEntryLocked(AsyncDataCacheEntry* entry) {
     VELOX_CHECK(removeIter != entryMap_.end());
     entryMap_.erase(removeIter);
     entry->key_.fileNum.clear();
+    entry->setSsdFile(nullptr, 0);
     if (entry->isPrefetch()) {
       entry->setPrefetch(false);
     }
@@ -351,7 +354,6 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t largeFreed = 0;
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
-  int32_t orgNumEvictChecks = numEvictChecks_;
   {
     std::lock_guard<std::mutex> l(mutex_);
     int size = entries_.size();
@@ -465,7 +467,7 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.allocClocks += allocClocks_;
 }
 
-void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
+void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
   auto& groupStats = cache_->ssdCache()->groupStats();
   std::lock_guard<std::mutex> l(mutex_);
   for (auto& entry : entries_) {
@@ -481,7 +483,7 @@ void CacheShard::getSsdSaveable(std::vector<CachePin>& pins) {
   }
 }
 
-  AsyncDataCache::AsyncDataCache(
+AsyncDataCache::AsyncDataCache(
     std::unique_ptr<MappedMemory> mappedMemory,
     uint64_t maxBytes,
     std::unique_ptr<SsdCache> ssdCache)
@@ -576,15 +578,15 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
       std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
     ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
-    if (!ssdCache_->startStore()) {
+    if (!ssdCache_->startWrite()) {
       return;
     }
 
     std::vector<CachePin> pins;
     for (auto& shard : shards_) {
-      shard->getSsdSaveable(pins);
+      shard->appendSsdSaveable(pins);
     }
-    ssdCache_->store(std::move(pins));
+    ssdCache_->write(std::move(pins));
   }
 }
 
@@ -597,11 +599,11 @@ CacheStats AsyncDataCache::refreshStats() const {
 }
 
 void AsyncDataCache::clear() {
-    for (auto& shard : shards_) {
-      shard->evict(std::numeric_limits<int32_t>::max(), true);
-    }
+  for (auto& shard : shards_) {
+    shard->evict(std::numeric_limits<int32_t>::max(), true);
   }
-  
+}
+
 std::string AsyncDataCache::toString() const {
   auto stats = refreshStats();
   std::stringstream out;
@@ -611,15 +613,62 @@ std::string AsyncDataCache::toString() const {
       << " / " << maxBytes_ << " bytes\n"
       << "Miss: " << stats.numNew << " Hit " << stats.numHit << " evict "
       << stats.numEvict << "\n"
-      << " read pins " << stats.numShared << " unused prefetch "
-      << stats.numPrefetch << " Alloc Mclks " << (stats.allocClocks >> 20)
-      << " allocated pages " << numAllocated() << " cached pages "
-      << cachedPages_;
+      << " read pins " << stats.numShared << " write pins "
+      << stats.numExclusive << " unused prefetch " << stats.numPrefetch
+      << " Alloc Mclocks " << (stats.allocClocks >> 20) << " allocated pages "
+      << numAllocated() << " cached pages " << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {
     out << "\nSSD: " << ssdCache_->toString();
   }
   return out.str();
+}
+
+CoalesceIoStats readPins(
+    const std::vector<CachePin>& pins,
+    int32_t maxGap,
+    int32_t rangesPerIo,
+    std::function<uint64_t(int32_t index)> offsetFunc,
+    std::function<void(
+        const std::vector<CachePin>& pins,
+        int32_t begin,
+        int32_t end,
+        uint64_t offset,
+        const std::vector<folly::Range<char*>>& buffers)> readFunc) {
+  return coalesceIo<CachePin, folly::Range<char*>>(
+      pins,
+      maxGap,
+      rangesPerIo,
+      offsetFunc,
+      [&](int32_t index) { return pins[index].checkedEntry()->size(); },
+      [&](int32_t index) {
+        return std::max<int32_t>(
+            1, pins[index].checkedEntry()->data().numRuns());
+      },
+      [&](const CachePin& pin, std::vector<folly::Range<char*>>& ranges) {
+        auto entry = pin.checkedEntry();
+        auto& data = entry->data();
+        uint64_t offsetInRuns = 0;
+        auto size = entry->size();
+        if (data.numPages() == 0) {
+          ranges.push_back(
+              folly::Range<char*>(pin.checkedEntry()->tinyData(), size));
+          offsetInRuns = size;
+        } else {
+          for (int i = 0; i < data.numRuns(); ++i) {
+            auto run = data.runAt(i);
+            uint64_t bytes = run.numBytes();
+            uint64_t readSize = std::min(bytes, size - offsetInRuns);
+            ranges.push_back(folly::Range<char*>(run.data<char>(), readSize));
+            offsetInRuns += readSize;
+          }
+        }
+        VELOX_CHECK_EQ(offsetInRuns, size);
+      },
+      [&](int32_t size, std::vector<folly::Range<char*>>& ranges) {
+        ranges.push_back(folly::Range<char*>(nullptr, size));
+      },
+      readFunc);
 }
 
 } // namespace facebook::velox::cache

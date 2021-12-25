@@ -55,16 +55,33 @@ class FunctionBaseTest : public testing::Test {
         std::forward<std::vector<std::shared_ptr<const Type>>&&>(types));
   }
 
+  void setNulls(
+      const VectorPtr& vector,
+      std::function<bool(vector_size_t /*row*/)> isNullAt) {
+    for (vector_size_t i = 0; i < vector->size(); i++) {
+      if (isNullAt(i)) {
+        vector->setNull(i, true);
+      }
+    }
+  }
+
+  RowVectorPtr makeRowVector(
+      const std::vector<std::string>& childNames,
+      const std::vector<VectorPtr>& children,
+      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
+    auto rowVector = vectorMaker_.rowVector(childNames, children);
+    if (isNullAt) {
+      setNulls(rowVector, isNullAt);
+    }
+    return rowVector;
+  }
+
   RowVectorPtr makeRowVector(
       const std::vector<VectorPtr>& children,
       std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
     auto rowVector = vectorMaker_.rowVector(children);
     if (isNullAt) {
-      for (vector_size_t i = 0; i < rowVector->size(); i++) {
-        if (isNullAt(i)) {
-          rowVector->setNull(i, true);
-        }
-      }
+      setNulls(rowVector, isNullAt);
     }
     return rowVector;
   }
@@ -197,6 +214,113 @@ class FunctionBaseTest : public testing::Test {
     return vectorMaker_.arrayOfRowVector(rowType, data);
   }
 
+  // Create an ArrayVector<ArrayVector<T>> from nested std::vectors of values.
+  // Example:
+  //   std::vector<std::optional<int64_t>> a {1, 2, 3};
+  //   std::vector<std::optional<int64_t>> b {4, 5};
+  //   std::vector<std::optional<int64_t>> c {6, 7, 8};
+  //   auto O = [](const std::vector<std::optional<int64_t>>& data) {
+  //     return std::make_optional(data);
+  //   };
+  //   auto arrayVector = makeNestedArrayVector<int64_t>(
+  //      {{O(a), O(b)},
+  //       {O(a), O(c)},
+  //       {O({})},
+  //       {O({std::nullopt})}});
+  //
+  //   EXPECT_EQ(4, arrayVector->size());
+  template <typename T>
+  ArrayVectorPtr makeNestedArrayVector(
+      const std::vector<
+          std::vector<std::optional<std::vector<std::optional<T>>>>>& data) {
+    vector_size_t size = data.size();
+    BufferPtr offsets = AlignedBuffer::allocate<vector_size_t>(size, pool());
+    BufferPtr sizes = AlignedBuffer::allocate<vector_size_t>(size, pool());
+
+    auto rawOffsets = offsets->asMutable<vector_size_t>();
+    auto rawSizes = sizes->asMutable<vector_size_t>();
+
+    // Flatten the outermost layer of std::vector of the input, and populate
+    // the sizes and offsets for the top-level array vector.
+    std::vector<std::optional<std::vector<std::optional<T>>>> flattenedData;
+    vector_size_t i = 0;
+    for (const auto& vector : data) {
+      flattenedData.insert(flattenedData.end(), vector.begin(), vector.end());
+
+      rawSizes[i] = vector.size();
+      rawOffsets[i] = (i == 0) ? 0 : rawOffsets[i - 1] + rawSizes[i - 1];
+
+      ++i;
+    }
+
+    // Create the underlying vector.
+    auto baseArray = makeVectorWithNullArrays<T>(flattenedData);
+
+    // Build and return a second-level of ArrayVector on top of baseArray.
+    return std::make_shared<ArrayVector>(
+        pool(),
+        ARRAY(ARRAY(CppToType<T>::create())),
+        BufferPtr(nullptr),
+        size,
+        offsets,
+        sizes,
+        baseArray,
+        0);
+  }
+
+  // Create an ArrayVector<MapVector<TKey, TValue>> from nested std::vectors of
+  // pairs. Example:
+  //   using S = StringView;
+  //   using P = std::pair<int64_t, std::optional<S>>;
+  //   std::vector<P> a {P{1, S{"red"}}, P{2, S{"blue"}}, P{3, S{"green"}}};
+  //   std::vector<P> b {P{1, S{"yellow"}}, P{2, S{"orange"}}};
+  //   std::vector<P> c {P{1, S{"red"}}, P{2, S{"yellow"}}, P{3, S{"purple"}}};
+  //   std::vector<std::vector<std::vector<P>>> data = {{a, b, b}, {b, c}, {c,
+  //   a, c}};
+  //   auto arrayVector = makeArrayOfMapVector<int64_t, S>(data);
+  //
+  //   EXPECT_EQ(3, arrayVector->size());
+  template <typename TKey, typename TValue>
+  ArrayVectorPtr makeArrayOfMapVector(
+      const std::vector<
+          std::vector<std::vector<std::pair<TKey, std::optional<TValue>>>>>&
+          data) {
+    vector_size_t size = data.size();
+    BufferPtr offsets = AlignedBuffer::allocate<vector_size_t>(size, pool());
+    BufferPtr sizes = AlignedBuffer::allocate<vector_size_t>(size, pool());
+
+    auto rawOffsets = offsets->asMutable<vector_size_t>();
+    auto rawSizes = sizes->asMutable<vector_size_t>();
+
+    // Flatten the outermost std::vector of the input and populate the sizes and
+    // offsets for the top-level array vector.
+    std::vector<std::vector<std::pair<TKey, std::optional<TValue>>>>
+        flattenedData;
+    vector_size_t i = 0;
+    for (const auto& vector : data) {
+      flattenedData.insert(flattenedData.end(), vector.begin(), vector.end());
+
+      rawSizes[i] = vector.size();
+      rawOffsets[i] = (i == 0) ? 0 : rawOffsets[i - 1] + rawSizes[i - 1];
+
+      ++i;
+    }
+
+    // Create the underlying map vector.
+    auto baseVector = makeMapVector<TKey, TValue>(flattenedData);
+
+    // Build and return a second-level of array vector on top of baseVector.
+    return std::make_shared<ArrayVector>(
+        pool(),
+        ARRAY(MAP(CppToType<TKey>::create(), CppToType<TValue>::create())),
+        BufferPtr(nullptr),
+        size,
+        offsets,
+        sizes,
+        baseVector,
+        0);
+  }
+
   // Convenience function to create arrayVectors (vector of arrays) based on
   // input values from nested std::vectors. The underlying array elements are
   // nullable.
@@ -254,6 +378,35 @@ class FunctionBaseTest : public testing::Test {
       std::function<bool(vector_size_t /*row */)> valueIsNullAt = nullptr) {
     return vectorMaker_.mapVector<TKey, TValue>(
         size, sizeAt, keyAt, valueAt, isNullAt, valueIsNullAt);
+  }
+
+  // Create map vector from nested std::vector representation.
+  template <typename TKey, typename TValue>
+  MapVectorPtr makeMapVector(
+      const std::vector<std::vector<std::pair<TKey, std::optional<TValue>>>>&
+          maps) {
+    std::vector<vector_size_t> lengths;
+    std::vector<TKey> keys;
+    std::vector<TValue> values;
+    std::vector<bool> nullValues;
+    auto undefined = TValue();
+
+    for (const auto& map : maps) {
+      lengths.push_back(map.size());
+      for (const auto& [key, value] : map) {
+        keys.push_back(key);
+        values.push_back(value.value_or(undefined));
+        nullValues.push_back(!value.has_value());
+      }
+    }
+
+    return makeMapVector<TKey, TValue>(
+        maps.size(),
+        [&](vector_size_t row) { return lengths[row]; },
+        [&](vector_size_t idx) { return keys[idx]; },
+        [&](vector_size_t idx) { return values[idx]; },
+        nullptr,
+        [&](vector_size_t idx) { return nullValues[idx]; });
   }
 
   template <typename T>
@@ -327,10 +480,8 @@ class FunctionBaseTest : public testing::Test {
         0);
   }
 
-  template <typename T>
-  std::shared_ptr<T> evaluate(
-      const std::string& expression,
-      const RowVectorPtr& data) {
+  // Use this directly if you don't want it to cast the returned vector.
+  VectorPtr evaluate(const std::string& expression, const RowVectorPtr& data) {
     auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
     exec::ExprSet exprSet({makeTypedExpr(expression, rowType)}, &execCtx_);
 
@@ -338,8 +489,14 @@ class FunctionBaseTest : public testing::Test {
     exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
     std::vector<VectorPtr> results(1);
     exprSet.eval(*rows, &evalCtx, &results);
+    return results[0];
+  }
 
-    auto result = results[0];
+  template <typename T>
+  std::shared_ptr<T> evaluate(
+      const std::string& expression,
+      const RowVectorPtr& data) {
+    auto result = evaluate(expression, data);
     VELOX_CHECK(result, "Expression evaluation result is null: {}", expression);
 
     auto castedResult = std::dynamic_pointer_cast<T>(result);
@@ -362,8 +519,10 @@ class FunctionBaseTest : public testing::Test {
         {makeTypedExpr(expression, rowType)}, &execCtx_);
 
     facebook::velox::exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
-    std::vector<VectorPtr> results{result};
+    std::vector<VectorPtr> results{std::move(result)};
     exprSet.eval(rows, &evalCtx, &results);
+    result = results[0];
+
     return std::dynamic_pointer_cast<T>(results[0]);
   }
 
@@ -412,7 +571,7 @@ class FunctionBaseTest : public testing::Test {
   }
 
   // TODO: Enable ASSERT_EQ for vectors
-  void assertEqualVectors(
+  static void assertEqualVectors(
       const VectorPtr& expected,
       const VectorPtr& actual,
       const std::string& additionalContext = "") {
@@ -457,6 +616,17 @@ class FunctionBaseTest : public testing::Test {
     }
   }
 
+  /// Register a lambda expression with a name that can later be used to refer
+  /// to the lambda in a function call, e.g. foo(a, b,
+  /// function('<lanbda-name>')).
+  ///
+  /// @param name Name to use when referring to the lambda expression from a
+  /// function call.
+  /// @param signature A list of names and types of inputs for the lambda
+  /// expression.
+  /// @param rowType The type of the input data used to resolve types of
+  /// captures used in the lambda expression.
+  /// @param body Body of the lambda as SQL expression.
   void registerLambda(
       const std::string& name,
       const std::shared_ptr<const RowType>& signature,

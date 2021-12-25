@@ -13,22 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <folly/Random.h>
-
-#include "velox/aggregates/tests/AggregationTestBase.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/exec/tests/PlanBuilder.h"
-
-using namespace facebook::velox::aggregate;
-using namespace facebook::velox::aggregate::test;
+#include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 
 using facebook::velox::test::BatchMaker;
 
 namespace facebook::velox::exec::test {
 namespace {
 
-class AggregationTest : public AggregationTestBase {
+class AggregationTest : public OperatorTestBase {
  protected:
+  std::vector<RowVectorPtr> makeVectors(
+      const std::shared_ptr<const RowType>& rowType,
+      vector_size_t size,
+      int numVectors) {
+    std::vector<RowVectorPtr> vectors;
+    for (int32_t i = 0; i < numVectors; ++i) {
+      auto vector = std::dynamic_pointer_cast<RowVector>(
+          velox::test::BatchMaker::createBatch(rowType, size, *pool_));
+      vectors.push_back(vector);
+    }
+    return vectors;
+  }
+
   template <typename T>
   void testSingleKey(
       const std::vector<RowVectorPtr>& vectors,
@@ -335,7 +343,7 @@ TEST_F(AggregationTest, hashmodes) {
   createDuckDbTable(batches);
   auto op = PlanBuilder()
                 .values(batches)
-                .finalAggregation({0, 1, 2, 3, 4, 5}, {"sum(1)"})
+                .singleAggregation({0, 1, 2, 3, 4, 5}, {"sum(1)"})
                 .planNode();
 
   assertQuery(
@@ -363,7 +371,7 @@ TEST_F(AggregationTest, rangeToDistinct) {
   createDuckDbTable(batches);
   auto op = PlanBuilder()
                 .values(batches)
-                .finalAggregation({0, 1, 2, 3, 4, 5}, {"sum(1)"})
+                .singleAggregation({0, 1, 2, 3, 4, 5}, {"sum(1)"})
                 .planNode();
 
   assertQuery(
@@ -389,7 +397,7 @@ TEST_F(AggregationTest, allKeyTypes) {
   createDuckDbTable(batches);
   auto op = PlanBuilder()
                 .values(batches)
-                .finalAggregation({0, 1, 2, 3, 4, 5}, {"sum(1)"})
+                .singleAggregation({0, 1, 2, 3, 4, 5}, {"sum(1)"})
                 .planNode();
 
   assertQuery(
@@ -423,7 +431,7 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
   params.planNode = PlanBuilder()
                         .values(vectors)
                         .partialAggregation({0}, {})
-                        .finalAggregation({0}, {})
+                        .finalAggregation()
                         .planNode();
 
   assertQuery(params, "SELECT distinct c0 FROM tmp");
@@ -432,7 +440,7 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
   params.planNode = PlanBuilder()
                         .values(vectors)
                         .partialAggregation({0}, {"count(1)"})
-                        .finalAggregation({0}, {"sum(a0)"})
+                        .finalAggregation()
                         .planNode();
 
   assertQuery(params, "SELECT c0, count(1) FROM tmp GROUP BY 1");

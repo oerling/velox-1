@@ -16,6 +16,7 @@
 #pragma once
 
 #include <memory>
+#include "velox/common/memory/ByteStream.h"
 #include "velox/exec/Operator.h"
 
 namespace facebook::velox::exec {
@@ -45,7 +46,9 @@ class SerializedPage {
   static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
       VectorStreamGroup* group) {
     std::stringstream out;
-    group->flush(&out);
+    OutputStreamListener listener;
+    OutputStream outputStream(&out, &listener);
+    group->flush(&outputStream);
     return std::make_unique<SerializedPage>(
         &out, out.tellp(), group->mappedMemory());
   }

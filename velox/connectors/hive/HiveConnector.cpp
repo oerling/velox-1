@@ -15,9 +15,16 @@
  */
 #include "velox/connectors/hive/HiveConnector.h"
 #include <velox/dwio/dwrf/reader/SelectiveColumnReader.h>
+#include "velox/common/process/TraceContext.h"
+
 #include "velox/dwio/common/InputStream.h"
+#include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/expression/ControlExpr.h"
+#include "velox/type/Conversions.h"
+#include "velox/type/Type.h"
+#include "velox/type/Variant.h"
 
 using namespace facebook::velox::dwrf;
 using WriterConfig = facebook::velox::dwrf::Config;
@@ -63,23 +70,55 @@ namespace {
 static void makeFieldSpecs(
     const std::string& pathPrefix,
     int32_t level,
-    const std::shared_ptr<const RowType>& type,
+    const TypePtr& type,
     common::ScanSpec* spec) {
-  for (auto i = 0; i < type->size(); ++i) {
-    std::string path =
-        level == 0 ? type->nameOf(i) : pathPrefix + "." + type->nameOf(i);
-    common::Subfield subfield(path);
-    common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
+  constexpr int32_t kNoChannel = -1;
+  auto makeNestedSpec = [&](const std::string& name, int32_t channel) {
+    std::string path = level == 0 ? name : pathPrefix + "." + name;
+    auto fieldSpec = spec->getOrCreateChild(common::Subfield(path));
     fieldSpec->setProjectOut(true);
-    fieldSpec->setChannel(i);
-    auto fieldType = type->childAt(i);
-    if (fieldType->kind() == TypeKind::ROW) {
-      makeFieldSpecs(
-          path,
-          level + 1,
-          std::static_pointer_cast<const RowType>(fieldType),
-          spec);
+    if (channel != kNoChannel) {
+      fieldSpec->setChannel(channel);
     }
+    return path;
+  };
+
+  switch (type->kind()) {
+    case TypeKind::ROW: {
+      auto rowType = type->as<TypeKind::ROW>();
+      for (auto i = 0; i < type->size(); ++i) {
+        makeFieldSpecs(
+            makeNestedSpec(rowType.nameOf(i), i),
+            level + 1,
+            type->childAt(i),
+            spec);
+      }
+      break;
+    }
+    case TypeKind::MAP: {
+      makeFieldSpecs(
+          makeNestedSpec("keys", kNoChannel),
+          level + 1,
+          type->childAt(0),
+          spec);
+      makeFieldSpecs(
+          makeNestedSpec("elements", kNoChannel),
+          level + 1,
+          type->childAt(1),
+          spec);
+      break;
+    }
+    case TypeKind::ARRAY: {
+      makeFieldSpecs(
+          makeNestedSpec("elements", kNoChannel),
+          level + 1,
+          type->childAt(0),
+          spec);
+      break;
+    }
+
+    default:
+      break;
   }
 }
 
@@ -129,27 +168,30 @@ HiveDataSource::HiveDataSource(
       mappedMemory_(mappedMemory),
       scanId_(scanId),
       executor_(executor) {
-  regularColumns_.reserve(outputType->size());
-
-  std::vector<std::string> columnNames;
-  columnNames.reserve(outputType->size());
-  for (auto& name : outputType->names()) {
-    auto it = columnHandles.find(name);
-    VELOX_CHECK(
-        it != columnHandles.end(),
-        "ColumnHandle is missing for output column {}",
-        name);
-
-    auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(it->second);
+  // Column handled keyed on the column alias, the name used in the query.
+  for (const auto& [canonicalizedName, columnHandle] : columnHandles) {
+    auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(columnHandle);
     VELOX_CHECK(
         handle != nullptr,
         "ColumnHandle must be an instance of HiveColumnHandle for {}",
-        name);
+        canonicalizedName);
 
-    columnNames.emplace_back(handle->name());
-    if (handle->columnType() == HiveColumnHandle::ColumnType::kRegular) {
-      regularColumns_.emplace_back(handle->name());
+    if (handle->columnType() == HiveColumnHandle::ColumnType::kPartitionKey) {
+      partitionKeys_.emplace(handle->name(), handle);
     }
+  }
+
+  std::vector<std::string> columnNames;
+  columnNames.reserve(outputType->size());
+  for (auto& outputName : outputType->names()) {
+    auto it = columnHandles.find(outputName);
+    VELOX_CHECK(
+        it != columnHandles.end(),
+        "ColumnHandle is missing for output column: {}",
+        outputName);
+
+    const auto& handle = static_cast<HiveColumnHandle&>(*it->second);
+    columnNames.emplace_back(handle.name());
   }
 
   auto hiveTableHandle =
@@ -208,6 +250,7 @@ bool testFilters(
   const auto& rowType = reader->rowType();
   for (const auto& child : scanSpec->children()) {
     if (child->filter()) {
+      child->clearSpecializedFilter();
       const auto& name = child->fieldName();
       if (!rowType->containsChild(name)) {
         // Column is missing. Most likely due to schema evolution.
@@ -264,6 +307,22 @@ std::unique_ptr<InputStreamHolder> makeStreamHolder(
     const std::string& path,
     std::shared_ptr<dwio::common::IoStatistics> stats) {
   return std::make_unique<InputStreamHolder>(factory->generate(path), stats);
+}
+
+template <TypeKind ToKind>
+velox::variant convertFromString(const std::optional<std::string>& value) {
+  if (value.has_value()) {
+    if constexpr (ToKind == TypeKind::VARCHAR) {
+      return velox::variant(value.value());
+    }
+    bool nullOutput = false;
+    auto result =
+        velox::util::Converter<ToKind>::cast(value.value(), nullOutput);
+    VELOX_CHECK(
+        not nullOutput, "Failed to cast {} to {}", value.value(), ToKind)
+    return velox::variant(result);
+  }
+  return velox::variant(ToKind);
 }
 
 } // namespace
@@ -367,10 +426,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
     auto keyIt = split_->partitionKeys.find(fieldName);
     if (keyIt != split_->partitionKeys.end()) {
-      setConstantValue(
-          scanChildSpec,
-          keyIt->second.has_value() ? velox::variant(*(keyIt->second))
-                                    : velox::variant(TypeKind::VARCHAR));
+      setPartitionValue(scanChildSpec, fieldName, keyIt->second);
     } else if (fieldName == kPath) {
       setConstantValue(scanChildSpec, velox::variant(split_->filePath));
     } else if (fieldName == kBucket) {
@@ -391,10 +447,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   for (const auto& entry : split_->partitionKeys) {
     auto childSpec = scanSpec_->childByName(entry.first);
     if (childSpec) {
-      setConstantValue(
-          childSpec,
-          entry.second.has_value() ? velox::variant(*(entry.second))
-                                   : velox::variant(TypeKind::VARCHAR));
+      setPartitionValue(childSpec, entry.first, entry.second);
     }
   }
 
@@ -458,6 +511,7 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
   // column, e.g. rand() < 0.1. Evaluate that conjunct first, then scan only
   // rows that passed.
 
+  process::TraceContext trace(fmt::format("Scan: {}", split_->filePath), true);
   auto rowsScanned = rowReader_->next(size, output_);
   completedRows_ += rowsScanned;
 
@@ -530,19 +584,51 @@ void HiveDataSource::setNullConstantValue(
   spec->setConstantValue(BaseVector::createNullConstant(type, 1, pool_));
 }
 
+void HiveDataSource::setPartitionValue(
+    common::ScanSpec* spec,
+    const std::string& partitionKey,
+    const std::optional<std::string>& value) const {
+  auto it = partitionKeys_.find(partitionKey);
+  VELOX_CHECK(
+      it != partitionKeys_.end(),
+      "ColumnHandle is missing for partition key {}",
+      partitionKey);
+  auto constValue = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      convertFromString, it->second->dataType()->kind(), value);
+  setConstantValue(spec, constValue);
+}
+
 std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
   auto res = runtimeStats_.toMap();
-  res.insert(
-      {{"numPrefetch", ioStats_->prefetch().count()},
-       {"prefetchBytes", ioStats_->prefetch().bytes()},
-       {"numStorageRead", ioStats_->read().count()},
-       {"storageReadBytes", ioStats_->read().bytes()},
-       {"numLocalRead", ioStats_->ssdRead().count()},
-       {"localReadBytes", ioStats_->ssdRead().bytes()},
-       {"numRamRead", ioStats_->ramHit().count()},
-       {"ramReadBytes", ioStats_->ramHit().bytes()},
-       {"ioWait", ioStats_->queryThreadIoLatency().bytes()}});
+  if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
+    res.insert(
+        {{"numPrefetch", ioStats_->prefetch().count()},
+         {"prefetchBytes", ioStats_->prefetch().bytes()},
+         {"numStorageRead", ioStats_->read().count()},
+         {"storageReadBytes", ioStats_->read().bytes()},
+         {"numLocalRead", ioStats_->ssdRead().count()},
+         {"localReadBytes", ioStats_->ssdRead().bytes()},
+         {"numRamRead", ioStats_->ramHit().count()},
+         {"ramReadBytes", ioStats_->ramHit().bytes()},
+         {"ioWait", ioStats_->queryThreadIoLatency().bytes()}});
+  }
   return res;
+}
+
+int64_t HiveDataSource::estimatedRowSize() {
+  if (!rowReader_ || errorInRowSize_) {
+    return kUnknownRowSize;
+  }
+  try {
+    return rowReader_->estimatedRowSize();
+  } catch (const std::exception& e) {
+    // Remember the error and do not try the other splits, they are
+    // likely to be broken the same way.
+    errorInRowSize_ = true;
+    LOG_EVERY_N(WARNING, 1000)
+        << "failed to get row size estimate for " << split_->toString();
+    return kUnknownRowSize;
+  }
 }
 
 HiveConnector::HiveConnector(
@@ -559,4 +645,6 @@ HiveConnector::HiveConnector(
       executor_(executor) {}
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
+VELOX_REGISTER_CONNECTOR_FACTORY(
+    std::make_shared<HiveHadoop2ConnectorFactory>())
 } // namespace facebook::velox::connector::hive

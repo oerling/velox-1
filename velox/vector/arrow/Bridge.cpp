@@ -18,25 +18,50 @@
 #include "velox/buffer/Buffer.h"
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
-#include "velox/common/memory/Memory.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox {
 
 namespace {
 
-// TODO: The initial supported conversions only use one buffer for nulls and
-// one for value, but we'll need more once we support strings and complex types.
-static constexpr size_t kMaxBuffers{2};
+// The supported conversions use one buffer for nulls (0), one for values (1),
+// and one for offsets (2).
+static constexpr size_t kMaxBuffers{3};
 
 // Structure that will hold the buffers needed by ArrowArray. This is opaquely
 // carried by ArrowArray.private_data
-struct VeloxToArrowBridgeHolder {
-  // Holds a shared_ptr to the vector being bridged, to ensure its lifetime.
-  VectorPtr vector;
+class VeloxToArrowBridgeHolder {
+ public:
+  VeloxToArrowBridgeHolder() {
+    for (size_t i = 0; i < kMaxBuffers; ++i) {
+      buffers_[i] = nullptr;
+    }
+  }
 
-  // Holds the pointers to buffers.
-  const void* buffers[kMaxBuffers];
+  // Acquires a buffer at index `idx`.
+  void setBuffer(size_t idx, const BufferPtr& buffer) {
+    bufferPtrs_[idx] = buffer;
+    if (buffer) {
+      buffers_[idx] = buffer->as<void>();
+    }
+  }
+
+  template <typename T>
+  T* getBufferAs(size_t idx) {
+    return bufferPtrs_[idx]->asMutable<T>();
+  }
+
+  const void** getArrowBuffers() {
+    return buffers_;
+  }
+
+ private:
+  // Holds the pointers to the arrow buffers.
+  const void* buffers_[kMaxBuffers];
+
+  // Holds ownership over the Buffers being referenced by the buffers vector
+  // above.
+  BufferPtr bufferPtrs_[kMaxBuffers];
 };
 
 // Structure that will hold buffers needed by ArrowSchema. This is opaquely
@@ -125,7 +150,49 @@ static void bridgeSchemaRelease(ArrowSchema* arrowSchema) {
   arrowSchema->private_data = nullptr;
 }
 
-void exportFlatVector(const VectorPtr& vector, ArrowArray& arrowArray) {
+template <typename TOffset>
+void exportFlatStringVector(
+    FlatVector<StringView>* vector,
+    ArrowArray& arrowArray,
+    VeloxToArrowBridgeHolder& bridgeHolder,
+    memory::MemoryPool* pool) {
+  VELOX_CHECK_NOT_NULL(vector);
+
+  // Quick first pass to calculate the buffer size for a single allocation.
+  size_t bufferSize = 0;
+  for (size_t i = 0; i < vector->size(); i++) {
+    bufferSize += vector->valueAtFast(i).size();
+  }
+
+  // Allocate raw string buffer.
+  bridgeHolder.setBuffer(1, AlignedBuffer::allocate<char>(bufferSize, pool));
+  char* rawBuffer = bridgeHolder.getBufferAs<char>(1);
+
+  // Allocate offset buffer.
+  bridgeHolder.setBuffer(
+      2, AlignedBuffer::allocate<TOffset>(vector->size() + 1, pool));
+  TOffset* rawOffsets = bridgeHolder.getBufferAs<TOffset>(2);
+  *rawOffsets = 0;
+
+  // Second pass to actually copy the string data and set offsets.
+  for (size_t i = 0; i < vector->size(); i++) {
+    // Copy string content.
+    const StringView& sv = vector->valueAtFast(i);
+    std::memcpy(rawBuffer, sv.data(), sv.size());
+    rawBuffer += sv.size();
+
+    // Set offset.
+    *(rawOffsets + 1) = *rawOffsets + sv.size();
+    ++rawOffsets;
+  }
+  VELOX_CHECK_EQ(bufferSize, *rawOffsets);
+}
+
+void exportFlatVector(
+    const VectorPtr& vector,
+    ArrowArray& arrowArray,
+    VeloxToArrowBridgeHolder& bridgeHolder,
+    memory::MemoryPool* pool) {
   switch (vector->typeKind()) {
     case TypeKind::BOOLEAN:
     case TypeKind::TINYINT:
@@ -134,7 +201,16 @@ void exportFlatVector(const VectorPtr& vector, ArrowArray& arrowArray) {
     case TypeKind::BIGINT:
     case TypeKind::REAL:
     case TypeKind::DOUBLE:
-      arrowArray.buffers[1] = vector->valuesAsVoid();
+      bridgeHolder.setBuffer(1, vector->values());
+      arrowArray.n_buffers = 2;
+      break;
+
+    // Returned string types always assume int32_t offsets.
+    case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY:
+      exportFlatStringVector<int32_t>(
+          vector->asFlatVector<StringView>(), arrowArray, bridgeHolder, pool);
+      arrowArray.n_buffers = 3;
       break;
 
     default:
@@ -162,15 +238,20 @@ const char* exportArrowFormatStr(const TypePtr& type) {
       return "f"; // float32
     case TypeKind::DOUBLE:
       return "g"; // float64
+
+    // We always map VARCHAR and VARBINARY to the "small" version (lower case
+    // format string), which uses 32 bit offsets.
     case TypeKind::VARCHAR:
       return "u"; // utf-8 string
     case TypeKind::VARBINARY:
       return "z"; // binary
+
     case TypeKind::TIMESTAMP:
       // TODO: need to figure out how we'll map this since in Velox we currently
       // store timestamps as two int64s (epoch in sec and nanos).
       return "ttn"; // time64 [nanoseconds]
-
+    case TypeKind::DATE:
+      return "tdD"; // date32[days]
     // Complex/nested types.
     case TypeKind::ARRAY:
       return "+L"; // large list
@@ -186,7 +267,10 @@ const char* exportArrowFormatStr(const TypePtr& type) {
 
 } // namespace
 
-void exportToArrow(const VectorPtr& vector, ArrowArray& arrowArray) {
+void exportToArrow(
+    const VectorPtr& vector,
+    ArrowArray& arrowArray,
+    memory::MemoryPool* pool) {
   // Bridge holder is stored in private_data, which is a C-compatible naked
   // pointer. However, since this function can throw (unsupported conversion
   // type, for instance), we temporarily use a unique_ptr to ensure the bridge
@@ -195,9 +279,7 @@ void exportToArrow(const VectorPtr& vector, ArrowArray& arrowArray) {
   // Since this unique_ptr dies with this function and we'll need this bridge
   // alive, the last step in this function is to release this unique_ptr.
   auto bridgeHolder = std::make_unique<VeloxToArrowBridgeHolder>();
-  bridgeHolder->vector = vector;
-  arrowArray.n_buffers = kMaxBuffers;
-  arrowArray.buffers = bridgeHolder->buffers;
+  arrowArray.buffers = bridgeHolder->getArrowBuffers();
   arrowArray.release = bridgeRelease;
   arrowArray.length = vector->size();
 
@@ -209,12 +291,12 @@ void exportToArrow(const VectorPtr& vector, ArrowArray& arrowArray) {
   arrowArray.offset = 0;
 
   // Setting up buffer pointers. First one is always nulls.
-  arrowArray.buffers[0] = vector->rawNulls();
+  bridgeHolder->setBuffer(0, vector->nulls());
 
   // Second buffer is values. Only support flat for now.
   switch (vector->encoding()) {
     case VectorEncoding::Simple::FLAT:
-      exportFlatVector(vector, arrowArray);
+      exportFlatVector(vector, arrowArray, *bridgeHolder, pool);
       break;
 
     default:
@@ -222,7 +304,7 @@ void exportToArrow(const VectorPtr& vector, ArrowArray& arrowArray) {
       break;
   }
 
-  // TODO: No nested types, strings, or dictionaries for now.
+  // TODO: No nested types or dictionaries for now.
   arrowArray.n_children = 0;
   arrowArray.children = nullptr;
   arrowArray.dictionary = nullptr;
@@ -334,6 +416,9 @@ TypePtr importFromArrow(const ArrowSchema& arrowSchema) {
       if (format[1] == 't' && format[2] == 'n') {
         return TIMESTAMP();
       }
+      if (format[1] == 'd' && format[2] == 'D') {
+        return DATE();
+      }
       break;
 
     // Complex types.
@@ -386,23 +471,53 @@ TypePtr importFromArrow(const ArrowSchema& arrowSchema) {
 }
 
 namespace {
+// Optionally, holds shared_ptrs pointing to the ArrowArray object that
+// holds the buffer and the ArrowSchema object that describes the ArrowArray,
+// which will be released to signal that we will no longer hold on to the data
+// and the shared_ptr deleters should run the release procedures if no one
+// else is referencing the objects.
 struct BufferViewReleaser {
+  BufferViewReleaser() : BufferViewReleaser(nullptr, nullptr) {}
+  BufferViewReleaser(
+      std::shared_ptr<ArrowSchema> arrowSchema,
+      std::shared_ptr<ArrowArray> arrowArray)
+      : schemaReleaser_(std::move(arrowSchema)),
+        arrayReleaser_(std::move(arrowArray)) {}
+
   void addRef() const {}
   void release() const {}
+
+ private:
+  const std::shared_ptr<ArrowSchema> schemaReleaser_;
+  const std::shared_ptr<ArrowArray> arrayReleaser_;
 };
 
 // Wraps a naked pointer using a Velox buffer view, without copying it. Adding a
 // dummy releaser as the buffer lifetime is fully controled by the client of the
 // API.
-BufferPtr wrapInBufferView(const void* buffer, size_t length) {
-  static const BufferViewReleaser kDummy;
+BufferPtr wrapInBufferViewAsViewer(const void* buffer, size_t length) {
+  static const BufferViewReleaser kViewerReleaser;
   return BufferView<BufferViewReleaser>::create(
-      static_cast<const uint8_t*>(buffer), length, kDummy);
+      static_cast<const uint8_t*>(buffer), length, kViewerReleaser);
+}
+
+// Wraps a naked pointer using a Velox buffer view, without copying it. This
+// buffer view uses shared_ptr to manage reference counting and releasing for
+// the ArrowSchema object and the ArrowArray object
+BufferPtr wrapInBufferViewAsOwner(
+    const void* buffer,
+    size_t length,
+    std::shared_ptr<ArrowSchema> schemaReleaser,
+    std::shared_ptr<ArrowArray> arrayReleaser) {
+  return BufferView<BufferViewReleaser>::create(
+      static_cast<const uint8_t*>(buffer),
+      length,
+      {std::move(schemaReleaser), std::move(arrayReleaser)});
 }
 
 // Dispatch based on the type.
 template <TypeKind kind>
-VectorPtr importFromArrowImpl(
+VectorPtr createFlatVector(
     memory::MemoryPool* pool,
     const TypePtr& type,
     BufferPtr nulls,
@@ -421,12 +536,55 @@ VectorPtr importFromArrowImpl(
       std::nullopt,
       nullCount == -1 ? std::nullopt : std::optional<int64_t>(nullCount));
 }
-} // namespace
 
-VectorPtr importFromArrow(
+using WrapInBufferViewFunc =
+    std::function<BufferPtr(const void* buffer, size_t length)>;
+
+template <typename TOffset>
+VectorPtr createStringFlatVector(
+    memory::MemoryPool* pool,
+    const TypePtr& type,
+    BufferPtr nulls,
+    size_t length,
+    const TOffset* offsets,
+    const char* values,
+    int64_t nullCount,
+    WrapInBufferViewFunc wrapInBufferView) {
+  BufferPtr stringViews = AlignedBuffer::allocate<StringView>(length, pool);
+  auto rawStringViews = stringViews->asMutable<StringView>();
+  bool shouldAcquireStringBuffer = false;
+
+  for (size_t i = 0; i < length; ++i) {
+    rawStringViews[i] =
+        StringView(values + offsets[i], offsets[i + 1] - offsets[i]);
+    shouldAcquireStringBuffer |= !rawStringViews[i].isInline();
+  }
+
+  std::vector<BufferPtr> stringViewBuffers;
+  if (shouldAcquireStringBuffer) {
+    stringViewBuffers.emplace_back(
+        wrapInBufferView(values, offsets[length + 1]));
+  }
+
+  return std::make_shared<FlatVector<StringView>>(
+      pool,
+      type,
+      nulls,
+      length,
+      stringViews,
+      std::move(stringViewBuffers),
+      cdvi::EMPTY_METADATA,
+      std::nullopt,
+      nullCount == -1 ? std::nullopt : std::optional<int64_t>(nullCount));
+}
+
+VectorPtr importFromArrowImpl(
     const ArrowSchema& arrowSchema,
     const ArrowArray& arrowArray,
-    memory::MemoryPool* pool) {
+    memory::MemoryPool* pool,
+    WrapInBufferViewFunc wrapInBufferView) {
+  VELOX_USER_CHECK_NOT_NULL(arrowSchema.release, "arrowSchema was released.");
+  VELOX_USER_CHECK_NOT_NULL(arrowArray.release, "arrowArray was released.");
   VELOX_USER_CHECK_NULL(
       arrowArray.dictionary,
       "Dictionary encoded arrowArrays not supported yet.");
@@ -462,24 +620,94 @@ VectorPtr importFromArrow(
         "Nulls buffer must be nullptr when null_count is zero.");
   }
 
-  // Wrap the values buffer into a Velox BufferView (also zero-copy).
-  VELOX_USER_CHECK_EQ(
-      arrowArray.n_buffers,
-      2,
-      "Expecting two buffers as input "
-      "(only simple types supported for now).");
-  auto values = wrapInBufferView(
-      arrowArray.buffers[1], arrowArray.length * type->cppSizeInBytes());
+  // String data types (VARCHAR and VARBINARY).
+  if (type->isVarchar() || type->isVarbinary()) {
+    VELOX_USER_CHECK_EQ(
+        arrowArray.n_buffers,
+        3,
+        "Expecting three buffers as input for string types.");
+    return createStringFlatVector(
+        pool,
+        type,
+        nulls,
+        arrowArray.length,
+        static_cast<const int32_t*>(arrowArray.buffers[2]), // offsets
+        static_cast<const char*>(arrowArray.buffers[1]), // values
+        arrowArray.null_count,
+        wrapInBufferView);
+  }
+  // Other primitive types.
+  else {
+    // Wrap the values buffer into a Velox BufferView - zero-copy.
+    VELOX_USER_CHECK_EQ(
+        arrowArray.n_buffers,
+        2,
+        "Primitive types expect two buffers as input.");
+    auto values = wrapInBufferView(
+        arrowArray.buffers[1], arrowArray.length * type->cppSizeInBytes());
 
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      importFromArrowImpl,
-      type->kind(),
+    return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        createFlatVector,
+        type->kind(),
+        pool,
+        type,
+        nulls,
+        arrowArray.length,
+        values,
+        arrowArray.null_count);
+  }
+}
+
+} // namespace
+
+VectorPtr importFromArrowAsViewer(
+    const ArrowSchema& arrowSchema,
+    const ArrowArray& arrowArray,
+    memory::MemoryPool* pool) {
+  return importFromArrowImpl(
+      arrowSchema, arrowArray, pool, wrapInBufferViewAsViewer);
+}
+
+VectorPtr importFromArrowAsOwner(
+    ArrowSchema& arrowSchema,
+    ArrowArray& arrowArray,
+    memory::MemoryPool* pool) {
+  // This Vector will take over the ownership of `arrowSchema` and `arrowArray`
+  // by marking them as released and becoming responsible for calling the
+  // release callbacks when use count reaches zero. These ArrowSchema object and
+  // ArrowArray object will be co-owned by both the BufferVieweReleaser of the
+  // nulls buffer and values buffer.
+  std::shared_ptr<ArrowSchema> schemaReleaser(
+      new ArrowSchema(arrowSchema), [](ArrowSchema* toDelete) {
+        if (toDelete != nullptr) {
+          if (toDelete->release != nullptr) {
+            toDelete->release(toDelete);
+          }
+          delete toDelete;
+        }
+      });
+  std::shared_ptr<ArrowArray> arrayReleaser(
+      new ArrowArray(arrowArray), [](ArrowArray* toDelete) {
+        if (toDelete != nullptr) {
+          if (toDelete->release != nullptr) {
+            toDelete->release(toDelete);
+          }
+          delete toDelete;
+        }
+      });
+  VectorPtr imported = importFromArrowImpl(
+      arrowSchema,
+      arrowArray,
       pool,
-      type,
-      nulls,
-      arrowArray.length,
-      values,
-      arrowArray.null_count);
+      [&schemaReleaser, &arrayReleaser](const void* buffer, size_t length) {
+        return wrapInBufferViewAsOwner(
+            buffer, length, schemaReleaser, arrayReleaser);
+      });
+
+  arrowSchema.release = nullptr;
+  arrowArray.release = nullptr;
+
+  return imported;
 }
 
 } // namespace facebook::velox

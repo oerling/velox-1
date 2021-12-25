@@ -16,14 +16,25 @@
 
 #include "glog/logging.h"
 #include "gtest/gtest.h"
+#include "velox/expression/Expr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/vector/BaseVector.h"
+#include "velox/vector/ComplexVector.h"
+#include "velox/vector/SelectivityVector.h"
 
 namespace {
 
 using namespace facebook::velox;
 
-class SimpleFunctionTest : public functions::test::FunctionBaseTest {};
+class SimpleFunctionTest : public functions::test::FunctionBaseTest {
+ protected:
+  VectorPtr arraySum(const std::vector<std::vector<int64_t>>& data) {
+    return makeFlatVector<int64_t>(data.size(), [&](auto row) {
+      return std::accumulate(data[row].begin(), data[row].end(), 0);
+    });
+  }
+};
 
 template <typename T>
 struct UnnamedFunction {
@@ -154,7 +165,12 @@ struct ArrayReaderFunction {
   FOLLY_ALWAYS_INLINE bool call(
       int64_t& out,
       const arg_type<Array<int64_t>>& input) {
-    out = input.size();
+    out = 0;
+    for (const auto& v : input) {
+      if (v) {
+        out += v.value();
+      }
+    }
     return true;
   }
 };
@@ -163,14 +179,48 @@ TEST_F(SimpleFunctionTest, arrayReader) {
   registerFunction<ArrayReaderFunction, int64_t, Array<int64_t>>(
       {"array_reader_func"});
 
-  const size_t rows = arrayData.size();
   auto arrayVector = makeArrayVector(arrayData);
   auto result = evaluate<FlatVector<int64_t>>(
       "array_reader_func(c0)", makeRowVector({arrayVector}));
 
-  auto arrayDataLocal = arrayData;
-  auto expected = makeFlatVector<int64_t>(
-      rows, [&arrayDataLocal](auto row) { return arrayDataLocal[row].size(); });
+  assertEqualVectors(arraySum(arrayData), result);
+}
+
+// Function that takes an array of arrays as input.
+template <typename T>
+struct ArrayArrayReaderFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& out,
+      const arg_type<Array<Array<int64_t>>>& input) {
+    out = 0;
+    for (const auto& inner : input) {
+      if (inner) {
+        for (const auto& v : inner.value()) {
+          if (v) {
+            out += v.value();
+          }
+        }
+      }
+    }
+    return true;
+  }
+};
+
+TEST_F(SimpleFunctionTest, arrayArrayReader) {
+  registerFunction<ArrayArrayReaderFunction, int64_t, Array<Array<int64_t>>>(
+      {"array_array_reader_func"});
+
+  const size_t rows = arrayData.size();
+  auto arrayVector = makeArrayVector(arrayData);
+  auto result = evaluate<FlatVector<int64_t>>(
+      "array_array_reader_func(array_constructor(c0, c0))",
+      makeRowVector({arrayVector}));
+
+  auto expected = makeFlatVector<int64_t>(rows, [&](auto row) {
+    return 2 * std::accumulate(arrayData[row].begin(), arrayData[row].end(), 0);
+  });
   assertEqualVectors(expected, result);
 }
 
@@ -179,7 +229,7 @@ static std::vector<int64_t> rowVectorCol1 = {0, 22, 44, 55, 99, 101, 9, 0};
 static std::vector<double> rowVectorCol2 =
     {9.1, 22.4, 44.55, 99.9, 1.01, 9.8, 10001.1, 0.1};
 
-// Function that returns a tupl.
+// Function that returns a tuple.
 template <typename T>
 struct RowWriterFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -224,7 +274,6 @@ TEST_F(SimpleFunctionTest, rowReader) {
   registerFunction<RowReaderFunction, int64_t, Row<int64_t, double>>(
       {"row_reader_func"});
 
-  const size_t rows = rowVectorCol1.size();
   auto vector1 = vectorMaker_.flatVector(rowVectorCol1);
   auto vector2 = vectorMaker_.flatVector(rowVectorCol2);
   auto internalRowVector = makeRowVector({vector1, vector2});
@@ -232,6 +281,47 @@ TEST_F(SimpleFunctionTest, rowReader) {
       "row_reader_func(c0)", makeRowVector({internalRowVector}));
 
   auto expected = vectorMaker_.flatVector(rowVectorCol1);
+  assertEqualVectors(expected, result);
+}
+
+// Function that takes a tuple of an array and a double.
+template <typename T>
+struct RowArrayReaderFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& out,
+      const arg_type<Row<Array<int64_t>, double>>& input) {
+    out = 0;
+    const auto& arrayInput = *input.template at<0>();
+    for (const auto& v : arrayInput) {
+      if (v) {
+        out += v.value();
+      }
+    }
+    out += *input.template at<1>();
+    return true;
+  }
+};
+
+TEST_F(SimpleFunctionTest, rowArrayReader) {
+  registerFunction<
+      RowArrayReaderFunction,
+      int64_t,
+      Row<Array<int64_t>, double>>({"row_array_reader_func"});
+
+  auto rows = arrayData.size();
+  auto vector1 = makeArrayVector(arrayData);
+  auto vector2 =
+      makeFlatVector<double>(rows, [](auto row) { return row + 0.1; });
+  auto internalRowVector = makeRowVector({vector1, vector2});
+  auto result = evaluate<FlatVector<int64_t>>(
+      "row_array_reader_func(c0)", makeRowVector({internalRowVector}));
+
+  auto expected = makeFlatVector<int64_t>(rows, [&](auto row) {
+    return row + 0.1 +
+        std::accumulate(arrayData[row].begin(), arrayData[row].end(), 0);
+  });
   assertEqualVectors(expected, result);
 }
 
@@ -276,7 +366,7 @@ TEST_F(SimpleFunctionTest, arrayRowWriter) {
   assertEqualVectors(expected, result);
 }
 
-// Function that takes an array of rows as an argument..
+// Function that takes an array of rows as an argument.
 template <typename T>
 struct ArrayRowReaderFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -286,7 +376,8 @@ struct ArrayRowReaderFunction {
       const arg_type<Array<Row<int64_t, double>>>& input) {
     out = 0;
     for (size_t i = 0; i < input.size(); i++) {
-      out += *input.at(i)->template at<0>();
+      auto&& row = *input.at(i);
+      out += *row.template at<0>();
     }
     return true;
   }
@@ -490,6 +581,153 @@ TEST_F(SimpleFunctionTest, templatedCall) {
   result = evaluate<FlatVector<bool>>(
       "is_input_varchar(c0)", makeRowVector({flatVectorStr}));
   expected = makeFlatVector<bool>(rows, [](auto) { return true; });
+  assertEqualVectors(expected, result);
+}
+
+// Function that takes a map as input.
+template <typename T>
+struct MapReaderFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& out,
+      const arg_type<Map<int64_t, double>>& input) {
+    out = 0;
+    for (const auto& entry : input) {
+      out += entry.first;
+      if (entry.second) {
+        out += entry.second.value();
+      }
+    }
+    return true;
+  }
+};
+
+TEST_F(SimpleFunctionTest, mapReader) {
+  registerFunction<MapReaderFunction, int64_t, Map<int64_t, double>>(
+      {"map_reader_func"});
+
+  const vector_size_t size = 10;
+  auto mapVector = vectorMaker_.mapVector<int64_t, double>(
+      size,
+      [](auto row) { return row % 5; },
+      [](auto /*row*/, auto index) { return index; },
+      [](auto /*row*/, auto index) { return 1.2 * index; });
+  auto result = evaluate<FlatVector<int64_t>>(
+      "map_reader_func(c0)", makeRowVector({mapVector}));
+
+  auto expected = makeFlatVector<int64_t>(size, [](auto row) {
+    int64_t sum = 0;
+    for (auto index = 0; index < row % 5; index++) {
+      sum += index + 1.2 * index;
+    }
+    return sum;
+  });
+  assertEqualVectors(expected, result);
+}
+
+// Function that takes a map from integer to array of doubles as input.
+template <typename T>
+struct MapArrayReaderFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      double& out,
+      const arg_type<Map<int64_t, Array<double>>>& input) {
+    out = 0;
+    for (const auto& entry : input) {
+      out += entry.first;
+      if (entry.second) {
+        for (const auto& v : entry.second.value()) {
+          if (v) {
+            out += v.value();
+          }
+        }
+      }
+    }
+    return true;
+  }
+};
+
+TEST_F(SimpleFunctionTest, mapArrayReader) {
+  registerFunction<MapArrayReaderFunction, double, Map<int64_t, Array<double>>>(
+      {"map_array_reader_func"});
+
+  const vector_size_t size = 10;
+  auto keys = makeArrayVector<int64_t>(
+      size,
+      [](auto /*row*/) { return 2; },
+      [](auto /*row*/, auto index) { return index; });
+  auto values = makeArrayVector<double>(
+      size,
+      [](auto row) { return row % 5; },
+      [](auto /*row*/, auto index) { return 1.2 * index; });
+  auto moreValues = makeArrayVector<double>(
+      size,
+      [](auto row) { return row % 3; },
+      [](auto /*row*/, auto index) { return 0.1 * index; });
+  auto result = evaluate<FlatVector<double>>(
+      "map_array_reader_func(map(c0, array_constructor(c1, c2)))",
+      makeRowVector({keys, values, moreValues}));
+
+  auto expected = makeFlatVector<double>(size, [](auto row) {
+    double sum = 1; // Sum of keys: 0 and 1.
+    for (auto index = 0; index < row % 5; index++) {
+      sum += 1.2 * index;
+    }
+    for (auto index = 0; index < row % 3; index++) {
+      sum += 0.1 * index;
+    }
+    return sum;
+  });
+
+  ASSERT_EQ(size, result->size());
+  for (auto i = 0; i < size; i++) {
+    EXPECT_NEAR(expected->valueAt(i), result->valueAt(i), 0.0000001);
+  }
+}
+
+template <typename T>
+struct MyArrayStringReuseFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  bool call(out_type<Array<Varchar>>& out, const arg_type<Varchar>& input) {
+    auto start = input.begin();
+    auto cur = start;
+
+    do {
+      cur = std::find(start, input.end(), ' ');
+      out.append(out_type<Varchar>(StringView(start, cur - start)));
+      start = cur + 1;
+    } while (cur < input.end());
+    return true;
+  }
+};
+
+TEST_F(SimpleFunctionTest, arrayStringReuse) {
+  registerFunction<MyArrayStringReuseFunction, Array<Varchar>, Varchar>(
+      {"my_array_string_reuse_func"});
+
+  std::vector<StringView> inputData = {
+      "my input data that will be tokenized"_sv, "some more tokens"_sv};
+  std::vector<std::vector<StringView>> outputData = {
+      {"my"_sv,
+       "input"_sv,
+       "data"_sv,
+       "that"_sv,
+       "will"_sv,
+       "be"_sv,
+       "tokenized"_sv},
+      {"some"_sv, "more"_sv, "tokens"_sv},
+  };
+
+  auto flatVector = vectorMaker_.flatVector(inputData);
+  auto result = evaluate<ArrayVector>(
+      "my_array_string_reuse_func(c0)", makeRowVector({flatVector}));
+
+  auto expected = vectorMaker_.arrayVector(outputData);
   assertEqualVectors(expected, result);
 }
 

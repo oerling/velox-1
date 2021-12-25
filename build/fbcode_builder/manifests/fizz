@@ -6,7 +6,6 @@ shipit_fbcode_builder = true
 
 [git]
 repo_url = https://github.com/facebookincubator/fizz.git
-rev = main
 
 [build]
 builder = cmake
@@ -27,6 +26,7 @@ BUILD_TESTS = OFF
 [dependencies]
 folly
 libsodium
+zlib
 zstd
 
 [dependencies.all(test=on, not(os=windows))]

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/exec/tests/OperatorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -230,7 +230,7 @@ TEST_F(FilterProjectTest, dereference) {
   auto plan = PlanBuilder()
                   .values(vectors)
                   .project(
-                      std::vector<std::string>{"concatRow(c1, c2)"},
+                      std::vector<std::string>{"row_constructor(c1, c2)"},
                       std::vector<std::string>{"c1_c2"})
                   .project(std::vector<std::string>{"c1_c2.c1", "c1_c2.c2"})
                   .planNode();
@@ -239,7 +239,7 @@ TEST_F(FilterProjectTest, dereference) {
   plan = PlanBuilder()
              .values(vectors)
              .project(
-                 std::vector<std::string>{"concatRow(c1, c2)"},
+                 std::vector<std::string>{"row_constructor(c1, c2)"},
                  std::vector<std::string>{"c1_c2"})
              .filter("c1_c2.c1 % 10 = 5")
              .project(std::vector<std::string>{"c1_c2.c1", "c1_c2.c2"})

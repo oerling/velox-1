@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/tests/HiveConnectorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -133,7 +133,7 @@ TEST_F(CrossJoinTest, basic) {
   params.planNode = PlanBuilder(10)
                         .values({leftVectors})
                         .crossJoin(
-                            PlanBuilder(0)
+                            PlanBuilder(0, pool_.get())
                                 .values({rightVectors}, true)
                                 .filter("c0 in (10, 17)")
                                 .project({"c0"}, {"u_c0"})
@@ -219,4 +219,28 @@ TEST_F(CrossJoinTest, zeroColumnBuild) {
            .planNode();
 
   assertQuery(op, "SELECT * FROM t");
+}
+
+// Test multi-threaded build and probe sides.
+TEST_F(CrossJoinTest, parallelism) {
+  // Setup 5 threads for build and probe. Each build thread gets 3 identical
+  // rows of input from the Values operator. The build thread that finishes last
+  // combines data from all other threads making it 3x5=15 rows and puts them
+  // into the CrossJoinBridge. All probe threads get 2 identical ros of input
+  // from the Values operator and join them with 15 rows of build side data from
+  // the bridge. Each probe thread is expected to produce 30 rows.
+
+  auto left = {makeRowVector({sequence<int32_t>(2)})};
+  auto right = {makeRowVector({sequence<int32_t>(3)})};
+
+  CursorParameters params;
+  params.maxDrivers = 5;
+  params.planNode =
+      PlanBuilder(10)
+          .values({left}, true)
+          .crossJoin(PlanBuilder().values({right}, true).planNode(), {0, 1})
+          .partialAggregation({}, {"count(1)"})
+          .planNode();
+
+  OperatorTestBase::assertQuery(params, "VALUES (30), (30), (30), (30), (30)");
 }

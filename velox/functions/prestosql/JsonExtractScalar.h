@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/functions/Macros.h"
+#include "velox/functions/UDFOutputString.h"
 #include "velox/functions/prestosql/json/JsonExtractor.h"
 
 namespace facebook::velox::functions {
@@ -23,23 +24,26 @@ namespace facebook::velox::functions {
 // Like jsonExtract(), but returns the result value as a string (as opposed
 // to being encoded as JSON). The value referenced by json_path must be a scalar
 // (boolean, number or string)
-VELOX_UDF_BEGIN(json_extract_scalar)
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<Varchar>& result,
-    const arg_type<Varchar>& json,
-    const arg_type<Varchar>& jsonPath) {
-  const folly::StringPiece& jsonStringPiece = json;
-  const folly::StringPiece& jsonPathStringPiece = jsonPath;
-  auto extractResult = jsonExtractScalar(jsonStringPiece, jsonPathStringPiece);
-  if (extractResult.hasValue()) {
-    UDFOutputString::assign(result, *extractResult);
-    return true;
+template <typename T>
+struct JsonExtractScalarFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  } else {
-    return false;
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& json,
+      const arg_type<Varchar>& jsonPath) {
+    const folly::StringPiece& jsonStringPiece = json;
+    const folly::StringPiece& jsonPathStringPiece = jsonPath;
+    auto extractResult =
+        jsonExtractScalar(jsonStringPiece, jsonPathStringPiece);
+    if (extractResult.hasValue()) {
+      UDFOutputString::assign(result, *extractResult);
+      return true;
+
+    } else {
+      return false;
+    }
   }
-}
-
-VELOX_UDF_END();
+};
 
 } // namespace facebook::velox::functions
