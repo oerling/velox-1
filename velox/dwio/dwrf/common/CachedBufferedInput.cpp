@@ -324,9 +324,12 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
       ioStats_->incRawOverreadBytes(stats.extraBytes);
       if (isSsd) {
         ioStats_->ssdRead().increment(stats.payloadBytes);
-        ioStats_->incRawBytesRead(stats.payloadBytes);
       } else {
-        // Reading the file increments rawReadBytes, so do not increment again.
+        // Reading the file increments rawReadBytes. Reverse this
+        // increment here because actually accessing the data via
+        // CacheInputStream will do the increment.
+	        ioStats_->incRawBytesRead(-stats.payloadBytes);
+
         ioStats_->read().increment(stats.payloadBytes);
       }
       if (isPrefetch) {
