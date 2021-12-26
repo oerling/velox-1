@@ -165,18 +165,18 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
         if (!ssdPin.empty()) {
           uint64_t usec = 0;
           {
-	    // SsdFile::load wants vectors of pins. Put the pins in a
-	    // temp vector and then put 'pin_' back in 'this'. 'pin_'
-	    // is exclusive and not movable.
-	    std::vector<cache::SsdPin> ssdPins;
-	    ssdPins.push_back(std::move(ssdPin));
-	    std::vector<cache::CachePin> pins;
-	    pins.push_back(std::move(pin_));
+            // SsdFile::load wants vectors of pins. Put the pins in a
+            // temp vector and then put 'pin_' back in 'this'. 'pin_'
+            // is exclusive and not movable.
+            std::vector<cache::SsdPin> ssdPins;
+            ssdPins.push_back(std::move(ssdPin));
+            std::vector<cache::CachePin> pins;
+            pins.push_back(std::move(pin_));
             MicrosecondTimer timer(&usec);
             file.load(ssdPins, pins);
-	    pin_ = std::move(pins[0]);
-	  }
-	    ioStats_->ssdRead().increment(pin_.entry()->size());
+            pin_ = std::move(pins[0]);
+          }
+          ioStats_->ssdRead().increment(pin_.entry()->size());
           ioStats_->queryThreadIoLatency().increment(usec);
           pin_.entry()->setValid(true);
           pin_.entry()->setExclusiveToShared();

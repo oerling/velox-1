@@ -225,8 +225,8 @@ void CachedBufferedInput::makeLoads(
   int32_t numNewLoads = 0;
 
   coalesceIo<CacheRequest*, CacheRequest*>(
-					   requests,
-					   maxDistance,
+      requests,
+      maxDistance,
       // Break batches up. Better load more short ones i parallel.
       40,
       [&](int32_t index) {
@@ -318,10 +318,7 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
   }
 
  protected:
-  void updateStats(
-      const CoalesceIoStats& stats,
-      bool isPrefetch,
-      bool isSsd) {
+  void updateStats(const CoalesceIoStats& stats, bool isPrefetch, bool isSsd) {
     if (ioStats_) {
       ioStats_->incRawOverreadBytes(stats.extraBytes);
       if (isSsd) {
@@ -330,7 +327,7 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
         // Reading the file increments rawReadBytes. Reverse this
         // increment here because actually accessing the data via
         // CacheInputStream will do the increment.
-	        ioStats_->incRawBytesRead(-stats.payloadBytes);
+        ioStats_->incRawBytesRead(-stats.payloadBytes);
 
         ioStats_->read().increment(stats.payloadBytes);
       }

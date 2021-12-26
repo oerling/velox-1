@@ -142,7 +142,7 @@ class CachedBufferedInput : public BufferedInput {
   void setIsSpeculative() {
     isSpeculative_ = true;
   }
-  
+
  private:
   // Sorts requests and makes FusedLoads for nearby requests. If 'prefetch' is
   // true, starts background loading.
@@ -169,7 +169,6 @@ class CachedBufferedInput : public BufferedInput {
   //  coalesced with nearby streams and prefetched. Anything read less
   //  frequently will be synchronously read on first use.
   int32_t prefetchThreshold_ = 60;
-
 
   // true if 'this' is made ahead of actual use. If there are
   // prefetchable items and space for them, start the prefetch for all
