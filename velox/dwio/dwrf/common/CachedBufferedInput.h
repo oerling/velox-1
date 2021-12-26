@@ -137,6 +137,12 @@ class CachedBufferedInput : public BufferedInput {
   std::shared_ptr<cache::FusedLoad> fusedLoad(
       const SeekableInputStream* stream);
 
+  // Indicates that the access will not follow immediately,
+  // e.g. another stripe will be processed first.
+  void setIsSpeculative() {
+    isSpeculative_ = true;
+  }
+  
  private:
   // Sorts requests and makes FusedLoads for nearby requests. If 'prefetch' is
   // true, starts background loading.
@@ -164,6 +170,13 @@ class CachedBufferedInput : public BufferedInput {
   //  frequently will be synchronously read on first use.
   int32_t prefetchThreshold_ = 60;
 
+
+  // true if 'this' is made ahead of actual use. If there are
+  // prefetchable items and space for them, start the prefetch for all
+  // even if just one item. A single item should not be async
+  // prefetched if going to access this immediately after making the
+  // CachedBufferedInput.
+  bool isSpeculative_{false};
   // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
   // Coalesced loads spanning multiple cache entries in one IO.

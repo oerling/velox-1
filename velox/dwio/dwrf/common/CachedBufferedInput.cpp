@@ -93,10 +93,12 @@ bool CachedBufferedInput::shouldPreload() {
   auto maxPages = cache_->maxBytes() / MappedMemory::kPageSize;
   auto allocatedPages = cache_->numAllocated();
   if (numPages < maxPages - allocatedPages) {
+    // There is free space for the read-ahead.
     return true;
   }
   auto prefetchPages = cache_->incrementPrefetchPages(0);
   if (numPages + prefetchPages < cachePages / 2) {
+    // The planned prefetch plus other prefetches are under half the cache.
     return true;
   }
   return false;
@@ -235,7 +237,7 @@ void CachedBufferedInput::makeLoads(
       [&](int32_t index) {
         return requests[index]->coalesces ? 1 : kNoCoalesce;
       },
-      [&](CacheRequest* request, std::vector<CacheRequest*> ranges) {
+      [&](CacheRequest* request, std::vector<CacheRequest*>& ranges) {
         ranges.push_back(request);
       },
       [&](int32_t /*gap*/, std::vector<CacheRequest*> /*ranges*/) { /*no op*/ },
@@ -247,7 +249,7 @@ void CachedBufferedInput::makeLoads(
         ++numNewLoads;
         readRegion(ranges, prefetch);
       });
-  if (prefetch && executor_ && numNewLoads > 1) {
+  if (prefetch && executor_ && (isSpeculative_ || numNewLoads > 1)) {
     for (auto& load : allFusedLoads_) {
       if (load->state() == LoadState::kPlanned) {
         executor_->add(
