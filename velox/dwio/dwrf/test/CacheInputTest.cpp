@@ -27,9 +27,9 @@ using namespace facebook::velox;
 using namespace facebook::velox::dwio;
 using namespace facebook::velox::cache;
 
+using facebook::velox::dwio::common::IoStatistics;
 using facebook::velox::dwio::common::Region;
 using memory::MappedMemory;
-using facebook::velox::dwio::common::IoStatistics;
 
 // Testing stream producing deterministic data. The byte at offset is
 // the low byte of 'seed_' + offset.
@@ -360,6 +360,7 @@ class CacheTest : public testing::Test {
               groupId,
               stripeIndex * streamStarts_[kMaxStreams - 1]));
           if (stripes.back()->input->shouldPreload()) {
+            stripes.back()->input->setIsSpeculative();
             stripes.back()->input->load(
                 facebook::velox::dwio::common::LogType::TEST);
           }
@@ -447,7 +448,7 @@ TEST_F(CacheTest, ssd) {
   // We measure bytes read for a full and sparse read of a stripe.
   auto bytes = ioStats_->rawBytesRead();
   readLoop("testfile", 30, 100, 1, 1);
-    auto ramBytes = ioStats_->ramHit().bytes();
+  auto ramBytes = ioStats_->ramHit().bytes();
 
   auto fullStripeBytes = ioStats_->rawBytesRead() - bytes;
   auto fullStripesOnSsd = kSsdBytes / fullStripeBytes;

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include "velox/common/caching/SsdCache.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/SsdCache.h"
 

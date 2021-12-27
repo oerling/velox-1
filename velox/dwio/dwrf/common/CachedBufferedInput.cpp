@@ -93,10 +93,12 @@ bool CachedBufferedInput::shouldPreload() {
   auto maxPages = cache_->maxBytes() / MappedMemory::kPageSize;
   auto allocatedPages = cache_->numAllocated();
   if (numPages < maxPages - allocatedPages) {
+    // There is free space for the read-ahead.
     return true;
   }
   auto prefetchPages = cache_->incrementPrefetchPages(0);
   if (numPages + prefetchPages < cachePages / 2) {
+    // The planned prefetch plus other prefetches are under half the cache.
     return true;
   }
   return false;
@@ -181,7 +183,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
             continue;
           }
           if (ssdFile) {
-            part->ssdPin = std::move(ssdFile->find(part->key));
+            part->ssdPin = ssdFile->find(part->key);
             if (!part->ssdPin.empty()) {
               ssdLoad.push_back(part);
               continue;
@@ -223,8 +225,8 @@ void CachedBufferedInput::makeLoads(
   int32_t numNewLoads = 0;
 
   coalesceIo<CacheRequest*, CacheRequest*>(
-					   requests,
-					   maxDistance,
+      requests,
+      maxDistance,
       // Break batches up. Better load more short ones i parallel.
       40,
       [&](int32_t index) {
@@ -235,7 +237,7 @@ void CachedBufferedInput::makeLoads(
       [&](int32_t index) {
         return requests[index]->coalesces ? 1 : kNoCoalesce;
       },
-      [&](CacheRequest* request, std::vector<CacheRequest*> ranges) {
+      [&](CacheRequest* request, std::vector<CacheRequest*>& ranges) {
         ranges.push_back(request);
       },
       [&](int32_t /*gap*/, std::vector<CacheRequest*> /*ranges*/) { /*no op*/ },
@@ -247,7 +249,7 @@ void CachedBufferedInput::makeLoads(
         ++numNewLoads;
         readRegion(ranges, prefetch);
       });
-  if (prefetch && executor_ && numNewLoads > 1) {
+  if (prefetch && executor_ && (isSpeculative_ || numNewLoads > 1)) {
     for (auto& load : allFusedLoads_) {
       if (load->state() == LoadState::kPlanned) {
         executor_->add(
@@ -316,10 +318,7 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
   }
 
  protected:
-  void updateStats(
-      const CoalesceIoStats& stats,
-      bool isPrefetch,
-      bool isSsd) {
+  void updateStats(const CoalesceIoStats& stats, bool isPrefetch, bool isSsd) {
     if (ioStats_) {
       ioStats_->incRawOverreadBytes(stats.extraBytes);
       if (isSsd) {
@@ -328,7 +327,7 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
         // Reading the file increments rawReadBytes. Reverse this
         // increment here because actually accessing the data via
         // CacheInputStream will do the increment.
-	        ioStats_->incRawBytesRead(-stats.payloadBytes);
+        ioStats_->incRawBytesRead(-stats.payloadBytes);
 
         ioStats_->read().increment(stats.payloadBytes);
       }
