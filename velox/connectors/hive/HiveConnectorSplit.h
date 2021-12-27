@@ -22,7 +22,12 @@
 
 namespace facebook::velox::connector::hive {
 
-struct HiveConnectorSplit : public connector::ConnectorSplit {
+struct SortingColumn {
+  std::string column;
+  bool ascending{true};
+};
+
+ struct HiveConnectorSplit : public connector::ConnectorSplit {
   const std::string filePath;
   dwio::common::FileFormat fileFormat;
   const uint64_t start;
@@ -30,6 +35,9 @@ struct HiveConnectorSplit : public connector::ConnectorSplit {
   const std::unordered_map<std::string, std::optional<std::string>>
       partitionKeys;
   std::optional<int32_t> tableBucketNumber;
+  std::vector<std::string> bucketedBy;
+  std::vector<SortingColumn> sortedBy;
+  std::optional<int32_t> bucketCount;
 
   HiveConnectorSplit(
       const std::string& connectorId,
@@ -39,14 +47,20 @@ struct HiveConnectorSplit : public connector::ConnectorSplit {
       uint64_t _length = std::numeric_limits<uint64_t>::max(),
       const std::unordered_map<std::string, std::optional<std::string>>&
           _partitionKeys = {},
-      std::optional<int32_t> _tableBucketNumber = std::nullopt)
+      std::optional<int32_t> _tableBucketNumber = std::nullopt,
+      std::vector<std::string> _bucketedBy = {},
+      std::optional<int32_t> _bucketCount = std::nullopt,
+      std::vector<SortingColumn> _sortedBy = {})
       : ConnectorSplit(connectorId),
         filePath(_filePath),
         fileFormat(_fileFormat),
         start(_start),
         length(_length),
         partitionKeys(_partitionKeys),
-        tableBucketNumber(_tableBucketNumber) {}
+        tableBucketNumber(_tableBucketNumber),
+        bucketedBy(std::move(_bucketedBy)),
+        bucketCount(_bucketCount),
+        sortedBy(_sortedBy) {}
 
   std::string toString() const override {
     if (tableBucketNumber.has_value()) {

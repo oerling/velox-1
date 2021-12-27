@@ -183,7 +183,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
             continue;
           }
           if (ssdFile) {
-            part->ssdPin = std::move(ssdFile->find(part->key));
+            part->ssdPin = ssdFile->find(part->key);
             if (!part->ssdPin.empty()) {
               ssdLoad.push_back(part);
               continue;
