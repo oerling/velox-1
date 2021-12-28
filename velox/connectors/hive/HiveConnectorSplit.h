@@ -23,8 +23,10 @@
 namespace facebook::velox::connector::hive {
 
 struct SortingColumn {
-  std::string column;
-  bool ascending{true};
+  const std::string column;
+  const bool ascending{true};
+
+SortingColumn(const std::string& _column, bool _ascending) : column(_column), ascending(_ascending) {}
 };
 
  enum class BucketFunction {kPresto, kHive};
