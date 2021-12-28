@@ -554,6 +554,9 @@ void Driver::close() {
 }
 
 bool Driver::terminate() {
+  if (!task_) {
+    return false;
+  }
   auto stop = task_->enterForTerminate(state_);
   if (stop == StopReason::kTerminate) {
     close();
