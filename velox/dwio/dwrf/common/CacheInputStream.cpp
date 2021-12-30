@@ -153,37 +153,45 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       ioStats_->queryThreadIoLatency().increment(usec);
       continue;
     }
-    if (pin_.entry()->isExclusive()) {
-      pin_.entry()->setGroupId(groupId_);
-      pin_.entry()->setTrackingId(trackingId_);
+    auto entry = pin_.checkedEntry();
+    if (entry->isExclusive()) {
+      entry->setGroupId(groupId_);
+      entry->setTrackingId(trackingId_);
       auto ssdCache = cache_->ssdCache();
 
       if (ssdCache) {
         auto& file = ssdCache->file(fileNum_);
         auto ssdPin =
-            file.find(cache::RawFileCacheKey{fileNum_, region.offset});
+	  file.find(cache::RawFileCacheKey{fileNum_, region.offset});
         if (!ssdPin.empty()) {
           uint64_t usec = 0;
-          {
-            // SsdFile::load wants vectors of pins. Put the pins in a
-            // temp vector and then put 'pin_' back in 'this'. 'pin_'
-            // is exclusive and not movable.
-            std::vector<cache::SsdPin> ssdPins;
-            ssdPins.push_back(std::move(ssdPin));
-            std::vector<cache::CachePin> pins;
-            pins.push_back(std::move(pin_));
-            MicrosecondTimer timer(&usec);
-            file.load(ssdPins, pins);
-            pin_ = std::move(pins[0]);
-          }
-          ioStats_->ssdRead().increment(pin_.entry()->size());
-          ioStats_->queryThreadIoLatency().increment(usec);
-          pin_.entry()->setValid(true);
-          pin_.entry()->setExclusiveToShared();
-          return;
-        }
+	  // SsdFile::load wants vectors of pins. Put the pins in a
+	  // temp vector and then put 'pin_' back in 'this'. 'pin_'
+	  // is exclusive and not movable.
+	  std::vector<cache::SsdPin> ssdPins;
+	  ssdPins.push_back(std::move(ssdPin));
+	  std::vector<cache::CachePin> pins;
+	  pins.push_back(std::move(pin_));
+	  bool loadedFromSsd = false;
+	  try {
+	    MicrosecondTimer timer(&usec);
+	    file.load(ssdPins, pins);
+	    loadedFromSsd = true;
+	  } catch (const std::exception& e) {
+	    LOG(ERROR) << "IOERR: Failed SSD loadSync. offset = " << entry->key().offset;
+	    std::rethrow_exception(std::current_exception());
+	  }
+	  pin_ = std::move(pins[0]);
+	    if (loadedFromSsd) {
+	      ioStats_->ssdRead().increment(pin_.entry()->size());
+	      ioStats_->queryThreadIoLatency().increment(usec);
+	      entry->setValid(true);
+	      entry->setExclusiveToShared();
+	      return;
+	    }
+	}
       }
-      auto ranges = makeRanges(pin_.entry(), region.length);
+      auto ranges = makeRanges(entry, region.length);
       uint64_t usec = 0;
       {
         MicrosecondTimer timer(&usec);
@@ -192,21 +200,20 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       // Already incremented at on entry, so revert the increment by read()
       // above.
       ioStats_->incRawBytesRead(-region.length);
-
       ioStats_->read().increment(region.length);
       ioStats_->queryThreadIoLatency().increment(usec);
-      pin_.entry()->setValid(true);
-      pin_.entry()->setExclusiveToShared();
+      entry->setValid(true);
+      entry->setExclusiveToShared();
     } else {
-      if (pin_.entry()->dataValid()) {
-        if (!pin_.entry()->getAndClearFirstUseFlag()) {
+      if (entry->dataValid()) {
+        if (!entry->getAndClearFirstUseFlag()) {
           ioStats_->ramHit().increment(pin_.entry()->size());
         }
       } else {
         uint64_t usec = 0;
         {
           MicrosecondTimer timer(&usec);
-          pin_.entry()->ensureLoaded(true);
+          entry->ensureLoaded(true);
         }
         ioStats_->queryThreadIoLatency().increment(usec);
       }
@@ -222,11 +229,15 @@ void CacheInputStream::loadPosition() {
       folly::SemiFuture<bool> waitFuture(false);
       uint64_t usec = 0;
       {
-        MicrosecondTimer timer(&usec);
-        if (!load->loadOrFuture(&waitFuture)) {
-          auto& exec = folly::QueuedImmediateExecutor::instance();
-          std::move(waitFuture).via(&exec).wait();
-        }
+	  MicrosecondTimer timer(&usec);
+	  try {
+	    if (!load->loadOrFuture(&waitFuture)) {
+	      auto& exec = folly::QueuedImmediateExecutor::instance();
+	      std::move(waitFuture).via(&exec).wait();
+	    }
+	  } catch (const std::exception& e) {
+	      LOG(ERROR) << "IOERR: error in fused load " << e.what();
+	  }
       }
       ioStats_->queryThreadIoLatency().increment(usec);
     }
@@ -239,7 +250,7 @@ void CacheInputStream::loadPosition() {
         loadQuantum_, region_.length - (loadRegion.offset - region_.offset));
     loadSync(loadRegion);
   }
-  auto* entry = pin_.entry();
+  auto* entry = pin_.checkedEntry();
   uint64_t positionInFile = offset + position_;
   if (entry->offset() <= positionInFile &&
       entry->offset() + entry->size() > positionInFile) {
