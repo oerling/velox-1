@@ -84,7 +84,7 @@ class DwrfRowReader : public DwrfRowReaderShared {
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
 
   // Gets next rows within 'this'.
-  uint64_t nextInternal(uint64_t size, VectorPtr& result);
+  uint64_t nextInStripe(uint64_t size, VectorPtr& result);
 
   // Asynchronously makes a DwrfRowReader for 'stripeIndex'.
   void preloadStripe(int32_t stripeIndex);

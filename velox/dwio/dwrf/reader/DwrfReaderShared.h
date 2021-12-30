@@ -49,8 +49,6 @@ class DwrfRowReaderShared : public StrideIndexProvider,
   std::shared_ptr<dwio::common::ColumnSelector> columnSelector_;
 
   // internal methods
-  void startNextStripe();
-
   size_t estimatedRowSizeHelper(
       const proto::Footer& footer,
       const dwio::common::Statistics& stats,
@@ -126,6 +124,8 @@ class DwrfRowReaderShared : public StrideIndexProvider,
 
   // Estimate the row size for projected columns
   size_t estimatedRowSize() const override;
+  // Creates column reader tree and may start prefetch of frequently read columns.
+  void startNextStripe();
 };
 
 class DwrfReaderShared : public dwio::common::Reader {

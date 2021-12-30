@@ -23,10 +23,14 @@
 namespace facebook::velox::connector::hive {
 
 struct SortingColumn {
-  std::string column;
-  bool ascending{true};
+  const std::string column;
+  const bool ascending{true};
+
+SortingColumn(const std::string& _column, bool _ascending) : column(_column), ascending(_ascending) {}
 };
 
+ enum class BucketFunction {kPresto, kHive};
+ 
  struct HiveConnectorSplit : public connector::ConnectorSplit {
   const std::string filePath;
   dwio::common::FileFormat fileFormat;
@@ -36,8 +40,9 @@ struct SortingColumn {
       partitionKeys;
   std::optional<int32_t> tableBucketNumber;
   std::vector<std::string> bucketedBy;
-  std::vector<SortingColumn> sortedBy;
   std::optional<int32_t> bucketCount;
+  std::optional<BucketFunction> bucketFunction;
+  std::vector<SortingColumn> sortedBy;
 
   HiveConnectorSplit(
       const std::string& connectorId,
@@ -50,6 +55,7 @@ struct SortingColumn {
       std::optional<int32_t> _tableBucketNumber = std::nullopt,
       std::vector<std::string> _bucketedBy = {},
       std::optional<int32_t> _bucketCount = std::nullopt,
+      std::optional<BucketFunction> _bucketFunction = std::nullopt,
       std::vector<SortingColumn> _sortedBy = {})
       : ConnectorSplit(connectorId),
         filePath(_filePath),
@@ -60,7 +66,8 @@ struct SortingColumn {
         tableBucketNumber(_tableBucketNumber),
         bucketedBy(std::move(_bucketedBy)),
         bucketCount(_bucketCount),
-        sortedBy(_sortedBy) {}
+    bucketFunction(_bucketFunction),
+    sortedBy(_sortedBy) {}
 
   std::string toString() const override {
     if (tableBucketNumber.has_value()) {
