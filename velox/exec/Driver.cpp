@@ -668,31 +668,35 @@ SuspendedSection::~SuspendedSection() {
   driver_->task()->leaveSuspended(driver_->state());
 }
 
-
 std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
 }
 
-  int64_t Driver::recoverableMemory() const {
-    int64_t total = 0;
-    for (auto& op : operators_) {
-      total += op->recoverableMemory();
-    }
-    return total;
+int64_t Driver::recoverableMemory() const {
+  int64_t total = 0;
+  for (auto& op : operators_) {
+    total += op->recoverableMemory();
   }
+  return total;
+}
 
 bool Driver::growTaskMemory(
+    memory::MemoryUsageTracker::UsageType type,
     int64_t size,
-    memory::MemoryUsageTracker* /*tracker*/) {
+    memory::MemoryUsageTracker& tracker) {
   bool result;
   SuspendedSection::suspended(this, [&]() {
-    result = memory::MemoryManagerStrategy::instance()->recover(
-							      task(), size);
+    auto current = tracker.totalReservedBytes();
+    auto limit = tracker.maxTotalBytes();
+    if (current < limit) {
+      return true;
+    }
+    result = memory::MemoryManagerStrategy::instance()->recover(task(), current - limit);
   });
   return result;
 }
 
-  int64_t Driver::spill(int64_t size) {
+int64_t Driver::spill(int64_t size) {
   int64_t spilled = 0;
   if (size > 0) {
     // Prefer to spill last operator first, e.g. group by should spill

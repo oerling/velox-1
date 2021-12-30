@@ -252,7 +252,7 @@ class Driver {
 
   // Checks terminate in Task and throws if needed.
   void checkTerminate();
-  
+
   // Requests 'size' bytes of memory from the process memory manager,
   // to be added to the limit of 'tracker'. If tracker is
   // revocable and there is no ready supply, the reservation may be
@@ -276,15 +276,17 @@ class Driver {
   // was raised by at least 'size'. The caller must be a thread of the Task of
   // 'this'.
   bool growTaskMemory(
+      memory::MemoryUsageTracker::UsageType type,
       int64_t size,
-      memory::MemoryUsageTracker* tracker);
+      memory::MemoryUsageTracker& tracker);
 
   std::shared_ptr<Task> task() const {
     return task_;
   }
 
   // Returns an estimate of the bytes that can be recovered by spill().
-  int64_t recoverableMemory() const;  
+  int64_t recoverableMemory() const;
+
  private:
   void enqueueInternal();
 
@@ -413,7 +415,8 @@ struct DriverFactory {
 // which also means that they are instantaneously killable or spillable.
 class SuspendedSection {
  public:
-  // Runs 'body' as a suspended section. Checks for termination requested after exiting the section.
+  // Runs 'body' as a suspended section. Checks for termination requested after
+  // exiting the section.
   template <typename Body>
   static void suspended(Driver* driver, Body body) {
     {
@@ -422,11 +425,10 @@ class SuspendedSection {
     }
     driver->checkTerminate();
   }
-  
+
  private:
   explicit SuspendedSection(Driver* FOLLY_NONNULL driver);
   ~SuspendedSection();
-
 
   Driver* FOLLY_NONNULL driver_;
 };

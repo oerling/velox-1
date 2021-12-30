@@ -95,7 +95,12 @@ class TestStripeStreams : public StripeStreamsBase {
     }
     if (!stream || stream->isSuppressed()) {
       if (throwIfNotFound) {
-        DWIO_RAISE("stream not found");
+        DWIO_RAISE(fmt::format(
+            "stream (node = {}, seq = {}, column = {}, kind = {}) not found",
+            si.node,
+            si.sequence,
+            si.column,
+            si.kind));
       } else {
         return nullptr;
       }
@@ -149,7 +154,9 @@ class TestStripeStreams : public StripeStreamsBase {
   }
 
   bool getUseVInts(const StreamIdentifier& streamId) const override {
-    DWIO_ENSURE(context_.hasStream(streamId));
+    DWIO_ENSURE(
+        context_.hasStream(streamId),
+        fmt::format("Stream not found: {}", streamId.toString()));
     return context_.getConfig(Config::USE_VINTS);
   }
 
@@ -318,7 +325,8 @@ void testDataTypeWriter(
     TestStripeStreams streams(context, sf, rowType);
     auto typeWithId = TypeWithId::create(rowType);
     auto reqType = typeWithId->childAt(0);
-    auto reader = ColumnReader::build(reqType, reqType, streams, sequence);
+    auto reader = ColumnReader::build(
+        reqType, reqType, streams, FlatMapContext{sequence, nullptr});
     VectorPtr out;
     for (auto strideI = 0; strideI < strideCount; ++strideI) {
       reader->next(size, out);
@@ -718,6 +726,8 @@ void testMapWriter(
   const auto dataType = rowType->childAt(0);
   const auto rowTypeWithId = TypeWithId::create(rowType);
   const auto dataTypeWithId = rowTypeWithId->childAt(0);
+  const auto writerSchema = TypeWithId::create(rowType);
+  const auto writerDataTypeWithId = writerSchema->childAt(0);
 
   VLOG(2) << "Testing map writer " << dataType->toString() << " using "
           << (useFlatMap ? "Flat Map" : "Regular Map");
@@ -725,13 +735,13 @@ void testMapWriter(
   const auto config = std::make_shared<Config>();
   if (useFlatMap) {
     config->set(Config::FLATTEN_MAP, true);
-    config->set(Config::MAP_FLAT_COLS, {dataTypeWithId->column});
+    config->set(Config::MAP_FLAT_COLS, {writerDataTypeWithId->column});
     config->set(
         Config::MAP_FLAT_DISABLE_DICT_ENCODING, disableDictionaryEncoding);
   }
 
   WriterContext context{config, getDefaultScopedMemoryPool()};
-  const auto writer = ColumnWriter::create(context, *dataTypeWithId);
+  const auto writer = ColumnWriter::create(context, *writerDataTypeWithId);
   // For writing flat map with encoded input, we'd like to test all 4
   // combinations.
   size_t strideCount = testEncoded ? 4 : 2;

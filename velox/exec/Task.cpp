@@ -47,19 +47,14 @@ Task::Task(
   constexpr int64_t kInitialTaskMemory = 8 << 20; // 8MB
   auto strategy = memory::MemoryManagerStrategy::instance();
   if (strategy->canResize()) {
-    auto tracker = pool_->getMemoryUsageTracker();
-    if (!tracker) {
-      tracker = memory::MemoryUsageTracker::create(
-          nullptr,
-          memory::MemoryUsageTracker::UsageType::kUserMem,
+    auto tracker = memory::MemoryUsageTracker::create(
           memory::MemoryUsageConfigBuilder()
-	  .maxTotalMemory(kInitialTaskMemory)
-	  .build());
+              .maxTotalMemory(kInitialTaskMemory)
+              .build());
       pool_->setMemoryUsageTracker(tracker);
-    }
-    tracker->setGrowCallback([&](memory::UsageType type,
+    tracker->setGrowCallback([&](memory::MemoryUsageTracker::UsageType type,
                                  int64_t size,
-                                 memory::MemoryUsageTracker* limit) {
+                                 memory::MemoryUsageTracker& limit) {
       Driver* driver = thisDriver();
       VELOX_CHECK(driver, "Allocating Task memory outside of Driver threads");
       return driver->growTaskMemory(type, size, limit);
@@ -848,14 +843,13 @@ int64_t Task::recover(int64_t size) {
 
 bool TaskMemoryStrategy::recover(
     std::shared_ptr<memory::MemoryConsumer> requester,
-    int64_t size) {
+    int64_t minSize) {
   Task* consumerTask = dynamic_cast<Task*>(requester.get());
   VELOX_CHECK(consumerTask, "Only a Task can request memory via recover()");
   auto topTracker =
       memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
   auto tracker =
       consumerTask ? consumerTask->pool()->getMemoryUsageTracker() : nullptr;
-  std::lock_guard<std::mutex> l(mutex_);
   // The limits of the consumers are stable inside this section but
   // the allocation sizes are volatile until the consumer in question
   // is stopped.
@@ -864,8 +858,9 @@ bool TaskMemoryStrategy::recover(
     if (consumerTask->state() != kRunning) {
       return false;
     }
-    if (tracker->getIfCan(type, size)) {
-      topTracker->increment(type, size);
+    auto available = topTracker->maxTotalMemory() - topTracker->totalReservedBytes();
+
+      topTracker->update(size);
       return true;
     }
     if (topTracker->getIfCan(type, size)) {
