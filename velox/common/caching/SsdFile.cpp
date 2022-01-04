@@ -34,9 +34,14 @@ SsdPin::SsdPin(SsdFile& file, SsdRun run) : file_(&file), run_(run) {
 }
 
 SsdPin::~SsdPin() {
+  clear();
+}
+
+void SsdPin::clear() {
   if (file_) {
     file_->unpinRegion(run_.offset());
   }
+  file_ = nullptr;
 }
 
 void SsdPin::operator=(SsdPin&& other) {
@@ -46,6 +51,17 @@ void SsdPin::operator=(SsdPin&& other) {
   file_ = other.file_;
   other.file_ = nullptr;
   run_ = other.run_;
+}
+
+std::string SsdPin::toString() const {
+  if (empty()) {
+    return "<empty SsdPin>";
+  }
+  return fmt::format(
+      "SsdPin(shard {} offset {} size {})",
+      file_->shardId(),
+      run_.offset(),
+      run_.size());
 }
 
 SsdFile::SsdFile(
@@ -131,6 +147,17 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
   return SsdPin(*this, run);
 }
 
+bool SsdFile::erase(RawFileCacheKey key) {
+  FileCacheKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
+  std::lock_guard<std::mutex> l(mutex_);
+  auto it = entries_.find(ssdKey);
+  if (it == entries_.end()) {
+    return false;
+  }
+  entries_.erase(it);
+  return true;
+}
+
 CoalesceIoStats SsdFile::load(
     const std::vector<SsdPin>& ssdPins,
     const std::vector<CachePin>& pins) {
@@ -138,11 +165,21 @@ CoalesceIoStats SsdFile::load(
   int payloadTotal = 0;
   for (auto i = 0; i < pins.size(); ++i) {
     auto runSize = ssdPins[i].run().size();
-    VELOX_CHECK_EQ(runSize, pins[i].entry()->size());
-    payloadTotal += runSize;
+    auto entry = pins[i].checkedEntry();
+    auto fileId = entry->key().fileNum.id();
+    if (runSize > entry->size()) {
+      LOG(INFO)
+          << "IOERR: Requested prefix of SSD cache entry: "
+          << runSize << " entry: " << entry->size();
+    }
+    VELOX_CHECK_GE(
+        runSize,
+        entry->size(),
+        "IOERR SSd cache entry shorter than requested range");
+    payloadTotal += entry->size();
     regionRead(regionIndex(ssdPins[i].run().offset()), runSize);
     ++stats_.entriesRead;
-    stats_.bytesRead += runSize;
+    stats_.bytesRead += entry->size();
   }
   // Do coalesced IO for the pins. For short payloads, the break-even
   // between discrete pread calls and a single preadv that discards

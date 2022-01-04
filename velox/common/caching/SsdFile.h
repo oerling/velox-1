@@ -88,6 +88,9 @@ class SsdPin {
 
   ~SsdPin();
 
+  // Resets 'this' to default-constructed state.
+  void clear();
+  
   void operator=(SsdPin&&);
 
   bool empty() const {
@@ -101,7 +104,9 @@ class SsdPin {
     return run_;
   }
 
- private:
+  std::string toString() const;
+  
+private:
   SsdFile* file_;
   SsdRun run_;
 };
@@ -140,6 +145,9 @@ class SsdFile {
   // Finds an entry for 'key'. If no entry is found, the returned pin is empty.
   SsdPin find(RawFileCacheKey key);
 
+    // Erases 'key'
+  bool erase(RawFileCacheKey key);
+  
   // Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
   // entries if they are in ascending order and near enough.
   CoalesceIoStats load(

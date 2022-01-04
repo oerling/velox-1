@@ -399,7 +399,7 @@ class CachePin {
 };
 
 // State of a FusedLoad
-enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
+  enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
 
 // Represents a possibly multi-entry load from a file system. The
 // cache expects to load multiple entries in most IOs. The IO is
@@ -445,10 +445,11 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   // using the data since the load may have failed.
   bool loadOrFuture(folly::SemiFuture<bool>* FOLLY_NULLABLE wait);
 
-  // Removes 'this' from the affected entries. If 'this' is already
-  // loading, takes no action since this indicates that another thread
-  // has control of 'this'.
-  void cancel();
+  // Removes 'this' from the affected entries. If 'force' is false and
+  // 'this' is already loading, takes no action since this indicates
+  // that another thread has control of 'this'. If called to recover
+  // from an error in loading, 'force' should be true.
+  void cancel(bool force = false);
 
   LoadState state() const {
     return state_;
@@ -466,6 +467,10 @@ class FusedLoad : public std::enable_shared_from_this<FusedLoad> {
   // access.
   virtual bool makePins() {
     VELOX_UNSUPPORTED("FusedLoad requires pins to be supplied");
+  }
+
+  virtual std::string toString() const {
+    return "<FusedLoad>";
   }
 
  protected:
