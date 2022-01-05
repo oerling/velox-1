@@ -138,25 +138,15 @@ class CachedBufferedInput : public BufferedInput {
   std::shared_ptr<cache::FusedLoad> fusedLoad(
       const SeekableInputStream* stream);
 
-  // Indicates that the access will not follow immediately,
-  // e.g. another stripe will be processed first.
-  void setIsSpeculative() {
-    isSpeculative_ = true;
-  }
-
  private:
   // Sorts requests and makes FusedLoads for nearby requests. If 'prefetch' is
   // true, starts background loading.
   void makeLoads(std::vector<CacheRequest*> requests, bool prefetch);
 
-  // Schedules 'requests' to be read in a single IO 'requests' are
-  //  sorted and non-overlapping and do not have excessive gaps
-  //  between the end of one and the start of the next. No action if
-  //  requests is empty or 'prefetch' is false and there is a single
-  //  request.
+  // Makes a FusedLoad for 'requests' to be read together, coalescing
+  // IO is appropriate. If 'prefetch' is set, schedules the FusedLoad
+  // on 'executor_'. Links the FusedLoad  to all CacheInputStreams tat it concers.
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
-
-  void traceFusedLoads();
 
   cache::AsyncDataCache* cache_;
   const uint64_t fileNum_;
@@ -166,26 +156,18 @@ class CachedBufferedInput : public BufferedInput {
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   folly::Executor* const executor_;
 
-  //  Percentage of reads over enqueues that qualifies a stream to be
-  //  coalesced with nearby streams and prefetched. Anything read less
-  //  frequently will be synchronously read on first use.
-  int32_t prefetchThreshold_ = 60;
-
-  // true if 'this' is made ahead of actual use. If there are
-  // prefetchable items and space for them, start the prefetch for all
-  // even if just one item. A single item should not be async
-  // prefetched if going to access this immediately after making the
-  // CachedBufferedInput.
-  bool isSpeculative_{false};
   // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
+
   // Coalesced loads spanning multiple cache entries in one IO.
   folly::Synchronized<folly::F14FastMap<
       const SeekableInputStream*,
       std::shared_ptr<cache::FusedLoad>>>
       fusedLoads_;
+
   // Distinct fused loads in 'fusedLoads_'.
   std::vector<std::shared_ptr<cache::FusedLoad>> allFusedLoads_;
+
   const uint64_t fileSize_;
 };
 

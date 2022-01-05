@@ -206,7 +206,6 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
           if (loadedFromSsd) {
             ioStats_->ssdRead().increment(pin_.entry()->size());
             ioStats_->queryThreadIoLatency().increment(usec);
-            entry->setValid(true);
             entry->setExclusiveToShared();
             return;
           }
@@ -223,21 +222,12 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       ioStats_->incRawBytesRead(-region.length);
       ioStats_->read().increment(region.length);
       ioStats_->queryThreadIoLatency().increment(usec);
-      entry->setValid(true);
       entry->setExclusiveToShared();
     } else {
-      if (entry->dataValid()) {
-        if (!entry->getAndClearFirstUseFlag()) {
-          ioStats_->ramHit().increment(pin_.entry()->size());
+      if (!entry->getAndClearFirstUseFlag()) {
+	ioStats_->ramHit().increment(pin_.entry()->size());
         }
-      } else {
-        uint64_t usec = 0;
-        {
-          MicrosecondTimer timer(&usec);
-          entry->ensureLoaded(true);
-        }
-        ioStats_->queryThreadIoLatency().increment(usec);
-      }
+      return;
     }
   } while (pin_.empty());
 }

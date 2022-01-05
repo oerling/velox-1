@@ -360,7 +360,6 @@ class CacheTest : public testing::Test {
               groupId,
               stripeIndex * streamStarts_[kMaxStreams - 1]));
           if (stripes.back()->input->shouldPreload()) {
-            stripes.back()->input->setIsSpeculative();
             stripes.back()->input->load(
                 facebook::velox::dwio::common::LogType::TEST);
           }

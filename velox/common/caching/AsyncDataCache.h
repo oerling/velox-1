@@ -387,6 +387,10 @@ enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
     return state_;
   }
 
+    void cancel() {
+      setEndState(LoadState::kCancelled);
+    }
+    
   virtual std::string toString() const {
     return "<FusedLoad>";
   }
