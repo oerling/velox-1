@@ -315,7 +315,7 @@ void AsyncDataCacheTest::loadOne(
     }
     // Load from storage.
     initializeContents(
-		       entry->key().offset + entry->key().fileNum.id(), entry->data());
+        entry->key().offset + entry->key().fileNum.id(), entry->data());
     // The entry is filled and will be made visible. 'pin' is released on
     // return.
     entry->setExclusiveToShared();
@@ -449,7 +449,7 @@ TEST_F(AsyncDataCacheTest, pin) {
   EXPECT_TRUE(otherPin.empty());
   bool noLongerExclusive = false;
   std::move(wait).via(&exec).thenValue([&](bool) { noLongerExclusive = true; });
-  initializeContents( key.fileNum + key.offset, pin.checkedEntry()->data());
+  initializeContents(key.fileNum + key.offset, pin.checkedEntry()->data());
   pin.checkedEntry()->setExclusiveToShared();
   pin.clear();
   EXPECT_TRUE(pin.empty());
@@ -471,7 +471,7 @@ TEST_F(AsyncDataCacheTest, pin) {
   EXPECT_EQ(1, stats.numEntries);
   EXPECT_EQ(0, stats.numShared);
   EXPECT_EQ(0, stats.numExclusive);
-  
+
   cache_->clear();
   stats = cache_->refreshStats();
   EXPECT_EQ(0, stats.largeSize);
