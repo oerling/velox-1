@@ -216,7 +216,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
       return;
     }
   }
-  LOG(WARNING) << "Trying to delete a Driver twice from its :"
+  LOG(INFO) << "Trying to delete a Driver twice from its :"
                << self->taskId();
 }
 

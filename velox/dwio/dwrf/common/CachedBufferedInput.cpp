@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/common/process/TraceContext.h"
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
 
 DEFINE_int32(cache_load_quantum, 8 << 20, "Max size of single IO to cache");
@@ -24,7 +25,7 @@ DEFINE_int32(
     "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
 DEFINE_int32(
     storage_max_coalesce_distance,
-    1 << 20,
+    5 << 19,
     "Max gap across wich IOs are coalesced for storage");
 DEFINE_int32(
     ssd_max_coalesce_distance,
@@ -62,6 +63,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   if (si) {
     id = TrackingId(si->node, si->kind);
   }
+  VELOX_CHECK_LE(region.offset + region.length, fileSize_);
   requests_.emplace_back(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id);
   tracker_->recordReference(id, region.length, fileNum_, groupId_);
@@ -184,6 +186,12 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
           }
           if (ssdFile) {
             part->ssdPin = ssdFile->find(part->key);
+            if (!part->ssdPin.empty() &&
+                part->ssdPin.run().size() < part->size) {
+              LOG(INFO) << "IOERR: Ignorin SSD  shorter than requested: "
+                        << part->ssdPin.run().size() << " vs " << part->size;
+              part->ssdPin.clear();
+            }
             if (!part->ssdPin.empty()) {
               ssdLoad.push_back(part);
               continue;
@@ -195,9 +203,6 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
     }
     makeLoads(std::move(storageLoad), isPrefetchPct(readPct));
     makeLoads(std::move(ssdLoad), isPrefetchPct(readPct));
-  }
-  if (!allFusedLoads_.empty() && FLAGS_coalesce_trace_count) {
-    traceFusedLoads();
   }
 }
 
@@ -249,25 +254,31 @@ void CachedBufferedInput::makeLoads(
         ++numNewLoads;
         readRegion(ranges, prefetch);
       });
-  if (prefetch && executor_ && (isSpeculative_ || numNewLoads > 1)) {
+  if (prefetch && executor_ /*&& (isSpeculative_ || numNewLoads > 1)*/) {
     for (auto& load : allFusedLoads_) {
       if (load->state() == LoadState::kPlanned) {
-        executor_->add(
-            [pendingLoad = load]() { pendingLoad->loadOrFuture(nullptr); });
+        executor_->add([pendingLoad = load]() {
+          process::TraceContext trace("Read Ahead");
+          pendingLoad->loadOrFuture(nullptr);
+        });
       }
     }
   }
 }
 
-// namespace {
+namespace {
+// Base class for FusedLoads for different storage types.
 class DwrfFusedLoadBase : public cache::FusedLoad {
  public:
   DwrfFusedLoadBase(
-      cache::AsyncDataCache* cache,
+      cache::AsyncDataCache& cache,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
       uint64_t groupId,
       std::vector<CacheRequest*> requests)
-      : cache_(cache), ioStats_(std::move(ioStats)), groupId_(groupId) {
+      : FusedLoad(makeKeys(requests), makeSizes(requests)),
+        cache_(cache),
+        ioStats_(std::move(ioStats)),
+        groupId_(groupId) {
     for (auto& request : requests) {
       requests_.push_back(std::move(*request));
     }
@@ -275,32 +286,6 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
 
   const std::vector<CacheRequest>& requests() {
     return requests_;
-  }
-
-  bool makePins() override {
-    VELOX_CHECK(toLoad_.empty());
-    for (auto& request : requests_) {
-      request.pin = cache_->findOrCreate(request.key, request.size, nullptr);
-      if (request.pin.empty()) {
-        // Already loading for another thread.
-        continue;
-      }
-      if (request.pin.entry()->isExclusive()) {
-        // A new entry to be filled.
-        request.pin.entry()->setTrackingId(request.trackingId);
-        request.pin.entry()->setGroupId(groupId_);
-        toLoad_.push_back(&request);
-      } else {
-        // Already in cache, access time is refreshed.
-        request.pin.clear();
-      }
-    }
-    std::vector<CachePin> pins;
-    for (auto* request : toLoad_) {
-      pins.push_back(std::move(request->pin));
-    }
-    initialize(std::move(pins));
-    return !toLoad_.empty();
   }
 
   std::string toString() const override {
@@ -337,17 +322,36 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
     }
   }
 
-  cache::AsyncDataCache* const cache_;
+  static std::vector<RawFileCacheKey> makeKeys(
+      std::vector<CacheRequest*>& requests) {
+    std::vector<RawFileCacheKey> keys;
+    keys.reserve(requests.size());
+    for (auto& request : requests) {
+      keys.push_back(request->key);
+    }
+    return keys;
+  }
+
+  std::vector<int32_t> makeSizes(std::vector<CacheRequest*> requests) {
+    std::vector<int32_t> sizes;
+    sizes.reserve(requests.size());
+    for (auto& request : requests) {
+      sizes.push_back(request->size);
+    }
+    return sizes;
+  }
+
+  cache::AsyncDataCache& cache_;
   std::vector<CacheRequest> requests_;
-  std::vector<CacheRequest*> toLoad_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   const uint64_t groupId_;
 };
 
+// Represents a FusedLoad from ReadFile, e.g. disagg disk.
 class DwrfFusedLoad : public DwrfFusedLoadBase {
  public:
   DwrfFusedLoad(
-      cache::AsyncDataCache* cache,
+      cache::AsyncDataCache& cache,
       std::unique_ptr<AbstractInputStreamHolder> input,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
       uint64_t groupId,
@@ -355,13 +359,22 @@ class DwrfFusedLoad : public DwrfFusedLoadBase {
       : DwrfFusedLoadBase(cache, ioStats, groupId, std::move(requests)),
         input_(std::move(input)) {}
 
-  void loadData(bool isPrefetch) override {
+  std::vector<CachePin> loadData(bool isPrefetch) override {
     auto& stream = input_->get();
+    std::vector<CachePin> pins;
+    pins.reserve(keys_.size());
+    cache_.makePins(
+        keys_,
+        [&](int32_t index) { return sizes_[index]; },
+        [&](int32_t index, CachePin pin) {});
+    if (pins.empty()) {
+      return pins;
+    }
     auto stats = cache::readPins(
-        pins_,
-        100000,
+        pins,
+        FLAGS_storage_max_coalesce_distance,
         1000,
-        [&](int32_t i) { return pins_[i].entry()->offset(); },
+        [&](int32_t i) { return pins[i].entry()->offset(); },
         [&](const std::vector<CachePin>& pins,
             int32_t begin,
             int32_t end,
@@ -370,31 +383,42 @@ class DwrfFusedLoad : public DwrfFusedLoadBase {
           stream.read(buffers, offset, dwio::common::LogType::FILE);
         });
     updateStats(stats, isPrefetch, false);
+    return pins;
   }
 
   std::unique_ptr<AbstractInputStreamHolder> input_;
 };
 
+// Represents a FusedLoad from local SSD cache.
 class SsdLoad : public DwrfFusedLoadBase {
  public:
   SsdLoad(
-      cache::AsyncDataCache* cache,
+      cache::AsyncDataCache& cache,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
       uint64_t groupId,
       std::vector<CacheRequest*> requests)
       : DwrfFusedLoadBase(cache, ioStats, groupId, std::move(requests)) {}
 
-  void loadData(bool isPrefetch) override {
+  std::vector<CachePin> loadData(bool isPrefetch) override {
     std::vector<SsdPin> ssdPins;
-    for (auto& request : toLoad_) {
-      ssdPins.push_back(std::move(request->ssdPin));
+    std::vector<CachePin> pins;
+    cache_.makePins(
+        keys_,
+        [&](int32_t index) { return sizes_[index]; },
+        [&](int32_t index, CachePin pin) {
+          pins.push_back(std::move(pin));
+          ssdPins.push_back(std::move(requests_[index].ssdPin));
+        });
+    if (pins.empty()) {
+      return pins;
     }
-    auto stats = ssdPins[0].file()->load(ssdPins, pins_);
+    auto stats = ssdPins[0].file()->load(ssdPins, pins);
     updateStats(stats, isPrefetch, true);
+    return pins;
   }
 };
 
-//} // namespace
+} // namespace
 
 void CachedBufferedInput::readRegion(
     std::vector<CacheRequest*> requests,
@@ -404,10 +428,10 @@ void CachedBufferedInput::readRegion(
   }
   std::shared_ptr<cache::FusedLoad> load;
   if (!requests[0]->ssdPin.empty()) {
-    load = std::make_shared<SsdLoad>(cache_, ioStats_, groupId_, requests);
+    load = std::make_shared<SsdLoad>(*cache_, ioStats_, groupId_, requests);
   } else {
     load = std::make_shared<DwrfFusedLoad>(
-        cache_, streamSource_(), ioStats_, groupId_, requests);
+        *cache_, streamSource_(), ioStats_, groupId_, requests);
   }
   allFusedLoads_.push_back(load);
   fusedLoads_.withWLock([&](auto& loads) {
@@ -438,6 +462,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
     uint64_t offset,
     uint64_t length,
     dwio::common::LogType /*logType*/) const {
+  VELOX_CHECK_LE(offset + length, fileSize_);
   return std::make_unique<CacheInputStream>(
       const_cast<CachedBufferedInput*>(this),
       ioStats_.get(),
@@ -447,16 +472,6 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
       nullptr,
       TrackingId(),
       0);
-}
-
-void CachedBufferedInput::traceFusedLoads() {
-  auto counter = FLAGS_coalesce_trace_count;
-  FLAGS_coalesce_trace_count = std::min(counter - 1, 0);
-  std::stringstream out;
-  for (auto& load : allFusedLoads_) {
-    out << load->toString() << " ";
-  }
-  LOG(INFO) << "Fused Loads: " << out.str();
 }
 
 } // namespace facebook::velox::dwrf
