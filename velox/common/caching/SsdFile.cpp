@@ -39,6 +39,13 @@ SsdPin::~SsdPin() {
   }
 }
 
+void SsdPin::clear() {
+  if (file_) {
+    file_->unpinRegion(run_.offset());
+  }
+  file_ = nullptr;
+}
+
 void SsdPin::operator=(SsdPin&& other) {
   if (file_) {
     file_->unpinRegion(run_.offset());
@@ -46,6 +53,14 @@ void SsdPin::operator=(SsdPin&& other) {
   file_ = other.file_;
   other.file_ = nullptr;
   run_ = other.run_;
+}
+
+std::string SsdPin::toString() const {
+  return fmt::format(
+      "SsdPin(shard {} offset {} size {})",
+      file_->shardId(),
+      run_.offset(),
+      run_.size());
 }
 
 SsdFile::SsdFile(
@@ -131,6 +146,17 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
   return SsdPin(*this, run);
 }
 
+bool SsdFile::erase(RawFileCacheKey key) {
+  FileCacheKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
+  std::lock_guard<std::mutex> l(mutex_);
+  auto it = entries_.find(ssdKey);
+  if (it == entries_.end()) {
+    return false;
+  }
+  entries_.erase(it);
+  return true;
+}
+
 CoalesceIoStats SsdFile::load(
     const std::vector<SsdPin>& ssdPins,
     const std::vector<CachePin>& pins) {
@@ -138,7 +164,35 @@ CoalesceIoStats SsdFile::load(
   int payloadTotal = 0;
   for (auto i = 0; i < pins.size(); ++i) {
     auto runSize = ssdPins[i].run().size();
-    VELOX_CHECK_EQ(runSize, pins[i].entry()->size());
+    auto entry = pins[i].checkedEntry();
+    auto fileId = entry->key().fileNum.id();
+    auto fileSize = FileSizes::size(entry->key().fileNum.id());
+    auto storageOffset = entry->key().offset;
+    if (storageOffset + runSize > fileSize) {
+      LOG(INFO) << fmt::format(
+          "IOERR: SSD entry would go past end of storage file  file {}, offset {} size {} file size {}",
+          fileId,
+          storageOffset,
+          runSize,
+          fileSize);
+    }
+    if (storageOffset + entry->size() > fileSize) {
+      LOG(INFO) << fmt::format(
+          "IOERR: SSD read would go past end of storage file , file {}, offset {} size {} file size {}",
+          fileId,
+          storageOffset,
+          entry->size(),
+          fileSize);
+    }
+    if (runSize > entry->size()) {
+      LOG(INFO)
+          << "IOERR: Requested different shorter run than SSD cache entry: "
+          << runSize << " entry: " << entry->size();
+    }
+    VELOX_CHECK_GE(
+        runSize,
+        entry->size(),
+        "IOERR SSd cache entry shorter than requested range");
     payloadTotal += runSize;
     regionRead(regionIndex(ssdPins[i].run().offset()), runSize);
     ++stats_.entriesRead;
@@ -302,12 +356,27 @@ void SsdFile::write(std::vector<CachePin>& pins) {
     }
     {
       std::lock_guard<std::mutex> l(mutex_);
+      uint64_t previousFile = ~0LL;
       for (auto i = storeIndex; i < storeIndex + numWritten; ++i) {
         auto entry = pins[i].checkedEntry();
+        auto fileNum = entry->key().fileNum.id();
+        if (fileNum != previousFile) {
+          previousFile = fileNum;
+          LOG(INFO) << "SSD File " << fileNum << "="
+                    << fileIds().string(fileNum) << " size "
+                    << FileSizes::size(fileNum);
+        }
         entry->setSsdFile(this, offset);
         auto size = entry->size();
         FileCacheKey key = {
             entry->key().fileNum, static_cast<uint64_t>(entry->offset())};
+        LOG(INFO) << fmt::format(
+            "SSD Store {}:{} size {} at {}:{}",
+            key.fileNum.id(),
+            key.offset,
+            size,
+            shardId_,
+            offset);
         entries_[std::move(key)] = SsdRun(offset, size);
         if (FLAGS_ssd_verify_write) {
           verifyWrite(*entry, SsdRun(offset, size));

@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/common/process/TraceContext.h"
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
 
 DEFINE_int32(cache_load_quantum, 8 << 20, "Max size of single IO to cache");
@@ -24,7 +25,7 @@ DEFINE_int32(
     "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
 DEFINE_int32(
     storage_max_coalesce_distance,
-    1 << 20,
+    5 << 19,
     "Max gap across wich IOs are coalesced for storage");
 DEFINE_int32(
     ssd_max_coalesce_distance,
@@ -61,6 +62,10 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   TrackingId id;
   if (si) {
     id = TrackingId(si->node, si->kind);
+  }
+  if (region.offset + region.length > fileSize_) {
+    LOG(FATAL) << "Enqueue of range that goes past end of file " << fileSize_
+               << " offset " << region.offset << " length " << region.length;
   }
   requests_.emplace_back(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id);
@@ -184,6 +189,12 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
           }
           if (ssdFile) {
             part->ssdPin = ssdFile->find(part->key);
+            if (!part->ssdPin.empty() &&
+                part->ssdPin.run().size() < part->size) {
+              LOG(INFO) << "IOERR: Ignorin SSD  shorter than requested: "
+                        << part->ssdPin.run().size() << " vs " << part->size;
+              part->ssdPin.clear();
+            }
             if (!part->ssdPin.empty()) {
               ssdLoad.push_back(part);
               continue;
@@ -249,16 +260,26 @@ void CachedBufferedInput::makeLoads(
         ++numNewLoads;
         readRegion(ranges, prefetch);
       });
-  if (prefetch && executor_ && (isSpeculative_ || numNewLoads > 1)) {
+  if (prefetch && executor_ /*&& (isSpeculative_ || numNewLoads > 1)*/) {
     for (auto& load : allFusedLoads_) {
       if (load->state() == LoadState::kPlanned) {
-        executor_->add(
-            [pendingLoad = load]() { pendingLoad->loadOrFuture(nullptr); });
+        executor_->add([pendingLoad = load]() {
+          process::TraceContext trace("Read Ahead");
+          pendingLoad->loadOrFuture(nullptr);
+        });
       }
     }
   }
 }
 
+struct Region {
+  Region(uint64_t _offset, uint64_t _size
+	 : offset(_offset), size(_size) {}
+
+	 uint64_t offset;
+  uint_t size;
+};
+  
 // namespace {
 class DwrfFusedLoadBase : public cache::FusedLoad {
  public:
@@ -438,6 +459,11 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
     uint64_t offset,
     uint64_t length,
     dwio::common::LogType /*logType*/) const {
+  if (offset + length > fileSize_) {
+    LOG(FATAL) << "Enqueue of range that goes past end of file " << fileSize_
+               << " offset " << offset << " length " << length;
+  }
+
   return std::make_unique<CacheInputStream>(
       const_cast<CachedBufferedInput*>(this),
       ioStats_.get(),

@@ -29,7 +29,7 @@ struct SortingColumn {
 SortingColumn(const std::string& _column, bool _ascending) : column(_column), ascending(_ascending) {}
 };
 
- enum class BucketFunction {kPresto, kHive};
+ enum class BucketFunction {kNative, kHive};
  
  struct HiveConnectorSplit : public connector::ConnectorSplit {
   const std::string filePath;

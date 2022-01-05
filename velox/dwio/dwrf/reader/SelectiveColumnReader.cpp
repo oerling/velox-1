@@ -17,6 +17,7 @@
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
 #include "velox/common/base/Portability.h"
+#include "velox/common/process/TraceContext.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/common/FloatingPointDecoder.h"
@@ -4182,7 +4183,7 @@ void ColumnLoader::loadInternal(
     }
     effectiveRows = RowSet(selectedRows);
   }
-
+  process::TraceContext trace(fmt::format("ColumnLoader {}", gettid()), true);
   structReader_->advanceFieldReader(fieldReader_, offset);
   fieldReader_->scanSpec()->setValueHook(hook);
   fieldReader_->read(offset, effectiveRows, incomingNulls);

@@ -293,16 +293,16 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     setEndState(LoadState::kLoaded);
     return true;
   } catch (const std::exception& e) {
-    cancel();
+    cancel(true);
     std::rethrow_exception(std::current_exception());
   }
 }
 
-void FusedLoad::cancel() {
+void FusedLoad::cancel()bool force {
   std::unique_ptr<folly::SharedPromise<bool>> promise;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (state_ == LoadState::kLoading || state_ == LoadState::kCancelled) {
+    if (!force && (state_ == LoadState::kLoading || state_ == LoadState::kCancelled)) {
       // Already cancelled or another thread is loading. If loading, we must let
       // the load finish.
       return;
