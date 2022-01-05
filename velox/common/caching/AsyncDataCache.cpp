@@ -96,6 +96,9 @@ void AsyncDataCacheEntry::ensureLoaded(bool wait) {
     } else {
       load->loadOrFuture(nullptr);
     }
+  } else {
+    // There s no FusedLoad and data is not valid. This happens when there has been been a FusedLoad and it has errored out and removed itself.
+    VELOX_FAIL("Hitting cache entry with failed load. Please retry"); 
   }
 }
 
