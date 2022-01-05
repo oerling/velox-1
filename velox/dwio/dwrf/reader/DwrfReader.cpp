@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/common/exception/Exception.h"
+#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
 DEFINE_bool(prefetch_stripes, true, "Enable prefetch of stripes.");
@@ -96,8 +97,10 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
     DwrfRowReader* FOLLY_NONNULL rowReader;
     if (currentStripe == firstStripe) {
       rowReader = this;
-    } else if (currentRowInStripe == 0) {
-      delegate_ = readerForStripe(currentStripe);
+    } else {
+      if (!delegate_) {
+        delegate_ = readerForStripe(currentStripe);
+      }
       rowReader = delegate_.get();
     }
     VELOX_CHECK(rowReader);
@@ -109,6 +112,7 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
     }
     if (rowReader->currentRowInStripe >= rowReader->rowsInCurrentStripe) {
       ++currentStripe;
+      delegate_.reset();
     }
     if (numRows) {
       return numRows;
@@ -178,7 +182,7 @@ void DwrfRowReader::preloadStripe(int32_t stripeIndex) {
   auto& stripe = footer.stripes(stripeIndex);
 
   auto newOpts = options_;
-  newOpts.range(stripe.offset(), stripe.offset() + 1);
+  newOpts.range(stripe.offset(), 1);
   auto readerBase = readerBaseShared();
   auto source = std::make_shared<AsyncSource<DwrfRowReader>>(
       [readerBase, stripeIndex, newOpts]() {
@@ -187,7 +191,7 @@ void DwrfRowReader::preloadStripe(int32_t stripeIndex) {
         stripeReader->startNextStripe();
         return stripeReader;
       });
-  executor->add([source]() { source->prepare(); });
+  // executor->add([source]() { source->prepare(); });
   prefetchedStripeReaders_[stripeIndex] = std::move(source);
 }
 

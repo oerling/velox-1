@@ -160,6 +160,9 @@ CachePin CacheShard::findOrCreate(
       } else {
         ++numHit_;
       }
+      if (found->size() != size) {
+	LOG(INFO) << "Different size reqd than found";
+      }
       ++found->numPins_;
       CachePin pin;
       pin.setEntry(found);

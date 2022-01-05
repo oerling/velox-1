@@ -367,7 +367,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         ? &asyncCache->ssdCache()->groupStats()
         : nullptr;
     auto tracker = Connector::getTracker(scanId_, groupStats);
-    bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
+    bufferedInputFactory_ = std::make_shared<dwrf::CachedBufferedInputFactory>(
         (asyncCache),
         std::move(tracker),
         fileHandle_->groupId.id(),
@@ -376,7 +376,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
          stats = ioStats_]() { return makeStreamHolder(factory, path, stats); },
         ioStats_,
         executor_);
-    readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
+    readerOpts_.setBufferedInputFactorySource(
+					      [factory = bufferedInputFactory_]() { return factory.get(); });
   } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
     dataCacheConfig->cache = dataCache_;
@@ -485,6 +486,7 @@ void HiveDataSource::setFromDataSource(
     std::shared_ptr<DataSource> sourceShared) {
   auto source = dynamic_cast<HiveDataSource*>(sourceShared.get());
   emptySplit_ = source->emptySplit_;
+  split_ = std::move(source->split_);
   if (emptySplit_) {
     reader_.reset();
     rowReader_.reset();
@@ -492,6 +494,10 @@ void HiveDataSource::setFromDataSource(
   }
   reader_ = std::move(source->reader_);
   rowReader_ = std::move(source->rowReader_);
+  // New io is accounted on the stats of 'source'. Add the existing
+  // balance to that.
+  source->ioStats_->merge(*ioStats_);
+  ioStats_ = std::move(source->ioStats_);
 }
 
 RowVectorPtr HiveDataSource::next(uint64_t size) {

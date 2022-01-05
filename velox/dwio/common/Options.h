@@ -307,7 +307,8 @@ class ReaderOptions {
   std::shared_ptr<DataCacheConfig> dataCacheConfig_;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
   velox::dwrf::BufferedInputFactory* bufferedInputFactory_ = nullptr;
-
+  std::function<velox::dwrf::BufferedInputFactory*()> bufferedInputFactorySource_; 
+  
  public:
   ReaderOptions(
       velox::memory::MemoryPool* pool =
@@ -428,7 +429,13 @@ class ReaderOptions {
     bufferedInputFactory_ = factory;
     return *this;
   }
+  ReaderOptions& setBufferedInputFactorySource(
+					       std::function<velox::dwrf::BufferedInputFactory*()> factory) {
+    bufferedInputFactorySource_ = factory;
+    return *this;
+  }
 
+  
   /**
    * Get the data cache config.
    */
@@ -486,6 +493,9 @@ class ReaderOptions {
   }
 
   velox::dwrf::BufferedInputFactory* getBufferedInputFactory() const {
+    if (bufferedInputFactorySource_) {
+      return bufferedInputFactorySource_();
+    }
     return bufferedInputFactory_;
   }
 };

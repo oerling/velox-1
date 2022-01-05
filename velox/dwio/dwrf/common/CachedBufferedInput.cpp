@@ -249,7 +249,7 @@ void CachedBufferedInput::makeLoads(
         ++numNewLoads;
         readRegion(ranges, prefetch);
       });
-  if (prefetch && executor_ && (isSpeculative_ || numNewLoads > 1)) {
+  if (prefetch && executor_ /* && (isSpeculative_ || numNewLoads > 1)*/) {
     for (auto& load : allFusedLoads_) {
       if (load->state() == LoadState::kPlanned) {
         executor_->add(
