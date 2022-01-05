@@ -291,7 +291,7 @@ TEST_F(HashJoinTest, memory) {
                         .project({"t_k0 % 1000", "u_k0 % 1000"}, {"k1", "k2"})
                         .singleAggregation({}, {"sum(k1)", "sum(k2)"})
                         .planNode();
-  params.queryCtx = core::QueryCtx::create();
+  params.queryCtx = core::QueryCtx::createForTest();
   auto tracker = memory::MemoryUsageTracker::create();
   params.queryCtx->pool()->setMemoryUsageTracker(tracker);
   auto [taskCursor, rows] = readCursor(params, [](Task*) {});
@@ -760,17 +760,27 @@ TEST_F(HashJoinTest, dynamicFilters) {
 
 TEST_F(HashJoinTest, leftJoin) {
   // Left side keys are [0, 1, 2,..10].
+  // Use 3-rd column as row number to allow for asserting the order of results.
   auto leftVectors = {
-      makeRowVector({
-          makeFlatVector<int32_t>(
-              1'234, [](auto row) { return row % 11; }, nullEvery(13)),
-          makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
-      }),
-      makeRowVector({
-          makeFlatVector<int32_t>(
-              2'222, [](auto row) { return (row + 3) % 11; }, nullEvery(13)),
-          makeFlatVector<int32_t>(2'222, [](auto row) { return row; }),
-      }),
+      makeRowVector(
+          {"c0", "c1", "row_number"},
+          {
+              makeFlatVector<int32_t>(
+                  1'234, [](auto row) { return row % 11; }, nullEvery(13)),
+              makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+              makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+          }),
+      makeRowVector(
+          {"c0", "c1", "row_number"},
+          {
+              makeFlatVector<int32_t>(
+                  2'222,
+                  [](auto row) { return (row + 3) % 11; },
+                  nullEvery(13)),
+              makeFlatVector<int32_t>(2'222, [](auto row) { return row; }),
+              makeFlatVector<int32_t>(
+                  2'222, [](auto row) { return 1'234 + row; }),
+          }),
   };
 
   // Right side keys are [0, 1, 2, 3, 4].
@@ -792,10 +802,14 @@ TEST_F(HashJoinTest, leftJoin) {
   auto op =
       PlanBuilder(10)
           .values(leftVectors)
-          .hashJoin({0}, {0}, buildSide, "", {0, 1, 3}, core::JoinType::kLeft)
+          .hashJoin(
+              {0}, {0}, buildSide, "", {2, 0, 1, 4}, core::JoinType::kLeft)
           .planNode();
 
-  assertQuery(op, "SELECT t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0");
+  assertQueryOrdered(
+      op,
+      "SELECT t.row_number, t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0 ORDER BY 1",
+      {0});
 
   // Empty build side.
   auto emptyBuildSide = PlanBuilder(0)
@@ -803,26 +817,30 @@ TEST_F(HashJoinTest, leftJoin) {
                             .filter("c0 < 0")
                             .project({"c0", "c1"}, {"u_c0", "u_c1"})
                             .planNode();
-  op = PlanBuilder(10)
-           .values(leftVectors)
-           .hashJoin({0}, {0}, emptyBuildSide, "", {1}, core::JoinType::kLeft)
-           .planNode();
+  op =
+      PlanBuilder(10)
+          .values(leftVectors)
+          .hashJoin({0}, {0}, emptyBuildSide, "", {2, 1}, core::JoinType::kLeft)
+          .planNode();
 
-  assertQuery(
+  assertQueryOrdered(
       op,
-      "SELECT t.c1 FROM t LEFT JOIN (SELECT c0 FROM u WHERE c0 < 0) u ON t.c0 = u.c0");
+      "SELECT t.row_number, t.c1 FROM t LEFT JOIN (SELECT c0 FROM u WHERE c0 < 0) u ON t.c0 = u.c0 ORDER BY 1",
+      {0});
 
   // All left-side rows have a match on the build side.
   op = PlanBuilder(10)
            .values(leftVectors)
            .filter("c0 < 5")
-           .hashJoin({0}, {0}, buildSide, "", {0, 1, 3}, core::JoinType::kLeft)
+           .hashJoin(
+               {0}, {0}, buildSide, "", {2, 0, 1, 4}, core::JoinType::kLeft)
            .planNode();
 
-  assertQuery(
+  assertQueryOrdered(
       op,
-      "SELECT t.c0, t.c1, u.c1 FROM (SELECT * FROM t WHERE c0 < 5) t"
-      " LEFT JOIN u ON t.c0 = u.c0");
+      "SELECT t.row_number, t.c0, t.c1, u.c1 FROM (SELECT * FROM t WHERE c0 < 5) t"
+      " LEFT JOIN u ON t.c0 = u.c0 ORDER BY t.row_number",
+      {0});
 
   // Additional filter.
   op = PlanBuilder(10)
@@ -832,13 +850,14 @@ TEST_F(HashJoinTest, leftJoin) {
                {0},
                buildSide,
                "(c1 + u_c1) % 2 = 1",
-               {0, 1, 3},
+               {2, 0, 1, 4},
                core::JoinType::kLeft)
            .planNode();
 
-  assertQuery(
+  assertQueryOrdered(
       op,
-      "SELECT t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0 AND (t.c1 + u.c1) % 2 = 1");
+      "SELECT t.row_number, t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0 AND (t.c1 + u.c1) % 2 = 1 ORDER BY t.row_number",
+      {0});
 
   // No rows pass the additional filter.
   op = PlanBuilder(10)
@@ -847,14 +866,55 @@ TEST_F(HashJoinTest, leftJoin) {
                {0},
                {0},
                buildSide,
-               "(c1 + u_c1) % 2  = 3",
-               {0, 1, 3},
+               "(c1 + u_c1) % 2 = 3",
+               {2, 0, 1, 4},
                core::JoinType::kLeft)
            .planNode();
 
-  assertQuery(
+  assertQueryOrdered(
       op,
-      "SELECT t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0 AND (t.c1 + u.c1) % 2 = 3");
+      "SELECT t.row_number, t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0 AND (t.c1 + u.c1) % 2 = 3 ORDER BY t.row_number",
+      {0});
+}
+
+/// Tests left join with a filter that may evalute to true, false or null. Makes
+/// sure that null filter results are handled correctly, e.g. as if the filter
+/// returned false.
+TEST_F(HashJoinTest, leftJoinWithNullableFilter) {
+  auto leftVectors = {
+      makeRowVector({
+          makeFlatVector<int32_t>({1, 2, 3, 4, 5}),
+          makeNullableFlatVector<int32_t>(
+              {10, std::nullopt, 30, std::nullopt, 50}),
+      }),
+      makeRowVector({
+          makeFlatVector<int32_t>({1, 2, 3, 4, 5}),
+          makeNullableFlatVector<int32_t>(
+              {std::nullopt, 20, 30, std::nullopt, 50}),
+      })};
+  auto rightVectors = {
+      makeRowVector({makeFlatVector<int32_t>({1, 2, 10, 30, 40})}),
+  };
+
+  createDuckDbTable("t", leftVectors);
+  createDuckDbTable("u", rightVectors);
+
+  auto buildSide =
+      PlanBuilder(0).values(rightVectors).project({"c0"}, {"u_c0"}).planNode();
+
+  auto plan = PlanBuilder(10)
+                  .values(leftVectors)
+                  .hashJoin(
+                      {0},
+                      {0},
+                      buildSide,
+                      "c1 + u_c0 > 0",
+                      {0, 1, 2},
+                      core::JoinType::kLeft)
+                  .planNode();
+
+  assertQuery(
+      plan, "SELECT * FROM t LEFT JOIN u ON (t.c0 = u.c0 AND t.c1 + u.c0 > 0)");
 }
 
 TEST_F(HashJoinTest, rightJoin) {
