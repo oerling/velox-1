@@ -72,15 +72,23 @@ class AsyncDataCacheTest : public testing::Test {
       std::vector<Request>& requests,
       bool injectError);
 
-  // Gets a pin on each of 'requests'individually. This checks the contents via cache_'s verifyHook.
-  void checkBatch(uint64_t fileNum, std::vector<Request>& requests) {
+  // Gets a pin on each of 'requests'individually. This checks the
+  // contents via cache_'s verifyHook. Returns true for a successful
+  // load and false if the FusedLoad triggered by accessing and entry
+  // threw an error. In the error case the pins are cleared.
+  bool checkBatch(uint64_t fileNum, std::vector<Request>& requests) {
     for (auto& request :requests) {
       try {
 	loadOne(fileNum, request);
 	request.pin.clear();
-      } catch (std::exception& e) {}
-      request.pin.clear();
+      } catch (std::exception& e) {
+	for (auto& request : requests) {
+	  request.pin.clear();
+	}
+	return false;
+      }
     }
+    return true;
   }
   
   // Loads a sequence of entries from a number of files. Looks up a
@@ -182,6 +190,10 @@ class TestingFusedLoad : public FusedLoad {
  public:
   TestingFusedLoad(AsyncDataCache* FOLLY_NONNULL cache) : cache_(cache) {}
 
+  void injectError(bool error) {
+    injectError_ = error;
+  }
+
   void loadData(bool /*isPrefetch*/) override {
     for (auto& pin : pins_) {
       auto& buffer = pin.entry()->data();
@@ -189,6 +201,7 @@ class TestingFusedLoad : public FusedLoad {
           pin.entry()->key().offset + pin.entry()->key().fileNum.id(), buffer);
       pin.entry()->setValid();
     }
+    VELOX_CHECK(!injectError_, "Testing error");
   }
 
   bool makePins() override {
@@ -198,6 +211,7 @@ class TestingFusedLoad : public FusedLoad {
  protected:
   AsyncDataCache* cache_;
   std::vector<Request> requests_;
+  bool injectError_{false};
 };
 
 class TestingSsdFusedLoad : public TestingFusedLoad {
@@ -212,8 +226,25 @@ public:
 
   void loadData(bool /*isPrefetch*/) override {
     auto file = ssdPins_[0].file();
-    assert(file); // For lint.
-    file->load(ssdPins_, pins_);
+    assert(file); // for lint.
+    auto fileNum = pins_[0].checkedEntry()->key().fileNum.id();
+    std::exception_ptr toRethrow;
+    try {
+      file->load(ssdPins_, pins_);
+      VELOX_CHECK(!injectError_, "Testing error");
+    } catch(std::exception& e) {
+      toRethrow = std::current_exception();
+    }
+    // Do the cleanup outside of catch so that any extra exceptions do
+    // not kill the process. Remove the entries for which the load
+    // failed from the SSD cache so that they will next be loaded from
+    // storage.
+    if (toRethrow) {
+      for (auto& ssdPin : ssdPins_) {
+	file->erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
+      }
+      std::rethrow_exception(toRethrow);
+    }
   }
 
  private:
@@ -309,6 +340,7 @@ void AsyncDataCacheTest::loadBatch(
       pins.push_back(std::move(request->pin));
     }
     auto load = std::make_shared<TestingFusedLoad>(cache_.get());
+    load->injectError(injectError);
     load->initialize(std::move(pins));
   }
   if (!fromSsd.empty()) {
@@ -319,6 +351,7 @@ void AsyncDataCacheTest::loadBatch(
       ssdPins.push_back(std::move(request->ssdPin));
     }
     auto load = std::make_shared<TestingSsdFusedLoad>(cache_.get());
+    load->injectError(injectError);
     load->initialize(std::move(pins), std::move(ssdPins));
   }
 }
@@ -345,13 +378,14 @@ void AsyncDataCacheTest::loadLoop(
 
       batch.emplace_back(offset, size);
       if (batch.size() >= 8) {
-	bool injectError = errorEveryNBatches && ++errorCounter % errorEveryNBatches == 0;
-	try {
+	for (;;) {
+	  bool injectError = errorEveryNBatches && (++errorCounter % errorEveryNBatches == 0);
 	  loadBatch(fileNum, batch, injectError);
-	  loadBatch(fileNum, batch, injectError);
-	  checkBatch(fileNum, batch);
+	  if (! checkBatch(fileNum, batch)) {
+	    continue; // Retry the same loads.
+	  }
 	  batch.clear();
-	} catch (std::exception& e) {
+	  break;
 	}
       }
     }
@@ -487,8 +521,8 @@ TEST_F(AsyncDataCacheTest, ssd) {
   // threads. The same data will
   // be hit by all threads. The expectation is that most of the data
   // ends up on SSD. All data may not get written if reading is faster than
-  // writing.
-  runThreads(4, [&](int32_t /*i*/) { loadLoop(0, kSsdBytes); });
+  // writing. Error out once every 11 load batches.
+  runThreads(4, [&](int32_t /*i*/) { loadLoop(0, kSsdBytes, 11); });
   LOG(INFO) << "Stats after first pass: " << cache_->toString();
   auto stats = cache_->ssdCache()->stats();
 
@@ -496,21 +530,27 @@ TEST_F(AsyncDataCacheTest, ssd) {
   FLAGS_ssd_verify_write = false;
 
   EXPECT_LE(kRamBytes, stats.bytesWritten);
-  // We read the data back. The verify hook checks correct values.
-  runThreads(4, [&](int32_t /*i*/) { loadLoop(0, kSsdBytes); });
+  // We read the data back. The verify hook checks correct values. Error every 13 batch loads.
+  runThreads(4, [&](int32_t /*i*/) { loadLoop(0, kSsdBytes, 13); });
 
   LOG(INFO) << "Stats after second pass:" << cache_->toString();
   stats = cache_->ssdCache()->stats();
   EXPECT_LE(kRamBytes, stats.bytesRead);
 
   // We re-read the second half and add another half capacity of new
-  // entries. We expect some of the oldest entries to get evicted.
+  // entries. We expect some of the oldest entries to get evicted. Error every 17 batch loads.
   runThreads(
-      4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5); });
+	     4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5), 17; });
 
   LOG(INFO) << "Stats after third pass:" << cache_->toString();
   auto stats2 = cache_->ssdCache()->stats();
   EXPECT_GT(stats2.bytesWritten, stats.bytesWritten);
   EXPECT_GT(stats2.bytesRead, stats.bytesRead);
+
+  // Check that no pins are leaked.
+  EXPECT_EQ(0, stats2.numPins);
+  auto ramStats = cache_->refreshStats();
+  EXPECT_EQ(0, ramStats.numShared);
+  EXPECT_EQ(0, ramStats.numExclusive);
   cache_->ssdCache()->clear();
 }

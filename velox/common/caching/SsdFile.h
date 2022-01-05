@@ -119,6 +119,7 @@ struct SsdCacheStats {
   uint64_t bytesRead{0};
   uint64_t entriesCached{0};
   uint64_t bytesCached{0};
+  int32_t numPins{0};
 };
 
 // A shard of SsdCache. Corresponds to one file on SSD.  The data

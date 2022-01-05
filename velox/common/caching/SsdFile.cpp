@@ -407,6 +407,9 @@ void SsdFile::updateStats(SsdCacheStats& stats) const {
   for (auto& regionSize : regionSize_) {
     stats.bytesCached += regionSize;
   }
+  for (auto pins : regionPins_) {
+    stats.numPins += pins;
+  }
 }
 
 void SsdFile::clear() {
