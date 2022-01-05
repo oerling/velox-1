@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <mutex>
 
+#include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
 
 namespace facebook::velox::cache {
@@ -78,9 +79,13 @@ struct TrackingData {
   int64_t readBytes{};
   int32_t numReferences{};
   int32_t numReads{};
-  void incrementReference(uint64_t bytes) {
+  void incrementReference(uint64_t bytes, int32_t quantum = 0) {
     referencedBytes += bytes;
-    ++numReferences;
+    if (!quantum) {
+      ++numReferences;
+    } else {
+      numReferences += bits::roundUp(bytes, quantum) / quantum;
+    }
   }
 
   void incrementRead(uint64_t bytes) {
@@ -134,8 +139,17 @@ class ScanTracker {
     return (100 * data.numReads) / data.numReferences >= minReadPct;
   }
 
+  TrackingData trackingData(TrackingId id) {
+    std::lock_guard<std::mutex> l(mutex_);
+    return data_[id];
+  }
+
   std::string_view id() const {
     return id_;
+  }
+
+  void setLoadQuantum(int32_t bytes) {
+    loadQuantum_ = bytes;
   }
 
   std::string toString() const;
@@ -147,6 +161,7 @@ class ScanTracker {
   std::function<void(ScanTracker*)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
+  int32_t loadQuantum_{0};
 };
 
 } // namespace facebook::velox::cache
