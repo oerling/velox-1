@@ -1806,4 +1806,3 @@ VELOX_INSTANTIATE_TEST_SUITE_P(
     TableScanTests,
     TableScanTest,
     testing::Values(true, false));
-

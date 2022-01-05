@@ -558,7 +558,6 @@ bool registerApproxPercentile(const std::string& name) {
               false, VARBINARY());
         }
 
-
         switch (type->kind()) {
           case TypeKind::TINYINT:
             return std::make_unique<ApproxPercentileAggregate<int8_t>>(

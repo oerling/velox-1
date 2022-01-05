@@ -164,9 +164,9 @@ class HiveDataSource : public DataSource {
 
   void setFromDataSource(std::shared_ptr<DataSource> source) override;
 
-    int64_t estimatedRowSize() override;
+  int64_t estimatedRowSize() override;
 
-private:
+ private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
   // some rows passed the filter. If no or all rows passed
@@ -259,7 +259,7 @@ class HiveConnector final : public Connector {
   bool supportsSplitPreload() override {
     return true;
   }
-  
+
   std::shared_ptr<DataSink> createDataSink(
       std::shared_ptr<const RowType> inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,

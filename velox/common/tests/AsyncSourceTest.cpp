@@ -60,20 +60,20 @@ TEST(AsyncSourceTest, basic) {
           auto gizmo =
               gizmos[folly::Random::rand32(rng) % gizmos.size()]->move();
           if (gizmo) {
-	    results.withWLock([&](auto& set) {
-	      EXPECT_TRUE(set.find(gizmo->id) == set.end());
-	      set.insert(gizmo->id);
-	    });
-	    }
+            results.withWLock([&](auto& set) {
+              EXPECT_TRUE(set.find(gizmo->id) == set.end());
+              set.insert(gizmo->id);
+            });
+          }
         }
         for (auto i = 0; i < gizmos.size(); ++i) {
           auto gizmo = gizmos[i]->move();
           if (gizmo) {
-	    results.withWLock([&](auto& set) {
-	      EXPECT_TRUE(set.find(gizmo->id) == set.end());
-	      set.insert(gizmo->id);
-	    });
-	    }
+            results.withWLock([&](auto& set) {
+              EXPECT_TRUE(set.find(gizmo->id) == set.end());
+              set.insert(gizmo->id);
+            });
+          }
         }
       }
     }));
@@ -87,4 +87,3 @@ TEST(AsyncSourceTest, basic) {
     }
   });
 }
-

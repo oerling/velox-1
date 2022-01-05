@@ -88,7 +88,7 @@ class CachedBufferedInput : public BufferedInput {
         streamSource_(streamSource),
         ioStats_(std::move(ioStats)),
         executor_(executor),
-	fileSize_(input.getLength()) {
+        fileSize_(input.getLength()) {
     tracker_->setLoadQuantum(FLAGS_cache_load_quantum);
   }
 
@@ -187,7 +187,6 @@ class CachedBufferedInput : public BufferedInput {
   // Distinct fused loads in 'fusedLoads_'.
   std::vector<std::shared_ptr<cache::FusedLoad>> allFusedLoads_;
   const uint64_t fileSize_;
-
 };
 
 class CachedBufferedInputFactory : public BufferedInputFactory {
@@ -232,7 +231,7 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
   folly::Executor* FOLLY_NULLABLE executor() const override {
     return executor_;
   }
-  
+
  private:
   cache::AsyncDataCache* const cache_;
   std::shared_ptr<cache::ScanTracker> tracker_;

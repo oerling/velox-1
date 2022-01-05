@@ -26,12 +26,13 @@ struct SortingColumn {
   const std::string column;
   const bool ascending{true};
 
-SortingColumn(const std::string& _column, bool _ascending) : column(_column), ascending(_ascending) {}
+  SortingColumn(const std::string& _column, bool _ascending)
+      : column(_column), ascending(_ascending) {}
 };
 
- enum class BucketFunction {kNative, kHive};
- 
- struct HiveConnectorSplit : public connector::ConnectorSplit {
+enum class BucketFunction { kNative, kHive };
+
+struct HiveConnectorSplit : public connector::ConnectorSplit {
   const std::string filePath;
   dwio::common::FileFormat fileFormat;
   const uint64_t start;
@@ -66,8 +67,8 @@ SortingColumn(const std::string& _column, bool _ascending) : column(_column), as
         tableBucketNumber(_tableBucketNumber),
         bucketedBy(std::move(_bucketedBy)),
         bucketCount(_bucketCount),
-    bucketFunction(_bucketFunction),
-    sortedBy(_sortedBy) {}
+        bucketFunction(_bucketFunction),
+        sortedBy(_sortedBy) {}
 
   std::string toString() const override {
     if (tableBucketNumber.has_value()) {

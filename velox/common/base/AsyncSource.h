@@ -76,10 +76,10 @@ class AsyncSource {
         promise_ = std::make_unique<folly::Promise<bool>>();
         wait = promise_->getSemiFuture();
       } else {
-	if (!make_) {
-	  return  nullptr;
-	}
-	std::swap(make, make_);
+        if (!make_) {
+          return nullptr;
+        }
+        std::swap(make, make_);
       }
     }
     // Outside of mutex_.

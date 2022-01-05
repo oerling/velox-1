@@ -62,10 +62,10 @@ class DwrfRowReader : public DwrfRowReaderShared {
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override {
     if (delegate_) {
-    stats.skippedStrides += delegate_->skippedStrides_;
+      stats.skippedStrides += delegate_->skippedStrides_;
     } else {
-    stats.skippedStrides += skippedStrides_;
-  }
+      stats.skippedStrides += skippedStrides_;
+    }
   }
 
   ColumnReader* columnReader() {
@@ -74,12 +74,12 @@ class DwrfRowReader : public DwrfRowReaderShared {
     } else {
       return columnReader_.get();
     }
-    }
+  }
 
   void resetFilterCaches() override;
 
   bool allPrefetchIssued() const override;
-  
+
  private:
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
 
@@ -93,7 +93,7 @@ class DwrfRowReader : public DwrfRowReaderShared {
   // must have been prepared by preloadStripe() for the same stripe
   // index.
   std::unique_ptr<DwrfRowReader> readerForStripe(int32_t stripeIndex);
-  
+
   void checkSkipStrides(const StatsContext& context, uint64_t strideSize);
 
   std::unique_ptr<ColumnReader> columnReader_;
@@ -109,7 +109,8 @@ class DwrfRowReader : public DwrfRowReaderShared {
   std::unique_ptr<DwrfRowReader> delegate_;
 
   // Map from stripe number to prepared stripe reader.
-  folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>prefetchedStripeReaders_; 
+  folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>
+      prefetchedStripeReaders_;
 
   // Set to true after clearing filter caches, i.e.  adding a dynamic
   // filter. Causes filters to be re-evaluated against stride stats on

@@ -124,7 +124,8 @@ class DwrfRowReaderShared : public StrideIndexProvider,
 
   // Estimate the row size for projected columns
   size_t estimatedRowSize() const override;
-  // Creates column reader tree and may start prefetch of frequently read columns.
+  // Creates column reader tree and may start prefetch of frequently read
+  // columns.
   void startNextStripe();
 };
 

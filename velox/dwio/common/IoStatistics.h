@@ -58,7 +58,7 @@ class IoCounter {
     bytes_ += other.bytes_;
     count_ += other.count_;
   }
-  
+
  private:
   std::atomic<uint64_t> count_{0};
   std::atomic<uint64_t> bytes_{0};
@@ -110,7 +110,7 @@ class IoStatistics {
   std::unordered_map<std::string, OperationCounters> operationStats() const;
 
   void merge(const IoStatistics& other);
-  
+
  private:
   std::atomic<uint64_t> rawBytesRead_{0};
   std::atomic<uint64_t> rawBytesWritten_{0};

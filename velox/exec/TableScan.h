@@ -62,7 +62,7 @@ class TableScan : public SourceOperator {
   // background on the executor of the connector. If the DataSource is
   // needed before prepare is done, it will be made when needed.
   void preload(std::shared_ptr<connector::ConnectorSplit> split);
-  
+
   // Adjust batch size according to split information.
   void setBatchSize();
   const core::PlanNodeId planNodeId_;

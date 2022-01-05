@@ -161,7 +161,7 @@ CachePin CacheShard::findOrCreate(
         ++numHit_;
       }
       if (found->size() != size) {
-	LOG(INFO) << "Different size reqd than found";
+        LOG(INFO) << "Different size reqd than found";
       }
       ++found->numPins_;
       CachePin pin;
