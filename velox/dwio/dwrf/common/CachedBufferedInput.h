@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/ScanTracker.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
 #include "velox/dwio/dwrf/common/CacheInputStream.h"
@@ -86,7 +86,7 @@ class CachedBufferedInput : public BufferedInput {
         streamSource_(streamSource),
         ioStats_(std::move(ioStats)),
         executor_(executor),
-	fileSize_(input.getLength()){
+        fileSize_(input.getLength()) {
     tracker_->setLoadQuantum(FLAGS_cache_load_quantum);
   }
 
@@ -137,7 +137,8 @@ class CachedBufferedInput : public BufferedInput {
 
   // Makes a FusedLoad for 'requests' to be read together, coalescing
   // IO is appropriate. If 'prefetch' is set, schedules the FusedLoad
-  // on 'executor_'. Links the FusedLoad  to all CacheInputStreams tat it concers.
+  // on 'executor_'. Links the FusedLoad  to all CacheInputStreams tat it
+  // concers.
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
   cache::AsyncDataCache* cache_;

@@ -29,7 +29,7 @@ DEFINE_int32(
     "Max gap across wich IOs are coalesced for storage");
 
 DEFINE_int32(
-max_coalesced_io_size,
+    max_coalesced_io_size,
     (16 << 20),
     "Maximum size of a single load for coalesced streams");
 
@@ -192,7 +192,7 @@ void CachedBufferedInput::makeLoads(
       requests.begin(),
       requests.end(),
       [&](const CacheRequest* left, const CacheRequest* right) {
-          return left->key.offset < right->key.offset;
+        return left->key.offset < right->key.offset;
       });
   // Combine adjacent short reads.
 
@@ -203,9 +203,7 @@ void CachedBufferedInput::makeLoads(
       maxDistance,
       // Break batches up. Better load more short ones i parallel.
       40,
-      [&](int32_t index) {
-        return requests[index]->key.offset;
-      },
+      [&](int32_t index) { return requests[index]->key.offset; },
       [&](int32_t index) { return requests[index]->size; },
       [&](int32_t index) {
         return requests[index]->coalesces ? 1 : kNoCoalesce;
@@ -274,12 +272,12 @@ class DwrfFusedLoadBase : public cache::FusedLoad {
   void updateStats(const CoalesceIoStats& stats, bool isPrefetch, bool isSsd) {
     if (ioStats_) {
       ioStats_->incRawOverreadBytes(stats.extraBytes);
-        // Reading the file increments rawReadBytes. Reverse this
-        // increment here because actually accessing the data via
-        // CacheInputStream will do the increment.
-        ioStats_->incRawBytesRead(-stats.payloadBytes);
+      // Reading the file increments rawReadBytes. Reverse this
+      // increment here because actually accessing the data via
+      // CacheInputStream will do the increment.
+      ioStats_->incRawBytesRead(-stats.payloadBytes);
 
-        ioStats_->read().increment(stats.payloadBytes);
+      ioStats_->read().increment(stats.payloadBytes);
 
       if (isPrefetch) {
         ioStats_->prefetch().increment(stats.payloadBytes);
@@ -362,8 +360,8 @@ void CachedBufferedInput::readRegion(
     return;
   }
   std::shared_ptr<cache::FusedLoad> load;
-    load = std::make_shared<DwrfFusedLoad>(
-        *cache_, streamSource_(), ioStats_, groupId_, requests);
+  load = std::make_shared<DwrfFusedLoad>(
+      *cache_, streamSource_(), ioStats_, groupId_, requests);
   allFusedLoads_.push_back(load);
   fusedLoads_.withWLock([&](auto& loads) {
     for (auto& request : requests) {

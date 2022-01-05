@@ -118,12 +118,10 @@ class CacheTest : public testing::Test {
     executor_->join();
   }
 
-  void initializeCache(
-      uint64_t maxBytes) {
+  void initializeCache(uint64_t maxBytes) {
     memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_unique<AsyncDataCache>(
-        std::make_unique<memory::MmapAllocator>(options),
-        maxBytes);
+        std::make_unique<memory::MmapAllocator>(options), maxBytes);
     cache_->setVerifyHook(checkEntry);
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
@@ -439,4 +437,3 @@ TEST_F(CacheTest, singleFileThreads) {
     threads[i].join();
   }
 }
-
