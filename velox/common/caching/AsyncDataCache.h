@@ -370,10 +370,12 @@ enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
 // either done by a background prefetch thread or if the query
 // thread gets there first, then the query thread will do the
 // IO. The IO is also cancelled as a unit.
-  class FusedLoad {
+class FusedLoad {
  public:
   FusedLoad(std::vector<RawFileCacheKey> keys, std::vector<int32_t> sizes)
-    : state_(LoadState::kPlanned), keys_(std::move(keys)), sizes_(std::move(sizes)) {}
+      : state_(LoadState::kPlanned),
+        keys_(std::move(keys)),
+        sizes_(std::move(sizes)) {}
 
   virtual ~FusedLoad();
 
@@ -387,10 +389,10 @@ enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
     return state_;
   }
 
-    void cancel() {
-      setEndState(LoadState::kCancelled);
-    }
-    
+  void cancel() {
+    setEndState(LoadState::kCancelled);
+  }
+
   virtual std::string toString() const {
     return "<FusedLoad>";
   }
@@ -495,7 +497,6 @@ class CacheShard {
 
   bool exists(RawFileCacheKey key);
 
-  
   AsyncDataCache* FOLLY_NONNULL cache() {
     return cache_;
   }
@@ -674,26 +675,24 @@ class AsyncDataCache : public memory::MappedMemory,
   }
 
   // Looks up a pin for each in 'keys' and skips all loading or
-// loaded pins. Calls processPin for each exclusive
-// pin. processPin must move its argument if it wants to use it
-// afterwards. sizeFunc(i) returns the size of the ith item in
-// 'keys'.
+  // loaded pins. Calls processPin for each exclusive
+  // pin. processPin must move its argument if it wants to use it
+  // afterwards. sizeFunc(i) returns the size of the ith item in
+  // 'keys'.
   template <typename SizeFunc, typename ProcessPin>
-void makePins(
-    std::vector<RawFileCacheKey>& keys,
-    SizeFunc sizeFunc,
-    ProcessPin processPin) {
-  for (auto i = 0; i < keys.size(); ++i) {
-    auto pin = findOrCreate(keys[i], sizeFunc(i), nullptr);
-    if (pin.empty() || pin.checkedEntry()->isShared()) {
-      continue;
+  void makePins(
+      std::vector<RawFileCacheKey>& keys,
+      SizeFunc sizeFunc,
+      ProcessPin processPin) {
+    for (auto i = 0; i < keys.size(); ++i) {
+      auto pin = findOrCreate(keys[i], sizeFunc(i), nullptr);
+      if (pin.empty() || pin.checkedEntry()->isShared()) {
+        continue;
+      }
+      processPin(i, std::move(pin));
     }
-    processPin(i, std::move(pin));
-  }
   }
 
-
-  
   // Drops all unpinned entries. Pins stay valid.
   void clear();
 

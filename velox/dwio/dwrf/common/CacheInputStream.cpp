@@ -225,8 +225,8 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
       entry->setExclusiveToShared();
     } else {
       if (!entry->getAndClearFirstUseFlag()) {
-	ioStats_->ramHit().increment(pin_.entry()->size());
-        }
+        ioStats_->ramHit().increment(pin_.entry()->size());
+      }
       return;
     }
   } while (pin_.empty());

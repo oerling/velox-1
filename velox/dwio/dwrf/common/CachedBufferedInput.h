@@ -88,7 +88,7 @@ class CachedBufferedInput : public BufferedInput {
         streamSource_(streamSource),
         ioStats_(std::move(ioStats)),
         executor_(executor),
-	fileSize_(input.getLength()){
+        fileSize_(input.getLength()) {
     tracker_->setLoadQuantum(FLAGS_cache_load_quantum);
   }
 
@@ -145,7 +145,8 @@ class CachedBufferedInput : public BufferedInput {
 
   // Makes a FusedLoad for 'requests' to be read together, coalescing
   // IO is appropriate. If 'prefetch' is set, schedules the FusedLoad
-  // on 'executor_'. Links the FusedLoad  to all CacheInputStreams tat it concers.
+  // on 'executor_'. Links the FusedLoad  to all CacheInputStreams tat it
+  // concers.
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
   cache::AsyncDataCache* cache_;

@@ -171,9 +171,8 @@ CoalesceIoStats SsdFile::load(
     auto entry = pins[i].checkedEntry();
     auto fileId = entry->key().fileNum.id();
     if (runSize > entry->size()) {
-      LOG(INFO)
-          << "IOERR: Requested prefix of SSD cache entry: "
-          << runSize << " entry: " << entry->size();
+      LOG(INFO) << "IOERR: Requested prefix of SSD cache entry: " << runSize
+                << " entry: " << entry->size();
     }
     VELOX_CHECK_GE(
         runSize,
