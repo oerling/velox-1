@@ -3862,6 +3862,81 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
   initTimeClocks_ = timer.elapsedClocks();
 }
 
+class SelectiveTimestampColumnReader : public ColumnReader {
+ public:
+  SelectiveTimestampColumnReader(
+    const std::shared_ptr<const TypeWithId>& nodeType,
+    StripeStreams& stripe,
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+
+    void seekToRowGroup(uint32_t index) override {
+    ensureRowGroupIndex();
+
+    auto positions = toPositions(index_->entry(index));
+    PositionProvider positionsProvider(positions);
+
+    if (notNullDecoder_) {
+      notNullDecoder_->seekToRowGroup(positionsProvider);
+    }
+
+    seconds_->seekToRowGroup(positionsProvider);
+    nano_->seekToRowGroup(positionsProvider);
+    VELOX_CHECK(!positionsProvider.hasNext());
+  }
+
+  uint64_t skip(uint64_t numValues) override;
+
+  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
+      override;
+
+  
+ private:
+  std::unique_ptr<IntDecoder</*isSigned*/ true>> seconds_;
+  std::unique_ptr<IntDecoder</*isSigned*/ false>> nano_;
+
+  BufferPtr nanosBuffer_;
+
+
+};
+
+SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
+    const std::shared_ptr<const TypeWithId>& nodeType,
+    StripeStreams& stripe,
+    common::ScanSpec* scanSpec,
+    FlatMapContext flatMapContext)
+    : SelectiveColumnReader(
+          nodeType,
+          stripe,
+          scanSpec,
+          nodeType->type,
+          std::move(flatMapContext)) {
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  RleVersion vers = convertRleVersion(stripe.getEncoding(encodingKey).kind());
+  auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
+  bool vints = stripe.getUseVInts(data);
+  seconds_ = IntDecoder</*isSigned*/ true>::createRle(
+						     stripe.getStream(data, true), vers, memoryPool_, vints, LONG_BYTE_SIZE);
+  auto nanoData = encodingKey.forKind(proto::Stream_Kind_NANO_DATA);
+  bool nanoVInts = stripe.getUseVInts(nanoData);
+  nano_ = IntDecoder</*isSigned*/ false>::createRle(
+						   stripe.getStream(nanoData, true),
+						   vers,
+						   memoryPool_,
+      nanoVInts,
+      LONG_BYTE_SIZE);
+}
+
+uint64_t TimestampColumnReader::skip(uint64_t numValues) {
+  numValues = SelectiveColumnReader::skip(numValues);
+  seconds_->skip(numValues);
+  nano_->skip(numValues);
+  return numValues;
+}
+
+
+
+  
 class SelectiveStructColumnReader : public SelectiveColumnReader {
  public:
   SelectiveStructColumnReader(
