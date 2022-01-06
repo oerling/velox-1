@@ -237,7 +237,7 @@ class InPredicate : public exec::VectorFunction {
 
     exec::LocalDecodedVector localDecoded(context, *arg, rows);
     auto decoded = localDecoded.get();
-				 
+
     BaseVector::ensureWritable(rows, BOOLEAN(), context->pool(), result);
     auto boolResult = static_cast<FlatVector<bool>*>((*result).get());
 
