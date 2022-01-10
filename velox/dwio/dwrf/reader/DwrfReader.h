@@ -78,9 +78,12 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   void resetFilterCaches() override;
 
+  void moveAdaptation(RowReader& other) override;
+  
+  
   bool allPrefetchIssued() const override;
 
- private:
+private:
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
 
   // Gets next rows within 'this'.
@@ -108,6 +111,11 @@ class DwrfRowReader : public DwrfRowReaderShared {
   // multiple stripes worth of read ahead.
   std::unique_ptr<DwrfRowReader> delegate_;
 
+  // Indicates that next() needs to take a new delegate to read a new
+  // stripe. The delegate for the previous stripe must stay live for
+  // serving up lazy loads even if scan is at end of stripe.
+  bool startWithNewDelegate_{false};
+  
   // Map from stripe number to prepared stripe reader.
   folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>
       prefetchedStripeReaders_;

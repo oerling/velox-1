@@ -17,6 +17,7 @@
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
 #include "velox/common/base/Portability.h"
+#include "velox/common/process/TraceContext.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/common/FloatingPointDecoder.h"
@@ -3965,7 +3966,11 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void setRowGroupSpecificFilters();
-
+  void moveScanSpec(ColumnReader& other) override {
+    auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
+    scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
+  }
+  
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
@@ -4001,9 +4006,9 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
       "Unknown encoding for StructColumnReader");
 
   const auto& cs = stripe.getColumnSelector();
-  auto& childSpecs = scanSpec->children();
+  auto& childSpecs = scanSpec->stableChildren();
   for (auto i = 0; i < childSpecs.size(); ++i) {
-    auto childSpec = childSpecs[i].get();
+    auto childSpec = childSpecs[i];
     if (childSpec->isConstant()) {
       continue;
     }
@@ -4182,7 +4187,7 @@ void ColumnLoader::loadInternal(
     }
     effectiveRows = RowSet(selectedRows);
   }
-
+  process::TraceContext trace(fmt::format("ColumnLoader {}", gettid()), true);
   structReader_->advanceFieldReader(fieldReader_, offset);
   fieldReader_->scanSpec()->setValueHook(hook);
   fieldReader_->read(offset, effectiveRows, incomingNulls);

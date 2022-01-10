@@ -484,17 +484,25 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
 void HiveDataSource::setFromDataSource(
     std::shared_ptr<DataSource> sourceShared) {
+  bool wasEmptySplit = emptySplit_;
   auto source = dynamic_cast<HiveDataSource*>(sourceShared.get());
   emptySplit_ = source->emptySplit_;
   split_ = std::move(source->split_);
   if (emptySplit_) {
-    reader_.reset();
-    rowReader_.reset();
+    // Leave old readers in place so tat their adaptation can be moved to a new
+    // reader.
     return;
   }
   reader_ = std::move(source->reader_);
+  if (rowReader_) {
+    source->rowReader_->moveAdaptation(*rowReader_);
+  } else {
+    // The only case where 'rowReader_' is not set is whenn we start with
+    // an empty split.
+    VELOX_CHECK(wasEmptySplit);
+  }
   rowReader_ = std::move(source->rowReader_);
-  // New io is accounted on the stats of 'source'. Add the existing
+  // New io will be accounted on the stats of 'source'. Add the existing
   // balance to that.
   source->ioStats_->merge(*ioStats_);
   ioStats_ = std::move(source->ioStats_);
@@ -504,8 +512,7 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {
     split_.reset();
-    reader_.reset();
-    rowReader_.reset();
+    // Keep readers around to hold adaptation.
     return nullptr;
   }
 
@@ -564,8 +571,7 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
   rowReader_->updateRuntimeStats(runtimeStats_);
 
   split_.reset();
-  reader_.reset();
-  rowReader_.reset();
+  // Keep readers around to hold adaptation.
   return nullptr;
 }
 

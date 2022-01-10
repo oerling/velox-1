@@ -98,7 +98,8 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
     if (currentStripe == firstStripe) {
       rowReader = this;
     } else {
-      if (!delegate_) {
+      if (startWithNewDelegate_) {
+	startWithNewDelegate_ = false;
         delegate_ = readerForStripe(currentStripe);
       }
       rowReader = delegate_.get();
@@ -112,7 +113,7 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
     }
     if (rowReader->currentRowInStripe >= rowReader->rowsInCurrentStripe) {
       ++currentStripe;
-      delegate_.reset();
+      startWithNewDelegate_ = true;
     }
     if (numRows) {
       return numRows;
@@ -191,7 +192,7 @@ void DwrfRowReader::preloadStripe(int32_t stripeIndex) {
         stripeReader->startNextStripe();
         return stripeReader;
       });
-  // executor->add([source]() { source->prepare(); });
+  executor->add([source]() { source->prepare(); });
   prefetchedStripeReaders_[stripeIndex] = std::move(source);
 }
 
@@ -215,6 +216,16 @@ bool DwrfRowReader::allPrefetchIssued() const {
       prefetchedStripeReaders_.end();
 }
 
+  void DwrfRowReader::moveAdaptation(RowReader& other) {
+    auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
+    if (!columnReader_) {
+      createColumnReaderImpl();
+    }
+    columnReader_->moveScanSpec(*otherReader->columnReader_);
+  }
+
+  
+  
 std::unique_ptr<DwrfReader> DwrfReader::create(
     std::unique_ptr<InputStream> stream,
     const ReaderOptions& options) {

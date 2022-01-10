@@ -68,6 +68,8 @@ class HashProbe : public Operator {
   // 'rowNumberMapping_'. Returns the number of passing rows.
   vector_size_t evalFilter(vector_size_t numRows);
 
+  void ensureLoadedIfNotAtEnd(ChannelIndex channel);
+
   // TODO: Define batch size as bytes based on RowContainer row sizes.
   const uint32_t outputBatchSize_;
 
@@ -209,9 +211,6 @@ class HashProbe : public Operator {
     // True if currentRow has a match.
     bool currentRowPassed{false};
   };
-
-  /// For left join, true if we received new 'input_'.
-  bool newInputForLeftJoin_{false};
 
   /// True if this is the last HashProbe operator in the pipeline. It is
   /// responsible for producing non-matching build-side rows for the right join.
