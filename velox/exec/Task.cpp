@@ -216,7 +216,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
       return;
     }
   }
-  LOG(INFO) << "Trying to delete a Driver twice from its :" << self->taskId();
+  LOG(INFO) << "Trying to delete a Driver twice from Task :" << self->taskId();
 }
 
 void Task::setMaxSplitSequenceId(

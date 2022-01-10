@@ -17,7 +17,7 @@
 #include "velox/exec/LocalPartition.h"
 #include "velox/exec/Task.h"
 
-DEFINE_bool(local_partition_copy, false, "copy data in local partitioning");
+DEFINE_bool(local_partition_copy, true, "copy data in local partitioning");
 
 namespace facebook::velox::exec {
 namespace {
