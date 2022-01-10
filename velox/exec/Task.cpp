@@ -208,7 +208,6 @@ void Task::resume(std::shared_ptr<Task> self) {
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
-
   std::lock_guard<std::mutex> taskLock(self->mutex_);
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() == driver) {
@@ -217,8 +216,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
       return;
     }
   }
-  LOG(INFO) << "Trying to delete a Driver twice from Task :"
-               << self->taskId();
+  LOG(INFO) << "Trying to delete a Driver twice from Task :" << self->taskId();
 }
 
 void Task::setMaxSplitSequenceId(

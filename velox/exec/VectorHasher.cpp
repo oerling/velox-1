@@ -733,7 +733,10 @@ void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
 }
 
 uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int64_t reserve) {
-  VELOX_CHECK_NE(typeKind_, TypeKind::BOOLEAN, "A boolean VectorHasher should  always be by range");
+  VELOX_CHECK_NE(
+      typeKind_,
+      TypeKind::BOOLEAN,
+      "A boolean VectorHasher should  always be by range");
   multiplier_ = multiplier;
   rangeSize_ = uniqueValues_.size() + 1 + reserve;
   isRange_ = false;
