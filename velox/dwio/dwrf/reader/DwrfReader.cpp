@@ -219,9 +219,10 @@ bool DwrfRowReader::allPrefetchIssued() const {
   void DwrfRowReader::moveAdaptation(RowReader& other) {
     auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
     if (!columnReader_) {
-      createColumnReaderImpl();
+      VELOX_FAIL("Should have columnReader_");
+    } else {
+      columnReader_->moveScanSpec(*otherReader->columnReader_);
     }
-    columnReader_->moveScanSpec(*otherReader->columnReader_);
   }
 
   
