@@ -3970,7 +3970,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
     scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
   }
-  
+
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;

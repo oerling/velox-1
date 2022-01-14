@@ -216,14 +216,14 @@ bool DwrfRowReader::allPrefetchIssued() const {
       prefetchedStripeReaders_.end();
 }
 
-  bool DwrfRowReader::moveAdaptation(RowReader& other) {
+bool DwrfRowReader::moveAdaptation(RowReader& other) {
   auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
   if (!columnReader_) {
     return false;
   }
   columnReader_->moveScanSpec(*otherReader->columnReader_);
   return true;
-  }
+}
 
 std::unique_ptr<DwrfReader> DwrfReader::create(
     std::unique_ptr<InputStream> stream,

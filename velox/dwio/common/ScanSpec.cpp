@@ -128,7 +128,7 @@ void ScanSpec::moveAdaptation(ScanSpec& other) {
       if (child && child->fieldName_ == otherChild->fieldName_) {
         child->filter_ = std::move(otherChild->filter_);
         child->selectivity_ = otherChild->selectivity_;
-	child->subscript_ = otherChild->subscript_;
+        child->subscript_ = otherChild->subscript_;
         newChildren_.push_back(std::move(child));
         found = true;
         break;

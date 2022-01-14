@@ -107,7 +107,7 @@ class ColumnReader {
   virtual void moveScanSpec(ColumnReader& other) {
     VELOX_NYI();
   }
-  
+
   /**
    * Create a reader for the given stripe.
    */
