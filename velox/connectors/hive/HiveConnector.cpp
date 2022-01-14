@@ -493,14 +493,15 @@ void HiveDataSource::setFromDataSource(
     // reader.
     return;
   }
-  reader_ = std::move(source->reader_);
   if (rowReader_) {
-    source->rowReader_->moveAdaptation(*rowReader_);
-  } else {
-    // The only case where 'rowReader_' is not set is whenn we start with
-    // an empty split.
-    VELOX_CHECK(wasEmptySplit);
-  }
+    if (! source->rowReader_->moveAdaptation(*rowReader_)) {
+      // The source had a reader that did not have state that could be
+      // advanced. Keep the old readers so that you can transfer the
+      // adaptation to the next non-empty one.
+      emptySplit_ = true;
+      return;
+    }
+  }  reader_ = std::move(source->reader_);
   rowReader_ = std::move(source->rowReader_);
   // New io will be accounted on the stats of 'source'. Add the existing
   // balance to that.
