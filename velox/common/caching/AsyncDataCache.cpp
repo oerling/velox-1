@@ -50,10 +50,12 @@ void AsyncDataCacheEntry::setExclusiveToShared() {
   if (hook) {
     hook(*this);
   }
-  if (!ssdFile_ && shard_->cache()->ssdCache() &&
-      shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
-          groupId_, trackingId_)) {
-    shard_->cache()->possibleSsdSave(size_);
+  if (!ssdFile_ && shard_->cache()->ssdCache()) {
+    if (shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
+            groupId_, trackingId_)) {
+      ssdSaveable_ = true;
+      shard_->cache()->possibleSsdSave(size_);
+    }
   }
 }
 
@@ -128,6 +130,9 @@ CachePin CacheShard::findOrCreate(
       } else {
         ++numHit_;
       }
+      if (found->size() != size) {
+        LOG(INFO) << "Different size reqd than found";
+      }
       ++found->numPins_;
       CachePin pin;
       pin.setEntry(found);
@@ -192,7 +197,8 @@ CachePin CacheShard::initEntry(
             VeloxRuntimeError,
             error_source::kErrorSourceRuntime.c_str(),
             error_code::kNoCacheSpace.c_str(),
-            /* isRetriable */ true);
+            /* isRetriable */ true,
+	    "Failed to allocate {} bytes for cache", size);
       }
     }
   }
@@ -243,7 +249,8 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     error = std::current_exception();
   }
   if (error) {
-    // Cleanup outside of catch to avoid killing the process if more exceptions.
+    // Cleanup outside of catch to avoid killing the process if more
+    // exceptions.
     setEndState(LoadState::kCancelled);
     std::rethrow_exception(error);
   }
@@ -281,6 +288,8 @@ void CacheShard::removeEntryLocked(AsyncDataCacheEntry* entry) {
 void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t tinyFreed = 0;
   int64_t largeFreed = 0;
+  int32_t evictSaveableSkipped = 0;
+  bool skipSsdSaveable = cache_->ssdCache() && cache_->ssdCache()->writeInProgress();
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
   {
@@ -319,6 +328,10 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
       if (candidate->numPins_ == 0 &&
           (!candidate->key_.fileNum.hasValue() || evictAllUnpinned ||
            (score = candidate->score(now)) >= evictionThreshold_)) {
+        if (skipSsdSaveable && candidate->ssdSaveable_ && !evictAllUnpinned) {
+          ++evictSaveableSkipped;
+          continue;
+        }
         removeEntryLocked(candidate);
         freeEntries_.push_back(std::move(*iter));
         emptySlots_.push_back(entryIndex);
@@ -341,6 +354,14 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   toFree.clear();
   cache_->incrementCachedPages(
       -largeFreed / static_cast<int32_t>(MappedMemory::kPageSize));
+  if (evictSaveableSkipped && cache_->ssdCache()->startWrite()) {
+    LOG(INFO) << "SSDCA: Start save for old saveable, skipped "
+              << cache_->numSkippedSaves();
+    cache_->numSkippedSaves() = 0;
+    cache_->saveToSsd();
+  } else if (evictSaveableSkipped) {
+    ++cache_->numSkippedSaves();
+  }
 }
 
 void CacheShard::calibrateThreshold() {
@@ -397,16 +418,23 @@ void CacheShard::updateStats(CacheStats& stats) {
 }
 
 void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
-  auto& groupStats = cache_->ssdCache()->groupStats();
   std::lock_guard<std::mutex> l(mutex_);
+  // Do not add more than 70% of entries to a write batch.If SSD save
+  // is slower than storage read, we must not have a situation where
+  // SSD save pins everything and stops reading.
+  int32_t limit = (entries_.size() * 100) /70;
+  VELOX_CHECK(cache_->ssdCache()->writeInProgress());
   for (auto& entry : entries_) {
     if (entry && !entry->ssdFile_ && !entry->isExclusive() &&
-        groupStats.shouldSaveToSsd(
-            entry->key_.fileNum.id(), entry->trackingId_)) {
+        entry->ssdSaveable_) {
       CachePin pin;
       ++entry->numPins_;
       pin.setEntry(entry.get());
       pins.push_back(std::move(pin));
+      if (pins.size() >= limit) {
+	LOG(INFO) << "SSDCA: Limiting SSD save batch to " << limit << " entries";
+	break;
+      }
     }
   }
 }
@@ -448,6 +476,11 @@ bool AsyncDataCache::makeSpace(
       if (allocate()) {
         return true;
       }
+    }
+    if (nthAttempt > 2 && ssdCache_ && ssdCache_->writeInProgress()) {
+      LOG(INFO) << "SSDCA: Pause 0.5s after failed eviction waiting for SSD "
+		<< "cach write to unpin memory";
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     ++shardCounter_;
     // Evict from next shard. If we have gone through all shards once
@@ -501,21 +534,26 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
   if (!ssdCache_) {
     return;
   }
+
   ssdSaveable_ += bytes;
   if (ssdSaveable_ / MappedMemory::kPageSize >
       std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
-    ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
     if (!ssdCache_->startWrite()) {
       return;
     }
-
-    std::vector<CachePin> pins;
-    for (auto& shard : shards_) {
-      shard->appendSsdSaveable(pins);
-    }
-    ssdCache_->write(std::move(pins));
+    saveToSsd();
   }
+}
+
+void AsyncDataCache::saveToSsd() {
+  std::vector<CachePin> pins;
+  VELOX_CHECK(ssdCache_->writeInProgress());
+  ssdSaveable_ = 0;
+  for (auto& shard : shards_) {
+    shard->appendSsdSaveable(pins);
+  }
+  ssdCache_->write(std::move(pins));
 }
 
 CacheStats AsyncDataCache::refreshStats() const {

@@ -203,6 +203,7 @@ class AsyncDataCacheEntry {
   void setSsdFile(SsdFile* FOLLY_NULLABLE file, uint64_t offset) {
     ssdFile_ = file;
     ssdOffset_ = offset;
+    ssdSaveable_ = false;
   }
 
   SsdFile* FOLLY_NULLABLE ssdFile() const {
@@ -279,6 +280,9 @@ class AsyncDataCacheEntry {
 
   // Offset in 'ssdFile_'.
   uint64_t ssdOffset_{0};
+
+  // True if this should be saved to SSD.
+  bool ssdSaveable_{false};
 
   friend class CacheShard;
   friend class CachePin;
@@ -696,12 +700,20 @@ class AsyncDataCache : public memory::MappedMemory,
   // Drops all unpinned entries. Pins stay valid.
   void clear();
 
+  // Saves all entries with 'ssdSaveable_' to 'ssdCache_'.
+  void saveToSsd();
+
+  int32_t& numSkippedSaves() {
+    return numSkippedSaves_;
+  }
+  
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
 
   bool makeSpace(
       memory::MachinePageCount numPages,
+
       std::function<bool()> allocate);
 
   std::unique_ptr<memory::MappedMemory> mappedMemory_;
@@ -727,6 +739,7 @@ class AsyncDataCache : public memory::MappedMemory,
   CacheStats stats_;
 
   std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
+  int32_t numSkippedSaves_{0};
 };
 
 // Samples a set of values T from 'numSamples' calls of
