@@ -48,6 +48,10 @@ class SsdCache {
   // state is reset asynchronously after writing to SSD finishes.
   bool startWrite();
 
+  bool writeInProgress() {
+    return writesInProgress_ != 0;
+  }
+
   // Stores the entries of 'pins' into the corresponding files. Sets
   // the file for the successfully stored entries. May evict existing
   // entries from unpinned regions.
