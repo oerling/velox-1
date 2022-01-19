@@ -49,7 +49,6 @@ class AsyncDataCacheTest : public testing::Test {
     }
   }
 
-
   void initializeCache(uint64_t maxBytes, int64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssdCache;
     if (ssdBytes) {
@@ -60,13 +59,18 @@ class AsyncDataCacheTest : public testing::Test {
     }
     memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_shared<AsyncDataCache>(
-					      std::make_unique<memory::MmapAllocator>(options), maxBytes, std::move(ssdCache));
+        std::make_unique<memory::MmapAllocator>(options),
+        maxBytes,
+        std::move(ssdCache));
     for (auto i = 0; i < kNumFiles; ++i) {
       auto name = fmt::format("testing_file_{}", i);
       filenames_.push_back(StringIdLease(fileIds(), name));
     }
   }
 
+  // Finds one entry from RAM, SSD or storage. Throws if the data
+  // cannot be read or 'injectError' is true. Checks the data with
+  // verifyHook and discards the pin.
   void loadOne(uint64_t fileNum, Request& request, bool injectError);
 
   // Brings the data for the ranges in 'requests' into cache. The individual
@@ -158,7 +162,6 @@ class AsyncDataCacheTest : public testing::Test {
       }
     }
   }
-
 
   CachePin newEntry(uint64_t offset, int32_t size) {
     folly::SemiFuture<bool> wait(false);
@@ -255,11 +258,11 @@ class TestingCoalescedSsdLoad : public TestingCoalescedLoad {
       VELOX_CHECK(!injectError_, "Testing error");
     } catch (std::exception& e) {
       try {
-	for (auto& ssdPin : toLoad) {
-	  file.erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
-	}
+        for (auto& ssdPin : toLoad) {
+          file.erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
+        }
       } catch (const std::exception& e) {
-	// Ignore error.
+        // Ignore error.
       }
       throw;
     }
@@ -294,8 +297,14 @@ void AsyncDataCacheTest::loadOne(
     }
     auto entry = pin.checkedEntry();
     if (entry->isShared()) {
+      // The entry has data. In this case the entry was checked by verifyHook,
+      // so no action here.
+      VELOX_CHECK(!injectError, "Testing error");
       return;
     }
+    // We have an uninitialized entry in exclusive mode. We fill it with data
+    // and set it to shared. If we release this pin while still in exclusive
+    // mode, the entry will be erased.
     if (cache_->ssdCache()) {
       auto& ssdFile = cache_->ssdCache()->file(key.fileNum);
       auto ssdPin = ssdFile.find(key);
@@ -312,7 +321,7 @@ void AsyncDataCacheTest::loadOne(
     }
     // Load from storage.
     initializeContents(
-		       entry->key().offset + entry->key().fileNum.id(), entry->data());
+        entry->key().offset + entry->key().fileNum.id(), entry->data());
     entry->setExclusiveToShared();
     return;
   }
@@ -335,11 +344,11 @@ void AsyncDataCacheTest::loadBatch(
     // Schedule a CoalescedLoad with other keys that need loading from the same
     // source.
     if (cache_->ssdCache()) {
-      auto& file =cache_->ssdCache()->file(key.fileNum);
+      auto& file = cache_->ssdCache()->file(key.fileNum);
       request.ssdPin = file.find(key);
       if (!request.ssdPin.empty()) {
-	fromSsd.push_back(&request);
-	continue;
+        fromSsd.push_back(&request);
+        continue;
       }
     }
     fromStorage.push_back(&request);
@@ -368,11 +377,10 @@ void AsyncDataCacheTest::loadBatch(
       ssdPins.push_back(std::move(request->ssdPin));
     }
     auto load = std::make_shared<TestingCoalescedSsdLoad>(
-							  std::move(keys), std::move(sizes), std::move(ssdPins), *cache_);
+        std::move(keys), std::move(sizes), std::move(ssdPins), *cache_);
     load->injectError(injectError);
     executor()->add([load]() { load->loadOrFuture(nullptr); });
   }
-
 }
 
 void AsyncDataCacheTest::loadLoop(
@@ -490,8 +498,7 @@ TEST_F(AsyncDataCacheTest, replace) {
 }
 
 TEST_F(AsyncDataCacheTest, outOfCapacity) {
-  constexpr int64_t kMaxBytes = 16 <<
-    20;
+  constexpr int64_t kMaxBytes = 16 << 20;
   constexpr int32_t kSize = 16 << 10;
   constexpr int32_t kSizeInPages = kSize / MappedMemory::kPageSize;
   std::deque<CachePin> pins;
@@ -555,7 +562,8 @@ TEST_F(AsyncDataCacheTest, ssd) {
   FLAGS_ssd_verify_write = false;
 
   EXPECT_LE(kRamBytes, stats.bytesWritten);
-  // We read the data back. The verify hook checks correct values. Error every 13 batch loads.
+  // We read the data back. The verify hook checks correct values. Error every
+  // 13 batch loads.
   runThreads(4, [&](int32_t /*i*/) { loadLoop(0, kSsdBytes, 13); });
 
   LOG(INFO) << "Stats after second pass:" << cache_->toString();
@@ -563,9 +571,10 @@ TEST_F(AsyncDataCacheTest, ssd) {
   EXPECT_LE(kRamBytes, stats.bytesRead);
 
   // We re-read the second half and add another half capacity of new
-  // entries. We expect some of the oldest entries to get evicted. Error every 17 batch loads.
+  // entries. We expect some of the oldest entries to get evicted. Error every
+  // 17 batch loads.
   runThreads(
-	     4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5), 17; });
+      4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5), 17; });
 
   LOG(INFO) << "Stats after third pass:" << cache_->toString();
   auto stats2 = cache_->ssdCache()->stats();
