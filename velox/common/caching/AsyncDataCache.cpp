@@ -16,7 +16,6 @@
 
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/FileIds.h"
-#include "velox/common/caching/GroupTracker.h"
 #include "velox/common/caching/SsdCache.h"
 
 #include <folly/executors/QueuedImmediateExecutor.h>
@@ -165,7 +164,7 @@ CachePin CacheShard::findOrCreate(
         ++numHit_;
       }
       if (found->size() != size) {
-        LOG(INFO) << "Different size reqd than found";
+        LOG(INFO) << "Requested " << size << " found " << found->size();
       }
       ++found->numPins_;
       CachePin pin;

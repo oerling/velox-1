@@ -59,7 +59,7 @@ bool SsdCache::startWrite() {
 }
 
 void SsdCache::write(std::vector<CachePin> pins) {
-  VELOX_CHECK_LE(numShards_, writesInProgress);
+  VELOX_CHECK_LE(numShards_, writesInProgress_);
   uint64_t bytes = 0;
   auto start = getCurrentTimeMicro();
   std::vector<std::vector<CachePin>> shards(numShards_);
@@ -86,9 +86,9 @@ void SsdCache::write(std::vector<CachePin> pins) {
     executor_->add([this, i, pinHolder, bytes, start]() {
       try {
 	files_[i]->write(pinHolder->pins);
-      } catch {
-	LOG(INFO) << "Ignoring error in SsdFile::write: " << e.waht();
-      };
+      } catch (const std::exception& e) {
+	LOG(INFO) << "Ignoring error in SsdFile::write: " << e.what();
+      }
       if (--writesInProgress_ == 0) {
         LOG(INFO) << fmt::format(
             "SSDCA: Wrote {}MB, {} MB/s",
