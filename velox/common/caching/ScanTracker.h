@@ -128,7 +128,10 @@ class ScanTracker {
       std::function<void(ScanTracker*)> unregisterer,
       int32_t loadQuantum,
       FileGroupStats* FOLLY_NULLABLE fileGroupStats = nullptr)
-    : id_(id), unregisterer_(unregisterer), loadQuantum_(loadQuantum), fileGroupStats_(fileGroupStats) {}
+      : id_(id),
+        unregisterer_(unregisterer),
+        loadQuantum_(loadQuantum),
+        fileGroupStats_(fileGroupStats) {}
 
   ~ScanTracker() {
     if (unregisterer_) {
@@ -196,7 +199,6 @@ class ScanTracker {
   // size is unlimited.
   const int32_t loadQuantum_;
   FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
-
 };
 
 } // namespace facebook::velox::cache

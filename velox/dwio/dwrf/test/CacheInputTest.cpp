@@ -350,7 +350,7 @@ class CacheTest : public testing::Test {
         "testTracker",
         nullptr,
         dwio::common::ReaderOptions::kDefaultLoadQuantum,
-						 groupTracker_);
+        groupTracker_);
     std::deque<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;

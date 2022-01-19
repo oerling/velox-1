@@ -47,7 +47,8 @@ RowVectorPtr TableScan::getOutput() {
     if (needNewSplit_) {
       exec::Split split;
       auto reason = driverCtx_->task->getSplitOrFuture(
-driverCtx_->driverId, planNodeId_,
+          driverCtx_->driverId,
+          planNodeId_,
           split,
           blockingFuture_,
           maxPreloadedSplits_,
@@ -162,8 +163,7 @@ bool TableScan::isFinished() {
   return noMoreSplits_;
 }
 
-  
-  void TableScan::setBatchSize() {
+void TableScan::setBatchSize() {
   constexpr int64_t kMB = 1 << 20;
   auto estimate = dataSource_->estimatedRowSize();
   if (estimate == connector::DataSource::kUnknownRowSize) {

@@ -65,7 +65,7 @@ class RowReader {
 
   // Moves the adaptively acquired filters/filter order from 'other' to 'this'.
   virtual void moveAdaptation(RowReader& other) {}
-  
+
   /**
    * Get an estimated row size basing on available statistics. Can
    * differ from the actual row size due to variable-length values.

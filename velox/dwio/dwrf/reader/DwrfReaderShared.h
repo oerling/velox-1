@@ -50,7 +50,7 @@ class DwrfRowReaderShared : public StrideIndexProvider,
 
   // internal methods
   std::optional<size_t> estimatedRowSizeHelper(
-					       const proto::Footer& footer,
+      const proto::Footer& footer,
       const dwio::common::Statistics& stats,
       uint32_t nodeId) const;
 
