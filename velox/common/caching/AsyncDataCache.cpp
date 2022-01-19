@@ -244,7 +244,6 @@ bool CoalescedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     state_ = LoadState::kLoading;
   }
   // Outside of 'mutex_'.
-  std::exception_ptr error;
   try {
     auto pins = loadData(!wait);
     for (auto& pin : pins) {
