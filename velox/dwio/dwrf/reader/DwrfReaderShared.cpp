@@ -383,7 +383,7 @@ uint64_t DwrfReaderShared::getMemoryUse(
 }
 
 void DwrfRowReaderShared::startNextStripe() {
-  if (newStripeLoaded) {
+  if (newStripeLoaded || currentStripe >= lastStripe) {
     return;
   }
 

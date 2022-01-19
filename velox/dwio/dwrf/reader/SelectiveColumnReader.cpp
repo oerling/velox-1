@@ -3965,7 +3965,11 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void setRowGroupSpecificFilters();
-
+  void moveScanSpec(ColumnReader& other) override {
+    auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
+    scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
+  }
+  
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
@@ -4001,9 +4005,9 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
       "Unknown encoding for StructColumnReader");
 
   const auto& cs = stripe.getColumnSelector();
-  auto& childSpecs = scanSpec->children();
+  auto& childSpecs = scanSpec->stableChildren();
   for (auto i = 0; i < childSpecs.size(); ++i) {
-    auto childSpec = childSpecs[i].get();
+    auto childSpec = childSpecs[i];
     if (childSpec->isConstant()) {
       continue;
     }

@@ -62,6 +62,8 @@ void ScanSpec::reorder() {
   if (children_.empty()) {
     return;
   }
+  // Make sure 'stableChildren_' is initialized.
+  stableChildren();
   std::sort(
       children_.begin(),
       children_.end(),
@@ -88,6 +90,17 @@ void ScanSpec::reorder() {
       });
 }
 
+const std::vector<ScanSpec*>& ScanSpec::stableChildren() {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (stableChildren_.empty()) {
+    stableChildren_.reserve(children_.size());
+    for (auto& child : children_) {
+      stableChildren_.push_back(child.get());
+    }
+  }
+  return stableChildren_;
+}
+
 bool ScanSpec::hasFilter() const {
   if (hasFilter_.has_value()) {
     return hasFilter_.value();
@@ -104,6 +117,32 @@ bool ScanSpec::hasFilter() const {
   }
   hasFilter_ = false;
   return false;
+}
+
+void ScanSpec::moveAdaptation(ScanSpec& other) {
+  // moves the filters and filter order from 'other'.
+  std::vector<std::unique_ptr<ScanSpec>> newChildren_;
+  for (auto& otherChild : other.children_) {
+    bool found = false;
+    for (auto& child : children_) {
+      if (child && child->fieldName_ == otherChild->fieldName_) {
+        child->filter_ = std::move(otherChild->filter_);
+        child->selectivity_ = otherChild->selectivity_;
+	child->subscript_ = otherChild->subscript_;
+        newChildren_.push_back(std::move(child));
+        found = true;
+        break;
+      }
+    }
+    VELOX_CHECK(found);
+  }
+  children_ = std::move(newChildren_);
+  stableChildren_.clear();
+  for (auto& otherChild : other.stableChildren_) {
+    auto child = childByName(otherChild->fieldName_);
+    VELOX_CHECK(child);
+    stableChildren_.push_back(child);
+  }
 }
 
 namespace {

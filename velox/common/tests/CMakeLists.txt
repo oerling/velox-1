@@ -18,7 +18,7 @@ add_executable(
   RangeTest.cpp
   BitUtilTest.cpp
   AsyncSourceTest.cpp
-BloomFilterTest.cpp
+  BloomFilterTest.cpp
   CoalesceIoTest.cpp
   RawVectorTest.cpp
   StatsReporterTest.cpp

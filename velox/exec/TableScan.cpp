@@ -18,6 +18,8 @@
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
+DEFINE_bool(enable_split_preload, true, "Prefetch split metadata");
+
 namespace facebook::velox::exec {
 
 TableScan::TableScan(
@@ -124,22 +126,24 @@ driverCtx_->driverId, planNodeId_,
 
 void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
   using DataSourcePtr = std::shared_ptr<connector::DataSource>;
-  split->dataSource = std::make_shared<AsyncSource<DataSourcePtr>>(
-      [type = outputType_,
-       table = tableHandle_,
-       columns = columnHandles_,
-       connector = connector_,
-       ctx = connectorQueryCtx_]() {
+  split->dataSource =
+      std::make_shared<AsyncSource<DataSourcePtr>>([type = outputType_,
+                                                    table = tableHandle_,
+                                                    columns = columnHandles_,
+                                                    connector = connector_,
+                                                    ctx = connectorQueryCtx_,
+                                                    split]() {
         auto value = std::make_unique<DataSourcePtr>();
-
         *value = connector->createDataSource(type, table, columns, ctx.get());
+        (*value)->addSplit(split);
         return value;
       });
 }
 
 void TableScan::checkPreload() {
   auto executor = connector_->executor();
-  if (!executor || !connector_->supportsSplitPreload()) {
+  if (!FLAGS_enable_split_preload || !executor ||
+      !connector_->supportsSplitPreload()) {
     return;
   }
   if (dataSource_->allPrefetchIssued()) {
@@ -148,8 +152,7 @@ void TableScan::checkPreload() {
       splitPreloader_ =
           [executor, this](std::shared_ptr<connector::ConnectorSplit> split) {
             preload(split);
-
-            executor->add([&]() { split->dataSource->prepare(); });
+            executor->add([split]() { split->dataSource->prepare(); });
           };
     }
   }

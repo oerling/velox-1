@@ -149,6 +149,10 @@ class BufferedInputFactory {
     return nullptr;
   }
 
+  virtual BufferedInputFactory* FOLLY_NONNULL copy() {
+    VELOX_UNSUPPORTED();
+  }
+
   static BufferedInputFactory* baseFactory();
 };
 

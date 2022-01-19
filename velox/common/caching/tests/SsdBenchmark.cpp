@@ -20,18 +20,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-
-#include <folly/executors/QueuedImmediateExecutor.h>
-#include <folly/futures/Future.h>
 #include <folly/Random.h>
 #include <folly/Synchronized.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/executors/QueuedImmediateExecutor.h>
+#include <folly/futures/Future.h>
 #include <folly/init/Init.h>
 #include <folly/portability/SysUio.h>
 #include <gflags/gflags.h>
-
-
-
 
 #include "velox/common/file/File.h"
 #include "velox/common/time/Timer.h"
@@ -45,7 +41,6 @@ DEFINE_bool(odirect, false, "Use O_DIRECT");
 enum class Mode { Pread = 0, Preadv = 1, Multiple = 2 };
 
 using namespace facebook::velox;
-
 
 // Struct to read data into. If we read contiguous and then copy to
 // non-contiguous buffers, we read to 'buffer' and copy to
@@ -61,15 +56,15 @@ class ReadBenchmark {
     executor_ =
         std::make_unique<folly::IOThreadPoolExecutor>(FLAGS_num_threads);
     if (FLAGS_odirect) {
-    fd_ = open(
-        FLAGS_path.c_str(),
-        O_CREAT | O_RDWR | (FLAGS_odirect ? O_DIRECT : 0),
-        S_IRUSR | S_IWUSR);
-    if (fd_ < 0) {
-      LOG(ERROR) << "Could not open " << FLAGS_path;
-      exit(1);
-    }
-        readFile_ = std::make_unique<LocalReadFile>(fd_);
+      fd_ = open(
+          FLAGS_path.c_str(),
+          O_CREAT | O_RDWR | (FLAGS_odirect ? O_DIRECT : 0),
+          S_IRUSR | S_IWUSR);
+      if (fd_ < 0) {
+        LOG(ERROR) << "Could not open " << FLAGS_path;
+        exit(1);
+      }
+      readFile_ = std::make_unique<LocalReadFile>(fd_);
 
     } else {
       filesystems::registerLocalFileSystem();

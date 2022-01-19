@@ -20,7 +20,6 @@
 #include "velox/dwio/dwrf/reader/ReaderBase.h"
 #include "velox/dwio/dwrf/reader/StripeReaderBase.h"
 
-
 namespace facebook::velox::dwrf {
 
 class StripeReaderBase {
@@ -63,7 +62,7 @@ class StripeReaderBase {
   std::shared_ptr<ReaderBase> readerBaseShared() {
     return reader_;
   }
-  
+
   const encryption::DecryptionHandler& getDecryptionHandler() const {
     return *handler_;
   }

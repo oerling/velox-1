@@ -62,10 +62,10 @@ class DwrfRowReader : public DwrfRowReaderShared {
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override {
     if (delegate_) {
-    stats.skippedStrides += delegate_->skippedStrides_;
+      stats.skippedStrides += delegate_->skippedStrides_;
     } else {
-    stats.skippedStrides += skippedStrides_;
-  }
+      stats.skippedStrides += skippedStrides_;
+    }
   }
 
   ColumnReader* columnReader() {
@@ -74,17 +74,20 @@ class DwrfRowReader : public DwrfRowReaderShared {
     } else {
       return columnReader_.get();
     }
-    }
+  }
 
   void resetFilterCaches() override;
 
-  bool allPrefetchIssued() const override;
+  void moveAdaptation(RowReader& other) override;
   
- private:
+  
+  bool allPrefetchIssued() const override;
+
+private:
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
 
   // Gets next rows within 'this'.
-  uint64_t nextInternal(uint64_t size, VectorPtr& result);
+  uint64_t nextInStripe(uint64_t size, VectorPtr& result);
 
   // Asynchronously makes a DwrfRowReader for 'stripeIndex'.
   void preloadStripe(int32_t stripeIndex);
@@ -93,7 +96,7 @@ class DwrfRowReader : public DwrfRowReaderShared {
   // must have been prepared by preloadStripe() for the same stripe
   // index.
   std::unique_ptr<DwrfRowReader> readerForStripe(int32_t stripeIndex);
-  
+
   void checkSkipStrides(const StatsContext& context, uint64_t strideSize);
 
   std::unique_ptr<ColumnReader> columnReader_;
@@ -108,8 +111,14 @@ class DwrfRowReader : public DwrfRowReaderShared {
   // multiple stripes worth of read ahead.
   std::unique_ptr<DwrfRowReader> delegate_;
 
+  // Indicates that next() needs to take a new delegate to read a new
+  // stripe. The delegate for the previous stripe must stay live for
+  // serving up lazy loads even if scan is at end of stripe.
+  bool startWithNewDelegate_{false};
+  
   // Map from stripe number to prepared stripe reader.
-  folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>prefetchedStripeReaders_; 
+  folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>
+      prefetchedStripeReaders_;
 
   // Set to true after clearing filter caches, i.e.  adding a dynamic
   // filter. Causes filters to be re-evaluated against stride stats on

@@ -183,7 +183,8 @@ class Task {
       exec::Split& split,
       ContinueFuture& future,
       int32_t maxPreloadSplits = 0,
-      std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload = nullptr); 
+      std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload =
+          nullptr);
 
   void splitFinished(const core::PlanNodeId& planNodeId, int32_t splitGroupId);
 
