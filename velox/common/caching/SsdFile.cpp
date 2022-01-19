@@ -162,15 +162,17 @@ CoalesceIoStats SsdFile::load(
     const std::vector<SsdPin>& ssdPins,
     const std::vector<CachePin>& pins) {
   VELOX_CHECK_EQ(ssdPins.size(), pins.size());
+  if (pins.empty()) {
+    return CoalesceIoStats();
+  }
   int payloadTotal = 0;
   for (auto i = 0; i < pins.size(); ++i) {
     auto runSize = ssdPins[i].run().size();
     auto entry = pins[i].checkedEntry();
     auto fileId = entry->key().fileNum.id();
     if (runSize > entry->size()) {
-      LOG(INFO)
-          << "IOERR: Requested prefix of SSD cache entry: "
-          << runSize << " entry: " << entry->size();
+      LOG(INFO) << "IOERR: Requested prefix of SSD cache entry: " << runSize
+                << " entry: " << entry->size();
     }
     VELOX_CHECK_GE(
         runSize,
