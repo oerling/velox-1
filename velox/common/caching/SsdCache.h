@@ -39,7 +39,8 @@ class SsdCache {
   //  file id from e.g. FileCacheKey.
   SsdFile& file(uint64_t fileId);
 
-  // Returnss the maximum capacity, rounded up from the capacity passed to the constructor.
+  // Returnss the maximum capacity, rounded up from the capacity passed to the
+  // constructor.
   uint64_t maxBytes() const {
     return files_[0]->maxRegions() * files_.size() * SsdFile::kRegionSize;
   }
@@ -55,7 +56,8 @@ class SsdCache {
 
   // Stores the entries of 'pins' into the corresponding files. Sets
   // the file for the successfully stored entries. May evict existing
-  // entries from unpinned regions. startWrite() must have been called first and it must have returned true.
+  // entries from unpinned regions. startWrite() must have been called first and
+  // it must have returned true.
   void write(std::vector<CachePin> pins);
 
   // Returns  stats aggregated from all shards.

@@ -85,9 +85,9 @@ void SsdCache::write(std::vector<CachePin> pins) {
     auto pinHolder = std::make_shared<PinHolder>(std::move(shards[i]));
     executor_->add([this, i, pinHolder, bytes, start]() {
       try {
-	files_[i]->write(pinHolder->pins);
+        files_[i]->write(pinHolder->pins);
       } catch (const std::exception& e) {
-	LOG(INFO) << "Ignoring error in SsdFile::write: " << e.what();
+        LOG(INFO) << "Ignoring error in SsdFile::write: " << e.what();
       }
       if (--writesInProgress_ == 0) {
         LOG(INFO) << fmt::format(
