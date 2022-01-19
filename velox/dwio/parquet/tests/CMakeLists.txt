@@ -34,7 +34,7 @@ set(VELOX_LINK_LIBS
 set(TEST_LINK_LIBS ${gflags_LIBRARIES} ${GTEST_BOTH_LIBRARIES} ${GMock} ${GLOG}
                    ${FILESYSTEM})
 
-add_executable(velox_dwio_parquet_reader_test TestReader.cpp)
+add_executable(velox_dwio_parquet_reader_test ParquetReaderTest.cpp)
 add_test(
   NAME velox_dwio_parquet_reader_test
   COMMAND velox_dwio_parquet_reader_test
@@ -50,4 +50,22 @@ target_link_libraries(
   ${LZO}
   ${ZSTD}
   ${ZLIB_LIBRARIES}
+  ${TEST_LINK_LIBS})
+
+add_executable(velox_dwio_parquet_table_scan_test ParquetTableScanTest.cpp)
+add_test(
+  NAME velox_dwio_parquet_table_scan_test
+  COMMAND velox_dwio_parquet_table_scan_test
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(
+  velox_dwio_parquet_table_scan_test
+  velox_vector_test_lib
+  velox_exec_test_util
+  velox_exec
+  velox_hive_connector
+  velox_aggregates
+  ${VELOX_LINK_LIBS}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${FMT}
   ${TEST_LINK_LIBS})

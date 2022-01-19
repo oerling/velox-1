@@ -21,6 +21,8 @@
 
 namespace facebook::velox::cache {
 
+// Marks that 'bytes' worth of data may be accessed in the
+// future. See TrackingData for meaning of quantum.
 void ScanTracker::recordReference(
     const TrackingId id,
     uint64_t bytes,

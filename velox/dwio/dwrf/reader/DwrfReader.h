@@ -78,7 +78,11 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   void resetFilterCaches() override;
 
+<<<<<<< HEAD
   bool moveAdaptation(RowReader& other) override;
+=======
+  void moveAdaptation(RowReader& other) override;
+>>>>>>> oerling1/hive-prefetch-dev
 
   bool allPrefetchIssued() const override;
 

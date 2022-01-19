@@ -366,16 +366,19 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     cache::FileGroupStats* groupStats = asyncCache->ssdCache()
         ? &asyncCache->ssdCache()->groupStats()
         : nullptr;
-    auto tracker = Connector::getTracker(scanId_, groupStats);
+    auto tracker =
+        Connector::getTracker(scanId_, readerOpts_.loadQuantum(), groupStats);
     bufferedInputFactory_ = std::make_shared<dwrf::CachedBufferedInputFactory>(
         (asyncCache),
-        std::move(tracker),
+        tracker,
         fileHandle_->groupId.id(),
         [factory = fileHandleFactory_,
          path = split_->filePath,
          stats = ioStats_]() { return makeStreamHolder(factory, path, stats); },
         ioStats_,
-        executor_);
+        executor_,
+        readerOpts_);
+
     readerOpts_.setBufferedInputFactorySource(
         [factory = bufferedInputFactory_]() { return factory.get(); });
   } else if (dataCache_) {
@@ -572,9 +575,13 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
 
   rowReader_->updateRuntimeStats(runtimeStats_);
 
+  resetSplit();
+  return nullptr;
+}
+
+void HiveDataSource::resetSplit() {
   split_.reset();
   // Keep readers around to hold adaptation.
-  return nullptr;
 }
 
 vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {
@@ -630,19 +637,14 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
 }
 
 int64_t HiveDataSource::estimatedRowSize() {
-  if (!rowReader_ || errorInRowSize_) {
+  if (!rowReader_) {
     return kUnknownRowSize;
   }
-  try {
-    return rowReader_->estimatedRowSize();
-  } catch (const std::exception& e) {
-    // Remember the error and do not try the other splits, they are
-    // likely to be broken the same way.
-    errorInRowSize_ = true;
-    LOG_EVERY_N(WARNING, 1000)
-        << "failed to get row size estimate for " << split_->toString();
-    return kUnknownRowSize;
+  auto size = rowReader_->estimatedRowSize();
+  if (size.has_value()) {
+    return size.value();
   }
+  return kUnknownRowSize;
 }
 
 HiveConnector::HiveConnector(

@@ -85,12 +85,19 @@ struct TrackingData {
   int64_t readBytes{};
   int32_t numReferences{};
   int32_t numReads{};
-  void incrementReference(uint64_t bytes, int32_t quantum = 0) {
+
+  // Marks that 'bytes' worth of data in the tracked object has been
+  // referenced and may later be accessed. If 'bytes' is larger than a single
+  // 'oadQuantum', the reference counts for as many accesses as are needed to
+  // cover 'bytes'. When reading a large object, we will get a read per quantum.
+  // So then if the referenced and read counts match, we know that the object is
+  // densely read.
+  void incrementReference(uint64_t bytes, int32_t loadQuantum) {
     referencedBytes += bytes;
-    if (!quantum) {
+    if (!loadQuantum) {
       ++numReferences;
     } else {
-      numReferences += bits::roundUp(bytes, quantum) / quantum;
+      numReferences += bits::roundUp(bytes, loadQuantum) / loadQuantum;
     }
   }
 
@@ -109,17 +116,22 @@ struct TrackingData {
 // over multiple partitions.
 class ScanTracker {
  public:
-  ScanTracker() {}
+  ScanTracker() : loadQuantum_(1 /*not used*/) {}
 
   // Constructs a tracker with 'id'. The tracker will be owned by
   // shared_ptr and will be referenced from a map from id to weak_ptr
   // to 'this'. 'unregisterer' is supplied so that the destructor can
-  // remove the weak_ptr from the map of pending trackers.
+  // remove the weak_ptr from the map of pending trackers. 'loadQuantum' is the
+  // largest single IO size for read.
   ScanTracker(
       std::string_view id,
       std::function<void(ScanTracker*)> unregisterer,
+      int32_t loadQuantum,
       FileGroupStats* FOLLY_NULLABLE fileGroupStats = nullptr)
-      : id_(id), unregisterer_(unregisterer), fileGroupStats_(fileGroupStats) {}
+      : id_(id),
+        unregisterer_(unregisterer),
+        loadQuantum_(loadQuantum),
+        fileGroupStats_(fileGroupStats) {}
 
   ~ScanTracker() {
     if (unregisterer_) {
@@ -172,10 +184,6 @@ class ScanTracker {
     return fileGroupStats_;
   }
 
-  void setLoadQuantum(int32_t bytes) {
-    loadQuantum_ = bytes;
-  }
-
   std::string toString() const;
 
  private:
@@ -185,12 +193,12 @@ class ScanTracker {
   std::function<void(ScanTracker*)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
-  FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
   // Maximum size of a read. A to 10MB would count as two references
   // if the quantim were 8MB. At the same time this would count as a
   // single 10MB reference for 'fileGroupTracker_'. 0 means the read
   // size is unlimited.
-  int32_t loadQuantum_{0};
+  const int32_t loadQuantum_;
+  FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
 };
 
 } // namespace facebook::velox::cache

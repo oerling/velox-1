@@ -63,19 +63,24 @@ class RowReader {
    */
   virtual void resetFilterCaches() = 0;
 
+<<<<<<< HEAD
   // Moves the adaptively acquired filters/filter order from 'other'
   // to 'this'. Returns true if 'this' is ready to read, false if
   // 'this' is known to be empty.
   virtual bool moveAdaptation(RowReader& other) {
     return true;
   }
+=======
+  // Moves the adaptively acquired filters/filter order from 'other' to 'this'.
+  virtual void moveAdaptation(RowReader& other) {}
+>>>>>>> oerling1/hive-prefetch-dev
 
   /**
    * Get an estimated row size basing on available statistics. Can
    * differ from the actual row size due to variable-length values.
-   * @return estimated row size
+   * @return Estimate of the row size or std::nullopt if cannot estimate.
    */
-  virtual size_t estimatedRowSize() const = 0;
+  virtual std::optional<size_t> estimatedRowSize() const = 0;
 
   // Returns true if the expected IO for 'this' is scheduled. If this
   // is true it makes sense to prefetch the next split.

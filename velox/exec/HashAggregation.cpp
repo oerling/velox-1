@@ -140,14 +140,14 @@ void HashAggregation::addInput(RowVectorPtr input) {
 }
 
 RowVectorPtr HashAggregation::getOutput() {
-  if (finished_ || (!isFinishing_ && !partialFull_ && !newDistincts_)) {
+  if (finished_ || (!noMoreInput_ && !partialFull_ && !newDistincts_)) {
     input_ = nullptr;
     return nullptr;
   }
 
   if (isDistinct_) {
     if (!newDistincts_) {
-      if (isFinishing_) {
+      if (noMoreInput_) {
         finished_ = true;
       }
       return nullptr;
@@ -185,7 +185,7 @@ RowVectorPtr HashAggregation::getOutput() {
     if (isPartialOutput_) {
       partialFull_ = false;
       groupingSet_->resetPartial();
-      if (isFinishing_) {
+      if (noMoreInput_) {
         finished_ = true;
       }
     } else {
@@ -196,4 +196,7 @@ RowVectorPtr HashAggregation::getOutput() {
   return result;
 }
 
+bool HashAggregation::isFinished() {
+  return finished_;
+}
 } // namespace facebook::velox::exec
