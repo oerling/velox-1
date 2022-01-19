@@ -486,30 +486,86 @@ bool AsyncDataCache::exists(RawFileCacheKey key) const {
 bool AsyncDataCache::makeSpace(
     MachinePageCount numPages,
     std::function<bool()> allocate) {
-  constexpr int32_t kMaxAttempts = kNumShards * 4;
+  // Try to allocate and if failed, evict the desired amount and
+  // retry. This is without symchronization, so that other threads may
+  // get what one thread evicted but this will usually work in a
+  // couple of iterations. If this does not settle withing 8 tries, we
+  // start counting the contending threads nd doing random backoff to
+  // serialize the evicts and allocates. If a new thread enters when
+  // thread counting and backoff are in ffect, it gets a rank at the
+  // end of the queue. The larger the rank, the larger the backoff, so
+  // that first come is likelier to get the memory. We cannot
+  // serialize with a mutex because memory arbitration must not be
+  // called from inside a global mutex.
 
+  constexpr int32_t kMaxAttempts = kNumShards * 4;
+  // If requesting less than kSmallSizePages try up to 4x more if
+  // first try failed.
+  constexpr int32_t kSmallSizePages = 2048; // 8MB
+  int32_t sizeMultiplier = 1;
+  // True if this thread is counted in 'numThreadsInAllocate_'.
+  bool isCounted = false;
+  // If more than half the allowed retries are needed, this is the rank in arrival order of this.
+  int32_t rank = 0;
+  if (numThreadsInAllocate_) {
+    rank = ++numThreadsInAllocate_;
+    isCounted = true;
+  }
   for (auto nthAttempt = 0; nthAttempt < kMaxAttempts; ++nthAttempt) {
     if (mappedMemory_->numAllocated() + numPages <
         maxBytes_ / MappedMemory::kPageSize) {
-      if (allocate()) {
-        return true;
+      try {
+	if (allocate()) {
+	  if (isCounted) {
+	    --numThreadsInAllocate_;
+	  }
+	  return true;
+	}
+      } catch (const std::exception& e) {
+	if (isCounted) {
+	  --numThreadsInAllocate_;
+	}
+	throw;
       }
     }
     if (nthAttempt > 2 && ssdCache_ && ssdCache_->writeInProgress()) {
       LOG(INFO) << "SSDCA: Pause 0.5s after failed eviction waiting for SSD "
-                << "cach write to unpin memory";
+		<< "cach write to unpin memory";
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (nthAttempt > kMaxAttempts / 2) {
+      if (!isCounted) {
+	rank = ++numThreadsInAllocate_; 
+	isCounted = true;
+      }
+    }
+    if (rank) {
+      backoff(nthAttempt + rank);
     }
     ++shardCounter_;
     // Evict from next shard. If we have gone through all shards once
     // and still have not made the allocation, we go to desperate mode
     // with 'evictAllUnpinned' set to true.
     shards_[shardCounter_ & (kShardMask)]->evict(
-        numPages * MappedMemory::kPageSize, nthAttempt >= kNumShards);
+						 numPages * sizeMultiplier * MappedMemory::kPageSize, nthAttempt >= kNumShards);
+    if (numPages < kSmallSizePages && sizeMultiplier < 4) {
+      sizeMultiplier *= 2;
+    }
+  }
+  if (isCounted) {
+    --numThreadsInAllocate_;
   }
   return false;
 }
 
+void AsyncDataCache::backoff(int32_t counter) {
+  size_t seed = folly::hasher<uint16_t>()(++backoffCounter_);
+  auto usec = (seed & 0xfff) * counter;
+  LOG(INFO) << "Backoff in allocation contention for " << usec << "us.";
+  std::this_thread::sleep_for(std::chrono::microseconds(usec));
+}
+
+  
 bool AsyncDataCache::allocate(
     MachinePageCount numPages,
     int32_t owner,

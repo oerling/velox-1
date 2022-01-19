@@ -724,6 +724,16 @@ class AsyncDataCache : public memory::MappedMemory,
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
 
+  // Waits a pseudorandom delay times 'counter'.
+  void backoff(int32_t counter);
+  
+  // Calls 'allocate' until this returns true. Returns true if
+  // allocate returns true. and Tries to evict at least 'numPages' of
+  // cache after each failed call to 'allocate'.  May pause to wait
+  // for SSD cache flush if ''ssdCache_' is set and is busy
+  // writing. Does random back-off after several failures and
+  // eventually gives up. Allocation must not be serialized by a mutex
+  // for memory arbitration to work.
   bool makeSpace(
       memory::MachinePageCount numPages,
 
@@ -752,7 +762,18 @@ class AsyncDataCache : public memory::MappedMemory,
   CacheStats stats_;
 
   std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
-  int32_t numSkippedSaves_{0};
+  // Count of skipped saves to 'ssdCache_' due to 'ssdCache_' being
+  // busy with write.
+   int32_t numSkippedSaves_{0};
+
+  // Used for pseudorandom backoff after failed allocation
+  // attempts. Serialization wth a mutex is not allowed for
+  // allocations, so use backoff.
+  std::atomic<uint16_t> backoffCounter_;
+
+  // Counter of threads competing for allocation in makeSpace(). Used
+  // for setting staggered backoff. Mutexes are not allowed for this.
+  std::atomic<int32_t> numThreadsInAllocate_;
 };
 
 // Samples a set of values T from 'numSamples' calls of
