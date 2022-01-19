@@ -27,10 +27,10 @@ class FileGroupStats {
   bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const {
     return true;
   }
-  // Updates the SSD selection criteria. If 'decayPct' is non-0, old
-  // stats are decayed and
-  // removed if counts go to zero.
-  void updateSsdFilter(uint64_t ssdSize, int32_t decayPct = 0) {}
+
+  // Updates the SSD selection criteria. 'ssdsize' is the capacity,
+  // 'decayPct' gives by how much old accesses are discounted.
+  void updateSsdFilter(uint64_t /*ssdSize*/, int32_t /*decayPct*/ = 0) {}
 
   // Recalculates the best groups and makes a human readable
   // summary. 'cacheBytes' is used to compute what fraction of the tracked

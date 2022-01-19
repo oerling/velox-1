@@ -39,16 +39,17 @@ class SsdCache {
   //  file id from e.g. FileCacheKey.
   SsdFile& file(uint64_t fileId);
 
+  // Returnss the maximum capacity, rounded up from the capacity passed to the constructor.
   uint64_t maxBytes() const {
     return files_[0]->maxRegions() * files_.size() * SsdFile::kRegionSize;
   }
 
   // Returns true if no write is in progress. Atomically sets a write
-  // to be in progress. store() must be called after this. The writing
+  // to be in progress. write() must be called after this. The writing
   // state is reset asynchronously after writing to SSD finishes.
   bool startWrite();
 
-  bool writeInProgress() {
+  bool writeInProgress() const {
     return writesInProgress_ != 0;
   }
 

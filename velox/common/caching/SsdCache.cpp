@@ -33,7 +33,7 @@ SsdCache::SsdCache(
       groupStats_(std::make_unique<FileGroupStats>()),
       executor_(executor) {
   files_.reserve(numShards_);
-  // Cache size must be a multiple of this so that each shard has te same max
+  // Cache size must be a multiple of this so that each shard has the same max
   // size.
   uint64_t sizeQuantum = numShards_ * SsdFile::kRegionSize;
   int32_t fileMaxRegions = bits::roundUp(maxBytes, sizeQuantum) / sizeQuantum;
@@ -59,6 +59,7 @@ bool SsdCache::startWrite() {
 }
 
 void SsdCache::write(std::vector<CachePin> pins) {
+  VELOX_CHECK_LE(numShards_, writesInProgress);
   uint64_t bytes = 0;
   auto start = getCurrentTimeMicro();
   std::vector<std::vector<CachePin>> shards(numShards_);
@@ -83,7 +84,11 @@ void SsdCache::write(std::vector<CachePin> pins) {
     // be wrapped in a shared struct to be passed via lambda capture.
     auto pinHolder = std::make_shared<PinHolder>(std::move(shards[i]));
     executor_->add([this, i, pinHolder, bytes, start]() {
-      files_[i]->write(pinHolder->pins);
+      try {
+	files_[i]->write(pinHolder->pins);
+      } catch {
+	LOG(INFO) << "Ignoring error in SsdFile::write: " << e.waht();
+      };
       if (--writesInProgress_ == 0) {
         LOG(INFO) << fmt::format(
             "SSDCA: Wrote {}MB, {} MB/s",
@@ -111,8 +116,7 @@ void SsdCache::clear() {
 
 std::string SsdCache::toString() const {
   auto data = stats();
-  uint64_t capacity =
-      files_.size() * files_[0]->maxRegions() * SsdFile::kRegionSize;
+  uint64_t capacity = maxBytes();
   std::stringstream out;
   out << "Ssd cache IO: Write " << (data.bytesWritten >> 20) << "MB read "
       << (data.bytesRead >> 20) << "MB Size " << (capacity >> 30)
