@@ -118,8 +118,8 @@ void AsyncDataCacheEntry::initialize(FileCacheKey key, int32_t size) {
           error_source::kErrorSourceRuntime.c_str(),
           error_code::kNoCacheSpace.c_str(),
           /* isRetriable */ true,
-	  "Failed to allocate {} bytes for cache", size);
-
+          "Failed to allocate {} bytes for cache",
+          size);
     }
   }
   size_ = size;
@@ -306,7 +306,8 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t tinyFreed = 0;
   int64_t largeFreed = 0;
   int32_t evictSaveableSkipped = 0;
-  bool skipSsdSaveable = cache_->ssdCache() && cache_->ssdCache()->writeInProgress();
+  bool skipSsdSaveable =
+      cache_->ssdCache() && cache_->ssdCache()->writeInProgress();
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
   {
@@ -439,7 +440,7 @@ void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
   // Do not add more than 70% of entries to a write batch.If SSD save
   // is slower than storage read, we must not have a situation where
   // SSD save pins everything and stops reading.
-  int32_t limit = (entries_.size() * 100) /70;
+  int32_t limit = (entries_.size() * 100) / 70;
   VELOX_CHECK(cache_->ssdCache()->writeInProgress());
   for (auto& entry : entries_) {
     if (entry && !entry->ssdFile_ && !entry->isExclusive() &&
@@ -449,8 +450,9 @@ void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
       pin.setEntry(entry.get());
       pins.push_back(std::move(pin));
       if (pins.size() >= limit) {
-	LOG(INFO) << "SSDCA: Limiting SSD save batch to " << limit << " entries";
-	break;
+        LOG(INFO) << "SSDCA: Limiting SSD save batch to " << limit
+                  << " entries";
+        break;
       }
     }
   }
@@ -496,7 +498,7 @@ bool AsyncDataCache::makeSpace(
     }
     if (nthAttempt > 2 && ssdCache_ && ssdCache_->writeInProgress()) {
       LOG(INFO) << "SSDCA: Pause 0.5s after failed eviction waiting for SSD "
-		<< "cach write to unpin memory";
+                << "cach write to unpin memory";
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     ++shardCounter_;
@@ -598,8 +600,9 @@ std::string AsyncDataCache::toString() const {
       << stats.numEvict << "\n"
       << " read pins " << stats.numShared << " write pins "
       << stats.numExclusive << " unused prefetch " << stats.numPrefetch
-      << " Alloc Megaclocks " << (stats.allocClocks >> 20) << " allocated pages "
-      << numAllocated() << " cached pages " << cachedPages_;
+      << " Alloc Megaclocks " << (stats.allocClocks >> 20)
+      << " allocated pages " << numAllocated() << " cached pages "
+      << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {
     out << "\nSSD: " << ssdCache_->toString();
