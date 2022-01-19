@@ -88,6 +88,7 @@ class GroupingSet {
   HashStringAllocator stringAllocator_;
   AllocationPool rows_;
   const bool isAdaptive_;
+  core::ExecCtx& execCtx_;
 };
 
 } // namespace facebook::velox::exec

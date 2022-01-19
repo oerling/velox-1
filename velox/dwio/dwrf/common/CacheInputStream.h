@@ -30,7 +30,6 @@ class CachedBufferedInput;
 
 class CacheInputStream : public SeekableInputStream {
  public:
-  static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
   CacheInputStream(
       CachedBufferedInput* cache,
       dwio::common::IoStatistics* ioStats,
@@ -39,7 +38,8 @@ class CacheInputStream : public SeekableInputStream {
       uint64_t fileNum,
       std::shared_ptr<cache::ScanTracker> tracker,
       cache::TrackingId trackingId,
-      uint64_t groupId);
+      uint64_t groupId,
+      int32_t loadQuantum);
 
   bool Next(const void** data, int* size) override;
   void BackUp(int count) override;

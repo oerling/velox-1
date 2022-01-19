@@ -15,6 +15,7 @@
  */
 
 #include "velox/expression/ExprCompiler.h"
+#include "velox/core/ScalarFunction.h"
 #include "velox/expression/CastExpr.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/expression/Expr.h"
@@ -341,7 +342,7 @@ ExprPtr compileExpression(
       result = specialForm;
     } else if (
         auto adapterFunc =
-            AdaptedVectorFunctions().Create({call->name(), inputTypes})) {
+            AdaptedVectorFunctions().createFunction(call->name(), inputTypes)) {
       VELOX_USER_CHECK(
           resultType->kindEquals(adapterFunc->returnType()),
           "Found incompatible return types for '{}' ({} vs. {}) "
@@ -361,8 +362,9 @@ ExprPtr compileExpression(
           resultType, std::move(compiledInputs), func, call->name());
     } else {
       VELOX_FAIL(
-          "Function not registered: {}",
-          core::FunctionKey(call->name(), inputTypes).toString());
+          "Scalar function not registered: {} ({})",
+          call->name(),
+          folly::join(", ", inputTypes));
     }
   } else if (
       auto access =

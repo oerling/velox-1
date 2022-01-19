@@ -50,10 +50,13 @@ void AsyncDataCacheEntry::setExclusiveToShared() {
   if (hook) {
     hook(*this);
   }
-  if (!ssdFile_ && shard_->cache()->ssdCache() &&
-      shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
-          groupId_, trackingId_)) {
-    shard_->cache()->possibleSsdSave(size_);
+
+  if (!ssdFile_ && shard_->cache()->ssdCache()) {
+    if (shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
+            groupId_, trackingId_)) {
+      ssdSaveable_ = true;
+      shard_->cache()->possibleSsdSave(size_);
+    }
   }
 }
 
@@ -87,6 +90,39 @@ memory::MachinePageCount AsyncDataCacheEntry::setPrefetch(bool flag) {
   auto numPages = bits::roundUp(size_, memory::MappedMemory::kPageSize) /
       memory::MappedMemory::kPageSize;
   return shard_->cache()->incrementPrefetchPages(flag ? numPages : -numPages);
+}
+
+void AsyncDataCacheEntry::initialize(FileCacheKey key, int32_t size) {
+  VELOX_CHECK(isExclusive());
+  VELOX_CHECK_EQ(0, size_);
+  setSsdFile(nullptr, 0);
+  accessStats_.reset();
+  key_ = std::move(key);
+  auto cache = shard_->cache();
+  ClockTimer t(shard_->allocClocks());
+  if (size < AsyncDataCacheEntry::kTinyDataSize) {
+    tinyData_.resize(size);
+  } else {
+    tinyData_.clear();
+    auto sizePages =
+        bits::roundUp(size, MappedMemory::kPageSize) / MappedMemory::kPageSize;
+    if (cache->allocate(sizePages, CacheShard::kCacheOwner, data_)) {
+      cache->incrementCachedPages(data().numPages());
+    } else {
+      // No memory to cover 'this'.
+      // Remove from 'shard_'s map and unpin.
+      shard_->removeEntry(this);
+      release();
+      _VELOX_THROW(
+          VeloxRuntimeError,
+          error_source::kErrorSourceRuntime.c_str(),
+          error_code::kNoCacheSpace.c_str(),
+          /* isRetriable */ true,
+          "Failed to allocate {} bytes for cache",
+          size);
+    }
+  }
+  size_ = size;
 }
 
 std::unique_ptr<AsyncDataCacheEntry> CacheShard::getFreeEntryWithSize(
@@ -128,6 +164,9 @@ CachePin CacheShard::findOrCreate(
       } else {
         ++numHit_;
       }
+      if (found->size() != size) {
+        LOG(INFO) << "Different size reqd than found";
+      }
       ++found->numPins_;
       CachePin pin;
       pin.setEntry(found);
@@ -152,7 +191,7 @@ CachePin CacheShard::findOrCreate(
   return initEntry(key, entryToInit, size);
 }
 
-bool CacheShard::exists(RawFileCacheKey key) {
+bool CacheShard::exists(RawFileCacheKey key) const {
   std::lock_guard<std::mutex> l(mutex_);
   auto it = entryMap_.find(key);
   if (it != entryMap_.end()) {
@@ -172,44 +211,20 @@ CachePin CacheShard::initEntry(
   // one has added. The new entry is otherwise volatile and
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
-  entry->setSsdFile(nullptr, 0);
-  entry->key_ = FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset};
-  if (entry->size() < size) {
-    ClockTimer t(allocClocks_);
-    if (size < AsyncDataCacheEntry::kTinyDataSize) {
-      entry->tinyData_.resize(size);
-    } else {
-      auto sizePages = bits::roundUp(size, MappedMemory::kPageSize) /
-          MappedMemory::kPageSize;
-      if (cache_->allocate(sizePages, kCacheOwner, entry->data_)) {
-        cache_->incrementCachedPages(entry->data().numPages());
-      } else {
-        // No memory to cover the new entry. The entry is in exclusive
-        // mode. We remove it from the map and unpin.
-        removeEntry(entry);
-        entry->release();
-        _VELOX_THROW(
-            VeloxRuntimeError,
-            error_source::kErrorSourceRuntime.c_str(),
-            error_code::kNoCacheSpace.c_str(),
-            /* isRetriable */ true);
-      }
-    }
-  }
-  entry->accessStats_.reset();
-  entry->size_ = size;
+  entry->initialize(
+      FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset}, size);
   cache_->incrementNew(size);
   CachePin pin;
   pin.setEntry(entry);
   return pin;
 }
 
-FusedLoad::~FusedLoad() {
+CoalescedLoad::~CoalescedLoad() {
   // Continue possibly waiting threads.
   setEndState(LoadState::kCancelled);
 }
 
-bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
+bool CoalescedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (state_ == LoadState::kCancelled || state_ == LoadState::kLoaded) {
@@ -229,7 +244,6 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     state_ = LoadState::kLoading;
   }
   // Outside of 'mutex_'.
-  std::exception_ptr error;
   try {
     auto pins = loadData(!wait);
     for (auto& pin : pins) {
@@ -240,17 +254,17 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     }
     setEndState(LoadState::kLoaded);
   } catch (std::exception& e) {
-    error = std::current_exception();
-  }
-  if (error) {
-    // Cleanup outside of catch to avoid killing the process if more exceptions.
-    setEndState(LoadState::kCancelled);
-    std::rethrow_exception(error);
+    try {
+      setEndState(LoadState::kCancelled);
+    } catch (std::exception& inner) {
+      // May not throw from inside catch.
+    }
+    throw;
   }
   return true;
 }
 
-void FusedLoad::setEndState(LoadState endState) {
+void CoalescedLoad::setEndState(LoadState endState) {
   std::lock_guard<std::mutex> l(mutex_);
   state_ = endState;
   if (promise_) {
@@ -275,12 +289,24 @@ void CacheShard::removeEntryLocked(AsyncDataCacheEntry* entry) {
     if (entry->isPrefetch()) {
       entry->setPrefetch(false);
     }
+    // An entry can have data allocated if we remove it after failing
+    // to fill it. Free the data and account for the difference. In
+    // eviction, the data of the evicted entries is moved away, so
+    // that freeing while holding the shard mutex is exceptional.
+    auto numPages = entry->data().numPages();
+    if (numPages) {
+      cache_->incrementCachedPages(-numPages);
+      cache_->free(entry->data());
+    }
   }
 }
 
 void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t tinyFreed = 0;
   int64_t largeFreed = 0;
+  int32_t evictSaveableSkipped = 0;
+  bool skipSsdSaveable =
+      cache_->ssdCache() && cache_->ssdCache()->writeInProgress();
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
   {
@@ -319,13 +345,17 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
       if (candidate->numPins_ == 0 &&
           (!candidate->key_.fileNum.hasValue() || evictAllUnpinned ||
            (score = candidate->score(now)) >= evictionThreshold_)) {
+        if (skipSsdSaveable && candidate->ssdSaveable_ && !evictAllUnpinned) {
+          ++evictSaveableSkipped;
+          continue;
+        }
+        largeFreed += candidate->data_.byteSize();
+        toFree.push_back(std::move(candidate->data()));
         removeEntryLocked(candidate);
         freeEntries_.push_back(std::move(*iter));
         emptySlots_.push_back(entryIndex);
         tinyFreed += candidate->tinyData_.size();
         candidate->tinyData_.clear();
-        largeFreed += candidate->data_.byteSize();
-        toFree.push_back(std::move(candidate->data()));
         candidate->size_ = 0;
         ++numEvict_;
         if (score) {
@@ -341,6 +371,14 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   toFree.clear();
   cache_->incrementCachedPages(
       -largeFreed / static_cast<int32_t>(MappedMemory::kPageSize));
+  if (evictSaveableSkipped && cache_->ssdCache()->startWrite()) {
+    LOG(INFO) << "SSDCA: Start save for old saveable, skipped "
+              << cache_->numSkippedSaves();
+    cache_->numSkippedSaves() = 0;
+    cache_->saveToSsd();
+  } else if (evictSaveableSkipped) {
+    ++cache_->numSkippedSaves();
+  }
 }
 
 void CacheShard::calibrateThreshold() {
@@ -397,16 +435,24 @@ void CacheShard::updateStats(CacheStats& stats) {
 }
 
 void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
-  auto& groupStats = cache_->ssdCache()->groupStats();
   std::lock_guard<std::mutex> l(mutex_);
+  // Do not add more than 70% of entries to a write batch.If SSD save
+  // is slower than storage read, we must not have a situation where
+  // SSD save pins everything and stops reading.
+  int32_t limit = (entries_.size() * 100) / 70;
+  VELOX_CHECK(cache_->ssdCache()->writeInProgress());
   for (auto& entry : entries_) {
     if (entry && !entry->ssdFile_ && !entry->isExclusive() &&
-        groupStats.shouldSaveToSsd(
-            entry->key_.fileNum.id(), entry->trackingId_)) {
+        entry->ssdSaveable_) {
       CachePin pin;
       ++entry->numPins_;
       pin.setEntry(entry.get());
       pins.push_back(std::move(pin));
+      if (pins.size() >= limit) {
+        LOG(INFO) << "SSDCA: Limiting SSD save batch to " << limit
+                  << " entries";
+        break;
+      }
     }
   }
 }
@@ -432,7 +478,7 @@ CachePin AsyncDataCache::findOrCreate(
   return shards_[shard]->findOrCreate(key, size, wait);
 }
 
-bool AsyncDataCache::exists(RawFileCacheKey key) {
+bool AsyncDataCache::exists(RawFileCacheKey key) const {
   int shard = std::hash<RawFileCacheKey>()(key) & (kShardMask);
   return shards_[shard]->exists(key);
 }
@@ -440,23 +486,85 @@ bool AsyncDataCache::exists(RawFileCacheKey key) {
 bool AsyncDataCache::makeSpace(
     MachinePageCount numPages,
     std::function<bool()> allocate) {
-  constexpr int32_t kMaxAttempts = kNumShards * 4;
+  // Try to allocate and if failed, evict the desired amount and
+  // retry. This is without symchronization, so that other threads may
+  // get what one thread evicted but this will usually work in a
+  // couple of iterations. If this does not settle withing 8 tries, we
+  // start counting the contending threads nd doing random backoff to
+  // serialize the evicts and allocates. If a new thread enters when
+  // thread counting and backoff are in ffect, it gets a rank at the
+  // end of the queue. The larger the rank, the larger the backoff, so
+  // that first come is likelier to get the memory. We cannot
+  // serialize with a mutex because memory arbitration must not be
+  // called from inside a global mutex.
 
+  constexpr int32_t kMaxAttempts = kNumShards * 4;
+  // If requesting less than kSmallSizePages try up to 4x more if
+  // first try failed.
+  constexpr int32_t kSmallSizePages = 2048; // 8MB
+  int32_t sizeMultiplier = 1;
+  // True if this thread is counted in 'numThreadsInAllocate_'.
+  bool isCounted = false;
+  // If more than half the allowed retries are needed, this is the rank in
+  // arrival order of this.
+  int32_t rank = 0;
+  if (numThreadsInAllocate_) {
+    rank = ++numThreadsInAllocate_;
+    isCounted = true;
+  }
   for (auto nthAttempt = 0; nthAttempt < kMaxAttempts; ++nthAttempt) {
     if (mappedMemory_->numAllocated() + numPages <
         maxBytes_ / MappedMemory::kPageSize) {
-      if (allocate()) {
-        return true;
+      try {
+        if (allocate()) {
+          if (isCounted) {
+            --numThreadsInAllocate_;
+          }
+          return true;
+        }
+      } catch (const std::exception& e) {
+        if (isCounted) {
+          --numThreadsInAllocate_;
+        }
+        throw;
       }
+    }
+    if (nthAttempt > 2 && ssdCache_ && ssdCache_->writeInProgress()) {
+      LOG(INFO) << "SSDCA: Pause 0.5s after failed eviction waiting for SSD "
+                << "cach write to unpin memory";
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (nthAttempt > kMaxAttempts / 2) {
+      if (!isCounted) {
+        rank = ++numThreadsInAllocate_;
+        isCounted = true;
+      }
+    }
+    if (rank) {
+      backoff(nthAttempt + rank);
     }
     ++shardCounter_;
     // Evict from next shard. If we have gone through all shards once
     // and still have not made the allocation, we go to desperate mode
     // with 'evictAllUnpinned' set to true.
     shards_[shardCounter_ & (kShardMask)]->evict(
-        numPages * MappedMemory::kPageSize, nthAttempt >= kNumShards);
+        numPages * sizeMultiplier * MappedMemory::kPageSize,
+        nthAttempt >= kNumShards);
+    if (numPages < kSmallSizePages && sizeMultiplier < 4) {
+      sizeMultiplier *= 2;
+    }
+  }
+  if (isCounted) {
+    --numThreadsInAllocate_;
   }
   return false;
+}
+
+void AsyncDataCache::backoff(int32_t counter) {
+  size_t seed = folly::hasher<uint16_t>()(++backoffCounter_);
+  auto usec = (seed & 0xfff) * counter;
+  LOG(INFO) << "Backoff in allocation contention for " << usec << "us.";
+  std::this_thread::sleep_for(std::chrono::microseconds(usec));
 }
 
 bool AsyncDataCache::allocate(
@@ -501,21 +609,26 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
   if (!ssdCache_) {
     return;
   }
+
   ssdSaveable_ += bytes;
   if (ssdSaveable_ / MappedMemory::kPageSize >
       std::max<int32_t>(kMinSavePages, cachedPages_ / 8)) {
-    ssdSaveable_ = 0;
     // Do not start a new save if another one is in progress.
     if (!ssdCache_->startWrite()) {
       return;
     }
-
-    std::vector<CachePin> pins;
-    for (auto& shard : shards_) {
-      shard->appendSsdSaveable(pins);
-    }
-    ssdCache_->write(std::move(pins));
+    saveToSsd();
   }
+}
+
+void AsyncDataCache::saveToSsd() {
+  std::vector<CachePin> pins;
+  VELOX_CHECK(ssdCache_->writeInProgress());
+  ssdSaveable_ = 0;
+  for (auto& shard : shards_) {
+    shard->appendSsdSaveable(pins);
+  }
+  ssdCache_->write(std::move(pins));
 }
 
 CacheStats AsyncDataCache::refreshStats() const {
@@ -543,8 +656,9 @@ std::string AsyncDataCache::toString() const {
       << stats.numEvict << "\n"
       << " read pins " << stats.numShared << " write pins "
       << stats.numExclusive << " unused prefetch " << stats.numPrefetch
-      << " Alloc Mclocks " << (stats.allocClocks >> 20) << " allocated pages "
-      << numAllocated() << " cached pages " << cachedPages_;
+      << " Alloc Megaclocks " << (stats.allocClocks >> 20)
+      << " allocated pages " << numAllocated() << " cached pages "
+      << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {
     out << "\nSSD: " << ssdCache_->toString();

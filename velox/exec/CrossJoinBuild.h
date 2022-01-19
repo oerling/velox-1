@@ -44,12 +44,14 @@ class CrossJoinBuild : public Operator {
   }
 
   bool needsInput() const override {
-    return !isFinishing_;
+    return !noMoreInput_;
   }
 
-  void finish() override;
+  void noMoreInput() override;
 
   BlockingReason isBlocked(ContinueFuture* future) override;
+
+  bool isFinished() override;
 
   void close() override {
     data_.clear();
@@ -61,8 +63,7 @@ class CrossJoinBuild : public Operator {
 
   // Future for synchronizing with other Drivers of the same pipeline. All build
   // Drivers must be completed before making data available for the probe side.
-  ContinueFuture future_{false};
-  bool hasFuture_ = false;
+  ContinueFuture future_{ContinueFuture::makeEmpty()};
 };
 
 } // namespace facebook::velox::exec

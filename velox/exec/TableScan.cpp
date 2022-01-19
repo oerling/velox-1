@@ -45,13 +45,12 @@ RowVectorPtr TableScan::getOutput() {
     if (needNewSplit_) {
       exec::Split split;
       auto reason = driverCtx_->task->getSplitOrFuture(
-          planNodeId_,
+driverCtx_->driverId, planNodeId_,
           split,
           blockingFuture_,
           maxPreloadedSplits_,
           splitPreloader_);
       if (reason != BlockingReason::kNotBlocked) {
-        hasBlockingFuture_ = true;
         return nullptr;
       }
 
@@ -155,6 +154,11 @@ void TableScan::checkPreload() {
     }
   }
 }
+
+bool TableScan::isFinished() {
+  return noMoreSplits_;
+}
+
   
   void TableScan::setBatchSize() {
   constexpr int64_t kMB = 1 << 20;

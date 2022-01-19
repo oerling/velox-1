@@ -486,6 +486,8 @@ if __name__ == "__main__":
         if extra_cmake_defines:
             self.defines.update(extra_cmake_defines)
         self.loader = loader
+        if build_opts.shared_libs:
+            self.defines["BUILD_SHARED_LIBS"] = "ON"
 
     def _invalidate_cache(self):
         for name in [
@@ -968,7 +970,7 @@ class Boost(BuilderBase):
     def _build(self, install_dirs, reconfigure):
         env = self._compute_env(install_dirs)
         linkage = ["static"]
-        if self.build_opts.is_windows():
+        if self.build_opts.is_windows() or self.build_opts.shared_libs:
             linkage.append("shared")
 
         args = []
@@ -1118,7 +1120,7 @@ install(FILES sqlite3.h sqlite3ext.h DESTINATION include)
 
         defines = {
             "CMAKE_INSTALL_PREFIX": self.inst_dir,
-            "BUILD_SHARED_LIBS": "OFF",
+            "BUILD_SHARED_LIBS": "ON" if self.build_opts.shared_libs else "OFF",
             "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         }
         define_args = ["-D%s=%s" % (k, v) for (k, v) in defines.items()]
@@ -1359,12 +1361,12 @@ incremental = false
         is also cargo-builded and if yes then extract it's git configs and
         install dir
         """
-        dependencies = self.manifest.get_section_as_dict("dependencies", ctx=self.ctx)
+        dependencies = self.manifest.get_dependencies(self.ctx)
         if not dependencies:
             return []
 
         dep_to_git = {}
-        for dep in dependencies.keys():
+        for dep in dependencies:
             dep_manifest = self.loader.load_manifest(dep)
             dep_builder = dep_manifest.get("build", "builder", ctx=self.ctx)
             if dep_builder not in ["cargo", "nop"] or dep == "rust":
@@ -1374,7 +1376,7 @@ incremental = false
                 # toolchain.
                 continue
 
-            git_conf = dep_manifest.get_section_as_dict("git", ctx=self.ctx)
+            git_conf = dep_manifest.get_section_as_dict("git", self.ctx)
             if "repo_url" not in git_conf:
                 raise Exception(
                     "A cargo dependency requires git.repo_url to be defined."

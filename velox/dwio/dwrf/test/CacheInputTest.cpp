@@ -188,6 +188,18 @@ class CacheTest : public testing::Test {
     }
   }
 
+  static void
+  checkData(const char* data, uint64_t offset, int32_t size, uint64_t seed) {
+    uint8_t expected = seed + offset;
+    for (auto i = 0; i < size; ++i) {
+      auto cached = reinterpret_cast<const uint8_t*>(data)[i];
+      if (cached != expected) {
+        ASSERT_EQ(expected, cached) << " at " << (offset + i);
+      }
+      ++expected;
+    }
+  }
+
   uint64_t seedByPath(const std::string& path) {
     StringIdLease lease(fileIds(), path);
     return lease.id();
@@ -235,7 +247,10 @@ class CacheTest : public testing::Test {
           return std::make_unique<TestInputStreamHolder>(inputStream);
         },
         ioStats_,
-        executor_.get());
+        executor_.get(),
+        dwio::common::ReaderOptions::kDefaultLoadQuantum, // loadQuantum 8MB.
+        512 << 10 // Max coalesce distance 512K.
+    );
     data->file = dynamic_cast<TestInputStream*>(inputStream.get());
     for (auto i = 0; i < numColumns; ++i) {
       int32_t streamIndex = i * (kMaxStreams / numColumns);
@@ -331,8 +346,11 @@ class CacheTest : public testing::Test {
       int32_t readPctModulo,
       int32_t numStripes,
       int32_t stripeWindow = 4) {
-    auto tracker =
-        std::make_shared<ScanTracker>("testTracker", nullptr, groupStats_);
+    auto tracker = std::make_shared<ScanTracker>(
+        "testTracker",
+        nullptr,
+        dwio::common::ReaderOptions::kDefaultLoadQuantum,
+						 groupTracker_);
     std::deque<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;

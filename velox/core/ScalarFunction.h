@@ -15,44 +15,17 @@
  */
 #pragma once
 
+#include <boost/algorithm/string.hpp>
 #include "folly/Likely.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/core/Metaprogramming.h"
 #include "velox/core/QueryConfig.h"
+#include "velox/expression/FunctionSignature.h"
 #include "velox/type/Type.h"
 #include "velox/type/Variant.h"
 
 namespace facebook::velox::core {
-
-class ArgumentsCtx {
- public:
-  /* implicit */ ArgumentsCtx(std::vector<std::shared_ptr<const Type>> argTypes)
-      : types_(std::move(argTypes)) {}
-
-  const std::vector<std::shared_ptr<const Type>>& types() const {
-    return types_;
-  }
-
-  bool operator==(const ArgumentsCtx& rhs) const {
-    if (types_.size() != rhs.types_.size()) {
-      return false;
-    }
-    return std::equal(
-        std::begin(types_),
-        std::end(types_),
-        std::begin(rhs.types()),
-        [](const std::shared_ptr<const Type>& l,
-           const std::shared_ptr<const Type>& r) { return l->kindEquals(r); });
-  }
-
-  bool operator!=(const ArgumentsCtx& rhs) const {
-    return !(*this == rhs);
-  }
-
- private:
-  std::vector<std::shared_ptr<const Type>> types_;
-};
 
 // most UDFs are determinisic, hence this default value
 template <class T, class = void>
@@ -99,55 +72,27 @@ struct udf_help<T, util::detail::void_t<decltype(T::help)>> {
   }
 };
 
-// This class is used as a key to resolve UDFs. UDF registry stores the function
-// implementation with the function signatures (FunctionKey) that it supports.
-// When it compiles the input expressions, expression engines evaluate the input
-// and construct FunctionKey with type resolving all inputs, to find a UDF
-// implementation that can handle this.
-class FunctionKey {
+// Has the value true, unless a Variadic Type appears anywhere but at the end
+// of the parameters.
+template <typename... TArgs>
+struct ValidateVariadicArgs {
+  using arg_types = std::tuple<TArgs...>;
+  static constexpr int num_args = std::tuple_size<arg_types>::value;
+  template <int32_t POSITION>
+  using arg_at = typename std::tuple_element<POSITION, arg_types>::type;
+
+  template <int32_t POSITION, typename... Args>
+  static constexpr bool isValidArg() {
+    if constexpr (POSITION >= num_args - 1) {
+      return true;
+    } else {
+      return !isVariadicType<arg_at<POSITION>>::value &&
+          isValidArg<POSITION + 1, Args...>();
+    }
+  }
+
  public:
-  FunctionKey(std::string name, std::vector<std::shared_ptr<const Type>> params)
-      : name_{std::move(name)}, argumentsCtx_{std::move(params)} {
-    for (const auto& param : argumentsCtx_.types()) {
-      CHECK_NOTNULL(param.get());
-    }
-  }
-
-  std::string toString() const {
-    std::string buf{name_};
-    buf.append("( ");
-    for (const auto& type : argumentsCtx_.types()) {
-      buf.append(type->toString());
-      buf.append(" ");
-    }
-    buf.append(")");
-    return buf;
-  }
-
-  friend std::ostream& operator<<(std::ostream& stream, const FunctionKey& k) {
-    stream << k.toString();
-    return stream;
-  }
-
-  bool operator==(const FunctionKey& rhs) const {
-    auto& lhs = *this;
-    if (lhs.name_ != rhs.name_) {
-      return false;
-    }
-    return lhs.argumentsCtx_ == rhs.argumentsCtx_;
-  }
-
-  const std::string& name() const {
-    return name_;
-  }
-
-  const std::vector<std::shared_ptr<const Type>>& types() const {
-    return argumentsCtx_.types();
-  }
-
- private:
-  std::string name_;
-  ArgumentsCtx argumentsCtx_;
+  static constexpr bool value = isValidArg<0, TArgs...>();
 };
 
 // todo(youknowjack): add a dynamic execution mode
@@ -163,9 +108,8 @@ class IScalarFunction {
   virtual std::string getName() const = 0;
   virtual bool isDeterministic() const = 0;
   virtual int32_t reuseStringsFromArg() const = 0;
-
-  FunctionKey key() const;
-  std::string signature(const std::string& name) const;
+  virtual std::shared_ptr<exec::FunctionSignature> signature() const = 0;
+  virtual std::string helpMessage(const std::string& name) const = 0;
 
   virtual ~IScalarFunction() = default;
 };
@@ -175,6 +119,20 @@ struct udf_has_name : std::false_type {};
 
 template <typename T>
 struct udf_has_name<T, decltype(&T::name, 0)> : std::true_type {};
+
+template <typename Arg>
+struct CreateType {
+  static std::shared_ptr<const Type> create() {
+    return CppToType<Arg>::create();
+  }
+};
+
+template <typename Underlying>
+struct CreateType<Variadic<Underlying>> {
+  static std::shared_ptr<const Type> create() {
+    return CppToType<Underlying>::create();
+  }
+};
 
 template <typename Fun, typename TReturn, typename... Args>
 class ScalarFunctionMetadata : public IScalarFunction {
@@ -209,14 +167,28 @@ class ScalarFunctionMetadata : public IScalarFunction {
     return returnType_;
   }
 
+  // Will convert Args to std::shared_ptr<const Type>.
+  // Note that if the last arg is Variadic, this will return a
+  // std::shared_ptr<const Type> matching the underlying type for that
+  // argument.
+  // You can check if that argument is Variadic by calling isVariadic()
+  // on this object.
   std::vector<std::shared_ptr<const Type>> argTypes() const final {
     std::vector<std::shared_ptr<const Type>> args(num_args);
     auto it = args.begin();
-    ((*it++ = CppToType<Args>::create()), ...);
+    ((*it++ = CreateType<Args>::create()), ...);
     for (const auto& arg : args) {
       CHECK_NOTNULL(arg.get());
     }
     return args;
+  }
+
+  static constexpr bool isVariadic() {
+    if constexpr (num_args == 0) {
+      return false;
+    } else {
+      return isVariadicType<type_at<num_args - 1>>::value;
+    }
   }
 
   explicit ScalarFunctionMetadata(std::shared_ptr<const Type> returnType)
@@ -226,11 +198,64 @@ class ScalarFunctionMetadata : public IScalarFunction {
   }
   ~ScalarFunctionMetadata() override = default;
 
+  std::shared_ptr<exec::FunctionSignature> signature() const final {
+    auto builder =
+        exec::FunctionSignatureBuilder().returnType(typeToString(returnType()));
+
+    for (const auto& arg : argTypes()) {
+      builder.argumentType(typeToString(arg));
+    }
+
+    if (isVariadic()) {
+      builder.variableArity();
+    }
+
+    return builder.build();
+  }
+
+  std::string helpMessage(const std::string& name) const final {
+    std::string s{name};
+    s.append("(");
+    bool first = true;
+    for (auto& arg : argTypes()) {
+      if (!first) {
+        s.append(", ");
+      }
+      first = false;
+      s.append(arg->toString());
+    }
+
+    if (isVariadic()) {
+      s.append("...");
+    }
+
+    s.append(")");
+    return s;
+  }
+
  private:
   void verifyReturnTypeCompatibility() {
     VELOX_USER_CHECK(
         CppToType<TReturn>::create()->kindEquals(returnType_),
         "return type override mismatch");
+  }
+
+  // convert type to a string representation that is recognized in
+  // FunctionSignature.
+  static std::string typeToString(const TypePtr& type) {
+    std::ostringstream out;
+    out << boost::algorithm::to_lower_copy(std::string(type->kindName()));
+    if (type->size()) {
+      out << "(";
+      for (auto i = 0; i < type->size(); i++) {
+        if (i > 0) {
+          out << ",";
+        }
+        out << typeToString(type->childAt(i));
+      }
+      out << ")";
+    }
+    return out.str();
   }
 
   const std::shared_ptr<const Type> returnType_;
@@ -294,6 +319,15 @@ class UDFHolder final
   static_assert(
       udf_has_call || udf_has_callNullable,
       "UDF must implement at least one of `call` or `callNullable`");
+
+  static_assert(
+      ValidateVariadicArgs<TArgs...>::value,
+      "Variadic can only be used as the last argument to a UDF");
+
+  // Initialize could be supported with variadicArgs
+  static_assert(
+      !(udf_has_initialize && Metadata::isVariadic()),
+      "Initialize is not supported for UDFs with VariadicArgs.");
 
   static constexpr bool is_default_null_behavior = !udf_has_callNullable;
   static constexpr bool has_ascii = udf_has_callAscii;
@@ -368,57 +402,3 @@ class UDFHolder final
 };
 
 } // namespace facebook::velox::core
-
-namespace std {
-template <>
-struct hash<facebook::velox::core::ArgumentsCtx> {
-  using argument_type = facebook::velox::core::ArgumentsCtx;
-  using result_type = std::size_t;
-
-  result_type operator()(const argument_type& key) const noexcept {
-    size_t val = 0;
-    for (const auto& type : key.types()) {
-      val = val * 31 + type->hashKind();
-    }
-    return val;
-  }
-};
-
-template <>
-struct hash<facebook::velox::core::FunctionKey> {
-  using argument_type = facebook::velox::core::FunctionKey;
-  using result_type = std::size_t;
-  result_type operator()(const argument_type& key) const noexcept {
-    size_t val = std::hash<std::string>{}(key.name());
-    for (const auto& type : key.types()) {
-      val = val * 31 + type->hashKind();
-    }
-    return val;
-  }
-};
-
-template <>
-struct equal_to<facebook::velox::core::FunctionKey> {
-  using result_type = bool;
-  using first_argument_type = facebook::velox::core::FunctionKey;
-  using second_argument_type = first_argument_type;
-
-  bool operator()(
-      const first_argument_type& lhs,
-      const second_argument_type& rhs) const {
-    return lhs == rhs;
-  }
-};
-} // namespace std
-
-template <>
-struct fmt::formatter<facebook::velox::core::FunctionKey> {
-  constexpr auto parse(format_parse_context& ctx) {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(const facebook::velox::core::FunctionKey& k, FormatContext& ctx) {
-    return format_to(ctx.out(), "{}", k.toString());
-  }
-};

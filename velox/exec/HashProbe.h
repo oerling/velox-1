@@ -30,17 +30,19 @@ class HashProbe : public Operator {
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::HashJoinNode>& hashJoinNode);
 
+  bool needsInput() const override {
+    return !finished_ && !noMoreInput_ && !input_;
+  }
+
   void addInput(RowVectorPtr input) override;
+
+  void noMoreInput() override;
 
   RowVectorPtr getOutput() override;
 
-  bool needsInput() const override {
-    return !isFinishing_ && !input_;
-  }
-
   BlockingReason isBlocked(ContinueFuture* future) override;
 
-  void finish() override;
+  bool isFinished() override;
 
   void clearDynamicFilters() override;
 
@@ -67,6 +69,8 @@ class HashProbe : public Operator {
   // Applies 'filter_' to 'outputRows_' and updates 'outputRows_' and
   // 'rowNumberMapping_'. Returns the number of passing rows.
   vector_size_t evalFilter(vector_size_t numRows);
+
+  void ensureLoadedIfNotAtEnd(ChannelIndex channel);
 
   // TODO: Define batch size as bytes based on RowContainer row sizes.
   const uint32_t outputBatchSize_;
@@ -230,6 +234,8 @@ class HashProbe : public Operator {
   // Input rows with a hash match. This is a subset of rows with no nulls in the
   // join keys and a superset of rows that have a match on the build side.
   SelectivityVector activeRows_;
+
+  bool finished_{false};
 };
 
 } // namespace facebook::velox::exec

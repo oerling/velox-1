@@ -366,16 +366,17 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     cache::FileGroupStats* groupStats = asyncCache->ssdCache()
         ? &asyncCache->ssdCache()->groupStats()
         : nullptr;
-    auto tracker = Connector::getTracker(scanId_, groupStats);
+    auto tracker = Connector::getTracker(scanId_, readerOpts_.loadQuantum(), groupStats);
     bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
         (asyncCache),
-        std::move(tracker),
+        tracker,
         fileHandle_->groupId.id(),
         [factory = fileHandleFactory_,
          path = split_->filePath,
          stats = ioStats_]() { return makeStreamHolder(factory, path, stats); },
         ioStats_,
-        executor_);
+        executor_,
+        readerOpts_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
   } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
@@ -497,9 +498,7 @@ void HiveDataSource::setFromDataSource(
 RowVectorPtr HiveDataSource::next(uint64_t size) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {
-    split_.reset();
-    reader_.reset();
-    rowReader_.reset();
+    resetSplit();
     return nullptr;
   }
 
@@ -557,10 +556,16 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
 
   rowReader_->updateRuntimeStats(runtimeStats_);
 
-  split_.reset();
-  reader_.reset();
-  rowReader_.reset();
+  resetSplit();
   return nullptr;
+}
+
+void HiveDataSource::resetSplit() {
+  split_.reset();
+  // Make sure to destroy Reader and RowReader in the opposite order of
+  // creation, e.g. destroy RowReader first, then destroy Reader.
+  rowReader_.reset();
+  reader_.reset();
 }
 
 vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {
@@ -616,19 +621,14 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
 }
 
 int64_t HiveDataSource::estimatedRowSize() {
-  if (!rowReader_ || errorInRowSize_) {
+  if (!rowReader_) {
     return kUnknownRowSize;
   }
-  try {
-    return rowReader_->estimatedRowSize();
-  } catch (const std::exception& e) {
-    // Remember the error and do not try the other splits, they are
-    // likely to be broken the same way.
-    errorInRowSize_ = true;
-    LOG_EVERY_N(WARNING, 1000)
-        << "failed to get row size estimate for " << split_->toString();
-    return kUnknownRowSize;
+  auto size = rowReader_->estimatedRowSize();
+  if (size.has_value()) {
+    return size.value();
   }
+  return kUnknownRowSize;
 }
 
 HiveConnector::HiveConnector(

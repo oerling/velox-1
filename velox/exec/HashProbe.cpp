@@ -19,6 +19,8 @@
 #include "velox/exec/Task.h"
 #include "velox/expression/ControlExpr.h"
 
+DEFINE_bool(no_probe_reuse, true, "Disabel result reuse for HashProbe");
+
 namespace facebook::velox::exec {
 
 namespace {
@@ -176,7 +178,7 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
   if (hashBuildResult->antiJoinHasNullKeys) {
     // Anti join with null keys on the build side always returns nothing.
     VELOX_CHECK(isAntiJoin(joinType_));
-    isFinishing_ = true;
+    finished_ = true;
   } else {
     table_ = hashBuildResult->table;
     if (table_->numDistinct() == 0) {
@@ -184,7 +186,7 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
       // case, hence, we can terminate the pipeline early.
       if (isInnerJoin(joinType_) || isSemiJoin(joinType_) ||
           isRightJoin(joinType_)) {
-        isFinishing_ = true;
+        finished_ = true;
       }
     } else if (
         (isInnerJoin(joinType_) || isSemiJoin(joinType_)) &&
@@ -239,7 +241,8 @@ void HashProbe::addInput(RowVectorPtr input) {
 
   nonNullRows_.resize(input_->size());
   nonNullRows_.setAll();
-  deselectRowsWithNulls(*input_, keyChannels_, nonNullRows_);
+  deselectRowsWithNulls(
+      *input_, keyChannels_, nonNullRows_, *operatorCtx_->execCtx());
 
   auto getDynamicFilterBuilder = [&](auto i) -> DynamicFilterBuilder* {
     if (!dynamicFilterBuilders_.empty()) {
@@ -349,6 +352,10 @@ folly::Range<vector_size_t*> initializeRowNumberMapping(
 } // namespace
 
 void HashProbe::prepareOutput(vector_size_t size) {
+  if (FLAGS_no_probe_reuse) {
+    output_ = nullptr;
+  }
+
   VectorPtr outputAsBase = std::move(output_);
   BaseVector::ensureWritable(
       SelectivityVector::empty(), outputType_, pool(), &outputAsBase);
@@ -362,9 +369,8 @@ void HashProbe::fillOutput(vector_size_t size) {
   for (auto projection : identityProjections_) {
     // Load input vector if it is being split into multiple batches. It is not
     // safe to wrap unloaded LazyVector into two different dictionaries.
-    auto inputChild = size == outputRows_.size()
-        ? input_->loadedChildAt(projection.inputChannel)
-        : input_->childAt(projection.inputChannel);
+    ensureLoadedIfNotAtEnd(projection.inputChannel);
+    auto inputChild = input_->childAt(projection.inputChannel);
 
     output_->childAt(projection.outputChannel) =
         wrapChild(size, rowNumberMapping_, inputChild);
@@ -413,8 +419,15 @@ RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
 RowVectorPtr HashProbe::getOutput() {
   clearIdentityProjectedOutput();
   if (!input_) {
-    if (isFinishing_ && isRightJoin(joinType_)) {
-      return getNonMatchingOutputForRightJoin();
+    if (noMoreInput_ && isRightJoin(joinType_)) {
+      auto output = getNonMatchingOutputForRightJoin();
+      if (output == nullptr) {
+        finished_ = true;
+      }
+      return output;
+    }
+    if (noMoreInput_) {
+      finished_ = true;
     }
     return nullptr;
   }
@@ -505,6 +518,7 @@ void HashProbe::fillFilterInput(vector_size_t size) {
   }
   filterInput_->resize(size);
   for (auto projection : filterProbeInputs_) {
+    ensureLoadedIfNotAtEnd(projection.inputChannel);
     filterInput_->childAt(projection.outputChannel) = wrapChild(
         size, rowNumberMapping_, input_->childAt(projection.inputChannel));
   }
@@ -563,8 +577,18 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
   return numPassed;
 }
 
-void HashProbe::finish() {
-  Operator::finish();
+void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
+  if (core::isSemiJoin(joinType_) || core::isAntiJoin(joinType_) ||
+      results_.atEnd()) {
+    return;
+  }
+  EvalCtx evalCtx(operatorCtx_->execCtx(), nullptr, input_.get());
+  SelectivityVector rows(input_->size());
+  evalCtx.ensureFieldLoaded(channel, rows);
+}
+
+void HashProbe::noMoreInput() {
+  Operator::noMoreInput();
   if (isRightJoin(joinType_)) {
     std::vector<VeloxPromise<bool>> promises;
     std::vector<std::shared_ptr<Driver>> peers;
@@ -578,5 +602,9 @@ void HashProbe::finish() {
 
     lastRightJoinProbe_ = true;
   }
+}
+
+bool HashProbe::isFinished() {
+  return finished_;
 }
 } // namespace facebook::velox::exec

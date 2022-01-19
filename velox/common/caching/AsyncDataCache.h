@@ -63,6 +63,9 @@ struct AccessStats {
     return (now - lastUse) / (1 + numUses);
   }
 
+  // Resets the access tracking to not accessed. This is used after
+  // evicting the previous contents of the entry, so that the new data
+  // does not inherit the history of the previous.
   void reset() {
     lastUse = accessTime();
     numUses = 0;
@@ -132,6 +135,11 @@ class AsyncDataCacheEntry {
   static constexpr int32_t kTinyDataSize = 2048;
 
   explicit AsyncDataCacheEntry(CacheShard* FOLLY_NONNULL shard);
+
+  // Sets the key and size and allocates the entry's memory.  Resets
+  //  all other state. The entry must be held exclusively and must
+  //  hold no memory when calling this.
+  void initialize(FileCacheKey key, int32_t size);
 
   memory::MappedMemory::Allocation& data() {
     return data_;
@@ -203,6 +211,7 @@ class AsyncDataCacheEntry {
   void setSsdFile(SsdFile* FOLLY_NULLABLE file, uint64_t offset) {
     ssdFile_ = file;
     ssdOffset_ = offset;
+    ssdSaveable_ = false;
   }
 
   SsdFile* FOLLY_NULLABLE ssdFile() const {
@@ -279,6 +288,9 @@ class AsyncDataCacheEntry {
 
   // Offset in 'ssdFile_'.
   uint64_t ssdOffset_{0};
+
+  // True if this should be saved to SSD.
+  bool ssdSaveable_{false};
 
   friend class CacheShard;
   friend class CachePin;
@@ -362,7 +374,7 @@ class CachePin {
   friend class CacheShard;
 };
 
-// State of a FusedLoad
+// State of a CoalescedLoad
 enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
 
 // Represents a possibly multi-entry load from a file system. The
@@ -370,14 +382,14 @@ enum class LoadState { kPlanned, kLoading, kCancelled, kLoaded };
 // either done by a background prefetch thread or if the query
 // thread gets there first, then the query thread will do the
 // IO. The IO is also cancelled as a unit.
-class FusedLoad {
+class CoalescedLoad {
  public:
-  FusedLoad(std::vector<RawFileCacheKey> keys, std::vector<int32_t> sizes)
+  CoalescedLoad(std::vector<RawFileCacheKey> keys, std::vector<int32_t> sizes)
       : state_(LoadState::kPlanned),
         keys_(std::move(keys)),
         sizes_(std::move(sizes)) {}
 
-  virtual ~FusedLoad();
+  virtual ~CoalescedLoad();
 
   // Makes entries for the keys that are not yet loaded and does a coalesced
   // load of the entries that are not yet present. If another thread is in the
@@ -394,7 +406,7 @@ class FusedLoad {
   }
 
   virtual std::string toString() const {
-    return "<FusedLoad>";
+    return "<CoalescedLoad>";
   }
 
  protected:
@@ -495,7 +507,8 @@ class CacheShard {
       uint64_t size,
       folly::SemiFuture<bool>* FOLLY_NULLABLE readyFuture);
 
-  bool exists(RawFileCacheKey key);
+  // Returns true if there is an entry for 'key'. Updates access time.
+  bool exists(RawFileCacheKey key) const;
 
   AsyncDataCache* FOLLY_NONNULL cache() {
     return cache_;
@@ -519,6 +532,10 @@ class CacheShard {
 
   void appendSsdSaveable(std::vector<CachePin>& pins);
 
+  auto& allocClocks() {
+    return allocClocks_;
+  }
+
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
   void calibrateThreshold();
@@ -531,7 +548,7 @@ class CacheShard {
       AsyncDataCacheEntry* FOLLY_NONNULL entry,
       int64_t size);
 
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry * FOLLY_NONNULL>
       entryMap_;
   // Entries associated to a key.
@@ -592,7 +609,7 @@ class AsyncDataCache : public memory::MappedMemory,
       folly::SemiFuture<bool>* FOLLY_NULLABLE waitFuture = nullptr);
 
   // Returns true if there is an entry for 'key'. Updates access time.
-  bool exists(RawFileCacheKey key);
+  bool exists(RawFileCacheKey key) const;
 
   bool allocate(
       memory::MachinePageCount numPages,
@@ -664,7 +681,7 @@ class AsyncDataCache : public memory::MappedMemory,
   void possibleSsdSave(uint64_t bytes);
 
   // Sets a callback applied to new entries at the point where
-  // 'dataValid_' is set to true. Used for testing and can be used for
+  //  they are set to shared mode. Used for testing and can be used for
   // e.g. checking checksums.
   void setVerifyHook(std::function<void(const AsyncDataCacheEntry&)> hook) {
     verifyHook_ = hook;
@@ -681,7 +698,7 @@ class AsyncDataCache : public memory::MappedMemory,
   // 'keys'.
   template <typename SizeFunc, typename ProcessPin>
   void makePins(
-      std::vector<RawFileCacheKey>& keys,
+      const std::vector<RawFileCacheKey>& keys,
       SizeFunc sizeFunc,
       ProcessPin processPin) {
     for (auto i = 0; i < keys.size(); ++i) {
@@ -696,12 +713,30 @@ class AsyncDataCache : public memory::MappedMemory,
   // Drops all unpinned entries. Pins stay valid.
   void clear();
 
+  // Saves all entries with 'ssdSaveable_' to 'ssdCache_'.
+  void saveToSsd();
+
+  int32_t& numSkippedSaves() {
+    return numSkippedSaves_;
+  }
+
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
 
+  // Waits a pseudorandom delay times 'counter'.
+  void backoff(int32_t counter);
+
+  // Calls 'allocate' until this returns true. Returns true if
+  // allocate returns true. and Tries to evict at least 'numPages' of
+  // cache after each failed call to 'allocate'.  May pause to wait
+  // for SSD cache flush if ''ssdCache_' is set and is busy
+  // writing. Does random back-off after several failures and
+  // eventually gives up. Allocation must not be serialized by a mutex
+  // for memory arbitration to work.
   bool makeSpace(
       memory::MachinePageCount numPages,
+
       std::function<bool()> allocate);
 
   std::unique_ptr<memory::MappedMemory> mappedMemory_;
@@ -727,6 +762,18 @@ class AsyncDataCache : public memory::MappedMemory,
   CacheStats stats_;
 
   std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
+  // Count of skipped saves to 'ssdCache_' due to 'ssdCache_' being
+  // busy with write.
+  int32_t numSkippedSaves_{0};
+
+  // Used for pseudorandom backoff after failed allocation
+  // attempts. Serialization wth a mutex is not allowed for
+  // allocations, so use backoff.
+  std::atomic<uint16_t> backoffCounter_;
+
+  // Counter of threads competing for allocation in makeSpace(). Used
+  // for setting staggered backoff. Mutexes are not allowed for this.
+  std::atomic<int32_t> numThreadsInAllocate_;
 };
 
 // Samples a set of values T from 'numSamples' calls of

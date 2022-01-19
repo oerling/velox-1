@@ -19,6 +19,7 @@
 #include "velox/common/caching/FileIds.h"
 
 #include "velox/common/caching/SsdCache.h"
+#include "velox/common/time/Timer.h"
 
 namespace facebook::velox::cache {
 
@@ -58,8 +59,11 @@ bool SsdCache::startWrite() {
 }
 
 void SsdCache::write(std::vector<CachePin> pins) {
+  uint64_t bytes = 0;
+  auto start = getCurrentTimeMicro();
   std::vector<std::vector<CachePin>> shards(numShards_);
   for (auto& pin : pins) {
+    bytes += pin.checkedEntry()->size();
     auto& target = file(pin.entry()->key().fileNum.id());
     shards[target.shardId()].push_back(std::move(pin));
   }
@@ -78,9 +82,14 @@ void SsdCache::write(std::vector<CachePin> pins) {
     // We move the mutable vector of pins to the executor. These must
     // be wrapped in a shared struct to be passed via lambda capture.
     auto pinHolder = std::make_shared<PinHolder>(std::move(shards[i]));
-    executor_->add([this, i, pinHolder]() {
+    executor_->add([this, i, pinHolder, bytes, start]() {
       files_[i]->write(pinHolder->pins);
-      --writesInProgress_;
+      if (--writesInProgress_ == 0) {
+        LOG(INFO) << fmt::format(
+            "SSDCA: Wrote {}MB, {} MB/s",
+            bytes >> 20,
+            static_cast<float>(bytes) / (getCurrentTimeMicro() - start));
+      }
     });
   }
   writesInProgress_.fetch_sub(numNoStore);

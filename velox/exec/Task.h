@@ -15,6 +15,7 @@
  */
 #pragma once
 #include <limits>
+#include "velox/core/PlanFragment.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/exec/Driver.h"
 #include "velox/exec/LocalPartition.h"
@@ -85,23 +86,15 @@ class Task {
  public:
   Task(
       const std::string& taskId,
-      std::shared_ptr<const core::PlanNode> planNode,
+      core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
       Consumer consumer = nullptr,
-      std::function<void(std::exception_ptr)> onError = nullptr)
-      : Task{
-            taskId,
-            std::move(planNode),
-            destination,
-            std::move(queryCtx),
-            (consumer ? [c = std::move(consumer)]() { return c; }
-                      : ConsumerSupplier{}),
-            std::move(onError)} {}
+      std::function<void(std::exception_ptr)> onError = nullptr);
 
   Task(
       const std::string& taskId,
-      std::shared_ptr<const core::PlanNode> planNode,
+      core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
       ConsumerSupplier consumerSupplier,
@@ -185,6 +178,7 @@ class Task {
   // so many of splits at the head of the queue are preloading. If
   // they are not, calls preload on them to start preload.
   BlockingReason getSplitOrFuture(
+      int driverId,
       const core::PlanNodeId& planNodeId,
       exec::Split& split,
       ContinueFuture& future,
@@ -537,7 +531,7 @@ class Task {
   std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
 
   const std::string taskId_;
-  std::shared_ptr<const core::PlanNode> planNode_;
+  core::PlanFragment planFragment_;
   const int destination_;
   std::shared_ptr<core::QueryCtx> queryCtx_;
   // True if produces output via PartitionedOutputBufferManager.
