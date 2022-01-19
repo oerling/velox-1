@@ -505,7 +505,8 @@ bool AsyncDataCache::makeSpace(
   int32_t sizeMultiplier = 1;
   // True if this thread is counted in 'numThreadsInAllocate_'.
   bool isCounted = false;
-  // If more than half the allowed retries are needed, this is the rank in arrival order of this.
+  // If more than half the allowed retries are needed, this is the rank in
+  // arrival order of this.
   int32_t rank = 0;
   if (numThreadsInAllocate_) {
     rank = ++numThreadsInAllocate_;
@@ -515,28 +516,28 @@ bool AsyncDataCache::makeSpace(
     if (mappedMemory_->numAllocated() + numPages <
         maxBytes_ / MappedMemory::kPageSize) {
       try {
-	if (allocate()) {
-	  if (isCounted) {
-	    --numThreadsInAllocate_;
-	  }
-	  return true;
-	}
+        if (allocate()) {
+          if (isCounted) {
+            --numThreadsInAllocate_;
+          }
+          return true;
+        }
       } catch (const std::exception& e) {
-	if (isCounted) {
-	  --numThreadsInAllocate_;
-	}
-	throw;
+        if (isCounted) {
+          --numThreadsInAllocate_;
+        }
+        throw;
       }
     }
     if (nthAttempt > 2 && ssdCache_ && ssdCache_->writeInProgress()) {
       LOG(INFO) << "SSDCA: Pause 0.5s after failed eviction waiting for SSD "
-		<< "cach write to unpin memory";
+                << "cach write to unpin memory";
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     if (nthAttempt > kMaxAttempts / 2) {
       if (!isCounted) {
-	rank = ++numThreadsInAllocate_; 
-	isCounted = true;
+        rank = ++numThreadsInAllocate_;
+        isCounted = true;
       }
     }
     if (rank) {
@@ -547,7 +548,8 @@ bool AsyncDataCache::makeSpace(
     // and still have not made the allocation, we go to desperate mode
     // with 'evictAllUnpinned' set to true.
     shards_[shardCounter_ & (kShardMask)]->evict(
-						 numPages * sizeMultiplier * MappedMemory::kPageSize, nthAttempt >= kNumShards);
+        numPages * sizeMultiplier * MappedMemory::kPageSize,
+        nthAttempt >= kNumShards);
     if (numPages < kSmallSizePages && sizeMultiplier < 4) {
       sizeMultiplier *= 2;
     }
@@ -565,7 +567,6 @@ void AsyncDataCache::backoff(int32_t counter) {
   std::this_thread::sleep_for(std::chrono::microseconds(usec));
 }
 
-  
 bool AsyncDataCache::allocate(
     MachinePageCount numPages,
     int32_t owner,

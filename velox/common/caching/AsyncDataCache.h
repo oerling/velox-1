@@ -726,7 +726,7 @@ class AsyncDataCache : public memory::MappedMemory,
 
   // Waits a pseudorandom delay times 'counter'.
   void backoff(int32_t counter);
-  
+
   // Calls 'allocate' until this returns true. Returns true if
   // allocate returns true. and Tries to evict at least 'numPages' of
   // cache after each failed call to 'allocate'.  May pause to wait
@@ -764,7 +764,7 @@ class AsyncDataCache : public memory::MappedMemory,
   std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
   // Count of skipped saves to 'ssdCache_' due to 'ssdCache_' being
   // busy with write.
-   int32_t numSkippedSaves_{0};
+  int32_t numSkippedSaves_{0};
 
   // Used for pseudorandom backoff after failed allocation
   // attempts. Serialization wth a mutex is not allowed for
