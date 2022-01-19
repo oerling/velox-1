@@ -178,7 +178,7 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
   if (hashBuildResult->antiJoinHasNullKeys) {
     // Anti join with null keys on the build side always returns nothing.
     VELOX_CHECK(isAntiJoin(joinType_));
-    isFinishing_ = true;
+    finished_ = true;
   } else {
     table_ = hashBuildResult->table;
     if (table_->numDistinct() == 0) {
@@ -186,7 +186,7 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
       // case, hence, we can terminate the pipeline early.
       if (isInnerJoin(joinType_) || isSemiJoin(joinType_) ||
           isRightJoin(joinType_)) {
-        isFinishing_ = true;
+        finished_ = true;
       }
     } else if (
         (isInnerJoin(joinType_) || isSemiJoin(joinType_)) &&
@@ -419,8 +419,15 @@ RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
 RowVectorPtr HashProbe::getOutput() {
   clearIdentityProjectedOutput();
   if (!input_) {
-    if (isFinishing_ && isRightJoin(joinType_)) {
-      return getNonMatchingOutputForRightJoin();
+    if (noMoreInput_ && isRightJoin(joinType_)) {
+      auto output = getNonMatchingOutputForRightJoin();
+      if (output == nullptr) {
+        finished_ = true;
+      }
+      return output;
+    }
+    if (noMoreInput_) {
+      finished_ = true;
     }
     return nullptr;
   }
@@ -580,8 +587,8 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
   evalCtx.ensureFieldLoaded(channel, rows);
 }
 
-void HashProbe::finish() {
-  Operator::finish();
+void HashProbe::noMoreInput() {
+  Operator::noMoreInput();
   if (isRightJoin(joinType_)) {
     std::vector<VeloxPromise<bool>> promises;
     std::vector<std::shared_ptr<Driver>> peers;
@@ -595,5 +602,9 @@ void HashProbe::finish() {
 
     lastRightJoinProbe_ = true;
   }
+}
+
+bool HashProbe::isFinished() {
+  return finished_;
 }
 } // namespace facebook::velox::exec

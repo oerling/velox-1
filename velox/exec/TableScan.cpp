@@ -45,9 +45,8 @@ RowVectorPtr TableScan::getOutput() {
     if (needNewSplit_) {
       exec::Split split;
       auto reason = driverCtx_->task->getSplitOrFuture(
-          planNodeId_, split, blockingFuture_);
+          driverCtx_->driverId, planNodeId_, split, blockingFuture_);
       if (reason != BlockingReason::kNotBlocked) {
-        hasBlockingFuture_ = true;
         return nullptr;
       }
 
@@ -111,6 +110,10 @@ RowVectorPtr TableScan::getOutput() {
     currentSplitGroupId_ = -1;
     needNewSplit_ = true;
   }
+}
+
+bool TableScan::isFinished() {
+  return noMoreSplits_;
 }
 
 void TableScan::setBatchSize() {

@@ -16,14 +16,13 @@
 
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/SsdCache.h"
+#include "velox/common/memory/MmapAllocator.h"
 
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/executors/QueuedImmediateExecutor.h>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
-DECLARE_bool(ssd_odirect);
-DECLARE_bool(ssd_verify_write);
 DECLARE_bool(velox_exception_stacktrace);
 
 using namespace facebook::velox;
@@ -37,12 +36,20 @@ struct Request {
 
   uint64_t offset;
   uint64_t size;
+  SsdPin ssdPin;
 };
 
 class AsyncDataCacheTest : public testing::Test {
  protected:
   static constexpr int32_t kNumFiles = 100;
-  void initializeCache(int64_t maxBytes, int64_t ssdBytes = 0) {
+
+  void TearDown() override {
+    if (executor_) {
+      executor_->join();
+    }
+  }
+
+  void initializeCache(uint64_t maxBytes, int64_t ssdBytes = 0) {
     std::unique_ptr<SsdCache> ssdCache;
     if (ssdBytes) {
       // tmpfs does not support O_DIRECT, so turn this off for testing.
@@ -50,8 +57,11 @@ class AsyncDataCacheTest : public testing::Test {
       ssdCache =
           std::make_unique<SsdCache>("/tmp/testcache", ssdBytes, 1, executor());
     }
+    memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_shared<AsyncDataCache>(
-        MappedMemory::createDefaultInstance(), maxBytes, std::move(ssdCache));
+        std::make_unique<memory::MmapAllocator>(options),
+        maxBytes,
+        std::move(ssdCache));
     for (auto i = 0; i < kNumFiles; ++i) {
       auto name = fmt::format("testing_file_{}", i);
       filenames_.push_back(StringIdLease(fileIds(), name));
@@ -59,9 +69,8 @@ class AsyncDataCacheTest : public testing::Test {
   }
 
   // Finds one entry from RAM, SSD or storage. Throws if the data
-  // cannot be read, otherwise request.pin is a loaded CachePin with
-  // the data for the range of 'request.size' bytes starting at
-  // 'request.offset'.
+  // cannot be read or 'injectError' is true. Checks the data with
+  // verifyHook and discards the pin.
   void loadOne(uint64_t fileNum, Request& request, bool injectError);
 
   // Brings the data for the ranges in 'requests' into cache. The individual
@@ -169,22 +178,27 @@ class AsyncDataCacheTest : public testing::Test {
   }
 
  protected:
-  static folly::Executor* executor() {
-    static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(4);
-    return executor.get();
+  folly::IOThreadPoolExecutor* FOLLY_NONNULL executor() {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> l(mutex);
+    if (!executor_) {
+      executor_ = std::make_unique<folly::IOThreadPoolExecutor>(4);
+    }
+    return executor_.get();
   }
 
   std::shared_ptr<AsyncDataCache> cache_;
   std::vector<StringIdLease> filenames_;
+  std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
 };
 
-class TestingFusedLoad : public FusedLoad {
+class TestingCoalescedLoad : public CoalescedLoad {
  public:
-  TestingFusedLoad(
+  TestingCoalescedLoad(
       std::vector<RawFileCacheKey> keys,
       std::vector<int32_t> sizes,
       AsyncDataCache& cache)
-      : FusedLoad(std::move(keys), std::move(sizes)), cache_(cache) {}
+      : CoalescedLoad(std::move(keys), std::move(sizes)), cache_(cache) {}
 
   void injectError(bool error) {
     injectError_ = error;
@@ -195,7 +209,9 @@ class TestingFusedLoad : public FusedLoad {
     cache_.makePins(
         keys_,
         [&](int32_t index) { return sizes_[index]; },
-        [&](int32_t index, CachePin pin) { pins.push_back(std::move(pin)); });
+        [&](int32_t /*index*/, CachePin pin) {
+          pins.push_back(std::move(pin));
+        });
     for (auto& pin : pins) {
       auto& buffer = pin.entry()->data();
       AsyncDataCacheTest::initializeContents(
@@ -211,20 +227,19 @@ class TestingFusedLoad : public FusedLoad {
   bool injectError_{false};
 };
 
-class TestingSsdFusedLoad : public TestingFusedLoad {
+class TestingCoalescedSsdLoad : public TestingCoalescedLoad {
  public:
-  TestingSsdFusedLoad(
+  TestingCoalescedSsdLoad(
       std::vector<RawFileCacheKey> keys,
       std::vector<int32_t> sizes,
       std::vector<SsdPin> ssdPins,
       AsyncDataCache& cache)
-      : TestingFusedLoad(std::move(keys), std::move(sizes), cache),
+      : TestingCoalescedLoad(std::move(keys), std::move(sizes), cache),
         ssdPins_(std::move(ssdPins)) {}
 
   std::vector<CachePin> loadData(bool /*isPrefetch*/) override {
     auto fileNum = keys_[0].fileNum;
     auto& file = cache_.ssdCache()->file(fileNum);
-    std::exception_ptr toRethrow;
     std::vector<CachePin> pins;
     std::vector<SsdPin> toLoad;
     // We make pins for the new load but leave out the entries that may have
@@ -242,17 +257,14 @@ class TestingSsdFusedLoad : public TestingFusedLoad {
       file.load(toLoad, pins);
       VELOX_CHECK(!injectError_, "Testing error");
     } catch (std::exception& e) {
-      toRethrow = std::current_exception();
-    }
-    // Do the cleanup outside of catch so that any extra exceptions do
-    // not kill the process. Remove the entries for which the load
-    // failed from the SSD cache so that they will next be loaded from
-    // storage.
-    if (toRethrow) {
-      for (auto& ssdPin : toLoad) {
-        file.erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
+      try {
+        for (auto& ssdPin : toLoad) {
+          file.erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
+        }
+      } catch (const std::exception& e) {
+        // Ignore error.
       }
-      std::rethrow_exception(toRethrow);
+      throw;
     }
     return pins;
   }
@@ -293,22 +305,16 @@ void AsyncDataCacheTest::loadOne(
     // We have an uninitialized entry in exclusive mode. We fill it with data
     // and set it to shared. If we release this pin while still in exclusive
     // mode, the entry will be erased.
-
-    // Check if on SSD.
     if (cache_->ssdCache()) {
       auto& ssdFile = cache_->ssdCache()->file(key.fileNum);
       auto ssdPin = ssdFile.find(key);
       if (!ssdPin.empty()) {
         std::vector<CachePin> pins;
         std::vector<SsdPin> ssdPins;
-        // request.pin is exclusive and not copiable, so std::move.
+        // pin is exclusive and not copiable, so std::move.
         pins.push_back(std::move(pin));
         ssdPins.push_back(std::move(ssdPin));
         ssdFile.load(ssdPins, pins);
-        VELOX_CHECK(
-            !injectError,
-            "Testing error"); // The read succeeded. Make it visible. The pin
-                              // will be released on destruction of 'pins'.
         entry->setExclusiveToShared();
         return;
       }
@@ -316,8 +322,6 @@ void AsyncDataCacheTest::loadOne(
     // Load from storage.
     initializeContents(
         entry->key().offset + entry->key().fileNum.id(), entry->data());
-    // The entry is filled and will be made visible. 'pin' is released on
-    // return.
     entry->setExclusiveToShared();
     return;
   }
@@ -328,23 +332,21 @@ void AsyncDataCacheTest::loadBatch(
     std::vector<Request>& requests,
     bool injectError) {
   // Pattern for loading a set of buffers from a file: Divide the requested
-  // ranges between already loaded, loadable from SSD cache and loadeable from
+  // ranges between already loaded and loadeable from
   // storage.
-  std::vector<Request*> fromSsd;
-  std::vector<SsdPin> ssdPins;
   std::vector<Request*> fromStorage;
+  std::vector<Request*> fromSsd;
   for (auto& request : requests) {
     RawFileCacheKey key{fileNum, request.offset};
     if (cache_->exists(key)) {
       continue;
     }
-    // Schedule a FusedLoad with other keys that need loading from the same
+    // Schedule a CoalescedLoad with other keys that need loading from the same
     // source.
     if (cache_->ssdCache()) {
-      auto& ssdFile = cache_->ssdCache()->file(key.fileNum);
-      auto ssdPin = ssdFile.find(key);
-      if (!ssdPin.empty()) {
-        ssdPins.push_back(std::move(ssdPin));
+      auto& file = cache_->ssdCache()->file(key.fileNum);
+      request.ssdPin = file.find(key);
+      if (!request.ssdPin.empty()) {
         fromSsd.push_back(&request);
         continue;
       }
@@ -352,28 +354,29 @@ void AsyncDataCacheTest::loadBatch(
     fromStorage.push_back(&request);
   }
 
-  // Make FusedLoads for pins from different sources.
+  // Make CoalescedLoads for pins from different sources.
   if (!fromStorage.empty()) {
-    std::vector<CachePin> pins;
     std::vector<RawFileCacheKey> keys;
     std::vector<int32_t> sizes;
     for (auto request : fromStorage) {
       keys.push_back(RawFileCacheKey{fileNum, request->offset});
       sizes.push_back(request->size);
     }
-    auto load = std::make_shared<TestingFusedLoad>(
+    auto load = std::make_shared<TestingCoalescedLoad>(
         std::move(keys), std::move(sizes), *cache_);
     load->injectError(injectError);
     executor()->add([load]() { load->loadOrFuture(nullptr); });
   }
   if (!fromSsd.empty()) {
+    std::vector<SsdPin> ssdPins;
     std::vector<RawFileCacheKey> keys;
     std::vector<int32_t> sizes;
-    for (auto& request : fromSsd) {
+    for (auto request : fromSsd) {
       keys.push_back(RawFileCacheKey{fileNum, request->offset});
       sizes.push_back(request->size);
+      ssdPins.push_back(std::move(request->ssdPin));
     }
-    auto load = std::make_shared<TestingSsdFusedLoad>(
+    auto load = std::make_shared<TestingCoalescedSsdLoad>(
         std::move(keys), std::move(sizes), std::move(ssdPins), *cache_);
     load->injectError(injectError);
     executor()->add([load]() { load->loadOrFuture(nullptr); });
@@ -387,7 +390,6 @@ void AsyncDataCacheTest::loadLoop(
   int64_t maxOffset =
       std::max<int64_t>(100000, (startOffset + loadBytes) / filenames_.size());
   int64_t skippedBytes = 0;
-  int64_t loadedBytes = 0;
   int32_t errorCounter = 0;
   std::vector<Request> batch;
   for (auto file = 0; file < filenames_.size(); ++file) {
@@ -480,11 +482,14 @@ TEST_F(AsyncDataCacheTest, pin) {
 }
 
 TEST_F(AsyncDataCacheTest, replace) {
-  constexpr int64_t kMaxBytes = 16 << 20;
+  constexpr int64_t kMaxBytes = 64 << 20;
   FLAGS_velox_exception_stacktrace = false;
   initializeCache(kMaxBytes);
   // Load 10x the max size, inject an error every 21 batches.
   loadLoop(0, kMaxBytes * 10, 21);
+  if (executor_) {
+    executor_->join();
+  }
   auto stats = cache_->refreshStats();
   EXPECT_LT(0, stats.numEvict);
   EXPECT_GE(
@@ -535,7 +540,6 @@ TEST_F(AsyncDataCacheTest, outOfCapacity) {
 TEST_F(AsyncDataCacheTest, ssd) {
   constexpr uint64_t kRamBytes = 32 << 20;
   constexpr uint64_t kSsdBytes = 512UL << 20;
-  FLAGS_velox_exception_stacktrace = false;
   initializeCache(kRamBytes, kSsdBytes);
   cache_->setVerifyHook([&](const AsyncDataCacheEntry& entry) {
     checkContents(entry.data(), entry.size());

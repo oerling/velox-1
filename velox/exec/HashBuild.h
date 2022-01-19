@@ -72,12 +72,14 @@ class HashBuild final : public Operator {
   }
 
   bool needsInput() const override {
-    return !isFinishing_;
+    return !noMoreInput_;
   }
 
-  void finish() override;
+  void noMoreInput() override;
 
   BlockingReason isBlocked(ContinueFuture* future) override;
+
+  bool isFinished() override;
 
   void close() override {}
 
@@ -103,8 +105,7 @@ class HashBuild final : public Operator {
 
   // Future for synchronizing with other Drivers of the same pipeline. All build
   // Drivers must be completed before making the hash table.
-  ContinueFuture future_{false};
-  bool hasFuture_ = false;
+  ContinueFuture future_{ContinueFuture::makeEmpty()};
 
   // True if we are considering use of normalized keys or array hash tables. Set
   // to false when the dataset is no longer suitable.
