@@ -273,7 +273,7 @@ class VectorHasher {
 
   std::string toString() const;
 
-private:
+ private:
   static constexpr uint32_t kStringASRangeMaxSize = 7;
   static constexpr uint32_t kStringBufferUnitSize = 1024;
   static constexpr uint64_t kMaxDistinctStringsBytes = 1 << 20;
@@ -409,7 +409,7 @@ private:
     return inRange;
   }
 
-public: // For testing.
+ public: // For testing.
   template <typename T>
   uint64_t valueId(T value) {
     auto int64Value = toInt64(value);
@@ -433,7 +433,7 @@ public: // For testing.
     return unique.id();
   }
 
-private:
+ private:
   template <typename T>
   uint64_t lookupValueId(T value) const {
     auto int64Value = toInt64(value);

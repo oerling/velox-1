@@ -275,7 +275,6 @@ void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
           [&rowNumbers](auto row) { rowNumbers.push_back(row); });
       rowSet = RowSet(rowNumbers);
 
-
       // If we have a mapping that is not a single level of dictionary, we
       // collapse this to a single level of dictionary. The reason is
       // that the inner levels of dictionary will reference rows that

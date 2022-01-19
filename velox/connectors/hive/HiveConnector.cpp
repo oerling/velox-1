@@ -366,7 +366,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     cache::FileGroupStats* groupStats = asyncCache->ssdCache()
         ? &asyncCache->ssdCache()->groupStats()
         : nullptr;
-    auto tracker = Connector::getTracker(scanId_, readerOpts_.loadQuantum(), groupStats);
+    auto tracker =
+        Connector::getTracker(scanId_, readerOpts_.loadQuantum(), groupStats);
     bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
         (asyncCache),
         tracker,

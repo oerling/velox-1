@@ -198,7 +198,7 @@ void CachedBufferedInput::makeLoads(
     return;
   }
   bool isSsd = !requests[0]->ssdPin.empty();
-  int32_t maxDistance = isSsd ? 20000 :maxCoalesceDistance_;
+  int32_t maxDistance = isSsd ? 20000 : maxCoalesceDistance_;
   std::sort(
       requests.begin(),
       requests.end(),
@@ -421,7 +421,12 @@ void CachedBufferedInput::readRegion(
     load = std::make_shared<SsdLoad>(*cache_, ioStats_, groupId_, requests);
   } else {
     load = std::make_shared<DwrfCoalescedLoad>(
-					   *cache_, streamSource_(), ioStats_, groupId_, requests, maxCoalesceDistance_);
+        *cache_,
+        streamSource_(),
+        ioStats_,
+        groupId_,
+        requests,
+        maxCoalesceDistance_);
   }
   allCoalescedLoads_.push_back(load);
   coalescedLoads_.withWLock([&](auto& loads) {
@@ -430,7 +435,6 @@ void CachedBufferedInput::readRegion(
     }
   });
 }
-
 
 std::shared_ptr<cache::CoalescedLoad> CachedBufferedInput::coalescedLoad(
     const SeekableInputStream* stream) {

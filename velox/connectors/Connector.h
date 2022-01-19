@@ -254,7 +254,6 @@ class Connector {
       int32_t loadQuantum,
       cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
-
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
 
