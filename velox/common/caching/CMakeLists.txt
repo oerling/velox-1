@@ -22,7 +22,7 @@ add_library(
   SsdCache.cpp
   SsdFile.cpp
 	SsdFileTracker.cpp)
-target_link_libraries(velox_caching velox_memory velox_exception velox_file
+target_link_libraries(velox_caching velox_memory velox_exception velox_file velox_time
                       glog::glog ${FOLLY_WITH_DEPENDENCIES})
 
 if(${VELOX_BUILD_TESTING})

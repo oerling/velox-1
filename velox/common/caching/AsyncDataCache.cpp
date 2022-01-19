@@ -50,6 +50,7 @@ void AsyncDataCacheEntry::setExclusiveToShared() {
   if (hook) {
     hook(*this);
   }
+
   if (!ssdFile_ && shard_->cache()->ssdCache()) {
     if (shard_->cache()->ssdCache()->groupStats().shouldSaveToSsd(
             groupId_, trackingId_)) {
@@ -89,6 +90,39 @@ memory::MachinePageCount AsyncDataCacheEntry::setPrefetch(bool flag) {
   auto numPages = bits::roundUp(size_, memory::MappedMemory::kPageSize) /
       memory::MappedMemory::kPageSize;
   return shard_->cache()->incrementPrefetchPages(flag ? numPages : -numPages);
+}
+
+void AsyncDataCacheEntry::initialize(FileCacheKey key, int32_t size) {
+  VELOX_CHECK(isExclusive());
+  VELOX_CHECK_EQ(0, size_);
+  setSsdFile(nullptr, 0);
+  accessStats_.reset();
+  key_ = std::move(key);
+  auto cache = shard_->cache();
+  ClockTimer t(shard_->allocClocks());
+  if (size < AsyncDataCacheEntry::kTinyDataSize) {
+    tinyData_.resize(size);
+  } else {
+    tinyData_.clear();
+    auto sizePages =
+        bits::roundUp(size, MappedMemory::kPageSize) / MappedMemory::kPageSize;
+    if (cache->allocate(sizePages, CacheShard::kCacheOwner, data_)) {
+      cache->incrementCachedPages(data().numPages());
+    } else {
+      // No memory to cover 'this'.
+      // Remove from 'shard_'s map and unpin.
+      shard_->removeEntry(this);
+      release();
+      _VELOX_THROW(
+          VeloxRuntimeError,
+          error_source::kErrorSourceRuntime.c_str(),
+          error_code::kNoCacheSpace.c_str(),
+          /* isRetriable */ true,
+	  "Failed to allocate {} bytes for cache", size);
+
+    }
+  }
+  size_ = size;
 }
 
 std::unique_ptr<AsyncDataCacheEntry> CacheShard::getFreeEntryWithSize(
@@ -157,7 +191,7 @@ CachePin CacheShard::findOrCreate(
   return initEntry(key, entryToInit, size);
 }
 
-bool CacheShard::exists(RawFileCacheKey key) {
+bool CacheShard::exists(RawFileCacheKey key) const {
   std::lock_guard<std::mutex> l(mutex_);
   auto it = entryMap_.find(key);
   if (it != entryMap_.end()) {
@@ -177,45 +211,20 @@ CachePin CacheShard::initEntry(
   // one has added. The new entry is otherwise volatile and
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
-  entry->setSsdFile(nullptr, 0);
-  entry->key_ = FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset};
-  if (entry->size() < size) {
-    ClockTimer t(allocClocks_);
-    if (size < AsyncDataCacheEntry::kTinyDataSize) {
-      entry->tinyData_.resize(size);
-    } else {
-      auto sizePages = bits::roundUp(size, MappedMemory::kPageSize) /
-          MappedMemory::kPageSize;
-      if (cache_->allocate(sizePages, kCacheOwner, entry->data_)) {
-        cache_->incrementCachedPages(entry->data().numPages());
-      } else {
-        // No memory to cover the new entry. The entry is in exclusive
-        // mode. We remove it from the map and unpin.
-        removeEntry(entry);
-        entry->release();
-        _VELOX_THROW(
-            VeloxRuntimeError,
-            error_source::kErrorSourceRuntime.c_str(),
-            error_code::kNoCacheSpace.c_str(),
-            /* isRetriable */ true,
-	    "Failed to allocate {} bytes for cache", size);
-      }
-    }
-  }
-  entry->accessStats_.reset();
-  entry->size_ = size;
+  entry->initialize(
+      FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset}, size);
   cache_->incrementNew(size);
   CachePin pin;
   pin.setEntry(entry);
   return pin;
 }
 
-FusedLoad::~FusedLoad() {
+CoalescedLoad::~CoalescedLoad() {
   // Continue possibly waiting threads.
   setEndState(LoadState::kCancelled);
 }
 
-bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
+bool CoalescedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (state_ == LoadState::kCancelled || state_ == LoadState::kLoaded) {
@@ -246,18 +255,17 @@ bool FusedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
     }
     setEndState(LoadState::kLoaded);
   } catch (std::exception& e) {
-    error = std::current_exception();
-  }
-  if (error) {
-    // Cleanup outside of catch to avoid killing the process if more
-    // exceptions.
-    setEndState(LoadState::kCancelled);
-    std::rethrow_exception(error);
+    try {
+      setEndState(LoadState::kCancelled);
+    } catch (std::exception& inner) {
+      // May not throw from inside catch.
+    }
+    throw;
   }
   return true;
 }
 
-void FusedLoad::setEndState(LoadState endState) {
+void CoalescedLoad::setEndState(LoadState endState) {
   std::lock_guard<std::mutex> l(mutex_);
   state_ = endState;
   if (promise_) {
@@ -281,6 +289,15 @@ void CacheShard::removeEntryLocked(AsyncDataCacheEntry* entry) {
     entry->setSsdFile(nullptr, 0);
     if (entry->isPrefetch()) {
       entry->setPrefetch(false);
+    }
+    // An entry can have data allocated if we remove it after failing
+    // to fill it. Free the data and account for the difference. In
+    // eviction, the data of the evicted entries is moved away, so
+    // that freeing while holding the shard mutex is exceptional.
+    auto numPages = entry->data().numPages();
+    if (numPages) {
+      cache_->incrementCachedPages(-numPages);
+      cache_->free(entry->data());
     }
   }
 }
@@ -332,13 +349,13 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
           ++evictSaveableSkipped;
           continue;
         }
+        largeFreed += candidate->data_.byteSize();
+        toFree.push_back(std::move(candidate->data()));
         removeEntryLocked(candidate);
         freeEntries_.push_back(std::move(*iter));
         emptySlots_.push_back(entryIndex);
         tinyFreed += candidate->tinyData_.size();
         candidate->tinyData_.clear();
-        largeFreed += candidate->data_.byteSize();
-        toFree.push_back(std::move(candidate->data()));
         candidate->size_ = 0;
         ++numEvict_;
         if (score) {
@@ -460,7 +477,7 @@ CachePin AsyncDataCache::findOrCreate(
   return shards_[shard]->findOrCreate(key, size, wait);
 }
 
-bool AsyncDataCache::exists(RawFileCacheKey key) {
+bool AsyncDataCache::exists(RawFileCacheKey key) const {
   int shard = std::hash<RawFileCacheKey>()(key) & (kShardMask);
   return shards_[shard]->exists(key);
 }
@@ -581,7 +598,7 @@ std::string AsyncDataCache::toString() const {
       << stats.numEvict << "\n"
       << " read pins " << stats.numShared << " write pins "
       << stats.numExclusive << " unused prefetch " << stats.numPrefetch
-      << " Alloc Mclocks " << (stats.allocClocks >> 20) << " allocated pages "
+      << " Alloc Megaclocks " << (stats.allocClocks >> 20) << " allocated pages "
       << numAllocated() << " cached pages " << cachedPages_;
   out << "\nBacking: " << mappedMemory_->toString();
   if (ssdCache_) {

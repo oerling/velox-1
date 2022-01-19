@@ -145,11 +145,10 @@ void compareVectors(const VectorPtr& vec1, const VectorPtr& vec2) {
 std::optional<bool> isDeterministic(
     const std::string& functionName,
     const std::vector<TypePtr>& argTypes) {
-  // Check if this is a scalar function.
-  auto key = core::FunctionKey(functionName, argTypes);
-  if (core::ScalarFunctions().Has(key)) {
-    auto scalarFunction = core::ScalarFunctions().Create(key);
-    return scalarFunction->isDeterministic();
+  // Check if this is a simple function.
+  if (auto simpleFunction =
+          core::ScalarFunctions().createFunction(functionName, argTypes)) {
+    return simpleFunction->isDeterministic();
   }
 
   // Vector functions are a bit more complicated. We need to fetch the list of
@@ -598,7 +597,7 @@ class ExpressionFuzzer {
       const CallableSignature& input)>;
   std::unordered_map<std::string, ArgsOverrideFunc> funcArgOverrides_;
 
-  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::create()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
   core::ExecCtx execCtx_{pool_.get(), queryCtx_.get()};

@@ -60,7 +60,7 @@ class MinMaxTest : public aggregate::test::AggregationTestBase {
     // Group by partial aggregation.
     op = PlanBuilder()
              .values(vectors)
-             .project({"c0 % 10", "c1"}, {"c0 % 10", "c1"})
+             .project({"c0 % 10", "c1"})
              .partialAggregation({0}, {agg(c1)})
              .planNode();
     assertQuery(
@@ -69,7 +69,7 @@ class MinMaxTest : public aggregate::test::AggregationTestBase {
     // Group by final aggregation.
     op = PlanBuilder()
              .values(vectors)
-             .project({"c0 % 10", "c1"}, {"c0 % 10", "c1"})
+             .project({"c0 % 10", "c1"})
              .partialAggregation({0}, {agg(c1)})
              .finalAggregation()
              .planNode();
@@ -80,7 +80,7 @@ class MinMaxTest : public aggregate::test::AggregationTestBase {
     op = PlanBuilder()
              .values(vectors)
              .filter("c0 % 2 = 0")
-             .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+             .project({"c0 % 11", "c1"})
              .partialAggregation({0}, {agg(c1)})
              .planNode();
 
@@ -141,7 +141,7 @@ TEST_F(MinMaxTest, maxVarchar) {
 
   auto op = PlanBuilder()
                 .values(vectors)
-                .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+                .project({"c0 % 11", "c1"})
                 .partialAggregation({0}, {"max(c1)"})
                 .planNode();
   assertQuery(op, "SELECT c0 % 11, max(c1) FROM tmp GROUP BY 1");
@@ -156,7 +156,7 @@ TEST_F(MinMaxTest, maxVarchar) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c0 % 2 = 0")
-           .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+           .project({"c0 % 11", "c1"})
            .partialAggregation({0}, {"max(c1)"})
            .planNode();
   assertQuery(
@@ -165,7 +165,7 @@ TEST_F(MinMaxTest, maxVarchar) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c0 % 2 = 0")
-           .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+           .project({"c0 % 11", "c1"})
            .partialAggregation({0}, {"max(c1)"})
            .finalAggregation()
            .planNode();
@@ -197,7 +197,7 @@ TEST_F(MinMaxTest, minVarchar) {
 
   auto op = PlanBuilder()
                 .values(vectors)
-                .project({"c0 % 17", "c1"}, {"c0_mod_17", "c1"})
+                .project({"c0 % 17", "c1"})
                 .partialAggregation({0}, {"min(c1)"})
                 .planNode();
   assertQuery(op, "SELECT c0 % 17, min(c1) FROM tmp GROUP BY 1");
@@ -212,7 +212,7 @@ TEST_F(MinMaxTest, minVarchar) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c0 % 2 = 0")
-           .project({"c0 % 17", "c1"}, {"c0_mod_17", "c1"})
+           .project({"c0 % 17", "c1"})
            .partialAggregation({0}, {"min(c1)"})
            .planNode();
   assertQuery(
@@ -221,7 +221,7 @@ TEST_F(MinMaxTest, minVarchar) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c0 % 2 = 0")
-           .project({"c0 % 17", "c1"}, {"c0_mod_17", "c1"})
+           .project({"c0 % 17", "c1"})
            .partialAggregation({0}, {"min(c1)"})
            .finalAggregation()
            .planNode();
@@ -276,6 +276,19 @@ TEST_F(MinMaxTest, minMaxTimestamp) {
   assertQuery(
       agg,
       "SELECT date_trunc('millisecond', min(c0)), date_trunc('millisecond', max(c0)) FROM tmp");
+}
+
+TEST_F(MinMaxTest, minMaxDate) {
+  auto rowType = ROW({"c0"}, {DATE()});
+  auto vectors = makeVectors(rowType, 1'000, 10);
+  createDuckDbTable(vectors);
+
+  auto agg = PlanBuilder()
+                 .values(vectors)
+                 .partialAggregation({}, {"min(c0)", "max(c0)"})
+                 .finalAggregation()
+                 .planNode();
+  assertQuery(agg, "SELECT min(c0), max(c0) from tmp");
 }
 
 TEST_F(MinMaxTest, initialValue) {
