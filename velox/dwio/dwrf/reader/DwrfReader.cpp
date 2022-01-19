@@ -218,7 +218,7 @@ bool DwrfRowReader::allPrefetchIssued() const {
 
 bool DwrfRowReader::moveAdaptation(RowReader& other) {
   auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
-  if (!columnReader_) {
+  if (!columnReader_ || !otherReader->columnReader_) {
     return false;
   }
   columnReader_->moveScanSpec(*otherReader->columnReader_);
