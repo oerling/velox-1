@@ -275,10 +275,13 @@ class Connector {
       int32_t loadQuantum,
       cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
 
+<<<<<<< HEAD
   virtual folly::Executor* FOLLY_NULLABLE executor() const {
     return nullptr;
   }
 
+=======
+>>>>>>> ssd-dev
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
 
