@@ -515,7 +515,6 @@ class Task {
   // allow for sharing vectors across drivers without copy.
   std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
 
-
   // True if produces output via PartitionedOutputBufferManager.
   bool hasPartitionedOutput_ = false;
   // Set to true by PartitionedOutputBufferManager when all output is
