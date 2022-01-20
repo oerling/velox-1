@@ -278,6 +278,7 @@ class Connector {
   virtual folly::Executor* FOLLY_NULLABLE executor() const {
     return nullptr;
   }
+
  private:
   static void unregisterTracker(cache::ScanTracker* tracker);
 
