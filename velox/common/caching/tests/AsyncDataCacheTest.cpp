@@ -547,6 +547,7 @@ TEST_F(AsyncDataCacheTest, outOfCapacity) {
 TEST_F(AsyncDataCacheTest, ssd) {
   constexpr uint64_t kRamBytes = 32 << 20;
   constexpr uint64_t kSsdBytes = 512UL << 20;
+  FLAGS_velox_exception_stacktrace = false;
   initializeCache(kRamBytes, kSsdBytes);
   cache_->setVerifyHook([&](const AsyncDataCacheEntry& entry) {
     checkContents(entry.data(), entry.size());
