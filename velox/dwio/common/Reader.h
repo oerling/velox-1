@@ -63,17 +63,12 @@ class RowReader {
    */
   virtual void resetFilterCaches() = 0;
 
-<<<<<<< HEAD
   // Moves the adaptively acquired filters/filter order from 'other'
   // to 'this'. Returns true if 'this' is ready to read, false if
   // 'this' is known to be empty.
   virtual bool moveAdaptation(RowReader& other) {
     return true;
   }
-=======
-  // Moves the adaptively acquired filters/filter order from 'other' to 'this'.
-  virtual void moveAdaptation(RowReader& other) {}
->>>>>>> oerling1/hive-prefetch-dev
 
   /**
    * Get an estimated row size basing on available statistics. Can
