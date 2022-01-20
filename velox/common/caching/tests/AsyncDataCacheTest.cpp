@@ -466,10 +466,16 @@ TEST_F(AsyncDataCacheTest, pin) {
   otherPin = pin;
   EXPECT_EQ(2, pin.entry()->numPins());
   EXPECT_FALSE(pin.entry()->isPrefetch());
+  auto largerPin = cache_->findOrCreate(key, kSize * 2, &wait);
+  // We expect a new uninitialized entry with a larger size to displace the previous one.
+  
+  EXPECT_TRUE(largerPin.checkedEntry()->isExclusive());
+  largerPin.checkedEntry()->setExclusiveToShared();
+  largerPin.clear();
   pin.clear();
   otherPin.clear();
   stats = cache_->refreshStats();
-  EXPECT_LE(kSize, stats.largeSize);
+  EXPECT_LE(kSize * 2, stats.largeSize);
   EXPECT_EQ(1, stats.numEntries);
   EXPECT_EQ(0, stats.numShared);
   EXPECT_EQ(0, stats.numExclusive);

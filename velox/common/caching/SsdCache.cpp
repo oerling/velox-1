@@ -87,9 +87,12 @@ void SsdCache::write(std::vector<CachePin> pins) {
       try {
         files_[i]->write(pinHolder->pins);
       } catch (const std::exception& e) {
+	// Catch so as not to miss updating 'writesInProgress_'. Could
+	// theoretically happen for std::bad_alloc or such.
         LOG(INFO) << "Ignoring error in SsdFile::write: " << e.what();
       }
       if (--writesInProgress_ == 0) {
+	// Typically occurs every few GB. Allows detecting unusually slow rates from failing devices.
         LOG(INFO) << fmt::format(
             "SSDCA: Wrote {}MB, {} MB/s",
             bytes >> 20,

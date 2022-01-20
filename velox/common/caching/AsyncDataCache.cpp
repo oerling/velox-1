@@ -155,35 +155,41 @@ CachePin CacheShard::findOrCreate(
         *wait = found->getFuture();
         return CachePin();
       }
-      found->touch();
-      // The entry is in a readable state. Add a pin.
-      if (found->isPrefetch_) {
-        found->isFirstUse_ = true;
-        found->setPrefetch(false);
-      } else {
-        ++numHit_;
+      if (found->size() >= size) {
+        found->touch();
+        // The entry is in a readable state. Add a pin.
+        if (found->isPrefetch_) {
+          found->isFirstUse_ = true;
+          found->setPrefetch(false);
+        } else {
+          ++numHit_;
+        }
+        ++found->numPins_;
+        CachePin pin;
+        pin.setEntry(found);
+        return pin;
       }
-      if (found->size() != size) {
-        LOG(INFO) << "Requested " << size << " found " << found->size();
-      }
-      ++found->numPins_;
-      CachePin pin;
-      pin.setEntry(found);
-      return pin;
+      // This can happen if different load quanta apply to access via
+      // different connectors. This is not an error but still worth
+      // logging.
+      LOG_EVERY_N(INFO, 100) << "Requested larger entry. Found size "
+                             << found->size() << " requested size " << size;
+      // The old entry is superseded. Possible readers of the old
+      // entry still retain a valid read pin.
+      found->key_.fileNum.clear();
+    }
+    auto newEntry = getFreeEntryWithSize(size);
+    // Initialize the members that must be set inside 'mutex_'.
+    newEntry->numPins_ = AsyncDataCacheEntry::kExclusive;
+    newEntry->promise_ = nullptr;
+    entryToInit = newEntry.get();
+    entryMap_[key] = newEntry.get();
+    if (emptySlots_.empty()) {
+      entries_.push_back(std::move(newEntry));
     } else {
-      auto newEntry = getFreeEntryWithSize(size);
-      // Initialize the members that must be set inside 'mutex_'.
-      newEntry->numPins_ = AsyncDataCacheEntry::kExclusive;
-      newEntry->promise_ = nullptr;
-      entryToInit = newEntry.get();
-      entryMap_[key] = newEntry.get();
-      if (emptySlots_.empty()) {
-        entries_.push_back(std::move(newEntry));
-      } else {
-        auto index = emptySlots_.back();
-        emptySlots_.pop_back();
-        entries_[index] = std::move(newEntry);
-      }
+      auto index = emptySlots_.back();
+      emptySlots_.pop_back();
+      entries_[index] = std::move(newEntry);
     }
     ++numNew_;
   }
@@ -371,6 +377,7 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   cache_->incrementCachedPages(
       -largeFreed / static_cast<int32_t>(MappedMemory::kPageSize));
   if (evictSaveableSkipped && cache_->ssdCache()->startWrite()) {
+    // Rare. May occur if SSD is unusually slow. Useful for  diagnostics.
     LOG(INFO) << "SSDCA: Start save for old saveable, skipped "
               << cache_->numSkippedSaves();
     cache_->numSkippedSaves() = 0;
