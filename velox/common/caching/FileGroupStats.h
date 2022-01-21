@@ -161,6 +161,7 @@ class FileGroupStats {
   // Recalculates the best groups and makes a human readable
   // summary. 'cacheBytes' is used to compute what fraction of the tracked
   // working set can be cached in 'cacheBytes'.
+<<<<<<< HEAD:velox/common/caching/GroupTracker.h
   std::string toString(uint64_t cacheBytes);
 
  private:
@@ -172,6 +173,10 @@ class FileGroupStats {
       return *groups_[id];
     }
     return *it->second;
+=======
+  std::string toString(uint64_t /*cacheBytes*/) {
+    return "<dummy FileGroupStats>";
+>>>>>>> oerling1/ssdcache-dev:velox/common/caching/FileGroupStats.h
   }
 
   // Returns the tracked group/column pairs best score first. Sets the

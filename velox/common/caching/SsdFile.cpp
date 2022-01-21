@@ -169,7 +169,6 @@ CoalesceIoStats SsdFile::load(
   for (auto i = 0; i < pins.size(); ++i) {
     auto runSize = ssdPins[i].run().size();
     auto entry = pins[i].checkedEntry();
-    auto fileId = entry->key().fileNum.id();
     if (runSize > entry->size()) {
       LOG(INFO) << "IOERR: Requested prefix of SSD cache entry: " << runSize
                 << " entry: " << entry->size();

@@ -261,7 +261,7 @@ class TestingCoalescedSsdLoad : public TestingCoalescedLoad {
         for (auto& ssdPin : toLoad) {
           file.erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
         }
-      } catch (const std::exception& e) {
+      } catch (const std::exception& e2) {
         // Ignore error.
       }
       throw;
@@ -466,10 +466,17 @@ TEST_F(AsyncDataCacheTest, pin) {
   otherPin = pin;
   EXPECT_EQ(2, pin.entry()->numPins());
   EXPECT_FALSE(pin.entry()->isPrefetch());
+  auto largerPin = cache_->findOrCreate(key, kSize * 2, &wait);
+  // We expect a new uninitialized entry with a larger size to displace the
+  // previous one.
+
+  EXPECT_TRUE(largerPin.checkedEntry()->isExclusive());
+  largerPin.checkedEntry()->setExclusiveToShared();
+  largerPin.clear();
   pin.clear();
   otherPin.clear();
   stats = cache_->refreshStats();
-  EXPECT_LE(kSize, stats.largeSize);
+  EXPECT_LE(kSize * 2, stats.largeSize);
   EXPECT_EQ(1, stats.numEntries);
   EXPECT_EQ(0, stats.numShared);
   EXPECT_EQ(0, stats.numExclusive);
@@ -540,6 +547,7 @@ TEST_F(AsyncDataCacheTest, outOfCapacity) {
 TEST_F(AsyncDataCacheTest, ssd) {
   constexpr uint64_t kRamBytes = 32 << 20;
   constexpr uint64_t kSsdBytes = 512UL << 20;
+  FLAGS_velox_exception_stacktrace = false;
   initializeCache(kRamBytes, kSsdBytes);
   cache_->setVerifyHook([&](const AsyncDataCacheEntry& entry) {
     checkContents(entry.data(), entry.size());
@@ -574,7 +582,7 @@ TEST_F(AsyncDataCacheTest, ssd) {
   // entries. We expect some of the oldest entries to get evicted. Error every
   // 17 batch loads.
   runThreads(
-      4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5), 17; });
+      4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5, 17); });
 
   LOG(INFO) << "Stats after third pass:" << cache_->toString();
   auto stats2 = cache_->ssdCache()->stats();

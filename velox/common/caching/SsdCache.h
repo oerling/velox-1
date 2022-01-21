@@ -39,22 +39,25 @@ class SsdCache {
   //  file id from e.g. FileCacheKey.
   SsdFile& file(uint64_t fileId);
 
+  // Returnss the maximum capacity, rounded up from the capacity passed to the
+  // constructor.
   uint64_t maxBytes() const {
     return files_[0]->maxRegions() * files_.size() * SsdFile::kRegionSize;
   }
 
   // Returns true if no write is in progress. Atomically sets a write
-  // to be in progress. store() must be called after this. The writing
+  // to be in progress. write() must be called after this. The writing
   // state is reset asynchronously after writing to SSD finishes.
   bool startWrite();
 
-  bool writeInProgress() {
+  bool writeInProgress() const {
     return writesInProgress_ != 0;
   }
 
   // Stores the entries of 'pins' into the corresponding files. Sets
   // the file for the successfully stored entries. May evict existing
-  // entries from unpinned regions.
+  // entries from unpinned regions. startWrite() must have been called first and
+  // it must have returned true.
   void write(std::vector<CachePin> pins);
 
   // Returns  stats aggregated from all shards.
@@ -82,7 +85,6 @@ class SsdCache {
   // Stats for selecting entries to save from AsyncDataCache.
   std::unique_ptr<FileGroupStats> groupStats_;
   folly::Executor* executor_;
-  int32_t numSkippedSaves_{0};
 };
 
 } // namespace facebook::velox::cache
