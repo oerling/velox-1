@@ -24,7 +24,7 @@ namespace facebook::velox::cache {
 class FileGroupStats {
  public:
   // Returns true if groupId, trackingId qualify the data to be cached to SSD.
-  bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const {
+  bool shouldSaveToSsd(uint64_t /*groupId*/, TrackingId /*trackingId*/) const {
     return true;
   }
 
@@ -35,7 +35,7 @@ class FileGroupStats {
   // Recalculates the best groups and makes a human readable
   // summary. 'cacheBytes' is used to compute what fraction of the tracked
   // working set can be cached in 'cacheBytes'.
-  std::string toString(uint64_t cacheBytes) {
+  std::string toString(uint64_t /*cacheBytes*/) {
     return "<dummy FileGroupStats>";
   }
 };

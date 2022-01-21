@@ -261,7 +261,7 @@ class TestingCoalescedSsdLoad : public TestingCoalescedLoad {
         for (auto& ssdPin : toLoad) {
           file.erase(RawFileCacheKey{fileNum, ssdPin.run().offset()});
         }
-      } catch (const std::exception& e) {
+      } catch (const std::exception& e2) {
         // Ignore error.
       }
       throw;
