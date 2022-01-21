@@ -85,7 +85,6 @@ class SsdCache {
   // Stats for selecting entries to save from AsyncDataCache.
   std::unique_ptr<FileGroupStats> groupStats_;
   folly::Executor* executor_;
-  int32_t numSkippedSaves_{0};
 };
 
 } // namespace facebook::velox::cache
