@@ -66,7 +66,6 @@ Task::Task(
       pool_(queryCtx_->pool()->addScopedChild("task_root")),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
-      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       bufferManager_(
           PartitionedOutputBufferManager::getInstance(queryCtx_->host())) {
   checkTraceCommand();

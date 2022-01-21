@@ -535,12 +535,6 @@ class Task {
   core::PlanFragment planFragment_;
   const int destination_;
   std::shared_ptr<core::QueryCtx> queryCtx_;
-  std::unique_ptr<velox::memory::MemoryPool> pool_;
-
-  // Keep driver and operator memory pools alive for the duration of the task to
-  // allow for sharing vectors across drivers without copy.
-  std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
-
   // True if produces output via PartitionedOutputBufferManager.
   bool hasPartitionedOutput_ = false;
   // Set to true by PartitionedOutputBufferManager when all output is
