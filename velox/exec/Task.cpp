@@ -61,7 +61,6 @@ Task::Task(
     std::function<void(std::exception_ptr)> onError)
     : taskId_(taskId),
       planFragment_(std::move(planFragment)),
-
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
       consumerSupplier_(std::move(consumerSupplier)),
