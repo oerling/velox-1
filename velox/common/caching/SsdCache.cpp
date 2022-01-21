@@ -77,7 +77,8 @@ void SsdCache::write(std::vector<CachePin> pins) {
     struct PinHolder {
       std::vector<CachePin> pins;
 
-      explicit PinHolder(std::vector<CachePin>&& _pins) : pins(std::move(_pins)) {}
+      explicit PinHolder(std::vector<CachePin>&& _pins)
+          : pins(std::move(_pins)) {}
     };
 
     // We move the mutable vector of pins to the executor. These must

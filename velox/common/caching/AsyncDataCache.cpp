@@ -53,8 +53,7 @@ void AsyncDataCacheEntry::setExclusiveToShared() {
   if (!ssdFile_ && shard_->cache()->ssdCache()) {
     auto ssdCache = shard_->cache()->ssdCache();
     assert(ssdCache); // for lint only.
-    if (ssdCache->groupStats().shouldSaveToSsd(
-            groupId_, trackingId_)) {
+    if (ssdCache->groupStats().shouldSaveToSsd(groupId_, trackingId_)) {
       ssdSaveable_ = true;
       shard_->cache()->possibleSsdSave(size_);
     }
@@ -313,8 +312,7 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   int64_t largeFreed = 0;
   int32_t evictSaveableSkipped = 0;
   auto ssdCache = cache_->ssdCache();
-  bool skipSsdSaveable =
-    ssdCache && ssdCache->writeInProgress();
+  bool skipSsdSaveable = ssdCache && ssdCache->writeInProgress();
   auto now = accessTime();
   std::vector<MappedMemory::Allocation> toFree;
   {
