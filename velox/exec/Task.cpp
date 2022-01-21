@@ -63,6 +63,7 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
+      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
       pool_(queryCtx_->pool()->addScopedChild("task_root")),

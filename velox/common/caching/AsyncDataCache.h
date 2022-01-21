@@ -23,7 +23,7 @@
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/CoalesceIo.h"
 #include "velox/common/base/SelectivityInfo.h"
-#include "velox/common/caching/GroupTracker.h"
+#include "velox/common/caching/FileGroupStats.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/StringIdMap.h"
 #include "velox/common/file/File.h"
@@ -530,6 +530,11 @@ class CacheShard {
   // Adds the stats of 'this' to 'stats'.
   void updateStats(CacheStats& stats);
 
+  // Appends a batch of non-saved SSD saveable entries in 'this' to
+  // 'pins'. This may have to be called several times since this keeps
+  // limits on the batch to write at one time. The saveable entries
+  // are pinned for read. 'pins' should be written or dropped before
+  // calling this a second time.
   void appendSsdSaveable(std::vector<CachePin>& pins);
 
   auto& allocClocks() {
@@ -767,7 +772,7 @@ class AsyncDataCache : public memory::MappedMemory,
   int32_t numSkippedSaves_{0};
 
   // Used for pseudorandom backoff after failed allocation
-  // attempts. Serialization wth a mutex is not allowed for
+  // attempts. Serialization with a mutex is not allowed for
   // allocations, so use backoff.
   std::atomic<uint16_t> backoffCounter_;
 

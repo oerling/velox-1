@@ -188,18 +188,6 @@ class CacheTest : public testing::Test {
     }
   }
 
-  static void
-  checkData(const char* data, uint64_t offset, int32_t size, uint64_t seed) {
-    uint8_t expected = seed + offset;
-    for (auto i = 0; i < size; ++i) {
-      auto cached = reinterpret_cast<const uint8_t*>(data)[i];
-      if (cached != expected) {
-        ASSERT_EQ(expected, cached) << " at " << (offset + i);
-      }
-      ++expected;
-    }
-  }
-
   uint64_t seedByPath(const std::string& path) {
     StringIdLease lease(fileIds(), path);
     return lease.id();
@@ -350,7 +338,7 @@ class CacheTest : public testing::Test {
         "testTracker",
         nullptr,
         dwio::common::ReaderOptions::kDefaultLoadQuantum,
-        groupTracker_);
+        groupStats_);
     std::deque<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;
