@@ -188,18 +188,6 @@ class CacheTest : public testing::Test {
     }
   }
 
-  static void
-  checkData(const char* data, uint64_t offset, int32_t size, uint64_t seed) {
-    uint8_t expected = seed + offset;
-    for (auto i = 0; i < size; ++i) {
-      auto cached = reinterpret_cast<const uint8_t*>(data)[i];
-      if (cached != expected) {
-        ASSERT_EQ(expected, cached) << " at " << (offset + i);
-      }
-      ++expected;
-    }
-  }
-
   uint64_t seedByPath(const std::string& path) {
     StringIdLease lease(fileIds(), path);
     return lease.id();
@@ -431,6 +419,7 @@ class CacheTest : public testing::Test {
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
 
+  std::unique_ptr<FileGroupStats> groupStats_;
   // Id of simulated streams. Corresponds 1:1 to 'streamStarts_'.
   std::vector<std::unique_ptr<dwrf::StreamIdentifier>> streamIds_;
 
