@@ -40,7 +40,6 @@ Task::Task(
           std::move(planFragment),
           destination,
           std::move(queryCtx),
-          pool_(queryCtx_->pool()->addScopedChild("task_root")),
           (consumer ? [c = std::move(consumer)]() { return c; }
                     : ConsumerSupplier{}),
           std::move(onError)} {}
