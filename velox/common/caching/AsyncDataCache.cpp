@@ -92,20 +92,19 @@ memory::MachinePageCount AsyncDataCacheEntry::setPrefetch(bool flag) {
   return shard_->cache()->incrementPrefetchPages(flag ? numPages : -numPages);
 }
 
-void AsyncDataCacheEntry::initialize(FileCacheKey key, int32_t size) {
+void AsyncDataCacheEntry::initialize(FileCacheKey key) {
   VELOX_CHECK(isExclusive());
-  VELOX_CHECK_EQ(0, size_);
   setSsdFile(nullptr, 0);
   accessStats_.reset();
   key_ = std::move(key);
   auto cache = shard_->cache();
   ClockTimer t(shard_->allocClocks());
-  if (size < AsyncDataCacheEntry::kTinyDataSize) {
-    tinyData_.resize(size);
+  if (size_ < AsyncDataCacheEntry::kTinyDataSize) {
+    tinyData_.resize(size_);
   } else {
     tinyData_.clear();
     auto sizePages =
-        bits::roundUp(size, MappedMemory::kPageSize) / MappedMemory::kPageSize;
+        bits::roundUp(size_, MappedMemory::kPageSize) / MappedMemory::kPageSize;
     if (cache->allocate(sizePages, CacheShard::kCacheOwner, data_)) {
       cache->incrementCachedPages(data().numPages());
     } else {
@@ -119,10 +118,9 @@ void AsyncDataCacheEntry::initialize(FileCacheKey key, int32_t size) {
           error_code::kNoCacheSpace.c_str(),
           /* isRetriable */ true,
           "Failed to allocate {} bytes for cache",
-          size);
+          size_);
     }
   }
-  size_ = size;
 }
 
 std::unique_ptr<AsyncDataCacheEntry> CacheShard::getFreeEntryWithSize(
@@ -193,8 +191,11 @@ CachePin CacheShard::findOrCreate(
       entries_[index] = std::move(newEntry);
     }
     ++numNew_;
+    // Inside the shard mutex.
+    VELOX_CHECK_EQ(0, entryToInit->size_);
+    entryToInit->size_ = size;
   }
-  return initEntry(key, entryToInit, size);
+  return initEntry(key, entryToInit);
 }
 
 bool CacheShard::exists(RawFileCacheKey key) const {
@@ -209,8 +210,7 @@ bool CacheShard::exists(RawFileCacheKey key) const {
 
 CachePin CacheShard::initEntry(
     RawFileCacheKey key,
-    AsyncDataCacheEntry* entry,
-    int64_t size) {
+    AsyncDataCacheEntry* entry) {
   //   The new entry is in the map and is in
   // exclusive mode and is otherwise uninitialized. Other threads may
   // find it and may add a Promis or wait for a promise that another
@@ -218,8 +218,8 @@ CachePin CacheShard::initEntry(
   // uninterpretable except for this thread. Non access serializing
   // members can be set outside of 'mutex_'.
   entry->initialize(
-      FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset}, size);
-  cache_->incrementNew(size);
+      FileCacheKey{StringIdLease(fileIds(), key.fileNum), key.offset});
+  cache_->incrementNew(entry->size());
   CachePin pin;
   pin.setEntry(entry);
   return pin;
