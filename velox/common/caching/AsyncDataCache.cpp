@@ -515,6 +515,7 @@ bool AsyncDataCache::makeSpace(
   // If more than half the allowed retries are needed, this is the rank in
   // arrival order of this.
   int32_t rank = 0;
+  assert(numThreadsInAllocate_ >= 0 && numThreadsInAllocate_ < 100);
   if (numThreadsInAllocate_) {
     rank = ++numThreadsInAllocate_;
     isCounted = true;
@@ -569,8 +570,8 @@ bool AsyncDataCache::makeSpace(
 
 void AsyncDataCache::backoff(int32_t counter) {
   size_t seed = folly::hasher<uint16_t>()(++backoffCounter_);
-  auto usec = (seed & 0xfff) * counter;
-  LOG(INFO) << "Backoff in allocation contention for " << usec << "us.";
+  auto usec = (seed & 0xfff) * (counter & 0x1f);
+  LOG(INFO) << "Backoff in allocation contention for " << usec << " us.";
   std::this_thread::sleep_for(std::chrono::microseconds(usec)); // NOLINT
 }
 
