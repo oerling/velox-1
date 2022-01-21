@@ -582,7 +582,7 @@ TEST_F(AsyncDataCacheTest, ssd) {
   // entries. We expect some of the oldest entries to get evicted. Error every
   // 17 batch loads.
   runThreads(
-      4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5), 17; });
+	     4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5, 17); });
 
   LOG(INFO) << "Stats after third pass:" << cache_->toString();
   auto stats2 = cache_->ssdCache()->stats();

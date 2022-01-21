@@ -53,7 +53,7 @@ void AsyncDataCacheEntry::setExclusiveToShared() {
   if (!ssdFile_ && shard_->cache()->ssdCache()) {
     auto ssdCache = shard_->cache()->ssdCache();
     assert(ssdCache); // for lint only.
-    if (ssdCache()->groupStats().shouldSaveToSsd(
+    if (ssdCache->groupStats().shouldSaveToSsd(
             groupId_, trackingId_)) {
       ssdSaveable_ = true;
       shard_->cache()->possibleSsdSave(size_);
@@ -379,7 +379,7 @@ void CacheShard::evict(uint64_t bytesToFree, bool evictAllUnpinned) {
   toFree.clear();
   cache_->incrementCachedPages(
       -largeFreed / static_cast<int32_t>(MappedMemory::kPageSize));
-  if (evictSaveableSkipped && && ssdCache && ssdCache->startWrite()) {
+  if (evictSaveableSkipped && ssdCache && ssdCache->startWrite()) {
     // Rare. May occur if SSD is unusually slow. Useful for  diagnostics.
     LOG(INFO) << "SSDCA: Start save for old saveable, skipped "
               << cache_->numSkippedSaves();
@@ -541,7 +541,7 @@ bool AsyncDataCache::makeSpace(
     if (nthAttempt > 2 && ssdCache_ && ssdCache_->writeInProgress()) {
       LOG(INFO) << "SSDCA: Pause 0.5s after failed eviction waiting for SSD "
                 << "cach write to unpin memory";
-      std::this_thread::sleep_for(std::chrono::milliseconds(500)); // nolint
+      std::this_thread::sleep_for(std::chrono::milliseconds(500)); // NOLINT
     }
     if (nthAttempt > kMaxAttempts / 2) {
       if (!isCounted) {
@@ -573,7 +573,7 @@ void AsyncDataCache::backoff(int32_t counter) {
   size_t seed = folly::hasher<uint16_t>()(++backoffCounter_);
   auto usec = (seed & 0xfff) * counter;
   LOG(INFO) << "Backoff in allocation contention for " << usec << "us.";
-  std::this_thread::sleep_for(std::chrono::microseconds(usec)); // nolint
+  std::this_thread::sleep_for(std::chrono::microseconds(usec)); // NOLINT
 }
 
 bool AsyncDataCache::allocate(

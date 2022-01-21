@@ -65,7 +65,7 @@ void SsdCache::write(std::vector<CachePin> pins) {
   std::vector<std::vector<CachePin>> shards(numShards_);
   for (auto& pin : pins) {
     bytes += pin.checkedEntry()->size();
-    auto& target = file(pin.entry()->key().fileNum.id());
+    auto& target = file(pin.checkedEntry()->key().fileNum.id());
     shards[target.shardId()].push_back(std::move(pin));
   }
   int32_t numNoStore = 0;
