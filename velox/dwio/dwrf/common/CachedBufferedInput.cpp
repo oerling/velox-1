@@ -23,6 +23,11 @@ DEFINE_int32(
     80,
     "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
 
+DEFINE_int32(
+    ssd_max_coalesce_distance,
+    (50 << 10),
+    "Max gap across wich IOs are coalesced for SSD");
+
 namespace facebook::velox::dwrf {
 
 using cache::CachePin;
@@ -30,6 +35,7 @@ using cache::LoadState;
 using cache::RawFileCacheKey;
 using cache::ScanTracker;
 using cache::SsdFile;
+using cache::SsdPin;
 using cache::TrackingId;
 using memory::MappedMemory;
 
@@ -48,7 +54,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   VELOX_CHECK_LE(region.offset + region.length, fileSize_);
   requests_.emplace_back(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id);
-  tracker_->recordReference(id, region.length, groupId_);
+  tracker_->recordReference(id, region.length, fileNum_, groupId_);
   auto stream = std::make_unique<CacheInputStream>(
       this,
       ioStats_.get(),
@@ -137,31 +143,52 @@ std::vector<CacheRequest*> makeRequestParts(
 void CachedBufferedInput::load(const dwio::common::LogType) {
   // 'requests_ is cleared on exit.
   auto requests = std::move(requests_);
+  cache::SsdFile* ssdFile =
+      cache_->ssdCache() ? &cache_->ssdCache()->file(fileNum_) : nullptr;
   // Extra requests made for preloadable regions that are larger then
   // 'loadQuantum'.
   std::vector<std::unique_ptr<CacheRequest>> extraRequests;
-  std::vector<CacheRequest*> storageLoad;
-  for (auto& request : requests) {
-    cache::TrackingData trackingData;
-    if (!request.trackingId.empty()) {
-      trackingData = tracker_->trackingData(request.trackingId);
-    }
-    // Gather frequently accessed items in a list and see if they should be
-    // loaded together.
-    if (request.trackingId.empty() ||
-        (100 * trackingData.numReads) / (1 + trackingData.numReferences) >=
-            80) {
-      auto parts =
-          makeRequestParts(request, trackingData, loadQuantum_, extraRequests);
-      for (auto part : parts) {
-        if (cache_->exists(part->key)) {
-          continue;
+  for (auto readPct : std::vector<int32_t>{80, 50, 20}) {
+    std::vector<CacheRequest*> storageLoad;
+    std::vector<CacheRequest*> ssdLoad;
+    for (auto& request : requests) {
+      if (request.processed) {
+        continue;
+      }
+      cache::TrackingData trackingData;
+      if (!request.trackingId.empty()) {
+        trackingData = tracker_->trackingData(request.trackingId);
+      }
+      if (request.trackingId.empty() ||
+          (100 * trackingData.numReads) / (1 + trackingData.numReferences) >=
+              readPct) {
+        request.processed = true;
+        auto parts = makeRequestParts(
+            request, trackingData, loadQuantum_, extraRequests);
+        for (auto part : parts) {
+          if (cache_->exists(part->key)) {
+            continue;
+          }
+          if (ssdFile) {
+            part->ssdPin = ssdFile->find(part->key);
+            if (!part->ssdPin.empty() &&
+                part->ssdPin.run().size() < part->size) {
+              LOG(INFO) << "IOERR: Ignorin SSD  shorter than requested: "
+                        << part->ssdPin.run().size() << " vs " << part->size;
+              part->ssdPin.clear();
+            }
+            if (!part->ssdPin.empty()) {
+              ssdLoad.push_back(part);
+              continue;
+            }
+          }
+          storageLoad.push_back(part);
         }
-        storageLoad.push_back(part);
       }
     }
+    makeLoads(std::move(storageLoad), isPrefetchPct(readPct));
+    makeLoads(std::move(ssdLoad), isPrefetchPct(readPct));
   }
-  makeLoads(std::move(storageLoad), true);
 }
 
 void CachedBufferedInput::makeLoads(
@@ -170,11 +197,17 @@ void CachedBufferedInput::makeLoads(
   if (requests.size() < 2) {
     return;
   }
+  bool isSsd = !requests[0]->ssdPin.empty();
+  int32_t maxDistance = isSsd ? 20000 : maxCoalesceDistance_;
   std::sort(
       requests.begin(),
       requests.end(),
       [&](const CacheRequest* left, const CacheRequest* right) {
-        return left->key.offset < right->key.offset;
+        if (isSsd) {
+          return left->ssdPin.run().offset() < right->ssdPin.run().offset();
+        } else {
+          return left->key.offset < right->key.offset;
+        }
       });
   // Combine adjacent short reads.
 
@@ -182,10 +215,13 @@ void CachedBufferedInput::makeLoads(
 
   coalesceIo<CacheRequest*, CacheRequest*>(
       requests,
-      maxCoalesceDistance_,
+      maxDistance,
       // Break batches up. Better load more short ones i parallel.
       40,
-      [&](int32_t index) { return requests[index]->key.offset; },
+      [&](int32_t index) {
+        return isSsd ? requests[index]->ssdPin.run().offset()
+                     : requests[index]->key.offset;
+      },
       [&](int32_t index) { return requests[index]->size; },
       [&](int32_t index) {
         return requests[index]->coalesces ? 1 : kNoCoalesce;
@@ -252,17 +288,19 @@ class DwrfCoalescedLoadBase : public cache::CoalescedLoad {
   }
 
  protected:
-  void
-  updateStats(const CoalesceIoStats& stats, bool isPrefetch, bool /*isSsd*/) {
+  void updateStats(const CoalesceIoStats& stats, bool isPrefetch, bool isSsd) {
     if (ioStats_) {
       ioStats_->incRawOverreadBytes(stats.extraBytes);
-      // Reading the file increments rawReadBytes. Reverse this
-      // increment here because actually accessing the data via
-      // CacheInputStream will do the increment.
-      ioStats_->incRawBytesRead(-stats.payloadBytes);
+      if (isSsd) {
+        ioStats_->ssdRead().increment(stats.payloadBytes);
+      } else {
+        // Reading the file increments rawReadBytes. Reverse this
+        // increment here because actually accessing the data via
+        // CacheInputStream will do the increment.
+        ioStats_->incRawBytesRead(-stats.payloadBytes);
 
-      ioStats_->read().increment(stats.payloadBytes);
-
+        ioStats_->read().increment(stats.payloadBytes);
+      }
       if (isPrefetch) {
         ioStats_->prefetch().increment(stats.payloadBytes);
       }
@@ -340,6 +378,36 @@ class DwrfCoalescedLoad : public DwrfCoalescedLoadBase {
   std::unique_ptr<AbstractInputStreamHolder> input_;
   const int32_t maxCoalesceDistance_;
 };
+
+// Represents a CoalescedLoad from local SSD cache.
+class SsdLoad : public DwrfCoalescedLoadBase {
+ public:
+  SsdLoad(
+      cache::AsyncDataCache& cache,
+      std::shared_ptr<dwio::common::IoStatistics> ioStats,
+      uint64_t groupId,
+      std::vector<CacheRequest*> requests)
+      : DwrfCoalescedLoadBase(cache, ioStats, groupId, std::move(requests)) {}
+
+  std::vector<CachePin> loadData(bool isPrefetch) override {
+    std::vector<SsdPin> ssdPins;
+    std::vector<CachePin> pins;
+    cache_.makePins(
+        keys_,
+        [&](int32_t index) { return sizes_[index]; },
+        [&](int32_t index, CachePin pin) {
+          pins.push_back(std::move(pin));
+          ssdPins.push_back(std::move(requests_[index].ssdPin));
+        });
+    if (pins.empty()) {
+      return pins;
+    }
+    auto stats = ssdPins[0].file()->load(ssdPins, pins);
+    updateStats(stats, isPrefetch, true);
+    return pins;
+  }
+};
+
 } // namespace
 
 void CachedBufferedInput::readRegion(
@@ -349,13 +417,17 @@ void CachedBufferedInput::readRegion(
     return;
   }
   std::shared_ptr<cache::CoalescedLoad> load;
-  load = std::make_shared<DwrfCoalescedLoad>(
-      *cache_,
-      streamSource_(),
-      ioStats_,
-      groupId_,
-      requests,
-      maxCoalesceDistance_);
+  if (!requests[0]->ssdPin.empty()) {
+    load = std::make_shared<SsdLoad>(*cache_, ioStats_, groupId_, requests);
+  } else {
+    load = std::make_shared<DwrfCoalescedLoad>(
+        *cache_,
+        streamSource_(),
+        ioStats_,
+        groupId_,
+        requests,
+        maxCoalesceDistance_);
+  }
   allCoalescedLoads_.push_back(load);
   coalescedLoads_.withWLock([&](auto& loads) {
     for (auto& request : requests) {

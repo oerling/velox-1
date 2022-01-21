@@ -88,6 +88,8 @@ class BufferedInput {
     return false;
   }
 
+  virtual void setNumStripes(int32_t /*numStripes*/) {}
+
  protected:
   dwio::common::InputStream& input_;
 
@@ -141,6 +143,14 @@ class BufferedInputFactory {
       velox::memory::MemoryPool& pool,
       dwio::common::DataCacheConfig* dataCacheConfig = nullptr) const {
     return std::make_unique<BufferedInput>(input, pool, dataCacheConfig);
+  }
+
+  virtual folly::Executor* FOLLY_NULLABLE executor() const {
+    return nullptr;
+  }
+
+  virtual BufferedInputFactory* FOLLY_NONNULL copy() {
+    VELOX_UNSUPPORTED();
   }
 
   static BufferedInputFactory* baseFactory();

@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/caching/FileGroupStats.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/SsdCache.h"
 #include "velox/dwio/common/InputStream.h"
@@ -56,6 +57,8 @@ struct CacheRequest {
   uint64_t size;
   cache::TrackingId trackingId;
   cache::CachePin pin;
+  cache::SsdPin ssdPin;
+
   bool processed{false};
 
   // True if this should be coalesced into a CoalescedLoad with other
@@ -121,6 +124,12 @@ class CachedBufferedInput : public BufferedInput {
     return true;
   }
 
+  void setNumStripes(int32_t numStripes) override {
+    if (tracker_->fileGroupStats()) {
+      tracker_->fileGroupStats()->recordFile(fileNum_, groupId_, numStripes);
+    }
+  }
+
   cache::AsyncDataCache* cache() const {
     return cache_;
   }
@@ -141,6 +150,7 @@ class CachedBufferedInput : public BufferedInput {
   // IO is appropriate. If 'prefetch' is set, schedules the CoalescedLoad
   // on 'executor_'. Links the CoalescedLoad  to all CacheInputStreams that it
   // concerns.
+
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
   cache::AsyncDataCache* cache_;
@@ -210,6 +220,10 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
       return tracker_->toString();
     }
     return "";
+  }
+
+  folly::Executor* FOLLY_NULLABLE executor() const override {
+    return executor_;
   }
 
  private:

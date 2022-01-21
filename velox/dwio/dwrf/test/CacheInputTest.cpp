@@ -118,10 +118,21 @@ class CacheTest : public testing::Test {
     executor_->join();
   }
 
-  void initializeCache(uint64_t maxBytes) {
+  void initializeCache(
+      uint64_t maxBytes,
+      const std::string& file = "",
+      uint64_t ssdBytes = 0) {
+    std::unique_ptr<SsdCache> ssd;
+    if (!file.empty()) {
+      FLAGS_ssd_odirect = false;
+      ssd = std::make_unique<SsdCache>(file, ssdBytes, 1, executor_.get());
+      groupStats_ = &ssd->groupStats();
+    }
     memory::MmapAllocatorOptions options = {maxBytes};
     cache_ = std::make_unique<AsyncDataCache>(
-        std::make_unique<memory::MmapAllocator>(options), maxBytes);
+        std::make_unique<memory::MmapAllocator>(options),
+        maxBytes,
+        std::move(ssd));
     cache_->setVerifyHook(checkEntry);
     for (auto i = 0; i < kMaxStreams; ++i) {
       streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
@@ -326,12 +337,16 @@ class CacheTest : public testing::Test {
     auto tracker = std::make_shared<ScanTracker>(
         "testTracker",
         nullptr,
-        dwio::common::ReaderOptions::kDefaultLoadQuantum);
+        dwio::common::ReaderOptions::kDefaultLoadQuantum,
+        groupStats_);
     std::deque<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;
     std::shared_ptr<facebook::velox::dwio::common::InputStream> input =
         inputByPath(filename, fileId, groupId);
+    if (groupStats_) {
+      groupStats_->recordFile(fileId, groupId, numStripes);
+    }
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
       stripes.push_back(makeStripeData(
           input,
@@ -397,6 +412,7 @@ class CacheTest : public testing::Test {
       std::shared_ptr<facebook::velox::dwio::common::InputStream>>
       pathToInput_;
   facebook::velox::dwio::common::DataCacheConfig config_;
+  cache::FileGroupStats* FOLLY_NULLABLE groupStats_ = nullptr;
   std::unique_ptr<AsyncDataCache> cache_;
   std::shared_ptr<facebook::velox::dwio::common::IoStatistics> ioStats_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
@@ -423,8 +439,65 @@ TEST_F(CacheTest, bufferedInput) {
   readLoop("testfile2", 30, 70, 70, 20);
 }
 
+// Calibrates the data read for a densely and sparsely read stripe of
+// test data. Fills the SSD cache with test data. Reads 2x cache size
+// worth of data and checks that the cache population settles to a
+// stable state.  Shifts the reading pattern so that half the working
+// set drops out and another half is added. Checks that the
+// working set stabilizes again.
+TEST_F(CacheTest, ssd) {
+  constexpr int64_t kSsdBytes = 2UL << 30;
+  initializeCache(160 << 20, "/tmp/ssdtest", kSsdBytes);
+  testRandomSeek_ = false;
+
+  // We measure bytes read for a full and sparse read of a stripe.
+  auto bytes = ioStats_->rawBytesRead();
+  readLoop("testfile", 30, 100, 1, 1);
+  auto ramBytes = ioStats_->ramHit().bytes();
+
+  auto fullStripeBytes = ioStats_->rawBytesRead() - bytes;
+  auto fullStripesOnSsd = kSsdBytes / fullStripeBytes;
+  bytes = ioStats_->rawBytesRead();
+  cache_->clear();
+  readLoop("testfile", 30, 70, 10, 5, 1);
+  auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 5;
+  constexpr int32_t kStripesPerFile = 20;
+  auto bytesPerFile = fullStripeBytes * kStripesPerFile;
+  auto filesPerGb = (1UL << 30) / bytesPerFile;
+  // Read files of 20 stripes each to prime SSD cache.
+  readFiles("prefix1_", 0, filesPerGb * 2, 30, 100, 1, kStripesPerFile, 4);
+
+  LOG(INFO) << cache_->toString();
+
+  // Read the same and 50% more to trigger selection of what gets written.
+  readFiles("prefix1_", 0, 3 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
+
+  LOG(INFO) << cache_->toString();
+
+  readFiles(
+      "prefix1_", filesPerGb, 4 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
+  LOG(INFO) << cache_->toString();
+}
+
 TEST_F(CacheTest, singleFileThreads) {
   initializeCache(1 << 30);
+
+  const int numThreads = 4;
+  std::vector<std::thread> threads;
+  threads.reserve(numThreads);
+  for (int i = 0; i < numThreads; ++i) {
+    threads.push_back(std::thread([this, i]() {
+      readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
+    }));
+  }
+  for (int i = 0; i < numThreads; ++i) {
+    threads[i].join();
+  }
+}
+
+TEST_F(CacheTest, ssdThreads) {
+  return;
+  initializeCache(1 << 28, "/tmp/ssdtest");
 
   const int numThreads = 4;
   std::vector<std::thread> threads;
