@@ -446,8 +446,8 @@ TEST_F(CacheTest, bufferedInput) {
 // set drops out and another half is added. Checks that the
 // working set stabilizes again.
 TEST_F(CacheTest, ssd) {
-  constexpr int64_t kSsdBytes = 2UL << 30;
-  initializeCache(160 << 20, "/tmp/ssdtest", kSsdBytes);
+  constexpr int64_t kSsdBytes = 2UL << 28; // 256MB
+  initializeCache(100 << 20, "/tmp/ssdtest", kSsdBytes);
   testRandomSeek_ = false;
 
   // We measure bytes read for a full and sparse read of a stripe.
@@ -496,7 +496,6 @@ TEST_F(CacheTest, singleFileThreads) {
 }
 
 TEST_F(CacheTest, ssdThreads) {
-  return;
   initializeCache(1 << 28, "/tmp/ssdtest");
 
   const int numThreads = 4;
