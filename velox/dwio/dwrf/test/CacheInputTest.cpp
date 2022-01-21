@@ -338,7 +338,7 @@ class CacheTest : public testing::Test {
         "testTracker",
         nullptr,
         dwio::common::ReaderOptions::kDefaultLoadQuantum,
-        groupTracker_);
+        groupStats_);
     std::deque<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;
@@ -419,7 +419,6 @@ class CacheTest : public testing::Test {
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
 
-  std::unique_ptr<FileGroupStats> groupStats_;
   // Id of simulated streams. Corresponds 1:1 to 'streamStarts_'.
   std::vector<std::unique_ptr<dwrf::StreamIdentifier>> streamIds_;
 

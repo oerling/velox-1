@@ -15,7 +15,7 @@
  */
 
 #include "velox/common/caching/ScanTracker.h"
-#include "velox/common/caching/GroupTracker.h"
+#include "velox/common/caching/FileGroupStats.h"
 
 #include <sstream>
 

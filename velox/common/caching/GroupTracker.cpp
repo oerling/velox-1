@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/common/caching/GroupTracker.h"
+#include "velox/common/caching/FileGroupStats.h"
 
 #include "velox/common/base/BitUtil.h"
 
