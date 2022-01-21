@@ -515,7 +515,10 @@ bool AsyncDataCache::makeSpace(
   // If more than half the allowed retries are needed, this is the rank in
   // arrival order of this.
   int32_t rank = 0;
-  assert(numThreadsInAllocate_ >= 0 && numThreadsInAllocate_ < 100);
+  VELOX_CHECK(
+      numThreadsInAllocate_ >= 0 && numThreadsInAllocate_ < 10000,
+      "Leak in numThreadsInAllocate_: {}",
+      numThreadsInAllocate_);
   if (numThreadsInAllocate_) {
     rank = ++numThreadsInAllocate_;
     isCounted = true;
