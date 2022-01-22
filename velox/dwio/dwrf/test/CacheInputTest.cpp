@@ -340,6 +340,7 @@ class CacheTest : public testing::Test {
         dwio::common::ReaderOptions::kDefaultLoadQuantum,
         groupStats_);
     std::deque<std::unique_ptr<StripeData>> stripes;
+    std::unique_ptr<StripeData> currentStripe;
     uint64_t fileId;
     uint64_t groupId;
     std::shared_ptr<facebook::velox::dwio::common::InputStream> input =
@@ -371,7 +372,7 @@ class CacheTest : public testing::Test {
           }
         }
       }
-      auto currentStripe = std::move(stripes.front());
+      currentStripe = std::move(stripes.front());
       stripes.pop_front();
       currentStripe->input->load(facebook::velox::dwio::common::LogType::TEST);
       for (auto columnIndex = 0; columnIndex < numColumns; ++columnIndex) {
@@ -476,6 +477,7 @@ TEST_F(CacheTest, ssd) {
 
   readFiles(
       "prefix1_", filesPerGb, 4 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
+  executor_->join();
   LOG(INFO) << cache_->toString();
 }
 
