@@ -16,7 +16,10 @@
 
 #pragma once
 
+<<<<<<< HEAD
 #include "velox/common/caching/FileGroupStats.h"
+=======
+>>>>>>> main
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/SsdCache.h"
 #include "velox/dwio/common/InputStream.h"
