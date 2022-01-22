@@ -527,7 +527,7 @@ class BoolValue final : public Filter {
 class BigintRange final : public Filter {
  public:
   /// @param lower Lower end of the range, inclusive.
-  /// @param lower Upper end of the range, inclusive.
+  /// @param upper Upper end of the range, inclusive.
   /// @param nullAllowed Null values are passing the filter if true.
   BigintRange(int64_t lower, int64_t upper, bool nullAllowed)
       : Filter(true, nullAllowed, FilterKind::kBigintRange),
@@ -757,6 +757,23 @@ class BigintValuesUsingBitmask final : public Filter {
 
 /// Base class for range filters on floating point and string data types.
 class AbstractRange : public Filter {
+ public:
+  bool lowerUnbounded() const {
+    return lowerUnbounded_;
+  }
+
+  bool lowerExclusive() const {
+    return lowerExclusive_;
+  }
+
+  bool upperUnbounded() const {
+    return upperUnbounded_;
+  }
+
+  bool upperExclusive() const {
+    return upperExclusive_;
+  }
+
  protected:
   AbstractRange(
       bool lowerUnbounded,
@@ -831,6 +848,14 @@ class FloatingPointRange final : public AbstractRange {
         upper_(other.upper_) {
     VELOX_CHECK(lowerUnbounded_ || !std::isnan(lower_));
     VELOX_CHECK(upperUnbounded_ || !std::isnan(upper_));
+  }
+
+  double lower() const {
+    return lower_;
+  }
+
+  double upper() const {
+    return upper_;
   }
 
   std::unique_ptr<Filter> clone(

@@ -110,7 +110,7 @@ TaskCursor::TaskCursor(const CursorParameters& params)
   if (params.queryCtx) {
     queryCtx = params.queryCtx;
   } else {
-    queryCtx = core::QueryCtx::create();
+    queryCtx = core::QueryCtx::createForTest();
   }
   auto numProducers = params.numResultDrivers.has_value()
       ? params.numResultDrivers.value()
@@ -118,9 +118,10 @@ TaskCursor::TaskCursor(const CursorParameters& params)
   queue_ = std::make_shared<TaskQueue>(numProducers, params.bufferedBytes);
   // Captured as a shared_ptr by the consumer callback of task_.
   auto queue = queue_;
+  core::PlanFragment planFragment{params.planNode};
   task_ = std::make_shared<exec::Task>(
       fmt::format("test_cursor {}", ++serial_),
-      params.planNode,
+      std::move(planFragment),
       params.destination,
       std::move(queryCtx),
       // consumer

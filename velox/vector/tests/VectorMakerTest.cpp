@@ -32,8 +32,7 @@ class VectorMakerTest : public ::testing::Test {
 
 TEST_F(VectorMakerTest, flatVector) {
   std::vector<int64_t> data = {0, 1, 2, 3, 1024, -123456, -99, -999, -1};
-
-  auto flatVector = maker_.flatVector<int64_t>(data);
+  auto flatVector = maker_.flatVector(data);
 
   EXPECT_EQ(data.size(), flatVector->size());
   EXPECT_FALSE(flatVector->mayHaveNulls());
@@ -96,6 +95,56 @@ TEST_F(VectorMakerTest, flatVectorString) {
   }
 }
 
+TEST_F(VectorMakerTest, flatVectorStringTypes) {
+  auto validate = [&](const FlatVectorPtr<StringView>& input) {
+    ASSERT_NE(nullptr, input);
+    EXPECT_EQ("hello"_sv, input->valueAt(0));
+    EXPECT_EQ("world"_sv, input->valueAt(1));
+  };
+
+  // char*
+  validate(maker_.flatVector({"hello", "world"}));
+
+  // std::string
+  validate(maker_.flatVector({std::string("hello"), std::string("world")}));
+
+  // StringView
+  validate(maker_.flatVector({"hello"_sv, "world"_sv}));
+
+  // std::string_view
+  validate(maker_.flatVector(
+      {std::string_view("hello"), std::string_view("world")}));
+}
+
+TEST_F(VectorMakerTest, flatVectorStringNullableTypes) {
+  auto validate = [&](const FlatVectorPtr<StringView>& input) {
+    ASSERT_NE(nullptr, input);
+    EXPECT_EQ("hello"_sv, input->valueAt(0));
+    EXPECT_TRUE(input->isNullAt(1));
+    EXPECT_EQ("world"_sv, input->valueAt(2));
+  };
+
+  // Compilers can't infer dependent template types, so we either need to
+  // explicitly specify the template type, of fully declare the vector type:
+
+  // char*
+  validate(
+      maker_.flatVectorNullable<const char*>({"hello", std::nullopt, "world"}));
+
+  // std::string
+  validate(maker_.flatVectorNullable(std::vector<std::optional<std::string>>(
+      {"hello", std::nullopt, "world"})));
+
+  // StringView
+  validate(
+      maker_.flatVectorNullable<StringView>({"hello", std::nullopt, "world"}));
+
+  // std::string_view
+  validate(
+      maker_.flatVectorNullable(std::vector<std::optional<std::string_view>>(
+          {"hello", std::nullopt, "world"})));
+}
+
 TEST_F(VectorMakerTest, nullableFlatVectorString) {
   std::vector<std::optional<std::string>> data = {
       "hello",
@@ -112,8 +161,8 @@ TEST_F(VectorMakerTest, nullableFlatVectorString) {
   EXPECT_EQ(1, flatVector->getNullCount().value());
   EXPECT_FALSE(flatVector->isSorted().value());
   EXPECT_EQ(4, flatVector->getDistinctValueCount().value());
-  EXPECT_EQ(StringView(""), flatVector->getMin().value());
-  EXPECT_EQ(StringView("world"), flatVector->getMax().value());
+  EXPECT_EQ(""_sv, flatVector->getMin().value());
+  EXPECT_EQ("world"_sv, flatVector->getMax().value());
 
   for (vector_size_t i = 0; i < data.size(); i++) {
     if (data[i] == std::nullopt) {
@@ -517,6 +566,32 @@ TEST_F(VectorMakerTest, arrayOfRowVector) {
   EXPECT_EQ("purple", colorVector->valueAt(4).str());
 }
 
+TEST_F(VectorMakerTest, arrayVectorUsingBaseVector) {
+  auto elementsVector = maker_.flatVector<int64_t>({1, 2, 3, 4, 5, 6});
+
+  // Create an array vector with 2 elements per array .
+  auto arrayVector = maker_.arrayVector({0, 2, 4}, elementsVector);
+
+  EXPECT_EQ(arrayVector->size(), 3);
+  for (int i = 0; i < 3; i++) {
+    EXPECT_EQ(arrayVector->sizeAt(i), 2);
+    EXPECT_EQ(arrayVector->isNullAt(i), false);
+  }
+
+  auto rawArrayValues = arrayVector->elements()->values()->as<int64_t>();
+  auto baseValues = elementsVector->values()->as<int64_t>();
+  EXPECT_EQ(
+      memcmp(
+          rawArrayValues, baseValues, elementsVector->size() * sizeof(int64_t)),
+      0);
+
+  // Create array vector with last array as null.
+  auto arrayVectorWithNull =
+      maker_.arrayVector({0, 2, 4, 6}, elementsVector, {3});
+  EXPECT_EQ(arrayVectorWithNull->isNullAt(3), true);
+  EXPECT_EQ(arrayVectorWithNull->sizeAt(3), 0);
+}
+
 TEST_F(VectorMakerTest, biasVector) {
   std::vector<std::optional<int64_t>> data = {10, 13, std::nullopt, 15, 12, 11};
   auto biasVector = maker_.biasVector(data);
@@ -681,24 +756,20 @@ TEST_F(VectorMakerTest, dictionaryVector) {
 
 TEST_F(VectorMakerTest, isSorted) {
   // Empty and single element.
-  EXPECT_TRUE(
-      maker_.flatVector<int64_t>(std::vector<int64_t>())->isSorted().value());
-  EXPECT_TRUE(
-      maker_.flatVector<int64_t>(std::vector<int64_t>(10))->isSorted().value());
+  EXPECT_TRUE(maker_.flatVector(std::vector<int64_t>())->isSorted().value());
+  EXPECT_TRUE(maker_.flatVector(std::vector<int64_t>(10))->isSorted().value());
 
   // More variations and data types.
-  EXPECT_TRUE(maker_.flatVector<int64_t>({-1, 0, 1, 2})->isSorted().value());
-  EXPECT_FALSE(maker_.flatVector<int64_t>({-1, 0, 2, 1})->isSorted().value());
+  EXPECT_TRUE(maker_.flatVector({-1, 0, 1, 2})->isSorted().value());
+  EXPECT_FALSE(maker_.flatVector({-1, 0, 2, 1})->isSorted().value());
+
+  EXPECT_TRUE(maker_.flatVector({-1.9, 0.0, 9.1, 10.09})->isSorted().value());
+  EXPECT_FALSE(maker_.flatVector({-1.9, 0.0, -9.1, 10.09})->isSorted().value());
 
   EXPECT_TRUE(
-      maker_.flatVector<double>({-1.9, 0, 9.1, 10.09})->isSorted().value());
+      maker_.flatVector({false, false, true, true})->isSorted().value());
   EXPECT_FALSE(
-      maker_.flatVector<double>({-1.9, 0, -9.1, 10.09})->isSorted().value());
-
-  EXPECT_TRUE(
-      maker_.flatVector<bool>({false, false, true, true})->isSorted().value());
-  EXPECT_FALSE(
-      maker_.flatVector<bool>({false, false, true, false})->isSorted().value());
+      maker_.flatVector({false, false, true, false})->isSorted().value());
 
   // Nullable.
   EXPECT_FALSE(maker_.flatVectorNullable<int64_t>({-1, std::nullopt, 1, 2})

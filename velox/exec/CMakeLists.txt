@@ -14,6 +14,7 @@
 add_library(
   velox_exec
   Aggregate.cpp
+  AggregationMasks.cpp
   ContainerRowSerde.cpp
   CrossJoinBuild.cpp
   CrossJoinProbe.cpp
@@ -40,6 +41,7 @@ add_library(
   PartitionedOutput.cpp
   PartitionedOutputBufferManager.cpp
   RowContainer.cpp
+  StreamingAggregation.cpp
   TableScan.cpp
   TableWriter.cpp
   Task.cpp

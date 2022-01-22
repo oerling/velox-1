@@ -17,6 +17,7 @@
 #pragma once
 #include <iterator>
 #include <optional>
+
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/vector/TypeAliases.h"
@@ -603,5 +604,10 @@ class RowView {
   const reader_t* childReaders_;
   vector_size_t offset_;
 };
+
+template <size_t I, class... Types>
+auto get(const RowView<Types...>& row) {
+  return row.template at<I>();
+}
 
 } // namespace facebook::velox::exec

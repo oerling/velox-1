@@ -103,9 +103,7 @@ TEST_F(VarianceAggregationTest, varianceConst) {
 
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{"c0 % 2", "c0"},
-                  std::vector<std::string>{"c0_mod_2", "c0"})
+              .project({"c0 % 2 AS c0_mod_2", "c0"})
               .partialAggregation({0}, {GEN_AGG("c0")})
               .finalAggregation()
               .planNode();
@@ -155,8 +153,9 @@ TEST_F(VarianceAggregationTest, varianceConstNull) {
               .values(vectors)
               .partialAggregation({}, {GEN_AGG("c0")})
               .finalAggregation()
+              .project({"round(a0, cast (10 as int))"})
               .planNode();
-    sql = genAggrQuery("SELECT {0}(c0) FROM tmp", aggrName);
+    sql = genAggrQuery("SELECT round({0}(c0), 10) FROM tmp", aggrName);
     assertQuery(agg, sql);
   }
 }
@@ -264,11 +263,7 @@ TEST_F(VarianceAggregationTest, variance) {
     // Group by
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{
-                      "c0 % 10", "c1", "c2", "c3", "c4", "c5"},
-                  std::vector<std::string>{
-                      "c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
+              .project({"c0 % 10", "c1", "c2", "c3", "c4", "c5"})
               .partialAggregation(
                   {0},
                   {GEN_AGG("c1"),
@@ -286,11 +281,7 @@ TEST_F(VarianceAggregationTest, variance) {
 
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{
-                      "c0 % 10", "c1", "c2", "c3", "c4", "c5"},
-                  std::vector<std::string>{
-                      "c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
+              .project({"c0 % 10", "c1", "c2", "c3", "c4", "c5"})
               .singleAggregation(
                   {0},
                   {GEN_AGG("c1"),
@@ -307,11 +298,7 @@ TEST_F(VarianceAggregationTest, variance) {
 
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{
-                      "c0 % 10", "c1", "c2", "c3", "c4", "c5"},
-                  std::vector<std::string>{
-                      "c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
+              .project({"c0 % 10", "c1", "c2", "c3", "c4", "c5"})
               .partialAggregation(
                   {0},
                   {GEN_AGG("c1"),
@@ -331,9 +318,7 @@ TEST_F(VarianceAggregationTest, variance) {
     // Group by; no input
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{"c0 % 10", "c1"},
-                  std::vector<std::string>{"c0_mod_10", "c1"})
+              .project({"c0 % 10 AS c0_mod_10", "c1"})
               .filter("c0_mod_10 > 10")
               .partialAggregation({0}, {GEN_AGG("c1")})
               .finalAggregation()
@@ -347,9 +332,7 @@ TEST_F(VarianceAggregationTest, variance) {
     agg = PlanBuilder()
               .values(vectors)
               .filter("c2 % 5 = 3")
-              .project(
-                  std::vector<std::string>{"c0 % 10", "c1"},
-                  std::vector<std::string>{"c0_mod_10", "c1"})
+              .project({"c0 % 10", "c1"})
               .partialAggregation({0}, {GEN_AGG("c1")})
               .finalAggregation()
               .planNode();

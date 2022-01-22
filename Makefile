@@ -1137,6 +1137,19 @@ velox_example_opaque_type/fast:
 .PHONY : velox_example_opaque_type/fast
 
 #=============================================================================
+# Target rules for targets named velox_expression_functions
+
+# Build rule for target.
+velox_expression_functions: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_functions
+.PHONY : velox_expression_functions
+
+# fast build rule for target.
+velox_expression_functions/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/CMakeFiles/velox_expression_functions.dir/build.make velox/expression/CMakeFiles/velox_expression_functions.dir/build
+.PHONY : velox_expression_functions/fast
+
+#=============================================================================
 # Target rules for targets named velox_expression
 
 # Build rule for target.
@@ -2255,6 +2268,19 @@ velox_functions_test/fast:
 .PHONY : velox_functions_test/fast
 
 #=============================================================================
+# Target rules for targets named velox_functions_benchmarks_compare
+
+# Build rule for target.
+velox_functions_benchmarks_compare: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_compare
+.PHONY : velox_functions_benchmarks_compare
+
+# fast build rule for target.
+velox_functions_benchmarks_compare/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_compare.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_compare.dir/build
+.PHONY : velox_functions_benchmarks_compare/fast
+
+#=============================================================================
 # Target rules for targets named velox_functions_prestosql_benchmarks_in
 
 # Build rule for target.
@@ -2841,6 +2867,7 @@ help:
 	@echo "... velox_exec_test_util"
 	@echo "... velox_exec_vector_hasher_benchmark"
 	@echo "... velox_expression"
+	@echo "... velox_expression_functions"
 	@echo "... velox_expression_fuzzer"
 	@echo "... velox_expression_fuzzer_test"
 	@echo "... velox_expression_test"
@@ -2852,6 +2879,7 @@ help:
 	@echo "... velox_fragmentation_benchmark"
 	@echo "... velox_function_registry"
 	@echo "... velox_function_registry_test"
+	@echo "... velox_functions_benchmarks_compare"
 	@echo "... velox_functions_benchmarks_url"
 	@echo "... velox_functions_hyperloglog"
 	@echo "... velox_functions_json"

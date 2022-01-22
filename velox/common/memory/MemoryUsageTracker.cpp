@@ -35,36 +35,40 @@ std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::create(
 void MemoryUsageTracker::checkAndPropagateReservationIncrement(
     int64_t increment,
     bool updateMinReservation) {
+  std::exception_ptr exception;
   try {
-    updateInternal(type_, increment);
+    incrementUsage(type_, increment);
   } catch (std::exception& e) {
-    // Compensate for ethe increase after exceeding limit.
+    exception = std::current_exception();
+  }
+  // Process the exception outside of catch so as not to kill the process if
+  // 'mutex_' throws deadlock.
+  if (exception) {
+    // Compensate for the increase after exceeding limit.
     std::lock_guard<std::mutex> l(mutex_);
     reservation_ -= increment;
     if (updateMinReservation) {
       minReservation_ -= increment;
     }
-    std::rethrow_exception(std::current_exception());
+    std::rethrow_exception(exception);
   }
 }
 
-void MemoryUsageTracker::updateInternal(UsageType type, int64_t size) {
+void MemoryUsageTracker::incrementUsage(UsageType type, int64_t size) {
   // Update parent first. If one of the ancestor's limits are exceeded, it
   // will throw VeloxMemoryCapExceeded exception.
   if (parent_) {
-    parent_->updateInternal(type, size);
+    parent_->incrementUsage(type, size);
   }
 
   auto newUsage = usage(currentUsageInBytes_, type)
                       .fetch_add(size, std::memory_order_relaxed) +
       size;
 
-  if (size > 0) {
-    ++usage(numAllocs_, type);
-    usage(cumulativeBytes_, type) += size;
-    ++usage(numAllocs_, type);
-    usage(cumulativeBytes_, type) += size;
-  }
+  ++usage(numAllocs_, type);
+  usage(cumulativeBytes_, type) += size;
+  ++usage(numAllocs_, type);
+  usage(cumulativeBytes_, type) += size;
 
   // We track the peak usage of total memory independent of user and
   // system memory since freed user memory can be reallocated as system
@@ -72,21 +76,11 @@ void MemoryUsageTracker::updateInternal(UsageType type, int64_t size) {
   int64_t totalBytes = usage(currentUsageInBytes_, UsageType::kUserMem) +
       usage(currentUsageInBytes_, UsageType::kSystemMem);
 
-  // Enforce the limit. Throw VeloxMemoryCapException exception if the limits
-  // are exceeded.
-  if (size > 0 &&
-      (newUsage > usage(maxMemory_, type) || totalBytes > total(maxMemory_))) {
-    bool limitRaised = false;
-    if (growCallback_) {
-      limitRaised = growCallback_(type, size, *this);
-    }
-    if (!limitRaised) {
+  // Enforce the limit.
+  if (newUsage > usage(maxMemory_, type) || totalBytes > total(maxMemory_)) {
+    if (!growCallback_ || !growCallback_(type, size, *this)) {
       // Exceeded the limit.  revert the change to current usage.
-      if (parent_) {
-        parent_->updateInternal(type, -size);
-      }
-      usage(currentUsageInBytes_, type)
-          .fetch_add(-size, std::memory_order_relaxed);
+      decrementUsage(type, size);
       checkNonNegativeSizes("after exceeding cap");
       VELOX_MEM_CAP_EXCEEDED(
           std::min(total(maxMemory_), usage(maxMemory_, type)));
@@ -97,4 +91,10 @@ void MemoryUsageTracker::updateInternal(UsageType type, int64_t size) {
   checkNonNegativeSizes("after update");
 }
 
+void MemoryUsageTracker::decrementUsage(UsageType type, int64_t size) noexcept {
+  if (parent_) {
+    parent_->decrementUsage(type, size);
+  }
+  usage(currentUsageInBytes_, type).fetch_sub(size);
+}
 } // namespace facebook::velox::memory

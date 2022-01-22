@@ -45,9 +45,8 @@ RowVectorPtr TableScan::getOutput() {
     if (needNewSplit_) {
       exec::Split split;
       auto reason = driverCtx_->task->getSplitOrFuture(
-          planNodeId_, split, blockingFuture_);
+          driverCtx_->driverId, planNodeId_, split, blockingFuture_);
       if (reason != BlockingReason::kNotBlocked) {
-        hasBlockingFuture_ = true;
         return nullptr;
       }
 
@@ -113,6 +112,10 @@ RowVectorPtr TableScan::getOutput() {
   }
 }
 
+bool TableScan::isFinished() {
+  return noMoreSplits_;
+}
+
 void TableScan::setBatchSize() {
   constexpr int64_t kMB = 1 << 20;
   auto estimate = dataSource_->estimatedRowSize();
@@ -135,10 +138,6 @@ void TableScan::addDynamicFilter(
   } else {
     pendingDynamicFilters_.emplace(outputChannel, filter);
   }
-}
-
-void TableScan::close() {
-  // TODO Implement
 }
 
 } // namespace facebook::velox::exec

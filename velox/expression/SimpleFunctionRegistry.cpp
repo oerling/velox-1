@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
 
-#include <type_traits>
-#include "folly/hash/Hash.h"
-namespace facebook::velox::functions {
+#include "velox/expression/SimpleFunctionRegistry.h"
 
-template <typename TT>
-FOLLY_ALWAYS_INLINE int64_t computeHash(const TT& a) {
-  return static_cast<int64_t>(folly::hasher<TT>()(a));
+namespace facebook::velox::exec {
+
+SimpleFunctionRegistry& SimpleFunctions() {
+  static SimpleFunctionRegistry instance;
+  return instance;
 }
 
-} // namespace facebook::velox::functions
+} // namespace facebook::velox::exec

@@ -1300,6 +1300,22 @@ struct Array {
   Array() {}
 };
 
+// This is a temporary type to be used when ArrayProxy is requested by the user
+// to represent an Array output type in the simple function interface.
+// Eventually this will be removed and Array will be ArrayProxyT once all proxy
+// types are implemented.
+template <typename ELEMENT>
+struct ArrayProxyT {
+  using element_type = ELEMENT;
+
+  static_assert(
+      !isVariadicType<element_type>::value,
+      "Array elements cannot be Variadic");
+
+ private:
+  ArrayProxyT() {}
+};
+
 template <typename... T>
 struct Row {
   template <size_t idx>
@@ -1375,6 +1391,9 @@ struct CppToType<velox::StringView> : public CppToTypeBase<TypeKind::VARCHAR> {
 };
 
 template <>
+struct CppToType<std::string_view> : public CppToTypeBase<TypeKind::VARCHAR> {};
+
+template <>
 struct CppToType<std::string> : public CppToTypeBase<TypeKind::VARCHAR> {};
 
 template <>
@@ -1419,6 +1438,13 @@ struct CppToType<Map<KEY, VAL>> : public TypeTraits<TypeKind::MAP> {
 
 template <typename ELEMENT>
 struct CppToType<Array<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
+  static auto create() {
+    return ARRAY(CppToType<ELEMENT>::create());
+  }
+};
+
+template <typename ELEMENT>
+struct CppToType<ArrayProxyT<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
   static auto create() {
     return ARRAY(CppToType<ELEMENT>::create());
   }

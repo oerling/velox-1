@@ -17,11 +17,15 @@
 #pragma once
 
 #include <algorithm>
+#include <cstring>
+#include <string_view>
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/expression/ComplexProxyTypes.h"
 #include "velox/expression/ComplexViewTypes.h"
 #include "velox/expression/DecodedArgs.h"
 #include "velox/expression/VariadicView.h"
 #include "velox/functions/UDFOutputString.h"
+#include "velox/type/StringView.h"
 #include "velox/type/Type.h"
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/FlatVector.h"
@@ -60,6 +64,11 @@ template <typename V>
 struct resolver<Array<V>> {
   using in_type = ArrayView<V>;
   using out_type = core::ArrayValWriter<typename resolver<V>::out_type>;
+};
+
+template <typename V>
+struct resolver<ArrayProxyT<V>> {
+  using out_type = ArrayProxy<V>;
 };
 
 template <>
@@ -106,14 +115,14 @@ struct VectorWriter {
 
   void ensureSize(size_t size) {
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
       init(*vector_);
     }
   }
 
   VectorWriter() {}
 
-  exec_out_t& current() {
+  FOLLY_ALWAYS_INLINE exec_out_t& current() {
     return data_[offset_];
   }
 
@@ -138,11 +147,11 @@ struct VectorWriter {
     }
   }
 
-  void setOffset(int32_t offset) {
+  FOLLY_ALWAYS_INLINE void setOffset(int32_t offset) {
     offset_ = offset;
   }
 
-  vector_t& vector() {
+  FOLLY_ALWAYS_INLINE vector_t& vector() {
     return *vector_;
   }
 
@@ -202,7 +211,7 @@ struct VectorWriter<Map<K, V>> {
 
   void ensureSize(size_t size) {
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
       init(*vector_);
     }
   }
@@ -370,11 +379,12 @@ struct VectorWriter<Array<V>> {
   void ensureSize(size_t size) {
     // todo(youknowjack): optimize the excessive ensureSize calls
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
       init(*vector_);
     }
   }
 
+  // TODO: deprecate this once all proxies introduced.
   void copyCommit(const exec_out_t& data) {
     vector_size_t childSize = childWriter_.vector().size();
     childWriter_.ensureSize(childSize + data.size());
@@ -419,6 +429,83 @@ struct VectorWriter<Array<V>> {
 
   VectorWriter<V> childWriter_;
   size_t offset_ = 0;
+};
+
+// A new temporary writer, to be used when the user wants a proxy interface for
+// the array output. Will eventually replace VectorWriter<Array>>.
+template <typename V>
+struct VectorWriter<ArrayProxyT<V>> {
+  using vector_t = typename TypeToFlatVector<Array<V>>::type;
+  using child_vector_t = typename TypeToFlatVector<V>::type;
+  using exec_out_t = ArrayProxy<V>;
+
+  void init(vector_t& vector) {
+    arrayVector_ = &vector;
+    childWriter_.init(static_cast<child_vector_t&>(*vector.elements().get()));
+    proxy_.setChildWriter(&childWriter_);
+  }
+
+  VectorWriter() = default;
+
+  exec_out_t& current() {
+    proxy_.init(currentValueOffset_);
+    return proxy_;
+  }
+
+  vector_t& vector() {
+    return *arrayVector_;
+  }
+
+  void ensureSize(size_t size) {
+    if (size > arrayVector_->size()) {
+      arrayVector_->resize(size);
+      childWriter_.init(
+          static_cast<child_vector_t&>(arrayVector_->elements().get()));
+    }
+  }
+
+  // Commit a not null value.
+  void commit() {
+    proxy_.finalize();
+    arrayVector_->setOffsetAndSize(offset_, currentValueOffset_, proxy_.size());
+    // Next array will be written at the new currentValueOffset_.
+    currentValueOffset_ += proxy_.size();
+    arrayVector_->setNull(offset_, false);
+  }
+
+  // Commit a null value.
+  void commitNull() {
+    arrayVector_->setNull(offset_, true);
+  }
+
+  void commit(bool isSet) {
+    if (LIKELY(isSet)) {
+      commit();
+    } else {
+      commitNull();
+    }
+  }
+
+  // Set the index being written.
+  void setOffset(vector_size_t offset) {
+    offset_ = offset;
+  }
+
+  void reset() {
+    currentValueOffset_ = 0;
+  }
+
+  vector_t* arrayVector_ = nullptr;
+
+  exec_out_t proxy_;
+
+  VectorWriter<V> childWriter_;
+
+  // The index being written in the array vector.
+  vector_size_t offset_ = 0;
+
+  // The offset of the current array being written in the child vector.
+  vector_size_t currentValueOffset_ = 0;
 };
 
 template <typename... T>
@@ -483,7 +570,7 @@ struct VectorWriter<Row<T...>> {
 
   void ensureSize(size_t size) {
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
       resizeVectorWritersInternal<0>(vector_->size());
     }
   }
@@ -688,9 +775,39 @@ class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
     finalized_ = true;
   }
 
-  void setNoCopy(StringView value) {
+  void setNoCopy(const StringView& value) {
     vector_->setNoCopy(offset_, value);
     finalized_ = true;
+  }
+
+  void append(const StringView& input) {
+    DCHECK(!finalized_);
+    auto oldSize = size();
+    resize(this->size() + input.size());
+    if (input.size() != 0) {
+      DCHECK(data());
+      DCHECK(input.data());
+      std::memcpy(data() + oldSize, input.data(), input.size());
+    }
+  }
+
+  void operator+=(const StringView& input) {
+    append(input);
+  }
+
+  void append(const std::string_view input) {
+    DCHECK(!finalized_);
+    auto oldSize = size();
+    resize(this->size() + input.size());
+    if (input.size() != 0) {
+      DCHECK(data());
+      DCHECK(input.data());
+      std::memcpy(data() + oldSize, input.data(), input.size());
+    }
+  }
+
+  void operator+=(const std::string_view input) {
+    append(input);
   }
 
  private:
@@ -770,7 +887,7 @@ struct VectorWriter<
 
   void ensureSize(size_t size) {
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
     }
   }
 
@@ -827,7 +944,7 @@ struct VectorWriter<T, std::enable_if_t<std::is_same_v<T, bool>>> {
 
   void ensureSize(size_t size) {
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
     }
   }
 
@@ -879,7 +996,7 @@ struct VectorWriter<std::shared_ptr<T>> {
 
   void ensureSize(size_t size) {
     if (size > vector_->size()) {
-      vector_->resize(size);
+      vector_->resize(size, /*setNotNull*/ false);
     }
   }
 

@@ -129,18 +129,9 @@ TEST_F(SimpleVectorNonParameterizedTest, BasicRoundTrip) {
   assertVectorAndProperties<int64_t>(expected.data(), vector);
 }
 
-using SimpleTypes = ::testing::Types<
-    uint8_t,
-    int8_t,
-    uint16_t,
-    int16_t,
-    uint32_t,
-    int32_t,
-    uint64_t,
-    int64_t,
-    double,
-    StringView,
-    bool>;
+// Only signed types are supported.
+using SimpleTypes = ::testing::
+    Types<int8_t, int16_t, int32_t, int64_t, double, StringView, bool>;
 
 template <typename T>
 class SimpleVectorTypedTest : public SimpleVectorTest {
@@ -520,6 +511,85 @@ TYPED_TEST(SimpleVectorUnaryTypedTest, hashAll) {
     }
   };
   this->runTest(hashTest);
+}
+
+template <typename T>
+class SimpleVectorCompareTest : public SimpleVectorTest {
+ protected:
+  void runTest(const CompareFlags& flags) {
+    ExpectedData<T> input = {
+        max(), std::nullopt, nan(), lowest(), inf(), -1, 1, 0, max(), lowest()};
+    auto vector = maker_.encodedVector(VectorEncoding::Simple::FLAT, input);
+    std::vector<int> indices(input.size());
+    for (int i = 0; i < input.size(); ++i) {
+      indices[i] = i;
+    }
+    std::sort(indices.begin(), indices.end(), [&](int a, int b) {
+      return vector->compare(vector.get(), a, b, flags) < 0;
+    });
+    ExpectedData<T> expected = {
+        std::nullopt, lowest(), lowest(), -1, 0, 1, max(), max(), inf(), nan()};
+    if (!flags.ascending) {
+      std::reverse(expected.begin() + 1, expected.end());
+    }
+    if (!flags.nullsFirst) {
+      // Move null to end of vector.
+      expected.erase(expected.begin());
+      expected.push_back(std::nullopt);
+    }
+    ExpectedData<T> actual;
+    for (int i = 0; i < input.size(); ++i) {
+      std::optional<T> v = std::nullopt;
+      if (not vector->isNullAt(indices[i])) {
+        v = vector->valueAt(indices[i]);
+      }
+      actual.push_back(v);
+    }
+    assertVector(
+        expected, maker_.encodedVector(VectorEncoding::Simple::FLAT, actual));
+  }
+
+  T max() {
+    return std::numeric_limits<T>::max();
+  }
+
+  T lowest() {
+    return std::numeric_limits<T>::lowest();
+  }
+
+  T inf() {
+    if constexpr (std::is_floating_point<T>::value) {
+      return std::numeric_limits<T>::infinity();
+    }
+    return std::numeric_limits<T>::max();
+  }
+
+  T nan() {
+    if constexpr (std::is_floating_point<T>::value) {
+      return std::numeric_limits<T>::quiet_NaN();
+    }
+    return std::numeric_limits<T>::max();
+  }
+};
+
+using NumericTypes =
+    ::testing::Types<int8_t, int16_t, int32_t, int64_t, float, double>;
+VELOX_TYPED_TEST_SUITE(SimpleVectorCompareTest, NumericTypes);
+
+TYPED_TEST(SimpleVectorCompareTest, compareAscNullsFirst) {
+  this->runTest({/*nullsFirst=*/true, /*ascending=*/true});
+}
+
+TYPED_TEST(SimpleVectorCompareTest, compareAscNullsLast) {
+  this->runTest({/*nullsFirst=*/false, /*ascending=*/true});
+}
+
+TYPED_TEST(SimpleVectorCompareTest, compareDescNullsFirst) {
+  this->runTest({/*nullsFirst=*/true, /*ascending=*/false});
+}
+
+TYPED_TEST(SimpleVectorCompareTest, compareDescNullsLast) {
+  this->runTest({/*nullsFirst=*/false, /*ascending=*/false});
 }
 
 template <typename T, int32_t offset>

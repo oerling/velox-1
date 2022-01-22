@@ -126,7 +126,7 @@ void HashBuild::addInput(RowVectorPtr input) {
     // can stop processing on first null.
     if (activeRows_.countSelected() < input->size()) {
       antiJoinHasNullKeys_ = true;
-      finish();
+      noMoreInput();
       return;
     }
   }
@@ -176,8 +176,12 @@ void HashBuild::addInput(RowVectorPtr input) {
   });
 }
 
-void HashBuild::finish() {
-  Operator::finish();
+void HashBuild::noMoreInput() {
+  if (noMoreInput_) {
+    return;
+  }
+
+  Operator::noMoreInput();
   std::vector<VeloxPromise<bool>> promises;
   std::vector<std::shared_ptr<Driver>> peers;
   // The last Driver to hit HashBuild::finish gathers the data from
@@ -187,7 +191,6 @@ void HashBuild::finish() {
   // build pipeline.
   if (!operatorCtx_->task()->allPeersFinished(
           planNodeId(), operatorCtx_->driver(), &future_, promises, peers)) {
-    hasFuture_ = true;
     return;
   }
 
@@ -246,12 +249,15 @@ void HashBuild::addRuntimeStats() {
 }
 
 BlockingReason HashBuild::isBlocked(ContinueFuture* future) {
-  if (!hasFuture_) {
+  if (!future_.valid()) {
     return BlockingReason::kNotBlocked;
   }
   *future = std::move(future_);
-  hasFuture_ = false;
   return BlockingReason::kWaitForJoinBuild;
+}
+
+bool HashBuild::isFinished() {
+  return !future_.valid() && noMoreInput_;
 }
 
 } // namespace facebook::velox::exec

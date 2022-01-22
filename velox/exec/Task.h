@@ -15,6 +15,7 @@
  */
 #pragma once
 #include <limits>
+#include "velox/core/PlanFragment.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/exec/Driver.h"
 #include "velox/exec/LocalPartition.h"
@@ -85,23 +86,15 @@ class Task : public memory::MemoryConsumer {
 public:
   Task(
       const std::string& taskId,
-      std::shared_ptr<const core::PlanNode> planNode,
+      core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
       Consumer consumer = nullptr,
-      std::function<void(std::exception_ptr)> onError = nullptr)
-      : Task{
-            taskId,
-            std::move(planNode),
-            destination,
-            std::move(queryCtx),
-            (consumer ? [c = std::move(consumer)]() { return c; }
-                      : ConsumerSupplier{}),
-            std::move(onError)} {}
+      std::function<void(std::exception_ptr)> onError = nullptr);
 
   Task(
       const std::string& taskId,
-      std::shared_ptr<const core::PlanNode> planNode,
+      core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
       ConsumerSupplier consumerSupplier,
@@ -182,6 +175,7 @@ public:
   // kWaitForSplit and sets a future that will complete when split becomes
   // available or no-more-splits signal is received.
   BlockingReason getSplitOrFuture(
+      int driverId,
       const core::PlanNodeId& planNodeId,
       exec::Split& split,
       ContinueFuture& future);
@@ -523,7 +517,7 @@ public:
   folly::SemiFuture<bool> recoverMemory(int64_t minMemoryToRecover);
 
   const std::string taskId_;
-  std::shared_ptr<const core::PlanNode> planNode_;
+  core::PlanFragment planFragment_;
   const int destination_;
   std::shared_ptr<core::QueryCtx> queryCtx_;
   // True if produces output via PartitionedOutputBufferManager.
@@ -557,9 +551,6 @@ public:
   // Holds states for pipelineBarrier(). Guarded by
   // 'mutex_'.
   std::unordered_map<std::string, BarrierState> barriers_;
-  // Map from the plan node id of the join to the corresponding JoinBridge.
-  // Guarded by 'mutex_'.
-  std::unordered_map<std::string, std::shared_ptr<JoinBridge>> bridges_;
 
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
@@ -569,6 +560,10 @@ public:
   // Keep driver and operator memory pools alive for the duration of the task to
   // allow for sharing vectors across drivers without copy.
   std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
+
+  // Map from the plan node id of the join to the corresponding JoinBridge.
+  // Guarded by 'mutex_'.
+  std::unordered_map<core::PlanNodeId, std::shared_ptr<JoinBridge>> bridges_;
 
   std::vector<std::shared_ptr<MergeSource>> localMergeSources_;
 

@@ -14,81 +14,159 @@
  * limitations under the License.
  */
 #pragma once
+
 #include "velox/functions/Udf.h"
+#include "velox/type/Conversions.h"
 
 namespace facebook::velox::functions {
 
-template <bool isMax, typename VeloxType>
-VELOX_UDF_BEGIN(array_min_max)
+template <typename TExecCtx, bool isMax>
+struct ArrayMinMaxFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(TExecCtx);
 
-template <typename T>
-void update(T& currentValue, const T& candidateValue) {
-  if constexpr (isMax) {
-    if (candidateValue > currentValue) {
-      currentValue = candidateValue;
-    }
-  } else {
-    if (candidateValue < currentValue) {
-      currentValue = candidateValue;
+  template <typename T>
+  void update(T& currentValue, const T& candidateValue) {
+    if constexpr (isMax) {
+      if (candidateValue > currentValue) {
+        currentValue = candidateValue;
+      }
+    } else {
+      if (candidateValue < currentValue) {
+        currentValue = candidateValue;
+      }
     }
   }
-}
 
-void assign(out_type<VeloxType>& out, const arg_type<VeloxType>& value) {
-  if constexpr (std::is_same<Varchar, VeloxType>::value) {
+  template <typename TReturn, typename TInput>
+  void assign(TReturn& out, const TInput& value) {
+    out = value;
+  }
+
+  void assign(out_type<Varchar>& out, const arg_type<Varchar>& value) {
     // TODO: reuse strings once support landed.
     out.resize(value.size());
     if (value.size() != 0) {
       std::memcpy(out.data(), value.data(), value.size());
     }
-  } else {
-    out = value;
+  }
+
+  template <typename TReturn, typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(TReturn& out, const TInput& array) {
+    // Result is null if array is empty.
+    if (array.size() == 0) {
+      return false;
+    }
+
+    if (!array.mayHaveNulls()) {
+      // Input array does not have nulls.
+      auto currentValue = *array[0];
+      for (const auto& item : array) {
+        update(currentValue, item.value());
+      }
+      assign(out, currentValue);
+      return true;
+    }
+
+    auto it = array.begin();
+    // Result is null if any element is null.
+    if (!it->has_value()) {
+      return false;
+    }
+
+    auto currentValue = it->value();
+    it++;
+    while (it != array.end()) {
+      if (!it->has_value()) {
+        return false;
+      }
+      update(currentValue, it->value());
+      it++;
+    }
+
+    assign(out, currentValue);
+    return true;
+  }
+};
+
+template <typename TExecCtx>
+struct ArrayMinFunction : public ArrayMinMaxFunction<TExecCtx, false> {};
+
+template <typename TExecCtx>
+struct ArrayMaxFunction : public ArrayMinMaxFunction<TExecCtx, true> {};
+
+template <typename T>
+VELOX_UDF_BEGIN(array_join)
+
+template <typename C>
+void writeValue(out_type<velox::Varchar>& result, const C& value) {
+  bool nullOutput = false;
+  result +=
+      util::Converter<CppToType<velox::Varchar>::typeKind, void, false>::cast(
+          value, nullOutput);
+}
+
+template <typename C>
+void writeOutput(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Varchar>& delim,
+    const C& value,
+    bool& firstNonNull) {
+  if (!firstNonNull) {
+    writeValue(result, delim);
+  }
+  writeValue(result, value);
+  firstNonNull = false;
+}
+
+void createOutputString(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Array<T>>& inputArray,
+    const arg_type<velox::Varchar>& delim,
+    std::optional<std::string> nullReplacement = std::nullopt) {
+  bool firstNonNull = true;
+  if (inputArray.size() == 0) {
+    return;
+  }
+
+  for (const auto& entry : inputArray) {
+    if (entry.has_value()) {
+      writeOutput(result, delim, entry.value(), firstNonNull);
+    } else if (nullReplacement.has_value()) {
+      writeOutput(result, delim, nullReplacement.value(), firstNonNull);
+    }
   }
 }
 
 FOLLY_ALWAYS_INLINE bool call(
-    out_type<VeloxType>& out,
-    const arg_type<Array<VeloxType>>& array) {
-  // Result is null if array is empty.
-  if (array.size() == 0) {
-    return false;
-  }
-
-  if (!array.mayHaveNulls()) {
-    // Input array does not have nulls.
-    auto currentValue = *array[0];
-    for (const auto& item : array) {
-      update(currentValue, item.value());
-    }
-    assign(out, currentValue);
-    return true;
-  }
-
-  auto it = array.begin();
-  // Result is null if any element is null.
-  if (!it->has_value()) {
-    return false;
-  }
-
-  auto currentValue = it->value();
-  it++;
-  while (it != array.end()) {
-    if (!it->has_value()) {
-      return false;
-    }
-    update(currentValue, it->value());
-    it++;
-  }
-
-  assign(out, currentValue);
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Array<T>>& inputArray,
+    const arg_type<velox::Varchar>& delim) {
+  createOutputString(result, inputArray, delim);
   return true;
 }
 
-VELOX_UDF_END()
+FOLLY_ALWAYS_INLINE bool call(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Array<T>>& inputArray,
+    const arg_type<velox::Varchar>& delim,
+    const arg_type<velox::Varchar>& nullReplacement) {
+  createOutputString(result, inputArray, delim, nullReplacement.getString());
+  return true;
+}
+
+VELOX_UDF_END();
 
 template <typename T>
 inline void registerArrayMinMaxFunctions() {
-  registerFunction<udf_array_min_max<false, T>, T, Array<T>>({"array_min"});
-  registerFunction<udf_array_min_max<true, T>, T, Array<T>>({"array_max"});
+  registerFunction<ArrayMinFunction, T, Array<T>>({"array_min"});
+  registerFunction<ArrayMaxFunction, T, Array<T>>({"array_max"});
+}
+
+template <typename T>
+inline void registerArrayJoinFunctions() {
+  registerFunction<udf_array_join<T>, Varchar, Array<T>, Varchar>(
+      {"array_join"});
+  registerFunction<udf_array_join<T>, Varchar, Array<T>, Varchar, Varchar>(
+      {"array_join"});
 }
 } // namespace facebook::velox::functions
