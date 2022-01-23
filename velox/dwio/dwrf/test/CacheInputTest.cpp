@@ -336,10 +336,10 @@ class CacheTest : public testing::Test {
       int32_t stripeWindow = 4) {
     auto tracker = std::make_shared<ScanTracker>(
         "testTracker",
-        nullptr,
+        std::nullopt,
         dwio::common::ReaderOptions::kDefaultLoadQuantum,
         groupStats_);
-    std::deque<std::unique_ptr<StripeData>> stripes;
+    std::vector<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;
     std::shared_ptr<facebook::velox::dwio::common::InputStream> input =
@@ -348,31 +348,26 @@ class CacheTest : public testing::Test {
       groupStats_->recordFile(fileId, groupId, numStripes);
     }
     for (auto stripeIndex = 0; stripeIndex < numStripes; ++stripeIndex) {
-      stripes.push_back(makeStripeData(
-          input,
-          numColumns,
-          tracker,
-          fileId,
-          groupId,
-          stripeIndex * streamStarts_[kMaxStreams - 1]));
-      stripes.back()->input->load(facebook::velox::dwio::common::LogType::TEST);
-      if (stripeIndex > 0) {
-        while (stripes.size() < stripeWindow) {
-          stripes.push_back(makeStripeData(
-              input,
-              numColumns,
-              tracker,
-              fileId,
-              groupId,
-              stripeIndex * streamStarts_[kMaxStreams - 1]));
-          if (stripes.back()->input->shouldPreload()) {
-            stripes.back()->input->load(
-                facebook::velox::dwio::common::LogType::TEST);
-          }
+      auto firstPrefetchStripe = stripeIndex + stripes.size();
+      auto window = std::min(stripeIndex + 1, stripeWindow);
+      auto lastPrefetchStripe = std::min(numStripes, stripeIndex + window);
+      for (auto prefetchStripeIndex = firstPrefetchStripe;
+           prefetchStripeIndex < lastPrefetchStripe;
+           ++prefetchStripeIndex) {
+        stripes.push_back(makeStripeData(
+            input,
+            numColumns,
+            tracker,
+            fileId,
+            groupId,
+            prefetchStripeIndex * streamStarts_[kMaxStreams - 1]));
+        if (stripes.back()->input->shouldPreload()) {
+          stripes.back()->input->load(
+              facebook::velox::dwio::common::LogType::TEST);
         }
       }
       auto currentStripe = std::move(stripes.front());
-      stripes.pop_front();
+      stripes.erase(stripes.begin());
       currentStripe->input->load(facebook::velox::dwio::common::LogType::TEST);
       for (auto columnIndex = 0; columnIndex < numColumns; ++columnIndex) {
         if (shouldRead(columnIndex, readPct, readPctModulo)) {
@@ -401,6 +396,15 @@ class CacheTest : public testing::Test {
           readPctModulo,
           numStripes,
           stripeWindow);
+    }
+  }
+
+  void waitForWrite() {
+    auto ssd = cache_->ssdCache();
+    if (ssd) {
+      while (ssd->writeInProgress()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50)); // NOLINT
+      }
     }
   }
 
@@ -446,36 +450,67 @@ TEST_F(CacheTest, bufferedInput) {
 // set drops out and another half is added. Checks that the
 // working set stabilizes again.
 TEST_F(CacheTest, ssd) {
-  constexpr int64_t kSsdBytes = 2UL << 30;
-  initializeCache(160 << 20, "/tmp/ssdtest", kSsdBytes);
+  constexpr int64_t kSsdBytes = 256 << 20;
+  // 128MB RAM, 256MB SSD
+  initializeCache(128 << 20, "/tmp/ssd", kSsdBytes);
   testRandomSeek_ = false;
 
-  // We measure bytes read for a full and sparse read of a stripe.
-  auto bytes = ioStats_->rawBytesRead();
+  // We read one stripe with all columns.
   readLoop("testfile", 30, 100, 1, 1);
-  auto ramBytes = ioStats_->ramHit().bytes();
-
-  auto fullStripeBytes = ioStats_->rawBytesRead() - bytes;
+  // This is a cold read, so expect no hits.
+  EXPECT_EQ(0, ioStats_->ramHit().bytes());
+  // Expect some extra reading from coalescing.
+  EXPECT_LT(0, ioStats_->rawOverreadBytes());
+  auto fullStripeBytes = ioStats_->rawBytesRead();
   auto fullStripesOnSsd = kSsdBytes / fullStripeBytes;
-  bytes = ioStats_->rawBytesRead();
+  auto bytes = ioStats_->rawBytesRead();
   cache_->clear();
-  readLoop("testfile", 30, 70, 10, 5, 1);
-  auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 5;
-  constexpr int32_t kStripesPerFile = 20;
+  // We read 10 stripes with some columns sparsely accessed.
+  readLoop("testfile", 30, 70, 10, 10, 1);
+  auto sparseStripeBytes = (ioStats_->rawBytesRead() - bytes) / 10;
+  EXPECT_LT(sparseStripeBytes, fullStripeBytes / 4);
+  // Expect the dense fraction of columns to have read ahead.
+  EXPECT_LT(1000000, ioStats_->prefetch().bytes());
+
+  constexpr int32_t kStripesPerFile = 10;
   auto bytesPerFile = fullStripeBytes * kStripesPerFile;
-  auto filesPerGb = (1UL << 30) / bytesPerFile;
-  // Read files of 20 stripes each to prime SSD cache.
-  readFiles("prefix1_", 0, filesPerGb * 2, 30, 100, 1, kStripesPerFile, 4);
+  // Read kSsdBytes worth of files to prime SSD cache.
+  readFiles(
+      "prefix1_", 0, kSsdBytes / bytesPerFile, 30, 100, 1, kStripesPerFile, 4);
 
   LOG(INFO) << cache_->toString();
 
-  // Read the same and 50% more to trigger selection of what gets written.
-  readFiles("prefix1_", 0, 3 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
-
+  waitForWrite();
+  cache_->clear();
+  // Read double this to get some eviction from SSD.
+  readFiles(
+      "prefix1_",
+      0,
+      kSsdBytes * 2 / bytesPerFile,
+      30,
+      100,
+      1,
+      kStripesPerFile,
+      4);
+  // Expect some hits from SSD.
+  EXPECT_LE(kSsdBytes / 8, ioStats_->ssdRead().bytes());
+  // We expec some prefetch but the quantity is nondeterminstic
+  // because cases where the main thread reads the data ahead of
+  // background reader does not count as prefetch even if prefetch was
+  // issued. Also, the head of each file does not get prefetched
+  // because each file has its own tracker.
+  EXPECT_LE(kSsdBytes / 8, ioStats_->prefetch().bytes());
   LOG(INFO) << cache_->toString();
 
   readFiles(
-      "prefix1_", filesPerGb, 4 * filesPerGb, 30, 100, 1, kStripesPerFile, 4);
+      "prefix1_",
+      kSsdBytes / bytesPerFile,
+      4 * kSsdBytes / bytesPerFile,
+      30,
+      100,
+      1,
+      kStripesPerFile,
+      4);
   LOG(INFO) << cache_->toString();
 }
 
@@ -490,24 +525,27 @@ TEST_F(CacheTest, singleFileThreads) {
       readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
     }));
   }
-  for (int i = 0; i < numThreads; ++i) {
+  for (auto i = 0; i < numThreads; ++i) {
     threads[i].join();
   }
 }
 
 TEST_F(CacheTest, ssdThreads) {
-  return;
-  initializeCache(1 << 28, "/tmp/ssdtest");
+  initializeCache(64 << 20, "/tmp/ssdThreads", 1024 << 20);
 
   const int numThreads = 4;
   std::vector<std::thread> threads;
   threads.reserve(numThreads);
   for (int i = 0; i < numThreads; ++i) {
     threads.push_back(std::thread([this, i]() {
-      readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
+      for (auto counter = 0; counter < 4; ++counter) {
+        readLoop(fmt::format("testfile{}", i), 10, 70, 10, 20);
+      }
     }));
   }
   for (int i = 0; i < numThreads; ++i) {
     threads[i].join();
   }
+  executor_->join();
+  LOG(INFO) << cache_->toString();
 }

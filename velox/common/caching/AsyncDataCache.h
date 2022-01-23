@@ -136,10 +136,10 @@ class AsyncDataCacheEntry {
 
   explicit AsyncDataCacheEntry(CacheShard* FOLLY_NONNULL shard);
 
-  // Sets the key and size and allocates the entry's memory.  Resets
+  // Sets the key and allocates the entry's memory.  Resets
   //  all other state. The entry must be held exclusively and must
   //  hold no memory when calling this.
-  void initialize(FileCacheKey key, int32_t size);
+  void initialize(FileCacheKey key);
 
   memory::MappedMemory::Allocation& data() {
     return data_;
@@ -550,8 +550,7 @@ class CacheShard {
   std::unique_ptr<AsyncDataCacheEntry> getFreeEntryWithSize(uint64_t sizeHint);
   CachePin initEntry(
       RawFileCacheKey key,
-      AsyncDataCacheEntry* FOLLY_NONNULL entry,
-      int64_t size);
+      AsyncDataCacheEntry* FOLLY_NONNULL entry);
 
   mutable std::mutex mutex_;
   folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry * FOLLY_NONNULL>
@@ -774,11 +773,11 @@ class AsyncDataCache : public memory::MappedMemory,
   // Used for pseudorandom backoff after failed allocation
   // attempts. Serialization with a mutex is not allowed for
   // allocations, so use backoff.
-  std::atomic<uint16_t> backoffCounter_;
+  std::atomic<uint16_t> backoffCounter_{0};
 
   // Counter of threads competing for allocation in makeSpace(). Used
   // for setting staggered backoff. Mutexes are not allowed for this.
-  std::atomic<int32_t> numThreadsInAllocate_;
+  std::atomic<int32_t> numThreadsInAllocate_{0};
 };
 
 // Samples a set of values T from 'numSamples' calls of

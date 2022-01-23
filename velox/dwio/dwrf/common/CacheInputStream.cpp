@@ -188,22 +188,29 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
             file.load(ssdPins, pins);
             loadedFromSsd = true;
           } catch (const std::exception& e) {
-            LOG(ERROR) << "IOERR: Failed SSD loadSync. offset = "
-                       << entry->key().offset << " " << e.what() << " "
-                       << process::TraceContext::statusLine()
-                       << fmt::format(
-                              "stream region {} {}b, start of load {}",
-                              region_.offset,
-                              region_.length,
-                              region.offset - region_.offset)
-                       << "file " << fileNum_ << ": "
-                       << fileIds().string(fileNum_);
-            file.erase(cache::RawFileCacheKey{fileNum_, region.offset});
-            std::rethrow_exception(std::current_exception());
+            try {
+              LOG(ERROR)
+                  << "IOERR: Failed SSD loadSync. offset = "
+                  << entry->key().offset << " " << e.what() << " "
+                  << process::TraceContext::statusLine()
+                  << fmt::format(
+                         "stream region {} {}b, start of load {} file {} {}",
+                         region_.offset,
+                         region_.length,
+                         region.offset - region_.offset,
+                         fileNum_,
+                         fileIds().string(fileNum_));
+              // Remove the non-loadable entry so that next access goes to
+              // storage.
+              file.erase(cache::RawFileCacheKey{fileNum_, region.offset});
+            } catch (const std::exception&) {
+              // Ignore error inside logging the error.
+            }
+            throw;
           }
           pin_ = std::move(pins[0]);
           if (loadedFromSsd) {
-            ioStats_->ssdRead().increment(pin_.entry()->size());
+            ioStats_->ssdRead().increment(entry->size());
             ioStats_->queryThreadIoLatency().increment(usec);
             entry->setExclusiveToShared();
             return;

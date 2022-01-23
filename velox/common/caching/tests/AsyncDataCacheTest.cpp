@@ -365,7 +365,13 @@ void AsyncDataCacheTest::loadBatch(
     auto load = std::make_shared<TestingCoalescedLoad>(
         std::move(keys), std::move(sizes), *cache_);
     load->injectError(injectError);
-    executor()->add([load]() { load->loadOrFuture(nullptr); });
+    executor()->add([load]() {
+      try {
+        load->loadOrFuture(nullptr);
+      } catch (const std::exception& e) {
+        // Expecting error, ignore.
+      };
+    });
   }
   if (!fromSsd.empty()) {
     std::vector<SsdPin> ssdPins;
@@ -379,7 +385,13 @@ void AsyncDataCacheTest::loadBatch(
     auto load = std::make_shared<TestingCoalescedSsdLoad>(
         std::move(keys), std::move(sizes), std::move(ssdPins), *cache_);
     load->injectError(injectError);
-    executor()->add([load]() { load->loadOrFuture(nullptr); });
+    executor()->add([load]() {
+      try {
+        load->loadOrFuture(nullptr);
+      } catch (const std::exception& e) {
+        // Expecting error, ignore.
+      };
+    });
   }
 }
 
@@ -585,6 +597,8 @@ TEST_F(AsyncDataCacheTest, ssd) {
       4, [&](int32_t /*i*/) { loadLoop(kSsdBytes / 2, kSsdBytes * 1.5, 17); });
 
   LOG(INFO) << "Stats after third pass:" << cache_->toString();
+  // Join for possibly pending writes.
+  executor()->join();
   auto stats2 = cache_->ssdCache()->stats();
   EXPECT_GT(stats2.bytesWritten, stats.bytesWritten);
   EXPECT_GT(stats2.bytesRead, stats.bytesRead);
