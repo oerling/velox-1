@@ -336,7 +336,7 @@ class CacheTest : public testing::Test {
       int32_t stripeWindow = 4) {
     auto tracker = std::make_shared<ScanTracker>(
         "testTracker",
-        nullptr,
+        std::nullopt,
         dwio::common::ReaderOptions::kDefaultLoadQuantum,
         groupStats_);
     std::vector<std::unique_ptr<StripeData>> stripes;
