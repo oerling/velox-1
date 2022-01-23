@@ -203,14 +203,14 @@ void CacheInputStream::loadSync(dwio::common::Region region) {
               // Remove the non-loadable entry so that next access goes to
               // storage.
               file.erase(cache::RawFileCacheKey{fileNum_, region.offset});
-            } catch (const std::exception& e) {
+            } catch (const std::exception&) {
               // Ignore error inside logging the error.
             }
             throw;
           }
           pin_ = std::move(pins[0]);
           if (loadedFromSsd) {
-            ioStats_->ssdRead().increment(pin_.entry()->size());
+            ioStats_->ssdRead().increment(entry->size());
             ioStats_->queryThreadIoLatency().increment(usec);
             entry->setExclusiveToShared();
             return;

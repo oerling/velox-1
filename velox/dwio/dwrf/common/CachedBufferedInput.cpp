@@ -152,8 +152,11 @@ int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
 void CachedBufferedInput::load(const dwio::common::LogType) {
   // 'requests_ is cleared on exit.
   auto requests = std::move(requests_);
-  cache::SsdFile* ssdFile =
-      cache_->ssdCache() ? &cache_->ssdCache()->file(fileNum_) : nullptr;
+  cache::SsdFile* FOLLY_NULLABLE ssdFile = nullptr;
+  auto ssdCache = cache_->ssdCache();
+  if (ssdCache) {
+    ssdFile = &ssdCache->file(fileNum_);
+  }
   // Extra requests made for preloadable regions that are larger then
   // 'loadQuantum'.
   std::vector<std::unique_ptr<CacheRequest>> extraRequests;
@@ -409,6 +412,7 @@ class SsdLoad : public DwrfCoalescedLoadBase {
     if (pins.empty()) {
       return pins;
     }
+    assert(!ssdPins.empty()); // for lint.
     auto stats = ssdPins[0].file()->load(ssdPins, pins);
     updateStats(stats, isPrefetch, true);
     return pins;

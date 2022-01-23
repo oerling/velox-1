@@ -452,7 +452,7 @@ TEST_F(CacheTest, bufferedInput) {
 TEST_F(CacheTest, ssd) {
   constexpr int64_t kSsdBytes = 256 << 20;
   // 128MB RAM, 256MB SSD
-  initializeCache(128 << 20, "/tmp/ssdtest", kSsdBytes);
+  initializeCache(128 << 20, "/tmp/ssd", kSsdBytes);
   testRandomSeek_ = false;
 
   // We read one stripe with all columns.
@@ -531,7 +531,7 @@ TEST_F(CacheTest, singleFileThreads) {
 }
 
 TEST_F(CacheTest, ssdThreads) {
-  initializeCache(64 << 20, "/tmp/ssdtest", 1024 << 20);
+  initializeCache(64 << 20, "/tmp/ssdThreads", 1024 << 20);
 
   const int numThreads = 4;
   std::vector<std::thread> threads;
