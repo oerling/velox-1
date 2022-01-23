@@ -194,6 +194,7 @@ CachePin CacheShard::findOrCreate(
     // Inside the shard mutex.
     VELOX_CHECK_EQ(0, entryToInit->size_);
     entryToInit->size_ = size;
+    entryToInit->isFirstUse_ = true;
   }
   return initEntry(key, entryToInit);
 }

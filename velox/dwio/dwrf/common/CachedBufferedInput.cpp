@@ -138,6 +138,15 @@ std::vector<CacheRequest*> makeRequestParts(
   }
   return parts;
 }
+
+
+int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
+  // When called, there will be one more reference that read, since references are counted before readig.
+  if (trackingData.numReferences < 2) {
+    return 0;
+  }
+  return (100 * trackingData.numReads) / (trackingData.numReferences - 1);
+}
 } // namespace
 
 void CachedBufferedInput::load(const dwio::common::LogType) {
@@ -148,7 +157,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
   // Extra requests made for preloadable regions that are larger then
   // 'loadQuantum'.
   std::vector<std::unique_ptr<CacheRequest>> extraRequests;
-  for (auto readPct : std::vector<int32_t>{80, 50, 20}) {
+  for (auto readPct : std::vector<int32_t>{80, 50, 20, 0}) {
     std::vector<CacheRequest*> storageLoad;
     std::vector<CacheRequest*> ssdLoad;
     for (auto& request : requests) {
@@ -159,9 +168,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
       if (!request.trackingId.empty()) {
         trackingData = tracker_->trackingData(request.trackingId);
       }
-      if (request.trackingId.empty() ||
-          (100 * trackingData.numReads) / (1 + trackingData.numReferences) >=
-              readPct) {
+      if (request.trackingId.empty() || adjustedReadPct(trackingData) >= readPct) {
         request.processed = true;
         auto parts = makeRequestParts(
             request, trackingData, loadQuantum_, extraRequests);
@@ -194,7 +201,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
 void CachedBufferedInput::makeLoads(
     std::vector<CacheRequest*> requests,
     bool prefetch) {
-  if (requests.size() < 2) {
+  if (requests.empty() || (requests.size() < 2 && !prefetch)) {
     return;
   }
   bool isSsd = !requests[0]->ssdPin.empty();
@@ -298,7 +305,6 @@ class DwrfCoalescedLoadBase : public cache::CoalescedLoad {
         // increment here because actually accessing the data via
         // CacheInputStream will do the increment.
         ioStats_->incRawBytesRead(-stats.payloadBytes);
-
         ioStats_->read().increment(stats.payloadBytes);
       }
       if (isPrefetch) {
