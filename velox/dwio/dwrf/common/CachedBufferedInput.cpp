@@ -139,9 +139,9 @@ std::vector<CacheRequest*> makeRequestParts(
   return parts;
 }
 
-
 int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
-  // When called, there will be one more reference that read, since references are counted before readig.
+  // When called, there will be one more reference that read, since references
+  // are counted before readig.
   if (trackingData.numReferences < 2) {
     return 0;
   }
@@ -168,7 +168,8 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
       if (!request.trackingId.empty()) {
         trackingData = tracker_->trackingData(request.trackingId);
       }
-      if (request.trackingId.empty() || adjustedReadPct(trackingData) >= readPct) {
+      if (request.trackingId.empty() ||
+          adjustedReadPct(trackingData) >= readPct) {
         request.processed = true;
         auto parts = makeRequestParts(
             request, trackingData, loadQuantum_, extraRequests);

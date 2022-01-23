@@ -252,7 +252,7 @@ std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
     writableRegions_.erase(writableRegions_.begin());
   }
 }
-  
+
 bool SsdFile::growOrEvictLocked() {
   if (numRegions_ < maxRegions_) {
     auto newSize = (numRegions_ + 1) * kRegionSize;
