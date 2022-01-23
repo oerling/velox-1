@@ -138,17 +138,29 @@ std::vector<CacheRequest*> makeRequestParts(
   }
   return parts;
 }
+
+int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
+  // When called, there will be one more reference that read, since references
+  // are counted before readig.
+  if (trackingData.numReferences < 2) {
+    return 0;
+  }
+  return (100 * trackingData.numReads) / (trackingData.numReferences - 1);
+}
 } // namespace
 
 void CachedBufferedInput::load(const dwio::common::LogType) {
   // 'requests_ is cleared on exit.
   auto requests = std::move(requests_);
-  cache::SsdFile* ssdFile =
-      cache_->ssdCache() ? &cache_->ssdCache()->file(fileNum_) : nullptr;
+  cache::SsdFile* FOLLY_NULLABLE ssdFile = nullptr;
+  auto ssdCache = cache_->ssdCache();
+  if (ssdCache) {
+    ssdFile = &ssdCache->file(fileNum_);
+  }
   // Extra requests made for preloadable regions that are larger then
   // 'loadQuantum'.
   std::vector<std::unique_ptr<CacheRequest>> extraRequests;
-  for (auto readPct : std::vector<int32_t>{80, 50, 20}) {
+  for (auto readPct : std::vector<int32_t>{80, 50, 20, 0}) {
     std::vector<CacheRequest*> storageLoad;
     std::vector<CacheRequest*> ssdLoad;
     for (auto& request : requests) {
@@ -160,8 +172,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
         trackingData = tracker_->trackingData(request.trackingId);
       }
       if (request.trackingId.empty() ||
-          (100 * trackingData.numReads) / (1 + trackingData.numReferences) >=
-              readPct) {
+          adjustedReadPct(trackingData) >= readPct) {
         request.processed = true;
         auto parts = makeRequestParts(
             request, trackingData, loadQuantum_, extraRequests);
@@ -194,7 +205,7 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
 void CachedBufferedInput::makeLoads(
     std::vector<CacheRequest*> requests,
     bool prefetch) {
-  if (requests.size() < 2) {
+  if (requests.empty() || (requests.size() < 2 && !prefetch)) {
     return;
   }
   bool isSsd = !requests[0]->ssdPin.empty();
@@ -298,7 +309,6 @@ class DwrfCoalescedLoadBase : public cache::CoalescedLoad {
         // increment here because actually accessing the data via
         // CacheInputStream will do the increment.
         ioStats_->incRawBytesRead(-stats.payloadBytes);
-
         ioStats_->read().increment(stats.payloadBytes);
       }
       if (isPrefetch) {
@@ -402,6 +412,7 @@ class SsdLoad : public DwrfCoalescedLoadBase {
     if (pins.empty()) {
       return pins;
     }
+    assert(!ssdPins.empty()); // for lint.
     auto stats = ssdPins[0].file()->load(ssdPins, pins);
     updateStats(stats, isPrefetch, true);
     return pins;

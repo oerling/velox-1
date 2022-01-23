@@ -222,6 +222,10 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
     return "";
   }
 
+  folly::Executor* FOLLY_NULLABLE executor() const override {
+    return executor_;
+  }
+
  private:
   cache::AsyncDataCache* const cache_;
   std::shared_ptr<cache::ScanTracker> tracker_;

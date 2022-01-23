@@ -111,23 +111,25 @@ class GroupTracker {
 // Set of file group stats. There is one instance per SSD cache.
 class FileGroupStats {
  public:
-  FileGroupStats();
-  // Records the existence of a distinct file inside 'groupId'
-  void recordFile(uint64_t fileId, uint64_t groupId, int32_t numStripes);
-
   // Records ScanTracker::recordReference at group level
   void recordReference(
-      uint64_t fileId,
-      uint64_t groupId,
-      TrackingId id,
-      int32_t bytes);
+      uint64_t /*fileId*/,
+      uint64_t /*groupId*/,
+      TrackingId /*trackingId*/,
+      int32_t /*bytes*/) {}
 
   // Records ScanTracker::recordRead at group level
   void recordRead(
-      uint64_t fileId,
-      uint64_t groupId,
-      TrackingId trackingId,
-      int32_t bytes);
+      uint64_t /*fileId*/,
+      uint64_t /*groupId*/,
+      TrackingId /*trackingId*/,
+      int32_t /*bytes*/) {}
+
+  // Records the existence of a distinct file inside 'groupId'
+  void recordFile(
+      uint64_t /*fileId*/,
+      uint64_t /*groupId*/,
+      int32_t /*numStripes*/) {}
 
   // Returns true if groupId, trackingId qualify the data to be cached to SSD.
   bool shouldSaveToSsd(uint64_t groupId, TrackingId trackingId) const;
