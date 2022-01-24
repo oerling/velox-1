@@ -522,15 +522,6 @@ class Task {
       SplitsState& splitsState,
       exec::Split&& split);
 
-  std::unique_ptr<velox::memory::MemoryPool> pool_;
-
-  // Keep driver and operator memory pools alive for the duration of
-  // the task to allow for sharing vectors across drivers without
-  // copy. Declare before other members so as to have this last in
-  // destruction order, e.g. after JoinBridges and other things that
-  // can hold vectors allocated in these pools.
-  std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
-
   const std::string taskId_;
   core::PlanFragment planFragment_;
   const int destination_;
@@ -570,6 +561,12 @@ class Task {
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
   TaskStats taskStats_;
+  std::unique_ptr<velox::memory::MemoryPool> pool_;
+
+  // Keep driver and operator memory pools alive for the duration of the task to
+  // allow for sharing vectors across drivers without copy.
+  std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
+
   // Map from the plan node id of the join to the corresponding JoinBridge.
   // Guarded by 'mutex_'.
   std::unordered_map<core::PlanNodeId, std::shared_ptr<JoinBridge>> bridges_;
