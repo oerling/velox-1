@@ -16,7 +16,7 @@
 #pragma once
 
 #include "velox/common/caching/DataCache.h"
-#include "velox/common/caching/GroupTracker.h"
+#include "velox/common/caching/FileGroupStats.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
