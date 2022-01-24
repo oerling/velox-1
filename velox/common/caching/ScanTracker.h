@@ -125,8 +125,7 @@ class ScanTracker {
   // largest single IO size for read.
   ScanTracker(
       std::string_view id,
-std::function<void(ScanTracker* FOLLY_NONNULL)>
-          unregisterer,
+      std::function<void(ScanTracker* FOLLY_NONNULL)> unregisterer,
       int32_t loadQuantum,
       FileGroupStats* FOLLY_NULLABLE fileGroupStats = nullptr)
       : id_(id),
@@ -191,7 +190,7 @@ std::function<void(ScanTracker* FOLLY_NONNULL)>
   std::mutex mutex_;
   // Id of query + scan operator to track.
   const std::string id_;
- std::function<void(ScanTracker* FOLLY_NONNULL)> unregisterer_;
+  std::function<void(ScanTracker* FOLLY_NONNULL)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
   // Maximum size of a read. A to 10MB would count as two references
