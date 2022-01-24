@@ -125,7 +125,8 @@ class ScanTracker {
   // largest single IO size for read.
   ScanTracker(
       std::string_view id,
-      std::optional<std::function<void(ScanTracker* FOLLY_NONNULL)>> unregisterer,
+      std::optional<std::function<void(ScanTracker* FOLLY_NONNULL)>>
+          unregisterer,
       int32_t loadQuantum,
       FileGroupStats* FOLLY_NULLABLE fileGroupStats = nullptr)
       : id_(id),
