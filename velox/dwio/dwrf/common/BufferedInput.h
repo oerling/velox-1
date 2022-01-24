@@ -29,7 +29,7 @@ class BufferedInput {
   BufferedInput(
       dwio::common::InputStream& input,
       memory::MemoryPool& pool,
-      dwio::common::DataCacheConfig* dataCacheConfig = nullptr)
+      dwio::common::DataCacheConfig* FOLLY_NULLABLE dataCacheConfig = nullptr)
       : input_{input}, pool_{pool}, dataCacheConfig_(dataCacheConfig) {}
 
   BufferedInput(BufferedInput&&) = default;
@@ -153,7 +153,7 @@ class BufferedInputFactory {
     VELOX_UNSUPPORTED();
   }
 
-  static BufferedInputFactory* baseFactory();
+  static BufferedInputFactory* FOLLY_NONNULL baseFactory();
 };
 
 } // namespace facebook::velox::dwrf
