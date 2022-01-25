@@ -564,26 +564,18 @@ class TestingPauser : public Operator {
       test_->registerForWakeup(&future_);
       return nullptr;
     }
-    {
-      SuspendedSection::suspended(operatorCtx_->driver(), [&]() {
-        sleep(1);
-        if (counter_ % 7 == 0) {
-          // Every 7th time, stop and resume other Tasks. This operation is
-          // globally serilized.
-          std::lock_guard<std::mutex> l(pauseMutex_);
 
-          for (auto i = 0; i <= counter_ % 3; ++i) {
-            auto task = test_->randomTask();
-            if (!task) {
-              continue;
-            }
-            auto cancelPool = task->cancelPool();
-            cancelPool->requestPause(true);
-            auto& executor = folly::QueuedImmediateExecutor::instance();
-            auto future = cancelPool->finishFuture().via(&executor);
-            future.wait();
-            sleep(2);
-            Task::resume(task);
+    SuspendedSection::suspended(operatorCtx_->driver(), [&]() {
+      sleep(1);
+      if (counter_ % 7 == 0) {
+        // Every 7th time, stop and resume other Tasks. This operation is
+        // globally serilized.
+        std::lock_guard<std::mutex> l(pauseMutex_);
+
+        for (auto i = 0; i <= counter_ % 3; ++i) {
+          auto task = test_->randomTask();
+          if (!task) {
+            continue;
           }
           task->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
@@ -592,8 +584,8 @@ class TestingPauser : public Operator {
           sleep(2);
           Task::resume(task);
         }
-      });
-    }
+      }
+    });
 
     return std::move(input_);
   }
@@ -726,6 +718,7 @@ TEST_F(DriverTest, pauserNode) {
   }
 }
 
+namespace {
 // An operator that passes through its input but maintains a varying
 // memory allocation. For example, a distinct with spilling would have a similar
 // behavior.
@@ -734,15 +727,17 @@ class TestingConsumer : public Operator {
   TestingConsumer(
       DriverCtx* ctx,
       int32_t id,
-      std::shared_ptr<const TestingConsumerNode> node)
+      std::shared_ptr<const TestingConsumerNode> node,
+      int32_t sequence)
       : Operator(ctx, node->outputType(), id, node->id(), "consumer"),
-        recoverableTracker_(memory::MemoryUsageTracker::create(
-            operatorCtx_->pool()->getMemoryUsageTracker(),
-            memory::UsageType::kRecoverableMem,
-            memory::MemoryUsageConfigBuilder().build())) {}
+        recoverableTracker_(
+            operatorCtx_->pool()->getMemoryUsageTracker()->addChild(
+                false,
+                memory::MemoryUsageConfigBuilder().build())),
+        sequence_(sequence) {}
 
   bool needsInput() const override {
-    return !isFinishing_ && !input_;
+    return !noMoreInput_ && !input_;
   }
 
   void addInput(RowVectorPtr input) override {
@@ -775,37 +770,85 @@ class TestingConsumer : public Operator {
     return BlockingReason::kNotBlocked;
   }
 
+  bool isFinished() override {
+    return noMoreInput_ && input_ == nullptr;
+  }
+
+  int64_t recoverableMemory() const override {
+    return recoverableTracker_->getCurrentUserBytes() / 3;
+  }
+
   int64_t spill(int64_t size) override {
     recoverableTracker_->release();
-    int64_t freed =
-        std::min(size, recoverableTracker_->getCurrentRecoverableBytes());
+    int64_t freed = std::min(size, recoverableTracker_->getCurrentUserBytes());
     recoverableTracker_->update(-freed);
     return freed;
   }
-
+  recoverableTracker_!!;
+  void close() override {
+  }
+  
  private:
   std::shared_ptr<memory::MemoryUsageTracker> recoverableTracker_;
+  const int32_t sequence_;
 };
+
+class ConsumerNodeFactory : public Operator::PlanNodeTranslator {
+ public:
+  ConsumerNodeFactory(
+      uint32_t maxDrivers,
+      std::atomic<int32_t>& sequence,
+      DriverTest* testInstance)
+      : maxDrivers_{maxDrivers},
+        sequence_{sequence},
+        testInstance_{testInstance} {}
+
+  std::unique_ptr<Operator> translate(
+      DriverCtx* ctx,
+      int32_t id,
+      const std::shared_ptr<const core::PlanNode>& node) override {
+    if (auto consumer =
+            std::dynamic_pointer_cast<const TestingConsumerNode>(node)) {
+      return std::make_unique<TestingConsumer>(ctx, id, consumer, ++sequence_);
+    }
+    return nullptr;
+  }
+
+  std::optional<uint32_t> maxDrivers(
+      const std::shared_ptr<const core::PlanNode>& node) override {
+    if (auto consumer =
+            std::dynamic_pointer_cast<const TestingConsumerNode>(node)) {
+      return maxDrivers_;
+    }
+    return std::nullopt;
+  }
+
+ private:
+  uint32_t maxDrivers_;
+  std::atomic<int32_t>& sequence_;
+  DriverTest* testInstance_;
+};
+} // namespace
 
 TEST_F(DriverTest, memoryReservation) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
   constexpr int64_t kProcessBytes = 1 << 30;
-  constexpr int64_t kTotalMemory = 100 << 20; // 100MB.
   memory::MemoryManagerStrategy::registerFactory(
       [&]() { return std::make_unique<TaskMemoryStrategy>(kProcessBytes); });
 
-  Operator::registerOperator(
-      [](DriverCtx* ctx,
-         int32_t id,
-         const std::shared_ptr<const core::PlanNode>& node)
-          -> std::unique_ptr<TestingConsumer> {
-        if (auto consumer =
-                std::dynamic_pointer_cast<const TestingConsumerNode>(node)) {
-          return std::make_unique<TestingConsumer>(ctx, id, consumer);
-        }
-        return nullptr;
-      });
+  auto topTracker =
+      memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
+
+  static std::atomic<int32_t> sequence{0};
+  // Use a static variable to pass the test instance to the create
+  // function of the testing operator. The testing operator registers
+  // all its Tasks in the test instance to create inter-Task pauses.
+  static DriverTest* testInstance;
+  testInstance = this;
+
+  Operator::registerOperator(std::make_unique<ConsumerNodeFactory>(
+      kThreadsPerTask, sequence, testInstance));
 
   auto& manager = memory::getProcessDefaultMemoryManager();
   std::vector<int32_t> counters;
@@ -813,8 +856,10 @@ TEST_F(DriverTest, memoryReservation) {
   std::vector<CursorParameters> params;
   params.resize(kNumTasks);
   int32_t hits;
+  auto executor = std::make_shared<folly::CPUThreadPoolExecutor>(20);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    params[i].queryCtx = core::QueryCtx::create();
+    params[i].queryCtx = core::QueryCtx::createForTest(
+        std::make_shared<core::MemConfig>(), executor);
     params[i].planNode = makeValuesFilterProject(
         rowType_,
         "m1 % 10 > 0",
@@ -844,7 +889,8 @@ TEST_F(DriverTest, memoryReservation) {
     EXPECT_EQ(counters[i], kThreadsPerTask * hits);
     EXPECT_TRUE(stateFutures_.at(i).isReady());
   }
-  Driver::testingJoinAndReinitializeExecutor(10);
+  executor->join();
+  EXPECT_EQ(0, topTracker->getCurrentUserBytes());
 }
 
 int main(int argc, char** argv) {

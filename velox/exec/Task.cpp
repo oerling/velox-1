@@ -64,10 +64,10 @@ Task::Task(
   auto strategy = memory::MemoryManagerStrategy::instance();
   if (strategy->canResize()) {
     auto tracker = memory::MemoryUsageTracker::create(
-          memory::MemoryUsageConfigBuilder()
-              .maxTotalMemory(kInitialTaskMemory)
-              .build());
-      pool_->setMemoryUsageTracker(tracker);
+        memory::MemoryUsageConfigBuilder()
+            .maxTotalMemory(kInitialTaskMemory)
+            .build());
+    pool_->setMemoryUsageTracker(tracker);
     tracker->setGrowCallback([&](memory::MemoryUsageTracker::UsageType type,
                                  int64_t size,
                                  memory::MemoryUsageTracker& limit) {
@@ -492,8 +492,7 @@ bool Task::allPeersFinished(
     std::vector<std::shared_ptr<Driver>>& peers) {
   std::lock_guard<std::mutex> l(mutex_);
   if (exception_) {
-    VELOX_FAIL("
-Task is terminating because of error: {}", errorMessage());
+    VELOX_FAIL("Task is terminating because of error: {}", errorMessage());
   }
   auto& state = barriers_[planNodeId];
 
@@ -835,8 +834,10 @@ Driver* FOLLY_NULLABLE Task::thisDriver() const {
 int64_t Task::recoverableMemory() const {
   int64_t total = 0;
   for (auto driver : drivers_) {
-    total += driver->recoverableMemory();
-  }
+    if (driver) {
+      total += driver->recoverableMemory();
+    }
+    }
   return total;
 }
 
@@ -868,6 +869,17 @@ int64_t Task::recover(int64_t size) {
   }
   return recovered;
 }
+namespace {
+bool maybeUpdate(int64_t size, memory::MemoryUsageTracker& tracker) {
+  try {
+    tracker.update(size);
+    return true;
+  } catch (const std::exception& e) {
+  }
+  return false;
+}
+
+} // namespace
 
 bool TaskMemoryStrategy::recover(
     std::shared_ptr<memory::MemoryConsumer> requester,
@@ -876,30 +888,27 @@ bool TaskMemoryStrategy::recover(
   VELOX_CHECK(consumerTask, "Only a Task can request memory via recover()");
   auto topTracker =
       memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
-  auto tracker =
-      consumerTask ? consumerTask->pool()->getMemoryUsageTracker() : nullptr;
+  auto tracker = consumerTask->pool()->getMemoryUsageTracker();
   // The limits of the consumers are stable inside this section but
   // the allocation sizes are volatile until the consumer in question
   // is stopped.
 
-  if (consumerTask) {
-    if (consumerTask->state() != kRunning) {
-      return false;
-    }
-    auto available = topTracker->maxTotalBytes() - topTracker->totalReservedBytes();
+  if (consumerTask->state() != kRunning) {
+    return false;
+  }
+  auto available =
+      topTracker->maxTotalBytes() - topTracker->totalReservedBytes();
 
-    topTracker->update(minSize);
-      return true;
-    }
-    if (topTracker->getIfCan(kUserMem, size)) {
-      tracker->increment(type, size);
+  // Allocation can be made from unallocated memory.
+  if (minSize <= available) {
+    if (maybeUpdate(minSize, *topTracker)) {
       return true;
     }
   }
 
   std::vector<ConsumerScore> candidates;
   std::vector<std::shared_ptr<Task>> paused;
-  int64_t available = 0;
+  available = 0;
   for (auto [raw, weak] : consumers_) {
     auto ptr = weak.lock();
     if (ptr) {
@@ -917,18 +926,18 @@ bool TaskMemoryStrategy::recover(
         // Most available first.
         return left.available > right.available;
       });
-  if (available < size) {
+  if (available < minSize) {
     return false;
   }
-  int64_t sizeToGo = size;
+  int64_t sizeToGo = minSize;
   int64_t recovered = 0;
   int64_t transfer = 0;
   for (auto& candidate : candidates) {
     if (auto& task = candidate.task) {
-      task->cancelPool()->requestPause(true);
+      task->requestPause(true);
       paused.push_back(task);
       auto& exec = folly::QueuedImmediateExecutor::instance();
-      auto future = task->cancelPool()->finishFuture();
+      auto future = task->finishFuture();
       std::move(future).via(&exec).wait();
       if (task->state() != TaskState::kRunning) {
         continue;
@@ -938,27 +947,23 @@ bool TaskMemoryStrategy::recover(
       if (task != requester) {
         transfer += delta;
       }
-      if (recovered >= size) {
+      if (recovered >= minSize) {
         break;
       }
       sizeToGo -= delta;
     }
   }
-  bool success = recovered >= size;
-  if (success && tracker) {
-    // The top tracker has shrunk from spill and now grows by the amount to be
-    // allocated.
-    topTracker->update(size);
-    // The requester's cap grows by the amount transferred from
-    // other consumers. Note that the requester itself may have
-    // spilled.
-    auto builder = memory::MemoryUsageConfigBuilder().maxTotalMemory(
-        transfer + tracker->getMaxTotalBytes());
-    tracker->updateConfig(builder.build());
+  bool success = recovered >= minSize;
+  if (success) {
+    success = maybeUpdate(minSize - recovered, *topTracker);
+  }
+  if (!success) {
+    // Updating downward, no throw.
+    topTracker->update(-recovered);
   }
 
   for (auto& task : paused) {
-    task->cancelPool()->requestPause(false);
+    task->requestPause(false);
     if (task->state() == TaskState::kRunning) {
       Task::resume(task);
     }

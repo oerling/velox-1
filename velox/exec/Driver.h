@@ -415,7 +415,7 @@ class SuspendedSection {
   // Runs 'body' as a suspended section. Checks for termination requested after
   // exiting the section.
   template <typename Body>
-  static void suspended(Driver* driver, Body body) {
+  static void suspended(Driver* FOLLY_NONNULL driver, Body body) {
     {
       SuspendedSection section(driver);
       body();
