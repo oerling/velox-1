@@ -313,16 +313,17 @@ TEST_F(HashJoinTest, lazyVectors) {
   // a dataset of multiple row groups with multiple columns. We create
   // different dictionary wrappings for different columns and load the
   // rows in scope at different times.
-  auto leftVectors = makeRowVector({
-      makeFlatVector<int32_t>(30'000, [](auto row) { return row; }),
-      makeFlatVector<int64_t>(30'000, [](auto row) { return row % 23; }),
-      makeFlatVector<int32_t>(30'000, [](auto row) { return row % 31; }),
-      makeFlatVector<StringView>(30'000, [](auto row) { return fmt::format("{}   string", row % 43); })
-  });
+  auto leftVectors = makeRowVector(
+      {makeFlatVector<int32_t>(30'000, [](auto row) { return row; }),
+       makeFlatVector<int64_t>(30'000, [](auto row) { return row % 23; }),
+       makeFlatVector<int32_t>(30'000, [](auto row) { return row % 31; }),
+       makeFlatVector<StringView>(30'000, [](auto row) {
+         return fmt::format("{}   string", row % 43);
+       })});
 
-  auto rightVectors = makeRowVector({
-				    makeFlatVector<int32_t>(10'000, [](auto row) { return row * 3; }),
-				    makeFlatVector<int32_t>(10'000, [](auto row) { return row % 31; })});
+  auto rightVectors = makeRowVector(
+      {makeFlatVector<int32_t>(10'000, [](auto row) { return row * 3; }),
+       makeFlatVector<int32_t>(10'000, [](auto row) { return row % 31; })});
 
   auto leftFile = TempFilePath::create();
   writeToFile(leftFile->path, kWriter, leftVectors);
@@ -349,26 +350,24 @@ TEST_F(HashJoinTest, lazyVectors) {
       {{0, {rightFile}}, {10, {leftFile}}},
       "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
 
-
-  auto op =
-      PlanBuilder(10)
-          .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
-    .filter("c2 < 29") 
-    .hashJoin(
-              {"c0"},
-              {"c0"},
-              PlanBuilder(0).tableScan(ROW({"bc0", "bc1"}, {INTEGER(), BIGINT()})).planNode(),
-              "",
-              {"c1", "bc1"})
-    .project({"c1 + 1"}, "bc1")
-          .planNode();
+  op = PlanBuilder(10)
+                .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
+                .filter("c2 < 29")
+                .hashJoin(
+                    {"c0"},
+                    {"c0"},
+                    PlanBuilder(0)
+                        .tableScan(ROW({"bc0", "bc1"}, {INTEGER(), BIGINT()}))
+                        .planNode(),
+                    "",
+                    {"c1", "bc1"})
+                .project({"c1 + 1"}, "bc1")
+                .planNode();
 
   assertQuery(
       op,
       {{0, {rightFile}}, {10, {leftFile}}},
       "SELECT t.c1 + 1, U.c1 FROM t, u WHERE t.c0 = u.c0");
-
-
 }
 
 /// Test hash join where build-side keys come from a small range and allow for
