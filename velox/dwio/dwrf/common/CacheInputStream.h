@@ -53,6 +53,10 @@ class CacheInputStream : public SeekableInputStream {
  private:
   void loadPosition();
   void loadSync(dwio::common::Region region);
+  bool loadFromSsd(
+		   dwio::common::Region region,
+		   cache::AsyncDataCacheEntry& entry);
+
   CachedBufferedInput* const bufferedInput_;
   cache::AsyncDataCache* const cache_;
   dwio::common::IoStatistics* ioStats_;

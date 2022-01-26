@@ -633,6 +633,8 @@ TEST_F(VectorHasherTest, computeValueIdsBoolDictionary) {
   std::fill(result.begin(), result.end(), 0);
   auto ok = hasher->computeValueIds(*vector, allRows, result);
   ASSERT_TRUE(ok);
+  // A boolean counts as as a range of 3 and the rounding has no effect.
+  EXPECT_EQ(6, hasher->enableRange(2, 11));
 }
 
 TEST_F(VectorHasherTest, computeValueIdsStrings) {
