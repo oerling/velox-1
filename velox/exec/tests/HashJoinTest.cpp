@@ -351,11 +351,11 @@ TEST_F(HashJoinTest, lazyVectors) {
       "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
 
   op = PlanBuilder(10)
-                .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
+    .tableScan(ROW({"c0", "c1", "c2"}, {INTEGER(), BIGINT(), INTEGER()}))
                 .filter("c2 < 29")
                 .hashJoin(
                     {"c0"},
-                    {"c0"},
+                    {"bc0"},
                     PlanBuilder(0)
                         .tableScan(ROW({"bc0", "bc1"}, {INTEGER(), BIGINT()}))
                         .planNode(),
