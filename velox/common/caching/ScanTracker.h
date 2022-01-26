@@ -193,9 +193,10 @@ class ScanTracker {
   std::function<void(ScanTracker* FOLLY_NONNULL)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
-  // Maximum size of a read. A to 10MB would count as two references
+
+  // Maximum size of a read. 10MB would count as two references
   // if the quantim were 8MB. At the same time this would count as a
-  // single 10MB reference for 'fileGroupTracker_'. 0 means the read
+  // single 10MB reference for 'fileGroupStats_'. 0 means the read
   // size is unlimited.
   const int32_t loadQuantum_;
   FileGroupStats* FOLLY_NULLABLE fileGroupStats_;

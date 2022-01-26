@@ -51,11 +51,17 @@ class CacheInputStream : public SeekableInputStream {
       override;
 
  private:
+  // Ensures that the current position is covered by 'pin_'.
   void loadPosition();
+
+  // Synchronously sets 'pin_' to cover 'region'.
   void loadSync(dwio::common::Region region);
+
+  // Returns true if there is an SSD ache and 'entry' is present there and
+  // successfully loaded.
   bool loadFromSsd(
-		   dwio::common::Region region,
-		   cache::AsyncDataCacheEntry& entry);
+      dwio::common::Region region,
+      cache::AsyncDataCacheEntry& entry);
 
   CachedBufferedInput* const bufferedInput_;
   cache::AsyncDataCache* const cache_;

@@ -462,7 +462,6 @@ TEST_F(CacheTest, ssd) {
   // Expect some extra reading from coalescing.
   EXPECT_LT(0, ioStats_->rawOverreadBytes());
   auto fullStripeBytes = ioStats_->rawBytesRead();
-  auto fullStripesOnSsd = kSsdBytes / fullStripeBytes;
   auto bytes = ioStats_->rawBytesRead();
   cache_->clear();
   // We read 10 stripes with some columns sparsely accessed.

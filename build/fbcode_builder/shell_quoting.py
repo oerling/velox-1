@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 # Copyright (c) Facebook, Inc. and its affiliates.
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
 
 """
 
@@ -23,6 +19,7 @@ import os
 from collections import namedtuple
 
 
+# pyre-fixme[13] This is too magical for Pyre.
 class ShellQuoted(namedtuple("ShellQuoted", ("do_not_use_raw_str",))):
     """
 

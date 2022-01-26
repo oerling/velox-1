@@ -82,6 +82,8 @@ void registerSimpleFunctions() {
   registerFunction<NanFunction, double>({"nan"});
   registerFunction<RandFunction, double>({"rand", "random"});
   registerFunction<FromBaseFunction, int64_t, Varchar, int64_t>({"from_base"});
+  registerFunction<ToBaseFunction, Varchar, int64_t, int64_t>({"to_base"});
+  registerFunction<PiFunction, double>({"pi"});
 }
 
 } // namespace

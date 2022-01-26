@@ -708,6 +708,19 @@ velox_file_test/fast:
 .PHONY : velox_file_test/fast
 
 #=============================================================================
+# Target rules for targets named velox_read_benchmark
+
+# Build rule for target.
+velox_read_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_read_benchmark
+.PHONY : velox_read_benchmark
+
+# fast build rule for target.
+velox_read_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/common/file/benchmark/CMakeFiles/velox_read_benchmark.dir/build.make velox/common/file/benchmark/CMakeFiles/velox_read_benchmark.dir/build
+.PHONY : velox_read_benchmark/fast
+
+#=============================================================================
 # Target rules for targets named velox_memory
 
 # Build rule for target.
@@ -2916,6 +2929,7 @@ help:
 	@echo "... velox_prestosql_coverage"
 	@echo "... velox_process"
 	@echo "... velox_re2_functions_benchmarks"
+	@echo "... velox_read_benchmark"
 	@echo "... velox_row_test"
 	@echo "... velox_serialization"
 	@echo "... velox_sparksql_benchmarks_in"

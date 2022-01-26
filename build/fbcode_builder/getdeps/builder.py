@@ -4,8 +4,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 import json
 import os
 import shutil
@@ -350,7 +348,6 @@ class CMakeBuilder(BuilderBase):
     MANUAL_BUILD_SCRIPT = """\
 #!{sys.executable}
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import argparse
 import subprocess
@@ -1228,7 +1225,7 @@ incremental = false
             self._patchup_workspace()
 
         try:
-            from getdeps.facebook.rust import vendored_crates
+            from .facebook.rust import vendored_crates
 
             vendored_crates(self.build_opts, build_source_dir)
         except ImportError:

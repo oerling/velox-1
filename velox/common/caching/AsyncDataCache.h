@@ -18,6 +18,7 @@
 
 #include <deque>
 
+#include <fmt/format.h>
 #include <folly/chrono/Hardware.h>
 #include <folly/futures/SharedPromise.h>
 #include "velox/common/base/BitUtil.h"
@@ -229,6 +230,8 @@ class AsyncDataCacheEntry {
   void setGroupId(uint64_t groupId) {
     groupId_ = groupId;
   }
+
+  std::string toString() const;
 
  private:
   void release();
@@ -825,3 +828,10 @@ CoalesceIoStats readPins(
         const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
 } // namespace facebook::velox::cache
+
+template <>
+struct fmt::formatter<facebook::velox::cache::LoadState> : formatter<int> {
+  auto format(facebook::velox::cache::LoadState s, format_context& ctx) {
+    return formatter<int>::format(static_cast<int>(s), ctx);
+  }
+};
