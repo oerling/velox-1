@@ -29,7 +29,7 @@ VectorPtr fused(const VectorPtr& data) {
   const auto numRows = data->size();
   auto result = std::static_pointer_cast<FlatVector<float>>(
       BaseVector::create(REAL(), numRows, data->pool()));
-  auto rawResults = result->mutableRawValues<int32_t>();
+  auto rawResults = result->mutableRawValues<float>();
 
   auto features = data->as<RowVector>()->childAt(0)->asFlatVector<float>();
   auto rawFeatures = features->rawValues();
@@ -63,15 +63,29 @@ class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
     auto exprSet = compileExpression(
         "clamp(c0.c0 + cast(17.0 as real), cast(-10 as real), cast(10 as real))",
         input->type());
+    SelectivityVector rows(input->size());
     suspender.dismiss();
 
-    doRun(exprSet, input);
+    doRun(rows, exprSet, input);
   }
 
-  void doRun(ExprSet& exprSet, const RowVectorPtr& rowVector) {
+  VectorPtr evaluate2(
+      const SelectivityVector& rows,
+      exec::ExprSet& exprSet,
+      const RowVectorPtr& data) {
+    exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
+    std::vector<VectorPtr> results(1);
+    exprSet.eval(rows, &evalCtx, &results);
+    return results[0];
+  }
+
+  void doRun(
+      const SelectivityVector& rows,
+      ExprSet& exprSet,
+      const RowVectorPtr& rowVector) {
     int cnt = 0;
-    for (auto i = 0; i < 100; i++) {
-      cnt += evaluate(exprSet, rowVector)->size();
+    for (auto i = 0; i < 1'000; i++) {
+      cnt += evaluate2(rows, exprSet, rowVector)->size();
     }
     folly::doNotOptimizeAway(cnt);
   }
@@ -82,7 +96,7 @@ class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
     suspender.dismiss();
 
     int cnt = 0;
-    for (auto i = 0; i < 100; i++) {
+    for (auto i = 0; i < 1'000; i++) {
       cnt += fused(input)->size();
     }
     folly::doNotOptimizeAway(cnt);

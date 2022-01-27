@@ -115,8 +115,16 @@ class SimpleFunctionAdapter : public VectorFunction {
       const TypePtr& outputType,
       EvalCtx* context,
       VectorPtr* result) const override {
-    ApplyContext applyContext{&rows, outputType, context, result};
-    DecodedArgs decodedArgs{rows, args, context};
+    VectorPtr* reusableArg = nullptr;
+    if (BaseVector::isReusableFlatVector(args[0])) {
+      reusableArg = &args[0];
+    }
+    ApplyContext applyContext{
+        &rows,
+        outputType,
+        context,
+        reusableArg == nullptr ? result : reusableArg};
+    //    DecodedArgs decodedArgs{rows, args, context};
 
     // Enable fast all-ASCII path if all string inputs are ASCII and the
     // function provides ASCII-only path.
@@ -124,7 +132,7 @@ class SimpleFunctionAdapter : public VectorFunction {
       applyContext.allAscii = isAsciiArgs(rows, args);
     }
 
-    unpack<0>(applyContext, true, decodedArgs);
+    unpack<0>(applyContext, true, args);
 
     // Check if the function reuses input strings for the result, and add
     // references to input string buffers to all result vectors.
@@ -133,8 +141,13 @@ class SimpleFunctionAdapter : public VectorFunction {
       VELOX_CHECK_LT(reuseStringsFromArg, args.size());
       VELOX_CHECK_EQ(args[reuseStringsFromArg]->typeKind(), TypeKind::VARCHAR);
 
+      DecodedArgs decodedArgs{rows, args, context};
       tryAcquireStringBuffer(
           result->get(), decodedArgs.at(reuseStringsFromArg)->base());
+    }
+
+    if (reusableArg) {
+      *result = *reusableArg;
     }
   }
 
@@ -202,7 +215,7 @@ class SimpleFunctionAdapter : public VectorFunction {
           unpack(
               ApplyContext& applyContext,
               bool allNotNull,
-              const DecodedArgs& packed,
+              std::vector<VectorPtr>& packed,
               TReader&... readers) const {
     if constexpr (isVariadicType<arg_at<POSITION>>::value) {
       // This should already be statically checked by the UDFHolder used to wrap
@@ -223,16 +236,65 @@ class SimpleFunctionAdapter : public VectorFunction {
       unpack<POSITION + 1>(
           applyContext, nextNonNull, packed, readers..., oneReader);
     } else {
-      auto* oneUnpacked = packed.at(POSITION);
-      auto oneReader = VectorReader<arg_at<POSITION>>(oneUnpacked);
+      if (packed[POSITION]->encoding() == VectorEncoding::Simple::FLAT) {
+        auto& flatUnpacked = packed[POSITION];
+        // context->nullPruned() is true after rows with nulls have been
+        // pruned out of 'rows', so we won't be seeing any more nulls here.
+        bool nextNonNull = applyContext.context->nullsPruned() ||
+            (allNotNull && !flatUnpacked->mayHaveNulls());
 
-      // context->nullPruned() is true after rows with nulls have been
-      // pruned out of 'rows', so we won't be seeing any more nulls here.
-      bool nextNonNull = applyContext.context->nullsPruned() ||
-          (allNotNull && !oneUnpacked->mayHaveNulls());
+        auto oneReader = FlatVectorReader<arg_at<POSITION>>(flatUnpacked.get());
 
-      unpack<POSITION + 1>(
-          applyContext, nextNonNull, packed, readers..., oneReader);
+        unpack<POSITION + 1>(
+            applyContext, nextNonNull, packed, readers..., oneReader);
+      } else if (
+          packed[POSITION]->encoding() == VectorEncoding::Simple::CONSTANT) {
+        auto& flatUnpacked = packed[POSITION];
+        // context->nullPruned() is true after rows with nulls have been
+        // pruned out of 'rows', so we won't be seeing any more nulls here.
+        bool nextNonNull = applyContext.context->nullsPruned() ||
+            (allNotNull && !flatUnpacked->mayHaveNulls());
+
+        auto oneReader =
+            ConstantVectorReader<arg_at<POSITION>>(flatUnpacked.get());
+
+        unpack<POSITION + 1>(
+            applyContext, nextNonNull, packed, readers..., oneReader);
+      } else {
+        VELOX_NYI();
+        //        auto* oneUnpacked = packed.at(POSITION);
+        //
+        //        // context->nullPruned() is true after rows with nulls have
+        //        been
+        //        // pruned out of 'rows', so we won't be seeing any more nulls
+        //        here. bool nextNonNull = applyContext.context->nullsPruned()
+        //        ||
+        //            (allNotNull && !oneUnpacked->mayHaveNulls());
+        //
+        //        //      if (oneUnpacked->isIdentityMapping()) {
+        //        //        auto oneReader =
+        //        //        FlatVectorReader<arg_at<POSITION>>(oneUnpacked);
+        //        //
+        //        //        unpack<POSITION + 1>(
+        //        //            applyContext, nextNonNull, packed, readers...,
+        //        oneReader);
+        //        //      } else
+        //        if (oneUnpacked->isConstantMapping()) {
+        //          auto oneReader =
+        //          ConstantVectorReader<arg_at<POSITION>>(oneUnpacked);
+        //
+        //          unpack<POSITION + 1>(
+        //              applyContext, nextNonNull, packed, readers...,
+        //              oneReader);
+        //        } else {
+        //          auto oneReader =
+        //          VectorReader<arg_at<POSITION>>(oneUnpacked);
+        //
+        //          unpack<POSITION + 1>(
+        //              applyContext, nextNonNull, packed, readers...,
+        //              oneReader);
+        //        }
+      }
     }
   }
 
@@ -249,7 +311,7 @@ class SimpleFunctionAdapter : public VectorFunction {
   void unpack(
       ApplyContext& applyContext,
       bool allNotNull,
-      const DecodedArgs& /*packed*/,
+      std::vector<VectorPtr>& /*packed*/,
       const TReader&... readers) const {
     iterate(applyContext, allNotNull, readers...);
   }

@@ -73,3 +73,7 @@ target_link_libraries(velox_functions_benchmarks_url ${BENCHMARK_DEPENDENCIES})
 add_executable(velox_functions_benchmarks_compare CompareBenchmark.cpp)
 target_link_libraries(velox_functions_benchmarks_compare
                       ${BENCHMARK_DEPENDENCIES})
+
+add_executable(velox_functions_benchmarks_dense_proc DenseProcBenchmark.cpp)
+target_link_libraries(velox_functions_benchmarks_dense_proc
+        ${BENCHMARK_DEPENDENCIES})

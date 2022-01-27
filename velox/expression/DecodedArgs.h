@@ -36,9 +36,25 @@ class DecodedArgs {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       exec::EvalCtx* context) {
-    for (auto& arg : args) {
-      holders_.emplace_back(context, *arg.get(), rows);
+    flatVectors_.resize(args.size());
+    for (auto i = 0; i < args.size(); ++i) {
+      if (args[i]->encoding() == VectorEncoding::Simple::FLAT) {
+        flatVectors_[i] = args[i].get();
+      } else {
+        flatVectors_[i] = nullptr;
+      }
     }
+    for (auto& arg : args) {
+      if (arg->encoding() == VectorEncoding::Simple::FLAT) {
+        holders_.emplace_back(context);
+      } else {
+        holders_.emplace_back(context, *arg.get(), rows);
+      }
+    }
+  }
+
+  BaseVector* flatAt(int i) const {
+    return flatVectors_[i];
   }
 
   DecodedVector* at(int i) const {
@@ -50,6 +66,7 @@ class DecodedArgs {
   }
 
  private:
+  std::vector<BaseVector*> flatVectors_;
   std::vector<exec::LocalDecodedVector> holders_;
 };
 } // namespace facebook::velox::exec
