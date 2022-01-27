@@ -353,7 +353,8 @@ class SimpleFunctionAdapter : public VectorFunction {
           // by the compiler (assuming the function call is inlined).
           typename return_type_traits::NativeType out;
           bool notNull = doApplyNotNull<0>(row, out, readers...);
-          writeResult(row, notNull, out);
+//          writeResult(row, notNull, out);
+          data[row] = out;
         });
       } else {
         applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {

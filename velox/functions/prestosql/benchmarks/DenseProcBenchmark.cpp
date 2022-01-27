@@ -25,6 +25,13 @@ using namespace facebook::velox::exec;
 
 namespace {
 
+VELOX_UDF_BEGIN(scale_and_clamp)
+FOLLY_ALWAYS_INLINE bool call(float& out, float f) {
+  out = std::clamp(f + 17.0, -10.0, 10.0);
+  return true;
+}
+VELOX_UDF_END();
+
 VectorPtr fused(const VectorPtr& data) {
   const auto numRows = data->size();
   auto result = std::static_pointer_cast<FlatVector<float>>(
@@ -45,6 +52,7 @@ class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
  public:
   DenseProcBenchmark() : FunctionBenchmarkBase() {
     functions::prestosql::registerAllFunctions();
+    registerFunction<udf_scale_and_clamp, float, float>({});
   }
 
   RowVectorPtr makeData() {
@@ -57,12 +65,10 @@ class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
     });
   }
 
-  void runSeparate() {
+  void runVelox(const std::string& expression) {
     folly::BenchmarkSuspender suspender;
     auto input = vectorMaker_.rowVector({makeData()});
-    auto exprSet = compileExpression(
-        "clamp(c0.c0 + cast(17.0 as real), cast(-10 as real), cast(10 as real))",
-        input->type());
+    auto exprSet = compileExpression(expression, input->type());
     SelectivityVector rows(input->size());
     suspender.dismiss();
 
@@ -103,9 +109,15 @@ class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
   }
 };
 
-BENCHMARK(separateExpressions) {
+BENCHMARK(multipleFunctions) {
   DenseProcBenchmark benchmark;
-  benchmark.runSeparate();
+  benchmark.runVelox(
+      "clamp(c0.c0 + cast(17.0 as real), cast(-10 as real), cast(10 as real))");
+}
+
+BENCHMARK_RELATIVE(singleFunction) {
+  DenseProcBenchmark benchmark;
+  benchmark.runVelox("scale_and_clamp(c0.c0)");
 }
 
 BENCHMARK_RELATIVE(fusedExpressions) {
