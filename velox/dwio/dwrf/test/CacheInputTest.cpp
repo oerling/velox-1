@@ -483,7 +483,7 @@ TEST_F(CacheTest, bufferedInput) {
 TEST_F(CacheTest, ssd) {
   constexpr int64_t kSsdBytes = 256 << 20;
   // 64 RAM, 256MB SSD
-  initializeCache(64 << 20,  kSsdBytes);
+  initializeCache(64 << 20, kSsdBytes);
   testRandomSeek_ = false;
   deterministic_ = true;
 
