@@ -66,7 +66,7 @@ struct CacheRequest {
   // for sparsely accessed large columns where hitting one piece
   // should not load the adjacent pieces.
   bool coalesces{true};
-  const SeekableInputStream* stream;
+  const SeekableInputStream* FOLLY_NONNULL stream;
 };
 
 class CachedBufferedInput : public BufferedInput {
@@ -74,13 +74,13 @@ class CachedBufferedInput : public BufferedInput {
   CachedBufferedInput(
       dwio::common::InputStream& input,
       memory::MemoryPool& pool,
-      dwio::common::DataCacheConfig* dataCacheConfig,
-      cache::AsyncDataCache* cache,
+      dwio::common::DataCacheConfig* FOLLY_NONNULL dataCacheConfig,
+      cache::AsyncDataCache* FOLLY_NONNULL cache,
       std::shared_ptr<cache::ScanTracker> tracker,
       uint64_t groupId,
       StreamSource streamSource,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
-      folly::Executor* executor,
+      folly::Executor* FOLLY_NULLABLE executor,
       int32_t loadQuantum,
       int32_t maxCoalesceDistance)
       : BufferedInput(input, pool, dataCacheConfig),
@@ -107,7 +107,7 @@ class CachedBufferedInput : public BufferedInput {
 
   std::unique_ptr<SeekableInputStream> enqueue(
       dwio::common::Region region,
-      const StreamIdentifier* si) override;
+      const StreamIdentifier* FOLLY_NULLABLE si) override;
 
   void load(const dwio::common::LogType) override;
 
@@ -125,12 +125,13 @@ class CachedBufferedInput : public BufferedInput {
   }
 
   void setNumStripes(int32_t numStripes) override {
-    if (tracker_->fileGroupStats()) {
-      tracker_->fileGroupStats()->recordFile(fileNum_, groupId_, numStripes);
+    auto stats = tracker_->fileGroupStats();
+    if (stats) {
+      stats->recordFile(fileNum_, groupId_, numStripes);
     }
   }
 
-  cache::AsyncDataCache* cache() const {
+  cache::AsyncDataCache* FOLLY_NONNULL cache() const {
     return cache_;
   }
 
@@ -139,7 +140,7 @@ class CachedBufferedInput : public BufferedInput {
   // call for 'stream' since the load is to be triggered by the first
   // access.
   std::shared_ptr<cache::CoalescedLoad> coalescedLoad(
-      const SeekableInputStream* stream);
+      const SeekableInputStream* FOLLY_NONNULL stream);
 
  private:
   // Sorts requests and makes CoalescedLoads for nearby requests. If 'prefetch'
@@ -153,13 +154,13 @@ class CachedBufferedInput : public BufferedInput {
 
   void readRegion(std::vector<CacheRequest*> requests, bool prefetch);
 
-  cache::AsyncDataCache* cache_;
+  cache::AsyncDataCache* FOLLY_NONNULL cache_;
   const uint64_t fileNum_;
   std::shared_ptr<cache::ScanTracker> tracker_;
   const uint64_t groupId_;
   StreamSource streamSource_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-  folly::Executor* const executor_;
+  folly::Executor* const FOLLY_NULLABLE executor_;
 
   // Regions that are candidates for loading.
   std::vector<CacheRequest> requests_;
@@ -181,12 +182,12 @@ class CachedBufferedInput : public BufferedInput {
 class CachedBufferedInputFactory : public BufferedInputFactory {
  public:
   CachedBufferedInputFactory(
-      cache::AsyncDataCache* cache,
+      cache::AsyncDataCache* FOLLY_NONNULL cache,
       std::shared_ptr<cache::ScanTracker> tracker,
       uint64_t groupId,
       StreamSource streamSource,
       std::shared_ptr<dwio::common::IoStatistics> ioStats,
-      folly::Executor* executor,
+      folly::Executor* FOLLY_NULLABLE executor,
       const dwio::common::ReaderOptions& readerOpts)
       : cache_(cache),
         tracker_(std::move(tracker)),
@@ -200,7 +201,8 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
   std::unique_ptr<BufferedInput> create(
       dwio::common::InputStream& input,
       velox::memory::MemoryPool& pool,
-      dwio::common::DataCacheConfig* dataCacheConfig = nullptr) const override {
+      dwio::common::DataCacheConfig* FOLLY_NULLABLE dataCacheConfig =
+          nullptr) const override {
     return std::make_unique<CachedBufferedInput>(
         input,
         pool,
@@ -227,12 +229,12 @@ class CachedBufferedInputFactory : public BufferedInputFactory {
   }
 
  private:
-  cache::AsyncDataCache* const cache_;
+  cache::AsyncDataCache* const FOLLY_NONNULL cache_;
   std::shared_ptr<cache::ScanTracker> tracker_;
   const uint64_t groupId_;
   StreamSource streamSource_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-  folly::Executor* executor_;
+  folly::Executor* FOLLY_NULLABLE executor_;
   int32_t loadQuantum_;
   int32_t maxCoalesceDistance_;
 };

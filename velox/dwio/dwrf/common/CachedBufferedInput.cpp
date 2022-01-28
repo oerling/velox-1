@@ -160,6 +160,9 @@ void CachedBufferedInput::load(const dwio::common::LogType) {
   // Extra requests made for preloadable regions that are larger then
   // 'loadQuantum'.
   std::vector<std::unique_ptr<CacheRequest>> extraRequests;
+  // We loop over access frequency buckets. For example readPct 80
+  // will get all streams where 80% or more of the referenced data is
+  // actually loaded.
   for (auto readPct : std::vector<int32_t>{80, 50, 20, 0}) {
     std::vector<CacheRequest*> storageLoad;
     std::vector<CacheRequest*> ssdLoad;

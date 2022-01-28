@@ -112,6 +112,7 @@ class GroupTracker {
 class FileGroupStats {
  public:
   FileGroupStats();
+
   // Records ScanTracker::recordReference at group level
   void recordReference(
       uint64_t /*fileId*/,
