@@ -373,8 +373,7 @@ class Task {
   }
 
  private:
-emplate <class TBridgeType>
-  std::shared_ptr<TBridgeType> getJoinBridgeInternal(
+  emplate<class TBridgeType> std::shared_ptr<TBridgeType> getJoinBridgeInternal(
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 
@@ -383,9 +382,9 @@ emplate <class TBridgeType>
       SplitsStore& splitsStore,
       exec::Split& split,
       ContinueFuture& future,
-					      int32_t maxPreloadSplits = 0,
+      int32_t maxPreloadSplits = 0,
       std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload =
-      nullptr);
+          nullptr);
 
   /// Creates a bunch of drivers for the 'nextSplitGroupId_' and advances the
   /// latter.

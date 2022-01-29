@@ -1106,7 +1106,7 @@ static void checkTraceCommand() {
   }
 }
 
-  void Task::setError(const std::exception_ptr& exception) {
+void Task::setError(const std::exception_ptr& exception) {
   bool isFirstError = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
