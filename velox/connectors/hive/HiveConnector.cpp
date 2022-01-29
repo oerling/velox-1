@@ -285,9 +285,7 @@ class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
       std::shared_ptr<dwio::common::IoStatistics> stats)
       : fileHandle_(std::move(fileHandle)), stats_(std::move(stats)) {
     input_ = std::make_unique<dwio::common::ReadFileInputStream>(
-        fileHandle_->file.get(),
-        dwio::common::MetricsLog::voidLog(),
-        stats.get());
+        fileHandle_->file.get(), dwio::common::MetricsLog::voidLog(), nullptr);
   }
 
   dwio::common::InputStream& get() override {
@@ -306,7 +304,7 @@ std::unique_ptr<InputStreamHolder> makeStreamHolder(
     FileHandleFactory* factory,
     const std::string& path,
     std::shared_ptr<dwio::common::IoStatistics> stats) {
-  return std::make_unique<InputStreamHolder>(factory->generate(path), stats);
+  return std::make_unique<InputStreamHolder>(factory->generate(path), nullptr);
 }
 
 template <TypeKind ToKind>
@@ -351,6 +349,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VLOG(1) << "Adding split " << split_->toString();
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
+  // For DataCache and no cache, the stream keeps track of IO.
+  auto ioStatsForStream = ioStats_.get();
   // Decide between AsyncDataCache, legacy DataCache and no cache. All
   // three are supported to enable comparison.
   if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
@@ -379,6 +379,10 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         executor_,
         readerOpts_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
+    // CachedBufferedInput updates ioStats_',so do not pass this to the
+    // InputStream to avoid double counting.
+
+    ioStatsForStream = nullptr;
   } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
     dataCacheConfig->cache = dataCache_;
@@ -403,7 +407,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
               std::make_unique<dwio::common::ReadFileInputStream>(
                   fileHandle_->file.get(),
                   dwio::common::MetricsLog::voidLog(),
-                  ioStats_.get()),
+                  ioStatsForStream),
               readerOpts_);
   reader_.reset(uniqueReader.release());
   emptySplit_ = false;

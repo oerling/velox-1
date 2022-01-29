@@ -2281,6 +2281,32 @@ velox_functions_test/fast:
 .PHONY : velox_functions_test/fast
 
 #=============================================================================
+# Target rules for targets named velox_benchmark_array_proxy_no_nulls
+
+# Build rule for target.
+velox_benchmark_array_proxy_no_nulls: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_benchmark_array_proxy_no_nulls
+.PHONY : velox_benchmark_array_proxy_no_nulls
+
+# fast build rule for target.
+velox_benchmark_array_proxy_no_nulls/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_no_nulls.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_no_nulls.dir/build
+.PHONY : velox_benchmark_array_proxy_no_nulls/fast
+
+#=============================================================================
+# Target rules for targets named velox_benchmark_array_proxy_with_nulls
+
+# Build rule for target.
+velox_benchmark_array_proxy_with_nulls: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_benchmark_array_proxy_with_nulls
+.PHONY : velox_benchmark_array_proxy_with_nulls
+
+# fast build rule for target.
+velox_benchmark_array_proxy_with_nulls/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_with_nulls.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_with_nulls.dir/build
+.PHONY : velox_benchmark_array_proxy_with_nulls/fast
+
+#=============================================================================
 # Target rules for targets named velox_functions_benchmarks_compare
 
 # Build rule for target.
@@ -2580,6 +2606,19 @@ velox_exec_test/fast:
 .PHONY : velox_exec_test/fast
 
 #=============================================================================
+# Target rules for targets named velox_temp_path
+
+# Build rule for target.
+velox_temp_path: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_temp_path
+.PHONY : velox_temp_path
+
+# fast build rule for target.
+velox_temp_path/fast:
+	$(MAKE) $(MAKESILENT) -f velox/exec/tests/utils/CMakeFiles/velox_temp_path.dir/build.make velox/exec/tests/utils/CMakeFiles/velox_temp_path.dir/build
+.PHONY : velox_temp_path/fast
+
+#=============================================================================
 # Target rules for targets named velox_exec_test_util
 
 # Build rule for target.
@@ -2792,6 +2831,8 @@ help:
 	@echo "... velox_aggregates_test_lib"
 	@echo "... velox_arrow_bridge"
 	@echo "... velox_arrow_bridge_test"
+	@echo "... velox_benchmark_array_proxy_no_nulls"
+	@echo "... velox_benchmark_array_proxy_with_nulls"
 	@echo "... velox_buffer"
 	@echo "... velox_buffer_test"
 	@echo "... velox_cache_test"
@@ -2933,6 +2974,7 @@ help:
 	@echo "... velox_row_test"
 	@echo "... velox_serialization"
 	@echo "... velox_sparksql_benchmarks_in"
+	@echo "... velox_temp_path"
 	@echo "... velox_time"
 	@echo "... velox_type"
 	@echo "... velox_type_test"
