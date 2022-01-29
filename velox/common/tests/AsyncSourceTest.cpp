@@ -25,19 +25,29 @@ using namespace facebook::velox;
 
 // A sample class to be constructed via AsyncSource.
 struct Gizmo {
-  Gizmo(int32_t _id) : id(_id) {}
+  explicit Gizmo(int32_t _id) : id(_id) {}
 
-  int32_t id;
+  const int32_t id;
 };
 
 TEST(AsyncSourceTest, basic) {
+  AsyncSource<Gizmo> gizmo([]() { return std::make_unique<Gizmo>(11); });
+  EXPECT_FALSE(gizmo.hasValue());
+  gizmo.prepare();
+  EXPECT_TRUE(gizmo.hasValue());
+  auto value = gizmo.move();
+  EXPECT_FALSE(gizmo.hasValue());
+  EXPECT_EQ(11, value->id);
+}
+
+TEST(AsyncSourceTest, threads) {
   constexpr int32_t kNumThreads = 10;
   constexpr int32_t kNumGizmos = 2000;
   folly::Synchronized<std::unordered_set<int32_t>> results;
   std::vector<std::shared_ptr<AsyncSource<Gizmo>>> gizmos;
   for (auto i = 0; i < kNumGizmos; ++i) {
     gizmos.push_back(std::make_shared<AsyncSource<Gizmo>>([i]() {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
       return std::make_unique<Gizmo>(i);
     }));
   }

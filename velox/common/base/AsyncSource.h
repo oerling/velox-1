@@ -32,7 +32,8 @@ namespace facebook::velox {
 template <typename Item>
 class AsyncSource {
  public:
-  AsyncSource(std::function<std::unique_ptr<Item>()> make) : make_(make) {}
+  explicit AsyncSource(std::function<std::unique_ptr<Item>()> make)
+      : make_(make) {}
 
   // Makes an item if it is not already made. To be called on a background
   // executor.
@@ -96,13 +97,6 @@ class AsyncSource {
   // else will not get the item first.
   bool hasValue() const {
     return item_ != nullptr;
-  }
-
-  // True if the item is scheduled to be made. The caller of move()
-  // will either wait for the make to finish or run the make on its
-  // own thread.
-  bool isPending() const {
-    return make_ && !item_;
   }
 
  private:
