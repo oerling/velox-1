@@ -220,7 +220,8 @@ void HashBuild::noMoreInput() {
 
   if (antiJoinHasNullKeys_) {
     operatorCtx_->task()
-        ->getHashJoinBridge(planNodeId())
+        ->getHashJoinBridge(
+            operatorCtx_->driverCtx()->splitGroupId, planNodeId())
         ->setAntiJoinHasNullKeys();
   } else {
     table_->prepareJoinTable(std::move(otherTables));
@@ -228,7 +229,8 @@ void HashBuild::noMoreInput() {
     addRuntimeStats();
 
     operatorCtx_->task()
-        ->getHashJoinBridge(planNodeId())
+        ->getHashJoinBridge(
+            operatorCtx_->driverCtx()->splitGroupId, planNodeId())
         ->setHashTable(std::move(table_));
   }
 }
