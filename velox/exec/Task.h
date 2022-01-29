@@ -376,8 +376,9 @@ class Task {
     return driverFactories_[caller->driverCtx()->pipelineId]->numDrivers;
   }
 
-private:
-  template<class TBridgeType> std::shared_ptr<TBridgeType> getJoinBridgeInternal(
+ private:
+  template <class TBridgeType>
+  std::shared_ptr<TBridgeType> getJoinBridgeInternal(
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 

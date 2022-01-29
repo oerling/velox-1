@@ -490,11 +490,16 @@ BlockingReason Task::getSplitOrFuture(
   auto& splitsState = splitsStates_[planNodeId];
 
   if (not isGroupedExecution()) {
-    return getSplitOrFutureLocked(splitsState.splitsStore, split, future, maxPreloadSplits, preload);
+    return getSplitOrFutureLocked(
+        splitsState.splitsStore, split, future, maxPreloadSplits, preload);
   } else {
     // Driver id allows a single driver to only access splits of a single group.
     return getSplitOrFutureLocked(
-				  groupSplitsStoreSafe(splitsState, splitGroupId), split, future, maxPreloadSplits, preload);
+        groupSplitsStoreSafe(splitsState, splitGroupId),
+        split,
+        future,
+        maxPreloadSplits,
+        preload);
   }
 }
 
