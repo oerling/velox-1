@@ -372,8 +372,12 @@ class Task {
     return mutex_;
   }
 
- private:
-  emplate<class TBridgeType> std::shared_ptr<TBridgeType> getJoinBridgeInternal(
+  int32_t numDrivers(Driver* caller) {
+    return driverFactories_[caller->driverCtx()->pipelineId]->numDrivers;
+  }
+
+private:
+  template<class TBridgeType> std::shared_ptr<TBridgeType> getJoinBridgeInternal(
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 

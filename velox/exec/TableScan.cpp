@@ -47,8 +47,7 @@ RowVectorPtr TableScan::getOutput() {
     if (needNewSplit_) {
       exec::Split split;
       auto reason = driverCtx_->task->getSplitOrFuture(
-          driverCtx_->splitGroupId, planNodeId_, split, blockingFuture_);
-          driverCtx_->driverId,
+          driverCtx_->splitGroupId,
           planNodeId_,
           split,
           blockingFuture_,
@@ -149,7 +148,7 @@ void TableScan::checkPreload() {
     return;
   }
   if (dataSource_->allPrefetchIssued()) {
-    maxPreloadedSplits_ = driverCtx_->numDrivers;
+    maxPreloadedSplits_ = driverCtx_->task->numDrivers(driverCtx_->driver);
     if (!splitPreloader_) {
       splitPreloader_ =
           [executor, this](std::shared_ptr<connector::ConnectorSplit> split) {

@@ -490,18 +490,20 @@ BlockingReason Task::getSplitOrFuture(
   auto& splitsState = splitsStates_[planNodeId];
 
   if (not isGroupedExecution()) {
-    return getSplitOrFutureLocked(splitsState.splitsStore, split, future);
+    return getSplitOrFutureLocked(splitsState.splitsStore, split, future, maxPreloadSplits, preload);
   } else {
     // Driver id allows a single driver to only access splits of a single group.
     return getSplitOrFutureLocked(
-        groupSplitsStoreSafe(splitsState, splitGroupId), split, future);
+				  groupSplitsStoreSafe(splitsState, splitGroupId), split, future, maxPreloadSplits, preload);
   }
 }
 
 BlockingReason Task::getSplitOrFutureLocked(
     SplitsStore& splitsStore,
     exec::Split& split,
-    ContinueFuture& future) {
+    ContinueFuture& future,
+    int32_t maxPreloadSplits,
+    std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload) {
   if (splitsStore.splits.empty()) {
     if (splitsStore.noMoreSplits) {
       return BlockingReason::kNotBlocked;
@@ -514,9 +516,9 @@ BlockingReason Task::getSplitOrFutureLocked(
   }
   int32_t readySplitIndex = -1;
   if (maxPreloadSplits) {
-    for (auto i = 0; i < splitsState.splits.size() && i < maxPreloadSplits;
+    for (auto i = 0; i < splitsStore.splits.size() && i < maxPreloadSplits;
          ++i) {
-      auto& split = splitsState.splits[i].connectorSplit;
+      auto& split = splitsStore.splits[i].connectorSplit;
       if (!split->dataSource) {
         // Initializes split->dataSource
         preload(split);
@@ -528,8 +530,8 @@ BlockingReason Task::getSplitOrFutureLocked(
   if (readySplitIndex == -1) {
     readySplitIndex = 0;
   }
-  split = std::move(splitsState.splits[readySplitIndex]);
-  splitsState.splits.erase(splitsState.splits.begin() + readySplitIndex);
+  split = std::move(splitsStore.splits[readySplitIndex]);
+  splitsStore.splits.erase(splitsStore.splits.begin() + readySplitIndex);
 
   --taskStats_.numQueuedSplits;
   ++taskStats_.numRunningSplits;
