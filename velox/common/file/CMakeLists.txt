@@ -28,4 +28,6 @@ if(${VELOX_BUILD_TESTING})
     ${FMT}
     ${FOLLY_WITH_DEPENDENCIES}
     ${GTEST_BOTH_LIBRARIES})
+
+  add_subdirectory(benchmark)
 endif()

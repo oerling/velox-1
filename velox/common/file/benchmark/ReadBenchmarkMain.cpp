@@ -13,22 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
 
-#include "velox/exec/Operator.h"
+#include "velox/common/file/benchmark/ReadBenchmark.h"
 
-namespace facebook::velox::core {
-struct PlanFragment;
-} // namespace facebook::velox::core
+using namespace facebook::velox;
 
-namespace facebook::velox::exec {
-
-class LocalPlanner {
- public:
-  static void plan(
-      const core::PlanFragment& planFragment,
-      ConsumerSupplier consumerSupplier,
-      std::vector<std::unique_ptr<DriverFactory>>* driverFactories,
-      uint32_t maxDrivers);
-};
-} // namespace facebook::velox::exec
+int main(int argc, char** argv) {
+  folly::init(&argc, &argv, false);
+  ReadBenchmark bm;
+  bm.run();
+}
