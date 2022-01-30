@@ -351,18 +351,20 @@ TEST_F(HashJoinTest, lazyVectors) {
       "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
 
   op = PlanBuilder(10)
-    .tableScan(ROW({"c0", "c1", "c2", "c3"}, {INTEGER(), BIGINT(), INTEGER(), VARCHAR()}))
+           .tableScan(
+               ROW({"c0", "c1", "c2", "c3"},
+                   {INTEGER(), BIGINT(), INTEGER(), VARCHAR()}))
            .filter("c2 < 29")
            .hashJoin(
                {"c0"},
                {"bc0"},
                PlanBuilder(0)
-	       .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
+                   .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
                    .project({"c0 as bc0", "c1 as bc1"})
                    .planNode(),
                "(c1 + bc1) % 33 < 27",
                {"c1", "bc1", "c3"})
-    .project({"c1 + 1", "bc1", "length(c3)"})
+           .project({"c1 + 1", "bc1", "length(c3)"})
            .planNode();
 
   assertQuery(

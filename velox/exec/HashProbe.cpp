@@ -589,9 +589,9 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
       auto numInput = input_->size();
       auto hits = lookup_->hits.data();
       for (auto i = 0; i < numInput; ++i) {
-	if (hits[i]) {
-	  passingInputRows_.setValid(i, true);
-	}
+        if (hits[i]) {
+          passingInputRows_.setValid(i, true);
+        }
       }
     }
     passingInputRows_.updateBounds();

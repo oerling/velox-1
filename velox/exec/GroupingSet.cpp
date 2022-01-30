@@ -74,9 +74,7 @@ GroupingSet::GroupingSet(
   }
 }
 
-void GroupingSet::addInput(
-    const RowVectorPtr& input,
-    bool mayPushdown) {
+void GroupingSet::addInput(const RowVectorPtr& input, bool mayPushdown) {
   auto numRows = input->size();
   activeRows_.resize(numRows);
   activeRows_.setAll();
