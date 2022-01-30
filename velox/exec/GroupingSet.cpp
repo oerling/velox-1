@@ -58,7 +58,8 @@ GroupingSet::GroupingSet(
       stringAllocator_(mappedMemory_),
       rows_(mappedMemory_),
       isAdaptive_(
-          operatorCtx->task()->queryCtx()->config().hashAdaptivityEnabled()) {
+          operatorCtx->task()->queryCtx()->config().hashAdaptivityEnabled()),
+      execCtx_(*operatorCtx->execCtx()) {
   for (auto& hasher : hashers_) {
     keyChannels_.push_back(hasher->channel());
   }
@@ -73,7 +74,9 @@ GroupingSet::GroupingSet(
   }
 }
 
-void GroupingSet::addInput(const RowVectorPtr& input, bool mayPushdown) {
+void GroupingSet::addInput(
+    const RowVectorPtr& input,
+    bool mayPushdown) {
   auto numRows = input->size();
   activeRows_.resize(numRows);
   activeRows_.setAll();
@@ -121,7 +124,7 @@ void GroupingSet::addInput(const RowVectorPtr& input, bool mayPushdown) {
   auto mode = table_->hashMode();
   if (ignoreNullKeys_) {
     // A null in any of the keys disables the row.
-    deselectRowsWithNulls(*input, keyChannels_, activeRows_);
+    deselectRowsWithNulls(*input, keyChannels_, activeRows_, execCtx_);
     for (int32_t i = 0; i < hashers.size(); ++i) {
       auto key = input->loadedChildAt(hashers[i]->channel());
       if (mode != BaseHashTable::HashMode::kHash) {

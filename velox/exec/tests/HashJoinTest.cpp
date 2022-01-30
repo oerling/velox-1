@@ -323,7 +323,7 @@ TEST_F(HashJoinTest, lazyVectors) {
 
   auto rightVectors = makeRowVector(
       {makeFlatVector<int32_t>(10'000, [](auto row) { return row * 3; }),
-       makeFlatVector<int32_t>(10'000, [](auto row) { return row % 31; })});
+       makeFlatVector<int64_t>(10'000, [](auto row) { return row % 31; })});
 
   auto leftFile = TempFilePath::create();
   writeToFile(leftFile->path, kWriter, leftVectors);
@@ -351,23 +351,25 @@ TEST_F(HashJoinTest, lazyVectors) {
       "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
 
   op = PlanBuilder(10)
-    .tableScan(ROW({"c0", "c1", "c2"}, {INTEGER(), BIGINT(), INTEGER()}))
-                .filter("c2 < 29")
-                .hashJoin(
-                    {"c0"},
-                    {"bc0"},
-                    PlanBuilder(0)
-                        .tableScan(ROW({"bc0", "bc1"}, {INTEGER(), BIGINT()}))
-                        .planNode(),
-                    "",
-                    {"c1", "bc1"})
-    .project({"c1 + 1", "bc1"})
-                .planNode();
+    .tableScan(ROW({"c0", "c1", "c2", "c3"}, {INTEGER(), BIGINT(), INTEGER(), VARCHAR()}))
+           .filter("c2 < 29")
+           .hashJoin(
+               {"c0"},
+               {"bc0"},
+               PlanBuilder(0)
+	       .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
+                   .project({"c0 as bc0", "c1 as bc1"})
+                   .planNode(),
+               "(c1 + bc1) % 33 < 27",
+               {"c1", "bc1", "c3"})
+    .project({"c1 + 1", "bc1", "length(c3)"})
+           .planNode();
 
   assertQuery(
       op,
       {{0, {rightFile}}, {10, {leftFile}}},
-      "SELECT t.c1 + 1, U.c1 FROM t, u WHERE t.c0 = u.c0");
+      "SELECT t.c1 + 1, U.c1, length(t.c3) FROM t, u "
+      "WHERE t.c0 = u.c0 and t.c2 < 29 and (t.c1 + u.c1) % 33 < 27");
 }
 
 /// Test hash join where build-side keys come from a small range and allow for
