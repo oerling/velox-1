@@ -251,7 +251,6 @@ class HashStringAllocator : public StreamArena {
     return pool_.mappedMemory();
   }
 
-  
   // Checks the free space accounting and consistency of
   // Headers. Throws when detects corruption.
   void checkConsistency() const;

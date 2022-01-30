@@ -530,7 +530,8 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
     sizeBits_ = __builtin_popcountll(sizeMask_);
     constexpr auto kPageSize = memory::MappedMemory::kPageSize;
     auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
-    if (!rows_->mappedMemory()->allocateContiguous(numPages, nullptr, tableAllocation_)) {
+    if (!rows_->mappedMemory()->allocateContiguous(
+            numPages, nullptr, tableAllocation_)) {
       VELOX_FAIL("Could not allocate join/group by hash table");
     }
     table_ = tableAllocation_.data<char*>();
@@ -789,7 +790,8 @@ void HashTable<ignoreNullKeys>::setHashMode(HashMode mode, int32_t numNew) {
     auto bytes = size_ * sizeof(char*);
     constexpr auto kPageSize = memory::MappedMemory::kPageSize;
     auto numPages = bits::roundUp(bytes, kPageSize) / kPageSize;
-    if (!rows_->mappedMemory()->allocateContiguous(numPages, nullptr, tableAllocation_)) {
+    if (!rows_->mappedMemory()->allocateContiguous(
+            numPages, nullptr, tableAllocation_)) {
       VELOX_FAIL("Could not allocate array for array mode hash table");
     }
     table_ = tableAllocation_.data<char*>();
