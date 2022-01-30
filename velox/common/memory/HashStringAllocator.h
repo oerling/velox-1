@@ -247,6 +247,11 @@ class HashStringAllocator : public StreamArena {
     pool_.clear();
   }
 
+  memory::MappedMemory* mappedMemory() const {
+    return pool_.mappedMemory();
+  }
+
+  
   // Checks the free space accounting and consistency of
   // Headers. Throws when detects corruption.
   void checkConsistency() const;
