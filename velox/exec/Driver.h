@@ -65,7 +65,7 @@ enum class StopReason {
 // states are blocked, terminated, suspended, enqueued.
 //
 //  Blocked - The Driver is not on thread and is waiting for an external event.
-//  Next states are terminated, enqueud.
+//  Next states are terminated, enqueued.
 //
 // Suspended - The Driver is on thread, 'thread' and 'isSuspended' are set. The
 // thread does not manipulate the Driver's state and is suspended as in waiting
@@ -127,6 +127,8 @@ enum class BlockingReason {
   kWaitForMemory
 };
 
+std::string blockingReasonToString(BlockingReason reason);
+
 using ContinueFuture = folly::SemiFuture<bool>;
 
 class BlockingState {
@@ -161,14 +163,20 @@ struct DriverCtx {
   std::unique_ptr<connector::ExpressionEvaluator> expressionEvaluator;
   const int driverId;
   const int pipelineId;
+  /// Id of the split group this driver should process in case of grouped
+  /// execution, zero otherwise.
+  const uint32_t splitGroupId;
+  /// Id of the partition to use by this driver. For local exchange, for
+  /// instance.
+  const uint32_t partitionId;
   Driver* FOLLY_NONNULL driver;
-  int32_t numDrivers;
 
   explicit DriverCtx(
       std::shared_ptr<Task> _task,
       int _driverId,
       int _pipelineId,
-      int32_t numDrivers);
+      uint32_t _splitGroupId,
+      uint32_t _partitionId);
 
   velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
 
@@ -193,11 +201,6 @@ class Driver {
   static void run(std::shared_ptr<Driver> self);
 
   static void enqueue(std::shared_ptr<Driver> instance);
-
-  // Waits for activity on 'executor_' to finish and then makes a new
-  // executor. Testing uses this to ensure that there are no live
-  // references to memory pools before deleting the pools.
-  static void testingJoinAndReinitializeExecutor(int32_t threads = 0);
 
   bool isOnThread() const {
     return state_.isOnThread();
@@ -324,10 +327,19 @@ using ConsumerSupplier = std::function<Consumer()>;
 
 struct DriverFactory {
   std::vector<std::shared_ptr<const core::PlanNode>> planNodes;
-  // Function that will generate the final operator of a driver being
-  // constructed.
+  /// Function that will generate the final operator of a driver being
+  /// constructed.
   OperatorSupplier consumerSupplier;
+  /// Maximum number of drivers that can be run concurrently in this pipeline.
   uint32_t maxDrivers;
+  /// Number of drivers that will be run concurrently in this pipeline. It is
+  /// also the number of drivers per split group in case of grouped execution.
+  uint32_t numDrivers;
+  /// Total number of drivers in this pipeline we expect to be run. In case of
+  /// grouped execution it is 'numDrivers' * 'numSplitGroups', otherwise it is
+  /// 'numDrivers'.
+  uint32_t numTotalDrivers;
+
   // True if 'planNodes' contains a source node for the task, e.g. TableScan or
   // Exchange.
   bool inputDriver{false};
@@ -346,9 +358,8 @@ struct DriverFactory {
             std::dynamic_pointer_cast<const core::PartitionedOutputNode>(
                 planNodes.back())) {
       return partitionedOutputNode;
-    } else {
-      return nullptr;
     }
+    return nullptr;
   }
 
   bool needsExchangeClient() const {
@@ -357,7 +368,6 @@ struct DriverFactory {
             planNodes.front())) {
       return true;
     }
-
     return false;
   }
 
@@ -370,7 +380,6 @@ struct DriverFactory {
                 planNodes.front())) {
       return exchangeNode->id();
     }
-
     return std::nullopt;
   }
 

@@ -73,7 +73,7 @@ SsdFile::SsdFile(
 #ifdef linux
   oDirect = FLAGS_ssd_odirect ? O_DIRECT : 0;
 #endif
-  fd_ = open(filename.c_str(), O_CREAT | O_RDWR | oDirect, S_IRUSR | S_IWUSR);
+  fd_ = open(filename_.c_str(), O_CREAT | O_RDWR | oDirect, S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
     LOG(ERROR) << "Cannot open or create " << filename << " error " << errno;
     exit(1);
@@ -81,8 +81,11 @@ SsdFile::SsdFile(
   readFile_ = std::make_unique<LocalReadFile>(fd_);
   uint64_t size = lseek(fd_, 0, SEEK_END);
   numRegions_ = size / kRegionSize;
+  if (numRegions_ > maxRegions_) {
+    numRegions_ = maxRegions_;
+  }
   fileSize_ = numRegions_ * kRegionSize;
-  if (size % kRegionSize > 0) {
+  if (size % kRegionSize > 0 || size > numRegions_ * kRegionSize) {
     ftruncate(fd_, fileSize_);
   }
   // The existing regions in the file are writable.
@@ -224,6 +227,7 @@ std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
         ;
       }
     }
+    assert(!writableRegions_.empty());
     auto region = writableRegions_[0];
     auto offset = regionSize_[region];
     auto available = kRegionSize - offset;
@@ -419,6 +423,17 @@ void SsdFile::clear() {
   std::fill(regionSize_.begin(), regionSize_.end(), 0);
   writableRegions_.resize(numRegions_);
   std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
+}
+
+void SsdFile::deleteFile() {
+  if (fd_) {
+    close(fd_);
+    fd_ = 0;
+  }
+  auto rc = unlink(filename_.c_str());
+  if (rc < 0) {
+    LOG(ERROR) << "Error deleting cache file " << filename_ << " rc: " << rc;
+  }
 }
 
 } // namespace facebook::velox::cache

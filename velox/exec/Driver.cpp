@@ -61,7 +61,8 @@ DriverCtx::DriverCtx(
     std::shared_ptr<Task> _task,
     int _driverId,
     int _pipelineId,
-    int32_t _numDrivers)
+    uint32_t _splitGroupId,
+    uint32_t _partitionId)
     : task(_task),
       execCtx(std::make_unique<core::ExecCtx>(
           task->addDriverPool(),
@@ -70,7 +71,8 @@ DriverCtx::DriverCtx(
           std::make_unique<SimpleExpressionEvaluator>(execCtx.get())),
       driverId(_driverId),
       pipelineId(_pipelineId),
-      numDrivers(_numDrivers) {}
+      splitGroupId(_splitGroupId),
+      partitionId(_partitionId) {}
 
 velox::memory::MemoryPool* FOLLY_NONNULL DriverCtx::addOperatorPool() {
   return task->addOperatorPool(execCtx->pool());
@@ -672,5 +674,24 @@ int64_t Driver::spill(int64_t size) {
   }
   return spilled;
 }
+
+std::string blockingReasonToString(BlockingReason reason) {
+  switch (reason) {
+    case BlockingReason::kNotBlocked:
+      return "kNotBlocked";
+    case BlockingReason::kWaitForConsumer:
+      return "kWaitForConsumer";
+    case BlockingReason::kWaitForSplit:
+      return "kWaitForSplit";
+    case BlockingReason::kWaitForExchange:
+      return "kWaitForExchange";
+    case BlockingReason::kWaitForJoinBuild:
+      return "kWaitForJoinBuild";
+    case BlockingReason::kWaitForMemory:
+      return "kWaitForMemory";
+  }
+  VELOX_UNREACHABLE();
+  return "";
+};
 
 } // namespace facebook::velox::exec
