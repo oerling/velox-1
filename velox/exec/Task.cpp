@@ -296,7 +296,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
   // Make sure the reference to Driver is dropped outside of the
   // critical section. This can deadlock with updating the task's
   // stats from Driver::close().
-  std::shared_ptr removedDriver;
+  std::shared_ptr<Driver> removedDriver;
   std::lock_guard<std::mutex> taskLock(self->mutex_);
   for (auto& driverPtr : self->drivers_) {
     if (driverPtr.get() != driver) {
@@ -310,7 +310,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
     --splitGroupState.activeDrivers;
 
     // Release the driver, note that after this 'driver' is invalid.
-    removedDriver = std::move(DriverPtr);
+    removedDriver = std::move(driverPtr);
     self->driverClosedLocked();
 
     if (self->isGroupedExecution()) {
