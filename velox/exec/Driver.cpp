@@ -172,7 +172,7 @@ class CancelGuard {
       // Terminate requested via Task. The Driver is not on
       // thread but 'terminated_' is set, hence no other threads will
       // enter. onTerminateCalled will be true if both runtime error and
-      // terminate requested via CancelPool.
+      // terminate requested via Task.
       if (!onTerminateCalled) {
         onTerminate_(reason);
       }
@@ -186,6 +186,14 @@ class CancelGuard {
   bool isThrow_ = true;
 };
 } // namespace
+
+Driver::~Driver() {
+  if (task_) {
+    LOG(ERROR) << "Driver destructed while still in Task: "
+               << task_->toString();
+    DLOG(FATAL) << "Driber destroyed while referencing task";
+  }
+}
 
 // static
 void Driver::enqueue(std::shared_ptr<Driver> driver) {
@@ -296,7 +304,9 @@ StopReason Driver::runInternal(
   auto stop = !task ? StopReason::kTerminate : task->enter(state_);
   if (stop != StopReason::kNone) {
     if (stop == StopReason::kTerminate) {
-      // ctx_ still has a reference to the Task.
+      // ctx_ still has a reference to the Task. 'this' is not on
+      // thread from the Task's viewpoint, hence no need to call
+      // close().
       ctx_->task->setError(std::make_exception_ptr(VeloxRuntimeError(
           __FILE__,
           __LINE__,
@@ -306,18 +316,14 @@ StopReason Driver::runInternal(
           error_source::kErrorSourceRuntime,
           error_code::kInvalidState,
           false)));
-      close();
     }
     return stop;
   }
 
-  CancelGuard guard(task_.get(), &state_, [this](StopReason reason) {
-    // Copy 'task_' to a local to protect against other threads
-    // unhooking 'this' from 'task_'. 'task_' will in this way stay
-    // live so that error state can be set etc.
-    auto taskPtrCopy = task_;
-    if (taskPtrCopy && reason == StopReason::kTerminate) {
-      taskPtrCopy->setError(std::make_exception_ptr(VeloxRuntimeError(
+  CancelGuard guard(task_.get(), &state_, [&](StopReason reason) {
+    // This is run on error or cancel exit.
+    if (reason == StopReason::kTerminate) {
+      task->setError(std::make_exception_ptr(VeloxRuntimeError(
           __FILE__,
           __LINE__,
           __FUNCTION__,
@@ -505,24 +511,25 @@ void Driver::close() {
     // Already closed.
     return;
   }
+  if (!isOnThread() && !isTerminated()) {
+    LOG(FATAL) << "Driver::close is only allowed from the Driver's thread";
+  }
   addStatsToTask();
   for (auto& op : operators_) {
     op->close();
   }
-  Task::removeDriver(task_, this);
-  task_ = nullptr;
+  auto task = std::move(task_);
+
+  Task::removeDriver(task, this);
 }
 
-bool Driver::terminate() {
-  if (!task_) {
-    return false;
+void Driver::closeByTask() {
+  VELOX_CHECK(isTerminated());
+  addStatsToTask();
+  for (auto& op : operators_) {
+    op->close();
   }
-  auto stop = task_->enterForTerminate(state_);
-  if (stop == StopReason::kTerminate) {
-    close();
-    return true;
-  }
-  return false;
+  task_ = nullptr;
 }
 
 bool Driver::mayPushdownAggregation(Operator* aggregation) const {
