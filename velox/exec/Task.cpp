@@ -341,7 +341,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
 
     return;
   }
-  VELOX_FAIL("Trying to delete a Driver twice from its Task");
+  LOG(WARNING)(" << Trying to remove a Driver twice from its Task";
 }
 
 void Task::setMaxSplitSequenceId(
