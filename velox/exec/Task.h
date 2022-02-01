@@ -546,6 +546,9 @@ class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
     std::shared_ptr<Task> task;
     int64_t available;
   };
+
+  // Serializes calls to recover().
+  std::mutex mutex_;
 };
 
 } // namespace facebook::velox::exec

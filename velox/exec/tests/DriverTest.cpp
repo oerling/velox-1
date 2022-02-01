@@ -760,6 +760,8 @@ class TestingConsumer : public Operator {
               // Use the reserved memory.
               recoverableTracker_->update(
                   recoverableTracker_->getAvailableReservation());
+	      // The reservation is converted to allocation.
+	      recoverableTracker_->release();
             })) {
       VELOX_FAIL("Out of memory");
     }
@@ -779,13 +781,15 @@ class TestingConsumer : public Operator {
   }
 
   int64_t spill(int64_t size) override {
-    recoverableTracker_->release();
     int64_t freed = std::min(size, recoverableTracker_->getCurrentUserBytes());
     recoverableTracker_->update(-freed);
+    recoverableTracker_->release();
     return freed;
   }
 
   void close() override {
+    recoverableTracker_->release();
+    recoverableTracker_->update(-recoverableTracker_->getCurrentUserBytes());
   }
   
  private:

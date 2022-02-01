@@ -1062,8 +1062,8 @@ int64_t Task::recover(int64_t size) {
   }
   int64_t recovered = 0;
   while (recovered < size) {
-    // Per driver recovery target is 1MB + target / number of drivers.
-    auto perDriver = 1 << 20 + ((size - recovered) / numDrivers);
+    // Per driver recovery target is 16MB + target / number of drivers.
+    auto perDriver = (16 << 20) + ((size - recovered) / numDrivers);
     auto initialRecovered = recovered;
     for (auto& driver : drivers_) {
       if (driver) {
@@ -1080,7 +1080,8 @@ int64_t Task::recover(int64_t size) {
   }
   return recovered;
 }
-namespace {
+
+  namespace {
 bool maybeUpdate(int64_t size, memory::MemoryUsageTracker& tracker) {
   try {
     tracker.update(size);
@@ -1095,6 +1096,7 @@ bool maybeUpdate(int64_t size, memory::MemoryUsageTracker& tracker) {
 bool TaskMemoryStrategy::recover(
     std::shared_ptr<memory::MemoryConsumer> requester,
     int64_t minSize) {
+  std::lock_guard<std::mutex> l(mutex_);
   Task* consumerTask = dynamic_cast<Task*>(requester.get());
   VELOX_CHECK(consumerTask, "Only a Task can request memory via recover()");
   auto topTracker =
