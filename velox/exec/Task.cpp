@@ -315,7 +315,8 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
         splitGroupState.clear();
 
         // Create a bunch of drivers for the next split, if there is one.
-        if (self->state_ == TaskState::kRunning && self->nextSplitGroupId_ < self->planFragment_.numSplitGroups) {
+        if (self->state_ == TaskState::kRunning &&
+            self->nextSplitGroupId_ < self->planFragment_.numSplitGroups) {
           std::vector<std::shared_ptr<Driver>> drivers;
           drivers.reserve(self->numDriversPerSplitGroup_);
           self->createDrivers(drivers, self);
@@ -723,15 +724,17 @@ void Task::terminate(TaskState terminalState) {
       return;
     }
     state_ = terminalState;
-    // Drivers that are on thread will see this at latest when they go off thread.
+    // Drivers that are on thread will see this at latest when they go off
+    // thread.
     terminateRequested_ = true;
     for (auto& driver : drivers_) {
       if (driver) {
-	if (enterForTerminateLocked(driver->state()) == StopReason::kTerminate) {
-	  offThreadDrivers.push_back(std::move(driver));
-	  driverClosedLocked();
-	}
-    }
+        if (enterForTerminateLocked(driver->state()) ==
+            StopReason::kTerminate) {
+          offThreadDrivers.push_back(std::move(driver));
+          driverClosedLocked();
+        }
+      }
     }
   }
 

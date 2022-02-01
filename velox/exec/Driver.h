@@ -245,9 +245,10 @@ class Driver {
     return task_;
   }
 
-  // Updates the stats in 'task_' and frees resources. Only called by Task for closing non-running Drivers.
+  // Updates the stats in 'task_' and frees resources. Only called by Task for
+  // closing non-running Drivers.
   void closeByTask();
-  
+
  private:
   void enqueueInternal();
 
