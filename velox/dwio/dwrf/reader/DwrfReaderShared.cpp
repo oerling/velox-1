@@ -202,7 +202,7 @@ DwrfReaderShared::DwrfReaderShared(
           options.getDecrypterFactory(),
           options.getBufferedInputFactorySource()
               ? options.getBufferedInputFactorySource()
-	  : []() { return BufferedInputFactory::baseFactory(); },
+              : []() { return BufferedInputFactory::baseFactory(); },
           options.getDataCacheConfig().get())),
       options_(options) {}
 

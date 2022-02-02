@@ -36,7 +36,7 @@ namespace facebook {
 namespace velox {
 namespace dwio {
 namespace common {
-  
+
 enum class FileFormat {
   UNKNOWN = 0,
   ORC = 1, // ORC/DWRF
@@ -318,7 +318,7 @@ class ReaderOptions {
   std::shared_ptr<DataCacheConfig> dataCacheConfig_;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
   velox::dwrf::BufferedInputFactory* bufferedInputFactory_ = nullptr;
-  std::function<velox::dwrf::BufferedInputFactory* FOLLY_NONNULL()>
+  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
       bufferedInputFactorySource_;
 
  public:
@@ -460,7 +460,8 @@ class ReaderOptions {
     return *this;
   }
   ReaderOptions& setBufferedInputFactorySource(
-      std::function<velox::dwrf::BufferedInputFactory* FOLLY_NONNULL()> factory) {
+      std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
+          factory) {
     bufferedInputFactorySource_ = factory;
     return *this;
   }
@@ -536,7 +537,8 @@ class ReaderOptions {
     return bufferedInputFactory_;
   }
 
-  std::function<velox::dwrf::BufferedInputFactory* FOLLY_NONNULL ()> getBufferedInputFactorySource() const {
+  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
+  getBufferedInputFactorySource() const {
     return bufferedInputFactorySource_;
   }
 };
