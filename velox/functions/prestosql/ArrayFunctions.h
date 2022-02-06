@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/functions/Udf.h"
+#include "velox/type/Conversions.h"
 
 namespace facebook::velox::functions {
 
@@ -59,8 +60,8 @@ struct ArrayMinMaxFunction {
     if (!array.mayHaveNulls()) {
       // Input array does not have nulls.
       auto currentValue = *array[0];
-      for (const auto& item : array) {
-        update(currentValue, item.value());
+      for (auto i = 1; i < array.size(); i++) {
+        update(currentValue, array[i].value());
       }
       assign(out, currentValue);
       return true;
@@ -73,13 +74,13 @@ struct ArrayMinMaxFunction {
     }
 
     auto currentValue = it->value();
-    it++;
+    ++it;
     while (it != array.end()) {
       if (!it->has_value()) {
         return false;
       }
       update(currentValue, it->value());
-      it++;
+      ++it;
     }
 
     assign(out, currentValue);
@@ -94,9 +95,65 @@ template <typename TExecCtx>
 struct ArrayMaxFunction : public ArrayMinMaxFunction<TExecCtx, true> {};
 
 template <typename T>
-inline void registerArrayMinMaxFunctions() {
-  registerFunction<ArrayMinFunction, T, Array<T>>({"array_min"});
-  registerFunction<ArrayMaxFunction, T, Array<T>>({"array_max"});
+VELOX_UDF_BEGIN(array_join)
+
+template <typename C>
+void writeValue(out_type<velox::Varchar>& result, const C& value) {
+  bool nullOutput = false;
+  result +=
+      util::Converter<CppToType<velox::Varchar>::typeKind, void, false>::cast(
+          value, nullOutput);
 }
+
+template <typename C>
+void writeOutput(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Varchar>& delim,
+    const C& value,
+    bool& firstNonNull) {
+  if (!firstNonNull) {
+    writeValue(result, delim);
+  }
+  writeValue(result, value);
+  firstNonNull = false;
+}
+
+void createOutputString(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Array<T>>& inputArray,
+    const arg_type<velox::Varchar>& delim,
+    std::optional<std::string> nullReplacement = std::nullopt) {
+  bool firstNonNull = true;
+  if (inputArray.size() == 0) {
+    return;
+  }
+
+  for (const auto& entry : inputArray) {
+    if (entry.has_value()) {
+      writeOutput(result, delim, entry.value(), firstNonNull);
+    } else if (nullReplacement.has_value()) {
+      writeOutput(result, delim, nullReplacement.value(), firstNonNull);
+    }
+  }
+}
+
+FOLLY_ALWAYS_INLINE bool call(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Array<T>>& inputArray,
+    const arg_type<velox::Varchar>& delim) {
+  createOutputString(result, inputArray, delim);
+  return true;
+}
+
+FOLLY_ALWAYS_INLINE bool call(
+    out_type<velox::Varchar>& result,
+    const arg_type<velox::Array<T>>& inputArray,
+    const arg_type<velox::Varchar>& delim,
+    const arg_type<velox::Varchar>& nullReplacement) {
+  createOutputString(result, inputArray, delim, nullReplacement.getString());
+  return true;
+}
+
+VELOX_UDF_END();
 
 } // namespace facebook::velox::functions

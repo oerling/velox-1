@@ -338,16 +338,16 @@ void printVeloxFunctions() {
   printer.footer();
 }
 
-/// Takes a super-set of scalar and aggregate function names and prints coverage
-/// map showing which of these functions are available in Velox.
+/// Takes a super-set of simple, vector and aggregate function names and prints
+/// coverage map showing which of these functions are available in Velox.
 void printCoverageMap(
     const std::vector<std::string>& scalarNames,
     const std::vector<std::string>& aggNames) {
-  auto veloxScalarFunctions = getFunctionSignatures();
+  auto veloxFunctions = getFunctionSignatures();
 
   std::unordered_set<std::string> veloxNames;
-  veloxNames.reserve(veloxScalarFunctions.size());
-  for (const auto& func : veloxScalarFunctions) {
+  veloxNames.reserve(veloxFunctions.size());
+  for (const auto& func : veloxFunctions) {
     veloxNames.emplace(func.first);
   }
 
@@ -404,7 +404,7 @@ int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   // Register all simple and vector scalar functions.
-  functions::prestosql::registerAllFunctions();
+  functions::prestosql::registerAllScalarFunctions();
 
   if (FLAGS_all) {
     printCoverageMapForAll();

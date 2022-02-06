@@ -3,15 +3,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
+import configparser
 import io
 import os
+from typing import List
 
 from .builder import (
     AutoconfBuilder,
     Boost,
-    CargoBuilder,
     CMakeBuilder,
     BistroBuilder,
     Iproute2Builder,
@@ -23,6 +22,7 @@ from .builder import (
     SqliteBuilder,
     CMakeBootStrapBuilder,
 )
+from .cargo import CargoBuilder
 from .expr import parse_expr
 from .fetcher import (
     ArchiveFetcher,
@@ -34,11 +34,6 @@ from .fetcher import (
 )
 from .py_wheel_builder import PythonWheelBuilder
 
-
-try:
-    import configparser
-except ImportError:
-    import ConfigParser as configparser
 
 REQUIRED = "REQUIRED"
 OPTIONAL = "OPTIONAL"
@@ -69,6 +64,7 @@ SCHEMA = {
             "builder": REQUIRED,
             "subdir": OPTIONAL,
             "build_in_src_dir": OPTIONAL,
+            "job_weight_mib": OPTIONAL,
         },
     },
     "msbuild": {"optional_section": True, "fields": {"project": REQUIRED}},
@@ -85,7 +81,9 @@ SCHEMA = {
     "autoconf.envcmd.LDFLAGS": {"optional_section": True},
     "rpms": {"optional_section": True},
     "debs": {"optional_section": True},
+    "homebrew": {"optional_section": True},
     "preinstalled.env": {"optional_section": True},
+    "bootstrap.args": {"optional_section": True},
     "b2.args": {"optional_section": True},
     "make.build_args": {"optional_section": True},
     "make.install_args": {"optional_section": True},
@@ -106,12 +104,16 @@ ALLOWED_EXPR_SECTIONS = [
     "dependencies",
     "make.build_args",
     "make.install_args",
+    "bootstrap.args",
     "b2.args",
     "download",
     "git",
     "install.files",
     "rpms",
     "debs",
+    "shipit.pathmap",
+    "shipit.strip",
+    "homebrew",
 ]
 
 
@@ -246,7 +248,25 @@ class ManifestParser(object):
 
         return defval
 
-    def get_section_as_args(self, section, ctx=None):
+    def get_dependencies(self, ctx):
+        dep_list = list(self.get_section_as_dict("dependencies", ctx).keys())
+        dep_list.sort()
+        builder = self.get("build", "builder", ctx=ctx)
+        if builder in ("cmake", "python-wheel"):
+            dep_list.insert(0, "cmake")
+        elif builder == "autoconf" and self.name not in (
+            "autoconf",
+            "libtool",
+            "automake",
+        ):
+            # they need libtool and its deps (automake, autoconf) so add
+            # those as deps (but obviously not if we're building those
+            # projects themselves)
+            dep_list.insert(0, "libtool")
+
+        return dep_list
+
+    def get_section_as_args(self, section, ctx=None) -> List[str]:
         """Intended for use with the make.[build_args/install_args] and
         autoconf.args sections, this method collects the entries and returns an
         array of strings.
@@ -290,9 +310,8 @@ class ManifestParser(object):
                 res.append((key, value))
         return res
 
-    def get_section_as_dict(self, section, ctx=None):
+    def get_section_as_dict(self, section, ctx):
         d = {}
-        ctx = ctx or {}
 
         for s in self._config.sections():
             if s != section:
@@ -341,6 +360,7 @@ class ManifestParser(object):
         return {
             "rpm": self.get_section_as_args("rpms", ctx),
             "deb": self.get_section_as_args("debs", ctx),
+            "homebrew": self.get_section_as_args("homebrew", ctx),
         }
 
     def _is_satisfied_by_preinstalled_environment(self, ctx):
@@ -367,7 +387,7 @@ class ManifestParser(object):
             and build_options.fbsource_dir
             and self.shipit_project
         ):
-            return SimpleShipitTransformerFetcher(build_options, self)
+            return SimpleShipitTransformerFetcher(build_options, self, ctx)
 
         if (
             self.fbsource_path
@@ -399,7 +419,7 @@ class ManifestParser(object):
             # We need to defer this import until now to avoid triggering
             # a cycle when the facebook/__init__.py is loaded.
             try:
-                from getdeps.facebook.lfs import LFSCachingArchiveFetcher
+                from .facebook.lfs import LFSCachingArchiveFetcher
 
                 return LFSCachingArchiveFetcher(
                     build_options, self, url, self.get("download", "sha256", ctx=ctx)
@@ -571,7 +591,15 @@ class ManifestContext(object):
     This object should be passed as the `ctx` parameter in ManifestParser.get() calls.
     """
 
-    ALLOWED_VARIABLES = {"os", "distro", "distro_vers", "fb", "test"}
+    ALLOWED_VARIABLES = {
+        "os",
+        "distro",
+        "distro_vers",
+        "fb",
+        "fbsource",
+        "test",
+        "shared_libs",
+    }
 
     def __init__(self, ctx_dict):
         assert set(ctx_dict.keys()) == self.ALLOWED_VARIABLES

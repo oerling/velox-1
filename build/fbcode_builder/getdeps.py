@@ -4,8 +4,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 import argparse
 import json
 import os
@@ -92,13 +90,16 @@ class ProjectCmdBase(SubCmd):
                 )
             args.project = opts.repo_project
 
-        ctx_gen = opts.get_context_generator(facebook_internal=args.facebook_internal)
+        ctx_gen = opts.get_context_generator()
         if args.test_dependencies:
             ctx_gen.set_value_for_all_projects("test", "on")
         if args.enable_tests:
             ctx_gen.set_value_for_project(args.project, "test", "on")
         else:
             ctx_gen.set_value_for_project(args.project, "test", "off")
+
+        if opts.shared_libs:
+            ctx_gen.set_value_for_all_projects("shared_libs", "on")
 
         loader = ManifestLoader(opts, ctx_gen)
         self.process_project_dir_arguments(args, loader)
@@ -346,10 +347,27 @@ class InstallSysDepsCmd(ProjectCmdBase):
             help="Don't install, just print the commands specs we would run",
         )
         parser.add_argument(
-            "--package-type",
-            choices=["rpm", "deb"],
+            "--os-type",
+            help="Filter to just this OS type to run",
+            choices=["linux", "darwin", "windows"],
+            action="store",
+            dest="ostype",
             default=None,
-            help="Allow overriding the package type so can see deb from centos",
+        )
+        parser.add_argument(
+            "--distro",
+            help="Filter to just this distro to run",
+            choices=["ubuntu", "centos_stream"],
+            action="store",
+            dest="distro",
+            default=None,
+        )
+        parser.add_argument(
+            "--distro-version",
+            help="Filter to just this distro version",
+            action="store",
+            dest="distrovers",
+            default=None,
         )
 
     def run_project_cmd(self, args, loader, manifest):
@@ -357,6 +375,27 @@ class InstallSysDepsCmd(ProjectCmdBase):
             projects = loader.manifests_in_dependency_order()
         else:
             projects = [manifest]
+
+        rebuild_ctx_gen = False
+        if args.ostype:
+            loader.build_opts.host_type.ostype = args.ostype
+            loader.build_opts.host_type.distro = None
+            loader.build_opts.host_type.distrovers = None
+            rebuild_ctx_gen = True
+
+        if args.distro:
+            loader.build_opts.host_type.distro = args.distro
+            loader.build_opts.host_type.distrovers = None
+            rebuild_ctx_gen = True
+
+        if args.distrovers:
+            loader.build_opts.host_type.distrovers = args.distrovers
+            rebuild_ctx_gen = True
+
+        if rebuild_ctx_gen:
+            loader.ctx_gen = loader.build_opts.get_context_generator()
+
+        manager = loader.build_opts.host_type.get_package_manager()
 
         all_packages = {}
         for m in projects:
@@ -367,20 +406,20 @@ class InstallSysDepsCmd(ProjectCmdBase):
                 merged += v
                 all_packages[k] = merged
 
-        if args.package_type:
-            manager = args.package_type
-        else:
-            manager = loader.build_opts.host_type.get_package_manager()
-
         cmd_args = None
         if manager == "rpm":
-            packages = sorted(list(set(all_packages["rpm"])))
+            packages = sorted(set(all_packages["rpm"]))
             if packages:
                 cmd_args = ["dnf", "install", "-y"] + packages
         elif manager == "deb":
-            packages = sorted(list(set(all_packages["deb"])))
+            packages = sorted(set(all_packages["deb"]))
             if packages:
                 cmd_args = ["apt", "install", "-y"] + packages
+        elif manager == "homebrew":
+            packages = sorted(set(all_packages["homebrew"]))
+            if packages:
+                cmd_args = ["brew", "install"] + packages
+
         else:
             host_tuple = loader.build_opts.host_type.as_tuple_string()
             print(
@@ -581,7 +620,10 @@ class BuildCmd(ProjectCmdBase):
                 elif args.verbose:
                     print("found good %s" % built_marker)
 
-            install_dirs.append(inst_dir)
+            # Paths are resolved from front. We prepend rather than append as
+            # the last project in topo order is the project itself, which
+            # should be first in the path, then its deps and so on.
+            install_dirs.insert(0, inst_dir)
 
     def compute_dep_change_status(self, m, built_marker, loader):
         reconfigure = False
@@ -589,7 +631,7 @@ class BuildCmd(ProjectCmdBase):
         st = os.lstat(built_marker)
 
         ctx = loader.ctx_gen.get_context(m.name)
-        dep_list = sorted(m.get_section_as_dict("dependencies", ctx).keys())
+        dep_list = m.get_dependencies(ctx)
         for dep in dep_list:
             if reconfigure and sources_changed:
                 break
@@ -705,6 +747,12 @@ class BuildCmd(ProjectCmdBase):
                 "when compiling the current project and all its deps. "
                 'e.g: \'{"CMAKE_CXX_FLAGS": "--bla"}\''
             ),
+        )
+        parser.add_argument(
+            "--shared-libs",
+            help="Build shared libraries if possible",
+            action="store_true",
+            default=False,
         )
 
 
@@ -891,7 +939,7 @@ jobs:
             out.write("  build:\n")
             out.write("    runs-on: %s\n" % runs_on)
             out.write("    steps:\n")
-            out.write("    - uses: actions/checkout@v1\n")
+            out.write("    - uses: actions/checkout@v2\n")
 
             if build_opts.is_windows():
                 # cmake relies on BOOST_ROOT but GH deliberately don't set it in order
@@ -904,7 +952,7 @@ jobs:
                 # https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
                 out.write("    - name: Export boost environment\n")
                 out.write(
-                    '      run: "echo BOOST_ROOT=%BOOST_ROOT_1_69_0% >> %GITHUB_ENV%"\n'
+                    '      run: "echo BOOST_ROOT=%BOOST_ROOT_1_78_0% >> %GITHUB_ENV%"\n'
                 )
                 out.write("      shell: cmd\n")
 

@@ -16,6 +16,10 @@
 
 #pragma once
 
+#include <memory>
+
+#include <velox/expression/ComplexProxyTypes.h>
+#include "velox/common/base/Portability.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/expression/VectorUdfTypeSystem.h"
@@ -23,8 +27,18 @@
 
 namespace facebook::velox::exec {
 
+template <typename T>
+struct IsArrayProxy {
+  static constexpr bool value = false;
+};
+
+template <typename T>
+struct IsArrayProxy<ArrayProxy<T>> {
+  static constexpr bool value = true;
+};
+
 template <typename FUNC>
-class VectorAdapter : public VectorFunction {
+class SimpleFunctionAdapter : public VectorFunction {
   using T = typename FUNC::exec_return_type;
   using return_type_traits = CppToType<typename FUNC::return_type>;
   template <int32_t POSITION>
@@ -96,7 +110,7 @@ class VectorAdapter : public VectorFunction {
   }
 
  public:
-  explicit VectorAdapter(
+  explicit SimpleFunctionAdapter(
       const core::QueryConfig& config,
       const std::vector<VectorPtr>& constantInputs,
       std::shared_ptr<const Type> returnType)
@@ -201,15 +215,36 @@ class VectorAdapter : public VectorFunction {
               bool allNotNull,
               const DecodedArgs& packed,
               TReader&... readers) const {
-    auto* oneUnpacked = packed.at(POSITION);
-    auto oneReader = VectorReader<arg_at<POSITION>>(oneUnpacked);
+    if constexpr (isVariadicType<arg_at<POSITION>>::value) {
+      // This should already be statically checked by the UDFHolder used to wrap
+      // the simple function, but checking again here just in case.
+      static_assert(
+          POSITION == FUNC::num_args - 1,
+          "Variadic args can only be used as the last argument to a function.");
+      auto oneReader = VectorReader<arg_at<POSITION>>(packed, POSITION);
 
-    // context->nullPruned() is true after rows with nulls have been
-    // pruned out of 'rows', so we won't be seeing any more nulls here.
-    bool nextNonNull = applyContext.context->nullsPruned() ||
-        (allNotNull && !oneUnpacked->mayHaveNulls());
-    unpack<POSITION + 1>(
-        applyContext, nextNonNull, packed, readers..., oneReader);
+      bool nextNonNull = applyContext.context->nullsPruned();
+      if (!nextNonNull && allNotNull) {
+        nextNonNull = true;
+        for (auto i = POSITION; i < packed.size(); i++) {
+          nextNonNull &= !packed.at(i)->mayHaveNulls();
+        }
+      }
+
+      unpack<POSITION + 1>(
+          applyContext, nextNonNull, packed, readers..., oneReader);
+    } else {
+      auto* oneUnpacked = packed.at(POSITION);
+      auto oneReader = VectorReader<arg_at<POSITION>>(oneUnpacked);
+
+      // context->nullPruned() is true after rows with nulls have been
+      // pruned out of 'rows', so we won't be seeing any more nulls here.
+      bool nextNonNull = applyContext.context->nullsPruned() ||
+          (allNotNull && !oneUnpacked->mayHaveNulls());
+
+      unpack<POSITION + 1>(
+          applyContext, nextNonNull, packed, readers..., oneReader);
+    }
   }
 
   // unpacking zips like const char* notnull, const T* values
@@ -240,68 +275,83 @@ class VectorAdapter : public VectorFunction {
         return_type_traits::isPrimitiveType &&
         return_type_traits::isFixedWidth &&
         return_type_traits::typeKind != TypeKind::BOOLEAN) {
-      // "writer" gets in the way for primitives, so we specialize
-      uint64_t* nn = nullptr;
+      uint64_t* nullBuffer = nullptr;
       auto* data = applyContext.result->mutableRawValues();
-      if (allNotNull) {
-        applyContext.applyToSelectedNoThrow([&](auto row) {
-          bool notNull = doApplyNotNull<0>(row, data[row], readers...);
-          if (!notNull) {
-            if (!nn) {
-              nn = applyContext.result->mutableRawNulls();
+      auto writeResult = [&applyContext, &nullBuffer, &data](
+                             auto row, bool notNull, auto out) INLINE_LAMBDA {
+        if (notNull) {
+          data[row] = out;
+          if (applyContext.result->rawNulls()) {
+            if (!nullBuffer) {
+              nullBuffer = applyContext.result->mutableRawNulls();
             }
-            bits::setNull(nn, row);
-          } else {
-            if (applyContext.result->rawNulls()) {
-              if (!nn) {
-                nn = applyContext.result->mutableRawNulls();
-              }
-              bits::clearNull(nn, row);
-            }
+            bits::clearNull(nullBuffer, row);
           }
+        } else {
+          if (!nullBuffer) {
+            nullBuffer = applyContext.result->mutableRawNulls();
+          }
+          bits::setNull(nullBuffer, row);
+        }
+      };
+      if (allNotNull) {
+        applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
+          // Passing a stack variable have shown to be boost the performance of
+          // functions that repeatedly update the output.
+          // The opposite optimization (eliminating the temp) is easier to do
+          // by the compiler (assuming the function call is inlined).
+          typename return_type_traits::NativeType out;
+          bool notNull = doApplyNotNull<0>(row, out, readers...);
+          writeResult(row, notNull, out);
         });
       } else {
-        applyContext.applyToSelectedNoThrow([&](auto row) {
-          bool notNull = doApply<0>(row, data[row], readers...);
-          if (!notNull) {
-            if (!nn) {
-              nn = applyContext.result->mutableRawNulls();
-            }
-            bits::setNull(nn, row);
-          } else {
-            if (applyContext.result->rawNulls()) {
-              if (!nn) {
-                nn = applyContext.result->mutableRawNulls();
-              }
-              bits::clearNull(nn, row);
-            }
-          }
+        applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
+          typename return_type_traits::NativeType out;
+          bool notNull = doApply<0>(row, out, readers...);
+          writeResult(row, notNull, out);
         });
       }
     } else {
       if (allNotNull) {
         if (applyContext.allAscii) {
-          applyContext.applyToSelectedNoThrow([&](auto row) {
-            applyContext.resultWriter.setOffset(row);
-            applyContext.resultWriter.commit(
-                static_cast<char>(doApplyAsciiNotNull<0>(
-                    row, applyContext.resultWriter.current(), readers...)));
+          applyUdf(applyContext, [&](auto& out, auto row) INLINE_LAMBDA {
+            return doApplyAsciiNotNull<0>(row, out, readers...);
           });
         } else {
-          applyContext.applyToSelectedNoThrow([&](auto row) {
-            applyContext.resultWriter.setOffset(row);
-            applyContext.resultWriter.commit(
-                static_cast<char>(doApplyNotNull<0>(
-                    row, applyContext.resultWriter.current(), readers...)));
+          applyUdf(applyContext, [&](auto& out, auto row) INLINE_LAMBDA {
+            return doApplyNotNull<0>(row, out, readers...);
           });
         }
       } else {
-        applyContext.applyToSelectedNoThrow([&](auto row) {
-          applyContext.resultWriter.setOffset(row);
-          applyContext.resultWriter.commit(static_cast<char>(doApply<0>(
-              row, applyContext.resultWriter.current(), readers...)));
+        applyUdf(applyContext, [&](auto& out, auto row) INLINE_LAMBDA {
+          return doApply<0>(row, out, readers...);
         });
       }
+    }
+  }
+
+  template <typename Func>
+  void applyUdf(ApplyContext& applyContext, Func func) const {
+    if constexpr (IsArrayProxy<T>::value) {
+      // An optimization for arrayProxy that force the localization of the
+      // output proxy.
+      auto& writerProxy = applyContext.resultWriter.proxy_;
+
+      applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
+        applyContext.resultWriter.setOffset(row);
+        // Force local copy of proxy.
+        auto localProxy = writerProxy;
+        auto notNull = func(localProxy, row);
+        writerProxy = localProxy;
+        applyContext.resultWriter.commit(notNull);
+      });
+      applyContext.resultWriter.finish();
+    } else {
+      applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
+        applyContext.resultWriter.setOffset(row);
+        applyContext.resultWriter.commit(
+            func(applyContext.resultWriter.current(), row));
+      });
     }
   }
 
@@ -365,7 +415,7 @@ class VectorAdapter : public VectorFunction {
     }
   }
 
-  // For default null behavior, Terminate by with ScalarFunction::call.
+  // For default null behavior, Terminate by with UDFHolder::call.
   template <
       size_t POSITION,
       typename... Values,
@@ -377,7 +427,7 @@ class VectorAdapter : public VectorFunction {
     return (*fn_).call(target, values...);
   }
 
-  // For NOT default null behavior, terminate with ScalarFunction::callNullable.
+  // For NOT default null behavior, terminate with UDFHolder::callNullable.
   template <
       size_t POSITION,
       typename... Values,
@@ -412,7 +462,7 @@ class VectorAdapter : public VectorFunction {
     return doApplyNotNull<POSITION + 1>(idx, target, extra..., v0);
   }
 
-  // For default null behavior, Terminate by with ScalarFunction::call.
+  // For default null behavior, Terminate by with UDFHolder::call.
   template <
       size_t POSITION,
       typename... Values,
@@ -448,29 +498,21 @@ class VectorAdapter : public VectorFunction {
   }
 };
 
-template <typename FUNC>
-class VectorAdapterFactoryImpl : public VectorAdapterFactory {
+template <typename UDFHolder>
+class SimpleFunctionAdapterFactoryImpl : public SimpleFunctionAdapterFactory {
  public:
-  explicit VectorAdapterFactoryImpl(std::shared_ptr<const Type> returnType)
+  // Exposed for use in FunctionRegistry
+  using Metadata = typename UDFHolder::Metadata;
+
+  explicit SimpleFunctionAdapterFactoryImpl(
+      std::shared_ptr<const Type> returnType)
       : returnType_(std::move(returnType)) {}
 
-  std::unique_ptr<VectorFunction> getVectorInterpreter(
+  std::unique_ptr<VectorFunction> createVectorFunction(
       const core::QueryConfig& config,
       const std::vector<VectorPtr>& constantInputs) const override {
-    return std::make_unique<VectorAdapter<FUNC>>(
+    return std::make_unique<SimpleFunctionAdapter<UDFHolder>>(
         config, constantInputs, returnType_);
-  }
-
-  const std::shared_ptr<const Type> returnType() const override {
-    return returnType_;
-  }
-
-  bool isDeterministic() {
-    return FUNC::isDeterministic;
-  }
-
-  bool isDefaultNullBehavior() {
-    return FUNC::is_default_null_behavior;
   }
 
  private:

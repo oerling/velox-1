@@ -12,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_library(velox_temp_path TempFilePath.cpp TempDirectoryPath.cpp)
+
+target_link_libraries(velox_temp_path velox_exception)
+
 add_library(
   velox_exec_test_util
-  FunctionUtils.cpp
-  TempFilePath.cpp
-  TempDirectoryPath.cpp
-  PlanBuilder.cpp
-  QueryAssertions.cpp
-  Cursor.cpp
-  OperatorTestBase.cpp
-  HiveConnectorTestBase.cpp)
+  FunctionUtils.cpp PlanBuilder.cpp QueryAssertions.cpp Cursor.cpp
+  OperatorTestBase.cpp HiveConnectorTestBase.cpp)
 
 target_link_libraries(
   velox_exec_test_util
+  velox_temp_path
   duckdb
   velox_core
   velox_exception

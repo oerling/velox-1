@@ -11,13 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_library(velox_vector_test_lib VectorMaker.cpp)
+add_library(velox_vector_test_lib VectorMaker.cpp VectorTestBase.cpp)
 
 target_link_libraries(velox_vector_test_lib velox_vector)
 
 add_executable(
-  velox_vector_test VectorMakerTest.cpp VectorTest.cpp DecodedVectorTest.cpp
-                    SelectivityVectorTest.cpp EnsureWritableVectorTest.cpp)
+  velox_vector_test
+  VectorMakerTest.cpp VectorTest.cpp DecodedVectorTest.cpp
+  SelectivityVectorTest.cpp EnsureWritableVectorTest.cpp
+  MayHaveNullsRecursiveTest.cpp)
 
 add_test(velox_vector_test velox_vector_test)
 
@@ -45,7 +47,7 @@ target_link_libraries(
   ${FMT}
   dl)
 
-add_executable(simple_vector_test SimpleVectorTest.cpp)
+add_executable(simple_vector_test SimpleVectorTest.cpp ToStringUtilityTest.cpp)
 
 add_test(simple_vector_test simple_vector_test)
 

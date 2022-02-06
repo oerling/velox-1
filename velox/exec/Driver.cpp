@@ -61,7 +61,8 @@ DriverCtx::DriverCtx(
     std::shared_ptr<Task> _task,
     int _driverId,
     int _pipelineId,
-    int32_t _numDrivers)
+    uint32_t _splitGroupId,
+    uint32_t _partitionId)
     : task(_task),
       execCtx(std::make_unique<core::ExecCtx>(
           task->addDriverPool(),
@@ -70,7 +71,8 @@ DriverCtx::DriverCtx(
           std::make_unique<SimpleExpressionEvaluator>(execCtx.get())),
       driverId(_driverId),
       pipelineId(_pipelineId),
-      numDrivers(_numDrivers) {}
+      splitGroupId(_splitGroupId),
+      partitionId(_partitionId) {}
 
 velox::memory::MemoryPool* FOLLY_NONNULL DriverCtx::addOperatorPool() {
   return task->addOperatorPool(execCtx->pool());
@@ -169,7 +171,7 @@ class CancelGuard {
       // Terminate requested via Task. The Driver is not on
       // thread but 'terminated_' is set, hence no other threads will
       // enter. onTerminateCalled will be true if both runtime error and
-      // terminate requested via CancelPool.
+      // terminate requested via Task.
       if (!onTerminateCalled) {
         onTerminate_(reason);
       }
@@ -183,6 +185,14 @@ class CancelGuard {
   bool isThrow_ = true;
 };
 } // namespace
+
+Driver::~Driver() {
+  if (task_) {
+    LOG(ERROR) << "Driver destructed while still in Task: "
+               << task_->toString();
+    DLOG(FATAL) << "Driver destructed while referencing task";
+  }
+}
 
 // static
 void Driver::enqueue(std::shared_ptr<Driver> driver) {
@@ -290,7 +300,9 @@ StopReason Driver::runInternal(
   auto stop = !task ? StopReason::kTerminate : task->enter(state_);
   if (stop != StopReason::kNone) {
     if (stop == StopReason::kTerminate) {
-      // ctx_ still has a reference to the Task.
+      // ctx_ still has a reference to the Task. 'this' is not on
+      // thread from the Task's viewpoint, hence no need to call
+      // close().
       ctx_->task->setError(std::make_exception_ptr(VeloxRuntimeError(
           __FILE__,
           __LINE__,
@@ -300,18 +312,14 @@ StopReason Driver::runInternal(
           error_source::kErrorSourceRuntime,
           error_code::kInvalidState,
           false)));
-      close();
     }
     return stop;
   }
 
-  CancelGuard guard(task_.get(), &state_, [this](StopReason reason) {
-    // Copy 'task_' to a local to protect against other threads
-    // unhooking 'this' from 'task_'. 'task_' will in this way stay
-    // live so that error state can be set etc.
-    auto taskPtrCopy = task_;
-    if (taskPtrCopy && reason == StopReason::kTerminate) {
-      taskPtrCopy->setError(std::make_exception_ptr(VeloxRuntimeError(
+  CancelGuard guard(task_.get(), &state_, [&](StopReason reason) {
+    // This is run on error or cancel exit.
+    if (reason == StopReason::kTerminate) {
+      task->setError(std::make_exception_ptr(VeloxRuntimeError(
           __FILE__,
           __LINE__,
           __FUNCTION__,
@@ -408,12 +416,10 @@ StopReason Driver::runInternal(
                 guard.notThrown();
                 return StopReason::kBlock;
               }
-              if (op->isFinishing()) {
-                if (!nextOp->isFinishing()) {
-                  CpuWallTimer timer(nextOp->stats().finishTiming);
-                  nextOp->finish();
-                  break;
-                }
+              if (op->isFinished()) {
+                CpuWallTimer timer(nextOp->stats().finishTiming);
+                nextOp->noMoreInput();
+                break;
               }
             }
           }
@@ -426,19 +432,13 @@ StopReason Driver::runInternal(
             CpuWallTimer timer(op->stats().getOutputTiming);
             op->getOutput();
           }
-          pushdownFilters(i);
-          continue;
-        }
-        if (i == 0) {
-          // The source is not blocked and not interrupted.
-          if (op->isFinishing()) {
+          if (op->isFinished()) {
             guard.notThrown();
             close();
             return StopReason::kAtEnd;
           }
-          CpuWallTimer timer(op->stats().finishTiming);
-          op->finish();
-          break;
+          pushdownFilters(i);
+          continue;
         }
       }
     }
@@ -507,21 +507,25 @@ void Driver::close() {
     // Already closed.
     return;
   }
+  if (!isOnThread() && !isTerminated()) {
+    LOG(FATAL) << "Driver::close is only allowed from the Driver's thread";
+  }
   addStatsToTask();
   for (auto& op : operators_) {
     op->close();
   }
-  Task::removeDriver(task_, this);
-  task_ = nullptr;
+  auto task = std::move(task_);
+
+  Task::removeDriver(task, this);
 }
 
-bool Driver::terminate() {
-  auto stop = task_->enterForTerminate(state_);
-  if (stop == StopReason::kTerminate) {
-    close();
-    return true;
+void Driver::closeByTask() {
+  VELOX_CHECK(isTerminated());
+  addStatsToTask();
+  for (auto& op : operators_) {
+    op->close();
   }
-  return false;
+  task_ = nullptr;
 }
 
 bool Driver::mayPushdownAggregation(Operator* aggregation) const {
@@ -632,5 +636,24 @@ SuspendedSection::~SuspendedSection() {
 std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
 }
+
+std::string blockingReasonToString(BlockingReason reason) {
+  switch (reason) {
+    case BlockingReason::kNotBlocked:
+      return "kNotBlocked";
+    case BlockingReason::kWaitForConsumer:
+      return "kWaitForConsumer";
+    case BlockingReason::kWaitForSplit:
+      return "kWaitForSplit";
+    case BlockingReason::kWaitForExchange:
+      return "kWaitForExchange";
+    case BlockingReason::kWaitForJoinBuild:
+      return "kWaitForJoinBuild";
+    case BlockingReason::kWaitForMemory:
+      return "kWaitForMemory";
+  }
+  VELOX_UNREACHABLE();
+  return "";
+};
 
 } // namespace facebook::velox::exec

@@ -116,17 +116,19 @@ class MergeJoinTest : public OperatorTestBase {
     createDuckDbTable("t", left);
     createDuckDbTable("u", right);
 
-    auto plan = PlanBuilder()
+    // Test INNER join.
+    auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    auto plan = PlanBuilder(planNodeIdGenerator)
                     .values(left)
                     .mergeJoin(
-                        {0},
-                        {0},
-                        PlanBuilder()
+                        {"c0"},
+                        {"u_c0"},
+                        PlanBuilder(planNodeIdGenerator)
                             .values(right)
-                            .project({"c0", "c1"}, {"u_c0", "u_c1"})
+                            .project({"c0 AS u_c0", "c1 AS u_c1"})
                             .planNode(),
                         "",
-                        {0, 1, 3},
+                        {"c0", "c1", "u_c1"},
                         core::JoinType::kInner)
                     .planNode();
 
@@ -144,6 +146,37 @@ class MergeJoinTest : public OperatorTestBase {
     assertQuery(
         makeCursorParameters(plan, 10'000),
         "SELECT t.c0, t.c1, u.c1 FROM t, u WHERE t.c0 = u.c0");
+
+    // Test LEFT join.
+    planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    plan = PlanBuilder(planNodeIdGenerator)
+               .values(left)
+               .mergeJoin(
+                   {"c0"},
+                   {"u_c0"},
+                   PlanBuilder(planNodeIdGenerator)
+                       .values(right)
+                       .project({"c0 as u_c0", "c1 as u_c1"})
+                       .planNode(),
+                   "",
+                   {"c0", "c1", "u_c1"},
+                   core::JoinType::kLeft)
+               .planNode();
+
+    // Use very small output batch size.
+    assertQuery(
+        makeCursorParameters(plan, 16),
+        "SELECT t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0");
+
+    // Use regular output batch size.
+    assertQuery(
+        makeCursorParameters(plan, 1024),
+        "SELECT t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0");
+
+    // Use very large output batch size.
+    assertQuery(
+        makeCursorParameters(plan, 10'000),
+        "SELECT t.c0, t.c1, u.c1 FROM t LEFT JOIN u ON t.c0 = u.c0");
   }
 };
 
@@ -186,17 +219,19 @@ TEST_F(MergeJoinTest, aggregationOverJoin) {
       makeRowVector({"t_c0"}, {makeFlatVector<int32_t>({1, 2, 3, 4, 5})});
   auto right = makeRowVector({"u_c0"}, {makeFlatVector<int32_t>({2, 4, 6})});
 
-  auto plan = PlanBuilder()
-                  .values({left})
-                  .mergeJoin(
-                      {0},
-                      {0},
-                      PlanBuilder().values({right}).planNode(),
-                      "",
-                      {0, 1},
-                      core::JoinType::kInner)
-                  .singleAggregation({}, {"count(1)"})
-                  .planNode();
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values({left})
+          .mergeJoin(
+              {"t_c0"},
+              {"u_c0"},
+              PlanBuilder(planNodeIdGenerator).values({right}).planNode(),
+              "",
+              {"t_c0", "u_c0"},
+              core::JoinType::kInner)
+          .singleAggregation({}, {"count(1)"})
+          .planNode();
 
   auto result = readSingleValue(plan);
   ASSERT_FALSE(result.isNull());

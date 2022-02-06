@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-#include "VectorFunctionRegistry.h"
+#include "velox/common/file/benchmark/ReadBenchmark.h"
 
-namespace facebook::velox::exec {
+using namespace facebook::velox;
 
-AdaptedVectorFunctionRegistry& AdaptedVectorFunctions() {
-  static AdaptedVectorFunctionRegistry instance;
-  return instance;
+int main(int argc, char** argv) {
+  folly::init(&argc, &argv, false);
+  ReadBenchmark bm;
+  bm.run();
 }
-
-} // namespace facebook::velox::exec

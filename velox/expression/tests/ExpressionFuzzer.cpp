@@ -19,10 +19,10 @@
 #include <exception>
 
 #include "velox/common/base/Exceptions.h"
-#include "velox/core/ScalarFunctionRegistry.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/FunctionSignature.h"
 #include "velox/expression/SignatureBinder.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/expression/tests/ExpressionFuzzer.h"
 #include "velox/expression/tests/VectorFuzzer.h"
@@ -145,11 +145,10 @@ void compareVectors(const VectorPtr& vec1, const VectorPtr& vec2) {
 std::optional<bool> isDeterministic(
     const std::string& functionName,
     const std::vector<TypePtr>& argTypes) {
-  // Check if this is a scalar function.
-  auto key = core::FunctionKey(functionName, argTypes);
-  if (core::ScalarFunctions().Has(key)) {
-    auto scalarFunction = core::ScalarFunctions().Create(key);
-    return scalarFunction->isDeterministic();
+  // Check if this is a simple function.
+  if (auto simpleFunctionEntry =
+          exec::SimpleFunctions().resolveFunction(functionName, argTypes)) {
+    return simpleFunctionEntry->getMetadata()->isDeterministic();
   }
 
   // Vector functions are a bit more complicated. We need to fetch the list of
@@ -321,6 +320,8 @@ class ExpressionFuzzer {
     registerFuncOverride(&ExpressionFuzzer::generateLikeArgs, "like");
     registerFuncOverride(
         &ExpressionFuzzer::generateEmptyApproxSetArgs, "empty_approx_set");
+    registerFuncOverride(
+        &ExpressionFuzzer::generateRegexpReplaceArgs, "regexp_replace");
   }
 
   template <typename TFunc>
@@ -441,6 +442,18 @@ class ExpressionFuzzer {
       return {};
     }
     return {generateArgConstant(input.args[0])};
+  }
+
+  // Specialization for the "regexp_replace" function: second and third
+  // (optional) parameters always need to be constant.
+  std::vector<core::TypedExprPtr> generateRegexpReplaceArgs(
+      const CallableSignature& input) {
+    std::vector<core::TypedExprPtr> inputExpressions = {
+        generateArg(input.args[0]), generateArgConstant(input.args[1])};
+    if (input.args.size() == 3) {
+      inputExpressions.emplace_back(generateArgConstant(input.args[2]));
+    }
+    return inputExpressions;
   }
 
   core::TypedExprPtr generateExpression(const TypePtr& returnType) {

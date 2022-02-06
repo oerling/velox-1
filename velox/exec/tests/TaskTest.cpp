@@ -16,10 +16,114 @@
 #include "velox/exec/Task.h"
 #include <gtest/gtest.h>
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+
+#define VELOX_ASSERT_THROW(expression, errorMessage)                  \
+  try {                                                               \
+    (expression);                                                     \
+    VELOX_FAIL("Expected an exception");                              \
+  } catch (const VeloxException& e) {                                 \
+    ASSERT_TRUE(e.isUserError());                                     \
+    ASSERT_TRUE(e.message().find(errorMessage) != std::string::npos); \
+  }
 
 using namespace facebook::velox;
 
-class TaskTest : public testing::Test {};
+class TaskTest : public testing::Test {
+ protected:
+  static void SetUpTestCase() {
+    functions::prestosql::registerAllScalarFunctions();
+  }
+
+  void useOneSplit(
+      exec::Task& task,
+      uint32_t splitGroupId,
+      const core::PlanNodeId& planNodeId) {
+    exec::Split splitOut;
+    exec::ContinueFuture futureOut{true};
+    task.getSplitOrFuture(splitGroupId, planNodeId, splitOut, futureOut);
+    task.splitFinished(planNodeId, splitGroupId);
+  }
+};
+
+TEST_F(TaskTest, wrongPlanNodeForSplit) {
+  auto connectorSplit = std::make_shared<connector::hive::HiveConnectorSplit>(
+      "test",
+      "file:/tmp/abc",
+      facebook::velox::dwio::common::FileFormat::ORC,
+      0,
+      100);
+
+  auto plan = exec::test::PlanBuilder()
+                  .tableScan(ROW({"a", "b"}, {INTEGER(), DOUBLE()}))
+                  .project({"a * a", "b + b"})
+                  .planFragment();
+
+  exec::Task task(
+      "task-1", std::move(plan), 0, core::QueryCtx::createForTest());
+
+  // Add split for the source node.
+  task.addSplit("0", exec::Split(folly::copy(connectorSplit)));
+
+  // Try to add split for a non-source node.
+  auto errorMessage =
+      "Splits can be associated only with source plan nodes. Plan node ID 1 doesn't refer to a source node.";
+  VELOX_ASSERT_THROW(
+      task.addSplit("1", exec::Split(folly::copy(connectorSplit))),
+      errorMessage)
+
+  VELOX_ASSERT_THROW(
+      task.addSplitWithSequence(
+          "1", exec::Split(folly::copy(connectorSplit)), 3),
+      errorMessage)
+
+  VELOX_ASSERT_THROW(task.setMaxSplitSequenceId("1", 9), errorMessage)
+
+  VELOX_ASSERT_THROW(task.noMoreSplits("1"), errorMessage)
+
+  VELOX_ASSERT_THROW(task.noMoreSplitsForGroup("1", 5), errorMessage)
+
+  // Try to add split for non-existent node.
+  errorMessage =
+      "Splits can be associated only with source plan nodes. Plan node ID 12 doesn't refer to a source node.";
+  VELOX_ASSERT_THROW(
+      task.addSplit("12", exec::Split(folly::copy(connectorSplit))),
+      errorMessage)
+
+  VELOX_ASSERT_THROW(
+      task.addSplitWithSequence(
+          "12", exec::Split(folly::copy(connectorSplit)), 3),
+      errorMessage)
+
+  VELOX_ASSERT_THROW(task.setMaxSplitSequenceId("12", 9), errorMessage)
+
+  VELOX_ASSERT_THROW(task.noMoreSplits("12"), errorMessage)
+
+  VELOX_ASSERT_THROW(task.noMoreSplitsForGroup("12", 5), errorMessage)
+}
+
+// Dummy node class to construct a node we don't need.
+class DummyNode : public core::PlanNode {
+ public:
+  explicit DummyNode(const core::PlanNodeId& id) : PlanNode(id) {}
+
+  const std::shared_ptr<const RowType>& outputType() const override {
+    return outputType_;
+  }
+
+  const std::vector<std::shared_ptr<const PlanNode>>& sources() const override {
+    return sources_;
+  }
+
+  std::string_view name() const override {
+    return id();
+  }
+
+ private:
+  std::vector<std::shared_ptr<const core::PlanNode>> sources_;
+  std::shared_ptr<const RowType> outputType_;
+};
 
 // Test if the Task correctly handles split groups.
 TEST_F(TaskTest, splitGroup) {
@@ -32,49 +136,72 @@ TEST_F(TaskTest, splitGroup) {
       100);
   core::PlanNodeId planNodeId{"0"};
   auto queryCtx = core::QueryCtx::createForTest();
-  exec::Task task("0", nullptr, 0, queryCtx);
+  core::PlanFragment planFragment{
+      std::make_shared<DummyNode>(planNodeId),
+      core::ExecutionStrategy::kGrouped,
+      3};
+  auto task = std::make_shared<exec::Task>(
+      "0", std::move(planFragment), 0, std::move(queryCtx));
 
   // This is the set of completed groups we expect.
   std::unordered_set<int32_t> completedSplitGroups;
 
   // Add and complete 3 splits for group 0.
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 0));
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 0));
-  task.splitFinished(planNodeId, 0);
-  task.splitFinished(planNodeId, 0);
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 0));
-  task.splitFinished(planNodeId, 0);
-  EXPECT_EQ(completedSplitGroups, task.taskStats().completedSplitGroups);
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 0));
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 0));
+  useOneSplit(*task, 0, planNodeId);
+  useOneSplit(*task, 0, planNodeId);
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 0));
+  useOneSplit(*task, 0, planNodeId);
+  EXPECT_EQ(completedSplitGroups, task->taskStats().completedSplitGroups);
 
   // Declare 'no more splits' for group 0.
-  task.noMoreSplitsForGroup(planNodeId, 0);
+  task->noMoreSplitsForGroup(planNodeId, 0);
   completedSplitGroups.insert(0);
-  EXPECT_EQ(completedSplitGroups, task.taskStats().completedSplitGroups);
+  EXPECT_EQ(completedSplitGroups, task->taskStats().completedSplitGroups);
 
   // Add 3 splits for group 1, declare 'no more splits' for group 1, finish 2
   // splits from group 1.
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 1));
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 1));
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 1));
-  task.noMoreSplitsForGroup(planNodeId, 1);
-  task.splitFinished(planNodeId, 1);
-  task.splitFinished(planNodeId, 1);
-  EXPECT_EQ(completedSplitGroups, task.taskStats().completedSplitGroups);
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 1));
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 1));
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 1));
+  task->noMoreSplitsForGroup(planNodeId, 1);
+  useOneSplit(*task, 1, planNodeId);
+  useOneSplit(*task, 1, planNodeId);
+  EXPECT_EQ(completedSplitGroups, task->taskStats().completedSplitGroups);
 
   // Add 2 splits for group 2, declare 'no more splits' for group 2.
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 2));
-  task.addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 2));
-  task.noMoreSplitsForGroup(planNodeId, 2);
-  EXPECT_EQ(completedSplitGroups, task.taskStats().completedSplitGroups);
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 2));
+  task->addSplit(planNodeId, exec::Split(folly::copy(connectorSplit), 2));
+  task->noMoreSplitsForGroup(planNodeId, 2);
+  EXPECT_EQ(completedSplitGroups, task->taskStats().completedSplitGroups);
 
   // Finish the last split for group 1
-  task.splitFinished(planNodeId, 1);
+  useOneSplit(*task, 1, planNodeId);
   completedSplitGroups.insert(1);
-  EXPECT_EQ(completedSplitGroups, task.taskStats().completedSplitGroups);
+  EXPECT_EQ(completedSplitGroups, task->taskStats().completedSplitGroups);
 
   // Finish the 2 split for group 2
-  task.splitFinished(planNodeId, 2);
-  task.splitFinished(planNodeId, 2);
+  useOneSplit(*task, 2, planNodeId);
+  useOneSplit(*task, 2, planNodeId);
   completedSplitGroups.insert(2);
-  EXPECT_EQ(completedSplitGroups, task.taskStats().completedSplitGroups);
+  EXPECT_EQ(completedSplitGroups, task->taskStats().completedSplitGroups);
+}
+
+TEST_F(TaskTest, duplicatePlanNodeIds) {
+  auto plan = exec::test::PlanBuilder()
+                  .tableScan(ROW({"a", "b"}, {INTEGER(), DOUBLE()}))
+                  .hashJoin(
+                      {"a"},
+                      {"a1"},
+                      exec::test::PlanBuilder()
+                          .tableScan(ROW({"a1", "b1"}, {INTEGER(), DOUBLE()}))
+                          .planNode(),
+                      "",
+                      {"b", "b1"})
+                  .planFragment();
+
+  VELOX_ASSERT_THROW(
+      exec::Task("task-1", std::move(plan), 0, core::QueryCtx::createForTest()),
+      "Plan node IDs must be unique. Found duplicate ID: 0.")
 }

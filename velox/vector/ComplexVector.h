@@ -22,6 +22,7 @@
 #include <folly/hash/Hash.h>
 #include <glog/logging.h>
 
+#include <velox/vector/BaseVector.h>
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/LazyVector.h"
@@ -44,7 +45,7 @@ class RowVector : public BaseVector {
         childrenSize_(children.size()),
         children_(std::move(children)) {
     // Some columns may not be projected out
-    VELOX_CHECK(children_.size() <= type->size());
+    VELOX_CHECK_LE(children_.size(), type->size());
     const auto* rowType = dynamic_cast<const RowType*>(type.get());
 
     // Check child vector types.
@@ -141,6 +142,20 @@ class RowVector : public BaseVector {
   std::string toString(vector_size_t index) const override;
 
   void ensureWritable(const SelectivityVector& rows) override;
+
+  bool mayHaveNullsRecursive() const override {
+    if (BaseVector::mayHaveNullsRecursive()) {
+      return true;
+    }
+
+    for (const auto& child : children_) {
+      if (child->mayHaveNullsRecursive()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 
  private:
   vector_size_t childSize() const {
@@ -270,12 +285,12 @@ class ArrayVector : public BaseVector {
 
   std::unique_ptr<SimpleVector<uint64_t>> hashAll() const override;
 
-  void resize(vector_size_t size) override {
+  void resize(vector_size_t size, bool setNotNull = true) override {
     if (BaseVector::length_ < size) {
       resizeIndices(size, 0, &offsets_, &rawOffsets_);
       resizeIndices(size, 0, &sizes_, &rawSizes_);
     }
-    BaseVector::resize(size);
+    BaseVector::resize(size, setNotNull);
   }
 
   void
@@ -285,6 +300,10 @@ class ArrayVector : public BaseVector {
   }
 
   const VectorPtr& elements() const {
+    return elements_;
+  }
+
+  VectorPtr& elements() {
     return elements_;
   }
 
@@ -349,6 +368,11 @@ class ArrayVector : public BaseVector {
   std::string toString(vector_size_t index) const override;
 
   void ensureWritable(const SelectivityVector& rows) override;
+
+  bool mayHaveNullsRecursive() const override {
+    return BaseVector::mayHaveNullsRecursive() ||
+        elements_->mayHaveNullsRecursive();
+  }
 
  private:
   BufferPtr offsets_;
@@ -425,19 +449,27 @@ class MapVector : public BaseVector {
 
   std::unique_ptr<SimpleVector<uint64_t>> hashAll() const override;
 
-  void resize(vector_size_t size) override {
+  void resize(vector_size_t size, bool setNotNull = true) override {
     if (BaseVector::length_ < size) {
       resizeIndices(size, 0, &offsets_, &rawOffsets_);
       resizeIndices(size, 0, &sizes_, &rawSizes_);
     }
-    BaseVector::resize(size);
+    BaseVector::resize(size, setNotNull);
   }
 
   const VectorPtr& mapKeys() const {
     return keys_;
   }
 
+  VectorPtr& mapKeys() {
+    return keys_;
+  }
+
   const VectorPtr& mapValues() const {
+    return values_;
+  }
+
+  VectorPtr& mapValues() {
     return values_;
   }
 
@@ -525,6 +557,11 @@ class MapVector : public BaseVector {
   std::vector<vector_size_t> sortedKeyIndices(vector_size_t index) const;
 
   void ensureWritable(const SelectivityVector& rows) override;
+
+  bool mayHaveNullsRecursive() const override {
+    return BaseVector::mayHaveNullsRecursive() ||
+        keys_->mayHaveNullsRecursive() || values_->mayHaveNullsRecursive();
+  }
 
  private:
   // Returns true if the keys for map at 'index' are sorted from first

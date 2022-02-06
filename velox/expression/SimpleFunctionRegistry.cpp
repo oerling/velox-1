@@ -13,31 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/core/ScalarFunction.h"
 
-namespace facebook {
-namespace velox {
-namespace core {
+#include "velox/expression/SimpleFunctionRegistry.h"
 
-FunctionKey IScalarFunction::key() const {
-  return FunctionKey{getName(), argTypes()};
+namespace facebook::velox::exec {
+
+SimpleFunctionRegistry& SimpleFunctions() {
+  static SimpleFunctionRegistry instance;
+  return instance;
 }
 
-std::string IScalarFunction::signature(const std::string& name) const {
-  std::string s{name};
-  s.append("(");
-  bool first = true;
-  for (auto& arg : argTypes()) {
-    if (!first) {
-      s.append(", ");
-    }
-    first = false;
-    s.append(arg->toString());
-  }
-  s.append(")");
-  return s;
-}
-
-} // namespace core
-} // namespace velox
-} // namespace facebook
+} // namespace facebook::velox::exec

@@ -28,8 +28,7 @@ class StreamingAggregation : public Operator {
   StreamingAggregation(
       int32_t operatorId,
       DriverCtx* driverCtx,
-      const std::shared_ptr<const core::StreamingAggregationNode>&
-          aggregationNode);
+      const std::shared_ptr<const core::AggregationNode>& aggregationNode);
 
   void addInput(RowVectorPtr input) override;
 
@@ -42,6 +41,8 @@ class StreamingAggregation : public Operator {
   BlockingReason isBlocked(ContinueFuture* /* unused */) override {
     return BlockingReason::kNotBlocked;
   }
+
+  bool isFinished() override;
 
  private:
   // Returns the rows to aggregate with masking applied if applicable.

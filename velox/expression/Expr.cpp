@@ -168,6 +168,8 @@ void Expr::evalSimplifiedImpl(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
 
@@ -219,6 +221,8 @@ void Expr::eval(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
 
@@ -638,6 +642,8 @@ void Expr::evalWithNulls(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
 
@@ -854,6 +860,8 @@ void Expr::evalAll(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
   if (isSpecialForm()) {
@@ -937,7 +945,15 @@ bool Expr::applyFunctionWithPeeling(
         continue;
       }
       if (numLevels == 0 && leaf->isConstant(rows)) {
-        setPeeledArg(leaf, i, numArgs, maybePeeled);
+        if (leaf->isConstantEncoding()) {
+          setPeeledArg(leaf, i, numArgs, maybePeeled);
+        } else {
+          setPeeledArg(
+              BaseVector::wrapInConstant(leaf->size(), rows.begin(), leaf),
+              i,
+              numArgs,
+              maybePeeled);
+        }
         constantArgs.resize(numArgs);
         constantArgs.at(i) = true;
         continue;

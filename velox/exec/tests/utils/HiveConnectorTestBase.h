@@ -33,8 +33,6 @@ class HiveConnectorTestBase : public OperatorTestBase {
  public:
   HiveConnectorTestBase();
   void SetUp() override;
-
- public:
   void TearDown() override;
 
   void writeToFile(
@@ -68,8 +66,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
 
   std::shared_ptr<exec::Task> assertQuery(
       const std::shared_ptr<const core::PlanNode>& plan,
-      const std::unordered_map<int, std::vector<std::shared_ptr<TempFilePath>>>&
-          filePaths,
+      const std::unordered_map<
+          core::PlanNodeId,
+          std::vector<std::shared_ptr<TempFilePath>>>& filePaths,
       const std::string& duckDbSql);
 
   static std::vector<std::shared_ptr<TempFilePath>> makeFilePaths(int count);
@@ -82,7 +81,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const std::string& filePath,
       uint64_t start = 0,
       uint64_t length = std::numeric_limits<uint64_t>::max()) {
-    return makeHiveConnectorSplit(filePath, {}, 0, length);
+    return makeHiveConnectorSplit(filePath, {}, start, length);
   }
 
   static std::shared_ptr<connector::hive::HiveConnectorSplit>

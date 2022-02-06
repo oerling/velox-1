@@ -61,6 +61,16 @@ KeyValue<StringView> extractKey<StringView>(const proto::KeyInfo& info) {
 }
 
 template <typename T>
+KeyValue<T> parseKeyValue(std::string_view str) {
+  return KeyValue<T>(folly::to<T>(str));
+}
+
+template <>
+KeyValue<StringView> parseKeyValue<StringView>(std::string_view str) {
+  return KeyValue<StringView>(StringView(str));
+}
+
+template <typename T>
 struct KeyProjection {
   KeyProjectionMode mode = KeyProjectionMode::ALLOW;
   KeyValue<T> value;
@@ -74,11 +84,13 @@ KeyProjection<T> convertDynamic(const folly::dynamic& v) {
   if (!view.empty() && view.front() == reject_prefix) {
     return {
         .mode = KeyProjectionMode::REJECT,
-        .value = KeyValue<T>(folly::to<T>(view.substr(1)))};
+        .value = parseKeyValue<T>(view.substr(1)),
+    };
   } else {
     return {
         .mode = KeyProjectionMode::ALLOW,
-        .value = KeyValue<T>(folly::to<T>(view))};
+        .value = parseKeyValue<T>(view),
+    };
   }
 }
 
@@ -223,17 +235,19 @@ KeyPredicate<T> prepareKeyPredicate(
 template <typename T>
 std::vector<std::unique_ptr<KeyNode<T>>> rearrangeKeyNodesAsProjectedOrder(
     std::vector<std::unique_ptr<KeyNode<T>>>& availableKeyNodes,
-    const std::vector<KeyValue<T>>& keys) {
+    const std::vector<std::string>& keys) {
   std::vector<std::unique_ptr<KeyNode<T>>> keyNodes(keys.size());
 
   std::unordered_map<KeyValue<T>, size_t, KeyValueHash<T>> keyLookup;
   for (size_t i = 0; i < keys.size(); ++i) {
-    keyLookup[keys[i]] = i;
+    keyLookup[parseKeyValue<T>(keys[i])] = i;
   }
 
   for (auto& keyNode : availableKeyNodes) {
     const auto it = keyLookup.find(keyNode->getKey());
-    DWIO_ENSURE(it != keyLookup.end());
+    if (it == keyLookup.end()) {
+      continue;
+    }
     keyNodes[it->second] = std::move(keyNode);
   }
 
@@ -283,13 +297,6 @@ uint64_t FlatMapColumnReader<T>::skip(uint64_t numValues) {
 }
 
 template <typename T>
-void resetIfWrongVectorType(VectorPtr& result) {
-  if (result && !result->as<T>()) {
-    result.reset();
-  }
-}
-
-template <typename T>
 void FlatMapColumnReader<T>::initKeysVector(
     VectorPtr& vector,
     vector_size_t size) {
@@ -315,27 +322,32 @@ void FlatMapColumnReader<T>::next(
     uint64_t numValues,
     VectorPtr& result,
     const uint64_t* incomingNulls) {
-  BufferPtr nulls = readNulls(numValues, result, incomingNulls);
-  const auto* nullsPtr = nulls ? nulls->as<uint64_t>() : nullptr;
-  uint64_t nullCount = nullsPtr ? bits::countNulls(nullsPtr, 0, numValues) : 0;
-
-  resetIfWrongVectorType<MapVector>(result);
-
-  // reuse key/value vectors when possible
+  auto mapVector = resetIfWrongVectorType<MapVector>(result);
   VectorPtr keysVector;
   VectorPtr valuesVector;
   BufferPtr offsets;
   BufferPtr lengths;
-  if (result) {
-    auto mapVector = result->as<MapVector>();
+  if (mapVector) {
     keysVector = mapVector->mapKeys();
     if (returnFlatVector_) {
       valuesVector = mapVector->mapValues();
     }
     offsets = mapVector->mutableOffsets(numValues);
     lengths = mapVector->mutableSizes(numValues);
-  } else {
+  }
+
+  BufferPtr nulls = readNulls(numValues, result, incomingNulls);
+  const auto* nullsPtr = nulls ? nulls->as<uint64_t>() : nullptr;
+  uint64_t nullCount = nullsPtr ? bits::countNulls(nullsPtr, 0, numValues) : 0;
+
+  if (mapVector) {
+    resetIfNotWritable(result, offsets, lengths);
+  }
+
+  if (!offsets) {
     offsets = AlignedBuffer::allocate<vector_size_t>(numValues, &memoryPool_);
+  }
+  if (!lengths) {
     lengths = AlignedBuffer::allocate<vector_size_t>(numValues, &memoryPool_);
   }
 
@@ -578,7 +590,6 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesForStructEncoding(
   // If the key is not found in the stripe, the key node will be nullptr.
 
   auto parsedKeyFilter = parseKeyFilter<T>(requestedType, stripe);
-  DWIO_ENSURE_EQ(parsedKeyFilter.mode, KeyProjectionMode::ALLOW);
 
   const KeyPredicate<T> keyPredicate(
       parsedKeyFilter.mode,
@@ -592,8 +603,12 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesForStructEncoding(
       stripe,
       memoryPool);
 
-  return rearrangeKeyNodesAsProjectedOrder<T>(
-      availableKeyNodes, parsedKeyFilter.keys);
+  const auto& mapColumnIdAsStruct =
+      stripe.getRowReaderOptions().getMapColumnIdAsStruct();
+  auto it = mapColumnIdAsStruct.find(requestedType->id);
+  DWIO_ENSURE(it != mapColumnIdAsStruct.end());
+
+  return rearrangeKeyNodesAsProjectedOrder<T>(availableKeyNodes, it->second);
 }
 
 template <typename T>
@@ -637,21 +652,27 @@ void FlatMapStructEncodingColumnReader<T>::next(
     uint64_t numValues,
     VectorPtr& result,
     const uint64_t* FOLLY_NULLABLE incomingNulls) {
+  auto rowVector = resetIfWrongVectorType<RowVector>(result);
+  std::vector<VectorPtr> children;
+  if (rowVector) {
+    // Track children vectors in a local variable because readNulls may reset
+    // the parent vector.
+    children = rowVector->children();
+    DWIO_ENSURE_EQ(children.size(), keyNodes_.size());
+  }
+
   BufferPtr nulls = readNulls(numValues, result, incomingNulls);
   const auto* nullsPtr = nulls ? nulls->as<uint64_t>() : nullptr;
   const uint64_t nullCount =
       nullsPtr ? bits::countNulls(nullsPtr, 0, numValues) : 0;
   const auto nonNullMaps = numValues - nullCount;
 
-  resetIfWrongVectorType<RowVector>(result);
-
-  std::vector<VectorPtr> children;
   std::vector<VectorPtr>* childrenPtr = nullptr;
-
   if (result) {
-    auto* rowVector = result->as<RowVector>();
+    // Parent vector still exist, so there is no need to double reference
+    // children vectors.
     childrenPtr = &rowVector->children();
-    DWIO_ENSURE_EQ(childrenPtr->size(), keyNodes_.size());
+    children.clear();
   } else {
     children.resize(keyNodes_.size());
     childrenPtr = &children;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/LocalPlanner.h"
-#include "velox/exec/Aggregate.h"
+#include "velox/core/PlanFragment.h"
 #include "velox/exec/AssignUniqueId.h"
 #include "velox/exec/CallbackSink.h"
 #include "velox/exec/CrossJoinBuild.h"
@@ -75,7 +75,8 @@ OperatorSupplier makeConsumerSupplier(
           std::dynamic_pointer_cast<const core::LocalMergeNode>(planNode)) {
     return [](int32_t operatorId, DriverCtx* ctx) {
       auto consumer = [ctx](RowVectorPtr input, ContinueFuture* future) {
-        auto mergeSource = ctx->task->getLocalMergeSource(ctx->driverId);
+        auto mergeSource =
+            ctx->task->getLocalMergeSource(ctx->splitGroupId, ctx->partitionId);
         return mergeSource->enqueue(input, future);
       };
       return std::make_unique<CallbackSink>(operatorId, ctx, consumer);
@@ -108,7 +109,8 @@ OperatorSupplier makeConsumerSupplier(
           std::dynamic_pointer_cast<const core::MergeJoinNode>(planNode)) {
     auto planNodeId = planNode->id();
     return [planNodeId](int32_t operatorId, DriverCtx* ctx) {
-      auto source = ctx->task->getMergeJoinSource(planNodeId);
+      auto source =
+          ctx->task->getMergeJoinSource(ctx->splitGroupId, planNodeId);
       auto consumer = [source](RowVectorPtr input, ContinueFuture* future) {
         return source->enqueue(input, future);
       };
@@ -220,11 +222,12 @@ uint32_t maxDrivers(
 
 // static
 void LocalPlanner::plan(
-    const std::shared_ptr<const core::PlanNode>& planNode,
+    const core::PlanFragment& planFragment,
     ConsumerSupplier consumerSupplier,
-    std::vector<std::unique_ptr<DriverFactory>>* driverFactories) {
+    std::vector<std::unique_ptr<DriverFactory>>* driverFactories,
+    uint32_t maxDrivers) {
   detail::plan(
-      planNode,
+      planFragment.planNode,
       nullptr,
       detail::makeConsumerSupplier(consumerSupplier),
       driverFactories);
@@ -233,6 +236,17 @@ void LocalPlanner::plan(
 
   for (auto& factory : *driverFactories) {
     factory->maxDrivers = detail::maxDrivers(factory->planNodes);
+    factory->numDrivers = std::min(factory->maxDrivers, maxDrivers);
+    // For grouped/bucketed execution we would have separate groups of drivers
+    // dealing with separate split groups (one driver can access splits from
+    // only one designated split group), hence we will have total number of
+    // drivers multiplied by the number of split groups.
+    if (planFragment.isGroupedExecution()) {
+      factory->numTotalDrivers =
+          factory->numDrivers * planFragment.numSplitGroups;
+    } else {
+      factory->numTotalDrivers = factory->numDrivers;
+    }
   }
 }
 
@@ -309,15 +323,16 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
           std::make_unique<CrossJoinProbe>(id, ctx.get(), joinNode));
     } else if (
         auto aggregationNode =
-            std::dynamic_pointer_cast<const core::StreamingAggregationNode>(
-                planNode)) {
-      operators.push_back(std::make_unique<StreamingAggregation>(
-          id, ctx.get(), aggregationNode));
-    } else if (
-        auto aggregationNode =
             std::dynamic_pointer_cast<const core::AggregationNode>(planNode)) {
-      operators.push_back(
-          std::make_unique<HashAggregation>(id, ctx.get(), aggregationNode));
+      if (!aggregationNode->preGroupedKeys().empty() &&
+          aggregationNode->preGroupedKeys().size() ==
+              aggregationNode->groupingKeys().size()) {
+        operators.push_back(std::make_unique<StreamingAggregation>(
+            id, ctx.get(), aggregationNode));
+      } else {
+        operators.push_back(
+            std::make_unique<HashAggregation>(id, ctx.get(), aggregationNode));
+      }
     } else if (
         auto topNNode =
             std::dynamic_pointer_cast<const core::TopNNode>(planNode)) {
@@ -338,13 +353,16 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
       auto localMergeOp =
           std::make_unique<LocalMerge>(id, ctx.get(), numSources, localMerge);
       ctx->task->createLocalMergeSources(
-          numSources, localMergeOp->outputType(), localMergeOp->mappedMemory());
+          ctx->splitGroupId,
+          numSources,
+          localMergeOp->outputType(),
+          localMergeOp->mappedMemory());
       operators.push_back(std::move(localMergeOp));
     } else if (
         auto mergeJoin =
             std::dynamic_pointer_cast<const core::MergeJoinNode>(planNode)) {
       auto mergeJoinOp = std::make_unique<MergeJoin>(id, ctx.get(), mergeJoin);
-      ctx->task->createMergeJoinSource(mergeJoin->id());
+      ctx->task->createMergeJoinSource(ctx->splitGroupId, mergeJoin->id());
       operators.push_back(std::move(mergeJoinOp));
     } else if (
         auto localPartitionNode =
@@ -355,7 +373,7 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
           ctx.get(),
           localPartitionNode->outputType(),
           localPartitionNode->id(),
-          ctx->driverId));
+          ctx->partitionId));
     } else if (
         auto unnest =
             std::dynamic_pointer_cast<const core::UnnestNode>(planNode)) {

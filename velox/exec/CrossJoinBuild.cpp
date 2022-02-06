@@ -59,16 +59,15 @@ void CrossJoinBuild::addInput(RowVectorPtr input) {
 }
 
 BlockingReason CrossJoinBuild::isBlocked(ContinueFuture* future) {
-  if (!hasFuture_) {
+  if (!future_.valid()) {
     return BlockingReason::kNotBlocked;
   }
   *future = std::move(future_);
-  hasFuture_ = false;
   return BlockingReason::kWaitForJoinBuild;
 }
 
-void CrossJoinBuild::finish() {
-  Operator::finish();
+void CrossJoinBuild::noMoreInput() {
+  Operator::noMoreInput();
   std::vector<VeloxPromise<bool>> promises;
   std::vector<std::shared_ptr<Driver>> peers;
   // The last Driver to hit CrossJoinBuild::finish gathers the data from
@@ -78,7 +77,6 @@ void CrossJoinBuild::finish() {
   // build pipeline.
   if (!operatorCtx_->task()->allPeersFinished(
           planNodeId(), operatorCtx_->driver(), &future_, promises, peers)) {
-    hasFuture_ = true;
     return;
   }
 
@@ -97,7 +95,12 @@ void CrossJoinBuild::finish() {
   }
 
   operatorCtx_->task()
-      ->getCrossJoinBridge(planNodeId())
+      ->getCrossJoinBridge(
+          operatorCtx_->driverCtx()->splitGroupId, planNodeId())
       ->setData(std::move(data_));
+}
+
+bool CrossJoinBuild::isFinished() {
+  return !future_.valid() && noMoreInput_;
 }
 } // namespace facebook::velox::exec

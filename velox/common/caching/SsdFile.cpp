@@ -34,9 +34,14 @@ SsdPin::SsdPin(SsdFile& file, SsdRun run) : file_(&file), run_(run) {
 }
 
 SsdPin::~SsdPin() {
+  clear();
+}
+
+void SsdPin::clear() {
   if (file_) {
     file_->unpinRegion(run_.offset());
   }
+  file_ = nullptr;
 }
 
 void SsdPin::operator=(SsdPin&& other) {
@@ -48,6 +53,17 @@ void SsdPin::operator=(SsdPin&& other) {
   run_ = other.run_;
 }
 
+std::string SsdPin::toString() const {
+  if (empty()) {
+    return "<empty SsdPin>";
+  }
+  return fmt::format(
+      "SsdPin(shard {} offset {} size {})",
+      file_->shardId(),
+      run_.offset(),
+      run_.size());
+}
+
 SsdFile::SsdFile(
     const std::string& filename,
     int32_t shardId,
@@ -57,7 +73,7 @@ SsdFile::SsdFile(
 #ifdef linux
   oDirect = FLAGS_ssd_odirect ? O_DIRECT : 0;
 #endif
-  fd_ = open(filename.c_str(), O_CREAT | O_RDWR | oDirect, S_IRUSR | S_IWUSR);
+  fd_ = open(filename_.c_str(), O_CREAT | O_RDWR | oDirect, S_IRUSR | S_IWUSR);
   if (fd_ < 0) {
     LOG(ERROR) << "Cannot open or create " << filename << " error " << errno;
     exit(1);
@@ -65,8 +81,11 @@ SsdFile::SsdFile(
   readFile_ = std::make_unique<LocalReadFile>(fd_);
   uint64_t size = lseek(fd_, 0, SEEK_END);
   numRegions_ = size / kRegionSize;
+  if (numRegions_ > maxRegions_) {
+    numRegions_ = maxRegions_;
+  }
   fileSize_ = numRegions_ * kRegionSize;
-  if (size % kRegionSize > 0) {
+  if (size % kRegionSize > 0 || size > numRegions_ * kRegionSize) {
     ftruncate(fd_, fileSize_);
   }
   // The existing regions in the file are writable.
@@ -131,18 +150,40 @@ SsdPin SsdFile::find(RawFileCacheKey key) {
   return SsdPin(*this, run);
 }
 
+bool SsdFile::erase(RawFileCacheKey key) {
+  FileCacheKey ssdKey{StringIdLease(fileIds(), key.fileNum), key.offset};
+  std::lock_guard<std::mutex> l(mutex_);
+  auto it = entries_.find(ssdKey);
+  if (it == entries_.end()) {
+    return false;
+  }
+  entries_.erase(it);
+  return true;
+}
+
 CoalesceIoStats SsdFile::load(
     const std::vector<SsdPin>& ssdPins,
     const std::vector<CachePin>& pins) {
   VELOX_CHECK_EQ(ssdPins.size(), pins.size());
+  if (pins.empty()) {
+    return CoalesceIoStats();
+  }
   int payloadTotal = 0;
   for (auto i = 0; i < pins.size(); ++i) {
     auto runSize = ssdPins[i].run().size();
-    VELOX_CHECK_EQ(runSize, pins[i].entry()->size());
-    payloadTotal += runSize;
+    auto entry = pins[i].checkedEntry();
+    if (runSize > entry->size()) {
+      LOG(INFO) << "IOERR: Requested prefix of SSD cache entry: " << runSize
+                << " entry: " << entry->size();
+    }
+    VELOX_CHECK_GE(
+        runSize,
+        entry->size(),
+        "IOERR SSd cache entry shorter than requested range");
+    payloadTotal += entry->size();
     regionRead(regionIndex(ssdPins[i].run().offset()), runSize);
     ++stats_.entriesRead;
-    stats_.bytesRead += runSize;
+    stats_.bytesRead += entry->size();
   }
   // Do coalesced IO for the pins. For short payloads, the break-even
   // between discrete pread calls and a single preadv that discards
@@ -186,6 +227,7 @@ std::optional<std::pair<uint64_t, int32_t>> SsdFile::getSpace(
         ;
       }
     }
+    assert(!writableRegions_.empty());
     auto region = writableRegions_[0];
     auto offset = regionSize_[region];
     auto available = kRegionSize - offset;
@@ -370,6 +412,9 @@ void SsdFile::updateStats(SsdCacheStats& stats) const {
   for (auto& regionSize : regionSize_) {
     stats.bytesCached += regionSize;
   }
+  for (auto pins : regionPins_) {
+    stats.numPins += pins;
+  }
 }
 
 void SsdFile::clear() {
@@ -378,6 +423,17 @@ void SsdFile::clear() {
   std::fill(regionSize_.begin(), regionSize_.end(), 0);
   writableRegions_.resize(numRegions_);
   std::iota(writableRegions_.begin(), writableRegions_.end(), 0);
+}
+
+void SsdFile::deleteFile() {
+  if (fd_) {
+    close(fd_);
+    fd_ = 0;
+  }
+  auto rc = unlink(filename_.c_str());
+  if (rc < 0) {
+    LOG(ERROR) << "Error deleting cache file " << filename_ << " rc: " << rc;
+  }
 }
 
 } // namespace facebook::velox::cache
