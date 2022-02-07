@@ -927,7 +927,7 @@ bool Expr::applyFunctionWithPeeling(
   }
   int numLevels = 0;
   bool peeled;
-  bool nonConstant = false;
+  int32_t numConstant = 0;
   auto numArgs = inputValues_.size();
   // Holds the outermost wrapper. This may be the last reference after
   // peeling for a temporary dictionary, hence use a shared_ptr.
@@ -944,7 +944,8 @@ bool Expr::applyFunctionWithPeeling(
         setPeeledArg(leaf, i, numArgs, maybePeeled);
         continue;
       }
-      if (numLevels == 0 && leaf->isConstant(rows)) {
+      if ((numLevels == 0 && leaf->isConstant(rows)) ||
+          leaf->isConstantEncoding()) {
         if (leaf->isConstantEncoding()) {
           setPeeledArg(leaf, i, numArgs, maybePeeled);
         } else {
@@ -956,9 +957,9 @@ bool Expr::applyFunctionWithPeeling(
         }
         constantArgs.resize(numArgs);
         constantArgs.at(i) = true;
+        ++numConstant;
         continue;
       }
-      nonConstant = true;
       auto encoding = leaf->encoding();
       if (encoding == VectorEncoding::Simple::DICTIONARY) {
         if (firstLengths) {
@@ -1012,7 +1013,7 @@ bool Expr::applyFunctionWithPeeling(
       ++numLevels;
       inputValues_ = std::move(maybePeeled);
     }
-  } while (peeled && nonConstant);
+  } while (peeled && numConstant != numArgs);
   if (!numLevels) {
     return false;
   }
@@ -1021,7 +1022,7 @@ bool Expr::applyFunctionWithPeeling(
   // We peel off the wrappers and make a new selection.
   SelectivityVector* newRows;
   LocalDecodedVector localDecoded(context);
-  if (!firstWrapper) {
+  if (numConstant == numArgs) {
     // All the fields are constant across the rows of interest.
     newRows = singleRow(newRowsHolder, rows.begin());
 
