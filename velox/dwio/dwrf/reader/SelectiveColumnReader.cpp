@@ -3861,43 +3861,29 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
   initTimeClocks_ = timer.elapsedClocks();
 }
 
-class SelectiveTimestampColumnReader : public ColumnReader {
+class SelectiveTimestampColumnReader : public SelectiveColumnReader {
  public:
   SelectiveTimestampColumnReader(
-    const std::shared_ptr<const TypeWithId>& nodeType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
+      const std::shared_ptr<const TypeWithId>& nodeType,
+      StripeStreams& stripe,
+      common::ScanSpec* scanSpec,
+      FlatMapContext flaatMapContext);
 
-    void seekToRowGroup(uint32_t index) override {
-    ensureRowGroupIndex();
+  void seekToRowGroup(uint32_t index) override;
+  uint64_t skip(uint64_t numValues);
 
-    auto positions = toPositions(index_->entry(index));
-    PositionProvider positionsProvider(positions);
+  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
 
-    if (notNullDecoder_) {
-      notNullDecoder_->seekToRowGroup(positionsProvider);
-    }
+  void getValues(RowSet rows, VectorPtr* result) override;
 
-    seconds_->seekToRowGroup(positionsProvider);
-    nano_->seekToRowGroup(positionsProvider);
-    VELOX_CHECK(!positionsProvider.hasNext());
-  }
-
-  uint64_t skip(uint64_t numValues) override;
-
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
-
-  
  private:
   std::unique_ptr<IntDecoder</*isSigned*/ true>> seconds_;
   std::unique_ptr<IntDecoder</*isSigned*/ false>> nano_;
 
-  BufferPtr nanosBuffer_;
+  // Values from copied from 'seconds_'. Nanos are in 'values_'.
+  BufferPtr secondsValues_;
 
-
-};
+}
 
 SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,
@@ -3915,27 +3901,76 @@ SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
   auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
   bool vints = stripe.getUseVInts(data);
   seconds_ = IntDecoder</*isSigned*/ true>::createRle(
-						     stripe.getStream(data, true), vers, memoryPool_, vints, LONG_BYTE_SIZE);
+      stripe.getStream(data, true), vers, memoryPool_, vints, LONG_BYTE_SIZE);
   auto nanoData = encodingKey.forKind(proto::Stream_Kind_NANO_DATA);
   bool nanoVInts = stripe.getUseVInts(nanoData);
   nano_ = IntDecoder</*isSigned*/ false>::createRle(
-						   stripe.getStream(nanoData, true),
-						   vers,
-						   memoryPool_,
+      stripe.getStream(nanoData, true),
+      vers,
+      memoryPool_,
       nanoVInts,
       LONG_BYTE_SIZE);
 }
 
-uint64_t TimestampColumnReader::skip(uint64_t numValues) {
+uint64_t SelectiveTimestampColumnReader::skip(uint64_t numValues) {
   numValues = SelectiveColumnReader::skip(numValues);
   seconds_->skip(numValues);
   nano_->skip(numValues);
   return numValues;
 }
 
+void SelectiveTimeStampColumnReader::seekToRowGroup(uint32_t index) override {
+  ensureRowGroupIndex();
 
+  auto positions = toPositions(index_->entry(index));
+  PositionProvider positionsProvider(positions);
+  -if (notNullDecoder_) {
+    notNullDecoder_->seekToRowGroup(positionsProvider);
+  }
 
-  
+  seconds_->seekToRowGroup(positionsProvider);
+  nano_->seekToRowGroup(positionsProvider);
+  VELOX_CHECK(!positionsProvider.hasNext());
+  -
+}
+
+void SelectiveTimestampColumnReader::read(
+    vector_size_t offset,
+    RowSet rows,
+    const uint64_t* incomingNulls) {
+  prepareRead<int64_t>(offset, rows, incomingNulls) bool isDense =
+      rows.back() == rows.size() - 1;
+  common::Filter* filter =
+      scanSpec_->filter() ? scanSpec_->filter() : &Filters::alwaysTrue;
+  VELOX_CHECK(!scanSpec_->valueHook());
+  ExtrackValues<> extractValues(this);
+  common::AlwaysTrue filter;
+  if (isDense) {
+    secondsV1 = dynamic_cast<RLEv1>(seconds_);
+    VELOX_CHECK(secondsV1, "Only RLEv1 is supported");
+    secondsV1->readWithVisitor(
+        rows,
+        ColumnVisitor<int64_t, TFilter, ExtractValues, true>(
+            *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
+    ensureCapacity<uint64_t>(secondsValues_, numValues_, &memoryPool_);
+    secondsValues_.setSize(numValues_);
+    memcpy(secondsValues_->as<char>(), rawValues, numValues_ * sizeof(int64_t));
+
+    numValues_ = 0;
+    nanosV1 = dynamic_cast<RLEv1>(nano_);
+    VELOX_CHECK(nanosV1, "Only RLEv1 is supported");
+    nanosV1->readWithVisitor(
+        rows,
+        ColumnVisitor<int64_t, TFilter, ExtractValues, true>(
+            *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
+
+  } else {
+  }
+}
+
+void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result)
+    override {}
+
 class SelectiveStructColumnReader : public SelectiveColumnReader {
  public:
   SelectiveStructColumnReader(
@@ -4917,7 +4952,13 @@ std::unique_ptr<SelectiveColumnReader> SelectiveColumnReader::build(
         default:
           DWIO_RAISE("buildReader string unknown encoding");
       }
-    default:
+  case TypeKind::TIMESTAMP:
+    return std::make_unique<SelectiveTimestampColumnReader>(
+              requestedType, stripe, scanSpec, std::move(flatMapContext));
+  default:
+          DWIO_RAISE("buildReader string unknown encoding");
+
+  default:
       DWIO_RAISE(
           "buildReader unhandled type: " +
           mapTypeKindToName(dataType->type->kind()));
