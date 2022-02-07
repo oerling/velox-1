@@ -657,7 +657,8 @@ class ExprTest : public testing::Test {
         std::make_unique<SimpleVectorLoader>([=](RowSet rows) {
           auto indices = makeIndices(
               vector->size(), [](vector_size_t row) { return row; });
-          return BaseVector::wrapInDictionary(nullptr, indices, vector->size(), vector);
+          return BaseVector::wrapInDictionary(
+              nullptr, indices, vector->size(), vector);
         }));
   }
 
@@ -2350,7 +2351,7 @@ TEST_F(ExprTest, peelLazyDictionaryOverConstant) {
                nullptr, c0Indices, 5, wrapInLazyDictionary(c0)),
            BaseVector::wrapInDictionary(
                nullptr, c0Indices, 5, wrapInLazyDictionary(c1))}));
-    assertEqualVectors(c0, result);
+  assertEqualVectors(c0, result);
 }
 
 TEST_F(ExprTest, accessNested) {
