@@ -364,16 +364,19 @@ TEST_F(HashJoinTest, lazyVectors) {
       {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
       "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
 
-  op = PlanBuilder(10)
+  planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  op = PlanBuilder(planNodeIdGenerator)
            .tableScan(
                ROW({"c0", "c1", "c2", "c3"},
                    {INTEGER(), BIGINT(), INTEGER(), VARCHAR()}))
+           .capturePlanNodeId(leftScanId)
            .filter("c2 < 29")
            .hashJoin(
                {"c0"},
                {"bc0"},
-               PlanBuilder(0)
+               PlanBuilder(planNodeIdGenerator)
                    .tableScan(ROW({"c0", "c1"}, {INTEGER(), BIGINT()}))
+                   .capturePlanNodeId(rightScanId)
                    .project({"c0 as bc0", "c1 as bc1"})
                    .planNode(),
                "(c1 + bc1) % 33 < 27",
@@ -383,7 +386,7 @@ TEST_F(HashJoinTest, lazyVectors) {
 
   assertQuery(
       op,
-      {{0, {rightFile}}, {10, {leftFile}}},
+      {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
       "SELECT t.c1 + 1, U.c1, length(t.c3) FROM t, u "
       "WHERE t.c0 = u.c0 and t.c2 < 29 and (t.c1 + u.c1) % 33 < 27");
 }
