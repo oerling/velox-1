@@ -26,13 +26,33 @@ class IExpr;
 
 namespace facebook::velox::exec::test {
 
+/// Generates unique sequential plan node IDs starting with zero or specified
+/// value.
+class PlanNodeIdGenerator {
+ public:
+  explicit PlanNodeIdGenerator(int startId = 0) : nextId_{startId} {}
+
+  int next() {
+    return nextId_++;
+  }
+
+  void reset(int startId = 0) {
+    nextId_ = startId;
+  }
+
+ private:
+  int nextId_;
+};
+
 class PlanBuilder {
  public:
-  explicit PlanBuilder(int planNodeId = 0, memory::MemoryPool* pool = nullptr)
-      : planNodeId_{planNodeId}, pool_{pool} {}
+  explicit PlanBuilder(
+      std::shared_ptr<PlanNodeIdGenerator> planNodeIdGenerator,
+      memory::MemoryPool* pool = nullptr)
+      : planNodeIdGenerator_{std::move(planNodeIdGenerator)}, pool_{pool} {}
 
-  explicit PlanBuilder(memory::MemoryPool* pool)
-      : planNodeId_{0}, pool_{pool} {}
+  explicit PlanBuilder(memory::MemoryPool* pool = nullptr)
+      : PlanBuilder(std::make_shared<PlanNodeIdGenerator>(), pool) {}
 
   PlanBuilder& tableScan(const RowTypePtr& outputType);
 
@@ -293,6 +313,12 @@ class PlanBuilder {
       const std::vector<std::string>& unnestColumns,
       const std::optional<std::string>& ordinalColumn = std::nullopt);
 
+  PlanBuilder& capturePlanNodeId(core::PlanNodeId& id) {
+    VELOX_CHECK_NOT_NULL(planNode_);
+    id = planNode_->id();
+    return *this;
+  }
+
   const std::shared_ptr<core::PlanNode>& planNode() const {
     return planNode_;
   }
@@ -358,7 +384,7 @@ class PlanBuilder {
       size_t numAggregates,
       const std::vector<std::string>& masks);
 
-  int planNodeId_;
+  std::shared_ptr<PlanNodeIdGenerator> planNodeIdGenerator_;
   std::shared_ptr<core::PlanNode> planNode_;
   memory::MemoryPool* pool_;
 };

@@ -278,7 +278,6 @@ class CacheTest : public testing::Test {
       int32_t modulo) {
     uint32_t random;
     if (deterministic_) {
-      auto& stream = *stripe.streams[columnIndex];
       auto region = stripe.regions[columnIndex];
       random = folly::hasher<uint64_t>()(region.offset + columnIndex);
     } else {
@@ -588,12 +587,6 @@ TEST_F(CacheTest, ssdThreads) {
     // All threads access the same amount. Where the data comes from varies.
     EXPECT_EQ(stats[0]->rawBytesRead(), stats[i]->rawBytesRead());
 
-    // What is accessed is <= what is hit from RAM + read from storage + read
-    // from SSD.
-    EXPECT_LE(
-        stats[i]->rawBytesRead(),
-        stats[i]->ramHit().bytes() + stats[i]->ssdRead().bytes() +
-            stats[i]->read().bytes());
     EXPECT_GE(stats[i]->rawBytesRead(), stats[i]->ramHit().bytes());
 
     // Prefetch is <= read from storage + read from SSD.

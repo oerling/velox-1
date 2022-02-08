@@ -158,6 +158,7 @@ class SystemPackageFetcher(object):
     def __init__(self, build_options, packages):
         self.manager = build_options.host_type.get_package_manager()
         self.packages = packages.get(self.manager)
+        self.host_type = build_options.host_type
         if self.packages:
             self.installed = None
         else:
@@ -172,6 +173,8 @@ class SystemPackageFetcher(object):
             cmd = ["rpm", "-q"] + sorted(self.packages)
         elif self.manager == "deb":
             cmd = ["dpkg", "-s"] + sorted(self.packages)
+        elif self.manager == "homebrew":
+            cmd = ["brew", "ls", "--versions"] + sorted(self.packages)
 
         if cmd:
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -181,8 +184,22 @@ class SystemPackageFetcher(object):
             else:
                 # Need all packages to be present to consider us installed
                 self.installed = False
+
         else:
             self.installed = False
+
+        # Hack to make openssl discovery with homebrew work. If openssl was
+        # built with autoconf we could use autoconf.envcmd.OPENSSL_ROOT_DIR
+        # from the manifest, but it isn't, so handle the special case here.
+        if (
+            self.installed
+            and self.host_type.is_darwin()
+            and self.manager == "homebrew"
+            and "openssl@1.1" in self.packages
+        ):
+            candidate = homebrew_package_prefix("openssl@1.1")
+            if os.path.exists(candidate):
+                os.environ["OPENSSL_ROOT_DIR"] = candidate
 
         return bool(self.installed)
 
@@ -447,14 +464,28 @@ class ShipitPathMap(object):
         # Record the full set of files that should be in the tree
         full_file_list = set()
 
+        if sys.platform == "win32":
+            # Let's not assume st_dev has a consistent value on Windows.
+            def st_dev(path):
+                return 1
+
+        else:
+
+            def st_dev(path):
+                return os.lstat(path).st_dev
+
         for fbsource_subdir in self.roots:
             dir_to_mirror = os.path.join(fbsource_root, fbsource_subdir)
+            root_dev = st_dev(dir_to_mirror)
             prefetch_dir_if_eden(dir_to_mirror)
             if not os.path.exists(dir_to_mirror):
                 raise Exception(
                     "%s doesn't exist; check your sparse profile!" % dir_to_mirror
                 )
-            for root, _dirs, files in os.walk(dir_to_mirror):
+
+            for root, dirs, files in os.walk(dir_to_mirror):
+                dirs[:] = [d for d in dirs if root_dev == st_dev(os.path.join(root, d))]
+
                 for src_file in files:
                     full_name = os.path.join(root, src_file)
                     rel_name = os.path.relpath(full_name, fbsource_root)
@@ -528,10 +559,11 @@ def get_fbsource_repo_data(build_options):
 
 
 class SimpleShipitTransformerFetcher(Fetcher):
-    def __init__(self, build_options, manifest):
+    def __init__(self, build_options, manifest, ctx):
         self.build_options = build_options
         self.manifest = manifest
         self.repo_dir = os.path.join(build_options.scratch_dir, "shipit", manifest.name)
+        self.ctx = ctx
 
     def clean(self):
         if os.path.exists(self.repo_dir):
@@ -539,13 +571,15 @@ class SimpleShipitTransformerFetcher(Fetcher):
 
     def update(self):
         mapping = ShipitPathMap()
-        for src, dest in self.manifest.get_section_as_ordered_pairs("shipit.pathmap"):
+        for src, dest in self.manifest.get_section_as_ordered_pairs(
+            "shipit.pathmap", self.ctx
+        ):
             mapping.add_mapping(src, dest)
         if self.manifest.shipit_fbcode_builder:
             mapping.add_mapping(
                 "fbcode/opensource/fbcode_builder", "build/fbcode_builder"
             )
-        for pattern in self.manifest.get_section_as_args("shipit.strip"):
+        for pattern in self.manifest.get_section_as_args("shipit.strip", self.ctx):
             mapping.add_exclusion(pattern)
 
         return mapping.mirror(self.build_options.fbsource_dir, self.repo_dir)
@@ -772,3 +806,14 @@ class ArchiveFetcher(Fetcher):
 
     def get_src_dir(self):
         return self.src_dir
+
+
+def homebrew_package_prefix(package):
+    cmd = ["brew", "--prefix", package]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        return
+
+    if proc.returncode == 0:
+        return proc.stdout.decode("utf-8").rstrip()

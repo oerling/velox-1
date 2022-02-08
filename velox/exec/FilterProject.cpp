@@ -130,6 +130,7 @@ RowVectorPtr FilterProject::getOutput() {
     return nullptr;
   }
   process::TraceContext trace(traceLabel_, true);
+  try {
   vector_size_t size = input_->size();
   LocalSelectivityVector localRows(operatorCtx_->execCtx(), size);
   auto* rows = localRows.get();
@@ -175,8 +176,26 @@ RowVectorPtr FilterProject::getOutput() {
   return fillOutput(
       numOut, allRowsSelected ? nullptr : filterEvalCtx_.selectedIndices);
 }
+  catch (const std::exception& e) {
+    LOG(INFO) << "FilterProject: " << e.what() << input_->type()->toString() ;
+    std::stringstream out;
+    for (auto child : input_->children()) {
+      LOG(INFO) << child->toString();
+      LOG(INFO) << child->toString(0, child->size());
+    }
+					    
+      std::stringstream label;
+  label << "FilterProject: ";
+  for (auto i = 0; i < numExprs_; ++i) {
+    label << exprs_->expr(i)->toString() << " ";
+  }
+  LOG(INFO) << "Exprs: " << label.str();
+  throw;
+  }
+}
 
-void FilterProject::clearNonReusableOutput() {
+
+  void FilterProject::clearNonReusableOutput() {
   if (!output_) {
     return;
   }
