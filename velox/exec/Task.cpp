@@ -36,7 +36,7 @@ namespace facebook::velox::exec {
 
 static void checkTraceCommand();
 
-  // The number of splits groups we run concurrently.
+// The number of splits groups we run concurrently.
 // TODO(spershin): We need to expose this as some kind of setting/parameter.
 static constexpr uint32_t kNumConcurrentSplitGroups = 1;
 
@@ -1187,7 +1187,7 @@ void doCommand(std::string command) {
   }
   LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << command;
 }
-  
+
 static void checkTraceCommand() {
   constexpr auto kCmdFile = "/tmp/veloxcmd.txt";
   static std::mutex mutex;
@@ -1225,7 +1225,7 @@ static void checkTraceCommand() {
   }
 }
 
-  void Task::setError(const std::exception_ptr& exception) {
+void Task::setError(const std::exception_ptr& exception) {
   bool isFirstError = false;
   {
     std::lock_guard<std::mutex> l(mutex_);

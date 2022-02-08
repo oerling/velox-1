@@ -131,71 +131,70 @@ RowVectorPtr FilterProject::getOutput() {
   }
   process::TraceContext trace(traceLabel_, true);
   try {
-  vector_size_t size = input_->size();
-  LocalSelectivityVector localRows(operatorCtx_->execCtx(), size);
-  auto* rows = localRows.get();
-  rows->setAll();
-  EvalCtx evalCtx(operatorCtx_->execCtx(), exprs_.get(), input_.get());
-  if (!hasFilter_) {
-    numProcessedInputRows_ = size;
-    VELOX_CHECK(!isIdentityProjection_);
-    project(*rows, &evalCtx);
+    vector_size_t size = input_->size();
+    LocalSelectivityVector localRows(operatorCtx_->execCtx(), size);
+    auto* rows = localRows.get();
+    rows->setAll();
+    EvalCtx evalCtx(operatorCtx_->execCtx(), exprs_.get(), input_.get());
+    if (!hasFilter_) {
+      numProcessedInputRows_ = size;
+      VELOX_CHECK(!isIdentityProjection_);
+      project(*rows, &evalCtx);
 
-    if (results_.size() > 0) {
-      auto outCol = results_[0];
-      if (outCol && outCol->isCodegenOutput()) {
-        // codegen can output different size when it merged filter + projection
-        size = outCol->size();
-        if (size == 0) { // all filtered out
-          return nullptr;
+      if (results_.size() > 0) {
+        auto outCol = results_[0];
+        if (outCol && outCol->isCodegenOutput()) {
+          // codegen can output different size when it merged filter +
+          // projection
+          size = outCol->size();
+          if (size == 0) { // all filtered out
+            return nullptr;
+          }
         }
       }
+
+      return fillOutput(size, nullptr);
     }
 
-    return fillOutput(size, nullptr);
-  }
-
-  // evaluate filter
-  auto numOut = filter(&evalCtx, *rows);
-  numProcessedInputRows_ = size;
-  if (numOut == 0) { // no rows passed the filer
-    inputProcessed();
-    return nullptr;
-  }
-
-  bool allRowsSelected = (numOut == size);
-
-  // evaluate projections (if present)
-  if (!isIdentityProjection_) {
-    if (!allRowsSelected) {
-      rows->setFromBits(filterEvalCtx_.selectedBits->as<uint64_t>(), size);
+    // evaluate filter
+    auto numOut = filter(&evalCtx, *rows);
+    numProcessedInputRows_ = size;
+    if (numOut == 0) { // no rows passed the filer
+      inputProcessed();
+      return nullptr;
     }
-    project(*rows, &evalCtx);
-  }
 
-  return fillOutput(
-      numOut, allRowsSelected ? nullptr : filterEvalCtx_.selectedIndices);
-}
-  catch (const std::exception& e) {
-    LOG(INFO) << "FilterProject: " << e.what() << input_->type()->toString() ;
+    bool allRowsSelected = (numOut == size);
+
+    // evaluate projections (if present)
+    if (!isIdentityProjection_) {
+      if (!allRowsSelected) {
+        rows->setFromBits(filterEvalCtx_.selectedBits->as<uint64_t>(), size);
+      }
+      project(*rows, &evalCtx);
+    }
+
+    return fillOutput(
+        numOut, allRowsSelected ? nullptr : filterEvalCtx_.selectedIndices);
+  } catch (const std::exception& e) {
+    LOG(INFO) << "FilterProject: " << e.what() << input_->type()->toString();
     std::stringstream out;
     for (auto child : input_->children()) {
       LOG(INFO) << child->toString();
       LOG(INFO) << child->toString(0, child->size());
     }
-					    
-      std::stringstream label;
-  label << "FilterProject: ";
-  for (auto i = 0; i < numExprs_; ++i) {
-    label << exprs_->expr(i)->toString() << " ";
-  }
-  LOG(INFO) << "Exprs: " << label.str();
-  throw;
+
+    std::stringstream label;
+    label << "FilterProject: ";
+    for (auto i = 0; i < numExprs_; ++i) {
+      label << exprs_->expr(i)->toString() << " ";
+    }
+    LOG(INFO) << "Exprs: " << label.str();
+    throw;
   }
 }
 
-
-  void FilterProject::clearNonReusableOutput() {
+void FilterProject::clearNonReusableOutput() {
   if (!output_) {
     return;
   }
