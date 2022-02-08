@@ -293,6 +293,7 @@ void HashProbe::addInput(RowVectorPtr input) {
     }
     return;
   }
+  passingInputRowsInitialized_ = false;
   if (isLeftJoin(joinType_)) {
     // Make sure to allocate an entry in 'hits' for every input row to allow for
     // including rows without a match in the output. Also, make sure to
@@ -302,7 +303,6 @@ void HashProbe::addInput(RowVectorPtr input) {
     auto& hits = lookup_->hits;
     hits.resize(numInput);
     std::fill(hits.data(), hits.data() + numInput, nullptr);
-    passingInputRowsInitialized_ = false;
     table_->joinProbe(*lookup_);
 
     // Update lookup_->rows to include all input rows, not just activeRows_ as
