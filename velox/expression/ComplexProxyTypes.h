@@ -15,13 +15,11 @@
  */
 
 #pragma once
-#include <algorithm>
-#include <iterator>
-#include <optional>
+#include <folly/Likely.h>
 
-#include <velox/common/base/Exceptions.h>
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/type/Type.h"
 #include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorTypeUtils.h"
 
@@ -53,7 +51,7 @@ struct PrimitiveWriterProxy {
 
   void operator=(const std::optional<element_t>& value) {
     if (value.has_value()) {
-      flatVector_->set(index_, value);
+      flatVector_->set(index_, value.value());
     } else {
       flatVector_->setNull(index_, true);
     }
@@ -85,36 +83,33 @@ class ArrayProxy {
   using element_t = typename child_writer_t::exec_out_t;
 
  public:
-  ArrayProxy<V>(const ArrayProxy<V>&) = delete;
-
-  ArrayProxy<V>& operator=(const ArrayProxy<V>&) = delete;
-
-  static bool constexpr provide_std_interface =
-      CppToType<V>::isPrimitiveType && !std::is_same<Varchar, V>::value;
+  static bool constexpr provide_std_interface = CppToType<V>::isPrimitiveType &&
+      !std::is_same<Varchar, V>::value && !std::is_same<Varbinary, V>::value;
 
   static bool constexpr requires_commit = !CppToType<V>::isPrimitiveType ||
-      std::is_same<Varchar, V>::value || std::is_same<bool, V>::value;
+      std::is_same<Varchar, V>::value || std::is_same<bool, V>::value ||
+      std::is_same<Varbinary, V>::value;
 
   // Note: size is with respect to the current size of this array being written.
-  FOLLY_ALWAYS_INLINE void reserve(vector_size_t size) {
-    if (size > capacity_) {
-      while (capacity_ < size) {
-        capacity_ = 2 * capacity_ + 1;
+  void reserve(vector_size_t size) {
+    auto currentSize = size + valuesOffset_;
+
+    if (UNLIKELY(currentSize > elementsVectorCapacity_)) {
+      while (currentSize > elementsVectorCapacity_) {
+        elementsVectorCapacity_ = elementsVectorCapacity_ * 2;
       }
-      childWriter_->ensureSize(valuesOffset_ + capacity_);
+      childWriter_->ensureSize(elementsVectorCapacity_);
     }
   }
 
   // Add a new not null item to the array, increasing its size by 1.
-  FOLLY_ALWAYS_INLINE element_t& add_item() {
-    commitMostRecentChildItem();
-    auto index = valuesOffset_ + length_;
-    length_++;
-    reserve(length_);
+  element_t& add_item() {
+    resize(length_ + 1);
+    auto index = valuesOffset_ + length_ - 1;
 
     if constexpr (!requires_commit) {
       VELOX_DCHECK(provide_std_interface);
-      childWriter_->vector().setNull(index, false);
+      elementsVector_->setNull(index, false);
       return childWriter_->data_[index];
     } else {
       needCommit_ = true;
@@ -124,12 +119,10 @@ class ArrayProxy {
   }
 
   // Add a new null item to the array.
-  FOLLY_ALWAYS_INLINE void add_null() {
-    commitMostRecentChildItem();
-    auto index = valuesOffset_ + length_;
-    length_++;
-    reserve(length_);
-    childWriter_->vector().setNull(index, true);
+  void add_null() {
+    resize(length_ + 1);
+    auto index = valuesOffset_ + length_ - 1;
+    elementsVector_->setNull(index, true);
     // Note: no need to commit the null item.
   }
 
@@ -137,62 +130,65 @@ class ArrayProxy {
   // last item if needed.
   void finalize() {
     commitMostRecentChildItem();
-    // Downsize to the actual size used in the underlying vector.
-    // Some vector-writer's logic depend on the previous size to append data.
-    childWriter_->vector().resize(valuesOffset_ + length_);
+    valuesOffset_ += length_;
+    length_ = 0;
   }
 
   vector_size_t size() {
     return length_;
   }
 
-  // Functions below provide an std::like interface, and are enabled only when
-  // the array element is primitive that is not string or bool.
-
   // 'size' is with respect to the current size of the array being written.
-  FOLLY_ALWAYS_INLINE typename std::enable_if<provide_std_interface>::type
-  resize(vector_size_t size) {
+  void resize(vector_size_t size) {
     commitMostRecentChildItem();
     reserve(size);
     length_ = size;
   }
 
-  typename std::enable_if<provide_std_interface>::type FOLLY_ALWAYS_INLINE
-  push_back(element_t value) {
-    auto& item = add_item();
-    item = value;
+  // Functions below provide an std::like interface, and are enabled only when
+  // the array element is primitive that is not string or bool.
+
+  void push_back(element_t value) {
+    static_assert(
+        provide_std_interface, "push_back not allowed for this array");
+    resize(length_ + 1);
+    back() = value;
   }
 
-  typename std::enable_if<provide_std_interface>::type FOLLY_ALWAYS_INLINE
-  push_back(std::nullopt_t) {
-    add_null();
+  void push_back(std::nullopt_t) {
+    static_assert(
+        provide_std_interface, "push_back not allowed for this array");
+    resize(length_ + 1);
+    back() = std::nullopt;
   }
 
-  typename std::enable_if<provide_std_interface>::type FOLLY_ALWAYS_INLINE
-  push_back(const std::optional<element_t>& value) {
-    if (value) {
-      push_back(*value);
-    } else {
-      add_null();
-    }
+  void push_back(const std::optional<element_t>& value) {
+    static_assert(
+        provide_std_interface, "push_back not allowed for this array");
+    resize(length_ + 1);
+    back() = value;
   }
 
-  typename std::enable_if<provide_std_interface, PrimitiveWriterProxy<V>>::type
+  template <typename T = V>
+  typename std::enable_if<provide_std_interface, PrimitiveWriterProxy<T>>::type
   operator[](vector_size_t index_) {
-    return PrimitiveWriterProxy<V>{
-        &childWriter_->vector(), valuesOffset_ + index_};
+    return PrimitiveWriterProxy<V>{elementsVector_, valuesOffset_ + index_};
   }
 
-  typename std::enable_if<provide_std_interface, PrimitiveWriterProxy<V>>::type
+  template <typename T = V>
+  typename std::enable_if<provide_std_interface, PrimitiveWriterProxy<T>>::type
   back() {
     return PrimitiveWriterProxy<V>{
-        &childWriter_->vector(), valuesOffset_ + size() - 1};
+        elementsVector_, valuesOffset_ + length_ - 1};
   }
 
  private:
-  ArrayProxy<V>() {}
+  // Make sure user do not use those.
+  ArrayProxy<V>() = default;
+  ArrayProxy<V>(const ArrayProxy<V>&) = default;
+  ArrayProxy<V>& operator=(const ArrayProxy<V>&) = default;
 
-  FOLLY_ALWAYS_INLINE void commitMostRecentChildItem() {
+  void commitMostRecentChildItem() {
     if constexpr (requires_commit) {
       if (needCommit_) {
         childWriter_->commit(true);
@@ -201,17 +197,14 @@ class ArrayProxy {
     }
   }
 
-  // Prepare the proxy for a new element.
-  FOLLY_ALWAYS_INLINE void init(vector_size_t valuesOffset) {
-    valuesOffset_ = valuesOffset;
-    length_ = 0;
-    capacity_ = 0;
-    needCommit_ = false;
+  void initialize(VectorWriter<ArrayProxyT<V>, void>* writer) {
+    childWriter_ = &writer->childWriter_;
+    elementsVector_ = &childWriter_->vector();
+    childWriter_->ensureSize(1);
+    elementsVectorCapacity_ = elementsVector_->size();
   }
 
-  void setChildWriter(child_writer_t* childWriter) {
-    childWriter_ = childWriter;
-  }
+  typename child_writer_t::vector_t* elementsVector_ = nullptr;
 
   // Pointer to child vector writer.
   child_writer_t* childWriter_ = nullptr;
@@ -226,12 +219,13 @@ class ArrayProxy {
   // The offset within the child vector at which this array starts.
   vector_size_t valuesOffset_ = 0;
 
-  // Virtual capacity for the current array.
-  // childWriter guaranteed to be safely writable at indices [valuesOffset_,
-  // valuesOffset_ + capacity_).
-  vector_size_t capacity_ = 0;
+  // Tracks the capacity of elements vector.
+  vector_size_t elementsVectorCapacity_ = 0;
 
   template <typename A, typename B>
   friend struct VectorWriter;
+
+  template <typename T>
+  friend class SimpleFunctionAdapter;
 };
 } // namespace facebook::velox::exec

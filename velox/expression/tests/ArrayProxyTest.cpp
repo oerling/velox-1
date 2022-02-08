@@ -15,12 +15,13 @@
  */
 
 #include <fmt/core.h>
-#include "glog/logging.h"
-#include "gtest/gtest.h"
+#include <glog/logging.h>
+#include <gtest/gtest.h>
 
 #include "velox/expression/VectorUdfTypeSystem.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/type/StringView.h"
 
 namespace facebook::velox {
 namespace {
@@ -111,7 +112,7 @@ class ArrayProxyTest : public functions::test::FunctionBaseTest {
 
     writer.result =
         prepareResult(std::make_shared<ArrayType>(ArrayType(BIGINT())));
-    writer.writer->init(*writer.result.get()->as<ArrayVector>());
+    writer.writer->init(*writer.result->as<ArrayVector>());
     writer.writer->setOffset(0);
     return writer;
   }
@@ -220,7 +221,7 @@ TEST_F(ArrayProxyTest, multipleRows) {
       std::make_shared<ArrayType>(ArrayType(BIGINT())), expected.size());
 
   exec::VectorWriter<ArrayProxyT<int64_t>> writer;
-  writer.init(*result.get()->as<ArrayVector>());
+  writer.init(*result->as<ArrayVector>());
 
   for (auto i = 0; i < expected.size(); i++) {
     writer.setOffset(i);
@@ -251,7 +252,7 @@ TEST_F(ArrayProxyTest, testTimeStamp) {
       prepareResult(std::make_shared<ArrayType>(ArrayType(TIMESTAMP())));
 
   exec::VectorWriter<ArrayProxyT<Timestamp>> writer;
-  writer.init(*result.get()->as<ArrayVector>());
+  writer.init(*result->as<ArrayVector>());
   writer.setOffset(0);
   auto& arrayProxy = writer.current();
   // General interface.
@@ -277,5 +278,191 @@ TEST_F(ArrayProxyTest, testTimeStamp) {
        Timestamp::fromMillis(3)}};
   assertEqualVectors(result, makeNullableArrayVector(expected));
 }
+
+TEST_F(ArrayProxyTest, testVarChar) {
+  auto result =
+      prepareResult(std::make_shared<ArrayType>(ArrayType(VARCHAR())));
+
+  exec::VectorWriter<ArrayProxyT<Varchar>> writer;
+  writer.init(*result->as<ArrayVector>());
+  writer.setOffset(0);
+  auto& arrayProxy = writer.current();
+  // General interface is allowed only for arrays of strings.
+  {
+    auto& string = arrayProxy.add_item();
+    string.resize(2);
+    string.data()[0] = 'h';
+    string.data()[1] = 'i';
+  }
+
+  arrayProxy.add_null();
+
+  {
+    auto& string = arrayProxy.add_item();
+    UDFOutputString::assign(string, "welcome");
+  }
+
+  {
+    auto& string = arrayProxy.add_item();
+    UDFOutputString::assign(
+        string,
+        "test a long string, a bit longer than that, longer, and longer");
+  }
+  writer.commit();
+  auto expected = std::vector<std::vector<std::optional<StringView>>>{
+      {"hi"_sv,
+       std::nullopt,
+       "welcome"_sv,
+       "test a long string, a bit longer than that, longer, and longer"_sv}};
+  assertEqualVectors(result, makeNullableArrayVector(expected));
+}
+
+TEST_F(ArrayProxyTest, testVarBinary) {
+  auto result =
+      prepareResult(std::make_shared<ArrayType>(ArrayType(VARBINARY())));
+
+  exec::VectorWriter<ArrayProxyT<Varbinary>> writer;
+  writer.init(*result->as<ArrayVector>());
+  writer.setOffset(0);
+  auto& arrayProxy = writer.current();
+  // General interface is allowed only for arrays of strings.
+  {
+    auto& string = arrayProxy.add_item();
+    string.resize(2);
+    string.data()[0] = 'h';
+    string.data()[1] = 'i';
+  }
+
+  arrayProxy.add_null();
+
+  {
+    auto& string = arrayProxy.add_item();
+    UDFOutputString::assign(string, "welcome");
+  }
+
+  {
+    auto& string = arrayProxy.add_item();
+    UDFOutputString::assign(
+        string,
+        "test a long string, a bit longer than that, longer, and longer");
+  }
+  writer.commit();
+  auto expected = std::vector<std::vector<std::optional<StringView>>>{
+      {"hi"_sv,
+       std::nullopt,
+       "welcome"_sv,
+       "test a long string, a bit longer than that, longer, and longer"_sv}};
+
+  // Test results.
+  DecodedVector decoded;
+  SelectivityVector rows(result->size());
+  decoded.decode(*result, rows);
+  exec::VectorReader<Array<Varbinary>> reader(&decoded);
+  ASSERT_EQ(reader[0].size(), expected[0].size());
+  for (auto i = 0; i < reader[0].size(); i++) {
+    ASSERT_EQ(reader[0][i], expected[0][i]);
+  }
+}
+
+TEST_F(ArrayProxyTest, nestedArray) {
+  auto elementType =
+      ArrayType(std::make_shared<ArrayType>(ArrayType(INTEGER())));
+  auto result = prepareResult(std::make_shared<ArrayType>(elementType));
+
+  exec::VectorWriter<ArrayProxyT<ArrayProxyT<int32_t>>> writer;
+  writer.init(*result.get()->as<ArrayVector>());
+  writer.setOffset(0);
+  auto& arrayProxy = writer.current();
+  // Only general interface is allowed for nested arrays.
+  {
+    auto& array = arrayProxy.add_item();
+    array.resize(2);
+    array[0] = 1;
+    array[1] = 2;
+  }
+
+  arrayProxy.add_null();
+
+  {
+    auto& array = arrayProxy.add_item();
+    array.resize(3);
+    array[0] = 1;
+    array[1] = std::nullopt;
+    array[2] = 2;
+  }
+
+  writer.commit();
+  using array_type = std::optional<std::vector<std::optional<int32_t>>>;
+  array_type array1 = {{1, 2}};
+  array_type array2 = std::nullopt;
+  array_type array3 = {{1, std::nullopt, 2}};
+
+  assertEqualVectors(
+      result, makeNestedArrayVector<int32_t>({{array1, array2, array3}}));
+}
+
+// Creates a matrix of size n*n with numbers 1 to n^2-1 for every input n,
+// and nulls in the diagonal.
+template <typename T>
+struct MakeMatrixFunc {
+  template <typename TOut>
+  bool call(TOut& out, const int64_t& n) {
+    int count = 0;
+    for (auto i = 0; i < n; i++) {
+      auto& matrixRow = out.add_item();
+      matrixRow.resize(n);
+      for (auto j = 0; j < n; j++) {
+        if (i == j) {
+          matrixRow[j] = std::nullopt;
+        } else {
+          matrixRow[j] = count;
+        }
+        count++;
+      }
+    }
+    VELOX_DCHECK(count == n * n);
+    return true;
+  }
+};
+
+TEST_F(ArrayProxyTest, nestedArrayE2E) {
+  registerFunction<MakeMatrixFunc, ArrayProxyT<ArrayProxyT<int64_t>>, int64_t>(
+      {"func"});
+
+  auto result = evaluate(
+      "func(c0)",
+      makeRowVector(
+          {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6, 7, 8, 9, 10})}));
+
+  // Build the expected output.
+  using matrix_row = std::vector<std::optional<int64_t>>;
+  using matrix_type = std::vector<std::optional<matrix_row>>;
+  std::vector<matrix_type> expected;
+  for (auto k = 1; k <= 10; k++) {
+    auto& expectedMatrix = *expected.insert(expected.end(), matrix_type());
+    auto n = k;
+    int count = 0;
+
+    // This is the same loop from NestedArrayFunc.
+    for (auto i = 0; i < n; i++) {
+      // The only line that is different from NestedArrayFunc.
+      auto& matrixRow =
+          **expectedMatrix.insert(expectedMatrix.end(), matrix_row());
+
+      matrixRow.resize(n);
+      for (auto j = 0; j < n; j++) {
+        if (i == j) {
+          matrixRow[j] = std::nullopt;
+        } else {
+          matrixRow[j] = count;
+        }
+        count++;
+      }
+    }
+  }
+
+  assertEqualVectors(result, makeNestedArrayVector<int64_t>(expected));
+}
+
 } // namespace
 } // namespace facebook::velox

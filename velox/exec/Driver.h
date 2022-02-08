@@ -194,9 +194,7 @@ class Driver {
       std::unique_ptr<DriverCtx> driverCtx,
       std::vector<std::unique_ptr<Operator>>&& operators);
 
-  ~Driver() {
-    close();
-  }
+  ~Driver();
 
   static void run(std::shared_ptr<Driver> self);
 
@@ -215,13 +213,6 @@ class Driver {
   ThreadState& state() {
     return state_;
   }
-
-  // Frees the resources associated with this if this is
-  // off-thread. Returns true if resources are freed. If this is on
-  // thread, returns false. In this case the Driver's thread will see
-  // that the Task is set to terminate and will free the
-  // resources on the thread.
-  bool terminate();
 
   void initializeOperatorStats(std::vector<OperatorStats>& stats);
 
@@ -253,6 +244,10 @@ class Driver {
   std::shared_ptr<Task> task() const {
     return task_;
   }
+
+  // Updates the stats in 'task_' and frees resources. Only called by Task for
+  // closing non-running Drivers.
+  void closeByTask();
 
  private:
   void enqueueInternal();
@@ -299,8 +294,9 @@ struct DriverFactory {
   OperatorSupplier consumerSupplier;
   /// Maximum number of drivers that can be run concurrently in this pipeline.
   uint32_t maxDrivers;
-  /// Number of drivers that will be run concurrently in this pipeline. It is
-  /// also the number of drivers per split group in case of grouped execution.
+  /// Number of drivers that will be run concurrently in this pipeline for one
+  /// split group (during grouped execution) or for the whole task (ungrouped
+  /// execution).
   uint32_t numDrivers;
   /// Total number of drivers in this pipeline we expect to be run. In case of
   /// grouped execution it is 'numDrivers' * 'numSplitGroups', otherwise it is

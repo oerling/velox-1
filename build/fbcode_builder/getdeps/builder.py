@@ -98,6 +98,14 @@ class BuilderBase(object):
             dep_dirs = self.get_dev_run_extra_path_dirs(install_dirs, dep_munger)
             dep_munger.emit_dev_run_script(script_path, dep_dirs)
 
+    @property
+    def num_jobs(self) -> int:
+        # 1.5 GiB is a lot to assume, but it's typical of Facebook-style C++.
+        # Some manifests are even heavier and should override.
+        return self.build_opts.get_num_jobs(
+            int(self.manifest.get("build", "job_weight_mib", 1536, ctx=self.ctx))
+        )
+
     def run_tests(
         self, install_dirs, schedule_type, owner, test_filter, retry, no_testpilot
     ):
@@ -161,11 +169,7 @@ class MakeBuilder(BuilderBase):
         # Need to ensure that PREFIX is set prior to install because
         # libbpf uses it when generating its pkg-config file.
         # The lowercase prefix is used by some projects.
-        cmd = (
-            ["make", "-j%s" % self.build_opts.num_jobs]
-            + self.build_args
-            + self._get_prefix()
-        )
+        cmd = ["make", "-j%s" % self.num_jobs] + self.build_args + self._get_prefix()
         self._run_cmd(cmd, env=env)
 
         install_cmd = ["make"] + self.install_args + self._get_prefix()
@@ -189,7 +193,7 @@ class CMakeBootStrapBuilder(MakeBuilder):
             [
                 "./bootstrap",
                 "--prefix=" + self.inst_dir,
-                f"--parallel={self.build_opts.num_jobs}",
+                f"--parallel={self.num_jobs}",
             ]
         )
         super(CMakeBootStrapBuilder, self)._build(install_dirs, reconfigure)
@@ -247,7 +251,7 @@ class AutoconfBuilder(BuilderBase):
                 self._run_cmd(["autoreconf", "-ivf"], cwd=self.src_dir, env=env)
         configure_cmd = [configure_path, "--prefix=" + self.inst_dir] + self.args
         self._run_cmd(configure_cmd, env=env)
-        self._run_cmd(["make", "-j%s" % self.build_opts.num_jobs], env=env)
+        self._run_cmd(["make", "-j%s" % self.num_jobs], env=env)
         self._run_cmd(["make", "install"], env=env)
 
 
@@ -282,7 +286,7 @@ class Iproute2Builder(BuilderBase):
         shutil.rmtree(self.build_dir)
         shutil.copytree(self.src_dir, self.build_dir)
         self._patch()
-        self._run_cmd(["make", "-j%s" % self.build_opts.num_jobs], env=env)
+        self._run_cmd(["make", "-j%s" % self.num_jobs], env=env)
         install_cmd = ["make", "install", "DESTDIR=" + self.inst_dir]
 
         for d in ["include", "lib"]:
@@ -314,7 +318,7 @@ class BistroBuilder(BuilderBase):
                 "make",
                 "install",
                 "-j",
-                str(self.build_opts.num_jobs),
+                str(self.num_jobs),
             ],
             cwd=os.path.join(p, "cmake", "Release"),
             env=env,
@@ -660,7 +664,7 @@ if __name__ == "__main__":
                 "--config",
                 "Release",
                 "-j",
-                str(self.build_opts.num_jobs),
+                str(self.num_jobs),
             ],
             env=env,
         )
@@ -781,7 +785,7 @@ if __name__ == "__main__":
                     "--buck-test-info",
                     buck_test_info_name,
                     "--retry=%d" % retry,
-                    "-j=%s" % str(self.build_opts.num_jobs),
+                    "-j=%s" % str(self.num_jobs),
                     "--test-config",
                     "platform=%s" % machine_suffix,
                     "buildsystem=getdeps",
@@ -794,7 +798,7 @@ if __name__ == "__main__":
                     "--buck-test-info",
                     buck_test_info_name,
                     "--retry=%d" % retry,
-                    "-j=%s" % str(self.build_opts.num_jobs),
+                    "-j=%s" % str(self.num_jobs),
                     "--print-long-results",
                 ]
 
@@ -854,7 +858,7 @@ if __name__ == "__main__":
                     use_cmd_prefix=use_cmd_prefix,
                 )
         else:
-            args = [ctest, "--output-on-failure", "-j", str(self.build_opts.num_jobs)]
+            args = [ctest, "--output-on-failure", "-j", str(self.num_jobs)]
             if test_filter:
                 args += ["-R", test_filter]
 
@@ -918,11 +922,11 @@ class OpenSSLBuilder(BuilderBase):
             args = ["VC-WIN64A-masm", "-utf-8"]
         elif self.build_opts.is_darwin():
             make = "make"
-            make_j_args = ["-j%s" % self.build_opts.num_jobs]
+            make_j_args = ["-j%s" % self.num_jobs]
             args = ["darwin64-x86_64-cc"]
         elif self.build_opts.is_linux():
             make = "make"
-            make_j_args = ["-j%s" % self.build_opts.num_jobs]
+            make_j_args = ["-j%s" % self.num_jobs]
             args = (
                 ["linux-x86_64"] if not self.build_opts.is_arm() else ["linux-aarch64"]
             )
@@ -980,14 +984,17 @@ class Boost(BuilderBase):
             args.append("--user-config=%s" % user_config)
 
         for link in linkage:
+            bootstrap_args = self.manifest.get_section_as_args(
+                "bootstrap.args", self.ctx
+            )
             if self.build_opts.is_windows():
                 bootstrap = os.path.join(self.src_dir, "bootstrap.bat")
-                self._run_cmd([bootstrap], cwd=self.src_dir, env=env)
+                self._run_cmd([bootstrap] + bootstrap_args, cwd=self.src_dir, env=env)
                 args += ["address-model=64"]
             else:
                 bootstrap = os.path.join(self.src_dir, "bootstrap.sh")
                 self._run_cmd(
-                    [bootstrap, "--prefix=%s" % self.inst_dir],
+                    [bootstrap, "--prefix=%s" % self.inst_dir] + bootstrap_args,
                     cwd=self.src_dir,
                     env=env,
                 )
@@ -996,7 +1003,7 @@ class Boost(BuilderBase):
             self._run_cmd(
                 [
                     b2,
-                    "-j%s" % self.build_opts.num_jobs,
+                    "-j%s" % self.num_jobs,
                     "--prefix=%s" % self.inst_dir,
                     "--builddir=%s" % self.build_dir,
                 ]
@@ -1140,7 +1147,7 @@ install(FILES sqlite3.h sqlite3ext.h DESTINATION include)
                 "--config",
                 "Release",
                 "-j",
-                str(self.build_opts.num_jobs),
+                str(self.num_jobs),
             ],
             env=env,
         )
@@ -1178,7 +1185,7 @@ class CargoBuilder(BuilderBase):
             "cargo",
             operation,
             "--workspace",
-            "-j%s" % self.build_opts.num_jobs,
+            "-j%s" % self.num_jobs,
         ] + args
         self._run_cmd(cmd, cwd=self.workspace_dir(), env=env)
 
