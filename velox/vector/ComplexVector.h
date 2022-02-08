@@ -45,7 +45,7 @@ class RowVector : public BaseVector {
         childrenSize_(children.size()),
         children_(std::move(children)) {
     // Some columns may not be projected out
-    VELOX_CHECK(children_.size() <= type->size());
+    VELOX_CHECK_LE(children_.size(), type->size());
     const auto* rowType = dynamic_cast<const RowType*>(type.get());
 
     // Check child vector types.
@@ -303,6 +303,10 @@ class ArrayVector : public BaseVector {
     return elements_;
   }
 
+  VectorPtr& elements() {
+    return elements_;
+  }
+
   void setElements(VectorPtr elements) {
     elements_ = BaseVector::getOrCreateEmpty(
         std::move(elements), type()->childAt(0), pool_);
@@ -457,7 +461,15 @@ class MapVector : public BaseVector {
     return keys_;
   }
 
+  VectorPtr& mapKeys() {
+    return keys_;
+  }
+
   const VectorPtr& mapValues() const {
+    return values_;
+  }
+
+  VectorPtr& mapValues() {
     return values_;
   }
 

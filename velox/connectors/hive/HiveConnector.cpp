@@ -302,8 +302,7 @@ class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
 
 std::unique_ptr<InputStreamHolder> makeStreamHolder(
     FileHandleFactory* factory,
-    const std::string& path,
-    std::shared_ptr<dwio::common::IoStatistics> stats) {
+    const std::string& path) {
   return std::make_unique<InputStreamHolder>(factory->generate(path), nullptr);
 }
 
@@ -350,10 +349,10 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
   // For DataCache and no cache, the stream keeps track of IO.
-  auto ioStatsForStream = ioStats_.get();
+  auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_);
   // Decide between AsyncDataCache, legacy DataCache and no cache. All
   // three are supported to enable comparison.
-  if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
+  if (asyncCache) {
     VELOX_CHECK(
         !dataCache_,
         "DataCache should not be present if the MappedMemory is AsyncDataCache");
@@ -372,9 +371,9 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         (asyncCache),
         tracker,
         fileHandle_->groupId.id(),
-        [factory = fileHandleFactory_,
-         path = split_->filePath,
-         stats = ioStats_]() { return makeStreamHolder(factory, path, stats); },
+        [factory = fileHandleFactory_, path = split_->filePath]() {
+          return makeStreamHolder(factory, path);
+        },
         ioStats_,
         executor_,
         readerOpts_);
@@ -382,7 +381,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         [factory = bufferedInputFactory_]() { return factory.get(); });
     // CachedBufferedInput updates ioStats_',so do not pass this to the
     // InputStream to avoid double counting.
-    ioStatsForStream = nullptr;
+
   } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
     dataCacheConfig->cache = dataCache_;
@@ -401,15 +400,14 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   // We run with the default BufferedInputFactory and no DataCacheConfig if
   // there is no DataCache and the MappedMemory is not an AsyncDataCache.
-  auto uniqueReader =
-      dwio::common::getReaderFactory(readerOpts_.getFileFormat())
-          ->createReader(
-              std::make_unique<dwio::common::ReadFileInputStream>(
-                  fileHandle_->file.get(),
-                  dwio::common::MetricsLog::voidLog(),
-                  ioStatsForStream),
-              readerOpts_);
-  reader_.reset(uniqueReader.release());
+  reader_ = dwio::common::getReaderFactory(readerOpts_.getFileFormat())
+                ->createReader(
+                    std::make_unique<dwio::common::ReadFileInputStream>(
+                        fileHandle_->file.get(),
+                        dwio::common::MetricsLog::voidLog(),
+                        asyncCache ? nullptr : ioStats_.get()),
+                    readerOpts_);
+
   emptySplit_ = false;
   if (reader_->numberOfRows() == 0) {
     emptySplit_ = true;

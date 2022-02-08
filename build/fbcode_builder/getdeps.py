@@ -90,7 +90,7 @@ class ProjectCmdBase(SubCmd):
                 )
             args.project = opts.repo_project
 
-        ctx_gen = opts.get_context_generator(facebook_internal=args.facebook_internal)
+        ctx_gen = opts.get_context_generator()
         if args.test_dependencies:
             ctx_gen.set_value_for_all_projects("test", "on")
         if args.enable_tests:
@@ -415,6 +415,11 @@ class InstallSysDepsCmd(ProjectCmdBase):
             packages = sorted(set(all_packages["deb"]))
             if packages:
                 cmd_args = ["apt", "install", "-y"] + packages
+        elif manager == "homebrew":
+            packages = sorted(set(all_packages["homebrew"]))
+            if packages:
+                cmd_args = ["brew", "install"] + packages
+
         else:
             host_tuple = loader.build_opts.host_type.as_tuple_string()
             print(
@@ -872,7 +877,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
     # TODO: Break up complex function
     def write_job_for_platform(self, platform, args):  # noqa: C901
         build_opts = setup_build_options(args, platform)
-        ctx_gen = build_opts.get_context_generator(facebook_internal=False)
+        ctx_gen = build_opts.get_context_generator()
         loader = ManifestLoader(build_opts, ctx_gen)
         manifest = loader.load_manifest(args.project)
         manifest_ctx = loader.ctx_gen.get_context(manifest.name)
@@ -895,24 +900,35 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
         py3 = "python3"
 
         if build_opts.is_linux():
-            job_name = "linux"
+            artifacts = "linux"
             runs_on = f"ubuntu-{args.ubuntu_version}"
         elif build_opts.is_windows():
             # We're targeting the windows-2016 image because it has
             # Visual Studio 2017 installed, and at the time of writing,
             # the version of boost in the manifests (1.69) is not
             # buildable with Visual Studio 2019
-            job_name = "windows"
+            artifacts = "windows"
             runs_on = "windows-2016"
             # The windows runners are python 3 by default; python2.exe
             # is available if needed.
             py3 = "python"
         else:
-            job_name = "mac"
+            artifacts = "mac"
             runs_on = "macOS-latest"
 
         os.makedirs(args.output_dir, exist_ok=True)
-        output_file = os.path.join(args.output_dir, f"getdeps_{job_name}.yml")
+
+        job_file_prefix = "getdeps_"
+        if args.job_file_prefix:
+            job_file_prefix = args.job_file_prefix
+
+        output_file = os.path.join(args.output_dir, f"{job_file_prefix}{artifacts}.yml")
+
+        if args.job_name_prefix:
+            job_name = args.job_name_prefix + artifacts.capitalize()
+        else:
+            job_name = artifacts
+
         with open(output_file, "w") as out:
             # Deliberate line break here because the @ and the generated
             # symbols are meaningful to our internal tooling when they
@@ -934,7 +950,7 @@ jobs:
             out.write("  build:\n")
             out.write("    runs-on: %s\n" % runs_on)
             out.write("    steps:\n")
-            out.write("    - uses: actions/checkout@v1\n")
+            out.write("    - uses: actions/checkout@v2\n")
 
             if build_opts.is_windows():
                 # cmake relies on BOOST_ROOT but GH deliberately don't set it in order
@@ -947,7 +963,7 @@ jobs:
                 # https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
                 out.write("    - name: Export boost environment\n")
                 out.write(
-                    '      run: "echo BOOST_ROOT=%BOOST_ROOT_1_69_0% >> %GITHUB_ENV%"\n'
+                    '      run: "echo BOOST_ROOT=%BOOST_ROOT_1_78_0% >> %GITHUB_ENV%"\n'
                 )
                 out.write("      shell: cmd\n")
 
@@ -958,15 +974,42 @@ jobs:
 
             projects = loader.manifests_in_dependency_order()
 
-            for m in projects:
-                if m != manifest:
-                    out.write("    - name: Fetch %s\n" % m.name)
-                    out.write(f"      run: {getdepscmd} fetch --no-tests {m.name}\n")
+            allow_sys_arg = ""
+            if (
+                build_opts.allow_system_packages
+                and build_opts.is_linux()
+                and build_opts.host_type.get_package_manager()
+            ):
+                allow_sys_arg = " --allow-system-packages"
+                out.write("    - name: Install system deps\n")
+                out.write(
+                    f"      run: sudo python3 build/fbcode_builder/getdeps.py --allow-system-packages install-system-deps --recursive {manifest.name}\n"
+                )
 
             for m in projects:
                 if m != manifest:
-                    out.write("    - name: Build %s\n" % m.name)
-                    out.write(f"      run: {getdepscmd} build --no-tests {m.name}\n")
+                    if m.name == "rust":
+                        out.write("    - name: Install Rust Stable\n")
+                        out.write("      uses: actions-rs/toolchain@v1\n")
+                        out.write("      with:\n")
+                        out.write("        toolchain: stable\n")
+                        out.write("        default: true\n")
+                        out.write("        profile: minimal\n")
+                    else:
+                        out.write("    - name: Fetch %s\n" % m.name)
+                        out.write(
+                            f"      run: {getdepscmd}{allow_sys_arg} fetch --no-tests {m.name}\n"
+                        )
+
+            for m in projects:
+                if m != manifest:
+                    if m.name == "rust":
+                        continue
+                    else:
+                        out.write("    - name: Build %s\n" % m.name)
+                        out.write(
+                            f"      run: {getdepscmd}{allow_sys_arg} build --no-tests {m.name}\n"
+                        )
 
             out.write("    - name: Build %s\n" % manifest.name)
 
@@ -977,7 +1020,7 @@ jobs:
                 )
 
             out.write(
-                f"      run: {getdepscmd} build --src-dir=. {manifest.name} {project_prefix}\n"
+                f"      run: {getdepscmd}{allow_sys_arg} build --src-dir=. {manifest.name} {project_prefix}\n"
             )
 
             out.write("    - name: Copy artifacts\n")
@@ -991,8 +1034,8 @@ jobs:
                 strip = ""
 
             out.write(
-                f"      run: {getdepscmd} fixup-dyn-deps{strip} "
-                f"--src-dir=. {manifest.name} _artifacts/{job_name} {project_prefix} "
+                f"      run: {getdepscmd}{allow_sys_arg} fixup-dyn-deps{strip} "
+                f"--src-dir=. {manifest.name} _artifacts/{artifacts} {project_prefix} "
                 f"--final-install-prefix /usr/local\n"
             )
 
@@ -1003,7 +1046,7 @@ jobs:
 
             out.write("    - name: Test %s\n" % manifest.name)
             out.write(
-                f"      run: {getdepscmd} test --src-dir=. {manifest.name} {project_prefix}\n"
+                f"      run: {getdepscmd}{allow_sys_arg} test --src-dir=. {manifest.name} {project_prefix}\n"
             )
 
     def setup_project_cmd_parser(self, parser):
@@ -1036,6 +1079,18 @@ jobs:
             action="append",
             dest="os_types",
             default=[],
+        )
+        parser.add_argument(
+            "--job-file-prefix",
+            type=str,
+            help="add a prefix to all job file names",
+            default=None,
+        )
+        parser.add_argument(
+            "--job-name-prefix",
+            type=str,
+            help="add a prefix to all job names",
+            default=None,
         )
 
 

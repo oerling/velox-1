@@ -433,6 +433,8 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
       ArrowArray& arrowArray,
       memory::MemoryPool* pool) = 0;
 
+  virtual bool isViewer() const = 0;
+
   // Helper structure to hold buffers required by an ArrowArray.
   struct ArrowContextHolder {
     BufferPtr values;
@@ -440,7 +442,8 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
     BufferPtr offsets;
 
     // Tests might not use the whole array.
-    const void* buffers[3];
+    const void* buffers[3] = {nullptr, nullptr, nullptr};
+    ArrowArray* children[10];
   };
 
   template <typename T>
@@ -470,7 +473,7 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
       }
     }
 
-    holder.buffers[0] = (nullCount == 0) ? nullptr : (const void*)rawNulls;
+    holder.buffers[0] = (length == 0) ? nullptr : (const void*)rawNulls;
     holder.buffers[1] = (length == 0) ? nullptr : (const void*)rawValues;
     return makeArrowArray(holder.buffers, 2, length, nullCount);
   }
@@ -518,7 +521,7 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
       }
     }
 
-    holder.buffers[0] = (nullCount == 0) ? nullptr : (const void*)rawNulls;
+    holder.buffers[0] = (length == 0) ? nullptr : (const void*)rawNulls;
     return makeArrowArray(holder.buffers, 3, length, nullCount);
   }
 
@@ -591,6 +594,44 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
     testArrowImport<float>("f", {-99.9, 4.3, 31.1, 129.11, -12});
   }
 
+  void testImportWithoutNullsBuffer() {
+    std::vector<std::optional<int64_t>> inputValues = {1, 2, 3, 4, 5};
+    auto length = inputValues.size();
+
+    // Construct Arrow array without nulls value and nulls buffer
+    ArrowContextHolder holder1;
+    holder1.values = AlignedBuffer::allocate<int64_t>(length, pool_.get());
+    auto rawValues1 = holder1.values->asMutable<int64_t>();
+    for (size_t i = 0; i < length; ++i) {
+      rawValues1[i] = *inputValues[i];
+    }
+
+    holder1.buffers[0] = nullptr;
+    holder1.buffers[1] = (const void*)rawValues1;
+    auto arrowArray1 = makeArrowArray(holder1.buffers, 2, length, 0);
+    auto arrowSchema1 = makeArrowSchema("l");
+
+    auto output = importFromArrow(arrowSchema1, arrowArray1, pool_.get());
+    assertVectorContent(inputValues, output, arrowArray1.null_count);
+
+    // However, convert from an Arrow array without nulls buffer but non-zero
+    // null count should fail
+    ArrowContextHolder holder2;
+    holder2.values = AlignedBuffer::allocate<int64_t>(length, pool_.get());
+    auto rawValues2 = holder2.values->asMutable<int64_t>();
+    for (size_t i = 0; i < length; ++i) {
+      rawValues2[i] = *inputValues[i];
+    }
+
+    holder2.buffers[0] = nullptr;
+    holder2.buffers[1] = (const void*)rawValues2;
+    auto arrowSchema2 = makeArrowSchema("l");
+    auto arrowArray2 = makeArrowArray(holder2.buffers, 2, length, 1);
+    EXPECT_THROW(
+        importFromArrow(arrowSchema2, arrowArray2, pool_.get()),
+        VeloxUserError);
+  }
+
   void testImportString() {
     testArrowImport<std::string>("u", {});
     testArrowImport<std::string>("u", {"single"});
@@ -622,6 +663,93 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
         });
   }
 
+ private:
+  void testImportRowFull() {
+    // Manually create a ROW type.
+    ArrowSchema arrowSchema;
+    exportToArrow(
+        ROW({"col1", "col2", "col3"}, {BIGINT(), DOUBLE(), VARCHAR()}),
+        arrowSchema);
+
+    // Some test data.
+    std::vector<std::optional<int64_t>> col1 = {1, 2, 3, 4};
+    std::vector<std::optional<double>> col2 = {99.9, 88.8, 77.7, std::nullopt};
+    std::vector<std::optional<std::string>> col3 = {
+        "my", "string", "column", "Longer string so it's not inlined."};
+
+    // Create the 3 children arrays.
+    ArrowContextHolder childHolder1;
+    ArrowContextHolder childHolder2;
+    ArrowContextHolder childHolder3;
+
+    auto childArray1 = fillArrowArray(col1, childHolder1);
+    auto childArray2 = fillArrowArray(col2, childHolder2);
+    auto childArray3 = fillArrowArray(col3, childHolder3);
+
+    // Create parent array and set the child pointers.
+    ArrowContextHolder parentHolder;
+    auto arrowArray = makeArrowArray(parentHolder.buffers, 0, col1.size(), 0);
+    arrowArray.buffers[0] = nullptr;
+
+    arrowArray.n_children = 3;
+    arrowArray.children = parentHolder.children;
+    arrowArray.children[0] = &childArray1;
+    arrowArray.children[1] = &childArray2;
+    arrowArray.children[2] = &childArray3;
+
+    // Import and validate output.
+    auto outputVector = importFromArrow(arrowSchema, arrowArray, pool_.get());
+    auto rowVector = std::dynamic_pointer_cast<RowVector>(outputVector);
+
+    EXPECT_TRUE(rowVector != nullptr);
+    EXPECT_EQ(arrowArray.n_children, rowVector->childrenSize());
+    EXPECT_EQ(arrowArray.length, rowVector->size());
+
+    assertVectorContent(col1, rowVector->childAt(0), childArray1.null_count);
+    assertVectorContent(col2, rowVector->childAt(1), childArray2.null_count);
+    assertVectorContent(col3, rowVector->childAt(2), childArray3.null_count);
+
+    if (isViewer()) {
+      arrowArray.release(&arrowArray);
+      arrowSchema.release(&arrowSchema);
+    } else {
+      EXPECT_EQ(arrowArray.release, nullptr);
+      EXPECT_EQ(arrowSchema.release, nullptr);
+    }
+  }
+
+  void testImportRowEmpty() {
+    // Manually create a ROW type.
+    ArrowSchema arrowSchema;
+    exportToArrow(ROW({}), arrowSchema);
+
+    // Create parent array and set the child pointers.
+    ArrowContextHolder parentHolder;
+    auto arrowArray = makeArrowArray(parentHolder.buffers, 0, 0, 0);
+
+    // Import and validate output.
+    auto outputVector = importFromArrow(arrowSchema, arrowArray, pool_.get());
+    auto rowVector = std::dynamic_pointer_cast<RowVector>(outputVector);
+
+    EXPECT_TRUE(rowVector != nullptr);
+    EXPECT_EQ(0, rowVector->childrenSize());
+    EXPECT_EQ(0, rowVector->size());
+
+    if (isViewer()) {
+      arrowArray.release(&arrowArray);
+      arrowSchema.release(&arrowSchema);
+    } else {
+      EXPECT_EQ(arrowArray.release, nullptr);
+      EXPECT_EQ(arrowSchema.release, nullptr);
+    }
+  }
+
+ protected:
+  void testImportRow() {
+    testImportRowFull();
+    testImportRowEmpty();
+  }
+
   void testImportFailures() {
     ArrowSchema arrowSchema;
     ArrowArray arrowArray;
@@ -630,13 +758,6 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
     const void* buffers[] = {nullptr, values};
 
     // Unsupported:
-
-    // Children not yet supported.
-    arrowSchema = makeArrowSchema("i");
-    arrowArray = makeArrowArray(buffers, 2, 4, 0);
-    arrowArray.n_children = 1;
-    EXPECT_THROW(
-        importFromArrow(arrowSchema, arrowArray, pool_.get()), VeloxUserError);
 
     // Offset not yet supported.
     arrowSchema = makeArrowSchema("i");
@@ -692,6 +813,10 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
 };
 
 class ArrowBridgeArrayImportAsViewerTest : public ArrowBridgeArrayImportTest {
+  bool isViewer() const override {
+    return true;
+  }
+
   VectorPtr importFromArrow(
       ArrowSchema& arrowSchema,
       ArrowArray& arrowArray,
@@ -705,8 +830,16 @@ TEST_F(ArrowBridgeArrayImportAsViewerTest, scalar) {
   testImportScalar();
 }
 
+TEST_F(ArrowBridgeArrayImportAsViewerTest, without_nulls_buffer) {
+  testImportWithoutNullsBuffer();
+}
+
 TEST_F(ArrowBridgeArrayImportAsViewerTest, string) {
   testImportString();
+}
+
+TEST_F(ArrowBridgeArrayImportAsViewerTest, row) {
+  testImportRow();
 }
 
 TEST_F(ArrowBridgeArrayImportAsViewerTest, failures) {
@@ -715,6 +848,10 @@ TEST_F(ArrowBridgeArrayImportAsViewerTest, failures) {
 
 class ArrowBridgeArrayImportAsOwnerTest
     : public ArrowBridgeArrayImportAsViewerTest {
+  bool isViewer() const override {
+    return false;
+  }
+
   VectorPtr importFromArrow(
       ArrowSchema& arrowSchema,
       ArrowArray& arrowArray,
@@ -728,8 +865,16 @@ TEST_F(ArrowBridgeArrayImportAsOwnerTest, scalar) {
   testImportScalar();
 }
 
+TEST_F(ArrowBridgeArrayImportAsOwnerTest, without_nulls_buffer) {
+  testImportWithoutNullsBuffer();
+}
+
 TEST_F(ArrowBridgeArrayImportAsOwnerTest, string) {
   testImportString();
+}
+
+TEST_F(ArrowBridgeArrayImportAsOwnerTest, row) {
+  testImportRow();
 }
 
 TEST_F(ArrowBridgeArrayImportAsOwnerTest, failures) {

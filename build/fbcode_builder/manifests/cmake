@@ -1,6 +1,13 @@
 [manifest]
 name = cmake
 
+[homebrew]
+cmake
+
+# 18.04 cmake is too old
+[debs.not(all(distro=ubuntu,distro_vers="18.04"))]
+cmake
+
 [rpms]
 cmake
 

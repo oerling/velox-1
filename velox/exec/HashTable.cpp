@@ -544,6 +544,8 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
     sizeMask_ = size_ - 1;
     sizeBits_ = __builtin_popcountll(sizeMask_);
     constexpr auto kPageSize = memory::MappedMemory::kPageSize;
+    // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
+    // tags table.
     auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
     if (!rows_->mappedMemory()->allocateContiguous(
             numPages, nullptr, tableAllocation_)) {

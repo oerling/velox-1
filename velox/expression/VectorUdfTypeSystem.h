@@ -16,9 +16,13 @@
 
 #pragma once
 
+#include <velox/vector/BaseVector.h>
+#include <velox/vector/TypeAliases.h>
 #include <algorithm>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
+
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/expression/ComplexProxyTypes.h"
 #include "velox/expression/ComplexViewTypes.h"
@@ -48,7 +52,8 @@ struct resolver {
 
 template <typename K, typename V>
 struct resolver<Map<K, V>> {
-  using in_type = MapView<K, V>;
+  using in_type = MapView<true, K, V>;
+  using null_free_in_type = MapView<false, K, V>;
   using out_type = core::SlowMapWriter<
       typename resolver<K>::out_type,
       typename resolver<V>::out_type>;
@@ -56,13 +61,15 @@ struct resolver<Map<K, V>> {
 
 template <typename... T>
 struct resolver<Row<T...>> {
-  using in_type = RowView<T...>;
+  using in_type = RowView<true, T...>;
+  using null_free_in_type = RowView<false, T...>;
   using out_type = core::RowWriter<typename resolver<T>::out_type...>;
 };
 
 template <typename V>
 struct resolver<Array<V>> {
-  using in_type = ArrayView<V>;
+  using in_type = ArrayView<true, V>;
+  using null_free_in_type = ArrayView<false, V>;
   using out_type = core::ArrayValWriter<typename resolver<V>::out_type>;
 };
 
@@ -91,8 +98,15 @@ struct resolver<std::shared_ptr<T>> {
 
 template <typename T>
 struct resolver<Variadic<T>> {
-  using in_type = VariadicView<T>;
+  using in_type = VariadicView<true, T>;
+  using null_free_in_type = VariadicView<false, T>;
   // Variadic cannot be used as an out_type
+};
+
+template <>
+struct resolver<Generic> {
+  using in_type = GenericView;
+  using out_type = void; // Not supported as output type yet.
 };
 } // namespace detail
 
@@ -163,6 +177,10 @@ struct VectorWriter {
 template <typename T>
 struct VectorReader {
   using exec_in_t = typename VectorExec::template resolver<T>::in_type;
+  // Types without views cannot contain null, they can only be null, so they're
+  // in_type is already null_free.
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<T>::in_type;
 
   explicit VectorReader(const DecodedVector* decoded) : decoded_(*decoded) {}
 
@@ -171,6 +189,10 @@ struct VectorReader {
 
   exec_in_t operator[](size_t offset) const {
     return decoded_.template valueAt<exec_in_t>(offset);
+  }
+
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    return decoded_.template valueAt<exec_null_free_in_t>(offset);
   }
 
   bool isSet(size_t offset) const {
@@ -287,6 +309,8 @@ template <typename K, typename V>
 struct VectorReader<Map<K, V>> {
   using in_vector_t = typename TypeToFlatVector<Map<K, V>>::type;
   using exec_in_t = typename VectorExec::template resolver<Map<K, V>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Map<K, V>>::null_free_in_type;
 
   explicit VectorReader(const DecodedVector* decoded)
       : decoded_{*decoded},
@@ -301,7 +325,12 @@ struct VectorReader<Map<K, V>> {
 
   exec_in_t operator[](size_t offset) const {
     auto index = decoded_.index(offset);
-    return MapView{&keyReader_, &valReader_, offsets_[index], lengths_[index]};
+    return {&keyReader_, &valReader_, offsets_[index], lengths_[index]};
+  }
+
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&keyReader_, &valReader_, offsets_[index], lengths_[index]};
   }
 
   bool isSet(size_t offset) const {
@@ -322,8 +351,9 @@ struct VectorReader<Map<K, V>> {
 template <typename V>
 struct VectorReader<Array<V>> {
   using in_vector_t = typename TypeToFlatVector<Array<V>>::type;
-  using child_vector_t = typename TypeToFlatVector<V>::type;
   using exec_in_t = typename VectorExec::template resolver<Array<V>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Array<V>>::null_free_in_type;
   using exec_in_child_t = typename VectorExec::template resolver<V>::in_type;
 
   explicit VectorReader(const DecodedVector* decoded)
@@ -343,7 +373,12 @@ struct VectorReader<Array<V>> {
 
   exec_in_t operator[](size_t offset) const {
     auto index = decoded_.index(offset);
-    return ArrayView{&childReader_, offsets_[index], lengths_[index]};
+    return {&childReader_, offsets_[index], lengths_[index]};
+  }
+
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&childReader_, offsets_[index], lengths_[index]};
   }
 
   DecodedVector arrayValuesDecoder_;
@@ -442,13 +477,18 @@ struct VectorWriter<ArrayProxyT<V>> {
   void init(vector_t& vector) {
     arrayVector_ = &vector;
     childWriter_.init(static_cast<child_vector_t&>(*vector.elements().get()));
-    proxy_.setChildWriter(&childWriter_);
+    proxy_.initialize(this);
+  }
+
+  // This should be called once all rows are proccessed.
+  void finish() {
+    proxy_.elementsVector_->resize(proxy_.valuesOffset_);
+    arrayVector_ = nullptr;
   }
 
   VectorWriter() = default;
 
   exec_out_t& current() {
-    proxy_.init(currentValueOffset_);
     return proxy_;
   }
 
@@ -460,17 +500,18 @@ struct VectorWriter<ArrayProxyT<V>> {
     if (size > arrayVector_->size()) {
       arrayVector_->resize(size);
       childWriter_.init(
-          static_cast<child_vector_t&>(arrayVector_->elements().get()));
+          static_cast<child_vector_t&>(*arrayVector_->elements()));
     }
   }
 
   // Commit a not null value.
   void commit() {
-    proxy_.finalize();
-    arrayVector_->setOffsetAndSize(offset_, currentValueOffset_, proxy_.size());
-    // Next array will be written at the new currentValueOffset_.
-    currentValueOffset_ += proxy_.size();
+    arrayVector_->setOffsetAndSize(
+        offset_, proxy_.valuesOffset_, proxy_.length_);
     arrayVector_->setNull(offset_, false);
+    // Will reset length to 0 and prepare proxy_.valuesOffset_ for the next
+    // item.
+    proxy_.finalize();
   }
 
   // Commit a null value.
@@ -492,7 +533,7 @@ struct VectorWriter<ArrayProxyT<V>> {
   }
 
   void reset() {
-    currentValueOffset_ = 0;
+    proxy_.valuesOffset_ = 0;
   }
 
   vector_t* arrayVector_ = nullptr;
@@ -503,15 +544,14 @@ struct VectorWriter<ArrayProxyT<V>> {
 
   // The index being written in the array vector.
   vector_size_t offset_ = 0;
-
-  // The offset of the current array being written in the child vector.
-  vector_size_t currentValueOffset_ = 0;
 };
 
 template <typename... T>
 struct VectorReader<Row<T...>> {
   using in_vector_t = typename TypeToFlatVector<Row<T...>>::type;
   using exec_in_t = typename VectorExec::resolver<Row<T...>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Row<T...>>::null_free_in_type;
 
   explicit VectorReader(const DecodedVector* decoded)
       : decoded_(*decoded),
@@ -523,7 +563,12 @@ struct VectorReader<Row<T...>> {
 
   exec_in_t operator[](size_t offset) const {
     auto index = decoded_.index(offset);
-    return RowView{&childReaders_, index};
+    return {&childReaders_, index};
+  }
+
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&childReaders_, index};
   }
 
   bool isSet(size_t offset) const {
@@ -672,13 +717,19 @@ struct VectorWriter<Row<T...>> {
 template <typename T>
 struct VectorReader<Variadic<T>> {
   using in_vector_t = typename TypeToFlatVector<T>::type;
-  using exec_in_t = VariadicView<T>;
+  using exec_in_t = typename VectorExec::resolver<Variadic<T>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Variadic<T>>::null_free_in_type;
 
   explicit VectorReader(const DecodedArgs& decodedArgs, int32_t startPosition)
       : childReaders_{prepareChildReaders(decodedArgs, startPosition)} {}
 
   exec_in_t operator[](vector_size_t offset) const {
-    return VariadicView<T>{&childReaders_, offset};
+    return {&childReaders_, offset};
+  }
+
+  exec_null_free_in_t readNullFree(vector_size_t offset) const {
+    return {&childReaders_, offset};
   }
 
   bool isSet(size_t /*unused*/) const {
@@ -879,7 +930,7 @@ struct VectorWriter<
     std::enable_if_t<
         std::is_same_v<T, Varchar> | std::is_same_v<T, Varbinary>>> {
   using vector_t = typename TypeToFlatVector<T>::type;
-  using proxy_t = StringProxy<FlatVector<StringView>, false>;
+  using exec_out_t = StringProxy<FlatVector<StringView>, false>;
 
   void init(vector_t& vector) {
     vector_ = &vector;
@@ -893,12 +944,12 @@ struct VectorWriter<
 
   VectorWriter() {}
 
-  proxy_t& current() {
-    proxy_ = proxy_t(vector_, offset_);
+  exec_out_t& current() {
+    proxy_ = exec_out_t(vector_, offset_);
     return proxy_;
   }
 
-  void copyCommit(const proxy_t& data) {
+  void copyCommit(const exec_out_t& data) {
     // If not initialized for zero-copy writes, copy the value into the vector.
     if (!proxy_.initialized()) {
       vector_->set(offset_, StringView(data.value()));
@@ -929,7 +980,7 @@ struct VectorWriter<
     return *vector_;
   }
 
-  proxy_t proxy_;
+  exec_out_t proxy_;
   vector_t* vector_;
   size_t offset_ = 0;
 };
@@ -1031,6 +1082,35 @@ struct VectorWriter<std::shared_ptr<T>> {
   exec_out_t proxy_;
   vector_t* vector_;
   size_t offset_ = 0;
+};
+
+template <>
+struct VectorReader<Generic> {
+  using exec_in_t = GenericView;
+  using exec_null_free_in_t = exec_in_t;
+
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_(*decoded), base_(decoded->base()) {}
+
+  explicit VectorReader(const VectorReader<Generic>&) = delete;
+
+  VectorReader<Generic>& operator=(const VectorReader<Generic>&) = delete;
+
+  bool isSet(size_t offset) const {
+    return !decoded_.isNullAt(offset);
+  }
+
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return GenericView{base_, index};
+  }
+
+  exec_null_free_in_t readNullFree(vector_size_t offset) const {
+    return operator[](offset);
+  }
+
+  const DecodedVector& decoded_;
+  const BaseVector* base_;
 };
 
 } // namespace facebook::velox::exec

@@ -295,6 +295,7 @@ void HashProbe::addInput(RowVectorPtr input) {
     }
     return;
   }
+  passingInputRowsInitialized_ = false;
   if (isLeftJoin(joinType_)) {
     // Make sure to allocate an entry in 'hits' for every input row to allow for
     // including rows without a match in the output. Also, make sure to
@@ -585,8 +586,23 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
     return;
   }
   EvalCtx evalCtx(operatorCtx_->execCtx(), nullptr, input_.get());
-  SelectivityVector rows(input_->size());
-  evalCtx.ensureFieldLoaded(channel, rows);
+  if (!passingInputRowsInitialized_) {
+    passingInputRows_.resize(input_->size());
+    if (isLeftJoin(joinType_)) {
+      passingInputRows_.setAll();
+    } else {
+      passingInputRows_.clearAll();
+      auto numInput = input_->size();
+      auto hits = lookup_->hits.data();
+      for (auto i = 0; i < numInput; ++i) {
+        if (hits[i]) {
+          passingInputRows_.setValid(i, true);
+        }
+      }
+    }
+    passingInputRows_.updateBounds();
+  }
+  evalCtx.ensureFieldLoaded(channel, passingInputRows_);
 }
 
 void HashProbe::noMoreInput() {
