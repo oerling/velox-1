@@ -654,7 +654,7 @@ class ExprTest : public testing::Test {
         execCtx_->pool(),
         vector->type(),
         vector->size(),
-        std::make_unique<SimpleVectorLoader>([=](RowSet rows) {
+        std::make_unique<SimpleVectorLoader>([=](RowSet /*rows*/) {
           auto indices = makeIndices(
               vector->size(), [](vector_size_t row) { return row; });
           return BaseVector::wrapInDictionary(
@@ -2336,16 +2336,10 @@ TEST_F(ExprTest, peelNulls) {
 TEST_F(ExprTest, peelLazyDictionaryOverConstant) {
   auto c0 = makeFlatVector<int64_t>(5, [](vector_size_t row) { return row; });
   auto c0Indices = makeIndices(5, [](auto row) { return row; });
-  auto c1 = makeFlatVector<int64_t>(5, [](vector_size_t row) { return row; });
-
-  auto rowType = ROW({"c0", "c1"}, {c0->type(), c1->type()});
-
-  auto exprSet = compileExpression(
-      "if (not(is_null(if (c0 >= 0, c1, null))), coalesce(c0, 22), null)",
-      rowType);
+  auto c1 = makeFlatVector<int64_t>(5, [](auto row) { return row; });
 
   auto result = evaluate(
-      exprSet.get(),
+      "if (not(is_null(if (c0 >= 0, c1, null))), coalesce(c0, 22), null)",
       makeRowVector(
           {BaseVector::wrapInDictionary(
                nullptr, c0Indices, 5, wrapInLazyDictionary(c0)),
@@ -2452,4 +2446,36 @@ TEST_F(ExprTest, testEmptyVectors) {
   auto a = makeFlatVector<int32_t>({});
   auto result = evaluate("c0 + c0", makeRowVector({a, a}));
   assertEqualVectors(a, result);
+}
+
+TEST_F(ExprTest, subsetOfDictOverLazy) {
+  // We have dictionaries over LazyVector. We load for some indices in
+  // the top dictionary. The intermediate dictionaries refer to
+  // non-loaded items in the base of the LazyVector, including indices
+  // past its end. We check that we end up with one level of
+  // dictionary and no dictionaries that are invalid by through
+  // referring to uninitialized/nonexistent positions.
+  auto base = makeFlatVector<int32_t>(100, [](auto row) { return row; });
+  auto lazy = std::make_shared<LazyVector>(
+      execCtx_->pool(),
+      INTEGER(),
+      1000,
+      std::make_unique<test::SimpleVectorLoader>(
+          [base](auto /*size*/) { return base; }));
+  auto row = makeRowVector({BaseVector::wrapInDictionary(
+      nullptr,
+      makeIndices(100, [](auto row) { return row; }),
+      100,
+
+      BaseVector::wrapInDictionary(
+          nullptr,
+          makeIndices(1000, [](auto row) { return row; }),
+          1000,
+          lazy))});
+
+  // We expect a single level of dictionary.
+  auto result = evaluate("c0", row);
+  EXPECT_EQ(result->encoding(), VectorEncoding::Simple::DICTIONARY);
+  EXPECT_EQ(result->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
+  assertEqualVectors(result, base);
 }

@@ -247,7 +247,7 @@ class HashStringAllocator : public StreamArena {
     pool_.clear();
   }
 
-  memory::MappedMemory* mappedMemory() const {
+  memory::MappedMemory* FOLLY_NONNULL mappedMemory() const {
     return pool_.mappedMemory();
   }
 
