@@ -4069,7 +4069,7 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
   }
 
   ensureCapacity<uint64_t>(secondsValues_, numValues_, &memoryPool_);
-  secondsValues_->setSize(numValues_);
+  secondsValues_->setSize(numValues_ * sizeof(int64_t));
   memcpy(secondsValues_->asMutable<char>(), rawValues_, numValues_ * sizeof(int64_t));
 
   numValues_ = 0;

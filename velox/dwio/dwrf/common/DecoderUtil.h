@@ -464,6 +464,9 @@ void processFixedWidthRun(
     } else if (scatter) {
       scatterNonNulls(rows.size(), scatterRows, values);
       numValues = scatterRows[rows.size() - 1] + 1;
+    } else {
+      // The values are already in place.
+      numValues += rows.size();
     }
     return;
   }

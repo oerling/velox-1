@@ -72,6 +72,10 @@ class E2EFilterTest : public testing::Test {
     pool_ = memory::getDefaultScopedMemoryPool();
   }
 
+  static bool typeKindSupportsValueHook(TypeKind kind) {
+    return kind != TypeKind::TIMESTAMP && kind != TypeKind::ARRAY && kind != TypeKind::ROW && kind != TypeKind::MAP;
+  }
+
   void makeRowType(const std::string& columns, bool wrapInStruct) {
     std::string schema = wrapInStruct
         ? fmt::format("struct<{},struct_val:struct<{}>>", columns, columns)
@@ -398,7 +402,7 @@ class E2EFilterTest : public testing::Test {
           auto rowVector = reinterpret_cast<RowVector*>(batch.get());
           for (int32_t i = 0; i < rowVector->childrenSize(); ++i) {
             auto child = rowVector->childAt(i);
-            if (child->encoding() == VectorEncoding::Simple::LAZY) {
+            if (child->encoding() == VectorEncoding::Simple::LAZY && typeKindSupportsValueHook(child->typeKind())) {
               ASSERT_TRUE(loadWithHook(rowVector, i, child, hitRows, rowIndex));
             }
           }
@@ -550,9 +554,6 @@ class E2EFilterTest : public testing::Test {
     for (int32_t noVInts = 0; noVInts < (tryNoVInts ? 2 : 1); ++noVInts) {
       useVInts_ = !noVInts;
       for (int32_t noNulls = 0; noNulls < (tryNoNulls ? 2 : 1); ++noNulls) {
-        if (noNulls) {
-          makeNotNull();
-        }
         std::cout << fmt::format(
                          "Run with {} nulls, {} vints",
                          noNulls ? "no" : "",
@@ -560,7 +561,12 @@ class E2EFilterTest : public testing::Test {
                   << std::endl;
         filterGenerator->reseedRng();
 
-        makeDataset(customize);
+	auto newCustomize = customize;
+	        if (noNulls) {
+		  newCustomize = [&]() { customize(); makeNotNull(); };makeNotNull();
+        }
+
+        makeDataset(newCustomize);
         for (auto i = 0; i < numCombinations; ++i) {
           std::vector<FilterSpec> specs =
               filterGenerator->makeRandomSpecs(filterable, 125);
@@ -719,6 +725,19 @@ TEST_F(E2EFilterTest, stringDictionary) {
       true);
 }
 
+TEST_F(E2EFilterTest, timestamp) {
+  testWithTypes(
+      "timestamp_val:timestamp,"
+      "long_val:bigint",
+      [&]() {
+      },
+      true,
+      {"long_val"},
+      20,
+      true,
+      true);
+}
+  
 TEST_F(E2EFilterTest, listAndMap) {
   testWithTypes(
       "long_val:bigint,"
