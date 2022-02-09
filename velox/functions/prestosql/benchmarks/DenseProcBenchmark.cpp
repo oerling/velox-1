@@ -32,10 +32,8 @@ FOLLY_ALWAYS_INLINE bool call(float& out, float f) {
 }
 VELOX_UDF_END();
 
-VectorPtr fused(const VectorPtr& data) {
+  VectorPtr fused(const VectorPtr& data, FlatVectorPtr<float> result) {
   const auto numRows = data->size();
-  auto result = std::static_pointer_cast<FlatVector<float>>(
-      BaseVector::create(REAL(), numRows, data->pool()));
   auto rawResults = result->mutableRawValues<float>();
 
   auto features = data->as<RowVector>()->childAt(0)->asFlatVector<float>();
@@ -48,6 +46,31 @@ VectorPtr fused(const VectorPtr& data) {
   return result;
 }
 
+    
+  VectorPtr fusedAvx(const VectorPtr& data, FlatVectorPtr<float> result) {
+  const auto numRows = data->size();
+  auto rawResults = result->mutableRawValues<float>();
+
+  auto features = data->as<RowVector>()->childAt(0)->asFlatVector<float>();
+  auto rawFeatures = features->rawValues();
+  using TV = simd::Vectors<float>;
+  
+  __m256 low = TV::setAll(-10);
+  __m256 high = TV::setAll(10);
+  for (auto row = 0; row < numRows; row += 8) {
+    __m256 values = *(__m256_u*)(rawFeatures + row) + 17.0;
+    auto lowMask = TV::compareGt(low, values);
+    auto highMask = TV::compareGt(values, high);
+    float* resultPtr = rawResults + row;
+    *(__m256_u*)resultPtr = values;
+    _mm256_maskstore_ps(resultPtr, (__m256i)lowMask, low);
+    _mm256_maskstore_ps(resultPtr, (__m256i)highMask, high);
+  }
+
+  return result;
+}
+
+  
 class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
  public:
   DenseProcBenchmark() : FunctionBenchmarkBase() {
@@ -99,14 +122,35 @@ class DenseProcBenchmark : public functions::test::FunctionBenchmarkBase {
   void runFused() {
     folly::BenchmarkSuspender suspender;
     auto input = makeData();
+    int32_t numRows = input->size();
+    auto result = std::static_pointer_cast<FlatVector<float>>(
+      BaseVector::create(REAL(), numRows, input->pool()));
+
     suspender.dismiss();
 
     int cnt = 0;
     for (auto i = 0; i < 1'000; i++) {
-      cnt += fused(input)->size();
+      cnt += fused(input, result)->size();
     }
     folly::doNotOptimizeAway(cnt);
   }
+
+  void runFusedAvx() {
+    folly::BenchmarkSuspender suspender;
+    auto input = makeData();
+    int32_t numRows = input->size();
+    auto result = std::static_pointer_cast<FlatVector<float>>(
+      BaseVector::create(REAL(), numRows, input->pool()));
+
+    suspender.dismiss();
+
+    volatile int cnt = 0;
+    for (auto i = 0; i < 1'000; i++) {
+      cnt += fusedAvx(input, result)->size();
+    }
+    folly::doNotOptimizeAway(cnt);
+  }
+
 };
 
 BENCHMARK(multipleFunctions) {
@@ -125,9 +169,16 @@ BENCHMARK_RELATIVE(fusedExpressions) {
   benchmark.runFused();
 }
 
+BENCHMARK_RELATIVE(fusedAvx) {
+  DenseProcBenchmark benchmark;
+  benchmark.runFusedAvx();
+}
+
+  
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
   folly::runBenchmarks();
-  return 0;
+  
+    return 0;
 }
