@@ -100,10 +100,23 @@ class BuilderBase(object):
 
     @property
     def num_jobs(self) -> int:
-        # 1.5 GiB is a lot to assume, but it's typical of Facebook-style C++.
-        # Some manifests are even heavier and should override.
+        # This is a hack, but we don't have a "defaults manifest" that we can
+        # customize per platform.
+        # TODO: Introduce some sort of defaults config that can select by
+        # platform, just like manifest contexts.
+        if sys.platform.startswith("freebsd"):
+            # clang on FreeBSD is quite memory-efficient.
+            default_job_weight = 512
+        else:
+            # 1.5 GiB is a lot to assume, but it's typical of Facebook-style C++.
+            # Some manifests are even heavier and should override.
+            default_job_weight = 1536
         return self.build_opts.get_num_jobs(
-            int(self.manifest.get("build", "job_weight_mib", 1536, ctx=self.ctx))
+            int(
+                self.manifest.get(
+                    "build", "job_weight_mib", default_job_weight, ctx=self.ctx
+                )
+            )
         )
 
     def run_tests(
@@ -160,19 +173,28 @@ class MakeBuilder(BuilderBase):
         self.install_args = install_args or []
         self.test_args = test_args
 
+    @property
+    def _make_binary(self):
+        return self.manifest.get("build", "make_binary", "make", ctx=self.ctx)
+
     def _get_prefix(self):
         return ["PREFIX=" + self.inst_dir, "prefix=" + self.inst_dir]
 
     def _build(self, install_dirs, reconfigure):
+
         env = self._compute_env(install_dirs)
 
         # Need to ensure that PREFIX is set prior to install because
         # libbpf uses it when generating its pkg-config file.
         # The lowercase prefix is used by some projects.
-        cmd = ["make", "-j%s" % self.num_jobs] + self.build_args + self._get_prefix()
+        cmd = (
+            [self._make_binary, "-j%s" % self.num_jobs]
+            + self.build_args
+            + self._get_prefix()
+        )
         self._run_cmd(cmd, env=env)
 
-        install_cmd = ["make"] + self.install_args + self._get_prefix()
+        install_cmd = [self._make_binary] + self.install_args + self._get_prefix()
         self._run_cmd(install_cmd, env=env)
 
     def run_tests(
@@ -183,7 +205,7 @@ class MakeBuilder(BuilderBase):
 
         env = self._compute_env(install_dirs)
 
-        cmd = ["make"] + self.test_args + self._get_prefix()
+        cmd = [self._make_binary] + self.test_args + self._get_prefix()
         self._run_cmd(cmd, env=env)
 
 
@@ -216,6 +238,10 @@ class AutoconfBuilder(BuilderBase):
         )
         self.args = args or []
         self.conf_env_args = conf_env_args or {}
+
+    @property
+    def _make_binary(self):
+        return self.manifest.get("build", "make_binary", "make", ctx=self.ctx)
 
     def _build(self, install_dirs, reconfigure):
         configure_path = os.path.join(self.src_dir, "configure")
@@ -251,8 +277,8 @@ class AutoconfBuilder(BuilderBase):
                 self._run_cmd(["autoreconf", "-ivf"], cwd=self.src_dir, env=env)
         configure_cmd = [configure_path, "--prefix=" + self.inst_dir] + self.args
         self._run_cmd(configure_cmd, env=env)
-        self._run_cmd(["make", "-j%s" % self.num_jobs], env=env)
-        self._run_cmd(["make", "install"], env=env)
+        self._run_cmd([self._make_binary, "-j%s" % self.num_jobs], env=env)
+        self._run_cmd([self._make_binary, "install"], env=env)
 
 
 class Iproute2Builder(BuilderBase):
@@ -486,6 +512,14 @@ if __name__ == "__main__":
         self.defines = defines or {}
         if extra_cmake_defines:
             self.defines.update(extra_cmake_defines)
+
+        try:
+            from .facebook.vcvarsall import extra_vc_cmake_defines
+        except ImportError:
+            pass
+        else:
+            self.defines.update(extra_vc_cmake_defines)
+
         self.loader = loader
         if build_opts.shared_libs:
             self.defines["BUILD_SHARED_LIBS"] = "ON"

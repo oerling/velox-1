@@ -60,14 +60,14 @@ fbcode/tools/lfs = tools/lfs
 
 [shipit.pathmap.fb=off]
 fbcode/eden/fs/public_autocargo = eden/fs
-fbcode/eden/scm/lib/public_autocargo = eden/scm/lib
+fbcode/eden/scm/public_autocargo = eden/scm
 fbcode/common/rust/shed/hostcaps/public_cargo = common/rust/shed/hostcaps
 fbcode/configerator/structs/scm/hg/public_autocargo = configerator/structs/scm/hg
 
 [shipit.strip]
 ^fbcode/eden/fs/eden-config\.h$
 ^fbcode/eden/fs/py/eden/config\.py$
-^fbcode/eden/hg/.*$
+^fbcode/eden/hg-server/.*$
 ^fbcode/eden/mononoke/(?!lfs_protocol)
 ^fbcode/eden/scm/build/.*$
 ^fbcode/eden/scm/lib/third-party/rust/.*/Cargo.toml$
@@ -77,9 +77,9 @@ fbcode/configerator/structs/scm/hg/public_autocargo = configerator/structs/scm/h
 
 [shipit.strip.fb=off]
 ^fbcode/common/rust/shed(?!/public_autocargo).*/Cargo\.toml$
-^fbcode/configerator/structs/hg(?!/public_autocargo).*/Cargo\.toml$
+^fbcode/configerator/structs/scm/hg(?!/public_autocargo).*/Cargo\.toml$
 ^fbcode/eden/fs(?!/public_autocargo).*/Cargo\.toml$
-^fbcode/eden/scm/lib(?!/public_autocargo).*/Cargo\.toml$
+^fbcode/eden/scm(?!/public_autocargo|/edenscmnative).*/Cargo\.toml$
 ^.*/facebook/.*$
 ^.*/fb/.*$
 

@@ -246,12 +246,7 @@ class ExprTest : public testing::Test {
           };
 
           if (makeLazyVector) {
-            current = std::make_shared<LazyVector>(
-                execCtx_->pool(),
-                CppToType<T>::create(),
-                cardinality,
-                std::make_unique<test::SimpleVectorLoader>(
-                    [flatVector](auto /*size*/) { return flatVector; }));
+            current = wrapInLazyDictionary(flatVector);
           } else {
             current = flatVector;
           }
@@ -651,6 +646,19 @@ class ExprTest : public testing::Test {
             VELOX_CHECK_EQ(rows[i], expectedRowAt(i));
           }
           return vectorMaker_->flatVector<T>(size, valueAt, isNullAt);
+        }));
+  }
+
+  VectorPtr wrapInLazyDictionary(VectorPtr vector) {
+    return std::make_shared<LazyVector>(
+        execCtx_->pool(),
+        vector->type(),
+        vector->size(),
+        std::make_unique<SimpleVectorLoader>([=](RowSet /*rows*/) {
+          auto indices = makeIndices(
+              vector->size(), [](vector_size_t row) { return row; });
+          return BaseVector::wrapInDictionary(
+              nullptr, indices, vector->size(), vector);
         }));
   }
 
@@ -2325,6 +2333,21 @@ TEST_F(ExprTest, peelNulls) {
   assertEqualVectors(expectedResult, result);
 }
 
+TEST_F(ExprTest, peelLazyDictionaryOverConstant) {
+  auto c0 = makeFlatVector<int64_t>(5, [](vector_size_t row) { return row; });
+  auto c0Indices = makeIndices(5, [](auto row) { return row; });
+  auto c1 = makeFlatVector<int64_t>(5, [](auto row) { return row; });
+
+  auto result = evaluate(
+      "if (not(is_null(if (c0 >= 0, c1, null))), coalesce(c0, 22), null)",
+      makeRowVector(
+          {BaseVector::wrapInDictionary(
+               nullptr, c0Indices, 5, wrapInLazyDictionary(c0)),
+           BaseVector::wrapInDictionary(
+               nullptr, c0Indices, 5, wrapInLazyDictionary(c1))}));
+  assertEqualVectors(c0, result);
+}
+
 TEST_F(ExprTest, accessNested) {
   // Construct Row(Row(Row(int))) vector
   auto base = makeFlatVector<int32_t>({1, 2, 3, 4, 5});
@@ -2423,6 +2446,38 @@ TEST_F(ExprTest, testEmptyVectors) {
   auto a = makeFlatVector<int32_t>({});
   auto result = evaluate("c0 + c0", makeRowVector({a, a}));
   assertEqualVectors(a, result);
+}
+
+TEST_F(ExprTest, subsetOfDictOverLazy) {
+  // We have dictionaries over LazyVector. We load for some indices in
+  // the top dictionary. The intermediate dictionaries refer to
+  // non-loaded items in the base of the LazyVector, including indices
+  // past its end. We check that we end up with one level of
+  // dictionary and no dictionaries that are invalid by through
+  // referring to uninitialized/nonexistent positions.
+  auto base = makeFlatVector<int32_t>(100, [](auto row) { return row; });
+  auto lazy = std::make_shared<LazyVector>(
+      execCtx_->pool(),
+      INTEGER(),
+      1000,
+      std::make_unique<test::SimpleVectorLoader>(
+          [base](auto /*size*/) { return base; }));
+  auto row = makeRowVector({BaseVector::wrapInDictionary(
+      nullptr,
+      makeIndices(100, [](auto row) { return row; }),
+      100,
+
+      BaseVector::wrapInDictionary(
+          nullptr,
+          makeIndices(1000, [](auto row) { return row; }),
+          1000,
+          lazy))});
+
+  // We expect a single level of dictionary.
+  auto result = evaluate("c0", row);
+  EXPECT_EQ(result->encoding(), VectorEncoding::Simple::DICTIONARY);
+  EXPECT_EQ(result->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
+  assertEqualVectors(result, base);
 }
 
 TEST_F(ExprTest, peeledConstant) {
