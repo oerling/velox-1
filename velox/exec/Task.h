@@ -137,6 +137,12 @@ class Task : public std::enable_shared_from_this<Task> {
 
   bool isUngroupedExecution() const;
 
+  /// Returns true if state is 'running'.
+  bool isRunning() const;
+
+  /// Returns true if state is 'finished'.
+  bool isFinished() const;
+
   void createLocalMergeSources(
       uint32_t splitGroupId,
       unsigned numSources,
@@ -380,6 +386,12 @@ class Task : public std::enable_shared_from_this<Task> {
   }
 
  private:
+  /// Returns true if state is 'running'.
+  bool isRunningLocked() const;
+
+  /// Returns true if state is 'finished'.
+  bool isFinishedLocked() const;
+
   template <class TBridgeType>
   std::shared_ptr<TBridgeType> getJoinBridgeInternal(
       uint32_t splitGroupId,
@@ -520,7 +532,7 @@ class Task : public std::enable_shared_from_this<Task> {
   /// queued split groups.
   std::queue<uint32_t> queuedSplitGroups_;
 
-  TaskState state_ = kRunning;
+  TaskState state_ = TaskState::kRunning;
 
   /// Stores separate splits state for each plan node.
   std::unordered_map<core::PlanNodeId, SplitsState> splitsStates_;

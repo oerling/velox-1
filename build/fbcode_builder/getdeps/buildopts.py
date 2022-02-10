@@ -161,6 +161,9 @@ class BuildOptions(object):
     def is_linux(self):
         return self.host_type.is_linux()
 
+    def is_freebsd(self):
+        return self.host_type.is_freebsd()
+
     def get_num_jobs(self, job_weight):
         """Given an estimated job_weight in MiB, compute a reasonable concurrency limit."""
         if self.specified_num_jobs:
@@ -201,6 +204,31 @@ class BuildOptions(object):
 
         env["GETDEPS_BUILD_DIR"] = os.path.join(self.scratch_dir, "build")
         env["GETDEPS_INSTALL_DIR"] = self.install_dir
+
+        # Python setuptools attempts to discover a local MSVC for
+        # building Python extensions. On Windows, getdeps already
+        # supports invoking a vcvarsall prior to compilation.
+        #
+        # Tell setuptools to bypass its own search. This fixes a bug
+        # where setuptools would fail when run from CMake on GitHub
+        # Actions with the inscrutable message 'error: Microsoft
+        # Visual C++ 14.0 is required. Get it with "Build Tools for
+        # Visual Studio"'. I suspect the actual error is that the
+        # environment or PATH is overflowing.
+        #
+        # For extra credit, someone could patch setuptools to
+        # propagate the actual error message from vcvarsall, because
+        # often it does not mean Visual C++ is not available.
+        #
+        # Related discussions:
+        # - https://github.com/pypa/setuptools/issues/2028
+        # - https://github.com/pypa/setuptools/issues/2307
+        # - https://developercommunity.visualstudio.com/t/error-microsoft-visual-c-140-is-required/409173
+        # - https://github.com/OpenMS/OpenMS/pull/4779
+        # - https://github.com/actions/virtual-environments/issues/1484
+
+        if self.is_windows() and self.get_vcvars_path():
+            env["DISTUTILS_USE_SDK"] = "1"
 
         # On macOS we need to set `SDKROOT` when we use clang for system
         # header files.
