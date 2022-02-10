@@ -231,11 +231,12 @@ void Task::start(
     }
   }
 
+  std::unique_lock<std::mutex> l(self->mutex_);
+
   // For grouped execution we postpone driver creation up until the splits start
   // arriving, as we don't know what split groups we are going to get.
   // Here we create Drivers only for ungrouped (normal) execution.
   if (self->isUngroupedExecution()) {
-    std::unique_lock<std::mutex> l(self->mutex_);
     // Create the drivers we are going to run for this task.
     std::vector<std::shared_ptr<Driver>> drivers;
     drivers.reserve(self->numDriversPerSplitGroup_);
@@ -400,7 +401,7 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
 void Task::ensureSplitGroupsAreBeingProcessedLocked(
     std::shared_ptr<Task>& self) {
   // Only try creating more drivers if we are running.
-  if (state_ != TaskState::kRunning) {
+  if (not isRunningLocked() or (numDriversPerSplitGroup_ == 0)) {
     return;
   }
 
@@ -438,7 +439,7 @@ void Task::setMaxSplitSequenceId(
   checkPlanNodeIdForSplit(planNodeId);
 
   std::lock_guard<std::mutex> l(mutex_);
-  VELOX_CHECK(state_ == kRunning);
+  VELOX_CHECK(isRunningLocked());
 
   auto& splitsState = splitsStates_[planNodeId];
   // We could have been sent an old split again, so only change max id, when the
@@ -456,7 +457,7 @@ bool Task::addSplitWithSequence(
   bool added = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(state_ == kRunning);
+    VELOX_CHECK(isRunningLocked());
 
     // The same split can be added again in some systems. The systems that want
     // 'one split processed once only' would use this method and duplicate
@@ -478,7 +479,7 @@ void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
   std::unique_ptr<ContinuePromise> promise;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(state_ == kRunning);
+    VELOX_CHECK(isRunningLocked());
 
     promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
   }
@@ -602,7 +603,7 @@ void Task::checkNoMoreSplitGroupsLocked() {
   }
   if (noMoreSplitGroups) {
     numTotalDrivers_ = seenSplitGroups_.size() * numDriversPerSplitGroup_;
-    {
+    if (hasPartitionedOutput_) {
       auto bufferManager = bufferManager_.lock();
       bufferManager->updateNumDrivers(
           taskId(), numDriversInPartitionedOutput_ * seenSplitGroups_.size());
@@ -717,6 +718,24 @@ bool Task::isUngroupedExecution() const {
   return not isGroupedExecution();
 }
 
+bool Task::isRunning() const {
+  std::lock_guard<std::mutex> l(mutex_);
+  return (state_ == TaskState::kRunning);
+}
+
+bool Task::isFinished() const {
+  std::lock_guard<std::mutex> l(mutex_);
+  return (state_ == TaskState::kFinished);
+}
+
+bool Task::isRunningLocked() const {
+  return (state_ == TaskState::kRunning);
+}
+
+bool Task::isFinishedLocked() const {
+  return (state_ == TaskState::kFinished);
+}
+
 void Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
   auto bufferManager = bufferManager_.lock();
   VELOX_CHECK_NOT_NULL(
@@ -735,7 +754,7 @@ void Task::setAllOutputConsumed() {
 }
 
 void Task::driverClosedLocked() {
-  if (state_ == TaskState::kRunning) {
+  if (isRunningLocked()) {
     --numRunningDrivers_;
   }
   ++numFinishedDrivers_;
@@ -743,16 +762,16 @@ void Task::driverClosedLocked() {
 }
 
 void Task::checkIfFinishedLocked() {
-  if ((numFinishedDrivers_ == numTotalDrivers_) && (state_ == kRunning)) {
+  if ((numFinishedDrivers_ == numTotalDrivers_) && isRunningLocked()) {
     if (taskStats_.executionEndTimeMs == 0) {
       // In case we haven't set executionEndTimeMs due to all splits depleted,
       // we set it here.
       // This can happen due to task error or task being cancelled.
       taskStats_.executionEndTimeMs = getCurrentTimeMs();
     }
-    if (!hasPartitionedOutput_ || partitionedOutputConsumed_) {
+    if ((not hasPartitionedOutput_) || partitionedOutputConsumed_) {
       taskStats_.endTimeMs = getCurrentTimeMs();
-      state_ = kFinished;
+      state_ = TaskState::kFinished;
       stateChangedLocked();
     }
   }
@@ -877,7 +896,7 @@ void Task::terminate(TaskState terminalState) {
     if (taskStats_.executionEndTimeMs == 0) {
       taskStats_.executionEndTimeMs = getCurrentTimeMs();
     }
-    if (state_ != kRunning) {
+    if (not isRunningLocked()) {
       return;
     }
     state_ = terminalState;
@@ -991,7 +1010,7 @@ ContinueFuture Task::stateChangeFuture(uint64_t maxWaitMicros) {
   std::lock_guard<std::mutex> l(mutex_);
   // If 'this' is running, the future is realized on timeout or when
   // this no longer is running.
-  if (state_ != kRunning) {
+  if (not isRunningLocked()) {
     return ContinueFuture(true);
   }
   auto [promise, future] = makeVeloxPromiseContract<bool>(
@@ -1229,7 +1248,7 @@ void Task::setError(const std::exception_ptr& exception) {
   bool isFirstError = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (state_ != kRunning) {
+    if (not isRunningLocked()) {
       return;
     }
     if (!exception_) {
@@ -1238,7 +1257,7 @@ void Task::setError(const std::exception_ptr& exception) {
     }
   }
   if (isFirstError) {
-    terminate(kFailed);
+    terminate(TaskState::kFailed);
   }
   if (isFirstError && onError_) {
     onError_(exception_);
