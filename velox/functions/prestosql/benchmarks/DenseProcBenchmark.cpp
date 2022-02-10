@@ -57,14 +57,23 @@ VELOX_UDF_END();
   
   __m256 low = TV::setAll(-10);
   __m256 high = TV::setAll(10);
+  __m256si allSet = simd::Vectors<int32_t>::setAll(-1);
   for (auto row = 0; row < numRows; row += 8) {
     __m256 values = *(__m256_u*)(rawFeatures + row) + 17.0;
     auto lowMask = TV::compareGt(low, values);
     auto highMask = TV::compareGt(values, high);
+#if 1
+    auto notHighMask = highMask ^ allSet;
+    values = (__m256)(((__m256si)values & notHighMask ) | ((__m256si)high & highMask));
+    auto notLowMask = lowMask ^ allSet;
+
+		      *(__m256si_u*)(rawResults + row) = ((__m256si)values & notLowMask) | ((__m256si)low & lowMask);
+#else
     float* resultPtr = rawResults + row;
     *(__m256_u*)resultPtr = values;
     _mm256_maskstore_ps(resultPtr, (__m256i)lowMask, low);
     _mm256_maskstore_ps(resultPtr, (__m256i)highMask, high);
+#endif
   }
 
   return result;
