@@ -46,7 +46,6 @@ class EvalCtx {
   // peeled off fields.
   const VectorPtr& getField(int32_t index) const;
 
-  
   BaseVector* getRawField(int32_t index) const;
 
   void ensureFieldLoaded(int32_t index, const SelectivityVector& rows);

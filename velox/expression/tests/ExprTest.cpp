@@ -2429,14 +2429,16 @@ TEST_F(ExprTest, peeledConstant) {
   constexpr int32_t kSubsetSize = 80;
   constexpr int32_t kBaseSize = 160;
   auto indices = makeIndices(kSubsetSize, [](auto row) { return row * 2; });
-  auto numbers = makeFlatVector<int32_t>(kBaseSize, [](auto row) { return row; });
-  auto row = makeRowVector({
-		BaseVector::wrapInDictionary(nullptr, indices, kSubsetSize, numbers),
-		BaseVector::createConstant("Hans Pfaal", kBaseSize, execCtx_->pool()) });
-  auto result = std::dynamic_pointer_cast<SimpleVector<StringView>>(evaluate("if (c0 % 4 = 0, c1, null)", row));
+  auto numbers =
+      makeFlatVector<int32_t>(kBaseSize, [](auto row) { return row; });
+  auto row = makeRowVector(
+      {BaseVector::wrapInDictionary(nullptr, indices, kSubsetSize, numbers),
+       BaseVector::createConstant("Hans Pfaal", kBaseSize, execCtx_->pool())});
+  auto result = std::dynamic_pointer_cast<SimpleVector<StringView>>(
+      evaluate("if (c0 % 4 = 0, c1, null)", row));
   EXPECT_EQ(kSubsetSize, result->size());
   std::stringstream stream;
-  for (auto i = 0; i <kSubsetSize; ++i) {
+  for (auto i = 0; i < kSubsetSize; ++i) {
     if (result->isNullAt(i)) {
       continue;
     }
@@ -2445,4 +2447,3 @@ TEST_F(ExprTest, peeledConstant) {
     stream << result->toString(i);
   }
 }
-

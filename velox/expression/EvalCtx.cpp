@@ -207,8 +207,8 @@ void EvalCtx::setErrors(
   rows.applyToSelected([&](auto row) { setError(row, exceptionPtr); });
 }
 
-  const VectorPtr& EvalCtx::getField(int32_t index) const {
-    const VectorPtr* field;
+const VectorPtr& EvalCtx::getField(int32_t index) const {
+  const VectorPtr* field;
   if (!peeledFields_.empty()) {
     field = &peeledFields_[index];
   } else {

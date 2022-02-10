@@ -109,8 +109,9 @@ void FieldReference::evalSpecialForm(
   // 'context'.  Chekc is the child is unique before taking the second
   // reference. Unique constant vectors can e resized in place, non-unique
   // must be copied to set the size.
-  bool isUniqueChild = inputs_.empty() ? context->getField(index_).unique() : row->childAt(index_).unique();
-    VectorPtr child =
+  bool isUniqueChild = inputs_.empty() ? context->getField(index_).unique()
+                                       : row->childAt(index_).unique();
+  VectorPtr child =
       inputs_.empty() ? context->getField(index_) : row->childAt(index_);
   if (result->get()) {
     auto indices = useDecode ? decoded.indices() : nullptr;
@@ -125,9 +126,9 @@ void FieldReference::evalSpecialForm(
     // and a copy otherwise.
     if (!useDecode && child->isConstantEncoding()) {
       if (isUniqueChild) {
-	child->resize(rows.size());
+        child->resize(rows.size());
       } else {
-	child = BaseVector::wrapInConstant(rows.size(), 0, child);
+        child = BaseVector::wrapInConstant(rows.size(), 0, child);
       }
     }
     *result = useDecode ? std::move(decoded.wrap(child, *input.get(), rows))
