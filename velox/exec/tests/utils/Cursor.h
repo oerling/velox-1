@@ -26,12 +26,21 @@ struct CursorParameters {
   int32_t destination = 0;
   // Maximum number of drivers per pipeline.
   int32_t maxDrivers = 1;
+  // Maximum number of split groups processed concurrently.
+  int32_t concurrentSplitGroups = 1;
   // Number of drivers for the pipeline that produces task results. Cannot
   // exceed numThreads, but can be less.
   std::optional<int32_t> numResultDrivers;
   // Optional, created if not present.
   std::shared_ptr<core::QueryCtx> queryCtx;
   uint64_t bufferedBytes = 512 * 1024;
+
+  // Ungrouped (by default) or grouped (bucketed) execution.
+  core::ExecutionStrategy executionStrategy{
+      core::ExecutionStrategy::kUngrouped};
+  // Total number of split groups, our task might get splits for all of them or
+  // only for a a fraction.
+  int numSplitGroups{0};
 };
 
 class TaskQueue {
@@ -95,6 +104,11 @@ class TaskCursor {
     }
   }
 
+  /// Starts the task if not started yet.
+  void start();
+
+  /// Fetches another batch from the task queue.
+  /// Starts the task if not started yet.
   bool moveNext();
 
   bool hasNext();
@@ -109,6 +123,7 @@ class TaskCursor {
 
  private:
   const int32_t maxDrivers_;
+  const int32_t concurrentSplitGroups_;
   bool started_ = false;
   std::shared_ptr<TaskQueue> queue_;
   std::shared_ptr<exec::Task> task_;

@@ -211,8 +211,7 @@ BlockingReason PartitionedOutputBuffer::enqueue(
     std::lock_guard<std::mutex> l(mutex_);
     VELOX_CHECK_LT(destination, buffers_.size());
     VELOX_CHECK(
-        task_->state() == kRunning,
-        "Task is terminated, cannot add data to output.");
+        task_->isRunning(), "Task is terminated, cannot add data to output.");
 
     totalSize_ += data->size();
     if (broadcast_) {
@@ -277,11 +276,9 @@ void PartitionedOutputBuffer::checkIfDone(bool oneDriverFinished) {
     }
   }
 
-  // Outside mutex_.
-  if (atEnd_) {
-    for (auto& notification : finished) {
-      notification.notify();
-    }
+  // Notify outside of mutex.
+  for (auto& notification : finished) {
+    notification.notify();
   }
 }
 
@@ -407,20 +404,21 @@ void PartitionedOutputBuffer::getData(
 }
 
 void PartitionedOutputBuffer::terminate() {
-  VELOX_CHECK(task_->state() != kRunning);
   std::lock_guard<std::mutex> l(mutex_);
+  VELOX_CHECK(not task_->isRunning());
   for (auto& promise : promises_) {
     promise.setValue(true);
   }
 }
 
 std::string PartitionedOutputBuffer::toString() {
+  std::lock_guard<std::mutex> l(mutex_);
   std::stringstream out;
   out << "[PartitionedOutputBuffer totalSize_=" << totalSize_
       << "b, num producers blocked=" << promises_.size()
       << ", completed=" << numFinished_ << "/" << numDrivers_ << ", "
       << (atEnd_ ? "at end, " : "") << "destinations: " << std::endl;
-  for (int i = 0; i < buffers_.size(); ++i) {
+  for (auto i = 0; i < buffers_.size(); ++i) {
     auto buffer = buffers_[i].get();
     out << i << ": " << (buffer ? buffer->toString() : "none") << std::endl;
   }
