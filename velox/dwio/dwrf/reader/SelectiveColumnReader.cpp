@@ -4046,6 +4046,7 @@ void SelectiveTimestampColumnReader::seekToRowGroup(uint32_t index) {
 
 template <bool dense>
 void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
+  vector_size_t numRows = rows.back() + 1;
   ExtractToReader extractValues(this);
   common::AlwaysTrue filter;
   auto secondsV1 = dynamic_cast<RleDecoderV1<true>*>(seconds_.get());
@@ -4092,6 +4093,7 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
             decltype(extractValues),
             dense>(filter, this, rows, extractValues));
   }
+  readOffset_ + numRows;
 }
 
 void SelectiveTimestampColumnReader::read(
@@ -4113,11 +4115,26 @@ void SelectiveTimestampColumnReader::read(
 void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result) {
   // We merge the seconds and nanos into 'values_'
   auto tsValues = AlignedBuffer::allocate<Timestamp>(numValues_, &memoryPool_);
-  auto target = tsValues->asMutable<Timestamp>();
-  auto rawSeconds = secondsValues_->as<int64_t>();
-  auto rawNanos = values_->as<uint64_t>();
-  for (auto i = 0; i < numValues_; ++i) {
-    target[i] = Timestamp(rawSeconds[i], rawNanos[i]);
+  auto rawTs = tsValues->asMutable<Timestamp>();
+  auto secondsData = secondsValues_->as<int64_t>();
+  auto nanosData = values_->as<uint64_t>();
+  auto rawNulls = nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
+  for (auto i = 0; i < numValues_; i++) {
+    if (!rawNulls || !bits::isBitNull(rawNulls, i)) {
+      auto nanos = nanosData[i];
+      uint64_t zeros = nanos & 0x7;
+      nanos >>= 3;
+      if (zeros != 0) {
+        for (uint64_t j = 0; j <= zeros; ++j) {
+          nanos *= 10;
+        }
+      }
+      auto seconds =  secondsData[i] + EPOCH_OFFSET;
+      if (seconds < 0 && nanos != 0) {
+        seconds -= 1;
+      }
+      rawTs[i] = Timestamp(seconds, nanos);
+    }
   }
   values_ = tsValues;
   rawValues_ = values_->asMutable<char>();
