@@ -73,7 +73,8 @@ class E2EFilterTest : public testing::Test {
   }
 
   static bool typeKindSupportsValueHook(TypeKind kind) {
-    return kind != TypeKind::TIMESTAMP && kind != TypeKind::ARRAY && kind != TypeKind::ROW && kind != TypeKind::MAP;
+    return kind != TypeKind::TIMESTAMP && kind != TypeKind::ARRAY &&
+        kind != TypeKind::ROW && kind != TypeKind::MAP;
   }
 
   void makeRowType(const std::string& columns, bool wrapInStruct) {
@@ -402,7 +403,8 @@ class E2EFilterTest : public testing::Test {
           auto rowVector = reinterpret_cast<RowVector*>(batch.get());
           for (int32_t i = 0; i < rowVector->childrenSize(); ++i) {
             auto child = rowVector->childAt(i);
-            if (child->encoding() == VectorEncoding::Simple::LAZY && typeKindSupportsValueHook(child->typeKind())) {
+            if (child->encoding() == VectorEncoding::Simple::LAZY &&
+                typeKindSupportsValueHook(child->typeKind())) {
               ASSERT_TRUE(loadWithHook(rowVector, i, child, hitRows, rowIndex));
             }
           }
@@ -563,9 +565,13 @@ class E2EFilterTest : public testing::Test {
                   << std::endl;
         filterGenerator->reseedRng();
 
-	auto newCustomize = customize;
-	        if (noNulls) {
-		  newCustomize = [&]() { customize(); makeNotNull(); };makeNotNull();
+        auto newCustomize = customize;
+        if (noNulls) {
+          newCustomize = [&]() {
+            customize();
+            makeNotNull();
+          };
+          makeNotNull();
         }
 
         makeDataset(newCustomize);
@@ -731,15 +737,14 @@ TEST_F(E2EFilterTest, timestamp) {
   testWithTypes(
       "timestamp_val:timestamp,"
       "long_val:bigint",
-      [&]() {
-      },
+      [&]() {},
       false,
       {"long_val"},
       20,
       true,
       true);
 }
-  
+
 TEST_F(E2EFilterTest, listAndMap) {
   testWithTypes(
       "long_val:bigint,"

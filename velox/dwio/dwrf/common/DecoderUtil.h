@@ -492,34 +492,35 @@ void processFixedWidthRun(
     }
     return;
   }
-  auto end = rowIndex + numInput & ~(kWidth - 1);
-  int32_t row = rowIndex;
+  auto end = numInput & ~(kWidth - 1);
+  int32_t row = 0;
+  int32_t valuesBegin = numValues;
   // Process full vectors
   for (; row < end; row += kWidth) {
-    auto valueVector = simd::Vectors<T>::load(values + row);
+    auto valueVector = simd::Vectors<T>::load(values + valuesBegin + row);
     processFixedFilter<T, filterOnly, scatter, dense>(
         reinterpret_cast<__m256i>(valueVector),
         kWidth,
-        rows[row],
+        rows[rowIndex + row],
         filter,
         [&](int32_t offset) {
           return simd::Vectors<T>::loadGather32Indices(
-              (scatter ? scatterRows : rows.data()) + row + offset * 8);
+              (scatter ? scatterRows : rows.data()) + rowIndex + row + offset * 8);
         },
         values,
         filterHits,
         numValues);
   }
   if (numInput > end) {
-    auto valueVector = simd::Vectors<T>::load(values + row);
+    auto valueVector = simd::Vectors<T>::load(values + valuesBegin + row);
     processFixedFilter<T, filterOnly, scatter, dense>(
         reinterpret_cast<__m256i>(valueVector),
         numInput - end,
-        rows[row],
+        rows[rowIndex + row],
         filter,
         [&](int32_t offset) {
           return simd::Vectors<T>::loadGather32Indices(
-              (scatter ? scatterRows : rows.data()) + row + offset * 8);
+              (scatter ? scatterRows : rows.data()) + row + rowIndex + offset * 8);
         },
         values,
         filterHits,

@@ -17,6 +17,7 @@
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include <folly/Random.h>
 #include "velox/common/base/Nulls.h"
+#include "velox/type/Filter.h"
 
 #include <gtest/gtest.h>
 
@@ -165,10 +166,23 @@ TEST_F(DecoderUtilTest, nonNullsFromSparse) {
   }
 }
 
+namespace facebook::velox::dwrf {
+  // Excerpt from LazyVector.h.
+struct NoHook  {
+  void addValues(
+      const int32_t* rows,
+      const void* values,
+      int32_t size,
+      uint8_t valueWidth) {}
+};
+
+
+} // namespace facebook::velox::dwrf
 
 TEST_F(DecoderUtilTest, processFixedWithRun) {
   // Tests processing consecutive batches of integers with processFixedWidthRun.
   constexpr int kSize = 100;
+  constexpr int32_t kStep = 17;
   std::vector<int32_t> data;
   std::vector<int32_t> scatter;
   data.reserve(kSize);
@@ -181,10 +195,45 @@ TEST_F(DecoderUtilTest, processFixedWithRun) {
     scatter.push_back(i * 2);
     scatter.push_back((i + 1) * 2);
   }
-  
-  // The values from data get copied here according to the row number mappinh n scatter.
-  std::vector<int32_t> result(scatter.back() + 1);
+
+  // the row numbers that pass the filter come here, translated via scatter.
+  std::vector<int32_t> hits(kSize);
   // Each valid index in 'data'
   std::vector<int32_t> rows(kSize);
+  auto filter = std::make_unique<common::BigintRange>(40, 1000, false);
   std::iota(rows.begin(), rows.end(), 0);
+  // The passing values are gathered here. Before each call to
+  // processFixedWidthRun, the candidate values are appended here and
+  // processFixedWidthRun overwrites them with the passing values and sets
+  // numValues to be the first unused index after the passing values.
+  std::vector<int32_t> results;
+  int32_t numValues = 0;
+  for (auto rowIndex = 0; rowIndex < kSize; rowIndex += kStep) {
+    int32_t numInput = std::min<int32_t>(kStep, kSize - rowIndex);
+    results.insert(
+        results.begin() + numValues,
+        data.begin() + rowIndex,
+        data.begin() + rowIndex + numInput);
+
+    NoHook noHook;
+    processFixedWidthRun<int32_t, false, true, false>(
+        rows,
+        rowIndex,
+        numInput,
+        scatter.data(),
+        results.data(),
+        hits.data(),
+        numValues,
+        *filter,
+        noHook);
+  }
+  // Check that each value that passes the filter is in 'results' and that   its index times 2 is in 'data' is in 'hits'. The 2x is because the scatter maps each row to 2x the row number.
+  int32_t passedCount = 0;
+  for (auto i = 0; i < kSize; ++i) {
+    if (data[i] >= 40) {
+      EXPECT_EQ(data[i], results[passedCount]);
+      EXPECT_EQ(i * 2, hits[passedCount]);
+      ++passedCount;
+    }
+  }
 }

@@ -3907,8 +3907,8 @@ class DirectRleColumnVisitor
         std::is_same<typename super::Extract, DropValues>::value;
 
     processFixedWidthRun<T, filterOnly, scatter, isDense>(
-							  folly::Range<const vector_size_t*>(super::rows_, super::numRows_),
-							  super::rowIndex_,
+        folly::Range<const vector_size_t*>(super::rows_, super::numRows_),
+        super::rowIndex_,
         numInput,
         scatterRows,
         values,
@@ -4121,10 +4121,10 @@ void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result) {
   auto rawTs = tsValues->asMutable<Timestamp>();
   auto secondsData = secondsValues_->as<int64_t>();
   auto nanosData = values_->as<uint64_t>();
-  auto rawNulls =
-      nullsInReadRange_
-    ? (returnReaderNulls_ ? nullsInReadRange_->as<uint64_t>() : rawResultNulls_)
-    : nullptr;
+  auto rawNulls = nullsInReadRange_
+      ? (returnReaderNulls_ ? nullsInReadRange_->as<uint64_t>()
+                            : rawResultNulls_)
+      : nullptr;
   for (auto i = 0; i < numValues_; i++) {
     if (!rawNulls || !bits::isBitNull(rawNulls, i)) {
       auto nanos = nanosData[i];

@@ -152,9 +152,9 @@ class DirectDecoder : public IntDecoder<isSigned> {
             ? folly::Range<const int*>(innerVector->data(), innerVector->size())
             : folly::Range<const int32_t*>(rows, outerVector->size());
         processFixedWidthRun<T, filterOnly, true, Visitor::dense>(
-								  dataRows,
+            dataRows,
             0,
-								  dataRows.size(),
+            dataRows.size(),
             outerVector->data(),
             data,
             hasFilter ? visitor.outputRows(numRows) : nullptr,

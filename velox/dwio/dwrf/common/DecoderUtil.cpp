@@ -180,7 +180,12 @@ template bool nonNullRowsFromSparse<false, false>(
     int32_t& tailSkip);
 
 template <typename T>
-void scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const int32_t* target, T* data) {
+void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    T* data) {
   for (auto index = numRows - 1; index >= 0; --index) {
     auto destination = target[rowIndex + index];
     if (destination == numValues + index) {
@@ -190,19 +195,39 @@ void scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const
   }
 }
 
-template void
-scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const int32_t* target, int64_t* data);
+template void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    int64_t* data);
 
-template void
-scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const int32_t* target, int32_t* data);
+template void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    int32_t* data);
 
-template void
-scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const int32_t* target, int16_t* data);
+template void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    int16_t* data);
 
-template void
-scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const int32_t* target, float* data);
+template void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    float* data);
 
-template void
-scatterNonNulls(int32_t rowIndex, int32_t numRows, int32_t numValues, const int32_t* target, double* data);
+template void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    double* data);
 
 } // namespace facebook::velox::dwrf
