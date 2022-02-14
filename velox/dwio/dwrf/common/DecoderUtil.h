@@ -428,11 +428,27 @@ bool useFastPath(Visitor& visitor) {
       (std::is_same<typename Visitor::HookType, NoHook>::value || !hasNulls ||
        Visitor::HookType::kSkipNulls);
 }
-
+// Scatters values in 'data' to indices in 'target]. 'numRows' is
+// the number of items in 'data' to process. 'numValues' is the
+// index of the first item of 'data' to process. 'rowIndex' is the
+// index of the destination of the first processed item of 'data' in
+// 'target.  data[destination[rowIndex]] = data[numValues]. Indices
+// in 'target' are increasing and the data movement is done in
+// descending order of index so as not to overwrite unprocessed
+// data'
 template <typename T>
-void scatterNonNulls(int32_t numRows, const int32_t* target, T* data);
+void scatterNonNulls(
+    int32_t rowIndex,
+    int32_t numRows,
+    int32_t numValues,
+    const int32_t* target,
+    T* data);
 
-// Processes a run of contiguous Ts in 'values'. If hook, call it on
+// Processes a run of contiguous Ts in 'values'. 'values', starting at
+// 'numValues' have been decoded from consecutive (dense case) or
+// non-consecutive places in the encoding. The row number in the
+// non-null space for values[numValues + i] is rows[rowIndex +i ].
+// If hook, call it on
 // all.  If no filter and no hook and no nulls, do nothing since the
 // values are already in place. If no filter and nulls, scatter the
 // values so that there is a gap for the nulls.
@@ -440,6 +456,10 @@ void scatterNonNulls(int32_t numRows, const int32_t* target, T* data);
 // If filter, filter the values and shift them down so that there are
 // no gaps. Produce the passing row numbers in 'filterHits'. If there
 // are nulls, scatter the passing row numbers.
+//
+// 'numInput' is the number of new values to process. The first of these is in
+// values[numValues]. 'rowIndex' is the index of the corresponding value in
+// 'scatterRows'
 template <
     typename T,
     bool filterOnly,
@@ -449,6 +469,8 @@ template <
     typename THook>
 void processFixedWidthRun(
     folly::Range<const int32_t*> rows,
+    int32_t rowIndex,
+    int32_t numInput,
     const int32_t* scatterRows,
     T* values,
     int32_t* filterHits,
@@ -460,19 +482,18 @@ void processFixedWidthRun(
   constexpr bool hasHook = !std::is_same<THook, NoHook>::value;
   if (!hasFilter) {
     if (hasHook) {
-      hook.addValues(scatterRows, values, rows.size(), sizeof(T));
+      hook.addValues(scatterRows + rowIndex, values, rows.size(), sizeof(T));
     } else if (scatter) {
-      scatterNonNulls(rows.size(), scatterRows, values);
-      numValues = scatterRows[rows.size() - 1] + 1;
+      scatterNonNulls(rowIndex, numInput, numValues, scatterRows, values);
+      numValues = scatterRows[rowIndex + numInput - 1] + 1;
     } else {
       // The values are already in place.
-      numValues += rows.size();
+      numValues += numInput;
     }
     return;
   }
-  auto numInput = rows.size();
-  auto end = numInput & ~(kWidth - 1);
-  int32_t row = 0;
+  auto end = rowIndex + numInput & ~(kWidth - 1);
+  int32_t row = rowIndex;
   // Process full vectors
   for (; row < end; row += kWidth) {
     auto valueVector = simd::Vectors<T>::load(values + row);

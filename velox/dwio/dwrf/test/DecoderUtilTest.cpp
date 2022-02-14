@@ -164,3 +164,27 @@ TEST_F(DecoderUtilTest, nonNullsFromSparse) {
     }
   }
 }
+
+
+TEST_F(DecoderUtilTest, processFixedWithRun) {
+  // Tests processing consecutive batches of integers with processFixedWidthRun.
+  constexpr int kSize = 100;
+  std::vector<int32_t> data;
+  std::vector<int32_t> scatter;
+  data.reserve(kSize);
+  scatter.reserve(kSize);
+  // Data is 0, 100,  2, 98 ... 98, 2.
+  // scatter is 0, 2, 4,6 ... 196, 198.
+  for (auto i = 0; i < kSize; i += 2) {
+    data.push_back(i / 2);
+    data.push_back(kSize - i);
+    scatter.push_back(i * 2);
+    scatter.push_back((i + 1) * 2);
+  }
+  
+  // The values from data get copied here according to the row number mappinh n scatter.
+  std::vector<int32_t> result(scatter.back() + 1);
+  // Each valid index in 'data'
+  std::vector<int32_t> rows(kSize);
+  std::iota(rows.begin(), rows.end(), 0);
+}

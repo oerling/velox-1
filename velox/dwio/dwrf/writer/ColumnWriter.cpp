@@ -736,15 +736,11 @@ uint64_t TimestampColumnWriter::write(
 
   size_t count = 0;
   if (decodedVector.mayHaveNulls()) {
-    int count = 0;
     for (auto& pos : ranges) {
       if (!decodedVector.isNullAt(pos)) {
         auto ts = decodedVector.valueAt<Timestamp>(pos);
         seconds_->writeValue(formatTime(ts.getSeconds(), ts.getNanos()));
         nanos_->writeValue(formatNanos(ts.getNanos()));
-	if (count < 10) {
-	  LOG(INFO) << fmt::format("NN: {}: {} s {} ns", count, formatTime(ts.getSeconds(), ts.getNanos()), formatNanos(ts.getNanos()));
-	}
         ++count;
       }
     }

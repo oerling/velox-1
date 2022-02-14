@@ -3877,7 +3877,7 @@ class DirectRleColumnVisitor
             filter,
             reader,
             rows,
-	                values)	    {}
+            values) {}
 
   // Use for replacing all rows with non-null rows for fast path with
   // processRun and processRle.
@@ -3903,22 +3903,22 @@ class DirectRleColumnVisitor
       T* values,
       int32_t& numValues) {
     DCHECK_EQ(input, values + numValues);
-        constexpr bool filterOnly =
+    constexpr bool filterOnly =
         std::is_same<typename super::Extract, DropValues>::value;
 
     processFixedWidthRun<T, filterOnly, scatter, isDense>(
-			 folly::Range<const int32_t*>(super::rows_ + super::rowIndex_, numInput),
-			 scatterRows,
-			 values,
-			 filterHits,
-			 numValues,
-			 super::filter_,
-			 super::values_.hook());
+							  folly::Range<const vector_size_t*>(super::rows_, super::numRows_),
+							  super::rowIndex_,
+        numInput,
+        scatterRows,
+        values,
+        filterHits,
+        numValues,
+        super::filter_,
+        super::values_.hook());
 
     super::rowIndex_ += numInput;
-      numValues = scatter ? scatterRows[super::rowIndex_ - 1] + 1
-	: numValues + numInput;
-}
+  }
 
   template <bool hasFilter, bool hasHook, bool scatter>
   void processRle(
@@ -3966,7 +3966,7 @@ class DirectRleColumnVisitor
         numValues);
   }
 };
-  
+
 class SelectiveTimestampColumnReader : public SelectiveColumnReader {
  public:
   // The readers produce int64_t, the vector is Timestamps.
@@ -4053,7 +4053,7 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
   VELOX_CHECK(secondsV1, "Only RLEv1 is supported");
   if (nullsInReadRange_) {
     secondsV1->readWithVisitor<true>(
-				     nullsInReadRange_->as<uint64_t>(),
+        nullsInReadRange_->as<uint64_t>(),
         DirectRleColumnVisitor<
             int64_t,
             common::AlwaysTrue,
@@ -4071,14 +4071,17 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
 
   ensureCapacity<uint64_t>(secondsValues_, numValues_, &memoryPool_);
   secondsValues_->setSize(numValues_ * sizeof(int64_t));
-  memcpy(secondsValues_->asMutable<char>(), rawValues_, numValues_ * sizeof(int64_t));
+  memcpy(
+      secondsValues_->asMutable<char>(),
+      rawValues_,
+      numValues_ * sizeof(int64_t));
 
   numValues_ = 0;
   auto nanosV1 = dynamic_cast<RleDecoderV1<false>*>(nano_.get());
   VELOX_CHECK(nanosV1, "Only RLEv1 is supported");
   if (nullsInReadRange_) {
     nanosV1->readWithVisitor<true>(
-				   nullsInReadRange_->as<uint64_t>(),
+        nullsInReadRange_->as<uint64_t>(),
         DirectRleColumnVisitor<
             int64_t,
             common::AlwaysTrue,
@@ -4093,7 +4096,7 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
             decltype(extractValues),
             dense>(filter, this, rows, extractValues));
   }
-  readOffset_ + numRows;
+  readOffset_ += numRows;
 }
 
 void SelectiveTimestampColumnReader::read(
@@ -4118,7 +4121,10 @@ void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result) {
   auto rawTs = tsValues->asMutable<Timestamp>();
   auto secondsData = secondsValues_->as<int64_t>();
   auto nanosData = values_->as<uint64_t>();
-  auto rawNulls = nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
+  auto rawNulls =
+      nullsInReadRange_
+    ? (returnReaderNulls_ ? nullsInReadRange_->as<uint64_t>() : rawResultNulls_)
+    : nullptr;
   for (auto i = 0; i < numValues_; i++) {
     if (!rawNulls || !bits::isBitNull(rawNulls, i)) {
       auto nanos = nanosData[i];
@@ -4129,7 +4135,7 @@ void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result) {
           nanos *= 10;
         }
       }
-      auto seconds =  secondsData[i] + EPOCH_OFFSET;
+      auto seconds = secondsData[i] + EPOCH_OFFSET;
       if (seconds < 0 && nanos != 0) {
         seconds -= 1;
       }
