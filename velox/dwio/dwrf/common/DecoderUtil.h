@@ -505,7 +505,8 @@ void processFixedWidthRun(
         filter,
         [&](int32_t offset) {
           return simd::Vectors<T>::loadGather32Indices(
-              (scatter ? scatterRows : rows.data()) + rowIndex + row + offset * 8);
+              (scatter ? scatterRows : rows.data()) + rowIndex + row +
+              offset * 8);
         },
         values,
         filterHits,
@@ -520,7 +521,8 @@ void processFixedWidthRun(
         filter,
         [&](int32_t offset) {
           return simd::Vectors<T>::loadGather32Indices(
-              (scatter ? scatterRows : rows.data()) + row + rowIndex + offset * 8);
+              (scatter ? scatterRows : rows.data()) + row + rowIndex +
+              offset * 8);
         },
         values,
         filterHits,

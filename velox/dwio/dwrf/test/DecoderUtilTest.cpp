@@ -167,15 +167,14 @@ TEST_F(DecoderUtilTest, nonNullsFromSparse) {
 }
 
 namespace facebook::velox::dwrf {
-  // Excerpt from LazyVector.h.
-struct NoHook  {
+// Excerpt from LazyVector.h.
+struct NoHook {
   void addValues(
       const int32_t* rows,
       const void* values,
       int32_t size,
       uint8_t valueWidth) {}
 };
-
 
 } // namespace facebook::velox::dwrf
 
@@ -227,7 +226,9 @@ TEST_F(DecoderUtilTest, processFixedWithRun) {
         *filter,
         noHook);
   }
-  // Check that each value that passes the filter is in 'results' and that   its index times 2 is in 'data' is in 'hits'. The 2x is because the scatter maps each row to 2x the row number.
+  // Check that each value that passes the filter is in 'results' and that   its
+  // index times 2 is in 'data' is in 'hits'. The 2x is because the scatter maps
+  // each row to 2x the row number.
   int32_t passedCount = 0;
   for (auto i = 0; i < kSize; ++i) {
     if (data[i] >= 40) {
