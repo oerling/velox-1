@@ -22,6 +22,7 @@ add_library(
   FlatMapHelper.cpp
   ReaderBase.cpp
   SelectiveColumnReader.cpp
+  SelectiveByteRleColumnReader.cpp
   StripeDictionaryCache.cpp
   StripeReaderBase.cpp
   StripeStream.cpp)

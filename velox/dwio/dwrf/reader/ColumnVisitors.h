@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
+#pragma once
 
+#include "velox/common/base/SimdUtil.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
-
 
 namespace facebook::velox::dwrf {
 
 // structs for extractValues in ColumnVisitor.
 
 // Represents values not being retained after filter evaluation.
-
 
 struct DropValues {
   static constexpr bool kSkipNulls = false;
@@ -43,8 +43,6 @@ struct DropValues {
     return hook;
   }
 };
-
-
 
 template <typename TReader>
 struct ExtractToReader {
@@ -464,11 +462,117 @@ void ExtractToReader<TReader>::addNull(vector_size_t /*rowIndex*/) {
   reader->template addNull<typename TReader::ValueType>();
 }
 
+enum FilterResult { kUnknown = 0x40, kSuccess = 0x80, kFailure = 0 };
 
+template <typename T>
+inline __m256si load8Indices(const T* /*input*/) {
+  VELOX_FAIL("Unsupported dictionary index type");
+}
 
+template <>
+inline __m256si load8Indices(const int32_t* input) {
+  using V32 = simd::Vectors<int32_t>;
+  return V32::load(input);
+}
+
+template <>
+inline __m256si load8Indices(const int16_t* input) {
+  using V16 = simd::Vectors<16_t>;
+
+  return V16::as8x32u(*reinterpret_cast<const __m128hi_u*>(input));
+}
+
+template <>
+inline __m256si load8Indices(const int64_t* input) {
+  static __m256si iota = {0, 1, 2, 3, 4, 5, 6, 7};
+  using V32 = simd::Vectors<int32_t>;
+
+  return V32::gather32<8>(input, V32::load(&iota));
+}
+
+// Copies from 'input' to 'values' and translates  via 'dict'. Only elements
+// where 'dictMask' is true at the element's index are translated, else they are
+// passed as is. The elements of input that are copied to values with or without
+// translation are given by the first 'numBits' elements of 'selected'. There is
+// a generic and a V32 specialization of this template. The V32 specialization
+// has 'indices' holding the data to translate, which is loaded from input +
+// inputIndex.
+template <typename T>
+inline void storeTranslatePermute(
+    const T* input,
+    int32_t inputIndex,
+    __m256si /*indices*/,
+    __m256si selected,
+    __m256si dictMask,
+    int8_t numBits,
+    const T* dict,
+    T* values) {
+  auto selectedAsInts = reinterpret_cast<int32_t*>(&selected);
+  auto inDict = reinterpret_cast<int32_t*>(&dictMask);
+  for (auto i = 0; i < numBits; ++i) {
+    auto value = input[inputIndex + selectedAsInts[i]];
+    if (inDict[selected[i]]) {
+      value = dict[value];
+    }
+    values[i] = value;
+  }
+}
+
+template <>
+inline void storeTranslatePermute(
+    const int32_t* /*input*/,
+    int32_t /*inputIndex*/,
+    __m256si indices,
+    __m256si selected,
+    __m256si dictMask,
+    int8_t /*numBits*/,
+    const int32_t* dict,
+    int32_t* values) {
+  using V32 = simd::Vectors<int32_t>;
+  auto translated = V32::maskGather32(indices, dictMask, dict, indices);
+  simd::storePermute(values, translated, selected);
+}
+
+// Stores 8 elements starting at 'input' + 'inputIndex' into
+// 'values'. The values are translated via 'dict' for the positions
+// that are true in 'dictMask'.
+template <typename T>
+inline void storeTranslate(
+    const T* input,
+    int32_t inputIndex,
+    __m256si /*indices*/,
+    __m256si dictMask,
+    const T* dict,
+    T* values) {
+  int32_t* inDict = reinterpret_cast<int32_t*>(&dictMask);
+  for (auto i = 0; i < 8; ++i) {
+    auto value = input[inputIndex + i];
+    if (inDict[i]) {
+      value = dict[value];
+    }
+    values[i] = value;
+  }
+}
+
+template <>
+inline void storeTranslate(
+    const int32_t* /*input*/,
+    int32_t /*inputIndex*/,
+    __m256si indices,
+    __m256si dictMask,
+    const int32_t* dict,
+    int32_t* values) {
+  using V32 = simd::Vectors<int32_t>;
+  V32::store(values, V32::maskGather32(indices, dictMask, dict, indices));
+}
+  
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class DictionaryColumnVisitor
     : public ColumnVisitor<T, TFilter, ExtractValues, isDense> {
+  using V64 = simd::Vectors<int64_t>;
+  using V32 = simd::Vectors<int32_t>;
+  using V16 = simd::Vectors<int16_t>;
+
   using super = ColumnVisitor<T, TFilter, ExtractValues, isDense>;
 
  public:
@@ -850,11 +954,18 @@ class DictionaryColumnVisitor
   const uint8_t width_;
 };
 
- class StringDictionaryColumnVisitor
+class SelectiveStringDictionaryColumnReader;
+
+template <typename TFilter, typename ExtractValues, bool isDense>
+class StringDictionaryColumnVisitor
     : public DictionaryColumnVisitor<int32_t, TFilter, ExtractValues, isDense> {
   using super = ColumnVisitor<int32_t, TFilter, ExtractValues, isDense>;
   using DictSuper =
       DictionaryColumnVisitor<int32_t, TFilter, ExtractValues, isDense>;
+
+  using V64 = simd::Vectors<int64_t>;
+  using V32 = simd::Vectors<int32_t>;
+  using V16 = simd::Vectors<int16_t>;
 
  public:
   StringDictionaryColumnVisitor(
@@ -1093,7 +1204,7 @@ class DictionaryColumnVisitor
   const uint64_t* const strideDictOffset_;
 };
 
- class ExtractStringDictionaryToGenericHook {
+class ExtractStringDictionaryToGenericHook {
  public:
   static constexpr bool kSkipNulls = true;
   using HookType = ValueHook;
@@ -1158,13 +1269,14 @@ class DictionaryColumnVisitor
   const uint64_t* const strideDictOffset_;
 };
 
- 
-}
-
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class DirectRleColumnVisitor
     : public ColumnVisitor<T, TFilter, ExtractValues, isDense> {
   using super = ColumnVisitor<T, TFilter, ExtractValues, isDense>;
+
+  using V64 = simd::Vectors<int64_t>;
+using V32 = simd::Vectors<int32_t>;
+using V16 = simd::Vectors<int16_t>;
 
  public:
   DirectRleColumnVisitor(
@@ -1206,8 +1318,8 @@ class DirectRleColumnVisitor
         std::is_same<typename super::Extract, DropValues>::value;
 
     processFixedWidthRun<T, filterOnly, scatter, isDense>(
-							  folly::Range<const vector_size_t*>(super::rows_, super::numRows_),
-							  super::rowIndex_,
+        folly::Range<const vector_size_t*>(super::rows_, super::numRows_),
+        super::rowIndex_,
         numInput,
         scatterRows,
         values,
@@ -1266,3 +1378,4 @@ class DirectRleColumnVisitor
   }
 };
 
+} // namespace facebook::velox::dwrf
