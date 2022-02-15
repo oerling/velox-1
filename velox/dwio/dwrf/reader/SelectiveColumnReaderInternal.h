@@ -162,32 +162,8 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
     RowSet rows,
     VectorPtr* result,
     const TypePtr& type,
-    bool isFinal) {
-  using V8 = simd::Vectors<int8_t>;
-  constexpr int32_t kWidth = V8::VSize;
-  static_assert(kWidth == 32);
-  VELOX_CHECK_EQ(valueSize_, sizeof(int8_t));
-  compactScalarValues<int8_t, int8_t>(rows, isFinal);
-  auto boolValues =
-      AlignedBuffer::allocate<bool>(numValues_, &memoryPool_, false);
-  auto rawBits = boolValues->asMutable<uint32_t>();
-  auto rawBytes = values_->as<int8_t>();
-  auto zero = V8::setAll(0);
-  for (auto i = 0; i < numValues_; i += kWidth) {
-    rawBits[i / kWidth] = ~V8::compareBitMask(
-        V8::compareResult(V8::compareEq(zero, V8::load(rawBytes + i))));
-  }
-  BufferPtr nulls = anyNulls_
-      ? (returnReaderNulls_ ? nullsInReadRange_ : resultNulls_)
-      : nullptr;
-  *result = std::make_shared<FlatVector<bool>>(
-      &memoryPool_,
-      type,
-      nulls,
-      numValues_,
-      std::move(boolValues),
-      std::move(stringBuffers_));
-}
+    bool isFinal);
+  
 
 template <typename T, typename TVector>
 void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
@@ -301,47 +277,12 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
   values_->setSize(numValues_ * sizeof(TVector));
 }
 
-template <>
-void SelectiveColumnReader::compactScalarValues<bool, bool>(
+  template <>
+  void SelectiveColumnReader::compactScalarValues<bool, bool>(
     RowSet rows,
-    bool isFinal) {
-  if (!values_ || rows.size() == numValues_) {
-    if (values_) {
-      values_->setSize(bits::nbytes(numValues_));
-    }
-    return;
-  }
-  auto rawBits = reinterpret_cast<uint64_t*>(rawValues_);
-  vector_size_t rowIndex = 0;
-  auto nextRow = rows[rowIndex];
-  bool moveNulls = shouldMoveNulls(rows);
-  for (size_t i = 0; i < numValues_; i++) {
-    if (outputRows_[i] < nextRow) {
-      continue;
-    }
+    bool isFinal);
 
-    VELOX_DCHECK(outputRows_[i] == nextRow);
-
-    bits::setBit(rawBits, rowIndex, bits::isBitSet(rawBits, i));
-    if (moveNulls && rowIndex != i) {
-      bits::setBit(
-          rawResultNulls_, rowIndex, bits::isBitSet(rawResultNulls_, i));
-    }
-    if (!isFinal) {
-      outputRows_[rowIndex] = nextRow;
-    }
-    rowIndex++;
-    if (rowIndex >= rows.size()) {
-      break;
-    }
-    nextRow = rows[rowIndex];
-  }
-  numValues_ = rows.size();
-  outputRows_.resize(numValues_);
-  values_->setSize(bits::nbytes(numValues_));
-}
-
-int32_t sizeOfIntKind(TypeKind kind) {
+inline int32_t sizeOfIntKind(TypeKind kind) {
   switch (kind) {
     case TypeKind::SMALLINT:
       return 2;

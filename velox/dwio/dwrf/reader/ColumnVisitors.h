@@ -477,7 +477,7 @@ inline __m256si load8Indices(const int32_t* input) {
 
 template <>
 inline __m256si load8Indices(const int16_t* input) {
-  using V16 = simd::Vectors<16_t>;
+  using V16 = simd::Vectors<int16_t>;
 
   return V16::as8x32u(*reinterpret_cast<const __m128hi_u*>(input));
 }
