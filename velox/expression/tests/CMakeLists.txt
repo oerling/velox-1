@@ -19,11 +19,13 @@ add_executable(
   EvalSimplifiedTest.cpp
   SignatureBinderTest.cpp
   SimpleFunctionTest.cpp
+  SimpleFunctionPresetNullsTest.cpp
   ArrayViewTest.cpp
   ArrayProxyTest.cpp
   MapViewTest.cpp
   RowViewTest.cpp
-  VariadicViewTest.cpp)
+  VariadicViewTest.cpp
+  VectorReaderTest.cpp)
 
 add_test(
   NAME velox_expression_test
@@ -51,10 +53,6 @@ target_link_libraries(
   ${gflags_LIBRARIES}
   glog::glog
   ${FMT})
-
-add_library(velox_vector_fuzzer VectorFuzzer.cpp)
-
-target_link_libraries(velox_vector_fuzzer velox_type velox_vector)
 
 add_library(velox_expression_fuzzer ExpressionFuzzer.cpp)
 
