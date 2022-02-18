@@ -2086,9 +2086,10 @@ class SelectiveTimestampColumnReader : public SelectiveColumnReader {
       FlatMapContext flaatMapContext);
 
   void seekToRowGroup(uint32_t index) override;
-  uint64_t skip(uint64_t numValues);
+  uint64_t skip(uint64_t numValues) override;
 
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
+  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
+      override;
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
@@ -2148,6 +2149,7 @@ void SelectiveTimestampColumnReader::seekToRowGroup(uint32_t index) {
 
   seconds_->seekToRowGroup(positionsProvider);
   nano_->seekToRowGroup(positionsProvider);
+  // Check that all the provided positions have been consumed.
   VELOX_CHECK(!positionsProvider.hasNext());
 }
 
@@ -2176,6 +2178,8 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
             dense>(filter, this, rows, extractValues));
   }
 
+  // Save the seconds into their own buffer before reading nanos into
+  // 'values_'
   ensureCapacity<uint64_t>(secondsValues_, numValues_, &memoryPool_);
   secondsValues_->setSize(numValues_ * sizeof(int64_t));
   memcpy(
@@ -2183,6 +2187,7 @@ void SelectiveTimestampColumnReader::readHelper(RowSet rows) {
       rawValues_,
       numValues_ * sizeof(int64_t));
 
+  // We read the nanos into 'values_' starting at index 0.
   numValues_ = 0;
   auto nanosV1 = dynamic_cast<RleDecoderV1<false>*>(nano_.get());
   VELOX_CHECK(nanosV1, "Only RLEv1 is supported");
@@ -2211,10 +2216,8 @@ void SelectiveTimestampColumnReader::read(
     RowSet rows,
     const uint64_t* incomingNulls) {
   prepareRead<int64_t>(offset, rows, incomingNulls);
+  VELOX_CHECK(!scanSpec_->filter());
   bool isDense = rows.back() == rows.size() - 1;
-  common::Filter* filter =
-      scanSpec_->filter() ? scanSpec_->filter() : &Filters::alwaysTrue;
-  VELOX_CHECK(!scanSpec_->valueHook());
   if (isDense) {
     readHelper<true>(rows);
   } else {
