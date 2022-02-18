@@ -181,17 +181,17 @@ template bool nonNullRowsFromSparse<false, false>(
 
 template <typename T>
 void scatterNonNulls(
-    int32_t rowIndex,
-    int32_t numRows,
+    int32_t targetBegin,
     int32_t numValues,
+    int32_t sourceBegin,
     const int32_t* target,
     T* data) {
-  for (auto index = numRows - 1; index >= 0; --index) {
-    auto destination = target[rowIndex + index];
-    if (destination == numValues + index) {
+  for (auto index = numValues - 1; index >= 0; --index) {
+    auto destination = target[targetBegin + index];
+    if (destination == sourceBegin + index) {
       break;
     }
-    data[destination] = data[numValues + index];
+    data[destination] = data[sourceBegin + index];
   }
 }
 

@@ -428,19 +428,18 @@ bool useFastPath(Visitor& visitor) {
       (std::is_same<typename Visitor::HookType, NoHook>::value || !hasNulls ||
        Visitor::HookType::kSkipNulls);
 }
-// Scatters values in 'data' to indices in 'target]. 'numRows' is
-// the number of items in 'data' to process. 'numValues' is the
-// index of the first item of 'data' to process. 'rowIndex' is the
-// index of the destination of the first processed item of 'data' in
-// 'target.  data[destination[rowIndex]] = data[numValues]. Indices
-// in 'target' are increasing and the data movement is done in
-// descending order of index so as not to overwrite unprocessed
-// data'
+
+// Scatters 'numValues' elements of 'data' starting at data[sourceBegin] to
+// indices given starting with target[targetBegin]. The scatter is done from
+// last to first so as not to overwrite source data when copying from lower to
+// higher indices. data[target[targetBegin + numValues - 1] = data[sourceBegin +
+// numValues - 1] is the first copy in execution order and
+// data[target[targetBegin]] = data[sourceBegin] is the last copy.
 template <typename T>
 void scatterNonNulls(
-    int32_t rowIndex,
-    int32_t numRows,
+    int32_t targetBegin,
     int32_t numValues,
+    int32_t sourceBegin,
     const int32_t* target,
     T* data);
 
