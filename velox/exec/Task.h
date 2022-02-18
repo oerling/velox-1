@@ -56,10 +56,19 @@ class Task : public std::enable_shared_from_this<Task> {
     return taskId_;
   }
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addDriverPool();
+  memory::MemoryPool* FOLLY_NONNULL addDriverPool();
 
-  velox::memory::MemoryPool* FOLLY_NONNULL
-  addOperatorPool(velox::memory::MemoryPool* FOLLY_NONNULL driverPool);
+  /// Creates new instance of MemoryPool, stores it in the task to ensure
+  /// lifetime and returns a raw pointer. Not thread safe, e.g. must be called
+  /// from the Operator's constructor.
+  memory::MemoryPool* FOLLY_NONNULL
+  addOperatorPool(memory::MemoryPool* FOLLY_NONNULL driverPool);
+
+  /// Creates new instance of MappedMemory, stores it in the task to ensure
+  /// lifetime and returns a raw pointer. Not thread safe, e.g. must be called
+  /// from the Operator's constructor.
+  memory::MappedMemory* FOLLY_NONNULL
+  addOperatorMemory(const std::shared_ptr<memory::MemoryUsageTracker>& tracker);
 
   static void start(
       std::shared_ptr<Task> self,
@@ -137,15 +146,16 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Returns true if state is 'finished'.
   bool isFinished() const;
 
-  void createLocalMergeSources(
+  /// Adds a MergeSource for the specified splitGroupId and planNodeId.
+  std::shared_ptr<MergeSource> addLocalMergeSource(
       uint32_t splitGroupId,
-      unsigned numSources,
-      const std::shared_ptr<const RowType>& rowType,
-      memory::MappedMemory* FOLLY_NONNULL mappedMemory);
+      const core::PlanNodeId& planNodeId,
+      const RowTypePtr& rowType);
 
-  std::shared_ptr<MergeSource> getLocalMergeSource(
+  /// Returns all MergeSource's for the specified splitGroupId and planNodeId.
+  const std::vector<std::shared_ptr<MergeSource>>& getLocalMergeSources(
       uint32_t splitGroupId,
-      int sourceId);
+      const core::PlanNodeId& planNodeId);
 
   void createMergeJoinSource(
       uint32_t splitGroupId,
@@ -301,7 +311,7 @@ class Task : public std::enable_shared_from_this<Task> {
     return numFinishedDrivers_;
   }
 
-  velox::memory::MemoryPool* FOLLY_NONNULL pool() const {
+  memory::MemoryPool* FOLLY_NONNULL pool() const {
     return pool_.get();
   }
 
@@ -530,11 +540,15 @@ class Task : public std::enable_shared_from_this<Task> {
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
   TaskStats taskStats_;
-  std::unique_ptr<velox::memory::MemoryPool> pool_;
+  std::unique_ptr<memory::MemoryPool> pool_;
 
   // Keep driver and operator memory pools alive for the duration of the task to
   // allow for sharing vectors across drivers without copy.
-  std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
+  std::vector<std::unique_ptr<memory::MemoryPool>> childPools_;
+
+  // Keep operator MappedMemory instances alive for the duration of the task to
+  // allow for sharing data without copy.
+  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
 
   /// Stores inter-operator state (exchange, bridges) per split group.
   /// During ungrouped execution we use the [0] entry in this vector.
