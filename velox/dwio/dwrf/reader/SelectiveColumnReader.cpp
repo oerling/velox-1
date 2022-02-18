@@ -3979,9 +3979,10 @@ class SelectiveTimestampColumnReader : public SelectiveColumnReader {
       FlatMapContext flaatMapContext);
 
   void seekToRowGroup(uint32_t index) override;
-  uint64_t skip(uint64_t numValues);
+  uint64_t skip(uint64_t numValues) override;
 
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
+  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
+      override;
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
@@ -4104,10 +4105,8 @@ void SelectiveTimestampColumnReader::read(
     RowSet rows,
     const uint64_t* incomingNulls) {
   prepareRead<int64_t>(offset, rows, incomingNulls);
+  VELOX_CHECK(!scanSpec_->filter());
   bool isDense = rows.back() == rows.size() - 1;
-  common::Filter* filter =
-      scanSpec_->filter() ? scanSpec_->filter() : &Filters::alwaysTrue;
-  VELOX_CHECK(!scanSpec_->valueHook());
   if (isDense) {
     readHelper<true>(rows);
   } else {
