@@ -559,16 +559,13 @@ void HashTable<ignoreNullKeys>::clear() {
 
 template <bool ignoreNullKeys>
 int64_t HashTable<ignoreNullKeys>::allocatedBytes() const {
-    int64_t size = tableAllocation_.size() + rows_->allocatedBytes();
-    for (auto& other : otherTables_) {
-      size += other->allocatedBytes();
-    }
-    return size;
+  int64_t size = tableAllocation_.size() + rows_->allocatedBytes();
+  for (auto& other : otherTables_) {
+    size += other->allocatedBytes();
   }
+  return size;
+}
 
-
-  
-  
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
   if (!table_ || !size_) {
