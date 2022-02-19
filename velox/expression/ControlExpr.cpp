@@ -39,11 +39,6 @@ void ConstantExpr::evalSpecialForm(
     vector->setAllIsAscii(isAscii);
     needToSetIsAscii_ = false;
   }
-  if (sharedSubexprValues_.unique() && !*result) {
-    sharedSubexprValues_->resize(rows.end());
-    *result = sharedSubexprValues_;
-    return;
-  }
 
   if (sharedSubexprValues_.unique()) {
     sharedSubexprValues_->resize(rows.end());
@@ -111,13 +106,8 @@ void FieldReference::evalSpecialForm(
   }
   // If we refer to a column of the context row, this may have been
   // peeled due to peeling off encoding, hence access it via
-<<<<<<< HEAD
-  // 'context'.  Chekc is the child is unique before taking the second
-  // reference. Unique constant vectors can e resized in place, non-unique
-=======
   // 'context'.  Chekc if the child is unique before taking the second
   // reference. Unique constant vectors can be resized in place, non-unique
->>>>>>> main
   // must be copied to set the size.
   bool isUniqueChild = inputs_.empty() ? context->getField(index_).unique()
                                        : row->childAt(index_).unique();
