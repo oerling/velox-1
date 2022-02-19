@@ -18,6 +18,7 @@
 #include "velox/functions/prestosql/aggregates/PrestoHasher.h"
 #include "velox/external/xxhash.h"
 #include "velox/functions/lib/LambdaFunctionUtil.h"
+#include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 
 namespace facebook::velox::aggregate {
 
@@ -68,6 +69,14 @@ __attribute__((no_sanitize("integer")))
 FOLLY_ALWAYS_INLINE int64_t
 safeHash(const int64_t& a, const int64_t& b) {
   return a * 31 + b;
+}
+
+#if defined(__clang__)
+__attribute__((no_sanitize("signed-integer-overflow")))
+#endif
+FOLLY_ALWAYS_INLINE int64_t
+safeXor(const int64_t& hash, const int64_t& a, const int64_t& b) {
+  return hash + (a ^ b);
 }
 
 } // namespace
@@ -207,7 +216,8 @@ void PrestoHasher::hash<TypeKind::MAP>(
       auto offset = rawOffsets[indices[row]];
 
       for (int i = 0; i < size; i++) {
-        hash = rawKeyHashes[offset + i] ^ rawValueHashes[offset + i];
+        hash =
+            safeXor(hash, rawKeyHashes[offset + i], rawValueHashes[offset + i]);
       }
     }
     rawHashes[row] = hash;
@@ -236,6 +246,19 @@ void PrestoHasher::hash<TypeKind::ROW>(
 
   auto rawHashes = hashes->asMutable<int64_t>();
   auto rowChildHashes = childHashes->as<int64_t>();
+
+  if (isTimestampWithTimeZoneType(vector_->base()->type())) {
+    // Hash only timestamp value.
+    children_[0]->hash(baseRow->childAt(0), elementRows, childHashes);
+    rows.applyToSelected([&](auto row) {
+      if (!baseRow->isNullAt(row)) {
+        rawHashes[row] = rowChildHashes[indices[row]];
+      } else {
+        rawHashes[row] = 0;
+      }
+    });
+    return;
+  }
 
   std::fill_n(rawHashes, rows.end(), 1);
 

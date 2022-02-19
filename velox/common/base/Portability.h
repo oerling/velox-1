@@ -27,7 +27,7 @@ inline size_t count_leading_zeros(uint64_t x) {
   return x == 0 ? 64 : __builtin_clzll(x);
 }
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) || defined(__clang__)
 #define INLINE_LAMBDA __attribute__((__always_inline__))
 #else
 #define INLINE_LAMBDA

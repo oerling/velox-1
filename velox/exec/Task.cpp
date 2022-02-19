@@ -140,10 +140,28 @@ Task::addOperatorPool(velox::memory::MemoryPool* FOLLY_NONNULL driverPool) {
   return childPools_.back().get();
 }
 
+memory::MappedMemory* FOLLY_NONNULL Task::addOperatorMemory(
+    const std::shared_ptr<memory::MemoryUsageTracker>& tracker) {
+  auto mappedMemory = queryCtx_->mappedMemory()->addChild(tracker);
+  childMappedMemories_.emplace_back(mappedMemory);
+  return mappedMemory.get();
+}
+
 void Task::start(
     std::shared_ptr<Task> self,
     uint32_t maxDrivers,
     uint32_t concurrentSplitGroups) {
+  if (concurrentSplitGroups > 1) {
+    VELOX_CHECK(
+        self->isGroupedExecution(),
+        "concurrentSplitGroups parameter applies only to grouped execution");
+  }
+  VELOX_CHECK_GE(
+      maxDrivers, 1, "maxDrivers parameter must be greater then or equal to 1");
+  VELOX_CHECK_GE(
+      concurrentSplitGroups,
+      1,
+      "concurrentSplitGroups parameter must be greater then or equal to 1");
   VELOX_CHECK(self->drivers_.empty());
   self->concurrentSplitGroups_ = concurrentSplitGroups;
   {
@@ -178,13 +196,13 @@ void Task::start(
   const auto numPipelines = self->driverFactories_.size();
   self->exchangeClients_.resize(numPipelines);
 
-  // For ungrouped execution we reuse some of the structures used grouped
+  // For ungrouped execution we reuse some structures used for grouped
   // execution and assume we have "1 split".
   const uint32_t numSplitGroups =
       std::max(1, self->planFragment_.numSplitGroups);
 
   // For each pipeline we have a corresponding driver factory.
-  // Here we count how many drivers in total we need and we also create create
+  // Here we count how many drivers in total we need and create
   // pipeline stats.
   for (auto& factory : self->driverFactories_) {
     self->numDriversPerSplitGroup_ += factory->numDrivers;
@@ -1048,7 +1066,7 @@ ContinueFuture Task::stateChangeFuture(uint64_t maxWaitMicros) {
   return std::move(future);
 }
 
-std::string Task::toString() {
+std::string Task::toString() const {
   std::stringstream out;
   out << "{Task " << shortId(taskId_) << " (" << taskId_ << ")";
 
@@ -1070,33 +1088,21 @@ std::string Task::toString() {
   return out.str();
 }
 
-void Task::createLocalMergeSources(
+std::shared_ptr<MergeSource> Task::addLocalMergeSource(
     uint32_t splitGroupId,
-    unsigned numSources,
-    const std::shared_ptr<const RowType>& rowType,
-    memory::MappedMemory* mappedMemory) {
-  auto& splitGroupState = splitGroupStates_[splitGroupId];
-
-  VELOX_CHECK(
-      splitGroupState.localMergeSources.empty(),
-      "Multiple local merges in a single task not supported");
-  splitGroupState.localMergeSources.reserve(numSources);
-  for (auto i = 0; i < numSources; ++i) {
-    splitGroupState.localMergeSources.emplace_back(
-        MergeSource::createLocalMergeSource(rowType, mappedMemory));
-  }
+    const core::PlanNodeId& planNodeId,
+    const RowTypePtr& rowType) {
+  auto source =
+      MergeSource::createLocalMergeSource(rowType, queryCtx()->mappedMemory());
+  splitGroupStates_[splitGroupId].localMergeSources[planNodeId].push_back(
+      source);
+  return source;
 }
 
-std::shared_ptr<MergeSource> Task::getLocalMergeSource(
+const std::vector<std::shared_ptr<MergeSource>>& Task::getLocalMergeSources(
     uint32_t splitGroupId,
-    int sourceId) {
-  auto& splitGroupState = splitGroupStates_[splitGroupId];
-
-  VELOX_CHECK_LT(
-      sourceId,
-      splitGroupState.localMergeSources.size(),
-      "Incorrect source id ");
-  return splitGroupState.localMergeSources[sourceId];
+    const core::PlanNodeId& planNodeId) {
+  return splitGroupStates_[splitGroupId].localMergeSources[planNodeId];
 }
 
 void Task::createMergeJoinSource(
@@ -1300,7 +1306,7 @@ void Task::setError(const std::string& message) {
   }
 }
 
-std::string Task::errorMessage() {
+std::string Task::errorMessage() const {
   if (!exception_) {
     return "";
   }

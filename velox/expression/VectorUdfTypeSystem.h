@@ -23,6 +23,7 @@
 #include <string_view>
 #include <type_traits>
 
+#include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/expression/ComplexProxyTypes.h"
 #include "velox/expression/ComplexViewTypes.h"
@@ -103,8 +104,8 @@ struct resolver<Variadic<T>> {
   // Variadic cannot be used as an out_type
 };
 
-template <>
-struct resolver<Generic> {
+template <typename T>
+struct resolver<Generic<T>> {
   using in_type = GenericView;
   using out_type = void; // Not supported as output type yet.
 };
@@ -201,6 +202,26 @@ struct VectorReader {
 
   bool mayHaveNulls() const {
     return decoded_.mayHaveNulls();
+  }
+
+  // These functions can be used to check if any elements in a given row are
+  // NULL. They are not especially fast, so they should only be used when
+  // necessary, and other options, e.g. calling mayHaveNullsRecursive() on the
+  // vector, have already been exhausted.
+  inline bool containsNull(vector_size_t index) const {
+    return decoded_.isNullAt(index);
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    // Note: This can be optimized for the special case where the underlying
+    // vector is flat using bit operations on the nulls buffer.
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   const DecodedVector& decoded_;
@@ -337,6 +358,30 @@ struct VectorReader<Map<K, V>> {
     return !decoded_.isNullAt(offset);
   }
 
+  bool containsNull(vector_size_t index) const {
+    auto decodedIndex = decoded_.index(index);
+
+    return decoded_.isNullAt(index) ||
+        (decodedKeys_.mayHaveNullsRecursive() &&
+         keyReader_.containsNull(
+             offsets_[decodedIndex],
+             offsets_[decodedIndex] + lengths_[decodedIndex])) ||
+        (decodedVals_.mayHaveNullsRecursive() &&
+         valReader_.containsNull(
+             offsets_[decodedIndex],
+             offsets_[decodedIndex] + lengths_[decodedIndex]));
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   const DecodedVector& decoded_;
   const MapVector& vector_;
   DecodedVector decodedKeys_;
@@ -379,6 +424,26 @@ struct VectorReader<Array<V>> {
   exec_null_free_in_t readNullFree(size_t offset) const {
     auto index = decoded_.index(offset);
     return {&childReader_, offsets_[index], lengths_[index]};
+  }
+
+  inline bool containsNull(vector_size_t index) const {
+    auto decodedIndex = decoded_.index(index);
+
+    return decoded_.isNullAt(index) ||
+        (arrayValuesDecoder_.mayHaveNullsRecursive() &&
+         childReader_.containsNull(
+             offsets_[decodedIndex],
+             offsets_[decodedIndex] + lengths_[decodedIndex]));
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   DecodedVector arrayValuesDecoder_;
@@ -575,6 +640,32 @@ struct VectorReader<Row<T...>> {
     return !decoded_.isNullAt(offset);
   }
 
+  bool containsNull(vector_size_t index) const {
+    if (decoded_.isNullAt(index)) {
+      return true;
+    }
+
+    bool fieldsContainNull = false;
+    auto decodedIndex = decoded_.index(index);
+    std::apply(
+        [&](const auto&... reader) {
+          fieldsContainNull |= (reader->containsNull(decodedIndex) || ...);
+        },
+        childReaders_);
+
+    return fieldsContainNull;
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
  private:
   template <size_t... I>
   std::tuple<std::unique_ptr<VectorReader<T>>...> prepareChildReaders(
@@ -716,7 +807,6 @@ struct VectorWriter<Row<T...>> {
 
 template <typename T>
 struct VectorReader<Variadic<T>> {
-  using in_vector_t = typename TypeToFlatVector<T>::type;
   using exec_in_t = typename VectorExec::resolver<Variadic<T>>::in_type;
   using exec_null_free_in_t =
       typename VectorExec::template resolver<Variadic<T>>::null_free_in_type;
@@ -736,6 +826,26 @@ struct VectorReader<Variadic<T>> {
     // The Variadic itself can never be null, only the values of the underlying
     // Types
     return true;
+  }
+
+  bool containsNull(vector_size_t index) const {
+    for (const auto& childReader : childReaders_) {
+      if (childReader->containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (const auto& childReader : childReaders_) {
+      if (childReader->containsNull(startIndex, endIndex)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
  private:
@@ -1089,17 +1199,17 @@ struct VectorWriter<std::shared_ptr<T>> {
   size_t offset_ = 0;
 };
 
-template <>
-struct VectorReader<Generic> {
+template <typename T>
+struct VectorReader<Generic<T>> {
   using exec_in_t = GenericView;
   using exec_null_free_in_t = exec_in_t;
 
   explicit VectorReader(const DecodedVector* decoded)
       : decoded_(*decoded), base_(decoded->base()) {}
 
-  explicit VectorReader(const VectorReader<Generic>&) = delete;
+  explicit VectorReader(const VectorReader<Generic<T>>&) = delete;
 
-  VectorReader<Generic>& operator=(const VectorReader<Generic>&) = delete;
+  VectorReader<Generic<T>>& operator=(const VectorReader<Generic<T>>&) = delete;
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
@@ -1112,6 +1222,22 @@ struct VectorReader<Generic> {
 
   exec_null_free_in_t readNullFree(vector_size_t offset) const {
     return operator[](offset);
+  }
+
+  inline bool containsNull(vector_size_t /* index */) const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  bool containsNull(
+      vector_size_t /* startIndex */,
+      vector_size_t /* endIndex */) const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
   }
 
   const DecodedVector& decoded_;

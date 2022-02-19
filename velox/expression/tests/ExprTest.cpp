@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
+#include <folly/Benchmark.h>
 #include "glog/logging.h"
 #include "gtest/gtest.h"
+
 #include "velox/dwio/common/DataSink.h"
-#include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
+#include "velox/parse/TypeResolver.h"
 #include "velox/vector/VectorEncoding.h"
 #include "velox/vector/tests/VectorMaker.h"
 
@@ -104,7 +105,7 @@ class ExprTest : public testing::Test {
  protected:
   void SetUp() override {
     functions::prestosql::registerAllScalarFunctions();
-    exec::test::registerTypeResolver();
+    parse::registerTypeResolver();
 
     testDataType_ =
         ROW({"tinyint1",
@@ -2479,8 +2480,6 @@ TEST_F(ExprTest, subsetOfDictOverLazy) {
   EXPECT_EQ(result->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
   assertEqualVectors(result, base);
 }
-<<<<<<< HEAD
-=======
 
 TEST_F(ExprTest, peeledConstant) {
   constexpr int32_t kSubsetSize = 80;
@@ -2494,14 +2493,12 @@ TEST_F(ExprTest, peeledConstant) {
   auto result = std::dynamic_pointer_cast<SimpleVector<StringView>>(
       evaluate("if (c0 % 4 = 0, c1, null)", row));
   EXPECT_EQ(kSubsetSize, result->size());
-  std::stringstream stream;
   for (auto i = 0; i < kSubsetSize; ++i) {
     if (result->isNullAt(i)) {
       continue;
     }
     EXPECT_LE(1, result->valueAt(i).size());
     // Check that the data is readable.
-    stream << result->toString(i);
+    folly::doNotOptimizeAway(result->toString(i));
   }
 }
->>>>>>> oerling1/wrapped-const-size-dev

@@ -288,11 +288,7 @@ class HashTable : public BaseHashTable {
 
   void clear() override;
 
-  int64_t allocatedBytes() const override {
-    // for each row: 1 byte per tag + sizeof(Entry) per table entry + memory
-    // allocated with MappedMemory for fixed-width rows and strings.
-    return (1 + sizeof(char*)) * size_ + rows_->allocatedBytes();
-  }
+  int64_t allocatedBytes() const override;
 
   HashStringAllocator* stringAllocator() override {
     return &rows_->stringAllocator();
@@ -356,6 +352,10 @@ class HashTable : public BaseHashTable {
       const std::vector<bool>& useRange,
       const std::vector<uint64_t>& rangeSizes,
       const std::vector<uint64_t>& distinctSizes);
+
+  // Clears all elements of 'useRange' except ones that correspond to boolean
+  // VectorHashers.
+  void clearUseRange(std::vector<bool>& useRange);
 
   void rehash();
   void initializeNewGroups(HashLookup& lookup);

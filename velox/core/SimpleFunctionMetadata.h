@@ -16,6 +16,7 @@
 #pragma once
 
 #include <boost/algorithm/string.hpp>
+
 #include "folly/Likely.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
@@ -95,6 +96,128 @@ struct ValidateVariadicArgs {
   static constexpr bool value = isValidArg<0, TArgs...>();
 };
 
+// Information collected during TypeAnalysis.
+struct TypeAnalysisResults {
+  // Whether a variadic is encountered.
+  bool hasVariadic = false;
+
+  // Whether a generic is encountered.
+  bool hasGeneric = false;
+
+  // Whether a variadic of generic is encountered.
+  // E.g: Variadic<T> or Variadic<Array<T1>>.
+  bool hasVariadicOfGeneric = false;
+
+  // The number of types that are neither generic, nor variadic.
+  size_t concreteCount = 0;
+
+  // String representaion of the type in the FunctionSignatureBuilder.
+  std::ostringstream out;
+
+  // Set of generic variables used in the type.
+  std::set<std::string> variables;
+
+  std::string typeAsString() {
+    return out.str();
+  }
+
+  void resetTypeString() {
+    out.str(std::string());
+  }
+};
+
+// A set of structs used to perform analysis on a static type to
+// collect information needed for signatrue construction.
+template <typename T>
+struct TypeAnalysis {
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << boost::algorithm::to_lower_copy(
+        std::string(CppToType<T>::name));
+  }
+};
+
+template <typename T>
+struct TypeAnalysis<Generic<T>> {
+  void run(TypeAnalysisResults& results) {
+    if constexpr (std::is_same<T, AnyType>::value) {
+      results.out << "any";
+    } else {
+      auto variableType = fmt::format("__user_T{}", T::getId());
+      results.out << variableType;
+      results.variables.insert(variableType);
+    }
+    results.hasGeneric = true;
+  }
+};
+
+template <typename K, typename V>
+struct TypeAnalysis<Map<K, V>> {
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << "map(";
+    TypeAnalysis<K>().run(results);
+    results.out << ",";
+    TypeAnalysis<V>().run(results);
+    results.out << ")";
+  }
+};
+
+template <typename V>
+struct TypeAnalysis<Variadic<V>> {
+  void run(TypeAnalysisResults& results) {
+    // We need to split, pass a clean results then merge results to correctly
+    // compute `hasVariadicOfGeneric`.
+    TypeAnalysisResults tmp;
+    TypeAnalysis<V>().run(tmp);
+
+    // Combine the child results.
+    results.hasVariadic = true;
+    results.hasGeneric = results.hasGeneric || tmp.hasGeneric;
+    results.hasVariadicOfGeneric =
+        tmp.hasGeneric || results.hasVariadicOfGeneric;
+
+    results.concreteCount += tmp.concreteCount;
+    results.variables.insert(tmp.variables.begin(), tmp.variables.end());
+    results.out << tmp.typeAsString();
+  }
+};
+
+template <typename V>
+struct TypeAnalysis<Array<V>> {
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << "array(";
+    TypeAnalysis<V>().run(results);
+    results.out << ")";
+  }
+};
+
+template <typename... T>
+struct TypeAnalysis<Row<T...>> {
+  using child_types = std::tuple<T...>;
+
+  template <size_t N>
+  using child_type_at = typename std::tuple_element<N, child_types>::type;
+
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << "row(";
+    // This expression applies the lambda for each row child type.
+    bool first = true;
+    (
+        [&]() {
+          if (!first) {
+            results.out << ", ";
+          }
+          first = false;
+          TypeAnalysis<T>().run(results);
+        }(),
+        ...);
+    results.out << ")";
+  }
+};
+
 // todo(youknowjack): need a better story for types for UDFs. Mapping
 //                    c++ types <-> Velox types is imprecise (e.g. string vs
 //                    binary) and difficult to change.
@@ -127,7 +250,14 @@ struct CreateType {
 template <typename Underlying>
 struct CreateType<Variadic<Underlying>> {
   static std::shared_ptr<const Type> create() {
-    return CppToType<Underlying>::create();
+    return CreateType<Underlying>::create();
+  }
+};
+
+template <typename T>
+struct CreateType<Generic<T>> {
+  static std::shared_ptr<const Type> create() {
+    return std::make_shared<UnknownType>();
   }
 };
 
@@ -193,14 +323,29 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
             returnType ? std::move(returnType) : CppToType<TReturn>::create()) {
     verifyReturnTypeCompatibility();
   }
+
   ~SimpleFunctionMetadata() override = default;
 
   std::shared_ptr<exec::FunctionSignature> signature() const final {
-    auto builder =
-        exec::FunctionSignatureBuilder().returnType(typeToString(returnType()));
+    auto builder = exec::FunctionSignatureBuilder();
 
-    for (const auto& arg : argTypes()) {
-      builder.argumentType(typeToString(arg));
+    TypeAnalysisResults results;
+    TypeAnalysis<return_type>().run(results);
+    builder.returnType(results.typeAsString());
+
+    // This expression applies the lambda for each input arg type.
+    (
+        [&]() {
+          // Clear string representation but keep other collected information to
+          // accumulate.
+          results.resetTypeString();
+          TypeAnalysis<Args>().run(results);
+          builder.argumentType(results.typeAsString());
+        }(),
+        ...);
+
+    for (const auto& variable : results.variables) {
+      builder.typeVariable(variable);
     }
 
     if (isVariadic()) {
@@ -235,24 +380,6 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
     VELOX_USER_CHECK(
         CppToType<TReturn>::create()->kindEquals(returnType_),
         "return type override mismatch");
-  }
-
-  // convert type to a string representation that is recognized in
-  // FunctionSignature.
-  static std::string typeToString(const TypePtr& type) {
-    std::ostringstream out;
-    out << boost::algorithm::to_lower_copy(std::string(type->kindName()));
-    if (type->size()) {
-      out << "(";
-      for (auto i = 0; i < type->size(); i++) {
-        if (i > 0) {
-          out << ",";
-        }
-        out << typeToString(type->childAt(i));
-      }
-      out << ")";
-    }
-    return out.str();
   }
 
   const std::shared_ptr<const Type> returnType_;

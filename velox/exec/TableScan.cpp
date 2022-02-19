@@ -18,7 +18,7 @@
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
-DEFINE_bool(enable_split_preload, true, "Prefetch split metadata");
+DEFINE_bool(enable_split_preload, false, "Prefetch split metadata");
 
 namespace facebook::velox::exec {
 

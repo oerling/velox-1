@@ -1462,9 +1462,8 @@ TEST_F(VectorTest, clearNulls) {
 TEST_F(VectorTest, setStringToNull) {
   constexpr int32_t kSize = 100;
   auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
-  auto target = vectorMaker->flatVector<StringView>(kSize, [](auto row) {
-    return StringView(fmt::format("Non-inlined string {}", row));
-  });
+  auto target = vectorMaker->flatVector<StringView>(
+      kSize, [](auto /*row*/) { return StringView("Non-inlined string"); });
   target->setNull(kSize - 1, true);
   auto unknownNull = std::make_shared<ConstantVector<UnknownValue>>(
       pool_.get(), kSize, true, UNKNOWN(), UnknownValue());
@@ -1489,4 +1488,19 @@ TEST_F(VectorTest, setStringToNull) {
   target->copy(flatNulls.get(), rows, nullptr);
   EXPECT_TRUE(target->isNullAt(6));
   EXPECT_EQ(4, bits::countNulls(target->rawNulls(), 0, kSize));
+}
+
+TEST_F(VectorTest, clearAllNulls) {
+  auto vectorSize = 100;
+  auto vector = BaseVector::create(INTEGER(), vectorSize, pool_.get());
+  ASSERT_FALSE(vector->mayHaveNulls());
+
+  auto rawNulls = vector->mutableRawNulls();
+  ASSERT_EQ(bits::countNulls(rawNulls, 0, vectorSize), 0);
+  bits::setNull(rawNulls, 50);
+  ASSERT_TRUE(vector->isNullAt(50));
+  ASSERT_EQ(bits::countNulls(rawNulls, 0, vectorSize), 1);
+  vector->clearAllNulls();
+  ASSERT_FALSE(vector->mayHaveNulls());
+  ASSERT_FALSE(vector->isNullAt(50));
 }

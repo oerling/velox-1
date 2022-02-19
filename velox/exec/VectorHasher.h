@@ -271,6 +271,11 @@ class VectorHasher {
   // and distinct values are unioned.
   void merge(const VectorHasher& other);
 
+  // true if no values have been added.
+  bool empty() const {
+    return !hasRange_ && uniqueValues_.empty();
+  }
+
   std::string toString() const;
 
  private:
@@ -292,6 +297,9 @@ class VectorHasher {
   inline int64_t toInt64(T value) const {
     return value;
   }
+
+  // Sets the data statistics from 'other'. Does not set the mapping mode.
+  void copyStatsFrom(const VectorHasher& other);
 
   template <TypeKind Kind>
   bool makeValueIds(const SelectivityVector& rows, uint64_t* result);
@@ -489,7 +497,7 @@ class VectorHasher {
   // Members for fast map to int domain for array/normalized key.
   // Maximum integer mapping. If distinct count exceeds this,
   // array/normalized key mapping fails.
-  uint32_t rangeSize_ = 0;
+  uint64_t rangeSize_ = 0;
 
   // Multiply int mapping by this before adding it to array index/normalized
   // key.

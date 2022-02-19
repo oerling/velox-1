@@ -34,8 +34,6 @@ fbcode/eden/fs/public_autocargo = eden/fs
 fbcode/eden/mononoke/public_autocargo = eden/mononoke
 fbcode/eden/scm/public_autocargo = eden/scm
 fbcode/tools/lfs = tools/lfs
-# This is to pick up the fb303.thrift stubs
-fbcode/fboss/common = common
 
 [shipit.strip]
 ^fbcode/configerator/structs/scm/hg(?!/public_autocargo).*/Cargo\.toml$
@@ -55,8 +53,10 @@ fbcode/fboss/common = common
 [dependencies]
 fb303
 fbthrift
-python
 rust-shed
+
+[dependencies.not(os=windows)]
+python
 
 # We use the system openssl on linux
 [dependencies.not(os=linux)]

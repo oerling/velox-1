@@ -21,43 +21,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "velox/expression/tests/ExpressionFuzzer.h"
-#include "velox/functions/FunctionRegistry.h"
+#include "velox/expression/tests/FuzzerRunner.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-
-/// ExpressionFuzzerTest is an test/executable that leverages ExpressionFuzzer
-/// and VectorFuzzer to automatically generate and execute expression tests. It
-/// works by:
-///
-///  1. Taking an initial set of available function signatures.
-///  2. Generating a random expression tree based on the available function
-///     signatures.
-///  3. Generating a random set of input data (vector), with a variety of
-///     encodings and data layouts.
-///  4. Executing the expression using the common and simplified eval paths, and
-///     asserting results are the exact same.
-///  5. Rinse and repeat.
-///
-/// The common usage pattern is as following:
-///
-///  $ ./velox_expression_fuzzer_test --steps 10000
-///
-/// The important flags that control Fuzzer's behavior are:
-///
-///  --steps: how many iterations to run
-///  --seed: pass a deterministic seed to reproduce the behavior (each iteration
-///          will print a seed as part of the logs).
-///  --v=1: verbose logging; print a lot more details about the execution.
-///  --only: restrict the functions to fuzz.
-///  --batch_size: size of input vector batches generated.
-///
-/// e.g:
-///
-///  $ ./velox_expression_fuzzer_test \
-///         --steps 10000 \
-///         --seed 123 \
-///         --v=1 \
-///         --only "substr,trim"
 
 DEFINE_int64(
     seed,
@@ -72,41 +37,11 @@ DEFINE_string(
     "this comma separated list of function names "
     "(e.g: --only \"split\" or --only \"substr,ltrim\").");
 
-DEFINE_int32(steps, 1, "Number of expressions to generate.");
-
-using namespace facebook::velox;
-
-// Parse the comma separated list of funciton names, and use it to filter the
-// input signatures.
-FunctionSignatureMap filterSignatures(
-    const FunctionSignatureMap& input,
-    const std::string& onlyFunctions) {
-  if (onlyFunctions.empty()) {
-    return input;
-  }
-
-  // Parse, lower case and trim it.
-  std::vector<folly::StringPiece> nameList;
-  folly::split(',', onlyFunctions, nameList);
-  std::unordered_set<std::string> nameSet;
-
-  for (const auto& it : nameList) {
-    auto str = folly::trimWhitespace(it).toString();
-    folly::toLowerAscii(str);
-    nameSet.insert(str);
-  }
-
-  // Use the generated set to filter the input signatures.
-  FunctionSignatureMap output;
-  for (const auto& it : input) {
-    if (nameSet.count(it.first) > 0) {
-      output.insert(it);
-    }
-  }
-  return output;
-}
+DEFINE_int32(steps, 10, "Number of expressions to generate.");
 
 int main(int argc, char** argv) {
+  facebook::velox::functions::prestosql::registerAllScalarFunctions();
+
   ::testing::InitGoogleTest(&argc, argv);
 
   // Calls common init functions in the necessary order, initializing
@@ -114,11 +49,20 @@ int main(int argc, char** argv) {
   // experience, and initialize glog and gflags.
   folly::init(&argc, &argv);
 
-  functions::prestosql::registerAllScalarFunctions();
-
-  test::expressionFuzzer(
-      filterSignatures(getFunctionSignatures(), FLAGS_only),
-      FLAGS_steps,
-      FLAGS_seed);
-  return RUN_ALL_TESTS();
+  // TODO: List of the functions that at some point crash or fail and need to
+  // be fixed before we can enable.
+  std::unordered_set<std::string> skipFunctions = {
+      "replace",
+      // The pad functions cause the test to OOM. The 2nd arg is only bound by
+      // the max value of int32_t, which leads to strings billions of characters
+      // long.
+      "lpad",
+      "rpad",
+      // Fuzzer and the underlying engine are confused about cardinality(HLL)
+      // (since HLL is a user defined type), and end up trying to use
+      // cardinality passing a VARBINARY (since HLL's implementation uses an
+      // alias to VARBINARY).
+      "cardinality",
+  };
+  return FuzzerRunner::run(FLAGS_only, FLAGS_steps, FLAGS_seed, skipFunctions);
 }
