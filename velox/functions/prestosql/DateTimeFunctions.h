@@ -749,58 +749,6 @@ struct DateFormatFunction {
 };
 
 template <typename T>
-struct DateDiffFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  std::optional<DateTimeUnit> unit_;
-
-  FOLLY_ALWAYS_INLINE void initialize(
-      const core::QueryConfig& config,
-      const arg_type<Varchar>* unitString,
-      const arg_type<Timestamp>* /*timestamp*/,
-      const arg_type<Timestamp>* /*timestamp*/) {
-    if (unitString != nullptr) {
-      unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
-    }
-  }
-
-  FOLLY_ALWAYS_INLINE void initialize(
-      const core::QueryConfig& config,
-      const arg_type<Varchar>* unitString,
-      const arg_type<Date>* /*after*/,
-      const arg_type<Date>* /*before*/) {
-    if (unitString != nullptr) {
-      unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
-    }
-  }
-
-  FOLLY_ALWAYS_INLINE bool call(
-      int64_t& result,
-      const arg_type<Varchar>& /*unitString*/,
-      const arg_type<Timestamp>& before,
-      const arg_type<Timestamp>& after) {
-    VELOX_CHECK(
-        unit_.has_value() && unit_.value() == DateTimeUnit::kDay,
-        "date_diff is only defined for unit of day");
-    result =
-        (after.toMicros() - before.toMicros()) / (24 * 60 * 60 * 1'000'000LL);
-    return true;
-  }
-
-  FOLLY_ALWAYS_INLINE bool call(
-      int64_t& result,
-      const arg_type<Varchar>& /*unitString*/,
-      const arg_type<Date>& before,
-      const arg_type<Date>& after) {
-    VELOX_CHECK(
-        unit_.has_value() && unit_.value() == DateTimeUnit::kDay,
-        "date_diff is only defined for unit of day");
-    result = after.days() - before.days();
-    return true;
-  }
-};
-
-template <typename T>
 struct DateParseFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
