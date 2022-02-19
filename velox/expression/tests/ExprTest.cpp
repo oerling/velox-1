@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <folly/Benchmark.h>
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 #include "velox/dwio/common/DataSink.h"
@@ -2480,7 +2481,10 @@ TEST_F(ExprTest, subsetOfDictOverLazy) {
   assertEqualVectors(result, base);
 }
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> main
 
 TEST_F(ExprTest, peeledConstant) {
   constexpr int32_t kSubsetSize = 80;
@@ -2494,14 +2498,23 @@ TEST_F(ExprTest, peeledConstant) {
   auto result = std::dynamic_pointer_cast<SimpleVector<StringView>>(
       evaluate("if (c0 % 4 = 0, c1, null)", row));
   EXPECT_EQ(kSubsetSize, result->size());
+<<<<<<< HEAD
   std::stringstream stream;
+=======
+>>>>>>> main
   for (auto i = 0; i < kSubsetSize; ++i) {
     if (result->isNullAt(i)) {
       continue;
     }
     EXPECT_LE(1, result->valueAt(i).size());
     // Check that the data is readable.
+<<<<<<< HEAD
     stream << result->toString(i);
   }
 }
 >>>>>>> oerling1/wrapped-const-size-dev
+=======
+    folly::doNotOptimizeAway(result->toString(i));
+  }
+}
+>>>>>>> main

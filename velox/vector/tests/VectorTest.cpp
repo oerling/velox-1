@@ -1462,9 +1462,8 @@ TEST_F(VectorTest, clearNulls) {
 TEST_F(VectorTest, setStringToNull) {
   constexpr int32_t kSize = 100;
   auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
-  auto target = vectorMaker->flatVector<StringView>(kSize, [](auto row) {
-    return StringView(fmt::format("Non-inlined string {}", row));
-  });
+  auto target = vectorMaker->flatVector<StringView>(
+      kSize, [](auto /*row*/) { return StringView("Non-inlined string"); });
   target->setNull(kSize - 1, true);
   auto unknownNull = std::make_shared<ConstantVector<UnknownValue>>(
       pool_.get(), kSize, true, UNKNOWN(), UnknownValue());
