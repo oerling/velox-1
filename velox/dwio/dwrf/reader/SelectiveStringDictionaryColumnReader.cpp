@@ -20,9 +20,10 @@
 
 namespace facebook::velox::dwrf {
 
+  using namespace dwio::common;
 
 
-electiveStringDictionaryColumnReader::SelectiveStringDictionaryColumnReader(
+SelectiveStringDictionaryColumnReader::SelectiveStringDictionaryColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,

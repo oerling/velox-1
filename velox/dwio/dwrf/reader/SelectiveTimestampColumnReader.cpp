@@ -16,11 +16,11 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveIntegerDictionaryColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveTimestampColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
-
+  using namespace dwio::common;
 
 SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,

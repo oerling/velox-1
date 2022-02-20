@@ -24,7 +24,7 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
  public:
   using ValueType = StringView;
   SelectiveStringDirectColumnReader(
-      const std::shared_ptr<const TypeWithId>& nodeType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);

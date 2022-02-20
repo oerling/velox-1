@@ -14,29 +14,27 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
 #include "velox/dwio/dwrf/reader/SelectiveByteRleColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveIntegerDirectColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDictionaryColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveIntegerDirectColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
+
 #include "velox/dwio/dwrf/reader/SelectiveStringDictionaryColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveTimestampColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+
 #include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
-using common::FilterKind;
 using dwio::common::TypeWithId;
 using dwio::common::typeutils::CompatChecker;
-using namespace facebook::velox::aggregate;
-using V64 = simd::Vectors<int64_t>;
-using V32 = simd::Vectors<int32_t>;
-using V16 = simd::Vectors<int16_t>;
-using V8 = simd::Vectors<int8_t>;
 
 SelectiveColumnReader::SelectiveColumnReader(
-    std::shared_ptr<const TypeWithId> requestedType,
+    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     // TODO: why is data type instead of requested type passed in?
@@ -126,7 +124,6 @@ void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
   rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
   simd::memset(rawResultNulls_, bits::kNotNullByte, resultNulls_->capacity());
 }
-
 
 bool SelectiveColumnReader::shouldMoveNulls(RowSet rows) {
   if (rows.size() == numValues_) {
@@ -236,7 +233,6 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
       std::move(stringBuffers_));
 }
 
-  
 template <>
 void SelectiveColumnReader::compactScalarValues<bool, bool>(
     RowSet rows,
@@ -311,15 +307,10 @@ std::vector<uint64_t> toPositions(const proto::RowIndexEntry& entry) {
       entry.positions().begin(), entry.positions().end());
 }
 
-
-
-
-
-
 std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
-    const std::shared_ptr<const TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     FlatMapContext flatMapContext,
-    const std::shared_ptr<const TypeWithId>& dataType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     StripeStreams& stripe,
     uint32_t numBytes,
     common::ScanSpec* scanSpec) {

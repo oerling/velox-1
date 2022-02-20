@@ -20,14 +20,13 @@
 
 namespace facebook::velox::dwrf {
 
-
 class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
  public:
   using ValueType = int64_t;
 
   SelectiveIntegerDictionaryColumnReader(
-      std::shared_ptr<const TypeWithId> requestedType,
-      const std::shared_ptr<const TypeWithId>& dataType,
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       uint32_t numBytes);
@@ -98,9 +97,6 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveColumnReader {
   bool initialized_{false};
 };
 
-
-
-
 template <typename ColumnVisitor>
 void SelectiveIntegerDictionaryColumnReader::readWithVisitor(
     RowSet rows,
@@ -170,31 +166,31 @@ void SelectiveIntegerDictionaryColumnReader::processFilter(
     common::Filter* filter,
     ExtractValues extractValues,
     RowSet rows) {
-  switch (filter ? filter->kind() : FilterKind::kAlwaysTrue) {
-    case FilterKind::kAlwaysTrue:
+  switch (filter ? filter->kind() : common::FilterKind::kAlwaysTrue) {
+    case common::FilterKind::kAlwaysTrue:
       readHelper<common::AlwaysTrue, isDense>(filter, rows, extractValues);
       break;
-    case FilterKind::kIsNull:
+    case common::FilterKind::kIsNull:
       filterNulls<int64_t>(
           rows,
           true,
           !std::is_same<decltype(extractValues), DropValues>::value);
       break;
-    case FilterKind::kIsNotNull:
+    case common::FilterKind::kIsNotNull:
       if (std::is_same<decltype(extractValues), DropValues>::value) {
         filterNulls<int64_t>(rows, false, false);
       } else {
         readHelper<common::IsNotNull, isDense>(filter, rows, extractValues);
       }
       break;
-    case FilterKind::kBigintRange:
+    case common::FilterKind::kBigintRange:
       readHelper<common::BigintRange, isDense>(filter, rows, extractValues);
       break;
-    case FilterKind::kBigintValuesUsingHashTable:
+    case common::FilterKind::kBigintValuesUsingHashTable:
       readHelper<common::BigintValuesUsingHashTable, isDense>(
           filter, rows, extractValues);
       break;
-    case FilterKind::kBigintValuesUsingBitmask:
+    case common::FilterKind::kBigintValuesUsingBitmask:
       readHelper<common::BigintValuesUsingBitmask, isDense>(
           filter, rows, extractValues);
       break;
@@ -209,11 +205,11 @@ void SelectiveIntegerDictionaryColumnReader::processValueHook(
     RowSet rows,
     ValueHook* hook) {
   switch (hook->kind()) {
-    case AggregationHook::kSumBigintToBigint:
+    case aggregate::AggregationHook::kSumBigintToBigint:
       readHelper<common::AlwaysTrue, isDense>(
           &Filters::alwaysTrue,
           rows,
-          ExtractToHook<SumHook<int64_t, int64_t>>(hook));
+          ExtractToHook<aggregate::SumHook<int64_t, int64_t>>(hook));
       break;
     default:
       readHelper<common::AlwaysTrue, isDense>(
@@ -221,5 +217,4 @@ void SelectiveIntegerDictionaryColumnReader::processValueHook(
   }
 }
 
-}
-
+} // namespace facebook::velox::dwrf

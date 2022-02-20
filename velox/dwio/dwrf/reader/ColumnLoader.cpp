@@ -1,11 +1,27 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-
-#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/dwrf/reader/ColumnLoader.h"
 
 namespace facebook::velox::dwrf {
+
 // Wraps '*result' in a dictionary to make the contiguous values
 // appear at the indices i 'rows'. Used when loading a LazyVector for
 // a sparse set of rows in conditional exprs.
+namespace {
 static void scatter(RowSet rows, VectorPtr* result) {
   auto end = rows.back() + 1;
   // Initialize the indices to 0 to make the dictionary safely
@@ -19,6 +35,7 @@ static void scatter(RowSet rows, VectorPtr* result) {
   *result =
       BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, end, *result);
 }
+} // namespace
 
 void ColumnLoader::loadInternal(
     RowSet rows,
@@ -61,4 +78,4 @@ void ColumnLoader::loadInternal(
   }
 }
 
-}
+} // namespace facebook::velox::dwrf

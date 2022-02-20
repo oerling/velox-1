@@ -21,13 +21,12 @@
 namespace facebook::velox::dwrf {
 
 class SelectiveByteRleColumnReader : public SelectiveColumnReader {
-
  public:
   using ValueType = int8_t;
 
   SelectiveByteRleColumnReader(
-			       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-			       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       bool isBool,
@@ -197,7 +196,7 @@ void SelectiveByteRleColumnReader::processValueHook(
     ValueHook* hook) {
   using namespace facebook::velox::aggregate;
   switch (hook->kind()) {
-    case AggregationHook::kSumBigintToBigint:
+    case aggregate::AggregationHook::kSumBigintToBigint:
       readHelper<common::AlwaysTrue, isDense>(
           &Filters::alwaysTrue,
           rows,
@@ -209,5 +208,4 @@ void SelectiveByteRleColumnReader::processValueHook(
   }
 }
 
-}
-
+} // namespace facebook::velox::dwrf

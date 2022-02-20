@@ -20,14 +20,12 @@
 
 namespace facebook::velox::dwrf {
 
-
-
 class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
  public:
   using ValueType = int32_t;
 
   SelectiveStringDictionaryColumnReader(
-      const std::shared_ptr<const TypeWithId>& nodeType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);
@@ -128,7 +126,7 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
   bool initialized_{false};
 };
 
-  template <typename TVisitor>
+template <typename TVisitor>
 void SelectiveStringDictionaryColumnReader::readWithVisitor(
     RowSet rows,
     TVisitor visitor) {
@@ -170,7 +168,7 @@ void SelectiveStringDictionaryColumnReader::processFilter(
     common::Filter* filter,
     RowSet rows,
     ExtractValues extractValues) {
-  switch (filter ? filter->kind() : FilterKind::kAlwaysTrue) {
+  switch (filter ? filter->kind() : common::FilterKind::kAlwaysTrue) {
     case common::FilterKind::kAlwaysTrue:
       readHelper<common::AlwaysTrue, isDense>(filter, rows, extractValues);
       break;
@@ -199,5 +197,4 @@ void SelectiveStringDictionaryColumnReader::processFilter(
   }
 }
 
-}
-
+} // namespace facebook::velox::dwrf

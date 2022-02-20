@@ -29,7 +29,7 @@ add_library(
   SelectiveStringDictionaryColumnReader.cpp
   SelectiveTimestampColumnReader.cpp
   SelectiveStructColumnReader.cpp
-  columnLoader.cpp
+  ColumnLoader.cpp
   SelectiveRepeatedColumnReader.cpp
   StripeDictionaryCache.cpp
   StripeReaderBase.cpp

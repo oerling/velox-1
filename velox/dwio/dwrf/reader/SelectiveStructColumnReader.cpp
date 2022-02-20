@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include "velox/dwio/dwrf/reader/SelectiveStringDictionaryColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/dwrf/reader/ColumnLoader.h"
 
 namespace facebook::velox::dwrf {
 
-SelectiveStructColumnReader::SelectiveStructColumnReader(
+  using namespace dwio::common;
+
+  SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,

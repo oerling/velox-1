@@ -14,16 +14,12 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include "velox/dwio/dwrf/reader/SelectiveDictionaryColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
-
-
 SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
-    const std::shared_ptr<const TypeWithId>& nodeType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     FlatMapContext flatMapContext)
@@ -377,7 +373,7 @@ void SelectiveStringDirectColumnReader::processFilter(
     common::Filter* filter,
     RowSet rows,
     ExtractValues extractValues) {
-  switch (filter ? filter->kind() : FilterKind::kAlwaysTrue) {
+  switch (filter ? filter->kind() : common::FilterKind::kAlwaysTrue) {
     case common::FilterKind::kAlwaysTrue:
       readHelper<common::AlwaysTrue, isDense>(filter, rows, extractValues);
       break;
@@ -449,3 +445,4 @@ void SelectiveStringDirectColumnReader::read(
   }
 }
 
+} // namespace facebook::velox::dwrf

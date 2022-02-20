@@ -22,8 +22,8 @@ namespace facebook::velox::dwrf {
 
   
 SelectiveListColumnReader::SelectiveListColumnReader(
-    const std::shared_ptr<const TypeWithId>& requestedType,
-    const std::shared_ptr<const TypeWithId>& dataType,
+						     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+						     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     FlatMapContext flatMapContext)
@@ -114,8 +114,8 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
 }
 
   SelectiveMapColumnReader::SelectiveMapColumnReader(
-    const std::shared_ptr<const TypeWithId>& requestedType,
-    const std::shared_ptr<const TypeWithId>& dataType,
+						     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+						     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     FlatMapContext flatMapContext)

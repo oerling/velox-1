@@ -20,9 +20,6 @@
 
 namespace facebook::velox::dwrf {
 
-
-
-
 // Abstract superclass for list and map readers. Encapsulates common
 // logic for dealing with mapping between enclosing and nested rows.
 class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
@@ -36,7 +33,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
   static constexpr size_t kBufferSize = 1024;
 
   SelectiveRepeatedColumnReader(
-      std::shared_ptr<const TypeWithId> nodeType,
+      std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       const TypePtr& type,
@@ -177,8 +174,8 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
 class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
  public:
   SelectiveListColumnReader(
-      const std::shared_ptr<const TypeWithId>& requestedType,
-      const std::shared_ptr<const TypeWithId>& dataType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);
@@ -218,11 +215,11 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
 
- class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
+class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
  public:
   SelectiveMapColumnReader(
-      const std::shared_ptr<const TypeWithId>& requestedType,
-      const std::shared_ptr<const TypeWithId>& dataType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);
@@ -266,5 +263,4 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
 
-
-}
+} // namespace facebook::velox::dwrf
