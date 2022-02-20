@@ -23,8 +23,8 @@ namespace facebook::velox::dwrf {
 class SelectiveStructColumnReader : public SelectiveColumnReader {
  public:
   SelectiveStructColumnReader(
-			      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-			      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);

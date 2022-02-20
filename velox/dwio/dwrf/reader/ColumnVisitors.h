@@ -565,7 +565,7 @@ inline void storeTranslate(
   using V32 = simd::Vectors<int32_t>;
   V32::store(values, V32::maskGather32(indices, dictMask, dict, indices));
 }
-  
+
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class DictionaryColumnVisitor
     : public ColumnVisitor<T, TFilter, ExtractValues, isDense> {
@@ -1275,8 +1275,8 @@ class DirectRleColumnVisitor
   using super = ColumnVisitor<T, TFilter, ExtractValues, isDense>;
 
   using V64 = simd::Vectors<int64_t>;
-using V32 = simd::Vectors<int32_t>;
-using V16 = simd::Vectors<int16_t>;
+  using V32 = simd::Vectors<int32_t>;
+  using V16 = simd::Vectors<int16_t>;
 
  public:
   DirectRleColumnVisitor(

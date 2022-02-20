@@ -23,7 +23,7 @@ add_library(
   ReaderBase.cpp
   SelectiveColumnReader.cpp
   SelectiveByteRleColumnReader.cpp
-	SelectiveIntegerDirectColumnReader.cpp
+  SelectiveIntegerDirectColumnReader.cpp
   SelectiveIntegerDictionaryColumnReader.cpp
   SelectiveStringDirectColumnReader.cpp
   SelectiveStringDictionaryColumnReader.cpp

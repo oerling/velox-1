@@ -20,10 +20,9 @@
 
 namespace facebook::velox::dwrf {
 
-  
 SelectiveListColumnReader::SelectiveListColumnReader(
-						     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-						     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     FlatMapContext flatMapContext)
@@ -56,7 +55,6 @@ SelectiveListColumnReader::SelectiveListColumnReader(
       FlatMapContext{encodingKey.sequence, nullptr});
 }
 
-  
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
   numValues = ColumnReader::skip(numValues);
   if (child_) {
@@ -113,9 +111,9 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
       elements);
 }
 
-  SelectiveMapColumnReader::SelectiveMapColumnReader(
-						     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-						     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+SelectiveMapColumnReader::SelectiveMapColumnReader(
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
     FlatMapContext flatMapContext)
@@ -241,7 +239,4 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
       values);
 }
 
-}
-  
-  
-
+} // namespace facebook::velox::dwrf

@@ -16,20 +16,19 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/common/base/Portability.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/common/FloatingPointDecoder.h"
 #include "velox/dwio/dwrf/common/RLEv1.h"
+#include "velox/dwio/dwrf/reader/ColumnVisitors.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/dwrf/utils/ProtoUtils.h"
 #include "velox/exec/AggregationHook.h"
 #include "velox/type/Timestamp.h"
 #include "velox/vector/ConstantVector.h"
 #include "velox/vector/DictionaryVector.h"
 #include "velox/vector/FlatVector.h"
-#include "velox/dwio/dwrf/reader/ColumnVisitors.h"
-#include "velox/exec/AggregationHook.h"
 
 #include <numeric>
 
@@ -163,7 +162,6 @@ void SelectiveColumnReader::getFlatValues<int8_t, bool>(
     VectorPtr* result,
     const TypePtr& type,
     bool isFinal);
-  
 
 template <typename T, typename TVector>
 void SelectiveColumnReader::upcastScalarValues(RowSet rows) {
@@ -277,8 +275,8 @@ void SelectiveColumnReader::compactScalarValues(RowSet rows, bool isFinal) {
   values_->setSize(numValues_ * sizeof(TVector));
 }
 
-  template <>
-  void SelectiveColumnReader::compactScalarValues<bool, bool>(
+template <>
+void SelectiveColumnReader::compactScalarValues<bool, bool>(
     RowSet rows,
     bool isFinal);
 

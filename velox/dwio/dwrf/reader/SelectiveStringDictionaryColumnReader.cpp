@@ -20,8 +20,7 @@
 
 namespace facebook::velox::dwrf {
 
-  using namespace dwio::common;
-
+using namespace dwio::common;
 
 SelectiveStringDictionaryColumnReader::SelectiveStringDictionaryColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,
@@ -208,7 +207,6 @@ void SelectiveStringDictionaryColumnReader::makeDictionaryBaseVector() {
   }
 }
 
-  
 void SelectiveStringDictionaryColumnReader::read(
     vector_size_t offset,
     RowSet rows,
@@ -350,6 +348,4 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
   initTimeClocks_ = timer.elapsedClocks();
 }
 
-
-}
-
+} // namespace facebook::velox::dwrf

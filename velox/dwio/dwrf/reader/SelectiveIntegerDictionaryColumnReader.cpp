@@ -19,8 +19,8 @@
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDictionaryColumnReader.h"
 
 namespace facebook::velox::dwrf {
-  using namespace dwio::common;
-  
+using namespace dwio::common;
+
 SelectiveIntegerDictionaryColumnReader::SelectiveIntegerDictionaryColumnReader(
     std::shared_ptr<const TypeWithId> requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,

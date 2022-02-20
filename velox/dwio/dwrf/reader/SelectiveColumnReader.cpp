@@ -17,9 +17,9 @@
 #include "velox/dwio/dwrf/reader/SelectiveByteRleColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
 
+#include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDictionaryColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDirectColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
 
 #include "velox/dwio/dwrf/reader/SelectiveStringDictionaryColumnReader.h"

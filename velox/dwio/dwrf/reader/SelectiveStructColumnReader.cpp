@@ -19,9 +19,9 @@
 
 namespace facebook::velox::dwrf {
 
-  using namespace dwio::common;
+using namespace dwio::common;
 
-  SelectiveStructColumnReader::SelectiveStructColumnReader(
+SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
@@ -242,5 +242,5 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
     }
   }
 }
- 
+
 } // namespace facebook::velox::dwrf

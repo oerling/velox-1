@@ -20,7 +20,7 @@
 
 namespace facebook::velox::dwrf {
 
-  using namespace dwio::common;
+using namespace dwio::common;
 
 SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,
@@ -175,5 +175,4 @@ void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result) {
   getFlatValues<Timestamp, Timestamp>(rows, result, type_, true);
 }
 
-}
-
+} // namespace facebook::velox::dwrf

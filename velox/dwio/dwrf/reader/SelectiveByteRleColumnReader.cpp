@@ -18,8 +18,6 @@
 
 namespace facebook::velox::dwrf {
 
-
-
 uint64_t SelectiveByteRleColumnReader::skip(uint64_t numValues) {
   numValues = ColumnReader::skip(numValues);
   if (byteRle_) {
@@ -29,7 +27,6 @@ uint64_t SelectiveByteRleColumnReader::skip(uint64_t numValues) {
   }
   return numValues;
 }
-
 
 void SelectiveByteRleColumnReader::read(
     vector_size_t offset,
@@ -61,7 +58,5 @@ void SelectiveByteRleColumnReader::read(
     }
   }
 }
-  
 
-
-}
+} // namespace facebook::velox::dwrf

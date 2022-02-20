@@ -23,15 +23,15 @@ namespace facebook::velox::dwrf {
 class ColumnLoader : public velox::VectorLoader {
  public:
   ColumnLoader(
-      SelectiveStructColumnReader * structReader,
-      SelectiveColumnReader * fieldReader,
+      SelectiveStructColumnReader* structReader,
+      SelectiveColumnReader* fieldReader,
       uint64_t version)
       : structReader_(structReader),
         fieldReader_(fieldReader),
         version_(version) {}
 
  protected:
-  void loadInternal(RowSet rows, ValueHook * hook, VectorPtr * result) override;
+  void loadInternal(RowSet rows, ValueHook* hook, VectorPtr* result) override;
 
  private:
   SelectiveStructColumnReader* structReader_;

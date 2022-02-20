@@ -93,7 +93,7 @@ class SelectiveIntegerDirectColumnReader : public SelectiveColumnReader {
   std::unique_ptr<DirectDecoder</*isSigned*/ true>> ints;
 };
 
-  template <typename ColumnVisitor>
+template <typename ColumnVisitor>
 void SelectiveIntegerDirectColumnReader::readWithVisitor(
     RowSet rows,
     ColumnVisitor visitor) {
@@ -205,7 +205,5 @@ void SelectiveIntegerDirectColumnReader::processValueHook(
           &Filters::alwaysTrue, rows, ExtractToGenericHook(hook));
   }
 }
-
-
 
 } // namespace facebook::velox::dwrf
