@@ -23,6 +23,14 @@ add_library(
   ReaderBase.cpp
   SelectiveColumnReader.cpp
   SelectiveByteRleColumnReader.cpp
+	SelectiveIntegerDirectColumnReader.cpp
+  SelectiveIntegerDictionaryColumnReader.cpp
+  SelectiveStringDirectColumnReader.cpp
+  SelectiveStringDictionaryColumnReader.cpp
+  SelectiveTimestampColumnReader.cpp
+  SelectiveStructColumnReader.cpp
+  columnLoader.cpp
+  SelectiveRepeatedColumnReader.cpp
   StripeDictionaryCache.cpp
   StripeReaderBase.cpp
   StripeStream.cpp)
