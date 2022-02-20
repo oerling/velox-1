@@ -96,8 +96,16 @@ std::unique_ptr<Filter> ColumnStats<float>::makeRangeFilter(
   }
   float lower = valueAtPct(startPct);
   float upper = valueAtPct(startPct + selectPct);
+  bool lowerUnbounded = std::isnan(lower);
+  bool upperUnbounded = std::isnan(upper);
   return std::make_unique<velox::common::FloatRange>(
-      lower, false, false, upper, false, false, selectPct > 25);
+      lower,
+      lowerUnbounded,
+      false,
+      upper,
+      upperUnbounded,
+      false,
+      selectPct > 25);
 }
 
 template <>
@@ -109,8 +117,16 @@ std::unique_ptr<Filter> ColumnStats<double>::makeRangeFilter(
   }
   double lower = valueAtPct(startPct);
   double upper = valueAtPct(startPct + selectPct);
+  bool lowerUnbounded = std::isnan(lower);
+  bool upperUnbounded = std::isnan(upper);
   return std::make_unique<velox::common::DoubleRange>(
-      lower, false, false, upper, false, false, selectPct > 25);
+      lower,
+      lowerUnbounded,
+      false,
+      upper,
+      upperUnbounded,
+      false,
+      selectPct > 25);
 }
 
 template <>
@@ -252,6 +268,11 @@ std::vector<std::string> FilterGenerator::makeFilterables(
   std::vector<std::string> filterables;
   filterables.reserve(rowType_->size());
   collectFilterableSubFields(rowType_.get(), filterables);
+  if (filterables.empty()) {
+    // It could be empty if none of the columns is filterable, for example,
+    // there are only (or mix of) map, array columns.
+    return filterables;
+  }
   uint32_t countTotal = filterables.size();
   uint32_t countSelect = std::min(count, countTotal);
   if (countSelect == 0) {

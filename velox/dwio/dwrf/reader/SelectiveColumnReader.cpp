@@ -2074,6 +2074,7 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
   initTimeClocks_ = timer.elapsedClocks();
 }
 
+
 class SelectiveTimestampColumnReader : public SelectiveColumnReader {
  public:
   // The readers produce int64_t, the vector is Timestamps.
