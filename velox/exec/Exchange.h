@@ -82,7 +82,7 @@ class ExchangeQueue {
       checkComplete();
       return;
     }
-    queue_.push_back(std::move(page));
+    byteSize_ += page->byteSize();    queue_.push_back(std::move(page));
     if (!promises_.empty()) {
       // Resume one of the waiting drivers.
       promises_.back().setValue(true);
@@ -121,9 +121,19 @@ class ExchangeQueue {
     auto page = std::move(queue_.front());
     queue_.pop_front();
     *atEnd = false;
+    byteSize_ -= page->byteSize();
     return page;
   }
 
+  uint64_t byteSize() const {
+    return byteSize_;
+  }
+
+  uint64_t maxSize() const {
+    return maxSize_;
+  }
+
+  
   void addSource() {
     VELOX_CHECK(!noMoreSources_, "addSource called after noMoreSources");
     numSources_++;
@@ -159,6 +169,9 @@ class ExchangeQueue {
   // When set, all promises will be realized and the next dequeue will
   // throw an exception with this message.
   std::string error_;
+  // Total size of SerializedPages in queue.
+  uint64_t byteSize_{0};
+  uint64_t maxSize_{128 << 20};
 };
 
 class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
