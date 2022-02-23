@@ -60,6 +60,11 @@ struct resolver<Map<K, V>> {
       typename resolver<V>::out_type>;
 };
 
+template <typename K, typename V>
+struct resolver<MapWriterT<K, V>> {
+  using out_type = MapWriter<K, V>;
+};
+
 template <typename... T>
 struct resolver<Row<T...>> {
   using in_type = RowView<true, T...>;
@@ -224,6 +229,13 @@ struct VectorReader {
     return false;
   }
 
+  inline bool mayHaveNullsRecursive() const {
+    return decoded_.mayHaveNulls();
+  }
+
+  // Scalars don't have children, so this is a no-op.
+  void setChildrenMayHaveNulls() {}
+
   const DecodedVector& decoded_;
 };
 
@@ -359,14 +371,18 @@ struct VectorReader<Map<K, V>> {
   }
 
   bool containsNull(vector_size_t index) const {
+    VELOX_DCHECK(
+        keysMayHaveNulls_.has_value() && valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before containsNull()");
+
     auto decodedIndex = decoded_.index(index);
 
     return decoded_.isNullAt(index) ||
-        (decodedKeys_.mayHaveNullsRecursive() &&
+        (*keysMayHaveNulls_ &&
          keyReader_.containsNull(
              offsets_[decodedIndex],
              offsets_[decodedIndex] + lengths_[decodedIndex])) ||
-        (decodedVals_.mayHaveNullsRecursive() &&
+        (*valuesMayHaveNulls_ &&
          valReader_.containsNull(
              offsets_[decodedIndex],
              offsets_[decodedIndex] + lengths_[decodedIndex]));
@@ -382,6 +398,22 @@ struct VectorReader<Map<K, V>> {
     return false;
   }
 
+  inline bool mayHaveNullsRecursive() const {
+    VELOX_DCHECK(
+        keysMayHaveNulls_.has_value() && valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before mayHaveNullsRecursive()");
+    return decoded_.mayHaveNulls() || *keysMayHaveNulls_ ||
+        *valuesMayHaveNulls_;
+  }
+
+  void setChildrenMayHaveNulls() {
+    keyReader_.setChildrenMayHaveNulls();
+    valReader_.setChildrenMayHaveNulls();
+
+    keysMayHaveNulls_ = keyReader_.mayHaveNullsRecursive();
+    valuesMayHaveNulls_ = valReader_.mayHaveNullsRecursive();
+  }
+
   const DecodedVector& decoded_;
   const MapVector& vector_;
   DecodedVector decodedKeys_;
@@ -391,6 +423,9 @@ struct VectorReader<Map<K, V>> {
   const vector_size_t* lengths_;
   VectorReader<K> keyReader_;
   VectorReader<V> valReader_;
+
+  std::optional<bool> keysMayHaveNulls_;
+  std::optional<bool> valuesMayHaveNulls_;
 };
 
 template <typename V>
@@ -427,10 +462,14 @@ struct VectorReader<Array<V>> {
   }
 
   inline bool containsNull(vector_size_t index) const {
+    VELOX_DCHECK(
+        valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before containsNull()");
+
     auto decodedIndex = decoded_.index(index);
 
     return decoded_.isNullAt(index) ||
-        (arrayValuesDecoder_.mayHaveNullsRecursive() &&
+        (*valuesMayHaveNulls_ &&
          childReader_.containsNull(
              offsets_[decodedIndex],
              offsets_[decodedIndex] + lengths_[decodedIndex]));
@@ -446,12 +485,27 @@ struct VectorReader<Array<V>> {
     return false;
   }
 
+  inline bool mayHaveNullsRecursive() const {
+    VELOX_DCHECK(
+        valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before mayHaveNullsRecursive()");
+
+    return decoded_.mayHaveNulls() || *valuesMayHaveNulls_;
+  }
+
+  void setChildrenMayHaveNulls() {
+    childReader_.setChildrenMayHaveNulls();
+
+    valuesMayHaveNulls_ = childReader_.mayHaveNullsRecursive();
+  }
+
   DecodedVector arrayValuesDecoder_;
   const DecodedVector& decoded_;
   const ArrayVector& vector_;
   const vector_size_t* offsets_;
   const vector_size_t* lengths_;
   VectorReader<V> childReader_;
+  std::optional<bool> valuesMayHaveNulls_;
 };
 
 template <typename V>
@@ -531,8 +585,8 @@ struct VectorWriter<Array<V>> {
   size_t offset_ = 0;
 };
 
-// A new temporary writer, to be used when the user wants a proxy interface for
-// the array output. Will eventually replace VectorWriter<Array>>.
+// A new temporary VectorWriter for the new array writer interface.
+// Will eventually replace VectorWriter<Array>>.
 template <typename V>
 struct VectorWriter<ArrayProxyT<V>> {
   using vector_t = typename TypeToFlatVector<Array<V>>::type;
@@ -545,7 +599,7 @@ struct VectorWriter<ArrayProxyT<V>> {
     proxy_.initialize(this);
   }
 
-  // This should be called once all rows are proccessed.
+  // This should be called once all rows are processed.
   void finish() {
     proxy_.elementsVector_->resize(proxy_.valuesOffset_);
     arrayVector_ = nullptr;
@@ -574,13 +628,13 @@ struct VectorWriter<ArrayProxyT<V>> {
     arrayVector_->setOffsetAndSize(
         offset_, proxy_.valuesOffset_, proxy_.length_);
     arrayVector_->setNull(offset_, false);
-    // Will reset length to 0 and prepare proxy_.valuesOffset_ for the next
-    // item.
+    // Will reset length to 0 and prepare proxy_ for the next item.
     proxy_.finalize();
   }
 
   // Commit a null value.
   void commitNull() {
+    proxy_.finalizeNull();
     arrayVector_->setNull(offset_, true);
   }
 
@@ -609,6 +663,88 @@ struct VectorWriter<ArrayProxyT<V>> {
 
   // The index being written in the array vector.
   vector_size_t offset_ = 0;
+};
+
+// A new temporary vector writer, to be used when the user wants a writer
+// interface for the map output. Will eventually replace VectorWriter<Map>>.
+template <typename K, typename V>
+struct VectorWriter<MapWriterT<K, V>> {
+  using vector_t = typename TypeToFlatVector<Map<K, V>>::type;
+  using key_vector_t = typename TypeToFlatVector<K>::type;
+  using val_vector_t = typename TypeToFlatVector<V>::type;
+  using exec_out_t = MapWriter<K, V>;
+
+  void init(vector_t& vector) {
+    mapVector_ = &vector;
+    keyWriter_.init(static_cast<key_vector_t&>(*vector.mapKeys()));
+    valWriter_.init(static_cast<val_vector_t&>(*vector.mapValues()));
+    elementWriter_.initialize(this);
+  }
+
+  // This should be called once all rows are processed.
+  void finish() {
+    // Downsize to actual used size.
+    elementWriter_.keysVector_->resize(elementWriter_.innerOffset_);
+    elementWriter_.valuesVector_->resize(elementWriter_.innerOffset_);
+    mapVector_ = nullptr;
+  }
+
+  VectorWriter() = default;
+
+  exec_out_t& current() {
+    return elementWriter_;
+  }
+
+  vector_t& vector() {
+    return *mapVector_;
+  }
+
+  void ensureSize(size_t size) {
+    if (size > mapVector_->size()) {
+      mapVector_->resize(size);
+      init(vector());
+    }
+  }
+
+  // Commit a not null value.
+  void commit() {
+    mapVector_->setOffsetAndSize(
+        offset_, elementWriter_.innerOffset_, elementWriter_.length_);
+    mapVector_->setNull(offset_, false);
+    // Will reset length to 0 and prepare proxy_.valuesOffset_ for the next
+    // item.
+    elementWriter_.finalize();
+  }
+
+  // Commit a null value.
+  void commitNull() {
+    elementWriter_.finalizeNull();
+    mapVector_->setNull(offset_, true);
+  }
+
+  void commit(bool isSet) {
+    if (LIKELY(isSet)) {
+      commit();
+    } else {
+      commitNull();
+    }
+  }
+
+  // Set the index being written.
+  void setOffset(vector_size_t offset) {
+    offset_ = offset;
+  }
+
+  void reset() {
+    elementWriter_.innerOffset_ = 0;
+  }
+
+  exec_out_t elementWriter_;
+
+  vector_t* mapVector_;
+  VectorWriter<K> keyWriter_;
+  VectorWriter<V> valWriter_;
+  size_t offset_ = 0;
 };
 
 template <typename... T>
@@ -664,6 +800,16 @@ struct VectorReader<Row<T...>> {
     }
 
     return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    return decoded_.mayHaveNullsRecursive();
+  }
+
+  void setChildrenMayHaveNulls() {
+    std::apply(
+        [](auto&... reader) { (reader->setChildrenMayHaveNulls(), ...); },
+        childReaders_);
   }
 
  private:
@@ -846,6 +992,22 @@ struct VectorReader<Variadic<T>> {
     }
 
     return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    for (const auto& childReader : childReaders_) {
+      if (childReader->mayHaveNullsRecursive()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void setChildrenMayHaveNulls() {
+    for (auto& childReader : childReaders_) {
+      childReader->setChildrenMayHaveNulls();
+    }
   }
 
  private:
@@ -1234,6 +1396,20 @@ struct VectorReader<Generic<T>> {
   bool containsNull(
       vector_size_t /* startIndex */,
       vector_size_t /* endIndex */) const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  inline void setChildrenMayHaveNulls() {
     // This function is only called if callNullFree is defined.
     // TODO (kevinwilfong): Add support for Generics in callNullFree.
     VELOX_UNSUPPORTED(

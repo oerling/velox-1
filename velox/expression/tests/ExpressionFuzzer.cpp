@@ -488,6 +488,15 @@ class ExpressionFuzzer {
     std::exception_ptr exceptionCommonPtr;
     std::exception_ptr exceptionSimplifiedPtr;
 
+    // Some functions (e.g. replace) change the input rowVector, so we
+    // need to keep a copy here.  Cannot use std::optional because
+    // copy assignment is disabled for RowVector.
+    std::unique_ptr<RowVector> rowVector2;
+    if (rowVector) {
+      rowVector2 = std::make_unique<RowVector>(*rowVector);
+      rowVector2->copy(rowVector.get(), 0, 0, rowVector->size());
+    }
+
     VLOG(1) << "Starting common eval execution.";
     SelectivityVector rows{rowVector ? rowVector->size() : 1};
 
@@ -496,13 +505,17 @@ class ExpressionFuzzer {
       exec::ExprSet exprSetCommon({plan}, &execCtx_);
       exec::EvalCtx evalCtxCommon(&execCtx_, &exprSetCommon, rowVector.get());
 
-      exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
-    } catch (...) {
-      if (!canThrow) {
-        LOG(ERROR)
-            << "Common eval wasn't supposed to throw, but it did. Aborting.";
-        throw;
+      try {
+        exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Common eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionCommonPtr = std::current_exception();
       }
+    } catch (...) {
       exceptionCommonPtr = std::current_exception();
     }
 
@@ -512,15 +525,19 @@ class ExpressionFuzzer {
     try {
       exec::ExprSetSimplified exprSetSimplified({plan}, &execCtx_);
       exec::EvalCtx evalCtxSimplified(
-          &execCtx_, &exprSetSimplified, rowVector.get());
+          &execCtx_, &exprSetSimplified, rowVector2.get());
 
-      exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
-    } catch (...) {
-      if (!canThrow) {
-        LOG(ERROR)
-            << "Simplified eval wasn't supposed to throw, but it did. Aborting.";
-        throw;
+      try {
+        exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Simplified eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionSimplifiedPtr = std::current_exception();
       }
+    } catch (...) {
       exceptionSimplifiedPtr = std::current_exception();
     }
 

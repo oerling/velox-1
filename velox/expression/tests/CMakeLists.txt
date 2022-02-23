@@ -16,9 +16,12 @@ add_executable(
   velox_expression_test
   ExprTest.cpp
   CastExprTest.cpp
+  MapWriterTest.cpp
+  ArrayProxyTest.cpp
   EvalSimplifiedTest.cpp
   SignatureBinderTest.cpp
   SimpleFunctionTest.cpp
+  SimpleFunctionCallNullFreeTest.cpp
   SimpleFunctionPresetNullsTest.cpp
   ArrayViewTest.cpp
   ArrayProxyTest.cpp
