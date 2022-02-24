@@ -73,7 +73,7 @@ void VectorStreamGroup::read(
 
 void VectorStreamGroup::makeIOBuf() {
   VELOX_CHECK(!iobuf_);
-  IOBufOutputStream stream(*mappedMemory());
+  IOBufOutputStream stream(*mappedMemory(), nullptr, StreamArena::size());
   flush(&stream);
   serializer_ = nullptr;
   iobuf_ = stream.getIOBuf();

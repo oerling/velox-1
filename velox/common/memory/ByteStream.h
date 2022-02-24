@@ -29,9 +29,22 @@ struct ByteRange {
     return (size - position) / sizeof(T);
   }
 
+  int32_t numValues() const {
+    return std::max(position, fill);
+  }
+
+  // Start of buffer. Not owned.
   uint8_t* buffer;
+
+  // Number of bytes or bits  starting at 'buffer'.
   int32_t size;
+
+  // Index of next byte/bit to be read/written in 'buffer'.
   int32_t position;
+
+  // Number of bytes/bits starting at 'buffer' that have been written at
+  // some time. if < position, position is the number of valid bytes/bits.
+  int32_t fill{0};
 };
 
 class OutputStreamListener {
@@ -138,12 +151,24 @@ class ByteStream {
   }
 
   Position tellp() const {
-    return std::make_tuple(current_, current_->position);
+    return std::make_tuple(current_, current_ ? current_->position : 0);
   }
 
   void seekp(Position position) {
-    current_ = std::get<0>(position);
-    current_->position = std::get<1>(position);
+    auto range = std::get<0>(position);
+    auto offset = std::get<1>(position);
+    ;
+    if (!range) {
+      VELOX_CHECK_EQ(offset, 0);
+      if (ranges_.empty()) {
+        return;
+      }
+      current_ = &ranges_[0];
+    }
+    if (current_->fill < current_->position) {
+      current_->fill = current_->position;
+    }
+    current_->position = offset;
   }
 
   size_t size() const {
@@ -348,11 +373,7 @@ class ByteStream {
   }
 
  private:
-  void extend(int32_t bytes = memory::MappedMemory::kPageSize) {
-    ranges_.emplace_back();
-    current_ = &ranges_.back();
-    arena_->newRange(bytes, current_);
-  }
+  void extend(int32_t bytes = memory::MappedMemory::kPageSize);
 
   StreamArena* arena_;
   // Indicates that position in ranges_ is in bits, not bytes.
@@ -384,10 +405,13 @@ class IOBufOutputStream : public OutputStream {
  public:
   explicit IOBufOutputStream(
       memory::MappedMemory& mappedMemory,
-      OutputStreamListener* listener = nullptr)
+      OutputStreamListener* listener = nullptr,
+      int32_t initialSize = memory::MappedMemory::kPageSize)
       : OutputStream(listener),
         arena_(std::make_shared<StreamArena>(&mappedMemory)),
-        out_(std::make_unique<ByteStream>(arena_.get())) {}
+        out_(std::make_unique<ByteStream>(arena_.get())) {
+    out_->startWrite(initialSize);
+  }
 
   void write(const char* s, std::streamsize count) {
     out_->appendStringPiece(folly::StringPiece(s, count));
@@ -397,13 +421,9 @@ class IOBufOutputStream : public OutputStream {
     }
   }
 
-  std::streampos tellp() const {
-    VELOX_NYI(); // return out_->tellp();
-  }
+  std::streampos tellp() const;
 
-  void seekp(std::streampos pos) {
-    VELOX_NYI(); // out_->seekp(pos);
-  }
+  void seekp(std::streampos pos);
 
   std::unique_ptr<folly::IOBuf> getIOBuf();
 

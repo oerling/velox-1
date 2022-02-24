@@ -19,7 +19,7 @@
 namespace facebook::velox {
 void ByteStream::flush(OutputStream* out) {
   for (int32_t i = 0; i < ranges_.size(); ++i) {
-    int32_t count = ranges_[i].position;
+    int32_t count = ranges_[i].numValues();
     int32_t bytes = isBits_ ? bits::nbytes(count) : count;
     if (isBits_ && isReverseBitOrder_ && !isReversed_) {
       bits::reverseBits(ranges_[i].buffer, bytes);
@@ -29,6 +29,23 @@ void ByteStream::flush(OutputStream* out) {
   if (isBits_ && isReverseBitOrder_) {
     isReversed_ = true;
   }
+}
+
+void ByteStream::extend(int32_t bytes) {
+  if (current_) {
+    current_->fill = current_->position;
+  }
+  if (current_ && current_ != &ranges_.back()) {
+    ++current_;
+    current_->fill = current_->position;
+    if (current_->fill < current_->position) {
+    }
+    current_->position = 0;
+    return;
+  }
+  ranges_.emplace_back();
+  current_ = &ranges_.back();
+  arena_->newRange(bytes, current_);
 }
 
 namespace {
@@ -57,6 +74,24 @@ std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
       iobuf = std::move(newBuf);
     }
   }
+}
+
+std::streampos IOBufOutputStream::tellp() const {
+  auto pos = out_->tellp();
+  std::streampos offset = std::get<1>(pos);
+  auto ranges = out_->ranges();
+  for (auto& range : ranges) {
+    if (&range == std::get<0>(pos)) {
+      break;
+    }
+    offset += range.position;
+  }
+  return offset;
+}
+
+void IOBufOutputStream::seekp(std::streampos pos) {
+  auto& ranges = out_->ranges();
+  int64_t start = 0;
 }
 
 } // namespace facebook::velox
