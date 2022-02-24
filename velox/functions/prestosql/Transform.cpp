@@ -35,7 +35,7 @@ class TransformFunction : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* caller,
+      const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
@@ -54,22 +54,20 @@ class TransformFunction : public exec::VectorFunction {
 
     // loop over lambda functions and apply these to elements of the base array;
     // in most cases there will be only one function and the loop will run once
-    FunctionVector::Iterator iter(*args[1], rows);
-    Callable* callable;
-    SelectivityVector* callableRows;
-    while (iter.next(callable, callableRows)) {
+    auto it = args[1]->asUnchecked<FunctionVector>()->iterator(&rows);
+    while (auto entry = it.next()) {
       auto elementRows = toElementRows<ArrayVector>(
-          newNumElements, *callableRows, flatArray.get());
+          newNumElements, *entry.rows, flatArray.get());
       auto wrapCapture = toWrapCapture<ArrayVector>(
-          newNumElements, callable, *callableRows, flatArray);
+          newNumElements, entry.callable, *entry.rows, flatArray);
 
-      callable->apply(
+      entry.callable->apply(
           elementRows, wrapCapture, context, lambdaArgs, &newElements);
     }
 
     VectorPtr localResult = std::make_shared<ArrayVector>(
         flatArray->pool(),
-        caller->type(),
+        outputType,
         flatArray->nulls(),
         flatArray->size(),
         flatArray->offsets(),

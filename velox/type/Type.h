@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <fmt/core.h>
 #include <fmt/format.h>
 #include <folly/Format.h>
 #include <folly/Range.h>
@@ -22,27 +23,29 @@
 #include <folly/json.h>
 #include <time.h>
 #include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <typeindex>
 #include <vector>
+
 #include "folly/CPortability.h"
 #include "velox/common/base/ClassName.h"
 #include "velox/common/serialization/Serializable.h"
+#include "velox/type/Date.h"
 #include "velox/type/StringView.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/Tree.h"
-
-using facebook::velox::Timestamp;
 
 namespace facebook::velox {
 
 // Velox type system supports a small set of SQL-compatible composeable types:
 // BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, REAL, DOUBLE, VARCHAR,
-// VARBINARY, TIMESTAMP, ARRAY, MAP, ROW
+// VARBINARY, TIMESTAMP, DATE, ARRAY, MAP, ROW
 //
 // This file has multiple C++ type definitions for each of these logical types.
 // These logical definitions each serve slightly different purposes.
@@ -65,13 +68,18 @@ enum class TypeKind : int8_t {
   VARCHAR = 7,
   VARBINARY = 8,
   TIMESTAMP = 9,
-  ARRAY = 10,
-  MAP = 11,
-  ROW = 12,
-  UNKNOWN = 13,
-  FUNCTION = 14,
-  OPAQUE = 15,
-  INVALID = 16
+  DATE = 10,
+
+  // Enum values for ComplexTypes start after 30 to leave
+  // some values space to accommodate adding new scalar/native
+  // types above.
+  ARRAY = 30,
+  MAP = 31,
+  ROW = 32,
+  UNKNOWN = 33,
+  FUNCTION = 34,
+  OPAQUE = 35,
+  INVALID = 36
 };
 
 TypeKind mapNameToTypeKind(const std::string& name);
@@ -85,7 +93,6 @@ class ScalarType;
 class ArrayType;
 class MapType;
 class RowType;
-class TimestampType;
 class FunctionType;
 class OpaqueType;
 class UnknownType;
@@ -232,7 +239,7 @@ struct TypeTraits<TypeKind::VARCHAR> {
 
 template <>
 struct TypeTraits<TypeKind::TIMESTAMP> {
-  using ImplType = TimestampType;
+  using ImplType = ScalarType<TypeKind::TIMESTAMP>;
   using NativeType = Timestamp;
   using DeepCopiedType = Timestamp;
   static constexpr uint32_t minSubTypes = 0;
@@ -244,6 +251,20 @@ struct TypeTraits<TypeKind::TIMESTAMP> {
   static constexpr bool isPrimitiveType = true;
   static constexpr bool isFixedWidth = true;
   static constexpr const char* name = "TIMESTAMP";
+};
+
+// Date is internally an int32_t that represents the days since the epoch
+template <>
+struct TypeTraits<TypeKind::DATE> {
+  using ImplType = ScalarType<TypeKind::DATE>;
+  using NativeType = Date;
+  using DeepCopiedType = Date;
+  static constexpr uint32_t minSubTypes = 0;
+  static constexpr uint32_t maxSubTypes = 0;
+  static constexpr TypeKind typeKind = TypeKind::DATE;
+  static constexpr bool isPrimitiveType = true;
+  static constexpr bool isFixedWidth = true;
+  static constexpr const char* name = "DATE";
 };
 
 template <>
@@ -412,6 +433,11 @@ class Type : public Tree<const std::shared_ptr<const Type>>,
 
   virtual bool isFixedWidth() const = 0;
 
+  // Used in FixedSizeArrayType to return the width constraint of the type.
+  virtual size_type fixedElementsWidth() const {
+    throw std::invalid_argument{"unimplemented"};
+  }
+
   static std::shared_ptr<const Type> create(const folly::dynamic& obj);
 
   // recursive kind hashing (ignores names)
@@ -436,10 +462,12 @@ class Type : public Tree<const std::shared_ptr<const Type>>,
   VELOX_FLUENT_CAST(Varchar, VARCHAR)
   VELOX_FLUENT_CAST(Varbinary, VARBINARY)
   VELOX_FLUENT_CAST(Timestamp, TIMESTAMP)
+  VELOX_FLUENT_CAST(Date, DATE)
   VELOX_FLUENT_CAST(Array, ARRAY)
   VELOX_FLUENT_CAST(Map, MAP)
   VELOX_FLUENT_CAST(Row, ROW)
   VELOX_FLUENT_CAST(Opaque, OPAQUE)
+  VELOX_FLUENT_CAST(UnKnown, UNKNOWN)
 
   bool containsUnknown() const;
 
@@ -517,40 +545,6 @@ const std::shared_ptr<const ScalarType<KIND>> ScalarType<KIND>::create() {
   return instance;
 }
 
-class TimestampType : public TypeBase<TypeKind::TIMESTAMP> {
- public:
-  TimestampType() = default;
-
-  uint32_t size() const override {
-    return 0;
-  }
-
-  const std::shared_ptr<const Type>& childAt(uint32_t) const override {
-    throw std::invalid_argument{"TimestampType type has no children"};
-  }
-
-  std::string toString() const override {
-    return TypeTraits<TypeKind::TIMESTAMP>::name;
-  }
-
-  size_t cppSizeInBytes() const override {
-    // nanos + seconds size.
-    // TODO: use Timestamp type here.
-    return sizeof(int64_t) + sizeof(int64_t);
-  }
-
-  bool operator==(const Type& other) const override {
-    return TypeKind::TIMESTAMP == other.kind();
-  }
-
-  folly::dynamic serialize() const override {
-    folly::dynamic obj = folly::dynamic::object;
-    obj["name"] = "Type";
-    obj["type"] = TypeTraits<TypeKind::TIMESTAMP>::name;
-    return obj;
-  }
-};
-
 class UnknownType : public TypeBase<TypeKind::UNKNOWN> {
  public:
   UnknownType() = default;
@@ -603,8 +597,37 @@ class ArrayType : public TypeBase<TypeKind::ARRAY> {
 
   folly::dynamic serialize() const override;
 
- private:
+ protected:
   std::shared_ptr<const Type> child_;
+};
+
+// FixedSizeArrayType implements an Array that is constrained to
+// always be a fixed size (width). When passing this type on the wire,
+// a FixedSizeArrayType may change into a general variable width array
+// as Presto/Spark do not have a notion of fixed size array.
+//
+// Anywhere an ArrayType can be used, a FixedSizeArrayType can be
+// used.
+class FixedSizeArrayType : public ArrayType {
+ public:
+  explicit FixedSizeArrayType(size_type len, std::shared_ptr<const Type> child);
+
+  bool isFixedWidth() const override {
+    return true;
+  }
+
+  size_type fixedElementsWidth() const override {
+    return len_;
+  }
+
+  const char* kindName() const override {
+    return "FIXED_SIZE_ARRAY";
+  }
+
+  std::string toString() const override;
+
+ private:
+  size_type len_;
 };
 
 class MapType : public TypeBase<TypeKind::MAP> {
@@ -821,8 +844,10 @@ using SmallintType = ScalarType<TypeKind::SMALLINT>;
 using BigintType = ScalarType<TypeKind::BIGINT>;
 using RealType = ScalarType<TypeKind::REAL>;
 using DoubleType = ScalarType<TypeKind::DOUBLE>;
+using TimestampType = ScalarType<TypeKind::TIMESTAMP>;
 using VarcharType = ScalarType<TypeKind::VARCHAR>;
 using VarbinaryType = ScalarType<TypeKind::VARBINARY>;
+using DateType = ScalarType<TypeKind::DATE>;
 
 // Used as T for SimpleVector subclasses that wrap another vector when
 // the wrapped vector is of a complex type. Applies to
@@ -844,13 +869,6 @@ struct TypeFactory {
   // default factory
   static std::shared_ptr<const typename TypeTraits<KIND>::ImplType> create() {
     return TypeTraits<KIND>::ImplType::create();
-  }
-};
-
-template <>
-struct TypeFactory<TypeKind::TIMESTAMP> {
-  static std::shared_ptr<const TimestampType> create() {
-    return std::make_shared<TimestampType>();
   }
 };
 
@@ -888,6 +906,9 @@ struct TypeFactory<TypeKind::ROW> {
 };
 
 std::shared_ptr<const ArrayType> ARRAY(std::shared_ptr<const Type> elementType);
+std::shared_ptr<const FixedSizeArrayType> FIXED_SIZE_ARRAY(
+    FixedSizeArrayType::size_type size,
+    std::shared_ptr<const Type> elementType);
 
 std::shared_ptr<const RowType> ROW(
     std::vector<std::string>&& names,
@@ -905,6 +926,8 @@ std::shared_ptr<const MapType> MAP(
     std::shared_ptr<const Type> valType);
 
 std::shared_ptr<const TimestampType> TIMESTAMP();
+
+std::shared_ptr<const DateType> DATE();
 
 template <typename Class>
 std::shared_ptr<const OpaqueType> OPAQUE() {
@@ -952,6 +975,9 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::TIMESTAMP: {                          \
         return TEMPLATE_FUNC<::facebook::velox::TypeKind::TIMESTAMP>(         \
             __VA_ARGS__);                                                     \
+      }                                                                       \
+      case ::facebook::velox::TypeKind::DATE: {                               \
+        return TEMPLATE_FUNC<::facebook::velox::TypeKind::DATE>(__VA_ARGS__); \
       }                                                                       \
       default:                                                                \
         VELOX_FAIL(                                                           \
@@ -1001,6 +1027,10 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       }                                                                  \
       case ::facebook::velox::TypeKind::TIMESTAMP: {                     \
         return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::TIMESTAMP>( \
+            __VA_ARGS__);                                                \
+      }                                                                  \
+      case ::facebook::velox::TypeKind::DATE: {                          \
+        return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::DATE>(      \
             __VA_ARGS__);                                                \
       }                                                                  \
       default:                                                           \
@@ -1062,6 +1092,9 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::TIMESTAMP: {                           \
         return PREFIX<::facebook::velox::TypeKind::TIMESTAMP> SUFFIX(          \
             __VA_ARGS__);                                                      \
+      }                                                                        \
+      case ::facebook::velox::TypeKind::DATE: {                                \
+        return PREFIX<::facebook::velox::TypeKind::DATE> SUFFIX(__VA_ARGS__);  \
       }                                                                        \
       case ::facebook::velox::TypeKind::ARRAY: {                               \
         return PREFIX<::facebook::velox::TypeKind::ARRAY> SUFFIX(__VA_ARGS__); \
@@ -1148,6 +1181,9 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::TIMESTAMP: {                          \
         return CLASS<::facebook::velox::TypeKind::TIMESTAMP>::FIELD;          \
       }                                                                       \
+      case ::facebook::velox::TypeKind::DATE: {                               \
+        return CLASS<::facebook::velox::TypeKind::TIMESTAMP>::FIELD;          \
+      }                                                                       \
       case ::facebook::velox::TypeKind::ARRAY: {                              \
         return CLASS<::facebook::velox::TypeKind::ARRAY>::FIELD;              \
       }                                                                       \
@@ -1182,22 +1218,15 @@ VELOX_SCALAR_ACCESSOR(SMALLINT);
 VELOX_SCALAR_ACCESSOR(BIGINT);
 VELOX_SCALAR_ACCESSOR(REAL);
 VELOX_SCALAR_ACCESSOR(DOUBLE);
+VELOX_SCALAR_ACCESSOR(TIMESTAMP);
 VELOX_SCALAR_ACCESSOR(VARCHAR);
 VELOX_SCALAR_ACCESSOR(VARBINARY);
+VELOX_SCALAR_ACCESSOR(DATE);
 VELOX_SCALAR_ACCESSOR(UNKNOWN);
 
-template <
-    TypeKind KIND,
-    std::enable_if_t<KIND != TypeKind::TIMESTAMP, int32_t> = 0>
+template <TypeKind KIND>
 std::shared_ptr<const Type> createScalarType() {
   return ScalarType<KIND>::create();
-}
-
-template <
-    TypeKind KIND,
-    std::enable_if_t<KIND == TypeKind::TIMESTAMP, int32_t> = 0>
-std::shared_ptr<const Type> createScalarType() {
-  return TIMESTAMP();
 }
 
 std::shared_ptr<const Type> createScalarType(TypeKind kind);
@@ -1219,10 +1248,6 @@ std::shared_ptr<const Type> createType(
 }
 
 template <>
-std::shared_ptr<const Type> createType<TypeKind::TIMESTAMP>(
-    std::vector<std::shared_ptr<const Type>>&& /*children*/);
-
-template <>
 std::shared_ptr<const Type> createType<TypeKind::ROW>(
     std::vector<std::shared_ptr<const Type>>&& /*children*/);
 template <>
@@ -1238,10 +1263,55 @@ std::shared_ptr<const Type> createType<TypeKind::OPAQUE>(
 
 #undef VELOX_SCALAR_ACCESSOR
 
+template <typename UNDERLYING_TYPE>
+struct Variadic {
+  using underlying_type = UNDERLYING_TYPE;
+
+  Variadic() = delete;
+};
+
+// A type that can be used in simple function to represent any type.
+// Two Generics with the same type variables should bound to the same type.
+template <size_t id>
+struct TypeVariable {
+  static size_t getId() {
+    return id;
+  }
+};
+
+using T1 = TypeVariable<1>;
+using T2 = TypeVariable<2>;
+using T3 = TypeVariable<3>;
+using T4 = TypeVariable<4>;
+using T5 = TypeVariable<5>;
+using T6 = TypeVariable<6>;
+using T7 = TypeVariable<7>;
+using T8 = TypeVariable<8>;
+
+struct AnyType {};
+
+template <typename T = AnyType>
+struct Generic {
+  Generic() = delete;
+};
+
+template <typename>
+struct isVariadicType : public std::false_type {};
+
+template <typename T>
+struct isVariadicType<Variadic<T>> : public std::true_type {};
+
 template <typename KEY, typename VALUE>
 struct Map {
   using key_type = KEY;
   using value_type = VALUE;
+
+  static_assert(
+      !isVariadicType<key_type>::value,
+      "Map keys cannot be Variadic");
+  static_assert(
+      !isVariadicType<value_type>::value,
+      "Map values cannot be Variadic");
 
  private:
   Map() {}
@@ -1251,14 +1321,57 @@ template <typename ELEMENT>
 struct Array {
   using element_type = ELEMENT;
 
+  static_assert(
+      !isVariadicType<element_type>::value,
+      "Array elements cannot be Variadic");
+
  private:
   Array() {}
+};
+
+// This is a temporary type to be used when ArrayProxy is requested by the user
+// to represent an Array output type in the simple function interface.
+// Eventually this will be removed and Array will be ArrayProxyT once all proxy
+// types are implemented.
+template <typename ELEMENT>
+struct ArrayProxyT {
+  using element_type = ELEMENT;
+
+  static_assert(
+      !isVariadicType<element_type>::value,
+      "Array elements cannot be Variadic");
+
+ private:
+  ArrayProxyT() {}
+};
+
+// This is a temporary type to be used when the fast MapWriter is requested by
+// the user to represent a map output type in the simple function interface.
+// Eventually this will be removed and joined with Map once all writers
+// types are implemented.
+template <typename K, typename V>
+struct MapWriterT {
+  using key_type = K;
+  using value_type = V;
+
+  static_assert(
+      !isVariadicType<key_type>::value,
+      "Map keys cannot be Variadic");
+  static_assert(
+      !isVariadicType<value_type>::value,
+      "Map values cannot be Variadic");
+
+  MapWriterT() = delete;
 };
 
 template <typename... T>
 struct Row {
   template <size_t idx>
   using type_at = typename std::tuple_element<idx, std::tuple<T...>>::type;
+
+  static_assert(
+      std::conjunction<std::bool_constant<!isVariadicType<T>::value>...>::value,
+      "Struct fields cannot be Variadic");
 
  private:
   Row() {}
@@ -1326,6 +1439,9 @@ struct CppToType<velox::StringView> : public CppToTypeBase<TypeKind::VARCHAR> {
 };
 
 template <>
+struct CppToType<std::string_view> : public CppToTypeBase<TypeKind::VARCHAR> {};
+
+template <>
 struct CppToType<std::string> : public CppToTypeBase<TypeKind::VARCHAR> {};
 
 template <>
@@ -1347,6 +1463,9 @@ struct CppToType<double> : public CppToTypeBase<TypeKind::DOUBLE> {};
 template <>
 struct CppToType<Timestamp> : public CppToTypeBase<TypeKind::TIMESTAMP> {};
 
+template <>
+struct CppToType<Date> : public CppToTypeBase<TypeKind::DATE> {};
+
 // TODO: maybe do something smarter than just matching any shared_ptr, e.g. we
 // can declare "registered" types explicitly
 template <typename T>
@@ -1365,8 +1484,22 @@ struct CppToType<Map<KEY, VAL>> : public TypeTraits<TypeKind::MAP> {
   }
 };
 
+template <typename KEY, typename VAL>
+struct CppToType<MapWriterT<KEY, VAL>> : public TypeTraits<TypeKind::MAP> {
+  static auto create() {
+    return MAP(CppToType<KEY>::create(), CppToType<VAL>::create());
+  }
+};
+
 template <typename ELEMENT>
 struct CppToType<Array<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
+  static auto create() {
+    return ARRAY(CppToType<ELEMENT>::create());
+  }
+};
+
+template <typename ELEMENT>
+struct CppToType<ArrayProxyT<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
   static auto create() {
     return ARRAY(CppToType<ELEMENT>::create());
   }
@@ -1439,10 +1572,34 @@ inline ComplexType to(std::string value) {
   return ComplexType();
 }
 
+namespace exec {
+
+/// Forward declaration.
+class CastOperator;
+
+using CastOperatorPtr = std::shared_ptr<const CastOperator>;
+
+} // namespace exec
+
+/// Associates custom types with their custom operators to be the payload in the
+/// custom type registry.
+class CustomTypeFactories {
+ public:
+  virtual ~CustomTypeFactories() = default;
+
+  /// Returns a shared pointer to the custom type with the specified child
+  /// types.
+  virtual TypePtr getType(std::vector<TypePtr> childTypes) const = 0;
+
+  /// Returns a shared pointer to the custom cast operator. If no cast operator
+  /// supports the custom type, this function throws an exception.
+  virtual exec::CastOperatorPtr getCastOperator() const = 0;
+};
+
 /// Adds custom type to the registry. Type names must be unique.
 void registerType(
     const std::string& name,
-    std::function<TypePtr(std::vector<TypePtr> childTypes)> factory);
+    std::unique_ptr<const CustomTypeFactories> factories);
 
 /// Return true if customer type with specified name exists.
 bool typeExists(const std::string& name);
@@ -1450,6 +1607,18 @@ bool typeExists(const std::string& name);
 /// Returns an instance of a custom type with the specified name and specified
 /// child types.
 TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes);
+
+/// Returns the custom cast operator for the custom type with the specified
+/// name. Returns nullptr if a type with the specified name does not exist.
+exec::CastOperatorPtr getCastOperator(const std::string& name);
+
+// Allows us to transparently use folly::toAppend(), folly::join(), etc.
+template <class TString>
+void toAppend(
+    const std::shared_ptr<const facebook::velox::Type>& type,
+    TString* result) {
+  result->append(type->toString());
+}
 
 } // namespace facebook::velox
 

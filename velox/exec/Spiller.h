@@ -119,7 +119,8 @@ class SpillFile : public SpillStream {
 
   WriteFile* output() {
     if (!output_) {
-      output_ = generateWriteFile(path_);
+      auto fs = getFileSystem(path_, Config());
+      output_ = fs->openFileForWrite(path_);
     }
     return output_.get();
   }

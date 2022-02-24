@@ -30,18 +30,14 @@ class TableScan : public SourceOperator {
   RowVectorPtr getOutput() override;
 
   BlockingReason isBlocked(ContinueFuture* future) override {
-    if (hasBlockingFuture_) {
-      hasBlockingFuture_ = false;
+    if (blockingFuture_.valid()) {
       *future = std::move(blockingFuture_);
       return BlockingReason::kWaitForSplit;
     }
     return BlockingReason::kNotBlocked;
   }
 
-  void finish() override {
-    Operator::finish();
-    close();
-  }
+  bool isFinished() override;
 
   bool canAddDynamicFilter() const override {
     // TODO Consult with the connector. Return true only if connector can accept
@@ -53,19 +49,18 @@ class TableScan : public SourceOperator {
       ChannelIndex outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
-  void close() override;
-
  private:
   static constexpr int32_t kDefaultBatchSize = 1024;
 
+  // Adjust batch size according to split information.
+  void setBatchSize();
   const core::PlanNodeId planNodeId_;
   const std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
   const std::
       unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           columnHandles_;
   DriverCtx* driverCtx_;
-  ContinueFuture blockingFuture_;
-  bool hasBlockingFuture_ = false;
+  ContinueFuture blockingFuture_{ContinueFuture::makeEmpty()};
   bool needNewSplit_ = true;
   std::shared_ptr<connector::Connector> connector_;
   std::unique_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
@@ -76,5 +71,6 @@ class TableScan : public SourceOperator {
   // Dynamic filters to add to the data source when it gets created.
   std::unordered_map<ChannelIndex, std::shared_ptr<common::Filter>>
       pendingDynamicFilters_;
+  int32_t readBatchSize_{kDefaultBatchSize};
 };
 } // namespace facebook::velox::exec

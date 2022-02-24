@@ -15,6 +15,7 @@
  */
 #include "velox/exec/RowContainer.h"
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <array>
 #include <random>
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
@@ -26,7 +27,22 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
-using namespace facebook::dwio;
+using namespace facebook::velox::dwio;
+
+namespace {
+static void assertEqualVectors(
+    const VectorPtr& expected,
+    const VectorPtr& actual,
+    const std::string& additionalContext = "") {
+  ASSERT_EQ(expected->size(), actual->size());
+
+  for (auto i = 0; i < expected->size(); i++) {
+    ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
+        << "at " << i << ": " << expected->toString(i) << " vs. "
+        << actual->toString(i) << additionalContext;
+  }
+}
+} // namespace
 
 class RowContainerTest : public testing::Test {
  protected:
@@ -40,7 +56,7 @@ class RowContainerTest : public testing::Test {
       const size_t size,
       std::function<void(RowVectorPtr)> customizeData) {
     std::string schema = fmt::format("struct<{}>", columns);
-    facebook::dwio::type::fbhive::HiveTypeParser parser;
+    facebook::velox::dwio::type::fbhive::HiveTypeParser parser;
     auto rowType =
         std::dynamic_pointer_cast<const RowType>(parser.parse(schema));
     auto batch = std::static_pointer_cast<RowVector>(
@@ -132,6 +148,64 @@ class RowContainerTest : public testing::Test {
     testExtractColumnForAllRows(rowContainer, rows, 0, input);
 
     testExtractColumnForOddRows(rowContainer, rows, 0, input);
+  }
+
+  template <typename T>
+  void testCompareFloats(TypePtr type, bool ascending) {
+    auto rowContainer = makeRowContainer({type}, {type});
+    auto lowest = std::numeric_limits<T>::lowest();
+    auto min = std::numeric_limits<T>::min();
+    auto max = std::numeric_limits<T>::max();
+    auto nan = std::numeric_limits<T>::quiet_NaN();
+    auto inf = std::numeric_limits<T>::infinity();
+
+    facebook::velox::test::VectorMaker vectorMaker{pool_.get()};
+    VectorPtr values =
+        vectorMaker.flatVector<T>({max, inf, 0.0, nan, lowest, min});
+    int numRows = values->size();
+
+    SelectivityVector allRows(numRows);
+    DecodedVector decoded(*values, allRows);
+    std::vector<char*> rows(numRows);
+    std::vector<std::pair<int, char*>> indexedRows(numRows);
+    for (size_t i = 0; i < numRows; ++i) {
+      rows[i] = rowContainer->newRow();
+      rowContainer->store(decoded, i, rows[i], 0);
+      indexedRows[i] = std::make_pair(i, rows[i]);
+    }
+
+    std::vector<T> expectedOrder = {lowest, 0.0, min, max, inf, nan};
+    if (!ascending) {
+      std::reverse(expectedOrder.begin(), expectedOrder.end());
+    }
+    VectorPtr expected = vectorMaker.flatVector<T>(expectedOrder);
+
+    // Verify compare method with two rows as input
+    std::sort(rows.begin(), rows.end(), [&](const char* l, const char* r) {
+      return rowContainer->compare(l, r, 0, {true, ascending}) < 0;
+    });
+    VectorPtr result = BaseVector::create(type, numRows, pool_.get());
+    rowContainer->extractColumn(rows.data(), numRows, 0, result);
+    assertEqualVectors(expected, result);
+
+    // Verify compare method with row and decoded vector as input
+    std::sort(
+        indexedRows.begin(),
+        indexedRows.end(),
+        [&](const std::pair<int, char*>& l, const std::pair<int, char*>& r) {
+          return rowContainer->compare(
+                     l.second,
+                     rowContainer->columnAt(0),
+                     decoded,
+                     r.first,
+                     {true, ascending}) < 0;
+        });
+    std::vector<T> sorted;
+    for (const auto& irow : indexedRows) {
+      sorted.push_back(decoded.valueAt<T>(irow.first));
+    }
+    result = vectorMaker.flatVector<T>(sorted);
+    assertEqualVectors(expected, result);
   }
 
   std::unique_ptr<memory::MemoryPool> pool_;
@@ -279,11 +353,11 @@ TEST_F(RowContainerTest, types) {
     auto extracted = copy->childAt(column);
     extracted->resize(kNumRows);
     data->extractColumn(rows.data(), rows.size(), column, extracted);
-    std::vector<uint64_t> hashes(kNumRows);
+    raw_vector<uint64_t> hashes(kNumRows);
     auto source = batch->childAt(column);
     auto columnType = batch->type()->as<TypeKind::ROW>().childAt(column);
     VectorHasher hasher(columnType, column);
-    hasher.hash(*source, allRows, false, &hashes);
+    hasher.hash(*source, allRows, false, hashes);
     DecodedVector decoded(*extracted, allRows);
     std::vector<uint64_t> rowHashes(kNumRows);
     data->hash(
@@ -292,7 +366,9 @@ TEST_F(RowContainerTest, types) {
         false,
         rowHashes.data());
     for (auto i = 0; i < kNumRows; ++i) {
-      EXPECT_EQ(hashes[i], rowHashes[i]);
+      if (column) {
+        EXPECT_EQ(hashes[i], rowHashes[i]);
+      }
       EXPECT_TRUE(source->equalValueAt(extracted.get(), i, i));
       EXPECT_EQ(source->compare(extracted.get(), i, i), 0);
       EXPECT_EQ(source->hashValueAt(i), hashes[i]);
@@ -369,10 +445,10 @@ TEST_F(RowContainerTest, rowSize) {
   auto data = makeRowContainer({SMALLINT()}, {VARCHAR()});
 
   // The layout is expected to be smallint - 6 bytes of padding - 1 byte of bits
-  // - StringView - rowSize - next pointer. The bits are a null flag for the second
-  // smallint, a probed flag and a free flag.
+  // - StringView - rowSize - next pointer. The bits are a null flag for the
+  // second smallint, a probed flag and a free flag.
   EXPECT_EQ(25, data->rowSizeOffset());
-  EXPECT_EQ(data->nextOffset(), 29);
+  EXPECT_EQ(29, data->nextOffset());
   // 2nd bit in first byte of flags.
   EXPECT_EQ(data->probedFlagOffset(), 8 * 8 + 1);
   std::unordered_set<char*> rowSet;
@@ -392,12 +468,30 @@ TEST_F(RowContainerTest, rowSize) {
   std::vector<char*> rowsFromContainer(kNumRows);
   RowContainerIterator iter;
   // The first row is returned alone.
-  auto numRows = data->listRows(&iter, kNumRows, 100000, rowsFromContainer.data());
+  auto numRows =
+      data->listRows(&iter, kNumRows, 100000, rowsFromContainer.data());
   EXPECT_EQ(1, numRows);
-  while (numRows < kNumRows) { 
-    numRows += data->listRows(&iter, kNumRows, 100000, rowsFromContainer.data() + numRows);
+  while (numRows < kNumRows) {
+    numRows += data->listRows(
+        &iter, kNumRows, 100000, rowsFromContainer.data() + numRows);
   }
-    EXPECT_EQ(0, data->listRows(&iter, kNumRows, rows.data()));
+  EXPECT_EQ(0, data->listRows(&iter, kNumRows, rows.data()));
 
   EXPECT_EQ(rows, rowsFromContainer);
+}
+
+// Verify comparison of fringe float values
+TEST_F(RowContainerTest, compareFloat) {
+  // Verify ascending order
+  testCompareFloats<float>(REAL(), true);
+  // Verify descending order
+  testCompareFloats<float>(REAL(), false);
+}
+
+// Verify comparison of fringe double values
+TEST_F(RowContainerTest, compareDouble) {
+  // Verify ascending order
+  testCompareFloats<double>(DOUBLE(), true);
+  // Verify descending order
+  testCompareFloats<double>(DOUBLE(), false);
 }

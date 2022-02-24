@@ -74,6 +74,12 @@ class DictionaryVector : public SimpleVector<T> {
     return BaseVector::nulls() || dictionaryValues_->mayHaveNulls();
   }
 
+  bool mayHaveNullsRecursive() const override {
+    VELOX_DCHECK(initialized_);
+    return BaseVector::mayHaveNullsRecursive() ||
+        dictionaryValues_->mayHaveNullsRecursive();
+  }
+
   bool isNullAt(vector_size_t idx) const override;
 
   const uint64_t* flatRawNulls(const SelectivityVector& rows) override;
@@ -146,18 +152,14 @@ class DictionaryVector : public SimpleVector<T> {
   }
 
   bool isConstant(const SelectivityVector& rows) const override {
-    SelectivityIterator iter(rows);
-    vector_size_t firstIdx;
-    if (!iter.next(firstIdx)) {
-      VELOX_CHECK(false, "No selected rows in isConstant()");
-    }
-    vector_size_t idx;
-    while (iter.next(idx)) {
-      if (idx != firstIdx) {
-        return false;
-      }
-    }
-    return true;
+    VELOX_CHECK(rows.hasSelections(), "No selected rows in isConstant()");
+    auto firstIdx = getDictionaryIndex(rows.begin());
+    auto firstNull = BaseVector::isNullAt(rows.begin());
+    return rows.testSelected([&](auto row) {
+      bool isNull = BaseVector::isNullAt(row);
+      return (firstNull && isNull) ||
+          (firstIdx == getDictionaryIndex(row) && !firstNull && !isNull);
+    });
   }
 
   bool isScalar() const override {

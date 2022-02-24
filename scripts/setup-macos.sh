@@ -29,10 +29,10 @@ set -e # Exit on error.
 set -x # Print commands that are executed.
 
 FB_OS_VERSION=v2021.05.10.00
-NPROC=$(sysctl -n hw.physicalcpu)
+NPROC=$(getconf _NPROCESSORS_ONLN)
 COMPILER_FLAGS="-mavx2 -mfma -mavx -mf16c -masm=intel -mlzcnt"
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
-MACOS_DEPS="ninja cmake ccache protobuf icu4c boost double-conversion gflags glog libevent lz4 lzo snappy xz zstd"
+MACOS_DEPS="ninja cmake ccache protobuf icu4c boost gflags glog libevent lz4 lzo snappy xz zstd openssl@1.1"
 
 function run_and_time {
   time "$@"
@@ -42,7 +42,7 @@ function run_and_time {
 function prompt {
   (
     while true; do
-      local input="${PROMPT_ALWAYS_RESPOND}"
+      local input="${PROMPT_ALWAYS_RESPOND:-}"
       echo -n "$(tput bold)$* [Y, n]$(tput sgr0) "
       [[ -z "${input}" ]] && read input
       if [[ "${input}" == "Y" || "${input}" == "y" || "${input}" == "" ]]; then
@@ -90,6 +90,7 @@ function cmake_install {
     "${INSTALL_PREFIX+-DCMAKE_PREFIX_PATH=}${INSTALL_PREFIX-}" \
     "${INSTALL_PREFIX+-DCMAKE_INSTALL_PREFIX=}${INSTALL_PREFIX-}" \
     -DCMAKE_CXX_FLAGS="${COMPILER_FLAGS}" \
+    -DBUILD_TESTING=OFF \
     "$@"
   ninja -C "${BINARY_DIR}" install
 }
@@ -101,7 +102,18 @@ function update_brew {
 function install_build_prerequisites {
   for pkg in ${MACOS_DEPS}
   do
-    brew install --formula $pkg && echo "Installation of $pkg is successful" || brew upgrade --formula $pkg
+    if [[ "${pkg}" =~ ^([0-9a-z-]*):([0-9](\.[0-9\])*)$ ]];
+    then
+      pkg=${BASH_REMATCH[1]}
+      ver=${BASH_REMATCH[2]}
+      echo "Installing '${pkg}' at '${ver}'"
+      tap="velox/local-${pkg}"
+      brew tap-new "${tap}"
+      brew extract "--version=${ver}" "${pkg}" "${tap}"
+      brew install "${tap}/${pkg}@${ver}"
+    else
+      brew install --formula "${pkg}" && echo "Installation of ${pkg} is successful" || brew upgrade --formula "$pkg"
+    fi
   done
 
   pip3 install --user cmake-format regex
@@ -117,26 +129,25 @@ function install_fmt {
   cmake_install -DFMT_TEST=OFF
 }
 
+function install_double_conversion {
+  github_checkout google/double-conversion v3.1.5
+  cmake_install -DBUILD_TESTING=OFF
+}
+
 function install_folly {
   github_checkout facebook/folly "${FB_OS_VERSION}"
-  OPENSSL_DIR=$(brew --prefix openssl)
-
-  if [[ ! -d "$OPENSSL_DIR" ]]
-  then
-    OPENSSL_DIR="/usr/local/opt/openssl"
-  fi
-
-  cmake_install -DBUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="${OPENSSL_DIR}"
+  OPENSSL_ROOT_DIR=$(brew --prefix openssl@1.1) \
+    cmake_install -DBUILD_TESTS=OFF
 }
 
 function install_ranges_v3 {
   github_checkout ericniebler/range-v3 master
-  cmake_install -DRANGES_ENABLE_WERROR=OFF
+  cmake_install -DRANGES_ENABLE_WERROR=OFF -DRANGE_V3_TESTS=OFF -DRANGE_V3_EXAMPLES=OFF
 }
 
 function install_re2 {
   github_checkout google/re2 2021-04-01
-  cmake_install
+  cmake_install -DRE2_BUILD_TESTING=OFF
 }
 
 function install_velox_deps {
@@ -146,6 +157,7 @@ function install_velox_deps {
   run_and_time install_ranges_v3
   run_and_time install_googletest
   run_and_time install_fmt
+  run_and_time install_double_conversion
   run_and_time install_folly
   run_and_time install_re2
 }

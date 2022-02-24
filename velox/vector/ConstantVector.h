@@ -33,7 +33,7 @@ struct DummyReleaser {
 } // namespace
 
 template <typename T>
-class ConstantVector : public SimpleVector<T> {
+class ConstantVector final : public SimpleVector<T> {
  public:
   static constexpr bool can_simd =
       (std::is_same<T, int64_t>::value || std::is_same<T, int32_t>::value ||
@@ -71,7 +71,7 @@ class ConstantVector : public SimpleVector<T> {
       std::optional<ByteCount> storageByteCount = std::nullopt)
       : SimpleVector<T>(
             pool,
-            std::move(type),
+            type,
             BufferPtr(nullptr),
             length,
             metaData,
@@ -84,6 +84,13 @@ class ConstantVector : public SimpleVector<T> {
         isNull_(isNull),
         initialized_(true) {
     makeNullsBuffer();
+    // Special handling for complex types
+    if (type->size() > 0) {
+      // Only allow null constants to be created through this interface.
+      VELOX_CHECK(isNull_);
+      valueVector_ = BaseVector::create(type, 1, pool);
+      valueVector_->setNull(0, true);
+    }
     if (!isNull_ && std::is_same<T, StringView>::value) {
       // Copy string value.
       StringView* valuePtr = reinterpret_cast<StringView*>(&value_);
@@ -150,6 +157,11 @@ class ConstantVector : public SimpleVector<T> {
   bool mayHaveNulls() const override {
     VELOX_DCHECK(initialized_);
     return isNull_;
+  }
+
+  bool mayHaveNullsRecursive() const override {
+    VELOX_DCHECK(initialized_);
+    return isNull_ || (valueVector_ && valueVector_->mayHaveNullsRecursive());
   }
 
   const uint64_t* flatRawNulls(const SelectivityVector& rows) override {
@@ -276,7 +288,7 @@ class ConstantVector : public SimpleVector<T> {
     return index_;
   }
 
-  void resize(vector_size_t size) override {
+  void resize(vector_size_t size, bool setNotNull = true) override {
     BaseVector::length_ = size;
   }
 
@@ -302,7 +314,7 @@ class ConstantVector : public SimpleVector<T> {
       return SimpleVector<T>::toString(index);
     }
 
-    return valueVector_->toString(index);
+    return valueVector_->toString(index_);
   }
 
  private:

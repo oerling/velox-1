@@ -27,8 +27,11 @@
 namespace facebook {
 namespace velox {
 
+// FlatVector is marked final to allow for inlining on virtual methods called
+// on a pointer that has the static type FlatVector<T>; this can be a
+// significant performance win when these methods are called in loops.
 template <typename T>
-class FlatVector : public SimpleVector<T> {
+class FlatVector final : public SimpleVector<T> {
  public:
   using value_type = T;
 
@@ -241,7 +244,7 @@ class FlatVector : public SimpleVector<T> {
     copyValuesAndNulls(source, targetIndex, sourceIndex, count);
   }
 
-  void resize(vector_size_t size) override;
+  void resize(vector_size_t size, bool setNotNull = true) override;
 
   bool isScalar() const override {
     return true;
@@ -282,10 +285,6 @@ class FlatVector : public SimpleVector<T> {
 
   Buffer* getBufferWithSpace(vector_size_t /* unused */) {
     return nullptr;
-  }
-
-  const std::vector<BufferPtr>& getStringBuffers() const {
-    return stringBuffers_;
   }
 
   void ensureWritable(const SelectivityVector& rows) override;

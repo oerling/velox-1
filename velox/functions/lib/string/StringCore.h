@@ -55,6 +55,35 @@ FOLLY_ALWAYS_INLINE bool isAscii(const char* str, size_t length) {
   return true;
 }
 
+/// Perform reverse for ascii string input
+FOLLY_ALWAYS_INLINE static void
+reverseAscii(char* output, const char* input, size_t length) {
+  auto j = length - 1;
+  VECTORIZE_LOOP_IF_POSSIBLE for (auto i = 0; i < length; ++i, --j) {
+    output[i] = input[j];
+  }
+}
+
+/// Perform reverse for utf8 string input
+FOLLY_ALWAYS_INLINE static void
+reverseUnicode(char* output, const char* input, size_t length) {
+  auto inputIdx = 0;
+  auto outputIdx = length;
+  while (inputIdx < length) {
+    int size;
+    utf8proc_codepoint(&input[inputIdx], size);
+    // invalid utf8 gets byte sequence with nextCodePoint==-1 and size==1,
+    // continue reverse invalid sequence byte by byte.
+    assert(
+        size > 0 && "UNLIKELY: could not get size of invalid utf8 code point");
+    outputIdx -= size;
+
+    assert(outputIdx >= 0 && outputIdx < length && "access out of bound");
+    std::memcpy(&output[outputIdx], &input[inputIdx], size);
+    inputIdx += size;
+  }
+}
+
 /// Perform upper for ascii string input
 FOLLY_ALWAYS_INLINE static void
 upperAscii(char* output, const char* input, size_t length) {
@@ -254,8 +283,9 @@ inline static size_t replace(
     return findNthInstanceByteIndex(inputString, replaced, 1, readPosition);
   };
 
-  auto writeUnchanged = [&](size_t size) {
-    if (size == 0) {
+  auto writeUnchanged = [&](ssize_t size) {
+    assert(size >= 0 && "Probable math error?");
+    if (size <= 0) {
       return;
     }
 
@@ -312,12 +342,13 @@ inline static size_t replace(
 
   while (readPosition < inputString.size()) {
     // Find next token to replace
-    size_t position = findNextReplaced();
+    auto position = findNextReplaced();
 
     if (position == -1) {
       break;
     }
-    size_t unchangedSize = position - readPosition;
+    assert(position >= 0 && "invalid position found");
+    auto unchangedSize = position - readPosition;
     writeUnchanged(unchangedSize);
     writeReplacement();
   }

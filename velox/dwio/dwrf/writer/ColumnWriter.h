@@ -119,9 +119,12 @@ class ColumnWriter {
     return size;
   }
 
-  virtual void abandonDictionaries() {
+  // Determine whether dictionary is the right encoding to use when writing
+  // the first stripe. We will continue using the same decision for all
+  // subsequent stripes.
+  virtual void tryAbandonDictionaries(bool force) {
     for (auto& child : children_) {
-      child->abandonDictionaries();
+      child->tryAbandonDictionaries(force);
     }
   }
 
@@ -195,11 +198,15 @@ class ColumnWriter {
     return context_.isIndexEnabled;
   }
 
-  bool useDictionaryEncoding() const {
+  virtual bool useDictionaryEncoding() const {
     return (sequence_ == 0 ||
             !context_.getConfig(Config::MAP_FLAT_DISABLE_DICT_ENCODING)) &&
         !context_.isLowMemoryMode();
   }
+
+  WriterContext::LocalDecodedVector decode(
+      const VectorPtr& slice,
+      const Ranges& ranges);
 
   WriterContext& context_;
   const dwio::common::TypeWithId& type_;

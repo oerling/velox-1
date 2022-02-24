@@ -16,15 +16,18 @@
 #pragma once
 
 #include <gtest/gtest.h>
+
 #include "velox/expression/Expr.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/type/Type.h"
 #include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/VectorTestBase.h"
 
 namespace facebook::velox::functions::test {
 
-class FunctionBaseTest : public testing::Test {
+class FunctionBaseTest : public testing::Test,
+                         public velox::test::VectorTestBase {
  public:
   // This class generates test name suffixes based on the type.
   // We use the type's toString() return value as the test name.
@@ -45,102 +48,6 @@ class FunctionBaseTest : public testing::Test {
 
  protected:
   static void SetUpTestCase();
-
-  template <typename T>
-  using EvalType = typename CppToType<T>::NativeType;
-
-  static std::shared_ptr<const RowType> makeRowType(
-      std::vector<std::shared_ptr<const Type>>&& types) {
-    return velox::test::VectorMaker::rowType(
-        std::forward<std::vector<std::shared_ptr<const Type>>&&>(types));
-  }
-
-  RowVectorPtr makeRowVector(
-      const std::vector<VectorPtr>& children,
-      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
-    auto rowVector = vectorMaker_.rowVector(children);
-    if (isNullAt) {
-      for (vector_size_t i = 0; i < rowVector->size(); i++) {
-        if (isNullAt(i)) {
-          rowVector->setNull(i, true);
-        }
-      }
-    }
-    return rowVector;
-  }
-
-  RowVectorPtr makeRowVector(
-      const std::shared_ptr<const RowType>& rowType,
-      vector_size_t size) {
-    return vectorMaker_.rowVector(rowType, size);
-  }
-
-  template <typename T>
-  FlatVectorPtr<T> makeFlatVector(
-      vector_size_t size,
-      std::function<T(vector_size_t /*row*/)> valueAt,
-      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
-    return vectorMaker_.flatVector<T>(size, valueAt, isNullAt);
-  }
-
-  template <typename T>
-  FlatVectorPtr<EvalType<T>> makeFlatVector(const std::vector<T>& data) {
-    return vectorMaker_.flatVector<T>(data);
-  }
-
-  template <typename T>
-  FlatVectorPtr<EvalType<T>> makeNullableFlatVector(
-      const std::vector<std::optional<T>>& data,
-      const TypePtr& type = CppToType<T>::create()) {
-    return vectorMaker_.flatVectorNullable(data, type);
-  }
-
-  template <typename T, int TupleIndex, typename TupleType>
-  FlatVectorPtr<T> makeFlatVector(const std::vector<TupleType>& data) {
-    return vectorMaker_.flatVector<T, TupleIndex, TupleType>(data);
-  }
-
-  template <typename T>
-  FlatVectorPtr<T> makeFlatVector(size_t size) {
-    return vectorMaker_.flatVector<T>(size);
-  }
-
-  template <typename T>
-  FlatVectorPtr<T> makeFlatVector(size_t size, const TypePtr& type) {
-    return vectorMaker_.flatVector<T>(size, type);
-  }
-
-  // Helper function for comparing vector results
-  template <typename T1, typename T2>
-  bool
-  compareValues(const T1& a, const std::optional<T2>& b, std::string& error) {
-    bool result = (a == b.value());
-    if (!result) {
-      error = " " + std::to_string(a) + " vs " + std::to_string(b.value());
-    } else {
-      error = "";
-    }
-    return result;
-  }
-
-  bool compareValues(
-      const StringView& a,
-      const std::optional<std::string>& b,
-      std::string& error) {
-    bool result = (a.getString() == b.value());
-    if (!result) {
-      error = " " + a.getString() + " vs " + b.value();
-    } else {
-      error = "";
-    }
-    return result;
-  }
-
-  static std::function<bool(vector_size_t /*row*/)> nullEvery(
-      int n,
-      int startingFrom = 0) {
-    return velox::test::VectorMaker::nullEvery(n, startingFrom);
-  }
 
   static std::function<vector_size_t(vector_size_t row)> modN(int n) {
     return [n](vector_size_t row) { return row % n; };
@@ -165,190 +72,45 @@ class FunctionBaseTest : public testing::Test {
     return core::Expressions::inferTypes(untyped, rowType, execCtx_.pool());
   }
 
-  // Convenience function to create arrayVectors (vector of arrays) based on
-  // input values from nested std::vectors. The underlying elements are
-  // non-nullable.
-  //
-  // Example:
-  //   auto arrayVector = makeArrayVector<int64_t>({
-  //       {1, 2, 3, 4, 5},
-  //       {},
-  //       {1, 2, 3},
-  //   });
-  //   EXPECT_EQ(3, arrayVector->size());
-  template <typename T>
-  ArrayVectorPtr makeArrayVector(const std::vector<std::vector<T>>& data) {
-    return vectorMaker_.arrayVector<T>(data);
-  }
-
-  // Create an ArrayVector<ROW> from nested std::vectors of variants.
-  // Example:
-  //   auto arrayVector = makeArrayOfRowVector({
-  //       {variant::row({1, "red"}), variant::row({1, "blue"})},
-  //       {},
-  //       {variant::row({3, "green"})},
-  //   });
-  //   EXPECT_EQ(3, arrayVector->size());
-  //
-  // Use variant(TypeKind::ROW) to specify a null array element.
-  ArrayVectorPtr makeArrayOfRowVector(
-      const RowTypePtr& rowType,
-      const std::vector<std::vector<variant>>& data) {
-    return vectorMaker_.arrayOfRowVector(rowType, data);
-  }
-
-  // Convenience function to create arrayVectors (vector of arrays) based on
-  // input values from nested std::vectors. The underlying array elements are
-  // nullable.
-  //
-  // Example:
-  //   auto arrayVector = makeNullableArrayVector<int64_t>({
-  //       {1, 2, std::nullopt, 4},
-  //       {},
-  //       {std::nullopt},
-  //   });
-  //   EXPECT_EQ(3, arrayVector->size());
-  template <typename T>
-  ArrayVectorPtr makeNullableArrayVector(
-      const std::vector<std::vector<std::optional<T>>>& data) {
-    std::vector<std::optional<std::vector<std::optional<T>>>> convData;
-    convData.reserve(data.size());
-    for (auto& array : data) {
-      convData.push_back(array);
-    }
-    return vectorMaker_.arrayVectorNullable<T>(convData);
-  }
-
-  template <typename T>
-  ArrayVectorPtr makeVectorWithNullArrays(
-      const std::vector<std::optional<std::vector<std::optional<T>>>>& data) {
-    return vectorMaker_.arrayVectorNullable<T>(data);
-  }
-
-  template <typename T>
-  ArrayVectorPtr makeArrayVector(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
-      std::function<T(vector_size_t /* idx */)> valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
-    return vectorMaker_.arrayVector<T>(size, sizeAt, valueAt, isNullAt);
-  }
-
-  template <typename T>
-  ArrayVectorPtr makeArrayVector(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
-      std::function<T(vector_size_t /* row */, vector_size_t /* idx */)>
-          valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
-    return vectorMaker_.arrayVector<T>(size, sizeAt, valueAt, isNullAt);
-  }
-
-  template <typename TKey, typename TValue>
-  MapVectorPtr makeMapVector(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
-      std::function<TKey(vector_size_t /* idx */)> keyAt,
-      std::function<TValue(vector_size_t /* idx */)> valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr,
-      std::function<bool(vector_size_t /*row */)> valueIsNullAt = nullptr) {
-    return vectorMaker_.mapVector<TKey, TValue>(
-        size, sizeAt, keyAt, valueAt, isNullAt, valueIsNullAt);
-  }
-
-  template <typename T>
-  VectorPtr makeConstant(T value, vector_size_t size) {
-    return BaseVector::createConstant(value, size, execCtx_.pool());
-  }
-
-  template <typename T>
-  VectorPtr makeConstant(const std::optional<T>& value, vector_size_t size) {
-    return std::make_shared<ConstantVector<EvalType<T>>>(
-        execCtx_.pool(),
-        size,
-        /*isNull=*/!value.has_value(),
-        CppToType<T>::create(),
-        value ? EvalType<T>(*value) : EvalType<T>(),
-        cdvi::EMPTY_METADATA,
-        sizeof(EvalType<T>));
-  }
-
-  /// Create constant vector of type ROW from a Variant.
-  VectorPtr makeConstantRow(
-      const RowTypePtr& rowType,
-      variant value,
-      vector_size_t size) {
-    return vectorMaker_.constantRow(rowType, value, size);
-  }
-
-  VectorPtr makeNullConstant(TypeKind typeKind, vector_size_t size) {
-    return BaseVector::createConstant(variant(typeKind), size, execCtx_.pool());
-  }
-
-  BufferPtr makeIndices(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t)> indexAt);
-
-  BufferPtr makeOddIndices(vector_size_t size);
-
-  BufferPtr makeEvenIndices(vector_size_t size);
-
-  BufferPtr makeIndicesInReverse(vector_size_t size) {
-    BufferPtr indices =
-        AlignedBuffer::allocate<vector_size_t>(size, execCtx_.pool());
-    auto rawIndices = indices->asMutable<vector_size_t>();
-    for (auto i = 0; i < size; ++i) {
-      rawIndices[i] = size - 1 - i;
-    }
-    return indices;
-  }
-
-  static VectorPtr
-  wrapInDictionary(BufferPtr indices, vector_size_t size, VectorPtr vector);
-
-  static VectorPtr flatten(const VectorPtr& vector) {
-    return velox::test::VectorMaker::flatten(vector);
-  }
-
-  // Returns a one element ArrayVector with 'vector' as elements of array at 0.
-  VectorPtr asArray(VectorPtr vector) {
-    BufferPtr sizes = AlignedBuffer::allocate<vector_size_t>(
-        1, vector->pool(), vector->size());
-    BufferPtr offsets =
-        AlignedBuffer::allocate<vector_size_t>(1, vector->pool(), 0);
-    return std::make_shared<ArrayVector>(
-        vector->pool(),
-        ARRAY(vector->type()),
-        BufferPtr(nullptr),
-        1,
-        offsets,
-        sizes,
-        vector,
-        0);
-  }
-
-  template <typename T>
-  std::shared_ptr<T> evaluate(
-      const std::string& expression,
+  // Use this directly if you want to evaluate a manually-constructed expression
+  // tree and don't want it to cast the returned vector.
+  VectorPtr evaluate(
+      const std::shared_ptr<const core::ITypedExpr>& typedExpr,
       const RowVectorPtr& data) {
-    auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
-    exec::ExprSet exprSet({makeTypedExpr(expression, rowType)}, &execCtx_);
+    exec::ExprSet exprSet({typedExpr}, &execCtx_);
 
     auto rows = std::make_unique<SelectivityVector>(data->size());
     exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
     std::vector<VectorPtr> results(1);
     exprSet.eval(*rows, &evalCtx, &results);
 
-    auto result = results[0];
-    VELOX_CHECK(result, "Expression evaluation result is null: {}", expression);
+    return results[0];
+  }
 
-    auto castedResult = std::dynamic_pointer_cast<T>(result);
-    VELOX_CHECK(
-        castedResult,
-        "Expression evaluation result is not of expected type: {} -> {}",
-        expression,
-        result->type()->toString());
-    return castedResult;
+  // Use this directly if you don't want it to cast the returned vector.
+  VectorPtr evaluate(const std::string& expression, const RowVectorPtr& data) {
+    auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
+    auto typedExpr = makeTypedExpr(expression, rowType);
+
+    return evaluate(typedExpr, data);
+  }
+
+  // Use this function if you want to evaluate a manually-constructed expression
+  // tree.
+  template <typename T>
+  std::shared_ptr<T> evaluate(
+      const std::shared_ptr<const core::ITypedExpr>& typedExpr,
+      const RowVectorPtr& data) {
+    auto result = evaluate(typedExpr, data);
+    return castEvaluateResult<T>(result, typedExpr->toString());
+  }
+
+  template <typename T>
+  std::shared_ptr<T> evaluate(
+      const std::string& expression,
+      const RowVectorPtr& data) {
+    auto result = evaluate(expression, data);
+    return castEvaluateResult<T>(result, expression);
   }
 
   template <typename T>
@@ -362,8 +124,10 @@ class FunctionBaseTest : public testing::Test {
         {makeTypedExpr(expression, rowType)}, &execCtx_);
 
     facebook::velox::exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
-    std::vector<VectorPtr> results{result};
+    std::vector<VectorPtr> results{std::move(result)};
     exprSet.eval(rows, &evalCtx, &results);
+    result = results[0];
+
     return std::dynamic_pointer_cast<T>(results[0]);
   }
 
@@ -412,7 +176,7 @@ class FunctionBaseTest : public testing::Test {
   }
 
   // TODO: Enable ASSERT_EQ for vectors
-  void assertEqualVectors(
+  static void assertEqualVectors(
       const VectorPtr& expected,
       const VectorPtr& actual,
       const std::string& additionalContext = "") {
@@ -457,6 +221,17 @@ class FunctionBaseTest : public testing::Test {
     }
   }
 
+  /// Register a lambda expression with a name that can later be used to refer
+  /// to the lambda in a function call, e.g. foo(a, b,
+  /// function('<lanbda-name>')).
+  ///
+  /// @param name Name to use when referring to the lambda expression from a
+  /// function call.
+  /// @param signature A list of names and types of inputs for the lambda
+  /// expression.
+  /// @param rowType The type of the input data used to resolve types of
+  /// captures used in the lambda expression.
+  /// @param body Body of the lambda as SQL expression.
   void registerLambda(
       const std::string& name,
       const std::shared_ptr<const RowType>& signature,
@@ -466,15 +241,25 @@ class FunctionBaseTest : public testing::Test {
         name, signature, rowType, parse::parseExpr(body), execCtx_.pool());
   }
 
-  memory::MemoryPool* pool() const {
-    return pool_.get();
-  }
-
-  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::create()};
-  std::unique_ptr<memory::MemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   core::ExecCtx execCtx_{pool_.get(), queryCtx_.get()};
-  velox::test::VectorMaker vectorMaker_{pool_.get()};
+
+ private:
+  template <typename T>
+  std::shared_ptr<T> castEvaluateResult(
+      const VectorPtr& result,
+      const std::string& expression) {
+    VELOX_CHECK(result, "Expression evaluation result is null: {}", expression);
+
+    auto castedResult = std::dynamic_pointer_cast<T>(result);
+    VELOX_CHECK(
+        castedResult,
+        "Expression evaluation result is not of expected type: {} -> {} vector of type {}",
+        expression,
+        result->encoding(),
+        result->type()->toString());
+    return castedResult;
+  }
 };
 
 } // namespace facebook::velox::functions::test

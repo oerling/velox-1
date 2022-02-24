@@ -15,9 +15,9 @@
  */
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
-#include "velox/expression/tests/VectorFuzzer.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
-#include "velox/functions/prestosql/VectorFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -29,7 +29,7 @@ class StringAsciiUTFFunctionBenchmark
     : public functions::test::FunctionBenchmarkBase {
  public:
   StringAsciiUTFFunctionBenchmark() : FunctionBenchmarkBase() {
-    functions::registerVectorFunctions();
+    functions::prestosql::registerStringFunctions();
   }
 
   void runUpperLower(const std::string& fnName, bool utf) {
@@ -83,6 +83,37 @@ class StringAsciiUTFFunctionBenchmark
     doRun(exprSet, rowVector);
   }
 
+  void runLPadRPad(const std::string& fnName, bool utf) {
+    folly::BenchmarkSuspender suspender;
+
+    VectorFuzzer::Options opts;
+    if (utf) {
+      opts.charEncodings.clear();
+      opts.charEncodings = {
+          UTF8CharList::UNICODE_CASE_SENSITIVE,
+          UTF8CharList::EXTENDED_UNICODE,
+          UTF8CharList::MATHEMATICAL_SYMBOLS};
+    }
+
+    opts.stringLength = 10;
+    opts.vectorSize = 10'000;
+    VectorFuzzer fuzzer(opts, execCtx_.pool());
+    auto stringVector = fuzzer.fuzzFlat(VARCHAR());
+    auto padStringVector = fuzzer.fuzzFlat(VARCHAR());
+
+    auto sizeVector =
+        BaseVector::createConstant(55, opts.vectorSize, execCtx_.pool());
+
+    auto rowVector =
+        vectorMaker_.rowVector({stringVector, sizeVector, padStringVector});
+
+    auto exprSet = compileExpression(
+        fmt::format("{}(c0, c1, c2)", fnName), rowVector->type());
+
+    suspender.dismiss();
+    doRun(exprSet, rowVector);
+  }
+
   void doRun(ExprSet& exprSet, const RowVectorPtr& rowVector) {
     uint32_t cnt = 0;
     for (auto i = 0; i < 100; i++) {
@@ -122,6 +153,25 @@ BENCHMARK_RELATIVE(asciiSubStr) {
   benchmark.runSubStr(false);
 }
 
+BENCHMARK(utfLPad) {
+  StringAsciiUTFFunctionBenchmark benchmark;
+  benchmark.runLPadRPad("lpad", true);
+}
+
+BENCHMARK_RELATIVE(aciiLPad) {
+  StringAsciiUTFFunctionBenchmark benchmark;
+  benchmark.runLPadRPad("lpad", false);
+}
+
+BENCHMARK(utfRPad) {
+  StringAsciiUTFFunctionBenchmark benchmark;
+  benchmark.runLPadRPad("rpad", true);
+}
+
+BENCHMARK_RELATIVE(aciiRPad) {
+  StringAsciiUTFFunctionBenchmark benchmark;
+  benchmark.runLPadRPad("rpad", false);
+}
 } // namespace
 
 // Preliminary release run, before ascii optimization.

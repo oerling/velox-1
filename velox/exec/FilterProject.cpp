@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/FilterProject.h"
-#include <velox/core/Expressions.h>
+#include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
@@ -26,7 +26,7 @@ bool checkAddIdentityProjection(
     std::vector<IdentityProjection>& identityProjections) {
   if (auto field = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
           projection)) {
-    if (std::dynamic_pointer_cast<const core::InputTypedExpr>(field->input())) {
+    if (field->inputs().empty()) {
       const auto inputChannel = inputType->getChildIdx(field->name());
       identityProjections.emplace_back(inputChannel, outputChannel);
       return true;
@@ -105,6 +105,10 @@ bool FilterProject::allInputProcessed() {
     return true;
   }
   return false;
+}
+
+bool FilterProject::isFinished() {
+  return noMoreInput_ && allInputProcessed();
 }
 
 RowVectorPtr FilterProject::getOutput() {

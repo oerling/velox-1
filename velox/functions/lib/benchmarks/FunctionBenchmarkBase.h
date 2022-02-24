@@ -15,10 +15,10 @@
  */
 #pragma once
 
-#include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/expression/Expr.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
+#include "velox/parse/TypeResolver.h"
 #include "velox/vector/tests/VectorMaker.h"
 
 namespace facebook::velox::functions::test {
@@ -26,7 +26,7 @@ namespace facebook::velox::functions::test {
 class FunctionBenchmarkBase {
  public:
   FunctionBenchmarkBase() {
-    exec::test::registerTypeResolver();
+    parse::registerTypeResolver();
   }
 
   exec::ExprSet compileExpression(
@@ -55,7 +55,7 @@ class FunctionBenchmarkBase {
   }
 
  protected:
-  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::create()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
   core::ExecCtx execCtx_{pool_.get(), queryCtx_.get()};

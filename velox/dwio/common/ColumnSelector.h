@@ -20,12 +20,17 @@
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeWithId.h"
 
-namespace facebook::dwio::common {
+namespace facebook::velox::dwio::common {
 
 /**
  * A quick answer to tell special cases - READ ALL
  */
 enum class ReadState { kPartial, kAll };
+
+// A utility function to extract column name and expression
+// from a augmented column names in current spec.
+std::pair<std::string_view, std::string_view> extractColumnName(
+    const std::string_view& name);
 
 class ColumnSelector {
  public:
@@ -268,11 +273,6 @@ class ColumnSelector {
       const std::shared_ptr<const velox::RowType>& fileSchema);
 
  private:
-  // A utility function to extract column name and expression
-  // from a augmented column names in current spec.
-  static std::pair<std::string_view, std::string_view> extractColumnName(
-      const std::string_view& name);
-
   // visit the tree with disk type
   static void copy(
       FilterTypePtr&,
@@ -380,4 +380,4 @@ class ColumnSelector {
   ColumnFilter filter_;
 };
 
-} // namespace facebook::dwio::common
+} // namespace facebook::velox::dwio::common

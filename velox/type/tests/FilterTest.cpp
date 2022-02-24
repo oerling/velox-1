@@ -244,6 +244,83 @@ TEST(FilterTest, bigintValuesUsingHashTable) {
   EXPECT_FALSE(filter->testInt64Range(11, 11, false));
   EXPECT_FALSE(filter->testInt64Range(-10, -5, false));
   EXPECT_FALSE(filter->testInt64Range(10'234, 20'000, false));
+  EXPECT_FALSE(filter->testInt64(102));
+  EXPECT_FALSE(filter->testInt64(INT64_MAX));
+
+  EXPECT_TRUE(filter->testInt64Range(5, 50, false));
+  EXPECT_FALSE(filter->testInt64Range(11, 11, false));
+  EXPECT_FALSE(filter->testInt64Range(-10, -5, false));
+  EXPECT_TRUE(filter->testInt64Range(10'000, 20'000, false));
+  EXPECT_FALSE(filter->testInt64Range(9'000, 9'999, false));
+  EXPECT_TRUE(filter->testInt64Range(9'000, 10'000, false));
+  EXPECT_TRUE(filter->testInt64Range(0, 1, false));
+}
+
+template <typename T, typename Verify>
+void applySimdTestToVector(
+    std::vector<T> numbers,
+    Filter& filter,
+    Verify verify) {
+  int32_t numLanes = 32 / sizeof(T);
+  for (auto i = 0; i + numLanes < numbers.size(); i += numLanes) {
+    if (numLanes == 4) {
+      int64_t lanes[4];
+      // Get keys to look up from the numbers in the filter. Make 0-4 of
+      // these miss by incrementing different lanes depending on the
+      // loop counter.
+      memcpy(lanes, numbers.data() + i, sizeof(lanes));
+
+      for (auto lane = 0; lane < 4; ++lane) {
+        if (i & (1 << (lane + 2))) {
+          ++lanes[lane];
+        }
+      }
+      checkSimd<int64_t>(&filter, reinterpret_cast<__m256i*>(&lanes), verify);
+    } else {
+      VELOX_CHECK_EQ(numLanes, 8, "Must be either 4 or 8 lanes");
+      int32_t lanes[8];
+      // Get keys to look up from the numbers in the filter. Make 0-8 of
+      // these miss by incrementing different lanes depending on the
+      // loop counter.
+      memcpy(lanes, numbers.data() + i, sizeof(lanes));
+
+      for (auto lane = 0; lane < 8; ++lane) {
+        if (i & (1 << (lane + 3))) {
+          ++lanes[lane];
+        }
+      }
+      checkSimd<int32_t>(&filter, reinterpret_cast<__m256si*>(&lanes), verify);
+    }
+  }
+}
+
+TEST(FilterTest, bigintValuesUsingHashTableSimd) {
+  std::vector<int64_t> numbers;
+  // make a worst case filter where every item falls on the same slot.
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 0x10000);
+  }
+  auto filter = createBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
+  __m256i outOfRange{-100, -20000, 0x10000000, 0x20000000};
+  auto verify = [&](int64_t x) { return filter->testInt64(x); };
+  checkSimd<int64_t>(filter.get(), &outOfRange, verify);
+  applySimdTestToVector(numbers, *filter, verify);
+  // Make a filter with reasonably distributed entries and retry.
+  numbers.clear();
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 1209);
+  }
+  filter = createBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
+  applySimdTestToVector(numbers, *filter, verify);
+
+  std::vector<int32_t> numbers32(numbers.size());
+  for (auto n : numbers) {
+    numbers32.push_back(n);
+  }
+
+  applySimdTestToVector(numbers32, *filter, verify);
 }
 
 TEST(FilterTest, bigintValuesUsingBitmask) {
@@ -504,6 +581,30 @@ TEST(FilterTest, bytesRange) {
   EXPECT_FALSE(filter->testBytes("banana", 6));
   EXPECT_FALSE(filter->testBytes("camel", 5));
   EXPECT_FALSE(filter->testBytes("_abc", 4));
+
+  // < b
+  filter = lessThan("b");
+  EXPECT_TRUE(filter->testBytes("a", 1));
+  EXPECT_FALSE(filter->testBytes("b", 1));
+  EXPECT_FALSE(filter->testBytes("c", 1));
+
+  // <= b
+  filter = lessThanOrEqual("b");
+  EXPECT_TRUE(filter->testBytes("a", 1));
+  EXPECT_TRUE(filter->testBytes("b", 1));
+  EXPECT_FALSE(filter->testBytes("c", 1));
+
+  // >= b
+  filter = greaterThanOrEqual("b");
+  EXPECT_FALSE(filter->testBytes("a", 1));
+  EXPECT_TRUE(filter->testBytes("b", 1));
+  EXPECT_TRUE(filter->testBytes("c", 1));
+
+  // > b
+  filter = greaterThan("b");
+  EXPECT_FALSE(filter->testBytes("a", 1));
+  EXPECT_FALSE(filter->testBytes("b", 1));
+  EXPECT_TRUE(filter->testBytes("c", 1));
 }
 
 TEST(FilterTest, bytesValues) {
@@ -754,6 +855,85 @@ void testMergeWithFloat(Filter* left, Filter* right) {
     ASSERT_EQ(merged->testFloat(f), left->testFloat(f) && right->testFloat(f));
   }
 }
+
+void testMergeWithBytes(Filter* left, Filter* right) {
+  auto merged = left->mergeWith(right);
+
+  ASSERT_EQ(merged->testNull(), left->testNull() && right->testNull())
+      << "left: " << left->toString() << ", right: " << right->toString()
+      << ", merged: " << merged->toString();
+
+  std::vector<std::string> testValues = {
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "abca",
+      "abcb",
+      "abcc",
+      "abcd",
+      "A",
+      "B",
+      "C",
+      "D",
+      "AB",
+      "AC",
+      "AD",
+      "1",
+      "2",
+      "11",
+      "22",
+      "12345",
+      "AbcDedFghIJkl",
+      "!@3456^&*()",
+      "!",
+      "#",
+      "^&",
+      "-=",
+      " ",
+      "[]",
+      "|",
+      "?",
+      "?!",
+      "!?!",
+      "/",
+      "<",
+      ">",
+      "=",
+      "//<<>>"};
+
+  for (const auto& test : testValues) {
+    ASSERT_EQ(
+        merged->testBytes(test.data(), test.size()),
+        left->testBytes(test.data(), test.size()) &&
+            right->testBytes(test.data(), test.size()))
+        << test << " "
+        << "left: " << left->toString() << ", right: " << right->toString()
+        << ", merged: " << merged->toString();
+  }
+}
 } // namespace
 
 TEST(FilterTest, mergeWithUntyped) {
@@ -796,8 +976,8 @@ TEST(FilterTest, mergeWithBigint) {
   filters.push_back(between(150, 500, true));
 
   // IN-list.
-  filters.push_back(in({1, 2, 3, 67, 134}));
-  filters.push_back(in({1, 2, 3, 67, 134}, true));
+  filters.push_back(in({1, 2, 3, 67'000'000'000, 134}));
+  filters.push_back(in({1, 2, 3, 67'000'000'000, 134}, true));
   filters.push_back(in({-7, -6, -5, -4, -3, -2}));
   filters.push_back(in({-7, -6, -5, -4, -3, -2}, true));
   filters.push_back(in({1, 2, 3, 67, 10'134}));
@@ -895,6 +1075,168 @@ TEST(FilterTest, mergeWithBigintMultiRange) {
   for (const auto& left : filters) {
     for (const auto& right : filters) {
       testMergeWithBigint(left.get(), right.get());
+    }
+  }
+}
+
+TEST(FilterTest, mergeMultiRange) {
+  std::vector<std::unique_ptr<Filter>> filters;
+  addUntypedFilters(filters);
+
+  filters.push_back(
+      orFilter(lessThanOrEqualFloat(-1.2), betweenFloat(1.2, 3.4)));
+  filters.push_back(
+      orFilter(lessThanOrEqualFloat(-1.2), betweenFloat(1.2, 3.4), true));
+
+  filters.push_back(orFilter(lessThanFloat(1.2), greaterThanFloat(3.4)));
+  filters.push_back(orFilter(lessThanFloat(1.2), greaterThanFloat(3.4), true));
+
+  filters.push_back(
+      orFilter(lessThanOrEqualFloat(1.2), greaterThanOrEqualFloat(3.4)));
+  filters.push_back(
+      orFilter(lessThanOrEqualFloat(1.2), greaterThanOrEqualFloat(3.4), true));
+
+  for (const auto& left : filters) {
+    for (const auto& right : filters) {
+      testMergeWithFloat(left.get(), right.get());
+    }
+  }
+}
+
+TEST(FilterTest, clone) {
+  auto filter1 = equal(1, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter1->clone(/*nullAllowed*/ true)->testNull());
+  auto filter2 = orFilter(
+      lessThanOrEqualFloat(-1.2),
+      betweenFloat(1.2, 3.4),
+      /*nullAllowed=*/false);
+  EXPECT_TRUE(filter2->clone(/*nullAllowed*/ true)->testNull());
+  auto filter3 = bigintOr(equal(12), between(25, 47), /*nullAllowed=*/false);
+  EXPECT_TRUE(filter3->clone(/*nullAllowed*/ true)->testNull());
+  auto filter4 = lessThanFloat(1.2, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter4->clone(/*nullAllowed*/ true)->testNull());
+  auto filter5 = lessThanDouble(1.2, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter5->clone(/*nullAllowed*/ true)->testNull());
+  auto filter6 = boolEqual(true, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter6->clone(/*nullAllowed*/ true)->testNull());
+  auto filter7 = betweenFloat(1.2, 1.2, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter7->clone(/*nullAllowed*/ true)->testNull());
+  auto filter8 = equal("abc", /*nullAllowed=*/false);
+  EXPECT_TRUE(filter8->clone(/*nullAllowed*/ true)->testNull());
+  std::vector<std::string> values({"Igne", "natura", "renovitur", "integra."});
+  auto filter9 = in(values, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter9->clone(/*nullAllowed*/ true)->testNull());
+  auto filter10 =
+      createBigintValues({1, 10, 100, 10'000}, /*nullAllowed=*/false);
+  EXPECT_TRUE(filter10->clone(/*nullAllowed*/ true)->testNull());
+}
+
+TEST(FilterTest, mergeWithBytesValues) {
+  std::vector<std::unique_ptr<Filter>> filters;
+
+  addUntypedFilters(filters);
+
+  filters.push_back(equal("a"));
+  filters.push_back(equal("ab"));
+  filters.push_back(equal("a", true));
+
+  filters.push_back(in({"e", "f", "g"}));
+  filters.push_back(in({"e", "f", "g", "h"}, true));
+
+  filters.push_back(in({"!", "!!jj", ">><<"}));
+  filters.push_back(
+      in({"!", "!!jj", ">><<", "[]", "12345", "123", "1", "2"}, true));
+
+  for (const auto& left : filters) {
+    for (const auto& right : filters) {
+      testMergeWithBytes(left.get(), right.get());
+    }
+  }
+}
+
+TEST(FilterTest, mergeWithBytesRange) {
+  std::vector<std::unique_ptr<Filter>> filters;
+
+  addUntypedFilters(filters);
+
+  filters.push_back(between("abca", "abcc"));
+  filters.push_back(between("abca", "abcc", true));
+
+  filters.push_back(between("b", "f"));
+  filters.push_back(between("b", "f", true));
+  filters.push_back(between("p", "t"));
+  filters.push_back(between("p", "t", true));
+  filters.push_back(betweenExclusive("a", "z"));
+  filters.push_back(betweenExclusive("a", "z", true));
+
+  filters.push_back(between("/", "<"));
+  filters.push_back(between("<<", ">>", true));
+  filters.push_back(between("ABCDE", "abcde"));
+  filters.push_back(between("1", "123456", true));
+
+  filters.push_back(lessThanOrEqual("k"));
+  filters.push_back(lessThanOrEqual("k", true));
+  filters.push_back(lessThanOrEqual("p"));
+  filters.push_back(lessThanOrEqual("p", true));
+  filters.push_back(lessThanOrEqual("!!"));
+  filters.push_back(lessThanOrEqual("?", true));
+
+  filters.push_back(greaterThanOrEqual("b"));
+  filters.push_back(greaterThanOrEqual("b", true));
+  filters.push_back(greaterThanOrEqual("e"));
+  filters.push_back(greaterThanOrEqual("e", true));
+
+  filters.push_back(lessThan("k"));
+  filters.push_back(lessThan("!!", true));
+  filters.push_back(lessThan("p"));
+  filters.push_back(lessThan("qq", true));
+  filters.push_back(lessThan("!>"));
+  filters.push_back(lessThan("?", true));
+
+  filters.push_back(greaterThan("b"));
+  filters.push_back(greaterThan("b", true));
+  filters.push_back(greaterThan("f"));
+  filters.push_back(greaterThan("e", true));
+
+  for (const auto& left : filters) {
+    for (const auto& right : filters) {
+      testMergeWithBytes(left.get(), right.get());
+    }
+  }
+}
+
+TEST(FilterTest, mergeWithBytesMultiRange) {
+  std::vector<std::unique_ptr<Filter>> filters;
+
+  addUntypedFilters(filters);
+
+  filters.push_back(between("b", "f"));
+  filters.push_back(between("b", "f", true));
+  filters.push_back(between("p", "t"));
+  filters.push_back(between("p", "t", true));
+
+  filters.push_back(lessThanOrEqual(">"));
+  filters.push_back(lessThanOrEqual("k", true));
+  filters.push_back(lessThanOrEqual("p"));
+  filters.push_back(lessThanOrEqual("<", true));
+
+  filters.push_back(equal("A"));
+  filters.push_back(equal("AB"));
+  filters.push_back(equal("A", true));
+
+  filters.push_back(in({"e", "f", "!", "h"}));
+  filters.push_back(in({"e", "f", "g", "h"}, true));
+
+  filters.push_back(orFilter(between("!", "f"), greaterThanOrEqual("h")));
+  filters.push_back(orFilter(between("b", "f"), lessThanOrEqual("a")));
+  filters.push_back(orFilter(between("b", "f"), between("p", "t")));
+  filters.push_back(orFilter(lessThanOrEqual("p"), greaterThanOrEqual("y")));
+  filters.push_back(orFilter(lessThan("p"), greaterThan("x")));
+  filters.push_back(orFilter(betweenExclusive("b", "f"), lessThanOrEqual("a")));
+
+  for (const auto& left : filters) {
+    for (const auto& right : filters) {
+      testMergeWithBytes(left.get(), right.get());
     }
   }
 }

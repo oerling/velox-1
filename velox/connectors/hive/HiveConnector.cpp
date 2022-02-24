@@ -14,9 +14,17 @@
  * limitations under the License.
  */
 #include "velox/connectors/hive/HiveConnector.h"
-#include <velox/dwio/dwrf/reader/SelectiveColumnReader.h>
+
+#include <memory>
+
 #include "velox/dwio/common/InputStream.h"
+#include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/expression/ControlExpr.h"
+#include "velox/type/Conversions.h"
+#include "velox/type/Type.h"
+#include "velox/type/Variant.h"
 
 using namespace facebook::velox::dwrf;
 using WriterConfig = facebook::velox::dwrf::Config;
@@ -27,7 +35,6 @@ DEFINE_int32(
     "Amount of space for the file handle cache in mb.");
 
 namespace facebook::velox::connector::hive {
-
 namespace {
 static const char* kPath = "$path";
 static const char* kBucket = "$bucket";
@@ -47,7 +54,7 @@ HiveDataSink::HiveDataSink(
   // Without explicitly setting flush policy, the default memory based flush
   // policy is used.
 
-  auto sink = facebook::dwio::common::DataSink::create(filePath);
+  auto sink = facebook::velox::dwio::common::DataSink::create(filePath);
   writer_ = std::make_unique<Writer>(options, std::move(sink), *memoryPool);
 }
 
@@ -63,25 +70,55 @@ namespace {
 static void makeFieldSpecs(
     const std::string& pathPrefix,
     int32_t level,
-    const std::shared_ptr<const RowType>& type,
+    const TypePtr& type,
     common::ScanSpec* spec) {
-  for (auto i = 0; i < type->size(); ++i) {
-    std::string path =
-        level == 0 ? type->nameOf(i) : pathPrefix + "." + type->nameOf(i);
-    common::Subfield subfield(path);
-    common::ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
+  constexpr int32_t kNoChannel = -1;
+  auto makeNestedSpec = [&](const std::string& name, int32_t channel) {
+    std::string path = level == 0 ? name : pathPrefix + "." + name;
+    auto fieldSpec = spec->getOrCreateChild(common::Subfield(path));
     fieldSpec->setProjectOut(true);
-    if (level == 0) {
-      fieldSpec->setChannel(i);
+    if (channel != kNoChannel) {
+      fieldSpec->setChannel(channel);
     }
-    auto fieldType = type->childAt(i);
-    if (fieldType->kind() == TypeKind::ROW) {
+    return path;
+  };
+
+  switch (type->kind()) {
+    case TypeKind::ROW: {
+      auto rowType = type->as<TypeKind::ROW>();
+      for (auto i = 0; i < type->size(); ++i) {
+        makeFieldSpecs(
+            makeNestedSpec(rowType.nameOf(i), i),
+            level + 1,
+            type->childAt(i),
+            spec);
+      }
+      break;
+    }
+    case TypeKind::MAP: {
       makeFieldSpecs(
-          path,
+          makeNestedSpec("keys", kNoChannel),
           level + 1,
-          std::static_pointer_cast<const RowType>(fieldType),
+          type->childAt(0),
           spec);
+      makeFieldSpecs(
+          makeNestedSpec("elements", kNoChannel),
+          level + 1,
+          type->childAt(1),
+          spec);
+      break;
     }
+    case TypeKind::ARRAY: {
+      makeFieldSpecs(
+          makeNestedSpec("elements", kNoChannel),
+          level + 1,
+          type->childAt(0),
+          spec);
+      break;
+    }
+
+    default:
+      break;
   }
 }
 
@@ -118,34 +155,43 @@ HiveDataSource::HiveDataSource(
     FileHandleFactory* fileHandleFactory,
     velox::memory::MemoryPool* pool,
     DataCache* dataCache,
-    ExpressionEvaluator* expressionEvaluator)
+    ExpressionEvaluator* expressionEvaluator,
+    memory::MappedMemory* mappedMemory,
+    const std::string& scanId,
+    folly::Executor* executor)
     : outputType_(outputType),
       fileHandleFactory_(fileHandleFactory),
       pool_(pool),
       readerOpts_(pool),
       dataCache_(dataCache),
-      expressionEvaluator_(expressionEvaluator) {
-  regularColumns_.reserve(outputType->size());
-
-  std::vector<std::string> columnNames;
-  columnNames.reserve(outputType->size());
-  for (auto& name : outputType->names()) {
-    auto it = columnHandles.find(name);
-    VELOX_CHECK(
-        it != columnHandles.end(),
-        "ColumnHandle is missing for output column {}",
-        name);
-
-    auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(it->second);
+      expressionEvaluator_(expressionEvaluator),
+      mappedMemory_(mappedMemory),
+      scanId_(scanId),
+      executor_(executor) {
+  // Column handled keyed on the column alias, the name used in the query.
+  for (const auto& [canonicalizedName, columnHandle] : columnHandles) {
+    auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(columnHandle);
     VELOX_CHECK(
         handle != nullptr,
         "ColumnHandle must be an instance of HiveColumnHandle for {}",
-        name);
+        canonicalizedName);
 
-    columnNames.emplace_back(handle->name());
-    if (handle->columnType() == HiveColumnHandle::ColumnType::kRegular) {
-      regularColumns_.emplace_back(handle->name());
+    if (handle->columnType() == HiveColumnHandle::ColumnType::kPartitionKey) {
+      partitionKeys_.emplace(handle->name(), handle);
     }
+  }
+
+  std::vector<std::string> columnNames;
+  columnNames.reserve(outputType->size());
+  for (auto& outputName : outputType->names()) {
+    auto it = columnHandles.find(outputName);
+    VELOX_CHECK(
+        it != columnHandles.end(),
+        "ColumnHandle is missing for output column: {}",
+        outputName);
+
+    const auto& handle = static_cast<HiveColumnHandle&>(*it->second);
+    columnNames.emplace_back(handle.name());
   }
 
   auto hiveTableHandle =
@@ -189,23 +235,19 @@ HiveDataSource::HiveDataSource(
     readerOutputType_ = ROW(std::move(names), std::move(types));
   }
 
-  columnReaderFactory_ =
-      std::make_unique<dwrf::SelectiveColumnReaderFactory>(scanSpec_.get());
-  rowReaderOpts_.setColumnReaderFactory(columnReaderFactory_.get());
+  rowReaderOpts_.setScanSpec(scanSpec_.get());
 
-  ioStats_ = std::make_unique<dwio::common::IoStatistics>();
+  ioStats_ = std::make_shared<dwio::common::IoStatistics>();
 }
 
 namespace {
-
 bool testFilters(
     common::ScanSpec* scanSpec,
-    dwrf::DwrfReader* reader,
+    dwio::common::Reader* reader,
     const std::string& filePath) {
-  auto stats = reader->getStatistics();
-  auto totalRows = reader->getFooter().numberofrows();
-  const auto& fileTypeWithId = reader->getTypeWithId();
-  const auto& rowType = reader->getType();
+  auto totalRows = reader->numberOfRows();
+  const auto& fileTypeWithId = reader->typeWithId();
+  const auto& rowType = reader->rowType();
   for (const auto& child : scanSpec->children()) {
     if (child->filter()) {
       const auto& name = child->fieldName();
@@ -217,11 +259,11 @@ bool testFilters(
         }
       } else {
         const auto& typeWithId = fileTypeWithId->childByName(name);
-        auto columnStats = reader->getColumnStatistics(typeWithId->id);
+        auto columnStats = reader->columnStatistics(typeWithId->id);
         if (!testFilter(
                 child->filter(),
                 columnStats.get(),
-                totalRows,
+                totalRows.value(),
                 typeWithId->type)) {
           VLOG(1) << "Skipping " << filePath
                   << " based on stats and filter for column "
@@ -234,6 +276,51 @@ bool testFilters(
 
   return true;
 }
+
+class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
+ public:
+  InputStreamHolder(
+      FileHandleCachedPtr fileHandle,
+      std::shared_ptr<dwio::common::IoStatistics> stats)
+      : fileHandle_(std::move(fileHandle)), stats_(std::move(stats)) {
+    input_ = std::make_unique<dwio::common::ReadFileInputStream>(
+        fileHandle_->file.get(), dwio::common::MetricsLog::voidLog(), nullptr);
+  }
+
+  dwio::common::InputStream& get() override {
+    return *input_;
+  }
+
+ private:
+  FileHandleCachedPtr fileHandle_;
+  // Keeps the pointer alive also in case of cancellation while reads
+  // proceeding on different threads.
+  std::shared_ptr<dwio::common::IoStatistics> stats_;
+  std::unique_ptr<dwio::common::InputStream> input_;
+};
+
+std::unique_ptr<InputStreamHolder> makeStreamHolder(
+    FileHandleFactory* factory,
+    const std::string& path) {
+  return std::make_unique<InputStreamHolder>(factory->generate(path), nullptr);
+}
+
+template <TypeKind ToKind>
+velox::variant convertFromString(const std::optional<std::string>& value) {
+  if (value.has_value()) {
+    if constexpr (ToKind == TypeKind::VARCHAR) {
+      return velox::variant(value.value());
+    }
+    bool nullOutput = false;
+    auto result =
+        velox::util::Converter<ToKind>::cast(value.value(), nullOutput);
+    VELOX_CHECK(
+        not nullOutput, "Failed to cast {} to {}", value.value(), ToKind)
+    return velox::variant(result);
+  }
+  return velox::variant(ToKind);
+}
+
 } // namespace
 
 void HiveDataSource::addDynamicFilter(
@@ -247,10 +334,7 @@ void HiveDataSource::addDynamicFilter(
   }
   scanSpec_->resetCachedValues();
 
-  auto columnReader =
-      dynamic_cast<SelectiveColumnReader*>(rowReader_->columnReader());
-  assert(columnReader);
-  columnReader->resetFilterCaches();
+  rowReader_->resetFilterCaches();
 }
 
 void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
@@ -263,24 +347,59 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VLOG(1) << "Adding split " << split_->toString();
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
-
-  if (dataCache_) {
+  // For DataCache and no cache, the stream keeps track of IO.
+  auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_);
+  // Decide between AsyncDataCache, legacy DataCache and no cache. All
+  // three are supported to enable comparison.
+  if (asyncCache) {
+    VELOX_CHECK(
+        !dataCache_,
+        "DataCache should not be present if the MappedMemory is AsyncDataCache");
+    // Make DataCacheConfig to pass the filenum and a null DataCache.
+    if (!readerOpts_.getDataCacheConfig()) {
+      auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
+      readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
+    }
+    readerOpts_.getDataCacheConfig()->filenum = fileHandle_->uuid.id();
+    bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
+        (asyncCache),
+        Connector::getTracker(scanId_, readerOpts_.loadQuantum()),
+        fileHandle_->groupId.id(),
+        [factory = fileHandleFactory_, path = split_->filePath]() {
+          return makeStreamHolder(factory, path);
+        },
+        ioStats_,
+        executor_,
+        readerOpts_);
+    readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
+  } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
     dataCacheConfig->cache = dataCache_;
     dataCacheConfig->filenum = fileHandle_->uuid.id();
     readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
   }
+  if (readerOpts_.getFileFormat() != dwio::common::FileFormat::UNKNOWN) {
+    VELOX_CHECK(
+        readerOpts_.getFileFormat() == split_->fileFormat,
+        "HiveDataSource received splits of different formats: {} and {}",
+        toString(readerOpts_.getFileFormat()),
+        toString(split_->fileFormat));
+  } else {
+    readerOpts_.setFileFormat(split_->fileFormat);
+  }
 
-  reader_ = dwrf::DwrfReader::create(
-      std::make_unique<dwio::common::ReadFileInputStream>(
-          fileHandle_->file.get(),
-          dwio::common::MetricsLog::voidLog(),
-          ioStats_.get()),
-      readerOpts_);
+  // We run with the default BufferedInputFactory and no DataCacheConfig if
+  // there is no DataCache and the MappedMemory is not an AsyncDataCache.
+  reader_ = dwio::common::getReaderFactory(readerOpts_.getFileFormat())
+                ->createReader(
+                    std::make_unique<dwio::common::ReadFileInputStream>(
+                        fileHandle_->file.get(),
+                        dwio::common::MetricsLog::voidLog(),
+                        asyncCache ? nullptr : ioStats_.get()),
+                    readerOpts_);
 
   emptySplit_ = false;
-  if (reader_->getFooter().has_numberofrows() &&
-      reader_->getFooter().numberofrows() == 0) {
+  if (reader_->numberOfRows() == 0) {
     emptySplit_ = true;
     return;
   }
@@ -288,12 +407,12 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   // Check filters and see if the whole split can be skipped
   if (!testFilters(scanSpec_.get(), reader_.get(), split_->filePath)) {
     emptySplit_ = true;
-    ++skippedSplits_;
-    skippedSplitBytes_ += split_->length;
+    ++runtimeStats_.skippedSplits;
+    runtimeStats_.skippedSplitBytes += split_->length;
     return;
   }
 
-  auto fileType = reader_->getType();
+  auto fileType = reader_->rowType();
 
   for (int i = 0; i < readerOutputType_->size(); i++) {
     auto fieldName = readerOutputType_->nameOf(i);
@@ -301,7 +420,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
     auto keyIt = split_->partitionKeys.find(fieldName);
     if (keyIt != split_->partitionKeys.end()) {
-      setConstantValue(scanChildSpec, velox::variant(keyIt->second));
+      setPartitionValue(scanChildSpec, fieldName, keyIt->second);
     } else if (fieldName == kPath) {
       setConstantValue(scanChildSpec, velox::variant(split_->filePath));
     } else if (fieldName == kBucket) {
@@ -322,7 +441,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   for (const auto& entry : split_->partitionKeys) {
     auto childSpec = scanSpec_->childByName(entry.first);
     if (childSpec) {
-      setConstantValue(childSpec, velox::variant(entry.second));
+      setPartitionValue(childSpec, entry.first, entry.second);
     }
   }
 
@@ -359,9 +478,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 RowVectorPtr HiveDataSource::next(uint64_t size) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {
-    split_.reset();
-    reader_.reset();
-    rowReader_.reset();
+    resetSplit();
     return nullptr;
   }
 
@@ -416,12 +533,18 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
         pool_, outputType_, BufferPtr(nullptr), rowsRemaining, outputColumns);
   }
 
-  skippedStrides_ += rowReader_->skippedStrides();
+  rowReader_->updateRuntimeStats(runtimeStats_);
 
-  split_.reset();
-  reader_.reset();
-  rowReader_.reset();
+  resetSplit();
   return nullptr;
+}
+
+void HiveDataSource::resetSplit() {
+  split_.reset();
+  // Make sure to destroy Reader and RowReader in the opposite order of
+  // creation, e.g. destroy RowReader first, then destroy Reader.
+  rowReader_.reset();
+  reader_.reset();
 }
 
 vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {
@@ -445,17 +568,59 @@ void HiveDataSource::setNullConstantValue(
   spec->setConstantValue(BaseVector::createNullConstant(type, 1, pool_));
 }
 
+void HiveDataSource::setPartitionValue(
+    common::ScanSpec* spec,
+    const std::string& partitionKey,
+    const std::optional<std::string>& value) const {
+  auto it = partitionKeys_.find(partitionKey);
+  VELOX_CHECK(
+      it != partitionKeys_.end(),
+      "ColumnHandle is missing for partition key {}",
+      partitionKey);
+  auto constValue = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      convertFromString, it->second->dataType()->kind(), value);
+  setConstantValue(spec, constValue);
+}
+
+std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
+  auto res = runtimeStats_.toMap();
+  res.insert(
+      {{"numPrefetch", ioStats_->prefetch().count()},
+       {"prefetchBytes", ioStats_->prefetch().bytes()},
+       {"numStorageRead", ioStats_->read().count()},
+       {"storageReadBytes", ioStats_->read().bytes()},
+       {"numLocalRead", ioStats_->ssdRead().count()},
+       {"localReadBytes", ioStats_->ssdRead().bytes()},
+       {"numRamRead", ioStats_->ramHit().count()},
+       {"ramReadBytes", ioStats_->ramHit().bytes()}});
+  return res;
+}
+
+int64_t HiveDataSource::estimatedRowSize() {
+  if (!rowReader_) {
+    return kUnknownRowSize;
+  }
+  auto size = rowReader_->estimatedRowSize();
+  if (size.has_value()) {
+    return size.value();
+  }
+  return kUnknownRowSize;
+}
+
 HiveConnector::HiveConnector(
     const std::string& id,
     std::shared_ptr<const Config> properties,
-    std::unique_ptr<DataCache> dataCache)
+    std::unique_ptr<DataCache> dataCache,
+    folly::Executor* FOLLY_NULLABLE executor)
     : Connector(id, properties),
       dataCache_(std::move(dataCache)),
       fileHandleFactory_(
           std::make_unique<SimpleLRUCache<std::string, FileHandle>>(
               FLAGS_file_handle_cache_mb << 20),
-          std::make_unique<FileHandleGenerator>(properties)) {}
+          std::make_unique<FileHandleGenerator>(std::move(properties))),
+      executor_(executor) {}
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<HiveConnectorFactory>())
-
+VELOX_REGISTER_CONNECTOR_FACTORY(
+    std::make_shared<HiveHadoop2ConnectorFactory>())
 } // namespace facebook::velox::connector::hive

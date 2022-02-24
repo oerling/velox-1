@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/TableScan.h"
+#include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
@@ -44,9 +45,8 @@ RowVectorPtr TableScan::getOutput() {
     if (needNewSplit_) {
       exec::Split split;
       auto reason = driverCtx_->task->getSplitOrFuture(
-          planNodeId_, split, blockingFuture_);
+          driverCtx_->splitGroupId, planNodeId_, split, blockingFuture_);
       if (reason != BlockingReason::kNotBlocked) {
-        hasBlockingFuture_ = true;
         return nullptr;
       }
 
@@ -68,8 +68,8 @@ RowVectorPtr TableScan::getOutput() {
 
       if (!connector_) {
         connector_ = connector::getConnector(connectorSplit->connectorId);
-        connectorQueryCtx_ =
-            driverCtx_->createConnectorQueryCtx(connectorSplit->connectorId);
+        connectorQueryCtx_ = driverCtx_->createConnectorQueryCtx(
+            connectorSplit->connectorId, planNodeId_);
         dataSource_ = connector_->createDataSource(
             outputType_,
             tableHandle_,
@@ -87,9 +87,14 @@ RowVectorPtr TableScan::getOutput() {
 
       dataSource_->addSplit(connectorSplit);
       ++stats_.numSplits;
+      setBatchSize();
     }
 
-    auto data = dataSource_->next(kDefaultBatchSize);
+    const auto ioTimeStartMicros = getCurrentTimeMicro();
+    auto data = dataSource_->next(readBatchSize_);
+    stats().addRuntimeStat(
+        "dataSourceWallNanos",
+        (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000);
     stats_.rawInputPositions = dataSource_->getCompletedRows();
     stats_.rawInputBytes = dataSource_->getCompletedBytes();
     if (data) {
@@ -107,6 +112,24 @@ RowVectorPtr TableScan::getOutput() {
   }
 }
 
+bool TableScan::isFinished() {
+  return noMoreSplits_;
+}
+
+void TableScan::setBatchSize() {
+  constexpr int64_t kMB = 1 << 20;
+  auto estimate = dataSource_->estimatedRowSize();
+  if (estimate == connector::DataSource::kUnknownRowSize) {
+    readBatchSize_ = kDefaultBatchSize;
+    return;
+  }
+  if (estimate < 1024) {
+    readBatchSize_ = 10000; // No more than 10MB of data per batch.
+    return;
+  }
+  readBatchSize_ = std::min<int64_t>(100, 10 * kMB / estimate);
+}
+
 void TableScan::addDynamicFilter(
     ChannelIndex outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
@@ -115,10 +138,6 @@ void TableScan::addDynamicFilter(
   } else {
     pendingDynamicFilters_.emplace(outputChannel, filter);
   }
-}
-
-void TableScan::close() {
-  // TODO Implement
 }
 
 } // namespace facebook::velox::exec

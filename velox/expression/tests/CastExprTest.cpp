@@ -14,46 +14,150 @@
  * limitations under the License.
  */
 
+#include <limits>
+#include "velox/buffer/Buffer.h"
+#include "velox/common/memory/Memory.h"
 #include "velox/expression/ControlExpr.h"
+#include "velox/expression/VectorFunction.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/type/Type.h"
+#include "velox/vector/BaseVector.h"
+#include "velox/vector/TypeAliases.h"
 
 using namespace facebook::velox;
 
-class CastExprTest : public functions::test::FunctionBaseTest {
- protected:
-  template <typename T>
-  std::shared_ptr<T> evaluate(
-      const std::string& expression,
-      RowVectorPtr data) {
-    auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
-    exec::ExprSet exprSet({makeTypedExpr(expression, rowType)}, &execCtx_);
+namespace {
 
-    SelectivityVector rows(data->size());
-    exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
-    std::vector<VectorPtr> result(1);
-    exprSet.eval(rows, &evalCtx, &result);
-    return std::dynamic_pointer_cast<T>(result[0]);
+/// Returns indices buffer with sequential values going from size - 1 to 0.
+BufferPtr makeIndicesInReverse(vector_size_t size, memory::MemoryPool* pool) {
+  auto indices = allocateIndices(size, pool);
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  for (auto i = 0; i < size; i++) {
+    rawIndices[i] = size - 1 - i;
+  }
+  return indices;
+}
+
+/// Wraps input in a dictionary that reverses the order of rows.
+class TestingDictionaryFunction : public exec::VectorFunction {
+ public:
+  bool isDefaultNullBehavior() const override {
+    return false;
   }
 
-  template <typename T>
-  std::shared_ptr<T> evaluateComplexCast(
-      const std::string& fromExpression,
-      RowVectorPtr data,
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& /* outputType */,
+      exec::EvalCtx* context,
+      VectorPtr* result) const override {
+    VELOX_CHECK(rows.isAllSelected());
+    const auto size = rows.size();
+    auto indices = makeIndicesInReverse(size, context->pool());
+    *result = BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), indices, size, args[0]);
+  }
+
+  static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
+    // T, integer -> T
+    return {exec::FunctionSignatureBuilder()
+                .typeVariable("T")
+                .returnType("T")
+                .argumentType("T")
+                .build()};
+  }
+};
+} // namespace
+
+class CastExprTest : public functions::test::FunctionBaseTest {
+ protected:
+  CastExprTest() {
+    exec::registerVectorFunction(
+        "testing_dictionary",
+        TestingDictionaryFunction::signatures(),
+        std::make_unique<TestingDictionaryFunction>());
+  }
+
+  void setCastIntByTruncate(bool value) {
+    queryCtx_->setConfigOverridesUnsafe({
+        {core::QueryConfig::kCastIntByTruncate, std::to_string(value)},
+    });
+  }
+
+  void setCastMatchStructByName(bool value) {
+    queryCtx_->setConfigOverridesUnsafe({
+        {core::QueryConfig::kCastMatchStructByName, std::to_string(value)},
+    });
+  }
+
+  void setTimezone(const std::string& value) {
+    queryCtx_->setConfigOverridesUnsafe({
+        {core::QueryConfig::kSessionTimezone, value},
+        {core::QueryConfig::kAdjustTimestampToTimezone, "true"},
+    });
+  }
+
+  std::shared_ptr<core::CastTypedExpr> makeCastExpr(
+      const std::shared_ptr<const core::ITypedExpr>& input,
       const TypePtr& toType,
+      bool nullOnFailure) {
+    std::vector<std::shared_ptr<const core::ITypedExpr>> inputs = {input};
+    return std::make_shared<core::CastTypedExpr>(toType, inputs, nullOnFailure);
+  }
+
+  void testComplexCast(
+      const std::string& fromExpression,
+      const VectorPtr& data,
+      const VectorPtr& expected,
       bool nullOnFailure = false) {
-    auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
-    auto fromTypedExpression = makeTypedExpr(fromExpression, rowType);
-    std::vector<std::shared_ptr<const facebook::velox::core::ITypedExpr>>
-        inputs = {fromTypedExpression};
-    auto castExpr = std::make_shared<facebook::velox::core::CastTypedExpr>(
-        toType, inputs, nullOnFailure);
+    auto rowVector = makeRowVector({data});
+    auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+    auto castExpr = makeCastExpr(
+        makeTypedExpr(fromExpression, rowType),
+        expected->type(),
+        nullOnFailure);
     exec::ExprSet exprSet({castExpr}, &execCtx_);
 
-    SelectivityVector rows(data->size());
-    exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
+    const auto size = data->size();
+    SelectivityVector rows(size);
     std::vector<VectorPtr> result(1);
-    exprSet.eval(rows, &evalCtx, &result);
-    return std::dynamic_pointer_cast<T>(result[0]);
+    {
+      exec::EvalCtx evalCtx(&execCtx_, &exprSet, rowVector.get());
+      exprSet.eval(rows, &evalCtx, &result);
+
+      assertEqualVectors(expected, result[0]);
+    }
+
+    // Test constant input.
+    {
+      // Use last element for constant.
+      const auto index = size - 1;
+      auto constantData = BaseVector::wrapInConstant(size, index, data);
+      auto constantRow = makeRowVector({constantData});
+      exec::EvalCtx evalCtx(&execCtx_, &exprSet, constantRow.get());
+      exprSet.eval(rows, &evalCtx, &result);
+
+      assertEqualVectors(
+          BaseVector::wrapInConstant(size, index, expected), result[0]);
+    }
+
+    // Test dictionary input. It is not sufficient to wrap input in a dictionary
+    // as it will be peeled off before calling "cast". Apply
+    // testing_dictionary function to input to ensure that "cast" receives
+    // dictionary input.
+    {
+      auto dictionaryCastExpr = makeCastExpr(
+          makeTypedExpr(
+              fmt::format("testing_dictionary({})", fromExpression), rowType),
+          expected->type(),
+          nullOnFailure);
+      exec::ExprSet dictionaryExprSet({dictionaryCastExpr}, &execCtx_);
+      exec::EvalCtx evalCtx(&execCtx_, &dictionaryExprSet, rowVector.get());
+      dictionaryExprSet.eval(rows, &evalCtx, &result);
+
+      auto indices = ::makeIndicesInReverse(size, pool());
+      assertEqualVectors(wrapInDictionary(indices, size, expected), result[0]);
+    }
   }
 
   /**
@@ -176,10 +280,7 @@ TEST_F(CastExprTest, timestampInvalid) {
 }
 
 TEST_F(CastExprTest, timestampAdjustToTimezone) {
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kSessionTimezone, "America/Los_Angeles"},
-      {core::QueryCtx::kAdjustTimestampToTimezone, "true"},
-  });
+  setTimezone("America/Los_Angeles");
 
   // Expect unix epochs to be converted to LA timezone (8h offset).
   testCast<std::string, Timestamp>(
@@ -204,10 +305,7 @@ TEST_F(CastExprTest, timestampAdjustToTimezone) {
       });
 
   // Empty timezone is assumed to be GMT.
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kSessionTimezone, ""},
-      {core::QueryCtx::kAdjustTimestampToTimezone, "true"},
-  });
+  setTimezone("");
   testCast<std::string, Timestamp>(
       "timestamp", {"1970-01-01"}, {Timestamp(0, 0)});
 }
@@ -218,37 +316,76 @@ TEST_F(CastExprTest, timestampAdjustToTimezoneInvalid) {
         "timestamp", {"1970-01-01"}, {Timestamp(1, 0)});
   };
 
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kSessionTimezone, "bla"},
-      {core::QueryCtx::kAdjustTimestampToTimezone, "true"},
-  });
+  setTimezone("bla");
   EXPECT_THROW(testFunc(), std::runtime_error);
+}
+
+TEST_F(CastExprTest, date) {
+  testCast<std::string, Date>(
+      "date",
+      {
+          "1970-01-01",
+          "2020-01-01",
+          "2135-11-09",
+          "1969-12-27",
+          "1812-04-15",
+          "1920-01-02",
+          std::nullopt,
+      },
+      {
+          Date(0),
+          Date(18262),
+          Date(60577),
+          Date(-5),
+          Date(-57604),
+          Date(-18262),
+          std::nullopt,
+      });
+}
+
+TEST_F(CastExprTest, invalidDate) {
+  testCast<int8_t, Date>("date", {12}, {Date(0)}, true);
+  testCast<int16_t, Date>("date", {1234}, {Date(0)}, true);
+  testCast<int32_t, Date>("date", {1234}, {Date(0)}, true);
+  testCast<int64_t, Date>("date", {1234}, {Date(0)}, true);
+
+  testCast<float, Date>("date", {12.99}, {Date(0)}, true);
+  testCast<double, Date>("date", {12.99}, {Date(0)}, true);
+
+  // Parsing an ill-formated date.
+  testCast<std::string, Date>("date", {"2012-Oct-23"}, {Date(0)}, true);
 }
 
 TEST_F(CastExprTest, truncateVsRound) {
   // Testing truncate vs round cast from double to int.
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastIntByTruncate, "true"},
-  });
+  setCastIntByTruncate(true);
   testCast<double, int>(
       "int", {1.888, 2.5, 3.6, 100.44, -100.101}, {1, 2, 3, 100, -100});
+  testCast<double, int8_t>(
+      "tinyint",
+      {1,
+       256,
+       257,
+       2147483646,
+       2147483647,
+       2147483648,
+       -2147483646,
+       -2147483647,
+       -2147483648,
+       -2147483649},
+      {1, 0, 1, -2, -1, -1, 2, 1, 0, 0});
 
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastIntByTruncate, "false"},
-  });
+  setCastIntByTruncate(false);
   testCast<double, int>(
       "int", {1.888, 2.5, 3.6, 100.44, -100.101}, {2, 3, 4, 100, -100});
 
   testCast<int8_t, int32_t>("int", {111, 2, 3, 10, -10}, {111, 2, 3, 10, -10});
 
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastIntByTruncate, "true"},
-  });
+  setCastIntByTruncate(true);
   testCast<int32_t, int8_t>(
       "tinyint", {1111111, 2, 3, 1000, -100101}, {71, 2, 3, -24, -5});
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastIntByTruncate, "false"},
-  });
+
+  setCastIntByTruncate(false);
   EXPECT_THROW(
       (testCast<int32_t, int8_t>(
           "tinyint", {1111111, 2, 3, 1000, -100101}, {71, 2, 3, -24, -5})),
@@ -280,19 +417,44 @@ TEST_F(CastExprTest, errorHandling) {
       false,
       true);
 
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastIntByTruncate, "true"},
-  });
-  testCast<double, int>(
-      "int",
-      {1e12, 2.5, 3.6, 100.44, -100.101},
-      {std::nullopt, 2, 3, 100, -100},
+  setCastIntByTruncate(true);
+  testCast<std::string, int8_t>(
+      "tinyint",
+      {"-",
+       "-0",
+       " @w 123",
+       "123 ",
+       "  122",
+       "",
+       "-12-3",
+       "125.5",
+       "1234",
+       "-129",
+       "127",
+       "-128"},
+      {std::nullopt,
+       0,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       127,
+       -128},
       false,
       true);
 
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastIntByTruncate, "false"},
-  });
+  testCast<double, int>(
+      "integer",
+      {1e12, 2.5, 3.6, 100.44, -100.101},
+      {std::numeric_limits<int32_t>::max(), 2, 3, 100, -100},
+      false,
+      true);
+
+  setCastIntByTruncate(false);
   testCast<double, int>(
       "int", {1.888, 2.5, 3.6, 100.44, -100.101}, {2, 3, 4, 100, -100});
 
@@ -318,9 +480,7 @@ TEST_F(CastExprTest, mapCast) {
     auto expectedMap = makeMapVector<int32_t, double>(
         kVectorSize, sizeAt, keyAt, valueAt, nullEvery(3));
 
-    auto result = evaluateComplexCast<MapVector>(
-        "c0", makeRowVector({inputMap}), MAP(INTEGER(), DOUBLE()));
-    assertEqualVectors(expectedMap, result);
+    testComplexCast("c0", inputMap, expectedMap);
   }
 
   // Cast map<bigint, bigint> -> map<bigint, varchar>.
@@ -332,9 +492,7 @@ TEST_F(CastExprTest, mapCast) {
     auto expectedMap = makeMapVector<int64_t, StringView>(
         kVectorSize, sizeAt, keyAt, valueAtString, nullEvery(3));
 
-    auto result = evaluateComplexCast<MapVector>(
-        "c0", makeRowVector({inputMap}), MAP(BIGINT(), VARCHAR()));
-    assertEqualVectors(expectedMap, result);
+    testComplexCast("c0", inputMap, expectedMap);
   }
 
   // Cast map<bigint, bigint> -> map<varchar, bigint>.
@@ -346,9 +504,7 @@ TEST_F(CastExprTest, mapCast) {
     auto expectedMap = makeMapVector<StringView, int64_t>(
         kVectorSize, sizeAt, keyAtString, valueAt, nullEvery(3));
 
-    auto result = evaluateComplexCast<MapVector>(
-        "c0", makeRowVector({inputMap}), MAP(VARCHAR(), BIGINT()));
-    assertEqualVectors(expectedMap, result);
+    testComplexCast("c0", inputMap, expectedMap);
   }
 
   // null values
@@ -359,9 +515,7 @@ TEST_F(CastExprTest, mapCast) {
     auto expectedMap = makeMapVector<int32_t, double>(
         kVectorSize, sizeAt, keyAt, valueAt, nullEvery(3), nullEvery(7));
 
-    auto result = evaluateComplexCast<MapVector>(
-        "c0", makeRowVector({inputWithNullValues}), MAP(INTEGER(), DOUBLE()));
-    assertEqualVectors(expectedMap, result);
+    testComplexCast("c0", inputWithNullValues, expectedMap);
   }
 }
 
@@ -375,11 +529,9 @@ TEST_F(CastExprTest, arrayCast) {
 
   // Cast array<double> -> array<bigint>.
   {
-    auto expectedVector =
+    auto expected =
         makeArrayVector<int64_t>(kVectorSize, sizeAt, valueAt, nullEvery(3));
-    auto result = evaluateComplexCast<ArrayVector>(
-        "c0", makeRowVector({arrayVector}), ARRAY(BIGINT()));
-    assertEqualVectors(expectedVector, result);
+    testComplexCast("c0", arrayVector, expected);
   }
 
   // Cast array<double> -> array<varchar>.
@@ -387,11 +539,9 @@ TEST_F(CastExprTest, arrayCast) {
     auto valueAtString = [valueAt](vector_size_t row, vector_size_t idx) {
       return StringView(folly::to<std::string>(valueAt(row, idx)));
     };
-    auto expectedVector = makeArrayVector<StringView>(
+    auto expected = makeArrayVector<StringView>(
         kVectorSize, sizeAt, valueAtString, nullEvery(3));
-    auto result = evaluateComplexCast<ArrayVector>(
-        "c0", makeRowVector({arrayVector}), ARRAY(VARCHAR()));
-    assertEqualVectors(expectedVector, result);
+    testComplexCast("c0", arrayVector, expected);
   }
 }
 
@@ -409,53 +559,39 @@ TEST_F(CastExprTest, rowCast) {
   auto rowVector = makeRowVector(
       {intVectorNullEvery11, doubleVectorNullEvery3}, nullEvery(5));
 
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastMatchStructByName, "false"},
-  });
+  setCastMatchStructByName(false);
   // Position-based cast: ROW(c0: bigint, c1: double) -> ROW(c0: double, c1:
   // bigint)
   {
     auto expectedRowVector = makeRowVector(
         {doubleVectorNullEvery11, intVectorNullEvery3}, nullEvery(5));
-    auto result = evaluateComplexCast<RowVector>(
-        "c0",
-        makeRowVector({rowVector}),
-        ROW({"c0", "c1"}, {DOUBLE(), BIGINT()}));
-    assertEqualVectors(expectedRowVector, result);
+    testComplexCast("c0", rowVector, expectedRowVector);
   }
   // Position-based cast: ROW(c0: bigint, c1: double) -> ROW(a: double, b:
   // bigint)
   {
     auto expectedRowVector = makeRowVector(
-        {doubleVectorNullEvery11, intVectorNullEvery3}, nullEvery(5));
-    auto result = evaluateComplexCast<RowVector>(
-        "c0",
-        makeRowVector({rowVector}),
-        ROW({"a", "b"}, {DOUBLE(), BIGINT()}));
-    assertEqualVectors(expectedRowVector, result);
+        {"a", "b"},
+        {doubleVectorNullEvery11, intVectorNullEvery3},
+        nullEvery(5));
+    testComplexCast("c0", rowVector, expectedRowVector);
   }
   // Position-based cast: ROW(c0: bigint, c1: double) -> ROW(c0: double)
   {
     auto expectedRowVector =
         makeRowVector({doubleVectorNullEvery11}, nullEvery(5));
-    auto result = evaluateComplexCast<RowVector>(
-        "c0", makeRowVector({rowVector}), ROW({"c0"}, {DOUBLE()}));
-    assertEqualVectors(expectedRowVector, result);
+    testComplexCast("c0", rowVector, expectedRowVector);
   }
-  // Name-based cast: ROW(c0: bigint, c1: double) -> ROW(c0: double) dropping b
-  queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kCastMatchStructByName, "true"},
-  });
+
+  // Name-based cast: ROW(c0: bigint, c1: double) -> ROW(c0: double) dropping
+  // b
+  setCastMatchStructByName(true);
   {
     auto intVectorNullAll = makeFlatVector<int64_t>(
         kVectorSize, valueAtInt, [](vector_size_t /* row */) { return true; });
     auto expectedRowVector = makeRowVector(
-        {doubleVectorNullEvery11, intVectorNullAll}, nullEvery(5));
-    auto result = evaluateComplexCast<RowVector>(
-        "c0",
-        makeRowVector({rowVector}),
-        ROW({"c0", "b"}, {DOUBLE(), BIGINT()}));
-    assertEqualVectors(expectedRowVector, result);
+        {"c0", "b"}, {doubleVectorNullEvery11, intVectorNullAll}, nullEvery(5));
+    testComplexCast("c0", rowVector, expectedRowVector);
   }
 }
 
@@ -479,16 +615,10 @@ TEST_F(CastExprTest, testNullOnFailure) {
       makeNullableFlatVector<std::string>({"1", "2", "", "3.4", std::nullopt});
   auto expected = makeNullableFlatVector<int32_t>(
       {1, 2, std::nullopt, std::nullopt, std::nullopt});
-  auto rowVector = makeRowVector({input});
-  auto result = evaluateComplexCast<FlatVector<int32_t>>(
-      "c0", rowVector, INTEGER(), true);
 
-  // nullOnFailure is true, so we should return null instead of throwing
-  assertEqualVectors(expected, result);
+  // nullOnFailure is true, so we should return null instead of throwing.
+  testComplexCast("c0", input, expected, true);
 
-  // nullOnFailure is false, so we should throw
-  EXPECT_THROW(
-      evaluateComplexCast<FlatVector<int32_t>>(
-          "c0", rowVector, INTEGER(), false),
-      std::exception);
+  // nullOnFailure is false, so we should throw.
+  EXPECT_THROW(testComplexCast("c0", input, expected, false), std::exception);
 }

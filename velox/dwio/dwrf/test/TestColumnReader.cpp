@@ -32,11 +32,11 @@
 #include <gtest/gtest.h>
 
 using namespace ::testing;
-using namespace facebook::dwio::common;
+using namespace facebook::velox::dwio::common;
 using namespace facebook::velox;
 using namespace facebook::velox::dwrf;
 using namespace facebook::velox::test;
-using facebook::dwio::type::fbhive::HiveTypeParser;
+using facebook::velox::dwio::type::fbhive::HiveTypeParser;
 
 class TestStrideIndexProvider : public StrideIndexProvider {
  public:
@@ -104,7 +104,11 @@ class SelectiveColumnReaderBuilder {
     makeFieldSpecs("", 0, rowType, scanSpec_.get());
 
     return SelectiveColumnReader::build(
-        cs.getSchemaWithId(), dataTypeWithId, stripe, scanSpec_.get(), 0);
+        cs.getSchemaWithId(),
+        dataTypeWithId,
+        stripe,
+        scanSpec_.get(),
+        FlatMapContext::nonFlatMapContext());
   }
 
  private:
@@ -137,11 +141,13 @@ std::unique_ptr<ColumnReader> buildColumnReader(
 struct StringReaderTestParams {
   const bool useSelectiveReader;
   const bool returnFlatVector;
+  const bool expectMemoryReuse;
 
   std::string toString() const {
     std::ostringstream out;
     out << (useSelectiveReader ? "selective" : "") << "_"
-        << (returnFlatVector ? "as_flat" : "");
+        << (returnFlatVector ? "as_flat" : "") << "_"
+        << (expectMemoryReuse ? "reuse" : "");
     return out.str();
   }
 };
@@ -150,7 +156,7 @@ class StringReaderTests
     : public ::testing::TestWithParam<StringReaderTestParams> {
  protected:
   StringReaderTests()
-      : expectMemoryReuse_{!useSelectiveReader()},
+      : expectMemoryReuse_{GetParam().expectMemoryReuse},
         returnFlatVector_{GetParam().returnFlatVector} {}
 
   std::unique_ptr<ColumnReader> buildReader(
@@ -239,9 +245,21 @@ std::shared_ptr<T> getChild(std::shared_ptr<F>& batch, size_t index) {
   return child;
 }
 
-class TestColumnReader : public testing::TestWithParam<bool> {
+struct ReaderTestParams {
+  const bool useSelectiveReader;
+  const bool expectMemoryReuse;
+
+  std::string toString() const {
+    std::ostringstream out;
+    out << (useSelectiveReader ? "selective" : "") << "_"
+        << (expectMemoryReuse ? "reuse" : "");
+    return out.str();
+  }
+};
+
+class TestColumnReader : public testing::TestWithParam<ReaderTestParams> {
  protected:
-  TestColumnReader() : expectMemoryReuse_{!useSelectiveReader()} {}
+  TestColumnReader() : expectMemoryReuse_{GetParam().expectMemoryReuse} {}
 
   std::unique_ptr<ColumnReader> buildReader(
       const std::shared_ptr<const Type>& requestedType,
@@ -275,7 +293,7 @@ class TestColumnReader : public testing::TestWithParam<bool> {
   }
 
   bool useSelectiveReader() const {
-    return GetParam();
+    return GetParam().useSelectiveReader;
   }
 
   const bool expectMemoryReuse_;
@@ -296,6 +314,9 @@ TEST_P(TestColumnReader, testBooleanWithNulls) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
+
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   // alternate 4 non-null and 4 null via [0xf0 for x in range(512 / 8)]
@@ -342,6 +363,8 @@ TEST_P(TestColumnReader, testBooleanWithNullsFractional) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   // alternate 4 non-null and 4 null via [0xf0 for x in range(512 / 8)]
@@ -377,11 +400,15 @@ TEST_P(TestColumnReader, testBooleanWithNullsFractional) {
           << "Wrong value at " << i;
     }
   }
+
+  auto boolBatchPtr = boolBatch.get();
+  if (expectMemoryReuse_) {
+    boolBatch.reset();
+  }
   skipAndRead(reader, batch, /* read */ 2);
 
-  if (!expectMemoryReuse_) {
-    boolBatch = getOnlyChild<FlatVector<bool>>(batch);
-  }
+  boolBatch = getOnlyChild<FlatVector<bool>>(batch);
+  ASSERT_EQ(expectMemoryReuse_, boolBatch.get() == boolBatchPtr);
 
   ASSERT_EQ(2, boolBatch->size());
   ASSERT_EQ(1, getNullCount(boolBatch));
@@ -398,6 +425,8 @@ TEST_P(TestColumnReader, testBooleanSkipsWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
@@ -424,11 +453,14 @@ TEST_P(TestColumnReader, testBooleanSkipsWithNulls) {
   ASSERT_EQ(0, getNullCount(boolBatch));
   EXPECT_EQ(0, boolBatch->valueAt(0));
 
+  auto boolBatchPtr = boolBatch.get();
+  if (expectMemoryReuse_) {
+    boolBatch.reset();
+  }
   skipAndRead(reader, batch, /* read */ 5, /* skip */ 506);
 
-  if (!expectMemoryReuse_) {
-    boolBatch = getOnlyChild<FlatVector<bool>>(batch);
-  }
+  boolBatch = getOnlyChild<FlatVector<bool>>(batch);
+  ASSERT_EQ(expectMemoryReuse_, boolBatch.get() == boolBatchPtr);
 
   ASSERT_EQ(5, boolBatch->size());
   ASSERT_EQ(4, getNullCount(boolBatch));
@@ -448,6 +480,8 @@ TEST_P(TestColumnReader, testByteWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
@@ -503,6 +537,8 @@ TEST_P(TestColumnReader, testBatchReusedSizeEnsured) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_PRESENT, false))
@@ -540,6 +576,8 @@ TEST_P(TestColumnReader, testByteSkipsWithNulls) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   // alternate 4 non-null and 4 null via [0xf0 for x in range(512 / 8)]
@@ -573,11 +611,15 @@ TEST_P(TestColumnReader, testByteSkipsWithNulls) {
   ASSERT_EQ(1, byteBatch->size());
   ASSERT_EQ(0, getNullCount(byteBatch));
   EXPECT_EQ(0, byteBatch->valueAt(0));
+
+  auto byteBatchPtr = byteBatch.get();
+  if (expectMemoryReuse_) {
+    byteBatch.reset();
+  }
   skipAndRead(reader, batch, /* read */ 5, /* skip */ 506);
 
-  if (!expectMemoryReuse_) {
-    byteBatch = getOnlyChild<FlatVector<int8_t>>(batch);
-  }
+  byteBatch = getOnlyChild<FlatVector<int8_t>>(batch);
+  ASSERT_EQ(expectMemoryReuse_, byteBatch.get() == byteBatchPtr);
 
   ASSERT_EQ(5, byteBatch->size());
   ASSERT_EQ(4, getNullCount(byteBatch));
@@ -597,6 +639,8 @@ TEST_P(TestColumnReader, testIntegerWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
@@ -646,6 +690,8 @@ TEST_P(TestColumnReader, testIntDictSkipNoNullsAllInDict) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
@@ -678,10 +724,15 @@ TEST_P(TestColumnReader, testIntDictSkipNoNullsAllInDict) {
   VectorPtr batch = newBatch(rowType);
   FlatVectorPtr<int32_t> intBatch;
   for (int32_t round = 0; round < 2; ++round) {
+    auto intBatchPtr = intBatch.get();
+    if (expectMemoryReuse_) {
+      intBatch.reset();
+    }
     skipAndRead(reader, batch, /* read */ 40, /* skip */ 10);
 
-    if (!expectMemoryReuse_ || round == 0) {
-      intBatch = getOnlyChild<FlatVector<int32_t>>(batch);
+    intBatch = getOnlyChild<FlatVector<int32_t>>(batch);
+    if (round > 0) {
+      ASSERT_EQ(expectMemoryReuse_, intBatch.get() == intBatchPtr);
     }
 
     ASSERT_EQ(40, intBatch->size());
@@ -707,6 +758,8 @@ TEST_P(TestColumnReader, testIntDictSkipWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
@@ -756,11 +809,16 @@ TEST_P(TestColumnReader, testIntDictSkipWithNulls) {
   VectorPtr batch = newBatch(rowType);
   FlatVectorPtr<int32_t> intBatch;
   for (int32_t round = 0; round < 2; ++round) {
+    auto intBatchPtr = intBatch.get();
+    if (expectMemoryReuse_) {
+      intBatch.reset();
+    }
     skipAndRead(reader, batch, /* read */ 90, /* skip */ 10);
     next += 5;
 
-    if (!expectMemoryReuse_ || round == 0) {
-      intBatch = getOnlyChild<FlatVector<int32_t>>(batch);
+    intBatch = getOnlyChild<FlatVector<int32_t>>(batch);
+    if (round > 0) {
+      ASSERT_EQ(expectMemoryReuse_, intBatch.get() == intBatchPtr);
     }
     ASSERT_EQ(90, intBatch->size());
     ASSERT_LT(0, getNullCount(intBatch));
@@ -792,6 +850,8 @@ TEST_P(TestColumnReader, testIntDictBoundary) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
@@ -856,6 +916,8 @@ TEST_P(StringReaderTests, testDictionaryWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, _, _)).WillRepeatedly(Return(nullptr));
   const unsigned char buffer1[] = {0x19, 0xf0};
@@ -929,6 +991,8 @@ TEST_P(StringReaderTests, testStringDictSkipNoNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   char data[1024];
@@ -1030,16 +1094,21 @@ TEST_P(StringReaderTests, testStringDictSkipNoNulls) {
     rowCount += toSkip;
     uint64_t rowsRead = rowIndexStride - toSkip;
 
+    auto stringBatchPtr = stringBatch.get();
+    if (expectMemoryReuse_) {
+      stringBatch.reset();
+    }
     reader->next(rowsRead, batch);
     ASSERT_EQ(rowsRead, batch->size());
     ASSERT_EQ(0, getNullCount(batch));
 
-    if (!expectMemoryReuse_ || toSkip == 0) {
-      if (returnFlatVector_) {
-        stringBatch = getOnlyChild<FlatVector<StringView>>(batch);
-      } else {
-        stringBatch = getOnlyChild<DictionaryVector<StringView>>(batch);
-      }
+    if (returnFlatVector_) {
+      stringBatch = getOnlyChild<FlatVector<StringView>>(batch);
+    } else {
+      stringBatch = getOnlyChild<DictionaryVector<StringView>>(batch);
+    }
+    if (toSkip > 0) {
+      ASSERT_EQ(expectMemoryReuse_, stringBatch.get() == stringBatchPtr);
     }
     ASSERT_EQ(rowsRead, stringBatch->size());
     ASSERT_EQ(0, getNullCount(stringBatch));
@@ -1073,6 +1142,8 @@ TEST_P(StringReaderTests, testStringDictSkipWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   const unsigned char present[] = {0x16, 0xaa};
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_PRESENT, false))
@@ -1179,16 +1250,21 @@ TEST_P(StringReaderTests, testStringDictSkipWithNulls) {
   std::shared_ptr<SimpleVector<StringView>> stringBatch;
   VectorPtr rowVector;
   while (rowCount < 150) {
+    auto stringBatchPtr = stringBatch.get();
+    if (expectMemoryReuse_) {
+      stringBatch.reset();
+    }
     reader->next(rowIndexStride, batch);
     ASSERT_EQ(rowIndexStride, batch->size());
     ASSERT_EQ(0, getNullCount(batch));
 
-    if (!expectMemoryReuse_ || rowCount == 0) {
-      if (returnFlatVector_) {
-        stringBatch = getOnlyChild<FlatVector<StringView>>(batch);
-      } else {
-        stringBatch = getOnlyChild<DictionaryVector<StringView>>(batch);
-      }
+    if (returnFlatVector_) {
+      stringBatch = getOnlyChild<FlatVector<StringView>>(batch);
+    } else {
+      stringBatch = getOnlyChild<DictionaryVector<StringView>>(batch);
+    }
+    if (rowCount > 0) {
+      ASSERT_EQ(expectMemoryReuse_, stringBatch.get() == stringBatchPtr);
     }
     ASSERT_EQ(rowIndexStride, stringBatch->size());
     ASSERT_LT(0, getNullCount(stringBatch));
@@ -1307,6 +1383,8 @@ TEST_P(TestColumnReader, testSkipWithNulls) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
   const unsigned char buffer1[] = {
@@ -1369,12 +1447,18 @@ TEST_P(TestColumnReader, testSkipWithNulls) {
     EXPECT_TRUE(stringBatch->isNullAt(i)) << "Wrong at " << i;
   }
 
+  auto intBatchPtr = intBatch.get();
+  auto stringBatchPtr = stringBatch.get();
+  if (expectMemoryReuse_) {
+    intBatch.reset();
+    stringBatch.reset();
+  }
   skipAndRead(reader, batch, /* read */ 100, /* skip */ 30);
 
-  if (!expectMemoryReuse_) {
-    intBatch = getChild<SimpleVector<int32_t>>(batch, 0);
-    stringBatch = getChild<DictionaryVector<StringView>>(batch, 1);
-  }
+  intBatch = getChild<SimpleVector<int32_t>>(batch, 0);
+  stringBatch = getChild<DictionaryVector<StringView>>(batch, 1);
+  ASSERT_EQ(expectMemoryReuse_, intBatch.get() == intBatchPtr);
+  ASSERT_EQ(expectMemoryReuse_, stringBatch.get() == stringBatchPtr);
 
   ASSERT_EQ(0, getNullCount(intBatch));
   ASSERT_EQ(0, getNullCount(stringBatch));
@@ -1401,6 +1485,8 @@ TEST_P(StringReaderTests, testBinaryDirect) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
@@ -1434,10 +1520,15 @@ TEST_P(StringReaderTests, testBinaryDirect) {
   FlatVectorPtr<StringView> strings;
   VectorPtr rowVector;
   for (size_t i = 0; i < 2; ++i) {
+    auto stringsPtr = strings.get();
+    if (expectMemoryReuse_) {
+      strings.reset();
+    }
     skipAndRead(reader, batch, /* read */ 50);
 
-    if (!expectMemoryReuse_ || i == 0) {
-      strings = getOnlyChild<FlatVector<StringView>>(batch);
+    strings = getOnlyChild<FlatVector<StringView>>(batch);
+    if (i > 0) {
+      ASSERT_EQ(expectMemoryReuse_, strings.get() == stringsPtr);
     }
     ASSERT_EQ(50, strings->size());
     ASSERT_EQ(0, getNullCount(strings));
@@ -1458,6 +1549,8 @@ TEST_P(StringReaderTests, testBinaryDirectWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
@@ -1494,10 +1587,15 @@ TEST_P(StringReaderTests, testBinaryDirectWithNulls) {
   FlatVectorPtr<StringView> strings;
   VectorPtr rowVector;
   for (size_t i = 0; i < 2; ++i) {
+    auto stringsPtr = strings.get();
+    if (expectMemoryReuse_) {
+      strings.reset();
+    }
     skipAndRead(reader, batch, /* read */ 128);
 
-    if (!expectMemoryReuse_ || i == 0) {
-      strings = getOnlyChild<FlatVector<StringView>>(batch);
+    strings = getOnlyChild<FlatVector<StringView>>(batch);
+    if (i > 0) {
+      ASSERT_EQ(expectMemoryReuse_, strings.get() == stringsPtr);
     }
     ASSERT_EQ(128, strings->size());
     ASSERT_LT(0, getNullCount(strings));
@@ -1524,6 +1622,8 @@ TEST_P(TestColumnReader, testShortBlobError) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
@@ -1569,6 +1669,8 @@ TEST_P(StringReaderTests, testStringDirectShortBuffer) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
@@ -1601,10 +1703,15 @@ TEST_P(StringReaderTests, testStringDirectShortBuffer) {
   FlatVectorPtr<StringView> strings;
   VectorPtr rowVector;
   for (size_t i = 0; i < 4; ++i) {
+    auto stringsPtr = strings.get();
+    if (expectMemoryReuse_) {
+      strings.reset();
+    }
     skipAndRead(reader, batch, /* read */ 25);
 
-    if (!expectMemoryReuse_ || i == 0) {
-      strings = getOnlyChild<FlatVector<StringView>>(batch);
+    strings = getOnlyChild<FlatVector<StringView>>(batch);
+    if (i > 0) {
+      ASSERT_EQ(expectMemoryReuse_, strings.get() == stringsPtr);
     }
     ASSERT_EQ(25, strings->size());
     ASSERT_EQ(0, getNullCount(strings));
@@ -1625,6 +1732,8 @@ TEST_P(StringReaderTests, testStringDirectShortBufferWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
@@ -1661,10 +1770,15 @@ TEST_P(StringReaderTests, testStringDirectShortBufferWithNulls) {
   FlatVectorPtr<StringView> strings;
   VectorPtr rowVector;
   for (size_t i = 0; i < 8; ++i) {
+    auto stringsPtr = strings.get();
+    if (expectMemoryReuse_) {
+      strings.reset();
+    }
     skipAndRead(reader, batch, /* read */ 64);
 
-    if (!expectMemoryReuse_ || i == 0) {
-      strings = getOnlyChild<FlatVector<StringView>>(batch);
+    strings = getOnlyChild<FlatVector<StringView>>(batch);
+    if (i > 0) {
+      ASSERT_EQ(expectMemoryReuse_, strings.get() == stringsPtr);
     }
 
     ASSERT_EQ(64, strings->size());
@@ -1697,6 +1811,8 @@ TEST_P(StringReaderTests, testStringDirectNullAcrossWindow) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
@@ -1771,6 +1887,8 @@ TEST_P(StringReaderTests, testStringDirectSkip) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
@@ -1836,6 +1954,8 @@ TEST_P(StringReaderTests, testStringDirectSkipWithNulls) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
@@ -2069,7 +2189,8 @@ TEST_P(TestColumnReader, testListWithNulls) {
   ASSERT_EQ(512, lists->size());
   ASSERT_LT(0, getNullCount(lists));
 
-  auto longs = lists->elements()->asFlatVector<int64_t>();
+  auto longs =
+      std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
   ASSERT_EQ(256, longs->size());
   ASSERT_EQ(0, getNullCount(longs));
   for (size_t i = 0; i < batch->size(); ++i) {
@@ -2081,7 +2202,17 @@ TEST_P(TestColumnReader, testListWithNulls) {
     EXPECT_EQ(i, longs->valueAt(i));
   }
 
+  auto listsPtr = lists.get();
+  auto longsPtr = longs.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+    longs.reset();
+  }
   skipAndRead(reader, batch, /* read */ 512);
+  lists = getOnlyChild<ArrayVector>(batch);
+  longs = std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
+  ASSERT_EQ(expectMemoryReuse_, longs.get() == longsPtr);
 
   ASSERT_EQ(512, lists->size());
   ASSERT_LT(0, getNullCount(lists));
@@ -2101,7 +2232,17 @@ TEST_P(TestColumnReader, testListWithNulls) {
     EXPECT_EQ(256 + i, longs->valueAt(i));
   }
 
+  listsPtr = lists.get();
+  longsPtr = longs.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+    longs.reset();
+  }
   skipAndRead(reader, batch, /* read */ 512);
+  lists = getOnlyChild<ArrayVector>(batch);
+  longs = std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
+  ASSERT_EQ(expectMemoryReuse_, longs.get() == longsPtr);
 
   ASSERT_EQ(512, lists->size());
   ASSERT_LT(0, getNullCount(lists));
@@ -2121,7 +2262,17 @@ TEST_P(TestColumnReader, testListWithNulls) {
     EXPECT_EQ(1268 + i, longs->valueAt(i));
   }
 
+  listsPtr = lists.get();
+  longsPtr = longs.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+    longs.reset();
+  }
   skipAndRead(reader, batch, /* read */ 512);
+  lists = getOnlyChild<ArrayVector>(batch);
+  longs = std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
+  ASSERT_EQ(expectMemoryReuse_, longs.get() == longsPtr);
 
   ASSERT_EQ(512, lists->size());
   ASSERT_LT(0, getNullCount(lists));
@@ -2203,13 +2354,24 @@ TEST_P(TestColumnReader, testListSkipWithNulls) {
   ASSERT_EQ(1, lists->size());
   ASSERT_EQ(0, getNullCount(lists));
 
-  auto longs = lists->elements()->asFlatVector<int64_t>();
+  auto longs =
+      std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
   ASSERT_EQ(1, longs->size());
   ASSERT_EQ(0, getNullCount(longs));
   EXPECT_EQ(0, lists->offsetAt(0));
   EXPECT_EQ(0, longs->valueAt(0));
 
+  auto listsPtr = lists.get();
+  auto longsPtr = longs.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+    longs.reset();
+  }
   skipAndRead(reader, batch, /* read */ 1, /* skip */ 13);
+  lists = getOnlyChild<ArrayVector>(batch);
+  longs = std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
+  ASSERT_EQ(expectMemoryReuse_, longs.get() == longsPtr);
 
   ASSERT_EQ(1, lists->size());
   ASSERT_EQ(0, getNullCount(lists));
@@ -2218,7 +2380,17 @@ TEST_P(TestColumnReader, testListSkipWithNulls) {
   EXPECT_EQ(0, lists->offsetAt(0));
   EXPECT_EQ(7, longs->valueAt(0));
 
+  listsPtr = lists.get();
+  longsPtr = longs.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+    longs.reset();
+  }
   skipAndRead(reader, batch, /* read */ 2, /* skip */ 2031);
+  lists = getOnlyChild<ArrayVector>(batch);
+  longs = std::dynamic_pointer_cast<FlatVector<int64_t>>(lists->elements());
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
+  ASSERT_EQ(expectMemoryReuse_, longs.get() == longsPtr);
 
   ASSERT_EQ(2, lists->size());
   ASSERT_LT(0, getNullCount(lists));
@@ -2286,13 +2458,25 @@ TEST_P(TestColumnReader, testListSkipWithNullsNoData) {
   ASSERT_EQ(0, getNullCount(lists));
   EXPECT_EQ(0, lists->offsetAt(0));
 
+  auto listsPtr = lists.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+  }
   skipAndRead(reader, batch, /* read */ 1, /* skip */ 13);
+  lists = getOnlyChild<ArrayVector>(batch);
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
 
   ASSERT_EQ(1, lists->size());
   ASSERT_EQ(0, getNullCount(lists));
   EXPECT_EQ(0, lists->offsetAt(0));
 
+  listsPtr = lists.get();
+  if (expectMemoryReuse_) {
+    lists.reset();
+  }
   skipAndRead(reader, batch, /* read */ 2, /* skip */ 2031);
+  lists = getOnlyChild<ArrayVector>(batch);
+  ASSERT_EQ(expectMemoryReuse_, lists.get() == listsPtr);
 
   ASSERT_EQ(2, lists->size());
   ASSERT_LT(0, getNullCount(lists));
@@ -2486,11 +2670,12 @@ TEST_P(TestColumnReader, testMapWithNulls) {
   ASSERT_EQ(512, maps->size());
   ASSERT_LT(0, getNullCount(maps));
 
-  auto keys = maps->mapKeys()->asFlatVector<int64_t>();
+  auto keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
   ASSERT_EQ(256, keys->size());
   ASSERT_EQ(0, getNullCount(keys));
 
-  auto elements = maps->mapValues()->asFlatVector<int64_t>();
+  auto elements =
+      std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
   ASSERT_EQ(256, elements->size());
   ASSERT_LT(0, getNullCount(elements));
   for (size_t i = 0; i < batch->size(); ++i) {
@@ -2506,7 +2691,21 @@ TEST_P(TestColumnReader, testMapWithNulls) {
     }
   }
 
+  auto mapsPtr = maps.get();
+  auto keysPtr = keys.get();
+  auto elementsPtr = elements.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+    keys.reset();
+    elements.reset();
+  }
   skipAndRead(reader, batch, /* read */ 512);
+  maps = getOnlyChild<MapVector>(batch);
+  keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
+  elements = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
+  ASSERT_EQ(expectMemoryReuse_, keys.get() == keysPtr);
+  ASSERT_EQ(expectMemoryReuse_, elements.get() == elementsPtr);
 
   ASSERT_EQ(512, maps->size());
   ASSERT_LT(0, getNullCount(maps));
@@ -2531,7 +2730,21 @@ TEST_P(TestColumnReader, testMapWithNulls) {
     }
   }
 
+  mapsPtr = maps.get();
+  keysPtr = keys.get();
+  elementsPtr = elements.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+    keys.reset();
+    elements.reset();
+  }
   skipAndRead(reader, batch, /* read */ 512);
+  maps = getOnlyChild<MapVector>(batch);
+  keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
+  elements = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
+  ASSERT_EQ(expectMemoryReuse_, keys.get() == keysPtr);
+  ASSERT_EQ(expectMemoryReuse_, elements.get() == elementsPtr);
 
   ASSERT_EQ(512, maps->size());
   ASSERT_LT(0, getNullCount(maps));
@@ -2555,7 +2768,21 @@ TEST_P(TestColumnReader, testMapWithNulls) {
     }
   }
 
+  mapsPtr = maps.get();
+  keysPtr = keys.get();
+  elementsPtr = elements.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+    keys.reset();
+    elements.reset();
+  }
   skipAndRead(reader, batch, /* read */ 512);
+  maps = getOnlyChild<MapVector>(batch);
+  keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
+  elements = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
+  ASSERT_EQ(expectMemoryReuse_, keys.get() == keysPtr);
+  ASSERT_EQ(expectMemoryReuse_, elements.get() == elementsPtr);
 
   ASSERT_EQ(512, maps->size());
   ASSERT_LT(0, getNullCount(maps));
@@ -2645,18 +2872,33 @@ TEST_P(TestColumnReader, testMapSkipWithNulls) {
   ASSERT_EQ(1, maps->size());
   ASSERT_EQ(0, getNullCount(maps));
 
-  auto keys = maps->mapKeys()->asFlatVector<int64_t>();
+  auto keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
   ASSERT_EQ(1, keys->size());
   ASSERT_EQ(0, getNullCount(keys));
 
-  auto elements = maps->mapValues()->asFlatVector<int64_t>();
+  auto elements =
+      std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
   ASSERT_EQ(1, elements->size());
   ASSERT_EQ(0, getNullCount(elements));
   EXPECT_EQ(0, maps->offsetAt(0));
   EXPECT_EQ(0, keys->valueAt(0));
   EXPECT_EQ(8, elements->valueAt(0));
 
+  auto mapsPtr = maps.get();
+  auto keysPtr = keys.get();
+  auto elementsPtr = elements.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+    keys.reset();
+    elements.reset();
+  }
   skipAndRead(reader, batch, /* read */ 1, /* skip */ 13);
+  maps = getOnlyChild<MapVector>(batch);
+  keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
+  elements = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
+  ASSERT_EQ(expectMemoryReuse_, keys.get() == keysPtr);
+  ASSERT_EQ(expectMemoryReuse_, elements.get() == elementsPtr);
 
   ASSERT_EQ(1, maps->size());
   ASSERT_EQ(0, getNullCount(maps));
@@ -2668,7 +2910,21 @@ TEST_P(TestColumnReader, testMapSkipWithNulls) {
   EXPECT_EQ(7, keys->valueAt(0));
   EXPECT_EQ(7 + 8, elements->valueAt(0));
 
+  mapsPtr = maps.get();
+  keysPtr = keys.get();
+  elementsPtr = elements.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+    keys.reset();
+    elements.reset();
+  }
   skipAndRead(reader, batch, /* read */ 2, /* skip */ 2031);
+  maps = getOnlyChild<MapVector>(batch);
+  keys = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapKeys());
+  elements = std::dynamic_pointer_cast<FlatVector<int64_t>>(maps->mapValues());
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
+  ASSERT_EQ(expectMemoryReuse_, keys.get() == keysPtr);
+  ASSERT_EQ(expectMemoryReuse_, elements.get() == elementsPtr);
 
   ASSERT_EQ(2, maps->size());
   ASSERT_LT(0, getNullCount(maps));
@@ -2732,13 +2988,25 @@ TEST_P(TestColumnReader, testMapSkipWithNullsNoData) {
   ASSERT_EQ(0, getNullCount(maps));
   EXPECT_EQ(0, maps->offsetAt(0));
 
+  auto mapsPtr = maps.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+  }
   skipAndRead(reader, batch, /* read */ 1, /* skip */ 13);
+  maps = getOnlyChild<MapVector>(batch);
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
 
   ASSERT_EQ(1, maps->size());
   ASSERT_EQ(0, getNullCount(maps));
   EXPECT_EQ(0, maps->offsetAt(0));
 
+  mapsPtr = maps.get();
+  if (expectMemoryReuse_) {
+    maps.reset();
+  }
   skipAndRead(reader, batch, /* read */ 2, /* skip */ 2031);
+  maps = getOnlyChild<MapVector>(batch);
+  ASSERT_EQ(expectMemoryReuse_, maps.get() == mapsPtr);
 
   ASSERT_EQ(2, maps->size());
   ASSERT_LT(0, getNullCount(maps));
@@ -2797,7 +3065,7 @@ TEST_P(TestColumnReader, testFloatBatchNotAligned) {
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
-  EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
+  EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   const float testValues[] = {1.0f, 2.5f, -100.125f};
@@ -2838,7 +3106,7 @@ TEST_P(TestColumnReader, testFloatWithNulls) {
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
-  EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
+  EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   // 13 non-nulls followed by 19 nulls
@@ -2907,7 +3175,7 @@ TEST_P(TestColumnReader, testFloatSkipWithNulls) {
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
-  EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
+  EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   // 2 non-nulls, 2 nulls, 2 non-nulls, 2 nulls
@@ -2964,11 +3232,15 @@ TEST_P(TestColumnReader, testFloatSkipWithNulls) {
     }
   }
 
+  auto floatBatchPtr = floatBatch.get();
+  if (expectMemoryReuse_) {
+    floatBatch.reset();
+  }
+
   skipAndRead(reader, batch, /* read */ 4, /* skip */ 1);
 
-  if (!expectMemoryReuse_) {
-    floatBatch = getOnlyChild<FlatVector<float>>(batch);
-  }
+  floatBatch = getOnlyChild<FlatVector<float>>(batch);
+  ASSERT_EQ(expectMemoryReuse_, floatBatch.get() == floatBatchPtr);
 
   ASSERT_EQ(4, floatBatch->size());
   ASSERT_LT(0, getNullCount(floatBatch));
@@ -2994,7 +3266,7 @@ TEST_P(TestColumnReader, testDoubleWithNulls) {
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
-  EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
+  EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   // 13 non-nulls followed by 19 nulls
@@ -3068,7 +3340,7 @@ TEST_P(TestColumnReader, testDoubleSkipWithNulls) {
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
-  EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_ROW_INDEX, false))
+  EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   // 1 non-null, 5 nulls, 2 non-nulls
@@ -3111,11 +3383,14 @@ TEST_P(TestColumnReader, testDoubleSkipWithNulls) {
     }
   }
 
+  auto doubleBatchPtr = doubleBatch.get();
+  if (expectMemoryReuse_) {
+    doubleBatch.reset();
+  }
   skipAndRead(reader, batch, /* read */ 3, /* skip */ 3);
 
-  if (!expectMemoryReuse_) {
-    doubleBatch = getOnlyChild<FlatVector<double>>(batch);
-  }
+  doubleBatch = getOnlyChild<FlatVector<double>>(batch);
+  ASSERT_EQ(expectMemoryReuse_, doubleBatch.get() == doubleBatchPtr);
 
   ASSERT_EQ(3, doubleBatch->size());
   ASSERT_LT(0, getNullCount(doubleBatch));
@@ -3196,44 +3471,50 @@ TEST_P(TestColumnReader, testTimestampSkipWithNulls) {
 
   skipAndRead(reader, batch, /* read */ 3);
 
-  auto longBatch = getOnlyChild<FlatVector<Timestamp>>(batch);
-  ASSERT_EQ(3, longBatch->size());
-  ASSERT_LT(0, getNullCount(longBatch));
+  auto tsBatch = getOnlyChild<FlatVector<Timestamp>>(batch);
+  ASSERT_EQ(3, tsBatch->size());
+  ASSERT_LT(0, getNullCount(tsBatch));
 
   for (size_t i = 0; i < batch->size(); ++i) {
     if (i > 1) {
-      EXPECT_TRUE(longBatch->isNullAt(i));
+      EXPECT_TRUE(tsBatch->isNullAt(i));
     } else {
-      EXPECT_FALSE(longBatch->isNullAt(i));
-      time_t time = static_cast<time_t>(longBatch->valueAt(i).getSeconds());
+      EXPECT_FALSE(tsBatch->isNullAt(i));
+      time_t time = static_cast<time_t>(tsBatch->valueAt(i).getSeconds());
       tm timeStruct;
       ASSERT_PRED1(isNotNull, gmtime_r(&time, &timeStruct));
       char buffer[30];
       asctime_r(&timeStruct, buffer);
       EXPECT_STREQ(expected[vals_ix], buffer)
           << "Wrong value at " << vals_ix << ", " << i;
-      EXPECT_EQ(expected_nano[vals_ix], longBatch->valueAt(i).getNanos())
+      EXPECT_EQ(expected_nano[vals_ix], tsBatch->valueAt(i).getNanos())
           << "Wrong value at " << vals_ix << ", " << i;
       vals_ix++;
     }
   }
 
+  auto tsBatchPtr = tsBatch.get();
+  if (expectMemoryReuse_) {
+    tsBatch.reset();
+  }
   skipAndRead(reader, batch, /* read */ 4, /* skip */ 1);
 
-  ASSERT_EQ(4, longBatch->size());
-  ASSERT_LT(0, getNullCount(longBatch));
+  tsBatch = getOnlyChild<FlatVector<Timestamp>>(batch);
+  ASSERT_EQ(expectMemoryReuse_, tsBatch.get() == tsBatchPtr);
+  ASSERT_EQ(4, tsBatch->size());
+  ASSERT_LT(0, getNullCount(tsBatch));
   for (size_t i = 0; i < batch->size(); ++i) {
     if (i > 1) {
-      EXPECT_TRUE(longBatch->isNullAt(i));
+      EXPECT_TRUE(tsBatch->isNullAt(i));
     } else {
-      EXPECT_FALSE(longBatch->isNullAt(i));
-      time_t time = static_cast<time_t>(longBatch->valueAt(i).getSeconds());
+      EXPECT_FALSE(tsBatch->isNullAt(i));
+      time_t time = static_cast<time_t>(tsBatch->valueAt(i).getSeconds());
       tm timeStruct;
       ASSERT_PRED1(isNotNull, gmtime_r(&time, &timeStruct));
       char buffer[30];
       asctime_r(&timeStruct, buffer);
       EXPECT_STREQ(expected[vals_ix], buffer);
-      EXPECT_EQ(expected_nano[vals_ix], longBatch->valueAt(i).getNanos());
+      EXPECT_EQ(expected_nano[vals_ix], tsBatch->valueAt(i).getNanos());
       vals_ix++;
     }
   }
@@ -3302,18 +3583,18 @@ TEST_P(TestColumnReader, testTimestamp) {
 
   skipAndRead(reader, batch, /* read */ 10);
 
-  auto longBatch = getOnlyChild<FlatVector<Timestamp>>(batch);
-  ASSERT_EQ(10, longBatch->size());
-  ASSERT_EQ(0, getNullCount(longBatch));
+  auto tsBatch = getOnlyChild<FlatVector<Timestamp>>(batch);
+  ASSERT_EQ(10, tsBatch->size());
+  ASSERT_EQ(0, getNullCount(tsBatch));
 
   for (size_t i = 0; i < batch->size(); ++i) {
-    time_t time = static_cast<time_t>(longBatch->valueAt(i).getSeconds());
+    time_t time = static_cast<time_t>(tsBatch->valueAt(i).getSeconds());
     tm timeStruct;
     ASSERT_PRED1(isNotNull, gmtime_r(&time, &timeStruct));
     char buffer[30];
     asctime_r(&timeStruct, buffer);
     EXPECT_STREQ(expected[i], buffer) << "Wrong value at " << i;
-    EXPECT_EQ(expectedNano[i], longBatch->valueAt(i).getNanos());
+    EXPECT_EQ(expectedNano[i], tsBatch->valueAt(i).getNanos());
   }
 }
 
@@ -3498,6 +3779,8 @@ TEST_P(StringReaderTests, testStringDictUseBatchAfterClose) {
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
+      .WillRepeatedly(Return(nullptr));
   EXPECT_CALL(streams, getStreamProxy(1, proto::Stream_Kind_PRESENT, false))
       .WillRepeatedly(Return(nullptr));
 
@@ -3606,6 +3889,8 @@ TEST_P(StringReaderTests, testStringDictStrideDictDoesntExist) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   std::array<char, 1024> data;
@@ -3721,15 +4006,20 @@ TEST_P(StringReaderTests, testStringDictStrideDictDoesntExist) {
   std::shared_ptr<SimpleVector<StringView>> stringBatch;
   VectorPtr rowVector;
   while (rowCount < totalRowCount) {
+    auto stringBatchPtr = stringBatch.get();
+    if (expectMemoryReuse_) {
+      stringBatch.reset();
+    }
     reader->next(rowIndexStride, batch);
     ASSERT_EQ(rowIndexStride, batch->size());
     ASSERT_EQ(0, getNullCount(batch));
-    if (!expectMemoryReuse_ || rowCount == 0) {
-      if (returnFlatVector_) {
-        stringBatch = getOnlyChild<FlatVector<StringView>>(batch);
-      } else {
-        stringBatch = getOnlyChild<DictionaryVector<StringView>>(batch);
-      }
+    if (returnFlatVector_) {
+      stringBatch = getOnlyChild<FlatVector<StringView>>(batch);
+    } else {
+      stringBatch = getOnlyChild<DictionaryVector<StringView>>(batch);
+    }
+    if (rowCount > 0) {
+      ASSERT_EQ(expectMemoryReuse_, stringBatch.get() == stringBatchPtr);
     }
     ASSERT_EQ(rowIndexStride, stringBatch->size());
     ASSERT_EQ(0, getNullCount(stringBatch));
@@ -3759,6 +4049,8 @@ TEST_P(StringReaderTests, testStringDictZeroLengthStrideDict) {
 
   // set getStream
   EXPECT_CALL(streams, getStreamProxy(_, proto::Stream_Kind_PRESENT, false))
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(streams, getStreamProxy(0, proto::Stream_Kind_ROW_INDEX, false))
       .WillRepeatedly(Return(nullptr));
 
   std::array<char, 1024> data;
@@ -4157,31 +4449,48 @@ TEST_P(TestColumnReader, testMapVectorTypeChange) {
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
+    TestColumnReaderNoReuse,
     TestColumnReader,
+    ::testing::Values(ReaderTestParams{false, false}));
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    TestColumnReaderReuse,
     TestColumnReader,
-    ::testing::Values(false));
+    ::testing::Values(ReaderTestParams{false, true}));
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     TestSelectiveColumnReader,
     TestColumnReader,
-    ::testing::Values(true));
+    ::testing::Values(ReaderTestParams{true, false}));
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
-    StringViewReader,
+    StringViewReaderNoReuse,
     StringReaderTests,
-    ::testing::Values(StringReaderTestParams{false, false}),
+    ::testing::Values(StringReaderTestParams{false, false, false}),
     [](auto p) { return p.param.toString(); });
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
-    FlatStringViewReader,
+    StringViewReaderReuse,
     StringReaderTests,
-    ::testing::Values(StringReaderTestParams{false, true}),
+    ::testing::Values(StringReaderTestParams{false, false, true}),
+    [](auto p) { return p.param.toString(); });
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    FlatStringViewReaderNoReuse,
+    StringReaderTests,
+    ::testing::Values(StringReaderTestParams{false, true, false}),
+    [](auto p) { return p.param.toString(); });
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    FlatStringViewReaderReuse,
+    StringReaderTests,
+    ::testing::Values(StringReaderTestParams{false, true, true}),
     [](auto p) { return p.param.toString(); });
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     SelectiveStringViewReader,
     StringReaderTests,
-    ::testing::Values(StringReaderTestParams{true, false}),
+    ::testing::Values(StringReaderTestParams{true, false, false}),
     [](auto p) { return p.param.toString(); });
 
 class SchemaMismatchTest : public TestWithParam<bool> {
@@ -4194,8 +4503,10 @@ class SchemaMismatchTest : public TestWithParam<bool> {
       bool returnFlatVector = false,
       const std::shared_ptr<const Type>& dataType = nullptr) {
     if (useSelectiveReader()) {
+      LOG(INFO) << "Using selective reader";
       return builder.build(requestedType, stripe, nodes, dataType);
     } else {
+      LOG(INFO) << "Using normal reader";
       return buildColumnReader(
           requestedType, stripe, nodes, returnFlatVector, dataType);
     }
@@ -4229,8 +4540,8 @@ class SchemaMismatchTest : public TestWithParam<bool> {
     asIsReader->next(size, asIsBatch, nullptr);
 
     ASSERT_EQ(asIsBatch->size(), mismatchBatch->size());
-    auto asIsField = getOnlyChild<SimpleVector<From>>(asIsBatch);
     auto mismatchField = getOnlyChild<SimpleVector<To>>(mismatchBatch);
+    auto asIsField = getOnlyChild<SimpleVector<From>>(asIsBatch);
     for (auto i = 0; i < asIsBatch->size(); ++i) {
       auto isNull = asIsField->isNullAt(i);
       EXPECT_EQ(isNull, mismatchField->isNullAt(i));

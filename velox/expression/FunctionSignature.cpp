@@ -16,7 +16,8 @@
 #include "velox/expression/FunctionSignature.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/trim.hpp>
-#include "velox/expression/VectorFunction.h"
+#include "velox/common/base/Exceptions.h"
+#include "velox/type/Type.h"
 
 namespace facebook::velox::exec {
 
@@ -83,7 +84,7 @@ TypeSignature parseTypeSignature(const std::string& signature) {
     nestedTypes.emplace_back(parseTypeSignature(token));
 
     prevPos = commaPos + 1;
-    commaPos = signature.find(',', prevPos);
+    commaPos = findNextComma(signature, prevPos);
   }
 
   auto token = signature.substr(prevPos, endParenPos - prevPos);
@@ -172,4 +173,26 @@ FunctionSignature::FunctionSignature(
       variableArity_{variableArity} {
   validate(typeVariableConstants_, returnType_, argumentTypes_);
 }
+
+std::shared_ptr<FunctionSignature> FunctionSignatureBuilder::build() {
+  VELOX_CHECK(returnType_.has_value());
+  return std::make_shared<FunctionSignature>(
+      std::move(typeVariableConstants_),
+      returnType_.value(),
+      std::move(argumentTypes_),
+      variableArity_);
+}
+
+std::shared_ptr<AggregateFunctionSignature>
+AggregateFunctionSignatureBuilder::build() {
+  VELOX_CHECK(returnType_.has_value());
+  VELOX_CHECK(intermediateType_.has_value());
+  return std::make_shared<AggregateFunctionSignature>(
+      std::move(typeVariableConstants_),
+      returnType_.value(),
+      intermediateType_.value(),
+      std::move(argumentTypes_),
+      variableArity_);
+}
+
 } // namespace facebook::velox::exec

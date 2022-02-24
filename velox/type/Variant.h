@@ -22,6 +22,7 @@
 
 #include "folly/dynamic.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/base/VeloxException.h"
 #include "velox/type/Conversions.h"
 #include "velox/type/Type.h"
 
@@ -41,6 +42,9 @@ struct VariantEquality;
 
 template <>
 struct VariantEquality<TypeKind::TIMESTAMP>;
+
+template <>
+struct VariantEquality<TypeKind::DATE>;
 
 template <>
 struct VariantEquality<TypeKind::ARRAY>;
@@ -206,6 +210,7 @@ class variant {
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::REAL)
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::DOUBLE)
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::VARCHAR)
+  VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::DATE)
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::TIMESTAMP)
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::UNKNOWN)
   // On 64-bit platforms `int64_t` is declared as `long int`, not `long long
@@ -257,6 +262,13 @@ class variant {
         new
         typename detail::VariantTypeTraits<TypeKind::TIMESTAMP>::stored_type{
             input}};
+  }
+
+  static variant date(const Date& input) {
+    return {
+        TypeKind::DATE,
+        new
+        typename detail::VariantTypeTraits<TypeKind::DATE>::stored_type{input}};
   }
 
   template <class T>
@@ -500,8 +512,13 @@ class variant {
         return ROW(std::move(children));
       }
       case TypeKind::ARRAY: {
-        auto& a = array();
-        auto elementType = a.empty() ? UNKNOWN() : a.at(0).inferType();
+        TypePtr elementType = UNKNOWN();
+        if (!isNull()) {
+          auto& a = array();
+          if (!a.empty()) {
+            elementType = a.at(0).inferType();
+          }
+        }
         return ARRAY(elementType);
       }
       case TypeKind::OPAQUE: {
@@ -540,7 +557,13 @@ struct VariantConverter {
     if (value.isNull()) {
       return variant{value.kind()};
     } else {
-      return variant{util::Converter<ToKind>::cast(value.value<FromKind>())};
+      bool nullOutput = false;
+      auto v = variant{
+          util::Converter<ToKind>::cast(value.value<FromKind>(), nullOutput)};
+      if (nullOutput) {
+        throw std::invalid_argument("Velox cast error");
+      }
+      return v;
     }
   }
 
@@ -565,8 +588,9 @@ struct VariantConverter {
         return convert<TypeKind::VARCHAR, ToKind>(value);
       case TypeKind::VARBINARY:
         return convert<TypeKind::VARBINARY, ToKind>(value);
+      case TypeKind::DATE:
       case TypeKind::TIMESTAMP:
-        // Default timestamp conversion is prone to errors and implicit
+        // Default date/timestamp conversion is prone to errors and implicit
         // assumptions. Block converting timestamp to integer, double and
         // std::string types. The callers should implement their own conversion
         //  from value.

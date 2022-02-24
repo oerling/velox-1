@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/common/exception/Exception.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -23,12 +24,12 @@ using dwio::common::InputStream;
 using dwio::common::ReaderOptions;
 using dwio::common::RowReaderOptions;
 
-std::unique_ptr<DwrfRowReader> DwrfReader::createRowReader() const {
-  RowReaderOptions defaultOpts;
-  return createRowReader(defaultOpts);
+std::unique_ptr<dwio::common::RowReader> DwrfReader::createRowReader(
+    const RowReaderOptions& opts) const {
+  return std::make_unique<DwrfRowReader>(readerBase_, opts);
 }
 
-std::unique_ptr<DwrfRowReader> DwrfReader::createRowReader(
+std::unique_ptr<DwrfRowReader> DwrfReader::createDwrfRowReader(
     const RowReaderOptions& opts) const {
   return std::make_unique<DwrfRowReader>(readerBase_, opts);
 }
@@ -40,8 +41,9 @@ void DwrfRowReader::checkSkipStrides(
     return;
   }
 
-  if (currentRowInStripe == 0) {
+  if (currentRowInStripe == 0 || recomputeStridesToSkip_) {
     stridesToSkip_ = columnReader_->filterRowGroups(strideSize, context);
+    recomputeStridesToSkip_ = false;
   }
 
   if (stridesToSkip_.empty()) {
@@ -126,10 +128,23 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
   }
 }
 
+void DwrfRowReader::resetFilterCaches() {
+  dynamic_cast<SelectiveColumnReader*>(columnReader())->resetFilterCaches();
+  recomputeStridesToSkip_ = true;
+}
+
 std::unique_ptr<DwrfReader> DwrfReader::create(
     std::unique_ptr<InputStream> stream,
     const ReaderOptions& options) {
   return std::make_unique<DwrfReader>(options, std::move(stream));
+}
+
+void registerDwrfReaderFactory() {
+  dwio::common::registerReaderFactory(std::make_shared<DwrfReaderFactory>());
+}
+
+void unregisterDwrfReaderFactory() {
+  dwio::common::unregisterReaderFactory(dwio::common::FileFormat::ORC);
 }
 
 } // namespace facebook::velox::dwrf

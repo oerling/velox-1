@@ -15,6 +15,7 @@
  */
 
 #include "velox/exec/HashTable.h"
+#include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/process/ProcessBase.h"
 #include "velox/exec/ContainerRowSerde.h"
@@ -38,6 +39,7 @@ HashTable<ignoreNullKeys>::HashTable(
     const std::vector<TypePtr>& dependentTypes,
     bool allowDuplicates,
     bool isJoinBuild,
+    bool hasProbedFlag,
     memory::MappedMemory* mappedMemory)
     : BaseHashTable(std::move(hashers)),
       aggregates_(aggregates),
@@ -56,7 +58,7 @@ HashTable<ignoreNullKeys>::HashTable(
       dependentTypes,
       allowDuplicates,
       isJoinBuild,
-      false,
+      hasProbedFlag,
       hashMode_ != HashMode::kHash,
       mappedMemory,
       ContainerRowSerde::instance());
@@ -268,7 +270,7 @@ char* HashTable<ignoreNullKeys>::insertEntry(
 
 template <bool ignoreNullKeys>
 bool HashTable<ignoreNullKeys>::compareKeys(
-    char* group,
+    const char* group,
     HashLookup& lookup,
     vector_size_t row) {
   int32_t numKeys = lookup.hashers.size();
@@ -314,7 +316,7 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::fullProbe(
         table_,
         sizeMask_,
         -static_cast<int32_t>(sizeof(normalized_key_t)),
-        [&](char* group, int32_t row) {
+        [&](char* group, int32_t row) INLINE_LAMBDA {
           return RowContainer::normalizedKey(group) ==
               lookup.normalizedKeys[row];
         },
@@ -341,7 +343,7 @@ namespace {
 // A normalized key is spread evenly over 64 bits. This mixes the bits
 // so that they affect the low 'bits', which are actually used for
 // indexing the hash table.
-static inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
+inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
   constexpr uint64_t prime1 = 0xc6a4a7935bd1e995UL; // M from Murmurhash.
   constexpr uint64_t prime2 = 527729;
   constexpr uint64_t prime3 = 28047;
@@ -523,21 +525,21 @@ void HashTable<ignoreNullKeys>::initializeNewGroups(HashLookup& lookup) {
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   VELOX_CHECK(bits::isPowerOfTwo(size), "Size is not a power of two: {}", size);
-  if (tags_) {
-    free(tags_);
-    tags_ = nullptr;
-  }
-  if (table_) {
-    free(table_);
-    table_ = nullptr;
-  }
   if (size > 0) {
     size_ = size;
     sizeMask_ = size_ - 1;
     sizeBits_ = __builtin_popcountll(sizeMask_);
-    tags_ = reinterpret_cast<uint8_t*>(aligned_alloc(64, size_));
+    constexpr auto kPageSize = memory::MappedMemory::kPageSize;
+    // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
+    // tags table.
+    auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
+    if (!rows_->mappedMemory()->allocateContiguous(
+            numPages, nullptr, tableAllocation_)) {
+      VELOX_FAIL("Could not allocate join/group by hash table");
+    }
+    table_ = tableAllocation_.data<char*>();
+    tags_ = reinterpret_cast<uint8_t*>(table_ + size);
     memset(tags_, 0, size_);
-    table_ = reinterpret_cast<char**>(aligned_alloc(64, sizeof(char*) * size_));
     // Not strictly necessary to clear 'table_' but more debuggable.
     memset(table_, 0, size_ * sizeof(char*));
   }
@@ -557,7 +559,7 @@ void HashTable<ignoreNullKeys>::clear() {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
-  if (!table_) {
+  if (!table_ || !size_) {
     // Initial guess of cardinality is double the first input batch or at
     // least 2K entries.
     // numDistinct_ is non-0 when switching from HashMode::kArray to regular
@@ -576,43 +578,25 @@ void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
   }
 }
 
-template <TypeKind Kind>
-bool valueIdRowsColumn(
-    bool ignoreNullKeys,
-    VectorHasher* hasher,
-    char** groups,
-    int32_t numGroups,
-    RowColumn column,
-    uint64_t* hashes) {
-  using T = typename TypeTraits<Kind>::NativeType;
-  return hasher->computeValueIdForRows<T>(
-      groups,
-      numGroups,
-      column.offset(),
-      column.nullByte(),
-      ignoreNullKeys ? 0 : column.nullMask(),
-      hashes);
-}
-
 template <bool ignoreNullKeys>
 bool HashTable<ignoreNullKeys>::insertBatch(
     char** groups,
-    uint64_t* hashes,
-    int32_t numGroups) {
+    int32_t numGroups,
+    raw_vector<uint64_t>& hashes) {
   for (int32_t i = 0; i < hashers_.size(); ++i) {
     auto& hasher = hashers_[i];
     if (hashMode_ == HashMode::kHash) {
-      rows_->hash(i, folly::Range<char**>(groups, numGroups), i > 0, hashes);
+      rows_->hash(
+          i, folly::Range<char**>(groups, numGroups), i > 0, hashes.data());
     } else {
       // Array or normalized key.
-      if (!VALUE_ID_TYPE_DISPATCH(
-              valueIdRowsColumn,
-              hasher->typeKind(),
-              ignoreNullKeys,
-              hasher.get(),
+      auto column = rows_->columnAt(i);
+      if (!hasher->computeValueIdsForRows(
               groups,
               numGroups,
-              rows_->columnAt(i),
+              column.offset(),
+              column.nullByte(),
+              ignoreNullKeys ? 0 : column.nullMask(),
               hashes)) {
         // Must reconsider 'hashMode_' and start over.
         return false;
@@ -620,9 +604,9 @@ bool HashTable<ignoreNullKeys>::insertBatch(
     }
   }
   if (isJoinBuild_) {
-    insertForJoin(groups, hashes, numGroups);
+    insertForJoin(groups, hashes.data(), numGroups);
   } else {
-    insertForGroupBy(groups, hashes, numGroups);
+    insertForGroupBy(groups, hashes.data(), numGroups);
   }
   return true;
 }
@@ -780,7 +764,8 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash() {
   constexpr int32_t kHashBatchSize = 1024;
   // @lint-ignore CLANGTIDY
-  uint64_t hashes[kHashBatchSize];
+  raw_vector<uint64_t> hashes;
+  hashes.resize(kHashBatchSize);
   char* groups[kHashBatchSize];
   // A join build can have multiple payload tables. Loop over 'this'
   // and the possible other tables and put all the data in the table
@@ -792,7 +777,7 @@ void HashTable<ignoreNullKeys>::rehash() {
       numGroups = (i == 0 ? this : otherTables_[i - 1].get())
                       ->rows()
                       ->listRows(&iterator, kHashBatchSize, groups);
-      if (!insertBatch(groups, hashes, numGroups)) {
+      if (!insertBatch(groups, numGroups, hashes)) {
         VELOX_CHECK(hashMode_ != HashMode::kHash);
         setHashMode(HashMode::kHash, 0);
         return;
@@ -804,10 +789,15 @@ void HashTable<ignoreNullKeys>::rehash() {
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::setHashMode(HashMode mode, int32_t numNew) {
   VELOX_CHECK(hashMode_ != HashMode::kHash);
-  allocateTables(0);
   if (mode == HashMode::kArray) {
     auto bytes = size_ * sizeof(char*);
-    table_ = reinterpret_cast<char**>(malloc(bytes));
+    constexpr auto kPageSize = memory::MappedMemory::kPageSize;
+    auto numPages = bits::roundUp(bytes, kPageSize) / kPageSize;
+    if (!rows_->mappedMemory()->allocateContiguous(
+            numPages, nullptr, tableAllocation_)) {
+      VELOX_FAIL("Could not allocate array for array mode hash table");
+    }
+    table_ = tableAllocation_.data<char*>();
     memset(table_, 0, bytes);
     hashMode_ = HashMode::kArray;
     rehash();
@@ -817,32 +807,20 @@ void HashTable<ignoreNullKeys>::setHashMode(HashMode mode, int32_t numNew) {
       hasher->resetStats();
     }
     rows_->disableNormalizedKeys();
+    size_ = 0;
     // Makes tables of the right size and rehashes.
     checkSize(numNew);
   } else if (mode == HashMode::kNormalizedKey) {
     hashMode_ = HashMode::kNormalizedKey;
+    size_ = 0;
     // Makes tables of the right size and rehashes.
     checkSize(numNew);
   }
 }
 
-template <TypeKind Kind>
-void analyzeHasher(
-    VectorHasher* hasher,
-    char** groups,
-    int32_t numGroups,
-    int32_t offset,
-    int32_t nullOffset,
-    uint8_t nullMask) {
-  using T = typename TypeTraits<Kind>::NativeType;
-
-  hasher->analyze<T>(groups, numGroups, offset, nullOffset, nullMask);
-}
-
 template <bool ignoreNullKeys>
 bool HashTable<ignoreNullKeys>::analyze() {
   constexpr int32_t kHashBatchSize = 1024;
-  uint64_t hashes[kHashBatchSize];
   // @lint-ignore CLANGTIDY
   char* groups[kHashBatchSize];
   RowContainerIterator iterator;
@@ -864,12 +842,8 @@ bool HashTable<ignoreNullKeys>::analyze() {
           rangeSize == VectorHasher::kRangeTooLarge) {
         return false;
       }
-      auto kind = hasher->typeKind();
       RowColumn column = rows_->columnAt(i);
-      VALUE_ID_TYPE_DISPATCH(
-          analyzeHasher,
-          kind,
-          hasher.get(),
+      hasher->analyze(
           groups,
           numGroups,
           column.offset(),
@@ -883,7 +857,7 @@ bool HashTable<ignoreNullKeys>::analyze() {
 namespace {
 // Multiplies a * b and produces uint64_t max to denote overflow. If
 // either a or b is overflow, preserves overflow.
-static inline uint64_t safeMul(uint64_t a, uint64_t b) {
+inline uint64_t safeMul(uint64_t a, uint64_t b) {
   constexpr uint64_t kMax = std::numeric_limits<uint64_t>::max();
   if (a == kMax || b == kMax) {
     return kMax;
@@ -966,9 +940,16 @@ uint64_t HashTable<ignoreNullKeys>::setHasherMode(
         : hashers[i]->enableValueIds(
               multiplier,
               addReserve(distinctSizes[i], kind) - distinctSizes[i]);
-    VELOX_CHECK(multiplier != VectorHasher::kRangeTooLarge);
+    VELOX_CHECK_NE(multiplier, VectorHasher::kRangeTooLarge);
   }
   return multiplier;
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::clearUseRange(std::vector<bool>& useRange) {
+  for (auto i = 0; i < hashers_.size(); ++i) {
+    useRange[i] = hashers_[i]->typeKind() == TypeKind::BOOLEAN;
+  }
 }
 
 template <bool ignoreNullKeys>
@@ -978,6 +959,7 @@ void HashTable<ignoreNullKeys>::decideHashMode(int32_t numNew) {
   std::vector<bool> useRange(hashers_.size());
   uint64_t bestWithReserve = 1;
   uint64_t distinctsWithReserve = 1;
+  uint64_t rangesWithReserve = 1;
   if (numDistinct_ && !isJoinBuild_) {
     if (!analyze()) {
       setHashMode(HashMode::kHash, numNew);
@@ -989,21 +971,30 @@ void HashTable<ignoreNullKeys>::decideHashMode(int32_t numNew) {
     hashers_[i]->cardinality(rangeSizes[i], distinctSizes[i]);
     distinctsWithReserve =
         safeMul(distinctsWithReserve, addReserve(distinctSizes[i], kind));
+    rangesWithReserve =
+        safeMul(rangesWithReserve, addReserve(rangeSizes[i], kind));
     if (distinctSizes[i] == VectorHasher::kRangeTooLarge &&
         rangeSizes[i] != VectorHasher::kRangeTooLarge) {
       useRange[i] = true;
       bestWithReserve =
           safeMul(bestWithReserve, addReserve(rangeSizes[i], kind));
     } else if (
-        rangeSizes[i] == VectorHasher::kRangeTooLarge ||
-        rangeSizes[i] > distinctSizes[i] * 20) {
-      bestWithReserve =
-          safeMul(bestWithReserve, addReserve(distinctSizes[i], kind));
-    } else {
+        rangeSizes[i] != VectorHasher::kRangeTooLarge &&
+        rangeSizes[i] <= distinctSizes[i] * 20) {
       useRange[i] = true;
       bestWithReserve =
           safeMul(bestWithReserve, addReserve(rangeSizes[i], kind));
+    } else {
+      bestWithReserve =
+          safeMul(bestWithReserve, addReserve(distinctSizes[i], kind));
     }
+  }
+
+  if (rangesWithReserve < kArrayHashMaxSize) {
+    std::fill(useRange.begin(), useRange.end(), true);
+    size_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
+    setHashMode(HashMode::kArray, numNew);
+    return;
   }
 
   if (bestWithReserve < kArrayHashMaxSize) {
@@ -1011,20 +1002,27 @@ void HashTable<ignoreNullKeys>::decideHashMode(int32_t numNew) {
     setHashMode(HashMode::kArray, numNew);
     return;
   }
+  if (rangesWithReserve != VectorHasher::kRangeTooLarge) {
+    std::fill(useRange.begin(), useRange.end(), true);
+    setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
+    setHashMode(HashMode::kNormalizedKey, numNew);
+    return;
+  }
   if (hashers_.size() == 1 && distinctsWithReserve > 10000) {
-    // A single part group by that does not become an array does not
-    // make sense as a normalized key unless it is very
-    // small.
+    // A single part group by that does not go by range or become an array does
+    // not make sense as a normalized key unless it is very small.
     setHashMode(HashMode::kHash, numNew);
     return;
   }
+
   if (distinctsWithReserve < kArrayHashMaxSize) {
-    useRange.clear();
+    clearUseRange(useRange);
     size_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew);
     return;
   }
-  if (distinctsWithReserve == VectorHasher::kRangeTooLarge) {
+  if (distinctsWithReserve == VectorHasher::kRangeTooLarge &&
+      rangesWithReserve == VectorHasher::kRangeTooLarge) {
     setHashMode(HashMode::kHash, numNew);
     return;
   }
@@ -1033,8 +1031,7 @@ void HashTable<ignoreNullKeys>::decideHashMode(int32_t numNew) {
     enableRangeWhereCan(rangeSizes, distinctSizes, useRange);
     setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
   } else {
-    useRange.clear();
-    setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
+    clearUseRange(useRange);
   }
   setHashMode(HashMode::kNormalizedKey, numNew);
 }
@@ -1043,10 +1040,21 @@ template <bool ignoreNullKeys>
 std::string HashTable<ignoreNullKeys>::toString() {
   std::stringstream out;
   int32_t occupied = 0;
-  for (int32_t i = 0; i < size_; ++i) {
-    occupied += tags_[i] != 0;
+  if (table_ && tableAllocation_.data() && tableAllocation_.size()) {
+    // 'size_' and 'table_' may not be set if initializing.
+    uint64_t size =
+        std::min<uint64_t>(tableAllocation_.size() / sizeof(char*), size_);
+    for (int32_t i = 0; i < size; ++i) {
+      occupied += table_[i] != nullptr;
+    }
   }
   out << "[HashTable  size: " << size_ << " occupied: " << occupied << "]";
+  if (!table_) {
+    out << "(no table) ";
+  }
+  for (auto& hasher : hashers_) {
+    out << hasher->toString();
+  }
   return out.str();
 }
 
@@ -1066,8 +1074,12 @@ bool mayUseValueIds(const BaseHashTable& table) {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::prepareJoinTable(
-    std::vector<std::unique_ptr<HashTable<ignoreNullKeys>>> tables) {
-  otherTables_ = std::move(tables);
+    std::vector<std::unique_ptr<BaseHashTable>> tables) {
+  otherTables_.reserve(tables.size());
+  for (auto& table : tables) {
+    otherTables_.emplace_back(std::unique_ptr<HashTable<ignoreNullKeys>>(
+        dynamic_cast<HashTable<ignoreNullKeys>*>(table.release())));
+  }
   bool useValueIds = mayUseValueIds(*this);
   if (useValueIds) {
     for (auto& other : otherTables_) {
@@ -1109,16 +1121,27 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
 template <bool ignoreNullKeys>
 int32_t HashTable<ignoreNullKeys>::listJoinResults(
     JoinResultIterator& iter,
+    bool includeMisses,
     folly::Range<vector_size_t*> inputRows,
     folly::Range<char**> hits) {
   VELOX_CHECK_LE(inputRows.size(), hits.size());
   int numOut = 0;
   auto maxOut = inputRows.size();
-  while (iter.lastRow < iter.rows->size()) {
+  while (iter.lastRowIndex < iter.rows->size()) {
     if (!iter.nextHit) {
-      iter.nextHit = (*iter.hits)[(*iter.rows)[iter.lastRow]]; // NOLINT
+      auto row = (*iter.rows)[iter.lastRowIndex];
+      iter.nextHit = (*iter.hits)[row]; // NOLINT
       if (!iter.nextHit) {
-        ++iter.lastRow;
+        ++iter.lastRowIndex;
+
+        if (includeMisses) {
+          inputRows[numOut] = row; // NOLINT
+          hits[numOut] = nullptr;
+          ++numOut;
+          if (numOut >= maxOut) {
+            return numOut;
+          }
+        }
         continue;
       }
     }
@@ -1128,12 +1151,12 @@ int32_t HashTable<ignoreNullKeys>::listJoinResults(
         next = nextRow(iter.nextHit);
         __builtin_prefetch(reinterpret_cast<char*>(next) + nextOffset_);
       }
-      inputRows[numOut] = (*iter.rows)[iter.lastRow]; // NOLINT
+      inputRows[numOut] = (*iter.rows)[iter.lastRowIndex]; // NOLINT
       hits[numOut] = iter.nextHit;
       ++numOut;
       iter.nextHit = next;
       if (!iter.nextHit) {
-        ++iter.lastRow;
+        ++iter.lastRowIndex;
       }
       if (numOut >= maxOut) {
         return numOut;
@@ -1144,9 +1167,38 @@ int32_t HashTable<ignoreNullKeys>::listJoinResults(
 }
 
 template <bool ignoreNullKeys>
+int32_t HashTable<ignoreNullKeys>::listNotProbedRows(
+    NotProbedRowsIterator* iter,
+    int32_t maxRows,
+    uint64_t maxBytes,
+    char** rows) {
+  if (iter->hashTableIndex_ == -1) {
+    auto numRows = rows_->listNotProbedRows(
+        &iter->rowContainerIterator_, maxRows, maxBytes, rows);
+    if (numRows) {
+      return numRows;
+    }
+    iter->hashTableIndex_ = 0;
+    iter->rowContainerIterator_.reset();
+  }
+  while (iter->hashTableIndex_ < otherTables_.size()) {
+    auto numRows =
+        otherTables_[iter->hashTableIndex_]->rows()->listNotProbedRows(
+            &iter->rowContainerIterator_, maxRows, maxBytes, rows);
+    if (numRows) {
+      return numRows;
+    }
+    ++iter->hashTableIndex_;
+    iter->rowContainerIterator_.reset();
+  }
+
+  return 0;
+}
+
+template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::erase(folly::Range<char**> rows) {
   auto numRows = rows.size();
-  std::vector<uint64_t> hashes;
+  raw_vector<uint64_t> hashes;
   hashes.resize(numRows);
 
   for (int32_t i = 0; i < hashers_.size(); ++i) {
@@ -1154,15 +1206,14 @@ void HashTable<ignoreNullKeys>::erase(folly::Range<char**> rows) {
     if (hashMode_ == HashMode::kHash) {
       rows_->hash(i, rows, i > 0, hashes.data());
     } else {
-      if (!VALUE_ID_TYPE_DISPATCH(
-              valueIdRowsColumn,
-              hasher->typeKind(),
-              ignoreNullKeys,
-              hasher.get(),
+      auto column = rows_->columnAt(i);
+      if (!hasher->computeValueIdsForRows(
               rows.data(),
               numRows,
-              rows_->columnAt(i),
-              hashes.data())) {
+              column.offset(),
+              column.nullByte(),
+              ignoreNullKeys ? 0 : column.nullMask(),
+              hashes)) {
         VELOX_FAIL("Value ids in erase must exist for all keys");
       }
     }
@@ -1197,7 +1248,7 @@ void HashTable<ignoreNullKeys>::eraseWithHashes(
           table_,
           sizeMask_,
           0,
-          [&](char* group, int32_t row) { return rows[row] == group; },
+          [&](const char* group, int32_t row) { return rows[row] == group; },
           [&](int32_t /*index*/, int32_t /*row*/) { return nullptr; },
           false);
     }

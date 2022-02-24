@@ -15,6 +15,7 @@
  */
 
 #include <folly/Random.h>
+#include <random>
 #include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/encryption/TestProvider.h"
@@ -26,18 +27,21 @@
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
 #include "velox/vector/FlatVector.h"
+#include "velox/vector/tests/VectorMaker.h"
 
 using namespace ::testing;
-using namespace facebook::dwio::common;
-using namespace facebook::dwio::common::encryption;
-using namespace facebook::dwio::common::encryption::test;
+using namespace facebook::velox::dwio::common;
+using namespace facebook::velox::dwio::common::encryption;
+using namespace facebook::velox::dwio::common::encryption::test;
 using namespace facebook::velox::test;
 using namespace facebook::velox::dwrf;
 using namespace facebook::velox::dwrf::encryption;
-using namespace facebook::dwio::type::fbhive;
+using namespace facebook::velox::dwio::type::fbhive;
 using namespace facebook::velox;
 using facebook::velox::memory::MemoryPool;
 using folly::Random;
+
+constexpr uint64_t kSizeMB = 1024UL * 1024UL;
 
 // This test can be run to generate test files. Run it with following command
 // buck test velox/dwio/dwrf/test:velox_dwrf_e2e_writer_tests --
@@ -76,12 +80,16 @@ TEST(E2EWriterTests, DISABLED_TestFileCreation) {
   auto& pool = *scopedPool;
   std::vector<VectorPtr> batches;
   for (size_t i = 0; i < batchCount; ++i) {
-    batches.push_back(BatchMaker::createBatch(type, size, pool));
+    batches.push_back(BatchMaker::createBatch(type, size, pool, nullptr, i));
   }
 
   auto sink = std::make_unique<FileSink>("/tmp/e2e_generated_file.orc");
   E2EWriterTestUtil::writeData(
-      std::move(sink), type, batches, config, false, true);
+      std::move(sink),
+      type,
+      batches,
+      config,
+      E2EWriterTestUtil::simpleFlushPolicy(true));
 }
 
 VectorPtr createRowVector(
@@ -134,11 +142,49 @@ TEST(E2EWriterTests, E2E) {
 
   std::vector<VectorPtr> batches;
   for (size_t i = 0; i < batchCount; ++i) {
-    batches.push_back(BatchMaker::createBatch(type, size, pool));
+    batches.push_back(BatchMaker::createBatch(type, size, pool, nullptr, i));
     size = 200;
   }
 
-  E2EWriterTestUtil::testWriter(pool, type, batches, 1, 1, config, true, false);
+  E2EWriterTestUtil::testWriter(pool, type, batches, 1, 1, config);
+}
+
+TEST(E2EWriterTests, FlatMapDictionaryEncoding) {
+  const size_t batchCount = 4;
+  // Start with a size larger than stride to cover splitting into
+  // strides. Continue with smaller size for faster test.
+  size_t size = 1100;
+  auto scopedPool = memory::getDefaultScopedMemoryPool();
+  auto& pool = *scopedPool;
+
+  HiveTypeParser parser;
+  auto type = parser.parse(
+      "struct<"
+      "map_val:map<int,double>,"
+      "map_val:map<bigint,double>,"
+      "map_val:map<bigint,map<string, int>>,"
+      "map_val:map<int, string>,"
+      "map_val:map<bigint,map<int, string>>"
+      ">");
+
+  auto config = std::make_shared<Config>();
+  config->set(Config::ROW_INDEX_STRIDE, static_cast<uint32_t>(1000));
+  config->set(Config::FLATTEN_MAP, true);
+  config->set(Config::MAP_FLAT_COLS, {0, 1, 2, 3, 4});
+  config->set(Config::MAP_FLAT_DISABLE_DICT_ENCODING, false);
+  config->set(Config::DICTIONARY_NUMERIC_KEY_SIZE_THRESHOLD, 1.0f);
+  config->set(Config::DICTIONARY_STRING_KEY_SIZE_THRESHOLD, 1.0f);
+  config->set(Config::ENTROPY_KEY_STRING_SIZE_THRESHOLD, 0.0f);
+
+  std::vector<VectorPtr> batches;
+  std::mt19937 gen;
+  gen.seed(983871726);
+  for (size_t i = 0; i < batchCount; ++i) {
+    batches.push_back(BatchMaker::createBatch(type, size, pool, gen));
+    size = 200;
+  }
+
+  E2EWriterTestUtil::testWriter(pool, type, batches, 1, 1, config);
 }
 
 TEST(E2EWriterTests, MaxFlatMapKeys) {
@@ -195,8 +241,7 @@ TEST(E2EWriterTests, PresentStreamIsSuppressedOnFlatMap) {
       type,
       E2EWriterTestUtil::generateBatches(std::move(batch)),
       config,
-      false,
-      true);
+      E2EWriterTestUtil::simpleFlushPolicy(true));
 
   // read it back and verify no present streams exist.
   auto input =
@@ -303,11 +348,13 @@ TEST(E2EWriterTests, FlatMapBackfill) {
       1,
       1,
       config,
-      /* useDefaultFlushPolicy */ false,
-      /* flushPerBatch */ false);
+      E2EWriterTestUtil::simpleFlushPolicy(false));
 }
 
-void testFlatMapWithNulls(bool firstRowNotNull, bool shareDictionary = false) {
+void testFlatMapWithNulls(
+    bool firstRowNotNull,
+    bool enableFlatmapDictionaryEncoding = false,
+    bool shareDictionary = false) {
   auto scopedPool = memory::getDefaultScopedMemoryPool();
   auto& pool = *scopedPool;
 
@@ -339,7 +386,8 @@ void testFlatMapWithNulls(bool firstRowNotNull, bool shareDictionary = false) {
   config->set(Config::FLATTEN_MAP, true);
   config->set(Config::MAP_FLAT_COLS, {0});
   config->set(Config::ROW_INDEX_STRIDE, strideSize);
-  config->set(Config::MAP_FLAT_DISABLE_DICT_ENCODING, false);
+  config->set(
+      Config::MAP_FLAT_DISABLE_DICT_ENCODING, !enableFlatmapDictionaryEncoding);
   config->set(Config::MAP_FLAT_DICT_SHARE, shareDictionary);
 
   E2EWriterTestUtil::testWriter(
@@ -349,18 +397,29 @@ void testFlatMapWithNulls(bool firstRowNotNull, bool shareDictionary = false) {
       1,
       1,
       config,
-      /* useDefaultFlushPolicy */ false,
-      /* flushPerBatch */ false);
+      E2EWriterTestUtil::simpleFlushPolicy(false));
 }
 
 TEST(E2EWriterTests, FlatMapWithNulls) {
-  testFlatMapWithNulls(false);
-  testFlatMapWithNulls(true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ false, /* enableFlatmapDictionaryEncoding */ false);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ true, /* enableFlatmapDictionaryEncoding */ false);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ false, /* enableFlatmapDictionaryEncoding */ true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ true, /* enableFlatmapDictionaryEncoding */ true);
 }
 
 TEST(E2EWriterTests, FlatMapWithNullsSharedDict) {
-  testFlatMapWithNulls(false, true);
-  testFlatMapWithNulls(true, true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ false,
+      /* enableFlatmapDictionaryEncoding */ true,
+      /* shareDictionary */ true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ true,
+      /* enableFlatmapDictionaryEncoding */ true,
+      /* shareDictionary */ true);
 }
 
 TEST(E2EWriterTests, FlatMapEmpty) {
@@ -402,8 +461,7 @@ TEST(E2EWriterTests, FlatMapEmpty) {
       1,
       1,
       config,
-      /* useDefaultFlushPolicy */ false,
-      /* flushPerBatch */ false);
+      E2EWriterTestUtil::simpleFlushPolicy(false));
 }
 
 void testFlatMapConfig(
@@ -429,7 +487,7 @@ void testFlatMapConfig(
   Writer writer{options, std::move(sink), pool};
 
   for (size_t i = 0; i < stripes; ++i) {
-    writer.write(BatchMaker::createBatch(type, size, pool));
+    writer.write(BatchMaker::createBatch(type, size, pool, nullptr, i));
   }
 
   writer.close();
@@ -570,10 +628,152 @@ TEST(E2EWriterTests, PartialStride) {
   ReaderOptions readerOpts;
   RowReaderOptions rowReaderOpts;
   auto reader = std::make_unique<DwrfReader>(readerOpts, std::move(input));
-  ASSERT_EQ(
-      size - nullCount, reader->getColumnStatistics(1)->getNumberOfValues())
-      << reader->getColumnStatistics(1)->toString();
-  ASSERT_EQ(true, reader->getColumnStatistics(1)->hasNull().value());
+  ASSERT_EQ(size - nullCount, reader->columnStatistics(1)->getNumberOfValues())
+      << reader->columnStatistics(1)->toString();
+  ASSERT_EQ(true, reader->columnStatistics(1)->hasNull().value());
+}
+
+TEST(E2EWriterTests, OversizeRows) {
+  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
+  auto& pool = scopedPool->getPool();
+
+  HiveTypeParser parser;
+  auto type = parser.parse(
+      "struct<"
+      "map_val:map<string, map<string, map<string, map<string, string>>>>,"
+      "list_val:array<array<array<array<string>>>>,"
+      "struct_val:struct<"
+      "map_val_field_1:map<string, map<string, map<string, map<string, string>>>>,"
+      "list_val_field_1:array<array<array<array<string>>>>,"
+      "list_val_field_2:array<array<array<array<string>>>>,"
+      "map_val_field_2:map<string, map<string, map<string, map<string, string>>>>"
+      ">,"
+      ">");
+  auto config = std::make_shared<Config>();
+  config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
+  config->set(Config::STRIPE_SIZE, 10 * kSizeMB);
+  config->set(
+      Config::RAW_DATA_SIZE_PER_BATCH, folly::to<uint64_t>(20 * 1024UL));
+
+  // Retained bytes in vector: 44704
+  auto singleBatch = E2EWriterTestUtil::generateBatches(
+      type, 1, 1, /* seed */ 1411367325, pool);
+
+  E2EWriterTestUtil::testWriter(
+      pool,
+      type,
+      singleBatch,
+      1,
+      1,
+      config,
+      /* flushPolicy */ nullptr,
+      /* layoutPlannerFactory */ nullptr,
+      /* memoryBudget */ std::numeric_limits<int64_t>::max(),
+      false);
+}
+
+TEST(E2EWriterTests, OversizeBatches) {
+  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
+  auto& pool = scopedPool->getPool();
+
+  HiveTypeParser parser;
+  auto type = parser.parse(
+      "struct<"
+      "bool_val:boolean,"
+      "byte_val:tinyint,"
+      "float_val:float,"
+      "double_val:double,"
+      ">");
+  auto config = std::make_shared<Config>();
+  config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
+  config->set(Config::STRIPE_SIZE, 10 * kSizeMB);
+
+  // Test splitting a gigantic batch.
+  auto singleBatch = E2EWriterTestUtil::generateBatches(
+      type, 1, 10000000, /* seed */ 1411367325, pool);
+  // A gigantic batch is split into 10 stripes.
+  E2EWriterTestUtil::testWriter(
+      pool,
+      type,
+      singleBatch,
+      10,
+      10,
+      config,
+      /* flushPolicy */ nullptr,
+      /* layoutPlannerFactory */ nullptr,
+      /* memoryBudget */ std::numeric_limits<int64_t>::max(),
+      false);
+
+  // Test splitting multiple huge batches.
+  auto batches = E2EWriterTestUtil::generateBatches(
+      type, 3, 5000000, /* seed */ 1411367325, pool);
+  // 3 gigantic batches are split into 15~16 stripes.
+  E2EWriterTestUtil::testWriter(
+      pool,
+      type,
+      batches,
+      15,
+      16,
+      config,
+      /* flushPolicy */ nullptr,
+      /* layoutPlannerFactory */ nullptr,
+      /* memoryBudget */ std::numeric_limits<int64_t>::max(),
+      false);
+}
+
+TEST(E2EWriterTests, OverflowLengthIncrements) {
+  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
+  auto& pool = scopedPool->getPool();
+
+  HiveTypeParser parser;
+  auto type = parser.parse(
+      "struct<"
+      "struct_val:struct<bigint_val:bigint>"
+      ">");
+  auto config = std::make_shared<Config>();
+  config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
+  config->set(Config::STRIPE_SIZE, 10 * kSizeMB);
+  config->set(
+      Config::RAW_DATA_SIZE_PER_BATCH,
+      folly::to<uint64_t>(500 * 1024UL * 1024UL));
+
+  const size_t size = 1024;
+
+  auto nulls = AlignedBuffer::allocate<char>(bits::nbytes(size), &pool);
+  auto* nullsPtr = nulls->asMutable<uint64_t>();
+  for (size_t i = 0; i < size; ++i) {
+    // Only the first element is non-null
+    bits::setNull(nullsPtr, i, i != 0);
+  }
+
+  // Bigint column
+  VectorMaker maker{&pool};
+  auto child = maker.flatVector<int64_t>(std::vector<int64_t>{1UL});
+
+  std::vector<VectorPtr> children{child};
+  auto rowVec = std::make_shared<RowVector>(
+      &pool, type->childAt(0), nulls, size, children, /* nullCount */ size - 1);
+
+  // Retained bytes in vector: 192, which is much less than 1024
+  auto vec = std::make_shared<RowVector>(
+      &pool,
+      type,
+      BufferPtr{},
+      size,
+      std::vector<VectorPtr>{rowVec},
+      /* nullCount */ 0);
+
+  E2EWriterTestUtil::testWriter(
+      pool,
+      type,
+      {vec},
+      1,
+      1,
+      config,
+      /*flushPolicy=*/nullptr,
+      /*layoutPlannerFactory=*/nullptr,
+      /*memoryBudget=*/std::numeric_limits<int64_t>::max(),
+      false);
 }
 
 namespace facebook::velox::dwrf {
@@ -605,7 +805,7 @@ class E2EEncryptionTest : public Test {
     writer_ = std::make_unique<Writer>(options, std::move(sink), pool);
 
     for (size_t i = 0; i < batchCount_; ++i) {
-      auto batch = BatchMaker::createBatch(type, batchSize_, pool);
+      auto batch = BatchMaker::createBatch(type, batchSize_, pool, nullptr, i);
       writer_->write(batch);
       batches_.push_back(std::move(batch));
       if (i % flushInterval_ == flushInterval_ - 1) {

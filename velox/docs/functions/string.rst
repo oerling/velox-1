@@ -41,6 +41,17 @@ String Functions
 
     Converts ``string`` to lowercase.
 
+.. function:: lpad(string, size, padstring) -> varchar
+
+     Left pads ``string`` to ``size`` characters with ``padstring``. If
+     ``size`` is less than the length of ``string``, the result is truncated
+     to ``size`` characters. ``size`` must not be negative and ``padstring``
+     must be non-empty.
+
+.. function:: ltrim(string) -> varchar
+
+    Removes leading whitespace from string.
+
 .. function:: replace(string, search) -> varchar
 
     Removes all instances of ``search`` from ``string``.
@@ -51,6 +62,39 @@ String Functions
 
     If ``search`` is an empty string, inserts ``replace`` in front of every
     character and at the end of the ``string``.
+
+.. function:: reverse(string) -> varchar
+
+    Reverses ``string``.
+
+.. function:: rpad(string, size, padstring) -> varchar
+
+     Right pads ``string`` to ``size`` characters with ``padstring``. If
+     ``size`` is less than the length of ``string``, the result is truncated
+     to ``size`` characters. ``size`` must not be negative and ``padstring``
+     must be non-empty.
+
+.. function:: rtrim(string) -> varchar
+
+    Removes trailing whitespace from string.
+
+.. function:: split(string, delimiter) -> array(string)
+
+    Splits ``string`` on ``delimiter`` and returns an array.
+
+.. function:: split(string, delimiter, limit) -> array(string)
+
+    Splits ``string`` on ``delimiter`` and returns an array of size at most ``limit``.
+
+    The last element in the array always contains everything left in the string.
+    ``limit`` must be a positive number.
+
+.. function:: split_part(string, delimiter, index) -> string
+
+    Splits ``string`` on ``delimiter`` and returns the part at index ``index``.
+
+    Field indexes start with 1. If the index is larger than the number of fields,
+    then null is returned.
 
 .. function:: strpos(string, substring) -> bigint
 
@@ -82,7 +126,6 @@ String Functions
 .. function:: upper(string) -> varchar
 
     Converts ``string`` to uppercase.
-
 
 Unicode Functions
 -----------------

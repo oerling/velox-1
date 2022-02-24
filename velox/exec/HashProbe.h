@@ -30,24 +30,23 @@ class HashProbe : public Operator {
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::HashJoinNode>& hashJoinNode);
 
+  bool needsInput() const override {
+    return !finished_ && !noMoreInput_ && !input_;
+  }
+
   void addInput(RowVectorPtr input) override;
+
+  void noMoreInput() override;
 
   RowVectorPtr getOutput() override;
 
-  bool needsInput() const override {
-    return !isFinishing_ && !input_;
-  }
-
   BlockingReason isBlocked(ContinueFuture* future) override;
+
+  bool isFinished() override;
 
   void clearDynamicFilters() override;
 
-  void close() override {}
-
  private:
-  // TODO: Define batch size as bytes based on RowContainer row sizes.
-  static constexpr int32_t kOutputBatchSize = 1'000;
-
   // Sets up 'filter_' and related members.
   void initializeFilter(
       const std::shared_ptr<const core::ITypedExpr>& filter,
@@ -60,12 +59,21 @@ class HashProbe : public Operator {
   // Populate output columns.
   void fillOutput(vector_size_t size);
 
+  // Populate output columns with build-side rows that didn't match join
+  // condition.
+  RowVectorPtr getNonMatchingOutputForRightJoin();
+
   // Populate filter input columns.
   void fillFilterInput(vector_size_t size);
 
   // Applies 'filter_' to 'outputRows_' and updates 'outputRows_' and
   // 'rowNumberMapping_'. Returns the number of passing rows.
   vector_size_t evalFilter(vector_size_t numRows);
+
+  void ensureLoadedIfNotAtEnd(ChannelIndex channel);
+
+  // TODO: Define batch size as bytes based on RowContainer row sizes.
+  const uint32_t outputBatchSize_;
 
   const core::JoinType joinType_;
 
@@ -134,11 +142,7 @@ class HashProbe : public Operator {
   // same pipeline.
   std::shared_ptr<BaseHashTable> table_;
 
-  // Decodes probe keys when 'table_' is in normalized key  or array hash mode.
-  DecodedVector valueIdDecoder_;
-
-  // Temporary for de-duplicating value ids for dictionary inputs.
-  std::vector<uint64_t> deduppedHashes_;
+  VectorHasher::ScratchMemory scratchMemory_;
 
   // Rows to apply 'filter_' to.
   SelectivityVector filterRows_;
@@ -210,8 +214,11 @@ class HashProbe : public Operator {
     bool currentRowPassed{false};
   };
 
-  /// For left join, true if we received new 'input_'.
-  bool newInputForLeftJoin_{false};
+  /// True if this is the last HashProbe operator in the pipeline. It is
+  /// responsible for producing non-matching build-side rows for the right join.
+  bool lastRightJoinProbe_{false};
+
+  BaseHashTable::NotProbedRowsIterator rightJoinIterator_;
 
   /// For left join, tracks the probe side rows which had matches on the build
   /// side but didn't pass the filter.
@@ -227,6 +234,17 @@ class HashProbe : public Operator {
   // Input rows with a hash match. This is a subset of rows with no nulls in the
   // join keys and a superset of rows that have a match on the build side.
   SelectivityVector activeRows_;
+
+  bool finished_{false};
+
+  // True if passingInputRows is up to date.
+  bool passingInputRowsInitialized_;
+
+  // Set of input rows for which there is at least one join hit. All
+  // set if right side optional. Used when loading lazy vectors for
+  // cases where there is more than one batch of output or join filter
+  // input.
+  SelectivityVector passingInputRows_;
 };
 
 } // namespace facebook::velox::exec

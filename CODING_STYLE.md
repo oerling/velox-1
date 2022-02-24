@@ -25,7 +25,7 @@ line width, indentation and ordering (for includes, using directives and etc). 
 * **camelCase_** for private and protected members variables.
 * Use **snake_case** for namespace names and build targets
 * Use **UPPER_SNAKE_CASE** for macros.
-* Use **kPascalCase** for static constants.
+* Use **kPascalCase** for static constants and enumerators.
 
 
 ## Comments
@@ -193,8 +193,8 @@ About comment style:
   * **NEVER** use `std::string` - this makes your code more prone to SIOF bugs.
   * Avoid `const char* const` and `const char*` - these are less efficient to
     convert to `std::string` later on in your program if you ever need to
-    because `std::string_view`/`folly::StringPiece` knows its size and can use
-    a more efficient constructor. `std::string_view`/`folly::StringPiece` also
+    because `std::string_view`/ `folly::StringPiece` knows its size and can use
+    a more efficient constructor. `std::string_view`/ `folly::StringPiece` also
     has richer interfaces and often works as a drop-in replacement to
     `std::string`.
   * Need compile-time string concatenation? You can use `folly::FixedString`

@@ -19,7 +19,7 @@
 #include <cmath>
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
 
-using namespace facebook::dwio::common;
+using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::dwrf;
 
 StatisticsBuilderOptions options{16};
@@ -98,7 +98,7 @@ TEST(StatisticsBuilder, integerMissingStats) {
   // merge missing stats
   proto::ColumnStatistics proto;
   auto intProto = proto.mutable_intstatistics();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<IntegerColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -106,7 +106,7 @@ TEST(StatisticsBuilder, integerMissingStats) {
   intProto->set_minimum(0);
   intProto->set_maximum(1);
   intProto->set_sum(100);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<IntegerColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -125,13 +125,13 @@ TEST(StatisticsBuilder, integerEmptyStats) {
   // merge empty stats
   proto::ColumnStatistics proto;
   proto.set_numberofvalues(0);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<IntegerColumnStatistics>(target.build());
   EXPECT_EQ(5, stats->getSum());
 
   // merge again
   proto.clear_numberofvalues();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<IntegerColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 }
@@ -249,7 +249,7 @@ TEST(StatisticsBuilder, doubleMissingStats) {
   // merge missing stats
   proto::ColumnStatistics proto;
   auto doubleProto = proto.mutable_doublestatistics();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<DoubleColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -257,7 +257,7 @@ TEST(StatisticsBuilder, doubleMissingStats) {
   doubleProto->set_minimum(0);
   doubleProto->set_maximum(1);
   doubleProto->set_sum(100);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<DoubleColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -276,13 +276,13 @@ TEST(StatisticsBuilder, doubleEmptyStats) {
   // merge empty stats
   proto::ColumnStatistics proto;
   proto.set_numberofvalues(0);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<DoubleColumnStatistics>(target.build());
   EXPECT_EQ(5, stats->getSum());
 
   // merge again
   proto.clear_numberofvalues();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<DoubleColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 }
@@ -376,7 +376,7 @@ TEST(StatisticsBuilder, stringMissingStats) {
   // merge missing stats
   proto::ColumnStatistics proto;
   auto strProto = proto.mutable_stringstatistics();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<StringColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -384,7 +384,7 @@ TEST(StatisticsBuilder, stringMissingStats) {
   strProto->set_minimum("aa");
   strProto->set_maximum("bb");
   strProto->set_sum(100);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<StringColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -403,13 +403,13 @@ TEST(StatisticsBuilder, stringEmptyStats) {
   // merge empty stats
   proto::ColumnStatistics proto;
   proto.set_numberofvalues(0);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<StringColumnStatistics>(target.build());
   EXPECT_EQ(10, stats->getTotalLength());
 
   // merge again
   proto.clear_numberofvalues();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<StringColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 }
@@ -437,7 +437,7 @@ TEST(StatisticsBuilder, stringLengthOverflow) {
   auto strProto = proto.mutable_stringstatistics();
   strProto->set_sum(std::numeric_limits<int64_t>::max());
   strProto->set_minimum("foo");
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   EXPECT_TRUE(target.getTotalLength().has_value());
   auto stats = as<StringColumnStatistics>(target.build());
   EXPECT_TRUE(stats->getTotalLength().has_value());
@@ -449,8 +449,8 @@ TEST(StatisticsBuilder, stringLengthOverflow) {
 
   // merge causing overflow
   target.reset();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   EXPECT_TRUE(target.getTotalLength().has_value());
   stats = as<StringColumnStatistics>(target.build());
   EXPECT_FALSE(stats->getTotalLength().has_value());
@@ -498,13 +498,13 @@ TEST(StatisticsBuilder, booleanMissingStats) {
   // merge missing stats
   proto::ColumnStatistics proto;
   auto boolProto = proto.mutable_bucketstatistics();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BooleanColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
   // merge again
   boolProto->add_count(1);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BooleanColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -523,13 +523,13 @@ TEST(StatisticsBuilder, booleanEmptyStats) {
   // merge empty stats
   proto::ColumnStatistics proto;
   proto.set_numberofvalues(0);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BooleanColumnStatistics>(target.build());
   EXPECT_EQ(5, stats->getTrueCount());
 
   // merge again
   proto.clear_numberofvalues();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BooleanColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 }
@@ -585,7 +585,7 @@ TEST(StatisticsBuilder, basicMissingStats) {
 
   // merge missing stats
   proto::ColumnStatistics proto;
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = target.build();
   EXPECT_FALSE(stats->getNumberOfValues().has_value());
   EXPECT_FALSE(stats->getRawSize().has_value());
@@ -602,29 +602,29 @@ TEST(StatisticsBuilder, basicMissingStats) {
 }
 
 TEST(StatisticsBuilder, basicHasNull) {
-  enum State { TRUE = 0, FALSE, MISSING };
+  enum class State { kTrue = 0, kFalse, kMissing };
   auto test = [](State to, State from, State expected) {
     StatisticsBuilder target{options};
-    if (to == State::TRUE) {
+    if (to == State::kTrue) {
       target.setHasNull();
-    } else if (to == State::MISSING) {
+    } else if (to == State::kMissing) {
       // merge against unknown
       proto::ColumnStatistics proto;
-      target.merge(*ColumnStatistics::fromProto(proto, context));
+      target.merge(*buildColumnStatisticsFromProto(proto, context));
     }
 
     proto::ColumnStatistics proto;
-    if (from == State::FALSE) {
+    if (from == State::kFalse) {
       proto.set_hasnull(false);
-    } else if (from == State::TRUE) {
+    } else if (from == State::kTrue) {
       proto.set_hasnull(true);
     }
 
-    target.merge(*ColumnStatistics::fromProto(proto, context));
+    target.merge(*buildColumnStatisticsFromProto(proto, context));
     auto stats = target.build();
-    if (expected == State::FALSE) {
+    if (expected == State::kFalse) {
       EXPECT_FALSE(stats->hasNull().value());
-    } else if (expected == State::TRUE) {
+    } else if (expected == State::kTrue) {
       EXPECT_TRUE(stats->hasNull().value());
     } else {
       EXPECT_FALSE(stats->hasNull().has_value());
@@ -632,20 +632,20 @@ TEST(StatisticsBuilder, basicHasNull) {
   };
 
   // true / any => true
-  test(State::TRUE, State::TRUE, State::TRUE);
-  test(State::TRUE, State::FALSE, State::TRUE);
-  test(State::TRUE, State::MISSING, State::TRUE);
+  test(State::kTrue, State::kTrue, State::kTrue);
+  test(State::kTrue, State::kFalse, State::kTrue);
+  test(State::kTrue, State::kMissing, State::kTrue);
   // unknown / true => true
   // unknown / unknown or false => unknown
-  test(State::MISSING, State::TRUE, State::TRUE);
-  test(State::MISSING, State::FALSE, State::MISSING);
-  test(State::MISSING, State::MISSING, State::MISSING);
+  test(State::kMissing, State::kTrue, State::kTrue);
+  test(State::kMissing, State::kFalse, State::kMissing);
+  test(State::kMissing, State::kMissing, State::kMissing);
   // false / unknown => unknown
   // false / false => false
   // false / true => true
-  test(State::FALSE, State::MISSING, State::MISSING);
-  test(State::FALSE, State::FALSE, State::FALSE);
-  test(State::FALSE, State::TRUE, State::TRUE);
+  test(State::kFalse, State::kMissing, State::kMissing);
+  test(State::kFalse, State::kFalse, State::kFalse);
+  test(State::kFalse, State::kTrue, State::kTrue);
 }
 
 TEST(StatisticsBuilder, binary) {
@@ -690,13 +690,13 @@ TEST(StatisticsBuilder, binaryMissingStats) {
   // merge missing stats
   proto::ColumnStatistics proto;
   auto binProto = proto.mutable_binarystatistics();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BinaryColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
   // merge again
   binProto->set_sum(100);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BinaryColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 
@@ -715,13 +715,13 @@ TEST(StatisticsBuilder, binaryEmptyStats) {
   // merge empty stats
   proto::ColumnStatistics proto;
   proto.set_numberofvalues(0);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BinaryColumnStatistics>(target.build());
   EXPECT_EQ(5, stats->getTotalLength());
 
   // merge again
   proto.clear_numberofvalues();
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   stats = as<BinaryColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);
 }
@@ -743,7 +743,7 @@ TEST(StatisticsBuilder, binaryLengthOverflow) {
   proto::ColumnStatistics proto;
   auto binProto = proto.mutable_binarystatistics();
   binProto->set_sum(1);
-  target.merge(*ColumnStatistics::fromProto(proto, context));
+  target.merge(*buildColumnStatisticsFromProto(proto, context));
   EXPECT_TRUE(target.getTotalLength().has_value());
   stats = as<BinaryColumnStatistics>(target.build());
   EXPECT_EQ(stats, nullptr);

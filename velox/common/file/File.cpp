@@ -19,92 +19,12 @@
 #include <fmt/format.h>
 #include <glog/logging.h>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 
 #include <fcntl.h>
 #include <folly/portability/SysUio.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 namespace facebook::velox {
-
-namespace {
-
-std::vector<std::function<void()>>& lazyRegistrations() {
-  // Meyers singleton.
-  static std::vector<std::function<void()>>* lazyRegs =
-      new std::vector<std::function<void()>>();
-  return *lazyRegs;
-}
-std::once_flag lazyRegistrationFlag;
-
-using RegisteredReadFiles = std::vector<std::pair<
-    std::function<bool(std::string_view)>,
-    std::function<std::unique_ptr<ReadFile>(std::string_view)>>>;
-
-RegisteredReadFiles& registeredReadFiles() {
-  // Meyers singleton.
-  static RegisteredReadFiles* files = new RegisteredReadFiles();
-  return *files;
-}
-
-using RegisteredWriteFiles = std::vector<std::pair<
-    std::function<bool(std::string_view)>,
-    std::function<std::unique_ptr<WriteFile>(std::string_view)>>>;
-
-RegisteredWriteFiles& registeredWriteFiles() {
-  // Meyers singleton.
-  static RegisteredWriteFiles* files = new RegisteredWriteFiles();
-  return *files;
-}
-
-} // namespace
-
-void lazyRegisterFileClass(std::function<void()> lazy_registration) {
-  lazyRegistrations().push_back(lazy_registration);
-}
-
-void registerFileClass(
-    std::function<bool(std::string_view)> filenameMatcher,
-    std::function<std::unique_ptr<ReadFile>(std::string_view)> readGenerator,
-    std::function<std::unique_ptr<WriteFile>(std::string_view)>
-        writeGenerator) {
-  registeredReadFiles().emplace_back(filenameMatcher, readGenerator);
-  registeredWriteFiles().emplace_back(filenameMatcher, writeGenerator);
-}
-
-std::unique_ptr<ReadFile> generateReadFile(std::string_view filename) {
-  std::call_once(lazyRegistrationFlag, []() {
-    for (auto registration : lazyRegistrations()) {
-      registration();
-    }
-  });
-  const auto& files = registeredReadFiles();
-  for (const auto& p : files) {
-    if (p.first(filename)) {
-      return p.second(filename);
-    }
-  }
-  throw std::runtime_error(fmt::format(
-      "No registered read file matched with filename '{}'", filename));
-}
-
-std::unique_ptr<WriteFile> generateWriteFile(std::string_view filename) {
-  std::call_once(lazyRegistrationFlag, []() {
-    for (auto registration : lazyRegistrations()) {
-      registration();
-    }
-  });
-  const auto& files = registeredWriteFiles();
-  for (const auto& p : files) {
-    if (p.first(filename)) {
-      return p.second(filename);
-    }
-  }
-  throw std::runtime_error(fmt::format(
-      "No registered write file matched with filename '{}'", filename));
-}
 
 std::string_view InMemoryReadFile::pread(
     uint64_t offset,
@@ -128,7 +48,7 @@ std::string InMemoryReadFile::pread(uint64_t offset, uint64_t length) const {
 
 uint64_t InMemoryReadFile::preadv(
     uint64_t offset,
-    const std::vector<folly::Range<char*>>& buffers) {
+    const std::vector<folly::Range<char*>>& buffers) const {
   uint64_t numRead = 0;
   if (offset >= file_.size()) {
     return 0;
@@ -157,18 +77,21 @@ LocalReadFile::LocalReadFile(std::string_view path) {
   buf[path.size()] = 0;
   memcpy(buf.get(), path.data(), path.size());
   fd_ = open(buf.get(), O_RDONLY);
-  if (fd_ < 0) {
-    throw std::runtime_error("open failure in LocalReadFile constructor.");
-  }
+  VELOX_CHECK_GE(fd_, 0, "open failure in LocalReadFile constructor, {}.", fd_);
 }
+
+LocalReadFile::LocalReadFile(int32_t fd) : fd_(fd) {}
 
 void LocalReadFile::preadInternal(uint64_t offset, uint64_t length, char* pos)
     const {
   bytesRead_ += length;
   auto bytesRead = ::pread(fd_, pos, length, offset);
-  if (bytesRead != length) {
-    throw std::runtime_error("fread failure in LocalReadFile::PReadInternal.");
-  }
+  VELOX_CHECK_EQ(
+      bytesRead,
+      length,
+      "fread failure in LocalReadFile::PReadInternal, {} vs {}.",
+      bytesRead,
+      length);
 }
 
 std::string_view
@@ -194,8 +117,10 @@ std::string LocalReadFile::pread(uint64_t offset, uint64_t length) const {
 
 uint64_t LocalReadFile::preadv(
     uint64_t offset,
-    const std::vector<folly::Range<char*>>& buffers) {
-  static char droppedBytes[8 * 1024];
+    const std::vector<folly::Range<char*>>& buffers) const {
+  // Dropped bytes sized so that a typical dropped range of 50K is not
+  // too many iovecs.
+  static char droppedBytes[16 * 1024];
   std::vector<struct iovec> iovecs;
   iovecs.reserve(buffers.size());
   for (auto& range : buffers) {
@@ -218,9 +143,7 @@ uint64_t LocalReadFile::size() const {
     return size_;
   }
   const off_t rc = lseek(fd_, 0, SEEK_END);
-  if (rc < 0) {
-    throw std::runtime_error("fseek failure in LocalReadFile::size.");
-  }
+  VELOX_CHECK_GE(rc, 0, "fseek failure in LocalReadFile::size, {}.", rc);
   size_ = rc;
   return size_;
 }
@@ -239,82 +162,49 @@ LocalWriteFile::LocalWriteFile(std::string_view path) {
   memcpy(buf.get(), path.data(), path.size());
   {
     FILE* exists = fopen(buf.get(), "rb");
-    if (exists != nullptr) {
-      throw std::runtime_error(fmt::format(
-          "Failure in LocalWriteFile: path '{}' already exists.", path));
-    }
+    VELOX_CHECK(
+        !exists, "Failure in LocalWriteFile: path '{}' already exists.", path);
   }
   file_ = fopen(buf.get(), "ab");
-  if (file_ == nullptr) {
-    throw std::runtime_error("fread failure in LocalWriteFile constructor.");
-  }
+  VELOX_CHECK(file_, "fread failure in LocalWriteFile constructor, {}.", path);
 }
 
 LocalWriteFile::~LocalWriteFile() {
-  if (file_) {
-    const int fclose_ret = fclose(file_);
-    if (fclose_ret != 0) {
-      // We cannot throw an exception from the destructor. Warn instead.
-      LOG(WARNING) << "fclose failure in LocalWriteFile destructor";
-    }
+  try {
+    close();
+  } catch (const std::exception& ex) {
+    // We cannot throw an exception from the destructor. Warn instead.
+    LOG(WARNING) << "fclose failure in LocalWriteFile destructor: "
+                 << ex.what();
   }
 }
 
 void LocalWriteFile::append(std::string_view data) {
+  VELOX_CHECK(!closed_, "file is closed");
   const uint64_t bytes_written = fwrite(data.data(), 1, data.size(), file_);
-  if (bytes_written != data.size()) {
-    throw std::runtime_error("fwrite failure in LocalWriteFile::append.");
-  }
+  VELOX_CHECK_EQ(
+      bytes_written,
+      data.size(),
+      "fwrite failure in LocalWriteFile::append, {} vs {}.",
+      bytes_written,
+      data.size());
 }
 
 void LocalWriteFile::flush() {
+  VELOX_CHECK(!closed_, "file is closed");
   auto ret = fflush(file_);
-  if (ret != 0) {
-    throw std::runtime_error("fflush failed in LocalWriteFile::flush.");
+  VELOX_CHECK_EQ(ret, 0, "fflush failed in LocalWriteFile::flush.");
+}
+
+void LocalWriteFile::close() {
+  if (!closed_) {
+    auto ret = fclose(file_);
+    VELOX_CHECK_EQ(ret, 0, "fwrite failure in LocalWriteFile::close.");
+    closed_ = true;
   }
 }
 
 uint64_t LocalWriteFile::size() const {
   return ftell(file_);
 }
-
-// Register the local Files.
-namespace {
-
-struct LocalFileRegistrar {
-  LocalFileRegistrar() {
-    lazyRegisterFileClass([this]() { this->ActuallyRegister(); });
-  }
-
-  void ActuallyRegister() {
-    // Note: presto behavior is to prefix local paths with 'file:'.
-    // Check for that prefix and prune to absolute regular paths as needed.
-    std::function<bool(std::string_view)> filename_matcher =
-        [](std::string_view filename) {
-          return filename.find("/") == 0 || filename.find("file:") == 0;
-        };
-    std::function<std::unique_ptr<ReadFile>(std::string_view)> read_generator =
-        [](std::string_view filename) {
-          if (filename.find("file:") == 0) {
-            return std::make_unique<LocalReadFile>(filename.substr(5));
-          } else {
-            return std::make_unique<LocalReadFile>(filename);
-          }
-        };
-    std::function<std::unique_ptr<WriteFile>(std::string_view)>
-        write_generator = [](std::string_view filename) {
-          if (filename.find("file:") == 0) {
-            return std::make_unique<LocalWriteFile>(filename.substr(5));
-          } else {
-            return std::make_unique<LocalWriteFile>(filename);
-          }
-        };
-    registerFileClass(filename_matcher, read_generator, write_generator);
-  }
-};
-
-const LocalFileRegistrar localFileRegistrar;
-
-} // namespace
-
 } // namespace facebook::velox

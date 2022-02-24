@@ -552,84 +552,6 @@ ContinuousUpdate/fast:
 .PHONY : ContinuousUpdate/fast
 
 #=============================================================================
-# Target rules for targets named velox_aggregates
-
-# Build rule for target.
-velox_aggregates: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates
-.PHONY : velox_aggregates
-
-# fast build rule for target.
-velox_aggregates/fast:
-	$(MAKE) $(MAKESILENT) -f velox/aggregates/CMakeFiles/velox_aggregates.dir/build.make velox/aggregates/CMakeFiles/velox_aggregates.dir/build
-.PHONY : velox_aggregates/fast
-
-#=============================================================================
-# Target rules for targets named velox_aggregates_hyperloglog
-
-# Build rule for target.
-velox_aggregates_hyperloglog: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_hyperloglog
-.PHONY : velox_aggregates_hyperloglog
-
-# fast build rule for target.
-velox_aggregates_hyperloglog/fast:
-	$(MAKE) $(MAKESILENT) -f velox/aggregates/hyperloglog/CMakeFiles/velox_aggregates_hyperloglog.dir/build.make velox/aggregates/hyperloglog/CMakeFiles/velox_aggregates_hyperloglog.dir/build
-.PHONY : velox_aggregates_hyperloglog/fast
-
-#=============================================================================
-# Target rules for targets named velox_aggregates_hyperloglog_test
-
-# Build rule for target.
-velox_aggregates_hyperloglog_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_hyperloglog_test
-.PHONY : velox_aggregates_hyperloglog_test
-
-# fast build rule for target.
-velox_aggregates_hyperloglog_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/aggregates/hyperloglog/tests/CMakeFiles/velox_aggregates_hyperloglog_test.dir/build.make velox/aggregates/hyperloglog/tests/CMakeFiles/velox_aggregates_hyperloglog_test.dir/build
-.PHONY : velox_aggregates_hyperloglog_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_aggregates_test_lib
-
-# Build rule for target.
-velox_aggregates_test_lib: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_test_lib
-.PHONY : velox_aggregates_test_lib
-
-# fast build rule for target.
-velox_aggregates_test_lib/fast:
-	$(MAKE) $(MAKESILENT) -f velox/aggregates/tests/CMakeFiles/velox_aggregates_test_lib.dir/build.make velox/aggregates/tests/CMakeFiles/velox_aggregates_test_lib.dir/build
-.PHONY : velox_aggregates_test_lib/fast
-
-#=============================================================================
-# Target rules for targets named velox_aggregates_test
-
-# Build rule for target.
-velox_aggregates_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_test
-.PHONY : velox_aggregates_test
-
-# fast build rule for target.
-velox_aggregates_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/aggregates/tests/CMakeFiles/velox_aggregates_test.dir/build.make velox/aggregates/tests/CMakeFiles/velox_aggregates_test.dir/build
-.PHONY : velox_aggregates_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_aggregates_pushdown_benchmarks
-
-# Build rule for target.
-velox_aggregates_pushdown_benchmarks: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_pushdown_benchmarks
-.PHONY : velox_aggregates_pushdown_benchmarks
-
-# fast build rule for target.
-velox_aggregates_pushdown_benchmarks/fast:
-	$(MAKE) $(MAKESILENT) -f velox/aggregates/benchmarks/CMakeFiles/velox_aggregates_pushdown_benchmarks.dir/build.make velox/aggregates/benchmarks/CMakeFiles/velox_aggregates_pushdown_benchmarks.dir/build
-.PHONY : velox_aggregates_pushdown_benchmarks/fast
-
-#=============================================================================
 # Target rules for targets named velox_buffer
 
 # Build rule for target.
@@ -773,30 +695,56 @@ velox_encode/fast:
 .PHONY : velox_encode/fast
 
 #=============================================================================
-# Target rules for targets named file
+# Target rules for targets named velox_file
 
 # Build rule for target.
-file: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 file
-.PHONY : file
+velox_file: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_file
+.PHONY : velox_file
 
 # fast build rule for target.
-file/fast:
-	$(MAKE) $(MAKESILENT) -f velox/common/file/CMakeFiles/file.dir/build.make velox/common/file/CMakeFiles/file.dir/build
-.PHONY : file/fast
+velox_file/fast:
+	$(MAKE) $(MAKESILENT) -f velox/common/file/CMakeFiles/velox_file.dir/build.make velox/common/file/CMakeFiles/velox_file.dir/build
+.PHONY : velox_file/fast
 
 #=============================================================================
-# Target rules for targets named file_test
+# Target rules for targets named velox_file_test
 
 # Build rule for target.
-file_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 file_test
-.PHONY : file_test
+velox_file_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_file_test
+.PHONY : velox_file_test
 
 # fast build rule for target.
-file_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/common/file/CMakeFiles/file_test.dir/build.make velox/common/file/CMakeFiles/file_test.dir/build
-.PHONY : file_test/fast
+velox_file_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/common/file/CMakeFiles/velox_file_test.dir/build.make velox/common/file/CMakeFiles/velox_file_test.dir/build
+.PHONY : velox_file_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_read_benchmark_lib
+
+# Build rule for target.
+velox_read_benchmark_lib: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_read_benchmark_lib
+.PHONY : velox_read_benchmark_lib
+
+# fast build rule for target.
+velox_read_benchmark_lib/fast:
+	$(MAKE) $(MAKESILENT) -f velox/common/file/benchmark/CMakeFiles/velox_read_benchmark_lib.dir/build.make velox/common/file/benchmark/CMakeFiles/velox_read_benchmark_lib.dir/build
+.PHONY : velox_read_benchmark_lib/fast
+
+#=============================================================================
+# Target rules for targets named velox_read_benchmark
+
+# Build rule for target.
+velox_read_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_read_benchmark
+.PHONY : velox_read_benchmark
+
+# fast build rule for target.
+velox_read_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/common/file/benchmark/CMakeFiles/velox_read_benchmark.dir/build.make velox/common/file/benchmark/CMakeFiles/velox_read_benchmark.dir/build
+.PHONY : velox_read_benchmark/fast
 
 #=============================================================================
 # Target rules for targets named velox_memory
@@ -823,6 +771,19 @@ velox_memory_test: cmake_check_build_system
 velox_memory_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/common/memory/tests/CMakeFiles/velox_memory_test.dir/build.make velox/common/memory/tests/CMakeFiles/velox_memory_test.dir/build
 .PHONY : velox_memory_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_fragmentation_benchmark
+
+# Build rule for target.
+velox_fragmentation_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_fragmentation_benchmark
+.PHONY : velox_fragmentation_benchmark
+
+# fast build rule for target.
+velox_fragmentation_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/common/memory/tests/CMakeFiles/velox_fragmentation_benchmark.dir/build.make velox/common/memory/tests/CMakeFiles/velox_fragmentation_benchmark.dir/build
+.PHONY : velox_fragmentation_benchmark/fast
 
 #=============================================================================
 # Target rules for targets named velox_process
@@ -877,97 +838,6 @@ velox_time/fast:
 .PHONY : velox_time/fast
 
 #=============================================================================
-# Target rules for targets named velox_duckdb_conversion
-
-# Build rule for target.
-velox_duckdb_conversion: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_conversion
-.PHONY : velox_duckdb_conversion
-
-# fast build rule for target.
-velox_duckdb_conversion/fast:
-	$(MAKE) $(MAKESILENT) -f velox/duckdb/conversion/CMakeFiles/velox_duckdb_conversion.dir/build.make velox/duckdb/conversion/CMakeFiles/velox_duckdb_conversion.dir/build
-.PHONY : velox_duckdb_conversion/fast
-
-#=============================================================================
-# Target rules for targets named velox_duckdb_parser
-
-# Build rule for target.
-velox_duckdb_parser: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_parser
-.PHONY : velox_duckdb_parser
-
-# fast build rule for target.
-velox_duckdb_parser/fast:
-	$(MAKE) $(MAKESILENT) -f velox/duckdb/conversion/CMakeFiles/velox_duckdb_parser.dir/build.make velox/duckdb/conversion/CMakeFiles/velox_duckdb_parser.dir/build
-.PHONY : velox_duckdb_parser/fast
-
-#=============================================================================
-# Target rules for targets named velox_duckdb_conversion_test
-
-# Build rule for target.
-velox_duckdb_conversion_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_conversion_test
-.PHONY : velox_duckdb_conversion_test
-
-# fast build rule for target.
-velox_duckdb_conversion_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/duckdb/conversion/tests/CMakeFiles/velox_duckdb_conversion_test.dir/build.make velox/duckdb/conversion/tests/CMakeFiles/velox_duckdb_conversion_test.dir/build
-.PHONY : velox_duckdb_conversion_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_duckdb_functions
-
-# Build rule for target.
-velox_duckdb_functions: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_functions
-.PHONY : velox_duckdb_functions
-
-# fast build rule for target.
-velox_duckdb_functions/fast:
-	$(MAKE) $(MAKESILENT) -f velox/duckdb/functions/CMakeFiles/velox_duckdb_functions.dir/build.make velox/duckdb/functions/CMakeFiles/velox_duckdb_functions.dir/build
-.PHONY : velox_duckdb_functions/fast
-
-#=============================================================================
-# Target rules for targets named velox_duckdb_functions_test
-
-# Build rule for target.
-velox_duckdb_functions_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_functions_test
-.PHONY : velox_duckdb_functions_test
-
-# fast build rule for target.
-velox_duckdb_functions_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/duckdb/functions/tests/CMakeFiles/velox_duckdb_functions_test.dir/build.make velox/duckdb/functions/tests/CMakeFiles/velox_duckdb_functions_test.dir/build
-.PHONY : velox_duckdb_functions_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_connector
-
-# Build rule for target.
-velox_connector: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_connector
-.PHONY : velox_connector
-
-# fast build rule for target.
-velox_connector/fast:
-	$(MAKE) $(MAKESILENT) -f velox/connectors/CMakeFiles/velox_connector.dir/build.make velox/connectors/CMakeFiles/velox_connector.dir/build
-.PHONY : velox_connector/fast
-
-#=============================================================================
-# Target rules for targets named velox_hive_connector
-
-# Build rule for target.
-velox_hive_connector: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_hive_connector
-.PHONY : velox_hive_connector
-
-# fast build rule for target.
-velox_hive_connector/fast:
-	$(MAKE) $(MAKESILENT) -f velox/connectors/hive/CMakeFiles/velox_hive_connector.dir/build.make velox/connectors/hive/CMakeFiles/velox_hive_connector.dir/build
-.PHONY : velox_hive_connector/fast
-
-#=============================================================================
 # Target rules for targets named velox_config
 
 # Build rule for target.
@@ -1005,6 +875,448 @@ velox_core_test: cmake_check_build_system
 velox_core_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/core/tests/CMakeFiles/velox_core_test.dir/build.make velox/core/tests/CMakeFiles/velox_core_test.dir/build
 .PHONY : velox_core_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_presto_serializer
+
+# Build rule for target.
+velox_presto_serializer: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_presto_serializer
+.PHONY : velox_presto_serializer
+
+# fast build rule for target.
+velox_presto_serializer/fast:
+	$(MAKE) $(MAKESILENT) -f velox/serializers/CMakeFiles/velox_presto_serializer.dir/build.make velox/serializers/CMakeFiles/velox_presto_serializer.dir/build
+.PHONY : velox_presto_serializer/fast
+
+#=============================================================================
+# Target rules for targets named velox_presto_serializer_test
+
+# Build rule for target.
+velox_presto_serializer_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_presto_serializer_test
+.PHONY : velox_presto_serializer_test
+
+# fast build rule for target.
+velox_presto_serializer_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/serializers/tests/CMakeFiles/velox_presto_serializer_test.dir/build.make velox/serializers/tests/CMakeFiles/velox_presto_serializer_test.dir/build
+.PHONY : velox_presto_serializer_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_type
+
+# Build rule for target.
+velox_type: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type
+.PHONY : velox_type
+
+# fast build rule for target.
+velox_type/fast:
+	$(MAKE) $(MAKESILENT) -f velox/type/CMakeFiles/velox_type.dir/build.make velox/type/CMakeFiles/velox_type.dir/build
+.PHONY : velox_type/fast
+
+#=============================================================================
+# Target rules for targets named velox_type_test
+
+# Build rule for target.
+velox_type_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type_test
+.PHONY : velox_type_test
+
+# fast build rule for target.
+velox_type_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/type/tests/CMakeFiles/velox_type_test.dir/build.make velox/type/tests/CMakeFiles/velox_type_test.dir/build
+.PHONY : velox_type_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_filter_benchmark
+
+# Build rule for target.
+velox_filter_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_filter_benchmark
+.PHONY : velox_filter_benchmark
+
+# fast build rule for target.
+velox_filter_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/type/tests/CMakeFiles/velox_filter_benchmark.dir/build.make velox/type/tests/CMakeFiles/velox_filter_benchmark.dir/build
+.PHONY : velox_filter_benchmark/fast
+
+#=============================================================================
+# Target rules for targets named velox_type_tz
+
+# Build rule for target.
+velox_type_tz: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type_tz
+.PHONY : velox_type_tz
+
+# fast build rule for target.
+velox_type_tz/fast:
+	$(MAKE) $(MAKESILENT) -f velox/type/tz/CMakeFiles/velox_type_tz.dir/build.make velox/type/tz/CMakeFiles/velox_type_tz.dir/build
+.PHONY : velox_type_tz/fast
+
+#=============================================================================
+# Target rules for targets named velox_type_tz_test
+
+# Build rule for target.
+velox_type_tz_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type_tz_test
+.PHONY : velox_type_tz_test
+
+# fast build rule for target.
+velox_type_tz_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/type/tz/tests/CMakeFiles/velox_type_tz_test.dir/build.make velox/type/tz/tests/CMakeFiles/velox_type_tz_test.dir/build
+.PHONY : velox_type_tz_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_vector
+
+# Build rule for target.
+velox_vector: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector
+.PHONY : velox_vector
+
+# fast build rule for target.
+velox_vector/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/CMakeFiles/velox_vector.dir/build.make velox/vector/CMakeFiles/velox_vector.dir/build
+.PHONY : velox_vector/fast
+
+#=============================================================================
+# Target rules for targets named velox_arrow_bridge
+
+# Build rule for target.
+velox_arrow_bridge: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_arrow_bridge
+.PHONY : velox_arrow_bridge
+
+# fast build rule for target.
+velox_arrow_bridge/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/arrow/CMakeFiles/velox_arrow_bridge.dir/build.make velox/vector/arrow/CMakeFiles/velox_arrow_bridge.dir/build
+.PHONY : velox_arrow_bridge/fast
+
+#=============================================================================
+# Target rules for targets named velox_arrow_bridge_test
+
+# Build rule for target.
+velox_arrow_bridge_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_arrow_bridge_test
+.PHONY : velox_arrow_bridge_test
+
+# fast build rule for target.
+velox_arrow_bridge_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/arrow/tests/CMakeFiles/velox_arrow_bridge_test.dir/build.make velox/vector/arrow/tests/CMakeFiles/velox_arrow_bridge_test.dir/build
+.PHONY : velox_arrow_bridge_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_vector_fuzzer
+
+# Build rule for target.
+velox_vector_fuzzer: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_fuzzer
+.PHONY : velox_vector_fuzzer
+
+# fast build rule for target.
+velox_vector_fuzzer/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/fuzzer/CMakeFiles/velox_vector_fuzzer.dir/build.make velox/vector/fuzzer/CMakeFiles/velox_vector_fuzzer.dir/build
+.PHONY : velox_vector_fuzzer/fast
+
+#=============================================================================
+# Target rules for targets named bias_vector_test
+
+# Build rule for target.
+bias_vector_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 bias_vector_test
+.PHONY : bias_vector_test
+
+# fast build rule for target.
+bias_vector_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/bias_vector_test.dir/build.make velox/vector/tests/CMakeFiles/bias_vector_test.dir/build
+.PHONY : bias_vector_test/fast
+
+#=============================================================================
+# Target rules for targets named simple_vector_test
+
+# Build rule for target.
+simple_vector_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 simple_vector_test
+.PHONY : simple_vector_test
+
+# fast build rule for target.
+simple_vector_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/simple_vector_test.dir/build.make velox/vector/tests/CMakeFiles/simple_vector_test.dir/build
+.PHONY : simple_vector_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_vector_test_lib
+
+# Build rule for target.
+velox_vector_test_lib: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_test_lib
+.PHONY : velox_vector_test_lib
+
+# fast build rule for target.
+velox_vector_test_lib/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/velox_vector_test_lib.dir/build.make velox/vector/tests/CMakeFiles/velox_vector_test_lib.dir/build
+.PHONY : velox_vector_test_lib/fast
+
+#=============================================================================
+# Target rules for targets named velox_vector_test
+
+# Build rule for target.
+velox_vector_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_test
+.PHONY : velox_vector_test
+
+# fast build rule for target.
+velox_vector_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/velox_vector_test.dir/build.make velox/vector/tests/CMakeFiles/velox_vector_test.dir/build
+.PHONY : velox_vector_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_vector_hash_all_benchmark
+
+# Build rule for target.
+velox_vector_hash_all_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_hash_all_benchmark
+.PHONY : velox_vector_hash_all_benchmark
+
+# fast build rule for target.
+velox_vector_hash_all_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/benchmarks/CMakeFiles/velox_vector_hash_all_benchmark.dir/build.make velox/vector/benchmarks/CMakeFiles/velox_vector_hash_all_benchmark.dir/build
+.PHONY : velox_vector_hash_all_benchmark/fast
+
+#=============================================================================
+# Target rules for targets named velox_vector_selectivity_vector_benchmark
+
+# Build rule for target.
+velox_vector_selectivity_vector_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_selectivity_vector_benchmark
+.PHONY : velox_vector_selectivity_vector_benchmark
+
+# fast build rule for target.
+velox_vector_selectivity_vector_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/vector/benchmarks/CMakeFiles/velox_vector_selectivity_vector_benchmark.dir/build.make velox/vector/benchmarks/CMakeFiles/velox_vector_selectivity_vector_benchmark.dir/build
+.PHONY : velox_vector_selectivity_vector_benchmark/fast
+
+#=============================================================================
+# Target rules for targets named velox_row_test
+
+# Build rule for target.
+velox_row_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_row_test
+.PHONY : velox_row_test
+
+# fast build rule for target.
+velox_row_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/row/tests/CMakeFiles/velox_row_test.dir/build.make velox/row/tests/CMakeFiles/velox_row_test.dir/build
+.PHONY : velox_row_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_flag_definitions
+
+# Build rule for target.
+velox_flag_definitions: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_flag_definitions
+.PHONY : velox_flag_definitions
+
+# fast build rule for target.
+velox_flag_definitions/fast:
+	$(MAKE) $(MAKESILENT) -f velox/flag_definitions/CMakeFiles/velox_flag_definitions.dir/build.make velox/flag_definitions/CMakeFiles/velox_flag_definitions.dir/build
+.PHONY : velox_flag_definitions/fast
+
+#=============================================================================
+# Target rules for targets named velox_external_date
+
+# Build rule for target.
+velox_external_date: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_external_date
+.PHONY : velox_external_date
+
+# fast build rule for target.
+velox_external_date/fast:
+	$(MAKE) $(MAKESILENT) -f velox/external/date/CMakeFiles/velox_external_date.dir/build.make velox/external/date/CMakeFiles/velox_external_date.dir/build
+.PHONY : velox_external_date/fast
+
+#=============================================================================
+# Target rules for targets named md5
+
+# Build rule for target.
+md5: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 md5
+.PHONY : md5
+
+# fast build rule for target.
+md5/fast:
+	$(MAKE) $(MAKESILENT) -f velox/external/md5/CMakeFiles/md5.dir/build.make velox/external/md5/CMakeFiles/md5.dir/build
+.PHONY : md5/fast
+
+#=============================================================================
+# Target rules for targets named velox_example_simple_functions
+
+# Build rule for target.
+velox_example_simple_functions: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_example_simple_functions
+.PHONY : velox_example_simple_functions
+
+# fast build rule for target.
+velox_example_simple_functions/fast:
+	$(MAKE) $(MAKESILENT) -f velox/examples/CMakeFiles/velox_example_simple_functions.dir/build.make velox/examples/CMakeFiles/velox_example_simple_functions.dir/build
+.PHONY : velox_example_simple_functions/fast
+
+#=============================================================================
+# Target rules for targets named velox_example_expression_eval
+
+# Build rule for target.
+velox_example_expression_eval: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_example_expression_eval
+.PHONY : velox_example_expression_eval
+
+# fast build rule for target.
+velox_example_expression_eval/fast:
+	$(MAKE) $(MAKESILENT) -f velox/examples/CMakeFiles/velox_example_expression_eval.dir/build.make velox/examples/CMakeFiles/velox_example_expression_eval.dir/build
+.PHONY : velox_example_expression_eval/fast
+
+#=============================================================================
+# Target rules for targets named velox_example_opaque_type
+
+# Build rule for target.
+velox_example_opaque_type: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_example_opaque_type
+.PHONY : velox_example_opaque_type
+
+# fast build rule for target.
+velox_example_opaque_type/fast:
+	$(MAKE) $(MAKESILENT) -f velox/examples/CMakeFiles/velox_example_opaque_type.dir/build.make velox/examples/CMakeFiles/velox_example_opaque_type.dir/build
+.PHONY : velox_example_opaque_type/fast
+
+#=============================================================================
+# Target rules for targets named velox_expression_functions
+
+# Build rule for target.
+velox_expression_functions: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_functions
+.PHONY : velox_expression_functions
+
+# fast build rule for target.
+velox_expression_functions/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/CMakeFiles/velox_expression_functions.dir/build.make velox/expression/CMakeFiles/velox_expression_functions.dir/build
+.PHONY : velox_expression_functions/fast
+
+#=============================================================================
+# Target rules for targets named velox_expression
+
+# Build rule for target.
+velox_expression: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression
+.PHONY : velox_expression
+
+# fast build rule for target.
+velox_expression/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/CMakeFiles/velox_expression.dir/build.make velox/expression/CMakeFiles/velox_expression.dir/build
+.PHONY : velox_expression/fast
+
+#=============================================================================
+# Target rules for targets named spark_expression_fuzzer_test
+
+# Build rule for target.
+spark_expression_fuzzer_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 spark_expression_fuzzer_test
+.PHONY : spark_expression_fuzzer_test
+
+# fast build rule for target.
+spark_expression_fuzzer_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/spark_expression_fuzzer_test.dir/build.make velox/expression/tests/CMakeFiles/spark_expression_fuzzer_test.dir/build
+.PHONY : spark_expression_fuzzer_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_expression_fuzzer
+
+# Build rule for target.
+velox_expression_fuzzer: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_fuzzer
+.PHONY : velox_expression_fuzzer
+
+# fast build rule for target.
+velox_expression_fuzzer/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_expression_fuzzer.dir/build.make velox/expression/tests/CMakeFiles/velox_expression_fuzzer.dir/build
+.PHONY : velox_expression_fuzzer/fast
+
+#=============================================================================
+# Target rules for targets named velox_expression_test
+
+# Build rule for target.
+velox_expression_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_test
+.PHONY : velox_expression_test
+
+# fast build rule for target.
+velox_expression_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_expression_test.dir/build.make velox/expression/tests/CMakeFiles/velox_expression_test.dir/build
+.PHONY : velox_expression_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_expression_fuzzer_test
+
+# Build rule for target.
+velox_expression_fuzzer_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_fuzzer_test
+.PHONY : velox_expression_fuzzer_test
+
+# fast build rule for target.
+velox_expression_fuzzer_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_expression_fuzzer_test.dir/build.make velox/expression/tests/CMakeFiles/velox_expression_fuzzer_test.dir/build
+.PHONY : velox_expression_fuzzer_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_parse_expression
+
+# Build rule for target.
+velox_parse_expression: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_expression
+.PHONY : velox_parse_expression
+
+# fast build rule for target.
+velox_parse_expression/fast:
+	$(MAKE) $(MAKESILENT) -f velox/parse/CMakeFiles/velox_parse_expression.dir/build.make velox/parse/CMakeFiles/velox_parse_expression.dir/build
+.PHONY : velox_parse_expression/fast
+
+#=============================================================================
+# Target rules for targets named velox_parse_utils
+
+# Build rule for target.
+velox_parse_utils: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_utils
+.PHONY : velox_parse_utils
+
+# fast build rule for target.
+velox_parse_utils/fast:
+	$(MAKE) $(MAKESILENT) -f velox/parse/CMakeFiles/velox_parse_utils.dir/build.make velox/parse/CMakeFiles/velox_parse_utils.dir/build
+.PHONY : velox_parse_utils/fast
+
+#=============================================================================
+# Target rules for targets named velox_parse_parser
+
+# Build rule for target.
+velox_parse_parser: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_parser
+.PHONY : velox_parse_parser
+
+# fast build rule for target.
+velox_parse_parser/fast:
+	$(MAKE) $(MAKESILENT) -f velox/parse/CMakeFiles/velox_parse_parser.dir/build.make velox/parse/CMakeFiles/velox_parse_parser.dir/build
+.PHONY : velox_parse_parser/fast
+
+#=============================================================================
+# Target rules for targets named velox_parse_utils_test
+
+# Build rule for target.
+velox_parse_utils_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_utils_test
+.PHONY : velox_parse_utils_test
+
+# fast build rule for target.
+velox_parse_utils_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/parse/tests/CMakeFiles/velox_parse_utils_test.dir/build.make velox/parse/tests/CMakeFiles/velox_parse_utils_test.dir/build
+.PHONY : velox_parse_utils_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_dwio_common
@@ -1124,17 +1436,17 @@ velox_dwio_dwrf_reader/fast:
 .PHONY : velox_dwio_dwrf_reader/fast
 
 #=============================================================================
-# Target rules for targets named velox_dwio_dwrf_encryption_test
+# Target rules for targets named velox_dwrf_float_column_writer_benchmark
 
 # Build rule for target.
-velox_dwio_dwrf_encryption_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_encryption_test
-.PHONY : velox_dwio_dwrf_encryption_test
+velox_dwrf_float_column_writer_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_float_column_writer_benchmark
+.PHONY : velox_dwrf_float_column_writer_benchmark
 
 # fast build rule for target.
-velox_dwio_dwrf_encryption_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_encryption_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_encryption_test.dir/build
-.PHONY : velox_dwio_dwrf_encryption_test/fast
+velox_dwrf_float_column_writer_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_float_column_writer_benchmark.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_float_column_writer_benchmark.dir/build
+.PHONY : velox_dwrf_float_column_writer_benchmark/fast
 
 #=============================================================================
 # Target rules for targets named velox_dwio_dwrf_decryption_test
@@ -1174,6 +1486,58 @@ velox_dwio_dwrf_layout_planner_test: cmake_check_build_system
 velox_dwio_dwrf_layout_planner_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_layout_planner_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_layout_planner_test.dir/build
 .PHONY : velox_dwio_dwrf_layout_planner_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwio_dwrf_column_reader_test
+
+# Build rule for target.
+velox_dwio_dwrf_column_reader_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_column_reader_test
+.PHONY : velox_dwio_dwrf_column_reader_test
+
+# fast build rule for target.
+velox_dwio_dwrf_column_reader_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_column_reader_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_column_reader_test.dir/build
+.PHONY : velox_dwio_dwrf_column_reader_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwio_dwrf_checksum_test
+
+# Build rule for target.
+velox_dwio_dwrf_checksum_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_checksum_test
+.PHONY : velox_dwio_dwrf_checksum_test
+
+# fast build rule for target.
+velox_dwio_dwrf_checksum_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_checksum_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_checksum_test.dir/build
+.PHONY : velox_dwio_dwrf_checksum_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwrf_column_writer_stats_test
+
+# Build rule for target.
+velox_dwrf_column_writer_stats_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_column_writer_stats_test
+.PHONY : velox_dwrf_column_writer_stats_test
+
+# fast build rule for target.
+velox_dwrf_column_writer_stats_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_stats_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_stats_test.dir/build
+.PHONY : velox_dwrf_column_writer_stats_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwio_dwrf_writer_encoding_manager_test
+
+# Build rule for target.
+velox_dwio_dwrf_writer_encoding_manager_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_writer_encoding_manager_test
+.PHONY : velox_dwio_dwrf_writer_encoding_manager_test
+
+# fast build rule for target.
+velox_dwio_dwrf_writer_encoding_manager_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_writer_encoding_manager_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_writer_encoding_manager_test.dir/build
+.PHONY : velox_dwio_dwrf_writer_encoding_manager_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_dwio_dwrf_range_test
@@ -1241,32 +1605,6 @@ velox_dwio_dwrf_dictionary_encoding_utils_test/fast:
 .PHONY : velox_dwio_dwrf_dictionary_encoding_utils_test/fast
 
 #=============================================================================
-# Target rules for targets named velox_dwrf_column_writer_test
-
-# Build rule for target.
-velox_dwrf_column_writer_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_column_writer_test
-.PHONY : velox_dwrf_column_writer_test
-
-# fast build rule for target.
-velox_dwrf_column_writer_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_test.dir/build
-.PHONY : velox_dwrf_column_writer_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_dwrf_int_encoder_benchmark
-
-# Build rule for target.
-velox_dwrf_int_encoder_benchmark: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_int_encoder_benchmark
-.PHONY : velox_dwrf_int_encoder_benchmark
-
-# fast build rule for target.
-velox_dwrf_int_encoder_benchmark/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_int_encoder_benchmark.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_int_encoder_benchmark.dir/build
-.PHONY : velox_dwrf_int_encoder_benchmark/fast
-
-#=============================================================================
 # Target rules for targets named velox_dwio_dwrf_index_builder_test
 
 # Build rule for target.
@@ -1278,6 +1616,19 @@ velox_dwio_dwrf_index_builder_test: cmake_check_build_system
 velox_dwio_dwrf_index_builder_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_index_builder_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_index_builder_test.dir/build
 .PHONY : velox_dwio_dwrf_index_builder_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwio_dwrf_writer_context_test
+
+# Build rule for target.
+velox_dwio_dwrf_writer_context_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_writer_context_test
+.PHONY : velox_dwio_dwrf_writer_context_test
+
+# fast build rule for target.
+velox_dwio_dwrf_writer_context_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_writer_context_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_writer_context_test.dir/build
+.PHONY : velox_dwio_dwrf_writer_context_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_dwio_dwrf_compression_test
@@ -1343,45 +1694,6 @@ velox_dwrf_e2e_writer_test: cmake_check_build_system
 velox_dwrf_e2e_writer_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_e2e_writer_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_e2e_writer_test.dir/build
 .PHONY : velox_dwrf_e2e_writer_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_dwio_dwrf_column_reader_test
-
-# Build rule for target.
-velox_dwio_dwrf_column_reader_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_column_reader_test
-.PHONY : velox_dwio_dwrf_column_reader_test
-
-# fast build rule for target.
-velox_dwio_dwrf_column_reader_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_column_reader_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_column_reader_test.dir/build
-.PHONY : velox_dwio_dwrf_column_reader_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_dwio_dwrf_checksum_test
-
-# Build rule for target.
-velox_dwio_dwrf_checksum_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_checksum_test
-.PHONY : velox_dwio_dwrf_checksum_test
-
-# fast build rule for target.
-velox_dwio_dwrf_checksum_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_checksum_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_checksum_test.dir/build
-.PHONY : velox_dwio_dwrf_checksum_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_dwrf_column_writer_stats_test
-
-# Build rule for target.
-velox_dwrf_column_writer_stats_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_column_writer_stats_test
-.PHONY : velox_dwrf_column_writer_stats_test
-
-# fast build rule for target.
-velox_dwrf_column_writer_stats_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_stats_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_stats_test.dir/build
-.PHONY : velox_dwrf_column_writer_stats_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_dwrf_statistics_builder_utils_test
@@ -1525,6 +1837,45 @@ velox_dwio_dwrf_encoding_selector_test: cmake_check_build_system
 velox_dwio_dwrf_encoding_selector_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_encoding_selector_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_encoding_selector_test.dir/build
 .PHONY : velox_dwio_dwrf_encoding_selector_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwio_dwrf_encryption_test
+
+# Build rule for target.
+velox_dwio_dwrf_encryption_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwio_dwrf_encryption_test
+.PHONY : velox_dwio_dwrf_encryption_test
+
+# fast build rule for target.
+velox_dwio_dwrf_encryption_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_encryption_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwio_dwrf_encryption_test.dir/build
+.PHONY : velox_dwio_dwrf_encryption_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwrf_int_encoder_benchmark
+
+# Build rule for target.
+velox_dwrf_int_encoder_benchmark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_int_encoder_benchmark
+.PHONY : velox_dwrf_int_encoder_benchmark
+
+# fast build rule for target.
+velox_dwrf_int_encoder_benchmark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_int_encoder_benchmark.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_int_encoder_benchmark.dir/build
+.PHONY : velox_dwrf_int_encoder_benchmark/fast
+
+#=============================================================================
+# Target rules for targets named velox_dwrf_column_writer_test
+
+# Build rule for target.
+velox_dwrf_column_writer_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_column_writer_test
+.PHONY : velox_dwrf_column_writer_test
+
+# fast build rule for target.
+velox_dwrf_column_writer_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_test.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_column_writer_test.dir/build
+.PHONY : velox_dwrf_column_writer_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_dwio_dwrf_config_test
@@ -1696,19 +2047,6 @@ velox_dwrf_int_decoder_benchmark/fast:
 .PHONY : velox_dwrf_int_decoder_benchmark/fast
 
 #=============================================================================
-# Target rules for targets named velox_dwrf_float_column_writer_benchmark
-
-# Build rule for target.
-velox_dwrf_float_column_writer_benchmark: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_dwrf_float_column_writer_benchmark
-.PHONY : velox_dwrf_float_column_writer_benchmark
-
-# fast build rule for target.
-velox_dwrf_float_column_writer_benchmark/fast:
-	$(MAKE) $(MAKESILENT) -f velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_float_column_writer_benchmark.dir/build.make velox/dwio/dwrf/test/CMakeFiles/velox_dwrf_float_column_writer_benchmark.dir/build
-.PHONY : velox_dwrf_float_column_writer_benchmark/fast
-
-#=============================================================================
 # Target rules for targets named velox_dwrf_test_utils
 
 # Build rule for target.
@@ -1774,30 +2112,563 @@ velox_dwio_type_fbhive/fast:
 .PHONY : velox_dwio_type_fbhive/fast
 
 #=============================================================================
-# Target rules for targets named velox_example_expression_eval
+# Target rules for targets named velox_function_registry
 
 # Build rule for target.
-velox_example_expression_eval: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_example_expression_eval
-.PHONY : velox_example_expression_eval
+velox_function_registry: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_function_registry
+.PHONY : velox_function_registry
 
 # fast build rule for target.
-velox_example_expression_eval/fast:
-	$(MAKE) $(MAKESILENT) -f velox/examples/CMakeFiles/velox_example_expression_eval.dir/build.make velox/examples/CMakeFiles/velox_example_expression_eval.dir/build
-.PHONY : velox_example_expression_eval/fast
+velox_function_registry/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/CMakeFiles/velox_function_registry.dir/build.make velox/functions/CMakeFiles/velox_function_registry.dir/build
+.PHONY : velox_function_registry/fast
 
 #=============================================================================
-# Target rules for targets named velox_example_opaque_type
+# Target rules for targets named velox_functions_lib
 
 # Build rule for target.
-velox_example_opaque_type: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_example_opaque_type
-.PHONY : velox_example_opaque_type
+velox_functions_lib: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_lib
+.PHONY : velox_functions_lib
 
 # fast build rule for target.
-velox_example_opaque_type/fast:
-	$(MAKE) $(MAKESILENT) -f velox/examples/CMakeFiles/velox_example_opaque_type.dir/build.make velox/examples/CMakeFiles/velox_example_opaque_type.dir/build
-.PHONY : velox_example_opaque_type/fast
+velox_functions_lib/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/lib/CMakeFiles/velox_functions_lib.dir/build.make velox/functions/lib/CMakeFiles/velox_functions_lib.dir/build
+.PHONY : velox_functions_lib/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_string_test
+
+# Build rule for target.
+velox_functions_string_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_string_test
+.PHONY : velox_functions_string_test
+
+# fast build rule for target.
+velox_functions_string_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/lib/string/tests/CMakeFiles/velox_functions_string_test.dir/build.make velox/functions/lib/string/tests/CMakeFiles/velox_functions_string_test.dir/build
+.PHONY : velox_functions_string_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_re2_functions_benchmarks
+
+# Build rule for target.
+velox_re2_functions_benchmarks: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_re2_functions_benchmarks
+.PHONY : velox_re2_functions_benchmarks
+
+# fast build rule for target.
+velox_re2_functions_benchmarks/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/lib/benchmarks/CMakeFiles/velox_re2_functions_benchmarks.dir/build.make velox/functions/lib/benchmarks/CMakeFiles/velox_re2_functions_benchmarks.dir/build
+.PHONY : velox_re2_functions_benchmarks/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_lib_test
+
+# Build rule for target.
+velox_functions_lib_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_lib_test
+.PHONY : velox_functions_lib_test
+
+# fast build rule for target.
+velox_functions_lib_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/lib/tests/CMakeFiles/velox_functions_lib_test.dir/build.make velox/functions/lib/tests/CMakeFiles/velox_functions_lib_test.dir/build
+.PHONY : velox_functions_lib_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_impl
+
+# Build rule for target.
+velox_functions_prestosql_impl: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_impl
+.PHONY : velox_functions_prestosql_impl
+
+# fast build rule for target.
+velox_functions_prestosql_impl/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/CMakeFiles/velox_functions_prestosql_impl.dir/build.make velox/functions/prestosql/CMakeFiles/velox_functions_prestosql_impl.dir/build
+.PHONY : velox_functions_prestosql_impl/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_json
+
+# Build rule for target.
+velox_functions_json: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_json
+.PHONY : velox_functions_json
+
+# fast build rule for target.
+velox_functions_json/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/json/CMakeFiles/velox_functions_json.dir/build.make velox/functions/prestosql/json/CMakeFiles/velox_functions_json.dir/build
+.PHONY : velox_functions_json/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_json_test
+
+# Build rule for target.
+velox_functions_json_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_json_test
+.PHONY : velox_functions_json_test
+
+# fast build rule for target.
+velox_functions_json_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/json/tests/CMakeFiles/velox_functions_json_test.dir/build.make velox/functions/prestosql/json/tests/CMakeFiles/velox_functions_json_test.dir/build
+.PHONY : velox_functions_json_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_hyperloglog
+
+# Build rule for target.
+velox_functions_hyperloglog: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_hyperloglog
+.PHONY : velox_functions_hyperloglog
+
+# fast build rule for target.
+velox_functions_hyperloglog/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/hyperloglog/CMakeFiles/velox_functions_hyperloglog.dir/build.make velox/functions/prestosql/hyperloglog/CMakeFiles/velox_functions_hyperloglog.dir/build
+.PHONY : velox_functions_hyperloglog/fast
+
+#=============================================================================
+# Target rules for targets named velox_aggregates_hyperloglog_test
+
+# Build rule for target.
+velox_aggregates_hyperloglog_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_hyperloglog_test
+.PHONY : velox_aggregates_hyperloglog_test
+
+# fast build rule for target.
+velox_aggregates_hyperloglog_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/hyperloglog/tests/CMakeFiles/velox_aggregates_hyperloglog_test.dir/build.make velox/functions/prestosql/hyperloglog/tests/CMakeFiles/velox_aggregates_hyperloglog_test.dir/build
+.PHONY : velox_aggregates_hyperloglog_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_presto_types
+
+# Build rule for target.
+velox_presto_types: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_presto_types
+.PHONY : velox_presto_types
+
+# fast build rule for target.
+velox_presto_types/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/types/CMakeFiles/velox_presto_types.dir/build.make velox/functions/prestosql/types/CMakeFiles/velox_presto_types.dir/build
+.PHONY : velox_presto_types/fast
+
+#=============================================================================
+# Target rules for targets named velox_aggregates
+
+# Build rule for target.
+velox_aggregates: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates
+.PHONY : velox_aggregates
+
+# fast build rule for target.
+velox_aggregates/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/aggregates/CMakeFiles/velox_aggregates.dir/build.make velox/functions/prestosql/aggregates/CMakeFiles/velox_aggregates.dir/build
+.PHONY : velox_aggregates/fast
+
+#=============================================================================
+# Target rules for targets named velox_aggregates_test_lib
+
+# Build rule for target.
+velox_aggregates_test_lib: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_test_lib
+.PHONY : velox_aggregates_test_lib
+
+# fast build rule for target.
+velox_aggregates_test_lib/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/aggregates/tests/CMakeFiles/velox_aggregates_test_lib.dir/build.make velox/functions/prestosql/aggregates/tests/CMakeFiles/velox_aggregates_test_lib.dir/build
+.PHONY : velox_aggregates_test_lib/fast
+
+#=============================================================================
+# Target rules for targets named velox_aggregates_test
+
+# Build rule for target.
+velox_aggregates_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_test
+.PHONY : velox_aggregates_test
+
+# fast build rule for target.
+velox_aggregates_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/aggregates/tests/CMakeFiles/velox_aggregates_test.dir/build.make velox/functions/prestosql/aggregates/tests/CMakeFiles/velox_aggregates_test.dir/build
+.PHONY : velox_aggregates_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_aggregates_pushdown_benchmarks
+
+# Build rule for target.
+velox_aggregates_pushdown_benchmarks: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_aggregates_pushdown_benchmarks
+.PHONY : velox_aggregates_pushdown_benchmarks
+
+# fast build rule for target.
+velox_aggregates_pushdown_benchmarks/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/aggregates/benchmarks/CMakeFiles/velox_aggregates_pushdown_benchmarks.dir/build.make velox/functions/prestosql/aggregates/benchmarks/CMakeFiles/velox_aggregates_pushdown_benchmarks.dir/build
+.PHONY : velox_aggregates_pushdown_benchmarks/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_test_lib
+
+# Build rule for target.
+velox_functions_test_lib: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_test_lib
+.PHONY : velox_functions_test_lib
+
+# fast build rule for target.
+velox_functions_test_lib/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/tests/CMakeFiles/velox_functions_test_lib.dir/build.make velox/functions/prestosql/tests/CMakeFiles/velox_functions_test_lib.dir/build
+.PHONY : velox_functions_test_lib/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_test
+
+# Build rule for target.
+velox_functions_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_test
+.PHONY : velox_functions_test
+
+# fast build rule for target.
+velox_functions_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/tests/CMakeFiles/velox_functions_test.dir/build.make velox/functions/prestosql/tests/CMakeFiles/velox_functions_test.dir/build
+.PHONY : velox_functions_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_map_input
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_map_input: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_map_input
+.PHONY : velox_functions_prestosql_benchmarks_map_input
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_map_input/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_map_input.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_map_input.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_map_input/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_bitwise
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_bitwise: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_bitwise
+.PHONY : velox_functions_prestosql_benchmarks_bitwise
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_bitwise/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_bitwise.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_bitwise.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_bitwise/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_in
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_in: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_in
+.PHONY : velox_functions_prestosql_benchmarks_in
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_in/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_in.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_in.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_in/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_date_time
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_date_time: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_date_time
+.PHONY : velox_functions_prestosql_benchmarks_date_time
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_date_time/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_date_time.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_date_time.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_date_time/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_array_position
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_array_position: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_array_position
+.PHONY : velox_functions_prestosql_benchmarks_array_position
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_array_position/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_array_position.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_array_position.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_array_position/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_not
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_not: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_not
+.PHONY : velox_functions_prestosql_benchmarks_not
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_not/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_not.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_not.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_not/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_array_contains
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_array_contains: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_array_contains
+.PHONY : velox_functions_prestosql_benchmarks_array_contains
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_array_contains/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_array_contains.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_array_contains.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_array_contains/fast
+
+#=============================================================================
+# Target rules for targets named velox_benchmark_nested_array_proxy_with_nulls
+
+# Build rule for target.
+velox_benchmark_nested_array_proxy_with_nulls: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_benchmark_nested_array_proxy_with_nulls
+.PHONY : velox_benchmark_nested_array_proxy_with_nulls
+
+# fast build rule for target.
+velox_benchmark_nested_array_proxy_with_nulls/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_nested_array_proxy_with_nulls.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_nested_array_proxy_with_nulls.dir/build
+.PHONY : velox_benchmark_nested_array_proxy_with_nulls/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_benchmarks_compare
+
+# Build rule for target.
+velox_functions_benchmarks_compare: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_compare
+.PHONY : velox_functions_benchmarks_compare
+
+# fast build rule for target.
+velox_functions_benchmarks_compare/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_compare.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_compare.dir/build
+.PHONY : velox_functions_benchmarks_compare/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_width_bucket
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_width_bucket: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_width_bucket
+.PHONY : velox_functions_prestosql_benchmarks_width_bucket
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_width_bucket/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_width_bucket.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_width_bucket.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_width_bucket/fast
+
+#=============================================================================
+# Target rules for targets named velox_benchmark_array_proxy_with_nulls
+
+# Build rule for target.
+velox_benchmark_array_proxy_with_nulls: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_benchmark_array_proxy_with_nulls
+.PHONY : velox_benchmark_array_proxy_with_nulls
+
+# fast build rule for target.
+velox_benchmark_array_proxy_with_nulls/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_with_nulls.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_with_nulls.dir/build
+.PHONY : velox_benchmark_array_proxy_with_nulls/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_string_ascii_utf_functions
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_string_ascii_utf_functions: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_string_ascii_utf_functions
+.PHONY : velox_functions_prestosql_benchmarks_string_ascii_utf_functions
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_string_ascii_utf_functions/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_string_ascii_utf_functions.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_string_ascii_utf_functions.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_string_ascii_utf_functions/fast
+
+#=============================================================================
+# Target rules for targets named velox_benchmark_array_proxy_no_nulls
+
+# Build rule for target.
+velox_benchmark_array_proxy_no_nulls: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_benchmark_array_proxy_no_nulls
+.PHONY : velox_benchmark_array_proxy_no_nulls
+
+# fast build rule for target.
+velox_benchmark_array_proxy_no_nulls/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_no_nulls.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_array_proxy_no_nulls.dir/build
+.PHONY : velox_benchmark_array_proxy_no_nulls/fast
+
+#=============================================================================
+# Target rules for targets named velox_benchmark_nested_array_proxy_no_nulls
+
+# Build rule for target.
+velox_benchmark_nested_array_proxy_no_nulls: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_benchmark_nested_array_proxy_no_nulls
+.PHONY : velox_benchmark_nested_array_proxy_no_nulls
+
+# fast build rule for target.
+velox_benchmark_nested_array_proxy_no_nulls/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_nested_array_proxy_no_nulls.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_benchmark_nested_array_proxy_no_nulls.dir/build
+.PHONY : velox_benchmark_nested_array_proxy_no_nulls/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql_benchmarks_array_min_max
+
+# Build rule for target.
+velox_functions_prestosql_benchmarks_array_min_max: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql_benchmarks_array_min_max
+.PHONY : velox_functions_prestosql_benchmarks_array_min_max
+
+# fast build rule for target.
+velox_functions_prestosql_benchmarks_array_min_max/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_array_min_max.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_prestosql_benchmarks_array_min_max.dir/build
+.PHONY : velox_functions_prestosql_benchmarks_array_min_max/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_benchmarks_url
+
+# Build rule for target.
+velox_functions_benchmarks_url: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_url
+.PHONY : velox_functions_benchmarks_url
+
+# fast build rule for target.
+velox_functions_benchmarks_url/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_url.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_url.dir/build
+.PHONY : velox_functions_benchmarks_url/fast
+
+#=============================================================================
+# Target rules for targets named velox_prestosql_coverage
+
+# Build rule for target.
+velox_prestosql_coverage: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_prestosql_coverage
+.PHONY : velox_prestosql_coverage
+
+# fast build rule for target.
+velox_prestosql_coverage/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/coverage/CMakeFiles/velox_prestosql_coverage.dir/build.make velox/functions/prestosql/coverage/CMakeFiles/velox_prestosql_coverage.dir/build
+.PHONY : velox_prestosql_coverage/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_prestosql
+
+# Build rule for target.
+velox_functions_prestosql: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql
+.PHONY : velox_functions_prestosql
+
+# fast build rule for target.
+velox_functions_prestosql/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/registration/CMakeFiles/velox_functions_prestosql.dir/build.make velox/functions/prestosql/registration/CMakeFiles/velox_functions_prestosql.dir/build
+.PHONY : velox_functions_prestosql/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_spark
+
+# Build rule for target.
+velox_functions_spark: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_spark
+.PHONY : velox_functions_spark
+
+# fast build rule for target.
+velox_functions_spark/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/sparksql/CMakeFiles/velox_functions_spark.dir/build.make velox/functions/sparksql/CMakeFiles/velox_functions_spark.dir/build
+.PHONY : velox_functions_spark/fast
+
+#=============================================================================
+# Target rules for targets named velox_functions_spark_test
+
+# Build rule for target.
+velox_functions_spark_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_spark_test
+.PHONY : velox_functions_spark_test
+
+# fast build rule for target.
+velox_functions_spark_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/sparksql/tests/CMakeFiles/velox_functions_spark_test.dir/build.make velox/functions/sparksql/tests/CMakeFiles/velox_functions_spark_test.dir/build
+.PHONY : velox_functions_spark_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_sparksql_benchmarks_in
+
+# Build rule for target.
+velox_sparksql_benchmarks_in: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_sparksql_benchmarks_in
+.PHONY : velox_sparksql_benchmarks_in
+
+# fast build rule for target.
+velox_sparksql_benchmarks_in/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/sparksql/benchmarks/CMakeFiles/velox_sparksql_benchmarks_in.dir/build.make velox/functions/sparksql/benchmarks/CMakeFiles/velox_sparksql_benchmarks_in.dir/build
+.PHONY : velox_sparksql_benchmarks_in/fast
+
+#=============================================================================
+# Target rules for targets named velox_function_registry_test
+
+# Build rule for target.
+velox_function_registry_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_function_registry_test
+.PHONY : velox_function_registry_test
+
+# fast build rule for target.
+velox_function_registry_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/functions/tests/CMakeFiles/velox_function_registry_test.dir/build.make velox/functions/tests/CMakeFiles/velox_function_registry_test.dir/build
+.PHONY : velox_function_registry_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_connector
+
+# Build rule for target.
+velox_connector: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_connector
+.PHONY : velox_connector
+
+# fast build rule for target.
+velox_connector/fast:
+	$(MAKE) $(MAKESILENT) -f velox/connectors/CMakeFiles/velox_connector.dir/build.make velox/connectors/CMakeFiles/velox_connector.dir/build
+.PHONY : velox_connector/fast
+
+#=============================================================================
+# Target rules for targets named velox_hive_connector
+
+# Build rule for target.
+velox_hive_connector: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_hive_connector
+.PHONY : velox_hive_connector
+
+# fast build rule for target.
+velox_hive_connector/fast:
+	$(MAKE) $(MAKESILENT) -f velox/connectors/hive/CMakeFiles/velox_hive_connector.dir/build.make velox/connectors/hive/CMakeFiles/velox_hive_connector.dir/build
+.PHONY : velox_hive_connector/fast
+
+#=============================================================================
+# Target rules for targets named velox_hive_partition_function
+
+# Build rule for target.
+velox_hive_partition_function: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_hive_partition_function
+.PHONY : velox_hive_partition_function
+
+# fast build rule for target.
+velox_hive_partition_function/fast:
+	$(MAKE) $(MAKESILENT) -f velox/connectors/hive/CMakeFiles/velox_hive_partition_function.dir/build.make velox/connectors/hive/CMakeFiles/velox_hive_partition_function.dir/build
+.PHONY : velox_hive_partition_function/fast
+
+#=============================================================================
+# Target rules for targets named velox_hive_connector_test
+
+# Build rule for target.
+velox_hive_connector_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_hive_connector_test
+.PHONY : velox_hive_connector_test
+
+# fast build rule for target.
+velox_hive_connector_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/connectors/hive/tests/CMakeFiles/velox_hive_connector_test.dir/build.make velox/connectors/hive/tests/CMakeFiles/velox_hive_connector_test.dir/build
+.PHONY : velox_hive_connector_test/fast
 
 #=============================================================================
 # Target rules for targets named velox_exec
@@ -1813,19 +2684,6 @@ velox_exec/fast:
 .PHONY : velox_exec/fast
 
 #=============================================================================
-# Target rules for targets named velox_exec_test_lib
-
-# Build rule for target.
-velox_exec_test_lib: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_exec_test_lib
-.PHONY : velox_exec_test_lib
-
-# fast build rule for target.
-velox_exec_test_lib/fast:
-	$(MAKE) $(MAKESILENT) -f velox/exec/tests/CMakeFiles/velox_exec_test_lib.dir/build.make velox/exec/tests/CMakeFiles/velox_exec_test_lib.dir/build
-.PHONY : velox_exec_test_lib/fast
-
-#=============================================================================
 # Target rules for targets named velox_exec_test
 
 # Build rule for target.
@@ -1837,6 +2695,19 @@ velox_exec_test: cmake_check_build_system
 velox_exec_test/fast:
 	$(MAKE) $(MAKESILENT) -f velox/exec/tests/CMakeFiles/velox_exec_test.dir/build.make velox/exec/tests/CMakeFiles/velox_exec_test.dir/build
 .PHONY : velox_exec_test/fast
+
+#=============================================================================
+# Target rules for targets named velox_temp_path
+
+# Build rule for target.
+velox_temp_path: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_temp_path
+.PHONY : velox_temp_path
+
+# fast build rule for target.
+velox_temp_path/fast:
+	$(MAKE) $(MAKESILENT) -f velox/exec/tests/utils/CMakeFiles/velox_temp_path.dir/build.make velox/exec/tests/utils/CMakeFiles/velox_temp_path.dir/build
+.PHONY : velox_temp_path/fast
 
 #=============================================================================
 # Target rules for targets named velox_exec_test_util
@@ -1865,82 +2736,95 @@ velox_exec_vector_hasher_benchmark/fast:
 .PHONY : velox_exec_vector_hasher_benchmark/fast
 
 #=============================================================================
-# Target rules for targets named velox_expression
+# Target rules for targets named velox_codegen
 
 # Build rule for target.
-velox_expression: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression
-.PHONY : velox_expression
+velox_codegen: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_codegen
+.PHONY : velox_codegen
 
 # fast build rule for target.
-velox_expression/fast:
-	$(MAKE) $(MAKESILENT) -f velox/expression/CMakeFiles/velox_expression.dir/build.make velox/expression/CMakeFiles/velox_expression.dir/build
-.PHONY : velox_expression/fast
+velox_codegen/fast:
+	$(MAKE) $(MAKESILENT) -f velox/codegen/CMakeFiles/velox_codegen.dir/build.make velox/codegen/CMakeFiles/velox_codegen.dir/build
+.PHONY : velox_codegen/fast
 
 #=============================================================================
-# Target rules for targets named velox_expression_test
+# Target rules for targets named velox_codegen_test
 
 # Build rule for target.
-velox_expression_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_test
-.PHONY : velox_expression_test
+velox_codegen_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_codegen_test
+.PHONY : velox_codegen_test
 
 # fast build rule for target.
-velox_expression_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_expression_test.dir/build.make velox/expression/tests/CMakeFiles/velox_expression_test.dir/build
-.PHONY : velox_expression_test/fast
+velox_codegen_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/codegen/tests/CMakeFiles/velox_codegen_test.dir/build.make velox/codegen/tests/CMakeFiles/velox_codegen_test.dir/build
+.PHONY : velox_codegen_test/fast
 
 #=============================================================================
-# Target rules for targets named velox_expression_fuzzer
+# Target rules for targets named velox_duckdb_conversion
 
 # Build rule for target.
-velox_expression_fuzzer: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_fuzzer
-.PHONY : velox_expression_fuzzer
+velox_duckdb_conversion: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_conversion
+.PHONY : velox_duckdb_conversion
 
 # fast build rule for target.
-velox_expression_fuzzer/fast:
-	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_expression_fuzzer.dir/build.make velox/expression/tests/CMakeFiles/velox_expression_fuzzer.dir/build
-.PHONY : velox_expression_fuzzer/fast
+velox_duckdb_conversion/fast:
+	$(MAKE) $(MAKESILENT) -f velox/duckdb/conversion/CMakeFiles/velox_duckdb_conversion.dir/build.make velox/duckdb/conversion/CMakeFiles/velox_duckdb_conversion.dir/build
+.PHONY : velox_duckdb_conversion/fast
 
 #=============================================================================
-# Target rules for targets named velox_vector_fuzzer
+# Target rules for targets named velox_duckdb_parser
 
 # Build rule for target.
-velox_vector_fuzzer: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_fuzzer
-.PHONY : velox_vector_fuzzer
+velox_duckdb_parser: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_parser
+.PHONY : velox_duckdb_parser
 
 # fast build rule for target.
-velox_vector_fuzzer/fast:
-	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_vector_fuzzer.dir/build.make velox/expression/tests/CMakeFiles/velox_vector_fuzzer.dir/build
-.PHONY : velox_vector_fuzzer/fast
+velox_duckdb_parser/fast:
+	$(MAKE) $(MAKESILENT) -f velox/duckdb/conversion/CMakeFiles/velox_duckdb_parser.dir/build.make velox/duckdb/conversion/CMakeFiles/velox_duckdb_parser.dir/build
+.PHONY : velox_duckdb_parser/fast
 
 #=============================================================================
-# Target rules for targets named velox_expression_fuzzer_main
+# Target rules for targets named velox_duckdb_conversion_test
 
 # Build rule for target.
-velox_expression_fuzzer_main: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_expression_fuzzer_main
-.PHONY : velox_expression_fuzzer_main
+velox_duckdb_conversion_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_conversion_test
+.PHONY : velox_duckdb_conversion_test
 
 # fast build rule for target.
-velox_expression_fuzzer_main/fast:
-	$(MAKE) $(MAKESILENT) -f velox/expression/tests/CMakeFiles/velox_expression_fuzzer_main.dir/build.make velox/expression/tests/CMakeFiles/velox_expression_fuzzer_main.dir/build
-.PHONY : velox_expression_fuzzer_main/fast
+velox_duckdb_conversion_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/duckdb/conversion/tests/CMakeFiles/velox_duckdb_conversion_test.dir/build.make velox/duckdb/conversion/tests/CMakeFiles/velox_duckdb_conversion_test.dir/build
+.PHONY : velox_duckdb_conversion_test/fast
 
 #=============================================================================
-# Target rules for targets named velox_external_date
+# Target rules for targets named velox_duckdb_functions
 
 # Build rule for target.
-velox_external_date: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_external_date
-.PHONY : velox_external_date
+velox_duckdb_functions: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_functions
+.PHONY : velox_duckdb_functions
 
 # fast build rule for target.
-velox_external_date/fast:
-	$(MAKE) $(MAKESILENT) -f velox/external/date/CMakeFiles/velox_external_date.dir/build.make velox/external/date/CMakeFiles/velox_external_date.dir/build
-.PHONY : velox_external_date/fast
+velox_duckdb_functions/fast:
+	$(MAKE) $(MAKESILENT) -f velox/duckdb/functions/CMakeFiles/velox_duckdb_functions.dir/build.make velox/duckdb/functions/CMakeFiles/velox_duckdb_functions.dir/build
+.PHONY : velox_duckdb_functions/fast
+
+#=============================================================================
+# Target rules for targets named velox_duckdb_functions_test
+
+# Build rule for target.
+velox_duckdb_functions_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_duckdb_functions_test
+.PHONY : velox_duckdb_functions_test
+
+# fast build rule for target.
+velox_duckdb_functions_test/fast:
+	$(MAKE) $(MAKESILENT) -f velox/duckdb/functions/tests/CMakeFiles/velox_duckdb_functions_test.dir/build.make velox/duckdb/functions/tests/CMakeFiles/velox_duckdb_functions_test.dir/build
+.PHONY : velox_duckdb_functions_test/fast
 
 #=============================================================================
 # Target rules for targets named duckdb
@@ -1980,526 +2864,6 @@ dbgen: cmake_check_build_system
 dbgen/fast:
 	$(MAKE) $(MAKESILENT) -f velox/external/duckdb/tpch/dbgen/CMakeFiles/dbgen.dir/build.make velox/external/duckdb/tpch/dbgen/CMakeFiles/dbgen.dir/build
 .PHONY : dbgen/fast
-
-#=============================================================================
-# Target rules for targets named md5
-
-# Build rule for target.
-md5: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 md5
-.PHONY : md5
-
-# fast build rule for target.
-md5/fast:
-	$(MAKE) $(MAKESILENT) -f velox/external/md5/CMakeFiles/md5.dir/build.make velox/external/md5/CMakeFiles/md5.dir/build
-.PHONY : md5/fast
-
-#=============================================================================
-# Target rules for targets named velox_function_registry
-
-# Build rule for target.
-velox_function_registry: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_function_registry
-.PHONY : velox_function_registry
-
-# fast build rule for target.
-velox_function_registry/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/CMakeFiles/velox_function_registry.dir/build.make velox/functions/CMakeFiles/velox_function_registry.dir/build
-.PHONY : velox_function_registry/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_lib
-
-# Build rule for target.
-velox_functions_lib: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_lib
-.PHONY : velox_functions_lib
-
-# fast build rule for target.
-velox_functions_lib/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/lib/CMakeFiles/velox_functions_lib.dir/build.make velox/functions/lib/CMakeFiles/velox_functions_lib.dir/build
-.PHONY : velox_functions_lib/fast
-
-#=============================================================================
-# Target rules for targets named velox_re2_functions_benchmarks
-
-# Build rule for target.
-velox_re2_functions_benchmarks: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_re2_functions_benchmarks
-.PHONY : velox_re2_functions_benchmarks
-
-# fast build rule for target.
-velox_re2_functions_benchmarks/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/lib/benchmarks/CMakeFiles/velox_re2_functions_benchmarks.dir/build.make velox/functions/lib/benchmarks/CMakeFiles/velox_re2_functions_benchmarks.dir/build
-.PHONY : velox_re2_functions_benchmarks/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_string_test
-
-# Build rule for target.
-velox_functions_string_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_string_test
-.PHONY : velox_functions_string_test
-
-# fast build rule for target.
-velox_functions_string_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/lib/string/tests/CMakeFiles/velox_functions_string_test.dir/build.make velox/functions/lib/string/tests/CMakeFiles/velox_functions_string_test.dir/build
-.PHONY : velox_functions_string_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_lib_test
-
-# Build rule for target.
-velox_functions_lib_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_lib_test
-.PHONY : velox_functions_lib_test
-
-# fast build rule for target.
-velox_functions_lib_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/lib/tests/CMakeFiles/velox_functions_lib_test.dir/build.make velox/functions/lib/tests/CMakeFiles/velox_functions_lib_test.dir/build
-.PHONY : velox_functions_lib_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_prestosql
-
-# Build rule for target.
-velox_functions_prestosql: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_prestosql
-.PHONY : velox_functions_prestosql
-
-# fast build rule for target.
-velox_functions_prestosql/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/CMakeFiles/velox_functions_prestosql.dir/build.make velox/functions/prestosql/CMakeFiles/velox_functions_prestosql.dir/build
-.PHONY : velox_functions_prestosql/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_json
-
-# Build rule for target.
-velox_functions_json: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_json
-.PHONY : velox_functions_json
-
-# fast build rule for target.
-velox_functions_json/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/json/CMakeFiles/velox_functions_json.dir/build.make velox/functions/prestosql/json/CMakeFiles/velox_functions_json.dir/build
-.PHONY : velox_functions_json/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_json_test
-
-# Build rule for target.
-velox_functions_json_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_json_test
-.PHONY : velox_functions_json_test
-
-# fast build rule for target.
-velox_functions_json_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/json/tests/CMakeFiles/velox_functions_json_test.dir/build.make velox/functions/prestosql/json/tests/CMakeFiles/velox_functions_json_test.dir/build
-.PHONY : velox_functions_json_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_test_lib
-
-# Build rule for target.
-velox_functions_test_lib: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_test_lib
-.PHONY : velox_functions_test_lib
-
-# fast build rule for target.
-velox_functions_test_lib/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/tests/CMakeFiles/velox_functions_test_lib.dir/build.make velox/functions/prestosql/tests/CMakeFiles/velox_functions_test_lib.dir/build
-.PHONY : velox_functions_test_lib/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_test
-
-# Build rule for target.
-velox_functions_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_test
-.PHONY : velox_functions_test
-
-# fast build rule for target.
-velox_functions_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/tests/CMakeFiles/velox_functions_test.dir/build.make velox/functions/prestosql/tests/CMakeFiles/velox_functions_test.dir/build
-.PHONY : velox_functions_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_benchmarks_not
-
-# Build rule for target.
-velox_functions_benchmarks_not: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_not
-.PHONY : velox_functions_benchmarks_not
-
-# fast build rule for target.
-velox_functions_benchmarks_not/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_not.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_not.dir/build
-.PHONY : velox_functions_benchmarks_not/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_benchmarks_width_bucket
-
-# Build rule for target.
-velox_functions_benchmarks_width_bucket: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_width_bucket
-.PHONY : velox_functions_benchmarks_width_bucket
-
-# fast build rule for target.
-velox_functions_benchmarks_width_bucket/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_width_bucket.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_width_bucket.dir/build
-.PHONY : velox_functions_benchmarks_width_bucket/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_benchmarks_string_ascii_utf_functions
-
-# Build rule for target.
-velox_functions_benchmarks_string_ascii_utf_functions: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_string_ascii_utf_functions
-.PHONY : velox_functions_benchmarks_string_ascii_utf_functions
-
-# fast build rule for target.
-velox_functions_benchmarks_string_ascii_utf_functions/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_string_ascii_utf_functions.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_string_ascii_utf_functions.dir/build
-.PHONY : velox_functions_benchmarks_string_ascii_utf_functions/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_benchmarks_array_contains
-
-# Build rule for target.
-velox_functions_benchmarks_array_contains: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_benchmarks_array_contains
-.PHONY : velox_functions_benchmarks_array_contains
-
-# fast build rule for target.
-velox_functions_benchmarks_array_contains/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_array_contains.dir/build.make velox/functions/prestosql/benchmarks/CMakeFiles/velox_functions_benchmarks_array_contains.dir/build
-.PHONY : velox_functions_benchmarks_array_contains/fast
-
-#=============================================================================
-# Target rules for targets named velox_prestosql_coverage
-
-# Build rule for target.
-velox_prestosql_coverage: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_prestosql_coverage
-.PHONY : velox_prestosql_coverage
-
-# fast build rule for target.
-velox_prestosql_coverage/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/prestosql/coverage/CMakeFiles/velox_prestosql_coverage.dir/build.make velox/functions/prestosql/coverage/CMakeFiles/velox_prestosql_coverage.dir/build
-.PHONY : velox_prestosql_coverage/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_spark
-
-# Build rule for target.
-velox_functions_spark: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_spark
-.PHONY : velox_functions_spark
-
-# fast build rule for target.
-velox_functions_spark/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/sparksql/CMakeFiles/velox_functions_spark.dir/build.make velox/functions/sparksql/CMakeFiles/velox_functions_spark.dir/build
-.PHONY : velox_functions_spark/fast
-
-#=============================================================================
-# Target rules for targets named velox_functions_spark_test
-
-# Build rule for target.
-velox_functions_spark_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_functions_spark_test
-.PHONY : velox_functions_spark_test
-
-# fast build rule for target.
-velox_functions_spark_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/sparksql/tests/CMakeFiles/velox_functions_spark_test.dir/build.make velox/functions/sparksql/tests/CMakeFiles/velox_functions_spark_test.dir/build
-.PHONY : velox_functions_spark_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_function_registry_test
-
-# Build rule for target.
-velox_function_registry_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_function_registry_test
-.PHONY : velox_function_registry_test
-
-# fast build rule for target.
-velox_function_registry_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/functions/tests/CMakeFiles/velox_function_registry_test.dir/build.make velox/functions/tests/CMakeFiles/velox_function_registry_test.dir/build
-.PHONY : velox_function_registry_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_parse_expression
-
-# Build rule for target.
-velox_parse_expression: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_expression
-.PHONY : velox_parse_expression
-
-# fast build rule for target.
-velox_parse_expression/fast:
-	$(MAKE) $(MAKESILENT) -f velox/parse/CMakeFiles/velox_parse_expression.dir/build.make velox/parse/CMakeFiles/velox_parse_expression.dir/build
-.PHONY : velox_parse_expression/fast
-
-#=============================================================================
-# Target rules for targets named velox_parse_utils
-
-# Build rule for target.
-velox_parse_utils: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_utils
-.PHONY : velox_parse_utils
-
-# fast build rule for target.
-velox_parse_utils/fast:
-	$(MAKE) $(MAKESILENT) -f velox/parse/CMakeFiles/velox_parse_utils.dir/build.make velox/parse/CMakeFiles/velox_parse_utils.dir/build
-.PHONY : velox_parse_utils/fast
-
-#=============================================================================
-# Target rules for targets named velox_parse_parser
-
-# Build rule for target.
-velox_parse_parser: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_parser
-.PHONY : velox_parse_parser
-
-# fast build rule for target.
-velox_parse_parser/fast:
-	$(MAKE) $(MAKESILENT) -f velox/parse/CMakeFiles/velox_parse_parser.dir/build.make velox/parse/CMakeFiles/velox_parse_parser.dir/build
-.PHONY : velox_parse_parser/fast
-
-#=============================================================================
-# Target rules for targets named velox_parse_utils_test
-
-# Build rule for target.
-velox_parse_utils_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_parse_utils_test
-.PHONY : velox_parse_utils_test
-
-# fast build rule for target.
-velox_parse_utils_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/parse/tests/CMakeFiles/velox_parse_utils_test.dir/build.make velox/parse/tests/CMakeFiles/velox_parse_utils_test.dir/build
-.PHONY : velox_parse_utils_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_presto_serializer
-
-# Build rule for target.
-velox_presto_serializer: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_presto_serializer
-.PHONY : velox_presto_serializer
-
-# fast build rule for target.
-velox_presto_serializer/fast:
-	$(MAKE) $(MAKESILENT) -f velox/serializers/CMakeFiles/velox_presto_serializer.dir/build.make velox/serializers/CMakeFiles/velox_presto_serializer.dir/build
-.PHONY : velox_presto_serializer/fast
-
-#=============================================================================
-# Target rules for targets named velox_presto_serializer_test
-
-# Build rule for target.
-velox_presto_serializer_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_presto_serializer_test
-.PHONY : velox_presto_serializer_test
-
-# fast build rule for target.
-velox_presto_serializer_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/serializers/tests/CMakeFiles/velox_presto_serializer_test.dir/build.make velox/serializers/tests/CMakeFiles/velox_presto_serializer_test.dir/build
-.PHONY : velox_presto_serializer_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_type
-
-# Build rule for target.
-velox_type: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type
-.PHONY : velox_type
-
-# fast build rule for target.
-velox_type/fast:
-	$(MAKE) $(MAKESILENT) -f velox/type/CMakeFiles/velox_type.dir/build.make velox/type/CMakeFiles/velox_type.dir/build
-.PHONY : velox_type/fast
-
-#=============================================================================
-# Target rules for targets named velox_type_test
-
-# Build rule for target.
-velox_type_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type_test
-.PHONY : velox_type_test
-
-# fast build rule for target.
-velox_type_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/type/tests/CMakeFiles/velox_type_test.dir/build.make velox/type/tests/CMakeFiles/velox_type_test.dir/build
-.PHONY : velox_type_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_type_tz
-
-# Build rule for target.
-velox_type_tz: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type_tz
-.PHONY : velox_type_tz
-
-# fast build rule for target.
-velox_type_tz/fast:
-	$(MAKE) $(MAKESILENT) -f velox/type/tz/CMakeFiles/velox_type_tz.dir/build.make velox/type/tz/CMakeFiles/velox_type_tz.dir/build
-.PHONY : velox_type_tz/fast
-
-#=============================================================================
-# Target rules for targets named velox_type_tz_test
-
-# Build rule for target.
-velox_type_tz_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_type_tz_test
-.PHONY : velox_type_tz_test
-
-# fast build rule for target.
-velox_type_tz_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/type/tz/tests/CMakeFiles/velox_type_tz_test.dir/build.make velox/type/tz/tests/CMakeFiles/velox_type_tz_test.dir/build
-.PHONY : velox_type_tz_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_vector
-
-# Build rule for target.
-velox_vector: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector
-.PHONY : velox_vector
-
-# fast build rule for target.
-velox_vector/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/CMakeFiles/velox_vector.dir/build.make velox/vector/CMakeFiles/velox_vector.dir/build
-.PHONY : velox_vector/fast
-
-#=============================================================================
-# Target rules for targets named bias_vector_test
-
-# Build rule for target.
-bias_vector_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 bias_vector_test
-.PHONY : bias_vector_test
-
-# fast build rule for target.
-bias_vector_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/bias_vector_test.dir/build.make velox/vector/tests/CMakeFiles/bias_vector_test.dir/build
-.PHONY : bias_vector_test/fast
-
-#=============================================================================
-# Target rules for targets named simple_vector_test
-
-# Build rule for target.
-simple_vector_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 simple_vector_test
-.PHONY : simple_vector_test
-
-# fast build rule for target.
-simple_vector_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/simple_vector_test.dir/build.make velox/vector/tests/CMakeFiles/simple_vector_test.dir/build
-.PHONY : simple_vector_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_vector_test_lib
-
-# Build rule for target.
-velox_vector_test_lib: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_test_lib
-.PHONY : velox_vector_test_lib
-
-# fast build rule for target.
-velox_vector_test_lib/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/velox_vector_test_lib.dir/build.make velox/vector/tests/CMakeFiles/velox_vector_test_lib.dir/build
-.PHONY : velox_vector_test_lib/fast
-
-#=============================================================================
-# Target rules for targets named velox_vector_test
-
-# Build rule for target.
-velox_vector_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_test
-.PHONY : velox_vector_test
-
-# fast build rule for target.
-velox_vector_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/tests/CMakeFiles/velox_vector_test.dir/build.make velox/vector/tests/CMakeFiles/velox_vector_test.dir/build
-.PHONY : velox_vector_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_vector_hash_all_benchmark
-
-# Build rule for target.
-velox_vector_hash_all_benchmark: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_hash_all_benchmark
-.PHONY : velox_vector_hash_all_benchmark
-
-# fast build rule for target.
-velox_vector_hash_all_benchmark/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/benchmarks/CMakeFiles/velox_vector_hash_all_benchmark.dir/build.make velox/vector/benchmarks/CMakeFiles/velox_vector_hash_all_benchmark.dir/build
-.PHONY : velox_vector_hash_all_benchmark/fast
-
-#=============================================================================
-# Target rules for targets named velox_vector_selectivity_vector_benchmark
-
-# Build rule for target.
-velox_vector_selectivity_vector_benchmark: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_vector_selectivity_vector_benchmark
-.PHONY : velox_vector_selectivity_vector_benchmark
-
-# fast build rule for target.
-velox_vector_selectivity_vector_benchmark/fast:
-	$(MAKE) $(MAKESILENT) -f velox/vector/benchmarks/CMakeFiles/velox_vector_selectivity_vector_benchmark.dir/build.make velox/vector/benchmarks/CMakeFiles/velox_vector_selectivity_vector_benchmark.dir/build
-.PHONY : velox_vector_selectivity_vector_benchmark/fast
-
-#=============================================================================
-# Target rules for targets named velox_row_test
-
-# Build rule for target.
-velox_row_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_row_test
-.PHONY : velox_row_test
-
-# fast build rule for target.
-velox_row_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/row/tests/CMakeFiles/velox_row_test.dir/build.make velox/row/tests/CMakeFiles/velox_row_test.dir/build
-.PHONY : velox_row_test/fast
-
-#=============================================================================
-# Target rules for targets named velox_flag_definitions
-
-# Build rule for target.
-velox_flag_definitions: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_flag_definitions
-.PHONY : velox_flag_definitions
-
-# fast build rule for target.
-velox_flag_definitions/fast:
-	$(MAKE) $(MAKESILENT) -f velox/flag_definitions/CMakeFiles/velox_flag_definitions.dir/build.make velox/flag_definitions/CMakeFiles/velox_flag_definitions.dir/build
-.PHONY : velox_flag_definitions/fast
-
-#=============================================================================
-# Target rules for targets named velox_codegen
-
-# Build rule for target.
-velox_codegen: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_codegen
-.PHONY : velox_codegen
-
-# fast build rule for target.
-velox_codegen/fast:
-	$(MAKE) $(MAKESILENT) -f velox/codegen/CMakeFiles/velox_codegen.dir/build.make velox/codegen/CMakeFiles/velox_codegen.dir/build
-.PHONY : velox_codegen/fast
-
-#=============================================================================
-# Target rules for targets named velox_codegen_test
-
-# Build rule for target.
-velox_codegen_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 velox_codegen_test
-.PHONY : velox_codegen_test
-
-# fast build rule for target.
-velox_codegen_test/fast:
-	$(MAKE) $(MAKESILENT) -f velox/codegen/tests/CMakeFiles/velox_codegen_test.dir/build.make velox/codegen/tests/CMakeFiles/velox_codegen_test.dir/build
-.PHONY : velox_codegen_test/fast
 
 # Help Target
 help:
@@ -2547,18 +2911,22 @@ help:
 	@echo "... data_cache_test"
 	@echo "... dbgen"
 	@echo "... duckdb"
-	@echo "... file"
-	@echo "... file_test"
 	@echo "... md5"
 	@echo "... simple_lru_cache_test"
 	@echo "... simple_vector_test"
+	@echo "... spark_expression_fuzzer_test"
 	@echo "... tpch_extension"
 	@echo "... velox_aggregates"
-	@echo "... velox_aggregates_hyperloglog"
 	@echo "... velox_aggregates_hyperloglog_test"
 	@echo "... velox_aggregates_pushdown_benchmarks"
 	@echo "... velox_aggregates_test"
 	@echo "... velox_aggregates_test_lib"
+	@echo "... velox_arrow_bridge"
+	@echo "... velox_arrow_bridge_test"
+	@echo "... velox_benchmark_array_proxy_no_nulls"
+	@echo "... velox_benchmark_array_proxy_with_nulls"
+	@echo "... velox_benchmark_nested_array_proxy_no_nulls"
+	@echo "... velox_benchmark_nested_array_proxy_with_nulls"
 	@echo "... velox_buffer"
 	@echo "... velox_buffer_test"
 	@echo "... velox_cache_test"
@@ -2621,6 +2989,8 @@ help:
 	@echo "... velox_dwio_dwrf_utils"
 	@echo "... velox_dwio_dwrf_utils_test"
 	@echo "... velox_dwio_dwrf_writer"
+	@echo "... velox_dwio_dwrf_writer_context_test"
+	@echo "... velox_dwio_dwrf_writer_encoding_manager_test"
 	@echo "... velox_dwio_dwrf_writer_sink_test"
 	@echo "... velox_dwio_dwrf_writer_test"
 	@echo "... velox_dwio_type_fbhive"
@@ -2639,35 +3009,52 @@ help:
 	@echo "... velox_encode"
 	@echo "... velox_example_expression_eval"
 	@echo "... velox_example_opaque_type"
+	@echo "... velox_example_simple_functions"
 	@echo "... velox_exception"
 	@echo "... velox_exec"
 	@echo "... velox_exec_test"
-	@echo "... velox_exec_test_lib"
 	@echo "... velox_exec_test_util"
 	@echo "... velox_exec_vector_hasher_benchmark"
 	@echo "... velox_expression"
+	@echo "... velox_expression_functions"
 	@echo "... velox_expression_fuzzer"
-	@echo "... velox_expression_fuzzer_main"
+	@echo "... velox_expression_fuzzer_test"
 	@echo "... velox_expression_test"
 	@echo "... velox_external_date"
+	@echo "... velox_file"
+	@echo "... velox_file_test"
+	@echo "... velox_filter_benchmark"
 	@echo "... velox_flag_definitions"
+	@echo "... velox_fragmentation_benchmark"
 	@echo "... velox_function_registry"
 	@echo "... velox_function_registry_test"
-	@echo "... velox_functions_benchmarks_array_contains"
-	@echo "... velox_functions_benchmarks_not"
-	@echo "... velox_functions_benchmarks_string_ascii_utf_functions"
-	@echo "... velox_functions_benchmarks_width_bucket"
+	@echo "... velox_functions_benchmarks_compare"
+	@echo "... velox_functions_benchmarks_url"
+	@echo "... velox_functions_hyperloglog"
 	@echo "... velox_functions_json"
 	@echo "... velox_functions_json_test"
 	@echo "... velox_functions_lib"
 	@echo "... velox_functions_lib_test"
 	@echo "... velox_functions_prestosql"
+	@echo "... velox_functions_prestosql_benchmarks_array_contains"
+	@echo "... velox_functions_prestosql_benchmarks_array_min_max"
+	@echo "... velox_functions_prestosql_benchmarks_array_position"
+	@echo "... velox_functions_prestosql_benchmarks_bitwise"
+	@echo "... velox_functions_prestosql_benchmarks_date_time"
+	@echo "... velox_functions_prestosql_benchmarks_in"
+	@echo "... velox_functions_prestosql_benchmarks_map_input"
+	@echo "... velox_functions_prestosql_benchmarks_not"
+	@echo "... velox_functions_prestosql_benchmarks_string_ascii_utf_functions"
+	@echo "... velox_functions_prestosql_benchmarks_width_bucket"
+	@echo "... velox_functions_prestosql_impl"
 	@echo "... velox_functions_spark"
 	@echo "... velox_functions_spark_test"
 	@echo "... velox_functions_string_test"
 	@echo "... velox_functions_test"
 	@echo "... velox_functions_test_lib"
 	@echo "... velox_hive_connector"
+	@echo "... velox_hive_connector_test"
+	@echo "... velox_hive_partition_function"
 	@echo "... velox_memory"
 	@echo "... velox_memory_test"
 	@echo "... velox_parse_expression"
@@ -2676,11 +3063,16 @@ help:
 	@echo "... velox_parse_utils_test"
 	@echo "... velox_presto_serializer"
 	@echo "... velox_presto_serializer_test"
+	@echo "... velox_presto_types"
 	@echo "... velox_prestosql_coverage"
 	@echo "... velox_process"
 	@echo "... velox_re2_functions_benchmarks"
+	@echo "... velox_read_benchmark"
+	@echo "... velox_read_benchmark_lib"
 	@echo "... velox_row_test"
 	@echo "... velox_serialization"
+	@echo "... velox_sparksql_benchmarks_in"
+	@echo "... velox_temp_path"
 	@echo "... velox_time"
 	@echo "... velox_type"
 	@echo "... velox_type_test"

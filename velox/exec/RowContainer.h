@@ -15,10 +15,10 @@
  */
 #pragma once
 
+#include "velox/common/memory/HashStringAllocator.h"
 #include "velox/common/memory/MappedMemory.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/ContainerRowSerde.h"
-#include "velox/exec/HashStringAllocator.h"
 #include "velox/exec/Spiller.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -113,7 +113,7 @@ class RowContainer {
   // allowed. 'hasProbedFlag' indicates that an extra bit is reserved
   // for a probed state of a full or right outer
   // join. 'hasNormalizedKey' specifies that an extra word is left
-  // below each row for a normlized key that collapses all parts
+  // below each row for a normalized key that collapses all parts
   // into one word for faster comparison. The bulk allocation is done
   // from 'mappedMemory'.  'serde_' is used for serializing complex
   // type values into the container.
@@ -146,7 +146,7 @@ class RowContainer {
   void incrementRowSize(char* row, uint64_t bytes) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
     uint64_t size = *ptr + bytes;
-    *ptr = std::min<uint64_t>(bytes, std::numeric_limits<uint32_t>::max());
+    *ptr = std::min<uint64_t>(size, std::numeric_limits<uint32_t>::max());
   }
 
   // Initialize row. 'reuse' specifies whether the 'row' is reused or
@@ -203,16 +203,31 @@ class RowContainer {
   // Extracts up to 'maxRows' rows starting at the position of
   // 'iter'. A default constructed or reset iter starts at the
   // beginning. Returns the number of rows written to 'rows'. Returns
-  // 0 when at end. Stops after te total size of returned rows exceeds
+  // 0 when at end. Stops after the total size of returned rows exceeds
   // maxBytes.
   int32_t listRows(
       RowContainerIterator* iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows);
+      char** rows) {
+    return listRows<false>(iter, maxRows, maxBytes, rows);
+  }
 
   int32_t listRows(RowContainerIterator* iter, int32_t maxRows, char** rows) {
-    return listRows(iter, maxRows, kUnlimited, rows);
+    return listRows<false>(iter, maxRows, kUnlimited, rows);
+  }
+
+  /// Sets 'probed' flag for the specified rows. Used by the right join to mark
+  /// build-side rows that matches join condition.
+  void setProbedFlag(char** rows, int32_t numRows);
+
+  /// Returns rows with 'probed' flag unset. Used by the right join.
+  int32_t listNotProbedRows(
+      RowContainerIterator* iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char** rows) {
+    return listRows<true>(iter, maxRows, maxBytes, rows);
   }
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
@@ -372,6 +387,10 @@ class RowContainer {
     }
   }
 
+  memory::MappedMemory* mappedMemory() const {
+    return stringAllocator_.mappedMemory();
+  }
+
   // Checks that row and free row counts match and that free list
   // membership is consistent with free flag.
   void checkConsistency();
@@ -426,6 +445,11 @@ class RowContainer {
 
   char*& nextFree(char* row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
+  }
+
+  uint32_t& variableRowSize(char* row) {
+    DCHECK(rowSizeOffset_);
+    return *reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
   }
 
   template <TypeKind Kind>
@@ -589,7 +613,7 @@ class RowContainer {
     }
     auto left = valueAt<T>(row, column.offset());
     auto right = decoded.valueAt<T>(index);
-    auto result = left < right ? -1 : left == right ? 0 : 1;
+    auto result = comparePrimitiveAsc(left, right);
     return flags.ascending ? result : result * -1;
   }
 
@@ -624,8 +648,23 @@ class RowContainer {
     }
     auto leftValue = valueAt<T>(left, offset);
     auto rightValue = valueAt<T>(right, offset);
-    auto result = leftValue < rightValue ? -1 : leftValue == rightValue ? 0 : 1;
+    auto result = comparePrimitiveAsc(leftValue, rightValue);
     return flags.ascending ? result : result * -1;
+  }
+
+  template <typename T>
+  static inline int comparePrimitiveAsc(const T& left, const T& right) {
+    if constexpr (std::is_floating_point<T>::value) {
+      bool isLeftNan = std::isnan(left);
+      bool isRightNan = std::isnan(right);
+      if (isLeftNan) {
+        return isRightNan ? 0 : 1;
+      }
+      if (isRightNan) {
+        return -1;
+      }
+    }
+    return left < right ? -1 : left == right ? 0 : 1;
   }
 
   void storeComplexType(
@@ -635,6 +674,70 @@ class RowContainer {
       int32_t offset,
       int32_t nullByte = 0,
       uint8_t nullMask = 0);
+
+  template <bool nonProbedRowsOnly>
+  int32_t listRows(
+      RowContainerIterator* iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char** rows) {
+    int32_t count = 0;
+    uint64_t totalBytes = 0;
+    auto numAllocations = rows_.numAllocations();
+    if (iter->allocationIndex == 0 && iter->runIndex == 0 &&
+        iter->rowOffset == 0) {
+      iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
+    }
+    int32_t rowSize = fixedRowSize_ +
+        (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
+    for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
+      auto allocation = rows_.allocationAt(i);
+      auto numRuns = allocation->numRuns();
+      for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
+        memory::MappedMemory::PageRun run = allocation->runAt(runIndex);
+        auto data = run.data<char>();
+        int64_t limit;
+        if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
+          limit = rows_.currentOffset();
+        } else {
+          limit = run.numPages() * memory::MappedMemory::kPageSize;
+        }
+        auto row = iter->rowOffset;
+        while (row + rowSize <= limit) {
+          rows[count++] = data + row +
+              (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
+          row += rowSize;
+          if (--iter->normalizedKeysLeft == 0) {
+            rowSize -= sizeof(normalized_key_t);
+          }
+          if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
+            --count;
+            continue;
+          }
+          if constexpr (nonProbedRowsOnly) {
+            if (bits::isBitSet(rows[count - 1], probedFlagOffset_)) {
+              --count;
+              continue;
+            }
+          }
+          totalBytes += rowSize;
+          if (rowSizeOffset_) {
+            totalBytes += variableRowSize(rows[count - 1]);
+          }
+          if (count == maxRows || totalBytes > maxBytes) {
+            iter->rowOffset = row;
+            iter->runIndex = runIndex;
+            iter->allocationIndex = i;
+            return count;
+          }
+        }
+        iter->rowOffset = 0;
+      }
+      iter->runIndex = 0;
+    }
+    iter->allocationIndex = std::numeric_limits<int32_t>::max();
+    return count;
+  }
 
   static void extractComplexType(
       const char* const* rows,
@@ -683,6 +786,7 @@ class RowContainer {
   // needed to manage memory of accumulators and the executable
   // aggregates. Store the metadata here.
   const std::vector<std::unique_ptr<Aggregate>>& aggregates_;
+  bool usesExternalMemory_ = false;
   // Types of non-aggregate columns. Keys first. Corresponds pairwise
   // to 'typeKinds_' and 'rowColumns_'.
   std::vector<TypePtr> types_;

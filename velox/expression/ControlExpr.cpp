@@ -30,16 +30,25 @@ void ConstantExpr::evalSpecialForm(
         BaseVector::createConstant(value_, 1, context->execCtx()->pool());
   }
 
-  if (isString()) {
+  if (needToSetIsAscii_) {
     auto* vector =
         sharedSubexprValues_->asUnchecked<SimpleVector<StringView>>();
-    vector->computeAndSetIsAscii(rows);
+    LocalSelectivityVector singleRow(context, 1);
+    singleRow.get()->setAll();
+    bool isAscii = vector->computeAndSetIsAscii(*singleRow.get());
+    vector->setAllIsAscii(isAscii);
+    needToSetIsAscii_ = false;
   }
 
-  context->moveOrCopyResult(
-      BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
-      rows,
-      result);
+  if (sharedSubexprValues_.unique()) {
+    sharedSubexprValues_->resize(rows.end());
+    context->moveOrCopyResult(sharedSubexprValues_, rows, result);
+  } else {
+    context->moveOrCopyResult(
+        BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
+        rows,
+        result);
+  }
 }
 
 void ConstantExpr::evalSpecialFormSimplified(
@@ -97,7 +106,11 @@ void FieldReference::evalSpecialForm(
   }
   // If we refer to a column of the context row, this may have been
   // peeled due to peeling off encoding, hence access it via
-  // 'context'.
+  // 'context'.  Chekc if the child is unique before taking the second
+  // reference. Unique constant vectors can be resized in place, non-unique
+  // must be copied to set the size.
+  bool isUniqueChild = inputs_.empty() ? context->getField(index_).unique()
+                                       : row->childAt(index_).unique();
   VectorPtr child =
       inputs_.empty() ? context->getField(index_) : row->childAt(index_);
   if (result->get()) {
@@ -106,6 +119,17 @@ void FieldReference::evalSpecialForm(
   } else {
     if (child->encoding() == VectorEncoding::Simple::LAZY) {
       child = BaseVector::loadedVectorShared(child);
+    }
+    // The caller relies on vectors having a meaningful size. If we
+    // have a constant that is not wrapped in anything we set its size
+    // to correspond to rows.size(). This is in place for unique ones
+    // and a copy otherwise.
+    if (!useDecode && child->isConstantEncoding()) {
+      if (isUniqueChild) {
+        child->resize(rows.size());
+      } else {
+        child = BaseVector::wrapInConstant(rows.size(), 0, child);
+      }
     }
     *result = useDecode ? std::move(decoded.wrap(child, *input.get(), rows))
                         : std::move(child);
@@ -394,8 +418,10 @@ void ConjunctExpr::evalSpecialForm(
   // Clear errors for 'rows' that are not in 'activeRows'.
   finalizeErrors(rows, *activeRows, throwOnError, context);
   if (!reorderEnabledChecked_) {
-    reorderEnabled_ =
-        context->execCtx()->queryCtx()->adaptiveFilterReorderingEnabled();
+    reorderEnabled_ = context->execCtx()
+                          ->queryCtx()
+                          ->config()
+                          .adaptiveFilterReorderingEnabled();
     reorderEnabledChecked_ = true;
   }
   if (reorderEnabled_) {

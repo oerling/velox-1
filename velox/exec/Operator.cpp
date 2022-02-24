@@ -22,8 +22,12 @@
 
 namespace facebook::velox::exec {
 
-std::vector<Operator::PlanNodeTranslator>& Operator::translators() {
-  static std::vector<PlanNodeTranslator> translators;
+OperatorCtx::OperatorCtx(DriverCtx* driverCtx)
+    : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorPool()) {}
+
+std::vector<std::unique_ptr<Operator::PlanNodeTranslator>>&
+Operator::translators() {
+  static std::vector<std::unique_ptr<PlanNodeTranslator>> translators;
   return translators;
 }
 
@@ -33,7 +37,7 @@ std::unique_ptr<Operator> Operator::fromPlanNode(
     int32_t id,
     const std::shared_ptr<const core::PlanNode>& planNode) {
   for (auto& translator : translators()) {
-    auto op = translator(ctx, id, planNode);
+    auto op = translator->translate(ctx, id, planNode);
     if (op) {
       return op;
     }
@@ -41,12 +45,29 @@ std::unique_ptr<Operator> Operator::fromPlanNode(
   return nullptr;
 }
 
+// static
+void Operator::registerOperator(
+    std::unique_ptr<PlanNodeTranslator> translator) {
+  translators().emplace_back(std::move(translator));
+}
+
+std::optional<uint32_t> Operator::maxDrivers(
+    const std::shared_ptr<const core::PlanNode>& planNode) {
+  for (auto& translator : translators()) {
+    auto current = translator->maxDrivers(planNode);
+    if (current) {
+      return current;
+    }
+  }
+  return std::nullopt;
+}
+
 memory::MappedMemory* OperatorCtx::mappedMemory() const {
   if (!mappedMemory_) {
-    auto parent = driverCtx_->task->queryCtx()->mappedMemory();
-    mappedMemory_ = parent->addChild(pool_->getMemoryUsageTracker());
+    mappedMemory_ =
+        driverCtx_->task->addOperatorMemory(pool_->getMemoryUsageTracker());
   }
-  return mappedMemory_.get();
+  return mappedMemory_;
 }
 
 const std::string& OperatorCtx::taskId() const {
@@ -169,7 +190,8 @@ std::string Operator::toString() {
   std::stringstream out;
   if (auto task = operatorCtx_->task()) {
     auto driverCtx = operatorCtx_->driverCtx();
-    out << "<" << task->taskId() << ":" << driverCtx->pipelineId << "."
+    out << stats_.operatorType << "(" << stats_.operatorId << ")<"
+        << task->taskId() << ":" << driverCtx->pipelineId << "."
         << driverCtx->driverId << " " << this;
   } else {
     out << "<Terminated, no task>";

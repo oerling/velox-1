@@ -13,12 +13,20 @@
 # limitations under the License.
 
 add_library(velox_exception Exceptions.cpp VeloxException.cpp Exceptions.h)
-target_link_libraries(velox_exception velox_flag_definitions velox_process
-                      ${FOLLY_WITH_DEPENDENCIES} ${FMT} ${GFLAGS_LIBRARIES})
+target_link_libraries(
+  velox_exception
+  velox_flag_definitions
+  velox_process
+  glog::glog
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${FMT}
+  ${GFLAGS_LIBRARIES})
 
 add_library(velox_common_base BitUtil.cpp RawVector.cpp SimdUtil.cpp)
 
 target_link_libraries(velox_common_base velox_exception velox_process)
 
 add_subdirectory(test_utils)
-add_subdirectory(benchmarks)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(benchmarks)
+endif()

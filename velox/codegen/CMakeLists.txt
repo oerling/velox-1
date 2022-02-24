@@ -13,10 +13,12 @@
 # limitations under the License.
 
 add_library(velox_codegen Codegen.cpp)
-if(${CODEGEN_SUPPORT})
+if(${VELOX_CODEGEN_SUPPORT})
   target_link_libraries(velox_codegen velox_experimental_codegen)
 else()
   target_link_libraries(velox_codegen velox_core velox_exec velox_expression
                         ${FOLLY_WITH_DEPENDENCIES})
 endif()
-add_subdirectory(tests)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()

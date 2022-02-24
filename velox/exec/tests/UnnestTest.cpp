@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/tests/OperatorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec::test;
@@ -50,5 +50,5 @@ TEST_F(UnnestTest, allEmptyOrNullArrays) {
   });
 
   auto op = PlanBuilder().values({vector}).unnest({"c0"}, {"c1"}).planNode();
-  assertQuery(op, "SELECT 1 LIMIT 0");
+  assertQueryReturnsEmptyResult(op);
 }

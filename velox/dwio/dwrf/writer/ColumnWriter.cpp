@@ -25,33 +25,28 @@
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/FlatVector.h"
 
-using namespace facebook::dwio::common;
+using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::memory;
 
 namespace facebook::velox::dwrf {
 
-namespace {
-FOLLY_ALWAYS_INLINE void initializeSelectivityVector(
-    const Ranges& ranges,
-    SelectivityVector& selectivityVector) {
-  selectivityVector.clearAll();
-  for (auto& range : ranges.getRanges()) {
-    selectivityVector.setValidRange(
-        std::get<0>(range), std::get<1>(range), true);
-  }
-  selectivityVector.updateBounds();
-}
-
-auto& decode(
-    WriterContext& context,
-    WriterContext::LocalDecodedVector& decoded,
+WriterContext::LocalDecodedVector ColumnWriter::decode(
     const VectorPtr& slice,
     const Ranges& ranges) {
-  auto localSv = context.getLocalSelectivityVector(slice->size());
-  initializeSelectivityVector(ranges, localSv.get());
-  decoded.get().decode(*slice, localSv.get());
-  return decoded.get();
+  auto& selected = context_.getSharedSelectivityVector(slice->size());
+  // initialize
+  selected.clearAll();
+  for (auto& range : ranges.getRanges()) {
+    selected.setValidRange(std::get<0>(range), std::get<1>(range), true);
+  }
+  selected.updateBounds();
+  // decode
+  auto localDecoded = context_.getLocalDecodedVector();
+  localDecoded.get().decode(*slice, selected);
+  return localDecoded;
 }
+
+namespace {
 
 template <typename T>
 class ByteRleColumnWriter : public ColumnWriter {
@@ -106,8 +101,8 @@ uint64_t ByteRleColumnWriter<int8_t>::write(
         ranges);
   } else {
     // The path for non-flat vectors
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     ColumnWriter::write(decodedVector, ranges);
 
     std::function<bool(vector_size_t)> isNullAt = nullptr;
@@ -155,8 +150,8 @@ uint64_t ByteRleColumnWriter<bool>::write(
         slice,
         ranges);
   } else {
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     ColumnWriter::write(decodedVector, ranges);
 
     std::function<bool(vector_size_t)> isNullAt = nullptr;
@@ -253,40 +248,19 @@ class IntegerColumnWriter : public ColumnWriter {
   void flush(
       std::function<proto::ColumnEncoding&(uint32_t)> encodingFactory,
       std::function<void(proto::ColumnEncoding&)> encodingOverride) override {
-    // Determine whether dictionary is the right encoding to use when writing
-    // the first stripe. We will continue using the same decision for all
-    // subsequent stripes.
-    // When we have already determined not to use dictionary encoding prior to
-    // flush, we would skip this block.
-    if (UNLIKELY(firstStripe_) && useDictionaryEncoding_) {
-      // Determine whether dictionary is the right encoding.
-      useDictionaryEncoding_ = shouldKeepDictionary();
-      initStreamWriters(useDictionaryEncoding_);
-      if (!useDictionaryEncoding_) {
-        // Suppress the stream used to initialize dictionary encoder.
-        // TODO: passing factory method into the dict encoder also works
-        // around this problem but has messier code organization.
-        context_.suppressStream(StreamIdentifier{
-            id_,
-            context_.shareFlatMapDictionaries ? 0 : sequence_,
-            0,
-            StreamKind::StreamKind_DICTIONARY_DATA});
-        // Record direct encoding stream starting position.
-        recordDirectEncodingStreamPositions(0);
-        convertToDirectEncoding();
-      }
-    }
+    tryAbandonDictionaries(false);
+    initStreamWriters(useDictionaryEncoding_);
 
+    size_t dictEncoderSize = dictEncoder_.size();
     if (useDictionaryEncoding_) {
       finalDictionarySize_ = dictEncoder_.flush();
       populateDictionaryEncodingStreams();
+      dictEncoder_.clear();
+      rows_.clear();
     }
 
     // NOTE: Flushes index. All index entries need to have been backfilled.
     ColumnWriter::flush(encodingFactory, encodingOverride);
-    size_t dictEncoderSize = dictEncoder_.size();
-    dictEncoder_.clear();
-    rows_.clear();
 
     ensureValidStreamWriters(useDictionaryEncoding_);
     // Flush in the order of the spec: IN_DICT, DICT_DATA, DATA
@@ -356,21 +330,31 @@ class IntegerColumnWriter : public ColumnWriter {
 
   // This incurs additional memory usage. A good long term adjustment but not
   // viable mitigation to memory pressure.
-  void abandonDictionaries() override {
-    if (!useDictionaryEncoding_) {
-      return;
-    }
-    useDictionaryEncoding_ = false;
+  void tryAbandonDictionaries(bool force) override {
     // TODO: hopefully not required in the future, but need to solve the problem
     // of replacing/deleting streams.
-    DWIO_ENSURE(firstStripe_);
-    initStreamWriters(useDictionaryEncoding_);
-    // Record direct encoding stream starting position.
-    recordDirectEncodingStreamPositions(0);
-    convertToDirectEncoding();
-    dictEncoder_.clear();
-    rows_.clear();
-    strideOffsets_.clear();
+    if (!useDictionaryEncoding_ || !firstStripe_) {
+      return;
+    }
+
+    useDictionaryEncoding_ = shouldKeepDictionary() && !force;
+    if (!useDictionaryEncoding_) {
+      initStreamWriters(useDictionaryEncoding_);
+      // Record direct encoding stream starting position.
+      recordDirectEncodingStreamPositions(0);
+      convertToDirectEncoding();
+      // Suppress the stream used to initialize dictionary encoder.
+      // TODO: passing factory method into the dict encoder also works
+      // around this problem but has messier code organization.
+      context_.suppressStream(StreamIdentifier{
+          id_,
+          context_.shareFlatMapDictionaries ? 0 : sequence_,
+          0,
+          StreamKind::StreamKind_DICTIONARY_DATA});
+      dictEncoder_.clear();
+      rows_.clear();
+      strideOffsets_.clear();
+    }
   }
 
  private:
@@ -382,7 +366,13 @@ class IntegerColumnWriter : public ColumnWriter {
     // Ensure we have valid streams for exactly one encoding.
     DWIO_ENSURE(
         (dictEncoding && data_ && inDictionary_ && !dataDirect_) ||
-        (!dictEncoding && !data_ && !inDictionary_ && dataDirect_));
+            (!dictEncoding && !data_ && !inDictionary_ && dataDirect_),
+        fmt::format(
+            "dictEncoding = {}, data_ = {}, inDictionary_ = {}, dataDirect_ = {}",
+            dictEncoding,
+            data_ != nullptr,
+            inDictionary_ != nullptr,
+            dataDirect_ != nullptr));
   }
 
   void initStreamWriters(bool dictEncoding) {
@@ -480,8 +470,8 @@ uint64_t IntegerColumnWriter<T>::write(
     const Ranges& ranges) {
   if (useDictionaryEncoding_) {
     // Decode and then write
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     return writeDict(decodedVector, ranges);
   } else {
     // If the input is not a flat vector we make a complete copy and convert
@@ -740,8 +730,8 @@ uint64_t TimestampColumnWriter::write(
     const Ranges& ranges) {
   // Timestamp is not frequently used, always decode so we have less branches to
   // deal with.
-  auto localDv = context_.getLocalDecodedVector();
-  auto& decodedVector = decode(context_, localDv, slice, ranges);
+  auto localDecoded = decode(slice, ranges);
+  auto& decodedVector = localDecoded.get();
   ColumnWriter::write(decodedVector, ranges);
 
   size_t count = 0;
@@ -838,29 +828,18 @@ class StringColumnWriter : public ColumnWriter {
   void flush(
       std::function<proto::ColumnEncoding&(uint32_t)> encodingFactory,
       std::function<void(proto::ColumnEncoding&)> encodingOverride) override {
-    // Determine whether dictionary is the right encoding to use when writing
-    // the first stripe. We will continue using the same decision for all
-    // subsequent stripes.
-    if (UNLIKELY(firstStripe_) && useDictionaryEncoding_) {
-      // Determine whether dictionary is the right encoding.
-      useDictionaryEncoding_ = shouldKeepDictionary();
-      initStreamWriters(useDictionaryEncoding_);
-      if (!useDictionaryEncoding_) {
-        // Record direct encoding stream starting position.
-        recordDirectEncodingStreamPositions(0);
-        convertToDirectEncoding();
-      }
-    }
+    tryAbandonDictionaries(false);
+    initStreamWriters(useDictionaryEncoding_);
 
+    size_t dictEncoderSize = dictEncoder_.size();
     if (useDictionaryEncoding_) {
       populateDictionaryEncodingStreams();
+      dictEncoder_.clear();
+      rows_.clear();
     }
 
     // NOTE: Flushes index. All index entries need to have been backfilled.
     ColumnWriter::flush(encodingFactory, encodingOverride);
-    size_t dictEncoderSize = dictEncoder_.size();
-    dictEncoder_.clear();
-    rows_.clear();
 
     ensureValidStreamWriters(useDictionaryEncoding_);
     // Flush in the order of the spec:
@@ -943,21 +922,31 @@ class StringColumnWriter : public ColumnWriter {
     }
   }
 
-  void abandonDictionaries() override {
-    if (!useDictionaryEncoding_) {
-      return;
-    }
-    useDictionaryEncoding_ = false;
+  void tryAbandonDictionaries(bool force) override {
     // TODO: hopefully not required in the future, but need to solve the problem
     // of replacing/deleting streams.
-    DWIO_ENSURE(firstStripe_);
-    initStreamWriters(useDictionaryEncoding_);
-    // Record direct encoding stream starting position.
-    recordDirectEncodingStreamPositions(0);
-    convertToDirectEncoding();
-    dictEncoder_.clear();
-    rows_.clear();
-    strideOffsets_.clear();
+    if (!useDictionaryEncoding_ || !firstStripe_) {
+      return;
+    }
+
+    useDictionaryEncoding_ = shouldKeepDictionary() && !force;
+    if (!useDictionaryEncoding_) {
+      initStreamWriters(useDictionaryEncoding_);
+      // Record direct encoding stream starting position.
+      recordDirectEncodingStreamPositions(0);
+      convertToDirectEncoding();
+      dictEncoder_.clear();
+      rows_.clear();
+      strideOffsets_.clear();
+    }
+  }
+
+ protected:
+  bool useDictionaryEncoding() const override {
+    return (sequence_ == 0 ||
+            !context_.getConfig(
+                Config::MAP_FLAT_DISABLE_DICT_ENCODING_STRING)) &&
+        !context_.isLowMemoryMode();
   }
 
  private:
@@ -1087,8 +1076,8 @@ class StringColumnWriter : public ColumnWriter {
 uint64_t StringColumnWriter::write(
     const VectorPtr& slice,
     const Ranges& ranges) {
-  auto localDv = context_.getLocalDecodedVector();
-  auto& decodedVector = decode(context_, localDv, slice, ranges);
+  auto localDecoded = decode(slice, ranges);
+  auto& decodedVector = localDecoded.get();
 
   if (useDictionaryEncoding_) {
     return writeDict(decodedVector, ranges);
@@ -1407,8 +1396,8 @@ uint64_t FloatColumnWriter<T>::write(
       }
     }
   } else {
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     ColumnWriter::write(decodedVector, ranges);
 
     // higher throughput is achieved through this local buffer
@@ -1490,41 +1479,73 @@ class BinaryColumnWriter : public ColumnWriter {
 uint64_t BinaryColumnWriter::write(
     const VectorPtr& slice,
     const Ranges& ranges) {
-  auto binarySlice = slice->asFlatVector<StringView>();
-  DWIO_ENSURE(binarySlice, "unexpected vector type");
-  ColumnWriter::write(slice, ranges);
-  auto nulls = slice->rawNulls();
-  auto data = binarySlice->rawValues();
+  auto& statsBuilder =
+      dynamic_cast<BinaryStatisticsBuilder&>(*indexStatsBuilder_);
+  uint64_t rawSize = 0;
+  uint64_t nullCount = 0;
 
   // TODO Optimize to avoid copy
   DataBuffer<int64_t> lengths{getMemoryPool(MemoryUsageCategory::GENERAL)};
   lengths.reserve(ranges.size());
-  uint64_t rawSize = 0;
 
-  auto& statsBuilder =
-      dynamic_cast<BinaryStatisticsBuilder&>(*indexStatsBuilder_);
-  auto processRow = [&](size_t pos) {
-    auto size = data[pos].size();
-    lengths.unsafeAppend(size);
-    data_.write(data[pos].data(), size);
-    statsBuilder.addValues(size);
-    rawSize += size;
-  };
+  if (slice->encoding() == VectorEncoding::Simple::FLAT) {
+    auto binarySlice = slice->asFlatVector<StringView>();
+    DWIO_ENSURE(binarySlice, "unexpected vector type");
+    ColumnWriter::write(slice, ranges);
+    auto nulls = slice->rawNulls();
+    auto data = binarySlice->rawValues();
 
-  uint64_t nullCount = 0;
-  if (slice->mayHaveNulls()) {
-    for (auto& pos : ranges) {
-      if (bits::isBitNull(nulls, pos)) {
-        ++nullCount;
-      } else {
+    auto processRow = [&](size_t pos) {
+      auto size = data[pos].size();
+      lengths.unsafeAppend(size);
+      data_.write(data[pos].data(), size);
+      statsBuilder.addValues(size);
+      rawSize += size;
+    };
+
+    if (slice->mayHaveNulls()) {
+      for (auto& pos : ranges) {
+        if (bits::isBitNull(nulls, pos)) {
+          ++nullCount;
+        } else {
+          processRow(pos);
+        }
+      }
+    } else {
+      for (auto& pos : ranges) {
         processRow(pos);
       }
     }
   } else {
-    for (auto& pos : ranges) {
-      processRow(pos);
+    // Decode
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
+    ColumnWriter::write(decodedVector, ranges);
+
+    auto processRow = [&](size_t pos) {
+      auto val = decodedVector.template valueAt<StringView>(pos);
+      auto size = val.size();
+      lengths.unsafeAppend(size);
+      data_.write(val.data(), size);
+      statsBuilder.addValues(size);
+      rawSize += size;
+    };
+
+    if (decodedVector.mayHaveNulls()) {
+      for (auto& pos : ranges) {
+        if (decodedVector.isNullAt(pos)) {
+          ++nullCount;
+        } else {
+          processRow(pos);
+        }
+      }
+    } else {
+      for (auto& pos : ranges) {
+        processRow(pos);
+      }
     }
   }
+
   if (lengths.size() > 0) {
     lengths_->add(lengths.data(), Ranges::of(0, lengths.size()), nullptr);
   }
@@ -1594,8 +1615,8 @@ uint64_t StructColumnWriter::write(
     const RowVector* rowSlice;
     const Ranges* childRangesPtr;
     if (slice->encoding() != VectorEncoding::Simple::ROW) {
-      auto localDv = context_.getLocalDecodedVector();
-      auto& decodedVector = decode(context_, localDv, slice, ranges);
+      auto localDecoded = decode(slice, ranges);
+      auto& decodedVector = localDecoded.get();
       rowSlice = decodedVector.base()->as<RowVector>();
       DWIO_ENSURE(rowSlice, "unexpected vector type");
       childRangesPtr = &childRanges;
@@ -1620,8 +1641,8 @@ uint64_t StructColumnWriter::write(
   const RowVector* rowSlice;
   const Ranges* childRangesPtr;
   if (slice->encoding() != VectorEncoding::Simple::ROW) {
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     rowSlice = decodedVector.base()->as<RowVector>();
     DWIO_ENSURE(rowSlice, "unexpected vector type");
     childRangesPtr = &childRanges;
@@ -1651,15 +1672,10 @@ uint64_t StructColumnWriter::write(
     auto nulls = slice->rawNulls();
     if (slice->mayHaveNulls()) {
       // Compute range of slice that child writer need to write.
-      // If null count not present, err on the side of caution and assume nulls
-      // exist.
-      if (!rowSlice->getNullCount().has_value() ||
-          rowSlice->getNullCount().value() > 0) {
-        childRanges = ranges.filter(
-            [&nulls](auto i) { return !bits::isBitNull(nulls, i); });
-        childRangesPtr = &childRanges;
-        nullCount = ranges.size() - childRanges.size();
-      }
+      childRanges = ranges.filter(
+          [&nulls](auto i) { return !bits::isBitNull(nulls, i); });
+      childRangesPtr = &childRanges;
+      nullCount = ranges.size() - childRanges.size();
     }
   }
   return writeChildrenAndStats(rowSlice, *childRangesPtr, nullCount);
@@ -1721,8 +1737,8 @@ uint64_t ListColumnWriter::write(const VectorPtr& slice, const Ranges& ranges) {
   };
 
   if (slice->encoding() != VectorEncoding::Simple::ARRAY) {
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     arraySlice = decodedVector.base()->as<ArrayVector>();
     DWIO_ENSURE(arraySlice, "unexpected vector type");
 
@@ -1845,8 +1861,8 @@ uint64_t MapColumnWriter::write(const VectorPtr& slice, const Ranges& ranges) {
   };
 
   if (slice->encoding() != VectorEncoding::Simple::MAP) {
-    auto localDv = context_.getLocalDecodedVector();
-    auto& decodedVector = decode(context_, localDv, slice, ranges);
+    auto localDecoded = decode(slice, ranges);
+    auto& decodedVector = localDecoded.get();
     mapSlice = decodedVector.base()->as<MapVector>();
     DWIO_ENSURE(mapSlice, "unexpected vector type");
 

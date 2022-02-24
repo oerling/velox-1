@@ -17,7 +17,6 @@
 
 #include "velox/exec/Operator.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
-#include "velox/exec/VectorHasher.h"
 
 namespace facebook::velox::exec {
 
@@ -28,7 +27,7 @@ class Destination {
   Destination(
       const std::string& taskId,
       int destination,
-      memory::MappedMemory* memory)
+      memory::MappedMemory* FOLLY_NONNULL memory)
       : taskId_(taskId), destination_(destination), memory_(memory) {}
 
   // Resets the destination before starting a new batch.
@@ -48,14 +47,14 @@ class Destination {
   BlockingReason advance(
       uint64_t maxBytes,
       const std::vector<vector_size_t>& sizes,
-      const RowVectorPtr& input,
+      const RowVectorPtr& output,
       PartitionedOutputBufferManager& bufferManager,
-      bool* atEnd,
-      ContinueFuture* future);
+      bool* FOLLY_NONNULL atEnd,
+      ContinueFuture* FOLLY_NONNULL future);
 
   BlockingReason flush(
       PartitionedOutputBufferManager& bufferManager,
-      ContinueFuture* future);
+      ContinueFuture* FOLLY_NULLABLE future);
 
   bool isFinished() const {
     return finished_;
@@ -75,7 +74,7 @@ class Destination {
 
   const std::string taskId_;
   const int destination_;
-  memory::MappedMemory* const memory_;
+  memory::MappedMemory* FOLLY_NONNULL const memory_;
   uint64_t bytesInCurrent_{0};
   std::vector<IndexRange> rows_;
 
@@ -98,7 +97,7 @@ class PartitionedOutput : public Operator {
  public:
   PartitionedOutput(
       int32_t operatorId,
-      DriverCtx* ctx,
+      DriverCtx* FOLLY_NONNULL ctx,
       const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
       : Operator(
             ctx,
@@ -109,14 +108,21 @@ class PartitionedOutput : public Operator {
         keyChannels_(toChannels(planNode->inputType(), planNode->keys())),
         numDestinations_(planNode->numPartitions()),
         replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
+        partitionFunction_(
+            numDestinations_ == 1
+                ? nullptr
+                : planNode->partitionFunctionFactory()(numDestinations_)),
         outputChannels_(calculateOutputChannels(
             planNode->inputType(),
             planNode->outputType())),
         future_(false),
         bufferManager_(PartitionedOutputBufferManager::getInstance(
-            operatorCtx_->task()->queryCtx()->host())) {
-    VELOX_CHECK(numDestinations_ > 1 || keyChannels_.empty());
-    VELOX_CHECK_GT(outputType_->size(), 0);
+            operatorCtx_->task()->queryCtx()->host())),
+        mappedMemory_{operatorCtx_->mappedMemory()} {
+    if (numDestinations_ == 1 || planNode->isBroadcast()) {
+      VELOX_CHECK(keyChannels_.empty());
+      VELOX_CHECK_NULL(partitionFunction_);
+    }
   }
 
   void addInput(RowVectorPtr input) override;
@@ -132,7 +138,7 @@ class PartitionedOutput : public Operator {
     return true;
   }
 
-  BlockingReason isBlocked(ContinueFuture* future) override {
+  BlockingReason isBlocked(ContinueFuture* FOLLY_NONNULL future) override {
     if (blockingReason_ != BlockingReason::kNotBlocked) {
       *future = std::move(future_);
       blockingReason_ = BlockingReason::kNotBlocked;
@@ -140,6 +146,8 @@ class PartitionedOutput : public Operator {
     }
     return BlockingReason::kNotBlocked;
   }
+
+  bool isFinished() override;
 
   void close() override {
     destinations_.clear();
@@ -152,12 +160,10 @@ class PartitionedOutput : public Operator {
 
   void initializeSizeBuffers();
 
-  void calculateHashes();
-
   void estimateRowSizes();
 
-  /// Collect all rows with null keys into the provided SelectivityVector.
-  void collectNullRows(SelectivityVector& nullRows);
+  /// Collect all rows with null keys into nullRows_.
+  void collectNullRows();
 
   static constexpr uint64_t kMaxDestinationSize = 1024 * 1024; // 1MB
   static constexpr uint64_t kMinDestinationSize = 16 * 1024; // 16 KB
@@ -165,25 +171,27 @@ class PartitionedOutput : public Operator {
   const std::vector<ChannelIndex> keyChannels_;
   const int numDestinations_;
   const bool replicateNullsAndAny_;
+  std::unique_ptr<core::PartitionFunction> partitionFunction_;
   // Empty if column order in the output is exactly the same as in input.
   const std::vector<ChannelIndex> outputChannels_;
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
   ContinueFuture future_;
-  bool isFinished_{false};
-  std::vector<std::unique_ptr<VectorHasher>> hashers_;
+  bool finished_{false};
   // top-level row numbers used as input to
   // VectorStreamGroup::estimateSerializedSize member variable is used to avoid
   // re-allocating memory
   std::vector<IndexRange> topLevelRanges_;
   std::vector<vector_size_t*> sizePointers_;
   std::vector<vector_size_t> rowSize_;
-  std::vector<uint64_t> hashes_;
   std::vector<std::unique_ptr<Destination>> destinations_;
   bool replicatedAny_{false};
   std::weak_ptr<exec::PartitionedOutputBufferManager> bufferManager_;
+  memory::MappedMemory* FOLLY_NONNULL mappedMemory_;
 
   // Reusable memory.
   SelectivityVector rows_;
+  SelectivityVector nullRows_;
+  std::vector<uint32_t> partitions_;
 };
 
 } // namespace facebook::velox::exec

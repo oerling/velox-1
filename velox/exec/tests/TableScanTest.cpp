@@ -13,12 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/common/base/test_utils/GTestUtils.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
-#include "velox/exec/tests/Cursor.h"
-#include "velox/exec/tests/HiveConnectorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/tests/utils/Cursor.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/type/Type.h"
 #include "velox/type/tests/FilterBuilder.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
@@ -40,9 +43,11 @@ static const std::string kNodeSelectionStrategy = "node_selection_strategy";
 static const std::string kSoftAffinity = "SOFT_AFFINITY";
 static const std::string kTableScanTest = "TableScanTest.Writer";
 
-class TableScanTest : public HiveConnectorTestBase {
+class TableScanTest : public virtual HiveConnectorTestBase,
+                      public testing::WithParamInterface<bool> {
  protected:
   void SetUp() override {
+    useAsyncCache_ = GetParam();
     HiveConnectorTestBase::SetUp();
     rowType_ =
         ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
@@ -53,6 +58,10 @@ class TableScanTest : public HiveConnectorTestBase {
              DOUBLE(),
              VARCHAR(),
              TINYINT()});
+  }
+
+  static void SetUpTestCase() {
+    HiveConnectorTestBase::SetUpTestCase();
   }
 
   std::vector<RowVectorPtr> makeVectors(
@@ -105,50 +114,69 @@ class TableScanTest : public HiveConnectorTestBase {
     return getTableScanStats(task).runtimeStats["skippedSplits"].sum;
   }
 
-  void testPartitionedTable(const std::string& filePath) {
-    auto outputType = ROW({"ds", "c0", "c1"}, {VARCHAR(), BIGINT(), DOUBLE()});
-
-    auto tableHandle = makeTableHandle(SubfieldFilters{});
-
-    ColumnHandleMap assignments = {
-        {"ds", partitionKey("ds")},
-        {"c0", regularColumn("c0")},
-        {"c1", regularColumn("c1")}};
-
-    std::unordered_map<std::string, std::string> partitionKeys = {
-        {"ds", "2020-11-01"}};
+  void testPartitionedTableImpl(
+      const std::string& filePath,
+      const TypePtr& partitionType,
+      const std::optional<std::string>& partitionValue) {
+    std::unordered_map<std::string, std::optional<std::string>> partitionKeys =
+        {{"pkey", partitionValue}};
     auto split = std::make_shared<HiveConnectorSplit>(
         kHiveConnectorId,
         filePath,
-        facebook::dwio::common::FileFormat::ORC,
+        facebook::velox::dwio::common::FileFormat::ORC,
         0,
         fs::file_size(filePath),
         partitionKeys);
+    auto outputType =
+        ROW({"pkey", "c0", "c1"}, {partitionType, BIGINT(), DOUBLE()});
+    auto tableHandle = makeTableHandle(SubfieldFilters{});
+    ColumnHandleMap assignments = {
+        {"pkey", partitionKey("pkey", partitionType)},
+        {"c0", regularColumn("c0", BIGINT())},
+        {"c1", regularColumn("c1", DOUBLE())}};
 
     auto op = PlanBuilder()
                   .tableScan(outputType, tableHandle, assignments)
                   .planNode();
-    assertQuery(op, split, "SELECT '2020-11-01', * FROM tmp");
 
-    outputType = ROW({"c0", "ds", "c1"}, {BIGINT(), VARCHAR(), DOUBLE()});
+    std::string partitionValueStr =
+        partitionValue.has_value() ? "'" + *partitionValue + "'" : "null";
+    assertQuery(
+        op, split, fmt::format("SELECT {}, * FROM tmp", partitionValueStr));
+
+    outputType = ROW({"c0", "pkey", "c1"}, {BIGINT(), partitionType, DOUBLE()});
     op = PlanBuilder()
              .tableScan(outputType, tableHandle, assignments)
              .planNode();
-    assertQuery(op, split, "SELECT c0, '2020-11-01', c1 FROM tmp");
-
-    outputType = ROW({"c0", "c1", "ds"}, {BIGINT(), DOUBLE(), VARCHAR()});
+    assertQuery(
+        op,
+        split,
+        fmt::format("SELECT c0, {}, c1 FROM tmp", partitionValueStr));
+    outputType = ROW({"c0", "c1", "pkey"}, {BIGINT(), DOUBLE(), partitionType});
     op = PlanBuilder()
              .tableScan(outputType, tableHandle, assignments)
              .planNode();
-    assertQuery(op, split, "SELECT c0, c1, '2020-11-01' FROM tmp");
+    assertQuery(
+        op,
+        split,
+        fmt::format("SELECT c0, c1, {} FROM tmp", partitionValueStr));
 
     // select only partition key
-    assignments = {{"ds", partitionKey("ds")}};
-    outputType = ROW({"ds"}, {VARCHAR()});
+    assignments = {{"pkey", partitionKey("pkey", partitionType)}};
+    outputType = ROW({"pkey"}, {partitionType});
     op = PlanBuilder()
              .tableScan(outputType, tableHandle, assignments)
              .planNode();
-    assertQuery(op, split, "SELECT '2020-11-01' FROM tmp");
+    assertQuery(
+        op, split, fmt::format("SELECT {} FROM tmp", partitionValueStr));
+  }
+
+  void testPartitionedTable(
+      const std::string& filePath,
+      const TypePtr& partitionType,
+      const std::optional<std::string>& partitionValue) {
+    testPartitionedTableImpl(filePath, partitionType, partitionValue);
+    testPartitionedTableImpl(filePath, partitionType, std::nullopt);
   }
 
   std::shared_ptr<const RowType> rowType_{
@@ -156,7 +184,7 @@ class TableScanTest : public HiveConnectorTestBase {
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
 };
 
-TEST_F(TableScanTest, allColumns) {
+TEST_P(TableScanTest, allColumns) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -165,13 +193,13 @@ TEST_F(TableScanTest, allColumns) {
   assertQuery(tableScanNode(), {filePath}, "SELECT * FROM tmp");
 }
 
-TEST_F(TableScanTest, columnAliases) {
+TEST_P(TableScanTest, columnAliases) {
   auto vectors = makeVectors(1, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
   createDuckDbTable(vectors);
 
-  ColumnHandleMap assignments = {{"a", regularColumn("c0")}};
+  ColumnHandleMap assignments = {{"a", regularColumn("c0", BIGINT())}};
   auto outputType = ROW({"a"}, {BIGINT()});
   auto op = PlanBuilder()
                 .tableScan(
@@ -199,7 +227,28 @@ TEST_F(TableScanTest, columnAliases) {
   assertQuery(op, {filePath}, "SELECT c0 FROM tmp WHERE c0 % 2 = 1");
 }
 
-TEST_F(TableScanTest, columnPruning) {
+TEST_P(TableScanTest, partitionKeyAlias) {
+  auto vectors = makeVectors(1, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+
+  ColumnHandleMap assignments = {
+      {"a", regularColumn("c0", BIGINT())},
+      {"ds_alias", partitionKey("ds", VARCHAR())}};
+
+  auto split = makeHiveConnectorSplit(filePath->path, {{"ds", "2021-12-02"}});
+
+  auto outputType = ROW({"a", "ds_alias"}, {BIGINT(), VARCHAR()});
+  auto op = PlanBuilder()
+                .tableScan(
+                    outputType, makeTableHandle(SubfieldFilters{}), assignments)
+                .planNode();
+
+  assertQuery(op, split, "SELECT c0, '2021-12-02' FROM tmp");
+}
+
+TEST_P(TableScanTest, columnPruning) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -226,7 +275,7 @@ TEST_F(TableScanTest, columnPruning) {
 
 // Test reading files written before schema change, e.g. missing newly added
 // columns.
-TEST_F(TableScanTest, missingColumns) {
+TEST_P(TableScanTest, missingColumns) {
   // Simulate schema change of adding a new column.
   // - Create an "old" file with one column.
   // - Create a "new" file with two columns.
@@ -269,15 +318,15 @@ TEST_F(TableScanTest, missingColumns) {
   outputType = ROW({"a", "b"}, {BIGINT(), DOUBLE()});
 
   assignments.clear();
-  assignments["a"] = regularColumn("c0");
-  assignments["b"] = regularColumn("c1");
+  assignments["a"] = regularColumn("c0", BIGINT());
+  assignments["b"] = regularColumn("c1", DOUBLE());
 
   op = PlanBuilder().tableScan(outputType, tableHandle, assignments).planNode();
   assertQuery(op, filePaths, "SELECT * FROM tmp");
 }
 
 // Tests queries that use Lazy vectors with multiple layers of wrapping.
-TEST_F(TableScanTest, constDictLazy) {
+TEST_P(TableScanTest, constDictLazy) {
   vector_size_t size = 1'000;
   auto rowVector = makeRowVector(
       {makeFlatVector<int64_t>(size, [](auto row) { return row; }),
@@ -329,7 +378,7 @@ TEST_F(TableScanTest, constDictLazy) {
   assertQuery(op, {filePath}, "SELECT 2 FROM tmp WHERE c0 = 5");
 }
 
-TEST_F(TableScanTest, count) {
+TEST_P(TableScanTest, count) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -354,7 +403,7 @@ TEST_F(TableScanTest, count) {
 
 // Test that adding the same split with the same sequence id does not cause
 // double read and the 2nd split is ignored.
-TEST_F(TableScanTest, sequentialSplitNoDoubleRead) {
+TEST_P(TableScanTest, sequentialSplitNoDoubleRead) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -384,7 +433,7 @@ TEST_F(TableScanTest, sequentialSplitNoDoubleRead) {
 
 // Test that adding the splits out of order does not result in splits being
 // ignored.
-TEST_F(TableScanTest, outOfOrderSplits) {
+TEST_P(TableScanTest, outOfOrderSplits) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -414,7 +463,7 @@ TEST_F(TableScanTest, outOfOrderSplits) {
 
 // Test that adding the same split, disregarding the sequence id, causes
 // double read, as expected.
-TEST_F(TableScanTest, splitDoubleRead) {
+TEST_P(TableScanTest, splitDoubleRead) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -441,7 +490,7 @@ TEST_F(TableScanTest, splitDoubleRead) {
   }
 }
 
-TEST_F(TableScanTest, multipleSplits) {
+TEST_P(TableScanTest, multipleSplits) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000);
   for (int32_t i = 0; i < vectors.size(); i++) {
@@ -452,7 +501,7 @@ TEST_F(TableScanTest, multipleSplits) {
   assertQuery(tableScanNode(), filePaths, "SELECT * FROM tmp");
 }
 
-TEST_F(TableScanTest, waitForSplit) {
+TEST_P(TableScanTest, waitForSplit) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000);
   for (int32_t i = 0; i < vectors.size(); i++) {
@@ -475,7 +524,7 @@ TEST_F(TableScanTest, waitForSplit) {
       duckDbQueryRunner_);
 }
 
-TEST_F(TableScanTest, splitOffsetAndLength) {
+TEST_P(TableScanTest, splitOffsetAndLength) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -492,17 +541,17 @@ TEST_F(TableScanTest, splitOffsetAndLength) {
       "SELECT * FROM tmp LIMIT 0");
 }
 
-TEST_F(TableScanTest, fileNotFound) {
+TEST_P(TableScanTest, fileNotFound) {
   CursorParameters params;
   params.planNode = tableScanNode();
 
   auto cursor = std::make_unique<TaskCursor>(params);
   cursor->task()->addSplit("0", makeHiveSplit("file:/path/to/nowhere.orc"));
-  EXPECT_THROW(cursor->moveNext(), std::runtime_error);
+  EXPECT_THROW(cursor->moveNext(), VeloxRuntimeError);
 }
 
 // A valid ORC file (containing headers) but no data.
-TEST_F(TableScanTest, validFileNoData) {
+TEST_P(TableScanTest, validFileNoData) {
   auto rowType = ROW({"c0", "c1", "c2"}, {DOUBLE(), VARCHAR(), BIGINT()});
 
   auto filePath = facebook::velox::test::getDataFilePath(
@@ -510,7 +559,7 @@ TEST_F(TableScanTest, validFileNoData) {
   auto split = std::make_shared<HiveConnectorSplit>(
       kHiveConnectorId,
       "file:" + filePath,
-      facebook::dwio::common::FileFormat::ORC,
+      facebook::velox::dwio::common::FileFormat::ORC,
       0,
       fs::file_size(filePath) / 2);
 
@@ -519,7 +568,7 @@ TEST_F(TableScanTest, validFileNoData) {
 }
 
 // An invalid (size = 0) file.
-TEST_F(TableScanTest, emptyFile) {
+TEST_P(TableScanTest, emptyFile) {
   auto filePath = TempFilePath::create();
 
   try {
@@ -531,61 +580,77 @@ TEST_F(TableScanTest, emptyFile) {
   }
 }
 
-TEST_F(TableScanTest, cacheEnabled) {
-  // DataCache not enabled
-  auto rowType = ROW({"c0", "c1", "c2"}, {DOUBLE(), VARCHAR(), BIGINT()});
-  auto vectors = makeVectors(10, 1'000, rowType);
-  auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
-
-  CursorParameters params;
-  params.planNode = tableScanNode(rowType);
-
-  auto cursor = std::make_unique<TaskCursor>(params);
-
-  addSplit(cursor->task().get(), "0", makeHiveSplit(filePath->path));
-  cursor->task()->noMoreSplits("0");
-
-  while (cursor->moveNext()) {
-    cursor->current();
-  }
-
-  EXPECT_EQ(dataCache->getCount, 0);
-  EXPECT_EQ(dataCache->putCount, 0);
-
-  // DataCache enabled
-  std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
-  std::unordered_map<std::string, std::string> hiveConnectorConfigs;
-  hiveConnectorConfigs.insert({kNodeSelectionStrategy, kSoftAffinity});
-  connectorConfigs.insert(
-      {kHiveConnectorId,
-       std::make_shared<core::MemConfig>(std::move(hiveConnectorConfigs))});
-  params.queryCtx = core::QueryCtx::create(
-      std::make_shared<core::MemConfig>(),
-      connectorConfigs,
-      memory::MappedMemory::getInstance());
-
-  cursor = std::make_unique<TaskCursor>(params);
-
-  addSplit(cursor->task().get(), "0", makeHiveSplit(filePath->path));
-  cursor->task()->noMoreSplits("0");
-
-  while (cursor->moveNext()) {
-    cursor->current();
-  }
-
-  EXPECT_NE(dataCache->getCount, 0);
-  EXPECT_NE(dataCache->putCount, 0);
-}
-
-TEST_F(TableScanTest, partitionedTable) {
+TEST_P(TableScanTest, partitionedTableVarcharKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
   createDuckDbTable(vectors);
 
-  testPartitionedTable(filePath->path);
+  testPartitionedTable(filePath->path, VARCHAR(), "2020-11-01");
+}
+
+TEST_P(TableScanTest, partitionedTableBigIntKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, BIGINT(), "123456789123456789");
+}
+
+TEST_P(TableScanTest, partitionedTableIntegerKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, INTEGER(), "123456789");
+}
+
+TEST_P(TableScanTest, partitionedTableSmallIntKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, SMALLINT(), "1");
+}
+
+TEST_P(TableScanTest, partitionedTableTinyIntKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, TINYINT(), "1");
+}
+
+TEST_P(TableScanTest, partitionedTableBooleanKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, BOOLEAN(), "0");
+}
+
+TEST_P(TableScanTest, partitionedTableRealKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, REAL(), "3.5");
+}
+
+TEST_P(TableScanTest, partitionedTableDoubleKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, DOUBLE(), "3.5");
 }
 
 std::vector<StringView> toStringViews(const std::vector<std::string>& values) {
@@ -597,7 +662,7 @@ std::vector<StringView> toStringViews(const std::vector<std::string>& values) {
   return views;
 }
 
-TEST_F(TableScanTest, statsBasedSkippingBool) {
+TEST_P(TableScanTest, statsBasedSkippingBool) {
   auto rowType = ROW({"c0", "c1"}, {INTEGER(), BOOLEAN()});
   auto filePaths = makeFilePaths(1);
   auto size = 31'234;
@@ -611,7 +676,7 @@ TEST_F(TableScanTest, statsBasedSkippingBool) {
 
   auto subfieldFilters = singleSubfieldFilter("c1", boolEqual(true));
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
-      assignments = {{"c0", regularColumn("c0")}};
+      assignments = {{"c0", regularColumn("c0", INTEGER())}};
   auto assertQuery = [&](const std::string& query) {
     auto tableHandle = makeTableHandle(std::move(subfieldFilters));
     return TableScanTest::assertQuery(
@@ -631,7 +696,7 @@ TEST_F(TableScanTest, statsBasedSkippingBool) {
   EXPECT_EQ(2, getSkippedStridesStat(task));
 }
 
-TEST_F(TableScanTest, statsBasedSkippingDouble) {
+TEST_P(TableScanTest, statsBasedSkippingDouble) {
   auto filePaths = makeFilePaths(1);
   auto size = 31'234;
   auto rowVector = makeRowVector({makeFlatVector<double>(
@@ -644,7 +709,7 @@ TEST_F(TableScanTest, statsBasedSkippingDouble) {
   auto subfieldFilters =
       singleSubfieldFilter("c0", lessThanOrEqualDouble(-1.05));
 
-  ColumnHandleMap assignments = {{"c0", regularColumn("c0")}};
+  ColumnHandleMap assignments = {{"c0", regularColumn("c0", DOUBLE())}};
 
   auto assertQuery = [&](const std::string& query) {
     auto tableHandle = makeTableHandle(std::move(subfieldFilters));
@@ -684,7 +749,7 @@ TEST_F(TableScanTest, statsBasedSkippingDouble) {
   EXPECT_EQ(3, getSkippedStridesStat(task));
 }
 
-TEST_F(TableScanTest, statsBasedSkippingFloat) {
+TEST_P(TableScanTest, statsBasedSkippingFloat) {
   auto filePaths = makeFilePaths(1);
   auto size = 31'234;
   auto rowVector = makeRowVector({makeFlatVector<float>(
@@ -697,7 +762,7 @@ TEST_F(TableScanTest, statsBasedSkippingFloat) {
   auto subfieldFilters =
       singleSubfieldFilter("c0", lessThanOrEqualFloat(-1.05));
 
-  ColumnHandleMap assignments = {{"c0", regularColumn("c0")}};
+  ColumnHandleMap assignments = {{"c0", regularColumn("c0", REAL())}};
 
   auto assertQuery = [&](const std::string& query) {
     auto tableHandle = makeTableHandle(std::move(subfieldFilters));
@@ -737,7 +802,7 @@ TEST_F(TableScanTest, statsBasedSkippingFloat) {
 }
 
 // Test skipping whole file based on statistics
-TEST_F(TableScanTest, statsBasedSkipping) {
+TEST_P(TableScanTest, statsBasedSkipping) {
   auto filePaths = makeFilePaths(1);
   const vector_size_t size = 31'234;
   std::vector<std::string> fruits = {"apple", "banana", "cherry", "grapes"};
@@ -770,7 +835,7 @@ TEST_F(TableScanTest, statsBasedSkipping) {
   // c0 <= -1 -> whole file should be skipped based on stats
   auto subfieldFilters = singleSubfieldFilter("c0", lessThanOrEqual(-1));
 
-  ColumnHandleMap assignments = {{"c1", regularColumn("c1")}};
+  ColumnHandleMap assignments = {{"c1", regularColumn("c1", INTEGER())}};
 
   auto assertQuery = [&](const std::string& query) {
     auto tableHandle = makeTableHandle(std::move(subfieldFilters));
@@ -866,7 +931,7 @@ TEST_F(TableScanTest, statsBasedSkipping) {
 
 // Test skipping files and row groups containing constant values based on
 // statistics
-TEST_F(TableScanTest, statsBasedSkippingConstants) {
+TEST_P(TableScanTest, statsBasedSkippingConstants) {
   auto filePaths = makeFilePaths(1);
   const vector_size_t size = 31'234;
   std::vector<std::string> fruits = {"apple", "banana", "cherry", "grapes"};
@@ -927,7 +992,7 @@ TEST_F(TableScanTest, statsBasedSkippingConstants) {
 }
 
 // Test stats-based skipping for the IS NULL filter.
-TEST_F(TableScanTest, statsBasedSkippingNulls) {
+TEST_P(TableScanTest, statsBasedSkippingNulls) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), INTEGER()});
   auto filePaths = makeFilePaths(1);
   const vector_size_t size = 31'234;
@@ -982,7 +1047,7 @@ TEST_F(TableScanTest, statsBasedSkippingNulls) {
 }
 
 // Test skipping whole compression blocks without decompressing these.
-TEST_F(TableScanTest, statsBasedSkippingWithoutDecompression) {
+TEST_P(TableScanTest, statsBasedSkippingWithoutDecompression) {
   const vector_size_t size = 31'234;
 
   // Use long, non-repeating strings to ensure there will be multiple
@@ -1037,7 +1102,7 @@ TEST_F(TableScanTest, statsBasedSkippingWithoutDecompression) {
 }
 
 // Test skipping whole compression blocks without decompressing these.
-TEST_F(TableScanTest, filterBasedSkippingWithoutDecompression) {
+TEST_P(TableScanTest, filterBasedSkippingWithoutDecompression) {
   const vector_size_t size = 31'234;
 
   // Use long, non-repeating strings to ensure there will be multiple
@@ -1077,7 +1142,7 @@ TEST_F(TableScanTest, filterBasedSkippingWithoutDecompression) {
 // Test stats-based skipping for numeric columns (integers, floats and booleans)
 // that don't have filters themselves. Skipping is driven by a single bigint
 // column.
-TEST_F(TableScanTest, statsBasedSkippingNumerics) {
+TEST_P(TableScanTest, statsBasedSkippingNumerics) {
   const vector_size_t size = 31'234;
 
   // Make a vector of all possible integer and floating point types.
@@ -1147,7 +1212,7 @@ TEST_F(TableScanTest, statsBasedSkippingNumerics) {
 
 // Test stats-based skipping for list and map columns that don't have
 // filters themselves. Skipping is driven by a single bigint column.
-TEST_F(TableScanTest, statsBasedSkippingComplexTypes) {
+TEST_P(TableScanTest, statsBasedSkippingComplexTypes) {
   const vector_size_t size = 31'234;
 
   // Make a vector of all possible integer and floating point types.
@@ -1232,7 +1297,7 @@ TEST_F(TableScanTest, statsBasedSkippingComplexTypes) {
 
 /// Test the interaction between stats-based and regular skipping for lists and
 /// maps.
-TEST_F(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
+TEST_P(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
   const vector_size_t size = 31'234;
 
   // Orchestrate the case where the nested reader of a list/map gets behind the
@@ -1289,7 +1354,7 @@ TEST_F(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
       "SELECT * FROM tmp WHERE c0 <= 10 OR c0 between 600 AND 650 OR c0 >= 21234");
 }
 
-TEST_F(TableScanTest, filterPushdown) {
+TEST_P(TableScanTest, filterPushdown) {
   auto rowType =
       ROW({"c0", "c1", "c2", "c3"}, {TINYINT(), BIGINT(), DOUBLE(), BOOLEAN()});
   auto filePaths = makeFilePaths(10);
@@ -1326,7 +1391,7 @@ TEST_F(TableScanTest, filterPushdown) {
 
   // Repeat the same but do not project out the filtered columns.
   assignments.clear();
-  assignments["c0"] = regularColumn("c0");
+  assignments["c0"] = regularColumn("c0", TINYINT());
   assertQuery(
       PlanBuilder()
           .tableScan(ROW({"c0"}, {TINYINT()}), tableHandle, assignments)
@@ -1339,7 +1404,7 @@ TEST_F(TableScanTest, filterPushdown) {
   assertQuery(
       PlanBuilder()
           .tableScan(ROW({}, {}), tableHandle, assignments)
-          .finalAggregation({}, {"sum(1)"})
+          .singleAggregation({}, {"sum(1)"})
           .planNode(),
       filePaths,
       "SELECT count(*) FROM tmp WHERE (c1 >= 0 OR c1 IS NULL) AND c3");
@@ -1350,13 +1415,13 @@ TEST_F(TableScanTest, filterPushdown) {
   assertQuery(
       PlanBuilder()
           .tableScan(ROW({}, {}), tableHandle, assignments)
-          .finalAggregation({}, {"sum(1)"})
+          .singleAggregation({}, {"sum(1)"})
           .planNode(),
       filePaths,
       "SELECT count(*) FROM tmp");
 }
 
-TEST_F(TableScanTest, path) {
+TEST_P(TableScanTest, path) {
   auto rowType = ROW({"a"}, {BIGINT()});
   auto filePath = makeFilePaths(1)[0];
   auto vector = makeVectors(1, 1'000, rowType)[0];
@@ -1366,7 +1431,7 @@ TEST_F(TableScanTest, path) {
   static const char* kPath = "$path";
 
   auto assignments = allRegularColumns(rowType);
-  assignments[kPath] = synthesizedColumn(kPath);
+  assignments[kPath] = synthesizedColumn(kPath, VARCHAR());
 
   auto tableHandle = makeTableHandle(SubfieldFilters{}, nullptr);
 
@@ -1394,7 +1459,7 @@ TEST_F(TableScanTest, path) {
       op, {filePath}, fmt::format("SELECT '{}', * FROM tmp", pathValue));
 }
 
-TEST_F(TableScanTest, bucket) {
+TEST_P(TableScanTest, bucket) {
   vector_size_t size = 1'000;
   int numBatches = 5;
 
@@ -1420,10 +1485,10 @@ TEST_F(TableScanTest, bucket) {
     splits.emplace_back(std::make_shared<HiveConnectorSplit>(
         kHiveConnectorId,
         filePaths[i]->path,
-        facebook::dwio::common::FileFormat::ORC,
+        facebook::velox::dwio::common::FileFormat::ORC,
         0,
         fs::file_size(filePaths[i]->path),
-        std::unordered_map<std::string, std::string>(),
+        std::unordered_map<std::string, std::optional<std::string>>(),
         bucket));
   }
 
@@ -1434,7 +1499,7 @@ TEST_F(TableScanTest, bucket) {
       std::dynamic_pointer_cast<const RowType>(rowVectors.front()->type());
 
   auto assignments = allRegularColumns(rowType);
-  assignments[kBucket] = synthesizedColumn(kBucket);
+  assignments[kBucket] = synthesizedColumn(kBucket, INTEGER());
 
   // Query that spans on all buckets
   auto typeWithBucket =
@@ -1472,7 +1537,7 @@ TEST_F(TableScanTest, bucket) {
   }
 }
 
-TEST_F(TableScanTest, remainingFilter) {
+TEST_P(TableScanTest, remainingFilter) {
   auto rowType = ROW(
       {"c0", "c1", "c2", "c3"}, {INTEGER(), INTEGER(), DOUBLE(), BOOLEAN()});
   auto filePaths = makeFilePaths(10);
@@ -1513,7 +1578,7 @@ TEST_F(TableScanTest, remainingFilter) {
       "SELECT * FROM tmp WHERE c1 > c0 AND c0 >= 0");
 
   // Remaining filter uses columns that are not used otherwise.
-  assignments = {{"c2", regularColumn("c2")}};
+  assignments = {{"c2", regularColumn("c2", DOUBLE())}};
   tableHandle =
       makeTableHandle(SubfieldFilters{}, parseExpr("c1 > c0", rowType));
   assertQuery(
@@ -1525,7 +1590,9 @@ TEST_F(TableScanTest, remainingFilter) {
 
   // Remaining filter uses one column that is used elsewhere (is projected out)
   // and another column that is not used anywhere else.
-  assignments = {{"c1", regularColumn("c1")}, {"c2", regularColumn("c2")}};
+  assignments = {
+      {"c1", regularColumn("c1", INTEGER())},
+      {"c2", regularColumn("c2", DOUBLE())}};
   tableHandle =
       makeTableHandle(SubfieldFilters{}, parseExpr("c1 > c0", rowType));
   assertQuery(
@@ -1539,7 +1606,7 @@ TEST_F(TableScanTest, remainingFilter) {
       "SELECT c1, c2 FROM tmp WHERE c1 > c0");
 }
 
-TEST_F(TableScanTest, aggregationPushdown) {
+TEST_P(TableScanTest, aggregationPushdown) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -1552,7 +1619,7 @@ TEST_F(TableScanTest, aggregationPushdown) {
   auto op =
       PlanBuilder()
           .tableScan(rowType_, tableHandle, assignments)
-          .finalAggregation(
+          .partialAggregation(
               {5}, {"max(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(c4)"})
           .planNode();
   query =
@@ -1562,7 +1629,7 @@ TEST_F(TableScanTest, aggregationPushdown) {
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation(
+           .singleAggregation(
                {5}, {"max(c0)", "max(c1)", "max(c2)", "max(c3)", "max(c4)"})
            .planNode();
   query =
@@ -1572,7 +1639,7 @@ TEST_F(TableScanTest, aggregationPushdown) {
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation(
+           .singleAggregation(
                {5}, {"min(c0)", "min(c1)", "min(c2)", "min(c3)", "min(c4)"})
            .planNode();
   query =
@@ -1584,8 +1651,8 @@ TEST_F(TableScanTest, aggregationPushdown) {
   // touch columns being aggregated
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .project({"c0 % 5", "c1"}, {"c0_mod_5", "c1"})
-           .finalAggregation({0}, {"sum(c1)"})
+           .project({"c0 % 5", "c1"})
+           .singleAggregation({0}, {"sum(c1)"})
            .planNode();
 
   assertQuery(op, {filePath}, "SELECT c0 % 5, sum(c1) FROM tmp group by 1");
@@ -1596,7 +1663,7 @@ TEST_F(TableScanTest, aggregationPushdown) {
       SubfieldFilters(), parseExpr("length(c5) % 2 = 0", rowType_));
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation({5}, {"max(c0)"})
+           .singleAggregation({5}, {"max(c0)"})
            .planNode();
   query = "SELECT c5, max(c0) FROM tmp WHERE length(c5) % 2 = 0 GROUP BY c5 ";
   assertQuery(op, {filePath}, query);
@@ -1606,21 +1673,21 @@ TEST_F(TableScanTest, aggregationPushdown) {
   tableHandle = makeTableHandle(SubfieldFilters(), nullptr);
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation({5}, {"min(c0)", "max(c0)"})
+           .singleAggregation({5}, {"min(c0)", "max(c0)"})
            .planNode();
   assertQuery(
       op, {filePath}, "SELECT c5, min(c0), max(c0) FROM tmp GROUP BY 1");
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .project({"c5", "c0", "c0 + c1"}, {"c5", "c0", "c0_plus_c1"})
-           .finalAggregation({0}, {"min(c0)", "max(c0_plus_c1)"})
+           .project({"c5", "c0", "c0 + c1 AS c0_plus_c1"})
+           .singleAggregation({0}, {"min(c0)", "max(c0_plus_c1)"})
            .planNode();
   assertQuery(
       op, {filePath}, "SELECT c5, min(c0), max(c0 + c1) FROM tmp GROUP BY 1");
 }
 
-TEST_F(TableScanTest, bitwiseAggregationPushdown) {
+TEST_P(TableScanTest, bitwiseAggregationPushdown) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, kTableScanTest, vectors);
@@ -1631,7 +1698,7 @@ TEST_F(TableScanTest, bitwiseAggregationPushdown) {
 
   auto op = PlanBuilder()
                 .tableScan(rowType_, tableHandle, assignments)
-                .finalAggregation(
+                .singleAggregation(
                     {5},
                     {"bitwise_and_agg(c0)",
                      "bitwise_and_agg(c1)",
@@ -1646,7 +1713,7 @@ TEST_F(TableScanTest, bitwiseAggregationPushdown) {
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation(
+           .singleAggregation(
                {5},
                {"bitwise_or_agg(c0)",
                 "bitwise_or_agg(c1)",
@@ -1659,3 +1726,251 @@ TEST_F(TableScanTest, bitwiseAggregationPushdown) {
       {filePath},
       "SELECT c5, bit_or(c0), bit_or(c1), bit_or(c2), bit_or(c6) FROM tmp group by c5");
 }
+
+TEST_P(TableScanTest, structLazy) {
+  vector_size_t size = 1'000;
+  auto rowVector = makeRowVector(
+      {makeFlatVector<int64_t>(size, [](auto row) { return row; }),
+       makeFlatVector<int64_t>(size, [](auto row) { return row; }),
+       makeRowVector({makeMapVector<int64_t, double>(
+           size,
+           [](auto row) { return row % 3; },
+           [](auto row) { return row; },
+           [](auto row) { return row * 0.1; })})});
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, {rowVector});
+
+  // Exclude struct columns as DuckDB doesn't support complex types yet.
+  createDuckDbTable(
+      {makeRowVector({rowVector->childAt(0), rowVector->childAt(1)})});
+
+  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+  auto assignments = allRegularColumns(rowType);
+
+  auto tableHandle = makeTableHandle(SubfieldFilters{});
+  auto op = PlanBuilder()
+                .tableScan(rowType, tableHandle, assignments)
+                .project({"cardinality(c2.c0)"})
+                .planNode();
+
+  assertQuery(op, {filePath}, "select c0 % 3 from tmp");
+}
+
+TEST_P(TableScanTest, structInArrayOrMap) {
+  vector_size_t size = 1'000;
+
+  auto rowNumbers = makeFlatVector<int64_t>(size, [](auto row) { return row; });
+  auto innerRow = makeRowVector({rowNumbers});
+  auto offsets = AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
+  auto rawOffsets = offsets->asMutable<vector_size_t>();
+  std::iota(rawOffsets, rawOffsets + size, 0);
+  auto sizes = AlignedBuffer::allocate<vector_size_t>(size, pool_.get(), 1);
+  auto rowVector = makeRowVector(
+      {rowNumbers,
+       rowNumbers,
+       std::make_shared<MapVector>(
+           pool_.get(),
+           MAP(BIGINT(), innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           makeFlatVector<int64_t>(size, [](int32_t /*row*/) { return 1; }),
+           innerRow),
+       std::make_shared<ArrayVector>(
+           pool_.get(),
+           ARRAY(innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           innerRow)});
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, {rowVector});
+
+  // Exclude struct columns as DuckDB doesn't support complex types yet.
+  createDuckDbTable(
+      {makeRowVector({rowVector->childAt(0), rowVector->childAt(1)})});
+
+  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+  auto op = PlanBuilder()
+                .tableScan(rowType)
+                .project({"c2[1].c0", "c3[1].c0"})
+                .planNode();
+
+  assertQuery(op, {filePath}, "select c0, c0 from tmp");
+}
+
+// Here we test various aspects of grouped/bucketed execution also involving
+// output buffer.
+TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
+  // Create source file - we will read from it in 6 splits.
+  const size_t numSplits{6};
+  auto vectors = makeVectors(10, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+
+  auto planFragment = PlanBuilder()
+                          .tableScan(rowType_)
+                          .partitionedOutput({}, 1, {0, 1, 2, 3, 4, 5})
+                          .planFragment();
+  planFragment.numSplitGroups = 10;
+  planFragment.executionStrategy = core::ExecutionStrategy::kGrouped;
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto task = std::make_shared<exec::Task>(
+      "0", std::move(planFragment), 0, std::move(queryCtx));
+  // 3 drivers max and 1 concurrent split group.
+  task->start(task, 3, 1);
+
+  // Add one splits before start to ensure we can handle such cases.
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // Only one split group should be in the processing mode, so 2 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Add the rest of splits
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // One split group should be in the processing mode, so 3 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Finalize one split group (8) and wait until 3 drivers are finished.
+  task->noMoreSplitsForGroup("0", 8);
+  while (task->numFinishedDrivers() != 3) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As one split group is finished, another one should kick in, so 3 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Finalize the second split group (1) and wait until 6 drivers are finished.
+  task->noMoreSplitsForGroup("0", 1);
+  while (task->numFinishedDrivers() != 6) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As one split group is finished, another one should kick in, so 3 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Finalize the third split group (5) and wait until 9 drivers are finished.
+  task->noMoreSplitsForGroup("0", 5);
+  while (task->numFinishedDrivers() != 9) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // No split groups should be processed at the moment, so 0 drivers.
+  EXPECT_EQ(0, task->numRunningDrivers());
+
+  // Flag that we would have no more split groups.
+  task->noMoreSplits("0");
+
+  // 'Delete results' from output buffer triggers 'set all output consumed',
+  // which should finish the task.
+  auto outputBufferManager =
+      PartitionedOutputBufferManager::getInstance(task->queryCtx()->host())
+          .lock();
+  outputBufferManager->deleteResults(task->taskId(), 0);
+
+  // Task must be finished at this stage.
+  EXPECT_EQ(TaskState::kFinished, task->state());
+}
+
+// Here we test various aspects of grouped/bucketed execution.
+TEST_P(TableScanTest, groupedExecution) {
+  // Create source file - we will read from it in 6 splits.
+  const size_t numSplits{6};
+  auto vectors = makeVectors(10, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+
+  CursorParameters params;
+  params.planNode = tableScanNode(ROW({}, {}));
+  params.maxDrivers = 2;
+  params.concurrentSplitGroups = 2;
+  // We will have 10 split groups 'in total', but our task will only handle
+  // three of them: 1, 5 and 8.
+  // Split 0 is from split group 1.
+  // Splits 1 and 2 are from split group 5.
+  // Splits 3, 4 and 5 are from split group 8.
+  params.executionStrategy = core::ExecutionStrategy::kGrouped;
+  params.numSplitGroups = 10;
+  // We'll only run 3 split groups, 2 drivers each.
+  params.numResultDrivers = 3 * 2;
+
+  // Create the cursor with the task underneath. It is not started yet.
+  auto cursor = std::make_unique<TaskCursor>(params);
+  auto* pTask = cursor->task().get();
+
+  // Add one splits before start to ensure we can handle such cases.
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // Start task now.
+  cursor->start();
+
+  // Only one split group should be in the processing mode, so 2 drivers.
+  EXPECT_EQ(2, pTask->numRunningDrivers());
+
+  // Add the rest of splits
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // Only two split groups should be in the processing mode, so 4 drivers.
+  EXPECT_EQ(4, pTask->numRunningDrivers());
+
+  // Finalize one split group (8) and wait until 2 drivers are finished.
+  pTask->noMoreSplitsForGroup("0", 8);
+  while (pTask->numFinishedDrivers() != 2) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As one split group is finished, another one should kick in, so 4 drivers.
+  EXPECT_EQ(4, pTask->numRunningDrivers());
+
+  // Finalize the second split group (5) and wait until 4 drivers are finished.
+  pTask->noMoreSplitsForGroup("0", 5);
+  while (pTask->numFinishedDrivers() != 4) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As the second split group is finished, only one is left, so 2 drivers.
+  EXPECT_EQ(2, pTask->numRunningDrivers());
+
+  // Finalize the third split group (1) and wait until 6 drivers are finished.
+  pTask->noMoreSplitsForGroup("0", 1);
+  while (pTask->numFinishedDrivers() != 6) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // No split groups should be processed at the moment, so 0 drivers.
+  EXPECT_EQ(0, pTask->numRunningDrivers());
+
+  // Flag that we would have no more split groups.
+  pTask->noMoreSplits("0");
+
+  // Make sure we've got the right number of rows.
+  int32_t numRead = 0;
+  while (cursor->moveNext()) {
+    auto vector = cursor->current();
+    EXPECT_EQ(vector->childrenSize(), 0);
+    numRead += vector->size();
+  }
+
+  // Task must be finished at this stage.
+  EXPECT_EQ(TaskState::kFinished, pTask->state());
+
+  EXPECT_EQ(numRead, numSplits * 10'000);
+}
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    TableScanTests,
+    TableScanTest,
+    testing::Values(true, false));

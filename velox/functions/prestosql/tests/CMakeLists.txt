@@ -14,41 +14,51 @@
 
 add_library(velox_functions_test_lib FunctionBaseTest.cpp)
 
-target_link_libraries(
-  velox_functions_test_lib velox_exec velox_functions_prestosql
-  velox_exec_test_util velox_vector_test_lib velox_parse_parser)
+target_link_libraries(velox_functions_test_lib velox_exec velox_exec_test_util
+                      velox_vector_test_lib velox_parse_parser)
 
 add_executable(
   velox_functions_test
   ArithmeticTest.cpp
   ArrayConstructorTest.cpp
   ArrayContainsTest.cpp
+  ArrayDistinctTest.cpp
+  ArrayDuplicatesTest.cpp
   ArrayExceptTest.cpp
   ArrayFilterTest.cpp
   ArrayIntersectTest.cpp
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
+  ArrayPositionTest.cpp
+  BitwiseTest.cpp
+  CardinalityTest.cpp
+  CeilFloorTest.cpp
   CoalesceTest.cpp
   ComparisonsTest.cpp
-  IsNullTest.cpp
-  NotTest.cpp
-  InPredicateTest.cpp
-  CeilFloorTest.cpp
-  JsonExtractScalarTest.cpp
-  StringFunctionsTest.cpp
   DateTimeFunctionsTest.cpp
-  ReduceTest.cpp
-  RoundTest.cpp
-  CardinalityTest.cpp
-  MapKeysAndValuesTest.cpp
-  MapTest.cpp
+  ElementAtTest.cpp
+  HyperLogLogFunctionsTest.cpp
+  InPredicateTest.cpp
+  JsonCastTest.cpp
+  JsonExtractScalarTest.cpp
   MapConcatTest.cpp
   MapEntriesTest.cpp
   MapFilterTest.cpp
+  MapKeysAndValuesTest.cpp
+  MapTest.cpp
+  NotTest.cpp
+  ReduceTest.cpp
+  RegexpReplaceTest.cpp
+  ReverseTest.cpp
+  RoundTest.cpp
+  SliceTest.cpp
+  SplitTest.cpp
+  StringFunctionsTest.cpp
   TransformTest.cpp
-  ElementAtTest.cpp
+  URLFunctionsTest.cpp
   WidthBucketArrayTest.cpp
-  ReverseTest.cpp)
+  GreatestLeastTest.cpp
+  ZipTest.cpp)
 
 add_test(velox_functions_test velox_functions_test)
 
@@ -62,4 +72,5 @@ target_link_libraries(
   velox_exec_test_util
   velox_dwrf_test_utils
   ${GTEST_BOTH_LIBRARIES}
-  ${gflags_LIBRARIES})
+  ${gflags_LIBRARIES}
+  ${GMock})

@@ -15,12 +15,25 @@
  */
 
 #pragma once
-#include <algorithm>
 
+#include <velox/vector/BaseVector.h>
+#include <velox/vector/TypeAliases.h>
+#include <algorithm>
+#include <cstring>
+#include <string_view>
+#include <type_traits>
+
+#include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/expression/ComplexProxyTypes.h"
+#include "velox/expression/ComplexViewTypes.h"
+#include "velox/expression/DecodedArgs.h"
+#include "velox/expression/VariadicView.h"
 #include "velox/functions/UDFOutputString.h"
+#include "velox/type/StringView.h"
 #include "velox/type/Type.h"
 #include "velox/vector/DecodedVector.h"
+#include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 
 namespace facebook::velox::exec {
@@ -28,146 +41,78 @@ namespace facebook::velox::exec {
 template <typename VectorType = FlatVector<StringView>, bool reuseInput = false>
 class StringProxy;
 
+template <typename T>
+struct VectorReader;
+
 namespace detail {
 template <typename T>
 struct resolver {
   using in_type = typename CppToType<T>::NativeType;
   using out_type = typename CppToType<T>::NativeType;
-
-  static variant toVariant(const in_type& t) {
-    return variant{t};
-  }
-
-  static in_type fromVariant(const variant& v) {
-    return v.value<in_type>();
-  }
 };
 
 template <typename K, typename V>
 struct resolver<Map<K, V>> {
-  using in_type = core::
-      SlowMapVal<typename resolver<K>::in_type, typename resolver<V>::in_type>;
+  using in_type = MapView<true, K, V>;
+  using null_free_in_type = MapView<false, K, V>;
   using out_type = core::SlowMapWriter<
       typename resolver<K>::out_type,
       typename resolver<V>::out_type>;
+};
 
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& v) {
-    VELOX_NYI();
-  }
+template <typename K, typename V>
+struct resolver<MapWriterT<K, V>> {
+  using out_type = MapWriter<K, V>;
 };
 
 template <typename... T>
 struct resolver<Row<T...>> {
-  using in_type = core::RowReader<typename resolver<T>::in_type...>;
+  using in_type = RowView<true, T...>;
+  using null_free_in_type = RowView<false, T...>;
   using out_type = core::RowWriter<typename resolver<T>::out_type...>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& t) {
-    VELOX_NYI();
-  }
 };
 
 template <typename V>
 struct resolver<Array<V>> {
-  using in_type = core::ArrayValReader<typename resolver<V>::in_type>;
+  using in_type = ArrayView<true, V>;
+  using null_free_in_type = ArrayView<false, V>;
   using out_type = core::ArrayValWriter<typename resolver<V>::out_type>;
+};
 
-  static variant toVariant(const in_type& t) {
-    using childType = typename resolver<V>::in_type;
-    std::vector<variant> v(t.size());
-    std::transform(
-        t.begin(), t.end(), v.begin(), [](const std::optional<childType>& v) {
-          return v.has_value()
-              ? resolver<childType>::toVariant(v)
-              : variant::null(in_type::veloxType()->childAt(0)->kind());
-        });
-
-    return variant::array(std::move(v));
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& t) {
-    using childType = typename resolver<V>::in_type;
-    VELOX_CHECK_EQ(t.kind(), TypeKind::ARRAY);
-    const auto& values = t.array();
-    in_type retVal;
-    for (auto& v : values) {
-      auto convertedVal = v.isNull()
-          ? std::optional<childType>{}
-          : std::optional<childType>{resolver<V>::fromVariant(v)};
-      retVal.append(std::move(convertedVal));
-    }
-
-    return retVal;
-  }
+template <typename V>
+struct resolver<ArrayProxyT<V>> {
+  using out_type = ArrayProxy<V>;
 };
 
 template <>
 struct resolver<Varchar> {
   using in_type = StringView;
   using out_type = StringProxy<>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& v) {
-    VELOX_NYI();
-  }
 };
 
 template <>
 struct resolver<Varbinary> {
   using in_type = StringView;
   using out_type = StringProxy<>;
-
-  static variant toVariant(const in_type& t) {
-    VELOX_NYI();
-  }
-
-  static variant toVariant(const out_type& t) {
-    VELOX_NYI();
-  }
-
-  static in_type fromVariant(const variant& v) {
-    VELOX_NYI();
-  }
 };
 
 template <typename T>
 struct resolver<std::shared_ptr<T>> {
   using in_type = std::shared_ptr<T>;
   using out_type = std::shared_ptr<T>;
+};
 
-  static variant toVariant(const in_type& t) {
-    return variant::opaque(t);
-  }
+template <typename T>
+struct resolver<Variadic<T>> {
+  using in_type = VariadicView<true, T>;
+  using null_free_in_type = VariadicView<false, T>;
+  // Variadic cannot be used as an out_type
+};
 
-  static in_type fromVariant(const variant& v) {
-    return v.opaque<T>();
-  }
+template <typename T>
+struct resolver<Generic<T>> {
+  using in_type = GenericView;
+  using out_type = void; // Not supported as output type yet.
 };
 } // namespace detail
 
@@ -189,15 +134,15 @@ struct VectorWriter {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
-      vector_->resize(size);
-      init(*vector_);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
+      data_ = vector_->mutableRawValues();
     }
   }
 
   VectorWriter() {}
 
-  exec_out_t& current() {
+  FOLLY_ALWAYS_INLINE exec_out_t& current() {
     return data_[offset_];
   }
 
@@ -206,6 +151,7 @@ struct VectorWriter {
     // in future, we want to eliminate this so all writes go directly to their
     // slice.
     data_[offset_] = data;
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -216,13 +162,16 @@ struct VectorWriter {
     // this code path is called when the slice is top-level
     if (!isSet) {
       vector_->setNull(offset_, true);
+    } else {
+      vector_->setNull(offset_, false);
     }
   }
-  void setOffset(int32_t offset) {
+
+  FOLLY_ALWAYS_INLINE void setOffset(int32_t offset) {
     offset_ = offset;
   }
 
-  vector_t& vector() {
+  FOLLY_ALWAYS_INLINE vector_t& vector() {
     return *vector_;
   }
 
@@ -231,30 +180,63 @@ struct VectorWriter {
   size_t offset_ = 0;
 };
 
-template <typename T, typename = void>
+template <typename T>
 struct VectorReader {
   using exec_in_t = typename VectorExec::template resolver<T>::in_type;
+  // Types without views cannot contain null, they can only be null, so they're
+  // in_type is already null_free.
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<T>::in_type;
 
-  VectorReader(const DecodeResult<exec_in_t>& decoded) : decoded_{decoded} {}
+  explicit VectorReader(const DecodedVector* decoded) : decoded_(*decoded) {}
 
-  const exec_in_t& operator[](size_t offset) const {
-    return decoded_[offset];
+  explicit VectorReader(const VectorReader<T>&) = delete;
+  VectorReader<T>& operator=(const VectorReader<T>&) = delete;
+
+  exec_in_t operator[](size_t offset) const {
+    return decoded_.template valueAt<exec_in_t>(offset);
+  }
+
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    return decoded_.template valueAt<exec_null_free_in_t>(offset);
   }
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  bool doLoad(size_t offset, exec_in_t& v) const {
-    if (isSet(offset)) {
-      v = decoded_[offset];
-      return true;
-    } else {
-      return false;
-    }
+  bool mayHaveNulls() const {
+    return decoded_.mayHaveNulls();
   }
 
-  const DecodeResult<exec_in_t> decoded_;
+  // These functions can be used to check if any elements in a given row are
+  // NULL. They are not especially fast, so they should only be used when
+  // necessary, and other options, e.g. calling mayHaveNullsRecursive() on the
+  // vector, have already been exhausted.
+  inline bool containsNull(vector_size_t index) const {
+    return decoded_.isNullAt(index);
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    // Note: This can be optimized for the special case where the underlying
+    // vector is flat using bit operations on the nulls buffer.
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    return decoded_.mayHaveNulls();
+  }
+
+  // Scalars don't have children, so this is a no-op.
+  void setChildrenMayHaveNulls() {}
+
+  const DecodedVector& decoded_;
 };
 
 template <typename K, typename V>
@@ -283,8 +265,8 @@ struct VectorWriter<Map<K, V>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
-      vector_->resize(size);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
       init(*vector_);
     }
   }
@@ -307,6 +289,7 @@ struct VectorWriter<Map<K, V>> {
       }
       ++childSize;
     }
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -342,147 +325,187 @@ struct VectorWriter<Map<K, V>> {
 
 namespace detail {
 
-template <typename TOut, typename TIn>
-const TOut& getDecoded(const DecodeResult<TIn>& decoded) {
+template <typename TOut>
+const TOut& getDecoded(const DecodedVector& decoded) {
   auto base = decoded.base();
   return *base->template as<TOut>();
 }
 
-template <typename T>
-DecodeResult<T> decode(DecodedVector& decoder, const BaseVector& vector) {
+inline DecodedVector* decode(DecodedVector& decoder, const BaseVector& vector) {
   SelectivityVector rows(vector.size());
   decoder.decode(vector, rows);
-  return decoder.as<T>();
+  return &decoder;
 }
-
-}; // namespace detail
+} // namespace detail
 
 template <typename K, typename V>
 struct VectorReader<Map<K, V>> {
-  // todo(youknowjack): in future, directly expose the slice data
-
   using in_vector_t = typename TypeToFlatVector<Map<K, V>>::type;
-  using key_vector_t = typename TypeToFlatVector<K>::type;
-  using val_vector_t = typename TypeToFlatVector<V>::type;
   using exec_in_t = typename VectorExec::template resolver<Map<K, V>>::in_type;
-  using exec_in_key_t = typename VectorExec::template resolver<K>::in_type;
-  using exec_in_val_t = typename VectorExec::template resolver<V>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Map<K, V>>::null_free_in_type;
 
-  explicit VectorReader(const DecodeResult<exec_in_t>& decoded)
-      : decoded_{decoded},
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_{*decoded},
         vector_(detail::getDecoded<in_vector_t>(decoded_)),
         offsets_(vector_.rawOffsets()),
         lengths_(vector_.rawSizes()),
-        keyReader_{
-            detail::decode<exec_in_key_t>(decodedKeys_, *vector_.mapKeys())},
-        valReader_{
-            detail::decode<exec_in_val_t>(decodedVals_, *vector_.mapValues())} {
+        keyReader_{detail::decode(decodedKeys_, *vector_.mapKeys())},
+        valReader_{detail::decode(decodedVals_, *vector_.mapValues())} {}
+
+  explicit VectorReader(const VectorReader<Map<K, V>>&) = delete;
+  VectorReader<Map<K, V>>& operator=(const VectorReader<Map<K, V>>&) = delete;
+
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&keyReader_, &valReader_, offsets_[index], lengths_[index]};
   }
 
-  bool doLoad(size_t outerOffset, exec_in_t& target) const {
-    if (UNLIKELY(!isSet(outerOffset))) {
-      return false;
-    }
-    vector_size_t offset = decoded_.decodedIndex(outerOffset);
-    const size_t offsetStart = offsets_[offset];
-    const size_t offsetEnd = offsetStart + lengths_[offset];
-
-    target.reserve(target.size() + offsetEnd - offsetStart);
-
-    for (size_t i = offsetStart; i != offsetEnd; ++i) {
-      exec_in_key_t key{};
-      exec_in_val_t val{};
-      if (UNLIKELY(!keyReader_.doLoad(i, key))) {
-        VELOX_USER_CHECK(false, "null map key not allowed");
-      }
-      const bool isSet = valReader_.doLoad(i, val);
-      if (LIKELY(isSet)) {
-        target.emplace(key, std::optional<exec_in_val_t>{std::move(val)});
-      } else {
-        target.emplace(key, std::optional<exec_in_val_t>{});
-      }
-    }
-    return true;
-  }
-
-  // note: because it uses a cached map; it is only valid until a new offset
-  // is fetched!! scary
-  exec_in_t& operator[](size_t offset) const {
-    m_.clear();
-    doLoad(offset, m_);
-    return m_;
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&keyReader_, &valReader_, offsets_[index], lengths_[index]};
   }
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  DecodeResult<exec_in_t> decoded_;
+  bool containsNull(vector_size_t index) const {
+    VELOX_DCHECK(
+        keysMayHaveNulls_.has_value() && valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before containsNull()");
+
+    auto decodedIndex = decoded_.index(index);
+
+    return decoded_.isNullAt(index) ||
+        (*keysMayHaveNulls_ &&
+         keyReader_.containsNull(
+             offsets_[decodedIndex],
+             offsets_[decodedIndex] + lengths_[decodedIndex])) ||
+        (*valuesMayHaveNulls_ &&
+         valReader_.containsNull(
+             offsets_[decodedIndex],
+             offsets_[decodedIndex] + lengths_[decodedIndex]));
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    VELOX_DCHECK(
+        keysMayHaveNulls_.has_value() && valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before mayHaveNullsRecursive()");
+    return decoded_.mayHaveNulls() || *keysMayHaveNulls_ ||
+        *valuesMayHaveNulls_;
+  }
+
+  void setChildrenMayHaveNulls() {
+    keyReader_.setChildrenMayHaveNulls();
+    valReader_.setChildrenMayHaveNulls();
+
+    keysMayHaveNulls_ = keyReader_.mayHaveNullsRecursive();
+    valuesMayHaveNulls_ = valReader_.mayHaveNullsRecursive();
+  }
+
+  const DecodedVector& decoded_;
   const MapVector& vector_;
   DecodedVector decodedKeys_;
   DecodedVector decodedVals_;
-  mutable exec_in_t m_{};
 
   const vector_size_t* offsets_;
   const vector_size_t* lengths_;
   VectorReader<K> keyReader_;
   VectorReader<V> valReader_;
+
+  std::optional<bool> keysMayHaveNulls_;
+  std::optional<bool> valuesMayHaveNulls_;
 };
 
 template <typename V>
 struct VectorReader<Array<V>> {
   using in_vector_t = typename TypeToFlatVector<Array<V>>::type;
-  using child_vector_t = typename TypeToFlatVector<V>::type;
   using exec_in_t = typename VectorExec::template resolver<Array<V>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Array<V>>::null_free_in_type;
   using exec_in_child_t = typename VectorExec::template resolver<V>::in_type;
 
-  explicit VectorReader(const DecodeResult<exec_in_t>& decoded)
-      : decoded_(decoded),
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_(*decoded),
         vector_(detail::getDecoded<in_vector_t>(decoded_)),
         offsets_{vector_.rawOffsets()},
         lengths_{vector_.rawSizes()},
-        childReader_{
-            detail::decode<exec_in_child_t>(decoder_, *vector_.elements())} {}
-
-  bool doLoad(size_t outerOffset, exec_in_t& results) const {
-    if (!isSet(outerOffset)) {
-      return false;
-    }
-    vector_size_t offset = decoded_.decodedIndex(outerOffset);
-    const size_t offsetStart = offsets_[offset];
-    const size_t offsetEnd = offsetStart + lengths_[offset];
-
-    results.reserve(results.size() + offsetEnd - offsetStart);
-
-    for (size_t i = offsetStart; i < offsetEnd; ++i) {
-      exec_in_child_t childval{};
-      if (childReader_.doLoad(i, childval)) {
-        results.append(std::move(childval));
-      } else {
-        results.appendNullable();
-      }
-    }
-
-    return true;
+        childReader_{detail::decode(arrayValuesDecoder_, *vector_.elements())} {
   }
+
+  explicit VectorReader(const VectorReader<Array<V>>&) = delete;
+  VectorReader<Array<V>>& operator=(const VectorReader<Array<V>>&) = delete;
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  exec_in_t& operator[](size_t offset) const {
-    returnval_.clear();
-    doLoad(offset, returnval_);
-    return returnval_;
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&childReader_, offsets_[index], lengths_[index]};
   }
 
-  DecodedVector decoder_;
-  DecodeResult<exec_in_t> decoded_;
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&childReader_, offsets_[index], lengths_[index]};
+  }
+
+  inline bool containsNull(vector_size_t index) const {
+    VELOX_DCHECK(
+        valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before containsNull()");
+
+    auto decodedIndex = decoded_.index(index);
+
+    return decoded_.isNullAt(index) ||
+        (*valuesMayHaveNulls_ &&
+         childReader_.containsNull(
+             offsets_[decodedIndex],
+             offsets_[decodedIndex] + lengths_[decodedIndex]));
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    VELOX_DCHECK(
+        valuesMayHaveNulls_.has_value(),
+        "setChildrenMayHaveNulls() should be called before mayHaveNullsRecursive()");
+
+    return decoded_.mayHaveNulls() || *valuesMayHaveNulls_;
+  }
+
+  void setChildrenMayHaveNulls() {
+    childReader_.setChildrenMayHaveNulls();
+
+    valuesMayHaveNulls_ = childReader_.mayHaveNullsRecursive();
+  }
+
+  DecodedVector arrayValuesDecoder_;
+  const DecodedVector& decoded_;
   const ArrayVector& vector_;
   const vector_size_t* offsets_;
   const vector_size_t* lengths_;
   VectorReader<V> childReader_;
-  mutable exec_in_t returnval_;
+  std::optional<bool> valuesMayHaveNulls_;
 };
 
 template <typename V>
@@ -509,12 +532,13 @@ struct VectorWriter<Array<V>> {
 
   void ensureSize(size_t size) {
     // todo(youknowjack): optimize the excessive ensureSize calls
-    if (size != vector_->size()) {
-      vector_->resize(size);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
       init(*vector_);
     }
   }
 
+  // TODO: deprecate this once all proxies introduced.
   void copyCommit(const exec_out_t& data) {
     vector_size_t childSize = childWriter_.vector().size();
     childWriter_.ensureSize(childSize + data.size());
@@ -528,6 +552,7 @@ struct VectorWriter<Array<V>> {
         childWriter_.commitNull();
       }
     }
+    vector_->setNull(offset_, false);
   }
 
   void commitNull() {
@@ -552,6 +577,7 @@ struct VectorWriter<Array<V>> {
     m_.clear();
     childWriter_.reset();
   }
+
   vector_t* vector_ = nullptr;
   exec_out_t m_{};
 
@@ -559,75 +585,246 @@ struct VectorWriter<Array<V>> {
   size_t offset_ = 0;
 };
 
+// A new temporary VectorWriter for the new array writer interface.
+// Will eventually replace VectorWriter<Array>>.
+template <typename V>
+struct VectorWriter<ArrayProxyT<V>> {
+  using vector_t = typename TypeToFlatVector<Array<V>>::type;
+  using child_vector_t = typename TypeToFlatVector<V>::type;
+  using exec_out_t = ArrayProxy<V>;
+
+  void init(vector_t& vector) {
+    arrayVector_ = &vector;
+    childWriter_.init(static_cast<child_vector_t&>(*vector.elements().get()));
+    proxy_.initialize(this);
+  }
+
+  // This should be called once all rows are processed.
+  void finish() {
+    proxy_.elementsVector_->resize(proxy_.valuesOffset_);
+    arrayVector_ = nullptr;
+  }
+
+  VectorWriter() = default;
+
+  exec_out_t& current() {
+    return proxy_;
+  }
+
+  vector_t& vector() {
+    return *arrayVector_;
+  }
+
+  void ensureSize(size_t size) {
+    if (size > arrayVector_->size()) {
+      arrayVector_->resize(size);
+      childWriter_.init(
+          static_cast<child_vector_t&>(*arrayVector_->elements()));
+    }
+  }
+
+  // Commit a not null value.
+  void commit() {
+    arrayVector_->setOffsetAndSize(
+        offset_, proxy_.valuesOffset_, proxy_.length_);
+    arrayVector_->setNull(offset_, false);
+    // Will reset length to 0 and prepare proxy_ for the next item.
+    proxy_.finalize();
+  }
+
+  // Commit a null value.
+  void commitNull() {
+    proxy_.finalizeNull();
+    arrayVector_->setNull(offset_, true);
+  }
+
+  void commit(bool isSet) {
+    if (LIKELY(isSet)) {
+      commit();
+    } else {
+      commitNull();
+    }
+  }
+
+  // Set the index being written.
+  void setOffset(vector_size_t offset) {
+    offset_ = offset;
+  }
+
+  void reset() {
+    proxy_.valuesOffset_ = 0;
+  }
+
+  vector_t* arrayVector_ = nullptr;
+
+  exec_out_t proxy_;
+
+  VectorWriter<V> childWriter_;
+
+  // The index being written in the array vector.
+  vector_size_t offset_ = 0;
+};
+
+// A new temporary vector writer, to be used when the user wants a writer
+// interface for the map output. Will eventually replace VectorWriter<Map>>.
+template <typename K, typename V>
+struct VectorWriter<MapWriterT<K, V>> {
+  using vector_t = typename TypeToFlatVector<Map<K, V>>::type;
+  using key_vector_t = typename TypeToFlatVector<K>::type;
+  using val_vector_t = typename TypeToFlatVector<V>::type;
+  using exec_out_t = MapWriter<K, V>;
+
+  void init(vector_t& vector) {
+    mapVector_ = &vector;
+    keyWriter_.init(static_cast<key_vector_t&>(*vector.mapKeys()));
+    valWriter_.init(static_cast<val_vector_t&>(*vector.mapValues()));
+    elementWriter_.initialize(this);
+  }
+
+  // This should be called once all rows are processed.
+  void finish() {
+    // Downsize to actual used size.
+    elementWriter_.keysVector_->resize(elementWriter_.innerOffset_);
+    elementWriter_.valuesVector_->resize(elementWriter_.innerOffset_);
+    mapVector_ = nullptr;
+  }
+
+  VectorWriter() = default;
+
+  exec_out_t& current() {
+    return elementWriter_;
+  }
+
+  vector_t& vector() {
+    return *mapVector_;
+  }
+
+  void ensureSize(size_t size) {
+    if (size > mapVector_->size()) {
+      mapVector_->resize(size);
+      init(vector());
+    }
+  }
+
+  // Commit a not null value.
+  void commit() {
+    mapVector_->setOffsetAndSize(
+        offset_, elementWriter_.innerOffset_, elementWriter_.length_);
+    mapVector_->setNull(offset_, false);
+    // Will reset length to 0 and prepare proxy_.valuesOffset_ for the next
+    // item.
+    elementWriter_.finalize();
+  }
+
+  // Commit a null value.
+  void commitNull() {
+    elementWriter_.finalizeNull();
+    mapVector_->setNull(offset_, true);
+  }
+
+  void commit(bool isSet) {
+    if (LIKELY(isSet)) {
+      commit();
+    } else {
+      commitNull();
+    }
+  }
+
+  // Set the index being written.
+  void setOffset(vector_size_t offset) {
+    offset_ = offset;
+  }
+
+  void reset() {
+    elementWriter_.innerOffset_ = 0;
+  }
+
+  exec_out_t elementWriter_;
+
+  vector_t* mapVector_;
+  VectorWriter<K> keyWriter_;
+  VectorWriter<V> valWriter_;
+  size_t offset_ = 0;
+};
+
 template <typename... T>
 struct VectorReader<Row<T...>> {
   using in_vector_t = typename TypeToFlatVector<Row<T...>>::type;
   using exec_in_t = typename VectorExec::resolver<Row<T...>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Row<T...>>::null_free_in_type;
 
-  explicit VectorReader(const DecodeResult<exec_in_t>& decoded)
-      : decoded_(decoded),
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_(*decoded),
         vector_(detail::getDecoded<in_vector_t>(decoded_)),
-        decoders_{vector_.childrenSize()},
-        childReader_{prepareChildReaders(
+        childrenDecoders_{vector_.childrenSize()},
+        childReaders_{prepareChildReaders(
             vector_,
             std::make_index_sequence<sizeof...(T)>{})} {}
 
-  exec_in_t& operator[](size_t offset) const {
-    returnval_.clear();
-    doLoad(offset, returnval_);
-    return returnval_;
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&childReaders_, index};
+  }
+
+  exec_null_free_in_t readNullFree(size_t offset) const {
+    auto index = decoded_.index(offset);
+    return {&childReaders_, index};
   }
 
   bool isSet(size_t offset) const {
     return !decoded_.isNullAt(offset);
   }
 
-  bool doLoad(size_t offset, exec_in_t& results) const {
-    if (!isSet(offset)) {
-      return false;
+  bool containsNull(vector_size_t index) const {
+    if (decoded_.isNullAt(index)) {
+      return true;
     }
 
-    doLoadInternal<0, T...>(offset, results);
-    return true;
+    bool fieldsContainNull = false;
+    auto decodedIndex = decoded_.index(index);
+    std::apply(
+        [&](const auto&... reader) {
+          fieldsContainNull |= (reader->containsNull(decodedIndex) || ...);
+        },
+        childReaders_);
+
+    return fieldsContainNull;
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (auto index = startIndex; index < endIndex; ++index) {
+      if (containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    return decoded_.mayHaveNullsRecursive();
+  }
+
+  void setChildrenMayHaveNulls() {
+    std::apply(
+        [](auto&... reader) { (reader->setChildrenMayHaveNulls(), ...); },
+        childReaders_);
   }
 
  private:
   template <size_t... I>
-  std::tuple<VectorReader<T>...> prepareChildReaders(
+  std::tuple<std::unique_ptr<VectorReader<T>>...> prepareChildReaders(
       const in_vector_t& vector,
       std::index_sequence<I...>) {
-    return {childReader<T, I>()...};
+    return {std::make_unique<VectorReader<T>>(
+        detail::decode(childrenDecoders_[I], *vector_.childAt(I)))...};
   }
 
-  template <typename CHILD_T, size_t I>
-  VectorReader<CHILD_T> childReader() {
-    auto& decoder = decoders_[I];
-    return VectorReader<CHILD_T>(
-        detail::decode<
-            typename VectorExec::template resolver<CHILD_T>::in_type>(
-            decoder, *vector_.childAt(I)));
-  }
-
-  template <size_t N, typename Type, typename... Types>
-  void doLoadInternal(size_t offset, exec_in_t& results) const {
-    using exec_child_in_t = typename VectorExec::resolver<Type>::in_type;
-
-    exec_child_in_t childval{};
-
-    if (std::get<N>(childReader_).doLoad(offset, childval)) {
-      results.template at<N>() = childval;
-    }
-
-    if constexpr (sizeof...(Types) > 0) {
-      doLoadInternal<N + 1, Types...>(offset, results);
-    }
-  }
-
-  DecodeResult<exec_in_t> decoded_;
+  const DecodedVector& decoded_;
   const in_vector_t& vector_;
-  std::vector<DecodedVector> decoders_;
-  std::tuple<VectorReader<T>...> childReader_;
-  mutable exec_in_t returnval_;
+  std::vector<DecodedVector> childrenDecoders_;
+  std::tuple<std::unique_ptr<VectorReader<T>>...> childReaders_;
 };
 
 template <typename... T>
@@ -639,7 +836,9 @@ struct VectorWriter<Row<T...>> {
 
   void init(vector_t& vector) {
     vector_ = &vector;
+    // Ensure that children vectors are at least of same size as top row vector.
     initVectorWritersInternal<0, T...>();
+    resizeVectorWritersInternal<0>(vector_->size());
   }
 
   exec_out_t& current() {
@@ -652,10 +851,9 @@ struct VectorWriter<Row<T...>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
-      vector_->resize(size);
-      resizeVectorWritersInternal<0>(size);
-      init(*vector_);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
+      resizeVectorWritersInternal<0>(vector_->size());
     }
   }
 
@@ -753,16 +951,114 @@ struct VectorWriter<Row<T...>> {
   size_t offset_ = 0;
 };
 
+template <typename T>
+struct VectorReader<Variadic<T>> {
+  using exec_in_t = typename VectorExec::resolver<Variadic<T>>::in_type;
+  using exec_null_free_in_t =
+      typename VectorExec::template resolver<Variadic<T>>::null_free_in_type;
+
+  explicit VectorReader(const DecodedArgs& decodedArgs, int32_t startPosition)
+      : childReaders_{prepareChildReaders(decodedArgs, startPosition)} {}
+
+  exec_in_t operator[](vector_size_t offset) const {
+    return {&childReaders_, offset};
+  }
+
+  exec_null_free_in_t readNullFree(vector_size_t offset) const {
+    return {&childReaders_, offset};
+  }
+
+  bool isSet(size_t /*unused*/) const {
+    // The Variadic itself can never be null, only the values of the underlying
+    // Types
+    return true;
+  }
+
+  bool containsNull(vector_size_t index) const {
+    for (const auto& childReader : childReaders_) {
+      if (childReader->containsNull(index)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool containsNull(vector_size_t startIndex, vector_size_t endIndex) const {
+    for (const auto& childReader : childReaders_) {
+      if (childReader->containsNull(startIndex, endIndex)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    for (const auto& childReader : childReaders_) {
+      if (childReader->mayHaveNullsRecursive()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void setChildrenMayHaveNulls() {
+    for (auto& childReader : childReaders_) {
+      childReader->setChildrenMayHaveNulls();
+    }
+  }
+
+ private:
+  std::vector<std::unique_ptr<VectorReader<T>>> prepareChildReaders(
+      const DecodedArgs& decodedArgs,
+      int32_t startPosition) {
+    std::vector<std::unique_ptr<VectorReader<T>>> childReaders;
+    childReaders.reserve(decodedArgs.size() - startPosition);
+
+    for (int i = startPosition; i < decodedArgs.size(); ++i) {
+      childReaders.emplace_back(
+          std::make_unique<VectorReader<T>>(decodedArgs.at(i)));
+    }
+
+    return childReaders;
+  }
+
+  std::vector<std::unique_ptr<VectorReader<T>>> childReaders_;
+};
+
 template <>
 class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
     : public UDFOutputString {
  public:
   StringProxy() : vector_(nullptr), offset_(-1) {}
 
+  // Used to initialize top-level strings and allow zero-copy writes.
   StringProxy(FlatVector<StringView>* vector, int32_t offset)
       : vector_(vector), offset_(offset) {}
 
- public:
+  // Used to initialize nested strings and requires a copy on write.
+  /* implicit */ StringProxy(StringView value)
+      : vector_(nullptr), offset_(-1), value_{value.str()} {}
+
+  // TODO: This is temporary until the new map writer interface is completed.
+  bool operator==(const StringProxy<>& rhs) const {
+    VELOX_DCHECK(!vector_ && offset_ == -1 && !initialized());
+    return (value().compare(rhs.value()) == 0);
+  }
+
+  // Returns true if initialized for zero-copy write. False, otherwise.
+  bool initialized() const {
+    return offset_ >= 0;
+  }
+
+  // If not initialized for zero-copy write, returns a string to copy into the
+  // target vector on commit.
+  const std::string& value() const {
+    return value_;
+  }
+
   /// Reserve a space for the output string with size of at least newCapacity
   void reserve(size_t newCapacity) override {
     if (newCapacity <= capacity()) {
@@ -792,14 +1088,64 @@ class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
   /// Not called by the UDF Implementation. Should be called at the end to
   /// finalize the allocation and the string writing
   void finalize() {
-    VELOX_CHECK(size() == 0 || data());
-    if (dataBuffer_) {
-      dataBuffer_->setSize(dataBuffer_->size() + size());
+    if (!finalized_) {
+      VELOX_CHECK(size() == 0 || data());
+      if (dataBuffer_) {
+        dataBuffer_->setSize(dataBuffer_->size() + size());
+      }
+      vector_->setNoCopy(offset_, StringView(data(), size()));
     }
-    vector_->setNoCopy(offset_, StringView(data(), size()));
+  }
+
+  void setEmpty() {
+    static const StringView kEmpty("");
+    vector_->setNoCopy(offset_, kEmpty);
+    finalized_ = true;
+  }
+
+  void setNoCopy(const StringView& value) {
+    vector_->setNoCopy(offset_, value);
+    finalized_ = true;
+  }
+
+  template <typename T>
+  void operator+=(const T& input) {
+    append(input);
+  }
+
+  void operator+=(const char* input) {
+    append(std::string_view(input));
+  }
+
+  template <typename T>
+  void append(const T& input) {
+    DCHECK(!finalized_);
+    auto oldSize = size();
+    resize(this->size() + input.size());
+    if (input.size() != 0) {
+      DCHECK(data());
+      DCHECK(input.data());
+      std::memcpy(data() + oldSize, input.data(), input.size());
+    }
+  }
+
+  void append(const char* input) {
+    append(std::string_view(input));
+  }
+
+  template <typename T>
+  void copy_from(const T& input) {
+    VELOX_DCHECK(initialized());
+    append(input);
+  }
+
+  void copy_from(const char* input) {
+    append(std::string_view(input));
   }
 
  private:
+  bool finalized_{false};
+
   /// The buffer that the output string uses for its allocation set during
   /// reserve() call
   Buffer* dataBuffer_ = nullptr;
@@ -807,6 +1153,8 @@ class StringProxy<FlatVector<StringView>, false /*reuseInput*/>
   FlatVector<StringView>* vector_;
 
   int32_t offset_;
+
+  std::string value_;
 };
 
 // A string proxy with UDFOutputString semantics that utilizes a pre-allocated
@@ -864,29 +1212,33 @@ struct VectorWriter<
     std::enable_if_t<
         std::is_same_v<T, Varchar> | std::is_same_v<T, Varbinary>>> {
   using vector_t = typename TypeToFlatVector<T>::type;
-  using proxy_t = StringProxy<FlatVector<StringView>, false>;
+  using exec_out_t = StringProxy<FlatVector<StringView>, false>;
 
   void init(vector_t& vector) {
     vector_ = &vector;
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
-      vector_->resize(size);
-      init(*vector_);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
     }
   }
 
   VectorWriter() {}
 
-  proxy_t& current() {
-    proxy_ = proxy_t(vector_, offset_);
+  exec_out_t& current() {
+    proxy_ = exec_out_t(vector_, offset_);
     return proxy_;
   }
 
-  void copyCommit(const proxy_t& data) {
-    // Not really copying.
-    proxy_.finalize();
+  void copyCommit(const exec_out_t& data) {
+    // If not initialized for zero-copy writes, copy the value into the vector.
+    if (!proxy_.initialized()) {
+      vector_->set(offset_, StringView(data.value()));
+    } else {
+      // Not really copying.
+      proxy_.finalize();
+    }
   }
 
   void commitNull() {
@@ -910,7 +1262,7 @@ struct VectorWriter<
     return *vector_;
   }
 
-  proxy_t proxy_;
+  exec_out_t proxy_;
   vector_t* vector_;
   size_t offset_ = 0;
 };
@@ -918,15 +1270,15 @@ struct VectorWriter<
 template <typename T>
 struct VectorWriter<T, std::enable_if_t<std::is_same_v<T, bool>>> {
   using vector_t = typename TypeToFlatVector<T>::type;
+  using exec_out_t = bool;
 
   void init(vector_t& vector) {
     vector_ = &vector;
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
-      vector_->resize(size);
-      init(*vector_);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
     }
   }
 
@@ -977,9 +1329,8 @@ struct VectorWriter<std::shared_ptr<T>> {
   }
 
   void ensureSize(size_t size) {
-    if (size != vector_->size()) {
-      vector_->resize(size);
-      init(*vector_);
+    if (size > vector_->size()) {
+      vector_->resize(size, /*setNotNull*/ false);
     }
   }
 
@@ -1015,4 +1366,73 @@ struct VectorWriter<std::shared_ptr<T>> {
   size_t offset_ = 0;
 };
 
+template <typename T>
+struct VectorReader<Generic<T>> {
+  using exec_in_t = GenericView;
+  using exec_null_free_in_t = exec_in_t;
+
+  explicit VectorReader(const DecodedVector* decoded)
+      : decoded_(*decoded), base_(decoded->base()) {}
+
+  explicit VectorReader(const VectorReader<Generic<T>>&) = delete;
+
+  VectorReader<Generic<T>>& operator=(const VectorReader<Generic<T>>&) = delete;
+
+  bool isSet(size_t offset) const {
+    return !decoded_.isNullAt(offset);
+  }
+
+  exec_in_t operator[](size_t offset) const {
+    auto index = decoded_.index(offset);
+    return GenericView{base_, index};
+  }
+
+  exec_null_free_in_t readNullFree(vector_size_t offset) const {
+    return operator[](offset);
+  }
+
+  inline bool containsNull(vector_size_t /* index */) const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  bool containsNull(
+      vector_size_t /* startIndex */,
+      vector_size_t /* endIndex */) const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  inline bool mayHaveNullsRecursive() const {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  inline void setChildrenMayHaveNulls() {
+    // This function is only called if callNullFree is defined.
+    // TODO (kevinwilfong): Add support for Generics in callNullFree.
+    VELOX_UNSUPPORTED(
+        "Calling callNullFree with Generic arguments is not yet supported.");
+  }
+
+  const DecodedVector& decoded_;
+  const BaseVector* base_;
+};
+
 } // namespace facebook::velox::exec
+
+namespace std {
+// TODO: This is temporary until the new map writer interface is completed.
+template <>
+struct hash<facebook::velox::exec::StringProxy<>> {
+  size_t operator()(const facebook::velox::exec::StringProxy<>& x) const {
+    return std::hash<std::string>{}(x.value());
+  }
+};
+} // namespace std

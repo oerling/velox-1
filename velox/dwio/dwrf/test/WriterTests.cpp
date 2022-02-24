@@ -23,8 +23,8 @@
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
 
 using namespace ::testing;
-using namespace facebook::dwio::common;
-using namespace facebook::dwio::type::fbhive;
+using namespace facebook::velox::dwio::common;
+using namespace facebook::velox::dwio::type::fbhive;
 using namespace facebook::velox::memory;
 
 namespace facebook::velox::dwrf {
@@ -317,6 +317,30 @@ void abandonWriterWithoutClosing() {
 
 TEST_F(WriterTest, DoNotCrashDbgModeOnAbort) {
   EXPECT_THROW(abandonWriterWithoutClosing(), std::runtime_error);
+}
+
+class MockDataSink : public dwio::common::DataSink {
+ public:
+  explicit MockDataSink() : DataSink("mock_data_sink", nullptr) {}
+  virtual ~MockDataSink() = default;
+
+  MOCK_METHOD(uint64_t, size, (), (const override));
+  MOCK_METHOD(bool, isBuffered, (), (const override));
+  MOCK_METHOD(void, write, (std::vector<DataBuffer<char>>&));
+};
+
+TEST(WriterBaseTest, FlushWriterSinkUponClose) {
+  auto config = std::make_shared<Config>();
+  auto pool = getDefaultScopedMemoryPool();
+  auto sink = std::make_unique<MockDataSink>();
+  MockDataSink* sinkPtr = sink.get();
+  EXPECT_CALL(*sinkPtr, write(_)).Times(1);
+  EXPECT_CALL(*sinkPtr, isBuffered()).WillOnce(Return(false));
+  {
+    auto writer = std::make_unique<WriterBase>(std::move(sink));
+    writer->initContext(config, pool->addScopedChild("test_writer_pool"));
+    writer->close();
+  }
 }
 
 } // namespace facebook::velox::dwrf

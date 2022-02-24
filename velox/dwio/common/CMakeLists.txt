@@ -14,7 +14,9 @@
 add_subdirectory(compression)
 add_subdirectory(encryption)
 add_subdirectory(exception)
-add_subdirectory(tests)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()
 add_library(
   velox_dwio_common
   ColumnSelector.cpp
@@ -25,6 +27,8 @@ add_library(
   IoStatistics.cpp
   MemoryInputStream.cpp
   Options.cpp
+  ReaderFactory.cpp
+  ScanSpec.cpp
   TypeWithId.cpp)
 
 target_link_libraries(
@@ -34,4 +38,4 @@ target_link_libraries(
   velox_dwio_common_compression
   Boost::regex
   ${FOLLY_WITH_DEPENDENCIES}
-  ${GLOG})
+  glog::glog)

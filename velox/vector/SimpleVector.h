@@ -192,7 +192,8 @@ class SimpleVector : public BaseVector {
     auto simpleVector = reinterpret_cast<const SimpleVector<T>*>(other);
     auto thisValue = valueAt(index);
     auto otherValue = simpleVector->valueAt(otherIndex);
-    return thisValue == otherValue ? 0 : thisValue < otherValue ? -1 : 1;
+    auto result = comparePrimitiveAsc(thisValue, otherValue);
+    return flags.ascending ? result : result * -1;
   }
 
   /**
@@ -215,7 +216,7 @@ class SimpleVector : public BaseVector {
     return max_;
   }
 
-  void resize(vector_size_t size) override {
+  void resize(vector_size_t size, bool setNotNull = true) override {
     VELOX_CHECK(false, "Can only resize flat vectors.");
   }
 
@@ -286,12 +287,12 @@ class SimpleVector : public BaseVector {
   }
 
   /// Computes and saves is-ascii flag for a given set of rows if not already
-  /// present.
+  /// present. Returns computed value.
   template <typename U = T>
-  typename std::enable_if<std::is_same<U, StringView>::value, void>::type
+  typename std::enable_if<std::is_same<U, StringView>::value, bool>::type
   computeAndSetIsAscii(const SelectivityVector& rows) {
     if (rows.isSubset(asciiSetRows_)) {
-      return;
+      return isAllAscii_;
     }
     ensureIsAsciiCapacity(rows.end());
     bool isAllAscii = true;
@@ -311,6 +312,7 @@ class SimpleVector : public BaseVector {
     }
 
     asciiSetRows_.select(rows);
+    return isAllAscii_;
   }
 
   /// Clears asciiness state.
@@ -388,6 +390,20 @@ class SimpleVector : public BaseVector {
   void setMinMax(const folly::F14FastMap<std::string, std::string>& metaData) {
     min_ = getMetaDataValue<T>(metaData, META_MIN);
     max_ = getMetaDataValue<T>(metaData, META_MAX);
+  }
+
+  int comparePrimitiveAsc(const T& left, const T& right) const {
+    if constexpr (std::is_floating_point<T>::value) {
+      bool isLeftNan = std::isnan(left);
+      bool isRightNan = std::isnan(right);
+      if (isLeftNan) {
+        return isRightNan ? 0 : 1;
+      }
+      if (isRightNan) {
+        return -1;
+      }
+    }
+    return left < right ? -1 : left == right ? 0 : 1;
   }
 
  protected:

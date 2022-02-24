@@ -16,9 +16,10 @@
 
 #include <folly/Random.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include "velox/common/time/Timer.h"
-#include "velox/dwio/dwrf/reader/ScanSpec.h"
+#include "velox/dwio/common/ScanSpec.h"
 #include "velox/type/Filter.h"
 #include "velox/type/Subfield.h"
 #include "velox/vector/FlatVector.h"
@@ -27,283 +28,22 @@
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/dwio/dwrf/test/utils/MapBuilder.h"
+#include "velox/dwio/dwrf/test/utils/FilterGenerator.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
 
 DEFINE_int32(timing_repeats, 0, "Count of repeats for timing filter tests");
 
-namespace facebook::dwio::dwrf {
+namespace facebook::velox::dwio::dwrf {
 using namespace facebook::velox::test;
 using namespace facebook::velox::dwrf;
-using namespace facebook::dwio::type::fbhive;
+using namespace facebook::velox::dwio::type::fbhive;
 using namespace facebook::velox;
 using namespace facebook::velox::common;
 
 using dwio::common::MemoryInputStream;
 using dwio::common::MemorySink;
 using velox::common::Subfield;
-
-using SubfieldFilters = std::unordered_map<
-    velox::common::Subfield,
-    std::unique_ptr<velox::common::Filter>>;
-
-// Encodes a batch number and an index into the batch into an int32_t
-uint32_t batchPosition(uint32_t batchNumber, vector_size_t batchRow) {
-  return batchNumber << 16 | batchRow;
-}
-
-static uint32_t batchNumber(uint32_t position) {
-  return position >> 16;
-}
-
-static vector_size_t batchRow(uint32_t position) {
-  return position & 0xffff;
-}
-
-VectorPtr getChildBySubfield(RowVector* rowVector, const Subfield& subfield) {
-  auto& path = subfield.path();
-  auto container = rowVector;
-  for (int i = 0; i < path.size(); ++i) {
-    auto nestedField =
-        dynamic_cast<const Subfield::NestedField*>(path[i].get());
-    VELOX_CHECK(nestedField, "Path does not consist of nested fields");
-
-    auto rowType = container->type()->as<TypeKind::ROW>();
-    auto child = rowVector->childAt(rowType.getChildIdx(nestedField->name()));
-
-    if (i == path.size() - 1) {
-      return child;
-    }
-    VELOX_CHECK(child->typeKind() == TypeKind::ROW);
-    container = child->as<RowVector>();
-  }
-  // Never reached.
-  VELOX_CHECK(false);
-  return nullptr;
-}
-
-struct FilterSpec {
-  std::string field;
-  float startPct = 50;
-  float selectPct = 20;
-  FilterKind filterKind = FilterKind::kBigintRange;
-};
-
-class AbstractColumnStats {
- public:
-  explicit AbstractColumnStats(TypePtr type) : type_(type) {}
-
-  virtual ~AbstractColumnStats() = default;
-
-  virtual void sample(
-      const std::vector<RowVectorPtr>& batches,
-      const Subfield& subfield,
-      std::vector<uint32_t>& rows) = 0;
-
-  virtual std::unique_ptr<velox::common::Filter> filter(
-      float startPct,
-      float selectPct,
-      FilterKind filterKind,
-      const std::vector<RowVectorPtr>& batches,
-      const Subfield& subfield,
-      std::vector<uint32_t>& hits) = 0;
-
- protected:
-  const TypePtr type_;
-  int32_t numDistinct_ = 0;
-  int32_t numNulls_ = 0;
-  int32_t numSamples_ = 0;
-  std::unordered_set<size_t> uniques_;
-  static uint32_t counter_;
-};
-
-uint32_t AbstractColumnStats::counter_ = 0;
-
-template <typename T>
-class ColumnStats : public AbstractColumnStats {
- public:
-  explicit ColumnStats(TypePtr type) : AbstractColumnStats(type) {}
-
-  void sample(
-      const std::vector<RowVectorPtr>& batches,
-      const Subfield& subfield,
-      std::vector<uint32_t>& rows) override {
-    int32_t previousBatch = -1;
-    SimpleVector<T>* values = nullptr;
-    for (auto row : rows) {
-      auto batch = batchNumber(row);
-      if (batch != previousBatch) {
-        previousBatch = batch;
-        auto vector = batches[batch];
-        values = getChildBySubfield(vector.get(), subfield)
-                     ->asUnchecked<SimpleVector<T>>();
-      }
-
-      addSample(values, batchRow(row));
-    }
-    std::sort(values_.begin(), values_.end());
-  }
-
-  std::unique_ptr<velox::common::Filter> filter(
-      float startPct,
-      float selectPct,
-      FilterKind filterKind,
-      const std::vector<RowVectorPtr>& batches,
-      const Subfield& subfield,
-      std::vector<uint32_t>& hits) override {
-    std::unique_ptr<velox::common::Filter> filter;
-    switch (filterKind) {
-      case FilterKind::kIsNull:
-        filter = std::make_unique<velox::common::IsNull>();
-        break;
-      case FilterKind::kIsNotNull:
-        filter = std::make_unique<velox::common::IsNotNull>();
-        break;
-      default:
-        filter = makeRangeFilter(startPct, selectPct);
-        break;
-    }
-
-    size_t numHits = 0;
-    SimpleVector<T>* values = nullptr;
-    int32_t previousBatch = -1;
-    for (auto hit : hits) {
-      auto batch = batchNumber(hit);
-      if (batch != previousBatch) {
-        previousBatch = batch;
-        auto vector = batches[batch];
-        values = getChildBySubfield(batches[batch].get(), subfield)
-                     ->as<SimpleVector<T>>();
-      }
-      auto row = batchRow(hit);
-      if (values->isNullAt(row)) {
-        if (filter->testNull()) {
-          hits[numHits++] = hit;
-        }
-        continue;
-      }
-      if (velox::common::applyFilter(*filter, values->valueAt(row))) {
-        hits[numHits++] = hit;
-      }
-    }
-    hits.resize(numHits);
-    return filter;
-  }
-
- private:
-  void addSample(SimpleVector<T>* vector, vector_size_t index) {
-    ++numSamples_;
-    if (vector->isNullAt(index)) {
-      ++numNulls_;
-      return;
-    }
-    T value = vector->valueAt(index);
-    size_t hash = folly::hasher<T>()(value) & kUniquesMask;
-    if (uniques_.find(hash) != uniques_.end()) {
-      return;
-    }
-    uniques_.insert(hash);
-    ++numDistinct_;
-    values_.push_back(value);
-  }
-
-  T valueAtPct(float pct, int32_t* indexOut = nullptr) {
-    int32_t index = values_.size() * (pct / 100);
-    int32_t boundedIndex =
-        std::min<int32_t>(values_.size() - 1, std::max<int32_t>(0, index));
-    if (indexOut) {
-      *indexOut = boundedIndex;
-    }
-    return values_[boundedIndex];
-  }
-
-  std::unique_ptr<velox::common::Filter> makeRangeFilter(
-      float startPct,
-      float selectPct) {
-    if (values_.empty()) {
-      return std::make_unique<velox::common::IsNull>();
-    }
-    int32_t lowerIndex;
-    int32_t upperIndex;
-    T lower = valueAtPct(startPct, &lowerIndex);
-    T upper = valueAtPct(startPct + selectPct, &upperIndex);
-    if (upperIndex - lowerIndex < 1000 && ++counter_ % 10 < 3) {
-      std::vector<int64_t> in;
-      for (auto i = lowerIndex; i <= upperIndex; ++i) {
-        in.push_back(values_[i]);
-      }
-      return velox::common::createBigintValues(in, true);
-    }
-    return std::make_unique<velox::common::BigintRange>(
-        lower, upper, selectPct > 25);
-  }
-
-  static constexpr size_t kUniquesMask = 0xfff;
-  std::vector<T> values_;
-};
-
-template <>
-std::unique_ptr<Filter> ColumnStats<bool>::makeRangeFilter(
-    float startPct,
-    float selectPct) {
-  if (values_.empty()) {
-    return std::make_unique<velox::common::IsNull>();
-  }
-  bool value = valueAtPct(startPct + selectPct);
-  return std::make_unique<velox::common::BoolValue>(value, selectPct > 50);
-}
-
-template <>
-std::unique_ptr<Filter> ColumnStats<float>::makeRangeFilter(
-    float startPct,
-    float selectPct) {
-  if (values_.empty()) {
-    return std::make_unique<velox::common::IsNull>();
-  }
-  float lower = valueAtPct(startPct);
-  float upper = valueAtPct(startPct + selectPct);
-  return std::make_unique<velox::common::FloatRange>(
-      lower, false, false, upper, false, false, selectPct > 25);
-}
-
-template <>
-std::unique_ptr<Filter> ColumnStats<double>::makeRangeFilter(
-    float startPct,
-    float selectPct) {
-  if (values_.empty()) {
-    return std::make_unique<velox::common::IsNull>();
-  }
-  double lower = valueAtPct(startPct);
-  double upper = valueAtPct(startPct + selectPct);
-  return std::make_unique<velox::common::DoubleRange>(
-      lower, false, false, upper, false, false, selectPct > 25);
-}
-
-template <>
-std::unique_ptr<Filter> ColumnStats<StringView>::makeRangeFilter(
-    float startPct,
-    float selectPct) {
-  if (values_.empty()) {
-    return std::make_unique<velox::common::IsNull>();
-  }
-  StringView lower = valueAtPct(startPct);
-  StringView upper = valueAtPct(startPct + selectPct);
-  return std::make_unique<velox::common::BytesRange>(
-      std::string(lower),
-      false,
-      false,
-      std::string(upper),
-      false,
-      false,
-      selectPct > 25);
-}
-
-template <TypeKind Kind>
-std::unique_ptr<AbstractColumnStats> makeStats(TypePtr type) {
-  using T = typename TypeTraits<Kind>::NativeType;
-  return std::make_unique<ColumnStats<T>>(type);
-}
 
 template <typename T>
 class TestingHook : public ValueHook {
@@ -326,35 +66,45 @@ void TestingHook<StringView>::addValue(vector_size_t row, const void* value) {
 
 class E2EFilterTest : public testing::Test {
  protected:
+  static constexpr int32_t kRowsInGroup = 10'000;
+
   void SetUp() override {
     pool_ = memory::getDefaultScopedMemoryPool();
-    rng_.seed(1);
   }
 
-  void makeDataset(
-      const std::string& columns,
-      std::function<void()> customizeData,
-      bool wrapInStruct) {
-    const size_t batchCount = 4;
-    const size_t size = 25'000;
+  static bool typeKindSupportsValueHook(TypeKind kind) {
+    return kind != TypeKind::TIMESTAMP && kind != TypeKind::ARRAY &&
+        kind != TypeKind::ROW && kind != TypeKind::MAP;
+  }
+
+  void makeRowType(const std::string& columns, bool wrapInStruct) {
     std::string schema = wrapInStruct
         ? fmt::format("struct<{},struct_val:struct<{}>>", columns, columns)
         : fmt::format("struct<{}>", columns);
     dwio::type::fbhive::HiveTypeParser parser;
     rowType_ = std::dynamic_pointer_cast<const RowType>(parser.parse(schema));
+  }
+
+  void makeDataset(
+      std::function<void()> customizeData,
+      bool forRowGroupSkip = false) {
+    const size_t batchCount = 4;
+    const size_t size = 25'000;
 
     batches_.clear();
     for (size_t i = 0; i < batchCount; ++i) {
       batches_.push_back(std::static_pointer_cast<RowVector>(
-          BatchMaker::createBatch(rowType_, size, *pool_)));
+          BatchMaker::createBatch(rowType_, size, *pool_, nullptr, i)));
     }
     if (customizeData) {
       customizeData();
     }
+    if (forRowGroupSkip) {
+      addRowGroupSpecificData();
+    }
+    writeToMemory(rowType_, batches_, forRowGroupSkip);
 
-    writeToMemory(rowType_, batches_);
-
-    auto spec = makeScanSpec(SubfieldFilters{});
+    auto spec = filterGenerator->makeScanSpec(SubfieldFilters{});
 
     uint64_t timeWithNoFilter = 0;
     readWithoutFilter(spec.get(), batches_, timeWithNoFilter);
@@ -362,71 +112,51 @@ class E2EFilterTest : public testing::Test {
               << std::endl;
   }
 
-  SubfieldFilters makeFilters(
-      const std::vector<FilterSpec>& filterSpecs,
+  // Adds high values to 'batches_' so that these values occur only in some row
+  // groups. Tests skipping row groups based on row group stats.
+  void addRowGroupSpecificData() {
+    auto type = batches_[0]->type();
+    for (auto i = 0; i < type->size(); ++i) {
+      if (type->childAt(i)->kind() == TypeKind::BIGINT) {
+        setRowGroupMarkers<int64_t>(
+            batches_, i, std::numeric_limits<int64_t>::max());
+        return;
+      }
+      if (type->childAt(i)->kind() == TypeKind::VARCHAR) {
+        static StringView marker(
+            AbstractColumnStats::kMaxString,
+            strlen(AbstractColumnStats::kMaxString));
+        setRowGroupMarkers<StringView>(batches_, i, marker);
+        return;
+      }
+    }
+  }
+
+  // Adds 'marker' to random places in selectable  row groups for 'i'th child in
+  // 'batches' If 'marker' occurs in skippable row groups, sets the element to
+  // T(). Row group numbers that are multiples of 3 are skippable.
+  template <typename T>
+  void setRowGroupMarkers(
       const std::vector<RowVectorPtr>& batches,
-      std::vector<uint32_t>& hitRows) {
-    vector_size_t totalSize = 0;
+      int32_t child,
+      T marker) {
+    int32_t row = 0;
     for (auto& batch : batches) {
-      totalSize += batch->size();
-    }
-    hitRows.reserve(totalSize);
-    for (auto i = 0; i < batches.size(); ++i) {
-      auto batch = batches[i];
-      for (auto j = 0; j < batch->size(); ++j) {
-        hitRows.push_back(batchPosition(i, j));
+      auto values = batch->childAt(child)->as<FlatVector<T>>();
+      for (auto i = 0; i < values->size(); ++i) {
+        auto rowGroup = row++ / kRowsInGroup;
+        bool isIn = (rowGroup % 3) != 0;
+        if (isIn) {
+          if (folly::Random::rand32(filterGenerator->rng()) % 100 == 0) {
+            values->set(i, marker);
+          }
+        } else {
+          if (!values->isNullAt(i) && values->valueAt(i) == marker) {
+            values->set(i, T());
+          }
+        }
       }
     }
-
-    RowVector* first = batches[0].get();
-
-    SubfieldFilters filters;
-    for (auto& filterSpec : filterSpecs) {
-      Subfield subfield(filterSpec.field);
-      auto vector = getChildBySubfield(first, subfield);
-      std::unique_ptr<AbstractColumnStats> stats;
-      switch (vector->typeKind()) {
-        case TypeKind::BOOLEAN:
-          stats = makeStats<TypeKind::BOOLEAN>(vector->type());
-          break;
-        case TypeKind::TINYINT:
-          stats = makeStats<TypeKind::TINYINT>(vector->type());
-          break;
-        case TypeKind::SMALLINT:
-          stats = makeStats<TypeKind::SMALLINT>(vector->type());
-          break;
-        case TypeKind::INTEGER:
-          stats = makeStats<TypeKind::INTEGER>(vector->type());
-          break;
-        case TypeKind::BIGINT:
-          stats = makeStats<TypeKind::BIGINT>(vector->type());
-          break;
-        case TypeKind::VARCHAR:
-          stats = makeStats<TypeKind::VARCHAR>(vector->type());
-          break;
-
-        case TypeKind::REAL:
-          stats = makeStats<TypeKind::REAL>(vector->type());
-          break;
-        case TypeKind::DOUBLE:
-          stats = makeStats<TypeKind::DOUBLE>(vector->type());
-          break;
-        default:
-          VELOX_CHECK(false, "Type not supported");
-      }
-
-      stats->sample(batches, subfield, hitRows);
-      auto filter = stats->filter(
-          filterSpec.startPct,
-          filterSpec.selectPct,
-          filterSpec.filterKind,
-          batches,
-          subfield,
-          hitRows);
-      filters[Subfield(filterSpec.field)] = std::move(filter);
-    }
-
-    return filters;
   }
 
   void makeAllNulls(const std::string& name) {
@@ -464,10 +194,12 @@ class E2EFilterTest : public testing::Test {
           numbers->copy(numbers, row - 1, row, 1);
         } else {
           if (rareFrequency && counter % rareFrequency == 0) {
-            value =
-                rareMin + (folly::Random::rand32(rng_) % (rareMax - rareMin));
+            value = rareMin +
+                (folly::Random::rand32(filterGenerator->rng()) %
+                 (rareMax - rareMin));
           } else {
-            value = min + (folly::Random::rand32(rng_) % (max - min));
+            value = min +
+                (folly::Random::rand32(filterGenerator->rng()) % (max - min));
           }
           numbers->set(row, value);
         }
@@ -503,13 +235,33 @@ class E2EFilterTest : public testing::Test {
           strings->copy(strings, row - 1, row, 1);
         } else if (addOneOffs && counter % 234 == 0) {
           value = fmt::format(
-              "s{}", folly::Random::rand32(rng_) % (111 * cardinality));
+              "s{}",
+              folly::Random::rand32(filterGenerator->rng()) %
+                  (111 * cardinality));
 
         } else {
-          value = fmt::format("s{}", folly::Random::rand32(rng_) % cardinality);
+          value = fmt::format(
+              "s{}",
+              folly::Random::rand32(filterGenerator->rng()) % cardinality);
           strings->set(row, StringView(value));
         }
         ++counter;
+      }
+    }
+  }
+
+  // Makes non-null strings unique by appending a row number.
+  void makeStringUnique(const Subfield& field) {
+    for (RowVectorPtr batch : batches_) {
+      auto strings =
+          getChildBySubfield(batch.get(), field)->as<FlatVector<StringView>>();
+      for (auto row = 0; row < strings->size(); ++row) {
+        if (strings->isNullAt(row)) {
+          continue;
+        }
+        std::string value = strings->valueAt(row);
+        value += fmt::format("{}", row);
+        strings->set(row, StringView(value));
       }
     }
   }
@@ -518,7 +270,7 @@ class E2EFilterTest : public testing::Test {
   // non-null values from each column and replaces nulls in the column
   // in question with one of these. A column where only nulls are
   // found in sampling is not changed.
-  void makeNotNull() {
+  void makeNotNull(int32_t firstRow = 0) {
     for (RowVectorPtr batch : batches_) {
       for (auto& data : batch->children()) {
         std::vector<vector_size_t> nonNulls;
@@ -534,7 +286,7 @@ class E2EFilterTest : public testing::Test {
           continue;
         }
         int32_t nonNullCounter = 0;
-        for (auto row = 0; row < data->size(); ++row) {
+        for (auto row = firstRow; row < data->size(); ++row) {
           if (data->isNullAt(row)) {
             data->copy(
                 data.get(), row, nonNulls[nonNullCounter % nonNulls.size()], 1);
@@ -547,19 +299,24 @@ class E2EFilterTest : public testing::Test {
 
   void writeToMemory(
       const TypePtr& type,
-      const std::vector<RowVectorPtr>& batches) {
+      const std::vector<RowVectorPtr>& batches,
+      bool forRowGroupSkip) {
     auto config = std::make_shared<dwrf::Config>();
     config->set(dwrf::Config::COMPRESSION, dwrf::CompressionKind_NONE);
     config->set(dwrf::Config::USE_VINTS, useVInts_);
     WriterOptions options;
     options.config = config;
     options.schema = type;
-    options.flushPolicy = [](auto /* unused */, auto& /* unused */) {
-      return true;
+    int32_t flushCounter = 0;
+    // If we test row group skip, we have all the data in one stripe. For scan,
+    // we start  a stripe every 'flushEveryNBatches_' batches.
+    options.flushPolicy = [&](auto /* unused */, auto& /* unused */) {
+      return forRowGroupSkip ? false
+                             : (++flushCounter % flushEveryNBatches_ == 0);
     };
-    sink_ = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
-    sinkPtr_ = sink_.get();
-    writer_ = std::make_unique<Writer>(options, std::move(sink_), *pool_);
+    auto sink = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
+    sinkPtr_ = sink.get();
+    writer_ = std::make_unique<Writer>(options, std::move(sink), *pool_);
     for (auto& batch : batches) {
       writer_->write(batch);
     }
@@ -576,9 +333,8 @@ class E2EFilterTest : public testing::Test {
     dwio::common::ReaderOptions readerOpts;
     dwio::common::RowReaderOptions rowReaderOpts;
     auto reader = std::make_unique<DwrfReader>(readerOpts, std::move(input));
-    auto factory = std::make_unique<SelectiveColumnReaderFactory>(spec);
-    // The factory and spec must stay live over the lifetime of the reader.
-    rowReaderOpts.setColumnReaderFactory(factory.get());
+    // The spec must stay live over the lifetime of the reader.
+    rowReaderOpts.setScanSpec(spec);
     auto rowReader = reader->createRowReader(rowReaderOpts);
 
     auto batchIndex = 0;
@@ -625,28 +381,30 @@ class E2EFilterTest : public testing::Test {
     dwio::common::RowReaderOptions rowReaderOpts;
     auto reader = std::make_unique<DwrfReader>(readerOpts, std::move(input));
     auto factory = std::make_unique<SelectiveColumnReaderFactory>(spec);
-    // The factory and spec must stay live over the lifetime of the reader.
-    rowReaderOpts.setColumnReaderFactory(factory.get());
+    // The  spec must stay live over the lifetime of the reader.
+    rowReaderOpts.setScanSpec(spec);
     auto rowReader = reader->createRowReader(rowReaderOpts);
-
+    runtimeStats_ = dwio::common::RuntimeStatistics();
     auto rowIndex = 0;
     auto batch = BaseVector::create(rowType_, 1, pool_.get());
+    resetReadBatchSizes();
     while (true) {
       {
         MicrosecondTimer timer(&time);
-        bool hasData = rowReader->next(1000, batch);
+        bool hasData = rowReader->next(nextReadBatchSize(), batch);
         if (!hasData) {
           break;
         }
         if (batch->size() == 0) {
-          // No hits in the last 1000 rows.
+          // No hits in the last batch of rows.
           continue;
         }
         if (useValueHook) {
           auto rowVector = reinterpret_cast<RowVector*>(batch.get());
           for (int32_t i = 0; i < rowVector->childrenSize(); ++i) {
             auto child = rowVector->childAt(i);
-            if (child->encoding() == VectorEncoding::Simple::LAZY) {
+            if (child->encoding() == VectorEncoding::Simple::LAZY &&
+                typeKindSupportsValueHook(child->typeKind())) {
               ASSERT_TRUE(loadWithHook(rowVector, i, child, hitRows, rowIndex));
             }
           }
@@ -676,6 +434,7 @@ class E2EFilterTest : public testing::Test {
     if (!skipCheck) {
       ASSERT_EQ(rowIndex, hitRows.size());
     }
+    rowReader->updateRuntimeStats(runtimeStats_);
   }
 
   template <TypeKind Kind>
@@ -705,7 +464,7 @@ class E2EFilterTest : public testing::Test {
                            ->as<FlatVector<T>>();
       auto referenceIndex = batchRow(hitRows[row]);
       if (reference->isNullAt(referenceIndex)) {
-        continue; // The hook is ot called on nulls.
+        continue; // The hook is not called on nulls.
       }
       if (reference->valueAt(referenceIndex) != result->valueAt(i)) {
         return false;
@@ -729,104 +488,11 @@ class E2EFilterTest : public testing::Test {
         checkLoadWithHook, kind, batch, columnIndex, child, hitRows, rowIndex);
   }
 
-  static void makeFieldSpecs(
-      const std::string& pathPrefix,
-      int32_t level,
-      const std::shared_ptr<const RowType>& type,
-      ScanSpec* spec) {
-    for (auto i = 0; i < type->size(); ++i) {
-      std::string path =
-          level == 0 ? type->nameOf(i) : pathPrefix + "." + type->nameOf(i);
-      Subfield subfield(path);
-      ScanSpec* fieldSpec = spec->getOrCreateChild(subfield);
-      fieldSpec->setProjectOut(true);
-      fieldSpec->setExtractValues(true);
-      fieldSpec->setChannel(i);
-      auto fieldType = type->childAt(i);
-      if (fieldType->kind() == TypeKind::ROW) {
-        makeFieldSpecs(
-            path,
-            level + 1,
-            std::static_pointer_cast<const RowType>(fieldType),
-            spec);
-      }
-    }
-  }
-
-  std::unique_ptr<ScanSpec> makeScanSpec(SubfieldFilters filters) {
-    auto spec = std::make_unique<ScanSpec>("root");
-    makeFieldSpecs("", 0, rowType_, spec.get());
-
-    for (auto& pair : filters) {
-      auto fieldSpec = spec->getOrCreateChild(pair.first);
-      fieldSpec->setFilter(std::move(pair.second));
-    }
-    return spec;
-  }
-
-  std::string specsToString(const std::vector<FilterSpec>& specs) {
-    std::stringstream out;
-    bool first = true;
-    for (auto& spec : specs) {
-      if (!first) {
-        out << ", ";
-      }
-      first = false;
-      out << spec.field;
-      if (spec.filterKind == FilterKind::kIsNull) {
-        out << " is null";
-      } else if (spec.filterKind == FilterKind::kIsNotNull) {
-        out << " is not null";
-      } else {
-        out << ":" << spec.selectPct << "," << spec.startPct << " ";
-      }
-    }
-    return out.str();
-  }
-
-  std::vector<FilterSpec> makeRandomSpecs(
-      const std::vector<std::string>& filterable) {
-    std::vector<FilterSpec> specs;
-    auto deck = filterable;
-    for (int i = 0; i < filterable.size(); ++i) {
-      // We aim at 1.5
-      if (folly::Random::rand32(rng_) % (100 * filterable.size()) < 125) {
-        auto idx = folly::Random::rand32(rng_) % deck.size();
-        auto name = deck[idx];
-        if (specs.empty()) {
-          ++filterCoverage_[name][0];
-        } else {
-          ++filterCoverage_[name][1];
-        }
-        deck.erase(deck.begin() + idx);
-        specs.emplace_back();
-        specs.back().field = name;
-        auto category = folly::Random::rand32(rng_) % 13;
-        if (category == 0) {
-          specs.back().selectPct = 1;
-        } else if (category < 4) {
-          specs.back().selectPct = category * 10;
-        } else if (category == 11) {
-          specs.back().filterKind = FilterKind::kIsNull;
-        } else if (category == 12) {
-          specs.back().filterKind = FilterKind::kIsNotNull;
-        } else {
-          specs.back().selectPct = 60 + category * 4;
-        }
-        specs.back().startPct = specs.back().selectPct < 100
-            ? folly::Random::rand32(rng_) %
-                static_cast<int32_t>(100 - specs.back().selectPct)
-            : 0;
-      }
-    }
-
-    return specs;
-  }
-
   void testFilterSpecs(const std::vector<FilterSpec>& filterSpecs) {
     std::vector<uint32_t> hitRows;
-    auto filters = makeFilters(filterSpecs, batches_, hitRows);
-    auto spec = makeScanSpec(std::move(filters));
+    auto filters =
+        filterGenerator->makeSubfieldFilters(filterSpecs, batches_, hitRows);
+    auto spec = filterGenerator->makeScanSpec(std::move(filters));
     uint64_t timeWithFilter = 0;
     readWithFilter(spec.get(), batches_, hitRows, timeWithFilter, false);
     std::cout << hitRows.size() << "  in " << timeWithFilter << " us"
@@ -854,6 +520,29 @@ class E2EFilterTest : public testing::Test {
               << "in " << timeWithFilter << " us" << std::endl;
   }
 
+  void testRowGroupSkip(const std::vector<std::string>& filterable) {
+    std::vector<FilterSpec> specs;
+    // Makes a row group skipping filter for the first bigint column.
+    for (auto& field : filterable) {
+      VectorPtr child = getChildBySubfield(batches_[0].get(), Subfield(field));
+      if (child->typeKind() == TypeKind::BIGINT ||
+          child->typeKind() == TypeKind::VARCHAR) {
+        specs.emplace_back();
+        specs.back().field = field;
+        specs.back().isForRowGroupSkip = true;
+        break;
+      }
+    }
+    if (specs.empty()) {
+      // No suitable column.
+      return;
+    }
+    std::cout << ": Testing with row group skip "
+              << FilterGenerator::specsToString(specs) << std::endl;
+    testFilterSpecs(specs);
+    EXPECT_LT(0, runtimeStats_.skippedStrides);
+  }
+
   void testWithTypes(
       const std::string& columns,
       std::function<void()> customize,
@@ -862,44 +551,73 @@ class E2EFilterTest : public testing::Test {
       int32_t numCombinations,
       bool tryNoNulls = false,
       bool tryNoVInts = false) {
+    makeRowType(columns, wrapInStruct);
+    // TODO: Seed was hard coded as 1 to make it behave the same as before.
+    // Change to use random seed (like current timestamp).
+    filterGenerator = std::make_unique<FilterGenerator>(rowType_, 1);
     for (int32_t noVInts = 0; noVInts < (tryNoVInts ? 2 : 1); ++noVInts) {
       useVInts_ = !noVInts;
       for (int32_t noNulls = 0; noNulls < (tryNoNulls ? 2 : 1); ++noNulls) {
-        if (noNulls) {
-          makeNotNull();
-        }
         std::cout << fmt::format(
                          "Run with {} nulls, {} vints",
                          noNulls ? "no" : "",
                          noVInts ? "no" : "")
                   << std::endl;
-        rng_.seed(1);
+        filterGenerator->reseedRng();
 
-        makeDataset(columns, customize, wrapInStruct);
+        auto newCustomize = customize;
+        if (noNulls) {
+          newCustomize = [&]() {
+            customize();
+            makeNotNull();
+          };
+          makeNotNull();
+        }
+
+        makeDataset(newCustomize);
         for (auto i = 0; i < numCombinations; ++i) {
-          std::vector<FilterSpec> specs = makeRandomSpecs(filterable);
-          std::cout << i << ": Testing " << specsToString(specs) << std::endl;
+          std::vector<FilterSpec> specs =
+              filterGenerator->makeRandomSpecs(filterable, 125);
+          std::cout << i << ": Testing "
+                    << FilterGenerator::specsToString(specs) << std::endl;
           testFilterSpecs(specs);
         }
+        makeDataset(customize, true);
+        testRowGroupSkip(filterable);
       }
     }
     std::cout << "Coverage:" << std::endl;
-    for (auto& pair : filterCoverage_) {
+    for (auto& pair : filterGenerator->filterCoverage()) {
       std::cout << pair.first << " as first filter: " << pair.second[0]
                 << " as second: " << pair.second[1] << std::endl;
     }
   }
 
+  // Allows testing reading with different batch sizes.
+  void resetReadBatchSizes() {
+    nextReadSizeIndex_ = 0;
+  }
+
+  int32_t nextReadBatchSize() {
+    if (nextReadSizeIndex_ >= readSizes_.size()) {
+      return 1000;
+    }
+    return readSizes_[nextReadSizeIndex_++];
+  }
+
+  std::unique_ptr<FilterGenerator> filterGenerator;
   std::unique_ptr<memory::MemoryPool> pool_;
   std::shared_ptr<const RowType> rowType_;
-  std::unique_ptr<MemorySink> sink_;
   MemorySink* sinkPtr_;
   std::unique_ptr<Writer> writer_;
   std::vector<RowVectorPtr> batches_;
-  std::unordered_map<std::string, std::array<int32_t, 2>> filterCoverage_;
-  folly::Random::DefaultGenerator rng_;
   bool useVInts_ = true;
-}; // namespace facebook::dwio::dwrf
+  dwio::common::RuntimeStatistics runtimeStats_;
+  // Number of calls to flush policy between starting new stripes.
+  int32_t flushEveryNBatches_{10};
+  int32_t nextReadSizeIndex_{0};
+  std::vector<int32_t> readSizes_;
+};
 
 TEST_F(E2EFilterTest, integerDirect) {
   testWithTypes(
@@ -985,15 +703,21 @@ TEST_F(E2EFilterTest, floatAndDouble) {
 }
 
 TEST_F(E2EFilterTest, stringDirect) {
+  flushEveryNBatches_ = 1;
   testWithTypes(
       "string_val:string,"
       "string_val_2:string",
-      [&]() {},
+      [&]() {
+        makeStringUnique(Subfield("string_val"));
+        makeStringUnique(Subfield("string_val_2"));
+      },
+
       true,
       {"string_val", "string_val_2"},
       20,
       true);
 }
+
 TEST_F(E2EFilterTest, stringDictionary) {
   testWithTypes(
       "string_val:string,"
@@ -1009,17 +733,51 @@ TEST_F(E2EFilterTest, stringDictionary) {
       true);
 }
 
+TEST_F(E2EFilterTest, timestamp) {
+  testWithTypes(
+      "timestamp_val:timestamp,"
+      "long_val:bigint",
+      [&]() {},
+      false,
+      {"long_val"},
+      20,
+      true,
+      true);
+}
+
 TEST_F(E2EFilterTest, listAndMap) {
   testWithTypes(
       "long_val:bigint,"
       "long_val_2:bigint,"
       "int_val:int,"
-      "array_val:array<array<int>>,"
-      "map_val:map<bigint,map<int, int>>",
+      "array_val:array<struct<array_member: array<int>>>,"
+      "map_val:map<bigint,struct<nested_map: map<int, int>>>",
       [&]() {},
       true,
       {"long_val", "long_val_2", "int_val"},
       10);
 }
 
-} // namespace facebook::dwio::dwrf
+TEST_F(E2EFilterTest, nullCompactRanges) {
+  // Makes a dataset with nulls at the beginning. Tries different
+  // filter ombinations on progressively larger batches. tests for a
+  // bug in null compaction where null bits past end of nulls buffer
+  // were compacted while there actually were no nulls.
+
+  readSizes_ = {10, 100, 1000, 10000, 10000, 10000};
+  testWithTypes(
+      "tiny_val:tinyint,"
+      "bool_val:boolean,"
+      "long_val:bigint,"
+      "tiny_null:bigint",
+
+      [&]() { makeNotNull(500); },
+
+      true,
+      {"tiny_val", "bool_val", "long_val", "tiny_null"},
+      20,
+      false,
+      false);
+}
+
+} // namespace facebook::velox::dwio::dwrf

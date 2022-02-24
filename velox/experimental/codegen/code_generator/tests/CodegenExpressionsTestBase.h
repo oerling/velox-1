@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 #pragma once
+
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <sstream>
 #include <stdexcept>
-#include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/experimental/codegen/ast/CodegenUtils.h"
 #include "velox/experimental/codegen/code_generator/ExprCodeGenerator.h"
 #include "velox/experimental/codegen/compiler_utils/CodeManager.h"
@@ -26,12 +26,14 @@
 #include "velox/experimental/codegen/compiler_utils/tests/definitions.h"
 #include "velox/experimental/codegen/utils/resources/ResourcePath.h"
 #include "velox/experimental/codegen/vector_function/StringTypes.h"
-#include "velox/functions/prestosql/CoreFunctions.h"
-#include "velox/functions/prestosql/VectorFunctions.h"
+#include "velox/expression/Expr.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
+#include "velox/parse/TypeResolver.h"
 #include "velox/type/StringView.h"
 #include "velox/type/Type.h"
+#include "velox/vector/ConstantVector.h"
 
 namespace facebook::velox::codegen {
 namespace expressions::test {
@@ -498,11 +500,10 @@ class ExpressionCodegenTestBase : public testing::Test {
         udfManager, useBuiltInForArithmetic, false);
 
     // Register velox functions since parsing expression depends on them
-    functions::registerFunctions();
-    functions::registerVectorFunctions();
+    functions::prestosql::registerArithmeticFunctions();
 
     // Register type resolver with the SQL parser.
-    exec::test::registerTypeResolver();
+    parse::registerTypeResolver();
   }
 
  protected:
@@ -559,7 +560,7 @@ class ExpressionCodegenTestBase : public testing::Test {
 
     if (auto callExpr =
             std::dynamic_pointer_cast<const core::CallTypedExpr>(typedExpr)) {
-      if (callExpr->name() == "concatrow") {
+      if (callExpr->name() == "row_constructor") {
         std::vector<std::string> names;
         for (auto i = 0; i < typedExpr->inputs().size(); i++) {
           names.push_back(fmt::format("c{}", names.size()));
@@ -579,7 +580,7 @@ class ExpressionCodegenTestBase : public testing::Test {
         core::ConcatTypedExpr({"c0"}, {typedExpr}));
   }
 
-  std::shared_ptr<core::QueryCtx> queryCtx_{std::make_shared<core::QueryCtx>()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
   std::unique_ptr<core::ExecCtx> execCtx_{

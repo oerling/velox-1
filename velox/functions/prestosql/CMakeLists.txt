@@ -12,53 +12,65 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 add_subdirectory(json)
+add_subdirectory(hyperloglog)
+add_subdirectory(types)
 
 add_library(
-  velox_functions_prestosql OBJECT
-  CoreFunctions.cpp
-  Reduce.cpp
-  RegisterArithmetic.cpp
-  RegisterCheckedArithmetic.cpp
-  RegisterComparisons.cpp
-  VectorFunctions.cpp
-  RowFunction.cpp
-  Coalesce.cpp
-  IsNull.cpp
-  InPredicate.cpp
-  StringFunctions.cpp
-  Length.cpp
+  velox_functions_prestosql_impl OBJECT
+  ArrayConstructor.cpp
+  ArrayContains.cpp
+  ArrayDistinct.cpp
+  ArrayDuplicates.cpp
+  ArrayIntersectExcept.cpp
+  ArrayMinMax.cpp
+  ArrayPosition.cpp
   Cardinality.cpp
+  Coalesce.cpp
+  ElementAt.cpp
+  FilterFunctions.cpp
+  FromUnixTime.cpp
+  GreatestLeast.cpp
+  InPredicate.cpp
   Map.cpp
   MapConcat.cpp
   MapEntries.cpp
   MapKeysAndValues.cpp
   Not.cpp
-  ArrayConstructor.cpp
-  ArrayContains.cpp
-  ArrayIntersectExcept.cpp
-  ArrayMinMax.cpp
-  FilterFunctions.cpp
-  FromUnixTime.cpp
+  Reduce.cpp
+  Reverse.cpp
+  RowFunction.cpp
+  Slice.cpp
+  Split.cpp
+  StringFunctions.cpp
+  Subscript.cpp
   ToUtf8.cpp
   Transform.cpp
-  ElementAt.cpp
-  Subscript.cpp
+  URLFunctions.cpp
   VectorArithmetic.cpp
   WidthBucketArray.cpp
-  Reverse.cpp)
+  Zip.cpp)
 
 target_link_libraries(
-  velox_functions_prestosql
-  velox_exec
+  velox_functions_prestosql_impl
   velox_functions_json
+  velox_functions_hyperloglog
   velox_functions_lib
   velox_expression
   md5
-  velox_type_tz)
+  velox_type_tz
+  velox_presto_types)
 
-set_property(TARGET velox_functions_prestosql PROPERTY JOB_POOL_COMPILE
-                                                       high_memory_pool)
+set_property(TARGET velox_functions_prestosql_impl PROPERTY JOB_POOL_COMPILE
+                                                            high_memory_pool)
 
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
-add_subdirectory(coverage)
+if(${VELOX_ENABLE_AGGREGATES})
+  add_subdirectory(aggregates)
+endif()
+
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+  add_subdirectory(benchmarks)
+  add_subdirectory(coverage)
+endif()
+
+add_subdirectory(registration)

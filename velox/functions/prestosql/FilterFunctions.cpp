@@ -52,7 +52,7 @@ class FilterFunctionBase : public exec::VectorFunction {
   static vector_size_t doApply(
       const SelectivityVector& rows,
       const std::shared_ptr<T>& input,
-      VectorPtr& lambdas,
+      const VectorPtr& lambdas,
       const std::vector<VectorPtr>& lambdaArgs,
       exec::EvalCtx* context,
       BufferPtr& resultOffsets,
@@ -62,27 +62,25 @@ class FilterFunctionBase : public exec::VectorFunction {
     auto inputSizes = input->rawSizes();
 
     auto pool = context->pool();
-    resultSizes = AlignedBuffer::allocate<vector_size_t>(rows.size(), pool, 0);
-    resultOffsets =
-        AlignedBuffer::allocate<vector_size_t>(rows.size(), pool, 0);
+    resultSizes = allocateSizes(rows.size(), pool);
+    resultOffsets = allocateOffsets(rows.size(), pool);
     auto rawResultSizes = resultSizes->asMutable<vector_size_t>();
     auto rawResultOffsets = resultOffsets->asMutable<vector_size_t>();
     auto numElements = lambdaArgs[0]->size();
 
     exec::LocalDecodedVector bitsDecoder(context);
-    FunctionVector::Iterator iter(*lambdas, rows);
-    Callable* callable;
-    SelectivityVector* callableRows;
-    while (iter.next(callable, callableRows)) {
+    auto iter = lambdas->asUnchecked<FunctionVector>()->iterator(&rows);
+    while (auto entry = iter.next()) {
       auto elementRows =
-          toElementRows<T>(numElements, *callableRows, input.get());
+          toElementRows<T>(numElements, *entry.rows, input.get());
       auto wrapCapture =
-          toWrapCapture<T>(numElements, callable, *callableRows, input);
+          toWrapCapture<T>(numElements, entry.callable, *entry.rows, input);
 
       VectorPtr bits;
-      callable->apply(elementRows, wrapCapture, context, lambdaArgs, &bits);
+      entry.callable->apply(
+          elementRows, wrapCapture, context, lambdaArgs, &bits);
       bitsDecoder.get()->decode(*bits, elementRows);
-      callableRows->applyToSelected([&](vector_size_t row) {
+      entry.rows->applyToSelected([&](vector_size_t row) {
         if (input->isNullAt(row)) {
           return;
         }
@@ -115,7 +113,7 @@ class ArrayFilterFunction : public FilterFunctionBase {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* /*caller*/,
+      const TypePtr& /* outputType */,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
@@ -175,7 +173,7 @@ class MapFilterFunction : public FilterFunctionBase {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* caller,
+      const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
@@ -211,7 +209,7 @@ class MapFilterFunction : public FilterFunctionBase {
                                      : nullptr;
     auto localResult = std::make_shared<MapVector>(
         flatMap->pool(),
-        caller->type(),
+        outputType,
         flatMap->nulls(),
         rows.size(),
         std::move(resultOffsets),
@@ -235,7 +233,7 @@ class MapFilterFunction : public FilterFunctionBase {
 } // namespace
 
 VELOX_DECLARE_VECTOR_FUNCTION(
-    udf_filter,
+    udf_array_filter,
     ArrayFilterFunction::signatures(),
     std::make_unique<ArrayFilterFunction>());
 

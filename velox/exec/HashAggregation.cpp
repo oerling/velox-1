@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/HashAggregation.h"
+#include "velox/exec/Aggregate.h"
 #include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
@@ -30,13 +31,16 @@ HashAggregation::HashAggregation(
           aggregationNode->step() == core::AggregationNode::Step::kPartial
               ? "PartialAggregation"
               : "Aggregation"),
+      outputBatchSize_{
+          driverCtx->execCtx->queryCtx()->config().preferredOutputBatchSize()},
+      maxPartialAggregationMemoryUsage_(
+          driverCtx->execCtx->queryCtx()
+              ->config()
+              .maxPartialAggregationMemoryUsage()),
       isPartialOutput_(isPartialOutput(aggregationNode->step())),
       isDistinct_(aggregationNode->aggregates().empty()),
       isGlobal_(aggregationNode->groupingKeys().empty()),
-      maxPartialAggregationMemoryUsage_(
-          operatorCtx_->task()
-              ->queryCtx()
-              ->maxPartialAggregationMemoryUsage()) {
+      hasPreGroupedKeys_(!aggregationNode->preGroupedKeys().empty()) {
   auto inputType = aggregationNode->sources()[0]->outputType();
 
   auto numHashers = aggregationNode->groupingKeys().size();
@@ -51,10 +55,17 @@ HashAggregation::HashAggregation(
     hashers.push_back(VectorHasher::create(key->type(), channel));
   }
 
+  std::vector<ChannelIndex> preGroupedChannels;
+  preGroupedChannels.reserve(aggregationNode->preGroupedKeys().size());
+  for (const auto& key : aggregationNode->preGroupedKeys()) {
+    auto channel = exprToChannel(key.get(), inputType);
+    preGroupedChannels.push_back(channel);
+  }
+
   auto numAggregates = aggregationNode->aggregates().size();
   std::vector<std::unique_ptr<Aggregate>> aggregates;
   aggregates.reserve(numAggregates);
-  std::vector<std::optional<uint32_t>> aggrMaskChannels;
+  std::vector<std::optional<ChannelIndex>> aggrMaskChannels;
   aggrMaskChannels.reserve(numAggregates);
   std::vector<std::vector<ChannelIndex>> args;
   std::vector<std::vector<VectorPtr>> constantLists;
@@ -78,7 +89,7 @@ HashAggregation::HashAggregation(
 
     // Setup aggregation mask: convert the Variable Reference name to the
     // channel (projection) index, if there is a mask.
-    const auto& aggrMask = aggregationNode->aggrMasks()[i];
+    const auto& aggrMask = aggregationNode->aggregateMasks()[i];
     if (aggrMask == nullptr) {
       aggrMaskChannels.emplace_back(std::optional<ChannelIndex>{});
     } else {
@@ -99,9 +110,10 @@ HashAggregation::HashAggregation(
     const auto& expectedType = outputType_->childAt(numHashers + i);
     VELOX_CHECK(
         aggResultType->kindEquals(expectedType),
-        "Unexpected result type for an aggregation: {}, expected {}",
+        "Unexpected result type for an aggregation: {}, expected {}, step {}",
         aggResultType->toString(),
-        expectedType->toString());
+        expectedType->toString(),
+        static_cast<int32_t>(aggregationNode->step()));
   }
 
   if (isDistinct_) {
@@ -112,11 +124,13 @@ HashAggregation::HashAggregation(
 
   groupingSet_ = std::make_unique<GroupingSet>(
       std::move(hashers),
+      std::move(preGroupedChannels),
       std::move(aggregates),
       std::move(aggrMaskChannels),
       std::move(args),
       std::move(constantLists),
       aggregationNode->ignoreNullKeys(),
+      isRawInput(aggregationNode->step()),
       operatorCtx_.get());
 }
 
@@ -135,14 +149,25 @@ void HashAggregation::addInput(RowVectorPtr input) {
 }
 
 RowVectorPtr HashAggregation::getOutput() {
-  if (finished_ || (!isFinishing_ && !partialFull_ && !newDistincts_)) {
+  if (finished_) {
+    input_ = nullptr;
+    return nullptr;
+  }
+
+  // Produce results if one of the following is true:
+  // - received no-more-input message;
+  // - partial aggregation reached memory limit;
+  // - distinct aggregation has new keys;
+  // - running in partial streaming mode and have some output ready.
+  if (!noMoreInput_ && !partialFull_ && !newDistincts_ &&
+      !groupingSet_->hasOutput()) {
     input_ = nullptr;
     return nullptr;
   }
 
   if (isDistinct_) {
     if (!newDistincts_) {
-      if (isFinishing_) {
+      if (noMoreInput_) {
         finished_ = true;
       }
       return nullptr;
@@ -150,8 +175,7 @@ RowVectorPtr HashAggregation::getOutput() {
 
     auto lookup = groupingSet_->hashLookup();
     auto size = lookup.newGroups.size();
-    BufferPtr indices =
-        AlignedBuffer::allocate<vector_size_t>(size, operatorCtx_->pool());
+    BufferPtr indices = allocateIndices(size, operatorCtx_->pool());
     auto indicesPtr = indices->asMutable<vector_size_t>();
     std::copy(lookup.newGroups.begin(), lookup.newGroups.end(), indicesPtr);
     newDistincts_ = false;
@@ -168,7 +192,7 @@ RowVectorPtr HashAggregation::getOutput() {
     return output;
   }
 
-  auto batchSize = isGlobal_ ? 1 : kOutputBatchSize;
+  auto batchSize = isGlobal_ ? 1 : outputBatchSize_;
 
   // TODO Figure out how to re-use 'result' safely.
   auto result = std::static_pointer_cast<RowVector>(
@@ -178,13 +202,13 @@ RowVectorPtr HashAggregation::getOutput() {
       batchSize, isPartialOutput_, &resultIterator_, result);
   if (!hasData) {
     resultIterator_.reset();
-    if (isPartialOutput_) {
+
+    if (partialFull_) {
       partialFull_ = false;
       groupingSet_->resetPartial();
-      if (isFinishing_) {
-        finished_ = true;
-      }
-    } else {
+    }
+
+    if (noMoreInput_) {
       finished_ = true;
     }
     return nullptr;
@@ -192,4 +216,7 @@ RowVectorPtr HashAggregation::getOutput() {
   return result;
 }
 
+bool HashAggregation::isFinished() {
+  return finished_;
+}
 } // namespace facebook::velox::exec

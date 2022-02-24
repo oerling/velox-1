@@ -21,7 +21,7 @@
 #include "folly/Conv.h"
 #include "velox/dwio/common/TypeUtils.h"
 
-namespace facebook::dwio::common {
+namespace facebook::velox::dwio::common {
 
 using common::typeutils::CompatChecker;
 using velox::RowType;
@@ -248,7 +248,6 @@ void ColumnSelector::setReadAll() {
 }
 
 const ColumnFilter& ColumnSelector::getProjection() const {
-  DWIO_ENSURE(!filter_.empty(), "need a valid filter");
   return filter_;
 }
 
@@ -321,7 +320,7 @@ const FilterTypePtr& ColumnSelector::process(const std::string& column, bool) {
   return findNode(column);
 }
 
-std::pair<std::string_view, std::string_view> ColumnSelector::extractColumnName(
+std::pair<std::string_view, std::string_view> extractColumnName(
     const std::string_view& name) {
   // right now this is the only supported expression for MAP key filter
   auto pos = name.find('#');
@@ -348,4 +347,4 @@ void ColumnSelector::logFilter() const {
   getLog()->logColumnFilter(filter_, numColumns, numNodes, hasSchema());
 }
 
-} // namespace facebook::dwio::common
+} // namespace facebook::velox::dwio::common

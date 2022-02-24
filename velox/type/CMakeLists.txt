@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_subdirectory(tests)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()
 add_subdirectory(tz)
 
 add_library(
@@ -21,12 +23,15 @@ add_library(
   Variant.cpp
   Timestamp.cpp
   TimestampConversion.cpp
+  Date.cpp
   Filter.cpp
   Subfield.cpp
   Tokenizer.cpp)
 
 target_link_libraries(
   velox_type
+  velox_type_tz
+  velox_common_base
   velox_encode
   velox_exception
   velox_serialization

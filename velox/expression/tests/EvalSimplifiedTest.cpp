@@ -16,9 +16,8 @@
 
 #include "gtest/gtest.h"
 
-#include "velox/expression/tests/VectorFuzzer.h"
-#include "velox/functions/prestosql/CoreFunctions.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;
 using functions::test::FunctionBaseTest;
@@ -163,7 +162,7 @@ TEST_F(EvalSimplifiedTest, doubles) {
 // is specified.
 TEST_F(EvalSimplifiedTest, queryParameter) {
   queryCtx_->setConfigOverridesUnsafe({
-      {core::QueryCtx::kExprEvalSimplified, "true"},
+      {core::QueryConfig::kExprEvalSimplified, "true"},
   });
 
   auto expr = makeTypedExpr("1 + 1", nullptr);

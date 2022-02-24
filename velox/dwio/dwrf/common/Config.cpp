@@ -114,6 +114,10 @@ Config::Entry<bool> Config::MAP_FLAT_DISABLE_DICT_ENCODING(
     "orc.map.flat.disable.dict.encoding",
     true);
 
+Config::Entry<bool> Config::MAP_FLAT_DISABLE_DICT_ENCODING_STRING(
+    "orc.map.flat.disable.dict.encoding.string",
+    true);
+
 Config::Entry<bool> Config::MAP_FLAT_DICT_SHARE(
     "orc.map.flat.dict.share",
     true);
@@ -161,4 +165,7 @@ Config::Entry<bool> Config::STREAM_SIZE_ABOVE_THRESHOLD_CHECK_ENABLED(
     "orc.stream.size.above.threshold.check.enabled",
     true);
 
+Config::Entry<uint64_t> Config::RAW_DATA_SIZE_PER_BATCH(
+    "hive.exec.orc.raw.data.size.per.batch",
+    50 * 1000 * 1000);
 } // namespace facebook::velox::dwrf

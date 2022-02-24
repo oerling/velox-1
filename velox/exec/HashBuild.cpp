@@ -90,27 +90,44 @@ HashBuild::HashBuild(
     }
   }
 
-  // Semi and anti join only needs to know whether there is a match. Hence, no
-  // need to store entries with duplicate keys.
-  const bool allowDuplicates =
-      !joinNode->isSemiJoin() && !joinNode->isAntiJoin();
+  if (joinNode->isRightJoin()) {
+    // Do not ignore null keys.
+    table_ = HashTable<false>::createForJoin(
+        std::move(keyHashers),
+        dependentTypes,
+        true, // allowDuplicates
+        true, // hasProbedFlag
+        mappedMemory_);
+  } else {
+    // Semi and anti join only needs to know whether there is a match. Hence, no
+    // need to store entries with duplicate keys.
+    const bool allowDuplicates =
+        !joinNode->isSemiJoin() && !joinNode->isAntiJoin();
 
-  table_ = HashTable<true>::createForJoin(
-      std::move(keyHashers), dependentTypes, allowDuplicates, mappedMemory_);
+    table_ = HashTable<true>::createForJoin(
+        std::move(keyHashers),
+        dependentTypes,
+        allowDuplicates,
+        false, // hasProbedFlag
+        mappedMemory_);
+  }
   analyzeKeys_ = table_->hashMode() != BaseHashTable::HashMode::kHash;
 }
 
 void HashBuild::addInput(RowVectorPtr input) {
   activeRows_.resize(input->size());
   activeRows_.setAll();
-  deselectRowsWithNulls(*input, keyChannels_, activeRows_);
+  if (!isRightJoin(joinType_)) {
+    deselectRowsWithNulls(
+        *input, keyChannels_, activeRows_, *operatorCtx_->execCtx());
+  }
 
   if (joinType_ == core::JoinType::kAnti) {
     // Anti join returns no rows if build side has nulls in join keys. Hence, we
     // can stop processing on first null.
     if (activeRows_.countSelected() < input->size()) {
       antiJoinHasNullKeys_ = true;
-      finish();
+      noMoreInput();
       return;
     }
   }
@@ -131,7 +148,7 @@ void HashBuild::addInput(RowVectorPtr input) {
     // TODO: Load only for active rows, except if right/full outer join.
     if (analyzeKeys_) {
       hasher->computeValueIds(
-          *input->loadedChildAt(hasher->channel()), activeRows_, &hashes_);
+          *input->loadedChildAt(hasher->channel()), activeRows_, hashes_);
       analyzeKeys_ = hasher->mayUseValueIds();
     } else {
       hasher->decode(*input->loadedChildAt(hasher->channel()), activeRows_);
@@ -160,8 +177,12 @@ void HashBuild::addInput(RowVectorPtr input) {
   });
 }
 
-void HashBuild::finish() {
-  Operator::finish();
+void HashBuild::noMoreInput() {
+  if (noMoreInput_) {
+    return;
+  }
+
+  Operator::noMoreInput();
   std::vector<VeloxPromise<bool>> promises;
   std::vector<std::shared_ptr<Driver>> peers;
   // The last Driver to hit HashBuild::finish gathers the data from
@@ -171,11 +192,10 @@ void HashBuild::finish() {
   // build pipeline.
   if (!operatorCtx_->task()->allPeersFinished(
           planNodeId(), operatorCtx_->driver(), &future_, promises, peers)) {
-    hasFuture_ = true;
     return;
   }
 
-  std::vector<std::unique_ptr<HashTable<true>>> otherTables;
+  std::vector<std::unique_ptr<BaseHashTable>> otherTables;
   otherTables.reserve(peers.size());
 
   if (!antiJoinHasNullKeys_) {
@@ -200,7 +220,8 @@ void HashBuild::finish() {
 
   if (antiJoinHasNullKeys_) {
     operatorCtx_->task()
-        ->getHashJoinBridge(planNodeId())
+        ->getHashJoinBridge(
+            operatorCtx_->driverCtx()->splitGroupId, planNodeId())
         ->setAntiJoinHasNullKeys();
   } else {
     table_->prepareJoinTable(std::move(otherTables));
@@ -208,7 +229,8 @@ void HashBuild::finish() {
     addRuntimeStats();
 
     operatorCtx_->task()
-        ->getHashJoinBridge(planNodeId())
+        ->getHashJoinBridge(
+            operatorCtx_->driverCtx()->splitGroupId, planNodeId())
         ->setHashTable(std::move(table_));
   }
 }
@@ -230,12 +252,15 @@ void HashBuild::addRuntimeStats() {
 }
 
 BlockingReason HashBuild::isBlocked(ContinueFuture* future) {
-  if (!hasFuture_) {
+  if (!future_.valid()) {
     return BlockingReason::kNotBlocked;
   }
   *future = std::move(future_);
-  hasFuture_ = false;
   return BlockingReason::kWaitForJoinBuild;
+}
+
+bool HashBuild::isFinished() {
+  return !future_.valid() && noMoreInput_;
 }
 
 } // namespace facebook::velox::exec

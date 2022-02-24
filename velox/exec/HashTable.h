@@ -37,14 +37,14 @@ struct HashLookup {
 
   // One entry per aggregation or join key
   const std::vector<std::unique_ptr<VectorHasher>>& hashers;
-  std::vector<vector_size_t> rows;
+  raw_vector<vector_size_t> rows;
   // Hash number for all input rows.
-  std::vector<uint64_t> hashes;
+  raw_vector<uint64_t> hashes;
   // If using valueIds, list of concatenated valueIds. 1:1 with 'hashes'.
-  std::vector<uint64_t> normalizedKeys;
+  raw_vector<uint64_t> normalizedKeys;
   // Hit for each row of input. nullptr if no hit. Points to the
   // corresponding group row.
-  std::vector<char*> hits;
+  raw_vector<char*> hits;
   std::vector<vector_size_t> newGroups;
 };
 
@@ -68,17 +68,22 @@ class BaseHashTable {
       rows = &lookup.rows;
       hits = &lookup.hits;
       nextHit = nullptr;
-      lastRow = 0;
+      lastRowIndex = 0;
     }
 
     bool atEnd() const {
-      return lastRow == rows->size();
+      return !rows || lastRowIndex == rows->size();
     }
 
-    const std::vector<vector_size_t>* rows;
-    const std::vector<char*>* hits;
+    const raw_vector<vector_size_t>* rows{nullptr};
+    const raw_vector<char*>* hits{nullptr};
     char* nextHit{nullptr};
-    vector_size_t lastRow{0};
+    vector_size_t lastRowIndex{0};
+  };
+
+  struct NotProbedRowsIterator {
+    int32_t hashTableIndex_{-1};
+    RowContainerIterator rowContainerIterator_;
   };
 
   /// Takes ownership of 'hashers'. These are used to keep key-level
@@ -106,10 +111,25 @@ class BaseHashTable {
   /// of 'inputRows' is set to the corresponding row number in probe keys.
   /// Returns the number of hits produced. If this s less than hits.size() then
   /// all the hits have been produced.
+  /// Adds input rows without a match to 'inputRows' with corresponding hit
+  /// set to nullptr if 'includeMisses' is true. Otherwise, skips input rows
+  /// without a match. 'includeMisses' is set to true when listing results for
+  /// the LEFT join.
   virtual int32_t listJoinResults(
       JoinResultIterator& iter,
+      bool includeMisses,
       folly::Range<vector_size_t*> inputRows,
       folly::Range<char**> hits) = 0;
+
+  /// Returns rows with 'probed' flag unset. Used by the right join.
+  virtual int32_t listNotProbedRows(
+      NotProbedRowsIterator* iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char** rows) = 0;
+
+  virtual void prepareJoinTable(
+      std::vector<std::unique_ptr<BaseHashTable>> tables) = 0;
 
   /// Returns the memory footprint in bytes for any data structures
   /// owned by 'this'.
@@ -203,16 +223,18 @@ class HashTable : public BaseHashTable {
  public:
   // Can be used for aggregation or join. An aggregation hash table
   // can also double as a join build side. 'isJoinBuild' is true if
-  // this is a build side. 'alloDuplicates' is false for a build side if
+  // this is a build side. 'allowDuplicates' is false for a build side if
   // second occurrences of a key are to be silently ignored or will
   // not occur. In this case the row does not need a link to the next
-  // match.
+  // match. 'hasProbedFlag' adds an extra bit in every row for tracking rows
+  // that matches join condition for right and full outer joins.
   HashTable(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
       const std::vector<std::unique_ptr<Aggregate>>& aggregates,
       const std::vector<TypePtr>& dependentTypes,
       bool allowDuplicates,
       bool isJoinBuild,
+      bool hasProbedFlag,
       memory::MappedMemory* memory);
 
   static std::unique_ptr<HashTable> createForAggregation(
@@ -223,29 +245,30 @@ class HashTable : public BaseHashTable {
         std::move(hashers),
         aggregates,
         std::vector<TypePtr>{},
-        false,
-        false,
+        false, // allowDuplicates
+        false, // isJoinBuild
+        false, // hasProbedFlag
         memory);
   }
 
   static std::unique_ptr<HashTable> createForJoin(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
       const std::vector<TypePtr>& dependentTypes,
-      bool hasNext,
+      bool allowDuplicates,
+      bool hasProbedFlag,
       memory::MappedMemory* memory) {
     static const std::vector<std::unique_ptr<Aggregate>> kNoAggregates;
     return std::make_unique<HashTable>(
         std::move(hashers),
         kNoAggregates,
         dependentTypes,
-        hasNext,
-        true,
+        allowDuplicates,
+        true, // isJoinBuild
+        hasProbedFlag,
         memory);
   }
 
-  virtual ~HashTable() override {
-    allocateTables(0);
-  }
+  virtual ~HashTable() override = default;
 
   void groupProbe(HashLookup& lookup) override;
 
@@ -253,8 +276,15 @@ class HashTable : public BaseHashTable {
 
   int32_t listJoinResults(
       JoinResultIterator& iter,
+      bool includeMisses,
       folly::Range<vector_size_t*> inputRows,
       folly::Range<char**> hits) override;
+
+  int32_t listNotProbedRows(
+      NotProbedRowsIterator* iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char** rows) override;
 
   void clear() override;
 
@@ -282,9 +312,9 @@ class HashTable : public BaseHashTable {
 
   void decideHashMode(int32_t numNew) override;
 
-  // Moves the contents of 'tables' into 'this' and prepares 'this'
-
   void erase(folly::Range<char**> rows) override;
+
+  // Moves the contents of 'tables' into 'this' and prepares 'this'
   // for use in hash join probe. A hash join build side is prepared as
   // follows: 1. Each build side thread gets a random selection of the
   // build stream. Each accumulates rows into its own
@@ -295,7 +325,7 @@ class HashTable : public BaseHashTable {
   // with prepareJoinTable. This then takes ownership of all the data
   // and VectorHashers and decides the hash mode and representation.
   void prepareJoinTable(
-      std::vector<std::unique_ptr<HashTable<ignoreNullKeys>>> tables);
+      std::vector<std::unique_ptr<BaseHashTable>> tables) override;
 
   std::string toString() override;
 
@@ -327,6 +357,10 @@ class HashTable : public BaseHashTable {
       const std::vector<uint64_t>& rangeSizes,
       const std::vector<uint64_t>& distinctSizes);
 
+  // Clears all elements of 'useRange' except ones that correspond to boolean
+  // VectorHashers.
+  void clearUseRange(std::vector<bool>& useRange);
+
   void rehash();
   void initializeNewGroups(HashLookup& lookup);
   void storeKeys(HashLookup& lookup, vector_size_t row);
@@ -342,7 +376,8 @@ class HashTable : public BaseHashTable {
   // Computes hash numbers of the appropriate hash mode for 'groups',
   // stores these in 'hashes' and inserts the groups using
   // insertForJoin or insertForGroupBy.
-  bool insertBatch(char** groups, uint64_t* hashes, int32_t numGroups);
+  bool
+  insertBatch(char** groups, int32_t numGroups, raw_vector<uint64_t>& hashes);
 
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
   // contents in a RowContainer owned by 'this'. 'hashes' are te hash
@@ -358,8 +393,11 @@ class HashTable : public BaseHashTable {
   void insertForGroupBy(char** groups, uint64_t* hashes, int32_t numGroups);
 
   char* insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
-  bool compareKeys(char* group, HashLookup& lookup, vector_size_t row);
+
+  bool compareKeys(const char* group, HashLookup& lookup, vector_size_t row);
+
   bool compareKeys(const char* group, const char* inserted);
+
   template <bool isJoin>
   void fullProbe(HashLookup& lookup, ProbeState& state, bool extraCheck);
 
@@ -397,6 +435,7 @@ class HashTable : public BaseHashTable {
   int32_t nextOffset_;
   uint8_t* tags_ = nullptr;
   char** table_ = nullptr;
+  memory::MappedMemory::ContiguousAllocation tableAllocation_;
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
   int64_t numDistinct_ = 0;

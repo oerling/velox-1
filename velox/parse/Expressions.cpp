@@ -16,8 +16,9 @@
 #include "Expressions.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/Expressions.h"
-#include "velox/core/FunctionRegistry.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/parse/VariantToVector.h"
+#include "velox/type/Type.h"
 #include "velox/vector/ConstantVector.h"
 
 namespace facebook::velox::core {
@@ -33,28 +34,32 @@ Expressions::lambdaRegistry() {
 }
 
 namespace {
-FunctionKey createFuncKey(
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs,
-    const std::string& fnName) {
+std::vector<TypePtr> getTypes(
+    const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs) {
   std::vector<std::shared_ptr<const Type>> types{};
   for (auto& i : inputs) {
     types.push_back(i->type());
   }
-  return FunctionKey{fnName, move(types)};
+  return types;
 }
 
+// Determine output type based on input types.
 std::shared_ptr<const Type> resolveTypeImpl(
     std::vector<std::shared_ptr<const core::ITypedExpr>> inputs,
     const std::shared_ptr<const CallExpr>& expr) {
+  // Check expressions which aren't simple functions, e.g. vector functions,
+  // and/or, try, etc.
   if (Expressions::getResolverHook()) {
     auto type = Expressions::getResolverHook()(inputs, expr);
     if (type) {
       return type;
     }
   }
-  auto fun =
-      ScalarFunctions().Create(createFuncKey(inputs, expr->getFunctionName()));
-  return fun == nullptr ? nullptr : fun->returnType();
+
+  // Check simple functions.
+  auto fun = exec::SimpleFunctions().resolveFunction(
+      expr->getFunctionName(), getTypes(inputs));
+  return fun == nullptr ? nullptr : fun->getMetadata()->returnType();
 }
 
 namespace {
@@ -63,6 +68,43 @@ std::shared_ptr<const core::CastTypedExpr> makeTypedCast(
     const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs) {
   return std::make_shared<const core::CastTypedExpr>(type, inputs, false);
 }
+
+std::vector<TypePtr> implicitCastTargets(const TypePtr& type) {
+  std::vector<TypePtr> targetTypes;
+  switch (type->kind()) {
+    // We decide not to implicitly upcast booleans because it maybe funky.
+    case TypeKind::BOOLEAN:
+      break;
+    case TypeKind::TINYINT:
+      targetTypes.emplace_back(SMALLINT());
+      FMT_FALLTHROUGH;
+    case TypeKind::SMALLINT:
+      targetTypes.emplace_back(INTEGER());
+      targetTypes.emplace_back(REAL());
+      FMT_FALLTHROUGH;
+    case TypeKind::INTEGER:
+      targetTypes.emplace_back(BIGINT());
+      targetTypes.emplace_back(DOUBLE());
+      FMT_FALLTHROUGH;
+    case TypeKind::BIGINT:
+      break;
+    case TypeKind::REAL:
+      targetTypes.emplace_back(DOUBLE());
+      FMT_FALLTHROUGH;
+    case TypeKind::DOUBLE:
+      break;
+    case TypeKind::ARRAY: {
+      auto childTargetTypes = implicitCastTargets(type->childAt(0));
+      for (auto childTarget : childTargetTypes) {
+        targetTypes.emplace_back(ARRAY(childTarget));
+      }
+      break;
+    }
+    default: // make compilers happy
+        ;
+  }
+  return targetTypes;
+}
 } // namespace
 
 // All acceptable implicit casts on this expression.
@@ -70,31 +112,12 @@ std::shared_ptr<const core::CastTypedExpr> makeTypedCast(
 // signatures that need to be compiled and registered.
 std::vector<std::shared_ptr<const core::ITypedExpr>> genImplicitCasts(
     const std::shared_ptr<const core::ITypedExpr>& typedExpr) {
+  auto targetTypes = implicitCastTargets(typedExpr->type());
+
   std::vector<std::shared_ptr<const core::ITypedExpr>> implicitCasts;
-  switch (typedExpr->type()->kind()) {
-    // We decide not to implicitly upcast booleans because it maybe funky.
-    case TypeKind::BOOLEAN:
-      break;
-    case TypeKind::TINYINT:
-      implicitCasts.emplace_back(makeTypedCast(SMALLINT(), {typedExpr}));
-      FMT_FALLTHROUGH;
-    case TypeKind::SMALLINT:
-      implicitCasts.emplace_back(makeTypedCast(INTEGER(), {typedExpr}));
-      implicitCasts.emplace_back(makeTypedCast(REAL(), {typedExpr}));
-      FMT_FALLTHROUGH;
-    case TypeKind::INTEGER:
-      implicitCasts.emplace_back(makeTypedCast(BIGINT(), {typedExpr}));
-      implicitCasts.emplace_back(makeTypedCast(DOUBLE(), {typedExpr}));
-      FMT_FALLTHROUGH;
-    case TypeKind::BIGINT:
-      break;
-    case TypeKind::REAL:
-      implicitCasts.emplace_back(makeTypedCast(DOUBLE(), {typedExpr}));
-      FMT_FALLTHROUGH;
-    case TypeKind::DOUBLE:
-      break;
-    default: // make compilers happy
-        ;
+  implicitCasts.reserve(targetTypes.size());
+  for (auto targetType : targetTypes) {
+    implicitCasts.emplace_back(makeTypedCast(targetType, {typedExpr}));
   }
   return implicitCasts;
 }
@@ -228,7 +251,7 @@ std::shared_ptr<const core::ITypedExpr> Expressions::inferTypes(
     }
     return std::make_shared<FieldAccessTypedExpr>(
         input->childAt(foundIndex),
-        move(children),
+        children.at(0),
         std::string{fae->getFieldName()});
   } else if (auto fun = std::dynamic_pointer_cast<const CallExpr>(expr)) {
     return createWithImplicitCast(move(fun), move(children));

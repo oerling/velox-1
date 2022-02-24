@@ -21,7 +21,6 @@
 #include <limits>
 #include <list>
 #include <memory>
-#include <mutex>
 #include <string>
 
 #include <fmt/format.h>
@@ -32,6 +31,7 @@
 #include "folly/CPortability.h"
 #include "folly/Likely.h"
 #include "folly/Random.h"
+#include "folly/SharedMutex.h"
 #include "folly/experimental/FunctionScheduler.h"
 #include "velox/common/memory/MemoryUsage.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
@@ -296,7 +296,7 @@ class MemoryPoolBase : public std::enable_shared_from_this<MemoryPoolBase>,
   const std::string name_;
   std::weak_ptr<MemoryPool> parent_;
 
-  mutable std::mutex childrenMutex_;
+  mutable folly::SharedMutex childrenMutex_;
   std::list<std::shared_ptr<MemoryPool>> children_;
 };
 
@@ -446,7 +446,7 @@ class MemoryPoolImpl : public MemoryPoolBase {
   // Memory allocated attributed to the memory node.
   MemoryUsage localMemoryUsage_;
   std::shared_ptr<MemoryUsageTracker> memoryUsageTracker_;
-  mutable std::mutex subtreeUsageMutex_;
+  mutable folly::SharedMutex subtreeUsageMutex_;
   MemoryUsage subtreeMemoryUsage_;
   int64_t cap_;
   std::atomic_bool capped_{false};
@@ -542,7 +542,7 @@ class MemoryManager final : public IMemoryManager {
   std::shared_ptr<Allocator> allocator_;
   const int64_t memoryQuota_;
   std::shared_ptr<MemoryPool> root_;
-  mutable std::mutex mutex_;
+  mutable folly::SharedMutex mutex_;
   std::atomic_long totalBytes_{0};
 };
 
@@ -563,7 +563,7 @@ MemoryPoolImpl<Allocator, ALIGNMENT>::MemoryPoolImpl(
 template <typename Allocator, uint16_t ALIGNMENT>
 void* MemoryPoolImpl<Allocator, ALIGNMENT>::allocate(int64_t size) {
   if (this->isMemoryCapped()) {
-    VELOX_MEM_CAP_EXCEEDED();
+    VELOX_MEM_CAP_EXCEEDED(cap_);
   }
   auto alignedSize = sizeAlign<ALIGNMENT>(ALIGNER<ALIGNMENT>{}, size);
   reserve(alignedSize);
@@ -577,7 +577,7 @@ void* MemoryPoolImpl<Allocator, ALIGNMENT>::allocateZeroFilled(
   VELOX_USER_CHECK_EQ(sizeEach, 1);
   auto alignedSize = sizeAlign<ALIGNMENT>(ALIGNER<ALIGNMENT>{}, numMembers);
   if (this->isMemoryCapped()) {
-    VELOX_MEM_CAP_EXCEEDED();
+    VELOX_MEM_CAP_EXCEEDED(cap_);
   }
   reserve(alignedSize * sizeEach);
   return allocator_.allocZeroFilled(alignedSize, sizeEach);
@@ -602,7 +602,7 @@ void* MemoryPoolImpl<Allocator, ALIGNMENT>::reallocate(
       ALIGNER<ALIGNMENT>{}, p, alignedSize, alignedNewSize);
   if (UNLIKELY(!newP)) {
     free(p, alignedSize);
-    VELOX_MEM_CAP_EXCEEDED();
+    VELOX_MEM_CAP_EXCEEDED(cap_);
   }
 
   return newP;
@@ -732,14 +732,14 @@ int64_t MemoryPoolImpl<Allocator, ALIGNMENT>::getSubtreeMaxBytes() const {
 template <typename Allocator, uint16_t ALIGNMENT>
 void MemoryPoolImpl<Allocator, ALIGNMENT>::accessSubtreeMemoryUsage(
     std::function<void(const MemoryUsage&)> visitor) const {
-  std::lock_guard<std::mutex> memoryBarrier{subtreeUsageMutex_};
+  folly::SharedMutex::ReadHolder readLock{subtreeUsageMutex_};
   visitor(subtreeMemoryUsage_);
 }
 
 template <typename Allocator, uint16_t ALIGNMENT>
 void MemoryPoolImpl<Allocator, ALIGNMENT>::updateSubtreeMemoryUsage(
     std::function<void(MemoryUsage&)> visitor) {
-  std::lock_guard<std::mutex> memoryBarrier{subtreeUsageMutex_};
+  folly::SharedMutex::WriteHolder writeLock{subtreeUsageMutex_};
   visitor(subtreeMemoryUsage_);
 }
 
@@ -758,7 +758,7 @@ void MemoryPoolImpl<Allocator, ALIGNMENT>::reserve(int64_t size) {
     // is low-pri because we can only have inflated aggregates, and be on the
     // more conservative side.
     release(size);
-    VELOX_MEM_CAP_EXCEEDED();
+    VELOX_MEM_CAP_EXCEEDED(cap_);
   }
 }
 

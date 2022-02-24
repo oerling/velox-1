@@ -24,10 +24,12 @@
 #include "velox/functions/lib/string/StringImpl.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 #include "velox/parse/Expressions.h"
+#include "velox/type/Type.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::functions::test;
+using namespace std::string_literals;
 
 namespace {
 /// Generate an ascii random string of size length
@@ -67,14 +69,15 @@ int expectedLength(int i) {
 }
 
 std::string hexToDec(const std::string& str) {
-  char output[16];
-  auto chars = str.data();
-  for (int i = 0; i < 16; i++) {
-    int high = facebook::velox::functions::stringImpl::fromHex(chars[2 * i]);
-    int low = facebook::velox::functions::stringImpl::fromHex(chars[2 * i + 1]);
-    output[i] = (high << 4) | (low & 0xf);
+  VELOX_CHECK_EQ(str.size() % 2, 0);
+  std::string out;
+  out.resize(str.size() / 2);
+  for (int i = 0; i < out.size(); ++i) {
+    int high = facebook::velox::functions::stringImpl::fromHex(str[2 * i]);
+    int low = facebook::velox::functions::stringImpl::fromHex(str[2 * i + 1]);
+    out[i] = (high << 4) | (low & 0xf);
   }
-  return std::string(output, 16);
+  return out;
 }
 } // namespace
 
@@ -290,6 +293,7 @@ class StringFunctionsTest : public FunctionBaseTest {
   using strpos_input_test_t = std::vector<
       std::pair<std::tuple<std::string, std::string, int64_t>, int64_t>>;
 
+  template <typename TInstance>
   void testStringPositionAllFlatVector(
       const strpos_input_test_t& tests,
       const std::vector<std::optional<bool>>& stringEncodings,
@@ -326,6 +330,48 @@ class StringFunctionsTest : public FunctionBaseTest {
   void testXXHash64(
       const std::vector<std::pair<std::string, int64_t>>& tests,
       bool stringVariant);
+
+  static std::string generateInvalidUtf8() {
+    std::string str;
+    str.resize(2);
+    // Create corrupt data below.
+    char16_t c = u'\u04FF';
+    str[0] = (char)c;
+    str[1] = (char)c;
+    return str;
+  }
+
+  // Generate complex encoding with the format:
+  // whitespace|unicode line separator|ascii|two bytes encoding|three bytes
+  // encoding|four bytes encoding|whitespace|unicode line separator
+  static std::string generateComplexUtf8(bool invalid = false) {
+    std::string str;
+    // White spaces
+    str.append(" \u2028"s);
+    if (invalid) {
+      str.append(generateInvalidUtf8());
+    }
+    // Ascii
+    str.append("hello");
+    // two bytes
+    str.append(" \u017F");
+    // three bytes
+    str.append(" \u4FE1");
+    // four bytes
+    std::string tmp;
+    tmp.resize(4);
+    tmp[0] = 0xF0;
+    tmp[1] = 0xAF;
+    tmp[2] = 0xA8;
+    tmp[3] = 0x9F;
+    str.append(" ").append(tmp);
+    if (invalid) {
+      str.append(generateInvalidUtf8());
+    }
+    // white spaces
+    str.append("\u2028 ");
+    return str;
+  }
 };
 
 /**
@@ -815,6 +861,7 @@ TEST_F(StringFunctionsTest, length) {
 }
 
 // Test strpos function
+template <typename TInstance>
 void StringFunctionsTest::testStringPositionAllFlatVector(
     const strpos_input_test_t& tests,
     const std::vector<std::optional<bool>>& asciiEncodings,
@@ -822,7 +869,7 @@ void StringFunctionsTest::testStringPositionAllFlatVector(
   auto stringVector = makeFlatVector<StringView>(tests.size());
   auto subStringVector = makeFlatVector<StringView>(tests.size());
   auto instanceVector =
-      withInstanceArgument ? makeFlatVector<int64_t>(tests.size()) : nullptr;
+      withInstanceArgument ? makeFlatVector<TInstance>(tests.size()) : nullptr;
 
   for (int i = 0; i < tests.size(); i++) {
     stringVector->set(i, StringView(std::get<0>(tests[i].first)));
@@ -873,9 +920,13 @@ TEST_F(StringFunctionsTest, stringPosition) {
   // We dont have to try all encoding combinations here since there is a test
   // that test the encoding resolution but we want to to have a test for each
   // possible resolution
-  testStringPositionAllFlatVector(testsAscii, {true, true}, false);
+  testStringPositionAllFlatVector<int64_t>(testsAscii, {true, true}, false);
 
-  testStringPositionAllFlatVector(testsAsciiWithPosition, {false, false}, true);
+  // Try instance parameter using BIGINT and INTEGER.
+  testStringPositionAllFlatVector<int32_t>(
+      testsAsciiWithPosition, {false, false}, true);
+  testStringPositionAllFlatVector<int64_t>(
+      testsAsciiWithPosition, {false, false}, true);
 
   // Test constant vectors
   auto rows = makeRowVector(makeRowType({BIGINT()}), 10);
@@ -980,33 +1031,85 @@ TEST_F(StringFunctionsTest, md5) {
   EXPECT_EQ(std::nullopt, md5(std::nullopt));
 }
 
+TEST_F(StringFunctionsTest, sha256) {
+  const auto sha256 = [&](std::optional<std::string> arg) {
+    return evaluateOnce<std::string, std::string>(
+        "sha256(c0)", {arg}, {VARBINARY()});
+  };
+
+  EXPECT_EQ(
+      hexToDec(
+          "02208b9403a87df9f4ed6b2ee2657efaa589026b4cce9accc8e8a5bf3d693c86"),
+      sha256("hashme"));
+  EXPECT_EQ(
+      hexToDec(
+          "d0067cad9a63e0813759a2bb841051ca73570c0da2e08e840a8eb45db6a7a010"),
+      sha256("Infinity"));
+  EXPECT_EQ(
+      hexToDec(
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+      sha256(""));
+
+  EXPECT_EQ(std::nullopt, sha256(std::nullopt));
+}
+
 void StringFunctionsTest::testReplaceInPlace(
     const std::vector<std::pair<std::string, std::string>>& tests,
     const std::string& search,
     const std::string& replace,
     bool multiReferenced) {
-  auto stringVector = makeFlatVector<StringView>(tests.size());
+  auto makeInput = [&]() {
+    auto stringVector = makeFlatVector<StringView>(tests.size());
 
-  for (int i = 0; i < tests.size(); i++) {
-    stringVector->set(i, StringView(tests[i].first));
-  }
-
-  auto crossRefVector = makeFlatVector<StringView>(1);
-
-  if (multiReferenced) {
-    crossRefVector->acquireSharedStringBuffers(stringVector.get());
-  }
-
-  FlatVectorPtr<StringView> result = evaluate<FlatVector<StringView>>(
-      fmt::format("replace(c0, '{}', '{}')", search, replace),
-      makeRowVector({stringVector}));
-
-  for (int32_t i = 0; i < tests.size(); ++i) {
-    ASSERT_EQ(result->valueAt(i), StringView(tests[i].second));
-    if (!multiReferenced && !stringVector->valueAt(i).isInline() &&
-        search.size() <= replace.size()) {
-      ASSERT_EQ(result->valueAt(i), stringVector->valueAt(i));
+    for (int i = 0; i < tests.size(); i++) {
+      stringVector->set(i, StringView(tests[i].first));
     }
+    auto crossRefVector = makeFlatVector<StringView>(1);
+
+    if (multiReferenced) {
+      crossRefVector->acquireSharedStringBuffers(stringVector.get());
+    }
+    return stringVector;
+  };
+
+  auto testResults = [&](const FlatVector<StringView>* results) {
+    for (int32_t i = 0; i < tests.size(); ++i) {
+      ASSERT_EQ(results->valueAt(i), StringView(tests[i].second));
+    }
+  };
+
+  auto result = evaluate<FlatVector<StringView>>(
+      fmt::format("replace(c0, '{}', '{}')", search, replace),
+      makeRowVector({makeInput()}));
+  testResults(result.get());
+
+  // Test in place optimization. If in-place is expected, make sure it happened.
+  // If its not expected make sure it did not happen.
+  auto applyReplaceFunction = [&](std::vector<VectorPtr>& functionInputs,
+                                  VectorPtr& resultPtr) {
+    auto replaceFunction = exec::getVectorFunction("replace", {VARCHAR()}, {});
+    SelectivityVector rows(tests.size());
+    ExprSet exprSet({}, &execCtx_);
+    RowVectorPtr inputRows = makeRowVector({});
+    exec::EvalCtx evalCtx(&execCtx_, &exprSet, inputRows.get());
+    replaceFunction->apply(
+        rows, functionInputs, VARCHAR(), &evalCtx, &resultPtr);
+  };
+
+  std::vector<VectorPtr> functionInputs = {
+      makeInput(),
+      makeConstant(search.c_str(), tests.size()),
+      makeConstant(replace.c_str(), tests.size())};
+
+  VectorPtr resultPtr;
+  applyReplaceFunction(functionInputs, resultPtr);
+  testResults(resultPtr->asFlatVector<StringView>());
+
+  if (!multiReferenced && search >= replace) {
+    // Expected in-place.
+    ASSERT_TRUE(resultPtr == functionInputs[0]);
+  } else {
+    ASSERT_FALSE(resultPtr == functionInputs[0]);
   }
 }
 
@@ -1072,6 +1175,7 @@ TEST_F(StringFunctionsTest, replace) {
 
   testReplaceInPlace(testsInplace, "a", "b", true);
   testReplaceInPlace(testsInplace, "a", "b", false);
+  testReplaceInPlace({{"a", "bb"}, {"aa", "bbbb"}}, "a", "bb", false);
 
   // Test constant vectors
   auto rows = makeRowVector(makeRowType({BIGINT()}), 10);
@@ -1195,6 +1299,29 @@ TEST_F(StringFunctionsTest, toBase64) {
       "SGVsbG8gV29ybGQgZnJvbSBWZWxveCE=", toBase64("Hello World from Velox!"));
 }
 
+TEST_F(StringFunctionsTest, reverse) {
+  const auto reverse = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string>("reverse(c0)", value);
+  };
+
+  std::string invalidStr = "Ψ\xFF\xFFΣΓΔA";
+  std::string expectedInvalidStr = "AΔΓΣ\xFF\xFFΨ";
+
+  EXPECT_EQ(std::nullopt, reverse(std::nullopt));
+  EXPECT_EQ("", reverse(""));
+  EXPECT_EQ("a", reverse("a"));
+  EXPECT_EQ("cba", reverse("abc"));
+  EXPECT_EQ("koobecaF", reverse("Facebook"));
+  EXPECT_EQ("ΨΧΦΥΤΣΣΡΠΟΞΝΜΛΚΙΘΗΖΕΔΓΒΑ", reverse("ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΣΤΥΦΧΨ"));
+  EXPECT_EQ(
+      u8" \u2028 \u671B\u5E0C \u7231 \u5FF5\u4FE1",
+      reverse(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B \u2028 "));
+  EXPECT_EQ(
+      u8"\u671B\u5E0C\u2014\u7231\u2014\u5FF5\u4FE1",
+      reverse(u8"\u4FE1\u5FF5\u2014\u7231\u2014\u5E0C\u671B"));
+  EXPECT_EQ(expectedInvalidStr, reverse(invalidStr));
+}
+
 TEST_F(StringFunctionsTest, fromBase64) {
   const auto fromBase64 = [&](std::optional<std::string> value) {
     return evaluateOnce<std::string>("from_base64(c0)", value);
@@ -1228,43 +1355,6 @@ TEST_F(StringFunctionsTest, urlEncode) {
       urlEncode("http://\u30c6\u30b9\u30c8"));
   EXPECT_EQ("%7E%40%3A.-*_%2B+%E2%98%83", urlEncode("~@:.-*_+ \u2603"));
   EXPECT_EQ("test", urlEncode("test"));
-}
-
-TEST_F(StringFunctionsTest, trim) {
-  // Making input vector
-  auto strings = std::vector<std::string>{
-      "  facebook  ",
-      "  facebook",
-      "facebook  ",
-      "\n\nfacebook \n ",
-      " \n",
-      "",
-      "    ",
-      "  a  ",
-      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B \u2028 ",
-      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ",
-      " \u4FE1\u5FF5 \u7231 \u5E0C\u671B ",
-      "  \u4FE1\u5FF5 \u7231 \u5E0C\u671B",
-      " \u2028 \u4FE1\u5FF5 \u7231 \u5E0C\u671B"};
-  auto row = makeRowVector({makeFlatVector(strings)});
-  auto result = evaluate<FlatVector<StringView>>("trim(c0)", row);
-
-  EXPECT_EQ("facebook", result->valueAt(0).getString());
-  EXPECT_EQ("facebook", result->valueAt(1).getString());
-  EXPECT_EQ("facebook", result->valueAt(2).getString());
-  EXPECT_EQ("facebook", result->valueAt(3).getString());
-  EXPECT_EQ("", result->valueAt(4).getString());
-  EXPECT_EQ("", result->valueAt(5).getString());
-  EXPECT_EQ("", result->valueAt(6).getString());
-  EXPECT_EQ("a", result->valueAt(7).getString());
-  EXPECT_EQ(
-      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B \u2028",
-      result->valueAt(8).getString());
-  EXPECT_EQ("\u4FE1\u5FF5 \u7231 \u5E0C\u671B", result->valueAt(9).getString());
-  EXPECT_EQ(
-      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B", result->valueAt(10).getString());
-  EXPECT_EQ(
-      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B", result->valueAt(11).getString());
 }
 
 TEST_F(StringFunctionsTest, urlDecode) {
@@ -1310,7 +1400,7 @@ class MultiStringFunction : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* /*caller*/,
+      const TypePtr& /* outputType */,
       exec::EvalCtx* /*context*/,
       VectorPtr* result) const override {
     *result = BaseVector::wrapInConstant(rows.size(), 0, args[0]);
@@ -1347,12 +1437,13 @@ TEST_F(StringFunctionsTest, ascinessOnDictionary) {
   using S = StringView;
   VELOX_REGISTER_VECTOR_FUNCTION(udf_multi_string_function, "multi_string_fn")
   vector_size_t size = 5;
-  auto flatVector = makeFlatVector<StringView>(
-      {S("hello how do"),
-       S("how are"),
-       S("is this how"),
-       S("abcd"),
-       S("yes no")});
+  auto flatVector = makeFlatVector<StringView>({
+      S("hello how do"),
+      S("how are"),
+      S("is this how"),
+      S("abcd"),
+      S("yes no"),
+  });
 
   auto searchVector = makeFlatVector<StringView>(
       {S("hello"), S("how"), S("is"), S("abc"), S("yes")});
@@ -1467,10 +1558,10 @@ class InputModifyingFunction : public MultiStringFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* expr,
+      const TypePtr& outputType,
       exec::EvalCtx* ctx,
       VectorPtr* result) const override {
-    MultiStringFunction::apply(rows, args, expr, ctx, result);
+    MultiStringFunction::apply(rows, args, outputType, ctx, result);
 
     // Modify args and remove its asciness
     for (auto& arg : args) {
@@ -1587,4 +1678,215 @@ TEST_F(StringFunctionsTest, asciiPropagationWithDisparateInput) {
   testAsciiPropagation(c1, c2, c3, all, false, "ascii_propagation_check", {});
 
   testAsciiPropagation(c1, c3, c2, all, true, "ascii_propagation_check", {});
+}
+
+TEST_F(StringFunctionsTest, trim) {
+  // Making input vector
+  std::string complexStr = generateComplexUtf8();
+  std::string expectedComplexStr = complexStr.substr(4, complexStr.size() - 8);
+
+  const auto trim = [&](std::optional<std::string> input) {
+    return evaluateOnce<std::string>("trim(c0)", input);
+  };
+
+  EXPECT_EQ("facebook", trim("  facebook  "));
+  EXPECT_EQ("facebook", trim("  facebook"));
+  EXPECT_EQ("facebook", trim("facebook  "));
+  EXPECT_EQ("facebook", trim("\n\nfacebook \n "));
+  EXPECT_EQ("", trim(" \n"));
+  EXPECT_EQ("", trim(""));
+  EXPECT_EQ("", trim("    "));
+  EXPECT_EQ("a", trim("  a  "));
+
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      trim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B \u2028 "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      trim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B  "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      trim(u8" \u4FE1\u5FF5 \u7231 \u5E0C\u671B "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      trim(u8"  \u4FE1\u5FF5 \u7231 \u5E0C\u671B"));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      trim(u8" \u2028 \u4FE1\u5FF5 \u7231 \u5E0C\u671B"));
+
+  EXPECT_EQ(expectedComplexStr, trim(complexStr));
+  EXPECT_EQ(
+      "Ψ\xFF\xFFΣΓΔA", trim("\u2028 \r \t \nΨ\xFF\xFFΣΓΔA \u2028 \r \t \n"));
+}
+
+TEST_F(StringFunctionsTest, ltrim) {
+  std::string complexStr = generateComplexUtf8();
+  std::string expectedComplexStr = complexStr.substr(4, complexStr.size() - 4);
+
+  const auto ltrim = [&](std::optional<std::string> input) {
+    return evaluateOnce<std::string>("ltrim(c0)", input);
+  };
+
+  EXPECT_EQ("facebook", ltrim("facebook"));
+  EXPECT_EQ("facebook ", ltrim("  facebook "));
+  EXPECT_EQ("facebook \n", ltrim("\n\nfacebook \n"));
+  EXPECT_EQ("", ltrim("\n"));
+  EXPECT_EQ("", ltrim(" "));
+  EXPECT_EQ("", ltrim("     "));
+  EXPECT_EQ("a  ", ltrim("  a  "));
+  EXPECT_EQ("facebo ok", ltrim(" facebo ok"));
+  EXPECT_EQ("move fast", ltrim("\tmove fast"));
+  EXPECT_EQ("move fast", ltrim("\r\t move fast"));
+  EXPECT_EQ("hello", ltrim("\n\t\r hello"));
+
+  EXPECT_EQ(u8"\u4F60\u597D", ltrim(u8" \u4F60\u597D"));
+  EXPECT_EQ(u8"\u4F60\u597D ", ltrim(u8" \u4F60\u597D "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ",
+      ltrim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B  "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B ",
+      ltrim(u8" \u4FE1\u5FF5 \u7231 \u5E0C\u671B "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      ltrim(u8"  \u4FE1\u5FF5 \u7231 \u5E0C\u671B"));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      ltrim(u8" \u2028 \u4FE1\u5FF5 \u7231 \u5E0C\u671B"));
+
+  EXPECT_EQ(expectedComplexStr, ltrim(complexStr));
+  EXPECT_EQ("Ψ\xFF\xFFΣΓΔA", ltrim("  \u2028 \r \t \n   Ψ\xFF\xFFΣΓΔA"));
+}
+
+TEST_F(StringFunctionsTest, rtrim) {
+  std::string complexStr = generateComplexUtf8();
+  std::string expectedComplexStr = complexStr.substr(0, complexStr.size() - 4);
+
+  const auto rtrim = [&](std::optional<std::string> input) {
+    return evaluateOnce<std::string>("rtrim(c0)", input);
+  };
+
+  EXPECT_EQ("facebook", rtrim("facebook"));
+  EXPECT_EQ(" facebook", rtrim(" facebook  "));
+  EXPECT_EQ("\nfacebook", rtrim("\nfacebook \n\n"));
+  EXPECT_EQ("", rtrim(" \n"));
+  EXPECT_EQ("", rtrim(" "));
+  EXPECT_EQ("", rtrim("     "));
+  EXPECT_EQ("  a", rtrim("  a  "));
+  EXPECT_EQ("facebo ok", rtrim("facebo ok "));
+  EXPECT_EQ("move fast", rtrim("move fast\t"));
+  EXPECT_EQ("move fast", rtrim("move fast\r\t "));
+  EXPECT_EQ("hello", rtrim("hello\n\t\r "));
+
+  EXPECT_EQ(u8" \u4F60\u597D", rtrim(u8" \u4F60\u597D"));
+  EXPECT_EQ(u8" \u4F60\u597D", rtrim(u8" \u4F60\u597D "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      rtrim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B  "));
+  EXPECT_EQ(
+      u8" \u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      rtrim(u8" \u4FE1\u5FF5 \u7231 \u5E0C\u671B "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      rtrim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B  "));
+  EXPECT_EQ(
+      u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B",
+      rtrim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B \u2028 "));
+
+  EXPECT_EQ(expectedComplexStr, rtrim(complexStr));
+  EXPECT_EQ("     Ψ\xFF\xFFΣΓΔA", rtrim("     Ψ\xFF\xFFΣΓΔA \u2028 \r \t \n"));
+}
+
+TEST_F(StringFunctionsTest, rpad) {
+  const auto rpad = [&](std::optional<std::string> string,
+                        std::optional<int64_t> size,
+                        std::optional<std::string> padString) {
+    return evaluateOnce<std::string>(
+        "rpad(c0, c1, c2)", string, size, padString);
+  };
+
+  std::string invalidString = "Ψ\xFF\xFFΣΓΔA";
+  std::string invalidPadString = "\xFFΨ\xFF";
+
+  // Null arguments
+  EXPECT_EQ(std::nullopt, rpad(std::nullopt, 16, "abc"));
+  EXPECT_EQ(std::nullopt, rpad("xyz", std::nullopt, "abc"));
+  EXPECT_EQ(std::nullopt, rpad("xyz", 16, std::nullopt));
+  // ASCII strings with various values for size and padString
+  EXPECT_EQ("textx", rpad("text", 5, "x"));
+  EXPECT_EQ("text", rpad("text", 4, "x"));
+  EXPECT_EQ("textxy", rpad("text", 6, "xy"));
+  EXPECT_EQ("textxyx", rpad("text", 7, "xy"));
+  EXPECT_EQ("textxyzxy", rpad("text", 9, "xyz"));
+  // Non-ASCII strings with various values for size and padString
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u671B",
+      rpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 10, "\u671B"));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u671B\u671B",
+      rpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 11, "\u671B"));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u5E0C\u671B\u5E0C",
+      rpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 12, "\u5E0C\u671B"));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u5E0C\u671B\u5E0C\u671B",
+      rpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 13, "\u5E0C\u671B"));
+  // Empty string
+  EXPECT_EQ("aaa", rpad("", 3, "a"));
+  // Truncating string
+  EXPECT_EQ("", rpad("abc", 0, "e"));
+  EXPECT_EQ("tex", rpad("text", 3, "xy"));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231 ",
+      rpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 5, "\u671B"));
+  // Invalid UTF-8 chars
+  EXPECT_EQ(invalidString + "x", rpad(invalidString, 8, "x"));
+  EXPECT_EQ("abc" + invalidPadString, rpad("abc", 6, invalidPadString));
+}
+
+TEST_F(StringFunctionsTest, lpad) {
+  const auto lpad = [&](std::optional<std::string> string,
+                        std::optional<int64_t> size,
+                        std::optional<std::string> padString) {
+    return evaluateOnce<std::string>(
+        "lpad(c0, c1, c2)", string, size, padString);
+  };
+
+  std::string invalidString = "Ψ\xFF\xFFΣΓΔA";
+  std::string invalidPadString = "\xFFΨ\xFF";
+
+  // Null arguments
+  EXPECT_EQ(std::nullopt, lpad(std::nullopt, 16, "abc"));
+  EXPECT_EQ(std::nullopt, lpad("xyz", std::nullopt, "abc"));
+  EXPECT_EQ(std::nullopt, lpad("xyz", 16, std::nullopt));
+  // ASCII strings with various values for size and padString
+  EXPECT_EQ("xtext", lpad("text", 5, "x"));
+  EXPECT_EQ("text", lpad("text", 4, "x"));
+  EXPECT_EQ("xytext", lpad("text", 6, "xy"));
+  EXPECT_EQ("xyxtext", lpad("text", 7, "xy"));
+  EXPECT_EQ("xyzxytext", lpad("text", 9, "xyz"));
+  // Non-ASCII strings with various values for size and padString
+  EXPECT_EQ(
+      "\u671B\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ",
+      lpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 10, "\u671B"));
+  EXPECT_EQ(
+      "\u671B\u671B\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ",
+      lpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 11, "\u671B"));
+  EXPECT_EQ(
+      "\u5E0C\u671B\u5E0C\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ",
+      lpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 12, "\u5E0C\u671B"));
+  EXPECT_EQ(
+      "\u5E0C\u671B\u5E0C\u671B\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ",
+      lpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 13, "\u5E0C\u671B"));
+  // Empty string
+  EXPECT_EQ("aaa", lpad("", 3, "a"));
+  // Truncating string
+  EXPECT_EQ("", lpad("abc", 0, "e"));
+  EXPECT_EQ("tex", lpad("text", 3, "xy"));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231 ",
+      lpad("\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ", 5, "\u671B"));
+  // Invalid UTF-8 chars
+  EXPECT_EQ("x" + invalidString, lpad(invalidString, 8, "x"));
+  EXPECT_EQ(invalidPadString + "abc", lpad("abc", 6, invalidPadString));
 }

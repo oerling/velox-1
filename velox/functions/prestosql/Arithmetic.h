@@ -15,263 +15,485 @@
  */
 #pragma once
 
+#include <cerrno>
+#include <charconv>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <system_error>
 
 #include "folly/CPortability.h"
+#include "velox/common/base/Exceptions.h"
 #include "velox/functions/Macros.h"
 #include "velox/functions/prestosql/ArithmeticImpl.h"
 
 namespace facebook::velox::functions {
 
-template <typename T>
-VELOX_UDF_BEGIN(plus)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = plus(a, b);
-  return true;
-}
-VELOX_UDF_END();
+inline constexpr int kMinRadix = 2;
+inline constexpr int kMaxRadix = 36;
+
+inline constexpr char digits[36] = {
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b',
+    'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+    'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'};
 
 template <typename T>
-VELOX_UDF_BEGIN(minus)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = minus(a, b);
-  return true;
-}
-VELOX_UDF_END();
+struct PlusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = plus(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(multiply)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = multiply(a, b);
-  return true;
-}
-VELOX_UDF_END();
+struct MinusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = minus(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(divide)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b)
+struct MultiplyFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = multiply(a, b);
+    return true;
+  }
+};
+
+template <typename T>
+struct DivideFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b)
 // depend on compiler have correct behaviour for divide by zero
 #if defined(__has_feature)
 #if __has_feature(__address_sanitizer__)
-    __attribute__((__no_sanitize__("float-divide-by-zero")))
+      __attribute__((__no_sanitize__("float-divide-by-zero")))
 #endif
 #endif
-{
-  result = a / b;
-  return true;
-}
-VELOX_UDF_END();
+  {
+    result = a / b;
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(modulus)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = modulus(a, b);
-  return true;
-}
-VELOX_UDF_END();
+struct ModulusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = modulus(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(ceil)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a) {
-  result = ceil(a);
-  return true;
-}
-VELOX_UDF_END();
+struct CeilFunction {
+  template <typename TOutput, typename TInput = TOutput>
+  FOLLY_ALWAYS_INLINE bool call(TOutput& result, const TInput& a) {
+    if constexpr (std::is_integral<TInput>::value) {
+      result = a;
+    } else {
+      result = ceil(a);
+    }
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(floor)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a) {
-  result = floor(a);
-  return true;
-}
-VELOX_UDF_END();
+struct FloorFunction {
+  template <typename TOutput, typename TInput = TOutput>
+  FOLLY_ALWAYS_INLINE bool call(TOutput& result, const TInput& a) {
+    if constexpr (std::is_integral<TInput>::value) {
+      result = a;
+    } else {
+      result = floor(a);
+    }
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(abs)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a) {
-  result = abs(a);
-  return true;
-}
-VELOX_UDF_END();
+struct AbsFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(TInput& result, const TInput& a) {
+    result = abs(a);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(negate)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a) {
-  result = negate(a);
-  return true;
-}
-VELOX_UDF_END();
+struct NegateFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(TInput& result, const TInput& a) {
+    result = negate(a);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(round)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const int32_t b = 0) {
-  result = round(a, b);
-  return true;
-}
-VELOX_UDF_END();
+struct RoundFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const int32_t b = 0) {
+    result = round(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(power)
-FOLLY_ALWAYS_INLINE bool call(double& result, const T& a, const T& b) {
-  result = std::pow(a, b);
-  return true;
-}
-VELOX_UDF_END();
-
-VELOX_UDF_BEGIN(exp)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::exp(a);
-  return true;
-}
-VELOX_UDF_END();
+struct PowerFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(double& result, const TInput& a, const TInput& b) {
+    result = std::pow(a, b);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(min)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& a, const T& b) {
-  result = std::min(a, b);
-  return true;
-}
-VELOX_UDF_END();
+struct ExpFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::exp(a);
+    return true;
+  }
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(clamp)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T& v, const T& lo, const T& hi) {
-  result = std::clamp(v, lo, hi);
-  return true;
+struct MinFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& a, const TInput& b) {
+    result = std::min(a, b);
+    return true;
+  }
+};
+
+template <typename T>
+struct ClampFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(TInput& result, const TInput& v, const TInput& lo, const TInput& hi) {
+    result = std::clamp(v, lo, hi);
+    return true;
+  }
+};
+
+template <typename T>
+struct LnFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::log(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct Log2Function {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::log2(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct Log10Function {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::log10(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct CosFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::cos(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct CoshFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::cosh(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct AcosFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::acos(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct SinFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::sin(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct AsinFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::asin(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct TanFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::tan(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct TanhFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::tanh(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct AtanFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::atan(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct Atan2Function {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double y, double x) {
+    result = std::atan2(y, x);
+    return true;
+  }
+};
+
+template <typename T>
+struct SqrtFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::sqrt(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct CbrtFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = std::cbrt(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct WidthBucketFunction {
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      double operand,
+      double bound1,
+      double bound2,
+      int64_t bucketCount) {
+    // TODO: These checks are costing ~13% performance penalty, it would be nice
+    //       to optimize for the common cases where bounds and bucket count are
+    //       constant to skip these checks
+    // Benchmark reference: WidthBucketBenchmark.cpp
+    // Benchmark Result:
+    // https://github.com/facebookexternal/velox/pull/1225#discussion_r665621405
+    VELOX_USER_CHECK_GT(bucketCount, 0, "bucketCount must be greater than 0");
+    VELOX_USER_CHECK(!std::isnan(operand), "operand must not be NaN");
+    VELOX_USER_CHECK(std::isfinite(bound1), "first bound must be finite");
+    VELOX_USER_CHECK(std::isfinite(bound2), "second bound must be finite");
+    VELOX_USER_CHECK_NE(bound1, bound2, "bounds cannot equal each other");
+
+    double lower = std::min(bound1, bound2);
+    double upper = std::max(bound1, bound2);
+
+    if (operand < lower) {
+      result = 0;
+    } else if (operand > upper) {
+      VELOX_USER_CHECK_NE(
+          bucketCount,
+          std::numeric_limits<int64_t>::max(),
+          "Bucket for value {} is out of range",
+          operand);
+      result = bucketCount + 1;
+    } else {
+      result =
+          (int64_t)((double)bucketCount * (operand - lower) / (upper - lower) + 1);
+    }
+
+    if (bound1 > bound2) {
+      result = bucketCount - result + 1;
+    }
+    return true;
+  }
+};
+
+template <typename T>
+struct RadiansFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
+    result = a * (M_PI / 180);
+    return true;
+  }
+};
+
+template <typename T>
+struct SignFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(TInput& result, const TInput& a) {
+    if constexpr (std::is_floating_point<TInput>::value) {
+      if (std::isnan(a)) {
+        result = std::numeric_limits<TInput>::quiet_NaN();
+      } else {
+        result = (a == 0.0) ? 0.0 : (a > 0.0) ? 1.0 : -1.0;
+      }
+    } else {
+      result = (a == 0) ? 0 : (a > 0) ? 1 : -1;
+    }
+    return true;
+  }
+};
+
+template <typename T>
+struct InfinityFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result) {
+    result = std::numeric_limits<double>::infinity();
+    return true;
+  }
+};
+
+template <typename T>
+struct IsFiniteFunction {
+  FOLLY_ALWAYS_INLINE bool call(bool& result, double a) {
+    result = !std::isinf(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct IsInfiniteFunction {
+  FOLLY_ALWAYS_INLINE bool call(bool& result, double a) {
+    result = std::isinf(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct IsNanFunction {
+  FOLLY_ALWAYS_INLINE bool call(bool& result, double a) {
+    result = std::isnan(a);
+    return true;
+  }
+};
+
+template <typename T>
+struct NanFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result) {
+    result = std::numeric_limits<double>::quiet_NaN();
+    return true;
+  }
+};
+
+FOLLY_ALWAYS_INLINE void checkRadix(int64_t radix) {
+  VELOX_USER_CHECK_GE(
+      radix,
+      kMinRadix,
+      "Radix must be between {} and {}.",
+      kMinRadix,
+      kMaxRadix);
+  VELOX_USER_CHECK_LE(
+      radix,
+      kMaxRadix,
+      "Radix must be between {} and {}.",
+      kMinRadix,
+      kMaxRadix);
 }
-VELOX_UDF_END();
 
-VELOX_UDF_BEGIN(ln)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::log(a);
-  return true;
-}
-VELOX_UDF_END();
+template <typename T>
+struct FromBaseFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-VELOX_UDF_BEGIN(acos)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::acos(a);
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool
+  call(int64_t& result, const arg_type<Varchar>& input, int64_t radix) {
+    checkRadix(radix);
 
-VELOX_UDF_BEGIN(asin)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::asin(a);
-  return true;
-}
-VELOX_UDF_END();
+    auto begin = input.begin();
+    if (input.size() > 0 && (*input.begin()) == '+')
+      begin = input.begin() + 1;
+    auto status = std::from_chars(begin, input.end(), result, radix);
 
-VELOX_UDF_BEGIN(atan)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::atan(a);
-  return true;
-}
-VELOX_UDF_END();
+    VELOX_USER_CHECK(
+        (status.ec != std::errc::invalid_argument && status.ptr == input.end()),
+        "Not a valid base-{} number: {}.",
+        radix,
+        input.getString());
 
-VELOX_UDF_BEGIN(atan2)
-FOLLY_ALWAYS_INLINE bool call(double& result, double y, double x) {
-  result = std::atan2(y, x);
-  return true;
-}
-VELOX_UDF_END();
-
-VELOX_UDF_BEGIN(sqrt)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::sqrt(a);
-  return true;
-}
-VELOX_UDF_END();
-
-VELOX_UDF_BEGIN(cbrt)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = std::cbrt(a);
-  return true;
-}
-VELOX_UDF_END();
-
-VELOX_UDF_BEGIN(width_bucket)
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& result,
-    double operand,
-    double bound1,
-    double bound2,
-    int64_t bucketCount) {
-  // TODO: These checks are costing ~13% performance penalty, it would be nice
-  //       to optimize for the common cases where bounds and bucket count are
-  //       constant to skip these checks
-  // Benchmark reference: WidthBucketBenchmark.cpp
-  // Benchmark Result:
-  // https://github.com/facebookexternal/velox/pull/1225#discussion_r665621405
-  VELOX_USER_CHECK_GT(bucketCount, 0, "bucketCount must be greater than 0");
-  VELOX_USER_CHECK(!std::isnan(operand), "operand must not be NaN");
-  VELOX_USER_CHECK(std::isfinite(bound1), "first bound must be finite");
-  VELOX_USER_CHECK(std::isfinite(bound2), "second bound must be finite");
-  VELOX_USER_CHECK_NE(bound1, bound2, "bounds cannot equal each other");
-
-  double lower = std::min(bound1, bound2);
-  double upper = std::max(bound1, bound2);
-
-  if (operand < lower) {
-    result = 0;
-  } else if (operand > upper) {
     VELOX_USER_CHECK_NE(
-        bucketCount,
-        std::numeric_limits<int64_t>::max(),
-        "Bucket for value {} is out of range",
-        operand);
-    result = bucketCount + 1;
-  } else {
-    result =
-        (int64_t)((double)bucketCount * (operand - lower) / (upper - lower) + 1);
+        status.ec,
+        std::errc::result_out_of_range,
+        "{} is out of range.",
+        input.getString());
+
+    return true;
   }
+};
 
-  if (bound1 > bound2) {
-    result = bucketCount - result + 1;
+template <typename T>
+struct ToBaseFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool
+  call(out_type<Varchar>& result, const int64_t& value, const int64_t& radix) {
+    checkRadix(radix);
+
+    if (value == 0) {
+      result.resize(1);
+      result.data()[0] = '0';
+    } else {
+      int64_t runningValue = std::abs(value);
+      int64_t remainder;
+      char* resultPtr;
+      int64_t resultSize =
+          (int64_t)std::floor(std::log(runningValue) / std::log(radix)) + 1;
+      if (value < 0) {
+        resultSize += 1;
+        result.resize(resultSize);
+        resultPtr = result.data();
+        resultPtr[0] = '-';
+      } else {
+        result.resize(resultSize);
+        resultPtr = result.data();
+      }
+      int64_t index = resultSize;
+      while (runningValue > 0) {
+        remainder = runningValue % radix;
+        resultPtr[--index] = digits[remainder];
+        runningValue /= radix;
+      }
+    }
+    return true;
   }
-  return true;
-}
-VELOX_UDF_END();
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(bitwise_and)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
-  result = a & b;
-  return true;
-}
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_not)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a) {
-  result = ~a;
-  return true;
-}
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_or)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
-  result = a | b;
-  return true;
-}
-VELOX_UDF_END();
-
-template <typename T>
-VELOX_UDF_BEGIN(bitwise_xor)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, T a, T b) {
-  result = a ^ b;
-  return true;
-}
-VELOX_UDF_END();
-
-VELOX_UDF_BEGIN(radians)
-FOLLY_ALWAYS_INLINE bool call(double& result, double a) {
-  result = a * (M_PI / 180);
-  return true;
-}
-VELOX_UDF_END();
-
+struct PiFunction {
+  FOLLY_ALWAYS_INLINE bool call(double& result) {
+    result = M_PI;
+    return true;
+  }
+};
 } // namespace facebook::velox::functions

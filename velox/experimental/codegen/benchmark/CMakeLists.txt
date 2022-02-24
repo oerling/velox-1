@@ -19,7 +19,7 @@ add_executable(
 
 target_link_libraries(
   velox_codegen_benchmark_single_output
-  velox_exec_test_lib
+  velox_exec_test_util
   velox_codegen_utils_resource_path
   velox_codegen_code_generator
   ${FOLLY_BENCHMARK}
@@ -29,6 +29,7 @@ target_link_libraries(
   ${GFLAGS_LIBRARIES}
   ${FMT}
   velox_core
+  velox_exec
   velox_exec_test_util
   velox_functions_lib
   velox_functions_prestosql
@@ -80,16 +81,17 @@ add_compile_definitions(velox_codegen_test GFLAGS_LI="${GFLAGS_INCLUDES}")
 
 target_link_libraries(
   velox_codegen_benchmark
-  velox_exec_test_lib
+  velox_exec_test_util
   velox_codegen_code_generator
   ${FOLLY_BENCHMARK}
   ${FOLLY_WITH_DEPENDENCIES}
   ${Boost_FILESYSTEM_LIBRARIES}
   ${GTEST_BOTH_LIBRARIES}
   ${GFLAGS_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${FMT}
   velox_core
+  velox_exec
   velox_codegen_utils_resource_path
   velox_exec_test_util
   velox_functions_lib

@@ -14,9 +14,6 @@
 
 add_subdirectory(utils)
 
-# for generated headers
-include_directories(${CMAKE_BINARY_DIR})
-
 set(VELOX_LINK_LIBS
     velox_dwio_common
     velox_dwio_dwrf_reader
@@ -35,7 +32,7 @@ set(VELOX_LINK_LIBS
     velox_caching)
 
 set(TEST_LINK_LIBS velox_dwrf_test_utils ${gflags_LIBRARIES}
-                   ${GTEST_BOTH_LIBRARIES} ${GMock} ${GLOG} ${FILESYSTEM})
+                   ${GTEST_BOTH_LIBRARIES} ${GMock} glog::glog ${FILESYSTEM})
 
 add_executable(velox_dwio_dwrf_buffered_output_stream_test
                TestBufferedOutputStream.cpp)
@@ -60,7 +57,7 @@ target_link_libraries(
   velox_dwio_dwrf_compression_test
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
-  ${GLOG}
+  glog::glog
   ${LZ4}
   ${LZO}
   ${ZSTD}
@@ -125,8 +122,9 @@ target_link_libraries(velox_dwio_dwrf_buffered_input_test ${VELOX_LINK_LIBS}
 add_executable(velox_dwio_dwrf_cache_input_test CacheInputTest.cpp)
 add_test(velox_dwio_dwrf_cache_input_test velox_dwio_dwrf_cache_input_test)
 
-target_link_libraries(velox_dwio_dwrf_cache_input_test ${VELOX_LINK_LIBS}
-                      ${FOLLY_WITH_DEPENDENCIES} ${TEST_LINK_LIBS})
+target_link_libraries(
+  velox_dwio_dwrf_cache_input_test ${VELOX_LINK_LIBS} velox_temp_path
+  ${FOLLY_WITH_DEPENDENCIES} ${TEST_LINK_LIBS})
 
 add_executable(velox_dwio_dwrf_dictionary_encoder_test
                TestIntegerDictionaryEncoder.cpp TestStringDictionaryEncoder.cpp)
@@ -171,6 +169,37 @@ add_test(velox_dwio_dwrf_writer_test velox_dwio_dwrf_writer_test)
 
 target_link_libraries(
   velox_dwio_dwrf_writer_test
+  ${VELOX_LINK_LIBS}
+  ${DOUBLE_CONVERSION}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${LZ4}
+  ${LZO}
+  ${ZSTD}
+  ${ZLIB_LIBRARIES}
+  ${TEST_LINK_LIBS})
+
+add_executable(velox_dwio_dwrf_writer_context_test TestWriterContext.cpp)
+add_test(velox_dwio_dwrf_writer_context_test
+         velox_dwio_dwrf_writer_context_test)
+
+target_link_libraries(
+  velox_dwio_dwrf_writer_context_test
+  ${VELOX_LINK_LIBS}
+  ${DOUBLE_CONVERSION}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${LZ4}
+  ${LZO}
+  ${ZSTD}
+  ${ZLIB_LIBRARIES}
+  ${TEST_LINK_LIBS})
+
+add_executable(velox_dwio_dwrf_writer_encoding_manager_test
+               EncodingManagerTests.cpp)
+add_test(velox_dwio_dwrf_writer_encoding_manager_test
+         velox_dwio_dwrf_writer_encoding_manager_test)
+
+target_link_libraries(
+  velox_dwio_dwrf_writer_encoding_manager_test
   ${VELOX_LINK_LIBS}
   ${DOUBLE_CONVERSION}
   ${FOLLY_WITH_DEPENDENCIES}
@@ -258,7 +287,7 @@ target_link_libraries(
   velox_dwio_dwrf_reader_base_test
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
-  ${GLOG}
+  glog::glog
   ${LZ4}
   ${LZO}
   ${ZSTD}
@@ -375,7 +404,6 @@ add_test(velox_dwrf_column_writer_test velox_dwrf_column_writer_test)
 
 target_link_libraries(
   velox_dwrf_column_writer_test
-  velox_dwio_common
   velox_dwrf_test_utils
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
@@ -423,6 +451,7 @@ add_test(velox_dwrf_e2e_writer_test velox_dwrf_e2e_writer_test)
 target_link_libraries(
   velox_dwrf_e2e_writer_test
   velox_dwrf_test_utils
+  velox_vector_test_lib
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
   ${FMT}
@@ -465,7 +494,7 @@ target_link_libraries(
 add_executable(velox_dwrf_int_decoder_benchmark IntDecoderBenchmark.cpp)
 target_link_libraries(
   velox_dwrf_int_decoder_benchmark velox_dwio_common_exception velox_exception
-  ${FOLLY} ${FOLLY_BENCHMARK})
+  velox_dwio_dwrf_common ${FOLLY} ${FOLLY_BENCHMARK})
 
 add_executable(velox_dwrf_int_encoder_benchmark IntEncoderBenchmark.cpp)
 target_link_libraries(

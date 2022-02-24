@@ -16,6 +16,7 @@
 #pragma once
 
 #include <memory>
+#include "velox/common/memory/ByteStream.h"
 #include "velox/exec/Operator.h"
 
 namespace facebook::velox::exec {
@@ -45,7 +46,9 @@ class SerializedPage {
   static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
       VectorStreamGroup* group) {
     std::stringstream out;
-    group->flush(&out);
+    OutputStreamListener listener;
+    OutputStream outputStream(&out, &listener);
+    group->flush(&outputStream);
     return std::make_unique<SerializedPage>(
         &out, out.tellp(), group->mappedMemory());
   }
@@ -278,14 +281,11 @@ class Exchange : public SourceOperator {
             exchangeNode->id(),
             "Exchange"),
         planNodeId_(exchangeNode->id()),
-        future_(false),
         exchangeClient_(std::move(exchangeClient)) {}
 
   ~Exchange() override {
     close();
   }
-
-  void finish() override;
 
   RowVectorPtr getOutput() override;
 
@@ -297,18 +297,30 @@ class Exchange : public SourceOperator {
 
   BlockingReason isBlocked(ContinueFuture* future) override;
 
+  bool isFinished() override;
+
  private:
-  BlockingReason getSplits(ContinueFuture* future);
+  /// Fetches splits from the task until there are no more splits or task
+  /// returns a future that will be complete when more splits arrive. Adds
+  /// splits to exchangeClient_. Returns true if received a future from the task
+  /// and sets the 'future' parameter. Returns false if fetched all splits or if
+  /// this operator is not the first operator in the pipeline and therefore is
+  /// not responsible for fetching splits and adding them to the
+  /// exchangeClient_.
+  bool getSplits(ContinueFuture* future);
 
   const core::PlanNodeId planNodeId_;
   bool noMoreSplits_ = false;
-  BlockingReason blockingReason_{BlockingReason::kNotBlocked};
-  ContinueFuture future_;
+
+  /// A future received from Task::getSplitOrFuture(). It will be complete when
+  /// there are more splits available or no-more-splits signal has arrived.
+  ContinueFuture splitFuture_{ContinueFuture::makeEmpty()};
+
   RowVectorPtr result_;
   std::shared_ptr<ExchangeClient> exchangeClient_;
   std::unique_ptr<SerializedPage> currentPage_;
   std::unique_ptr<ByteStream> inputStream_;
-  bool atEnd_ = false;
+  bool atEnd_{false};
   size_t numSplits_{0}; // Number of splits we took to process so far.
 };
 

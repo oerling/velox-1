@@ -32,26 +32,23 @@ using namespace facebook::velox;
 //
 // Check `velox/docs/develop/scalar-functions.rst` for more documentation on how
 // to build scalar functions.
-VELOX_UDF_BEGIN(times_two)
-FOLLY_ALWAYS_INLINE bool call(int64_t& out, const int64_t& a) {
-  out = a * 2;
-  return true; // True if result is not null.
-}
-VELOX_UDF_END();
+template <typename T>
+struct TimesTwoFunction {
+  FOLLY_ALWAYS_INLINE bool call(int64_t& out, const int64_t& a) {
+    out = a * 2;
+    return true; // True if result is not null.
+  }
+};
 
 int main(int argc, char** argv) {
-  // Register the function defined above. Note that the first parameter requires
-  // the "udf_" prefix in the tag, and that the first template parameter is the
-  // function return type.
+  // Register the function defined above. The first template parameter is the
+  // class that implements the `call()` function (or one of its variations), the
+  // second template parameter is the function return type, followed by the list
+  // of function input parameters.
   //
-  // Optionally, this function takes as an argument a list of aliases for the
-  // function being registered. If a list is specified, you need to specify
-  // both the original name and aliases (original name is not added by
-  // default).
-  //
-  // By default it will be registered as the "times_two" defined name (since
-  // alias list is empty).
-  registerFunction<udf_times_two, int64_t, int64_t>();
+  // This function takes as an argument a list of aliases for the function being
+  // registered.
+  registerFunction<TimesTwoFunction, int64_t, int64_t>({"times_two"});
 
   // First of all, executing an expression in Velox will require us to create a
   // query context, a memory pool, and an execution context.
@@ -59,7 +56,7 @@ int main(int argc, char** argv) {
   // QueryCtx holds the metadata and configuration associated with a
   // particular query. This is shared between all threads of execution
   // for the same query (one object per query).
-  auto queryCtx = core::QueryCtx::create();
+  auto queryCtx = core::QueryCtx::createForTest();
 
   // ExecCtx holds structures associated with a single thread of execution
   // (one per thread). Each thread of execution requires a scoped memory pool,
@@ -82,32 +79,17 @@ int main(int argc, char** argv) {
   // ---------------------------------
   // | FieldAccessTypedExpr (my_col) |
   // ---------------------------------
-  //            /\
-  //            ||
-  // ------------------------
-  // | InputTypedExpr (ROW) |
-  // ------------------------
-  //
-  // The leaf (InputTypedExpr) in the tree above defines where data will be
-  // coming from. Input datasets are always described in terms of "rows", which
-  // are a collection of named types.
   //
   // Let's first define a type for the input dataset used in this example. In
   // this case, a single input column called "my_col", typed as bigint:
   auto inputRowType = ROW({{"my_col", BIGINT()}});
 
-  // InputTypedExpr is the leaf expression node that represents the actual
-  // source.
-  auto inputExprNode =
-      std::make_shared<const core::InputTypedExpr>(inputRowType);
-
   // FieldAccessTypedExpr let us choose a particular field/column from the input
   // dataset(s). The first parameter defines the return type of this field, the
-  // second are the inputs (note it takes a vector of inputs, and each input can
-  // have multiple columns/fields), and the third is the field name. In this
-  // case we're interested in the "my_col" field:
-  auto fieldAccessExprNode = std::make_shared<core::FieldAccessTypedExpr>(
-      BIGINT(), std::vector<core::TypedExprPtr>{inputExprNode}, "my_col");
+  // second is the field name. In this case we're interested in the "my_col"
+  // field:
+  auto fieldAccessExprNode =
+      std::make_shared<core::FieldAccessTypedExpr>(BIGINT(), "my_col");
 
   // CallTypedExpr will be the root of our expression tree, and defines a
   // function call. The first parameter is the expected return type (bigint in

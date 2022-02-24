@@ -231,19 +231,19 @@ std::string ExchangeClient::toString() {
   return out.str();
 }
 
-BlockingReason Exchange::getSplits(ContinueFuture* future) {
+bool Exchange::getSplits(ContinueFuture* future) {
   if (operatorCtx_->driverCtx()->driverId != 0) {
     // When there are multiple pipelines, a single operator, the one from
     // pipeline 0, is responsible for feeding splits into shared ExchangeClient.
-    return BlockingReason::kNotBlocked;
+    return false;
   }
   if (noMoreSplits_) {
-    return BlockingReason::kNotBlocked;
+    return false;
   }
   for (;;) {
     exec::Split split;
-    auto reason =
-        operatorCtx_->task()->getSplitOrFuture(planNodeId_, split, *future);
+    auto reason = operatorCtx_->task()->getSplitOrFuture(
+        operatorCtx_->driverCtx()->splitGroupId, planNodeId_, split, *future);
     if (reason == BlockingReason::kNotBlocked) {
       if (split.hasConnectorSplit()) {
         auto remoteSplit = std::dynamic_pointer_cast<RemoteConnectorSplit>(
@@ -254,76 +254,85 @@ BlockingReason Exchange::getSplits(ContinueFuture* future) {
       } else {
         exchangeClient_->noMoreRemoteTasks();
         noMoreSplits_ = true;
-        return BlockingReason::kNotBlocked;
+        if (atEnd_) {
+          operatorCtx_->task()->multipleSplitsFinished(numSplits_);
+        }
+        return false;
       }
     } else {
-      return BlockingReason::kWaitForSplit;
+      return true;
     }
   }
 }
 
 BlockingReason Exchange::isBlocked(ContinueFuture* future) {
-  if (blockingReason_ != BlockingReason::kNotBlocked) {
-    *future = std::move(future_);
-    blockingReason_ = BlockingReason::kNotBlocked;
-    return BlockingReason::kWaitForExchange;
-  }
-  if (currentPage_) {
-    return BlockingReason::kNotBlocked;
-  }
-  auto reason = getSplits(future);
-  if (reason != BlockingReason::kNotBlocked) {
-    blockingReason_ = BlockingReason::kNotBlocked;
-    return reason;
-  }
-  currentPage_ = exchangeClient_->next(&atEnd_, future);
   if (currentPage_ || atEnd_) {
     return BlockingReason::kNotBlocked;
   }
-  blockingReason_ = BlockingReason::kNotBlocked;
-  return BlockingReason::kWaitForExchange;
+
+  // Start fetching data right away. Do not wait for all
+  // splits to be available.
+
+  if (!splitFuture_.valid()) {
+    getSplits(&splitFuture_);
+  }
+
+  ContinueFuture dataFuture{false};
+  currentPage_ = exchangeClient_->next(&atEnd_, &dataFuture);
+  if (currentPage_ || atEnd_) {
+    if (atEnd_ && noMoreSplits_) {
+      operatorCtx_->task()->multipleSplitsFinished(numSplits_);
+    }
+    return BlockingReason::kNotBlocked;
+  }
+
+  // We have a dataFuture and we may also have a splitFuture_.
+
+  if (splitFuture_.valid()) {
+    // Block until data becomes available or more splits arrive.
+    std::vector<ContinueFuture> futures;
+    futures.push_back(std::move(splitFuture_));
+    futures.push_back(std::move(dataFuture));
+
+    *future = folly::collectAny(futures).deferValue(
+        [](auto /*unused*/) { return true; });
+  } else {
+    // Block until data becomes available.
+    *future = std::move(dataFuture);
+  }
+  return numSplits_ == 0 ? BlockingReason::kWaitForSplit
+                         : BlockingReason::kWaitForExchange;
 }
 
-void Exchange::finish() {
-  Operator::finish();
-  operatorCtx_->task()->multipleSplitsFinished(numSplits_);
+bool Exchange::isFinished() {
+  return atEnd_;
 }
 
 RowVectorPtr Exchange::getOutput() {
-  blockingReason_ = getSplits(&future_);
-  if (blockingReason_ != BlockingReason::kNotBlocked) {
+  if (!currentPage_) {
     return nullptr;
   }
-  for (;;) {
-    if (currentPage_) {
-      if (!inputStream_) {
-        inputStream_ = std::make_unique<ByteStream>();
-        stats_.rawInputBytes += currentPage_->byteSize();
-        currentPage_->prepareStreamForDeserialize(inputStream_.get());
-      }
 
-      VectorStreamGroup::read(
-          inputStream_.get(), operatorCtx_->pool(), outputType_, &result_);
-
-      stats_.inputPositions += result_->size();
-      stats_.inputBytes += result_->retainedSize();
-
-      if (inputStream_->atEnd()) {
-        currentPage_ = nullptr;
-        inputStream_ = nullptr;
-      }
-
-      return result_;
-    }
-    bool atEnd = false;
-    currentPage_ = exchangeClient_->next(&atEnd, &future_);
-    if (!currentPage_) {
-      blockingReason_ = atEnd ? BlockingReason::kNotBlocked
-                              : BlockingReason::kWaitForExchange;
-      return nullptr;
-    }
+  if (!inputStream_) {
+    inputStream_ = std::make_unique<ByteStream>();
+    stats_.rawInputBytes += currentPage_->byteSize();
+    currentPage_->prepareStreamForDeserialize(inputStream_.get());
   }
+
+  VectorStreamGroup::read(
+      inputStream_.get(), operatorCtx_->pool(), outputType_, &result_);
+
+  stats_.inputPositions += result_->size();
+  stats_.inputBytes += result_->retainedSize();
+
+  if (inputStream_->atEnd()) {
+    currentPage_ = nullptr;
+    inputStream_ = nullptr;
+  }
+
+  return result_;
 }
+
 VELOX_REGISTER_EXCHANGE_SOURCE_METHOD_DEFINITION(
     ExchangeSource,
     createLocalExchangeSource);

@@ -65,11 +65,15 @@ RowContainer::RowContainer(
   // is followed by a free bit which is set if the row is in a free
   // list. The accumulators come next, with size given by
   // Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
-  // These are non-key columns for hash join or order by.
+  // These are non-key columns for hash join or order by. If there are variable
+  // length columns or accumulators, i.e. ones that allocate extra space, this
+  // space is tracked by a uint32_t after the dependent columns. If this is a
+  // hash join build side, the pointer to the next row with the same key is
+  // after the optional row size.
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
   // -1, 8 bytes below the pointer. This space is reserved for a 64
-  // bit unique digest of the keys for speding up comparison. This
+  // bit unique digest of the keys for speeding up comparison. This
   // space is reserved for the rows that are inserted before the
   // cardinality grows too large for packing all in 64
   // bits. 'numRowsWithNormalizedKey_' gives the number of rows with
@@ -99,6 +103,8 @@ RowContainer::RowContainer(
     nullOffsets_.push_back(nullOffset);
     ++nullOffset;
     isVariableWidth |= !aggregate->isFixedSize();
+    usesExternalMemory_ |= aggregate->accumulatorUsesExternalMemory();
+
   }
   for (auto& type : dependentTypes) {
     types_.push_back(type);
@@ -211,7 +217,7 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
         initialNulls_.size());
   }
   if (rowSizeOffset_) {
-    *reinterpret_cast<uint32_t*>(row + rowSizeOffset_) = 0;
+    variableRowSize(row) = 0;
   }
   return row;
 }
@@ -286,63 +292,6 @@ void RowContainer::freeAggregates(folly::Range<char**> rows) {
 }
 
 int32_t RowContainer::listRows(
-    RowContainerIterator* iter,
-    int32_t maxRows,
-    uint64_t maxBytes,
-    char** rows) {
-  int32_t count = 0;
-  uint64_t totalBytes = 0;
-  auto numAllocations = rows_.numAllocations();
-  if (iter->allocationIndex == 0 && iter->runIndex == 0 &&
-      iter->rowOffset == 0) {
-    iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
-  }
-  int32_t rowSize = fixedRowSize_ +
-      (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
-  for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
-    auto allocation = rows_.allocationAt(i);
-    auto numRuns = allocation->numRuns();
-    for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
-      memory::MappedMemory::PageRun run = allocation->runAt(runIndex);
-      auto data = run.data<char>();
-      int64_t limit;
-      if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
-        limit = rows_.currentOffset();
-      } else {
-        limit = run.numPages() * memory::MappedMemory::kPageSize;
-      }
-      auto row = iter->rowOffset;
-      while (row + rowSize <= limit) {
-        rows[count++] = data + row +
-            (iter->normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
-        row += rowSize;
-        if (--iter->normalizedKeysLeft == 0) {
-          rowSize -= sizeof(normalized_key_t);
-        }
-        if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
-          --count;
-          continue;
-        }
-	totalBytes += rowSize;
-        if (rowSizeOffset_) {
-          totalBytes +=
-              *reinterpret_cast<uint32_t*>(rows[count - 1] + rowSizeOffset_);
-        }
-        if (count == maxRows || totalBytes > maxBytes) {
-          iter->rowOffset = row;
-          iter->runIndex = runIndex;
-          iter->allocationIndex = i;
-          return count;
-        }
-      }
-      iter->rowOffset = 0;
-    }
-    iter->runIndex = 0;
-  }
-  iter->allocationIndex = std::numeric_limits<int32_t>::max();
-  return count;
-}
-
 void RowContainer::store(
     const DecodedVector& decoded,
     vector_size_t index,
@@ -552,6 +501,20 @@ void RowContainer::hash(
 }
 
 void RowContainer::clear() {
+  if (usesExternalMemory_) {
+    constexpr int32_t kBatch = 1000;
+    std::vector<char*> rows(kBatch);
+
+    RowContainerIterator iter;
+    for (;;) {
+      int64_t numRows = listRows(&iter, kBatch, rows.data());
+      if (!numRows) {
+        break;
+      }
+      auto rowsData = folly::Range<char**>(rows.data(), numRows);
+      freeAggregates(rowsData);
+    }
+  }
   rows_.clear();
   stringAllocator_.clear();
   numRows_ = 0;
@@ -789,6 +752,10 @@ bool RowContainer::fillSpillRuns(
         return numRows == 0;
       }
     }
+
+void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
+  for (auto i = 0; i < numRows; i++) {
+    bits::setBit(rows[i], probedFlagOffset_);
   }
 }
 

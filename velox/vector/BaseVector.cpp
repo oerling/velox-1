@@ -15,9 +15,12 @@
  */
 
 #include "velox/vector/BaseVector.h"
+#include "velox/type/StringView.h"
+#include "velox/type/Type.h"
 #include "velox/type/Variant.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DictionaryVector.h"
+#include "velox/vector/FlatVector.h"
 #include "velox/vector/LazyVector.h"
 #include "velox/vector/SequenceVector.h"
 #include "velox/vector/TypeAliases.h"
@@ -68,11 +71,11 @@ void BaseVector::allocateNulls() {
 }
 
 template <>
-vector_size_t BaseVector::byteSize<bool>(vector_size_t count) {
+uint64_t BaseVector::byteSize<bool>(vector_size_t count) {
   return bits::nbytes(count);
 }
 
-void BaseVector::resize(vector_size_t size) {
+void BaseVector::resize(vector_size_t size, bool setNotNull) {
   if (nulls_) {
     auto bytes = byteSize<bool>(size);
     if (length_ < size) {
@@ -80,7 +83,7 @@ void BaseVector::resize(vector_size_t size) {
         AlignedBuffer::reallocate<char>(&nulls_, bytes);
         rawNulls_ = nulls_->as<uint64_t>();
       }
-      if (size > length_) {
+      if (setNotNull && size > length_) {
         bits::fillBits(
             const_cast<uint64_t*>(rawNulls_), length_, size, bits::kNotNull);
       }
@@ -264,6 +267,33 @@ VectorPtr BaseVector::create(
     case TypeKind::ARRAY: {
       BufferPtr sizes = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
       BufferPtr offsets = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
+      // When constructing FixedSizeArray types we validate the
+      // provided lengths are of the expected size. But
+      // BaseVector::create constructs the array with the
+      // sizes/offsets all set to zero -- presumably because the
+      // caller will fill them in later by directly manipulating
+      // rawSizes/rawOffsets. This makes the sanity check in the
+      // FixedSizeArray constructor less powerful than it would be if
+      // we knew the sizes / offsets were going to populate them with
+      // in advance and they were immutable after constructing the
+      // array.
+      //
+      // For now to support the current code structure of "create then
+      // populate" for BaseVector::create(), in the case of
+      // FixedSizeArrays we pre-initialize the sizes / offsets here
+      // with what we expect them to be so the constructor validation
+      // passes. The code that subsequently manipulates the
+      // sizes/offsets directly should also validate they are
+      // continuing to upload the fixedSize constraint.
+      if (type->isFixedWidth()) {
+        auto rawOffsets = offsets->asMutable<vector_size_t>();
+        auto rawSizes = sizes->asMutable<vector_size_t>();
+        const auto width = type->fixedElementsWidth();
+        for (vector_size_t i = 0; i < size; ++i) {
+          *rawSizes++ = width;
+          *rawOffsets++ = width * i;
+        }
+      }
       auto elementType = type->as<TypeKind::ARRAY>().elementType();
       auto elements = create(elementType, 0, pool);
       return std::make_shared<ArrayVector>(
@@ -351,7 +381,7 @@ void BaseVector::clearNulls(const SelectivityVector& rows) {
   }
 
   auto rawNulls = nulls_->asMutable<uint64_t>();
-  bits::orWithNegatedBits(
+  bits::orBits(
       rawNulls,
       rows.asRange().bits(),
       std::min(length_, rows.begin()),
@@ -589,17 +619,38 @@ bool isLazyNotLoaded(const BaseVector& vector) {
 
 // static
 bool BaseVector::isReusableFlatVector(const VectorPtr& vector) {
-  if (!vector.unique()) {
+  // If the main shared_ptr has more than one references, or if it's not a flat
+  // vector, can't reuse.
+  if (!vector.unique() || !isFlat(vector->encoding())) {
     return false;
   }
-  if (vector->encoding() == VectorEncoding::Simple::FLAT &&
-      (!vector->nulls() || vector->nulls()->unique())) {
-    auto& values = vector->values();
-    if (!values || values->unique()) {
-      return true;
+
+  // Now check if nulls and values buffers also have a single reference and
+  // are mutable.
+  auto checkNullsAndValueBuffers = [&]() {
+    const auto& nulls = vector->nulls();
+    if (!nulls || (vector->nulls()->unique() && vector->nulls()->isMutable())) {
+      const auto& values = vector->values();
+      if (!values || (values->unique() && values->isMutable())) {
+        return true;
+      }
     }
-  }
-  return false;
+    return false;
+  };
+
+  // Check that all string buffers are single referenced.
+  auto checkStringBuffers = [&]() {
+    if (vector->typeKind_ == TypeKind::VARBINARY ||
+        vector->typeKind_ == TypeKind::VARCHAR) {
+      for (auto& buffer : vector->asFlatVector<StringView>()->stringBuffers()) {
+        if (buffer->refCount() > 1) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  return checkNullsAndValueBuffers() && checkStringBuffers();
 }
 
 } // namespace velox

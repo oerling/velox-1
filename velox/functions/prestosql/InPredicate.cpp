@@ -22,37 +22,30 @@ namespace {
 template <typename T, typename U = T>
 std::optional<std::pair<std::vector<T>, bool>> toValues(
     const std::vector<exec::VectorFunctionArg>& inputArgs) {
-  std::vector<T> values;
-  values.reserve(inputArgs.size());
-  bool nullAllowed = false;
-
-  // First input is the value to test. The rest are values of the in-list.
-  for (auto i = 1; i < inputArgs.size(); i++) {
-    const auto& constantValue = inputArgs[i].constantValue;
-    if (!constantValue) {
-      continue;
-    }
-
-    if (constantValue->typeKind() == TypeKind::UNKNOWN) {
-      nullAllowed = true;
-      continue;
-    }
-
-    auto constantInput =
-        std::dynamic_pointer_cast<ConstantVector<U>>(constantValue);
-    if (!constantInput) {
-      return std::nullopt;
-    }
-    if (constantInput->isNullAt(0)) {
-      nullAllowed = true;
-    } else {
-      values.emplace_back(constantInput->valueAt(0));
-    }
+  const auto& constantValue = inputArgs[1].constantValue;
+  if (!constantValue) {
+    return std::nullopt;
   }
 
-  // In case we didn't find any values (constant or null).
-  if (values.empty() && !nullAllowed) {
-    return std::nullopt;
+  auto constantInput =
+      std::dynamic_pointer_cast<ConstantVector<ComplexType>>(constantValue);
+  auto arrayVector = dynamic_cast<const ArrayVector*>(
+      constantInput->valueVector()->wrappedVector());
+  auto elementsVector = arrayVector->elements()->as<SimpleVector<U>>();
+  auto offset = arrayVector->offsetAt(constantInput->index());
+  auto size = arrayVector->sizeAt(constantInput->index());
+  VELOX_USER_CHECK_GT(size, 0, "IN list must not be empty");
+
+  std::vector<T> values;
+  values.reserve(size);
+  bool nullAllowed = false;
+
+  for (auto i = offset; i < offset + size; i++) {
+    if (elementsVector->isNullAt(i)) {
+      nullAllowed = true;
+    } else {
+      values.emplace_back(elementsVector->valueAt(i));
+    }
   }
 
   return std::optional<std::pair<std::vector<T>, bool>>(
@@ -110,11 +103,12 @@ class InPredicate : public exec::VectorFunction {
   static std::shared_ptr<InPredicate> create(
       const std::string& /*name*/,
       const std::vector<exec::VectorFunctionArg>& inputArgs) {
-    VELOX_CHECK_GE(inputArgs.size(), 2);
+    VELOX_CHECK_EQ(inputArgs.size(), 2);
     auto inListType = inputArgs[1].type;
+    VELOX_CHECK_EQ(inListType->kind(), TypeKind::ARRAY);
     std::unique_ptr<common::Filter> filter;
 
-    switch (inListType->kind()) {
+    switch (inListType->childAt(0)->kind()) {
       case TypeKind::BIGINT:
         filter = createBigintValuesFilter<int64_t>(inputArgs);
         break;
@@ -147,7 +141,7 @@ class InPredicate : public exec::VectorFunction {
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* /* unused */,
+      const TypePtr& /* outputType */,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     const auto& input = args[0];
@@ -192,8 +186,7 @@ class InPredicate : public exec::VectorFunction {
       signatures.emplace_back(exec::FunctionSignatureBuilder()
                                   .returnType("boolean")
                                   .argumentType(type)
-                                  .argumentType(type)
-                                  .variableArity()
+                                  .argumentType(fmt::format("array({})", type))
                                   .build());
     }
     return signatures;
@@ -224,14 +217,13 @@ class InPredicate : public exec::VectorFunction {
     // Indicates whether result can be true or null only, e.g. no false results.
     const bool passOrNull = filter_->testNull();
 
-    exec::LocalDecodedVector holder(context, *arg, rows);
-    auto decoder = holder.get();
-    if (decoder->isConstantMapping()) {
+    if (arg->isConstant(rows)) {
+      auto simpleArg = arg->asUnchecked<SimpleVector<T>>();
       VectorPtr localResult;
-      if (decoder->isNullAt(0)) {
+      if (simpleArg->isNullAt(rows.begin())) {
         localResult = createBoolConstantNull(rows.size(), context);
       } else {
-        bool pass = testFunction(decoder->valueAt<T>(0));
+        bool pass = testFunction(simpleArg->valueAt(rows.begin()));
         if (!pass && passOrNull) {
           localResult = createBoolConstantNull(rows.size(), context);
         } else {
@@ -243,28 +235,32 @@ class InPredicate : public exec::VectorFunction {
       return;
     }
 
+    VELOX_CHECK_EQ(arg->encoding(), VectorEncoding::Simple::FLAT);
+    auto flatArg = arg->asUnchecked<FlatVector<T>>();
+    auto rawValues = flatArg->rawValues();
+
     BaseVector::ensureWritable(rows, BOOLEAN(), context->pool(), result);
-    auto boolResult = std::dynamic_pointer_cast<FlatVector<bool>>(*result);
+    auto boolResult = static_cast<FlatVector<bool>*>((*result).get());
 
-    auto rawValues = boolResult->mutableRawValues<uint64_t>();
+    auto rawResults = boolResult->mutableRawValues<uint64_t>();
 
-    if (decoder->mayHaveNulls() || passOrNull) {
+    if (flatArg->mayHaveNulls() || passOrNull) {
       rows.applyToSelected([&](auto row) {
-        if (decoder->isNullAt(row)) {
+        if (flatArg->isNullAt(row)) {
           boolResult->setNull(row, true);
         } else {
-          bool pass = testFunction(decoder->valueAt<T>(row));
+          bool pass = testFunction(rawValues[row]);
           if (!pass && passOrNull) {
             boolResult->setNull(row, true);
           } else {
-            bits::setBit(rawValues, row, pass);
+            bits::setBit(rawResults, row, pass);
           }
         }
       });
     } else {
       rows.applyToSelected([&](auto row) {
-        bool pass = testFunction(decoder->valueAt<T>(row));
-        bits::setBit(rawValues, row, pass);
+        bool pass = testFunction(rawValues[row]);
+        bits::setBit(rawResults, row, pass);
       });
     }
   }

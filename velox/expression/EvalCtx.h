@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/base/Portability.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/FlatVector.h"
@@ -43,7 +44,7 @@ class EvalCtx {
   // Returns the index-th column of the base row. If we have peeled off
   // wrappers like dictionaries, then this provides access only to the
   // peeled off fields.
-  VectorPtr getField(int32_t index) const;
+  const VectorPtr& getField(int32_t index) const;
 
   BaseVector* getRawField(int32_t index) const;
 
@@ -74,12 +75,16 @@ class EvalCtx {
 
   void setError(vector_size_t index, const std::exception_ptr& exceptionPtr);
 
+  void setErrors(
+      const SelectivityVector& rows,
+      const std::exception_ptr& exceptionPtr);
+
   /// Invokes a function on each selected row. Records per-row exceptions by
   /// calling 'setError'. The function must take a single "row" argument of type
   /// vector_size_t and return void.
   template <typename Callable>
   void applyToSelectedNoThrow(const SelectivityVector& rows, Callable func) {
-    rows.template applyToSelected([&](auto row) {
+    rows.template applyToSelected([&](auto row) INLINE_LAMBDA {
       try {
         func(row);
       } catch (const std::exception& e) {

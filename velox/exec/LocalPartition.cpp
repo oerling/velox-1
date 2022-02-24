@@ -137,16 +137,10 @@ BlockingReason LocalExchangeSource::next(
       return BlockingReason::kWaitForExchange;
     }
 
-    // TODO Avoid the copy. The data was allocated from the producer's memory
-    // pool and may go away before it is fully processed by the consumer.
-    auto sourceVector = queue.front();
-    *data = std::static_pointer_cast<RowVector>(
-        BaseVector::create(sourceVector->type(), sourceVector->size(), pool));
-    (*data)->copy(sourceVector.get(), 0, 0, sourceVector->size());
-
+    *data = queue.front();
     queue.pop();
 
-    memoryManager_->decreaseMemoryUsage(sourceVector->retainedSize());
+    memoryManager_->decreaseMemoryUsage((*data)->retainedSize());
 
     if (noMoreProducers_ && pendingProducers_ == 0 && queue.empty()) {
       producerPromises = std::move(producerPromises_);
@@ -171,6 +165,16 @@ BlockingReason LocalExchangeSource::isFinished(ContinueFuture* future) {
   });
 }
 
+bool LocalExchangeSource::isFinished() {
+  return queue_.withWLock([&](auto& queue) {
+    if (noMoreProducers_ && pendingProducers_ == 0 && queue.empty()) {
+      return true;
+    }
+
+    return false;
+  });
+}
+
 LocalExchangeSourceOperator::LocalExchangeSourceOperator(
     int32_t operatorId,
     DriverCtx* ctx,
@@ -184,9 +188,10 @@ LocalExchangeSourceOperator::LocalExchangeSourceOperator(
           planNodeId,
           "LocalExchangeSource"),
       partition_{partition},
-      source_{
-          operatorCtx_->task()->getLocalExchangeSource(planNodeId, partition)} {
-}
+      source_{operatorCtx_->task()->getLocalExchangeSource(
+          ctx->splitGroupId,
+          planNodeId,
+          partition)} {}
 
 BlockingReason LocalExchangeSourceOperator::isBlocked(ContinueFuture* future) {
   if (blockingReason_ != BlockingReason::kNotBlocked) {
@@ -212,6 +217,10 @@ RowVectorPtr LocalExchangeSourceOperator::getOutput() {
   return data;
 }
 
+bool LocalExchangeSourceOperator::isFinished() {
+  return source_->isFinished();
+}
+
 LocalPartition::LocalPartition(
     int32_t operatorId,
     DriverCtx* ctx,
@@ -222,25 +231,19 @@ LocalPartition::LocalPartition(
           operatorId,
           planNode->id(),
           "LocalPartition"),
-      localExchangeSources_{ctx->task->getLocalExchangeSources(planNode->id())},
+      localExchangeSources_{ctx->task->getLocalExchangeSources(
+          ctx->splitGroupId,
+          planNode->id())},
       numPartitions_{localExchangeSources_.size()},
-      keyChannels_{
+      partitionFunction_(
           numPartitions_ == 1
-              ? std::vector<ChannelIndex>{}
-              : toChannels(planNode->inputType(), planNode->keys())},
+              ? nullptr
+              : planNode->partitionFunctionFactory()(numPartitions_)),
       outputChannels_{calculateOutputChannels(
           planNode->inputType(),
           planNode->outputType())},
       blockingReasons_{numPartitions_} {
-  VELOX_CHECK(numPartitions_ == 1 || !keyChannels_.empty());
-  VELOX_CHECK_GT(outputType_->size(), 0);
-
-  const auto& inputType = planNode->inputType();
-  hashers_.reserve(keyChannels_.size());
-  for (auto channel : keyChannels_) {
-    hashers_.emplace_back(
-        VectorHasher::create(inputType->childAt(channel), channel));
-  }
+  VELOX_CHECK(numPartitions_ == 1 || partitionFunction_ != nullptr);
 
   for (auto& source : localExchangeSources_) {
     source->addProducer();
@@ -260,8 +263,7 @@ std::vector<BufferPtr> allocateIndexBuffers(
   std::vector<BufferPtr> indexBuffers;
   indexBuffers.reserve(numBuffers);
   for (auto i = 0; i < numBuffers; i++) {
-    indexBuffers.emplace_back(
-        AlignedBuffer::allocate<vector_size_t>(size, pool));
+    indexBuffers.emplace_back(allocateIndices(size, pool));
   }
   return indexBuffers;
 }
@@ -274,25 +276,6 @@ std::vector<vector_size_t*> getRawIndices(
     rawIndices.emplace_back(buffer->asMutable<vector_size_t>());
   }
   return rawIndices;
-}
-
-RowVectorPtr project(
-    const RowVectorPtr& input,
-    const RowTypePtr& outputType,
-    const std::vector<ChannelIndex>& outputChannels) {
-  std::vector<VectorPtr> outputColumns;
-  outputColumns.reserve(outputChannels.size());
-  for (const auto& i : outputChannels) {
-    outputColumns.push_back(input->childAt(i));
-  }
-
-  return std::make_shared<RowVector>(
-      input->pool(),
-      outputType,
-      input->nulls(),
-      input->size(),
-      outputColumns,
-      input->getNullCount());
 }
 
 RowVectorPtr
@@ -309,6 +292,27 @@ wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
 }
 } // namespace
 
+BlockingReason LocalPartition::enqueue(
+    int32_t source,
+    RowVectorPtr data,
+    ContinueFuture* future) {
+  RowVectorPtr projectedData;
+  if (outputChannels_.empty() && outputType_->size() > 0) {
+    projectedData = std::move(data);
+  } else {
+    std::vector<VectorPtr> outputColumns;
+    outputColumns.reserve(outputChannels_.size());
+    for (const auto& i : outputChannels_) {
+      outputColumns.push_back(data->childAt(i));
+    }
+
+    projectedData = std::make_shared<RowVector>(
+        data->pool(), outputType_, nullptr, data->size(), outputColumns);
+  }
+
+  return localExchangeSources_[source]->enqueue(projectedData, future);
+}
+
 void LocalPartition::addInput(RowVectorPtr input) {
   stats_.outputBytes += input->retainedSize();
   stats_.outputPositions += input->size();
@@ -318,20 +322,15 @@ void LocalPartition::addInput(RowVectorPtr input) {
     child->loadedVector();
   }
 
-  if (outputChannels_.empty()) {
-    input_ = input;
-  } else {
-    input_ = project(input, outputType_, outputChannels_);
-  }
+  input_ = std::move(input);
 
   if (numPartitions_ == 1) {
-    blockingReasons_[0] =
-        localExchangeSources_[0]->enqueue(input_, &futures_[0]);
+    blockingReasons_[0] = enqueue(0, input_, &futures_[0]);
     if (blockingReasons_[0] != BlockingReason::kNotBlocked) {
       numBlockedPartitions_ = 1;
     }
   } else {
-    calculateHashes();
+    partitionFunction_->partition(*input_, partitions_);
 
     auto numInput = input_->size();
     auto indexBuffers = allocateIndexBuffers(numPartitions_, numInput, pool());
@@ -339,7 +338,7 @@ void LocalPartition::addInput(RowVectorPtr input) {
 
     std::vector<vector_size_t> maxIndex(numPartitions_, 0);
     for (auto i = 0; i < numInput; ++i) {
-      auto partition = hashes_[i] % numPartitions_;
+      auto partition = partitions_[i];
       rawIndices[partition][maxIndex[partition]] = i;
       ++maxIndex[partition];
     }
@@ -355,25 +354,12 @@ void LocalPartition::addInput(RowVectorPtr input) {
           wrapChildren(input_, partitionSize, std::move(indexBuffers[i]));
 
       ContinueFuture future{false};
-      auto reason = localExchangeSources_[i]->enqueue(partitionData, &future);
+      auto reason = enqueue(i, partitionData, &future);
       if (reason != BlockingReason::kNotBlocked) {
         blockingReasons_[numBlockedPartitions_] = reason;
         futures_[numBlockedPartitions_] = std::move(future);
         ++numBlockedPartitions_;
       }
-    }
-  }
-}
-
-void LocalPartition::calculateHashes() {
-  auto numInput = input_->size();
-  if (!keyChannels_.empty()) {
-    hashes_.resize(numInput);
-    allRows_.resize(numInput);
-    allRows_.setAll();
-    for (auto i = 0; i < keyChannels_.size(); ++i) {
-      hashers_[i]->hash(
-          *input_->childAt(keyChannels_[i]), allRows_, i > 0, &hashes_);
     }
   }
 }
@@ -385,7 +371,7 @@ BlockingReason LocalPartition::isBlocked(ContinueFuture* future) {
     return blockingReasons_[numBlockedPartitions_];
   }
 
-  if (isFinishing()) {
+  if (noMoreInput_) {
     for (const auto& source : localExchangeSources_) {
       auto reason = source->isFinished(future);
       if (reason != BlockingReason::kNotBlocked) {
@@ -397,10 +383,24 @@ BlockingReason LocalPartition::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-void LocalPartition::finish() {
-  Operator::finish();
+void LocalPartition::noMoreInput() {
+  Operator::noMoreInput();
   for (const auto& source : localExchangeSources_) {
     source->noMoreData();
   }
+}
+
+bool LocalPartition::isFinished() {
+  if (numBlockedPartitions_ || !noMoreInput_) {
+    return false;
+  }
+
+  for (const auto& source : localExchangeSources_) {
+    if (!source->isFinished()) {
+      return false;
+    }
+  }
+
+  return true;
 }
 } // namespace facebook::velox::exec

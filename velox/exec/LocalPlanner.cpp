@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 #include "velox/exec/LocalPlanner.h"
-#include "velox/exec/Aggregate.h"
+#include "velox/core/PlanFragment.h"
+#include "velox/exec/AssignUniqueId.h"
 #include "velox/exec/CallbackSink.h"
+#include "velox/exec/CrossJoinBuild.h"
+#include "velox/exec/CrossJoinProbe.h"
 #include "velox/exec/EnforceSingleRow.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/FilterProject.h"
@@ -24,8 +27,10 @@
 #include "velox/exec/HashProbe.h"
 #include "velox/exec/Limit.h"
 #include "velox/exec/Merge.h"
+#include "velox/exec/MergeJoin.h"
 #include "velox/exec/OrderBy.h"
 #include "velox/exec/PartitionedOutput.h"
+#include "velox/exec/StreamingAggregation.h"
 #include "velox/exec/TableScan.h"
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/TopN.h"
@@ -68,9 +73,12 @@ OperatorSupplier makeConsumerSupplier(
     const std::shared_ptr<const core::PlanNode>& planNode) {
   if (auto localMerge =
           std::dynamic_pointer_cast<const core::LocalMergeNode>(planNode)) {
-    return [](int32_t operatorId, DriverCtx* ctx) {
-      auto consumer = [ctx](RowVectorPtr input, ContinueFuture* future) {
-        auto mergeSource = ctx->task->getLocalMergeSource(ctx->driverId);
+    return [localMerge](int32_t operatorId, DriverCtx* ctx) {
+      auto mergeSource = ctx->task->addLocalMergeSource(
+          ctx->splitGroupId, localMerge->id(), localMerge->outputType());
+
+      auto consumer = [mergeSource](
+                          RowVectorPtr input, ContinueFuture* future) {
         return mergeSource->enqueue(input, future);
       };
       return std::make_unique<CallbackSink>(operatorId, ctx, consumer);
@@ -91,6 +99,26 @@ OperatorSupplier makeConsumerSupplier(
       return std::make_unique<HashBuild>(operatorId, ctx, join);
     };
   }
+
+  if (auto join =
+          std::dynamic_pointer_cast<const core::CrossJoinNode>(planNode)) {
+    return [join](int32_t operatorId, DriverCtx* ctx) {
+      return std::make_unique<CrossJoinBuild>(operatorId, ctx, join);
+    };
+  }
+
+  if (auto join =
+          std::dynamic_pointer_cast<const core::MergeJoinNode>(planNode)) {
+    auto planNodeId = planNode->id();
+    return [planNodeId](int32_t operatorId, DriverCtx* ctx) {
+      auto source =
+          ctx->task->getMergeJoinSource(ctx->splitGroupId, planNodeId);
+      auto consumer = [source](RowVectorPtr input, ContinueFuture* future) {
+        return source->enqueue(input, future);
+      };
+      return std::make_unique<CallbackSink>(operatorId, ctx, consumer);
+    };
+  }
   return nullptr;
 }
 
@@ -106,13 +134,16 @@ void plan(
   }
 
   auto sources = planNode->sources();
-
-  for (int32_t i = 0; i < sources.size(); ++i) {
-    plan(
-        sources[i],
-        mustStartNewPipeline(planNode, i) ? nullptr : currentPlanNodes,
-        makeConsumerSupplier(planNode),
-        driverFactories);
+  if (sources.empty()) {
+    driverFactories->back()->inputDriver = true;
+  } else {
+    for (int32_t i = 0; i < sources.size(); ++i) {
+      plan(
+          sources[i],
+          mustStartNewPipeline(planNode, i) ? nullptr : currentPlanNodes,
+          makeConsumerSupplier(planNode),
+          driverFactories);
+    }
   }
 
   currentPlanNodes->push_back(planNode);
@@ -120,6 +151,7 @@ void plan(
 
 uint32_t maxDrivers(
     const std::vector<std::shared_ptr<const core::PlanNode>>& planNodes) {
+  uint32_t count = std::numeric_limits<uint32_t>::max();
   for (auto& node : planNodes) {
     if (auto aggregation =
             std::dynamic_pointer_cast<const core::AggregationNode>(node)) {
@@ -128,67 +160,95 @@ uint32_t maxDrivers(
         // final aggregations must run single-threaded
         return 1;
       }
-    }
-    if (auto topN = std::dynamic_pointer_cast<const core::TopNNode>(node)) {
+    } else if (
+        auto topN = std::dynamic_pointer_cast<const core::TopNNode>(node)) {
       if (!topN->isPartial()) {
         // final topN must run single-threaded
         return 1;
       }
-    }
-    if (auto values = std::dynamic_pointer_cast<const core::ValuesNode>(node)) {
+    } else if (
+        auto values = std::dynamic_pointer_cast<const core::ValuesNode>(node)) {
       // values node must run single-threaded, unless in test context
       if (!values->isParallelizable()) {
         return 1;
       }
-    }
-    if (auto limit = std::dynamic_pointer_cast<const core::LimitNode>(node)) {
+    } else if (
+        auto limit = std::dynamic_pointer_cast<const core::LimitNode>(node)) {
       // final limit must run single-threaded
       if (!limit->isPartial()) {
         return 1;
       }
-    }
-    if (auto orderBy =
+    } else if (
+        auto orderBy =
             std::dynamic_pointer_cast<const core::OrderByNode>(node)) {
       // final orderby must run single-threaded
       if (!orderBy->isPartial()) {
         return 1;
       }
-    }
-    if (auto localMerge =
+    } else if (
+        auto localMerge =
             std::dynamic_pointer_cast<const core::LocalMergeNode>(node)) {
       // Local merge must run single-threaded.
       return 1;
-    }
-
-    if (auto mergeExchange =
+    } else if (
+        auto mergeExchange =
             std::dynamic_pointer_cast<const core::MergeExchangeNode>(node)) {
       // MergeExchange must run single-threaded.
       return 1;
-    }
-
-    if (auto tableWrite =
+    } else if (
+        auto tableWrite =
             std::dynamic_pointer_cast<const core::TableWriteNode>(node)) {
-      // Multi-threaded table write is not supported yet.
-      return 1;
+      if (!tableWrite->insertTableHandle()
+               ->connectorInsertTableHandle()
+               ->supportsMultiThreading()) {
+        return 1;
+      }
+    } else {
+      auto result = Operator::maxDrivers(node);
+      if (result) {
+        VELOX_CHECK_GT(
+            *result,
+            0,
+            "maxDrivers must be greater than 0. Plan node: {}",
+            node->toString())
+        if (*result == 1) {
+          return 1;
+        }
+        count = std::min(*result, count);
+      }
     }
   }
-  return std::numeric_limits<uint32_t>::max();
+  return count;
 }
 } // namespace detail
 
 // static
 void LocalPlanner::plan(
-    const std::shared_ptr<const core::PlanNode>& planNode,
+    const core::PlanFragment& planFragment,
     ConsumerSupplier consumerSupplier,
-    std::vector<std::unique_ptr<DriverFactory>>* driverFactories) {
+    std::vector<std::unique_ptr<DriverFactory>>* driverFactories,
+    uint32_t maxDrivers) {
   detail::plan(
-      planNode,
+      planFragment.planNode,
       nullptr,
       detail::makeConsumerSupplier(consumerSupplier),
       driverFactories);
 
+  (*driverFactories)[0]->outputDriver = true;
+
   for (auto& factory : *driverFactories) {
     factory->maxDrivers = detail::maxDrivers(factory->planNodes);
+    factory->numDrivers = std::min(factory->maxDrivers, maxDrivers);
+    // For grouped/bucketed execution we would have separate groups of drivers
+    // dealing with separate split groups (one driver can access splits from
+    // only one designated split group), hence we will have total number of
+    // drivers multiplied by the number of split groups.
+    if (planFragment.isGroupedExecution()) {
+      factory->numTotalDrivers =
+          factory->numDrivers * planFragment.numSplitGroups;
+    } else {
+      factory->numTotalDrivers = factory->numDrivers;
+    }
   }
 }
 
@@ -198,6 +258,7 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
     std::function<int(int pipelineId)> numDrivers) {
   std::vector<std::unique_ptr<Operator>> operators;
   operators.reserve(planNodes.size());
+
   for (int32_t i = 0; i < planNodes.size(); i++) {
     // Id of the Operator being made. This is not the same as 'i'
     // because some PlanNodes may get fused.
@@ -258,10 +319,22 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
             std::dynamic_pointer_cast<const core::HashJoinNode>(planNode)) {
       operators.push_back(std::make_unique<HashProbe>(id, ctx.get(), joinNode));
     } else if (
+        auto joinNode =
+            std::dynamic_pointer_cast<const core::CrossJoinNode>(planNode)) {
+      operators.push_back(
+          std::make_unique<CrossJoinProbe>(id, ctx.get(), joinNode));
+    } else if (
         auto aggregationNode =
             std::dynamic_pointer_cast<const core::AggregationNode>(planNode)) {
-      operators.push_back(
-          std::make_unique<HashAggregation>(id, ctx.get(), aggregationNode));
+      if (!aggregationNode->preGroupedKeys().empty() &&
+          aggregationNode->preGroupedKeys().size() ==
+              aggregationNode->groupingKeys().size()) {
+        operators.push_back(std::make_unique<StreamingAggregation>(
+            id, ctx.get(), aggregationNode));
+      } else {
+        operators.push_back(
+            std::make_unique<HashAggregation>(id, ctx.get(), aggregationNode));
+      }
     } else if (
         auto topNNode =
             std::dynamic_pointer_cast<const core::TopNNode>(planNode)) {
@@ -278,12 +351,15 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
     } else if (
         auto localMerge =
             std::dynamic_pointer_cast<const core::LocalMergeNode>(planNode)) {
-      auto numSources = numDrivers(ctx->pipelineId + 1);
       auto localMergeOp =
-          std::make_unique<LocalMerge>(id, ctx.get(), numSources, localMerge);
-      ctx->task->createLocalMergeSources(
-          numSources, localMergeOp->outputType(), localMergeOp->mappedMemory());
+          std::make_unique<LocalMerge>(id, ctx.get(), localMerge);
       operators.push_back(std::move(localMergeOp));
+    } else if (
+        auto mergeJoin =
+            std::dynamic_pointer_cast<const core::MergeJoinNode>(planNode)) {
+      auto mergeJoinOp = std::make_unique<MergeJoin>(id, ctx.get(), mergeJoin);
+      ctx->task->createMergeJoinSource(ctx->splitGroupId, mergeJoin->id());
+      operators.push_back(std::move(mergeJoinOp));
     } else if (
         auto localPartitionNode =
             std::dynamic_pointer_cast<const core::LocalPartitionNode>(
@@ -293,7 +369,7 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
           ctx.get(),
           localPartitionNode->outputType(),
           localPartitionNode->id(),
-          ctx->driverId));
+          ctx->partitionId));
     } else if (
         auto unnest =
             std::dynamic_pointer_cast<const core::UnnestNode>(planNode)) {
@@ -304,6 +380,16 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
                 planNode)) {
       operators.push_back(
           std::make_unique<EnforceSingleRow>(id, ctx.get(), enforceSingleRow));
+    } else if (
+        auto assignUniqueIdNode =
+            std::dynamic_pointer_cast<const core::AssignUniqueIdNode>(
+                planNode)) {
+      operators.push_back(std::make_unique<AssignUniqueId>(
+          id,
+          ctx.get(),
+          assignUniqueIdNode,
+          assignUniqueIdNode->taskUniqueId(),
+          assignUniqueIdNode->uniqueIdCounter()));
     } else {
       auto extended = Operator::fromPlanNode(ctx.get(), id, planNode);
       VELOX_CHECK(extended, "Unsupported plan node: {}", planNode->toString());

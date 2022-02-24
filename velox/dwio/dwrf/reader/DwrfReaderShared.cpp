@@ -16,9 +16,11 @@
 
 #include "velox/dwio/dwrf/reader/DwrfReaderShared.h"
 #include <exception>
+#include <optional>
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/common/exception/Exceptions.h"
 #include "velox/dwio/dwrf/common/Statistics.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
 
 namespace facebook::velox::dwrf {
@@ -27,7 +29,6 @@ using dwio::common::ColumnSelector;
 using dwio::common::InputStream;
 using dwio::common::ReaderOptions;
 using dwio::common::RowReaderOptions;
-using dwio::common::StatsError;
 using dwio::common::TypeWithId;
 using dwio::common::typeutils::CompatChecker;
 
@@ -84,6 +85,11 @@ DwrfRowReaderShared::DwrfRowReaderShared(
         getType()->toString());
     return exceptionMessageContext;
   };
+
+  if (options_.getScanSpec()) {
+    columnReaderFactory_ =
+        std::make_unique<SelectiveColumnReaderFactory>(options_.getScanSpec());
+  }
 
   CompatChecker::check(
       *getReader().getSchema(), *getType(), true, createExceptionContext);
@@ -411,16 +417,16 @@ size_t DwrfRowReaderShared::estimatedReaderMemory() const {
   return 2 * DwrfReaderShared::getMemoryUse(getReader(), -1, *columnSelector_);
 }
 
-size_t DwrfRowReaderShared::estimatedRowSizeHelper(
+std::optional<size_t> DwrfRowReaderShared::estimatedRowSizeHelper(
     const proto::Footer& footer,
-    const Statistics& stats,
+    const dwio::common::Statistics& stats,
     uint32_t nodeId) const {
   DWIO_ENSURE_LT(nodeId, footer.types_size(), "Types missing in footer");
 
   const auto& s = stats.getColumnStatistics(nodeId);
   const auto& t = footer.types(nodeId);
   if (!s.getNumberOfValues()) {
-    throw StatsError("numberofvalues unavailable");
+    return std::nullopt;
   }
   auto valueCount = s.getNumberOfValues().value();
   if (valueCount < 1) {
@@ -449,24 +455,26 @@ size_t DwrfRowReaderShared::estimatedRowSizeHelper(
       return valueCount * sizeof(double);
     }
     case proto::Type_Kind_STRING: {
-      auto stringStats = dynamic_cast<const StringColumnStatistics*>(&s);
+      auto stringStats =
+          dynamic_cast<const dwio::common::StringColumnStatistics*>(&s);
       if (!stringStats) {
-        throw StatsError("stringstatistics unavailable");
+        return std::nullopt;
       }
       auto length = stringStats->getTotalLength();
       if (!length) {
-        throw StatsError("stringstatistics unavailable");
+        return std::nullopt;
       }
       return length.value();
     }
     case proto::Type_Kind_BINARY: {
-      auto binaryStats = dynamic_cast<const BinaryColumnStatistics*>(&s);
+      auto binaryStats =
+          dynamic_cast<const dwio::common::BinaryColumnStatistics*>(&s);
       if (!binaryStats) {
-        throw StatsError("binarystatistics unavailable");
+        return std::nullopt;
       }
       auto length = binaryStats->getTotalLength();
       if (!length) {
-        throw StatsError("binarystatistics unavailable");
+        return std::nullopt;
       }
       return length.value();
     }
@@ -484,23 +492,27 @@ size_t DwrfRowReaderShared::estimatedRowSizeHelper(
            ++i) {
         auto subtypeEstimate =
             estimatedRowSizeHelper(footer, stats, t.subtypes(i));
-        totalEstimate = t.kind() == proto::Type_Kind_UNION
-            ? std::max(totalEstimate, subtypeEstimate)
-            : (totalEstimate + subtypeEstimate);
+        if (subtypeEstimate.has_value()) {
+          totalEstimate = t.kind() == proto::Type_Kind_UNION
+              ? std::max(totalEstimate, subtypeEstimate.value())
+              : (totalEstimate + subtypeEstimate.value());
+        } else {
+          return std::nullopt;
+        }
       }
       return totalEstimate;
     }
     default:
-      throw StatsError("unexpected type");
+      return std::nullopt;
   }
 }
 
-size_t DwrfRowReaderShared::estimatedRowSize() const {
+std::optional<size_t> DwrfRowReaderShared::estimatedRowSize() const {
   auto& reader = getReader();
   auto& footer = reader.getFooter();
 
   if (!footer.has_numberofrows()) {
-    throw StatsError("numberofrows unavailable");
+    return std::nullopt;
   }
 
   if (footer.numberofrows() < 1) {
@@ -510,9 +522,12 @@ size_t DwrfRowReaderShared::estimatedRowSize() const {
   // Estimate with projections
   constexpr uint32_t ROOT_NODE_ID = 0;
   auto stats = reader.getStatistics();
-  size_t projectedSize = estimatedRowSizeHelper(footer, *stats, ROOT_NODE_ID);
+  auto projectedSize = estimatedRowSizeHelper(footer, *stats, ROOT_NODE_ID);
+  if (projectedSize.has_value()) {
+    return projectedSize.value() / footer.numberofrows();
+  }
 
-  return projectedSize / footer.numberofrows();
+  return std::nullopt;
 }
 
 } // namespace facebook::velox::dwrf

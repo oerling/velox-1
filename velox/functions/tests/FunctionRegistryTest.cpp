@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "velox/expression/Expr.h"
@@ -28,44 +29,83 @@ namespace facebook::velox {
 
 namespace {
 
-VELOX_UDF_BEGIN(func_one)
-FOLLY_ALWAYS_INLINE bool call(
-    out_type<velox::Varchar>& /* result */,
-    const arg_type<velox::Varchar>& /* arg1 */) {
-  return true;
-}
-VELOX_UDF_END();
+template <typename T>
+struct FuncOne {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-template <typename T1, typename T2>
-VELOX_UDF_BEGIN(func_two)
-FOLLY_ALWAYS_INLINE bool call(
-    int64_t& /* result */,
-    const T1& /* arg1 */,
-    const T2& /* arg2 */) {
-  return true;
-}
-VELOX_UDF_END();
+  // Set func_one as non-deterministic.
+  static constexpr bool is_deterministic = false;
 
-VELOX_UDF_BEGIN(func_three)
-FOLLY_ALWAYS_INLINE bool call(
-    ArrayWriter<int64_t>& /* result */,
-    const ArrayVal<int64_t>& /* arg1 */) {
-  return true;
-}
-VELOX_UDF_END();
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<velox::Varchar>& /* result */,
+      const arg_type<velox::Varchar>& /* arg1 */) {
+    return true;
+  }
+};
+
+template <typename T>
+struct FuncTwo {
+  template <typename T1, typename T2>
+  FOLLY_ALWAYS_INLINE bool
+  call(int64_t& /* result */, const T1& /* arg1 */, const T2& /* arg2 */) {
+    return true;
+  }
+};
+
+template <typename T>
+struct FuncThree {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      ArrayWriter<int64_t>& /* result */,
+      const ArrayVal<int64_t>& /* arg1 */) {
+    return true;
+  }
+};
+
+template <typename T>
+struct FuncFour {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<velox::Varchar>& /* result */,
+      const arg_type<velox::Varchar>& /* arg1 */) {
+    return true;
+  }
+};
+
+template <typename T>
+struct FuncFive {
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& /* result */,
+      const int64_t& /* arg1 */) {
+    return true;
+  }
+};
+
+template <typename T>
+struct VariadicFunc {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<velox::Varchar>& /* result */,
+      const arg_type<Variadic<velox::Varchar>>& /* arg1 */) {
+    return true;
+  }
+};
 
 class VectorFuncOne : public velox::exec::VectorFunction {
  public:
   void apply(
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
-      velox::exec::Expr* /* caller */,
+      const TypePtr& /* outputType */,
       velox::exec::EvalCtx* /* context */,
       velox::VectorPtr* /* result */) const override {}
 
   static std::vector<std::shared_ptr<velox::exec::FunctionSignature>>
   signatures() {
-    // varchar) -> bigint
+    // varchar -> bigint
     return {velox::exec::FunctionSignatureBuilder()
                 .returnType("bigint")
                 .argumentType("varchar")
@@ -78,7 +118,7 @@ class VectorFuncTwo : public velox::exec::VectorFunction {
   void apply(
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
-      velox::exec::Expr* /* caller */,
+      const TypePtr& /* outputType */,
       velox::exec::EvalCtx* /* context */,
       velox::VectorPtr* /* result */) const override {}
 
@@ -97,7 +137,7 @@ class VectorFuncThree : public velox::exec::VectorFunction {
   void apply(
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
-      velox::exec::Expr* /* caller */,
+      const TypePtr& /* outputType */,
       velox::exec::EvalCtx* /* context */,
       velox::VectorPtr* /* result */) const override {}
 
@@ -116,7 +156,7 @@ class VectorFuncFour : public velox::exec::VectorFunction {
   void apply(
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
-      velox::exec::Expr* /* caller */,
+      const TypePtr& /* outputType */,
       velox::exec::EvalCtx* /* context */,
       velox::VectorPtr* /* result */) const override {}
 
@@ -129,6 +169,11 @@ class VectorFuncFour : public velox::exec::VectorFunction {
                 .returnType("array(K)")
                 .argumentType("map(K,V)")
                 .build()};
+  }
+
+  // Make it non-deterministic.
+  bool isDeterministic() const override {
+    return false;
   }
 };
 
@@ -153,13 +198,22 @@ VELOX_DECLARE_VECTOR_FUNCTION(
     std::make_unique<VectorFuncFour>());
 
 inline void registerTestFunctions() {
-  registerFunction<udf_func_one, Varchar, Varchar>({"func_one"});
-  registerFunction<udf_func_two<int64_t, int32_t>, int64_t, int64_t, int32_t>(
-      {"func_two"});
-  registerFunction<udf_func_two<int64_t, int16_t>, int64_t, int64_t, int16_t>(
-      {"func_two"});
-  registerFunction<udf_func_three, Array<int64_t>, Array<int64_t>>(
-      {"func_three"});
+  // If no alias is specified, ensure it will fallback to the struct name.
+  registerFunction<FuncOne, Varchar, Varchar>({"func_one"});
+
+  // func_two has two signatures.
+  registerFunction<FuncTwo, int64_t, int64_t, int32_t>({"func_two"});
+  registerFunction<FuncTwo, int64_t, int64_t, int16_t>({"func_two"});
+
+  // func_three has two aliases.
+  registerFunction<FuncThree, Array<int64_t>, Array<int64_t>>(
+      {"func_three_alias1", "func_three_alias2"});
+
+  // We swap func_four and func_five while registering.
+  registerFunction<FuncFour, Varchar, Varchar>({"func_five"});
+  registerFunction<FuncFive, int64_t, int64_t>({"func_four"});
+
+  registerFunction<VariadicFunc, Varchar, Variadic<Varchar>>({"variadic_func"});
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_one, "vector_func_one");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_two, "vector_func_two");
@@ -173,15 +227,36 @@ class FunctionRegistryTest : public ::testing::Test {
   FunctionRegistryTest() {
     registerTestFunctions();
   }
+
+  void testResolveVectorFunction(
+      const std::string& functionName,
+      const std::vector<TypePtr>& types,
+      const TypePtr& expected) {
+    checkEqual(velox::resolveFunction(functionName, types), expected);
+    checkEqual(velox::resolveVectorFunction(functionName, types), expected);
+  }
+
+  void checkEqual(const TypePtr& actual, const TypePtr& expected) {
+    if (expected) {
+      EXPECT_EQ(*actual, *expected);
+    } else {
+      EXPECT_EQ(actual, nullptr);
+    }
+  }
 };
 
 TEST_F(FunctionRegistryTest, getFunctionSignatures) {
   auto functionSignatures = getFunctionSignatures();
-  ASSERT_EQ(functionSignatures.size(), 7);
+  ASSERT_EQ(functionSignatures.size(), 11);
 
   ASSERT_EQ(functionSignatures.count("func_one"), 1);
   ASSERT_EQ(functionSignatures.count("func_two"), 1);
-  ASSERT_EQ(functionSignatures.count("func_three"), 1);
+  ASSERT_EQ(functionSignatures.count("func_three"), 0);
+  ASSERT_EQ(functionSignatures.count("func_three_alias1"), 1);
+  ASSERT_EQ(functionSignatures.count("func_three_alias2"), 1);
+  ASSERT_EQ(functionSignatures.count("func_four"), 1);
+  ASSERT_EQ(functionSignatures.count("func_five"), 1);
+  ASSERT_EQ(functionSignatures.count("variadic_func"), 1);
   ASSERT_EQ(functionSignatures.count("vector_func_one"), 1);
   ASSERT_EQ(functionSignatures.count("vector_func_two"), 1);
   ASSERT_EQ(functionSignatures.count("vector_func_three"), 1);
@@ -189,7 +264,9 @@ TEST_F(FunctionRegistryTest, getFunctionSignatures) {
 
   ASSERT_EQ(functionSignatures["func_one"].size(), 1);
   ASSERT_EQ(functionSignatures["func_two"].size(), 2);
-  ASSERT_EQ(functionSignatures["func_three"].size(), 1);
+  ASSERT_EQ(functionSignatures["func_three"].size(), 0);
+  ASSERT_EQ(functionSignatures["func_three_alias1"].size(), 1);
+  ASSERT_EQ(functionSignatures["func_three_alias2"].size(), 1);
   ASSERT_EQ(functionSignatures["vector_func_one"].size(), 1);
   ASSERT_EQ(functionSignatures["vector_func_two"].size(), 1);
   ASSERT_EQ(functionSignatures["vector_func_three"].size(), 1);
@@ -203,29 +280,66 @@ TEST_F(FunctionRegistryTest, getFunctionSignatures) {
           .build()
           ->toString());
 
-  ASSERT_EQ(
-      functionSignatures["func_two"].at(0)->toString(),
-      exec::FunctionSignatureBuilder()
-          .returnType("bigint")
-          .argumentType("bigint")
-          .argumentType("smallint")
-          .build()
-          ->toString());
+  std::vector<std::string> funcTwoSignatures;
+  std::transform(
+      functionSignatures["func_two"].begin(),
+      functionSignatures["func_two"].end(),
+      std::back_inserter(funcTwoSignatures),
+      [](auto& signature) { return signature->toString(); });
+  ASSERT_THAT(
+      funcTwoSignatures,
+      testing::UnorderedElementsAre(
+          exec::FunctionSignatureBuilder()
+              .returnType("bigint")
+              .argumentType("bigint")
+              .argumentType("integer")
+              .build()
+              ->toString(),
+          exec::FunctionSignatureBuilder()
+              .returnType("bigint")
+              .argumentType("bigint")
+              .argumentType("smallint")
+              .build()
+              ->toString()));
 
   ASSERT_EQ(
-      functionSignatures["func_two"].at(1)->toString(),
-      exec::FunctionSignatureBuilder()
-          .returnType("bigint")
-          .argumentType("bigint")
-          .argumentType("integer")
-          .build()
-          ->toString());
-
-  ASSERT_EQ(
-      functionSignatures["func_three"].at(0)->toString(),
+      functionSignatures["func_three_alias1"].at(0)->toString(),
       exec::FunctionSignatureBuilder()
           .returnType("array(bigint)")
           .argumentType("array(bigint)")
+          .build()
+          ->toString());
+
+  ASSERT_EQ(
+      functionSignatures["func_three_alias2"].at(0)->toString(),
+      exec::FunctionSignatureBuilder()
+          .returnType("array(bigint)")
+          .argumentType("array(bigint)")
+          .build()
+          ->toString());
+
+  ASSERT_EQ(
+      functionSignatures["func_four"].at(0)->toString(),
+      exec::FunctionSignatureBuilder()
+          .returnType("bigint")
+          .argumentType("bigint")
+          .build()
+          ->toString());
+
+  ASSERT_EQ(
+      functionSignatures["func_five"].at(0)->toString(),
+      exec::FunctionSignatureBuilder()
+          .returnType("varchar")
+          .argumentType("varchar")
+          .build()
+          ->toString());
+
+  ASSERT_EQ(
+      functionSignatures["variadic_func"].at(0)->toString(),
+      exec::FunctionSignatureBuilder()
+          .returnType("varchar")
+          .argumentType("varchar")
+          .variableArity()
           .build()
           ->toString());
 
@@ -264,49 +378,73 @@ TEST_F(FunctionRegistryTest, getFunctionSignatures) {
           ->toString());
 }
 
-TEST_F(FunctionRegistryTest, hasScalarFunctionSignature) {
+TEST_F(FunctionRegistryTest, hasSimpleFunctionSignature) {
   auto result = resolveFunction("func_one", {VARCHAR()});
   ASSERT_EQ(*result, *VARCHAR());
 }
 
-TEST_F(FunctionRegistryTest, hasScalarFunctionSignatureWrongArgType) {
+TEST_F(FunctionRegistryTest, hasSimpleFunctionSignatureWrongArgType) {
   auto result = resolveFunction("func_one", {INTEGER()});
   ASSERT_EQ(result, nullptr);
 }
 
-TEST_F(FunctionRegistryTest, hasScalarFunctionSignatureWrongFunctionName) {
+TEST_F(FunctionRegistryTest, hasSimpleFunctionSignatureWrongFunctionName) {
   auto result = resolveFunction("method_one", {VARCHAR()});
   ASSERT_EQ(result, nullptr);
 }
 
+TEST_F(FunctionRegistryTest, hasVariadicFunctionSignature) {
+  auto result = resolveFunction("variadic_func", {});
+  ASSERT_EQ(*result, *VARCHAR());
+
+  result = resolveFunction("variadic_func", {VARCHAR()});
+  ASSERT_EQ(*result, *VARCHAR());
+
+  result = resolveFunction("variadic_func", {VARCHAR(), VARCHAR()});
+  ASSERT_EQ(*result, *VARCHAR());
+
+  result = resolveFunction("variadic_func", {INTEGER()});
+  ASSERT_EQ(result, nullptr);
+}
+
 TEST_F(FunctionRegistryTest, hasVectorFunctionSignature) {
-  auto result = resolveFunction("vector_func_one", {VARCHAR()});
-  ASSERT_EQ(*result, *BIGINT());
+  testResolveVectorFunction("vector_func_one", {VARCHAR()}, BIGINT());
 }
 
 TEST_F(FunctionRegistryTest, hasVectorFunctionSignature2) {
-  auto result = resolveFunction("vector_func_two", {ARRAY(VARCHAR())});
-  ASSERT_EQ(*result, *ARRAY(BIGINT()));
+  testResolveVectorFunction(
+      "vector_func_two", {ARRAY(VARCHAR())}, ARRAY(BIGINT()));
 }
 
 TEST_F(FunctionRegistryTest, hasVectorFunctionSignature3) {
-  auto result = resolveFunction("vector_func_three", {REAL()});
-  ASSERT_EQ(*result, *OPAQUE<void>());
+  testResolveVectorFunction("vector_func_three", {REAL()}, OPAQUE<void>());
 }
 
 TEST_F(FunctionRegistryTest, hasVectorFunctionSignature4) {
-  auto result = resolveFunction("vector_func_four", {MAP(BIGINT(), VARCHAR())});
-  ASSERT_EQ(*result, *ARRAY(BIGINT()));
+  testResolveVectorFunction(
+      "vector_func_four", {MAP(BIGINT(), VARCHAR())}, ARRAY(BIGINT()));
 }
 
 TEST_F(FunctionRegistryTest, hasVectorFunctionSignatureWrongArgType) {
-  auto result = resolveFunction("vector_func_one", {INTEGER()});
-  ASSERT_EQ(result, nullptr);
+  testResolveVectorFunction("vector_func_one", {INTEGER()}, nullptr);
 }
 
 TEST_F(FunctionRegistryTest, hasVectorFunctionSignatureWrongFunctionName) {
-  auto result = resolveFunction("vector_method_one", {VARCHAR()});
-  ASSERT_EQ(result, nullptr);
+  testResolveVectorFunction("vector_method_one", {VARCHAR()}, nullptr);
+}
+
+TEST_F(FunctionRegistryTest, registerFunctionTwice) {
+  // For better or worse, there are code paths that depend on the ability to
+  // register the same functions repeatedly and have those repeated calls
+  // ignored.
+  registerFunction<FuncOne, Varchar, Varchar>({"func_one"});
+  registerFunction<FuncOne, Varchar, Varchar>({"func_one"});
+
+  auto& simpleFunctions = exec::SimpleFunctions();
+  auto signatures = simpleFunctions.getFunctionSignatures("func_one");
+  // The function should only be registered once, despite the multiple calls to
+  // registerFunction.
+  ASSERT_EQ(signatures.size(), 1);
 }
 
 } // namespace facebook::velox

@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include "velox/exec/AggregationMasks.h"
 #include "velox/exec/HashTable.h"
 #include "velox/exec/VectorHasher.h"
 
@@ -26,15 +27,29 @@ class GroupingSet {
  public:
   GroupingSet(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
+      std::vector<ChannelIndex>&& preGroupedKeys,
       std::vector<std::unique_ptr<Aggregate>>&& aggregates,
       std::vector<std::optional<ChannelIndex>>&& aggrMaskChannels,
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
       bool ignoreNullKeys,
+      bool isRawInput,
       OperatorCtx* driverCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
 
+  void noMoreInput();
+
+  /// Typically, the output is not available until all input has been added.
+  /// However, in case when input is clustered on some of the grouping keys, the
+  /// output becomes available every time one of these grouping keys changes
+  /// value. This method returns true if no-more-input message has been received
+  /// or if some groups are ready for output because pre-grouped keys values
+  /// have changed.
+  bool hasOutput();
+
+  /// Called if partial aggregation has reached memory limit or if hasOutput()
+  /// returns true.
   bool getOutput(
       int32_t batchSize,
       bool isPartial,
@@ -48,15 +63,23 @@ class GroupingSet {
   const HashLookup& hashLookup() const;
 
  private:
+  void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
+
+  void addRemainingInput();
+
   void initializeGlobalAggregation();
 
-  void populateTempVectors(int32_t aggregateIndex, const RowVectorPtr& input);
+  void addGlobalAggregationInput(const RowVectorPtr& input, bool mayPushdown);
 
-  // For each aggregation, if that aggregation has mask, the method prepares the
-  // selectivity vector by copying activeRows_ and then updating it from the
-  // mask column. The selectivity vectors are reused, if more than one
-  // aggregation is using it (we keep the map keyed by channel index).
-  void prepareMaskedSelectivityVectors(const RowVectorPtr& input);
+  bool getGlobalAggregationOutput(
+      int32_t batchSize,
+      bool isPartial,
+      RowContainerIterator* iterator,
+      RowVectorPtr& result);
+
+  void createHashTable();
+
+  void populateTempVectors(int32_t aggregateIndex, const RowVectorPtr& input);
 
   // If the given aggregation has mask, the method returns reference to the
   // selectivity vector from the maskedActiveRows_ (based on the mask channel
@@ -64,12 +87,15 @@ class GroupingSet {
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
   std::vector<ChannelIndex> keyChannels_;
+
+  /// A subset of grouping keys on which the input is clustered.
+  const std::vector<ChannelIndex> preGroupedKeyChannels_;
+
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   const bool isGlobal_;
+  const bool isRawInput_;
   std::vector<std::unique_ptr<Aggregate>> aggregates_;
-  // For each aggregation, can hold an index to a boolean channel (projection in
-  // the input row vector), that acts as row mask for the aggregation.
-  std::vector<std::optional<ChannelIndex>> aggrMaskChannels_;
+  AggregationMasks masks_;
   // Argument list for the corresponding element of 'aggregates_'.
   const std::vector<std::vector<ChannelIndex>> channelLists_;
   // Constant arguments to aggregates. Corresponds pairwise to
@@ -77,8 +103,11 @@ class GroupingSet {
   // kConstantChannel.
   const std::vector<std::vector<VectorPtr>> constantLists_;
   const bool ignoreNullKeys_;
-  DriverCtx* const driverCtx_;
   memory::MappedMemory* const mappedMemory_;
+
+  // Boolean indicating whether accumulators for a global aggregation (i.e.
+  // aggregation with no grouping keys) have been initialized.
+  bool globalAggregationInitialized_{false};
 
   std::vector<bool> mayPushdown_;
 
@@ -86,25 +115,29 @@ class GroupingSet {
   std::vector<VectorPtr> tempVectors_;
   std::unique_ptr<BaseHashTable> table_;
   std::unique_ptr<HashLookup> lookup_;
-  uint64_t numAdded_ = 0;
   SelectivityVector activeRows_;
-  // For aggregations that use masks we keep selectivity vectors in this map,
-  // keyed by the channel index, so the selectivity vectors can be reused.
-  struct MaskedRows {
-    bool prepared{false}; // true, if already prepared for the current batch.
-    SelectivityVector rows;
-  };
-  std::unordered_map<ChannelIndex, MaskedRows> maskedActiveRows_;
-
-  // We use this vector to decode mask boolean projections to update aggregation
-  // masks.
-  DecodedVector decodedMask_;
 
   // Used to allocate memory for a single row accumulating results of global
   // aggregation
   HashStringAllocator stringAllocator_;
   AllocationPool rows_;
   const bool isAdaptive_;
+
+  core::ExecCtx& execCtx_;
+
+  bool noMoreInput_{false};
+
+  /// In case of partial streaming aggregation, the input vector passed to
+  /// addInput(). A set of rows that belong to the last group of pre-grouped
+  /// keys need to be processed after flushing the hash table and accumulators.
+  RowVectorPtr remainingInput_;
+
+  /// First row in remainingInput_ that needs to be processed.
+  vector_size_t firstRemainingRow_;
+
+  /// The value of mayPushdown flag specified in addInput() for the
+  /// 'remainingInput_'.
+  bool remainingMayPushdown_;
 };
 
 } // namespace facebook::velox::exec

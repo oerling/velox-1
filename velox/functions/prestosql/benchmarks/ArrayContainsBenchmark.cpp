@@ -16,8 +16,9 @@
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 #include "velox/functions/Macros.h"
+#include "velox/functions/Registerer.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
-#include "velox/functions/prestosql/VectorFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -26,12 +27,38 @@ namespace {
 
 template <typename T>
 VELOX_UDF_BEGIN(contains)
-// UDF to tell whether a element is part of an array
 FOLLY_ALWAYS_INLINE bool call(
     bool& out,
-    const arg_type<Array<T>>& x,
-    const arg_type<T>& element) {
-  out = std::find(x.begin(), x.end(), element) != x.end();
+    const arg_type<Array<T>>& array,
+    const arg_type<T>& key) {
+  if (array.mayHaveNulls()) {
+    auto nullFound = false;
+    for (const auto& item : array) {
+      if (item.has_value()) {
+        if (*item == key) {
+          out = true;
+          return true;
+        }
+        continue;
+      }
+      nullFound = true;
+    }
+
+    if (!nullFound) {
+      out = false;
+      return true;
+    }
+    return false;
+  }
+
+  // Not nulls path
+  for (const auto& item : array) {
+    if (*item == key) {
+      out = true;
+      return true;
+    }
+  }
+  out = false;
   return true;
 }
 VELOX_UDF_END();
@@ -39,19 +66,14 @@ VELOX_UDF_END();
 class ArrayContainsBenchmark : public functions::test::FunctionBenchmarkBase {
  public:
   ArrayContainsBenchmark() : FunctionBenchmarkBase() {
-    functions::registerVectorFunctions();
+    functions::prestosql::registerArrayFunctions();
+    functions::prestosql::registerGeneralFunctions();
 
     registerFunction<
         udf_contains<int32_t>,
         bool,
         facebook::velox::Array<int32_t>,
         int32_t>({"contains_alt"});
-
-    registerFunction<
-        udf_contains<Varchar>,
-        bool,
-        facebook::velox::Array<Varchar>,
-        Varchar>({"contains_alt"});
   }
 
   void runInteger(const std::string& functionName) {
@@ -111,7 +133,7 @@ class ArrayContainsBenchmark : public functions::test::FunctionBenchmarkBase {
   }
 };
 
-BENCHMARK(vectorAdapterInteger) {
+BENCHMARK(vectorSimpleFunction) {
   ArrayContainsBenchmark benchmark;
   benchmark.runInteger("contains_alt");
 }
@@ -119,16 +141,6 @@ BENCHMARK(vectorAdapterInteger) {
 BENCHMARK_RELATIVE(vectorFunctionInteger) {
   ArrayContainsBenchmark benchmark;
   benchmark.runInteger("contains");
-}
-
-BENCHMARK(vectorAdapterVarchar) {
-  ArrayContainsBenchmark benchmark;
-  benchmark.runVarchar("contains_alt");
-}
-
-BENCHMARK_RELATIVE(vectorFunctionVarchar) {
-  ArrayContainsBenchmark benchmark;
-  benchmark.runVarchar("contains");
 }
 
 } // namespace

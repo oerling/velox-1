@@ -201,17 +201,24 @@ void EvalCtx::setError(
   addError(index, exceptionPtr, &errors_);
 }
 
-VectorPtr EvalCtx::getField(int32_t index) const {
-  VectorPtr field;
+void EvalCtx::setErrors(
+    const SelectivityVector& rows,
+    const std::exception_ptr& exceptionPtr) {
+  rows.applyToSelected([&](auto row) { setError(row, exceptionPtr); });
+}
+
+const VectorPtr& EvalCtx::getField(int32_t index) const {
+  const VectorPtr* field;
   if (!peeledFields_.empty()) {
-    field = peeledFields_[index];
+    field = &peeledFields_[index];
   } else {
-    field = row_->childAt(index);
+    field = &row_->childAt(index);
   }
-  if (field->isLazy() && field->asUnchecked<LazyVector>()->isLoaded()) {
-    return BaseVector::loadedVectorShared(field);
+  if ((*field)->isLazy() && (*field)->asUnchecked<LazyVector>()->isLoaded()) {
+    auto lazy = (*field)->asUnchecked<LazyVector>();
+    return lazy->loadedVectorShared();
   }
-  return field;
+  return *field;
 }
 
 BaseVector* EvalCtx::getRawField(int32_t index) const {
@@ -268,16 +275,38 @@ void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
       baseRows->applyToSelected(
           [&rowNumbers](auto row) { rowNumbers.push_back(row); });
       rowSet = RowSet(rowNumbers);
+
+      // If we have a mapping that is not a single level of dictionary, we
+      // collapse this to a single level of dictionary. The reason is
+      // that the inner levels of dictionary will reference rows that
+      // are not loaded, since the load was done for only the rows that
+      // are reachable from 'field'.
+      if (field->encoding() != VectorEncoding::Simple::DICTIONARY ||
+          lazyVector != field->valueVector().get()) {
+        lazyVector->load(rowSet, nullptr);
+        BufferPtr indices = AlignedBuffer::allocate<vector_size_t>(
+            field->size(), field->pool());
+        std::memcpy(
+            indices->asMutable<vector_size_t>(),
+            decoded->indices(),
+            sizeof(vector_size_t) * field->size());
+        const_cast<RowVector*>(row_)->childAt(index) =
+            BaseVector::wrapInDictionary(
+                BufferPtr(nullptr),
+                std::move(indices),
+                field->size(),
+                lazyVector->loadedVectorShared());
+        return;
+      }
     }
 
     lazyVector->load(rowSet, nullptr);
   }
-
   // An explicit call to loadedVector() is necessary to allow for proper
-  // initialization of dictionaries, sequences, etc. on top of lazy vector after
-  // it has been loaded. If encoding has been peeled off, the loading of the
-  // lazy vector would have happen already, but we still need to initialize this
-  // vector.
+  // initialization of dictionaries, sequences, etc. on top of lazy vector
+  // after it has been loaded. If encoding has been peeled off, the loading of
+  // the lazy vector would have happen already, but we still need to
+  // initialize this vector.
   field->loadedVector();
 }
 

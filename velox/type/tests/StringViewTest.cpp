@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sstream>
 #include "velox/type/Type.h"
 
 using namespace facebook::velox;
 
-TEST(Type, StringView) {
+TEST(StringView, basic) {
   std::string text = "We are stardust, we are golden...";
   for (int32_t i = 0; i < text.size(); ++i) {
     std::string subText(text.data(), i);
@@ -42,7 +43,7 @@ TEST(Type, StringView) {
   }
 }
 
-TEST(Type, StringViewContainer) {
+TEST(StringView, comparison) {
   // Differ in prefix.
   EXPECT_LT(StringView(" ab"), StringView("ab"));
   // Differ in inlined part.
@@ -51,7 +52,9 @@ TEST(Type, StringViewContainer) {
   EXPECT_LT(
       StringView("In hoc signo"),
       StringView("in hoc signo vinces, Constantinus"));
+}
 
+TEST(StringView, container) {
   std::vector<std::string> strings = {
       "May",
       "I walk",
@@ -76,7 +79,7 @@ TEST(Type, StringViewContainer) {
   }
 }
 
-TEST(Type, StringViewSelfComparison) {
+TEST(StringView, selfComparison) {
   std::vector<std::string> texts{
       "USA", // Within prefix
       "CUBA", // Exactly prefix
@@ -111,4 +114,39 @@ TEST(Type, StringViewSelfComparison) {
     EXPECT_EQ(lhs == rhs, true);
     EXPECT_EQ(lhs != rhs, false);
   }
+}
+
+TEST(StringView, literal) {
+  EXPECT_EQ("ab"_sv, StringView("ab"));
+
+  std::vector<StringView> vec = {"a"_sv, "b"_sv};
+  EXPECT_THAT(vec, ::testing::ElementsAre("a"_sv, "b"_sv));
+}
+
+TEST(StringView, implicitConstructionAndConversion) {
+  StringView sv1("literal");
+  EXPECT_EQ(sv1, "literal");
+
+  StringView sv2{"literal"};
+  EXPECT_EQ(sv2, "literal");
+
+  StringView sv3 = "literal";
+  EXPECT_EQ(sv3, "literal");
+
+  std::optional<StringView> sv4 = "literal";
+  EXPECT_TRUE(sv4.has_value());
+  EXPECT_EQ(*sv4, "literal");
+
+  std::optional<StringView> sv5("literal");
+  EXPECT_TRUE(sv5.has_value());
+  EXPECT_EQ(*sv5, "literal");
+
+  auto testRegularConversion = [](StringView sv) { EXPECT_EQ(sv, "literal"); };
+  testRegularConversion("literal");
+
+  auto testOptionalConversion = [](std::optional<StringView> sv) {
+    EXPECT_TRUE(sv.has_value());
+    EXPECT_EQ(sv, "literal");
+  };
+  testOptionalConversion("literal");
 }

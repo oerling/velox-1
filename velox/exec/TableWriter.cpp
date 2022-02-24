@@ -29,7 +29,7 @@ TableWriter::TableWriter(
           tableWriteNode->outputType(),
           operatorId,
           tableWriteNode->id(),
-          "TableWriter"),
+          "TableWrite"),
       numWrittenRows_(0),
       finished_(false),
       closed_(false),
@@ -41,7 +41,8 @@ TableWriter::TableWriter(
   // partition
   const auto& connectorId = tableWriteNode->insertTableHandle()->connectorId();
   connector_ = connector::getConnector(connectorId);
-  connectorQueryCtx_ = driverCtx_->createConnectorQueryCtx(connectorId);
+  connectorQueryCtx_ =
+      driverCtx_->createConnectorQueryCtx(connectorId, stats_.planNodeId);
 
   auto names = tableWriteNode->columnNames();
   auto types = tableWriteNode->columns()->children();
@@ -54,6 +55,11 @@ TableWriter::TableWriter(
   }
 
   mappedType_ = ROW(std::move(names), std::move(types));
+  const auto& config = driverCtx_->task->queryCtx()->config();
+  if (config.createEmptyFiles()) {
+    LOG(INFO) << "Enforce creating empty files\n";
+    createDataSink();
+  }
 }
 
 void TableWriter::createDataSink() {
@@ -90,7 +96,7 @@ void TableWriter::addInput(RowVectorPtr input) {
 
 RowVectorPtr TableWriter::getOutput() {
   // Making sure the output is read only once after the write is fully done
-  if (!isFinishing_ || finished_) {
+  if (!noMoreInput_ || finished_) {
     return nullptr;
   }
   finished_ = true;

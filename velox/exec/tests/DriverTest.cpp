@@ -15,9 +15,9 @@
  */
 #include <folly/init/Init.h>
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/exec/tests/Cursor.h"
-#include "velox/exec/tests/OperatorTestBase.h"
-#include "velox/exec/tests/PlanBuilder.h"
+#include "velox/exec/tests/utils/Cursor.h"
+#include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -52,6 +52,8 @@ class TestingPauserNode : public core::PlanNode {
   }
 
  private:
+  void addDetails(std::stringstream& /* stream */) const override {}
+
   std::vector<std::shared_ptr<const core::PlanNode>> sources_;
 };
 
@@ -125,12 +127,10 @@ class DriverTest : public OperatorTestBase {
     }
 
     if (!project.empty()) {
-      auto projectNames = rowType->names();
-      auto expressions = projectNames;
-      projectNames.push_back("expr");
-      expressions.push_back(project);
+      auto expressions = rowType->names();
+      expressions.push_back(fmt::format("{} AS expr", project));
 
-      planBuilder.project(expressions, projectNames);
+      planBuilder.project(expressions);
     }
     if (addTestingPauser) {
       planBuilder.addNode(
@@ -185,15 +185,15 @@ class DriverTest : public OperatorTestBase {
           LOG(INFO) << "Task::toString() while probably blocked: "
                     << tasks_[0]->toString();
         } else if (operation == ResultOperation::kCancel) {
-          cursor->cancelPool()->requestTerminate();
+          cursor->task()->requestTerminate();
         } else if (operation == ResultOperation::kTerminate) {
-          cursor->task()->terminate(kAborted);
+          cursor->task()->terminate(TaskState::kAborted);
         } else if (operation == ResultOperation::kYield) {
-          cursor->cancelPool()->requestYield();
+          cursor->task()->requestYield();
         } else if (operation == ResultOperation::kPause) {
-          cursor->cancelPool()->requestPause(true);
+          cursor->task()->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = cursor->cancelPool()->finishFuture().via(&executor);
+          auto future = cursor->task()->finishFuture().via(&executor);
           future.wait();
           paused = true;
         }
@@ -201,21 +201,31 @@ class DriverTest : public OperatorTestBase {
     }
   }
 
-  // Checks that 'task' transits to finished state within a short
-  // time. The finish takes place on a different thread after all
-  // results are produced and the cursor is at end, so that we may
-  // sometimes arrive at the check before the state change.
-  void expectFinished(std::shared_ptr<Task> task) {
-    constexpr int32_t kMaxWait = 5;
-    TaskState state;
+  // Checks that Test passes within a reasonable delay. The test can
+  // be flaky under indeterminate timing (heavy load) because we wait
+  // for a future that is realized after all threads have acknowledged
+  // a stop or pause.  Setting the next state is not in the same
+  // critical section as realizing the future, hence there can be a
+  // delay of some hundreds of instructions before all the consequent
+  // state changes occur. For cases where we have a cursor at end and
+  // the final state is set only after the cursor at end is visible to
+  // the caller, we do not have a good way to combine all inside the
+  // same critical section.
+  template <typename Test>
+  void expectWithDelay(
+      Test test,
+      const char* file,
+      int32_t line,
+      const char* message) {
+    constexpr int32_t kMaxWait = 1000;
+
     for (auto i = 0; i < kMaxWait; ++i) {
-      state = task->state();
-      if (state == kFinished) {
-        break;
+      if (test()) {
+        return;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    EXPECT_EQ(state, kFinished);
+    FAIL() << file << ":" << line << " " << message << "not realized within 1s";
   }
 
  public:
@@ -225,24 +235,31 @@ class DriverTest : public OperatorTestBase {
     std::lock_guard<std::mutex> l(wakeupMutex_);
     if (!wakeupInitialized_) {
       wakeupInitialized_ = true;
-      wakeupThread_ = std::thread([&]() {
+      wakeupThread_ = std::thread([this]() {
         int32_t counter = 0;
         for (;;) {
-          if (wakeupCancelled_) {
-            return;
+          {
+            std::lock_guard<std::mutex> l2(wakeupMutex_);
+            if (wakeupCancelled_) {
+              return;
+            }
           }
           // Wait a small interval and realize a small number of queued
           // promises, if any.
           auto units = 1 + (++counter % 5);
+
           // NOLINT
           std::this_thread::sleep_for(std::chrono::milliseconds(units));
-          auto count = 1 + (++counter % 4);
-          for (auto i = 0; i < count; ++i) {
-            if (wakeupPromises_.empty()) {
-              break;
+          {
+            std::lock_guard<std::mutex> l2(wakeupMutex_);
+            auto count = 1 + (++counter % 4);
+            for (auto i = 0; i < count; ++i) {
+              if (wakeupPromises_.empty()) {
+                break;
+              }
+              wakeupPromises_.front().setValue(true);
+              wakeupPromises_.pop_front();
             }
-            wakeupPromises_.front().setValue(true);
-            wakeupPromises_.pop_front();
           }
         }
       });
@@ -286,7 +303,7 @@ class DriverTest : public OperatorTestBase {
   std::deque<folly::Promise<bool>> wakeupPromises_;
   bool wakeupInitialized_{false};
   // Set to true when it is time to exit 'wakeupThread_'.
-  bool wakeupCancelled_{false};
+  std::atomic<bool> wakeupCancelled_{false};
 
   std::shared_ptr<const RowType> rowType_;
   std::mutex mutex_;
@@ -301,8 +318,10 @@ class DriverTest : public OperatorTestBase {
   folly::Random::DefaultGenerator rng_;
 };
 
+#define EXPECT_WITH_DELAY(test) \
+  expectWithDelay([&]() { return test; }, __FILE__, __LINE__, #test)
+
 TEST_F(DriverTest, error) {
-  Driver::testingJoinAndReinitializeExecutor(10);
   CursorParameters params;
   params.planNode = makeValuesFilterProject(rowType_, "m1 % 0", "", 100, 10);
   params.maxDrivers = 20;
@@ -317,13 +336,11 @@ TEST_F(DriverTest, error) {
   EXPECT_TRUE(stateFutures_.at(0).isReady());
   // Realized immediately since task not running.
   EXPECT_TRUE(tasks_[0]->stateChangeFuture(1'000'000).isReady());
-  EXPECT_EQ(tasks_[0]->state(), kFailed);
+  EXPECT_EQ(tasks_[0]->state(), TaskState::kFailed);
 }
 
 TEST_F(DriverTest, cancel) {
   CursorParameters params;
-  params.queryCtx = core::QueryCtx::create();
-
   params.planNode = makeValuesFilterProject(
       rowType_,
       "m1 % 10 > 0",
@@ -340,16 +357,14 @@ TEST_F(DriverTest, cancel) {
   }
   EXPECT_GE(numRead, 1'000'000);
   auto& executor = folly::QueuedImmediateExecutor::instance();
-  auto future = tasks_[0]->cancelPool()->finishFuture().via(&executor);
+  auto future = tasks_[0]->finishFuture().via(&executor);
   future.wait();
   EXPECT_TRUE(stateFutures_.at(0).isReady());
-  EXPECT_EQ(tasks_[0]->numDrivers(), 0);
+  EXPECT_EQ(tasks_[0]->numRunningDrivers(), 0);
 }
 
 TEST_F(DriverTest, terminate) {
   CursorParameters params;
-  params.queryCtx = core::QueryCtx::create();
-
   params.planNode = makeValuesFilterProject(
       rowType_,
       "m1 % 10 > 0",
@@ -367,7 +382,7 @@ TEST_F(DriverTest, terminate) {
   }
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
-  EXPECT_EQ(tasks_[0]->state(), kAborted);
+  EXPECT_EQ(tasks_[0]->state(), TaskState::kAborted);
 }
 
 TEST_F(DriverTest, slow) {
@@ -387,9 +402,11 @@ TEST_F(DriverTest, slow) {
   // are updated some tens of instructions after this. Determinism
   // requires a barrier.
   auto& executor = folly::QueuedImmediateExecutor::instance();
-  auto future = tasks_[0]->cancelPool()->finishFuture().via(&executor);
+  auto future = tasks_[0]->finishFuture().via(&executor);
   future.wait();
-  EXPECT_EQ(tasks_[0]->numDrivers(), 0);
+  // Note that the driver count drops after the last thread stops and
+  // realizes the future.
+  EXPECT_WITH_DELAY(tasks_[0]->numRunningDrivers() == 0);
   const auto stats = tasks_[0]->taskStats().pipelineStats;
   ASSERT_TRUE(!stats.empty() && !stats[0].operatorStats.empty());
   // Check that the blocking of the CallbackSink at the end of the pipeline is
@@ -416,9 +433,12 @@ TEST_F(DriverTest, pause) {
   readResults(params, ResultOperation::kPause, 370'000'000, &numRead);
   // Each thread will fully read the 1M rows in values.
   EXPECT_EQ(numRead, 10 * hits);
-  EXPECT_TRUE(stateFutures_.at(0).isReady());
-  expectFinished(tasks_[0]);
-  EXPECT_EQ(tasks_[0]->numDrivers(), 0);
+  auto stateFuture = tasks_[0]->stateChangeFuture(100'000'000);
+  auto& executor = folly::QueuedImmediateExecutor::instance();
+  auto state = std::move(stateFuture).via(&executor);
+  state.wait();
+  EXPECT_TRUE(tasks_[0]->isFinished());
+  EXPECT_EQ(tasks_[0]->numRunningDrivers(), 0);
   const auto taskStats = tasks_[0]->taskStats();
   ASSERT_EQ(taskStats.pipelineStats.size(), 1);
   const auto& operators = taskStats.pipelineStats[0].operatorStats;
@@ -457,8 +477,8 @@ TEST_F(DriverTest, yield) {
   }
   for (int32_t i = 0; i < kNumTasks; ++i) {
     threads[i].join();
+    EXPECT_WITH_DELAY(stateFutures_.at(i).isReady());
     EXPECT_EQ(counters[i], kThreadsPerTask * hits);
-    EXPECT_TRUE(stateFutures_.at(i).isReady());
   }
 }
 
@@ -495,11 +515,16 @@ class TestingPauser : public Operator {
   }
 
   bool needsInput() const override {
-    return !isFinishing_ && !input_;
+    return !noMoreInput_ && !input_;
   }
 
   void addInput(RowVectorPtr input) override {
     input_ = std::move(input);
+  }
+
+  void noMoreInput() override {
+    test_->unregisterTask(operatorCtx_->task());
+    Operator::noMoreInput();
   }
 
   RowVectorPtr getOutput() override {
@@ -511,7 +536,6 @@ class TestingPauser : public Operator {
     // Block for a time quantum evern 10th time.
     if (counter_ % 10 == 0) {
       test_->registerForWakeup(&future_);
-      hasFuture_ = true;
       return nullptr;
     }
     {
@@ -527,10 +551,9 @@ class TestingPauser : public Operator {
           if (!task) {
             continue;
           }
-          auto cancelPool = task->cancelPool();
-          cancelPool->requestPause(true);
+          task->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = cancelPool->finishFuture().via(&executor);
+          auto future = task->finishFuture().via(&executor);
           future.wait();
           sleep(2);
           Task::resume(task);
@@ -543,17 +566,15 @@ class TestingPauser : public Operator {
 
   BlockingReason isBlocked(ContinueFuture* future) override {
     VELOX_CHECK(!operatorCtx_->driver()->state().isSuspended);
-    if (hasFuture_) {
-      hasFuture_ = false;
+    if (future_.valid()) {
       *future = std::move(future_);
       return BlockingReason::kWaitForConsumer;
     }
     return BlockingReason::kNotBlocked;
   }
 
-  void finish() override {
-    test_->unregisterTask(operatorCtx_->task());
-    Operator::finish();
+  bool isFinished() override {
+    return noMoreInput_ && input_ == nullptr;
   }
 
  private:
@@ -561,44 +582,75 @@ class TestingPauser : public Operator {
     // NOLINT
     std::this_thread::sleep_for(std::chrono::milliseconds(units));
   }
+
   // The DriverTest under which this is running. Used for global context.
   DriverTest* test_;
+
   // Mutex to serialize the pause/restart exercise so that only one instance
   // does this at a time.
   static std::mutex pauseMutex_;
 
-  // Counter deciding
-  // the next action in getOutput().
+  // Counter deciding the next action in getOutput().
   int32_t counter_;
-  bool hasFuture_{false};
-  ContinueFuture future_;
+  ContinueFuture future_{ContinueFuture::makeEmpty()};
 };
 
 std::mutex TestingPauser ::pauseMutex_;
+
+namespace {
+
+class PauserNodeFactory : public Operator::PlanNodeTranslator {
+ public:
+  PauserNodeFactory(
+      uint32_t maxDrivers,
+      std::atomic<int32_t>& sequence,
+      DriverTest* testInstance)
+      : maxDrivers_{maxDrivers},
+        sequence_{sequence},
+        testInstance_{testInstance} {}
+
+  std::unique_ptr<Operator> translate(
+      DriverCtx* ctx,
+      int32_t id,
+      const std::shared_ptr<const core::PlanNode>& node) override {
+    if (auto pauser =
+            std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
+      return std::make_unique<TestingPauser>(
+          ctx, id, pauser, testInstance_, ++sequence_);
+    }
+    return nullptr;
+  }
+
+  std::optional<uint32_t> maxDrivers(
+      const std::shared_ptr<const core::PlanNode>& node) override {
+    if (auto pauser =
+            std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
+      return maxDrivers_;
+    }
+    return std::nullopt;
+  }
+
+ private:
+  uint32_t maxDrivers_;
+  std::atomic<int32_t>& sequence_;
+  DriverTest* testInstance_;
+};
+
+} // namespace
 
 TEST_F(DriverTest, pauserNode) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
   // Run with a fraction of the testing threads fitting in the executor.
-  Driver::testingJoinAndReinitializeExecutor(20);
-  static int32_t sequence = 0;
+  auto executor = std::make_shared<folly::CPUThreadPoolExecutor>(20);
+  static std::atomic<int32_t> sequence{0};
   // Use a static variable to pass the test instance to the create
   // function of the testing operator. The testing operator registers
   // all its Tasks in the test instance to create inter-Task pauses.
   static DriverTest* testInstance;
   testInstance = this;
-  Operator::registerOperator(
-      [&](DriverCtx* ctx,
-          int32_t id,
-          const std::shared_ptr<const core::PlanNode>& node)
-          -> std::unique_ptr<TestingPauser> {
-        if (auto pauser =
-                std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
-          return std::make_unique<TestingPauser>(
-              ctx, id, pauser, testInstance, ++sequence);
-        }
-        return nullptr;
-      });
+  Operator::registerOperator(std::make_unique<PauserNodeFactory>(
+      kThreadsPerTask, sequence, testInstance));
 
   std::vector<int32_t> counters;
   counters.reserve(kNumTasks);
@@ -606,7 +658,8 @@ TEST_F(DriverTest, pauserNode) {
   params.resize(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    params[i].queryCtx = core::QueryCtx::create();
+    params[i].queryCtx = core::QueryCtx::createForTest(
+        std::make_shared<core::MemConfig>(), executor);
     params[i].planNode = makeValuesFilterProject(
         rowType_,
         "m1 % 10 > 0",
@@ -616,7 +669,9 @@ TEST_F(DriverTest, pauserNode) {
         [](int64_t num) { return num % 10 > 0; },
         &hits,
         true);
-    params[i].maxDrivers = kThreadsPerTask;
+    params[i].maxDrivers =
+        kThreadsPerTask * 2; // a number larger than kThreadsPerTask
+    params[i].numResultDrivers = kThreadsPerTask;
   }
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
@@ -635,7 +690,6 @@ TEST_F(DriverTest, pauserNode) {
     EXPECT_EQ(counters[i], kThreadsPerTask * hits);
     EXPECT_TRUE(stateFutures_.at(i).isReady());
   }
-  Driver::testingJoinAndReinitializeExecutor(10);
 }
 
 int main(int argc, char** argv) {

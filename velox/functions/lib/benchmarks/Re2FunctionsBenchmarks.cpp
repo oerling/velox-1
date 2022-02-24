@@ -19,9 +19,9 @@
 #include <folly/init/Init.h>
 #include <string>
 
-#include "velox/expression/tests/VectorFuzzer.h"
 #include "velox/functions/lib/Re2Functions.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace facebook::velox::functions::test {
 namespace {
@@ -84,13 +84,19 @@ BENCHMARK_NAMED_PARAM_MULTI(regexExtract, bs100k, 100 << 10);
 
 } // namespace
 
+std::shared_ptr<exec::VectorFunction> makeRegexExtract(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs) {
+  return makeRe2Extract(name, inputArgs, /*emptyNoMatch=*/false);
+}
+
 void registerRe2Functions() {
   exec::registerStatefulVectorFunction(
       "re2_match", re2MatchSignatures(), makeRe2Match);
   exec::registerStatefulVectorFunction(
       "re2_search", re2SearchSignatures(), makeRe2Search);
   exec::registerStatefulVectorFunction(
-      "re2_extract", re2ExtractSignatures(), makeRe2Extract);
+      "re2_extract", re2ExtractSignatures(), makeRegexExtract);
 }
 
 } // namespace facebook::velox::functions::test

@@ -16,8 +16,11 @@
 #pragma once
 
 #include "velox/common/caching/DataCache.h"
+#include "velox/common/caching/ScanTracker.h"
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
+
+#include <folly/Synchronized.h>
 
 namespace facebook::velox::common {
 class Filter;
@@ -34,6 +37,10 @@ namespace facebook::velox::connector {
 // as a RowVectorPtr, potentially after processing pushdowns.
 struct ConnectorSplit {
   const std::string connectorId;
+
+  // true if the Task processing this has aborted. Allows aborting
+  // async prefetch for the split.
+  bool cancelled{false};
 
   explicit ConnectorSplit(const std::string& _connectorId)
       : connectorId(_connectorId) {}
@@ -61,6 +68,12 @@ class ConnectorTableHandle {
 class ConnectorInsertTableHandle {
  public:
   virtual ~ConnectorInsertTableHandle() {}
+
+  // Whether multi-threaded write is supported by this connector. Planner uses
+  // this flag to determine number of drivers.
+  virtual bool supportsMultiThreading() const {
+    return false;
+  }
 };
 
 class DataSink {
@@ -76,6 +89,7 @@ class DataSink {
 
 class DataSource {
  public:
+  static constexpr int64_t kUnknownRowSize = -1;
   virtual ~DataSource() = default;
 
   // Add split to process, then call next multiple times to process the split.
@@ -103,6 +117,16 @@ class DataSource {
   virtual uint64_t getCompletedRows() = 0;
 
   virtual std::unordered_map<std::string, int64_t> runtimeStats() = 0;
+
+  // Returns a connector dependent row size if available. This can be
+  // called after addSplit().  This estimates uncompressed data
+  // sizes. This is better than getCompletedBytes()/getCompletedRows()
+  // since these track sizes before decompression and may include
+  // read-ahead and extra IO from coalescing reads and  will not
+  // fully account for size of sparsely accessed columns.
+  virtual int64_t estimatedRowSize() {
+    return kUnknownRowSize;
+  }
 
   // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)
   // to avoid holding up the thread.
@@ -133,10 +157,14 @@ class ConnectorQueryCtx {
   ConnectorQueryCtx(
       memory::MemoryPool* pool,
       Config* config,
-      ExpressionEvaluator* expressionEvaluator)
+      ExpressionEvaluator* expressionEvaluator,
+      memory::MappedMemory* mappedMemory,
+      const std::string& scanId)
       : pool_(pool),
         config_(config),
-        expressionEvaluator_(expressionEvaluator) {}
+        expressionEvaluator_(expressionEvaluator),
+        mappedMemory_(mappedMemory),
+        scanId_(scanId) {}
 
   memory::MemoryPool* memoryPool() const {
     return pool_;
@@ -150,10 +178,27 @@ class ConnectorQueryCtx {
     return expressionEvaluator_;
   }
 
+  // MappedMemory for large allocations. Used for caching with
+  // CachedBufferedImput if this implements cache::AsyncDataCache.
+  memory::MappedMemory* mappedMemory() const {
+    return mappedMemory_;
+  }
+
+  // Returns an id that allows sharing state between different threads
+  // of the same scan. This is typically a query id plus the scan's
+  // PlanNodeId. This is used for locating a scanTracker, which tracks
+  // the read density of columns for prefetch and other memory
+  // hierarchy purposes.
+  const std::string& scanId() const {
+    return scanId_;
+  }
+
  private:
   memory::MemoryPool* pool_;
   Config* config_;
   ExpressionEvaluator* expressionEvaluator_;
+  memory::MappedMemory* mappedMemory_;
+  std::string scanId_;
 };
 
 class Connector {
@@ -191,14 +236,29 @@ class Connector {
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx) = 0;
 
+  // Returns a ScanTracker for 'id'. 'id' uniquely identifies the
+  // tracker and different threads will share the same
+  // instance. 'loadQuantum' is the largest single IO for the query
+  // being tracked.
+  static std::shared_ptr<cache::ScanTracker> getTracker(
+      const std::string& scanId,
+      int32_t loadQuantum);
+
  private:
+  static void unregisterTracker(cache::ScanTracker* tracker);
+
   const std::string id_;
+
+  static folly::Synchronized<
+      std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>>
+      trackers_;
+
   const std::shared_ptr<const Config> properties_;
 };
 
 class ConnectorFactory {
  public:
-  explicit ConnectorFactory(const std::string& name) : name_(name) {}
+  explicit ConnectorFactory(const char* name) : name_(name) {}
 
   virtual ~ConnectorFactory() = default;
 
@@ -209,21 +269,34 @@ class ConnectorFactory {
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
       std::shared_ptr<const Config> properties,
-      std::unique_ptr<DataCache> dataCache = nullptr) = 0;
+      std::unique_ptr<DataCache> dataCache = nullptr,
+      folly::Executor* executor = nullptr) = 0;
 
  private:
   const std::string name_;
 };
 
+/// Adds a factory for creating connectors to the registry using connector name
+/// as the key. Throws if factor with the same name is already present. Always
+/// returns true. The return value makes it easy to use with
+/// FB_ANONYMOUS_VARIABLE.
 bool registerConnectorFactory(std::shared_ptr<ConnectorFactory> factory);
 
+/// Returns a factory for creating connectors with the specified name. Throws if
+/// factory doesn't exist.
 std::shared_ptr<ConnectorFactory> getConnectorFactory(
     const std::string& connectorName);
 
+/// Adds connector instance to the registry using connector ID as the key.
+/// Throws if connector with the same ID is already present. Always returns
+/// true. The return value makes it easy to use with FB_ANONYMOUS_VARIABLE.
 bool registerConnector(std::shared_ptr<Connector> connector);
 
+/// Removes the connector with specified ID from the registry. Returns true if
+/// connector was removed and false if connector didn't exist.
 bool unregisterConnector(const std::string& connectorId);
 
+/// Returns a connector with specified ID. Throws if connector doesn't exist.
 std::shared_ptr<Connector> getConnector(const std::string& connectorId);
 
 #define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                      \

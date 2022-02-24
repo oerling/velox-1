@@ -94,25 +94,28 @@ inline std::ostream& operator<<(
 //
 // Check `velox/docs/develop/scalar-functions.rst` for more documentation on how
 // to build scalar functions.
-VELOX_UDF_BEGIN(map_resolver_simple)
-FOLLY_ALWAYS_INLINE bool call(
-    arg_type<std::shared_ptr<UserDefinedOutput>>& out,
-    const arg_type<std::shared_ptr<UserDefinedMap>>& state,
-    const int64_t& idx) {
-  out = std::make_shared<UserDefinedOutput>(idx, state->toString(idx));
-  return true;
-}
-VELOX_UDF_END()
+template <typename T>
+struct MapResolverSimpleFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      arg_type<std::shared_ptr<UserDefinedOutput>>& out,
+      const arg_type<std::shared_ptr<UserDefinedMap>>& state,
+      const int64_t& idx) {
+    out = std::make_shared<UserDefinedOutput>(idx, state->toString(idx));
+    return true;
+  }
+};
 
 // Next, we implement the same logic using the vectorized function framework.
-class MapResolverFunction : public exec::VectorFunction {
+class MapResolverVectorFunction : public exec::VectorFunction {
  public:
   // Note that when using the vectorized function framework, you will need to
   // explicitly cast your opaque type vector into the expected opaqued type.
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
-      exec::Expr* caller,
+      const TypePtr& outputType,
       exec::EvalCtx* context,
       VectorPtr* result) const override {
     // We cannot make any assumptions about the encoding of the input vectors.
@@ -131,7 +134,7 @@ class MapResolverFunction : public exec::VectorFunction {
 
     // Ensure we have an output vector where we can write the output opaqued
     // values.
-    BaseVector::ensureWritable(rows, caller->type(), context->pool(), result);
+    BaseVector::ensureWritable(rows, outputType, context->pool(), result);
     auto* output = (*result)->as<KindToFlatVector<TypeKind::OPAQUE>::type>();
 
     // `applyToSelected()` will execute the lambda below on each row enabled in
@@ -171,21 +174,21 @@ class MapResolverFunction : public exec::VectorFunction {
 // Declaring the vectorized function.
 VELOX_DECLARE_VECTOR_FUNCTION(
     udf_map_resolver_vector,
-    MapResolverFunction::signatures(),
-    std::make_unique<MapResolverFunction>());
+    MapResolverVectorFunction::signatures(),
+    std::make_unique<MapResolverVectorFunction>());
 
 int main(int argc, char** argv) {
   // Registering both simple and vectorized functions.
   registerFunction<
-      udf_map_resolver_simple,
+      MapResolverSimpleFunction,
       std::shared_ptr<UserDefinedOutput>,
       std::shared_ptr<UserDefinedMap>,
-      int64_t>();
+      int64_t>({"map_resolver_simple"});
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_map_resolver_vector, "map_resolver_vector");
 
   // Create memory pool and other query-related structures.
-  auto queryCtx = core::QueryCtx::create();
+  auto queryCtx = core::QueryCtx::createForTest();
   auto pool = memory::getDefaultScopedMemoryPool();
   core::ExecCtx execCtx{pool.get(), queryCtx.get()};
 
@@ -309,16 +312,10 @@ VectorPtr evaluate(
 
   auto rowType = rowVector->type()->as<TypeKind::ROW>();
 
-  auto inputExprNode =
-      std::make_shared<const core::InputTypedExpr>(rowVector->type());
   auto fieldAccessExprNode1 = std::make_shared<core::FieldAccessTypedExpr>(
-      rowType.findChild(argName1),
-      std::vector<core::TypedExprPtr>{inputExprNode},
-      argName1);
+      rowType.findChild(argName1), argName1);
   auto fieldAccessExprNode2 = std::make_shared<core::FieldAccessTypedExpr>(
-      rowType.findChild(argName2),
-      std::vector<core::TypedExprPtr>{inputExprNode},
-      argName2);
+      rowType.findChild(argName2), argName2);
 
   auto exprPlan = std::make_shared<core::CallTypedExpr>(
       OPAQUE<UserDefinedOutput>(),

@@ -12,12 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# for generated headers
-include_directories(${CMAKE_BINARY_DIR})
-
 add_executable(
-  velox_expression_test ExprTest.cpp CastExprTest.cpp EvalSimplifiedTest.cpp
-                        SignatureBinderTest.cpp SimpleFunctionTest.cpp)
+  velox_expression_test
+  ExprTest.cpp
+  CastExprTest.cpp
+  MapWriterTest.cpp
+  ArrayProxyTest.cpp
+  EvalSimplifiedTest.cpp
+  SignatureBinderTest.cpp
+  SimpleFunctionTest.cpp
+  SimpleFunctionCallNullFreeTest.cpp
+  SimpleFunctionPresetNullsTest.cpp
+  ArrayViewTest.cpp
+  ArrayProxyTest.cpp
+  StringProxyTest.cpp
+  MapViewTest.cpp
+  RowViewTest.cpp
+  TryExprTest.cpp
+  VariadicViewTest.cpp
+  VectorReaderTest.cpp)
 
 add_test(
   NAME velox_expression_test
@@ -43,19 +56,20 @@ target_link_libraries(
   ${GTEST_BOTH_LIBRARIES}
   ${FOLLY_WITH_DEPENDENCIES}
   ${gflags_LIBRARIES}
-  ${GLOG}
+  glog::glog
   ${FMT})
-
-add_library(velox_vector_fuzzer VectorFuzzer.cpp)
-
-target_link_libraries(velox_vector_fuzzer velox_type velox_vector)
 
 add_library(velox_expression_fuzzer ExpressionFuzzer.cpp)
 
 target_link_libraries(velox_expression_fuzzer velox_type velox_vector_fuzzer
-                      velox_vector_test_lib)
+                      velox_vector_test_lib velox_function_registry)
 
-add_executable(velox_expression_fuzzer_main ExpressionFuzzerMain.cpp)
+add_executable(velox_expression_fuzzer_test ExpressionFuzzerTest.cpp)
 
-target_link_libraries(velox_expression_fuzzer_main velox_expression_fuzzer
-                      velox_functions_prestosql)
+target_link_libraries(velox_expression_fuzzer_test velox_expression_fuzzer
+                      velox_functions_prestosql ${GTEST_BOTH_LIBRARIES})
+
+add_executable(spark_expression_fuzzer_test SparkExpressionFuzzerTest.cpp)
+
+target_link_libraries(spark_expression_fuzzer_test velox_expression_fuzzer
+                      velox_functions_spark ${GTEST_BOTH_LIBRARIES})

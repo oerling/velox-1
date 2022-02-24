@@ -15,11 +15,15 @@
  */
 
 #include "velox/type/Type.h"
-#include <boost/algorithm/string.hpp>
-#include <boost/regex.hpp>
-#include <folly/Demangle.h>
+
 #include <sstream>
 #include <typeindex>
+
+#include <boost/algorithm/string.hpp>
+#include <boost/regex.hpp>
+
+#include <folly/Demangle.h>
+
 #include "velox/common/base/Exceptions.h"
 
 namespace std {
@@ -52,6 +56,7 @@ TypeKind mapNameToTypeKind(const std::string& name) {
       {"VARCHAR", TypeKind::VARCHAR},
       {"VARBINARY", TypeKind::VARBINARY},
       {"TIMESTAMP", TypeKind::TIMESTAMP},
+      {"DATE", TypeKind::DATE},
       {"ARRAY", TypeKind::ARRAY},
       {"MAP", TypeKind::MAP},
       {"ROW", TypeKind::ROW},
@@ -81,6 +86,7 @@ std::string mapTypeKindToName(const TypeKind& typeKind) {
       {TypeKind::VARCHAR, "VARCHAR"},
       {TypeKind::VARBINARY, "VARBINARY"},
       {TypeKind::TIMESTAMP, "TIMESTAMP"},
+      {TypeKind::DATE, "DATE"},
       {TypeKind::ARRAY, "ARRAY"},
       {TypeKind::MAP, "MAP"},
       {TypeKind::ROW, "ROW"},
@@ -196,13 +202,26 @@ folly::dynamic ArrayType::serialize() const {
   return obj;
 }
 
+FixedSizeArrayType::FixedSizeArrayType(
+    FixedSizeArrayType::size_type len,
+    std::shared_ptr<const Type> child)
+    : ArrayType(child), len_(len) {}
+
+std::string FixedSizeArrayType::toString() const {
+  std::stringstream ss;
+  ss << "FIXED_SIZE_ARRAY(" << len_ << ")<" << child_->toString() << ">";
+  return ss.str();
+}
+
 const std::shared_ptr<const Type>& MapType::childAt(uint32_t idx) const {
   if (idx == 0) {
     return keyType();
   } else if (idx == 1) {
     return valueType();
   }
-  VELOX_USER_FAIL("Map type should have only two children");
+  VELOX_USER_FAIL(
+      "Map type should have only two children. Tried to access child '{}'",
+      idx);
 }
 
 MapType::MapType(
@@ -475,6 +494,13 @@ std::shared_ptr<const ArrayType> ARRAY(
   return std::make_shared<const ArrayType>(std::move(elementType));
 }
 
+std::shared_ptr<const FixedSizeArrayType> FIXED_SIZE_ARRAY(
+    FixedSizeArrayType::size_type len,
+    std::shared_ptr<const Type> elementType) {
+  return std::make_shared<const FixedSizeArrayType>(
+      len, std::move(elementType));
+}
+
 std::shared_ptr<const RowType> ROW(
     std::vector<std::string>&& names,
     std::vector<std::shared_ptr<const Type>>&& types) {
@@ -512,10 +538,6 @@ std::shared_ptr<const MapType> MAP(
       std::move(keyType), std::move(valType));
 };
 
-std::shared_ptr<const TimestampType> TIMESTAMP() {
-  return std::make_shared<const TimestampType>();
-};
-
 std::shared_ptr<const FunctionType> FUNCTION(
     std::vector<std::shared_ptr<const Type>>&& argumentTypes,
     std::shared_ptr<const Type> returnType) {
@@ -535,8 +557,10 @@ KOSKI_DEFINE_SCALAR_ACCESSOR(SMALLINT);
 KOSKI_DEFINE_SCALAR_ACCESSOR(BIGINT);
 KOSKI_DEFINE_SCALAR_ACCESSOR(REAL);
 KOSKI_DEFINE_SCALAR_ACCESSOR(DOUBLE);
+KOSKI_DEFINE_SCALAR_ACCESSOR(TIMESTAMP);
 KOSKI_DEFINE_SCALAR_ACCESSOR(VARCHAR);
 KOSKI_DEFINE_SCALAR_ACCESSOR(VARBINARY);
+KOSKI_DEFINE_SCALAR_ACCESSOR(DATE);
 KOSKI_DEFINE_SCALAR_ACCESSOR(UNKNOWN);
 
 #undef KOSKI_DEFINE_SCALAR_ACCESSOR
@@ -549,12 +573,6 @@ std::shared_ptr<const Type> createType(
     TypeKind kind,
     std::vector<std::shared_ptr<const Type>>&& children) {
   return VELOX_DYNAMIC_TYPE_DISPATCH(createType, kind, std::move(children));
-}
-
-template <>
-std::shared_ptr<const Type> createType<TypeKind::TIMESTAMP>(
-    std::vector<std::shared_ptr<const Type>>&& /*children*/) {
-  return TIMESTAMP();
 }
 
 template <>
@@ -599,18 +617,21 @@ bool Type::containsUnknown() const {
 
 namespace {
 
-using CustomTypeFactory =
-    std::function<TypePtr(std::vector<TypePtr> childTypes)>;
-
-std::unordered_map<std::string, CustomTypeFactory>& typeFactories() {
-  static std::unordered_map<std::string, CustomTypeFactory> factories;
+std::unordered_map<std::string, std::unique_ptr<const CustomTypeFactories>>&
+typeFactories() {
+  static std::
+      unordered_map<std::string, std::unique_ptr<const CustomTypeFactories>>
+          factories;
   return factories;
 }
+
 } // namespace
 
-void registerType(const std::string& name, CustomTypeFactory factory) {
+void registerType(
+    const std::string& name,
+    std::unique_ptr<const CustomTypeFactories> factories) {
   auto uppercaseName = boost::algorithm::to_upper_copy(name);
-  typeFactories().emplace(uppercaseName, factory);
+  typeFactories().emplace(uppercaseName, std::move(factories));
 }
 
 bool typeExists(const std::string& name) {
@@ -618,14 +639,34 @@ bool typeExists(const std::string& name) {
   return typeFactories().count(uppercaseName) > 0;
 }
 
-TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes) {
+const CustomTypeFactories* FOLLY_NULLABLE
+getTypeFactories(const std::string& name) {
   auto uppercaseName = boost::algorithm::to_upper_copy(name);
   auto it = typeFactories().find(uppercaseName);
-  if (it == typeFactories().end()) {
-    return nullptr;
+
+  if (it != typeFactories().end()) {
+    return it->second.get();
   }
 
-  return it->second(std::move(childTypes));
+  return nullptr;
+}
+
+TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes) {
+  auto factories = getTypeFactories(name);
+  if (factories) {
+    return factories->getType(std::move(childTypes));
+  }
+
+  return nullptr;
+}
+
+exec::CastOperatorPtr getCastOperator(const std::string& name) {
+  auto factories = getTypeFactories(name);
+  if (factories) {
+    return factories->getCastOperator();
+  }
+
+  return nullptr;
 }
 
 } // namespace facebook::velox

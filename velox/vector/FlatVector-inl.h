@@ -179,11 +179,11 @@ void FlatVector<T>::copyValuesAndNulls(
       }
     }
   } else if (source->isConstantEncoding()) {
-    auto constant = source->as<ConstantVector<T>>();
-    if (constant->isNullAt(0)) {
+    if (source->isNullAt(0)) {
       BaseVector::addNulls(nullptr, rows);
       return;
     }
+    auto constant = source->as<ConstantVector<T>>();
     T value = constant->valueAt(0);
     while (iter.next(row)) {
       rawValues_[row] = value;
@@ -252,11 +252,11 @@ void FlatVector<T>::copyValuesAndNulls(
       }
     }
   } else if (source->isConstantEncoding()) {
-    auto constant = source->as<ConstantVector<T>>();
-    if (constant->isNullAt(0)) {
+    if (source->isNullAt(0)) {
       bits::fillBits(rawNulls, targetIndex, targetIndex + count, bits::kNull);
       return;
     }
+    auto constant = source->as<ConstantVector<T>>();
     T value = constant->valueAt(0);
     for (auto row = targetIndex; row < targetIndex + count; ++row) {
       rawValues_[row] = value;
@@ -281,13 +281,13 @@ void FlatVector<T>::copyValuesAndNulls(
 }
 
 template <typename T>
-void FlatVector<T>::resize(vector_size_t size) {
+void FlatVector<T>::resize(vector_size_t size, bool setNotNull) {
   auto previousSize = BaseVector::length_;
-  BaseVector::resize(size);
+  BaseVector::resize(size, setNotNull);
   if (!values_) {
     return;
   }
-  vector_size_t minBytes = BaseVector::byteSize<T>(size);
+  const uint64_t minBytes = BaseVector::byteSize<T>(size);
   if (values_->capacity() < minBytes) {
     AlignedBuffer::reallocate<T>(&values_, size);
     rawValues_ = values_->asMutable<T>();

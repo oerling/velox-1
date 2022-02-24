@@ -140,8 +140,8 @@ inline const char* errorMessage(const char* s) {
 }
 
 template <typename... Args>
-std::string errorMessage(const Args&... args) {
-  return fmt::format(args...);
+std::string errorMessage(fmt::string_view fmt, const Args&... args) {
+  return fmt::vformat(fmt, fmt::make_format_args(args...));
 }
 
 } // namespace detail
@@ -330,6 +330,8 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
   _VELOX_USER_CHECK_OP(e1, e2, ==, ##__VA_ARGS__)
 #define VELOX_USER_CHECK_NE(e1, e2, ...) \
   _VELOX_USER_CHECK_OP(e1, e2, !=, ##__VA_ARGS__)
+#define VELOX_USER_CHECK_NULL(e, ...) \
+  VELOX_USER_CHECK(e == nullptr, ##__VA_ARGS__)
 #define VELOX_USER_CHECK_NOT_NULL(e, ...) \
   VELOX_USER_CHECK(e != nullptr, ##__VA_ARGS__)
 
@@ -349,6 +351,7 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
   VELOX_USER_CHECK_NE(e1, e2, ##__VA_ARGS__)
 #define VELOX_USER_DCHECK_NOT_NULL(e, ...) \
   VELOX_USER_CHECK_NOT_NULL(e, ##__VA_ARGS__)
+#define VELOX_USER_DCHECK_NULL(e, ...) VELOX_USER_CHECK_NULL(e, ##__VA_ARGS__)
 #else
 #define VELOX_USER_DCHECK(expr, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_GT(e1, e2, ...) VELOX_USER_CHECK(true)
@@ -357,6 +360,7 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxUserError);
 #define VELOX_USER_DCHECK_LE(e1, e2, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_EQ(e1, e2, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_NE(e1, e2, ...) VELOX_USER_CHECK(true)
+#define VELOX_USER_DCHECK_NULL(e, ...) VELOX_USER_CHECK(true)
 #define VELOX_USER_DCHECK_NOT_NULL(e, ...) VELOX_USER_CHECK(true)
 #endif
 
