@@ -390,18 +390,19 @@ class IOBufOutputStream : public OutputStream {
         out_(std::make_unique<ByteStream>(arena_.get())) {}
 
   void write(const char* s, std::streamsize count) {
-    out_->appendStringPiece(folly::StringPiece(s, count));;
+    out_->appendStringPiece(folly::StringPiece(s, count));
+    ;
     if (listener_) {
       listener_->onWrite(s, count);
     }
   }
 
   std::streampos tellp() const {
-    VELOX_NYI(); //return out_->tellp();
+    VELOX_NYI(); // return out_->tellp();
   }
 
   void seekp(std::streampos pos) {
-    VELOX_NYI(); //out_->seekp(pos);
+    VELOX_NYI(); // out_->seekp(pos);
   }
 
   std::unique_ptr<folly::IOBuf> getIOBuf();

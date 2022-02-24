@@ -55,7 +55,9 @@ SerializedPage::SerializedPage(
     auto bufSize = buf.size();
     auto bytes = std::min<int32_t>(bufSize, toRead);
     ranges_.push_back(ByteRange{
-        const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())), bytes, 0});
+        const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
+        bytes,
+        0});
     toRead -= bytes;
     if (!toRead) {
       break;

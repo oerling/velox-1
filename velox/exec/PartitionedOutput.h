@@ -33,7 +33,8 @@ class Destination {
       int destination,
       memory::MappedMemory* FOLLY_NONNULL memory)
       : taskId_(taskId), destination_(destination), memory_(memory) {
-    setTargetSizePct();}
+    setTargetSizePct();
+  }
 
   // Resets the destination before starting a new batch.
   void beginBatch() {
@@ -82,7 +83,7 @@ class Destination {
     targetSizePct_ = 70 + (folly::Random::rand32(rng_) % 50);
     targetNumRows_ = (10000 * targetSizePct_) / 100;
   }
-  
+
   const std::string taskId_;
   const int destination_;
   memory::MappedMemory* FOLLY_NONNULL const memory_;
@@ -100,7 +101,7 @@ class Destination {
   // burst of traffic.
   int32_t targetSizePct_;
 
-  int32_t targetNumRows_; 
+  int32_t targetNumRows_;
 
   // Generator for varying target batch size. Randomly seededat construction.
   folly::Random::DefaultGenerator rng_;
@@ -140,8 +141,9 @@ class PartitionedOutput : public Operator {
         future_(false),
         bufferManager_(PartitionedOutputBufferManager::getInstance(
             operatorCtx_->task()->queryCtx()->host())),
-	maxBufferedBytes_(
-			  std::max<int64_t>(FLAGS_min_partitioned_output_buffer_mb << 20, ctx->task->queryCtx()->config().maxPartitionedOutputBufferSize())),
+        maxBufferedBytes_(std::max<int64_t>(
+            FLAGS_min_partitioned_output_buffer_mb << 20,
+            ctx->task->queryCtx()->config().maxPartitionedOutputBufferSize())),
         mappedMemory_{operatorCtx_->mappedMemory()} {
     if (numDestinations_ == 1 || planNode->isBroadcast()) {
       VELOX_CHECK(keyChannels_.empty());

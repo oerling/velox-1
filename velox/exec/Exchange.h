@@ -33,10 +33,8 @@ class SerializedPage {
       uint64_t size,
       memory::MappedMemory* memory);
   // Construct from IOBuf chain.
-  SerializedPage(
-		 std::unique_ptr<folly::IOBuf> iobuf,
-      uint64_t size);
-  
+  SerializedPage(std::unique_ptr<folly::IOBuf> iobuf, uint64_t size);
+
   ~SerializedPage() = default;
 
   uint64_t byteSize() const {
@@ -93,7 +91,8 @@ class ExchangeQueue {
       checkComplete();
       return;
     }
-    byteSize_ += page->byteSize();    queue_.push_back(std::move(page));
+    byteSize_ += page->byteSize();
+    queue_.push_back(std::move(page));
     if (!promises_.empty()) {
       // Resume one of the waiting drivers.
       promises_.back().setValue(true);
@@ -144,7 +143,6 @@ class ExchangeQueue {
     return maxSize_;
   }
 
-  
   void addSource() {
     VELOX_CHECK(!noMoreSources_, "addSource called after noMoreSources");
     numSources_++;

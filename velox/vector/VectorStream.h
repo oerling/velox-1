@@ -109,7 +109,7 @@ class VectorStreamGroup : public StreamArena {
     }
     return StreamArena::size();
   }
-  
+
   // Flushes the gathered content into a chain of IOBuf and frees any
   // outstanding state/memory. size() will hereafter return the byte
   // size of the payload in the IOBufs. Retrieve the data with
@@ -121,7 +121,7 @@ class VectorStreamGroup : public StreamArena {
     VELOX_CHECK(iobuf_);
     return std::move(iobuf_);
   }
-  
+
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
       ByteStream* source,
