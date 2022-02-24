@@ -13,6 +13,7 @@
  */
 
 #include "velox/exec/Spiller.h"
+#include "velox/common/file/FileSystems.h"
 
 namespace facebook::velox::exec {
 
@@ -29,14 +30,20 @@ SpillFile::~SpillFile() {
   }
 }
 
+std::shared_ptr<Config> spillConfig() {
+  static auto config = std::make_shared<Config>();
+  return config;
+}
+
 void FileList::flush(bool close) {
   std::string str;
   {
     if (batch_) {
-      std::stringstream out;
+      std::stringstream outStr;
+      OutputStream out(&outStr);
       batch_->flush(&out);
       batch_.reset();
-      str = out.str();
+      str = outStr.str();
       if (!isOpen_ || (!close && files_.back()->size() > targetFileSize_)) {
         if (isOpen_) {
           files_.back()->finishWrite();

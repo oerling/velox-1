@@ -14,6 +14,7 @@
 #pragma once
 
 #include "velox/common/file/File.h"
+#include "velox/common/file/FileSystems.h"
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DecodedVector.h"
@@ -119,7 +120,7 @@ class SpillFile : public SpillStream {
 
   WriteFile* output() {
     if (!output_) {
-      auto fs = getFileSystem(path_, Config());
+      auto fs = filesystems::getFileSystem(path_, spillConfig());
       output_ = fs->openFileForWrite(path_);
     }
     return output_.get();
@@ -134,7 +135,8 @@ class SpillFile : public SpillStream {
   void startRead() {
     constexpr uint64_t kMaxReadBufferSize = 1 << 20; // 1MB
     VELOX_CHECK(!output_);
-    auto file = generateReadFile(path_);
+    auto fs = filesystems::getFileSystem(path_, spillConfig());
+    auto file = fs->openFileForRead(path_);
     auto buffer = AlignedBuffer::allocate<char>(
         std::min<uint64_t>(size_, kMaxReadBufferSize), &pool_);
     stream_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
@@ -168,6 +170,8 @@ class SpillFile : public SpillStream {
   }
 
  private:
+  static std::shared_ptr<Config> spillConfig();
+
   std::string path_;
   uint64_t size_ = 0;
   std::unique_ptr<WriteFile> output_;
