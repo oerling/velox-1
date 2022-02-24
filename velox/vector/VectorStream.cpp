@@ -71,4 +71,15 @@ void VectorStreamGroup::read(
   getVectorSerde()->deserialize(source, pool, type, result);
 }
 
+  void VectorStreamGroup::makeIOBuf() {
+    VELOX_CHECK(!iobuf_);
+    IOBufOutputStream stream(*mappedMemory());
+    flush(&stream);
+    serializer_ = nullptr;
+    iobuf_ = stream.getIOBuf();
+    for(auto& buf : *iobuf_) {
+      iobufBytes_ += buf.size();
+    }
+  }
+  
 } // namespace facebook::velox

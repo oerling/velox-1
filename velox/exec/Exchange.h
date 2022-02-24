@@ -32,11 +32,20 @@ class SerializedPage {
       std::istream* stream,
       uint64_t size,
       memory::MappedMemory* memory);
-
+  // Construct from IOBuf chain.
+  SerializedPage(
+		 std::unique_ptr<folly::IOBuf> iobuf,
+      uint64_t size);
+  
   ~SerializedPage() = default;
 
   uint64_t byteSize() const {
-    return allocation_.byteSize();
+    if (allocation_) {
+      return allocation_->byteSize();
+    }
+    if (iobuf_) {
+      return iobufSize_;
+    }
   }
 
   // Makes 'input' ready for deserializing 'this' with
@@ -47,15 +56,17 @@ class SerializedPage {
       VectorStreamGroup* group) {
     std::stringstream out;
     OutputStreamListener listener;
-    OutputStream outputStream(&out, &listener);
+    OStreamOutputStream outputStream(&out, &listener);
     group->flush(&outputStream);
     return std::make_unique<SerializedPage>(
         &out, out.tellp(), group->mappedMemory());
   }
 
  private:
-  memory::MappedMemory::Allocation allocation_;
+  std::unique_ptr<memory::MappedMemory::Allocation> allocation_;
   std::vector<ByteRange> ranges_;
+  std::unique_ptr<folly::IOBuf> iobuf_;
+  int64_t iobufSize_{0};
 };
 
 // Queue of results retrieved from source. Owned by shared_ptr by

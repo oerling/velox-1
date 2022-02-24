@@ -103,6 +103,25 @@ class VectorStreamGroup : public StreamArena {
   // Writes the contents to 'stream' in wire format.
   void flush(OutputStream* stream);
 
+  uint64_t size() const override {
+    if (iobuf_) {
+      return iobufBytes_;
+    }
+    return StreamArena::size();
+  }
+  
+  // Flushes the gathered content into a chain of IOBuf and frees any
+  // outstanding state/memory. size() will hereafter return the byte
+  // size of the payload in the IOBufs. Retrieve the data with
+  // getIOBuf().
+  void makeIOBuf();
+
+  // Returns the IOBuf made with makeIOBuf().
+  std::unique_ptr<folly::IOBuf> getIOBuf() {
+    VELOX_CHECK(iobuf_);
+    return std::move(iobuf_);
+  }
+  
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
       ByteStream* source,
@@ -112,6 +131,8 @@ class VectorStreamGroup : public StreamArena {
 
  private:
   std::unique_ptr<VectorSerializer> serializer_;
+  std::unique_ptr<folly::IOBuf> iobuf_;
+  int64_t iobufBytes_{0};
 };
 
 } // namespace facebook::velox

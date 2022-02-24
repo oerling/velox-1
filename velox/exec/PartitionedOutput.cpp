@@ -80,6 +80,7 @@ BlockingReason Destination::flush(
   }
   bytesInCurrent_ = 0;
   setTargetSizePct();
+  current_->makeIOBuf();
   return bufferManager.enqueue(
       taskId_, destination_, std::move(current_), future);
 }

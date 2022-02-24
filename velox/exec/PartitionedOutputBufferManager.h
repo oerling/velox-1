@@ -92,6 +92,8 @@ class DestinationBuffer {
   // Cumulative time spent in a non-empty state.
   uint64_t fetchDelay_{0};
   uint64_t fetchCount_{0};
+  // Microsecond time of last time the output was given to the consumer.
+  uint64_t lastSendStart_{0};
 };
 
 class PartitionedOutputBuffer {

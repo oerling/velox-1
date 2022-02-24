@@ -31,4 +31,28 @@ void ByteStream::flush(OutputStream* out) {
   }
 }
 
+  namespace {
+    void freeFunc(void* data, void* userData) {
+      auto ptr = reinterpret_cast<std::shared_ptr<StreamArena>*>(userData);
+      delete ptr;
+    }
+  }
+  
+  std::unique_ptr<folly::IOBuf>   IOBufOutputStream::getIOBuf() {
+    // Make an IOBuf for each range. Transfer ownership of arena_ to
+    // the IOBuf chain so that wen the last IOBuf of the chain is
+    // destructed the arena is freed.
+    std::unique_ptr<folly::IOBuf> iobuf;
+    for (auto& range : out_->ranges()) {
+      auto userData = new std::shared_ptr<StreamArena>(arena_);
+      std::unique_ptr<folly::IOBuf> iobuf;
+      auto newBuf = folly::IOBuf::takeOwnership(reinterpret_cast<char*>(range.buffer), range.position, freeFunc, userData);
+      if (iobuf) {
+	iobuf->prev()->appendChain(std::move(newBuf));
+      } else {
+	iobuf = std::move(newBuf);
+      }
+      }
+  }
+
 } // namespace facebook::velox

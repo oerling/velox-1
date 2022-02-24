@@ -18,6 +18,8 @@
 #include "velox/common/memory/StreamArena.h"
 #include "velox/type/Type.h"
 
+#include <folly/io/IOBuf.h>
+
 namespace facebook::velox {
 
 struct ByteRange {
@@ -40,33 +42,47 @@ class OutputStreamListener {
 
 class OutputStream {
  public:
-  explicit OutputStream(
+  explicit OutputStream(OutputStreamListener* listener = nullptr)
+      : listener_(listener) {}
+
+  virtual void write(const char* s, std::streamsize count) = 0;
+
+  virtual std::streampos tellp() const = 0;
+
+  virtual void seekp(std::streampos pos) = 0;
+
+  OutputStreamListener* listener() const {
+    return listener_;
+  }
+
+ protected:
+  OutputStreamListener* listener_;
+};
+
+class OStreamOutputStream : public OutputStream {
+ public:
+  explicit OStreamOutputStream(
       std::ostream* out,
       OutputStreamListener* listener = nullptr)
-      : out_(out), listener_(listener) {}
+      : OutputStream(listener), out_(out) {}
 
-  void write(const char* s, std::streamsize count) {
+  void write(const char* s, std::streamsize count) override {
     out_->write(s, count);
     if (listener_) {
       listener_->onWrite(s, count);
     }
   }
 
-  std::streampos tellp() const {
+  std::streampos tellp() const override {
     return out_->tellp();
   }
 
-  void seekp(std::streampos pos) {
+  void seekp(std::streampos pos) override {
     out_->seekp(pos);
-  }
-
-  OutputStreamListener* listener() const {
-    return listener_;
   }
 
  private:
   std::ostream* out_;
-  OutputStreamListener* listener_;
 };
 
 template <>
@@ -363,5 +379,36 @@ inline Date ByteStream::read<Date>() {
   readBytes(reinterpret_cast<uint8_t*>(&value), sizeof(value));
   return value;
 }
+
+class IOBufOutputStream : public OutputStream {
+ public:
+  explicit IOBufOutputStream(
+      memory::MappedMemory& mappedMemory,
+      OutputStreamListener* listener = nullptr)
+      : OutputStream(listener),
+        arena_(std::make_shared<StreamArena>(&mappedMemory)),
+        out_(std::make_unique<ByteStream>(arena_.get())) {}
+
+  void write(const char* s, std::streamsize count) {
+    out_->appendStringPiece(folly::StringPiece(s, count));;
+    if (listener_) {
+      listener_->onWrite(s, count);
+    }
+  }
+
+  std::streampos tellp() const {
+    VELOX_NYI(); //return out_->tellp();
+  }
+
+  void seekp(std::streampos pos) {
+    VELOX_NYI(); //out_->seekp(pos);
+  }
+
+  std::unique_ptr<folly::IOBuf> getIOBuf();
+
+ private:
+  std::shared_ptr<StreamArena> arena_;
+  std::unique_ptr<ByteStream> out_;
+};
 
 } // namespace facebook::velox
