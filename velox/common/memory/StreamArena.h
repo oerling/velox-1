@@ -25,7 +25,7 @@ struct ByteRange;
 // held are released as a unit when the destination acknowledges
 // receipt. Another use case is a hash table partition that holds
 // complex types as serialized rows.
-class StreamArena {
+  class StreamArena {
  public:
   static constexpr int32_t kVectorStreamOwner = 1;
 

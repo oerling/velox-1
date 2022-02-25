@@ -47,14 +47,24 @@ void ByteStream::extend(int32_t bytes) {
   current_ = &ranges_.back();
   arena_->newRange(bytes, current_);
 }
+namespace {
+void freeFunc(void* /*data*/, void* userData) {
+  auto ptr = reinterpret_cast<std::shared_ptr<StreamArena>*>(userData);
+  delete ptr;
+}
+} // namespace
 
 std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
-  // Make an IOBuf for each range. The wrapped data is owned by 'arena_', not the IOBufs.
+  // Make an IOBuf for each range. The The IOBufs keep shared ownership of
+  // 'arena_'.
   std::unique_ptr<folly::IOBuf> iobuf;
   for (auto& range : out_->ranges()) {
-    auto newBuf = folly::IOBuf::wrapBuffer(
+    auto userData = new std::shared_ptr<StreamArena>(arena_);
+    auto newBuf = folly::IOBuf::takeOwnership(
         reinterpret_cast<char*>(range.buffer),
-        range.numValues());
+        range.numValues(),
+        freeFunc,
+        userData);
     if (iobuf) {
       iobuf->prev()->appendChain(std::move(newBuf));
     } else {

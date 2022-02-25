@@ -110,17 +110,9 @@ class VectorStreamGroup : public StreamArena {
     return StreamArena::size();
   }
 
-  // Flushes the gathered content into a chain of IOBuf and frees any
-  // outstanding state/memory. size() will hereafter return the byte
-  // size of the payload in the IOBufs. Retrieve the data with
-  // getIOBuf(). The IOBufs are valid for the lifetime of 'this'.
-  void makeIOBuf();
 
-  // Returns the IOBuf made with makeIOBuf().
-  std::unique_ptr<folly::IOBuf> getIOBuf() {
-    VELOX_CHECK(iobuf_);
-    return iobuf_->clone();
-  }
+  // Returns the IOBuf containing the final serialized data. The IOBuf chain has shared ownership of 'this'. May be called several times and will return a clone of the same chain.
+  std::unique_ptr<folly::IOBuf> getIOBuf();
 
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
@@ -130,6 +122,12 @@ class VectorStreamGroup : public StreamArena {
       std::shared_ptr<RowVector>* result);
 
  private:
+  // Flushes the gathered content into a chain of IOBuf and frees any
+  // outstanding state/memory. size() will hereafter return the byte
+  // size of the payload in the IOBufs. Retrieve the data with
+  // getIOBuf(). The IOBufs own have shared ownership of 'this'.
+  void makeIOBuf();
+
   std::unique_ptr<VectorSerializer> serializer_;
   std::unique_ptr<folly::IOBuf> iobuf_;
   int64_t iobufBytes_{0};

@@ -33,7 +33,7 @@ class SerializedPage {
       uint64_t size,
       memory::MappedMemory* memory);
   // Construct from IOBuf chain.
-  SerializedPage(std::unique_ptr<folly::IOBuf> iobuf, uint64_t size);
+  SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
 
   ~SerializedPage() = default;
 
@@ -52,12 +52,8 @@ class SerializedPage {
 
   static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
       VectorStreamGroup* group) {
-    std::stringstream out;
-    OutputStreamListener listener;
-    OStreamOutputStream outputStream(&out, &listener);
-    group->flush(&outputStream);
     return std::make_unique<SerializedPage>(
-        &out, out.tellp(), group->mappedMemory());
+					    group->getIOBuf());
   }
 
  private:
