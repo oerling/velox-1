@@ -119,7 +119,8 @@ class VectorStreamGroup : public StreamArena {
   // Returns the IOBuf made with makeIOBuf().
   std::unique_ptr<folly::IOBuf> getIOBuf() {
     VELOX_CHECK(iobuf_);
-    return std::move(iobuf_);
+    VELOX_CHECK(iobuf_->isManaged());
+    return iobuf_->clone();
   }
 
   // Reads data in wire format. Returns the RowVector in 'result'.

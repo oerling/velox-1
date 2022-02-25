@@ -62,7 +62,6 @@ std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
   std::unique_ptr<folly::IOBuf> iobuf;
   for (auto& range : out_->ranges()) {
     auto userData = new std::shared_ptr<StreamArena>(arena_);
-    std::unique_ptr<folly::IOBuf> iobuf;
     auto newBuf = folly::IOBuf::takeOwnership(
         reinterpret_cast<char*>(range.buffer),
         range.position,
@@ -74,12 +73,13 @@ std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
       iobuf = std::move(newBuf);
     }
   }
+  return iobuf;
 }
 
 std::streampos IOBufOutputStream::tellp() const {
   auto pos = out_->tellp();
   std::streampos offset = std::get<1>(pos);
-  auto ranges = out_->ranges();
+  auto& ranges = out_->ranges();
   for (auto& range : ranges) {
     if (&range == std::get<0>(pos)) {
       break;
@@ -91,7 +91,17 @@ std::streampos IOBufOutputStream::tellp() const {
 
 void IOBufOutputStream::seekp(std::streampos pos) {
   auto& ranges = out_->ranges();
-  int64_t start = 0;
+  int64_t toSkip = pos;
+  for (auto& range : ranges) {
+    auto numValues = range.numValues();
+    if (toSkip <= numValues) {
+      out_->seekp(std::make_tuple<ByteRange*, int32_t>(
+          const_cast<ByteRange*>(&range), toSkip));
+      return;
+    }
+    toSkip -= numValues;
+  }
+  VELOX_FAIL("Trying to seek past end {} offset = {}", out_->size(), pos);
 }
 
 } // namespace facebook::velox

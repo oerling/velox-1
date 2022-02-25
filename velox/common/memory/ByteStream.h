@@ -157,7 +157,6 @@ class ByteStream {
   void seekp(Position position) {
     auto range = std::get<0>(position);
     auto offset = std::get<1>(position);
-    ;
     if (!range) {
       VELOX_CHECK_EQ(offset, 0);
       if (ranges_.empty()) {
