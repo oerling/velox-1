@@ -46,17 +46,16 @@ SerializedPage::SerializedPage(
   VELOX_CHECK_EQ(toRead, 0);
 }
 
-SerializedPage::SerializedPage(
-    std::unique_ptr<folly::IOBuf> iobuf)
+SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
     : iobuf_(std::move(iobuf)) {
   for (auto& buf : *iobuf_) {
     auto bufSize = buf.size();
-    auto bytes = std::min<int32_t>(bufSize, toRead);
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
-        bytes,
-        0, bytes});
-    iobufBytes_ +=  bytes;
+        bufSize,
+        0,
+        bufSize});
+    iobufBytes_ += bufSize;
   }
 }
 

@@ -40,9 +40,8 @@ class SerializedPage {
   uint64_t byteSize() const {
     if (allocation_) {
       return allocation_->byteSize();
-    }
-    if (iobuf_) {
-      return iobufSize_;
+    } else {
+      return iobufBytes_;
     }
   }
 
@@ -60,7 +59,7 @@ class SerializedPage {
   std::unique_ptr<memory::MappedMemory::Allocation> allocation_;
   std::vector<ByteRange> ranges_;
   std::unique_ptr<folly::IOBuf> iobuf_;
-  int64_t iobufSize_{0};
+  int64_t iobufBytes_{0};
 };
 
 // Queue of results retrieved from source. Owned by shared_ptr by
