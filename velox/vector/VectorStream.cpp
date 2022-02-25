@@ -74,6 +74,9 @@ void VectorStreamGroup::read(
 void VectorStreamGroup::makeIOBuf() {
   VELOX_CHECK(!iobuf_);
   IOBufOutputStream stream(*mappedMemory(), nullptr, StreamArena::size());
+  std::vector<memory::MappedMemory::Allocation> allocations;
+  std::vector<std::string> tinyAllocations;
+  resetAllocations(allocations, tinyAllocations);
   flush(&stream);
   serializer_ = nullptr;
   iobuf_ = stream.getIOBuf();

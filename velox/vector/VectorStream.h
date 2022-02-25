@@ -113,13 +113,12 @@ class VectorStreamGroup : public StreamArena {
   // Flushes the gathered content into a chain of IOBuf and frees any
   // outstanding state/memory. size() will hereafter return the byte
   // size of the payload in the IOBufs. Retrieve the data with
-  // getIOBuf().
+  // getIOBuf(). The IOBufs are valid for the lifetime of 'this'.
   void makeIOBuf();
 
   // Returns the IOBuf made with makeIOBuf().
   std::unique_ptr<folly::IOBuf> getIOBuf() {
     VELOX_CHECK(iobuf_);
-    VELOX_CHECK(iobuf_->isManaged());
     return iobuf_->clone();
   }
 
