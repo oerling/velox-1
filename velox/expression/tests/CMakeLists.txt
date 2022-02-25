@@ -17,16 +17,19 @@ add_executable(
   ExprTest.cpp
   CastExprTest.cpp
   MapWriterTest.cpp
-  ArrayProxyTest.cpp
+  ArrayWriterTest.cpp
   EvalSimplifiedTest.cpp
   SignatureBinderTest.cpp
   SimpleFunctionTest.cpp
   SimpleFunctionCallNullFreeTest.cpp
   SimpleFunctionPresetNullsTest.cpp
   ArrayViewTest.cpp
-  ArrayProxyTest.cpp
+  ArrayWriterTest.cpp
+  StringProxyTest.cpp
+  ArrayWriterTest.cpp
   MapViewTest.cpp
   RowViewTest.cpp
+  TryExprTest.cpp
   VariadicViewTest.cpp
   VectorReaderTest.cpp)
 

@@ -17,30 +17,45 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <optional>
+#include <tuple>
 
 #include "velox/expression/VectorUdfTypeSystem.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 #include "velox/type/StringView.h"
+#include "velox/type/Type.h"
 namespace facebook::velox {
 namespace {
 
-// Function that creates a map with elements i->i*2+1 if i is odd.
-// and i->null if i is even. For every i = [0..n).
+// Function that creates a map and covers all the map writer interface.
 template <typename T>
 struct Func {
   template <typename TOut>
   bool call(TOut& out, const int64_t& n) {
     for (int i = 0; i < n; i++) {
-      switch (i % 2) {
+      switch (i % 6) {
         case 0: {
           auto [keyWriter, valueWriter] = out.add_item();
           keyWriter = i;
-          valueWriter = i * 2 + 1;
+          valueWriter = i + 1;
           break;
         }
         case 1:
           out.add_null() = i;
+          break;
+        case 2:
+          out.emplace(i, i + 2);
+          break;
+        case 3:
+          out.emplace(i, std::nullopt);
+          break;
+        case 4:
+          out.resize(out.size() + 1);
+          out[out.size() - 1] = std::make_tuple(i, std::nullopt);
+          break;
+        case 5:
+          out.resize(out.size() + 1);
+          out[out.size() - 1] = std::make_tuple(i, i + 5);
           break;
       }
     }
@@ -70,20 +85,33 @@ class MapWriterTest : public functions::test::FunctionBaseTest {
             {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6, 7, 8, 9, 10})}));
 
     std::vector<map_pairs_t<T, T>> expected;
-    for (auto i = 1; i <= 10; i++) {
+    for (auto n = 1; n <= 10; n++) {
       expected.push_back({});
       auto& currentExpected = expected[expected.size() - 1];
-      for (auto j = 0; j < i; j++) {
-        switch (j % 2) {
+      for (auto i = 0; i < n; i++) {
+        switch (i % 6) {
           case 0:
-            currentExpected.push_back({j, {j * 2 + 1}});
+            currentExpected.push_back({i, i + 1});
             break;
           case 1:
-            currentExpected.push_back({j, std::nullopt});
+            currentExpected.push_back({i, std::nullopt});
+            break;
+          case 2:
+            currentExpected.push_back({i, i + 2});
+            break;
+          case 3:
+            currentExpected.push_back({i, std::nullopt});
+            break;
+          case 4:
+            currentExpected.push_back({i, std::nullopt});
+            break;
+          case 5:
+            currentExpected.push_back({i, i + 5});
             break;
         }
       }
     }
+
     assertEqualVectors(result, makeMapVector<T, T>(expected));
   }
 
@@ -167,6 +195,54 @@ TEST_F(MapWriterTest, addItem) {
   vectorWriter->finish();
 
   map_pairs_t<int64_t, int64_t> expected = {{1, 1}, {1, 3}, {11, 12}};
+  assertEqualVectors(result, makeMapVector<int64_t, int64_t>({expected}));
+}
+
+TEST_F(MapWriterTest, emplace) {
+  auto [result, vectorWriter] = makeTestWriter();
+
+  auto& mapWriter = vectorWriter->current();
+
+  mapWriter.emplace(1, 1);
+  mapWriter.emplace(2, std::nullopt);
+  mapWriter.emplace(3, std::optional<int64_t>{std::nullopt});
+  mapWriter.emplace(4, std::optional<int64_t>{11});
+
+  vectorWriter->commit();
+  vectorWriter->finish();
+
+  map_pairs_t<int64_t, int64_t> expected = {
+      {1, 1}, {2, std::nullopt}, {3, std::nullopt}, {4, 11}};
+  assertEqualVectors(result, makeMapVector<int64_t, int64_t>({expected}));
+}
+
+TEST_F(MapWriterTest, resizeAndSubscriptAccess) {
+  auto [result, vectorWriter] = makeTestWriter();
+
+  auto& mapWriter = vectorWriter->current();
+
+  mapWriter.resize(4);
+  mapWriter[0] = std::make_tuple(1, 1);
+  mapWriter[1] = std::make_tuple(2, std::nullopt);
+  mapWriter[2] = std::make_tuple(3, std::optional<int64_t>{std::nullopt});
+  mapWriter[3] = std::make_tuple(4, std::optional<int64_t>{11});
+
+  mapWriter.resize(mapWriter.size() + 1);
+  mapWriter[mapWriter.size() - 1] = std::make_tuple(6, std::nullopt);
+
+  mapWriter.resize(mapWriter.size() + 1);
+  mapWriter[mapWriter.size() - 1] = std::make_tuple(5, 6);
+
+  vectorWriter->commit();
+  vectorWriter->finish();
+
+  map_pairs_t<int64_t, int64_t> expected = {
+      {1, 1},
+      {2, std::nullopt},
+      {3, std::nullopt},
+      {4, 11},
+      {5, 6},
+      {6, std::nullopt}};
   assertEqualVectors(result, makeMapVector<int64_t, int64_t>({expected}));
 }
 
@@ -293,7 +369,7 @@ struct MakeComplexMapFunction {
 
 // Test a function that writes out map<array, map<>>.
 TEST_F(MapWriterTest, nestedMap) {
-  using out_t = MapWriterT<ArrayProxyT<int64_t>, MapWriterT<int64_t, int64_t>>;
+  using out_t = MapWriterT<ArrayWriterT<int64_t>, MapWriterT<int64_t, int64_t>>;
   registerFunction<MakeComplexMapFunction, out_t, int64_t>({"complex_map"});
 
   auto result = evaluate(
@@ -325,6 +401,86 @@ TEST_F(MapWriterTest, nestedMap) {
     }
   }
 }
+
+std::unordered_map<int64_t, std::vector<int64_t>> makeCopyFromTestData() {
+  std::unordered_map<int64_t, std::vector<int64_t>> data;
+  for (int i = 0; i < 10; i++) {
+    std::vector<int64_t> array;
+    for (auto j = 0; j < i; j++) {
+      array.push_back(j);
+    }
+    data.emplace(i, std::move(array));
+  }
+  return data;
+}
+
+template <typename T>
+struct CopyFromTestFunc {
+  template <typename TOut>
+  bool call(TOut& out) {
+    out.copy_from(makeCopyFromTestData());
+    return true;
+  }
+};
+
+TEST_F(MapWriterTest, copyFrom) {
+  auto [result, vectorWriter] = makeTestWriter();
+
+  auto& mapWriter = vectorWriter->current();
+  // Item 1.
+  std::unordered_map<int64_t, int64_t> data = {{1, 2}, {1, 3}, {11, 12}};
+  mapWriter.copy_from(data);
+  vectorWriter->commit();
+  vectorWriter->finish();
+
+  map_pairs_t<int64_t, int64_t> expected;
+  for (auto item : data) {
+    expected.push_back(item);
+  }
+  assertEqualVectors(result, makeMapVector<int64_t, int64_t>({expected}));
+}
+
+// Test copy_from e2e on Map<int64_t, Array<int64_t>>
+TEST_F(MapWriterTest, copyFromE2E) {
+  registerFunction<
+      CopyFromTestFunc,
+      MapWriterT<int64_t, ArrayWriterT<int64_t>>>({"f_copy_from_e2e"});
+
+  auto result = evaluate(
+      "f_copy_from_e2e()", makeRowVector({makeFlatVector<int64_t>(1)}));
+
+  // Test results.
+  DecodedVector decoded;
+  SelectivityVector rows(1);
+  decoded.decode(*result, rows);
+  exec::VectorReader<Map<int64_t, Array<int64_t>>> reader(&decoded);
+
+  auto referenceData = makeCopyFromTestData();
+  auto mapView = reader[0];
+
+  ASSERT_EQ(mapView.size(), referenceData.size());
+
+  for (auto [key, value] : mapView) {
+    auto arrayView = *value;
+    auto& arrayRef = referenceData[key];
+    ASSERT_EQ(arrayView.size(), arrayRef.size());
+    for (int i = 0; i < arrayView.size(); i++) {
+      ASSERT_EQ(arrayRef[i], arrayView[i].value());
+    }
+  }
+}
+
+template <typename T>
+struct CopyFromMapViewFunc {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  bool call(
+      out_type<MapWriterT<int64_t, int64_t>>& out,
+      const arg_type<Map<int64_t, int64_t>>& input) {
+    out.copy_from(input);
+    return true;
+  }
+};
 
 } // namespace
 } // namespace facebook::velox
