@@ -118,7 +118,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   void moveScanSpec(ColumnReader& other) override {
     auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
-    scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
+    //scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
   }
 
 
@@ -132,6 +132,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   // Dense set of rows to read in next().
   raw_vector<vector_size_t> rows_;
+  int32_t previousRowGroup_{-1};
 };
 
 } // namespace facebook::velox::dwrf
