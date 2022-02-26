@@ -18,9 +18,10 @@
 #include "velox/dwio/dwrf/reader/ColumnLoader.h"
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDirectColumnReader.h"
 
-
-DEFINE_bool(enable_specialize_filters, true,
-	    "Enable specializing filters by column stats");
+DEFINE_bool(
+    enable_specialize_filters,
+    true,
+    "Enable specializing filters by column stats");
 
 namespace facebook::velox::dwrf {
 
@@ -272,5 +273,4 @@ void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
   }
 }
 
-  
 } // namespace facebook::velox::dwrf

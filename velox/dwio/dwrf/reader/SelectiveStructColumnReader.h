@@ -114,13 +114,12 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     }
   }
 
-    void setRowGroupSpecificFilters();
+  void setRowGroupSpecificFilters();
 
   void moveScanSpec(ColumnReader& other) override {
     auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
-    //scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
+    // scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
   }
-
 
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;

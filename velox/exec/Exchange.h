@@ -51,8 +51,7 @@ class SerializedPage {
 
   static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
       VectorStreamGroup* group) {
-    return std::make_unique<SerializedPage>(
-					    group->getIOBuf());
+    return std::make_unique<SerializedPage>(group->getIOBuf());
   }
 
  private:

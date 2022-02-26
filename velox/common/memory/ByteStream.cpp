@@ -18,28 +18,27 @@
 
 namespace facebook::velox {
 
-  std::streampos ByteStream::tellp() const {
-    if (ranges_.empty()) {
-      return 0;
-    }
-    assert(current_);
-    int64_t size = 0;
-    for (auto& range : ranges_) {
-      if (&range  == current_) {
-	return current_->position + size;
-      }
-      size += range.numValues();
-    }
-    VELOX_FAIL("ByteStream 'current_' is not in 'ranges_'.");
+std::streampos ByteStream::tellp() const {
+  if (ranges_.empty()) {
+    return 0;
   }
+  assert(current_);
+  int64_t size = 0;
+  for (auto& range : ranges_) {
+    if (&range == current_) {
+      return current_->position + size;
+    }
+    size += range.numValues();
+  }
+  VELOX_FAIL("ByteStream 'current_' is not in 'ranges_'.");
+}
 
-  
-  void ByteStream::seekp(std::streampos position) {
-    int64_t toSkip = position;
+void ByteStream::seekp(std::streampos position) {
+  int64_t toSkip = position;
   if (current_ && current_->position > current_->fill) {
     current_->fill = current_->position;
   }
-  if  (ranges_.empty() && position == 0) {
+  if (ranges_.empty() && position == 0) {
     return;
   }
   for (auto& range : ranges_) {
