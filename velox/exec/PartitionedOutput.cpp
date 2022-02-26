@@ -148,7 +148,8 @@ void PartitionedOutput::addInput(RowVectorPtr input) {
   // TODO Report outputBytes as bytes after serialization
   stats_.outputBytes += input->retainedSize();
   stats_.outputPositions += input->size();
-
+  LOG(INFO) << "Batch: \n" << input->BaseVector::toString(0, input->size());
+  
   initializeInput(std::move(input));
 
   initializeDestinations();

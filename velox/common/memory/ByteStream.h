@@ -108,8 +108,6 @@ inline int32_t ByteRange::available<bool>() {
 // for streams in repartitioning or for complex variable length data
 // in hash tables.
 class ByteStream {
-  using Position = std::tuple<ByteRange*, int32_t>;
-
  public:
   // For input.
   ByteStream() : isBits_(false), isReverseBitOrder_(false) {}
@@ -150,25 +148,9 @@ class ByteStream {
     current_->position = position;
   }
 
-  Position tellp() const {
-    return std::make_tuple(current_, current_ ? current_->position : 0);
-  }
+  std::streampos tellp() const;
 
-  void seekp(Position position) {
-    auto range = std::get<0>(position);
-    auto offset = std::get<1>(position);
-    if (!range) {
-      VELOX_CHECK_EQ(offset, 0);
-      if (ranges_.empty()) {
-        return;
-      }
-      current_ = &ranges_[0];
-    }
-    if (current_->fill < current_->position) {
-      current_->fill = current_->position;
-    }
-    current_->position = offset;
-  }
+  void seekp(std::streampos position);
 
   size_t size() const {
     size_t total = 0;

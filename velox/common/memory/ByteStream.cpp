@@ -17,6 +17,42 @@
 #include "velox/common/memory/ByteStream.h"
 
 namespace facebook::velox {
+
+  std::streampos ByteStream::tellp() const {
+    if (ranges_.empty()) {
+      return 0;
+    }
+    assert(current_);
+    int64_t size = 0;
+    for (auto& range : ranges_) {
+      if (&range  == current_) {
+	return current_->position + size;
+      }
+      size += range.numValues();
+    }
+    VELOX_FAIL("ByteStream 'current_' is not in 'ranges_'.");
+  }
+
+  
+  void ByteStream::seekp(std::streampos position) {
+    int64_t toSkip = position;
+  if (current_ && current_->position > current_->fill) {
+    current_->fill = current_->position;
+  }
+  if  (ranges_.empty() && position == 0) {
+    return;
+  }
+  for (auto& range : ranges_) {
+    if (toSkip <= range.numValues()) {
+      current_ = &range;
+      current_->position = toSkip;
+      return;
+    }
+    toSkip -= range.numValues();
+  }
+  VELOX_FAIL("Seeking past end of ByteStream: {}", position);
+}
+
 void ByteStream::flush(OutputStream* out) {
   for (int32_t i = 0; i < ranges_.size(); ++i) {
     int32_t count = ranges_[i].numValues();
@@ -75,31 +111,11 @@ std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
 }
 
 std::streampos IOBufOutputStream::tellp() const {
-  auto pos = out_->tellp();
-  std::streampos offset = std::get<1>(pos);
-  auto& ranges = out_->ranges();
-  for (auto& range : ranges) {
-    if (&range == std::get<0>(pos)) {
-      break;
-    }
-    offset += range.position;
-  }
-  return offset;
+  return out_->tellp();
 }
 
 void IOBufOutputStream::seekp(std::streampos pos) {
-  auto& ranges = out_->ranges();
-  int64_t toSkip = pos;
-  for (auto& range : ranges) {
-    auto numValues = range.numValues();
-    if (toSkip <= numValues) {
-      out_->seekp(std::make_tuple<ByteRange*, int32_t>(
-          const_cast<ByteRange*>(&range), toSkip));
-      return;
-    }
-    toSkip -= numValues;
-  }
-  VELOX_FAIL("Trying to seek past end {} offset = {}", out_->size(), pos);
+  out_->seekp(pos);
 }
 
 } // namespace facebook::velox
