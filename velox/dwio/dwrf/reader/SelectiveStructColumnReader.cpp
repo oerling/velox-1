@@ -131,6 +131,7 @@ void SelectiveStructColumnReader::next(
   if (numValues > oldSize) {
     std::iota(&rows_[oldSize], &rows_[rows_.size()], oldSize);
   }
+  setRowGroupSpecificFilters();
   read(readOffset_, rows_, nullptr);
   getValues(outputRows(), &result);
 }
@@ -243,4 +244,28 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
   }
 }
 
+void SelectiveStructColumnReader::setRowGroupSpecificFilters() {
+  if (!FLAGS_enable_specialize_filters) {
+    return;
+  }
+  auto rowGroup = readOffset_ / rowsPerRowGroup_;
+  if (rowGroup == previousRowGroup_) {
+    return;
+  }
+  previousRowGroup_ = rowGroup;
+  auto& childSpecs = scanSpec_->children();
+  for (auto& childSpec : childSpecs) {
+    if (childSpec->filter()) {
+      auto& reader = children_[childSpec->subscript()];
+      auto rowGroupIndex = readOffset_ / rowsPerRowGroup_;
+      auto stats = reader->rowGroupStats(rowGroupIndex);
+      if (stats &&
+          dynamic_cast<SelectiveIntegerDirectColumnReader*>(reader.get())) {
+        childSpec->specializeFilter(reader->type(), stats);
+      }
+    }
+  }
+}
+
+  
 } // namespace facebook::velox::dwrf
