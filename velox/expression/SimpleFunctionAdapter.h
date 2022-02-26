@@ -18,8 +18,8 @@
 
 #include <memory>
 
-#include <velox/expression/ComplexProxyTypes.h>
 #include "velox/common/base/Portability.h"
+#include "velox/expression/ComplexWriterTypes.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/expression/VectorUdfTypeSystem.h"
@@ -28,12 +28,22 @@
 namespace facebook::velox::exec {
 
 template <typename T>
-struct IsArrayProxy {
+struct IsArrayWriter {
   static constexpr bool value = false;
 };
 
 template <typename T>
-struct IsArrayProxy<ArrayProxy<T>> {
+struct IsArrayWriter<ArrayWriter<T>> {
+  static constexpr bool value = true;
+};
+
+template <typename T>
+struct IsMapWriter {
+  static constexpr bool value = false;
+};
+
+template <typename K, typename V>
+struct IsMapWriter<MapWriter<K, V>> {
   static constexpr bool value = true;
 };
 
@@ -73,6 +83,7 @@ class SimpleFunctionAdapter : public VectorFunction {
     VectorWriter<typename FUNC::return_type> resultWriter;
     EvalCtx* context;
     bool allAscii{false};
+    bool mayHaveNullsRecursive{false};
   };
 
   template <
@@ -223,6 +234,11 @@ class SimpleFunctionAdapter : public VectorFunction {
           "Variadic args can only be used as the last argument to a function.");
       auto oneReader = VectorReader<arg_at<POSITION>>(packed, POSITION);
 
+      if constexpr (FUNC::udf_has_callNullFree) {
+        oneReader.setChildrenMayHaveNulls();
+        applyContext.mayHaveNullsRecursive |= oneReader.mayHaveNullsRecursive();
+      }
+
       bool nextNonNull = applyContext.context->nullsPruned();
       if (!nextNonNull && allNotNull) {
         nextNonNull = true;
@@ -236,6 +252,11 @@ class SimpleFunctionAdapter : public VectorFunction {
     } else {
       auto* oneUnpacked = packed.at(POSITION);
       auto oneReader = VectorReader<arg_at<POSITION>>(oneUnpacked);
+
+      if constexpr (FUNC::udf_has_callNullFree) {
+        oneReader.setChildrenMayHaveNulls();
+        applyContext.mayHaveNullsRecursive |= oneReader.mayHaveNullsRecursive();
+      }
 
       // context->nullPruned() is true after rows with nulls have been
       // pruned out of 'rows', so we won't be seeing any more nulls here.
@@ -270,6 +291,14 @@ class SimpleFunctionAdapter : public VectorFunction {
       ApplyContext& applyContext,
       bool allNotNull,
       const TReader&... readers) const {
+    // If is_default_contains_nulls_behavior we return null if the inputs
+    // contain any nulls.
+    // If !is_default_contains_nulls_behavior we don't invoke callNullFree
+    // if the inputs contain any nulls, but rather invoke call or callNullable
+    // as usual.
+    bool callNullFree = FUNC::is_default_contains_nulls_behavior ||
+        (FUNC::udf_has_callNullFree && !applyContext.mayHaveNullsRecursive);
+
     // iterate the rows
     if constexpr (
         return_type_traits::isPrimitiveType &&
@@ -294,7 +323,33 @@ class SimpleFunctionAdapter : public VectorFunction {
           bits::setNull(nullBuffer, row);
         }
       };
-      if (allNotNull) {
+      if (callNullFree) {
+        // This results in some code duplication, but applying this check once
+        // per batch instead of once per row shows a significant performance
+        // improvement when there are no nulls.
+        if (applyContext.mayHaveNullsRecursive) {
+          applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
+            auto out = typename return_type_traits::NativeType();
+            auto containsNull = (readers.containsNull(row) || ...);
+            bool notNull;
+            if (containsNull) {
+              // Result is NULL because the input contains NULL.
+              notNull = false;
+            } else {
+              notNull = doApplyNullFree<0>(row, out, readers...);
+            }
+
+            writeResult(row, notNull, out);
+          });
+        } else {
+          applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
+            typename return_type_traits::NativeType out;
+            bool notNull = doApplyNullFree<0>(row, out, readers...);
+
+            writeResult(row, notNull, out);
+          });
+        }
+      } else if (allNotNull) {
         applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
           // Passing a stack variable have shown to be boost the performance of
           // functions that repeatedly update the output.
@@ -312,7 +367,26 @@ class SimpleFunctionAdapter : public VectorFunction {
         });
       }
     } else {
-      if (allNotNull) {
+      if (callNullFree) {
+        // This results in some code duplication, but applying this check once
+        // per batch instead of once per row shows a significant performance
+        // improvement when there are no nulls.
+        if (applyContext.mayHaveNullsRecursive) {
+          applyUdf(applyContext, [&](auto& out, auto row) INLINE_LAMBDA {
+            auto containsNull = (readers.containsNull(row) || ...);
+            if (containsNull) {
+              // Result is NULL because the input contains NULL.
+              return false;
+            }
+
+            return doApplyNullFree<0>(row, out, readers...);
+          });
+        } else {
+          applyUdf(applyContext, [&](auto& out, auto row) INLINE_LAMBDA {
+            return doApplyNullFree<0>(row, out, readers...);
+          });
+        }
+      } else if (allNotNull) {
         if (applyContext.allAscii) {
           applyUdf(applyContext, [&](auto& out, auto row) INLINE_LAMBDA {
             return doApplyAsciiNotNull<0>(row, out, readers...);
@@ -332,17 +406,17 @@ class SimpleFunctionAdapter : public VectorFunction {
 
   template <typename Func>
   void applyUdf(ApplyContext& applyContext, Func func) const {
-    if constexpr (IsArrayProxy<T>::value) {
-      // An optimization for arrayProxy that force the localization of the
-      // output proxy.
-      auto& writerProxy = applyContext.resultWriter.proxy_;
+    if constexpr (IsArrayWriter<T>::value || IsMapWriter<T>::value) {
+      // An optimization for arrayProxy and mapWriter that force the
+      // localization of the writer.
+      auto& currentWriter = applyContext.resultWriter.writer_;
 
       applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
         applyContext.resultWriter.setOffset(row);
         // Force local copy of proxy.
-        auto localProxy = writerProxy;
-        auto notNull = func(localProxy, row);
-        writerProxy = localProxy;
+        auto localWriter = currentWriter;
+        auto notNull = func(localWriter, row);
+        currentWriter = localWriter;
         applyContext.resultWriter.commit(notNull);
       });
       applyContext.resultWriter.finish();
@@ -495,6 +569,29 @@ class SimpleFunctionAdapter : public VectorFunction {
       T& target,
       const Values&... values) const {
     return (*fn_).callAscii(target, values...);
+  }
+
+  template <
+      size_t POSITION,
+      typename R0,
+      typename... TStuff,
+      std::enable_if_t<POSITION != FUNC::num_args, int32_t> = 0>
+  FOLLY_ALWAYS_INLINE bool doApplyNullFree(
+      size_t idx,
+      T& target,
+      R0& currentReader,
+      const TStuff&... extra) const {
+    auto v0 = currentReader.readNullFree(idx);
+    return doApplyNullFree<POSITION + 1>(idx, target, extra..., v0);
+  }
+
+  template <
+      size_t POSITION,
+      typename... Values,
+      std::enable_if_t<POSITION == FUNC::num_args, int32_t> = 0>
+  FOLLY_ALWAYS_INLINE bool
+  doApplyNullFree(size_t /*idx*/, T& target, const Values&... values) const {
+    return (*fn_).callNullFree(target, values...);
   }
 };
 
