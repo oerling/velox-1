@@ -51,8 +51,15 @@ class SerializedPage {
 
   static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
       VectorStreamGroup* group) {
-    return std::make_unique<SerializedPage>(
-					    group->getIOBuf());
+    return std::make_unique<SerializedPage>(group->getIOBuf());
+  }
+
+  // Copies the IOBufs from 'group' so that they no longer hold memory
+  // acounted in the producer Task. Used only with LocalExchangeSource
+  // in tests.
+  static std::unique_ptr<SerializedPage> copyFromVectorStreamGroup(
+      VectorStreamGroup* group) {
+    return std::make_unique<SerializedPage>(group->getIOBuf()->unshare());
   }
 
  private:
