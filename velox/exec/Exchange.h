@@ -59,7 +59,9 @@ class SerializedPage {
   // in tests.
   static std::unique_ptr<SerializedPage> copyFromVectorStreamGroup(
       VectorStreamGroup* group) {
-    return std::make_unique<SerializedPage>(group->getIOBuf()->unshare());
+    auto buf = group->getIOBuf();
+    buf->unshare();
+    return std::make_unique<SerializedPage>(std::move(buf));
   }
 
  private:
