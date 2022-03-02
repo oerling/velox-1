@@ -124,13 +124,13 @@ class ByteStream {
   virtual Position tellp() const {
     return std::make_tuple(current_, current_->position);
   }
-  
+
   virtual void seekp(Position position) {
     current_ = std::get<0>(position);
     current_->position = std::get<1>(position);
   }
-  
-virtual   size_t size() const {
+
+  virtual size_t size() const {
     size_t total = 0;
     for (auto& range : ranges_) {
       total += range.position;

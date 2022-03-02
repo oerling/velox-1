@@ -115,4 +115,3 @@ class VectorStreamGroup : public StreamArena {
 };
 
 } // namespace facebook::velox
- 
