@@ -27,8 +27,13 @@ namespace facebook::velox::functions::sparksql {
 template <typename T>
 struct PModFunction {
   template <typename TInput>
-  FOLLY_ALWAYS_INLINE bool
-  call(TInput& result, const TInput a, const TInput n) {
+  FOLLY_ALWAYS_INLINE bool call(TInput& result, const TInput a, const TInput n)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
     if (UNLIKELY(n == 0)) {
       return false;
     }
@@ -52,28 +57,30 @@ struct RemainderFunction {
 };
 
 template <typename T>
-VELOX_UDF_BEGIN(unaryminus)
-FOLLY_ALWAYS_INLINE bool call(T& result, const T a) {
-  if constexpr (std::is_integral_v<T>) {
-    // Avoid undefined integer overflow.
-    result = a == std::numeric_limits<T>::min() ? a : -a;
-  } else {
-    result = -a;
+struct UnaryMinusFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(TInput& result, const TInput a) {
+    if constexpr (std::is_integral_v<TInput>) {
+      // Avoid undefined integer overflow.
+      result = a == std::numeric_limits<TInput>::min() ? a : -a;
+    } else {
+      result = -a;
+    }
+    return true;
   }
-  return true;
-}
-VELOX_UDF_END();
+};
 
-VELOX_UDF_BEGIN(divide)
-FOLLY_ALWAYS_INLINE bool
-call(double& result, const double num, const double denom) {
-  if (UNLIKELY(denom == 0)) {
-    return false;
+template <typename T>
+struct DivideFunction {
+  FOLLY_ALWAYS_INLINE bool
+  call(double& result, const double num, const double denom) {
+    if (UNLIKELY(denom == 0)) {
+      return false;
+    }
+    result = num / denom;
+    return true;
   }
-  result = num / denom;
-  return true;
-}
-VELOX_UDF_END();
+};
 
 /*
   In Spark both ceil and floor must return Long type
@@ -104,26 +111,29 @@ inline int64_t safeDoubleToInt64(const int64_t& arg) {
 }
 
 template <typename T>
-VELOX_UDF_BEGIN(ceil)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, const T value) {
-  if constexpr (std::is_integral_v<T>) {
-    result = value;
-  } else {
-    result = safeDoubleToInt64(std::ceil(value));
+struct CeilFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const TInput value) {
+    if constexpr (std::is_integral_v<TInput>) {
+      result = value;
+    } else {
+      result = safeDoubleToInt64(std::ceil(value));
+    }
+    return true;
   }
-  return true;
-}
-VELOX_UDF_END();
+};
 
 template <typename T>
-VELOX_UDF_BEGIN(floor)
-FOLLY_ALWAYS_INLINE bool call(int64_t& result, const T value) {
-  if constexpr (std::is_integral_v<T>) {
-    result = value;
-  } else {
-    result = safeDoubleToInt64(std::floor(value));
+struct FloorFunction {
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const TInput value) {
+    if constexpr (std::is_integral_v<TInput>) {
+      result = value;
+    } else {
+      result = safeDoubleToInt64(std::floor(value));
+    }
+    return true;
   }
-  return true;
-}
-VELOX_UDF_END();
+};
+
 } // namespace facebook::velox::functions::sparksql

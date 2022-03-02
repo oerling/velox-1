@@ -15,6 +15,7 @@
  */
 
 #include <folly/Random.h>
+#include <random>
 #include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/encryption/TestProvider.h"
@@ -79,7 +80,7 @@ TEST(E2EWriterTests, DISABLED_TestFileCreation) {
   auto& pool = *scopedPool;
   std::vector<VectorPtr> batches;
   for (size_t i = 0; i < batchCount; ++i) {
-    batches.push_back(BatchMaker::createBatch(type, size, pool));
+    batches.push_back(BatchMaker::createBatch(type, size, pool, nullptr, i));
   }
 
   auto sink = std::make_unique<FileSink>("/tmp/e2e_generated_file.orc");
@@ -141,7 +142,45 @@ TEST(E2EWriterTests, E2E) {
 
   std::vector<VectorPtr> batches;
   for (size_t i = 0; i < batchCount; ++i) {
-    batches.push_back(BatchMaker::createBatch(type, size, pool));
+    batches.push_back(BatchMaker::createBatch(type, size, pool, nullptr, i));
+    size = 200;
+  }
+
+  E2EWriterTestUtil::testWriter(pool, type, batches, 1, 1, config);
+}
+
+TEST(E2EWriterTests, FlatMapDictionaryEncoding) {
+  const size_t batchCount = 4;
+  // Start with a size larger than stride to cover splitting into
+  // strides. Continue with smaller size for faster test.
+  size_t size = 1100;
+  auto scopedPool = memory::getDefaultScopedMemoryPool();
+  auto& pool = *scopedPool;
+
+  HiveTypeParser parser;
+  auto type = parser.parse(
+      "struct<"
+      "map_val:map<int,double>,"
+      "map_val:map<bigint,double>,"
+      "map_val:map<bigint,map<string, int>>,"
+      "map_val:map<int, string>,"
+      "map_val:map<bigint,map<int, string>>"
+      ">");
+
+  auto config = std::make_shared<Config>();
+  config->set(Config::ROW_INDEX_STRIDE, static_cast<uint32_t>(1000));
+  config->set(Config::FLATTEN_MAP, true);
+  config->set(Config::MAP_FLAT_COLS, {0, 1, 2, 3, 4});
+  config->set(Config::MAP_FLAT_DISABLE_DICT_ENCODING, false);
+  config->set(Config::DICTIONARY_NUMERIC_KEY_SIZE_THRESHOLD, 1.0f);
+  config->set(Config::DICTIONARY_STRING_KEY_SIZE_THRESHOLD, 1.0f);
+  config->set(Config::ENTROPY_KEY_STRING_SIZE_THRESHOLD, 0.0f);
+
+  std::vector<VectorPtr> batches;
+  std::mt19937 gen;
+  gen.seed(983871726);
+  for (size_t i = 0; i < batchCount; ++i) {
+    batches.push_back(BatchMaker::createBatch(type, size, pool, gen));
     size = 200;
   }
 
@@ -312,7 +351,10 @@ TEST(E2EWriterTests, FlatMapBackfill) {
       E2EWriterTestUtil::simpleFlushPolicy(false));
 }
 
-void testFlatMapWithNulls(bool firstRowNotNull, bool shareDictionary = false) {
+void testFlatMapWithNulls(
+    bool firstRowNotNull,
+    bool enableFlatmapDictionaryEncoding = false,
+    bool shareDictionary = false) {
   auto scopedPool = memory::getDefaultScopedMemoryPool();
   auto& pool = *scopedPool;
 
@@ -344,7 +386,8 @@ void testFlatMapWithNulls(bool firstRowNotNull, bool shareDictionary = false) {
   config->set(Config::FLATTEN_MAP, true);
   config->set(Config::MAP_FLAT_COLS, {0});
   config->set(Config::ROW_INDEX_STRIDE, strideSize);
-  config->set(Config::MAP_FLAT_DISABLE_DICT_ENCODING, false);
+  config->set(
+      Config::MAP_FLAT_DISABLE_DICT_ENCODING, !enableFlatmapDictionaryEncoding);
   config->set(Config::MAP_FLAT_DICT_SHARE, shareDictionary);
 
   E2EWriterTestUtil::testWriter(
@@ -358,13 +401,25 @@ void testFlatMapWithNulls(bool firstRowNotNull, bool shareDictionary = false) {
 }
 
 TEST(E2EWriterTests, FlatMapWithNulls) {
-  testFlatMapWithNulls(false);
-  testFlatMapWithNulls(true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ false, /* enableFlatmapDictionaryEncoding */ false);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ true, /* enableFlatmapDictionaryEncoding */ false);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ false, /* enableFlatmapDictionaryEncoding */ true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ true, /* enableFlatmapDictionaryEncoding */ true);
 }
 
 TEST(E2EWriterTests, FlatMapWithNullsSharedDict) {
-  testFlatMapWithNulls(false, true);
-  testFlatMapWithNulls(true, true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ false,
+      /* enableFlatmapDictionaryEncoding */ true,
+      /* shareDictionary */ true);
+  testFlatMapWithNulls(
+      /* firstRowNotNull */ true,
+      /* enableFlatmapDictionaryEncoding */ true,
+      /* shareDictionary */ true);
 }
 
 TEST(E2EWriterTests, FlatMapEmpty) {
@@ -432,7 +487,7 @@ void testFlatMapConfig(
   Writer writer{options, std::move(sink), pool};
 
   for (size_t i = 0; i < stripes; ++i) {
-    writer.write(BatchMaker::createBatch(type, size, pool));
+    writer.write(BatchMaker::createBatch(type, size, pool, nullptr, i));
   }
 
   writer.close();
@@ -750,7 +805,7 @@ class E2EEncryptionTest : public Test {
     writer_ = std::make_unique<Writer>(options, std::move(sink), pool);
 
     for (size_t i = 0; i < batchCount_; ++i) {
-      auto batch = BatchMaker::createBatch(type, batchSize_, pool);
+      auto batch = BatchMaker::createBatch(type, batchSize_, pool, nullptr, i);
       writer_->write(batch);
       batches_.push_back(std::move(batch));
       if (i % flushInterval_ == flushInterval_ - 1) {

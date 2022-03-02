@@ -73,7 +73,7 @@ RowContainer::RowContainer(
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
   // -1, 8 bytes below the pointer. This space is reserved for a 64
-  // bit unique digest of the keys for speding up comparison. This
+  // bit unique digest of the keys for speeding up comparison. This
   // space is reserved for the rows that are inserted before the
   // cardinality grows too large for packing all in 64
   // bits. 'numRowsWithNormalizedKey_' gives the number of rows with
@@ -103,6 +103,7 @@ RowContainer::RowContainer(
     nullOffsets_.push_back(nullOffset);
     ++nullOffset;
     isVariableWidth |= !aggregate->isFixedSize();
+    usesExternalMemory_ |= aggregate->accumulatorUsesExternalMemory();
   }
   for (auto& type : dependentTypes) {
     types_.push_back(type);
@@ -489,6 +490,20 @@ void RowContainer::hash(
 }
 
 void RowContainer::clear() {
+  if (usesExternalMemory_) {
+    constexpr int32_t kBatch = 1000;
+    std::vector<char*> rows(kBatch);
+
+    RowContainerIterator iter;
+    for (;;) {
+      int64_t numRows = listRows(&iter, kBatch, rows.data());
+      if (!numRows) {
+        break;
+      }
+      auto rowsData = folly::Range<char**>(rows.data(), numRows);
+      freeAggregates(rowsData);
+    }
+  }
   rows_.clear();
   stringAllocator_.clear();
   numRows_ = 0;

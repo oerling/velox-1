@@ -73,6 +73,15 @@ template <>
 }
 
 template <>
+::duckdb::Value duckValueAt<TypeKind::DATE>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  using T = typename KindToFlatVector<TypeKind::DATE>::WrapperType;
+  return ::duckdb::Value::DATE(::duckdb::Date::EpochDaysToDate(
+      vector->as<SimpleVector<T>>()->valueAt(index).days()));
+}
+
+template <>
 ::duckdb::Value duckValueAt<TypeKind::ARRAY>(
     const VectorPtr& vector,
     int32_t row) {
@@ -108,7 +117,8 @@ velox::variant variantAt<TypeKind::VARCHAR>(
     ::duckdb::DataChunk* dataChunk,
     int32_t row,
     int32_t column) {
-  return velox::variant(StringView(dataChunk->GetValue(column, row).str_value));
+  return velox::variant(
+      StringView(::duckdb::StringValue::Get(dataChunk->GetValue(column, row))));
 }
 
 template <>
@@ -116,7 +126,8 @@ velox::variant variantAt<TypeKind::VARBINARY>(
     ::duckdb::DataChunk* dataChunk,
     int32_t row,
     int32_t column) {
-  return velox::variant(StringView(dataChunk->GetValue(column, row).str_value));
+  return velox::variant(
+      StringView(::duckdb::StringValue::Get(dataChunk->GetValue(column, row))));
 }
 
 template <>
@@ -126,6 +137,15 @@ velox::variant variantAt<TypeKind::TIMESTAMP>(
     int32_t column) {
   return velox::variant::timestamp(duckdbTimestampToVelox(
       dataChunk->GetValue(column, row).GetValue<::duckdb::timestamp_t>()));
+}
+
+template <>
+velox::variant variantAt<TypeKind::DATE>(
+    ::duckdb::DataChunk* dataChunk,
+    int32_t row,
+    int32_t column) {
+  return velox::variant::date(::duckdb::Date::EpochDays(
+      dataChunk->GetValue(column, row).GetValue<::duckdb::date_t>()));
 }
 
 template <TypeKind kind>
@@ -138,10 +158,11 @@ velox::variant rowVariantAt(
     const ::duckdb::Value& vector,
     const std::shared_ptr<const Type>& rowType) {
   std::vector<velox::variant> values;
-  for (size_t i = 0; i < vector.struct_value.size(); ++i) {
-    auto currChild = vector.struct_value[i];
+  const auto& structValue = ::duckdb::StructValue::GetChildren(vector);
+  for (size_t i = 0; i < structValue.size(); ++i) {
+    auto currChild = structValue[i];
     auto currType = rowType->childAt(i)->kind();
-    if (currChild.is_null) {
+    if (currChild.IsNull()) {
       values.push_back(variant(currType));
     } else if (currType == TypeKind::ROW) {
       values.push_back(rowVariantAt(currChild, rowType->childAt(i)));
@@ -169,7 +190,7 @@ std::vector<MaterializedRow> materialize(
     row.reserve(rowType->size());
     for (size_t j = 0; j < rowType->size(); ++j) {
       auto typeKind = rowType->childAt(j)->kind();
-      if (dataChunk->GetValue(j, i).is_null) {
+      if (dataChunk->GetValue(j, i).IsNull()) {
         row.push_back(variant(typeKind));
       } else if (typeKind == TypeKind::ROW) {
         row.push_back(
@@ -369,15 +390,22 @@ std::string generateUserFriendlyDiff(
   return message.str();
 }
 
+void verifyDuckDBResult(const DuckDBQueryResult& result, std::string_view sql) {
+  ASSERT_TRUE(result->success)
+      << "DuckDB query failed: " << result->error << std::endl
+      << sql;
+}
+
 } // namespace
 
 void DuckDbQueryRunner::createTable(
     const std::string& name,
     const std::vector<RowVectorPtr>& data) {
-  ::duckdb::Connection con(db_);
-  con.Query("DROP TABLE IF EXISTS " + name);
+  auto query = fmt::format("DROP TABLE IF EXISTS {}", name);
+  execute(query);
 
   auto rowType = data[0]->type()->as<TypeKind::ROW>();
+  ::duckdb::Connection con(db_);
   auto res = con.Query(makeCreateTableSql(name, rowType));
   if (!res->success) {
     VELOX_FAIL(res->error);
@@ -404,21 +432,28 @@ void DuckDbQueryRunner::createTable(
   }
 }
 
+void DuckDbQueryRunner::initializeTpch(double scaleFactor) {
+  db_.LoadExtension<::duckdb::TPCHExtension>();
+  auto query = fmt::format("CALL dbgen(sf={})", scaleFactor);
+  execute(query);
+}
+
+DuckDBQueryResult DuckDbQueryRunner::execute(const std::string& sql) {
+  ::duckdb::Connection con(db_);
+  auto duckDbResult = con.Query(sql);
+  verifyDuckDBResult(duckDbResult, sql);
+  return duckDbResult;
+}
+
 void DuckDbQueryRunner::execute(
     const std::string& sql,
     const std::shared_ptr<const RowType>& resultRowType,
     std::function<void(std::vector<MaterializedRow>&)> resultCallback) {
-  ::duckdb::Connection con(db_);
-  auto duckDbResult = con.Query(sql);
-  ASSERT_TRUE(duckDbResult->success)
-      << "DuckDB query failed: " << duckDbResult->error << std::endl
-      << sql;
+  auto duckDbResult = execute(sql);
 
   for (;;) {
     auto dataChunk = duckDbResult->Fetch();
-    ASSERT_TRUE(duckDbResult->success)
-        << "DuckDB query failed: " << duckDbResult->error << std::endl
-        << sql;
+    verifyDuckDBResult(duckDbResult, sql);
     if (!dataChunk || (dataChunk->size() == 0)) {
       break;
     }
@@ -560,22 +595,8 @@ std::shared_ptr<Task> assertQuery(
     std::optional<std::vector<uint32_t>> sortingKeys) {
   CursorParameters params;
   params.planNode = plan;
-  auto result = readCursor(params, addSplits);
-  if (sortingKeys) {
-    assertResultsOrdered(
-        result.second,
-        params.planNode->outputType(),
-        duckDbSql,
-        duckDbQueryRunner,
-        sortingKeys.value());
-  } else {
-    assertResults(
-        result.second,
-        params.planNode->outputType(),
-        duckDbSql,
-        duckDbQueryRunner);
-  }
-  return result.first->task();
+  return assertQuery(
+      params, addSplits, duckDbSql, duckDbQueryRunner, sortingKeys);
 }
 
 std::shared_ptr<Task> assertQuery(
@@ -584,14 +605,7 @@ std::shared_ptr<Task> assertQuery(
     const std::string& duckDbSql,
     DuckDbQueryRunner& duckDbQueryRunner,
     std::optional<std::vector<uint32_t>> sortingKeys) {
-  auto cursor = std::make_unique<TaskCursor>(params);
-  addSplits(cursor->task().get());
-
-  std::vector<RowVectorPtr> actualResults;
-  while (cursor->moveNext()) {
-    actualResults.push_back(cursor->current());
-    addSplits(cursor->task().get());
-  }
+  auto [cursor, actualResults] = readCursor(params, addSplits);
 
   if (sortingKeys) {
     assertResultsOrdered(
@@ -607,7 +621,18 @@ std::shared_ptr<Task> assertQuery(
         duckDbSql,
         duckDbQueryRunner);
   }
-  return cursor->task();
+  auto task = cursor->task();
+
+  if (!task->isFinished()) {
+    // The Task can return results before the Driver is finished executing.
+    // Wait for the Task to finish before returning it to ensure it's stable
+    // e.g. the Driver isn't updating it anymore.
+    auto& executor = folly::QueuedImmediateExecutor::instance();
+    auto future = task->finishFuture().via(&executor);
+    future.wait();
+  }
+
+  return task;
 }
 
 std::shared_ptr<Task> assertQuery(

@@ -16,7 +16,7 @@
 #include "Expressions.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/Expressions.h"
-#include "velox/core/FunctionRegistry.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/parse/VariantToVector.h"
 #include "velox/type/Type.h"
 #include "velox/vector/ConstantVector.h"
@@ -34,28 +34,32 @@ Expressions::lambdaRegistry() {
 }
 
 namespace {
-FunctionKey createFuncKey(
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs,
-    const std::string& fnName) {
+std::vector<TypePtr> getTypes(
+    const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs) {
   std::vector<std::shared_ptr<const Type>> types{};
   for (auto& i : inputs) {
     types.push_back(i->type());
   }
-  return FunctionKey{fnName, move(types)};
+  return types;
 }
 
+// Determine output type based on input types.
 std::shared_ptr<const Type> resolveTypeImpl(
     std::vector<std::shared_ptr<const core::ITypedExpr>> inputs,
     const std::shared_ptr<const CallExpr>& expr) {
+  // Check expressions which aren't simple functions, e.g. vector functions,
+  // and/or, try, etc.
   if (Expressions::getResolverHook()) {
     auto type = Expressions::getResolverHook()(inputs, expr);
     if (type) {
       return type;
     }
   }
-  auto fun =
-      ScalarFunctions().Create(createFuncKey(inputs, expr->getFunctionName()));
-  return fun == nullptr ? nullptr : fun->returnType();
+
+  // Check simple functions.
+  auto fun = exec::SimpleFunctions().resolveFunction(
+      expr->getFunctionName(), getTypes(inputs));
+  return fun == nullptr ? nullptr : fun->getMetadata()->returnType();
 }
 
 namespace {

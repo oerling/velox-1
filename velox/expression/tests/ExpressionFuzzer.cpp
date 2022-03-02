@@ -19,14 +19,14 @@
 #include <exception>
 
 #include "velox/common/base/Exceptions.h"
-#include "velox/core/FunctionRegistry.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/FunctionSignature.h"
 #include "velox/expression/SignatureBinder.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/expression/tests/ExpressionFuzzer.h"
-#include "velox/expression/tests/VectorFuzzer.h"
 #include "velox/type/Type.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/VectorMaker.h"
 
 DEFINE_int32(
@@ -50,22 +50,6 @@ namespace facebook::velox::test {
 namespace {
 
 using exec::SignatureBinder;
-
-// TODO: List of the functions that at some point crash or fail and need to
-// be fixed before we can enable.
-static std::unordered_set<std::string> kSkipFunctions = {
-    "replace",
-    // The pad functions cause the test to OOM. The 2nd arg is only bound by
-    // the max value of int32_t, which leads to strings billions of characters
-    // long.
-    "lpad",
-    "rpad",
-    // Fuzzer and the underlying engine are confused about cardinality(HLL)
-    // (since HLL is a user defined type), and end up trying to use cardinality
-    // passing a VARBINARY (since HLL's implementation uses an alias to
-    // VARBINARY).
-    "cardinality",
-};
 
 // Called if at least one of the ptrs has an exception.
 void compareExceptions(
@@ -145,11 +129,10 @@ void compareVectors(const VectorPtr& vec1, const VectorPtr& vec2) {
 std::optional<bool> isDeterministic(
     const std::string& functionName,
     const std::vector<TypePtr>& argTypes) {
-  // Check if this is a scalar function.
-  auto key = core::FunctionKey(functionName, argTypes);
-  if (core::ScalarFunctions().Has(key)) {
-    auto scalarFunction = core::ScalarFunctions().Create(key);
-    return scalarFunction->isDeterministic();
+  // Check if this is a simple function.
+  if (auto simpleFunctionEntry =
+          exec::SimpleFunctions().resolveFunction(functionName, argTypes)) {
+    return simpleFunctionEntry->getMetadata()->isDeterministic();
   }
 
   // Vector functions are a bit more complicated. We need to fetch the list of
@@ -268,11 +251,6 @@ class ExpressionFuzzer {
 
     // Process each available signature for every function.
     for (const auto& function : signatureMap) {
-      if (kSkipFunctions.count(function.first) > 0) {
-        LOG(INFO) << "Skipping buggy function: " << function.first;
-        continue;
-      }
-
       for (const auto& signature : function.second) {
         if (auto callableFunction =
                 processSignature(function.first, *signature)) {
@@ -321,6 +299,8 @@ class ExpressionFuzzer {
     registerFuncOverride(&ExpressionFuzzer::generateLikeArgs, "like");
     registerFuncOverride(
         &ExpressionFuzzer::generateEmptyApproxSetArgs, "empty_approx_set");
+    registerFuncOverride(
+        &ExpressionFuzzer::generateRegexpReplaceArgs, "regexp_replace");
   }
 
   template <typename TFunc>
@@ -443,6 +423,18 @@ class ExpressionFuzzer {
     return {generateArgConstant(input.args[0])};
   }
 
+  // Specialization for the "regexp_replace" function: second and third
+  // (optional) parameters always need to be constant.
+  std::vector<core::TypedExprPtr> generateRegexpReplaceArgs(
+      const CallableSignature& input) {
+    std::vector<core::TypedExprPtr> inputExpressions = {
+        generateArg(input.args[0]), generateArgConstant(input.args[1])};
+    if (input.args.size() == 3) {
+      inputExpressions.emplace_back(generateArgConstant(input.args[2]));
+    }
+    return inputExpressions;
+  }
+
   core::TypedExprPtr generateExpression(const TypePtr& returnType) {
     // If no functions can return `returnType`, return a constant instead.
     auto it = signaturesMap_.find(returnType->kind());
@@ -504,13 +496,17 @@ class ExpressionFuzzer {
       exec::ExprSet exprSetCommon({plan}, &execCtx_);
       exec::EvalCtx evalCtxCommon(&execCtx_, &exprSetCommon, rowVector.get());
 
-      exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
-    } catch (...) {
-      if (!canThrow) {
-        LOG(ERROR)
-            << "Common eval wasn't supposed to throw, but it did. Aborting.";
-        throw;
+      try {
+        exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Common eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionCommonPtr = std::current_exception();
       }
+    } catch (...) {
       exceptionCommonPtr = std::current_exception();
     }
 
@@ -522,13 +518,17 @@ class ExpressionFuzzer {
       exec::EvalCtx evalCtxSimplified(
           &execCtx_, &exprSetSimplified, rowVector.get());
 
-      exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
-    } catch (...) {
-      if (!canThrow) {
-        LOG(ERROR)
-            << "Simplified eval wasn't supposed to throw, but it did. Aborting.";
-        throw;
+      try {
+        exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Simplified eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionSimplifiedPtr = std::current_exception();
       }
+    } catch (...) {
       exceptionSimplifiedPtr = std::current_exception();
     }
 
@@ -598,7 +598,7 @@ class ExpressionFuzzer {
       const CallableSignature& input)>;
   std::unordered_map<std::string, ArgsOverrideFunc> funcArgOverrides_;
 
-  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::create()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   std::unique_ptr<memory::MemoryPool> pool_{
       memory::getDefaultScopedMemoryPool()};
   core::ExecCtx execCtx_{pool_.get(), queryCtx_.get()};

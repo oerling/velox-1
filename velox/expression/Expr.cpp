@@ -168,6 +168,8 @@ void Expr::evalSimplifiedImpl(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
 
@@ -218,42 +220,51 @@ void Expr::eval(
     const SelectivityVector& rows,
     EvalCtx* context,
     VectorPtr* result) {
-  if (!rows.hasSelections()) {
-    return;
-  }
-
-  // Check if there are any IFs, ANDs or ORs. These expressions are special
-  // because not all of their sub-expressions get evaluated on all the rows all
-  // the time. Therefore, we should delay loading lazy vectors until we know the
-  // minimum subset of rows needed to be loaded.
-  //
-  // If there is only one field, load it unconditionally. The very first IF, AND
-  // or OR will have to load it anyway. Pre-loading enables peeling of encodings
-  // at a higher level in the expression tree and avoids repeated peeling and
-  // wrapping in the sub-nodes.
-  //
-  // TODO: Re-work the logic of deciding when to load which field.
-  if (!hasConditionals_ || distinctFields_.size() == 1) {
-    // Load lazy vectors if any.
-    for (const auto& field : distinctFields_) {
-      context->ensureFieldLoaded(field->index(context), rows);
+  try {
+    if (!rows.hasSelections()) {
+      // empty input, return an empty vector of the right type
+      *result = BaseVector::createNullConstant(type(), 0, context->pool());
+      return;
     }
+
+    // Check if there are any IFs, ANDs or ORs. These expressions are special
+    // because not all of their sub-expressions get evaluated on all the rows
+    // all the time. Therefore, we should delay loading lazy vectors until we
+    // know the minimum subset of rows needed to be loaded.
+    //
+    // If there is only one field, load it unconditionally. The very first IF,
+    // AND or OR will have to load it anyway. Pre-loading enables peeling of
+    // encodings at a higher level in the expression tree and avoids repeated
+    // peeling and wrapping in the sub-nodes.
+    //
+    // TODO: Re-work the logic of deciding when to load which field.
+    if (!hasConditionals_ || distinctFields_.size() == 1) {
+      // Load lazy vectors if any.
+      for (const auto& field : distinctFields_) {
+        context->ensureFieldLoaded(field->index(context), rows);
+      }
+    }
+
+    if (inputs_.empty()) {
+      evalAll(rows, context, result);
+      return;
+    }
+
+    // Check if this expression has been evaluated already. If so, fetch and
+    // return the previously computed result.
+    if (checkGetSharedSubexprValues(rows, context, result)) {
+      return;
+    }
+
+    evalEncodings(rows, context, result);
+
+    checkUpdateSharedSubexprValues(rows, context, *result);
+  } catch (const std::exception& e) {
+    LOG(INFO) << "Inside: " << rows.countSelected() << " from " << rows.begin()
+              << " to " << rows.end() << " wrap " << context->wrapEncoding()
+              << " expr " << toString();
+    throw;
   }
-
-  if (inputs_.empty()) {
-    evalAll(rows, context, result);
-    return;
-  }
-
-  // Check if this expression has been evaluated already. If so, fetch and
-  // return the previously computed result.
-  if (checkGetSharedSubexprValues(rows, context, result)) {
-    return;
-  }
-
-  evalEncodings(rows, context, result);
-
-  checkUpdateSharedSubexprValues(rows, context, *result);
 }
 
 bool Expr::checkGetSharedSubexprValues(
@@ -638,6 +649,8 @@ void Expr::evalWithNulls(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
 
@@ -854,6 +867,8 @@ void Expr::evalAll(
     EvalCtx* context,
     VectorPtr* result) {
   if (!rows.hasSelections()) {
+    // empty input, return an empty vector of the right type
+    *result = BaseVector::createNullConstant(type(), 0, context->pool());
     return;
   }
   if (isSpecialForm()) {
@@ -883,6 +898,25 @@ void Expr::evalAll(
         setAllNulls(rows, context, result);
         return;
       }
+    }
+  }
+
+  // If any errors occurred evaluating the arguments, it's possible (even
+  // likely) that the values for those arguments were not defined which could
+  // lead to undefined behavior if we try to evaluate the current function on
+  // them.  It's safe to skip evaluating them since the value for this branch
+  // of the expression tree will be NULL for those rows anyway.
+  if (context->errors()) {
+    if (remainingRows == &rows) {
+      nonNulls.allocate(rows.end());
+      *nonNulls.get() = rows;
+      remainingRows = nonNulls.get();
+    }
+    deselectErrors(context, *nonNulls.get());
+    if (!remainingRows->hasSelections()) {
+      inputValues_.clear();
+      setAllNulls(rows, context, result);
+      return;
     }
   }
 
@@ -919,7 +953,7 @@ bool Expr::applyFunctionWithPeeling(
   }
   int numLevels = 0;
   bool peeled;
-  bool nonConstant = false;
+  int32_t numConstant = 0;
   auto numArgs = inputValues_.size();
   // Holds the outermost wrapper. This may be the last reference after
   // peeling for a temporary dictionary, hence use a shared_ptr.
@@ -936,13 +970,22 @@ bool Expr::applyFunctionWithPeeling(
         setPeeledArg(leaf, i, numArgs, maybePeeled);
         continue;
       }
-      if (numLevels == 0 && leaf->isConstant(rows)) {
-        setPeeledArg(leaf, i, numArgs, maybePeeled);
+      if ((numLevels == 0 && leaf->isConstant(rows)) ||
+          leaf->isConstantEncoding()) {
+        if (leaf->isConstantEncoding()) {
+          setPeeledArg(leaf, i, numArgs, maybePeeled);
+        } else {
+          setPeeledArg(
+              BaseVector::wrapInConstant(leaf->size(), rows.begin(), leaf),
+              i,
+              numArgs,
+              maybePeeled);
+        }
         constantArgs.resize(numArgs);
         constantArgs.at(i) = true;
+        ++numConstant;
         continue;
       }
-      nonConstant = true;
       auto encoding = leaf->encoding();
       if (encoding == VectorEncoding::Simple::DICTIONARY) {
         if (firstLengths) {
@@ -996,7 +1039,7 @@ bool Expr::applyFunctionWithPeeling(
       ++numLevels;
       inputValues_ = std::move(maybePeeled);
     }
-  } while (peeled && nonConstant);
+  } while (peeled && numConstant != numArgs);
   if (!numLevels) {
     return false;
   }
@@ -1005,7 +1048,7 @@ bool Expr::applyFunctionWithPeeling(
   // We peel off the wrappers and make a new selection.
   SelectivityVector* newRows;
   LocalDecodedVector localDecoded(context);
-  if (!firstWrapper) {
+  if (numConstant == numArgs) {
     // All the fields are constant across the rows of interest.
     newRows = singleRow(newRowsHolder, rows.begin());
 

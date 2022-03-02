@@ -18,10 +18,11 @@ workflows:
     jobs:
       - linux-build
       - linux-build-options
-      - linux-storage-adapters-build
+      - linux-parquet-s3-build
       - macos-build
       - format-check
       - header-check
+      - linux-benchmarks
 
   # Daily documentation update
   nightly:
@@ -35,10 +36,26 @@ workflows:
     jobs:
       - doc-gen-job
 
+  # Hourly build on weekdays
+  weekday:
+    triggers:
+      - schedule:
+          cron: "0 0,4,8,12,16,20 * * 1-5"
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - linux-build
+      - linux-build-release
+      - linux-build-options
+      - linux-parquet-s3-build
+      - macos-build
+
 executors:
   build:
     docker:
-      - image : prestocpp/velox-circleci:mikesh-20211012
+      - image : prestocpp/velox-circleci:sagarm-20220131
     resource_class: 2xlarge
     environment:
         CC:  /opt/rh/gcc-toolset-9/root/bin/gcc
@@ -48,7 +65,7 @@ executors:
       - image : prestocpp/velox-check:mikesh-20210609
   doc-gen:
     docker:
-      - image : prestocpp/velox-circleci:mikesh-20210928
+      - image : prestocpp/velox-circleci:sagarm-20220131
 
 jobs:
   macos-build:
@@ -80,7 +97,7 @@ jobs:
       - restore_cache:
           name: "Restore CCache cache"
           keys:
-            - velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+            - velox-ccache-debug-{{ arch }}-{{ checksum "merge-base-date" }}
       - run:
           name: "Build on MacOS"
           command: |
@@ -94,7 +111,7 @@ jobs:
           no_output_timeout: 1h
       - save_cache:
           name: "Save CCache cache"
-          key: velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+          key: velox-ccache-debug-{{ arch }}-{{ checksum "merge-base-date" }}
           paths:
             - .ccache/
 
@@ -108,7 +125,7 @@ jobs:
       - restore_cache:
           name: "Restore CCache cache"
           keys:
-            - velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+            - velox-ccache-debug-{{ arch }}-{{ checksum "merge-base-date" }}
       - run:
           name: Build
           command: |
@@ -116,31 +133,114 @@ jobs:
             export CCACHE_DIR=$(realpath .ccache)
             ccache -sz -M 5Gi
             source /opt/rh/gcc-toolset-9/enable
-            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=16
+            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
             ccache -s
           no_output_timeout: 1h
       - store_artifacts:
           path: '_build/debug/.ninja_log'
       - save_cache:
           name: "Save CCache cache"
-          key: velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+          key: velox-ccache-debug-{{ arch }}-{{ checksum "merge-base-date" }}
           paths:
             - .ccache/
       - run:
           name: "Run Unit Tests"
           command: |
-            make unittest NUM_THREADS=16
+            cd _build/debug && ctest -j 16 -VV --output-on-failure
           no_output_timeout: 1h
       - run:
           name: "Run Fuzzer Tests"
           command: |
-            make fuzzertest
+            _build/debug/velox/expression/tests/velox_expression_fuzzer_test --steps 100000 --logtostderr=1 --minloglevel=0
           no_output_timeout: 5m
       - run:
          name: "Run the velox examples"
          command: |
            _build/debug/velox/examples/velox_example_expression_eval
            _build/debug/velox/examples/velox_example_opaque_type
+
+  linux-build-release:
+    executor: build
+    steps:
+      - checkout
+      - run:
+          name: "Calculate merge-base date for CCache"
+          command: git show -s --format=%cd --date="format:%Y%m%d" $(git merge-base origin/main HEAD) | tee merge-base-date
+      - restore_cache:
+          name: "Restore CCache cache"
+          keys:
+            - velox-ccache-release-{{ arch }}-{{ checksum "merge-base-date" }}
+      - run:
+          name: Build
+          command: |
+            mkdir -p .ccache
+            export CCACHE_DIR=$(realpath .ccache)
+            ccache -sz -M 5Gi
+            source /opt/rh/gcc-toolset-9/enable
+            make release NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+            ccache -s
+          no_output_timeout: 1h
+      - store_artifacts:
+          path: '_build/release/.ninja_log'
+      - save_cache:
+          name: "Save CCache cache"
+          key: velox-ccache-release-{{ arch }}-{{ checksum "merge-base-date" }}
+          paths:
+            - .ccache/
+      - run:
+          name: "Run Unit Tests"
+          command: |
+            cd _build/release && ctest -j 16 -VV --output-on-failure
+          no_output_timeout: 1h
+
+  linux-benchmarks:
+    executor: build
+    steps:
+      - checkout
+      - run:
+          name: "Calculate merge-base date for CCache"
+          command: |
+            git show -s --format=%cd --date="format:%Y%m%d" $(git merge-base origin/main HEAD) | tee merge-base-date
+      - restore_cache:
+          name: "Restore CCache cache"
+          keys:
+            - velox-ccache-release-{{ arch }}-{{ checksum "merge-base-date" }}
+      - run:
+          name: "Build Benchmarks - Baseline"
+          command: |
+            git checkout $(git merge-base origin/main HEAD)
+            mkdir -p .ccache
+            export CCACHE_DIR=$(realpath .ccache)
+            ccache -sz -M 5Gi
+            source /opt/rh/gcc-toolset-9/enable
+            make benchmarks-build NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+            ccache -s
+          no_output_timeout: 1h
+      - run:
+          name: "Run Benchmarks - Baseline"
+          command: |
+            make benchmarks-dump NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+      - run:
+          name: "Build Benchmarks - Current"
+          command: |
+            git checkout -
+            mkdir -p .ccache
+            export CCACHE_DIR=$(realpath .ccache)
+            ccache -sz -M 5Gi
+            source /opt/rh/gcc-toolset-9/enable
+            make benchmarks-build NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+            ccache -s
+      - run:
+          name: "Run Benchmarks - Current"
+          command: |
+            make benchmarks-dump NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+      - store_artifacts:
+          path: '_build/debug/.ninja_log'
+      - save_cache:
+          name: "Save CCache cache"
+          key: velox-ccache-release-{{ arch }}-{{ checksum "merge-base-date" }}
+          paths:
+            - .ccache/
 
   # Build with different options
   linux-build-options:
@@ -153,7 +253,7 @@ jobs:
       - restore_cache:
           name: "Restore CCache cache"
           keys:
-            - velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+            - velox-ccache-debug-{{ arch }}-{{ checksum "merge-base-date" }}
       - run:
           name: Build minimal velox
           command: |
@@ -179,11 +279,11 @@ jobs:
           path: '_build/debug/.ninja_log'
       - save_cache:
           name: "Save CCache cache"
-          key: velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+          key: velox-ccache-debug-{{ arch }}-{{ checksum "merge-base-date" }}
           paths:
             - .ccache/
 
-  linux-storage-adapters-build:
+  linux-parquet-s3-build:
     executor: build
     steps:
       - checkout
@@ -193,7 +293,7 @@ jobs:
       - restore_cache:
           name: "Restore CCache cache"
           keys:
-            - velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+            - velox-ccache-release-{{ arch }}-{{ checksum "merge-base-date" }}
       - run:
           name: "Install adapter dependencies"
           command: |
@@ -215,21 +315,21 @@ jobs:
             export CCACHE_DIR=$(realpath .ccache)
             ccache -sz -M 5Gi
             source /opt/rh/gcc-toolset-9/enable
-            make release VELOX_ENABLE_ADAPTERS=ON AWSSDK_ROOT_DIR=~/adapter-deps/install NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=16
+            make release EXTRA_CMAKE_FLAGS=" -DVELOX_ENABLE_PARQUET=ON -DVELOX_ENABLE_S3=ON " AWSSDK_ROOT_DIR=~/adapter-deps/install NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
             ccache -s
           no_output_timeout: 1h
       - store_artifacts:
           path: '_build/release/.ninja_log'
       - save_cache:
           name: "Save CCache cache"
-          key: velox-ccache-{{ arch }}-{{ checksum "merge-base-date" }}
+          key: velox-ccache-release-{{ arch }}-{{ checksum "merge-base-date" }}
           paths:
             - .ccache/
       - run:
           name: "Run Unit Tests"
           command: |
             export PATH=~/adapter-deps/install/bin:${PATH}
-            make unittestrel VELOX_ENABLE_ADAPTERS=ON AWSSDK_ROOT_DIR=~/adapter-deps/install NUM_THREADS=16
+            cd _build/release && ctest -j 16 -VV --output-on-failure
           no_output_timeout: 1h
 
   format-check:

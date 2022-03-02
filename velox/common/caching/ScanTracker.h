@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <mutex>
 
+#include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
 
 namespace facebook::velox::cache {
@@ -55,6 +56,10 @@ class TrackingId {
     return id_;
   }
 
+  int32_t columnId() const {
+    return id_ >> kNodeShift;
+  }
+
  private:
   int32_t id_;
 };
@@ -72,15 +77,28 @@ struct hash<::facebook::velox::cache::TrackingId> {
 
 namespace facebook::velox::cache {
 
+class FileGroupStats;
+
 // Records references and actual uses of a stream.
 struct TrackingData {
   int64_t referencedBytes{};
   int64_t readBytes{};
   int32_t numReferences{};
   int32_t numReads{};
-  void incrementReference(uint64_t bytes) {
+
+  // Marks that 'bytes' worth of data in the tracked object has been
+  // referenced and may later be accessed. If 'bytes' is larger than a single
+  // 'oadQuantum', the reference counts for as many accesses as are needed to
+  // cover 'bytes'. When reading a large object, we will get a read per quantum.
+  // So then if the referenced and read counts match, we know that the object is
+  // densely read.
+  void incrementReference(uint64_t bytes, int32_t loadQuantum) {
     referencedBytes += bytes;
-    ++numReferences;
+    if (!loadQuantum) {
+      ++numReferences;
+    } else {
+      numReferences += bits::roundUp(bytes, loadQuantum) / loadQuantum;
+    }
   }
 
   void incrementRead(uint64_t bytes) {
@@ -98,16 +116,22 @@ struct TrackingData {
 // over multiple partitions.
 class ScanTracker {
  public:
-  ScanTracker() {}
+  ScanTracker() : loadQuantum_(1 /*not used*/) {}
 
   // Constructs a tracker with 'id'. The tracker will be owned by
   // shared_ptr and will be referenced from a map from id to weak_ptr
   // to 'this'. 'unregisterer' is supplied so that the destructor can
-  // remove the weak_ptr from the map of pending trackers.
+  // remove the weak_ptr from the map of pending trackers. 'loadQuantum' is the
+  // largest single IO size for read.
   ScanTracker(
       std::string_view id,
-      std::function<void(ScanTracker*)> unregisterer)
-      : id_(id), unregisterer_(unregisterer) {}
+      std::function<void(ScanTracker* FOLLY_NONNULL)> unregisterer,
+      int32_t loadQuantum,
+      FileGroupStats* FOLLY_NULLABLE fileGroupStats = nullptr)
+      : id_(id),
+        unregisterer_(unregisterer),
+        loadQuantum_(loadQuantum),
+        fileGroupStats_(fileGroupStats) {}
 
   ~ScanTracker() {
     if (unregisterer_) {
@@ -117,25 +141,47 @@ class ScanTracker {
 
   // Records that a scan references 'bytes' bytes of the stream given
   // by 'id'. This is called when preparing to read a stripe.
-  void recordReference(const TrackingId id, uint64_t bytes, uint64_t groupId);
+  void recordReference(
+      const TrackingId id,
+      uint64_t bytes,
+      uint64_t fileId,
+      uint64_t groupId);
 
   // Records that 'bytes' bytes have actually been read from the stream
   // given by 'id'.
-  void recordRead(const TrackingId id, uint64_t bytes, uint64_t groupId);
+  void recordRead(
+      const TrackingId id,
+      uint64_t bytes,
+      uint64_t fileId,
+      uint64_t groupId);
 
   // True if 'trackingId' is read at least  'minReadPct' % of the time.
   bool shouldPrefetch(TrackingId id, int32_t minReadPct) {
+    return readPct(id) >= minReadPct;
+  }
+
+  // Returns the percentage of referenced columns that are actually read. 100%
+  // if no data.
+  int32_t readPct(TrackingId id) {
     std::lock_guard<std::mutex> l(mutex_);
     const auto& data = data_[id];
     if (!data.numReferences) {
-      // Always prefetch first time data is mentioned.
-      return true;
+      return 100;
     }
-    return (100 * data.numReads) / data.numReferences >= minReadPct;
+    return (100 * data.numReads) / data.numReferences;
+  }
+
+  TrackingData trackingData(TrackingId id) {
+    std::lock_guard<std::mutex> l(mutex_);
+    return data_[id];
   }
 
   std::string_view id() const {
     return id_;
+  }
+
+  FileGroupStats* FOLLY_NULLABLE fileGroupStats() const {
+    return fileGroupStats_;
   }
 
   std::string toString() const;
@@ -144,9 +190,15 @@ class ScanTracker {
   std::mutex mutex_;
   // Id of query + scan operator to track.
   const std::string id_;
-  std::function<void(ScanTracker*)> unregisterer_;
+  std::function<void(ScanTracker* FOLLY_NONNULL)> unregisterer_;
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
+  // Maximum size of a read. 10MB would count as two references
+  // if the quantim were 8MB. At the same time this would count as a
+  // single 10MB reference for 'fileGroupStats_'. 0 means the read
+  // size is unlimited.
+  const int32_t loadQuantum_;
+  FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
 };
 
 } // namespace facebook::velox::cache

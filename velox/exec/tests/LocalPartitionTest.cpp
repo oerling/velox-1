@@ -69,11 +69,13 @@ TEST_F(LocalPartitionTest, gather) {
       makeRowVector({makeFlatSequence<int32_t>(-71, 100)}),
   };
 
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+
   auto valuesNode = [&](int index) {
-    return PlanBuilder().values({vectors[index]}).planNode();
+    return PlanBuilder(planNodeIdGenerator).values({vectors[index]}).planNode();
   };
 
-  auto op = PlanBuilder()
+  auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
                     {},
                     {
@@ -92,17 +94,21 @@ TEST_F(LocalPartitionTest, gather) {
 
   auto rowType = getRowType(vectors[0]);
 
-  auto tableScanNode = [&](int planNodeId) {
-    return PlanBuilder(planNodeId).tableScan(rowType).planNode();
+  std::vector<core::PlanNodeId> scanNodeIds;
+
+  auto tableScanNode = [&]() {
+    auto node = PlanBuilder(planNodeIdGenerator).tableScan(rowType).planNode();
+    scanNodeIds.push_back(node->id());
+    return node;
   };
 
-  op = PlanBuilder(3)
+  op = PlanBuilder(planNodeIdGenerator)
            .localPartition(
                {},
                {
-                   tableScanNode(0),
-                   tableScanNode(1),
-                   tableScanNode(2),
+                   tableScanNode(),
+                   tableScanNode(),
+                   tableScanNode(),
                })
            .singleAggregation({}, {"count(1)", "min(c0)", "max(c0)"})
            .planNode();
@@ -112,7 +118,7 @@ TEST_F(LocalPartitionTest, gather) {
       op,
       [&](exec::Task* task) {
         while (fileIndex < filePaths.size()) {
-          auto planNodeId = fmt::format("{}", fileIndex);
+          auto planNodeId = scanNodeIds[fileIndex];
           addSplit(task, planNodeId, makeHiveSplit(filePaths[fileIndex]->path));
           task->noMoreSplits(planNodeId);
           ++fileIndex;
@@ -134,20 +140,24 @@ TEST_F(LocalPartitionTest, partition) {
 
   auto rowType = getRowType(vectors[0]);
 
-  auto scanAggNode = [&](int planNodeId) {
-    return PlanBuilder(planNodeId)
-        .tableScan(rowType)
-        .partialAggregation({0}, {"count(1)"})
-        .planNode();
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+
+  std::vector<core::PlanNodeId> scanNodeIds;
+
+  auto scanAggNode = [&]() {
+    auto builder = PlanBuilder(planNodeIdGenerator);
+    auto scanNode = builder.tableScan(rowType).planNode();
+    scanNodeIds.push_back(scanNode->id());
+    return builder.partialAggregation({0}, {"count(1)"}).planNode();
   };
 
-  auto op = PlanBuilder(3)
+  auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
                     {0},
                     {
-                        scanAggNode(0),
-                        scanAggNode(1),
-                        scanAggNode(2),
+                        scanAggNode(),
+                        scanAggNode(),
+                        scanAggNode(),
                     })
                 .partialAggregation({0}, {"count(1)"})
                 .planNode();
@@ -163,7 +173,7 @@ TEST_F(LocalPartitionTest, partition) {
       params,
       [&](exec::Task* task) {
         while (fileIndex < filePaths.size()) {
-          auto planNodeId = fmt::format("{}", fileIndex);
+          auto planNodeId = scanNodeIds[fileIndex];
           addSplit(task, planNodeId, makeHiveSplit(filePaths[fileIndex]->path));
           task->noMoreSplits(planNodeId);
           ++fileIndex;
@@ -181,14 +191,16 @@ TEST_F(LocalPartitionTest, maxBufferSizeGather) {
         100, [i](auto row) { return -71 + i * 10 + row; })}));
   }
 
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+
   auto valuesNode = [&](int start, int end) {
-    return PlanBuilder()
+    return PlanBuilder(planNodeIdGenerator)
         .values(std::vector<RowVectorPtr>(
             vectors.begin() + start, vectors.begin() + end))
         .planNode();
   };
 
-  auto op = PlanBuilder()
+  auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
                     {},
                     {
@@ -201,7 +213,7 @@ TEST_F(LocalPartitionTest, maxBufferSizeGather) {
 
   CursorParameters params;
   params.planNode = op;
-  params.queryCtx = core::QueryCtx::create();
+  params.queryCtx = core::QueryCtx::createForTest();
 
   // Set an artificially low buffer size limit to trigger blocking behavior.
   params.queryCtx->setConfigOverridesUnsafe({
@@ -229,17 +241,23 @@ TEST_F(LocalPartitionTest, maxBufferSizePartition) {
 
   auto rowType = getRowType(vectors[0]);
 
-  auto scanNode = [&](int planNodeId) {
-    return PlanBuilder(planNodeId).tableScan(rowType).planNode();
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+
+  std::vector<core::PlanNodeId> scanNodeIds;
+
+  auto scanNode = [&]() {
+    auto node = PlanBuilder(planNodeIdGenerator).tableScan(rowType).planNode();
+    scanNodeIds.push_back(node->id());
+    return node;
   };
 
-  auto op = PlanBuilder(3)
+  auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
                     {0},
                     {
-                        scanNode(0),
-                        scanNode(1),
-                        scanNode(2),
+                        scanNode(),
+                        scanNode(),
+                        scanNode(),
                     })
                 .partialAggregation({0}, {"count(1)"})
                 .planNode();
@@ -247,7 +265,7 @@ TEST_F(LocalPartitionTest, maxBufferSizePartition) {
   CursorParameters params;
   params.planNode = op;
   params.maxDrivers = 2;
-  params.queryCtx = core::QueryCtx::create();
+  params.queryCtx = core::QueryCtx::createForTest();
 
   // Set an artificially low buffer size limit to trigger blocking behavior.
   params.queryCtx->setConfigOverridesUnsafe({
@@ -257,7 +275,7 @@ TEST_F(LocalPartitionTest, maxBufferSizePartition) {
   uint32_t fileIndex = 0;
   auto addSplits = [&](exec::Task* task) {
     while (fileIndex < filePaths.size()) {
-      auto planNodeId = fmt::format("{}", fileIndex % 3);
+      auto planNodeId = scanNodeIds[fileIndex % 3];
       addSplit(task, planNodeId, makeHiveSplit(filePaths[fileIndex]->path));
       task->noMoreSplits(planNodeId);
       ++fileIndex;
@@ -285,7 +303,7 @@ TEST_F(LocalPartitionTest, maxBufferSizePartition) {
   verifyExchangeSourceOperatorStats(task, 2100);
 }
 
-TEST_F(LocalPartitionTest, outputLayout) {
+TEST_F(LocalPartitionTest, outputLayoutGather) {
   std::vector<RowVectorPtr> vectors = {
       makeRowVector({
           makeFlatVector<int32_t>(100, [](auto row) { return row; }),
@@ -301,11 +319,12 @@ TEST_F(LocalPartitionTest, outputLayout) {
       }),
   };
 
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
   auto valuesNode = [&](int index) {
-    return PlanBuilder().values({vectors[index]}).planNode();
+    return PlanBuilder(planNodeIdGenerator).values({vectors[index]}).planNode();
   };
 
-  auto op = PlanBuilder()
+  auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
                     {},
                     {
@@ -318,11 +337,11 @@ TEST_F(LocalPartitionTest, outputLayout) {
                 .singleAggregation({}, {"count(1)", "min(c0)", "max(c1)"})
                 .planNode();
 
-  auto task = assertQuery(
-      op, std::vector<std::shared_ptr<TempFilePath>>{}, "SELECT 300, -71, 102");
+  auto task = assertQuery(op, "SELECT 300, -71, 102");
   verifyExchangeSourceOperatorStats(task, 300);
 
-  op = PlanBuilder()
+  planNodeIdGenerator->reset();
+  op = PlanBuilder(planNodeIdGenerator)
            .localPartition(
                {},
                {
@@ -335,11 +354,11 @@ TEST_F(LocalPartitionTest, outputLayout) {
            .singleAggregation({}, {"count(1)", "min(c1)", "max(c1)"})
            .planNode();
 
-  task = assertQuery(
-      op, std::vector<std::shared_ptr<TempFilePath>>{}, "SELECT 300, -71, 102");
+  task = assertQuery(op, "SELECT 300, -71, 102");
   verifyExchangeSourceOperatorStats(task, 300);
 
-  op = PlanBuilder()
+  planNodeIdGenerator->reset();
+  op = PlanBuilder(planNodeIdGenerator)
            .localPartition(
                {},
                {
@@ -352,8 +371,86 @@ TEST_F(LocalPartitionTest, outputLayout) {
            .singleAggregation({}, {"count(1)"})
            .planNode();
 
-  task = assertQuery(
-      op, std::vector<std::shared_ptr<TempFilePath>>{}, "SELECT 300");
+  task = assertQuery(op, "SELECT 300");
+  verifyExchangeSourceOperatorStats(task, 300);
+}
+
+TEST_F(LocalPartitionTest, outputLayoutPartition) {
+  std::vector<RowVectorPtr> vectors = {
+      makeRowVector({
+          makeFlatVector<int32_t>(100, [](auto row) { return row; }),
+          makeFlatVector<int32_t>(100, [](auto /*row*/) { return 123; }),
+      }),
+      makeRowVector({
+          makeFlatVector<int32_t>(100, [](auto row) { return 53 + row; }),
+          makeFlatVector<int32_t>(100, [](auto /*row*/) { return 123; }),
+      }),
+      makeRowVector({
+          makeFlatVector<int32_t>(100, [](auto row) { return -71 + row; }),
+          makeFlatVector<int32_t>(100, [](auto /*row*/) { return 123; }),
+      }),
+  };
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+
+  auto valuesNode = [&](int index) {
+    return PlanBuilder(planNodeIdGenerator).values({vectors[index]}).planNode();
+  };
+
+  CursorParameters params;
+  params.maxDrivers = 2;
+  params.planNode =
+      PlanBuilder(planNodeIdGenerator)
+          .localPartition(
+              {0},
+              {
+                  valuesNode(0),
+                  valuesNode(1),
+                  valuesNode(2),
+              },
+              // Change column order: (c0, c1) -> (c1, c0).
+              {1, 0})
+          .partialAggregation({}, {"count(1)", "min(c0)", "max(c1)"})
+          .planNode();
+
+  auto task = OperatorTestBase::assertQuery(
+      params, "VALUES (146, -71, 123), (154, -70, 123)");
+  verifyExchangeSourceOperatorStats(task, 300);
+
+  planNodeIdGenerator->reset();
+  params.planNode =
+      PlanBuilder(planNodeIdGenerator)
+          .localPartition(
+              {0},
+              {
+                  valuesNode(0),
+                  valuesNode(1),
+                  valuesNode(2),
+              },
+              // Drop column: (c0, c1) -> (c1).
+              {1})
+          .partialAggregation({}, {"count(1)", "min(c1)", "max(c1)"})
+          .planNode();
+
+  task = OperatorTestBase::assertQuery(
+      params, "VALUES (146, 123, 123), (154, 123, 123)");
+  verifyExchangeSourceOperatorStats(task, 300);
+
+  planNodeIdGenerator->reset();
+  params.planNode = PlanBuilder(planNodeIdGenerator)
+                        .localPartition(
+                            {0},
+                            {
+                                valuesNode(0),
+                                valuesNode(1),
+                                valuesNode(2),
+                            },
+                            // Drop all columns.
+                            {})
+                        .partialAggregation({}, {"count(1)"})
+                        .planNode();
+
+  task = OperatorTestBase::assertQuery(params, "VALUES (146), (154)");
   verifyExchangeSourceOperatorStats(task, 300);
 }
 
@@ -377,24 +474,29 @@ TEST_F(LocalPartitionTest, multipleExchanges) {
 
   auto rowType = getRowType(vectors[0]);
 
-  auto tableScanNode = [&](int planNodeId) {
-    return PlanBuilder(planNodeId).tableScan(rowType).planNode();
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  std::vector<core::PlanNodeId> scanNodeIds;
+
+  auto tableScanNode = [&]() {
+    auto node = PlanBuilder(planNodeIdGenerator).tableScan(rowType).planNode();
+    scanNodeIds.push_back(node->id());
+    return node;
   };
 
   // Make a plan with 2 local exchanges. UNION ALL results of 3 table scans.
   // Group by 0, 1 and compute counts. Group by 0 and compute counts and sums.
   // First exchange re-partitions the results of table scan on two keys. Second
   // exchange re-partitions the results on just the first key.
-  auto op = PlanBuilder(40)
+  auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
                     {0},
-                    {PlanBuilder(30)
+                    {PlanBuilder(planNodeIdGenerator)
                          .localPartition(
                              {0, 1},
                              {
-                                 tableScanNode(0),
-                                 tableScanNode(10),
-                                 tableScanNode(20),
+                                 tableScanNode(),
+                                 tableScanNode(),
+                                 tableScanNode(),
                              })
                          .partialAggregation({0, 1}, {"count(1)"})
                          .planNode()})
@@ -412,8 +514,7 @@ TEST_F(LocalPartitionTest, multipleExchanges) {
       params,
       [&](exec::Task* task) {
         while (fileIndex < filePaths.size()) {
-          // Make table scan node IDs: 0, 10, 20.
-          auto planNodeId = fmt::format("{}", fileIndex * 10);
+          auto planNodeId = scanNodeIds[fileIndex];
           addSplit(task, planNodeId, makeHiveSplit(filePaths[fileIndex]->path));
           task->noMoreSplits(planNodeId);
           ++fileIndex;

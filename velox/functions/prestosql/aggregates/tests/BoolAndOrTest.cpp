@@ -44,7 +44,6 @@ TEST_P(BoolAndOrTest, basic) {
   const auto duckDbName = GetParam().duckDbName;
 
   const auto partialAgg = fmt::format("{}(c1)", veloxName);
-  const auto finalAgg = fmt::format("{}(a0)", veloxName);
 
   // Global partial aggregation.
   auto agg = PlanBuilder()
@@ -57,14 +56,14 @@ TEST_P(BoolAndOrTest, basic) {
   agg = PlanBuilder()
             .values(vectors)
             .partialAggregation({}, {partialAgg})
-            .finalAggregation({}, {finalAgg})
+            .finalAggregation()
             .planNode();
   assertQuery(agg, fmt::format("SELECT {}(c1::TINYINT) FROM tmp", duckDbName));
 
   // Group by partial aggregation.
   agg = PlanBuilder()
             .values(vectors)
-            .project({"c0 % 10", "c1"}, {"c0 % 10", "c1"})
+            .project({"c0 % 10", "c1"})
             .partialAggregation({0}, {partialAgg})
             .planNode();
   assertQuery(
@@ -75,9 +74,9 @@ TEST_P(BoolAndOrTest, basic) {
   // Group by final aggregation.
   agg = PlanBuilder()
             .values(vectors)
-            .project({"c0 % 10", "c1"}, {"c0 % 10", "c1"})
+            .project({"c0 % 10", "c1"})
             .partialAggregation({0}, {partialAgg})
-            .finalAggregation({0}, {finalAgg})
+            .finalAggregation()
             .planNode();
   assertQuery(
       agg,
@@ -88,7 +87,7 @@ TEST_P(BoolAndOrTest, basic) {
   agg = PlanBuilder()
             .values(vectors)
             .filter("c0 % 2 = 0")
-            .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+            .project({"c0 % 11", "c1"})
             .partialAggregation({0}, {partialAgg})
             .planNode();
 

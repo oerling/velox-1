@@ -99,6 +99,10 @@ BlockingReason Merge::ensureSourcesReady(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
+bool Merge::isFinished() {
+  return blockingReason_ == BlockingReason::kNotBlocked && candidates_.empty();
+}
+
 RowVectorPtr Merge::getOutput() {
   blockingReason_ = ensureSourcesReady(&future_);
   if (blockingReason_ != BlockingReason::kNotBlocked) {
@@ -158,7 +162,6 @@ Merge::Comparator::Comparator(
 LocalMerge::LocalMerge(
     int32_t operatorId,
     DriverCtx* driverCtx,
-    int numSources,
     const std::shared_ptr<const core::LocalMergeNode>& localMergeNode)
     : Merge(
           operatorId,
@@ -167,8 +170,7 @@ LocalMerge::LocalMerge(
           localMergeNode->sortingKeys(),
           localMergeNode->sortingOrders(),
           localMergeNode->id(),
-          "LocalMerge"),
-      numSources_(numSources) {
+          "LocalMerge") {
   VELOX_CHECK_EQ(
       operatorCtx_->driverCtx()->driverId,
       0,
@@ -176,12 +178,8 @@ LocalMerge::LocalMerge(
 }
 
 BlockingReason LocalMerge::addMergeSources(ContinueFuture* /* future */) {
-  if (sources_.size() != numSources_) {
-    sources_.reserve(numSources_);
-    for (auto i = 0; i < numSources_; ++i) {
-      sources_.emplace_back(operatorCtx_->task()->getLocalMergeSource(i));
-    }
-  }
+  sources_ = operatorCtx_->task()->getLocalMergeSources(
+      operatorCtx_->driverCtx()->splitGroupId, planNodeId());
   return BlockingReason::kNotBlocked;
 }
 
@@ -198,11 +196,6 @@ MergeExchange::MergeExchange(
           mergeExchangeNode->id(),
           "MergeExchange") {}
 
-void MergeExchange::finish() {
-  Merge::finish();
-  operatorCtx_->task()->multipleSplitsFinished(numSplits_);
-}
-
 BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
   if (operatorCtx_->driverCtx()->driverId != 0) {
     // When there are multiple pipelines, a single operator, the one from
@@ -214,8 +207,8 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
   }
   for (;;) {
     exec::Split split;
-    auto reason =
-        operatorCtx_->task()->getSplitOrFuture(planNodeId_, split, *future);
+    auto reason = operatorCtx_->task()->getSplitOrFuture(
+        operatorCtx_->driverCtx()->splitGroupId, planNodeId_, split, *future);
     if (reason == BlockingReason::kNotBlocked) {
       if (split.hasConnectorSplit()) {
         auto remoteSplit = std::dynamic_pointer_cast<RemoteConnectorSplit>(
@@ -227,6 +220,8 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
         ++numSplits_;
       } else {
         noMoreSplits_ = true;
+        // TODO Delay this call until all input data has been processed.
+        operatorCtx_->task()->multipleSplitsFinished(numSplits_);
         return BlockingReason::kNotBlocked;
       }
     } else {

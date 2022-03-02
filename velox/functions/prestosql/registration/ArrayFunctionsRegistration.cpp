@@ -19,6 +19,19 @@
 #include "velox/functions/prestosql/WidthBucketArray.h"
 
 namespace facebook::velox::functions {
+template <typename T>
+inline void registerArrayMinMaxFunctions() {
+  registerFunction<ArrayMinFunction, T, Array<T>>({"array_min"});
+  registerFunction<ArrayMaxFunction, T, Array<T>>({"array_max"});
+}
+
+template <typename T>
+inline void registerArrayJoinFunctions() {
+  registerFunction<udf_array_join<T>, Varchar, Array<T>, Varchar>(
+      {"array_join"});
+  registerFunction<udf_array_join<T>, Varchar, Array<T>, Varchar, Varchar>(
+      {"array_join"});
+}
 
 void registerArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_constructor, "array_constructor");
@@ -30,6 +43,7 @@ void registerArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_duplicates, "array_duplicates");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_slice, "slice");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_zip, "zip");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_position, "array_position");
 
   exec::registerStatefulVectorFunction(
       "width_bucket", widthBucketArraySignature(), makeWidthBucketArray);
@@ -44,5 +58,14 @@ void registerArrayFunctions() {
   registerArrayMinMaxFunctions<Varchar>();
   registerArrayMinMaxFunctions<Timestamp>();
   registerArrayMinMaxFunctions<Date>();
+
+  registerArrayJoinFunctions<int8_t>();
+  registerArrayJoinFunctions<int16_t>();
+  registerArrayJoinFunctions<int32_t>();
+  registerArrayJoinFunctions<int64_t>();
+  registerArrayJoinFunctions<float>();
+  registerArrayJoinFunctions<double>();
+  registerArrayJoinFunctions<bool>();
+  registerArrayJoinFunctions<Varchar>();
 }
 }; // namespace facebook::velox::functions

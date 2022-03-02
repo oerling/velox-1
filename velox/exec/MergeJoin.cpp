@@ -30,15 +30,16 @@ MergeJoin::MergeJoin(
           "MergeJoin"),
       outputBatchSize_{
           driverCtx->execCtx->queryCtx()->config().preferredOutputBatchSize()},
+      joinType_{joinNode->joinType()},
       numKeys_{joinNode->leftKeys().size()} {
   VELOX_USER_CHECK(
-      joinNode->isInnerJoin(),
-      "Merge join supports only inner join. Other joins types are not supported yet.");
+      joinNode->isInnerJoin() || joinNode->isLeftJoin(),
+      "Merge join supports only inner and left joins. Other join types are not supported yet.");
   VELOX_USER_CHECK_NULL(
       joinNode->filter(), "Merge join doesn't support filter yet.");
 
-  leftKeys_.resize(numKeys_);
-  rightKeys_.resize(numKeys_);
+  leftKeys_.reserve(numKeys_);
+  rightKeys_.reserve(numKeys_);
 
   auto leftType = joinNode->sources()[0]->outputType();
   for (auto& key : joinNode->leftKeys()) {
@@ -68,9 +69,8 @@ MergeJoin::MergeJoin(
 }
 
 BlockingReason MergeJoin::isBlocked(ContinueFuture* future) {
-  if (hasFuture_) {
+  if (future_.valid()) {
     *future = std::move(future_);
-    hasFuture_ = false;
     return BlockingReason::kWaitForExchange;
   }
 
@@ -136,6 +136,21 @@ bool MergeJoin::findEndOfMatch(Match& match, const RowVectorPtr& input) {
   return true;
 }
 
+void MergeJoin::addOutputRowForLeftJoin() {
+  for (auto& projection : leftProjections_) {
+    auto source = input_->childAt(projection.inputChannel);
+    auto target = output_->childAt(projection.outputChannel);
+    target->copy(source.get(), outputSize_, index_, 1);
+  }
+
+  for (auto& projection : rightProjections_) {
+    auto target = output_->childAt(projection.outputChannel);
+    target->setNull(outputSize_, true);
+  }
+
+  ++outputSize_;
+}
+
 void MergeJoin::addOutputRow(
     const RowVectorPtr& left,
     vector_size_t leftIndex,
@@ -156,8 +171,7 @@ void MergeJoin::addOutputRow(
   ++outputSize_;
 }
 
-bool MergeJoin::addToOutput() {
-  // Prepare output vector.
+void MergeJoin::prepareOutput() {
   if (output_ == nullptr) {
     std::vector<VectorPtr> localColumns(outputType_->size());
     for (auto i = 0; i < outputType_->size(); ++i) {
@@ -173,6 +187,10 @@ bool MergeJoin::addToOutput() {
         std::move(localColumns));
     outputSize_ = 0;
   }
+}
+
+bool MergeJoin::addToOutput() {
+  prepareOutput();
 
   size_t firstLeftBatch;
   vector_size_t leftStartIndex;
@@ -230,7 +248,7 @@ RowVectorPtr MergeJoin::getOutput() {
   // Make sure to have is-blocked or needs-input as true if returning null
   // output. Otherwise, Driver assumes the operator is finished.
 
-  // Use Operator::isFinishing() as a no-more-input-on-the-left indicator and a
+  // Use Operator::noMoreInput() as a no-more-input-on-the-left indicator and a
   // noMoreRightInput_ flag as no-more-input-on-the-right indicator.
 
   // TODO Finish early if ran out of data on either side of the join.
@@ -242,13 +260,13 @@ RowVectorPtr MergeJoin::getOutput() {
     }
 
     // Check if we need to get more data from the right side.
-    if (!noMoreRightInput_ && !hasFuture_ && !rightInput_) {
+    if (!noMoreRightInput_ && !future_.valid() && !rightInput_) {
       if (!rightSource_) {
-        rightSource_ = operatorCtx_->task()->getMergeJoinSource(planNodeId());
+        rightSource_ = operatorCtx_->task()->getMergeJoinSource(
+            operatorCtx_->driverCtx()->splitGroupId, planNodeId());
       }
       auto blockingReason = rightSource_->next(&future_, &rightInput_);
       if (blockingReason != BlockingReason::kNotBlocked) {
-        hasFuture_ = true;
         return nullptr;
       }
 
@@ -293,7 +311,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
       if (leftMatch_->inputs.back() == input_) {
         index_ = leftMatch_->endIndex;
       }
-    } else if (isFinishing()) {
+    } else if (noMoreInput_) {
       leftMatch_->complete = true;
     } else {
       // Need more input.
@@ -329,10 +347,36 @@ RowVectorPtr MergeJoin::doGetOutput() {
   }
 
   if (!input_ || !rightInput_) {
-    if (isFinishing() || noMoreRightInput_) {
-      if (output_) {
+    if (isLeftJoin(joinType_)) {
+      if (input_ && noMoreRightInput_) {
+        prepareOutput();
+        while (true) {
+          if (outputSize_ == outputBatchSize_) {
+            return std::move(output_);
+          }
+
+          addOutputRowForLeftJoin();
+
+          ++index_;
+          if (index_ == input_->size()) {
+            // Ran out of rows on the left side.
+            input_ = nullptr;
+            return nullptr;
+          }
+        }
+      }
+
+      if (noMoreInput_ && output_) {
         output_->resize(outputSize_);
         return std::move(output_);
+      }
+    } else {
+      if (noMoreInput_ || noMoreRightInput_) {
+        if (output_) {
+          output_->resize(outputSize_);
+          return std::move(output_);
+        }
+        input_ = nullptr;
       }
     }
 
@@ -346,6 +390,16 @@ RowVectorPtr MergeJoin::doGetOutput() {
   for (;;) {
     // Catch up input_ with rightInput_.
     while (compareResult < 0) {
+      if (isLeftJoin(joinType_)) {
+        prepareOutput();
+
+        if (outputSize_ == outputBatchSize_) {
+          return std::move(output_);
+        }
+
+        addOutputRowForLeftJoin();
+      }
+
       ++index_;
       if (index_ == input_->size()) {
         // Ran out of rows on the left side.
@@ -416,4 +470,9 @@ RowVectorPtr MergeJoin::doGetOutput() {
 
   VELOX_UNREACHABLE();
 }
+
+bool MergeJoin::isFinished() {
+  return noMoreInput_ && input_ == nullptr;
+}
+
 } // namespace facebook::velox::exec

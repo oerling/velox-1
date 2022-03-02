@@ -24,7 +24,6 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/utils/Cursor.h"
-#include "velox/exec/tests/utils/FunctionUtils.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/codegen/CodegenCompiledExpressionTransform.h"
 #include "velox/experimental/codegen/CodegenLogger.h"
@@ -33,6 +32,7 @@
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
+#include "velox/parse/TypeResolver.h"
 #include "velox/type/Type.h"
 
 namespace facebook::velox::codegen {
@@ -103,11 +103,11 @@ class CodegenTestCore {
             useSymbolForArithmetic_,
             eventSequence_);
     pool_ = memory::getDefaultScopedMemoryPool();
-    queryCtx_ = std::make_shared<core::QueryCtx>();
+    queryCtx_ = core::QueryCtx::createForTest();
     execCtx_ = std::make_unique<core::ExecCtx>(pool_.get(), queryCtx_.get());
 
-    exec::test::registerTypeResolver();
-    functions::prestosql::registerAllFunctions();
+    parse::registerTypeResolver();
+    functions::prestosql::registerAllScalarFunctions();
   }
 
   /// Creates a plan node given filter and a list of projection
@@ -415,10 +415,6 @@ class CodegenTestBase : public CodegenTestCore, public testing::Test {
 
   virtual void SetUp() override {
     init();
-  }
-
-  void TearDown() override {
-    Driver::testingJoinAndReinitializeExecutor();
   }
 };
 }; // namespace facebook::velox::codegen

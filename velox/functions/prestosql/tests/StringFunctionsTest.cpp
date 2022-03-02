@@ -24,6 +24,7 @@
 #include "velox/functions/lib/string/StringImpl.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 #include "velox/parse/Expressions.h"
+#include "velox/type/Type.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -68,14 +69,15 @@ int expectedLength(int i) {
 }
 
 std::string hexToDec(const std::string& str) {
-  char output[16];
-  auto chars = str.data();
-  for (int i = 0; i < 16; i++) {
-    int high = facebook::velox::functions::stringImpl::fromHex(chars[2 * i]);
-    int low = facebook::velox::functions::stringImpl::fromHex(chars[2 * i + 1]);
-    output[i] = (high << 4) | (low & 0xf);
+  VELOX_CHECK_EQ(str.size() % 2, 0);
+  std::string out;
+  out.resize(str.size() / 2);
+  for (int i = 0; i < out.size(); ++i) {
+    int high = facebook::velox::functions::stringImpl::fromHex(str[2 * i]);
+    int low = facebook::velox::functions::stringImpl::fromHex(str[2 * i + 1]);
+    out[i] = (high << 4) | (low & 0xf);
   }
-  return std::string(output, 16);
+  return out;
 }
 } // namespace
 
@@ -1029,33 +1031,85 @@ TEST_F(StringFunctionsTest, md5) {
   EXPECT_EQ(std::nullopt, md5(std::nullopt));
 }
 
+TEST_F(StringFunctionsTest, sha256) {
+  const auto sha256 = [&](std::optional<std::string> arg) {
+    return evaluateOnce<std::string, std::string>(
+        "sha256(c0)", {arg}, {VARBINARY()});
+  };
+
+  EXPECT_EQ(
+      hexToDec(
+          "02208b9403a87df9f4ed6b2ee2657efaa589026b4cce9accc8e8a5bf3d693c86"),
+      sha256("hashme"));
+  EXPECT_EQ(
+      hexToDec(
+          "d0067cad9a63e0813759a2bb841051ca73570c0da2e08e840a8eb45db6a7a010"),
+      sha256("Infinity"));
+  EXPECT_EQ(
+      hexToDec(
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+      sha256(""));
+
+  EXPECT_EQ(std::nullopt, sha256(std::nullopt));
+}
+
 void StringFunctionsTest::testReplaceInPlace(
     const std::vector<std::pair<std::string, std::string>>& tests,
     const std::string& search,
     const std::string& replace,
     bool multiReferenced) {
-  auto stringVector = makeFlatVector<StringView>(tests.size());
+  auto makeInput = [&]() {
+    auto stringVector = makeFlatVector<StringView>(tests.size());
 
-  for (int i = 0; i < tests.size(); i++) {
-    stringVector->set(i, StringView(tests[i].first));
-  }
-
-  auto crossRefVector = makeFlatVector<StringView>(1);
-
-  if (multiReferenced) {
-    crossRefVector->acquireSharedStringBuffers(stringVector.get());
-  }
-
-  FlatVectorPtr<StringView> result = evaluate<FlatVector<StringView>>(
-      fmt::format("replace(c0, '{}', '{}')", search, replace),
-      makeRowVector({stringVector}));
-
-  for (int32_t i = 0; i < tests.size(); ++i) {
-    ASSERT_EQ(result->valueAt(i), StringView(tests[i].second));
-    if (!multiReferenced && !stringVector->valueAt(i).isInline() &&
-        search.size() <= replace.size()) {
-      ASSERT_EQ(result->valueAt(i), stringVector->valueAt(i));
+    for (int i = 0; i < tests.size(); i++) {
+      stringVector->set(i, StringView(tests[i].first));
     }
+    auto crossRefVector = makeFlatVector<StringView>(1);
+
+    if (multiReferenced) {
+      crossRefVector->acquireSharedStringBuffers(stringVector.get());
+    }
+    return stringVector;
+  };
+
+  auto testResults = [&](const FlatVector<StringView>* results) {
+    for (int32_t i = 0; i < tests.size(); ++i) {
+      ASSERT_EQ(results->valueAt(i), StringView(tests[i].second));
+    }
+  };
+
+  auto result = evaluate<FlatVector<StringView>>(
+      fmt::format("replace(c0, '{}', '{}')", search, replace),
+      makeRowVector({makeInput()}));
+  testResults(result.get());
+
+  // Test in place optimization. If in-place is expected, make sure it happened.
+  // If its not expected make sure it did not happen.
+  auto applyReplaceFunction = [&](std::vector<VectorPtr>& functionInputs,
+                                  VectorPtr& resultPtr) {
+    auto replaceFunction = exec::getVectorFunction("replace", {VARCHAR()}, {});
+    SelectivityVector rows(tests.size());
+    ExprSet exprSet({}, &execCtx_);
+    RowVectorPtr inputRows = makeRowVector({});
+    exec::EvalCtx evalCtx(&execCtx_, &exprSet, inputRows.get());
+    replaceFunction->apply(
+        rows, functionInputs, VARCHAR(), &evalCtx, &resultPtr);
+  };
+
+  std::vector<VectorPtr> functionInputs = {
+      makeInput(),
+      makeConstant(search.c_str(), tests.size()),
+      makeConstant(replace.c_str(), tests.size())};
+
+  VectorPtr resultPtr;
+  applyReplaceFunction(functionInputs, resultPtr);
+  testResults(resultPtr->asFlatVector<StringView>());
+
+  if (!multiReferenced && search >= replace) {
+    // Expected in-place.
+    ASSERT_TRUE(resultPtr == functionInputs[0]);
+  } else {
+    ASSERT_FALSE(resultPtr == functionInputs[0]);
   }
 }
 
@@ -1121,6 +1175,7 @@ TEST_F(StringFunctionsTest, replace) {
 
   testReplaceInPlace(testsInplace, "a", "b", true);
   testReplaceInPlace(testsInplace, "a", "b", false);
+  testReplaceInPlace({{"a", "bb"}, {"aa", "bbbb"}}, "a", "bb", false);
 
   // Test constant vectors
   auto rows = makeRowVector(makeRowType({BIGINT()}), 10);
@@ -1382,12 +1437,13 @@ TEST_F(StringFunctionsTest, ascinessOnDictionary) {
   using S = StringView;
   VELOX_REGISTER_VECTOR_FUNCTION(udf_multi_string_function, "multi_string_fn")
   vector_size_t size = 5;
-  auto flatVector = makeFlatVector<StringView>(
-      {S("hello how do"),
-       S("how are"),
-       S("is this how"),
-       S("abcd"),
-       S("yes no")});
+  auto flatVector = makeFlatVector<StringView>({
+      S("hello how do"),
+      S("how are"),
+      S("is this how"),
+      S("abcd"),
+      S("yes no"),
+  });
 
   auto searchVector = makeFlatVector<StringView>(
       {S("hello"), S("how"), S("is"), S("abc"), S("yes")});
@@ -1628,8 +1684,6 @@ TEST_F(StringFunctionsTest, trim) {
   // Making input vector
   std::string complexStr = generateComplexUtf8();
   std::string expectedComplexStr = complexStr.substr(4, complexStr.size() - 8);
-  std::string invalidStr = generateComplexUtf8(true);
-  std::string expectedInvalidStr = invalidStr.substr(4, invalidStr.size() - 4);
 
   const auto trim = [&](std::optional<std::string> input) {
     return evaluateOnce<std::string>("trim(c0)", input);
@@ -1661,14 +1715,13 @@ TEST_F(StringFunctionsTest, trim) {
       trim(u8" \u2028 \u4FE1\u5FF5 \u7231 \u5E0C\u671B"));
 
   EXPECT_EQ(expectedComplexStr, trim(complexStr));
-  EXPECT_EQ(expectedInvalidStr, trim(invalidStr));
+  EXPECT_EQ(
+      "Ψ\xFF\xFFΣΓΔA", trim("\u2028 \r \t \nΨ\xFF\xFFΣΓΔA \u2028 \r \t \n"));
 }
 
 TEST_F(StringFunctionsTest, ltrim) {
   std::string complexStr = generateComplexUtf8();
   std::string expectedComplexStr = complexStr.substr(4, complexStr.size() - 4);
-  std::string invalidStr = generateComplexUtf8(true);
-  std::string expectedInvalidStr = invalidStr.substr(4, invalidStr.size() - 4);
 
   const auto ltrim = [&](std::optional<std::string> input) {
     return evaluateOnce<std::string>("ltrim(c0)", input);
@@ -1702,14 +1755,12 @@ TEST_F(StringFunctionsTest, ltrim) {
       ltrim(u8" \u2028 \u4FE1\u5FF5 \u7231 \u5E0C\u671B"));
 
   EXPECT_EQ(expectedComplexStr, ltrim(complexStr));
-  EXPECT_EQ(expectedInvalidStr, ltrim(invalidStr));
+  EXPECT_EQ("Ψ\xFF\xFFΣΓΔA", ltrim("  \u2028 \r \t \n   Ψ\xFF\xFFΣΓΔA"));
 }
 
 TEST_F(StringFunctionsTest, rtrim) {
   std::string complexStr = generateComplexUtf8();
   std::string expectedComplexStr = complexStr.substr(0, complexStr.size() - 4);
-  std::string invalidStr = generateComplexUtf8(true);
-  std::string expectedInvalidStr = invalidStr;
 
   const auto rtrim = [&](std::optional<std::string> input) {
     return evaluateOnce<std::string>("rtrim(c0)", input);
@@ -1743,7 +1794,7 @@ TEST_F(StringFunctionsTest, rtrim) {
       rtrim(u8"\u4FE1\u5FF5 \u7231 \u5E0C\u671B \u2028 "));
 
   EXPECT_EQ(expectedComplexStr, rtrim(complexStr));
-  EXPECT_EQ(expectedInvalidStr, rtrim(invalidStr));
+  EXPECT_EQ("     Ψ\xFF\xFFΣΓΔA", rtrim("     Ψ\xFF\xFFΣΓΔA \u2028 \r \t \n"));
 }
 
 TEST_F(StringFunctionsTest, rpad) {

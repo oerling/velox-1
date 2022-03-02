@@ -167,7 +167,7 @@ class SpillFile : public SpillStream {
   // Sets 'result' to refer to the next row of content of 'this'.
   void read(RowVector& result);
 
- protected:
+protected:
   void nextBatch() override {
     VectorStreamGroup::read(input_.get(), &pool_, type_, &rowVector_);
     index_ = 0;

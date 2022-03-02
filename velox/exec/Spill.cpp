@@ -107,10 +107,11 @@ WriteFile& SpillFileList::currentOutput() {
 
 void SpillFileList::flush() {
   if (batch_) {
-    std::stringstream out;
+    std::stringstream stringStream;
+    OutputStream out(&stringStream);
     batch_->flush(&out);
     batch_.reset();
-    std::string str = out.str();
+    std::string str = stringStream.str();
     if (!str.empty()) {
       currentOutput().append(str);
     }

@@ -18,11 +18,12 @@
 
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
+#include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/dwrf/common/ByteRLE.h"
 #include "velox/dwio/dwrf/common/Compression.h"
 #include "velox/dwio/dwrf/common/wrap/dwrf-proto-wrapper.h"
+#include "velox/dwio/dwrf/reader/EncodingContext.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
-#include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::dwrf {
@@ -32,8 +33,13 @@ namespace facebook::velox::dwrf {
  */
 class ColumnReader {
  protected:
-  explicit ColumnReader(memory::MemoryPool& memoryPool)
-      : notNullDecoder{}, encodingKey{0}, memoryPool{memoryPool} {}
+  explicit ColumnReader(
+      memory::MemoryPool& memoryPool,
+      const std::shared_ptr<const dwio::common::TypeWithId>& type)
+      : notNullDecoder_{},
+        nodeType_{type},
+        memoryPool_{memoryPool},
+        flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
 
   // Reads nulls, if any. Sets '*nulls' to nullptr if void
   // the reader has no nulls and there are no incoming
@@ -52,12 +58,16 @@ class ColumnReader {
       VectorPtr& result,
       const uint64_t* incomingNulls);
 
-  std::unique_ptr<ByteRleDecoder> notNullDecoder;
-  EncodingKey encodingKey;
-  memory::MemoryPool& memoryPool;
+  std::unique_ptr<ByteRleDecoder> notNullDecoder_;
+  const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
+  memory::MemoryPool& memoryPool_;
+  FlatMapContext flatMapContext_;
 
  public:
-  ColumnReader(const EncodingKey& ek, StripeStreams& stripe);
+  ColumnReader(
+      std::shared_ptr<const dwio::common::TypeWithId> nodeId,
+      StripeStreams& stripe,
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
 
   virtual ~ColumnReader() = default;
 
@@ -101,7 +111,7 @@ class ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
-      uint32_t sequence = 0);
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
 };
 
 class ColumnReaderFactory {
@@ -111,21 +121,52 @@ class ColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
-      uint32_t sequence = 0) {
-    return ColumnReader::build(requestedType, dataType, stripe, sequence);
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext()) {
+    return ColumnReader::build(
+        requestedType, dataType, stripe, std::move(flatMapContext));
   }
 
   static ColumnReaderFactory* baseFactory();
 };
 
 template <typename T>
-static inline void ensureCapacity(
+inline void ensureCapacity(
     BufferPtr& data,
     size_t capacity,
     velox::memory::MemoryPool* pool) {
   if (!data || !data->unique() ||
       data->capacity() < BaseVector::byteSize<T>(capacity)) {
     data = AlignedBuffer::allocate<T>(capacity, pool);
+  }
+}
+
+template <typename T>
+inline T* resetIfWrongVectorType(VectorPtr& result) {
+  if (result) {
+    auto casted = result->as<T>();
+    // We only expect vector to be used by a single thread.
+    if (casted && result.use_count() == 1) {
+      return casted;
+    }
+    result.reset();
+  }
+  return nullptr;
+}
+
+template <typename... T>
+inline void resetIfNotWritable(VectorPtr& result, T&... buffer) {
+  // The result vector and the buffer both hold reference, so refCount is at
+  // least 2
+  auto resetIfShared = [](auto& buffer) {
+    const bool reset = buffer->refCount() > 2;
+    if (reset) {
+      buffer.reset();
+    }
+    return reset;
+  };
+
+  if ((... | resetIfShared(buffer))) {
+    result.reset();
   }
 }
 } // namespace facebook::velox::dwrf

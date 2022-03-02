@@ -38,6 +38,32 @@ The above examples use the timestamp ``2001-08-22 03:04:05.321`` as the input.
 
     Returns ``x`` truncated to ``unit``. The supported types for ``x`` are TIMESTAMP and DATE.
 
+Interval Functions
+------------------
+
+The functions in this section support the following interval units:
+
+=============== =======================
+Unit            Description
+=============== =======================
+``millisecond`` ``Milliseconds``
+``second``      ``Seconds``
+``minute``      ``Minutes``
+``hour``        ``Hours``
+``day``         ``Days``
+``month``       ``Months``
+``quarter``     ``Quarters of a year``
+``year``        ``Years``
+=============== =======================
+
+.. function:: date_add(unit, value, x) -> x
+
+    Adds an interval ``value`` of type ``unit`` to ``x``. The supported types for ``x`` are TIMESTAMP and DATE.
+    Subtraction can be performed by using a negative value.
+
+.. function:: date_diff(unit, x1, x2) -> bigint
+
+    Returns ``x2 - x1`` in terms of ``unit``. The supported types for ``x`` are TIMESTAMP and DATE.
 
 Java Date Functions
 -------------------

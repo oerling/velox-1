@@ -14,10 +14,12 @@
 
 add_executable(
   velox_common_test
+  AsyncSourceTest.cpp
   ExceptionTests.cpp
   RangeTest.cpp
   BitUtilTest.cpp
   BloomFilterTest.cpp
+  CoalesceIoTest.cpp
   RawVectorTest.cpp
   StatsReporterTest.cpp
   SimdUtilTest.cpp

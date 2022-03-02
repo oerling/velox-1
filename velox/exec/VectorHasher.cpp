@@ -18,7 +18,7 @@
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
-#include "velox/exec/HashStringAllocator.h"
+#include "velox/common/memory/HashStringAllocator.h"
 
 namespace facebook::velox::exec {
 
@@ -39,6 +39,9 @@ namespace facebook::velox::exec {
       }                                                                  \
       case TypeKind::BIGINT: {                                           \
         return TEMPLATE_FUNC<TypeKind::BIGINT>(__VA_ARGS__);             \
+      }                                                                  \
+      case TypeKind::DATE: {                                             \
+        return TEMPLATE_FUNC<TypeKind::DATE>(__VA_ARGS__);               \
       }                                                                  \
       case TypeKind::VARCHAR:                                            \
       case TypeKind::VARBINARY: {                                        \
@@ -582,6 +585,10 @@ void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
 }
 
 uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int64_t reserve) {
+  VELOX_CHECK_NE(
+      typeKind_,
+      TypeKind::BOOLEAN,
+      "A boolean VectorHasher should  always be by range");
   multiplier_ = multiplier;
   rangeSize_ = uniqueValues_.size() + 1 + reserve;
   isRange_ = false;
@@ -611,7 +618,11 @@ uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int64_t reserve) {
   }
   isRange_ = true;
   // No overflow because max range is under 63 bits.
-  rangeSize_ = (max_ - min_) + 2;
+  if (typeKind_ == TypeKind::BOOLEAN) {
+    rangeSize_ = 3;
+  } else {
+    rangeSize_ = (max_ - min_) + 2;
+  }
   uint64_t result;
   if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
     return kRangeTooLarge;
@@ -619,8 +630,25 @@ uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int64_t reserve) {
   return result;
 }
 
+void VectorHasher::copyStatsFrom(const VectorHasher& other) {
+  hasRange_ = other.hasRange_;
+  rangeOverflow_ = other.rangeOverflow_;
+  distinctOverflow_ = other.distinctOverflow_;
+
+  min_ = other.min_;
+  max_ = other.max_;
+  uniqueValues_ = other.uniqueValues_;
+}
+
 void VectorHasher::merge(const VectorHasher& other) {
   if (typeKind_ == TypeKind::BOOLEAN) {
+    return;
+  }
+  if (other.empty()) {
+    return;
+  }
+  if (empty()) {
+    copyStatsFrom(other);
     return;
   }
   if (hasRange_ && other.hasRange_ && !rangeOverflow_ &&
@@ -644,6 +672,15 @@ void VectorHasher::merge(const VectorHasher& other) {
   } else {
     distinctOverflow_ = true;
   }
+}
+
+std::string VectorHasher::toString() const {
+  std::stringstream out;
+  out << "<VectorHasher type=" << type_->toString() << "  isRange_=" << isRange_
+      << " rangeSize= " << rangeSize_ << " min=" << min_ << " max=" << max_
+      << " multiplier=" << multiplier_
+      << " numDistinct=" << uniqueValues_.size() << ">";
+  return out.str();
 }
 
 } // namespace facebook::velox::exec

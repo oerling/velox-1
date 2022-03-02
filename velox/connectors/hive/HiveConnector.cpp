@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 #include "velox/connectors/hive/HiveConnector.h"
-#include <velox/dwio/dwrf/reader/SelectiveColumnReader.h>
+
+#include <memory>
+
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/type/Conversions.h"
 #include "velox/type/Type.h"
@@ -166,15 +169,12 @@ HiveDataSource::HiveDataSource(
       scanId_(scanId),
       executor_(executor) {
   // Column handled keyed on the column alias, the name used in the query.
-  std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>
-      columnHandleMap;
-  for (const auto& entry : columnHandles) {
-    auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(entry.second);
+  for (const auto& [canonicalizedName, columnHandle] : columnHandles) {
+    auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(columnHandle);
     VELOX_CHECK(
         handle != nullptr,
         "ColumnHandle must be an instance of HiveColumnHandle for {}",
-        entry.first);
-    columnHandleMap.emplace(entry.first, handle);
+        canonicalizedName);
 
     if (handle->columnType() == HiveColumnHandle::ColumnType::kPartitionKey) {
       partitionKeys_.emplace(handle->name(), handle);
@@ -183,14 +183,15 @@ HiveDataSource::HiveDataSource(
 
   std::vector<std::string> columnNames;
   columnNames.reserve(outputType->size());
-  for (auto& name : outputType->names()) {
-    auto it = columnHandleMap.find(name);
+  for (auto& outputName : outputType->names()) {
+    auto it = columnHandles.find(outputName);
     VELOX_CHECK(
-        it != columnHandleMap.end(),
-        "ColumnHandle is missing for output column {}",
-        name);
+        it != columnHandles.end(),
+        "ColumnHandle is missing for output column: {}",
+        outputName);
 
-    columnNames.emplace_back(it->second->name());
+    const auto& handle = static_cast<HiveColumnHandle&>(*it->second);
+    columnNames.emplace_back(handle.name());
   }
 
   auto hiveTableHandle =
@@ -283,9 +284,7 @@ class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
       std::shared_ptr<dwio::common::IoStatistics> stats)
       : fileHandle_(std::move(fileHandle)), stats_(std::move(stats)) {
     input_ = std::make_unique<dwio::common::ReadFileInputStream>(
-        fileHandle_->file.get(),
-        dwio::common::MetricsLog::voidLog(),
-        stats.get());
+        fileHandle_->file.get(), dwio::common::MetricsLog::voidLog(), nullptr);
   }
 
   dwio::common::InputStream& get() override {
@@ -302,9 +301,8 @@ class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
 
 std::unique_ptr<InputStreamHolder> makeStreamHolder(
     FileHandleFactory* factory,
-    const std::string& path,
-    std::shared_ptr<dwio::common::IoStatistics> stats) {
-  return std::make_unique<InputStreamHolder>(factory->generate(path), stats);
+    const std::string& path) {
+  return std::make_unique<InputStreamHolder>(factory->generate(path), nullptr);
 }
 
 template <TypeKind ToKind>
@@ -349,9 +347,11 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VLOG(1) << "Adding split " << split_->toString();
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
+  // For DataCache and no cache, the stream keeps track of IO.
+  auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_);
   // Decide between AsyncDataCache, legacy DataCache and no cache. All
   // three are supported to enable comparison.
-  if (auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
+  if (asyncCache) {
     VELOX_CHECK(
         !dataCache_,
         "DataCache should not be present if the MappedMemory is AsyncDataCache");
@@ -363,13 +363,14 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     readerOpts_.getDataCacheConfig()->filenum = fileHandle_->uuid.id();
     bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
         (asyncCache),
-        Connector::getTracker(scanId_),
+        Connector::getTracker(scanId_, readerOpts_.loadQuantum()),
         fileHandle_->groupId.id(),
-        [factory = fileHandleFactory_,
-         path = split_->filePath,
-         stats = ioStats_]() { return makeStreamHolder(factory, path, stats); },
+        [factory = fileHandleFactory_, path = split_->filePath]() {
+          return makeStreamHolder(factory, path);
+        },
         ioStats_,
-        executor_);
+        executor_,
+        readerOpts_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_.get());
   } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
@@ -394,7 +395,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
                     std::make_unique<dwio::common::ReadFileInputStream>(
                         fileHandle_->file.get(),
                         dwio::common::MetricsLog::voidLog(),
-                        ioStats_.get()),
+                        asyncCache ? nullptr : ioStats_.get()),
                     readerOpts_);
 
   emptySplit_ = false;
@@ -477,9 +478,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 RowVectorPtr HiveDataSource::next(uint64_t size) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {
-    split_.reset();
-    reader_.reset();
-    rowReader_.reset();
+    resetSplit();
     return nullptr;
   }
 
@@ -536,10 +535,16 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
 
   rowReader_->updateRuntimeStats(runtimeStats_);
 
-  split_.reset();
-  reader_.reset();
-  rowReader_.reset();
+  resetSplit();
   return nullptr;
+}
+
+void HiveDataSource::resetSplit() {
+  split_.reset();
+  // Make sure to destroy Reader and RowReader in the opposite order of
+  // creation, e.g. destroy RowReader first, then destroy Reader.
+  rowReader_.reset();
+  reader_.reset();
 }
 
 vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {
@@ -592,19 +597,14 @@ std::unordered_map<std::string, int64_t> HiveDataSource::runtimeStats() {
 }
 
 int64_t HiveDataSource::estimatedRowSize() {
-  if (!rowReader_ || errorInRowSize_) {
+  if (!rowReader_) {
     return kUnknownRowSize;
   }
-  try {
-    return rowReader_->estimatedRowSize();
-  } catch (const std::exception& e) {
-    // Remember the error and do not try the other splits, they are
-    // likely to be broken the same way.
-    errorInRowSize_ = true;
-    LOG_EVERY_N(WARNING, 1000)
-        << "failed to get row size estimate for " << split_->toString();
-    return kUnknownRowSize;
+  auto size = rowReader_->estimatedRowSize();
+  if (size.has_value()) {
+    return size.value();
   }
+  return kUnknownRowSize;
 }
 
 HiveConnector::HiveConnector(

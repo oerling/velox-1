@@ -30,18 +30,14 @@ class TableScan : public SourceOperator {
   RowVectorPtr getOutput() override;
 
   BlockingReason isBlocked(ContinueFuture* future) override {
-    if (hasBlockingFuture_) {
-      hasBlockingFuture_ = false;
+    if (blockingFuture_.valid()) {
       *future = std::move(blockingFuture_);
       return BlockingReason::kWaitForSplit;
     }
     return BlockingReason::kNotBlocked;
   }
 
-  void finish() override {
-    Operator::finish();
-    close();
-  }
+  bool isFinished() override;
 
   bool canAddDynamicFilter() const override {
     // TODO Consult with the connector. Return true only if connector can accept
@@ -52,8 +48,6 @@ class TableScan : public SourceOperator {
   void addDynamicFilter(
       ChannelIndex outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
-
-  void close() override;
 
  private:
   static constexpr int32_t kDefaultBatchSize = 1024;
@@ -66,8 +60,7 @@ class TableScan : public SourceOperator {
       unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           columnHandles_;
   DriverCtx* driverCtx_;
-  ContinueFuture blockingFuture_;
-  bool hasBlockingFuture_ = false;
+  ContinueFuture blockingFuture_{ContinueFuture::makeEmpty()};
   bool needNewSplit_ = true;
   std::shared_ptr<connector::Connector> connector_;
   std::unique_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;

@@ -23,9 +23,9 @@ void registerCheckedArithmeticFunctions() {
   registerBinaryIntegral<CheckedPlusFunction>({"plus"});
   registerBinaryIntegral<CheckedMinusFunction>({"minus"});
   registerBinaryIntegral<CheckedMultiplyFunction>({"multiply"});
-  registerBinaryIntegral<CheckedModulusFunction>({"modulus"});
+  registerBinaryIntegral<CheckedModulusFunction>({"mod"});
   registerBinaryIntegral<CheckedDivideFunction>({"divide"});
-  registerUnaryIntegral<udf_checked_negate>({"negate"});
+  registerUnaryIntegral<CheckedNegateFunction>({"negate"});
 }
 
 } // namespace facebook::velox::functions

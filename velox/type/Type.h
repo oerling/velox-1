@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <fmt/core.h>
 #include <fmt/format.h>
 #include <folly/Format.h>
 #include <folly/Range.h>
@@ -22,13 +23,16 @@
 #include <folly/json.h>
 #include <time.h>
 #include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <typeindex>
 #include <vector>
+
 #include "folly/CPortability.h"
 #include "velox/common/base/ClassName.h"
 #include "velox/common/serialization/Serializable.h"
@@ -463,6 +467,7 @@ class Type : public Tree<const std::shared_ptr<const Type>>,
   VELOX_FLUENT_CAST(Map, MAP)
   VELOX_FLUENT_CAST(Row, ROW)
   VELOX_FLUENT_CAST(Opaque, OPAQUE)
+  VELOX_FLUENT_CAST(UnKnown, UNKNOWN)
 
   bool containsUnknown() const;
 
@@ -1262,8 +1267,32 @@ template <typename UNDERLYING_TYPE>
 struct Variadic {
   using underlying_type = UNDERLYING_TYPE;
 
- private:
-  Variadic() {}
+  Variadic() = delete;
+};
+
+// A type that can be used in simple function to represent any type.
+// Two Generics with the same type variables should bound to the same type.
+template <size_t id>
+struct TypeVariable {
+  static size_t getId() {
+    return id;
+  }
+};
+
+using T1 = TypeVariable<1>;
+using T2 = TypeVariable<2>;
+using T3 = TypeVariable<3>;
+using T4 = TypeVariable<4>;
+using T5 = TypeVariable<5>;
+using T6 = TypeVariable<6>;
+using T7 = TypeVariable<7>;
+using T8 = TypeVariable<8>;
+
+struct AnyType {};
+
+template <typename T = AnyType>
+struct Generic {
+  Generic() = delete;
 };
 
 template <typename>
@@ -1298,6 +1327,41 @@ struct Array {
 
  private:
   Array() {}
+};
+
+// This is a temporary type to be used when ArrayWriter is requested by the user
+// to represent an Array output type in the simple function interface.
+// Eventually this will be removed and Array will be ArrayWriterT once all proxy
+// types are implemented.
+template <typename ELEMENT>
+struct ArrayWriterT {
+  using element_type = ELEMENT;
+
+  static_assert(
+      !isVariadicType<element_type>::value,
+      "Array elements cannot be Variadic");
+
+ private:
+  ArrayWriterT() {}
+};
+
+// This is a temporary type to be used when the fast MapWriter is requested by
+// the user to represent a map output type in the simple function interface.
+// Eventually this will be removed and joined with Map once all writers
+// types are implemented.
+template <typename K, typename V>
+struct MapWriterT {
+  using key_type = K;
+  using value_type = V;
+
+  static_assert(
+      !isVariadicType<key_type>::value,
+      "Map keys cannot be Variadic");
+  static_assert(
+      !isVariadicType<value_type>::value,
+      "Map values cannot be Variadic");
+
+  MapWriterT() = delete;
 };
 
 template <typename... T>
@@ -1375,6 +1439,9 @@ struct CppToType<velox::StringView> : public CppToTypeBase<TypeKind::VARCHAR> {
 };
 
 template <>
+struct CppToType<std::string_view> : public CppToTypeBase<TypeKind::VARCHAR> {};
+
+template <>
 struct CppToType<std::string> : public CppToTypeBase<TypeKind::VARCHAR> {};
 
 template <>
@@ -1417,8 +1484,22 @@ struct CppToType<Map<KEY, VAL>> : public TypeTraits<TypeKind::MAP> {
   }
 };
 
+template <typename KEY, typename VAL>
+struct CppToType<MapWriterT<KEY, VAL>> : public TypeTraits<TypeKind::MAP> {
+  static auto create() {
+    return MAP(CppToType<KEY>::create(), CppToType<VAL>::create());
+  }
+};
+
 template <typename ELEMENT>
 struct CppToType<Array<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
+  static auto create() {
+    return ARRAY(CppToType<ELEMENT>::create());
+  }
+};
+
+template <typename ELEMENT>
+struct CppToType<ArrayWriterT<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
   static auto create() {
     return ARRAY(CppToType<ELEMENT>::create());
   }
@@ -1491,10 +1572,34 @@ inline ComplexType to(std::string value) {
   return ComplexType();
 }
 
+namespace exec {
+
+/// Forward declaration.
+class CastOperator;
+
+using CastOperatorPtr = std::shared_ptr<const CastOperator>;
+
+} // namespace exec
+
+/// Associates custom types with their custom operators to be the payload in the
+/// custom type registry.
+class CustomTypeFactories {
+ public:
+  virtual ~CustomTypeFactories() = default;
+
+  /// Returns a shared pointer to the custom type with the specified child
+  /// types.
+  virtual TypePtr getType(std::vector<TypePtr> childTypes) const = 0;
+
+  /// Returns a shared pointer to the custom cast operator. If no cast operator
+  /// supports the custom type, this function throws an exception.
+  virtual exec::CastOperatorPtr getCastOperator() const = 0;
+};
+
 /// Adds custom type to the registry. Type names must be unique.
 void registerType(
     const std::string& name,
-    std::function<TypePtr(std::vector<TypePtr> childTypes)> factory);
+    std::unique_ptr<const CustomTypeFactories> factories);
 
 /// Return true if customer type with specified name exists.
 bool typeExists(const std::string& name);
@@ -1502,6 +1607,10 @@ bool typeExists(const std::string& name);
 /// Returns an instance of a custom type with the specified name and specified
 /// child types.
 TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes);
+
+/// Returns the custom cast operator for the custom type with the specified
+/// name. Returns nullptr if a type with the specified name does not exist.
+exec::CastOperatorPtr getCastOperator(const std::string& name);
 
 // Allows us to transparently use folly::toAppend(), folly::join(), etc.
 template <class TString>

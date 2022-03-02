@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/Exchange.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/serializers/PrestoSerializer.h"
 
 using namespace facebook::velox;
@@ -38,11 +39,17 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
 
   std::shared_ptr<Task> initializeTask(
       const std::string& taskId,
+      const RowTypePtr& rowType,
       int numDestinations,
       int numDrivers) {
-    auto queryCtx = core::QueryCtx::create();
     bufferManager_->removeTask(taskId);
-    auto task = std::make_shared<Task>(taskId, nullptr, 0, std::move(queryCtx));
+
+    auto planFragment = exec::test::PlanBuilder()
+                            .values({std::dynamic_pointer_cast<RowVector>(
+                                BatchMaker::createBatch(rowType, 100, *pool_))})
+                            .planFragment();
+    auto task = std::make_shared<Task>(
+        taskId, std::move(planFragment), 0, core::QueryCtx::createForTest());
 
     bufferManager_->initializeTask(task, false, numDestinations, numDrivers);
     return task;
@@ -222,7 +229,7 @@ TEST_F(PartitionedOutputBufferManagerTest, basic) {
   vector_size_t size = 100;
 
   std::string taskId = "t0";
-  auto task = initializeTask(taskId, 5, 1);
+  auto task = initializeTask(taskId, rowType, 5, 1);
 
   // - enqueue one group per destination
   // - fetch and ask one group per destination
@@ -273,11 +280,11 @@ TEST_F(PartitionedOutputBufferManagerTest, basic) {
   for (int destination = 0; destination < 3; destination++) {
     fetchEndMarker(taskId, destination, 2);
   }
-  EXPECT_EQ(task->state(), kRunning);
+  EXPECT_TRUE(task->isRunning());
   deleteResults(taskId, 3);
   fetchEndMarker(taskId, 4, 2);
 
-  EXPECT_EQ(task->state(), kFinished);
+  EXPECT_TRUE(task->isFinished());
 }
 
 TEST_F(PartitionedOutputBufferManagerTest, maxBytes) {
@@ -287,7 +294,7 @@ TEST_F(PartitionedOutputBufferManagerTest, maxBytes) {
   vector_size_t size = 100;
 
   std::string taskId = "t0";
-  initializeTask(taskId, 5, 1);
+  initializeTask(taskId, rowType, 5, 1);
 
   enqueue(taskId, 0, rowType, size);
   enqueue(taskId, 1, rowType, size);
@@ -318,7 +325,7 @@ TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
   vector_size_t size = 100;
 
   std::string taskId = "t0";
-  auto task = initializeTask(taskId, 5, 1);
+  auto task = initializeTask(taskId, rowType, 5, 1);
 
   enqueue(taskId, 0, rowType, size);
   for (int i = 0; i < 10; i++) {

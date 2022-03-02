@@ -62,9 +62,11 @@ BlockingReason CrossJoinProbe::isBlocked(ContinueFuture* future) {
     return BlockingReason::kNotBlocked;
   }
 
-  auto buildData = operatorCtx_->task()
-                       ->getCrossJoinBridge(planNodeId())
-                       ->dataOrFuture(future);
+  auto buildData =
+      operatorCtx_->task()
+          ->getCrossJoinBridge(
+              operatorCtx_->driverCtx()->splitGroupId, planNodeId())
+          ->dataOrFuture(future);
   if (!buildData.has_value()) {
     return BlockingReason::kWaitForJoinBuild;
   }
@@ -74,7 +76,7 @@ BlockingReason CrossJoinProbe::isBlocked(ContinueFuture* future) {
   if (buildData_->empty()) {
     // Build side is empty. Return empty set of rows and  terminate the pipeline
     // early.
-    isFinishing_ = true;
+    buildSideEmpty_ = true;
   }
 
   return BlockingReason::kNotBlocked;
@@ -151,6 +153,10 @@ RowVectorPtr CrossJoinProbe::getOutput() {
     }
   }
   return output;
+}
+
+bool CrossJoinProbe::isFinished() {
+  return buildSideEmpty_ || (noMoreInput_ && input_ == nullptr);
 }
 
 void CrossJoinProbe::close() {

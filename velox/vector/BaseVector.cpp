@@ -15,9 +15,12 @@
  */
 
 #include "velox/vector/BaseVector.h"
+#include "velox/type/StringView.h"
+#include "velox/type/Type.h"
 #include "velox/type/Variant.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DictionaryVector.h"
+#include "velox/vector/FlatVector.h"
 #include "velox/vector/LazyVector.h"
 #include "velox/vector/SequenceVector.h"
 #include "velox/vector/TypeAliases.h"
@@ -72,7 +75,7 @@ uint64_t BaseVector::byteSize<bool>(vector_size_t count) {
   return bits::nbytes(count);
 }
 
-void BaseVector::resize(vector_size_t size) {
+void BaseVector::resize(vector_size_t size, bool setNotNull) {
   if (nulls_) {
     auto bytes = byteSize<bool>(size);
     if (length_ < size) {
@@ -80,7 +83,7 @@ void BaseVector::resize(vector_size_t size) {
         AlignedBuffer::reallocate<char>(&nulls_, bytes);
         rawNulls_ = nulls_->as<uint64_t>();
       }
-      if (size > length_) {
+      if (setNotNull && size > length_) {
         bits::fillBits(
             const_cast<uint64_t*>(rawNulls_), length_, size, bits::kNotNull);
       }
@@ -378,7 +381,7 @@ void BaseVector::clearNulls(const SelectivityVector& rows) {
   }
 
   auto rawNulls = nulls_->asMutable<uint64_t>();
-  bits::orWithNegatedBits(
+  bits::orBits(
       rawNulls,
       rows.asRange().bits(),
       std::min(length_, rows.begin()),
@@ -622,16 +625,32 @@ bool BaseVector::isReusableFlatVector(const VectorPtr& vector) {
     return false;
   }
 
-  // Now check if nulls and values buffers also have a single reference and are
-  // mutable.
-  const auto& nulls = vector->nulls();
-  if (!nulls || (vector->nulls()->unique() && vector->nulls()->isMutable())) {
-    const auto& values = vector->values();
-    if (!values || (values->unique() && values->isMutable())) {
-      return true;
+  // Now check if nulls and values buffers also have a single reference and
+  // are mutable.
+  auto checkNullsAndValueBuffers = [&]() {
+    const auto& nulls = vector->nulls();
+    if (!nulls || (vector->nulls()->unique() && vector->nulls()->isMutable())) {
+      const auto& values = vector->values();
+      if (!values || (values->unique() && values->isMutable())) {
+        return true;
+      }
     }
-  }
-  return false;
+    return false;
+  };
+
+  // Check that all string buffers are single referenced.
+  auto checkStringBuffers = [&]() {
+    if (vector->typeKind_ == TypeKind::VARBINARY ||
+        vector->typeKind_ == TypeKind::VARCHAR) {
+      for (auto& buffer : vector->asFlatVector<StringView>()->stringBuffers()) {
+        if (buffer->refCount() > 1) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  return checkNullsAndValueBuffers() && checkStringBuffers();
 }
 
 } // namespace velox

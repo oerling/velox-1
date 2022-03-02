@@ -15,10 +15,10 @@
  */
 #pragma once
 
+#include "velox/common/memory/HashStringAllocator.h"
 #include "velox/common/memory/MappedMemory.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/ContainerRowSerde.h"
-#include "velox/exec/HashStringAllocator.h"
 #include "velox/exec/Spill.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -113,7 +113,7 @@ class RowContainer {
   // allowed. 'hasProbedFlag' indicates that an extra bit is reserved
   // for a probed state of a full or right outer
   // join. 'hasNormalizedKey' specifies that an extra word is left
-  // below each row for a normlized key that collapses all parts
+  // below each row for a normalized key that collapses all parts
   // into one word for faster comparison. The bulk allocation is done
   // from 'mappedMemory'.  'serde_' is used for serializing complex
   // type values into the container.
@@ -394,6 +394,10 @@ class RowContainer {
       RowContainer::extractColumn(
           rows.data(), rows.size(), columnAt(i), result->childAt(i));
     }
+  }
+
+  memory::MappedMemory* mappedMemory() const {
+    return stringAllocator_.mappedMemory();
   }
 
   // Checks that row and free row counts match and that free list
@@ -828,6 +832,7 @@ class RowContainer {
   // needed to manage memory of accumulators and the executable
   // aggregates. Store the metadata here.
   const std::vector<std::unique_ptr<Aggregate>>& aggregates_;
+  bool usesExternalMemory_ = false;
   // Types of non-aggregate columns. Keys first. Corresponds pairwise
   // to 'typeKinds_' and 'rowColumns_'.
   std::vector<TypePtr> types_;

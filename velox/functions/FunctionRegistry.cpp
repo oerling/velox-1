@@ -16,13 +16,15 @@
 #include "velox/functions/FunctionRegistry.h"
 
 #include <boost/algorithm/string.hpp>
+#include <algorithm>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include "velox/common/base/Exceptions.h"
-#include "velox/core/FunctionRegistry.h"
-#include "velox/core/ScalarFunction.h"
+#include "velox/core/SimpleFunctionMetadata.h"
 #include "velox/expression/FunctionSignature.h"
 #include "velox/expression/SignatureBinder.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/type/Type.h"
 
@@ -43,25 +45,11 @@ exec::TypeSignature typeToTypeSignature(std::shared_ptr<const Type> type) {
 }
 
 void populateSimpleFunctionSignatures(FunctionSignatureMap& map) {
-  auto keys = core::ScalarFunctions().Keys();
-  for (const auto& key : keys) {
-    auto scalarFunction = core::ScalarFunctions().Create(key);
-    auto argTypes = scalarFunction->argTypes();
-    const auto& functionName = key.name();
-
-    auto returnTypeSignature =
-        typeToTypeSignature(scalarFunction->returnType());
-    std::vector<exec::TypeSignature> argTypeSignatures;
-    argTypeSignatures.reserve(argTypes.size());
-    for (auto argType : argTypes) {
-      argTypeSignatures.emplace_back(typeToTypeSignature(argType));
-    }
-    auto functionSignature = std::make_shared<exec::FunctionSignature>(
-        std::vector<exec::TypeVariableConstraint>(),
-        returnTypeSignature,
-        argTypeSignatures,
-        false);
-    map[functionName].emplace_back(functionSignature);
+  auto& simpleFunctions = exec::SimpleFunctions();
+  auto functionNames = simpleFunctions.getFunctionNames();
+  for (const auto& functionName : functionNames) {
+    auto signatures = simpleFunctions.getFunctionSignatures(functionName);
+    map[functionName] = signatures;
   }
 }
 
@@ -71,8 +59,12 @@ void populateVectorFunctionSignatures(FunctionSignatureMap& map) {
     for (const auto& it : locked) {
       const auto& allSignatures = it.second.signatures;
       auto& curSignatures = map[it.first];
-      curSignatures.insert(
-          curSignatures.end(), allSignatures.begin(), allSignatures.end());
+      std::transform(
+          allSignatures.begin(),
+          allSignatures.end(),
+          std::back_inserter(curSignatures),
+          [](std::shared_ptr<exec::FunctionSignature> signature)
+              -> exec::FunctionSignature* { return signature.get(); });
     }
   });
 }
@@ -89,15 +81,28 @@ FunctionSignatureMap getFunctionSignatures() {
 std::shared_ptr<const Type> resolveFunction(
     const std::string& functionName,
     const std::vector<TypePtr>& argTypes) {
-  // Check if ScalarFunctions has this function name + signature.
-  auto key = core::FunctionKey(functionName, argTypes);
-  if (core::ScalarFunctions().Has(key)) {
-    auto scalarFunction = core::ScalarFunctions().Create(key);
-    return scalarFunction->returnType();
+  // Check if this is a simple function.
+  if (auto returnType = resolveSimpleFunction(functionName, argTypes)) {
+    return returnType;
   }
 
   // Check if VectorFunctions has this function name + signature.
   return resolveVectorFunction(functionName, argTypes);
+}
+
+std::shared_ptr<const Type> resolveSimpleFunction(
+    const std::string& functionName,
+    const std::vector<TypePtr>& argTypes) {
+  auto simpleFunctionSignatures =
+      exec::SimpleFunctions().getFunctionSignatures(functionName);
+  for (const auto* signature : simpleFunctionSignatures) {
+    exec::SignatureBinder binder(*signature, argTypes);
+    if (binder.tryBind()) {
+      return binder.tryResolveReturnType();
+    }
+  }
+
+  return nullptr;
 }
 
 std::shared_ptr<const Type> resolveVectorFunction(

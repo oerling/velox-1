@@ -15,7 +15,6 @@
  */
 
 #pragma once
-
 #include "velox/common/base/RawVector.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/common/process/ProcessBase.h"
@@ -24,10 +23,6 @@
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/type/Filter.h"
 
-extern bool enableDense;
-
-extern bool enableDense;
-
 namespace facebook::velox::dwrf {
 
 class SelectiveColumnReader : public ColumnReader {
@@ -35,10 +30,11 @@ class SelectiveColumnReader : public ColumnReader {
   static constexpr uint64_t kStringBufferSize = 16 * 1024;
 
   SelectiveColumnReader(
-      const EncodingKey& ek,
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
-      const TypePtr& type);
+      const TypePtr& type,
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
 
   /**
    * Read the next group of values into a RowVector.
@@ -58,7 +54,7 @@ class SelectiveColumnReader : public ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
-      uint32_t sequence = 0);
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
 
   // Called when filters in ScanSpec change, e.g. a new filter is pushed down
   // from a downstream operator.
@@ -410,9 +406,9 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
-      uint32_t sequence) override {
+      FlatMapContext flatMapContext) override {
     auto reader = SelectiveColumnReader::build(
-        requestedType, dataType, stripe, scanSpec_, sequence);
+        requestedType, dataType, stripe, scanSpec_, std::move(flatMapContext));
     reader->setIsTopLevel();
     return reader;
   }

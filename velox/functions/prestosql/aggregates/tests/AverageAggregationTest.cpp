@@ -22,14 +22,14 @@ namespace facebook::velox::aggregate::test {
 
 namespace {
 
-class AverageAggregation : public AggregationTestBase {
+class AverageAggregationTest : public AggregationTestBase {
  protected:
   std::shared_ptr<const RowType> rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
           {BIGINT(), SMALLINT(), INTEGER(), BIGINT(), REAL(), DOUBLE()})};
 };
 
-TEST_F(AverageAggregation, avgConst) {
+TEST_F(AverageAggregationTest, avgConst) {
   // Have two row vectors a lest as it triggers different code paths.
   auto vectors = {
       makeRowVector({
@@ -52,7 +52,7 @@ TEST_F(AverageAggregation, avgConst) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({}, {"avg(c1)", "avg(c2)"})
-                   .finalAggregation({}, {"avg(a0)", "avg(a1)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT avg(c1), avg(c2) FROM tmp");
   }
@@ -61,7 +61,7 @@ TEST_F(AverageAggregation, avgConst) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({0}, {"avg(c1)", "avg(c2)"})
-                   .finalAggregation({0}, {"avg(a0)", "avg(a1)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT c0, avg(c1), avg(c2) FROM tmp group by c0");
   }
@@ -70,24 +70,22 @@ TEST_F(AverageAggregation, avgConst) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({}, {"avg(c0)"})
-                   .finalAggregation({}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT avg(c0) FROM tmp");
   }
   {
     auto agg = PlanBuilder()
                    .values(vectors)
-                   .project(
-                       std::vector<std::string>{"c0 % 2", "c0"},
-                       std::vector<std::string>{"c0_mod_2", "c0"})
+                   .project({"c0 % 2 AS c0_mod_2", "c0"})
                    .partialAggregation({0}, {"avg(c0)"})
-                   .finalAggregation({0}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT c0 % 2, avg(c0) FROM tmp group by 1");
   }
 }
 
-TEST_F(AverageAggregation, avgConstNull) {
+TEST_F(AverageAggregationTest, avgConstNull) {
   // Have two row vectors a lest as it triggers different code paths.
   auto vectors = {
       makeRowVector({
@@ -108,7 +106,7 @@ TEST_F(AverageAggregation, avgConstNull) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({}, {"avg(c1)", "avg(c2)"})
-                   .finalAggregation({}, {"avg(a0)", "avg(a1)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT avg(c1), avg(c2) FROM tmp");
   }
@@ -117,7 +115,7 @@ TEST_F(AverageAggregation, avgConstNull) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({0}, {"avg(c1)", "avg(c2)"})
-                   .finalAggregation({0}, {"avg(a0)", "avg(a1)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT c0, avg(c1), avg(c2) FROM tmp group by c0");
   }
@@ -126,13 +124,13 @@ TEST_F(AverageAggregation, avgConstNull) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({}, {"avg(c0)"})
-                   .finalAggregation({}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT avg(c0) FROM tmp");
   }
 }
 
-TEST_F(AverageAggregation, avgNulls) {
+TEST_F(AverageAggregationTest, avgNulls) {
   // Have two row vectors a lest as it triggers different code paths.
   auto vectors = {
       makeRowVector({
@@ -153,7 +151,7 @@ TEST_F(AverageAggregation, avgNulls) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({}, {"avg(c1)", "avg(c2)"})
-                   .finalAggregation({}, {"avg(a0)", "avg(a1)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT avg(c1), avg(c2) FROM tmp");
   }
@@ -162,25 +160,24 @@ TEST_F(AverageAggregation, avgNulls) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .partialAggregation({0}, {"avg(c1)", "avg(c2)"})
-                   .finalAggregation({0}, {"avg(a0)", "avg(a1)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT c0, avg(c1), avg(c2) FROM tmp group by c0");
   }
 }
 
-TEST_F(AverageAggregation, avg) {
+TEST_F(AverageAggregationTest, avg) {
   auto vectors = makeVectors(rowType_, 10, 100);
   createDuckDbTable(vectors);
 
   // global aggregation
   {
-    auto agg =
-        PlanBuilder()
-            .values(vectors)
-            .partialAggregation(
-                {}, {"avg(c1)", "avg(c2)", "avg(c4)", "avg(c5)"})
-            .finalAggregation({}, {"avg(a0)", "avg(a1)", "avg(a2)", "avg(a3)"})
-            .planNode();
+    auto agg = PlanBuilder()
+                   .values(vectors)
+                   .partialAggregation(
+                       {}, {"avg(c1)", "avg(c2)", "avg(c4)", "avg(c5)"})
+                   .finalAggregation()
+                   .planNode();
     assertQuery(agg, "SELECT avg(c1), avg(c2), avg(c4), avg(c5) FROM tmp");
 
     agg =
@@ -190,15 +187,13 @@ TEST_F(AverageAggregation, avg) {
             .planNode();
     assertQuery(agg, "SELECT avg(c1), avg(c2), avg(c4), avg(c5) FROM tmp");
 
-    agg =
-        PlanBuilder()
-            .values(vectors)
-            .partialAggregation(
-                {}, {"avg(c1)", "avg(c2)", "avg(c4)", "avg(c5)"})
-            .intermediateAggregation(
-                {}, {"avg(a0)", "avg(a1)", "avg(a2)", "avg(a3)"})
-            .finalAggregation({}, {"avg(a0)", "avg(a1)", "avg(a2)", "avg(a3)"})
-            .planNode();
+    agg = PlanBuilder()
+              .values(vectors)
+              .partialAggregation(
+                  {}, {"avg(c1)", "avg(c2)", "avg(c4)", "avg(c5)"})
+              .intermediateAggregation()
+              .finalAggregation()
+              .planNode();
     assertQuery(agg, "SELECT avg(c1), avg(c2), avg(c4), avg(c5) FROM tmp");
   }
 
@@ -208,7 +203,7 @@ TEST_F(AverageAggregation, avg) {
                    .values(vectors)
                    .filter("c0 % 2 = 5")
                    .partialAggregation({}, {"avg(c0)"})
-                   .finalAggregation({}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT null");
   }
@@ -219,7 +214,7 @@ TEST_F(AverageAggregation, avg) {
                    .values(vectors)
                    .filter("c0 % 5 = 3")
                    .partialAggregation({}, {"avg(c1)"})
-                   .finalAggregation({}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "SELECT avg(c1) FROM tmp WHERE c0 % 5 = 3");
   }
@@ -229,15 +224,10 @@ TEST_F(AverageAggregation, avg) {
     auto agg =
         PlanBuilder()
             .values(vectors)
-            .project(
-                std::vector<std::string>{
-                    "c0 % 10", "c1", "c2", "c3", "c4", "c5"},
-                std::vector<std::string>{
-                    "c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
+            .project({"c0 % 10 AS c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
             .partialAggregation(
                 {0}, {"avg(c1)", "avg(c2)", "avg(c3)", "avg(c4)", "avg(c5)"})
-            .finalAggregation(
-                {0}, {"avg(a0)", "avg(a1)", "avg(a2)", "avg(a3)", "avg(a4)"})
+            .finalAggregation()
             .planNode();
     assertQuery(
         agg,
@@ -245,11 +235,7 @@ TEST_F(AverageAggregation, avg) {
 
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{
-                      "c0 % 10", "c1", "c2", "c3", "c4", "c5"},
-                  std::vector<std::string>{
-                      "c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
+              .project({"c0 % 10 AS c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
               .singleAggregation(
                   {0}, {"avg(c1)", "avg(c2)", "avg(c3)", "avg(c4)", "avg(c5)"})
               .planNode();
@@ -259,17 +245,11 @@ TEST_F(AverageAggregation, avg) {
 
     agg = PlanBuilder()
               .values(vectors)
-              .project(
-                  std::vector<std::string>{
-                      "c0 % 10", "c1", "c2", "c3", "c4", "c5"},
-                  std::vector<std::string>{
-                      "c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
+              .project({"c0 % 10 AS c0_mod_10", "c1", "c2", "c3", "c4", "c5"})
               .partialAggregation(
                   {0}, {"avg(c1)", "avg(c2)", "avg(c3)", "avg(c4)", "avg(c5)"})
-              .intermediateAggregation(
-                  {0}, {"avg(a0)", "avg(a1)", "avg(a2)", "avg(a3)", "avg(a4)"})
-              .finalAggregation(
-                  {0}, {"avg(a0)", "avg(a1)", "avg(a2)", "avg(a3)", "avg(a4)"})
+              .intermediateAggregation()
+              .finalAggregation()
               .planNode();
     assertQuery(
         agg,
@@ -280,12 +260,10 @@ TEST_F(AverageAggregation, avg) {
   {
     auto agg = PlanBuilder()
                    .values(vectors)
-                   .project(
-                       std::vector<std::string>{"c0 % 10", "c1"},
-                       std::vector<std::string>{"c0_mod_10", "c1"})
+                   .project({"c0 % 10 AS c0_mod_10", "c1"})
                    .filter("c0_mod_10 > 10")
                    .partialAggregation({0}, {"avg(c1)"})
-                   .finalAggregation({0}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(agg, "");
   }
@@ -295,16 +273,25 @@ TEST_F(AverageAggregation, avg) {
     auto agg = PlanBuilder()
                    .values(vectors)
                    .filter("c2 % 5 = 3")
-                   .project(
-                       std::vector<std::string>{"c0 % 10", "c1"},
-                       std::vector<std::string>{"c0_mod_10", "c1"})
+                   .project({"c0 % 10 AS c0_mod_10", "c1"})
                    .partialAggregation({0}, {"avg(c1)"})
-                   .finalAggregation({0}, {"avg(a0)"})
+                   .finalAggregation()
                    .planNode();
     assertQuery(
         agg, "SELECT c0 % 10, avg(c1) FROM tmp WHERE c2 % 5 = 3 GROUP BY 1");
   }
 }
 
+TEST_F(AverageAggregationTest, partialResults) {
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>(100, [](auto row) { return row; })});
+
+  auto plan = PlanBuilder()
+                  .values({data})
+                  .partialAggregation({}, {"avg(c0)"})
+                  .planNode();
+
+  assertQuery(plan, "SELECT row(4950, 100)");
+}
 } // namespace
 } // namespace facebook::velox::aggregate::test

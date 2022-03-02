@@ -1,7 +1,4 @@
 load("@fbcode_macros//build_defs:cpp_binary.bzl", "cpp_binary")
-
-# @autodeps
-
 load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
 
 cpp_unittest(
@@ -25,7 +22,6 @@ cpp_unittest(
         "//velox/experimental/codegen/tests:velox_experimental_codegen_test_utils",
         "//velox/experimental/codegen/transform:velox_transform",
         "//velox/experimental/codegen/transform/utils:velox_transform_utils",
-        "//velox/functions/prestosql/registration:velox_functions_prestosql",
     ],
 )
 
@@ -50,7 +46,6 @@ cpp_unittest(
         "//velox/experimental/codegen/tests:velox_experimental_codegen_test_utils",
         "//velox/experimental/codegen/transform:velox_transform",
         "//velox/experimental/codegen/transform/utils:velox_transform_utils",
-        "//velox/functions/prestosql/registration:velox_functions_prestosql",
     ],
 )
 
@@ -75,7 +70,6 @@ cpp_unittest(
         "//velox/experimental/codegen/tests:velox_experimental_codegen_test_utils",
         "//velox/experimental/codegen/transform:velox_transform",
         "//velox/experimental/codegen/transform/utils:velox_transform_utils",
-        "//velox/functions/prestosql/registration:velox_functions_prestosql",
     ],
 )
 
@@ -89,7 +83,6 @@ cpp_unittest(
     linker_flags = ["--export-dynamic"],
     deps = [
         "//velox/experimental/codegen/tests:velox_experimental_codegen_test_utils",
-        "//velox/functions/prestosql/registration:velox_functions_prestosql",
     ],
 )
 
@@ -139,7 +132,6 @@ cpp_binary(
         "//velox/experimental/codegen/tests:velox_experimental_codegen_test_utils",
         "//velox/experimental/codegen/transform:velox_transform",
         "//velox/experimental/codegen/transform/utils:velox_transform_utils",
-              "//velox/functions/prestosql/registration:velox_functions_prestosql",
     ],
 )
 
@@ -164,6 +156,5 @@ cpp_unittest(
         "//velox/experimental/codegen/tests:velox_experimental_codegen_test_utils",
         "//velox/experimental/codegen/transform:velox_transform",
         "//velox/experimental/codegen/transform/utils:velox_transform_utils",
-              "//velox/functions/prestosql/registration:velox_functions_prestosql",
     ],
 )

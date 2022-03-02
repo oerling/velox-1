@@ -58,8 +58,8 @@ void OrderBy::addInput(RowVectorPtr input) {
   numRows_ += allRows.size();
 }
 
-void OrderBy::finish() {
-  Operator::finish();
+void OrderBy::noMoreInput() {
+  Operator::noMoreInput();
 
   // No data.
   if (numRows_ == 0) {
@@ -77,14 +77,12 @@ void OrderBy::finish() {
       returningRows_.begin(),
       returningRows_.end(),
       [this](const char* leftRow, const char* rightRow) {
-        for (auto& key : keyInfo_) {
+        for (auto& [channelIndex, sortOrder] : keyInfo_) {
           if (auto result = data_->compare(
                   leftRow,
                   rightRow,
-                  key.first,
-                  {key.second.isNullsFirst(),
-                   key.second.isAscending(),
-                   false})) {
+                  channelIndex,
+                  {sortOrder.isNullsFirst(), sortOrder.isAscending(), false})) {
             return result < 0;
           }
         }
@@ -93,7 +91,7 @@ void OrderBy::finish() {
 }
 
 RowVectorPtr OrderBy::getOutput() {
-  if (finished_ || !isFinishing_ || returningRows_.size() == numRowsReturned_) {
+  if (finished_ || !noMoreInput_ || returningRows_.size() == numRowsReturned_) {
     return nullptr;
   }
 

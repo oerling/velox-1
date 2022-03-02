@@ -107,6 +107,40 @@ TEST(DuckParserTest, in) {
       parseExpr("col1 in ('a', null, 'b', 'c')")->toString());
 }
 
+TEST(DuckParserTest, notin) {
+  EXPECT_EQ(
+      "not(in(\"col1\",[1,2,3]))",
+      parseExpr("col1 not in (1, 2, 3)")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[1,2,3]))",
+      parseExpr("not(col1 in (1, 2, 3))")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[1,2,null,3]))",
+      parseExpr("col1 not in (1, 2, null, 3)")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[1,2,null,3]))",
+      parseExpr("not(col1 in (1, 2, null, 3))")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[\"a\",\"b\",\"c\"]))",
+      parseExpr("col1 not in ('a', 'b', 'c')")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[\"a\",\"b\",\"c\"]))",
+      parseExpr("not(col1 in ('a', 'b', 'c'))")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[\"a\",null,\"b\",\"c\"]))",
+      parseExpr("col1 not in ('a', null, 'b', 'c')")->toString());
+
+  EXPECT_EQ(
+      "not(in(\"col1\",[\"a\",null,\"b\",\"c\"]))",
+      parseExpr("not(col1 in ('a', null, 'b', 'c'))")->toString());
+}
+
 TEST(DuckParserTest, expressions) {
   // Comparisons.
   EXPECT_EQ("eq(1,0)", parseExpr("1 = 0")->toString());
@@ -123,7 +157,7 @@ TEST(DuckParserTest, expressions) {
   EXPECT_EQ("minus(1,0)", parseExpr("1 - 0")->toString());
   EXPECT_EQ("multiply(1,0)", parseExpr("1 * 0")->toString());
   EXPECT_EQ("divide(1,0)", parseExpr("1 / 0")->toString());
-  EXPECT_EQ("modulus(1,0)", parseExpr("1 % 0")->toString());
+  EXPECT_EQ("mod(1,0)", parseExpr("1 % 0")->toString());
 
   // ANDs and ORs.
   EXPECT_EQ("and(1,0)", parseExpr("1 and 0")->toString());
@@ -139,7 +173,7 @@ TEST(DuckParserTest, expressions) {
 
   // Mix-and-match.
   EXPECT_EQ(
-      "gte(plus(modulus(\"c0\",10),0),multiply(f(100),9))",
+      "gte(plus(mod(\"c0\",10),0),multiply(f(100),9))",
       parseExpr("c0 % 10 + 0 >= f(100) * 9")->toString());
 }
 
@@ -243,4 +277,22 @@ TEST(DuckParserTest, structExtract) {
   EXPECT_EQ("dot(\"a\",\"b\")", parseExpr("(a.b)")->toString());
   EXPECT_EQ("dot(dot(\"a\",\"b\"),\"c\")", parseExpr("(a).b.c")->toString());
   EXPECT_EQ("dot(dot(\"a\",\"b\"),\"c\")", parseExpr("(a.b).c")->toString());
+}
+
+TEST(DuckParserTest, alias) {
+  EXPECT_EQ("plus(\"a\",\"b\") AS sum", parseExpr("a + b AS sum")->toString());
+  EXPECT_EQ(
+      "gt(\"a\",\"b\") AS result", parseExpr("a > b AS result")->toString());
+  EXPECT_EQ("2 AS multiplier", parseExpr("2 AS multiplier")->toString());
+  EXPECT_EQ(
+      "cast(\"a\", DOUBLE) AS a_double",
+      parseExpr("cast(a AS DOUBLE) AS a_double")->toString());
+  EXPECT_EQ("\"a\" AS b", parseExpr("a AS b")->toString());
+}
+
+TEST(DuckParserTest, like) {
+  EXPECT_EQ("like(\"name\",\"%b%\")", parseExpr("name LIKE '%b%'")->toString());
+  EXPECT_EQ(
+      "like(\"name\",\"%#_%\",\"#\")",
+      parseExpr("name LIKE '%#_%' ESCAPE '#'")->toString());
 }

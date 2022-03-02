@@ -52,6 +52,8 @@ class TestingPauserNode : public core::PlanNode {
   }
 
  private:
+  void addDetails(std::stringstream& /* stream */) const override {}
+
   std::vector<std::shared_ptr<const core::PlanNode>> sources_;
 };
 
@@ -125,12 +127,10 @@ class DriverTest : public OperatorTestBase {
     }
 
     if (!project.empty()) {
-      auto projectNames = rowType->names();
-      auto expressions = projectNames;
-      projectNames.push_back("expr");
-      expressions.push_back(project);
+      auto expressions = rowType->names();
+      expressions.push_back(fmt::format("{} AS expr", project));
 
-      planBuilder.project(expressions, projectNames);
+      planBuilder.project(expressions);
     }
     if (addTestingPauser) {
       planBuilder.addNode(
@@ -187,7 +187,7 @@ class DriverTest : public OperatorTestBase {
         } else if (operation == ResultOperation::kCancel) {
           cursor->task()->requestTerminate();
         } else if (operation == ResultOperation::kTerminate) {
-          cursor->task()->terminate(kAborted);
+          cursor->task()->terminate(TaskState::kAborted);
         } else if (operation == ResultOperation::kYield) {
           cursor->task()->requestYield();
         } else if (operation == ResultOperation::kPause) {
@@ -322,7 +322,6 @@ class DriverTest : public OperatorTestBase {
   expectWithDelay([&]() { return test; }, __FILE__, __LINE__, #test)
 
 TEST_F(DriverTest, error) {
-  Driver::testingJoinAndReinitializeExecutor(10);
   CursorParameters params;
   params.planNode = makeValuesFilterProject(rowType_, "m1 % 0", "", 100, 10);
   params.maxDrivers = 20;
@@ -337,13 +336,11 @@ TEST_F(DriverTest, error) {
   EXPECT_TRUE(stateFutures_.at(0).isReady());
   // Realized immediately since task not running.
   EXPECT_TRUE(tasks_[0]->stateChangeFuture(1'000'000).isReady());
-  EXPECT_EQ(tasks_[0]->state(), kFailed);
+  EXPECT_EQ(tasks_[0]->state(), TaskState::kFailed);
 }
 
 TEST_F(DriverTest, cancel) {
   CursorParameters params;
-  params.queryCtx = core::QueryCtx::create();
-
   params.planNode = makeValuesFilterProject(
       rowType_,
       "m1 % 10 > 0",
@@ -363,13 +360,11 @@ TEST_F(DriverTest, cancel) {
   auto future = tasks_[0]->finishFuture().via(&executor);
   future.wait();
   EXPECT_TRUE(stateFutures_.at(0).isReady());
-  EXPECT_EQ(tasks_[0]->numDrivers(), 0);
+  EXPECT_EQ(tasks_[0]->numRunningDrivers(), 0);
 }
 
 TEST_F(DriverTest, terminate) {
   CursorParameters params;
-  params.queryCtx = core::QueryCtx::create();
-
   params.planNode = makeValuesFilterProject(
       rowType_,
       "m1 % 10 > 0",
@@ -387,7 +382,7 @@ TEST_F(DriverTest, terminate) {
   }
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
-  EXPECT_EQ(tasks_[0]->state(), kAborted);
+  EXPECT_EQ(tasks_[0]->state(), TaskState::kAborted);
 }
 
 TEST_F(DriverTest, slow) {
@@ -411,7 +406,7 @@ TEST_F(DriverTest, slow) {
   future.wait();
   // Note that the driver count drops after the last thread stops and
   // realizes the future.
-  EXPECT_WITH_DELAY(tasks_[0]->numDrivers() == 0);
+  EXPECT_WITH_DELAY(tasks_[0]->numRunningDrivers() == 0);
   const auto stats = tasks_[0]->taskStats().pipelineStats;
   ASSERT_TRUE(!stats.empty() && !stats[0].operatorStats.empty());
   // Check that the blocking of the CallbackSink at the end of the pipeline is
@@ -438,9 +433,12 @@ TEST_F(DriverTest, pause) {
   readResults(params, ResultOperation::kPause, 370'000'000, &numRead);
   // Each thread will fully read the 1M rows in values.
   EXPECT_EQ(numRead, 10 * hits);
-  EXPECT_WITH_DELAY(stateFutures_.at(0).isReady());
-  EXPECT_WITH_DELAY(tasks_[0]->state() == TaskState::kFinished);
-  EXPECT_EQ(tasks_[0]->numDrivers(), 0);
+  auto stateFuture = tasks_[0]->stateChangeFuture(100'000'000);
+  auto& executor = folly::QueuedImmediateExecutor::instance();
+  auto state = std::move(stateFuture).via(&executor);
+  state.wait();
+  EXPECT_TRUE(tasks_[0]->isFinished());
+  EXPECT_EQ(tasks_[0]->numRunningDrivers(), 0);
   const auto taskStats = tasks_[0]->taskStats();
   ASSERT_EQ(taskStats.pipelineStats.size(), 1);
   const auto& operators = taskStats.pipelineStats[0].operatorStats;
@@ -517,11 +515,16 @@ class TestingPauser : public Operator {
   }
 
   bool needsInput() const override {
-    return !isFinishing_ && !input_;
+    return !noMoreInput_ && !input_;
   }
 
   void addInput(RowVectorPtr input) override {
     input_ = std::move(input);
+  }
+
+  void noMoreInput() override {
+    test_->unregisterTask(operatorCtx_->task());
+    Operator::noMoreInput();
   }
 
   RowVectorPtr getOutput() override {
@@ -533,7 +536,6 @@ class TestingPauser : public Operator {
     // Block for a time quantum evern 10th time.
     if (counter_ % 10 == 0) {
       test_->registerForWakeup(&future_);
-      hasFuture_ = true;
       return nullptr;
     }
     {
@@ -564,17 +566,15 @@ class TestingPauser : public Operator {
 
   BlockingReason isBlocked(ContinueFuture* future) override {
     VELOX_CHECK(!operatorCtx_->driver()->state().isSuspended);
-    if (hasFuture_) {
-      hasFuture_ = false;
+    if (future_.valid()) {
       *future = std::move(future_);
       return BlockingReason::kWaitForConsumer;
     }
     return BlockingReason::kNotBlocked;
   }
 
-  void finish() override {
-    test_->unregisterTask(operatorCtx_->task());
-    Operator::finish();
+  bool isFinished() override {
+    return noMoreInput_ && input_ == nullptr;
   }
 
  private:
@@ -582,17 +582,17 @@ class TestingPauser : public Operator {
     // NOLINT
     std::this_thread::sleep_for(std::chrono::milliseconds(units));
   }
+
   // The DriverTest under which this is running. Used for global context.
   DriverTest* test_;
+
   // Mutex to serialize the pause/restart exercise so that only one instance
   // does this at a time.
   static std::mutex pauseMutex_;
 
-  // Counter deciding
-  // the next action in getOutput().
+  // Counter deciding the next action in getOutput().
   int32_t counter_;
-  bool hasFuture_{false};
-  ContinueFuture future_;
+  ContinueFuture future_{ContinueFuture::makeEmpty()};
 };
 
 std::mutex TestingPauser ::pauseMutex_;
@@ -642,7 +642,7 @@ TEST_F(DriverTest, pauserNode) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
   // Run with a fraction of the testing threads fitting in the executor.
-  Driver::testingJoinAndReinitializeExecutor(20);
+  auto executor = std::make_shared<folly::CPUThreadPoolExecutor>(20);
   static std::atomic<int32_t> sequence{0};
   // Use a static variable to pass the test instance to the create
   // function of the testing operator. The testing operator registers
@@ -658,7 +658,8 @@ TEST_F(DriverTest, pauserNode) {
   params.resize(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    params[i].queryCtx = core::QueryCtx::create();
+    params[i].queryCtx = core::QueryCtx::createForTest(
+        std::make_shared<core::MemConfig>(), executor);
     params[i].planNode = makeValuesFilterProject(
         rowType_,
         "m1 % 10 > 0",
@@ -689,7 +690,6 @@ TEST_F(DriverTest, pauserNode) {
     EXPECT_EQ(counters[i], kThreadsPerTask * hits);
     EXPECT_TRUE(stateFutures_.at(i).isReady());
   }
-  Driver::testingJoinAndReinitializeExecutor(10);
 }
 
 int main(int argc, char** argv) {

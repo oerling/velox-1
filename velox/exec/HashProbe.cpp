@@ -166,9 +166,11 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
     return BlockingReason::kNotBlocked;
   }
 
-  auto hashBuildResult = operatorCtx_->task()
-                             ->getHashJoinBridge(planNodeId())
-                             ->tableOrFuture(future);
+  auto hashBuildResult =
+      operatorCtx_->task()
+          ->getHashJoinBridge(
+              operatorCtx_->driverCtx()->splitGroupId, planNodeId())
+          ->tableOrFuture(future);
   if (!hashBuildResult.has_value()) {
     return BlockingReason::kWaitForJoinBuild;
   }
@@ -176,7 +178,7 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
   if (hashBuildResult->antiJoinHasNullKeys) {
     // Anti join with null keys on the build side always returns nothing.
     VELOX_CHECK(isAntiJoin(joinType_));
-    isFinishing_ = true;
+    finished_ = true;
   } else {
     table_ = hashBuildResult->table;
     if (table_->numDistinct() == 0) {
@@ -184,7 +186,7 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
       // case, hence, we can terminate the pipeline early.
       if (isInnerJoin(joinType_) || isSemiJoin(joinType_) ||
           isRightJoin(joinType_)) {
-        isFinishing_ = true;
+        finished_ = true;
       }
     } else if (
         (isInnerJoin(joinType_) || isSemiJoin(joinType_)) &&
@@ -225,7 +227,6 @@ void HashProbe::clearDynamicFilters() {
 
 void HashProbe::addInput(RowVectorPtr input) {
   input_ = std::move(input);
-  newInputForLeftJoin_ = isLeftJoin(joinType_);
 
   if (canReplaceWithDynamicFilter_) {
     replacedWithDynamicFilter_ = true;
@@ -240,7 +241,8 @@ void HashProbe::addInput(RowVectorPtr input) {
 
   nonNullRows_.resize(input_->size());
   nonNullRows_.setAll();
-  deselectRowsWithNulls(*input_, keyChannels_, nonNullRows_);
+  deselectRowsWithNulls(
+      *input_, keyChannels_, nonNullRows_, *operatorCtx_->execCtx());
 
   auto getDynamicFilterBuilder = [&](auto i) -> DynamicFilterBuilder* {
     if (!dynamicFilterBuilders_.empty()) {
@@ -291,9 +293,29 @@ void HashProbe::addInput(RowVectorPtr input) {
     }
     return;
   }
-  lookup_->hits.resize(lookup_->rows.back() + 1);
-  table_->joinProbe(*lookup_);
-  results_.reset(*lookup_);
+  passingInputRowsInitialized_ = false;
+  if (isLeftJoin(joinType_)) {
+    // Make sure to allocate an entry in 'hits' for every input row to allow for
+    // including rows without a match in the output. Also, make sure to
+    // initialize all 'hits' to nullptr as HashTable::joinProbe will only
+    // process activeRows_.
+    auto numInput = input_->size();
+    auto& hits = lookup_->hits;
+    hits.resize(numInput);
+    std::fill(hits.data(), hits.data() + numInput, nullptr);
+    table_->joinProbe(*lookup_);
+
+    // Update lookup_->rows to include all input rows, not just activeRows_ as
+    // we need to include all rows in the output.
+    auto& rows = lookup_->rows;
+    rows.resize(numInput);
+    std::iota(rows.begin(), rows.end(), 0);
+    results_.reset(*lookup_);
+  } else {
+    lookup_->hits.resize(lookup_->rows.back() + 1);
+    table_->joinProbe(*lookup_);
+    results_.reset(*lookup_);
+  }
 }
 
 namespace {
@@ -344,29 +366,19 @@ void HashProbe::fillOutput(vector_size_t size) {
   for (auto projection : identityProjections_) {
     // Load input vector if it is being split into multiple batches. It is not
     // safe to wrap unloaded LazyVector into two different dictionaries.
-    auto inputChild = size == outputRows_.size()
-        ? input_->loadedChildAt(projection.inputChannel)
-        : input_->childAt(projection.inputChannel);
+    ensureLoadedIfNotAtEnd(projection.inputChannel);
+    auto inputChild = input_->childAt(projection.inputChannel);
 
     output_->childAt(projection.outputChannel) =
         wrapChild(size, rowNumberMapping_, inputChild);
   }
 
-  if (newInputForLeftJoin_) {
-    // populate build-side columns of the output with nulls
-    for (const auto& projection : tableResultProjections_) {
-      output_->childAt(projection.outputChannel) =
-          BaseVector::createNullConstant(
-              outputType_->childAt(projection.outputChannel), size, pool());
-    }
-  } else {
-    extractColumns(
-        table_.get(),
-        folly::Range<char**>(outputRows_.data(), size),
-        tableResultProjections_,
-        pool(),
-        output_);
-  }
+  extractColumns(
+      table_.get(),
+      folly::Range<char**>(outputRows_.data(), size),
+      tableResultProjections_,
+      pool(),
+      output_);
 }
 
 RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
@@ -404,8 +416,15 @@ RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
 RowVectorPtr HashProbe::getOutput() {
   clearIdentityProjectedOutput();
   if (!input_) {
-    if (isFinishing_ && isRightJoin(joinType_)) {
-      return getNonMatchingOutputForRightJoin();
+    if (noMoreInput_ && isRightJoin(joinType_)) {
+      auto output = getNonMatchingOutputForRightJoin();
+      if (output == nullptr) {
+        finished_ = true;
+      }
+      return output;
+    }
+    if (noMoreInput_) {
+      finished_ = true;
     }
     return nullptr;
   }
@@ -428,7 +447,7 @@ RowVectorPtr HashProbe::getOutput() {
   // of input they produce zero or 1 row of output. Therefore, we can process
   // each batch of input in one go.
   auto outputBatchSize =
-      (isSemiOrAntiJoin || newInputForLeftJoin_) ? inputSize : outputBatchSize_;
+      (isSemiOrAntiJoin || emptyBuildSide) ? inputSize : outputBatchSize_;
   auto mapping =
       initializeRowNumberMapping(rowNumberMapping_, outputBatchSize, pool());
   outputRows_.resize(outputBatchSize);
@@ -452,25 +471,11 @@ RowVectorPtr HashProbe::getOutput() {
         }
       }
     } else {
-      if (newInputForLeftJoin_) {
-        // Collect probe rows with no match.
-        for (auto i = 0; i < inputSize; i++) {
-          if (!activeRows_.isValid(i) || !lookup_->hits[i]) {
-            mapping[numOut] = i;
-            ++numOut;
-          }
-        }
-        if (!numOut) {
-          newInputForLeftJoin_ = false;
-        }
-      }
-
-      if (!numOut) {
-        numOut = table_->listJoinResults(
-            results_,
-            mapping,
-            folly::Range(outputRows_.data(), outputRows_.size()));
-      }
+      numOut = table_->listJoinResults(
+          results_,
+          isLeftJoin(joinType_),
+          mapping,
+          folly::Range(outputRows_.data(), outputRows_.size()));
     }
 
     if (!numOut) {
@@ -479,16 +484,14 @@ RowVectorPtr HashProbe::getOutput() {
     }
     VELOX_CHECK_LE(numOut, outputRows_.size());
 
-    if (!newInputForLeftJoin_) {
-      numOut = evalFilter(numOut);
-      if (!numOut) {
-        // the filter was false on all rows.
-        if (isSemiOrAntiJoin) {
-          input_ = nullptr;
-          return nullptr;
-        }
-        continue;
+    numOut = evalFilter(numOut);
+    if (!numOut) {
+      // the filter was false on all rows.
+      if (isSemiOrAntiJoin) {
+        input_ = nullptr;
+        return nullptr;
       }
+      continue;
     }
 
     if (isRightJoin(joinType_)) {
@@ -501,7 +504,6 @@ RowVectorPtr HashProbe::getOutput() {
     if (isSemiOrAntiJoin || emptyBuildSide) {
       input_ = nullptr;
     }
-    newInputForLeftJoin_ = false;
     return output_;
   }
 }
@@ -513,6 +515,7 @@ void HashProbe::fillFilterInput(vector_size_t size) {
   }
   filterInput_->resize(size);
   for (auto projection : filterProbeInputs_) {
+    ensureLoadedIfNotAtEnd(projection.inputChannel);
     filterInput_->childAt(projection.outputChannel) = wrapChild(
         size, rowNumberMapping_, input_->childAt(projection.inputChannel));
   }
@@ -548,7 +551,8 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
       rawMapping[numPassed++] = row;
     };
     for (auto i = 0; i < numRows; ++i) {
-      const bool passed = decodedFilterResult_.valueAt<bool>(i);
+      const bool passed = !decodedFilterResult_.isNullAt(i) &&
+          decodedFilterResult_.valueAt<bool>(i);
       leftJoinTracker_.advance(rawMapping[i], passed, addMiss);
       if (passed) {
         outputRows_[numPassed] = outputRows_[i];
@@ -570,8 +574,34 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
   return numPassed;
 }
 
-void HashProbe::finish() {
-  Operator::finish();
+void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
+  if (core::isSemiJoin(joinType_) || core::isAntiJoin(joinType_) ||
+      results_.atEnd()) {
+    return;
+  }
+  EvalCtx evalCtx(operatorCtx_->execCtx(), nullptr, input_.get());
+  if (!passingInputRowsInitialized_) {
+    passingInputRowsInitialized_ = true;
+    passingInputRows_.resize(input_->size());
+    if (isLeftJoin(joinType_)) {
+      passingInputRows_.setAll();
+    } else {
+      passingInputRows_.clearAll();
+      auto numInput = input_->size();
+      auto hits = lookup_->hits.data();
+      for (auto i = 0; i < numInput; ++i) {
+        if (hits[i]) {
+          passingInputRows_.setValid(i, true);
+        }
+      }
+    }
+    passingInputRows_.updateBounds();
+  }
+  evalCtx.ensureFieldLoaded(channel, passingInputRows_);
+}
+
+void HashProbe::noMoreInput() {
+  Operator::noMoreInput();
   if (isRightJoin(joinType_)) {
     std::vector<VeloxPromise<bool>> promises;
     std::vector<std::shared_ptr<Driver>> peers;
@@ -585,5 +615,9 @@ void HashProbe::finish() {
 
     lastRightJoinProbe_ = true;
   }
+}
+
+bool HashProbe::isFinished() {
+  return finished_;
 }
 } // namespace facebook::velox::exec

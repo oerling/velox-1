@@ -17,6 +17,11 @@
 
 namespace facebook::velox::core {
 
+const SortOrder kAscNullsFirst(true, true);
+const SortOrder kAscNullsLast(true, false);
+const SortOrder kDescNullsFirst(false, true);
+const SortOrder kDescNullsLast(false, false);
+
 namespace {
 const std::vector<std::shared_ptr<const PlanNode>> kEmptySources;
 
@@ -55,6 +60,8 @@ AggregationNode::AggregationNode(
     Step step,
     const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
         groupingKeys,
+    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
+        preGroupedKeys,
     const std::vector<std::string>& aggregateNames,
     const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates,
     const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
@@ -64,6 +71,7 @@ AggregationNode::AggregationNode(
     : PlanNode(id),
       step_(step),
       groupingKeys_(groupingKeys),
+      preGroupedKeys_(preGroupedKeys),
       aggregateNames_(aggregateNames),
       aggregates_(aggregates),
       aggregateMasks_(aggregateMasks),
@@ -80,6 +88,50 @@ AggregationNode::AggregationNode(
   VELOX_CHECK(
       !groupingKeys_.empty() || !aggregates_.empty(),
       "Aggregation must specify either grouping keys or aggregates");
+
+  std::unordered_set<std::string> groupingKeyNames;
+  groupingKeyNames.reserve(groupingKeys.size());
+  for (const auto& key : groupingKeys) {
+    groupingKeyNames.insert(key->name());
+  }
+
+  for (const auto& key : preGroupedKeys) {
+    VELOX_CHECK_EQ(
+        1,
+        groupingKeyNames.count(key->name()),
+        "Pre-grouped key must be one of the grouping keys: {}.",
+        key->name());
+  }
+}
+
+namespace {
+void addKeys(
+    std::stringstream& stream,
+    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& keys) {
+  for (auto i = 0; i < keys.size(); ++i) {
+    if (i > 0) {
+      stream << ", ";
+    }
+    stream << keys[i]->name();
+  }
+}
+} // namespace
+
+void AggregationNode::addDetails(std::stringstream& stream) const {
+  stream << stepName(step_) << " ";
+
+  if (!groupingKeys_.empty()) {
+    stream << "[";
+    addKeys(stream, groupingKeys_);
+    stream << "] ";
+  }
+
+  for (auto i = 0; i < aggregateNames_.size(); ++i) {
+    if (i > 0) {
+      stream << ", ";
+    }
+    stream << aggregateNames_[i] << " := " << aggregates_[i]->toString();
+  }
 }
 
 const std::vector<std::shared_ptr<const PlanNode>>& ValuesNode::sources()
@@ -87,14 +139,30 @@ const std::vector<std::shared_ptr<const PlanNode>>& ValuesNode::sources()
   return kEmptySources;
 }
 
+void ValuesNode::addDetails(std::stringstream& stream) const {
+  vector_size_t totalCount = 0;
+  for (const auto& vector : values_) {
+    totalCount += vector->size();
+  }
+  stream << totalCount << " rows in " << values_.size() << " vectors";
+}
+
 const std::vector<std::shared_ptr<const PlanNode>>& TableScanNode::sources()
     const {
   return kEmptySources;
 }
 
+void TableScanNode::addDetails(std::stringstream& /* stream */) const {
+  // TODO Add connector details.
+}
+
 const std::vector<std::shared_ptr<const PlanNode>>& ExchangeNode::sources()
     const {
   return kEmptySources;
+}
+
+void ExchangeNode::addDetails(std::stringstream& /* stream */) const {
+  // Nothing to add.
 }
 
 UnnestNode::UnnestNode(
@@ -146,6 +214,10 @@ UnnestNode::UnnestNode(
   outputType_ = ROW(std::move(names), std::move(types));
 }
 
+void UnnestNode::addDetails(std::stringstream& stream) const {
+  addKeys(stream, unnestVariables_);
+}
+
 AbstractJoinNode::AbstractJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
@@ -162,49 +234,66 @@ AbstractJoinNode::AbstractJoinNode(
       filter_(std::move(filter)),
       sources_({std::move(left), std::move(right)}),
       outputType_(outputType) {
-  VELOX_CHECK(
-      !leftKeys_.empty(), "HashJoinNode requires at least one join key");
+  VELOX_CHECK(!leftKeys_.empty(), "JoinNode requires at least one join key");
   VELOX_CHECK_EQ(
       leftKeys_.size(),
       rightKeys_.size(),
-      "HashJoinNode requires same number of join keys on probe and build sides");
+      "JoinNode requires same number of join keys on left and right sides");
+  if (isSemiJoin() || isAntiJoin()) {
+    VELOX_CHECK_NULL(filter, "Semi and anti join does not support filter");
+  }
   auto leftType = sources_[0]->outputType();
   for (auto key : leftKeys_) {
     VELOX_CHECK(
         leftType->containsChild(key->name()),
-        "Probe side join key not found in probe side output: {}",
+        "Left side join key not found in left side output: {}",
         key->name());
   }
   auto rightType = sources_[1]->outputType();
   for (auto key : rightKeys_) {
     VELOX_CHECK(
         rightType->containsChild(key->name()),
-        "Build side join key not found in build side output: {}",
+        "Right side join key not found in right side output: {}",
         key->name());
   }
   for (auto i = 0; i < leftKeys_.size(); ++i) {
     VELOX_CHECK_EQ(
         leftKeys_[i]->type()->kind(),
         rightKeys_[i]->type()->kind(),
-        "Join key types on the probe and build sides must match");
+        "Join key types on the left and right sides must match");
   }
   for (auto i = 0; i < outputType_->size(); ++i) {
     auto name = outputType_->nameOf(i);
     if (leftType->containsChild(name)) {
       VELOX_CHECK(
           !rightType->containsChild(name),
-          "Duplicate column name found on join's build and probe sides: {}",
+          "Duplicate column name found on join's left and right sides: {}",
           name);
     } else if (rightType->containsChild(name)) {
       VELOX_CHECK(
           !leftType->containsChild(name),
-          "Duplicate column name found on join's build and probe sides: {}",
+          "Duplicate column name found on join's left and right sides: {}",
           name);
     } else {
       VELOX_FAIL(
-          "Join's output column not found in either probe or build sides: {}",
+          "Join's output column not found in either left or right sides: {}",
           name);
     }
+  }
+}
+
+void AbstractJoinNode::addDetails(std::stringstream& stream) const {
+  stream << joinTypeName(joinType_) << " ";
+
+  for (auto i = 0; i < leftKeys_.size(); ++i) {
+    if (i > 0) {
+      stream << " AND ";
+    }
+    stream << leftKeys_[i]->name() << "=" << rightKeys_[i]->name();
+  }
+
+  if (filter_) {
+    stream << ", filter: " << filter_->toString();
   }
 }
 
@@ -216,6 +305,10 @@ CrossJoinNode::CrossJoinNode(
     : PlanNode(id),
       sources_({std::move(left), std::move(right)}),
       outputType_(std::move(outputType)) {}
+
+void CrossJoinNode::addDetails(std::stringstream& /* stream */) const {
+  // Nothing to add.
+}
 
 AssignUniqueIdNode::AssignUniqueIdNode(
     const PlanNodeId& id,
@@ -230,6 +323,86 @@ AssignUniqueIdNode::AssignUniqueIdNode(
   types.emplace_back(BIGINT());
   outputType_ = ROW(std::move(names), std::move(types));
   uniqueIdCounter_ = std::make_shared<std::atomic_int64_t>();
+}
+
+void AssignUniqueIdNode::addDetails(std::stringstream& /* stream */) const {
+  // Nothing to add.
+}
+
+namespace {
+void addSortingKeys(
+    std::stringstream& stream,
+    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& sortingKeys,
+    const std::vector<SortOrder>& sortingOrders) {
+  for (auto i = 0; i < sortingKeys.size(); ++i) {
+    if (i > 0) {
+      stream << ", ";
+    }
+    stream << sortingKeys[i]->name() << " " << sortingOrders[i].toString();
+  }
+}
+} // namespace
+
+void LocalMergeNode::addDetails(std::stringstream& stream) const {
+  addSortingKeys(stream, sortingKeys_, sortingOrders_);
+}
+
+void TableWriteNode::addDetails(std::stringstream& /* stream */) const {
+  // TODO Add connector details.
+}
+
+void MergeExchangeNode::addDetails(std::stringstream& stream) const {
+  addSortingKeys(stream, sortingKeys_, sortingOrders_);
+}
+
+void LocalPartitionNode::addDetails(std::stringstream& /* stream */) const {
+  // Nothing to add.
+}
+
+void EnforceSingleRowNode::addDetails(std::stringstream& /* stream */) const {
+  // Nothing to add.
+}
+
+void PartitionedOutputNode::addDetails(std::stringstream& stream) const {
+  if (broadcast_) {
+    stream << "BROADCAST";
+  } else if (numPartitions_ == 1) {
+    stream << "SINGLE";
+  } else {
+    stream << "HASH(";
+    addKeys(stream, keys_);
+    stream << ") " << numPartitions_;
+  }
+
+  if (replicateNullsAndAny_) {
+    stream << " replicate nulls and any";
+  }
+}
+
+void TopNNode::addDetails(std::stringstream& stream) const {
+  if (isPartial_) {
+    stream << "PARTIAL ";
+  }
+  stream << count_ << " ";
+
+  addSortingKeys(stream, sortingKeys_, sortingOrders_);
+}
+
+void LimitNode::addDetails(std::stringstream& stream) const {
+  if (isPartial_) {
+    stream << "PARTIAL ";
+  }
+  stream << count_;
+  if (offset_) {
+    stream << " offset " << offset_;
+  }
+}
+
+void OrderByNode::addDetails(std::stringstream& stream) const {
+  if (isPartial_) {
+    stream << "PARTIAL ";
+  }
+  addSortingKeys(stream, sortingKeys_, sortingOrders_);
 }
 
 } // namespace facebook::velox::core

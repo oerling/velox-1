@@ -21,40 +21,11 @@
 #include <folly/container/F14Map.h>
 
 #include "velox/core/Expressions.h"
+#include "velox/expression/DecodedArgs.h"
 #include "velox/expression/EvalCtx.h"
 #include "velox/vector/SimpleVector.h"
 
 namespace facebook::velox::exec {
-
-/// A helper class to decode VectorFunction arguments.
-/// Example:
-///    DecodedArgs decodedArgs(rows, args, context);
-///    auto base = decodedArgs.at(0);
-///    auto exp = decodedArgs.at(1);
-///
-///    rows.applyToSelected([&](int row) {
-///      rawResults[row] =
-///        std::pow(base->valueAt<double>(row), exp->valueAt<double>(row));
-///    });
-///
-class DecodedArgs {
- public:
-  DecodedArgs(
-      const SelectivityVector& rows,
-      const std::vector<VectorPtr>& args,
-      exec::EvalCtx* context) {
-    for (auto& arg : args) {
-      holders_.emplace_back(context, *arg.get(), rows);
-    }
-  }
-
-  DecodedVector* at(int i) const {
-    return const_cast<exec::LocalDecodedVector*>(&holders_[i])->get();
-  }
-
- private:
-  std::vector<exec::LocalDecodedVector> holders_;
-};
 
 class ExprSet;
 class FieldReference;
@@ -254,7 +225,7 @@ class Expr {
       VectorPtr* result);
 
   // Calls the function of 'this' on arguments in
-  // 'inputValues_'. Handles cases of VectorFunction and VectorAdapter.
+  // 'inputValues_'. Handles cases of VectorFunction and SimpleFunction.
   void applyFunction(
       const SelectivityVector& rows,
       EvalCtx* context,

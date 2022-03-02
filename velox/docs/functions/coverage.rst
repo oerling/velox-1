@@ -41,13 +41,17 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(11) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(11) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(11) td:nth-child(7) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(12) td:nth-child(1) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(12) td:nth-child(7) {background-color: #6BA81E;}
     table.coverage tr:nth-child(13) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(13) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(13) td:nth-child(3) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(13) td:nth-child(4) {background-color: #6BA81E;}
     table.coverage tr:nth-child(14) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(14) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(14) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(15) td:nth-child(5) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(16) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(16) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(16) td:nth-child(4) {background-color: #6BA81E;}
     table.coverage tr:nth-child(17) td:nth-child(5) {background-color: #6BA81E;}
@@ -66,6 +70,7 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(22) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(22) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(22) td:nth-child(4) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(22) td:nth-child(5) {background-color: #6BA81E;}
     table.coverage tr:nth-child(22) td:nth-child(7) {background-color: #6BA81E;}
     table.coverage tr:nth-child(23) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(23) td:nth-child(3) {background-color: #6BA81E;}
@@ -78,6 +83,7 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(27) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(27) td:nth-child(4) {background-color: #6BA81E;}
     table.coverage tr:nth-child(27) td:nth-child(7) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(28) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(28) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(28) td:nth-child(5) {background-color: #6BA81E;}
     table.coverage tr:nth-child(29) td:nth-child(2) {background-color: #6BA81E;}
@@ -89,6 +95,7 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(35) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(35) td:nth-child(5) {background-color: #6BA81E;}
     table.coverage tr:nth-child(36) td:nth-child(5) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(37) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(38) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(38) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(38) td:nth-child(3) {background-color: #6BA81E;}
@@ -97,6 +104,7 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(39) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(39) td:nth-child(5) {background-color: #6BA81E;}
     table.coverage tr:nth-child(40) td:nth-child(1) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(40) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(41) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(41) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(41) td:nth-child(7) {background-color: #6BA81E;}
@@ -128,6 +136,7 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(52) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(52) td:nth-child(5) {background-color: #6BA81E;}
     table.coverage tr:nth-child(54) td:nth-child(1) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(54) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(55) td:nth-child(2) {background-color: #6BA81E;}
     table.coverage tr:nth-child(56) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(56) td:nth-child(2) {background-color: #6BA81E;}
@@ -144,7 +153,6 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(60) td:nth-child(7) {background-color: #6BA81E;}
     table.coverage tr:nth-child(61) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(61) td:nth-child(3) {background-color: #6BA81E;}
-    table.coverage tr:nth-child(61) td:nth-child(7) {background-color: #6BA81E;}
     table.coverage tr:nth-child(62) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(62) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(62) td:nth-child(5) {background-color: #6BA81E;}
@@ -154,11 +162,14 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     table.coverage tr:nth-child(63) td:nth-child(7) {background-color: #6BA81E;}
     table.coverage tr:nth-child(64) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(64) td:nth-child(5) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(64) td:nth-child(7) {background-color: #6BA81E;}
     table.coverage tr:nth-child(65) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(65) td:nth-child(5) {background-color: #6BA81E;}
     table.coverage tr:nth-child(66) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(66) td:nth-child(5) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(67) td:nth-child(3) {background-color: #6BA81E;}
     table.coverage tr:nth-child(69) td:nth-child(2) {background-color: #6BA81E;}
+    table.coverage tr:nth-child(70) td:nth-child(1) {background-color: #6BA81E;}
     table.coverage tr:nth-child(70) td:nth-child(2) {background-color: #6BA81E;}
     </style>
 
@@ -180,23 +191,23 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     array_frequency                           degrees                                   :func:`json_extract_scalar`               scale_qdigest                             st_x                                          :func:`bitwise_or_agg`
     array_has_duplicates                      :func:`dow`                               json_format                               :func:`second`                            st_xmax                                       :func:`bool_and`
     :func:`array_intersect`                   :func:`doy`                               json_parse                                sequence                                  st_xmin                                       :func:`bool_or`
-    array_join                                e                                         json_size                                 sha1                                      st_y                                          checksum
-    :func:`array_max`                         :func:`element_at`                        :func:`least`                             sha256                                    st_ymax                                       classification_fall_out
+    :func:`array_join`                        e                                         json_size                                 sha1                                      st_y                                          :func:`checksum`
+    :func:`array_max`                         :func:`element_at`                        :func:`least`                             :func:`sha256`                            st_ymax                                       classification_fall_out
     :func:`array_min`                         :func:`empty_approx_set`                  :func:`length`                            sha512                                    st_ymin                                       classification_miss_rate
     array_normalize                           enum_key                                  levenshtein_distance                      shuffle                                   :func:`strpos`                                classification_precision
-    array_position                            :func:`exp`                               line_interpolate_point                    :func:`sign`                              strrpos                                       classification_recall
+    :func:`array_position`                    :func:`exp`                               line_interpolate_point                    :func:`sign`                              strrpos                                       classification_recall
     array_remove                              expand_envelope                           line_locate_point                         simplify_geometry                         :func:`substr`                                classification_thresholds
     array_sort                                features                                  :func:`ln`                                :func:`sin`                               :func:`tan`                                   convex_hull_agg
     array_sum                                 :func:`filter`                            localtime                                 :func:`slice`                             :func:`tanh`                                  :func:`corr`
     array_union                               flatten                                   localtimestamp                            spatial_partitions                        timezone_hour                                 :func:`count`
     arrays_overlap                            flatten_geometry_collections              :func:`log10`                             :func:`split`                             timezone_minute                               :func:`count_if`
-    :func:`asin`                              :func:`floor`                             :func:`log2`                              :func:`split_part`                        to_base                                       :func:`covar_pop`
+    :func:`asin`                              :func:`floor`                             :func:`log2`                              :func:`split_part`                        :func:`to_base`                               :func:`covar_pop`
     :func:`atan`                              fnv1_32                                   :func:`lower`                             split_to_map                              :func:`to_base64`                             :func:`covar_samp`
     :func:`atan2`                             fnv1_64                                   :func:`lpad`                              split_to_multimap                         to_base64url                                  differential_entropy
     bar                                       fnv1a_32                                  :func:`ltrim`                             spooky_hash_v2_32                         to_big_endian_32                              entropy
     beta_cdf                                  fnv1a_64                                  :func:`map`                               spooky_hash_v2_64                         to_big_endian_64                              evaluate_classifier_predictions
     bing_tile                                 format_datetime                           :func:`map_concat`                        :func:`sqrt`                              to_geometry                                   :func:`every`
-    bing_tile_at                              from_base                                 :func:`map_entries`                       st_area                                   :func:`to_hex`                                geometric_mean
+    bing_tile_at                              :func:`from_base`                         :func:`map_entries`                       st_area                                   :func:`to_hex`                                geometric_mean
     bing_tile_children                        :func:`from_base64`                       :func:`map_filter`                        st_asbinary                               to_ieee754_32                                 geometry_union_agg
     bing_tile_coordinates                     from_base64url                            map_from_entries                          st_astext                                 to_ieee754_64                                 histogram
     bing_tile_parent                          from_big_endian_32                        :func:`map_keys`                          st_boundary                               to_iso8601                                    khyperloglog_agg
@@ -205,10 +216,10 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     bing_tile_zoom_level                      from_ieee754_32                           map_zip_with                              st_contains                               :func:`to_unixtime`                           learn_libsvm_classifier
     bing_tiles_around                         from_ieee754_64                           :func:`md5`                               st_convexhull                             :func:`to_utf8`                               learn_libsvm_regressor
     binomial_cdf                              from_iso8601_date                         merge_hll                                 st_coorddim                               :func:`transform`                             learn_regressor
-    bit_count                                 from_iso8601_timestamp                    merge_khll                                st_crosses                                transform_keys                                make_set_digest
+    :func:`bit_count`                         from_iso8601_timestamp                    merge_khll                                st_crosses                                transform_keys                                make_set_digest
     :func:`bitwise_and`                       :func:`from_unixtime`                     :func:`millisecond`                       st_difference                             transform_values                              :func:`map_agg`
     :func:`bitwise_arithmetic_shift_right`    from_utf8                                 :func:`minute`                            st_dimension                              :func:`trim`                                  map_union
-    :func:`bitwise_left_shift`                geometry_as_geojson                       mod                                       st_disjoint                               truncate                                      map_union_sum
+    :func:`bitwise_left_shift`                geometry_as_geojson                       :func:`mod`                               st_disjoint                               truncate                                      map_union_sum
     :func:`bitwise_logical_shift_right`       geometry_from_geojson                     :func:`month`                             st_distance                               typeof                                        :func:`max`
     :func:`bitwise_not`                       geometry_invalid_reason                   multimap_from_entries                     st_endpoint                               uniqueness_distribution                       :func:`max_by`
     :func:`bitwise_or`                        geometry_nearest_points                   myanmar_font_encoding                     st_envelope                               :func:`upper`                                 :func:`merge`
@@ -222,21 +233,21 @@ Here is a list of all scalar and aggregate Presto functions with functions that 
     :func:`ceil`                              hmac_md5                                  :func:`parse_datetime`                    st_geomfrombinary                         :func:`url_extract_protocol`                  regr_intercept
     :func:`ceiling`                           hmac_sha1                                 parse_duration                            st_interiorringn                          :func:`url_extract_query`                     regr_slope
     chi_squared_cdf                           hmac_sha256                               parse_presto_data_size                    st_interiorrings                          value_at_quantile                             set_agg
-    :func:`chr`                               hmac_sha512                               pi                                        st_intersection                           values_at_quantiles                           set_union
+    :func:`chr`                               hmac_sha512                               :func:`pi`                                st_intersection                           values_at_quantiles                           set_union
     classify                                  :func:`hour`                              poisson_cdf                               st_intersects                             week                                          skewness
     :func:`codepoint`                         :func:`infinity`                          :func:`pow`                               st_isclosed                               week_of_year                                  spatial_partitioning
     color                                     intersection_cardinality                  :func:`power`                             st_isempty                                weibull_cdf                                   :func:`stddev`
     combinations                              inverse_beta_cdf                          quantile_at_value                         st_isring                                 :func:`width_bucket`                          :func:`stddev_pop`
     :func:`concat`                            inverse_binomial_cdf                      :func:`quarter`                           st_issimple                               wilson_interval_lower                         :func:`stddev_samp`
     :func:`contains`                          inverse_cauchy_cdf                        :func:`radians`                           st_isvalid                                wilson_interval_upper                         :func:`sum`
-    :func:`cos`                               inverse_chi_squared_cdf                   :func:`rand`                              st_length                                 word_stem                                     :func:`var_pop`
-    :func:`cosh`                              inverse_normal_cdf                        :func:`random`                            st_linefromtext                           :func:`xxhash64`                              :func:`var_samp`
-    cosine_similarity                         inverse_poisson_cdf                       :func:`reduce`                            st_linestring                             :func:`year`                                  :func:`variance`
-    crc32                                     inverse_weibull_cdf                       :func:`regexp_extract`                    st_multipoint                             :func:`year_of_week`
+    :func:`cos`                               inverse_chi_squared_cdf                   :func:`rand`                              st_length                                 word_stem                                     tdigest_agg
+    :func:`cosh`                              inverse_normal_cdf                        :func:`random`                            st_linefromtext                           :func:`xxhash64`                              :func:`var_pop`
+    cosine_similarity                         inverse_poisson_cdf                       :func:`reduce`                            st_linestring                             :func:`year`                                  :func:`var_samp`
+    crc32                                     inverse_weibull_cdf                       :func:`regexp_extract`                    st_multipoint                             :func:`year_of_week`                          :func:`variance`
     current_date                              ip_prefix                                 :func:`regexp_extract_all`                st_numgeometries                          :func:`yow`
     current_time                              ip_subnet_max                             :func:`regexp_like`                       st_numinteriorring                        :func:`zip`
-    current_timestamp                         ip_subnet_min                             regexp_replace                            st_numpoints                              zip_with
+    current_timestamp                         ip_subnet_min                             :func:`regexp_replace`                    st_numpoints                              zip_with
     current_timezone                          ip_subnet_range                           regexp_split                              st_overlaps
     date                                      :func:`is_finite`                         regress                                   st_point
-    date_add                                  :func:`is_infinite`                       reidentification_potential                st_pointn
+    :func:`date_add`                          :func:`is_infinite`                       reidentification_potential                st_pointn
     ========================================  ========================================  ========================================  ========================================  ========================================  ==  ========================================

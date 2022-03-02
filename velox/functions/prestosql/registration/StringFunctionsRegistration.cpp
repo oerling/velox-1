@@ -15,8 +15,10 @@
  */
 #include "velox/functions/Registerer.h"
 #include "velox/functions/lib/Re2Functions.h"
+#include "velox/functions/prestosql/RegexpReplace.h"
 #include "velox/functions/prestosql/SplitPart.h"
 #include "velox/functions/prestosql/StringFunctions.h"
+#include "velox/functions/prestosql/types/JsonType.h"
 
 namespace facebook::velox::functions {
 
@@ -56,6 +58,7 @@ void registerSimpleFunctions() {
   // Register hash functions.
   registerFunction<XxHash64Function, Varbinary, Varbinary>({"xxhash64"});
   registerFunction<Md5Function, Varbinary, Varbinary>({"md5"});
+  registerFunction<Sha256Function, Varbinary, Varbinary>({"sha256"});
 
   registerFunction<ToHexFunction, Varchar, Varbinary>({"to_hex"});
   registerFunction<FromHexFunction, Varbinary, Varchar>({"from_hex"});
@@ -65,6 +68,10 @@ void registerSimpleFunctions() {
 
   registerFunction<SplitPart, Varchar, Varchar, Varchar, int64_t>(
       {"split_part"});
+  registerFunction<Re2RegexpReplacePresto, Varchar, Varchar, Varchar>(
+      {"regexp_replace"});
+  registerFunction<Re2RegexpReplacePresto, Varchar, Varchar, Varchar, Varchar>(
+      {"regexp_replace"});
 }
 } // namespace
 
@@ -87,5 +94,7 @@ void registerStringFunctions() {
       "regexp_extract_all", re2ExtractAllSignatures(), makeRe2ExtractAll);
   exec::registerStatefulVectorFunction(
       "regexp_like", re2SearchSignatures(), makeRe2Search);
+
+  registerType("json", std::make_unique<const JsonTypeFactories>());
 }
 } // namespace facebook::velox::functions
