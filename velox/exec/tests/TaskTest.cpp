@@ -31,8 +31,9 @@ TEST_F(TaskTest, splitGroup) {
       0,
       100);
   core::PlanNodeId planNodeId{"0"};
-  auto queryCtx = std::make_shared<core::QueryCtx>();
-  exec::Task task("0", nullptr, 0, queryCtx);
+  auto queryCtx = core::QueryCtx::createForTest();
+  core::PlanFragment emptyPlanFragment;
+  exec::Task task("0", std::move(emptyPlanFragment), 0, std::move(queryCtx));
 
   // This is the set of completed groups we expect.
   std::unordered_set<int32_t> completedSplitGroups;

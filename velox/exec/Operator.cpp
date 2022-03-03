@@ -45,6 +45,12 @@ std::unique_ptr<Operator> Operator::fromPlanNode(
   return nullptr;
 }
 
+// static
+void Operator::registerOperator(
+    std::unique_ptr<PlanNodeTranslator> translator) {
+  translators().emplace_back(std::move(translator));
+}
+
 std::optional<uint32_t> Operator::maxDrivers(
     const std::shared_ptr<const core::PlanNode>& planNode) {
   for (auto& translator : translators()) {
@@ -184,7 +190,8 @@ std::string Operator::toString() {
   std::stringstream out;
   if (auto task = operatorCtx_->task()) {
     auto driverCtx = operatorCtx_->driverCtx();
-    out << "<" << task->taskId() << ":" << driverCtx->pipelineId << "."
+    out << stats_.operatorType << "(" << stats_.operatorId << ")<"
+        << task->taskId() << ":" << driverCtx->pipelineId << "."
         << driverCtx->driverId << " " << this;
   } else {
     out << "<Terminated, no task>";

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -99,6 +99,9 @@ class ProjectCmdBase(SubCmd):
             ctx_gen.set_value_for_project(args.project, "test", "on")
         else:
             ctx_gen.set_value_for_project(args.project, "test", "off")
+
+        if opts.shared_libs:
+            ctx_gen.set_value_for_all_projects("shared_libs", "on")
 
         loader = ManifestLoader(opts, ctx_gen)
         self.process_project_dir_arguments(args, loader)
@@ -581,7 +584,10 @@ class BuildCmd(ProjectCmdBase):
                 elif args.verbose:
                     print("found good %s" % built_marker)
 
-            install_dirs.append(inst_dir)
+            # Paths are resolved from front. We prepend rather than append as
+            # the last project in topo order is the project itself, which
+            # should be first in the path, then its deps and so on.
+            install_dirs.insert(0, inst_dir)
 
     def compute_dep_change_status(self, m, built_marker, loader):
         reconfigure = False
@@ -589,7 +595,7 @@ class BuildCmd(ProjectCmdBase):
         st = os.lstat(built_marker)
 
         ctx = loader.ctx_gen.get_context(m.name)
-        dep_list = sorted(m.get_section_as_dict("dependencies", ctx).keys())
+        dep_list = m.get_dependencies(ctx)
         for dep in dep_list:
             if reconfigure and sources_changed:
                 break
@@ -705,6 +711,12 @@ class BuildCmd(ProjectCmdBase):
                 "when compiling the current project and all its deps. "
                 'e.g: \'{"CMAKE_CXX_FLAGS": "--bla"}\''
             ),
+        )
+        parser.add_argument(
+            "--shared-libs",
+            help="Build shared libraries if possible",
+            action="store_true",
+            default=False,
         )
 
 
