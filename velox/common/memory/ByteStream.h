@@ -56,7 +56,7 @@ class OutputStream {
     return out_->tellp();
   }
 
-  virtual void seekp(std::streampos pos) {
+  void seekp(std::streampos pos) {
     out_->seekp(pos);
   }
 
