@@ -59,7 +59,7 @@ class OutputStream {
       : listener_(listener) {}
 
   virtual ~OutputStream() = default;
-  
+
   virtual void write(const char* s, std::streamsize count) = 0;
 
   virtual std::streampos tellp() const = 0;

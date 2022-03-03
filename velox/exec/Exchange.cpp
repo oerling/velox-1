@@ -134,7 +134,8 @@ class LocalExchangeSource : public ExchangeSource {
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back(SerializedPage::copyFromVectorStreamGroup(group.get()));
+            pages.push_back(
+                SerializedPage::copyFromVectorStreamGroup(group.get()));
             group = nullptr;
           }
           int64_t ackSequence;

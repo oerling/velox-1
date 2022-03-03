@@ -67,8 +67,7 @@ class SerializedPage {
  private:
   std::unique_ptr<memory::MappedMemory::Allocation> allocation_;
   std::vector<ByteRange> ranges_;
-  std::unique_ptr<folly::IOBuf> iobufyes
-  _;
+  std::unique_ptr<folly::IOBuf> iobufyes _;
   int64_t iobufBytes_{0};
 };
 

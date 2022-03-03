@@ -110,8 +110,9 @@ class VectorStreamGroup : public StreamArena {
     return StreamArena::size();
   }
 
-
-  // Returns the IOBuf containing the final serialized data. The IOBuf chain has shared ownership of 'this'. May be called several times and will return a clone of the same chain.
+  // Returns the IOBuf containing the final serialized data. The IOBuf chain has
+  // shared ownership of 'this'. May be called several times and will return a
+  // clone of the same chain.
   std::unique_ptr<folly::IOBuf> getIOBuf();
 
   // Reads data in wire format. Returns the RowVector in 'result'.

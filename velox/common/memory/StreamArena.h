@@ -25,7 +25,7 @@ struct ByteRange;
 // held are released as a unit when the destination acknowledges
 // receipt. Another use case is a hash table partition that holds
 // complex types as serialized rows.
-  class StreamArena {
+class StreamArena {
  public:
   static constexpr int32_t kVectorStreamOwner = 1;
 
@@ -60,8 +60,10 @@ struct ByteRange;
   // by new allocations from the same MappedMemory. After this, the
   // individually serialized streams are dropped and 'this' is left
   // holding the memory for the final message.
-  void resetAllocations(std::vector<memory::MappedMemory::Allocation>& allocations, std::vector<std::string>& tiny);
-  
+  void resetAllocations(
+      std::vector<memory::MappedMemory::Allocation>& allocations,
+      std::vector<std::string>& tiny);
+
  private:
   memory::MappedMemory* mappedMemory_;
   // All allocations.

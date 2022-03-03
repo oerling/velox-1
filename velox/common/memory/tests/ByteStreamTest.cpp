@@ -45,7 +45,7 @@ class ByteStreamTest : public testing::TestWithParam<bool> {
 
 TEST_F(ByteStreamTest, basic) {
   auto out =
-    std::make_unique<IOBufOutputStream>(*mmapAllocator_, nullptr, 10000);
+      std::make_unique<IOBufOutputStream>(*mmapAllocator_, nullptr, 10000);
   std::stringstream referenceSStream;
   auto reference = std::make_unique<OStreamOutputStream>(&referenceSStream);
   for (auto i = 0; i < 100; ++i) {
@@ -85,7 +85,7 @@ TEST_F(ByteStreamTest, basic) {
   out = nullptr;
   // The memory stays allocated since shared ownership in 'iobuf' chain.
   EXPECT_EQ(numPages, mmapAllocator_->numAllocated());
-    
+
   iobuf = nullptr;
   // We expect dropping the stream and the iobuf frees the backing memory.
   EXPECT_EQ(0, mmapAllocator_->numAllocated());
