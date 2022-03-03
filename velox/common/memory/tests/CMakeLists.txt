@@ -22,7 +22,6 @@ CompactDoubleListTest.cpp
   MemoryPoolTest.cpp
   MemoryUsageTest.cpp
   MemoryUsageTrackerTest.cpp
-  ArenaTest.cpp
   MappedMemoryTest.cpp)
 
 target_link_libraries(
