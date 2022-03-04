@@ -49,7 +49,7 @@ SerializedPage::SerializedPage(
 SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
     : iobuf_(std::move(iobuf)) {
   for (auto& buf : *iobuf_) {
-    auto bufSize = buf.size();
+    int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
