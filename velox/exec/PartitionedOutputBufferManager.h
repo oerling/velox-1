@@ -264,7 +264,8 @@ class PartitionedOutputBufferManager {
     return checksumListenerFactory_ ? checksumListenerFactory_() : nullptr;
   }
 
-  void setChecksumListenerFactory(std::function<std::unique_ptr<OutputStreamListener>()> factory) {
+  void setChecksumListenerFactory(
+      std::function<std::unique_ptr<OutputStreamListener>()> factory) {
     checksumListenerFactory_ = factory;
   }
 

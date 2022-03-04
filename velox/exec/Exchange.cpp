@@ -17,9 +17,9 @@
 #include "velox/exec/PartitionedOutputBufferManager.h"
 
 namespace facebook::velox::exec {
-  
+
 SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-  : iobuf_(std::move(iobuf)) {
+    : iobuf_(std::move(iobuf)) {
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
