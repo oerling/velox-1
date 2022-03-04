@@ -348,6 +348,10 @@ class RowContainer {
     }
   }
 
+  memory::MappedMemory* mappedMemory() const {
+    return stringAllocator_.mappedMemory();
+  }
+
   // Checks that row and free row counts match and that free list
   // membership is consistent with free flag.
   void checkConsistency();
@@ -735,6 +739,7 @@ class RowContainer {
   // needed to manage memory of accumulators and the executable
   // aggregates. Store the metadata here.
   const std::vector<std::unique_ptr<Aggregate>>& aggregates_;
+  bool usesExternalMemory_ = false;
   // Types of non-aggregate columns. Keys first. Corresponds pairwise
   // to 'typeKinds_' and 'rowColumns_'.
   std::vector<TypePtr> types_;

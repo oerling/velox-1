@@ -55,15 +55,14 @@ VectorPtr getChildBySubfield(
         ? container->type()->as<TypeKind::ROW>()
         : *parentType;
     auto childIdx = rowType.getChildIdx(nestedField->name());
-    auto child = rowVector->childAt(childIdx);
+    auto child = container->childAt(childIdx);
 
     if (i == path.size() - 1) {
       return child;
     }
     VELOX_CHECK(child->typeKind() == TypeKind::ROW);
     container = child->as<RowVector>();
-    parentType =
-        dynamic_cast<const RowType*>(parentType->childAt(childIdx).get());
+    parentType = dynamic_cast<const RowType*>(rowType.childAt(childIdx).get());
     VELOX_CHECK_NOT_NULL(
         parentType,
         "Expecting child to be row type",
@@ -97,8 +96,16 @@ std::unique_ptr<Filter> ColumnStats<float>::makeRangeFilter(
   }
   float lower = valueAtPct(startPct);
   float upper = valueAtPct(startPct + selectPct);
+  bool lowerUnbounded = std::isnan(lower);
+  bool upperUnbounded = std::isnan(upper);
   return std::make_unique<velox::common::FloatRange>(
-      lower, false, false, upper, false, false, selectPct > 25);
+      lower,
+      lowerUnbounded,
+      false,
+      upper,
+      upperUnbounded,
+      false,
+      selectPct > 25);
 }
 
 template <>
@@ -110,8 +117,16 @@ std::unique_ptr<Filter> ColumnStats<double>::makeRangeFilter(
   }
   double lower = valueAtPct(startPct);
   double upper = valueAtPct(startPct + selectPct);
+  bool lowerUnbounded = std::isnan(lower);
+  bool upperUnbounded = std::isnan(upper);
   return std::make_unique<velox::common::DoubleRange>(
-      lower, false, false, upper, false, false, selectPct > 25);
+      lower,
+      lowerUnbounded,
+      false,
+      upper,
+      upperUnbounded,
+      false,
+      selectPct > 25);
 }
 
 template <>
@@ -213,6 +228,16 @@ std::string FilterGenerator::specsToString(
   return out.str();
 }
 
+SubfieldFilters FilterGenerator::cloneSubfieldFilters(
+    const SubfieldFilters& src) {
+  SubfieldFilters copy;
+  for (const auto& sf : src) {
+    copy[Subfield(sf.first.toString())] = sf.second->clone();
+  }
+
+  return copy;
+}
+
 void FilterGenerator::collectFilterableSubFields(
     const RowType* rowType,
     std::vector<std::string>& subFields) {
@@ -243,6 +268,11 @@ std::vector<std::string> FilterGenerator::makeFilterables(
   std::vector<std::string> filterables;
   filterables.reserve(rowType_->size());
   collectFilterableSubFields(rowType_.get(), filterables);
+  if (filterables.empty()) {
+    // It could be empty if none of the columns is filterable, for example,
+    // there are only (or mix of) map, array columns.
+    return filterables;
+  }
   uint32_t countTotal = filterables.size();
   uint32_t countSelect = std::min(count, countTotal);
   if (countSelect == 0) {

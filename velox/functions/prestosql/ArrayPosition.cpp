@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <folly/CPortability.h>
+
 #include "velox/expression/Expr.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/vector/DecodedVector.h"
@@ -37,6 +39,57 @@ void applyTypedFirstMatch(
   auto rawOffsets = baseArray->rawOffsets();
   auto indices = arrayDecoded.indices();
 
+  if (elementsDecoded.isIdentityMapping() && !elementsDecoded.mayHaveNulls() &&
+      searchDecoded.isConstantMapping()) {
+    // Fast path for array vector of boolean.
+    if constexpr (std::is_same_v<bool, T>) {
+      auto rawElements = elementsDecoded.values<uint64_t>();
+
+      auto search = bits::isBitSet(searchDecoded.values<uint64_t>(), 0);
+
+      rows.applyToSelected([&](auto row) {
+        auto size = rawSizes[indices[row]];
+        auto offset = rawOffsets[indices[row]];
+
+        int i;
+        for (i = 0; i < size; i++) {
+          if (bits::isBitSet(rawElements, offset + i) == search) {
+            flatResult.set(row, i + 1);
+            break;
+          }
+        }
+        if (i == size) {
+          flatResult.set(row, 0);
+        }
+      });
+      return;
+    }
+
+    // Fast path for array vector of types other than boolean.
+    auto rawElements = elementsDecoded.values<T>();
+
+    auto search = searchDecoded.valueAt<T>(0);
+
+    rows.applyToSelected([&](auto row) {
+      auto size = rawSizes[indices[row]];
+      auto offset = rawOffsets[indices[row]];
+
+      int i;
+      for (i = 0; i < size; i++) {
+        if (rawElements[offset + i] == search) {
+          flatResult.set(row, i + 1);
+          break;
+        }
+      }
+      if (i == size) {
+        flatResult.set(row, 0);
+      }
+    });
+    return;
+  }
+
+  // Regular path where no assumption is made about the encodings of
+  // searchDecoded and elementsDecoded.
   rows.applyToSelected([&](auto row) {
     auto size = rawSizes[indices[row]];
     auto offset = rawOffsets[indices[row]];
@@ -96,6 +149,22 @@ void applyTypedFirstMatch(
   });
 }
 
+FOLLY_ALWAYS_INLINE void getLoopBoundary(
+    const int* rawSizes,
+    const int* indices,
+    vector_size_t row,
+    int64_t& instance,
+    int& startIndex,
+    int& endIndex,
+    int& step) {
+  auto size = rawSizes[indices[row]];
+
+  startIndex = instance > 0 ? 0 : size - 1;
+  endIndex = instance > 0 ? size : -1;
+  step = instance > 0 ? 1 : -1;
+  instance = std::abs(instance);
+}
+
 // Find the index of the instance-th match for primitive types.
 template <
     TypeKind kind,
@@ -114,8 +183,77 @@ void applyTypedWithInstance(
   auto rawOffsets = baseArray->rawOffsets();
   auto indices = arrayDecoded.indices();
 
+  int startIndex;
+  int endIndex;
+  int step;
+
+  if (elementsDecoded.isIdentityMapping() && !elementsDecoded.mayHaveNulls() &&
+      searchDecoded.isConstantMapping() &&
+      instanceDecoded.isConstantMapping()) {
+    auto instance = instanceDecoded.valueAt<int64_t>(0);
+    VELOX_USER_CHECK_NE(
+        instance,
+        0,
+        "array_position cannot take a 0-valued instance argument.");
+
+    // Fast path for array vector of boolean.
+    if constexpr (std::is_same_v<bool, T>) {
+      auto rawElements = elementsDecoded.values<uint64_t>();
+
+      auto search = bits::isBitSet(searchDecoded.values<uint64_t>(), 0);
+
+      rows.applyToSelected([&](auto row) {
+        auto offset = rawOffsets[indices[row]];
+        getLoopBoundary(
+            rawSizes, indices, row, instance, startIndex, endIndex, step);
+
+        int i;
+        for (i = startIndex; i != endIndex; i += step) {
+          if (bits::isBitSet(rawElements, offset + i) == search) {
+            --instance;
+            if (instance == 0) {
+              flatResult.set(row, i + 1);
+              break;
+            }
+          }
+        }
+        if (i == endIndex) {
+          flatResult.set(row, 0);
+        }
+      });
+      return;
+    }
+
+    // Fast path for array vector of types other than boolean.
+    auto rawElements = elementsDecoded.values<T>();
+
+    auto search = searchDecoded.valueAt<T>(0);
+
+    rows.applyToSelected([&](auto row) {
+      auto offset = rawOffsets[indices[row]];
+      getLoopBoundary(
+          rawSizes, indices, row, instance, startIndex, endIndex, step);
+
+      int i;
+      for (i = startIndex; i != endIndex; i += step) {
+        if (rawElements[offset + i] == search) {
+          --instance;
+          if (instance == 0) {
+            flatResult.set(row, i + 1);
+            break;
+          }
+        }
+      }
+      if (i == endIndex) {
+        flatResult.set(row, 0);
+      }
+    });
+    return;
+  }
+
+  // Regular path where no assumption is made about the encodings of
+  // searchDecoded and elementsDecoded.
   rows.applyToSelected([&](auto row) {
-    auto size = rawSizes[indices[row]];
     auto offset = rawOffsets[indices[row]];
     auto search = searchDecoded.valueAt<T>(row);
 
@@ -125,10 +263,8 @@ void applyTypedWithInstance(
         0,
         "array_position cannot take a 0-valued instance argument.");
 
-    int startIndex = instance > 0 ? 0 : size - 1;
-    int endIndex = instance > 0 ? size : -1;
-    int step = instance > 0 ? 1 : -1;
-    instance = std::abs(instance);
+    getLoopBoundary(
+        rawSizes, indices, row, instance, startIndex, endIndex, step);
 
     int i;
     for (i = startIndex; i != endIndex; i += step) {
@@ -168,8 +304,11 @@ void applyTypedWithInstance(
   auto searchBase = searchDecoded.base();
   auto searchIndices = searchDecoded.indices();
 
+  int startIndex;
+  int endIndex;
+  int step;
+
   rows.applyToSelected([&](auto row) {
-    auto size = rawSizes[indices[row]];
     auto offset = rawOffsets[indices[row]];
     auto searchIndex = searchIndices[row];
 
@@ -179,10 +318,8 @@ void applyTypedWithInstance(
         0,
         "array_position cannot take a 0-valued instance argument.");
 
-    int startIndex = instance > 0 ? 0 : size - 1;
-    int endIndex = instance > 0 ? size : -1;
-    int step = instance > 0 ? 1 : -1;
-    instance = std::abs(instance);
+    getLoopBoundary(
+        rawSizes, indices, row, instance, startIndex, endIndex, step);
 
     int i;
     for (i = startIndex; i != endIndex; i += step) {

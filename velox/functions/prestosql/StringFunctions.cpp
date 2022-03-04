@@ -26,18 +26,6 @@
 namespace facebook::velox::functions {
 
 using namespace stringCore;
-namespace {
-
-/// Check if the input vector's  buffers are single referenced
-bool hasSingleReferencedBuffers(const FlatVector<StringView>* vec) {
-  for (auto& buffer : vec->stringBuffers()) {
-    if (buffer->refCount() > 1) {
-      return false;
-    }
-  }
-  return true;
-};
-} // namespace
 
 namespace {
 /**
@@ -55,7 +43,7 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
         const DecodedVector* decodedInput,
         FlatVector<StringView>* results) {
       rows.applyToSelected([&](int row) {
-        auto proxy = exec::StringProxy<FlatVector<StringView>>(results, row);
+        auto proxy = exec::StringWriter<>(results, row);
         if constexpr (isLower) {
           stringImpl::lower<isAscii>(
               proxy, decodedInput->valueAt<StringView>(row));
@@ -73,12 +61,11 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
       DecodedVector* decodedInput,
       FlatVector<StringView>* results) const {
     rows.applyToSelected([&](int row) {
-      auto proxy =
-          exec::StringProxy<FlatVector<StringView>, true /*reuseInput*/>(
-              results,
-              row,
-              decodedInput->valueAt<StringView>(row) /*reusedInput*/,
-              true /*inPlace*/);
+      auto proxy = exec::StringWriter<true /*reuseInput*/>(
+          results,
+          row,
+          decodedInput->valueAt<StringView>(row) /*reusedInput*/,
+          true /*inPlace*/);
       if constexpr (isLower) {
         stringImpl::lowerAsciiInPlace(proxy);
       } else {
@@ -109,21 +96,16 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
 
     auto ascii = isAscii(inputStringsVector, rows);
 
-    bool inPlace = ascii &&
-        (inputStringsVector->encoding() == VectorEncoding::Simple::FLAT) &&
-        hasSingleReferencedBuffers(
-                       args.at(0).get()->as<FlatVector<StringView>>());
+    bool tryInplace = ascii &&
+        (inputStringsVector->encoding() == VectorEncoding::Simple::FLAT);
+
+    bool inputVectorMoved =
+        prepareFlatResultsVector(result, rows, context, args.at(0));
+
+    bool inPlace = tryInplace && inputVectorMoved;
 
     if (inPlace) {
-      bool inputVectorMoved =
-          prepareFlatResultsVector(result, rows, context, args.at(0));
       auto* resultFlatVector = (*result)->as<FlatVector<StringView>>();
-
-      // Move string buffers references to the output vector if we are reusing
-      // them and they are not already moved
-      if (!inputVectorMoved) {
-        resultFlatVector->acquireSharedStringBuffers(inputStringsVector);
-      }
 
       applyInternalInPlace(rows, decodedInput, resultFlatVector);
       return;
@@ -185,8 +167,7 @@ class ConcatFunction : public exec::VectorFunction {
       for (int i = 0; i < args.size(); i++) {
         concatInputs[i] = decodedArgs.at(i)->valueAt<StringView>(row);
       }
-      auto proxy =
-          exec::StringProxy<FlatVector<StringView>>(resultFlatVector, row);
+      auto proxy = exec::StringWriter<>(resultFlatVector, row);
       stringImpl::concatDynamic(proxy, concatInputs);
       proxy.finalize();
     });
@@ -353,7 +334,7 @@ class Replace : public exec::VectorFunction {
       const SelectivityVector& rows,
       FlatVector<StringView>* results) const {
     rows.applyToSelected([&](int row) {
-      auto proxy = exec::StringProxy<FlatVector<StringView>>(results, row);
+      auto proxy = exec::StringWriter<>(results, row);
       stringImpl::replace(
           proxy, stringReader(row), searchReader(row), replaceReader(row));
       proxy.finalize();
@@ -371,12 +352,8 @@ class Replace : public exec::VectorFunction {
       const SelectivityVector& rows,
       FlatVector<StringView>* results) const {
     rows.applyToSelected([&](int row) {
-      auto proxy =
-          exec::StringProxy<FlatVector<StringView>, true /*reuseInput*/>(
-              results,
-              row,
-              stringReader(row) /*reusedInput*/,
-              true /*inPlace*/);
+      auto proxy = exec::StringWriter<true /*reuseInput*/>(
+          results, row, stringReader(row) /*reusedInput*/, true /*inPlace*/);
       stringImpl::replaceInPlace(proxy, searchReader(row), replaceReader(row));
       proxy.finalize();
     });
@@ -433,27 +410,24 @@ class Replace : public exec::VectorFunction {
     };
 
     // Right now we enable the inplace if 'search' and 'replace' are constants
-    // and 'search' size is smaller than or equal to 'replace'.
+    // and 'search' size is larger than or equal to 'replace' and if the input
+    // vector is reused.
 
     // TODO: analyze other options for enabling inplace i.e.:
     // 1. Decide per row.
     // 2. Scan inputs for max lengths and decide based on that. ..etc
-    bool inPlace = replaceArgValue.has_value() && searchArgValue.has_value() &&
-        (searchArgValue.value().size() <= replaceArgValue.value().size()) &&
-        (args.at(0)->encoding() == VectorEncoding::Simple::FLAT) &&
-        hasSingleReferencedBuffers(
-                       args.at(0).get()->as<FlatVector<StringView>>());
+    bool tryInplace = replaceArgValue.has_value() &&
+        searchArgValue.has_value() &&
+        (searchArgValue.value().size() >= replaceArgValue.value().size()) &&
+        (args.at(0)->encoding() == VectorEncoding::Simple::FLAT);
+
+    bool inputVectorMoved =
+        prepareFlatResultsVector(result, rows, context, args.at(0));
+
+    bool inPlace = tryInplace && inputVectorMoved;
 
     if (inPlace) {
-      bool inputVectorMoved =
-          prepareFlatResultsVector(result, rows, context, args.at(0));
       auto* resultFlatVector = (*result)->as<FlatVector<StringView>>();
-
-      // Move string buffers references to the output vector if we are reusing
-      // them and they are not already moved.
-      if (!inputVectorMoved) {
-        resultFlatVector->acquireSharedStringBuffers(args.at(0).get());
-      }
       applyInPlace(
           stringReader, searchReader, replaceReader, rows, resultFlatVector);
       return;

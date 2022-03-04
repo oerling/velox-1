@@ -61,13 +61,16 @@ class S3FileSystemTest : public testing::Test {
   }
 
   void readData(ReadFile* readFile) {
-    Arena arena;
     ASSERT_EQ(readFile->size(), 15 + kOneMB);
-    ASSERT_EQ(readFile->pread(10 + kOneMB, 5, &arena), "ddddd");
-    ASSERT_EQ(readFile->pread(0, 10, &arena), "aaaaabbbbb");
-    ASSERT_EQ(readFile->pread(10, kOneMB, &arena), std::string(kOneMB, 'c'));
+    char buffer1[5];
+    ASSERT_EQ(readFile->pread(10 + kOneMB, 5, &buffer1), "ddddd");
+    char buffer2[10];
+    ASSERT_EQ(readFile->pread(0, 10, &buffer2), "aaaaabbbbb");
+    char buffer3[kOneMB];
+    ASSERT_EQ(readFile->pread(10, kOneMB, &buffer3), std::string(kOneMB, 'c'));
     ASSERT_EQ(readFile->size(), 15 + kOneMB);
-    const std::string_view arf = readFile->pread(5, 10, &arena);
+    char buffer4[10];
+    const std::string_view arf = readFile->pread(5, 10, &buffer4);
     const std::string zarf = readFile->pread(kOneMB, 15);
     auto buf = std::make_unique<char[]>(8);
     const std::string_view warf = readFile->pread(4, 8, buf.get());
@@ -76,6 +79,22 @@ class S3FileSystemTest : public testing::Test {
     ASSERT_EQ(zarf, "ccccccccccddddd");
     ASSERT_EQ(warf, "abbbbbcc");
     ASSERT_EQ(warfFromBuf, "abbbbbcc");
+    char head[12];
+    char middle[4];
+    char tail[7];
+    std::vector<folly::Range<char*>> buffers = {
+        folly::Range<char*>(head, sizeof(head)),
+        folly::Range<char*>(nullptr, 500000),
+        folly::Range<char*>(middle, sizeof(middle)),
+        folly::Range<char*>(
+            nullptr,
+            15 + kOneMB - 500000 - sizeof(head) - sizeof(middle) -
+                sizeof(tail)),
+        folly::Range<char*>(tail, sizeof(tail))};
+    ASSERT_EQ(15 + kOneMB, readFile->preadv(0, buffers));
+    ASSERT_EQ(std::string_view(head, sizeof(head)), "aaaaabbbbbcc");
+    ASSERT_EQ(std::string_view(middle, sizeof(middle)), "cccc");
+    ASSERT_EQ(std::string_view(tail, sizeof(tail)), "ccddddd");
   }
 
   static std::shared_ptr<MinioServer> minioServer_;

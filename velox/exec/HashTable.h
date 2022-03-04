@@ -72,11 +72,11 @@ class BaseHashTable {
     }
 
     bool atEnd() const {
-      return lastRowIndex == rows->size();
+      return !rows || lastRowIndex == rows->size();
     }
 
-    const raw_vector<vector_size_t>* rows;
-    const raw_vector<char*>* hits;
+    const raw_vector<vector_size_t>* rows{nullptr};
+    const raw_vector<char*>* hits{nullptr};
     char* nextHit{nullptr};
     vector_size_t lastRowIndex{0};
   };
@@ -268,9 +268,7 @@ class HashTable : public BaseHashTable {
         memory);
   }
 
-  virtual ~HashTable() override {
-    allocateTables(0);
-  }
+  virtual ~HashTable() override = default;
 
   void groupProbe(HashLookup& lookup) override;
 
@@ -314,9 +312,9 @@ class HashTable : public BaseHashTable {
 
   void decideHashMode(int32_t numNew) override;
 
-  // Moves the contents of 'tables' into 'this' and prepares 'this'
-
   void erase(folly::Range<char**> rows) override;
+
+  // Moves the contents of 'tables' into 'this' and prepares 'this'
   // for use in hash join probe. A hash join build side is prepared as
   // follows: 1. Each build side thread gets a random selection of the
   // build stream. Each accumulates rows into its own
@@ -358,6 +356,10 @@ class HashTable : public BaseHashTable {
       const std::vector<bool>& useRange,
       const std::vector<uint64_t>& rangeSizes,
       const std::vector<uint64_t>& distinctSizes);
+
+  // Clears all elements of 'useRange' except ones that correspond to boolean
+  // VectorHashers.
+  void clearUseRange(std::vector<bool>& useRange);
 
   void rehash();
   void initializeNewGroups(HashLookup& lookup);
@@ -433,6 +435,7 @@ class HashTable : public BaseHashTable {
   int32_t nextOffset_;
   uint8_t* tags_ = nullptr;
   char** table_ = nullptr;
+  memory::MappedMemory::ContiguousAllocation tableAllocation_;
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
   int64_t numDistinct_ = 0;

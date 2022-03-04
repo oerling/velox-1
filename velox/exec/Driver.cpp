@@ -190,7 +190,7 @@ Driver::~Driver() {
   if (task_) {
     LOG(ERROR) << "Driver destructed while still in Task: "
                << task_->toString();
-    DLOG(FATAL) << "Driber destroyed while referencing task";
+    DLOG(FATAL) << "Driver destructed while referencing task";
   }
 }
 

@@ -277,7 +277,8 @@ class VectorMaker {
       vector_size_t size,
       std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
       std::function<T(vector_size_t /* idx */)> valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
+      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr,
+      std::function<bool(vector_size_t /* idx */)> valueIsNullAt = nullptr) {
     BufferPtr nulls;
     BufferPtr offsets;
     BufferPtr sizes;
@@ -291,7 +292,7 @@ class VectorMaker {
         size,
         offsets,
         sizes,
-        flatVector<T>(numElements, valueAt),
+        flatVector<T>(numElements, valueAt, valueIsNullAt),
         BaseVector::countNulls(nulls, 0, size));
   }
 
@@ -489,7 +490,7 @@ class VectorMaker {
 
   /// Create a ArrayVector<T>
   /// array elements are created based on input std::vectors and are
-  /// nullable. Only null array elements are supported; not null arrays.
+  /// nullable.
   template <typename T>
   ArrayVectorPtr arrayVectorNullable(
       const std::vector<std::optional<std::vector<std::optional<T>>>>& data) {
@@ -497,8 +498,7 @@ class VectorMaker {
   }
 
   /// Create a FixedSizeArrayVector<T> array elements are created
-  /// based on input std::vectors and are nullable.  Only null array
-  /// elements are supported; not null arrays.  All vectors should be
+  /// based on input std::vectors and are nullable. All vectors should be
   /// the same size.
   template <typename T>
   ArrayVectorPtr fixedSizeArrayVectorNullable(

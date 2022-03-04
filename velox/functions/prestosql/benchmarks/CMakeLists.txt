@@ -35,6 +35,11 @@ add_executable(velox_functions_prestosql_benchmarks_array_min_max
 target_link_libraries(velox_functions_prestosql_benchmarks_array_min_max
                       ${BENCHMARK_DEPENDENCIES})
 
+add_executable(velox_functions_prestosql_benchmarks_array_position
+               ArrayPositionBenchmark.cpp)
+target_link_libraries(velox_functions_prestosql_benchmarks_array_position
+                      ${BENCHMARK_DEPENDENCIES})
+
 add_executable(velox_functions_prestosql_benchmarks_width_bucket
                WidthBucketBenchmark.cpp)
 target_link_libraries(velox_functions_prestosql_benchmarks_width_bucket
@@ -76,16 +81,40 @@ add_executable(velox_functions_benchmarks_compare CompareBenchmark.cpp)
 target_link_libraries(velox_functions_benchmarks_compare
                       ${BENCHMARK_DEPENDENCIES})
 
-add_executable(velox_benchmark_array_proxy_with_nulls ArrayProxyBenchmark.cpp)
-target_link_libraries(velox_benchmark_array_proxy_with_nulls
-                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
-
-add_executable(velox_benchmark_array_proxy_no_nulls ArrayProxyBenchmark.cpp)
-target_link_libraries(velox_benchmark_array_proxy_no_nulls
-                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
-
-target_compile_definitions(velox_benchmark_array_proxy_with_nulls
+add_executable(velox_benchmark_array_writer_with_nulls ArrayWriterBenchmark.cpp)
+target_compile_definitions(velox_benchmark_array_writer_with_nulls
                            PUBLIC WITH_NULLS=true)
+target_link_libraries(velox_benchmark_array_writer_with_nulls
+                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
 
-target_compile_definitions(velox_benchmark_array_proxy_no_nulls
+add_executable(velox_benchmark_array_writer_no_nulls ArrayWriterBenchmark.cpp)
+target_link_libraries(velox_benchmark_array_writer_no_nulls
+                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
+target_compile_definitions(velox_benchmark_array_writer_no_nulls
+                           PUBLIC WITH_NULLS=false)
+
+add_executable(velox_benchmark_nested_array_writer_no_nulls
+               NestedArrayWriterBenchmark.cpp)
+target_link_libraries(velox_benchmark_nested_array_writer_no_nulls
+                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
+target_compile_definitions(velox_benchmark_nested_array_writer_no_nulls
+                           PUBLIC WITH_NULLS=false)
+
+add_executable(velox_benchmark_nested_array_writer_with_nulls
+               NestedArrayWriterBenchmark.cpp)
+target_compile_definitions(velox_benchmark_nested_array_writer_with_nulls
+                           PUBLIC WITH_NULLS=true)
+target_link_libraries(velox_benchmark_nested_array_writer_with_nulls
+                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
+
+add_executable(velox_benchmark_map_writer_with_nulls MapWriterBenchmarks.cpp)
+target_compile_definitions(velox_benchmark_map_writer_with_nulls
+                           PUBLIC WITH_NULLS=true)
+target_link_libraries(velox_benchmark_map_writer_with_nulls
+                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
+
+add_executable(velox_benchmark_map_writer_no_nulls MapWriterBenchmarks.cpp)
+target_link_libraries(velox_benchmark_map_writer_no_nulls
+                      ${BENCHMARK_DEPENDENCIES_NO_FUNC})
+target_compile_definitions(velox_benchmark_map_writer_no_nulls
                            PUBLIC WITH_NULLS=false)

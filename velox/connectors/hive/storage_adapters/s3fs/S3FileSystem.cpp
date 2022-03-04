@@ -28,6 +28,7 @@
 #include <aws/core/auth/AWSCredentialsProviderChain.h>
 #include <aws/core/http/HttpResponse.h>
 #include <aws/core/utils/logging/ConsoleLogSystem.h>
+#include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 #include <aws/identity-management/auth/STSAssumeRoleCredentialsProvider.h>
 #include <aws/s3/S3Client.h>
 #include <aws/s3/model/GetObjectRequest.h>
@@ -35,6 +36,29 @@
 
 namespace facebook::velox {
 namespace {
+// Reference: https://issues.apache.org/jira/browse/ARROW-8692
+// https://github.com/apache/arrow/blob/master/cpp/src/arrow/filesystem/s3fs.cc#L843
+// A non-copying iostream. See
+// https://stackoverflow.com/questions/35322033/aws-c-sdk-uploadpart-times-out
+// https://stackoverflow.com/questions/13059091/creating-an-input-stream-from-constant-memory
+class StringViewStream : Aws::Utils::Stream::PreallocatedStreamBuf,
+                         public std::iostream {
+ public:
+  StringViewStream(const void* data, int64_t nbytes)
+      : Aws::Utils::Stream::PreallocatedStreamBuf(
+            reinterpret_cast<unsigned char*>(const_cast<void*>(data)),
+            static_cast<size_t>(nbytes)),
+        std::iostream(this) {}
+};
+
+// By default, the AWS SDK reads object data into an auto-growing StringStream.
+// To avoid copies, read directly into a pre-allocated buffer instead.
+// See https://github.com/aws/aws-sdk-cpp/issues/64 for an alternative but
+// functionally similar recipe.
+Aws::IOStreamFactory AwsWriteableStreamFactory(void* data, int64_t nbytes) {
+  return [=]() { return Aws::New<StringViewStream>("", data, nbytes); };
+}
+
 class S3ReadFile final : public ReadFile {
  public:
   S3ReadFile(const std::string& path, Aws::S3::S3Client* client)
@@ -61,13 +85,6 @@ class S3ReadFile final : public ReadFile {
     VELOX_CHECK_GE(length_, 0);
   }
 
-  std::string_view pread(uint64_t offset, uint64_t length, Arena* arena)
-      const override {
-    char* position = arena->reserve(length);
-    preadInternal(offset, length, position);
-    return {position, length};
-  }
-
   std::string_view pread(uint64_t offset, uint64_t length, void* buffer)
       const override {
     preadInternal(offset, length, static_cast<char*>(buffer));
@@ -75,7 +92,6 @@ class S3ReadFile final : public ReadFile {
   }
 
   std::string pread(uint64_t offset, uint64_t length) const override {
-    // TODO: use allocator that doesn't initialize memory?
     std::string result(length, 0);
     char* position = result.data();
     preadInternal(offset, length, position);
@@ -85,7 +101,27 @@ class S3ReadFile final : public ReadFile {
   uint64_t preadv(
       uint64_t offset,
       const std::vector<folly::Range<char*>>& buffers) const override {
-    VELOX_NYI();
+    // 'buffers' contains Ranges(data, size)  with some gaps (data = nullptr) in
+    // between. This call must populate the ranges (except gap ranges)
+    // sequentially starting from 'offset'. AWS S3 GetObject does not support
+    // multi-range. AWS S3 also charges by number of read requests and not size.
+    // The idea here is to use a single read spanning all the ranges and then
+    // populate individual ranges. We pre-allocate a buffer to support this.
+    size_t length = 0;
+    for (const auto range : buffers) {
+      length += range.size();
+    }
+    // TODO: allocate from a memory pool
+    std::string result(length, 0);
+    preadInternal(offset, length, static_cast<char*>(result.data()));
+    size_t resultOffset = 0;
+    for (auto range : buffers) {
+      if (range.data()) {
+        memcpy(range.data(), &(result.data()[resultOffset]), range.size());
+      }
+      resultOffset += range.size();
+    }
+    return length;
   }
 
   uint64_t size() const override {
@@ -115,14 +151,10 @@ class S3ReadFile final : public ReadFile {
     std::stringstream ss;
     ss << "bytes=" << offset << "-" << offset + length - 1;
     request.SetRange(awsString(ss.str()));
-    // TODO: Avoid copy below by using  req.SetResponseStreamFactory();
-    // Reference: ARROW-8692
+    request.SetResponseStreamFactory(
+        AwsWriteableStreamFactory(position, length));
     auto outcome = client_->GetObject(request);
     VELOX_CHECK_AWS_OUTCOME(outcome, "Failed to get S3 object", bucket_, key_);
-
-    result = std::move(outcome).GetResultWithOwnership();
-    auto& stream = result.GetBody();
-    stream.read(reinterpret_cast<char*>(position), length);
   }
 
   Aws::S3::S3Client* client_;
@@ -183,7 +215,7 @@ class S3Config {
   }
 
  private:
-  const Config* config_;
+  const Config* FOLLY_NONNULL config_;
 };
 
 class S3FileSystem::Impl {
@@ -338,7 +370,13 @@ static std::function<std::shared_ptr<FileSystem>(std::shared_ptr<const Config>)>
       // Initialize on first access and reuse after that.
       static std::shared_ptr<FileSystem> s3fs;
       folly::call_once(S3FSInstantiationFlag, [&properties]() {
-        auto fs = std::make_shared<S3FileSystem>(properties);
+        std::shared_ptr<S3FileSystem> fs;
+        if (properties != nullptr) {
+          fs = std::make_shared<S3FileSystem>(properties);
+        } else {
+          fs = std::make_shared<S3FileSystem>(
+              std::make_shared<core::MemConfig>());
+        }
         fs->initializeClient();
         s3fs = fs;
       });

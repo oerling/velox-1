@@ -16,6 +16,7 @@
 #pragma once
 
 #include <boost/algorithm/string.hpp>
+
 #include "folly/Likely.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
@@ -95,6 +96,128 @@ struct ValidateVariadicArgs {
   static constexpr bool value = isValidArg<0, TArgs...>();
 };
 
+// Information collected during TypeAnalysis.
+struct TypeAnalysisResults {
+  // Whether a variadic is encountered.
+  bool hasVariadic = false;
+
+  // Whether a generic is encountered.
+  bool hasGeneric = false;
+
+  // Whether a variadic of generic is encountered.
+  // E.g: Variadic<T> or Variadic<Array<T1>>.
+  bool hasVariadicOfGeneric = false;
+
+  // The number of types that are neither generic, nor variadic.
+  size_t concreteCount = 0;
+
+  // String representaion of the type in the FunctionSignatureBuilder.
+  std::ostringstream out;
+
+  // Set of generic variables used in the type.
+  std::set<std::string> variables;
+
+  std::string typeAsString() {
+    return out.str();
+  }
+
+  void resetTypeString() {
+    out.str(std::string());
+  }
+};
+
+// A set of structs used to perform analysis on a static type to
+// collect information needed for signatrue construction.
+template <typename T>
+struct TypeAnalysis {
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << boost::algorithm::to_lower_copy(
+        std::string(CppToType<T>::name));
+  }
+};
+
+template <typename T>
+struct TypeAnalysis<Generic<T>> {
+  void run(TypeAnalysisResults& results) {
+    if constexpr (std::is_same<T, AnyType>::value) {
+      results.out << "any";
+    } else {
+      auto variableType = fmt::format("__user_T{}", T::getId());
+      results.out << variableType;
+      results.variables.insert(variableType);
+    }
+    results.hasGeneric = true;
+  }
+};
+
+template <typename K, typename V>
+struct TypeAnalysis<Map<K, V>> {
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << "map(";
+    TypeAnalysis<K>().run(results);
+    results.out << ",";
+    TypeAnalysis<V>().run(results);
+    results.out << ")";
+  }
+};
+
+template <typename V>
+struct TypeAnalysis<Variadic<V>> {
+  void run(TypeAnalysisResults& results) {
+    // We need to split, pass a clean results then merge results to correctly
+    // compute `hasVariadicOfGeneric`.
+    TypeAnalysisResults tmp;
+    TypeAnalysis<V>().run(tmp);
+
+    // Combine the child results.
+    results.hasVariadic = true;
+    results.hasGeneric = results.hasGeneric || tmp.hasGeneric;
+    results.hasVariadicOfGeneric =
+        tmp.hasGeneric || results.hasVariadicOfGeneric;
+
+    results.concreteCount += tmp.concreteCount;
+    results.variables.insert(tmp.variables.begin(), tmp.variables.end());
+    results.out << tmp.typeAsString();
+  }
+};
+
+template <typename V>
+struct TypeAnalysis<Array<V>> {
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << "array(";
+    TypeAnalysis<V>().run(results);
+    results.out << ")";
+  }
+};
+
+template <typename... T>
+struct TypeAnalysis<Row<T...>> {
+  using child_types = std::tuple<T...>;
+
+  template <size_t N>
+  using child_type_at = typename std::tuple_element<N, child_types>::type;
+
+  void run(TypeAnalysisResults& results) {
+    results.concreteCount++;
+    results.out << "row(";
+    // This expression applies the lambda for each row child type.
+    bool first = true;
+    (
+        [&]() {
+          if (!first) {
+            results.out << ", ";
+          }
+          first = false;
+          TypeAnalysis<T>().run(results);
+        }(),
+        ...);
+    results.out << ")";
+  }
+};
+
 // todo(youknowjack): need a better story for types for UDFs. Mapping
 //                    c++ types <-> Velox types is imprecise (e.g. string vs
 //                    binary) and difficult to change.
@@ -127,7 +250,14 @@ struct CreateType {
 template <typename Underlying>
 struct CreateType<Variadic<Underlying>> {
   static std::shared_ptr<const Type> create() {
-    return CppToType<Underlying>::create();
+    return CreateType<Underlying>::create();
+  }
+};
+
+template <typename T>
+struct CreateType<Generic<T>> {
+  static std::shared_ptr<const Type> create() {
+    return std::make_shared<UnknownType>();
   }
 };
 
@@ -193,14 +323,29 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
             returnType ? std::move(returnType) : CppToType<TReturn>::create()) {
     verifyReturnTypeCompatibility();
   }
+
   ~SimpleFunctionMetadata() override = default;
 
   std::shared_ptr<exec::FunctionSignature> signature() const final {
-    auto builder =
-        exec::FunctionSignatureBuilder().returnType(typeToString(returnType()));
+    auto builder = exec::FunctionSignatureBuilder();
 
-    for (const auto& arg : argTypes()) {
-      builder.argumentType(typeToString(arg));
+    TypeAnalysisResults results;
+    TypeAnalysis<return_type>().run(results);
+    builder.returnType(results.typeAsString());
+
+    // This expression applies the lambda for each input arg type.
+    (
+        [&]() {
+          // Clear string representation but keep other collected information to
+          // accumulate.
+          results.resetTypeString();
+          TypeAnalysis<Args>().run(results);
+          builder.argumentType(results.typeAsString());
+        }(),
+        ...);
+
+    for (const auto& variable : results.variables) {
+      builder.typeVariable(variable);
     }
 
     if (isVariadic()) {
@@ -237,24 +382,6 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
         "return type override mismatch");
   }
 
-  // convert type to a string representation that is recognized in
-  // FunctionSignature.
-  static std::string typeToString(const TypePtr& type) {
-    std::ostringstream out;
-    out << boost::algorithm::to_lower_copy(std::string(type->kindName()));
-    if (type->size()) {
-      out << "(";
-      for (auto i = 0; i < type->size(); i++) {
-        if (i > 0) {
-          out << ",";
-        }
-        out << typeToString(type->childAt(i));
-      }
-      out << ")";
-    }
-    return out.str();
-  }
-
   const std::shared_ptr<const Type> returnType_;
 };
 
@@ -278,13 +405,24 @@ class UDFHolder final
   template <typename T>
   using optional_exec_arg_type = std::optional<exec_arg_type<T>>;
 
+  DECLARE_CONDITIONAL_TYPE_NAME(
+      null_free_in_type_resolver,
+      null_free_in_type,
+      in_type);
+
+  template <typename T>
+  using exec_no_nulls_arg_type =
+      typename null_free_in_type_resolver::template resolve<
+          typename Exec::template resolver<T>>::type;
+
   DECLARE_METHOD_RESOLVER(call_method_resolver, call);
   DECLARE_METHOD_RESOLVER(callNullable_method_resolver, callNullable);
+  DECLARE_METHOD_RESOLVER(callNullFree_method_resolver, callNullFree);
   DECLARE_METHOD_RESOLVER(callAscii_method_resolver, callAscii);
   DECLARE_METHOD_RESOLVER(initialize_method_resolver, initialize);
 
-  // Check which of the call(), callNullable(), callAscii(), and initialize()
-  // methods are available in the UDF object.
+  // Check which of the call(), callNullable(), callNullFree(), callAscii(), and
+  // initialize() methods are available in the UDF object.
   static constexpr bool udf_has_call = util::has_method<
       Fun,
       call_method_resolver,
@@ -298,6 +436,13 @@ class UDFHolder final
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>*...>::value;
+
+  static constexpr bool udf_has_callNullFree = util::has_method<
+      Fun,
+      callNullFree_method_resolver,
+      bool,
+      exec_return_type,
+      const exec_no_nulls_arg_type<TArgs>&...>::value;
 
   static constexpr bool udf_has_callAscii = util::has_method<
       Fun,
@@ -314,8 +459,8 @@ class UDFHolder final
       const exec_arg_type<TArgs>*...>::value;
 
   static_assert(
-      udf_has_call || udf_has_callNullable,
-      "UDF must implement at least one of `call` or `callNullable`");
+      udf_has_call || udf_has_callNullable || udf_has_callNullFree,
+      "UDF must implement at least one of `call`, `callNullable`, or `callNullFree`");
 
   static_assert(
       ValidateVariadicArgs<TArgs...>::value,
@@ -327,6 +472,12 @@ class UDFHolder final
       "Initialize is not supported for UDFs with VariadicArgs.");
 
   static constexpr bool is_default_null_behavior = !udf_has_callNullable;
+  // This is true when callNullFree is implemented, but not call or
+  // callNullable.  In this case if any input is NULL or any complex type in
+  // the input contains a NULL element (recursively) the function will return
+  // NULL directly, skipping evaluation.
+  static constexpr bool is_default_contains_nulls_behavior =
+      !udf_has_call && !udf_has_callNullable;
   static constexpr bool has_ascii = udf_has_callAscii;
   static constexpr bool is_default_ascii_behavior =
       udf_is_default_ascii_behavior<Fun>();
@@ -364,8 +515,11 @@ class UDFHolder final
       const typename Exec::template resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_call) {
       return instance_.call(out, args...);
-    } else {
+    } else if constexpr (udf_has_callNullable) {
       return instance_.callNullable(out, (&args)...);
+    } else {
+      VELOX_UNREACHABLE(
+          "call should never be called if the UDF does not implement call or callNullable.");
     }
   }
 
@@ -374,7 +528,7 @@ class UDFHolder final
       const typename Exec::template resolver<TArgs>::in_type*... args) {
     if constexpr (udf_has_callNullable) {
       return instance_.callNullable(out, args...);
-    } else {
+    } else if constexpr (udf_has_call) {
       // default null behavior
       const bool isAllSet = (args && ...);
       if (LIKELY(isAllSet)) {
@@ -382,6 +536,9 @@ class UDFHolder final
       } else {
         return false;
       }
+    } else {
+      VELOX_UNREACHABLE(
+          "callNullable should never be called if the UDF does not implement callNullable or call.");
     }
   }
 
@@ -392,8 +549,22 @@ class UDFHolder final
       return instance_.callAscii(out, args...);
     } else if constexpr (udf_has_call) {
       return instance_.call(out, args...);
-    } else {
+    } else if constexpr (udf_has_callNullable) {
       return instance_.callNullable(out, (&args)...);
+    } else {
+      VELOX_UNREACHABLE(
+          "callAscii should never be called if the UDF does not implement callAscii, call, or callNullable.");
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullFree(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const exec_no_nulls_arg_type<TArgs>&... args) {
+    if constexpr (udf_has_callNullFree) {
+      return instance_.callNullFree(out, args...);
+    } else {
+      VELOX_UNREACHABLE(
+          "callNullFree should never be called if the UDF does not implement callNullFree.");
     }
   }
 };

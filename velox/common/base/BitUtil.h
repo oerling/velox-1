@@ -89,11 +89,11 @@ inline T roundUp(T value, U factor) {
   return (value + (factor - 1)) / factor * factor;
 }
 
-inline uint64_t lowMask(int32_t bits) {
+constexpr inline uint64_t lowMask(int32_t bits) {
   return (1UL << bits) - 1;
 }
 
-inline uint64_t highMask(int32_t bits) {
+constexpr inline uint64_t highMask(int32_t bits) {
   return lowMask(bits) << (64 - bits);
 }
 
@@ -337,6 +337,7 @@ void forEachBit(
     int32_t end,
     bool isSet,
     Callable func) {
+  static constexpr uint64_t kAllSet = -1ULL;
   forEachWord(
       begin,
       end,
@@ -352,12 +353,17 @@ void forEachBit(
       },
       [isSet, bits, func](int32_t idx) {
         auto word = (isSet ? bits[idx] : ~bits[idx]);
-        if (!word) {
-          return;
-        }
-        while (word) {
-          func(idx * 64 + __builtin_ctzll(word));
-          word &= word - 1;
+        if (kAllSet == word) {
+          const size_t start = idx * 64;
+          const size_t end = (idx + 1) * 64;
+          for (size_t row = start; row < end; ++row) {
+            func(row);
+          }
+        } else {
+          while (word) {
+            func(idx * 64 + __builtin_ctzll(word));
+            word &= word - 1;
+          }
         }
       });
 }

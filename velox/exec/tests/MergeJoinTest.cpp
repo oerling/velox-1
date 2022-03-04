@@ -117,12 +117,13 @@ class MergeJoinTest : public OperatorTestBase {
     createDuckDbTable("u", right);
 
     // Test INNER join.
-    auto plan = PlanBuilder()
+    auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    auto plan = PlanBuilder(planNodeIdGenerator)
                     .values(left)
                     .mergeJoin(
                         {"c0"},
                         {"u_c0"},
-                        PlanBuilder()
+                        PlanBuilder(planNodeIdGenerator)
                             .values(right)
                             .project({"c0 AS u_c0", "c1 AS u_c1"})
                             .planNode(),
@@ -147,12 +148,13 @@ class MergeJoinTest : public OperatorTestBase {
         "SELECT t.c0, t.c1, u.c1 FROM t, u WHERE t.c0 = u.c0");
 
     // Test LEFT join.
-    plan = PlanBuilder()
+    planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    plan = PlanBuilder(planNodeIdGenerator)
                .values(left)
                .mergeJoin(
                    {"c0"},
                    {"u_c0"},
-                   PlanBuilder()
+                   PlanBuilder(planNodeIdGenerator)
                        .values(right)
                        .project({"c0 as u_c0", "c1 as u_c1"})
                        .planNode(),
@@ -217,19 +219,51 @@ TEST_F(MergeJoinTest, aggregationOverJoin) {
       makeRowVector({"t_c0"}, {makeFlatVector<int32_t>({1, 2, 3, 4, 5})});
   auto right = makeRowVector({"u_c0"}, {makeFlatVector<int32_t>({2, 4, 6})});
 
-  auto plan = PlanBuilder()
-                  .values({left})
-                  .mergeJoin(
-                      {"t_c0"},
-                      {"u_c0"},
-                      PlanBuilder().values({right}).planNode(),
-                      "",
-                      {"t_c0", "u_c0"},
-                      core::JoinType::kInner)
-                  .singleAggregation({}, {"count(1)"})
-                  .planNode();
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values({left})
+          .mergeJoin(
+              {"t_c0"},
+              {"u_c0"},
+              PlanBuilder(planNodeIdGenerator).values({right}).planNode(),
+              "",
+              {"t_c0", "u_c0"},
+              core::JoinType::kInner)
+          .singleAggregation({}, {"count(1)"})
+          .planNode();
 
   auto result = readSingleValue(plan);
   ASSERT_FALSE(result.isNull());
   ASSERT_EQ(2, result.value<int64_t>());
+}
+
+TEST_F(MergeJoinTest, nonFirstJoinKeys) {
+  auto left = makeRowVector(
+      {"t_data", "t_key"},
+      {
+          makeFlatVector<int32_t>({50, 40, 30, 20, 10}),
+          makeFlatVector<int32_t>({1, 2, 3, 4, 5}),
+      });
+  auto right = makeRowVector(
+      {"u_data", "u_key"},
+      {
+          makeFlatVector<int32_t>({23, 22, 21}),
+          makeFlatVector<int32_t>({2, 4, 6}),
+      });
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values({left})
+          .mergeJoin(
+              {"t_key"},
+              {"u_key"},
+              PlanBuilder(planNodeIdGenerator).values({right}).planNode(),
+              "",
+              {"t_key", "t_data", "u_data"},
+              core::JoinType::kInner)
+          .planNode();
+
+  assertQuery(plan, "VALUES (2, 40, 23), (4, 20, 22)");
 }

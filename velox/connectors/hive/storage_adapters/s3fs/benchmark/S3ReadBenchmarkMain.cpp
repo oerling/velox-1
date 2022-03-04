@@ -14,19 +14,18 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/parquet/reader/duckdb/InputStreamFileSystem.h"
+#include "velox/connectors/hive/storage_adapters/s3fs/benchmark/S3ReadBenchmark.h"
 
-namespace facebook::velox::duckdb {
+using namespace facebook::velox;
 
-InputStreamFileHandle::~InputStreamFileHandle() {
-  Close();
+// This benchmark measures the throughput of an S3 compatible FileSystem for
+// various ReadFile APIs. The output helps us understand the maximum possible
+// gains for queries. Example: If a single thread requires reading 1GB of data
+// and the IO throughput is 100 MBps, then it takes 10 seconds to just read the
+// data.
+int main(int argc, char** argv) {
+  folly::init(&argc, &argv, false);
+  S3ReadBenchmark bm;
+  bm.initialize();
+  bm.run();
 }
-
-void InputStreamFileHandle::Close() {
-  if (streamId_) {
-    dynamic_cast<InputStreamFileSystem&>(file_system).CloseStream(streamId_);
-    streamId_ = 0;
-  }
-}
-
-} // namespace facebook::velox::duckdb

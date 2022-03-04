@@ -48,7 +48,7 @@ namespace {
 std::shared_ptr<const core::IExpr> parseExpr(ParsedExpression& expr);
 
 std::string normalizeFuncName(std::string input) {
-  static std::map<std::string, std::string> lookup{
+  static std::map<std::string, std::string> kLookup{
       {"+", "plus"},
       {"-", "minus"},
       {"*", "multiply"},
@@ -65,9 +65,11 @@ std::string normalizeFuncName(std::string input) {
       {"and", "and"},
       {"or", "or"},
       {"is", "is"},
+      {"~~", "like"},
+      {"like_escape", "like"},
   };
-  auto it = lookup.find(input);
-  return (it == lookup.end()) ? input : it->second;
+  auto it = kLookup.find(input);
+  return (it == kLookup.end()) ? input : it->second;
 }
 
 // Convert duckDB operator name to Velox function. Coalesce and subscript needs
@@ -232,7 +234,9 @@ std::shared_ptr<const core::IExpr> parseOperatorExpr(ParsedExpression& expr) {
         variant::array(arrayElements), getAlias(expr));
   }
 
-  if (expr.GetExpressionType() == ExpressionType::COMPARE_IN) {
+  // Check if the operator is "IN" or "NOT IN".
+  if (expr.GetExpressionType() == ExpressionType::COMPARE_IN ||
+      expr.GetExpressionType() == ExpressionType::COMPARE_NOT_IN) {
     auto numValues = operExpr.children.size() - 1;
 
     std::vector<variant> values;
@@ -250,7 +254,11 @@ std::shared_ptr<const core::IExpr> parseOperatorExpr(ParsedExpression& expr) {
     params.emplace_back(parseExpr(*operExpr.children[0]));
     params.emplace_back(std::make_shared<const core::ConstantExpr>(
         variant::array(values), std::nullopt));
-    return callExpr("in", std::move(params), getAlias(expr));
+    auto inExpr = callExpr("in", std::move(params), getAlias(expr));
+    // Translate COMPARE_NOT_IN into NOT(IN()).
+    return (expr.GetExpressionType() == ExpressionType::COMPARE_IN)
+        ? inExpr
+        : callExpr("not", inExpr, std::nullopt);
   }
 
   std::vector<std::shared_ptr<const core::IExpr>> params;

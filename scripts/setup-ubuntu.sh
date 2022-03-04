@@ -40,7 +40,6 @@ sudo apt install -y \
   libgtest-dev \
   libgmock-dev \
   libevent-dev \
-  libfmt-dev \
   libprotobuf-dev \
   liblz4-dev \
   libzstd-dev \
@@ -99,8 +98,11 @@ function cmake_install {
     rm -rf "${BINARY_DIR}"
   fi
   mkdir -p "${BINARY_DIR}"
+
+  # CMAKE_POSITION_INDEPENDENT_CODE is required so that Velox can be built into dynamic libraries \
   cmake -Wno-dev -B"${BINARY_DIR}" \
     -GNinja \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_CXX_STANDARD=17 \
     "${INSTALL_PREFIX+-DCMAKE_PREFIX_PATH=}${INSTALL_PREFIX-}" \
     "${INSTALL_PREFIX+-DCMAKE_INSTALL_PREFIX=}${INSTALL_PREFIX-}" \
@@ -110,12 +112,18 @@ function cmake_install {
   ninja -C "${BINARY_DIR}" install
 }
 
+function install_fmt {
+  github_checkout fmtlib/fmt 7.1.3
+  cmake_install -DFMT_TEST=OFF
+}
+
 function install_folly {
   github_checkout facebook/folly "${FB_OS_VERSION}"
   cmake_install -DBUILD_TESTS=OFF
 }
 
 function install_velox_deps {
+  run_and_time install_fmt
   run_and_time install_folly
 }
 

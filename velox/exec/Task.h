@@ -32,8 +32,24 @@ class CrossJoinBridge;
 
 using ContinuePromise = VeloxPromise<bool>;
 
-class Task : public memory::MemoryConsumer {
-public:
+  class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
+ public:
+  /// Creates a task to execute a plan fragment, but doesn't start execution
+  /// until Task::start() method is called.
+  /// @param taskId Unique task identifier.
+  /// @param planFragment Plan fragment.
+  /// @param destination Partition number if task is expected to receive data
+  /// for a particular partition from a set of upstream tasks participating in a
+  /// distributed execution. Used to initialize an ExchangeClient. Ignored if
+  /// plan fragment doesn't have an ExchangeNode.
+  /// @param queryCtx Query context containing MemoryPool and MappedMemory
+  /// instances to use for memory allocations during execution, executor to
+  /// schedule operators on, and session properties.
+  /// @param consumer Optional factory function to get callbacks to pass the
+  /// results of the execution. In a multi-threaded execution, results from each
+  /// thread are passed on to a separate consumer.
+  /// @param onError Optional callback to receive an exception if task
+  /// execution fails.
   Task(
       const std::string& taskId,
       core::PlanFragment planFragment,
@@ -52,28 +68,55 @@ public:
 
   ~Task();
 
+  std::string toString() const;
+
+  /// Returns task ID specified in the constructor.
   const std::string& taskId() const {
     return taskId_;
   }
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addDriverPool();
+  // Convenience function for shortening a Presto taskId. To be used
+  // in debugging messages and listings.
+  static std::string shortId(const std::string& id);
 
-  velox::memory::MemoryPool* FOLLY_NONNULL
-  addOperatorPool(velox::memory::MemoryPool* FOLLY_NONNULL driverPool);
+  /// Returns QueryCtx specified in the constructor.
+  const std::shared_ptr<core::QueryCtx>& queryCtx() const {
+    return queryCtx_;
+  }
 
-  static void start(std::shared_ptr<Task> self, uint32_t maxDrivers);
+  /// Returns MemoryPool used to allocate memory during execution. This instance
+  /// is a child of the MemoryPool passed in the constructor.
+  memory::MemoryPool* FOLLY_NONNULL pool() const {
+    return pool_.get();
+  }
+
+  /// Returns ConsumerSupplier passed in the constructor.
+  ConsumerSupplier consumerSupplier() const {
+    return consumerSupplier_;
+  }
+
+  bool isGroupedExecution() const;
+
+  bool isUngroupedExecution() const;
+
+  /// Starts executing the plan fragment specified in the constructor. If leaf
+  /// nodes require splits (e.g. TableScan, Exchange, etc.), these splits can be
+  /// added before or after calling start().
+  ///
+  /// @param maxDrivers Maximum number of drivers / threads used to run a single
+  /// pipeline. Some pipelines are running in fewer threads if they contain plan
+  /// nodes that do not support parallelism (e.g. final limit) or their source
+  /// nodes require splits and there are not enough of these.
+  /// @param concurrentSplitGroups In grouped execution, maximum number of
+  /// splits groups processed concurrently.
+  static void start(
+      std::shared_ptr<Task> self,
+      uint32_t maxDrivers,
+      uint32_t concurrentSplitGroups = 1);
 
   // Resumes execution of 'self' after a successful pause. All 'drivers_' must
   // be off-thread and there must be no 'exception_'
   static void resume(std::shared_ptr<Task> self);
-
-  // Removes driver from the set of drivers in 'self'. The task will be kept
-  // alive by 'self'. 'self' going out of scope may cause the Task to
-  // be freed. This happens if a cancelled task is decoupled from the
-  // task manager and threads are left to finish themselves.
-  static void removeDriver(
-      std::shared_ptr<Task> self,
-      Driver* FOLLY_NONNULL instance);
 
   // Sets the (so far) max split sequence id, so all splits with sequence id
   // equal or below that, will be ignored in the 'addSplitWithSequence' call.
@@ -107,6 +150,108 @@ public:
   // corresponding to plan node with specified ID.
   void noMoreSplits(const core::PlanNodeId& planNodeId);
 
+  /// Updates the total number of output buffers to broadcast the results of the
+  /// execution to. Used when plan tree ends with a PartitionedOutputNode with
+  /// broadcast flag set to true.
+  /// @param numBuffers Number of output buffers. Must not decrease on
+  /// subsequent calls.
+  /// @param noMoreBuffers A flag indicating that numBuffers is the final number
+  /// of buffers. No more calls are expected after the call with noMoreBuffers
+  /// == true.
+  void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
+
+  // Sets this to a terminal requested state and frees all resources of Drivers
+  // that are not presently on thread. Unblocks all waiting Drivers, e.g.
+  // Drivers waiting for free space in outgoing buffers or new splits. Sets the
+  // state to 'terminalState', which should be kCanceled for cancellation by
+  // users, kFailed for errors and kAborted for termination due to failure in
+  // some other Task.
+  void terminate(TaskState terminalState);
+
+  /// Returns true if state is 'running'.
+  bool isRunning() const;
+
+  /// Returns true if state is 'finished'.
+  bool isFinished() const;
+
+  /// Returns current state of execution.
+  TaskState state() const {
+    std::lock_guard<std::mutex> l(mutex_);
+    return state_;
+  }
+
+  // Returns a future which is realized when 'this' is no longer in
+  // running state. If 'this' is not in running state at the time of
+  // call, the future is immediately realized. The future is realized
+  // with an exception after maxWaitMicros. A zero max wait means no
+  // timeout.
+  ContinueFuture stateChangeFuture(uint64_t maxWaitMicros);
+
+  /// Returns task execution error or nullptr if no error occurred.
+  std::exception_ptr error() const {
+    return exception_;
+  }
+
+  /// Returns task execution error message or empty string if not error
+  /// occurred.
+  std::string errorMessage() const;
+
+  // Returns by copy as other threads might be updating the structure.
+  TaskStats taskStats() const {
+    std::lock_guard<std::mutex> l(mutex_);
+    return taskStats_;
+  }
+
+  /// Returns time (ms) since the task execution started or zero, if not
+  /// started.
+  uint64_t timeSinceStartMs() const;
+
+  /// Returns time (ms) since the task execution ended or zero, if not finished.
+  uint64_t timeSinceEndMs() const;
+
+  /// Returns the number of running drivers.
+  uint32_t numRunningDrivers() const {
+    std::lock_guard<std::mutex> taskLock(mutex_);
+    return numRunningDrivers_;
+  }
+
+  /// Returns the total number of drivers the task needs to run.
+  uint32_t numTotalDrivers() const {
+    return numTotalDrivers_;
+  }
+
+  /// Returns the number of finished drivers so far.
+  uint32_t numFinishedDrivers() const {
+    std::lock_guard<std::mutex> taskLock(mutex_);
+    return numFinishedDrivers_;
+  }
+
+  /// Internal public methods. These methods are intended to be used by internal
+  /// library components (Driver, Operator, etc.) and should not be called by
+  /// the library users.
+
+  memory::MemoryPool* FOLLY_NONNULL addDriverPool();
+
+  /// Creates new instance of MemoryPool, stores it in the task to ensure
+  /// lifetime and returns a raw pointer. Not thread safe, e.g. must be called
+  /// from the Operator's constructor.
+  memory::MemoryPool* FOLLY_NONNULL
+  addOperatorPool(memory::MemoryPool* FOLLY_NONNULL driverPool);
+
+  /// Creates new instance of MappedMemory, stores it in the task to ensure
+  /// lifetime and returns a raw pointer. Not thread safe, e.g. must be called
+  /// from the Operator's constructor.
+  memory::MappedMemory* FOLLY_NONNULL
+  addOperatorMemory(const std::shared_ptr<memory::MemoryUsageTracker>& tracker);
+
+  // Removes driver from the set of drivers in 'self'. The task will be kept
+  // alive by 'self'. 'self' going out of scope may cause the Task to
+  // be freed. This happens if a cancelled task is decoupled from the
+  // task manager and threads are left to finish themselves.
+  static void removeDriver(
+      std::shared_ptr<Task> self,
+      Driver* FOLLY_NONNULL instance);
+
   // Returns a split for the source operator corresponding to plan node with
   // specified ID. If there are no splits and no-more-splits signal has been
   // received, sets split to null and returns kNotBlocked. Otherwise, returns
@@ -122,19 +267,16 @@ public:
 
   void multipleSplitsFinished(int32_t numSplits);
 
-  void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
-
-  bool isGroupedExecution() const;
-
-  void createLocalMergeSources(
+  /// Adds a MergeSource for the specified splitGroupId and planNodeId.
+  std::shared_ptr<MergeSource> addLocalMergeSource(
       uint32_t splitGroupId,
-      unsigned numSources,
-      const std::shared_ptr<const RowType>& rowType,
-      memory::MappedMemory* FOLLY_NONNULL mappedMemory);
+      const core::PlanNodeId& planNodeId,
+      const RowTypePtr& rowType);
 
-  std::shared_ptr<MergeSource> getLocalMergeSource(
+  /// Returns all MergeSource's for the specified splitGroupId and planNodeId.
+  const std::vector<std::shared_ptr<MergeSource>>& getLocalMergeSources(
       uint32_t splitGroupId,
-      int sourceId);
+      const core::PlanNodeId& planNodeId);
 
   void createMergeJoinSource(
       uint32_t splitGroupId,
@@ -144,7 +286,8 @@ public:
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 
-  void createLocalExchangeSources(
+  void createLocalExchangeSourcesLocked(
+      uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId,
       int numPartitions);
 
@@ -160,23 +303,9 @@ public:
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 
-  std::exception_ptr error() const {
-    return exception_;
-  }
-
   void setError(const std::exception_ptr& exception);
 
   void setError(const std::string& message);
-
-  std::string errorMessage();
-
-  std::shared_ptr<core::QueryCtx> queryCtx() const {
-    return queryCtx_;
-  }
-
-  ConsumerSupplier consumerSupplier() {
-    return consumerSupplier_;
-  }
 
   // Synchronizes completion of an Operator across Drivers of 'this'.
   // 'planNodeId' identifies the Operator within all
@@ -200,10 +329,14 @@ public:
       std::vector<std::shared_ptr<Driver>>& peers);
 
   // Adds HashJoinBridge's for all the specified plan node IDs.
-  void addHashJoinBridges(const std::vector<core::PlanNodeId>& planNodeIds);
+  void addHashJoinBridgesLocked(
+      uint32_t splitGroupId,
+      const std::vector<core::PlanNodeId>& planNodeIds);
 
   // Adds CrossJoinBridge's for all the specified plan node IDs.
-  void addCrossJoinBridges(const std::vector<core::PlanNodeId>& planNodeIds);
+  void addCrossJoinBridgesLocked(
+      uint32_t splitGroupId,
+      const std::vector<core::PlanNodeId>& planNodeIds);
 
   // Returns a HashJoinBridge for 'planNodeId'. This is used for synchronizing
   // start of probe with completion of build for a join that has a
@@ -218,15 +351,6 @@ public:
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 
-  // Sets this to a terminate requested
-  // state and frees all resources of Drivers that are not presently
-  // on thread. Unblocks all waiting Drivers, e.g. Drivers waiting for
-  // free space in outgoing buffers or new splits. Sets the state to
-  // 'terminalState', which should be kCanceled for cancellation by users,
-  // kFailed for errors and kAborted for termination due to failure in
-  // some other Task.
-  void terminate(TaskState terminalState);
-
   // Transitions this to kFinished state if all Drivers are
   // finished. Otherwise sets a flag so that the last Driver to finish
   // will transition the state.
@@ -236,64 +360,11 @@ public:
   // the Task stats. Clears 'stats'.
   void addOperatorStats(OperatorStats& stats);
 
-  // Returns by copy as other threads might be updating the structure.
-  TaskStats taskStats() const {
-    std::lock_guard<std::mutex> l(mutex_);
-    return taskStats_;
-  }
-
-  /// Returns time (ms) since the task execution started.
-  /// Returns zero, if not started.
-  uint64_t timeSinceStartMs() const;
-
-  /// Returns time (ms) since the task execution ended.
-  /// Returns zero, if not finished.
-  uint64_t timeSinceEndMs() const;
-
-  // Convenience function for shortening a Presto taskId. To be used
-  // in debugging messages and listings.
-  static std::string shortId(const std::string& id);
-
-  std::string toString();
-
-  TaskState state() const {
-    std::lock_guard<std::mutex> l(mutex_);
-    return state_;
-  }
-
-  // Returns a future which is realized when 'this' is no longer in
-  // running state. If 'this' is not in running state at the time of
-  // call, the future is immediately realized. The future is realized
-  // with an exception after maxWaitMicros. A zero max wait means no
-  // timeout.
-  ContinueFuture stateChangeFuture(uint64_t maxWaitMicros);
-
   /// Returns the number of running drivers.
   // TODO(spershin): Deprecate this method gradually.
   uint32_t numDrivers() const {
     std::lock_guard<std::mutex> taskLock(mutex_);
     return numRunningDrivers_;
-  }
-
-  /// Returns the number of running drivers.
-  uint32_t numRunningDrivers() const {
-    std::lock_guard<std::mutex> taskLock(mutex_);
-    return numRunningDrivers_;
-  }
-
-  /// Returns the total number of drivers the task needs to run.
-  uint32_t numTotalDrivers() const {
-    return numTotalDrivers_;
-  }
-
-  /// Returns the number of finished drivers so far.
-  uint32_t numFinishedDrivers() const {
-    std::lock_guard<std::mutex> taskLock(mutex_);
-    return numFinishedDrivers_;
-  }
-
-  velox::memory::MemoryPool* FOLLY_NONNULL pool() const {
-    return pool_.get();
   }
 
   void updateMemoryUsageConfig(
@@ -380,6 +451,12 @@ public:
   }
 
  private:
+  /// Returns true if state is 'running'.
+  bool isRunningLocked() const;
+
+  /// Returns true if state is 'finished'.
+  bool isFinishedLocked() const;
+
   template <class TBridgeType>
   std::shared_ptr<TBridgeType> getJoinBridgeInternal(
       uint32_t splitGroupId,
@@ -391,22 +468,32 @@ public:
       exec::Split& split,
       ContinueFuture& future);
 
-  /// Creates a bunch of drivers for the 'nextSplitGroupId_' and advances the
-  /// latter.
-  void createDrivers(
-      std::vector<std::shared_ptr<Driver>>& out,
-      std::shared_ptr<Task>& self);
+  /// Creates for the given split group and fills up the 'SplitGroupState'
+  /// structure, which stores inter-operator state (local exchange, bridges).
+  void createSplitGroupStateLocked(
+      std::shared_ptr<Task>& self,
+      uint32_t splitGroupId);
 
-  /// Safely returns reference to the group splits store, ensuring before
-  /// accessing it that it is created.
-  inline SplitsStore& groupSplitsStoreSafe(
-      SplitsState& splitsState,
-      uint32_t splitGroupId) {
-    return splitsState.groupSplitsStores(
-        planFragment_.numSplitGroups)[splitGroupId];
-  }
+  /// Creates a bunch of drivers for the given split group.
+  void createDriversLocked(
+      std::shared_ptr<Task>& self,
+      uint32_t splitGroupId,
+      std::vector<std::shared_ptr<Driver>>& out);
+
+  /// Checks if we have splits in a split group that haven't been processed yet
+  /// and have capacity in terms of number of concurrent split groups being
+  /// processed. If yes, creates split group state and Drivers and runs them.
+  void ensureSplitGroupsAreBeingProcessedLocked(std::shared_ptr<Task>& self);
 
   void driverClosedLocked();
+
+  /// Checks if the Task is finished due to all drivers done and all output
+  /// consumed.
+  void checkIfFinishedLocked();
+
+  /// Check if we have no more split groups coming and adjust the total number
+  /// of drivers if more split groups coming.
+  void checkNoMoreSplitGroupsLocked();
 
   void stateChangedLocked();
 
@@ -433,15 +520,19 @@ public:
 
   StopReason shouldStopLocked();
 
-  void checkSplitGroupIndex(
-      uint32_t splitGroupId,
-      const char* FOLLY_NONNULL context);
+  /// Checks that specified plan node ID refers to a source plan node. Throws if
+  /// that's not the case.
+  void checkPlanNodeIdForSplit(const core::PlanNodeId& id) const;
 
- private:
   const std::string taskId_;
   core::PlanFragment planFragment_;
   const int destination_;
-  std::shared_ptr<core::QueryCtx> queryCtx_;
+  const std::shared_ptr<core::QueryCtx> queryCtx_;
+
+  /// A set of source plan node IDs. Used to check plan node IDs specified in
+  /// split management methods.
+  const std::unordered_set<core::PlanNodeId> sourcePlanNodeIds_;
+
   // True if produces output via PartitionedOutputBufferManager.
   bool hasPartitionedOutput_ = false;
   // Set to true by PartitionedOutputBufferManager when all output is
@@ -471,7 +562,9 @@ public:
   uint32_t numRunningDrivers_{0};
   /// The total number of drivers we need to run in all pipelines. In normal
   /// execution it is the sum of number of drivers for all pipelines. In grouped
-  /// execution we multiply that by the number of split groups.
+  /// execution we multiply that by the number of split groups, but in practice
+  /// this number will be much less (roughly divided by the number of workers),
+  /// so this will be adjusted in the end of task's work.
   uint32_t numTotalDrivers_{0};
   /// The number of completed drivers so far.
   /// This number increases over time as drivers finish their work.
@@ -480,10 +573,30 @@ public:
   /// Reflects number of drivers required to process single split group during
   /// grouped execution or the whole plan fragment during normal execution.
   uint32_t numDriversPerSplitGroup_{0};
-  /// Used during grouped execution, indicates the next split group to process.
-  uint32_t nextSplitGroupId_{0};
+  /// Number of drivers running in the pipeine hosting the Partitioned Output.
+  /// We use it to recalculate the number of producing drivers at the end during
+  /// the Grouped Execution mode.
+  uint32_t numDriversInPartitionedOutput_{0};
+  /// The number of splits groups we run concurrently.
+  uint32_t concurrentSplitGroups_{1};
 
-  TaskState state_ = kRunning;
+  /// Have we initialized operators' stats already?
+  bool initializedOpStats_{false};
+  /// How many splits groups we are processing at the moment. Used to control
+  /// split group concurrency.
+  uint32_t numRunningSplitGroups_{0};
+  /// Split groups for which we have received at least one split - meaning our
+  /// task is to process these. This set only grows. Used to deduplicate split
+  /// groups for different nodes and to determine how many split groups we to
+  /// process in total.
+  std::unordered_set<uint32_t> seenSplitGroups_;
+  /// Split groups for which we have received splits but haven't started
+  /// processing. It grows with arrival of the 1st split of a previously not
+  /// seen split group and depletes with creating new sets of drivers to process
+  /// queued split groups.
+  std::queue<uint32_t> queuedSplitGroups_;
+
+  TaskState state_ = TaskState::kRunning;
 
   /// Stores separate splits state for each plan node.
   std::unordered_map<core::PlanNodeId, SplitsState> splitsStates_;
@@ -494,15 +607,19 @@ public:
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
   TaskStats taskStats_;
-  std::unique_ptr<velox::memory::MemoryPool> pool_;
+  std::unique_ptr<memory::MemoryPool> pool_;
 
   // Keep driver and operator memory pools alive for the duration of the task to
   // allow for sharing vectors across drivers without copy.
-  std::vector<std::unique_ptr<velox::memory::MemoryPool>> childPools_;
+  std::vector<std::unique_ptr<memory::MemoryPool>> childPools_;
+
+  // Keep operator MappedMemory instances alive for the duration of the task to
+  // allow for sharing data without copy.
+  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
 
   /// Stores inter-operator state (exchange, bridges) per split group.
-  /// During ungrouped execution we use the 1st entry in this vector.
-  std::vector<SplitGroupState> splitGroupStates_;
+  /// During ungrouped execution we use the [0] entry in this vector.
+  std::unordered_map<uint32_t, SplitGroupState> splitGroupStates_;
 
   std::weak_ptr<PartitionedOutputBufferManager> bufferManager_;
 

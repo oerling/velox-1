@@ -25,8 +25,8 @@
 #include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/expression/tests/ExpressionFuzzer.h"
-#include "velox/expression/tests/VectorFuzzer.h"
 #include "velox/type/Type.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/VectorMaker.h"
 
 DEFINE_int32(
@@ -50,22 +50,6 @@ namespace facebook::velox::test {
 namespace {
 
 using exec::SignatureBinder;
-
-// TODO: List of the functions that at some point crash or fail and need to
-// be fixed before we can enable.
-static std::unordered_set<std::string> kSkipFunctions = {
-    "replace",
-    // The pad functions cause the test to OOM. The 2nd arg is only bound by
-    // the max value of int32_t, which leads to strings billions of characters
-    // long.
-    "lpad",
-    "rpad",
-    // Fuzzer and the underlying engine are confused about cardinality(HLL)
-    // (since HLL is a user defined type), and end up trying to use cardinality
-    // passing a VARBINARY (since HLL's implementation uses an alias to
-    // VARBINARY).
-    "cardinality",
-};
 
 // Called if at least one of the ptrs has an exception.
 void compareExceptions(
@@ -267,11 +251,6 @@ class ExpressionFuzzer {
 
     // Process each available signature for every function.
     for (const auto& function : signatureMap) {
-      if (kSkipFunctions.count(function.first) > 0) {
-        LOG(INFO) << "Skipping buggy function: " << function.first;
-        continue;
-      }
-
       for (const auto& signature : function.second) {
         if (auto callableFunction =
                 processSignature(function.first, *signature)) {
@@ -517,13 +496,17 @@ class ExpressionFuzzer {
       exec::ExprSet exprSetCommon({plan}, &execCtx_);
       exec::EvalCtx evalCtxCommon(&execCtx_, &exprSetCommon, rowVector.get());
 
-      exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
-    } catch (...) {
-      if (!canThrow) {
-        LOG(ERROR)
-            << "Common eval wasn't supposed to throw, but it did. Aborting.";
-        throw;
+      try {
+        exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Common eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionCommonPtr = std::current_exception();
       }
+    } catch (...) {
       exceptionCommonPtr = std::current_exception();
     }
 
@@ -535,13 +518,17 @@ class ExpressionFuzzer {
       exec::EvalCtx evalCtxSimplified(
           &execCtx_, &exprSetSimplified, rowVector.get());
 
-      exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
-    } catch (...) {
-      if (!canThrow) {
-        LOG(ERROR)
-            << "Simplified eval wasn't supposed to throw, but it did. Aborting.";
-        throw;
+      try {
+        exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Simplified eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionSimplifiedPtr = std::current_exception();
       }
+    } catch (...) {
       exceptionSimplifiedPtr = std::current_exception();
     }
 

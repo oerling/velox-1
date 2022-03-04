@@ -24,7 +24,6 @@ of plan nodes can be located at the leaves of the plan tree. These are:
 * TableScanNode
 * ValuesNode
 * ExchangeNode
-* LocalMergeNode
 * MergeExchangeNode
 
 Here is a list of supported plan nodes and corresponding operators.
@@ -35,8 +34,7 @@ Plan Node                   Operator(s)                                      Lea
 TableScanNode               TableScan                                        Y
 FilterNode                  FilterProject
 ProjectNode                 FilterProject
-AggregationNode             HashAggregation
-StreamingAggregationNode    StreamingAggregation
+AggregationNode             HashAggregation or StreamingAggregation
 HashJoinNode                HashProbe and HashBuild
 MergeJoinNode               MergeJoin
 CrossJoinNode               CrossJoinProbe and CrossJoinBuild
@@ -113,16 +111,11 @@ input columns.
    * - expressions
      - Expressions for the output columns.
 
-AggregationNode and StreamingAggregationNode
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+AggregationNode
+~~~~~~~~~~~~~~~
 
 The aggregate operation groups input data on a set of grouping keys, calculating
 each measure for each combination of the grouping keys.
-
-StreamingAggregationNode represents an implementation that assumes that input is
-pre-grouped on the grouping keys, e.g. all rows with a given combination of
-values of the grouping keys appear together one after another. The input is not
-assumed to be sorted on the grouping keys.
 
 .. list-table::
    :widths: 10 30
@@ -135,6 +128,8 @@ assumed to be sorted on the grouping keys.
      - Aggregation step: partial, final, intermediate, single.
    * - groupingKeys
      - Zero or more grouping keys.
+   * - preGroupedKeys
+     - A subset of the grouping keys on which the input is known to be pre-grouped, i.e. all rows with a given combination of values of the pre-grouped keys appear together one after another. The input is not assumed to be sorted on the pre-grouped keys. If input is pre-grouped on all grouping keys the execution will use the StreamingAggregation operator.
    * - aggregateNames
      - Names for the output columns for the measures.
    * - aggregates

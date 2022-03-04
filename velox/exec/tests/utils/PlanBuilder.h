@@ -26,13 +26,33 @@ class IExpr;
 
 namespace facebook::velox::exec::test {
 
+/// Generates unique sequential plan node IDs starting with zero or specified
+/// value.
+class PlanNodeIdGenerator {
+ public:
+  explicit PlanNodeIdGenerator(int startId = 0) : nextId_{startId} {}
+
+  int next() {
+    return nextId_++;
+  }
+
+  void reset(int startId = 0) {
+    nextId_ = startId;
+  }
+
+ private:
+  int nextId_;
+};
+
 class PlanBuilder {
  public:
-  explicit PlanBuilder(int planNodeId = 0, memory::MemoryPool* pool = nullptr)
-      : planNodeId_{planNodeId}, pool_{pool} {}
+  explicit PlanBuilder(
+      std::shared_ptr<PlanNodeIdGenerator> planNodeIdGenerator,
+      memory::MemoryPool* pool = nullptr)
+      : planNodeIdGenerator_{std::move(planNodeIdGenerator)}, pool_{pool} {}
 
-  explicit PlanBuilder(memory::MemoryPool* pool)
-      : planNodeId_{0}, pool_{pool} {}
+  explicit PlanBuilder(memory::MemoryPool* pool = nullptr)
+      : PlanBuilder(std::make_shared<PlanNodeIdGenerator>(), pool) {}
 
   PlanBuilder& tableScan(const RowTypePtr& outputType);
 
@@ -115,6 +135,7 @@ class PlanBuilder {
       const std::vector<std::string>& masks = {}) {
     return aggregation(
         groupingKeys,
+        {},
         aggregates,
         masks,
         core::AggregationNode::Step::kPartial,
@@ -136,6 +157,7 @@ class PlanBuilder {
       const std::vector<TypePtr>& resultTypes) {
     return aggregation(
         groupingKeys,
+        {},
         aggregates,
         {},
         core::AggregationNode::Step::kFinal,
@@ -154,6 +176,7 @@ class PlanBuilder {
       const std::vector<TypePtr>& resultTypes) {
     return aggregation(
         groupingKeys,
+        {},
         aggregates,
         {},
         core::AggregationNode::Step::kIntermediate,
@@ -166,6 +189,7 @@ class PlanBuilder {
       const std::vector<std::string>& aggregates) {
     return aggregation(
         groupingKeys,
+        {},
         aggregates,
         {},
         core::AggregationNode::Step::kSingle,
@@ -174,6 +198,18 @@ class PlanBuilder {
 
   PlanBuilder& aggregation(
       const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<std::string>& aggregates,
+      const std::vector<std::string>& masks,
+      core::AggregationNode::Step step,
+      bool ignoreNullKeys,
+      const std::vector<TypePtr>& resultTypes = {}) {
+    return aggregation(
+        groupingKeys, {}, aggregates, masks, step, ignoreNullKeys, resultTypes);
+  }
+
+  PlanBuilder& aggregation(
+      const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<ChannelIndex>& preGroupedKeys,
       const std::vector<std::string>& aggregates,
       const std::vector<std::string>& masks,
       core::AggregationNode::Step step,
@@ -191,8 +227,6 @@ class PlanBuilder {
         core::AggregationNode::Step::kPartial,
         false);
   }
-
-  PlanBuilder& finalStreamingAggregation();
 
   PlanBuilder& finalStreamingAggregation(
       const std::vector<ChannelIndex>& groupingKeys,
@@ -217,7 +251,8 @@ class PlanBuilder {
 
   PlanBuilder& localMerge(
       const std::vector<ChannelIndex>& keyIndices,
-      const std::vector<core::SortOrder>& sortOrder);
+      const std::vector<core::SortOrder>& sortOrder,
+      std::vector<std::shared_ptr<const core::PlanNode>> sources);
 
   PlanBuilder& orderBy(
       const std::vector<ChannelIndex>& keyIndices,
@@ -293,6 +328,12 @@ class PlanBuilder {
       const std::vector<std::string>& unnestColumns,
       const std::optional<std::string>& ordinalColumn = std::nullopt);
 
+  PlanBuilder& capturePlanNodeId(core::PlanNodeId& id) {
+    VELOX_CHECK_NOT_NULL(planNode_);
+    id = planNode_->id();
+    return *this;
+  }
+
   const std::shared_ptr<core::PlanNode>& planNode() const {
     return planNode_;
   }
@@ -337,8 +378,7 @@ class PlanBuilder {
 
   std::shared_ptr<core::PlanNode> createIntermediateOrFinalAggregation(
       core::AggregationNode::Step step,
-      const core::AggregationNode* partialAggNode,
-      bool streaming);
+      const core::AggregationNode* partialAggNode);
 
   std::shared_ptr<const core::ITypedExpr> inferTypes(
       const std::shared_ptr<const core::IExpr>& untypedExpr);
@@ -358,7 +398,7 @@ class PlanBuilder {
       size_t numAggregates,
       const std::vector<std::string>& masks);
 
-  int planNodeId_;
+  std::shared_ptr<PlanNodeIdGenerator> planNodeIdGenerator_;
   std::shared_ptr<core::PlanNode> planNode_;
   memory::MemoryPool* pool_;
 };
