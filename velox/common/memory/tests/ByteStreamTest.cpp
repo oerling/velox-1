@@ -22,8 +22,6 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
-DECLARE_int32(velox_memory_pool_mb);
-
 using namespace facebook::velox;
 using namespace facebook::velox::memory;
 
