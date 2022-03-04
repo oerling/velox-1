@@ -27,22 +27,13 @@ class SerializedPage {
  public:
   static constexpr int kSerializedPageOwner = -11;
 
-  // Construct from a bounded stream
-  SerializedPage(
-      std::istream* stream,
-      uint64_t size,
-      memory::MappedMemory* memory);
   // Construct from IOBuf chain.
   SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
 
   ~SerializedPage() = default;
 
   uint64_t byteSize() const {
-    if (allocation_) {
-      return allocation_->byteSize();
-    } else {
-      return iobufBytes_;
-    }
+    return iobufBytes_;
   }
 
   // Makes 'input' ready for deserializing 'this' with
@@ -64,18 +55,13 @@ class SerializedPage {
   }
 
  private:
-  // Owns data referenced in 'ranges_' if constructed from an std::istream.
-  std::unique_ptr<memory::MappedMemory::Allocation> allocation_;
-
-  // Buffers containing the serialized data. The memory is owned by
-  // 'allocation_' or 'iobuf_', depending on construction.
+  // Buffers containing the serialized data. The memory is owned by 'iobuf_'.
   std::vector<ByteRange> ranges_;
 
-  // IOBuf holding the data in 'ranges_. nullptr if constructed from a
-  // std::istream.
+  // IOBuf holding the data in 'ranges_. May be nullptr for 0 length.
   std::unique_ptr<folly::IOBuf> iobuf_;
 
-  // Bytes held in 'iobuf_'.
+  // Number of payload bytes in 'iobuf_'.
   int64_t iobufBytes_{0};
 };
 

@@ -356,8 +356,7 @@ TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
 
 TEST_F(PartitionedOutputBufferManagerTest, errorInQueue) {
   auto queue = std::make_shared<ExchangeQueue>();
-  std::stringstream str;
-  auto page = std::make_unique<SerializedPage>(&str, 0, mappedMemory_);
+  auto page = std::make_unique<SerializedPage>(nullptr);
   {
     std::lock_guard<std::mutex> l(queue->mutex());
     queue->setErrorLocked("error");
