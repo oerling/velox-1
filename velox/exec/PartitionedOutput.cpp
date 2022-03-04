@@ -76,14 +76,17 @@ BlockingReason Destination::flush(
   if (!current_) {
     return BlockingReason::kNotBlocked;
   }
+  auto listener = bufferManager.newChecksumListener();
+  IOBufOutputStream stream(*current_->mappedMemory(), listener.get(), current_->size());
+  current_->flush(&stream);
+  current_.reset();
   bytesInCurrent_ = 0;
 
   return bufferManager.enqueue(
       taskId_,
       destination_,
-      std::make_shared<SerializedPage>(current->getIOBuf()),
+      std::make_shared<SerializedPage>(stream.getIOBuf()),
       future);
-  current_ = nullptr;
 }
 
 void PartitionedOutput::initializeInput(RowVectorPtr input) {

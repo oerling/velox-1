@@ -114,7 +114,7 @@ class LocalExchangeSource : public ExchangeSource {
         // Since this lambda may outlive 'this', we need to capture a
         // shared_ptr to the current object (self).
         [self, requestedSequence, buffers, this](
-            std::vector<std::shared_ptr<VectorStreamGroup>>& data,
+            std::vector<std::shared_ptr<SerializedPage>>& data,
             int64_t sequence) {
           if (requestedSequence > sequence) {
             VLOG(2) << "Receives earlier sequence than requested: task "
@@ -128,15 +128,15 @@ class LocalExchangeSource : public ExchangeSource {
           }
           std::vector<std::unique_ptr<SerializedPage>> pages;
           bool atEnd = false;
-          for (auto& group : data) {
-            if (!group) {
+          for (auto& inputPage : data) {
+            if (!inputPage) {
               atEnd = true;
               // Keep looping, there could be extra end markers.
               continue;
             }
             pages.push_back(
-                SerializedPage::copyFromVectorStreamGroup(group.get()));
-            group = nullptr;
+                SerializedPage::copyFrom(inputPage.get()));
+            inputPage = nullptr;
           }
           int64_t ackSequence;
           {

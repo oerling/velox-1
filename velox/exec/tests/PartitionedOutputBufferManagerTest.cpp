@@ -71,7 +71,9 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
         std::dynamic_pointer_cast<const RowType>(vector->type()), size);
     data->append(
         std::dynamic_pointer_cast<RowVector>(vector), folly::Range(&range, 1));
-    return std::make_unique<SerializedPage>(data->getIOBuf());
+    IOBufOutputStream stream(*mappedMemory_, nullptr, data->size());
+    data->flush(&stream);
+    return std::make_unique<SerializedPage>(stream.getIOBuf());
   }
 
   void enqueue(

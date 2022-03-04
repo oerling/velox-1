@@ -49,25 +49,33 @@ class SerializedPage {
   // VectorStreamGroup::read().
   void prepareStreamForDeserialize(ByteStream* input);
 
-  static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
-      VectorStreamGroup* group) {
-    return std::make_unique<SerializedPage>(group->getIOBuf());
-  }
-
-  // Copies the IOBufs from 'group' so that they no longer hold memory
+    // Copies the IOBufs from 'page' so that they no longer hold memory
   // acounted in the producer Task. Used only with LocalExchangeSource
   // in tests.
-  static std::unique_ptr<SerializedPage> copyFromVectorStreamGroup(
-      VectorStreamGroup* group) {
-    auto buf = group->getIOBuf();
+  static std::unique_ptr<SerializedPage> copyFrom(
+								   SerializedPage* page) {
+    auto buf = page->getIOBuf();
     buf->unshare();
     return std::make_unique<SerializedPage>(std::move(buf));
   }
 
+  std::unique_ptr<folly::IOBuf> getIOBuf() {
+    VELOX_CHECK(iobuf_);
+    return iobuf_->clone();
+  }
+
  private:
+  // Owns data referenced in 'ranges_' if constructed from an std::istream.
   std::unique_ptr<memory::MappedMemory::Allocation> allocation_;
+
+  // Buffers containing the serialized data. The memory is owned by
+  // 'allocation_' or 'iobuf_', depending on construction.
   std::vector<ByteRange> ranges_;
-  std::unique_ptr<folly::IOBuf> iobufyes _;
+
+  // IOBuf holding the data in 'ranges_. nullptr if constructed from a std::istream.
+  std::unique_ptr<folly::IOBuf> iobuf_;
+
+  // Bytes held in 'iobuf_'.
   int64_t iobufBytes_{0};
 };
 

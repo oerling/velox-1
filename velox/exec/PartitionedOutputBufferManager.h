@@ -21,12 +21,12 @@
 
 namespace facebook::velox::exec {
 
-// nullptr in groups indicates that there is no more data.
+// nullptr in pages indicates that there is no more data.
 // sequence is the same as specified in BufferManager::getData call. The caller
 // is expected to advance sequence by the number of entries in groups and call
 // BufferManager::acknowledge.
 using DataAvailableCallback = std::function<void(
-    std::vector<std::shared_ptr<SerializedPage>>& groups,
+    std::vector<std::shared_ptr<SerializedPage>>& pages,
     int64_t sequence)>;
 
 struct DataAvailable {
@@ -116,7 +116,7 @@ class PartitionedOutputBuffer {
 
   BlockingReason enqueue(
       int destination,
-      std::unique_ptr<SerializedPage> data,
+      std::shared_ptr<SerializedPage> data,
       ContinueFuture* future);
 
   void noMoreData();
@@ -217,7 +217,7 @@ class PartitionedOutputBufferManager {
   BlockingReason enqueue(
       const std::string& taskId,
       int destination,
-      std::unique_ptr<SerializedPage> data,
+      std::shared_ptr<SerializedPage> data,
       ContinueFuture* future);
 
   void noMoreData(const std::string& taskId);
@@ -260,6 +260,10 @@ class PartitionedOutputBufferManager {
   static std::weak_ptr<PartitionedOutputBufferManager> getInstance(
       const std::string& host = "local");
 
+  std::unique_ptr<OutputStreamListener> newChecksumListener() const {
+    return checksumListenerFactory_ ? checksumListenerFactory_() : nullptr;
+  }
+  
   std::string toString();
 
  private:
@@ -270,5 +274,7 @@ class PartitionedOutputBufferManager {
       std::unordered_map<std::string, std::shared_ptr<PartitionedOutputBuffer>>,
       std::mutex>
       buffers_;
+
+  std::function<std::unique_ptr<OutputStreamListener>()> checksumListenerFactory_{nullptr};
 };
 } // namespace facebook::velox::exec
