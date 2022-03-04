@@ -28,7 +28,7 @@ class SerializedPage {
   static constexpr int kSerializedPageOwner = -11;
 
   // Construct from IOBuf chain.
-  SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
+  explicit SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
 
   ~SerializedPage() = default;
 

@@ -87,14 +87,6 @@ class DestinationBuffer {
   // The sequence number of the first item to pass to 'notify'.
   int64_t notifySequence_;
   uint64_t notifyMaxBytes_;
-
-  // Microsecond time when 'this' became non-empty.
-  uint64_t dataAvailableSince_{0};
-  // Cumulative time spent in a non-empty state.
-  uint64_t fetchDelay_{0};
-  uint64_t fetchCount_{0};
-  // Microsecond time of last time the output was given to the consumer.
-  uint64_t lastSendStart_{0};
 };
 
 class PartitionedOutputBuffer {
