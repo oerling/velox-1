@@ -49,11 +49,10 @@ class SerializedPage {
   // VectorStreamGroup::read().
   void prepareStreamForDeserialize(ByteStream* input);
 
-    // Copies the IOBufs from 'page' so that they no longer hold memory
+  // Copies the IOBufs from 'page' so that they no longer hold memory
   // acounted in the producer Task. Used only with LocalExchangeSource
   // in tests.
-  static std::unique_ptr<SerializedPage> copyFrom(
-								   SerializedPage* page) {
+  static std::unique_ptr<SerializedPage> copyFrom(SerializedPage* page) {
     auto buf = page->getIOBuf();
     buf->unshare();
     return std::make_unique<SerializedPage>(std::move(buf));
@@ -72,7 +71,8 @@ class SerializedPage {
   // 'allocation_' or 'iobuf_', depending on construction.
   std::vector<ByteRange> ranges_;
 
-  // IOBuf holding the data in 'ranges_. nullptr if constructed from a std::istream.
+  // IOBuf holding the data in 'ranges_. nullptr if constructed from a
+  // std::istream.
   std::unique_ptr<folly::IOBuf> iobuf_;
 
   // Bytes held in 'iobuf_'.

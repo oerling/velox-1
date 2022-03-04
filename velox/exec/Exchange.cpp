@@ -134,8 +134,7 @@ class LocalExchangeSource : public ExchangeSource {
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back(
-                SerializedPage::copyFrom(inputPage.get()));
+            pages.push_back(SerializedPage::copyFrom(inputPage.get()));
             inputPage = nullptr;
           }
           int64_t ackSequence;

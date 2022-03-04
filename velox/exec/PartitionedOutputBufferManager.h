@@ -263,7 +263,7 @@ class PartitionedOutputBufferManager {
   std::unique_ptr<OutputStreamListener> newChecksumListener() const {
     return checksumListenerFactory_ ? checksumListenerFactory_() : nullptr;
   }
-  
+
   std::string toString();
 
  private:
@@ -275,6 +275,7 @@ class PartitionedOutputBufferManager {
       std::mutex>
       buffers_;
 
-  std::function<std::unique_ptr<OutputStreamListener>()> checksumListenerFactory_{nullptr};
+  std::function<std::unique_ptr<OutputStreamListener>()>
+      checksumListenerFactory_{nullptr};
 };
 } // namespace facebook::velox::exec

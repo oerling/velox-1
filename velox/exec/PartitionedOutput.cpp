@@ -77,7 +77,8 @@ BlockingReason Destination::flush(
     return BlockingReason::kNotBlocked;
   }
   auto listener = bufferManager.newChecksumListener();
-  IOBufOutputStream stream(*current_->mappedMemory(), listener.get(), current_->size());
+  IOBufOutputStream stream(
+      *current_->mappedMemory(), listener.get(), current_->size());
   current_->flush(&stream);
   current_.reset();
   bytesInCurrent_ = 0;
