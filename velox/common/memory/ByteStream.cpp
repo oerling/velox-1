@@ -67,7 +67,8 @@ void ByteStream::flush(OutputStream* out) {
 }
 
 void ByteStream::extend(int32_t bytes) {
-  // Check if rewriting existing content. If so, move to next range and start at 0.
+  // Check if rewriting existing content. If so, move to next range and start at
+  // 0.
   if (current_ && current_ != &ranges_.back()) {
     ++current_;
     current_->position = 0;
@@ -78,7 +79,7 @@ void ByteStream::extend(int32_t bytes) {
   arena_->newRange(bytes, current_);
 }
 
-  namespace {
+namespace {
 void freeFunc(void* /*data*/, void* userData) {
   auto ptr = reinterpret_cast<std::shared_ptr<StreamArena>*>(userData);
   delete ptr;
@@ -91,13 +92,11 @@ std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
   std::unique_ptr<folly::IOBuf> iobuf;
   auto& ranges = out_->ranges();
   for (auto& range : ranges) {
-    auto numValues = &range == &ranges.back() ? out_->lastRangeEnd() : range.size;
+    auto numValues =
+        &range == &ranges.back() ? out_->lastRangeEnd() : range.size;
     auto userData = new std::shared_ptr<StreamArena>(arena_);
     auto newBuf = folly::IOBuf::takeOwnership(
-        reinterpret_cast<char*>(range.buffer),
-        numValues,
-        freeFunc,
-        userData);
+        reinterpret_cast<char*>(range.buffer), numValues, freeFunc, userData);
     if (iobuf) {
       iobuf->prev()->appendChain(std::move(newBuf));
     } else {

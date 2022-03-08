@@ -94,14 +94,14 @@ class OStreamOutputStream : public OutputStream {
   std::ostream* out_;
 };
 
-  #if 0
+#if 0
 template <>
 inline int32_t ByteRange::available<bool>() {
   return size * 8 - position;
 }
 #endif
 
-  // Stream over a chain of ByteRanges. Provides read, write and
+// Stream over a chain of ByteRanges. Provides read, write and
 // comparison for equality between stream contents and memory. Used
 // for streams in repartitioning or for complex variable length data
 // in hash tables. The stream is seekable and supports overwriting of
@@ -183,7 +183,7 @@ class ByteStream {
     updateEnd();
     return lastRangeEnd_;
   }
-  
+
   // Sets 'current_' to point to the next range of input.  // The
   // input is consecutive ByteRanges in 'ranges_' for the base class
   // but any view over external buffers can be made by specialization.
@@ -366,11 +366,12 @@ class ByteStream {
   void extend(int32_t bytes = memory::MappedMemory::kPageSize);
 
   void updateEnd() {
-    if (!ranges_.empty() && current_ == &ranges_.back() && current_->position > lastRangeEnd_) {
+    if (!ranges_.empty() && current_ == &ranges_.back() &&
+        current_->position > lastRangeEnd_) {
       lastRangeEnd_ = current_->position;
     }
   }
-  
+
   StreamArena* arena_;
   // Indicates that position in ranges_ is in bits, not bytes.
   const bool isBits_;
