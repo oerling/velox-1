@@ -24,13 +24,6 @@ namespace facebook::velox {
 
 struct ByteRange {
  public:
-#if 0
-  template <typename T>
-  int32_t available() {
-    return (capacity - position) / sizeof(T);
-  }
-#endif
-
   // Start of buffer. Not owned.
   uint8_t* buffer;
 
@@ -93,13 +86,6 @@ class OStreamOutputStream : public OutputStream {
  private:
   std::ostream* out_;
 };
-
-#if 0
-template <>
-inline int32_t ByteRange::available<bool>() {
-  return size * 8 - position;
-}
-#endif
 
 // Stream over a chain of ByteRanges. Provides read, write and
 // comparison for equality between stream contents and memory. Used
