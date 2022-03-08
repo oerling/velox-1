@@ -36,12 +36,13 @@ class ByteStreamTest : public testing::TestWithParam<bool> {
 
   void TearDown() override {
     MappedMemory::destroyTestOnly();
+    MappedMemory::setDefaultInstance(nullptr);
   }
 
   std::unique_ptr<MmapAllocator> mmapAllocator_;
 };
 
-TEST_F(ByteStreamTest, basic) {
+TEST_F(ByteStreamTest, outputStream) {
   auto out =
       std::make_unique<IOBufOutputStream>(*mmapAllocator_, nullptr, 10000);
   std::stringstream referenceSStream;
