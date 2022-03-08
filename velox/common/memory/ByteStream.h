@@ -24,14 +24,12 @@ namespace facebook::velox {
 
 struct ByteRange {
  public:
+#if 0
   template <typename T>
   int32_t available() {
-    return (size - position) / sizeof(T);
+    return (capacity - position) / sizeof(T);
   }
-
-  int32_t numValues() const {
-    return std::max(position, fill);
-  }
+#endif
 
   // Start of buffer. Not owned.
   uint8_t* buffer;
@@ -41,10 +39,6 @@ struct ByteRange {
 
   // Index of next byte/bit to be read/written in 'buffer'.
   int32_t position;
-
-  // Number of bytes/bits starting at 'buffer' that have been written at
-  // some time. if < position, position is the number of valid bytes/bits.
-  int32_t fill{0};
 };
 
 class OutputStreamListener {
@@ -100,15 +94,19 @@ class OStreamOutputStream : public OutputStream {
   std::ostream* out_;
 };
 
+  #if 0
 template <>
 inline int32_t ByteRange::available<bool>() {
   return size * 8 - position;
 }
+#endif
 
-// Stream over a chain of ByteRanges. Provides read, write and
+  // Stream over a chain of ByteRanges. Provides read, write and
 // comparison for equality between stream contents and memory. Used
 // for streams in repartitioning or for complex variable length data
-// in hash tables.
+// in hash tables. The stream is seekable and supports overwriting of
+// previous content, for example, writing a message body and then
+// seeking to start to write a length header.
 class ByteStream {
  public:
   // For input.
@@ -154,29 +152,38 @@ class ByteStream {
 
   void seekp(std::streampos position);
 
+  // Returns the size written into ranges_. This is the sum of the
+  // capcities of non-last ranges + the write position of the last
+  // range.
   size_t size() const {
-    size_t total = 0;
-    for (auto& range : ranges_) {
-      total += range.position;
+    if (ranges_.empty()) {
+      return 0;
     }
-    return total;
+    size_t total = 0;
+    for (auto i = 0; i < ranges_.size() - 1; ++i) {
+      total += ranges_[i].size;
+    }
+    return total + std::max(ranges_.back().position, lastRangeEnd_);
   }
 
   // For input. Returns true if all input has been read.
   bool atEnd() const {
+    if (!current_) {
+      return false;
+    }
     if (current_->position < current_->size) {
       return false;
     }
 
-    size_t position = current_ - ranges_.data();
-    VELOX_CHECK(position >= 0 && position < ranges_.size());
-    if (position == ranges_.size() - 1) {
-      return true;
-    }
-
-    return false;
+    VELOX_CHECK(current_ >= ranges_.data() && current_ <= &ranges_.back());
+    return current_ == &ranges_.back();
   }
 
+  int32_t lastRangeEnd() {
+    updateEnd();
+    return lastRangeEnd_;
+  }
+  
   // Sets 'current_' to point to the next range of input.  // The
   // input is consecutive ByteRanges in 'ranges_' for the base class
   // but any view over external buffers can be made by specialization.
@@ -358,6 +365,12 @@ class ByteStream {
  private:
   void extend(int32_t bytes = memory::MappedMemory::kPageSize);
 
+  void updateEnd() {
+    if (!ranges_.empty() && current_ == &ranges_.back() && current_->position > lastRangeEnd_) {
+      lastRangeEnd_ = current_->position;
+    }
+  }
+  
   StreamArena* arena_;
   // Indicates that position in ranges_ is in bits, not bytes.
   const bool isBits_;
@@ -368,6 +381,12 @@ class ByteStream {
   std::vector<ByteRange> ranges_;
   // Pointer to the current element of 'ranges_'.
   ByteRange* current_ = nullptr;
+
+  // Number of bits/bytes that have been written in the last element
+  // of 'ranges_'. In a write situation, all non-last ranges are full
+  // and the last may be partly full. The position in the last range
+  // is not necessarily the the end if there has been a seek.
+  int32_t lastRangeEnd_{0};
 };
 
 template <>
@@ -398,7 +417,6 @@ class IOBufOutputStream : public OutputStream {
 
   void write(const char* s, std::streamsize count) override {
     out_->appendStringPiece(folly::StringPiece(s, count));
-    ;
     if (listener_) {
       listener_->onWrite(s, count);
     }

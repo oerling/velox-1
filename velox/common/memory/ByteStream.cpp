@@ -28,33 +28,33 @@ std::streampos ByteStream::tellp() const {
     if (&range == current_) {
       return current_->position + size;
     }
-    size += range.numValues();
+    size += range.size;
   }
   VELOX_FAIL("ByteStream 'current_' is not in 'ranges_'.");
 }
 
 void ByteStream::seekp(std::streampos position) {
   int64_t toSkip = position;
-  if (current_ && current_->position > current_->fill) {
-    current_->fill = current_->position;
-  }
+  // Record how much was written pre-seek.
+  updateEnd();
   if (ranges_.empty() && position == 0) {
     return;
   }
   for (auto& range : ranges_) {
-    if (toSkip <= range.numValues()) {
+    if (toSkip <= range.size) {
       current_ = &range;
       current_->position = toSkip;
       return;
     }
-    toSkip -= range.numValues();
+    toSkip -= range.size;
   }
   VELOX_FAIL("Seeking past end of ByteStream: {}", position);
 }
 
 void ByteStream::flush(OutputStream* out) {
+  updateEnd();
   for (int32_t i = 0; i < ranges_.size(); ++i) {
-    int32_t count = ranges_[i].numValues();
+    int32_t count = i == ranges_.size() - 1 ? lastRangeEnd_ : ranges_[i].size;
     int32_t bytes = isBits_ ? bits::nbytes(count) : count;
     if (isBits_ && isReverseBitOrder_ && !isReversed_) {
       bits::reverseBits(ranges_[i].buffer, bytes);
@@ -67,14 +67,9 @@ void ByteStream::flush(OutputStream* out) {
 }
 
 void ByteStream::extend(int32_t bytes) {
-  if (current_) {
-    current_->fill = current_->position;
-  }
+  // Check if rewriting existing content. If so, move to next range and start at 0.
   if (current_ && current_ != &ranges_.back()) {
     ++current_;
-    current_->fill = current_->position;
-    if (current_->fill < current_->position) {
-    }
     current_->position = 0;
     return;
   }
@@ -82,7 +77,8 @@ void ByteStream::extend(int32_t bytes) {
   current_ = &ranges_.back();
   arena_->newRange(bytes, current_);
 }
-namespace {
+
+  namespace {
 void freeFunc(void* /*data*/, void* userData) {
   auto ptr = reinterpret_cast<std::shared_ptr<StreamArena>*>(userData);
   delete ptr;
@@ -90,14 +86,16 @@ void freeFunc(void* /*data*/, void* userData) {
 } // namespace
 
 std::unique_ptr<folly::IOBuf> IOBufOutputStream::getIOBuf() {
-  // Make an IOBuf for each range. The The IOBufs keep shared ownership of
+  // Make an IOBuf for each range. The IOBufs keep shared ownership of
   // 'arena_'.
   std::unique_ptr<folly::IOBuf> iobuf;
-  for (auto& range : out_->ranges()) {
+  auto& ranges = out_->ranges();
+  for (auto& range : ranges) {
+    auto numValues = &range == &ranges.back() ? out_->lastRangeEnd() : range.size;
     auto userData = new std::shared_ptr<StreamArena>(arena_);
     auto newBuf = folly::IOBuf::takeOwnership(
         reinterpret_cast<char*>(range.buffer),
-        range.numValues(),
+        numValues,
         freeFunc,
         userData);
     if (iobuf) {
