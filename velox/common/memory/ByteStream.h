@@ -92,9 +92,8 @@ class OStreamOutputStream : public OutputStream {
 // for streams in repartitioning or for complex variable length data
 // in hash tables. The stream is seekable and supports overwriting of
 // previous content, for example, writing a message body and then
-// seeking to start to write a length header.
+// seeking back to start to write a length header.
 class ByteStream {
- public:
   // For input.
   ByteStream() : isBits_(false), isReverseBitOrder_(false) {}
   virtual ~ByteStream() = default;
@@ -119,6 +118,7 @@ class ByteStream {
     ranges_.resize(1);
     ranges_[0] = range;
     current_ = ranges_.data();
+    lastRangeEnd_ = ranges_[0].size;
   }
 
   const std::vector<ByteRange>& ranges() const {
@@ -139,8 +139,8 @@ class ByteStream {
   void seekp(std::streampos position);
 
   // Returns the size written into ranges_. This is the sum of the
-  // capcities of non-last ranges + the write position of the last
-  // range.
+  // capacities of non-last ranges + the greatest write position of
+  // the last range.
   size_t size() const {
     if (ranges_.empty()) {
       return 0;
