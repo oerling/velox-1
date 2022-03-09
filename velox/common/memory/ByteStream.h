@@ -23,7 +23,6 @@
 namespace facebook::velox {
 
 struct ByteRange {
- public:
   // Start of buffer. Not owned.
   uint8_t* buffer;
 
@@ -94,6 +93,7 @@ class OStreamOutputStream : public OutputStream {
 // previous content, for example, writing a message body and then
 // seeking back to start to write a length header.
 class ByteStream {
+ public:
   // For input.
   ByteStream() : isBits_(false), isReverseBitOrder_(false) {}
   virtual ~ByteStream() = default;
