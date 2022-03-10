@@ -76,6 +76,7 @@ void ByteStream::extend(int32_t bytes) {
   }
   ranges_.emplace_back();
   current_ = &ranges_.back();
+  lastRangeEnd_ = 0;
   arena_->newRange(bytes, current_);
 }
 
