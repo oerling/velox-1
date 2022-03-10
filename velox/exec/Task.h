@@ -20,6 +20,7 @@
 #include "velox/exec/LocalPartition.h"
 #include "velox/exec/MergeSource.h"
 #include "velox/exec/Split.h"
+#include "velox/exec/TaskStats.h"
 #include "velox/exec/TaskStructs.h"
 #include "velox/vector/ComplexVector.h"
 
@@ -120,7 +121,8 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Sets the (so far) max split sequence id, so all splits with sequence id
   // equal or below that, will be ignored in the 'addSplitWithSequence' call.
-  // Note, that 'addSplitWithSequence' does not update max split sequence id.
+  // Note, that 'addSplitWithSequence' does not update max split sequence id
+  // and the operation is silently ignored if Task is not running.
   void setMaxSplitSequenceId(
       const core::PlanNodeId& planNodeId,
       long maxSequenceId);
@@ -132,6 +134,7 @@ class Task : public std::enable_shared_from_this<Task> {
   // duplicate.
   // Note, that this method does NOT update max split sequence id.
   // Returns true if split was added, false if it was ignored.
+  // Note that, the operation is silently ignored if Task is not running.
   bool addSplitWithSequence(
       const core::PlanNodeId& planNodeId,
       exec::Split&& split,
@@ -139,6 +142,7 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Adds split for a source operator corresponding to plan node with
   // specified ID. Does not require sequential id.
+  // Note that, the operation is silently ignored if Task is not running.
   void addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split);
 
   // We mark that for the given group there would be no more splits coming.
