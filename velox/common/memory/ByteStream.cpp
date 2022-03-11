@@ -69,6 +69,11 @@ void ByteStream::flush(OutputStream* out) {
 void ByteStream::extend(int32_t bytes) {
   // Check if rewriting existing content. If so, move to next range and start at
   // 0.
+  if (current_ && current_->position != current_->size) {
+    LOG(FATAL) << "Extend ByteStream before range full: " << current_->position
+               << " vs. " << current_->size;
+  }
+
   if (current_ && current_ != &ranges_.back()) {
     ++current_;
     current_->position = 0;
@@ -78,6 +83,10 @@ void ByteStream::extend(int32_t bytes) {
   current_ = &ranges_.back();
   lastRangeEnd_ = 0;
   arena_->newRange(bytes, current_);
+  if (isBits_) {
+    // size and position are in units of bits for a bits stream.
+    current_->size *= 8;
+  }
 }
 
 namespace {

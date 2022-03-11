@@ -285,7 +285,7 @@ class ByteStream {
   }
 
   void appendBool(bool value, int32_t count) {
-    if (count == 1 && current_->size * 8 - current_->position) {
+    if (count == 1 && current_->size > current_->position) {
       bits::setBit(
           reinterpret_cast<uint64_t*>(current_->buffer),
           current_->position,
@@ -297,7 +297,7 @@ class ByteStream {
     VELOX_DCHECK(isBits_);
     for (;;) {
       int32_t bitsFit =
-          std::min(count - offset, current_->size * 8 - current_->position);
+          std::min(count - offset, current_->size - current_->position);
       bits::fillBits(
           reinterpret_cast<uint64_t*>(current_->buffer),
           current_->position,
