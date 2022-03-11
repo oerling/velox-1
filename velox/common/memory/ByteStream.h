@@ -23,7 +23,6 @@
 namespace facebook::velox {
 
 struct ByteRange {
- public:
   // Start of buffer. Not owned.
   uint8_t* buffer;
 
@@ -92,7 +91,7 @@ class OStreamOutputStream : public OutputStream {
 // for streams in repartitioning or for complex variable length data
 // in hash tables. The stream is seekable and supports overwriting of
 // previous content, for example, writing a message body and then
-// seeking to start to write a length header.
+// seeking back to start to write a length header.
 class ByteStream {
  public:
   // For input.
@@ -119,6 +118,7 @@ class ByteStream {
     ranges_.resize(1);
     ranges_[0] = range;
     current_ = ranges_.data();
+    lastRangeEnd_ = ranges_[0].size;
   }
 
   const std::vector<ByteRange>& ranges() const {
@@ -139,8 +139,8 @@ class ByteStream {
   void seekp(std::streampos position);
 
   // Returns the size written into ranges_. This is the sum of the
-  // capcities of non-last ranges + the write position of the last
-  // range.
+  // capacities of non-last ranges + the greatest write position of
+  // the last range.
   size_t size() const {
     if (ranges_.empty()) {
       return 0;
@@ -285,7 +285,7 @@ class ByteStream {
   }
 
   void appendBool(bool value, int32_t count) {
-    if (count == 1 && current_->size * 8 - current_->position) {
+    if (count == 1 && current_->size > current_->position) {
       bits::setBit(
           reinterpret_cast<uint64_t*>(current_->buffer),
           current_->position,
@@ -297,7 +297,7 @@ class ByteStream {
     VELOX_DCHECK(isBits_);
     for (;;) {
       int32_t bitsFit =
-          std::min(count - offset, current_->size * 8 - current_->position);
+          std::min(count - offset, current_->size - current_->position);
       bits::fillBits(
           reinterpret_cast<uint64_t*>(current_->buffer),
           current_->position,

@@ -28,7 +28,7 @@
 
 namespace facebook::velox::core {
 
-// most UDFs are determinisic, hence this default value
+// Most UDFs are deterministic, hence this default value.
 template <class T, class = void>
 struct udf_is_deterministic : std::true_type {};
 
@@ -487,13 +487,15 @@ class UDFHolder final
  public:
   using Metadata = core::SimpleFunctionMetadata<Fun, TReturn, TArgs...>;
 
-  using exec_return_type = typename Exec::template resolver<TReturn>::out_type;
+  template <typename T>
+  using exec_resolver = typename Exec::template resolver<T>;
+
+  using exec_return_type = typename exec_resolver<TReturn>::out_type;
   using optional_exec_return_type = std::optional<exec_return_type>;
 
   template <typename T>
-  using exec_arg_type = typename Exec::template resolver<T>::in_type;
-  using exec_arg_types =
-      std::tuple<typename Exec::template resolver<TArgs>::in_type...>;
+  using exec_arg_type = typename exec_resolver<T>::in_type;
+  using exec_arg_types = std::tuple<typename exec_resolver<TArgs>::in_type...>;
   template <typename T>
   using optional_exec_arg_type = std::optional<exec_arg_type<T>>;
 
@@ -505,7 +507,7 @@ class UDFHolder final
   template <typename T>
   using exec_no_nulls_arg_type =
       typename null_free_in_type_resolver::template resolve<
-          typename Exec::template resolver<T>>::type;
+          exec_resolver<T>>::type;
 
   DECLARE_METHOD_RESOLVER(call_method_resolver, call);
   DECLARE_METHOD_RESOLVER(callNullable_method_resolver, callNullable);
@@ -513,36 +515,104 @@ class UDFHolder final
   DECLARE_METHOD_RESOLVER(callAscii_method_resolver, callAscii);
   DECLARE_METHOD_RESOLVER(initialize_method_resolver, initialize);
 
-  // Check which of the call(), callNullable(), callNullFree(), callAscii(),
-  // and initialize() methods are available in the UDF object.
-  static constexpr bool udf_has_call = util::has_method<
+  // Check which flavor of the call() method is provided by the UDF object. UDFs
+  // are required to provide at least one of the following methods:
+  //
+  // - bool|void call(...)
+  // - bool|void callNullable(...)
+  // - bool|void callNullFree(...)
+  //
+  // Each of these methods can return either bool or void. Returning void means
+  // that the UDF is assumed never to return null values.
+  //
+  // Optionally, UDFs can also provide the following methods:
+  //
+  // - bool|void callAscii(...)
+  // - void initialize(...)
+
+  // call():
+  static constexpr bool udf_has_call_return_bool = util::has_method<
       Fun,
       call_method_resolver,
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_call_return_void = util::has_method<
+      Fun,
+      call_method_resolver,
+      void,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_call =
+      udf_has_call_return_bool | udf_has_call_return_void;
+  static_assert(
+      !(udf_has_call_return_bool && udf_has_call_return_void),
+      "Provided call() methods need to return either void OR bool.");
 
-  static constexpr bool udf_has_callNullable = util::has_method<
+  // callNullable():
+  static constexpr bool udf_has_callNullable_return_bool = util::has_method<
       Fun,
       callNullable_method_resolver,
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>*...>::value;
+  static constexpr bool udf_has_callNullable_return_void = util::has_method<
+      Fun,
+      callNullable_method_resolver,
+      void,
+      exec_return_type,
+      const exec_arg_type<TArgs>*...>::value;
+  static constexpr bool udf_has_callNullable =
+      udf_has_callNullable_return_bool | udf_has_callNullable_return_void;
+  static_assert(
+      !(udf_has_callNullable_return_bool && udf_has_callNullable_return_void),
+      "Provided callNullable() methods need to return either void OR bool.");
 
-  static constexpr bool udf_has_callNullFree = util::has_method<
+  // callNullFree():
+  static constexpr bool udf_has_callNullFree_return_bool = util::has_method<
       Fun,
       callNullFree_method_resolver,
       bool,
       exec_return_type,
       const exec_no_nulls_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callNullFree_return_void = util::has_method<
+      Fun,
+      callNullFree_method_resolver,
+      void,
+      exec_return_type,
+      const exec_no_nulls_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callNullFree =
+      udf_has_callNullFree_return_bool | udf_has_callNullFree_return_void;
+  static_assert(
+      !(udf_has_callNullFree_return_bool && udf_has_callNullFree_return_void),
+      "Provided callNullFree() methods need to return either void OR bool.");
 
-  static constexpr bool udf_has_callAscii = util::has_method<
+  // callAscii():
+  static constexpr bool udf_has_callAscii_return_bool = util::has_method<
       Fun,
       callAscii_method_resolver,
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callAscii_return_void = util::has_method<
+      Fun,
+      callAscii_method_resolver,
+      void,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callAscii =
+      udf_has_callAscii_return_bool | udf_has_callAscii_return_void;
+  static_assert(
+      !(udf_has_callAscii_return_bool && udf_has_callAscii_return_void),
+      "Provided callAscii() methods need to return either void OR bool.");
 
+  // Assert that the return type for callAscii() matches call()'s.
+  static_assert(
+      !((udf_has_callAscii_return_bool && udf_has_call_return_void) ||
+        (udf_has_callAscii_return_void && udf_has_call_return_bool)),
+      "The return type for callAscii() must match the return type for call().");
+
+  // initialize():
   static constexpr bool udf_has_initialize = util::has_method<
       Fun,
       initialize_method_resolver,
@@ -563,9 +633,19 @@ class UDFHolder final
       !(udf_has_initialize && Metadata::isVariadic()),
       "Initialize is not supported for UDFs with VariadicArgs.");
 
+  // Default null behavior means assuming null output if any of the inputs is
+  // null, without calling the function implementation.
   static constexpr bool is_default_null_behavior = !udf_has_callNullable;
+
+  // If any of the the provided "call" flavors can produce null (in case any of
+  // them return bool). This is only false if all the call methods provided for
+  // a function return void.
+  static constexpr bool can_produce_null_output = udf_has_call_return_bool |
+      udf_has_callNullable_return_bool | udf_has_callNullFree_return_bool |
+      udf_has_callAscii_return_bool;
+
   // This is true when callNullFree is implemented, but not call or
-  // callNullable.  In this case if any input is NULL or any complex type in
+  // callNullable. In this case if any input is NULL or any complex type in
   // the input contains a NULL element (recursively) the function will return
   // NULL directly, skipping evaluation.
   static constexpr bool is_default_contains_nulls_behavior =
@@ -596,67 +676,114 @@ class UDFHolder final
 
   FOLLY_ALWAYS_INLINE void initialize(
       const core::QueryConfig& config,
-      const typename Exec::template resolver<TArgs>::in_type*... constantArgs) {
+      const typename exec_resolver<TArgs>::in_type*... constantArgs) {
     if constexpr (udf_has_initialize) {
       return instance_.initialize(config, constantArgs...);
     }
   }
 
   FOLLY_ALWAYS_INLINE bool call(
-      typename Exec::template resolver<TReturn>::out_type& out,
-      const typename Exec::template resolver<TArgs>::in_type&... args) {
+      exec_return_type& out,
+      const typename exec_resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_call) {
-      return instance_.call(out, args...);
+      return callImpl(out, args...);
     } else if constexpr (udf_has_callNullable) {
-      return instance_.callNullable(out, (&args)...);
+      return callNullableImpl(out, (&args)...);
     } else {
       VELOX_UNREACHABLE(
-          "call should never be called if the UDF does not implement call or callNullable.");
+          "call should never be called if the UDF does not "
+          "implement call or callNullable.");
     }
   }
 
   FOLLY_ALWAYS_INLINE bool callNullable(
       exec_return_type& out,
-      const typename Exec::template resolver<TArgs>::in_type*... args) {
+      const typename exec_resolver<TArgs>::in_type*... args) {
     if constexpr (udf_has_callNullable) {
-      return instance_.callNullable(out, args...);
+      return callNullableImpl(out, args...);
     } else if constexpr (udf_has_call) {
-      // default null behavior
+      // Default null behavior.
       const bool isAllSet = (args && ...);
       if (LIKELY(isAllSet)) {
-        return instance_.call(out, (*args)...);
+        return callImpl(out, (*args)...);
       } else {
         return false;
       }
     } else {
       VELOX_UNREACHABLE(
-          "callNullable should never be called if the UDF does not implement callNullable or call.");
+          "callNullable should never be called if the UDF does not "
+          "implement callNullable or call.");
     }
   }
 
   FOLLY_ALWAYS_INLINE bool callAscii(
-      typename Exec::template resolver<TReturn>::out_type& out,
-      const typename Exec::template resolver<TArgs>::in_type&... args) {
+      exec_return_type& out,
+      const typename exec_resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_callAscii) {
-      return instance_.callAscii(out, args...);
-    } else if constexpr (udf_has_call) {
-      return instance_.call(out, args...);
-    } else if constexpr (udf_has_callNullable) {
-      return instance_.callNullable(out, (&args)...);
+      return callAsciiImpl(out, args...);
     } else {
-      VELOX_UNREACHABLE(
-          "callAscii should never be called if the UDF does not implement callAscii, call, or callNullable.");
+      return call(out, args...);
     }
   }
 
   FOLLY_ALWAYS_INLINE bool callNullFree(
-      typename Exec::template resolver<TReturn>::out_type& out,
+      exec_return_type& out,
       const exec_no_nulls_arg_type<TArgs>&... args) {
     if constexpr (udf_has_callNullFree) {
-      return instance_.callNullFree(out, args...);
+      return callNullFreeImpl(out, args...);
     } else {
       VELOX_UNREACHABLE(
           "callNullFree should never be called if the UDF does not implement callNullFree.");
+    }
+  }
+
+  // Helper functions to handle void vs bool return type.
+
+  FOLLY_ALWAYS_INLINE bool callImpl(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const typename Exec::template resolver<TArgs>::in_type&... args) {
+    static_assert(udf_has_call);
+    if constexpr (udf_has_call_return_bool) {
+      return instance_.call(out, args...);
+    } else {
+      instance_.call(out, args...);
+      return true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullableImpl(
+      exec_return_type& out,
+      const typename Exec::template resolver<TArgs>::in_type*... args) {
+    static_assert(udf_has_callNullable);
+    if constexpr (udf_has_callNullable_return_bool) {
+      return instance_.callNullable(out, args...);
+    } else {
+      instance_.callNullable(out, args...);
+      return true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callAsciiImpl(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const typename Exec::template resolver<TArgs>::in_type&... args) {
+    static_assert(udf_has_callAscii);
+    if constexpr (udf_has_callAscii_return_bool) {
+      return instance_.callAscii(out, args...);
+    } else {
+      instance_.callAscii(out, args...);
+      return true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullFreeImpl(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const exec_no_nulls_arg_type<TArgs>&... args) {
+    static_assert(udf_has_callNullFree);
+    if constexpr (udf_has_callNullFree_return_bool) {
+      return instance_.callNullFree(out, args...);
+    } else {
+      instance_.callNullFree(out, args...);
+      return true;
     }
   }
 };
