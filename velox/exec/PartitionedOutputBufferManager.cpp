@@ -15,15 +15,6 @@
  */
 #include "velox/exec/PartitionedOutputBufferManager.h"
 
-DEFINE_int32(
-    min_partitioned_output_buffer_mb,
-    32,
-    "Minimum MB of buffer for Task output");
-DEFINE_int32(
-    partitioned_output_continue_pct,
-    90,
-    "Fill percentage of Task partitioned output for resuming a blocked Task");
-
 namespace facebook::velox::exec {
 
 void DestinationBuffer::getData(
@@ -59,7 +50,7 @@ void DestinationBuffer::getData(
       break;
     }
     result.push_back(data_[i]);
-    resultBytes += data_[i]->byteSize();
+    resultBytes += data_[i]->size();
     if (resultBytes >= maxBytes) {
       break;
     }
@@ -163,10 +154,9 @@ PartitionedOutputBuffer::PartitionedOutputBuffer(
     : task_(std::move(task)),
       broadcast_(broadcast),
       numDrivers_(numDrivers),
-      maxSize_(std::max<int64_t>(
-          FLAGS_min_partitioned_output_buffer_mb << 20,
-          task_->queryCtx()->config().maxPartitionedOutputBufferSize())),
-      continueSize_((maxSize_ * FLAGS_partitioned_output_continue_pct) / 100) {
+      maxSize_(
+          task_->queryCtx()->config().maxPartitionedOutputBufferSize()),
+      continueSize_((maxSize_ * kContinuePct) / 100) {
   buffers_.reserve(numDestinations);
   for (int i = 0; i < numDestinations; i++) {
     buffers_.push_back(std::make_unique<DestinationBuffer>());
@@ -240,7 +230,7 @@ BlockingReason PartitionedOutputBuffer::enqueue(
     VELOX_CHECK(
         task_->isRunning(), "Task is terminated, cannot add data to output.");
 
-    totalSize_ += data->byteSize();
+    totalSize_ += data->size();
     if (broadcast_) {
       for (auto& buffer : buffers_) {
         buffer->enqueue(data);
@@ -349,7 +339,7 @@ void PartitionedOutputBuffer::updateAfterAcknowledgeLocked(
   uint64_t totalFreed = 0;
   for (const auto& free : freed) {
     if (free.unique()) {
-      totalFreed += free->byteSize();
+      totalFreed += free->size();
     }
   }
   if (totalFreed == 0) {

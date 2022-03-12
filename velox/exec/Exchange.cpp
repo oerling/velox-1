@@ -105,7 +105,7 @@ class LocalExchangeSource : public ExchangeSource {
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back(SerializedPage::copyFrom(inputPage.get()));
+            pages.push_back  (copyPage(*inputPage));
             inputPage = nullptr;
           }
           int64_t ackSequence;
@@ -134,6 +134,14 @@ class LocalExchangeSource : public ExchangeSource {
 
  private:
   static constexpr uint64_t kMaxBytes = 32 * 1024 * 1024; // 32 MB
+
+  // Copies the IOBufs from 'page' so that they no longer hold memory
+  // acounted in the producer Task.
+  static std::unique_ptr<SerializedPage> copyPage(SerializedPage& page) {
+    auto buf = page.getIOBuf();
+    buf->unshare();
+    return std::make_unique<SerializedPage>(std::move(buf));
+  }
 };
 
 std::unique_ptr<ExchangeSource> createLocalExchangeSource(
@@ -299,7 +307,7 @@ RowVectorPtr Exchange::getOutput() {
 
   if (!inputStream_) {
     inputStream_ = std::make_unique<ByteStream>();
-    stats_.rawInputBytes += currentPage_->byteSize();
+    stats_.rawInputBytes += currentPage_->size();
     currentPage_->prepareStreamForDeserialize(inputStream_.get());
   }
 
