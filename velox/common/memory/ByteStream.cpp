@@ -67,13 +67,13 @@ void ByteStream::flush(OutputStream* out) {
 }
 
 void ByteStream::extend(int32_t bytes) {
-  // Check if rewriting existing content. If so, move to next range and start at
-  // 0.
   if (current_ && current_->position != current_->size) {
     LOG(FATAL) << "Extend ByteStream before range full: " << current_->position
                << " vs. " << current_->size;
   }
 
+  // Check if rewriting existing content. If so, move to next range and start at
+  // 0.
   if (current_ && current_ != &ranges_.back()) {
     ++current_;
     current_->position = 0;
