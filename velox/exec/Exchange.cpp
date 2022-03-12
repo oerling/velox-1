@@ -105,7 +105,7 @@ class LocalExchangeSource : public ExchangeSource {
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back  (copyPage(*inputPage));
+            pages.push_back(copyPage(*inputPage));
             inputPage = nullptr;
           }
           int64_t ackSequence;

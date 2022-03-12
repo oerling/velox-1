@@ -129,7 +129,8 @@ class ExchangeQueue {
     return totalBytes_;
   }
 
-  // Returns the target maximum for totalBytes(). An exchange client should not fetch more data until the  queue totalBytes() is below maxBytes().
+  // Returns the target maximum for totalBytes(). An exchange client should not
+  // fetch more data until the  queue totalBytes() is below maxBytes().
   uint64_t maxBytes() const {
     return maxBytes_;
   }
@@ -172,7 +173,8 @@ class ExchangeQueue {
   // Total size of SerializedPages in queue.
   uint64_t totalBytes_{0};
 
-  // If 'totalBytes_' < 'maxBytes_', an exchange should request more data from producers.
+  // If 'totalBytes_' < 'maxBytes_', an exchange should request more data from
+  // producers.
   uint64_t maxBytes_{128 << 20};
 };
 
