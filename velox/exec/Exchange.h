@@ -40,20 +40,9 @@ class SerializedPage {
   // VectorStreamGroup::read().
   void prepareStreamForDeserialize(ByteStream* input);
 
-<<<<<<< HEAD
   std::unique_ptr<folly::IOBuf> getIOBuf() const {
     VELOX_CHECK(iobuf_);
     return iobuf_->clone();
-=======
-  static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
-      VectorStreamGroup* group) {
-    std::stringstream out;
-    OutputStreamListener listener;
-    OStreamOutputStream outputStream(&out, &listener);
-    group->flush(&outputStream);
-    return std::make_unique<SerializedPage>(
-        &out, out.tellp(), group->mappedMemory());
->>>>>>> main
   }
 
  private:

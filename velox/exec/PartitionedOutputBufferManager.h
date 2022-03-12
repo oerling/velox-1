@@ -263,7 +263,7 @@ class PartitionedOutputBufferManager {
 
   // Sets the stream listener factory. This allows custom processing of data for
   // repartitioning, e.g. computing checksums.
-  void setChecksumListenerFactory(
+  void setListenerFactory(
       std::function<std::unique_ptr<OutputStreamListener>()> factory) {
     listenerFactory_ = factory;
   }
