@@ -18,38 +18,10 @@
 
 namespace facebook::velox::exec {
 
-SerializedPage::SerializedPage(
-    std::istream* stream,
-    uint64_t size,
-    memory::MappedMemory* memory)
-    : allocation_(std::make_unique<memory::MappedMemory::Allocation>(memory)) {
-  if (!memory->allocate(
-          bits::roundUp(size, memory::MappedMemory::kPageSize) /
-              memory::MappedMemory::kPageSize,
-          kSerializedPageOwner,
-          *allocation_)) {
-    VELOX_FAIL("Could not allocate memory for exchange input");
-  }
-  auto toRead = size;
-  for (int i = 0; i < allocation_->numRuns(); ++i) {
-    auto run = allocation_->runAt(i);
-    auto runSize = run.numPages() * memory::MappedMemory::kPageSize;
-    auto bytes = std::min<int32_t>(runSize, toRead);
-    ranges_.push_back(ByteRange{run.data(), bytes, 0});
-    stream->read(reinterpret_cast<char*>(run.data()), bytes);
-    toRead -= bytes;
-    if (!toRead) {
-      break;
-    }
-  }
-
-  VELOX_CHECK_EQ(toRead, 0);
-}
-
 SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
     : iobuf_(std::move(iobuf)) {
   for (auto& buf : *iobuf_) {
-    auto bufSize = buf.size();
+    int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
@@ -114,7 +86,7 @@ class LocalExchangeSource : public ExchangeSource {
         // Since this lambda may outlive 'this', we need to capture a
         // shared_ptr to the current object (self).
         [self, requestedSequence, buffers, this](
-            std::vector<std::shared_ptr<VectorStreamGroup>>& data,
+            std::vector<std::shared_ptr<SerializedPage>>& data,
             int64_t sequence) {
           if (requestedSequence > sequence) {
             VLOG(2) << "Receives earlier sequence than requested: task "
@@ -128,14 +100,14 @@ class LocalExchangeSource : public ExchangeSource {
           }
           std::vector<std::unique_ptr<SerializedPage>> pages;
           bool atEnd = false;
-          for (auto& group : data) {
-            if (!group) {
+          for (auto& inputPage : data) {
+            if (!inputPage) {
               atEnd = true;
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back(SerializedPage::fromVectorStreamGroup(group.get()));
-            group = nullptr;
+            pages.push_back(SerializedPage::copyFrom(inputPage.get()));
+            inputPage = nullptr;
           }
           int64_t ackSequence;
           {

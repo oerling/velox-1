@@ -55,15 +55,15 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
     return task;
   }
 
-  std::unique_ptr<VectorStreamGroup> makeVectorStreamGroup(
+  std::unique_ptr<SerializedPage> makeSerializedPage(
       std::shared_ptr<const RowType> rowType,
       vector_size_t size) {
     auto vector = std::dynamic_pointer_cast<RowVector>(
         BatchMaker::createBatch(rowType, size, *pool_));
-    return toVectorStreamGroup(vector);
+    return toSerializedPage(vector);
   }
 
-  std::unique_ptr<VectorStreamGroup> toVectorStreamGroup(VectorPtr vector) {
+  std::unique_ptr<SerializedPage> toSerializedPage(VectorPtr vector) {
     auto data = std::make_unique<VectorStreamGroup>(mappedMemory_);
     auto size = vector->size();
     auto range = IndexRange{0, size};
@@ -71,7 +71,9 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
         std::dynamic_pointer_cast<const RowType>(vector->type()), size);
     data->append(
         std::dynamic_pointer_cast<RowVector>(vector), folly::Range(&range, 1));
-    return data;
+    IOBufOutputStream stream(*mappedMemory_, nullptr, data->size());
+    data->flush(&stream);
+    return std::make_unique<SerializedPage>(stream.getIOBuf());
   }
 
   void enqueue(
@@ -81,7 +83,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
       vector_size_t size) {
     ContinueFuture future(false);
     auto blockingReason = bufferManager_->enqueue(
-        taskId, destination, makeVectorStreamGroup(rowType, size), &future);
+        taskId, destination, makeSerializedPage(rowType, size), &future);
     ASSERT_EQ(blockingReason, BlockingReason::kNotBlocked);
   }
 
@@ -102,7 +104,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
         maxBytes,
         sequence,
         [destination, sequence, expectedGroups, &receivedData](
-            std::vector<std::shared_ptr<VectorStreamGroup>>& groups,
+            std::vector<std::shared_ptr<SerializedPage>>& groups,
             int64_t inSequence) {
           EXPECT_FALSE(receivedData) << "for destination " << destination;
           EXPECT_EQ(groups.size(), expectedGroups)
@@ -139,7 +141,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
   DataAvailableCallback
   receiveEndMarker(int destination, int64_t sequence, bool& receivedEndMarker) {
     return [destination, sequence, &receivedEndMarker](
-               std::vector<std::shared_ptr<VectorStreamGroup>>& groups,
+               std::vector<std::shared_ptr<SerializedPage>>& groups,
                int64_t inSequence) {
       EXPECT_FALSE(receivedEndMarker) << "for destination " << destination;
       EXPECT_EQ(groups.size(), 1) << "for destination " << destination;
@@ -188,7 +190,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
       bool& receivedData) {
     receivedData = false;
     return [destination, sequence, expectedGroups, &receivedData](
-               std::vector<std::shared_ptr<VectorStreamGroup>>& groups,
+               std::vector<std::shared_ptr<SerializedPage>>& groups,
                int64_t inSequence) {
       EXPECT_FALSE(receivedData) << "for destination " << destination;
       EXPECT_EQ(groups.size(), expectedGroups)
@@ -354,8 +356,7 @@ TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
 
 TEST_F(PartitionedOutputBufferManagerTest, errorInQueue) {
   auto queue = std::make_shared<ExchangeQueue>();
-  std::stringstream str;
-  auto page = std::make_unique<SerializedPage>(&str, 0, mappedMemory_);
+  auto page = std::make_unique<SerializedPage>(nullptr);
   {
     std::lock_guard<std::mutex> l(queue->mutex());
     queue->setErrorLocked("error");

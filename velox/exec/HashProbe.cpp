@@ -50,21 +50,6 @@ std::shared_ptr<const RowType> makeTableType(
   }
   return std::make_shared<RowType>(std::move(names), std::move(types));
 }
-
-void checkJoinType(core::JoinType joinType) {
-  switch (joinType) {
-    case core::JoinType::kInner:
-    case core::JoinType::kLeft:
-    case core::JoinType::kSemi:
-    case core::JoinType::kAnti:
-    case core::JoinType::kRight:
-      break;
-    case core::JoinType::kFull:
-      VELOX_USER_FAIL("Full outer joins are not supported yet");
-    default:
-      VELOX_USER_FAIL("Unsupported join type");
-  }
-}
 } // namespace
 
 HashProbe::HashProbe(
@@ -82,7 +67,6 @@ HashProbe::HashProbe(
       joinType_{joinNode->joinType()},
       filterResult_(1),
       outputRows_(outputBatchSize_) {
-  checkJoinType(joinType_);
   auto probeType = joinNode->sources()[0]->outputType();
   auto numKeys = joinNode->leftKeys().size();
   keyChannels_.reserve(numKeys);
@@ -236,8 +220,11 @@ void HashProbe::addInput(RowVectorPtr input) {
   }
 
   if (table_->numDistinct() == 0) {
-    // Build side is empty. This state is valid only for anti and left joins.
-    VELOX_CHECK(isAntiJoin(joinType_) || isLeftJoin(joinType_));
+    // Build side is empty. This state is valid only for anti, left and full
+    // joins.
+    VELOX_CHECK(
+        isAntiJoin(joinType_) || isLeftJoin(joinType_) ||
+        isFullJoin(joinType_));
     return;
   }
 
@@ -296,7 +283,7 @@ void HashProbe::addInput(RowVectorPtr input) {
     return;
   }
   passingInputRowsInitialized_ = false;
-  if (isLeftJoin(joinType_)) {
+  if (isLeftJoin(joinType_) || isFullJoin(joinType_)) {
     // Make sure to allocate an entry in 'hits' for every input row to allow for
     // including rows without a match in the output. Also, make sure to
     // initialize all 'hits' to nullptr as HashTable::joinProbe will only
@@ -422,7 +409,7 @@ RowVectorPtr HashProbe::getNonMatchingOutputForRightJoin() {
 RowVectorPtr HashProbe::getOutput() {
   clearIdentityProjectedOutput();
   if (!input_) {
-    if (noMoreInput_ && isRightJoin(joinType_)) {
+    if (noMoreInput_ && (isRightJoin(joinType_) || isFullJoin(joinType_))) {
       auto output = getNonMatchingOutputForRightJoin();
       if (output == nullptr) {
         finished_ = true;
@@ -479,7 +466,7 @@ RowVectorPtr HashProbe::getOutput() {
     } else {
       numOut = table_->listJoinResults(
           results_,
-          isLeftJoin(joinType_),
+          isLeftJoin(joinType_) || isFullJoin(joinType_),
           mapping,
           folly::Range(outputRows_.data(), outputRows_.size()));
     }
@@ -492,7 +479,7 @@ RowVectorPtr HashProbe::getOutput() {
 
     numOut = evalFilter(numOut);
     if (!numOut) {
-      // the filter was false on all rows.
+      // The filter was false on all rows.
       if (isSemiOrAntiJoin) {
         input_ = nullptr;
         return nullptr;
@@ -500,7 +487,7 @@ RowVectorPtr HashProbe::getOutput() {
       continue;
     }
 
-    if (isRightJoin(joinType_)) {
+    if (isRightJoin(joinType_) || isFullJoin(joinType_)) {
       // Mark build-side rows that have a match on the join condition.
       table_->rows()->setProbedFlag(outputRows_.data(), numOut);
     }
@@ -549,7 +536,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
 
   int32_t numPassed = 0;
   auto rawMapping = rowNumberMapping_->asMutable<vector_size_t>();
-  if (isLeftJoin(joinType_)) {
+  if (isLeftJoin(joinType_) || isFullJoin(joinType_)) {
     // Identify probe rows which got filtered out and add them back with nulls
     // for build side.
     auto addMiss = [&](auto row) {
@@ -589,7 +576,7 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
   if (!passingInputRowsInitialized_) {
     passingInputRowsInitialized_ = true;
     passingInputRows_.resize(input_->size());
-    if (isLeftJoin(joinType_)) {
+    if (isLeftJoin(joinType_) || isFullJoin(joinType_)) {
       passingInputRows_.setAll();
     } else {
       passingInputRows_.clearAll();
@@ -608,7 +595,7 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
 
 void HashProbe::noMoreInput() {
   Operator::noMoreInput();
-  if (isRightJoin(joinType_)) {
+  if (isRightJoin(joinType_) || isFullJoin(joinType_)) {
     std::vector<VeloxPromise<bool>> promises;
     std::vector<std::shared_ptr<Driver>> peers;
     // The last Driver to hit HashProbe::finish is responsible for producing

@@ -592,7 +592,7 @@ inline bool processPrefix64(
       1UL << 56};
   auto masks = V64::gather64<8>(lengthMasks64, lengths);
   prefixes |= masks;
-  if (V64::compareResult(
+  if (V64::compareBitMask(
           V64::compareGt(min, prefixes) | V64::compareGt(prefixes, max))) {
     return false;
   }
@@ -649,14 +649,14 @@ bool VectorHasher::tryMapToRange(
     } else {
       lengths = V32::gather32(first, stringViewOffsets);
     }
-    if (V32::compareResult(
+    if (V32::compareBitMask(
             V32::compareGt(lengths, V32::setAll(rangeMaxChars_)))) {
       // At least one is longer than maximum allowed.
       return false;
     }
     if (rangeMaxChars_ <= 3 ||
         V32::kAllTrue ==
-            V32::compareResult(V32::compareGt(V32::setAll(4), lengths))) {
+            V32::compareBitMask(V32::compareGt(V32::setAll(4), lengths))) {
       // All fit in 32 bits.
       if (i + 8 <= end) {
         prefixes = V32::gather32(first + 1, stringViewOffsets);
@@ -670,7 +670,7 @@ bool VectorHasher::tryMapToRange(
       auto masks = reinterpret_cast<__m256si>(_mm256_permutevar8x32_epi32(
           simd::to256i(lengthMasks32), simd::to256i(lengths)));
       prefixes |= masks;
-      if (V32::compareResult(
+      if (V32::compareBitMask(
               V32::compareGt(V32::setAll(min_), prefixes) |
               V32::compareGt(prefixes, V32::setAll(max_)))) {
         return false;

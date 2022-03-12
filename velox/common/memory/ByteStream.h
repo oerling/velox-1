@@ -58,6 +58,8 @@ class OutputStream {
   explicit OutputStream(OutputStreamListener* listener = nullptr)
       : listener_(listener) {}
 
+  virtual ~OutputStream() = default;
+
   virtual void write(const char* s, std::streamsize count) = 0;
 
   virtual std::streampos tellp() const = 0;
@@ -394,7 +396,7 @@ class IOBufOutputStream : public OutputStream {
     out_->startWrite(initialSize);
   }
 
-  void write(const char* s, std::streamsize count) {
+  void write(const char* s, std::streamsize count) override {
     out_->appendStringPiece(folly::StringPiece(s, count));
     ;
     if (listener_) {
@@ -402,9 +404,9 @@ class IOBufOutputStream : public OutputStream {
     }
   }
 
-  std::streampos tellp() const;
+  std::streampos tellp() const override;
 
-  void seekp(std::streampos pos);
+  void seekp(std::streampos pos) override;
 
   std::unique_ptr<folly::IOBuf> getIOBuf();
 

@@ -30,7 +30,7 @@ void DestinationBuffer::getData(
     uint64_t maxBytes,
     int64_t sequence,
     DataAvailableCallback notify,
-    std::vector<std::shared_ptr<VectorStreamGroup>>& result) {
+    std::vector<std::shared_ptr<SerializedPage>>& result) {
   VELOX_CHECK_GE(
       sequence, sequence_, "Get received for an already acknowledged item");
 
@@ -59,7 +59,7 @@ void DestinationBuffer::getData(
       break;
     }
     result.push_back(data_[i]);
-    resultBytes += data_[i]->size();
+    resultBytes += data_[i]->byteSize();
     if (resultBytes >= maxBytes) {
       break;
     }
@@ -80,7 +80,7 @@ DataAvailable DestinationBuffer::getAndClearNotify() {
   return result;
 }
 
-std::vector<std::shared_ptr<VectorStreamGroup>> DestinationBuffer::acknowledge(
+std::vector<std::shared_ptr<SerializedPage>> DestinationBuffer::acknowledge(
     int64_t sequence,
     bool fromGetData) {
   int64_t numDeleted = sequence - sequence_;
@@ -103,7 +103,7 @@ std::vector<std::shared_ptr<VectorStreamGroup>> DestinationBuffer::acknowledge(
 
   VELOX_CHECK_LE(
       numDeleted, data_.size(), "Ack received for a not yet produced item");
-  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
+  std::vector<std::shared_ptr<SerializedPage>> freed;
   for (auto i = 0; i < numDeleted; ++i) {
     if (!data_[i]) {
       VELOX_CHECK_EQ(i, data_.size() - 1, "null marker found in the middle");
@@ -116,9 +116,9 @@ std::vector<std::shared_ptr<VectorStreamGroup>> DestinationBuffer::acknowledge(
   return freed;
 }
 
-std::vector<std::shared_ptr<VectorStreamGroup>>
+std::vector<std::shared_ptr<SerializedPage>>
 DestinationBuffer::deleteResults() {
-  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
+  std::vector<std::shared_ptr<SerializedPage>> freed;
   for (auto i = 0; i < data_.size(); ++i) {
     if (!data_[i]) {
       VELOX_CHECK_EQ(i, data_.size() - 1, "null marker found in the middle");
@@ -146,7 +146,7 @@ namespace {
 // that we do the expensive free outside and only then continue the
 // producers which will allocate more memory.
 void releaseAfterAcknowledge(
-    std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
+    std::vector<std::shared_ptr<SerializedPage>>& freed,
     std::vector<VeloxPromise<bool>>& promises) {
   freed.clear();
   for (auto& promise : promises) {
@@ -229,7 +229,7 @@ void PartitionedOutputBuffer::addBroadcastOutputBuffersLocked(int numBuffers) {
 
 BlockingReason PartitionedOutputBuffer::enqueue(
     int destination,
-    std::unique_ptr<VectorStreamGroup> data,
+    std::shared_ptr<SerializedPage> data,
     ContinueFuture* future) {
   VELOX_CHECK(data);
   std::vector<DataAvailable> dataAvailableCallbacks;
@@ -240,17 +240,16 @@ BlockingReason PartitionedOutputBuffer::enqueue(
     VELOX_CHECK(
         task_->isRunning(), "Task is terminated, cannot add data to output.");
 
-    totalSize_ += data->size();
+    totalSize_ += data->byteSize();
     if (broadcast_) {
-      std::shared_ptr<VectorStreamGroup> shared = std::move(data);
       for (auto& buffer : buffers_) {
         VELOX_CHECK(buffer, "Null broadcast destination buffer");
-        buffer->enqueue(shared);
+        buffer->enqueue(data);
         dataAvailableCallbacks.emplace_back(buffer->getAndClearNotify());
       }
 
       if (!noMoreBroadcastBuffers_) {
-        dataToBroadcast_.emplace_back(shared);
+        dataToBroadcast_.emplace_back(data);
       }
     } else {
       auto buffer = buffers_[destination].get();
@@ -328,7 +327,7 @@ bool PartitionedOutputBuffer::isFinishedLocked() {
 }
 
 void PartitionedOutputBuffer::acknowledge(int destination, int64_t sequence) {
-  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
+  std::vector<std::shared_ptr<SerializedPage>> freed;
   std::vector<VeloxPromise<bool>> promises;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -346,12 +345,12 @@ void PartitionedOutputBuffer::acknowledge(int destination, int64_t sequence) {
 }
 
 void PartitionedOutputBuffer::updateAfterAcknowledgeLocked(
-    const std::vector<std::shared_ptr<VectorStreamGroup>>& freed,
+    const std::vector<std::shared_ptr<SerializedPage>>& freed,
     std::vector<VeloxPromise<bool>>& promises) {
   uint64_t totalFreed = 0;
   for (const auto& free : freed) {
     if (free.unique()) {
-      totalFreed += free->size();
+      totalFreed += free->byteSize();
     }
   }
   if (totalFreed == 0) {
@@ -371,7 +370,7 @@ void PartitionedOutputBuffer::updateAfterAcknowledgeLocked(
 }
 
 bool PartitionedOutputBuffer::deleteResults(int destination) {
-  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
+  std::vector<std::shared_ptr<SerializedPage>> freed;
   std::vector<VeloxPromise<bool>> promises;
   bool isFinished;
   {
@@ -404,8 +403,8 @@ void PartitionedOutputBuffer::getData(
     uint64_t maxBytes,
     int64_t sequence,
     DataAvailableCallback notify) {
-  std::vector<std::shared_ptr<VectorStreamGroup>> data;
-  std::vector<std::shared_ptr<VectorStreamGroup>> freed;
+  std::vector<std::shared_ptr<SerializedPage>> data;
+  std::vector<std::shared_ptr<SerializedPage>> freed;
   std::vector<VeloxPromise<bool>> promises;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -485,7 +484,7 @@ PartitionedOutputBufferManager::getBuffer(const std::string& taskId) {
 BlockingReason PartitionedOutputBufferManager::enqueue(
     const std::string& taskId,
     int destination,
-    std::unique_ptr<VectorStreamGroup> data,
+    std::shared_ptr<SerializedPage> data,
     ContinueFuture* future) {
   return getBuffer(taskId)->enqueue(destination, std::move(data), future);
 }

@@ -14,6 +14,7 @@
 include(GoogleTest)
 add_executable(
   velox_memory_test
+  ByteStreamTest.cpp
   CompactDoubleListTest.cpp
   HashStringAllocatorTest.cpp
   MemoryHeaderTest.cpp
@@ -21,7 +22,6 @@ add_executable(
   MemoryPoolTest.cpp
   MemoryUsageTest.cpp
   MemoryUsageTrackerTest.cpp
-  ArenaTest.cpp
   MappedMemoryTest.cpp)
 
 target_link_libraries(

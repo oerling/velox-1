@@ -27,37 +27,40 @@ class SerializedPage {
  public:
   static constexpr int kSerializedPageOwner = -11;
 
-  // Construct from a bounded stream
-  SerializedPage(
-      std::istream* stream,
-      uint64_t size,
-      memory::MappedMemory* memory);
   // Construct from IOBuf chain.
-  SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
+  explicit SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
 
   ~SerializedPage() = default;
 
   uint64_t byteSize() const {
-    if (allocation_) {
-      return allocation_->byteSize();
-    } else {
-      return iobufBytes_;
-    }
+    return iobufBytes_;
   }
 
   // Makes 'input' ready for deserializing 'this' with
   // VectorStreamGroup::read().
   void prepareStreamForDeserialize(ByteStream* input);
 
-  static std::unique_ptr<SerializedPage> fromVectorStreamGroup(
-      VectorStreamGroup* group) {
-    return std::make_unique<SerializedPage>(group->getIOBuf());
+  // acounted in the producer Task. Used only with LocalExchangeSource
+  // in tests.
+  static std::unique_ptr<SerializedPage> copyFrom(SerializedPage* page) {
+    auto buf = page->getIOBuf();
+    buf->unshare();
+    return std::make_unique<SerializedPage>(std::move(buf));
+  }
+
+  std::unique_ptr<folly::IOBuf> getIOBuf() {
+    VELOX_CHECK(iobuf_);
+    return iobuf_->clone();
   }
 
  private:
-  std::unique_ptr<memory::MappedMemory::Allocation> allocation_;
+  // Buffers containing the serialized data. The memory is owned by 'iobuf_'.
   std::vector<ByteRange> ranges_;
+
+  // IOBuf holding the data in 'ranges_. May be nullptr for 0 length.
   std::unique_ptr<folly::IOBuf> iobuf_;
+
+  // Number of payload bytes in 'iobuf_'.
   int64_t iobufBytes_{0};
 };
 
