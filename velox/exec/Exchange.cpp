@@ -19,14 +19,15 @@
 namespace facebook::velox::exec {
 
 SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-    : iobuf_(std::move(iobuf)) {
+  : iobuf_(std::move(iobuf)),
+    iobufBytes_(chainBytes(*iobuf_.get())){
+  VELOX_CHECK(iobuf_);
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
         0});
-    iobufBytes_ += bufSize;
   }
 }
 

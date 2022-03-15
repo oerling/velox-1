@@ -360,7 +360,7 @@ TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
 }
 
 TEST_F(PartitionedOutputBufferManagerTest, errorInQueue) {
-  auto queue = std::make_shared<ExchangeQueue>();
+  auto queue = std::make_shared<ExchangeQueue>(1 << 20);
   auto page = std::make_unique<SerializedPage>(nullptr);
   {
     std::lock_guard<std::mutex> l(queue->mutex());
