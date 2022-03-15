@@ -192,7 +192,10 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
     page = queue_->dequeue(atEnd, future);
-    if (*atEnd || page /*queue_->totalBytes() > queue_->minBytes()*/) {
+    if (*atEnd) {
+      return page;
+    }
+    if (page && queue_->totalBytes() > queue_->minBytes()) {
       return page;
     }
     // There is space for more data, send requests to sources with no pending
