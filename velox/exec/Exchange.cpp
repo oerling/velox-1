@@ -188,7 +188,7 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     ContinueFuture* future) {
   std::vector<std::shared_ptr<ExchangeSource>> toRequest;
   std::unique_ptr<SerializedPage> page;
-    {
+  {
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
     page = queue_->dequeue(atEnd, future);
