@@ -19,8 +19,7 @@
 namespace facebook::velox::exec {
 
 SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-  : iobuf_(std::move(iobuf)),
-    iobufBytes_(chainBytes(*iobuf_.get())){
+    : iobuf_(std::move(iobuf)), iobufBytes_(chainBytes(*iobuf_.get())) {
   VELOX_CHECK(iobuf_);
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();

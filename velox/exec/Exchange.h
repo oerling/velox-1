@@ -49,7 +49,7 @@ class SerializedPage {
   static int64_t chainBytes(folly::IOBuf& iobuf) {
     int64_t size = 0;
     for (auto& range : iobuf) {
-      size+= range.size();
+      size += range.size();
     }
     return size;
   }
@@ -269,7 +269,8 @@ class ExchangeClient {
   static constexpr int32_t kDefaultMinSize = 32 << 20; // 32 MB.
 
   explicit ExchangeClient(int destination, int64_t minSize = kDefaultMinSize)
-      : destination_(destination), queue_(std::make_shared<ExchangeQueue>(minSize)) {
+      : destination_(destination),
+        queue_(std::make_shared<ExchangeQueue>(minSize)) {
     VELOX_CHECK(
         destination >= 0,
         "Exchange client destination must be greater than zero, got {}",
