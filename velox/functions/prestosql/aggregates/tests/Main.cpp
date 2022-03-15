@@ -13,27 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <folly/init/Init.h>
+#include <gtest/gtest.h>
 
-#include "velox/vector/SimpleVector.h"
-#include "velox/common/base/Exceptions.h"
-
-namespace facebook {
-namespace velox {
-
-template <>
-void SimpleVector<StringView>::setMinMax(
-    const folly::F14FastMap<std::string, std::string>& metaData) {
-  auto it = metaData.find(META_MIN);
-  if (it != metaData.end()) {
-    minString_ = it->second;
-    min_ = StringView(minString_);
-  }
-  it = metaData.find(META_MAX);
-  if (it != metaData.end()) {
-    maxString_ = it->second;
-    max_ = StringView(maxString_);
-  }
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  folly::init(&argc, &argv, false);
+  return RUN_ALL_TESTS();
 }
-
-} // namespace velox
-} // namespace facebook
