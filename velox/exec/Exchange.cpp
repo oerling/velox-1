@@ -187,14 +187,16 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     bool* atEnd,
     ContinueFuture* future) {
   std::vector<std::shared_ptr<ExchangeSource>> toRequest;
-  {
+  std::unique_ptr<SerializedPage> page;
+    {
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
-    auto page = queue_->dequeue(atEnd, future);
-    if (*atEnd || page) {
+    page = queue_->dequeue(atEnd, future);
+    if (*atEnd || queue_->totalBytes() > queue_->minBytes()) {
       return page;
     }
-    // There is no data to return, send out more requests.
+    // There is space for more data, send requests to sources with no pending
+    // request.
     for (auto& source : sources_) {
       if (source->shouldRequestLocked()) {
         toRequest.push_back(source);
@@ -206,7 +208,7 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
   for (auto& source : toRequest) {
     source->request();
   }
-  return nullptr;
+  return page;
 }
 
 ExchangeClient::~ExchangeClient() {
