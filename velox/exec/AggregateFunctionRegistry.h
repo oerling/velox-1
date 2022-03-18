@@ -13,27 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#pragma once
 
-#include "velox/vector/SimpleVector.h"
-#include "velox/common/base/Exceptions.h"
+#include <string>
+#include <vector>
 
-namespace facebook {
-namespace velox {
+#include "velox/type/Type.h"
 
-template <>
-void SimpleVector<StringView>::setMinMax(
-    const folly::F14FastMap<std::string, std::string>& metaData) {
-  auto it = metaData.find(META_MIN);
-  if (it != metaData.end()) {
-    minString_ = it->second;
-    min_ = StringView(minString_);
-  }
-  it = metaData.find(META_MAX);
-  if (it != metaData.end()) {
-    maxString_ = it->second;
-    max_ = StringView(maxString_);
-  }
-}
+namespace facebook::velox::exec {
 
-} // namespace velox
-} // namespace facebook
+/// Given a name of aggregate function and argument types, returns a pair of the
+/// return type and intermediate type if the function exists. Returns a pair of
+/// nullptr otherwise.
+std::pair<TypePtr, TypePtr> resolveAggregateFunction(
+    const std::string& functionName,
+    const std::vector<TypePtr>& argTypes);
+
+} // namespace facebook::velox::exec

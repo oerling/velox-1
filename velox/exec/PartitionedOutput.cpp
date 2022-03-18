@@ -76,9 +76,13 @@ BlockingReason Destination::flush(
   if (!current_) {
     return BlockingReason::kNotBlocked;
   }
+  // Upper limit of message size with no columns.
+  constexpr int32_t kMinMessageSize = 128;
   auto listener = bufferManager.newListener();
   IOBufOutputStream stream(
-      *current_->mappedMemory(), listener.get(), current_->size());
+      *current_->mappedMemory(),
+      listener.get(),
+      std::max<int64_t>(kMinMessageSize, current_->size()));
   current_->flush(&stream);
   current_.reset();
   bytesInCurrent_ = 0;
