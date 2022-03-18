@@ -333,8 +333,9 @@ void HiveDataSource::addDynamicFilter(
     fieldSpec.setFilter(filter->clone());
   }
   scanSpec_->resetCachedValues();
-
-  rowReader_->resetFilterCaches();
+  if (rowReader_) {
+    rowReader_->resetFilterCaches();
+  }
 }
 
 void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
@@ -359,6 +360,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     if (!readerOpts_.getDataCacheConfig()) {
       auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
       readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
+//      readerOpts_.setLoadQuantum();
     }
     readerOpts_.getDataCacheConfig()->filenum = fileHandle_->uuid.id();
     bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
