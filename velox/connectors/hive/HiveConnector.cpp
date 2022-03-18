@@ -122,10 +122,10 @@ static void makeFieldSpecs(
   }
 }
 
-std::unique_ptr<common::ScanSpec> makeScanSpec(
+std::shared_ptr<common::ScanSpec> makeScanSpec(
     const SubfieldFilters& filters,
     const std::shared_ptr<const RowType>& rowType) {
-  auto spec = std::make_unique<common::ScanSpec>("root");
+  auto spec = std::make_shared<common::ScanSpec>("root");
   makeFieldSpecs("", 0, rowType, spec.get());
 
   for (auto& pair : filters) {
@@ -235,7 +235,7 @@ HiveDataSource::HiveDataSource(
     readerOutputType_ = ROW(std::move(names), std::move(types));
   }
 
-  rowReaderOpts_.setScanSpec(scanSpec_.get());
+  rowReaderOpts_.setScanSpec(scanSpec_);
 
   ioStats_ = std::make_shared<dwio::common::IoStatistics>();
 }
