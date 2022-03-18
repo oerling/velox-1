@@ -28,7 +28,7 @@
 
 namespace facebook::velox::core {
 
-// most UDFs are determinisic, hence this default value
+// Most UDFs are deterministic, hence this default value.
 template <class T, class = void>
 struct udf_is_deterministic : std::true_type {};
 
@@ -98,18 +98,68 @@ struct ValidateVariadicArgs {
 
 // Information collected during TypeAnalysis.
 struct TypeAnalysisResults {
-  // Whether a variadic is encountered.
-  bool hasVariadic = false;
+  struct Stats {
+    // Whether a variadic is encountered.
+    bool hasVariadic = false;
 
-  // Whether a generic is encountered.
-  bool hasGeneric = false;
+    // Whether a generic is encountered.
+    bool hasGeneric = false;
 
-  // Whether a variadic of generic is encountered.
-  // E.g: Variadic<T> or Variadic<Array<T1>>.
-  bool hasVariadicOfGeneric = false;
+    // Whether a variadic of generic is encountered.
+    // E.g: Variadic<T> or Variadic<Array<T1>>.
+    bool hasVariadicOfGeneric = false;
 
-  // The number of types that are neither generic, nor variadic.
-  size_t concreteCount = 0;
+    // The number of types that are neither generic, nor variadic.
+    size_t concreteCount = 0;
+
+    // Set a priority based on the collected information. Lower priorities are
+    // picked first during function resolution. Each signature get a rank out
+    // of 4, those ranks form a Lattice ordering.
+    // rank 1: generic free and variadic free.
+    //    e.g: int, int, int -> int.
+    // rank 2: has variadic but generic free.
+    //    e.g: Variadic<int> -> int.
+    // rank 3: has generic but no variadic of generic.
+    //    e.g: Generic<>, Generic<>, -> int.
+    // rank 4: has variadic of generic.
+    //    e.g: Variadic<Generic<>> -> int.
+
+    // If two functions have the same rank, then concreteCount is used to
+    // to resolve the ordering.
+    // e.g: consider the two functions:
+    //    1. int, Generic<>, Variadic<int> -> has rank 3. concreteCount =2
+    //    2. int, Generic<>, Generic<>     -> has rank 3. concreteCount =1
+    // in this case (1) is picked.
+    // e.g: (Generic<>, int) will be picked before (Generic<>, Generic<>)
+    // e.g: Variadic<Array<Generic<>>> is picked before Variadic<Generic<>>.
+    uint32_t getRank() {
+      if (!hasGeneric && !hasVariadic) {
+        return 1;
+      }
+
+      if (hasVariadic && !hasGeneric) {
+        VELOX_DCHECK(!hasVariadicOfGeneric);
+        return 2;
+      }
+
+      if (hasGeneric && !hasVariadicOfGeneric) {
+        return 3;
+      }
+
+      if (hasVariadicOfGeneric) {
+        VELOX_DCHECK(hasVariadic);
+        VELOX_DCHECK(hasGeneric);
+        return 4;
+      }
+
+      VELOX_UNREACHABLE("unreachable");
+    }
+
+    uint32_t computePriority() {
+      // This assumes we wont have signature longer than 1M argument.
+      return getRank() * 1000000 - concreteCount;
+    }
+  } stats;
 
   // String representaion of the type in the FunctionSignatureBuilder.
   std::ostringstream out;
@@ -131,7 +181,11 @@ struct TypeAnalysisResults {
 template <typename T>
 struct TypeAnalysis {
   void run(TypeAnalysisResults& results) {
-    results.concreteCount++;
+    // This should only handle primitives and OPAQUE.
+    static_assert(
+        CppToType<T>::isPrimitiveType ||
+        CppToType<T>::typeKind == TypeKind::OPAQUE);
+    results.stats.concreteCount++;
     results.out << boost::algorithm::to_lower_copy(
         std::string(CppToType<T>::name));
   }
@@ -147,17 +201,17 @@ struct TypeAnalysis<Generic<T>> {
       results.out << variableType;
       results.variables.insert(variableType);
     }
-    results.hasGeneric = true;
+    results.stats.hasGeneric = true;
   }
 };
 
 template <typename K, typename V>
 struct TypeAnalysis<Map<K, V>> {
   void run(TypeAnalysisResults& results) {
-    results.concreteCount++;
+    results.stats.concreteCount++;
     results.out << "map(";
     TypeAnalysis<K>().run(results);
-    results.out << ",";
+    results.out << ", ";
     TypeAnalysis<V>().run(results);
     results.out << ")";
   }
@@ -172,12 +226,12 @@ struct TypeAnalysis<Variadic<V>> {
     TypeAnalysis<V>().run(tmp);
 
     // Combine the child results.
-    results.hasVariadic = true;
-    results.hasGeneric = results.hasGeneric || tmp.hasGeneric;
-    results.hasVariadicOfGeneric =
-        tmp.hasGeneric || results.hasVariadicOfGeneric;
+    results.stats.hasVariadic = true;
+    results.stats.hasGeneric = results.stats.hasGeneric || tmp.stats.hasGeneric;
+    results.stats.hasVariadicOfGeneric =
+        tmp.stats.hasGeneric || results.stats.hasVariadicOfGeneric;
 
-    results.concreteCount += tmp.concreteCount;
+    results.stats.concreteCount += tmp.stats.concreteCount;
     results.variables.insert(tmp.variables.begin(), tmp.variables.end());
     results.out << tmp.typeAsString();
   }
@@ -186,7 +240,7 @@ struct TypeAnalysis<Variadic<V>> {
 template <typename V>
 struct TypeAnalysis<Array<V>> {
   void run(TypeAnalysisResults& results) {
-    results.concreteCount++;
+    results.stats.concreteCount++;
     results.out << "array(";
     TypeAnalysis<V>().run(results);
     results.out << ")";
@@ -201,7 +255,7 @@ struct TypeAnalysis<Row<T...>> {
   using child_type_at = typename std::tuple_element<N, child_types>::type;
 
   void run(TypeAnalysisResults& results) {
-    results.concreteCount++;
+    results.stats.concreteCount++;
     results.out << "row(";
     // This expression applies the lambda for each row child type.
     bool first = true;
@@ -218,6 +272,28 @@ struct TypeAnalysis<Row<T...>> {
   }
 };
 
+// TODO: remove once old writers deprecated.
+template <typename V>
+struct TypeAnalysis<ArrayWriterT<V>> {
+  void run(TypeAnalysisResults& results) {
+    TypeAnalysis<Array<V>>().run(results);
+  }
+};
+
+template <typename K, typename V>
+struct TypeAnalysis<MapWriterT<K, V>> {
+  void run(TypeAnalysisResults& results) {
+    TypeAnalysis<Map<K, V>>().run(results);
+  }
+};
+
+template <typename... T>
+struct TypeAnalysis<RowWriterT<T...>> {
+  void run(TypeAnalysisResults& results) {
+    TypeAnalysis<Row<T...>>().run(results);
+  }
+};
+
 // todo(youknowjack): need a better story for types for UDFs. Mapping
 //                    c++ types <-> Velox types is imprecise (e.g. string vs
 //                    binary) and difficult to change.
@@ -228,9 +304,9 @@ class ISimpleFunctionMetadata {
   virtual std::string getName() const = 0;
   virtual bool isDeterministic() const = 0;
   virtual int32_t reuseStringsFromArg() const = 0;
-  virtual std::shared_ptr<exec::FunctionSignature> signature() const = 0;
+  virtual uint32_t priority() const = 0;
+  virtual const std::shared_ptr<exec::FunctionSignature> signature() const = 0;
   virtual std::string helpMessage(const std::string& name) const = 0;
-
   virtual ~ISimpleFunctionMetadata() = default;
 };
 
@@ -271,6 +347,10 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
   static constexpr int num_args = std::tuple_size<arg_types>::value;
 
  public:
+  uint32_t priority() const override {
+    return priority_;
+  }
+
   std::string getName() const final {
     if constexpr (udf_has_name<Fun>::value) {
       return Fun::name;
@@ -321,38 +401,16 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
   explicit SimpleFunctionMetadata(std::shared_ptr<const Type> returnType)
       : returnType_(
             returnType ? std::move(returnType) : CppToType<TReturn>::create()) {
+    auto analysis = analyzeSignatureTypes();
+    buildSignature(analysis);
+    priority_ = analysis.stats.computePriority();
     verifyReturnTypeCompatibility();
   }
 
   ~SimpleFunctionMetadata() override = default;
 
-  std::shared_ptr<exec::FunctionSignature> signature() const final {
-    auto builder = exec::FunctionSignatureBuilder();
-
-    TypeAnalysisResults results;
-    TypeAnalysis<return_type>().run(results);
-    builder.returnType(results.typeAsString());
-
-    // This expression applies the lambda for each input arg type.
-    (
-        [&]() {
-          // Clear string representation but keep other collected information to
-          // accumulate.
-          results.resetTypeString();
-          TypeAnalysis<Args>().run(results);
-          builder.argumentType(results.typeAsString());
-        }(),
-        ...);
-
-    for (const auto& variable : results.variables) {
-      builder.typeVariable(variable);
-    }
-
-    if (isVariadic()) {
-      builder.variableArity();
-    }
-
-    return builder.build();
+  const std::shared_ptr<exec::FunctionSignature> signature() const override {
+    return signature_;
   }
 
   std::string helpMessage(const std::string& name) const final {
@@ -376,6 +434,56 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
   }
 
  private:
+  struct SignatureTypesAnalysisResults {
+    std::vector<std::string> argsTypes;
+    std::string outputType;
+    std::set<std::string> variables;
+    TypeAnalysisResults::Stats stats;
+  };
+
+  SignatureTypesAnalysisResults analyzeSignatureTypes() {
+    std::vector<std::string> argsTypes;
+
+    TypeAnalysisResults results;
+    TypeAnalysis<return_type>().run(results);
+    std::string outputType = results.typeAsString();
+
+    (
+        [&]() {
+          // Clear string representation but keep other collected information
+          // to accumulate.
+          results.resetTypeString();
+          TypeAnalysis<Args>().run(results);
+          argsTypes.push_back(results.typeAsString());
+        }(),
+        ...);
+
+    return SignatureTypesAnalysisResults{
+        std::move(argsTypes),
+        std::move(outputType),
+        std::move(results.variables),
+        std::move(results.stats)};
+  }
+
+  void buildSignature(const SignatureTypesAnalysisResults& analysis) {
+    auto builder = exec::FunctionSignatureBuilder();
+
+    builder.returnType(analysis.outputType);
+
+    for (const auto& arg : analysis.argsTypes) {
+      builder.argumentType(arg);
+    }
+
+    for (const auto& variable : analysis.variables) {
+      builder.typeVariable(variable);
+    }
+
+    if (isVariadic()) {
+      builder.variableArity();
+    }
+    signature_ = builder.build();
+  }
+
   void verifyReturnTypeCompatibility() {
     VELOX_USER_CHECK(
         CppToType<TReturn>::create()->kindEquals(returnType_),
@@ -383,6 +491,8 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
   }
 
   const std::shared_ptr<const Type> returnType_;
+  std::shared_ptr<exec::FunctionSignature> signature_;
+  uint32_t priority_;
 };
 
 // wraps a UDF object to provide the inheritance
@@ -395,13 +505,15 @@ class UDFHolder final
  public:
   using Metadata = core::SimpleFunctionMetadata<Fun, TReturn, TArgs...>;
 
-  using exec_return_type = typename Exec::template resolver<TReturn>::out_type;
+  template <typename T>
+  using exec_resolver = typename Exec::template resolver<T>;
+
+  using exec_return_type = typename exec_resolver<TReturn>::out_type;
   using optional_exec_return_type = std::optional<exec_return_type>;
 
   template <typename T>
-  using exec_arg_type = typename Exec::template resolver<T>::in_type;
-  using exec_arg_types =
-      std::tuple<typename Exec::template resolver<TArgs>::in_type...>;
+  using exec_arg_type = typename exec_resolver<T>::in_type;
+  using exec_arg_types = std::tuple<typename exec_resolver<TArgs>::in_type...>;
   template <typename T>
   using optional_exec_arg_type = std::optional<exec_arg_type<T>>;
 
@@ -413,7 +525,7 @@ class UDFHolder final
   template <typename T>
   using exec_no_nulls_arg_type =
       typename null_free_in_type_resolver::template resolve<
-          typename Exec::template resolver<T>>::type;
+          exec_resolver<T>>::type;
 
   DECLARE_METHOD_RESOLVER(call_method_resolver, call);
   DECLARE_METHOD_RESOLVER(callNullable_method_resolver, callNullable);
@@ -421,36 +533,104 @@ class UDFHolder final
   DECLARE_METHOD_RESOLVER(callAscii_method_resolver, callAscii);
   DECLARE_METHOD_RESOLVER(initialize_method_resolver, initialize);
 
-  // Check which of the call(), callNullable(), callNullFree(), callAscii(), and
-  // initialize() methods are available in the UDF object.
-  static constexpr bool udf_has_call = util::has_method<
+  // Check which flavor of the call() method is provided by the UDF object. UDFs
+  // are required to provide at least one of the following methods:
+  //
+  // - bool|void call(...)
+  // - bool|void callNullable(...)
+  // - bool|void callNullFree(...)
+  //
+  // Each of these methods can return either bool or void. Returning void means
+  // that the UDF is assumed never to return null values.
+  //
+  // Optionally, UDFs can also provide the following methods:
+  //
+  // - bool|void callAscii(...)
+  // - void initialize(...)
+
+  // call():
+  static constexpr bool udf_has_call_return_bool = util::has_method<
       Fun,
       call_method_resolver,
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_call_return_void = util::has_method<
+      Fun,
+      call_method_resolver,
+      void,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_call =
+      udf_has_call_return_bool | udf_has_call_return_void;
+  static_assert(
+      !(udf_has_call_return_bool && udf_has_call_return_void),
+      "Provided call() methods need to return either void OR bool.");
 
-  static constexpr bool udf_has_callNullable = util::has_method<
+  // callNullable():
+  static constexpr bool udf_has_callNullable_return_bool = util::has_method<
       Fun,
       callNullable_method_resolver,
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>*...>::value;
+  static constexpr bool udf_has_callNullable_return_void = util::has_method<
+      Fun,
+      callNullable_method_resolver,
+      void,
+      exec_return_type,
+      const exec_arg_type<TArgs>*...>::value;
+  static constexpr bool udf_has_callNullable =
+      udf_has_callNullable_return_bool | udf_has_callNullable_return_void;
+  static_assert(
+      !(udf_has_callNullable_return_bool && udf_has_callNullable_return_void),
+      "Provided callNullable() methods need to return either void OR bool.");
 
-  static constexpr bool udf_has_callNullFree = util::has_method<
+  // callNullFree():
+  static constexpr bool udf_has_callNullFree_return_bool = util::has_method<
       Fun,
       callNullFree_method_resolver,
       bool,
       exec_return_type,
       const exec_no_nulls_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callNullFree_return_void = util::has_method<
+      Fun,
+      callNullFree_method_resolver,
+      void,
+      exec_return_type,
+      const exec_no_nulls_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callNullFree =
+      udf_has_callNullFree_return_bool | udf_has_callNullFree_return_void;
+  static_assert(
+      !(udf_has_callNullFree_return_bool && udf_has_callNullFree_return_void),
+      "Provided callNullFree() methods need to return either void OR bool.");
 
-  static constexpr bool udf_has_callAscii = util::has_method<
+  // callAscii():
+  static constexpr bool udf_has_callAscii_return_bool = util::has_method<
       Fun,
       callAscii_method_resolver,
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callAscii_return_void = util::has_method<
+      Fun,
+      callAscii_method_resolver,
+      void,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+  static constexpr bool udf_has_callAscii =
+      udf_has_callAscii_return_bool | udf_has_callAscii_return_void;
+  static_assert(
+      !(udf_has_callAscii_return_bool && udf_has_callAscii_return_void),
+      "Provided callAscii() methods need to return either void OR bool.");
 
+  // Assert that the return type for callAscii() matches call()'s.
+  static_assert(
+      !((udf_has_callAscii_return_bool && udf_has_call_return_void) ||
+        (udf_has_callAscii_return_void && udf_has_call_return_bool)),
+      "The return type for callAscii() must match the return type for call().");
+
+  // initialize():
   static constexpr bool udf_has_initialize = util::has_method<
       Fun,
       initialize_method_resolver,
@@ -471,9 +651,19 @@ class UDFHolder final
       !(udf_has_initialize && Metadata::isVariadic()),
       "Initialize is not supported for UDFs with VariadicArgs.");
 
+  // Default null behavior means assuming null output if any of the inputs is
+  // null, without calling the function implementation.
   static constexpr bool is_default_null_behavior = !udf_has_callNullable;
+
+  // If any of the the provided "call" flavors can produce null (in case any of
+  // them return bool). This is only false if all the call methods provided for
+  // a function return void.
+  static constexpr bool can_produce_null_output = udf_has_call_return_bool |
+      udf_has_callNullable_return_bool | udf_has_callNullFree_return_bool |
+      udf_has_callAscii_return_bool;
+
   // This is true when callNullFree is implemented, but not call or
-  // callNullable.  In this case if any input is NULL or any complex type in
+  // callNullable. In this case if any input is NULL or any complex type in
   // the input contains a NULL element (recursively) the function will return
   // NULL directly, skipping evaluation.
   static constexpr bool is_default_contains_nulls_behavior =
@@ -504,67 +694,114 @@ class UDFHolder final
 
   FOLLY_ALWAYS_INLINE void initialize(
       const core::QueryConfig& config,
-      const typename Exec::template resolver<TArgs>::in_type*... constantArgs) {
+      const typename exec_resolver<TArgs>::in_type*... constantArgs) {
     if constexpr (udf_has_initialize) {
       return instance_.initialize(config, constantArgs...);
     }
   }
 
   FOLLY_ALWAYS_INLINE bool call(
-      typename Exec::template resolver<TReturn>::out_type& out,
-      const typename Exec::template resolver<TArgs>::in_type&... args) {
+      exec_return_type& out,
+      const typename exec_resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_call) {
-      return instance_.call(out, args...);
+      return callImpl(out, args...);
     } else if constexpr (udf_has_callNullable) {
-      return instance_.callNullable(out, (&args)...);
+      return callNullableImpl(out, (&args)...);
     } else {
       VELOX_UNREACHABLE(
-          "call should never be called if the UDF does not implement call or callNullable.");
+          "call should never be called if the UDF does not "
+          "implement call or callNullable.");
     }
   }
 
   FOLLY_ALWAYS_INLINE bool callNullable(
       exec_return_type& out,
-      const typename Exec::template resolver<TArgs>::in_type*... args) {
+      const typename exec_resolver<TArgs>::in_type*... args) {
     if constexpr (udf_has_callNullable) {
-      return instance_.callNullable(out, args...);
+      return callNullableImpl(out, args...);
     } else if constexpr (udf_has_call) {
-      // default null behavior
+      // Default null behavior.
       const bool isAllSet = (args && ...);
       if (LIKELY(isAllSet)) {
-        return instance_.call(out, (*args)...);
+        return callImpl(out, (*args)...);
       } else {
         return false;
       }
     } else {
       VELOX_UNREACHABLE(
-          "callNullable should never be called if the UDF does not implement callNullable or call.");
+          "callNullable should never be called if the UDF does not "
+          "implement callNullable or call.");
     }
   }
 
   FOLLY_ALWAYS_INLINE bool callAscii(
-      typename Exec::template resolver<TReturn>::out_type& out,
-      const typename Exec::template resolver<TArgs>::in_type&... args) {
+      exec_return_type& out,
+      const typename exec_resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_callAscii) {
-      return instance_.callAscii(out, args...);
-    } else if constexpr (udf_has_call) {
-      return instance_.call(out, args...);
-    } else if constexpr (udf_has_callNullable) {
-      return instance_.callNullable(out, (&args)...);
+      return callAsciiImpl(out, args...);
     } else {
-      VELOX_UNREACHABLE(
-          "callAscii should never be called if the UDF does not implement callAscii, call, or callNullable.");
+      return call(out, args...);
     }
   }
 
   FOLLY_ALWAYS_INLINE bool callNullFree(
-      typename Exec::template resolver<TReturn>::out_type& out,
+      exec_return_type& out,
       const exec_no_nulls_arg_type<TArgs>&... args) {
     if constexpr (udf_has_callNullFree) {
-      return instance_.callNullFree(out, args...);
+      return callNullFreeImpl(out, args...);
     } else {
       VELOX_UNREACHABLE(
           "callNullFree should never be called if the UDF does not implement callNullFree.");
+    }
+  }
+
+  // Helper functions to handle void vs bool return type.
+
+  FOLLY_ALWAYS_INLINE bool callImpl(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const typename Exec::template resolver<TArgs>::in_type&... args) {
+    static_assert(udf_has_call);
+    if constexpr (udf_has_call_return_bool) {
+      return instance_.call(out, args...);
+    } else {
+      instance_.call(out, args...);
+      return true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullableImpl(
+      exec_return_type& out,
+      const typename Exec::template resolver<TArgs>::in_type*... args) {
+    static_assert(udf_has_callNullable);
+    if constexpr (udf_has_callNullable_return_bool) {
+      return instance_.callNullable(out, args...);
+    } else {
+      instance_.callNullable(out, args...);
+      return true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callAsciiImpl(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const typename Exec::template resolver<TArgs>::in_type&... args) {
+    static_assert(udf_has_callAscii);
+    if constexpr (udf_has_callAscii_return_bool) {
+      return instance_.callAscii(out, args...);
+    } else {
+      instance_.callAscii(out, args...);
+      return true;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullFreeImpl(
+      typename Exec::template resolver<TReturn>::out_type& out,
+      const exec_no_nulls_arg_type<TArgs>&... args) {
+    static_assert(udf_has_callNullFree);
+    if constexpr (udf_has_callNullFree_return_bool) {
+      return instance_.callNullFree(out, args...);
+    } else {
+      instance_.callNullFree(out, args...);
+      return true;
     }
   }
 };

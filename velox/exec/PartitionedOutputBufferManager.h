@@ -140,6 +140,10 @@ class PartitionedOutputBuffer {
   std::string toString();
 
  private:
+  // Percentage of maxSize below which a blocked producer should
+  // be unblocked.
+  static constexpr int32_t kContinuePct = 90;
+
   /// If this is called due to a driver processed all its data (no more data),
   /// we increment the number of finished drivers. If it is called due to us
   /// updating the total number of drivers, we don't.
@@ -252,13 +256,16 @@ class PartitionedOutputBufferManager {
   static std::weak_ptr<PartitionedOutputBufferManager> getInstance(
       const std::string& host = "local");
 
-  std::unique_ptr<OutputStreamListener> newChecksumListener() const {
-    return checksumListenerFactory_ ? checksumListenerFactory_() : nullptr;
+  // Returns a new stream listener if a listener factory has been set.
+  std::unique_ptr<OutputStreamListener> newListener() const {
+    return listenerFactory_ ? listenerFactory_() : nullptr;
   }
 
-  void setChecksumListenerFactory(
+  // Sets the stream listener factory. This allows custom processing of data for
+  // repartitioning, e.g. computing checksums.
+  void setListenerFactory(
       std::function<std::unique_ptr<OutputStreamListener>()> factory) {
-    checksumListenerFactory_ = factory;
+    listenerFactory_ = factory;
   }
 
   std::string toString();
@@ -272,7 +279,7 @@ class PartitionedOutputBufferManager {
       std::mutex>
       buffers_;
 
-  std::function<std::unique_ptr<OutputStreamListener>()>
-      checksumListenerFactory_{nullptr};
+  std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory_{
+      nullptr};
 };
 } // namespace facebook::velox::exec

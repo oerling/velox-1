@@ -25,8 +25,7 @@ SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
-        0,
-        bufSize});
+        0});
     iobufBytes_ += bufSize;
   }
 }
@@ -106,7 +105,7 @@ class LocalExchangeSource : public ExchangeSource {
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back(SerializedPage::copyFrom(inputPage.get()));
+            pages.push_back(copyPage(*inputPage));
             inputPage = nullptr;
           }
           int64_t ackSequence;
@@ -135,6 +134,14 @@ class LocalExchangeSource : public ExchangeSource {
 
  private:
   static constexpr uint64_t kMaxBytes = 32 * 1024 * 1024; // 32 MB
+
+  // Copies the IOBufs from 'page' so that they no longer hold memory
+  // acounted in the producer Task.
+  static std::unique_ptr<SerializedPage> copyPage(SerializedPage& page) {
+    auto buf = page.getIOBuf();
+    buf->unshare();
+    return std::make_unique<SerializedPage>(std::move(buf));
+  }
 };
 
 std::unique_ptr<ExchangeSource> createLocalExchangeSource(

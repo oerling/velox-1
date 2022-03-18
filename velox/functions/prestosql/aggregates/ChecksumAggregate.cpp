@@ -109,6 +109,13 @@ class ChecksumAggregate : public exec::Aggregate {
     });
   }
 
+#if defined(FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER)
+  FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER("signed-integer-overflow")
+#endif
+  FOLLY_ALWAYS_INLINE void safeAdd(int64_t& lhs, const int64_t& rhs) {
+    lhs += rhs;
+  }
+
   void addIntermediateResults(
       char** groups,
       const SelectivityVector& rows,
@@ -122,7 +129,7 @@ class ChecksumAggregate : public exec::Aggregate {
       auto group = groups[row];
       if (!vector->isNullAt(row)) {
         clearNull(group);
-        *value<int64_t>(group) += rawValues[row];
+        safeAdd(*value<int64_t>(group), rawValues[row]);
       }
     });
   }
@@ -161,14 +168,14 @@ class ChecksumAggregate : public exec::Aggregate {
     bool clearGroupNull = false;
     rows.applyToSelected([&](vector_size_t i) {
       if (!vector->isNullAt(i)) {
-        result += rawValues[i];
+        safeAdd(result, rawValues[i]);
         clearGroupNull = true;
       }
     });
     if (clearGroupNull) {
       clearNull(group);
     }
-    *value<int64_t>(group) += result;
+    safeAdd(*value<int64_t>(group), result);
   }
 
  private:

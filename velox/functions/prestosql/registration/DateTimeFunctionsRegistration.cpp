@@ -70,13 +70,6 @@ void registerSimpleFunctions() {
       Varchar,
       Varchar>({"parse_datetime"});
 
-  registerFunction<DateFormatFunction, Varchar, Timestamp, Varchar>(
-      {"date_format"});
-  registerFunction<DateDiffFunction, int64_t, Varchar, Timestamp, Timestamp>(
-      {"date_diff"});
-
-  registerFunction<DateDiffFunction, int64_t, Varchar, Date, Date>(
-      {"date_diff"});
   registerFunction<DateParseFunction, Timestamp, Varchar, Varchar>(
       {"date_parse"});
 }

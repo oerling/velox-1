@@ -32,7 +32,7 @@ class SerializedPage {
 
   ~SerializedPage() = default;
 
-  uint64_t byteSize() const {
+  uint64_t size() const {
     return iobufBytes_;
   }
 
@@ -40,15 +40,7 @@ class SerializedPage {
   // VectorStreamGroup::read().
   void prepareStreamForDeserialize(ByteStream* input);
 
-  // acounted in the producer Task. Used only with LocalExchangeSource
-  // in tests.
-  static std::unique_ptr<SerializedPage> copyFrom(SerializedPage* page) {
-    auto buf = page->getIOBuf();
-    buf->unshare();
-    return std::make_unique<SerializedPage>(std::move(buf));
-  }
-
-  std::unique_ptr<folly::IOBuf> getIOBuf() {
+  std::unique_ptr<folly::IOBuf> getIOBuf() const {
     VELOX_CHECK(iobuf_);
     return iobuf_->clone();
   }
@@ -88,7 +80,7 @@ class ExchangeQueue {
       checkComplete();
       return;
     }
-    byteSize_ += page->byteSize();
+    totalBytes_ += page->size();
     queue_.push_back(std::move(page));
     if (!promises_.empty()) {
       // Resume one of the waiting drivers.
@@ -128,16 +120,19 @@ class ExchangeQueue {
     auto page = std::move(queue_.front());
     queue_.pop_front();
     *atEnd = false;
-    byteSize_ -= page->byteSize();
+    totalBytes_ -= page->size();
     return page;
   }
 
-  uint64_t byteSize() const {
-    return byteSize_;
+  // Returns the total bytes held by SerializedPages in 'this'.
+  uint64_t totalBytes() const {
+    return totalBytes_;
   }
 
-  uint64_t maxSize() const {
-    return maxSize_;
+  // Returns the target maximum for totalBytes(). An exchange client should not
+  // fetch more data until the  queue totalBytes() is below maxBytes().
+  uint64_t maxBytes() const {
+    return maxBytes_;
   }
 
   void addSource() {
@@ -176,8 +171,11 @@ class ExchangeQueue {
   // throw an exception with this message.
   std::string error_;
   // Total size of SerializedPages in queue.
-  uint64_t byteSize_{0};
-  uint64_t maxSize_{128 << 20};
+  uint64_t totalBytes_{0};
+
+  // If 'totalBytes_' < 'maxBytes_', an exchange should request more data from
+  // producers.
+  uint64_t maxBytes_{128 << 20};
 };
 
 class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {

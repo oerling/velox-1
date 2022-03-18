@@ -34,6 +34,10 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
     if (!isRegisteredVectorSerde()) {
       facebook::velox::serializer::presto::PrestoVectorSerde::
           registerVectorSerde();
+      bufferManager_->setListenerFactory([]() {
+        return std::make_unique<
+            serializer::presto::PrestoOutputStreamListener>();
+      });
     }
   }
 
@@ -71,7 +75,8 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
         std::dynamic_pointer_cast<const RowType>(vector->type()), size);
     data->append(
         std::dynamic_pointer_cast<RowVector>(vector), folly::Range(&range, 1));
-    IOBufOutputStream stream(*mappedMemory_, nullptr, data->size());
+    auto listener = bufferManager_->newListener();
+    IOBufOutputStream stream(*mappedMemory_, listener.get(), data->size());
     data->flush(&stream);
     return std::make_unique<SerializedPage>(stream.getIOBuf());
   }

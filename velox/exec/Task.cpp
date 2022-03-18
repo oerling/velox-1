@@ -346,42 +346,52 @@ void Task::createDriversLocked(
     std::shared_ptr<Task>& self,
     uint32_t splitGroupId,
     std::vector<std::shared_ptr<Driver>>& out) {
-  auto& splitGroupState = self->splitGroupStates_[splitGroupId];
-  const auto numPipelines = driverFactories_.size();
-  for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
-    auto& factory = driverFactories_[pipeline];
-    const uint32_t driverIdOffset = factory->numDrivers * splitGroupId;
-    for (uint32_t partitionId = 0; partitionId < factory->numDrivers;
-         ++partitionId) {
-      out.emplace_back(factory->createDriver(
-          std::make_unique<DriverCtx>(
-              self,
-              driverIdOffset + partitionId,
-              pipeline,
-              splitGroupId,
-              partitionId),
-          self->exchangeClients_[pipeline],
-          [self](size_t i) {
-            return i < self->driverFactories_.size()
-                ? self->driverFactories_[i]->numTotalDrivers
-                : 0;
-          }));
-      ++splitGroupState.activeDrivers;
-    }
-  }
-  noMoreLocalExchangeProducers(splitGroupId);
-  ++numRunningSplitGroups_;
-
-  // Initialize operator stats using the 1st driver of each operator.
-  if (not initializedOpStats_) {
-    initializedOpStats_ = true;
-    size_t driverIndex{0};
+  try {
+    auto& splitGroupState = self->splitGroupStates_[splitGroupId];
+    const auto numPipelines = driverFactories_.size();
     for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
-      auto& factory = self->driverFactories_[pipeline];
-      out[driverIndex]->initializeOperatorStats(
-          self->taskStats_.pipelineStats[pipeline].operatorStats);
-      driverIndex += factory->numDrivers;
+      auto& factory = driverFactories_[pipeline];
+      const uint32_t driverIdOffset = factory->numDrivers * splitGroupId;
+      for (uint32_t partitionId = 0; partitionId < factory->numDrivers;
+           ++partitionId) {
+        out.emplace_back(factory->createDriver(
+            std::make_unique<DriverCtx>(
+                self,
+                driverIdOffset + partitionId,
+                pipeline,
+                splitGroupId,
+                partitionId),
+            self->exchangeClients_[pipeline],
+            [self](size_t i) {
+              return i < self->driverFactories_.size()
+                  ? self->driverFactories_[i]->numTotalDrivers
+                  : 0;
+            }));
+        ++splitGroupState.activeDrivers;
+      }
     }
+    noMoreLocalExchangeProducers(splitGroupId);
+    ++numRunningSplitGroups_;
+
+    // Initialize operator stats using the 1st driver of each operator.
+    if (not initializedOpStats_) {
+      initializedOpStats_ = true;
+      size_t driverIndex{0};
+      for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
+        auto& factory = self->driverFactories_[pipeline];
+        out[driverIndex]->initializeOperatorStats(
+            self->taskStats_.pipelineStats[pipeline].operatorStats);
+        driverIndex += factory->numDrivers;
+      }
+    }
+  } catch (std::exception& e) {
+    // If one of the drivers threw in creation, we need to remove task pointer
+    // from already created drivers or we will face another throw (or even a
+    // crash).
+    for (auto& driver : out) {
+      driver->disconnectFromTask();
+    }
+    throw;
   }
 }
 
@@ -457,13 +467,13 @@ void Task::setMaxSplitSequenceId(
   checkPlanNodeIdForSplit(planNodeId);
 
   std::lock_guard<std::mutex> l(mutex_);
-  VELOX_CHECK(isRunningLocked());
-
-  auto& splitsState = splitsStates_[planNodeId];
-  // We could have been sent an old split again, so only change max id, when the
-  // new one is greater.
-  splitsState.maxSequenceId =
-      std::max(splitsState.maxSequenceId, maxSequenceId);
+  if (isRunningLocked()) {
+    auto& splitsState = splitsStates_[planNodeId];
+    // We could have been sent an old split again, so only change max id, when
+    // the new one is greater.
+    splitsState.maxSequenceId =
+        std::max(splitsState.maxSequenceId, maxSequenceId);
+  }
 }
 
 bool Task::addSplitWithSequence(
@@ -475,15 +485,16 @@ bool Task::addSplitWithSequence(
   bool added = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(isRunningLocked());
-
-    // The same split can be added again in some systems. The systems that want
-    // 'one split processed once only' would use this method and duplicate
-    // splits would be ignored.
-    auto& splitsState = splitsStates_[planNodeId];
-    if (sequenceId > splitsState.maxSequenceId) {
-      promise = addSplitLocked(splitsState, std::move(split));
-      added = true;
+    if (isRunningLocked()) {
+      // The same split can be added again in some systems. The systems that
+      // want
+      // 'one split processed once only' would use this method and duplicate
+      // splits would be ignored.
+      auto& splitsState = splitsStates_[planNodeId];
+      if (sequenceId > splitsState.maxSequenceId) {
+        promise = addSplitLocked(splitsState, std::move(split));
+        added = true;
+      }
     }
   }
   if (promise) {
@@ -497,9 +508,9 @@ void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
   std::unique_ptr<ContinuePromise> promise;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(isRunningLocked());
-
-    promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
+    if (isRunningLocked()) {
+      promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
+    }
   }
   if (promise) {
     promise->setValue(false);
@@ -926,6 +937,7 @@ void Task::terminate(TaskState terminalState) {
     // is cleared here so that this is 0 right after terminate as
     // tests expect.
     numRunningDrivers_ = 0;
+    stateChangedLocked();
     for (auto& driver : drivers_) {
       if (driver) {
         if (enterForTerminateLocked(driver->state()) ==
@@ -982,8 +994,6 @@ void Task::terminate(TaskState terminalState) {
   for (auto& bridge : oldBridges) {
     bridge->cancel();
   }
-  std::lock_guard<std::mutex> l(mutex_);
-  stateChangedLocked();
 }
 
 void Task::addOperatorStats(OperatorStats& stats) {

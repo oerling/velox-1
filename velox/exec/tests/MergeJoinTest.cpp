@@ -267,3 +267,178 @@ TEST_F(MergeJoinTest, nonFirstJoinKeys) {
 
   assertQuery(plan, "VALUES (2, 40, 23), (4, 20, 22)");
 }
+
+TEST_F(MergeJoinTest, innerJoinFilter) {
+  vector_size_t size = 1'000;
+  // Join keys on the left side: 0, 10, 20,..
+  // Payload on the left side: 0, 1, 2, 3,..
+  auto left = makeRowVector(
+      {"t_c0", "t_c1"},
+      {
+          makeFlatVector<int32_t>(size, [](auto row) { return row * 10; }),
+          makeFlatVector<int64_t>(
+              size, [](auto row) { return row; }, nullEvery(13)),
+      });
+
+  // Join keys on the right side: 0, 5, 10, 15, 20,..
+  // Payload on the right side: 0, 1, 2, 3, 4, 5, 6, 0, 1, 2,..
+  auto right = makeRowVector(
+      {"u_c0", "u_c1"},
+      {
+          makeFlatVector<int32_t>(size, [](auto row) { return row * 5; }),
+          makeFlatVector<int64_t>(
+              size, [](auto row) { return row % 7; }, nullEvery(17)),
+      });
+
+  createDuckDbTable("t", {left});
+  createDuckDbTable("u", {right});
+
+  auto plan = [&](const std::string& filter) {
+    auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    return PlanBuilder(planNodeIdGenerator)
+        .values({left})
+        .mergeJoin(
+            {"t_c0"},
+            {"u_c0"},
+            PlanBuilder(planNodeIdGenerator).values({right}).planNode(),
+            filter,
+            {"t_c0", "u_c0", "u_c1"},
+            core::JoinType::kInner)
+        .planNode();
+  };
+
+  assertQuery(
+      plan("(t_c1 + u_c1) % 2 = 0"),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c1 + u_c1) % 2 = 0");
+
+  assertQuery(
+      plan("(t_c1 + u_c1) % 2 = 1"),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c1 + u_c1) % 2 = 1");
+
+  // No rows pass filter.
+  assertQuery(
+      plan("(t_c1 + u_c1) % 2 < 0"),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c1 + u_c1) % 2 < 0");
+
+  // All rows pass filter.
+  assertQuery(
+      plan("(t_c1 + u_c1) % 2 >= 0"),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c1 + u_c1) % 2 >= 0");
+
+  // Filter expressions over join keys.
+  assertQuery(
+      plan("(t_c0 + u_c1) % 2 = 0"),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c0 + u_c1) % 2 = 0");
+
+  assertQuery(
+      plan("(t_c1 + u_c0) % 2 = 0"),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c1 + u_c0) % 2 = 0");
+
+  // Very small output batch size.
+  assertQuery(
+      makeCursorParameters(plan("(t_c1 + u_c1) % 2 = 0"), 16),
+      "SELECT t_c0, u_c0, u_c1 FROM t, u WHERE t_c0 = u_c0 AND (t_c1 + u_c1) % 2 = 0");
+}
+
+TEST_F(MergeJoinTest, leftJoinFilter) {
+  // Each row on the left side has at most one match on the right side.
+  auto left = makeRowVector(
+      {"t_c0", "t_c1"},
+      {
+          makeFlatVector<int32_t>({0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50}),
+          makeFlatVector<int32_t>({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}),
+      });
+
+  auto right = makeRowVector(
+      {"u_c0", "u_c1"},
+      {
+          makeFlatVector<int32_t>({0, 10, 20, 30, 40, 50}),
+          makeFlatVector<int32_t>({0, 1, 2, 3, 4, 5}),
+      });
+
+  createDuckDbTable("t", {left});
+  createDuckDbTable("u", {right});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto plan = [&](const std::string& filter) {
+    return PlanBuilder(planNodeIdGenerator)
+        .values({left})
+        .mergeJoin(
+            {"t_c0"},
+            {"u_c0"},
+            PlanBuilder(planNodeIdGenerator).values({right}).planNode(),
+            filter,
+            {"t_c0", "t_c1", "u_c1"},
+            core::JoinType::kLeft)
+        .planNode();
+  };
+
+  // Test with different output batch sizes.
+  for (auto batchSize : {1, 3, 16}) {
+    assertQuery(
+        makeCursorParameters(plan("(t_c1 + u_c1) % 2 = 0"), batchSize),
+        "SELECT t_c0, t_c1, u_c1 FROM t LEFT JOIN u ON t_c0 = u_c0 AND (t_c1 + u_c1) % 2 = 0");
+  }
+
+  // A left-side row with multiple matches on the right side.
+  left = makeRowVector(
+      {"t_c0", "t_c1"},
+      {
+          makeFlatVector<int32_t>({5, 10}),
+          makeFlatVector<int32_t>({0, 0}),
+      });
+
+  right = makeRowVector(
+      {"u_c0", "u_c1"},
+      {
+          makeFlatVector<int32_t>({10, 10, 10, 10, 10, 10}),
+          makeFlatVector<int32_t>({0, 1, 2, 3, 4, 5}),
+      });
+
+  createDuckDbTable("t", {left});
+  createDuckDbTable("u", {right});
+
+  // Test with different filters and output batch sizes.
+  for (auto batchSize : {1, 3, 16}) {
+    for (auto filter :
+         {"t_c1 + u_c1 > 3",
+          "t_c1 + u_c1 < 3",
+          "t_c1 + u_c1 > 100",
+          "t_c1 + u_c1 < 100"}) {
+      assertQuery(
+          makeCursorParameters(plan(filter), batchSize),
+          fmt::format(
+              "SELECT t_c0, t_c1, u_c1 FROM t LEFT JOIN u ON t_c0 = u_c0 AND {}",
+              filter));
+    }
+  }
+}
+
+// Verify that both left-side and right-side pipelines feeding the merge join
+// always run single-threaded.
+TEST_F(MergeJoinTest, numDrivers) {
+  auto left = makeRowVector({"t_c0"}, {makeFlatVector<int32_t>({1, 2, 3})});
+  auto right = makeRowVector({"u_c0"}, {makeFlatVector<int32_t>({0, 2, 5})});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values({left}, true)
+          .mergeJoin(
+              {"t_c0"},
+              {"u_c0"},
+              PlanBuilder(planNodeIdGenerator).values({right}, true).planNode(),
+              "",
+              {"t_c0", "u_c0"},
+              core::JoinType::kInner)
+          .planNode();
+
+  CursorParameters params;
+  params.planNode = plan;
+  params.maxDrivers = 5;
+  params.numResultDrivers = 1;
+  auto task = assertQuery(params, "SELECT 2, 2");
+  // We have two pipelines in the task and each must have 1 driver.
+  EXPECT_EQ(2, task->numTotalDrivers());
+  EXPECT_EQ(2, task->numFinishedDrivers());
+}
