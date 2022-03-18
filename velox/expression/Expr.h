@@ -88,9 +88,8 @@ class Expr {
     if (sharedSubexprRows_) {
       sharedSubexprRows_->clearAll();
     }
-    if (sharedSubexprValues_.unique() &&
-        sharedSubexprValues_->encoding() == VectorEncoding::Simple::FLAT) {
-      sharedSubexprValues_->clear();
+    if (BaseVector::isReusableFlatVector(sharedSubexprValues_)) {
+      sharedSubexprValues_->resize(0);
     } else {
       sharedSubexprValues_ = nullptr;
     }
@@ -269,6 +268,8 @@ class Expr {
       VectorPtr* result);
 
  protected:
+  void appendInputs(std::stringstream& stream) const;
+
   const std::shared_ptr<const Type> type_;
   const std::vector<std::shared_ptr<Expr>> inputs_;
   const std::string name_;

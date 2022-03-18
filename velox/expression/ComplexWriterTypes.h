@@ -18,6 +18,7 @@
 #include <folly/Likely.h>
 #include <optional>
 #include <tuple>
+#include <utility>
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
@@ -497,6 +498,152 @@ class MapWriter {
 
   template <typename T>
   friend class SimpleFunctionAdapter;
+};
+
+// The object passed to the simple function interface that represent a single
+// output row entry.
+
+template <typename... T>
+class RowWriter;
+
+template <size_t I, class... Types>
+inline auto get(const RowWriter<Types...>& writer) {
+  using type = std::tuple_element_t<I, std::tuple<Types...>>;
+  static_assert(
+      provide_std_interface<type>,
+      "operation not supported, use general interface instead");
+
+  return PrimitiveWriter<type>(
+      std::get<I>(writer.childrenVectors_), writer.offset_);
+}
+
+template <typename... T>
+class RowWriter {
+ public:
+  using writers_t = std::tuple<VectorWriter<T, void>...>;
+  static constexpr bool std_interface =
+      (true && ... && provide_std_interface<T>);
+
+  template <vector_size_t I>
+  void set_null_at() {
+    std::get<I>(childrenVectors_)->setNull(offset_, true);
+  }
+
+  template <size_t I>
+  typename std::tuple_element_t<I, writers_t>::exec_out_t& get_writer_at() {
+    using Type = std::tuple_element_t<I, std::tuple<T...>>;
+    if constexpr (!requires_commit<Type>) {
+      VELOX_DCHECK(provide_std_interface<Type>);
+      std::get<I>(childrenVectors_)->setNull(offset_, false);
+      return std::get<I>(childrenWriters_).data_[offset_];
+    } else {
+      std::get<I>(needCommit_) = true;
+      std::get<I>(childrenWriters_).setOffset(offset_);
+      return std::get<I>(childrenWriters_).current();
+    }
+  }
+
+  void operator=(const std::tuple<T...>& inputs) {
+    static_assert(
+        std_interface,
+        "operation not supported, use general interface instead");
+    assignImpl(inputs, std::index_sequence_for<T...>{});
+  }
+
+  void operator=(const std::tuple<std::optional<T>...>& inputs) {
+    static_assert(
+        std_interface,
+        "operation not supported, use general interface instead");
+    assignImpl(inputs, std::index_sequence_for<T...>{});
+  }
+
+  template <typename... K>
+  void copy_from(const std::tuple<K...>& inputs) {
+    copyFromImpl(inputs, std::index_sequence_for<T...>{});
+  }
+
+ private:
+  // Make sure user do not use those.
+  RowWriter<T...>() = default;
+
+  void initialize() {
+    initializeImpl(std::index_sequence_for<T...>());
+  }
+
+  template <std::size_t... Is>
+  void initializeImpl(std::index_sequence<Is...>) {
+    (
+        [&]() {
+          std::get<Is>(needCommit_) = false;
+          std::get<Is>(childrenVectors_) =
+              &std::get<Is>(childrenWriters_).vector();
+        }(),
+        ...);
+  }
+
+  template <typename... K, std::size_t... Is>
+  void copyFromImpl(
+      const std::tuple<K...>& inputs,
+      std::index_sequence<Is...>) {
+    using children_types = std::tuple<T...>;
+    (
+        [&]() {
+          if constexpr (provide_std_interface<
+                            std::tuple_element_t<Is, children_types>>) {
+            exec::get<Is>(*this) = std::get<Is>(inputs);
+          } else {
+            auto& writer = get_writer_at<Is>();
+            writer.copy_from(std::get<Is>(inputs));
+          }
+        }(),
+        ...);
+  }
+
+  template <std::size_t... Is>
+  void assignImpl(const std::tuple<T...>& inputs, std::index_sequence<Is...>) {
+    ((exec::get<Is>(*this) = std::get<Is>(inputs)), ...);
+  }
+
+  template <std::size_t... Is>
+  void assignImpl(
+      const std::tuple<std::optional<T>...>& inputs,
+      std::index_sequence<Is...>) {
+    ((exec::get<Is>(*this) = std::get<Is>(inputs)), ...);
+  }
+
+  void finalize() {
+    finalizeImpl(std::index_sequence_for<T...>{});
+  }
+
+  template <std::size_t... Is>
+  void finalizeImpl(std::index_sequence<Is...>) {
+    (
+        [&]() {
+          if (std::get<Is>(needCommit_)) {
+            // Commit not null.
+            std::get<Is>(childrenWriters_).commit(true);
+            std::get<Is>(needCommit_) = false;
+          }
+        }(),
+        ...);
+  }
+
+  writers_t childrenWriters_;
+
+  std::tuple<typename VectorWriter<T, void>::vector_t*...> childrenVectors_;
+
+  template <typename>
+  using Bool = bool;
+
+  std::tuple<Bool<T>...> needCommit_;
+
+  vector_size_t offset_;
+
+  template <typename A, typename B>
+  friend struct VectorWriter;
+
+  template <size_t I, class... Types>
+  friend auto get(const RowWriter<Types...>& writer);
 };
 
 } // namespace facebook::velox::exec

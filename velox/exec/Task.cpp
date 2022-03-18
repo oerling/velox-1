@@ -151,11 +151,6 @@ void Task::start(
     std::shared_ptr<Task> self,
     uint32_t maxDrivers,
     uint32_t concurrentSplitGroups) {
-  if (concurrentSplitGroups > 1) {
-    VELOX_CHECK(
-        self->isGroupedExecution(),
-        "concurrentSplitGroups parameter applies only to grouped execution");
-  }
   VELOX_CHECK_GE(
       maxDrivers, 1, "maxDrivers parameter must be greater then or equal to 1");
   VELOX_CHECK_GE(
@@ -243,8 +238,11 @@ void Task::start(
     }
 
     if (factory->needsExchangeClient()) {
-      self->exchangeClients_[pipeline] =
-          std::make_shared<ExchangeClient>(self->destination_);
+      // Low-water mark for filling the exchange queue is 1/2 of the per worker
+      // buffer size of the producers.
+      self->exchangeClients_[pipeline] = std::make_shared<ExchangeClient>(
+          self->destination_,
+          self->queryCtx()->config().maxPartitionedOutputBufferSize() / 2);
     }
   }
 
@@ -456,13 +454,13 @@ void Task::setMaxSplitSequenceId(
   checkPlanNodeIdForSplit(planNodeId);
 
   std::lock_guard<std::mutex> l(mutex_);
-  VELOX_CHECK(isRunningLocked());
-
-  auto& splitsState = splitsStates_[planNodeId];
-  // We could have been sent an old split again, so only change max id, when the
-  // new one is greater.
-  splitsState.maxSequenceId =
-      std::max(splitsState.maxSequenceId, maxSequenceId);
+  if (isRunningLocked()) {
+    auto& splitsState = splitsStates_[planNodeId];
+    // We could have been sent an old split again, so only change max id, when
+    // the new one is greater.
+    splitsState.maxSequenceId =
+        std::max(splitsState.maxSequenceId, maxSequenceId);
+  }
 }
 
 bool Task::addSplitWithSequence(
@@ -474,15 +472,16 @@ bool Task::addSplitWithSequence(
   bool added = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(isRunningLocked());
-
-    // The same split can be added again in some systems. The systems that want
-    // 'one split processed once only' would use this method and duplicate
-    // splits would be ignored.
-    auto& splitsState = splitsStates_[planNodeId];
-    if (sequenceId > splitsState.maxSequenceId) {
-      promise = addSplitLocked(splitsState, std::move(split));
-      added = true;
+    if (isRunningLocked()) {
+      // The same split can be added again in some systems. The systems that
+      // want
+      // 'one split processed once only' would use this method and duplicate
+      // splits would be ignored.
+      auto& splitsState = splitsStates_[planNodeId];
+      if (sequenceId > splitsState.maxSequenceId) {
+        promise = addSplitLocked(splitsState, std::move(split));
+        added = true;
+      }
     }
   }
   if (promise) {
@@ -496,9 +495,9 @@ void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
   std::unique_ptr<ContinuePromise> promise;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(isRunningLocked());
-
-    promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
+    if (isRunningLocked()) {
+      promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
+    }
   }
   if (promise) {
     promise->setValue(false);
@@ -952,6 +951,7 @@ void Task::terminate(TaskState terminalState) {
     // is cleared here so that this is 0 right after terminate as
     // tests expect.
     numRunningDrivers_ = 0;
+    stateChangedLocked();
     for (auto& driver : drivers_) {
       if (driver) {
         if (enterForTerminateLocked(driver->state()) ==
@@ -1008,8 +1008,6 @@ void Task::terminate(TaskState terminalState) {
   for (auto& bridge : oldBridges) {
     bridge->cancel();
   }
-  std::lock_guard<std::mutex> l(mutex_);
-  stateChangedLocked();
 }
 
 void Task::addOperatorStats(OperatorStats& stats) {
@@ -1437,23 +1435,11 @@ StopReason Task::shouldStop() {
   return StopReason::kNone;
 }
 
-folly::SemiFuture<bool> Task::finishFuture() {
-  auto [promise, future] =
-      makeVeloxPromiseContract<bool>("CancelPool::finishFuture");
-  std::lock_guard<std::mutex> l(mutex_);
-  if (numThreads_ == 0) {
-    promise.setValue(true);
-    return std::move(future);
-  }
-  finishPromises_.push_back(std::move(promise));
-  return std::move(future);
-}
-
 void Task::finished() {
-  for (auto& promise : finishPromises_) {
+  for (auto& promise : pausePromises_) {
     promise.setValue(true);
   }
-  finishPromises_.clear();
+  pausePromises_.clear();
 }
 
 StopReason Task::shouldStopLocked() {
@@ -1470,4 +1456,15 @@ StopReason Task::shouldStopLocked() {
   return StopReason::kNone;
 }
 
+ContinueFuture Task::requestPauseLocked(bool pause) {
+  pauseRequested_ = pause;
+
+  auto [promise, future] = makeVeloxPromiseContract<bool>("Task::requestPause");
+  if (numThreads_ == 0) {
+    promise.setValue(true);
+    return std::move(future);
+  }
+  pausePromises_.push_back(std::move(promise));
+  return std::move(future);
+}
 } // namespace facebook::velox::exec

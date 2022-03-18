@@ -40,6 +40,8 @@ class CastExpr : public SpecialForm {
       EvalCtx* context,
       VectorPtr* result) override;
 
+  std::string toString() const override;
+
  private:
   /// @tparam To The cast target type
   /// @tparam From The expression type
@@ -119,19 +121,23 @@ class CastOperator {
 
   /// Casts an input vector to the custom type.
   /// @param input The flat or constant input vector
+  /// @param context The context
   /// @param rows Non-null rows of input
   /// @param result The writable output vector of the custom type
   virtual void castTo(
       const BaseVector& input,
+      exec::EvalCtx* context,
       const SelectivityVector& rows,
       BaseVector& result) const = 0;
 
   /// Casts a vector of the custom type to another type.
   /// @param input The flat or constant input vector
+  /// @param context The context
   /// @param rows Non-null rows of input
   /// @param result The writable output vector of the destination type
   virtual void castFrom(
       const BaseVector& input,
+      exec::EvalCtx* context,
       const SelectivityVector& rows,
       BaseVector& result) const = 0;
 };

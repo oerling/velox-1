@@ -214,7 +214,7 @@ RowVectorPtr LocalExchangeSourceOperator::getOutput() {
   }
   if (data != nullptr) {
     stats().inputPositions += data->size();
-    stats().inputBytes += data->retainedSize();
+    stats().inputBytes += data->estimateFlatSize();
   }
   return data;
 }
@@ -323,7 +323,7 @@ BlockingReason LocalPartition::enqueue(
 }
 
 void LocalPartition::addInput(RowVectorPtr input) {
-  stats_.outputBytes += input->retainedSize();
+  stats_.outputBytes += input->estimateFlatSize();
   stats_.outputPositions += input->size();
 
   // Lazy vectors must be loaded or processed.

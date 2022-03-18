@@ -14,332 +14,159 @@
  * limitations under the License.
  */
 
+#include <folly/init/Init.h>
 #include "velox/common/file/FileSystems.h"
-#include "velox/dwio/dwrf/test/utils/DataFiles.h"
 #include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/exec/tests/utils/TpchQueryBuilder.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-#include "velox/type/tests/FilterBuilder.h"
-#include "velox/type/tests/SubfieldFiltersBuilder.h"
+#include "velox/parse/TypeResolver.h"
+
+#include <vector>
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-#if __has_include("filesystem")
-#include <filesystem>
-namespace fs = std::filesystem;
-#else
-#include <experimental/filesystem>
-namespace fs = std::experimental::filesystem;
-#endif
+static const int kNumDrivers = 4;
 
 class ParquetTpchTest : public testing::Test {
  protected:
   // Setup a DuckDB instance for the entire suite and load TPC-H data with scale
   // factor 0.01.
-  static void SetUpTestCase() {
+  static void SetUpTestSuite() {
     if (duckDb_ == nullptr) {
       duckDb_ = std::make_shared<DuckDbQueryRunner>();
       constexpr double kTpchScaleFactor = 0.01;
       duckDb_->initializeTpch(kTpchScaleFactor);
     }
     functions::prestosql::registerAllScalarFunctions();
-  }
-
-  void SetUp() override {
+    parse::registerTypeResolver();
     filesystems::registerLocalFileSystem();
     parquet::registerParquetReaderFactory();
+
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, nullptr);
     connector::registerConnector(hiveConnector);
     tempDirectory_ = exec::test::TempDirectoryPath::create();
-    lineitemType_ =
-        ROW({"orderkey",
-             "partkey",
-             "suppkey",
-             "linenumber",
-             "quantity",
-             "extendedprice",
-             "discount",
-             "tax",
-             "returnflag",
-             "linestatus",
-             "shipdate",
-             "commitdate",
-             "receiptdate",
-             "shipinstruct",
-             "shipmode",
-             "comment"},
-            {BIGINT(),
-             BIGINT(),
-             BIGINT(),
-             BIGINT(),
-             DOUBLE(),
-             DOUBLE(),
-             DOUBLE(),
-             DOUBLE(),
-             VARCHAR(),
-             VARCHAR(),
-             DATE(),
-             DATE(),
-             DATE(),
-             VARCHAR(),
-             VARCHAR(),
-             VARCHAR()});
+    saveTpchTablesAsParquet();
+    tpchBuilder_.initialize(tempDirectory_->path);
   }
 
-  void TearDown() override {
+  /// Write TPC-H tables as a Parquet file to temp directory in hive-style
+  /// partition
+  static void saveTpchTablesAsParquet() {
+    constexpr int kRowGroupSize = 10'000;
+    const auto tableNames = tpchBuilder_.getTableNames();
+    for (const auto& tableName : tableNames) {
+      auto tableDirectory =
+          fmt::format("{}/{}", tempDirectory_->path, tableName);
+      fs::create_directory(tableDirectory);
+      auto filePath = fmt::format("{}/file.parquet", tableDirectory);
+      auto query = fmt::format(
+          duckDbParquetWriteSQL_.at(tableName),
+          tableName,
+          filePath,
+          kRowGroupSize);
+      duckDb_->execute(query);
+    }
+  }
+
+  static void TearDownTestSuite() {
     connector::unregisterConnector(kHiveConnectorId);
     parquet::unregisterParquetReaderFactory();
   }
 
-  int64_t date(std::string_view stringDate) const {
-    Date date;
-    parseTo(stringDate, date);
-    return date.days();
-  }
-
-  // Split file at a given path 'filePath' into 'numSplits' splits.
-  std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>> makeSplits(
-      const std::string& filePath,
-      int64_t numSplits = 10) const {
-    const int fileSize = fs::file_size(filePath);
-    // Take the upper bound.
-    const int splitSize = std::ceil(fileSize / numSplits);
-    std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>> splits;
-
-    // Add all the splits.
-    for (int i = 0; i < numSplits; i++) {
-      auto split = HiveConnectorTestBase::makeHiveConnectorSplit(
-          filePath, i * splitSize, splitSize);
-      split->fileFormat = dwio::common::FileFormat::PARQUET;
-      splits.push_back(std::move(split));
-    }
-    return splits;
-  }
-
-  // Write the DuckDB Lineitem TPC-H table to a Parquet file and return the file
-  // location.
-  std::string writeLineitemTableToParquet() const {
-    constexpr std::string_view tableName("lineitem");
-    constexpr int kRowGroupSize = 10'000;
-    const auto& filePath =
-        fmt::format("{}/{}.parquet", tempDirectory_->path, tableName);
-    // Convert decimal columns to double.
-    const auto& query = fmt::format(
-        "COPY (SELECT l_orderkey as orderkey, l_partkey as partkey, l_suppkey as suppkey, l_linenumber as linenumber, "
-        "l_quantity::DOUBLE as quantity, l_extendedprice::DOUBLE as extendedprice, l_discount::DOUBLE as discount, "
-        "l_tax::DOUBLE as tax, l_returnflag as returnflag, l_linestatus as linestatus, "
-        "l_shipdate as shipdate, l_receiptdate as receiptdate, "
-        "l_shipinstruct as shipinstruct, l_shipmode as shipmode, l_comment as comment "
-        "FROM {}) TO '{}' (FORMAT 'parquet', ROW_GROUP_SIZE {})",
-        tableName,
-        filePath,
-        kRowGroupSize);
-    duckDb_->execute(query);
-    return filePath;
-  }
-
-  RowTypePtr getLineitemColumns(std::vector<std::string> names) const {
-    std::vector<TypePtr> types;
-    for (auto colName : names) {
-      types.push_back(lineitemType_->findChild(colName));
-    }
-    return ROW(std::move(names), std::move(types));
-  }
-
   std::shared_ptr<Task> assertQuery(
-      const CursorParameters& params,
-      const std::string& filePath,
-      const core::PlanNodeId& sourcePlanNodeId,
+      const TpchPlan& tpchPlan,
       const std::string& duckQuery) const {
     bool noMoreSplits = false;
-    return exec::test::assertQuery(
-        params,
-        [&](exec::Task* task) {
-          if (!noMoreSplits) {
-            auto const& splits = makeSplits(filePath);
+    constexpr int kNumSplits = 10;
+    auto addSplits = [&](exec::Task* task) {
+      if (!noMoreSplits) {
+        for (const auto& entry : tpchPlan.dataFiles) {
+          for (const auto& path : entry.second) {
+            auto const splits = HiveConnectorTestBase::makeHiveConnectorSplits(
+                path, kNumSplits, tpchPlan.dataFileFormat);
             for (const auto& split : splits) {
-              task->addSplit(sourcePlanNodeId, exec::Split(split));
+              task->addSplit(entry.first, exec::Split(split));
             }
-            task->noMoreSplits(sourcePlanNodeId);
-            noMoreSplits = true;
           }
-        },
-        duckQuery,
-        *duckDb_);
+          task->noMoreSplits(entry.first);
+        }
+      }
+      noMoreSplits = true;
+    };
+    CursorParameters params;
+    params.maxDrivers = kNumDrivers;
+    params.numResultDrivers = 1;
+    params.planNode = tpchPlan.plan;
+    return exec::test::assertQuery(params, addSplits, duckQuery, *duckDb_);
+  }
+
+  void assertQuery(
+      int queryId,
+      const int expectedPipelineCount,
+      const int expectedFinishedSplits) const {
+    auto tpchPlan = tpchBuilder_.getQueryPlan(queryId);
+    auto duckDbSql = duckDb_->getTpchQuery(queryId);
+    auto task = assertQuery(tpchPlan, duckDbSql);
+    const auto& stats = task->taskStats();
+    ASSERT_EQ(expectedPipelineCount, stats.pipelineStats.size());
+    ASSERT_EQ(expectedFinishedSplits, stats.numFinishedSplits);
   }
 
   static std::shared_ptr<DuckDbQueryRunner> duckDb_;
-  std::shared_ptr<exec::test::TempDirectoryPath> tempDirectory_;
-  RowTypePtr lineitemType_;
+  static std::shared_ptr<exec::test::TempDirectoryPath> tempDirectory_;
+  static TpchQueryBuilder tpchBuilder_;
+  static std::unordered_map<std::string, std::string> duckDbParquetWriteSQL_;
 };
 
 std::shared_ptr<DuckDbQueryRunner> ParquetTpchTest::duckDb_ = nullptr;
+std::shared_ptr<exec::test::TempDirectoryPath> ParquetTpchTest::tempDirectory_ =
+    nullptr;
+TpchQueryBuilder ParquetTpchTest::tpchBuilder_(
+    dwio::common::FileFormat::PARQUET);
 
-TEST_F(ParquetTpchTest, q1) {
-  const auto filePath = writeLineitemTableToParquet();
+std::unordered_map<std::string, std::string>
+    ParquetTpchTest::duckDbParquetWriteSQL_ = {
+        std::make_pair(
+            "lineitem",
+            R"(COPY (SELECT l_orderkey, l_partkey, l_suppkey, l_linenumber,
+        l_quantity::DOUBLE as l_quantity, l_extendedprice::DOUBLE as l_extendedprice, l_discount::DOUBLE as l_discount,
+        l_tax::DOUBLE as l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate,
+        l_shipinstruct, l_shipmode, l_comment FROM {}) TO '{}' (FORMAT 'parquet', ROW_GROUP_SIZE {}))"),
+        std::make_pair(
+            "orders",
+            R"(COPY (SELECT o_orderkey, o_custkey, o_orderstatus,
+        o_totalprice::DOUBLE as o_totalprice,
+        o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment
+        FROM {}) TO '{}' (FORMAT 'parquet', ROW_GROUP_SIZE {}))"),
+        std::make_pair(
+            "customer",
+            R"(COPY (SELECT c_custkey, c_name, c_address, c_nationkey, c_phone,
+        c_acctbal::DOUBLE as c_acctbal, c_mktsegment, c_comment
+        FROM {}) TO '{}' (FORMAT 'parquet', ROW_GROUP_SIZE {}))"),
+};
 
-  auto rowType = getLineitemColumns(
-      {"returnflag",
-       "linestatus",
-       "quantity",
-       "extendedprice",
-       "discount",
-       "tax",
-       "shipdate"});
-
-  // shipdate <= '1998-09-02'
-  auto filters =
-      common::test::SubfieldFiltersBuilder()
-          .add("shipdate", common::test::lessThanOrEqual(date("1998-09-02")))
-          .build();
-
-  CursorParameters params;
-  params.maxDrivers = 4;
-  params.numResultDrivers = 1;
-  static const core::SortOrder kAscNullsLast(true, false);
-
-  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
-  core::PlanNodeId sourcePlanNodeId;
-
-  const auto stage1 =
-      PlanBuilder(planNodeIdGenerator)
-          .tableScan(
-              rowType,
-              HiveConnectorTestBase::makeTableHandle(std::move(filters)),
-              HiveConnectorTestBase::allRegularColumns(rowType))
-          .capturePlanNodeId(sourcePlanNodeId)
-          .project(
-              {"returnflag",
-               "linestatus",
-               "quantity",
-               "extendedprice",
-               "extendedprice * (1.0 - discount) AS sum_disc_price",
-               "extendedprice * (1.0 - discount) * (1.0 + tax) AS sum_charge",
-               "discount"})
-          .partialAggregation(
-              {0, 1},
-              {"sum(quantity)",
-               "sum(extendedprice)",
-               "sum(sum_disc_price)",
-               "sum(sum_charge)",
-               "avg(quantity)",
-               "avg(extendedprice)",
-               "avg(discount)",
-               "count(0)"})
-          .planNode();
-
-  auto plan = PlanBuilder(planNodeIdGenerator)
-                  .localPartition({}, {stage1})
-                  .finalAggregation(
-                      {0, 1},
-                      {"sum(a0)",
-                       "sum(a1)",
-                       "sum(a2)",
-                       "sum(a3)",
-                       "avg(a4)",
-                       "avg(a5)",
-                       "avg(a6)",
-                       "count(a7)"},
-                      {DOUBLE(),
-                       DOUBLE(),
-                       DOUBLE(),
-                       DOUBLE(),
-                       DOUBLE(),
-                       DOUBLE(),
-                       DOUBLE(),
-                       BIGINT()})
-                  .orderBy({0, 1}, {kAscNullsLast, kAscNullsLast}, false)
-                  // Additional step for double type result verification
-                  .project(
-                      {"returnflag",
-                       "linestatus",
-                       "round(a0, cast(2 as integer))",
-                       "round(a1, cast(2 as integer))",
-                       "round(a2, cast(2 as integer))",
-                       "round(a3, cast(2 as integer))",
-                       "round(a4, cast(2 as integer))",
-                       "round(a5, cast(2 as integer))",
-                       "round(a6, cast(2 as integer))",
-                       "a7"})
-                  .planNode();
-
-  params.planNode = std::move(plan);
-  auto duckDbSql = duckDb_->getTpchQuery(1);
-  // Additional steps for double type result verification.
-  const auto& duckDBRounded = fmt::format(
-      "select l_returnflag, l_linestatus, round(sum_qty, 2), "
-      "round(sum_base_price, 2), round(sum_disc_price, 2), round(sum_charge, 2), "
-      "round(avg_qty, 2), round(avg_price, 2), round(avg_disc, 2),"
-      "count_order from ({})",
-      duckDbSql);
-  auto task = assertQuery(params, filePath, sourcePlanNodeId, duckDBRounded);
-
-  const auto& stats = task->taskStats();
-  // There should be two pipelines.
-  ASSERT_EQ(2, stats.pipelineStats.size());
-  // We used the default of 10 splits per file.
-  ASSERT_EQ(10, stats.numFinishedSplits);
+TEST_F(ParquetTpchTest, Q1) {
+  assertQuery(1, 2, 10);
 }
 
-TEST_F(ParquetTpchTest, q6) {
-  const auto& filePath = writeLineitemTableToParquet();
+TEST_F(ParquetTpchTest, Q6) {
+  assertQuery(6, 2, 10);
+}
 
-  auto rowType =
-      getLineitemColumns({"shipdate", "extendedprice", "quantity", "discount"});
+TEST_F(ParquetTpchTest, Q18) {
+  assertQuery(18, 5, 30);
+}
 
-  auto filters =
-      common::test::SubfieldFiltersBuilder()
-          .add(
-              "shipdate",
-              common::test::between(date("1994-01-01"), date("1994-12-31")))
-          .add("discount", common::test::betweenDouble(0.05, 0.07))
-          .add("quantity", common::test::lessThanDouble(24.0))
-          .build();
-
-  CursorParameters params;
-  params.maxDrivers = 4;
-  params.numResultDrivers = 1;
-
-  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
-  core::PlanNodeId sourcePlanNodeId;
-
-  auto plan =
-      PlanBuilder(planNodeIdGenerator)
-          .localPartition(
-              {},
-              {PlanBuilder(planNodeIdGenerator)
-                   .tableScan(
-                       rowType,
-                       HiveConnectorTestBase::makeTableHandle(
-                           std::move(filters)),
-                       HiveConnectorTestBase::allRegularColumns(rowType))
-                   .capturePlanNodeId(sourcePlanNodeId)
-                   .project({"extendedprice * discount"})
-                   .partialAggregation({}, {"sum(p0)"})
-                   .planNode()})
-          .finalAggregation({}, {"sum(a0)"}, {DOUBLE()})
-          // Additional step for double type result verification
-          .project({"round(a0, cast(2 as integer))"})
-          .planNode();
-
-  params.planNode = std::move(plan);
-  auto duckDbSql = duckDb_->getTpchQuery(6);
-  // Additional steps for double type result verification.
-  const auto& duckDBRounded =
-      fmt::format("select round(revenue, 2) from ({})", duckDbSql);
-
-  auto task = assertQuery(params, filePath, sourcePlanNodeId, duckDBRounded);
-
-  const auto& stats = task->taskStats();
-  // There should be two pipelines
-  ASSERT_EQ(2, stats.pipelineStats.size());
-  // We used the default of 10 splits
-  ASSERT_EQ(10, stats.numFinishedSplits);
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  folly::init(&argc, &argv, false);
+  return RUN_ALL_TESTS();
 }

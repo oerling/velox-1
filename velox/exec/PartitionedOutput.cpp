@@ -30,8 +30,7 @@ BlockingReason Destination::advance(
     *atEnd = true;
     return BlockingReason::kNotBlocked;
   }
-  uint32_t adjustedMaxBytes = (maxBytes * targetSizePct_) / 100;
-  if (bytesInCurrent_ >= adjustedMaxBytes) {
+  if (bytesInCurrent_ >= maxBytes) {
     return flush(bufferManager, future);
   }
   auto firstRow = row_;
@@ -41,8 +40,7 @@ BlockingReason Destination::advance(
     for (vector_size_t i = 0; i < rows_[row_].size; i++) {
       bytesInCurrent_ += sizes[rows_[row_].begin + i];
     }
-    if (bytesInCurrent_ >= adjustedMaxBytes ||
-        row_ - firstRow >= targetNumRows_) {
+    if (bytesInCurrent_ >= maxBytes) {
       serialize(output, firstRow, row_ + 1);
       if (row_ == rows_.size() - 1) {
         *atEnd = true;
@@ -78,11 +76,22 @@ BlockingReason Destination::flush(
   if (!current_) {
     return BlockingReason::kNotBlocked;
   }
+  // Upper limit of message size with no columns.
+  constexpr int32_t kMinMessageSize = 128;
+  auto listener = bufferManager.newListener();
+  IOBufOutputStream stream(
+      *current_->mappedMemory(),
+      listener.get(),
+      std::max<int64_t>(kMinMessageSize, current_->size()));
+  current_->flush(&stream);
+  current_.reset();
   bytesInCurrent_ = 0;
-  setTargetSizePct();
-  current_->getIOBuf();
+
   return bufferManager.enqueue(
-      taskId_, destination_, std::move(current_), future);
+      taskId_,
+      destination_,
+      std::make_shared<SerializedPage>(stream.getIOBuf()),
+      future);
 }
 
 void PartitionedOutput::initializeInput(RowVectorPtr input) {
@@ -148,7 +157,6 @@ void PartitionedOutput::addInput(RowVectorPtr input) {
   // TODO Report outputBytes as bytes after serialization
   stats_.outputBytes += input->retainedSize();
   stats_.outputPositions += input->size();
-  LOG(INFO) << "Batch: \n" << input->BaseVector::toString(0, input->size());
 
   initializeInput(std::move(input));
 
@@ -232,7 +240,7 @@ RowVectorPtr PartitionedOutput::getOutput() {
     for (auto& destination : destinations_) {
       bool atEnd = false;
       blockingReason_ = destination->advance(
-          maxBufferedBytes_ / destinations_.size(),
+          kMaxDestinationSize,
           rowSize_,
           output_,
           *bufferManager,

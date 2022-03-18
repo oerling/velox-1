@@ -30,7 +30,7 @@ if(${VELOX_ENABLE_EXAMPLES} AND ${VELOX_ENABLE_EXPRESSION})
   add_subdirectory(examples)
 endif()
 
-if(${VELOX_ENABLE_BENCHMARKS})
+if(${VELOX_ENABLE_BENCHMARKS} OR ${VELOX_ENABLE_BENCHMARKS_BASIC})
   add_subdirectory(benchmarks)
 endif()
 
@@ -63,4 +63,9 @@ endif()
 
 if(${VELOX_CODEGEN_SUPPORT})
   add_subdirectory(experimental/codegen)
+endif()
+
+# substrait converter
+if(${VELOX_ENABLE_SUBSTRAIT})
+  add_subdirectory(substrait)
 endif()

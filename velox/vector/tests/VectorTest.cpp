@@ -1062,6 +1062,23 @@ TEST_F(VectorTest, resizeStringAsciiness) {
   ASSERT_FALSE(stringVector->isAscii(rows));
 }
 
+TEST_F(VectorTest, copyNoRows) {
+  auto maker = std::make_unique<test::VectorMaker>(pool_.get());
+  {
+    auto source = maker->flatVectorNullable<int32_t>({1, 2, 3});
+    auto target = BaseVector::create(INTEGER(), 10, pool_.get());
+    SelectivityVector rows(3, false);
+    target->copy(source.get(), rows, nullptr);
+  }
+
+  {
+    auto source = maker->flatVectorNullable<StringView>({"a", "b", "c"});
+    auto target = BaseVector::create(VARCHAR(), 10, pool_.get());
+    SelectivityVector rows(3, false);
+    target->copy(source.get(), rows, nullptr);
+  }
+}
+
 TEST_F(VectorTest, copyAscii) {
   auto maker = std::make_unique<test::VectorMaker>(pool_.get());
   std::vector<std::string> stringData = {"a", "b", "c"};
@@ -1503,4 +1520,11 @@ TEST_F(VectorTest, clearAllNulls) {
   vector->clearAllNulls();
   ASSERT_FALSE(vector->mayHaveNulls());
   ASSERT_FALSE(vector->isNullAt(50));
+}
+
+TEST_F(VectorTest, constantSetNull) {
+  auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
+  auto vector = vectorMaker->constantVector<int64_t>({{0}});
+
+  EXPECT_THROW(vector->setNull(0, true), VeloxRuntimeError);
 }

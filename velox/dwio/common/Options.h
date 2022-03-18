@@ -95,7 +95,7 @@ class RowReaderOptions {
   bool returnFlatVector_ = false;
   ErrorTolerance errorTolerance_;
   std::shared_ptr<ColumnSelector> selector_;
-  velox::common::ScanSpec* scanSpec_ = nullptr;
+  std::shared_ptr<velox::common::ScanSpec> scanSpec_ = nullptr;
   // Node id for map column to a list of keys to be projected as a struct.
   std::unordered_map<uint32_t, std::vector<std::string>> flatmapNodeIdAsStruct_;
 
@@ -229,10 +229,10 @@ class RowReaderOptions {
   }
 
   velox::common::ScanSpec* getScanSpec() const {
-    return scanSpec_;
+    return scanSpec_.get();
   }
 
-  void setScanSpec(velox::common::ScanSpec* scanSpec) {
+  void setScanSpec(std::shared_ptr<velox::common::ScanSpec> scanSpec) {
     scanSpec_ = scanSpec;
   }
 
