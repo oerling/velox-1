@@ -388,7 +388,7 @@ void cartesianMix(
       nextHash = HivePartitionFunction::mix(hash, nextHash);
     }
     if (level == hashes.size() - 1) {
-      bits::setBit(bits.data(), hash % numBits, true);
+      bits::setBit(bits.data(), nextHash % numBits, true);
     } else {
       cartesianMix(hashes, level + 1, nextHash, numBits, bits);
     }
