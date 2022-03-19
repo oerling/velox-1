@@ -248,11 +248,12 @@ struct Releaser {
 bool filterMatchesBucket(common::Filter& filter, HiveConnectorSplit& split) {
   if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
     auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
-    auto& values = in->values(20000);
-    if (values.empty()) {
+    auto maybeValues = in->values(20000);
+    if (!maybeValues.has_value()) {
       // Too many values, assume there is one for every bucket.
       return true;
     }
+    auto& values = maybeValues.value();
     std::vector<uint64_t> hashes(values.size());
     BufferView view(
         values.data(), values.size() * sizeof(values[0]), Releaser());
