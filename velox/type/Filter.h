@@ -230,6 +230,15 @@ class Filter {
 
   virtual std::string toString() const;
 
+  // Returns the set of values for which the filter is true if there
+  // are no more than 'maxValues' elements in the set. Returns std::nullopt if
+  // the number of values is larger. Applies to integer filters. Used
+  // for calculating a partitioning hash from passing values and
+  // comparing this to a partition number in the data (e.gHive bucket
+  // number).
+  virtual std::optional<std::vector<int64_t>> values(int32_t maxValues) const;
+
+  
  protected:
   const bool nullAllowed_;
 
@@ -683,6 +692,14 @@ class BigintValuesUsingHashTable final : public Filter {
     return max_;
   }
 
+  std::optional<std::vector<int64_t>> values(int32_t maxValues) const override {
+    if (values_.size()
+	<= maxValues) {
+      return std::nullopt;
+    }
+    return {};
+  }
+  
   std::string toString() const final {
     return fmt::format(
         "BigintValuesUsingHashTable: [{}, {}] {}",

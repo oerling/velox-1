@@ -241,11 +241,41 @@ HiveDataSource::HiveDataSource(
 }
 
 namespace {
-bool testFilters(
+  struct Releaser {
+    void release() {}
+  };
+
+  bool filterMatchesBucket(common::Filter& filter, HiveConnectorSplit& split) {
+    if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
+      auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
+      auto& values = in->values(20000);
+      if (values.empty()) {
+	// Too many values, assume there is one for every bucket.
+	return true;
+      }
+      std::vector<uint64_t> hashes(values.size());
+      BufferView view(values.data(), values.size() * sizeof(values[0]), Releaser());
+      FlatVector<int64_t> vector(memory::getProcessDefaultMemoryManager().root(), BufferPtr(nullptr), values.size(), view, {});
+      DecodedVector decoded;
+      SelectivityVector rows(values.size());
+      decoded.decode(vector, rows)
+	HivePartitioningFunction::hash(decoded, values.size(), false, hashes);
+      for (auto i = 0; i < values.size(); ++i) {
+	if (i % 1024 == split.tableBucketNumber.value()) {
+	  return true;
+	}
+      }
+      return false;
+    }
+    return true;
+  }
+
+  bool testFilters(
     common::ScanSpec* scanSpec,
     dwio::common::Reader* reader,
-    const std::string& filePath) {
+    const HiveConnectorSplit& split) {
   auto totalRows = reader->numberOfRows();
+  auto& filePath = split.filePath;
   const auto& fileTypeWithId = reader->typeWithId();
   const auto& rowType = reader->rowType();
   for (const auto& child : scanSpec->children()) {
@@ -270,6 +300,11 @@ bool testFilters(
                   << child->fieldName();
           return false;
         }
+	if (split.tableBucketNumber.has_value() && fieldName == "admarket_account_id") {
+	  if (!filterMatchesBucket(*filter, split)) {
+	    return false;
+	  }
+	} 
       }
     }
   }
@@ -327,6 +362,7 @@ void HiveDataSource::addDynamicFilter(
     ChannelIndex outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
   auto& fieldSpec = scanSpec_->getChildByChannel(outputChannel);
+  LOG(INFO) << "SCNF: Adding filter after " << completedRows_ << ": " << filter->toString();
   if (fieldSpec.filter()) {
     fieldSpec.setFilter(fieldSpec.filter()->mergeWith(filter.get()));
   } else {
@@ -407,7 +443,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   }
 
   // Check filters and see if the whole split can be skipped
-  if (!testFilters(scanSpec_.get(), reader_.get(), split_->filePath)) {
+  if (!testFilters(scanSpec_.get(), reader_.get(), *split_)) {
     emptySplit_ = true;
     ++runtimeStats_.skippedSplits;
     runtimeStats_.skippedSplitBytes += split_->length;
@@ -494,7 +530,14 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
 
   auto rowsScanned = rowReader_->next(size, output_);
   completedRows_ += rowsScanned;
-
+  auto scanSpec = rowReaderOpts_.getScanSpec();
+  int32_t numFilters = 0;
+  for (auto& child : scanSpec->children()) {
+    ++numFilters;
+  }
+  if (!numFilters) {
+    LOG(INFO) << "SCNF: Scan with no filters " << rowsScanned << " rows";
+  }
   if (rowsScanned) {
     VELOX_CHECK(
         !output_->mayHaveNulls(), "Top-level row vector cannot have nulls");
