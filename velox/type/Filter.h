@@ -238,7 +238,6 @@ class Filter {
   // number).
   virtual std::optional<std::vector<int64_t>> values(int32_t maxValues) const;
 
-  
  protected:
   const bool nullAllowed_;
 
@@ -693,13 +692,12 @@ class BigintValuesUsingHashTable final : public Filter {
   }
 
   std::optional<std::vector<int64_t>> values(int32_t maxValues) const override {
-    if (values_.size()
-	<= maxValues) {
+    if (values_.size() <= maxValues) {
       return std::nullopt;
     }
     return {};
   }
-  
+
   std::string toString() const final {
     return fmt::format(
         "BigintValuesUsingHashTable: [{}, {}] {}",

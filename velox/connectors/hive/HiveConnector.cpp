@@ -241,36 +241,42 @@ HiveDataSource::HiveDataSource(
 }
 
 namespace {
-  struct Releaser {
-    void release() {}
-  };
+struct Releaser {
+  void release() {}
+};
 
-  bool filterMatchesBucket(common::Filter& filter, HiveConnectorSplit& split) {
-    if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
-      auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
-      auto& values = in->values(20000);
-      if (values.empty()) {
-	// Too many values, assume there is one for every bucket.
-	return true;
-      }
-      std::vector<uint64_t> hashes(values.size());
-      BufferView view(values.data(), values.size() * sizeof(values[0]), Releaser());
-      FlatVector<int64_t> vector(memory::getProcessDefaultMemoryManager().root(), BufferPtr(nullptr), values.size(), view, {});
-      DecodedVector decoded;
-      SelectivityVector rows(values.size());
-      decoded.decode(vector, rows)
-	HivePartitioningFunction::hash(decoded, values.size(), false, hashes);
-      for (auto i = 0; i < values.size(); ++i) {
-	if (i % 1024 == split.tableBucketNumber.value()) {
-	  return true;
-	}
-      }
-      return false;
+bool filterMatchesBucket(common::Filter& filter, HiveConnectorSplit& split) {
+  if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
+    auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
+    auto& values = in->values(20000);
+    if (values.empty()) {
+      // Too many values, assume there is one for every bucket.
+      return true;
     }
-    return true;
+    std::vector<uint64_t> hashes(values.size());
+    BufferView view(
+        values.data(), values.size() * sizeof(values[0]), Releaser());
+    FlatVector<int64_t> vector(
+        memory::getProcessDefaultMemoryManager().root(),
+        BufferPtr(nullptr),
+        values.size(),
+        view,
+        {});
+    DecodedVector decoded;
+    SelectivityVector rows(values.size());
+    decoded.decode(vector, rows)
+        HivePartitioningFunction::hash(decoded, values.size(), false, hashes);
+    for (auto i = 0; i < values.size(); ++i) {
+      if (i % 1024 == split.tableBucketNumber.value()) {
+        return true;
+      }
+    }
+    return false;
   }
+  return true;
+}
 
-  bool testFilters(
+bool testFilters(
     common::ScanSpec* scanSpec,
     dwio::common::Reader* reader,
     const HiveConnectorSplit& split) {
@@ -300,11 +306,12 @@ namespace {
                   << child->fieldName();
           return false;
         }
-	if (split.tableBucketNumber.has_value() && fieldName == "admarket_account_id") {
-	  if (!filterMatchesBucket(*filter, split)) {
-	    return false;
-	  }
-	} 
+        if (split.tableBucketNumber.has_value() &&
+            fieldName == "admarket_account_id") {
+          if (!filterMatchesBucket(*filter, split)) {
+            return false;
+          }
+        }
       }
     }
   }
@@ -362,7 +369,8 @@ void HiveDataSource::addDynamicFilter(
     ChannelIndex outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
   auto& fieldSpec = scanSpec_->getChildByChannel(outputChannel);
-  LOG(INFO) << "SCNF: Adding filter after " << completedRows_ << ": " << filter->toString();
+  LOG(INFO) << "SCNF: Adding filter after " << completedRows_ << ": "
+            << filter->toString();
   if (fieldSpec.filter()) {
     fieldSpec.setFilter(fieldSpec.filter()->mergeWith(filter.get()));
   } else {
@@ -396,7 +404,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     if (!readerOpts_.getDataCacheConfig()) {
       auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
       readerOpts_.setDataCacheConfig(std::move(dataCacheConfig));
-//      readerOpts_.setLoadQuantum();
+      //      readerOpts_.setLoadQuantum();
     }
     readerOpts_.getDataCacheConfig()->filenum = fileHandle_->uuid.id();
     bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(

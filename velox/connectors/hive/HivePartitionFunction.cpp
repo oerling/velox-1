@@ -103,8 +103,8 @@ void hashTyped<TypeKind::VARCHAR>(
 }
 } // namespace
 
-  // static
-  void HivePartitionFunction::hash(
+// static
+void HivePartitionFunction::hash(
     const DecodedVector& values,
     TypeKind typeKind,
     vector_size_t size,
