@@ -242,46 +242,6 @@ HiveDataSource::HiveDataSource(
 }
 
 namespace {
-struct Releaser {
-  void release() const {}
-  void addRef() const {}
-};
-
-bool filterMatchesBucket(common::Filter& filter, const HiveConnectorSplit& split) {
-  if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
-    auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
-    auto maybeValues = in->int64Values(20000);
-    if (!maybeValues.has_value()) {
-      // Too many values, assume there is one for every bucket.
-      return true;
-    }
-    auto& values = maybeValues.value();
-    auto view = BufferView<Releaser>::create(
-        reinterpret_cast<uint8_t*>(values.data()),
-        values.size() * sizeof(values[0]),
-        Releaser());
-    FlatVector<int64_t> vector(
-        &memory::getProcessDefaultMemoryManager().getRoot(),
-        BufferPtr(nullptr),
-        values.size(),
-        view,
-        std::vector<BufferPtr>{});
-    DecodedVector decoded;
-    SelectivityVector rows(values.size());
-    decoded.decode(vector, rows);
-    std::vector<uint32_t> hashes(values.size());
-    HivePartitionFunction::hash(
-        decoded, TypeKind::BIGINT, values.size(), false, hashes);
-    for (auto i = 0; i < values.size(); ++i) {
-      if (i % 1024 == split.tableBucketNumber.value()) {
-        return true;
-      }
-    }
-    return false;
-  }
-  return true;
-}
-
 bool testFilters(
     common::ScanSpec* scanSpec,
     dwio::common::Reader* reader,
@@ -314,9 +274,6 @@ bool testFilters(
         }
         if (split.tableBucketNumber.has_value() &&
             name == "admarket_account_id") {
-          if (!filterMatchesBucket(*child->filter(), split)) {
-            return false;
-          }
         }
       }
     }
@@ -371,6 +328,105 @@ velox::variant convertFromString(const std::optional<std::string>& value) {
 
 } // namespace
 
+bool HiveDataSource::splitInSelectedBuckets(
+    const HiveConnectorSplit& split) const {
+  if (selectedBuckets_.empty()) {
+    return true;
+  }
+  VELOX_CHECK(split.tableBucketNumber.has_value());
+  auto bucket = split.tableBucketNumber.value();
+  VELOX_CHECK_GT(selectedBuckets_.size(), bits::nwords(bucket));
+  return bits::isBitSet(selectedBuckets_.data(), bucket);
+}
+
+struct Releaser {
+  void release() const {}
+  void addRef() const {}
+};
+
+namespace {
+std::vector<uint32_t> getFilterHashes(
+    common::Filter& filter,
+    const HiveConnectorSplit& /*split*/) {
+  if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
+    auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
+    auto maybeValues = in->int64Values(20000);
+    if (!maybeValues.has_value()) {
+      // Too many values,
+      return {};
+    }
+    auto& values = maybeValues.value();
+    auto view = BufferView<Releaser>::create(
+        reinterpret_cast<uint8_t*>(values.data()),
+        values.size() * sizeof(values[0]),
+        Releaser());
+    FlatVector<int64_t> vector(
+        &memory::getProcessDefaultMemoryManager().getRoot(),
+        BufferPtr(nullptr),
+        values.size(),
+        view,
+        std::vector<BufferPtr>{});
+    DecodedVector decoded;
+    SelectivityVector rows(values.size());
+    decoded.decode(vector, rows);
+    std::vector<uint32_t> hashes(values.size());
+    HivePartitionFunction::hash(
+        decoded, TypeKind::BIGINT, values.size(), false, hashes);
+    return hashes;
+  }
+  return {};
+}
+
+void cartesianMix(
+    const std::vector<std::vector<uint32_t>>& hashes,
+    int32_t level,
+    uint32_t hash,
+    int32_t numBits,
+    std::vector<uint64_t>& bits) {
+  for (auto nextHash : hashes[level]) {
+    if (level > 0) {
+      nextHash = HivePartitionFunction::mix(hash, nextHash);
+    }
+    if (level == hashes.size() - 1) {
+      bits::setBit(bits.data(), hash % numBits, true);
+    } else {
+      cartesianMix(hashes, level + 1, nextHash, numBits, bits);
+    }
+  }
+}
+} // namespace
+
+void HiveDataSource::updateSelectedBuckets() {
+  if (!split_) {
+    return;
+  }
+
+  // Get this from split when it has the data.
+  std::vector<std::string> bucketColumns = {"admarket_account_id"};
+  std::vector<std::vector<uint32_t>> allHashes;
+  selectedBucketsInitialized_ = true;
+  selectedBuckets_.clear();
+  for (auto& name : bucketColumns) {
+    auto child = scanSpec_->childByName(name);
+    if (!child) {
+      continue;
+    }
+    auto filter = child->filter();
+    if (!filter) {
+      // All bucketing columns must have a filter for dynamic bucket pruning.
+      return;
+    }
+    auto hashes = getFilterHashes(*filter, *split_);
+    if (hashes.empty()) {
+      // A filter did not have a small set of passing values.
+      return;
+    }
+    allHashes.push_back(std::move(hashes));
+  }
+  selectedBuckets_.resize(bits::nwords(1024));
+  cartesianMix(allHashes, 0, 0, 1024, selectedBuckets_);
+}
+
 void HiveDataSource::addDynamicFilter(
     ChannelIndex outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
@@ -383,6 +439,7 @@ void HiveDataSource::addDynamicFilter(
     fieldSpec.setFilter(filter->clone());
   }
   scanSpec_->resetCachedValues();
+  updateSelectedBuckets();
   if (rowReader_) {
     rowReader_->resetFilterCaches();
   }
@@ -397,6 +454,13 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   VLOG(1) << "Adding split " << split_->toString();
 
+  if (split_->tableBucketNumber.has_value() && !selectedBucketsInitialized_) {
+    updateSelectedBuckets();
+  }
+  if (!splitInSelectedBuckets(*split_)) {
+    emptySplit_ = true;
+    return;
+  }
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
   // For DataCache and no cache, the stream keeps track of IO.
   auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_);

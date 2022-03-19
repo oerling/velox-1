@@ -695,9 +695,9 @@ class BigintValuesUsingHashTable final : public Filter {
 
   std::optional<std::vector<int64_t>> int64Values(int32_t maxValues) const override {
     if (values_.size() <= maxValues) {
-      return std::nullopt;
+      return values_;
     }
-    return {};
+    return std::nullopt;
   }
 
   std::string toString() const final {

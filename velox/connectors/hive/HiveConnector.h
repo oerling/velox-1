@@ -183,6 +183,12 @@ class HiveDataSource : public DataSource {
   /// Clear split_, reader_ and rowReader_ after split has been fully processed.
   void resetSplit();
 
+  // Returns false if 'split' has a bucket number that is excluded by a filter on a bucketing column.
+  bool splitInSelectedBuckets(const HiveConnectorSplit& split) const;
+
+  // Sets 'selectedBuckets_' after adding filters.
+  void updateSelectedBuckets();
+  
   const std::shared_ptr<const RowType> outputType_;
   // Column handles for the partition key columns keyed on partition key column
   // name.
@@ -218,6 +224,13 @@ class HiveDataSource : public DataSource {
   memory::MappedMemory* const FOLLY_NONNULL mappedMemory_;
   const std::string& scanId_;
   folly::Executor* FOLLY_NULLABLE executor_;
+  // Bitmap with a 1 for each bucket number that may contain data. If
+  // empty, all buckets may contain data. Bucket pruning is normally
+  // done by the coordinator but this may get set when pushing down
+  // filters on bucketing columns.
+  std::vector<uint64_t> selectedBuckets_;
+  // true if 'selectedBuckets_' is initialized based on filters.
+  bool selectedBucketsInitialized_{false};
 };
 
 class HiveConnector final : public Connector {

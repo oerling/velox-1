@@ -43,7 +43,7 @@ void hashTyped<TypeKind::BOOLEAN>(
       hash = values.valueAt<bool>(i) ? 1 : 0;
     }
 
-    hashes[i] = mix ? hashes[i] * 31 + hash : hash;
+    hashes[i] = mix ? HivePartitionFunction::mix(hashes[i], hash) : hash;
   }
 }
 
