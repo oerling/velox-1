@@ -236,7 +236,9 @@ class Filter {
   // for calculating a partitioning hash from passing values and
   // comparing this to a partition number in the data (e.gHive bucket
   // number).
-  virtual std::optional<std::vector<int64_t>> values(int32_t maxValues) const;
+  virtual std::optional<std::vector<int64_t>> int64Values(int32_t maxValues) const {
+    return std::nullopt;
+  }
 
  protected:
   const bool nullAllowed_;
@@ -691,7 +693,7 @@ class BigintValuesUsingHashTable final : public Filter {
     return max_;
   }
 
-  std::optional<std::vector<int64_t>> values(int32_t maxValues) const override {
+  std::optional<std::vector<int64_t>> int64Values(int32_t maxValues) const override {
     if (values_.size() <= maxValues) {
       return std::nullopt;
     }

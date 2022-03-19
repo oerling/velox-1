@@ -17,6 +17,7 @@
 
 #include <memory>
 
+#include "velox/connectors/hive/HivePartitionFunction.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
@@ -242,31 +243,35 @@ HiveDataSource::HiveDataSource(
 
 namespace {
 struct Releaser {
-  void release() {}
+  void release() const {}
+  void addRef() const {}
 };
 
-bool filterMatchesBucket(common::Filter& filter, HiveConnectorSplit& split) {
+bool filterMatchesBucket(common::Filter& filter, const HiveConnectorSplit& split) {
   if (filter.kind() == common::FilterKind::kBigintValuesUsingHashTable) {
     auto in = reinterpret_cast<common::BigintValuesUsingHashTable*>(&filter);
-    auto maybeValues = in->values(20000);
+    auto maybeValues = in->int64Values(20000);
     if (!maybeValues.has_value()) {
       // Too many values, assume there is one for every bucket.
       return true;
     }
     auto& values = maybeValues.value();
-    std::vector<uint64_t> hashes(values.size());
-    BufferView view(
-        values.data(), values.size() * sizeof(values[0]), Releaser());
+    auto view = BufferView<Releaser>::create(
+        reinterpret_cast<uint8_t*>(values.data()),
+        values.size() * sizeof(values[0]),
+        Releaser());
     FlatVector<int64_t> vector(
-        memory::getProcessDefaultMemoryManager().root(),
+        &memory::getProcessDefaultMemoryManager().getRoot(),
         BufferPtr(nullptr),
         values.size(),
         view,
-        {});
+        std::vector<BufferPtr>{});
     DecodedVector decoded;
     SelectivityVector rows(values.size());
-    decoded.decode(vector, rows)
-        HivePartitioningFunction::hash(decoded, values.size(), false, hashes);
+    decoded.decode(vector, rows);
+    std::vector<uint32_t> hashes(values.size());
+    HivePartitionFunction::hash(
+        decoded, TypeKind::BIGINT, values.size(), false, hashes);
     for (auto i = 0; i < values.size(); ++i) {
       if (i % 1024 == split.tableBucketNumber.value()) {
         return true;
@@ -308,8 +313,8 @@ bool testFilters(
           return false;
         }
         if (split.tableBucketNumber.has_value() &&
-            fieldName == "admarket_account_id") {
-          if (!filterMatchesBucket(*filter, split)) {
+            name == "admarket_account_id") {
+          if (!filterMatchesBucket(*child->filter(), split)) {
             return false;
           }
         }
