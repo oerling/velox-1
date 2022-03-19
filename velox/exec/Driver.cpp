@@ -309,7 +309,7 @@ StopReason Driver::runInternal(
           guard.notThrown();
           return StopReason::kBlock;
         }
-	pushdownFilters(i);
+        pushdownFilters(i);
         Operator* nextOp = nullptr;
         if (i < operators_.size() - 1) {
           nextOp = operators_[i + 1].get();
@@ -366,7 +366,7 @@ StopReason Driver::runInternal(
                 nextOp->noMoreInput();
                 break;
               }
-	      pushdownFilters(i);
+              pushdownFilters(i);
             }
           }
         } else {

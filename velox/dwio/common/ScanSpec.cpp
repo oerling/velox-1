@@ -315,5 +315,5 @@ std::string ScanSpec::toString() const {
   }
   return out.str();
 }
-  
+
 } // namespace facebook::velox::common

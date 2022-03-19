@@ -42,7 +42,6 @@ class HivePartitionFunction : public core::PartitionFunction {
     return hash1 * 31 + hash2;
   }
 
-  
  private:
   const int numBuckets_;
   const std::vector<int> bucketToPartition_;

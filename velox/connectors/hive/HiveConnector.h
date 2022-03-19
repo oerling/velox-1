@@ -183,12 +183,13 @@ class HiveDataSource : public DataSource {
   /// Clear split_, reader_ and rowReader_ after split has been fully processed.
   void resetSplit();
 
-  // Returns false if 'split' has a bucket number that is excluded by a filter on a bucketing column.
+  // Returns false if 'split' has a bucket number that is excluded by a filter
+  // on a bucketing column.
   bool splitInSelectedBuckets(const HiveConnectorSplit& split) const;
 
   // Sets 'selectedBuckets_' after adding filters.
   void updateSelectedBuckets();
-  
+
   const std::shared_ptr<const RowType> outputType_;
   // Column handles for the partition key columns keyed on partition key column
   // name.
