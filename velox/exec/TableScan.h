@@ -86,6 +86,11 @@ class TableScan : public SourceOperator {
 
   int32_t maxPreloadedSplits_{0};
 
+  // Callback passed to getSplitOrFuture() for triggering async
+  // preload. The callback's lifetime is the lifetime of 'this'. This
+  // callback can schedule preloads on an executor. These preloads may
+  // outlive the Task and therefore need to capture a shared_ptr to
+  // it.
   std::function<void(std::shared_ptr<connector::ConnectorSplit>)>
       splitPreloader_{nullptr};
 

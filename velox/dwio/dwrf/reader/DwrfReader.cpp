@@ -19,7 +19,7 @@
 #include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
-DEFINE_bool(prefetch_stripes, false, "Enable prefetch of stripes.");
+DEFINE_bool(prefetch_stripes, true, "Enable prefetch of stripes.");
 
 namespace facebook::velox::dwrf {
 

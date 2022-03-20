@@ -405,6 +405,14 @@ class Task : public std::enable_shared_from_this<Task> {
   // are to yield.
   StopReason shouldStop();
 
+  // Returns true if Driver or async executor threads for 'this'
+  // should silently stop and drop any results that may be
+  // pending. This is like shouldStop() but can be called multiple
+  // times since not affect a yield counter.
+  bool isCancelled() const {
+    return terminateRequested_;
+  }
+  
   ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
     return requestPauseLocked(pause);
