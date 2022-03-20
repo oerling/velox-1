@@ -56,6 +56,7 @@ namespace {
 bool isStackTraceEnabled() {
   using namespace std::literals::chrono_literals;
 
+  return true;
   if (!FLAGS_velox_exception_stacktrace) {
     // VeloxException stacktraces are disabled
     return false;
