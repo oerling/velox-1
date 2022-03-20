@@ -412,7 +412,7 @@ class Task : public std::enable_shared_from_this<Task> {
   bool isCancelled() const {
     return terminateRequested_;
   }
-  
+
   ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
     return requestPauseLocked(pause);

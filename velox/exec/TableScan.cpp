@@ -94,11 +94,11 @@ RowVectorPtr TableScan::getOutput() {
 
       if (connectorSplit->dataSource) {
         auto prepared = *connectorSplit->dataSource->move().release();
-	if (!prepared) {
-	  // There must be a cancellation.
-	  VELOX_CHECK(operatorCtx_->task()->isCancelled());
-	  return nullptr;
-	}
+        if (!prepared) {
+          // There must be a cancellation.
+          VELOX_CHECK(operatorCtx_->task()->isCancelled());
+          return nullptr;
+        }
         dataSource_->setFromDataSource(std::move(prepared));
       } else {
         dataSource_->addSplit(connectorSplit);
@@ -108,7 +108,8 @@ RowVectorPtr TableScan::getOutput() {
     }
 
     const auto ioTimeStartMicros = getCurrentTimeMicro();
-    // Check for  cancellation since scans that filter everything out will not hit the check in Driver.
+    // Check for  cancellation since scans that filter everything out will not
+    // hit the check in Driver.
     if (operatorCtx_->task()->isCancelled()) {
       return nullptr;
     }
