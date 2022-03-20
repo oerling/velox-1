@@ -335,7 +335,7 @@ bool HiveDataSource::splitInSelectedBuckets(
   }
   VELOX_CHECK(split.tableBucketNumber.has_value());
   auto bucket = split.tableBucketNumber.value();
-  VELOX_CHECK_GT(selectedBuckets_.size(), bits::nwords(bucket));
+  VELOX_CHECK_GT(selectedBuckets_.size() * 64, bucket);
   return bits::isBitSet(selectedBuckets_.data(), bucket);
 }
 
