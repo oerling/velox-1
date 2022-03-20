@@ -423,10 +423,11 @@ void HiveDataSource::updateSelectedBuckets() {
     }
     allHashes.push_back(std::move(hashes));
   }
-  selectedBuckets_.resize(bits::nwords(1024));
-  cartesianMix(allHashes, 0, 0, 1024, selectedBuckets_);
+  if (!allHashes.empty()) {
+    selectedBuckets_.resize(bits::nwords(1024));
+    cartesianMix(allHashes, 0, 0, 1024, selectedBuckets_);
+  }
 }
-
 void HiveDataSource::addDynamicFilter(
     ChannelIndex outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
