@@ -42,10 +42,6 @@ class DataSource;
 struct ConnectorSplit {
   const std::string connectorId;
 
-  // true if the Task processing this has aborted. Allows aborting
-  // async prefetch for the split.
-  bool cancelled{false};
-
   std::shared_ptr<AsyncSource<std::shared_ptr<DataSource>>> dataSource;
 
   explicit ConnectorSplit(const std::string& _connectorId)
