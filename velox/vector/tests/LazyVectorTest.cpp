@@ -23,7 +23,44 @@ using namespace facebook::velox::test;
 
 class LazyVectorTest : public testing::Test, public VectorTestBase {};
 
-TEST_F(LazyVectorTest, lazyInDoubleDict) {
+TEST_F(LazyVectorTest, lazyInDictionary) {
+  // We have a dictionary over LazyVector. We load for some indices in
+  static constexpr int32_t kInnerSize = 100;
+  static constexpr int32_t kOuterSize = 1000;
+  auto base = makeFlatVector<int32_t>(kInnerSize, [](auto row) { return row; });
+  std::vector<vector_size_t> loadedRows;
+  auto lazy = std::make_shared<LazyVector>(
+      pool_.get(),
+      INTEGER(),
+      kInnerSize,
+      std::make_unique<test::SimpleVectorLoader>([&](auto rows) {
+        for (auto row : rows) {
+          loadedRows.push_back(row);
+        }
+        return base;
+      }));
+  auto wrapped = BaseVector::wrapInDictionary(
+      nullptr,
+      makeIndices(kOuterSize, [](auto row) { return row / 10; }),
+      kOuterSize,
+      lazy);
+
+  // We expect a single level of dictionary and rows loaded for the selected
+  // indices in rows.
+
+  SelectivityVector rows(kOuterSize, false);
+  // We select 3 rows, the 2 first fall on 0 and the last on 5 in 'base'.
+  rows.setValid(1, true);
+  rows.setValid(9, true);
+  rows.setValid(55, true);
+  rows.updateBounds();
+  LazyVector::ensureLoadedRows(wrapped, rows);
+  EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+  EXPECT_EQ(wrapped->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
+  EXPECT_EQ(loadedRows, (std::vector<vector_size_t>{0, 5}));
+}
+
+TEST_F(LazyVectorTest, lazyInDoubldDictionary) {
   // We have dictionaries over LazyVector. We load for some indices in
   // the top dictionary. The intermediate dictionaries refer to
   // non-loaded items in the base of the LazyVector, including indices
