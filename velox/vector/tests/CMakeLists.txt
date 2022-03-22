@@ -25,7 +25,7 @@ add_executable(
   SelectivityVectorTest.cpp
   EnsureWritableVectorTest.cpp
   LazyVectorTest.cpp
-MayHaveNullsRecursiveTest.cpp)
+  MayHaveNullsRecursiveTest.cpp)
 
 add_test(velox_vector_test velox_vector_test)
 
