@@ -487,8 +487,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
 void HiveDataSource::setFromDataSource(
     std::shared_ptr<DataSource> sourceShared) {
-  bool wasEmptySplit = emptySplit_;
   auto source = dynamic_cast<HiveDataSource*>(sourceShared.get());
+  VELOX_CHECK(source, "Bad DataSource type");
   emptySplit_ = source->emptySplit_;
   split_ = std::move(source->split_);
   if (emptySplit_) {

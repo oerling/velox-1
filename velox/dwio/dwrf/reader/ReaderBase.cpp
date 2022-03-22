@@ -88,14 +88,14 @@ ReaderBase::ReaderBase(
     std::unique_ptr<InputStream> stream,
     DecrypterFactory* factory,
     std::function<BufferedInputFactory*()> bufferedInputFactorySource,
-    dwio::common::DataCacheConfig* dataCacheConfig)
+    std::shared_ptr<dwio::common::DataCacheConfig> dataCacheConfig)
     : pool_{pool},
       stream_{std::move(stream)},
       arena_(std::make_unique<google::protobuf::Arena>()),
       bufferedInputFactorySource_(bufferedInputFactorySource),
       dataCacheConfig_(dataCacheConfig) {
   input_ =
-      bufferedInputFactorySource_()->create(*stream_, pool, dataCacheConfig);
+    bufferedInputFactorySource_()->create(*stream_, pool, dataCacheConfig.get());
 
   // We may have cached the tail before, in which case we can skip the read.
   if (dataCacheConfig && dataCacheConfig->cache) {

@@ -68,7 +68,7 @@ class ReaderBase {
       std::function<BufferedInputFactory * FOLLY_NONNULL()>
           bufferedInputFactorySource =
               []() { return BufferedInputFactory::baseFactory(); },
-      dwio::common::DataCacheConfig* dataCacheConfig = nullptr);
+      std::shared_ptr<dwio::common::DataCacheConfig> dataCacheConfig = nullptr);
 
   // create reader base from metadata
   ReaderBase(
@@ -218,7 +218,7 @@ class ReaderBase {
   }
 
   dwio::common::DataCacheConfig* getDataCacheConfig() const {
-    return dataCacheConfig_;
+    return dataCacheConfig_.get();
   }
 
   google::protobuf::Arena* arena() const {
@@ -240,7 +240,7 @@ class ReaderBase {
   std::function<BufferedInputFactory * FOLLY_NONNULL()>
       bufferedInputFactorySource_ =
           []() { return BufferedInputFactory::baseFactory(); };
-  dwio::common::DataCacheConfig* dataCacheConfig_ = nullptr;
+  std::shared_ptr<dwio::common::DataCacheConfig> dataCacheConfig_ = nullptr;
 
   std::unique_ptr<BufferedInput> input_;
   std::shared_ptr<const RowType> schema_;

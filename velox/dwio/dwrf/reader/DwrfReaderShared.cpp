@@ -203,7 +203,7 @@ DwrfReaderShared::DwrfReaderShared(
           options.getBufferedInputFactorySource()
               ? options.getBufferedInputFactorySource()
               : []() { return BufferedInputFactory::baseFactory(); },
-          options.getDataCacheConfig().get())),
+          options.getDataCacheConfig())),
       options_(options) {}
 
 std::unique_ptr<StripeInformation> DwrfReaderShared::getStripe(
