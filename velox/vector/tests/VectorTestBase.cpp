@@ -58,4 +58,14 @@ BufferPtr VectorTestBase::makeIndices(
   return indices;
 }
 
+void assertEqualVectors(const VectorPtr& expected, const VectorPtr& actual) {
+  ASSERT_EQ(expected->size(), actual->size());
+  ASSERT_EQ(expected->typeKind(), actual->typeKind());
+  for (auto i = 0; i < expected->size(); i++) {
+    ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
+        << "at " << i << ": expected " << expected->toString(i) << ", but got "
+        << actual->toString(i);
+  }
+}
+
 } // namespace facebook::velox::test
