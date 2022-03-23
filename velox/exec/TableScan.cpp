@@ -59,7 +59,6 @@ RowVectorPtr TableScan::getOutput() {
 
       if (!split.hasConnectorSplit()) {
         noMoreSplits_ = true;
-
         if (dataSource_) {
           auto connectorStats = dataSource_->runtimeStats();
           for (const auto& entry : connectorStats) {
