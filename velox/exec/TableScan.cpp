@@ -93,15 +93,15 @@ RowVectorPtr TableScan::getOutput() {
       }
 
       if (connectorSplit->dataSource) {
-	// The AsyncSource returns a unique_ptr to a shared_ptr. The
-	// unique_ptr will be nullptr if there was a cancellation.
-        auto preparedPtr =connectorSplit->dataSource->move();
+        // The AsyncSource returns a unique_ptr to a shared_ptr. The
+        // unique_ptr will be nullptr if there was a cancellation.
+        auto preparedPtr = connectorSplit->dataSource->move();
         if (!preparedPtr) {
           // There must be a cancellation.
           VELOX_CHECK(operatorCtx_->task()->isCancelled());
           return nullptr;
         }
-	auto preparedDataSource = std::move(*preparedPtr);
+        auto preparedDataSource = std::move(*preparedPtr);
         dataSource_->setFromDataSource(std::move(preparedDataSource));
       } else {
         dataSource_->addSplit(connectorSplit);
