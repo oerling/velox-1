@@ -495,7 +495,7 @@ void HiveDataSource::setFromDataSource(
     return;
   }
   if (rowReader_) {
-    if (!source->rowReader_->moveAdaptation(*rowReader_)) {
+    if (!source->rowReader_->moveAdaptationFrom(*rowReader_)) {
       // The source had a reader that did not have state that could be
       // advanced. Keep the old readers so that you can transfer the
       // adaptation to the next non-empty one.
