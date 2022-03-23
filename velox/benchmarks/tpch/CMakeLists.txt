@@ -11,17 +11,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_library(velox_parse_expression Expressions.cpp)
-target_link_libraries(velox_parse_expression velox_type velox_parse_utils
-                      velox_expression)
 
-add_library(velox_parse_parser ExpressionsParser.cpp)
-target_link_libraries(velox_parse_parser velox_parse_expression velox_type
-                      velox_duckdb_parser)
+add_executable(velox_tpch_benchmark TpchBenchmark.cpp)
 
-add_library(velox_parse_utils TypeResolver.cpp VariantToVector.cpp)
-target_link_libraries(velox_parse_utils velox_buffer velox_type velox_vector)
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
+target_link_libraries(
+  velox_tpch_benchmark
+  velox_aggregates
+  velox_exec
+  velox_exec_test_util
+  velox_dwio_common
+  velox_dwio_common_exception
+  velox_dwio_parquet_reader
+  velox_dwio_type_fbhive
+  velox_dwrf_test_utils
+  velox_hive_connector
+  velox_exception
+  velox_memory
+  velox_process
+  velox_serialization
+  velox_encode
+  velox_type
+  velox_caching
+  velox_vector
+  velox_vector_test_lib
+  ${GTEST_BOTH_LIBRARIES}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${FOLLY_BENCHMARK}
+  ${FMT})

@@ -339,9 +339,18 @@ folly::Range<vector_size_t*> initializeRowNumberMapping(
 } // namespace
 
 void HashProbe::prepareOutput(vector_size_t size) {
-  // TODO Reuse output vector when possible.
-  output_ = std::static_pointer_cast<RowVector>(
-      BaseVector::create(outputType_, size, pool()));
+  // Try to re-use memory for the output vectors that contain build-side data.
+  // We expect output vectors containing probe-side data to be null (reset in
+  // clearIdentityProjectedOutput). BaseVector::prepareForReuse keeps null
+  // children unmodified and makes non-null (build side) children reusable.
+  if (output_) {
+    VectorPtr output = std::move(output_);
+    BaseVector::prepareForReuse(output, size);
+    output_ = std::static_pointer_cast<RowVector>(output);
+  } else {
+    output_ = std::static_pointer_cast<RowVector>(
+        BaseVector::create(outputType_, size, pool()));
+  }
 }
 
 void HashProbe::fillOutput(vector_size_t size) {
@@ -571,9 +580,9 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
       passingInputRows_.setAll();
     } else {
       passingInputRows_.clearAll();
-      auto numInput = input_->size();
+      auto hitsSize = lookup_->hits.size();
       auto hits = lookup_->hits.data();
-      for (auto i = 0; i < numInput; ++i) {
+      for (auto i = 0; i < hitsSize; ++i) {
         if (hits[i]) {
           passingInputRows_.setValid(i, true);
         }
