@@ -28,7 +28,7 @@ void SpillInput::next(bool throwIfPastEnd) {
   offset_ += readBytes;
 }
 
-  void SpillInput::seekp(std::streampos position) {
+void SpillInput::seekp(std::streampos position) {
   auto bufferOffset = offset_ - current_->size;
   if (bufferOffset <= position && bufferOffset + current_->size < position) {
     current_->position = position - bufferOffset;
