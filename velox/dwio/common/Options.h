@@ -95,7 +95,7 @@ class RowReaderOptions {
   bool returnFlatVector_ = false;
   ErrorTolerance errorTolerance_;
   std::shared_ptr<ColumnSelector> selector_;
-  velox::common::ScanSpec* scanSpec_ = nullptr;
+  std::shared_ptr<velox::common::ScanSpec> scanSpec_ = nullptr;
   // Node id for map column to a list of keys to be projected as a struct.
   std::unordered_map<uint32_t, std::vector<std::string>> flatmapNodeIdAsStruct_;
 
@@ -229,10 +229,10 @@ class RowReaderOptions {
   }
 
   velox::common::ScanSpec* getScanSpec() const {
-    return scanSpec_;
+    return scanSpec_.get();
   }
 
-  void setScanSpec(velox::common::ScanSpec* scanSpec) {
+  void setScanSpec(std::shared_ptr<velox::common::ScanSpec> scanSpec) {
     scanSpec_ = scanSpec;
   }
 
@@ -316,6 +316,8 @@ class ReaderOptions {
   std::shared_ptr<DataCacheConfig> dataCacheConfig_;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
   velox::dwrf::BufferedInputFactory* bufferedInputFactory_ = nullptr;
+  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
+      bufferedInputFactorySource_;
 
  public:
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
@@ -455,6 +457,12 @@ class ReaderOptions {
     bufferedInputFactory_ = factory;
     return *this;
   }
+  ReaderOptions& setBufferedInputFactorySource(
+      std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
+          factory) {
+    bufferedInputFactorySource_ = factory;
+    return *this;
+  }
 
   /**
    * Get the data cache config.
@@ -521,7 +529,15 @@ class ReaderOptions {
   }
 
   velox::dwrf::BufferedInputFactory* getBufferedInputFactory() const {
+    if (bufferedInputFactorySource_) {
+      return bufferedInputFactorySource_();
+    }
     return bufferedInputFactory_;
+  }
+
+  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
+  getBufferedInputFactorySource() const {
+    return bufferedInputFactorySource_;
   }
 };
 
