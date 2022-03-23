@@ -126,9 +126,16 @@ void ScanSpec::moveAdaptation(ScanSpec& other) {
     bool found = false;
     for (auto& child : children_) {
       if (child && child->fieldName_ == otherChild->fieldName_) {
-        child->filter_ = std::move(otherChild->filter_);
+        if (child->isConstant() || otherChild->isConstant()) {
+          // If other child is constant, a possible filter on a
+          // constant will have been evaluated at split start time. If
+          // 'child' is constant there is no adaptation that can be
+          // received.
+          newChildren_.push_back(std::move(child));
+          continue;
+        }
+          child->filter_ = std::move(otherChild->filter_);
         child->selectivity_ = otherChild->selectivity_;
-        child->subscript_ = otherChild->subscript_;
         newChildren_.push_back(std::move(child));
         found = true;
         break;
