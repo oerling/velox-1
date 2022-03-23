@@ -132,9 +132,9 @@ void ScanSpec::moveAdaptationFrom(ScanSpec& other) {
           // 'child' is constant there is no adaptation that can be
           // received.
           child->filter_ = std::move(otherChild->filter_);
-	  child->selectivity_ = otherChild->selectivity_;
-	}
-	newChildren.push_back(std::move(child));
+          child->selectivity_ = otherChild->selectivity_;
+        }
+        newChildren.push_back(std::move(child));
         found = true;
         break;
       }
