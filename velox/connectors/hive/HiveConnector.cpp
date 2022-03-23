@@ -506,6 +506,7 @@ void HiveDataSource::setFromDataSource(
   }
   reader_ = std::move(source->reader_);
   rowReader_ = std::move(source->rowReader_);
+  scanSpec_ = std::move(source->scanSpec_);
   // New io will be accounted on the stats of 'source'. Add the existing
   // balance to that.
   source->ioStats_->merge(*ioStats_);

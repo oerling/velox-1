@@ -221,7 +221,7 @@ bool DwrfRowReader::allPrefetchIssued() const {
       prefetchedStripeReaders_.end();
 }
 
-bool DwrfRowReader::moveAdaptation(RowReader& other) {
+bool DwrfRowReader::moveAdaptationFrom(RowReader& other) {
   auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
   if (!columnReader_ || !otherReader->columnReader_) {
     return false;

@@ -78,7 +78,7 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   void resetFilterCaches() override;
 
-  bool moveAdaptation(RowReader& other) override;
+  bool moveAdaptationFrom(RowReader& other) override;
 
   bool allPrefetchIssued() const override;
 

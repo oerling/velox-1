@@ -116,7 +116,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   void moveScanSpec(ColumnReader& other) override {
     auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
-    scanSpec_->moveAdaptation(*otherStruct->scanSpec_);
+    scanSpec_->moveAdaptationFrom(*otherStruct->scanSpec_);
   }
 
  private:
