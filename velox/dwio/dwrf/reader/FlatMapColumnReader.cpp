@@ -23,7 +23,6 @@ namespace facebook::velox::dwrf {
 
 using dwio::common::TypeWithId;
 using memory::MemoryPool;
-using namespace flatmap_helper;
 
 StringKeyBuffer::StringKeyBuffer(
     MemoryPool& pool,
@@ -300,7 +299,7 @@ template <typename T>
 void FlatMapColumnReader<T>::initKeysVector(
     VectorPtr& vector,
     vector_size_t size) {
-  initializeFlatVector<T>(vector, memoryPool_, size, false);
+  flatmap_helper::initializeFlatVector<T>(vector, memoryPool_, size, false);
   vector->setSize(size);
 }
 
@@ -308,7 +307,7 @@ template <>
 void FlatMapColumnReader<StringView>::initKeysVector(
     VectorPtr& vector,
     vector_size_t size) {
-  initializeFlatVector<StringView>(
+  flatmap_helper::initializeFlatVector<StringView>(
       vector,
       memoryPool_,
       size,
@@ -322,7 +321,7 @@ void FlatMapColumnReader<T>::next(
     uint64_t numValues,
     VectorPtr& result,
     const uint64_t* incomingNulls) {
-  auto mapVector = resetIfWrongVectorType<MapVector>(result);
+  auto mapVector = detail::resetIfWrongVectorType<MapVector>(result);
   VectorPtr keysVector;
   VectorPtr valuesVector;
   BufferPtr offsets;
@@ -341,7 +340,7 @@ void FlatMapColumnReader<T>::next(
   uint64_t nullCount = nullsPtr ? bits::countNulls(nullsPtr, 0, numValues) : 0;
 
   if (mapVector) {
-    resetIfNotWritable(result, offsets, lengths);
+    detail::resetIfNotWritable(result, offsets, lengths);
   }
 
   if (!offsets) {
@@ -387,7 +386,8 @@ void FlatMapColumnReader<T>::next(
     }
 
     initKeysVector(keysVector, totalChildren);
-    initializeVector(valuesVector, mapValueType, memoryPool_, nodeBatches);
+    flatmap_helper::initializeVector(
+        valuesVector, mapValueType, memoryPool_, nodeBatches);
 
     if (!returnFlatVector_) {
       for (auto batch : nodeBatches) {
@@ -417,7 +417,7 @@ void FlatMapColumnReader<T>::next(
         if (bulkInMapIter.hasValueAt(j)) {
           nodes[j]->fillKeysVector(keysVector, offset, stringKeyBuffer_.get());
           if (returnFlatVector_) {
-            copyOne(
+            flatmap_helper::copyOne(
                 mapValueType,
                 *valuesVector,
                 offset,
@@ -652,7 +652,7 @@ void FlatMapStructEncodingColumnReader<T>::next(
     uint64_t numValues,
     VectorPtr& result,
     const uint64_t* FOLLY_NULLABLE incomingNulls) {
-  auto rowVector = resetIfWrongVectorType<RowVector>(result);
+  auto rowVector = detail::resetIfWrongVectorType<RowVector>(result);
   std::vector<VectorPtr> children;
   if (rowVector) {
     // Track children vectors in a local variable because readNulls may reset

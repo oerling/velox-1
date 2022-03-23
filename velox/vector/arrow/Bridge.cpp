@@ -194,13 +194,13 @@ void exportFlatStringVector(
   }
 
   // Allocate raw string buffer.
-  bridgeHolder.setBuffer(1, AlignedBuffer::allocate<char>(bufferSize, pool));
-  char* rawBuffer = bridgeHolder.getBufferAs<char>(1);
+  bridgeHolder.setBuffer(2, AlignedBuffer::allocate<char>(bufferSize, pool));
+  char* rawBuffer = bridgeHolder.getBufferAs<char>(2);
 
   // Allocate offset buffer.
   bridgeHolder.setBuffer(
-      2, AlignedBuffer::allocate<TOffset>(vector->size() + 1, pool));
-  TOffset* rawOffsets = bridgeHolder.getBufferAs<TOffset>(2);
+      1, AlignedBuffer::allocate<TOffset>(vector->size() + 1, pool));
+  TOffset* rawOffsets = bridgeHolder.getBufferAs<TOffset>(1);
   *rawOffsets = 0;
 
   // Second pass to actually copy the string data and set offsets.
@@ -330,7 +330,9 @@ void exportToArrow(
   arrowArray.buffers = bridgeHolder->getArrowBuffers();
   arrowArray.release = bridgeRelease;
   arrowArray.length = vector->size();
-  arrowArray.n_buffers = 0;
+  // Following the fix described in the below Jira:
+  // https://issues.apache.org/jira/browse/ARROW-15846
+  arrowArray.n_buffers = 1;
   arrowArray.n_children = 0;
   arrowArray.children = nullptr;
 
@@ -340,7 +342,6 @@ void exportToArrow(
   // Setting up buffer pointers. First one is always nulls.
   if (vector->nulls()) {
     bridgeHolder->setBuffer(0, vector->nulls());
-    arrowArray.n_buffers = 1;
 
     // getNullCount() returns a std::optional. -1 means we don't have the count
     // available yet (and we don't want to count it here).
@@ -733,8 +734,8 @@ VectorPtr importFromArrowImpl(
         type,
         nulls,
         arrowArray.length,
-        static_cast<const int32_t*>(arrowArray.buffers[2]), // offsets
-        static_cast<const char*>(arrowArray.buffers[1]), // values
+        static_cast<const int32_t*>(arrowArray.buffers[1]), // offsets
+        static_cast<const char*>(arrowArray.buffers[2]), // values
         arrowArray.null_count,
         wrapInBufferView);
   }

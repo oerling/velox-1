@@ -26,7 +26,10 @@ bool checkAddIdentityProjection(
     std::vector<IdentityProjection>& identityProjections) {
   if (auto field = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
           projection)) {
-    if (field->inputs().empty()) {
+    const auto& inputs = field->inputs();
+    if (inputs.empty() ||
+        (inputs.size() == 1 &&
+         dynamic_cast<const core::InputTypedExpr*>(inputs[0].get()))) {
       const auto inputChannel = inputType->getChildIdx(field->name());
       identityProjections.emplace_back(inputChannel, outputChannel);
       return true;
@@ -87,8 +90,8 @@ void FilterProject::addInput(RowVectorPtr input) {
 
   for (int32_t i = 0; i < firstProjected; ++i) {
     if (results_[i]) {
-      if (results_[i]->encoding() == VectorEncoding::Simple::FLAT) {
-        results_[i]->clear();
+      if (BaseVector::isReusableFlatVector(results_[i])) {
+        results_[i]->resize(0);
       } else {
         results_[i] = nullptr;
       }

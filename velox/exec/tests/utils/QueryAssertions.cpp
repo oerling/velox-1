@@ -40,6 +40,9 @@ std::string makeCreateTableSql(
     auto child = rowType.childAt(i);
     if (child->isArray()) {
       sql << child->asArray().elementType()->kindName() << "[]";
+    } else if (child->isMap()) {
+      sql << "MAP(" << child->asMap().keyType()->kindName() << ", "
+          << child->asMap().valueType()->kindName() << ")";
     } else {
       sql << child->kindName();
     }
@@ -105,6 +108,42 @@ template <>
   return ::duckdb::Value::LIST(array);
 }
 
+template <>
+::duckdb::Value duckValueAt<TypeKind::MAP>(
+    const VectorPtr& vector,
+    int32_t row) {
+  auto mapVector = vector->as<MapVector>();
+  const auto& mapKeys = mapVector->mapKeys();
+  const auto& mapValues = mapVector->mapValues();
+  auto offset = mapVector->offsetAt(row);
+  auto size = mapVector->sizeAt(row);
+  if (size == 0) {
+    return ::duckdb::Value::MAP(
+        ::duckdb::Value::EMPTYLIST(duckdb::fromVeloxType(mapKeys->typeKind())),
+        ::duckdb::Value::EMPTYLIST(
+            duckdb::fromVeloxType(mapValues->typeKind())));
+  }
+
+  std::vector<::duckdb::Value> duckKeysVector;
+  std::vector<::duckdb::Value> duckValuesVector;
+  duckKeysVector.reserve(size);
+  duckValuesVector.reserve(size);
+  for (auto i = 0; i < size; i++) {
+    auto innerRow = offset + i;
+    duckKeysVector.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        duckValueAt, mapKeys->typeKind(), mapKeys, innerRow));
+    if (mapValues->isNullAt(innerRow)) {
+      duckValuesVector.emplace_back(::duckdb::Value(nullptr));
+    } else {
+      duckValuesVector.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          duckValueAt, mapValues->typeKind(), mapValues, innerRow));
+    }
+  }
+  return ::duckdb::Value::MAP(
+      ::duckdb::Value::LIST(duckKeysVector),
+      ::duckdb::Value::LIST(duckValuesVector));
+}
+
 template <TypeKind kind>
 velox::variant
 variantAt(::duckdb::DataChunk* dataChunk, int32_t row, int32_t column) {
@@ -156,7 +195,7 @@ velox::variant variantAt(const ::duckdb::Value& value) {
 
 velox::variant rowVariantAt(
     const ::duckdb::Value& vector,
-    const std::shared_ptr<const Type>& rowType) {
+    const TypePtr& rowType) {
   std::vector<velox::variant> values;
   const auto& structValue = ::duckdb::StructValue::GetChildren(vector);
   for (size_t i = 0; i < structValue.size(); ++i) {
@@ -173,6 +212,30 @@ velox::variant rowVariantAt(
     }
   }
   return velox::variant::row(std::move(values));
+}
+
+velox::variant mapVariantAt(
+    const ::duckdb::Value& vector,
+    const TypePtr& mapType) {
+  std::map<variant, variant> map;
+
+  const auto& mapValue = ::duckdb::StructValue::GetChildren(vector);
+  VELOX_CHECK_EQ(mapValue.size(), 2);
+
+  auto mapTypePtr = dynamic_cast<const MapType*>(mapType.get());
+  auto keyType = mapTypePtr->keyType()->kind();
+  auto valueType = mapTypePtr->valueType()->kind();
+  const auto& keyList = ::duckdb::ListValue::GetChildren(mapValue[0]);
+  const auto& valueList = ::duckdb::ListValue::GetChildren(mapValue[1]);
+  VELOX_CHECK_EQ(keyList.size(), valueList.size());
+  for (int i = 0; i < keyList.size(); i++) {
+    auto variantKey =
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(variantAt, keyType, keyList[i]);
+    auto variantValue =
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(variantAt, valueType, valueList[i]);
+    map.insert({variantKey, variantValue});
+  }
+  return velox::variant::map(map);
 }
 
 std::vector<MaterializedRow> materialize(
@@ -192,6 +255,9 @@ std::vector<MaterializedRow> materialize(
       auto typeKind = rowType->childAt(j)->kind();
       if (dataChunk->GetValue(j, i).IsNull()) {
         row.push_back(variant(typeKind));
+      } else if (typeKind == TypeKind::MAP) {
+        row.push_back(
+            mapVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
       } else if (typeKind == TypeKind::ROW) {
         row.push_back(
             rowVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
@@ -345,8 +411,8 @@ std::string toString(const MaterializedRow& row) {
 }
 
 std::string generateUserFriendlyDiff(
-    const std::multiset<MaterializedRow>& expectedRows,
-    const std::multiset<MaterializedRow>& actualRows) {
+    const MaterializedRowMultiset& expectedRows,
+    const MaterializedRowMultiset& actualRows) {
   std::vector<MaterializedRow> extraActualRows;
   std::set_difference(
       actualRows.begin(),
@@ -421,6 +487,8 @@ void DuckDbQueryRunner::createTable(
           appender.Append(nullptr);
         } else if (rowType.childAt(column)->isArray()) {
           appender.Append(duckValueAt<TypeKind::ARRAY>(columnVector, row));
+        } else if (rowType.childAt(column)->isMap()) {
+          appender.Append(duckValueAt<TypeKind::MAP>(columnVector, row));
         } else {
           auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
               duckValueAt, rowType.childAt(column)->kind(), columnVector, row);
@@ -487,23 +555,89 @@ std::shared_ptr<Task> assertQueryReturnsEmptyResult(
   return result.first->task();
 }
 
+// Special function to compare multisets with vectors of variants in a way that
+// we compare all floating point values inside using 'epsilon' constant.
+// Returns true if equal.
+static bool compareMaterializedRows(
+    const MaterializedRowMultiset& left,
+    const MaterializedRowMultiset& right) {
+  if (left.size() != right.size()) {
+    return false;
+  }
+
+  for (auto& it : left) {
+    if (right.count(it) == 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void assertResults(
     const std::vector<RowVectorPtr>& results,
     const std::shared_ptr<const RowType>& resultType,
     const std::string& duckDbSql,
     DuckDbQueryRunner& duckDbQueryRunner) {
-  std::multiset<MaterializedRow> actualRows;
-  for (auto vector : results) {
+  MaterializedRowMultiset actualRows;
+  for (const auto& vector : results) {
     auto rows = materialize(vector);
     std::copy(
         rows.begin(), rows.end(), std::inserter(actualRows, actualRows.end()));
   }
 
   auto expectedRows = duckDbQueryRunner.execute(duckDbSql, resultType);
-  if (actualRows != expectedRows) {
+  if (not compareMaterializedRows(actualRows, expectedRows)) {
     auto message = generateUserFriendlyDiff(expectedRows, actualRows);
     EXPECT_TRUE(false) << message << "DuckDB query: " << duckDbSql;
   }
+}
+
+// To handle the case when the sorting keys are not unique and the order
+// within the same key is not deterministic, we partition the results with
+// sorting keys and verify the partitions are equal using set-diff.
+using OrderedPartition = std::pair<MaterializedRow, MaterializedRowMultiset>;
+
+// Special function to compare ordered partitions in a way that
+// we compare all floating point values inside using 'epsilon' constant.
+// Returns true if equal.
+static bool compareOrderedPartitions(
+    const OrderedPartition& left,
+    const OrderedPartition& right) {
+  if (left.first.size() != right.first.size() or
+      left.second.size() != right.second.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < left.first.size(); ++i) {
+    if (not left.first[i].equalsWithEpsilon(right.first[i])) {
+      return false;
+    }
+  }
+  if (not compareMaterializedRows(left.second, right.second)) {
+    return false;
+  }
+
+  return true;
+}
+
+// Special function to compare vectors of ordered partitions in a way that
+// we compare all floating point values inside using 'epsilon' constant.
+// Returns true if equal.
+static bool compareOrderedPartitionsVectors(
+    const std::vector<OrderedPartition>& left,
+    const std::vector<OrderedPartition>& right) {
+  if (left.size() != right.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < left.size(); ++i) {
+    if (not compareOrderedPartitions(left[i], right[i])) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 void assertResultsOrdered(
@@ -512,41 +646,36 @@ void assertResultsOrdered(
     const std::string& duckDbSql,
     DuckDbQueryRunner& duckDbQueryRunner,
     const std::vector<uint32_t>& sortingKeys) {
-  // To handle the case when the sorting keys are not unique and the order
-  // within the same key is not deterministic, we partition the results with
-  // sorting keys and verify the partitions are equal using set-diff.
-  using OrderedPartition =
-      std::pair<MaterializedRow, std::multiset<MaterializedRow>>;
-
   std::vector<OrderedPartition> actualPartitions;
   std::vector<OrderedPartition> expectedPartitions;
 
-  for (auto vector : results) {
+  for (const auto& vector : results) {
     auto rows = materialize(vector);
-    for (auto row : rows) {
+    for (const auto& row : rows) {
       auto keys = getColumns(row, sortingKeys);
       if (actualPartitions.empty() || actualPartitions.back().first != keys) {
-        actualPartitions.emplace_back(keys, std::multiset<MaterializedRow>());
+        actualPartitions.emplace_back(keys, MaterializedRowMultiset());
       }
       actualPartitions.back().second.insert(row);
     }
   }
 
   auto expectedRows = duckDbQueryRunner.executeOrdered(duckDbSql, resultType);
-  for (auto row : expectedRows) {
+  for (const auto& row : expectedRows) {
     auto keys = getColumns(row, sortingKeys);
     if (expectedPartitions.empty() || expectedPartitions.back().first != keys) {
-      expectedPartitions.emplace_back(keys, std::multiset<MaterializedRow>());
+      expectedPartitions.emplace_back(keys, MaterializedRowMultiset());
     }
     expectedPartitions.back().second.insert(row);
   }
 
-  if (expectedPartitions != actualPartitions) {
+  if (not compareOrderedPartitionsVectors(
+          expectedPartitions, actualPartitions)) {
     auto actualPartIter = actualPartitions.begin();
     auto expectedPartIter = expectedPartitions.begin();
     while (expectedPartIter != expectedPartitions.end() &&
            actualPartIter != actualPartitions.end()) {
-      if (*expectedPartIter != *actualPartIter) {
+      if (not compareOrderedPartitions(*expectedPartIter, *actualPartIter)) {
         break;
       }
       ++expectedPartIter;
@@ -623,13 +752,14 @@ std::shared_ptr<Task> assertQuery(
   }
   auto task = cursor->task();
 
-  if (!task->isFinished()) {
+  if (not task->isFinished()) {
     // The Task can return results before the Driver is finished executing.
     // Wait for the Task to finish before returning it to ensure it's stable
     // e.g. the Driver isn't updating it anymore.
     auto& executor = folly::QueuedImmediateExecutor::instance();
-    auto future = task->finishFuture().via(&executor);
+    auto future = task->stateChangeFuture(1'000'000).via(&executor);
     future.wait();
+    EXPECT_TRUE(task->isFinished());
   }
 
   return task;
@@ -660,14 +790,14 @@ velox::variant readSingleValue(
 void assertEqualResults(
     const std::vector<RowVectorPtr>& expected,
     const std::vector<RowVectorPtr>& actual) {
-  std::multiset<MaterializedRow> actualRows;
+  MaterializedRowMultiset actualRows;
   for (auto vector : actual) {
     auto rows = materialize(vector);
     std::copy(
         rows.begin(), rows.end(), std::inserter(actualRows, actualRows.end()));
   }
 
-  std::multiset<MaterializedRow> expectedRows;
+  MaterializedRowMultiset expectedRows;
   for (auto vector : expected) {
     auto rows = materialize(vector);
     std::copy(
@@ -676,7 +806,7 @@ void assertEqualResults(
         std::inserter(expectedRows, expectedRows.end()));
   }
 
-  if (actualRows != expectedRows) {
+  if (not compareMaterializedRows(actualRows, expectedRows)) {
     auto message = generateUserFriendlyDiff(expectedRows, actualRows);
     EXPECT_TRUE(false) << message << "Unexpected results";
   }

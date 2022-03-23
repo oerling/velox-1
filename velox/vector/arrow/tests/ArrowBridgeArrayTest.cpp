@@ -53,7 +53,7 @@ class ArrowBridgeArrayExportTest : public testing::Test {
     if constexpr (isString) {
       validateStringArray(inputData, arrowArray);
     } else {
-      validatePrimitiveArray(inputData, arrowArray);
+      validateNumericalArray(inputData, arrowArray);
     }
 
     arrowArray.release(&arrowArray);
@@ -62,7 +62,7 @@ class ArrowBridgeArrayExportTest : public testing::Test {
   }
 
   template <typename T>
-  void validatePrimitiveArray(
+  void validateNumericalArray(
       const std::vector<std::optional<T>>& inputData,
       const ArrowArray& arrowArray) {
     ASSERT_EQ(2, arrowArray.n_buffers); // null and values buffers.
@@ -104,8 +104,8 @@ class ArrowBridgeArrayExportTest : public testing::Test {
     ASSERT_EQ(3, arrowArray.n_buffers); // null, values, and offsets buffers.
 
     const uint64_t* nulls = static_cast<const uint64_t*>(arrowArray.buffers[0]);
-    const char* values = static_cast<const char*>(arrowArray.buffers[1]);
-    const int32_t* offsets = static_cast<const int32_t*>(arrowArray.buffers[2]);
+    const char* values = static_cast<const char*>(arrowArray.buffers[2]);
+    const int32_t* offsets = static_cast<const int32_t*>(arrowArray.buffers[1]);
 
     if (arrowArray.null_count == 0) {
       EXPECT_EQ(nulls, nullptr);
@@ -324,15 +324,15 @@ TEST_F(ArrowBridgeArrayExportTest, rowVector) {
   EXPECT_EQ(col1.size(), arrowArray.length);
   EXPECT_EQ(0, arrowArray.null_count);
   EXPECT_EQ(0, arrowArray.offset);
-  EXPECT_EQ(0, arrowArray.n_buffers);
+  EXPECT_EQ(1, arrowArray.n_buffers);
   EXPECT_EQ(vector->childrenSize(), arrowArray.n_children);
 
   EXPECT_NE(nullptr, arrowArray.children);
   EXPECT_EQ(nullptr, arrowArray.dictionary);
 
   // Validate data in the children arrays.
-  validatePrimitiveArray(col1, *arrowArray.children[0]);
-  validatePrimitiveArray(col2, *arrowArray.children[1]);
+  validateNumericalArray(col1, *arrowArray.children[0]);
+  validateNumericalArray(col2, *arrowArray.children[1]);
   validateStringArray(col3, *arrowArray.children[2]);
 
   arrowArray.release(&arrowArray);
@@ -368,7 +368,7 @@ TEST_F(ArrowBridgeArrayExportTest, rowVectorNullable) {
   EXPECT_EQ(nullptr, arrowArray.dictionary);
 
   // Validate data in the children arrays.
-  validatePrimitiveArray(col1, *arrowArray.children[0]);
+  validateNumericalArray(col1, *arrowArray.children[0]);
 
   // Check if the null buffer has the correct bits set.
   const uint64_t* nulls = static_cast<const uint64_t*>(arrowArray.buffers[0]);
@@ -386,7 +386,7 @@ TEST_F(ArrowBridgeArrayExportTest, rowVectorEmpty) {
   ArrowArray arrowArray;
   exportToArrow(vectorMaker_.rowVector({}), arrowArray, pool_.get());
   EXPECT_EQ(0, arrowArray.n_children);
-  EXPECT_EQ(0, arrowArray.n_buffers);
+  EXPECT_EQ(1, arrowArray.n_buffers);
   EXPECT_EQ(nullptr, arrowArray.children);
 
   arrowArray.release(&arrowArray);
@@ -501,8 +501,8 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
     auto rawValues = holder.values->asMutable<char>();
     *rawOffsets = 0;
 
-    holder.buffers[1] = (length == 0) ? nullptr : (const void*)rawValues;
-    holder.buffers[2] = (length == 0) ? nullptr : (const void*)rawOffsets;
+    holder.buffers[2] = (length == 0) ? nullptr : (const void*)rawValues;
+    holder.buffers[1] = (length == 0) ? nullptr : (const void*)rawOffsets;
 
     for (size_t i = 0; i < length; ++i) {
       if (inputValues[i] == std::nullopt) {

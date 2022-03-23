@@ -28,14 +28,13 @@ void SpillInput::next(bool throwIfPastEnd) {
   offset_ += readBytes;
 }
 
-void SpillInput::seekp(Position position) {
-  auto target = std::get<1>(position);
+  void SpillInput::seekp(std::streampos position) {
   auto bufferOffset = offset_ - current_->size;
-  if (bufferOffset <= target && bufferOffset + current_->size < target) {
-    current_->position = target - bufferOffset;
+  if (bufferOffset <= position && bufferOffset + current_->size < position) {
+    current_->position = position - bufferOffset;
   } else {
     // The seek target is not in the buffer.
-    offset_ = target;
+    offset_ = position;
     current_->position = 0;
     current_->size = 0;
     next(true);
@@ -108,7 +107,7 @@ WriteFile& SpillFileList::currentOutput() {
 void SpillFileList::flush() {
   if (batch_) {
     std::stringstream stringStream;
-    OutputStream out(&stringStream);
+    OStreamOutputStream out(&stringStream);
     batch_->flush(&out);
     batch_.reset();
     std::string str = stringStream.str();
