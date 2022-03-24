@@ -158,9 +158,6 @@ class BlockingState {
 };
 
 struct DriverCtx {
-  std::shared_ptr<Task> task;
-  std::unique_ptr<core::ExecCtx> execCtx;
-  std::unique_ptr<connector::ExpressionEvaluator> expressionEvaluator;
   const int driverId;
   const int pipelineId;
   /// Id of the split group this driver should process in case of grouped
@@ -169,6 +166,9 @@ struct DriverCtx {
   /// Id of the partition to use by this driver. For local exchange, for
   /// instance.
   const uint32_t partitionId;
+
+  std::shared_ptr<Task> task;
+  memory::MemoryPool* FOLLY_NONNULL pool;
   Driver* FOLLY_NONNULL driver;
 
   explicit DriverCtx(
@@ -178,14 +178,9 @@ struct DriverCtx {
       uint32_t _splitGroupId,
       uint32_t _partitionId);
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
+  const core::QueryConfig& queryConfig() const;
 
-  // Makes an extract of QueryCtx for use in a connector. 'planNodeId'
-  // is the id of the calling TableScan. This and the task id identify
-  // the scan for column access tracking.
-  std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
-      const std::string& connectorId,
-      const std::string& planNodeId) const;
+  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
 };
 
 class Driver {
@@ -193,8 +188,6 @@ class Driver {
   Driver(
       std::unique_ptr<DriverCtx> driverCtx,
       std::vector<std::unique_ptr<Operator>>&& operators);
-
-  ~Driver();
 
   static void run(std::shared_ptr<Driver> self);
 
@@ -271,14 +264,14 @@ class Driver {
       int64_t size,
       memory::MemoryUsageTracker& tracker);
 
-  std::shared_ptr<Task> task() const {
-    return task_;
-  }
-
   // Returns an estimate of the bytes that can be recovered by spill().
   int64_t recoverableMemory() const;
 
-  // Updates the stats in 'task_' and frees resources. Only called by Task for
+  const std::shared_ptr<Task>& task() const {
+    return ctx_->task;
+  }
+
+  // Updates the stats in Task and frees resources. Only called by Task for
   // closing non-running Drivers.
   void closeByTask();
 
@@ -296,9 +289,10 @@ class Driver {
   void pushdownFilters(int operatorIndex);
 
   std::unique_ptr<DriverCtx> ctx_;
-  std::shared_ptr<Task> task_;
 
-  // Set via Task_ and serialized by 'task_'s mutex.
+  std::atomic_bool closed_{false};
+
+  // Set via Task and serialized by Task's mutex.
   ThreadState state_;
 
   // Timer used to track down the time we are sitting in the driver queue.
@@ -335,6 +329,9 @@ struct DriverFactory {
   /// grouped execution it is 'numDrivers' * 'numSplitGroups', otherwise it is
   /// 'numDrivers'.
   uint32_t numTotalDrivers;
+  /// The (local) node that will consume results supplied by this pipeline.
+  /// Can be null. We use that to determine the max drivers.
+  std::shared_ptr<const core::PlanNode> consumerNode;
 
   // True if 'planNodes' contains a source node for the task, e.g. TableScan or
   // Exchange.

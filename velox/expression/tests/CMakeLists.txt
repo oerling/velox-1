@@ -18,6 +18,7 @@ add_executable(
   CastExprTest.cpp
   MapWriterTest.cpp
   ArrayWriterTest.cpp
+  RowWriterTest.cpp
   EvalSimplifiedTest.cpp
   SignatureBinderTest.cpp
   SimpleFunctionTest.cpp
@@ -29,6 +30,7 @@ add_executable(
   StringWriterTest.cpp
   MapViewTest.cpp
   RowViewTest.cpp
+  GenericViewTest.cpp
   TryExprTest.cpp
   VariadicViewTest.cpp
   VectorReaderTest.cpp)

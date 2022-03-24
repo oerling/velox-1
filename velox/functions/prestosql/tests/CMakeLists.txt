@@ -30,6 +30,7 @@ add_executable(
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
   ArrayPositionTest.cpp
+  ArraysOverlapTest.cpp
   BitwiseTest.cpp
   CardinalityTest.cpp
   CeilFloorTest.cpp
@@ -37,6 +38,7 @@ add_executable(
   ComparisonsTest.cpp
   DateTimeFunctionsTest.cpp
   ElementAtTest.cpp
+  HyperLogLogCastTest.cpp
   HyperLogLogFunctionsTest.cpp
   InPredicateTest.cpp
   JsonCastTest.cpp

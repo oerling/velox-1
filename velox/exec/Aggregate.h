@@ -15,7 +15,6 @@
  */
 #pragma once
 
-#include "velox/common/serialization/Registry.h"
 #include "velox/core/PlanNode.h"
 #include "velox/vector/BaseVector.h"
 
@@ -31,7 +30,7 @@ class AggregateFunctionSignature;
 // and single aggregation.
 bool isRawInput(core::AggregationNode::Step step);
 
-// Returns true if aggregation produces final result, e.g. final
+// Returns false if aggregation produces final result, e.g. final
 // and single aggregation.
 bool isPartialOutput(core::AggregationNode::Step step);
 

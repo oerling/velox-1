@@ -61,6 +61,10 @@ class SimpleFunctionAdapter : public VectorFunction {
       typename TypeToFlatVector<typename FUNC::return_type>::type;
   std::unique_ptr<FUNC> fn_;
 
+  // Whether the return type for this UDF allows for fast path iteration.
+  static constexpr bool fastPathIteration =
+      return_type_traits::isPrimitiveType && return_type_traits::isFixedWidth;
+
   struct ApplyContext {
     ApplyContext(
         const SelectivityVector* _rows,
@@ -138,7 +142,6 @@ class SimpleFunctionAdapter : public VectorFunction {
       EvalCtx* context,
       VectorPtr* result) const override {
     ApplyContext applyContext{&rows, outputType, context, result};
-    DecodedArgs decodedArgs{rows, args, context};
 
     // Enable fast all-ASCII path if all string inputs are ASCII and the
     // function provides ASCII-only path.
@@ -146,6 +149,15 @@ class SimpleFunctionAdapter : public VectorFunction {
       applyContext.allAscii = isAsciiArgs(rows, args);
     }
 
+    // If this UDF can take the fast path iteration, we set all active rows as
+    // non-nulls in the result vector. The assumption is that the majority of
+    // rows will return non-null values (and hence won't have to touch the null
+    // buffer during iteration).
+    if constexpr (fastPathIteration) {
+      (*result)->clearNulls(rows);
+    }
+
+    DecodedArgs decodedArgs{rows, args, context};
     unpack<0>(applyContext, true, decodedArgs);
 
     // Check if the function reuses input strings for the result, and add
@@ -270,9 +282,6 @@ class SimpleFunctionAdapter : public VectorFunction {
 
   // unpacking zips like const char* notnull, const T* values
 
-  // todo(youknowjack): I don't think this will work with more than 2 arguments
-  //                    how can compiler know how to expand the packs?
-
   // unpack: base case
   template <
       int32_t POSITION,
@@ -299,22 +308,20 @@ class SimpleFunctionAdapter : public VectorFunction {
     bool callNullFree = FUNC::is_default_contains_nulls_behavior ||
         (FUNC::udf_has_callNullFree && !applyContext.mayHaveNullsRecursive);
 
-    // iterate the rows
-    if constexpr (
-        return_type_traits::isPrimitiveType &&
-        return_type_traits::isFixedWidth &&
-        return_type_traits::typeKind != TypeKind::BOOLEAN) {
+    // Iterate the rows.
+    if constexpr (fastPathIteration) {
       uint64_t* nullBuffer = nullptr;
       auto* data = applyContext.result->mutableRawValues();
       auto writeResult = [&applyContext, &nullBuffer, &data](
                              auto row, bool notNull, auto out) INLINE_LAMBDA {
+        // For fast path iteration, all active rows were already set as non-null
+        // beforehand, so we only need to update the null buffer if the function
+        // returned null (which is not the common case).
         if (notNull) {
-          data[row] = out;
-          if (applyContext.result->rawNulls()) {
-            if (!nullBuffer) {
-              nullBuffer = applyContext.result->mutableRawNulls();
-            }
-            bits::clearNull(nullBuffer, row);
+          if constexpr (return_type_traits::typeKind == TypeKind::BOOLEAN) {
+            bits::setBit(data, row, out);
+          } else {
+            data[row] = out;
           }
         } else {
           if (!nullBuffer) {
@@ -329,7 +336,7 @@ class SimpleFunctionAdapter : public VectorFunction {
         // improvement when there are no nulls.
         if (applyContext.mayHaveNullsRecursive) {
           applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
-            auto out = typename return_type_traits::NativeType();
+            typename return_type_traits::NativeType out{};
             auto containsNull = (readers.containsNull(row) || ...);
             bool notNull;
             if (containsNull) {
@@ -343,7 +350,7 @@ class SimpleFunctionAdapter : public VectorFunction {
           });
         } else {
           applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
-            typename return_type_traits::NativeType out;
+            typename return_type_traits::NativeType out{};
             bool notNull = doApplyNullFree<0>(row, out, readers...);
 
             writeResult(row, notNull, out);
@@ -355,13 +362,13 @@ class SimpleFunctionAdapter : public VectorFunction {
           // functions that repeatedly update the output.
           // The opposite optimization (eliminating the temp) is easier to do
           // by the compiler (assuming the function call is inlined).
-          typename return_type_traits::NativeType out;
+          typename return_type_traits::NativeType out{};
           bool notNull = doApplyNotNull<0>(row, out, readers...);
           writeResult(row, notNull, out);
         });
       } else {
         applyContext.applyToSelectedNoThrow([&](auto row) INLINE_LAMBDA {
-          typename return_type_traits::NativeType out;
+          typename return_type_traits::NativeType out{};
           bool notNull = doApply<0>(row, out, readers...);
           writeResult(row, notNull, out);
         });

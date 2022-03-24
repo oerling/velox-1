@@ -20,6 +20,7 @@
 #include "velox/exec/LocalPartition.h"
 #include "velox/exec/MergeSource.h"
 #include "velox/exec/Split.h"
+#include "velox/exec/TaskStats.h"
 #include "velox/exec/TaskStructs.h"
 #include "velox/vector/ComplexVector.h"
 
@@ -120,7 +121,8 @@ using ContinuePromise = VeloxPromise<bool>;
 
   // Sets the (so far) max split sequence id, so all splits with sequence id
   // equal or below that, will be ignored in the 'addSplitWithSequence' call.
-  // Note, that 'addSplitWithSequence' does not update max split sequence id.
+  // Note, that 'addSplitWithSequence' does not update max split sequence id
+  // and the operation is silently ignored if Task is not running.
   void setMaxSplitSequenceId(
       const core::PlanNodeId& planNodeId,
       long maxSequenceId);
@@ -132,6 +134,7 @@ using ContinuePromise = VeloxPromise<bool>;
   // duplicate.
   // Note, that this method does NOT update max split sequence id.
   // Returns true if split was added, false if it was ignored.
+  // Note that, the operation is silently ignored if Task is not running.
   bool addSplitWithSequence(
       const core::PlanNodeId& planNodeId,
       exec::Split&& split,
@@ -139,6 +142,7 @@ using ContinuePromise = VeloxPromise<bool>;
 
   // Adds split for a source operator corresponding to plan node with
   // specified ID. Does not require sequential id.
+  // Note that, the operation is silently ignored if Task is not running.
   void addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split);
 
   // We mark that for the given group there would be no more splits coming.
@@ -394,7 +398,7 @@ using ContinuePromise = VeloxPromise<bool>;
   StopReason enterForTerminateLocked(ThreadState& state);
 
   // Marks that the Driver is not on thread. If no more Drivers in the
-  // CancelPool are on thread, this realizes any finishFutures. The
+  // CancelPool are on thread, this realizes requestPause futures. The
   // Driver may go off thread because of hasBlockingFuture or pause
   // requested or terminate requested. The return value indicates the
   // reason. If kTerminate is returned, the isTerminated flag is set.
@@ -415,14 +419,12 @@ using ContinuePromise = VeloxPromise<bool>;
   // are to yield.
   StopReason shouldStop();
 
-  void requestPause(bool pause) {
+  ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
-    requestPauseLocked(pause);
+    return requestPauseLocked(pause);
   }
 
-  void requestPauseLocked(bool pause) {
-    pauseRequested_ = pause;
-  }
+  ContinueFuture requestPauseLocked(bool pause);
 
   void requestTerminate() {
     std::lock_guard<std::mutex> l(mutex_);
@@ -440,11 +442,6 @@ using ContinuePromise = VeloxPromise<bool>;
   bool pauseRequested() const {
     return pauseRequested_;
   }
-
-  // Returns a future that is completed when all threads have acknowledged
-  // terminate or pause. If the future is realized there is no running activity
-  // on behalf of threads that have entered 'this'.
-  folly::SemiFuture<bool> finishFuture();
 
   std::mutex& mutex() {
     return mutex_;
@@ -625,15 +622,15 @@ using ContinuePromise = VeloxPromise<bool>;
 
   // Thread counts and cancellation -related state.
   //
-  // Some of the below are declared atomic for tsan because they are
+  // Some of the variables below are declared atomic for tsan because they are
   // sometimes tested outside of 'mutex_' for a value of 0/false,
-  // which is safe to access without acquiring 'nutex_'.Thread counts
+  // which is safe to access without acquiring 'mutex_'.Thread counts
   // and promises are guarded by 'mutex_'
   std::atomic<bool> pauseRequested_{false};
   std::atomic<bool> terminateRequested_{false};
   std::atomic<int32_t> toYield_ = 0;
   int32_t numThreads_ = 0;
-  std::vector<VeloxPromise<bool>> finishPromises_;
+  std::vector<VeloxPromise<bool>> pausePromises_;
 };
 
 class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {

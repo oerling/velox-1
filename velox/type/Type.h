@@ -1377,6 +1377,18 @@ struct Row {
   Row() {}
 };
 
+template <typename... T>
+struct RowWriterT {
+  template <size_t idx>
+  using type_at = typename std::tuple_element<idx, std::tuple<T...>>::type;
+
+  static_assert(
+      std::conjunction<std::bool_constant<!isVariadicType<T>::value>...>::value,
+      "Struct fields cannot be Variadic");
+
+  RowWriterT() = delete;
+};
+
 struct DynamicRow {
  private:
   DynamicRow() {}
@@ -1512,6 +1524,13 @@ struct CppToType<Row<T...>> : public TypeTraits<TypeKind::ROW> {
   }
 };
 
+template <typename... T>
+struct CppToType<RowWriterT<T...>> : public TypeTraits<TypeKind::ROW> {
+  static auto create() {
+    return ROW({CppToType<T>::create()...});
+  }
+};
+
 template <>
 struct CppToType<DynamicRow> : public TypeTraits<TypeKind::ROW> {
   static std::shared_ptr<const Type> create() {
@@ -1591,8 +1610,10 @@ class CustomTypeFactories {
   /// types.
   virtual TypePtr getType(std::vector<TypePtr> childTypes) const = 0;
 
-  /// Returns a shared pointer to the custom cast operator. If no cast operator
-  /// supports the custom type, this function throws an exception.
+  /// Returns a shared pointer to the custom cast operator. If a custom type
+  /// should be treated as its underlying native type during type castings,
+  /// return a nullptr. If a custom type does not support castings, throw an
+  /// exception.
   virtual exec::CastOperatorPtr getCastOperator() const = 0;
 };
 
@@ -1609,7 +1630,8 @@ bool typeExists(const std::string& name);
 TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes);
 
 /// Returns the custom cast operator for the custom type with the specified
-/// name. Returns nullptr if a type with the specified name does not exist.
+/// name. Returns nullptr if a type with the specified name does not exist or
+/// does not have a dedicated custom cast operator.
 exec::CastOperatorPtr getCastOperator(const std::string& name);
 
 // Allows us to transparently use folly::toAppend(), folly::join(), etc.
