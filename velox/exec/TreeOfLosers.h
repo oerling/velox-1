@@ -122,7 +122,7 @@ class TreeOfLosers {
 
     // Returns the lesser of the Sources from left and right children
     // and sets 'state_'.
-    inline Source* makeResult() {
+    inline Source* FOLLY_NONNULL makeResult() {
       if (*leftValue_ < *rightValue_) {
         state_ = State::kLeftResult;
         return leftValue_;
@@ -132,8 +132,8 @@ class TreeOfLosers {
     }
 
     State state_;
-    Source* leftValue_{nullptr};
-    Source* rightValue_{nullptr};
+    Source* FOLLY_NULLABLE leftValue_{nullptr};
+    Source* FOLLY_NULLABLE rightValue_{nullptr};
     std::unique_ptr<Node> left_;
     std::unique_ptr<Node> right_;
     std::unique_ptr<Source> source_;
@@ -174,7 +174,7 @@ class TreeOfLosers {
   }
 
  private:
-  Source* lastValue_{nullptr};
+  Source* FOLLY_NULLABLE lastValue_{nullptr};
   std::unique_ptr<Node> root_;
 };
 } // namespace facebook::velox
