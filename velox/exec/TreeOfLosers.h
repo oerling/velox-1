@@ -32,39 +32,39 @@ class TreeOfLosers {
 
     Source* next() {
       if (source_) {
-	if (source_->hasData()) {
-	  return source_.get();
-	}
-	return nullptr;
+        if (source_->hasData()) {
+          return source_.get();
+        }
+        return nullptr;
       }
       if (!leftValue_ && !leftAtEnd_) {
-	leftValue_ = left_->next();
-	leftAtEnd_ = !leftValue_;
+        leftValue_ = left_->next();
+        leftAtEnd_ = !leftValue_;
       }
       if (!rightValue_ && !rightAtEnd_) {
-	rightValue_ = right_->next();
-	rightAtEnd_ = !rightValue_;
+        rightValue_ = right_->next();
+        rightAtEnd_ = !rightValue_;
       }
       Source* value;
       if (rightValue_ && leftValue_) {
-	if (*leftValue_ < *rightValue_) {
-	  value = leftValue_;
-	  leftValue_ = nullptr;
-	} else {
-	  value = rightValue_;
-	  rightValue_ = nullptr;
-	}
+        if (*leftValue_ < *rightValue_) {
+          value = leftValue_;
+          leftValue_ = nullptr;
+        } else {
+          value = rightValue_;
+          rightValue_ = nullptr;
+        }
       } else if (leftValue_) {
-	value = leftValue_;
-	leftValue_ = nullptr;
+        value = leftValue_;
+        leftValue_ = nullptr;
       } else {
-	value = rightValue_;
-	rightValue_ = nullptr;
+        value = rightValue_;
+        rightValue_ = nullptr;
       }
       return value;
     }
-    
-  private:
+
+   private:
     Source* leftValue_{nullptr};
     Source* rightValue_{nullptr};
     bool leftAtEnd_{false};

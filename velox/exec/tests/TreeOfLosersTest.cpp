@@ -35,10 +35,9 @@ class TreeOfLosersTest : public testing::Test {
 };
 
 class Value {
-public:
-
+ public:
   Value() = default;
-  
+
   Value(uint32_t value) : value_(value) {}
 
   uint32_t value() const {
@@ -49,8 +48,8 @@ public:
     return payload_;
   }
 
-private:
-    uint32_t value_ = 0;
+ private:
+  uint32_t value_ = 0;
   uint64_t payload_ = 11;
 };
 
@@ -78,7 +77,7 @@ class Source {
     currentValid_ = false;
   }
 
-  bool operator <(const Source& other) const {
+  bool operator<(const Source& other) const {
     if (numbers_.empty()) {
       return false;
     }
@@ -87,7 +86,7 @@ class Source {
     }
     return current()->value() < other.current()->value();
   }
-  
+
  private:
   // True if 'current_' is initialized.
   mutable bool currentValid_{false};
@@ -131,12 +130,13 @@ TEST_F(TreeOfLosersTest, merge) {
     for (auto expected : data) {
       auto source = tree.next();
       if (!source) {
-	FAIL() << "Premature end in TreeOfLosers";
+        FAIL() << "Premature end in TreeOfLosers";
       }
       auto result = source->current()->value();
       ASSERT_EQ(result, expected);
     }
     ASSERT_FALSE(tree.next());
   }
-  std::cout << kNumValues << " values in " << kNumRuns << " streams "  << usec << "us";
+  std::cout << kNumValues << " values in " << kNumRuns << " streams " << usec
+            << "us";
 }
