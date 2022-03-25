@@ -53,12 +53,16 @@ class Value {
   uint64_t payload_ = 11;
 };
 
-class Source {
+class Source final : public TreeOfLosersSource {
  public:
   Source(std::vector<uint32_t>&& numbers) : numbers_(std::move(numbers)) {}
 
-  bool hasData() const {
-    return !numbers_.empty();
+  bool hasData() const final {
+    if (!numbers_.empty()) {
+      current();
+      return true;
+    }
+    return false;
   }
 
   Value* current() const {
@@ -72,30 +76,26 @@ class Source {
     return &current_;
   }
 
-  void next() {
+  void next() final {
     numbers_.pop_back();
     currentValid_ = false;
   }
 
-  bool operator<(const Source& other) const {
-    if (numbers_.empty()) {
-      return false;
-    }
-    if (other.numbers_.empty()) {
-      return true;
-    }
-    return current()->value() < other.current()->value();
+  bool operator<(const TreeOfLosersSource& other) const final {
+    return current_.value() < static_cast<const Source&>(other).current_.value();
   }
 
  private:
   // True if 'current_' is initialized.
   mutable bool currentValid_{false};
   mutable Value current_;
+
+  // The reversed sequence of values 'this represents.
   std::vector<uint32_t> numbers_;
 };
 
 TEST_F(TreeOfLosersTest, merge) {
-  constexpr int32_t kNumValues = 100000000;
+  constexpr int32_t kNumValues = 5000000;
   constexpr int32_t kNumRuns = 31;
   std::vector<uint32_t> data;
   for (auto i = 0; i < kNumValues; ++i) {
@@ -137,6 +137,6 @@ TEST_F(TreeOfLosersTest, merge) {
     }
     ASSERT_FALSE(tree.next());
   }
-  std::cout << kNumValues << " values in " << kNumRuns << " streams " << usec
+  LOG(INFO) << kNumValues << " values in " << kNumRuns << " streams " << usec
             << "us";
 }

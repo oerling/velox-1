@@ -19,61 +19,128 @@
 #include <optional>
 #include <vector>
 
+#include "velox/common/base/Exceptions.h"
+
 namespace facebook::velox {
 
+// Abstract class defining the interface for a stream of values to be merged by
+// TreeOfLosers.
+class TreeOfLosersSource {
+  // True if this has a value. If this returns true, it is valid to
+  // call < or next immediately after this. If false, no more
+  // methods other than hasData() may be called.
+  virtual bool hasData() const = 0;
+
+  // Pops the first value off 'this'. One must call hasData() after next() to
+  // determine if next or < may be called after this.
+  virtual void next() = 0;
+
+  // Returns true if the first element of 'this' is less than the first element
+  // of 'other'. hasData() must be true of 'this' and 'other'.
+  virtual bool operator<(const TreeOfLosersSource& other) const = 0;
+};
+
+// Implements a tree of loserrs algorithm for merging ordered
+// streams. The TreeOfLosers owns two or more instances of
+// Source. At each call of next(), it returns the Source that has
+// the lowest value as first value from the set of Sources. It
+// returns nullptr when all Sources are at end. The order is
+// determined by Source::operator<.
 template <typename Source>
 class TreeOfLosers {
  public:
+  // A leaf Node owns a Source. Inner Nodes own their children. A
+  // node's 'state_' records whether the node is at end, which child's
+  // value was last returned and whether one or both children are at
+  // end.
   class Node {
    public:
-    Node(std::unique_ptr<Source>&& source) : source_(std::move(source)) {}
-    Node(std::unique_ptr<Node> left, std::unique_ptr<Node>&& right)
-        : left_(std::move(left)), right_(std::move(right)) {}
+    Node(std::unique_ptr<Source>&& source)
+        : state_(State::kSource), source_(std::move(source)) {
+      static_assert(std::is_base_of<TreeOfLosersSource, Source>::value);
+    }
 
+    Node(std::unique_ptr<Node> left, std::unique_ptr<Node>&& right)
+        : state_(State::kInit),
+          left_(std::move(left)),
+          right_(std::move(right)) {}
+
+    // Returns the Source with the lowest value of all the sources under 'this'.
     Source* next() {
-      if (source_) {
-        if (source_->hasData()) {
-          return source_.get();
-        }
-        return nullptr;
+      switch (state_) {
+        case State::kAtEnd:
+          return nullptr;
+        case State::kSource:
+          if (source_->hasData()) {
+            return source_.get();
+          }
+          state_ = State::kAtEnd;
+          return nullptr;
+        case State::kInit:
+          leftValue_ = left_->next();
+          rightValue_ = right_->next();
+          if (!leftValue_) {
+            state_ = rightValue_ ? State::kRightOnly : State::kAtEnd;
+            return rightValue_;
+          } else if (!rightValue_) {
+            state_ = State::kLeftOnly;
+            return leftValue_;
+          }
+          return makeResult();
+        case State::kLeftResult:
+          leftValue_ = left_->next();
+          if (!leftValue_) {
+            state_ = State::kRightOnly;
+            return rightValue_;
+          }
+          return makeResult();
+        case State::kRightResult:
+          rightValue_ = right_->next();
+          if (!rightValue_) {
+            state_ = State::kLeftOnly;
+            return leftValue_;
+          }
+          return makeResult();
+        case State::kLeftOnly:
+          return left_->next();
+        case State::kRightOnly:
+          return right_->next();
       }
-      if (!leftValue_ && !leftAtEnd_) {
-        leftValue_ = left_->next();
-        leftAtEnd_ = !leftValue_;
-      }
-      if (!rightValue_ && !rightAtEnd_) {
-        rightValue_ = right_->next();
-        rightAtEnd_ = !rightValue_;
-      }
-      Source* value;
-      if (rightValue_ && leftValue_) {
-        if (*leftValue_ < *rightValue_) {
-          value = leftValue_;
-          leftValue_ = nullptr;
-        } else {
-          value = rightValue_;
-          rightValue_ = nullptr;
-        }
-      } else if (leftValue_) {
-        value = leftValue_;
-        leftValue_ = nullptr;
-      } else {
-        value = rightValue_;
-        rightValue_ = nullptr;
-      }
-      return value;
+      VELOX_UNREACHABLE();
     }
 
    private:
+    enum class State {
+      kInit,
+      kSource,
+      kAtEnd,
+      kLeftResult,
+      kRightResult,
+      kLeftOnly,
+      kRightOnly
+    };
+
+    // Returns the lesser of the Sources from left and right children
+    // and sets 'state_'.
+    inline Source* makeResult() {
+      if (*leftValue_ < *rightValue_) {
+        state_ = State::kLeftResult;
+        return leftValue_;
+      }
+      state_ = State::kRightResult;
+      return rightValue_;
+    }
+
+    State state_;
     Source* leftValue_{nullptr};
     Source* rightValue_{nullptr};
-    bool leftAtEnd_{false};
-    bool rightAtEnd_{false};
     std::unique_ptr<Node> left_;
     std::unique_ptr<Node> right_;
     std::unique_ptr<Source> source_;
   };
 
+  // Constructs a balanced binary tree where each leaf corresponds to an element
+  // of 'sources'.
   TreeOfLosers(std::vector<std::unique_ptr<Source>>&& sources) {
     std::vector<std::unique_ptr<Node>> level(sources.size());
     for (auto i = 0; i < sources.size(); ++i) {
@@ -94,6 +161,10 @@ class TreeOfLosers {
     root_ = std::move(level[0]);
   }
 
+  // Returns the Source with the lowest value in the first element and
+  // nullptr if all sources are at end. On a non-first call, first
+  // removes the first value off the source returned on the previous
+  // call.
   Source* next() {
     if (lastValue_) {
       lastValue_->next();
@@ -103,7 +174,6 @@ class TreeOfLosers {
   }
 
  private:
-  bool isFirst_{true};
   Source* lastValue_{nullptr};
   std::unique_ptr<Node> root_;
 };
