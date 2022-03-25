@@ -82,7 +82,8 @@ class Source final : public TreeOfLosersSource {
   }
 
   bool operator<(const TreeOfLosersSource& other) const final {
-    return current_.value() < static_cast<const Source&>(other).current_.value();
+    return current_.value() <
+        static_cast<const Source&>(other).current_.value();
   }
 
  private:

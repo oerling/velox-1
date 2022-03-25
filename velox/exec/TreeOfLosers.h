@@ -66,7 +66,7 @@ class TreeOfLosers {
           right_(std::move(right)) {}
 
     // Returns the Source with the lowest value of all the sources under 'this'.
-    Source* next() {
+    Source* FOLLY_NULLABLE next() {
       switch (state_) {
         case State::kAtEnd:
           return nullptr;
@@ -165,7 +165,7 @@ class TreeOfLosers {
   // nullptr if all sources are at end. On a non-first call, first
   // removes the first value off the source returned on the previous
   // call.
-  Source* next() {
+  Source* FOLLY_NULLABLE next() {
     if (lastValue_) {
       lastValue_->next();
     }
