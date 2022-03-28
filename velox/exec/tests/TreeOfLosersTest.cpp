@@ -18,14 +18,12 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec::test;
 
-class TreeOfLosersTest : public testing::Test,
-public MergeTestUtils {
+class TreeOfLosersTest : public testing::Test, public MergeTestUtils {
  protected:
   void SetUp() override {
     seed(1);
   }
 };
-
 
 TEST_F(TreeOfLosersTest, merge) {
   constexpr int32_t kNumValues = 5000000;
@@ -35,4 +33,3 @@ TEST_F(TreeOfLosersTest, merge) {
   test<TreeOfLosers<TestingStream>>(testData, true);
   test<MergeArray<TestingStream>>(testData, true);
 }
-

@@ -18,6 +18,5 @@ target_link_libraries(velox_exec_vector_hasher_benchmark velox_exec
 
 add_executable(velox_merge_benchmark MergeBenchmark.cpp)
 
-target_link_libraries(velox_merge_benchmark velox_exec
-                      velox_vector_test_lib ${FOLLY_BENCHMARK}
-		        ${GTEST_BOTH_LIBRARIES})
+target_link_libraries(velox_merge_benchmark velox_exec velox_vector_test_lib
+                      ${FOLLY_BENCHMARK} ${GTEST_BOTH_LIBRARIES})

@@ -103,7 +103,7 @@ class TreeOfLosers {
   TIndex first(TIndex node) {
     if (node >= firstSource_) {
       return sources_[node - firstSource_]->hasData() ? node - firstSource_
-	: kEmpty;
+                                                      : kEmpty;
     }
     auto left = first(leftChild(node));
     auto right = first(rightChild(node));
@@ -129,7 +129,7 @@ class TreeOfLosers {
     }
     for (;;) {
       if (values_[node] == kEmpty) {
-	// The value goes past the node and the node stays empty.
+        // The value goes past the node and the node stays empty.
       } else if (value == kEmpty) {
         value = values_[node];
         values_[node] = kEmpty;
@@ -186,35 +186,32 @@ class MergeArray {
     if (UNLIKELY(isFirst_)) {
       isFirst_ = false;
       if (sources_.empty()) {
-	return nullptr;
+        return nullptr;
       }
       // source has data, else it would not be here after construction.
       return sources_[0].get();
     }
-      sources_[0]->next();
-      if (!sources_[0]->hasData()) {
-        sources_.erase(sources_.begin());
-	return sources_.empty() ? nullptr : sources_[0].get();
-      }
-      auto rawSources = reinterpret_cast<Source**>(sources_.data());
-      auto first = rawSources[0];
-      auto it = std::lower_bound(
-				 rawSources + 1,
-				 rawSources + sources_.size(),
-				 first,
-				 [](const Source* left, const Source* right) {
-				   return *left < *right;
-				 });
-      auto offset = it - rawSources;
-      if (offset > 1) {
-	simd::memcpy(
-		     rawSources, rawSources + 1, (offset - 1) * sizeof(Source*));
-	it[-1] = first;
-      }
-      return sources_[0].get();
+    sources_[0]->next();
+    if (!sources_[0]->hasData()) {
+      sources_.erase(sources_.begin());
+      return sources_.empty() ? nullptr : sources_[0].get();
+    }
+    auto rawSources = reinterpret_cast<Source**>(sources_.data());
+    auto first = rawSources[0];
+    auto it = std::lower_bound(
+        rawSources + 1,
+        rawSources + sources_.size(),
+        first,
+        [](const Source* left, const Source* right) { return *left < *right; });
+    auto offset = it - rawSources;
+    if (offset > 1) {
+      simd::memcpy(rawSources, rawSources + 1, (offset - 1) * sizeof(Source*));
+      it[-1] = first;
+    }
+    return sources_[0].get();
   }
 
-private:
+ private:
   bool isFirst_{true};
   std::vector<std::unique_ptr<Source>> sources_;
 };
