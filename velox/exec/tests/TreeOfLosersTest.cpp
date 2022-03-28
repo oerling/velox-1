@@ -13,131 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/TreeOfLosers.h"
-#include "velox/common/base/Exceptions.h"
-#include "velox/common/time/Timer.h"
-
-#include <folly/Random.h>
-
-#include <gtest/gtest.h>
-#include <algorithm>
-#include <optional>
+#include "velox/exec/tests/utils/MergeTestUtils.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::exec::test;
 
-class TreeOfLosersTest : public testing::Test {
+class TreeOfLosersTest : public testing::Test,
+public MergeTestUtils {
  protected:
   void SetUp() override {
-    rng_.seed(1);
+    seed(1);
   }
-
-  folly::Random::DefaultGenerator rng_;
 };
 
-class Value {
- public:
-  Value() = default;
-
-  Value(uint32_t value) : value_(value) {}
-
-  uint32_t value() const {
-    return value_;
-  }
-
-  int64_t payload() const {
-    return payload_;
-  }
-
- private:
-  uint32_t value_ = 0;
-  uint64_t payload_ = 11;
-};
-
-class Source final : public TreeOfLosersSource {
- public:
-  Source(std::vector<uint32_t>&& numbers) : numbers_(std::move(numbers)) {}
-
-  bool hasData() const final {
-    if (!numbers_.empty()) {
-      current();
-      return true;
-    }
-    return false;
-  }
-
-  Value* current() const {
-    if (numbers_.empty()) {
-      return nullptr;
-    }
-    if (!currentValid_) {
-      currentValid_ = true;
-      current_ = Value(numbers_.back());
-    }
-    return &current_;
-  }
-
-  void next() final {
-    numbers_.pop_back();
-    currentValid_ = false;
-  }
-
-  bool operator<(const TreeOfLosersSource& other) const final {
-    return current_.value() <
-        static_cast<const Source&>(other).current_.value();
-  }
-
- private:
-  // True if 'current_' is initialized.
-  mutable bool currentValid_{false};
-  mutable Value current_;
-
-  // The reversed sequence of values 'this represents.
-  std::vector<uint32_t> numbers_;
-};
 
 TEST_F(TreeOfLosersTest, merge) {
   constexpr int32_t kNumValues = 5000000;
-  constexpr int32_t kNumRuns = 31;
-  std::vector<uint32_t> data;
-  for (auto i = 0; i < kNumValues; ++i) {
-    data.push_back(folly::Random::rand32(rng_));
-  }
-  std::vector<std::vector<uint32_t>> runs;
-  int32_t offset = 0;
-  for (auto i = 0; i < kNumRuns; ++i) {
-    int size =
-        i == kNumRuns - 1 ? data.size() - offset : data.size() / kNumRuns;
-    runs.emplace_back();
-    runs.back().insert(
-        runs.back().begin(),
-        data.begin() + offset,
-        data.begin() + offset + size);
-    std::sort(
-        runs.back().begin(),
-        runs.back().end(),
-        [](uint32_t left, uint32_t right) { return left > right; });
-    offset += size;
-  }
-  std::sort(data.begin(), data.end());
+  constexpr int32_t kNumRuns = 35;
 
-  std::vector<std::unique_ptr<Source>> sources;
-  for (auto& run : runs) {
-    sources.push_back(std::make_unique<Source>(std::move(run)));
-  }
-  TreeOfLosers<Source> tree(std::move(sources));
-  uint64_t usec = 0;
-  {
-    MicrosecondTimer t(&usec);
-    for (auto expected : data) {
-      auto source = tree.next();
-      if (!source) {
-        FAIL() << "Premature end in TreeOfLosers";
-      }
-      auto result = source->current()->value();
-      ASSERT_EQ(result, expected);
-    }
-    ASSERT_FALSE(tree.next());
-  }
-  LOG(INFO) << kNumValues << " values in " << kNumRuns << " streams " << usec
-            << "us";
+  TestData testData = makeTestData(kNumValues, kNumRuns);
+  test<TreeOfLosers<TestingStream>>(testData, true);
+  test<MergeArray<TestingStream>>(testData, true);
 }
+
