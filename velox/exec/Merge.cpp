@@ -25,24 +25,26 @@ namespace facebook::velox::exec {
 Merge::Merge(
     int32_t operatorId,
     DriverCtx* ctx,
-    std::shared_ptr<const RowType> outputType,
+    RowTypePtr outputType,
     const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
         sortingKeys,
     const std::vector<core::SortOrder>& sortingOrders,
     const std::string& planNodeId,
     const std::string& operatorType)
-    : SourceOperator(ctx, outputType, operatorId, planNodeId, operatorType),
-      planNodeId_(planNodeId),
+    : SourceOperator(
+          ctx,
+          std::move(outputType),
+          operatorId,
+          planNodeId,
+          operatorType),
       rowContainer_(std::make_unique<RowContainer>(
           outputType_->children(),
           operatorCtx_->mappedMemory())),
-      candidates_(Comparator(
+      comparator_(Comparator(
           outputType_,
           sortingKeys,
           sortingOrders,
           rowContainer_.get())),
-      extractedCols_(std::dynamic_pointer_cast<RowVector>(
-          BaseVector::create(outputType_, 1, operatorCtx_->pool()))),
       future_(false) {}
 
 BlockingReason Merge::isBlocked(ContinueFuture* future) {
@@ -57,12 +59,56 @@ BlockingReason Merge::isBlocked(ContinueFuture* future) {
 }
 
 BlockingReason Merge::pushSource(ContinueFuture* future, size_t sourceId) {
-  char* row = nullptr;
-  auto reason = sources_[sourceId]->next(future, &row);
-  if (reason == BlockingReason::kNotBlocked && row) {
-    candidates_.emplace(sourceId, row);
+  if (sourceCursors_.size() <= sourceId) {
+    sourceCursors_.resize(sourceId + 1);
   }
-  return reason;
+
+  auto& cursor = sourceCursors_[sourceId];
+  if (cursor.hasNext()) {
+    candidates_.push_back({sourceId, cursor.nextUnchecked()});
+    return BlockingReason::kNotBlocked;
+  }
+
+  if (cursor.atEnd) {
+    return BlockingReason::kNotBlocked;
+  }
+
+  RowVectorPtr data;
+  auto reason = sources_[sourceId]->next(data, future);
+  if (reason != BlockingReason::kNotBlocked) {
+    return reason;
+  }
+
+  if (data) {
+    VELOX_CHECK_LT(0, data->size());
+    cursor.reset(data, rowContainer_.get());
+    candidates_.push_back({sourceId, cursor.nextUnchecked()});
+  } else {
+    cursor.atEnd = true;
+  }
+
+  return BlockingReason::kNotBlocked;
+}
+
+void Merge::SourceCursor::reset(
+    const RowVectorPtr& data,
+    RowContainer* rowContainer) {
+  rows.clear();
+  index = 0;
+
+  SelectivityVector allRows(data->size());
+  rows.reserve(data->size());
+  for (int i = 0; i < data->size(); ++i) {
+    rows.emplace_back(rowContainer->newRow());
+  }
+
+  DecodedVector decoded;
+  for (int col = 0; col < data->childrenSize(); ++col) {
+    decoded.decode(*data->childAt(col), allRows);
+    for (int i = 0; i < data->size(); ++i) {
+      rowContainer->store(decoded, i, rows[i], col);
+    }
+  }
 }
 
 // Returns kNotBlocked if all sources ready and the priority queue has
@@ -103,6 +149,22 @@ bool Merge::isFinished() {
   return blockingReason_ == BlockingReason::kNotBlocked && candidates_.empty();
 }
 
+Merge::SourceRow Merge::nextOutputRow() {
+  size_t maxSource = 0;
+  for (auto i = 1; i < candidates_.size(); i++) {
+    if (comparator_(candidates_[maxSource], candidates_[i])) {
+      maxSource = i;
+    }
+  }
+
+  auto entry = candidates_[maxSource];
+  if (maxSource < candidates_.size() - 1) {
+    candidates_[maxSource] = candidates_.back();
+  }
+  candidates_.pop_back();
+  return entry;
+}
+
 RowVectorPtr Merge::getOutput() {
   blockingReason_ = ensureSourcesReady(&future_);
   if (blockingReason_ != BlockingReason::kNotBlocked) {
@@ -114,11 +176,8 @@ RowVectorPtr Merge::getOutput() {
   rows_.reserve(numRowsPerBatch);
 
   while (!candidates_.empty()) {
-    auto entry = candidates_.top();
-    candidates_.pop();
-
-    rows_.push_back(rowContainer_->addRow(entry.second, extractedCols_));
-
+    auto entry = nextOutputRow();
+    rows_.push_back(entry.second);
     blockingReason_ = pushSource(&future_, entry.first);
     if (blockingReason_ != BlockingReason::kNotBlocked) {
       currentSourcePos_ = entry.first;
@@ -135,7 +194,7 @@ RowVectorPtr Merge::getOutput() {
         BaseVector::create(outputType_, rows_.size(), operatorCtx_->pool()));
 
     rowContainer_->extractRows(rows_, result);
-    rowContainer_->clear();
+    rowContainer_->eraseRows(folly::Range(rows_.data(), rows_.size()));
     rows_.clear();
     return result;
   }
@@ -143,7 +202,7 @@ RowVectorPtr Merge::getOutput() {
 }
 
 Merge::Comparator::Comparator(
-    std::shared_ptr<const RowType> type,
+    const RowTypePtr& type,
     const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
         sortingKeys,
     const std::vector<core::SortOrder>& sortingOrders,
@@ -152,10 +211,16 @@ Merge::Comparator::Comparator(
   auto numKeys = sortingKeys.size();
   for (int i = 0; i < numKeys; ++i) {
     auto channel = exprToChannel(sortingKeys[i].get(), type);
-    VELOX_CHECK(
-        channel != kConstantChannel,
+    VELOX_CHECK_NE(
+        channel,
+        kConstantChannel,
         "Merge doesn't allow constant grouping keys");
-    keyInfo_.emplace_back(channel, sortingOrders[i]);
+    keyInfo_.emplace_back(
+        channel,
+        CompareFlags{
+            sortingOrders[i].isNullsFirst(),
+            sortingOrders[i].isAscending(),
+            false});
   }
 }
 
@@ -178,8 +243,10 @@ LocalMerge::LocalMerge(
 }
 
 BlockingReason LocalMerge::addMergeSources(ContinueFuture* /* future */) {
-  sources_ = operatorCtx_->task()->getLocalMergeSources(
-      operatorCtx_->driverCtx()->splitGroupId, planNodeId());
+  if (sources_.empty()) {
+    sources_ = operatorCtx_->task()->getLocalMergeSources(
+        operatorCtx_->driverCtx()->splitGroupId, planNodeId());
+  }
   return BlockingReason::kNotBlocked;
 }
 
@@ -208,7 +275,7 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
   for (;;) {
     exec::Split split;
     auto reason = operatorCtx_->task()->getSplitOrFuture(
-        operatorCtx_->driverCtx()->splitGroupId, planNodeId_, split, *future);
+        operatorCtx_->driverCtx()->splitGroupId, planNodeId(), split, *future);
     if (reason == BlockingReason::kNotBlocked) {
       if (split.hasConnectorSplit()) {
         auto remoteSplit = std::dynamic_pointer_cast<RemoteConnectorSplit>(
