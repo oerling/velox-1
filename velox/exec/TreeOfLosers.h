@@ -15,17 +15,21 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <vector>
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/base/SimdUtil.h"
+
+#include <folly/Likely.h>
 
 namespace facebook::velox {
 
 // Abstract class defining the interface for a stream of values to be merged by
-// TreeOfLosers.
-class TreeOfLosersSource {
+// TreeOfLosers or MergeArray.
+class MergeStream {
   // True if this has a value. If this returns true, it is valid to
   // call < or next immediately after this. If false, no more
   // methods other than hasData() may be called.
@@ -37,7 +41,7 @@ class TreeOfLosersSource {
 
   // Returns true if the first element of 'this' is less than the first element
   // of 'other'. hasData() must be true of 'this' and 'other'.
-  virtual bool operator<(const TreeOfLosersSource& other) const = 0;
+  virtual bool operator<(const MergeStream& other) const = 0;
 };
 
 // Implements a tree of loserrs algorithm for merging ordered
@@ -46,135 +50,165 @@ class TreeOfLosersSource {
 // the lowest value as first value from the set of Sources. It
 // returns nullptr when all Sources are at end. The order is
 // determined by Source::operator<.
-template <typename Source>
+template <typename Source, typename TIndex = uint16_t>
 class TreeOfLosers {
  public:
-  // A leaf Node owns a Source. Inner Nodes own their children. A
-  // node's 'state_' records whether the node is at end, which child's
-  // value was last returned and whether one or both children are at
-  // end.
-  class Node {
-   public:
-    Node(std::unique_ptr<Source>&& source)
-        : state_(State::kSource), source_(std::move(source)) {
-      static_assert(std::is_base_of<TreeOfLosersSource, Source>::value);
+  TreeOfLosers(std::vector<std::unique_ptr<Source>> sources)
+      : sources_(std::move(sources)) {
+    VELOX_CHECK_LT(sources_.size(), std::numeric_limits<TIndex>::max());
+    int32_t size = 0;
+    int32_t levelSize = 1;
+    int32_t numSources = sources_.size();
+    while (numSources > levelSize) {
+      size += levelSize;
+      levelSize *= 2;
     }
 
-    Node(std::unique_ptr<Node> left, std::unique_ptr<Node>&& right)
-        : state_(State::kInit),
-          left_(std::move(left)),
-          right_(std::move(right)) {}
+    if (numSources == bits::nextPowerOfTwo(numSources)) {
+      firstSource_ = size - levelSize;
+    } else {
+      // Some of the sources are on the last level and some on the level before.
+      // The first source follows the last inner node in the node numbering.
 
-    // Returns the Source with the lowest value of all the sources under 'this'.
-    Source* FOLLY_NULLABLE next() {
-      switch (state_) {
-        case State::kAtEnd:
-          return nullptr;
-        case State::kSource:
-          if (source_->hasData()) {
-            return source_.get();
-          }
-          state_ = State::kAtEnd;
-          return nullptr;
-        case State::kInit:
-          leftValue_ = left_->next();
-          rightValue_ = right_->next();
-          if (!leftValue_) {
-            state_ = rightValue_ ? State::kRightOnly : State::kAtEnd;
-            return rightValue_;
-          } else if (!rightValue_) {
-            state_ = State::kLeftOnly;
-            return leftValue_;
-          }
-          return makeResult();
-        case State::kLeftResult:
-          leftValue_ = left_->next();
-          if (!leftValue_) {
-            state_ = State::kRightOnly;
-            return rightValue_;
-          }
-          return makeResult();
-        case State::kRightResult:
-          rightValue_ = right_->next();
-          if (!rightValue_) {
-            state_ = State::kLeftOnly;
-            return leftValue_;
-          }
-          return makeResult();
-        case State::kLeftOnly:
-          return left_->next();
-        case State::kRightOnly:
-          return right_->next();
-      }
-      VELOX_UNREACHABLE();
+      auto secondLastSize = levelSize / 2;
+      auto overflow = numSources - secondLastSize;
+      auto sourcesOnSecondLast = secondLastSize - overflow;
+      // Suppose 12 sources. The last level has 16 places, the second
+      // last 8. If we fill the second last level we have 8 sources
+      // and 4 left over. These 4 need parents on the second last
+      // level. So, we end up with 4 inner nodes on the second last
+      // level and 8 nodes on the last level. The sources at the left
+      // of the second last level become inner nodes and their sources
+      // move to the level below.
+      firstSource_ = (size - levelSize - secondLastSize) + overflow;
     }
-
-   private:
-    enum class State {
-      kInit,
-      kSource,
-      kAtEnd,
-      kLeftResult,
-      kRightResult,
-      kLeftOnly,
-      kRightOnly
-    };
-
-    // Returns the lesser of the Sources from left and right children
-    // and sets 'state_'.
-    inline Source* FOLLY_NONNULL makeResult() {
-      if (*leftValue_ < *rightValue_) {
-        state_ = State::kLeftResult;
-        return leftValue_;
-      }
-      state_ = State::kRightResult;
-      return rightValue_;
-    }
-
-    State state_;
-    Source* FOLLY_NULLABLE leftValue_{nullptr};
-    Source* FOLLY_NULLABLE rightValue_{nullptr};
-    std::unique_ptr<Node> left_;
-    std::unique_ptr<Node> right_;
-    std::unique_ptr<Source> source_;
-  };
-
-  // Constructs a balanced binary tree where each leaf corresponds to an element
-  // of 'sources'.
-  TreeOfLosers(std::vector<std::unique_ptr<Source>>&& sources) {
-    std::vector<std::unique_ptr<Node>> level(sources.size());
-    for (auto i = 0; i < sources.size(); ++i) {
-      level[i] = std::make_unique<Node>(std::move(sources[i]));
-    }
-    while (level.size() > 1) {
-      std::vector<std::unique_ptr<Node>> nextLevel;
-      for (auto i = 0; i < level.size(); i += 2) {
-        if (i <= level.size() - 2) {
-          nextLevel.push_back(std::make_unique<Node>(
-              std::move(level[i]), std::move(level[i + 1])));
-        } else {
-          nextLevel.push_back(std::move(level[i]));
-        }
-      }
-      level = std::move(nextLevel);
-    }
-    root_ = std::move(level[0]);
+    values_.resize(firstSource_, kEmpty);
   }
 
-  // Returns the Source with the lowest value in the first element and
-  // nullptr if all sources are at end. On a non-first call, first
-  // removes the first value off the source returned on the previous
-  // call.
-  Source* FOLLY_NULLABLE next() {
-    if (lastValue_) {
-      lastValue_->next();
+  Source* next() {
+    if (lastIndex_ == kEmpty) {
+      lastIndex_ = first(0);
+    } else {
+      sources_[lastIndex_]->next();
+      lastIndex_ = propagate(
+          parent(firstSource_ + lastIndex_),
+          sources_[lastIndex_]->hasData() ? lastIndex_ : kEmpty);
     }
-    lastValue_ = root_->next();
-    return lastValue_;
+    return lastIndex_ == kEmpty ? nullptr : sources_[lastIndex_].get();
   }
 
  private:
-  Source* FOLLY_NULLABLE lastValue_{nullptr};
-  std::unique_ptr<Node> root_;
+  static constexpr TIndex kEmpty = std::numeric_limits<TIndex>::max();
+
+  TIndex first(TIndex node) {
+    if (node >= firstSource_) {
+      return sources_[node - firstSource_]->hasData() ? node - firstSource_
+	: kEmpty;
+    }
+    auto left = first(leftChild(node));
+    auto right = first(rightChild(node));
+    if (left == kEmpty) {
+      return right;
+    } else if (right == kEmpty) {
+      return left;
+    } else if (*sources_[left] < *sources_[right]) {
+      values_[node] = right;
+      return left;
+    } else {
+      values_[node] = left;
+      return right;
+    }
+  }
+
+  TIndex propagate(TIndex node, TIndex value) {
+    while (UNLIKELY(values_[node] == kEmpty)) {
+      if (UNLIKELY(node == 0)) {
+        return value;
+      }
+      node = parent(node);
+    }
+    for (;;) {
+      if (value == kEmpty) {
+        value = values_[node];
+        values_[node] = kEmpty;
+      } else if (*sources_[values_[node]] < *sources_[value]) {
+        // The node had the lower value, the value stays here and the previous
+        // value goes up.
+        std::swap(value, values_[node]);
+      } else {
+        // The value is less than the value in the node, No action, the value
+        // goes up.
+        ;
+      }
+      if (UNLIKELY(node == 0)) {
+        return value;
+      }
+      node = parent(node);
+    }
+  }
+
+  static TIndex parent(TIndex node) {
+    return (node - 1) / 2;
+  }
+
+  static TIndex leftChild(TIndex node) {
+    return node * 2 + 1;
+  }
+
+  static TIndex rightChild(TIndex node) {
+    return node * 2 + 2;
+  }
+  std::vector<TIndex> values_;
+  std::vector<std::unique_ptr<Source>> sources_;
+  TIndex lastIndex_ = kEmpty;
+  int32_t firstSource_;
 };
+
+template <typename Source>
+class MergeArray {
+ public:
+  MergeArray(std::vector<std::unique_ptr<Source>> sources) {
+    static_assert(std::is_base_of<MergeStream, Source>::value);
+    for (auto& source : sources_) {
+      if (source->hasData()) {
+        sources_.push_back(std::move(source));
+      }
+    }
+    std::sort(
+        sources_.begin(),
+        sources_.end(),
+        [](const auto& left, const auto& right) { return *left < *right; });
+  }
+  Source* next() {
+    if (!isFirst_) {
+      isFirst_ = false;
+      sources_[0]->next();
+      if (!sources_[0]->hasData()) {
+        sources_.erase(sources_.begin());
+	return sources_.empty() ? nullptr : sources_[0].get();
+      }
+    }
+    auto rawSources = reinterpret_cast<Source**>(sources_.data());
+    auto first = rawSources[0];
+    auto it = std::lower_bound(
+            rawSources + 1,
+            rawSources + sources_.size(),
+            first,
+            [](const Source* left, const Source* right) {
+              return *left < *right;
+            });
+        auto offset = it - rawSources;
+        if (offset > 1) {
+          simd::memcpy(
+              rawSources, rawSources + 1, (offset - 1) * sizeof(Source*));
+          it[-1] = first;
+        }
+        return sources_[0].get();
+  }
+
+private:
+  bool isFirst_{true};
+  std::vector<std::unique_ptr<Source>> sources_;
+};
+
 } // namespace facebook::velox
