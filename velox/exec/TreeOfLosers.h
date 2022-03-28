@@ -80,7 +80,7 @@ class TreeOfLosers {
       // level and 8 nodes on the last level. The sources at the left
       // of the second last level become inner nodes and their sources
       // move to the level below.
-      firstSource_ = (size - levelSize - secondLastSize) + overflow;
+      firstSource_ = (size - secondLastSize) + overflow;
     }
     values_.resize(firstSource_, kEmpty);
   }
@@ -128,7 +128,9 @@ class TreeOfLosers {
       node = parent(node);
     }
     for (;;) {
-      if (value == kEmpty) {
+      if (values_[node] == kEmpty) {
+	// The value goes past the node and the node stays empty.
+      } else if (value == kEmpty) {
         value = values_[node];
         values_[node] = kEmpty;
       } else if (*sources_[values_[node]] < *sources_[value]) {
@@ -169,7 +171,7 @@ class MergeArray {
  public:
   MergeArray(std::vector<std::unique_ptr<Source>> sources) {
     static_assert(std::is_base_of<MergeStream, Source>::value);
-    for (auto& source : sources_) {
+    for (auto& source : sources) {
       if (source->hasData()) {
         sources_.push_back(std::move(source));
       }
@@ -179,31 +181,37 @@ class MergeArray {
         sources_.end(),
         [](const auto& left, const auto& right) { return *left < *right; });
   }
+
   Source* next() {
-    if (!isFirst_) {
+    if (UNLIKELY(isFirst_)) {
       isFirst_ = false;
+      if (sources_.empty()) {
+	return nullptr;
+      }
+      // source has data, else it would not be here after construction.
+      return sources_[0].get();
+    }
       sources_[0]->next();
       if (!sources_[0]->hasData()) {
         sources_.erase(sources_.begin());
 	return sources_.empty() ? nullptr : sources_[0].get();
       }
-    }
-    auto rawSources = reinterpret_cast<Source**>(sources_.data());
-    auto first = rawSources[0];
-    auto it = std::lower_bound(
-            rawSources + 1,
-            rawSources + sources_.size(),
-            first,
-            [](const Source* left, const Source* right) {
-              return *left < *right;
-            });
-        auto offset = it - rawSources;
-        if (offset > 1) {
-          simd::memcpy(
-              rawSources, rawSources + 1, (offset - 1) * sizeof(Source*));
-          it[-1] = first;
-        }
-        return sources_[0].get();
+      auto rawSources = reinterpret_cast<Source**>(sources_.data());
+      auto first = rawSources[0];
+      auto it = std::lower_bound(
+				 rawSources + 1,
+				 rawSources + sources_.size(),
+				 first,
+				 [](const Source* left, const Source* right) {
+				   return *left < *right;
+				 });
+      auto offset = it - rawSources;
+      if (offset > 1) {
+	simd::memcpy(
+		     rawSources, rawSources + 1, (offset - 1) * sizeof(Source*));
+	it[-1] = first;
+      }
+      return sources_[0].get();
   }
 
 private:
