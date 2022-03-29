@@ -19,8 +19,8 @@
 
 namespace facebook::velox::functions::sparksql::test {
 
-  using namespace facebook::velox::test;
-  namespace {
+using namespace facebook::velox::test;
+namespace {
 
 class SplitTest : public SparkFunctionBaseTest {
  protected:
