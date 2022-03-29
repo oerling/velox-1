@@ -34,7 +34,10 @@
 // null.
 
 namespace facebook::velox {
-namespace {
+
+  using namespace facebook::velox::test;
+
+  namespace {
 
 class SimpleFunctionPresetNullsTest : public functions::test::FunctionBaseTest {
   // Helper class to create the test function for type T.

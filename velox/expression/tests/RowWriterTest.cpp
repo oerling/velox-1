@@ -32,7 +32,10 @@
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::exec {
-namespace {
+
+  using namespace facebook::velox::test;
+
+  namespace {
 
 template <typename T>
 struct FuncPrimitivesTest {

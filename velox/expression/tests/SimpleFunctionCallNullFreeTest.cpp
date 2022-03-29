@@ -27,7 +27,10 @@
 #include "velox/vector/SelectivityVector.h"
 
 namespace facebook::velox {
-class SimpleFunctionCallNullFreeTest
+
+  using namespace facebook::velox::test;
+
+  class SimpleFunctionCallNullFreeTest
     : public functions::test::FunctionBaseTest {};
 
 // Test that function with default contains nulls behavior won't get called when

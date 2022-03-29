@@ -22,7 +22,10 @@
 #include "velox/vector/ConstantVector.h"
 
 namespace facebook::velox {
-class TryExprTest : public functions::test::FunctionBaseTest {};
+
+  using namespace facebook::velox::test;
+
+  class TryExprTest : public functions::test::FunctionBaseTest {};
 
 TEST_F(TryExprTest, tryExpr) {
   auto a = makeFlatVector<int32_t>({10, 20, 30, 20, 50, 30});
