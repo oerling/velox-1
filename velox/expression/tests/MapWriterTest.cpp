@@ -27,8 +27,8 @@
 namespace facebook::velox {
 namespace {
 
-  using namespace facebook::velox::test;
-  
+using namespace facebook::velox::test;
+
 // Function that creates a map and covers all the map writer interface.
 template <typename T>
 struct Func {

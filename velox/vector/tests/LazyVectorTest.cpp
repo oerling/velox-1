@@ -67,7 +67,7 @@ TEST_F(LazyVectorTest, lazyInDoubleDictionary) {
   // the top dictionary. The intermediate dictionaries refer to
   // non-loaded items in the base of the LazyVector, including indices
   // past its end. We check that we end up with one level of
-  // dictionary and have no dictionaries that are invalid by 
+  // dictionary and have no dictionaries that are invalid by
   // referring to uninitialized/nonexistent positions.
   static constexpr int32_t kInnerSize = 100;
   static constexpr int32_t kOuterSize = 1000;

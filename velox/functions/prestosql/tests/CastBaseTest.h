@@ -24,8 +24,8 @@
 
 namespace facebook::velox::functions::test {
 
-  using namespace facebook::velox::test;
-  
+using namespace facebook::velox::test;
+
 class CastBaseTest : public FunctionBaseTest {
  protected:
   CastBaseTest() {

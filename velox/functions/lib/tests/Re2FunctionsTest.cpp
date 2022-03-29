@@ -30,10 +30,10 @@
 
 namespace facebook::velox::functions {
 
-using   namespace facebook::velox::test;
+using namespace facebook::velox::test;
 
-  namespace {
-  
+namespace {
+
 std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs) {

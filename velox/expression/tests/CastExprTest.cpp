@@ -28,7 +28,7 @@ using namespace facebook::velox;
 using namespace facebook::velox::test;
 
 namespace {
-  /// Wraps input in a dictionary that reverses the order of rows.
+/// Wraps input in a dictionary that reverses the order of rows.
 class TestingDictionaryFunction : public exec::VectorFunction {
  public:
   bool isDefaultNullBehavior() const override {

@@ -23,7 +23,7 @@
 namespace {
 
 using namespace facebook::velox;
-  using namespace facebook::velox::test;
+using namespace facebook::velox::test;
 
 DecodedVector* decode(DecodedVector& decoder, const BaseVector& vector) {
   SelectivityVector rows(vector.size());

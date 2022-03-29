@@ -33,9 +33,9 @@
 
 namespace facebook::velox::exec {
 
-  using namespace facebook::velox::test;
+using namespace facebook::velox::test;
 
-  namespace {
+namespace {
 
 template <typename T>
 struct FuncPrimitivesTest {

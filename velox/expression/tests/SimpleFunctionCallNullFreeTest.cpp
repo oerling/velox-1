@@ -28,9 +28,9 @@
 
 namespace facebook::velox {
 
-  using namespace facebook::velox::test;
+using namespace facebook::velox::test;
 
-  class SimpleFunctionCallNullFreeTest
+class SimpleFunctionCallNullFreeTest
     : public functions::test::FunctionBaseTest {};
 
 // Test that function with default contains nulls behavior won't get called when
