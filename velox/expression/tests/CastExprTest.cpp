@@ -25,6 +25,7 @@
 #include "velox/vector/TypeAliases.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::test;
 
 namespace {
 

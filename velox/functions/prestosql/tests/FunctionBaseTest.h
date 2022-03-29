@@ -179,20 +179,6 @@ class FunctionBaseTest : public testing::Test,
                                : ReturnType(result->valueAt(0));
   }
 
-  // TODO: Enable ASSERT_EQ for vectors
-  static void assertEqualVectors(
-      const VectorPtr& expected,
-      const VectorPtr& actual,
-      const std::string& additionalContext = "") {
-    ASSERT_EQ(expected->size(), actual->size());
-
-    for (auto i = 0; i < expected->size(); i++) {
-      ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
-          << "at " << i << ": " << expected->toString(i) << " vs. "
-          << actual->toString(i) << additionalContext;
-    }
-  }
-
   // Asserts that `func` throws `VeloxUserError`. Optionally, checks if
   // `expectedErrorMessage` is a substr of the exception message thrown.
   template <typename TFunc>

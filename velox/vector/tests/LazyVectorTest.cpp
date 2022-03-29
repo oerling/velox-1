@@ -25,6 +25,8 @@ class LazyVectorTest : public testing::Test, public VectorTestBase {};
 
 TEST_F(LazyVectorTest, lazyInDictionary) {
   // We have a dictionary over LazyVector. We load for some indices in
+  // the dictionary. We check that the loads on the wrapped lazy
+  // vector are properly translated and deduplicated.
   static constexpr int32_t kInnerSize = 100;
   static constexpr int32_t kOuterSize = 1000;
   auto base = makeFlatVector<int32_t>(kInnerSize, [](auto row) { return row; });
@@ -60,12 +62,12 @@ TEST_F(LazyVectorTest, lazyInDictionary) {
   EXPECT_EQ(loadedRows, (std::vector<vector_size_t>{0, 5}));
 }
 
-TEST_F(LazyVectorTest, lazyInDoubldDictionary) {
+TEST_F(LazyVectorTest, lazyInDoubleDictionary) {
   // We have dictionaries over LazyVector. We load for some indices in
   // the top dictionary. The intermediate dictionaries refer to
   // non-loaded items in the base of the LazyVector, including indices
   // past its end. We check that we end up with one level of
-  // dictionary and no dictionaries that are invalid by through
+  // dictionary and have no dictionaries that are invalid by 
   // referring to uninitialized/nonexistent positions.
   static constexpr int32_t kInnerSize = 100;
   static constexpr int32_t kOuterSize = 1000;
