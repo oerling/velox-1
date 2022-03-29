@@ -27,7 +27,9 @@
 namespace facebook::velox::functions::sparksql::test {
 namespace {
 
-using facebook::velox::functions::test::FunctionBaseTest;
+  using namespace facebook::velox::test;
+
+  using facebook::velox::functions::test::FunctionBaseTest;
 
 class ArraySortTest : public SparkFunctionBaseTest {
  protected:
