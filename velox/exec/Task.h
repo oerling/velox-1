@@ -164,14 +164,6 @@ class Task : public std::enable_shared_from_this<Task> {
   /// == true.
   void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
 
-  // Sets this to a terminal requested state and frees all resources of Drivers
-  // that are not presently on thread. Unblocks all waiting Drivers, e.g.
-  // Drivers waiting for free space in outgoing buffers or new splits. Sets the
-  // state to 'terminalState', which should be kCanceled for cancellation by
-  // users, kFailed for errors and kAborted for termination due to failure in
-  // some other Task.
-  void terminate(TaskState terminalState);
-
   /// Returns true if state is 'running'.
   bool isRunning() const;
 
@@ -407,8 +399,17 @@ class Task : public std::enable_shared_from_this<Task> {
   ContinueFuture requestPauseLocked(bool pause);
 
   // Requests activity of 'this' to stop. The returned future will be
-  // realized when the last thread stops running for 'this'.
-  ContinueFuture requestTerminate();
+  // realized when the last thread stops running for 'this'. This is used to
+  // mark cancellation by the user.
+  ContinueFuture requestCancel() {
+    return terminate(kCanceled);
+  }
+
+  // Like requestCancel but sets end state to kAborted. This is for stopping
+  // Tasks due to failures of other parts of the query.
+  ContinueFuture requestAbort() {
+    return terminate(kAborted);
+  }
 
   void requestYield() {
     std::lock_guard<std::mutex> l(mutex_);
@@ -497,6 +498,21 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Checks that specified plan node ID refers to a source plan node. Throws if
   /// that's not the case.
   void checkPlanNodeIdForSplit(const core::PlanNodeId& id) const;
+
+  // Sets this to a terminal requested state and frees all resources
+  // of Drivers that are not presently on thread. Unblocks all waiting
+  // Drivers, e.g.  Drivers waiting for free space in outgoing buffers
+  // or new splits. Sets the state to 'terminalState', which should be
+  // kCanceled for cancellation by users, kFailed for errors and
+  // kAborted for termination due to failure in some other Task. The
+  // returned future is realized when all threds running for 'this'
+  // have finished.
+  ContinueFuture terminate(TaskState terminalState);
+
+  // Returns a future that is realized when there are no more threads
+  // executing for 'this'. 'comment' is used as a debugging label on
+  // the promise/future pair.
+  ContinueFuture makeFinishFutureLocked(const char* comment);
 
   const std::string taskId_;
   core::PlanFragment planFragment_;

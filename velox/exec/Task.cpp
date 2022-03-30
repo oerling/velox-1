@@ -904,7 +904,7 @@ static void movePromisesOut(
   from.clear();
 }
 
-void Task::terminate(TaskState terminalState) {
+ContinueFuture Task::terminate(TaskState terminalState) {
   std::vector<std::shared_ptr<Driver>> offThreadDrivers;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -912,9 +912,17 @@ void Task::terminate(TaskState terminalState) {
       taskStats_.executionEndTimeMs = getCurrentTimeMs();
     }
     if (not isRunningLocked()) {
-      return;
+      return makeFinishFutureLocked("Task::terminate");
     }
     state_ = terminalState;
+    if (state_ == TaskState::kCanceled || state_ == TaskState::kAborted) {
+      try {
+	VELOX_FAIL(state_ == TaskState::kCanceled ? "Cancelled" : "Aborted for external error");
+      } catch (const std::exception& e) {
+	exception_ = std::current_exception();
+      }
+    }
+
     // Drivers that are on thread will see this at latest when they go off
     // thread.
     terminateRequested_ = true;
@@ -979,6 +987,19 @@ void Task::terminate(TaskState terminalState) {
   for (auto& bridge : oldBridges) {
     bridge->cancel();
   }
+
+  std::lock_guard<std::mutex> l(mutex_); 
+  return makeFinishFutureLocked("Task::terminate");
+}
+  ContinueFuture Task::makeFinishFutureLocked(const char* comment) {
+  auto [promise, future] = makeVeloxPromiseContract<bool>(comment);
+
+    if (numThreads_ == 0) {
+    promise.setValue(true);
+    return std::move(future);
+  }
+  pausePromises_.push_back(std::move(promise));
+  return std::move(future);
 }
 
 void Task::addOperatorStats(OperatorStats& stats) {
@@ -1348,27 +1369,6 @@ StopReason Task::shouldStopLocked() {
 
 ContinueFuture Task::requestPauseLocked(bool pause) {
   pauseRequested_ = pause;
-
-  auto [promise, future] = makeVeloxPromiseContract<bool>("Task::requestPause");
-  if (numThreads_ == 0) {
-    promise.setValue(true);
-    return std::move(future);
-  }
-  pausePromises_.push_back(std::move(promise));
-  return std::move(future);
+  return makeFinishFutureLocked("Task::requestPause");
 }
-
-ContinueFuture Task::requestTerminate() {
-  std::lock_guard<std::mutex> l(mutex_);
-  terminateRequested_ = true;
-
-  auto [promise, future] = makeVeloxPromiseContract<bool>("Task::requestPause");
-  if (numThreads_ == 0) {
-    promise.setValue(true);
-    return std::move(future);
-  }
-  pausePromises_.push_back(std::move(promise));
-  return std::move(future);
-}
-
 } // namespace facebook::velox::exec
