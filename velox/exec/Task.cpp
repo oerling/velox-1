@@ -1358,4 +1358,18 @@ ContinueFuture Task::requestPauseLocked(bool pause) {
   pausePromises_.push_back(std::move(promise));
   return std::move(future);
 }
+
+  ContinueFuture Task::requestTerminate() {
+  std::lock_guard<std::mutex> l(mutex_);
+  terminateRequested_ = true;
+
+  auto [promise, future] = makeVeloxPromiseContract<bool>("Task::requestPause");
+  if (numThreads_ == 0) {
+    promise.setValue(true);
+    return std::move(future);
+  }
+  pausePromises_.push_back(std::move(promise));
+  return std::move(future);
+}
+
 } // namespace facebook::velox::exec

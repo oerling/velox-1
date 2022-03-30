@@ -406,11 +406,7 @@ class Task : public std::enable_shared_from_this<Task> {
 
   ContinueFuture requestPauseLocked(bool pause);
 
-  void requestTerminate() {
-    std::lock_guard<std::mutex> l(mutex_);
-    terminateRequested_ = true;
-  }
-
+  ContinueFuture requestTerminate();
   void requestYield() {
     std::lock_guard<std::mutex> l(mutex_);
     toYield_ = numThreads_;

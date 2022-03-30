@@ -185,7 +185,9 @@ class DriverTest : public OperatorTestBase {
           LOG(INFO) << "Task::toString() while probably blocked: "
                     << tasks_[0]->toString();
         } else if (operation == ResultOperation::kCancel) {
-          cursor->task()->requestTerminate();
+          auto& executor = folly::QueuedImmediateExecutor::instance();
+          auto future = cursor->task()->requestTerminate();
+          future.wait();
         } else if (operation == ResultOperation::kTerminate) {
           cursor->task()->terminate(TaskState::kAborted);
         } else if (operation == ResultOperation::kYield) {
