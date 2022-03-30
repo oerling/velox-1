@@ -1358,7 +1358,7 @@ ContinueFuture Task::requestPauseLocked(bool pause) {
   return std::move(future);
 }
 
-  ContinueFuture Task::requestTerminate() {
+ContinueFuture Task::requestTerminate() {
   std::lock_guard<std::mutex> l(mutex_);
   terminateRequested_ = true;
 
