@@ -917,9 +917,11 @@ ContinueFuture Task::terminate(TaskState terminalState) {
     state_ = terminalState;
     if (state_ == TaskState::kCanceled || state_ == TaskState::kAborted) {
       try {
-	VELOX_FAIL(state_ == TaskState::kCanceled ? "Cancelled" : "Aborted for external error");
+        VELOX_FAIL(
+            state_ == TaskState::kCanceled ? "Cancelled"
+                                           : "Aborted for external error");
       } catch (const std::exception& e) {
-	exception_ = std::current_exception();
+        exception_ = std::current_exception();
       }
     }
 
@@ -988,13 +990,13 @@ ContinueFuture Task::terminate(TaskState terminalState) {
     bridge->cancel();
   }
 
-  std::lock_guard<std::mutex> l(mutex_); 
+  std::lock_guard<std::mutex> l(mutex_);
   return makeFinishFutureLocked("Task::terminate");
 }
-  ContinueFuture Task::makeFinishFutureLocked(const char* comment) {
+ContinueFuture Task::makeFinishFutureLocked(const char* comment) {
   auto [promise, future] = makeVeloxPromiseContract<bool>(comment);
 
-    if (numThreads_ == 0) {
+  if (numThreads_ == 0) {
     promise.setValue(true);
     return std::move(future);
   }
