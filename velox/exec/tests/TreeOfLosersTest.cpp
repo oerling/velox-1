@@ -108,5 +108,6 @@ TEST_F(TreeOfLosersTest, merge) {
     }
     ASSERT_FALSE(tree.next(compare).has_value());
   }
-  std::cout << kNumValues << " values in " << kNumRuns << " streams "  << usec << "us";
+  std::cout << kNumValues << " values in " << kNumRuns << " streams " << usec
+            << "us";
 }
