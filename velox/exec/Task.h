@@ -406,7 +406,10 @@ class Task : public std::enable_shared_from_this<Task> {
 
   ContinueFuture requestPauseLocked(bool pause);
 
+  // Requests activity of 'this' to stop. The returned future will be
+  // realized when the last thread stops running for 'this'.
   ContinueFuture requestTerminate();
+
   void requestYield() {
     std::lock_guard<std::mutex> l(mutex_);
     toYield_ = numThreads_;

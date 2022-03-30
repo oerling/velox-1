@@ -919,9 +919,8 @@ void Task::terminate(TaskState terminalState) {
     // thread.
     terminateRequested_ = true;
     // The drivers that are on thread will go off thread in time and
-    // finishFuture() allows syncing with this. 'numRunningDrivers_'
-    // is cleared here so that this is 0 right after terminate as
-    // tests expect.
+    // 'numRunningDrivers_' is cleared here so that this is 0 right
+    // after terminate as tests expect.
     numRunningDrivers_ = 0;
     stateChangedLocked();
     for (auto& driver : drivers_) {
