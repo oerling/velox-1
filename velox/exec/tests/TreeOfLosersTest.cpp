@@ -15,6 +15,7 @@
  */
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/time/Timer.h"
 
 #include <folly/Random.h>
 
@@ -35,6 +36,7 @@ class TreeOfLosersTest : public testing::Test {
 
 struct Value {
   uint32_t value;
+  uint64_t payload = 11;
 
   bool operator<(const Value& other) {
     return value < other.value;
@@ -68,8 +70,8 @@ int compare(Value left, Value right) {
 }
 
 TEST_F(TreeOfLosersTest, merge) {
-  constexpr int32_t kNumValues = 1000000;
-  constexpr int32_t kNumRuns = 17;
+  constexpr int32_t kNumValues = 100000000;
+  constexpr int32_t kNumRuns = 31;
   std::vector<uint32_t> data;
   for (auto i = 0; i < kNumValues; ++i) {
     data.push_back(folly::Random::rand32(rng_));
@@ -97,9 +99,14 @@ TEST_F(TreeOfLosersTest, merge) {
     sources.push_back(std::make_unique<Source>(std::move(run)));
   }
   TreeOfLosers<Value, Source> tree(std::move(sources));
-  for (auto expected : data) {
-    auto result = tree.next(compare);
-    ASSERT_EQ(result.value().value, expected);
+  uint64_t usec = 0;
+  {
+    MicrosecondTimer t(&usec);
+    for (auto expected : data) {
+      auto result = tree.next(compare);
+      ASSERT_EQ(result.value().value, expected);
+    }
+    ASSERT_FALSE(tree.next(compare).has_value());
   }
-  ASSERT_FALSE(tree.next(compare).has_value());
+  std::cout << kNumValues << " values in " << kNumRuns << " streams "  << usec << "us";
 }
