@@ -11,28 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-add_executable(
-  velox_common_test
-  AsyncSourceTest.cpp
-  ExceptionTest.cpp
-  RangeTest.cpp
-  BitUtilTest.cpp
-  BloomFilterTest.cpp
-  CoalesceIoTest.cpp
-  RawVectorTest.cpp
-  StatsReporterTest.cpp
-  SimdUtilTest.cpp
-  SuccinctPrinterTest.cpp
-  TraceContextTest.cpp)
-
-add_test(velox_common_test velox_common_test)
-
-target_link_libraries(
-  velox_common_test
-  velox_common_base
-  velox_memory
-  ${gflags_LIBRARIES}
-  glog::glog
-  ${GTEST_BOTH_LIBRARIES}
-  pthread)
+add_subdirectory(googletest)

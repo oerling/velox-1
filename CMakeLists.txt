@@ -216,12 +216,8 @@ include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 # Range-v3 will be enable when the codegen code actually lands keeping it here
 # for reference. find_package(range-v3)
 
-find_package(GTest REQUIRED)
-find_library(GMock gmock)
-
 find_package(gflags COMPONENTS shared)
 find_package(glog REQUIRED)
-include_directories(SYSTEM ${GTEST_INCLUDE_DIRS})
 
 find_library(FMT fmt)
 
@@ -298,5 +294,11 @@ include_directories(.)
 # TODO: Include all other installation files. For now just making sure this
 # generates an installable makefile.
 install(FILES velox/type/Type.h DESTINATION "include/velox")
+
+add_subdirectory(third_party)
+
+# Include third party header files
+include_directories(third_party/googletest/googletest/include)
+include_directories(third_party/googletest/googlemock/include)
 
 add_subdirectory(velox)

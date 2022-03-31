@@ -12,4 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(vector_operation_test_utils INTERFACE)
+add_executable(velox_process_test TraceContextTest.cpp)
+
+add_test(velox_process_test velox_process_test)
+
+target_link_libraries(
+  velox_process_test
+  velox_process
+  ${gflags_LIBRARIES}
+  glog::glog
+  gtest
+  gtest_main
+  pthread)

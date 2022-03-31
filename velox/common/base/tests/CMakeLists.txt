@@ -11,9 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_executable(velox_parse_utils_test VariantToVectorTest.cpp)
 
-add_test(velox_parse_utils_test velox_parse_utils_test)
+add_executable(
+  velox_base_test
+  AsyncSourceTest.cpp
+  BitUtilTest.cpp
+  BloomFilterTest.cpp
+  CoalesceIoTest.cpp
+  ExceptionTest.cpp
+  RangeTest.cpp
+  RawVectorTest.cpp
+  SimdUtilTest.cpp
+  StatsReporterTest.cpp
+  SuccinctPrinterTest.cpp)
 
-target_link_libraries(velox_parse_utils_test velox_parse_utils velox_type
-                      velox_vector gtest gtest_main)
+add_test(velox_base_test velox_base_test)
+
+target_link_libraries(
+  velox_base_test
+  velox_common_base
+  ${gflags_LIBRARIES}
+  glog::glog
+  gtest
+  gtest_main
+  pthread)
