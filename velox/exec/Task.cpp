@@ -985,7 +985,7 @@ ContinueFuture Task::makeFinishFutureLocked(const char* FOLLY_NONNULL comment) {
     promise.setValue(true);
     return std::move(future);
   }
-  pausePromises_.push_back(std::move(promise));
+  threadFinishPromises_.push_back(std::move(promise));
   return std::move(future);
 }
 
@@ -1334,10 +1334,10 @@ StopReason Task::shouldStop() {
 }
 
 void Task::finished() {
-  for (auto& promise : pausePromises_) {
+  for (auto& promise : threadFinishPromises_) {
     promise.setValue(true);
   }
-  pausePromises_.clear();
+  threadFinishPromises_.clear();
 }
 
 StopReason Task::shouldStopLocked() {
