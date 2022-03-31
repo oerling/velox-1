@@ -508,7 +508,7 @@ class Task : public std::enable_shared_from_this<Task> {
   // Returns a future that is realized when there are no more threads
   // executing for 'this'. 'comment' is used as a debugging label on
   // the promise/future pair.
-  ContinueFuture makeFinishFutureLocked(const char* comment);
+  ContinueFuture makeFinishFutureLocked(const char* FOLLY_NONNULL comment);
 
   const std::string taskId_;
   core::PlanFragment planFragment_;
