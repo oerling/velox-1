@@ -371,10 +371,12 @@ class Task : public std::enable_shared_from_this<Task> {
   StopReason enterForTerminateLocked(ThreadState& state);
 
   // Marks that the Driver is not on thread. If no more Drivers in the
-  // CancelPool are on thread, this realizes requestPause futures. The
-  // Driver may go off thread because of hasBlockingFuture or pause
-  // requested or terminate requested. The return value indicates the
-  // reason. If kTerminate is returned, the isTerminated flag is set.
+  // CancelPool are on thread, this realizes
+  // threadFinishFutures_. These allow syncing with pause or
+  // termination. The Driver may go off thread because of
+  // hasBlockingFuture or pause requested or terminate requested. The
+  // return value indicates the reason. If kTerminate is returned, the
+  // isTerminated flag is set.
   StopReason leave(ThreadState& state);
 
   // Enters a suspended section where the caller stays on thread but
@@ -392,6 +394,9 @@ class Task : public std::enable_shared_from_this<Task> {
   // are to yield.
   StopReason shouldStop();
 
+  // Requests the Task to stop activity.  The returned future is
+  // realized when all running threads have stopped running. Activity
+  // can be resumed with resume() after the future is realized.
   ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
     return requestPauseLocked(pause);
@@ -501,7 +506,7 @@ class Task : public std::enable_shared_from_this<Task> {
   // or new splits. Sets the state to 'terminalState', which should be
   // kCanceled for cancellation by users, kFailed for errors and
   // kAborted for termination due to failure in some other Task. The
-  // returned future is realized when all threds running for 'this'
+  // returned future is realized when all threads running for 'this'
   // have finished.
   ContinueFuture terminate(TaskState terminalState);
 
@@ -616,7 +621,10 @@ class Task : public std::enable_shared_from_this<Task> {
   std::atomic<bool> terminateRequested_{false};
   std::atomic<int32_t> toYield_ = 0;
   int32_t numThreads_ = 0;
-  std::vector<VeloxPromise<bool>> pausePromises_;
+  // Promises for the futures returned to callers of requestPause() or
+  // terminate(). They are fulfilled when the last thread stops
+  // running for 'this'.
+  std::vector<VeloxPromise<bool>> threadFinishPromises_;
 };
 
 } // namespace facebook::velox::exec
