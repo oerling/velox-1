@@ -381,7 +381,7 @@ TEST_F(DriverTest, terminate) {
     // Not necessarily an exception.
   } catch (const std::exception& e) {
     // If this is an exception, it will be a cancellation.
-    EXPECT_EQ("Cancelled", std::string(e.what()));
+    EXPECT_TRUE(strstr(e.what(), "Aborted") != nullptr) << e.what();
   }
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
