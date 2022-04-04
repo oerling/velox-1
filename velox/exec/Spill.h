@@ -182,7 +182,7 @@ class SpillFile : public SpillStream {
   // Sets 'result' to refer to the next row of content of 'this'.
   void read(RowVector& result);
 
-private:
+ private:
   void nextBatch() override;
 
   const std::string path_;
@@ -207,10 +207,11 @@ struct HashBitRange {
 class SpillFileList {
  public:
   // Constructs a set of spill files. 'type' is a RowType describing the
-  // content. 'numSortingKeys' is the number of leading columns on which the data is sorted. 'path' is a file path prefix. 'targetBatchSize is the target size
-  // of a single RowVector in rows. 'targetFileSize' is the target byte size of
-  // a single file in the file set. 'pool' and 'mappedMemory' are used for
-  // buffering and constructing the result data read from 'this'.
+  // content. 'numSortingKeys' is the number of leading columns on which the
+  // data is sorted. 'path' is a file path prefix. 'targetBatchSize is the
+  // target size of a single RowVector in rows. 'targetFileSize' is the target
+  // byte size of a single file in the file set. 'pool' and 'mappedMemory' are
+  // used for buffering and constructing the result data read from 'this'.
   //
   // When writing sorted spill runs, the caller is responsible for buffering and
   // sorting the data. write is called multiple times, followed by flush().
@@ -223,7 +224,7 @@ class SpillFileList {
       memory::MemoryPool& pool,
       memory::MappedMemory& mappedMemory)
       : type_(type),
-	numSortingKeys_(numSortingKeys),
+        numSortingKeys_(numSortingKeys),
         path_(path),
         targetBatchSize_(targetBatchSize),
         targetFileSize_(targetFileSize),

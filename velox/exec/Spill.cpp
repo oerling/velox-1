@@ -79,20 +79,16 @@ void SpillFile::startRead() {
   nextBatch();
 }
 
-
-  void SpillFile::nextBatch() {
-    index_ = 0;
-    if (input_->atEnd()) {
-      size_ = 0;
-      return;
-    }
-    VectorStreamGroup::read(input_.get(), &pool_, type_, &rowVector_);
-    size_ = rowVector_->size();
+void SpillFile::nextBatch() {
+  index_ = 0;
+  if (input_->atEnd()) {
+    size_ = 0;
+    return;
   }
+  VectorStreamGroup::read(input_.get(), &pool_, type_, &rowVector_);
+  size_ = rowVector_->size();
+}
 
-
-
-  
 WriteFile& SpillFileList::currentOutput() {
   if (files_.empty() || !files_.back()->isWritable() ||
       files_.back()->size() > targetFileSize_ * 1.5) {
@@ -100,7 +96,10 @@ WriteFile& SpillFileList::currentOutput() {
       files_.back()->finishWrite();
     }
     files_.push_back(std::make_unique<SpillFile>(
-						 type_, numSortingKeys_, fmt::format("{}-{}", path_, files_.size()), pool_));
+        type_,
+        numSortingKeys_,
+        fmt::format("{}-{}", path_, files_.size()),
+        pool_));
   }
   return files_.back()->output();
 }
@@ -155,7 +154,7 @@ void SpillState::appendToPartition(
        ++newPartition) {
     files_.push_back(std::make_unique<SpillFileList>(
         std::static_pointer_cast<const RowType>(rows->type()),
-	numSortingKeys_,
+        numSortingKeys_,
         fmt::format("{}-{}", path_, newPartition),
         1 << 20,
         targetFileSize_,
@@ -181,8 +180,7 @@ std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
   if (extra) {
     result.push_back(std::move(extra));
   }
-  return std::make_unique<TreeOfLosers<SpillStream>>(
-      std::move(result));
+  return std::make_unique<TreeOfLosers<SpillStream>>(std::move(result));
 }
 
 } // namespace facebook::velox::exec

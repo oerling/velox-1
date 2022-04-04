@@ -560,7 +560,7 @@ class RowContainerSpillStream : public SpillStream {
       memory::MemoryPool& pool,
       std::vector<char*>&& rows,
       RowContainer& container)
-    : SpillStream(std::move(type), numSortingKeys, pool),
+      : SpillStream(std::move(type), numSortingKeys, pool),
         rows_(std::move(rows)),
         container_(container) {
     nextBatch();
@@ -607,7 +607,11 @@ std::unique_ptr<SpillStream> RowContainer::spillStreamOverRows(
   VELOX_CHECK(spillFinalized_);
   VELOX_CHECK_LT(partition, spillRuns_.size());
   return std::make_unique<RowContainerSpillStream>(
-						   rowType(), keyTypes_.size(), pool, std::move(spillRuns_[partition].rows), *this);
+      rowType(),
+      keyTypes_.size(),
+      pool,
+      std::move(spillRuns_[partition].rows),
+      *this);
 }
 
 void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
@@ -620,8 +624,7 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
     uint64_t bytes = 0;
     int32_t i = 0;
     int32_t limit = std::min<uint64_t>(128, run.rows.size());
-    for (; i < limit;
-	 ++i) {
+    for (; i < limit; ++i) {
       bytes += rowSize(run.rows[i]);
       if (bytes > spill.targetBatchSize()) {
         break;

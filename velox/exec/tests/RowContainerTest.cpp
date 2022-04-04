@@ -27,7 +27,6 @@
 #include "velox/vector/tests/VectorMaker.h"
 #include "velox/vector/tests/VectorTestBase.h"
 
-
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
@@ -576,7 +575,13 @@ TEST_F(RowContainerTest, spill) {
   auto tempDirectory = exec::test::TempDirectoryPath::create();
   // We spill 'data' in 4 sorted partitions.
   auto spillState = std::make_unique<SpillState>(
-						 tempDirectory->path, HashBitRange{0, 2}, keys.size(), 2000000, 1000, *pool_, *mappedMemory_);
+      tempDirectory->path,
+      HashBitRange{0, 2},
+      keys.size(),
+      2000000,
+      1000,
+      *pool_,
+      *mappedMemory_);
 
   // We have a bit range of two bits , so up to 4 spilled partitions.
   EXPECT_EQ(4, spillState->maxPartitions());
@@ -606,20 +611,19 @@ TEST_F(RowContainerTest, spill) {
     // We make a merge reader that merges the spill files and the rows that are
     // still in the RowContainer.
     auto merge = spillState->startMerge(
-					partitionIndex, data->spillStreamOverRows(partitionIndex, *pool_));
+        partitionIndex, data->spillStreamOverRows(partitionIndex, *pool_));
 
     // We read the spilled data back and check that it matches the sorted order
     // of the partition.
     auto& indices = partitions[partitionIndex];
     for (auto i = 0; i < indices.size(); ++i) {
-      auto stream =
-          merge->next();
+      auto stream = merge->next();
       if (!stream) {
-	FAIL() << "Stream ends after " << i << " entries";
-	break;
+        FAIL() << "Stream ends after " << i << " entries";
+        break;
       }
-      EXPECT_TRUE(batch->equalValueAt(&stream->current(), 
-				       indices[i], stream->currentIndex()));
+      EXPECT_TRUE(batch->equalValueAt(
+          &stream->current(), indices[i], stream->currentIndex()));
       stream->pop();
     }
   }
