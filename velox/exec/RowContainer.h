@@ -808,7 +808,6 @@ class RowContainer {
   // runs to 'pendingSpillPartitions_'.
   bool fillSpillRuns(
       SpillState& spill,
-      Eraser eraser,
       RowContainerIterator& iterator,
       uint64_t targetSize,
       std::vector<char*>* rowsFromNonSpillingPartitions = nullptr);

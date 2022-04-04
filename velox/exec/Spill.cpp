@@ -31,7 +31,7 @@ void SpillInput::next(bool throwIfPastEnd) {
 void SpillInput::seekp(std::streampos position) {
   auto bufferOffset = offset_ - current_->size;
   if (bufferOffset <= position && bufferOffset + current_->size < position) {
-    current_->position = position - bufferOffset;
+    current_->position = std::streamoff(position) - bufferOffset;
   } else {
     // The seek target is not in the buffer.
     offset_ = position;

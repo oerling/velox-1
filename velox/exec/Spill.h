@@ -235,7 +235,7 @@ class SpillFileList {
   // must produce a view where the rows are sorted if sorting is desired.
   // Consecutive calls must have sorted data so that the first row of the
   // next call is not less than the last row of the previous call.
-  void write(const RowVectorPtr& rows, const folly::Range<IndexRange*> indices);
+  void write(const RowVectorPtr& rows, const folly::Range<IndexRange*>& indices);
 
   // Closes the current output file if any. Subsequent calls to write will start
   // a new one.
@@ -296,7 +296,7 @@ class SpillState {
   // Returns which spill partition 'hash' falls into. Returns -1 if the
   // partition of 'hash' has not been started.
   int32_t partition(uint64_t hash) const {
-    auto field = (hash >> hashBits_.begin) & fieldMask_;
+    int32_t field = (hash >> hashBits_.begin) & fieldMask_;
     return field < numPartitions_ ? field : -1;
   }
 

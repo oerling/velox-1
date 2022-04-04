@@ -519,7 +519,7 @@ TEST_F(RowContainerTest, spill) {
                    ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
       }),
       kNumRows,
-      [](RowVectorPtr rows) {});
+      [](RowVectorPtr /*rows&*/) {});
   const auto& types = batch->type()->as<TypeKind::ROW>().children();
   std::vector<TypePtr> keys;
   keys.insert(keys.begin(), types.begin(), types.begin() + 6);

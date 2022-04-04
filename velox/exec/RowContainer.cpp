@@ -242,7 +242,7 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
             }
           }
         }
-      }
+      } break;
       default:;
     }
   }
@@ -580,6 +580,7 @@ class RowContainerSpillStream : public SpillStream {
     size_t bytes = 0;
     vector_size_t numRows = 0;
     auto limit = std::min<size_t>(rows_.size() - nextBatchIndex_, kMaxRows);
+    assert(!rows_.empty());
     for (; numRows < limit; ++numRows) {
       bytes += container_.rowSize(rows_[nextBatchIndex_ + numRows]);
       if (bytes > kMaxBytes) {
@@ -632,7 +633,6 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
     }
     folly::Range<char**> spilled(run.rows.data(), i);
     extractSpill(spilled, spill.pool(), &spillVector_);
-    IndexRange range{0, spillVector_->size()};
     spill.appendToPartition(partition, spillVector_);
     eraser(spilled);
     run.rows.erase(run.rows.begin(), run.rows.begin() + i);
@@ -671,7 +671,6 @@ void RowContainer::spill(
     if (doneFullSweep) {
       return;
     }
-    auto targetSize = spill.targetFileSize();
     for (auto newPartition = spillRuns_.size();
          newPartition < spill.numPartitions();
          ++newPartition) {
@@ -679,7 +678,7 @@ void RowContainer::spill(
     }
     clearSpillRuns();
     iterator.reset();
-    if (fillSpillRuns(spill, eraser, iterator, spill.targetFileSize())) {
+    if (fillSpillRuns(spill, iterator, spill.targetFileSize())) {
       // Arrived at end of the container. Add more spilled ranges if any left.
       if (spill.numPartitions() < spill.maxPartitions()) {
         spill.setNumPartitions(spill.numPartitions() + 1);
@@ -699,8 +698,7 @@ std::vector<char*> RowContainer::finishSpill(SpillState& spill) {
   RowContainerIterator iterator;
   iterator.reset();
   std::vector<char*> rowsFromNonSpillingPartitions;
-  fillSpillRuns(
-      spill, nullptr, iterator, kUnlimited, &rowsFromNonSpillingPartitions);
+  fillSpillRuns(spill, iterator, kUnlimited, &rowsFromNonSpillingPartitions);
   return rowsFromNonSpillingPartitions;
 }
 
@@ -712,7 +710,6 @@ void RowContainer::clearSpillRuns() {
 
 bool RowContainer::fillSpillRuns(
     SpillState& spill,
-    Eraser eraser,
     RowContainerIterator& iterator,
     uint64_t targetSize,
     std::vector<char*>* FOLLY_NULLABLE rowsFromNonSpillingPartitions) {
