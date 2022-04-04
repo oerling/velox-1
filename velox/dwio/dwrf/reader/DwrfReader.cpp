@@ -50,6 +50,7 @@ void DwrfRowReader::checkSkipStrides(
 
   if (currentRowInStripe == 0 || recomputeStridesToSkip_) {
     stridesToSkip_ = columnReader_->filterRowGroups(strideSize, context);
+    stripeStridesToSkip_[currentStripe] = stridesToSkip_;
     recomputeStridesToSkip_ = false;
   }
 

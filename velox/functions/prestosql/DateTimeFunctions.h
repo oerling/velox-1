@@ -39,9 +39,7 @@ struct ToUnixtimeFunction {
       double& result,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     const auto milliseconds = *timestampWithTimezone.template at<0>();
-    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
-    timestamp.toGMT(*timestampWithTimezone.template at<1>());
-    result = toUnixtime(timestamp);
+    result = (double)milliseconds / kMillisecondsInSecond;
     return true;
   }
 };
@@ -274,6 +272,15 @@ struct HourFunction : public InitSessionTimezone<T> {
   FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
     result = getDateTime(date).tm_hour;
     return true;
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+    const auto milliseconds = *timestampWithTimezone.template at<0>();
+    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
+    timestamp.toTimezone(*timestampWithTimezone.template at<1>());
+    result = getDateTime(timestamp, nullptr).tm_hour;
   }
 };
 
@@ -742,6 +749,7 @@ struct ParseDateTimeFunction {
     // no session timezone, fallback to 0 (GMT).
     int16_t timezoneId = jodaResult.timezoneId != -1 ? jodaResult.timezoneId
                                                      : sessionTzID_.value_or(0);
+    jodaResult.timestamp.toGMT(timezoneId);
     result = std::make_tuple(jodaResult.timestamp.toMillis(), timezoneId);
     return true;
   }

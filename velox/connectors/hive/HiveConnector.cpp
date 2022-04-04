@@ -40,6 +40,41 @@ static const char* kPath = "$path";
 static const char* kBucket = "$bucket";
 } // namespace
 
+HiveTableHandle::HiveTableHandle(
+    const std::string& tableName,
+    bool filterPushdownEnabled,
+    SubfieldFilters subfieldFilters,
+    const std::shared_ptr<const core::ITypedExpr>& remainingFilter)
+    : tableName_(tableName),
+      filterPushdownEnabled_(filterPushdownEnabled),
+      subfieldFilters_(std::move(subfieldFilters)),
+      remainingFilter_(remainingFilter) {}
+
+HiveTableHandle::~HiveTableHandle() {}
+
+std::string HiveTableHandle::toString() const {
+  std::stringstream out;
+  out << "Table: " << tableName_;
+  if (!subfieldFilters_.empty()) {
+    // Sort filters by subfield for deterministic output.
+    std::map<std::string, common::Filter*> orderedFilters;
+    for (const auto& [field, filter] : subfieldFilters_) {
+      orderedFilters[field.toString()] = filter.get();
+    }
+    out << ", Filters: [";
+    bool notFirstFilter = false;
+    for (const auto& [field, filter] : orderedFilters) {
+      if (notFirstFilter) {
+        out << ", ";
+      }
+      out << "(" << field << ", " << filter->toString() << ")";
+      notFirstFilter = true;
+    }
+    out << "]";
+  }
+  return out.str();
+}
+
 HiveDataSink::HiveDataSink(
     std::shared_ptr<const RowType> inputType,
     const std::string& filePath,

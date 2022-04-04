@@ -15,6 +15,7 @@
  */
 
 #include <folly/init/Init.h>
+#include "velox/common/base/tests/Fs.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -137,8 +138,8 @@ std::unordered_map<std::string, std::string>
         std::make_pair(
             "lineitem",
             R"(COPY (SELECT l_orderkey, l_partkey, l_suppkey, l_linenumber,
-        l_quantity::DOUBLE as l_quantity, l_extendedprice::DOUBLE as l_extendedprice, l_discount::DOUBLE as l_discount,
-        l_tax::DOUBLE as l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate,
+        l_quantity::DOUBLE as quantity, l_extendedprice::DOUBLE as extendedprice, l_discount::DOUBLE as discount,
+        l_tax::DOUBLE as tax, l_returnflag, l_linestatus, l_shipdate AS shipdate, l_commitdate, l_receiptdate,
         l_shipinstruct, l_shipmode, l_comment FROM {}) TO '{}' (FORMAT 'parquet', ROW_GROUP_SIZE {}))"),
         std::make_pair(
             "orders",

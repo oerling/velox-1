@@ -257,6 +257,8 @@ class ScanSpec {
 
   void moveAdaptationFrom(ScanSpec& other);
 
+  std::string toString() const;
+
  private:
   void reorder();
 

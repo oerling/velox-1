@@ -18,10 +18,18 @@
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/tests/VectorMaker.h"
 
+#include <gtest/gtest.h>
+
 namespace facebook::velox::test {
 
 /// Returns indices buffer with sequential values going from size - 1 to 0.
 BufferPtr makeIndicesInReverse(vector_size_t size, memory::MemoryPool* pool);
+
+// TODO: enable ASSERT_EQ for vectors.
+void assertEqualVectors(
+    const VectorPtr& expected,
+    const VectorPtr& actual,
+    const std::string& additionalContext = "");
 
 class VectorTestBase {
  protected:
@@ -307,13 +315,14 @@ class VectorTestBase {
   //   EXPECT_EQ(3, arrayVector->size());
   template <typename T>
   ArrayVectorPtr makeNullableArrayVector(
-      const std::vector<std::vector<std::optional<T>>>& data) {
+      const std::vector<std::vector<std::optional<T>>>& data,
+      const TypePtr& type = ARRAY(CppToType<T>::create())) {
     std::vector<std::optional<std::vector<std::optional<T>>>> convData;
     convData.reserve(data.size());
     for (auto& array : data) {
       convData.push_back(array);
     }
-    return vectorMaker_.arrayVectorNullable<T>(convData);
+    return vectorMaker_.arrayVectorNullable<T>(convData, type);
   }
 
   template <typename T>
@@ -369,16 +378,20 @@ class VectorTestBase {
       std::function<TKey(vector_size_t /* idx */)> keyAt,
       std::function<TValue(vector_size_t /* idx */)> valueAt,
       std::function<bool(vector_size_t /*row */)> isNullAt = nullptr,
-      std::function<bool(vector_size_t /*row */)> valueIsNullAt = nullptr) {
+      std::function<bool(vector_size_t /*row */)> valueIsNullAt = nullptr,
+      const TypePtr& type =
+          MAP(CppToType<TKey>::create(), CppToType<TValue>::create())) {
     return vectorMaker_.mapVector<TKey, TValue>(
-        size, sizeAt, keyAt, valueAt, isNullAt, valueIsNullAt);
+        size, sizeAt, keyAt, valueAt, isNullAt, valueIsNullAt, type);
   }
 
   // Create map vector from nested std::vector representation.
   template <typename TKey, typename TValue>
   MapVectorPtr makeMapVector(
       const std::vector<std::vector<std::pair<TKey, std::optional<TValue>>>>&
-          maps) {
+          maps,
+      const TypePtr& type =
+          MAP(CppToType<TKey>::create(), CppToType<TValue>::create())) {
     std::vector<vector_size_t> lengths;
     std::vector<TKey> keys;
     std::vector<TValue> values;
@@ -400,7 +413,8 @@ class VectorTestBase {
         [&](vector_size_t idx) { return keys[idx]; },
         [&](vector_size_t idx) { return values[idx]; },
         nullptr,
-        [&](vector_size_t idx) { return nullValues[idx]; });
+        [&](vector_size_t idx) { return nullValues[idx]; },
+        type);
   }
 
   template <typename T>

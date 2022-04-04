@@ -22,6 +22,8 @@
 #include <string>
 #include <unordered_map>
 
+#include <folly/dynamic.h>
+
 namespace facebook {
 namespace velox {
 namespace dwio {
@@ -110,6 +112,8 @@ class IoStatistics {
   std::unordered_map<std::string, OperationCounters> operationStats() const;
 
   void merge(const IoStatistics& other);
+
+  folly::dynamic getOperationStatsSnapshot() const;
 
  private:
   std::atomic<uint64_t> rawBytesRead_{0};

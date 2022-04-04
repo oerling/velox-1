@@ -86,14 +86,15 @@ std::string TailKey(uint64_t filenum) {
 ReaderBase::ReaderBase(
     MemoryPool& pool,
     std::unique_ptr<InputStream> stream,
-    DecrypterFactory* factory,
+    std::shared_ptr<DecrypterFactory> decryptorFactory,
     std::function<BufferedInputFactory*()> bufferedInputFactorySource,
     std::shared_ptr<dwio::common::DataCacheConfig> dataCacheConfig)
     : pool_{pool},
       stream_{std::move(stream)},
       arena_(std::make_unique<google::protobuf::Arena>()),
       bufferedInputFactorySource_(bufferedInputFactorySource),
-      dataCacheConfig_(dataCacheConfig) {
+      dataCacheConfig_(dataCacheConfig),
+      decryptorFactory_(decryptorFactory) {
   input_ = bufferedInputFactorySource_()->create(
       *stream_, pool, dataCacheConfig.get());
 
@@ -125,7 +126,7 @@ ReaderBase::ReaderBase(
         cache_ = std::make_unique<StripeMetadataCache>(
             *postScript_, *footer_, std::move(cacheBuffer));
       }
-      handler_ = DecryptionHandler::create(*footer_, factory);
+      handler_ = DecryptionHandler::create(*footer_, decryptorFactory_.get());
       return;
     }
   }
@@ -227,7 +228,7 @@ ReaderBase::ReaderBase(
     }
   }
   // initialize file decrypter
-  handler_ = DecryptionHandler::create(*footer_, factory);
+  handler_ = DecryptionHandler::create(*footer_, decryptorFactory_.get());
 }
 
 std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
