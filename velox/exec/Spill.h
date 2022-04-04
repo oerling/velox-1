@@ -235,7 +235,9 @@ class SpillFileList {
   // must produce a view where the rows are sorted if sorting is desired.
   // Consecutive calls must have sorted data so that the first row of the
   // next call is not less than the last row of the previous call.
-  void write(const RowVectorPtr& rows, const folly::Range<IndexRange*>& indices);
+  void write(
+      const RowVectorPtr& rows,
+      const folly::Range<IndexRange*>& indices);
 
   // Closes the current output file if any. Subsequent calls to write will start
   // a new one.
