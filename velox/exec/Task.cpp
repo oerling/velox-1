@@ -329,42 +329,52 @@ void Task::createDriversLocked(
     std::shared_ptr<Task>& self,
     uint32_t splitGroupId,
     std::vector<std::shared_ptr<Driver>>& out) {
-  auto& splitGroupState = self->splitGroupStates_[splitGroupId];
-  const auto numPipelines = driverFactories_.size();
-  for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
-    auto& factory = driverFactories_[pipeline];
-    const uint32_t driverIdOffset = factory->numDrivers * splitGroupId;
-    for (uint32_t partitionId = 0; partitionId < factory->numDrivers;
-         ++partitionId) {
-      out.emplace_back(factory->createDriver(
-          std::make_unique<DriverCtx>(
-              self,
-              driverIdOffset + partitionId,
-              pipeline,
-              splitGroupId,
-              partitionId),
-          self->exchangeClients_[pipeline],
-          [self](size_t i) {
-            return i < self->driverFactories_.size()
-                ? self->driverFactories_[i]->numTotalDrivers
-                : 0;
-          }));
-      ++splitGroupState.activeDrivers;
-    }
-  }
-  noMoreLocalExchangeProducers(splitGroupId);
-  ++numRunningSplitGroups_;
-
-  // Initialize operator stats using the 1st driver of each operator.
-  if (not initializedOpStats_) {
-    initializedOpStats_ = true;
-    size_t driverIndex{0};
+  try {
+    auto& splitGroupState = self->splitGroupStates_[splitGroupId];
+    const auto numPipelines = driverFactories_.size();
     for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
-      auto& factory = self->driverFactories_[pipeline];
-      out[driverIndex]->initializeOperatorStats(
-          self->taskStats_.pipelineStats[pipeline].operatorStats);
-      driverIndex += factory->numDrivers;
+      auto& factory = driverFactories_[pipeline];
+      const uint32_t driverIdOffset = factory->numDrivers * splitGroupId;
+      for (uint32_t partitionId = 0; partitionId < factory->numDrivers;
+           ++partitionId) {
+        out.emplace_back(factory->createDriver(
+            std::make_unique<DriverCtx>(
+                self,
+                driverIdOffset + partitionId,
+                pipeline,
+                splitGroupId,
+                partitionId),
+            self->exchangeClients_[pipeline],
+            [self](size_t i) {
+              return i < self->driverFactories_.size()
+                  ? self->driverFactories_[i]->numTotalDrivers
+                  : 0;
+            }));
+        ++splitGroupState.activeDrivers;
+      }
     }
+    noMoreLocalExchangeProducers(splitGroupId);
+    ++numRunningSplitGroups_;
+
+    // Initialize operator stats using the 1st driver of each operator.
+    if (not initializedOpStats_) {
+      initializedOpStats_ = true;
+      size_t driverIndex{0};
+      for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
+        auto& factory = self->driverFactories_[pipeline];
+        out[driverIndex]->initializeOperatorStats(
+            self->taskStats_.pipelineStats[pipeline].operatorStats);
+        driverIndex += factory->numDrivers;
+      }
+    }
+  } catch (std::exception& e) {
+    // If one of the drivers threw in creation, we need to remove task pointer
+    // from already created drivers or we will face another throw (or even a
+    // crash).
+    for (auto& driver : out) {
+      driver->disconnectFromTask();
+    }
+    throw;
   }
 }
 
@@ -378,8 +388,8 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
 
     // Mark the closure of another driver for its split group (even in ungrouped
     // execution mode).
-    auto& splitGroupState =
-        self->splitGroupStates_[driver->driverCtx()->splitGroupId];
+    const auto splitGroupId = driver->driverCtx()->splitGroupId;
+    auto& splitGroupState = self->splitGroupStates_[splitGroupId];
     --splitGroupState.activeDrivers;
 
     // Release the driver, note that after this 'driver' is invalid.
@@ -390,8 +400,13 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
       // Check if a split group is finished.
       if (splitGroupState.activeDrivers == 0) {
         --self->numRunningSplitGroups_;
+        self->taskStats_.completedSplitGroups.emplace(splitGroupId);
         splitGroupState.clear();
         self->ensureSplitGroupsAreBeingProcessedLocked(self);
+      }
+    } else {
+      if (splitGroupState.activeDrivers == 0) {
+        splitGroupState.clear();
       }
     }
     return;
@@ -549,8 +564,13 @@ void Task::noMoreSplitsForGroup(
     auto& splitsState = splitsStates_[planNodeId];
     auto& splitsStore = splitsState.groupSplitsStores[splitGroupId];
     splitsStore.noMoreSplits = true;
-    checkGroupSplitsCompleteLocked(splitGroupId, splitsStore);
     promises = std::move(splitsStore.splitPromises);
+
+    // There were no splits in this group, hence, no active drivers. Mark the
+    // group complete.
+    if (seenSplitGroups_.count(splitGroupId) == 0) {
+      taskStats_.completedSplitGroups.insert(splitGroupId);
+    }
   }
   for (auto& promise : promises) {
     promise.setValue(false);
@@ -673,28 +693,12 @@ BlockingReason Task::getSplitOrFutureLocked(
   return BlockingReason::kNotBlocked;
 }
 
-void Task::splitFinished(
-    const core::PlanNodeId& planNodeId,
-    int32_t splitGroupId) {
+void Task::splitFinished() {
   std::lock_guard<std::mutex> l(mutex_);
   ++taskStats_.numFinishedSplits;
   --taskStats_.numRunningSplits;
   if (isAllSplitsFinishedLocked()) {
     taskStats_.executionEndTimeMs = getCurrentTimeMs();
-  }
-
-  if (isUngroupedExecution()) {
-    VELOX_DCHECK(
-        splitGroupId == -1, "Got split group for ungrouped execution!");
-  } else {
-    VELOX_CHECK(
-        splitGroupId >= 0, "Missing split group for grouped execution!");
-    auto& splitsState = splitsStates_[planNodeId];
-    auto it = splitsState.groupSplitsStores.find(splitGroupId);
-    VELOX_DCHECK(
-        it != splitsState.groupSplitsStores.end(),
-        "Split group split store is missing!");
-    checkGroupSplitsCompleteLocked(splitGroupId, it->second);
   }
 }
 
@@ -702,13 +706,8 @@ void Task::multipleSplitsFinished(int32_t numSplits) {
   std::lock_guard<std::mutex> l(mutex_);
   taskStats_.numFinishedSplits += numSplits;
   taskStats_.numRunningSplits -= numSplits;
-}
-
-void Task::checkGroupSplitsCompleteLocked(
-    int32_t splitGroupId,
-    const SplitsStore& splitsStore) {
-  if (splitsStore.splits.empty() and splitsStore.noMoreSplits) {
-    taskStats_.completedSplitGroups.emplace(splitGroupId);
+  if (isAllSplitsFinishedLocked()) {
+    taskStats_.executionEndTimeMs = getCurrentTimeMs();
   }
 }
 
@@ -789,14 +788,16 @@ bool Task::allPeersFinished(
   if (exception_) {
     VELOX_FAIL("Task is terminating because of error: {}", errorMessage());
   }
-  auto& state = barriers_[planNodeId];
+  const auto splitGroupId = caller->driverCtx()->splitGroupId;
+  auto& barriers = splitGroupStates_[splitGroupId].barriers;
+  auto& state = barriers[planNodeId];
 
   const auto numPeers =
       driverFactories_[caller->driverCtx()->pipelineId]->numDrivers;
   if (++state.numRequested == numPeers) {
     peers = std::move(state.drivers);
     promises = std::move(state.promises);
-    barriers_.erase(planNodeId);
+    barriers.erase(planNodeId);
     return true;
   }
   std::shared_ptr<Driver> callerShared;
@@ -806,7 +807,8 @@ bool Task::allPeersFinished(
       break;
     }
   }
-  VELOX_CHECK(callerShared, "Caller of pipelineBarrier is not a valid Driver");
+  VELOX_CHECK(
+      callerShared, "Caller of Task::allPeersFinished is not a valid Driver");
   state.drivers.push_back(callerShared);
   state.promises.emplace_back(
       fmt::format("Task::allPeersFinished {}", taskId_));
@@ -950,7 +952,7 @@ void Task::terminate(TaskState terminalState) {
       for (auto& pair : splitGroupState.second.bridges) {
         oldBridges.emplace_back(std::move(pair.second));
       }
-      splitGroupState.second.bridges.clear();
+      splitGroupState.second.clear();
     }
 
     // Collect all outstanding split promises from all splits state structures.
@@ -1049,8 +1051,7 @@ std::shared_ptr<MergeSource> Task::addLocalMergeSource(
     uint32_t splitGroupId,
     const core::PlanNodeId& planNodeId,
     const RowTypePtr& rowType) {
-  auto source =
-      MergeSource::createLocalMergeSource(rowType, queryCtx()->mappedMemory());
+  auto source = MergeSource::createLocalMergeSource();
   splitGroupStates_[splitGroupId].localMergeSources[planNodeId].push_back(
       source);
   return source;

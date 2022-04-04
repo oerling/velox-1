@@ -221,6 +221,7 @@ class Task : public std::enable_shared_from_this<Task> {
 
   /// Returns the total number of drivers the task needs to run.
   uint32_t numTotalDrivers() const {
+    std::lock_guard<std::mutex> taskLock(mutex_);
     return numTotalDrivers_;
   }
 
@@ -267,7 +268,7 @@ class Task : public std::enable_shared_from_this<Task> {
       exec::Split& split,
       ContinueFuture& future);
 
-  void splitFinished(const core::PlanNodeId& planNodeId, int32_t splitGroupId);
+  void splitFinished();
 
   void multipleSplitsFinished(int32_t numSplits);
 
@@ -478,11 +479,6 @@ class Task : public std::enable_shared_from_this<Task> {
   // splits coming for the task.
   bool isAllSplitsFinishedLocked();
 
-  /// See if we need to register a split group as completed.
-  void checkGroupSplitsCompleteLocked(
-      int32_t splitGroupId,
-      const SplitsStore& splitsStore);
-
   std::unique_ptr<ContinuePromise> addSplitLocked(
       SplitsState& splitsState,
       exec::Split&& split);
@@ -575,9 +571,6 @@ class Task : public std::enable_shared_from_this<Task> {
 
   /// Stores separate splits state for each plan node.
   std::unordered_map<core::PlanNodeId, SplitsState> splitsStates_;
-
-  // Holds states for pipelineBarrier(). Guarded by 'mutex_'.
-  std::unordered_map<std::string, BarrierState> barriers_;
 
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 

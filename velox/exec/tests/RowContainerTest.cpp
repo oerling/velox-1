@@ -24,25 +24,12 @@
 #include "velox/exec/VectorHasher.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/VectorTestBase.h"
+
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
-
-namespace {
-static void assertEqualVectors(
-    const VectorPtr& expected,
-    const VectorPtr& actual,
-    const std::string& additionalContext = "") {
-  ASSERT_EQ(expected->size(), actual->size());
-
-  for (auto i = 0; i < expected->size(); i++) {
-    ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
-        << "at " << i << ": " << expected->toString(i) << " vs. "
-        << actual->toString(i) << additionalContext;
-  }
-}
-} // namespace
 
 class RowContainerTest : public testing::Test {
  protected:
@@ -126,7 +113,7 @@ class RowContainerTest : public testing::Test {
     for (size_t row = 0; row < size; ++row) {
       EXPECT_TRUE(expected->equalValueAt(result.get(), row, row))
           << "at " << row << ": expected " << expected->toString(row)
-          << ", got " << result->toString();
+          << ", got " << result->toString(row);
     }
   }
 
