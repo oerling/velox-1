@@ -145,7 +145,7 @@ class SpillFile : public SpillStream {
       memory::MemoryPool& pool)
       : SpillStream(type, numSortingKeys, pool), path_(path) {}
 
-  ~SpillFile();
+  ~SpillFile() override;
 
   // Returns a file for writing spilled data. The caller constructs
   // this, then callsoutput() and writes serialized data to the file
@@ -218,7 +218,7 @@ class SpillFileList {
   SpillFileList(
       RowTypePtr type,
       int32_t numSortingKeys,
-      const std::string path,
+      const std::string& path,
       uint64_t targetBatchSize,
       uint64_t targetFileSize,
       memory::MemoryPool& pool,
