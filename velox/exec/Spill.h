@@ -24,21 +24,6 @@
 
 namespace facebook::velox::exec {
 
-// A lightweight, non-owning reference to a row in a RowVector read from
-// spill.
-struct SpillFileRow {
-  // A batch of rows read from a spill file.
-  RowVector* rowVector;
-  // Index of the current row in 'rowVector'.
-  vector_size_t index;
-  // Decodes each column of 'rowVector'. The decoding is done right
-  // after reading 'rowVector' from a spill file. The contents of the
-  // file are flat but the RowContainer APIs take a DecodedVector,
-  // hence we make one here and initialize for each RowVector that is
-  // read from the file.
-  std::vector<std::unique_ptr<DecodedVector>>* decoded;
-};
-
 // Input stream backed by spill file.
 class SpillInput : public ByteStream {
  public:
@@ -54,7 +39,7 @@ class SpillInput : public ByteStream {
 
   // True if all of the file has been read into vectors.
   bool atEnd() const {
-    return offset_ == size_ && ranges()[0].position >= ranges()[0].size;
+    return offset_ >= size_ && ranges()[0].position >= ranges()[0].size;
   }
 
   // Returns the offset of the first byte of input that is not yet consumed. May
@@ -75,26 +60,48 @@ class SpillInput : public ByteStream {
 };
 
 // A source of SpillFileRows coming either from a file or memory.
-class SpillStream {
+class SpillStream : public MergeStream {
  public:
-  SpillStream(RowTypePtr type, memory::MemoryPool& pool)
-      : type_(type), pool_(pool), ordinal_(++ordinalCounter_) {
-    auto width = type_->size();
-    decoded_.resize(width);
-    for (auto i = 0; i < width; ++i) {
-      decoded_[i] = std::make_unique<DecodedVector>();
-    }
-  }
+  SpillStream(RowTypePtr type, int32_t numSortingKeys, memory::MemoryPool& pool)
+      : type_(type),
+        numSortingKeys_(numSortingKeys),
+        pool_(pool),
+        ordinal_(++ordinalCounter_) {}
 
   virtual ~SpillStream() = default;
 
-  virtual bool atEnd() const = 0;
+  bool hasData() const final {
+    return index_ < size_;
+  }
+
+  bool operator<(const MergeStream& other) const final {
+    auto& otherStream = static_cast<const SpillStream&>(other);
+    auto& children = rowVector_->children();
+    auto& otherChildren = otherStream.current().children();
+    int32_t key = 0;
+    do {
+      auto result = children[key]->compare(
+          otherChildren[key].get(), index_, otherStream.index_);
+      if (result) {
+        return result < 0;
+      }
+    } while (++key < numSortingKeys_);
+    return false;
+  }
 
   virtual std::string label() const {
     return fmt::format("{}", ordinal_);
   }
 
-  SpillFileRow next();
+  void pop();
+
+  const RowVector& current() const {
+    return *rowVector_;
+  }
+
+  vector_size_t currentIndex() const {
+    return index_;
+  }
 
   virtual uint64_t size() const = 0;
 
@@ -102,15 +109,25 @@ class SpillStream {
   // Loads the next RowVector from the backing storage, e.g. spill file or
   // RowContainer.
   virtual void nextBatch() = 0;
-  void decodeRowVector();
+
+  // Type of 'rowVector_'. Needed for setting up writing.
   const std::shared_ptr<const RowType> type_;
+
+  // Number of leading columns of 'rowVector_'  on which the values are sorted,
+  // 0 if not sorted.
+  const int32_t numSortingKeys_;
+
   memory::MemoryPool& pool_;
+
+  // Current batch of rows.
   RowVectorPtr rowVector_;
-  // The next row to process from 'rowVector_'
-  vector_size_t index_ = 0;
+
+  // The current row in 'rowVector_'
+  vector_size_t index_{0};
+
   // Number of rows in 'rowVector_'
-  vector_size_t numRowsInVector_ = 0;
-  std::vector<std::unique_ptr<DecodedVector>> decoded_;
+  vector_size_t size_{0};
+
   // Ordinal number used for making a label for debugging.
   const int32_t ordinal_;
   static std::atomic<int32_t> ordinalCounter_;
@@ -121,8 +138,12 @@ class SpillStream {
 // contains the spilled data and is live for the duration of 'this'.
 class SpillFile : public SpillStream {
  public:
-  SpillFile(RowTypePtr type, const std::string& path, memory::MemoryPool& pool)
-      : SpillStream(type, pool), path_(path) {}
+  SpillFile(
+      RowTypePtr type,
+      int32_t numSortingKeys,
+      const std::string& path,
+      memory::MemoryPool& pool)
+      : SpillStream(type, numSortingKeys, pool), path_(path) {}
 
   ~SpillFile();
 
@@ -158,22 +179,12 @@ class SpillFile : public SpillStream {
     return fileSize_;
   }
 
-  // True if no more SpillFileRows can be read from 'this'.
-  bool atEnd() const override {
-    return index_ >= numRowsInVector_ && input_->atEnd();
-  }
-
   // Sets 'result' to refer to the next row of content of 'this'.
   void read(RowVector& result);
 
- protected:
-  void nextBatch() override {
-    VectorStreamGroup::read(input_.get(), &pool_, type_, &rowVector_);
-    index_ = 0;
-    numRowsInVector_ = rowVector_->size();
-  }
+private:
+  void nextBatch() override;
 
- private:
   const std::string path_;
   // Byte size of the backing file. Set when finishing writing.
   uint64_t fileSize_ = 0;
@@ -196,7 +207,7 @@ struct HashBitRange {
 class SpillFileList {
  public:
   // Constructs a set of spill files. 'type' is a RowType describing the
-  // content. 'path' is a file path prefix. 'targetBatchSize is the target size
+  // content. 'numSortingKeys' is the number of leading columns on which the data is sorted. 'path' is a file path prefix. 'targetBatchSize is the target size
   // of a single RowVector in rows. 'targetFileSize' is the target byte size of
   // a single file in the file set. 'pool' and 'mappedMemory' are used for
   // buffering and constructing the result data read from 'this'.
@@ -205,12 +216,14 @@ class SpillFileList {
   // sorting the data. write is called multiple times, followed by flush().
   SpillFileList(
       RowTypePtr type,
+      int32_t numSortingKeys,
       const std::string path,
       uint64_t targetBatchSize,
       uint64_t targetFileSize,
       memory::MemoryPool& pool,
       memory::MappedMemory& mappedMemory)
       : type_(type),
+	numSortingKeys_(numSortingKeys),
         path_(path),
         targetBatchSize_(targetBatchSize),
         targetFileSize_(targetFileSize),
@@ -239,6 +252,7 @@ class SpillFileList {
   // Writes data from 'batch_' to the current output file.
   void flush();
   const RowTypePtr type_;
+  const int32_t numSortingKeys_;
   const std::string path_;
   const uint64_t targetBatchSize_;
   const uint64_t targetFileSize_;
@@ -252,15 +266,19 @@ class SpillFileList {
 // by. This has one SpillFileList per partition of spill data.
 class SpillState {
  public:
-  // Constructs a SpillState. 'type' is the content RowType. 'path' is the file
-  // system path prefix. 'bits' is the hash bit field for partitioning data
-  // between files. This also gives the maximum number of partitions.
-  // 'targetFileSize' is the target size of a single file. 'targetBatchSize is
-  // the target number of rows in a single RowVector written to a spill file.
-  // 'pool' and 'mappedMemory' own the memory for state and results.
+  // Constructs a SpillState. 'type' is the content RowType. 'path' is
+  // the file system path prefix. 'bits' is the hash bit field for
+  // partitioning data between files. This also gives the maximum
+  // number of partitions. 'numSortingKeys' is the number of leading columns
+  // on which the data is sorted, 0 if only hash partitioning is used.
+  // 'targetFileSize' is the target size of a single
+  // file. 'targetBatchSize is the target number of rows in a single
+  // RowVector written to a spill file.  'pool' and 'mappedMemory' own
+  // the memory for state and results.
   SpillState(
       const std::string& path,
       HashBitRange bits,
+      int32_t numSortingKeys,
       uint64_t targetFileSize,
       uint64_t targetBatchSize,
       memory::MemoryPool& pool,
@@ -268,6 +286,7 @@ class SpillState {
       : path_(path),
         hashBits_(bits),
         fieldMask_(((1UL << (hashBits_.end - hashBits_.begin))) - 1),
+        numSortingKeys_(numSortingKeys),
         targetFileSize_(targetFileSize),
         targetBatchSize_(targetBatchSize),
         pool_(pool),
@@ -318,21 +337,16 @@ class SpillState {
   // Starts reading values for 'partition'. If 'extra' is non-null, it can be
   // a stream of rows from a RowContainer so as to merge unspilled
   // data with spilled data.
-  std::unique_ptr<TreeOfLosers<SpillFileRow, SpillStream>> startMerge(
+  std::unique_ptr<TreeOfLosers<SpillStream>> startMerge(
       int32_t partition,
       std::unique_ptr<SpillStream>&& extra);
-
-  // Helper function for comparing current elements of streams to merge.
-  static int32_t compareSpilled(
-      const SpillFileRow& left,
-      const SpillFileRow& right,
-      int32_t numKeys);
 
  private:
   const RowTypePtr type_;
   const std::string path_;
   const HashBitRange hashBits_;
   const uint64_t fieldMask_;
+  const int32_t numSortingKeys_;
   // Number of spilled ranges. This is 2** the number of bits in the range of
   // 'hashBits_'
   int32_t numPartitions_ = 0;
