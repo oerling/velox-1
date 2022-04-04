@@ -64,7 +64,8 @@ class ReaderBase {
   ReaderBase(
       memory::MemoryPool& pool,
       std::unique_ptr<dwio::common::InputStream> stream,
-      std::shared_ptr<dwio::common::encryption::DecrypterFactory> decryptorFactory = nullptr,
+      std::shared_ptr<dwio::common::encryption::DecrypterFactory>
+          decryptorFactory = nullptr,
       std::function<BufferedInputFactory * FOLLY_NONNULL()>
           bufferedInputFactorySource =
               []() { return BufferedInputFactory::baseFactory(); },

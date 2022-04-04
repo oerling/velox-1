@@ -524,7 +524,8 @@ class ReaderOptions {
     return serDeOptions;
   }
 
-  const std::shared_ptr<encryption::DecrypterFactory> getDecrypterFactory() const {
+  const std::shared_ptr<encryption::DecrypterFactory> getDecrypterFactory()
+      const {
     return decrypterFactory_;
   }
 

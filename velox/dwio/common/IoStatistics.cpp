@@ -113,7 +113,7 @@ void OperationCounters::merge(const OperationCounters& other) {
   requestCount += other.requestCount;
   delayInjectedInSecs += other.delayInjectedInSecs;
 }
-  
+
 folly::dynamic serialize(const OperationCounters& counters) {
   folly::dynamic json = folly::dynamic::object;
   json["latencyInMs"] = counters.latencyInMs;
