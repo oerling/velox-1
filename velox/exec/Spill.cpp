@@ -21,7 +21,7 @@ namespace facebook::velox::exec {
 
 std::atomic<int32_t> SpillStream::ordinalCounter_;
 
-  void SpillInput::next(bool /*throwIfPastEnd*/) {
+void SpillInput::next(bool /*throwIfPastEnd*/) {
   int32_t readBytes = std::min(input_->size() - offset_, buffer_->capacity());
   setRange({buffer_->asMutable<uint8_t>(), readBytes, 0});
   input_->pread(offset_, readBytes, buffer_->asMutable<char>());
