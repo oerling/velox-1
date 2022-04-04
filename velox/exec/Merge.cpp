@@ -54,28 +54,33 @@ Merge::Merge(
   }
 }
 
+void Merge::initializeTreeOfLosers() {
+  std::vector<std::unique_ptr<SourceStream>> sourceCursors;
+  sourceCursors.reserve(sources_.size());
+  for (auto& source : sources_) {
+    sourceCursors.push_back(std::make_unique<SourceStream>(
+        source.get(), sortingKeys_, outputBatchSize_));
+  }
+
+  // Save the pointers to cursors before moving these into the TreeOfLosers.
+  streams_.reserve(sources_.size());
+  for (auto& cursor : sourceCursors) {
+    streams_.push_back(cursor.get());
+  }
+
+  treeOfLosers_ =
+      std::make_unique<TreeOfLosers<SourceStream>>(std::move(sourceCursors));
+}
+
 BlockingReason Merge::isBlocked(ContinueFuture* future) {
   auto reason = addMergeSources(future);
   if (reason != BlockingReason::kNotBlocked) {
     return reason;
   }
 
-  if (streams_.empty()) {
-    std::vector<std::unique_ptr<SourceStream>> sourceCursors;
-    sourceCursors.reserve(sources_.size());
-    for (auto& source : sources_) {
-      sourceCursors.push_back(std::make_unique<SourceStream>(
-          source.get(), sortingKeys_, outputBatchSize_));
-    }
-
-    // Save the pointers to cursors before moving these into the TreeOfLosers.
-    streams_.reserve(sources_.size());
-    for (auto& cursor : sourceCursors) {
-      streams_.push_back(cursor.get());
-    }
-
-    treeOfLosers_ =
-        std::make_unique<TreeOfLosers<SourceStream>>(std::move(sourceCursors));
+  // No merging is needed if there is only one source.
+  if (streams_.empty() && sources_.size() > 1) {
+    initializeTreeOfLosers();
   }
 
   if (sourceBlockingFutures_.empty()) {
@@ -100,6 +105,20 @@ bool Merge::isFinished() {
 RowVectorPtr Merge::getOutput() {
   if (finished_) {
     return nullptr;
+  }
+
+  // No merging is needed if there is only one source.
+  if (sources_.size() == 1) {
+    ContinueFuture future{false};
+    RowVectorPtr data;
+    auto reason = sources_[0]->next(data, &future);
+    if (reason != BlockingReason::kNotBlocked) {
+      sourceBlockingFutures_.emplace_back(std::move(future));
+      return nullptr;
+    }
+
+    finished_ = data == nullptr;
+    return data;
   }
 
   if (!output_) {
@@ -144,6 +163,82 @@ RowVectorPtr Merge::getOutput() {
       return nullptr;
     }
   }
+}
+
+bool SourceStream::operator<(const MergeStream& other) const {
+  const auto& otherCursor = static_cast<const SourceStream&>(other);
+  for (auto i = 0; i < sortingKeys_.size(); ++i) {
+    const auto& key = sortingKeys_[i];
+    if (auto result = keyColumns_[i]->compare(
+            otherCursor.keyColumns_[i],
+            currentSourceRow_,
+            otherCursor.currentSourceRow_,
+            key.second)) {
+      return result < 0;
+    }
+  }
+  return false;
+}
+
+bool SourceStream::pop(std::vector<ContinueFuture>& futures) {
+  ++currentSourceRow_;
+  if (currentSourceRow_ == data_->size()) {
+    // Make sure all current data has been copied out.
+    VELOX_CHECK(!outputRows_.hasSelections());
+    return fetchMoreData(futures);
+  }
+
+  return false;
+}
+
+void SourceStream::copyToOutput(RowVectorPtr& output) {
+  outputRows_.updateBounds();
+
+  if (!outputRows_.hasSelections()) {
+    return;
+  }
+
+  vector_size_t sourceRow = firstSourceRow_;
+  outputRows_.applyToSelected(
+      [&](auto row) { sourceRows_[row] = sourceRow++; });
+
+  for (auto i = 0; i < output->type()->size(); ++i) {
+    output->childAt(i)->copy(
+        data_->childAt(i).get(), outputRows_, sourceRows_.data());
+  }
+
+  outputRows_.clearAll();
+
+  if (currentSourceRow_ == data_->size() - 1) {
+    firstSourceRow_ = 0;
+  } else {
+    firstSourceRow_ = currentSourceRow_;
+  }
+}
+
+bool SourceStream::fetchMoreData(std::vector<ContinueFuture>& futures) {
+  ContinueFuture future{false};
+  auto reason = source_->next(data_, &future);
+  if (reason != BlockingReason::kNotBlocked) {
+    needData_ = true;
+    futures.emplace_back(std::move(future));
+    return true;
+  }
+
+  atEnd_ = !data_ || data_->size() == 0;
+  needData_ = false;
+  currentSourceRow_ = 0;
+
+  if (!atEnd_) {
+    for (auto& child : data_->children()) {
+      child = BaseVector::loadedVectorShared(child);
+    }
+    keyColumns_.clear();
+    for (const auto& key : sortingKeys_) {
+      keyColumns_.push_back(data_->childAt(key.first).get());
+    }
+  }
+  return false;
 }
 
 LocalMerge::LocalMerge(
