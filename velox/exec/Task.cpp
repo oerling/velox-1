@@ -982,6 +982,7 @@ ContinueFuture Task::terminate(TaskState terminalState) {
   std::lock_guard<std::mutex> l(mutex_);
   return makeFinishFutureLocked("Task::terminate");
 }
+
 ContinueFuture Task::makeFinishFutureLocked(const char* FOLLY_NONNULL comment) {
   auto [promise, future] = makeVeloxPromiseContract<bool>(comment);
 
