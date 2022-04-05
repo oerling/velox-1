@@ -156,7 +156,6 @@ void SpillState::appendToPartition(
         std::static_pointer_cast<const RowType>(rows->type()),
         numSortingKeys_,
         fmt::format("{}-{}", path_, newPartition),
-        1 << 20,
         targetFileSize_,
         pool_,
         mappedMemory_));

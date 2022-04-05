@@ -208,10 +208,10 @@ class SpillFileList {
  public:
   // Constructs a set of spill files. 'type' is a RowType describing the
   // content. 'numSortingKeys' is the number of leading columns on which the
-  // data is sorted. 'path' is a file path prefix. 'targetBatchSize is the
-  // target size of a single RowVector in rows. 'targetFileSize' is the target
-  // byte size of a single file in the file set. 'pool' and 'mappedMemory' are
-  // used for buffering and constructing the result data read from 'this'.
+  // data is sorted. 'path' is a file path prefix. ' 'targetFileSize' is the
+  // target byte size of a single file in the file set. 'pool' and
+  // 'mappedMemory' are used for buffering and constructing the result data read
+  // from 'this'.
   //
   // When writing sorted spill runs, the caller is responsible for buffering and
   // sorting the data. write is called multiple times, followed by flush().
@@ -219,14 +219,12 @@ class SpillFileList {
       RowTypePtr type,
       int32_t numSortingKeys,
       const std::string& path,
-      uint64_t targetBatchSize,
       uint64_t targetFileSize,
       memory::MemoryPool& pool,
       memory::MappedMemory& mappedMemory)
       : type_(type),
         numSortingKeys_(numSortingKeys),
         path_(path),
-        targetBatchSize_(targetBatchSize),
         targetFileSize_(targetFileSize),
         pool_(pool),
         mappedMemory_(mappedMemory) {}
@@ -257,7 +255,6 @@ class SpillFileList {
   const RowTypePtr type_;
   const int32_t numSortingKeys_;
   const std::string path_;
-  const uint64_t targetBatchSize_;
   const uint64_t targetFileSize_;
   memory::MemoryPool& pool_;
   memory::MappedMemory& mappedMemory_;
