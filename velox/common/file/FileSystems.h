@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include "velox/common/base/Exceptions.h"
+
 #include <functional>
 #include <memory>
 #include <string_view>
@@ -41,6 +43,11 @@ class FileSystem {
   virtual std::unique_ptr<WriteFile> openFileForWrite(
       std::string_view path) = 0;
 
+  // Deletes the file at 'path'. Throws on error.
+  virtual void remove(std::string_view path) {
+    VELOX_UNSUPPORTED();
+  }
+  
  protected:
   std::shared_ptr<const Config> config_;
 };

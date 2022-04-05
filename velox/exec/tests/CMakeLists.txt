@@ -44,7 +44,8 @@ add_executable(
   PlanNodeToStringTest.cpp
   FunctionSignatureBuilderTest.cpp
   SimpleFunctionResolutionTest.cpp
-  UnnestTest.cpp
+  SpillTest.cpp
+UnnestTest.cpp
   AssignUniqueIdTest.cpp)
 
 add_test(

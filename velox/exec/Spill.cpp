@@ -48,14 +48,11 @@ void SpillStream::pop() {
 }
 
 SpillFile::~SpillFile() {
-  // TBD: FileSystem must have a file deletion method.
-  VELOX_CHECK_EQ(
-      path_[0],
-      '/',
-      "Spill only supports absolute paths to local files, not {}.",
-      path_);
-  if (unlink(path_.c_str()) != 0) {
-    LOG(ERROR) << "Error deleting spill file " << path_ << " errno: " << errno;
+  try {
+    auto fs = filesystems::getFileSystem(path_, nullptr);
+    fs->remove(path_);
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Error deleting spill file " <<path_ << " : " << e.what();
   }
 }
 
@@ -106,13 +103,12 @@ WriteFile& SpillFileList::currentOutput() {
 
 void SpillFileList::flush() {
   if (batch_) {
-    std::stringstream stringStream;
-    OStreamOutputStream out(&stringStream);
+    IOBufOutputStream out(mappedMemory_, nullptr, std::max<int64_t>(64 * 1024, batch_->size()));
     batch_->flush(&out);
     batch_.reset();
-    std::string str = stringStream.str();
-    if (!str.empty()) {
-      currentOutput().append(str);
+    auto iobuf = out.getIOBuf();
+    for (auto& range : *iobuf) {
+      currentOutput().append(std::string_view(reinterpret_cast<const char*>(range.data()), range.size()));
     }
   }
 }
