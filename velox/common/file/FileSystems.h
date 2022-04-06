@@ -44,9 +44,7 @@ class FileSystem {
       std::string_view path) = 0;
 
   // Deletes the file at 'path'. Throws on error.
-  virtual void remove(std::string_view path) {
-    VELOX_UNSUPPORTED();
-  }
+  virtual void remove(std::string_view path) = 0;
 
  protected:
   std::shared_ptr<const Config> config_;

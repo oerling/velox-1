@@ -23,6 +23,7 @@ std::atomic<int32_t> SpillStream::ordinalCounter_;
 
 void SpillInput::next(bool /*throwIfPastEnd*/) {
   int32_t readBytes = std::min(input_->size() - offset_, buffer_->capacity());
+  VELOX_CHECK_LT(0, readBytes, "Reading past end of spill file");
   setRange({buffer_->asMutable<uint8_t>(), readBytes, 0});
   input_->pread(offset_, readBytes, buffer_->asMutable<char>());
   offset_ += readBytes;
@@ -95,8 +96,9 @@ void SpillFileList::flush() {
     batch_->flush(&out);
     batch_.reset();
     auto iobuf = out.getIOBuf();
+    auto& file = currentOutput();
     for (auto& range : *iobuf) {
-      currentOutput().append(std::string_view(
+      file.append(std::string_view(
           reinterpret_cast<const char*>(range.data()), range.size()));
     }
   }

@@ -183,15 +183,6 @@ class SpillFile : public SpillStream {
   std::unique_ptr<SpillInput> input_;
 };
 
-// Describes a bit range inside a 64 bit hash number for use in
-// partitioning data over multiple sets of spill files.
-struct HashBitRange {
-  // Low bit number of hash number bit range.
-  uint8_t begin;
-  // Bit number of first bit above the hash number bit range.
-  uint8_t end;
-};
-
 // Sequence of files for one partition of the spilled data. If data is
 // sorted, each file is sorted. The globally sorted order is produced
 // by merging the constituent files.
@@ -267,25 +258,17 @@ class SpillState {
   // the memory for state and results.
   SpillState(
       const std::string& path,
-      HashBitRange bits,
+      int32_t maxPartitions,
       int32_t numSortingKeys,
       uint64_t targetFileSize,
       memory::MemoryPool& pool,
       memory::MappedMemory& mappedMemory)
       : path_(path),
-        hashBits_(bits),
-        fieldMask_(((1UL << (hashBits_.end - hashBits_.begin))) - 1),
+        maxPartitions_(maxPartitions),
         numSortingKeys_(numSortingKeys),
         targetFileSize_(targetFileSize),
         pool_(pool),
         mappedMemory_(mappedMemory) {}
-
-  // Returns which spill partition 'hash' falls into. Returns -1 if the
-  // partition of 'hash' has not been started.
-  int32_t partition(uint64_t hash) const {
-    int32_t field = (hash >> hashBits_.begin) & fieldMask_;
-    return field < numPartitions_ ? field : -1;
-  }
 
   int32_t numPartitions() const {
     return numPartitions_;
@@ -296,7 +279,7 @@ class SpillState {
 
   // Returns how many ways spilled data can be partitioned.
   int32_t maxPartitions() const {
-    return 1 << (hashBits_.end - hashBits_.begin);
+    return maxPartitions_;
   }
 
   uint64_t targetFileSize() const {
@@ -328,11 +311,9 @@ class SpillState {
  private:
   const RowTypePtr type_;
   const std::string path_;
-  const HashBitRange hashBits_;
-  const uint64_t fieldMask_;
+  const int32_t maxPartitions_;
   const int32_t numSortingKeys_;
-  // Number of spilled ranges. This is 2** the number of bits in the range of
-  // 'hashBits_'
+  // Number of currently spilling partitions.
   int32_t numPartitions_ = 0;
   const uint64_t targetFileSize_;
   // A file list for each spilled partition. Only partitions that have

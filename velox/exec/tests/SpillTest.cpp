@@ -50,7 +50,7 @@ TEST_F(SpillTest, spillState) {
   // gaps.
   SpillState state(
       tempDirectory->path,
-      HashBitRange{0, 1},
+      2,
       1,
       10000, // small target file size. Makes a new file for each batch.
       *pool(),
