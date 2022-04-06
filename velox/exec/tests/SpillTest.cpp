@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <array>
 #include "velox/common/file/FileSystems.h"
-#include "velox/exec/RowContainer.h"
+#include "velox/exec/Spill.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/tests/VectorTestBase.h"
