@@ -34,7 +34,7 @@ static int32_t typeKindSize(TypeKind kind) {
 }
 } // namespace
 
-  RowContainer::RowContainer(
+RowContainer::RowContainer(
     const std::vector<TypePtr>& keyTypes,
     bool nullableKeys,
     const std::vector<std::unique_ptr<Aggregate>>& aggregates,
@@ -522,10 +522,11 @@ void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   }
 }
 
-  const RowTypePtr& RowContainer::rowType() const {
-  VELOX_CHECK(aggregates_.empty(), "Add logic to get the extracted accumulator type here");
+const RowTypePtr& RowContainer::rowType() const {
+  VELOX_CHECK(
+      aggregates_.empty(),
+      "Add logic to get the extracted accumulator type here");
   if (!rowType_) {
-
     auto copy = types_;
     rowType_ = ROW(std::move(copy));
   }

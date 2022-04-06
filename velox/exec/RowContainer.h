@@ -361,7 +361,8 @@ class RowContainer {
       int32_t partition,
       memory::MemoryPool& pool);
 
-  // Extracts the keys, dependents or accumulators for 'rows' into '*result'. Creates '*results' in 'pool' if nullptr.
+  // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
+  // Creates '*results' in 'pool' if nullptr.
   void extractSpill(
       folly::Range<char**> rows,
       memory::MemoryPool& pool,
@@ -898,7 +899,7 @@ class RowContainer {
 
   // Type of contents as a row. Set on first use.
   mutable RowTypePtr rowType_;
-  
+
   // RowContainer requires a valid reference to a vector of aggregates. We
   // use a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.
