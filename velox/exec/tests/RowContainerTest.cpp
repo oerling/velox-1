@@ -579,7 +579,6 @@ TEST_F(RowContainerTest, spill) {
       HashBitRange{0, 2},
       keys.size(),
       2000000,
-      1000,
       *pool_,
       *mappedMemory_);
 

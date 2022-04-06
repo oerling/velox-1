@@ -621,6 +621,10 @@ std::unique_ptr<SpillStream> RowContainer::spillStreamOverRows(
 }
 
 void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
+  // Size Target size of a single vector of spilled content. One of
+  // these will be materialized at a time for each stream of the
+  // merge.
+  constexpr int32_t kTargetBatchBytes= 1 << 20; // 1MB
   for (auto partition = 0; partition < spillRuns_.size(); ++partition) {
     if (pendingSpillPartitions_.find(partition) ==
         pendingSpillPartitions_.end()) {
@@ -632,7 +636,7 @@ void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
     int32_t limit = std::min<uint64_t>(128, run.rows.size());
     for (; i < limit; ++i) {
       bytes += rowSize(run.rows[i]);
-      if (bytes > spill.targetBatchSize()) {
+      if (bytes > kTargetBatchBytes) {
         break;
       }
     }

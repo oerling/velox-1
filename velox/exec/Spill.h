@@ -263,15 +263,13 @@ class SpillState {
   // number of partitions. 'numSortingKeys' is the number of leading columns
   // on which the data is sorted, 0 if only hash partitioning is used.
   // 'targetFileSize' is the target size of a single
-  // file. 'targetBatchSize is the target number of rows in a single
-  // RowVector written to a spill file.  'pool' and 'mappedMemory' own
+  // file.  'pool' and 'mappedMemory' own
   // the memory for state and results.
   SpillState(
       const std::string& path,
       HashBitRange bits,
       int32_t numSortingKeys,
       uint64_t targetFileSize,
-      uint64_t targetBatchSize,
       memory::MemoryPool& pool,
       memory::MappedMemory& mappedMemory)
       : path_(path),
@@ -279,7 +277,6 @@ class SpillState {
         fieldMask_(((1UL << (hashBits_.end - hashBits_.begin))) - 1),
         numSortingKeys_(numSortingKeys),
         targetFileSize_(targetFileSize),
-        targetBatchSize_(targetBatchSize),
         pool_(pool),
         mappedMemory_(mappedMemory) {}
 
@@ -304,10 +301,6 @@ class SpillState {
 
   uint64_t targetFileSize() const {
     return targetFileSize_;
-  }
-
-  uint64_t targetBatchSize() const {
-    return targetBatchSize_;
   }
 
   memory::MemoryPool& pool() const {
@@ -342,7 +335,6 @@ class SpillState {
   // 'hashBits_'
   int32_t numPartitions_ = 0;
   const uint64_t targetFileSize_;
-  const uint64_t targetBatchSize_;
   // A file list for each spilled partition. Only partitions that have
   // started spilling have an entry here.
   std::vector<std::unique_ptr<SpillFileList>> files_;

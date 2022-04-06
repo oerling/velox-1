@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/exec/Spill.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
 #include "velox/common/file/FileSystems.h"
-#include "velox/exec/RowContainer.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/tests/VectorTestBase.h"
@@ -52,8 +52,7 @@ TEST_F(SpillTest, spillState) {
       tempDirectory->path,
       HashBitRange{0, 1},
       1,
-      1000000,
-      1000000,
+      10000, // small target file size. Makes a new file for each batch.
       *pool(),
       *mappedMemory_);
 
@@ -73,7 +72,7 @@ TEST_F(SpillTest, spillState) {
           partition,
           makeRowVector({makeFlatVector<int64_t>(
               10000, [&](auto row) { return row * 10 + batch + 100000; })}));
-      // Inidicates that the next additions to 'partition' are not sorted with
+      // Indicates that the next additions to 'partition' are not sorted with
       // respect to the values added so far.
       state.finishWrite(partition);
     }
