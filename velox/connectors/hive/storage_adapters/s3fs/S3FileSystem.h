@@ -40,7 +40,7 @@ class S3FileSystem : public FileSystem {
   void remove(std::string_view path) override {
     VELOX_UNSUPPORTED("remove for S3 not implemented");
   }
-  
+
  protected:
   class Impl;
   std::shared_ptr<Impl> impl_;
