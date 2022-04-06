@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/exec/Spill.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
 #include "velox/common/file/FileSystems.h"
-#include "velox/exec/Spill.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/tests/VectorTestBase.h"

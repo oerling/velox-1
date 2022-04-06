@@ -27,7 +27,7 @@ void SpillInput::next(bool /*throwIfPastEnd*/) {
   input_->pread(offset_, readBytes, buffer_->asMutable<char>());
   offset_ += readBytes;
 }
-  
+
 void SpillStream::pop() {
   if (++index_ >= size_) {
     nextBatch();
