@@ -361,6 +361,7 @@ class RowContainer {
       int32_t partition,
       memory::MemoryPool& pool);
 
+  // Extracts the keys, dependents or accumulators for 'rows' into '*result'. Creates '*results' in 'pool' if nullptr.
   void extractSpill(
       folly::Range<char**> rows,
       memory::MemoryPool& pool,
@@ -421,7 +422,7 @@ class RowContainer {
   struct SpillRun {
     // Spillable rows from the RowContainer.
     std::vector<char*> rows;
-    // The partitioning has of each element in 'rows'.
+    // The partitioning hash of each element in 'rows'.
     std::vector<uint64_t> hashes;
     // The total byte size of rows referenced from 'rows'.
     uint64_t size = 0;
@@ -434,7 +435,7 @@ class RowContainer {
   };
 
   // Returns the type of a row of content.
-  RowTypePtr rowType() const;
+  const RowTypePtr& rowType() const;
 
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
@@ -895,6 +896,9 @@ class RowContainer {
   // spillStreamOverRows().
   bool spillFinalized_{false};
 
+  // Type of contents as a row. Set on first use.
+  mutable RowTypePtr rowType_;
+  
   // RowContainer requires a valid reference to a vector of aggregates. We
   // use a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.
