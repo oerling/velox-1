@@ -52,8 +52,7 @@ TEST_F(SpillTest, spillState) {
       tempDirectory->path,
       HashBitRange{0, 1},
       1,
-      1000000,
-      1000000,
+      10000, // small target file size. Makes a new file for each batch.
       *pool(),
       *mappedMemory_);
 
@@ -73,7 +72,7 @@ TEST_F(SpillTest, spillState) {
           partition,
           makeRowVector({makeFlatVector<int64_t>(
               10000, [&](auto row) { return row * 10 + batch + 100000; })}));
-      // Inidicates that the next additions to 'partition' are not sorted with
+      // Indicates that the next additions to 'partition' are not sorted with
       // respect to the values added so far.
       state.finishWrite(partition);
     }
