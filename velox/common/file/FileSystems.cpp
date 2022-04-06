@@ -99,27 +99,27 @@ class LocalFileSystem : public FileSystem {
     }
   }
 
-static std::function<bool(std::string_view)>
-schemeMatcher() {
-  // Note: presto behavior is to prefix local paths with 'file:'.
-  // Check for that prefix and prune to absolute regular paths as needed.
-  return [](std::string_view filename) {
-    return filename.find("/") == 0 || filename.find(kFileScheme) == 0;
-  };
-}
+  static std::function<bool(std::string_view)> schemeMatcher() {
+    // Note: presto behavior is to prefix local paths with 'file:'.
+    // Check for that prefix and prune to absolute regular paths as needed.
+    return [](std::string_view filename) {
+      return filename.find("/") == 0 || filename.find(kFileScheme) == 0;
+    };
+  }
 
-static std::function<std::shared_ptr<FileSystem>(std::shared_ptr<const Config>)>
-fileSystemGenerator() {
-  return [](std::shared_ptr<const Config> properties) {
-    // One instance of Local FileSystem is sufficient.
-    // Initialize on first access and reuse after that.
-    static std::shared_ptr<FileSystem> lfs;
-    folly::call_once(localFSInstantiationFlag, [&properties]() {
-      lfs = std::make_shared<LocalFileSystem>(properties);
-    });
-    return lfs;
-  };
-}
+  static std::function<
+      std::shared_ptr<FileSystem>(std::shared_ptr<const Config>)>
+  fileSystemGenerator() {
+    return [](std::shared_ptr<const Config> properties) {
+      // One instance of Local FileSystem is sufficient.
+      // Initialize on first access and reuse after that.
+      static std::shared_ptr<FileSystem> lfs;
+      folly::call_once(localFSInstantiationFlag, [&properties]() {
+        lfs = std::make_shared<LocalFileSystem>(properties);
+      });
+      return lfs;
+    };
+  }
 };
 } // namespace
 

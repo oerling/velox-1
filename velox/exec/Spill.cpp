@@ -52,7 +52,7 @@ SpillFile::~SpillFile() {
     auto fs = filesystems::getFileSystem(path_, nullptr);
     fs->remove(path_);
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Error deleting spill file " <<path_ << " : " << e.what();
+    LOG(ERROR) << "Error deleting spill file " << path_ << " : " << e.what();
   }
 }
 
@@ -103,12 +103,14 @@ WriteFile& SpillFileList::currentOutput() {
 
 void SpillFileList::flush() {
   if (batch_) {
-    IOBufOutputStream out(mappedMemory_, nullptr, std::max<int64_t>(64 * 1024, batch_->size()));
+    IOBufOutputStream out(
+        mappedMemory_, nullptr, std::max<int64_t>(64 * 1024, batch_->size()));
     batch_->flush(&out);
     batch_.reset();
     auto iobuf = out.getIOBuf();
     for (auto& range : *iobuf) {
-      currentOutput().append(std::string_view(reinterpret_cast<const char*>(range.data()), range.size()));
+      currentOutput().append(std::string_view(
+          reinterpret_cast<const char*>(range.data()), range.size()));
     }
   }
 }

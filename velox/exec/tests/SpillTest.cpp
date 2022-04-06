@@ -86,11 +86,12 @@ TEST_F(SpillTest, spillState) {
       ASSERT_NE(nullptr, stream);
       EXPECT_EQ(
           i,
-          stream->current().childAt(0)->asUnchecked <
-	  FlatVector<int64_t>>()->valueAt(stream->currentIndex()));
+          stream->current()
+              .childAt(0)
+              ->asUnchecked<FlatVector<int64_t>>()
+              ->valueAt(stream->currentIndex()));
       stream->pop();
     }
     ASSERT_EQ(nullptr, merge->next());
   }
 }
-

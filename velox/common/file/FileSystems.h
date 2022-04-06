@@ -47,7 +47,7 @@ class FileSystem {
   virtual void remove(std::string_view path) {
     VELOX_UNSUPPORTED();
   }
-  
+
  protected:
   std::shared_ptr<const Config> config_;
 };
