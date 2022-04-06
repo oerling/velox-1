@@ -576,7 +576,7 @@ TEST_F(RowContainerTest, spill) {
   // We spill 'data' in 4 sorted partitions.
   auto spillState = std::make_unique<SpillState>(
       tempDirectory->path,
-      HashBitRange{0, 2},
+      4,
       keys.size(),
       2000000,
       *pool_,
@@ -614,7 +614,8 @@ TEST_F(RowContainerTest, spill) {
 
     // We read the spilled data back and check that it matches the sorted order
     // of the partition.
-    auto& indices = partitions[partitionIndex];
+    au
+      to& indices = partitions[partitionIndex];
     for (auto i = 0; i < indices.size(); ++i) {
       auto stream = merge->next();
       if (!stream) {
