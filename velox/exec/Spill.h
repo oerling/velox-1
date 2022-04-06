@@ -42,15 +42,6 @@ class SpillInput : public ByteStream {
     return offset_ >= size_ && ranges()[0].position >= ranges()[0].size;
   }
 
-  // Returns the offset of the first byte of input that is not yet consumed. May
-  // be used with seekp to rewind a read.
-  std::streampos tellp() const override {
-    return offset_ - current_->size + current_->position;
-  }
-
-  // Positions the file so that the byte at 'position' is the first to be read.
-  void seekp(std::streampos position) override;
-
  private:
   std::unique_ptr<ReadFile> input_;
   BufferPtr buffer_;

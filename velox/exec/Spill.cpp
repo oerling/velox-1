@@ -27,20 +27,7 @@ void SpillInput::next(bool /*throwIfPastEnd*/) {
   input_->pread(offset_, readBytes, buffer_->asMutable<char>());
   offset_ += readBytes;
 }
-
-void SpillInput::seekp(std::streampos position) {
-  auto bufferOffset = offset_ - current_->size;
-  if (bufferOffset <= position && bufferOffset + current_->size < position) {
-    current_->position = std::streamoff(position) - bufferOffset;
-  } else {
-    // The seek target is not in the buffer.
-    offset_ = position;
-    current_->position = 0;
-    current_->size = 0;
-    next(true);
-  }
-}
-
+  
 void SpillStream::pop() {
   if (++index_ >= size_) {
     nextBatch();

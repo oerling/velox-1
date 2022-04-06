@@ -94,8 +94,6 @@ class OStreamOutputStream : public OutputStream {
 // seeking back to start to write a length header.
 class ByteStream {
  public:
-  using Position = std::tuple<ByteRange*, int64_t>;
-
   // For input.
   ByteStream() : isBits_(false), isReverseBitOrder_(false) {}
   virtual ~ByteStream() = default;
@@ -131,19 +129,19 @@ class ByteStream {
     extend(initialSize);
   }
 
-  virtual void seek(int32_t range, int32_t position) {
+  void seek(int32_t range, int32_t position) {
     current_ = &ranges_[range];
     current_->position = position;
   }
 
-  virtual std::streampos tellp() const;
+  std::streampos tellp() const;
 
-  virtual void seekp(std::streampos position);
+  void seekp(std::streampos position);
 
   // Returns the size written into ranges_. This is the sum of the
   // capacities of non-last ranges + the greatest write position of
   // the last range.
-  virtual size_t size() const {
+  size_t size() const {
     if (ranges_.empty()) {
       return 0;
     }
@@ -350,7 +348,7 @@ class ByteStream {
     return reinterpret_cast<char*>(current_->buffer) + current_->position;
   }
 
- protected:
+ private:
   void extend(int32_t bytes = memory::MappedMemory::kPageSize);
 
   void updateEnd() {
