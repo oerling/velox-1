@@ -162,7 +162,8 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
     partitions.push_back(partition);
     writes.push_back(
         std::make_shared<AsyncSource<int32_t>>([partition, this, maxBytes]() {
-          return writeSpill(partition, maxBytes / pendingSpillPartitions_.size());
+          return writeSpill(
+              partition, maxBytes / pendingSpillPartitions_.size());
         }));
     executor_->add([source = writes.back()]() { source->prepare(); });
   }

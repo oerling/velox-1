@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/RowContainer.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
@@ -23,6 +22,7 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/ContainerRowSerde.h"
+#include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -48,7 +48,7 @@ class RowContainerTestBase : public testing::Test {
       const size_t size,
       std::function<void(RowVectorPtr)> customizeData) {
     auto batch = std::static_pointer_cast<RowVector>(
-						     velox::test::BatchMaker::createBatch(rowType, size, *pool_));
+        velox::test::BatchMaker::createBatch(rowType, size, *pool_));
     if (customizeData) {
       customizeData(batch);
     }
@@ -76,4 +76,4 @@ class RowContainerTestBase : public testing::Test {
   std::unique_ptr<memory::MemoryPool> pool_;
   memory::MappedMemory* mappedMemory_;
 };
-}
+} // namespace facebook::velox::exec::test

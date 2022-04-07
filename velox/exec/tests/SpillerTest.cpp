@@ -1,148 +1,143 @@
 
 
 #include "velox/exec/Spiller.h"
-#include "velox/exec/tests/utils/RowContainerTestBase.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
+#include "velox/exec/tests/utils/RowContainerTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 
 class SpillerTest : public exec::test::RowContainerTestBase {
-protected:
+ protected:
   void testSpill(int32_t spillPct) {
-  constexpr int32_t kNumRows = 100000;
-  auto batch = makeDataset(
-      ROW({
-          {"bool_val", BOOLEAN()},
-          {"tiny_val", TINYINT()},
-          {"small_val", SMALLINT()},
-          {"int_val", INTEGER()},
-          {"long_val", BIGINT()},
-          {"ordinal", BIGINT()},
-          {"float_val", REAL()},
-          {"double_val", DOUBLE()},
-          {"string_val", VARCHAR()},
-          {"array_val", ARRAY(VARCHAR())},
-          {"struct_val",
-           ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
-          {"map_val",
-           MAP(VARCHAR(),
-               MAP(BIGINT(),
-                   ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
-      }),
-      kNumRows,
-      [](RowVectorPtr /*rows&*/) {});
-  const auto& types = batch->type()->as<TypeKind::ROW>().children();
-  std::vector<TypePtr> keys;
-  keys.insert(keys.begin(), types.begin(), types.begin() + 6);
+    constexpr int32_t kNumRows = 100000;
+    auto batch = makeDataset(
+        ROW({
+            {"bool_val", BOOLEAN()},
+            {"tiny_val", TINYINT()},
+            {"small_val", SMALLINT()},
+            {"int_val", INTEGER()},
+            {"long_val", BIGINT()},
+            {"ordinal", BIGINT()},
+            {"float_val", REAL()},
+            {"double_val", DOUBLE()},
+            {"string_val", VARCHAR()},
+            {"array_val", ARRAY(VARCHAR())},
+            {"struct_val",
+             ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+            {"map_val",
+             MAP(VARCHAR(),
+                 MAP(BIGINT(),
+                     ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
+        }),
+        kNumRows,
+        [](RowVectorPtr /*rows&*/) {});
+    const auto& types = batch->type()->as<TypeKind::ROW>().children();
+    std::vector<TypePtr> keys;
+    keys.insert(keys.begin(), types.begin(), types.begin() + 6);
 
-  std::vector<TypePtr> dependents;
-  dependents.insert(dependents.begin(), types.begin() + 6, types.end());
-  // Set ordinal so that the sorted order is unambiguous
+    std::vector<TypePtr> dependents;
+    dependents.insert(dependents.begin(), types.begin() + 6, types.end());
+    // Set ordinal so that the sorted order is unambiguous
 
-  auto ordinal = batch->childAt(5)->as<FlatVector<int64_t>>();
-  for (auto i = 0; i < kNumRows; ++i) {
-    ordinal->set(i, i);
-  }
-  // Make non-join build container so that spill runs are sorted. Note
-  // that a distinct or group by hash table can have dependents if
-  // some keys are known to be unique by themselves. Aggregation
-  // spilling will be tested separately.
-  auto data = makeRowContainer(keys, dependents, false);
-  std::vector<char*> rows(kNumRows);
-  for (int i = 0; i < kNumRows; ++i) {
-    rows[i] = data->newRow();
-  }
-
-  SelectivityVector allRows(kNumRows);
-  for (auto column = 0; column < batch->childrenSize(); ++column) {
-    DecodedVector decoded(*batch->childAt(column), allRows);
-    for (auto index = 0; index < kNumRows; ++index) {
-      data->store(decoded, index, rows[index], column);
+    auto ordinal = batch->childAt(5)->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < kNumRows; ++i) {
+      ordinal->set(i, i);
     }
-  }
-  std::vector<uint64_t> hashes(kNumRows);
-  // Calculate a hash for every key in 'rows'.
-  for (auto i = 0; i < keys.size(); ++i) {
-    data->hash(
-        i, folly::Range<char**>(rows.data(), kNumRows), i > 0, hashes.data());
-  }
-
-  // We divide the rows in 4 partitions according to 2 low bits of the hash.
-  std::vector<std::vector<int32_t>> partitions(4);
-  for (auto i = 0; i < kNumRows; ++i) {
-    partitions[hashes[i] & 3].push_back(i);
-  }
-
-  // We sort the rows in each partition in key order.
-  for (auto& partition : partitions) {
-    std::sort(
-        partition.begin(),
-        partition.end(),
-        [&](int32_t leftIndex, int32_t rightIndex) {
-          return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
-        });
-  }
-
-  auto tempDirectory = exec::test::TempDirectoryPath::create();
-  // We spill 'data' in 4 sorted partitions.
-  auto spiller = std::make_unique<Spiller>(
-					   *data,
-					   [&](folly::Range<char**> rows) { data->eraseRows(rows); },
-					   batch->type(),
-					   HashBitRange(0, 2),
-      keys.size(),
-					   tempDirectory->path,
-      2000000,
-      *pool_,
-					   executor());
-
-  // We have a bit range of two bits , so up to 4 spilled partitions.
-  EXPECT_EQ(4, spiller->state().maxPartitions());
-
-  RowContainerIterator iter;
-
-  // We spill spillPct% of the data in 10% increments.
-  auto initialBytes = data->allocatedBytes();
-  auto initialRows = data->numRows();
-  for (auto pct = 10; pct <= spillPct; pct += 10) {
-    spiller->spill(
-        initialRows * 100 / pct,
-        initialBytes * 100 / pct,
-        iter);
-
-  }
-  auto unspilledPartitionRows = spiller->finishSpill();
-  if (spillPct == 100) {
-  EXPECT_TRUE(unspilledPartitionRows.empty());
-  EXPECT_EQ(0, data->numRows());
-  }
-  // We read back the spilled and not spilled data in each of the
-  // partitions. We check that the data comes back in key order.
-  for (auto partitionIndex = 0; partitionIndex < 4; ++partitionIndex) {
-    if (!spiller->isSpilled(partitionIndex)) {
-      continue;
+    // Make non-join build container so that spill runs are sorted. Note
+    // that a distinct or group by hash table can have dependents if
+    // some keys are known to be unique by themselves. Aggregation
+    // spilling will be tested separately.
+    auto data = makeRowContainer(keys, dependents, false);
+    std::vector<char*> rows(kNumRows);
+    for (int i = 0; i < kNumRows; ++i) {
+      rows[i] = data->newRow();
     }
-    // We make a merge reader that merges the spill files and the rows that are
-    // still in the RowContainer.
-    auto merge = spiller->startMerge(
-        partitionIndex);
 
-    // We read the spilled data back and check that it matches the sorted order
-    // of the partition.
-    auto& indices = partitions[partitionIndex];
-    for (auto i = 0; i < indices.size(); ++i) {
-      auto stream = merge->next();
-      if (!stream) {
-        FAIL() << "Stream ends after " << i << " entries";
-        break;
+    SelectivityVector allRows(kNumRows);
+    for (auto column = 0; column < batch->childrenSize(); ++column) {
+      DecodedVector decoded(*batch->childAt(column), allRows);
+      for (auto index = 0; index < kNumRows; ++index) {
+        data->store(decoded, index, rows[index], column);
       }
-      EXPECT_TRUE(batch->equalValueAt(
-          &stream->current(), indices[i], stream->currentIndex()));
-      stream->pop();
+    }
+    std::vector<uint64_t> hashes(kNumRows);
+    // Calculate a hash for every key in 'rows'.
+    for (auto i = 0; i < keys.size(); ++i) {
+      data->hash(
+          i, folly::Range<char**>(rows.data(), kNumRows), i > 0, hashes.data());
+    }
+
+    // We divide the rows in 4 partitions according to 2 low bits of the hash.
+    std::vector<std::vector<int32_t>> partitions(4);
+    for (auto i = 0; i < kNumRows; ++i) {
+      partitions[hashes[i] & 3].push_back(i);
+    }
+
+    // We sort the rows in each partition in key order.
+    for (auto& partition : partitions) {
+      std::sort(
+          partition.begin(),
+          partition.end(),
+          [&](int32_t leftIndex, int32_t rightIndex) {
+            return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
+          });
+    }
+
+    auto tempDirectory = exec::test::TempDirectoryPath::create();
+    // We spill 'data' in 4 sorted partitions.
+    auto spiller = std::make_unique<Spiller>(
+        *data,
+        [&](folly::Range<char**> rows) { data->eraseRows(rows); },
+        batch->type(),
+        HashBitRange(0, 2),
+        keys.size(),
+        tempDirectory->path,
+        2000000,
+        *pool_,
+        executor());
+
+    // We have a bit range of two bits , so up to 4 spilled partitions.
+    EXPECT_EQ(4, spiller->state().maxPartitions());
+
+    RowContainerIterator iter;
+
+    // We spill spillPct% of the data in 10% increments.
+    auto initialBytes = data->allocatedBytes();
+    auto initialRows = data->numRows();
+    for (auto pct = 10; pct <= spillPct; pct += 10) {
+      spiller->spill(initialRows * 100 / pct, initialBytes * 100 / pct, iter);
+    }
+    auto unspilledPartitionRows = spiller->finishSpill();
+    if (spillPct == 100) {
+      EXPECT_TRUE(unspilledPartitionRows.empty());
+      EXPECT_EQ(0, data->numRows());
+    }
+    // We read back the spilled and not spilled data in each of the
+    // partitions. We check that the data comes back in key order.
+    for (auto partitionIndex = 0; partitionIndex < 4; ++partitionIndex) {
+      if (!spiller->isSpilled(partitionIndex)) {
+        continue;
+      }
+      // We make a merge reader that merges the spill files and the rows that
+      // are still in the RowContainer.
+      auto merge = spiller->startMerge(partitionIndex);
+
+      // We read the spilled data back and check that it matches the sorted
+      // order of the partition.
+      auto& indices = partitions[partitionIndex];
+      for (auto i = 0; i < indices.size(); ++i) {
+        auto stream = merge->next();
+        if (!stream) {
+          FAIL() << "Stream ends after " << i << " entries";
+          break;
+        }
+        EXPECT_TRUE(batch->equalValueAt(
+            &stream->current(), indices[i], stream->currentIndex()));
+        stream->pop();
+      }
     }
   }
-}
 
   folly::IOThreadPoolExecutor* FOLLY_NONNULL executor() {
     static std::mutex mutex;

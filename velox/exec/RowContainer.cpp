@@ -524,5 +524,4 @@ void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   }
 }
 
-
 } // namespace facebook::velox::exec

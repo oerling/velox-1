@@ -46,7 +46,7 @@ add_executable(
   SimpleFunctionResolutionTest.cpp
   SpillTest.cpp
   "SpillerTest.cpp"
-UnnestTest.cpp
+  UnnestTest.cpp
   AssignUniqueIdTest.cpp)
 
 add_test(

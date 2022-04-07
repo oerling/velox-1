@@ -22,9 +22,9 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/VectorHasher.h"
+#include "velox/exec/tests/utils/RowContainerTestBase.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
-#include "velox/exec/tests/utils/RowContainerTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;

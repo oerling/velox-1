@@ -384,7 +384,7 @@ class RowContainer {
   const HashStringAllocator& stringAllocator() const {
     return stringAllocator_;
   }
-  
+
   // Checks that row and free row counts match and that free list
   // membership is consistent with free flag.
   void checkConsistency();
@@ -392,7 +392,6 @@ class RowContainer {
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
-
 
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {

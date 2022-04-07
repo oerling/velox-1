@@ -59,7 +59,7 @@ class Spiller {
       folly::Executor* executor)
       : container_(container),
         eraser_(eraser),
-    rowType_(std::static_pointer_cast<const RowType>(rowType)),
+        rowType_(std::static_pointer_cast<const RowType>(rowType)),
         bits_(bits),
         state_(
             path,
