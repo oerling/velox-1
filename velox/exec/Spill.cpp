@@ -136,16 +136,15 @@ void SpillState::setNumPartitions(int32_t numPartitions) {
 void SpillState::appendToPartition(
     int32_t partition,
     const RowVectorPtr& rows) {
-  // Ensure that all partitions exist before writing.
-  for (auto newPartition = files_.size(); newPartition < numPartitions_;
-       ++newPartition) {
-    files_.push_back(std::make_unique<SpillFileList>(
+  // Ensure that partition exist before writing.
+  if (!files_.at(partition)) {
+    files_[partition] = std::make_unique<SpillFileList>(
         std::static_pointer_cast<const RowType>(rows->type()),
         numSortingKeys_,
-        fmt::format("{}-{}", path_, newPartition),
+        fmt::format("{}-{}", path_, partition),
         targetFileSize_,
         pool_,
-        mappedMemory_));
+        mappedMemory_);
   }
 
   IndexRange range{0, rows->size()};

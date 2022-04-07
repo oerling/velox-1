@@ -144,6 +144,15 @@ class Spiller {
     }
   };
 
+  struct SpillStatus {
+    int32_t partition;
+    int32_t numWritten;
+    std::exception_ptr error;
+
+    SpillStatus(int32_t _partition, int32_t _numWritten, std::exception_ptr _error)
+      : partition(_partition), numWritten(_numWritten), error(_error) {}
+  };
+  
   // Prepares spill runs for the spillable hash number ranges in
   // 'spill'. Returns true if at end of 'iterator'. Returns false
   // before reaching end of iterator if found enough to spill. Adds spillable
@@ -159,12 +168,15 @@ class Spiller {
   // Clears runs that have not started spilling.
   void clearNonSpillingRuns();
 
+  // Sorts 'run' if not already sorted.
+  void ensureSorted(SpillRun& run);
+
+  
   // Function for writing a spill partition on an executor. Writes to
   // 'partition' until all rows in spillRuns_[partition] are written
   // or 'maxBytes' is exceeded. Returns the number of rows
-  // written. The return value is a unique_ptr to te count to
-  // work with AsyncSource.
-  std::unique_ptr<int32_t> writeSpill(int32_t partition, uint64_t maxBytes);
+  // written.
+  std::unique_ptr<SpillStatus> writeSpill(int32_t partition, uint64_t maxBytes);
 
   // Writes out  and erases rows marked for spilling.
   void advanceSpill(uint64_t maxBytes);

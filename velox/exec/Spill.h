@@ -267,8 +267,10 @@ class SpillState {
         maxPartitions_(maxPartitions),
         numSortingKeys_(numSortingKeys),
         targetFileSize_(targetFileSize),
+	files_(maxPartitions_),
         pool_(pool),
-        mappedMemory_(mappedMemory) {}
+        mappedMemory_(mappedMemory) {
+  }
 
   int32_t numPartitions() const {
     return numPartitions_;
@@ -290,8 +292,10 @@ class SpillState {
     return pool_;
   }
 
-  // Appends data to 'partition'. The rows  given by 'indices'  must be sorted
-  // for a sorted spill and must hash to 'partition'.
+  // Appends data to 'partition'. The rows given by 'indices' must be
+  // sorted for a sorted spill and must hash to 'partition'. It is
+  // safe to call this on multiple threads if all threads specify a
+  // different partition.
   void appendToPartition(int32_t partition, const RowVectorPtr& rows);
 
   // Finishes a sorted run for 'partition'. If write is called for 'partition'

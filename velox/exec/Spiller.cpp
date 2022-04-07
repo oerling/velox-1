@@ -18,6 +18,8 @@
 
 #include "velox/common/base/AsyncSource.h"
 
+#include <folly/ScopeGuard.h>
+
 namespace facebook::velox::exec {
 
 void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr* resultPtr) {
@@ -99,6 +101,7 @@ class RowContainerSpillStream : public SpillStream {
 std::unique_ptr<SpillStream> Spiller::spillStreamOverRows(int32_t partition) {
   VELOX_CHECK(spillFinalized_);
   VELOX_CHECK_LT(partition, spillRuns_.size());
+  ensureSorted(spillRuns_[partition]);
   return std::make_unique<RowContainerSpillStream>(
       rowType_,
       container_.keyTypes().size(),
@@ -107,16 +110,7 @@ std::unique_ptr<SpillStream> Spiller::spillStreamOverRows(int32_t partition) {
       *this);
 }
 
-std::unique_ptr<int32_t> Spiller::writeSpill(
-    int32_t partition,
-    uint64_t maxBytes) {
-  // Size Target size of a single vector of spilled content. One of
-  // these will be materialized at a time for each stream of the
-  // merge.
-  constexpr int32_t kTargetBatchBytes = 1 << 20; // 1MB
-
-  RowVectorPtr spillVector;
-  auto& run = spillRuns_[partition];
+void Spiller::ensureSorted(SpillRun& run) {
   if (!run.sorted) {
     std::sort(
         run.rows.begin(),
@@ -126,51 +120,80 @@ std::unique_ptr<int32_t> Spiller::writeSpill(
         });
     run.sorted = true;
   }
-  int64_t totalBytes = 0;
-  int32_t written = 0;
-  while (written < run.rows.size()) {
-    int32_t i = 0;
-    int32_t limit = std::min<uint64_t>(128, run.rows.size() - written);
-    int32_t bytes = 0;
-    for (; i < limit; ++i) {
-      bytes += container_.rowSize(run.rows[written + i]);
-      if (bytes > kTargetBatchBytes) {
-        ++i;
+}
+
+std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(
+    int32_t partition,
+    uint64_t maxBytes) {
+  // Size Target size of a single vector of spilled content. One of
+  // these will be materialized at a time for each stream of the
+  // merge.
+  constexpr int32_t kTargetBatchBytes = 1 << 20; // 1MB
+
+  RowVectorPtr spillVector;
+  auto& run = spillRuns_[partition];
+  try {
+    ensureSorted(run);
+    int64_t totalBytes = 0;
+    int32_t written = 0;
+    while (written < run.rows.size()) {
+      int32_t i = 0;
+      int32_t limit = std::min<uint64_t>(128, run.rows.size() - written);
+      int32_t bytes = 0;
+      for (; i < limit; ++i) {
+        bytes += container_.rowSize(run.rows[written + i]);
+        if (bytes > kTargetBatchBytes) {
+          ++i;
+          break;
+        }
+      }
+      folly::Range<char**> spilled(run.rows.data() + written, i);
+      extractSpill(spilled, &spillVector);
+      state_.appendToPartition(partition, spillVector);
+      written += i;
+      totalBytes += bytes;
+      if (totalBytes > maxBytes) {
         break;
       }
     }
-    folly::Range<char**> spilled(run.rows.data() + written, i + written);
-    extractSpill(spilled, &spillVector);
-    state_.appendToPartition(partition, spillVector);
-    written += i;
-    totalBytes += bytes;
-    if (totalBytes > maxBytes) {
-      break;
-    }
+    return std::make_unique<SpillStatus>(partition, written, nullptr);
+  } catch (const std::exception& e) {
+    return std::make_unique<SpillStatus>(
+        partition, 0, std::current_exception());
   }
-  return std::make_unique<int32_t>(written);
 }
 
 void Spiller::advanceSpill(uint64_t maxBytes) {
-  std::vector<std::shared_ptr<AsyncSource<int32_t>>> writes;
-  std::vector<int32_t> partitions;
+  std::vector<std::shared_ptr<AsyncSource<SpillStatus>>> writes;
   for (auto partition = 0; partition < spillRuns_.size(); ++partition) {
     if (pendingSpillPartitions_.find(partition) ==
         pendingSpillPartitions_.end()) {
       continue;
     }
-    partitions.push_back(partition);
-    writes.push_back(
-        std::make_shared<AsyncSource<int32_t>>([partition, this, maxBytes]() {
+    writes.push_back(std::make_shared<AsyncSource<SpillStatus>>(
+        [partition, this, maxBytes]() {
           return writeSpill(
               partition, maxBytes / pendingSpillPartitions_.size());
         }));
     executor_->add([source = writes.back()]() { source->prepare(); });
   }
-  for (auto i = 0; i < writes.size(); ++i) {
-    auto result = writes[i]->move();
-    auto numWritten = *result;
-    auto partition = partitions[i];
+  auto sync = folly::makeGuard([&]() {
+    for (auto& write : writes) {
+      try {
+        write->move();
+      } catch (const std::exception& e) {
+      }
+    }
+  });
+
+  for (auto& write : writes) {
+    auto result = write->move();
+
+    if (result->error) {
+      std::rethrow_exception(result->error);
+    }
+    auto numWritten = result->numWritten;
+    auto partition = result->partition;
     auto& run = spillRuns_[partition];
     auto spilled = folly::Range<char**>(run.rows.data(), numWritten);
     eraser_(spilled);

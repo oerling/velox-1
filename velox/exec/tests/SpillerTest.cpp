@@ -105,8 +105,11 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     // We spill spillPct% of the data in 10% increments.
     auto initialBytes = data->allocatedBytes();
     auto initialRows = data->numRows();
-    for (auto pct = 10; pct <= spillPct; pct += 10) {
-      spiller->spill(initialRows * 100 / pct, initialBytes * 100 / pct, iter);
+    for (int32_t pct = 10; pct <= spillPct; pct += 10) {
+      spiller->spill(
+          initialRows - (initialRows * pct / 100),
+          initialBytes - (initialBytes * pct / 100),
+          iter);
     }
     auto unspilledPartitionRows = spiller->finishSpill();
     if (spillPct == 100) {
@@ -139,6 +142,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     }
   }
 
+  
   folly::IOThreadPoolExecutor* FOLLY_NONNULL executor() {
     static std::mutex mutex;
     std::lock_guard<std::mutex> l(mutex);
