@@ -60,8 +60,10 @@ class RowContainerSpillStream : public SpillStream {
       : SpillStream(std::move(type), numSortingKeys, pool),
         rows_(std::move(rows)),
         spiller_(spiller) {
-    nextBatch();
-  }
+    if (!rows_.empty()) {
+      nextBatch();
+    }
+    }
 
   uint64_t size() const override {
     return 0;
@@ -197,6 +199,10 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
     auto& run = spillRuns_[partition];
     auto spilled = folly::Range<char**>(run.rows.data(), numWritten);
     eraser_(spilled);
+    if (!container_.numRows()) {
+      // If the container became empty, free its memory.
+      container_.clear();
+    }
     run.rows.erase(run.rows.begin(), run.rows.begin() + numWritten);
     if (run.rows.empty()) {
       // Run ends, start with a new file next time.
@@ -208,8 +214,8 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
 }
 
 void Spiller::spill(
-    uint64_t targetFreeRows,
-    uint64_t targetFreeSpace,
+    uint64_t targetRows,
+    uint64_t targetSpace,
     RowContainerIterator& iterator) {
   bool doneFullSweep = false;
   bool startedFullSweep = false;
@@ -218,8 +224,10 @@ void Spiller::spill(
     state_.setNumPartitions(1);
   }
   for (;;) {
-    if (container_.numFreeRows() >= targetFreeRows &&
-        container_.stringAllocator().freeSpace() > targetFreeSpace) {
+    auto rowsLeft = container_.numRows();
+    auto spaceLeft = container_.stringAllocator().retainedSize() -
+        container_.stringAllocator().freeSpace();
+    if (!rowsLeft || (rowsLeft <= targetRows && spaceLeft < targetSpace)) {
       return;
     }
     if (!pendingSpillPartitions_.empty()) {
@@ -238,7 +246,10 @@ void Spiller::spill(
     }
     clearSpillRuns();
     iterator.reset();
-    if (fillSpillRuns(iterator, state_.targetFileSize())) {
+    if (fillSpillRuns(
+            iterator,
+            targetSpace < state_.targetFileSize() ? RowContainer::kUnlimited
+                                                  : state_.targetFileSize())) {
       // Arrived at end of the container. Add more spilled ranges if any left.
       if (state_.numPartitions() < state_.maxPartitions()) {
         state_.setNumPartitions(state_.numPartitions() + 1);
@@ -283,12 +294,15 @@ bool Spiller::fillSpillRuns(
         RowContainer::kUnlimited,
         "Retrieving rows of non-spilling partitions is only "
         "allowed if retrieving the whole container");
+    final = true;
+  } else if (targetSize == RowContainer::kUnlimited) {
+    final = true;
   }
   std::vector<uint64_t> hashes(kHashBatchSize);
   std::vector<char*> rows(kHashBatchSize);
   for (;;) {
-    auto numRows =
-        container_.listRows(&iterator, rows.size(), targetSize, rows.data());
+    auto numRows = container_.listRows(
+        &iterator, rows.size(), RowContainer::kUnlimited, rows.data());
 
     // Calculate hashes for this batch of spill candidates.
     auto rowSet = folly::Range<char**>(rows.data(), numRows);
@@ -316,7 +330,7 @@ bool Spiller::fillSpillRuns(
     bool anyStarted = false;
     for (auto i = 0; i < spillRuns_.size(); ++i) {
       auto& run = spillRuns_[i];
-      if (run.size > targetSize || final) {
+      if (!run.rows.empty() && (run.size > targetSize || final)) {
         pendingSpillPartitions_.insert(i);
         anyStarted = true;
       }

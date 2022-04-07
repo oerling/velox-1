@@ -312,6 +312,10 @@ class SpillState {
       int32_t partition,
       std::unique_ptr<SpillStream>&& extra);
 
+  bool hasFiles(int32_t partition) {
+    return partition < files_.size()  && files_[partition];
+  }
+  
  private:
   const RowTypePtr type_;
   const std::string path_;

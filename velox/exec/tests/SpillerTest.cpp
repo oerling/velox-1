@@ -9,7 +9,7 @@ using namespace facebook::velox::exec;
 
 class SpillerTest : public exec::test::RowContainerTestBase {
  protected:
-  void testSpill(int32_t spillPct) {
+  void testSpill(int32_t spillPct, bool makeError = false) {
     constexpr int32_t kNumRows = 100000;
     auto batch = makeDataset(
         ROW({
@@ -92,7 +92,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
         batch->type(),
         HashBitRange(0, 2),
         keys.size(),
-        tempDirectory->path,
+        makeError ? "/bad/path" : tempDirectory->path,
         2000000,
         *pool_,
         executor());
@@ -106,11 +106,19 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     auto initialBytes = data->allocatedBytes();
     auto initialRows = data->numRows();
     for (int32_t pct = 10; pct <= spillPct; pct += 10) {
-      spiller->spill(
-          initialRows - (initialRows * pct / 100),
-          initialBytes - (initialBytes * pct / 100),
-          iter);
-    }
+      try {
+	spiller->spill(
+		       initialRows - (initialRows * pct / 100),
+		       initialBytes - (initialBytes * pct / 100),
+		       iter);
+	EXPECT_FALSE(makeError);
+      } catch (const std::exception& e) {
+	if (!makeError) {
+	  throw;
+	}
+	return;
+      }
+      }
     auto unspilledPartitionRows = spiller->finishSpill();
     if (spillPct == 100) {
       EXPECT_TRUE(unspilledPartitionRows.empty());
@@ -163,6 +171,10 @@ TEST_F(SpillerTest, spilMost) {
   testSpill(60);
 }
 
-TEST_F(SpillerTest, spilAll) {
+TEST_F(SpillerTest, spillAll) {
   testSpill(100);
+}
+
+TEST_F(SpillerTest, error) {
+  testSpill(100, true);
 }

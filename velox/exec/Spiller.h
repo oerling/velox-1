@@ -71,25 +71,20 @@ class Spiller {
         pool_(pool),
         executor_(executor) {}
 
-  // Spills rows from 'this' into 'spill' until there are
-  // 'targetFreeRows' free rows and 'targetFreeBytes' of free space or
-  // everything has been spilled. 'iterator' should be at the start of
-  // 'container_' on first call.
-  // spill()
-  // starts with one spill partition and initializes more spill
-  // partitions as needed to hit the size target. If there is no more
-  // data to spill in one hash range, it starts spilling another hash
-  // range until all hash ranges are spilling. Must be called once
-  // with 'isFinal' true before starting to read spilled data. On the
-  // final call, rowsFromNonSpillingPartitions is filled with rows
-  // from partitions that have not started spilling.
+  // Spills rows from 'this'until there are under 'targetRows' rows
+  // and 'targetBytes' of allocated variable length space in
+  // use. 'iterator' should be at the start of 'container_' on first
+  // call.  spill() starts with one spill partition and initializes
+  // more spill partitions as needed to hit the size target. If there
+  // is no more data to spill in one hash range, it starts spilling
+  // another hash range until all hash ranges are spilling. 
   void spill(
-      uint64_t targetFreeRows,
-      uint64_t targetFreeSpace,
+      uint64_t targetRows,
+      uint64_t targetSpace,
       RowContainerIterator& iterator);
 
   bool isSpilled(int32_t partition) {
-    return partition < spillRuns_.size();
+    return state_.hasFiles(partition);
   }
 
   // Finishes spilling and returns the rows that are in partitions that have not
