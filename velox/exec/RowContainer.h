@@ -336,22 +336,6 @@ class RowContainer {
         ((batchSizeInBytes % fixedRowSize_) ? 1 : 0);
   }
 
-  // Returns a new row initialized from 'srcRow'. 'extractedCols' s used as
-  // intermediate storage and must have the same types as 'this'.
-  char* addRow(const char* srcRow, const RowVectorPtr& extractedCols) {
-    static const SelectivityVector kOneRow(1);
-
-    auto* destRow = newRow();
-    DecodedVector decoded;
-    for (int i = 0; i < keyTypes_.size(); ++i) {
-      RowContainer::extractColumn(
-          &srcRow, 1, columnAt(i), extractedCols->childAt(i));
-      decoded.decode(*extractedCols->childAt(i), kOneRow, true);
-      store(decoded, 0, destRow, i);
-    }
-    return destRow;
-  }
-
   // Extract column values for 'rows' into 'result'.
   void extractRows(const std::vector<char*>& rows, const RowVectorPtr& result) {
     VELOX_CHECK_EQ(rows.size(), result->size());
