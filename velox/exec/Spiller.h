@@ -15,28 +15,179 @@
  */
 #pragma once
 
-#include "velox/common/memory/RowContainer.h"
+#include "velox/exec//RowContainer.h"
 
-
-
+namespace facebook::velox::exec {
 
 // Describes a bit range inside a 64 bit hash number for use in
 // partitioning data over multiple sets of spill files.
-struct HashBitRange {
-  // Low bit number of hash number bit range.
-  uint8_t begin;
-  // Bit number of first bit above the hash number bit range.
-  uint8_t end;
-};
+class HashBitRange {
+ public:
+  HashBitRange(uint8_t begin, uint8_t end)
+      : begin_(begin), end_(end), fieldMask_(bits::lowMask(end - begin)) {}
 
-
-
-
-  // Returns which spill partition 'hash' falls into. Returns -1 if the
-  // partition of 'hash' has not been started.
-  int32_t partition(uint64_t hash) const {
-    int32_t field = (hash >> hashBits_.begin) & fieldMask_;
-    return field < numPartitions_ ? field : -1;
+  int32_t partition(uint64_t hash, int32_t numPartitions) const {
+    int32_t number = (hash >> begin_) & fieldMask_;
+    return number < numPartitions ? number : -1;
   }
 
+  int32_t numPartitions() const {
+    return 1 << (end_ - begin_);
+  }
 
+ private:
+  // Low bit number of hash number bit range.
+  const uint8_t begin_;
+  // Bit number of first bit above the hash number bit range.
+  const uint8_t end_;
+
+  const uint64_t fieldMask_;
+};
+
+// Manages spilling data from a RowContainer.
+class Spiller {
+ public:
+  Spiller(
+      RowContainer& container,
+      RowContainer::Eraser eraser,
+      TypePtr rowType,
+      HashBitRange bits,
+      int32_t numSortingKeys,
+      const std::string& path,
+      int64_t targetFileSize,
+      memory::MemoryPool& pool,
+      folly::Executor* executor)
+      : container_(container),
+        eraser_(eraser),
+    rowType_(std::static_pointer_cast<const RowType>(rowType)),
+        bits_(bits),
+        state_(
+            path,
+            bits.numPartitions(),
+            numSortingKeys,
+            targetFileSize,
+            pool,
+            *container_.mappedMemory()),
+        pool_(pool),
+        executor_(executor) {}
+
+  // Spills rows from 'this' into 'spill' until there are
+  // 'targetFreeRows' free rows and 'targetFreeBytes' of free space or
+  // everything has been spilled. 'iterator' should be at the start of
+  // 'container_' on first call.
+  // spill()
+  // starts with one spill partition and initializes more spill
+  // partitions as needed to hit the size target. If there is no more
+  // data to spill in one hash range, it starts spilling another hash
+  // range until all hash ranges are spilling. Must be called once
+  // with 'isFinal' true before starting to read spilled data. On the
+  // final call, rowsFromNonSpillingPartitions is filled with rows
+  // from partitions that have not started spilling.
+  void spill(
+      uint64_t targetFreeRows,
+      uint64_t targetFreeSpace,
+      RowContainerIterator& iterator);
+
+  bool isSpilled(int32_t partition) {
+    return partition < spillRuns_.size();
+  }
+
+  // Finishes spilling and returns the rows that are in partitions that have not
+  // started spilling.
+  std::vector<char*> finishSpill();
+
+  // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
+  // Creates '*results' in 'pool_' if nullptr.
+  void extractSpill(folly::Range<char**> rows, RowVectorPtr* result);
+
+  RowContainer& container() const {
+    return container_;
+  }
+
+  // For testing.
+  SpillState& state() {
+    return state_;
+  }
+
+  std::unique_ptr<TreeOfLosers<SpillStream>> startMerge(int32_t partition) {
+    return state_.startMerge(partition, spillStreamOverRows(partition));
+  }
+
+ private:
+  // Returns a mergeable stream that goes over unspilled in-memory
+  // rows for the spill partition  'partition'. finishSpill()
+  // first and 'partition' must specify a partition that has started spilling.
+  std::unique_ptr<SpillStream> spillStreamOverRows(int32_t partition);
+
+  // Represents a run of rows from a spillable partition of
+  // a RowContainer. Rows that hash to the same partition are accumulated here
+  // and sorted in the case of sorted spilling. The run is then
+  // spilled into storage as multiple batches. The rows are deleted
+  // from this and the RowContainer as they are written. When 'rows'
+  // goes empty this is refilled from the RowContainer for the next
+  // spill run from the same partition.
+  struct SpillRun {
+    // Spillable rows from the RowContainer.
+    std::vector<char*> rows;
+    // The partitioning hash of each element in 'rows'.
+    std::vector<uint64_t> hashes;
+    // The total byte size of rows referenced from 'rows'.
+    uint64_t size{0};
+    // True if 'rows' are sorted on their key.
+    bool sorted{false};
+
+    void clear() {
+      rows.clear();
+      hashes.clear();
+      size = 0;
+      sorted = false;
+    }
+  };
+
+  // Prepares spill runs for the spillable hash number ranges in
+  // 'spill'. Returns true if at end of 'iterator'. Returns false
+  // before reaching end of iterator if found enough to spill. Adds spillable
+  // runs to 'pendingSpillPartitions_'.
+  bool fillSpillRuns(
+      RowContainerIterator& iterator,
+      uint64_t targetSize,
+      std::vector<char*>* rowsFromNonSpillingPartitions = nullptr);
+
+  // Clears pending spill state.
+  void clearSpillRuns();
+
+  // Clears runs that have not started spilling.
+  void clearNonSpillingRuns();
+
+  // Function for writing a spill partition on an executor. Writes to
+  // 'partition' until all rows in spillRuns_[partition] are written
+  // or 'maxBytes' is exceeded. Returns the number of rows
+  // written. The return value is a unique_ptr to te count to
+  // work with AsyncSource.
+  std::unique_ptr<int32_t> writeSpill(int32_t partition, uint64_t maxBytes);
+
+  // Writes out  and erases rows marked for spilling.
+  void advanceSpill(uint64_t maxBytes);
+
+  RowContainer& container_;
+  const RowContainer::Eraser eraser_;
+  RowTypePtr rowType_;
+  const HashBitRange bits_;
+  SpillState state_;
+
+  // One spill run for each partition of spillable data.
+  std::vector<SpillRun> spillRuns_;
+
+  // Indices into 'spillRuns_' that are currently getting spilled.
+  std::unordered_set<int32_t> pendingSpillPartitions_;
+
+  // True if all rows of spilling partitions are in 'spillRuns_', so
+  // that one can start reading these back. This means that the rows
+  // that are not written out and deleted will be captured by
+  // spillStreamOverRows().
+  bool spillFinalized_{false};
+  memory::MemoryPool& pool_;
+  folly::Executor* const executor_;
+};
+
+} // namespace facebook::velox::exec

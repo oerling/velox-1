@@ -45,7 +45,8 @@ add_executable(
   FunctionSignatureBuilderTest.cpp
   SimpleFunctionResolutionTest.cpp
   SpillTest.cpp
-  UnnestTest.cpp
+  "SpillerTest.cpp"
+UnnestTest.cpp
   AssignUniqueIdTest.cpp)
 
 add_test(

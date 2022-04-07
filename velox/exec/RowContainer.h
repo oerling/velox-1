@@ -328,46 +328,6 @@ class RowContainer {
     return 0;
   }
 
-  // Spills rows from 'this' into 'spill' until there are
-  // 'targetFreeRows' free rows and 'targetFreeBytes' of free space or
-  // everything has been spilled. 'iterator' should be at the start of
-  // 'this' on first call. 'eraser' is called to remove rows after
-  // they are spilled. This may for example remove these from a group
-  // by hash table in addition to removing these from 'this'. 'eraser'
-  // is required and minimally removes the rows it gets from
-  // 'this'. 'spill' may specify multiple spill partitions. spill()
-  // starts with one spill partition and initializes more spill
-  // partitions as needed to hit the size target. If there is no more
-  // data to spill in one hash range, it starts spilling another hash
-  // range until all hash ranges are spilling. Must be called once
-  // with 'isFinal' true before starting to read spilled data. On the
-  // final call, rowsFromNonSpillingPartitions is filled with rows
-  // from partitions that have not started spilling.
-  void spill(
-      SpillState& spill,
-      uint64_t targetFreeRows,
-      uint64_t targetFreeSpace,
-      RowContainerIterator& iterator,
-      Eraser eraser);
-
-  // Finishes spilling and returns the rows that are in partitions that have not
-  // started spilling.
-  std::vector<char*> finishSpill(SpillState& spill);
-
-  // Returns a mergeable stream that goes over unspilled in-memory
-  // rows for the spill partition  'partition'. finishSpill()
-  // first and 'partition' must specify a partition that has started spilling.
-  std::unique_ptr<SpillStream> spillStreamOverRows(
-      int32_t partition,
-      memory::MemoryPool& pool);
-
-  // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
-  // Creates '*results' in 'pool' if nullptr.
-  void extractSpill(
-      folly::Range<char**> rows,
-      memory::MemoryPool& pool,
-      RowVectorPtr* result);
-
   // Returns estimated number of rows a batch can support for
   // the given batchSizeInBytes.
   // FIXME(venkatra): estimate num rows for variable length fields.
@@ -405,6 +365,26 @@ class RowContainer {
     return stringAllocator_.mappedMemory();
   }
 
+  auto& columnTypes() const {
+    return types_;
+  }
+
+  auto& keyTypes() const {
+    return keyTypes_;
+  }
+
+  auto& aggregates() const {
+    return aggregates_;
+  }
+
+  auto numFreeRows() const {
+    return numFreeRows_;
+  }
+
+  const HashStringAllocator& stringAllocator() const {
+    return stringAllocator_;
+  }
+  
   // Checks that row and free row counts match and that free list
   // membership is consistent with free flag.
   void checkConsistency();
@@ -413,30 +393,6 @@ class RowContainer {
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
 
-  // Represents a run of rows from a spillable partition of
-  // 'this'. Rows that hash to the same partition are accumulated here
-  // and sorted in the case of sorted spilling. The run is then
-  // spilled into storage as multiple batches. The rows are deleted
-  // from this and the RowContainer as they are written. When 'rows'
-  // goes empty this is refilled from the RowContainer for the next
-  // spill run from the same partition.
-  struct SpillRun {
-    // Spillable rows from the RowContainer.
-    std::vector<char*> rows;
-    // The partitioning hash of each element in 'rows'.
-    std::vector<uint64_t> hashes;
-    // The total byte size of rows referenced from 'rows'.
-    uint64_t size = 0;
-
-    void clear() {
-      rows.clear();
-      hashes.clear();
-      size = 0;
-    }
-  };
-
-  // Returns the type of a row of content.
-  const RowTypePtr& rowType() const;
 
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
@@ -804,25 +760,6 @@ class RowContainer {
       int32_t offset,
       CompareFlags flags);
 
-  // Prepares spill runs for the spillable hash number ranges in
-  // 'spill'. Returns true if at end of 'iterator'. Returns false
-  // before reaching end of iterator if found enough to spill. Adds spillable
-  // runs to 'pendingSpillPartitions_'.
-  bool fillSpillRuns(
-      SpillState& spill,
-      RowContainerIterator& iterator,
-      uint64_t targetSize,
-      std::vector<char*>* rowsFromNonSpillingPartitions = nullptr);
-
-  // Clears pending spill state.
-  void clearSpillRuns();
-
-  void clearNonSpillingRuns();
-
-  // Creates a vector to append to spilling and erases the coresponding rows
-  // after spilling.
-  void advanceSpill(SpillState& spill, Eraser eraser);
-
   // Free any variable-width fields associated with the 'rows'.
   void freeVariableWidthFields(folly::Range<char**> rows);
 
@@ -877,29 +814,8 @@ class RowContainer {
 
   AllocationPool rows_;
   HashStringAllocator stringAllocator_;
+
   const RowSerde& serde_;
-
-  // One spill run for each partition of spillable data.
-  std::vector<SpillRun> spillRuns_;
-
-  // Indices into 'spillRuns_' that are currently getting spilled.
-  std::unordered_set<int32_t> pendingSpillPartitions_;
-
-  // Type of the row written to spill.
-  RowTypePtr spillType_;
-
-  // Temporary vector for adding to spilled data.
-  RowVectorPtr spillVector_;
-
-  // True if all rows of spilling partitions are in 'spillRuns_', so
-  // that one can start reading these back. This means that the rows
-  // that are not written out and deleted will be captured by
-  // spillStreamOverRows().
-  bool spillFinalized_{false};
-
-  // Type of contents as a row. Set on first use.
-  mutable RowTypePtr rowType_;
-
   // RowContainer requires a valid reference to a vector of aggregates. We
   // use a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.

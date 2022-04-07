@@ -24,55 +24,14 @@
 #include "velox/exec/VectorHasher.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
-#include "velox/vector/tests/VectorMaker.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/exec/tests/utils/RowContainerTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
 
-class RowContainerTest : public testing::Test {
+class RowContainerTest : public exec::test::RowContainerTestBase {
  protected:
-  void SetUp() override {
-    pool_ = memory::getDefaultScopedMemoryPool();
-    mappedMemory_ = memory::MappedMemory::getInstance();
-    if (!isRegisteredVectorSerde()) {
-      facebook::velox::serializer::presto::PrestoVectorSerde::
-          registerVectorSerde();
-    }
-    filesystems::registerLocalFileSystem();
-  }
-
-  RowVectorPtr makeDataset(
-      const TypePtr rowType,
-      const size_t size,
-      std::function<void(RowVectorPtr)> customizeData) {
-    auto batch = std::static_pointer_cast<RowVector>(
-        BatchMaker::createBatch(rowType, size, *pool_));
-    if (customizeData) {
-      customizeData(batch);
-    }
-    return batch;
-  }
-
-  std::unique_ptr<RowContainer> makeRowContainer(
-      const std::vector<TypePtr>& keyTypes,
-      const std::vector<TypePtr>& dependentTypes,
-      bool isJoinBuild = true) {
-    static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;
-    return std::make_unique<RowContainer>(
-        keyTypes,
-        !isJoinBuild,
-        kEmptyAggregates,
-        dependentTypes,
-        isJoinBuild,
-        isJoinBuild,
-        true,
-        true,
-        mappedMemory_,
-        ContainerRowSerde::instance());
-  }
-
   void testExtractColumnForOddRows(
       RowContainer& container,
       const std::vector<char*>& rows,
@@ -196,9 +155,6 @@ class RowContainerTest : public testing::Test {
     result = vectorMaker.flatVector<T>(sorted);
     assertEqualVectors(expected, result);
   }
-
-  std::unique_ptr<memory::MemoryPool> pool_;
-  memory::MappedMemory* mappedMemory_;
 };
 
 namespace {
@@ -495,136 +451,4 @@ TEST_F(RowContainerTest, compareDouble) {
   testCompareFloats<double>(DOUBLE(), true);
   // Verify descending order
   testCompareFloats<double>(DOUBLE(), false);
-}
-
-TEST_F(RowContainerTest, spill) {
-  constexpr int32_t kNumRows = 100000;
-  auto batch = makeDataset(
-      ROW({
-          {"bool_val", BOOLEAN()},
-          {"tiny_val", TINYINT()},
-          {"small_val", SMALLINT()},
-          {"int_val", INTEGER()},
-          {"long_val", BIGINT()},
-          {"ordinal", BIGINT()},
-          {"float_val", REAL()},
-          {"double_val", DOUBLE()},
-          {"string_val", VARCHAR()},
-          {"array_val", ARRAY(VARCHAR())},
-          {"struct_val",
-           ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
-          {"map_val",
-           MAP(VARCHAR(),
-               MAP(BIGINT(),
-                   ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
-      }),
-      kNumRows,
-      [](RowVectorPtr /*rows&*/) {});
-  const auto& types = batch->type()->as<TypeKind::ROW>().children();
-  std::vector<TypePtr> keys;
-  keys.insert(keys.begin(), types.begin(), types.begin() + 6);
-
-  std::vector<TypePtr> dependents;
-  dependents.insert(dependents.begin(), types.begin() + 6, types.end());
-  // Set ordinal so that the sorted order is unambiguous
-
-  auto ordinal = batch->childAt(5)->as<FlatVector<int64_t>>();
-  for (auto i = 0; i < kNumRows; ++i) {
-    ordinal->set(i, i);
-  }
-  // Make non-join build container so that spill runs are sorted. Note
-  // that a distinct or group by hash table can have dependents if
-  // some keys are known to be unique by themselves. Aggregation
-  // spilling will be tested separately.
-  auto data = makeRowContainer(keys, dependents, false);
-  std::vector<char*> rows(kNumRows);
-  for (int i = 0; i < kNumRows; ++i) {
-    rows[i] = data->newRow();
-  }
-
-  SelectivityVector allRows(kNumRows);
-  for (auto column = 0; column < batch->childrenSize(); ++column) {
-    DecodedVector decoded(*batch->childAt(column), allRows);
-    for (auto index = 0; index < kNumRows; ++index) {
-      data->store(decoded, index, rows[index], column);
-    }
-  }
-  std::vector<uint64_t> hashes(kNumRows);
-  // Calculate a hash for every key in 'rows'.
-  for (auto i = 0; i < keys.size(); ++i) {
-    data->hash(
-        i, folly::Range<char**>(rows.data(), kNumRows), i > 0, hashes.data());
-  }
-
-  // We divide the rows in 4 partitions according to 2 low bits of the hash.
-  std::vector<std::vector<int32_t>> partitions(4);
-  for (auto i = 0; i < kNumRows; ++i) {
-    partitions[hashes[i] & 3].push_back(i);
-  }
-
-  // We sort the rows in each partition in key order.
-  for (auto& partition : partitions) {
-    std::sort(
-        partition.begin(),
-        partition.end(),
-        [&](int32_t leftIndex, int32_t rightIndex) {
-          return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
-        });
-  }
-
-  auto tempDirectory = exec::test::TempDirectoryPath::create();
-  // We spill 'data' in 4 sorted partitions.
-  auto spillState = std::make_unique<SpillState>(
-      tempDirectory->path,
-      4,
-      keys.size(),
-      2000000,
-      *pool_,
-      *mappedMemory_);
-
-  // We have a bit range of two bits , so up to 4 spilled partitions.
-  EXPECT_EQ(4, spillState->maxPartitions());
-  // We start spilling  in the first partition, if enough data does not get up
-  // to all partitions will start spilling.
-  spillState->setNumPartitions(1);
-  EXPECT_EQ(1, spillState->numPartitions());
-
-  RowContainerIterator iter;
-
-  // We spill 90% of the data in 10% increments.
-  auto initialBytes = data->allocatedBytes();
-  auto initialRows = data->numRows();
-  for (auto pct = 10; pct <= 90; pct += 10) {
-    data->spill(
-        *spillState,
-        initialRows * 100 / pct,
-        initialBytes * 100 / pct,
-        iter,
-        [&](folly::Range<char**> rows) { data->eraseRows(rows); });
-  }
-  auto unspilledPartitionRows = data->finishSpill(*spillState);
-  EXPECT_TRUE(unspilledPartitionRows.empty());
-  // We read back the spilled and not spilled data in each of the
-  // partitions. We check that the data comes back in key order.
-  for (auto partitionIndex = 0; partitionIndex < 4; ++partitionIndex) {
-    // We make a merge reader that merges the spill files and the rows that are
-    // still in the RowContainer.
-    auto merge = spillState->startMerge(
-        partitionIndex, data->spillStreamOverRows(partitionIndex, *pool_));
-
-    // We read the spilled data back and check that it matches the sorted order
-    // of the partition.
-    au
-      to& indices = partitions[partitionIndex];
-    for (auto i = 0; i < indices.size(); ++i) {
-      auto stream = merge->next();
-      if (!stream) {
-        FAIL() << "Stream ends after " << i << " entries";
-        break;
-      }
-      EXPECT_TRUE(batch->equalValueAt(
-          &stream->current(), indices[i], stream->currentIndex()));
-      stream->pop();
-    }
-  }
 }
