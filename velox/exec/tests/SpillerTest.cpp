@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include "velox/exec/Spiller.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include "velox/exec/tests/utils/RowContainerTestBase.h"
