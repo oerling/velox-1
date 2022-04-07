@@ -159,7 +159,8 @@ RowContainer::RowContainer(
   // A distinct hash table has no aggregates and if the hash table has
   // no nulls, it may be that there are no null flags.
   if (!nullOffsets_.empty()) {
-    // All flags like free and probed flags and null flags for keys and non-keys start as 0.
+    // All flags like free and probed flags and null flags for keys and non-keys
+    // start as 0.
     initialNulls_.resize(nullBytes, 0x0);
     // Aggregates are null on a new row.
     auto aggregateNullOffset = nullableKeys ? keyTypes.size() : 0;
