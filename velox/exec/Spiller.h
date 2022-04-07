@@ -77,7 +77,7 @@ class Spiller {
   // call.  spill() starts with one spill partition and initializes
   // more spill partitions as needed to hit the size target. If there
   // is no more data to spill in one hash range, it starts spilling
-  // another hash range until all hash ranges are spilling. 
+  // another hash range until all hash ranges are spilling.
   void spill(
       uint64_t targetRows,
       uint64_t targetSpace,
@@ -144,10 +144,13 @@ class Spiller {
     int32_t numWritten;
     std::exception_ptr error;
 
-    SpillStatus(int32_t _partition, int32_t _numWritten, std::exception_ptr _error)
-      : partition(_partition), numWritten(_numWritten), error(_error) {}
+    SpillStatus(
+        int32_t _partition,
+        int32_t _numWritten,
+        std::exception_ptr _error)
+        : partition(_partition), numWritten(_numWritten), error(_error) {}
   };
-  
+
   // Prepares spill runs for the spillable hash number ranges in
   // 'spill'. Returns true if at end of 'iterator'. Returns false
   // before reaching end of iterator if found enough to spill. Adds spillable
@@ -166,7 +169,6 @@ class Spiller {
   // Sorts 'run' if not already sorted.
   void ensureSorted(SpillRun& run);
 
-  
   // Function for writing a spill partition on an executor. Writes to
   // 'partition' until all rows in spillRuns_[partition] are written
   // or 'maxBytes' is exceeded. Returns the number of rows

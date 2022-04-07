@@ -267,10 +267,9 @@ class SpillState {
         maxPartitions_(maxPartitions),
         numSortingKeys_(numSortingKeys),
         targetFileSize_(targetFileSize),
-	files_(maxPartitions_),
+        files_(maxPartitions_),
         pool_(pool),
-        mappedMemory_(mappedMemory) {
-  }
+        mappedMemory_(mappedMemory) {}
 
   int32_t numPartitions() const {
     return numPartitions_;
@@ -313,9 +312,9 @@ class SpillState {
       std::unique_ptr<SpillStream>&& extra);
 
   bool hasFiles(int32_t partition) {
-    return partition < files_.size()  && files_[partition];
+    return partition < files_.size() && files_[partition];
   }
-  
+
  private:
   const RowTypePtr type_;
   const std::string path_;

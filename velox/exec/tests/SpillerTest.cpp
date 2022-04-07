@@ -107,18 +107,18 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     auto initialRows = data->numRows();
     for (int32_t pct = 10; pct <= spillPct; pct += 10) {
       try {
-	spiller->spill(
-		       initialRows - (initialRows * pct / 100),
-		       initialBytes - (initialBytes * pct / 100),
-		       iter);
-	EXPECT_FALSE(makeError);
+        spiller->spill(
+            initialRows - (initialRows * pct / 100),
+            initialBytes - (initialBytes * pct / 100),
+            iter);
+        EXPECT_FALSE(makeError);
       } catch (const std::exception& e) {
-	if (!makeError) {
-	  throw;
-	}
-	return;
+        if (!makeError) {
+          throw;
+        }
+        return;
       }
-      }
+    }
     auto unspilledPartitionRows = spiller->finishSpill();
     if (spillPct == 100) {
       EXPECT_TRUE(unspilledPartitionRows.empty());
@@ -150,7 +150,6 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     }
   }
 
-  
   folly::IOThreadPoolExecutor* FOLLY_NONNULL executor() {
     static std::mutex mutex;
     std::lock_guard<std::mutex> l(mutex);

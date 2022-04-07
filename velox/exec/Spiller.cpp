@@ -63,7 +63,7 @@ class RowContainerSpillStream : public SpillStream {
     if (!rows_.empty()) {
       nextBatch();
     }
-    }
+  }
 
   uint64_t size() const override {
     return 0;
