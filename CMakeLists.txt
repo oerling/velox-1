@@ -86,6 +86,15 @@ if(${VELOX_ENABLE_BENCHMARKS} OR ${VELOX_ENABLE_BENCHMARKS_BASIC})
   set(VELOX_ENABLE_PARSE ON)
 endif()
 
+if(${VELOX_BUILD_BENCHMARKS_LARGE})
+  set(VELOX_ENABLE_PARQUET ON)
+  set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
+  set(VELOX_ENABLE_PARSE ON)
+  set(VELOX_ENABLE_AGGREGATES ON)
+  set(VELOX_ENABLE_EXEC ON)
+  set(VELOX_BUILD_TEST_UTILS ON)
+endif()
+
 if(VELOX_ENABLE_S3)
   # Set AWS_ROOT_DIR if you have a custom install location of AWS SDK CPP.
   if(AWSSDK_ROOT_DIR)
@@ -207,13 +216,8 @@ include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 # Range-v3 will be enable when the codegen code actually lands keeping it here
 # for reference. find_package(range-v3)
 
-find_package(GTest REQUIRED)
 find_package(gflags COMPONENTS shared)
-
-find_library(GMock gmock)
-
 find_package(glog REQUIRED)
-include_directories(SYSTEM ${GTEST_INCLUDE_DIRS})
 
 find_library(FMT fmt)
 
@@ -221,12 +225,15 @@ find_library(EVENT event)
 
 find_library(DOUBLE_CONVERSION double-conversion)
 
-find_library(LZ4 lz4)
-find_library(LZO lzo2)
+if(NOT ${VELOX_BUILD_MINIMAL})
+  find_library(LZ4 lz4)
+  find_library(LZO lzo2)
+  find_library(ZSTD zstd)
+  find_package(ZLIB)
+  find_library(SNAPPY snappy)
+endif()
+
 find_library(RE2 re2 REQUIRED)
-find_library(ZSTD zstd)
-find_package(ZLIB)
-find_library(SNAPPY snappy)
 
 if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
   set(CMAKE_PREFIX_PATH "/usr/local/opt/icu4c" ${CMAKE_PREFIX_PATH})
@@ -243,9 +250,11 @@ set(FOLLY_WITH_DEPENDENCIES
 set(FOLLY ${FOLLY_LIBRARIES})
 set(FOLLY_BENCHMARK Folly::follybenchmark)
 
-find_package(BZip2 MODULE)
-if(BZIP2_FOUND)
-  list(APPEND FOLLY_WITH_DEPENDENCIES ${BZIP2_LIBRARIES})
+if(NOT ${VELOX_BUILD_MINIMAL})
+  find_package(BZip2 MODULE)
+  if(BZIP2_FOUND)
+    list(APPEND FOLLY_WITH_DEPENDENCIES ${BZIP2_LIBRARIES})
+  endif()
 endif()
 
 include_directories(SYSTEM ${FOLLY_INCLUDE_DIRS})
@@ -286,4 +295,5 @@ include_directories(.)
 # generates an installable makefile.
 install(FILES velox/type/Type.h DESTINATION "include/velox")
 
+add_subdirectory(third_party)
 add_subdirectory(velox)

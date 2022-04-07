@@ -164,14 +164,6 @@ using ContinuePromise = VeloxPromise<bool>;
   /// == true.
   void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
 
-  // Sets this to a terminal requested state and frees all resources of Drivers
-  // that are not presently on thread. Unblocks all waiting Drivers, e.g.
-  // Drivers waiting for free space in outgoing buffers or new splits. Sets the
-  // state to 'terminalState', which should be kCanceled for cancellation by
-  // users, kFailed for errors and kAborted for termination due to failure in
-  // some other Task.
-  void terminate(TaskState terminalState);
-
   /// Returns true if state is 'running'.
   bool isRunning() const;
 
@@ -221,6 +213,7 @@ using ContinuePromise = VeloxPromise<bool>;
 
   /// Returns the total number of drivers the task needs to run.
   uint32_t numTotalDrivers() const {
+    std::lock_guard<std::mutex> taskLock(mutex_);
     return numTotalDrivers_;
   }
 
@@ -267,7 +260,7 @@ using ContinuePromise = VeloxPromise<bool>;
       exec::Split& split,
       ContinueFuture& future);
 
-  void splitFinished(const core::PlanNodeId& planNodeId, int32_t splitGroupId);
+  void splitFinished();
 
   void multipleSplitsFinished(int32_t numSplits);
 
@@ -398,10 +391,12 @@ using ContinuePromise = VeloxPromise<bool>;
   StopReason enterForTerminateLocked(ThreadState& state);
 
   // Marks that the Driver is not on thread. If no more Drivers in the
-  // CancelPool are on thread, this realizes requestPause futures. The
-  // Driver may go off thread because of hasBlockingFuture or pause
-  // requested or terminate requested. The return value indicates the
-  // reason. If kTerminate is returned, the isTerminated flag is set.
+  // CancelPool are on thread, this realizes
+  // threadFinishFutures_. These allow syncing with pause or
+  // termination. The Driver may go off thread because of
+  // hasBlockingFuture or pause requested or terminate requested. The
+  // return value indicates the reason. If kTerminate is returned, the
+  // isTerminated flag is set.
   StopReason leave(ThreadState& state);
 
   // Enters a suspended section where the caller stays on thread but
@@ -419,6 +414,9 @@ using ContinuePromise = VeloxPromise<bool>;
   // are to yield.
   StopReason shouldStop();
 
+  // Requests the Task to stop activity.  The returned future is
+  // realized when all running threads have stopped running. Activity
+  // can be resumed with resume() after the future is realized.
   ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
     return requestPauseLocked(pause);
@@ -426,9 +424,17 @@ using ContinuePromise = VeloxPromise<bool>;
 
   ContinueFuture requestPauseLocked(bool pause);
 
-  void requestTerminate() {
-    std::lock_guard<std::mutex> l(mutex_);
-    terminateRequested_ = true;
+  // Requests activity of 'this' to stop. The returned future will be
+  // realized when the last thread stops running for 'this'. This is used to
+  // mark cancellation by the user.
+  ContinueFuture requestCancel() {
+    return terminate(kCanceled);
+  }
+
+  // Like requestCancel but sets end state to kAborted. This is for stopping
+  // Tasks due to failures of other parts of the query.
+  ContinueFuture requestAbort() {
+    return terminate(kAborted);
   }
 
   void requestYield() {
@@ -498,11 +504,6 @@ using ContinuePromise = VeloxPromise<bool>;
   // splits coming for the task.
   bool isAllSplitsFinishedLocked();
 
-  /// See if we need to register a split group as completed.
-  void checkGroupSplitsCompleteLocked(
-      int32_t splitGroupId,
-      const SplitsStore& splitsStore);
-
   std::unique_ptr<ContinuePromise> addSplitLocked(
       SplitsState& splitsState,
       exec::Split&& split);
@@ -520,6 +521,21 @@ using ContinuePromise = VeloxPromise<bool>;
   /// Checks that specified plan node ID refers to a source plan node. Throws if
   /// that's not the case.
   void checkPlanNodeIdForSplit(const core::PlanNodeId& id) const;
+
+  // Sets this to a terminal requested state and frees all resources
+  // of Drivers that are not presently on thread. Unblocks all waiting
+  // Drivers, e.g.  Drivers waiting for free space in outgoing buffers
+  // or new splits. Sets the state to 'terminalState', which should be
+  // kCanceled for cancellation by users, kFailed for errors and
+  // kAborted for termination due to failure in some other Task. The
+  // returned future is realized when all threads running for 'this'
+  // have finished.
+  ContinueFuture terminate(TaskState terminalState);
+
+  // Returns a future that is realized when there are no more threads
+  // executing for 'this'. 'comment' is used as a debugging label on
+  // the promise/future pair.
+  ContinueFuture makeFinishFutureLocked(const char* FOLLY_NONNULL comment);
 
   const std::string taskId_;
   core::PlanFragment planFragment_;
@@ -598,9 +614,6 @@ using ContinuePromise = VeloxPromise<bool>;
   /// Stores separate splits state for each plan node.
   std::unordered_map<core::PlanNodeId, SplitsState> splitsStates_;
 
-  // Holds states for pipelineBarrier(). Guarded by 'mutex_'.
-  std::unordered_map<std::string, BarrierState> barriers_;
-
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
   TaskStats taskStats_;
@@ -630,7 +643,10 @@ using ContinuePromise = VeloxPromise<bool>;
   std::atomic<bool> terminateRequested_{false};
   std::atomic<int32_t> toYield_ = 0;
   int32_t numThreads_ = 0;
-  std::vector<VeloxPromise<bool>> pausePromises_;
+  // Promises for the futures returned to callers of requestPause() or
+  // terminate(). They are fulfilled when the last thread stops
+  // running for 'this'.
+  std::vector<VeloxPromise<bool>> threadFinishPromises_;
 };
 
 class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {

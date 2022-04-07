@@ -13,7 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/common/base/test_utils/GTestUtils.h"
+#include "velox/common/base/tests/Fs.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
@@ -26,23 +27,11 @@
 #include "velox/type/tests/FilterBuilder.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
-#if __has_include("filesystem")
-#include <filesystem>
-namespace fs = std::filesystem;
-#else
-#include <experimental/filesystem>
-namespace fs = std::experimental::filesystem;
-#endif
-
 using namespace facebook::velox;
 using namespace facebook::velox::connector::hive;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::common::test;
 using namespace facebook::velox::exec::test;
-
-static const std::string kNodeSelectionStrategy = "node_selection_strategy";
-static const std::string kSoftAffinity = "SOFT_AFFINITY";
-static const std::string kTableScanTest = "TableScanTest.Writer";
 
 class TableScanTest : public virtual HiveConnectorTestBase,
                       public testing::WithParamInterface<bool> {
@@ -50,15 +39,6 @@ class TableScanTest : public virtual HiveConnectorTestBase,
   void SetUp() override {
     useAsyncCache_ = GetParam();
     HiveConnectorTestBase::SetUp();
-    rowType_ =
-        ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
-            {BIGINT(),
-             INTEGER(),
-             SMALLINT(),
-             REAL(),
-             DOUBLE(),
-             VARCHAR(),
-             TINYINT()});
   }
 
   static void SetUpTestCase() {
@@ -119,6 +99,21 @@ class TableScanTest : public virtual HiveConnectorTestBase,
 
   static int64_t getSkippedSplitsStat(const std::shared_ptr<Task>& task) {
     return getTableScanRuntimeStats(task)["skippedSplits"].sum;
+  }
+
+  static std::unordered_set<int32_t> getCompletedSplitGroups(
+      const std::shared_ptr<Task>& task) {
+    return task->taskStats().completedSplitGroups;
+  }
+
+  static void waitForFinishedDrivers(
+      const std::shared_ptr<Task>& task,
+      uint32_t n) {
+    while (task->numFinishedDrivers() < n) {
+      /* sleep override */
+      usleep(100'000); // 0.1 second.
+    }
+    ASSERT_EQ(n, task->numFinishedDrivers());
   }
 
   void testPartitionedTableImpl(
@@ -186,15 +181,21 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     testPartitionedTableImpl(filePath, partitionType, std::nullopt);
   }
 
-  std::shared_ptr<const RowType> rowType_{
-      ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
-          {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
+  RowTypePtr rowType_{
+      ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
+          {BIGINT(),
+           INTEGER(),
+           SMALLINT(),
+           REAL(),
+           DOUBLE(),
+           VARCHAR(),
+           TINYINT()})};
 };
 
 TEST_P(TableScanTest, allColumns) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
 
   auto plan = tableScanNode();
@@ -212,7 +213,7 @@ TEST_P(TableScanTest, allColumns) {
 TEST_P(TableScanTest, columnAliases) {
   auto vectors = makeVectors(1, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
 
   ColumnHandleMap assignments = {{"a", regularColumn("c0", BIGINT())}};
@@ -246,7 +247,7 @@ TEST_P(TableScanTest, columnAliases) {
 TEST_P(TableScanTest, partitionKeyAlias) {
   auto vectors = makeVectors(1, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
 
   ColumnHandleMap assignments = {
@@ -267,7 +268,7 @@ TEST_P(TableScanTest, partitionKeyAlias) {
 TEST_P(TableScanTest, columnPruning) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
 
   auto op = tableScanNode(ROW({"c0"}, {BIGINT()}));
@@ -304,8 +305,8 @@ TEST_P(TableScanTest, missingColumns) {
   });
 
   auto filePaths = makeFilePaths(2);
-  writeToFile(filePaths[0]->path, kTableScanTest, {oldData});
-  writeToFile(filePaths[1]->path, kTableScanTest, {newData});
+  writeToFile(filePaths[0]->path, {oldData});
+  writeToFile(filePaths[1]->path, {newData});
 
   auto oldDataWithNull = makeRowVector({
       makeFlatVector<int64_t>(size, [](auto row) { return row; }),
@@ -354,7 +355,7 @@ TEST_P(TableScanTest, constDictLazy) {
            [](auto row) { return row * 0.1; })});
 
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, {rowVector});
+  writeToFile(filePath->path, {rowVector});
 
   createDuckDbTable({rowVector});
 
@@ -395,7 +396,7 @@ TEST_P(TableScanTest, constDictLazy) {
 TEST_P(TableScanTest, count) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -420,7 +421,7 @@ TEST_P(TableScanTest, count) {
 TEST_P(TableScanTest, sequentialSplitNoDoubleRead) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -450,7 +451,7 @@ TEST_P(TableScanTest, sequentialSplitNoDoubleRead) {
 TEST_P(TableScanTest, outOfOrderSplits) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -480,7 +481,7 @@ TEST_P(TableScanTest, outOfOrderSplits) {
 TEST_P(TableScanTest, splitDoubleRead) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -508,7 +509,7 @@ TEST_P(TableScanTest, multipleSplits) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000);
   for (int32_t i = 0; i < vectors.size(); i++) {
-    writeToFile(filePaths[i]->path, kTableScanTest, vectors[i]);
+    writeToFile(filePaths[i]->path, vectors[i]);
   }
   createDuckDbTable(vectors);
 
@@ -519,7 +520,7 @@ TEST_P(TableScanTest, waitForSplit) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000);
   for (int32_t i = 0; i < vectors.size(); i++) {
-    writeToFile(filePaths[i]->path, kTableScanTest, vectors[i]);
+    writeToFile(filePaths[i]->path, vectors[i]);
   }
   createDuckDbTable(vectors);
 
@@ -541,7 +542,7 @@ TEST_P(TableScanTest, waitForSplit) {
 TEST_P(TableScanTest, splitOffsetAndLength) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
 
   assertQuery(
@@ -598,7 +599,7 @@ TEST_P(TableScanTest, partitionedTableVarcharKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
 
   testPartitionedTable(filePath->path, VARCHAR(), "2020-11-01");
@@ -608,7 +609,7 @@ TEST_P(TableScanTest, partitionedTableBigIntKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, BIGINT(), "123456789123456789");
 }
@@ -617,7 +618,7 @@ TEST_P(TableScanTest, partitionedTableIntegerKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, INTEGER(), "123456789");
 }
@@ -626,7 +627,7 @@ TEST_P(TableScanTest, partitionedTableSmallIntKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, SMALLINT(), "1");
 }
@@ -635,7 +636,7 @@ TEST_P(TableScanTest, partitionedTableTinyIntKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, TINYINT(), "1");
 }
@@ -644,7 +645,7 @@ TEST_P(TableScanTest, partitionedTableBooleanKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, BOOLEAN(), "0");
 }
@@ -653,7 +654,7 @@ TEST_P(TableScanTest, partitionedTableRealKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, REAL(), "3.5");
 }
@@ -662,7 +663,7 @@ TEST_P(TableScanTest, partitionedTableDoubleKey) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
   auto vectors = makeVectors(10, 1'000, rowType);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, DOUBLE(), "3.5");
 }
@@ -685,7 +686,7 @@ TEST_P(TableScanTest, statsBasedSkippingBool) {
        makeFlatVector<bool>(
            size, [](auto row) { return (row / 10'000) % 2 == 0; })});
 
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   auto subfieldFilters = singleSubfieldFilter("c1", boolEqual(true));
@@ -716,7 +717,7 @@ TEST_P(TableScanTest, statsBasedSkippingDouble) {
   auto rowVector = makeRowVector({makeFlatVector<double>(
       size, [](auto row) { return (double)(row + 0.0001); })});
 
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // c0 <= -1.05 -> whole file should be skipped based on stats
@@ -769,7 +770,7 @@ TEST_P(TableScanTest, statsBasedSkippingFloat) {
   auto rowVector = makeRowVector({makeFlatVector<float>(
       size, [](auto row) { return (float)(row + 0.0001); })});
 
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // c0 <= -1.05 -> whole file should be skipped based on stats
@@ -843,7 +844,7 @@ TEST_P(TableScanTest, statsBasedSkipping) {
              }
            })});
 
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // c0 <= -1 -> whole file should be skipped based on stats
@@ -961,7 +962,7 @@ TEST_P(TableScanTest, statsBasedSkippingConstants) {
          return fruitViews[row / 10'000];
        })});
 
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // skip whole file
@@ -1018,7 +1019,7 @@ TEST_P(TableScanTest, statsBasedSkippingNulls) {
       [](auto row) { return row >= 11'111; });
   auto rowVector = makeRowVector({noNulls, someNulls});
 
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // c0 IS NULL - whole file should be skipped based on stats
@@ -1076,7 +1077,7 @@ TEST_P(TableScanTest, statsBasedSkippingWithoutDecompression) {
   auto rowVector = makeRowVector({makeFlatVector(strings)});
 
   auto filePaths = makeFilePaths(1);
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // skip 1st row group
@@ -1135,7 +1136,7 @@ TEST_P(TableScanTest, filterBasedSkippingWithoutDecompression) {
   auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
 
   auto filePaths = makeFilePaths(1);
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   auto tableHandle =
@@ -1188,7 +1189,7 @@ TEST_P(TableScanTest, statsBasedSkippingNumerics) {
            size, [](auto row) { return row % 11 == 0; }, nullEvery(23))});
 
   auto filePaths = makeFilePaths(1);
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   createDuckDbTable({rowVector});
 
   // skip whole file
@@ -1259,7 +1260,7 @@ TEST_P(TableScanTest, statsBasedSkippingComplexTypes) {
            nullEvery(11))});
 
   auto filePaths = makeFilePaths(1);
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
   // TODO Figure out how to create DuckDB tables with columns of complex types
   // For now, using 1st element of the array and map element for key zero.
   createDuckDbTable({makeRowVector(
@@ -1339,7 +1340,7 @@ TEST_P(TableScanTest, statsBasedAndRegularSkippingComplexTypes) {
   });
 
   auto filePaths = makeFilePaths(1);
-  writeToFile(filePaths[0]->path, kTableScanTest, rowVector);
+  writeToFile(filePaths[0]->path, rowVector);
 
   createDuckDbTable({makeRowVector({
       makeFlatVector<int64_t>(size, [](auto row) { return row; }),
@@ -1374,7 +1375,7 @@ TEST_P(TableScanTest, filterPushdown) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000, rowType);
   for (int32_t i = 0; i < vectors.size(); i++) {
-    writeToFile(filePaths[i]->path, kTableScanTest, vectors[i]);
+    writeToFile(filePaths[i]->path, vectors[i]);
   }
   createDuckDbTable(vectors);
 
@@ -1439,7 +1440,7 @@ TEST_P(TableScanTest, path) {
   auto rowType = ROW({"a"}, {BIGINT()});
   auto filePath = makeFilePaths(1)[0];
   auto vector = makeVectors(1, 1'000, rowType)[0];
-  writeToFile(filePath->path, kTableScanTest, vector);
+  writeToFile(filePath->path, vector);
   createDuckDbTable({vector});
 
   static const char* kPath = "$path";
@@ -1493,7 +1494,7 @@ TEST_P(TableScanTest, bucket) {
         {makeFlatVector<int32_t>(size, [&](auto /*row*/) { return bucket; }),
          makeFlatVector<int64_t>(
              size, [&](auto row) { return bucket + row; })});
-    writeToFile(filePaths[i]->path, kTableScanTest, rowVector);
+    writeToFile(filePaths[i]->path, rowVector);
     rowVectors.emplace_back(rowVector);
 
     splits.emplace_back(std::make_shared<HiveConnectorSplit>(
@@ -1557,7 +1558,7 @@ TEST_P(TableScanTest, remainingFilter) {
   auto filePaths = makeFilePaths(10);
   auto vectors = makeVectors(10, 1'000, rowType);
   for (int32_t i = 0; i < vectors.size(); i++) {
-    writeToFile(filePaths[i]->path, kTableScanTest, vectors[i]);
+    writeToFile(filePaths[i]->path, vectors[i]);
   }
   createDuckDbTable(vectors);
 
@@ -1623,7 +1624,7 @@ TEST_P(TableScanTest, remainingFilter) {
 TEST_P(TableScanTest, aggregationPushdown) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   auto tableHandle = makeTableHandle(SubfieldFilters());
 
@@ -1745,7 +1746,7 @@ TEST_P(TableScanTest, aggregationPushdown) {
 TEST_P(TableScanTest, bitwiseAggregationPushdown) {
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   auto tableHandle = makeTableHandle(SubfieldFilters(), nullptr);
 
@@ -1794,7 +1795,7 @@ TEST_P(TableScanTest, structLazy) {
            [](auto row) { return row * 0.1; })})});
 
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, {rowVector});
+  writeToFile(filePath->path, {rowVector});
 
   // Exclude struct columns as DuckDB doesn't support complex types yet.
   createDuckDbTable(
@@ -1843,7 +1844,7 @@ TEST_P(TableScanTest, structInArrayOrMap) {
            innerRow)});
 
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, {rowVector});
+  writeToFile(filePath->path, {rowVector});
 
   // Exclude struct columns as DuckDB doesn't support complex types yet.
   createDuckDbTable(
@@ -1865,7 +1866,7 @@ TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
   const size_t numSplits{6};
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
 
   auto planFragment = PlanBuilder()
                           .tableScan(rowType_)
@@ -1882,8 +1883,9 @@ TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
   // Add one splits before start to ensure we can handle such cases.
   task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
 
-  // Only one split group should be in the processing mode, so 2 drivers.
+  // Only one split group should be in the processing mode, so 3 drivers.
   EXPECT_EQ(3, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
   // Add the rest of splits
   task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
@@ -1894,33 +1896,31 @@ TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
 
   // One split group should be in the processing mode, so 3 drivers.
   EXPECT_EQ(3, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
   // Finalize one split group (8) and wait until 3 drivers are finished.
   task->noMoreSplitsForGroup("0", 8);
-  while (task->numFinishedDrivers() != 3) {
-    /* sleep override */
-    usleep(100'000); // 0.1 second.
-  }
+  waitForFinishedDrivers(task, 3);
   // As one split group is finished, another one should kick in, so 3 drivers.
   EXPECT_EQ(3, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>({8}), getCompletedSplitGroups(task));
 
   // Finalize the second split group (1) and wait until 6 drivers are finished.
   task->noMoreSplitsForGroup("0", 1);
-  while (task->numFinishedDrivers() != 6) {
-    /* sleep override */
-    usleep(100'000); // 0.1 second.
-  }
+  waitForFinishedDrivers(task, 6);
+
   // As one split group is finished, another one should kick in, so 3 drivers.
   EXPECT_EQ(3, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>({1, 8}), getCompletedSplitGroups(task));
 
   // Finalize the third split group (5) and wait until 9 drivers are finished.
   task->noMoreSplitsForGroup("0", 5);
-  while (task->numFinishedDrivers() != 9) {
-    /* sleep override */
-    usleep(100'000); // 0.1 second.
-  }
+  waitForFinishedDrivers(task, 9);
+
   // No split groups should be processed at the moment, so 0 drivers.
   EXPECT_EQ(0, task->numRunningDrivers());
+  EXPECT_EQ(
+      std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
 
   // Flag that we would have no more split groups.
   task->noMoreSplits("0");
@@ -1934,6 +1934,8 @@ TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
 
   // Task must be finished at this stage.
   EXPECT_EQ(TaskState::kFinished, task->state());
+  EXPECT_EQ(
+      std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
 }
 
 // Here we test various aspects of grouped/bucketed execution.
@@ -1942,7 +1944,7 @@ TEST_P(TableScanTest, groupedExecution) {
   const size_t numSplits{6};
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, vectors);
+  writeToFile(filePath->path, vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -1960,56 +1962,61 @@ TEST_P(TableScanTest, groupedExecution) {
 
   // Create the cursor with the task underneath. It is not started yet.
   auto cursor = std::make_unique<TaskCursor>(params);
-  auto* pTask = cursor->task().get();
+  auto task = cursor->task();
 
   // Add one splits before start to ensure we can handle such cases.
-  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
 
   // Start task now.
   cursor->start();
 
   // Only one split group should be in the processing mode, so 2 drivers.
-  EXPECT_EQ(2, pTask->numRunningDrivers());
+  EXPECT_EQ(2, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
   // Add the rest of splits
-  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
 
   // Only two split groups should be in the processing mode, so 4 drivers.
-  EXPECT_EQ(4, pTask->numRunningDrivers());
+  EXPECT_EQ(4, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
   // Finalize one split group (8) and wait until 2 drivers are finished.
-  pTask->noMoreSplitsForGroup("0", 8);
-  while (pTask->numFinishedDrivers() != 2) {
-    /* sleep override */
-    usleep(100'000); // 0.1 second.
-  }
+  task->noMoreSplitsForGroup("0", 8);
+  waitForFinishedDrivers(task, 2);
+
   // As one split group is finished, another one should kick in, so 4 drivers.
-  EXPECT_EQ(4, pTask->numRunningDrivers());
+  EXPECT_EQ(4, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>({8}), getCompletedSplitGroups(task));
 
   // Finalize the second split group (5) and wait until 4 drivers are finished.
-  pTask->noMoreSplitsForGroup("0", 5);
-  while (pTask->numFinishedDrivers() != 4) {
-    /* sleep override */
-    usleep(100'000); // 0.1 second.
-  }
+  task->noMoreSplitsForGroup("0", 5);
+  waitForFinishedDrivers(task, 4);
+
   // As the second split group is finished, only one is left, so 2 drivers.
-  EXPECT_EQ(2, pTask->numRunningDrivers());
+  EXPECT_EQ(2, task->numRunningDrivers());
+  EXPECT_EQ(std::unordered_set<int32_t>({5, 8}), getCompletedSplitGroups(task));
 
   // Finalize the third split group (1) and wait until 6 drivers are finished.
-  pTask->noMoreSplitsForGroup("0", 1);
-  while (pTask->numFinishedDrivers() != 6) {
-    /* sleep override */
-    usleep(100'000); // 0.1 second.
-  }
+  task->noMoreSplitsForGroup("0", 1);
+  waitForFinishedDrivers(task, 6);
+
   // No split groups should be processed at the moment, so 0 drivers.
-  EXPECT_EQ(0, pTask->numRunningDrivers());
+  EXPECT_EQ(0, task->numRunningDrivers());
+  EXPECT_EQ(
+      std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
+
+  // Make sure split groups with no splits are reported as complete.
+  task->noMoreSplitsForGroup("0", 3);
+  EXPECT_EQ(
+      std::unordered_set<int32_t>({1, 3, 5, 8}), getCompletedSplitGroups(task));
 
   // Flag that we would have no more split groups.
-  pTask->noMoreSplits("0");
+  task->noMoreSplits("0");
 
   // Make sure we've got the right number of rows.
   int32_t numRead = 0;
@@ -2020,8 +2027,9 @@ TEST_P(TableScanTest, groupedExecution) {
   }
 
   // Task must be finished at this stage.
-  EXPECT_EQ(TaskState::kFinished, pTask->state());
-
+  EXPECT_EQ(TaskState::kFinished, task->state());
+  EXPECT_EQ(
+      std::unordered_set<int32_t>({1, 3, 5, 8}), getCompletedSplitGroups(task));
   EXPECT_EQ(numRead, numSplits * 10'000);
 }
 
@@ -2030,7 +2038,7 @@ TEST_P(TableScanTest, addSplitsToFailedTask) {
       {makeFlatVector<int32_t>(12'000, [](auto row) { return row % 5; })});
 
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, kTableScanTest, {data});
+  writeToFile(filePath->path, {data});
 
   core::PlanNodeId scanNodeId;
   exec::test::CursorParameters params;

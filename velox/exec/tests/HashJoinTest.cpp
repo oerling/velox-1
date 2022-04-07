@@ -28,8 +28,6 @@ using namespace facebook::velox::exec::test;
 
 using facebook::velox::test::BatchMaker;
 
-static const std::string kWriter = "HashJoinTest.Writer";
-
 class HashJoinTest : public HiveConnectorTestBase {
  protected:
   void SetUp() override {
@@ -341,11 +339,11 @@ TEST_F(HashJoinTest, lazyVectors) {
        makeFlatVector<int64_t>(10'000, [](auto row) { return row % 31; })});
 
   auto leftFile = TempFilePath::create();
-  writeToFile(leftFile->path, kWriter, leftVectors);
+  writeToFile(leftFile->path, leftVectors);
   createDuckDbTable("t", {leftVectors});
 
   auto rightFile = TempFilePath::create();
-  writeToFile(rightFile->path, kWriter, rightVectors);
+  writeToFile(rightFile->path, rightVectors);
   createDuckDbTable("u", {rightVectors});
 
   auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
@@ -618,7 +616,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
         makeFlatVector<int64_t>(1'024, [](auto row) { return row; }),
     });
     leftVectors.push_back(rowVector);
-    writeToFile(leftFiles[i]->path, kWriter, rowVector);
+    writeToFile(leftFiles[i]->path, rowVector);
   }
 
   // 100 key values in [35, 233] range.
@@ -1009,9 +1007,9 @@ TEST_F(HashJoinTest, leftJoin) {
       {0});
 }
 
-/// Tests left join with a filter that may evalute to true, false or null. Makes
-/// sure that null filter results are handled correctly, e.g. as if the filter
-/// returned false.
+/// Tests left join with a filter that may evaluate to true, false or null.
+/// Makes sure that null filter results are handled correctly, e.g. as if the
+/// filter returned false.
 TEST_F(HashJoinTest, leftJoinWithNullableFilter) {
   auto leftVectors = {
       makeRowVector({
@@ -1313,5 +1311,59 @@ TEST_F(HashJoinTest, memoryUsage) {
 
   auto planStats = toPlanStats(task->taskStats());
   auto outputBytes = planStats.at(joinNodeId).outputBytes;
-  ASSERT_LT(outputBytes, 512 * 1024);
+  ASSERT_LT(outputBytes, 700 * 1024);
+
+  // Verify number of memory allocations. Should not be too high if hash join is
+  // able to re-use output vectors that contain build-side data.
+  ASSERT_GT(30, task->pool()->getMemoryUsageTracker()->getNumAllocs());
+}
+
+/// Test an edge case in producing small output batches where the logic to
+/// calculate the set of probe-side rows to load lazy vectors for was triggering
+/// a crash.
+TEST_F(HashJoinTest, smallOutputBatchSize) {
+  // Setup probe data with 50 non-null matching keys followed by 50 null keys:
+  // 1, 2, 1, 2,...null, null.
+  auto probeData = makeRowVector({
+      makeFlatVector<int32_t>(
+          100,
+          [](auto row) { return 1 + row % 2; },
+          [](auto row) { return row > 50; }),
+      makeFlatVector<int32_t>(100, [](auto row) { return row * 10; }),
+  });
+
+  // Setup build side to match non-null probe side keys.
+  auto buildData = makeRowVector(
+      {"u_c0", "u_c1"},
+      {
+          makeFlatVector<int32_t>({1, 2}),
+          makeFlatVector<int32_t>({100, 200}),
+      });
+
+  createDuckDbTable("t", {probeData});
+  createDuckDbTable("u", {buildData});
+
+  // Plan hash inner join with a filter.
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values({probeData})
+          .hashJoin(
+              {"c0"},
+              {"u_c0"},
+              PlanBuilder(planNodeIdGenerator).values({buildData}).planNode(),
+              "c1 < u_c1",
+              {"c0", "u_c1"})
+          .planNode();
+
+  // Use small output batch size to trigger logic for calculating set of
+  // probe-side rows to load lazy vectors for.
+  CursorParameters params;
+  params.planNode = plan;
+  params.queryCtx = core::QueryCtx::createForTest();
+  params.queryCtx->setConfigOverridesUnsafe(
+      {{core::QueryConfig::kPreferredOutputBatchSize, std::to_string(10)}});
+
+  OperatorTestBase::assertQuery(
+      params, "SELECT c0, u_c1 FROM t, u WHERE c0 = u_c0 AND c1 < u_c1");
 }

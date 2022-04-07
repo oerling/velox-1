@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
+#include "velox/common/base/tests/Fs.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/type/tests/FilterBuilder.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
-
 namespace facebook::velox::exec::test {
 
 static int64_t toDate(std::string_view stringDate) {
@@ -46,18 +46,25 @@ void TpchQueryBuilder::initialize(const std::string& dataPath) {
                     std::make_unique<dwio::common::FileInputStream>(
                         dirEntry.path()),
                     readerOptions);
-        tableMetadata_[tableName].type = reader->rowType();
-        const auto aliases = reader->rowType()->names();
+        const auto fileType = reader->rowType();
+        const auto fileColumnNames = fileType->names();
         // There can be extra columns in the file towards the end.
-        VELOX_CHECK_GE(aliases.size(), columns.size());
-        std::unordered_map<std::string, std::string> aliasMap(columns.size());
+        VELOX_CHECK_GE(fileColumnNames.size(), columns.size());
+        std::unordered_map<std::string, std::string> fileColumnNamesMap(
+            columns.size());
         std::transform(
             columns.begin(),
             columns.end(),
-            aliases.begin(),
-            std::inserter(aliasMap, aliasMap.begin()),
+            fileColumnNames.begin(),
+            std::inserter(fileColumnNamesMap, fileColumnNamesMap.begin()),
             [](std::string a, std::string b) { return std::make_pair(a, b); });
-        tableMetadata_[tableName].columnAliases = std::move(aliasMap);
+        auto columnNames = columns;
+        auto types = fileType->children();
+        types.resize(columnNames.size());
+        tableMetadata_[tableName].type =
+            std::make_shared<RowType>(std::move(columnNames), std::move(types));
+        tableMetadata_[tableName].fileColumnNames =
+            std::move(fileColumnNamesMap);
       }
       tableMetadata_[tableName].dataFiles.push_back(dirEntry.path());
     }
@@ -86,10 +93,11 @@ using ColumnHandleMap =
     std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>;
 
 std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
+    const std::string& tableName,
     common::test::SubfieldFilters subfieldFilters,
     const std::shared_ptr<const core::ITypedExpr>& remainingFilter = nullptr) {
   return std::make_shared<connector::hive::HiveTableHandle>(
-      true, std::move(subfieldFilters), remainingFilter);
+      tableName, true, std::move(subfieldFilters), remainingFilter);
 }
 
 std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
@@ -100,19 +108,21 @@ std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
 }
 
 ColumnHandleMap allRegularColumns(
-    const std::shared_ptr<const RowType>& rowType) {
+    const std::shared_ptr<const RowType>& rowType,
+    const std::unordered_map<std::string, std::string>& fileColumnNames) {
   ColumnHandleMap assignments;
   assignments.reserve(rowType->size());
   for (uint32_t i = 0; i < rowType->size(); ++i) {
     const auto& name = rowType->nameOf(i);
-    assignments[name] = regularColumn(name, rowType->childAt(i));
+    assignments[name] =
+        regularColumn(fileColumnNames.at(name), rowType->childAt(i));
   }
   return assignments;
 }
 } // namespace
 
 TpchPlan TpchQueryBuilder::getQ1Plan() const {
-  static const std::string kTableName = "lineitem";
+  static const std::string kLineitem = "lineitem";
   std::vector<std::string> selectedColumns = {
       "l_returnflag",
       "l_linestatus",
@@ -122,21 +132,21 @@ TpchPlan TpchQueryBuilder::getQ1Plan() const {
       "l_tax",
       "l_shipdate"};
 
-  auto selectedRowType = getRowType(kTableName, selectedColumns);
-  // Add an extra project step to map file columns to standard
-  // column names.
-  const auto projectAlias =
-      getProjectColumnAliases(kTableName, selectedColumns);
+  auto selectedRowType = getRowType(kLineitem, selectedColumns);
+  const auto& fileColumnNames = getFileColumnNames(kLineitem);
 
   // shipdate <= '1998-09-02'
-  auto shipDate = getColumnAlias(kTableName, "l_shipdate");
+  const auto shipDate = "l_shipdate";
   common::test::SubfieldFiltersBuilder filtersBuilder;
   // DWRF does not support Date type. Use Varchar instead.
   if (selectedRowType->findChild(shipDate)->isVarchar()) {
-    filtersBuilder.add(shipDate, common::test::lessThanOrEqual("1998-09-02"));
+    filtersBuilder.add(
+        fileColumnNames.at(shipDate),
+        common::test::lessThanOrEqual("1998-09-02"));
   } else {
     filtersBuilder.add(
-        shipDate, common::test::lessThanOrEqual(toDate("1998-09-02")));
+        fileColumnNames.at(shipDate),
+        common::test::lessThanOrEqual(toDate("1998-09-02")));
   }
   auto filters = filtersBuilder.build();
   auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
@@ -146,10 +156,9 @@ TpchPlan TpchQueryBuilder::getQ1Plan() const {
       PlanBuilder(planNodeIdGenerator)
           .tableScan(
               selectedRowType,
-              makeTableHandle(std::move(filters)),
-              allRegularColumns(selectedRowType))
+              makeTableHandle(kLineitem, std::move(filters)),
+              allRegularColumns(selectedRowType, fileColumnNames))
           .capturePlanNodeId(lineitemPlanNodeId)
-          .project(projectAlias)
           .project(
               {"l_returnflag",
                "l_linestatus",
@@ -195,62 +204,60 @@ TpchPlan TpchQueryBuilder::getQ1Plan() const {
 
   TpchPlan context;
   context.plan = std::move(plan);
-  context.dataFiles[lineitemPlanNodeId] = getTableFilePaths(kTableName);
+  context.dataFiles[lineitemPlanNodeId] = getTableFilePaths(kLineitem);
   context.dataFileFormat = format_;
   return context;
 }
 
 TpchPlan TpchQueryBuilder::getQ6Plan() const {
-  static const std::string kTableName = "lineitem";
+  static const std::string kLineitem = "lineitem";
   std::vector<std::string> selectedColumns = {
       "l_shipdate", "l_extendedprice", "l_quantity", "l_discount"};
 
-  auto selectedRowType = getRowType(kTableName, selectedColumns);
-  // Add an extra project step to map file columns to standard
-  // column names.
-  const auto projectAlias =
-      getProjectColumnAliases(kTableName, selectedColumns);
+  auto selectedRowType = getRowType(kLineitem, selectedColumns);
+  const auto& fileColumnNames = getFileColumnNames(kLineitem);
 
-  auto shipDate = getColumnAlias(kTableName, "l_shipdate");
+  const auto shipDate = "l_shipdate";
   common::test::SubfieldFiltersBuilder filtersBuilder;
   // DWRF does not support Date type. Use Varchar instead.
   if (selectedRowType->findChild(shipDate)->isVarchar()) {
     filtersBuilder.add(
-        shipDate, common::test::between("1994-01-01", "1994-12-31"));
+        fileColumnNames.at(shipDate),
+        common::test::between("1994-01-01", "1994-12-31"));
   } else {
     filtersBuilder.add(
-        shipDate,
+        fileColumnNames.at(shipDate),
         common::test::between(toDate("1994-01-01"), toDate("1994-12-31")));
   }
   auto filters = filtersBuilder
                      .add(
-                         getColumnAlias(kTableName, "l_discount"),
+                         fileColumnNames.at("l_discount"),
                          common::test::betweenDouble(0.05, 0.07))
                      .add(
-                         getColumnAlias(kTableName, "l_quantity"),
+                         fileColumnNames.at("l_quantity"),
                          common::test::lessThanDouble(24.0))
                      .build();
 
   auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
   core::PlanNodeId lineitemPlanNodeId;
-  auto plan = PlanBuilder(planNodeIdGenerator)
-                  .localPartition(
-                      {},
-                      {PlanBuilder(planNodeIdGenerator)
-                           .tableScan(
-                               selectedRowType,
-                               makeTableHandle(std::move(filters)),
-                               allRegularColumns(selectedRowType))
-                           .capturePlanNodeId(lineitemPlanNodeId)
-                           .project(projectAlias)
-                           .project({"l_extendedprice * l_discount"})
-                           .partialAggregation({}, {"sum(p0)"})
-                           .planNode()})
-                  .finalAggregation({}, {"sum(a0)"}, {DOUBLE()})
-                  .planNode();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .localPartition(
+              {},
+              {PlanBuilder(planNodeIdGenerator)
+                   .tableScan(
+                       selectedRowType,
+                       makeTableHandle(kLineitem, std::move(filters)),
+                       allRegularColumns(selectedRowType, fileColumnNames))
+                   .capturePlanNodeId(lineitemPlanNodeId)
+                   .project({"l_extendedprice * l_discount"})
+                   .partialAggregation({}, {"sum(p0)"})
+                   .planNode()})
+          .finalAggregation({}, {"sum(a0)"}, {DOUBLE()})
+          .planNode();
   TpchPlan context;
   context.plan = std::move(plan);
-  context.dataFiles[lineitemPlanNodeId] = getTableFilePaths(kTableName);
+  context.dataFiles[lineitemPlanNodeId] = getTableFilePaths(kLineitem);
   context.dataFileFormat = format_;
   return context;
 }
@@ -265,8 +272,13 @@ TpchPlan TpchQueryBuilder::getQ18Plan() const {
   std::vector<std::string> customerColumns = {"c_name", "c_custkey"};
 
   auto lineitemSelectedRowType = getRowType(kLineitem, lineitemColumns);
+  const auto& lineitemFileColumns = getFileColumnNames(kLineitem);
+
   auto ordersSelectedRowType = getRowType(kOrders, ordersColumns);
+  const auto& ordersFileColumns = getFileColumnNames(kOrders);
+
   auto customerSelectedRowType = getRowType(kCustomer, customerColumns);
+  const auto& customerFileColumns = getFileColumnNames(kCustomer);
 
   auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
   core::PlanNodeId customerScanNodeId;
@@ -278,48 +290,66 @@ TpchPlan TpchQueryBuilder::getQ18Plan() const {
           .localPartition(
               {0}, // l_orderkey
               {PlanBuilder(planNodeIdGenerator)
-                   .tableScan(lineitemSelectedRowType)
+                   .tableScan(
+                       lineitemSelectedRowType,
+                       makeTableHandle(
+                           kLineitem, common::test::SubfieldFilters{}),
+                       allRegularColumns(
+                           lineitemSelectedRowType, lineitemFileColumns))
                    .capturePlanNodeId(lineitemScanNodeId)
                    .partialAggregation({0}, {"sum(l_quantity) AS partial_sum"})
                    .planNode()})
           .finalAggregation({0}, {"sum(partial_sum) AS quantity"}, {DOUBLE()})
+          .filter("quantity > 300.0")
           .planNode();
 
-  auto plan = PlanBuilder(planNodeIdGenerator)
-                  .localPartition(
-                      {},
-                      {PlanBuilder(planNodeIdGenerator)
-                           .tableScan(ordersSelectedRowType)
-                           .capturePlanNodeId(ordersScanNodeId)
-                           .hashJoin(
-                               {"o_orderkey"},
-                               {"l_orderkey"},
-                               bigOrders,
-                               "quantity > 300.0",
-                               {"o_orderkey",
-                                "o_custkey",
-                                "o_orderdate",
-                                "o_totalprice",
-                                "l_orderkey",
-                                "quantity"})
-                           .hashJoin(
-                               {"o_custkey"},
-                               {"c_custkey"},
-                               PlanBuilder(planNodeIdGenerator)
-                                   .tableScan(customerSelectedRowType)
-                                   .capturePlanNodeId(customerScanNodeId)
-                                   .planNode(),
-                               "",
-                               {"c_name",
-                                "c_custkey",
-                                "o_orderkey",
-                                "o_orderdate",
-                                "o_totalprice",
-                                "quantity"})
-                           .planNode()})
-                  .orderBy({"o_totalprice DESC", "o_orderdate"}, false)
-                  .limit(0, 100, false)
-                  .planNode();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .localPartition(
+              {},
+              {PlanBuilder(planNodeIdGenerator)
+                   .tableScan(
+                       ordersSelectedRowType,
+                       makeTableHandle(
+                           kOrders, common::test::SubfieldFilters{}),
+                       allRegularColumns(
+                           ordersSelectedRowType, ordersFileColumns))
+                   .capturePlanNodeId(ordersScanNodeId)
+                   .hashJoin(
+                       {"o_orderkey"},
+                       {"l_orderkey"},
+                       bigOrders,
+                       "",
+                       {"o_orderkey",
+                        "o_custkey",
+                        "o_orderdate",
+                        "o_totalprice",
+                        "l_orderkey",
+                        "quantity"})
+                   .hashJoin(
+                       {"o_custkey"},
+                       {"c_custkey"},
+                       PlanBuilder(planNodeIdGenerator)
+                           .tableScan(
+                               customerSelectedRowType,
+                               makeTableHandle(
+                                   kCustomer, common::test::SubfieldFilters{}),
+                               allRegularColumns(
+                                   customerSelectedRowType,
+                                   customerFileColumns))
+                           .capturePlanNodeId(customerScanNodeId)
+                           .planNode(),
+                       "",
+                       {"c_name",
+                        "c_custkey",
+                        "o_orderkey",
+                        "o_orderdate",
+                        "o_totalprice",
+                        "quantity"})
+                   .planNode()})
+          .orderBy({"o_totalprice DESC", "o_orderdate"}, false)
+          .limit(0, 100, false)
+          .planNode();
 
   TpchPlan context;
   context.plan = std::move(plan);

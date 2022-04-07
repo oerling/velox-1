@@ -73,11 +73,6 @@ class RowVector : public BaseVector {
     return VectorEncoding::Simple::ROW;
   }
 
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override;
-
   int32_t compare(
       const BaseVector* other,
       vector_size_t index,
@@ -144,6 +139,10 @@ class RowVector : public BaseVector {
   std::string toString(vector_size_t index) const override;
 
   void ensureWritable(const SelectivityVector& rows) override;
+
+  /// Calls BaseVector::prepareForReuse() to check and reset nulls buffer if
+  /// needed, then calls BaseVector::prepareForReuse(child, 0) for all children.
+  void prepareForReuse() override;
 
   bool mayHaveNullsRecursive() const override {
     if (BaseVector::mayHaveNullsRecursive()) {
@@ -272,11 +271,6 @@ class ArrayVector : public BaseVector {
     return VectorEncoding::Simple::ARRAY;
   }
 
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override;
-
   int32_t compare(
       const BaseVector* other,
       vector_size_t index,
@@ -373,6 +367,12 @@ class ArrayVector : public BaseVector {
 
   void ensureWritable(const SelectivityVector& rows) override;
 
+  /// Calls BaseVector::prepareForReuse() to check and reset nulls buffer if
+  /// needed, checks and resets offsets and sizes buffers, zeros out offsets and
+  /// sizes if reusable, calls BaseVector::prepareForReuse(elements, 0) for the
+  /// elements vector.
+  void prepareForReuse() override;
+
   bool mayHaveNullsRecursive() const override {
     return BaseVector::mayHaveNullsRecursive() ||
         elements_->mayHaveNullsRecursive();
@@ -437,11 +437,6 @@ class MapVector : public BaseVector {
   VectorEncoding::Simple encoding() const override {
     return VectorEncoding::Simple::MAP;
   }
-
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override;
 
   int32_t compare(
       const BaseVector* other,
@@ -563,6 +558,12 @@ class MapVector : public BaseVector {
   std::vector<vector_size_t> sortedKeyIndices(vector_size_t index) const;
 
   void ensureWritable(const SelectivityVector& rows) override;
+
+  /// Calls BaseVector::prepareForReuse() to check and reset nulls buffer if
+  /// needed, checks and resets offsets and sizes buffers, zeros out offsets and
+  /// sizes if reusable, calls BaseVector::prepareForReuse(keys|values, 0) for
+  /// the keys and values vectors.
+  void prepareForReuse() override;
 
   bool mayHaveNullsRecursive() const override {
     return BaseVector::mayHaveNullsRecursive() ||

@@ -39,9 +39,7 @@ struct ToUnixtimeFunction {
       double& result,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     const auto milliseconds = *timestampWithTimezone.template at<0>();
-    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
-    timestamp.toTimezone(*timestampWithTimezone.template at<1>());
-    result = toUnixtime(timestamp);
+    result = (double)milliseconds / kMillisecondsInSecond;
     return true;
   }
 };
@@ -79,7 +77,7 @@ FOLLY_ALWAYS_INLINE const date::time_zone* getTimeZoneFromConfig(
 FOLLY_ALWAYS_INLINE int64_t
 getSeconds(Timestamp timestamp, const date::time_zone* timeZone) {
   if (timeZone != nullptr) {
-    timestamp.toTimezoneUTC(*timeZone);
+    timestamp.toTimezone(*timeZone);
     return timestamp.getSeconds();
   } else {
     return timestamp.getSeconds();
@@ -274,6 +272,15 @@ struct HourFunction : public InitSessionTimezone<T> {
   FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
     result = getDateTime(date).tm_hour;
     return true;
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+    const auto milliseconds = *timestampWithTimezone.template at<0>();
+    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
+    timestamp.toTimezone(*timestampWithTimezone.template at<1>());
+    result = getDateTime(timestamp, nullptr).tm_hour;
   }
 };
 
@@ -486,7 +493,7 @@ struct DateTruncFunction {
 
     result = Timestamp(timegm(&dateTime), 0);
     if (timeZone_ != nullptr) {
-      result.toTimezone(*timeZone_);
+      result.toGMT(*timeZone_);
     }
     return true;
   }
@@ -557,7 +564,7 @@ struct DateAddFunction {
       // sessionTimeZone not null means that the config
       // adjust_timestamp_to_timezone is on.
       Timestamp zonedTimestamp = timestamp;
-      zonedTimestamp.toTimezoneUTC(*sessionTimeZone_);
+      zonedTimestamp.toTimezone(*sessionTimeZone_);
 
       Timestamp resultTimestamp =
           addToTimestamp(zonedTimestamp, unit, (int32_t)value);
@@ -568,7 +575,7 @@ struct DateAddFunction {
         result = Timestamp(
             resultTimestamp.getSeconds() + offset, resultTimestamp.getNanos());
       } else {
-        resultTimestamp.toTimezone(*sessionTimeZone_);
+        resultTimestamp.toGMT(*sessionTimeZone_);
         result = resultTimestamp;
       }
     } else {
@@ -638,7 +645,7 @@ struct DateDiffFunction {
       // sessionTimeZone not null means that the config
       // adjust_timestamp_to_timezone is on.
       Timestamp fromZonedTimestamp = timestamp1;
-      fromZonedTimestamp.toTimezoneUTC(*sessionTimeZone_);
+      fromZonedTimestamp.toTimezone(*sessionTimeZone_);
 
       Timestamp toZonedTimestamp = timestamp2;
       if (isTimeUnit(unit)) {
@@ -648,7 +655,7 @@ struct DateDiffFunction {
             toZonedTimestamp.getSeconds() - offset,
             toZonedTimestamp.getNanos());
       } else {
-        toZonedTimestamp.toTimezoneUTC(*sessionTimeZone_);
+        toZonedTimestamp.toTimezone(*sessionTimeZone_);
       }
       result = diffTimestamp(unit, fromZonedTimestamp, toZonedTimestamp);
     } else {
@@ -742,6 +749,7 @@ struct ParseDateTimeFunction {
     // no session timezone, fallback to 0 (GMT).
     int16_t timezoneId = jodaResult.timezoneId != -1 ? jodaResult.timezoneId
                                                      : sessionTzID_.value_or(0);
+    jodaResult.timestamp.toGMT(timezoneId);
     result = std::make_tuple(jodaResult.timestamp.toMillis(), timezoneId);
     return true;
   }

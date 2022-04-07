@@ -66,45 +66,6 @@ std::shared_ptr<RowVector> RowVector::createEmpty(
   return std::static_pointer_cast<RowVector>(BaseVector::create(type, 0, pool));
 }
 
-bool RowVector::equalValueAt(
-    const BaseVector* other,
-    vector_size_t index,
-    vector_size_t otherIndex) const {
-  bool isNull = isNullAt(index);
-  bool otherNull = other->isNullAt(otherIndex);
-  if (isNull && otherNull) {
-    return true;
-  }
-  if (isNull || otherNull) {
-    return false;
-  }
-  auto otherRow = other->wrappedVector()->as<RowVector>();
-  if (otherRow->encoding() != VectorEncoding::Simple::ROW) {
-    return false;
-  }
-  if (children_.size() != otherRow->children_.size()) {
-    return false;
-  }
-  auto wrappedIndex = other->wrappedIndex(otherIndex);
-  for (int32_t i = 0; i < children_.size(); ++i) {
-    BaseVector* child = children_[i].get();
-    BaseVector* otherChild = otherRow->loadedChildAt(i).get();
-    if (!child && !otherChild) {
-      continue;
-    }
-    if (!child || !otherChild) {
-      return false;
-    }
-    if (child->typeKind() != otherChild->typeKind()) {
-      return false;
-    }
-    if (!child->equalValueAt(otherChild, index, wrappedIndex)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 int32_t RowVector::compare(
     const BaseVector* other,
     vector_size_t index,
@@ -120,8 +81,7 @@ int32_t RowVector::compare(
   }
 
   bool isNull = isNullAt(index);
-  auto wrappedOtherIndex = other->wrappedIndex(otherIndex);
-  bool otherNull = otherRow->isNullAt(wrappedOtherIndex);
+  bool otherNull = other->isNullAt(otherIndex);
   if (isNull) {
     if (otherNull) {
       return 0;
@@ -130,6 +90,10 @@ int32_t RowVector::compare(
   }
   if (otherNull) {
     return flags.nullsFirst ? 1 : -1;
+  }
+
+  if (flags.equalsOnly && children_.size() != otherRow->children_.size()) {
+    return 1;
   }
 
   auto compareSize = std::min(children_.size(), otherRow->children_.size());
@@ -149,6 +113,7 @@ int32_t RowVector::compare(
           BaseVector::toString(),
           other->BaseVector::toString());
     }
+    auto wrappedOtherIndex = other->wrappedIndex(otherIndex);
     auto result = child->compare(otherChild, index, wrappedOtherIndex, flags);
     if (result) {
       return result;
@@ -311,44 +276,15 @@ uint64_t RowVector::estimateFlatSize() const {
   return total;
 }
 
-bool ArrayVector::equalValueAt(
-    const BaseVector* other,
-    vector_size_t index,
-    vector_size_t otherIndex) const {
-  bool isNull = isNullAt(index);
-  bool otherNull = other->isNullAt(otherIndex);
-  if (isNull && otherNull) {
-    return true;
-  }
-  if (isNull || otherNull) {
-    return false;
-  }
-  auto otherValue = other->wrappedVector();
-  if (otherValue->encoding() != VectorEncoding::Simple::ARRAY) {
-    return false;
-  }
-  auto otherArray = otherValue->asUnchecked<ArrayVector>();
-  auto wrappedIndex = other->wrappedIndex(otherIndex);
-  if (rawSizes_[index] != otherArray->rawSizes_[wrappedIndex]) {
-    return false;
-  }
-  if (rawSizes_[index] == 0) {
-    return true;
-  }
-  auto otherElements = otherArray->elements_.get();
-  if (elements_->typeKind() != otherElements->typeKind()) {
-    return false;
-  }
-
-  auto offset = rawOffsets_[index];
-  auto otherOffset = otherArray->rawOffsets_[wrappedIndex];
-  for (int32_t i = 0; i < rawSizes_[index]; ++i) {
-    if (!elements_->equalValueAt(otherElements, offset + i, otherOffset + i)) {
-      return false;
+void RowVector::prepareForReuse() {
+  BaseVector::prepareForReuse();
+  for (auto& child : children_) {
+    if (child) {
+      BaseVector::prepareForReuse(child, 0);
     }
   }
-  return true;
 }
+
 namespace {
 int compareArrays(
     const BaseVector& left,
@@ -427,6 +363,11 @@ int32_t ArrayVector::compare(
         "Compare of arrays of different element type: {} and {}",
         BaseVector::toString(),
         otherArray->BaseVector::toString());
+  }
+
+  if (flags.equalsOnly &&
+      rawSizes_[index] != otherArray->rawSizes_[wrappedOtherIndex]) {
+    return 1;
   }
   return compareArrays(
       *elements_,
@@ -594,60 +535,28 @@ uint64_t ArrayVector::estimateFlatSize() const {
       sizes_->capacity() + elements_->estimateFlatSize();
 }
 
-bool MapVector::equalValueAt(
-    const BaseVector* other,
-    vector_size_t index,
-    vector_size_t otherIndex) const {
-  bool isNull = isNullAt(index);
-  bool otherNull = other->isNullAt(otherIndex);
-  if (isNull && otherNull) {
-    return true;
-  }
-  if (isNull || otherNull) {
-    return false;
-  }
-  auto otherValue = other->wrappedVector();
-  if (otherValue->encoding() != VectorEncoding::Simple::MAP) {
-    return false;
-  }
-  auto otherMap = otherValue->asUnchecked<MapVector>();
-  auto wrappedIndex = other->wrappedIndex(otherIndex);
-  if (rawSizes_[index] != otherMap->rawSizes_[wrappedIndex]) {
-    return false;
-  }
-  if (rawSizes_[index] == 0) {
-    return true;
-  }
-  auto otherKeys = otherMap->keys_.get();
-  auto otherValues = otherMap->values_.get();
-  if (keys_->typeKind() != otherKeys->typeKind()) {
-    return false;
-  }
-  if (values_->typeKind() != otherValues->typeKind()) {
-    return false;
+namespace {
+void zeroOutBuffer(BufferPtr buffer) {
+  memset(buffer->asMutable<char>(), 0, buffer->size());
+}
+} // namespace
+
+void ArrayVector::prepareForReuse() {
+  BaseVector::prepareForReuse();
+
+  if (!(offsets_->unique() && offsets_->isMutable())) {
+    offsets_ = nullptr;
+  } else {
+    zeroOutBuffer(offsets_);
   }
 
-  auto offset = rawOffsets_[index];
-  auto otherOffset = otherMap->rawOffsets_[wrappedIndex];
-  int32_t mapSize = rawSizes_[index];
-  std::vector<bool> othersMatch(mapSize, false);
-  for (int32_t i = 0; i < mapSize; ++i) {
-    bool found = false;
-    for (int32_t j = 0; j < mapSize; ++j) {
-      if (!othersMatch[j] &&
-          keys_->equalValueAt(otherKeys, offset + i, otherOffset + j) &&
-          values_->equalValueAt(otherValues, offset + i, otherOffset + j)) {
-        found = true;
-        othersMatch[j] = true;
-        break;
-      }
-    }
-    if (!found) {
-      return false;
-    }
+  if (!(sizes_->unique() && sizes_->isMutable())) {
+    sizes_ = nullptr;
+  } else {
+    zeroOutBuffer(sizes_);
   }
 
-  return true;
+  BaseVector::prepareForReuse(elements_, 0);
 }
 
 int32_t MapVector::compare(
@@ -684,8 +593,15 @@ int32_t MapVector::compare(
         BaseVector::toString(),
         otherMap->BaseVector::toString());
   }
+
+  if (flags.equalsOnly &&
+      rawSizes_[index] != otherMap->rawSizes_[wrappedOtherIndex]) {
+    return 1;
+  }
+
   auto leftIndices = sortedKeyIndices(index);
   auto rightIndices = otherMap->sortedKeyIndices(wrappedOtherIndex);
+
   auto result =
       compareArrays(*keys_, *otherMap->keys_, leftIndices, rightIndices, flags);
   if (result) {
@@ -935,6 +851,25 @@ uint64_t MapVector::estimateFlatSize() const {
   return BaseVector::retainedSize() + offsets_->capacity() +
       sizes_->capacity() + keys_->estimateFlatSize() +
       values_->estimateFlatSize();
+}
+
+void MapVector::prepareForReuse() {
+  BaseVector::prepareForReuse();
+
+  if (!(offsets_->unique() && offsets_->isMutable())) {
+    offsets_ = nullptr;
+  } else {
+    zeroOutBuffer(offsets_);
+  }
+
+  if (!(sizes_->unique() && sizes_->isMutable())) {
+    sizes_ = nullptr;
+  } else {
+    zeroOutBuffer(sizes_);
+  }
+
+  BaseVector::prepareForReuse(keys_, 0);
+  BaseVector::prepareForReuse(values_, 0);
 }
 
 } // namespace velox
