@@ -18,9 +18,9 @@
 #include <velox/exec/Aggregate.h>
 #include <velox/exec/HashPartitionFunction.h>
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/duckdb/conversion/DuckParser.h"
 #include "velox/expression/SignatureBinder.h"
 #include "velox/parse/Expressions.h"
-#include "velox/parse/ExpressionsParser.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::connector::hive;
@@ -33,7 +33,7 @@ std::shared_ptr<const core::ITypedExpr> parseExpr(
     const std::string& text,
     RowTypePtr rowType,
     memory::MemoryPool* pool) {
-  auto untyped = parse::parseExpr(text);
+  auto untyped = duckdb::parseExpr(text);
   return core::Expressions::inferTypes(untyped, rowType, pool);
 }
 } // namespace
@@ -50,8 +50,8 @@ PlanBuilder& PlanBuilder::tableScan(const RowTypePtr& outputType) {
              name, HiveColumnHandle::ColumnType::kRegular, type)});
   }
 
-  auto tableHandle =
-      std::make_shared<HiveTableHandle>(true, SubfieldFilters{}, nullptr);
+  auto tableHandle = std::make_shared<HiveTableHandle>(
+      "hive_table", true, SubfieldFilters{}, nullptr);
   return tableScan(outputType, tableHandle, assignments);
 }
 
@@ -81,16 +81,41 @@ PlanBuilder& PlanBuilder::exchange(const RowTypePtr& outputType) {
   return *this;
 }
 
-PlanBuilder& PlanBuilder::mergeExchange(
-    const RowTypePtr& outputType,
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder) {
+namespace {
+std::pair<
+    std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>,
+    std::vector<core::SortOrder>>
+parseOrderByClauses(
+    const std::vector<std::string>& keys,
+    const RowTypePtr& inputType,
+    memory::MemoryPool* pool) {
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
   std::vector<core::SortOrder> sortingOrders;
-  for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.push_back(field(outputType, keyIndices[i]));
-    sortingOrders.push_back(sortOrder[i]);
+  for (const auto& key : keys) {
+    auto [untypedExpr, sortOrder] = duckdb::parseOrderByExpr(key);
+    auto typedExpr =
+        core::Expressions::inferTypes(untypedExpr, inputType, pool);
+
+    auto sortingKey =
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(typedExpr);
+    VELOX_CHECK_NOT_NULL(
+        sortingKey,
+        "ORDER BY clause must use a column name, not an expression: {}",
+        key);
+    sortingKeys.emplace_back(sortingKey);
+    sortingOrders.emplace_back(sortOrder);
   }
+
+  return {sortingKeys, sortingOrders};
+}
+} // namespace
+
+PlanBuilder& PlanBuilder::mergeExchange(
+    const RowTypePtr& outputType,
+    const std::vector<std::string>& keys) {
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, outputType, pool_);
+
   planNode_ = std::make_shared<core::MergeExchangeNode>(
       nextPlanNodeId(), outputType, sortingKeys, sortingOrders);
 
@@ -101,7 +126,7 @@ PlanBuilder& PlanBuilder::project(const std::vector<std::string>& projections) {
   std::vector<std::shared_ptr<const core::ITypedExpr>> expressions;
   std::vector<std::string> projectNames;
   for (auto i = 0; i < projections.size(); ++i) {
-    auto untypedExpr = parse::parseExpr(projections[i]);
+    auto untypedExpr = duckdb::parseExpr(projections[i]);
     expressions.push_back(inferTypes(untypedExpr));
     if (untypedExpr->alias().has_value()) {
       projectNames.push_back(untypedExpr->alias().value());
@@ -281,13 +306,29 @@ PlanBuilder::createIntermediateOrFinalAggregation(
       planNode_);
 }
 
-PlanBuilder& PlanBuilder::intermediateAggregation() {
-  // Current plan node must be a partial aggregation.
-  auto* aggNode = dynamic_cast<core::AggregationNode*>(planNode_.get());
+namespace {
+/// Checks that specified plan node is a partial or intermediate aggregation or
+/// local exchange over the same. Returns a pointer to core::AggregationNode.
+const core::AggregationNode* findPartialAggregation(
+    const core::PlanNode* planNode) {
+  const core::AggregationNode* aggNode;
+  if (auto exchange = dynamic_cast<const core::LocalPartitionNode*>(planNode)) {
+    aggNode = dynamic_cast<const core::AggregationNode*>(
+        exchange->sources()[0].get());
+  } else {
+    aggNode = dynamic_cast<const core::AggregationNode*>(planNode);
+  }
   VELOX_CHECK_NOT_NULL(
-      aggNode, "Current plan node must be a partial aggregation.");
-
+      aggNode,
+      "Current plan node must be a partial or intermediate aggregation or local exchange over the same. Got: {}",
+      planNode->toString());
   VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+  return aggNode;
+}
+} // namespace
+
+PlanBuilder& PlanBuilder::intermediateAggregation() {
+  const auto* aggNode = findPartialAggregation(planNode_.get());
   VELOX_CHECK(exec::isRawInput(aggNode->step()));
 
   auto step = core::AggregationNode::Step::kIntermediate;
@@ -297,13 +338,8 @@ PlanBuilder& PlanBuilder::intermediateAggregation() {
 }
 
 PlanBuilder& PlanBuilder::finalAggregation() {
-  // Current plan node must be a partial or intermediate aggregation.
-  const auto* aggNode = dynamic_cast<core::AggregationNode*>(planNode_.get());
-  VELOX_CHECK_NOT_NULL(
-      aggNode,
-      "Current plan node must be a partial or intermediate aggregation.");
+  const auto* aggNode = findPartialAggregation(planNode_.get());
 
-  VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
   if (!exec::isRawInput(aggNode->step())) {
     // Check the source node.
     aggNode =
@@ -337,7 +373,7 @@ PlanBuilder::createAggregateExpressionsAndNames(
       resolver.setResultType(resultTypes[i]);
     }
 
-    auto untypedExpr = parse::parseExpr(agg);
+    auto untypedExpr = duckdb::parseExpr(agg);
 
     auto expr = std::dynamic_pointer_cast<const core::CallTypedExpr>(
         inferTypes(untypedExpr));
@@ -421,19 +457,16 @@ PlanBuilder& PlanBuilder::streamingAggregation(
 }
 
 PlanBuilder& PlanBuilder::localMerge(
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder,
+    const std::vector<std::string>& keys,
     std::vector<std::shared_ptr<const core::PlanNode>> sources) {
   VELOX_CHECK_NULL(planNode_, "localMerge() must be the first call");
   VELOX_CHECK_GE(
       sources.size(), 1, "localMerge() requires at least one source");
+
   const auto& inputType = sources[0]->outputType();
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
-  std::vector<core::SortOrder> sortingOrders;
-  for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.push_back(field(inputType, keyIndices[i]));
-    sortingOrders.push_back(sortOrder[i]);
-  }
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, inputType, pool_);
+
   planNode_ = std::make_shared<core::LocalMergeNode>(
       nextPlanNodeId(), sortingKeys, sortingOrders, std::move(sources));
 
@@ -441,15 +474,11 @@ PlanBuilder& PlanBuilder::localMerge(
 }
 
 PlanBuilder& PlanBuilder::orderBy(
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder,
+    const std::vector<std::string>& keys,
     bool isPartial) {
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
-  std::vector<core::SortOrder> sortingOrders;
-  for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.emplace_back(field(keyIndices[i]));
-    sortingOrders.emplace_back(sortOrder[i]);
-  }
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, planNode_->outputType(), pool_);
+
   planNode_ = std::make_shared<core::OrderByNode>(
       nextPlanNodeId(), sortingKeys, sortingOrders, isPartial, planNode_);
 
@@ -457,16 +486,11 @@ PlanBuilder& PlanBuilder::orderBy(
 }
 
 PlanBuilder& PlanBuilder::topN(
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder,
+    const std::vector<std::string>& keys,
     int32_t count,
     bool isPartial) {
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
-  std::vector<core::SortOrder> sortingOrders;
-  for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.push_back(field(keyIndices[i]));
-    sortingOrders.push_back(sortOrder[i]);
-  }
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, planNode_->outputType(), pool_);
   planNode_ = std::make_shared<core::TopNNode>(
       nextPlanNodeId(),
       sortingKeys,
@@ -498,34 +522,20 @@ PlanBuilder& PlanBuilder::assignUniqueId(
 }
 
 namespace {
-RowTypePtr toRowType(
-    RowTypePtr inputType,
-    const std::vector<ChannelIndex>& outputLayout) {
-  if (outputLayout.empty()) {
-    return inputType;
-  }
-
-  std::vector<std::string> names;
-  std::vector<TypePtr> types;
-
-  for (auto index : outputLayout) {
-    names.push_back(inputType->nameOf(index));
-    types.push_back(inputType->childAt(index));
-  }
-  return ROW(std::move(names), std::move(types));
-}
-
 core::PartitionFunctionFactory createPartitionFunctionFactory(
     const RowTypePtr& inputType,
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
-        keys) {
+    const std::vector<std::string>& keys) {
   if (keys.empty()) {
     return
         [](auto /*numPartitions*/) -> std::unique_ptr<core::PartitionFunction> {
           VELOX_UNREACHABLE();
         };
   } else {
+    std::vector<ChannelIndex> keyIndices;
+    keyIndices.reserve(keys.size());
+    for (const auto& key : keys) {
+      keyIndices.push_back(inputType->getChildIdx(key));
+    }
     return [inputType, keyIndices](
                auto numPartitions) -> std::unique_ptr<core::PartitionFunction> {
       return std::make_unique<exec::HashPartitionFunction>(
@@ -534,60 +544,6 @@ core::PartitionFunctionFactory createPartitionFunctionFactory(
   }
 }
 
-} // namespace
-
-PlanBuilder& PlanBuilder::partitionedOutput(
-    const std::vector<ChannelIndex>& keyIndices,
-    int numPartitions,
-    const std::vector<ChannelIndex>& outputLayout) {
-  return partitionedOutput(keyIndices, numPartitions, false, outputLayout);
-}
-
-PlanBuilder& PlanBuilder::partitionedOutput(
-    const std::vector<ChannelIndex>& keyIndices,
-    int numPartitions,
-    bool replicateNullsAndAny,
-    const std::vector<ChannelIndex>& outputLayout) {
-  auto outputType = toRowType(planNode_->outputType(), outputLayout);
-  auto keys = fields(keyIndices);
-  auto partitionFunctionFactory =
-      createPartitionFunctionFactory(planNode_->outputType(), keyIndices, keys);
-  planNode_ = std::make_shared<core::PartitionedOutputNode>(
-      nextPlanNodeId(),
-      keys,
-      numPartitions,
-      false,
-      replicateNullsAndAny,
-      std::move(partitionFunctionFactory),
-      outputType,
-      planNode_);
-  return *this;
-}
-
-PlanBuilder& PlanBuilder::partitionedOutputBroadcast(
-    const std::vector<ChannelIndex>& outputLayout) {
-  auto outputType = toRowType(planNode_->outputType(), outputLayout);
-  planNode_ = core::PartitionedOutputNode::broadcast(
-      nextPlanNodeId(), 1, outputType, planNode_);
-  return *this;
-}
-
-PlanBuilder& PlanBuilder::localPartition(
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
-    const std::vector<ChannelIndex>& outputLayout) {
-  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
-  auto inputType = sources[0]->outputType();
-  auto outputType = toRowType(inputType, outputLayout);
-  auto keys = fields(inputType, keyIndices);
-  auto partitionFunctionFactory =
-      createPartitionFunctionFactory(inputType, keyIndices, keys);
-  planNode_ = std::make_shared<core::LocalPartitionNode>(
-      nextPlanNodeId(), partitionFunctionFactory, outputType, sources);
-  return *this;
-}
-
-namespace {
 RowTypePtr concat(const RowTypePtr& a, const RowTypePtr& b) {
   std::vector<std::string> names = a->names();
   std::vector<TypePtr> types = a->children();
@@ -609,6 +565,65 @@ RowTypePtr extract(
   return ROW(std::move(names), std::move(types));
 }
 } // namespace
+
+PlanBuilder& PlanBuilder::partitionedOutput(
+    const std::vector<std::string>& keys,
+    int numPartitions,
+    const std::vector<std::string>& outputLayout) {
+  return partitionedOutput(keys, numPartitions, false, outputLayout);
+}
+
+PlanBuilder& PlanBuilder::partitionedOutput(
+    const std::vector<std::string>& keys,
+    int numPartitions,
+    bool replicateNullsAndAny,
+    const std::vector<std::string>& outputLayout) {
+  auto outputType = outputLayout.empty()
+      ? planNode_->outputType()
+      : extract(planNode_->outputType(), outputLayout);
+  auto partitionFunctionFactory =
+      createPartitionFunctionFactory(planNode_->outputType(), keys);
+  planNode_ = std::make_shared<core::PartitionedOutputNode>(
+      nextPlanNodeId(),
+      fields(keys),
+      numPartitions,
+      false,
+      replicateNullsAndAny,
+      std::move(partitionFunctionFactory),
+      outputType,
+      planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::partitionedOutputBroadcast(
+    const std::vector<std::string>& outputLayout) {
+  auto outputType = outputLayout.empty()
+      ? planNode_->outputType()
+      : extract(planNode_->outputType(), outputLayout);
+  planNode_ = core::PartitionedOutputNode::broadcast(
+      nextPlanNodeId(), 1, outputType, planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::localPartition(
+    const std::vector<std::string>& keys,
+    const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
+    const std::vector<std::string>& outputLayout) {
+  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
+  auto inputType = sources[0]->outputType();
+  auto outputType = outputLayout.empty() ? sources[0]->outputType()
+                                         : extract(inputType, outputLayout);
+  auto partitionFunctionFactory =
+      createPartitionFunctionFactory(inputType, keys);
+  planNode_ = std::make_shared<core::LocalPartitionNode>(
+      nextPlanNodeId(),
+      keys.empty() ? core::LocalPartitionNode::Type::kGather
+                   : core::LocalPartitionNode::Type::kRepartition,
+      partitionFunctionFactory,
+      outputType,
+      sources);
+  return *this;
+}
 
 PlanBuilder& PlanBuilder::hashJoin(
     const std::vector<std::string>& leftKeys,

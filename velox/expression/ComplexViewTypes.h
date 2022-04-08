@@ -18,6 +18,7 @@
 #include <iterator>
 #include <optional>
 
+#include "folly/container/F14Map.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/type/Type.h"
@@ -48,20 +49,52 @@ class PointerWrapper {
   T t_;
 };
 
-// Base class for ArrayView::Iterator and MapView::Iterator. The missing parts
-// to be implemented by deriving classes are: operator*() and operator->().
-template <typename T, typename TIndex>
+// Base class for ArrayView::Iterator, MapView::Iterator, and
+// VariadicView::Iterator.
+// TElementAccessor is a class that supplies the following:
+// index_t: the type to use for indexes into the container. It should be signed
+// to allow, for example, loops to iterate backwards and end at a point before
+// the beginning of the container.
+// element_t: the type returned when the iterator is dereferenced.
+// element_t operator()(index_t index): returns the element at the provided
+// index in the container being iterated over.
+template <typename TElementAccessor>
 class IndexBasedIterator {
  public:
-  using Iterator = IndexBasedIterator<T, TIndex>;
-  using iterator_category = std::input_iterator_tag;
-  using value_type = T;
-  using difference_type = int;
-  using pointer = PointerWrapper<value_type>;
-  using reference = T;
+  using Iterator = IndexBasedIterator<TElementAccessor>;
+  using index_t = typename TElementAccessor::index_t;
+  using element_t = typename TElementAccessor::element_t;
+  using iterator_category = std::random_access_iterator_tag;
+  using value_type = element_t;
+  using difference_type = index_t;
+  using pointer = PointerWrapper<element_t>;
+  using reference = element_t;
 
-  explicit IndexBasedIterator<value_type, TIndex>(int64_t index)
-      : index_(index) {}
+  explicit IndexBasedIterator(
+      index_t index,
+      index_t containerStartIndex,
+      index_t containerEndIndex,
+      const TElementAccessor& elementAccessor)
+      : index_(index),
+        containerStartIndex_(containerStartIndex),
+        containerEndIndex_(containerEndIndex),
+        elementAccessor_(elementAccessor) {}
+
+  PointerWrapper<element_t> operator->() const {
+    validateBounds(index_);
+
+    return PointerWrapper(elementAccessor_(index_));
+  }
+
+  element_t operator*() const {
+    validateBounds(index_);
+
+    return elementAccessor_(index_);
+  }
+
+  element_t operator[](difference_type n) const {
+    return elementAccessor_(index_ + n);
+  }
 
   bool operator!=(const Iterator& rhs) const {
     return index_ != rhs.index_;
@@ -100,8 +133,85 @@ class IndexBasedIterator {
     return *this;
   }
 
+  // Implement post decrement.
+  Iterator operator--(int) {
+    Iterator old = *this;
+    --*this;
+    return old;
+  }
+
+  // Implement pre decrement.
+  Iterator& operator--() {
+    index_--;
+    return *this;
+  }
+
+  Iterator& operator+=(const difference_type& rhs) {
+    index_ += rhs;
+    return *this;
+  }
+
+  Iterator& operator-=(const difference_type& rhs) {
+    index_ -= rhs;
+    return *this;
+  }
+
+  // Iterators +/- ints.
+  Iterator operator+(difference_type rhs) const {
+    return Iterator(
+        this->index_ + rhs,
+        containerStartIndex_,
+        containerEndIndex_,
+        elementAccessor_);
+  }
+
+  Iterator operator-(difference_type rhs) const {
+    return Iterator(
+        this->index_ - rhs,
+        containerStartIndex_,
+        containerEndIndex_,
+        elementAccessor_);
+  }
+
+  // Subtract iterators.
+  difference_type operator-(const Iterator& rhs) const {
+    return this->index_ - rhs.index_;
+  }
+
+  friend Iterator operator+(
+      typename Iterator::difference_type lhs,
+      const Iterator& rhs) {
+    return rhs + lhs;
+  }
+
  protected:
-  TIndex index_;
+  index_t index_;
+
+  // Every instance of Iterator for the same container should have the same
+  // values for these two fields.
+  // The first index in the container. When begin() is called on a container
+  // the returned iterator should have index_ == containerStartIndex_.
+  index_t containerStartIndex_;
+
+  // Last index in the container + 1. When end() is called on a
+  // container the returned iterator should have index_ == containerEndIndex_.
+  index_t containerEndIndex_;
+  TElementAccessor elementAccessor_;
+
+  inline void validateBounds(index_t index) const {
+    VELOX_DCHECK_LT(
+        index,
+        containerEndIndex_,
+        "Iterator has index {} beyond the length of the container {}.",
+        index,
+        containerEndIndex_);
+    VELOX_DCHECK_GE(
+        index,
+        containerStartIndex_,
+        "Iterator has index {} before the start of the container {}.",
+        index,
+        containerStartIndex_);
+  }
 };
 
 // Implements an iterator for values that skips nulls and provides direct access
@@ -114,9 +224,13 @@ class IndexBasedIterator {
 template <typename BaseIterator>
 class SkipNullsIterator {
   using Iterator = SkipNullsIterator<BaseIterator>;
+
+  // SkipNullsIterator cannot meet the requirements of
+  // random_access_iterator_tag as moving between elements is a linear time
+  // operation.
   using iterator_category = std::input_iterator_tag;
-  using value_type = typename std::result_of<decltype (&BaseIterator::value)(
-      BaseIterator)>::type;
+  using value_type = typename std::
+      invoke_result<decltype(&BaseIterator::value), BaseIterator>::type;
   using difference_type = int;
   using pointer = PointerWrapper<value_type>;
   using reference = value_type;
@@ -378,6 +492,18 @@ operator!=(const VectorOptionalValueAccessor<U>& lhs, const T& rhs) {
   return !(lhs == rhs);
 }
 
+// Helper function that calls materialize on element if it's not primitive.
+template <typename VeloxType, typename T>
+auto materializeElement(const T& element) {
+  if constexpr (MaterializeType<VeloxType>::requiresMaterialization) {
+    return element.materialize();
+  } else if constexpr (util::is_shared_ptr<VeloxType>::value) {
+    return *element;
+  } else {
+    return element;
+  }
+}
+
 // Represents an array of elements with an interface similar to std::vector.
 // When returnsOptionalValues is true, the interface is like
 // std::vector<std::optional<V>>.
@@ -399,69 +525,88 @@ class ArrayView {
       VectorOptionalValueAccessor<reader_t>,
       element_t>::type;
 
-  class Iterator : public IndexBasedIterator<Element, vector_size_t> {
+  class ElementAccessor {
    public:
-    Iterator(const reader_t* reader, vector_size_t index)
-        : IndexBasedIterator<Element, vector_size_t>(index), reader_(reader) {}
+    using element_t = Element;
+    using index_t = vector_size_t;
 
-    PointerWrapper<Element> operator->() const {
+    explicit ElementAccessor(const reader_t* reader) : reader_(reader) {}
+
+    Element operator()(vector_size_t index) const {
       if constexpr (returnsOptionalValues) {
-        return PointerWrapper(Element{reader_, this->index_});
+        return Element{reader_, index};
       } else {
-        return PointerWrapper(reader_->readNullFree(this->index_));
+        return reader_->readNullFree(index);
       }
     }
 
-    Element operator*() const {
-      if constexpr (returnsOptionalValues) {
-        return Element{reader_, this->index_};
-      } else {
-        return reader_->readNullFree(this->index_);
-      }
-    }
-
-   protected:
+   private:
     const reader_t* reader_;
   };
 
+  using Iterator = IndexBasedIterator<ElementAccessor>;
+
   Iterator begin() const {
-    return Iterator{reader_, offset_};
+    return Iterator{
+        offset_, offset_, offset_ + size_, ElementAccessor(reader_)};
   }
 
   Iterator end() const {
-    return Iterator{reader_, offset_ + size_};
+    return Iterator{
+        offset_ + size_, offset_, offset_ + size_, ElementAccessor(reader_)};
   }
 
   struct SkipNullsContainer {
     class SkipNullsBaseIterator : public Iterator {
      public:
-      SkipNullsBaseIterator(const reader_t* reader, vector_size_t index)
-          : Iterator(reader, index) {}
+      SkipNullsBaseIterator(
+          const reader_t* reader,
+          vector_size_t index,
+          vector_size_t startIndex,
+          vector_size_t endIndex)
+          : Iterator(index, startIndex, endIndex, ElementAccessor(reader)),
+            reader_(reader) {}
 
       bool hasValue() const {
-        return this->reader_->isSet(this->index_);
+        return reader_->isSet(this->index_);
       }
 
       element_t value() const {
-        return (*this->reader_)[this->index_];
+        return (*reader_)[this->index_];
       }
+
+     private:
+      const reader_t* reader_;
     };
 
     explicit SkipNullsContainer(const ArrayView* array_) : array_(array_) {}
 
     SkipNullsIterator<SkipNullsBaseIterator> begin() {
       return SkipNullsIterator<SkipNullsBaseIterator>::initialize(
-          SkipNullsBaseIterator{array_->reader_, array_->offset_},
           SkipNullsBaseIterator{
-              array_->reader_, array_->offset_ + array_->size_});
+              array_->reader_,
+              array_->offset_,
+              array_->offset_,
+              array_->offset_ + array_->size_},
+          SkipNullsBaseIterator{
+              array_->reader_,
+              array_->offset_ + array_->size_,
+              array_->offset_,
+              array_->offset_ + array_->size_});
     }
 
     SkipNullsIterator<SkipNullsBaseIterator> end() {
       return SkipNullsIterator<SkipNullsBaseIterator>{
           SkipNullsBaseIterator{
-              array_->reader_, array_->offset_ + array_->size_},
+              array_->reader_,
+              array_->offset_ + array_->size_,
+              array_->offset_,
+              array_->offset_ + array_->size_},
           SkipNullsBaseIterator{
-              array_->reader_, array_->offset_ + array_->size_}};
+              array_->reader_,
+              array_->offset_ + array_->size_,
+              array_->offset_,
+              array_->offset_ + array_->size_}};
     }
 
    private:
@@ -476,6 +621,28 @@ class ArrayView {
     } else {
       return false;
     }
+  }
+
+  using materialize_t = typename std::conditional<
+      returnsOptionalValues,
+      typename MaterializeType<Array<V>>::nullable_t,
+      typename MaterializeType<Array<V>>::null_free_t>::type;
+
+  materialize_t materialize() const {
+    materialize_t result;
+
+    for (const auto& element : *this) {
+      if constexpr (returnsOptionalValues) {
+        if (element.has_value()) {
+          result.push_back({materializeElement<V>(element.value())});
+        } else {
+          result.push_back(std::nullopt);
+        }
+      } else {
+        result.push_back(materializeElement<V>(element));
+      }
+    }
+    return result;
   }
 
   Element operator[](vector_size_t index) const {
@@ -571,8 +738,8 @@ class MapView {
     }
 
    private:
-    // Helper functions to allow us to use "if constexpr" when initializing the
-    // values.
+    // Helper functions to allow us to use "if constexpr" when initializing
+    // the values.
     KeyAccessor getFirst(const key_reader_t* keyReader, int64_t index) {
       if constexpr (returnsOptionalValues) {
         return (*keyReader)[index];
@@ -590,22 +757,18 @@ class MapView {
     }
   };
 
-  class Iterator : public IndexBasedIterator<Element, vector_size_t> {
+  class ElementAccessor {
    public:
-    Iterator(
+    using element_t = Element;
+    using index_t = vector_size_t;
+
+    ElementAccessor(
         const key_reader_t* keyReader,
-        const value_reader_t* valueReader,
-        vector_size_t index)
-        : IndexBasedIterator<Element, vector_size_t>(index),
-          keyReader_(keyReader),
-          valueReader_(valueReader) {}
+        const value_reader_t* valueReader)
+        : keyReader_(keyReader), valueReader_(valueReader) {}
 
-    PointerWrapper<Element> operator->() const {
-      return PointerWrapper(Element{keyReader_, valueReader_, this->index_});
-    }
-
-    Element operator*() const {
-      return Element{keyReader_, valueReader_, this->index_};
+    Element operator()(vector_size_t index) const {
+      return Element{keyReader_, valueReader_, index};
     }
 
    private:
@@ -613,15 +776,26 @@ class MapView {
     const value_reader_t* valueReader_;
   };
 
+  using Iterator = IndexBasedIterator<ElementAccessor>;
+
   Iterator begin() const {
-    return Iterator{keyReader_, valueReader_, offset_};
+    return Iterator{
+        offset_,
+        offset_,
+        offset_ + size_,
+        ElementAccessor(keyReader_, valueReader_)};
   }
 
   Iterator end() const {
-    return Iterator{keyReader_, valueReader_, size_ + offset_};
+    return Iterator{
+        offset_ + size_,
+        offset_,
+        offset_ + size_,
+        ElementAccessor(keyReader_, valueReader_)};
   }
 
-  const Element operator[](vector_size_t index) const {
+  // Index-based access for the map elements.
+  const Element atIndex(vector_size_t index) const {
     return Element{keyReader_, valueReader_, index + offset_};
   }
 
@@ -639,6 +813,34 @@ class MapView {
     auto it = find(key);
     VELOX_USER_CHECK(it != end(), "accessed key is not found in the map");
     return it->second;
+  }
+
+  // Beware!! runtime is O(N)!!
+  ValueAccessor operator[](const key_element_t& key) const {
+    return at(key);
+  }
+
+  using materialize_t = typename std::conditional<
+      returnsOptionalValues,
+      typename MaterializeType<Map<K, V>>::nullable_t,
+      typename MaterializeType<Map<K, V>>::null_free_t>::type;
+
+  materialize_t materialize() const {
+    materialize_t result;
+    for (const auto& [key, value] : *this) {
+      if constexpr (returnsOptionalValues) {
+        if (value.has_value()) {
+          result.emplace(
+              materializeElement<K>(key), materializeElement<V>(value.value()));
+        } else {
+          result.emplace(materializeElement<K>(key), std::nullopt);
+        }
+      } else {
+        result.emplace(
+            materializeElement<K>(key), materializeElement<V>(value));
+      }
+    }
+    return result;
   }
 
  private:
@@ -672,13 +874,49 @@ class RowView {
     }
   }
 
+  using materialize_t = typename std::conditional<
+      returnsOptionalValues,
+      typename MaterializeType<Row<T...>>::nullable_t,
+      typename MaterializeType<Row<T...>>::null_free_t>::type;
+
+  materialize_t materialize() const {
+    materialize_t result;
+    materializeImpl(result, std::index_sequence_for<T...>());
+
+    return result;
+  }
+
  private:
+  void initialize() {
+    initializeImpl(std::index_sequence_for<T...>());
+  }
+
+  using children_types = std::tuple<T...>;
+  template <std::size_t... Is>
+  void materializeImpl(materialize_t& result, std::index_sequence<Is...>)
+      const {
+    (
+        [&]() {
+          using child_t = typename std::tuple_element_t<Is, children_types>;
+          const auto& element = at<Is>();
+          if constexpr (returnsOptionalValues) {
+            if (element.has_value()) {
+              std::get<Is>(result) = {materializeElement<child_t>(*element)};
+            } else {
+              std::get<Is>(result) = std::nullopt;
+            }
+          } else {
+            std::get<Is>(result) = materializeElement<child_t>(element);
+          }
+        }(),
+        ...);
+  }
   const reader_t* childReaders_;
   vector_size_t offset_;
 };
 
 template <size_t I, bool returnsOptionalValues, class... Types>
-auto get(const RowView<returnsOptionalValues, Types...>& row) {
+inline auto get(const RowView<returnsOptionalValues, Types...>& row) {
   return row.template at<I>();
 }
 
@@ -692,9 +930,7 @@ class GenericView {
   }
 
   bool operator==(const GenericView& other) const {
-    static constexpr auto kConfig = CompareFlags{true, true, true};
-    return baseVector_->compare(
-               other.baseVector_, index_, other.index_, kConfig) == 0;
+    return baseVector_->equalValueAt(other.baseVector_, index_, other.index_);
   }
 
  private:

@@ -30,6 +30,7 @@ add_executable(
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
   ArrayPositionTest.cpp
+  ArraysOverlapTest.cpp
   BitwiseTest.cpp
   CardinalityTest.cpp
   CeilFloorTest.cpp
@@ -37,6 +38,7 @@ add_executable(
   ComparisonsTest.cpp
   DateTimeFunctionsTest.cpp
   ElementAtTest.cpp
+  HyperLogLogCastTest.cpp
   HyperLogLogFunctionsTest.cpp
   InPredicateTest.cpp
   JsonCastTest.cpp
@@ -71,6 +73,7 @@ target_link_libraries(
   velox_functions_lib
   velox_exec_test_util
   velox_dwrf_test_utils
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${gflags_LIBRARIES}
-  ${GMock})
+  gmock)

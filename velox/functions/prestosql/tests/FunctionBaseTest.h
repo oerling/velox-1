@@ -21,7 +21,6 @@
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/type/Type.h"
-#include "velox/vector/tests/VectorMaker.h"
 #include "velox/vector/tests/VectorTestBase.h"
 
 namespace facebook::velox::functions::test {
@@ -77,14 +76,7 @@ class FunctionBaseTest : public testing::Test,
   VectorPtr evaluate(
       const std::shared_ptr<const core::ITypedExpr>& typedExpr,
       const RowVectorPtr& data) {
-    exec::ExprSet exprSet({typedExpr}, &execCtx_);
-
-    auto rows = std::make_unique<SelectivityVector>(data->size());
-    exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
-    std::vector<VectorPtr> results(1);
-    exprSet.eval(*rows, &evalCtx, &results);
-
-    return results[0];
+    return evaluateImpl<exec::ExprSet>(typedExpr, data);
   }
 
   // Use this directly if you don't want it to cast the returned vector.
@@ -110,6 +102,17 @@ class FunctionBaseTest : public testing::Test,
       const std::string& expression,
       const RowVectorPtr& data) {
     auto result = evaluate(expression, data);
+    return castEvaluateResult<T>(result, expression);
+  }
+
+  template <typename T>
+  std::shared_ptr<T> evaluateSimplified(
+      const std::string& expression,
+      const RowVectorPtr& data) {
+    auto rowType = std::dynamic_pointer_cast<const RowType>(data->type());
+    auto typedExpr = makeTypedExpr(expression, rowType);
+    auto result = evaluateImpl<exec::ExprSetSimplified>(typedExpr, data);
+
     return castEvaluateResult<T>(result, expression);
   }
 
@@ -173,20 +176,6 @@ class FunctionBaseTest : public testing::Test,
         evaluate<SimpleVector<EvalType<ReturnType>>>(expr, rowVectorPtr);
     return result->isNullAt(0) ? std::optional<ReturnType>{}
                                : ReturnType(result->valueAt(0));
-  }
-
-  // TODO: Enable ASSERT_EQ for vectors
-  static void assertEqualVectors(
-      const VectorPtr& expected,
-      const VectorPtr& actual,
-      const std::string& additionalContext = "") {
-    ASSERT_EQ(expected->size(), actual->size());
-
-    for (auto i = 0; i < expected->size(); i++) {
-      ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
-          << "at " << i << ": " << expected->toString(i) << " vs. "
-          << actual->toString(i) << additionalContext;
-    }
   }
 
   // Asserts that `func` throws `VeloxUserError`. Optionally, checks if
@@ -259,6 +248,20 @@ class FunctionBaseTest : public testing::Test,
         result->encoding(),
         result->type()->toString());
     return castedResult;
+  }
+
+  template <typename ExprSet>
+  VectorPtr evaluateImpl(
+      const std::shared_ptr<const core::ITypedExpr>& typedExpr,
+      const RowVectorPtr& data) {
+    auto rows = std::make_unique<SelectivityVector>(data->size());
+    std::vector<VectorPtr> results(1);
+
+    ExprSet exprSet({typedExpr}, &execCtx_);
+    exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
+    exprSet.eval(*rows, &evalCtx, &results);
+
+    return results[0];
   }
 };
 

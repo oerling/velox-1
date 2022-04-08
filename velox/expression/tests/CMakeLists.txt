@@ -17,17 +17,21 @@ add_executable(
   ExprTest.cpp
   CastExprTest.cpp
   MapWriterTest.cpp
-  ArrayProxyTest.cpp
+  ArrayWriterTest.cpp
+  RowWriterTest.cpp
   EvalSimplifiedTest.cpp
   SignatureBinderTest.cpp
   SimpleFunctionTest.cpp
+  SimpleFunctionInitTest.cpp
   SimpleFunctionCallNullFreeTest.cpp
   SimpleFunctionPresetNullsTest.cpp
   ArrayViewTest.cpp
-  ArrayProxyTest.cpp
-  StringProxyTest.cpp
+  StringWriterTest.cpp
+  ArrayWriterTest.cpp
+  StringWriterTest.cpp
   MapViewTest.cpp
   RowViewTest.cpp
+  GenericViewTest.cpp
   TryExprTest.cpp
   VariadicViewTest.cpp
   VectorReaderTest.cpp)
@@ -53,7 +57,8 @@ target_link_libraries(
   velox_presto_serializer
   velox_vector_test_lib
   velox_vector_fuzzer
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${FOLLY_WITH_DEPENDENCIES}
   ${gflags_LIBRARIES}
   glog::glog
@@ -67,9 +72,9 @@ target_link_libraries(velox_expression_fuzzer velox_type velox_vector_fuzzer
 add_executable(velox_expression_fuzzer_test ExpressionFuzzerTest.cpp)
 
 target_link_libraries(velox_expression_fuzzer_test velox_expression_fuzzer
-                      velox_functions_prestosql ${GTEST_BOTH_LIBRARIES})
+                      velox_functions_prestosql gtest gtest_main)
 
 add_executable(spark_expression_fuzzer_test SparkExpressionFuzzerTest.cpp)
 
 target_link_libraries(spark_expression_fuzzer_test velox_expression_fuzzer
-                      velox_functions_spark ${GTEST_BOTH_LIBRARIES})
+                      velox_functions_spark gtest gtest_main)

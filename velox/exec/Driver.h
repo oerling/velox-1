@@ -139,6 +139,10 @@ class BlockingState {
       Operator* FOLLY_NONNULL op,
       BlockingReason reason);
 
+  ~BlockingState() {
+    numBlockedDrivers_--;
+  }
+
   static void setResume(std::shared_ptr<BlockingState> state);
 
   Operator* FOLLY_NONNULL op() {
@@ -149,18 +153,23 @@ class BlockingState {
     return reason_;
   }
 
+  /// Returns total number of drivers process wide that are currently in blocked
+  /// state.
+  static uint64_t numBlockedDrivers() {
+    return numBlockedDrivers_;
+  }
+
  private:
   std::shared_ptr<Driver> driver_;
   ContinueFuture future_;
   Operator* FOLLY_NONNULL operator_;
   BlockingReason reason_;
   uint64_t sinceMicros_;
+
+  static std::atomic_uint64_t numBlockedDrivers_;
 };
 
 struct DriverCtx {
-  std::shared_ptr<Task> task;
-  std::unique_ptr<core::ExecCtx> execCtx;
-  std::unique_ptr<connector::ExpressionEvaluator> expressionEvaluator;
   const int driverId;
   const int pipelineId;
   /// Id of the split group this driver should process in case of grouped
@@ -169,6 +178,9 @@ struct DriverCtx {
   /// Id of the partition to use by this driver. For local exchange, for
   /// instance.
   const uint32_t partitionId;
+
+  std::shared_ptr<Task> task;
+  memory::MemoryPool* FOLLY_NONNULL pool;
   Driver* FOLLY_NONNULL driver;
 
   explicit DriverCtx(
@@ -178,14 +190,9 @@ struct DriverCtx {
       uint32_t _splitGroupId,
       uint32_t _partitionId);
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
+  const core::QueryConfig& queryConfig() const;
 
-  // Makes an extract of QueryCtx for use in a connector. 'planNodeId'
-  // is the id of the calling TableScan. This and the task id identify
-  // the scan for column access tracking.
-  std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
-      const std::string& connectorId,
-      const std::string& planNodeId) const;
+  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
 };
 
 class Driver {
@@ -193,8 +200,6 @@ class Driver {
   Driver(
       std::unique_ptr<DriverCtx> driverCtx,
       std::vector<std::unique_ptr<Operator>>&& operators);
-
-  ~Driver();
 
   static void run(std::shared_ptr<Driver> self);
 
@@ -225,7 +230,7 @@ class Driver {
   // Returns a subset of channels for which there are operators upstream from
   // filterSource that accept dynamically generated filters.
   std::unordered_set<ChannelIndex> canPushdownFilters(
-      Operator* FOLLY_NONNULL filterSource,
+      const Operator* FOLLY_NONNULL filterSource,
       const std::vector<ChannelIndex>& channels) const;
 
   // Returns the Operator with 'planNodeId.' or nullptr if not
@@ -241,11 +246,11 @@ class Driver {
     return ctx_.get();
   }
 
-  std::shared_ptr<Task> task() const {
-    return task_;
+  const std::shared_ptr<Task>& task() const {
+    return ctx_->task;
   }
 
-  // Updates the stats in 'task_' and frees resources. Only called by Task for
+  // Updates the stats in Task and frees resources. Only called by Task for
   // closing non-running Drivers.
   void closeByTask();
 
@@ -263,9 +268,9 @@ class Driver {
   void pushdownFilters(int operatorIndex);
 
   std::unique_ptr<DriverCtx> ctx_;
-  std::shared_ptr<Task> task_;
+  std::atomic_bool closed_{false};
 
-  // Set via Task_ and serialized by 'task_'s mutex.
+  // Set via Task and serialized by Task's mutex.
   ThreadState state_;
 
   // Timer used to track down the time we are sitting in the driver queue.
@@ -302,6 +307,9 @@ struct DriverFactory {
   /// grouped execution it is 'numDrivers' * 'numSplitGroups', otherwise it is
   /// 'numDrivers'.
   uint32_t numTotalDrivers;
+  /// The (local) node that will consume results supplied by this pipeline.
+  /// Can be null. We use that to determine the max drivers.
+  std::shared_ptr<const core::PlanNode> consumerNode;
 
   // True if 'planNodes' contains a source node for the task, e.g. TableScan or
   // Exchange.

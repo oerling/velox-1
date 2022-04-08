@@ -152,8 +152,8 @@ const std::vector<std::shared_ptr<const PlanNode>>& TableScanNode::sources()
   return kEmptySources;
 }
 
-void TableScanNode::addDetails(std::stringstream& /* stream */) const {
-  // TODO Add connector details.
+void TableScanNode::addDetails(std::stringstream& stream) const {
+  stream << tableHandle_->toString();
 }
 
 const std::vector<std::shared_ptr<const PlanNode>>& ExchangeNode::sources()
@@ -355,8 +355,16 @@ void MergeExchangeNode::addDetails(std::stringstream& stream) const {
   addSortingKeys(stream, sortingKeys_, sortingOrders_);
 }
 
-void LocalPartitionNode::addDetails(std::stringstream& /* stream */) const {
+void LocalPartitionNode::addDetails(std::stringstream& stream) const {
   // Nothing to add.
+  switch (type_) {
+    case Type::kGather:
+      stream << "GATHER";
+      break;
+    case Type::kRepartition:
+      stream << "REPARTITION";
+      break;
+  }
 }
 
 void EnforceSingleRowNode::addDetails(std::stringstream& /* stream */) const {
@@ -403,6 +411,61 @@ void OrderByNode::addDetails(std::stringstream& stream) const {
     stream << "PARTIAL ";
   }
   addSortingKeys(stream, sortingKeys_, sortingOrders_);
+}
+
+void PlanNode::toString(
+    std::stringstream& stream,
+    bool detailed,
+    bool recursive,
+    size_t indentationSize,
+    std::function<void(
+        const PlanNodeId& planNodeId,
+        const std::string& indentation,
+        std::stringstream& stream)> addContext) const {
+  const std::string indentation(indentationSize, ' ');
+
+  stream << indentation << "-> " << name();
+
+  if (detailed) {
+    stream << "[";
+    addDetails(stream);
+    stream << "]";
+  }
+  stream << std::endl;
+
+  if (addContext) {
+    auto contextIndentation = indentation + "   ";
+    stream << contextIndentation;
+    addContext(id_, contextIndentation, stream);
+    stream << std::endl;
+  }
+
+  if (recursive) {
+    for (auto& source : sources()) {
+      source->toString(stream, detailed, true, indentationSize + 2, addContext);
+    }
+  }
+}
+
+namespace {
+void collectLeafPlanNodeIds(
+    const core::PlanNode& planNode,
+    std::unordered_set<core::PlanNodeId>& leafIds) {
+  if (planNode.sources().empty()) {
+    leafIds.insert(planNode.id());
+    return;
+  }
+
+  for (const auto& child : planNode.sources()) {
+    collectLeafPlanNodeIds(*child, leafIds);
+  }
+}
+} // namespace
+
+std::unordered_set<core::PlanNodeId> PlanNode::leafPlanNodeIds() const {
+  std::unordered_set<core::PlanNodeId> leafIds;
+  collectLeafPlanNodeIds(*this, leafIds);
+  return leafIds;
 }
 
 } // namespace facebook::velox::core

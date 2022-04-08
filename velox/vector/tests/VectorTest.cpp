@@ -19,11 +19,13 @@
 #include <stdio.h>
 #include "velox/common/memory/ByteStream.h"
 #include "velox/serializers/PrestoSerializer.h"
+#include "velox/vector/BaseVector.h"
 #include "velox/vector/BiasVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/LazyVector.h"
+#include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorTypeUtils.h"
 #include "velox/vector/tests/VectorMaker.h"
 
@@ -319,7 +321,6 @@ class VectorTest : public testing::Test {
   template <TypeKind KIND>
   void testFlat(TypePtr type, vector_size_t size, bool withNulls) {
     using T = typename TypeTraits<KIND>::NativeType;
-    BufferPtr buffer;
     VectorPtr base = BaseVector::create(type, size, pool_.get());
     auto flat = std::dynamic_pointer_cast<FlatVector<T>>(base);
     ASSERT_NE(flat.get(), nullptr);
@@ -338,6 +339,7 @@ class VectorTest : public testing::Test {
       EXPECT_TRUE(flat->isNullAt(size * 2 - 1));
     }
     // Test that the null is cleared.
+    BufferPtr buffer;
     flat->set(size * 2 - 1, testValue<T>(size, buffer));
     EXPECT_FALSE(flat->isNullAt(size * 2 - 1));
 
@@ -495,6 +497,7 @@ class VectorTest : public testing::Test {
     target->copy(source.get(), sourceSize, 0, sourceSize);
     for (int32_t i = 0; i < sourceSize; ++i) {
       EXPECT_TRUE(target->equalValueAt(source.get(), sourceSize + i, i));
+      EXPECT_TRUE(source->equalValueAt(target.get(), i, sourceSize + i));
     }
     // Check that uninitialized is copyable.
     target->resize(target->size() + 100);
@@ -697,8 +700,8 @@ class VectorTest : public testing::Test {
             oddIndices.size() - oddIndices.size() / 2));
     std::stringstream evenStream;
     std::stringstream oddStream;
-    OutputStream eventOutputStream(&evenStream);
-    OutputStream oddOutputStream(&oddStream);
+    OStreamOutputStream eventOutputStream(&evenStream);
+    OStreamOutputStream oddOutputStream(&oddStream);
     even.flush(&eventOutputStream);
     odd.flush(&oddOutputStream);
     ByteStream input;
@@ -720,8 +723,7 @@ class VectorTest : public testing::Test {
         auto deserializedRetained = resultRow->retainedSize();
         EXPECT_LE(deserializedRetained, originalRetained)
             << "Deserializing half is larger than original";
-        EXPECT_GT(deserializedRetained, originalRetained / 8)
-            << "Deserialized half is less than 1/8 the of original size";
+        EXPECT_GT(deserializedRetained, 0);
         break;
       }
       default:
@@ -1060,6 +1062,23 @@ TEST_F(VectorTest, resizeStringAsciiness) {
   ASSERT_TRUE(stringVector->isAscii(rows).value());
   stringVector->resize(2);
   ASSERT_FALSE(stringVector->isAscii(rows));
+}
+
+TEST_F(VectorTest, copyNoRows) {
+  auto maker = std::make_unique<test::VectorMaker>(pool_.get());
+  {
+    auto source = maker->flatVectorNullable<int32_t>({1, 2, 3});
+    auto target = BaseVector::create(INTEGER(), 10, pool_.get());
+    SelectivityVector rows(3, false);
+    target->copy(source.get(), rows, nullptr);
+  }
+
+  {
+    auto source = maker->flatVectorNullable<StringView>({"a", "b", "c"});
+    auto target = BaseVector::create(VARCHAR(), 10, pool_.get());
+    SelectivityVector rows(3, false);
+    target->copy(source.get(), rows, nullptr);
+  }
 }
 
 TEST_F(VectorTest, copyAscii) {
@@ -1503,4 +1522,11 @@ TEST_F(VectorTest, clearAllNulls) {
   vector->clearAllNulls();
   ASSERT_FALSE(vector->mayHaveNulls());
   ASSERT_FALSE(vector->isNullAt(50));
+}
+
+TEST_F(VectorTest, constantSetNull) {
+  auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
+  auto vector = vectorMaker->constantVector<int64_t>({{0}});
+
+  EXPECT_THROW(vector->setNull(0, true), VeloxRuntimeError);
 }

@@ -164,6 +164,10 @@ class ConstantVector final : public SimpleVector<T> {
     return isNull_ || (valueVector_ && valueVector_->mayHaveNullsRecursive());
   }
 
+  void setNull(vector_size_t /*idx*/, bool /*value*/) override {
+    VELOX_FAIL("setNull not supported on ConstantVector");
+  }
+
   const uint64_t* flatRawNulls(const SelectivityVector& rows) override {
     VELOX_DCHECK(initialized_);
     if (isNull_) {
@@ -300,6 +304,28 @@ class ConstantVector final : public SimpleVector<T> {
   void move(vector_size_t /*source*/, vector_size_t target) override {
     VELOX_CHECK_LT(target, BaseVector::length_);
     // nothing to do
+  }
+
+  std::optional<int32_t> compare(
+      const BaseVector* other,
+      vector_size_t index,
+      vector_size_t otherIndex,
+      CompareFlags flags) const override {
+    if constexpr (!std::is_same_v<T, ComplexType>) {
+      if (other->isConstantEncoding()) {
+        auto otherConstant = other->asUnchecked<ConstantVector<T>>();
+        if (isNull_ || otherConstant->isNull_) {
+          return BaseVector::compareNulls(
+              isNull_, otherConstant->isNull_, flags);
+        }
+
+        auto result =
+            SimpleVector<T>::comparePrimitiveAsc(value_, otherConstant->value_);
+        return flags.ascending ? result : result * -1;
+      }
+    }
+
+    return SimpleVector<T>::compare(other, index, otherIndex, flags);
   }
 
   std::string toString() const override {

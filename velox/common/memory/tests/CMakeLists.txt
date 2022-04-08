@@ -14,6 +14,7 @@
 include(GoogleTest)
 add_executable(
   velox_memory_test
+  ByteStreamTest.cpp
   CompactDoubleListTest.cpp
   HashStringAllocatorTest.cpp
   MemoryHeaderTest.cpp
@@ -21,21 +22,27 @@ add_executable(
   MemoryPoolTest.cpp
   MemoryUsageTest.cpp
   MemoryUsageTrackerTest.cpp
-  ArenaTest.cpp
   MappedMemoryTest.cpp)
 
 target_link_libraries(
   velox_memory_test
   velox_memory
   velox_exception
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${gflags_LIBRARIES}
-  ${GMock}
+  gmock
   glog::glog)
 
 gtest_add_tests(velox_memory_test "" AUTO)
 
 add_executable(velox_fragmentation_benchmark FragmentationBenchmark.cpp)
 
-target_link_libraries(velox_fragmentation_benchmark velox_memory glog::glog
-                      ${GTEST_BOTH_LIBRARIES} ${gflags_LIBRARIES} pthread)
+target_link_libraries(
+  velox_fragmentation_benchmark
+  velox_memory
+  glog::glog
+  gtest
+  gtest_main
+  ${gflags_LIBRARIES}
+  pthread)

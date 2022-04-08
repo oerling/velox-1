@@ -77,6 +77,10 @@ class VectorFuzzer {
       size_t seed = 123456)
       : opts_(options), pool_(pool), rng_(seed) {}
 
+  void setOptions(VectorFuzzer::Options options) {
+    opts_ = options;
+  }
+
   // Returns a "fuzzed" vector, containing randomized data, nulls, and indices
   // vector (dictionary).
   VectorPtr fuzz(const TypePtr& type);
@@ -99,16 +103,25 @@ class VectorFuzzer {
 
   variant randVariant(const TypePtr& arg);
 
+  // Generates a random type, including maps, vectors, and arrays. maxDepth
+  // limits the maximum level of nesting for complex types. maxDepth <= 1 means
+  // no complex types are allowed.
+  //
+  // There are no options to control type generation yet; these may be added in
+  // the future.
+  TypePtr randType(int maxDepth = 5);
+  RowTypePtr randRowType(int maxDepth = 5);
+
   void reSeed(size_t seed) {
     rng_.seed(seed);
   }
 
- private:
   // Returns true 1/n of times.
   bool oneIn(size_t n) {
     return folly::Random::oneIn(n, rng_);
   }
 
+ private:
   VectorPtr fuzz(const TypePtr& type, vector_size_t size);
 
   VectorPtr fuzzFlat(const TypePtr& type, vector_size_t size);
@@ -119,7 +132,7 @@ class VectorFuzzer {
 
   VectorPtr fuzzRow(const RowTypePtr& rowType, vector_size_t size);
 
-  const VectorFuzzer::Options opts_;
+  VectorFuzzer::Options opts_;
 
   memory::MemoryPool* pool_;
 

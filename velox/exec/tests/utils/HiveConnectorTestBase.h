@@ -35,14 +35,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void writeToFile(
-      const std::string& filePath,
-      const std::string& name,
-      RowVectorPtr vector);
+  void writeToFile(const std::string& filePath, RowVectorPtr vector);
 
   void writeToFile(
       const std::string& filePath,
-      const std::string& name,
       const std::vector<RowVectorPtr>& vectors,
       std::shared_ptr<dwrf::Config> config =
           std::make_shared<facebook::velox::dwrf::Config>());
@@ -84,6 +80,13 @@ class HiveConnectorTestBase : public OperatorTestBase {
     return makeHiveConnectorSplit(filePath, {}, start, length);
   }
 
+  /// Split file at path 'filePath' into 'splitCount' splits.
+  static std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>>
+  makeHiveConnectorSplits(
+      const std::string& filePath,
+      uint32_t splitCount,
+      dwio::common::FileFormat format);
+
   static std::shared_ptr<connector::hive::HiveConnectorSplit>
   makeHiveConnectorSplit(
       const std::string& filePath,
@@ -103,10 +106,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
 
   static std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
       common::test::SubfieldFilters subfieldFilters,
-      const std::shared_ptr<const core::ITypedExpr>& remainingFilter =
-          nullptr) {
+      const std::shared_ptr<const core::ITypedExpr>& remainingFilter = nullptr,
+      const std::string& tableName = "hive_table") {
     return std::make_shared<connector::hive::HiveTableHandle>(
-        true, std::move(subfieldFilters), remainingFilter);
+        tableName, true, std::move(subfieldFilters), remainingFilter);
   }
 
   static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(

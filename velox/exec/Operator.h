@@ -130,6 +130,8 @@ struct OperatorStats {
 
   std::unordered_map<std::string, RuntimeMetric> runtimeStats;
 
+  int numDrivers = 0;
+
   OperatorStats(
       int32_t _operatorId,
       int32_t _pipelineId,
@@ -152,25 +154,11 @@ class OperatorCtx {
  public:
   explicit OperatorCtx(DriverCtx* driverCtx);
 
-  velox::memory::MemoryPool* pool() const {
-    return pool_;
-  }
-
-  memory::MappedMemory* mappedMemory() const;
-
   const std::shared_ptr<Task>& task() const {
     return driverCtx_->task;
   }
 
   const std::string& taskId() const;
-
-  core::ExecCtx* execCtx() const {
-    return driverCtx_->execCtx.get();
-  }
-
-  core::QueryCtx* queryCtx() const {
-    return driverCtx_->execCtx->queryCtx();
-  }
 
   Driver* driver() const {
     return driverCtx_->driver;
@@ -180,12 +168,29 @@ class OperatorCtx {
     return driverCtx_;
   }
 
+  velox::memory::MemoryPool* pool() const {
+    return pool_;
+  }
+
+  memory::MappedMemory* mappedMemory() const;
+
+  core::ExecCtx* execCtx() const;
+
+  // Makes an extract of QueryCtx for use in a connector. 'planNodeId'
+  // is the id of the calling TableScan. This and the task id identify
+  // the scan for column access tracking.
+  std::unique_ptr<connector::ConnectorQueryCtx> createConnectorQueryCtx(
+      const std::string& connectorId,
+      const std::string& planNodeId) const;
+
  private:
   DriverCtx* driverCtx_;
   velox::memory::MemoryPool* pool_;
 
   // These members are created on demand.
   mutable memory::MappedMemory* mappedMemory_{nullptr};
+  mutable std::unique_ptr<core::ExecCtx> execCtx_;
+  mutable std::unique_ptr<connector::ExpressionEvaluator> expressionEvaluator_;
 };
 
 // Query operator
@@ -331,7 +336,7 @@ class Operator {
 
   void recordBlockingTime(uint64_t start);
 
-  virtual std::string toString();
+  virtual std::string toString() const;
 
   velox::memory::MemoryPool* pool() {
     return operatorCtx_->pool();
@@ -424,7 +429,7 @@ std::vector<ChannelIndex> toChannels(
     const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
         fields);
 
-ChannelIndex exprToChannel(const core::ITypedExpr* expr, TypePtr type);
+ChannelIndex exprToChannel(const core::ITypedExpr* expr, const TypePtr& type);
 
 /// Given an input type and output type that contains a subset of the input type
 /// columns possibly in different order returns the indices of the output

@@ -27,10 +27,18 @@ inline void registerArrayMinMaxFunctions() {
 
 template <typename T>
 inline void registerArrayJoinFunctions() {
-  registerFunction<udf_array_join<T>, Varchar, Array<T>, Varchar>(
-      {"array_join"});
-  registerFunction<udf_array_join<T>, Varchar, Array<T>, Varchar, Varchar>(
-      {"array_join"});
+  registerFunction<
+      ParameterBinder<ArrayJoinFunction, T>,
+      Varchar,
+      Array<T>,
+      Varchar>({"array_join"});
+
+  registerFunction<
+      ParameterBinder<ArrayJoinFunction, T>,
+      Varchar,
+      Array<T>,
+      Varchar,
+      Varchar>({"array_join"});
 }
 
 void registerArrayFunctions() {
@@ -41,6 +49,7 @@ void registerArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_contains, "contains");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, "array_except");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_duplicates, "array_duplicates");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_arrays_overlap, "arrays_overlap");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_slice, "slice");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_zip, "zip");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_position, "array_position");
@@ -67,5 +76,7 @@ void registerArrayFunctions() {
   registerArrayJoinFunctions<double>();
   registerArrayJoinFunctions<bool>();
   registerArrayJoinFunctions<Varchar>();
+  registerArrayJoinFunctions<Timestamp>();
+  registerArrayJoinFunctions<Date>();
 }
 }; // namespace facebook::velox::functions

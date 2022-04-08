@@ -48,8 +48,10 @@ class LocalExchangeMemoryManager {
 /// Consumers call 'next' repeatedly to fetch the data.
 class LocalExchangeSource {
  public:
-  LocalExchangeSource(LocalExchangeMemoryManager* memoryManager, int partition)
-      : memoryManager_{memoryManager}, partition_{partition} {}
+  LocalExchangeSource(
+      std::shared_ptr<LocalExchangeMemoryManager> memoryManager,
+      int partition)
+      : memoryManager_{std::move(memoryManager)}, partition_{partition} {}
 
   std::string toString() const {
     return fmt::format("LocalExchangeSource({})", partition_);
@@ -87,16 +89,14 @@ class LocalExchangeSource {
 
   bool isFinished();
 
-  void close() {
-    queue_.withWLock([](auto& queue) {
-      while (!queue.empty()) {
-        queue.pop();
-      }
-    });
-  }
+  /// Drop remaining data from the queue and notify consumers and producers if
+  /// called before all the data has been processed. No-op otherwise.
+  void close();
 
  private:
-  LocalExchangeMemoryManager* memoryManager_;
+  bool isFinishedLocked(const std::queue<RowVectorPtr>& queue) const;
+
+  std::shared_ptr<LocalExchangeMemoryManager> memoryManager_;
   const int partition_;
   folly::Synchronized<std::queue<RowVectorPtr>> queue_;
   // Satisfied when data becomes available or all producers report that they
@@ -109,6 +109,7 @@ class LocalExchangeSource {
   std::vector<VeloxPromise<bool>> producerPromises_;
   int pendingProducers_{0};
   bool noMoreProducers_{false};
+  bool closed_{false};
 };
 
 /// Fetches data for a single partition produced by local exchange from
@@ -122,7 +123,7 @@ class LocalExchangeSourceOperator : public SourceOperator {
       const std::string& planNodeId,
       int partition);
 
-  std::string toString() override {
+  std::string toString() const override {
     return fmt::format("LocalExchangeSourceOperator({})", partition_);
   }
 
@@ -131,6 +132,15 @@ class LocalExchangeSourceOperator : public SourceOperator {
   RowVectorPtr getOutput() override;
 
   bool isFinished() override;
+
+  /// Close exchange source. If called before all data has been processed,
+  /// notifies the producer that no more data is needed.
+  void close() override {
+    Operator::close();
+    if (source_) {
+      source_->close();
+    }
+  }
 
  private:
   const int partition_;
@@ -148,7 +158,7 @@ class LocalPartition : public Operator {
       DriverCtx* ctx,
       const std::shared_ptr<const core::LocalPartitionNode>& planNode);
 
-  std::string toString() override {
+  std::string toString() const override {
     return fmt::format("LocalPartition({})", numPartitions_);
   }
 

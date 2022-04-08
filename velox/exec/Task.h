@@ -20,6 +20,7 @@
 #include "velox/exec/LocalPartition.h"
 #include "velox/exec/MergeSource.h"
 #include "velox/exec/Split.h"
+#include "velox/exec/TaskStats.h"
 #include "velox/exec/TaskStructs.h"
 #include "velox/vector/ComplexVector.h"
 
@@ -120,7 +121,8 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Sets the (so far) max split sequence id, so all splits with sequence id
   // equal or below that, will be ignored in the 'addSplitWithSequence' call.
-  // Note, that 'addSplitWithSequence' does not update max split sequence id.
+  // Note, that 'addSplitWithSequence' does not update max split sequence id
+  // and the operation is silently ignored if Task is not running.
   void setMaxSplitSequenceId(
       const core::PlanNodeId& planNodeId,
       long maxSequenceId);
@@ -132,6 +134,7 @@ class Task : public std::enable_shared_from_this<Task> {
   // duplicate.
   // Note, that this method does NOT update max split sequence id.
   // Returns true if split was added, false if it was ignored.
+  // Note that, the operation is silently ignored if Task is not running.
   bool addSplitWithSequence(
       const core::PlanNodeId& planNodeId,
       exec::Split&& split,
@@ -139,6 +142,7 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Adds split for a source operator corresponding to plan node with
   // specified ID. Does not require sequential id.
+  // Note that, the operation is silently ignored if Task is not running.
   void addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split);
 
   // We mark that for the given group there would be no more splits coming.
@@ -159,14 +163,6 @@ class Task : public std::enable_shared_from_this<Task> {
   /// of buffers. No more calls are expected after the call with noMoreBuffers
   /// == true.
   void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
-
-  // Sets this to a terminal requested state and frees all resources of Drivers
-  // that are not presently on thread. Unblocks all waiting Drivers, e.g.
-  // Drivers waiting for free space in outgoing buffers or new splits. Sets the
-  // state to 'terminalState', which should be kCanceled for cancellation by
-  // users, kFailed for errors and kAborted for termination due to failure in
-  // some other Task.
-  void terminate(TaskState terminalState);
 
   /// Returns true if state is 'running'.
   bool isRunning() const;
@@ -217,6 +213,7 @@ class Task : public std::enable_shared_from_this<Task> {
 
   /// Returns the total number of drivers the task needs to run.
   uint32_t numTotalDrivers() const {
+    std::lock_guard<std::mutex> taskLock(mutex_);
     return numTotalDrivers_;
   }
 
@@ -263,7 +260,7 @@ class Task : public std::enable_shared_from_this<Task> {
       exec::Split& split,
       ContinueFuture& future);
 
-  void splitFinished(const core::PlanNodeId& planNodeId, int32_t splitGroupId);
+  void splitFinished();
 
   void multipleSplitsFinished(int32_t numSplits);
 
@@ -374,10 +371,12 @@ class Task : public std::enable_shared_from_this<Task> {
   StopReason enterForTerminateLocked(ThreadState& state);
 
   // Marks that the Driver is not on thread. If no more Drivers in the
-  // CancelPool are on thread, this realizes any finishFutures. The
-  // Driver may go off thread because of hasBlockingFuture or pause
-  // requested or terminate requested. The return value indicates the
-  // reason. If kTerminate is returned, the isTerminated flag is set.
+  // CancelPool are on thread, this realizes
+  // threadFinishFutures_. These allow syncing with pause or
+  // termination. The Driver may go off thread because of
+  // hasBlockingFuture or pause requested or terminate requested. The
+  // return value indicates the reason. If kTerminate is returned, the
+  // isTerminated flag is set.
   StopReason leave(ThreadState& state);
 
   // Enters a suspended section where the caller stays on thread but
@@ -395,18 +394,27 @@ class Task : public std::enable_shared_from_this<Task> {
   // are to yield.
   StopReason shouldStop();
 
-  void requestPause(bool pause) {
+  // Requests the Task to stop activity.  The returned future is
+  // realized when all running threads have stopped running. Activity
+  // can be resumed with resume() after the future is realized.
+  ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
-    requestPauseLocked(pause);
+    return requestPauseLocked(pause);
   }
 
-  void requestPauseLocked(bool pause) {
-    pauseRequested_ = pause;
+  ContinueFuture requestPauseLocked(bool pause);
+
+  // Requests activity of 'this' to stop. The returned future will be
+  // realized when the last thread stops running for 'this'. This is used to
+  // mark cancellation by the user.
+  ContinueFuture requestCancel() {
+    return terminate(kCanceled);
   }
 
-  void requestTerminate() {
-    std::lock_guard<std::mutex> l(mutex_);
-    terminateRequested_ = true;
+  // Like requestCancel but sets end state to kAborted. This is for stopping
+  // Tasks due to failures of other parts of the query.
+  ContinueFuture requestAbort() {
+    return terminate(kAborted);
   }
 
   void requestYield() {
@@ -420,11 +428,6 @@ class Task : public std::enable_shared_from_this<Task> {
   bool pauseRequested() const {
     return pauseRequested_;
   }
-
-  // Returns a future that is completed when all threads have acknowledged
-  // terminate or pause. If the future is realized there is no running activity
-  // on behalf of threads that have entered 'this'.
-  folly::SemiFuture<bool> finishFuture();
 
   std::mutex& mutex() {
     return mutex_;
@@ -481,11 +484,6 @@ class Task : public std::enable_shared_from_this<Task> {
   // splits coming for the task.
   bool isAllSplitsFinishedLocked();
 
-  /// See if we need to register a split group as completed.
-  void checkGroupSplitsCompleteLocked(
-      int32_t splitGroupId,
-      const SplitsStore& splitsStore);
-
   std::unique_ptr<ContinuePromise> addSplitLocked(
       SplitsState& splitsState,
       exec::Split&& split);
@@ -501,6 +499,21 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Checks that specified plan node ID refers to a source plan node. Throws if
   /// that's not the case.
   void checkPlanNodeIdForSplit(const core::PlanNodeId& id) const;
+
+  // Sets this to a terminal requested state and frees all resources
+  // of Drivers that are not presently on thread. Unblocks all waiting
+  // Drivers, e.g.  Drivers waiting for free space in outgoing buffers
+  // or new splits. Sets the state to 'terminalState', which should be
+  // kCanceled for cancellation by users, kFailed for errors and
+  // kAborted for termination due to failure in some other Task. The
+  // returned future is realized when all threads running for 'this'
+  // have finished.
+  ContinueFuture terminate(TaskState terminalState);
+
+  // Returns a future that is realized when there are no more threads
+  // executing for 'this'. 'comment' is used as a debugging label on
+  // the promise/future pair.
+  ContinueFuture makeFinishFutureLocked(const char* FOLLY_NONNULL comment);
 
   const std::string taskId_;
   core::PlanFragment planFragment_;
@@ -579,9 +592,6 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Stores separate splits state for each plan node.
   std::unordered_map<core::PlanNodeId, SplitsState> splitsStates_;
 
-  // Holds states for pipelineBarrier(). Guarded by 'mutex_'.
-  std::unordered_map<std::string, BarrierState> barriers_;
-
   std::vector<VeloxPromise<bool>> stateChangePromises_;
 
   TaskStats taskStats_;
@@ -603,15 +613,18 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Thread counts and cancellation -related state.
   //
-  // Some of the below are declared atomic for tsan because they are
+  // Some of the variables below are declared atomic for tsan because they are
   // sometimes tested outside of 'mutex_' for a value of 0/false,
-  // which is safe to access without acquiring 'nutex_'.Thread counts
+  // which is safe to access without acquiring 'mutex_'.Thread counts
   // and promises are guarded by 'mutex_'
   std::atomic<bool> pauseRequested_{false};
   std::atomic<bool> terminateRequested_{false};
   std::atomic<int32_t> toYield_ = 0;
   int32_t numThreads_ = 0;
-  std::vector<VeloxPromise<bool>> finishPromises_;
+  // Promises for the futures returned to callers of requestPause() or
+  // terminate(). They are fulfilled when the last thread stops
+  // running for 'this'.
+  std::vector<VeloxPromise<bool>> threadFinishPromises_;
 };
 
 } // namespace facebook::velox::exec

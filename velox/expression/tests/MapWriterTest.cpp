@@ -27,6 +27,8 @@
 namespace facebook::velox {
 namespace {
 
+using namespace facebook::velox::test;
+
 // Function that creates a map and covers all the map writer interface.
 template <typename T>
 struct Func {
@@ -247,13 +249,13 @@ TEST_F(MapWriterTest, resizeAndSubscriptAccess) {
 }
 
 TEST_F(MapWriterTest, e2ePrimitives) {
-  testE2E<int8_t>("f_int6");
-  testE2E<int16_t>("f_int16");
-  testE2E<int32_t>("f_int32");
-  testE2E<int64_t>("f_int64");
-  testE2E<float>("f_float");
-  testE2E<double>("f_double");
-  testE2E<bool>("f_bool");
+  testE2E<int8_t>("map_writer_f_int8");
+  testE2E<int16_t>("map_writer_f_int16");
+  testE2E<int32_t>("map_writer_f_int32");
+  testE2E<int64_t>("map_writer_f_int64");
+  testE2E<float>("map_writer_f_float");
+  testE2E<double>("map_writer_f_double");
+  testE2E<bool>("map_writer_f_bool");
 }
 
 TEST_F(MapWriterTest, testTimeStamp) {
@@ -369,7 +371,7 @@ struct MakeComplexMapFunction {
 
 // Test a function that writes out map<array, map<>>.
 TEST_F(MapWriterTest, nestedMap) {
-  using out_t = MapWriterT<ArrayProxyT<int64_t>, MapWriterT<int64_t, int64_t>>;
+  using out_t = MapWriterT<ArrayWriterT<int64_t>, MapWriterT<int64_t, int64_t>>;
   registerFunction<MakeComplexMapFunction, out_t, int64_t>({"complex_map"});
 
   auto result = evaluate(
@@ -442,8 +444,9 @@ TEST_F(MapWriterTest, copyFrom) {
 
 // Test copy_from e2e on Map<int64_t, Array<int64_t>>
 TEST_F(MapWriterTest, copyFromE2E) {
-  registerFunction<CopyFromTestFunc, MapWriterT<int64_t, ArrayProxyT<int64_t>>>(
-      {"f_copy_from_e2e"});
+  registerFunction<
+      CopyFromTestFunc,
+      MapWriterT<int64_t, ArrayWriterT<int64_t>>>({"f_copy_from_e2e"});
 
   auto result = evaluate(
       "f_copy_from_e2e()", makeRowVector({makeFlatVector<int64_t>(1)}));

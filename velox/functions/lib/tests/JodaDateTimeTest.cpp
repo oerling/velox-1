@@ -265,6 +265,11 @@ TEST_F(JodaDateTimeTest, parseTimezone) {
   EXPECT_EQ("+14:00", parseTZ("+14:00", "ZZ"));
   EXPECT_EQ("-14:00", parseTZ("-14:00", "ZZ"));
 
+  // Valid long format without colon:
+  EXPECT_EQ("+00:01", parseTZ("+0001", "ZZ"));
+  EXPECT_EQ("+11:00", parseTZ("+1100", "ZZ"));
+  EXPECT_EQ("-04:30", parseTZ("-0430", "ZZ"));
+
   // Invalid long format:
   EXPECT_THROW(parseTZ("+14:01", "ZZ"), VeloxUserError);
   EXPECT_THROW(parseTZ("-14:01", "ZZ"), VeloxUserError);
@@ -314,9 +319,46 @@ TEST_F(JodaDateTimeTest, parseMixed) {
   EXPECT_EQ(util::fromTimestampString("2021-11-05 01:00:00"), result.timestamp);
   EXPECT_EQ("+09:00", util::getTimeZoneName(result.timezoneId));
 
+  // Timezone offset in -hh:mm format.
   result = parseAll("-07:232021-11-05+01:00", "ZZYYYY-MM-dd+HH:mm");
   EXPECT_EQ(util::fromTimestampString("2021-11-05 01:00:00"), result.timestamp);
   EXPECT_EQ("-07:23", util::getTimeZoneName(result.timezoneId));
+
+  // Timezone offset in +hhmm format.
+  result = parseAll("+01332022-03-08+13:00", "ZZYYYY-MM-dd+HH:mm");
+  EXPECT_EQ(util::fromTimestampString("2022-03-08 13:00:00"), result.timestamp);
+  EXPECT_EQ("+01:33", util::getTimeZoneName(result.timezoneId));
+}
+
+TEST_F(JodaDateTimeTest, parseFractionOfSecond) {
+  // Valid milliseconds and timezone with positive offset.
+  auto result =
+      parseAll("2022-02-23T12:15:00.364+04:00", "yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+  EXPECT_EQ(
+      util::fromTimestampString("2022-02-23 12:15:00.364"), result.timestamp);
+  EXPECT_EQ("+04:00", util::getTimeZoneName(result.timezoneId));
+
+  // Valid milliseconds and timezone with negative offset.
+  result =
+      parseAll("2022-02-23T12:15:00.776-14:00", "yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+  EXPECT_EQ(
+      util::fromTimestampString("2022-02-23 12:15:00.776"), result.timestamp);
+  EXPECT_EQ("-14:00", util::getTimeZoneName(result.timezoneId));
+
+  // Valid milliseconds.
+  EXPECT_EQ(
+      util::fromTimestampString("2022-02-24 02:19:33.283"),
+      parse("2022-02-24 02:19:33.283", "yyyy-MM-dd HH:mm:ss.SSS"));
+
+  // Test without milliseconds.
+  EXPECT_EQ(
+      util::fromTimestampString("2022-02-23 20:30:00"),
+      parse("2022-02-23T20:30:00", "yyyy-MM-dd'T'HH:mm:ss"));
+
+  // Assert on difference in milliseconds.
+  EXPECT_NE(
+      util::fromTimestampString("2022-02-23 12:15:00.223"),
+      parse("2022-02-23T12:15:00.776", "yyyy-MM-dd'T'HH:mm:ss.SSS"));
 }
 
 } // namespace

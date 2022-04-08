@@ -26,6 +26,28 @@ namespace facebook::velox::exec::test {
 using MaterializedRow = std::vector<velox::variant>;
 using DuckDBQueryResult = std::unique_ptr<::duckdb::MaterializedQueryResult>;
 
+// Comparison function used in tests which compares floating point variants
+// using 'epsilon' parameter to treat close enough floating point values as
+// equal.
+struct MaterializedRowComparator {
+  bool operator()(const MaterializedRow& lhs, const MaterializedRow& rhs)
+      const {
+    const auto minSize = std::min(lhs.size(), rhs.size());
+    for (size_t i = 0; i < minSize; ++i) {
+      if (lhs[i].equalsWithEpsilon(rhs[i])) {
+        continue;
+      }
+      // The 1st non-equal element determines if 'left' is smaller or not.
+      return lhs[i].lessThanWithEpsilon(rhs[i]);
+    }
+    // The shorter vector is smaller.
+    return lhs.size() < rhs.size();
+  }
+};
+// Multiset that uses 'epsilon' to compare doubles.
+using MaterializedRowMultiset =
+    std::multiset<MaterializedRow, MaterializedRowComparator>;
+
 class DuckDbQueryRunner {
  public:
   DuckDbQueryRunner() : db_(nullptr) {}
@@ -36,10 +58,10 @@ class DuckDbQueryRunner {
 
   DuckDBQueryResult execute(const std::string& sql);
 
-  std::multiset<MaterializedRow> execute(
+  MaterializedRowMultiset execute(
       const std::string& sql,
       const std::shared_ptr<const RowType>& resultRowType) {
-    std::multiset<MaterializedRow> allRows;
+    MaterializedRowMultiset allRows;
     execute(
         sql,
         resultRowType,
@@ -89,6 +111,14 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
     const CursorParameters& params,
     std::function<void(exec::Task*)> addSplits);
 
+/// The Task can return results before the Driver is finished executing.
+/// Wait upto maxWaitMicros for the Task to finish before returning to ensure
+/// it's stable e.g. the Driver isn't updating it anymore.
+/// Returns true if the task is completed before maxWaitMicros expires.
+bool waitForTaskCompletion(
+    exec::Task* task,
+    uint64_t maxWaitMicros = 1'000'000);
+
 std::shared_ptr<Task> assertQuery(
     const std::shared_ptr<const core::PlanNode>& plan,
     const std::string& duckDbSql,
@@ -127,6 +157,10 @@ void assertResultsOrdered(
 
 std::shared_ptr<Task> assertQuery(
     const std::shared_ptr<const core::PlanNode>& plan,
+    const std::vector<RowVectorPtr>& expectedResults);
+
+std::shared_ptr<Task> assertQuery(
+    const CursorParameters& params,
     const std::vector<RowVectorPtr>& expectedResults);
 
 velox::variant readSingleValue(

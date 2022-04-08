@@ -54,12 +54,21 @@ class SelectivityVector {
   // are set to false.
   static SelectivityVector empty(vector_size_t size);
 
+  /// Return a summary of all selected rows and row numbers of the first few
+  /// selected rows. To be used for debugging.
+  /// @param maxSelectedRowsToPrint Maximum number of the first selected rows to
+  /// include in the output.
+  std::string toString(vector_size_t maxSelectedRowsToPrint = 10) const;
+
   /// Resizes the vector to new size and sets the new bits with value `value`.
   void resize(int32_t size, bool value = true) {
     auto numWords = bits::nwords(size);
     // Set bits from size_ to end of the word.
     if (size > size_ && !bits_.empty()) {
-      bits::fillBits(&bits_.back(), size_ % 64, 64, value);
+      const auto start = size_ % 64;
+      if (start) {
+        bits::fillBits(&bits_.back(), start, 64, value);
+      }
     }
 
     bits_.resize(numWords, value ? -1 : 0);

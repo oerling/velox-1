@@ -1329,12 +1329,12 @@ struct Array {
   Array() {}
 };
 
-// This is a temporary type to be used when ArrayProxy is requested by the user
+// This is a temporary type to be used when ArrayWriter is requested by the user
 // to represent an Array output type in the simple function interface.
-// Eventually this will be removed and Array will be ArrayProxyT once all proxy
+// Eventually this will be removed and Array will be ArrayWriterT once all proxy
 // types are implemented.
 template <typename ELEMENT>
-struct ArrayProxyT {
+struct ArrayWriterT {
   using element_type = ELEMENT;
 
   static_assert(
@@ -1342,7 +1342,7 @@ struct ArrayProxyT {
       "Array elements cannot be Variadic");
 
  private:
-  ArrayProxyT() {}
+  ArrayWriterT() {}
 };
 
 // This is a temporary type to be used when the fast MapWriter is requested by
@@ -1375,6 +1375,18 @@ struct Row {
 
  private:
   Row() {}
+};
+
+template <typename... T>
+struct RowWriterT {
+  template <size_t idx>
+  using type_at = typename std::tuple_element<idx, std::tuple<T...>>::type;
+
+  static_assert(
+      std::conjunction<std::bool_constant<!isVariadicType<T>::value>...>::value,
+      "Struct fields cannot be Variadic");
+
+  RowWriterT() = delete;
 };
 
 struct DynamicRow {
@@ -1499,7 +1511,7 @@ struct CppToType<Array<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
 };
 
 template <typename ELEMENT>
-struct CppToType<ArrayProxyT<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
+struct CppToType<ArrayWriterT<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
   static auto create() {
     return ARRAY(CppToType<ELEMENT>::create());
   }
@@ -1507,6 +1519,13 @@ struct CppToType<ArrayProxyT<ELEMENT>> : public TypeTraits<TypeKind::ARRAY> {
 
 template <typename... T>
 struct CppToType<Row<T...>> : public TypeTraits<TypeKind::ROW> {
+  static auto create() {
+    return ROW({CppToType<T>::create()...});
+  }
+};
+
+template <typename... T>
+struct CppToType<RowWriterT<T...>> : public TypeTraits<TypeKind::ROW> {
   static auto create() {
     return ROW({CppToType<T>::create()...});
   }
@@ -1591,8 +1610,10 @@ class CustomTypeFactories {
   /// types.
   virtual TypePtr getType(std::vector<TypePtr> childTypes) const = 0;
 
-  /// Returns a shared pointer to the custom cast operator. If no cast operator
-  /// supports the custom type, this function throws an exception.
+  /// Returns a shared pointer to the custom cast operator. If a custom type
+  /// should be treated as its underlying native type during type castings,
+  /// return a nullptr. If a custom type does not support castings, throw an
+  /// exception.
   virtual exec::CastOperatorPtr getCastOperator() const = 0;
 };
 
@@ -1609,7 +1630,8 @@ bool typeExists(const std::string& name);
 TypePtr getType(const std::string& name, std::vector<TypePtr> childTypes);
 
 /// Returns the custom cast operator for the custom type with the specified
-/// name. Returns nullptr if a type with the specified name does not exist.
+/// name. Returns nullptr if a type with the specified name does not exist or
+/// does not have a dedicated custom cast operator.
 exec::CastOperatorPtr getCastOperator(const std::string& name);
 
 // Allows us to transparently use folly::toAppend(), folly::join(), etc.
@@ -1619,6 +1641,63 @@ void toAppend(
     TString* result) {
   result->append(type->toString());
 }
+
+template <typename T>
+struct MaterializeType {
+  using null_free_t = T;
+  using nullable_t = T;
+  static constexpr bool requiresMaterialization = false;
+};
+
+template <typename V>
+struct MaterializeType<Array<V>> {
+  using null_free_t = std::vector<typename MaterializeType<V>::null_free_t>;
+  using nullable_t =
+      std::vector<std::optional<typename MaterializeType<V>::nullable_t>>;
+  static constexpr bool requiresMaterialization = true;
+};
+
+template <typename K, typename V>
+struct MaterializeType<Map<K, V>> {
+  using key_t = typename MaterializeType<K>::null_free_t;
+
+  using nullable_t = folly::
+      F14FastMap<key_t, std::optional<typename MaterializeType<V>::nullable_t>>;
+
+  using null_free_t =
+      folly::F14FastMap<key_t, typename MaterializeType<V>::null_free_t>;
+  static constexpr bool requiresMaterialization = true;
+};
+
+template <typename... T>
+struct MaterializeType<Row<T...>> {
+  using nullable_t =
+      std::tuple<std::optional<typename MaterializeType<T>::nullable_t>...>;
+
+  using null_free_t = std::tuple<typename MaterializeType<T>::null_free_t...>;
+  static constexpr bool requiresMaterialization = true;
+};
+
+template <typename T>
+struct MaterializeType<std::shared_ptr<T>> {
+  using nullable_t = T;
+  using null_free_t = T;
+  static constexpr bool requiresMaterialization = false;
+};
+
+template <>
+struct MaterializeType<Varchar> {
+  using nullable_t = std::string;
+  using null_free_t = std::string;
+  static constexpr bool requiresMaterialization = false;
+};
+
+template <>
+struct MaterializeType<Varbinary> {
+  using nullable_t = std::string;
+  using null_free_t = std::string;
+  static constexpr bool requiresMaterialization = false;
+};
 
 } // namespace facebook::velox
 

@@ -1,0 +1,176 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "velox/exec/PlanNodeStats.h"
+#include "velox/common/base/SuccinctPrinter.h"
+#include "velox/exec/TaskStats.h"
+
+namespace facebook::velox::exec {
+
+void PlanNodeStats::add(const OperatorStats& stats) {
+  auto it = operatorStats.find(stats.operatorType);
+  if (it != operatorStats.end()) {
+    it->second->addTotals(stats);
+  } else {
+    auto opStats = std::make_unique<PlanNodeStats>();
+    opStats->addTotals(stats);
+    operatorStats.emplace(stats.operatorType, std::move(opStats));
+  }
+  addTotals(stats);
+}
+
+void PlanNodeStats::addTotals(const OperatorStats& stats) {
+  inputRows += stats.inputPositions;
+  inputBytes += stats.inputBytes;
+
+  rawInputRows += stats.rawInputPositions;
+  rawInputBytes += stats.rawInputBytes;
+
+  outputRows += stats.outputPositions;
+  outputBytes += stats.outputBytes;
+
+  cpuWallTiming.add(stats.addInputTiming);
+  cpuWallTiming.add(stats.getOutputTiming);
+  cpuWallTiming.add(stats.finishTiming);
+
+  blockedWallNanos += stats.blockedWallNanos;
+
+  peakMemoryBytes += stats.memoryStats.peakTotalMemoryReservation;
+
+  for (const auto& entry : stats.runtimeStats) {
+    customStats[entry.first].merge(entry.second);
+  }
+
+  // Populating number of drivers for plan nodes with multiple operators is not
+  // useful. Each operator could have been executed in different pipelines with
+  // different number of drivers.
+  if (!isMultiOperatorNode()) {
+    numDrivers += stats.numDrivers;
+  } else {
+    numDrivers = 0;
+  }
+
+  numSplits += stats.numSplits;
+}
+
+std::string PlanNodeStats::toString(bool includeInputStats) const {
+  std::stringstream out;
+  if (includeInputStats) {
+    out << "Input: " << inputRows << " rows (" << succinctBytes(inputBytes)
+        << "), ";
+    if ((rawInputRows > 0) && (rawInputRows != inputRows)) {
+      out << "Raw Input: " << rawInputRows << " rows ("
+          << succinctBytes(rawInputBytes) << "), ";
+    }
+  }
+  out << "Output: " << outputRows << " rows (" << succinctBytes(outputBytes)
+      << ")"
+      << ", Cpu time: " << succinctNanos(cpuWallTiming.cpuNanos)
+      << ", Blocked wall time: " << succinctNanos(blockedWallNanos)
+      << ", Peak memory: " << succinctBytes(peakMemoryBytes);
+
+  if (numDrivers > 0) {
+    out << ", Threads: " << numDrivers;
+  }
+
+  if (numSplits > 0) {
+    out << ", Splits: " << numSplits;
+  }
+  return out.str();
+}
+
+std::unordered_map<core::PlanNodeId, PlanNodeStats> toPlanStats(
+    const TaskStats& taskStats) {
+  std::unordered_map<core::PlanNodeId, PlanNodeStats> planStats;
+
+  for (const auto& pipelineStats : taskStats.pipelineStats) {
+    for (const auto& opStats : pipelineStats.operatorStats) {
+      const auto& planNodeId = opStats.planNodeId;
+      auto it = planStats.find(planNodeId);
+      if (it != planStats.end()) {
+        it->second.add(opStats);
+      } else {
+        PlanNodeStats nodeStats;
+        nodeStats.add(opStats);
+        planStats.emplace(planNodeId, std::move(nodeStats));
+      }
+    }
+  }
+
+  return planStats;
+}
+
+namespace {
+void printCustomStats(
+    const std::unordered_map<std::string, RuntimeMetric>& stats,
+    const std::string& indentation,
+    std::stringstream& stream) {
+  int width = 0;
+  for (const auto& entry : stats) {
+    if (width < entry.first.size()) {
+      width = entry.first.size();
+    }
+  }
+  width += 3;
+
+  for (const auto& entry : stats) {
+    stream << std::endl;
+    stream << indentation << std::left << std::setw(width) << entry.first
+           << " sum: " << entry.second.sum << ", count: " << entry.second.count
+           << ", min: " << entry.second.min << ", max: " << entry.second.max;
+  }
+}
+} // namespace
+
+std::string printPlanWithStats(
+    const core::PlanNode& plan,
+    const TaskStats& taskStats,
+    bool includeCustomStats) {
+  auto planStats = toPlanStats(taskStats);
+  auto leafPlanNodes = plan.leafPlanNodeIds();
+
+  return plan.toString(
+      true,
+      true,
+      [&](const auto& planNodeId, const auto& indentation, auto& stream) {
+        const auto& stats = planStats[planNodeId];
+
+        // Print input rows and sizes only for leaf plan nodes. Including this
+        // information for other plan nodes is redundant as it is the same as
+        // output of the source nodes.
+        const bool includeInputStats = leafPlanNodes.count(planNodeId) > 0;
+        stream << stats.toString(includeInputStats);
+
+        // Include break down by operator type for plan nodes with multiple
+        // operators. Print input rows and sizes for all such nodes.
+        if (stats.isMultiOperatorNode()) {
+          for (const auto& entry : stats.operatorStats) {
+            stream << std::endl;
+            stream << indentation << entry.first << ": "
+                   << entry.second->toString(true);
+
+            if (includeCustomStats) {
+              printCustomStats(
+                  entry.second->customStats, indentation + "   ", stream);
+            }
+          }
+        } else {
+          if (includeCustomStats) {
+            printCustomStats(stats.customStats, indentation + "   ", stream);
+          }
+        }
+      });
+}
+} // namespace facebook::velox::exec

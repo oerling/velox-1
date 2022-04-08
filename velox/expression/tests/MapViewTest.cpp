@@ -15,6 +15,7 @@
  */
 
 #include <optional>
+#include "folly/container/F14Map.h"
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 #include "velox/common/base/Exceptions.h"
@@ -136,29 +137,158 @@ class MapViewTest : public functions::test::FunctionBaseTest {
     }
   }
 
-  // MapView can be seen as std::vector<pair<key, value>>.
-  void indexedLoopTest() {
-    auto mapVector = createTestMapVector();
+  void iteratorDecrementTest() {
+    std::vector<std::vector<std::pair<int64_t, std::optional<int64_t>>>> map{
+        {{1, 101}},
+        {{2, 102}, {3, 103}},
+        {{4, 104}, {5, 105}, {6, 106}},
+        {{7, 107}, {8, 108}, {9, 109}, {10, 110}},
+        {{11, 111}, {12, 112}, {13, 113}, {14, 114}, {15, 115}}};
+    auto mapVector = makeMapVector(map);
+
     DecodedVector decoded;
     exec::VectorReader<Map<int64_t, int64_t>> reader(
         decode(decoded, *mapVector.get()));
 
-    for (auto i = 0; i < mapsData.size(); ++i) {
+    for (auto i = 0; i < map.size(); i++) {
       auto mapView = read(reader, i);
-      auto it = mapsData[i].begin();
-      int count = 0;
-      ASSERT_EQ(mapsData[i].size(), mapView.size());
-      for (int j = 0; j < mapView.size(); j++) {
-        ASSERT_EQ(mapView[j].first, it->first);
-        ASSERT_EQ(mapValueHasValue(mapView[j].second), it->second.has_value());
-        if (it->second.has_value()) {
-          ASSERT_EQ(mapValueValue(mapView[j].second), it->second.value());
-        }
-        ASSERT_EQ(mapView[j].second, it->second);
-        it++;
-        count++;
+      // Test using post decrement on the iterator.
+      auto j = mapView.size() - 1;
+      for (auto it = mapView.end() - 1; it >= mapView.begin(); it--) {
+        ASSERT_EQ(it->first, map[i][j].first);
+        ASSERT_EQ(it->second, map[i][j].second);
+        j--;
       }
-      ASSERT_EQ(count, mapsData[i].size());
+      ASSERT_EQ(j, -1);
+
+      // Test using pre decrement on the iterator.
+      j = mapView.size() - 1;
+      for (auto it = mapView.end() - 1; it >= mapView.begin(); --it) {
+        ASSERT_EQ(it->first, map[i][j].first);
+        ASSERT_EQ(it->second, map[i][j].second);
+        j--;
+      }
+      ASSERT_EQ(j, -1);
+    }
+  }
+
+  void iteratorDifferenceTest() {
+    std::vector<std::vector<std::pair<int64_t, std::optional<int64_t>>>> map{
+        {{1, 101}},
+        {{2, 102}, {3, 103}},
+        {{4, 104}, {5, 105}, {6, 106}},
+        {{7, 107}, {8, 108}, {9, 109}, {10, 110}},
+        {{11, 111}, {12, 112}, {13, 113}, {14, 114}, {15, 115}}};
+    auto mapVector = makeMapVector(map);
+
+    DecodedVector decoded;
+    exec::VectorReader<Map<int64_t, int64_t>> reader(
+        decode(decoded, *mapVector.get()));
+
+    for (auto i = 0; i < map.size(); i++) {
+      auto mapView = read(reader, i);
+      auto it = mapView.begin();
+
+      for (int j = 0; j < mapView.size(); j++) {
+        auto it2 = mapView.begin();
+        for (int k = 0; k <= j; k++) {
+          ASSERT_EQ(it - it2, j - k);
+          ASSERT_EQ(it2 - it, k - j);
+          it2++;
+        }
+        it++;
+      }
+    }
+  }
+
+  void iteratorAdditionTest() {
+    std::vector<std::vector<std::pair<int64_t, std::optional<int64_t>>>> map{
+        {{1, 101}},
+        {{2, 102}, {3, 103}},
+        {{4, 104}, {5, 105}, {6, 106}},
+        {{7, 107}, {8, 108}, {9, 109}, {10, 110}},
+        {{11, 111}, {12, 112}, {13, 113}, {14, 114}, {15, 115}}};
+    auto mapVector = makeMapVector(map);
+
+    DecodedVector decoded;
+    exec::VectorReader<Map<int64_t, int64_t>> reader(
+        decode(decoded, *mapVector.get()));
+
+    for (auto i = 0; i < map.size(); i++) {
+      auto mapView = read(reader, i);
+      auto it = mapView.begin();
+
+      for (int j = 0; j < mapView.size(); j++) {
+        auto it2 = mapView.begin();
+        for (int k = 0; k < mapView.size(); k++) {
+          ASSERT_EQ(it, it2 + (j - k));
+          ASSERT_EQ(it, (j - k) + it2);
+          auto it3 = it2;
+          it3 += j - k;
+          ASSERT_EQ(it, it3);
+          it2++;
+        }
+        it++;
+      }
+    }
+  }
+
+  void iteratorSubtractionTest() {
+    std::vector<std::vector<std::pair<int64_t, std::optional<int64_t>>>> map{
+        {{1, 101}},
+        {{2, 102}, {3, 103}},
+        {{4, 104}, {5, 105}, {6, 106}},
+        {{7, 107}, {8, 108}, {9, 109}, {10, 110}},
+        {{11, 111}, {12, 112}, {13, 113}, {14, 114}, {15, 115}}};
+    auto mapVector = makeMapVector(map);
+
+    DecodedVector decoded;
+    exec::VectorReader<Map<int64_t, int64_t>> reader(
+        decode(decoded, *mapVector.get()));
+
+    for (auto i = 0; i < map.size(); i++) {
+      auto mapView = read(reader, i);
+      auto it = mapView.begin();
+
+      for (int j = 0; j < mapView.size(); j++) {
+        auto it2 = mapView.begin();
+        for (int k = 0; k < mapView.size(); k++) {
+          ASSERT_EQ(it, it2 - (k - j));
+          auto it3 = it2;
+          it3 -= k - j;
+          ASSERT_EQ(it, it3);
+          it2++;
+        }
+        it++;
+      }
+    }
+  }
+
+  void iteratorSubscriptTest() {
+    std::vector<std::vector<std::pair<int64_t, std::optional<int64_t>>>> map{
+        {{1, 101}},
+        {{2, 102}, {3, 103}},
+        {{4, 104}, {5, 105}, {6, 106}},
+        {{7, 107}, {8, 108}, {9, 109}, {10, 110}},
+        {{11, 111}, {12, 112}, {13, 113}, {14, 114}, {15, 115}}};
+    auto mapVector = makeMapVector(map);
+
+    DecodedVector decoded;
+    exec::VectorReader<Map<int64_t, int64_t>> reader(
+        decode(decoded, *mapVector.get()));
+
+    for (auto i = 0; i < map.size(); i++) {
+      auto mapView = read(reader, i);
+      auto it = mapView.begin();
+
+      for (int j = 0; j < mapView.size(); j++) {
+        auto it2 = mapView.begin();
+        for (int k = 0; k < mapView.size(); k++) {
+          ASSERT_EQ(*it, it2[j - k]);
+          it2++;
+        }
+        it++;
+      }
     }
   }
 
@@ -192,28 +322,35 @@ class MapViewTest : public functions::test::FunctionBaseTest {
         decode(decoded, *mapVector.get()));
 
     // Compare LazyValueAccess with constant.
-    ASSERT_EQ(read(reader, 1)[0].first, 1);
-    ASSERT_NE(read(reader, 1)[0].first, 10);
-    ASSERT_EQ(1, read(reader, 1)[0].first);
-    ASSERT_NE(10, read(reader, 1)[0].first);
+    ASSERT_EQ(reader[1].atIndex(0).first, 1);
+    ASSERT_NE(reader[1].atIndex(0).first, 10);
+    ASSERT_EQ(1, reader[1].atIndex(0).first);
+    ASSERT_NE(10, reader[1].atIndex(0).first);
 
     // Compare LazyValueAccess with LazyValueAccess.
-    ASSERT_EQ(read(reader, 2)[2].first, read(reader, 1)[0].first);
-    ASSERT_NE(read(reader, 2)[2].first, read(reader, 1)[1].first);
+    ASSERT_EQ(
+        read(reader, 2).atIndex(2).first, read(reader, 1).atIndex(0).first);
+    ASSERT_NE(
+        read(reader, 2).atIndex(2).first, read(reader, 1).atIndex(1).first);
 
     // Compare LazyValueAccess with VectorOptionalValueAccessor value.
     ASSERT_EQ(
-        read(reader, 2)[1].first, mapValueValue(read(reader, 1)[0].second));
+        read(reader, 2).atIndex(1).first,
+        mapValueValue(read(reader, 1).atIndex(0).second));
     ASSERT_NE(
-        read(reader, 2)[2].first, mapValueValue(read(reader, 1)[1].second));
+        read(reader, 2).atIndex(2).first,
+        mapValueValue(read(reader, 1).atIndex(1).second));
     ASSERT_EQ(
-        mapValueValue(read(reader, 1)[0].second), read(reader, 2)[1].first);
+        mapValueValue(read(reader, 1).atIndex(0).second),
+        read(reader, 2).atIndex(1).first);
     ASSERT_NE(
-        mapValueValue(read(reader, 1)[1].second), read(reader, 2)[2].first);
+        mapValueValue(read(reader, 1).atIndex(1).second),
+        read(reader, 2).atIndex(2).first);
 
     // Compare null VectorOptionalValueAccessor with LazyValueAccess.
     ASSERT_NE(
-        mapValueValue(read(reader, 1)[1].second), read(reader, 1)[2].first);
+        mapValueValue(read(reader, 1).atIndex(1).second),
+        read(reader, 1).atIndex(2).first);
   }
 
   void compareVectorOptionalValueAccessorTest() {
@@ -223,60 +360,64 @@ class MapViewTest : public functions::test::FunctionBaseTest {
         decode(decoded, *mapVector.get()));
 
     // Compare VectorOptionalValueAccessor with std::optional.
-    ASSERT_EQ(read(reader, 2)[2].second, std::optional(4));
-    ASSERT_EQ(read(reader, 2)[2].second, std::optional(4l));
-    ASSERT_EQ(read(reader, 2)[2].second, std::optional(4ll));
-    ASSERT_EQ(read(reader, 2)[2].second, std::optional(4.0F));
+    const auto valueAt2_2 = read(reader, 2).atIndex(2).second;
+    ASSERT_EQ(valueAt2_2, std::optional(4));
+    ASSERT_EQ(valueAt2_2, std::optional(4l));
+    ASSERT_EQ(valueAt2_2, std::optional(4ll));
+    ASSERT_EQ(valueAt2_2, std::optional(4.0F));
 
-    ASSERT_NE(read(reader, 2)[2].second, std::optional(4.01F));
-    ASSERT_NE(read(reader, 2)[2].second, std::optional(8));
+    ASSERT_NE(valueAt2_2, std::optional(4.01F));
+    ASSERT_NE(valueAt2_2, std::optional(8));
 
-    ASSERT_EQ(std::optional(4), read(reader, 2)[2].second);
-    ASSERT_EQ(std::optional(4l), read(reader, 2)[2].second);
-    ASSERT_EQ(std::optional(4ll), read(reader, 2)[2].second);
+    ASSERT_EQ(std::optional(4), valueAt2_2);
+    ASSERT_EQ(std::optional(4l), valueAt2_2);
+    ASSERT_EQ(std::optional(4ll), valueAt2_2);
 
-    ASSERT_NE(std::optional(4.01F), read(reader, 2)[2].second);
+    ASSERT_NE(std::optional(4.01F), valueAt2_2);
 
     if constexpr (returnsOptionalValues) {
-      ASSERT_EQ(std::nullopt, read(reader, 1)[2].second);
-      ASSERT_NE(std::nullopt, read(reader, 1)[1].second);
+      ASSERT_EQ(std::nullopt, read(reader, 1).atIndex(2).second);
+      ASSERT_NE(std::nullopt, read(reader, 1).atIndex(1).second);
 
       std::optional<int64_t> nullOpt;
-      ASSERT_EQ(read(reader, 1)[2].second, std::nullopt);
-      ASSERT_NE(read(reader, 1)[1].second, std::nullopt);
+      ASSERT_EQ(read(reader, 1).atIndex(2).second, std::nullopt);
+      ASSERT_NE(read(reader, 1).atIndex(1).second, std::nullopt);
 
-      ASSERT_EQ(read(reader, 1)[2].second, nullOpt);
-      ASSERT_NE(read(reader, 1)[1].second, nullOpt);
+      ASSERT_EQ(read(reader, 1).atIndex(2).second, nullOpt);
+      ASSERT_NE(read(reader, 1).atIndex(1).second, nullOpt);
     }
 
     // Compare VectorOptionalValueAccessor<T> with T::exec_t.
-    ASSERT_EQ(read(reader, 2)[2].second, 4);
-    ASSERT_EQ(read(reader, 2)[2].second, 4l);
-    ASSERT_EQ(read(reader, 2)[2].second, 4ll);
-    ASSERT_EQ(read(reader, 2)[2].second, 4.0F);
+    ASSERT_EQ(valueAt2_2, 4);
+    ASSERT_EQ(valueAt2_2, 4l);
+    ASSERT_EQ(valueAt2_2, 4ll);
+    ASSERT_EQ(valueAt2_2, 4.0F);
 
-    ASSERT_NE(read(reader, 2)[2].second, 4.01F);
-    ASSERT_NE(read(reader, 2)[2].second, 8);
+    ASSERT_NE(valueAt2_2, 4.01F);
+    ASSERT_NE(valueAt2_2, 8);
 
-    ASSERT_EQ(4, read(reader, 2)[2].second);
-    ASSERT_EQ(4l, read(reader, 2)[2].second);
-    ASSERT_EQ(4ll, read(reader, 2)[2].second);
-    ASSERT_NE(4.01F, read(reader, 2)[2].second);
+    ASSERT_EQ(4, valueAt2_2);
+    ASSERT_EQ(4l, valueAt2_2);
+    ASSERT_EQ(4ll, valueAt2_2);
+    ASSERT_NE(4.01F, valueAt2_2);
 
     // VectorOptionalValueAccessor is null here.
-    ASSERT_NE(4.01F, read(reader, 1)[2].second);
-    ASSERT_NE(read(reader, 1)[2].second, 4);
+    ASSERT_NE(4.01F, read(reader, 1).atIndex(2).second);
+    ASSERT_NE(read(reader, 1).atIndex(2).second, 4);
 
     // Compare VectorOptionalValueAccessor with VectorOptionalValueAccessor.
-    ASSERT_EQ(read(reader, 2)[2].second, read(reader, 2)[3].second);
-    ASSERT_NE(read(reader, 2)[2].second, read(reader, 2)[0].second);
+    ASSERT_EQ(valueAt2_2, read(reader, 2).atIndex(3).second);
+    ASSERT_NE(valueAt2_2, read(reader, 2).atIndex(0).second);
 
     // Compare with empty VectorOptionalValueAccessor.
     // One null and one not null.
-    ASSERT_NE(read(reader, 1)[1].second, read(reader, 1)[2].second);
-    ASSERT_NE(read(reader, 1)[2].second, read(reader, 1)[1].second);
+    ASSERT_NE(
+        read(reader, 1).atIndex(1).second, read(reader, 1).atIndex(2).second);
+    ASSERT_NE(
+        read(reader, 1).atIndex(2).second, read(reader, 1).atIndex(1).second);
     // Both are null.
-    ASSERT_EQ(read(reader, 2)[1].second, read(reader, 1)[2].second);
+    ASSERT_EQ(
+        read(reader, 2).atIndex(1).second, read(reader, 1).atIndex(2).second);
   }
 
   void compareMapViewElementTest() {
@@ -286,8 +427,8 @@ class MapViewTest : public functions::test::FunctionBaseTest {
         decode(decoded, *mapVector.get()));
 
     // Compare VectorOptionalValueAccessor with constant.
-    ASSERT_NE(read(reader, 2)[2], read(reader, 2)[1]);
-    ASSERT_EQ(read(reader, 1)[0], read(reader, 2)[2]);
+    ASSERT_NE(read(reader, 2).atIndex(2), read(reader, 2).atIndex(1));
+    ASSERT_EQ(read(reader, 1).atIndex(0), read(reader, 2).atIndex(2));
   }
 
   void assignToOptionalTest() {
@@ -296,10 +437,10 @@ class MapViewTest : public functions::test::FunctionBaseTest {
     exec::VectorReader<Map<int64_t, int64_t>> reader(
         decode(decoded, *mapVector.get()));
 
-    std::optional<int64_t> element = read(reader, 2)[2].second;
-    std::optional<int64_t> element2 = read(reader, 2)[1].second;
-    ASSERT_EQ(element, read(reader, 2)[2].second);
-    ASSERT_EQ(element2, read(reader, 2)[1].second);
+    std::optional<int64_t> element = read(reader, 2).atIndex(2).second;
+    std::optional<int64_t> element2 = read(reader, 2).atIndex(1).second;
+    ASSERT_EQ(element, read(reader, 2).atIndex(2).second);
+    ASSERT_EQ(element2, read(reader, 2).atIndex(1).second);
     ASSERT_NE(element2, element);
   }
 
@@ -353,6 +494,35 @@ class MapViewTest : public functions::test::FunctionBaseTest {
       ASSERT_EQ(count, mapsData[i].size());
     }
   }
+
+  // MapView can be seen as std::vector<pair<key, value>>.
+  void indexedLoopTest() {
+    auto mapVector = createTestMapVector();
+    DecodedVector decoded;
+    exec::VectorReader<Map<int64_t, int64_t>> reader(
+        decode(decoded, *mapVector.get()));
+
+    for (auto i = 0; i < mapsData.size(); ++i) {
+      auto mapView = read(reader, i);
+      auto it = mapsData[i].begin();
+      int count = 0;
+      ASSERT_EQ(mapsData[i].size(), mapView.size());
+      for (int j = 0; j < mapView.size(); j++) {
+        ASSERT_EQ(mapView.atIndex(j).first, it->first);
+        ASSERT_EQ(
+            mapValueHasValue(mapView.atIndex(j).second),
+            it->second.has_value());
+        if (it->second.has_value()) {
+          ASSERT_EQ(
+              mapValueValue(mapView.atIndex(j).second), it->second.value());
+        }
+        ASSERT_EQ(mapView.atIndex(j).second, it->second);
+        it++;
+        count++;
+      }
+      ASSERT_EQ(count, mapsData[i].size());
+    }
+  }
 };
 
 class NullableMapViewTest : public MapViewTest<true> {};
@@ -365,10 +535,6 @@ TEST_F(NullableMapViewTest, testReadingRangeLoop) {
 
 TEST_F(NullableMapViewTest, testReadingIteratorLoop) {
   readingIteratorLoopTest();
-}
-
-TEST_F(NullableMapViewTest, testIndexedLoop) {
-  indexedLoopTest();
 }
 
 TEST_F(NullableMapViewTest, encoded) {
@@ -440,7 +606,7 @@ struct MapComplexKeyF {
 
 TEST_F(NullableMapViewTest, mapCoplexKey) {
   registerFunction<MapComplexKeyF, double, Map<Array<double>, double>>(
-      {"func"});
+      {"map_complex_key"});
 
   const vector_size_t size = 10;
   auto values1 = makeArrayVector<double>(
@@ -454,7 +620,7 @@ TEST_F(NullableMapViewTest, mapCoplexKey) {
       [](auto /*row*/, auto index) { return 1.2 * index; });
 
   auto result = evaluate<FlatVector<double>>(
-      "func(map(array_constructor(c0), c1))",
+      "map_complex_key(map(array_constructor(c0), c1))",
       makeRowVector({values1, values2}));
 
   auto expected =
@@ -470,16 +636,52 @@ TEST_F(NullableMapViewTest, testReadingStructureBindingLoop) {
   readingStructureBindingLoopTest();
 }
 
+TEST_F(NullableMapViewTest, testIndexedLoop) {
+  indexedLoopTest();
+}
+
+TEST_F(NullFreeMapViewTest, testIndexedLoop) {
+  indexedLoopTest();
+}
+
+TEST_F(NullableMapViewTest, testSubscript) {
+  auto mapVector = createTestMapVector();
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(
+      decode(decoded, *mapVector.get()));
+
+  ASSERT_THROW(read(reader, 1)[5], VeloxException);
+  ASSERT_EQ(read(reader, 1)[4], std::nullopt);
+  ASSERT_EQ(read(reader, 1)[3], 3);
+  ASSERT_EQ(read(reader, 1)[1], 4);
+}
+
+TEST_F(NullableMapViewTest, iteratorDecrement) {
+  iteratorDecrementTest();
+}
+
+TEST_F(NullableMapViewTest, iteratorDifference) {
+  iteratorDifferenceTest();
+}
+
+TEST_F(NullableMapViewTest, iteratorAddition) {
+  iteratorAdditionTest();
+}
+
+TEST_F(NullableMapViewTest, iteratorSubtraction) {
+  iteratorSubtractionTest();
+}
+
+TEST_F(NullableMapViewTest, iteratorSubscript) {
+  iteratorSubscriptTest();
+}
+
 TEST_F(NullFreeMapViewTest, testReadingRangeLoop) {
   readingRangeLoopTest();
 }
 
 TEST_F(NullFreeMapViewTest, testReadingIteratorLoop) {
   readingIteratorLoopTest();
-}
-
-TEST_F(NullFreeMapViewTest, testIndexedLoop) {
-  indexedLoopTest();
 }
 
 TEST_F(NullFreeMapViewTest, encoded) {
@@ -514,4 +716,74 @@ TEST_F(NullFreeMapViewTest, testReadingStructureBindingLoop) {
   readingStructureBindingLoopTest();
 }
 
+TEST_F(NullFreeMapViewTest, testSubscript) {
+  auto mapVector = createTestMapVector();
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(
+      decode(decoded, *mapVector.get()));
+
+  ASSERT_THROW(read(reader, 1)[5], VeloxException);
+  ASSERT_EQ(read(reader, 1)[3], 3);
+}
+
+TEST_F(NullFreeMapViewTest, materialize) {
+  auto result = evaluate(
+      "map(array_constructor(1, 2), array_constructor(1, 3))",
+      makeRowVector({makeFlatVector<int64_t>(1)}));
+
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(
+      decode(decoded, *result.get()));
+
+  folly::F14FastMap<int64_t, int64_t> expected{{1, 1}, {2, 3}};
+  ASSERT_EQ(reader.readNullFree(0).materialize(), expected);
+}
+
+TEST_F(NullableMapViewTest, materialize) {
+  auto result = evaluate(
+      "map(array_constructor(1, 2),array_constructor(1, NULL))",
+      makeRowVector({makeFlatVector<int64_t>(1)}));
+
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, int64_t>> reader(
+      decode(decoded, *result.get()));
+
+  folly::F14FastMap<int64_t, std::optional<int64_t>> expected{
+      {1, 1}, {2, std::nullopt}};
+  ASSERT_EQ(reader[0].materialize(), expected);
+}
+
+TEST_F(NullableMapViewTest, materializeNested) {
+  auto result = evaluate(
+      "map(array_constructor(1, 2), array_constructor(array_constructor(1, null), null))",
+      makeRowVector({makeFlatVector<int64_t>(1)}));
+
+  DecodedVector decoded;
+  exec::VectorReader<Map<int64_t, Array<int64_t>>> reader(
+      decode(decoded, *result.get()));
+
+  folly::F14FastMap<int64_t, std::optional<std::vector<std::optional<int64_t>>>>
+      expected{{1, {{1, std::nullopt}}}, {2, std::nullopt}};
+  ASSERT_EQ(reader[0].materialize(), expected);
+}
+
+TEST_F(NullFreeMapViewTest, iteratorDecrement) {
+  iteratorDecrementTest();
+}
+
+TEST_F(NullFreeMapViewTest, iteratorDifference) {
+  iteratorDifferenceTest();
+}
+
+TEST_F(NullFreeMapViewTest, iteratorAddition) {
+  iteratorAdditionTest();
+}
+
+TEST_F(NullFreeMapViewTest, iteratorSubtraction) {
+  iteratorSubtractionTest();
+}
+
+TEST_F(NullFreeMapViewTest, iteratorSubscript) {
+  iteratorSubscriptTest();
+}
 } // namespace

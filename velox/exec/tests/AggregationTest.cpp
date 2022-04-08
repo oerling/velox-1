@@ -250,22 +250,6 @@ class AggregationTest : public OperatorTestBase {
       bool distinct) {
     std::vector<std::string> aggregates;
     if (!distinct) {
-<<<<<<< HEAD
-      aggregates = {"sum(15)",
-                    "sum(0.1)",
-                    "sum(c4)",
-                    "sum(c5)",
-                    "min(15)",
-                    "min(0.1)",
-                    "min(c3)",
-                    "min(c4)",
-                    "min(c5)",
-                    "max(15)",
-                    "max(0.1)",
-                    "max(c3)",
-                    "max(c4)",
-                    "max(c5)"};
-=======
       aggregates = {
           "sum(15)",
           "sum(0.1)",
@@ -282,7 +266,6 @@ class AggregationTest : public OperatorTestBase {
           "max(c4)",
           "max(c5)",
           "sumnonpod(1)"};
->>>>>>> oerling1/spill-dev
     }
     auto op = PlanBuilder()
                   .values(vectors)

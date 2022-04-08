@@ -15,6 +15,7 @@
  */
 
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/common/base/tests/Fs.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
@@ -59,16 +60,16 @@ void HiveConnectorTestBase::TearDown() {
 
 void HiveConnectorTestBase::writeToFile(
     const std::string& filePath,
-    const std::string& name,
     RowVectorPtr vector) {
-  writeToFile(filePath, name, std::vector{vector});
+  writeToFile(filePath, std::vector{vector});
 }
 
 void HiveConnectorTestBase::writeToFile(
     const std::string& filePath,
-    const std::string& name,
     const std::vector<RowVectorPtr>& vectors,
     std::shared_ptr<dwrf::Config> config) {
+  static const auto kWriter = "HiveConnectorTestBase.Writer";
+
   facebook::velox::dwrf::WriterOptions options;
   options.config = config;
   options.schema = vectors[0]->type();
@@ -77,7 +78,7 @@ void HiveConnectorTestBase::writeToFile(
   facebook::velox::dwrf::Writer writer{
       options,
       std::move(sink),
-      pool_->addChild(name, std::numeric_limits<int64_t>::max())};
+      pool_->addChild(kWriter, std::numeric_limits<int64_t>::max())};
 
   for (size_t i = 0; i < vectors.size(); ++i) {
     writer.write(vectors[i]);
@@ -140,6 +141,25 @@ std::vector<std::shared_ptr<TempFilePath>> HiveConnectorTestBase::makeFilePaths(
     filePaths.emplace_back(TempFilePath::create());
   }
   return filePaths;
+}
+
+std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>>
+HiveConnectorTestBase::makeHiveConnectorSplits(
+    const std::string& filePath,
+    uint32_t splitCount,
+    dwio::common::FileFormat format) {
+  const int fileSize = fs::file_size(filePath);
+  // Take the upper bound.
+  const int splitSize = std::ceil((fileSize) / splitCount);
+  std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>> splits;
+
+  // Add all the splits.
+  for (int i = 0; i < splitCount; i++) {
+    auto split = std::make_shared<connector::hive::HiveConnectorSplit>(
+        kHiveConnectorId, "file:" + filePath, format, i * splitSize, splitSize);
+    splits.push_back(std::move(split));
+  }
+  return splits;
 }
 
 std::vector<std::shared_ptr<connector::ConnectorSplit>>

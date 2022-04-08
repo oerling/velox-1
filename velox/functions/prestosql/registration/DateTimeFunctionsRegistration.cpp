@@ -46,6 +46,7 @@ void registerSimpleFunctions() {
   registerFunction<DayOfYearFunction, int64_t, Date>({"doy", "day_of_year"});
   registerFunction<HourFunction, int64_t, Timestamp>({"hour"});
   registerFunction<HourFunction, int64_t, Date>({"hour"});
+  registerFunction<HourFunction, int64_t, TimestampWithTimezone>({"hour"});
   registerFunction<MinuteFunction, int64_t, Timestamp>({"minute"});
   registerFunction<MinuteFunction, int64_t, Date>({"minute"});
   registerFunction<SecondFunction, int64_t, Timestamp>({"second"});
@@ -62,11 +63,15 @@ void registerSimpleFunctions() {
       {"date_diff"});
   registerFunction<DateDiffFunction, int64_t, Varchar, Timestamp, Timestamp>(
       {"date_diff"});
+  registerFunction<DateFormatFunction, Varchar, Timestamp, Varchar>(
+      {"date_format"});
   registerFunction<
       ParseDateTimeFunction,
       TimestampWithTimezone,
       Varchar,
       Varchar>({"parse_datetime"});
+  registerFunction<DateFormatFunction, Varchar, Timestamp, Varchar>(
+      {"date_format"});
 }
 } // namespace
 

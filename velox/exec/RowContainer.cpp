@@ -419,6 +419,8 @@ int RowContainer::compareComplexType(
     const DecodedVector& decoded,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   ByteStream stream;
   prepareRead(row, offset, stream);
   return serde_.compare(stream, decoded, index, flags);
@@ -437,6 +439,8 @@ int32_t RowContainer::compareComplexType(
     const Type* type,
     int32_t offset,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   ByteStream leftStream;
   ByteStream rightStream;
   prepareRead(left, offset, leftStream);
@@ -755,7 +759,10 @@ bool RowContainer::fillSpillRuns(
 
 void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   for (auto i = 0; i < numRows; i++) {
-    bits::setBit(rows[i], probedFlagOffset_);
+    // Row may be null in case of a FULL join.
+    if (rows[i]) {
+      bits::setBit(rows[i], probedFlagOffset_);
+    }
   }
 }
 

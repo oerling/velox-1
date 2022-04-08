@@ -14,12 +14,17 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/type/tests/FilterBuilder.h"
+#include "velox/type/tests/SubfieldFiltersBuilder.h"
 #include "velox/vector/tests/VectorTestBase.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::common::test;
+
 using facebook::velox::exec::test::PlanBuilder;
 
 class PlanNodeToStringTest : public testing::Test, public test::VectorTestBase {
@@ -47,33 +52,98 @@ class PlanNodeToStringTest : public testing::Test, public test::VectorTestBase {
 };
 
 TEST_F(PlanNodeToStringTest, basic) {
-  ASSERT_EQ("->project\n", plan_->toString());
+  ASSERT_EQ("-> Project\n", plan_->toString());
 }
 
 TEST_F(PlanNodeToStringTest, recursive) {
   ASSERT_EQ(
-      "->project\n"
-      "  ->filter\n"
-      "    ->project\n"
-      "      ->filter\n"
-      "        ->values\n",
+      "-> Project\n"
+      "  -> Filter\n"
+      "    -> Project\n"
+      "      -> Filter\n"
+      "        -> Values\n",
       plan_->toString(false, true));
 }
 
 TEST_F(PlanNodeToStringTest, detailed) {
   ASSERT_EQ(
-      "->project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n",
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n",
       plan_->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, recursiveAndDetailed) {
   ASSERT_EQ(
-      "->project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
-      "  ->filter[expression: lt(mod(cast ROW[\"out1\"] as BIGINT,10),8)]\n"
-      "    ->project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50))), ]\n"
-      "      ->filter[expression: lt(mod(cast ROW[\"c0\"] as BIGINT,10),9)]\n"
-      "        ->values[5 rows in 1 vectors]\n",
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "  -> Filter[expression: lt(mod(cast ROW[\"out1\"] as BIGINT,10),8)]\n"
+      "    -> Project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50))), ]\n"
+      "      -> Filter[expression: lt(mod(cast ROW[\"c0\"] as BIGINT,10),9)]\n"
+      "        -> Values[5 rows in 1 vectors]\n",
       plan_->toString(true, true));
+}
+
+TEST_F(PlanNodeToStringTest, withContext) {
+  auto addContext = [](const core::PlanNodeId& planNodeId,
+                       const std::string& /* indentation */,
+                       std::stringstream& stream) {
+    stream << "Context for " << planNodeId;
+  };
+
+  ASSERT_EQ(
+      "-> Project\n"
+      "   Context for 4\n",
+      plan_->toString(false, false, addContext));
+
+  ASSERT_EQ(
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "   Context for 4\n",
+      plan_->toString(true, false, addContext));
+
+  ASSERT_EQ(
+      "-> Project\n"
+      "   Context for 4\n"
+      "  -> Filter\n"
+      "     Context for 3\n"
+      "    -> Project\n"
+      "       Context for 2\n"
+      "      -> Filter\n"
+      "         Context for 1\n"
+      "        -> Values\n"
+      "           Context for 0\n",
+      plan_->toString(false, true, addContext));
+
+  ASSERT_EQ(
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "   Context for 4\n"
+      "  -> Filter[expression: lt(mod(cast ROW[\"out1\"] as BIGINT,10),8)]\n"
+      "     Context for 3\n"
+      "    -> Project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50))), ]\n"
+      "       Context for 2\n"
+      "      -> Filter[expression: lt(mod(cast ROW[\"c0\"] as BIGINT,10),9)]\n"
+      "         Context for 1\n"
+      "        -> Values[5 rows in 1 vectors]\n"
+      "           Context for 0\n",
+      plan_->toString(true, true, addContext));
+}
+
+TEST_F(PlanNodeToStringTest, withMultiLineContext) {
+  auto addContext = [](const core::PlanNodeId& planNodeId,
+                       const std::string& indentation,
+                       std::stringstream& stream) {
+    stream << "Context for " << planNodeId << ": line 1" << std::endl;
+    stream << indentation << "Context for " << planNodeId << ": line 2";
+  };
+
+  ASSERT_EQ(
+      "-> Project\n"
+      "   Context for 4: line 1\n"
+      "   Context for 4: line 2\n",
+      plan_->toString(false, false, addContext));
+
+  ASSERT_EQ(
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "   Context for 4: line 1\n"
+      "   Context for 4: line 2\n",
+      plan_->toString(true, false, addContext));
 }
 
 TEST_F(PlanNodeToStringTest, aggregation) {
@@ -84,9 +154,9 @@ TEST_F(PlanNodeToStringTest, aggregation) {
                       {}, {"sum(c0) AS a", "avg(c1) AS b", "min(c2) AS c"})
                   .planNode();
 
-  ASSERT_EQ("->aggregation\n", plan->toString());
+  ASSERT_EQ("-> Aggregation\n", plan->toString());
   ASSERT_EQ(
-      "->aggregation[PARTIAL a := sum(ROW[\"c0\"]), b := avg(ROW[\"c1\"]), c := min(ROW[\"c2\"])]\n",
+      "-> Aggregation[PARTIAL a := sum(ROW[\"c0\"]), b := avg(ROW[\"c1\"]), c := min(ROW[\"c2\"])]\n",
       plan->toString(true, false));
 
   // Group-by aggregation.
@@ -95,9 +165,9 @@ TEST_F(PlanNodeToStringTest, aggregation) {
              .singleAggregation({0}, {"sum(c1) AS a", "avg(c2) AS b"})
              .planNode();
 
-  ASSERT_EQ("->aggregation\n", plan->toString());
+  ASSERT_EQ("-> Aggregation\n", plan->toString());
   ASSERT_EQ(
-      "->aggregation[SINGLE [c0] a := sum(ROW[\"c1\"]), b := avg(ROW[\"c2\"])]\n",
+      "-> Aggregation[SINGLE [c0] a := sum(ROW[\"c1\"]), b := avg(ROW[\"c2\"])]\n",
       plan->toString(true, false));
 }
 
@@ -116,8 +186,8 @@ TEST_F(PlanNodeToStringTest, hashJoin) {
                       {"t_c0", "t_c1", "u_c1"})
                   .planNode();
 
-  ASSERT_EQ("->hash join\n", plan->toString());
-  ASSERT_EQ("->hash join[INNER t_c0=u_c0]\n", plan->toString(true, false));
+  ASSERT_EQ("-> HashJoin\n", plan->toString());
+  ASSERT_EQ("-> HashJoin[INNER t_c0=u_c0]\n", plan->toString(true, false));
 
   plan = PlanBuilder()
              .values({data_})
@@ -134,9 +204,9 @@ TEST_F(PlanNodeToStringTest, hashJoin) {
                  core::JoinType::kLeft)
              .planNode();
 
-  ASSERT_EQ("->hash join\n", plan->toString());
+  ASSERT_EQ("-> HashJoin\n", plan->toString());
   ASSERT_EQ(
-      "->hash join[LEFT t_c0=u_c0, filter: gt(ROW[\"t_c1\"],ROW[\"u_c1\"])]\n",
+      "-> HashJoin[LEFT t_c0=u_c0, filter: gt(ROW[\"t_c1\"],ROW[\"u_c1\"])]\n",
       plan->toString(true, false));
 }
 
@@ -155,8 +225,8 @@ TEST_F(PlanNodeToStringTest, mergeJoin) {
                       {"t_c0", "t_c1", "u_c1"})
                   .planNode();
 
-  ASSERT_EQ("->merge join\n", plan->toString());
-  ASSERT_EQ("->merge join[INNER t_c0=u_c0]\n", plan->toString(true, false));
+  ASSERT_EQ("-> MergeJoin\n", plan->toString());
+  ASSERT_EQ("-> MergeJoin[INNER t_c0=u_c0]\n", plan->toString(true, false));
 
   plan = PlanBuilder()
              .values({data_})
@@ -173,9 +243,9 @@ TEST_F(PlanNodeToStringTest, mergeJoin) {
                  core::JoinType::kLeft)
              .planNode();
 
-  ASSERT_EQ("->merge join\n", plan->toString());
+  ASSERT_EQ("-> MergeJoin\n", plan->toString());
   ASSERT_EQ(
-      "->merge join[LEFT t_c0=u_c0, filter: gt(ROW[\"t_c1\"],ROW[\"u_c1\"])]\n",
+      "-> MergeJoin[LEFT t_c0=u_c0, filter: gt(ROW[\"t_c1\"],ROW[\"u_c1\"])]\n",
       plan->toString(true, false));
 }
 
@@ -191,79 +261,77 @@ TEST_F(PlanNodeToStringTest, crossJoin) {
                       {"t_c0", "t_c1", "u_c1"})
                   .planNode();
 
-  ASSERT_EQ("->cross join\n", plan->toString());
-  ASSERT_EQ("->cross join[]\n", plan->toString(true, false));
+  ASSERT_EQ("-> CrossJoin\n", plan->toString());
+  ASSERT_EQ("-> CrossJoin[]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, orderBy) {
   auto plan = PlanBuilder()
                   .values({data_})
-                  .orderBy({1}, {core::kAscNullsFirst}, true)
+                  .orderBy({"c1 ASC NULLS FIRST"}, true)
                   .planNode();
 
-  ASSERT_EQ("->orderby\n", plan->toString());
+  ASSERT_EQ("-> OrderBy\n", plan->toString());
   ASSERT_EQ(
-      "->orderby[PARTIAL c1 ASC NULLS FIRST]\n", plan->toString(true, false));
+      "-> OrderBy[PARTIAL c1 ASC NULLS FIRST]\n", plan->toString(true, false));
 
-  plan =
-      PlanBuilder()
-          .values({data_})
-          .orderBy({1, 0}, {core::kAscNullsFirst, core::kDescNullsLast}, false)
-          .planNode();
+  plan = PlanBuilder()
+             .values({data_})
+             .orderBy({"c1 ASC NULLS FIRST", "c0 DESC NULLS LAST"}, false)
+             .planNode();
 
-  ASSERT_EQ("->orderby\n", plan->toString());
+  ASSERT_EQ("-> OrderBy\n", plan->toString());
   ASSERT_EQ(
-      "->orderby[c1 ASC NULLS FIRST, c0 DESC NULLS LAST]\n",
+      "-> OrderBy[c1 ASC NULLS FIRST, c0 DESC NULLS LAST]\n",
       plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, limit) {
   auto plan = PlanBuilder().values({data_}).limit(0, 10, true).planNode();
 
-  ASSERT_EQ("->limit\n", plan->toString());
-  ASSERT_EQ("->limit[PARTIAL 10]\n", plan->toString(true, false));
+  ASSERT_EQ("-> Limit\n", plan->toString());
+  ASSERT_EQ("-> Limit[PARTIAL 10]\n", plan->toString(true, false));
 
   plan = PlanBuilder().values({data_}).limit(7, 12, false).planNode();
 
-  ASSERT_EQ("->limit\n", plan->toString());
-  ASSERT_EQ("->limit[12 offset 7]\n", plan->toString(true, false));
+  ASSERT_EQ("-> Limit\n", plan->toString());
+  ASSERT_EQ("-> Limit[12 offset 7]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, topN) {
   auto plan = PlanBuilder()
                   .values({data_})
-                  .topN({0}, {core::kAscNullsFirst}, 10, true)
+                  .topN({"c0 NULLS FIRST"}, 10, true)
                   .planNode();
 
-  ASSERT_EQ("->topN\n", plan->toString());
+  ASSERT_EQ("-> TopN\n", plan->toString());
   ASSERT_EQ(
-      "->topN[PARTIAL 10 c0 ASC NULLS FIRST]\n", plan->toString(true, false));
+      "-> TopN[PARTIAL 10 c0 ASC NULLS FIRST]\n", plan->toString(true, false));
 
-  plan =
-      PlanBuilder()
-          .values({data_})
-          .topN({1, 0}, {core::kAscNullsFirst, core::kDescNullsLast}, 10, false)
-          .planNode();
+  plan = PlanBuilder()
+             .values({data_})
+             .topN({"c1 NULLS FIRST", "c0 DESC"}, 10, false)
+             .planNode();
 
-  ASSERT_EQ("->topN\n", plan->toString());
+  ASSERT_EQ("-> TopN\n", plan->toString());
   ASSERT_EQ(
-      "->topN[10 c1 ASC NULLS FIRST, c0 DESC NULLS LAST]\n",
+      "-> TopN[10 c1 ASC NULLS FIRST, c0 DESC NULLS LAST]\n",
       plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, enforceSingleRow) {
   auto plan = PlanBuilder().values({data_}).enforceSingleRow().planNode();
 
-  ASSERT_EQ("->enforce single row\n", plan->toString());
-  ASSERT_EQ("->enforce single row[]\n", plan->toString(true, false));
+  ASSERT_EQ("-> EnforceSingleRow\n", plan->toString());
+  ASSERT_EQ("-> EnforceSingleRow[]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, assignUniqueId) {
   auto plan =
       PlanBuilder().values({data_}).assignUniqueId("unique_id", 123).planNode();
 
-  ASSERT_EQ("->assign unique id\n", plan->toString());
-  ASSERT_EQ("->assign unique id[]\n", plan->toString(true, false));
+  ASSERT_EQ("-> AssignUniqueId\n", plan->toString());
+  ASSERT_EQ("-> AssignUniqueId[]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, unnest) {
@@ -273,69 +341,74 @@ TEST_F(PlanNodeToStringTest, unnest) {
                   .unnest({"c1"}, {"a0"})
                   .planNode();
 
-  ASSERT_EQ("->unnest\n", plan->toString());
-  ASSERT_EQ("->unnest[a0]\n", plan->toString(true, false));
+  ASSERT_EQ("-> Unnest\n", plan->toString());
+  ASSERT_EQ("-> Unnest[a0]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, localPartition) {
   auto plan =
       PlanBuilder()
-          .localPartition({0}, {PlanBuilder().values({data_}).planNode()})
+          .localPartition({"c0"}, {PlanBuilder().values({data_}).planNode()})
           .planNode();
 
-  ASSERT_EQ("->local repartitioning\n", plan->toString());
-  ASSERT_EQ("->local repartitioning[]\n", plan->toString(true, false));
+  ASSERT_EQ("-> LocalPartition\n", plan->toString());
+  ASSERT_EQ("-> LocalPartition[REPARTITION]\n", plan->toString(true, false));
+
+  plan = PlanBuilder()
+             .localPartition({}, {PlanBuilder().values({data_}).planNode()})
+             .planNode();
+
+  ASSERT_EQ("-> LocalPartition\n", plan->toString());
+  ASSERT_EQ("-> LocalPartition[GATHER]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, partitionedOutput) {
   auto plan =
-      PlanBuilder().values({data_}).partitionedOutput({0}, 4).planNode();
+      PlanBuilder().values({data_}).partitionedOutput({"c0"}, 4).planNode();
 
-  ASSERT_EQ("->repartitioning\n", plan->toString());
-  ASSERT_EQ("->repartitioning[HASH(c0) 4]\n", plan->toString(true, false));
+  ASSERT_EQ("-> PartitionedOutput\n", plan->toString());
+  ASSERT_EQ("-> PartitionedOutput[HASH(c0) 4]\n", plan->toString(true, false));
 
   plan = PlanBuilder().values({data_}).partitionedOutputBroadcast().planNode();
 
-  ASSERT_EQ("->repartitioning\n", plan->toString());
-  ASSERT_EQ("->repartitioning[BROADCAST]\n", plan->toString(true, false));
+  ASSERT_EQ("-> PartitionedOutput\n", plan->toString());
+  ASSERT_EQ("-> PartitionedOutput[BROADCAST]\n", plan->toString(true, false));
 
   plan = PlanBuilder().values({data_}).partitionedOutput({}, 1).planNode();
 
-  ASSERT_EQ("->repartitioning\n", plan->toString());
-  ASSERT_EQ("->repartitioning[SINGLE]\n", plan->toString(true, false));
+  ASSERT_EQ("-> PartitionedOutput\n", plan->toString());
+  ASSERT_EQ("-> PartitionedOutput[SINGLE]\n", plan->toString(true, false));
 
   plan = PlanBuilder()
              .values({data_})
-             .partitionedOutput({1, 2}, 5, true)
+             .partitionedOutput({"c1", "c2"}, 5, true)
              .planNode();
 
-  ASSERT_EQ("->repartitioning\n", plan->toString());
+  ASSERT_EQ("-> PartitionedOutput\n", plan->toString());
   ASSERT_EQ(
-      "->repartitioning[HASH(c1, c2) 5 replicate nulls and any]\n",
+      "-> PartitionedOutput[HASH(c1, c2) 5 replicate nulls and any]\n",
       plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, localMerge) {
-  auto plan = PlanBuilder()
-                  .localMerge(
-                      {1},
-                      {core::kAscNullsFirst},
-                      {PlanBuilder().values({data_}).planNode()})
-                  .planNode();
+  auto plan =
+      PlanBuilder()
+          .localMerge(
+              {"c1 NULLS FIRST"}, {PlanBuilder().values({data_}).planNode()})
+          .planNode();
 
-  ASSERT_EQ("->local merge\n", plan->toString());
-  ASSERT_EQ("->local merge[c1 ASC NULLS FIRST]\n", plan->toString(true, false));
+  ASSERT_EQ("-> LocalMerge\n", plan->toString());
+  ASSERT_EQ("-> LocalMerge[c1 ASC NULLS FIRST]\n", plan->toString(true, false));
 
   plan = PlanBuilder()
              .localMerge(
-                 {1, 0},
-                 {core::kAscNullsFirst, core::kDescNullsLast},
+                 {"c1 NULLS FIRST", "c0 DESC"},
                  {PlanBuilder().values({data_}).planNode()})
              .planNode();
 
-  ASSERT_EQ("->local merge\n", plan->toString());
+  ASSERT_EQ("-> LocalMerge\n", plan->toString());
   ASSERT_EQ(
-      "->local merge[c1 ASC NULLS FIRST, c0 DESC NULLS LAST]\n",
+      "-> LocalMerge[c1 ASC NULLS FIRST, c0 DESC NULLS LAST]\n",
       plan->toString(true, false));
 }
 
@@ -343,6 +416,30 @@ TEST_F(PlanNodeToStringTest, exchange) {
   auto plan =
       PlanBuilder().exchange(ROW({"a", "b"}, {BIGINT(), VARCHAR()})).planNode();
 
-  ASSERT_EQ("->exchange\n", plan->toString());
-  ASSERT_EQ("->exchange[]\n", plan->toString(true, false));
+  ASSERT_EQ("-> Exchange\n", plan->toString());
+  ASSERT_EQ("-> Exchange[]\n", plan->toString(true, false));
+}
+
+TEST_F(PlanNodeToStringTest, tableScan) {
+  RowTypePtr rowType{ROW(
+      {"discount", "quantity", "shipdate"}, {DOUBLE(), DOUBLE(), VARCHAR()})};
+  auto filters = SubfieldFiltersBuilder()
+                     .add("shipdate", between("1994-01-01", "1994-12-31"))
+                     .add("discount", betweenDouble(0.05, 0.07))
+                     .add("quantity", lessThanDouble(24.0))
+                     .build();
+  auto tableHandle = exec::test::HiveConnectorTestBase::makeTableHandle(
+      std::move(filters), nullptr, "lineitem");
+  auto plan =
+      PlanBuilder()
+          .tableScan(
+              rowType,
+              tableHandle,
+              exec::test::HiveConnectorTestBase::allRegularColumns(rowType))
+          .planNode();
+
+  ASSERT_EQ("-> TableScan\n", plan->toString());
+  ASSERT_EQ(
+      "-> TableScan[Table: lineitem, Filters: [(discount, DoubleRange: [0.050000, 0.070000] no nulls), (quantity, DoubleRange: (-inf, 24.000000) no nulls), (shipdate, BytesRange: [1994-01-01, 1994-12-31] no nulls)]]\n",
+      plan->toString(true, false));
 }

@@ -97,9 +97,29 @@ class PlanNode {
   virtual const std::vector<std::shared_ptr<const PlanNode>>& sources()
       const = 0;
 
-  std::string toString(bool detailed = false, bool recursive = false) const {
+  /// Returns a set of leaf plan node IDs.
+  std::unordered_set<core::PlanNodeId> leafPlanNodeIds() const;
+
+  /// Returns human-friendly representation of the plan. By default, returns the
+  /// plan node name. Includes plan node details such as join keys and aggregate
+  /// function names if 'detailed' is true. Returns the whole sub-tree if
+  /// 'recursive' is true. Includes additional context for each plan node if
+  /// 'addContext' is not null.
+  ///
+  /// @param addContext Optional lambda to add context for a given plan node.
+  /// Receives plan node ID, indentation and std::stringstring where to append
+  /// the context. Use indentation for second and subsequent lines of a
+  /// mult-line context. Do not use indentation for single-line context. Do not
+  /// add trailing new-line character for the last or only line of context.
+  std::string toString(
+      bool detailed = false,
+      bool recursive = false,
+      std::function<void(
+          const PlanNodeId& planNodeId,
+          const std::string& indentation,
+          std::stringstream& stream)> addContext = nullptr) const {
     std::stringstream stream;
-    toString(stream, detailed, recursive, 0);
+    toString(stream, detailed, recursive, 0, addContext);
     return stream.str();
   }
 
@@ -118,31 +138,13 @@ class PlanNode {
   //         ...
   void toString(
       std::stringstream& stream,
-      bool detailed = false,
-      bool recursive = false,
-      size_t indentation = 0) const {
-    auto addIndentation = [&]() {
-      auto counter = indentation;
-      while (counter) {
-        stream << " ";
-        counter--;
-      }
-    };
-
-    addIndentation();
-    stream << "->" << name();
-    if (detailed) {
-      stream << "[";
-      addDetails(stream);
-      stream << "]";
-    }
-    stream << "\n";
-    if (recursive) {
-      for (auto& source : sources()) {
-        source->toString(stream, detailed, true, indentation + 2);
-      }
-    }
-  }
+      bool detailed,
+      bool recursive,
+      size_t indentationSize,
+      std::function<void(
+          const PlanNodeId& planNodeId,
+          const std::string& indentation,
+          std::stringstream& stream)> addContext) const;
 
   const std::string id_;
 };
@@ -189,7 +191,7 @@ class ValuesNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "values";
+    return "Values";
   }
 
  private:
@@ -221,7 +223,7 @@ class FilterNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "filter";
+    return "Filter";
   }
 
  private:
@@ -274,7 +276,7 @@ class ProjectNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "project";
+    return "Project";
   }
 
  private:
@@ -336,7 +338,7 @@ class TableScanNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "table scan";
+    return "TableScan";
   }
 
  private:
@@ -395,7 +397,7 @@ class TableWriteNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "table write";
+    return "TableWrite";
   }
 
  private:
@@ -421,8 +423,8 @@ class AggregationNode : public PlanNode {
     kSingle
   };
 
-  static const char* stepName(Step joinType) {
-    switch (joinType) {
+  static const char* stepName(Step step) {
+    switch (step) {
       case Step::kPartial:
         return "PARTIAL";
       case Step::kFinal:
@@ -498,7 +500,7 @@ class AggregationNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "aggregation";
+    return "Aggregation";
   }
 
  private:
@@ -553,7 +555,7 @@ class ExchangeNode : public PlanNode {
   const std::vector<std::shared_ptr<const PlanNode>>& sources() const override;
 
   std::string_view name() const override {
-    return "exchange";
+    return "Exchange";
   }
 
  private:
@@ -584,7 +586,7 @@ class MergeExchangeNode : public ExchangeNode {
   }
 
   std::string_view name() const override {
-    return "merge exchange";
+    return "MergeExchange";
   }
 
  private:
@@ -624,7 +626,7 @@ class LocalMergeNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "local merge";
+    return "LocalMerge";
   }
 
  private:
@@ -657,12 +659,21 @@ using PartitionFunctionFactory =
 /// different from input.
 class LocalPartitionNode : public PlanNode {
  public:
+  enum class Type {
+    // N-to-1 exchange.
+    kGather,
+    // N-to-M shuffle.
+    kRepartition,
+  };
+
   LocalPartitionNode(
       const PlanNodeId& id,
+      Type type,
       PartitionFunctionFactory partitionFunctionFactory,
       RowTypePtr outputType,
       std::vector<std::shared_ptr<const PlanNode>> sources)
       : PlanNode(id),
+        type_{type},
         sources_{std::move(sources)},
         partitionFunctionFactory_{std::move(partitionFunctionFactory)},
         outputType_{std::move(outputType)} {
@@ -672,17 +683,22 @@ class LocalPartitionNode : public PlanNode {
         "Local repartitioning node requires at least one source");
   }
 
-  static std::shared_ptr<LocalPartitionNode> single(
+  static std::shared_ptr<LocalPartitionNode> gather(
       const PlanNodeId& id,
       RowTypePtr outputType,
       std::vector<std::shared_ptr<const PlanNode>> sources) {
     return std::make_shared<LocalPartitionNode>(
         id,
+        Type::kGather,
         [](auto /*numPartitions*/) -> std::unique_ptr<PartitionFunction> {
           VELOX_UNREACHABLE();
         },
         std::move(outputType),
         std::move(sources));
+  }
+
+  Type type() const {
+    return type_;
   }
 
   const RowTypePtr& outputType() const override {
@@ -702,12 +718,13 @@ class LocalPartitionNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "local repartitioning";
+    return "LocalPartition";
   }
 
  private:
   void addDetails(std::stringstream& stream) const override;
 
+  const Type type_;
   const std::vector<std::shared_ptr<const PlanNode>> sources_;
   const PartitionFunctionFactory partitionFunctionFactory_;
   const RowTypePtr outputType_;
@@ -820,7 +837,7 @@ class PartitionedOutputNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "repartitioning";
+    return "PartitionedOutput";
   }
 
  private:
@@ -983,7 +1000,7 @@ class HashJoinNode : public AbstractJoinNode {
             outputType) {}
 
   std::string_view name() const override {
-    return "hash join";
+    return "HashJoin";
   }
 };
 
@@ -1014,7 +1031,7 @@ class MergeJoinNode : public AbstractJoinNode {
             outputType) {}
 
   std::string_view name() const override {
-    return "merge join";
+    return "MergeJoin";
   }
 };
 
@@ -1036,7 +1053,7 @@ class CrossJoinNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "cross join";
+    return "CrossJoin";
   }
 
  private:
@@ -1093,7 +1110,7 @@ class OrderByNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "orderby";
+    return "OrderBy";
   }
 
  private:
@@ -1156,7 +1173,7 @@ class TopNNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "topN";
+    return "TopN";
   }
 
  private:
@@ -1211,7 +1228,7 @@ class LimitNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "limit";
+    return "Limit";
   }
 
  private:
@@ -1274,7 +1291,7 @@ class UnnestNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "unnest";
+    return "Unnest";
   }
 
  private:
@@ -1310,7 +1327,7 @@ class EnforceSingleRowNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "enforce single row";
+    return "EnforceSingleRow";
   }
 
  private:
@@ -1346,7 +1363,7 @@ class AssignUniqueIdNode : public PlanNode {
   }
 
   std::string_view name() const override {
-    return "assign unique id";
+    return "AssignUniqueId";
   }
 
   int32_t taskUniqueId() const {
