@@ -38,3 +38,45 @@ TEST_F(TreeOfLosersTest, merge) {
   testBoth(0, 9);
   testBoth(5000000, 37);
 }
+
+TEST_F(TreeOfLosersTest, nextWithEquals) {
+  constexpr int32_t kNumStreams = 17;
+  std::vector<std::vector <uint32_t>> streams(kNumStreams);
+  // Each stream is filled with consecutive integers. The probability of each integer being in any stream depends on the integer i, so that if i
+  for (auto i = 0; i < 10000; ++i) {
+    for (auto stream = 0; stream < streams.size(); ++stream) {
+      if (folly::Random::rand32(rng_) % 31 > i % 31) {
+	streams[stream].push_back(i);
+      }
+    }
+    std::vector<uint32_t> allStreams;
+    std::vector<std::unique_ptr<TestingStream>> mergeStreams;
+
+    for (auto& stream : streams) {
+      allStreams.insert(allStreams.end(), stream.begin(), stream.end());
+      mergeStreams.push_back(std::make_unique<TestingStream>(std::move(stream)));
+    }
+    std::sort(allStreams.begin(), allStreams.end());
+    TreeOfLosers<TestingStream> merge(std::move(mergeStreams));
+    bool expectRepeat = false;
+    uint32_t lastValue;
+    for (auto i = 0; i < allStreams.size(); ++i) {
+      auto result = merge.nextWithEquals();
+      if (result.first == nullptr) {
+	FAIL() << "Merge ends too soon";
+	break;
+      }
+      auto number = result.first->current()->
+	value();
+      EXPECT_EQ(allStreams[i], number);
+      if (expectRepeat) {
+	EXPECT_EQ(allStreams[i], allStreams[i - 1]);
+      } else if (i > 0) {
+	EXPECT_NE(allStreams[i], allStreams[i - 1]);
+      }
+      expectRepeat = result.second;
+    }
+  }
+}
+  
+
