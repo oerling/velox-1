@@ -17,6 +17,7 @@
 #include <folly/Benchmark.h>
 #include <gflags/gflags.h>
 
+#include "velox/common/base/CompareFlags.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
@@ -54,7 +55,19 @@ class VectorCompareBenchmark : public functions::test::FunctionBenchmarkBase {
     size_t sum = 0;
 
     for (auto i = 0; i < vectorSize_; i++) {
-      sum += vector->compare(vector.get(), i, i, flags);
+      sum += *vector->compare(vector.get(), i, i, kFlags);
+    }
+    folly::doNotOptimizeAway(sum);
+    return vectorSize_;
+  }
+
+  // Avoid dynamic dispatch by casting the vector before calling compare to its
+  // derived that have final compare function.
+  size_t runFastFlat() {
+    size_t sum = 0;
+    auto flatVector = flatVector_->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < vectorSize_; i++) {
+      sum += *flatVector->compare(flatVector, i, vectorSize_ - i - 1, kFlags);
     }
     folly::doNotOptimizeAway(sum);
     return vectorSize_;
@@ -66,7 +79,7 @@ class VectorCompareBenchmark : public functions::test::FunctionBenchmarkBase {
   VectorPtr rowVector_;
 
  private:
-  static constexpr CompareFlags flags{true, true, false};
+  static constexpr CompareFlags kFlags{true, true, false, false};
 
   const size_t vectorSize_;
   SelectivityVector rows_;
@@ -74,8 +87,12 @@ class VectorCompareBenchmark : public functions::test::FunctionBenchmarkBase {
 
 std::unique_ptr<VectorCompareBenchmark> benchmark;
 
-BENCHMARK_MULTI(compareSimilarFlat) {
+BENCHMARK_MULTI(compareSimilarSimpleFlat) {
   return benchmark->run(benchmark->flatVector_);
+}
+
+BENCHMARK_MULTI(compareSimilarSSimpleFlatNoDispatch) {
+  return benchmark->runFastFlat();
 }
 
 BENCHMARK_MULTI(compareSimilarArray) {
