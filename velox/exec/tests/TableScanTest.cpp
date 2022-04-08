@@ -704,6 +704,8 @@ TEST_P(TableScanTest, statsBasedSkippingBool) {
   auto task = assertQuery("SELECT c0 FROM tmp WHERE c1 = true");
   EXPECT_EQ(20'000, getTableScanStats(task).rawInputRows);
   EXPECT_EQ(2, getSkippedStridesStat(task));
+  EXPECT_EQ(1, getTableScanStats(task).numSplits);
+  EXPECT_EQ(1, getTableScanStats(task).numDrivers);
 
   subfieldFilters = singleSubfieldFilter("c1", boolEqual(false));
   task = assertQuery("SELECT c0 FROM tmp WHERE c1 = false");
@@ -1868,10 +1870,11 @@ TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, vectors);
 
-  auto planFragment = PlanBuilder()
-                          .tableScan(rowType_)
-                          .partitionedOutput({}, 1, {0, 1, 2, 3, 4, 5})
-                          .planFragment();
+  auto planFragment =
+      PlanBuilder()
+          .tableScan(rowType_)
+          .partitionedOutput({}, 1, {"c0", "c1", "c2", "c3", "c4", "c5"})
+          .planFragment();
   planFragment.numSplitGroups = 10;
   planFragment.executionStrategy = core::ExecutionStrategy::kGrouped;
   auto queryCtx = core::QueryCtx::createForTest();
@@ -1928,8 +1931,7 @@ TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
   // 'Delete results' from output buffer triggers 'set all output consumed',
   // which should finish the task.
   auto outputBufferManager =
-      PartitionedOutputBufferManager::getInstance(task->queryCtx()->host())
-          .lock();
+      PartitionedOutputBufferManager::getInstance().lock();
   outputBufferManager->deleteResults(task->taskId(), 0);
 
   // Task must be finished at this stage.

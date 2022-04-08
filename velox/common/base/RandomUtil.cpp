@@ -13,25 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/JoinBridge.h"
 
-namespace facebook::velox::exec {
+#include "velox/common/base/RandomUtil.h"
 
-// static
-void JoinBridge::notify(std::vector<VeloxPromise<bool>> promises) {
-  for (auto& promise : promises) {
-    promise.setValue(true);
-  }
+#include <optional>
+
+#include <folly/Random.h>
+
+namespace facebook::velox::random {
+
+namespace {
+
+std::optional<uint32_t> customSeed;
+
 }
 
-void JoinBridge::cancel() {
-  std::vector<VeloxPromise<bool>> promises;
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    cancelled_ = true;
-    promises = std::move(promises_);
-  }
-  notify(std::move(promises));
+void setSeed(uint32_t value) {
+  customSeed = value;
 }
 
-} // namespace facebook::velox::exec
+uint32_t getSeed() {
+  return customSeed ? *customSeed : folly::Random::rand32();
+}
+
+} // namespace facebook::velox::random

@@ -13,25 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/JoinBridge.h"
 
-namespace facebook::velox::exec {
+#pragma once
 
-// static
-void JoinBridge::notify(std::vector<VeloxPromise<bool>> promises) {
-  for (auto& promise : promises) {
-    promise.setValue(true);
-  }
-}
+namespace facebook::velox {
 
-void JoinBridge::cancel() {
-  std::vector<VeloxPromise<bool>> promises;
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    cancelled_ = true;
-    promises = std::move(promises_);
-  }
-  notify(std::move(promises));
-}
+// Describes value collation in comparison.
+struct CompareFlags {
+  // This flag will be ignored if stopAtNull is true.
+  bool nullsFirst = true;
 
-} // namespace facebook::velox::exec
+  bool ascending = true;
+
+  // When true, comparison should return non-0 early when sizes mismatch.
+  bool equalsOnly = false;
+
+  // When true, the compare returns std::nullopt if null encountered.
+  bool stopAtNull = false;
+};
+
+} // namespace facebook::velox

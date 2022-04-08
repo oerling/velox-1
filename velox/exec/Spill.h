@@ -50,11 +50,11 @@ class SpillInput : public ByteStream {
   uint64_t offset_ = 0;
 };
 
-// A source of SpillFileRows coming either from a file or memory.
+// A source of spilled RowVectors coming either from a file or memory.
 class SpillStream : public MergeStream {
  public:
   SpillStream(RowTypePtr type, int32_t numSortingKeys, memory::MemoryPool& pool)
-      : type_(type),
+      : type_(std::move(type)),
         numSortingKeys_(numSortingKeys),
         pool_(pool),
         ordinal_(++ordinalCounter_) {}
@@ -102,7 +102,7 @@ class SpillStream : public MergeStream {
   virtual void nextBatch() = 0;
 
   // Type of 'rowVector_'. Needed for setting up writing.
-  const std::shared_ptr<const RowType> type_;
+  const RowTypePtr type_;
 
   // Number of leading columns of 'rowVector_'  on which the values are sorted,
   // 0 if not sorted.
@@ -125,7 +125,7 @@ class SpillStream : public MergeStream {
 };
 
 // Represents a spill file that is first in write mode and then
-// turns into a source of SpillFileRow. Owns a file system file that
+// turns into a source of spilled RowVectors. Owns a file system file that
 // contains the spilled data and is live for the duration of 'this'.
 class SpillFile : public SpillStream {
  public:
@@ -134,14 +134,14 @@ class SpillFile : public SpillStream {
       int32_t numSortingKeys,
       const std::string& path,
       memory::MemoryPool& pool)
-      : SpillStream(type, numSortingKeys, pool), path_(path) {}
+      : SpillStream(std::move(type), numSortingKeys, pool), path_(path) {}
 
   ~SpillFile() override;
 
   // Returns a file for writing spilled data. The caller constructs
-  // this, then callsoutput() and writes serialized data to the file
+  // this, then calls output() and writes serialized data to the file
   // and calls finishWrite when the file has reached its final
-  // size. For sorted spilling, the data in one file is expected to b
+  // size. For sorted spilling, the data in one file is expected to be
   // sorted.
   WriteFile& output();
 

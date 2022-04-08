@@ -242,7 +242,7 @@ void Operator::recordBlockingTime(uint64_t start) {
   stats_.blockedWallNanos += (now - start) * 1000;
 }
 
-std::string Operator::toString() {
+std::string Operator::toString() const {
   std::stringstream out;
   if (auto task = operatorCtx_->task()) {
     auto driverCtx = operatorCtx_->driverCtx();
@@ -326,6 +326,8 @@ void OperatorStats::add(const OperatorStats& other) {
   for (const auto& stat : other.runtimeStats) {
     runtimeStats[stat.first].merge(stat.second);
   }
+
+  numDrivers += other.numDrivers;
 }
 
 void OperatorStats::clear() {
