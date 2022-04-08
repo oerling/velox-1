@@ -13,25 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/JoinBridge.h"
 
-namespace facebook::velox::exec {
+#pragma once
 
-// static
-void JoinBridge::notify(std::vector<VeloxPromise<bool>> promises) {
-  for (auto& promise : promises) {
-    promise.setValue(true);
-  }
-}
+#include <cstdint>
 
-void JoinBridge::cancel() {
-  std::vector<VeloxPromise<bool>> promises;
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    cancelled_ = true;
-    promises = std::move(promises_);
-  }
-  notify(std::move(promises));
-}
+namespace facebook::velox::random {
 
-} // namespace facebook::velox::exec
+// Set a custom seed to be returned in all following getSeed() calls.
+// Should be only used in unit tests.
+void setSeed(uint32_t);
+
+// Return a true random seed unless setSeed() is called before.
+uint32_t getSeed();
+
+} // namespace facebook::velox::random
