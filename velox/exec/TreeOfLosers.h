@@ -250,9 +250,9 @@ class TreeOfLosers {
         // goes up.
         ;
       }
+      }
       if (UNLIKELY(node == 0)) {
         return value;
-      }
       }
       node = parent(node);
     }
