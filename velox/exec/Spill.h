@@ -54,7 +54,7 @@ class SpillInput : public ByteStream {
 class SpillStream : public MergeStream {
  public:
   SpillStream(RowTypePtr type, int32_t numSortingKeys, memory::MemoryPool& pool)
-    : type_(std::move(type)),
+      : type_(std::move(type)),
         numSortingKeys_(numSortingKeys),
         pool_(pool),
         ordinal_(++ordinalCounter_) {}
@@ -134,7 +134,7 @@ class SpillFile : public SpillStream {
       int32_t numSortingKeys,
       const std::string& path,
       memory::MemoryPool& pool)
-    : SpillStream(std::move(type), numSortingKeys, pool), path_(path) {}
+      : SpillStream(std::move(type), numSortingKeys, pool), path_(path) {}
 
   ~SpillFile() override;
 
