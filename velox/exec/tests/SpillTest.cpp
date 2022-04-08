@@ -26,7 +26,7 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 
 class SpillTest : public testing::Test,
-                  public facebook::velox::test::VectorTestBase {
+                  public /*facebook::velox::*/test::VectorTestBase {
  protected:
   void SetUp() override {
     mappedMemory_ = memory::MappedMemory::getInstance();
