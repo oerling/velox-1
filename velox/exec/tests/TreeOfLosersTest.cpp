@@ -79,4 +79,3 @@ TEST_F(TreeOfLosersTest, nextWithEquals) {
     result.first->pop();
   }
 }
-
