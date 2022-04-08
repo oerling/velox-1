@@ -66,6 +66,7 @@ HashAggregation::HashAggregation(
   aggrMaskChannels.reserve(numAggregates);
   std::vector<std::vector<ChannelIndex>> args;
   std::vector<std::vector<VectorPtr>> constantLists;
+  std::vector<TypePtr> intermediateTypes;
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode->aggregates()[i];
 
@@ -99,6 +100,8 @@ HashAggregation::HashAggregation(
         aggregate->name(), aggregationNode->step(), argTypes, resultType));
     args.push_back(channels);
     constantLists.push_back(constants);
+    intermediateTypes_.push_back(Aggregate::intermediateType(
+        aggregate->name(), argTypes));
   }
 
   // Check that aggregate result type match the output type
@@ -126,7 +129,9 @@ HashAggregation::HashAggregation(
       std::move(aggrMaskChannels),
       std::move(args),
       std::move(constantLists),
+      std::move(intermediateTypes),
       aggregationNode->ignoreNullKeys(),
+      isPartialOutput_,
       isRawInput(aggregationNode->step()),
       operatorCtx_.get());
 }

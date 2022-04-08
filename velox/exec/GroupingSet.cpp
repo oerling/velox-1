@@ -44,6 +44,7 @@ GroupingSet::GroupingSet(
     std::vector<std::optional<ChannelIndex>>&& aggrMaskChannels,
     std::vector<std::vector<ChannelIndex>>&& channelLists,
     std::vector<std::vector<VectorPtr>>&& constantLists,
+    std::vector<TypePtr> intermediateTypes,
     bool ignoreNullKeys,
     bool isRawInput,
     OperatorCtx* operatorCtx)
@@ -55,6 +56,7 @@ GroupingSet::GroupingSet(
       masks_{std::move(aggrMaskChannels)},
       channelLists_(std::move(channelLists)),
       constantLists_(std::move(constantLists)),
+      intermediateTypes_(std::move(intermediateTypes)),
       ignoreNullKeys_(ignoreNullKeys),
       mappedMemory_(operatorCtx->mappedMemory()),
       stringAllocator_(mappedMemory_),
@@ -148,6 +150,7 @@ void GroupingSet::addInputForActiveRows(
   auto& hashers = lookup_->hashers;
   lookup_->reset(activeRows_.end());
   auto mode = table_->hashMode();
+  checkSpill(input);
   if (ignoreNullKeys_) {
     // A null in any of the keys disables the row.
     deselectRowsWithNulls(*input, keyChannels_, activeRows_, execCtx_);
@@ -362,7 +365,10 @@ bool GroupingSet::getOutput(
   if (isGlobal_) {
     return getGlobalAggregationOutput(batchSize, isPartial, iterator, result);
   }
-
+  if (spiller_) {
+    return getOutputWithSpill(batchSize, result);
+  }
+  
   // @lint-ignore CLANGTIDY
   char* groups[batchSize];
   int32_t numGroups =
@@ -411,5 +417,142 @@ uint64_t GroupingSet::allocatedBytes() const {
 const HashLookup& GroupingSet::hashLookup() const {
   return *lookup_;
 }
+void GroupingSet::checkSpill(const RowVectorPtr& input) {
+  if (!spillThreshold_ || !table_ ||
+      table_->allocatedBytes() < spillThreshold_) {
+    return;
+  }
+  auto maxSize = maxSerializedSize(input);
+  auto [rows, bytes] = table_->rows()->freeSpace();
+  if (rows > input->size() && bytes > maxSize) {
+    return;
+  }
+  if (!spill_) {
+    auto queryCtx = driverCtx_->execCtx->queryCtx();
+    auto path = fmt::format(
+        "{}-{}-{}-",
+        queryCtx->spillFilePath(),
+        process::getProcessId(),
+        SpillState::spillFileId());
+    spill_ = std::make_unique<SpillState>(
+        table_->rows()->spillType(),
+        path,
+        HashBitField{29, 32},
+        queryCtx->spillFileSize(),
+        200000,
+        *driverCtx_->execCtx->pool(),
+        queryCtx->mappedMemory());
+  }
+  table_->rows()->spill(
+      *spill_,
+      input->size(),
+      maxSize,
+      spillIterator_,
+      [&](folly::Range<char**> rows) { table_->erase(rows); });
+}
 
+
+  void GroupingSet::getOutputWithSpill(int32_t batchSize, VectorPtr* result) {
+  if (outputPartition_ == -1) {
+    std::vector<TypePtr> keyTypes;
+    for (auto& hasher : table_->hashers()) {
+      keyTypes.push_back(hasher->type());
+    }
+    mergeRows_ = std::make_unique<RowContainer>(
+        keyTypes,
+        !ignoreNullKeys_,
+        aggregates_,
+        std::vector<TypePtr>(),
+        false,
+        false,
+        false,
+        false,
+        driverCtx_->execCtx->queryCtx()->mappedMemory(),
+        ContainerRowSerde::instance());
+    outputPartition_ = 0;
+    spill_->finishWrite();
+    table_->rows()->clearSpillRuns();
+    spillIterator_.reset();
+    table_->rows()->fillSpillRuns(
+        *spill_,
+        nullptr,
+        spillIterator_,
+        RowContainer::kUnlimited,
+        &nonSpilledRows_);
+  }
+
+  if (nonSpilledIndex_ < nonSpilledRows_.size()) {
+    uint64_t bytes = 0;
+    vector_size_t numGroups = 0;
+    auto limit =
+        std::min<size_t>(1000, nonSpilledRows_.size() - nonSpilledIndex_);
+    for (; numGroups < limit; ++numGroups) {
+      bytes += table_->rows()->rowSize(
+          nonSpilledRows_[nonSpilledIndex_ + numGroups]);
+      if (bytes > maxBatchBytes_) {
+        ++numGroups;
+        break;
+      }
+    }
+    extractGroups(
+        nonSpilledRows_.data() + nonSpilledIndex_, numGroups, false, result);
+    nonSpilledIndex_ += numGroups;
+    return true;
+  }
+  while (outputPartition_ < spill_->numWays()) {
+    if (!merge_) {
+      merge_ = spill_->startMerge(
+          outputPartition_,
+          table_->rows()->spillStreamOverRows(
+              outputPartition_, *driverCtx_->execCtx->pool()));
+    }
+    if (!mergeNext(result)) {
+      ++outputPartition_;
+      merge_ = nullptr;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool GroupingSet::mergeNext(RowVectorPtr& result) {
+  if (mergeSelection_.size() < 64) {
+    mergeSelection_.resize(64);
+    mergeSelection_.clearAll();
+  }
+  for (;;) {
+    auto next =
+        merge_->next([&](const VectorRow& left, const VectorRow& right) {
+          return SpillState::compareSpilled(left, right, keyChannels_.size());
+        });
+    if (!next.has_value()) {
+      extractSpillResult(result);
+      mergeState_ = nullptr;
+      return result->size() > 0;
+    }
+    if (!mergeState_) {
+      mergeState_ = mergeRows_->newRow();
+      initializeRow(next.value(), mergeState_);
+      updateRow(next.value(), mergeState_);
+    } else if (isSameKey(next.value(), mergeState_)) {
+      updateRow(next.value(), mergeState_);
+    } else {
+      bool isFull = false;
+      if (mergeRows_->allocatedBytes() > 1 << 20) {
+        extractSpillResult(result);
+        isFull = true;
+      }
+      mergeState_ = mergeRows_->newRow();
+      initializeRow(next.value(), mergeState_);
+      updateRow(next.value(), mergeState_);
+      if (isFull) {
+        return true;
+      }
+    }
+  }
+}
+
+
+  
 } // namespace facebook::velox::exec

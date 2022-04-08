@@ -17,7 +17,10 @@
 
 #include "velox/exec/AggregationMasks.h"
 #include "velox/exec/HashTable.h"
+#include "velox/exec/Spill.h"
+#include "velox/exec/TreeOfLosers.h"
 #include "velox/exec/VectorHasher.h"
+
 
 namespace facebook::velox::exec {
 
@@ -33,6 +36,7 @@ class GroupingSet {
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
       bool ignoreNullKeys,
+      bool isPartial,
       bool isRawInput,
       OperatorCtx* driverCtx);
 
@@ -86,6 +90,26 @@ class GroupingSet {
   // index for this aggregation), otherwise it returns reference to activeRows_.
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
+  void checkSpill(const RowVectorPtr& input);
+
+  int32_t
+  listRowsNoSpill(RowContainerIterator* iterator, int32_t maxRows, char** rows);
+
+  void extractGroups(
+      char** groups,
+      int32_t numGroups,
+      bool isPartial,
+      RowVectorPtr& result);
+
+  bool getSpilledOutput(RowVectorPtr result);
+  bool mergeNext(RowVectorPtr& result);
+  int32_t compareSpilled(VectorRow left, VectorRow right);
+  void initializeRow(VectorRow& keys, char* row);
+  bool isSameKey(VectorRow key, char* row);
+  void updateRow(VectorRow& keys, char* row);
+  void extractSpillResult(RowVectorPtr& result);
+
+  
   std::vector<ChannelIndex> keyChannels_;
 
   /// A subset of grouping keys on which the input is clustered.
@@ -93,6 +117,7 @@ class GroupingSet {
 
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   const bool isGlobal_;
+  const bool isPartial_;
   const bool isRawInput_;
   std::vector<std::unique_ptr<Aggregate>> aggregates_;
   AggregationMasks masks_;
@@ -138,6 +163,41 @@ class GroupingSet {
   /// The value of mayPushdown flag specified in addInput() for the
   /// 'remainingInput_'.
   bool remainingMayPushdown_;
+
+  uint64_t spillThreshold_ = 0;
+  uint64_t maxBatchBytes_;
+
+  // Intermediate types of aggregates. Used for spilling
+  std::vector<TypePtr> intermediateTypes_;
+
+  std::unique_ptr<Spiller> spill_;
+  std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
+  RowContainerIterator spillIterator_;
+
+  // Container for materializing batches of output from spilling.
+  std::unique_ptr<RowContainer> mergeRows_;
+
+  // The row with the current merge state, allocated from 'mergeRow_'.
+  char* mergeState_ = nullptr;
+
+  // The currently running spill partition in producing spilld output.
+  int32_t outputPartition_{-1};
+
+  // Intermediate vector for passing arguments to aggregate in merging spill.
+  std::vector<VectorPtr> mergeArgs_;
+
+  // Indicates the element in mergeArgs_[0] that corresponds to the accumulator to merge.
+  SelectivityVector mergeSelection_;
+
+  // True if 'merge_' indicates that the next key is the same as the current one.
+  bool nextKeyIsEqual_{false};
+  
+  // The set of rows that are outside of the spillable hash number
+  // ranges. Used when producing output.
+  std::vector<char*> nonSpilledRows_;
+
+  // Index of first in 'nonSpilledRows_' that has not been added to output.
+  size_t nonSpilledIndex_ = 0;
 };
 
 } // namespace facebook::velox::exec

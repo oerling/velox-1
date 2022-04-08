@@ -203,6 +203,12 @@ class Aggregate {
       const std::vector<TypePtr>& argTypes,
       const TypePtr& resultType);
 
+  // Returns the intermediate type for 'name' with 'argTypes'. Throws
+  // if 'name' is not registered or the type cannot be resolved.
+  TypePtr intermediateType(
+    const std::string& name,
+    const std::vector<TypePtr>& argTypes);
+  
  protected:
   bool isNull(char* group) const {
     return numNulls_ && (group[nullByte_] & nullMask_);
