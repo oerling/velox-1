@@ -14,10 +14,11 @@
 
 # for generated headers
 
-add_library(velox_s3fs S3FileSystem.cpp)
+add_library(velox_s3fs S3FileSystem.cpp S3Util.cpp)
 target_include_directories(velox_s3fs PUBLIC ${AWSSDK_INCLUDE_DIRS})
 target_link_libraries(velox_s3fs ${AWSSDK_LIBRARIES})
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
+  add_subdirectory(benchmark)
 endif()

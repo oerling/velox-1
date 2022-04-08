@@ -185,18 +185,32 @@ class OperatorCtx {
   velox::memory::MemoryPool* pool_;
 
   // These members are created on demand.
-  mutable std::shared_ptr<memory::MappedMemory> mappedMemory_;
+  mutable memory::MappedMemory* mappedMemory_{nullptr};
 };
 
 // Query operator
 class Operator {
  public:
-  // Function for mapping a user-registered PlanNode into the corresponding
+  // Factory class for mapping a user-registered PlanNode into the corresponding
   // Operator.
-  using PlanNodeTranslator = std::function<std::unique_ptr<Operator>(
-      DriverCtx* ctx,
-      int32_t id,
-      const std::shared_ptr<const core::PlanNode>& node)>;
+  class PlanNodeTranslator {
+   public:
+    virtual ~PlanNodeTranslator() = default;
+
+    // Translates plan node to operator. Returns nullptr if the plan node cannot
+    // be handled by this factory.
+    virtual std::unique_ptr<Operator> translate(
+        DriverCtx* ctx,
+        int32_t id,
+        const std::shared_ptr<const core::PlanNode>& node) = 0;
+
+    // Returns max driver count for the plan node. Returns std::nullopt if the
+    // plan node cannot be handled by this factory.
+    virtual std::optional<uint32_t> maxDrivers(
+        const std::shared_ptr<const core::PlanNode>& /* node */) {
+      return std::nullopt;
+    }
+  };
 
   // 'operatorId' is the initial index of the 'this' in the Driver's
   // list of Operators. This is used as in index into OperatorStats
@@ -219,24 +233,28 @@ class Operator {
 
   virtual ~Operator() = default;
 
-  // Returns true if can accept input.
+  // Returns true if 'this' can accept input. Not used if operator is a source
+  // operator, e.g. the first operator in the pipeline.
   virtual bool needsInput() const = 0;
 
-  // Adds input.
+  // Adds input. Not used if operator is a source operator, e.g. the first
+  // operator in the pipeline.
   virtual void addInput(RowVectorPtr input) = 0;
-
-  // Returns a RowVector with the result columns. Returns nullptr if
-  // no more output can be produced without more input or if blocked
-  // for outside cause. isBlocked distinguishes between the
-  // cases.
-  virtual RowVectorPtr getOutput() = 0;
 
   // Informs 'this' that addInput will no longer be called. This means
   // that any partial state kept by 'this' should be returned by
-  // the next call(s) to getOutput.
-  virtual void finish() {
-    isFinishing_ = true;
+  // the next call(s) to getOutput. Not used if operator is a source operator,
+  // e.g. the first operator in the pipeline.
+  virtual void noMoreInput() {
+    noMoreInput_ = true;
   }
+
+  // Returns a RowVector with the result columns. Returns nullptr if
+  // no more output can be produced without more input or if blocked
+  // for outside causes. isBlocked distinguishes between the
+  // cases. Sink operator, e.g. the last operator in the pipeline, must return
+  // nullptr and pass results to the consumer through a custom mechanism.
+  virtual RowVectorPtr getOutput() = 0;
 
   // Returns kNotBlocked if 'this' is not prevented from
   // advancing. Otherwise, returns a reason and sets 'future' to a
@@ -245,9 +263,12 @@ class Operator {
   // another call.
   virtual BlockingReason isBlocked(ContinueFuture* future) = 0;
 
-  virtual bool isFinishing() {
-    return isFinishing_;
-  }
+  // Returns true if completely finished processing and no more output will be
+  // produced. Some operators may finish early before receiving all input and
+  // noMoreInput() message. For example, Limit operator finishes as soon as it
+  // receives specified number of rows and HashProbe finishes early if the build
+  // side is empty.
+  virtual bool isFinished() = 0;
 
   // Returns single-column dynamically generated filters to be pushed down to
   // upstream operators. Used to push down filters on join keys from broadcast
@@ -322,9 +343,7 @@ class Operator {
 
   // Registers 'translator' for mapping user defined PlanNode subclass instances
   // to user-defined Operators.
-  static void registerOperator(PlanNodeTranslator translator) {
-    translators().emplace_back(std::move(translator));
-  }
+  static void registerOperator(std::unique_ptr<PlanNodeTranslator> translator);
 
   // Calls all the registered PlanNodeTranslators on 'planNode' and
   // returns the result of the first one that returns non-nullptr
@@ -334,8 +353,13 @@ class Operator {
       int32_t id,
       const std::shared_ptr<const core::PlanNode>& planNode);
 
+  // Calls `maxDrivers` on all the registered PlanNodeTranslators and returns
+  // the first one that is not std::nullopt or std::nullopt otherwise.
+  static std::optional<uint32_t> maxDrivers(
+      const std::shared_ptr<const core::PlanNode>& planNode);
+
  protected:
-  static std::vector<PlanNodeTranslator>& translators();
+  static std::vector<std::unique_ptr<PlanNodeTranslator>>& translators();
 
   // Clears the columns of 'output_' that are projected from
   // 'input_'. This should be done when preparing to produce a next
@@ -375,7 +399,7 @@ class Operator {
   // from 'input_' and from 'results_'. Reused if singly referenced.
   RowVectorPtr output_;
 
-  bool isFinishing_ = false;
+  bool noMoreInput_ = false;
   std::vector<IdentityProjection> identityProjections_;
   std::vector<VectorPtr> results_;
 
@@ -430,7 +454,11 @@ class SourceOperator : public Operator {
   }
 
   void addInput(RowVectorPtr /* unused */) override {
-    VELOX_CHECK(false, "SourceOperator does not support addInput()");
+    VELOX_FAIL("SourceOperator does not support addInput()");
+  }
+
+  void noMoreInput() override {
+    VELOX_FAIL("SourceOperator does not support noMoreInput()");
   }
 };
 

@@ -32,16 +32,19 @@ class HashAggregation : public Operator {
   RowVectorPtr getOutput() override;
 
   bool needsInput() const override {
-    return !isFinishing_ && !partialFull_;
+    return !noMoreInput_ && !partialFull_;
   }
 
-  void finish() override {
-    Operator::finish();
+  void noMoreInput() override {
+    groupingSet_->noMoreInput();
+    Operator::noMoreInput();
   }
 
   BlockingReason isBlocked(ContinueFuture* /* unused */) override {
     return BlockingReason::kNotBlocked;
   }
+
+  bool isFinished() override;
 
   void close() override {
     Operator::close();
@@ -49,19 +52,27 @@ class HashAggregation : public Operator {
   }
 
  private:
-  static constexpr int32_t kOutputBatchSize = 10'000;
+  /// Maximum number of rows in the output batch.
+  const uint32_t outputBatchSize_;
 
-  std::unique_ptr<GroupingSet> groupingSet_;
+  const int64_t maxPartialAggregationMemoryUsage_;
+
   const bool isPartialOutput_;
   const bool isDistinct_;
   const bool isGlobal_;
-  const int64_t maxPartialAggregationMemoryUsage_;
+  const bool hasPreGroupedKeys_;
+
+  std::unique_ptr<GroupingSet> groupingSet_;
+
   bool partialFull_ = false;
   bool newDistincts_ = false;
   bool finished_ = false;
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;
   bool mayPushdown_ = false;
+
+  // Intermediate types of aggregates. Used for spilling
+  std::vector<TypePtr> intermediateTypes_;
 };
 
 } // namespace facebook::velox::exec

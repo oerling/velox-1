@@ -17,6 +17,8 @@
 
 #include <gmock/gmock.h>
 
+#include <velox/common/base/VeloxException.h>
+#include <velox/vector/SimpleVector.h>
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 
 namespace facebook::velox {
@@ -53,17 +55,17 @@ class ArithmeticTest : public functions::test::FunctionBaseTest {
     }
   }
 
-  template <typename T>
+  template <typename T, typename U = T, typename V = T>
   void assertError(
       const std::string& expression,
       const std::vector<T>& arg0,
-      const std::vector<T>& arg1,
+      const std::vector<U>& arg1,
       const std::string& errorMessage) {
     auto vector0 = makeFlatVector(arg0);
     auto vector1 = makeFlatVector(arg1);
 
     try {
-      evaluate<SimpleVector<T>>(expression, makeRowVector({vector0, vector1}));
+      evaluate<SimpleVector<V>>(expression, makeRowVector({vector0, vector1}));
       ASSERT_TRUE(false) << "Expected an error";
     } catch (const std::exception& e) {
       ASSERT_TRUE(
@@ -91,29 +93,29 @@ __attribute__((__no_sanitize__("float-divide-by-zero")))
       "c0 / c1", {10.5, 9.2, 0.0}, {2, 0, 0}, {5.25, kInf, kNan});
 }
 
-TEST_F(ArithmeticTest, modulus) {
+TEST_F(ArithmeticTest, mod) {
   std::vector<double> numerDouble = {0, 6, 0, -7, -1, -9, 9, 10.1};
   std::vector<double> denomDouble = {1, 2, -1, 3, -1, -3, -3, -99.9};
   std::vector<double> expectedDouble = {0, 0, 0, -1, 0, 0, 0, 10.1};
 
   // Check using function name and alias.
   assertExpression<double>(
-      "modulus(c0, c1)", numerDouble, denomDouble, expectedDouble);
+      "mod(c0, c1)", numerDouble, denomDouble, expectedDouble);
   assertExpression<double>(
-      "modulus(c0, c1)",
+      "mod(c0, c1)",
       {5.1, kNan, 5.1, kInf, 5.1},
       {0.0, 5.1, kNan, 5.1, kInf},
       {kNan, kNan, kNan, kNan, 5.1});
 }
 
-TEST_F(ArithmeticTest, modulusInt) {
+TEST_F(ArithmeticTest, modInt) {
   std::vector<int64_t> numerInt = {9, 10, 0, -9, -10, -11};
   std::vector<int64_t> denomInt = {3, -3, 11, -1, 199999, 77};
   std::vector<int64_t> expectedInt = {0, 1, 0, 0, -10, -11};
 
   assertExpression<int64_t, int64_t>(
-      "modulus(c0, c1)", numerInt, denomInt, expectedInt);
-  assertError<int64_t>("modulus(c0, c1)", {10}, {0}, "Cannot divide by 0");
+      "mod(c0, c1)", numerInt, denomInt, expectedInt);
+  assertError<int64_t>("mod(c0, c1)", {10}, {0}, "Cannot divide by 0");
 }
 
 TEST_F(ArithmeticTest, power) {
@@ -468,6 +470,106 @@ TEST_F(ArithmeticTest, nan) {
   };
 
   EXPECT_EQ(true, std::isnan(nan().value()));
+}
+
+TEST_F(ArithmeticTest, fromBase) {
+  const auto fromBase = [&](const std::optional<StringView>& a,
+                            std::optional<int64_t> b) {
+    return evaluateOnce<int64_t>("from_base(c0, c1)", a, b);
+  };
+
+  EXPECT_EQ(12, fromBase("12"_sv, 10));
+  EXPECT_EQ(12, fromBase("+12"_sv, 10));
+  EXPECT_EQ(-12, fromBase("-12"_sv, 10));
+  EXPECT_EQ(26, fromBase("1a"_sv, 16));
+  EXPECT_EQ(3, fromBase("11"_sv, 2));
+  EXPECT_EQ(71, fromBase("1z"_sv, 36));
+  EXPECT_EQ(
+      9223372036854775807,
+      fromBase(
+          "111111111111111111111111111111111111111111111111111111111111111"_sv,
+          2));
+
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)", {"0"_sv}, {1}, "Radix must be between 2 and 36.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)", {"0"_sv}, {37}, "Radix must be between 2 and 36.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"0x12"_sv},
+      {16},
+      "Not a valid base-16 number: 0x12.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)", {""_sv}, {10}, "Not a valid base-10 number: .");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {" 12"_sv},
+      {16},
+      "Not a valid base-16 number:  12.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"123xy"_sv},
+      {10},
+      "Not a valid base-10 number: 123xy.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"123456789012xy"_sv},
+      {10},
+      "Not a valid base-10 number: 123456789012xy.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"abc12"_sv},
+      {10},
+      "Not a valid base-10 number: abc12.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"9223372036854775808"_sv},
+      {10},
+      "9223372036854775808 is out of range.");
+  assertError<StringView, int64_t, int64_t>(
+      "from_base(c0, c1)",
+      {"1111111111111111111111111111111111111111111111111111111111111111111111"_sv},
+      {2},
+      "1111111111111111111111111111111111111111111111111111111111111111111111 is out of range.");
+}
+
+TEST_F(ArithmeticTest, toBase) {
+  const auto to_base = [&](std::optional<int64_t> value,
+                           std::optional<int64_t> radix) {
+    auto valueVector = makeNullableFlatVector<int64_t>(
+        std::vector<std::optional<int64_t>>{value});
+    auto radixVector = makeNullableFlatVector<int64_t>(
+        std::vector<std::optional<int64_t>>{radix});
+    auto result = evaluate<SimpleVector<StringView>>(
+        "to_base(c0, c1)", makeRowVector({valueVector, radixVector}));
+    return result->valueAt(0).getString();
+  };
+
+  for (auto i = 0; i < 10; i++) {
+    std::string expected(1, (char)((int)'0' + i));
+    EXPECT_EQ(expected, to_base(i, 36));
+  }
+
+  for (auto i = 10; i < 36; i++) {
+    std::string expected(1, (char)((int)'a' + i - 10));
+    EXPECT_EQ(expected, to_base(i, 36));
+  }
+
+  EXPECT_EQ("110111111010", to_base(3578, 2));
+  EXPECT_EQ("313322", to_base(3578, 4));
+  EXPECT_EQ("6772", to_base(3578, 8));
+  EXPECT_EQ("20a2", to_base(3578, 12));
+  EXPECT_EQ("-20a2", to_base(-3578, 12));
+
+  ASSERT_THROW(to_base(1, 37), velox::VeloxUserError);
+}
+
+TEST_F(ArithmeticTest, pi) {
+  const auto piValue = [&]() {
+    return evaluateOnce<double>("pi()", makeRowVector(ROW({}), 1));
+  };
+
+  EXPECT_EQ(piValue(), M_PI);
 }
 
 } // namespace

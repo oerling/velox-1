@@ -543,6 +543,7 @@ TEST_F(DecodedVectorTest, wrapOnDictionaryEncoding) {
 
 TEST_F(DecodedVectorTest, wrapOnConstantEncoding) {
   const int kSize = 12;
+  // non-null
   auto intVector =
       vectorMaker_->flatVector<int32_t>(kSize, [](auto row) { return row; });
   auto rowVector = vectorMaker_->rowVector({intVector});
@@ -554,6 +555,41 @@ TEST_F(DecodedVectorTest, wrapOnConstantEncoding) {
     ASSERT_TRUE(
         wrappedVector->equalValueAt(intVector.get(), i, decoded.index(i)));
   }
+
+  // null with empty size children
+  intVector = vectorMaker_->flatVector<int32_t>(
+      0 /*size*/, [](auto row) { return row; });
+  rowVector = std::make_shared<RowVector>(
+      pool_.get(),
+      rowVector->type(),
+      nullsBuffer(kSize, VectorMaker::nullEvery(1)),
+      kSize,
+      std::vector<VectorPtr>{intVector});
+  constantVector = BaseVector::wrapInConstant(kSize, 1, rowVector);
+  decoded.decode(*constantVector, allRows);
+  wrappedVector = decoded.wrap(intVector, *constantVector, allRows);
+  for (auto i = 0; i < kSize; i++) {
+    ASSERT_TRUE(wrappedVector->isNullAt(i));
+  }
+}
+
+TEST_F(DecodedVectorTest, noValues) {
+  // Tests decoding a flat vector that consists of all nulls and has
+  // no values() buffer.
+  constexpr vector_size_t kSize = 100;
+  auto nulls = AlignedBuffer::allocate<uint64_t>(
+      bits::nwords(kSize), pool_.get(), bits::kNull64);
+  auto vector = std::make_shared<FlatVector<int32_t>>(
+      pool_.get(),
+      std::move(nulls),
+      kSize,
+      BufferPtr(nullptr),
+      std::vector<BufferPtr>{});
+  SelectivityVector rows(kSize);
+  DecodedVector decoded;
+  decoded.decode(*vector, rows);
+  EXPECT_EQ(nullptr, decoded.data<int32_t>());
+  EXPECT_TRUE(decoded.isNullAt(kSize - 1));
 }
 
 } // namespace facebook::velox::test

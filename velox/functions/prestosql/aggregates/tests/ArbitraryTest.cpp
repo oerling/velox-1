@@ -59,9 +59,7 @@ TEST_F(ArbitraryTest, noNulls) {
   // Group by partial aggregation.
   agg = PlanBuilder()
             .values(vectors)
-            .project(
-                {"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"},
-                {"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"})
+            .project({"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"})
             .partialAggregation(
                 {0},
                 {"arbitrary(c1)",
@@ -87,14 +85,7 @@ TEST_F(ArbitraryTest, noNulls) {
                  "arbitrary(c4)",
                  "arbitrary(c5)",
                  "arbitrary(c6)"})
-            .finalAggregation(
-                {},
-                {"arbitrary(a0)",
-                 "arbitrary(a1)",
-                 "arbitrary(a2)",
-                 "arbitrary(a3)",
-                 "arbitrary(a4)",
-                 "arbitrary(a5)"})
+            .finalAggregation()
             .planNode();
   assertQuery(
       agg,
@@ -104,9 +95,7 @@ TEST_F(ArbitraryTest, noNulls) {
   // Group by final aggregation.
   agg = PlanBuilder()
             .values(vectors)
-            .project(
-                {"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"},
-                {"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"})
+            .project({"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"})
             .partialAggregation(
                 {0},
                 {"arbitrary(c1)",
@@ -115,14 +104,7 @@ TEST_F(ArbitraryTest, noNulls) {
                  "arbitrary(c4)",
                  "arbitrary(c5)",
                  "arbitrary(c6)"})
-            .finalAggregation(
-                {0},
-                {"arbitrary(a0)",
-                 "arbitrary(a1)",
-                 "arbitrary(a2)",
-                 "arbitrary(a3)",
-                 "arbitrary(a4)",
-                 "arbitrary(a5)"})
+            .finalAggregation()
             .planNode();
   assertQuery(
       agg,
@@ -133,9 +115,7 @@ TEST_F(ArbitraryTest, noNulls) {
   agg = PlanBuilder()
             .values(vectors)
             .filter("c0 % 2 = 0")
-            .project(
-                {"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"},
-                {"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"})
+            .project({"c0 % 10", "c1", "c2", "c3", "c4", "c5", "c6"})
             .partialAggregation(
                 {0},
                 {"arbitrary(c1)",
@@ -205,7 +185,7 @@ TEST_F(ArbitraryTest, nulls) {
   agg = PlanBuilder()
             .values(vectors)
             .partialAggregation({}, {"arbitrary(c1)", "arbitrary(c2)"})
-            .finalAggregation({}, {"arbitrary(a0)", "arbitrary(a1)"})
+            .finalAggregation()
             .planNode();
   assertQuery(agg, "SELECT * FROM( VALUES (4, 0.50)) AS t");
 
@@ -213,7 +193,7 @@ TEST_F(ArbitraryTest, nulls) {
   agg = PlanBuilder()
             .values(vectors)
             .partialAggregation({0}, {"arbitrary(c1)", "arbitrary(c2)"})
-            .finalAggregation({0}, {"arbitrary(a0)", "arbitrary(a1)"})
+            .finalAggregation()
             .planNode();
   assertQuery(
       agg,
@@ -227,7 +207,7 @@ TEST_F(ArbitraryTest, varchar) {
 
   auto op = PlanBuilder()
                 .values(vectors)
-                .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+                .project({"c0 % 11", "c1"})
                 .partialAggregation({0}, {"arbitrary(c1)"})
                 .planNode();
 
@@ -245,7 +225,7 @@ TEST_F(ArbitraryTest, varchar) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c0 % 2 = 0")
-           .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+           .project({"c0 % 11", "c1"})
            .partialAggregation({0}, {"arbitrary(c1)"})
            .planNode();
 
@@ -274,14 +254,14 @@ TEST_F(ArbitraryTest, varcharConstAndNulls) {
   auto op = PlanBuilder()
                 .values(vectors)
                 .partialAggregation({}, {"arbitrary(c1)", "arbitrary(c2)"})
-                .finalAggregation({}, {"arbitrary(a0)", "arbitrary(a1)"})
+                .finalAggregation()
                 .planNode();
   assertQuery(op, "SELECT first(c1), first(c2) FROM tmp");
 
   op = PlanBuilder()
            .values(vectors)
            .partialAggregation({0}, {"arbitrary(c1)", "arbitrary(c2)"})
-           .finalAggregation({0}, {"arbitrary(a0)", "arbitrary(a1)"})
+           .finalAggregation()
            .planNode();
   assertQuery(op, "SELECT c0, first(c1), first(c2) FROM tmp group by c0");
 }
@@ -297,14 +277,14 @@ TEST_F(ArbitraryTest, numericConstAndNulls) {
   auto op = PlanBuilder()
                 .values(vectors)
                 .partialAggregation({}, {"arbitrary(c1)", "arbitrary(c2)"})
-                .finalAggregation({}, {"arbitrary(a0)", "arbitrary(a1)"})
+                .finalAggregation()
                 .planNode();
   assertQuery(op, "SELECT first(c1), first(c2) FROM tmp");
 
   op = PlanBuilder()
            .values(vectors)
            .partialAggregation({0}, {"arbitrary(c1)", "arbitrary(c2)"})
-           .finalAggregation({0}, {"arbitrary(a0)", "arbitrary(a1)"})
+           .finalAggregation()
            .planNode();
   assertQuery(op, "SELECT c0, first(c1), first(c2) FROM tmp group by c0");
 }

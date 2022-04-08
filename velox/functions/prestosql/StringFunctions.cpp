@@ -26,42 +26,6 @@
 namespace facebook::velox::functions {
 
 using namespace stringCore;
-namespace {
-
-/// Check if the input vector's  buffers are single referenced
-bool hasSingleReferencedBuffers(const FlatVector<StringView>* vec) {
-  for (auto& buffer : vec->stringBuffers()) {
-    if (buffer->refCount() > 1) {
-      return false;
-    }
-  }
-  return true;
-};
-} // namespace
-
-/// Helper function that prepares a string result vector and initializes it.
-/// It will use the input argToReuse vector instead of creating new one when
-/// possible. Returns true if argToReuse vector was moved to results
-VectorPtr emptyVectorPtr;
-bool prepareFlatResultsVector(
-    VectorPtr* result,
-    const SelectivityVector& rows,
-    exec::EvalCtx* context,
-    VectorPtr& argToReuse = emptyVectorPtr) {
-  if (!*result && argToReuse && argToReuse.unique()) {
-    // Move input vector to result
-    VELOX_CHECK(
-        argToReuse.get()->encoding() == VectorEncoding::Simple::FLAT &&
-        argToReuse.get()->typeKind() == TypeKind::VARCHAR);
-    *result = std::move(argToReuse);
-    return true;
-  }
-  // This will allocate results if not allocated
-  BaseVector::ensureWritable(rows, VARCHAR(), context->pool(), result);
-
-  VELOX_CHECK_EQ((*result).get()->encoding(), VectorEncoding::Simple::FLAT);
-  return false;
-}
 
 namespace {
 /**
@@ -133,21 +97,16 @@ class UpperLowerTemplateFunction : public exec::VectorFunction {
 
     auto ascii = isAscii(inputStringsVector, rows);
 
-    bool inPlace = ascii &&
-        (inputStringsVector->encoding() == VectorEncoding::Simple::FLAT) &&
-        hasSingleReferencedBuffers(
-                       args.at(0).get()->as<FlatVector<StringView>>());
+    bool tryInplace = ascii &&
+        (inputStringsVector->encoding() == VectorEncoding::Simple::FLAT);
+
+    bool inputVectorMoved =
+        prepareFlatResultsVector(result, rows, context, args.at(0));
+
+    bool inPlace = tryInplace && inputVectorMoved;
 
     if (inPlace) {
-      bool inputVectorMoved =
-          prepareFlatResultsVector(result, rows, context, args.at(0));
       auto* resultFlatVector = (*result)->as<FlatVector<StringView>>();
-
-      // Move string buffers references to the output vector if we are reusing
-      // them and they are not already moved
-      if (!inputVectorMoved) {
-        resultFlatVector->acquireSharedStringBuffers(inputStringsVector);
-      }
 
       applyInternalInPlace(rows, decodedInput, resultFlatVector);
       return;
@@ -457,27 +416,24 @@ class Replace : public exec::VectorFunction {
     };
 
     // Right now we enable the inplace if 'search' and 'replace' are constants
-    // and 'search' size is smaller than or equal to 'replace'.
+    // and 'search' size is larger than or equal to 'replace' and if the input
+    // vector is reused.
 
     // TODO: analyze other options for enabling inplace i.e.:
     // 1. Decide per row.
     // 2. Scan inputs for max lengths and decide based on that. ..etc
-    bool inPlace = replaceArgValue.has_value() && searchArgValue.has_value() &&
-        (searchArgValue.value().size() <= replaceArgValue.value().size()) &&
-        (args.at(0)->encoding() == VectorEncoding::Simple::FLAT) &&
-        hasSingleReferencedBuffers(
-                       args.at(0).get()->as<FlatVector<StringView>>());
+    bool tryInplace = replaceArgValue.has_value() &&
+        searchArgValue.has_value() &&
+        (searchArgValue.value().size() >= replaceArgValue.value().size()) &&
+        (args.at(0)->encoding() == VectorEncoding::Simple::FLAT);
+
+    bool inputVectorMoved =
+        prepareFlatResultsVector(result, rows, context, args.at(0));
+
+    bool inPlace = tryInplace && inputVectorMoved;
 
     if (inPlace) {
-      bool inputVectorMoved =
-          prepareFlatResultsVector(result, rows, context, args.at(0));
       auto* resultFlatVector = (*result)->as<FlatVector<StringView>>();
-
-      // Move string buffers references to the output vector if we are reusing
-      // them and they are not already moved.
-      if (!inputVectorMoved) {
-        resultFlatVector->acquireSharedStringBuffers(args.at(0).get());
-      }
       applyInPlace(
           stringReader, searchReader, replaceReader, rows, resultFlatVector);
       return;

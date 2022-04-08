@@ -27,7 +27,9 @@ CrossJoinProbe::CrossJoinProbe(
           joinNode->outputType(),
           operatorId,
           joinNode->id(),
-          "CrossJoinProbe") {
+          "CrossJoinProbe"),
+      outputBatchSize_{
+          driverCtx->execCtx->queryCtx()->config().preferredOutputBatchSize()} {
   bool isIdentityProjection = true;
 
   auto probeType = joinNode->sources()[0]->outputType();
@@ -60,9 +62,11 @@ BlockingReason CrossJoinProbe::isBlocked(ContinueFuture* future) {
     return BlockingReason::kNotBlocked;
   }
 
-  auto buildData = operatorCtx_->task()
-                       ->getCrossJoinBridge(planNodeId())
-                       ->dataOrFuture(future);
+  auto buildData =
+      operatorCtx_->task()
+          ->getCrossJoinBridge(
+              operatorCtx_->driverCtx()->splitGroupId, planNodeId())
+          ->dataOrFuture(future);
   if (!buildData.has_value()) {
     return BlockingReason::kWaitForJoinBuild;
   }
@@ -72,7 +76,7 @@ BlockingReason CrossJoinProbe::isBlocked(ContinueFuture* future) {
   if (buildData_->empty()) {
     // Build side is empty. Return empty set of rows and  terminate the pipeline
     // early.
-    isFinishing_ = true;
+    buildSideEmpty_ = true;
   }
 
   return BlockingReason::kNotBlocked;
@@ -95,15 +99,13 @@ RowVectorPtr CrossJoinProbe::getOutput() {
 
   const auto inputSize = input_->size();
 
-  // TODO Use query-level configuration property.
-  static const vector_size_t kOutputBatchSize = 1'000;
-
   auto buildSize = buildData_.value()[buildIndex_]->size();
   vector_size_t probeCnt;
-  if (buildSize > kOutputBatchSize) {
+  if (buildSize > outputBatchSize_) {
     probeCnt = 1;
   } else {
-    probeCnt = std::min(kOutputBatchSize / buildSize, inputSize - probeRow_);
+    probeCnt = std::min(
+        (vector_size_t)outputBatchSize_ / buildSize, inputSize - probeRow_);
   }
 
   auto size = probeCnt * buildSize;
@@ -151,6 +153,10 @@ RowVectorPtr CrossJoinProbe::getOutput() {
     }
   }
   return output;
+}
+
+bool CrossJoinProbe::isFinished() {
+  return buildSideEmpty_ || (noMoreInput_ && input_ == nullptr);
 }
 
 void CrossJoinProbe::close() {

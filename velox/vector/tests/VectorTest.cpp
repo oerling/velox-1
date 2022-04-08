@@ -17,12 +17,14 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <stdio.h>
+#include "velox/common/memory/ByteStream.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/BiasVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/LazyVector.h"
+#include "velox/vector/VectorTypeUtils.h"
 #include "velox/vector/tests/VectorMaker.h"
 
 using namespace facebook::velox;
@@ -695,8 +697,10 @@ class VectorTest : public testing::Test {
             oddIndices.size() - oddIndices.size() / 2));
     std::stringstream evenStream;
     std::stringstream oddStream;
-    even.flush(&evenStream);
-    odd.flush(&oddStream);
+    OutputStream eventOutputStream(&evenStream);
+    OutputStream oddOutputStream(&oddStream);
+    even.flush(&eventOutputStream);
+    odd.flush(&oddOutputStream);
     ByteStream input;
     auto evenString = evenStream.str();
     checkSizes(source.get(), evenSizes, evenString);
@@ -1134,11 +1138,9 @@ TEST_F(VectorTest, compareNan) {
 class VectorCreateConstantTest : public VectorTest {
  public:
   template <TypeKind KIND>
-  void testCreateConstant(
-      std::optional<typename TypeTraits<KIND>::NativeType> val) {
+  void testPrimitiveConstant(typename TypeTraits<KIND>::NativeType val) {
     using TCpp = typename TypeTraits<KIND>::NativeType;
-    auto var = (val == std::nullopt) ? variant::null(KIND)
-                                     : variant::create<KIND>(*val);
+    auto var = variant::create<KIND>(val);
 
     auto baseVector = BaseVector::createConstant(var, size_, pool_.get());
     auto simpleVector = baseVector->template as<SimpleVector<TCpp>>();
@@ -1149,9 +1151,7 @@ class VectorCreateConstantTest : public VectorTest {
     ASSERT_TRUE(simpleVector->isScalar());
 
     for (auto i = 0; i < simpleVector->size(); i++) {
-      if (var.isNull()) {
-        ASSERT_TRUE(simpleVector->isNullAt(i));
-      } else if constexpr (std::is_same<TCpp, StringView>::value) {
+      if constexpr (std::is_same<TCpp, StringView>::value) {
         ASSERT_EQ(
             var.template value<KIND>(), std::string(simpleVector->valueAt(i)));
       } else {
@@ -1165,6 +1165,60 @@ class VectorCreateConstantTest : public VectorTest {
         baseVector->toString(0),
         size_);
     EXPECT_EQ(expectedStr, baseVector->toString());
+    for (auto i = 1; i < baseVector->size(); ++i) {
+      EXPECT_EQ(baseVector->toString(0), baseVector->toString(i));
+    }
+  }
+
+  template <TypeKind KIND>
+  void testComplexConstant(const TypePtr& type, const VectorPtr& vector) {
+    ASSERT_EQ(KIND, type->kind());
+    auto baseVector = BaseVector::wrapInConstant(size_, 0, vector);
+    auto simpleVector = baseVector->template as<
+        SimpleVector<typename KindToFlatVector<KIND>::WrapperType>>();
+    ASSERT_TRUE(simpleVector != nullptr);
+
+    ASSERT_EQ(KIND, simpleVector->typeKind());
+    ASSERT_EQ(size_, simpleVector->size());
+    ASSERT_FALSE(simpleVector->isScalar());
+
+    for (auto i = 0; i < simpleVector->size(); i++) {
+      ASSERT_TRUE(vector->equalValueAt(baseVector.get(), 0, i));
+    }
+
+    auto expectedStr = fmt::format(
+        "[CONSTANT {}: {} value, {} size]",
+        type->toString(),
+        vector->toString(0),
+        size_);
+    EXPECT_EQ(expectedStr, baseVector->toString());
+    for (auto i = 1; i < baseVector->size(); ++i) {
+      EXPECT_EQ(baseVector->toString(0), baseVector->toString(i));
+    }
+  }
+
+  template <TypeKind KIND>
+  void testNullConstant(const TypePtr& type) {
+    ASSERT_EQ(KIND, type->kind());
+    auto baseVector = BaseVector::createNullConstant(type, size_, pool_.get());
+    auto simpleVector = baseVector->template as<
+        SimpleVector<typename KindToFlatVector<KIND>::WrapperType>>();
+    ASSERT_TRUE(simpleVector != nullptr);
+
+    ASSERT_EQ(KIND, simpleVector->typeKind());
+    ASSERT_EQ(size_, simpleVector->size());
+    ASSERT_EQ(simpleVector->isScalar(), TypeTraits<KIND>::isPrimitiveType);
+
+    for (auto i = 0; i < simpleVector->size(); i++) {
+      ASSERT_TRUE(simpleVector->isNullAt(i));
+    }
+
+    auto expectedStr = fmt::format(
+        "[CONSTANT {}: null value, {} size]", type->toString(), size_);
+    EXPECT_EQ(expectedStr, baseVector->toString());
+    for (auto i = 1; i < baseVector->size(); ++i) {
+      EXPECT_EQ(baseVector->toString(0), baseVector->toString(i));
+    }
   }
 
  protected:
@@ -1173,35 +1227,71 @@ class VectorCreateConstantTest : public VectorTest {
 };
 
 TEST_F(VectorCreateConstantTest, scalar) {
-  testCreateConstant<TypeKind::BIGINT>(-123456789);
-  testCreateConstant<TypeKind::INTEGER>(98765);
-  testCreateConstant<TypeKind::SMALLINT>(1234);
-  testCreateConstant<TypeKind::TINYINT>(123);
+  testPrimitiveConstant<TypeKind::BIGINT>(-123456789);
+  testPrimitiveConstant<TypeKind::INTEGER>(98765);
+  testPrimitiveConstant<TypeKind::SMALLINT>(1234);
+  testPrimitiveConstant<TypeKind::TINYINT>(123);
 
-  testCreateConstant<TypeKind::BOOLEAN>(true);
-  testCreateConstant<TypeKind::BOOLEAN>(false);
+  testPrimitiveConstant<TypeKind::BOOLEAN>(true);
+  testPrimitiveConstant<TypeKind::BOOLEAN>(false);
 
-  testCreateConstant<TypeKind::REAL>(99.98);
-  testCreateConstant<TypeKind::DOUBLE>(12.345);
+  testPrimitiveConstant<TypeKind::REAL>(99.98);
+  testPrimitiveConstant<TypeKind::DOUBLE>(12.345);
 
-  testCreateConstant<TypeKind::VARCHAR>(StringView("hello world"));
-  testCreateConstant<TypeKind::VARBINARY>(StringView("my binary buffer"));
+  testPrimitiveConstant<TypeKind::VARCHAR>(StringView("hello world"));
+  testPrimitiveConstant<TypeKind::VARBINARY>(StringView("my binary buffer"));
 }
 
-TEST_F(VectorCreateConstantTest, scalarNull) {
-  testCreateConstant<TypeKind::BIGINT>(std::nullopt);
-  testCreateConstant<TypeKind::INTEGER>(std::nullopt);
-  testCreateConstant<TypeKind::SMALLINT>(std::nullopt);
-  testCreateConstant<TypeKind::TINYINT>(std::nullopt);
+TEST_F(VectorCreateConstantTest, complex) {
+  {
+    auto type = ARRAY(INTEGER());
+    test::VectorMaker maker{pool_.get()};
+    testComplexConstant<TypeKind::ARRAY>(
+        type,
+        maker.arrayVector<int32_t>(
+            1, [](auto) { return 10; }, [](auto i) { return i; }));
+  }
+  {
+    auto type = MAP(INTEGER(), REAL());
+    test::VectorMaker maker{pool_.get()};
+    testComplexConstant<TypeKind::MAP>(
+        type,
+        maker.mapVector<int32_t, float>(
+            1,
+            [](auto) { return 10; },
+            [](auto i) { return i; },
+            [](auto i) { return i; }));
+  }
+  {
+    auto type = ROW({{"c0", INTEGER()}});
+    test::VectorMaker maker{pool_.get()};
+    testComplexConstant<TypeKind::ROW>(
+        type, maker.rowVector({maker.flatVector<int32_t>(1, [](auto i) {
+          return i;
+        })}));
+  }
+}
 
-  testCreateConstant<TypeKind::BOOLEAN>(std::nullopt);
-  testCreateConstant<TypeKind::BOOLEAN>(std::nullopt);
+TEST_F(VectorCreateConstantTest, null) {
+  testNullConstant<TypeKind::BIGINT>(BIGINT());
+  testNullConstant<TypeKind::INTEGER>(INTEGER());
+  testNullConstant<TypeKind::SMALLINT>(SMALLINT());
+  testNullConstant<TypeKind::TINYINT>(TINYINT());
 
-  testCreateConstant<TypeKind::REAL>(std::nullopt);
-  testCreateConstant<TypeKind::DOUBLE>(std::nullopt);
+  testNullConstant<TypeKind::BOOLEAN>(BOOLEAN());
 
-  testCreateConstant<TypeKind::VARCHAR>(std::nullopt);
-  testCreateConstant<TypeKind::VARBINARY>(std::nullopt);
+  testNullConstant<TypeKind::REAL>(REAL());
+  testNullConstant<TypeKind::DOUBLE>(DOUBLE());
+
+  testNullConstant<TypeKind::TIMESTAMP>(TIMESTAMP());
+  testNullConstant<TypeKind::DATE>(DATE());
+
+  testNullConstant<TypeKind::VARCHAR>(VARCHAR());
+  testNullConstant<TypeKind::VARBINARY>(VARBINARY());
+
+  testNullConstant<TypeKind::ROW>(ROW({BIGINT(), REAL()}));
+  testNullConstant<TypeKind::ARRAY>(ARRAY(DOUBLE()));
+  testNullConstant<TypeKind::MAP>(MAP(INTEGER(), DOUBLE()));
 }
 
 class TestingHook : public ValueHook {
@@ -1318,4 +1408,99 @@ TEST_F(VectorTest, constantDictionary) {
     rows.updateBounds();
     ASSERT_TRUE(dictionaryVector->isConstant(rows));
   }
+}
+
+TEST_F(VectorTest, clearNulls) {
+  auto vectorSize = 100;
+  auto vector = BaseVector::create(INTEGER(), vectorSize, pool_.get());
+  ASSERT_FALSE(vector->mayHaveNulls());
+
+  // No op if doesn't have nulls
+  SelectivityVector selection{vectorSize};
+  vector->clearNulls(selection);
+  ASSERT_FALSE(vector->mayHaveNulls());
+
+  // De-allocate nulls if all selected
+  auto rawNulls = vector->mutableRawNulls();
+  ASSERT_EQ(bits::countNulls(rawNulls, 0, vectorSize), 0);
+  bits::setNull(rawNulls, 50);
+  ASSERT_TRUE(vector->isNullAt(50));
+  ASSERT_EQ(bits::countNulls(rawNulls, 0, vectorSize), 1);
+  vector->clearNulls(selection);
+  ASSERT_FALSE(vector->mayHaveNulls());
+
+  // Clear within vectorSize
+  rawNulls = vector->mutableRawNulls();
+  bits::setNull(rawNulls, 50);
+  bits::setNull(rawNulls, 70);
+  selection.clearAll();
+  selection.setValidRange(40, 60, true);
+  selection.updateBounds();
+  vector->clearNulls(selection);
+  ASSERT_TRUE(!vector->isNullAt(50));
+  ASSERT_TRUE(vector->isNullAt(70));
+
+  // Clear with end > vector size
+  selection.resize(120);
+  selection.clearAll();
+  selection.setValidRange(60, 120, true);
+  selection.updateBounds();
+  vector->clearNulls(selection);
+  ASSERT_TRUE(!vector->isNullAt(70));
+  ASSERT_TRUE(vector->mayHaveNulls());
+
+  // Clear with begin > vector size
+  rawNulls = vector->mutableRawNulls();
+  bits::setNull(rawNulls, 70);
+  selection.clearAll();
+  selection.setValidRange(100, 120, true);
+  selection.updateBounds();
+  vector->clearNulls(selection);
+  ASSERT_TRUE(vector->isNullAt(70));
+}
+
+TEST_F(VectorTest, setStringToNull) {
+  constexpr int32_t kSize = 100;
+  auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
+  auto target = vectorMaker->flatVector<StringView>(
+      kSize, [](auto /*row*/) { return StringView("Non-inlined string"); });
+  target->setNull(kSize - 1, true);
+  auto unknownNull = std::make_shared<ConstantVector<UnknownValue>>(
+      pool_.get(), kSize, true, UNKNOWN(), UnknownValue());
+
+  auto stringNull = BaseVector::wrapInConstant(kSize, kSize - 1, target);
+  SelectivityVector rows(kSize, false);
+  rows.setValid(2, true);
+  rows.updateBounds();
+  target->copy(unknownNull.get(), rows, nullptr);
+  EXPECT_TRUE(target->isNullAt(2));
+
+  rows.setValid(4, true);
+  rows.updateBounds();
+  target->copy(stringNull.get(), rows, nullptr);
+  EXPECT_TRUE(target->isNullAt(4));
+  auto nulls = AlignedBuffer::allocate<uint64_t>(
+      bits::nwords(kSize), pool_.get(), bits::kNull64);
+  auto flatNulls = std::make_shared<FlatVector<UnknownValue>>(
+      pool_.get(), nulls, kSize, BufferPtr(nullptr), std::vector<BufferPtr>());
+  rows.setValid(6, true);
+  rows.updateBounds();
+  target->copy(flatNulls.get(), rows, nullptr);
+  EXPECT_TRUE(target->isNullAt(6));
+  EXPECT_EQ(4, bits::countNulls(target->rawNulls(), 0, kSize));
+}
+
+TEST_F(VectorTest, clearAllNulls) {
+  auto vectorSize = 100;
+  auto vector = BaseVector::create(INTEGER(), vectorSize, pool_.get());
+  ASSERT_FALSE(vector->mayHaveNulls());
+
+  auto rawNulls = vector->mutableRawNulls();
+  ASSERT_EQ(bits::countNulls(rawNulls, 0, vectorSize), 0);
+  bits::setNull(rawNulls, 50);
+  ASSERT_TRUE(vector->isNullAt(50));
+  ASSERT_EQ(bits::countNulls(rawNulls, 0, vectorSize), 1);
+  vector->clearAllNulls();
+  ASSERT_FALSE(vector->mayHaveNulls());
+  ASSERT_FALSE(vector->isNullAt(50));
 }

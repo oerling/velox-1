@@ -15,11 +15,11 @@
  */
 #pragma once
 
+#include "velox/common/memory/HashStringAllocator.h"
 #include "velox/common/memory/MappedMemory.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/ContainerRowSerde.h"
-#include "velox/exec/HashStringAllocator.h"
-#include "velox/exec/Spill.h"
+#include "velox/exec/Spiller.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 namespace facebook::velox::exec {
@@ -113,7 +113,7 @@ class RowContainer {
   // allowed. 'hasProbedFlag' indicates that an extra bit is reserved
   // for a probed state of a full or right outer
   // join. 'hasNormalizedKey' specifies that an extra word is left
-  // below each row for a normlized key that collapses all parts
+  // below each row for a normalized key that collapses all parts
   // into one word for faster comparison. The bulk allocation is done
   // from 'mappedMemory'.  'serde_' is used for serializing complex
   // type values into the container.
@@ -199,6 +199,7 @@ class RowContainer {
   static inline uint8_t nullMask(int32_t nullOffset) {
     return 1 << (nullOffset & 7);
   }
+
   // Extracts up to 'maxRows' rows starting at the position of
   // 'iter'. A default constructed or reset iter starts at the
   // beginning. Returns the number of rows written to 'rows'. Returns
@@ -216,8 +217,8 @@ class RowContainer {
     return listRows<false>(iter, maxRows, kUnlimited, rows);
   }
 
-  /// Sets 'probed' flag for the specified rows. Used by the right join to
-  /// mark build-side rows that matches join condition.
+  /// Sets 'probed' flag for the specified rows. Used by the right join to mark
+  /// build-side rows that matches join condition.
   void setProbedFlag(char** rows, int32_t numRows);
 
   /// Returns rows with 'probed' flag unset. Used by the right join.
@@ -230,8 +231,8 @@ class RowContainer {
   }
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
-  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This
-  // is a fast path for compare().
+  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
+  // a fast path for compare().
   template <bool mayHaveNulls>
   bool equals(
       const char* row,
@@ -249,8 +250,8 @@ class RowContainer {
       vector_size_t index,
       CompareFlags flags = CompareFlags());
 
-  // Compares the value at 'columnIndex' between 'left' and 'right'. Returns
-  // 0 for equal, < 0 for left < right, > 0 otherwise.
+  // Compares the value at 'columnIndex' between 'left' and 'right'. Returns 0
+  // for equal, < 0 for left < right, > 0 otherwise.
   int32_t compare(
       const char* left,
       const char* right,
@@ -272,8 +273,8 @@ class RowContainer {
     return rowColumns_[index];
   }
 
-  // Bit offset of the probed flag for a full or right outer join  payload.
-  // 0 if not applicable.
+  // Bit offset of the probed flag for a full or right outer join  payload. 0 if
+  // not applicable.
   int32_t probedFlagOffset() const {
     return probedFlagOffset_;
   }
@@ -362,8 +363,7 @@ class RowContainer {
         ((batchSizeInBytes % fixedRowSize_) ? 1 : 0);
   }
 
-  // Adds new row to the row container and copy the 'srcRow' into the new
-  // row.
+  // Adds new row to the row container and copy the 'srcRow' into the new row.
   char* addRow(const char* srcRow, const RowVectorPtr& extractedCols) {
     static const SelectivityVector kOneRow(1);
 
@@ -385,6 +385,10 @@ class RowContainer {
       RowContainer::extractColumn(
           rows.data(), rows.size(), columnAt(i), result->childAt(i));
     }
+  }
+
+  memory::MappedMemory* mappedMemory() const {
+    return stringAllocator_.mappedMemory();
   }
 
   // Checks that row and free row counts match and that free list
@@ -782,6 +786,7 @@ class RowContainer {
   // needed to manage memory of accumulators and the executable
   // aggregates. Store the metadata here.
   const std::vector<std::unique_ptr<Aggregate>>& aggregates_;
+  bool usesExternalMemory_ = false;
   // Types of non-aggregate columns. Keys first. Corresponds pairwise
   // to 'typeKinds_' and 'rowColumns_'.
   std::vector<TypePtr> types_;
@@ -793,14 +798,15 @@ class RowContainer {
   std::vector<int32_t> nullOffsets_;
   // Position of field or accumulator. Corresponds 1:1 to 'nullOffset_'.
   std::vector<int32_t> offsets_;
-  // Offset and null indicator offset of non-aggregate fields as a single
-  // word. Corresponds pairwise to 'types_'.
+  // Offset and null indicator offset of non-aggregate fields as a single word.
+  // Corresponds pairwise to 'types_'.
   std::vector<RowColumn> rowColumns_;
   // Bit position of probed flag, 0 if none.
   int32_t probedFlagOffset_ = 0;
 
   // Bit position of free bit.
   int32_t freeFlagOffset_ = 0;
+  int32_t nextFreeOffset_ = 0;
   int32_t rowSizeOffset_ = 0;
 
   int32_t fixedRowSize_;
@@ -809,8 +815,8 @@ class RowContainer {
   // The count of entries that have an extra normalized_key_t before the
   // start.
   int64_t numRowsWithNormalizedKey_ = 0;
-  // Extra bytes to reserve before  each added row for a normalized key. Set
-  // to 0 after deciding not to use normalized keys.
+  // Extra bytes to reserve before  each added row for a normalized key. Set to
+  // 0 after deciding not to use normalized keys.
   int8_t normalizedKeySize_ = sizeof(normalized_key_t);
   // Copied over the null bits of each row on initialization. Keys are
   // not null, aggregates are null.
@@ -823,15 +829,14 @@ class RowContainer {
   AllocationPool rows_;
   HashStringAllocator stringAllocator_;
   const RowSerde& serde_;
-
   std::vector<SpillRun> spillRuns_;
   // Indices into 'spillRuns_' that are currently getting spilled.
   std::unordered_set<int32_t> spillingRuns_;
   TypePtr spillType_;
   RowVectorPtr spillVector_;
 
-  // RowContainer requires a valid reference to a vector of aggregates. We
-  // use a static constant to ensure the aggregates_ is valid throughout the
+  // RowContainer requires a valid reference to a vector of aggregates. We use
+  // a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.
   static const std::vector<std::unique_ptr<Aggregate>>& emptyAggregates() {
     static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;

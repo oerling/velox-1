@@ -15,11 +15,43 @@
  */
 
 #include "velox/exec/VectorHasher.h"
+#include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
-#include "velox/exec/HashStringAllocator.h"
+#include "velox/common/memory/HashStringAllocator.h"
 
 namespace facebook::velox::exec {
+
+#define VALUE_ID_TYPE_DISPATCH(TEMPLATE_FUNC, typeKind, ...)             \
+  [&]() {                                                                \
+    switch (typeKind) {                                                  \
+      case TypeKind::BOOLEAN: {                                          \
+        return TEMPLATE_FUNC<TypeKind::BOOLEAN>(__VA_ARGS__);            \
+      }                                                                  \
+      case TypeKind::TINYINT: {                                          \
+        return TEMPLATE_FUNC<TypeKind::TINYINT>(__VA_ARGS__);            \
+      }                                                                  \
+      case TypeKind::SMALLINT: {                                         \
+        return TEMPLATE_FUNC<TypeKind::SMALLINT>(__VA_ARGS__);           \
+      }                                                                  \
+      case TypeKind::INTEGER: {                                          \
+        return TEMPLATE_FUNC<TypeKind::INTEGER>(__VA_ARGS__);            \
+      }                                                                  \
+      case TypeKind::BIGINT: {                                           \
+        return TEMPLATE_FUNC<TypeKind::BIGINT>(__VA_ARGS__);             \
+      }                                                                  \
+      case TypeKind::DATE: {                                             \
+        return TEMPLATE_FUNC<TypeKind::DATE>(__VA_ARGS__);               \
+      }                                                                  \
+      case TypeKind::VARCHAR:                                            \
+      case TypeKind::VARBINARY: {                                        \
+        return TEMPLATE_FUNC<TypeKind::VARCHAR>(__VA_ARGS__);            \
+      }                                                                  \
+      default:                                                           \
+        VELOX_UNREACHABLE(                                               \
+            "Unsupported value ID type: ", mapTypeKindToName(typeKind)); \
+    }                                                                    \
+  }()
 
 using V32 = simd::Vectors<int32_t>;
 using V64 = simd::Vectors<int64_t>;
@@ -86,15 +118,15 @@ bool VectorHasher::makeValueIds(
   using T = typename TypeTraits<Kind>::NativeType;
 
   if (decoded_.isConstantMapping()) {
-    uint64_t hash = decoded_.isNullAt(rows.begin())
+    uint64_t id = decoded_.isNullAt(rows.begin())
         ? 0
         : valueId(decoded_.valueAt<T>(rows.begin()));
-    if (hash == kUnmappable) {
+    if (id == kUnmappable) {
       analyzeValue(decoded_.valueAt<T>(rows.begin()));
       return false;
     }
     rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
-      result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+      result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
     });
     return true;
   }
@@ -121,8 +153,8 @@ bool VectorHasher::makeValueIdsFlatNoNulls<bool>(
   const auto* values = decoded_.data<uint64_t>();
   rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
     bool value = bits::isBitSet(values, row);
-    uint64_t hash = valueId(value);
-    result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+    uint64_t id = valueId(value);
+    result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
   });
   return true;
 }
@@ -141,8 +173,8 @@ bool VectorHasher::makeValueIdsFlatWithNulls<bool>(
       return;
     }
     bool value = bits::isBitSet(values, row);
-    uint64_t hash = valueId(value);
-    result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+    uint64_t id = valueId(value);
+    result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
   });
   return true;
 }
@@ -165,13 +197,13 @@ bool VectorHasher::makeValueIdsFlatNoNulls(
       analyzeValue(value);
       return;
     }
-    uint64_t hash = valueId(value);
-    if (hash == kUnmappable) {
+    uint64_t id = valueId(value);
+    if (id == kUnmappable) {
       success = false;
       analyzeValue(value);
       return;
     }
-    result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+    result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
   });
 
   return success;
@@ -199,13 +231,13 @@ bool VectorHasher::makeValueIdsFlatWithNulls(
       analyzeValue(value);
       return;
     }
-    uint64_t hash = valueId(value);
-    if (hash == kUnmappable) {
+    uint64_t id = valueId(value);
+    if (id == kUnmappable) {
       success = false;
       analyzeValue(value);
       return;
     }
-    result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+    result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
   });
   return success;
 }
@@ -254,17 +286,71 @@ bool VectorHasher::makeValueIdsDecoded(
   return success;
 }
 
-bool VectorHasher::computeValueIds(
-    const BaseVector& values,
-    SelectivityVector& rows,
-    raw_vector<uint64_t>* result) {
-  decoded_.decode(values, rows);
-  return VALUE_ID_TYPE_DISPATCH(
-      makeValueIds, values.typeKind(), rows, result->data());
+template <>
+bool VectorHasher::makeValueIdsDecoded<bool, true>(
+    const SelectivityVector& rows,
+    uint64_t* result) {
+  auto indices = decoded_.indices();
+  auto values = decoded_.values<uint64_t>();
+
+  rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
+    if (decoded_.isNullAt(row)) {
+      if (multiplier_ == 1) {
+        result[row] = 0;
+      }
+      return;
+    }
+
+    bool value = bits::isBitSet(values, indices[row]);
+    auto id = valueId(value);
+    result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
+  });
+  return true;
 }
 
 template <>
-bool VectorHasher::computeValueIdForRows<StringView>(
+bool VectorHasher::makeValueIdsDecoded<bool, false>(
+    const SelectivityVector& rows,
+    uint64_t* result) {
+  auto indices = decoded_.indices();
+  auto values = decoded_.values<uint64_t>();
+
+  rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
+    bool value = bits::isBitSet(values, indices[row]);
+    auto id = valueId(value);
+    result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
+  });
+  return true;
+}
+
+bool VectorHasher::computeValueIds(
+    const BaseVector& values,
+    const SelectivityVector& rows,
+    raw_vector<uint64_t>& result) {
+  decoded_.decode(values, rows);
+  return VALUE_ID_TYPE_DISPATCH(makeValueIds, typeKind_, rows, result.data());
+}
+
+bool VectorHasher::computeValueIdsForRows(
+    char** groups,
+    int32_t numGroups,
+    int32_t offset,
+    int32_t nullByte,
+    uint8_t nullMask,
+    raw_vector<uint64_t>& result) {
+  return VALUE_ID_TYPE_DISPATCH(
+      makeValueIdsForRows,
+      typeKind_,
+      groups,
+      numGroups,
+      offset,
+      nullByte,
+      nullMask,
+      result.data());
+}
+
+template <>
+bool VectorHasher::makeValueIdsForRows<TypeKind::VARCHAR>(
     char** groups,
     int32_t numGroups,
     int32_t offset,
@@ -293,20 +379,26 @@ template <TypeKind Kind>
 void VectorHasher::lookupValueIdsTyped(
     const DecodedVector& decoded,
     SelectivityVector& rows,
-    raw_vector<uint64_t>& cachedHashes,
+    raw_vector<uint64_t>& hashes,
     uint64_t* result) const {
   using T = typename TypeTraits<Kind>::NativeType;
   if (decoded.isConstantMapping()) {
-    uint64_t hash = decoded.isNullAt(rows.begin())
-        ? 0
-        : lookupValueId(decoded.valueAt<T>(rows.begin()));
-    if (hash == kUnmappable) {
-      rows.clearAll();
+    if (decoded.isNullAt(rows.begin())) {
+      if (multiplier_ == 1) {
+        rows.applyToSelected([&](vector_size_t row)
+                                 INLINE_LAMBDA { result[row] = 0; });
+      }
       return;
     }
-    rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
-      result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
-    });
+
+    uint64_t id = lookupValueId(decoded.valueAt<T>(rows.begin()));
+    if (id == kUnmappable) {
+      rows.clearAll();
+    } else {
+      rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
+        result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
+      });
+    }
   } else if (decoded.isIdentityMapping()) {
     rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
       if (decoded.isNullAt(row)) {
@@ -316,17 +408,17 @@ void VectorHasher::lookupValueIdsTyped(
         return;
       }
       T value = decoded.valueAt<T>(row);
-      uint64_t hash = lookupValueId(value);
-      if (hash == kUnmappable) {
+      uint64_t id = lookupValueId(value);
+      if (id == kUnmappable) {
         rows.setValid(row, false);
         return;
       }
-      result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+      result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
     });
     rows.updateBounds();
   } else {
-    cachedHashes.resize(decoded.base()->size());
-    std::fill(cachedHashes.begin(), cachedHashes.end(), 0);
+    hashes.resize(decoded.base()->size());
+    std::fill(hashes.begin(), hashes.end(), 0);
     rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
       if (decoded.isNullAt(row)) {
         if (multiplier_ == 1) {
@@ -335,7 +427,7 @@ void VectorHasher::lookupValueIdsTyped(
         return;
       }
       auto baseIndex = decoded.index(row);
-      uint64_t id = cachedHashes[baseIndex];
+      uint64_t id = hashes[baseIndex];
       if (id == 0) {
         T value = decoded.valueAt<T>(row);
         id = lookupValueId(value);
@@ -343,7 +435,7 @@ void VectorHasher::lookupValueIdsTyped(
           rows.setValid(row, false);
           return;
         }
-        cachedHashes[baseIndex] = id;
+        hashes[baseIndex] = id;
       }
       result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
     });
@@ -352,27 +444,38 @@ void VectorHasher::lookupValueIdsTyped(
 }
 
 void VectorHasher::lookupValueIds(
-    const DecodedVector& decoded,
+    const BaseVector& values,
     SelectivityVector& rows,
-    raw_vector<uint64_t>& cachedHashes,
-    raw_vector<uint64_t>* result) const {
+    ScratchMemory& scratchMemory,
+    raw_vector<uint64_t>& result) const {
+  scratchMemory.decoded.decode(values, rows);
   VALUE_ID_TYPE_DISPATCH(
       lookupValueIdsTyped,
-      decoded.base()->typeKind(),
-      decoded,
+      typeKind_,
+      scratchMemory.decoded,
       rows,
-      cachedHashes,
-      result->data());
+      scratchMemory.hashes,
+      result.data());
 }
 
 void VectorHasher::hash(
     const BaseVector& values,
     const SelectivityVector& rows,
     bool mix,
-    raw_vector<uint64_t>* result) {
+    raw_vector<uint64_t>& result) {
   decoded_.decode(values, rows);
   return VELOX_DYNAMIC_TYPE_DISPATCH(
-      hashValues, values.typeKind(), rows, mix, result->data());
+      hashValues, typeKind_, rows, mix, result.data());
+}
+
+void VectorHasher::analyze(
+    char** groups,
+    int32_t numGroups,
+    int32_t offset,
+    int32_t nullByte,
+    uint8_t nullMask) {
+  return VALUE_ID_TYPE_DISPATCH(
+      analyzeTyped, typeKind_, groups, numGroups, offset, nullByte, nullMask);
 }
 
 template <>
@@ -482,6 +585,10 @@ void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
 }
 
 uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int64_t reserve) {
+  VELOX_CHECK_NE(
+      typeKind_,
+      TypeKind::BOOLEAN,
+      "A boolean VectorHasher should  always be by range");
   multiplier_ = multiplier;
   rangeSize_ = uniqueValues_.size() + 1 + reserve;
   isRange_ = false;
@@ -509,19 +616,39 @@ uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int64_t reserve) {
   } else {
     max_ += reserve;
   }
-  rangeMaxChars_ = max_ ? (64 - __builtin_clzll(max_)) / 8 : 0;
   isRange_ = true;
-  uint64_t result;
   // No overflow because max range is under 63 bits.
-  rangeSize_ = (max_ - min_) + 2;
+  if (typeKind_ == TypeKind::BOOLEAN) {
+    rangeSize_ = 3;
+  } else {
+    rangeSize_ = (max_ - min_) + 2;
+  }
+  uint64_t result;
   if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
     return kRangeTooLarge;
   }
   return result;
 }
 
+void VectorHasher::copyStatsFrom(const VectorHasher& other) {
+  hasRange_ = other.hasRange_;
+  rangeOverflow_ = other.rangeOverflow_;
+  distinctOverflow_ = other.distinctOverflow_;
+
+  min_ = other.min_;
+  max_ = other.max_;
+  uniqueValues_ = other.uniqueValues_;
+}
+
 void VectorHasher::merge(const VectorHasher& other) {
   if (typeKind_ == TypeKind::BOOLEAN) {
+    return;
+  }
+  if (other.empty()) {
+    return;
+  }
+  if (empty()) {
+    copyStatsFrom(other);
     return;
   }
   if (hasRange_ && other.hasRange_ && !rangeOverflow_ &&
@@ -545,6 +672,15 @@ void VectorHasher::merge(const VectorHasher& other) {
   } else {
     distinctOverflow_ = true;
   }
+}
+
+std::string VectorHasher::toString() const {
+  std::stringstream out;
+  out << "<VectorHasher type=" << type_->toString() << "  isRange_=" << isRange_
+      << " rangeSize= " << rangeSize_ << " min=" << min_ << " max=" << max_
+      << " multiplier=" << multiplier_
+      << " numDistinct=" << uniqueValues_.size() << ">";
+  return out.str();
 }
 
 } // namespace facebook::velox::exec

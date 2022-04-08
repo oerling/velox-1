@@ -53,6 +53,22 @@ Array Functions
         SELECT array_min(ARRAY [-1, -2, NULL]); -- NULL
         SELECT array_min(ARRAY []); -- NULL
 
+.. function:: array_position(x, element) -> bigint
+
+    Returns the position of the first occurrence of the ``element`` in array ``x`` (or 0 if not found).
+
+.. function:: array_position(x, element, instance) -> bigint
+
+    If ``instance > 0``, returns the position of the ``instance``-th occurrence of the ``element`` in array ``x``. If ``instance < 0``, returns the position of the ``instance``-to-last occurrence of the ``element`` in array ``x``. If no matching element instance is found, 0 is returned.
+
+.. function:: array_join(x, delimiter, null_replacement) -> varchar
+
+    Concatenates the elements of the given array using the delimiter and an optional string to replace nulls. ::
+
+        SELECT array_join(ARRAY [1, 2, 3], ",") -- "1,2,3"
+        SELECT array_join(ARRAY [1, NULL, 2], ",") -- "1,2"
+        SELECT array_join(ARRAY [1, NULL, 2], ",", "0") -- "1,0,2"
+
 .. function:: cardinality(x) -> bigint
 
     Returns the cardinality (size) of the array ``x``.
@@ -120,3 +136,12 @@ Array Functions
         SELECT transform(ARRAY [5, NULL, 6], x -> COALESCE(x, 0) + 1); -- [6, 1, 7]
         SELECT transform(ARRAY ['x', 'abc', 'z'], x -> x || '0'); -- ['x0', 'abc0', 'z0']
         SELECT transform(ARRAY [ARRAY [1, NULL, 2], ARRAY[3, NULL]], a -> filter(a, x -> x IS NOT NULL)); -- [[1, 2], [3]]
+
+
+.. function:: zip(array(T), array(U),..) -> array(row(T,U, ...))
+
+    Returns the merge of the given arrays, element-wise into a single array of rows.
+    The M-th element of the N-th argument will be the N-th field of the M-th output element.
+    If the arguments have an uneven length, missing values are filled with ``NULL`` ::
+
+    SELECT zip(ARRAY[1, 2], ARRAY['1b', null, '3b']); -- [ROW(1, '1b'), ROW(2, null), ROW(null, '3b')]

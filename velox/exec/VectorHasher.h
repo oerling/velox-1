@@ -45,6 +45,13 @@ class UniqueValue {
     }
   }
 
+  explicit UniqueValue(Date value) {
+    // The number of valid bytes of Date stored in data_ is
+    // (int64_t)value.days().
+    size_ = sizeof(int64_t);
+    data_ = value.days();
+  }
+
   uint32_t size() const {
     return size_;
   }
@@ -63,21 +70,6 @@ class UniqueValue {
 
   void setData(int64_t data) {
     data_ = data;
-  }
-
-  static bool typeKindSupportsValueIds(TypeKind kind) {
-    switch (kind) {
-      case TypeKind::BOOLEAN:
-      case TypeKind::TINYINT:
-      case TypeKind::SMALLINT:
-      case TypeKind::INTEGER:
-      case TypeKind::BIGINT:
-      case TypeKind::VARCHAR:
-      case TypeKind::VARBINARY:
-        return true;
-      default:
-        return false;
-    }
   }
 
  private:
@@ -140,9 +132,10 @@ class VectorHasher {
   static constexpr uint64_t kRangeTooLarge = ~0UL;
 
   VectorHasher(TypePtr type, ChannelIndex channel)
-      : channel_(channel), type_(type), typeKind_(type->kind()) {
-    if (type->kind() == TypeKind::BOOLEAN) {
-      // We do not need samples to know the cardinality or limits a bool vector.
+      : channel_(channel), type_(std::move(type)), typeKind_(type_->kind()) {
+    if (typeKind_ == TypeKind::BOOLEAN) {
+      // We do not need samples to know the cardinality or limits of a bool
+      // vector.
       hasRange_ = true;
       min_ = 0;
       max_ = 1;
@@ -152,14 +145,14 @@ class VectorHasher {
   static std::unique_ptr<VectorHasher> create(
       TypePtr type,
       ChannelIndex channel) {
-    return std::make_unique<VectorHasher>(type, channel);
+    return std::make_unique<VectorHasher>(std::move(type), channel);
   }
 
   ChannelIndex channel() const {
     return channel_;
   }
 
-  TypePtr type() const {
+  const TypePtr& type() const {
     return type_;
   }
 
@@ -169,11 +162,13 @@ class VectorHasher {
 
   static constexpr uint64_t kNullHash = BaseVector::kNullHash;
 
+  // Computes a hash for 'rows' in 'values' and stores it in 'result'.
+  // If 'mix' is true, mixes the hash with existing value in 'result'.
   void hash(
       const BaseVector& values,
       const SelectivityVector& rows,
       bool mix,
-      raw_vector<uint64_t>* result);
+      raw_vector<uint64_t>& result);
 
   // Computes a normalized key for 'rows' in 'values' and stores this
   // in 'result'. If this is not the first hasher with normalized
@@ -185,21 +180,35 @@ class VectorHasher {
   // new keys could not be represented.
   bool computeValueIds(
       const BaseVector& values,
-      SelectivityVector& rows,
-      raw_vector<uint64_t>* result);
+      const SelectivityVector& rows,
+      raw_vector<uint64_t>& result);
 
-  // Updates the value id in 'result' for values in 'decoded' at
-  // positions in 'rows'. If some value does not have an id, result is
-  // not modified at the position and the position is removed from
-  // 'rows'. This behavior corresponds to hash join probe, where we
-  // have a miss if any of the keys has a value that is not
-  // represented. 'cachedHashes' is a scratchpad vector for
-  // deduplicating ids if 'decoded' represents a dictionary.
+  // Same as computeValueIds, but takes input stored row-wise.
+  bool computeValueIdsForRows(
+      char** groups,
+      int32_t numGroups,
+      int32_t offset,
+      int32_t nullByte,
+      uint8_t nullMask,
+      raw_vector<uint64_t>& result);
+
+  struct ScratchMemory {
+    DecodedVector decoded;
+    raw_vector<uint64_t> hashes;
+  };
+
+  // Updates the value id in 'result' for 'rows' in 'values'. If some value does
+  // not have an id, result is not modified at the position and the position is
+  // removed from 'rows'. This behavior corresponds to hash join probe, where we
+  // have a miss if any of the keys has a value that is not represented.
+  //
+  // This method can be called concurrently from multiple threads. To allow for
+  // that the caller must provide 'scratchMemory'.
   void lookupValueIds(
-      const DecodedVector& decoded,
+      const BaseVector& values,
       SelectivityVector& rows,
-      raw_vector<uint64_t>& cachedHashes,
-      raw_vector<uint64_t>* result) const;
+      ScratchMemory& scratchMemory,
+      raw_vector<uint64_t>& result) const;
 
   // Returns true if either range or distinct values have not overflowed.
   bool mayUseValueIds() const {
@@ -210,30 +219,6 @@ class VectorHasher {
   // Returns null if distinctOverflow_ is true.
   std::unique_ptr<common::Filter> getFilter(bool nullAllowed) const;
 
-  template <typename T>
-  bool computeValueIdForRows(
-      char** groups,
-      int32_t numGroups,
-      int32_t offset,
-      int32_t nullByte,
-      uint8_t nullMask,
-      uint64_t* result) {
-    for (int32_t i = 0; i < numGroups; ++i) {
-      if (isNullAt(groups[i], nullByte, nullMask)) {
-        if (multiplier_ == 1) {
-          result[i] = 0;
-        }
-      } else {
-        auto id = valueId<T>(valueAt<T>(groups[i], offset));
-        if (id == kUnmappable) {
-          return false;
-        }
-        result[i] = multiplier_ == 1 ? id : result[i] + multiplier_ * id;
-      }
-    }
-    return true;
-  }
-
   void resetStats() {
     uniqueValues_.clear();
     uniqueValuesStorage_.clear();
@@ -243,25 +228,16 @@ class VectorHasher {
 
   uint64_t enableValueIds(uint64_t multiplier, int64_t reserve);
 
-  // Returns the number of distinct values in range and in distinct values mode.
+  // Returns the number of distinct values in range and distinct-values modes.
   // kRangeTooLarge means that the mode is not applicable.
   void cardinality(uint64_t& asRange, uint64_t& asDistincts);
 
-  template <typename T>
   void analyze(
       char** groups,
       int32_t numGroups,
       int32_t offset,
       int32_t nullByte,
-      uint8_t nullMask) {
-    for (auto i = 0; i < numGroups; ++i) {
-      auto group = groups[i];
-      if (group[nullByte] & nullMask) {
-        continue;
-      }
-      analyzeValue(valueAt<T>(group, offset));
-    }
-  }
+      uint8_t nullMask);
 
   bool isRange() const {
     return isRange_;
@@ -284,6 +260,7 @@ class VectorHasher {
       case TypeKind::BIGINT:
       case TypeKind::VARCHAR:
       case TypeKind::VARBINARY:
+      case TypeKind::DATE:
         return true;
       default:
         return false;
@@ -294,12 +271,20 @@ class VectorHasher {
   // and distinct values are unioned.
   void merge(const VectorHasher& other);
 
+  // true if no values have been added.
+  bool empty() const {
+    return !hasRange_ && uniqueValues_.empty();
+  }
+
+  std::string toString() const;
+
  private:
   static constexpr uint32_t kStringASRangeMaxSize = 7;
   static constexpr uint32_t kStringBufferUnitSize = 1024;
   static constexpr uint64_t kMaxDistinctStringsBytes = 1 << 20;
-  // stop counting distinct values after this many and revert to regular hash.
+  // Stop counting distinct values after this many and revert to regular hash.
   static constexpr int32_t kMaxDistinct = 100'000;
+
   // Maps a binary string of up to 7 bytes to int64_t. Each size maps
   // to a different numeric range, so leading zeros are considered.
   static inline int64_t stringAsNumber(const char* data, int32_t size) {
@@ -307,6 +292,14 @@ class VectorHasher {
         bits::loadPartialWord(reinterpret_cast<const uint8_t*>(data), size);
     return size == 0 ? word : word + (1L << (size * 8));
   }
+
+  template <typename T>
+  inline int64_t toInt64(T value) const {
+    return value;
+  }
+
+  // Sets the data statistics from 'other'. Does not set the mapping mode.
+  void copyStatsFrom(const VectorHasher& other);
 
   template <TypeKind Kind>
   bool makeValueIds(const SelectivityVector& rows, uint64_t* result);
@@ -323,15 +316,58 @@ class VectorHasher {
   bool makeValueIdsDecoded(const SelectivityVector& rows, uint64_t* result);
 
   template <TypeKind Kind>
+  bool makeValueIdsForRows(
+      char** groups,
+      int32_t numGroups,
+      int32_t offset,
+      int32_t nullByte,
+      uint8_t nullMask,
+      uint64_t* result) {
+    using T = typename TypeTraits<Kind>::NativeType;
+    for (int32_t i = 0; i < numGroups; ++i) {
+      if (isNullAt(groups[i], nullByte, nullMask)) {
+        if (multiplier_ == 1) {
+          result[i] = 0;
+        }
+      } else {
+        auto id = valueId<T>(valueAt<T>(groups[i], offset));
+        if (id == kUnmappable) {
+          return false;
+        }
+        result[i] =
+            multiplier_ == 1 ? toInt64(id) : result[i] + multiplier_ * id;
+      }
+    }
+    return true;
+  }
+
+  template <TypeKind Kind>
   void lookupValueIdsTyped(
       const DecodedVector& decoded,
       SelectivityVector& rows,
-      raw_vector<uint64_t>& cachedHashes,
+      raw_vector<uint64_t>& hashes,
       uint64_t* result) const;
+
+  template <TypeKind Kind>
+  void analyzeTyped(
+      char** groups,
+      int32_t numGroups,
+      int32_t offset,
+      int32_t nullByte,
+      uint8_t nullMask) {
+    using T = typename TypeTraits<Kind>::NativeType;
+    for (auto i = 0; i < numGroups; ++i) {
+      auto group = groups[i];
+      if (isNullAt(group, nullByte, nullMask)) {
+        continue;
+      }
+      analyzeValue(valueAt<T>(group, offset));
+    }
+  }
 
   template <typename T>
   void analyzeValue(T value) {
-    auto normalized = static_cast<int64_t>(value);
+    auto normalized = toInt64(value);
     if (!rangeOverflow_) {
       updateRange(normalized);
     }
@@ -371,11 +407,12 @@ class VectorHasher {
 
     bool inRange = true;
     rows.template testSelected([&](vector_size_t row) {
-      if (values[row] > max_ || values[row] < min_) {
+      auto int64Value = toInt64(values[row]);
+      if (int64Value > max_ || int64Value < min_) {
         inRange = false;
         return false;
       }
-      auto hash = values[row] - min_ + 1;
+      auto hash = int64Value - min_ + 1;
       result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
       return true;
     });
@@ -385,19 +422,21 @@ class VectorHasher {
 
   template <typename T>
   uint64_t valueId(T value) {
+    auto int64Value = toInt64(value);
     if (isRange_) {
-      if (value > max_ || value < min_) {
+      if (int64Value > max_ || int64Value < min_) {
         return kUnmappable;
       }
-      return value - min_ + 1;
+      return int64Value - min_ + 1;
     }
+
     UniqueValue unique(value);
     unique.setId(uniqueValues_.size() + 1);
     auto pair = uniqueValues_.insert(unique);
     if (!pair.second) {
       return pair.first->id();
     }
-    updateRange(value);
+    updateRange(int64Value);
     if (uniqueValues_.size() >= rangeSize_) {
       return kUnmappable;
     }
@@ -406,11 +445,12 @@ class VectorHasher {
 
   template <typename T>
   uint64_t lookupValueId(T value) const {
+    auto int64Value = toInt64(value);
     if (isRange_) {
-      if (value > max_ || value < min_) {
+      if (int64Value > max_ || int64Value < min_) {
         return kUnmappable;
       }
-      return value - min_ + 1;
+      return int64Value - min_ + 1;
     }
     UniqueValue unique(value);
     auto iter = uniqueValues_.find(unique);
@@ -449,27 +489,26 @@ class VectorHasher {
   void hashValues(const SelectivityVector& rows, bool mix, uint64_t* result);
 
   const ChannelIndex channel_;
-  TypePtr type_;
+  const TypePtr type_;
   const TypeKind typeKind_;
+
   DecodedVector decoded_;
   raw_vector<uint64_t> cachedHashes_;
 
   // Members for fast map to int domain for array/normalized key.
   // Maximum integer mapping. If distinct count exceeds this,
   // array/normalized key mapping fails.
-  uint32_t rangeSize_ = 0;
+  uint64_t rangeSize_ = 0;
 
-  // Multiply int mapping by this before adding it to array index/normalized ey.
+  // Multiply int mapping by this before adding it to array index/normalized
+  // key.
   uint64_t multiplier_ = 1;
 
-  // true if the mapping is simply value - min_.
+  // True if the mapping is simply value - min_.
   bool isRange_ = false;
 
   // True if 'min_' and 'max_' are initialized.
   bool hasRange_ = false;
-
-  // Maximum character size of a string that can fit the range.
-  uint32_t rangeMaxChars_ = 0;
 
   // True when range or distinct mapping is not possible or practical.
   bool rangeOverflow_ = false;
@@ -488,7 +527,12 @@ class VectorHasher {
 };
 
 template <>
-bool VectorHasher::computeValueIdForRows<StringView>(
+inline int64_t VectorHasher::toInt64(Date value) const {
+  return value.days();
+}
+
+template <>
+bool VectorHasher::makeValueIdsForRows<TypeKind::VARCHAR>(
     char** groups,
     int32_t numGroups,
     int32_t offset,
@@ -498,6 +542,7 @@ bool VectorHasher::computeValueIdForRows<StringView>(
 
 template <>
 void VectorHasher::analyzeValue(StringView value);
+
 template <>
 inline bool VectorHasher::tryMapToRange(
     const StringView* /*values*/,
@@ -595,32 +640,15 @@ bool VectorHasher::makeValueIdsFlatWithNulls<bool>(
     const SelectivityVector& rows,
     uint64_t* result);
 
-#define VALUE_ID_TYPE_DISPATCH(TEMPLATE_FUNC, typeKind, ...)   \
-  [&]() {                                                      \
-    switch (typeKind) {                                        \
-      case TypeKind::BOOLEAN: {                                \
-        return TEMPLATE_FUNC<TypeKind::BOOLEAN>(__VA_ARGS__);  \
-      }                                                        \
-      case TypeKind::TINYINT: {                                \
-        return TEMPLATE_FUNC<TypeKind::TINYINT>(__VA_ARGS__);  \
-      }                                                        \
-      case TypeKind::SMALLINT: {                               \
-        return TEMPLATE_FUNC<TypeKind::SMALLINT>(__VA_ARGS__); \
-      }                                                        \
-      case TypeKind::INTEGER: {                                \
-        return TEMPLATE_FUNC<TypeKind::INTEGER>(__VA_ARGS__);  \
-      }                                                        \
-      case TypeKind::BIGINT: {                                 \
-        return TEMPLATE_FUNC<TypeKind::BIGINT>(__VA_ARGS__);   \
-      }                                                        \
-      case TypeKind::VARCHAR:                                  \
-      case TypeKind::VARBINARY: {                              \
-        return TEMPLATE_FUNC<TypeKind::VARCHAR>(__VA_ARGS__);  \
-      }                                                        \
-      default:                                                 \
-        throw std::invalid_argument{"not a value ids  type!"}; \
-    }                                                          \
-  }()
+template <>
+bool VectorHasher::makeValueIdsDecoded<bool, true>(
+    const SelectivityVector& rows,
+    uint64_t* result);
+
+template <>
+bool VectorHasher::makeValueIdsDecoded<bool, false>(
+    const SelectivityVector& rows,
+    uint64_t* result);
 
 } // namespace facebook::velox::exec
 

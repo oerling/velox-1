@@ -32,6 +32,10 @@ class TypeVariableConstraint {
     return name_;
   }
 
+  bool operator==(const TypeVariableConstraint& rhs) const {
+    return name_ == rhs.name_;
+  }
+
  private:
   const std::string name_;
 };
@@ -51,6 +55,10 @@ class TypeSignature {
   }
 
   std::string toString() const;
+
+  bool operator==(const TypeSignature& rhs) const {
+    return baseType_ == rhs.baseType_ && parameters_ == rhs.parameters_;
+  }
 
  private:
   const std::string baseType_;
@@ -95,11 +103,44 @@ class FunctionSignature {
 
   std::string toString() const;
 
+  // This tests syntactic equality not semantic equality
+  // For example, even if only the names of the typeVariableConstants are
+  // different the signatures are considered not equal (array(K) != array(V))
+  bool operator==(const FunctionSignature& rhs) const {
+    return typeVariableConstants_ == rhs.typeVariableConstants_ &&
+        returnType_ == rhs.returnType_ &&
+        argumentTypes_ == rhs.argumentTypes_ &&
+        variableArity_ == rhs.variableArity_;
+  }
+
  private:
   const std::vector<TypeVariableConstraint> typeVariableConstants_;
   const TypeSignature returnType_;
   const std::vector<TypeSignature> argumentTypes_;
   const bool variableArity_;
+};
+
+class AggregateFunctionSignature : public FunctionSignature {
+ public:
+  AggregateFunctionSignature(
+      std::vector<TypeVariableConstraint> typeVariableConstants,
+      TypeSignature returnType,
+      TypeSignature intermediateType,
+      std::vector<TypeSignature> argumentTypes,
+      bool variableArity)
+      : FunctionSignature(
+            std::move(typeVariableConstants),
+            std::move(returnType),
+            std::move(argumentTypes),
+            variableArity),
+        intermediateType_{std::move(intermediateType)} {}
+
+  const TypeSignature& intermediateType() const {
+    return intermediateType_;
+  }
+
+ private:
+  const TypeSignature intermediateType_;
 };
 
 /// Parses a string into TypeSignature. The format of the string is type name,
@@ -162,4 +203,106 @@ class FunctionSignatureBuilder {
   bool variableArity_{false};
 };
 
+/// Convenience class for creating AggregageFunctionSignature instances.
+/// Example of usage:
+///
+///     - signature of covar_samp aggregate function: (double, double) -> double
+///
+///     exec::AggregateFunctionSignatureBuilder()
+///                .returnType("double")
+///                .intermediateType("row(double,bigint,double,double)")
+///                .argumentType("double")
+///                .argumentType("double")
+///                .build()
+class AggregateFunctionSignatureBuilder {
+ public:
+  AggregateFunctionSignatureBuilder& typeVariable(std::string name) {
+    typeVariableConstants_.emplace_back(name);
+    return *this;
+  }
+
+  AggregateFunctionSignatureBuilder& returnType(const std::string& type) {
+    returnType_.emplace(parseTypeSignature(type));
+    return *this;
+  }
+
+  AggregateFunctionSignatureBuilder& argumentType(const std::string& type) {
+    argumentTypes_.emplace_back(parseTypeSignature(type));
+    return *this;
+  }
+
+  AggregateFunctionSignatureBuilder& intermediateType(const std::string& type) {
+    intermediateType_.emplace(parseTypeSignature(type));
+    return *this;
+  }
+
+  AggregateFunctionSignatureBuilder& variableArity() {
+    variableArity_ = true;
+    return *this;
+  }
+
+  std::shared_ptr<AggregateFunctionSignature> build();
+
+ private:
+  std::vector<TypeVariableConstraint> typeVariableConstants_;
+  std::optional<TypeSignature> returnType_;
+  std::optional<TypeSignature> intermediateType_;
+  std::vector<TypeSignature> argumentTypes_;
+  bool variableArity_{false};
+};
+
 } // namespace facebook::velox::exec
+
+namespace std {
+template <>
+struct hash<facebook::velox::exec::TypeVariableConstraint> {
+  using argument_type = facebook::velox::exec::TypeVariableConstraint;
+  using result_type = std::size_t;
+
+  result_type operator()(const argument_type& key) const noexcept {
+    return std::hash<std::string>{}(key.name());
+  }
+};
+
+template <>
+struct hash<facebook::velox::exec::TypeSignature> {
+  using argument_type = facebook::velox::exec::TypeSignature;
+  using result_type = std::size_t;
+
+  result_type operator()(const argument_type& key) const noexcept {
+    size_t val = std::hash<std::string>{}(key.baseType());
+    for (const auto& parameter : key.parameters()) {
+      val = val * 31 + this->operator()(parameter);
+    }
+    return val;
+  }
+};
+
+template <>
+struct hash<facebook::velox::exec::FunctionSignature> {
+  using argument_type = facebook::velox::exec::FunctionSignature;
+  using result_type = std::size_t;
+
+  result_type operator()(const argument_type& key) const noexcept {
+    auto typeVariableConstraintHasher =
+        std::hash<facebook::velox::exec::TypeVariableConstraint>{};
+    auto typeSignatureHasher =
+        std::hash<facebook::velox::exec::TypeSignature>{};
+
+    size_t val = 0;
+    for (const auto& constraint : key.typeVariableConstants()) {
+      val = val * 31 + typeVariableConstraintHasher(constraint);
+    }
+
+    val = val * 31 + typeSignatureHasher(key.returnType());
+
+    for (const auto& arg : key.argumentTypes()) {
+      val = val * 31 + typeSignatureHasher(arg);
+    }
+
+    val = val * 31 + (key.variableArity() ? 0 : 1);
+    return val;
+  }
+};
+
+} // namespace std

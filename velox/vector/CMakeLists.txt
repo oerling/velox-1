@@ -29,6 +29,7 @@ target_link_libraries(velox_vector velox_encode velox_memory velox_time
                       velox_type)
 
 add_subdirectory(arrow)
+add_subdirectory(fuzzer)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

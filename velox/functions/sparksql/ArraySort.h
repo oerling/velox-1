@@ -19,10 +19,42 @@
 
 namespace facebook::velox::functions::sparksql {
 
+class ArraySort : public exec::VectorFunction {
+  /// This class implements generic array sort function. Takes an array as input
+  /// and sorts it according to provided comparator |Cmp| as template parameter.
+  /// Additionally |nullsFirst| ctor parameter can be used to configure nulls
+  /// sort order. If |nullsFirst| is  true nulls are moved to front of array,
+  ///  otherwise nulls are moved to end of array.
+  ///
+  /// Sorts floating points as per following ascending order:
+  /// -Inf < Inf < NaN
+
+ public:
+  explicit ArraySort(bool ascending, bool nullsFirst)
+      : ascending_(ascending), nullsFirst_(nullsFirst) {}
+
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& /* outputType */,
+      exec::EvalCtx* context,
+      VectorPtr* result) const override;
+
+ private:
+  bool ascending_;
+  bool nullsFirst_;
+};
+
 std::shared_ptr<exec::VectorFunction> makeArraySort(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs);
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> arraySortSignatures();
+
+std::shared_ptr<exec::VectorFunction> makeSortArray(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs);
+
+std::vector<std::shared_ptr<exec::FunctionSignature>> sortArraySignatures();
 
 } // namespace facebook::velox::functions::sparksql

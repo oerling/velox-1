@@ -8,13 +8,14 @@
 
 #pragma once
 
-#include "duckdb.hpp"
+#include "velox/external/duckdb/duckdb.hpp"
 
 namespace duckdb {
 
 class TPCHExtension : public Extension {
 public:
 	void Load(DuckDB &db) override;
+	std::string Name() override;
 
 	//! Gets the specified TPC-H Query number as a string
 	static std::string GetQuery(int query);

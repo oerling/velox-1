@@ -16,68 +16,22 @@
 #pragma once
 
 #include "velox/buffer/Buffer.h"
+#include "velox/common/memory/ByteStream.h"
 #include "velox/common/memory/MappedMemory.h"
 #include "velox/common/memory/Memory.h"
+#include "velox/common/memory/StreamArena.h"
 #include "velox/type/Type.h"
 #include "velox/vector/SelectivityVector.h"
 
-namespace facebook {
-namespace velox {
+namespace facebook::velox {
 
 class BaseVector;
-struct ByteRange;
 class ByteStream;
 class RowVector;
 
 struct IndexRange {
   vector_size_t begin;
   vector_size_t size;
-};
-
-// An abstract class that holds memory for serialized vector
-// content. A single repartitioning target is one use case: The bytes
-// held are released as a unit when the destination acknowledges
-// receipt. Another use case is a hash table partition that holds
-// complex types as serialized rows.
-class StreamArena {
- public:
-  static constexpr int32_t kVectorStreamOwner = 1;
-
-  explicit StreamArena(memory::MappedMemory* mappedMemory)
-      : mappedMemory_(mappedMemory), allocation_(mappedMemory) {}
-
-  virtual ~StreamArena() = default;
-
-  // Sets range to refer  to at least one page of writable memory owned by
-  // 'this'. Up to 'numPages' may be  allocated.
-  virtual void newRange(int32_t bytes, ByteRange* range);
-
-  // sets 'range' to point to a small piece of memory owned by this. These alwys
-  // come from the heap. The use case is for headers that may change length
-  // based on data properties, not for bulk data.
-  virtual void newTinyRange(int32_t bytes, ByteRange* range);
-
-  // Returns the Total size in bytes held by all Allocations.
-  virtual size_t size() const {
-    return size_;
-  }
-
-  memory::MappedMemory* mappedMemory() {
-    return mappedMemory_;
-  }
-
- private:
-  memory::MappedMemory* mappedMemory_;
-  // All allocations.
-  std::vector<std::unique_ptr<memory::MappedMemory::Allocation>> allocations_;
-  // The allocation from which pages are given out. Moved to 'allocations_' when
-  // used up.
-  memory::MappedMemory::Allocation allocation_;
-  int32_t currentRun_ = 0;
-  int32_t currentPage_ = 0;
-  memory::MachinePageCount allocationQuantum_ = 2;
-  size_t size_ = 0;
-  std::vector<std::string> tinyRanges_;
 };
 
 class VectorSerializer {
@@ -89,7 +43,7 @@ class VectorSerializer {
       const folly::Range<const IndexRange*>& ranges) = 0;
 
   // Writes the contents to 'stream' in wire format
-  virtual void flush(std::ostream* stream) = 0;
+  virtual void flush(OutputStream* stream) = 0;
 };
 
 class VectorSerde {
@@ -147,7 +101,7 @@ class VectorStreamGroup : public StreamArena {
       const folly::Range<const IndexRange*>& ranges);
 
   // Writes the contents to 'stream' in wire format.
-  void flush(std::ostream* stream);
+  void flush(OutputStream* stream);
 
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
@@ -160,6 +114,7 @@ class VectorStreamGroup : public StreamArena {
   std::unique_ptr<VectorSerializer> serializer_;
 };
 
+<<<<<<< HEAD
 struct ByteRange {
  public:
   template <typename T>
@@ -471,3 +426,6 @@ inline Date ByteStream::read<Date>() {
 
 } // namespace velox
 } // namespace facebook
+=======
+} // namespace facebook::velox
+>>>>>>> oerling1/spill-dev

@@ -322,12 +322,34 @@ class SlowMapVal : public IMapVal<KEY, VAL> {};
 template <typename KEY, typename VAL>
 class SlowMapWriter : public IMapVal<KEY, VAL> {
  public:
-  SlowMapWriter& operator=(const IMapVal<KEY, VAL>& rh) {
+  // Allow map-like object to be assigned to a map writer. This should change
+  // once we implement writer proxies.
+  template <template <typename, typename> typename T>
+  SlowMapWriter& operator=(const T<KEY, VAL>& rh) {
+    assignFrom(rh);
+
+    return *this;
+  }
+
+  // Allow Velox's MapView to be assigned to a map writer.  This should also
+  // change once we implement writer proxies.
+  template <bool nullFree, template <bool, typename, typename> typename T>
+  SlowMapWriter& operator=(const T<nullFree, KEY, VAL>& rh) {
+    assignFrom(rh);
+
+    return *this;
+  }
+
+ private:
+  // This allows us to share code between assignment operators.
+  // Ensure rh supports a map-like iterator interface before calling this
+  // function.
+  template <typename T>
+  inline void assignFrom(const T& rh) {
     IMapVal<KEY, VAL>::clear();
     for (const auto& it : rh) {
-      IMapVal<KEY, VAL>::emplace(it.first, std::optional<VAL>(it.second));
+      IMapVal<KEY, VAL>::emplace(it.first, it.second);
     }
-    return *this;
   }
 };
 

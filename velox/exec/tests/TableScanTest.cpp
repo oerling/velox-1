@@ -17,6 +17,7 @@
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
+#include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -224,6 +225,27 @@ TEST_P(TableScanTest, columnAliases) {
                assignments)
            .planNode();
   assertQuery(op, {filePath}, "SELECT c0 FROM tmp WHERE c0 % 2 = 1");
+}
+
+TEST_P(TableScanTest, partitionKeyAlias) {
+  auto vectors = makeVectors(1, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+  createDuckDbTable(vectors);
+
+  ColumnHandleMap assignments = {
+      {"a", regularColumn("c0", BIGINT())},
+      {"ds_alias", partitionKey("ds", VARCHAR())}};
+
+  auto split = makeHiveConnectorSplit(filePath->path, {{"ds", "2021-12-02"}});
+
+  auto outputType = ROW({"a", "ds_alias"}, {BIGINT(), VARCHAR()});
+  auto op = PlanBuilder()
+                .tableScan(
+                    outputType, makeTableHandle(SubfieldFilters{}), assignments)
+                .planNode();
+
+  assertQuery(op, split, "SELECT c0, '2021-12-02' FROM tmp");
 }
 
 TEST_P(TableScanTest, columnPruning) {
@@ -525,7 +547,7 @@ TEST_P(TableScanTest, fileNotFound) {
 
   auto cursor = std::make_unique<TaskCursor>(params);
   cursor->task()->addSplit("0", makeHiveSplit("file:/path/to/nowhere.orc"));
-  EXPECT_THROW(cursor->moveNext(), std::runtime_error);
+  EXPECT_THROW(cursor->moveNext(), VeloxRuntimeError);
 }
 
 // A valid ORC file (containing headers) but no data.
@@ -1382,7 +1404,7 @@ TEST_P(TableScanTest, filterPushdown) {
   assertQuery(
       PlanBuilder()
           .tableScan(ROW({}, {}), tableHandle, assignments)
-          .finalAggregation({}, {"sum(1)"})
+          .singleAggregation({}, {"sum(1)"})
           .planNode(),
       filePaths,
       "SELECT count(*) FROM tmp WHERE (c1 >= 0 OR c1 IS NULL) AND c3");
@@ -1393,7 +1415,7 @@ TEST_P(TableScanTest, filterPushdown) {
   assertQuery(
       PlanBuilder()
           .tableScan(ROW({}, {}), tableHandle, assignments)
-          .finalAggregation({}, {"sum(1)"})
+          .singleAggregation({}, {"sum(1)"})
           .planNode(),
       filePaths,
       "SELECT count(*) FROM tmp");
@@ -1597,7 +1619,7 @@ TEST_P(TableScanTest, aggregationPushdown) {
   auto op =
       PlanBuilder()
           .tableScan(rowType_, tableHandle, assignments)
-          .finalAggregation(
+          .partialAggregation(
               {5}, {"max(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(c4)"})
           .planNode();
   query =
@@ -1607,7 +1629,7 @@ TEST_P(TableScanTest, aggregationPushdown) {
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation(
+           .singleAggregation(
                {5}, {"max(c0)", "max(c1)", "max(c2)", "max(c3)", "max(c4)"})
            .planNode();
   query =
@@ -1617,7 +1639,7 @@ TEST_P(TableScanTest, aggregationPushdown) {
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation(
+           .singleAggregation(
                {5}, {"min(c0)", "min(c1)", "min(c2)", "min(c3)", "min(c4)"})
            .planNode();
   query =
@@ -1629,8 +1651,8 @@ TEST_P(TableScanTest, aggregationPushdown) {
   // touch columns being aggregated
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .project({"c0 % 5", "c1"}, {"c0_mod_5", "c1"})
-           .finalAggregation({0}, {"sum(c1)"})
+           .project({"c0 % 5", "c1"})
+           .singleAggregation({0}, {"sum(c1)"})
            .planNode();
 
   assertQuery(op, {filePath}, "SELECT c0 % 5, sum(c1) FROM tmp group by 1");
@@ -1641,7 +1663,7 @@ TEST_P(TableScanTest, aggregationPushdown) {
       SubfieldFilters(), parseExpr("length(c5) % 2 = 0", rowType_));
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation({5}, {"max(c0)"})
+           .singleAggregation({5}, {"max(c0)"})
            .planNode();
   query = "SELECT c5, max(c0) FROM tmp WHERE length(c5) % 2 = 0 GROUP BY c5 ";
   assertQuery(op, {filePath}, query);
@@ -1651,15 +1673,15 @@ TEST_P(TableScanTest, aggregationPushdown) {
   tableHandle = makeTableHandle(SubfieldFilters(), nullptr);
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation({5}, {"min(c0)", "max(c0)"})
+           .singleAggregation({5}, {"min(c0)", "max(c0)"})
            .planNode();
   assertQuery(
       op, {filePath}, "SELECT c5, min(c0), max(c0) FROM tmp GROUP BY 1");
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .project({"c5", "c0", "c0 + c1"}, {"c5", "c0", "c0_plus_c1"})
-           .finalAggregation({0}, {"min(c0)", "max(c0_plus_c1)"})
+           .project({"c5", "c0", "c0 + c1 AS c0_plus_c1"})
+           .singleAggregation({0}, {"min(c0)", "max(c0_plus_c1)"})
            .planNode();
   assertQuery(
       op, {filePath}, "SELECT c5, min(c0), max(c0 + c1) FROM tmp GROUP BY 1");
@@ -1676,7 +1698,7 @@ TEST_P(TableScanTest, bitwiseAggregationPushdown) {
 
   auto op = PlanBuilder()
                 .tableScan(rowType_, tableHandle, assignments)
-                .finalAggregation(
+                .singleAggregation(
                     {5},
                     {"bitwise_and_agg(c0)",
                      "bitwise_and_agg(c1)",
@@ -1691,7 +1713,7 @@ TEST_P(TableScanTest, bitwiseAggregationPushdown) {
 
   op = PlanBuilder()
            .tableScan(rowType_, tableHandle, assignments)
-           .finalAggregation(
+           .singleAggregation(
                {5},
                {"bitwise_or_agg(c0)",
                 "bitwise_or_agg(c1)",
@@ -1733,6 +1755,219 @@ TEST_P(TableScanTest, structLazy) {
                 .planNode();
 
   assertQuery(op, {filePath}, "select c0 % 3 from tmp");
+}
+
+TEST_P(TableScanTest, structInArrayOrMap) {
+  vector_size_t size = 1'000;
+
+  auto rowNumbers = makeFlatVector<int64_t>(size, [](auto row) { return row; });
+  auto innerRow = makeRowVector({rowNumbers});
+  auto offsets = AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
+  auto rawOffsets = offsets->asMutable<vector_size_t>();
+  std::iota(rawOffsets, rawOffsets + size, 0);
+  auto sizes = AlignedBuffer::allocate<vector_size_t>(size, pool_.get(), 1);
+  auto rowVector = makeRowVector(
+      {rowNumbers,
+       rowNumbers,
+       std::make_shared<MapVector>(
+           pool_.get(),
+           MAP(BIGINT(), innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           makeFlatVector<int64_t>(size, [](int32_t /*row*/) { return 1; }),
+           innerRow),
+       std::make_shared<ArrayVector>(
+           pool_.get(),
+           ARRAY(innerRow->type()),
+           BufferPtr(nullptr),
+           size,
+           offsets,
+           sizes,
+           innerRow)});
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, {rowVector});
+
+  // Exclude struct columns as DuckDB doesn't support complex types yet.
+  createDuckDbTable(
+      {makeRowVector({rowVector->childAt(0), rowVector->childAt(1)})});
+
+  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+  auto op = PlanBuilder()
+                .tableScan(rowType)
+                .project({"c2[1].c0", "c3[1].c0"})
+                .planNode();
+
+  assertQuery(op, {filePath}, "select c0, c0 from tmp");
+}
+
+// Here we test various aspects of grouped/bucketed execution also involving
+// output buffer.
+TEST_P(TableScanTest, groupedExecutionWithOutputBuffer) {
+  // Create source file - we will read from it in 6 splits.
+  const size_t numSplits{6};
+  auto vectors = makeVectors(10, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+
+  auto planFragment = PlanBuilder()
+                          .tableScan(rowType_)
+                          .partitionedOutput({}, 1, {0, 1, 2, 3, 4, 5})
+                          .planFragment();
+  planFragment.numSplitGroups = 10;
+  planFragment.executionStrategy = core::ExecutionStrategy::kGrouped;
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto task = std::make_shared<exec::Task>(
+      "0", std::move(planFragment), 0, std::move(queryCtx));
+  // 3 drivers max and 1 concurrent split group.
+  task->start(task, 3, 1);
+
+  // Add one splits before start to ensure we can handle such cases.
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // Only one split group should be in the processing mode, so 2 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Add the rest of splits
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // One split group should be in the processing mode, so 3 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Finalize one split group (8) and wait until 3 drivers are finished.
+  task->noMoreSplitsForGroup("0", 8);
+  while (task->numFinishedDrivers() != 3) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As one split group is finished, another one should kick in, so 3 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Finalize the second split group (1) and wait until 6 drivers are finished.
+  task->noMoreSplitsForGroup("0", 1);
+  while (task->numFinishedDrivers() != 6) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As one split group is finished, another one should kick in, so 3 drivers.
+  EXPECT_EQ(3, task->numRunningDrivers());
+
+  // Finalize the third split group (5) and wait until 9 drivers are finished.
+  task->noMoreSplitsForGroup("0", 5);
+  while (task->numFinishedDrivers() != 9) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // No split groups should be processed at the moment, so 0 drivers.
+  EXPECT_EQ(0, task->numRunningDrivers());
+
+  // Flag that we would have no more split groups.
+  task->noMoreSplits("0");
+
+  // 'Delete results' from output buffer triggers 'set all output consumed',
+  // which should finish the task.
+  auto outputBufferManager =
+      PartitionedOutputBufferManager::getInstance(task->queryCtx()->host())
+          .lock();
+  outputBufferManager->deleteResults(task->taskId(), 0);
+
+  // Task must be finished at this stage.
+  EXPECT_EQ(TaskState::kFinished, task->state());
+}
+
+// Here we test various aspects of grouped/bucketed execution.
+TEST_P(TableScanTest, groupedExecution) {
+  // Create source file - we will read from it in 6 splits.
+  const size_t numSplits{6};
+  auto vectors = makeVectors(10, 1'000);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, kTableScanTest, vectors);
+
+  CursorParameters params;
+  params.planNode = tableScanNode(ROW({}, {}));
+  params.maxDrivers = 2;
+  params.concurrentSplitGroups = 2;
+  // We will have 10 split groups 'in total', but our task will only handle
+  // three of them: 1, 5 and 8.
+  // Split 0 is from split group 1.
+  // Splits 1 and 2 are from split group 5.
+  // Splits 3, 4 and 5 are from split group 8.
+  params.executionStrategy = core::ExecutionStrategy::kGrouped;
+  params.numSplitGroups = 10;
+  // We'll only run 3 split groups, 2 drivers each.
+  params.numResultDrivers = 3 * 2;
+
+  // Create the cursor with the task underneath. It is not started yet.
+  auto cursor = std::make_unique<TaskCursor>(params);
+  auto* pTask = cursor->task().get();
+
+  // Add one splits before start to ensure we can handle such cases.
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // Start task now.
+  cursor->start();
+
+  // Only one split group should be in the processing mode, so 2 drivers.
+  EXPECT_EQ(2, pTask->numRunningDrivers());
+
+  // Add the rest of splits
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
+  pTask->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+
+  // Only two split groups should be in the processing mode, so 4 drivers.
+  EXPECT_EQ(4, pTask->numRunningDrivers());
+
+  // Finalize one split group (8) and wait until 2 drivers are finished.
+  pTask->noMoreSplitsForGroup("0", 8);
+  while (pTask->numFinishedDrivers() != 2) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As one split group is finished, another one should kick in, so 4 drivers.
+  EXPECT_EQ(4, pTask->numRunningDrivers());
+
+  // Finalize the second split group (5) and wait until 4 drivers are finished.
+  pTask->noMoreSplitsForGroup("0", 5);
+  while (pTask->numFinishedDrivers() != 4) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // As the second split group is finished, only one is left, so 2 drivers.
+  EXPECT_EQ(2, pTask->numRunningDrivers());
+
+  // Finalize the third split group (1) and wait until 6 drivers are finished.
+  pTask->noMoreSplitsForGroup("0", 1);
+  while (pTask->numFinishedDrivers() != 6) {
+    /* sleep override */
+    usleep(100'000); // 0.1 second.
+  }
+  // No split groups should be processed at the moment, so 0 drivers.
+  EXPECT_EQ(0, pTask->numRunningDrivers());
+
+  // Flag that we would have no more split groups.
+  pTask->noMoreSplits("0");
+
+  // Make sure we've got the right number of rows.
+  int32_t numRead = 0;
+  while (cursor->moveNext()) {
+    auto vector = cursor->current();
+    EXPECT_EQ(vector->childrenSize(), 0);
+    numRead += vector->size();
+  }
+
+  // Task must be finished at this stage.
+  EXPECT_EQ(TaskState::kFinished, pTask->state());
+
+  EXPECT_EQ(numRead, numSplits * 10'000);
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

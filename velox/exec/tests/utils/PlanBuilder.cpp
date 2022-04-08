@@ -18,6 +18,7 @@
 #include <velox/exec/Aggregate.h>
 #include <velox/exec/HashPartitionFunction.h>
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/expression/SignatureBinder.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 
@@ -28,25 +29,16 @@ namespace facebook::velox::exec::test {
 
 namespace {
 
-std::vector<std::string> makeNames(const std::string& prefix, int size) {
-  std::vector<std::string> names;
-  for (int i = 0; i < size; i++) {
-    names.push_back(fmt::format("{}{}", prefix, i));
-  }
-  return names;
-}
-
 std::shared_ptr<const core::ITypedExpr> parseExpr(
     const std::string& text,
-    std::shared_ptr<const RowType> rowType,
+    RowTypePtr rowType,
     memory::MemoryPool* pool) {
   auto untyped = parse::parseExpr(text);
   return core::Expressions::inferTypes(untyped, rowType, pool);
 }
 } // namespace
 
-PlanBuilder& PlanBuilder::tableScan(
-    const std::shared_ptr<const RowType>& outputType) {
+PlanBuilder& PlanBuilder::tableScan(const RowTypePtr& outputType) {
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
   for (uint32_t i = 0; i < outputType->size(); ++i) {
@@ -64,7 +56,7 @@ PlanBuilder& PlanBuilder::tableScan(
 }
 
 PlanBuilder& PlanBuilder::tableScan(
-    const std::shared_ptr<const RowType>& outputType,
+    const RowTypePtr& outputType,
     const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
     const std::unordered_map<
         std::string,
@@ -83,15 +75,14 @@ PlanBuilder& PlanBuilder::values(
   return *this;
 }
 
-PlanBuilder& PlanBuilder::exchange(
-    const std::shared_ptr<const RowType>& outputType) {
+PlanBuilder& PlanBuilder::exchange(const RowTypePtr& outputType) {
   planNode_ =
       std::make_shared<core::ExchangeNode>(nextPlanNodeId(), outputType);
   return *this;
 }
 
 PlanBuilder& PlanBuilder::mergeExchange(
-    const std::shared_ptr<const RowType>& outputType,
+    const RowTypePtr& outputType,
     const std::vector<ChannelIndex>& keyIndices,
     const std::vector<core::SortOrder>& sortOrder) {
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
@@ -106,20 +97,21 @@ PlanBuilder& PlanBuilder::mergeExchange(
   return *this;
 }
 
-PlanBuilder& PlanBuilder::project(
-    const std::vector<std::string>& projections,
-    const std::vector<std::string>& names) {
-  std::vector<std::string> projectNames;
-  if (names.empty()) {
-    projectNames = makeNames("p", projections.size());
-  } else {
-    VELOX_CHECK_EQ(names.size(), projections.size());
-    projectNames = names;
-  }
+PlanBuilder& PlanBuilder::project(const std::vector<std::string>& projections) {
   std::vector<std::shared_ptr<const core::ITypedExpr>> expressions;
-  for (auto& projection : projections) {
-    expressions.push_back(
-        parseExpr(projection, planNode_->outputType(), pool_));
+  std::vector<std::string> projectNames;
+  for (auto i = 0; i < projections.size(); ++i) {
+    auto untypedExpr = parse::parseExpr(projections[i]);
+    expressions.push_back(inferTypes(untypedExpr));
+    if (untypedExpr->alias().has_value()) {
+      projectNames.push_back(untypedExpr->alias().value());
+    } else if (
+        auto fieldExpr =
+            dynamic_cast<const core::FieldAccessExpr*>(untypedExpr.get())) {
+      projectNames.push_back(fieldExpr->getFieldName());
+    } else {
+      projectNames.push_back(fmt::format("p{}", i));
+    }
   }
   planNode_ = std::make_shared<core::ProjectNode>(
       nextPlanNodeId(),
@@ -146,7 +138,7 @@ PlanBuilder& PlanBuilder::tableWrite(
 }
 
 PlanBuilder& PlanBuilder::tableWrite(
-    const std::shared_ptr<const RowType>& columns,
+    const RowTypePtr& columns,
     const std::vector<std::string>& columnNames,
     const std::shared_ptr<core::InsertTableHandle>& insertHandle,
     const std::string& rowCountColumnName) {
@@ -169,6 +161,24 @@ template <TypeKind Kind>
 TypePtr nameToType() {
   using T = typename TypeTraits<Kind>::NativeType;
   return CppToType<T>::create();
+}
+
+TypePtr resolveAggregateType(
+    const std::string& aggregateName,
+    core::AggregationNode::Step step,
+    const std::vector<TypePtr>& rawInputTypes) {
+  if (auto signatures = exec::getAggregateFunctionSignatures(aggregateName)) {
+    for (const auto& signature : signatures.value()) {
+      exec::SignatureBinder binder(*signature, rawInputTypes);
+      if (binder.tryBind()) {
+        return binder.tryResolveType(
+            exec::isPartialOutput(step) ? signature->intermediateType()
+                                        : signature->returnType());
+      }
+    }
+  }
+
+  return nullptr;
 }
 
 class AggregateTypeResolver {
@@ -203,11 +213,15 @@ class AggregateTypeResolver {
     }
 
     auto functionName = expr->getFunctionName();
-    auto aggregate =
-        exec::Aggregate::create(functionName, step_, types, UNKNOWN());
-    if (aggregate) {
-      return aggregate->resultType();
+
+    // Use raw input types (if available) to resolve intermediate and final
+    // result types.
+    if (exec::isRawInput(step_)) {
+      if (auto type = resolveAggregateType(functionName, step_, types)) {
+        return type;
+      }
     }
+
     return nullptr;
   }
 
@@ -218,47 +232,189 @@ class AggregateTypeResolver {
 
 } // namespace
 
-PlanBuilder& PlanBuilder::aggregation(
-    const std::vector<ChannelIndex>& groupingKeys,
-    const std::vector<std::string>& aggregates,
-    const std::vector<std::string>& masks,
+std::shared_ptr<core::PlanNode>
+PlanBuilder::createIntermediateOrFinalAggregation(
     core::AggregationNode::Step step,
-    bool ignoreNullKeys,
+    const core::AggregationNode* partialAggNode) {
+  // Create intermediate or final aggregation using same grouping keys and same
+  // aggregate function names.
+  const auto& partialAggregates = partialAggNode->aggregates();
+  const auto& groupingKeys = partialAggNode->groupingKeys();
+
+  auto numAggregates = partialAggregates.size();
+  auto numGroupingKeys = groupingKeys.size();
+
+  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> masks(
+      numAggregates);
+
+  std::vector<std::shared_ptr<const core::CallTypedExpr>> aggregates;
+  aggregates.reserve(numAggregates);
+  for (auto i = 0; i < numAggregates; i++) {
+    // Resolve final or intermediate aggregation result type using raw input
+    // types for the partial aggregation.
+    auto name = partialAggregates[i]->name();
+    auto rawInputs = partialAggregates[i]->inputs();
+
+    std::vector<TypePtr> rawInputTypes;
+    for (auto& rawInput : rawInputs) {
+      rawInputTypes.push_back(rawInput->type());
+    }
+
+    auto type = resolveAggregateType(name, step, rawInputTypes);
+    VELOX_CHECK_NOT_NULL(
+        type, "Failed to resolve result type for aggregate function {}", name);
+    std::vector<std::shared_ptr<const core::ITypedExpr>> inputs = {
+        field(numGroupingKeys + i)};
+    aggregates.emplace_back(
+        std::make_shared<core::CallTypedExpr>(type, std::move(inputs), name));
+  }
+
+  return std::make_shared<core::AggregationNode>(
+      nextPlanNodeId(),
+      step,
+      groupingKeys,
+      partialAggNode->preGroupedKeys(),
+      partialAggNode->aggregateNames(),
+      aggregates,
+      masks,
+      partialAggNode->ignoreNullKeys(),
+      planNode_);
+}
+
+PlanBuilder& PlanBuilder::intermediateAggregation() {
+  // Current plan node must be a partial aggregation.
+  auto* aggNode = dynamic_cast<core::AggregationNode*>(planNode_.get());
+  VELOX_CHECK_NOT_NULL(
+      aggNode, "Current plan node must be a partial aggregation.");
+
+  VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+  VELOX_CHECK(exec::isRawInput(aggNode->step()));
+
+  auto step = core::AggregationNode::Step::kIntermediate;
+
+  planNode_ = createIntermediateOrFinalAggregation(step, aggNode);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::finalAggregation() {
+  // Current plan node must be a partial or intermediate aggregation.
+  const auto* aggNode = dynamic_cast<core::AggregationNode*>(planNode_.get());
+  VELOX_CHECK_NOT_NULL(
+      aggNode,
+      "Current plan node must be a partial or intermediate aggregation.");
+
+  VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+  if (!exec::isRawInput(aggNode->step())) {
+    // Check the source node.
+    aggNode =
+        dynamic_cast<const core::AggregationNode*>(aggNode->sources()[0].get());
+    VELOX_CHECK_NOT_NULL(
+        aggNode,
+        "Plan node before current plan node must be a partial aggregation.");
+    VELOX_CHECK(exec::isRawInput(aggNode->step()));
+    VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+  }
+
+  auto step = core::AggregationNode::Step::kFinal;
+
+  planNode_ = createIntermediateOrFinalAggregation(step, aggNode);
+  return *this;
+}
+
+PlanBuilder::AggregateExpressionsAndNames
+PlanBuilder::createAggregateExpressionsAndNames(
+    const std::vector<std::string>& aggregates,
+    core::AggregationNode::Step step,
     const std::vector<TypePtr>& resultTypes) {
   AggregateTypeResolver resolver(step);
-  std::vector<std::shared_ptr<const core::CallTypedExpr>> aggregateExprs;
-  aggregateExprs.reserve(aggregates.size());
+  std::vector<std::shared_ptr<const core::CallTypedExpr>> exprs;
+  std::vector<std::string> names;
+  exprs.reserve(aggregates.size());
+  names.reserve(aggregates.size());
   for (auto i = 0; i < aggregates.size(); i++) {
     auto& agg = aggregates[i];
     if (i < resultTypes.size()) {
       resolver.setResultType(resultTypes[i]);
     }
 
+    auto untypedExpr = parse::parseExpr(agg);
+
     auto expr = std::dynamic_pointer_cast<const core::CallTypedExpr>(
-        parseExpr(agg, planNode_->outputType(), pool_));
-    aggregateExprs.emplace_back(expr);
-  }
+        inferTypes(untypedExpr));
+    exprs.emplace_back(expr);
 
-  auto names = makeNames("a", aggregates.size());
-  auto groupingExpr = fields(groupingKeys);
-
-  // Generate masks vector for aggregations.
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> aggregateMasks(
-      aggregateExprs.size());
-  if (!masks.empty()) {
-    VELOX_CHECK_EQ(aggregates.size(), masks.size());
-    for (auto i = 0; i < masks.size(); i++) {
-      aggregateMasks[i] = field(masks[i]);
+    if (untypedExpr->alias().has_value()) {
+      names.push_back(untypedExpr->alias().value());
+    } else {
+      names.push_back(fmt::format("a{}", i));
     }
   }
 
+  return {exprs, names};
+}
+
+std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
+PlanBuilder::createAggregateMasks(
+    size_t numAggregates,
+    const std::vector<std::string>& masks) {
+  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> maskExprs(
+      numAggregates);
+  if (masks.empty()) {
+    return maskExprs;
+  }
+
+  VELOX_CHECK_EQ(numAggregates, masks.size());
+  for (auto i = 0; i < numAggregates; ++i) {
+    if (!masks[i].empty()) {
+      maskExprs[i] = field(masks[i]);
+    }
+  }
+
+  return maskExprs;
+}
+
+PlanBuilder& PlanBuilder::aggregation(
+    const std::vector<ChannelIndex>& groupingKeys,
+    const std::vector<ChannelIndex>& preGroupedKeys,
+    const std::vector<std::string>& aggregates,
+    const std::vector<std::string>& masks,
+    core::AggregationNode::Step step,
+    bool ignoreNullKeys,
+    const std::vector<TypePtr>& resultTypes) {
+  auto numAggregates = aggregates.size();
+  auto aggregatesAndNames =
+      createAggregateExpressionsAndNames(aggregates, step, resultTypes);
   planNode_ = std::make_shared<core::AggregationNode>(
       nextPlanNodeId(),
       step,
-      groupingExpr,
-      names,
-      aggregateExprs,
-      aggregateMasks,
+      fields(groupingKeys),
+      fields(preGroupedKeys),
+      aggregatesAndNames.names,
+      aggregatesAndNames.aggregates,
+      createAggregateMasks(numAggregates, masks),
+      ignoreNullKeys,
+      planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::streamingAggregation(
+    const std::vector<ChannelIndex>& groupingKeys,
+    const std::vector<std::string>& aggregates,
+    const std::vector<std::string>& masks,
+    core::AggregationNode::Step step,
+    bool ignoreNullKeys,
+    const std::vector<TypePtr>& resultTypes) {
+  auto numAggregates = aggregates.size();
+  auto aggregatesAndNames =
+      createAggregateExpressionsAndNames(aggregates, step, resultTypes);
+  planNode_ = std::make_shared<core::AggregationNode>(
+      nextPlanNodeId(),
+      step,
+      fields(groupingKeys),
+      fields(groupingKeys),
+      aggregatesAndNames.names,
+      aggregatesAndNames.aggregates,
+      createAggregateMasks(numAggregates, masks),
       ignoreNullKeys,
       planNode_);
   return *this;
@@ -266,15 +422,20 @@ PlanBuilder& PlanBuilder::aggregation(
 
 PlanBuilder& PlanBuilder::localMerge(
     const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder) {
+    const std::vector<core::SortOrder>& sortOrder,
+    std::vector<std::shared_ptr<const core::PlanNode>> sources) {
+  VELOX_CHECK_NULL(planNode_, "localMerge() must be the first call");
+  VELOX_CHECK_GE(
+      sources.size(), 1, "localMerge() requires at least one source");
+  const auto& inputType = sources[0]->outputType();
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
   std::vector<core::SortOrder> sortingOrders;
   for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.push_back(field(keyIndices[i]));
+    sortingKeys.push_back(field(inputType, keyIndices[i]));
     sortingOrders.push_back(sortOrder[i]);
   }
   planNode_ = std::make_shared<core::LocalMergeNode>(
-      nextPlanNodeId(), sortingKeys, sortingOrders, planNode_);
+      nextPlanNodeId(), sortingKeys, sortingOrders, std::move(sources));
 
   return *this;
 }
@@ -415,6 +576,7 @@ PlanBuilder& PlanBuilder::localPartition(
     const std::vector<ChannelIndex>& keyIndices,
     const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
     const std::vector<ChannelIndex>& outputLayout) {
+  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
   auto inputType = sources[0]->outputType();
   auto outputType = toRowType(inputType, outputLayout);
   auto keys = fields(inputType, keyIndices);
@@ -436,25 +598,24 @@ RowTypePtr concat(const RowTypePtr& a, const RowTypePtr& b) {
 
 RowTypePtr extract(
     const RowTypePtr& type,
-    const std::vector<ChannelIndex>& channels) {
-  std::vector<std::string> names;
-  names.reserve(channels.size());
+    const std::vector<std::string>& childNames) {
+  std::vector<std::string> names = childNames;
+
   std::vector<TypePtr> types;
-  types.reserve(channels.size());
-  for (auto channel : channels) {
-    names.emplace_back(type->nameOf(channel));
-    types.emplace_back(type->childAt(channel));
+  types.reserve(childNames.size());
+  for (const auto& name : childNames) {
+    types.emplace_back(type->findChild(name));
   }
   return ROW(std::move(names), std::move(types));
 }
 } // namespace
 
 PlanBuilder& PlanBuilder::hashJoin(
-    const std::vector<ChannelIndex>& leftKeys,
-    const std::vector<ChannelIndex>& rightKeys,
+    const std::vector<std::string>& leftKeys,
+    const std::vector<std::string>& rightKeys,
     const std::shared_ptr<facebook::velox::core::PlanNode>& build,
     const std::string& filterText,
-    const std::vector<ChannelIndex>& output,
+    const std::vector<std::string>& output,
     core::JoinType joinType) {
   VELOX_CHECK_EQ(leftKeys.size(), rightKeys.size());
 
@@ -482,11 +643,11 @@ PlanBuilder& PlanBuilder::hashJoin(
 }
 
 PlanBuilder& PlanBuilder::mergeJoin(
-    const std::vector<ChannelIndex>& leftKeys,
-    const std::vector<ChannelIndex>& rightKeys,
+    const std::vector<std::string>& leftKeys,
+    const std::vector<std::string>& rightKeys,
     const std::shared_ptr<facebook::velox::core::PlanNode>& build,
     const std::string& filterText,
-    const std::vector<ChannelIndex>& output,
+    const std::vector<std::string>& output,
     core::JoinType joinType) {
   VELOX_CHECK_EQ(leftKeys.size(), rightKeys.size());
 
@@ -515,7 +676,7 @@ PlanBuilder& PlanBuilder::mergeJoin(
 
 PlanBuilder& PlanBuilder::crossJoin(
     const std::shared_ptr<core::PlanNode>& build,
-    const std::vector<ChannelIndex>& output) {
+    const std::vector<std::string>& output) {
   auto resultType = concat(planNode_->outputType(), build->outputType());
   auto outputType = extract(resultType, output);
 
@@ -567,9 +728,7 @@ PlanBuilder& PlanBuilder::unnest(
 }
 
 std::string PlanBuilder::nextPlanNodeId() {
-  auto id = fmt::format("{}", planNodeId_);
-  planNodeId_++;
-  return id;
+  return fmt::format("{}", planNodeIdGenerator_->next());
 }
 
 std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
@@ -579,12 +738,18 @@ std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
 
 std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
     const std::string& name) {
-  auto index = planNode_->outputType()->getChildIdx(name);
-  return field(planNode_->outputType(), index);
+  return field(planNode_->outputType(), name);
 }
 
 std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
-    const std::shared_ptr<const RowType>& inputType,
+    const RowTypePtr& inputType,
+    const std::string& name) {
+  auto index = inputType->getChildIdx(name);
+  return field(inputType, index);
+}
+
+std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
+    const RowTypePtr& inputType,
     int index) {
   auto name = inputType->names()[index];
   auto type = inputType->childAt(index);
@@ -592,8 +757,24 @@ std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
 }
 
 std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
+PlanBuilder::fields(const std::vector<std::string>& names) {
+  return fields(planNode_->outputType(), names);
+}
+
+std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
 PlanBuilder::fields(
-    const std::shared_ptr<const RowType> inputType,
+    const RowTypePtr& inputType,
+    const std::vector<std::string>& names) {
+  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> fields;
+  for (const auto& name : names) {
+    fields.push_back(field(inputType, name));
+  }
+  return fields;
+}
+
+std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
+PlanBuilder::fields(
+    const RowTypePtr& inputType,
     const std::vector<ChannelIndex>& indices) {
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> fields;
   for (auto& index : indices) {
@@ -605,5 +786,11 @@ PlanBuilder::fields(
 std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
 PlanBuilder::fields(const std::vector<ChannelIndex>& indices) {
   return fields(planNode_->outputType(), indices);
+}
+
+std::shared_ptr<const core::ITypedExpr> PlanBuilder::inferTypes(
+    const std::shared_ptr<const core::IExpr>& untypedExpr) {
+  return core::Expressions::inferTypes(
+      untypedExpr, planNode_->outputType(), pool_);
 }
 } // namespace facebook::velox::exec::test

@@ -32,145 +32,227 @@
 namespace facebook::velox::functions::sparksql {
 namespace {
 
+void applyComplexType(
+    const SelectivityVector& rows,
+    ArrayVector* inputArray,
+    bool ascending,
+    bool nullsFirst,
+    exec::EvalCtx* context,
+    VectorPtr* resultElements) {
+  auto elementsVector = inputArray->elements();
+
+  // Allocate new vectors for indices.
+  BufferPtr indices = allocateIndices(elementsVector->size(), context->pool());
+  vector_size_t* rawIndices = indices->asMutable<vector_size_t>();
+
+  const CompareFlags flags{.nullsFirst = nullsFirst, .ascending = ascending};
+  // Note: Reusing offsets and sizes isn't safe if the input array had two
+  // arrays that had overlapping (but not identical) ranges in the input.
+  rows.applyToSelected([&](vector_size_t row) {
+    auto size = inputArray->sizeAt(row);
+    auto offset = inputArray->offsetAt(row);
+
+    for (auto i = 0; i < size; ++i) {
+      rawIndices[offset + i] = offset + i;
+    }
+    std::sort(
+        rawIndices + offset,
+        rawIndices + offset + size,
+        [&](vector_size_t& a, vector_size_t& b) {
+          return elementsVector->compare(elementsVector.get(), a, b, flags) < 0;
+        });
+  });
+
+  *resultElements = BaseVector::transpose(indices, std::move(elementsVector));
+}
+
+template <typename T>
+inline void swapWithNull(
+    FlatVector<T>* vector,
+    vector_size_t index,
+    vector_size_t nullIndex) {
+  // Values are already present in vector stringBuffers. Don't create additional
+  // copy.
+  if constexpr (std::is_same<T, StringView>::value) {
+    vector->setNoCopy(nullIndex, vector->valueAt(index));
+  } else {
+    vector->set(nullIndex, vector->valueAt(index));
+  }
+  vector->setNull(index, true);
+}
+
 template <TypeKind kind>
 void applyTyped(
     const SelectivityVector& rows,
     const ArrayVector* inputArray,
-    bool sortDescending,
+    bool ascending,
+    bool nullsFirst,
     exec::EvalCtx* context,
-    VectorPtr result) {
+    VectorPtr* resultElements) {
   using T = typename TypeTraits<kind>::NativeType;
 
-  // Decode and acquire array elements vector.
-  const VectorPtr& elementsVector = inputArray->elements();
+  // Copy array elements to new vector.
+  const VectorPtr& inputElements = inputArray->elements();
   SelectivityVector elementRows =
-      toElementRows(elementsVector->size(), rows, inputArray);
-  exec::LocalDecodedVector inputElements(context, *elementsVector, elementRows);
+      toElementRows(inputElements->size(), rows, inputArray);
 
-  // Initialize elements vectors for result
-  ArrayVector* resultArray = result->as<ArrayVector>();
-  auto resultElements = resultArray->elements();
-  resultElements->resize(inputArray->elements()->size());
-  auto resultFlatElements = resultElements->asFlatVector<T>();
-  T* resultRawValues = resultFlatElements->mutableRawValues();
+  *resultElements = BaseVector::create(
+      inputElements->type(), inputElements->size(), context->pool());
+  (*resultElements)
+      ->copy(inputElements.get(), elementRows, /*toSourceRow=*/nullptr);
 
-  vector_size_t resultOffset = 0;
+  auto flatResults = (*resultElements)->asFlatVector<T>();
+  T* resultRawValues = flatResults->mutableRawValues();
+
   auto processRow = [&](vector_size_t row) {
     auto size = inputArray->sizeAt(row);
-    auto inputOffset = inputArray->offsetAt(row);
-    resultArray->setOffsetAndSize(row, resultOffset, size);
+    auto offset = inputArray->offsetAt(row);
     if (size == 0) {
       return;
     }
-    T* rowValues = resultRawValues + resultOffset;
-    for (int j = 0; j < size; ++j) {
-      *(rowValues + j) = inputElements->valueAt<T>(j + inputOffset);
-    }
-    if (sortDescending) {
-      // Move nulls to end of array
-      vector_size_t numNulls = 0;
-      for (vector_size_t i = size - 1; i >= 0; --i) {
-        if (inputElements->isNullAt(i + inputOffset)) {
-          std::swap(*(rowValues + i), *(rowValues + size - numNulls - 1));
-          resultElements->setNull(resultOffset + size - numNulls - 1, true);
-          ++numNulls;
-        }
-      }
-      std::sort(rowValues, rowValues + size - numNulls, Greater<T>());
-    } else {
-      // Move nulls to beginning of array
-      vector_size_t numNulls = 0;
+    vector_size_t numNulls = 0;
+    if (nullsFirst) {
+      // Move nulls to beginning of array.
       for (vector_size_t i = 0; i < size; ++i) {
-        if (inputElements->isNullAt(i + inputOffset)) {
-          std::swap(*(rowValues + i), *(rowValues + numNulls));
-          resultElements->setNull(resultOffset + numNulls, true);
+        if (flatResults->isNullAt(offset + i)) {
+          swapWithNull<T>(flatResults, offset + numNulls, offset + i);
           ++numNulls;
         }
       }
-      std::sort(rowValues + numNulls, rowValues + size, Less<T>());
+    } else {
+      // Move nulls to end of array.
+      for (vector_size_t i = size - 1; i >= 0; --i) {
+        if (flatResults->isNullAt(offset + i)) {
+          swapWithNull<T>(
+              flatResults, offset + size - numNulls - 1, offset + i);
+          ++numNulls;
+        }
+      }
     }
-    resultOffset += size;
+    // Exclude null values while sorting.
+    auto rowBegin = offset + (nullsFirst ? numNulls : 0);
+    auto rowEnd = rowBegin + size - numNulls;
+
+    if constexpr (kind == TypeKind::BOOLEAN) {
+      uint64_t* rawBits = flatResults->template mutableRawValues<uint64_t>();
+      auto numSetBits = bits::countBits(rawBits, rowBegin, rowEnd);
+      // If ascending, false is placed before true, otherwise true is placed
+      // before false.
+      bool smallerValue = !ascending;
+      auto mid = ascending ? rowEnd - numSetBits : rowBegin + numSetBits;
+      bits::fillBits(rawBits, rowBegin, mid, smallerValue);
+      bits::fillBits(rawBits, mid, rowEnd, !smallerValue);
+    } else {
+      if (ascending) {
+        std::sort(
+            resultRawValues + rowBegin, resultRawValues + rowEnd, Less<T>());
+      } else {
+        std::sort(
+            resultRawValues + rowBegin, resultRawValues + rowEnd, Greater<T>());
+      }
+    }
   };
 
   rows.applyToSelected(processRow);
 }
-
-class ArraySort : public exec::VectorFunction {
-  /// This class implements array_sort function. Takes an array as input
-  /// and sorts it in ascending order as per following sematics
-  /// NULL < -Inf < Inf < NaN
-  /// If optional second parameter is set to true, then the elements will
-  /// sorted in descending order instead.
-  ///
-  /// Signature:
-  ///   array_sort(array(T)) -> array(T)
-  ///   array_sort(array(T), boolean) -> array(T)
-  ///
-  /// NOTE: Supports all scalar types except BOOLEAN, VARCHAR and VARBINARY.
-
- public:
-  explicit ArraySort(bool sortDescending) : sortDescending_(sortDescending) {}
-
-  void apply(
-      const SelectivityVector& rows,
-      std::vector<VectorPtr>& args,
-      const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
-    const ArrayVector* inputArray = args[0]->as<ArrayVector>();
-
-    // initialize result ArrayVector
-    VectorPtr resultArray = BaseVector::create(
-        inputArray->type(), inputArray->size(), context->pool());
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-        applyTyped,
-        inputArray->elements()->typeKind(),
-        rows,
-        inputArray,
-        sortDescending_,
-        context,
-        resultArray);
-    context->moveOrCopyResult(resultArray, rows, result);
-  }
-
- private:
-  bool sortDescending_;
-};
 } // namespace
 
+void ArraySort::apply(
+    const SelectivityVector& rows,
+    std::vector<VectorPtr>& args,
+    const TypePtr& /*outputType*/,
+    exec::EvalCtx* context,
+    VectorPtr* result) const {
+  ArrayVector* inputArray = args[0]->as<ArrayVector>();
+  VectorPtr resultElements;
+
+  auto typeKind = inputArray->elements()->typeKind();
+  if (typeKind == TypeKind::MAP || typeKind == TypeKind::ARRAY ||
+      typeKind == TypeKind::ROW) {
+    applyComplexType(
+        rows, inputArray, ascending_, nullsFirst_, context, &resultElements);
+  } else {
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        applyTyped,
+        typeKind,
+        rows,
+        inputArray,
+        ascending_,
+        nullsFirst_,
+        context,
+        &resultElements);
+  }
+
+  auto resultArray = std::make_shared<ArrayVector>(
+      context->pool(),
+      inputArray->type(),
+      inputArray->nulls(),
+      rows.end(),
+      inputArray->offsets(),
+      inputArray->sizes(),
+      resultElements,
+      inputArray->getNullCount());
+
+  context->moveOrCopyResult(resultArray, rows, result);
+}
+
+// Signature: array_sort(array(T)) -> array(T)
 std::vector<std::shared_ptr<exec::FunctionSignature>> arraySortSignatures() {
-  return {// array(T) -> array(T)
-          exec::FunctionSignatureBuilder()
-              .typeVariable("T")
-              .argumentType("array(T)")
-              .returnType("array(T)")
-              .build(),
-          // array(T, boolean) -> array(T)
-          exec::FunctionSignatureBuilder()
-              .typeVariable("T")
-              .argumentType("array(T)")
-              .argumentType("boolean")
-              .returnType("array(T)")
-              .build()};
+  return {
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .argumentType("array(T)")
+          .returnType("array(T)")
+          .build(),
+  };
 }
 
 std::shared_ptr<exec::VectorFunction> makeArraySort(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs) {
+  VELOX_CHECK_EQ(inputArgs.size(), 1);
+  // Nulls are considered largest.
+  return std::make_shared<ArraySort>(/*ascending=*/true, /*nullsFirst=*/false);
+}
+
+// Signatures:
+//   sort_array(array(T)) -> array(T)
+//   sort_array(array(T), boolean) -> array(T)
+std::vector<std::shared_ptr<exec::FunctionSignature>> sortArraySignatures() {
+  return {
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .argumentType("array(T)")
+          .returnType("array(T)")
+          .build(),
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .argumentType("array(T)")
+          .argumentType("boolean")
+          .returnType("array(T)")
+          .build(),
+  };
+}
+
+std::shared_ptr<exec::VectorFunction> makeSortArray(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs) {
   VELOX_CHECK(
       inputArgs.size() == 1 || inputArgs.size() == 2,
       "Invalid number of arguments {}, expected 1 or 2",
       inputArgs.size());
-  bool sortDescending = false;
-  // Read optional sort descending flag.
+  bool ascending = true;
+  // Read optional sort ascending flag.
   if (inputArgs.size() == 2) {
     BaseVector* boolVector = inputArgs[1].constantValue.get();
     if (!boolVector || !boolVector->isConstantEncoding()) {
       VELOX_USER_FAIL(
           "{} requires a constant bool as the second argument.", name);
     }
-    sortDescending = boolVector->as<ConstantVector<bool>>()->valueAt(0);
+    ascending = boolVector->as<ConstantVector<bool>>()->valueAt(0);
   }
-  return std::make_shared<ArraySort>(sortDescending);
+  // Nulls are considered smallest.
+  bool nullsFirst = ascending;
+  return std::make_shared<ArraySort>(ascending, nullsFirst);
 }
 } // namespace facebook::velox::functions::sparksql

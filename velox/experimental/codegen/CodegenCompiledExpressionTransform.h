@@ -247,7 +247,7 @@ class CompiledExpressionTransformVisitor {
       const std::string& columnName,
       const size_t outputIndex,
       std::stringstream& out) {
-    static const std::string formatString = R"(
+    constexpr auto formatString = R"(
         {generatedStructCode}
         using {usingDeclName} = std::tuple<{className},{inputMap},
                   std::index_sequence<{outputIndex}>>;
@@ -475,17 +475,17 @@ class CompiledExpressionTransformVisitor {
     for (const auto& includePath : includeSet) {
       includes << fmt::format("#include {}\n", includePath);
     };
-    const std::string fileString = fmt::format(
+    const std::string fileString = fmt::vformat(
         fileFormat(),
-        fmt::arg("includes", includes.str()),
-        fmt::arg("GeneratedCode", genCode),
-        fmt::arg("GeneratedCodeClass", "FilterExpr"),
-        fmt::arg(
-            "isDefaultNull", isDefaultNull(filter.id()) ? "true" : "false"),
-        fmt::arg(
-            "isDefaultNullStrict",
-            isDefaultNullStrict(filter.id()) ? "true" : "false"));
-
+        fmt::make_format_args(
+            fmt::arg("includes", includes.str()),
+            fmt::arg("GeneratedCode", genCode),
+            fmt::arg("GeneratedCodeClass", "FilterExpr"),
+            fmt::arg(
+                "isDefaultNull", isDefaultNull(filter.id()) ? "true" : "false"),
+            fmt::arg(
+                "isDefaultNullStrict",
+                isDefaultNullStrict(filter.id()) ? "true" : "false")));
     auto compiledObject = codeManager_.compiler().compileString({}, fileString);
     auto dynamicObject = codeManager_.compiler().link({}, {compiledObject});
 
@@ -574,14 +574,16 @@ class CompiledExpressionTransformVisitor {
       isDefaultNullStrict = this->isDefaultNullStrict(projection.id());
     }
 
-    const std::string fileString = fmt::format(
+    const std::string fileString = fmt::vformat(
         fileFormat(),
-        fmt::arg("includes", includes.str()),
-        fmt::arg("GeneratedCode", genCode),
-        fmt::arg("GeneratedCodeClass", "ProjectExpr"),
-        fmt::arg("isDefaultNull", isDefaultNull ? "true" : "false"),
-        fmt::arg(
-            "isDefaultNullStrict", isDefaultNullStrict ? "true" : "false"));
+        fmt::make_format_args(
+            fmt::arg("includes", includes.str()),
+            fmt::arg("GeneratedCode", genCode),
+            fmt::arg("GeneratedCodeClass", "ProjectExpr"),
+            fmt::arg("isDefaultNull", isDefaultNull ? "true" : "false"),
+            fmt::arg(
+                "isDefaultNullStrict",
+                isDefaultNullStrict ? "true" : "false")));
 
     auto compiledObject = codeManager_.compiler().compileString({}, fileString);
     auto dynamicObject = codeManager_.compiler().link({}, {compiledObject});

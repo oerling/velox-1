@@ -39,6 +39,8 @@ class Merge : public SourceOperator {
 
   BlockingReason isBlocked(ContinueFuture* future) override;
 
+  bool isFinished() override;
+
   RowVectorPtr getOutput() override;
 
   const std::shared_ptr<const RowType> outputType() const {
@@ -111,14 +113,10 @@ class LocalMerge : public Merge {
   LocalMerge(
       int32_t operatorId,
       DriverCtx* driverCtx,
-      int32_t numSources,
       const std::shared_ptr<const core::LocalMergeNode>& localMergeNode);
 
  protected:
   BlockingReason addMergeSources(ContinueFuture* future) override;
-
- private:
-  int32_t numSources_;
 };
 
 // MergeExchange merges its sources' outputs into a single stream of
@@ -130,8 +128,6 @@ class MergeExchange : public Merge {
       int32_t operatorId,
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::MergeExchangeNode>& orderByNode);
-
-  void finish() override;
 
  protected:
   BlockingReason addMergeSources(ContinueFuture* future) override;

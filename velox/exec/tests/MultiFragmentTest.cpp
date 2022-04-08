@@ -62,14 +62,11 @@ class MultiFragmentTest : public OperatorTestBase {
       const std::string& taskId,
       std::shared_ptr<const core::PlanNode> planNode,
       int destination) {
-    auto queryCtx = core::QueryCtx::create(
-        std::make_shared<core::MemConfig>(configSettings_),
-        std::unordered_map<std::string, std::shared_ptr<Config>>{},
-        memory::MappedMemory::getInstance(),
-        memory::getProcessDefaultMemoryManager().getRoot().addScopedChild(
-            "query_root"));
+    auto queryCtx = core::QueryCtx::createForTest(
+        std::make_shared<core::MemConfig>(configSettings_));
+    core::PlanFragment planFragment{planNode};
     return std::make_shared<Task>(
-        taskId, planNode, destination, std::move(queryCtx));
+        taskId, std::move(planFragment), destination, std::move(queryCtx));
   }
 
   void writeToFile(const std::string& filePath, RowVectorPtr vector) {
@@ -180,13 +177,12 @@ TEST_F(MultiFragmentTest, aggregationSingleKey) {
   auto leafTaskId = makeTaskId("leaf", 0);
   std::shared_ptr<core::PlanNode> partialAggPlan;
   {
-    partialAggPlan =
-        PlanBuilder()
-            .tableScan(rowType_)
-            .project(std::vector<std::string>{"c0 % 10", "c1"}, {"c0", "c1"})
-            .partialAggregation({0}, {"sum(c1)"})
-            .partitionedOutput({0}, 3)
-            .planNode();
+    partialAggPlan = PlanBuilder()
+                         .tableScan(rowType_)
+                         .project({"c0 % 10 AS c0", "c1"})
+                         .partialAggregation({0}, {"sum(c1)"})
+                         .partitionedOutput({0}, 3)
+                         .planNode();
 
     auto leafTask = makeTask(leafTaskId, partialAggPlan, 0);
     tasks.push_back(leafTask);
@@ -199,7 +195,7 @@ TEST_F(MultiFragmentTest, aggregationSingleKey) {
   for (int i = 0; i < 3; i++) {
     finalAggPlan = PlanBuilder()
                        .exchange(partialAggPlan->outputType())
-                       .finalAggregation({0}, {"sum(a0)"})
+                       .finalAggregation({0}, {"sum(a0)"}, {BIGINT()})
                        .partitionedOutput({}, 1)
                        .planNode();
 
@@ -222,15 +218,12 @@ TEST_F(MultiFragmentTest, aggregationMultiKey) {
   auto leafTaskId = makeTaskId("leaf", 0);
   std::shared_ptr<core::PlanNode> partialAggPlan;
   {
-    partialAggPlan =
-        PlanBuilder()
-            .tableScan(rowType_)
-            .project(
-                std::vector<std::string>{"c0 % 10", "c1 % 2", "c2"},
-                {"c0", "c1", "c2"})
-            .partialAggregation({0, 1}, {"sum(c2)"})
-            .partitionedOutput({0, 1}, 3)
-            .planNode();
+    partialAggPlan = PlanBuilder()
+                         .tableScan(rowType_)
+                         .project({"c0 % 10 AS c0", "c1 % 2 AS c1", "c2"})
+                         .partialAggregation({0, 1}, {"sum(c2)"})
+                         .partitionedOutput({0, 1}, 3)
+                         .planNode();
 
     auto leafTask = makeTask(leafTaskId, partialAggPlan, 0);
     tasks.push_back(leafTask);
@@ -243,7 +236,7 @@ TEST_F(MultiFragmentTest, aggregationMultiKey) {
   for (int i = 0; i < 3; i++) {
     finalAggPlan = PlanBuilder()
                        .exchange(partialAggPlan->outputType())
-                       .finalAggregation({0, 1}, {"sum(a0)"})
+                       .finalAggregation({0, 1}, {"sum(a0)"}, {BIGINT()})
                        .partitionedOutput({}, 1)
                        .planNode();
 
@@ -271,11 +264,10 @@ TEST_F(MultiFragmentTest, distributedTableScan) {
     std::shared_ptr<core::PlanNode> leafPlan;
     {
       PlanBuilder builder;
-      leafPlan =
-          builder.tableScan(rowType_)
-              .project(std::vector<std::string>{"c0 % 10", "c1 % 2", "c2"})
-              .partitionedOutput({}, 1, {2, 1, 0})
-              .planNode();
+      leafPlan = builder.tableScan(rowType_)
+                     .project({"c0 % 10", "c1 % 2", "c2"})
+                     .partitionedOutput({}, 1, {2, 1, 0})
+                     .planNode();
 
       auto leafTask = makeTask(leafTaskId, leafPlan, 0);
       tasks.push_back(leafTask);
@@ -303,15 +295,20 @@ TEST_F(MultiFragmentTest, mergeExchange) {
       filePaths0, filePaths1};
 
   std::vector<std::string> partialSortTaskIds;
-  std::shared_ptr<const RowType> outputType;
+  RowTypePtr outputType;
 
   for (int i = 0; i < 2; ++i) {
     auto sortTaskId = makeTaskId("orderby", tasks.size());
     partialSortTaskIds.push_back(sortTaskId);
-    auto partialSortPlan = PlanBuilder()
-                               .tableScan(rowType_)
-                               .orderBy({0}, {kAscNullsLast}, true)
-                               .localMerge({0}, {kAscNullsLast})
+    auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    auto partialSortPlan = PlanBuilder(planNodeIdGenerator)
+                               .localMerge(
+                                   {0},
+                                   {kAscNullsLast},
+                                   {PlanBuilder(planNodeIdGenerator)
+                                        .tableScan(rowType_)
+                                        .orderBy({0}, {kAscNullsLast}, true)
+                                        .planNode()})
                                .partitionedOutput({}, 1)
                                .planNode();
 
@@ -481,7 +478,7 @@ TEST_F(MultiFragmentTest, replicateNullsAndAny) {
     finalAggPlan =
         PlanBuilder()
             .exchange(leafPlan->outputType())
-            .project({"c0 is null"}, {"co_is_null"})
+            .project({"c0 is null AS co_is_null"})
             .partialAggregation({}, {"count_if(co_is_null)", "count(1)"})
             .partitionedOutput({}, 1)
             .planNode();
@@ -493,13 +490,53 @@ TEST_F(MultiFragmentTest, replicateNullsAndAny) {
 
   // Collect results and verify number of nulls is 3 times larger than in the
   // original data.
-  auto op = PlanBuilder()
-                .exchange(finalAggPlan->outputType())
-                .finalAggregation({}, {"sum(a0)", "sum(a1)"})
-                .planNode();
+  auto op =
+      PlanBuilder()
+          .exchange(finalAggPlan->outputType())
+          .finalAggregation({}, {"sum(a0)", "sum(a1)"}, {BIGINT(), BIGINT()})
+          .planNode();
 
   assertQuery(
       op,
       finalAggTaskIds,
       "SELECT 3 * ceil(1000.0 / 7) /* number of null rows */, 1000 + 2 * ceil(1000.0 / 7) /* total number of rows */");
+}
+
+// Test query finishing before all splits have been scheduled.
+TEST_F(MultiFragmentTest, limit) {
+  auto data = makeRowVector({makeFlatVector<int32_t>(
+      1'000, [](auto row) { return row; }, nullEvery(7))});
+
+  // Make leaf task: Values -> PartialLimit(1) -> Repartitioning(0).
+  auto leafTaskId = makeTaskId("leaf", 0);
+  auto leafPlan = PlanBuilder()
+                      .values({data})
+                      .limit(0, 1, false)
+                      .partitionedOutput({}, 1)
+                      .planNode();
+  auto leafTask = makeTask(leafTaskId, leafPlan, 0);
+  Task::start(leafTask, 1);
+
+  // Make final task: Exchange -> FinalLimit(1).
+  auto plan = PlanBuilder()
+                  .exchange(leafPlan->outputType())
+                  .limit(0, 1, false)
+                  .planNode();
+
+  auto split =
+      exec::Split(std::make_shared<RemoteConnectorSplit>(leafTaskId), -1);
+
+  // Expect the task to produce results before receiving no-more-splits message.
+  bool splitAdded = false;
+  auto task = ::assertQuery(
+      plan,
+      [&](Task* task) {
+        if (splitAdded) {
+          return;
+        }
+        task->addSplit("0", std::move(split));
+        splitAdded = true;
+      },
+      "SELECT null",
+      duckDbQueryRunner_);
 }

@@ -85,6 +85,8 @@ class LocalExchangeSource {
   /// copied into the consumers memory pool.
   BlockingReason isFinished(ContinueFuture* future);
 
+  bool isFinished();
+
   void close() {
     queue_.withWLock([](auto& queue) {
       while (!queue.empty()) {
@@ -128,6 +130,8 @@ class LocalExchangeSourceOperator : public SourceOperator {
 
   RowVectorPtr getOutput() override;
 
+  bool isFinished() override;
+
  private:
   const int partition_;
   const std::shared_ptr<LocalExchangeSource> source_{nullptr};
@@ -162,7 +166,9 @@ class LocalPartition : public Operator {
 
   BlockingReason isBlocked(ContinueFuture* future) override;
 
-  void finish() override;
+  void noMoreInput() override;
+
+  bool isFinished() override;
 
   void close() override {
     Operator::close();
@@ -172,6 +178,9 @@ class LocalPartition : public Operator {
   }
 
  private:
+  BlockingReason
+  enqueue(int32_t source, RowVectorPtr data, ContinueFuture* future);
+
   const std::vector<std::shared_ptr<LocalExchangeSource>> localExchangeSources_;
   const size_t numPartitions_;
   std::unique_ptr<core::PartitionFunction> partitionFunction_;
@@ -183,7 +192,6 @@ class LocalPartition : public Operator {
   std::vector<ContinueFuture> futures_;
 
   /// Reusable memory for hash calculation.
-  SelectivityVector allRows_;
   std::vector<uint32_t> partitions_;
 };
 

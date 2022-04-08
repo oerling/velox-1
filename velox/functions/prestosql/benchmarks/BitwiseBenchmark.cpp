@@ -16,11 +16,11 @@
 
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
-#include "velox/expression/tests/VectorFuzzer.h"
 #include "velox/functions/Macros.h"
 #include "velox/functions/Registerer.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
-#include "velox/functions/prestosql/SimpleFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace {
 using namespace facebook::velox;
@@ -50,7 +50,7 @@ VELOX_UDF_END();
 class BitwiseBenchmark : public functions::test::FunctionBenchmarkBase {
  public:
   BitwiseBenchmark() : FunctionBenchmarkBase() {
-    functions::registerFunctions();
+    functions::prestosql::registerBitwiseFunctions();
     registerFunction<
         udf_bitwise_arithmetic_shift_right_nocheck,
         int64_t,

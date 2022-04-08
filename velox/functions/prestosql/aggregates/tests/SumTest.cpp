@@ -41,14 +41,14 @@ TEST_F(SumTest, sumTinyint) {
   agg = PlanBuilder()
             .values(vectors)
             .partialAggregation({}, {"sum(c1)"})
-            .finalAggregation({}, {"sum(a0)"})
+            .finalAggregation()
             .planNode();
   assertQuery(agg, "SELECT sum(c1) FROM tmp");
 
   // Group by partial aggregation.
   agg = PlanBuilder()
             .values(vectors)
-            .project({"c0 % 10", "c1"}, {"c0 % 10", "c1"})
+            .project({"c0 % 10", "c1"})
             .partialAggregation({0}, {"sum(c1)"})
             .planNode();
   assertQuery(agg, "SELECT c0 % 10, sum(c1) FROM tmp GROUP BY 1");
@@ -56,9 +56,9 @@ TEST_F(SumTest, sumTinyint) {
   // Group by final aggregation.
   agg = PlanBuilder()
             .values(vectors)
-            .project({"c0 % 10", "c1"}, {"c0 % 10", "c1"})
+            .project({"c0 % 10", "c1"})
             .partialAggregation({0}, {"sum(c1)"})
-            .finalAggregation({0}, {"sum(a0)"})
+            .finalAggregation()
             .planNode();
   assertQuery(agg, "SELECT c0 % 10, sum(c1) FROM tmp GROUP BY 1");
 
@@ -66,7 +66,7 @@ TEST_F(SumTest, sumTinyint) {
   agg = PlanBuilder()
             .values(vectors)
             .filter("c0 % 2 = 0")
-            .project({"c0 % 11", "c1"}, {"c0_mod_11", "c1"})
+            .project({"c0 % 11", "c1"})
             .partialAggregation({0}, {"sum(c1)"})
             .planNode();
   assertQuery(
@@ -86,15 +86,12 @@ TEST_F(SumTest, sumDouble) {
   createDuckDbTable(vectors);
 
   // Global final aggregation.
-  auto agg =
-      PlanBuilder()
-          .values(vectors)
-          .partialAggregation(
-              {}, {"sum(c0)", "sum(c1)"}, {}, {DOUBLE(), DOUBLE()})
-          .intermediateAggregation(
-              {}, {"sum(a0)", "sum(a1)"}, {DOUBLE(), DOUBLE()})
-          .finalAggregation({}, {"sum(a0)", "sum(a1)"}, {REAL(), DOUBLE()})
-          .planNode();
+  auto agg = PlanBuilder()
+                 .values(vectors)
+                 .partialAggregation({}, {"sum(c0)", "sum(c1)"})
+                 .intermediateAggregation()
+                 .finalAggregation()
+                 .planNode();
   assertQuery(agg, "SELECT sum(c0), sum(c1) FROM tmp");
 }
 
@@ -113,12 +110,10 @@ TEST_F(SumTest, sumWithMask) {
   // Global partial+final aggregation.
   op = PlanBuilder()
            .values(vectors)
-           .project(
-               {"c0", "c1", "c2 % 2 = 0", "c3 % 3 = 0"},
-               {"c0", "c1", "m0", "m1"})
+           .project({"c0", "c1", "c2 % 2 = 0 AS m0", "c3 % 3 = 0 AS m1"})
            .partialAggregation(
                {}, {"sum(c0)", "sum(c0)", "sum(c1)"}, {"m0", "m1", "m1"})
-           .finalAggregation({}, {"sum(a0)", "sum(a1)", "sum(a2)"})
+           .finalAggregation()
            .planNode();
   assertQuery(
       op,
@@ -131,12 +126,10 @@ TEST_F(SumTest, sumWithMask) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c3 % 2 = 0")
-           .project(
-               {"c0", "c1", "c2 % 2 = 0", "c3 % 3 = 0"},
-               {"c0", "c1", "m0", "m1"})
+           .project({"c0", "c1", "c2 % 2 = 0 AS m0", "c3 % 3 = 0 AS m1"})
            .partialAggregation(
                {}, {"sum(c0)", "sum(c0)", "sum(c1)"}, {"m0", "m1", "m1"})
-           .finalAggregation({}, {"sum(a0)", "sum(a1)", "sum(a2)"})
+           .finalAggregation()
            .planNode();
   assertQuery(
       op,
@@ -147,12 +140,10 @@ TEST_F(SumTest, sumWithMask) {
   // Group by partial+final aggregation.
   op = PlanBuilder()
            .values(vectors)
-           .project(
-               {"c4", "c0", "c1", "c2 % 2 = 0", "c3 % 3 = 0"},
-               {"c4", "c0", "c1", "m0", "m1"})
+           .project({"c4", "c0", "c1", "c2 % 2 = 0 AS m0", "c3 % 3 = 0 AS m1"})
            .partialAggregation(
                {0}, {"sum(c0)", "sum(c0)", "sum(c1)"}, {"m0", "m1", "m1"})
-           .finalAggregation({0}, {"sum(a0)", "sum(a1)", "sum(a2)"})
+           .finalAggregation()
            .planNode();
   assertQuery(
       op,
@@ -165,12 +156,10 @@ TEST_F(SumTest, sumWithMask) {
   op = PlanBuilder()
            .values(vectors)
            .filter("c3 % 2 = 0")
-           .project(
-               {"c4", "c0", "c1", "c2 % 2 = 0", "c3 % 3 = 0"},
-               {"c4", "c0", "c1", "m0", "m1"})
+           .project({"c4", "c0", "c1", "c2 % 2 = 0 AS m0", "c3 % 3 = 0 AS m1"})
            .partialAggregation(
                {0}, {"sum(c0)", "sum(c0)", "sum(c1)"}, {"m0", "m1", "m1"})
-           .finalAggregation({0}, {"sum(a0)", "sum(a1)", "sum(a2)"})
+           .finalAggregation()
            .planNode();
   assertQuery(
       op,

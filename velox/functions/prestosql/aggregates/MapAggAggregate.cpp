@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/ContainerRowSerde.h"
+#include "velox/expression/FunctionSignature.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
 #include "velox/functions/prestosql/aggregates/ValueList.h"
 
@@ -81,7 +82,12 @@ class MapAggAggregate : public exec::Aggregate {
       offset += mapSize;
     }
 
-    *result = removeDuplicates(std::dynamic_pointer_cast<MapVector>(*result));
+    // canonicalize requires a singly referenced MapVector. std::move
+    // inside the cast does not clear *result, so we clear this
+    // manually.
+    auto mapVectorPtr = std::static_pointer_cast<MapVector>(std::move(*result));
+    *result = nullptr;
+    *result = removeDuplicates(mapVectorPtr);
   }
 
   void extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result)
@@ -185,8 +191,8 @@ class MapAggAggregate : public exec::Aggregate {
     return size;
   }
 
-  VectorPtr removeDuplicates(MapVectorPtr mapVector) const {
-    mapVector->canonicalize();
+  VectorPtr removeDuplicates(MapVectorPtr& mapVector) const {
+    MapVector::canonicalize(mapVector);
 
     auto offsets = mapVector->rawOffsets();
     auto sizes = mapVector->rawSizes();
@@ -256,22 +262,30 @@ class MapAggAggregate : public exec::Aggregate {
 };
 
 bool registerMapAggAggregate(const std::string& name) {
-  exec::AggregateFunctions().Register(
+  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
+      exec::AggregateFunctionSignatureBuilder()
+          .typeVariable("K")
+          .typeVariable("V")
+          .returnType("map(K,V)")
+          .intermediateType("map(K,V)")
+          .argumentType("K")
+          .argumentType("V")
+          .build()};
+
+  exec::registerAggregateFunction(
       name,
+      std::move(signatures),
       [name](
           core::AggregationNode::Step step,
           const std::vector<TypePtr>& argTypes,
-          const TypePtr&
-          /*resultType*/) -> std::unique_ptr<exec::Aggregate> {
+          const TypePtr& resultType) -> std::unique_ptr<exec::Aggregate> {
         auto rawInput = exec::isRawInput(step);
         VELOX_CHECK_EQ(
             argTypes.size(),
             rawInput ? 2 : 1,
             "{} ({}): unexpected number of arguments",
             name);
-        TypePtr returnType =
-            rawInput ? MAP(argTypes[0], argTypes[1]) : argTypes[0];
-        return std::make_unique<MapAggAggregate>(returnType);
+        return std::make_unique<MapAggAggregate>(resultType);
       });
   return true;
 }

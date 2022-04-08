@@ -27,10 +27,13 @@ add_library(
   BitwiseAggregates.cpp
   BoolAggregates.cpp
   CountIfAggregate.cpp
+  CovarianceAggregates.cpp
+  ChecksumAggregate.cpp
   MapAggAggregate.cpp
   MinMaxAggregates.cpp
   MinMaxByAggregates.cpp
   CountAggregate.cpp
+  PrestoHasher.cpp
   SingleValueAccumulator.cpp
   SumAggregate.cpp
   SumAggregate.h

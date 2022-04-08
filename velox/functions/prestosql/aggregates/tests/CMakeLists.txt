@@ -25,10 +25,13 @@ add_executable(
   AverageAggregationTest.cpp
   BitwiseAggregationTest.cpp
   BoolAndOrTest.cpp
+  ChecksumAggregateTest.cpp
   CountAggregationTest.cpp
   CountIfAggregationTest.cpp
+  CovarianceAggregationTest.cpp
   MinMaxByAggregationTest.cpp
   MinMaxTest.cpp
+  PrestoHasherTest.cpp
   SumTest.cpp
   MapAggTest.cpp
   ValueListTest.cpp

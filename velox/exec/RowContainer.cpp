@@ -73,7 +73,7 @@ RowContainer::RowContainer(
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
   // -1, 8 bytes below the pointer. This space is reserved for a 64
-  // bit unique digest of the keys for speding up comparison. This
+  // bit unique digest of the keys for speeding up comparison. This
   // space is reserved for the rows that are inserted before the
   // cardinality grows too large for packing all in 64
   // bits. 'numRowsWithNormalizedKey_' gives the number of rows with
@@ -103,6 +103,8 @@ RowContainer::RowContainer(
     nullOffsets_.push_back(nullOffset);
     ++nullOffset;
     isVariableWidth |= !aggregate->isFixedSize();
+    usesExternalMemory_ |= aggregate->accumulatorUsesExternalMemory();
+
   }
   for (auto& type : dependentTypes) {
     types_.push_back(type);
@@ -158,12 +160,21 @@ RowContainer::RowContainer(
   // A distinct hash table has no aggregates and if the hash table has
   // no nulls, it may be that there are no null flags.
   if (!nullOffsets_.empty()) {
-    initialNulls_.resize(nullBytes, 0x0);
-    // Aggregates are null on a new row.
-    auto aggregateNullOffset = nullableKeys ? keyTypes.size() : 0;
-    for (int32_t i = 0; i < aggregates_.size(); ++i) {
-      bits::setBit(initialNulls_.data(), i + aggregateNullOffset);
+    // Aggregates start life as null, join dependent columns as non-null.
+    initialNulls_.resize(nullBytes, isJoinBuild_ ? 0x0 : 0xff);
+    // The free flag has an initial value of 0.
+    bits::clearBit(
+        initialNulls_.data(), freeFlagOffset_ - nullOffsets_.front());
+    if (nullableKeys) {
+      for (int32_t i = 0; i < keyTypes_.size(); ++i) {
+        bits::clearBit(initialNulls_.data(), i);
+      }
     }
+  }
+  if (hasProbedFlag) {
+    bits::clearBit(
+        initialNulls_.data(),
+        nullOffsets_[nullOffsets_.size() - 2] - nullOffsets_[0]);
   }
   normalizedKeySize_ = hasNormalizedKeys_ ? sizeof(normalized_key_t) : 0;
   for (auto i = 0; i < offsets_.size(); ++i) {
@@ -172,7 +183,7 @@ RowContainer::RowContainer(
         (nullableKeys_ || i >= keyTypes_.size()) ? nullOffsets_[i]
                                                  : RowColumn::kNotNullOffset);
   }
-}
+  }
 
 char* RowContainer::newRow() {
   char* row;
@@ -280,6 +291,7 @@ void RowContainer::freeAggregates(folly::Range<char**> rows) {
   }
 }
 
+int32_t RowContainer::listRows(
 void RowContainer::store(
     const DecodedVector& decoded,
     vector_size_t index,
@@ -489,18 +501,26 @@ void RowContainer::hash(
 }
 
 void RowContainer::clear() {
+  if (usesExternalMemory_) {
+    constexpr int32_t kBatch = 1000;
+    std::vector<char*> rows(kBatch);
+
+    RowContainerIterator iter;
+    for (;;) {
+      int64_t numRows = listRows(&iter, kBatch, rows.data());
+      if (!numRows) {
+        break;
+      }
+      auto rowsData = folly::Range<char**>(rows.data(), numRows);
+      freeAggregates(rowsData);
+    }
+  }
   rows_.clear();
   stringAllocator_.clear();
   numRows_ = 0;
   numRowsWithNormalizedKey_ = 0;
   if (hasNormalizedKeys_) {
     normalizedKeySize_ = sizeof(normalized_key_t);
-  }
-}
-
-void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
-  for (auto i = 0; i < numRows; i++) {
-    bits::setBit(rows[i], probedFlagOffset_);
   }
 }
 
@@ -526,15 +546,9 @@ void RowContainer::extractSpill(folly::Range<char**> rows, RowVector* result) {
     extractColumn(rows.data(), rows.size(), i, result->childAt(i));
   }
   for (auto i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(rows.data(), rows.size());
+    aggregates_[i]->finalize(        rows.data(), rows.size());
     aggregates_[i]->extractAccumulators(
         rows.data(), rows.size(), &result->childAt(i + keyTypes_.size()));
-  }
-  if (aggregates_.empty()) {
-    int32_t firstDependentIndex = keyTypes_.size();
-    for (auto i = keyTypes_.size(); i < types_.size(); ++i) {
-      extractColumn(rows.data(), rows.size(), i, result->childAt(i));
-    }
   }
 }
 
@@ -656,13 +670,13 @@ void RowContainer::spill(
     if (doneFullSweep) {
       return;
     }
-    auto targetSize = spill.targetFileSize();
+    auto targetSize = spill.targetSize();
     for (auto newWay = spillRuns_.size(); newWay < spill.numWays(); ++newWay) {
       spillRuns_.emplace_back();
     }
     clearSpillRuns();
     iterator.reset();
-    if (fillSpillRuns(spill, eraser, iterator, spill.targetFileSize())) {
+    if (fillSpillRuns(spill, eraser, iterator, spill.targetSize())) {
       // Arrived at end of the container. Add more spilled ranges if any left.
       if (spill.numWays() < spill.maxWays()) {
         spill.setNumWays(spill.numWays() + 1);
@@ -738,6 +752,10 @@ bool RowContainer::fillSpillRuns(
         return numRows == 0;
       }
     }
+
+void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
+  for (auto i = 0; i < numRows; i++) {
+    bits::setBit(rows[i], probedFlagOffset_);
   }
 }
 

@@ -13,17 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/functions/prestosql/VectorFunctions.h"
+
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::functions::test;
-
-namespace facebook::velox::functions {
-void registerMapAllowingDuplicates() {
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_map_allow_duplicates, "map2");
-}
-}; // namespace facebook::velox::functions
 
 class MapTest : public FunctionBaseTest {};
 
@@ -111,7 +106,8 @@ TEST_F(MapTest, duplicateKeys) {
     ASSERT_EQ(e.message(), "Duplicate map keys are not allowed");
   }
   // Trying the map version with allowing duplicates
-  facebook::velox::functions::registerMapAllowingDuplicates();
+  facebook::velox::functions::prestosql::registerMapAllowingDuplicates(
+      std::string("map2"));
   try {
     evaluate<MapVector>("map2(c0, c1)", makeRowVector({keys, values}));
   } catch (const VeloxUserError& e) {
@@ -172,5 +168,45 @@ TEST_F(MapTest, encodings) {
 
   auto result =
       evaluate<MapVector>("map(c0, c1)", makeRowVector({keys, values}));
+  assertEqualVectors(expectedMap, result);
+}
+
+// Test map function applied to a constant array of keys and flat array of
+// values.
+TEST_F(MapTest, constantKeys) {
+  auto size = 1'000;
+
+  auto sizeAt = [](vector_size_t /*row*/) { return 1; };
+  auto keyAt = [](vector_size_t /*row*/) { return "key"_sv; };
+  auto valueAt = [](vector_size_t row) { return row; };
+
+  auto expectedMap =
+      makeMapVector<StringView, int32_t>(size, sizeAt, keyAt, valueAt);
+
+  auto result = evaluate<MapVector>(
+      "map(array['key'], array_constructor(c0))",
+      makeRowVector({
+          makeFlatVector<int32_t>(size, valueAt),
+      }));
+  assertEqualVectors(expectedMap, result);
+}
+
+// Test map function applied to a flat array of keys and constant array of
+// values.
+TEST_F(MapTest, constantValues) {
+  auto size = 1'000;
+
+  auto sizeAt = [](vector_size_t /*row*/) { return 1; };
+  auto keyAt = [](vector_size_t row) { return row; };
+  auto valueAt = [](vector_size_t /*row*/) { return "value"_sv; };
+
+  auto expectedMap =
+      makeMapVector<int32_t, StringView>(size, sizeAt, keyAt, valueAt);
+
+  auto result = evaluate<MapVector>(
+      "map(array_constructor(c0), array['value'])",
+      makeRowVector({
+          makeFlatVector<int32_t>(size, keyAt),
+      }));
   assertEqualVectors(expectedMap, result);
 }

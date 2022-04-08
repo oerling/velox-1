@@ -15,11 +15,12 @@
  */
 
 #include "velox/expression/ExprCompiler.h"
+#include "velox/core/SimpleFunctionMetadata.h"
 #include "velox/expression/CastExpr.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/VectorFunction.h"
-#include "velox/expression/VectorFunctionRegistry.h"
 
 namespace facebook::velox::exec {
 
@@ -327,8 +328,8 @@ ExprPtr compileExpression(
   auto inputTypes = getTypes(compiledInputs);
 
   if (auto concat = dynamic_cast<const core::ConcatTypedExpr*>(expr.get())) {
-    auto vectorFunction = getVectorFunction("ROW", inputTypes, {});
-    VELOX_CHECK(vectorFunction, "Vector function ROW is missing");
+    auto vectorFunction = getVectorFunction("row_constructor", inputTypes, {});
+    VELOX_CHECK(vectorFunction, "Vector function row_constructor is missing");
     result = std::make_shared<Expr>(
         resultType, std::move(compiledInputs), vectorFunction, "row");
   } else if (auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get())) {
@@ -340,17 +341,18 @@ ExprPtr compileExpression(
             call->name(), resultType, std::move(compiledInputs))) {
       result = specialForm;
     } else if (
-        auto adapterFunc =
-            AdaptedVectorFunctions().Create({call->name(), inputTypes})) {
+        auto simpleFunctionEntry =
+            SimpleFunctions().resolveFunction(call->name(), inputTypes)) {
+      auto metadata = simpleFunctionEntry->getMetadata();
       VELOX_USER_CHECK(
-          resultType->kindEquals(adapterFunc->returnType()),
+          resultType->kindEquals(metadata->returnType()),
           "Found incompatible return types for '{}' ({} vs. {}) "
           "for input types ({}).",
           call->name(),
-          adapterFunc->returnType(),
+          metadata->returnType(),
           resultType,
           folly::join(", ", inputTypes));
-      auto func = adapterFunc->getVectorInterpreter(
+      auto func = simpleFunctionEntry->createFunction()->createVectorFunction(
           config, getConstantInputs(compiledInputs));
       result = std::make_shared<Expr>(
           resultType, std::move(compiledInputs), std::move(func), call->name());
@@ -361,8 +363,9 @@ ExprPtr compileExpression(
           resultType, std::move(compiledInputs), func, call->name());
     } else {
       VELOX_FAIL(
-          "Function not registered: {}",
-          core::FunctionKey(call->name(), inputTypes).toString());
+          "Scalar function not registered: {} ({})",
+          call->name(),
+          folly::join(", ", inputTypes));
     }
   } else if (
       auto access =

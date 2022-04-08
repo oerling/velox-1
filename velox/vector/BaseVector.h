@@ -95,6 +95,14 @@ class BaseVector {
     return rawNulls_;
   }
 
+  // Returns false if this vector and all of its children have no nulls. Returns
+  // true if this vector or any of its children may have nulls.
+  // When this method returns true, flatRawNulls called on this vector or any
+  // of its children is guaranteed to return non-null.
+  virtual bool mayHaveNullsRecursive() const {
+    return mayHaveNulls();
+  }
+
   // Returns raw nulls or nullptr with one bit per logical position in
   // the vector, with valid values at least for the rows selected in
   // 'rows'. Dictionaries, sequences and constants may calculate this on
@@ -173,15 +181,15 @@ class BaseVector {
    * vector. May hold nullptr if there are no nulls. Not const because
    * some vectors may generate this on first access.
    */
-  virtual const BufferPtr& nulls() const {
+  const BufferPtr& nulls() const {
     return nulls_;
   }
 
-  virtual const uint64_t* rawNulls() const {
+  const uint64_t* rawNulls() const {
     return rawNulls_;
   }
 
-  virtual uint64_t* mutableRawNulls() {
+  uint64_t* mutableRawNulls() {
     ensureNulls();
     return const_cast<uint64_t*>(rawNulls_);
   }
@@ -304,9 +312,15 @@ class BaseVector {
   }
 
   // Sets the null indicator at 'idx'. 'true' means null.
-  virtual void setNull(vector_size_t idx, bool value) {
+  FOLLY_ALWAYS_INLINE virtual void setNull(vector_size_t idx, bool value) {
     VELOX_DCHECK(idx >= 0 && idx < length_);
-    ensureNulls();
+    if (!nulls_) {
+      if (!value) {
+        return;
+      }
+      allocateNulls();
+    }
+
     bits::setBit(
         nulls_->asMutable<uint64_t>(), idx, bits::kNull ? value : !value);
   }
@@ -327,9 +341,14 @@ class BaseVector {
   // Sets null when 'nulls' has null value for a row in 'rows'
   virtual void addNulls(const uint64_t* bits, const SelectivityVector& rows);
 
+  // Clears null when 'nulls' has non-null value for a row in 'rows'
   virtual void clearNulls(const SelectivityVector& rows);
 
   virtual void clearNulls(vector_size_t begin, vector_size_t end);
+
+  void clearAllNulls() {
+    clearNulls(0, size());
+  }
 
   virtual void clear() {
     resize(0);
@@ -337,7 +356,9 @@ class BaseVector {
 
   // Sets the size to 'size' and ensures there is space for the
   // indicated number of nulls and top level values.
-  virtual void resize(vector_size_t newSize);
+  // 'setNotNull' indicates if nulls in range [oldSize, newSize) should be set
+  // to not null.
+  virtual void resize(vector_size_t newSize, bool setNotNull = true);
 
   // Sets the rows of 'this' given by 'rows' to
   // 'source.valueAt(toSourceRow ? toSourceRow[row] : row)', where
@@ -466,6 +487,7 @@ class BaseVector {
   virtual BaseVector* loadedVector() {
     return this;
   }
+
   virtual const BaseVector* loadedVector() const {
     return this;
   }

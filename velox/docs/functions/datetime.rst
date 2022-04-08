@@ -28,6 +28,7 @@ Unit        Example Truncated Value
 ``hour``    ``2001-08-22 03:00:00.000``
 ``day``     ``2001-08-22 00:00:00.000``
 ``month``   ``2001-08-01 00:00:00.000``
+``quarter`` ``2001-07-01 00:00:00.000``
 ``year``    ``2001-01-01 00:00:00.000``
 =========== ===========================
 
@@ -37,6 +38,32 @@ The above examples use the timestamp ``2001-08-22 03:04:05.321`` as the input.
 
     Returns ``x`` truncated to ``unit``. The supported types for ``x`` are TIMESTAMP and DATE.
 
+Interval Functions
+------------------
+
+The functions in this section support the following interval units:
+
+=============== =======================
+Unit            Description
+=============== =======================
+``millisecond`` ``Milliseconds``
+``second``      ``Seconds``
+``minute``      ``Minutes``
+``hour``        ``Hours``
+``day``         ``Days``
+``month``       ``Months``
+``quarter``     ``Quarters of a year``
+``year``        ``Years``
+=============== =======================
+
+.. function:: date_add(unit, value, x) -> x
+
+    Adds an interval ``value`` of type ``unit`` to ``x``. The supported types for ``x`` are TIMESTAMP and DATE.
+    Subtraction can be performed by using a negative value.
+
+.. function:: date_diff(unit, x1, x2) -> bigint
+
+    Returns ``x2 - x1`` in terms of ``unit``. The supported types for ``x`` are TIMESTAMP and DATE.
 
 Java Date Functions
 -------------------
@@ -97,6 +124,10 @@ These functions are supported for TIMESTAMP and DATE values.
 
     Returns the month of the year from ``x``.
 
+.. function:: quarter(x) -> bigint
+
+    Returns the quarter of the year from ``x``. The value ranges from ``1`` to ``4``.
+
 .. function:: second(x) -> bigint
 
     Returns the second of the minute from ``x``.
@@ -104,3 +135,11 @@ These functions are supported for TIMESTAMP and DATE values.
 .. function:: year(x) -> bigint
 
     Returns the year from ``x``.
+
+.. function:: year_of_week(x) -> bigint
+
+    Returns the year of the ISO week from ``x``.
+
+.. function:: yow(x) -> bigint
+
+    This is an alias for :func:`year_of_week`.

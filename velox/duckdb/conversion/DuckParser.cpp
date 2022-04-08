@@ -39,6 +39,7 @@ using ::duckdb::LogicalTypeIdToString;
 using ::duckdb::OperatorExpression;
 using ::duckdb::ParsedExpression;
 using ::duckdb::Parser;
+using ::duckdb::ParserOptions;
 using ::duckdb::StringUtil;
 using ::duckdb::Value;
 
@@ -47,12 +48,12 @@ namespace {
 std::shared_ptr<const core::IExpr> parseExpr(ParsedExpression& expr);
 
 std::string normalizeFuncName(std::string input) {
-  static std::map<std::string, std::string> lookup{
+  static std::map<std::string, std::string> kLookup{
       {"+", "plus"},
       {"-", "minus"},
       {"*", "multiply"},
       {"/", "divide"},
-      {"%", "modulus"},
+      {"%", "mod"},
       {"<", "lt"},
       {"<=", "lte"},
       {">", "gt"},
@@ -64,9 +65,11 @@ std::string normalizeFuncName(std::string input) {
       {"and", "and"},
       {"or", "or"},
       {"is", "is"},
+      {"~~", "like"},
+      {"like_escape", "like"},
   };
-  auto it = lookup.find(input);
-  return (it == lookup.end()) ? input : it->second;
+  auto it = kLookup.find(input);
+  return (it == kLookup.end()) ? input : it->second;
 }
 
 // Convert duckDB operator name to Velox function. Coalesce and subscript needs
@@ -86,19 +89,26 @@ std::string duckOperatorToVelox(ExpressionType type) {
   }
 }
 
-std::shared_ptr<const core::CallExpr> callExpr(
-    std::string name,
-    std::vector<std::shared_ptr<const core::IExpr>> params) {
-  return std::make_shared<const core::CallExpr>(
-      std::move(name), std::move(params));
+std::optional<std::string> getAlias(const ParsedExpression& expr) {
+  const auto& alias = expr.alias;
+  return alias.empty() ? std::optional<std::string>() : alias;
 }
 
 std::shared_ptr<const core::CallExpr> callExpr(
     std::string name,
-    const std::shared_ptr<const core::IExpr>& param) {
+    std::vector<std::shared_ptr<const core::IExpr>> params,
+    std::optional<std::string> alias) {
+  return std::make_shared<const core::CallExpr>(
+      std::move(name), std::move(params), std::move(alias));
+}
+
+std::shared_ptr<const core::CallExpr> callExpr(
+    std::string name,
+    const std::shared_ptr<const core::IExpr>& param,
+    std::optional<std::string> alias) {
   std::vector<std::shared_ptr<const core::IExpr>> params = {param};
   return std::make_shared<const core::CallExpr>(
-      std::move(name), std::move(params));
+      std::move(name), std::move(params), std::move(alias));
 }
 
 // Parse a constant (1, 99.8, "string", etc).
@@ -113,21 +123,22 @@ std::shared_ptr<const core::IExpr> parseConstantExpr(ParsedExpression& expr) {
     value = Value::BIGINT(value.GetValue<int32_t>());
   }
   return std::make_shared<const core::ConstantExpr>(
-      duckValueToVariant(constantExpr.value));
+      duckValueToVariant(constantExpr.value), getAlias(expr));
 }
 
 // Parse a column reference (col1, "col2", tbl.col, etc).
 std::shared_ptr<const core::IExpr> parseColumnRefExpr(ParsedExpression& expr) {
   const auto& colRefExpr = dynamic_cast<ColumnRefExpression&>(expr);
-  if (colRefExpr.table_name.empty()) {
+  if (!colRefExpr.IsQualified()) {
     return std::make_shared<const core::FieldAccessExpr>(
-        colRefExpr.column_name);
+        colRefExpr.GetColumnName(), getAlias(expr));
   }
   return std::make_shared<const core::FieldAccessExpr>(
-      colRefExpr.column_name,
+      colRefExpr.GetColumnName(),
+      getAlias(expr),
       std::vector<std::shared_ptr<const core::IExpr>>{
           std::make_shared<const core::FieldAccessExpr>(
-              colRefExpr.table_name)});
+              colRefExpr.GetTableName(), std::nullopt)});
 }
 
 // Parse a function call (avg(a), func(1, b), etc).
@@ -141,7 +152,9 @@ std::shared_ptr<const core::IExpr> parseFunctionExpr(ParsedExpression& expr) {
     params.emplace_back(parseExpr(*c));
   }
   return callExpr(
-      normalizeFuncName(functionExpr.function_name), std::move(params));
+      normalizeFuncName(functionExpr.function_name),
+      std::move(params),
+      getAlias(expr));
 }
 
 // Parse a comparison (a > b, a = b, etc).
@@ -151,7 +164,8 @@ std::shared_ptr<const core::IExpr> parseComparisonExpr(ParsedExpression& expr) {
       parseExpr(*compExpr.left), parseExpr(*compExpr.right)};
   return callExpr(
       normalizeFuncName(ExpressionTypeToOperator(expr.GetExpressionType())),
-      std::move(params));
+      std::move(params),
+      getAlias(expr));
 }
 
 // Parse x between lower and upper
@@ -161,7 +175,8 @@ std::shared_ptr<const core::IExpr> parseBetweenExpr(ParsedExpression& expr) {
       "between",
       {parseExpr(*betweenExpr.input),
        parseExpr(*betweenExpr.lower),
-       parseExpr(*betweenExpr.upper)});
+       parseExpr(*betweenExpr.upper)},
+      getAlias(expr));
 }
 
 // Parse a conjunction (AND or OR).
@@ -194,7 +209,7 @@ std::shared_ptr<const core::IExpr> parseConjunctionExpr(
       params.emplace_back(current);
       params.emplace_back(parseExpr(*conjExpr.children[i]));
     }
-    current = callExpr(conjName, std::move(params));
+    current = callExpr(conjName, std::move(params), getAlias(expr));
   }
   return current;
 }
@@ -216,10 +231,12 @@ std::shared_ptr<const core::IExpr> parseOperatorExpr(ParsedExpression& expr) {
       }
     }
     return std::make_shared<const core::ConstantExpr>(
-        variant::array(arrayElements));
+        variant::array(arrayElements), getAlias(expr));
   }
 
-  if (expr.GetExpressionType() == ExpressionType::COMPARE_IN) {
+  // Check if the operator is "IN" or "NOT IN".
+  if (expr.GetExpressionType() == ExpressionType::COMPARE_IN ||
+      expr.GetExpressionType() == ExpressionType::COMPARE_NOT_IN) {
     auto numValues = operExpr.children.size() - 1;
 
     std::vector<variant> values;
@@ -235,9 +252,13 @@ std::shared_ptr<const core::IExpr> parseOperatorExpr(ParsedExpression& expr) {
 
     std::vector<std::shared_ptr<const core::IExpr>> params;
     params.emplace_back(parseExpr(*operExpr.children[0]));
-    params.emplace_back(
-        std::make_shared<const core::ConstantExpr>(variant::array(values)));
-    return callExpr("in", std::move(params));
+    params.emplace_back(std::make_shared<const core::ConstantExpr>(
+        variant::array(values), std::nullopt));
+    auto inExpr = callExpr("in", std::move(params), getAlias(expr));
+    // Translate COMPARE_NOT_IN into NOT(IN()).
+    return (expr.GetExpressionType() == ExpressionType::COMPARE_IN)
+        ? inExpr
+        : callExpr("not", inExpr, std::nullopt);
   }
 
   std::vector<std::shared_ptr<const core::IExpr>> params;
@@ -258,18 +279,23 @@ std::shared_ptr<const core::IExpr> parseOperatorExpr(ParsedExpression& expr) {
       auto fieldName = constantExpr->value().value<std::string>();
 
       return std::make_shared<const core::FieldAccessExpr>(
-          fieldName, std::move(input));
+          fieldName, getAlias(expr), std::move(input));
     } else {
       VELOX_UNSUPPORTED("STRUCT_EXTRACT field name must be constant");
     }
   }
 
   if (expr.GetExpressionType() == ExpressionType::OPERATOR_IS_NOT_NULL) {
-    return callExpr("not", callExpr("is_null", std::move(params)));
+    return callExpr(
+        "not",
+        callExpr("is_null", std::move(params), std::nullopt),
+        getAlias(expr));
   }
 
   return callExpr(
-      duckOperatorToVelox(expr.GetExpressionType()), std::move(params));
+      duckOperatorToVelox(expr.GetExpressionType()),
+      std::move(params),
+      getAlias(expr));
 }
 
 namespace {
@@ -296,7 +322,7 @@ std::shared_ptr<const core::IExpr> parseCaseExpr(ParsedExpression& expr) {
         parseExpr(*check.then_expr),
         parseExpr(*caseExpr.else_expr),
     };
-    return callExpr("if", std::move(params));
+    return callExpr("if", std::move(params), getAlias(expr));
   }
 
   std::vector<std::shared_ptr<const core::IExpr>> inputs;
@@ -311,7 +337,7 @@ std::shared_ptr<const core::IExpr> parseCaseExpr(ParsedExpression& expr) {
     inputs.emplace_back(elseExpr);
   }
 
-  return callExpr("switch", std::move(inputs));
+  return callExpr("switch", std::move(inputs), getAlias(expr));
 }
 
 // Parse an CAST expression.
@@ -325,7 +351,7 @@ std::shared_ptr<const core::IExpr> parseCastExpr(ParsedExpression& expr) {
   const bool nullOnFailure = castExpr.try_cast;
   VELOX_CHECK(!params.empty());
   return std::make_shared<const core::CastExpr>(
-      targetType, params[0], nullOnFailure);
+      targetType, params[0], nullOnFailure, getAlias(expr));
 }
 
 std::shared_ptr<const core::IExpr> parseExpr(ParsedExpression& expr) {
@@ -367,7 +393,9 @@ std::shared_ptr<const core::IExpr> parseExpr(ParsedExpression& expr) {
 } // namespace
 
 std::shared_ptr<const core::IExpr> parseExpr(const std::string& exprString) {
-  auto parsedExpressions = Parser::ParseExpressionList(exprString);
+  ParserOptions options;
+  options.preserve_identifier_case = false;
+  auto parsedExpressions = Parser::ParseExpressionList(exprString, options);
   if (parsedExpressions.size() != 1) {
     throw std::invalid_argument(folly::sformat(
         "Expecting exactly one input expression, found {}.",

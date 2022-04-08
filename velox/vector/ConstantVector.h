@@ -159,6 +159,11 @@ class ConstantVector final : public SimpleVector<T> {
     return isNull_;
   }
 
+  bool mayHaveNullsRecursive() const override {
+    VELOX_DCHECK(initialized_);
+    return isNull_ || (valueVector_ && valueVector_->mayHaveNullsRecursive());
+  }
+
   const uint64_t* flatRawNulls(const SelectivityVector& rows) override {
     VELOX_DCHECK(initialized_);
     if (isNull_) {
@@ -283,7 +288,7 @@ class ConstantVector final : public SimpleVector<T> {
     return index_;
   }
 
-  void resize(vector_size_t size) override {
+  void resize(vector_size_t size, bool setNotNull = true) override {
     BaseVector::length_ = size;
   }
 
@@ -309,7 +314,7 @@ class ConstantVector final : public SimpleVector<T> {
       return SimpleVector<T>::toString(index);
     }
 
-    return valueVector_->toString(index);
+    return valueVector_->toString(index_);
   }
 
  private:

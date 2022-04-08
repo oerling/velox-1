@@ -108,8 +108,9 @@ std::shared_ptr<exec::Task> HiveConnectorTestBase::assertQuery(
 
 std::shared_ptr<exec::Task> HiveConnectorTestBase::assertQuery(
     const std::shared_ptr<const core::PlanNode>& plan,
-    const std::unordered_map<int, std::vector<std::shared_ptr<TempFilePath>>>&
-        filePaths,
+    const std::unordered_map<
+        core::PlanNodeId,
+        std::vector<std::shared_ptr<TempFilePath>>>& filePaths,
     const std::string& duckDbSql) {
   bool noMoreSplits = false;
   return test::assertQuery(
@@ -117,7 +118,7 @@ std::shared_ptr<exec::Task> HiveConnectorTestBase::assertQuery(
       [&](auto* task) {
         if (!noMoreSplits) {
           for (const auto& entry : filePaths) {
-            auto planNodeId = fmt::format("{}", entry.first);
+            auto planNodeId = entry.first;
             for (auto file : entry.second) {
               addSplit(task, planNodeId, makeHiveSplit(file->path));
             }
@@ -154,6 +155,8 @@ HiveConnectorTestBase::makeHiveSplits(
 std::shared_ptr<connector::hive::HiveConnectorSplit>
 HiveConnectorTestBase::makeHiveConnectorSplit(
     const std::string& filePath,
+    const std::unordered_map<std::string, std::optional<std::string>>&
+        partitionKeys,
     uint64_t start,
     uint64_t length) {
   return std::make_shared<connector::hive::HiveConnectorSplit>(
@@ -161,7 +164,8 @@ HiveConnectorTestBase::makeHiveConnectorSplit(
       "file:" + filePath,
       dwio::common::FileFormat::ORC,
       start,
-      length);
+      length,
+      partitionKeys);
 }
 
 exec::Split HiveConnectorTestBase::makeHiveSplit(
@@ -174,6 +178,14 @@ exec::Split HiveConnectorTestBase::makeHiveSplit(
       dwio::common::FileFormat::ORC,
       start,
       length));
+}
+
+exec::Split HiveConnectorTestBase::makeHiveSplitWithGroup(
+    const std::string& filePath,
+    int32_t groupId) {
+  auto split = HiveConnectorTestBase::makeHiveSplit(filePath);
+  split.groupId = groupId;
+  return split;
 }
 
 std::shared_ptr<connector::hive::HiveColumnHandle>

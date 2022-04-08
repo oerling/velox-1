@@ -158,6 +158,8 @@ class HiveDataSource : public DataSource {
 
   std::unordered_map<std::string, int64_t> runtimeStats() override;
 
+  int64_t estimatedRowSize() override;
+
  private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
@@ -178,12 +180,16 @@ class HiveDataSource : public DataSource {
       const std::string& partitionKey,
       const std::optional<std::string>& value) const;
 
+  /// Clear split_, reader_ and rowReader_ after split has been fully processed.
+  void resetSplit();
+
   const std::shared_ptr<const RowType> outputType_;
+  // Column handles for the partition key columns keyed on partition key column
+  // name.
   std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>
-      columnHandles_;
+      partitionKeys_;
   FileHandleFactory* FOLLY_NONNULL fileHandleFactory_;
   velox::memory::MemoryPool* FOLLY_NONNULL pool_;
-  std::vector<std::string> regularColumns_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   std::unique_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::unique_ptr<common::ScanSpec> scanSpec_;
