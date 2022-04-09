@@ -66,6 +66,10 @@ class SpillStream : public MergeStream {
   }
 
   bool operator<(const MergeStream& other) const final {
+    return compare(other) < 0;
+  }
+
+  int32_t compare(const MergeStream& other) const final {
     auto& otherStream = static_cast<const SpillStream&>(other);
     auto& children = rowVector_->children();
     auto& otherChildren = otherStream.current().children();
@@ -74,12 +78,13 @@ class SpillStream : public MergeStream {
       auto result = children[key]->compare(
           otherChildren[key].get(), index_, otherStream.index_);
       if (result) {
-        return result < 0;
+        return result;
       }
     } while (++key < numSortingKeys_);
-    return false;
+    return 0;
   }
 
+  
   virtual std::string label() const {
     return fmt::format("{}", ordinal_);
   }
@@ -94,9 +99,44 @@ class SpillStream : public MergeStream {
     return index_;
   }
 
+  // Returns a DecodedVector set decoding the 'index'th child of 'rowVector_'
+  DecodedVector& decoded(int32_t index) {
+    ensureDecodedValid(index);
+    return decoded_[index];
+  }
+      
   virtual uint64_t size() const = 0;
 
  protected:
+  // loads the next 'rowVector' and sets 'decoded_' if this is initialized.
+  void setNextBatch() {
+    nextBatch();
+    if (!decoded_.empty()) {
+      ensureRows();
+      for (auto i = 0; i < decoded_.size(); ++i) {
+	decoded_[i].decode(*rowVector_->childAt(i), rows_);
+      }
+    }
+  }
+
+  void ensureDecodedValid(int32_t index) {
+    int32_t oldSize = decoded_.size();
+    if (index < oldSize) {
+      return;
+    }
+    ensureRows();
+    decoded_.resize(index + 1);
+    for (auto i = oldSize; i <= index; ++i) {
+      decoded_[index].decode(*rowVector_->childAt(index), rows_);
+    }
+  }
+
+  void ensureRows() {
+    if (rows_.size() != rowVector_->size()) {
+      rows_.resize(size_);
+    }
+  }
+  
   // Loads the next RowVector from the backing storage, e.g. spill file or
   // RowContainer.
   virtual void nextBatch() = 0;
@@ -119,8 +159,15 @@ class SpillStream : public MergeStream {
   // Number of rows in 'rowVector_'
   vector_size_t size_{0};
 
+  // Decoded vectors for leading parts of 'rowVector_'. Initialized on first use and maintained when updating 'rowVector_'.
+  std::vector<DecodedVector> decoded_;
+
+  // Covers all rows inn 'rowVector_' Set if 'decoded_' is non-empty.
+  SelectivityVector rows_;
+  
   // Ordinal number used for making a label for debugging.
   const int32_t ordinal_;
+
   static std::atomic<int32_t> ordinalCounter_;
 };
 
@@ -172,7 +219,7 @@ class SpillFile : public SpillStream {
 
   // Sets 'result' to refer to the next row of content of 'this'.
   void read(RowVector& result);
-
+  
  private:
   void nextBatch() override;
 

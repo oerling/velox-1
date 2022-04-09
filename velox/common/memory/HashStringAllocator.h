@@ -251,6 +251,10 @@ class HashStringAllocator : public StreamArena {
     return pool_.mappedMemory();
   }
 
+  uint64_t cumulativeBytes() const {
+    return cumulativeBytes_;
+  }
+
   // Checks the free space accounting and consistency of
   // Headers. Throws when detects corruption.
   void checkConsistency() const;
@@ -306,6 +310,12 @@ class HashStringAllocator : public StreamArena {
 
   // Sum of the size of blocks in 'free_', excluding headers.
   uint64_t freeBytes_ = 0;
+
+  // Counter of allocated bytes. The difference of two point in time values
+  // tells how much memory has been consumed by activity between these points in
+  // time. Incremented by allocation and decremented by free. Used for tracking
+  // the row by row space usage in a RowContainer.
+  uint64_t cumulativeBytes_{0};
 
   // Pointer to Header for the range being written. nullptr if a write is not in
   // progress.

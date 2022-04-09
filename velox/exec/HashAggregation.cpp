@@ -100,7 +100,7 @@ HashAggregation::HashAggregation(
         aggregate->name(), aggregationNode->step(), argTypes, resultType));
     args.push_back(channels);
     constantLists.push_back(constants);
-    intermediateTypes_.push_back(Aggregate::intermediateType(
+    intermediateTypes.push_back(Aggregate::intermediateType(
         aggregate->name(), argTypes));
   }
 

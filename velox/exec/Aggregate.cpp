@@ -16,6 +16,7 @@
 
 #include "velox/exec/Aggregate.h"
 #include "velox/expression/FunctionSignature.h"
+#include "velox/expression/SignatureBinder.h"
 
 namespace facebook::velox::exec {
 
@@ -81,17 +82,17 @@ TypePtr Aggregate::intermediateType(
     const std::string& name,
     const std::vector<TypePtr>& argTypes) {
   if (auto signatures = getAggregateFunctionSignatures(name)) {
-    for (auto signature& : signatures.value()) {
-      SignatureBinder binder(signature, argTypes);
+    for (auto& signature : signatures.value()) {
+      SignatureBinder binder(*signature, argTypes);
       if (binder.tryBind()) {
-	intermediate = binder.tryResolveType(signature->intermediateType());
+	auto intermediate = binder.tryResolveType(signature->intermediateType());
 	if (!intermediate) {
 	  VELOX_FAIL("Failed to resolve intermediate type for {}", name);
 	}
 	return intermediate;
       }
     }
-    VELOX_FAIL("No signature match for {}" name);
+    VELOX_FAIL("No signature match for {}", name);
   }
 
   VELOX_USER_FAIL("Aggregate function not registered: {}", name);

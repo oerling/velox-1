@@ -143,6 +143,9 @@ class BaseHashTable {
   /// side. This is used for sizing the internal hash table.
   virtual uint64_t numDistinct() const = 0;
 
+  // Returns value of numDistinct() at which the table gets rehashed.
+  virtual uint64_t rehashSize() const = 0;
+
   /// Returns true if the hash table contains rows with duplicate keys.
   virtual bool hasDuplicateKeys() const = 0;
 
@@ -326,6 +329,11 @@ class HashTable : public BaseHashTable {
   // and VectorHashers and decides the hash mode and representation.
   void prepareJoinTable(
       std::vector<std::unique_ptr<BaseHashTable>> tables) override;
+
+  uint64_t rehashSize() const override {
+    // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
+    return size_ - (size_ / 8);
+  }
 
   std::string toString() override;
 

@@ -31,7 +31,7 @@ void SpillInput::next(bool /*throwIfPastEnd*/) {
 
 void SpillStream::pop() {
   if (++index_ >= size_) {
-    nextBatch();
+    setNextBatch();
   }
 }
 

@@ -205,7 +205,7 @@ class Aggregate {
 
   // Returns the intermediate type for 'name' with 'argTypes'. Throws
   // if 'name' is not registered or the type cannot be resolved.
-  TypePtr intermediateType(
+  static TypePtr intermediateType(
     const std::string& name,
     const std::vector<TypePtr>& argTypes);
   

@@ -280,6 +280,13 @@ class MappedMemory {
   virtual std::shared_ptr<MappedMemory> addChild(
       std::shared_ptr<MemoryUsageTracker> tracker);
 
+  // Returns the tracker for 'this'. Returns nullptr for process-wide
+  // root MappedMemories and a tracker for Task or lower level
+  // ScopedMappedMemory instances.
+  virtual MemoryUsageTracker* tracker() const {
+    return nullptr;
+  }
+  
   virtual std::string toString() const;
 
  protected:
@@ -388,6 +395,9 @@ class ScopedMappedMemory final : public MappedMemory {
     return std::make_shared<ScopedMappedMemory>(this, tracker);
   }
 
+  MemoryUsageTracker* tracker() const override {
+    return tracker_.get();
+  }
  private:
   std::shared_ptr<MappedMemory> parentPtr_;
   MappedMemory* FOLLY_NONNULL parent_;

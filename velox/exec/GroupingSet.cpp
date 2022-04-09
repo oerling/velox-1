@@ -63,7 +63,10 @@ GroupingSet::GroupingSet(
       rows_(mappedMemory_),
       isAdaptive_(
           operatorCtx->task()->queryCtx()->config().hashAdaptivityEnabled()),
-      execCtx_(*operatorCtx->execCtx()) {
+      execCtx_(*operatorCtx->execCtx()),
+      spillPath_(
+          isPartial_ ? ""
+                     : operatorCtx->task()->queryCtx()->config().spillPath()) {
   for (auto& hasher : hashers_) {
     keyChannels_.push_back(hasher->channel());
   }
@@ -76,6 +79,8 @@ GroupingSet::GroupingSet(
   for (const std::vector<ChannelIndex>& argList : channelLists_) {
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
   }
+  maySpill_ =
+      !isPartial && operatorCtx->task()->queryCtx()->config().spillPath() != ""
 }
 
 namespace {
@@ -368,7 +373,7 @@ bool GroupingSet::getOutput(
   if (spiller_) {
     return getOutputWithSpill(batchSize, result);
   }
-  
+
   // @lint-ignore CLANGTIDY
   char* groups[batchSize];
   int32_t numGroups =
@@ -418,41 +423,53 @@ const HashLookup& GroupingSet::hashLookup() const {
   return *lookup_;
 }
 void GroupingSet::checkSpill(const RowVectorPtr& input) {
-  if (!spillThreshold_ || !table_ ||
-      table_->allocatedBytes() < spillThreshold_) {
+  if (spillPath_.empty() || table_->hashMode() == HashMode::kArray) {
     return;
   }
-  auto maxSize = maxSerializedSize(input);
   auto [rows, bytes] = table_->rows()->freeSpace();
   if (rows > input->size() && bytes > maxSize) {
     return;
   }
-  if (!spill_) {
-    auto queryCtx = driverCtx_->execCtx->queryCtx();
-    auto path = fmt::format(
-        "{}-{}-{}-",
-        queryCtx->spillFilePath(),
-        process::getProcessId(),
-        SpillState::spillFileId());
-    spill_ = std::make_unique<SpillState>(
-        table_->rows()->spillType(),
-        path,
-        HashBitField{29, 32},
-        queryCtx->spillFileSize(),
-        200000,
-        *driverCtx_->execCtx->pool(),
-        queryCtx->mappedMemory());
+  auto maxSize = rows_->sizeIncrement(input->size(), maxSerializedSize(input));
+  auto tracker = mappedMemory_->tracker();
+  VELOX_CHECK(tracker);
+  if (table_->numDistinct() + input->size() >= table_->rehashSize()) {
+    maxsize += bits::nextPowerOfTwo(table->numDistinct() * 9);
   }
-  table_->rows()->spill(
-      *spill_,
-      input->size(),
-      maxSize,
-      spillIterator_,
-      [&](folly::Range<char**> rows) { table_->erase(rows); });
+  if (tracker->getAvailableReservation() > maxSize) {
+    return;
+  }
+  if (maybeReserve(tracker, maxSize * 2)) {
+    return;
+  }
+  if (!spiller_) {
+    auto type = rows_->keyTypes();
+    types.insert(
+        types.end(), intermediateTypes_.begin(), intermediateTypes_.end());
+    std::vector<std::string> names;
+    for (auto i = 0; i < types.size(); ++i) {
+      names.push_back(fmt::format("s{}", i));
+    }
+    spiller_ = std::make_unique<Spiller>(
+        *rows_,
+        [&](folly::Range<char**> rows) { table_->erase(rows); },
+        ROW(std::move(names), std::move(types)),
+        rows_.keyTypes().size(),
+        HashBitField{29, 32},
+        spillPath_,
+        rows_->allocatedBytes() / 16,
+        pool_,
+        Spiller::spillExecutor());
+  }
+  spiller_->spill(
+      rows_->numRows() / 4 * 3,
+      (rows_->stringAllocator().retainedSize() -
+       rows.stringAllocator().freeSpace()) /
+          4 * 3,
+      spillIterator_);
 }
 
-
-  void GroupingSet::getOutputWithSpill(int32_t batchSize, VectorPtr* result) {
+bool GroupingSet::getOutputWithSpill(int32_t batchSize, VectorPtr* result) {
   if (outputPartition_ == -1) {
     std::vector<TypePtr> keyTypes;
     for (auto& hasher : table_->hashers()) {
@@ -470,15 +487,7 @@ void GroupingSet::checkSpill(const RowVectorPtr& input) {
         driverCtx_->execCtx->queryCtx()->mappedMemory(),
         ContainerRowSerde::instance());
     outputPartition_ = 0;
-    spill_->finishWrite();
-    table_->rows()->clearSpillRuns();
-    spillIterator_.reset();
-    table_->rows()->fillSpillRuns(
-        *spill_,
-        nullptr,
-        spillIterator_,
-        RowContainer::kUnlimited,
-        &nonSpilledRows_);
+    nonSpilledRows = spiller_->finishSpill();
   }
 
   if (nonSpilledIndex_ < nonSpilledRows_.size()) {
@@ -499,14 +508,11 @@ void GroupingSet::checkSpill(const RowVectorPtr& input) {
     nonSpilledIndex_ += numGroups;
     return true;
   }
-  while (outputPartition_ < spill_->numWays()) {
+  while (outputPartition_ < spiller_->numPartitions()) {
     if (!merge_) {
-      merge_ = spill_->startMerge(
-          outputPartition_,
-          table_->rows()->spillStreamOverRows(
-              outputPartition_, *driverCtx_->execCtx->pool()));
+      merge_ = spiller_->startMerge(outputPartition_);
     }
-    if (!mergeNext(result)) {
+    if (!mergeNext(batchSize, result)) {
       ++outputPartition_;
       merge_ = nullptr;
       continue;
@@ -522,37 +528,55 @@ bool GroupingSet::mergeNext(RowVectorPtr& result) {
     mergeSelection_.clearAll();
   }
   for (;;) {
-    auto next =
-        merge_->next([&](const VectorRow& left, const VectorRow& right) {
-          return SpillState::compareSpilled(left, right, keyChannels_.size());
-        });
-    if (!next.has_value()) {
+    auto next = merge_->nextWithEquals();
+    if (!next.first) {
       extractSpillResult(result);
-      mergeState_ = nullptr;
       return result->size() > 0;
     }
-    if (!mergeState_) {
+    if (!nextKeyIsEqual_) {
       mergeState_ = mergeRows_->newRow();
-      initializeRow(next.value(), mergeState_);
-      updateRow(next.value(), mergeState_);
-    } else if (isSameKey(next.value(), mergeState_)) {
-      updateRow(next.value(), mergeState_);
-    } else {
-      bool isFull = false;
-      if (mergeRows_->allocatedBytes() > 1 << 20) {
-        extractSpillResult(result);
-        isFull = true;
-      }
-      mergeState_ = mergeRows_->newRow();
-      initializeRow(next.value(), mergeState_);
-      updateRow(next.value(), mergeState_);
-      if (isFull) {
-        return true;
-      }
+      initializeRow(next.first, mergeState_);
+    }
+    updateRow(next.first, mergeState_);
+    nextKeyIsEqual_ = next->second;
+    if (!nextKeyIsEqual_ && mergeRows_->allocatedBytes() > kBatchBytes) {
+      extractSpillResult(result);
+      return true;
     }
   }
 }
 
-
+void GroupingSet::initializeRow(SpillStream& keys, char* row) {
+  // Each stream gets read for all positions. When at index 0, decode the keys and keep the DecodedVectors around until redecoding these when the tream is again at idex 0.
+  if (keys->currentIndex() == 0) {
+    
+  }
+  for (auto i = 0; i < keyChannels_.size(); ++i) {
+    mergeRows_->store(*(*keys.decoded)[i], keys.index, mergeState_, i);
+  }
+  vector_size_t zero = 0;
+  for (auto& aggregate : aggregates_) {
+    aggregate->initializeNewGroups(
+        &row, folly::Range<const vector_size_t*>(&zero, 1));
+  }
+}
   
+void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
+  std::vector<char*> rows(mergeRows_->numRows());
+  RowContainerIterator iter;
+  mergeRows_->listRows(
+      &iter, rows.size(), RowContainer::kUnlimited, rows.data());
+  result->resize(rows.size());
+  for (int32_t i = 0; i < keyChannels_.size(); ++i) {
+    auto keyVector = result->childAt(i);
+    mergeRows_->extractColumn(rows.data(), rows.size(), i, keyVector);
+  }
+  for (int32_t i = 0; i < aggregates_.size(); ++i) {
+    aggregates_[i]->finalize(rows.data(), rows.size());
+    auto aggregateVector = result->childAt(i + keyChannels_.size());
+    aggregates_[i]->extractValues(rows.data(), rows.size(), &aggregateVector);
+  }
+  mergeRows_->clear();
+}
+
 } // namespace facebook::velox::exec

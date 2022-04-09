@@ -17,7 +17,7 @@
 
 #include "velox/exec/AggregationMasks.h"
 #include "velox/exec/HashTable.h"
-#include "velox/exec/Spill.h"
+#include "velox/exec/Spiller.h"
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/exec/VectorHasher.h"
 
@@ -92,8 +92,6 @@ class GroupingSet {
 
   void checkSpill(const RowVectorPtr& input);
 
-  int32_t
-  listRowsNoSpill(RowContainerIterator* iterator, int32_t maxRows, char** rows);
 
   void extractGroups(
       char** groups,
@@ -101,13 +99,13 @@ class GroupingSet {
       bool isPartial,
       RowVectorPtr& result);
 
-  bool getSpilledOutput(RowVectorPtr result);
+  bool getOutputWithSpill(int32_t batchSize, RowVectorPtr result);
+
   bool mergeNext(RowVectorPtr& result);
-  int32_t compareSpilled(VectorRow left, VectorRow right);
-  void initializeRow(VectorRow& keys, char* row);
-  bool isSameKey(VectorRow key, char* row);
-  void updateRow(VectorRow& keys, char* row);
-  void extractSpillResult(RowVectorPtr& result);
+
+  void initializeRow(SpillStream& keys, char* row);
+  void updateRow(SpillStream& keys, char* row);
+  void extractSpillResult(const RowVectorPtr& result);
 
   
   std::vector<ChannelIndex> keyChannels_;
@@ -170,7 +168,10 @@ class GroupingSet {
   // Intermediate types of aggregates. Used for spilling
   std::vector<TypePtr> intermediateTypes_;
 
-  std::unique_ptr<Spiller> spill_;
+  // Filesystem path for spill files, empty if spilling is disabled.
+  const std::string spillPath_;
+  
+  std::unique_ptr<Spiller> spiller_;
   std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
   RowContainerIterator spillIterator_;
 

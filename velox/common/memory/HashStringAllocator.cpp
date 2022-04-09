@@ -272,6 +272,7 @@ HashStringAllocator::allocateFromFreeList(
   if (next) {
     next->clearPreviousFree();
   }
+  cumulativeBytes_ += found->size();
   if (isFinalSize) {
     freeRestOfBlock(found, preferredSize);
   }
@@ -288,6 +289,7 @@ void HashStringAllocator::free(Header* _header) {
     }
     VELOX_CHECK(!header->isFree());
     freeBytes_ += header->size() + sizeof(Header);
+    cumulativeBytes_ -= header->size();
     Header* next = header->next();
     if (next) {
       VELOX_CHECK(!next->isPreviousFree());
