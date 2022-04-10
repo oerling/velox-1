@@ -364,6 +364,7 @@ void RowContainer::storeComplexType(
     row[nullByte] |= nullMask;
     return;
   }
+  RowSizeTracker t(row + rowSizeOffset_, stringAllocator_);
   ByteStream stream(&stringAllocator_, false, false);
   auto position = stringAllocator_.newWrite(stream);
   serde_.serialize(*decoded.base(), decoded.index(index), stream);

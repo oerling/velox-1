@@ -260,6 +260,7 @@ class HashStringAllocator : public StreamArena {
   void checkConsistency() const;
 
  private:
+  static constexpr int32_t kNoRowSizeOffset = -1;
   // The minimum allocation must have space after the header for the
   // free list pointers and the trailing length.
   static constexpr int32_t kMinAlloc =
@@ -323,6 +324,42 @@ class HashStringAllocator : public StreamArena {
 
   // Pool for getting new slabs.
   AllocationPool pool_;
+  int32_t rowSizeOffset_{kNoRowSizeOffset};
+};
+
+// Utility for keeping track of allocation between two points in
+// time. A counter on a row supplied at construction is incremented
+// by the change in allocation between construction and
+// destruction. This is a scoped guard to use around setting
+// variable length data in a RowContainer or similar.
+template <typename T, typename TCounter = uint32_t>
+class RowSizeTracker {
+ public:
+  //  Will update the counter at pointer cast to TCounter*
+  //  with the change in allocation during the lifetime of 'this'
+  RowSizeTracker(T* FOLLY_NONNULL counter, HashStringAllocator& allocator)
+      : allocator_(allocator),
+        size_(allocator_.cumulativeBytes()),
+        counter_(counter) {}
+
+  ~RowSizeTracker() {
+    auto delta = allocator_.cumulativeBytes() - size_;
+    if (delta) {
+      saturatingIncrement(counter_, delta);
+    }
+  }
+
+ private:
+  // Increments T at *pointer without wrapping around at overflow.
+  void saturatingIncrement(T* FOLLY_NONNULL pointer, int64_t delta) {
+    auto value = *reinterpret_cast<TCounter*>(pointer) + delta;
+    *reinterpret_cast<TCounter*>(pointer) =
+        std::min<uint64_t>(value, std::numeric_limits<TCounter>::max());
+  }
+
+  HashStringAllocator& allocator_;
+  const uint64_t size_;
+  T* FOLLY_NONNULL const counter_;
 };
 
 // An Allocator based by HashStringAllocator to use with STL containers.

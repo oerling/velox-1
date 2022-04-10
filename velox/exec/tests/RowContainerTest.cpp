@@ -76,6 +76,15 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
     }
   }
 
+  void checkSizes(std::vector<char*>& rows, RowContainer& data) {
+    int64_t sum = 0;
+    for (auto row : rows) {
+      sum += data.rowSize(row) - data.fixedRowSize();
+    }
+    auto usage = data.stringAllocator().cumulativeBytes();
+    EXPECT_EQ(usage, sum);
+  }
+
   // Stores the input vector in Row Container, extracts it and compares.
   void roundTrip(const VectorPtr& input) {
     // Create row container.
@@ -287,6 +296,7 @@ TEST_F(RowContainerTest, types) {
   EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), kNumRows);
   EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), 0);
 
+  checkSizes(rows, *data);
   SelectivityVector allRows(kNumRows);
   for (auto column = 0; column < batch->childrenSize(); ++column) {
     if (column < keys.size()) {
@@ -300,6 +310,7 @@ TEST_F(RowContainerTest, types) {
       data->store(decoded, index, rows[index], column);
     }
   }
+  checkSizes(rows, *data);
   data->checkConsistency();
   auto copy = std::static_pointer_cast<RowVector>(
       BaseVector::create(batch->type(), batch->size(), pool_.get()));
