@@ -123,6 +123,10 @@ class ApproxPercentileAggregate : public exec::Aggregate {
     return sizeof(KllSketchAccumulator<T>);
   }
 
+  bool isFixedSize() const override {
+    return false;
+  }
+  
   void initializeNewGroups(
       char** groups,
       folly::Range<const vector_size_t*> indices) override {
@@ -190,7 +194,8 @@ class ApproxPercentileAggregate : public exec::Aggregate {
           return;
         }
 
-        auto accumulator = initRawAccumulator(groups[row]);
+	RowSizeTracker t(groups[row] + rowSizeOffset_, *allocator_);
+	auto accumulator = initRawAccumulator(groups[row]);
         auto value = decodedValue_.valueAt<T>(row);
         auto weight = decodedWeight_.valueAt<int64_t>(row);
         VELOX_USER_CHECK_GE(
@@ -229,7 +234,8 @@ class ApproxPercentileAggregate : public exec::Aggregate {
       if (decodedDigest_.isNullAt(row)) {
         return;
       }
-      auto accumulator = value<KllSketchAccumulator<T>>(groups[row]);
+	RowSizeTracker t(groups[row] + rowSizeOffset_, *allocator_);
+	auto accumulator = value<KllSketchAccumulator<T>>(groups[row]);
       accumulator->append(getDeserializedDigest(row));
     });
   }
@@ -243,6 +249,7 @@ class ApproxPercentileAggregate : public exec::Aggregate {
     checkSetPercentile();
     checkSetAccuracy();
 
+    RowSizeTracker t(group + rowSizeOffset_, *allocator_);
     auto accumulator = initRawAccumulator(group);
 
     if (hasWeight_) {
@@ -284,7 +291,8 @@ class ApproxPercentileAggregate : public exec::Aggregate {
     decodedDigest_.decode(*args[0], rows, true);
     auto accumulator = value<KllSketchAccumulator<T>>(group);
 
-    std::vector<const char*> digests;
+	RowSizeTracker t(group + rowSizeOffset_, *allocator_);
+	std::vector<const char*> digests;
     digests.reserve(rows.end());
 
     rows.applyToSelected([&](auto row) {
