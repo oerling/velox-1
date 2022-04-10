@@ -37,7 +37,7 @@ class ArrayAggAggregate : public exec::Aggregate {
   bool isFixedSize() const override {
     return false;
   }
-  
+
   void initializeNewGroups(
       char** groups,
       folly::Range<const vector_size_t*> indices) override {

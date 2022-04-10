@@ -157,7 +157,7 @@ void HashStringAllocator::newSlab(int32_t size) {
   // Write end  marker.
   *reinterpret_cast<uint32_t*>(run + available) = Header::kArenaEnd;
   cumulativeBytes_ += available;
-  
+
   // Add the new memory to the free list: Placement construct a header
   // that covers the space from start to the end marker and add this
   // to free list.

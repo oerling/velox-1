@@ -205,7 +205,7 @@ class ApproxDistinctAggregate : public exec::Aggregate {
         }
 
         auto group = groups[row];
-	RowSizeTracker t(group + rowSizeOffset_, *allocator_);
+        RowSizeTracker t(group + rowSizeOffset_, *allocator_);
         auto accumulator = value<HllAccumulator>(group);
         if (clearNull(group)) {
           accumulator->setIndexBitLength(indexBitLength_);

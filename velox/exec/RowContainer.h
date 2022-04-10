@@ -142,7 +142,7 @@ class RowContainer {
   int32_t fixedRowSize() const {
     return fixedRowSize_;
   }
-  
+
   // Adds 'rows' to the free rows list and frees any associated
   // variable length data.
   void eraseRows(folly::Range<char**> rows);

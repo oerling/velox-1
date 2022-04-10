@@ -39,7 +39,7 @@ class MapAggAggregate : public exec::Aggregate {
   bool isFixedSize() const override {
     return false;
   }
-  
+
   void initializeNewGroups(
       char** groups,
       folly::Range<const vector_size_t*> indices) override {
@@ -112,7 +112,7 @@ class MapAggAggregate : public exec::Aggregate {
       if (!decodedKeys_.isNullAt(row)) {
         auto group = groups[row];
         auto accumulator = value<MapAccumulator>(group);
-	RowSizeTracker t(group + rowSizeOffset_, *allocator_);
+        RowSizeTracker t(group + rowSizeOffset_, *allocator_);
         accumulator->keys.appendValue(decodedKeys_, row, allocator_);
         accumulator->values.appendValue(decodedValues_, row, allocator_);
       }

@@ -332,13 +332,15 @@ class HashStringAllocator : public StreamArena {
 // by the change in allocation between construction and
 // destruction. This is a scoped guard to use around setting
 // variable length data in a RowContainer or similar.
-  template <typename T, typename TCounter = uint32_t>
+template <typename T, typename TCounter = uint32_t>
 class RowSizeTracker {
-public:
-  //  Will update the counter at pointer cast to TCounter* 
+ public:
+  //  Will update the counter at pointer cast to TCounter*
   //  with the change in allocation during the lifetime of 'this'
   RowSizeTracker(T* counter, HashStringAllocator& allocator)
-      : allocator_(allocator), size_(allocator_.cumulativeBytes()), counter_(counter) {}
+      : allocator_(allocator),
+        size_(allocator_.cumulativeBytes()),
+        counter_(counter) {}
 
   ~RowSizeTracker() {
     auto delta = allocator_.cumulativeBytes() - size_;
@@ -357,7 +359,7 @@ public:
 
   HashStringAllocator& allocator_;
   const uint64_t size_;
-    T* const counter_;
+  T* const counter_;
 };
 
 // An Allocator based by HashStringAllocator to use with STL containers.

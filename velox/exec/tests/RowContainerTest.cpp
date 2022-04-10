@@ -121,7 +121,7 @@ class RowContainerTest : public testing::Test {
     auto usage = data.stringAllocator().cumulativeBytes();
     EXPECT_EQ(usage, sum);
   }
-  
+
   // Stores the input vector in Row Container, extracts it and compares.
   void roundTrip(const VectorPtr& input) {
     // Create row container.
