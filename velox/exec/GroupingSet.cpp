@@ -44,8 +44,9 @@ GroupingSet::GroupingSet(
     std::vector<std::optional<ChannelIndex>>&& aggrMaskChannels,
     std::vector<std::vector<ChannelIndex>>&& channelLists,
     std::vector<std::vector<VectorPtr>>&& constantLists,
-    std::vector<TypePtr> intermediateTypes,
+    std::vector<TypePtr>&& intermediateTypes,
     bool ignoreNullKeys,
+    bool isPartial,
     bool isRawInput,
     OperatorCtx* operatorCtx)
     : preGroupedKeyChannels_(std::move(preGroupedKeys)),
@@ -53,6 +54,7 @@ GroupingSet::GroupingSet(
       isGlobal_(hashers_.empty()),
       isRawInput_(isRawInput),
       aggregates_(std::move(aggregates)),
+      isPartial_(isPartial),
       masks_{std::move(aggrMaskChannels)},
       channelLists_(std::move(channelLists)),
       constantLists_(std::move(constantLists)),
@@ -66,7 +68,8 @@ GroupingSet::GroupingSet(
       execCtx_(*operatorCtx->execCtx()),
       spillPath_(
           isPartial_ ? ""
-                     : operatorCtx->task()->queryCtx()->config().spillPath()) {
+	  : operatorCtx->task()->queryCtx()->config().spillPath()),
+      spillExecutor_(          operatorCtx->task()->queryCtx()->spillExecutor()){
   for (auto& hasher : hashers_) {
     keyChannels_.push_back(hasher->channel());
   }
@@ -79,8 +82,6 @@ GroupingSet::GroupingSet(
   for (const std::vector<ChannelIndex>& argList : channelLists_) {
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
   }
-  maySpill_ =
-      !isPartial && operatorCtx->task()->queryCtx()->config().spillPath() != ""
 }
 
 namespace {
@@ -422,51 +423,86 @@ uint64_t GroupingSet::allocatedBytes() const {
 const HashLookup& GroupingSet::hashLookup() const {
   return *lookup_;
 }
+
+namespace {
+  bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
+  try {
+    tracker.reserve(increment);
+  } catch (const std::exception& e) {
+    return false;
+  }
+}
+} // namespace
+
 void GroupingSet::checkSpill(const RowVectorPtr& input) {
-  if (spillPath_.empty() || table_->hashMode() == HashMode::kArray) {
+  if (isPartial_ || spillPath_.empty()) {
     return;
   }
-  auto [rows, bytes] = table_->rows()->freeSpace();
-  if (rows > input->size() && bytes > maxSize) {
+  auto numDistinct = table_->numDistinct();
+  if (numDistinct) {
     return;
   }
-  auto maxSize = rows_->sizeIncrement(input->size(), maxSerializedSize(input));
+  auto tableIncrement =
+      numDistinct + input->size() >= table_->rehashSize()
+    ? BaseHashTable::tableByteSize(2 * numDistinct) - BaseHashTable::tableByteSize(numDistinct) : 0;
+
+  int64_t retainedSize = input->retainedSize();
+
+  auto rows = table_->rows();
+
+  auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
+  auto outOfLineBytes = rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
+  auto outOfLinePerRow = numDistinct / outOfLineBytes;
+  // Check against retainedSize first because this is fast and allows to
+  // decide early. Retained size is always an overestimation.
+  if (!tableIncrement && freeRows > input->size() && outOfLineFreeBytes >= input->size() * outOfLinePerRow) {
+    return;
+  }
+
+  int64_t flatSize = input->estimateFlatSize();
+  auto increment = rows->sizeIncrement(input->size(), flatSize) + tableIncrement;
   auto tracker = mappedMemory_->tracker();
   VELOX_CHECK(tracker);
-  if (table_->numDistinct() + input->size() >= table_->rehashSize()) {
-    maxsize += bits::nextPowerOfTwo(table->numDistinct() * 9);
-  }
-  if (tracker->getAvailableReservation() > maxSize) {
+  if (tracker->getAvailableReservation() > increment) {
     return;
   }
-  if (maybeReserve(tracker, maxSize * 2)) {
+
+  // Check if can inscrease reservation. The The increment is the larger of twice the maximum increment from this input and 1/4 of the current reservation.
+  auto targetIncrement = std::max<int64_t>(
+					   increment * 2, tracker->getCurrentUserBytes() / 4);
+  if (maybeReserve(targetIncrement, *tracker)) {
     return;
   }
-  if (!spiller_) {
-    auto type = rows_->keyTypes();
-    types.insert(
-        types.end(), intermediateTypes_.begin(), intermediateTypes_.end());
-    std::vector<std::string> names;
-    for (auto i = 0; i < types.size(); ++i) {
-      names.push_back(fmt::format("s{}", i));
-    }
-    spiller_ = std::make_unique<Spiller>(
-        *rows_,
-        [&](folly::Range<char**> rows) { table_->erase(rows); },
-        ROW(std::move(names), std::move(types)),
-        rows_.keyTypes().size(),
-        HashBitField{29, 32},
-        spillPath_,
-        rows_->allocatedBytes() / 16,
-        pool_,
-        Spiller::spillExecutor());
+  auto rowsToSpill = targetIncrement / (rows->fixedRowSize() + outOfLinePerRow);
+  
+  spill(numDistinct - rowsToSpill,
+	outOfLineBytes - (rowsToSpill * outOfLinePerRow),
+	spillIterator_);
+}
+
+  void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
+    if (!spiller_) {
+  auto type = rows_->keyTypes();
+  types.insert(
+      types.end(), intermediateTypes_.begin(), intermediateTypes_.end());
+  std::vector<std::string> names;
+  for (auto i = 0; i < types.size(); ++i) {
+    names.push_back(fmt::format("s{}", i));
   }
-  spiller_->spill(
-      rows_->numRows() / 4 * 3,
-      (rows_->stringAllocator().retainedSize() -
-       rows.stringAllocator().freeSpace()) /
-          4 * 3,
-      spillIterator_);
+  spiller_ = std::make_unique<Spiller>(
+      *rows_,
+      [&](folly::Range<char**> rows) { table_->erase(rows); },
+      ROW(std::move(names), std::move(types)),
+      rows_.keyTypes().size(),
+      HashBitField{29, 32},
+      spillPath_,
+      rows_->allocatedBytes() / 16,
+      pool_,
+      spillExecutor_);
+}
+spiller_->spill(
+		targetRows, targetBytes,
+    spillIterator_);
 }
 
 bool GroupingSet::getOutputWithSpill(int32_t batchSize, VectorPtr* result) {
@@ -547,9 +583,10 @@ bool GroupingSet::mergeNext(RowVectorPtr& result) {
 }
 
 void GroupingSet::initializeRow(SpillStream& keys, char* row) {
-  // Each stream gets read for all positions. When at index 0, decode the keys and keep the DecodedVectors around until redecoding these when the tream is again at idex 0.
+  // Each stream gets read for all positions. When at index 0, decode the keys
+  // and keep the DecodedVectors around until redecoding these when the tream is
+  // again at idex 0.
   if (keys->currentIndex() == 0) {
-    
   }
   for (auto i = 0; i < keyChannels_.size(); ++i) {
     mergeRows_->store(*(*keys.decoded)[i], keys.index, mergeState_, i);
@@ -560,7 +597,7 @@ void GroupingSet::initializeRow(SpillStream& keys, char* row) {
         &row, folly::Range<const vector_size_t*>(&zero, 1));
   }
 }
-  
+
 void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   std::vector<char*> rows(mergeRows_->numRows());
   RowContainerIterator iter;

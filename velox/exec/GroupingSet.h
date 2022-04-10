@@ -35,10 +35,11 @@ class GroupingSet {
       std::vector<std::optional<ChannelIndex>>&& aggrMaskChannels,
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
+      std::vector<TypePtr>&& intermediateTypes,
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
-      OperatorCtx* driverCtx);
+      OperatorCtx* operatorCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
 
@@ -66,6 +67,9 @@ class GroupingSet {
 
   const HashLookup& hashLookup() const;
 
+  // Spills until the data size in memory is under targetSize or everything is spilled. If 'targetSize' <= 0, everything is spilled and the memory of 'table_->rows()' is physically freed. The hash table of 'table_' will not be freed or shrunk.
+  void spill(int64_t targetSize);
+  
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 
@@ -199,6 +203,7 @@ class GroupingSet {
 
   // Index of first in 'nonSpilledRows_' that has not been added to output.
   size_t nonSpilledIndex_ = 0;
+  folly::Executor* spillExecutor_;
 };
 
 } // namespace facebook::velox::exec

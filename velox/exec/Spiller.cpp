@@ -177,8 +177,10 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
           return writeSpill(
               partition, maxBytes / pendingSpillPartitions_.size());
         }));
-    executor_->add([source = writes.back()]() { source->prepare(); });
-  }
+    if (executor_) {
+      executor_->add([source = writes.back()]() { source->prepare(); });
+    }
+    }
   auto sync = folly::makeGuard([&]() {
     for (auto& write : writes) {
       try {
