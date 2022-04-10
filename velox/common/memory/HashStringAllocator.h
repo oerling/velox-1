@@ -337,7 +337,7 @@ class RowSizeTracker {
  public:
   //  Will update the counter at pointer cast to TCounter*
   //  with the change in allocation during the lifetime of 'this'
-  RowSizeTracker(T* counter, HashStringAllocator& allocator)
+  RowSizeTracker(T* FOLLY_NONNULL counter, HashStringAllocator& allocator)
       : allocator_(allocator),
         size_(allocator_.cumulativeBytes()),
         counter_(counter) {}
@@ -351,7 +351,7 @@ class RowSizeTracker {
 
  private:
   // Increments T at *pointer without wrapping around at overflow.
-  void saturatingIncrement(T* pointer, int64_t delta) {
+  void saturatingIncrement(T* FOLLY_NONNULL pointer, int64_t delta) {
     auto value = *reinterpret_cast<TCounter*>(pointer) + delta;
     *reinterpret_cast<TCounter*>(pointer) =
         std::min<uint64_t>(value, std::numeric_limits<TCounter>::max());
@@ -359,7 +359,7 @@ class RowSizeTracker {
 
   HashStringAllocator& allocator_;
   const uint64_t size_;
-  T* const counter_;
+  T* FOLLY_NONNULL const counter_;
 };
 
 // An Allocator based by HashStringAllocator to use with STL containers.
