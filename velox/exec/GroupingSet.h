@@ -21,7 +21,6 @@
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/exec/VectorHasher.h"
 
-
 namespace facebook::velox::exec {
 
 class Aggregate;
@@ -66,7 +65,6 @@ class GroupingSet {
 
   const HashLookup& hashLookup() const;
 
-  
   // Spills content until under 'targetRows' and under 'targetBytes'
   // of out of line data are left. If targetRows is 0, spills
   // everything and physically frees the data in the
@@ -76,7 +74,6 @@ class GroupingSet {
   // of this will be in a paused state and off thread.
   void spill(int64_t targetRows, int64_t targetBytes);
 
-  
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 
@@ -105,9 +102,10 @@ class GroupingSet {
   // reservation if not. If reservation cannot be increased, spills
   // enough to make 'input' fit.
   void ensureInputFits(const RowVectorPtr& input);
-  
-  void extractGroups(char** groups, int32_t numGroups, const RowVectorPtr& result);
- 
+
+  void
+  extractGroups(char** groups, int32_t numGroups, const RowVectorPtr& result);
+
   bool getOutputWithSpill(const RowVectorPtr& result);
 
   bool mergeNext(const RowVectorPtr& result);
@@ -116,7 +114,6 @@ class GroupingSet {
   void updateRow(SpillStream& keys, char* row);
   void extractSpillResult(const RowVectorPtr& result);
 
-  
   std::vector<ChannelIndex> keyChannels_;
 
   /// A subset of grouping keys on which the input is clustered.
@@ -179,7 +176,7 @@ class GroupingSet {
 
   // Filesystem path for spill files, empty if spilling is disabled.
   const std::string spillPath_;
-  
+
   std::unique_ptr<Spiller> spiller_;
   std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
   RowContainerIterator spillIterator_;
@@ -196,12 +193,14 @@ class GroupingSet {
   // Intermediate vector for passing arguments to aggregate in merging spill.
   std::vector<VectorPtr> mergeArgs_;
 
-  // Indicates the element in mergeArgs_[0] that corresponds to the accumulator to merge.
+  // Indicates the element in mergeArgs_[0] that corresponds to the accumulator
+  // to merge.
   SelectivityVector mergeSelection_;
 
-  // True if 'merge_' indicates that the next key is the same as the current one.
+  // True if 'merge_' indicates that the next key is the same as the current
+  // one.
   bool nextKeyIsEqual_{false};
-  
+
   // The set of rows that are outside of the spillable hash number
   // ranges. Used when producing output.
   std::vector<char*> nonSpilledRows_;

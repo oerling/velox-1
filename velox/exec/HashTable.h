@@ -145,12 +145,13 @@ class BaseHashTable {
 
   // Returns value of numDistinct() at which the table gets rehashed.
   virtual uint64_t rehashSize() const = 0;
-  
-  // Returns the size  in bytes for hash table structures given the count of distinct keys.
+
+  // Returns the size  in bytes for hash table structures given the count of
+  // distinct keys.
   static uint64_t tableByteSize(int32_t numDistinct) {
     return bits::nextPowerOfTwo(numDistinct) * 9;
-				}
-  
+  }
+
   /// Returns true if the hash table contains rows with duplicate keys.
   virtual bool hasDuplicateKeys() const = 0;
 

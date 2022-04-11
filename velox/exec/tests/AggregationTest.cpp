@@ -375,11 +375,7 @@ class AggregationTest : public OperatorTestBase {
         BufferPtr(nullptr), dictionary, count, rows->childAt(1)));
     children.push_back(children[1]);
     batches.push_back(std::make_shared<RowVector>(
-        rows->pool(),
-        rows->type(),
-        BufferPtr(nullptr),
-        count,
-        children));
+        rows->pool(), rows->type(), BufferPtr(nullptr), count, children));
     dictionary = AlignedBuffer::allocate<vector_size_t>(
         dictionary->capacity() / sizeof(vector_size_t), rows->pool());
   }
@@ -682,7 +678,7 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
 
   assertQuery(params, "SELECT c0, count(1) FROM tmp GROUP BY 1");
 }
-  
+
 TEST_F(AggregationTest, spill) {
   using core::QueryConfig;
   constexpr int32_t kNumDistinct = 200000;
@@ -720,10 +716,10 @@ TEST_F(AggregationTest, spill) {
   makeBatches(rows, order1, batches);
   makeBatches(rows, order2, batches);
   makeBatches(rows, order3, batches);
-    auto tempDirectory = exec::test::TempDirectoryPath::create();
-    CursorParameters params;
+  auto tempDirectory = exec::test::TempDirectoryPath::create();
+  CursorParameters params;
   std::unordered_map<std::string, std::string> configStrings;
-  configStrings[QueryConfig::kMaxPartialAggregationMemory ] = "1600000";
+  configStrings[QueryConfig::kMaxPartialAggregationMemory] = "1600000";
   configStrings[QueryConfig::kSpillPath] = tempDirectory->path;
   std::shared_ptr<Config> config =
       std::make_shared<core::MemConfig>(configStrings);
@@ -731,7 +727,10 @@ TEST_F(AggregationTest, spill) {
   params.planNode = PlanBuilder()
                         .values(batches)
                         .partialAggregation({0, 1}, {"array_agg(a)"})
-    .finalAggregation({0, 1}, {"array_agg(a0)"}, {BIGINT(), VARCHAR(), ARRAY(VARCHAR())})
+                        .finalAggregation(
+                            {0, 1},
+                            {"array_agg(a0)"},
+                            {BIGINT(), VARCHAR(), ARRAY(VARCHAR())})
                         .planNode();
   auto pair = readCursor(params, [](Task*) {});
   int32_t numRows = 0;

@@ -58,7 +58,7 @@ class QueryCtx : public Context {
         connectorConfigs_(connectorConfigs),
         executor_{std::move(executor)},
         config_{this},
-	spillExecutor_(std::move(spillExecutor)) {
+        spillExecutor_(std::move(spillExecutor)) {
     setConfigOverrides(config);
     if (!pool_) {
       initPool();
@@ -138,7 +138,7 @@ class QueryCtx : public Context {
   folly::Executor* FOLLY_NULLABLE spillExecutor() const {
     return spillExecutor_.get();
   }
-  
+
  private:
   static Config* getEmptyConfig() {
     static const std::unique_ptr<Config> kEmptyConfig =

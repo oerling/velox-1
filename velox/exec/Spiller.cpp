@@ -180,7 +180,7 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
     if (executor_) {
       executor_->add([source = writes.back()]() { source->prepare(); });
     }
-    }
+  }
   auto sync = folly::makeGuard([&]() {
     for (auto& write : writes) {
       try {

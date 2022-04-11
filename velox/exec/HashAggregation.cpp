@@ -100,8 +100,8 @@ HashAggregation::HashAggregation(
         aggregate->name(), aggregationNode->step(), argTypes, resultType));
     args.push_back(channels);
     constantLists.push_back(constants);
-    intermediateTypes.push_back(Aggregate::intermediateType(
-        aggregate->name(), argTypes));
+    intermediateTypes.push_back(
+        Aggregate::intermediateType(aggregate->name(), argTypes));
   }
 
   // Check that aggregate result type match the output type
@@ -200,8 +200,7 @@ RowVectorPtr HashAggregation::getOutput() {
   auto result = std::static_pointer_cast<RowVector>(
       BaseVector::create(outputType_, batchSize, operatorCtx_->pool()));
 
-  bool hasData = groupingSet_->getOutput(
-      batchSize, &resultIterator_, result);
+  bool hasData = groupingSet_->getOutput(batchSize, &resultIterator_, result);
   if (!hasData) {
     resultIterator_.reset();
 

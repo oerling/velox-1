@@ -392,8 +392,11 @@ bool GroupingSet::getOutput(
   return true;
 }
 
-  void GroupingSet::extractGroups(char** groups, int32_t numGroups, const RowVectorPtr& result) {
-    result->resize(numGroups);
+void GroupingSet::extractGroups(
+    char** groups,
+    int32_t numGroups,
+    const RowVectorPtr& result) {
+  result->resize(numGroups);
   auto totalKeys = lookup_->hashers.size();
   for (int32_t i = 0; i < totalKeys; ++i) {
     auto keyVector = result->childAt(i);
@@ -550,8 +553,7 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
         break;
       }
     }
-    extractGroups(
-        nonSpilledRows_.data() + nonSpilledIndex_, numGroups, result);
+    extractGroups(nonSpilledRows_.data() + nonSpilledIndex_, numGroups, result);
     nonSpilledIndex_ += numGroups;
     return true;
   }
@@ -570,7 +572,7 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
 }
 
 bool GroupingSet::mergeNext(const RowVectorPtr& result) {
-  constexpr int32_t kBatchBytes = 1 << 20; //1MB
+  constexpr int32_t kBatchBytes = 1 << 20; // 1MB
   if (mergeSelection_.size() < 64) {
     mergeSelection_.resize(64);
     mergeSelection_.clearAll();
@@ -627,5 +629,5 @@ void GroupingSet::updateRow(SpillStream& input, char* row) {
   }
   mergeSelection_.setValid(input.currentIndex(), false);
 }
-  
+
 } // namespace facebook::velox::exec

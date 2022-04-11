@@ -320,9 +320,10 @@ class RowContainer {
         stringAllocator_.freeSpace());
   }
 
-  // Returns a cap on  extra memory that may be needed when adding 'numRows' with 'bytes in in flat vector space consumption.
+  // Returns a cap on  extra memory that may be needed when adding 'numRows'
+  // with 'bytes in in flat vector space consumption.
   int64_t sizeIncrement(vector_size_t numRows, int64_t flatBytes) const;
-  
+
   // Resets the state to be as after construction. Frees memory for payload.
   void clear();
 
