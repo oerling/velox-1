@@ -361,11 +361,11 @@ class RowContainer {
     return types_;
   }
 
-  auto& keyTypes() const {
+  const auto& keyTypes() const {
     return keyTypes_;
   }
 
-  auto& aggregates() const {
+  const auto& aggregates() const {
     return aggregates_;
   }
 

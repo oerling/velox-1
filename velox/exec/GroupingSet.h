@@ -57,7 +57,6 @@ class GroupingSet {
   /// returns true.
   bool getOutput(
       int32_t batchSize,
-      bool isPartial,
       RowContainerIterator* iterator,
       RowVectorPtr& result);
 
@@ -67,8 +66,16 @@ class GroupingSet {
 
   const HashLookup& hashLookup() const;
 
-  // Spills until the data size in memory is under targetSize or everything is spilled. If 'targetSize' <= 0, everything is spilled and the memory of 'table_->rows()' is physically freed. The hash table of 'table_' will not be freed or shrunk.
-  void spill(int64_t targetSize);
+  
+  // Spills content until under 'targetRows' and under 'targetBytes'
+  // of out of line data are left. If targetRows is 0, spills
+  // everything and physically frees the data in the
+  // 'table_->rows()'. This leaves 'table_' initialized and 'this'
+  // ready to accumulate more input. This is called by ensureInputFits
+  // or by external memory management. In the latter case, the Driver
+  // of this will be in a paused state and off thread.
+  void spill(int64_t targetRows, int64_t targetBytes);
+
   
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
@@ -94,18 +101,16 @@ class GroupingSet {
   // index for this aggregation), otherwise it returns reference to activeRows_.
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
-  void checkSpill(const RowVectorPtr& input);
+  // Checks if input will fit in the existing memory and increases
+  // reservation if not. If reservation cannot be increased, spills
+  // enough to make 'input' fit.
+  void ensureInputFits(const RowVectorPtr& input);
+  
+  void extractGroups(char** groups, int32_t numGroups, const RowVectorPtr& result);
+ 
+  bool getOutputWithSpill(const RowVectorPtr& result);
 
-
-  void extractGroups(
-      char** groups,
-      int32_t numGroups,
-      bool isPartial,
-      RowVectorPtr& result);
-
-  bool getOutputWithSpill(int32_t batchSize, RowVectorPtr result);
-
-  bool mergeNext(RowVectorPtr& result);
+  bool mergeNext(const RowVectorPtr& result);
 
   void initializeRow(SpillStream& keys, char* row);
   void updateRow(SpillStream& keys, char* row);
@@ -203,7 +208,11 @@ class GroupingSet {
 
   // Index of first in 'nonSpilledRows_' that has not been added to output.
   size_t nonSpilledIndex_ = 0;
-  folly::Executor* spillExecutor_;
+  // Pool of the OperatorCtx. Used for spilling.
+  memory::MemoryPool& pool_;
+
+  // Executor for spilling. If nullptr spilling writes on the Driver's thread.
+  folly::Executor* FOLLY_NULLABLE const spillExecutor_;
 };
 
 } // namespace facebook::velox::exec

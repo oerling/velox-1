@@ -201,7 +201,7 @@ RowVectorPtr HashAggregation::getOutput() {
       BaseVector::create(outputType_, batchSize, operatorCtx_->pool()));
 
   bool hasData = groupingSet_->getOutput(
-      batchSize, isPartialOutput_, &resultIterator_, result);
+      batchSize, &resultIterator_, result);
   if (!hasData) {
     resultIterator_.reset();
 

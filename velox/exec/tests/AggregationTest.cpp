@@ -18,6 +18,7 @@
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/FunctionSignature.h"
 
 using facebook::velox::exec::Aggregate;
@@ -683,6 +684,7 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
 }
   
 TEST_F(AggregationTest, spill) {
+  using core::QueryConfig;
   constexpr int32_t kNumDistinct = 200000;
   rng_.seed(1);
   rowType_ = ROW({"c0", "c1", "a"}, {INTEGER(), VARCHAR(), VARCHAR()});
@@ -718,22 +720,18 @@ TEST_F(AggregationTest, spill) {
   makeBatches(rows, order1, batches);
   makeBatches(rows, order2, batches);
   makeBatches(rows, order3, batches);
-  CursorParameters params;
+    auto tempDirectory = exec::test::TempDirectoryPath::create();
+    CursorParameters params;
   std::unordered_map<std::string, std::string> configStrings;
-  configStrings["driver.max-final-aggregation-memory-usage"] = "16000000";
-  configStrings["driver.spill-file-size"] = "16000000";
+  configStrings[QueryConfig::kMaxPartialAggregationMemory ] = "1600000";
+  configStrings[QueryConfig::kSpillPath] = tempDirectory->path;
   std::shared_ptr<Config> config =
       std::make_shared<core::MemConfig>(configStrings);
-  std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
-
-  params.queryCtx = std::make_shared<core::QueryCtx>(
-      std::move(config),
-      std::move(connectorConfigs),
-      memory::MappedMemory::getInstance());
+  params.queryCtx = core::QueryCtx::createForTest(std::move(config));
   params.planNode = PlanBuilder()
                         .values(batches)
                         .partialAggregation({0, 1}, {"array_agg(a)"})
-                        .finalAggregation({0, 1}, {"array_agg(a0)"})
+    .finalAggregation({0, 1}, {"array_agg(a0)"}, {BIGINT(), VARCHAR(), ARRAY(VARCHAR())})
                         .planNode();
   auto pair = readCursor(params, [](Task*) {});
   int32_t numRows = 0;

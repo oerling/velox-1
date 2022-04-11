@@ -83,7 +83,6 @@ class SpillStream : public MergeStream {
     } while (++key < numSortingKeys_);
     return 0;
   }
-
   
   virtual std::string label() const {
     return fmt::format("{}", ordinal_);
