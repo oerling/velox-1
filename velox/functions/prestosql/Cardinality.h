@@ -13,24 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/expression/VectorFunction.h"
+#pragma once
 
-namespace facebook::velox::functions::sparksql {
+#include "velox/functions/Macros.h"
 
-// Supported types:
-//   - Bools
-//   - Integer types (byte, short, int, long)
-//   - String, Binary
-//   - Float, Double
-//   - Timestamp
-//   - Date
-//
-// Unsupported:
-//   - Decimal
-//   - Datetime
-//   - Structs, Arrays
-//   - Maps
+namespace facebook::velox::functions {
 
-void registerIn(const std::string& prefix);
+template <typename T>
+struct CardinalityFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-} // namespace facebook::velox::functions::sparksql
+  void call(int64_t& out, const arg_type<Array<Generic<>>>& input) {
+    out = input.size();
+  }
+
+  void call(int64_t& out, const arg_type<Map<Generic<>, Generic<>>>& input) {
+    out = input.size();
+  }
+};
+} // namespace facebook::velox::functions
