@@ -106,7 +106,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
         batch->type(),
         HashBitRange(0, 2),
         keys.size(),
-        makeError ? "/bad/path" : tempDirectory->path,
+        makeError ? "/bad/path" : tempDirectory->path + "/test",
         2000000,
         *pool_,
         executor());

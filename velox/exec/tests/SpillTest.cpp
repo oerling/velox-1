@@ -49,7 +49,7 @@ TEST_F(SpillTest, spillState) {
   // both partitions produce an ascending sequence of integers without
   // gaps.
   SpillState state(
-      tempDirectory->path,
+      tempDirectory->path + "/test",
       2,
       1,
       10000, // small target file size. Makes a new file for each batch.
@@ -89,6 +89,11 @@ TEST_F(SpillTest, spillState) {
               .childAt(0)
               ->asUnchecked<FlatVector<int64_t>>()
               ->valueAt(stream->currentIndex()));
+      EXPECT_EQ(
+          i,
+          stream->decoded(0)
+	  .valueAt<int64_t>(stream->currentIndex()));
+
       stream->pop();
     }
     ASSERT_EQ(nullptr, merge->next());

@@ -127,6 +127,14 @@ void SpillFileList::finishFile() {
   }
 }
 
+int64_t SpillFileList::spilledBytes() const {
+  int64_t bytes = 0;
+  for (auto& file : files_) {
+    bytes += file->size();
+  }
+  return bytes;
+}
+
 void SpillState::setNumPartitions(int32_t numPartitions) {
   VELOX_CHECK_LE(numPartitions, maxPartitions());
   VELOX_CHECK_GT(numPartitions, numPartitions_, "May only add partitions");
@@ -141,7 +149,7 @@ void SpillState::appendToPartition(
     files_[partition] = std::make_unique<SpillFileList>(
         std::static_pointer_cast<const RowType>(rows->type()),
         numSortingKeys_,
-        fmt::format("{}-{}", path_, partition),
+        fmt::format("{}-spill-{}", path_, partition),
         targetFileSize_,
         pool_,
         mappedMemory_);
@@ -166,6 +174,16 @@ std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
     result.push_back(std::move(extra));
   }
   return std::make_unique<TreeOfLosers<SpillStream>>(std::move(result));
+}
+
+  int64_t SpillState::spilledBytes() const {
+  int64_t bytes = 0;
+  for (auto& list : files_) {
+    if (list) {
+      bytes += list->spilledBytes();
+    }
+  }
+  return bytes;
 }
 
 } // namespace facebook::velox::exec

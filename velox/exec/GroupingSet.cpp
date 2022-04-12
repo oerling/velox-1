@@ -35,6 +35,17 @@ bool areAllLazyNotLoaded(const std::vector<VectorPtr>& vectors) {
     return isLazyNotLoaded(*vector);
   });
 }
+
+std::string makeSpillPath(bool isPartial, OperatorCtx* operatorCtx) {
+  if (isPartial) {
+    return "";
+  }
+  auto path = operatorCtx->task()->queryCtx()->config().spillPath();
+  if (!path.empty()) {
+    return path + "/" + operatorCtx->task()->taskId();
+  }
+  return "";
+}
 } // namespace
 
 GroupingSet::GroupingSet(
@@ -66,9 +77,7 @@ GroupingSet::GroupingSet(
       isAdaptive_(
           operatorCtx->task()->queryCtx()->config().hashAdaptivityEnabled()),
       execCtx_(*operatorCtx->execCtx()),
-      spillPath_(
-          isPartial_ ? ""
-                     : operatorCtx->task()->queryCtx()->config().spillPath()),
+      spillPath_(makeSpillPath(isPartial, operatorCtx)),
       pool_(*operatorCtx->pool()),
       spillExecutor_(operatorCtx->task()->queryCtx()->spillExecutor()) {
   for (auto& hasher : hashers_) {
@@ -82,6 +91,9 @@ GroupingSet::GroupingSet(
   }
   for (const std::vector<ChannelIndex>& argList : channelLists_) {
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
+  }
+  for (auto& aggregate : aggregates_) {
+    minVariableWidthAccumulatorBytes_ += aggregate->minVariableWidthAccumulatorBytes();
   }
 }
 
@@ -438,7 +450,15 @@ bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
   } catch (const std::exception& e) {
     return false;
   }
+  return true;
 }
+
+  int64_t estimateSerializedSize(const VectorPtr& vector) {
+    vector_size_t bytes = 0;
+    auto bytesPtr = &bytes;
+    VectorStreamGroup::estimateSerializedSize(vector, std::vector<IndexRange>{IndexRange{0, vector->size()}}, &bytesPtr);
+    return bytes;
+  }
 } // namespace
 
 void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
@@ -446,7 +466,7 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
     return;
   }
   auto numDistinct = table_->numDistinct();
-  if (numDistinct) {
+  if (!numDistinct) {
     return;
   }
   auto tableIncrement = numDistinct + input->size() >= table_->rehashSize()
@@ -461,20 +481,22 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
   auto outOfLineBytes =
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
-  auto outOfLinePerRow = numDistinct / outOfLineBytes;
+  auto outOfLineBytesPerRow = (outOfLineBytes / numDistinct) + minVariableWidthAccumulatorBytes_;
   // Check against retainedSize first because this is fast and allows to
   // decide early. Retained size is always an overestimation.
   if (!tableIncrement && freeRows > input->size() &&
-      outOfLineFreeBytes >= input->size() * outOfLinePerRow) {
+      outOfLineFreeBytes >= input->size() * outOfLineBytesPerRow) {
     return;
   }
 
-  int64_t flatSize = input->estimateFlatSize();
-  auto increment =
-      rows->sizeIncrement(input->size(), flatSize) + tableIncrement;
+  int64_t flatSize = estimateSerializedSize(input);
+  auto increment = 
+    rows->sizeIncrement(input->size(), flatSize) + tableIncrement;
   auto tracker = mappedMemory_->tracker();
   VELOX_CHECK(tracker);
-  if (tracker->getAvailableReservation() > increment) {
+  // There must be at least 2x the increment in reservation. If less,
+  // finalizing before spilling could overflow.
+  if (tracker->getAvailableReservation() > 2 * increment) {
     return;
   }
 
@@ -486,11 +508,11 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   if (maybeReserve(targetIncrement, *tracker)) {
     return;
   }
-  auto rowsToSpill = targetIncrement / (rows->fixedRowSize() + outOfLinePerRow);
+  auto rowsToSpill = targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow);
 
   spill(
       numDistinct - rowsToSpill,
-      outOfLineBytes - (rowsToSpill * outOfLinePerRow));
+      outOfLineBytes - (rowsToSpill * outOfLineBytesPerRow));
 }
 
 void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
@@ -589,6 +611,7 @@ bool GroupingSet::mergeNext(const RowVectorPtr& result) {
     }
     updateRow(*next.first, mergeState_);
     nextKeyIsEqual_ = next.second;
+    next.first->pop();
     if (!nextKeyIsEqual_ && mergeRows_->allocatedBytes() > kBatchBytes) {
       extractSpillResult(result);
       return true;
@@ -613,6 +636,7 @@ void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   mergeRows_->listRows(
       &iter, rows.size(), RowContainer::kUnlimited, rows.data());
   extractGroups(rows.data(), rows.size(), result);
+  mergeRows_->clear();
 }
 
 void GroupingSet::updateRow(SpillStream& input, char* row) {

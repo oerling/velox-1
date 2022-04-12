@@ -28,6 +28,13 @@ namespace facebook::velox::aggregate {
 // non-null values.
 class ValueList {
  public:
+  // An array_agg or related begins with an allocation of 5 words and
+  // 4 bytes for header. This is compact for small arrays (up to 5
+  // bigints) and efficient if needs to be extended (stores 4 bigints
+  // and a next pointer. This could be adaptive, with smaller initial
+  // sizes for lots of small arrays.
+  static constexpr int kInitialSize = 44;
+
   void appendValue(
       const DecodedVector& decoded,
       vector_size_t index,
@@ -68,13 +75,6 @@ class ValueList {
   }
 
  private:
-  // An array_agg or related begins with an allocation of 5 words and
-  // 4 bytes for header. This is compact for small arrays (up to 5
-  // bigints) and efficient if needs to be extended (stores 4 bigints
-  // and a next pointer. This could be adaptive, with smaller initial
-  // sizes for lots of small arrays.
-  static constexpr int kInitialSize = 44;
-
   void appendNull(HashStringAllocator* allocator);
 
   void appendNonNull(

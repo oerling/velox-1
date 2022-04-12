@@ -25,7 +25,7 @@ namespace facebook::velox::exec {
 void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr* resultPtr) {
   if (!*resultPtr) {
     *resultPtr = std::static_pointer_cast<RowVector>(
-        BaseVector::create(rowType_, rows.size(), &pool_));
+        BaseVector::create(rowType_, rows.size(), &spillPool()));
   } else {
     (*resultPtr)->prepareForReuse();
     (*resultPtr)->resize(rows.size());
@@ -38,6 +38,7 @@ void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr* resultPtr) {
   auto& aggregates = container_.aggregates();
   auto numKeys = types.size();
   for (auto i = 0; i < aggregates.size(); ++i) {
+    aggregates[i]->finalize(rows.data(), rows.size());
     aggregates[i]->extractAccumulators(
         rows.data(), rows.size(), &result->childAt(i + numKeys));
   }
@@ -302,9 +303,11 @@ bool Spiller::fillSpillRuns(
   }
   std::vector<uint64_t> hashes(kHashBatchSize);
   std::vector<char*> rows(kHashBatchSize);
+  int64_t numConsidered = 0;
   for (;;) {
     auto numRows = container_.listRows(
         &iterator, rows.size(), RowContainer::kUnlimited, rows.data());
+    numConsidered += numRows;
 
     // Calculate hashes for this batch of spill candidates.
     auto rowSet = folly::Range<char**>(rows.data(), numRows);
@@ -341,6 +344,26 @@ bool Spiller::fillSpillRuns(
       return true;
     }
     if (!numRows) {
+      if (numConsidered == container_.numRows()) {
+        // If done full sweep but no spill started yet, start enough partitions
+        // to cover the ask.
+        std::vector<int32_t> indices(spillRuns_.size());
+        std::iota(indices.begin(), indices.end(), 0);
+        std::sort(
+            indices.begin(), indices.end(), [&](int32_t left, int32_t right) {
+              return spillRuns_[left].size > spillRuns_[right].size;
+            });
+        int64_t started = 0;
+        for (auto i : indices) {
+          pendingSpillPartitions_.insert(i);
+          started += spillRuns_[i].size;
+          if (started > targetSize) {
+            break;
+          }
+        }
+        clearNonSpillingRuns();
+        return false;
+      }
       clearNonSpillingRuns();
       return true;
     }
@@ -357,6 +380,21 @@ void Spiller::clearNonSpillingRuns() {
       spillRuns_[i].clear();
     }
   }
+}
+
+// static
+  memory::MappedMemory& Spiller::spillMappedMemory(RowContainer& /*container*/) {
+  // Return the top level instance. Since this too may be full,
+  // another possibility is to return an emergency instance that
+  // delegates to the process wide one and makes a file-backed mmap
+  // if the allocation fails.
+  return *memory::MappedMemory::getInstance();
+}
+
+// static
+  memory::MemoryPool& Spiller::spillPool() {
+  static auto pool = memory::getDefaultScopedMemoryPool();
+  return *pool;
 }
 
 } // namespace facebook::velox::exec

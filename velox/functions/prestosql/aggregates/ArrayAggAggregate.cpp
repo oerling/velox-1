@@ -38,6 +38,10 @@ class ArrayAggAggregate : public exec::Aggregate {
     return false;
   }
 
+  int32_t minVariableWidthAccumulatorBytes() const override {
+    return 2 * ValueList::kInitialSize;
+  }
+  
   void initializeNewGroups(
       char** groups,
       folly::Range<const vector_size_t*> indices) override {

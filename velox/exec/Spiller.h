@@ -67,7 +67,7 @@ class Spiller {
             numSortingKeys,
             targetFileSize,
             pool,
-            *container_.mappedMemory()),
+            spillMappedMemory(container_)),
         pool_(pool),
         executor_(executor) {}
 
@@ -92,7 +92,7 @@ class Spiller {
   std::vector<char*> finishSpill();
 
   // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
-  // Creates '*results' in 'pool_' if nullptr.
+  // Creates '*results' in spillPool() if nullptr.
   void extractSpill(folly::Range<char**> rows, RowVectorPtr* result);
 
   RowContainer& container() const {
@@ -108,7 +108,19 @@ class Spiller {
     return state_.startMerge(partition, spillStreamOverRows(partition));
   }
 
+  int64_t spilledBytes() const {
+    return state_.spilledBytes();
+  }
+  
  private:
+  // Returns the MappedMemory to use for intermediate storage for
+  // spilling. This is not directly the RowContainer's memory because
+  // this is usually at limit when starting spilling.
+  static memory::MappedMemory& spillMappedMemory(RowContainer& container);
+
+  // Global memory pool for spill intermediates. ~1MB per spill executor thread is the expected peak utilization.
+  static memory::MemoryPool& spillPool();
+  
   // Returns a mergeable stream that goes over unspilled in-memory
   // rows for the spill partition  'partition'. finishSpill()
   // first and 'partition' must specify a partition that has started spilling.

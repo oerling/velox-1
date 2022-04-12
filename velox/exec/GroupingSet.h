@@ -74,6 +74,10 @@ class GroupingSet {
   // of this will be in a paused state and off thread.
   void spill(int64_t targetRows, int64_t targetBytes);
 
+  int64_t spilledBytes() const {
+    return spiller_ ? spiller_->spilledBytes() : 0;
+  }
+  
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 
@@ -172,6 +176,11 @@ class GroupingSet {
   uint64_t maxBatchBytes_;
 
   // Intermediate types of aggregates. Used for spilling
+
+  // Sum of the minimum variable length size for variable length
+  // accumulators. This + serialized size of new values is a reasonable
+  // cap for additional space usage when updating.
+  int32_t minVariableWidthAccumulatorBytes_{0};
   std::vector<TypePtr> intermediateTypes_;
 
   // Filesystem path for spill files, empty if spilling is disabled.

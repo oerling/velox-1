@@ -132,6 +132,8 @@ struct OperatorStats {
 
   int numDrivers = 0;
 
+  int64_t spilledBytes{0};
+  
   OperatorStats(
       int32_t _operatorId,
       int32_t _pipelineId,

@@ -181,7 +181,8 @@ class SpillFile : public SpillStream {
       int32_t numSortingKeys,
       const std::string& path,
       memory::MemoryPool& pool)
-      : SpillStream(std::move(type), numSortingKeys, pool), path_(path) {}
+      : SpillStream(std::move(type), numSortingKeys, pool),
+        path_(fmt::format("{}-{}", path, ordinalCounter_++)) {}
 
   ~SpillFile() override;
 
@@ -276,6 +277,8 @@ class SpillFileList {
     return std::move(files_);
   }
 
+  int64_t spilledBytes() const;
+
  private:
   // Returns the current file to write to and creates one if needed.
   WriteFile& currentOutput();
@@ -361,6 +364,8 @@ class SpillState {
   bool hasFiles(int32_t partition) {
     return partition < files_.size() && files_[partition];
   }
+
+  int64_t spilledBytes() const;
 
  private:
   const RowTypePtr type_;

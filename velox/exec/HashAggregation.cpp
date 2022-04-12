@@ -101,7 +101,9 @@ HashAggregation::HashAggregation(
     args.push_back(channels);
     constantLists.push_back(constants);
     intermediateTypes.push_back(
-        Aggregate::intermediateType(aggregate->name(), argTypes));
+        isRawInput(aggregationNode->step())
+            ? Aggregate::intermediateType(aggregate->name(), argTypes)
+            : argTypes[0]);
   }
 
   // Check that aggregate result type match the output type
@@ -202,6 +204,7 @@ RowVectorPtr HashAggregation::getOutput() {
 
   bool hasData = groupingSet_->getOutput(batchSize, &resultIterator_, result);
   if (!hasData) {
+    stats_.spilledBytes = groupingSet_->spilledBytes();
     resultIterator_.reset();
 
     if (partialFull_) {
