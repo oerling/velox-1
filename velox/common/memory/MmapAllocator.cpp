@@ -168,7 +168,7 @@ bool MmapAllocator::allocateContiguous(
   }
   int advised = 0;
   if (newPages > 0) {
-    int64_t toAdvise = numMapped_ + newPages - capacity_;
+    int64_t toAdvise = numMapped_ + numExternalMapped_ + newPages - capacity_;
 
     if (toAdvise > 0) {
       advised = adviseAway(toAdvise);
@@ -180,7 +180,8 @@ bool MmapAllocator::allocateContiguous(
       numAllocated_ -= newPages + numCollateralPages + numLargeCollateralPages;
       return false;
     }
-    numMapped_ -= advised;
+      numAdvisedPages_ += advised;
+      numMapped_ -= advised;
   }
   numExternalMapped_ += numPages - numLargeCollateralPages;
   void* data = mmap(
@@ -286,7 +287,7 @@ std::string MmapAllocator::SizeClass::toString() const {
   }
   auto mb = (count * MappedMemory::kPageSize * unitSize_) >> 20;
   out << "[size " << unitSize_ << ": " << count << "(" << mb << "MB) allocated "
-      << mb << mappedCount << " mapped";
+      << mappedCount << " mapped";
   if (mappedFreeCount != numMappedFreePages_) {
     out << "Mismatched count of mapped free pages "
         << ". Actual= " << mappedFreeCount
@@ -555,3 +556,4 @@ std::string MmapAllocator::toString() const {
 }
 
 } // namespace facebook::velox::memory
+

@@ -34,17 +34,57 @@ using namespace facebook::velox;
 using namespace facebook::velox::memory;
 
 struct Block {
+  Block() : allocation(MappedMemory::getInstance()) {}
+
+  Block(Block&& other)
+      : allocation(std::move(other.allocation)),
+        contiguous(std::move(other.contiguous)) {
+    data = other.data;
+    size = other.size;
+    other.data = nullptr;
+    other.size = 0;
+  }
+
   ~Block() {
     if (data) {
       free(data);
+      data = 0;
     }
+    size = 0;
   }
 
   size_t size = 0;
   char* data = nullptr;
-  std::unique_ptr<MappedMemory::Allocation> allocation;
-  MmapAllocator::ContiguousAllocation contiguous;
+  MappedMemory::Allocation allocation;
+  MappedMemory::ContiguousAllocation contiguous;
 };
+
+class BlockVector {
+public:
+  Block& operator[](int32_t index) {
+    return data_[index];
+  }
+  void resize(int32_t size) {
+    if (size > capacity_) {
+      capacity_ = std::max(size, 2 * capacity_);
+      Block* data = reinterpret_cast<Block*>(malloc(capacity_ * sizeof(Block)));
+      memcpy(data, data_, size_ * sizeof(Block));
+      ::free(data_);
+      data_ = data;
+    }
+    size_ = size;
+  }
+
+  int32_t size() const {
+    return size_;
+  }
+  
+private:
+  int32_t size_ = 0;
+  int32_t capacity_ = 0;
+  Block* data_ = nullptr;
+};
+
 
 class FragmentationTest {
  public:
@@ -84,17 +124,17 @@ class FragmentationTest {
   }
 
   void allocate(size_t size) {
-    auto block = std::make_unique<Block>();
+    auto last = blocks_.size();
+    blocks_.resize(last + 1);
+    auto block = new(&blocks_[last]) Block();
     block->size = size;
     if (memory_) {
       if (size <= 8 << 20) {
-        block->allocation =
-            std::make_unique<MappedMemory::Allocation>(memory_.get());
-        if (!memory_->allocate(size / 4096, 0, *block->allocation)) {
+        if (!memory_->allocate(size / 4096, 0, block->allocation)) {
           VELOX_FAIL("allocate() faild");
         }
-        for (int i = 0; i < block->allocation->numRuns(); ++i) {
-          auto run = block->allocation->runAt(i);
+        for (int i = 0; i < block->allocation.numRuns(); ++i) {
+          auto run = block->allocation.runAt(i);
           for (int64_t offset = 0; offset < run.numPages() * 4096;
                offset += 4096) {
             run.data<char>()[offset] = 1;
@@ -117,15 +157,23 @@ class FragmentationTest {
       }
     }
     outstanding_ += size;
-    blocks_.push_back(std::move(block));
   }
 
   void makeSpace(size_t size) {
     while (outstanding_ + size > sizeCap_) {
       size_t numBlocks = blocks_.size();
       size_t candidate = folly::Random::rand32(rng_) % (1 + numBlocks / 10);
-      outstanding_ -= blocks_[candidate]->size;
-      blocks_.erase(blocks_.begin() + candidate);
+      int numTried = 0;
+      while (blocks_[candidate].size == 0) {
+        candidate = candidate == blocks_.size() - 1 ? 0 : candidate + 1;
+	if (++numTried > 10) {
+	  compact();
+	  candidate = 0;
+	  break;
+	}
+      }
+      outstanding_ -= blocks_[candidate].size;
+      blocks_[candidate].~Block();
     }
   }
 
@@ -141,10 +189,28 @@ class FragmentationTest {
     return *it >> 10;
   }
 
+  void compact() {
+    int32_t fill = 0;
+    for (auto i = 0; i < blocks_.size(); ++i) {
+      if (blocks_[i].size) {
+	if (i > fill) { 
+	  memcpy(&blocks_[fill], &blocks_[i], sizeof(Block));
+	}
+	  ++fill;
+      }
+    }
+    // Reset the elements abut to be deleted so ~Block does not do anything.
+    for (auto i = fill; i < blocks_.size(); ++i) {
+      new(&blocks_[i]) Block();
+    }
+    blocks_.resize(fill);
+  }
+
   void initMemory(size_t sizeCap) {
     MmapAllocatorOptions options;
     options.capacity = sizeCap + (64 << 20);
     memory_ = std::make_unique<MmapAllocator>(options);
+    MappedMemory::setDefaultInstance(memory_.get());
   }
 
   void run(uint64_t total, size_t sizeCap, bool useMmap) {
@@ -152,13 +218,19 @@ class FragmentationTest {
       initMemory(sizeCap);
     }
     sizeCap_ = sizeCap;
+    blocks_.resize(sizeCap /  1000000);
+    blocks_.resize(0);
     uint64_t allocated = 0;
+    uint64_t counter = 0;
     while (allocated < total) {
       auto size = sizes_[folly::Random::rand32(rng_) % sizes_.size()];
       makeSpace(size);
       allocate(size);
       stats_[sizeBucket(size)] += size >> 10;
       allocated += size;
+      if (++counter % 1000 == 0) {
+	compact();
+      }
     }
   }
 
@@ -182,7 +254,7 @@ class FragmentationTest {
 
  protected:
   std::unique_ptr<MmapAllocator> memory_;
-  std::deque<std::unique_ptr<Block>> blocks_;
+  BlockVector blocks_;
   std::vector<size_t> sizes_;
   std::vector<size_t> buckets_;
   size_t outstanding_ = 0;
