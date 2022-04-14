@@ -60,7 +60,7 @@ struct Block {
 };
 
 class BlockVector {
-public:
+ public:
   Block& operator[](int32_t index) {
     return data_[index];
   }
@@ -78,13 +78,12 @@ public:
   int32_t size() const {
     return size_;
   }
-  
-private:
+
+ private:
   int32_t size_ = 0;
   int32_t capacity_ = 0;
   Block* data_ = nullptr;
 };
-
 
 class FragmentationTest {
  public:
@@ -126,7 +125,7 @@ class FragmentationTest {
   void allocate(size_t size) {
     auto last = blocks_.size();
     blocks_.resize(last + 1);
-    auto block = new(&blocks_[last]) Block();
+    auto block = new (&blocks_[last]) Block();
     block->size = size;
     if (memory_) {
       if (size <= 8 << 20) {
@@ -166,11 +165,11 @@ class FragmentationTest {
       int numTried = 0;
       while (blocks_[candidate].size == 0) {
         candidate = candidate == blocks_.size() - 1 ? 0 : candidate + 1;
-	if (++numTried > 10) {
-	  compact();
-	  candidate = 0;
-	  break;
-	}
+        if (++numTried > 10) {
+          compact();
+          candidate = 0;
+          break;
+        }
       }
       outstanding_ -= blocks_[candidate].size;
       blocks_[candidate].~Block();
@@ -193,15 +192,15 @@ class FragmentationTest {
     int32_t fill = 0;
     for (auto i = 0; i < blocks_.size(); ++i) {
       if (blocks_[i].size) {
-	if (i > fill) { 
-	  memcpy(&blocks_[fill], &blocks_[i], sizeof(Block));
-	}
-	  ++fill;
+        if (i > fill) {
+          memcpy(&blocks_[fill], &blocks_[i], sizeof(Block));
+        }
+        ++fill;
       }
     }
     // Reset the elements abut to be deleted so ~Block does not do anything.
     for (auto i = fill; i < blocks_.size(); ++i) {
-      new(&blocks_[i]) Block();
+      new (&blocks_[i]) Block();
     }
     blocks_.resize(fill);
   }
@@ -218,7 +217,7 @@ class FragmentationTest {
       initMemory(sizeCap);
     }
     sizeCap_ = sizeCap;
-    blocks_.resize(sizeCap /  1000000);
+    blocks_.resize(sizeCap / 1000000);
     blocks_.resize(0);
     uint64_t allocated = 0;
     uint64_t counter = 0;
@@ -229,7 +228,7 @@ class FragmentationTest {
       stats_[sizeBucket(size)] += size >> 10;
       allocated += size;
       if (++counter % 1000 == 0) {
-	compact();
+        compact();
       }
     }
   }

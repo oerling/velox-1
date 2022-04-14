@@ -180,8 +180,8 @@ bool MmapAllocator::allocateContiguous(
       numAllocated_ -= newPages + numCollateralPages + numLargeCollateralPages;
       return false;
     }
-      numAdvisedPages_ += advised;
-      numMapped_ -= advised;
+    numAdvisedPages_ += advised;
+    numMapped_ -= advised;
   }
   numExternalMapped_ += numPages - numLargeCollateralPages;
   void* data = mmap(
@@ -556,4 +556,3 @@ std::string MmapAllocator::toString() const {
 }
 
 } // namespace facebook::velox::memory
-
