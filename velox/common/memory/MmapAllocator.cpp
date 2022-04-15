@@ -77,24 +77,21 @@ bool MmapAllocator::allocate(
     }
   }
   if (newMapsNeeded == 0) {
-    // out.setMappedMemory(this);
     return true;
   }
-  if (ensureEnoughMappedPages(newMapsNeeded, out)) {
-    // out.setMappedMemory(this);
+  if (ensureEnoughMappedPages(newMapsNeeded)) {
+    markAllMapped(out);
     return true;
   }
+  free(out);
   return false;
 }
 
-bool MmapAllocator::ensureEnoughMappedPages(
-    int32_t newMappedNeeded,
-    Allocation& out) {
+bool MmapAllocator::ensureEnoughMappedPages(int32_t newMappedNeeded) {
   std::lock_guard<std::mutex> l(sizeClassBalanceMutex_);
   int totalMaps = numMapped_.fetch_add(newMappedNeeded) + newMappedNeeded;
   if (totalMaps <= capacity_) {
     // We are not at capacity. No need to advise away.
-    markAllMapped(out);
     return true;
   }
   // We need to advise away a number of pages or we fail the alloc.
@@ -102,11 +99,9 @@ bool MmapAllocator::ensureEnoughMappedPages(
   int numAdvised = adviseAway(target);
   numAdvisedPages_ += numAdvised;
   if (numAdvised >= target) {
-    markAllMapped(out);
     numMapped_.fetch_sub(numAdvised);
     return true;
   }
-  free(out);
   numMapped_.fetch_sub(numAdvised + newMappedNeeded);
   return false;
 }
@@ -136,6 +131,14 @@ bool MmapAllocator::allocateContiguous(
     MmapAllocator::ContiguousAllocation& allocation,
     std::function<void(int64_t)> beforeAllocCB) {
   MachinePageCount numCollateralPages = 0;
+  // 'collateral' and 'allocation' get freed anyway. But the counters
+  // are not updated to reflect this. Rather, we add the delta that is
+  // needed on top of collaterals to the allocation and mapped
+  // counters. In this way another thread will not see the temporary
+  // dip in allocation and we are sure to succeed if 'collateral' and
+  // 'allocation' together cover 'numPages'. If we need more space and
+  // fail to get this, then we subtract 'collateral' and 'allocation'
+  // from the counters.
   if (collateral) {
     numCollateralPages = freeInternal(*collateral);
   }
@@ -153,9 +156,14 @@ bool MmapAllocator::allocateContiguous(
       beforeAllocCB(newPages * kPageSize);
     } catch (const std::exception& e) {
       numAllocated_ -= numCollateralPages + numLargeCollateralPages;
-      beforeAllocCB(
-          -static_cast<int64_t>(numCollateralPages + numLargeCollateralPages) *
-          kPageSize);
+      try {
+        beforeAllocCB(
+            -static_cast<int64_t>(
+                numCollateralPages + numLargeCollateralPages) *
+            kPageSize);
+      } catch (const std::exception& inner) {
+      };
+      numMapped_ -= numLargeCollateralPages;
       numExternalMapped_ -= numLargeCollateralPages;
       std::rethrow_exception(std::current_exception());
     }
@@ -163,24 +171,22 @@ bool MmapAllocator::allocateContiguous(
   int numAllocated = numAllocated_.fetch_add(newPages) + newPages;
   if (numAllocated > capacity_) {
     numAllocated_ -= newPages + numCollateralPages + numLargeCollateralPages;
+    numMapped_ -= numLargeCollateralPages;
     numExternalMapped_ -= numLargeCollateralPages;
     return false;
   }
-  int advised = 0;
   if (newPages > 0) {
-    int64_t toAdvise = numMapped_ + newPages - capacity_;
-
-    if (toAdvise > 0) {
-      advised = adviseAway(toAdvise);
-    }
-    if (advised < toAdvise) {
-      LOG(WARNING) << "Could not advise away " << toAdvise << " pages";
+    if (!ensureEnoughMappedPages(newPages)) {
+      // LOG(WARNING) << "Could not advise away  enough for " << newPages << "
+      // pages for allocateContiguous";
+      numMapped_ -= numLargeCollateralPages;
       numExternalMapped_ -= numLargeCollateralPages;
-      numMapped_ -= advised;
       numAllocated_ -= newPages + numCollateralPages + numLargeCollateralPages;
       return false;
     }
-    numMapped_ -= advised;
+  } else {
+    // We exchange a large mmap for a smaller one.
+    numMapped_ += numPages - numLargeCollateralPages;
   }
   numExternalMapped_ += numPages - numLargeCollateralPages;
   void* data = mmap(
@@ -200,6 +206,7 @@ void MmapAllocator::freeContiguous(ContiguousAllocation& allocation) {
       LOG(ERROR) << "munmap returned " << errno << "for " << allocation.data()
                  << ", " << allocation.size();
     }
+    numMapped_ -= allocation.numPages();
     numExternalMapped_ -= allocation.numPages();
     numAllocated_ -= allocation.numPages();
     allocation.reset(nullptr, nullptr, 0);
@@ -286,7 +293,7 @@ std::string MmapAllocator::SizeClass::toString() const {
   }
   auto mb = (count * MappedMemory::kPageSize * unitSize_) >> 20;
   out << "[size " << unitSize_ << ": " << count << "(" << mb << "MB) allocated "
-      << mb << mappedCount << " mapped";
+      << mappedCount << " mapped";
   if (mappedFreeCount != numMappedFreePages_) {
     out << "Mismatched count of mapped free pages "
         << ". Actual= " << mappedFreeCount
@@ -534,7 +541,7 @@ bool MmapAllocator::checkConsistency() const {
     LOG(WARNING) << "Allocated count out of sync. Actual= " << count
                  << " recorded= " << numAllocated_ - numExternalMapped_;
   }
-  if (mappedCount != numMapped_) {
+  if (mappedCount != numMapped_ - numExternalMapped_) {
     ok = false;
     LOG(WARNING) << "Mapped count out of sync. Actual= " << mappedCount
                  << " recorded= " << numMapped_;

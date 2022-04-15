@@ -184,8 +184,9 @@ class MappedMemoryTest : public testing::TestWithParam<bool> {
           EXPECT_EQ(kCapacity, instance_->numAllocated());
           if (useMmap_) {
             // The allocator has everything allocated and half mapped, with the
-            // other half mapped by the contiguous allocation.
-            EXPECT_EQ(kCapacity / 2, instance_->numMapped());
+            // other half mapped by the contiguous allocation. numMapped()
+            // includes the contiguous allocation.
+            EXPECT_EQ(kCapacity, instance_->numMapped());
           }
           if (!allocateContiguous(available / 2, nullptr, large)) {
             FAIL()
@@ -440,6 +441,48 @@ TEST_P(MappedMemoryTest, minSizeClass) {
       tracker->getCurrentUserBytes());
   mappedMemory->free(result);
   EXPECT_EQ(0, tracker->getCurrentUserBytes());
+}
+
+TEST_P(MappedMemoryTest, extAdvise) {
+  if (!useMmap_) {
+    return;
+  }
+  constexpr int32_t kSmallSize = 16;
+  constexpr int32_t kLargeSize = 32 * kSmallSize + 1;
+  auto instance = dynamic_cast<MmapAllocator*>(MappedMemory::getInstance());
+  std::vector<std::unique_ptr<MappedMemory::Allocation>> allocations;
+  auto numAllocs = kCapacity / kSmallSize;
+  allocations.reserve(numAllocs);
+  for (int32_t i = 0; i < numAllocs; ++i) {
+    allocations.push_back(std::make_unique<MappedMemory::Allocation>(instance));
+    EXPECT_TRUE(allocate(kSmallSize, *allocations.back().get()));
+  }
+  // We allocated and mapped the capacity. Now free half, leaving the memory
+  // still mapped.
+  allocations.resize(numAllocs / 2);
+  EXPECT_TRUE(instance->checkConsistency());
+  EXPECT_EQ(instance->numMapped(), numAllocs * kSmallSize);
+  EXPECT_EQ(instance->numAllocated(), numAllocs / 2 * kSmallSize);
+  std::vector<MappedMemory::ContiguousAllocation> large(2);
+  EXPECT_TRUE(instance->allocateContiguous(kLargeSize, nullptr, large[0]));
+  // The same number are mapped but some got advised away to back the large
+  // allocation. One kSmallSize got advised away but not fully used because
+  // kLargeSize is not a multiple of kSmallSize.
+  EXPECT_EQ(instance->numMapped(), numAllocs * kSmallSize - kSmallSize + 1);
+  EXPECT_EQ(instance->numAllocated(), numAllocs / 2 * kSmallSize + kLargeSize);
+  EXPECT_TRUE(instance->allocateContiguous(kLargeSize, nullptr, large[1]));
+  large.clear();
+  EXPECT_EQ(instance->numAllocated(), allocations.size() * kSmallSize);
+  // After freeing 2xkLargeSize, We have unmapped 2*LargeSize at the free and
+  // another (kSmallSize - 1 when allocating the first kLargeSize. Of the 15
+  // that this unmapped, 1 was taken by the second large alloc. So, the mapped
+  // pages is total - (2 * kLargeSize) - 14. The unused unmapped are 15 pages
+  // after the first and 14 after the second allocContiguous().
+  EXPECT_EQ(
+      instance->numMapped(),
+      kSmallSize * numAllocs - (2 * kLargeSize) -
+          (kSmallSize - (2 * (kLargeSize % kSmallSize))));
+  EXPECT_TRUE(instance->checkConsistency());
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
