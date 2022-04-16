@@ -370,6 +370,7 @@ void RowContainer::storeComplexType(
     row[nullByte] |= nullMask;
     return;
   }
+  RowSizeTracker tracker(row[rowSizeOffset_], stringAllocator_);
   ByteStream stream(&stringAllocator_, false, false);
   auto position = stringAllocator_.newWrite(stream);
   serde_.serialize(*decoded.base(), decoded.index(index), stream);
@@ -416,6 +417,8 @@ int RowContainer::compareComplexType(
     const DecodedVector& decoded,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   ByteStream stream;
   prepareRead(row, offset, stream);
   return serde_.compare(stream, decoded, index, flags);
@@ -434,6 +437,8 @@ int32_t RowContainer::compareComplexType(
     const Type* type,
     int32_t offset,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   ByteStream leftStream;
   ByteStream rightStream;
   prepareRead(left, offset, leftStream);

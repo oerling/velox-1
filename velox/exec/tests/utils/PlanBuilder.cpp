@@ -15,12 +15,15 @@
  */
 
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include <velox/exec/Aggregate.h>
-#include <velox/exec/HashPartitionFunction.h>
+#include "velox/common/memory/Memory.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/duckdb/conversion/DuckParser.h"
+#include "velox/exec/Aggregate.h"
+#include "velox/exec/HashPartitionFunction.h"
+#include "velox/exec/RoundRobinPartitionFunction.h"
 #include "velox/expression/SignatureBinder.h"
 #include "velox/parse/Expressions.h"
+#include "velox/type/tests/FilterBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::connector::hive;
@@ -31,27 +34,367 @@ namespace {
 
 std::shared_ptr<const core::ITypedExpr> parseExpr(
     const std::string& text,
-    RowTypePtr rowType,
+    const RowTypePtr& rowType,
     memory::MemoryPool* pool) {
   auto untyped = duckdb::parseExpr(text);
   return core::Expressions::inferTypes(untyped, rowType, pool);
 }
+
+template <TypeKind FromKind, TypeKind ToKind>
+typename TypeTraits<ToKind>::NativeType cast(const variant& v) {
+  bool nullOutput;
+  return util::Converter<ToKind, void, false>::cast(
+      v.value<FromKind>(), nullOutput);
+}
+
+VectorPtr toConstant(
+    const std::shared_ptr<const core::ITypedExpr>& expr,
+    const std::shared_ptr<core::QueryCtx>& queryCtx) {
+  auto data = std::make_shared<RowVector>(
+      queryCtx->pool(), ROW({}, {}), nullptr, 1, std::vector<VectorPtr>{});
+  core::ExecCtx execCtx{queryCtx->pool(), queryCtx.get()};
+  ExprSet exprSet({expr}, &execCtx);
+  exec::EvalCtx evalCtx(&execCtx, &exprSet, data.get());
+
+  SelectivityVector rows(1);
+  std::vector<VectorPtr> results(1);
+  exprSet.eval(rows, &evalCtx, &results);
+
+  return results[0];
+}
+
+template <typename T>
+T singleValue(const VectorPtr& vector) {
+  auto simpleVector = vector->as<SimpleVector<T>>();
+  VELOX_CHECK_NOT_NULL(simpleVector);
+  return simpleVector->valueAt(0);
+}
+
+const core::FieldAccessTypedExpr* asField(
+    const core::ITypedExpr* expr,
+    int index) {
+  return dynamic_cast<const core::FieldAccessTypedExpr*>(
+      expr->inputs()[index].get());
+}
+
+const core::CallTypedExpr* asCall(const core::ITypedExpr* expr) {
+  return dynamic_cast<const core::CallTypedExpr*>(expr);
+}
+
+common::BigintRange* asBigintRange(std::unique_ptr<common::Filter>& filter) {
+  return dynamic_cast<common::BigintRange*>(filter.get());
+}
+
+common::BigintMultiRange* asBigintMultiRange(
+    std::unique_ptr<common::Filter>& filter) {
+  return dynamic_cast<common::BigintMultiRange*>(filter.get());
+}
+
+template <typename T, typename U>
+std::unique_ptr<T> asUniquePtr(std::unique_ptr<U> ptr) {
+  return std::unique_ptr<T>(static_cast<T*>(ptr.release()));
+}
+
+std::unique_ptr<common::Filter> makeOrFilter(
+    std::unique_ptr<common::Filter> a,
+    std::unique_ptr<common::Filter> b) {
+  if (asBigintRange(a) && asBigintRange(b)) {
+    return common::test::bigintOr(
+        asUniquePtr<common::BigintRange>(std::move(a)),
+        asUniquePtr<common::BigintRange>(std::move(b)));
+  }
+
+  if (asBigintRange(a) && asBigintMultiRange(b)) {
+    const auto& ranges = asBigintMultiRange(b)->ranges();
+    std::vector<std::unique_ptr<common::BigintRange>> newRanges;
+    newRanges.emplace_back(asUniquePtr<common::BigintRange>(std::move(a)));
+    for (const auto& range : ranges) {
+      newRanges.emplace_back(asUniquePtr<common::BigintRange>(range->clone()));
+    }
+
+    std::sort(
+        newRanges.begin(), newRanges.end(), [](const auto& a, const auto& b) {
+          return a->lower() < b->lower();
+        });
+
+    return std::make_unique<common::BigintMultiRange>(
+        std::move(newRanges), false);
+  }
+
+  if (asBigintMultiRange(a) && asBigintRange(b)) {
+    return makeOrFilter(std::move(b), std::move(a));
+  }
+
+  return common::test::orFilter(std::move(a), std::move(b));
+}
+
+std::unique_ptr<common::Filter> makeLessThanOrEqualFilter(
+    const std::shared_ptr<const core::ITypedExpr>& upperExpr) {
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto upper = toConstant(upperExpr, queryCtx);
+  switch (upper->typeKind()) {
+    case TypeKind::INTEGER:
+      return common::test::lessThanOrEqual(singleValue<int32_t>(upper));
+    case TypeKind::BIGINT:
+      return common::test::lessThanOrEqual(singleValue<int64_t>(upper));
+    case TypeKind::DOUBLE:
+      return common::test::lessThanOrEqualDouble(singleValue<double>(upper));
+    case TypeKind::REAL:
+      return common::test::lessThanOrEqualFloat(singleValue<float>(upper));
+    case TypeKind::VARCHAR:
+      return common::test::lessThanOrEqual(singleValue<StringView>(upper));
+    case TypeKind::DATE:
+      return common::test::lessThanOrEqual(singleValue<Date>(upper).days());
+    default:
+      VELOX_NYI(
+          "Unsupported value for less than or equals filter: {} <= {}",
+          upper->type()->toString(),
+          upper->toString(0));
+  }
+}
+
+std::unique_ptr<common::Filter> makeLessThanFilter(
+    const std::shared_ptr<const core::ITypedExpr>& upperExpr) {
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto upper = toConstant(upperExpr, queryCtx);
+  switch (upper->typeKind()) {
+    case TypeKind::INTEGER:
+      return common::test::lessThan(singleValue<int32_t>(upper));
+    case TypeKind::BIGINT:
+      return common::test::lessThan(singleValue<int64_t>(upper));
+    case TypeKind::DOUBLE:
+      return common::test::lessThanDouble(singleValue<double>(upper));
+    case TypeKind::REAL:
+      return common::test::lessThanFloat(singleValue<float>(upper));
+    case TypeKind::VARCHAR:
+      return common::test::lessThan(singleValue<StringView>(upper));
+    case TypeKind::DATE:
+      return common::test::lessThan(singleValue<Date>(upper).days());
+    default:
+      VELOX_NYI(
+          "Unsupported value for less than filter: {} <= {}",
+          upper->type()->toString(),
+          upper->toString(0));
+  }
+}
+
+std::unique_ptr<common::Filter> makeGreaterThanOrEqualFilter(
+    const std::shared_ptr<const core::ITypedExpr>& lowerExpr) {
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto lower = toConstant(lowerExpr, queryCtx);
+  switch (lower->typeKind()) {
+    case TypeKind::INTEGER:
+      return common::test::greaterThanOrEqual(singleValue<int32_t>(lower));
+    case TypeKind::BIGINT:
+      return common::test::greaterThanOrEqual(singleValue<int64_t>(lower));
+    case TypeKind::DOUBLE:
+      return common::test::greaterThanOrEqualDouble(singleValue<double>(lower));
+    case TypeKind::REAL:
+      return common::test::greaterThanOrEqualFloat(singleValue<float>(lower));
+    case TypeKind::VARCHAR:
+      return common::test::greaterThanOrEqual(singleValue<StringView>(lower));
+    case TypeKind::DATE:
+      return common::test::greaterThanOrEqual(singleValue<Date>(lower).days());
+    default:
+      VELOX_NYI(
+          "Unsupported value for greater than or equals filter: {} >= {}",
+          lower->type()->toString(),
+          lower->toString(0));
+  }
+}
+
+std::unique_ptr<common::Filter> makeGreaterThanFilter(
+    const std::shared_ptr<const core::ITypedExpr>& lowerExpr) {
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto lower = toConstant(lowerExpr, queryCtx);
+  switch (lower->typeKind()) {
+    case TypeKind::INTEGER:
+      return common::test::greaterThan(singleValue<int32_t>(lower));
+    case TypeKind::BIGINT:
+      return common::test::greaterThan(singleValue<int64_t>(lower));
+    case TypeKind::DOUBLE:
+      return common::test::greaterThanDouble(singleValue<double>(lower));
+    case TypeKind::REAL:
+      return common::test::greaterThanFloat(singleValue<float>(lower));
+    case TypeKind::VARCHAR:
+      return common::test::greaterThan(singleValue<StringView>(lower));
+    case TypeKind::DATE:
+      return common::test::greaterThan(singleValue<Date>(lower).days());
+    default:
+      VELOX_NYI(
+          "Unsupported value for greater than filter: {} > {}",
+          lower->type()->toString(),
+          lower->toString(0));
+  }
+}
+
+std::unique_ptr<common::Filter> makeEqualFilter(
+    const std::shared_ptr<const core::ITypedExpr>& valueExpr) {
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto value = toConstant(valueExpr, queryCtx);
+  switch (value->typeKind()) {
+    case TypeKind::BOOLEAN:
+      return common::test::boolEqual(singleValue<bool>(value));
+    case TypeKind::INTEGER:
+      return common::test::equal(singleValue<int32_t>(value));
+    case TypeKind::BIGINT:
+      return common::test::equal(singleValue<int64_t>(value));
+    case TypeKind::VARCHAR:
+      return common::test::equal(singleValue<StringView>(value));
+    case TypeKind::DATE:
+      return common::test::equal(singleValue<Date>(value).days());
+    default:
+      VELOX_NYI(
+          "Unsupported value for equals filter: {} = {}",
+          value->type()->toString(),
+          value->toString(0));
+  }
+}
+
+std::unique_ptr<common::Filter> makeBetweenFilter(
+    const std::shared_ptr<const core::ITypedExpr>& lowerExpr,
+    const std::shared_ptr<const core::ITypedExpr>& upperExpr) {
+  auto queryCtx = core::QueryCtx::createForTest();
+  auto lower = toConstant(lowerExpr, queryCtx);
+  auto upper = toConstant(upperExpr, queryCtx);
+  switch (lower->typeKind()) {
+    case TypeKind::BIGINT:
+      return common::test::between(
+          singleValue<int64_t>(lower), singleValue<int64_t>(upper));
+    case TypeKind::DOUBLE:
+      return common::test::betweenDouble(
+          singleValue<double>(lower), singleValue<double>(upper));
+    case TypeKind::REAL:
+      return common::test::betweenFloat(
+          singleValue<float>(lower), singleValue<float>(upper));
+    case TypeKind::DATE:
+      return common::test::between(
+          singleValue<Date>(lower).days(), singleValue<Date>(upper).days());
+    default:
+      VELOX_NYI(
+          "Unsupported value for 'between' filter: {} BETWEEN {} AND {}",
+          lower->type()->toString(),
+          lower->toString(0),
+          upper->toString(0));
+  }
+}
+
+std::pair<common::Subfield, std::unique_ptr<common::Filter>> toSubfieldFilter(
+    const std::shared_ptr<const core::ITypedExpr>& expr) {
+  using common::Subfield;
+
+  if (auto call = asCall(expr.get())) {
+    if (call->name() == "or") {
+      auto left = toSubfieldFilter(call->inputs()[0]);
+      auto right = toSubfieldFilter(call->inputs()[1]);
+      VELOX_CHECK(left.first == right.first);
+      return {
+          std::move(left.first),
+          makeOrFilter(std::move(left.second), std::move(right.second))};
+    } else if (call->name() == "eq") {
+      if (auto field = asField(call, 0)) {
+        return {Subfield(field->name()), makeEqualFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "lte") {
+      if (auto field = asField(call, 0)) {
+        return {
+            Subfield(field->name()),
+            makeLessThanOrEqualFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "lt") {
+      if (auto field = asField(call, 0)) {
+        return {Subfield(field->name()), makeLessThanFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "gte") {
+      if (auto field = asField(call, 0)) {
+        return {
+            Subfield(field->name()),
+            makeGreaterThanOrEqualFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "gt") {
+      if (auto field = asField(call, 0)) {
+        return {
+            Subfield(field->name()), makeGreaterThanFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "between") {
+      if (auto field = asField(call, 0)) {
+        return {
+            Subfield(field->name()),
+            makeBetweenFilter(call->inputs()[1], call->inputs()[2])};
+      }
+    } else if (call->name() == "is_null") {
+      if (auto field = asField(call, 0)) {
+        return {Subfield(field->name()), common::test::isNull()};
+      }
+    } else if (call->name() == "not") {
+      if (auto nestedCall = asCall(call->inputs()[0].get())) {
+        if (nestedCall->name() == "is_null") {
+          if (auto field = asField(nestedCall, 0)) {
+            return {Subfield(field->name()), common::test::isNotNull()};
+          }
+        }
+      }
+    }
+  }
+
+  VELOX_NYI("Unsupported expression for range filter: {}", expr->toString());
+}
 } // namespace
 
-PlanBuilder& PlanBuilder::tableScan(const RowTypePtr& outputType) {
+PlanBuilder& PlanBuilder::tableScan(
+    const RowTypePtr& outputType,
+    const std::vector<std::string>& subfieldFilters,
+    const std::string& remainingFilter) {
+  return tableScan(
+      "hive_table", outputType, {}, subfieldFilters, remainingFilter);
+}
+
+PlanBuilder& PlanBuilder::tableScan(
+    const std::string& tableName,
+    const RowTypePtr& outputType,
+    const std::unordered_map<std::string, std::string>& columnAliases,
+    const std::vector<std::string>& subfieldFilters,
+    const std::string& remainingFilter) {
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
   for (uint32_t i = 0; i < outputType->size(); ++i) {
     const auto& name = outputType->nameOf(i);
     const auto& type = outputType->childAt(i);
+
+    std::string hiveColumnName = name;
+    auto it = columnAliases.find(name);
+    if (it != columnAliases.end()) {
+      hiveColumnName = it->second;
+    }
+
     assignments.insert(
         {name,
          std::make_shared<HiveColumnHandle>(
-             name, HiveColumnHandle::ColumnType::kRegular, type)});
+             hiveColumnName, HiveColumnHandle::ColumnType::kRegular, type)});
+  }
+
+  SubfieldFilters filters;
+  filters.reserve(subfieldFilters.size());
+  for (const auto& filter : subfieldFilters) {
+    auto filterExpr = parseExpr(filter, outputType, pool_);
+    auto [subfield, subfieldFilter] = toSubfieldFilter(filterExpr);
+
+    auto it = columnAliases.find(subfield.toString());
+    if (it != columnAliases.end()) {
+      subfield = common::Subfield(it->second);
+    }
+
+    filters[std::move(subfield)] = std::move(subfieldFilter);
+  }
+
+  std::shared_ptr<const core::ITypedExpr> remainingFilterExpr;
+  if (!remainingFilter.empty()) {
+    remainingFilterExpr = parseExpr(remainingFilter, outputType, pool_)
+                              ->rewriteInputNames(columnAliases);
   }
 
   auto tableHandle = std::make_shared<HiveTableHandle>(
-      "hive_table", true, SubfieldFilters{}, nullptr);
+      tableName, true, std::move(filters), remainingFilterExpr);
   return tableScan(outputType, tableHandle, assignments);
 }
 
@@ -81,16 +424,41 @@ PlanBuilder& PlanBuilder::exchange(const RowTypePtr& outputType) {
   return *this;
 }
 
-PlanBuilder& PlanBuilder::mergeExchange(
-    const RowTypePtr& outputType,
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder) {
+namespace {
+std::pair<
+    std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>,
+    std::vector<core::SortOrder>>
+parseOrderByClauses(
+    const std::vector<std::string>& keys,
+    const RowTypePtr& inputType,
+    memory::MemoryPool* pool) {
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
   std::vector<core::SortOrder> sortingOrders;
-  for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.push_back(field(outputType, keyIndices[i]));
-    sortingOrders.push_back(sortOrder[i]);
+  for (const auto& key : keys) {
+    auto [untypedExpr, sortOrder] = duckdb::parseOrderByExpr(key);
+    auto typedExpr =
+        core::Expressions::inferTypes(untypedExpr, inputType, pool);
+
+    auto sortingKey =
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(typedExpr);
+    VELOX_CHECK_NOT_NULL(
+        sortingKey,
+        "ORDER BY clause must use a column name, not an expression: {}",
+        key);
+    sortingKeys.emplace_back(sortingKey);
+    sortingOrders.emplace_back(sortOrder);
   }
+
+  return {sortingKeys, sortingOrders};
+}
+} // namespace
+
+PlanBuilder& PlanBuilder::mergeExchange(
+    const RowTypePtr& outputType,
+    const std::vector<std::string>& keys) {
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, outputType, pool_);
+
   planNode_ = std::make_shared<core::MergeExchangeNode>(
       nextPlanNodeId(), outputType, sortingKeys, sortingOrders);
 
@@ -281,13 +649,29 @@ PlanBuilder::createIntermediateOrFinalAggregation(
       planNode_);
 }
 
-PlanBuilder& PlanBuilder::intermediateAggregation() {
-  // Current plan node must be a partial aggregation.
-  auto* aggNode = dynamic_cast<core::AggregationNode*>(planNode_.get());
+namespace {
+/// Checks that specified plan node is a partial or intermediate aggregation or
+/// local exchange over the same. Returns a pointer to core::AggregationNode.
+const core::AggregationNode* findPartialAggregation(
+    const core::PlanNode* planNode) {
+  const core::AggregationNode* aggNode;
+  if (auto exchange = dynamic_cast<const core::LocalPartitionNode*>(planNode)) {
+    aggNode = dynamic_cast<const core::AggregationNode*>(
+        exchange->sources()[0].get());
+  } else {
+    aggNode = dynamic_cast<const core::AggregationNode*>(planNode);
+  }
   VELOX_CHECK_NOT_NULL(
-      aggNode, "Current plan node must be a partial aggregation.");
-
+      aggNode,
+      "Current plan node must be a partial or intermediate aggregation or local exchange over the same. Got: {}",
+      planNode->toString());
   VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+  return aggNode;
+}
+} // namespace
+
+PlanBuilder& PlanBuilder::intermediateAggregation() {
+  const auto* aggNode = findPartialAggregation(planNode_.get());
   VELOX_CHECK(exec::isRawInput(aggNode->step()));
 
   auto step = core::AggregationNode::Step::kIntermediate;
@@ -297,22 +681,18 @@ PlanBuilder& PlanBuilder::intermediateAggregation() {
 }
 
 PlanBuilder& PlanBuilder::finalAggregation() {
-  // Current plan node must be a partial or intermediate aggregation.
-  const auto* aggNode = dynamic_cast<core::AggregationNode*>(planNode_.get());
-  VELOX_CHECK_NOT_NULL(
-      aggNode,
-      "Current plan node must be a partial or intermediate aggregation.");
+  const auto* aggNode = findPartialAggregation(planNode_.get());
 
-  VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
   if (!exec::isRawInput(aggNode->step())) {
-    // Check the source node.
-    aggNode =
-        dynamic_cast<const core::AggregationNode*>(aggNode->sources()[0].get());
-    VELOX_CHECK_NOT_NULL(
-        aggNode,
-        "Plan node before current plan node must be a partial aggregation.");
-    VELOX_CHECK(exec::isRawInput(aggNode->step()));
-    VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+    // If aggregation node is not the partial aggregation, keep looking again.
+    aggNode = findPartialAggregation(aggNode->sources()[0].get());
+    if (!exec::isRawInput(aggNode->step())) {
+      VELOX_CHECK_NOT_NULL(
+          aggNode,
+          "Plan node before current plan node must be a partial aggregation.");
+      VELOX_CHECK(exec::isRawInput(aggNode->step()));
+      VELOX_CHECK(exec::isPartialOutput(aggNode->step()));
+    }
   }
 
   auto step = core::AggregationNode::Step::kFinal;
@@ -420,35 +800,6 @@ PlanBuilder& PlanBuilder::streamingAggregation(
   return *this;
 }
 
-namespace {
-std::pair<
-    std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>,
-    std::vector<core::SortOrder>>
-parseOrderByClauses(
-    const std::vector<std::string>& keys,
-    const RowTypePtr& inputType,
-    memory::MemoryPool* pool) {
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
-  std::vector<core::SortOrder> sortingOrders;
-  for (const auto& key : keys) {
-    auto [untypedExpr, sortOrder] = duckdb::parseOrderByExpr(key);
-    auto typedExpr =
-        core::Expressions::inferTypes(untypedExpr, inputType, pool);
-
-    auto sortingKey =
-        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(typedExpr);
-    VELOX_CHECK_NOT_NULL(
-        sortingKey,
-        "ORDER BY clause must use a column name, not an expression: {}",
-        key);
-    sortingKeys.emplace_back(sortingKey);
-    sortingOrders.emplace_back(sortOrder);
-  }
-
-  return {sortingKeys, sortingOrders};
-}
-} // namespace
-
 PlanBuilder& PlanBuilder::localMerge(
     const std::vector<std::string>& keys,
     std::vector<std::shared_ptr<const core::PlanNode>> sources) {
@@ -479,16 +830,11 @@ PlanBuilder& PlanBuilder::orderBy(
 }
 
 PlanBuilder& PlanBuilder::topN(
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<core::SortOrder>& sortOrder,
+    const std::vector<std::string>& keys,
     int32_t count,
     bool isPartial) {
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> sortingKeys;
-  std::vector<core::SortOrder> sortingOrders;
-  for (int i = 0; i < keyIndices.size(); i++) {
-    sortingKeys.push_back(field(keyIndices[i]));
-    sortingOrders.push_back(sortOrder[i]);
-  }
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, planNode_->outputType(), pool_);
   planNode_ = std::make_shared<core::TopNNode>(
       nextPlanNodeId(),
       sortingKeys,
@@ -520,34 +866,20 @@ PlanBuilder& PlanBuilder::assignUniqueId(
 }
 
 namespace {
-RowTypePtr toRowType(
-    RowTypePtr inputType,
-    const std::vector<ChannelIndex>& outputLayout) {
-  if (outputLayout.empty()) {
-    return inputType;
-  }
-
-  std::vector<std::string> names;
-  std::vector<TypePtr> types;
-
-  for (auto index : outputLayout) {
-    names.push_back(inputType->nameOf(index));
-    types.push_back(inputType->childAt(index));
-  }
-  return ROW(std::move(names), std::move(types));
-}
-
 core::PartitionFunctionFactory createPartitionFunctionFactory(
     const RowTypePtr& inputType,
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
-        keys) {
+    const std::vector<std::string>& keys) {
   if (keys.empty()) {
     return
         [](auto /*numPartitions*/) -> std::unique_ptr<core::PartitionFunction> {
           VELOX_UNREACHABLE();
         };
   } else {
+    std::vector<ChannelIndex> keyIndices;
+    keyIndices.reserve(keys.size());
+    for (const auto& key : keys) {
+      keyIndices.push_back(inputType->getChildIdx(key));
+    }
     return [inputType, keyIndices](
                auto numPartitions) -> std::unique_ptr<core::PartitionFunction> {
       return std::make_unique<exec::HashPartitionFunction>(
@@ -556,60 +888,6 @@ core::PartitionFunctionFactory createPartitionFunctionFactory(
   }
 }
 
-} // namespace
-
-PlanBuilder& PlanBuilder::partitionedOutput(
-    const std::vector<ChannelIndex>& keyIndices,
-    int numPartitions,
-    const std::vector<ChannelIndex>& outputLayout) {
-  return partitionedOutput(keyIndices, numPartitions, false, outputLayout);
-}
-
-PlanBuilder& PlanBuilder::partitionedOutput(
-    const std::vector<ChannelIndex>& keyIndices,
-    int numPartitions,
-    bool replicateNullsAndAny,
-    const std::vector<ChannelIndex>& outputLayout) {
-  auto outputType = toRowType(planNode_->outputType(), outputLayout);
-  auto keys = fields(keyIndices);
-  auto partitionFunctionFactory =
-      createPartitionFunctionFactory(planNode_->outputType(), keyIndices, keys);
-  planNode_ = std::make_shared<core::PartitionedOutputNode>(
-      nextPlanNodeId(),
-      keys,
-      numPartitions,
-      false,
-      replicateNullsAndAny,
-      std::move(partitionFunctionFactory),
-      outputType,
-      planNode_);
-  return *this;
-}
-
-PlanBuilder& PlanBuilder::partitionedOutputBroadcast(
-    const std::vector<ChannelIndex>& outputLayout) {
-  auto outputType = toRowType(planNode_->outputType(), outputLayout);
-  planNode_ = core::PartitionedOutputNode::broadcast(
-      nextPlanNodeId(), 1, outputType, planNode_);
-  return *this;
-}
-
-PlanBuilder& PlanBuilder::localPartition(
-    const std::vector<ChannelIndex>& keyIndices,
-    const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
-    const std::vector<ChannelIndex>& outputLayout) {
-  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
-  auto inputType = sources[0]->outputType();
-  auto outputType = toRowType(inputType, outputLayout);
-  auto keys = fields(inputType, keyIndices);
-  auto partitionFunctionFactory =
-      createPartitionFunctionFactory(inputType, keyIndices, keys);
-  planNode_ = std::make_shared<core::LocalPartitionNode>(
-      nextPlanNodeId(), partitionFunctionFactory, outputType, sources);
-  return *this;
-}
-
-namespace {
 RowTypePtr concat(const RowTypePtr& a, const RowTypePtr& b) {
   std::vector<std::string> names = a->names();
   std::vector<TypePtr> types = a->children();
@@ -631,6 +909,85 @@ RowTypePtr extract(
   return ROW(std::move(names), std::move(types));
 }
 } // namespace
+
+PlanBuilder& PlanBuilder::partitionedOutput(
+    const std::vector<std::string>& keys,
+    int numPartitions,
+    const std::vector<std::string>& outputLayout) {
+  return partitionedOutput(keys, numPartitions, false, outputLayout);
+}
+
+PlanBuilder& PlanBuilder::partitionedOutput(
+    const std::vector<std::string>& keys,
+    int numPartitions,
+    bool replicateNullsAndAny,
+    const std::vector<std::string>& outputLayout) {
+  auto outputType = outputLayout.empty()
+      ? planNode_->outputType()
+      : extract(planNode_->outputType(), outputLayout);
+  auto partitionFunctionFactory =
+      createPartitionFunctionFactory(planNode_->outputType(), keys);
+  planNode_ = std::make_shared<core::PartitionedOutputNode>(
+      nextPlanNodeId(),
+      fields(keys),
+      numPartitions,
+      false,
+      replicateNullsAndAny,
+      std::move(partitionFunctionFactory),
+      outputType,
+      planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::partitionedOutputBroadcast(
+    const std::vector<std::string>& outputLayout) {
+  auto outputType = outputLayout.empty()
+      ? planNode_->outputType()
+      : extract(planNode_->outputType(), outputLayout);
+  planNode_ = core::PartitionedOutputNode::broadcast(
+      nextPlanNodeId(), 1, outputType, planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::localPartition(
+    const std::vector<std::string>& keys,
+    const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
+    const std::vector<std::string>& outputLayout) {
+  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
+  auto inputType = sources[0]->outputType();
+  auto outputType = outputLayout.empty() ? sources[0]->outputType()
+                                         : extract(inputType, outputLayout);
+  auto partitionFunctionFactory =
+      createPartitionFunctionFactory(inputType, keys);
+  planNode_ = std::make_shared<core::LocalPartitionNode>(
+      nextPlanNodeId(),
+      keys.empty() ? core::LocalPartitionNode::Type::kGather
+                   : core::LocalPartitionNode::Type::kRepartition,
+      partitionFunctionFactory,
+      outputType,
+      sources);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::localPartitionRoundRobin(
+    const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
+    const std::vector<std::string>& outputLayout) {
+  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
+  auto inputType = sources[0]->outputType();
+  auto outputType = outputLayout.empty() ? sources[0]->outputType()
+                                         : extract(inputType, outputLayout);
+  auto partitionFunctionFactory = [](auto numPartitions) {
+    return std::make_unique<velox::exec::RoundRobinPartitionFunction>(
+        numPartitions);
+  };
+  planNode_ = std::make_shared<core::LocalPartitionNode>(
+      nextPlanNodeId(),
+      core::LocalPartitionNode::Type::kRepartition,
+      partitionFunctionFactory,
+      outputType,
+      sources);
+  return *this;
+}
 
 PlanBuilder& PlanBuilder::hashJoin(
     const std::vector<std::string>& leftKeys,

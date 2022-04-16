@@ -300,6 +300,8 @@ velox::variant arrayVariantAt(const VectorPtr& vector, vector_size_t row) {
     auto innerRow = offset + i;
     if (elements->isNullAt(innerRow)) {
       array.emplace_back(elements->typeKind());
+    } else if (elements->typeKind() == TypeKind::ARRAY) {
+      array.push_back(arrayVariantAt(elements, innerRow));
     } else {
       array.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           variantAt, elements->typeKind(), elements, innerRow));
@@ -716,6 +718,16 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
   return {std::move(cursor), std::move(result)};
 }
 
+bool waitForTaskCompletion(exec::Task* task, uint64_t maxWaitMicros) {
+  if (not task->isFinished()) {
+    auto& executor = folly::QueuedImmediateExecutor::instance();
+    auto future = task->stateChangeFuture(maxWaitMicros).via(&executor);
+    future.wait();
+    return task->isFinished();
+  }
+  return true;
+}
+
 std::shared_ptr<Task> assertQuery(
     const std::shared_ptr<const core::PlanNode>& plan,
     std::function<void(exec::Task*)> addSplits,
@@ -752,15 +764,7 @@ std::shared_ptr<Task> assertQuery(
   }
   auto task = cursor->task();
 
-  if (not task->isFinished()) {
-    // The Task can return results before the Driver is finished executing.
-    // Wait for the Task to finish before returning it to ensure it's stable
-    // e.g. the Driver isn't updating it anymore.
-    auto& executor = folly::QueuedImmediateExecutor::instance();
-    auto future = task->stateChangeFuture(1'000'000).via(&executor);
-    future.wait();
-    EXPECT_TRUE(task->isFinished());
-  }
+  EXPECT_TRUE(waitForTaskCompletion(task.get()));
 
   return task;
 }
@@ -770,6 +774,12 @@ std::shared_ptr<Task> assertQuery(
     const std::vector<RowVectorPtr>& expectedResults) {
   CursorParameters params;
   params.planNode = plan;
+  return assertQuery(params, expectedResults);
+}
+
+std::shared_ptr<Task> assertQuery(
+    const CursorParameters& params,
+    const std::vector<RowVectorPtr>& expectedResults) {
   auto result = readCursor(params, [](Task*) {});
 
   assertEqualResults(expectedResults, result.second);
@@ -777,9 +787,11 @@ std::shared_ptr<Task> assertQuery(
 }
 
 velox::variant readSingleValue(
-    const std::shared_ptr<const core::PlanNode>& plan) {
+    const std::shared_ptr<const core::PlanNode>& plan,
+    int32_t maxDrivers) {
   CursorParameters params;
   params.planNode = plan;
+  params.maxDrivers = maxDrivers;
   auto result = readCursor(params, [](Task*) {});
 
   EXPECT_EQ(1, result.second.size());

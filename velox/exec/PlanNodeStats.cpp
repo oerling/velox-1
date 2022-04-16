@@ -20,8 +20,6 @@
 namespace facebook::velox::exec {
 
 void PlanNodeStats::add(const OperatorStats& stats) {
-  addTotals(stats);
-
   auto it = operatorStats.find(stats.operatorType);
   if (it != operatorStats.end()) {
     it->second->addTotals(stats);
@@ -30,6 +28,7 @@ void PlanNodeStats::add(const OperatorStats& stats) {
     opStats->addTotals(stats);
     operatorStats.emplace(stats.operatorType, std::move(opStats));
   }
+  addTotals(stats);
 }
 
 void PlanNodeStats::addTotals(const OperatorStats& stats) {
@@ -50,9 +49,24 @@ void PlanNodeStats::addTotals(const OperatorStats& stats) {
 
   peakMemoryBytes += stats.memoryStats.peakTotalMemoryReservation;
 
-  for (const auto& entry : stats.runtimeStats) {
-    customStats[entry.first].merge(entry.second);
+  for (const auto& [name, runtimeStats] : stats.runtimeStats) {
+    if (UNLIKELY(customStats.count(name) == 0)) {
+      customStats.insert(std::make_pair(name, runtimeStats));
+    } else {
+      customStats.at(name).merge(runtimeStats);
+    }
   }
+
+  // Populating number of drivers for plan nodes with multiple operators is not
+  // useful. Each operator could have been executed in different pipelines with
+  // different number of drivers.
+  if (!isMultiOperatorNode()) {
+    numDrivers += stats.numDrivers;
+  } else {
+    numDrivers = 0;
+  }
+
+  numSplits += stats.numSplits;
 }
 
 std::string PlanNodeStats::toString(bool includeInputStats) const {
@@ -60,7 +74,7 @@ std::string PlanNodeStats::toString(bool includeInputStats) const {
   if (includeInputStats) {
     out << "Input: " << inputRows << " rows (" << succinctBytes(inputBytes)
         << "), ";
-    if (rawInputRows != inputRows) {
+    if ((rawInputRows > 0) && (rawInputRows != inputRows)) {
       out << "Raw Input: " << rawInputRows << " rows ("
           << succinctBytes(rawInputBytes) << "), ";
     }
@@ -70,6 +84,14 @@ std::string PlanNodeStats::toString(bool includeInputStats) const {
       << ", Cpu time: " << succinctNanos(cpuWallTiming.cpuNanos)
       << ", Blocked wall time: " << succinctNanos(blockedWallNanos)
       << ", Peak memory: " << succinctBytes(peakMemoryBytes);
+
+  if (numDrivers > 0) {
+    out << ", Threads: " << numDrivers;
+  }
+
+  if (numSplits > 0) {
+    out << ", Splits: " << numSplits;
+  }
   return out.str();
 }
 
@@ -107,11 +129,16 @@ void printCustomStats(
   }
   width += 3;
 
-  for (const auto& entry : stats) {
+  // Copy to a map to get a deterministic output.
+  std::map<std::string_view, RuntimeMetric> orderedStats;
+  for (const auto& [name, metric] : stats) {
+    orderedStats[name] = metric;
+  }
+
+  for (const auto& [name, metric] : orderedStats) {
     stream << std::endl;
-    stream << indentation << std::left << std::setw(width) << entry.first
-           << " sum: " << entry.second.sum << ", count: " << entry.second.count
-           << ", min: " << entry.second.min << ", max: " << entry.second.max;
+    stream << indentation << std::left << std::setw(width) << name;
+    metric.printMetric(stream);
   }
 }
 } // namespace
@@ -135,13 +162,13 @@ std::string printPlanWithStats(
         const bool includeInputStats = leafPlanNodes.count(planNodeId) > 0;
         stream << stats.toString(includeInputStats);
 
-        // Include break down by operator type if there are more than one of
-        // these.
-        if (stats.operatorStats.size() > 1) {
+        // Include break down by operator type for plan nodes with multiple
+        // operators. Print input rows and sizes for all such nodes.
+        if (stats.isMultiOperatorNode()) {
           for (const auto& entry : stats.operatorStats) {
             stream << std::endl;
             stream << indentation << entry.first << ": "
-                   << entry.second->toString(includeInputStats);
+                   << entry.second->toString(true);
 
             if (includeCustomStats) {
               printCustomStats(

@@ -17,13 +17,10 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
-#include "velox/expression/Expr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 #include "velox/type/Type.h"
-#include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
-#include "velox/vector/DecodedVector.h"
 #include "velox/vector/SelectivityVector.h"
 
 namespace facebook::velox {
@@ -74,14 +71,14 @@ struct NonDefaultBehaviorFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   bool callNullable(
-      out_type<Array<int32_t>>& out,
+      out_type<ArrayWriterT<int32_t>>& out,
       const arg_type<Array<int32_t>>* input) {
-    out.append(kCallNullable);
+    out.push_back(kCallNullable);
 
     if (input) {
       for (auto i : *input) {
         if (i.has_value()) {
-          out.append(i.value());
+          out.push_back(*i);
         }
       }
     }
@@ -90,12 +87,12 @@ struct NonDefaultBehaviorFunction {
   }
 
   bool callNullFree(
-      out_type<Array<int32_t>>& out,
+      out_type<ArrayWriterT<int32_t>>& out,
       const null_free_arg_type<Array<int32_t>>& input) {
-    out.append(kCallNullFree);
+    out.push_back(kCallNullFree);
 
     for (auto i : input) {
-      out.append(i);
+      out.push_back(i);
     }
 
     return true;
@@ -103,8 +100,10 @@ struct NonDefaultBehaviorFunction {
 };
 
 TEST_F(SimpleFunctionCallNullFreeTest, nonDefaultBehavior) {
-  registerFunction<NonDefaultBehaviorFunction, Array<int32_t>, Array<int32_t>>(
-      {"non_default_behavior"});
+  registerFunction<
+      NonDefaultBehaviorFunction,
+      ArrayWriterT<int32_t>,
+      Array<int32_t>>({"non_default_behavior"});
 
   // Make a vector with a NULL.
   auto arrayVectorWithNull = makeVectorWithNullArrays<int32_t>(
@@ -228,4 +227,5 @@ TEST_F(SimpleFunctionCallNullFreeTest, deeplyNestedInputType) {
        true});
   assertEqualVectors(expected, result);
 }
+
 } // namespace facebook::velox

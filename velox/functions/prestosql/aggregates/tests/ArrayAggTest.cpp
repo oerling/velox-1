@@ -57,6 +57,7 @@ TEST_F(ArrayAggTest, groupBy) {
                         .partialAggregation({0}, {"array_agg(A)"})
                         .finalAggregation()
                         .planNode();
+
   auto pair = readCursor(params, [](Task*) {});
   auto reference = batches[0]->as<RowVector>()->childAt(1);
   for (auto rowVector : pair.second) {
@@ -78,6 +79,21 @@ TEST_F(ArrayAggTest, groupBy) {
       }
     }
   }
+
+  // Add local exchange before intermediate aggregation. Expect the same result.
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  params.planNode = PlanBuilder(planNodeIdGenerator)
+                        .localPartition(
+                            {"C0"},
+                            {PlanBuilder(planNodeIdGenerator)
+                                 .values(batches)
+                                 .partialAggregation({0}, {"array_agg(A)"})
+                                 .planNode()})
+                        .intermediateAggregation()
+                        .planNode();
+  params.maxDrivers = 2;
+
+  exec::test::assertQuery(params, pair.second);
 }
 
 TEST_F(ArrayAggTest, global) {
@@ -103,6 +119,39 @@ TEST_F(ArrayAggTest, global) {
     }
   }
   ASSERT_EQ(velox::variant::array(expected), value);
+
+  // Add local exchange before intermediate aggregation. Expect the same result.
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  op = PlanBuilder(planNodeIdGenerator)
+           .localPartition(
+               {},
+               {PlanBuilder(planNodeIdGenerator)
+                    .localPartitionRoundRobin(
+                        {PlanBuilder(planNodeIdGenerator)
+                             .values(vectors)
+                             .partialAggregation({}, {"array_agg(c0)"})
+                             .planNode()})
+                    .intermediateAggregation()
+                    .planNode()})
+           .finalAggregation()
+           .planNode();
+
+  value = readSingleValue(op, 2);
+  ASSERT_EQ(velox::variant::array(expected), value);
+}
+
+TEST_F(ArrayAggTest, globalNoData) {
+  std::vector<RowVectorPtr> vectors = {
+      vectorMaker_.rowVector(ROW({"c0"}, {INTEGER()}), 0)};
+
+  auto op = PlanBuilder()
+                .values(vectors)
+                .partialAggregation({}, {"array_agg(c0)"})
+                .finalAggregation()
+                .planNode();
+
+  auto value = readSingleValue(op);
+  ASSERT_EQ(velox::variant::array({}), value);
 }
 
 } // namespace
