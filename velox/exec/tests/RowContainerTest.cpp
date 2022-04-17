@@ -20,62 +20,18 @@
 #include <random>
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/dwio/type/fbhive/HiveTypeParser.h"
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/VectorHasher.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/exec/tests/utils/RowContainerTestBase.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/serializers/PrestoSerializer.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
-using namespace facebook::velox::dwio;
 
-class RowContainerTest : public testing::Test {
+class RowContainerTest : public exec::test::RowContainerTestBase {
  protected:
-  void SetUp() override {
-    pool_ = memory::getDefaultScopedMemoryPool();
-    mappedMemory_ = memory::MappedMemory::getInstance();
-    if (!isRegisteredVectorSerde()) {
-      facebook::velox::serializer::presto::PrestoVectorSerde::
-          registerVectorSerde();
-    }
-    filesystems::registerLocalFileSystem();
-  }
-
-  RowVectorPtr makeDataset(
-      const std::string& columns,
-      const size_t size,
-      std::function<void(RowVectorPtr)> customizeData) {
-    std::string schema = fmt::format("struct<{}>", columns);
-    facebook::velox::dwio::type::fbhive::HiveTypeParser parser;
-    auto rowType =
-        std::dynamic_pointer_cast<const RowType>(parser.parse(schema));
-    auto batch = std::static_pointer_cast<RowVector>(
-        BatchMaker::createBatch(rowType, size, *pool_));
-    if (customizeData) {
-      customizeData(batch);
-    }
-    return batch;
-  }
-
-  std::unique_ptr<RowContainer> makeRowContainer(
-      const std::vector<TypePtr>& keyTypes,
-      const std::vector<TypePtr>& dependentTypes,
-      bool isJoinBuild = true) {
-    static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;
-    return std::make_unique<RowContainer>(
-        keyTypes,
-        !isJoinBuild,
-        kEmptyAggregates,
-        dependentTypes,
-        isJoinBuild,
-        isJoinBuild,
-        true,
-        true,
-        mappedMemory_,
-        ContainerRowSerde::instance());
-  }
-
   void testExtractColumnForOddRows(
       RowContainer& container,
       const std::vector<char*>& rows,
@@ -118,6 +74,15 @@ class RowContainerTest : public testing::Test {
           << "at " << row << ": expected " << expected->toString(row)
           << ", got " << result->toString(row);
     }
+  }
+
+  void checkSizes(std::vector<char*>& rows, RowContainer& data) {
+    int64_t sum = 0;
+    for (auto row : rows) {
+      sum += data.rowSize(row) - data.fixedRowSize();
+    }
+    auto usage = data.stringAllocator().cumulativeBytes();
+    EXPECT_EQ(usage, sum);
   }
 
   // Stores the input vector in Row Container, extracts it and compares.
@@ -199,9 +164,6 @@ class RowContainerTest : public testing::Test {
     result = vectorMaker.flatVector<T>(sorted);
     assertEqualVectors(expected, result);
   }
-
-  std::unique_ptr<memory::MemoryPool> pool_;
-  memory::MappedMemory* mappedMemory_;
 };
 
 namespace {
@@ -262,28 +224,39 @@ TEST_F(RowContainerTest, storeExtractArrayOfVarchar) {
 TEST_F(RowContainerTest, types) {
   constexpr int32_t kNumRows = 100;
   auto batch = makeDataset(
-      "bool_val:boolean,"
-      "tiny_val:tinyint,"
-      "small_val:bigint,"
-      "int_val:int,"
-      "long_val:bigint,"
-      "float_val:float,"
-      "double_val:double,"
-      "string_val:string,"
-      "array_val:array<array<string>>,"
-      "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>"
-      "bool_val:boolean,"
-      "tiny_val:tinyint,"
-      "small_val:bigint,"
-      "int_val:int,"
-      "long_val:bigint,"
-      "float_val:float,"
-      "double_val:double,"
-      "string_val:string,"
-      "array_val:array<array<string>>,"
-      "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>",
+      ROW(
+          {{"bool_val", BOOLEAN()},
+           {"tiny_val", TINYINT()},
+           {"small_val", SMALLINT()},
+           {"int_val", INTEGER()},
+           {"long_val", BIGINT()},
+           {"float_val", REAL()},
+           {"double_val", DOUBLE()},
+           {"string_val", VARCHAR()},
+           {"array_val", ARRAY(VARCHAR())},
+           {"struct_val",
+            ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+           {"map_val",
+            MAP(VARCHAR(),
+                MAP(BIGINT(),
+                    ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
+
+           {"bool_val2", BOOLEAN()},
+           {"tiny_val2", TINYINT()},
+           {"small_val2", SMALLINT()},
+           {"int_val2", INTEGER()},
+           {"long_val2", BIGINT()},
+           {"float_val2", REAL()},
+           {"double_val2", DOUBLE()},
+           {"string_val2", VARCHAR()},
+           {"array_val2", ARRAY(VARCHAR())},
+           {"struct_val2",
+            ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+           {"map_val2",
+            MAP(VARCHAR(),
+                MAP(BIGINT(),
+                    ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}}),
+
       kNumRows,
       [](RowVectorPtr rows) {
         auto strings =
@@ -323,6 +296,7 @@ TEST_F(RowContainerTest, types) {
   EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), kNumRows);
   EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), 0);
 
+  checkSizes(rows, *data);
   SelectivityVector allRows(kNumRows);
   for (auto column = 0; column < batch->childrenSize(); ++column) {
     if (column < keys.size()) {
@@ -336,6 +310,7 @@ TEST_F(RowContainerTest, types) {
       data->store(decoded, index, rows[index], column);
     }
   }
+  checkSizes(rows, *data);
   data->checkConsistency();
   auto copy = std::static_pointer_cast<RowVector>(
       BaseVector::create(batch->type(), batch->size(), pool_.get()));
@@ -487,88 +462,4 @@ TEST_F(RowContainerTest, compareDouble) {
   testCompareFloats<double>(DOUBLE(), true);
   // Verify descending order
   testCompareFloats<double>(DOUBLE(), false);
-}
-
-TEST_F(RowContainerTest, spill) {
-  constexpr int32_t kNumRows = 100000;
-  auto batch = makeDataset(
-      "bool_val:boolean,"
-      "tiny_val:tinyint,"
-      "small_val:bigint,"
-      "int_val:int,"
-      "long_val: bigint,"
-      "ordinal: bigint,"
-      "float_val:float,"
-      "double_val:double,"
-      "string_val:string,"
-      "array_val:array<array<string>>,"
-      "struct_val:struct<s_int:int, s_array:array<float>>,"
-      "map_val:map<string, map<bigint, struct<s2_int:int, s2_string:string>>>",
-      kNumRows,
-      [](RowVectorPtr rows) {});
-  const auto& types = batch->type()->as<TypeKind::ROW>().children();
-  std::vector<TypePtr> keys;
-  keys.insert(keys.begin(), types.begin(), types.begin() + 6);
-
-  std::vector<TypePtr> dependents;
-  dependents.insert(dependents.begin(), types.begin() + 6, types.end());
-  // Set ordinal so that the sorted order is unambiguous
-
-  auto ordinal = batch->childAt(5)->as<FlatVector<int64_t>>();
-  for (auto i = 0; i < kNumRows; ++i) {
-    ordinal->set(i, i);
-  }
-  // Make non-join build container so that spill runs are sorted.
-  auto data = makeRowContainer(keys, dependents, false);
-  std::vector<char*> rows(kNumRows);
-  for (int i = 0; i < kNumRows; ++i) {
-    rows[i] = data->newRow();
-  }
-
-  SelectivityVector allRows(kNumRows);
-  for (auto column = 0; column < batch->childrenSize(); ++column) {
-    DecodedVector decoded(*batch->childAt(column), allRows);
-    for (auto index = 0; index < kNumRows; ++index) {
-      data->store(decoded, index, rows[index], column);
-    }
-  }
-  std::vector<int32_t> sortedIndices(kNumRows);
-  std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
-  std::sort(
-      sortedIndices.begin(),
-      sortedIndices.end(),
-      [&](int32_t leftIndex, int32_t rightIndex) {
-        return data->compareRows(rows[leftIndex], rows[rightIndex]) < 0;
-      });
-
-  auto spillState = std::make_unique<SpillState>(
-      batch->type(),
-      "/tmp/spill",
-      HashBitField{0, 0},
-      2000000,
-      1000,
-      *pool_,
-      mappedMemory_);
-  RowContainerIterator iter;
-  // We spill size * 0.8 bytes/rows.
-  data->spill(
-      *spillState,
-      kNumRows * 0.8,
-      data->allocatedBytes() * 0.8,
-      iter,
-      [&](folly::Range<char**> rows) { data->eraseRows(rows); });
-
-  // We make a merge reader that merges the spill files and the rows that are
-  // still in the RowContainer.
-  auto merge = spillState->startMerge(0, data->spillStreamOverRows(0, *pool_));
-
-  // We read the spilled data back and chekc that it matches the sorted order of
-  // the source batch.
-  for (auto i = 0; i < kNumRows; ++i) {
-    auto row = merge->next([&](const VectorRow& left, const VectorRow& right) {
-      return SpillState::compareSpilled(left, right, keys.size());
-    });
-    EXPECT_TRUE(batch->equalValueAt(
-        row.value().rowVector, sortedIndices[i], row.value().index));
-  }
 }

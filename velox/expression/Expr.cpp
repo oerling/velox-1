@@ -13,10 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <boost/lexical_cast.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
-#include "velox/expression/Expr.h"
+#include "velox/common/base/SuccinctPrinter.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/ControlExpr.h"
+#include "velox/expression/Expr.h"
 #include "velox/expression/ExprCompiler.h"
 #include "velox/expression/VarSetter.h"
 #include "velox/expression/VectorFunction.h"
@@ -28,6 +32,43 @@ DEFINE_bool(
     "use of simplified expression evaluation path.");
 
 namespace facebook::velox::exec {
+
+namespace {
+folly::Synchronized<std::vector<std::shared_ptr<ExprSetListener>>>&
+listeners() {
+  static folly::Synchronized<std::vector<std::shared_ptr<ExprSetListener>>>
+      kListeners;
+  return kListeners;
+}
+} // namespace
+
+bool registerExprSetListener(std::shared_ptr<ExprSetListener> listener) {
+  return listeners().withWLock([&](auto& listeners) {
+    for (const auto& existingListener : listeners) {
+      if (existingListener == listener) {
+        // Listener already registered. Do not register again.
+        return false;
+      }
+    }
+    listeners.push_back(std::move(listener));
+    return true;
+  });
+}
+
+bool unregisterExprSetListener(
+    const std::shared_ptr<ExprSetListener>& listener) {
+  return listeners().withWLock([&](auto& listeners) {
+    for (auto it = listeners.begin(); it != listeners.end(); ++it) {
+      if ((*it) == listener) {
+        listeners.erase(it);
+        return true;
+      }
+    }
+
+    // Listener not found.
+    return false;
+  });
+}
 
 namespace {
 
@@ -1070,6 +1111,9 @@ void Expr::applyFunction(
     const SelectivityVector& rows,
     EvalCtx* context,
     VectorPtr* result) {
+  stats_.numProcessedRows += rows.countSelected();
+  CpuWallTimer timer(stats_.timing);
+
   computeIsAsciiForInputs(vectorFunction_.get(), inputValues_, rows);
   auto isAscii = type()->isVarchar()
       ? computeIsAsciiForResult(vectorFunction_.get(), inputValues_, rows)
@@ -1137,11 +1181,15 @@ void Expr::applySingleConstArgVectorFunction(
   }
 }
 
-std::string Expr::toString() const {
-  std::stringstream out;
-  out << name_;
-  appendInputs(out);
-  return out.str();
+std::string Expr::toString(bool recursive) const {
+  if (recursive) {
+    std::stringstream out;
+    out << name_;
+    appendInputs(out);
+    return out.str();
+  }
+
+  return name_;
 }
 
 void Expr::appendInputs(std::stringstream& stream) const {
@@ -1164,6 +1212,41 @@ ExprSet::ExprSet(
     : execCtx_(execCtx) {
   exprs_ = compileExpressions(
       std::move(sources), execCtx, this, enableConstantFolding);
+}
+
+namespace {
+void addStats(
+    const exec::Expr& expr,
+    std::unordered_map<std::string, exec::ExprStats>& stats) {
+  // Do not aggregate empty stats.
+  if (expr.stats().numProcessedRows) {
+    stats[expr.name()].add(expr.stats());
+  }
+
+  for (const auto& input : expr.inputs()) {
+    addStats(*input, stats);
+  }
+}
+
+std::string makeUuid() {
+  return boost::lexical_cast<std::string>(boost::uuids::random_generator()());
+}
+} // namespace
+
+ExprSet::~ExprSet() {
+  listeners().withRLock([&](auto& listeners) {
+    if (!listeners.empty()) {
+      std::unordered_map<std::string, exec::ExprStats> stats;
+      for (const auto& expr : exprs()) {
+        addStats(*expr, stats);
+      }
+
+      auto uuid = makeUuid();
+      for (auto& listener : listeners) {
+        listener->onCompletion(uuid, {stats});
+      }
+    }
+  });
 }
 
 void ExprSet::eval(
@@ -1221,4 +1304,33 @@ std::unique_ptr<ExprSet> makeExprSetFromFlag(
   return std::make_unique<ExprSet>(std::move(source), execCtx);
 }
 
+namespace {
+void printExprWithStats(
+    const exec::Expr& expr,
+    const std::string& indent,
+    std::stringstream& out) {
+  const auto& stats = expr.stats();
+  out << indent << expr.toString(false)
+      << " [cpu time: " << succinctNanos(stats.timing.cpuNanos)
+      << ", rows: " << stats.numProcessedRows << "] -> "
+      << expr.type()->toString() << std::endl;
+
+  auto newIndent = indent + "   ";
+  for (const auto& input : expr.inputs()) {
+    printExprWithStats(*input, newIndent, out);
+  }
+}
+} // namespace
+
+std::string printExprWithStats(const exec::ExprSet& exprSet) {
+  const auto& exprs = exprSet.exprs();
+  std::stringstream out;
+  for (auto i = 0; i < exprs.size(); ++i) {
+    if (i > 0) {
+      out << std::endl;
+    }
+    printExprWithStats(*exprs[i], "", out);
+  }
+  return out.str();
+}
 } // namespace facebook::velox::exec

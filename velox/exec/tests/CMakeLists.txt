@@ -34,6 +34,7 @@ add_executable(
   RoundRobinPartitionFunctionTest.cpp
   StreamingAggregationTest.cpp
   TableWriteTest.cpp
+  TaskListenerTest.cpp
   TopNTest.cpp
   LimitTest.cpp
   OrderByTest.cpp
@@ -44,6 +45,8 @@ add_executable(
   PlanNodeToStringTest.cpp
   FunctionSignatureBuilderTest.cpp
   SimpleFunctionResolutionTest.cpp
+  SpillTest.cpp
+  "SpillerTest.cpp"
   UnnestTest.cpp
   AssignUniqueIdTest.cpp)
 

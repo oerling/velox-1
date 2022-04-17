@@ -13,27 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#pragma once
 
-#include "velox/vector/SimpleVector.h"
-#include "velox/common/base/Exceptions.h"
+#include "velox/functions/Macros.h"
 
-namespace facebook {
-namespace velox {
+namespace facebook::velox::functions {
 
-template <>
-void SimpleVector<StringView>::setMinMax(
-    const folly::F14FastMap<std::string, std::string>& metaData) {
-  auto it = metaData.find(META_MIN);
-  if (it != metaData.end()) {
-    minString_ = it->second;
-    min_ = StringView(minString_);
+template <typename T>
+struct CardinalityFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  void call(int64_t& out, const arg_type<Array<Generic<>>>& input) {
+    out = input.size();
   }
-  it = metaData.find(META_MAX);
-  if (it != metaData.end()) {
-    maxString_ = it->second;
-    max_ = StringView(maxString_);
-  }
-}
 
-} // namespace velox
-} // namespace facebook
+  void call(int64_t& out, const arg_type<Map<Generic<>, Generic<>>>& input) {
+    out = input.size();
+  }
+};
+} // namespace facebook::velox::functions

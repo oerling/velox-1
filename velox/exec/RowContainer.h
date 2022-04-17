@@ -19,7 +19,7 @@
 #include "velox/common/memory/MappedMemory.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/ContainerRowSerde.h"
-#include "velox/exec/Spiller.h"
+#include "velox/exec/Spill.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 namespace facebook::velox::exec {
@@ -139,6 +139,11 @@ class RowContainer {
              : 0);
   }
 
+  // The row size excluding any out-of-line stored variable length values.
+  int32_t fixedRowSize() const {
+    return fixedRowSize_;
+  }
+
   // Adds 'rows' to the free rows list and frees any associated
   // variable length data.
   void eraseRows(folly::Range<char**> rows);
@@ -199,7 +204,6 @@ class RowContainer {
   static inline uint8_t nullMask(int32_t nullOffset) {
     return 1 << (nullOffset & 7);
   }
-
   // Extracts up to 'maxRows' rows starting at the position of
   // 'iter'. A default constructed or reset iter starts at the
   // beginning. Returns the number of rows written to 'rows'. Returns
@@ -234,8 +238,8 @@ class RowContainer {
   }
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
-  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
-  // a fast path for compare().
+  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This
+  // is a fast path for compare().
   template <bool mayHaveNulls>
   bool equals(
       const char* row,
@@ -253,8 +257,8 @@ class RowContainer {
       vector_size_t index,
       CompareFlags flags = CompareFlags());
 
-  // Compares the value at 'columnIndex' between 'left' and 'right'. Returns 0
-  // for equal, < 0 for left < right, > 0 otherwise.
+  // Compares the value at 'columnIndex' between 'left' and 'right'. Returns
+  // 0 for equal, < 0 for left < right, > 0 otherwise.
   int32_t compare(
       const char* left,
       const char* right,
@@ -276,8 +280,8 @@ class RowContainer {
     return rowColumns_[index];
   }
 
-  // Bit offset of the probed flag for a full or right outer join  payload. 0 if
-  // not applicable.
+  // Bit offset of the probed flag for a full or right outer join  payload.
+  // 0 if not applicable.
   int32_t probedFlagOffset() const {
     return probedFlagOffset_;
   }
@@ -310,7 +314,7 @@ class RowContainer {
   // Returns the number of fixed size rows that can be allocated
   // without growing the container and the number of unused bytes of
   // reserved storage for variable length data.
-  std::pair<uint64_t, uint64_t> freeSpace() {
+  std::pair<uint64_t, uint64_t> freeSpace() const {
     return std::make_pair<uint64_t, uint64_t>(
         rows_.availableInRun() / fixedRowSize_ + numFreeRows_,
         stringAllocator_.freeSpace());
@@ -328,35 +332,6 @@ class RowContainer {
     }
     return 0;
   }
-
-  void spill(
-      SpillState& spill,
-      uint64_t targetFreeRows,
-      uint64_t targetFreeSpace,
-      RowContainerIterator& iterator,
-      Eraser eraser);
-
-  // Clears pending spill state.
-  void clearSpillRuns();
-
-  // Prepares spill runs for the spillable hash number ranges in 'spill'.
-  bool fillSpillRuns(
-      SpillState& spill,
-      Eraser eraser,
-      RowContainerIterator& iterator,
-      uint64_t targetSize,
-      std::vector<char*>* nonSpilledRows = nullptr);
-
-  // Returns a mergeable stream that goes over unspilled in-memory
-  // rows for the spill way 'way'. fillSpillRuns must have been called
-  // first and 'way' must specify a spilled hash number range.
-  std::unique_ptr<SpillStream> spillStreamOverRows(
-      uint16_t way,
-      memory::MemoryPool& pool);
-
-  TypePtr spillType();
-
-  void extractSpill(folly::Range<char**> rows, RowVector* result);
 
   // Returns estimated number of rows a batch can support for
   // the given batchSizeInBytes.
@@ -379,6 +354,27 @@ class RowContainer {
     return stringAllocator_.mappedMemory();
   }
 
+  // Returns the types of all non-aggregate columns of 'this', keys first.
+  const auto& columnTypes() const {
+    return types_;
+  }
+
+  const auto& keyTypes() const {
+    return keyTypes_;
+  }
+
+  const auto& aggregates() const {
+    return aggregates_;
+  }
+
+  auto numFreeRows() const {
+    return numFreeRows_;
+  }
+
+  const HashStringAllocator& stringAllocator() const {
+    return stringAllocator_;
+  }
+
   // Checks that row and free row counts match and that free list
   // membership is consistent with free flag.
   void checkConsistency();
@@ -386,12 +382,6 @@ class RowContainer {
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
-
-  struct SpillRun {
-    std::vector<char*> rows;
-    std::vector<uint64_t> hashes;
-    uint64_t size = 0;
-  };
 
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
@@ -458,6 +448,7 @@ class RowContainer {
     }
     *reinterpret_cast<T*>(row + offset) = decoded.valueAt<T>(index);
     if constexpr (std::is_same<T, StringView>::value) {
+      RowSizeTracker tracker(row[rowSizeOffset_], stringAllocator_);
       stringAllocator_.copyMultipart(row, offset);
     }
   }
@@ -471,6 +462,7 @@ class RowContainer {
     using T = typename TypeTraits<Kind>::NativeType;
     *reinterpret_cast<T*>(group + offset) = decoded.valueAt<T>(index);
     if constexpr (std::is_same<T, StringView>::value) {
+      RowSizeTracker tracker(group[rowSizeOffset_], stringAllocator_);
       stringAllocator_.copyMultipart(group, offset);
     }
   }
@@ -759,8 +751,6 @@ class RowContainer {
       int32_t offset,
       CompareFlags flags);
 
-  void advanceSpill(SpillState& spill, Eraser eraser);
-
   // Free any variable-width fields associated with the 'rows'.
   void freeVariableWidthFields(folly::Range<char**> rows);
 
@@ -786,15 +776,14 @@ class RowContainer {
   std::vector<int32_t> nullOffsets_;
   // Position of field or accumulator. Corresponds 1:1 to 'nullOffset_'.
   std::vector<int32_t> offsets_;
-  // Offset and null indicator offset of non-aggregate fields as a single word.
-  // Corresponds pairwise to 'types_'.
+  // Offset and null indicator offset of non-aggregate fields as a single
+  // word. Corresponds pairwise to 'types_'.
   std::vector<RowColumn> rowColumns_;
   // Bit position of probed flag, 0 if none.
   int32_t probedFlagOffset_ = 0;
 
   // Bit position of free bit.
   int32_t freeFlagOffset_ = 0;
-  int32_t nextFreeOffset_ = 0;
   int32_t rowSizeOffset_ = 0;
 
   int32_t fixedRowSize_;
@@ -803,8 +792,8 @@ class RowContainer {
   // The count of entries that have an extra normalized_key_t before the
   // start.
   int64_t numRowsWithNormalizedKey_ = 0;
-  // Extra bytes to reserve before  each added row for a normalized key. Set to
-  // 0 after deciding not to use normalized keys.
+  // Extra bytes to reserve before  each added row for a normalized key. Set
+  // to 0 after deciding not to use normalized keys.
   int8_t normalizedKeySize_ = sizeof(normalized_key_t);
   // Copied over the null bits of each row on initialization. Keys are
   // not null, aggregates are null.
@@ -816,15 +805,10 @@ class RowContainer {
 
   AllocationPool rows_;
   HashStringAllocator stringAllocator_;
-  const RowSerde& serde_;
-  std::vector<SpillRun> spillRuns_;
-  // Indices into 'spillRuns_' that are currently getting spilled.
-  std::unordered_set<int32_t> spillingRuns_;
-  TypePtr spillType_;
-  RowVectorPtr spillVector_;
 
-  // RowContainer requires a valid reference to a vector of aggregates. We use
-  // a static constant to ensure the aggregates_ is valid throughout the
+  const RowSerde& serde_;
+  // RowContainer requires a valid reference to a vector of aggregates. We
+  // use a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.
   static const std::vector<std::unique_ptr<Aggregate>>& emptyAggregates() {
     static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;

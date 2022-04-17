@@ -104,7 +104,6 @@ RowContainer::RowContainer(
     ++nullOffset;
     isVariableWidth |= !aggregate->isFixedSize();
     usesExternalMemory_ |= aggregate->accumulatorUsesExternalMemory();
-
   }
   for (auto& type : dependentTypes) {
     types_.push_back(type);
@@ -160,21 +159,14 @@ RowContainer::RowContainer(
   // A distinct hash table has no aggregates and if the hash table has
   // no nulls, it may be that there are no null flags.
   if (!nullOffsets_.empty()) {
-    // Aggregates start life as null, join dependent columns as non-null.
-    initialNulls_.resize(nullBytes, isJoinBuild_ ? 0x0 : 0xff);
-    // The free flag has an initial value of 0.
-    bits::clearBit(
-        initialNulls_.data(), freeFlagOffset_ - nullOffsets_.front());
-    if (nullableKeys) {
-      for (int32_t i = 0; i < keyTypes_.size(); ++i) {
-        bits::clearBit(initialNulls_.data(), i);
-      }
+    // All flags like free and probed flags and null flags for keys and non-keys
+    // start as 0.
+    initialNulls_.resize(nullBytes, 0x0);
+    // Aggregates are null on a new row.
+    auto aggregateNullOffset = nullableKeys ? keyTypes.size() : 0;
+    for (int32_t i = 0; i < aggregates_.size(); ++i) {
+      bits::setBit(initialNulls_.data(), i + aggregateNullOffset);
     }
-  }
-  if (hasProbedFlag) {
-    bits::clearBit(
-        initialNulls_.data(),
-        nullOffsets_[nullOffsets_.size() - 2] - nullOffsets_[0]);
   }
   normalizedKeySize_ = hasNormalizedKeys_ ? sizeof(normalized_key_t) : 0;
   for (auto i = 0; i < offsets_.size(); ++i) {
@@ -183,7 +175,7 @@ RowContainer::RowContainer(
         (nullableKeys_ || i >= keyTypes_.size()) ? nullOffsets_[i]
                                                  : RowColumn::kNotNullOffset);
   }
-  }
+}
 
 char* RowContainer::newRow() {
   char* row;
@@ -252,7 +244,7 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
             }
           }
         }
-      }
+      } break;
       default:;
     }
   }
@@ -291,7 +283,6 @@ void RowContainer::freeAggregates(folly::Range<char**> rows) {
   }
 }
 
-int32_t RowContainer::listRows(
 void RowContainer::store(
     const DecodedVector& decoded,
     vector_size_t index,
@@ -373,6 +364,7 @@ void RowContainer::storeComplexType(
     row[nullByte] |= nullMask;
     return;
   }
+  RowSizeTracker tracker(row[rowSizeOffset_], stringAllocator_);
   ByteStream stream(&stringAllocator_, false, false);
   auto position = stringAllocator_.newWrite(stream);
   serde_.serialize(*decoded.base(), decoded.index(index), stream);
@@ -526,236 +518,9 @@ void RowContainer::clear() {
   if (hasNormalizedKeys_) {
     normalizedKeySize_ = sizeof(normalized_key_t);
   }
+  numFreeRows_ = 0;
+  firstFreeRow_ = nullptr;
 }
-
-TypePtr RowContainer::spillType() {
-  if (spillType_) {
-    return spillType_;
-  }
-  std::vector<std::string> names;
-  std::vector<TypePtr> types = keyTypes_;
-  for (auto& aggregate : aggregates_) {
-    types.push_back(aggregate->accumulatorType());
-  }
-  types.insert(types.end(), types_.begin() + keyTypes_.size(), types_.end());
-  for (auto i = 0; i < types.size(); ++i) {
-    names.push_back(fmt::format("c{}", i));
-  }
-  return spillType_ = ROW(std::move(names), std::move(types));
-}
-
-void RowContainer::extractSpill(folly::Range<char**> rows, RowVector* result) {
-  result->resize(rows.size());
-  for (auto i = 0; i < keyTypes_.size(); ++i) {
-    extractColumn(rows.data(), rows.size(), i, result->childAt(i));
-  }
-  for (auto i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(        rows.data(), rows.size());
-    aggregates_[i]->extractAccumulators(
-        rows.data(), rows.size(), &result->childAt(i + keyTypes_.size()));
-  }
-}
-
-namespace {
-// A stream of ordered groups being read from the in memory
-// container. This is the part of a spillable range that is not yet
-// spilled when starting to produce output.
-class RowContainerSpillStream : public SpillStream {
- public:
-  RowContainerSpillStream(
-      TypePtr type,
-      memory::MemoryPool& pool,
-      std::vector<char*>&& rows,
-      RowContainer* container)
-      : SpillStream(type, pool),
-        rows_(std::move(rows)),
-        container_(container) {}
-
-  bool atEnd() const override {
-    return index_ >= numRows_ && nextBatchIndex_ == rows_.size();
-  }
-
- protected:
-  void nextBatch() override {
-    constexpr vector_size_t kMaxRows = 64;
-    constexpr uint64_t kMaxBytes = 4 << 20;
-    if (!rowVector_) {
-      rowVector_ = std::static_pointer_cast<RowVector>(
-          BaseVector::create(container_->spillType(), kMaxRows, &pool_));
-    }
-    size_t bytes = 0;
-    vector_size_t numRows = 0;
-    auto limit = std::min<size_t>(rows_.size() - nextBatchIndex_, kMaxRows);
-    for (; numRows < limit; ++numRows) {
-      bytes += container_->rowSize(rows_[nextBatchIndex_ + numRows]);
-      if (bytes > kMaxBytes) {
-        ++numRows;
-        break;
-      }
-    }
-    container_->extractSpill(
-        folly::Range(&rows_[nextBatchIndex_], numRows), rowVector_.get());
-    nextBatchIndex_ += numRows;
-  }
-
- private:
-  std::vector<char*> rows_;
-  RowContainer* container_;
-  size_t nextBatchIndex_ = 0;
-};
-} // namespace
-
-std::unique_ptr<SpillStream> RowContainer::spillStreamOverRows(
-    uint16_t way,
-    memory::MemoryPool& pool) {
-  VELOX_CHECK(way < spillRuns_.size());
-  return std::make_unique<RowContainerSpillStream>(
-      spillType(), pool, std::move(spillRuns_[way].rows), this);
-}
-
-void RowContainer::advanceSpill(SpillState& spill, Eraser eraser) {
-  if (!spillVector_) {
-    spillVector_ = std::static_pointer_cast<RowVector>(
-        BaseVector::create(spillType(), 1, &spill.pool()));
-  }
-  for (auto runIndex = 0; runIndex < spillRuns_.size(); ++runIndex) {
-    if (spillingRuns_.find(runIndex) == spillingRuns_.end()) {
-      continue;
-    }
-    auto& run = spillRuns_[runIndex];
-    uint64_t bytes = 0;
-    int32_t i = 0;
-    int32_t limit = std::min<uint64_t>(128, run.rows.size());
-    for (; i < limit; ++i) {
-      bytes += rowSize(run.rows[i]);
-      if (bytes > spill.targetBatchSize()) {
-        break;
-      }
-    }
-    folly::Range<char**> spilled(run.rows.data(), i);
-    extractSpill(spilled, spillVector_.get());
-    IndexRange range{0, spillVector_->size()};
-    spill.write(runIndex, spillVector_, folly::Range<IndexRange*>(&range, 1));
-    if (eraser) {
-      eraser(spilled);
-    }
-    run.rows.erase(run.rows.begin(), run.rows.begin() + i);
-    if (run.rows.empty()) {
-      // Sorted run ends, start with a new file next time.
-      run.size = 0;
-      spill.finishWrite(runIndex);
-      spillingRuns_.erase(runIndex);
-    }
-  }
-}
-
-void RowContainer::spill(
-    SpillState& spill,
-    uint64_t targetFreeRows,
-    uint64_t targetFreeSpace,
-    RowContainerIterator& iterator,
-    Eraser eraser) {
-  bool doneFullSweep = false;
-  bool startedFullSweep = false;
-  if (!spill.numWays()) {
-    spill.setNumWays(1);
-  }
-  for (;;) {
-    if (numFreeRows_ >= targetFreeRows &&
-        stringAllocator_.freeSpace() > targetFreeSpace) {
-      return;
-    }
-    if (!spillingRuns_.empty()) {
-      advanceSpill(spill, eraser);
-      if (!spillingRuns_.empty()) {
-        continue;
-      }
-    }
-    if (doneFullSweep) {
-      return;
-    }
-    auto targetSize = spill.targetSize();
-    for (auto newWay = spillRuns_.size(); newWay < spill.numWays(); ++newWay) {
-      spillRuns_.emplace_back();
-    }
-    clearSpillRuns();
-    iterator.reset();
-    if (fillSpillRuns(spill, eraser, iterator, spill.targetSize())) {
-      // Arrived at end of the container. Add more spilled ranges if any left.
-      if (spill.numWays() < spill.maxWays()) {
-        spill.setNumWays(spill.numWays() + 1);
-      } else {
-        doneFullSweep = startedFullSweep;
-        startedFullSweep = true;
-      }
-      iterator.reset();
-    }
-  }
-}
-
-void RowContainer::clearSpillRuns() {
-  for (auto& run : spillRuns_) {
-    run.rows.clear();
-    run.size = 0;
-  }
-}
-
-bool RowContainer::fillSpillRuns(
-    SpillState& spill,
-    Eraser eraser,
-    RowContainerIterator& iterator,
-    uint64_t targetSize,
-    std::vector<char*>* nonSpilledRows) {
-  constexpr int32_t kRowsInBatch = 1024;
-  std::vector<uint64_t> hashes(kRowsInBatch);
-  std::vector<char*> rows(kRowsInBatch);
-  for (;;) {
-    auto numRows = listRows(&iterator, rows.size(), targetSize, rows.data());
-    for (auto i = 0; i < keyTypes_.size(); ++i) {
-      hash(i, folly::Range<char**>(rows.data(), numRows), i > 0, hashes.data());
-    }
-    for (auto i = 0; i < numRows; ++i) {
-      auto way = spill.way(hashes[i]);
-      if (way < 0) {
-        if (nonSpilledRows) {
-          nonSpilledRows->push_back(rows[i]);
-        }
-        continue;
-      }
-      spillRuns_[way].rows.push_back(rows[i]);
-      spillRuns_[way].size += rowSize(rows[i]);
-    }
-    int64_t totalSize = 0;
-    int64_t totalSpillableSize = 0;
-    for (auto i = 0; i < spillRuns_.size(); ++i) {
-      totalSpillableSize += spillRuns_[i].size;
-    }
-    for (auto i = 0; i < spillRuns_.size(); ++i) {
-      if (!numRows || spillRuns_[i].size > targetSize) {
-        for (auto j = 0; j < spillRuns_.size(); ++j) {
-          if (!isJoinBuild_) {
-            if (targetSize != kUnlimited &&
-                spillRuns_[j].size < totalSpillableSize / spillRuns_.size()) {
-              // Do not start spilling if the run would be below
-              // average size.  Avoid making sorted runs that are too
-              // small and blow up the fanout. If called with
-              // unlimited targetSize, include all runs.
-              spillRuns_[j].rows.clear();
-              spillRuns_[j].size = 0;
-              continue;
-            }
-            std::sort(
-                spillRuns_[j].rows.begin(),
-                spillRuns_[j].rows.end(),
-                [&](const char* left, const char* right) {
-                  return compareRows(left, right) <= 0;
-                });
-          }
-          spillingRuns_.insert(j);
-        }
-        return numRows == 0;
-      }
-    }
 
 void RowContainer::setProbedFlag(char** rows, int32_t numRows) {
   for (auto i = 0; i < numRows; i++) {

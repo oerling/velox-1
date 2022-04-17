@@ -82,7 +82,13 @@ enum class TypeKind : int8_t {
   INVALID = 36
 };
 
+// Returns the typekind represented by the `name`. Throws if no match found.
 TypeKind mapNameToTypeKind(const std::string& name);
+
+// Returns the typekind represented by the `name` and std::nullopt if no
+// match found.
+std::optional<TypeKind> tryMapNameToTypeKind(const std::string& name);
+
 std::string mapTypeKindToName(const TypeKind& typeKind);
 
 std::ostream& operator<<(std::ostream& os, const TypeKind& kind);
@@ -1478,6 +1484,9 @@ struct CppToType<Timestamp> : public CppToTypeBase<TypeKind::TIMESTAMP> {};
 template <>
 struct CppToType<Date> : public CppToTypeBase<TypeKind::DATE> {};
 
+template <typename T>
+struct CppToType<Generic<T>> : public CppToTypeBase<TypeKind::UNKNOWN> {};
+
 // TODO: maybe do something smarter than just matching any shared_ptr, e.g. we
 // can declare "registered" types explicitly
 template <typename T>
@@ -1555,40 +1564,39 @@ static inline int32_t sizeOfTypeKind(TypeKind kind) {
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(sizeOfTypeKindHelper, kind);
 }
 
-// Helper for using folly::to with StringView.
 template <typename T, typename U>
-static inline T to(U value) {
+static inline T to(const U& value) {
   return folly::to<T>(value);
 }
 
 template <>
-inline Timestamp to(std::string value) {
+inline Timestamp to(const std::string& value) {
   return Timestamp(0, 0);
 }
 
 template <>
-inline UnknownValue to(std::string /* value */) {
+inline UnknownValue to(const std::string& /* value */) {
   return UnknownValue();
 }
 
 template <>
-inline std::string to(Timestamp value) {
+inline std::string to(const Timestamp& value) {
   return value.toString();
 }
 
 template <>
-inline std::string to(velox::StringView value) {
+inline std::string to(const velox::StringView& value) {
   return std::string(value.data(), value.size());
 }
 
 template <>
-inline std::string to(ComplexType value) {
+inline std::string to(const ComplexType& value) {
   return std::string("ComplexType");
 }
 
 template <>
-inline ComplexType to(std::string value) {
-  return ComplexType();
+inline velox::StringView to(const std::string& value) {
+  return velox::StringView(value);
 }
 
 namespace exec {
