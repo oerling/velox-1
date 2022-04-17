@@ -47,6 +47,8 @@ class HashBitRange {
 // Manages spilling data from a RowContainer.
 class Spiller {
  public:
+
+  using SpillRows = std::vector<char*, memory::StlMappedMemoryAllocator<char*>>;
   Spiller(
       RowContainer& container,
       RowContainer::Eraser eraser,
@@ -93,7 +95,7 @@ class Spiller {
 
   // Finishes spilling and returns the rows that are in partitions that have not
   // started spilling.
-  std::vector<char*> finishSpill();
+  SpillRows finishSpill();
 
   RowContainer& container() const {
     return container_;
@@ -140,10 +142,10 @@ class Spiller {
   // goes empty this is refilled from the RowContainer for the next
   // spill run from the same partition.
   struct SpillRun {
+    SpillRun(memory::MappedMemory& mappedMemory)
+      : rows(0, memory::StlMappedMemoryAllocator<char*>(&mappedMemory)) {}
     // Spillable rows from the RowContainer.
-    std::vector<char*> rows;
-    // The partitioning hash of each element in 'rows'.
-    std::vector<uint64_t> hashes;
+    SpillRows rows;
     // The total byte size of rows referenced from 'rows'.
     uint64_t size{0};
     // True if 'rows' are sorted on their key.
@@ -151,7 +153,6 @@ class Spiller {
 
     void clear() {
       rows.clear();
-      hashes.clear();
       size = 0;
       sorted = false;
     }
@@ -176,7 +177,7 @@ class Spiller {
   bool fillSpillRuns(
       RowContainerIterator& iterator,
       uint64_t targetSize,
-      std::vector<char*>* rowsFromNonSpillingPartitions = nullptr);
+      SpillRows* rowsFromNonSpillingPartitions = nullptr);
 
   // Clears pending spill state.
   void clearSpillRuns();

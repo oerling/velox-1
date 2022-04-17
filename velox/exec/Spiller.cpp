@@ -56,7 +56,7 @@ class RowContainerSpillStream : public SpillStream {
       RowTypePtr type,
       int32_t numSortingKeys,
       memory::MemoryPool& pool,
-      std::vector<char*>&& rows,
+      Spiller::SpillRows&& rows,
       Spiller& spiller)
       : SpillStream(std::move(type), numSortingKeys, pool),
         rows_(std::move(rows)),
@@ -95,7 +95,7 @@ class RowContainerSpillStream : public SpillStream {
     index_ = 0;
   }
 
-  std::vector<char*> rows_;
+  Spiller::SpillRows rows_;
   Spiller& spiller_;
   size_t nextBatchIndex_ = 0;
 };
@@ -245,7 +245,7 @@ void Spiller::spill(
     for (auto newPartition = spillRuns_.size();
          newPartition < state_.maxPartitions();
          ++newPartition) {
-      spillRuns_.emplace_back();
+      spillRuns_.emplace_back(spillMappedMemory(container_));
     }
     clearSpillRuns();
     iterator.reset();
@@ -265,13 +265,13 @@ void Spiller::spill(
   }
 }
 
-std::vector<char*> Spiller::finishSpill() {
+  Spiller::  SpillRows Spiller::finishSpill() {
   VELOX_CHECK(!spillFinalized_);
   spillFinalized_ = true;
   clearSpillRuns();
   RowContainerIterator iterator;
   iterator.reset();
-  std::vector<char*> rowsFromNonSpillingPartitions;
+  SpillRows rowsFromNonSpillingPartitions(0, memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory(container_)));
   fillSpillRuns(
       iterator, RowContainer::kUnlimited, &rowsFromNonSpillingPartitions);
   return rowsFromNonSpillingPartitions;
@@ -286,7 +286,7 @@ void Spiller::clearSpillRuns() {
 bool Spiller::fillSpillRuns(
     RowContainerIterator& iterator,
     uint64_t targetSize,
-    std::vector<char*>* FOLLY_NULLABLE rowsFromNonSpillingPartitions) {
+    SpillRows* rowsFromNonSpillingPartitions) {
   // Number of rows to hash and divide into spill partitions at a time.
   constexpr int32_t kHashBatchSize = 1024;
   bool final = false;
