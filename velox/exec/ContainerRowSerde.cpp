@@ -324,6 +324,9 @@ void deserializeSwitch(
     ByteStream& in,
     vector_size_t index,
     BaseVector& result) {
+  // This is called only on non-null values, so clear the null flag in
+  // case of reuse.
+  result.setNull(index, false);
   VELOX_DYNAMIC_TYPE_DISPATCH(
       deserializeOne, result.typeKind(), in, index, result);
 }
