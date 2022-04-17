@@ -344,21 +344,17 @@ int32_t sizeClassSize(
     int32_t size,
     const std::vector<MachinePageCount>& sizes) {
   VELOX_CHECK_LE(size, sizes.back());
-  auto it = std::lower_bound(sizes.begin(), sizes.end(), size);
-  if (*it == size) {
-    return size;
-  }
-  return it[1];
+  return *std::lower_bound(sizes.begin(), sizes.end(), size);
 }
 } // namespace
 
 char* MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
   if (size <= maxMallocSize) {
     return reinterpret_cast<char*>(::malloc(size));
-  } else if (size <= sizeClassSizes_.back()) {
+  } else if (size <= sizeClassSizes_.back() * kPageSize) {
     Allocation allocation(this);
     auto numPages =
-        sizeClassSize(bits::roundUp(size, kPageSize), sizeClassSizes_);
+        sizeClassSize(bits::roundUp(size, kPageSize) / kPageSize, sizeClassSizes_);
     if (allocate(numPages, kMallocOwner, allocation, nullptr, numPages)) {
       auto run = allocation.runAt(0);
       VELOX_CHECK_EQ(
@@ -386,10 +382,10 @@ void MappedMemory::freeBytes(
     int32_t maxMallocSize) noexcept {
   if (size <= maxMallocSize) {
     ::free(p);
-  } else if (size <= sizeClassSizes_.back()) {
+  } else if (size <= sizeClassSizes_.back() * kPageSize) {
     Allocation allocation(this);
     auto numPages =
-        sizeClassSize(bits::roundUp(size, kPageSize), sizeClassSizes_);
+        sizeClassSize(bits::roundUp(size, kPageSize) / kPageSize, sizeClassSizes_);
     allocation.append(reinterpret_cast<uint8_t*>(p), numPages);
     free(allocation);
   } else {
