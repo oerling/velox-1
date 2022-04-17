@@ -55,6 +55,8 @@ class MappedMemory {
   static constexpr uint64_t kPageSize = 4096;
   static constexpr int32_t kMaxSizeClasses = 12;
   static constexpr int32_t kNoOwner = -1;
+  // Marks allocation via allocateBytes, e.g. StlMappedMemoryAllocator.
+  static constexpr int32_t kMallocOwner = -14;
 
   // Represents a number of consecutive pages of kPageSize bytes.
   class PageRun {
@@ -263,6 +265,19 @@ class MappedMemory {
 
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
 
+  // Allocates 'size'contiguous bytes and returns the pointer to the
+  // first byte. If 'size' is less than 'maxMallocSize', delegates the
+  // allocation to malloc. If the size is above that and below the
+  // largest size class, allocates one element of the next size
+  // class. If 'size' is greater than the largest size class, calls
+  // allocateContiguous(). Returns nullptr if there is no space. The
+  // amount to allocate is subject to the size limit of
+  // 'this'. Trackers are expected to be called before this.
+  char* allocateBytes(uint64_t size, int32_t maxMallocSize);
+
+  // Frees memory allocated with allocateBytes().
+  void freeBytes(void* p, uint64_t size, int32_t maxMallocSize) noexcept;
+
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
   virtual bool checkConsistency() const = 0;
@@ -392,6 +407,53 @@ class ScopedMappedMemory final : public MappedMemory {
   std::shared_ptr<MappedMemory> parentPtr_;
   MappedMemory* FOLLY_NONNULL parent_;
   std::shared_ptr<MemoryUsageTracker> tracker_;
+};
+
+// An Allocator backed by MappedMemory for for STL containers.
+template <class T>
+struct StlMappedMemoryAllocator {
+  using value_type = T;
+
+  explicit StlMappedMemoryAllocator(MappedMemory* FOLLY_NONNULL allocator)
+      : allocator_{allocator} {
+    VELOX_CHECK(allocator);
+  }
+
+  template <class U>
+  explicit StlMappedMemoryAllocator(
+      const StlMappedMemoryAllocator<U>& allocator)
+      : allocator_{allocator.allocator()} {
+    VELOX_CHECK(allocator_);
+  }
+
+  T* FOLLY_NONNULL allocate(std::size_t n) {
+    return reinterpret_cast<T*>(
+        allocator_->allocateBytes(n * sizeof(T), kMaxMallocSize));
+  }
+
+  void deallocate(T* FOLLY_NONNULL p, std::size_t n) noexcept {
+    allocator_->freeBytes(p, n * sizeof(T), kMaxMallocSize);
+  }
+
+  MappedMemory* FOLLY_NONNULL allocator() const {
+    return allocator_;
+  }
+
+  friend bool operator==(
+      const StlMappedMemoryAllocator& lhs,
+      const StlMappedMemoryAllocator& rhs) {
+    return lhs.allocator_ == rhs.allocator_;
+  }
+  friend bool operator!=(
+      const StlMappedMemoryAllocator& lhs,
+      const StlMappedMemoryAllocator& rhs) {
+    return !(lhs == rhs);
+  }
+
+ private:
+  // Larger than 3K will go to smallest size class of 4K.
+  static constexpr int32_t kMaxMallocSize = 3072;
+  MappedMemory* FOLLY_NONNULL allocator_;
 };
 
 } // namespace facebook::velox::memory

@@ -442,6 +442,27 @@ TEST_P(MappedMemoryTest, minSizeClass) {
   EXPECT_EQ(0, tracker->getCurrentUserBytes());
 }
 
+TEST_P(MappedMemoryTest, stlMappedMemoryAllocator) {
+  {
+    std::vector<double, StlMappedMemoryAllocator<double>> data(
+        0, StlMappedMemoryAllocator<double>(instance_));
+    // The contiguous size goes to 2MB, covering malloc, size
+    // Allocation from classes and ContiguousAllocation outside size
+    // classes.
+    constexpr int32_t kNumDoubles = 256 * 1024;
+    for (auto i = 0; i < kNumDoubles; i++) {
+      data.push_back(i);
+    }
+    for (auto i = 0; i < kNumDoubles; i++) {
+      ASSERT_EQ(i, data[i]);
+    }
+    EXPECT_EQ(512, instance_->numAllocated());
+    EXPECT_TRUE(instance_->checkConsistency());
+  }
+  EXPECT_EQ(0, instance_->numAllocated());
+  EXPECT_TRUE(instance_->checkConsistency());
+}
+
 VELOX_INSTANTIATE_TEST_SUITE_P(
     MappedMemoryTests,
     MappedMemoryTest,
