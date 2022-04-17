@@ -353,8 +353,8 @@ char* MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
     return reinterpret_cast<char*>(::malloc(size));
   } else if (size <= sizeClassSizes_.back() * kPageSize) {
     Allocation allocation(this);
-    auto numPages =
-        sizeClassSize(bits::roundUp(size, kPageSize) / kPageSize, sizeClassSizes_);
+    auto numPages = sizeClassSize(
+        bits::roundUp(size, kPageSize) / kPageSize, sizeClassSizes_);
     if (allocate(numPages, kMallocOwner, allocation, nullptr, numPages)) {
       auto run = allocation.runAt(0);
       VELOX_CHECK_EQ(
@@ -384,8 +384,8 @@ void MappedMemory::freeBytes(
     ::free(p);
   } else if (size <= sizeClassSizes_.back() * kPageSize) {
     Allocation allocation(this);
-    auto numPages =
-        sizeClassSize(bits::roundUp(size, kPageSize) / kPageSize, sizeClassSizes_);
+    auto numPages = sizeClassSize(
+        bits::roundUp(size, kPageSize) / kPageSize, sizeClassSizes_);
     allocation.append(reinterpret_cast<uint8_t*>(p), numPages);
     free(allocation);
   } else {
