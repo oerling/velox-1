@@ -372,7 +372,7 @@ char* MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
   } else {
     ContiguousAllocation allocation;
     if (allocateContiguous(
-			   bits::roundUp(size, kPageSize) / kPageSize, nullptr, allocation)) {
+            bits::roundUp(size, kPageSize) / kPageSize, nullptr, allocation)) {
       char* data = allocation.data<char>();
       allocation.reset(nullptr, nullptr, 0);
       return data;
@@ -388,7 +388,8 @@ void MappedMemory::freeBytes(
     ::free(p);
   } else if (size <= sizeClassSizes_.back()) {
     Allocation allocation(this);
-    auto numPages = sizeClassSize(bits::roundUp(size, kPageSize), sizeClassSizes_);
+    auto numPages =
+        sizeClassSize(bits::roundUp(size, kPageSize), sizeClassSizes_);
     allocation.append(reinterpret_cast<uint8_t*>(p), numPages);
     free(allocation);
   } else {
