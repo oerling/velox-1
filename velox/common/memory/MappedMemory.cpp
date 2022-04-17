@@ -338,6 +338,66 @@ std::shared_ptr<MappedMemory> MappedMemory::addChild(
   return std::make_shared<ScopedMappedMemory>(this, tracker);
 }
 
+namespace {
+// Returns the size class size that corresponds to 'size'.
+int32_t sizeClassSize(
+    int32_t size,
+    const std::vector<MachinePageCount>& sizes) {
+  VELOX_CHECK_LE(size, sizes.back());
+  auto it = std::lower_bound(sizes.begin(), sizes.end(), size);
+  if (*it == size) {
+    return size;
+  }
+  return it[1];
+}
+} // namespace
+
+char* MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
+  if (size <= maxMallocSize) {
+    return reinterpret_cast<char*>(::malloc(size));
+  } else if (size <= sizeClassSizes_.back()) {
+    Allocation allocation(this);
+    auto numPages =
+        sizeClassSize(bits::roundUp(size, kPageSize), sizeClassSizes_);
+    if (allocate(numPages, kMallocOwner, allocation, nullptr, numPages)) {
+      auto run = allocation.runAt(0);
+      VELOX_CHECK_EQ(
+          1,
+          allocation.numRuns(),
+          "A size class alocateBytes must produce one run");
+      allocation.clear();
+      return run.data<char>();
+    }
+    return nullptr;
+  } else {
+    ContiguousAllocation allocation;
+    if (allocateContiguous(
+			   bits::roundUp(size, kPageSize) / kPageSize, nullptr, allocation)) {
+      char* data = allocation.data<char>();
+      allocation.reset(nullptr, nullptr, 0);
+      return data;
+    }
+  }
+}
+
+void MappedMemory::freeBytes(
+    void* p,
+    uint64_t size,
+    int32_t maxMallocSize) noexcept {
+  if (size <= maxMallocSize) {
+    ::free(p);
+  } else if (size <= sizeClassSizes_.back()) {
+    Allocation allocation(this);
+    auto numPages = sizeClassSize(bits::roundUp(size, kPageSize), sizeClassSizes_);
+    allocation.append(reinterpret_cast<uint8_t*>(p), numPages);
+    free(allocation);
+  } else {
+    ContiguousAllocation allocation;
+    allocation.reset(this, p, size);
+    freeContiguous(allocation);
+  }
+}
+
 bool ScopedMappedMemory::allocate(
     MachinePageCount numPages,
     int32_t owner,
