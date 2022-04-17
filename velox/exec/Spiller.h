@@ -47,7 +47,6 @@ class HashBitRange {
 // Manages spilling data from a RowContainer.
 class Spiller {
  public:
-
   using SpillRows = std::vector<char*, memory::StlMappedMemoryAllocator<char*>>;
   Spiller(
       RowContainer& container,
@@ -143,7 +142,7 @@ class Spiller {
   // spill run from the same partition.
   struct SpillRun {
     SpillRun(memory::MappedMemory& mappedMemory)
-      : rows(0, memory::StlMappedMemoryAllocator<char*>(&mappedMemory)) {}
+        : rows(0, memory::StlMappedMemoryAllocator<char*>(&mappedMemory)) {}
     // Spillable rows from the RowContainer.
     SpillRows rows;
     // The total byte size of rows referenced from 'rows'.

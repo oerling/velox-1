@@ -265,13 +265,15 @@ void Spiller::spill(
   }
 }
 
-  Spiller::  SpillRows Spiller::finishSpill() {
+Spiller::SpillRows Spiller::finishSpill() {
   VELOX_CHECK(!spillFinalized_);
   spillFinalized_ = true;
   clearSpillRuns();
   RowContainerIterator iterator;
   iterator.reset();
-  SpillRows rowsFromNonSpillingPartitions(0, memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory(container_)));
+  SpillRows rowsFromNonSpillingPartitions(
+      0,
+      memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory(container_)));
   fillSpillRuns(
       iterator, RowContainer::kUnlimited, &rowsFromNonSpillingPartitions);
   return rowsFromNonSpillingPartitions;
