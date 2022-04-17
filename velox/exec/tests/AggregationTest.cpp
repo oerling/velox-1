@@ -17,6 +17,8 @@
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
+
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/expression/FunctionSignature.h"
 
@@ -341,6 +343,24 @@ class AggregationTest : public OperatorTestBase {
       setKey<StringView>(4, c4, 5, count % 1000, rowVector.get());
       setKey<StringView>(5, c5, 8, count % 1000, rowVector.get());
     }
+  }
+
+  // Inserts 'key' into 'order' with random bits and a serial
+  // umber. The serial number makes repeats of 'key' unique and the
+  // random bits randomize the order in the set.
+  void insertRandomOrder(
+      int64_t key,
+      int64_t serial,
+      folly::F14FastSet<uint64_t>& order) {
+    // The word has 24 bits of grouping key, 8 random bits and 32 bits of serial
+    // number.
+    order.insert(
+        ((folly::Random::rand32(rng_) & 0xff) << 24) | key | (serial << 32));
+  }
+
+  // Returns the key from a value inserted with insertRandomOrder().
+  int32_t randomOrderKey(uint64_t key) {
+    return key & ((1 << 24) - 1);
   }
 
   // Inserts 'key' into 'order' with random bits and a serial
@@ -719,9 +739,10 @@ TEST_F(AggregationTest, spill) {
   makeBatches(rows, order2, batches);
   makeBatches(rows, order3, batches);
   CursorParameters params;
+  auto temp = test::TempDirectoryPath::create();
   std::unordered_map<std::string, std::string> configStrings;
-  configStrings["driver.max-final-aggregation-memory-usage"] = "16000000";
-  configStrings["driver.spill-file-size"] = "16000000";
+  configStrings[kMaxPartialAggregationMemory] = "8000000";
+  configStrings[kSpillPath] = "temp->path";
   std::shared_ptr<Config> config =
       std::make_shared<core::MemConfig>(configStrings);
   std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
@@ -730,10 +751,13 @@ TEST_F(AggregationTest, spill) {
       std::move(config),
       std::move(connectorConfigs),
       memory::MappedMemory::getInstance());
+  constexpr int32_t kMaxMemory = 16'000'000;
+  auto tracker = MemoryUsageTracker::create(kMaxMemory, std::numeric_limits<uint64_t>::max(), kMaxMemory);
+  params.queryCtx->pool()->setMemoryUsageTracker(tracker);
   params.planNode = PlanBuilder()
                         .values(batches)
                         .partialAggregation({0, 1}, {"array_agg(a)"})
-                        .finalAggregation({0, 1}, {"array_agg(a0)"})
+                        .finalAggregation()
                         .planNode();
   auto pair = readCursor(params, [](Task*) {});
   int32_t numRows = 0;
@@ -757,5 +781,6 @@ TEST_F(AggregationTest, spill) {
   EXPECT_EQ(numRows, kNumDistinct);
 }
 
+  
 } // namespace
 } // namespace facebook::velox::exec::test

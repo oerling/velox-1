@@ -35,6 +35,7 @@ class GroupingSet {
       std::vector<std::optional<ChannelIndex>>&& aggrMaskChannels,
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
+      std::vector<TypePtr> intermediateTypes,
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
