@@ -373,6 +373,7 @@ char* MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
       allocation.reset(nullptr, nullptr, 0);
       return data;
     }
+    return nullptr;
   }
 }
 
