@@ -709,7 +709,6 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   std::vector<ContinuePromise> threadFinishPromises_;
 };
 
-<<<<<<< HEAD
 class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
  public:
   explicit TaskMemoryStrategy(int64_t size) {
@@ -742,7 +741,6 @@ class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
   std::mutex mutex_;
 };
 
-=======
 /// Listener invoked on task completion.
 class TaskListener {
  public:
@@ -766,5 +764,4 @@ bool registerTaskListener(std::shared_ptr<TaskListener> listener);
 /// unregistered successfuly, false if listener was not found.
 bool unregisterTaskListener(const std::shared_ptr<TaskListener>& listener);
 
->>>>>>> main
 } // namespace facebook::velox::exec

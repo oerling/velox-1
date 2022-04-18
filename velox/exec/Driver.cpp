@@ -575,7 +575,7 @@ std::string Driver::toString() {
 }
 
 void Driver::checkTerminate() {
-  if (task_->shouldStop() == StopReason::kTerminate) {
+  if (task()->shouldStop() == StopReason::kTerminate) {
     VELOX_USER_FAIL("Cancelled");
   }
 }
