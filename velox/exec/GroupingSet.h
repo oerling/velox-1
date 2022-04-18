@@ -17,7 +17,7 @@
 
 #include "velox/exec/AggregationMasks.h"
 #include "velox/exec/HashTable.h"
-#include "velox/exec/Spill.h"
+#include "velox/exec/Spiller.h"
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/exec/VectorHasher.h"
 
@@ -39,7 +39,7 @@ class GroupingSet {
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
-      OperatorCtx* driverCtx);
+      OperatorCtx* operatorCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
 
@@ -60,13 +60,18 @@ class GroupingSet {
       bool isPartial,
       RowContainerIterator* iterator,
       RowVectorPtr& result);
-
+  bool getOutputWithSpill(VectorPtr& result);
+  
   uint64_t allocatedBytes() const;
 
   void resetPartial();
 
   const HashLookup& hashLookup() const;
 
+  uint64_t spilledBytes() const {
+    return spiller_ ? spiller_->spilledBytes() : 0;
+  }
+  
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 
@@ -104,10 +109,8 @@ class GroupingSet {
 
   bool getSpilledOutput(RowVectorPtr result);
   bool mergeNext(RowVectorPtr& result);
-  int32_t compareSpilled(VectorRow left, VectorRow right);
   void initializeRow(VectorRow& keys, char* row);
-  bool isSameKey(VectorRow key, char* row);
-  void updateRow(VectorRow& keys, char* row);
+  void updateRow(SpillStream& stream, char* row);
   void extractSpillResult(RowVectorPtr& result);
 
   
@@ -128,6 +131,7 @@ class GroupingSet {
   // 'channelLists_'. This is used when channelLists_[i][j] ==
   // kConstantChannel.
   const std::vector<std::vector<VectorPtr>> constantLists_;
+  std::vector<TypePtr> intermediateTypes,
   const bool ignoreNullKeys_;
   memory::MappedMemory* const mappedMemory_;
 
@@ -165,9 +169,11 @@ class GroupingSet {
   /// 'remainingInput_'.
   bool remainingMayPushdown_;
 
-  uint64_t spillThreshold_ = 0;
+  // Accumulator types of aggregates. Used for spilling.
+  std::vector<TypePtr> intermediateTypes_;
+  
   uint64_t maxBatchBytes_;
-  std::unique_ptr<Spiller> spill_;
+  std::unique_ptr<Spiller> spiller_;
   std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
   RowContainerIterator spillIterator_;
   std::unique_ptr<RowContainer> mergeRows_;
@@ -179,9 +185,13 @@ class GroupingSet {
   SelectivityVector mergeSelection_;
   // The set of rows that are outside of the spillable hash number
   // ranges. Used when producing output.
-  std::vector<char*> nonSpilledRows_;
+  Spiller::SpillRows nonSpilledRows_;
   // Index of first in 'nonSpilledRows_' that has not been added to output.
   size_t nonSpilledIndex_ = 0;
+  // true if 'merge' indicates that the next to merge has the same key.
+  bool nextIsSameKey_{false};
+  const std::string spillPath_;
+  memory::MemoryUsageTracker* FOLLY_NULLABLE const  tracker_;
 };
 
 } // namespace facebook::velox::exec

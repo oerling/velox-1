@@ -295,6 +295,11 @@ class MappedMemory {
   virtual std::shared_ptr<MappedMemory> addChild(
       std::shared_ptr<MemoryUsageTracker> tracker);
 
+  virtual MemoryUsageTracker* FOLLY_NULLABLE tracker() const {
+    return nullptr;
+  }
+
+  
   virtual std::string toString() const;
 
  protected:
@@ -403,6 +408,11 @@ class ScopedMappedMemory final : public MappedMemory {
     return std::make_shared<ScopedMappedMemory>(this, tracker);
   }
 
+  MemoryUsageTracker* FOLLY_NULLABLE tracker() const override {
+    return tracker_.get();
+  }
+
+  
  private:
   std::shared_ptr<MappedMemory> parentPtr_;
   MappedMemory* FOLLY_NONNULL parent_;

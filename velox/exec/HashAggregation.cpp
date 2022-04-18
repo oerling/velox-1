@@ -66,6 +66,7 @@ HashAggregation::HashAggregation(
   aggrMaskChannels.reserve(numAggregates);
   std::vector<std::vector<ChannelIndex>> args;
   std::vector<std::vector<VectorPtr>> constantLists;
+  std::vector<TypePtr> intermediateTypes;
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode->aggregates()[i];
 
@@ -81,6 +82,11 @@ HashAggregation::HashAggregation(
             constant->value(), 1, operatorCtx_->pool()));
       } else {
         constants.push_back(nullptr);
+      }
+      if (isRawInput) {
+	intermediateTypes.push_back(Aggregate::intermediateType(aggregate->name(), argTypes));
+      } else {
+	intermediateTypes.push_back(argTypes[0]);
       }
     }
 
@@ -126,6 +132,7 @@ HashAggregation::HashAggregation(
       std::move(aggrMaskChannels),
       std::move(args),
       std::move(constantLists),
+      std::move(intermediateTypes),
       aggregationNode->ignoreNullKeys(),
       isPartialOutput_,
       isRawInput(aggregationNode->step()),
@@ -199,6 +206,7 @@ RowVectorPtr HashAggregation::getOutput() {
   bool hasData = groupingSet_->getOutput(
       batchSize, isPartialOutput_, &resultIterator_, result);
   if (!hasData) {
+    stats_.spilledBytes = groupingSet_->spilledBytes();
     resultIterator_.reset();
 
     if (partialFull_) {

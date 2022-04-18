@@ -197,8 +197,8 @@ class Aggregate {
   // for e.g. spilling.
   virtual TypePtr accumulatorType() const {
     return resultType_;
-}
-  
+  }
+
   // Clears state between reuses, e.g. this is called before reusing
   // the aggregation operator's state after flushing a partial
   // aggregation.
@@ -211,6 +211,9 @@ class Aggregate {
       core::AggregationNode::Step step,
       const std::vector<TypePtr>& argTypes,
       const TypePtr& resultType);
+  static TypePtr intermediateType(
+      const std::string& name,
+      const std::vector<TypePtr>& argTypes);
 
  protected:
   // Shorthand for maintaining accumulator variable length size in

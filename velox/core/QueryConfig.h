@@ -87,7 +87,7 @@ class QueryConfig {
 
   static constexpr const char* kCreateEmptyFiles = "driver.create_empty_files";
 
-  static constexpr const char* kSpillPath = "experimental.spiller-spill-path";[
+  static constexpr const char* kSpillPath = "experimental.spiller-spill-path";
   
   uint64_t maxPartialAggregationMemoryUsage() const {
     static constexpr uint64_t kDefault = 1L << 24;
