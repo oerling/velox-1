@@ -221,6 +221,10 @@ class GroupingSet {
 
   // Executor for spilling. If nullptr spilling writes on the Driver's thread.
   folly::Executor* FOLLY_NULLABLE const spillExecutor_;
+
+  // The RowContainer of 'table_' is moved here before freeing
+  // 'table_' when starting to read spill output.
+  std::unique_ptr<RowContainer> rowsWhileReadingSpill_;
 };
 
 } // namespace facebook::velox::exec

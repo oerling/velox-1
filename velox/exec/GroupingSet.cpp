@@ -558,6 +558,9 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
         false,
         mappedMemory_,
         ContainerRowSerde::instance());
+    // Take ownership of the rows and free the hash table. The table will not be needed for producing spill output.
+    rowsWhileReadingSpill_ = table_->moveRows();
+    table_.reset();
     outputPartition_ = 0;
     nonSpilledRows_ = spiller_->finishSpill();
   }
