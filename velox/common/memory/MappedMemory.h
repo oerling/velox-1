@@ -299,7 +299,6 @@ class MappedMemory {
     return nullptr;
   }
 
-  
   virtual std::string toString() const;
 
  protected:
@@ -412,7 +411,6 @@ class ScopedMappedMemory final : public MappedMemory {
     return tracker_.get();
   }
 
-  
  private:
   std::shared_ptr<MappedMemory> parentPtr_;
   MappedMemory* FOLLY_NONNULL parent_;

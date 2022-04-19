@@ -108,7 +108,7 @@ struct OperatorStats {
 
   MemoryStats memoryStats;
   uint64_t spilledBytes;
-  
+
   std::unordered_map<std::string, RuntimeMetric> runtimeStats;
 
   int numDrivers = 0;

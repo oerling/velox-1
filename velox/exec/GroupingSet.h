@@ -77,7 +77,7 @@ class GroupingSet {
   int64_t spilledBytes() const {
     return spiller_ ? spiller_->spilledBytes() : 0;
   }
-  
+
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 

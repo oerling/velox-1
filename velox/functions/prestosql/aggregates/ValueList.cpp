@@ -36,8 +36,8 @@ void ValueList::prepareAppend(HashStringAllocator* allocator) {
     // the position because writing the next word can shift things
     // around and invalidate the hashStringAllocator::Position.
     auto nullsOffset = HashStringAllocator::offset(nullsBegin_, nullsCurrent_);
-        writeLastNulls(allocator);
-	nullsCurrent_ = HashStringAllocator::seek(nullsBegin_, nullsOffset);
+    writeLastNulls(allocator);
+    nullsCurrent_ = HashStringAllocator::seek(nullsBegin_, nullsOffset);
   }
 }
 

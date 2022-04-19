@@ -45,7 +45,7 @@ add_library(
   PartitionedOutputBufferManager.cpp
   PlanNodeStats.cpp
   RowContainer.cpp
-    Spiller.cpp
+  Spiller.cpp
   StreamingAggregation.cpp
   TableScan.cpp
   TableWriter.cpp

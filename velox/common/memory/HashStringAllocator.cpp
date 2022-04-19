@@ -318,7 +318,7 @@ void HashStringAllocator::free(Header* _header) {
 
 //  static
 int64_t HashStringAllocator::offset(
-				    Header* FOLLY_NONNULL header,
+    Header* FOLLY_NONNULL header,
     Position position) {
   int64_t size = 0;
   for (;;) {
@@ -337,7 +337,7 @@ int64_t HashStringAllocator::offset(
 }
 
 //  static
-  HashStringAllocator::Position HashStringAllocator::seek(
+HashStringAllocator::Position HashStringAllocator::seek(
     Header* FOLLY_NONNULL header,
     int64_t offset) {
   int64_t size = 0;
@@ -346,8 +346,7 @@ int64_t HashStringAllocator::offset(
     auto length = header->size() - (continued ? sizeof(void*) : 0);
     auto begin = header->begin();
     if (offset >= size && offset < size + length) {
-      return Position {
-        header, begin + (offset - size)};
+      return Position{header, begin + (offset - size)};
     }
     if (!continued) {
       return {nullptr, nullptr};
@@ -355,56 +354,56 @@ int64_t HashStringAllocator::offset(
     size += length;
     header = getNextContinued(header);
   }
-  }
+}
 
 void HashStringAllocator::checkConsistency() const {
-    uint64_t numFree = 0;
-    uint64_t freeBytes = 0;
-    for (auto i = 0; i < pool_.numAllocations(); ++i) {
-      auto allocation = pool_.allocationAt(i);
-      for (auto runIndex = 0; runIndex < allocation->numRuns(); ++runIndex) {
-        auto run = allocation->runAt(runIndex);
-        auto size = run.numBytes() - sizeof(Header);
-        bool previousFree = false;
-        auto end = reinterpret_cast<Header*>(run.data<char>() + size);
-        auto header = run.data<Header>();
-        while (header != end) {
-          VELOX_CHECK(header >= run.data<Header>());
-          VELOX_CHECK(header < end);
-          VELOX_CHECK(header->end() <= reinterpret_cast<char*>(end));
-          VELOX_CHECK_EQ(header->isPreviousFree(), previousFree);
+  uint64_t numFree = 0;
+  uint64_t freeBytes = 0;
+  for (auto i = 0; i < pool_.numAllocations(); ++i) {
+    auto allocation = pool_.allocationAt(i);
+    for (auto runIndex = 0; runIndex < allocation->numRuns(); ++runIndex) {
+      auto run = allocation->runAt(runIndex);
+      auto size = run.numBytes() - sizeof(Header);
+      bool previousFree = false;
+      auto end = reinterpret_cast<Header*>(run.data<char>() + size);
+      auto header = run.data<Header>();
+      while (header != end) {
+        VELOX_CHECK(header >= run.data<Header>());
+        VELOX_CHECK(header < end);
+        VELOX_CHECK(header->end() <= reinterpret_cast<char*>(end));
+        VELOX_CHECK_EQ(header->isPreviousFree(), previousFree);
 
-          if (header->isFree()) {
-            VELOX_CHECK(!previousFree);
-            VELOX_CHECK(!header->isContinued());
-            if (header->next()) {
-              VELOX_CHECK_EQ(
-                  header->size(),
-                  *(reinterpret_cast<int32_t*>(header->end()) - 1));
-            }
-            ++numFree;
-            freeBytes += sizeof(Header) + header->size();
-          } else if (header->isContinued()) {
-            // If the content of the header is continued, check the
-            // continue header is readable and not free.
-            auto continued = getNextContinued(header);
-            VELOX_CHECK(!continued->isFree());
+        if (header->isFree()) {
+          VELOX_CHECK(!previousFree);
+          VELOX_CHECK(!header->isContinued());
+          if (header->next()) {
+            VELOX_CHECK_EQ(
+                header->size(),
+                *(reinterpret_cast<int32_t*>(header->end()) - 1));
           }
-          previousFree = header->isFree();
-          header = reinterpret_cast<Header*>(header->end());
+          ++numFree;
+          freeBytes += sizeof(Header) + header->size();
+        } else if (header->isContinued()) {
+          // If the content of the header is continued, check the
+          // continue header is readable and not free.
+          auto continued = getNextContinued(header);
+          VELOX_CHECK(!continued->isFree());
         }
+        previousFree = header->isFree();
+        header = reinterpret_cast<Header*>(header->end());
       }
     }
-    VELOX_CHECK(numFree == numFree_);
-    VELOX_CHECK(freeBytes == freeBytes_);
-    uint64_t numInFreeList = 0;
-    uint64_t bytesInFreeList = 0;
-    for (auto free = free_.next(); free != &free_; free = free->next()) {
-      ++numInFreeList;
-      bytesInFreeList += headerOf(free)->size() + sizeof(Header);
-    }
-    VELOX_CHECK(numInFreeList == numFree_);
-    VELOX_CHECK(bytesInFreeList == freeBytes_);
+  }
+  VELOX_CHECK(numFree == numFree_);
+  VELOX_CHECK(freeBytes == freeBytes_);
+  uint64_t numInFreeList = 0;
+  uint64_t bytesInFreeList = 0;
+  for (auto free = free_.next(); free != &free_; free = free->next()) {
+    ++numInFreeList;
+    bytesInFreeList += headerOf(free)->size() + sizeof(Header);
+  }
+  VELOX_CHECK(numInFreeList == numFree_);
+  VELOX_CHECK(bytesInFreeList == freeBytes_);
   }
 
 } // namespace facebook::velox

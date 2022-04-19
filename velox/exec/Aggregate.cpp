@@ -80,18 +80,19 @@ std::unique_ptr<Aggregate> Aggregate::create(
 
 // static
 TypePtr Aggregate::intermediateType(
-				    const std::string& name,
-				    const std::vector<TypePtr>& argTypes) {
+    const std::string& name,
+    const std::vector<TypePtr>& argTypes) {
   auto signatures = getAggregateFunctionSignatures(name);
   if (!signatures.has_value()) {
     VELOX_FAIL("Aggregate {} not registered", name);
   }
-  for (auto& signature :signatures.value()) {SignatureBinder binder(*signature, argTypes);
+  for (auto& signature : signatures.value()) {
+    SignatureBinder binder(*signature, argTypes);
     if (binder.tryBind()) {
       return binder.tryResolveType(signature->intermediateType());
     }
   }
   VELOX_FAIL("Could not infer intermediate type for aggregate {}", name);
 }
-  
+
 } // namespace facebook::velox::exec

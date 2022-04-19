@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
+#include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/FunctionSignature.h"
-#include "velox/common/file/FileSystems.h"
 
 using facebook::velox::exec::Aggregate;
 using facebook::velox::test::BatchMaker;
@@ -684,7 +684,7 @@ TEST_F(AggregationTest, spill) {
   using core::QueryConfig;
   constexpr int32_t kNumDistinct = 200000;
   constexpr int64_t kMaxBytes = 24 << 20; // 24 MB
-filesystems::registerLocalFileSystem();
+  filesystems::registerLocalFileSystem();
   rng_.seed(1);
   rowType_ = ROW({"c0", "c1", "a"}, {INTEGER(), VARCHAR(), VARCHAR()});
   // The input batch has kNumDistinct distinct keys. The repeat count of a key
@@ -727,8 +727,8 @@ filesystems::registerLocalFileSystem();
   std::shared_ptr<Config> config =
       std::make_shared<core::MemConfig>(configStrings);
   params.queryCtx = core::QueryCtx::createForTest(std::move(config));
-  params.queryCtx->pool()->setMemoryUsageTracker(velox::memory::MemoryUsageTracker::create(
-      kMaxBytes, 0, kMaxBytes));
+  params.queryCtx->pool()->setMemoryUsageTracker(
+      velox::memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
 
   params.planNode = PlanBuilder()
                         .values(batches)
@@ -759,7 +759,7 @@ filesystems::registerLocalFileSystem();
   }
   auto stats = pair.first->task()->taskStats().pipelineStats;
 
-  //EXPECT_LT(1 << 20, spilledBytes);
+  // EXPECT_LT(1 << 20, spilledBytes);
   EXPECT_EQ(numRows, kNumDistinct);
 }
 

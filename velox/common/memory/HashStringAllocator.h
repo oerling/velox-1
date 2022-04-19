@@ -42,8 +42,6 @@ class HashStringAllocator : public StreamArena {
   static constexpr int32_t kMinAlloc =
       sizeof(CompactDoubleList) + sizeof(uint32_t);
 
-
-
   class Header {
    public:
     static constexpr uint32_t kFree = 1U << 31;
@@ -200,9 +198,10 @@ class HashStringAllocator : public StreamArena {
       const Header* FOLLY_NONNULL header,
       ByteStream& stream);
 
-  // Returns the number of payload bytes between 'header->begin()' and 'position'.
+  // Returns the number of payload bytes between 'header->begin()' and
+  // 'position'.
   static int64_t offset(Header* Folly_NONNULL, Position position);
-  
+
   // Returns a position 'offset' bytes after 'header->begin()'.
   static Position seek(Header* FOLLY_NONNULL header, int64_t offset);
 

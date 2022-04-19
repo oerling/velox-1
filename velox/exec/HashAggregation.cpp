@@ -85,7 +85,8 @@ HashAggregation::HashAggregation(
       }
     }
     if (isRawInput(aggregationNode->step())) {
-      intermediateTypes.push_back(Aggregate::intermediateType(aggregate->name(), argTypes));
+      intermediateTypes.push_back(
+          Aggregate::intermediateType(aggregate->name(), argTypes));
     } else {
       intermediateTypes.push_back(argTypes[0]);
     }
@@ -203,8 +204,7 @@ RowVectorPtr HashAggregation::getOutput() {
   auto result = std::static_pointer_cast<RowVector>(
       BaseVector::create(outputType_, batchSize, operatorCtx_->pool()));
 
-  bool hasData = groupingSet_->getOutput(
-      batchSize, &resultIterator_, result);
+  bool hasData = groupingSet_->getOutput(batchSize, &resultIterator_, result);
   if (!hasData) {
     stats_.spilledBytes = groupingSet_->spilledBytes();
     resultIterator_.reset();

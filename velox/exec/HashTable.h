@@ -199,7 +199,7 @@ class BaseHashTable {
   std::unique_ptr<RowContainer> moveRows() {
     return std::move(rows_);
   }
-  
+
   // Static functions for processing internals. Public because used in
   // structs that define probe and insert algorithms. These are
   // concentrated here to abstract away data layout, e.g tags and

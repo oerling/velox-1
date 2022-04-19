@@ -93,7 +93,8 @@ GroupingSet::GroupingSet(
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
   }
   for (auto& aggregate : aggregates_) {
-    minVariableWidthAccumulatorBytes_ += aggregate->minVariableWidthAccumulatorBytes();
+    minVariableWidthAccumulatorBytes_ +=
+        aggregate->minVariableWidthAccumulatorBytes();
   }
 }
 
@@ -453,12 +454,15 @@ bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
   return true;
 }
 
-  int64_t estimateSerializedSize(const VectorPtr& vector) {
-    vector_size_t bytes = 0;
-    auto bytesPtr = &bytes;
-    VectorStreamGroup::estimateSerializedSize(vector, std::vector<IndexRange>{IndexRange{0, vector->size()}}, &bytesPtr);
-    return bytes;
-  }
+int64_t estimateSerializedSize(const VectorPtr& vector) {
+  vector_size_t bytes = 0;
+  auto bytesPtr = &bytes;
+  VectorStreamGroup::estimateSerializedSize(
+      vector,
+      std::vector<IndexRange>{IndexRange{0, vector->size()}},
+      &bytesPtr);
+  return bytes;
+}
 } // namespace
 
 void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
@@ -481,7 +485,8 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
   auto outOfLineBytes =
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
-  auto outOfLineBytesPerRow = (outOfLineBytes / numDistinct) + minVariableWidthAccumulatorBytes_;
+  auto outOfLineBytesPerRow =
+      (outOfLineBytes / numDistinct) + minVariableWidthAccumulatorBytes_;
   // Check against retainedSize first because this is fast and allows to
   // decide early. Retained size is always an overestimation.
   if (!tableIncrement && freeRows > input->size() &&
@@ -490,8 +495,8 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   }
 
   int64_t flatSize = estimateSerializedSize(input);
-  auto increment = 
-    rows->sizeIncrement(input->size(), flatSize) + tableIncrement;
+  auto increment =
+      rows->sizeIncrement(input->size(), flatSize) + tableIncrement;
   auto tracker = mappedMemory_->tracker();
   VELOX_CHECK(tracker);
   // There must be at least 2x the increment in reservation. If less,
@@ -508,7 +513,8 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   if (maybeReserve(targetIncrement, *tracker)) {
     return;
   }
-  auto rowsToSpill = targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow);
+  auto rowsToSpill =
+      targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow);
 
   spill(
       numDistinct - rowsToSpill,
@@ -558,7 +564,8 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
         false,
         mappedMemory_,
         ContainerRowSerde::instance());
-    // Take ownership of the rows and free the hash table. The table will not be needed for producing spill output.
+    // Take ownership of the rows and free the hash table. The table will not be
+    // needed for producing spill output.
     rowsWhileReadingSpill_ = table_->moveRows();
     table_.reset();
     outputPartition_ = 0;
@@ -568,17 +575,18 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
   if (nonSpilledIndex_ < nonSpilledRows_.value().size()) {
     uint64_t bytes = 0;
     vector_size_t numGroups = 0;
-    auto limit =
-      std::min<size_t>(1000, nonSpilledRows_.value().size() - nonSpilledIndex_);
+    auto limit = std::min<size_t>(
+        1000, nonSpilledRows_.value().size() - nonSpilledIndex_);
     for (; numGroups < limit; ++numGroups) {
       bytes += table_->rows()->rowSize(
-				       nonSpilledRows_.value()[nonSpilledIndex_ + numGroups]);
+          nonSpilledRows_.value()[nonSpilledIndex_ + numGroups]);
       if (bytes > maxBatchBytes_) {
         ++numGroups;
         break;
       }
     }
-    extractGroups(nonSpilledRows_.value().data() + nonSpilledIndex_, numGroups, result);
+    extractGroups(
+        nonSpilledRows_.value().data() + nonSpilledIndex_, numGroups, result);
     nonSpilledIndex_ += numGroups;
     return true;
   }

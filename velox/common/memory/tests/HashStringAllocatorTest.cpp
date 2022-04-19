@@ -177,7 +177,8 @@ TEST_F(HashStringAllocatorTest, rewrite) {
     stream.appendOne(12345LL);
     stream.appendOne(67890LL);
     position = instance_->finishWrite(stream, 0);
-    EXPECT_EQ(3 * sizeof(int64_t), HashStringAllocator::offset(header, position));
+    EXPECT_EQ(
+        3 * sizeof(int64_t), HashStringAllocator::offset(header, position));
     HashStringAllocator::prepareRead(header, stream);
     EXPECT_EQ(123456789012345LL, stream.read<int64_t>());
     EXPECT_EQ(12345LL, stream.read<int64_t>());

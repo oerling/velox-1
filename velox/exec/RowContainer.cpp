@@ -538,8 +538,8 @@ int64_t RowContainer::sizeIncrement(vector_size_t numRows, int64_t flatBytes)
   int64_t needBytes = stringAllocator_.cumulativeBytes()
       ? std::min<int64_t>(0, stringAllocator_.freeSpace() - flatBytes)
       : 0;
-  return bits::roundUp(needRows * fixedRowSize_, kAllocUnit) +-      +bits::roundUp(needBytes, kAllocUnit);
+  return bits::roundUp(needRows * fixedRowSize_, kAllocUnit) +
+      -+bits::roundUp(needBytes, kAllocUnit);
 }
 
-  
 } // namespace facebook::velox::exec
