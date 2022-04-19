@@ -457,7 +457,10 @@ TEST_P(MappedMemoryTest, stlMappedMemoryAllocator) {
       ASSERT_EQ(i, data[i]);
     }
     EXPECT_EQ(512, instance_->numAllocated());
-    EXPECT_TRUE(instance_->checkConsistency());
+    auto stats = MappedMemory::allocateBytesStats();
+    EXPECT_EQ(0, stats.totalSmall);
+    EXPECT_EQ(0, stats.totalInSizeClasses);
+    EXPECT_EQ(2 << 20, stats.totalLarge);
   }
   EXPECT_EQ(0, instance_->numAllocated());
   EXPECT_TRUE(instance_->checkConsistency());

@@ -273,6 +273,10 @@ class MemoryUsageTracker
     growCallback_ = func;
   }
 
+  MemoryUsageTracker* FOLLY_NULLABLE parent() {
+    return parent_.get();
+  }
+  
  private:
   static constexpr int64_t kMB = 1 << 20;
 
