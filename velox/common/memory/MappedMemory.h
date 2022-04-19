@@ -276,7 +276,10 @@ class MappedMemory {
   void* FOLLY_NULLABLE allocateBytes(uint64_t size, int32_t maxMallocSize);
 
   // Frees memory allocated with allocateBytes().
-  void freeBytes(void* FOLLY_NONNULL p, uint64_t size, int32_t maxMallocSize) noexcept;
+  void freeBytes(
+      void* FOLLY_NONNULL p,
+      uint64_t size,
+      int32_t maxMallocSize) noexcept;
 
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.

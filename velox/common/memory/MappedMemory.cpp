@@ -348,7 +348,8 @@ int32_t sizeClassSize(
 }
 } // namespace
 
-  void* FOLLY_NULLABLE MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
+void* FOLLY_NULLABLE
+MappedMemory::allocateBytes(uint64_t size, int32_t maxMallocSize) {
   if (size <= maxMallocSize) {
     return reinterpret_cast<char*>(::malloc(size));
   } else if (size <= sizeClassSizes_.back() * kPageSize) {
