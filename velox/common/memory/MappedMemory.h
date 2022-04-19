@@ -273,10 +273,10 @@ class MappedMemory {
   // allocateContiguous(). Returns nullptr if there is no space. The
   // amount to allocate is subject to the size limit of
   // 'this'. Trackers are expected to be called before this.
-  char* allocateBytes(uint64_t size, int32_t maxMallocSize);
+  void* FOLLY_NULLABLE allocateBytes(uint64_t size, int32_t maxMallocSize);
 
   // Frees memory allocated with allocateBytes().
-  void freeBytes(void* p, uint64_t size, int32_t maxMallocSize) noexcept;
+  void freeBytes(void* FOLLY_NONNULL p, uint64_t size, int32_t maxMallocSize) noexcept;
 
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
