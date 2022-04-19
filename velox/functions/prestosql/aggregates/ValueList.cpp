@@ -18,6 +18,11 @@
 
 namespace facebook::velox::aggregate {
 void ValueList::prepareAppend(HashStringAllocator* allocator) {
+  if (!nullsBegin_) {
+    nullsBegin_ = allocator->allocate(HashStringAllocator::kMinAlloc);
+    nullsCurrent_ = {nullsBegin_, nullsBegin_->begin()};
+  }
+
   if (!dataBegin_) {
     dataBegin_ = allocator->allocate(kInitialSize);
     dataCurrent_ = {dataBegin_, dataBegin_->begin()};
@@ -26,6 +31,13 @@ void ValueList::prepareAppend(HashStringAllocator* allocator) {
   if (size_ && size_ % 64 == 0) {
     writeLastNulls(allocator);
     lastNulls_ = 0;
+    // Write an extra word and then seek back before that word so that
+    // finish will not grow the allocation. Use byte offset to keep
+    // the position because writing the next word can shift things
+    // around and invalidate the hashStringAllocator::Position.
+    auto nullsOffset = HashStringAllocator::offset(nullsBegin_, nullsCurrent_);
+    writeLastNulls(allocator);
+    nullsCurrent_ = HashStringAllocator::seek(nullsBegin_, nullsOffset);
   }
 }
 

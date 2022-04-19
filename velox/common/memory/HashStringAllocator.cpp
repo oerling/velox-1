@@ -316,6 +316,46 @@ void HashStringAllocator::free(Header* _header) {
   } while (header);
 }
 
+//  static
+int64_t HashStringAllocator::offset(
+    Header* FOLLY_NONNULL header,
+    Position position) {
+  int64_t size = 0;
+  for (;;) {
+    bool continued = header->isContinued();
+    auto length = header->size() - (continued ? sizeof(void*) : 0);
+    auto begin = header->begin();
+    if (position.position >= begin && position.position <= begin + length) {
+      return size + (position.position - begin);
+    }
+    if (!continued) {
+      return -1;
+    }
+    size += length;
+    header = getNextContinued(header);
+  }
+}
+
+//  static
+HashStringAllocator::Position HashStringAllocator::seek(
+    Header* FOLLY_NONNULL header,
+    int64_t offset) {
+  int64_t size = 0;
+  for (;;) {
+    bool continued = header->isContinued();
+    auto length = header->size() - (continued ? sizeof(void*) : 0);
+    auto begin = header->begin();
+    if (offset >= size && offset < size + length) {
+      return Position{header, begin + (offset - size)};
+    }
+    if (!continued) {
+      return {nullptr, nullptr};
+    }
+    size += length;
+    header = getNextContinued(header);
+  }
+}
+
 void HashStringAllocator::checkConsistency() const {
   uint64_t numFree = 0;
   uint64_t freeBytes = 0;
@@ -364,6 +404,6 @@ void HashStringAllocator::checkConsistency() const {
   }
   VELOX_CHECK(numInFreeList == numFree_);
   VELOX_CHECK(bytesInFreeList == freeBytes_);
-}
+  }
 
 } // namespace facebook::velox
