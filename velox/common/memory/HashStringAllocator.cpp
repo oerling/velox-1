@@ -404,6 +404,6 @@ void HashStringAllocator::checkConsistency() const {
   }
   VELOX_CHECK(numInFreeList == numFree_);
   VELOX_CHECK(bytesInFreeList == freeBytes_);
-  }
+}
 
 } // namespace facebook::velox
