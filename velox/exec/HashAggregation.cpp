@@ -83,11 +83,11 @@ HashAggregation::HashAggregation(
       } else {
         constants.push_back(nullptr);
       }
-      if (isRawInput) {
-	intermediateTypes.push_back(Aggregate::intermediateType(aggregate->name(), argTypes));
-      } else {
-	intermediateTypes.push_back(argTypes[0]);
-      }
+    }
+    if (isRawInput(aggregationNode->step())) {
+      intermediateTypes.push_back(Aggregate::intermediateType(aggregate->name(), argTypes));
+    } else {
+      intermediateTypes.push_back(argTypes[0]);
     }
 
     // Setup aggregation mask: convert the Variable Reference name to the
@@ -204,7 +204,7 @@ RowVectorPtr HashAggregation::getOutput() {
       BaseVector::create(outputType_, batchSize, operatorCtx_->pool()));
 
   bool hasData = groupingSet_->getOutput(
-      batchSize, isPartialOutput_, &resultIterator_, result);
+      batchSize, &resultIterator_, result);
   if (!hasData) {
     stats_.spilledBytes = groupingSet_->spilledBytes();
     resultIterator_.reset();

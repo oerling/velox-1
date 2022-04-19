@@ -37,6 +37,13 @@ namespace facebook::velox {
 // HashStringAllocator is set to kArenaEnd.
 class HashStringAllocator : public StreamArena {
  public:
+  // The minimum allocation must have space after the header for the
+  // free list pointers and the trailing length.
+  static constexpr int32_t kMinAlloc =
+      sizeof(CompactDoubleList) + sizeof(uint32_t);
+
+
+
   class Header {
    public:
     static constexpr uint32_t kFree = 1U << 31;
@@ -193,6 +200,12 @@ class HashStringAllocator : public StreamArena {
       const Header* FOLLY_NONNULL header,
       ByteStream& stream);
 
+  // Returns the number of payload bytes between 'header->begin()' and 'position'.
+  static int64_t offset(Header* Folly_NONNULL, Position position);
+  
+  // Returns a position 'offset' bytes after 'header->begin()'.
+  static Position seek(Header* FOLLY_NONNULL header, int64_t offset);
+
   // Sets stream to write to this pool. The write can span multiple
   // non-contiguous runs. Each contiguous run will have at least
   // kMinContiguous bytes of contiguous space. finishWrite finalizes
@@ -260,10 +273,6 @@ class HashStringAllocator : public StreamArena {
   void checkConsistency() const;
 
  private:
-  // The minimum allocation must have space after the header for the
-  // free list pointers and the trailing length.
-  static constexpr int32_t kMinAlloc =
-      sizeof(CompactDoubleList) + sizeof(uint32_t);
   static constexpr int32_t kUnitSize = 16 * memory::MappedMemory::kPageSize;
   static constexpr int32_t kMinContiguous = 48;
 

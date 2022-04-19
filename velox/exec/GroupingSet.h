@@ -21,7 +21,6 @@
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/exec/VectorHasher.h"
 
-
 namespace facebook::velox::exec {
 
 class Aggregate;
@@ -35,7 +34,7 @@ class GroupingSet {
       std::vector<std::optional<ChannelIndex>>&& aggrMaskChannels,
       std::vector<std::vector<ChannelIndex>>&& channelLists,
       std::vector<std::vector<VectorPtr>>&& constantLists,
-      std::vector<TypePtr> intermediateTypes,
+      std::vector<TypePtr>&& intermediateTypes,
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
@@ -57,18 +56,25 @@ class GroupingSet {
   /// returns true.
   bool getOutput(
       int32_t batchSize,
-      bool isPartial,
       RowContainerIterator* iterator,
       RowVectorPtr& result);
-  bool getOutputWithSpill(VectorPtr& result);
-  
+
   uint64_t allocatedBytes() const;
 
   void resetPartial();
 
   const HashLookup& hashLookup() const;
 
-  uint64_t spilledBytes() const {
+  // Spills content until under 'targetRows' and under 'targetBytes'
+  // of out of line data are left. If targetRows is 0, spills
+  // everything and physically frees the data in the
+  // 'table_->rows()'. This leaves 'table_' initialized and 'this'
+  // ready to accumulate more input. This is called by ensureInputFits
+  // or by external memory management. In the latter case, the Driver
+  // of this will be in a paused state and off thread.
+  void spill(int64_t targetRows, int64_t targetBytes);
+
+  int64_t spilledBytes() const {
     return spiller_ ? spiller_->spilledBytes() : 0;
   }
   
@@ -96,24 +102,22 @@ class GroupingSet {
   // index for this aggregation), otherwise it returns reference to activeRows_.
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
-  void checkSpill(const RowVectorPtr& input);
+  // Checks if input will fit in the existing memory and increases
+  // reservation if not. If reservation cannot be increased, spills
+  // enough to make 'input' fit.
+  void ensureInputFits(const RowVectorPtr& input);
 
-  int32_t
-  listRowsNoSpill(RowContainerIterator* iterator, int32_t maxRows, char** rows);
+  void
+  extractGroups(char** groups, int32_t numGroups, const RowVectorPtr& result);
 
-  void extractGroups(
-      char** groups,
-      int32_t numGroups,
-      bool isPartial,
-      RowVectorPtr& result);
+  bool getOutputWithSpill(const RowVectorPtr& result);
 
-  bool getSpilledOutput(RowVectorPtr result);
-  bool mergeNext(RowVectorPtr& result);
-  void initializeRow(VectorRow& keys, char* row);
-  void updateRow(SpillStream& stream, char* row);
-  void extractSpillResult(RowVectorPtr& result);
+  bool mergeNext(const RowVectorPtr& result);
 
-  
+  void initializeRow(SpillStream& keys, char* row);
+  void updateRow(SpillStream& keys, char* row);
+  void extractSpillResult(const RowVectorPtr& result);
+
   std::vector<ChannelIndex> keyChannels_;
 
   /// A subset of grouping keys on which the input is clustered.
@@ -131,7 +135,6 @@ class GroupingSet {
   // 'channelLists_'. This is used when channelLists_[i][j] ==
   // kConstantChannel.
   const std::vector<std::vector<VectorPtr>> constantLists_;
-  std::vector<TypePtr> intermediateTypes,
   const bool ignoreNullKeys_;
   memory::MappedMemory* const mappedMemory_;
 
@@ -169,29 +172,55 @@ class GroupingSet {
   /// 'remainingInput_'.
   bool remainingMayPushdown_;
 
-  // Accumulator types of aggregates. Used for spilling.
-  std::vector<TypePtr> intermediateTypes_;
-  
+  uint64_t spillThreshold_ = 0;
   uint64_t maxBatchBytes_;
+
+  // Intermediate types of aggregates. Used for spilling
+
+  // Sum of the minimum variable length size for variable length
+  // accumulators. This + serialized size of new values is a reasonable
+  // cap for additional space usage when updating.
+  int32_t minVariableWidthAccumulatorBytes_{0};
+  std::vector<TypePtr> intermediateTypes_;
+
+  // Filesystem path for spill files, empty if spilling is disabled.
+  const std::string spillPath_;
+
   std::unique_ptr<Spiller> spiller_;
   std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
   RowContainerIterator spillIterator_;
+
+  // Container for materializing batches of output from spilling.
   std::unique_ptr<RowContainer> mergeRows_;
+
   // The row with the current merge state, allocated from 'mergeRow_'.
   char* mergeState_ = nullptr;
+
   // The currently running spill partition in producing spilld output.
-  int32_t outputPartition_ = -1;
+  int32_t outputPartition_{-1};
+
+  // Intermediate vector for passing arguments to aggregate in merging spill.
   std::vector<VectorPtr> mergeArgs_;
+
+  // Indicates the element in mergeArgs_[0] that corresponds to the accumulator
+  // to merge.
   SelectivityVector mergeSelection_;
+
+  // True if 'merge_' indicates that the next key is the same as the current
+  // one.
+  bool nextKeyIsEqual_{false};
+
   // The set of rows that are outside of the spillable hash number
   // ranges. Used when producing output.
-  Spiller::SpillRows nonSpilledRows_;
+  std::optional<Spiller::SpillRows> nonSpilledRows_;
+
   // Index of first in 'nonSpilledRows_' that has not been added to output.
   size_t nonSpilledIndex_ = 0;
-  // true if 'merge' indicates that the next to merge has the same key.
-  bool nextIsSameKey_{false};
-  const std::string spillPath_;
-  memory::MemoryUsageTracker* FOLLY_NULLABLE const  tracker_;
+  // Pool of the OperatorCtx. Used for spilling.
+  memory::MemoryPool& pool_;
+
+  // Executor for spilling. If nullptr spilling writes on the Driver's thread.
+  folly::Executor* FOLLY_NULLABLE const spillExecutor_;
 };
 
 } // namespace facebook::velox::exec

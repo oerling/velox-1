@@ -64,6 +64,17 @@ class Aggregate {
   virtual bool isFixedSize() const {
     return true;
   }
+
+
+  // Returns the size for a single-value variable length
+  // accumulator. For example, map_agg has 4xthe initial array size as
+  // overhead even for a single key-value pair. This is on top of
+  // accumulatorFixedWidthBytes() and the serialized size of the
+  // accumulated value.
+  virtual int32_t minVariableWidthAccumulatorBytes() const {
+    return 0;
+  }
+
   void setAllocator(HashStringAllocator* allocator) {
     allocator_ = allocator;
   }
