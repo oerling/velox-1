@@ -200,7 +200,7 @@ class HashStringAllocator : public StreamArena {
 
   // Returns the number of payload bytes between 'header->begin()' and
   // 'position'.
-  static int64_t offset(Header* Folly_NONNULL, Position position);
+  static int64_t offset(Header* Folly_NONNULL header, Position position);
 
   // Returns a position 'offset' bytes after 'header->begin()'.
   static Position seek(Header* FOLLY_NONNULL header, int64_t offset);
