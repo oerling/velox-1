@@ -446,12 +446,28 @@ const HashLookup& GroupingSet::hashLookup() const {
 
 namespace {
 bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
-  try {
-    tracker.reserve(increment);
-  } catch (const std::exception& e) {
-    return false;
+  constexpr int32_t kGrowthQuantum = 8 << 20;
+  auto addedReservation = bits::roundUp(increment, kGrowthQuantum);
+  // We look up the tracker tree to see if there is a parent that could have space. If some parent could have space we take the chance and try to increase reservation.
+  auto tracker* candidate = &tracker;
+  while (candidate) {
+    auto limit = candidate->maxTotalMemory();
+    if (limit == memory::kMaxMemory && candidate->parent()) {
+      candidate = candidate->parent();
+      continue;
+    }
+    if (limit - candidate->getCurrentTotalMemory() > addedReservation) {
+      try {
+	tracker.reserve(addedReservation);
+      } catch (const std::exception& e) {
+	return false;
+      }
+      return true;
+    }
+    candidate = candidate->parent();
   }
-  return true;
+  return false;
+
 }
 
 int64_t estimateSerializedSize(const VectorPtr& vector) {
