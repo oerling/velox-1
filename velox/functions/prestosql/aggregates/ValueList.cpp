@@ -31,13 +31,10 @@ void ValueList::prepareAppend(HashStringAllocator* allocator) {
   if (size_ && size_ % 64 == 0) {
     writeLastNulls(allocator);
     lastNulls_ = 0;
-    // Write an extra word and then seek back before that word so that
-    // finish will not grow the allocation. Use byte offset to keep
-    // the position because writing the next word can shift things
-    // around and invalidate the hashStringAllocator::Position.
-    auto nullsOffset = HashStringAllocator::offset(nullsBegin_, nullsCurrent_);
-    writeLastNulls(allocator);
-    nullsCurrent_ = HashStringAllocator::seek(nullsBegin_, nullsOffset);
+    // Make sure there is space for another word of null flags without
+    // allocating more space. This is needed for finalize to finish in
+    // constant space.
+    allocator->ensureAvailable(sizeof(int64_t), nullsCurrent_);
   }
 }
 

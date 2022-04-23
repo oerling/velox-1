@@ -168,6 +168,10 @@ TEST_F(HashStringAllocatorTest, rewrite) {
     current = instance_->finishWrite(stream, 0);
     auto offset = HashStringAllocator::offset(header, current);
     EXPECT_EQ((i + 1) * sizeof(int64_t), offset);
+    // The allocated writable space from 'header' is at least the amount
+    // written.
+    auto avail = HashStringAllocator::available({header, header->begin()});
+    EXPECT_LE((i + 1) * sizeof(int64_t), avail);
   }
   EXPECT_EQ(-1, HashStringAllocator::offset(header, {nullptr, nullptr}));
   for (auto repeat = 0; repeat < 2; ++repeat) {
@@ -184,6 +188,11 @@ TEST_F(HashStringAllocatorTest, rewrite) {
     EXPECT_EQ(12345LL, stream.read<int64_t>());
     EXPECT_EQ(67890LL, stream.read<int64_t>());
   }
+  // The stream contains 3 int64_t's.
+  auto end = HashStringAllocator::seek(header, 3 * sizeof(int64_t));
+  EXPECT_EQ(0, HashStringAllocator::available(end));
+  instance_->ensureAvailable(32, end);
+  EXPECT_EQ(32, HashStringAllocator::available(end));
 }
 
 TEST_F(HashStringAllocatorTest, stlAllocator) {

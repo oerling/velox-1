@@ -205,6 +205,16 @@ class HashStringAllocator : public StreamArena {
   // Returns a position 'offset' bytes after 'header->begin()'.
   static Position seek(Header* FOLLY_NONNULL header, int64_t offset);
 
+  // Returns the number of bytes that can be written starting at 'position'
+  // without allocating more space.
+  static int64_t available(const Position& position);
+
+  // Ensures that one can write at least 'bytes' data starting at
+  // 'position' without allocating more space. 'position' can be
+  // changed but will logically point at the same data. Data to the
+  // right of 'position is not preserved.
+  void ensureAvailable(int32_t bytes, Position& position);
+
   // Sets stream to write to this pool. The write can span multiple
   // non-contiguous runs. Each contiguous run will have at least
   // kMinContiguous bytes of contiguous space. finishWrite finalizes
