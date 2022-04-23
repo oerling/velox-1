@@ -1301,11 +1301,19 @@ struct Generic {
   Generic() = delete;
 };
 
+using Any = Generic<>;
+
 template <typename>
 struct isVariadicType : public std::false_type {};
 
 template <typename T>
 struct isVariadicType<Variadic<T>> : public std::true_type {};
+
+template <typename>
+struct isGenericType : public std::false_type {};
+
+template <typename T>
+struct isGenericType<Generic<T>> : public std::true_type {};
 
 template <typename KEY, typename VALUE>
 struct Map {

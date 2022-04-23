@@ -57,6 +57,8 @@ class MappedMemory {
   static constexpr int32_t kNoOwner = -1;
   // Marks allocation via allocateBytes, e.g. StlMappedMemoryAllocator.
   static constexpr int32_t kMallocOwner = -14;
+  // Allocations smaller than 3K should  go to malloc.
+  static constexpr int32_t kMaxMallocBytes = 3072;
 
   // Represents a number of consecutive pages of kPageSize bytes.
   class PageRun {
@@ -208,6 +210,16 @@ class MappedMemory {
     uint64_t size_{0};
   };
 
+  // Stats on memory allocated by allocateBytes().
+  struct AllocateBytesCounters {
+    // Total size of small allocations.
+    uint64_t totalSmall;
+    // Total size of allocations from some size class.
+    uint64_t totalInSizeClasses;
+    // Total in standalone large allocations via allocateContiguous().
+    uint64_t totalLarge;
+  };
+
   MappedMemory() {}
 
   virtual ~MappedMemory() {}
@@ -271,15 +283,17 @@ class MappedMemory {
   // largest size class, allocates one element of the next size
   // class. If 'size' is greater than the largest size class, calls
   // allocateContiguous(). Returns nullptr if there is no space. The
-  // amount to allocate is subject to the size limit of
-  // 'this'. Trackers are expected to be called before this.
-  void* FOLLY_NULLABLE allocateBytes(uint64_t size, int32_t maxMallocSize);
+  // amount to allocate is subject to the size limit of 'this'. This
+  // function is not virtual but calls the virtual functions allocate
+  // and allocateContiguous, which can track sizes and enforce caps etc.
+  void* FOLLY_NULLABLE
+  allocateBytes(uint64_t bytes, uint64_t maxMallocSize = kMaxMallocBytes);
 
   // Frees memory allocated with allocateBytes().
   void freeBytes(
       void* FOLLY_NONNULL p,
       uint64_t size,
-      int32_t maxMallocSize) noexcept;
+      uint64_t maxMallocSize = kMaxMallocBytes) noexcept;
 
   // Checks internal consistency of allocation data
   // structures. Returns true if OK.
@@ -297,6 +311,19 @@ class MappedMemory {
 
   virtual std::shared_ptr<MappedMemory> addChild(
       std::shared_ptr<MemoryUsageTracker> tracker);
+
+  virtual MemoryUsageTracker* FOLLY_NULLABLE tracker() const {
+    return nullptr;
+  }
+
+  // Returns static counters for allocateBytes usage.
+
+  static AllocateBytesCounters allocateBytesStats() {
+    return {
+        totalSmallAllocateBytes_,
+        totalSizeClassAllocateBytes_,
+        totalLargeAllocateBytes_};
+  }
 
   virtual std::string toString() const;
 
@@ -334,6 +361,14 @@ class MappedMemory {
   // by getInstance().
   static MappedMemory* FOLLY_NULLABLE customInstance_;
   static std::mutex initMutex_;
+  // Static counters for STL and memoryPool users of
+  // MappedMemory. Updated by allocateBytes() and freeBytes(). These
+  // are intended to be exported via StatsReporter. These are
+  // respectively backed by malloc, allocate from a single size class
+  // and standalone mmap.
+  static std::atomic<uint64_t> totalSmallAllocateBytes_;
+  static std::atomic<uint64_t> totalSizeClassAllocateBytes_;
+  static std::atomic<uint64_t> totalLargeAllocateBytes_;
 };
 
 // Wrapper around MappedMemory for scoped tracking of activity. We
@@ -406,6 +441,10 @@ class ScopedMappedMemory final : public MappedMemory {
     return std::make_shared<ScopedMappedMemory>(this, tracker);
   }
 
+  MemoryUsageTracker* FOLLY_NULLABLE tracker() const override {
+    return tracker_.get();
+  }
+
  private:
   std::shared_ptr<MappedMemory> parentPtr_;
   MappedMemory* FOLLY_NONNULL parent_;
@@ -430,12 +469,11 @@ struct StlMappedMemoryAllocator {
   }
 
   T* FOLLY_NONNULL allocate(std::size_t n) {
-    return reinterpret_cast<T*>(
-        allocator_->allocateBytes(n * sizeof(T), kMaxMallocSize));
+    return reinterpret_cast<T*>(allocator_->allocateBytes(n * sizeof(T)));
   }
 
   void deallocate(T* FOLLY_NONNULL p, std::size_t n) noexcept {
-    allocator_->freeBytes(p, n * sizeof(T), kMaxMallocSize);
+    allocator_->freeBytes(p, n * sizeof(T));
   }
 
   MappedMemory* FOLLY_NONNULL allocator() const {
@@ -454,8 +492,6 @@ struct StlMappedMemoryAllocator {
   }
 
  private:
-  // Larger than 3K will go to smallest size class of 4K.
-  static constexpr int32_t kMaxMallocSize = 3072;
   MappedMemory* FOLLY_NONNULL allocator_;
 };
 
