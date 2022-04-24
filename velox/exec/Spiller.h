@@ -118,7 +118,6 @@ class Spiller {
   // RowContainerSpillStream.
   void extractSpill(folly::Range<char**> rows, RowVectorPtr* result);
 
- private:
   // Returns the MappedMemory to use for intermediate storage for
   // spilling. This is not directly the RowContainer's memory because
   // this is usually at limit when starting spilling.
@@ -133,6 +132,7 @@ class Spiller {
   // first and 'partition' must specify a partition that has started spilling.
   std::unique_ptr<SpillStream> spillStreamOverRows(int32_t partition);
 
+ private:
   // Represents a run of rows from a spillable partition of
   // a RowContainer. Rows that hash to the same partition are accumulated here
   // and sorted in the case of sorted spilling. The run is then
