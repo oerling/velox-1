@@ -265,7 +265,7 @@ class MemoryUsageTracker
     }
   }
 
-  int maxTotalBytes() const {
+  int64_t maxTotalBytes() const {
     return usage(maxMemory_, UsageType::kTotalMem);
   }
 

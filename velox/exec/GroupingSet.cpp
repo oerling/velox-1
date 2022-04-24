@@ -449,14 +449,14 @@ bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
   constexpr int32_t kGrowthQuantum = 8 << 20;
   auto addedReservation = bits::roundUp(increment, kGrowthQuantum);
   // We look up the tracker tree to see if there is a parent that could have space. If some parent could have space we take the chance and try to increase reservation.
-  auto tracker* candidate = &tracker;
+  auto candidate = &tracker;
   while (candidate) {
-    auto limit = candidate->maxTotalMemory();
+    auto limit = candidate->maxTotalBytes();
     if (limit == memory::kMaxMemory && candidate->parent()) {
       candidate = candidate->parent();
       continue;
     }
-    if (limit - candidate->getCurrentTotalMemory() > addedReservation) {
+    if (limit - candidate->getCurrentTotalBytes() > addedReservation) {
       try {
 	tracker.reserve(addedReservation);
       } catch (const std::exception& e) {
@@ -556,7 +556,7 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         rows->keyTypes().size(),
         spillPath_,
         fileSize,
-        pool_,
+        Spiller::spillPool(),
         spillExecutor_);
   }
   spiller_->spill(targetRows, targetBytes, spillIterator_);
