@@ -449,7 +449,9 @@ namespace {
 bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
   constexpr int32_t kGrowthQuantum = 8 << 20;
   auto addedReservation = bits::roundUp(increment, kGrowthQuantum);
-  // We look up the tracker tree to see if there is a parent that could have space. If some parent could have space we take the chance and try to increase reservation.
+  // We look up the tracker tree to see if there is a parent that could have
+  // space. If some parent could have space we take the chance and try to
+  // increase reservation.
   auto candidate = &tracker;
   while (candidate) {
     auto limit = candidate->maxTotalBytes();
@@ -459,16 +461,15 @@ bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
     }
     if (limit - candidate->getCurrentTotalBytes() > addedReservation) {
       try {
-	tracker.reserve(addedReservation);
+        tracker.reserve(addedReservation);
       } catch (const std::exception& e) {
-	return false;
+        return false;
       }
       return true;
     }
     candidate = candidate->parent();
   }
   return false;
-
 }
 
 int64_t estimateSerializedSize(const VectorPtr& vector) {
