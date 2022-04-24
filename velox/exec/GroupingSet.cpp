@@ -410,10 +410,11 @@ void GroupingSet::extractGroups(
     int32_t numGroups,
     const RowVectorPtr& result) {
   result->resize(numGroups);
-  auto totalKeys = lookup_->hashers.size();
+  RowContainer& rows = table_ ? *table_->rows() : *rowsWhileReadingSpill_;
+  auto totalKeys = rows.keyTypes().size();
   for (int32_t i = 0; i < totalKeys; ++i) {
     auto keyVector = result->childAt(i);
-    table_->rows()->extractColumn(groups, numGroups, i, keyVector);
+    rows.extractColumn(groups, numGroups, i, keyVector);
   }
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
     aggregates_[i]->finalize(groups, numGroups);

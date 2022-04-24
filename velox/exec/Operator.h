@@ -107,7 +107,7 @@ struct OperatorStats {
   CpuWallTiming finishTiming;
 
   MemoryStats memoryStats;
-  uint64_t spilledBytes;
+  uint64_t spilledBytes{0};
 
   std::unordered_map<std::string, RuntimeMetric> runtimeStats;
 

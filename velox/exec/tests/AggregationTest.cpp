@@ -759,7 +759,10 @@ TEST_F(AggregationTest, spill) {
   }
   auto stats = pair.first->task()->taskStats().pipelineStats;
 
-  // EXPECT_LT(1 << 20, spilledBytes);
+  // Over 20MB spilled.
+  EXPECT_LT(20 << 20, stats[0].operatorStats[2].spilledBytes);
+  // No spill in partial aggregation.
+  EXPECT_EQ(0, stats[0].operatorStats[1].spilledBytes);
   EXPECT_EQ(numRows, kNumDistinct);
 }
 

@@ -203,10 +203,13 @@ RowVectorPtr HashAggregation::getOutput() {
   // TODO Figure out how to re-use 'result' safely.
   auto result = std::static_pointer_cast<RowVector>(
       BaseVector::create(outputType_, batchSize, operatorCtx_->pool()));
-
+  if (!stats_.spilledBytes) {
+    // Set spilledBytes when first getting data. All spill, if any,
+    // will have taken place by then.
+    stats_.spilledBytes = groupingSet_->spilledBytes();
+  }
   bool hasData = groupingSet_->getOutput(batchSize, &resultIterator_, result);
   if (!hasData) {
-    stats_.spilledBytes = groupingSet_->spilledBytes();
     resultIterator_.reset();
 
     if (partialFull_) {
