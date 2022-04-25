@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include "velox/exec//RowContainer.h"
+#include "velox/exec/RowContainer.h"
 
 namespace facebook::velox::exec {
 
