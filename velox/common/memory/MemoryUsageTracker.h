@@ -420,7 +420,7 @@ class MemoryUsageTracker
   //  Decrements usage in 'this' and parents.
   void decrementUsage(UsageType type, int64_t size) noexcept;
 
-  void checkNonNegativeSizes(const char* message) const {
+  void checkNonNegativeSizes(const char* FOLLY_NONNULL message) const {
     if (user(currentUsageInBytes_) < 0 || system(currentUsageInBytes_) < 0 ||
         total(currentUsageInBytes_) < 0) {
       LOG_EVERY_N(ERROR, 100)
