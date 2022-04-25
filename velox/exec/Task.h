@@ -528,7 +528,7 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
       SplitsStore& splitsStore,
       exec::Split&& split);
 
-  void finished();
+  void finishedLocked();
 
   StopReason shouldStopLocked();
 

@@ -1549,7 +1549,7 @@ StopReason Task::enterForTerminateLocked(ThreadState& state) {
 StopReason Task::leave(ThreadState& state) {
   std::lock_guard<std::mutex> l(mutex_);
   if (--numThreads_ == 0) {
-    finished();
+    finishedLocked();
   }
   state.clearThread();
   if (state.isTerminated) {
@@ -1583,7 +1583,7 @@ StopReason Task::enterSuspended(ThreadState& state) {
   if (reason == StopReason::kNone || reason == StopReason::kPause) {
     state.isSuspended = true;
     if (--numThreads_ == 0) {
-      finished();
+      finishedLocked();
     }
   }
   return StopReason::kNone;
@@ -1632,7 +1632,7 @@ StopReason Task::shouldStop() {
   return StopReason::kNone;
 }
 
-void Task::finished() {
+void Task::finishedLocked() {
   for (auto& promise : threadFinishPromises_) {
     promise.setValue(true);
   }
