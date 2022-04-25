@@ -135,6 +135,10 @@ class GroupingSet {
   // 'channelLists_'. This is used when channelLists_[i][j] ==
   // kConstantChannel.
   const std::vector<std::vector<VectorPtr>> constantLists_;
+
+  // Types for extracting accumulators for spilling.
+  std::vector<TypePtr> intermediateTypes_;
+
   const bool ignoreNullKeys_;
   memory::MappedMemory* const mappedMemory_;
 
@@ -172,16 +176,12 @@ class GroupingSet {
   /// 'remainingInput_'.
   bool remainingMayPushdown_;
 
-  uint64_t spillThreshold_ = 0;
   uint64_t maxBatchBytes_;
-
-  // Intermediate types of aggregates. Used for spilling
 
   // Sum of the minimum variable length size for variable length
   // accumulators. This + serialized size of new values is a reasonable
   // cap for additional space usage when updating.
   int32_t minVariableWidthAccumulatorBytes_{0};
-  std::vector<TypePtr> intermediateTypes_;
 
   // Filesystem path for spill files, empty if spilling is disabled.
   const std::string spillPath_;
