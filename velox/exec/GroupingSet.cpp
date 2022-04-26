@@ -36,13 +36,13 @@ bool areAllLazyNotLoaded(const std::vector<VectorPtr>& vectors) {
   });
 }
 
-std::string makeSpillPath(bool isPartial, OperatorCtx* operatorCtx) {
+std::string makeSpillPath(bool isPartial, const OperatorCtx& operatorCtx) {
   if (isPartial) {
     return "";
   }
-  auto path = operatorCtx->task()->queryCtx()->config().spillPath();
+  auto path = operatorCtx.task()->queryCtx()->config().spillPath();
   if (!path.empty()) {
-    return path + "/" + operatorCtx->task()->taskId();
+    return path + "/" + operatorCtx.task()->taskId();
   }
   return "";
 }
@@ -59,7 +59,7 @@ GroupingSet::GroupingSet(
     bool ignoreNullKeys,
     bool isPartial,
     bool isRawInput,
-    OperatorCtx* operatorCtx)
+    OperatorCtx* FOLLY_NONNULL operatorCtx)
     : preGroupedKeyChannels_(std::move(preGroupedKeys)),
       hashers_(std::move(hashers)),
       isGlobal_(hashers_.empty()),
@@ -77,7 +77,7 @@ GroupingSet::GroupingSet(
       isAdaptive_(
           operatorCtx->task()->queryCtx()->config().hashAdaptivityEnabled()),
       execCtx_(*operatorCtx->execCtx()),
-      spillPath_(makeSpillPath(isPartial, operatorCtx)),
+      spillPath_(makeSpillPath(isPartial, *operatorCtx)),
       pool_(*operatorCtx->pool()),
       spillExecutor_(operatorCtx->task()->queryCtx()->spillExecutor()) {
   for (auto& hasher : hashers_) {

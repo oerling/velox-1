@@ -38,7 +38,7 @@ class GroupingSet {
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
-      OperatorCtx* operatorCtx);
+      OperatorCtx* FOLLY_NONNULL operatorCtx);
 
   void addInput(const RowVectorPtr& input, bool mayPushdown);
 
