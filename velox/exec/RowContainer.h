@@ -379,14 +379,14 @@ class RowContainer {
   // membership is consistent with free flag.
   void checkConsistency();
 
- private:
-  // Offset of the pointer to the next free row on a free row.
-  static constexpr int32_t kNextFreeOffset = 0;
-
   static inline bool
   isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
     return (row[nullByte] & nullMask) != 0;
   }
+
+ private:
+  // Offset of the pointer to the next free row on a free row.
+  static constexpr int32_t kNextFreeOffset = 0;
 
   template <typename T>
   static inline T valueAt(const char* group, int32_t offset) {
@@ -779,7 +779,8 @@ class RowContainer {
   // Offset and null indicator offset of non-aggregate fields as a single
   // word. Corresponds pairwise to 'types_'.
   std::vector<RowColumn> rowColumns_;
-  // Bit position of probed flag, 0 if none.
+  // Bit offset of the probed flag for a full or right outer join  payload. 0 if
+  // not applicable.
   int32_t probedFlagOffset_ = 0;
 
   // Bit position of free bit.
