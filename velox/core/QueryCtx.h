@@ -94,7 +94,7 @@ class QueryCtx : public Context {
     return pool_.get();
   }
 
-  memory::MappedMemory* mappedMemory() const {
+  memory::MappedMemory* FOLLY_NONNULL mappedMemory() const {
     return mappedMemory_;
   }
 
@@ -111,7 +111,7 @@ class QueryCtx : public Context {
     return config_;
   }
 
-  Config* getConnectorConfig(const std::string& connectorId) const {
+  Config* FOLLY_NONNULL getConnectorConfig(const std::string& connectorId) const {
     auto it = connectorConfigs_.find(connectorId);
     if (it == connectorConfigs_.end()) {
       return getEmptyConfig();
