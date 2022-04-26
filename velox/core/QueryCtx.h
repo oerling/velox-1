@@ -49,7 +49,8 @@ class QueryCtx : public Context {
       std::shared_ptr<Config> config = std::make_shared<MemConfig>(),
       std::unordered_map<std::string, std::shared_ptr<Config>>
           connectorConfigs = {},
-      memory::MappedMemory* mappedMemory = memory::MappedMemory::getInstance(),
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory =
+          memory::MappedMemory::getInstance(),
       std::unique_ptr<memory::MemoryPool> pool = nullptr,
       std::shared_ptr<folly::Executor> spillExecutor = nullptr)
       : Context{ContextScope::QUERY},
@@ -140,7 +141,7 @@ class QueryCtx : public Context {
   }
 
  private:
-  static Config* getEmptyConfig() {
+  static Config* FOLLY_NONNULL getEmptyConfig() {
     static const std::unique_ptr<Config> kEmptyConfig =
         std::make_unique<MemConfig>();
     return kEmptyConfig.get();
@@ -157,7 +158,7 @@ class QueryCtx : public Context {
   static constexpr const char* kQueryRootMemoryPool = "query_root";
 
   std::unique_ptr<memory::MemoryPool> pool_;
-  memory::MappedMemory* mappedMemory_;
+  memory::MappedMemory* FOLLY_NONNULL mappedMemory_;
   std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs_;
   std::shared_ptr<folly::Executor> executor_;
   folly::Executor::KeepAlive<> executorKeepalive_;
@@ -168,14 +169,14 @@ class QueryCtx : public Context {
 // Represents the state of one thread of query execution.
 class ExecCtx : public Context {
  public:
-  ExecCtx(memory::MemoryPool* pool, QueryCtx* queryCtx)
+  ExecCtx(memory::MemoryPool* pool, QueryCtx* FOLLY_NONNULL queryCtx)
       : Context{ContextScope::QUERY}, pool_(pool), queryCtx_(queryCtx) {}
 
-  velox::memory::MemoryPool* pool() const {
+  velox::memory::MemoryPool* FOLLY_NONNULL pool() const {
     return pool_;
   }
 
-  QueryCtx* queryCtx() const {
+  QueryCtx* FOLLY_NONNULL queryCtx() const {
     return queryCtx_;
   }
 
@@ -214,8 +215,8 @@ class ExecCtx : public Context {
 
  private:
   // Pool for all Buffers for this thread
-  memory::MemoryPool* pool_;
-  QueryCtx* queryCtx_;
+  memory::MemoryPool* FOLLY_NONNULL pool_;
+  QueryCtx* FOLLY_NULLABLE queryCtx_;
   // A pool of preallocated DecodedVectors for use by expressions and operators.
   std::vector<std::unique_ptr<DecodedVector>> decodedVectorPool_;
   // A pool of preallocated SelectivityVectors for use by expressions
