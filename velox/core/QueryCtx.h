@@ -75,7 +75,8 @@ class QueryCtx : public Context {
       std::shared_ptr<Config> config = std::make_shared<MemConfig>(),
       std::unordered_map<std::string, std::shared_ptr<Config>>
           connectorConfigs = {},
-      memory::MappedMemory* mappedMemory = memory::MappedMemory::getInstance(),
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory =
+          memory::MappedMemory::getInstance(),
       std::unique_ptr<memory::MemoryPool> pool = nullptr)
       : Context{ContextScope::QUERY},
         pool_(std::move(pool)),
@@ -89,7 +90,7 @@ class QueryCtx : public Context {
     }
   }
 
-  memory::MemoryPool* pool() const {
+  memory::MemoryPool* FOLLY_NONNULL pool() const {
     return pool_.get();
   }
 
@@ -97,7 +98,7 @@ class QueryCtx : public Context {
     return mappedMemory_;
   }
 
-  folly::Executor* executor() const {
+  folly::Executor* FOLLY_NONNULL executor() const {
     if (executor_) {
       return executor_.get();
     }
@@ -155,7 +156,8 @@ class QueryCtx : public Context {
         memory::MemoryUsageTracker::create(kUnlimited, kUnlimited, kUnlimited));
   }
 
-  static constexpr const char* kQueryRootMemoryPool = "query_root";
+  static constexpr const char* FOLLY_NONNULL kQueryRootMemoryPool =
+      "query_root";
 
   std::unique_ptr<memory::MemoryPool> pool_;
   memory::MappedMemory* FOLLY_NONNULL mappedMemory_;
@@ -169,7 +171,9 @@ class QueryCtx : public Context {
 // Represents the state of one thread of query execution.
 class ExecCtx : public Context {
  public:
-  ExecCtx(memory::MemoryPool* pool, QueryCtx* FOLLY_NONNULL queryCtx)
+  ExecCtx(
+      memory::MemoryPool* FOLLY_NONNULL pool,
+      QueryCtx* FOLLY_NONNULL queryCtx)
       : Context{ContextScope::QUERY}, pool_(pool), queryCtx_(queryCtx) {}
 
   velox::memory::MemoryPool* FOLLY_NONNULL pool() const {
