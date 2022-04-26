@@ -111,7 +111,8 @@ class QueryCtx : public Context {
     return config_;
   }
 
-  Config* FOLLY_NONNULL getConnectorConfig(const std::string& connectorId) const {
+  Config* FOLLY_NONNULL
+  getConnectorConfig(const std::string& connectorId) const {
     auto it = connectorConfigs_.find(connectorId);
     if (it == connectorConfigs_.end()) {
       return getEmptyConfig();
