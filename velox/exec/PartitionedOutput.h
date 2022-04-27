@@ -19,8 +19,6 @@
 #include "velox/exec/Operator.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
 
-DECLARE_int32(min_partitioned_output_buffer_mb);
-
 namespace facebook::velox::exec {
 
 class PartitionedOutput;
@@ -77,6 +75,13 @@ class Destination {
   void
   serialize(const RowVectorPtr& input, vector_size_t begin, vector_size_t end);
 
+  // Sets the next target size for flushing. This is called at the
+  // start of each batch of output for the destination. The effect is
+  // to make different destinations ready at slightly different times
+  // so that for an even distribution of output we avoid a bursty
+  // traffic pattern where all consumers contend for the network at
+  // the same time. This is done for each batch so that the average
+  // batch size for each converges.
   void setTargetSizePct() {
     // Flush at  70 to 120% of target row or byte count.
     targetSizePct_ = 70 + (folly::Random::rand32(rng_) % 50);
@@ -103,7 +108,7 @@ class Destination {
   // Number of rows to accumulate before flushing.
   int32_t targetNumRows_;
 
-  // Generator for varying target batch size. Randomly seededat construction.
+  // Generator for varying target batch size. Randomly seeded at construction.
   folly::Random::DefaultGenerator rng_;
 };
 
