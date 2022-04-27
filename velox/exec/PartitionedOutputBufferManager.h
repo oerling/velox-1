@@ -43,7 +43,14 @@ struct DataAvailable {
 
 class DestinationBuffer {
  public:
-  void enqueue(std::shared_ptr<SerializedPage> data);
+  void enqueue(std::shared_ptr<SerializedPage> data) {
+    // drop duplicate end markers
+    if (data == nullptr && !data_.empty() && data_.back() == nullptr) {
+      return;
+    }
+
+    data_.push_back(std::move(data));
+  }
 
   // Copies data starting at 'sequence' into 'result', stopping after
   // exceeding 'maxBytes'. If there is no data, 'notify' is installed
@@ -80,14 +87,6 @@ class DestinationBuffer {
   // The sequence number of the first item to pass to 'notify'.
   int64_t notifySequence_;
   uint64_t notifyMaxBytes_;
-
-  // Microsecond time when 'this' became non-empty.
-  uint64_t dataAvailableSince_{0};
-  // Cumulative time spent in a non-empty state.
-  uint64_t fetchDelay_{0};
-  uint64_t fetchCount_{0};
-  // Microsecond time of last time the output was given to the consumer.
-  uint64_t lastSendStart_{0};
 };
 
 class PartitionedOutputBuffer {
