@@ -40,6 +40,9 @@ std::string makeCreateTableSql(
     auto child = rowType.childAt(i);
     if (child->isArray()) {
       sql << child->asArray().elementType()->kindName() << "[]";
+    } else if (child->isMap()) {
+      sql << "MAP(" << child->asMap().keyType()->kindName() << ", "
+          << child->asMap().valueType()->kindName() << ")";
     } else {
       sql << child->kindName();
     }
@@ -105,6 +108,42 @@ template <>
   return ::duckdb::Value::LIST(array);
 }
 
+template <>
+::duckdb::Value duckValueAt<TypeKind::MAP>(
+    const VectorPtr& vector,
+    int32_t row) {
+  auto mapVector = vector->as<MapVector>();
+  const auto& mapKeys = mapVector->mapKeys();
+  const auto& mapValues = mapVector->mapValues();
+  auto offset = mapVector->offsetAt(row);
+  auto size = mapVector->sizeAt(row);
+  if (size == 0) {
+    return ::duckdb::Value::MAP(
+        ::duckdb::Value::EMPTYLIST(duckdb::fromVeloxType(mapKeys->typeKind())),
+        ::duckdb::Value::EMPTYLIST(
+            duckdb::fromVeloxType(mapValues->typeKind())));
+  }
+
+  std::vector<::duckdb::Value> duckKeysVector;
+  std::vector<::duckdb::Value> duckValuesVector;
+  duckKeysVector.reserve(size);
+  duckValuesVector.reserve(size);
+  for (auto i = 0; i < size; i++) {
+    auto innerRow = offset + i;
+    duckKeysVector.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        duckValueAt, mapKeys->typeKind(), mapKeys, innerRow));
+    if (mapValues->isNullAt(innerRow)) {
+      duckValuesVector.emplace_back(::duckdb::Value(nullptr));
+    } else {
+      duckValuesVector.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          duckValueAt, mapValues->typeKind(), mapValues, innerRow));
+    }
+  }
+  return ::duckdb::Value::MAP(
+      ::duckdb::Value::LIST(duckKeysVector),
+      ::duckdb::Value::LIST(duckValuesVector));
+}
+
 template <TypeKind kind>
 velox::variant
 variantAt(::duckdb::DataChunk* dataChunk, int32_t row, int32_t column) {
@@ -156,7 +195,7 @@ velox::variant variantAt(const ::duckdb::Value& value) {
 
 velox::variant rowVariantAt(
     const ::duckdb::Value& vector,
-    const std::shared_ptr<const Type>& rowType) {
+    const TypePtr& rowType) {
   std::vector<velox::variant> values;
   const auto& structValue = ::duckdb::StructValue::GetChildren(vector);
   for (size_t i = 0; i < structValue.size(); ++i) {
@@ -173,6 +212,30 @@ velox::variant rowVariantAt(
     }
   }
   return velox::variant::row(std::move(values));
+}
+
+velox::variant mapVariantAt(
+    const ::duckdb::Value& vector,
+    const TypePtr& mapType) {
+  std::map<variant, variant> map;
+
+  const auto& mapValue = ::duckdb::StructValue::GetChildren(vector);
+  VELOX_CHECK_EQ(mapValue.size(), 2);
+
+  auto mapTypePtr = dynamic_cast<const MapType*>(mapType.get());
+  auto keyType = mapTypePtr->keyType()->kind();
+  auto valueType = mapTypePtr->valueType()->kind();
+  const auto& keyList = ::duckdb::ListValue::GetChildren(mapValue[0]);
+  const auto& valueList = ::duckdb::ListValue::GetChildren(mapValue[1]);
+  VELOX_CHECK_EQ(keyList.size(), valueList.size());
+  for (int i = 0; i < keyList.size(); i++) {
+    auto variantKey =
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(variantAt, keyType, keyList[i]);
+    auto variantValue =
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(variantAt, valueType, valueList[i]);
+    map.insert({variantKey, variantValue});
+  }
+  return velox::variant::map(map);
 }
 
 std::vector<MaterializedRow> materialize(
@@ -192,6 +255,9 @@ std::vector<MaterializedRow> materialize(
       auto typeKind = rowType->childAt(j)->kind();
       if (dataChunk->GetValue(j, i).IsNull()) {
         row.push_back(variant(typeKind));
+      } else if (typeKind == TypeKind::MAP) {
+        row.push_back(
+            mapVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
       } else if (typeKind == TypeKind::ROW) {
         row.push_back(
             rowVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
@@ -234,6 +300,8 @@ velox::variant arrayVariantAt(const VectorPtr& vector, vector_size_t row) {
     auto innerRow = offset + i;
     if (elements->isNullAt(innerRow)) {
       array.emplace_back(elements->typeKind());
+    } else if (elements->typeKind() == TypeKind::ARRAY) {
+      array.push_back(arrayVariantAt(elements, innerRow));
     } else {
       array.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           variantAt, elements->typeKind(), elements, innerRow));
@@ -421,6 +489,8 @@ void DuckDbQueryRunner::createTable(
           appender.Append(nullptr);
         } else if (rowType.childAt(column)->isArray()) {
           appender.Append(duckValueAt<TypeKind::ARRAY>(columnVector, row));
+        } else if (rowType.childAt(column)->isMap()) {
+          appender.Append(duckValueAt<TypeKind::MAP>(columnVector, row));
         } else {
           auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
               duckValueAt, rowType.childAt(column)->kind(), columnVector, row);
@@ -648,6 +718,16 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
   return {std::move(cursor), std::move(result)};
 }
 
+bool waitForTaskCompletion(exec::Task* task, uint64_t maxWaitMicros) {
+  if (not task->isFinished()) {
+    auto& executor = folly::QueuedImmediateExecutor::instance();
+    auto future = task->stateChangeFuture(maxWaitMicros).via(&executor);
+    future.wait();
+    return task->isFinished();
+  }
+  return true;
+}
+
 std::shared_ptr<Task> assertQuery(
     const std::shared_ptr<const core::PlanNode>& plan,
     std::function<void(exec::Task*)> addSplits,
@@ -684,14 +764,7 @@ std::shared_ptr<Task> assertQuery(
   }
   auto task = cursor->task();
 
-  if (!task->isFinished()) {
-    // The Task can return results before the Driver is finished executing.
-    // Wait for the Task to finish before returning it to ensure it's stable
-    // e.g. the Driver isn't updating it anymore.
-    auto& executor = folly::QueuedImmediateExecutor::instance();
-    auto future = task->finishFuture().via(&executor);
-    future.wait();
-  }
+  EXPECT_TRUE(waitForTaskCompletion(task.get()));
 
   return task;
 }
@@ -701,6 +774,12 @@ std::shared_ptr<Task> assertQuery(
     const std::vector<RowVectorPtr>& expectedResults) {
   CursorParameters params;
   params.planNode = plan;
+  return assertQuery(params, expectedResults);
+}
+
+std::shared_ptr<Task> assertQuery(
+    const CursorParameters& params,
+    const std::vector<RowVectorPtr>& expectedResults) {
   auto result = readCursor(params, [](Task*) {});
 
   assertEqualResults(expectedResults, result.second);
@@ -708,9 +787,11 @@ std::shared_ptr<Task> assertQuery(
 }
 
 velox::variant readSingleValue(
-    const std::shared_ptr<const core::PlanNode>& plan) {
+    const std::shared_ptr<const core::PlanNode>& plan,
+    int32_t maxDrivers) {
   CursorParameters params;
   params.planNode = plan;
+  params.maxDrivers = maxDrivers;
   auto result = readCursor(params, [](Task*) {});
 
   EXPECT_EQ(1, result.second.size());

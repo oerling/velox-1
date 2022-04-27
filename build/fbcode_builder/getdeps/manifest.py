@@ -12,7 +12,6 @@ from .builder import (
     AutoconfBuilder,
     Boost,
     CMakeBuilder,
-    BistroBuilder,
     Iproute2Builder,
     MakeBuilder,
     NinjaBootstrap,
@@ -66,6 +65,8 @@ SCHEMA = {
             "make_binary": OPTIONAL,
             "build_in_src_dir": OPTIONAL,
             "job_weight_mib": OPTIONAL,
+            "patchfile": OPTIONAL,
+            "patchfile_opts": OPTIONAL,
         },
     },
     "msbuild": {"optional_section": True, "fields": {"project": REQUIRED}},
@@ -466,6 +467,7 @@ class ManifestParser(object):
         loader,
         final_install_prefix=None,
         extra_cmake_defines=None,
+        extra_b2_args=None,
     ):
         builder = self.get_builder_name(ctx)
         build_in_src_dir = self.get("build", "build_in_src_dir", "false", ctx=ctx)
@@ -527,17 +529,9 @@ class ManifestParser(object):
 
         if builder == "boost":
             args = self.get_section_as_args("b2.args", ctx)
+            if extra_b2_args is not None:
+                args += extra_b2_args
             return Boost(build_options, ctx, self, src_dir, build_dir, inst_dir, args)
-
-        if builder == "bistro":
-            return BistroBuilder(
-                build_options,
-                ctx,
-                self,
-                src_dir,
-                build_dir,
-                inst_dir,
-            )
 
         if builder == "cmake":
             defines = self.get_section_as_dict("cmake.defines", ctx)

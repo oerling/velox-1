@@ -22,6 +22,7 @@ add_executable(
   TableScanTest.cpp
   TaskTest.cpp
   AggregationTest.cpp
+  AggregateFunctionRegistryTest.cpp
   RowContainerTest.cpp
   HashTableTest.cpp
   TreeOfLosersTest.cpp
@@ -33,6 +34,7 @@ add_executable(
   RoundRobinPartitionFunctionTest.cpp
   StreamingAggregationTest.cpp
   TableWriteTest.cpp
+  TaskListenerTest.cpp
   TopNTest.cpp
   LimitTest.cpp
   OrderByTest.cpp
@@ -43,6 +45,7 @@ add_executable(
   PlanNodeToStringTest.cpp
   FunctionSignatureBuilderTest.cpp
   SimpleFunctionResolutionTest.cpp
+  SpillTest.cpp
   UnnestTest.cpp
   AssignUniqueIdTest.cpp)
 
@@ -76,7 +79,8 @@ target_link_libraries(
   ${Boost_REGEX_LIBRARIES}
   ${Boost_THREAD_LIBRARIES}
   ${Boost_SYSTEM_LIBRARIES}
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${FOLLY_WITH_DEPENDENCIES}
   ${DOUBLE_CONVERSION}
   ${gflags_LIBRARIES}

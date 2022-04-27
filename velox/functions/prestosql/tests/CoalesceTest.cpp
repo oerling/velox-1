@@ -16,6 +16,7 @@
 #include "velox/functions/prestosql/tests/FunctionBaseTest.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::test;
 
 class CoalesceTest : public functions::test::FunctionBaseTest {};
 
@@ -55,4 +56,21 @@ TEST_F(CoalesceTest, basic) {
       EXPECT_EQ(result->valueAt(i), i * pow(10, i % 3)) << "at " << i;
     }
   }
+}
+
+TEST_F(CoalesceTest, strings) {
+  auto input = makeRowVector({
+      makeNullableFlatVector<StringView>(
+          {"a", std::nullopt, std::nullopt, "d", std::nullopt}),
+      makeNullableFlatVector<StringView>(
+          {"aa", std::nullopt, std::nullopt, "dd", std::nullopt}),
+      makeNullableFlatVector<StringView>(
+          {"aaa", "bbb", std::nullopt, "ddd", "eee"}),
+  });
+
+  auto expectedResult = makeNullableFlatVector<StringView>(
+      {"a", "bbb", std::nullopt, "d", "eee"});
+
+  auto result = evaluate<FlatVector<StringView>>("coalesce(c0, c1, c2)", input);
+  assertEqualVectors(expectedResult, result);
 }

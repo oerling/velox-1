@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <folly/init/Init.h>
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
 #include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -68,7 +69,7 @@ class ParquetTableScanTest : public HiveConnectorTestBase {
   void assertSelectWithAgg(
       std::vector<std::string>&& outputColumnNames,
       const std::vector<std::string>& aggregates,
-      const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<std::string>& groupingKeys,
       const std::string& sql) {
     auto plan = PlanBuilder()
                     .tableScan(getRowType(std::move(outputColumnNames)))
@@ -82,7 +83,7 @@ class ParquetTableScanTest : public HiveConnectorTestBase {
       std::vector<std::string>&& outputColumnNames,
       common::test::SubfieldFilters filters,
       const std::vector<std::string>& aggregates,
-      const std::vector<ChannelIndex>& groupingKeys,
+      const std::vector<std::string>& groupingKeys,
       const std::string& sql) {
     auto rowType = getRowType(std::move(outputColumnNames));
 
@@ -177,9 +178,9 @@ TEST_F(ParquetTableScanTest, basic) {
   assertSelectWithAgg(
       {"a", "b"}, {"min(a)", "max(b)"}, {}, "SELECT min(a), max(b) FROM tmp");
   assertSelectWithAgg(
-      {"b", "a"}, {"max(b)"}, {0}, "SELECT max(b), a FROM tmp group by a");
+      {"b", "a"}, {"max(b)"}, {"a"}, "SELECT max(b), a FROM tmp GROUP BY a");
   assertSelectWithAgg(
-      {"a", "b"}, {"max(a)"}, {1}, "SELECT max(a), b FROM tmp group by b");
+      {"a", "b"}, {"max(a)"}, {"b"}, "SELECT max(a), b FROM tmp GROUP BY b");
 
   // With filter and aggregation
   assertSelectWithFilterAndAgg(
@@ -204,8 +205,8 @@ TEST_F(ParquetTableScanTest, basic) {
       {"b", "a"},
       common::test::singleSubfieldFilter("a", common::test::lessThan(3)),
       {"max(b)"},
-      {0},
-      "SELECT max(b), a FROM tmp WHERE a < 3 group by a");
+      {"a"},
+      "SELECT max(b), a FROM tmp WHERE a < 3 GROUP BY a");
 }
 
 TEST_F(ParquetTableScanTest, countStar) {
@@ -222,4 +223,10 @@ TEST_F(ParquetTableScanTest, countStar) {
                   .planNode();
 
   assertQuery(plan, {split}, "SELECT 20");
+}
+
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  folly::init(&argc, &argv, false);
+  return RUN_ALL_TESTS();
 }

@@ -355,13 +355,13 @@ TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
 
   noMoreData(taskId);
   fetchEndMarker(taskId, 1, 10);
-  task->terminate(TaskState::kCanceled);
+  task->requestCancel();
   bufferManager_->removeTask(taskId);
 }
 
 TEST_F(PartitionedOutputBufferManagerTest, errorInQueue) {
-  auto queue = std::make_shared<ExchangeQueue>();
-  auto page = std::make_unique<SerializedPage>(nullptr);
+  auto queue = std::make_shared<ExchangeQueue>(1 << 20);
+  auto page = std::make_unique<SerializedPage>(folly::IOBuf::copyBuffer("", 0));
   {
     std::lock_guard<std::mutex> l(queue->mutex());
     queue->setErrorLocked("error");

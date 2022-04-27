@@ -15,7 +15,7 @@
  */
 #include "velox/duckdb/conversion/DuckParser.h"
 #include "velox/common/base/Exceptions.h"
-#include "velox/core/Expressions.h"
+#include "velox/core/PlanNode.h"
 #include "velox/duckdb/conversion/DuckConversion.h"
 #include "velox/expression/CastExpr.h"
 #include "velox/external/duckdb/duckdb.hpp"
@@ -66,7 +66,9 @@ std::string normalizeFuncName(std::string input) {
       {"or", "or"},
       {"is", "is"},
       {"~~", "like"},
+      {"!~~", "notlike"},
       {"like_escape", "like"},
+      {"not_like_escape", "notlike"},
   };
   auto it = kLookup.find(input);
   return (it == kLookup.end()) ? input : it->second;
@@ -151,10 +153,16 @@ std::shared_ptr<const core::IExpr> parseFunctionExpr(ParsedExpression& expr) {
   for (const auto& c : functionExpr.children) {
     params.emplace_back(parseExpr(*c));
   }
-  return callExpr(
-      normalizeFuncName(functionExpr.function_name),
-      std::move(params),
-      getAlias(expr));
+  auto func = normalizeFuncName(functionExpr.function_name);
+  // NOT LIKE function needs special handling as it maps to two functions
+  // "not" and "like".
+  if (func == "notlike") {
+    auto likeParams = params;
+    params.clear();
+    params.emplace_back(callExpr("like", std::move(likeParams), {}));
+    func = "not";
+  }
+  return callExpr(func, std::move(params), getAlias(expr));
 }
 
 // Parse a comparison (a > b, a = b, etc).
@@ -403,6 +411,63 @@ std::shared_ptr<const core::IExpr> parseExpr(const std::string& exprString) {
   }
 
   return parseExpr(*parsedExpressions.front());
+}
+
+namespace {
+bool isAscending(::duckdb::OrderType orderType, const std::string& exprString) {
+  switch (orderType) {
+    case ::duckdb::OrderType::ASCENDING:
+      return true;
+    case ::duckdb::OrderType::DESCENDING:
+      return false;
+    case ::duckdb::OrderType::ORDER_DEFAULT:
+      // ASC is the default.
+      return true;
+    case ::duckdb::OrderType::INVALID:
+    default:
+      VELOX_FAIL("Cannot parse ORDER BY clause: {}", exprString)
+  }
+}
+
+bool isNullsFirst(
+    ::duckdb::OrderByNullType orderByNullType,
+    const std::string& exprString) {
+  switch (orderByNullType) {
+    case ::duckdb::OrderByNullType::NULLS_FIRST:
+      return true;
+    case ::duckdb::OrderByNullType::NULLS_LAST:
+      return false;
+    case ::duckdb::OrderByNullType::ORDER_DEFAULT:
+      // NULLS LAST is the default.
+      return false;
+    case ::duckdb::OrderByNullType::INVALID:
+    default:
+      VELOX_FAIL("Cannot parse ORDER BY clause: {}", exprString)
+  }
+
+  VELOX_UNREACHABLE();
+}
+} // namespace
+
+std::pair<std::shared_ptr<const core::IExpr>, core::SortOrder> parseOrderByExpr(
+    const std::string& exprString) {
+  ParserOptions options;
+  options.preserve_identifier_case = false;
+  auto orderByNodes = Parser::ParseOrderList(exprString, options);
+  if (orderByNodes.size() != 1) {
+    throw std::invalid_argument(folly::sformat(
+        "Expecting exactly one input expression, found {}.",
+        orderByNodes.size()));
+  }
+
+  const auto& orderByNode = orderByNodes[0];
+
+  const bool ascending = isAscending(orderByNode.type, exprString);
+  const bool nullsFirst = isNullsFirst(orderByNode.null_order, exprString);
+
+  return {
+      parseExpr(*orderByNode.expression),
+      core::SortOrder(ascending, nullsFirst)};
 }
 
 } // namespace facebook::velox::duckdb

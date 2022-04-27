@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-#include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-class MergeJoinTest : public OperatorTestBase {
+class MergeJoinTest : public HiveConnectorTestBase {
  protected:
+  using OperatorTestBase::assertQuery;
+
   static CursorParameters makeCursorParameters(
       const std::shared_ptr<const core::PlanNode>& planNode,
       uint32_t preferredOutputBatchSize) {
@@ -125,7 +127,7 @@ class MergeJoinTest : public OperatorTestBase {
                         {"u_c0"},
                         PlanBuilder(planNodeIdGenerator)
                             .values(right)
-                            .project({"c0 AS u_c0", "c1 AS u_c1"})
+                            .project({"c1 AS u_c1", "c0 AS u_c0"})
                             .planNode(),
                         "",
                         {"c0", "c1", "u_c1"},
@@ -156,7 +158,7 @@ class MergeJoinTest : public OperatorTestBase {
                    {"u_c0"},
                    PlanBuilder(planNodeIdGenerator)
                        .values(right)
-                       .project({"c0 as u_c0", "c1 as u_c1"})
+                       .project({"c1 as u_c1", "c0 as u_c0"})
                        .planNode(),
                    "",
                    {"c0", "c1", "u_c1"},
@@ -436,9 +438,62 @@ TEST_F(MergeJoinTest, numDrivers) {
   CursorParameters params;
   params.planNode = plan;
   params.maxDrivers = 5;
-  params.numResultDrivers = 1;
   auto task = assertQuery(params, "SELECT 2, 2");
   // We have two pipelines in the task and each must have 1 driver.
   EXPECT_EQ(2, task->numTotalDrivers());
   EXPECT_EQ(2, task->numFinishedDrivers());
+}
+
+TEST_F(MergeJoinTest, lazyVectors) {
+  // a dataset of multiple row groups with multiple columns. We create
+  // different dictionary wrappings for different columns and load the
+  // rows in scope at different times.  We make 11000 repeats of 300
+  // followed by ascending rows. These will hits one 300 from the
+  // right side and cover more than one batch, so that we test lazy
+  // loading where we buffer multiple batches of input.
+  auto leftVectors = makeRowVector(
+      {makeFlatVector<int32_t>(
+           30'000, [](auto row) { return row < 11000 ? 300 : row; }),
+       makeFlatVector<int64_t>(30'000, [](auto row) { return row % 23; }),
+       makeFlatVector<int32_t>(30'000, [](auto row) { return row % 31; }),
+       makeFlatVector<StringView>(30'000, [](auto row) {
+         return StringView(fmt::format("{}   string", row % 43));
+       })});
+
+  auto rightVectors = makeRowVector(
+      {"rc0", "rc1"},
+      {makeFlatVector<int32_t>(10'000, [](auto row) { return row * 3; }),
+       makeFlatVector<int64_t>(10'000, [](auto row) { return row % 31; })});
+
+  auto leftFile = TempFilePath::create();
+  writeToFile(leftFile->path, leftVectors);
+  createDuckDbTable("t", {leftVectors});
+
+  auto rightFile = TempFilePath::create();
+  writeToFile(rightFile->path, rightVectors);
+  createDuckDbTable("u", {rightVectors});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  core::PlanNodeId leftScanId;
+  core::PlanNodeId rightScanId;
+  auto op = PlanBuilder(planNodeIdGenerator)
+                .tableScan(
+                    ROW({"c0", "c1", "c2", "c3"},
+                        {INTEGER(), BIGINT(), INTEGER(), VARCHAR()}))
+                .capturePlanNodeId(leftScanId)
+                .mergeJoin(
+                    {"c0"},
+                    {"rc0"},
+                    PlanBuilder(planNodeIdGenerator)
+                        .tableScan(ROW({"rc0", "rc1"}, {INTEGER(), BIGINT()}))
+                        .capturePlanNodeId(rightScanId)
+                        .planNode(),
+                    "c1 + rc1 < 30",
+                    {"c0", "rc0", "c1", "rc1", "c2", "c3"})
+                .planNode();
+
+  HiveConnectorTestBase::assertQuery(
+      op,
+      {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
+      "SELECT c0, rc0, c1, rc1, c2, c3  FROM t, u WHERE t.c0 = u.rc0 and c1 + rc1 < 30");
 }

@@ -16,10 +16,9 @@
 #pragma once
 
 #include "velox/common/time/CpuWallTimer.h"
-#include "velox/core/PlanNode.h"
+#include "velox/exec/Operator.h"
 
 namespace facebook::velox::exec {
-struct OperatorStats;
 struct TaskStats;
 } // namespace facebook::velox::exec
 
@@ -79,13 +78,26 @@ struct PlanNodeStats {
   /// operator instances were running concurrently.
   uint64_t peakMemoryBytes{0};
 
+  /// Operator-specific counters.
+  std::unordered_map<std::string, RuntimeMetric> customStats;
+
   /// Breakdown of stats by operator type.
   std::unordered_map<std::string, std::unique_ptr<PlanNodeStats>> operatorStats;
+
+  /// Number of drivers that executed the pipeline.
+  int numDrivers{0};
+
+  /// Number of total splits.
+  int numSplits{0};
 
   /// Add stats for a single operator instance.
   void add(const OperatorStats& stats);
 
   std::string toString(bool includeInputStats = false) const;
+
+  bool isMultiOperatorNode() const {
+    return operatorStats.size() > 1;
+  }
 
  private:
   void addTotals(const OperatorStats& stats);
@@ -102,7 +114,10 @@ std::unordered_map<core::PlanNodeId, PlanNodeStats> toPlanStats(
 /// statistics per operator type.
 ///
 /// Note that input row counts and sizes are printed only for leaf plan nodes.
+///
+/// @param includeCustomStats If true, prints operator-specific counters.
 std::string printPlanWithStats(
     const core::PlanNode& plan,
-    const TaskStats& taskStats);
+    const TaskStats& taskStats,
+    bool includeCustomStats = false);
 } // namespace facebook::velox::exec

@@ -185,15 +185,14 @@ class DriverTest : public OperatorTestBase {
           LOG(INFO) << "Task::toString() while probably blocked: "
                     << tasks_[0]->toString();
         } else if (operation == ResultOperation::kCancel) {
-          cursor->task()->requestTerminate();
+          cancelFuture_ = cursor->task()->requestCancel();
         } else if (operation == ResultOperation::kTerminate) {
-          cursor->task()->terminate(TaskState::kAborted);
+          cancelFuture_ = cursor->task()->requestAbort();
         } else if (operation == ResultOperation::kYield) {
           cursor->task()->requestYield();
         } else if (operation == ResultOperation::kPause) {
-          cursor->task()->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = cursor->task()->finishFuture().via(&executor);
+          auto future = cursor->task()->requestPause(true).via(&executor);
           future.wait();
           paused = true;
         }
@@ -308,6 +307,7 @@ class DriverTest : public OperatorTestBase {
   std::shared_ptr<const RowType> rowType_;
   std::mutex mutex_;
   std::vector<std::shared_ptr<Task>> tasks_;
+  ContinueFuture cancelFuture_{false};
   std::unordered_map<int32_t, folly::Future<bool>> stateFutures_;
 
   // Mutex for randomTask()
@@ -357,9 +357,12 @@ TEST_F(DriverTest, cancel) {
   }
   EXPECT_GE(numRead, 1'000'000);
   auto& executor = folly::QueuedImmediateExecutor::instance();
-  auto future = tasks_[0]->finishFuture().via(&executor);
+  auto future = tasks_[0]->stateChangeFuture(1'000'000).via(&executor);
   future.wait();
   EXPECT_TRUE(stateFutures_.at(0).isReady());
+
+  std::move(cancelFuture_).via(&executor).wait();
+
   EXPECT_EQ(tasks_[0]->numRunningDrivers(), 0);
 }
 
@@ -378,7 +381,7 @@ TEST_F(DriverTest, terminate) {
     // Not necessarily an exception.
   } catch (const std::exception& e) {
     // If this is an exception, it will be a cancellation.
-    EXPECT_EQ("Cancelled", std::string(e.what()));
+    EXPECT_TRUE(strstr(e.what(), "Aborted") != nullptr) << e.what();
   }
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
@@ -402,7 +405,7 @@ TEST_F(DriverTest, slow) {
   // are updated some tens of instructions after this. Determinism
   // requires a barrier.
   auto& executor = folly::QueuedImmediateExecutor::instance();
-  auto future = tasks_[0]->finishFuture().via(&executor);
+  auto future = tasks_[0]->stateChangeFuture(1'000'000).via(&executor);
   future.wait();
   // Note that the driver count drops after the last thread stops and
   // realizes the future.
@@ -543,7 +546,7 @@ class TestingPauser : public Operator {
       sleep(1);
       if (counter_ % 7 == 0) {
         // Every 7th time, stop and resume other Tasks. This operation is
-        // globally serilized.
+        // globally serialized.
         std::lock_guard<std::mutex> l(pauseMutex_);
 
         for (auto i = 0; i <= counter_ % 3; ++i) {
@@ -551,9 +554,8 @@ class TestingPauser : public Operator {
           if (!task) {
             continue;
           }
-          task->requestPause(true);
           auto& executor = folly::QueuedImmediateExecutor::instance();
-          auto future = task->finishFuture().via(&executor);
+          auto future = task->requestPause(true).via(&executor);
           future.wait();
           sleep(2);
           Task::resume(task);
@@ -671,7 +673,6 @@ TEST_F(DriverTest, pauserNode) {
         true);
     params[i].maxDrivers =
         kThreadsPerTask * 2; // a number larger than kThreadsPerTask
-    params[i].numResultDrivers = kThreadsPerTask;
   }
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
@@ -809,7 +810,6 @@ TEST_F(DriverTest, driverCreationThrow) {
     CursorParameters params;
     params.planNode = std::move(plan);
     params.maxDrivers = 5;
-    params.numResultDrivers = 1;
     getResults(params);
     FAIL() << "Expected exception.";
   } catch (const VeloxException& ex) {

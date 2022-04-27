@@ -139,6 +139,10 @@ class BlockingState {
       Operator* FOLLY_NONNULL op,
       BlockingReason reason);
 
+  ~BlockingState() {
+    numBlockedDrivers_--;
+  }
+
   static void setResume(std::shared_ptr<BlockingState> state);
 
   Operator* FOLLY_NONNULL op() {
@@ -149,12 +153,20 @@ class BlockingState {
     return reason_;
   }
 
+  /// Returns total number of drivers process wide that are currently in blocked
+  /// state.
+  static uint64_t numBlockedDrivers() {
+    return numBlockedDrivers_;
+  }
+
  private:
   std::shared_ptr<Driver> driver_;
   ContinueFuture future_;
   Operator* FOLLY_NONNULL operator_;
   BlockingReason reason_;
   uint64_t sinceMicros_;
+
+  static std::atomic_uint64_t numBlockedDrivers_;
 };
 
 struct DriverCtx {
@@ -189,8 +201,6 @@ class Driver {
       std::unique_ptr<DriverCtx> driverCtx,
       std::vector<std::unique_ptr<Operator>>&& operators);
 
-  ~Driver();
-
   static void run(std::shared_ptr<Driver> self);
 
   static void enqueue(std::shared_ptr<Driver> instance);
@@ -220,7 +230,7 @@ class Driver {
   // Returns a subset of channels for which there are operators upstream from
   // filterSource that accept dynamically generated filters.
   std::unordered_set<ChannelIndex> canPushdownFilters(
-      Operator* FOLLY_NONNULL filterSource,
+      const Operator* FOLLY_NONNULL filterSource,
       const std::vector<ChannelIndex>& channels) const;
 
   // Returns the Operator with 'planNodeId.' or nullptr if not
@@ -236,17 +246,13 @@ class Driver {
     return ctx_.get();
   }
 
-  std::shared_ptr<Task> task() const {
-    return task_;
+  const std::shared_ptr<Task>& task() const {
+    return ctx_->task;
   }
 
-  // Updates the stats in 'task_' and frees resources. Only called by Task for
+  // Updates the stats in Task and frees resources. Only called by Task for
   // closing non-running Drivers.
   void closeByTask();
-
-  // This is called if the creation of drivers failed and we want to disconnect
-  // driver from the task before driver's destruction.
-  void disconnectFromTask();
 
  private:
   void enqueueInternal();
@@ -262,9 +268,9 @@ class Driver {
   void pushdownFilters(int operatorIndex);
 
   std::unique_ptr<DriverCtx> ctx_;
-  std::shared_ptr<Task> task_;
+  std::atomic_bool closed_{false};
 
-  // Set via Task_ and serialized by 'task_'s mutex.
+  // Set via Task and serialized by Task's mutex.
   ThreadState state_;
 
   // Timer used to track down the time we are sitting in the driver queue.
@@ -338,7 +344,7 @@ struct DriverFactory {
 
   /// Returns LocalPartition plan node ID if the pipeline gets data from a local
   /// exchange.
-  std::optional<core::PlanNodeId> needsLocalExchangeSource() const {
+  std::optional<core::PlanNodeId> needsLocalExchange() const {
     VELOX_CHECK(!planNodes.empty());
     if (auto exchangeNode =
             std::dynamic_pointer_cast<const core::LocalPartitionNode>(

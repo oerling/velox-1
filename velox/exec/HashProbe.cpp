@@ -175,18 +175,16 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
         (isInnerJoin(joinType_) || isSemiJoin(joinType_)) &&
         table_->hashMode() != BaseHashTable::HashMode::kHash) {
       // Find out whether there are any upstream operators that can accept
-      // dynamic filters on all or a subset of the join keys. Setup dynamic
-      // filter builders to track join selectivity for these keys and generate
-      // dynamic filters to push down.
+      // dynamic filters on all or a subset of the join keys. Create dynamic
+      // filters to push down.
       const auto& buildHashers = table_->hashers();
       auto channels = operatorCtx_->driverCtx()->driver->canPushdownFilters(
           this, keyChannels_);
-      dynamicFilterBuilders_.resize(keyChannels_.size());
       for (auto i = 0; i < keyChannels_.size(); i++) {
-        auto it = channels.find(keyChannels_[i]);
-        if (it != channels.end()) {
-          dynamicFilterBuilders_[i].emplace(DynamicFilterBuilder(
-              *(buildHashers[i].get()), keyChannels_[i], dynamicFilters_));
+        if (channels.find(keyChannels_[i]) != channels.end()) {
+          if (auto filter = buildHashers[i]->getFilter(false)) {
+            dynamicFilters_.emplace(keyChannels_[i], std::move(filter));
+          }
         }
       }
     }
@@ -230,16 +228,6 @@ void HashProbe::addInput(RowVectorPtr input) {
   deselectRowsWithNulls(
       *input_, keyChannels_, nonNullRows_, *operatorCtx_->execCtx());
 
-  auto getDynamicFilterBuilder = [&](auto i) -> DynamicFilterBuilder* {
-    if (!dynamicFilterBuilders_.empty()) {
-      auto& builder = dynamicFilterBuilders_[i];
-      if (builder.has_value() && builder->isActive()) {
-        return &(builder.value());
-      }
-    }
-    return nullptr;
-  };
-
   activeRows_ = nonNullRows_;
   lookup_->hashes.resize(input_->size());
   auto mode = table_->hashMode();
@@ -247,17 +235,8 @@ void HashProbe::addInput(RowVectorPtr input) {
   for (auto i = 0; i < keyChannels_.size(); ++i) {
     auto key = input_->loadedChildAt(keyChannels_[i]);
     if (mode != BaseHashTable::HashMode::kHash) {
-      auto* dynamicFilterBuilder = getDynamicFilterBuilder(i);
-      if (dynamicFilterBuilder) {
-        dynamicFilterBuilder->addInput(activeRows_.countSelected());
-      }
-
       buildHashers[i]->lookupValueIds(
           *key, activeRows_, scratchMemory_, lookup_->hashes);
-
-      if (dynamicFilterBuilder) {
-        dynamicFilterBuilder->addOutput(activeRows_.countSelected());
-      }
     } else {
       hashers_[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
     }
@@ -339,11 +318,18 @@ folly::Range<vector_size_t*> initializeRowNumberMapping(
 } // namespace
 
 void HashProbe::prepareOutput(vector_size_t size) {
-  VectorPtr outputAsBase = std::move(output_);
-  BaseVector::ensureWritable(
-      SelectivityVector::empty(), outputType_, pool(), &outputAsBase);
-  output_ = std::static_pointer_cast<RowVector>(outputAsBase);
-  output_->resize(size);
+  // Try to re-use memory for the output vectors that contain build-side data.
+  // We expect output vectors containing probe-side data to be null (reset in
+  // clearIdentityProjectedOutput). BaseVector::prepareForReuse keeps null
+  // children unmodified and makes non-null (build side) children reusable.
+  if (output_) {
+    VectorPtr output = std::move(output_);
+    BaseVector::prepareForReuse(output, size);
+    output_ = std::static_pointer_cast<RowVector>(output);
+  } else {
+    output_ = std::static_pointer_cast<RowVector>(
+        BaseVector::create(outputType_, size, pool()));
+  }
 }
 
 void HashProbe::fillOutput(vector_size_t size) {
@@ -418,7 +404,8 @@ RowVectorPtr HashProbe::getOutput() {
   const auto inputSize = input_->size();
 
   if (replacedWithDynamicFilter_) {
-    stats_.addRuntimeStat("replacedWithDynamicFilterRows", inputSize);
+    stats_.addRuntimeStat(
+        "replacedWithDynamicFilterRows", RuntimeCounter(inputSize));
     auto output = Operator::fillOutput(inputSize, nullptr);
     input_ = nullptr;
     return output;
@@ -573,9 +560,9 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
       passingInputRows_.setAll();
     } else {
       passingInputRows_.clearAll();
-      auto numInput = input_->size();
+      auto hitsSize = lookup_->hits.size();
       auto hits = lookup_->hits.data();
-      for (auto i = 0; i < numInput; ++i) {
+      for (auto i = 0; i < hitsSize; ++i) {
         if (hits[i]) {
           passingInputRows_.setValid(i, true);
         }
@@ -589,7 +576,7 @@ void HashProbe::ensureLoadedIfNotAtEnd(ChannelIndex channel) {
 void HashProbe::noMoreInput() {
   Operator::noMoreInput();
   if (isRightJoin(joinType_) || isFullJoin(joinType_)) {
-    std::vector<VeloxPromise<bool>> promises;
+    std::vector<ContinuePromise> promises;
     std::vector<std::shared_ptr<Driver>> peers;
     // The last Driver to hit HashProbe::finish is responsible for producing
     // non-matching build-side rows for the right join.

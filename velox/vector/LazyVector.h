@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include "velox/common/base/RuntimeMetrics.h"
+#include "velox/vector/DecodedVector.h"
 #include "velox/vector/SimpleVector.h"
 
 namespace facebook::velox {
@@ -103,7 +105,9 @@ class BaseRuntimeStatWriter {
  public:
   virtual ~BaseRuntimeStatWriter() = default;
 
-  virtual void addRuntimeStat(const std::string& name, int64_t value){};
+  virtual void addRuntimeStat(
+      const std::string& /* name */,
+      const RuntimeCounter& /* value */) {}
 };
 
 // Setting a concrete runtime stats writer on the thread will ensure that lazy
@@ -162,14 +166,7 @@ class LazyVector : public BaseVector {
     loader_->load(rows, hook, &vector_);
   }
 
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override {
-    return loadedVector()->equalValueAt(other, index, otherIndex);
-  }
-
-  int32_t compare(
+  std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
       vector_size_t otherIndex,
@@ -257,9 +254,31 @@ class LazyVector : public BaseVector {
                       : BaseVector::retainedSize();
   }
 
+  /// Returns zero if vector has not been loaded yet.
+  uint64_t estimateFlatSize() const override {
+    return isLoaded() ? loadedVector()->estimateFlatSize() : 0;
+  }
+
   std::string toString(vector_size_t index) const override {
     return loadedVector()->toString(index);
   }
+
+  // Loads 'rows' of 'vector'. 'vector' may be an arbitrary wrapping
+  // of a LazyVector. 'rows' are translated through the wrappers. If
+  // there is no LazyVector inside 'vector', this has no
+  // effect. 'vector' may be replaced by a a new vector with 'rows'
+  // loaded and the rest as after default construction.
+  static void ensureLoadedRows(
+      VectorPtr& vector,
+      const SelectivityVector& rows);
+
+  // as ensureLoadedRows, above, but takes a scratch DecodedVector and
+  // SelectivityVector as arguments to enable reuse.
+  static void ensureLoadedRows(
+      VectorPtr& vector,
+      const SelectivityVector& rows,
+      DecodedVector& decoded,
+      SelectivityVector& baseRows);
 
  private:
   std::unique_ptr<VectorLoader> loader_;

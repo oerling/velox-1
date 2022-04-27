@@ -13,11 +13,11 @@
 # limitations under the License.
 
 add_executable(velox_aggregates_hyperloglog_test DenseHllTest.cpp
-        SparseHllTest.cpp)
+                                                 SparseHllTest.cpp)
 
 add_test(NAME velox_aggregates_hyperloglog_test
          COMMAND velox_aggregates_hyperloglog_test)
 
 target_link_libraries(
-  velox_aggregates_hyperloglog_test velox_functions_hyperloglog
-  ${gflags_LIBRARIES} ${GTEST_BOTH_LIBRARIES})
+  velox_aggregates_hyperloglog_test velox_functions_hyperloglog velox_encode
+  ${gflags_LIBRARIES} gtest gtest_main)

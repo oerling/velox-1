@@ -15,6 +15,8 @@
  */
 
 #include "velox/dwio/dwrf/writer/WriterShared.h"
+
+#include "velox/common/time/CpuWallTimer.h"
 #include "velox/dwio/dwrf/common/Common.h"
 #include "velox/dwio/dwrf/utils/ProtoUtils.h"
 #include "velox/dwio/dwrf/writer/LayoutPlanner.h"
@@ -245,6 +247,9 @@ bool WriterShared::shouldFlush(
   if (UNLIKELY(
           overBudget && !context.isLowMemoryMode() &&
           !flushPolicy_(false, context))) {
+    // The previous memory budget check made sure we have enough budget to
+    // flush with a conservative esitmate, which also makes sure we have
+    // enough to switch encoding as is.
     enterLowMemoryMode();
     // Recalculate memory usage due to encoding switch.
     overBudget = overMemoryBudget(context, nextWriteLength);
@@ -254,12 +259,6 @@ bool WriterShared::shouldFlush(
 
 void WriterShared::setLowMemoryMode() {
   getContext().setLowMemoryMode();
-}
-
-bool safeToSwitchEncoding(const WriterContext& context) {
-  return getTotalMemoryUsage(context) +
-      context.getEstimatedEncodingSwitchOverhead() >
-      context.getMemoryBudget();
 }
 
 // Low memory allows for the writer to write the same data with a lower
@@ -272,12 +271,9 @@ void WriterShared::enterLowMemoryMode() {
   auto& context = getContext();
   // Until we have capability to abandon dictionary after the first
   // stripe, do nothing and rely solely on flush to comply with budget.
-  // TODO: extract context.canSwitchEncoding().
   if (UNLIKELY(context.checkLowMemoryMode() && context.stripeIndex == 0)) {
-    if (safeToSwitchEncoding(context)) {
-      // Idempotent call to switch to less memory intensive encodings.
-      abandonDictionariesImpl();
-    }
+    // Idempotent call to switch to less memory intensive encodings.
+    abandonDictionariesImpl();
   }
 }
 
@@ -452,101 +448,112 @@ void WriterShared::flushStripe(bool close) {
 }
 
 void WriterShared::flushInternal(bool close) {
-  flushStripe(close);
-
   auto& context = getContext();
   auto& footer = getFooter();
-  // if this is the last stripe, add footer
-  if (close) {
-    auto& handler = context.getEncryptionHandler();
-    std::vector<std::vector<proto::FileStatistics>> stats;
-    proto::Encryption* encryption = nullptr;
+  auto& sink = getSink();
+  {
+    CpuWallTimer timer{context.flushTiming};
+    flushStripe(close);
 
-    // initialize encryption related metadata only when there is data written
-    if (handler.isEncrypted() && footer.stripes_size() > 0) {
-      auto count = handler.getEncryptionGroupCount();
-      stats.resize(count);
-      encryption = footer.mutable_encryption();
-      encryption->set_keyprovider(
-          encryption::toProto(handler.getKeyProviderType()));
-      for (uint32_t i = 0; i < count; ++i) {
-        encryption->add_encryptiongroups();
-      }
-    }
+    // if this is the last stripe, add footer
+    if (close) {
+      auto& handler = context.getEncryptionHandler();
+      std::vector<std::vector<proto::FileStatistics>> stats;
+      proto::Encryption* encryption = nullptr;
 
-    std::optional<uint32_t> lastRoot;
-    std::unordered_map<proto::ColumnStatistics*, proto::ColumnStatistics*>
-        statsMap;
-    writeFileStatsImpl([&](uint32_t nodeId) -> proto::ColumnStatistics& {
-      auto entry = footer.add_statistics();
-      if (!encryption || !handler.isEncrypted(nodeId)) {
-        return *entry;
+      // initialize encryption related metadata only when there is data written
+      if (handler.isEncrypted() && footer.stripes_size() > 0) {
+        auto count = handler.getEncryptionGroupCount();
+        stats.resize(count);
+        encryption = footer.mutable_encryption();
+        encryption->set_keyprovider(
+            encryption::toProto(handler.getKeyProviderType()));
+        for (uint32_t i = 0; i < count; ++i) {
+          encryption->add_encryptiongroups();
+        }
       }
 
-      auto root = handler.getEncryptionRoot(nodeId);
-      auto groupIndex = handler.getEncryptionGroupIndex(nodeId);
-      auto& group = stats.at(groupIndex);
-      if (!lastRoot || root != lastRoot.value()) {
-        // this is a new root, add to the footer, and use a new slot
-        group.emplace_back();
-        encryption->mutable_encryptiongroups(groupIndex)->add_nodes(root);
-      }
-      lastRoot = root;
-      auto encryptedStats = group.back().add_statistics();
-      statsMap[entry] = encryptedStats;
-      return *encryptedStats;
-    });
+      std::optional<uint32_t> lastRoot;
+      std::unordered_map<proto::ColumnStatistics*, proto::ColumnStatistics*>
+          statsMap;
+      writeFileStatsImpl([&](uint32_t nodeId) -> proto::ColumnStatistics& {
+        auto entry = footer.add_statistics();
+        if (!encryption || !handler.isEncrypted(nodeId)) {
+          return *entry;
+        }
+
+        auto root = handler.getEncryptionRoot(nodeId);
+        auto groupIndex = handler.getEncryptionGroupIndex(nodeId);
+        auto& group = stats.at(groupIndex);
+        if (!lastRoot || root != lastRoot.value()) {
+          // this is a new root, add to the footer, and use a new slot
+          group.emplace_back();
+          encryption->mutable_encryptiongroups(groupIndex)->add_nodes(root);
+        }
+        lastRoot = root;
+        auto encryptedStats = group.back().add_statistics();
+        statsMap[entry] = encryptedStats;
+        return *encryptedStats;
+      });
 
 #define COPY_STAT(from, to, stat) \
   if (from->has_##stat()) {       \
     to->set_##stat(from->stat()); \
   }
 
-    // fill basic stats
-    for (auto& pair : statsMap) {
-      COPY_STAT(pair.second, pair.first, numberofvalues);
-      COPY_STAT(pair.second, pair.first, hasnull);
-      COPY_STAT(pair.second, pair.first, rawsize);
-      COPY_STAT(pair.second, pair.first, size);
-    }
+      // fill basic stats
+      for (auto& pair : statsMap) {
+        COPY_STAT(pair.second, pair.first, numberofvalues);
+        COPY_STAT(pair.second, pair.first, hasnull);
+        COPY_STAT(pair.second, pair.first, rawsize);
+        COPY_STAT(pair.second, pair.first, size);
+      }
 
 #undef COPY_STAT
 
-    // set metadata for each encryption group
-    if (encryption) {
-      for (uint32_t i = 0; i < handler.getEncryptionGroupCount(); ++i) {
-        auto group = encryption->mutable_encryptiongroups(i);
-        // set stats. No need to set key metadata since it just reused the same
-        // key of the first stripe
-        for (auto& s : stats.at(i)) {
-          writeProtoAsString(
-              *group->add_statistics(),
-              s,
-              std::addressof(handler.getEncryptionProviderByIndex(i)));
+      // set metadata for each encryption group
+      if (encryption) {
+        for (uint32_t i = 0; i < handler.getEncryptionGroupCount(); ++i) {
+          auto group = encryption->mutable_encryptiongroups(i);
+          // set stats. No need to set key metadata since it just reused the
+          // same key of the first stripe
+          for (auto& s : stats.at(i)) {
+            writeProtoAsString(
+                *group->add_statistics(),
+                s,
+                std::addressof(handler.getEncryptionProviderByIndex(i)));
+          }
         }
       }
+
+      writeFooter(*schema_->type);
     }
 
-    writeFooter(*schema_->type);
+    // flush to sink
+    sink.flush();
   }
-
-  // flush to sink
-  auto& sink = getSink();
-  sink.flush();
 
   if (close) {
     context.metricLogger->logFileClose(
-        writerVersionToString(context.getConfig(Config::WRITER_VERSION)),
-        footer.contentlength(),
-        sink.size(),
-        sink.getCacheSize(),
-        sink.getCacheOffsets().size() - 1,
-        static_cast<int32_t>(sink.getCacheMode()),
-        context.stripeIndex,
-        context.stripeRowCount,
-        context.stripeRawSize,
-        context.getStreamCount(),
-        context.getTotalMemoryUsage());
+        dwio::common::MetricsLog::FileCloseMetrics{
+            .writerVersion = writerVersionToString(
+                context.getConfig(Config::WRITER_VERSION)),
+            .footerLength = footer.contentlength(),
+            .fileSize = sink.size(),
+            .cacheSize = sink.getCacheSize(),
+            .numCacheBlocks = sink.getCacheOffsets().size() - 1,
+            .cacheMode = static_cast<int32_t>(sink.getCacheMode()),
+            .numOfStripes = context.stripeIndex,
+            .rowCount = context.stripeRowCount,
+            .rawDataSize = context.stripeRawSize,
+            .numOfStreams = context.getStreamCount(),
+            .totalMemory = context.getTotalMemoryUsage(),
+            .dictionaryMemory =
+                context.getMemoryUsage(MemoryUsageCategory::DICTIONARY)
+                    .getCurrentBytes(),
+            .generalMemory =
+                context.getMemoryUsage(MemoryUsageCategory::GENERAL)
+                    .getCurrentBytes()});
   }
 }
 

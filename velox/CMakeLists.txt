@@ -30,7 +30,7 @@ if(${VELOX_ENABLE_EXAMPLES} AND ${VELOX_ENABLE_EXPRESSION})
   add_subdirectory(examples)
 endif()
 
-if(${VELOX_ENABLE_BENCHMARKS})
+if(${VELOX_ENABLE_BENCHMARKS} OR ${VELOX_ENABLE_BENCHMARKS_BASIC})
   add_subdirectory(benchmarks)
 endif()
 
@@ -59,6 +59,7 @@ endif()
 if(${VELOX_ENABLE_DUCKDB})
   add_subdirectory(duckdb)
   add_subdirectory(external/duckdb)
+  add_subdirectory(tpch/gen)
 endif()
 
 if(${VELOX_CODEGEN_SUPPORT})

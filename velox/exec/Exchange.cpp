@@ -19,14 +19,14 @@
 namespace facebook::velox::exec {
 
 SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-    : iobuf_(std::move(iobuf)) {
+    : iobuf_(std::move(iobuf)), iobufBytes_(chainBytes(*iobuf_.get())) {
+  VELOX_CHECK(iobuf_);
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
         0});
-    iobufBytes_ += bufSize;
   }
 }
 
@@ -63,7 +63,7 @@ class LocalExchangeSource : public ExchangeSource {
       : ExchangeSource(taskId, destination, queue) {}
 
   bool shouldRequestLocked() override {
-    if (atEnd_ && queue_->empty()) {
+    if (atEnd_) {
       return false;
     }
     bool pending = requestPending_;
@@ -187,14 +187,19 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     bool* atEnd,
     ContinueFuture* future) {
   std::vector<std::shared_ptr<ExchangeSource>> toRequest;
+  std::unique_ptr<SerializedPage> page;
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
-    auto page = queue_->dequeue(atEnd, future);
-    if (*atEnd || page) {
+    page = queue_->dequeue(atEnd, future);
+    if (*atEnd) {
       return page;
     }
-    // There is no data to return, send out more requests.
+    if (page && queue_->totalBytes() > queue_->minBytes()) {
+      return page;
+    }
+    // There is space for more data, send requests to sources with no pending
+    // request.
     for (auto& source : sources_) {
       if (source->shouldRequestLocked()) {
         toRequest.push_back(source);
@@ -206,7 +211,7 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
   for (auto& source : toRequest) {
     source->request();
   }
-  return nullptr;
+  return page;
 }
 
 ExchangeClient::~ExchangeClient() {
