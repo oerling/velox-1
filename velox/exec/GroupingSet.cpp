@@ -379,7 +379,7 @@ const SelectivityVector& GroupingSet::getSelectivityVector(
 
 bool GroupingSet::getOutput(
     int32_t batchSize,
-    RowContainerIterator* iterator,
+    RowContainerIterator* FOLLY_NONNULL iterator,
     RowVectorPtr& result) {
   if (isGlobal_) {
     return getGlobalAggregationOutput(batchSize, isPartial_, iterator, result);
@@ -648,7 +648,7 @@ bool GroupingSet::mergeNext(const RowVectorPtr& result) {
   }
 }
 
-void GroupingSet::initializeRow(SpillStream& keys, char* row) {
+void GroupingSet::initializeRow(SpillStream& keys, char* FOLLY_NONNULL row) {
   for (auto i = 0; i < keyChannels_.size(); ++i) {
     mergeRows_->store(keys.decoded(i), keys.currentIndex(), mergeState_, i);
   }
@@ -668,7 +668,7 @@ void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   mergeRows_->clear();
 }
 
-void GroupingSet::updateRow(SpillStream& input, char* row) {
+void GroupingSet::updateRow(SpillStream& input, char* FOLLY_NONNULL row) {
   if (input.currentIndex() >= mergeSelection_.size()) {
     mergeSelection_.resize(bits::roundUp(input.currentIndex() + 1, 64));
     mergeSelection_.clearAll();

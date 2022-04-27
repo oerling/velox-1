@@ -56,7 +56,7 @@ class GroupingSet {
   /// returns true.
   bool getOutput(
       int32_t batchSize,
-      RowContainerIterator* iterator,
+      RowContainerIterator* FOLLY_NONNULL iterator,
       RowVectorPtr& result);
 
   uint64_t allocatedBytes() const;
@@ -108,14 +108,14 @@ class GroupingSet {
   void ensureInputFits(const RowVectorPtr& input);
 
   void
-  extractGroups(char** groups, int32_t numGroups, const RowVectorPtr& result);
+  extractGroups(char** FOLLY_NONNULL groups, int32_t numGroups, const RowVectorPtr& result);
 
   bool getOutputWithSpill(const RowVectorPtr& result);
 
   bool mergeNext(const RowVectorPtr& result);
 
-  void initializeRow(SpillStream& keys, char* row);
-  void updateRow(SpillStream& keys, char* row);
+  void initializeRow(SpillStream& keys, char* FOLLY_NONNULL row);
+  void updateRow(SpillStream& keys, char* FOLLY_NONNULL row);
   void extractSpillResult(const RowVectorPtr& result);
 
   std::vector<ChannelIndex> keyChannels_;
@@ -140,7 +140,7 @@ class GroupingSet {
   std::vector<TypePtr> intermediateTypes_;
 
   const bool ignoreNullKeys_;
-  memory::MappedMemory* const mappedMemory_;
+  memory::MappedMemory* FOLLY_NONNULL const mappedMemory_;
 
   // Boolean indicating whether accumulators for a global aggregation (i.e.
   // aggregation with no grouping keys) have been initialized.
@@ -194,7 +194,7 @@ class GroupingSet {
   std::unique_ptr<RowContainer> mergeRows_;
 
   // The row with the current merge state, allocated from 'mergeRow_'.
-  char* mergeState_ = nullptr;
+  char* FOLLY_NULLABLE mergeState_ = nullptr;
 
   // The currently running spill partition in producing spilld output.
   int32_t outputPartition_{-1};
