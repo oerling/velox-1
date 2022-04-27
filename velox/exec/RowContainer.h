@@ -238,8 +238,8 @@ class RowContainer {
   }
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
-  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This
-  // is a fast path for compare().
+  // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
+  // a fast path for compare().
   template <bool mayHaveNulls>
   bool equals(
       const char* row,
@@ -780,8 +780,8 @@ class RowContainer {
   std::vector<int32_t> nullOffsets_;
   // Position of field or accumulator. Corresponds 1:1 to 'nullOffset_'.
   std::vector<int32_t> offsets_;
-  // Offset and null indicator offset of non-aggregate fields as a single
-  // word. Corresponds pairwise to 'types_'.
+  // Offset and null indicator offset of non-aggregate fields as a single word.
+  // Corresponds pairwise to 'types_'.
   std::vector<RowColumn> rowColumns_;
   // Bit offset of the probed flag for a full or right outer join  payload. 0 if
   // not applicable.
@@ -797,8 +797,8 @@ class RowContainer {
   // The count of entries that have an extra normalized_key_t before the
   // start.
   int64_t numRowsWithNormalizedKey_ = 0;
-  // Extra bytes to reserve before  each added row for a normalized key. Set
-  // to 0 after deciding not to use normalized keys.
+  // Extra bytes to reserve before  each added row for a normalized key. Set to
+  // 0 after deciding not to use normalized keys.
   int8_t normalizedKeySize_ = sizeof(normalized_key_t);
   // Copied over the null bits of each row on initialization. Keys are
   // not null, aggregates are null.
@@ -812,8 +812,8 @@ class RowContainer {
   HashStringAllocator stringAllocator_;
 
   const RowSerde& serde_;
-  // RowContainer requires a valid reference to a vector of aggregates. We
-  // use a static constant to ensure the aggregates_ is valid throughout the
+  // RowContainer requires a valid reference to a vector of aggregates. We use
+  // a static constant to ensure the aggregates_ is valid throughout the
   // lifetime of the RowContainer.
   static const std::vector<std::unique_ptr<Aggregate>>& emptyAggregates() {
     static const std::vector<std::unique_ptr<Aggregate>> kEmptyAggregates;
