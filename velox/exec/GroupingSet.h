@@ -107,8 +107,10 @@ class GroupingSet {
   // enough to make 'input' fit.
   void ensureInputFits(const RowVectorPtr& input);
 
-  void
-  extractGroups(char** FOLLY_NONNULL groups, int32_t numGroups, const RowVectorPtr& result);
+  void extractGroups(
+      char** FOLLY_NONNULL groups,
+      int32_t numGroups,
+      const RowVectorPtr& result);
 
   bool getOutputWithSpill(const RowVectorPtr& result);
 
