@@ -14,8 +14,20 @@
  * limitations under the License.
  */
 #include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/common/time/Timer.h"
 
 namespace facebook::velox::exec {
+
+void DestinationBuffer::enqueue(std::shared_ptr<SerializedPage> data) {
+  // drop duplicate end markers
+  if (data == nullptr && !data_.empty() && data_.back() == nullptr) {
+    return;
+  }
+  if (!dataAvailableSince_) {
+    dataAvailableSince_ = getCurrentTimeMicro();
+  }
+  data_.push_back(std::move(data));
+}
 
 void DestinationBuffer::getData(
     uint64_t maxBytes,
@@ -53,6 +65,13 @@ void DestinationBuffer::getData(
     resultBytes += data_[i]->size();
     if (resultBytes >= maxBytes) {
       break;
+    }
+    auto now = getCurrentTimeMicro();
+    fetchDelay_ += now - dataAvailableSince_;
+    if (result.size() == data_.size()) {
+      dataAvailableSince_ = 0;
+    } else {
+      dataAvailableSince_ = now;
     }
   }
 }
