@@ -251,6 +251,14 @@ std::unique_ptr<common::Filter> makeEqualFilter(
   }
 }
 
+std::unique_ptr<common::Filter> makeNotEqualFilter(
+    const std::shared_ptr<const core::ITypedExpr>& valueExpr) {
+  std::vector<std::unique_ptr<common::Filter>> filters;
+  filters.emplace_back(makeLessThanFilter(valueExpr));
+  filters.emplace_back(makeGreaterThanFilter(valueExpr));
+  return std::make_unique<common::MultiRange>(std::move(filters), false, false);
+}
+
 std::unique_ptr<common::Filter> makeBetweenFilter(
     const std::shared_ptr<const core::ITypedExpr>& lowerExpr,
     const std::shared_ptr<const core::ITypedExpr>& upperExpr) {
@@ -270,6 +278,9 @@ std::unique_ptr<common::Filter> makeBetweenFilter(
     case TypeKind::DATE:
       return common::test::between(
           singleValue<Date>(lower).days(), singleValue<Date>(upper).days());
+    case TypeKind::VARCHAR:
+      return common::test::between(
+          singleValue<StringView>(lower), singleValue<StringView>(upper));
     default:
       VELOX_NYI(
           "Unsupported value for 'between' filter: {} BETWEEN {} AND {}",
@@ -294,6 +305,10 @@ std::pair<common::Subfield, std::unique_ptr<common::Filter>> toSubfieldFilter(
     } else if (call->name() == "eq") {
       if (auto field = asField(call, 0)) {
         return {Subfield(field->name()), makeEqualFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "neq") {
+      if (auto field = asField(call, 0)) {
+        return {Subfield(field->name()), makeNotEqualFilter(call->inputs()[1])};
       }
     } else if (call->name() == "lte") {
       if (auto field = asField(call, 0)) {
@@ -754,8 +769,8 @@ PlanBuilder::createAggregateMasks(
 }
 
 PlanBuilder& PlanBuilder::aggregation(
-    const std::vector<ChannelIndex>& groupingKeys,
-    const std::vector<ChannelIndex>& preGroupedKeys,
+    const std::vector<std::string>& groupingKeys,
+    const std::vector<std::string>& preGroupedKeys,
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& masks,
     core::AggregationNode::Step step,
@@ -778,7 +793,7 @@ PlanBuilder& PlanBuilder::aggregation(
 }
 
 PlanBuilder& PlanBuilder::streamingAggregation(
-    const std::vector<ChannelIndex>& groupingKeys,
+    const std::vector<std::string>& groupingKeys,
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& masks,
     core::AggregationNode::Step step,
