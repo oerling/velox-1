@@ -118,7 +118,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
     scanSpec_->moveAdaptationFrom(*otherStruct->scanSpec_);
   }
-  
+
   // Sets 'rows' as the set of rows for which 'this' or its children
   // may be loaded as LazyVectors. When a struct is loaded as lazy,
   // its children will be lazy if the struct does not add nulls. The
