@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <gtest/gtest.h>
+
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
-#include "velox/type/tests/FilterBuilder.h"
-#include "velox/type/tests/SubfieldFiltersBuilder.h"
 #include "velox/vector/tests/VectorTestBase.h"
+
+#include <gtest/gtest.h>
 
 using namespace facebook::velox;
 using namespace facebook::velox::common::test;
@@ -67,15 +67,15 @@ TEST_F(PlanNodeToStringTest, recursive) {
 
 TEST_F(PlanNodeToStringTest, detailed) {
   ASSERT_EQ(
-      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n",
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10))]\n",
       plan_->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, recursiveAndDetailed) {
   ASSERT_EQ(
-      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10))]\n"
       "  -> Filter[expression: lt(mod(cast ROW[\"out1\"] as BIGINT,10),8)]\n"
-      "    -> Project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50))), ]\n"
+      "    -> Project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50)))]\n"
       "      -> Filter[expression: lt(mod(cast ROW[\"c0\"] as BIGINT,10),9)]\n"
       "        -> Values[5 rows in 1 vectors]\n",
       plan_->toString(true, true));
@@ -94,7 +94,7 @@ TEST_F(PlanNodeToStringTest, withContext) {
       plan_->toString(false, false, addContext));
 
   ASSERT_EQ(
-      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10))]\n"
       "   Context for 4\n",
       plan_->toString(true, false, addContext));
 
@@ -112,11 +112,11 @@ TEST_F(PlanNodeToStringTest, withContext) {
       plan_->toString(false, true, addContext));
 
   ASSERT_EQ(
-      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10))]\n"
       "   Context for 4\n"
       "  -> Filter[expression: lt(mod(cast ROW[\"out1\"] as BIGINT,10),8)]\n"
       "     Context for 3\n"
-      "    -> Project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50))), ]\n"
+      "    -> Project[expressions: (out1:SMALLINT, ROW[\"c0\"]), (out2:BIGINT, plus(mod(cast ROW[\"c0\"] as BIGINT,100),mod(cast ROW[\"c1\"] as BIGINT,50)))]\n"
       "       Context for 2\n"
       "      -> Filter[expression: lt(mod(cast ROW[\"c0\"] as BIGINT,10),9)]\n"
       "         Context for 1\n"
@@ -140,7 +140,7 @@ TEST_F(PlanNodeToStringTest, withMultiLineContext) {
       plan_->toString(false, false, addContext));
 
   ASSERT_EQ(
-      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10)), ]\n"
+      "-> Project[expressions: (out3:BIGINT, plus(cast ROW[\"out1\"] as BIGINT,10))]\n"
       "   Context for 4: line 1\n"
       "   Context for 4: line 2\n",
       plan_->toString(true, false, addContext));
@@ -162,7 +162,7 @@ TEST_F(PlanNodeToStringTest, aggregation) {
   // Group-by aggregation.
   plan = PlanBuilder()
              .values({data_})
-             .singleAggregation({0}, {"sum(c1) AS a", "avg(c2) AS b"})
+             .singleAggregation({"c0"}, {"sum(c1) AS a", "avg(c2) AS b"})
              .planNode();
 
   ASSERT_EQ("-> Aggregation\n", plan->toString());
@@ -301,18 +301,17 @@ TEST_F(PlanNodeToStringTest, limit) {
 TEST_F(PlanNodeToStringTest, topN) {
   auto plan = PlanBuilder()
                   .values({data_})
-                  .topN({0}, {core::kAscNullsFirst}, 10, true)
+                  .topN({"c0 NULLS FIRST"}, 10, true)
                   .planNode();
 
   ASSERT_EQ("-> TopN\n", plan->toString());
   ASSERT_EQ(
       "-> TopN[PARTIAL 10 c0 ASC NULLS FIRST]\n", plan->toString(true, false));
 
-  plan =
-      PlanBuilder()
-          .values({data_})
-          .topN({1, 0}, {core::kAscNullsFirst, core::kDescNullsLast}, 10, false)
-          .planNode();
+  plan = PlanBuilder()
+             .values({data_})
+             .topN({"c1 NULLS FIRST", "c0 DESC"}, 10, false)
+             .planNode();
 
   ASSERT_EQ("-> TopN\n", plan->toString());
   ASSERT_EQ(
@@ -349,16 +348,23 @@ TEST_F(PlanNodeToStringTest, unnest) {
 TEST_F(PlanNodeToStringTest, localPartition) {
   auto plan =
       PlanBuilder()
-          .localPartition({0}, {PlanBuilder().values({data_}).planNode()})
+          .localPartition({"c0"}, {PlanBuilder().values({data_}).planNode()})
           .planNode();
 
   ASSERT_EQ("-> LocalPartition\n", plan->toString());
-  ASSERT_EQ("-> LocalPartition[]\n", plan->toString(true, false));
+  ASSERT_EQ("-> LocalPartition[REPARTITION]\n", plan->toString(true, false));
+
+  plan = PlanBuilder()
+             .localPartition({}, {PlanBuilder().values({data_}).planNode()})
+             .planNode();
+
+  ASSERT_EQ("-> LocalPartition\n", plan->toString());
+  ASSERT_EQ("-> LocalPartition[GATHER]\n", plan->toString(true, false));
 }
 
 TEST_F(PlanNodeToStringTest, partitionedOutput) {
   auto plan =
-      PlanBuilder().values({data_}).partitionedOutput({0}, 4).planNode();
+      PlanBuilder().values({data_}).partitionedOutput({"c0"}, 4).planNode();
 
   ASSERT_EQ("-> PartitionedOutput\n", plan->toString());
   ASSERT_EQ("-> PartitionedOutput[HASH(c0) 4]\n", plan->toString(true, false));
@@ -375,7 +381,7 @@ TEST_F(PlanNodeToStringTest, partitionedOutput) {
 
   plan = PlanBuilder()
              .values({data_})
-             .partitionedOutput({1, 2}, 5, true)
+             .partitionedOutput({"c1", "c2"}, 5, true)
              .planNode();
 
   ASSERT_EQ("-> PartitionedOutput\n", plan->toString());
@@ -415,25 +421,36 @@ TEST_F(PlanNodeToStringTest, exchange) {
 }
 
 TEST_F(PlanNodeToStringTest, tableScan) {
-  RowTypePtr rowType{ROW(
-      {"discount", "quantity", "shipdate"}, {DOUBLE(), DOUBLE(), VARCHAR()})};
-  auto filters = SubfieldFiltersBuilder()
-                     .add("shipdate", between("1994-01-01", "1994-12-31"))
-                     .add("discount", betweenDouble(0.05, 0.07))
-                     .add("quantity", lessThanDouble(24.0))
-                     .build();
-  auto tableHandle = exec::test::HiveConnectorTestBase::makeTableHandle(
-      std::move(filters), nullptr, "lineitem");
-  auto plan =
-      PlanBuilder()
-          .tableScan(
-              rowType,
-              tableHandle,
-              exec::test::HiveConnectorTestBase::allRegularColumns(rowType))
-          .planNode();
+  RowTypePtr rowType{
+      ROW({"discount", "quantity", "shipdate", "comment"},
+          {DOUBLE(), DOUBLE(), VARCHAR(), VARCHAR()})};
+  {
+    auto plan = PlanBuilder()
+                    .tableScan(
+                        rowType,
+                        {"shipdate between '1994-01-01' and '1994-12-31'",
+                         "discount between 0.05 and 0.07",
+                         "quantity < 24.0::DOUBLE"},
+                        "comment NOT LIKE '%special%request%'")
+                    .planNode();
 
-  ASSERT_EQ("-> TableScan\n", plan->toString());
-  ASSERT_EQ(
-      "-> TableScan[Table: lineitem, Filters: [(discount, DoubleRange: [0.050000, 0.070000] no nulls), (quantity, DoubleRange: (-inf, 24.000000) no nulls), (shipdate, BytesRange: [1994-01-01, 1994-12-31] no nulls)]]\n",
-      plan->toString(true, false));
+    ASSERT_EQ("-> TableScan\n", plan->toString());
+    const char* output =
+        "-> TableScan[table: hive_table, "
+        "range filters: [(discount, DoubleRange: [0.050000, 0.070000] no nulls), "
+        "(quantity, DoubleRange: (-inf, 24.000000) no nulls), "
+        "(shipdate, BytesRange: [1994-01-01, 1994-12-31] no nulls)], "
+        "remaining filter: (not(like(ROW[\"comment\"],\"%special%request%\")))]\n";
+    ASSERT_EQ(output, plan->toString(true, false));
+  }
+  {
+    auto plan =
+        PlanBuilder()
+            .tableScan(rowType, {}, "comment NOT LIKE '%special%request%'")
+            .planNode();
+
+    ASSERT_EQ(
+        "-> TableScan[table: hive_table, remaining filter: (not(like(ROW[\"comment\"],\"%special%request%\")))]\n",
+        plan->toString(true, false));
+  }
 }

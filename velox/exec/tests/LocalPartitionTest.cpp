@@ -77,7 +77,7 @@ class LocalPartitionTest : public HiveConnectorTestBase {
       auto& executor = folly::QueuedImmediateExecutor::instance();
       auto future = task->stateChangeFuture(1'000'000).via(&executor);
       future.wait();
-      EXPECT_TRUE(task->state() == expected);
+      EXPECT_EQ(expected, task->state());
     }
   }
 };
@@ -168,18 +168,18 @@ TEST_F(LocalPartitionTest, partition) {
     auto builder = PlanBuilder(planNodeIdGenerator);
     auto scanNode = builder.tableScan(rowType).planNode();
     scanNodeIds.push_back(scanNode->id());
-    return builder.partialAggregation({0}, {"count(1)"}).planNode();
+    return builder.partialAggregation({"c0"}, {"count(1)"}).planNode();
   };
 
   auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
-                    {0},
+                    {"c0"},
                     {
                         scanAggNode(),
                         scanAggNode(),
                         scanAggNode(),
                     })
-                .partialAggregation({0}, {"count(1)"})
+                .partialAggregation({"c0"}, {"count(1)"})
                 .planNode();
 
   createDuckDbTable(vectors);
@@ -273,13 +273,13 @@ TEST_F(LocalPartitionTest, maxBufferSizePartition) {
 
   auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
-                    {0},
+                    {"c0"},
                     {
                         scanNode(),
                         scanNode(),
                         scanNode(),
                     })
-                .partialAggregation({0}, {"count(1)"})
+                .partialAggregation({"c0"}, {"count(1)"})
                 .planNode();
 
   CursorParameters params;
@@ -353,7 +353,7 @@ TEST_F(LocalPartitionTest, outputLayoutGather) {
                         valuesNode(2),
                     },
                     // Change column order: (c0, c1) -> (c1, c0).
-                    {1, 0})
+                    {"c1", "c0"})
                 .singleAggregation({}, {"count(1)", "min(c0)", "max(c1)"})
                 .planNode();
 
@@ -370,7 +370,7 @@ TEST_F(LocalPartitionTest, outputLayoutGather) {
                    valuesNode(2),
                },
                // Drop column: (c0, c1) -> (c1).
-               {1})
+               {"c1"})
            .singleAggregation({}, {"count(1)", "min(c1)", "max(c1)"})
            .planNode();
 
@@ -422,14 +422,14 @@ TEST_F(LocalPartitionTest, outputLayoutPartition) {
   params.planNode =
       PlanBuilder(planNodeIdGenerator)
           .localPartition(
-              {0},
+              {"c0"},
               {
                   valuesNode(0),
                   valuesNode(1),
                   valuesNode(2),
               },
               // Change column order: (c0, c1) -> (c1, c0).
-              {1, 0})
+              {"c1", "c0"})
           .partialAggregation({}, {"count(1)", "min(c0)", "max(c1)"})
           .planNode();
 
@@ -441,14 +441,14 @@ TEST_F(LocalPartitionTest, outputLayoutPartition) {
   params.planNode =
       PlanBuilder(planNodeIdGenerator)
           .localPartition(
-              {0},
+              {"c0"},
               {
                   valuesNode(0),
                   valuesNode(1),
                   valuesNode(2),
               },
               // Drop column: (c0, c1) -> (c1).
-              {1})
+              {"c1"})
           .partialAggregation({}, {"count(1)", "min(c1)", "max(c1)"})
           .planNode();
 
@@ -459,7 +459,7 @@ TEST_F(LocalPartitionTest, outputLayoutPartition) {
   planNodeIdGenerator->reset();
   params.planNode = PlanBuilder(planNodeIdGenerator)
                         .localPartition(
-                            {0},
+                            {"c0"},
                             {
                                 valuesNode(0),
                                 valuesNode(1),
@@ -509,18 +509,18 @@ TEST_F(LocalPartitionTest, multipleExchanges) {
   // exchange re-partitions the results on just the first key.
   auto op = PlanBuilder(planNodeIdGenerator)
                 .localPartition(
-                    {0},
+                    {"c0"},
                     {PlanBuilder(planNodeIdGenerator)
                          .localPartition(
-                             {0, 1},
+                             {"c0", "c1"},
                              {
                                  tableScanNode(),
                                  tableScanNode(),
                                  tableScanNode(),
                              })
-                         .partialAggregation({0, 1}, {"count(1)"})
+                         .partialAggregation({"c0", "c1"}, {"count(1)"})
                          .planNode()})
-                .partialAggregation({0}, {"count(1)", "sum(a0)"})
+                .partialAggregation({"c0"}, {"count(1)", "sum(a0)"})
                 .planNode();
 
   createDuckDbTable(vectors);
@@ -589,6 +589,8 @@ TEST_F(LocalPartitionTest, earlyCancelation) {
 
   CursorParameters params;
   params.planNode = plan;
+  // Make sure results are queued one batch a a time.
+  params.bufferedBytes = 100;
 
   auto cursor = std::make_unique<TaskCursor>(params);
   const auto& task = cursor->task();
@@ -598,14 +600,19 @@ TEST_F(LocalPartitionTest, earlyCancelation) {
   ASSERT_EQ(100, cursor->current()->size());
 
   // Cancel the task.
-  task->terminate(exec::kCanceled);
+  task->requestCancel();
 
-  // Fetch the remaining results.
-  while (cursor->moveNext()) {
-    ;
+  // Fetch the remaining results. This will throw since only one vector can be
+  // buffered in the cursor.
+  try {
+    while (cursor->moveNext()) {
+      ;
+      FAIL() << "Expected a throw due to cancellation";
+    }
+  } catch (const std::exception& e) {
   }
 
-  // Wait for task to transition to failed state.
+  // Wait for task to transition to final state.
   waitForTaskState(task, exec::kCanceled);
 
   // Make sure there is only one reference to Task left, i.e. no Driver is

@@ -101,7 +101,7 @@ struct TestData {
 
 } // namespace
 
-class ExprTest : public testing::Test {
+class ExprTest : public testing::Test, public VectorTestBase {
  protected:
   void SetUp() override {
     functions::prestosql::registerAllScalarFunctions();
@@ -555,12 +555,13 @@ class ExprTest : public testing::Test {
     exprs_ = std::make_unique<exec::ExprSet>(std::move(source), execCtx_.get());
     return exprs_->expr(0).get();
   }
+
+  template <typename T = ComplexType>
   std::shared_ptr<core::ConstantTypedExpr> makeConstantExpr(
       const VectorPtr& base,
       vector_size_t index) {
     return std::make_shared<core::ConstantTypedExpr>(
-        std::make_shared<ConstantVector<ComplexType>>(
-            execCtx_->pool(), 1, index, base));
+        std::make_shared<ConstantVector<T>>(execCtx_->pool(), 1, index, base));
   }
 
   VectorPtr makeConstantVector(variant value, vector_size_t size) {
@@ -1066,6 +1067,67 @@ TEST_F(ExprTest, constantArray) {
   ASSERT_TRUE(b->equalValueAt(result[1].get(), 5, 0));
 }
 
+TEST_F(ExprTest, constantScalarEquals) {
+  auto a = makeFlatVector<int32_t>(10, [](auto row) { return row; });
+  auto b = makeFlatVector<int32_t>(10, [](auto row) { return row; });
+  auto c = makeFlatVector<int64_t>(10, [](auto row) { return row; });
+
+  ASSERT_EQ(*makeConstantExpr<int32_t>(a, 3), *makeConstantExpr<int32_t>(b, 3));
+  // The types differ, so not equal
+  ASSERT_FALSE(
+      *makeConstantExpr<int32_t>(a, 3) == *makeConstantExpr<int64_t>(c, 3));
+  // The values differ, so not equal
+  ASSERT_FALSE(
+      *makeConstantExpr<int32_t>(a, 3) == *makeConstantExpr<int32_t>(b, 4));
+}
+
+TEST_F(ExprTest, constantComplexEquals) {
+  auto testConstantEquals =
+      // a and b should be equal but distinct vectors.
+      // a and c should be vectors with equal values but different types (e.g.
+      // int32_t and int64_t).
+      [&](const VectorPtr& a, const VectorPtr& b, const VectorPtr& c) {
+        ASSERT_EQ(*makeConstantExpr(a, 3), *makeConstantExpr(b, 3));
+        // The types differ, so not equal
+        ASSERT_FALSE(*makeConstantExpr(a, 3) == *makeConstantExpr(c, 3));
+        // The values differ, so not equal
+        ASSERT_FALSE(*makeConstantExpr(a, 3) == *makeConstantExpr(b, 4));
+      };
+
+  testConstantEquals(
+      makeArrayVector<int32_t>(
+          10, [](auto /*row*/) { return 5; }, [](auto row) { return row * 3; }),
+      makeArrayVector<int32_t>(
+          10, [](auto /*row*/) { return 5; }, [](auto row) { return row * 3; }),
+      makeArrayVector<int64_t>(
+          10,
+          [](auto /*row*/) { return 5; },
+          [](auto row) { return row * 3; }));
+
+  testConstantEquals(
+      makeMapVector<int32_t, int32_t>(
+          10,
+          [](auto /*row*/) { return 5; },
+          [](auto row) { return row; },
+          [](auto row) { return row * 3; }),
+      makeMapVector<int32_t, int32_t>(
+          10,
+          [](auto /*row*/) { return 5; },
+          [](auto row) { return row; },
+          [](auto row) { return row * 3; }),
+      makeMapVector<int32_t, int64_t>(
+          10,
+          [](auto /*row*/) { return 5; },
+          [](auto row) { return row; },
+          [](auto row) { return row * 3; }));
+
+  auto a = makeFlatVector<int32_t>(10, [](auto row) { return row; });
+  auto b = makeFlatVector<int64_t>(10, [](auto row) { return row; });
+
+  testConstantEquals(
+      makeRowVector({a}), makeRowVector({a}), makeRowVector({b}));
+}
+
 namespace {
 class PlusConstantFunction : public exec::VectorFunction {
  public:
@@ -1168,8 +1230,8 @@ TEST_F(ExprTest, dictionaryAndConstantOverLazy) {
   assertEqualVectors(expected, result);
 }
 
-// Test evaluating single-argument vector function on a non-zero row of constant
-// vector.
+// Test evaluating single-argument vector function on a non-zero row of
+// constant vector.
 TEST_F(ExprTest, vectorFunctionOnConstantInput) {
   exec::registerVectorFunction(
       "plus5",
@@ -1233,8 +1295,8 @@ class PlusRandomIntegerFunction : public exec::VectorFunction {
 };
 } // namespace
 
-// Test evaluating single-argument non-deterministic vector function on constant
-// vector. The function must be called on each row, not just one.
+// Test evaluating single-argument non-deterministic vector function on
+// constant vector. The function must be called on each row, not just one.
 TEST_F(ExprTest, nonDeterministicVectorFunctionOnConstantInput) {
   exec::registerVectorFunction(
       "plus_random",
@@ -1288,20 +1350,20 @@ TEST_F(ExprTest, shortCircuit) {
 }
 
 // Test common sub-expression (CSE) optimization with encodings.
-// CSE evaluation may happen in different contexts, e.g. original input rows on
-// first evaluation and base vectors uncovered through peeling of encodings on
-// second. In this case, the row numbers from first evaluation and row numbers
-// in the second evaluation are non-comparable.
+// CSE evaluation may happen in different contexts, e.g. original input rows
+// on first evaluation and base vectors uncovered through peeling of encodings
+// on second. In this case, the row numbers from first evaluation and row
+// numbers in the second evaluation are non-comparable.
 //
 // Consider two projections:
 //  if (a > 0 AND c = 'apple')
 //  if (b > 0 AND c = 'apple')
 //
-// c = 'apple' is CSE. Let a be flat vector, b and c be dictionaries with shared
-// indices. On first evaluation, 'a' and 'c' don't share any encodings, no
-// peeling happens and context contains the original vectors and rows. On second
-// evaluation, 'b' and 'c' share dictionary encoding and it gets peeled. Context
-// now contains base vectors and inner rows.
+// c = 'apple' is CSE. Let a be flat vector, b and c be dictionaries with
+// shared indices. On first evaluation, 'a' and 'c' don't share any encodings,
+// no peeling happens and context contains the original vectors and rows. On
+// second evaluation, 'b' and 'c' share dictionary encoding and it gets
+// peeled. Context now contains base vectors and inner rows.
 //
 // Currently, this case doesn't work properly, hence, peeling disables CSE
 // optimizations.
@@ -1360,10 +1422,10 @@ class AddSuffixFunction : public exec::VectorFunction {
 };
 } // namespace
 
-// Test CSE evaluation where first evaluation applies to fewer rows then second.
-// Make sure values calculated on first evaluation are preserved when
-// calculating additional rows on second evaluation. This could happen if CSE is
-// a function that uses EvalCtx::moveOrCopyResult which relies on
+// Test CSE evaluation where first evaluation applies to fewer rows then
+// second. Make sure values calculated on first evaluation are preserved when
+// calculating additional rows on second evaluation. This could happen if CSE
+// is a function that uses EvalCtx::moveOrCopyResult which relies on
 // isFinalSelection flag.
 TEST_F(ExprTest, csePartialEvaluation) {
   exec::registerVectorFunction(
@@ -1385,8 +1447,8 @@ TEST_F(ExprTest, csePartialEvaluation) {
   assertEqualVectors(expected, results[1]);
 }
 
-// Checks that vector function registry overwrites if multiple registry attempts
-// are made for the same functions.
+// Checks that vector function registry overwrites if multiple registry
+// attempts are made for the same functions.
 TEST_F(ExprTest, overwriteInRegistry) {
   auto inserted = exec::registerVectorFunction(
       "plus5",
@@ -1519,8 +1581,8 @@ TEST_F(ExprTest, selectiveLazyLoadingAnd) {
   // Evaluate AND expression on 3 lazy vectors and verify that each
   // subsequent vector is loaded for fewer rows than the one before.
   // Create 3 identical vectors with values set to row numbers. Use conditions
-  // that pass on half of the rows for the first vector, a third for the second,
-  // and a fifth for the third: a % 2 = 0 AND b % 3 = 0 AND c % 5 = 0.
+  // that pass on half of the rows for the first vector, a third for the
+  // second, and a fifth for the third: a % 2 = 0 AND b % 3 = 0 AND c % 5 = 0.
   // Verify that all rows are loaded for the first vector, half for the second
   // and only 1/6 for the third.
   auto valueAt = [](auto row) { return row; };
@@ -1782,7 +1844,8 @@ TEST_F(ExprTest, opaque) {
   EXPECT_EQ(OpaqueState::constructed, 0);
   EXPECT_EQ(OpaqueState::destructed, 0);
 
-  // opaque created by a function taking a literal and should be constant folded
+  // opaque created by a function taking a literal and should be constant
+  // folded
   OpaqueState::clearStats();
   runAll<int64_t>(
       "test_opaque_add(test_opaque_create(123), bigint2)", [&](int32_t row) {
@@ -2152,8 +2215,8 @@ TEST_F(ExprTest, complexNullOutput) {
       BaseVector::createNullConstant(ARRAY(VARCHAR()), 1, execCtx_->pool());
   auto resultForNulls = evaluate("null_array(NULL, NULL)", row);
 
-  // Making sure the output of the function is the same when returning all null
-  // or called on NULL constants
+  // Making sure the output of the function is the same when returning all
+  // null or called on NULL constants
   assertEqualVectors(expectedResults, resultForNulls);
 }
 
@@ -2216,9 +2279,9 @@ TEST_F(ExprTest, memo) {
 
 // This test triggers the situation when peelEncodings() produces an empty
 // selectivity vector, which if passed to evalWithMemo() causes the latter to
-// produce null Expr::dictionaryCache_, which leads to a crash in evaluation of
-// subsequent rows. We have fixed that issue with condition and this test is for
-// that.
+// produce null Expr::dictionaryCache_, which leads to a crash in evaluation
+// of subsequent rows. We have fixed that issue with condition and this test
+// is for that.
 TEST_F(ExprTest, memoNulls) {
   // Generate 5 rows with null string and 5 with a string.
   auto base = makeFlatVector<StringView>(
@@ -2506,4 +2569,109 @@ TEST_F(ExprTest, constantToString) {
   ASSERT_EQ(
       "4 elements starting at 0 {1.2000000476837158, 3.4000000953674316, null, 5.599999904632568}:ARRAY<REAL>",
       exprSet.exprs()[2]->toString());
+}
+
+namespace {
+// A naive function that wraps the input in a dictionary vector resized to
+// rows.end() - 1.  It assumes all selected values are non-null.
+class TestingShrinkingDictionary : public exec::VectorFunction {
+ public:
+  bool isDefaultNullBehavior() const override {
+    return true;
+  }
+
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& /* outputType */,
+      exec::EvalCtx* context,
+      VectorPtr* result) const override {
+    BufferPtr indices =
+        AlignedBuffer::allocate<vector_size_t>(rows.end(), context->pool());
+    auto rawIndices = indices->asMutable<vector_size_t>();
+    rows.applyToSelected([&](int row) { rawIndices[row] = row; });
+
+    *result =
+        BaseVector::wrapInDictionary(nullptr, indices, rows.end() - 1, args[0]);
+  }
+
+  static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
+    return {exec::FunctionSignatureBuilder()
+                .returnType("bigint")
+                .argumentType("bigint")
+                .build()};
+  }
+};
+} // namespace
+
+TEST_F(ExprTest, specialFormPropagateNulls) {
+  exec::registerVectorFunction(
+      "test_shrinking_dictionary",
+      TestingShrinkingDictionary::signatures(),
+      std::make_unique<TestingShrinkingDictionary>());
+
+  // This test verifies an edge case where applyFunctionWithPeeling may produce
+  // a result vector which is dictionary encoded and has fewer values than
+  // are rows.
+  // This can happen when the last value in a column used in an expression is
+  // null which causes removeSureNulls to move the end of the SelectivityVector
+  // forward.  When we incorrectly use rows.end() as the size of the
+  // dictionary when rewrapping the results.
+  // Normally this is masked when this vector is used in a function call which
+  // produces a new output vector.  However, in SpecialForm expressions, we may
+  // return the output untouched, and when we try to add back in the nulls, we
+  // get an exception trying to resize the DictionaryVector.
+  // This is difficult to reproduce, so this test artificially triggers the
+  // issue by using a UDF that returns a dictionary one smaller than rows.end().
+
+  // Making the last row NULL, so we call addNulls in eval.
+  auto c0 = makeFlatVector<int64_t>(
+      5,
+      [](vector_size_t row) { return row; },
+      [](vector_size_t row) { return row == 4; });
+
+  auto rowVector = makeRowVector({c0});
+  auto evalResult = evaluate("test_shrinking_dictionary(\"c0\")", rowVector);
+
+  auto expectedResult = makeFlatVector<int64_t>(
+      5,
+      [](vector_size_t row) { return row; },
+      [](vector_size_t row) { return row == 4; });
+  assertEqualVectors(expectedResult, evalResult);
+}
+
+namespace {
+template <typename T>
+struct AlwaysThrowsFunction {
+  template <typename TResult, typename TInput>
+  FOLLY_ALWAYS_INLINE void call(TResult&, const TInput&) {
+    VELOX_CHECK(false);
+  }
+};
+} // namespace
+
+TEST_F(ExprTest, tryWithConstantFailure) {
+  // This test verifies the behavior of constant peeling on a function wrapped
+  // in a TRY.  Specifically the case when the UDF executed on the peeled
+  // vector throws an exception on the constant value.
+
+  // When wrapping a peeled ConstantVector, the result is wrapped in a
+  // ConstantVector.  ConstantVector has special handling logic to copy the
+  // underlying string when the type is Varchar.  When an exception is thrown
+  // and the StringView isn't initialized, without special handling logic in
+  // EvalCtx this results in reading uninitialized memory triggering ASAN
+  // errors.
+  registerFunction<AlwaysThrowsFunction, Varchar, Varchar>({"always_throws"});
+  auto c0 = makeConstantVector("test", 5);
+  auto c1 = makeFlatVector<int64_t>(5, [](vector_size_t row) { return row; });
+  auto rowVector = makeRowVector({c0, c1});
+
+  // We use strpos and c1 to ensure that the constant is peeled before calling
+  // always_throws, not before the try.
+  auto evalResult =
+      evaluate("try(strpos(always_throws(\"c0\"), 't', c1))", rowVector);
+
+  auto expectedResult = makeFlatVector<int64_t>(
+      5, [](vector_size_t) { return 0; }, [](vector_size_t) { return true; });
+  assertEqualVectors(expectedResult, evalResult);
 }

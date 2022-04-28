@@ -69,7 +69,7 @@ class WriterContext : public CompressionBufferPool {
       handler_ = std::make_unique<encryption::EncryptionHandler>();
     }
     validateConfigs();
-    LOG(INFO) << fmt::format("Compression config: {}", compression);
+    VLOG(1) << fmt::format("Compression config: {}", compression);
     compressionBuffer_ = std::make_unique<dwio::common::DataBuffer<char>>(
         generalPool_, compressionBlockSize + PAGE_HEADER_SIZE);
   }
@@ -367,11 +367,6 @@ class WriterContext : public CompressionBufferPool {
   // from encoding to encoding, and thus should be schema aware.
   size_t getEstimatedFlushOverhead(size_t dataRawSize) const {
     return ceil(flushOverheadRatioTracker_.getEstimatedRatio() * dataRawSize);
-  }
-
-  // At this point we won't have data to estimate flush overhead.
-  int64_t getEstimatedEncodingSwitchOverhead() const {
-    return stripeRawSize;
   }
 
   bool checkLowMemoryMode() const {

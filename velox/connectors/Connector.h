@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/common/base/AsyncSource.h"
+#include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/caching/DataCache.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/core/Context.h"
@@ -118,7 +119,7 @@ class DataSource {
   // Returns the number of input rows processed so far.
   virtual uint64_t getCompletedRows() = 0;
 
-  virtual std::unordered_map<std::string, int64_t> runtimeStats() = 0;
+  virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats() = 0;
 
   // Returns true if 'this' has initiated all the prefetch this will
   // initiate. This means that the caller should schedule next splits

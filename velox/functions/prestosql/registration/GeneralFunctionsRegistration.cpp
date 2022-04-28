@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/functions/Registerer.h"
+#include "velox/functions/prestosql/Cardinality.h"
 
 namespace facebook::velox::functions {
 
@@ -25,12 +26,15 @@ void registerGeneralFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_coalesce, "coalesce");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_is_null, "is_null");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_in, "in");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_cardinality, "cardinality");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_filter, "filter");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat_row, "row_constructor");
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_least, "least");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_greatest, "greatest");
+
+  registerFunction<CardinalityFunction, int64_t, Array<Any>>({"cardinality"});
+  registerFunction<CardinalityFunction, int64_t, Map<Any, Any>>(
+      {"cardinality"});
 }
 
 } // namespace facebook::velox::functions

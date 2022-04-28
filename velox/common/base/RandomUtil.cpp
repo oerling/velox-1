@@ -14,26 +14,26 @@
  * limitations under the License.
  */
 
-#include "velox/vector/SimpleVector.h"
-#include "velox/common/base/Exceptions.h"
+#include "velox/common/base/RandomUtil.h"
 
-namespace facebook {
-namespace velox {
+#include <optional>
 
-template <>
-void SimpleVector<StringView>::setMinMax(
-    const folly::F14FastMap<std::string, std::string>& metaData) {
-  auto it = metaData.find(META_MIN);
-  if (it != metaData.end()) {
-    minString_ = it->second;
-    min_ = StringView(minString_);
-  }
-  it = metaData.find(META_MAX);
-  if (it != metaData.end()) {
-    maxString_ = it->second;
-    max_ = StringView(maxString_);
-  }
+#include <folly/Random.h>
+
+namespace facebook::velox::random {
+
+namespace {
+
+std::optional<uint32_t> customSeed;
+
 }
 
-} // namespace velox
-} // namespace facebook
+void setSeed(uint32_t value) {
+  customSeed = value;
+}
+
+uint32_t getSeed() {
+  return customSeed ? *customSeed : folly::Random::rand32();
+}
+
+} // namespace facebook::velox::random
