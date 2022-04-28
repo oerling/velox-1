@@ -117,7 +117,10 @@ class SpillerTest : public exec::test::RowContainerTestBase {
       }
     }
   }
-  std::unique_ptr<RowContainer> makeSpillData(int32_t numRows, std::vector<char*>& rows, RowVectorPtr& batch) {
+  std::unique_ptr<RowContainer> makeSpillData(
+      int32_t numRows,
+      std::vector<char*>& rows,
+      RowVectorPtr& batch) {
     batch = makeDataset(
         ROW({
             {"bool_val", BOOLEAN()},
@@ -172,7 +175,6 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     return data;
   }
 
-  
   folly::IOThreadPoolExecutor* FOLLY_NONNULL executor() {
     static std::mutex mutex;
     std::lock_guard<std::mutex> l(mutex);

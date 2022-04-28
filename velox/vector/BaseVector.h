@@ -539,7 +539,6 @@ class BaseVector {
     return std::static_pointer_cast<T>(createInternal(type, size, pool));
   }
 
-  
   static std::shared_ptr<BaseVector> getOrCreateEmpty(
       std::shared_ptr<BaseVector> vector,
       const TypePtr& type,
@@ -722,7 +721,6 @@ class BaseVector {
       const TypePtr& type,
       vector_size_t size,
       velox::memory::MemoryPool* pool);
-
 
   bool isCodegenOutput_ = false;
 

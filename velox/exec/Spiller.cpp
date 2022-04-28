@@ -24,7 +24,7 @@ namespace facebook::velox::exec {
 
 void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr& resultPtr) {
   if (!resultPtr) {
-    resultPtr = 
+    resultPtr =
         BaseVector::create<RowVector>(rowType_, rows.size(), &spillPool());
   } else {
     resultPtr->prepareForReuse();
@@ -85,8 +85,8 @@ class RowContainerSpillStream : public SpillStream {
     for (; numRows < limit; ++numRows) {
       bytes += spiller_.container().rowSize(rows_[nextBatchIndex_ + numRows]);
       if (bytes > kMaxBytes) {
-	// Increment because the row that went over the limit is part
-	// of the result. We must spill at least one row.
+        // Increment because the row that went over the limit is part
+        // of the result. We must spill at least one row.
         ++numRows;
         break;
       }
@@ -164,7 +164,8 @@ std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(
     }
     return std::make_unique<SpillStatus>(partition, written, nullptr);
   } catch (const std::exception& e) {
-    // The exception is passed to the caller thread which checks this in advanceSpill().
+    // The exception is passed to the caller thread which checks this in
+    // advanceSpill().
     return std::make_unique<SpillStatus>(
         partition, 0, std::current_exception());
   }
@@ -279,8 +280,7 @@ Spiller::SpillRows Spiller::finishSpill() {
   RowContainerIterator iterator;
   iterator.reset();
   SpillRows rowsFromNonSpillingPartitions(
-      0,
-      memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory()));
+      0, memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory()));
   fillSpillRuns(
       iterator, RowContainer::kUnlimited, &rowsFromNonSpillingPartitions);
   return rowsFromNonSpillingPartitions;
