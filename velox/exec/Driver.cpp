@@ -47,6 +47,8 @@ velox::memory::MemoryPool* FOLLY_NONNULL DriverCtx::addOperatorPool() {
   return task->addOperatorPool(pool);
 }
 
+std::atomic_uint64_t BlockingState::numBlockedDrivers_{0};
+
 BlockingState::BlockingState(
     std::shared_ptr<Driver> driver,
     ContinueFuture&& future,
@@ -62,6 +64,7 @@ BlockingState::BlockingState(
               .count()) {
   // Set before leaving the thread.
   driver_->state().hasBlockingFuture = true;
+  numBlockedDrivers_++;
 }
 
 // static
@@ -147,6 +150,9 @@ class CancelGuard {
 void Driver::enqueue(std::shared_ptr<Driver> driver) {
   // This is expected to be called inside the Driver's Tasks's mutex.
   driver->enqueueInternal();
+  if (driver->closed_) {
+    return;
+  }
   driver->task()->queryCtx()->executor()->add(
       [driver]() { Driver::run(driver); });
 }
@@ -182,7 +188,8 @@ void Driver::pushdownFilters(int operatorIndex) {
     return;
   }
 
-  op->stats().addRuntimeStat("dynamicFiltersProduced", filters.size());
+  op->stats().addRuntimeStat(
+      "dynamicFiltersProduced", RuntimeCounter(filters.size()));
 
   // Walk operator list upstream and find a place to install the filters.
   for (const auto& entry : filters) {
@@ -197,7 +204,8 @@ void Driver::pushdownFilters(int operatorIndex) {
             "Cannot push down dynamic filters produced by {}",
             op->toString());
         prevOp->addDynamicFilter(channel, entry.second);
-        prevOp->stats().addRuntimeStat("dynamicFiltersAccepted", 1);
+        prevOp->stats().addRuntimeStat(
+            "dynamicFiltersAccepted", RuntimeCounter(1));
         break;
       }
 
@@ -210,7 +218,8 @@ void Driver::pushdownFilters(int operatorIndex) {
             "Cannot push down dynamic filters produced by {}",
             op->toString());
         prevOp->addDynamicFilter(channel, entry.second);
-        prevOp->stats().addRuntimeStat("dynamicFiltersAccepted", 1);
+        prevOp->stats().addRuntimeStat(
+            "dynamicFiltersAccepted", RuntimeCounter(1));
         break;
       }
 
@@ -232,17 +241,15 @@ void Driver::enqueueInternal() {
 StopReason Driver::runInternal(
     std::shared_ptr<Driver>& self,
     std::shared_ptr<BlockingState>* blockingState) {
-  const auto queuedWallNanos =
-      (getCurrentTimeMicro() - queueTimeStartMicros_) * 1'000;
-
-  auto& task = ctx_->task;
-  auto stop = task->enter(state_);
+  auto queuedTime = (getCurrentTimeMicro() - queueTimeStartMicros_) * 1'000;
+  // Update the next operator's queueTime.
+  auto stop = closed_ ? StopReason::kTerminate : task()->enter(state_);
   if (stop != StopReason::kNone) {
     if (stop == StopReason::kTerminate) {
       // ctx_ still has a reference to the Task. 'this' is not on
       // thread from the Task's viewpoint, hence no need to call
       // close().
-      task->setError(std::make_exception_ptr(VeloxRuntimeError(
+      ctx_->task->setError(std::make_exception_ptr(VeloxRuntimeError(
           __FILE__,
           __LINE__,
           __FUNCTION__,
@@ -257,16 +264,18 @@ StopReason Driver::runInternal(
   process::TraceContext trace(
       fmt::format("driver {}", self->ctx_->task->taskId()), true);
 
-  // Update the next operator's queueTime.
+  // Update the queued time after entering the Task to ensure the stats have not
+  // been deleted.
   if (curOpIndex_ < operators_.size()) {
     operators_[curOpIndex_]->stats().addRuntimeStat(
-        "queuedWallNanos", queuedWallNanos);
+        "queuedWallNanos",
+        RuntimeCounter(queuedTime, RuntimeCounter::Unit::kNanos));
   }
 
-  CancelGuard guard(task.get(), &state_, [&](StopReason reason) {
+  CancelGuard guard(task().get(), &state_, [&](StopReason reason) {
     // This is run on error or cancel exit.
     if (reason == StopReason::kTerminate) {
-      task->setError(std::make_exception_ptr(VeloxRuntimeError(
+      task()->setError(std::make_exception_ptr(VeloxRuntimeError(
           __FILE__,
           __LINE__,
           __FUNCTION__,
@@ -290,7 +299,7 @@ StopReason Driver::runInternal(
 
     for (;;) {
       for (int32_t i = numOperators - 1; i >= 0; --i) {
-        stop = task->shouldStop();
+        stop = task()->shouldStop();
         if (stop != StopReason::kNone) {
           guard.notThrown();
           return stop;
@@ -345,7 +354,7 @@ StopReason Driver::runInternal(
               i += 2;
               continue;
             } else {
-              stop = task->shouldStop();
+              stop = task()->shouldStop();
               if (stop != StopReason::kNone) {
                 guard.notThrown();
                 return stop;
@@ -390,12 +399,12 @@ StopReason Driver::runInternal(
       }
     }
   } catch (velox::VeloxException& e) {
-    task->setError(std::current_exception());
-    // The CancelPoolGuard will close 'self' and remove from task_.
+    task()->setError(std::current_exception());
+    // The CancelPoolGuard will close 'self' and remove from Task.
     return StopReason::kAlreadyTerminated;
   } catch (std::exception& e) {
-    task->setError(std::current_exception());
-    // The CancelGuard will close 'self' and remove from task_.
+    task()->setError(std::current_exception());
+    // The CancelGuard will close 'self' and remove from Task.
     return StopReason::kAlreadyTerminated;
   }
 }
@@ -445,7 +454,8 @@ void Driver::addStatsToTask() {
   for (auto& op : operators_) {
     auto& stats = op->stats();
     stats.memoryStats.update(op->pool()->getMemoryUsageTracker());
-    ctx_->task->addOperatorStats(stats);
+    stats.numDrivers = 1;
+    task()->addOperatorStats(stats);
   }
 }
 
@@ -454,9 +464,6 @@ void Driver::close() {
     // Already closed.
     return;
   }
-
-  closed_ = true;
-
   if (!isOnThread() && !isTerminated()) {
     LOG(FATAL) << "Driver::close is only allowed from the Driver's thread";
   }
@@ -464,6 +471,7 @@ void Driver::close() {
   for (auto& op : operators_) {
     op->close();
   }
+  closed_ = true;
   Task::removeDriver(ctx_->task, this);
 }
 
@@ -473,6 +481,7 @@ void Driver::closeByTask() {
   for (auto& op : operators_) {
     op->close();
   }
+  closed_ = true;
 }
 
 bool Driver::mayPushdownAggregation(Operator* aggregation) const {
@@ -491,7 +500,7 @@ bool Driver::mayPushdownAggregation(Operator* aggregation) const {
 }
 
 std::unordered_set<ChannelIndex> Driver::canPushdownFilters(
-    Operator* FOLLY_NONNULL filterSource,
+    const Operator* FOLLY_NONNULL filterSource,
     const std::vector<ChannelIndex>& channels) const {
   int filterSourceIndex = -1;
   for (auto i = 0; i < operators_.size(); ++i) {
@@ -550,7 +559,7 @@ Driver::findOperator(std::string_view planNodeId) const {
 }
 
 void Driver::setError(std::exception_ptr exception) {
-  ctx_->task->setError(exception);
+  task()->setError(exception);
 }
 
 std::string Driver::toString() {
@@ -581,7 +590,7 @@ SuspendedSection::~SuspendedSection() {
 }
 
 std::string Driver::label() const {
-  return fmt::format("<Driver {}:{}>", ctx_->task->taskId(), ctx_->driverId);
+  return fmt::format("<Driver {}:{}>", task()->taskId(), ctx_->driverId);
 }
 
 std::string blockingReasonToString(BlockingReason reason) {

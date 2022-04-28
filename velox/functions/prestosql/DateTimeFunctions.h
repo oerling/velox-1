@@ -39,9 +39,7 @@ struct ToUnixtimeFunction {
       double& result,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     const auto milliseconds = *timestampWithTimezone.template at<0>();
-    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
-    timestamp.toGMT(*timestampWithTimezone.template at<1>());
-    result = toUnixtime(timestamp);
+    result = (double)milliseconds / kMillisecondsInSecond;
     return true;
   }
 };
@@ -274,6 +272,15 @@ struct HourFunction : public InitSessionTimezone<T> {
   FOLLY_ALWAYS_INLINE bool call(int64_t& result, const arg_type<Date>& date) {
     result = getDateTime(date).tm_hour;
     return true;
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+    const auto milliseconds = *timestampWithTimezone.template at<0>();
+    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
+    timestamp.toTimezone(*timestampWithTimezone.template at<1>());
+    result = getDateTime(timestamp, nullptr).tm_hour;
   }
 };
 
@@ -711,6 +718,56 @@ struct DateFormatFunction {
 };
 
 template <typename T>
+struct DateParseFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+  static constexpr folly::StringPiece supportedFormat{"%Y-%m-%d"};
+  static constexpr folly::StringPiece correspondingJodaFormat{"YYYY-MM-dd"};
+
+  std::optional<JodaFormatter> format_;
+  std::optional<int64_t> sessionTzID_;
+
+  void validateFormat(const velox::StringView& format) {
+    if (format != supportedFormat) {
+      VELOX_USER_FAIL(
+          "'date_parse' function currently only supports '%Y-%m-%d' format but "
+          "'",
+          format,
+          "' is provided");
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* /*input*/,
+      const arg_type<Varchar>* formatString) {
+    if (formatString != nullptr) {
+      validateFormat(*formatString);
+      format_.emplace(correspondingJodaFormat.data());
+    }
+
+    auto sessionTzName = config.sessionTimezone();
+    if (!sessionTzName.empty()) {
+      sessionTzID_ = util::getTimeZoneID(sessionTzName);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Timestamp>& result,
+      const arg_type<Varchar>& input,
+      const arg_type<Varchar>& format) {
+    validateFormat(format);
+    if (!format_.has_value()) {
+      format_.emplace(correspondingJodaFormat.data());
+    }
+    auto jodaResult = format_->parse(input);
+    int16_t timezoneId = sessionTzID_.value_or(0);
+    jodaResult.timestamp.toGMT(timezoneId);
+    result = jodaResult.timestamp;
+    return true;
+  }
+};
+
+template <typename T>
 struct ParseDateTimeFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -742,6 +799,7 @@ struct ParseDateTimeFunction {
     // no session timezone, fallback to 0 (GMT).
     int16_t timezoneId = jodaResult.timezoneId != -1 ? jodaResult.timezoneId
                                                      : sessionTzID_.value_or(0);
+    jodaResult.timestamp.toGMT(timezoneId);
     result = std::make_tuple(jodaResult.timestamp.toMillis(), timezoneId);
     return true;
   }

@@ -23,7 +23,8 @@ set(velox_benchmark_deps
     ${FOLLY}
     ${FOLLY_BENCHMARK}
     ${DOUBLE_CONVERSION}
-    ${GTEST_BOTH_LIBRARIES}
+    gtest
+    gtest_main
     ${gflags_LIBRARIES}
     glog::glog)
 
@@ -38,3 +39,11 @@ target_link_libraries(velox_benchmark_basic_comparison_conjunct
 add_executable(velox_benchmark_basic_decoded_vector DecodedVector.cpp)
 target_link_libraries(velox_benchmark_basic_decoded_vector
                       ${velox_benchmark_deps})
+
+add_executable(velox_benchmark_basic_selectivity_vector SelectivityVector.cpp)
+target_link_libraries(velox_benchmark_basic_selectivity_vector
+                      ${velox_benchmark_deps})
+
+add_executable(velox_benchmark_basic_vector_compare VectorCompare.cpp)
+target_link_libraries(velox_benchmark_basic_vector_compare
+                      ${velox_benchmark_deps} velox_vector_test_lib)

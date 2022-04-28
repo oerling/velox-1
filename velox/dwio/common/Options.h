@@ -526,8 +526,9 @@ class ReaderOptions {
     return serDeOptions;
   }
 
-  encryption::DecrypterFactory* getDecrypterFactory() const {
-    return decrypterFactory_.get();
+  const std::shared_ptr<encryption::DecrypterFactory> getDecrypterFactory()
+      const {
+    return decrypterFactory_;
   }
 
   velox::dwrf::BufferedInputFactory* getBufferedInputFactory() const {

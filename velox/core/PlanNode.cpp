@@ -147,13 +147,25 @@ void ValuesNode::addDetails(std::stringstream& stream) const {
   stream << totalCount << " rows in " << values_.size() << " vectors";
 }
 
+void ProjectNode::addDetails(std::stringstream& stream) const {
+  stream << "expressions: ";
+  for (auto i = 0; i < projections_.size(); i++) {
+    auto& projection = projections_[i];
+    if (i > 0) {
+      stream << ", ";
+    }
+    stream << "(" << names_[i] << ":" << projection->type()->toString() << ", "
+           << projection->toString() << ")";
+  }
+}
+
 const std::vector<std::shared_ptr<const PlanNode>>& TableScanNode::sources()
     const {
   return kEmptySources;
 }
 
-void TableScanNode::addDetails(std::stringstream& /* stream */) const {
-  // TODO Add connector details.
+void TableScanNode::addDetails(std::stringstream& stream) const {
+  stream << tableHandle_->toString();
 }
 
 const std::vector<std::shared_ptr<const PlanNode>>& ExchangeNode::sources()
@@ -355,8 +367,16 @@ void MergeExchangeNode::addDetails(std::stringstream& stream) const {
   addSortingKeys(stream, sortingKeys_, sortingOrders_);
 }
 
-void LocalPartitionNode::addDetails(std::stringstream& /* stream */) const {
+void LocalPartitionNode::addDetails(std::stringstream& stream) const {
   // Nothing to add.
+  switch (type_) {
+    case Type::kGather:
+      stream << "GATHER";
+      break;
+    case Type::kRepartition:
+      stream << "REPARTITION";
+      break;
+  }
 }
 
 void EnforceSingleRowNode::addDetails(std::stringstream& /* stream */) const {

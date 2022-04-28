@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/common/base/AsyncSource.h"
+#include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/caching/DataCache.h"
 #include "velox/common/caching/FileGroupStats.h"
 #include "velox/common/caching/ScanTracker.h"
@@ -62,6 +63,7 @@ class ColumnHandle {
 class ConnectorTableHandle {
  public:
   virtual ~ConnectorTableHandle() = default;
+  virtual std::string toString() const = 0;
 };
 
 /**
@@ -118,7 +120,23 @@ class DataSource {
   // Returns the number of input rows processed so far.
   virtual uint64_t getCompletedRows() = 0;
 
-  virtual std::unordered_map<std::string, int64_t> runtimeStats() = 0;
+  virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats() = 0;
+
+  // Returns true if 'this' has initiated all the prefetch this will
+  // initiate. This means that the caller should schedule next splits
+  // to prefetch in the background. false if the source does not
+  // prefetch.
+  virtual bool allPrefetchIssued() const {
+    return false;
+  }
+
+  // Initializes this from 'source'. 'source' is effectively moved
+  // into 'this' Adaptation like dynamic filters stay in effect but
+  // the parts dealing with open files, prefetched data etc. are moved. 'source'
+  // is freed after the move.
+  virtual void setFromDataSource(std::shared_ptr<DataSource> source) {
+    VELOX_UNSUPPORTED("setFromDataSource");
+  }
 
   // Returns true if 'this' has initiated all the prefetch this will
   // initiate. This means that the caller should schedule next splits
@@ -270,6 +288,10 @@ class Connector {
       const std::string& scanId,
       int32_t loadQuantum,
       cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
+
+  virtual folly::Executor* FOLLY_NULLABLE executor() const {
+    return nullptr;
+  }
 
   virtual folly::Executor* FOLLY_NULLABLE executor() const {
     return nullptr;

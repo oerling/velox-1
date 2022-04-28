@@ -73,12 +73,7 @@ class RowVector : public BaseVector {
     return VectorEncoding::Simple::ROW;
   }
 
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override;
-
-  int32_t compare(
+  std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
       vector_size_t otherIndex,
@@ -276,12 +271,7 @@ class ArrayVector : public BaseVector {
     return VectorEncoding::Simple::ARRAY;
   }
 
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override;
-
-  int32_t compare(
+  std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
       vector_size_t otherIndex,
@@ -448,12 +438,7 @@ class MapVector : public BaseVector {
     return VectorEncoding::Simple::MAP;
   }
 
-  bool equalValueAt(
-      const BaseVector* other,
-      vector_size_t index,
-      vector_size_t otherIndex) const override;
-
-  int32_t compare(
+  std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
       vector_size_t otherIndex,

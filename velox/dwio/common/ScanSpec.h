@@ -271,7 +271,9 @@ class ScanSpec {
   // Returns the child which produces values for 'channel'. Throws if not found.
   ScanSpec& getChildByChannel(ChannelIndex channel);
 
-  void moveAdaptation(ScanSpec& other);
+  void moveAdaptationFrom(ScanSpec& other);
+
+  std::string toString() const;
 
  private:
   void reorder();

@@ -119,24 +119,29 @@ bool ScanSpec::hasFilter() const {
   return false;
 }
 
-void ScanSpec::moveAdaptation(ScanSpec& other) {
+void ScanSpec::moveAdaptationFrom(ScanSpec& other) {
   // moves the filters and filter order from 'other'.
-  std::vector<std::unique_ptr<ScanSpec>> newChildren_;
+  std::vector<std::unique_ptr<ScanSpec>> newChildren;
   for (auto& otherChild : other.children_) {
     bool found = false;
     for (auto& child : children_) {
       if (child && child->fieldName_ == otherChild->fieldName_) {
-        child->filter_ = std::move(otherChild->filter_);
-        child->selectivity_ = otherChild->selectivity_;
-        child->subscript_ = otherChild->subscript_;
-        newChildren_.push_back(std::move(child));
+        if (!child->isConstant() && !otherChild->isConstant()) {
+          // If other child is constant, a possible filter on a
+          // constant will have been evaluated at split start time. If
+          // 'child' is constant there is no adaptation that can be
+          // received.
+          child->filter_ = std::move(otherChild->filter_);
+          child->selectivity_ = otherChild->selectivity_;
+        }
+        newChildren.push_back(std::move(child));
         found = true;
         break;
       }
     }
     VELOX_CHECK(found);
   }
-  children_ = std::move(newChildren_);
+  children_ = std::move(newChildren);
   stableChildren_.clear();
   for (auto& otherChild : other.stableChildren_) {
     auto child = childByName(otherChild->fieldName_);
@@ -295,7 +300,9 @@ bool testFilter(
     // IS NULL filter cannot pass.
     return false;
   }
-
+  if (mayHaveNull && filter->testNull()) {
+    return true;
+  }
   switch (type->kind()) {
     case TypeKind::BIGINT:
     case TypeKind::INTEGER:
@@ -380,6 +387,24 @@ ScanSpec& ScanSpec::getChildByChannel(ChannelIndex channel) {
     }
   }
   VELOX_FAIL("No ScanSpec produces channel {}", channel);
+}
+
+std::string ScanSpec::toString() const {
+  std::stringstream out;
+  if (!fieldName_.empty()) {
+    out << fieldName_;
+    if (filter_) {
+      out << " filter " << filter_->toString();
+    }
+  }
+  if (!children_.empty()) {
+    out << "(";
+    for (auto& child : children_) {
+      out << child->toString() << ", ";
+    }
+    out << ")";
+  }
+  return out.str();
 }
 
 } // namespace facebook::velox::common

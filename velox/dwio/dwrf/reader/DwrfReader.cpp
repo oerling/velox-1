@@ -50,6 +50,7 @@ void DwrfRowReader::checkSkipStrides(
 
   if (currentRowInStripe == 0 || recomputeStridesToSkip_) {
     stridesToSkip_ = columnReader_->filterRowGroups(strideSize, context);
+    stripeStridesToSkip_[currentStripe] = stridesToSkip_;
     recomputeStridesToSkip_ = false;
   }
 
@@ -221,7 +222,7 @@ bool DwrfRowReader::allPrefetchIssued() const {
       prefetchedStripeReaders_.end();
 }
 
-bool DwrfRowReader::moveAdaptation(RowReader& other) {
+bool DwrfRowReader::moveAdaptationFrom(RowReader& other) {
   auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
   if (!columnReader_ || !otherReader->columnReader_) {
     return false;

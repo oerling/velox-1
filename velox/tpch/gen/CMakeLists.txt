@@ -11,5 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+add_library(velox_tpch_gen TpchGen.cpp DBGenIterator.cpp)
 
-add_library(vector_operation_test_utils INTERFACE)
+target_link_libraries(velox_tpch_gen velox_memory velox_vector dbgen duckdb)
+
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()

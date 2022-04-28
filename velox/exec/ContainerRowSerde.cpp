@@ -15,6 +15,7 @@
  */
 
 #include "velox/exec/ContainerRowSerde.h"
+#include "velox/common/base/Exceptions.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/FlatVector.h"
@@ -342,6 +343,7 @@ int32_t compare(
     const BaseVector& right,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
   using T = typename TypeTraits<Kind>::NativeType;
   auto rightValue = right.asUnchecked<SimpleVector<T>>()->valueAt(index);
   auto leftValue = left.read<T>();
@@ -381,6 +383,8 @@ int compare<TypeKind::VARCHAR>(
     const BaseVector& right,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto result = compareStringAsc(left, right, index, flags.equalsOnly);
   return flags.ascending ? result : result * -1;
 }
@@ -391,6 +395,8 @@ int compare<TypeKind::VARBINARY>(
     const BaseVector& right,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto result = compareStringAsc(left, right, index, flags.equalsOnly);
   return flags.ascending ? result : result * -1;
 }
@@ -401,6 +407,8 @@ int compare<TypeKind::ROW>(
     const BaseVector& right,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto row = right.wrappedVector()->asUnchecked<RowVector>();
   auto wrappedIndex = right.wrappedIndex(index);
   VELOX_CHECK(row->encoding() == VectorEncoding::Simple::ROW);
@@ -435,6 +443,8 @@ int32_t compareArrays(
     vector_size_t offset,
     vector_size_t rightSize,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   int leftSize = left.read<int32_t>();
   if (leftSize != rightSize && flags.equalsOnly) {
     return flags.ascending ? 1 : -1;
@@ -467,6 +477,8 @@ int32_t compareArrayIndices(
     BaseVector& elements,
     folly::Range<const vector_size_t*> rightIndices,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   int32_t leftSize = left.read<int32_t>();
   int32_t rightSize = rightIndices.size();
   if (leftSize != rightSize && flags.equalsOnly) {
@@ -501,6 +513,8 @@ int compare<TypeKind::ARRAY>(
     const BaseVector& right,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto array = right.wrappedVector()->asUnchecked<ArrayVector>();
   VELOX_CHECK(array->encoding() == VectorEncoding::Simple::ARRAY);
   auto wrappedIndex = right.wrappedIndex(index);
@@ -518,6 +532,8 @@ int compare<TypeKind::MAP>(
     const BaseVector& right,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto map = right.wrappedVector()->asUnchecked<MapVector>();
   VELOX_CHECK(map->encoding() == VectorEncoding::Simple::MAP);
   auto wrappedIndex = right.wrappedIndex(index);
@@ -536,6 +552,8 @@ int32_t compareSwitch(
     const BaseVector& vector,
     vector_size_t index,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   return VELOX_DYNAMIC_TYPE_DISPATCH(
       compare, vector.typeKind(), stream, vector, index, flags);
 }
@@ -569,6 +587,8 @@ int32_t compare(
     ByteStream& right,
     const Type* /*type*/,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   using T = typename TypeTraits<Kind>::NativeType;
   T leftValue = left.read<T>();
   T rightValue = right.read<T>();
@@ -582,6 +602,8 @@ int32_t compare<TypeKind::VARCHAR>(
     ByteStream& right,
     const Type* /*type*/,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   std::string leftStorage;
   std::string rightStorage;
   StringView leftValue = readStringView(left, leftStorage);
@@ -596,6 +618,8 @@ int32_t compare<TypeKind::VARBINARY>(
     ByteStream& right,
     const Type* /*type*/,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   std::string leftStorage;
   std::string rightStorage;
   StringView leftValue = readStringView(left, leftStorage);
@@ -609,6 +633,8 @@ int32_t compareArrays(
     ByteStream& right,
     const Type* elementType,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto leftSize = left.read<int32_t>();
   auto rightSize = right.read<int32_t>();
   if (flags.equalsOnly && leftSize != rightSize) {
@@ -643,6 +669,8 @@ int32_t compare<TypeKind::ROW>(
     ByteStream& right,
     const Type* type,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   const auto& rowType = type->as<TypeKind::ROW>();
   int size = rowType.size();
   auto leftNulls = readNulls(left, size);
@@ -673,6 +701,8 @@ int32_t compare<TypeKind::ARRAY>(
     ByteStream& right,
     const Type* type,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   return compareArrays(left, right, type->childAt(0).get(), flags);
 }
 
@@ -682,6 +712,8 @@ int32_t compare<TypeKind::MAP>(
     ByteStream& right,
     const Type* type,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   auto result = compareArrays(left, right, type->childAt(0).get(), flags);
   if (result) {
     return result;
@@ -694,6 +726,8 @@ int32_t compareSwitch(
     ByteStream& right,
     const Type* type,
     CompareFlags flags) {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   return VELOX_DYNAMIC_TYPE_DISPATCH(
       compare, type->kind(), left, right, type, flags);
 }
@@ -791,6 +825,8 @@ int32_t ContainerRowSerde::compare(
     const DecodedVector& right,
     vector_size_t index,
     CompareFlags flags) const {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   return compareSwitch(left, *right.base(), right.index(index), flags);
 }
 
@@ -799,6 +835,8 @@ int32_t ContainerRowSerde::compare(
     ByteStream& right,
     const Type* type,
     CompareFlags flags) const {
+  VELOX_DCHECK(!flags.stopAtNull, "not supported compare flag");
+
   return compareSwitch(left, right, type, flags);
 }
 

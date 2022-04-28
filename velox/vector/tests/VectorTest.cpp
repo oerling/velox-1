@@ -19,11 +19,14 @@
 #include <stdio.h>
 #include "velox/common/memory/ByteStream.h"
 #include "velox/serializers/PrestoSerializer.h"
+#include "velox/vector/BaseVector.h"
 #include "velox/vector/BiasVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/LazyVector.h"
+#include "velox/vector/SimpleVector.h"
+#include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorTypeUtils.h"
 #include "velox/vector/tests/VectorMaker.h"
 
@@ -146,15 +149,14 @@ class VectorTest : public testing::Test {
         rawValues[i] = testValue<TBias>(i, buffer) - kBias;
       }
     }
-    folly::F14FastMap<std::string, std::string> metadata;
-    metadata[BiasVector<T>::BIAS_VALUE] = folly::to<std::string>(kBias);
     return std::make_shared<BiasVector<T>>(
         pool_.get(),
         nulls,
         size,
         BiasKind,
         std::move(values),
-        std::move(metadata),
+        kBias,
+        SimpleVectorStats<T>{},
         std::nullopt,
         numNulls,
         false,
@@ -495,6 +497,7 @@ class VectorTest : public testing::Test {
     target->copy(source.get(), sourceSize, 0, sourceSize);
     for (int32_t i = 0; i < sourceSize; ++i) {
       EXPECT_TRUE(target->equalValueAt(source.get(), sourceSize + i, i));
+      EXPECT_TRUE(source->equalValueAt(target.get(), i, sourceSize + i));
     }
     // Check that uninitialized is copyable.
     target->resize(target->size() + 100);

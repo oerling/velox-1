@@ -63,8 +63,6 @@ void E2EFilterTestBase::makeDataset(
 
   uint64_t timeWithNoFilter = 0;
   readWithoutFilter(spec.get(), batches_, timeWithNoFilter);
-  std::cout << " Time without filter: " << timeWithNoFilter << " us"
-            << std::endl;
 }
 
 void E2EFilterTestBase::addRowGroupSpecificData() {
@@ -146,26 +144,39 @@ void E2EFilterTestBase::makeStringUnique(const Subfield& field) {
 
 void E2EFilterTestBase::makeNotNull(int32_t firstRow) {
   for (RowVectorPtr batch : batches_) {
-    for (auto& data : batch->children()) {
-      std::vector<vector_size_t> nonNulls;
-      vector_size_t probe = 0;
-      for (auto counter = 0; counter < 23; ++counter) {
-        // Sample with a prime stride for a handful of non-null  values.
-        probe = (probe + 47) % data->size();
-        if (!data->isNullAt(probe)) {
-          nonNulls.push_back(probe);
-        }
+    makeNotNullRecursive(firstRow, batch);
+  }
+}
+
+void E2EFilterTestBase::makeNotNullRecursive(
+    int32_t firstRow,
+    RowVectorPtr batch) {
+  // make all children in nested structs non-null.
+  for (auto& data : batch->children()) {
+    if (data->typeKind() == TypeKind::ROW) {
+      auto rowVector = std::dynamic_pointer_cast<RowVector>(data);
+      makeNotNullRecursive(firstRow, rowVector);
+    }
+  }
+  for (auto& data : batch->children()) {
+    std::vector<vector_size_t> nonNulls;
+    vector_size_t probe = 0;
+    for (auto counter = 0; counter < 23; ++counter) {
+      // Sample with a prime stride for a handful of non-null  values.
+      probe = (probe + 47) % data->size();
+      if (!data->isNullAt(probe)) {
+        nonNulls.push_back(probe);
       }
-      if (nonNulls.empty()) {
-        continue;
-      }
-      int32_t nonNullCounter = 0;
-      for (auto row = firstRow; row < data->size(); ++row) {
-        if (data->isNullAt(row)) {
-          data->copy(
-              data.get(), row, nonNulls[nonNullCounter % nonNulls.size()], 1);
-          ++nonNullCounter;
-        }
+    }
+    if (nonNulls.empty()) {
+      continue;
+    }
+    int32_t nonNullCounter = 0;
+    for (auto row = firstRow; row < data->size(); ++row) {
+      if (data->isNullAt(row)) {
+        data->copy(
+            data.get(), row, nonNulls[nonNullCounter % nonNulls.size()], 1);
+        ++nonNullCounter;
       }
     }
   }
@@ -237,9 +248,13 @@ void E2EFilterTestBase::readWithFilter(
   auto rowIndex = 0;
   auto batch = BaseVector::create(rowType_, 1, pool_.get());
   resetReadBatchSizes();
+  int32_t clearCnt = 0;
   while (true) {
     {
       MicrosecondTimer timer(&time);
+      if (++clearCnt % 17 == 0) {
+        rowReader->resetFilterCaches();
+      }
       bool hasData = rowReader->next(nextReadBatchSize(), batch);
       if (!hasData) {
         break;
@@ -300,6 +315,15 @@ bool E2EFilterTestBase::loadWithHook(
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
       checkLoadWithHook, kind, batch, columnIndex, child, hitRows, rowIndex);
 }
+namespace {
+// Recursively clear extractValues so that eager read is not forced.
+void setLazy(ScanSpec& spec) {
+  spec.setExtractValues(false);
+  for (auto& child : spec.children()) {
+    setLazy(*child);
+  }
+}
+} // namespace
 
 void E2EFilterTestBase::testFilterSpecs(
     const std::vector<FilterSpec>& filterSpecs) {
@@ -309,29 +333,21 @@ void E2EFilterTestBase::testFilterSpecs(
   auto spec = filterGenerator->makeScanSpec(std::move(filters));
   uint64_t timeWithFilter = 0;
   readWithFilter(spec.get(), batches_, hitRows, timeWithFilter, false);
-  std::cout << hitRows.size() << "  in " << timeWithFilter << " us"
-            << std::endl;
 
   if (FLAGS_timing_repeats) {
     for (auto i = 0; i < FLAGS_timing_repeats; ++i) {
       readWithFilter(
           spec.get(), batches_, hitRows, timeWithFilter, false, true);
     }
-    std::cout << FLAGS_timing_repeats << " repeats in " << timeWithFilter
-              << " us" << std::endl;
   }
   // Redo the test with LazyVectors for non-filtered columns.
   timeWithFilter = 0;
   for (auto& childSpec : spec->children()) {
-    childSpec->setExtractValues(false);
+    setLazy(*childSpec);
   }
   readWithFilter(spec.get(), batches_, hitRows, timeWithFilter, false);
-  std::cout << hitRows.size() << "  lazy vectors in " << timeWithFilter << " us"
-            << std::endl;
   timeWithFilter = 0;
   readWithFilter(spec.get(), batches_, hitRows, timeWithFilter, true);
-  std::cout << hitRows.size() << "  lazy vectors with sparse load pushdown "
-            << "in " << timeWithFilter << " us" << std::endl;
 }
 
 void E2EFilterTestBase::testRowGroupSkip(
@@ -352,8 +368,7 @@ void E2EFilterTestBase::testRowGroupSkip(
     // No suitable column.
     return;
   }
-  std::cout << ": Testing with row group skip "
-            << FilterGenerator::specsToString(specs) << std::endl;
+
   testFilterSpecs(specs);
   EXPECT_LT(0, runtimeStats_.skippedStrides);
 }
@@ -373,11 +388,6 @@ void E2EFilterTestBase::testWithTypes(
   for (int32_t noVInts = 0; noVInts < (tryNoVInts ? 2 : 1); ++noVInts) {
     useVInts_ = !noVInts;
     for (int32_t noNulls = 0; noNulls < (tryNoNulls ? 2 : 1); ++noNulls) {
-      std::cout << fmt::format(
-                       "Run with {} nulls, {} vints",
-                       noNulls ? "no" : "",
-                       noVInts ? "no" : "")
-                << std::endl;
       filterGenerator->reseedRng();
 
       auto newCustomize = customize;
@@ -393,18 +403,11 @@ void E2EFilterTestBase::testWithTypes(
       for (auto i = 0; i < numCombinations; ++i) {
         std::vector<FilterSpec> specs =
             filterGenerator->makeRandomSpecs(filterable, 125);
-        std::cout << i << ": Testing " << FilterGenerator::specsToString(specs)
-                  << std::endl;
         testFilterSpecs(specs);
       }
       makeDataset(customize, true);
       testRowGroupSkip(filterable);
     }
-  }
-  std::cout << "Coverage:" << std::endl;
-  for (auto& pair : filterGenerator->filterCoverage()) {
-    std::cout << pair.first << " as first filter: " << pair.second[0]
-              << " as second: " << pair.second[1] << std::endl;
   }
 }
 

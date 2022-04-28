@@ -64,7 +64,8 @@ class ReaderBase {
   ReaderBase(
       memory::MemoryPool& pool,
       std::unique_ptr<dwio::common::InputStream> stream,
-      dwio::common::encryption::DecrypterFactory* factory = nullptr,
+      std::shared_ptr<dwio::common::encryption::DecrypterFactory>
+          decryptorFactory = nullptr,
       std::function<BufferedInputFactory * FOLLY_NONNULL()>
           bufferedInputFactorySource =
               []() { return BufferedInputFactory::baseFactory(); },
@@ -236,6 +237,8 @@ class ReaderBase {
   std::unique_ptr<proto::PostScript> postScript_;
   proto::Footer* footer_ = nullptr;
   std::unique_ptr<StripeMetadataCache> cache_;
+  // Keeps factory alive for possibly async prefetch.
+  std::shared_ptr<dwio::common::encryption::DecrypterFactory> decryptorFactory_;
   std::unique_ptr<encryption::DecryptionHandler> handler_;
   std::function<BufferedInputFactory * FOLLY_NONNULL()>
       bufferedInputFactorySource_ =

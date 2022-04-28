@@ -22,6 +22,7 @@
 #include "velox/type/tz/TimeZoneMap.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::test;
 
 class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
  protected:
@@ -65,6 +66,22 @@ class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
     return TimestampWithTimezone{
         rowVector->children()[0]->as<SimpleVector<int64_t>>()->valueAt(0),
         rowVector->children()[1]->as<SimpleVector<int16_t>>()->valueAt(0)};
+  }
+
+  std::optional<Timestamp> dateParse(
+      const std::optional<std::string>& input,
+      const std::optional<std::string>& format) {
+    auto resultVector = evaluate(
+        "date_parse(c0, c1)",
+        makeRowVector(
+            {makeNullableFlatVector<std::string>({input}),
+             makeNullableFlatVector<std::string>({format})}));
+    EXPECT_EQ(1, resultVector->size());
+
+    if (resultVector->isNullAt(0)) {
+      return std::nullopt;
+    }
+    return resultVector->as<SimpleVector<Timestamp>>()->valueAt(0);
   }
 
   std::optional<std::string> dateFormat(
@@ -116,13 +133,20 @@ TEST_F(DateTimeFunctionsTest, toUnixtime) {
   // 1639426440000 is milliseconds (from PrestoDb '2021-12-13+20:14+00:00').
   EXPECT_EQ(0, toUnixtimeWTZ(0, "+00:00"));
   EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "+00:00"));
-  EXPECT_EQ(1639415640, toUnixtimeWTZ(1639426440000, "+03:00"));
-  EXPECT_EQ(1639412040, toUnixtimeWTZ(1639426440000, "+04:00"));
-  EXPECT_EQ(1639451640, toUnixtimeWTZ(1639426440000, "-07:00"));
-  EXPECT_EQ(1639426500, toUnixtimeWTZ(1639426440000, "-00:01"));
-  EXPECT_EQ(1639426380, toUnixtimeWTZ(1639426440000, "+00:01"));
-  EXPECT_EQ(1639476840, toUnixtimeWTZ(1639426440000, "-14:00"));
-  EXPECT_EQ(1639376040, toUnixtimeWTZ(1639426440000, "+14:00"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "+03:00"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "+04:00"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "-07:00"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "-00:01"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "+00:01"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "-14:00"));
+  EXPECT_EQ(1639426440, toUnixtimeWTZ(1639426440000, "+14:00"));
+
+  // test floating point and negative time
+  EXPECT_EQ(16394.26, toUnixtimeWTZ(16394260, "+00:00"));
+  EXPECT_EQ(16394.26, toUnixtimeWTZ(16394260, "+03:00"));
+  EXPECT_EQ(16394.26, toUnixtimeWTZ(16394260, "-07:00"));
+  EXPECT_EQ(-16394.26, toUnixtimeWTZ(-16394260, "+12:00"));
+  EXPECT_EQ(-16394.26, toUnixtimeWTZ(-16394260, "-06:00"));
 }
 
 TEST_F(DateTimeFunctionsTest, fromUnixtimeRountTrip) {
@@ -339,6 +363,23 @@ TEST_F(DateTimeFunctionsTest, hour) {
   // EXPECT_EQ(21, hour(Timestamp(4000000000, 123000000)));
   EXPECT_EQ(23, hour(Timestamp(998474645, 321000000)));
   EXPECT_EQ(8, hour(Timestamp(998423705, 321000000)));
+
+  const auto hourWTZ = [&](double timestamp, std::string timeZoneName) {
+    return evaluateOnce<int64_t>(
+        "hour(from_unixtime(c0, c1))",
+        makeRowVector({
+            makeNullableFlatVector<double>({timestamp}),
+            makeNullableFlatVector<std::string>({timeZoneName}),
+        }));
+  };
+  EXPECT_EQ(20, hourWTZ(998423705, "+01:00"));
+  EXPECT_EQ(12, hourWTZ(41028, "+01:00"));
+  EXPECT_EQ(13, hourWTZ(41028, "+02:00"));
+  EXPECT_EQ(14, hourWTZ(41028, "+03:00"));
+  EXPECT_EQ(8, hourWTZ(41028, "-03:00"));
+  EXPECT_EQ(1, hourWTZ(41028, "+14:00"));
+  EXPECT_EQ(9, hourWTZ(-100, "-14:00"));
+  EXPECT_EQ(2, hourWTZ(-41028, "+14:00"));
 }
 
 TEST_F(DateTimeFunctionsTest, hourDate) {
@@ -1356,15 +1397,40 @@ TEST_F(DateTimeFunctionsTest, parseDatetime) {
       TimestampWithTimezone(86400000, 0),
       parseDatetime("1970-01-02", "YYYY-MM-dd"));
 
+  // 118860000 is the number of milliseconds since epoch at 1970-01-02
+  // 09:01:00.000 UTC.
   EXPECT_EQ(
-      TimestampWithTimezone(86400000, util::getTimeZoneID("-09:00")),
-      parseDatetime("1970-01-02+00:00-09:00", "YYYY-MM-dd+HH:mmZZ"));
+      TimestampWithTimezone(118860000, util::getTimeZoneID("+00:00")),
+      parseDatetime("1970-01-02+09:01+00:00", "YYYY-MM-dd+HH:mmZZ"));
+  EXPECT_EQ(
+      TimestampWithTimezone(118860000, util::getTimeZoneID("-09:00")),
+      parseDatetime("1970-01-02+00:01-09:00", "YYYY-MM-dd+HH:mmZZ"));
+  EXPECT_EQ(
+      TimestampWithTimezone(118860000, util::getTimeZoneID("-02:00")),
+      parseDatetime("1970-01-02+07:01-02:00", "YYYY-MM-dd+HH:mmZZ"));
+  EXPECT_EQ(
+      TimestampWithTimezone(118860000, util::getTimeZoneID("+14:00")),
+      parseDatetime("1970-01-02+23:01+14:00", "YYYY-MM-dd+HH:mmZZ"));
 
   setQueryTimeZone("Asia/Kolkata");
 
+  // 66600000 is the number of millisecond since epoch at 1970-01-01
+  // 18:30:00.000 UTC.
   EXPECT_EQ(
-      TimestampWithTimezone(86400000, util::getTimeZoneID("Asia/Kolkata")),
+      TimestampWithTimezone(66600000, util::getTimeZoneID("Asia/Kolkata")),
       parseDatetime("1970-01-02+00:00", "YYYY-MM-dd+HH:mm"));
+  EXPECT_EQ(
+      TimestampWithTimezone(66600000, util::getTimeZoneID("-03:00")),
+      parseDatetime("1970-01-01+15:30-03:00", "YYYY-MM-dd+HH:mmZZ"));
+
+  // -66600000 is the number of millisecond since epoch at 1969-12-31
+  // 05:30:00.000 UTC.
+  EXPECT_EQ(
+      TimestampWithTimezone(-66600000, util::getTimeZoneID("Asia/Kolkata")),
+      parseDatetime("1969-12-31+11:00", "YYYY-MM-dd+HH:mm"));
+  EXPECT_EQ(
+      TimestampWithTimezone(-66600000, util::getTimeZoneID("+02:00")),
+      parseDatetime("1969-12-31+07:30+02:00", "YYYY-MM-dd+HH:mmZZ"));
 }
 
 TEST_F(DateTimeFunctionsTest, dateFormat) {
@@ -1441,4 +1507,18 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_THROW(
       dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%x"),
       VeloxUserError);
+}
+
+TEST_F(DateTimeFunctionsTest, dateParse) {
+  EXPECT_EQ(Timestamp(86400, 0), dateParse("1970-01-02", "%Y-%m-%d"));
+  EXPECT_EQ(Timestamp(0, 0), dateParse("1970-01-01", "%Y-%m-%d"));
+
+  // Check null behavior.
+  EXPECT_EQ(std::nullopt, dateParse("1970-01-01", std::nullopt));
+  EXPECT_EQ(std::nullopt, dateParse(std::nullopt, "%Y-%m-%d"));
+  EXPECT_EQ(std::nullopt, dateParse(std::nullopt, std::nullopt));
+
+  // Ensure it throws.
+  EXPECT_THROW(dateParse("", ""), VeloxUserError);
+  EXPECT_THROW(dateParse("1999-01-01-Jan", "%Y-%m-%d-%M"), VeloxUserError);
 }

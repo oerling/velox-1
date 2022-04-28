@@ -13,27 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#pragma once
 
-#include "velox/vector/SimpleVector.h"
-#include "velox/common/base/Exceptions.h"
-
-namespace facebook {
-namespace velox {
-
-template <>
-void SimpleVector<StringView>::setMinMax(
-    const folly::F14FastMap<std::string, std::string>& metaData) {
-  auto it = metaData.find(META_MIN);
-  if (it != metaData.end()) {
-    minString_ = it->second;
-    min_ = StringView(minString_);
-  }
-  it = metaData.find(META_MAX);
-  if (it != metaData.end()) {
-    maxString_ = it->second;
-    max_ = StringView(maxString_);
-  }
-}
-
-} // namespace velox
-} // namespace facebook
+#if __has_include("filesystem")
+#include <filesystem>
+namespace fs = std::filesystem;
+#else
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#endif

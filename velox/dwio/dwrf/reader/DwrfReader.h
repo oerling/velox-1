@@ -78,9 +78,18 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   void resetFilterCaches() override;
 
-  bool moveAdaptation(RowReader& other) override;
+  bool moveAdaptationFrom(RowReader& other) override;
 
   bool allPrefetchIssued() const override;
+
+  // Returns the skipped strides for 'stripe'. Used for testing.
+  std::optional<std::vector<uint32_t>> stridesToSkip(uint32_t stripe) const {
+    auto it = stripeStridesToSkip_.find(stripe);
+    if (it == stripeStridesToSkip_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
 
  private:
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
@@ -100,7 +109,8 @@ class DwrfRowReader : public DwrfRowReaderShared {
 
   std::unique_ptr<ColumnReader> columnReader_;
   std::vector<uint32_t> stridesToSkip_;
-
+  // Record of strides to skip in each visited stripe. Used for diagnostics.
+  std::unordered_map<uint32_t, std::vector<uint32_t>> stripeStridesToSkip_;
   // Number of skipped strides.
   int64_t skippedStrides_{0};
 

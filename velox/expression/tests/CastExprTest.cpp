@@ -25,19 +25,9 @@
 #include "velox/vector/TypeAliases.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::test;
 
 namespace {
-
-/// Returns indices buffer with sequential values going from size - 1 to 0.
-BufferPtr makeIndicesInReverse(vector_size_t size, memory::MemoryPool* pool) {
-  auto indices = allocateIndices(size, pool);
-  auto rawIndices = indices->asMutable<vector_size_t>();
-  for (auto i = 0; i < size; i++) {
-    rawIndices[i] = size - 1 - i;
-  }
-  return indices;
-}
-
 /// Wraps input in a dictionary that reverses the order of rows.
 class TestingDictionaryFunction : public exec::VectorFunction {
  public:
@@ -221,7 +211,6 @@ TEST_F(CastExprTest, basics) {
   // Testing non-null or error cases
   const std::vector<std::optional<int32_t>> ii = {1, 2, 3, 100, -100};
   const std::vector<std::optional<double>> oo = {1.0, 2.0, 3.0, 100.0, -100.0};
-  std::cout << oo[2].has_value();
   testCast<int32_t, double>(
       "double", {1, 2, 3, 100, -100}, {1.0, 2.0, 3.0, 100.0, -100.0});
   testCast<int32_t, std::string>(

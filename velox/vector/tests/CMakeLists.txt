@@ -17,6 +17,7 @@ target_link_libraries(velox_vector_test_lib velox_vector)
 
 add_executable(
   velox_vector_test
+  VectorCompareTest.cpp
   VectorMakerTest.cpp
   VectorTest.cpp
   VectorEstimateFlatSizeTest.cpp
@@ -24,6 +25,7 @@ add_executable(
   DecodedVectorTest.cpp
   SelectivityVectorTest.cpp
   EnsureWritableVectorTest.cpp
+  LazyVectorTest.cpp
   MayHaveNullsRecursiveTest.cpp)
 
 add_test(velox_vector_test velox_vector_test)
@@ -44,7 +46,8 @@ target_link_libraries(
   ${Boost_REGEX_LIBRARIES}
   ${Boost_THREAD_LIBRARIES}
   ${Boost_SYSTEM_LIBRARIES}
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${FOLLY_WITH_DEPENDENCIES}
   ${DOUBLE_CONVERSION}
   ${gflags_LIBRARIES}
@@ -62,7 +65,8 @@ target_link_libraries(
   velox_buffer
   velox_type
   velox_vector_test_lib
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${FOLLY_WITH_DEPENDENCIES}
   ${gflags_LIBRARIES}
   glog::glog
@@ -76,7 +80,8 @@ target_link_libraries(
   bias_vector_test
   velox_vector
   Boost::filesystem
-  ${GTEST_BOTH_LIBRARIES}
+  gtest
+  gtest_main
   ${FOLLY_WITH_DEPENDENCIES}
   ${gflags_LIBRARIES}
   glog::glog
