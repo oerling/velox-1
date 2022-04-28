@@ -183,7 +183,7 @@ void E2EFilterTestBase::makeNotNullRecursive(
 }
 
 void E2EFilterTestBase::readWithoutFilter(
-					  std::shared_ptr<ScanSpec> spec,
+    std::shared_ptr<ScanSpec> spec,
     const std::vector<RowVectorPtr>& batches,
     uint64_t& time) {
   auto input = std::make_unique<MemoryInputStream>(
@@ -228,7 +228,7 @@ void E2EFilterTestBase::readWithoutFilter(
 }
 
 void E2EFilterTestBase::readWithFilter(
-				       std::shared_ptr<ScanSpec> spec,
+    std::shared_ptr<ScanSpec> spec,
     const std::vector<RowVectorPtr>& batches,
     const std::vector<uint32_t>& hitRows,
     uint64_t& time,
@@ -336,8 +336,7 @@ void E2EFilterTestBase::testFilterSpecs(
 
   if (FLAGS_timing_repeats) {
     for (auto i = 0; i < FLAGS_timing_repeats; ++i) {
-      readWithFilter(
-          spec, batches_, hitRows, timeWithFilter, false, true);
+      readWithFilter(spec, batches_, hitRows, timeWithFilter, false, true);
     }
   }
   // Redo the test with LazyVectors for non-filtered columns.

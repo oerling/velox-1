@@ -182,12 +182,12 @@ class E2EFilterTestBase : public testing::Test {
       std::unique_ptr<dwio::common::InputStream> input) = 0;
 
   void readWithoutFilter(
-			 std::shared_ptr<ScanSpec> spec,
+      std::shared_ptr<ScanSpec> spec,
       const std::vector<RowVectorPtr>& batches,
       uint64_t& time);
 
   void readWithFilter(
-		      std::shared_ptr<ScanSpec> spec,
+      std::shared_ptr<ScanSpec> spec,
       const std::vector<RowVectorPtr>& batches,
       const std::vector<uint32_t>& hitRows,
       uint64_t& time,

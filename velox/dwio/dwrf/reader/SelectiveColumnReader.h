@@ -480,7 +480,8 @@ inline void SelectiveColumnReader::addValue(const folly::StringPiece value) {
 
 class SelectiveColumnReaderFactory : public ColumnReaderFactory {
  public:
-  explicit SelectiveColumnReaderFactory(std::shared_ptr<common::ScanSpec> scanSpec)
+  explicit SelectiveColumnReaderFactory(
+      std::shared_ptr<common::ScanSpec> scanSpec)
       : scanSpec_(scanSpec) {}
   std::unique_ptr<ColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -488,7 +489,11 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
       StripeStreams& stripe,
       FlatMapContext flatMapContext) override {
     auto reader = SelectiveColumnReader::build(
-					       requestedType, dataType, stripe, scanSpec_.get(), std::move(flatMapContext));
+        requestedType,
+        dataType,
+        stripe,
+        scanSpec_.get(),
+        std::move(flatMapContext));
     reader->setIsTopLevel();
     return reader;
   }

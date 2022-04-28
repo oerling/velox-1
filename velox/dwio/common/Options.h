@@ -316,7 +316,8 @@ class ReaderOptions {
   std::shared_ptr<DataCacheConfig> dataCacheConfig_;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
   velox::dwrf::BufferedInputFactory* bufferedInputFactory_ = nullptr;
-  std::shared_ptr<velox::dwrf::BufferedInputFactory> bufferedInputFactoryShared_ = nullptr;
+  std::shared_ptr<velox::dwrf::BufferedInputFactory>
+      bufferedInputFactoryShared_ = nullptr;
 
   std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
       bufferedInputFactorySource_;
