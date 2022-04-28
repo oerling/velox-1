@@ -531,11 +531,15 @@ class BaseVector {
     throw std::runtime_error("Vector is not a wrapper");
   }
 
-  static std::shared_ptr<BaseVector> create(
+  template <typename T = BaseVector>
+  static std::shared_ptr<T> create(
       const TypePtr& type,
       vector_size_t size,
-      velox::memory::MemoryPool* pool);
+      velox::memory::MemoryPool* pool) {
+    return std::static_pointer_cast<T>(createInternal(type, size, pool));
+  }
 
+  
   static std::shared_ptr<BaseVector> getOrCreateEmpty(
       std::shared_ptr<BaseVector> vector,
       const TypePtr& type,
@@ -714,6 +718,12 @@ class BaseVector {
   ByteCount inMemoryBytes_ = 0;
 
  private:
+  static std::shared_ptr<BaseVector> createInternal(
+      const TypePtr& type,
+      vector_size_t size,
+      velox::memory::MemoryPool* pool);
+
+
   bool isCodegenOutput_ = false;
 
   friend class LazyVector;

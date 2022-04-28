@@ -68,7 +68,7 @@ class Spiller {
             numSortingKeys,
             targetFileSize,
             pool,
-            spillMappedMemory(container_)),
+            spillMappedMemory()),
         pool_(pool),
         executor_(executor) {}
 
@@ -116,12 +116,12 @@ class Spiller {
   // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
   // Creates '*results' in spillPool() if nullptr. Used from Spiller and
   // RowContainerSpillStream.
-  void extractSpill(folly::Range<char**> rows, RowVectorPtr* result);
+  void extractSpill(folly::Range<char**> rows, RowVectorPtr& result);
 
   // Returns the MappedMemory to use for intermediate storage for
   // spilling. This is not directly the RowContainer's memory because
   // this is usually at limit when starting spilling.
-  static memory::MappedMemory& spillMappedMemory(RowContainer& container);
+  static memory::MappedMemory& spillMappedMemory();
 
   // Global memory pool for spill intermediates. ~1MB per spill executor thread
   // is the expected peak utilization.
@@ -146,27 +146,27 @@ class Spiller {
     // Spillable rows from the RowContainer.
     SpillRows rows;
     // The total byte size of rows referenced from 'rows'.
-    uint64_t size{0};
+    uint64_t numBytes{0};
     // True if 'rows' are sorted on their key.
     bool sorted{false};
 
     void clear() {
       rows.clear();
-      size = 0;
+      numBytes = 0;
       sorted = false;
     }
   };
 
   struct SpillStatus {
     const int32_t partition;
-    const int32_t numWritten;
+    const int32_t rowsWritten;
     const std::exception_ptr error;
 
     SpillStatus(
         int32_t _partition,
         int32_t _numWritten,
         std::exception_ptr _error)
-        : partition(_partition), numWritten(_numWritten), error(_error) {}
+        : partition(_partition), rowsWritten(_numWritten), error(_error) {}
   };
 
   // Prepares spill runs for the spillable hash number ranges in

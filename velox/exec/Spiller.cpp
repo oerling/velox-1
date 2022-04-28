@@ -22,15 +22,15 @@
 
 namespace facebook::velox::exec {
 
-void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr* resultPtr) {
-  if (!*resultPtr) {
-    *resultPtr = std::static_pointer_cast<RowVector>(
-        BaseVector::create(rowType_, rows.size(), &spillPool()));
+void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr& resultPtr) {
+  if (!resultPtr) {
+    resultPtr = 
+        BaseVector::create<RowVector>(rowType_, rows.size(), &spillPool());
   } else {
-    (*resultPtr)->prepareForReuse();
-    (*resultPtr)->resize(rows.size());
+    resultPtr->prepareForReuse();
+    resultPtr->resize(rows.size());
   }
-  auto result = resultPtr->get();
+  auto result = resultPtr.get();
   auto& types = container_.columnTypes();
   for (auto i = 0; i < types.size(); ++i) {
     container_.extractColumn(rows.data(), rows.size(), i, result->childAt(i));
@@ -67,14 +67,15 @@ class RowContainerSpillStream : public SpillStream {
   }
 
   uint64_t size() const override {
+    // 0 means that 'this' does not own spilled data in files.
     return 0;
   }
 
  private:
   void nextBatch() override {
     // Extracts up to 64 rows at a time. Small batch size because may
-    // have wide data and no gain in larger.when the caller will go
-    // over aggregations row by row.
+    // have wide data and no advantage in large size for narrow data
+    // since this is all processed row by row.
     static constexpr vector_size_t kMaxRows = 64;
     constexpr uint64_t kMaxBytes = 4 << 20;
     size_t bytes = 0;
@@ -84,12 +85,14 @@ class RowContainerSpillStream : public SpillStream {
     for (; numRows < limit; ++numRows) {
       bytes += spiller_.container().rowSize(rows_[nextBatchIndex_ + numRows]);
       if (bytes > kMaxBytes) {
+	// Increment because the row that went over the limit is part
+	// of the result. We must spill at least one row.
         ++numRows;
         break;
       }
     }
     spiller_.extractSpill(
-        folly::Range(&rows_[nextBatchIndex_], numRows), &rowVector_);
+        folly::Range(&rows_[nextBatchIndex_], numRows), rowVector_);
     nextBatchIndex_ += numRows;
     size_ = rowVector_->size();
     index_ = 0;
@@ -128,10 +131,10 @@ void Spiller::ensureSorted(SpillRun& run) {
 std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(
     int32_t partition,
     uint64_t maxBytes) {
-  // Size Target size of a single vector of spilled content. One of
+  // Target size of a single vector of spilled content. One of
   // these will be materialized at a time for each stream of the
   // merge.
-  constexpr int32_t kTargetBatchBytes = 1 << 20; // 1MB
+  constexpr int32_t kTargetBatchBytes = 1 << 18; // 256K
 
   RowVectorPtr spillVector;
   auto& run = spillRuns_[partition];
@@ -151,7 +154,7 @@ std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(
         }
       }
       folly::Range<char**> spilled(run.rows.data() + written, i);
-      extractSpill(spilled, &spillVector);
+      extractSpill(spilled, spillVector);
       state_.appendToPartition(partition, spillVector);
       written += i;
       totalBytes += bytes;
@@ -161,6 +164,7 @@ std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(
     }
     return std::make_unique<SpillStatus>(partition, written, nullptr);
   } catch (const std::exception& e) {
+    // The exception is passed to the caller thread which checks this in advanceSpill().
     return std::make_unique<SpillStatus>(
         partition, 0, std::current_exception());
   }
@@ -184,6 +188,9 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
   }
   auto sync = folly::makeGuard([&]() {
     for (auto& write : writes) {
+      // We consume the result for the pending writes. This is a
+      // cleanup in the guard and must not throw. The first error is
+      // already captured before this runs.
       try {
         write->move();
       } catch (const std::exception& e) {
@@ -197,7 +204,7 @@ void Spiller::advanceSpill(uint64_t maxBytes) {
     if (result->error) {
       std::rethrow_exception(result->error);
     }
-    auto numWritten = result->numWritten;
+    auto numWritten = result->rowsWritten;
     auto partition = result->partition;
     auto& run = spillRuns_[partition];
     auto spilled = folly::Range<char**>(run.rows.data(), numWritten);
@@ -245,7 +252,7 @@ void Spiller::spill(
     for (auto newPartition = spillRuns_.size();
          newPartition < state_.maxPartitions();
          ++newPartition) {
-      spillRuns_.emplace_back(spillMappedMemory(container_));
+      spillRuns_.emplace_back(spillMappedMemory());
     }
     clearSpillRuns();
     iterator.reset();
@@ -273,7 +280,7 @@ Spiller::SpillRows Spiller::finishSpill() {
   iterator.reset();
   SpillRows rowsFromNonSpillingPartitions(
       0,
-      memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory(container_)));
+      memory::StlMappedMemoryAllocator<char*>(&spillMappedMemory()));
   fillSpillRuns(
       iterator, RowContainer::kUnlimited, &rowsFromNonSpillingPartitions);
   return rowsFromNonSpillingPartitions;
@@ -327,7 +334,7 @@ bool Spiller::fillSpillRuns(
         continue;
       }
       spillRuns_[partition].rows.push_back(rows[i]);
-      spillRuns_[partition].size += container_.rowSize(rows[i]);
+      spillRuns_[partition].numBytes += container_.rowSize(rows[i]);
     }
     // The final phase goes through the whole container and makes runs for all
     // non-empty spilling partitions.
@@ -337,7 +344,7 @@ bool Spiller::fillSpillRuns(
     bool anyStarted = false;
     for (auto i = 0; i < spillRuns_.size(); ++i) {
       auto& run = spillRuns_[i];
-      if (!run.rows.empty() && (run.size > targetSize || final)) {
+      if (!run.rows.empty() && (run.numBytes > targetSize || final)) {
         pendingSpillPartitions_.insert(i);
         anyStarted = true;
       }
@@ -353,12 +360,12 @@ bool Spiller::fillSpillRuns(
         std::iota(indices.begin(), indices.end(), 0);
         std::sort(
             indices.begin(), indices.end(), [&](int32_t left, int32_t right) {
-              return spillRuns_[left].size > spillRuns_[right].size;
+              return spillRuns_[left].numBytes > spillRuns_[right].numBytes;
             });
         int64_t started = 0;
         for (auto i : indices) {
           pendingSpillPartitions_.insert(i);
-          started += spillRuns_[i].size;
+          started += spillRuns_[i].numBytes;
           if (started > targetSize) {
             break;
           }
@@ -385,7 +392,7 @@ void Spiller::clearNonSpillingRuns() {
 }
 
 // static
-memory::MappedMemory& Spiller::spillMappedMemory(RowContainer& /*container*/) {
+memory::MappedMemory& Spiller::spillMappedMemory() {
   // Return the top level instance. Since this too may be full,
   // another possibility is to return an emergency instance that
   // delegates to the process wide one and makes a file-backed mmap

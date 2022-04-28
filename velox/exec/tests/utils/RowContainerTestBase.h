@@ -42,7 +42,7 @@ class RowContainerTestBase : public testing::Test {
   }
 
   RowVectorPtr makeDataset(
-      const TypePtr rowType,
+      const TypePtr& rowType,
       const size_t size,
       std::function<void(RowVectorPtr)> customizeData) {
     auto batch = std::static_pointer_cast<RowVector>(
