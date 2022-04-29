@@ -168,27 +168,48 @@ bool MmapAllocator::allocateContiguous(
       std::rethrow_exception(std::current_exception());
     }
   }
-  int numAllocated = numAllocated_.fetch_add(newPages) + newPages;
+  bool success = false;
+  bool mappedCountUpdated = false;
+  // The rolls back the counters on failure. the small collateral does
+  // not decrement 'numMapped_' because these pages are not advised
+  // away. They may be advised away by ensureEnoughMappedPages but
+  // then the counts are updated in ensureEnoughMappedPages().
+  auto guard = folly::makeGuard([&]() {
+    if (!success) {
+      auto pageDelta = newPages + numLargeCollateralPages + numCollateralPages ;
+      numAllocated_ -= pageDelta;
+      try {
+	beforeAllocCB(-pageDelta);
+      } catch (const std::exception& e) {
+	// Ignore exception, this is run on in a destructor on return path.
+      }
+      numExternalMapped_ -= numPages + numLargeCollateralPages;
+      // If we fail after incrementing the mapped count, we drop both
+      // collateral and the new allocation. The collateral is dropped
+      // in all cases.
+      if (mappedCountUpdated) {
+	numMapped_ -= numPages + numLargeCollateralPages;
+      } else {
+	numMapped_ -= numLargeCollateralPages;
+      }
+      }
+  });
+  numExternalMapped_ += numPages - numLargeCollateralPages;
+  auto numAllocated = numAllocated_.fetch_add(newPages) + newPages;
   if (numAllocated > capacity_) {
-    numAllocated_ -= newPages + numCollateralPages + numLargeCollateralPages;
-    numMapped_ -= numLargeCollateralPages;
-    numExternalMapped_ -= numLargeCollateralPages;
     return false;
   }
   if (newPages > 0) {
     if (!ensureEnoughMappedPages(newPages)) {
-      // LOG(WARNING) << "Could not advise away  enough for " << newPages << "
-      // pages for allocateContiguous";
-      numMapped_ -= numLargeCollateralPages;
-      numExternalMapped_ -= numLargeCollateralPages;
-      numAllocated_ -= newPages + numCollateralPages + numLargeCollateralPages;
+      LOG(WARNING) << "Could not advise away  enough for " << newPages << 
+	" pages for allocateContiguous";
       return false;
     }
   } else {
     // We exchange a large mmap for a smaller one.
     numMapped_ += numPages - numLargeCollateralPages;
   }
-  numExternalMapped_ += numPages - numLargeCollateralPages;
+  mappedCountUpdated = true;
   void* data = mmap(
       nullptr,
       numPages * kPageSize,
@@ -196,6 +217,11 @@ bool MmapAllocator::allocateContiguous(
       MAP_PRIVATE | MAP_ANONYMOUS,
       -1,
       0);
+  if (!data) {
+    return false;
+  }
+
+  success = true;
   allocation.reset(this, data, numPages * kPageSize);
   return true;
 }
@@ -543,7 +569,7 @@ bool MmapAllocator::checkConsistency() const {
   }
   if (mappedCount != numMapped_ - numExternalMapped_) {
     ok = false;
-    LOG(WARNING) << "Mapped count out of sync. Actual= " << mappedCount
+    LOG(WARNING) << "Mapped count out of sync. Actual= " << mappedCount + numExternalMapped_
                  << " recorded= " << numMapped_;
   }
   return ok;

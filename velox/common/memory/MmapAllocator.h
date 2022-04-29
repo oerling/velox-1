@@ -216,13 +216,12 @@ class MmapAllocator : public MappedMemory {
     uint64_t numAdvisedAway_ = 0;
   };
 
-  // Ensures that there are at least 'ewMappedNeeded' pages that are
+  // Ensures that there are at least 'newMappedNeeded' pages that are
   // not backing any existing allocation. If capacity_ - numMapped_ <
   // newMappedNeeded, advises away enough pages backing freed slots in
   // the size classes to make sure that the new pages can be used
-  // without growing RSS past 'capacity_'. Returns true on
-  // success. Returns false if enough backed but unused pages from the
-  // size classes cannot be advised away.
+  // while staying within 'capacity"'.
+  // success. Returns false if cannot advise away enough free but backed pages from the size classes.
   bool ensureEnoughMappedPages(int32_t newMappedNeeded);
 
   // Frees 'allocation and returns the number of freed pages. Does not
@@ -251,7 +250,7 @@ class MmapAllocator : public MappedMemory {
   // application via allocateContiguous, outside of
   // 'sizeClasses'. These pages are counted in 'numAllocated_' and
   // 'numMapped_'. Allocation requests are decided against
-  // 'numAllocated_' and 'numMapped_'. This counter is infromational
+  // 'numAllocated_' and 'numMapped_'. This counter is informational
   // only.
   std::atomic<MachinePageCount> numExternalMapped_{0};
   MachinePageCount capacity_ = 0;

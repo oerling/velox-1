@@ -251,6 +251,14 @@ std::unique_ptr<common::Filter> makeEqualFilter(
   }
 }
 
+std::unique_ptr<common::Filter> makeNotEqualFilter(
+    const std::shared_ptr<const core::ITypedExpr>& valueExpr) {
+  std::vector<std::unique_ptr<common::Filter>> filters;
+  filters.emplace_back(makeLessThanFilter(valueExpr));
+  filters.emplace_back(makeGreaterThanFilter(valueExpr));
+  return std::make_unique<common::MultiRange>(std::move(filters), false, false);
+}
+
 std::unique_ptr<common::Filter> makeBetweenFilter(
     const std::shared_ptr<const core::ITypedExpr>& lowerExpr,
     const std::shared_ptr<const core::ITypedExpr>& upperExpr) {
@@ -270,6 +278,9 @@ std::unique_ptr<common::Filter> makeBetweenFilter(
     case TypeKind::DATE:
       return common::test::between(
           singleValue<Date>(lower).days(), singleValue<Date>(upper).days());
+    case TypeKind::VARCHAR:
+      return common::test::between(
+          singleValue<StringView>(lower), singleValue<StringView>(upper));
     default:
       VELOX_NYI(
           "Unsupported value for 'between' filter: {} BETWEEN {} AND {}",
@@ -294,6 +305,10 @@ std::pair<common::Subfield, std::unique_ptr<common::Filter>> toSubfieldFilter(
     } else if (call->name() == "eq") {
       if (auto field = asField(call, 0)) {
         return {Subfield(field->name()), makeEqualFilter(call->inputs()[1])};
+      }
+    } else if (call->name() == "neq") {
+      if (auto field = asField(call, 0)) {
+        return {Subfield(field->name()), makeNotEqualFilter(call->inputs()[1])};
       }
     } else if (call->name() == "lte") {
       if (auto field = asField(call, 0)) {
@@ -419,6 +434,7 @@ PlanBuilder& PlanBuilder::values(
 }
 
 PlanBuilder& PlanBuilder::exchange(const RowTypePtr& outputType) {
+  VELOX_CHECK_NULL(planNode_, "exchange() must be the first call");
   planNode_ =
       std::make_shared<core::ExchangeNode>(nextPlanNodeId(), outputType);
   return *this;
@@ -506,8 +522,8 @@ PlanBuilder& PlanBuilder::tableWrite(
 }
 
 PlanBuilder& PlanBuilder::tableWrite(
-    const RowTypePtr& columns,
-    const std::vector<std::string>& columnNames,
+    const RowTypePtr& inputColumns,
+    const std::vector<std::string>& tableColumnNames,
     const std::shared_ptr<core::InsertTableHandle>& insertHandle,
     const std::string& rowCountColumnName) {
   auto outputType =
@@ -515,8 +531,8 @@ PlanBuilder& PlanBuilder::tableWrite(
           {BIGINT(), VARBINARY(), VARBINARY()});
   planNode_ = std::make_shared<core::TableWriteNode>(
       nextPlanNodeId(),
-      columns,
-      columnNames,
+      inputColumns,
+      tableColumnNames,
       insertHandle,
       outputType,
       planNode_);
@@ -754,8 +770,8 @@ PlanBuilder::createAggregateMasks(
 }
 
 PlanBuilder& PlanBuilder::aggregation(
-    const std::vector<ChannelIndex>& groupingKeys,
-    const std::vector<ChannelIndex>& preGroupedKeys,
+    const std::vector<std::string>& groupingKeys,
+    const std::vector<std::string>& preGroupedKeys,
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& masks,
     core::AggregationNode::Step step,
@@ -778,7 +794,7 @@ PlanBuilder& PlanBuilder::aggregation(
 }
 
 PlanBuilder& PlanBuilder::streamingAggregation(
-    const std::vector<ChannelIndex>& groupingKeys,
+    const std::vector<std::string>& groupingKeys,
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& masks,
     core::AggregationNode::Step step,
@@ -993,8 +1009,8 @@ PlanBuilder& PlanBuilder::hashJoin(
     const std::vector<std::string>& leftKeys,
     const std::vector<std::string>& rightKeys,
     const std::shared_ptr<facebook::velox::core::PlanNode>& build,
-    const std::string& filterText,
-    const std::vector<std::string>& output,
+    const std::string& filter,
+    const std::vector<std::string>& outputLayout,
     core::JoinType joinType) {
   VELOX_CHECK_EQ(leftKeys.size(), rightKeys.size());
 
@@ -1002,10 +1018,10 @@ PlanBuilder& PlanBuilder::hashJoin(
   auto rightType = build->outputType();
   auto resultType = concat(leftType, rightType);
   std::shared_ptr<const core::ITypedExpr> filterExpr;
-  if (!filterText.empty()) {
-    filterExpr = parseExpr(filterText, resultType, pool_);
+  if (!filter.empty()) {
+    filterExpr = parseExpr(filter, resultType, pool_);
   }
-  auto outputType = extract(resultType, output);
+  auto outputType = extract(resultType, outputLayout);
   auto leftKeyFields = fields(leftType, leftKeys);
   auto rightKeyFields = fields(rightType, rightKeys);
 
@@ -1025,8 +1041,8 @@ PlanBuilder& PlanBuilder::mergeJoin(
     const std::vector<std::string>& leftKeys,
     const std::vector<std::string>& rightKeys,
     const std::shared_ptr<facebook::velox::core::PlanNode>& build,
-    const std::string& filterText,
-    const std::vector<std::string>& output,
+    const std::string& filter,
+    const std::vector<std::string>& outputLayout,
     core::JoinType joinType) {
   VELOX_CHECK_EQ(leftKeys.size(), rightKeys.size());
 
@@ -1034,10 +1050,10 @@ PlanBuilder& PlanBuilder::mergeJoin(
   auto rightType = build->outputType();
   auto resultType = concat(leftType, rightType);
   std::shared_ptr<const core::ITypedExpr> filterExpr;
-  if (!filterText.empty()) {
-    filterExpr = parseExpr(filterText, resultType, pool_);
+  if (!filter.empty()) {
+    filterExpr = parseExpr(filter, resultType, pool_);
   }
-  auto outputType = extract(resultType, output);
+  auto outputType = extract(resultType, outputLayout);
   auto leftKeyFields = fields(leftType, leftKeys);
   auto rightKeyFields = fields(rightType, rightKeys);
 
@@ -1054,13 +1070,13 @@ PlanBuilder& PlanBuilder::mergeJoin(
 }
 
 PlanBuilder& PlanBuilder::crossJoin(
-    const std::shared_ptr<core::PlanNode>& build,
-    const std::vector<std::string>& output) {
-  auto resultType = concat(planNode_->outputType(), build->outputType());
-  auto outputType = extract(resultType, output);
+    const std::shared_ptr<core::PlanNode>& right,
+    const std::vector<std::string>& outputLayout) {
+  auto resultType = concat(planNode_->outputType(), right->outputType());
+  auto outputType = extract(resultType, outputLayout);
 
   planNode_ = std::make_shared<core::CrossJoinNode>(
-      nextPlanNodeId(), std::move(planNode_), build, outputType);
+      nextPlanNodeId(), std::move(planNode_), right, outputType);
   return *this;
 }
 
@@ -1110,16 +1126,7 @@ std::string PlanBuilder::nextPlanNodeId() {
   return fmt::format("{}", planNodeIdGenerator_->next());
 }
 
-std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
-    int index) {
-  return field(planNode_->outputType(), index);
-}
-
-std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
-    const std::string& name) {
-  return field(planNode_->outputType(), name);
-}
-
+// static
 std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
     const RowTypePtr& inputType,
     const std::string& name) {
@@ -1127,19 +1134,16 @@ std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
   return field(inputType, index);
 }
 
+// static
 std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
     const RowTypePtr& inputType,
-    int index) {
+    ChannelIndex index) {
   auto name = inputType->names()[index];
   auto type = inputType->childAt(index);
   return std::make_shared<core::FieldAccessTypedExpr>(type, name);
 }
 
-std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
-PlanBuilder::fields(const std::vector<std::string>& names) {
-  return fields(planNode_->outputType(), names);
-}
-
+// static
 std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
 PlanBuilder::fields(
     const RowTypePtr& inputType,
@@ -1151,6 +1155,7 @@ PlanBuilder::fields(
   return fields;
 }
 
+// static
 std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
 PlanBuilder::fields(
     const RowTypePtr& inputType,
@@ -1160,6 +1165,21 @@ PlanBuilder::fields(
     fields.push_back(field(inputType, index));
   }
   return fields;
+}
+
+std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
+    ChannelIndex index) {
+  return field(planNode_->outputType(), index);
+}
+
+std::shared_ptr<const core::FieldAccessTypedExpr> PlanBuilder::field(
+    const std::string& name) {
+  return field(planNode_->outputType(), name);
+}
+
+std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
+PlanBuilder::fields(const std::vector<std::string>& names) {
+  return fields(planNode_->outputType(), names);
 }
 
 std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
