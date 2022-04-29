@@ -107,9 +107,7 @@ class GroupingSet {
   // enough to make 'input' fit.
   void ensureInputFits(const RowVectorPtr& input);
 
-  void extractGroups(
-		     folly::Range<char**> groups,
-      const RowVectorPtr& result);
+  void extractGroups(folly::Range<char**> groups, const RowVectorPtr& result);
 
   bool getOutputWithSpill(const RowVectorPtr& result);
 

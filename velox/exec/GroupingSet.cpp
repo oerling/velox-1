@@ -407,9 +407,9 @@ bool GroupingSet::getOutput(
 }
 
 void GroupingSet::extractGroups(
-				folly::Range<char**>groups,
+    folly::Range<char**> groups,
     const RowVectorPtr& result) {
-				  result->resize(groups.size());
+  result->resize(groups.size());
   RowContainer& rows = table_ ? *table_->rows() : *rowsWhileReadingSpill_;
   auto totalKeys = rows.keyTypes().size();
   for (int32_t i = 0; i < totalKeys; ++i) {
@@ -420,9 +420,11 @@ void GroupingSet::extractGroups(
     aggregates_[i]->finalize(groups.data(), groups.size());
     auto& aggregateVector = result->childAt(i + totalKeys);
     if (isPartial_) {
-      aggregates_[i]->extractAccumulators(groups.data(), groups.size(), &aggregateVector);
+      aggregates_[i]->extractAccumulators(
+          groups.data(), groups.size(), &aggregateVector);
     } else {
-      aggregates_[i]->extractValues(groups.data(), groups.size(), &aggregateVector);
+      aggregates_[i]->extractValues(
+          groups.data(), groups.size(), &aggregateVector);
     }
   }
 }
@@ -604,7 +606,9 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
       }
     }
     extractGroups(
-		  folly::Range<char**>(nonSpilledRows_.value().data() + nonSpilledIndex_, numGroups), result);
+        folly::Range<char**>(
+            nonSpilledRows_.value().data() + nonSpilledIndex_, numGroups),
+        result);
     nonSpilledIndex_ += numGroups;
     return true;
   }
