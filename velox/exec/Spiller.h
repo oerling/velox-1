@@ -123,7 +123,7 @@ class Spiller {
   // nextBatchIndex to be the index of the first non-extracted element
   // of 'rows'. Returns the byte size of the extracted rows.
   int64_t extractSpillVector(
-			  SpillRows& rows_,
+      SpillRows& rows_,
       int32_t maxRows,
       int64_t maxBytes,
       RowVectorPtr& spillVector,
@@ -152,7 +152,7 @@ class Spiller {
   // goes empty this is refilled from the RowContainer for the next
   // spill run from the same partition.
   struct SpillRun {
-    SpillRun(memory::MappedMemory& mappedMemory)
+    explicit SpillRun(memory::MappedMemory& mappedMemory)
         : rows(0, memory::StlMappedMemoryAllocator<char*>(&mappedMemory)) {}
     // Spillable rows from the RowContainer.
     SpillRows rows;
