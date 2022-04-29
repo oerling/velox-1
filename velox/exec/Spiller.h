@@ -68,7 +68,7 @@ class Spiller {
             numSortingKeys,
             targetFileSize,
             pool,
-            spillMappedMemory(container_)),
+            spillMappedMemory()),
         pool_(pool),
         executor_(executor) {}
 
@@ -116,12 +116,23 @@ class Spiller {
   // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
   // Creates '*results' in spillPool() if nullptr. Used from Spiller and
   // RowContainerSpillStream.
-  void extractSpill(folly::Range<char**> rows, RowVectorPtr* result);
+  void extractSpill(folly::Range<char**> rows, RowVectorPtr& result);
+
+  // Extracts up to 'maxRows' or 'maxBytes' from 'rows' into
+  // 'spillVector'. The extract starts at nextBatchIndex and updates
+  // nextBatchIndex to be the index of the first non-extracted element
+  // of 'rows'. Returns the byte size of the extracted rows.
+  int64_t extractSpillVector(
+      SpillRows& rows_,
+      int32_t maxRows,
+      int64_t maxBytes,
+      RowVectorPtr& spillVector,
+      size_t& nextBatchIndex);
 
   // Returns the MappedMemory to use for intermediate storage for
   // spilling. This is not directly the RowContainer's memory because
   // this is usually at limit when starting spilling.
-  static memory::MappedMemory& spillMappedMemory(RowContainer& container);
+  static memory::MappedMemory& spillMappedMemory();
 
   // Global memory pool for spill intermediates. ~1MB per spill executor thread
   // is the expected peak utilization.
@@ -141,32 +152,32 @@ class Spiller {
   // goes empty this is refilled from the RowContainer for the next
   // spill run from the same partition.
   struct SpillRun {
-    SpillRun(memory::MappedMemory& mappedMemory)
+    explicit SpillRun(memory::MappedMemory& mappedMemory)
         : rows(0, memory::StlMappedMemoryAllocator<char*>(&mappedMemory)) {}
     // Spillable rows from the RowContainer.
     SpillRows rows;
     // The total byte size of rows referenced from 'rows'.
-    uint64_t size{0};
+    uint64_t numBytes{0};
     // True if 'rows' are sorted on their key.
     bool sorted{false};
 
     void clear() {
       rows.clear();
-      size = 0;
+      numBytes = 0;
       sorted = false;
     }
   };
 
   struct SpillStatus {
     const int32_t partition;
-    const int32_t numWritten;
+    const int32_t rowsWritten;
     const std::exception_ptr error;
 
     SpillStatus(
         int32_t _partition,
         int32_t _numWritten,
         std::exception_ptr _error)
-        : partition(_partition), numWritten(_numWritten), error(_error) {}
+        : partition(_partition), rowsWritten(_numWritten), error(_error) {}
   };
 
   // Prepares spill runs for the spillable hash number ranges in

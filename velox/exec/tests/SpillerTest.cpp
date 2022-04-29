@@ -25,57 +25,11 @@ class SpillerTest : public exec::test::RowContainerTestBase {
  protected:
   void testSpill(int32_t spillPct, bool makeError = false) {
     constexpr int32_t kNumRows = 100000;
-    auto batch = makeDataset(
-        ROW({
-            {"bool_val", BOOLEAN()},
-            {"tiny_val", TINYINT()},
-            {"small_val", SMALLINT()},
-            {"int_val", INTEGER()},
-            {"long_val", BIGINT()},
-            {"ordinal", BIGINT()},
-            {"float_val", REAL()},
-            {"double_val", DOUBLE()},
-            {"string_val", VARCHAR()},
-            {"array_val", ARRAY(VARCHAR())},
-            {"struct_val",
-             ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
-            {"map_val",
-             MAP(VARCHAR(),
-                 MAP(BIGINT(),
-                     ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
-        }),
-        kNumRows,
-        [](RowVectorPtr /*rows&*/) {});
-    const auto& types = batch->type()->as<TypeKind::ROW>().children();
-    std::vector<TypePtr> keys;
-    keys.insert(keys.begin(), types.begin(), types.begin() + 6);
-
-    std::vector<TypePtr> dependents;
-    dependents.insert(dependents.begin(), types.begin() + 6, types.end());
-    // Set ordinal so that the sorted order is unambiguous
-
-    auto ordinal = batch->childAt(5)->as<FlatVector<int64_t>>();
-    for (auto i = 0; i < kNumRows; ++i) {
-      ordinal->set(i, i);
-    }
-    // Make non-join build container so that spill runs are sorted. Note
-    // that a distinct or group by hash table can have dependents if
-    // some keys are known to be unique by themselves. Aggregation
-    // spilling will be tested separately.
-    auto data = makeRowContainer(keys, dependents, false);
     std::vector<char*> rows(kNumRows);
-    for (int i = 0; i < kNumRows; ++i) {
-      rows[i] = data->newRow();
-    }
-
-    SelectivityVector allRows(kNumRows);
-    for (auto column = 0; column < batch->childrenSize(); ++column) {
-      DecodedVector decoded(*batch->childAt(column), allRows);
-      for (auto index = 0; index < kNumRows; ++index) {
-        data->store(decoded, index, rows[index], column);
-      }
-    }
+    RowVectorPtr batch;
+    auto data = makeSpillData(kNumRows, rows, batch);
     std::vector<uint64_t> hashes(kNumRows);
+    auto keys = data->keyTypes();
     // Calculate a hash for every key in 'rows'.
     for (auto i = 0; i < keys.size(); ++i) {
       data->hash(
@@ -162,6 +116,63 @@ class SpillerTest : public exec::test::RowContainerTestBase {
         stream->pop();
       }
     }
+  }
+  std::unique_ptr<RowContainer> makeSpillData(
+      int32_t numRows,
+      std::vector<char*>& rows,
+      RowVectorPtr& batch) {
+    batch = makeDataset(
+        ROW({
+            {"bool_val", BOOLEAN()},
+            {"tiny_val", TINYINT()},
+            {"small_val", SMALLINT()},
+            {"int_val", INTEGER()},
+            {"long_val", BIGINT()},
+            {"ordinal", BIGINT()},
+            {"float_val", REAL()},
+            {"double_val", DOUBLE()},
+            {"string_val", VARCHAR()},
+            {"array_val", ARRAY(VARCHAR())},
+            {"struct_val",
+             ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+            {"map_val",
+             MAP(VARCHAR(),
+                 MAP(BIGINT(),
+                     ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))},
+        }),
+        numRows,
+        [](RowVectorPtr /*rows&*/) {});
+    const auto& types = batch->type()->as<TypeKind::ROW>().children();
+    std::vector<TypePtr> keys;
+    keys.insert(keys.begin(), types.begin(), types.begin() + 6);
+
+    std::vector<TypePtr> dependents;
+    dependents.insert(dependents.begin(), types.begin() + 6, types.end());
+    // Set ordinal so that the sorted order is unambiguous
+
+    auto ordinal = batch->childAt(5)->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < numRows; ++i) {
+      ordinal->set(i, i);
+    }
+    // Make non-join build container so that spill runs are sorted. Note
+    // that a distinct or group by hash table can have dependents if
+    // some keys are known to be unique by themselves. Aggregation
+    // spilling will be tested separately.
+    auto data = makeRowContainer(keys, dependents, false);
+    rows.resize(numRows);
+    for (int i = 0; i < numRows; ++i) {
+      rows[i] = data->newRow();
+    }
+
+    SelectivityVector allRows(numRows);
+    for (auto column = 0; column < batch->childrenSize(); ++column) {
+      DecodedVector decoded(*batch->childAt(column), allRows);
+      for (auto index = 0; index < numRows; ++index) {
+        data->store(decoded, index, rows[index], column);
+      }
+    }
+
+    return data;
   }
 
   folly::IOThreadPoolExecutor* FOLLY_NONNULL executor() {
