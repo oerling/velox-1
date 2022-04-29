@@ -486,7 +486,7 @@ TEST_P(MappedMemoryTest, externalAdvise) {
           (kSmallSize - (2 * (kLargeSize % kSmallSize))));
   EXPECT_TRUE(instance->checkConsistency());
 }
-  
+
 TEST_P(MappedMemoryTest, allocateBytes) {
   constexpr int32_t kNumAllocs = 50;
   // Different sizes, including below minimum and above largest size class.

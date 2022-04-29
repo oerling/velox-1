@@ -221,7 +221,8 @@ class MmapAllocator : public MappedMemory {
   // newMappedNeeded, advises away enough pages backing freed slots in
   // the size classes to make sure that the new pages can be used
   // while staying within 'capacity"'.
-  // success. Returns false if cannot advise away enough free but backed pages from the size classes.
+  // success. Returns false if cannot advise away enough free but backed pages
+  // from the size classes.
   bool ensureEnoughMappedPages(int32_t newMappedNeeded);
 
   // Frees 'allocation and returns the number of freed pages. Does not

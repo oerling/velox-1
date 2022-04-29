@@ -176,23 +176,23 @@ bool MmapAllocator::allocateContiguous(
   // then the counts are updated in ensureEnoughMappedPages().
   auto guard = folly::makeGuard([&]() {
     if (!success) {
-      auto pageDelta = newPages + numLargeCollateralPages + numCollateralPages ;
+      auto pageDelta = newPages + numLargeCollateralPages + numCollateralPages;
       numAllocated_ -= pageDelta;
       try {
-	beforeAllocCB(-pageDelta);
+        beforeAllocCB(-pageDelta);
       } catch (const std::exception& e) {
-	// Ignore exception, this is run on in a destructor on return path.
+        // Ignore exception, this is run on in a destructor on return path.
       }
       numExternalMapped_ -= numPages + numLargeCollateralPages;
       // If we fail after incrementing the mapped count, we drop both
       // collateral and the new allocation. The collateral is dropped
       // in all cases.
       if (mappedCountUpdated) {
-	numMapped_ -= numPages + numLargeCollateralPages;
+        numMapped_ -= numPages + numLargeCollateralPages;
       } else {
-	numMapped_ -= numLargeCollateralPages;
+        numMapped_ -= numLargeCollateralPages;
       }
-      }
+    }
   });
   numExternalMapped_ += numPages - numLargeCollateralPages;
   auto numAllocated = numAllocated_.fetch_add(newPages) + newPages;
@@ -201,8 +201,8 @@ bool MmapAllocator::allocateContiguous(
   }
   if (newPages > 0) {
     if (!ensureEnoughMappedPages(newPages)) {
-      LOG(WARNING) << "Could not advise away  enough for " << newPages << 
-	" pages for allocateContiguous";
+      LOG(WARNING) << "Could not advise away  enough for " << newPages
+                   << " pages for allocateContiguous";
       return false;
     }
   } else {
@@ -569,7 +569,8 @@ bool MmapAllocator::checkConsistency() const {
   }
   if (mappedCount != numMapped_ - numExternalMapped_) {
     ok = false;
-    LOG(WARNING) << "Mapped count out of sync. Actual= " << mappedCount + numExternalMapped_
+    LOG(WARNING) << "Mapped count out of sync. Actual= "
+                 << mappedCount + numExternalMapped_
                  << " recorded= " << numMapped_;
   }
   return ok;
