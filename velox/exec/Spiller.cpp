@@ -101,9 +101,12 @@ class RowContainerSpillStream : public SpillStream {
     // have wide data and no advantage in large size for narrow data
     // since this is all processed row by row.
     static constexpr vector_size_t kMaxRows = 64;
-    constexpr uint64_t kMaxBytes = 4 << 20;
-    size_t bytes = 0;
-    vector_size_t numRows = 0;
+    constexpr uint64_t kMaxBytes = 1 << 18;
+    if (nextBatchIndex_ >= rows_.size()) {
+      index_ = 0;
+      size_ = 0;
+      return;
+    }
     spiller_.extractSpillVector(
         rows_, kMaxRows, kMaxBytes, rowVector_, nextBatchIndex_);
     size_ = rowVector_->size();
