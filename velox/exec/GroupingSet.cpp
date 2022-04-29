@@ -1,4 +1,5 @@
 /*
+
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -327,10 +328,10 @@ void GroupingSet::addGlobalAggregationInput(
 bool GroupingSet::getGlobalAggregationOutput(
     int32_t batchSize,
     bool isPartial,
-    RowContainerIterator* iterator,
+    RowContainerIterator& iterator,
     RowVectorPtr& result) {
   VELOX_CHECK_EQ(batchSize, 1);
-  if (iterator->allocationIndex != 0) {
+  if (iterator.allocationIndex != 0) {
     return false;
   }
 
@@ -345,7 +346,7 @@ bool GroupingSet::getGlobalAggregationOutput(
       aggregates_[i]->extractValues(groups, 1, &result->childAt(i));
     }
   }
-  iterator->allocationIndex = std::numeric_limits<int32_t>::max();
+  iterator.allocationIndex = std::numeric_limits<int32_t>::max();
   return true;
 }
 
@@ -382,7 +383,7 @@ bool GroupingSet::getOutput(
     RowContainerIterator* FOLLY_NONNULL iterator,
     RowVectorPtr& result) {
   if (isGlobal_) {
-    return getGlobalAggregationOutput(batchSize, isPartial_, iterator, result);
+    return getGlobalAggregationOutput(batchSize, isPartial_, *iterator, result);
   }
   if (spiller_) {
     return getOutputWithSpill(result);
@@ -401,28 +402,27 @@ bool GroupingSet::getOutput(
     }
     return false;
   }
-  extractGroups(groups, numGroups, result);
+  extractGroups(folly::Range<char**>(groups, numGroups), result);
   return true;
 }
 
 void GroupingSet::extractGroups(
-    char** groups,
-    int32_t numGroups,
+				folly::Range<char**>groups,
     const RowVectorPtr& result) {
-  result->resize(numGroups);
+				  result->resize(groups.size());
   RowContainer& rows = table_ ? *table_->rows() : *rowsWhileReadingSpill_;
   auto totalKeys = rows.keyTypes().size();
   for (int32_t i = 0; i < totalKeys; ++i) {
     auto keyVector = result->childAt(i);
-    rows.extractColumn(groups, numGroups, i, keyVector);
+    rows.extractColumn(groups.data(), groups.size(), i, keyVector);
   }
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(groups, numGroups);
+    aggregates_[i]->finalize(groups.data(), groups.size());
     auto& aggregateVector = result->childAt(i + totalKeys);
     if (isPartial_) {
-      aggregates_[i]->extractAccumulators(groups, numGroups, &aggregateVector);
+      aggregates_[i]->extractAccumulators(groups.data(), groups.size(), &aggregateVector);
     } else {
-      aggregates_[i]->extractValues(groups, numGroups, &aggregateVector);
+      aggregates_[i]->extractValues(groups.data(), groups.size(), &aggregateVector);
     }
   }
 }
@@ -604,7 +604,7 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
       }
     }
     extractGroups(
-        nonSpilledRows_.value().data() + nonSpilledIndex_, numGroups, result);
+		  folly::Range<char**>(nonSpilledRows_.value().data() + nonSpilledIndex_, numGroups), result);
     nonSpilledIndex_ += numGroups;
     return true;
   }
@@ -664,7 +664,7 @@ void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   RowContainerIterator iter;
   mergeRows_->listRows(
       &iter, rows.size(), RowContainer::kUnlimited, rows.data());
-  extractGroups(rows.data(), rows.size(), result);
+  extractGroups(folly::Range<char**>(rows.data(), rows.size()), result);
   mergeRows_->clear();
 }
 

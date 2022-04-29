@@ -90,7 +90,7 @@ class GroupingSet {
   bool getGlobalAggregationOutput(
       int32_t batchSize,
       bool isPartial,
-      RowContainerIterator* iterator,
+      RowContainerIterator& iterator,
       RowVectorPtr& result);
 
   void createHashTable();
@@ -108,8 +108,7 @@ class GroupingSet {
   void ensureInputFits(const RowVectorPtr& input);
 
   void extractGroups(
-      char** FOLLY_NONNULL groups,
-      int32_t numGroups,
+		     folly::Range<char**> groups,
       const RowVectorPtr& result);
 
   bool getOutputWithSpill(const RowVectorPtr& result);
