@@ -118,6 +118,17 @@ class Spiller {
   // RowContainerSpillStream.
   void extractSpill(folly::Range<char**> rows, RowVectorPtr& result);
 
+  // Extracts up to 'maxRows' or 'maxBytes' from 'rows' into
+  // 'spillVector'. The extract starts at nextBatchIndex and updates
+  // nextBatchIndex to be the index of the first non-extracted element
+  // of 'rows'. Returns the byte size of the extracted rows.
+  int64_t extractSpillVector(
+			  SpillRows& rows_,
+      int32_t maxRows,
+      int64_t maxBytes,
+      RowVectorPtr& spillVector,
+      size_t& nextBatchIndex);
+
   // Returns the MappedMemory to use for intermediate storage for
   // spilling. This is not directly the RowContainer's memory because
   // this is usually at limit when starting spilling.

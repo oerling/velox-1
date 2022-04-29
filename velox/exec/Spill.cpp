@@ -1,4 +1,4 @@
-/*
+ /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +53,8 @@ WriteFile& SpillFile::output() {
 }
 
 void SpillFile::startRead() {
-  constexpr uint64_t kMaxReadBufferSize = 1 << 20; // 1MB
+  constexpr uint64_t kMaxReadBufferSize =
+      (1 << 20) - AlignedBuffer::kPaddedSize; // 1MB - padding.
   VELOX_CHECK(!output_);
   VELOX_CHECK(!input_);
   auto fs = filesystems::getFileSystem(path_, nullptr);

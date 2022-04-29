@@ -44,6 +44,30 @@ void Spiller::extractSpill(folly::Range<char**> rows, RowVectorPtr& resultPtr) {
   }
 }
 
+int64_t Spiller::extractSpillVector(
+    SpillRows& rows,
+    int32_t maxRows,
+    int64_t maxBytes,
+    RowVectorPtr& spillVector,
+    size_t& nextBatchIndex) {
+  auto limit = std::min<size_t>(rows.size() - nextBatchIndex, maxRows);
+  assert(!rows.empty());
+  int32_t numRows = 0;
+  int64_t bytes = 0;
+  for (; numRows < limit; ++numRows) {
+    bytes += container_.rowSize(rows[nextBatchIndex + numRows]);
+    if (bytes > maxBytes) {
+      // Increment because the row that went over the limit is part
+      // of the result. We must spill at least one row.
+      ++numRows;
+      break;
+    }
+  }
+  extractSpill(folly::Range(&rows[nextBatchIndex], numRows), spillVector);
+  nextBatchIndex += numRows;
+  return bytes;
+}
+
 namespace {
 // A stream of ordered rows being read from the in memory
 // container. This is the part of a spillable range that is not yet
@@ -80,20 +104,8 @@ class RowContainerSpillStream : public SpillStream {
     constexpr uint64_t kMaxBytes = 4 << 20;
     size_t bytes = 0;
     vector_size_t numRows = 0;
-    auto limit = std::min<size_t>(rows_.size() - nextBatchIndex_, kMaxRows);
-    assert(!rows_.empty());
-    for (; numRows < limit; ++numRows) {
-      bytes += spiller_.container().rowSize(rows_[nextBatchIndex_ + numRows]);
-      if (bytes > kMaxBytes) {
-        // Increment because the row that went over the limit is part
-        // of the result. We must spill at least one row.
-        ++numRows;
-        break;
-      }
-    }
-    spiller_.extractSpill(
-        folly::Range(&rows_[nextBatchIndex_], numRows), rowVector_);
-    nextBatchIndex_ += numRows;
+    spiller_.extractSpillVector(
+        rows_, kMaxRows, kMaxBytes, rowVector_, nextBatchIndex_);
     size_ = rowVector_->size();
     index_ = 0;
   }
@@ -141,23 +153,11 @@ std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(
   try {
     ensureSorted(run);
     int64_t totalBytes = 0;
-    int32_t written = 0;
+    size_t written = 0;
     while (written < run.rows.size()) {
-      int32_t i = 0;
-      int32_t limit = std::min<uint64_t>(128, run.rows.size() - written);
-      int32_t bytes = 0;
-      for (; i < limit; ++i) {
-        bytes += container_.rowSize(run.rows[written + i]);
-        if (bytes > kTargetBatchBytes) {
-          ++i;
-          break;
-        }
-      }
-      folly::Range<char**> spilled(run.rows.data() + written, i);
-      extractSpill(spilled, spillVector);
+      totalBytes += extractSpillVector(
+          run.rows, 64, kTargetBatchBytes, spillVector, written);
       state_.appendToPartition(partition, spillVector);
-      written += i;
-      totalBytes += bytes;
       if (totalBytes > maxBytes) {
         break;
       }
