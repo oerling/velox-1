@@ -167,12 +167,6 @@ class HiveDataSource : public DataSource {
 
   void setFromDataSource(std::shared_ptr<DataSource> source) override;
 
-  bool allPrefetchIssued() const override {
-    return rowReader_ && rowReader_->allPrefetchIssued();
-  }
-
-  void setFromDataSource(std::shared_ptr<DataSource> source) override;
-
   int64_t estimatedRowSize() override;
 
  private:

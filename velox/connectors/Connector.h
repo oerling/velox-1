@@ -138,22 +138,6 @@ class DataSource {
     VELOX_UNSUPPORTED("setFromDataSource");
   }
 
-  // Returns true if 'this' has initiated all the prefetch this will
-  // initiate. This means that the caller should schedule next splits
-  // to prefetch in the background. false if the source does not
-  // prefetch.
-  virtual bool allPrefetchIssued() const {
-    return false;
-  }
-
-  // Initializes this from 'source'. 'source' is effectively moved
-  // into 'this' Adaptation like dynamic filters stay in effect but
-  // the parts dealing with open files, prefetched data etc. are moved. 'source'
-  // is freed after the move.
-  virtual void setFromDataSource(std::shared_ptr<DataSource> source) {
-    VELOX_UNSUPPORTED("setFromDataSource");
-  }
-
   // Returns a connector dependent row size if available. This can be
   // called after addSplit().  This estimates uncompressed data
   // sizes. This is better than getCompletedBytes()/getCompletedRows()
@@ -288,10 +272,6 @@ class Connector {
       const std::string& scanId,
       int32_t loadQuantum,
       cache::FileGroupStats* FOLLY_NULLABLE groupStats = nullptr);
-
-  virtual folly::Executor* FOLLY_NULLABLE executor() const {
-    return nullptr;
-  }
 
   virtual folly::Executor* FOLLY_NULLABLE executor() const {
     return nullptr;

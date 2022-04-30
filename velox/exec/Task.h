@@ -417,12 +417,9 @@ class Task : public std::enable_shared_from_this<Task> {
     return terminateRequested_;
   }
 
-<<<<<<< HEAD
-=======
   // Requests the Task to stop activity.  The returned future is
   // realized when all running threads have stopped running. Activity
   // can be resumed with resume() after the future is realized.
->>>>>>> oerling/prefetch-dev
   ContinueFuture requestPause(bool pause) {
     std::lock_guard<std::mutex> l(mutex_);
     return requestPauseLocked(pause);
