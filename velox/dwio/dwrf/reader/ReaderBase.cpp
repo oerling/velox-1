@@ -92,9 +92,9 @@ ReaderBase::ReaderBase(
     : pool_{pool},
       stream_{std::move(stream)},
       arena_(std::make_unique<google::protobuf::Arena>()),
+      decryptorFactory_(decryptorFactory),
       bufferedInputFactorySource_(bufferedInputFactorySource),
-      dataCacheConfig_(dataCacheConfig),
-      decryptorFactory_(decryptorFactory) {
+      dataCacheConfig_(dataCacheConfig) {
   input_ = bufferedInputFactorySource_()->create(
       *stream_, pool, dataCacheConfig.get());
 

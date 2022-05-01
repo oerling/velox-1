@@ -27,10 +27,15 @@ using dwio::common::InputStream;
 using dwio::common::ReaderOptions;
 using dwio::common::RowReaderOptions;
 
+bool DwrfRowReader::mayPrefetch() const {
+  return FLAGS_prefetch_stripes &&
+      getReader().bufferedInputFactory().executor();
+}
+
 std::unique_ptr<dwio::common::RowReader> DwrfReader::createRowReader(
     const RowReaderOptions& opts) const {
   auto rowReader = std::make_unique<DwrfRowReader>(readerBase_, opts);
-  if (FLAGS_prefetch_stripes) {
+  if (rowReader->mayPrefetch()) {
     rowReader->startNextStripe();
   }
   return rowReader;
@@ -79,7 +84,7 @@ void DwrfRowReader::checkSkipStrides(
 }
 
 uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
-  if (!FLAGS_prefetch_stripes) {
+  if (!mayPrefetch()) {
     for (;;) {
       if (currentStripe >= lastStripe) {
         return 0;

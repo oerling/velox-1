@@ -91,6 +91,10 @@ class DwrfRowReader : public DwrfRowReaderShared {
     return it->second;
   }
 
+  // Returns true if stripe prefetch is enabled and an executor is
+  // specified via the BufferedInput factory.
+  bool mayPrefetch() const;
+
  private:
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
 

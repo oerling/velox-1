@@ -42,11 +42,15 @@ class DBGenIterator {
 
   // Generate different types of records.
   void genNation(size_t index, code_t& code);
+  void genRegion(size_t index, code_t& code);
   void genOrder(size_t index, order_t& order);
+  void genSupplier(size_t index, supplier_t& supplier);
+  void genPart(size_t index, part_t& part);
+  void genCustomer(size_t index, customer_t& customer);
 
  private:
   // Should not instantiate directly.
-  DBGenIterator(std::unique_lock<std::mutex>&& lease)
+  explicit DBGenIterator(std::unique_lock<std::mutex>&& lease)
       : lockGuard_(std::move(lease)) {}
 
   // unique_lock instead of lock_guard so it's movable.
