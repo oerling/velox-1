@@ -313,7 +313,9 @@ RowVectorPtr Exchange::getOutput() {
   if (!inputStream_) {
     inputStream_ = std::make_unique<ByteStream>();
     stats_.rawInputBytes += currentPage_->size();
-    stats_.addRuntimeStat("exchangeInputBytes", RuntimeCounter(currentPage_->size(), RuntimeCounter::Unit::kBytes));
+    stats_.addRuntimeStat(
+        "exchangeInputBytes",
+        RuntimeCounter(currentPage_->size(), RuntimeCounter::Unit::kBytes));
     currentPage_->prepareStreamForDeserialize(inputStream_.get());
   }
 

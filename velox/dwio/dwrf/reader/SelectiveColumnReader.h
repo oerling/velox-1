@@ -312,7 +312,7 @@ class SelectiveColumnReader : public ColumnReader {
     auto it = rowGroupStats_.find(index);
     return it == rowGroupStats_.end() ? nullptr : it->second.get();
   }
-  
+
   // Used by decoders to set encoding-related data to be kept between calls to
   // read().
   ScanState& scanState() {

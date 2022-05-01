@@ -554,7 +554,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
   }
 }
 
-  #if 0
+#if 0
 namespace {
 
 V32::TV stringViewOffsets = {0, 4, 8, 12, 16, 20, 24, 28};
@@ -620,7 +620,7 @@ bool VectorHasher::tryMapToRange(
     const SelectivityVector& rows,
     uint64_t* result) {
   return false;
-  #if 0
+#if 0
   if (!FLAGS_enable_str_simd || !process::hasAvx2() || !rows.isAllSelected()) {
     return false;
   }
