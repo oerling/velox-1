@@ -55,9 +55,6 @@ namespace facebook::velox::exec {
     }                                                                    \
   }()
 
-using V32 = simd::Vectors<int32_t>;
-using V64 = simd::Vectors<int64_t>;
-
 namespace {
 template <TypeKind Kind>
 uint64_t hashOne(DecodedVector& decoded, vector_size_t index) {
@@ -557,6 +554,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
   }
 }
 
+  #if 0
 namespace {
 
 V32::TV stringViewOffsets = {0, 4, 8, 12, 16, 20, 24, 28};
@@ -615,12 +613,14 @@ loadPrefixes64(const void* base, int64_t min, int32_t i, int32_t end) {
   }
 }
 } // namespace
-
+#endif
 template <>
 bool VectorHasher::tryMapToRange(
     const StringView* values,
     const SelectivityVector& rows,
     uint64_t* result) {
+  return false;
+  #if 0
   if (!FLAGS_enable_str_simd || !process::hasAvx2() || !rows.isAllSelected()) {
     return false;
   }
@@ -704,6 +704,7 @@ bool VectorHasher::tryMapToRange(
     first += (8 * sizeof(StringView)) / sizeof(int32_t);
   }
   return true;
+#endif
 }
 
 void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
