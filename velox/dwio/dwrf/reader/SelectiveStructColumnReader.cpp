@@ -61,6 +61,8 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
         FlatMapContext{encodingKey.sequence, nullptr}));
     childSpec->setSubscript(children_.size() - 1);
   }
+  thread_local std::string readerDebugString;
+  debugString_ = readerDebugString;
 }
 
 std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
