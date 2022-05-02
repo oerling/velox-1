@@ -67,9 +67,10 @@ void DestinationBuffer::getData(
       break;
     }
     auto now = getCurrentTimeMicro();
-    fetchDelay_ += now - dataAvailableSince_;
+    fetchDelay_.addValue((now - dataAvailableSince_) * 1000);
     if (result.size() == data_.size()) {
       dataAvailableSince_ = 0;
+      dataFetchedSince_ = now;
     } else {
       dataAvailableSince_ = now;
     }
@@ -93,6 +94,10 @@ DataAvailable DestinationBuffer::getAndClearNotify() {
 std::vector<std::shared_ptr<SerializedPage>> DestinationBuffer::acknowledge(
     int64_t sequence,
     bool fromGetData) {
+  if (dataFetchedSince_) {
+    ackDelay_.addValue((getCurrentTimeMicro() - dataFetchedSince_) * 1000);
+    dataFetchedSince_ = 0;
+  }
   int64_t numDeleted = sequence - sequence_;
   if (numDeleted == 0 && fromGetData) {
     // If called from getData, it is expected that there will be
@@ -437,6 +442,11 @@ void PartitionedOutputBuffer::getData(
   }
 }
 
+  void DestinationBuffer::updateStats(OperatorStats& stats) {
+    stats.mergeRuntimeStat("fetchDelay", fetchDelay_);
+    stats.mergeRuntimeStat("ackDelay", ackDelay_);
+  }
+  
 void PartitionedOutputBuffer::terminate() {
   std::vector<ContinuePromise> outstandingPromises;
   {
@@ -449,6 +459,14 @@ void PartitionedOutputBuffer::terminate() {
   }
 }
 
+  void PartitionedOutputBuffer::updateStats(OperatorStats& stats) {
+    std::lock_guard<std::mutex> l(mutex_);
+    
+    for (auto& buffer : buffers_) {
+      buffer->updateStats(stats);
+    }
+  }
+  
 std::string PartitionedOutputBuffer::toString() {
   std::lock_guard<std::mutex> l(mutex_);
   std::stringstream out;
@@ -594,7 +612,21 @@ void PartitionedOutputBufferManager::removeTask(const std::string& taskId) {
   }
 }
 
-std::string PartitionedOutputBufferManager::toString() {
+
+  void PartitionedOutputBufferManager::updateStats(const std::string& taskId, OperatorStats& stats) {
+      auto buffer = buffers_.withLock(
+      [&](auto& buffers) -> std::shared_ptr<PartitionedOutputBuffer> {
+        auto it = buffers.find(taskId);
+        if (it == buffers.end()) {
+          // Already removed.
+          return nullptr;
+        }
+	return it->second;
+      });
+      buffer->updateStats(stats);
+  }
+
+      std::string PartitionedOutputBufferManager::toString() {
   return buffers_.withLock([](const auto& buffers) {
     std::stringstream out;
     out << "[BufferManager:" << std::endl;

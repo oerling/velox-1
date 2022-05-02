@@ -72,6 +72,8 @@ class DestinationBuffer {
 
   std::string toString();
 
+  void updateStats(OperatorStats& stats);
+  
  private:
   std::vector<std::shared_ptr<SerializedPage>> data_;
   // The sequence number of the first in 'data_'.
@@ -83,11 +85,14 @@ class DestinationBuffer {
 
   // Microsecond time when 'this' became non-empty.
   uint64_t dataAvailableSince_{0};
-  // Cumulative time spent in a non-empty state.
-  uint64_t fetchDelay_{0};
-  uint64_t fetchCount_{0};
-  // Microsecond time of last time the output was given to the consumer.
-  uint64_t lastSendStart_{0};
+  // Time spent in a non-empty state.
+  RuntimeMetric fetchDelay_{RuntimeCounter::Unit::kNanos};
+
+  int64_t dataFetchedSince_{0};
+  // Times between send and ack. Ack is either an ack message or a
+  // getData with a higher sequence number.
+  RuntimeMetric ackDelay_{RuntimeCounter::Unit::kNanos};
+
 };
 
 class PartitionedOutputBuffer {
@@ -138,6 +143,8 @@ class PartitionedOutputBuffer {
   // producer task has an error or cancellation.
   void terminate();
 
+  void updateStats(OperatorStats& stats);
+  
   std::string toString();
 
  private:
@@ -266,6 +273,8 @@ class PartitionedOutputBufferManager {
     listenerFactory_ = factory;
   }
 
+  void updateStats(const std::string& taskId, OperatorStats& stats);
+  
   std::string toString();
 
  private:
