@@ -73,7 +73,7 @@ class DestinationBuffer {
   std::string toString();
 
   void updateStats(OperatorStats& stats);
-  
+
  private:
   std::vector<std::shared_ptr<SerializedPage>> data_;
   // The sequence number of the first in 'data_'.
@@ -92,7 +92,6 @@ class DestinationBuffer {
   // Times between send and ack. Ack is either an ack message or a
   // getData with a higher sequence number.
   RuntimeMetric ackDelay_{RuntimeCounter::Unit::kNanos};
-
 };
 
 class PartitionedOutputBuffer {
@@ -144,7 +143,7 @@ class PartitionedOutputBuffer {
   void terminate();
 
   void updateStats(OperatorStats& stats);
-  
+
   std::string toString();
 
  private:
@@ -274,7 +273,7 @@ class PartitionedOutputBufferManager {
   }
 
   void updateStats(const std::string& taskId, OperatorStats& stats);
-  
+
   std::string toString();
 
  private:

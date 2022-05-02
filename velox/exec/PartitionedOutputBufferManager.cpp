@@ -442,11 +442,11 @@ void PartitionedOutputBuffer::getData(
   }
 }
 
-  void DestinationBuffer::updateStats(OperatorStats& stats) {
-    stats.mergeRuntimeStat("fetchDelay", fetchDelay_);
-    stats.mergeRuntimeStat("ackDelay", ackDelay_);
-  }
-  
+void DestinationBuffer::updateStats(OperatorStats& stats) {
+  stats.mergeRuntimeStat("fetchDelay", fetchDelay_);
+  stats.mergeRuntimeStat("ackDelay", ackDelay_);
+}
+
 void PartitionedOutputBuffer::terminate() {
   std::vector<ContinuePromise> outstandingPromises;
   {
@@ -459,14 +459,14 @@ void PartitionedOutputBuffer::terminate() {
   }
 }
 
-  void PartitionedOutputBuffer::updateStats(OperatorStats& stats) {
-    std::lock_guard<std::mutex> l(mutex_);
-    
-    for (auto& buffer : buffers_) {
-      buffer->updateStats(stats);
-    }
+void PartitionedOutputBuffer::updateStats(OperatorStats& stats) {
+  std::lock_guard<std::mutex> l(mutex_);
+
+  for (auto& buffer : buffers_) {
+    buffer->updateStats(stats);
   }
-  
+}
+
 std::string PartitionedOutputBuffer::toString() {
   std::lock_guard<std::mutex> l(mutex_);
   std::stringstream out;
@@ -612,21 +612,22 @@ void PartitionedOutputBufferManager::removeTask(const std::string& taskId) {
   }
 }
 
-
-  void PartitionedOutputBufferManager::updateStats(const std::string& taskId, OperatorStats& stats) {
-      auto buffer = buffers_.withLock(
+void PartitionedOutputBufferManager::updateStats(
+    const std::string& taskId,
+    OperatorStats& stats) {
+  auto buffer = buffers_.withLock(
       [&](auto& buffers) -> std::shared_ptr<PartitionedOutputBuffer> {
         auto it = buffers.find(taskId);
         if (it == buffers.end()) {
           // Already removed.
           return nullptr;
         }
-	return it->second;
+        return it->second;
       });
-      buffer->updateStats(stats);
-  }
+  buffer->updateStats(stats);
+}
 
-      std::string PartitionedOutputBufferManager::toString() {
+std::string PartitionedOutputBufferManager::toString() {
   return buffers_.withLock([](const auto& buffers) {
     std::stringstream out;
     out << "[BufferManager:" << std::endl;

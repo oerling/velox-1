@@ -138,7 +138,7 @@ struct OperatorStats {
       runtimeStats.at(name).merge(other);
     }
   }
-  
+
   void add(const OperatorStats& other);
   void clear();
 };
