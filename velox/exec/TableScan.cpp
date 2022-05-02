@@ -89,7 +89,10 @@ RowVectorPtr TableScan::getOutput() {
             "Got splits with different connector IDs");
       }
 
-      thread_local std::string readerDebugString = fmt::format("Split {} Task {}", connectorSplit->toString(), operatorCtx_->task()->taskId());
+      thread_local std::string readerDebugString = fmt::format(
+          "Split {} Task {}",
+          connectorSplit->toString(),
+          operatorCtx_->task()->taskId());
       dataSource_->addSplit(connectorSplit);
       ++stats_.numSplits;
       setBatchSize();

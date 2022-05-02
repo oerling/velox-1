@@ -693,10 +693,20 @@ class DictionaryColumnVisitor
       }
       if (inDict()) {
         translateScatter<true, scatter>(
-					input, numInput, scatterRows, numValues, values, super::reader_->scanState().dictionary.numValues);
+            input,
+            numInput,
+            scatterRows,
+            numValues,
+            values,
+            super::reader_->scanState().dictionary.numValues);
       } else {
         translateScatter<false, scatter>(
-					 input, numInput, scatterRows, numValues, values, super::reader_->scanState().dictionary.numValues);
+            input,
+            numInput,
+            scatterRows,
+            numValues,
+            values,
+            super::reader_->scanState().dictionary.numValues);
       }
       super::rowIndex_ += numInput;
       numValues = scatter ? scatterRows[super::rowIndex_ - 1] + 1
@@ -866,7 +876,7 @@ class DictionaryColumnVisitor
       const int32_t* scatterRows,
       int32_t numValues,
       T* values,
-			int32_t dictionarySize) {
+      int32_t dictionarySize) {
     for (int32_t i = numInput - 1; i >= 0; --i) {
       using U = typename std::make_unsigned<T>::type;
       T value = input[i];
@@ -877,9 +887,9 @@ class DictionaryColumnVisitor
           continue;
         }
       } else {
-		    auto index = static_cast<U>(value);
-		    VELOX_CHECK_LT(index, dictionarySize);
-		    value = dict()[index];
+        auto index = static_cast<U>(value);
+        VELOX_CHECK_LT(index, dictionarySize);
+        value = dict()[index];
       }
       if (scatter) {
         values[scatterRows[super::rowIndex_ + i]] = value;

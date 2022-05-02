@@ -127,7 +127,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   const std::string& debugString() const {
     return debugString_;
   }
-  
+
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
