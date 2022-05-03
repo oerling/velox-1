@@ -487,6 +487,84 @@ TEST_P(MappedMemoryTest, externalAdvise) {
   EXPECT_TRUE(instance->checkConsistency());
 }
 
+TEST_P(MappedMemoryTest, allocContiguousFail) {
+  if (!useMmap_) {
+    return;
+  }
+  // Covers edge cases of
+  constexpr int32_t kSmallSize = 16;
+  constexpr int32_t kLargeSize = kCapacity / 2;
+  auto instance = dynamic_cast<MmapAllocator*>(MappedMemory::getInstance());
+  std::vector<std::unique_ptr<MappedMemory::Allocation>> allocations;
+  auto numAllocs = kCapacity / kSmallSize;
+  int64_t trackedBytes = 0;
+  auto trackCallback = [&](int64_t delta) { trackedBytes += delta; };
+  allocations.reserve(numAllocs);
+  for (int32_t i = 0; i < numAllocs; ++i) {
+    allocations.push_back(std::make_unique<MappedMemory::Allocation>(instance));
+    EXPECT_TRUE(allocate(kSmallSize, *allocations.back().get()));
+  }
+  // We allocated and mapped the capacity. Now free half, leaving the memory
+  // still mapped.
+  allocations.resize(numAllocs / 2);
+  EXPECT_TRUE(instance->checkConsistency());
+  EXPECT_EQ(instance->numMapped(), numAllocs * kSmallSize);
+  EXPECT_EQ(instance->numAllocated(), numAllocs / 2 * kSmallSize);
+  MappedMemory::ContiguousAllocation large;
+  EXPECT_TRUE(instance->allocateContiguous(
+      kLargeSize / 2, nullptr, large, trackCallback));
+  EXPECT_TRUE(instance->checkConsistency());
+
+  // The allocation should go through because there is 1/2 of
+  // kLargeSize already in large[0], 1/2 of kLargeSize free and
+  // kSmallSize given as collateral. This does not go through because
+  // we inject a failure in advising away the collateral.
+  instance->injectFailure(MmapAllocator::Failure::kMadvise);
+  EXPECT_FALSE(instance->allocateContiguous(
+      kLargeSize + kSmallSize, allocations.back().get(), large, trackCallback));
+  EXPECT_TRUE(instance->checkConsistency());
+  // large and allocations.back() were both freed and nothing was allocated.
+  EXPECT_EQ(kSmallSize * (allocations.size() - 1), instance->numAllocated());
+  // An extra kSmallSize were freed.
+  EXPECT_EQ(-kSmallSize * MappedMemory::kPageSize, trackedBytes);
+  // Remove the cleared item from the end.
+  allocations.pop_back();
+
+  trackedBytes = 0;
+  EXPECT_TRUE(instance->allocateContiguous(
+      kLargeSize / 2, nullptr, large, trackCallback));
+  instance->injectFailure(MmapAllocator::Failure::kMmap);
+  // Should go through because 1/2 of kLargeSize + kSmallSize free and 1/2 of
+  // kLargeSize already in large. Fails because mmap after advise away fails.
+  EXPECT_FALSE(instance->allocateContiguous(
+      kLargeSize + 2 * kSmallSize,
+      allocations.back().get(),
+      large,
+      trackCallback));
+  // large and allocations.back() were both freed and nothing was allocated.
+  EXPECT_EQ(kSmallSize * (allocations.size() - 1), instance->numAllocated());
+  EXPECT_EQ(-kSmallSize * MappedMemory::kPageSize, trackedBytes);
+  allocations.pop_back();
+  EXPECT_TRUE(instance->checkConsistency());
+
+  trackedBytes = 0;
+  EXPECT_TRUE(instance->allocateContiguous(
+      kLargeSize / 2, nullptr, large, trackCallback));
+  // We succeed without injected failure.
+  EXPECT_TRUE(instance->allocateContiguous(
+      kLargeSize + 3 * kSmallSize,
+      allocations.back().get(),
+      large,
+      trackCallback));
+  EXPECT_EQ(kCapacity, instance->numMapped());
+  EXPECT_EQ(kCapacity, instance->numAllocated());
+  // Size grew by kLargeSize + 2 * kSmallSize (one kSmallSize item was freed, so
+  // no not 3 x kSmallSize).
+  EXPECT_EQ(
+      (kLargeSize + 2 * kSmallSize) * MappedMemory::kPageSize, trackedBytes);
+  EXPECT_TRUE(instance->checkConsistency());
+}
+
 TEST_P(MappedMemoryTest, allocateBytes) {
   constexpr int32_t kNumAllocs = 50;
   // Different sizes, including below minimum and above largest size class.

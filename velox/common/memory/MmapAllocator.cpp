@@ -89,6 +89,11 @@ bool MmapAllocator::allocate(
 
 bool MmapAllocator::ensureEnoughMappedPages(int32_t newMappedNeeded) {
   std::lock_guard<std::mutex> l(sizeClassBalanceMutex_);
+  if (injectedFailure_ == Failure::kMadvise) {
+    // Mimic case of not finding anything to advise away.
+    injectedFailure_ = Failure::kNone;
+    return false;
+  }
   int totalMaps = numMapped_.fetch_add(newMappedNeeded) + newMappedNeeded;
   if (totalMaps <= capacity_) {
     // We are not at capacity. No need to advise away.
@@ -168,60 +173,67 @@ bool MmapAllocator::allocateContiguous(
       std::rethrow_exception(std::current_exception());
     }
   }
-  bool success = false;
-  bool mappedCountUpdated = false;
-  // The rolls back the counters on failure. the small collateral does
-  // not decrement 'numMapped_' because these pages are not advised
-  // away. They may be advised away by ensureEnoughMappedPages but
-  // then the counts are updated in ensureEnoughMappedPages().
-  auto guard = folly::makeGuard([&]() {
-    if (!success) {
-      auto pageDelta = newPages + numLargeCollateralPages + numCollateralPages;
-      numAllocated_ -= pageDelta;
-      try {
-        beforeAllocCB(-pageDelta);
-      } catch (const std::exception& e) {
-        // Ignore exception, this is run on in a destructor on return path.
-      }
-      numExternalMapped_ -= numPages + numLargeCollateralPages;
-      // If we fail after incrementing the mapped count, we drop both
-      // collateral and the new allocation. The collateral is dropped
-      // in all cases.
-      if (mappedCountUpdated) {
-        numMapped_ -= numPages + numLargeCollateralPages;
-      } else {
-        numMapped_ -= numLargeCollateralPages;
-      }
+
+  // Rolls back the counters on failure. 'mappedDecrement is subtracted from
+  // 'numMapped_' on top of other adjustment.
+  auto rollbackAllocation = [&](int64_t mappedDecrement) {
+    // The previous allocation and collateral were both freed but not counted as
+    // freed.
+    auto pagesFreed = newPages + numLargeCollateralPages + numCollateralPages;
+    numAllocated_ -= pagesFreed;
+    try {
+      beforeAllocCB(-pagesFreed * kPageSize);
+    } catch (const std::exception& e) {
+      // Ignore exception, this is run on failure return path.
     }
-  });
+    // was incremented by numPages - numLargeCollateralPages. On failure,
+    // nulLargeCollateralPages are freed and numPages - numLargeCollateralPages
+    // were never allocated.
+    numExternalMapped_ -= numPages;
+    numMapped_ -= numLargeCollateralPages + mappedDecrement;
+  };
   numExternalMapped_ += numPages - numLargeCollateralPages;
   auto numAllocated = numAllocated_.fetch_add(newPages) + newPages;
   if (numAllocated > capacity_) {
+    rollbackAllocation(0);
     return false;
   }
-  if (newPages > 0) {
-    if (!ensureEnoughMappedPages(newPages)) {
-      LOG(WARNING) << "Could not advise away  enough for " << newPages
+  // Make sure there are free backing pages for the size minus what we just
+  // unmapped.
+  int64_t numToMap = numPages - numLargeCollateralPages;
+  if (numToMap > 0) {
+    if (!ensureEnoughMappedPages(numToMap)) {
+      LOG(WARNING) << "Could not advise away  enough for " << numToMap
                    << " pages for allocateContiguous";
+      rollbackAllocation(0);
       return false;
     }
   } else {
-    // We exchange a large mmap for a smaller one.
-    numMapped_ += numPages - numLargeCollateralPages;
+    // We exchange a large mmap for a smaller one. Add negative delta.
+    numMapped_ += numToMap;
   }
-  mappedCountUpdated = true;
-  void* data = mmap(
-      nullptr,
-      numPages * kPageSize,
-      PROT_READ | PROT_WRITE,
-      MAP_PRIVATE | MAP_ANONYMOUS,
-      -1,
-      0);
+  void* data;
+  if (injectedFailure_ == Failure::kMmap) {
+    // Mimic running out of mmaps for process.
+    injectedFailure_ = Failure::kNone;
+    data = nullptr;
+  } else {
+    data = mmap(
+        nullptr,
+        numPages * kPageSize,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0);
+  }
   if (!data) {
+    // If the mmap failed, we have unmapped large collateral and all
+    // the extra to be mapped, i.e. the target size - large collateral
+    // - collateral.
+    rollbackAllocation(numToMap);
     return false;
   }
 
-  success = true;
   allocation.reset(this, data, numPages * kPageSize);
   return true;
 }

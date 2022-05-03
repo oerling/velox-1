@@ -50,6 +50,8 @@ struct MmapAllocatorOptions {
 // (ContiguousAllocation).
 class MmapAllocator : public MappedMemory {
  public:
+  enum class Failure {kNone, kMadvise, kMmap};
+
   explicit MmapAllocator(const MmapAllocatorOptions& options);
 
   bool allocate(
@@ -87,6 +89,12 @@ class MmapAllocator : public MappedMemory {
     return numMapped_;
   }
 
+  // Causes 'failure' to occur in next call. This is a test-only
+  // function for validating otherwise unreachable error paths.
+  void injectFailure(Failure failure) {
+    injectedFailure_ = failure;
+  }
+  
   std::string toString() const override;
 
  private:
@@ -262,6 +270,7 @@ class MmapAllocator : public MappedMemory {
   uint64_t numAllocations_ = 0;
   uint64_t numAllocatedPages_ = 0;
   uint64_t numAdvisedPages_ = 0;
+  Failure injectedFailure_{Failure::kNone};
 };
 
 } // namespace facebook::velox::memory
