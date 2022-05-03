@@ -95,8 +95,7 @@ ReaderBase::ReaderBase(
       decryptorFactory_(decryptorFactory),
       bufferedInputFactory_(bufferedInputFactory),
       dataCacheConfig_(dataCacheConfig) {
-  input_ = bufferedInputFactory_->create(
-      *stream_, pool, dataCacheConfig.get());
+  input_ = bufferedInputFactory_->create(*stream_, pool, dataCacheConfig.get());
 
   // We may have cached the tail before, in which case we can skip the read.
   if (dataCacheConfig && dataCacheConfig->cache) {

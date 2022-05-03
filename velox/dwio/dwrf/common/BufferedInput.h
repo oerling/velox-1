@@ -157,7 +157,7 @@ class BufferedInputFactory {
   }
 
   // Returns a static factory for producing basic BufferedInput instances.
-  static std::shared_ptr<BufferedInputFactory>  baseFactoryShared();
+  static std::shared_ptr<BufferedInputFactory> baseFactoryShared();
 
   static BufferedInputFactory* FOLLY_NONNULL baseFactory() {
     return baseFactoryShared().get();

@@ -211,7 +211,8 @@ std::tuple<const char*, uint64_t> BufferedInput::readInternal(
 }
 
 //  static
-  std::shared_ptr<BufferedInputFactory> BufferedInputFactory::baseFactoryShared() {
+std::shared_ptr<BufferedInputFactory>
+BufferedInputFactory::baseFactoryShared() {
   static auto instance = std::make_shared<BufferedInputFactory>();
   return instance;
 }
