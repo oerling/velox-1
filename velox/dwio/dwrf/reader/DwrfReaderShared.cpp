@@ -201,9 +201,9 @@ DwrfReaderShared::DwrfReaderShared(
           std::move(input),
           options.getDecrypterFactory(),
           options.getBufferedInputFactory()
-              ? options.getBufferedInputFactory()
-              : BufferedInputFactory::baseFactory(),
-          options.getDataCacheConfig().get())),
+	  ? options.getBufferedInputFactory()
+	  :  BufferedInputFactory::baseFactoryShared(),
+          options.getDataCacheConfig())),
       options_(options) {}
 
 std::unique_ptr<StripeInformation> DwrfReaderShared::getStripe(
@@ -383,7 +383,7 @@ uint64_t DwrfReaderShared::getMemoryUse(
 }
 
 void DwrfRowReaderShared::startNextStripe() {
-  if (newStripeLoaded) {
+  if (newStripeLoaded || currentStripe >= lastStripe) {
     return;
   }
 
