@@ -100,8 +100,8 @@ class ParquetReaderTest : public testing::Test {
     EXPECT_EQ(reader.next(1000, result), 0);
   }
 
-  std::unique_ptr<common::ScanSpec> makeScanSpec(const RowTypePtr& rowType) {
-    auto scanSpec = std::make_unique<common::ScanSpec>("");
+  std::shared_ptr<common::ScanSpec> makeScanSpec(const RowTypePtr& rowType) {
+    auto scanSpec = std::make_shared<common::ScanSpec>("");
 
     for (auto i = 0; i < rowType->size(); ++i) {
       auto child =
@@ -134,7 +134,7 @@ class ParquetReaderTest : public testing::Test {
     }
 
     auto rowReaderOpts = getReaderOpts(fileSchema);
-    rowReaderOpts.setScanSpec(scanSpec.get());
+    rowReaderOpts.setScanSpec(scanSpec);
     auto rowReader = reader.createRowReader(rowReaderOpts);
     assertReadExpected(*rowReader, expected);
   }
