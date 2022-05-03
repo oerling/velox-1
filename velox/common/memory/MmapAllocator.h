@@ -50,7 +50,7 @@ struct MmapAllocatorOptions {
 // (ContiguousAllocation).
 class MmapAllocator : public MappedMemory {
  public:
-  enum class Failure {kNone, kMadvise, kMmap};
+  enum class Failure { kNone, kMadvise, kMmap };
 
   explicit MmapAllocator(const MmapAllocatorOptions& options);
 
@@ -94,7 +94,7 @@ class MmapAllocator : public MappedMemory {
   void injectFailure(Failure failure) {
     injectedFailure_ = failure;
   }
-  
+
   std::string toString() const override;
 
  private:
