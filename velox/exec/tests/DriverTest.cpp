@@ -939,7 +939,7 @@ class ConsumerNodeFactory : public Operator::PlanNodeTranslator {
         sequence_{sequence},
         testInstance_{testInstance} {}
 
-  std::unique_ptr<Operator> translate(
+  std::unique_ptr<Operator> toOperator(
       DriverCtx* ctx,
       int32_t id,
       const std::shared_ptr<const core::PlanNode>& node) override {
