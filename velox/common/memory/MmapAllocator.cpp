@@ -179,6 +179,14 @@ bool MmapAllocator::allocateContiguous(
   auto rollbackAllocation = [&](int64_t mappedDecrement) {
     // The previous allocation and collateral were both freed but not counted as
     // freed.
+    //
+    // Specifically, we do not subtract anything from counters with a
+    // resource reservation semantic, i.e. 'numAllocated_' and
+    // 'numMapped_' except at the end where the outcome of the
+    // operation is clear. Otherwise we could not have the guarantee
+    // that the operation succeeds if 'collateral' and 'allocation'
+    // cover the new size, as other threads might grab the transiently
+    // free pages.
     auto pagesFreed = newPages + numLargeCollateralPages + numCollateralPages;
     numAllocated_ -= pagesFreed;
     try {
@@ -187,7 +195,7 @@ bool MmapAllocator::allocateContiguous(
       // Ignore exception, this is run on failure return path.
     }
     // was incremented by numPages - numLargeCollateralPages. On failure,
-    // nulLargeCollateralPages are freed and numPages - numLargeCollateralPages
+    // numLargeCollateralPages are freed and numPages - numLargeCollateralPages
     // were never allocated.
     numExternalMapped_ -= numPages;
     numMapped_ -= numLargeCollateralPages + mappedDecrement;
