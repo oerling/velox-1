@@ -65,15 +65,6 @@ class Aggregate {
     return true;
   }
 
-  // Returns the size for a single-value variable length
-  // accumulator. For example, map_agg has 4xthe initial array size as
-  // overhead even for a single key-value pair. This is on top of
-  // accumulatorFixedWidthBytes() and the serialized size of the
-  // accumulated value.
-  virtual int32_t minVariableWidthAccumulatorBytes() const {
-    return 0;
-  }
-
   void setAllocator(HashStringAllocator* allocator) {
     allocator_ = allocator;
   }
@@ -201,13 +192,6 @@ class Aggregate {
   // Frees any out of line storage for the accumulator in
   // 'groups'. No-op for fixed length accumulators.
   virtual void destroy(folly::Range<char**> /*groups*/) {}
-
-  // Returns the type that extractAccumulator will produce. This is
-  // different from resultType_ for complex final aggregations. Needed
-  // for e.g. spilling.
-  virtual TypePtr accumulatorType() const {
-    return resultType_;
-  }
 
   // Clears state between reuses, e.g. this is called before reusing
   // the aggregation operator's state after flushing a partial

@@ -36,15 +36,15 @@ bool areAllLazyNotLoaded(const std::vector<VectorPtr>& vectors) {
   });
 }
 
-std::string makeSpillPath(bool isPartial, const OperatorCtx& operatorCtx) {
+  std::optional<std::string> makeSpillPath(bool isPartial, const OperatorCtx& operatorCtx) {
   if (isPartial) {
-    return "";
+    return std::nullopt;
   }
   auto path = operatorCtx.task()->queryCtx()->config().spillPath();
   if (!path.empty()) {
     return path + "/" + operatorCtx.task()->taskId();
   }
-  return "";
+  return std::nullopt;
 }
 } // namespace
 
@@ -91,10 +91,6 @@ GroupingSet::GroupingSet(
   }
   for (const std::vector<ChannelIndex>& argList : channelLists_) {
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
-  }
-  for (auto& aggregate : aggregates_) {
-    minVariableWidthAccumulatorBytes_ +=
-        aggregate->minVariableWidthAccumulatorBytes();
   }
 }
 
@@ -379,10 +375,10 @@ const SelectivityVector& GroupingSet::getSelectivityVector(
 
 bool GroupingSet::getOutput(
     int32_t batchSize,
-    RowContainerIterator* FOLLY_NONNULL iterator,
+    RowContainerIterator& iterator,
     RowVectorPtr& result) {
   if (isGlobal_) {
-    return getGlobalAggregationOutput(batchSize, isPartial_, *iterator, result);
+    return getGlobalAggregationOutput(batchSize, isPartial_, iterator, result);
   }
   if (spiller_) {
     return getOutputWithSpill(result);
@@ -391,7 +387,7 @@ bool GroupingSet::getOutput(
   // @lint-ignore CLANGTIDY
   char* groups[batchSize];
   int32_t numGroups =
-      table_ ? table_->rows()->listRows(iterator, batchSize, groups) : 0;
+      table_ ? table_->rows()->listRows(&iterator, batchSize, groups) : 0;
   if (!numGroups) {
     if (table_) {
       table_->clear();
@@ -485,46 +481,43 @@ int64_t estimateSerializedSize(const VectorPtr& vector) {
 } // namespace
 
 void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
-  if (isPartial_ || spillPath_.empty()) {
+  // Spilling is considered if this is a final or single aggregation and spillPath is set.
+  if (isPartial_ || !spillPath_.has_value()) {
     return;
   }
   auto numDistinct = table_->numDistinct();
   if (!numDistinct) {
+    // Table is empty. Nothing to spill.
     return;
   }
-  auto tableIncrement = numDistinct + input->size() >= table_->rehashSize()
-      ? BaseHashTable::tableByteSize(2 * numDistinct) -
-          BaseHashTable::tableByteSize(numDistinct)
-      : 0;
-
-  int64_t retainedSize = input->retainedSize();
+  auto tableIncrement = table_->hashTableSizeIncrease(input->size());
 
   auto rows = table_->rows();
 
   auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
   auto outOfLineBytes =
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
-  auto outOfLineBytesPerRow =
-      (outOfLineBytes / numDistinct) + minVariableWidthAccumulatorBytes_;
-  // Check against retainedSize first because this is fast and allows to
-  // decide early. Retained size is always an overestimation.
+  int64_t flatBytes = input->estimateFlatSize();
+
   if (!tableIncrement && freeRows > input->size() &&
-      outOfLineFreeBytes >= input->size() * outOfLineBytesPerRow) {
+      (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes)) {
+    // Enough free rows for input rows and enough variable length free
+    // space for the flat size of the whole vector. If outOfLineBytes
+    // is 0 there is no need for variable length space.
     return;
   }
-
-  int64_t flatSize = estimateSerializedSize(input);
+  // If there is variable length data we take the flat size of the
+  // input as a cap on the new variable length data needed.
   auto increment =
-      rows->sizeIncrement(input->size(), flatSize) + tableIncrement;
+    rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0) + tableIncrement;
   auto tracker = mappedMemory_->tracker();
   VELOX_CHECK(tracker);
-  // There must be at least 2x the increment in reservation. If less,
-  // finalizing before spilling could overflow.
+  // There must be at least 2x the increment in reservation.
   if (tracker->getAvailableReservation() > 2 * increment) {
     return;
   }
 
-  // Check if can inscrease reservation. The The increment is the larger of
+  // Check if can increase reservation. The increment is the larger of
   // twice the maximum increment from this input and 1/4 of the current
   // reservation.
   auto targetIncrement =
@@ -532,6 +525,7 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   if (maybeReserve(targetIncrement, *tracker)) {
     return;
   }
+  auto outOfLineBytesPerRow = outOfLineBytes / numDistinct;
   auto rowsToSpill =
       targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow);
 
@@ -555,9 +549,10 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         *rows,
         [&](folly::Range<char**> rows) { table_->erase(rows); },
         ROW(std::move(names), std::move(types)),
+	// Spill up to 4 partitions based on bits 29 and 30 of the hash number.
         HashBitRange(29, 31),
         rows->keyTypes().size(),
-        spillPath_,
+        spillPath_.value(),
         fileSize,
         Spiller::spillPool(),
         spillExecutor_);

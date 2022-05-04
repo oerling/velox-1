@@ -146,14 +146,8 @@ class BaseHashTable {
   /// side. This is used for sizing the internal hash table.
   virtual uint64_t numDistinct() const = 0;
 
-  // Returns value of numDistinct() at which the table gets rehashed.
-  virtual uint64_t rehashSize() const = 0;
-
-  // Returns the size  in bytes for hash table structures given the count of
-  // distinct keys.
-  static uint64_t tableByteSize(int32_t numDistinct) {
-    return bits::nextPowerOfTwo(numDistinct) * 9;
-  }
+  // Returns table growth in bytes after adding 'numNewDistinct' distinct entries. This only concerns the hash table, not the payload rows.
+  virtual uint64_t hashTableSizeIncrease(int32_t numnewDistinct) const = 0;
 
   /// Returns true if the hash table contains rows with duplicate keys.
   virtual bool hasDuplicateKeys() const = 0;
@@ -340,14 +334,24 @@ class HashTable : public BaseHashTable {
   void prepareJoinTable(
       std::vector<std::unique_ptr<BaseHashTable>> tables) override;
 
-  uint64_t rehashSize() const override {
+  uint64_t hashTableSizeIncrease(int32_t numNewDistinct) const override {
+    if (numDistinct_ + numNewDistinct > rehashSize()) {
+      // If rehashed, the table adds size_ entries (i.e. doubles),
+      // adding one pointer and one tag byte for each new position.
+      return size_ * (sizeof(void*) + 1);
+    }
+  }
+  
+  
+  std::string toString() override;
+
+ private:
+  // Returns the number of elements after which 
+  uint64_t rehashSize() const {
     // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
     return size_ - (size_ / 8);
   }
 
-  std::string toString() override;
-
- private:
   char*& nextRow(char* row) {
     return *reinterpret_cast<char**>(row + nextOffset_);
   }

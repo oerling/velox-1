@@ -70,9 +70,6 @@ class HashAggregation : public Operator {
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;
   bool mayPushdown_ = false;
-
-  // Intermediate types of aggregates. Used for spilling
-  std::vector<TypePtr> intermediateTypes_;
 };
 
 } // namespace facebook::velox::exec

@@ -208,7 +208,7 @@ RowVectorPtr HashAggregation::getOutput() {
     // will have taken place by then.
     stats_.spilledBytes = groupingSet_->spilledBytes();
   }
-  bool hasData = groupingSet_->getOutput(batchSize, &resultIterator_, result);
+  bool hasData = groupingSet_->getOutput(batchSize, resultIterator_, result);
   if (!hasData) {
     resultIterator_.reset();
 

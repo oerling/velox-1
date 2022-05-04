@@ -56,7 +56,7 @@ class GroupingSet {
   /// returns true.
   bool getOutput(
       int32_t batchSize,
-      RowContainerIterator* FOLLY_NONNULL iterator,
+      RowContainerIterator& iterator,
       RowVectorPtr& result);
 
   uint64_t allocatedBytes() const;
@@ -177,13 +177,8 @@ class GroupingSet {
 
   uint64_t maxBatchBytes_;
 
-  // Sum of the minimum variable length size for variable length
-  // accumulators. This + serialized size of new values is a reasonable
-  // cap for additional space usage when updating.
-  int32_t minVariableWidthAccumulatorBytes_{0};
-
   // Filesystem path for spill files, empty if spilling is disabled.
-  const std::string spillPath_;
+  const std::optional<std::string> spillPath_;
 
   std::unique_ptr<Spiller> spiller_;
   std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
