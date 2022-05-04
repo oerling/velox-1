@@ -179,7 +179,7 @@ class QueryConfig {
   std::optional<T> get(const std::string& key) const {
     return std::optional<T>(config_->get<T>(key));
   }
-  
+
   BaseConfigManager* config_;
 };
 } // namespace facebook::velox::core
