@@ -146,7 +146,8 @@ class BaseHashTable {
   /// side. This is used for sizing the internal hash table.
   virtual uint64_t numDistinct() const = 0;
 
-  // Returns table growth in bytes after adding 'numNewDistinct' distinct entries. This only concerns the hash table, not the payload rows.
+  // Returns table growth in bytes after adding 'numNewDistinct' distinct
+  // entries. This only concerns the hash table, not the payload rows.
   virtual uint64_t hashTableSizeIncrease(int32_t numnewDistinct) const = 0;
 
   /// Returns true if the hash table contains rows with duplicate keys.
@@ -341,12 +342,11 @@ class HashTable : public BaseHashTable {
       return size_ * (sizeof(void*) + 1);
     }
   }
-  
-  
+
   std::string toString() override;
 
  private:
-  // Returns the number of elements after which 
+  // Returns the number of elements after which
   uint64_t rehashSize() const {
     // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
     return size_ - (size_ / 8);

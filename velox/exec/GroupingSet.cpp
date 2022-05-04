@@ -36,7 +36,9 @@ bool areAllLazyNotLoaded(const std::vector<VectorPtr>& vectors) {
   });
 }
 
-  std::optional<std::string> makeSpillPath(bool isPartial, const OperatorCtx& operatorCtx) {
+std::optional<std::string> makeSpillPath(
+    bool isPartial,
+    const OperatorCtx& operatorCtx) {
   if (isPartial) {
     return std::nullopt;
   }
@@ -481,7 +483,8 @@ int64_t estimateSerializedSize(const VectorPtr& vector) {
 } // namespace
 
 void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
-  // Spilling is considered if this is a final or single aggregation and spillPath is set.
+  // Spilling is considered if this is a final or single aggregation and
+  // spillPath is set.
   if (isPartial_ || !spillPath_.has_value()) {
     return;
   }
@@ -509,7 +512,8 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   // If there is variable length data we take the flat size of the
   // input as a cap on the new variable length data needed.
   auto increment =
-    rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0) + tableIncrement;
+      rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0) +
+      tableIncrement;
   auto tracker = mappedMemory_->tracker();
   VELOX_CHECK(tracker);
   // There must be at least 2x the increment in reservation.
@@ -549,7 +553,7 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         *rows,
         [&](folly::Range<char**> rows) { table_->erase(rows); },
         ROW(std::move(names), std::move(types)),
-	// Spill up to 4 partitions based on bits 29 and 30 of the hash number.
+        // Spill up to 4 partitions based on bits 29 and 30 of the hash number.
         HashBitRange(29, 31),
         rows->keyTypes().size(),
         spillPath_.value(),
