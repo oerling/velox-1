@@ -55,7 +55,6 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_replace, prefix + "replace");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_upper, prefix + "upper");
   // Logical.
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_coalesce, prefix + "coalesce");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_is_null, prefix + "isnull");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_is_not_null, prefix + "isnotnull");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_not, prefix + "not");
@@ -77,7 +76,6 @@ void registerFunctions(const std::string& prefix) {
       {prefix + "substring"});
   registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
       {prefix + "substring"});
-
   exec::registerStatefulVectorFunction("instr", instrSignatures(), makeInstr);
   exec::registerStatefulVectorFunction(
       "length", lengthSignatures(), makeLength);
