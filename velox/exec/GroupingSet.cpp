@@ -43,8 +43,8 @@ std::optional<std::string> makeSpillPath(
     return std::nullopt;
   }
   auto path = operatorCtx.task()->queryCtx()->config().spillPath();
-  if (!path.empty()) {
-    return path + "/" + operatorCtx.task()->taskId();
+  if (path.has_value()) {
+    return path.value() + "/" + operatorCtx.task()->taskId();
   }
   return std::nullopt;
 }

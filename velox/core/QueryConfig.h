@@ -166,8 +166,8 @@ class QueryConfig {
     return get<bool>(kExprEvalSimplified, false);
   }
 
-  std::string spillPath() const {
-    return get<std::string>(kSpillPath, "");
+  std::optional<std::string> spillPath() const {
+    return get<std::string>(kSpillPath);
   }
 
  private:
@@ -175,7 +175,11 @@ class QueryConfig {
   T get(const std::string& key, const T& defaultValue) const {
     return config_->get<T>(key, defaultValue);
   }
-
+  template <typename T>
+  std::optional<T> get(const std::string& key) const {
+    return std::optional<T>(config_->get<T>(key));
+  }
+  
   BaseConfigManager* config_;
 };
 } // namespace facebook::velox::core

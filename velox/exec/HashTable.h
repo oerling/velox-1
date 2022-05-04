@@ -341,6 +341,7 @@ class HashTable : public BaseHashTable {
       // adding one pointer and one tag byte for each new position.
       return size_ * (sizeof(void*) + 1);
     }
+    return 0;
   }
 
   std::string toString() override;
