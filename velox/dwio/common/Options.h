@@ -456,14 +456,6 @@ class ReaderOptions {
     return *this;
   }
 
-#if 0
-  ReaderOptions& setBufferedInputFactorySource(
-      std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
-          factory) {
-    bufferedInputFactorySource_ = factory;
-    return *this;
-  }
-#endif
   /**
    * Get the data cache config.
    */
@@ -531,20 +523,9 @@ class ReaderOptions {
 
   std::shared_ptr<velox::dwrf::BufferedInputFactory> getBufferedInputFactory()
       const {
-#if 0
-    if (bufferedInputFactorySource_) {
-      return bufferedInputFactorySource_();
-    }
-#endif
     return bufferedInputFactory_;
   }
 
-#if 0
-  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
-  getBufferedInputFactorySource() const {
-    return bufferedInputFactorySource_;
-  }
-#endif
 };
 
 } // namespace common
