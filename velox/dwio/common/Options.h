@@ -525,7 +525,6 @@ class ReaderOptions {
       const {
     return bufferedInputFactory_;
   }
-
 };
 
 } // namespace common
