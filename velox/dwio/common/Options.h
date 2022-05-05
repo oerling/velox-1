@@ -455,12 +455,6 @@ class ReaderOptions {
     bufferedInputFactory_ = factory;
     return *this;
   }
-  ReaderOptions& setBufferedInputFactorySource(
-      std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
-          factory) {
-    bufferedInputFactorySource_ = factory;
-    return *this;
-  }
 
   /**
    * Get the data cache config.
