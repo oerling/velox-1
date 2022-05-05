@@ -95,7 +95,11 @@ RowVectorPtr TableScan::getOutput() {
             "Got splits with different connector IDs");
       }
 
-<<<<<<< HEAD
+      debugString_ = fmt::format(
+          "Split {} Task {}",
+          connectorSplit->toString(),
+          operatorCtx_->task()->taskId());
+
       if (connectorSplit->dataSource) {
         // The AsyncSource returns a unique_ptr to a shared_ptr. The
         // unique_ptr will be nullptr if there was a cancellation.
@@ -110,37 +114,23 @@ RowVectorPtr TableScan::getOutput() {
       } else {
         dataSource_->addSplit(connectorSplit);
       }
-=======
-      thread_local std::string readerDebugString = fmt::format(
-          "Split {} Task {}",
-          connectorSplit->toString(),
-          operatorCtx_->task()->taskId());
-      debugString_ = fmt::format(
-          "Split {} Task {}",
-          connectorSplit->toString(),
-operatorCtx_->task()->taskId());
-      dataSource_->addSplit(connectorSplit);
->>>>>>> oerling/rdr-dbg-dev
+
       ++stats_.numSplits;
       setBatchSize();
     }
 
     const auto ioTimeStartMicros = getCurrentTimeMicro();
-<<<<<<< HEAD
     // Check for  cancellation since scans that filter everything out will not
     // hit the check in Driver.
     if (operatorCtx_->task()->isCancelled()) {
       return nullptr;
     }
-=======
-  ExceptionContextSetter exceptionContext(
-      {[](auto* debugString) {
-	return *static_cast<std::string*>(debugString);
+    ExceptionContextSetter exceptionContext(
+        {[](auto* debugString) {
+           return *static_cast<std::string*>(debugString);
+         },
+         &debugString_});
 
-       },
-       &debugString_});
-
->>>>>>> oerling/rdr-dbg-dev
     auto data = dataSource_->next(readBatchSize_);
     checkPreload();
     stats().addRuntimeStat(
