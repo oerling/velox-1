@@ -93,5 +93,8 @@ class TableScan : public SourceOperator {
       splitPreloader_{nullptr};
 
   int32_t readBatchSize_{kDefaultBatchSize};
+
+  // String shown in ExceptionContext inside DataSource and LazyVector loading.
+  std::string debugString_;
 };
 } // namespace facebook::velox::exec
