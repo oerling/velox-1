@@ -144,6 +144,14 @@ bool MmapAllocator::allocateContiguous(
   // 'allocation' together cover 'numPages'. If we need more space and
   // fail to get this, then we subtract 'collateral' and 'allocation'
   // from the counters.
+    //
+    // Specifically, we do not subtract anything from counters with a
+    // resource reservation semantic, i.e. 'numAllocated_' and
+    // 'numMapped_' except at the end where the outcome of the
+    // operation is clear. Otherwise we could not have the guarantee
+    // that the operation succeeds if 'collateral' and 'allocation'
+    // cover the new size, as other threads might grab the transiently
+    // free pages.
   if (collateral) {
     numCollateralPages = freeInternal(*collateral);
   }
@@ -155,22 +163,25 @@ bool MmapAllocator::allocateContiguous(
     }
     allocation.reset(nullptr, nullptr, 0);
   }
-  int64_t newPages = numPages - numCollateralPages - numLargeCollateralPages;
+  auto totalCollateralPages = numCollateralPages + numLargeCollateralPages;
+  auto numCollateralUnmap = numLargeCollateralPages;
+  int64_t newPages = numPages - totalCollateralPages;
   if (beforeAllocCB) {
     try {
       beforeAllocCB(newPages * kPageSize);
     } catch (const std::exception& e) {
-      numAllocated_ -= numCollateralPages + numLargeCollateralPages;
+      numAllocated_ -= totalCollateralPages;
+      // We failed to grow by 'newPages. So we record the freeing off
+      // the whole collaterall and the unmap of former 'allocation'.
       try {
         beforeAllocCB(
             -static_cast<int64_t>(
-                numCollateralPages + numLargeCollateralPages) *
-            kPageSize);
+                totalCollateralPages) * kPageSize);
       } catch (const std::exception& inner) {
       };
-      numMapped_ -= numLargeCollateralPages;
-      numExternalMapped_ -= numLargeCollateralPages;
-      std::rethrow_exception(std::current_exception());
+      numMapped_ -= numCollateralUnmap;
+      numExternalMapped_ -= numCollateralUnmap;
+      throw;
     }
   }
 
@@ -179,18 +190,9 @@ bool MmapAllocator::allocateContiguous(
   auto rollbackAllocation = [&](int64_t mappedDecrement) {
     // The previous allocation and collateral were both freed but not counted as
     // freed.
-    //
-    // Specifically, we do not subtract anything from counters with a
-    // resource reservation semantic, i.e. 'numAllocated_' and
-    // 'numMapped_' except at the end where the outcome of the
-    // operation is clear. Otherwise we could not have the guarantee
-    // that the operation succeeds if 'collateral' and 'allocation'
-    // cover the new size, as other threads might grab the transiently
-    // free pages.
-    auto pagesFreed = newPages + numLargeCollateralPages + numCollateralPages;
-    numAllocated_ -= pagesFreed;
+    numAllocated_ -= numPages;
     try {
-      beforeAllocCB(-pagesFreed * kPageSize);
+      beforeAllocCB(-numPages * kPageSize);
     } catch (const std::exception& e) {
       // Ignore exception, this is run on failure return path.
     }
@@ -198,17 +200,18 @@ bool MmapAllocator::allocateContiguous(
     // numLargeCollateralPages are freed and numPages - numLargeCollateralPages
     // were never allocated.
     numExternalMapped_ -= numPages;
-    numMapped_ -= numLargeCollateralPages + mappedDecrement;
+    numMapped_ -= numCollateralUnmap + mappedDecrement;
   };
-  numExternalMapped_ += numPages - numLargeCollateralPages;
+  numExternalMapped_ += numPages - numCollateralUnmap;
   auto numAllocated = numAllocated_.fetch_add(newPages) + newPages;
-  if (numAllocated > capacity_) {
+  // Check if went over the limit. But a net decrease always succeeds even if ending up over the limit because some other thread might be transiently over the limit.
+  if (newPages > 0 && numAllocated > capacity_) {
     rollbackAllocation(0);
     return false;
   }
   // Make sure there are free backing pages for the size minus what we just
   // unmapped.
-  int64_t numToMap = numPages - numLargeCollateralPages;
+  int64_t numToMap = numPages - numCollateralUnmap;
   if (numToMap > 0) {
     if (!ensureEnoughMappedPages(numToMap)) {
       LOG(WARNING) << "Could not advise away  enough for " << numToMap
@@ -235,9 +238,8 @@ bool MmapAllocator::allocateContiguous(
         0);
   }
   if (!data) {
-    // If the mmap failed, we have unmapped large collateral and all
-    // the extra to be mapped, i.e. the target size - large collateral
-    // - collateral.
+    // If the mmap failed, we have unmapped former 'allocation' and 
+    // the extra to be mapped.
     rollbackAllocation(numToMap);
     return false;
   }
