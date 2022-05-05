@@ -144,14 +144,14 @@ bool MmapAllocator::allocateContiguous(
   // 'allocation' together cover 'numPages'. If we need more space and
   // fail to get this, then we subtract 'collateral' and 'allocation'
   // from the counters.
-    //
-    // Specifically, we do not subtract anything from counters with a
-    // resource reservation semantic, i.e. 'numAllocated_' and
-    // 'numMapped_' except at the end where the outcome of the
-    // operation is clear. Otherwise we could not have the guarantee
-    // that the operation succeeds if 'collateral' and 'allocation'
-    // cover the new size, as other threads might grab the transiently
-    // free pages.
+  //
+  // Specifically, we do not subtract anything from counters with a
+  // resource reservation semantic, i.e. 'numAllocated_' and
+  // 'numMapped_' except at the end where the outcome of the
+  // operation is clear. Otherwise we could not have the guarantee
+  // that the operation succeeds if 'collateral' and 'allocation'
+  // cover the new size, as other threads might grab the transiently
+  // free pages.
   if (collateral) {
     numCollateralPages = freeInternal(*collateral);
   }
@@ -174,9 +174,7 @@ bool MmapAllocator::allocateContiguous(
       // We failed to grow by 'newPages. So we record the freeing off
       // the whole collaterall and the unmap of former 'allocation'.
       try {
-        beforeAllocCB(
-            -static_cast<int64_t>(
-                totalCollateralPages) * kPageSize);
+        beforeAllocCB(-static_cast<int64_t>(totalCollateralPages) * kPageSize);
       } catch (const std::exception& inner) {
       };
       numMapped_ -= numCollateralUnmap;
@@ -204,7 +202,9 @@ bool MmapAllocator::allocateContiguous(
   };
   numExternalMapped_ += numPages - numCollateralUnmap;
   auto numAllocated = numAllocated_.fetch_add(newPages) + newPages;
-  // Check if went over the limit. But a net decrease always succeeds even if ending up over the limit because some other thread might be transiently over the limit.
+  // Check if went over the limit. But a net decrease always succeeds even if
+  // ending up over the limit because some other thread might be transiently
+  // over the limit.
   if (newPages > 0 && numAllocated > capacity_) {
     rollbackAllocation(0);
     return false;
@@ -238,7 +238,7 @@ bool MmapAllocator::allocateContiguous(
         0);
   }
   if (!data) {
-    // If the mmap failed, we have unmapped former 'allocation' and 
+    // If the mmap failed, we have unmapped former 'allocation' and
     // the extra to be mapped.
     rollbackAllocation(numToMap);
     return false;
