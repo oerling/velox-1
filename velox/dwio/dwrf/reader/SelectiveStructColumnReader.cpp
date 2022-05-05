@@ -33,7 +33,8 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
           scanSpec,
           dataType->type,
           std::move(flatMapContext)),
-      requestedType_{requestedType} {
+      requestedType_{requestedType},
+      debugString_(getExceptionContext().message()) {
   EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
   DWIO_ENSURE_EQ(encodingKey.node, dataType->id, "working on the same node");
   auto encoding = static_cast<int64_t>(stripe.getEncoding(encodingKey).kind());
@@ -61,8 +62,6 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
         FlatMapContext{encodingKey.sequence, nullptr}));
     childSpec->setSubscript(children_.size() - 1);
   }
-  thread_local std::string readerDebugString;
-  debugString_ = readerDebugString;
 }
 
 std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(

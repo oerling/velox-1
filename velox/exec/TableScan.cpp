@@ -93,12 +93,23 @@ RowVectorPtr TableScan::getOutput() {
           "Split {} Task {}",
           connectorSplit->toString(),
           operatorCtx_->task()->taskId());
+      debugString_ = fmt::format(
+          "Split {} Task {}",
+          connectorSplit->toString(),
+operatorCtx_->task()->taskId());
       dataSource_->addSplit(connectorSplit);
       ++stats_.numSplits;
       setBatchSize();
     }
 
     const auto ioTimeStartMicros = getCurrentTimeMicro();
+  ExceptionContextSetter exceptionContext(
+      {[](auto* debugString) {
+	return *static_cast<std::string*>(debugString);
+
+       },
+       &debugString_});
+
     auto data = dataSource_->next(readBatchSize_);
     stats().addRuntimeStat(
         "dataSourceWallNanos",
