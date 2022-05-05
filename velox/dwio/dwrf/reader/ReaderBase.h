@@ -66,9 +66,7 @@ class ReaderBase {
       std::unique_ptr<dwio::common::InputStream> stream,
       std::shared_ptr<dwio::common::encryption::DecrypterFactory>
           decryptorFactory = nullptr,
-      std::function<BufferedInputFactory * FOLLY_NONNULL()>
-          bufferedInputFactorySource =
-              []() { return BufferedInputFactory::baseFactory(); },
+      std::shared_ptr<BufferedInputFactory> bufferedInputFactory = nullptr,
       std::shared_ptr<dwio::common::DataCacheConfig> dataCacheConfig = nullptr);
 
   // create reader base from metadata
@@ -85,7 +83,9 @@ class ReaderBase {
         footer_{footer},
         cache_{std::move(cache)},
         handler_{std::move(handler)},
-        input_{std::make_unique<BufferedInput>(*stream_, pool_)},
+        input_{
+            stream_ ? std::make_unique<BufferedInput>(*stream_, pool_)
+                    : nullptr},
         schema_{
             std::dynamic_pointer_cast<const RowType>(convertType(*footer_))},
         fileLength_{0},
@@ -240,9 +240,7 @@ class ReaderBase {
   // Keeps factory alive for possibly async prefetch.
   std::shared_ptr<dwio::common::encryption::DecrypterFactory> decryptorFactory_;
   std::unique_ptr<encryption::DecryptionHandler> handler_;
-  std::function<BufferedInputFactory * FOLLY_NONNULL()>
-      bufferedInputFactorySource_ =
-          []() { return BufferedInputFactory::baseFactory(); };
+  std::shared_ptr<BufferedInputFactory> bufferedInputFactory_;
   std::shared_ptr<dwio::common::DataCacheConfig> dataCacheConfig_ = nullptr;
 
   std::unique_ptr<BufferedInput> input_;

@@ -315,12 +315,7 @@ class ReaderOptions {
   SerDeOptions serDeOptions;
   std::shared_ptr<DataCacheConfig> dataCacheConfig_;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
-  velox::dwrf::BufferedInputFactory* bufferedInputFactory_ = nullptr;
-  std::shared_ptr<velox::dwrf::BufferedInputFactory>
-      bufferedInputFactoryShared_ = nullptr;
-
-  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
-      bufferedInputFactorySource_;
+  std::shared_ptr<velox::dwrf::BufferedInputFactory> bufferedInputFactory_;
 
  public:
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
@@ -456,7 +451,7 @@ class ReaderOptions {
   }
 
   ReaderOptions& setBufferedInputFactory(
-      velox::dwrf::BufferedInputFactory* factory) {
+      std::shared_ptr<velox::dwrf::BufferedInputFactory> factory) {
     bufferedInputFactory_ = factory;
     return *this;
   }
@@ -532,16 +527,9 @@ class ReaderOptions {
     return decrypterFactory_;
   }
 
-  velox::dwrf::BufferedInputFactory* getBufferedInputFactory() const {
-    if (bufferedInputFactorySource_) {
-      return bufferedInputFactorySource_();
-    }
+  std::shared_ptr<velox::dwrf::BufferedInputFactory> getBufferedInputFactory()
+      const {
     return bufferedInputFactory_;
-  }
-
-  std::function<velox::dwrf::BufferedInputFactory * FOLLY_NONNULL()>
-  getBufferedInputFactorySource() const {
-    return bufferedInputFactorySource_;
   }
 };
 

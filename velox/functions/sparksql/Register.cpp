@@ -76,7 +76,6 @@ void registerFunctions(const std::string& prefix) {
       {prefix + "substring"});
   registerFunction<SubstrFunction, Varchar, Varchar, int32_t, int32_t>(
       {prefix + "substring"});
-
   exec::registerStatefulVectorFunction("instr", instrSignatures(), makeInstr);
   exec::registerStatefulVectorFunction(
       "length", lengthSignatures(), makeLength);
