@@ -92,20 +92,13 @@ FilterProject::FilterProject(
 void FilterProject::addInput(RowVectorPtr input) {
   input_ = std::move(input);
   numProcessedInputRows_ = 0;
-  getResultVectors(&results_);
-  int32_t firstProjected;
-  if (resultProjections_.empty()) {
-    firstProjected = results_.size();
-  } else {
-    firstProjected = resultProjections_[0].inputChannel;
-  }
-
-  for (int32_t i = 0; i < firstProjected; ++i) {
-    if (results_[i]) {
-      if (BaseVector::isReusableFlatVector(results_[i])) {
-        results_[i]->resize(0);
+  if (!resultProjections_.empty()) {
+    results_.resize(resultProjections_.back().inputChannel + 1);
+    for (auto& result : results_) {
+      if (result && result.unique()) {
+        BaseVector::prepareForReuse(result, 0);
       } else {
-        results_[i] = nullptr;
+        result.reset();
       }
     }
   }
@@ -116,7 +109,7 @@ bool FilterProject::allInputProcessed() {
     return true;
   }
   if (numProcessedInputRows_ == input_->size()) {
-    inputProcessed();
+    input_ = nullptr;
     return true;
   }
   return false;
@@ -128,10 +121,9 @@ bool FilterProject::isFinished() {
 
 RowVectorPtr FilterProject::getOutput() {
   if (allInputProcessed()) {
-    clearIdentityProjectedOutput();
-    clearNonReusableOutput();
     return nullptr;
   }
+<<<<<<< HEAD
   process::TraceContext trace(traceLabel_, true);
   try {
     vector_size_t size = input_->size();
@@ -143,6 +135,18 @@ RowVectorPtr FilterProject::getOutput() {
       numProcessedInputRows_ = size;
       VELOX_CHECK(!isIdentityProjection_);
       project(*rows, &evalCtx);
+=======
+
+  vector_size_t size = input_->size();
+  LocalSelectivityVector localRows(operatorCtx_->execCtx(), size);
+  auto* rows = localRows.get();
+  rows->setAll();
+  EvalCtx evalCtx(operatorCtx_->execCtx(), exprs_.get(), input_.get());
+  if (!hasFilter_) {
+    numProcessedInputRows_ = size;
+    VELOX_CHECK(!isIdentityProjection_);
+    project(*rows, &evalCtx);
+>>>>>>> oerling/prefetch-dev
 
       if (results_.size() > 0) {
         auto outCol = results_[0];
@@ -159,12 +163,32 @@ RowVectorPtr FilterProject::getOutput() {
       return fillOutput(size, nullptr);
     }
 
+<<<<<<< HEAD
     // evaluate filter
     auto numOut = filter(&evalCtx, *rows);
     numProcessedInputRows_ = size;
     if (numOut == 0) { // no rows passed the filer
       inputProcessed();
       return nullptr;
+=======
+    return fillOutput(size, nullptr);
+  }
+
+  // evaluate filter
+  auto numOut = filter(&evalCtx, *rows);
+  numProcessedInputRows_ = size;
+  if (numOut == 0) { // no rows passed the filer
+    input_ = nullptr;
+    return nullptr;
+  }
+
+  bool allRowsSelected = (numOut == size);
+
+  // evaluate projections (if present)
+  if (!isIdentityProjection_) {
+    if (!allRowsSelected) {
+      rows->setFromBits(filterEvalCtx_.selectedBits->as<uint64_t>(), size);
+>>>>>>> oerling/prefetch-dev
     }
 
     bool allRowsSelected = (numOut == size);
@@ -194,24 +218,6 @@ RowVectorPtr FilterProject::getOutput() {
     }
     LOG(INFO) << "Exprs: " << label.str();
     throw;
-  }
-}
-
-void FilterProject::clearNonReusableOutput() {
-  if (!output_) {
-    return;
-  }
-  if (!output_.unique()) {
-    output_ = nullptr;
-    return;
-  }
-  for (auto& child : output_->children()) {
-    if (!child) {
-      continue;
-    }
-    if (!BaseVector::isReusableFlatVector(child)) {
-      child = nullptr;
-    }
   }
 }
 

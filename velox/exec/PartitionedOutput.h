@@ -218,6 +218,7 @@ class PartitionedOutput : public Operator {
   std::weak_ptr<exec::PartitionedOutputBufferManager> bufferManager_;
   const int64_t maxBufferedBytes_;
   memory::MappedMemory* FOLLY_NONNULL mappedMemory_;
+  RowVectorPtr output_;
 
   // Reusable memory.
   SelectivityVector rows_;

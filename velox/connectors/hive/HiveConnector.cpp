@@ -413,11 +413,15 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         ioStats_,
         executor_,
         readerOpts_);
+<<<<<<< HEAD
     readerOpts_.setBufferedInputFactorySource(
         [factory = bufferedInputFactory_]() { return factory.get(); });
     // CachedBufferedInput updates ioStats_',so do not pass this to the
     // InputStream to avoid double counting.
 
+=======
+    readerOpts_.setBufferedInputFactory(bufferedInputFactory_);
+>>>>>>> rdr-shared-dev
   } else if (dataCache_) {
     auto dataCacheConfig = std::make_shared<dwio::common::DataCacheConfig>();
     dataCacheConfig->cache = dataCache_;

@@ -200,9 +200,9 @@ DwrfReaderShared::DwrfReaderShared(
           options.getMemoryPool(),
           std::move(input),
           options.getDecrypterFactory(),
-          options.getBufferedInputFactorySource()
-              ? options.getBufferedInputFactorySource()
-              : []() { return BufferedInputFactory::baseFactory(); },
+          options.getBufferedInputFactory()
+              ? options.getBufferedInputFactory()
+              : BufferedInputFactory::baseFactoryShared(),
           options.getDataCacheConfig())),
       options_(options) {}
 

@@ -25,7 +25,7 @@
 
 namespace facebook::velox::simd {
 
-// Width of the widest store.
+// Return width of the widest store.
 template <typename A = xsimd::default_arch>
 constexpr int32_t batchByteSize(const A& = {}) {
   return sizeof(xsimd::types::simd_register<int8_t, A>);
@@ -89,11 +89,23 @@ template <typename T, typename IndexType, typename A, int kSizeT = sizeof(T)>
 struct Gather;
 }
 
+// Load certain number of indices from memory into a batch that is
+// suitable for calling 'gather' with data type 'T' and index type
+// 'IndexType'.
+//
+// For example, on an architecture with maximum 256-bits vector, when
+// T = int64_t and IndexType = int32_t, 'gather' will return a
+// batch<int64_t> which has 4 lanes, so this function will load 4
+// 32-bits indices.
 template <typename T, typename IndexType, typename A = xsimd::default_arch>
 auto loadGatherIndices(const IndexType* indices, const A& arch = {}) {
   return detail::Gather<T, IndexType, A>::loadIndices(indices, arch);
 }
 
+// Gather data from memory location specified in 'base' and 'vindex'
+// into a batch, i.e. returning 'dst' where
+//
+//   dst[i] = *(base + vindex[i])
 template <
     typename T,
     typename IndexType,
@@ -108,6 +120,7 @@ xsimd::batch<T, A> gather(
   return Impl::template apply<kScale>(base, vindex, arch);
 }
 
+// Same as 'gather' above except the indices are read from memory.
 template <
     typename T,
     typename IndexType,
@@ -119,6 +132,8 @@ gather(const T* base, const IndexType* indices, const A& arch = {}) {
   return gather<T, IndexType, kScale>(base, vindex, arch);
 }
 
+// Gather only data where mask[i] is set; otherwise keep the data in
+// src[i].
 template <
     typename T,
     typename IndexType,
@@ -135,6 +150,7 @@ xsimd::batch<T, A> maskGather(
       src, mask, base, vindex, arch);
 }
 
+// Same as 'maskGather' above but read indices from memory.
 template <
     typename T,
     typename IndexType,
@@ -167,6 +183,7 @@ uint8_t gather8Bits(
     int32_t numIndices,
     const A& = {});
 
+// Same as 'gather8Bits' above but read indices from memory.
 template <typename A = xsimd::default_arch>
 uint8_t gather8Bits(
     const void* bits,
@@ -193,6 +210,7 @@ auto toBitMask(xsimd::batch_bool<T, A> mask, const A& arch = {}) {
   return detail::BitMask<T, A>::toBitMask(mask, arch);
 }
 
+// Get a vector mask from bit mask.
 template <typename T, typename BitMaskType, typename A = xsimd::default_arch>
 xsimd::batch_bool<T, A> fromBitMask(BitMaskType bitMask, const A& arch = {}) {
   return detail::BitMask<T, A>::fromBitMask(bitMask, arch);
@@ -218,6 +236,8 @@ filter(xsimd::batch<T, A> data, BitMaskType bitMask, const A& arch = {}) {
   return detail::Filter<T, A>::apply(data, bitMask, arch);
 }
 
+// Same as 'filter' on full-sized vector, except this one operate on a
+// half-sized vector.
 template <typename T, typename BitMaskType, typename A = xsimd::default_arch>
 HalfBatch<T, A>
 filter(HalfBatch<T, A> data, BitMaskType bitMask, const A& arch = {}) {
@@ -239,6 +259,8 @@ template <typename To, typename From, typename A>
 struct GetHalf;
 }
 
+// Get either first or second half of the vector.  The type 'To' is as
+// twice as large as 'From' to keep the vector size same.
 template <
     typename To,
     bool kSecond,
@@ -253,11 +275,14 @@ template <typename T, typename A>
 struct Crc32;
 }
 
+// Calculate the CRC32 checksum.
 template <typename A = xsimd::default_arch>
 uint32_t crc32U64(uint32_t checksum, uint64_t value, const A& arch = {}) {
   return detail::Crc32<uint64_t, A>::apply(checksum, value, arch);
 }
 
+// Return a vector consisting {0, 1, ..., n} where 'n' is the number
+// of lanes.
 template <typename T, typename A = xsimd::default_arch>
 xsimd::batch<T, A> iota(const A& = {});
 
