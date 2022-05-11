@@ -36,8 +36,7 @@ HashAggregation::HashAggregation(
           driverCtx->queryConfig().maxPartialAggregationMemoryUsage()),
       isPartialOutput_(isPartialOutput(aggregationNode->step())),
       isDistinct_(aggregationNode->aggregates().empty()),
-      isGlobal_(aggregationNode->groupingKeys().empty()),
-      hasPreGroupedKeys_(!aggregationNode->preGroupedKeys().empty()) {
+      isGlobal_(aggregationNode->groupingKeys().empty()) {
   auto inputType = aggregationNode->sources()[0]->outputType();
 
   auto numHashers = aggregationNode->groupingKeys().size();
@@ -90,7 +89,7 @@ HashAggregation::HashAggregation(
     } else {
       intermediateTypes.push_back(argTypes[0]);
     }
-
+    VELOX_CHECK_EQ(intermediateTypes.back()->size(), 1, "Intermediate aggregates must have a single argument");
     // Setup aggregation mask: convert the Variable Reference name to the
     // channel (projection) index, if there is a mask.
     const auto& aggrMask = aggregationNode->aggregateMasks()[i];
@@ -147,11 +146,24 @@ void HashAggregation::addInput(RowVectorPtr input) {
     pushdownChecked_ = true;
   }
   groupingSet_->addInput(input_, mayPushdown_);
+  stats_.spilledBytes = groupingSet_->spilledBytes();
+
   if (isPartialOutput_ &&
       groupingSet_->allocatedBytes() > maxPartialAggregationMemoryUsage_) {
     partialFull_ = true;
   }
   newDistincts_ = isDistinct_ && !groupingSet_->hashLookup().newGroups.empty();
+}
+
+void HashAggregation::prepareOutput(vector_size_t size) {
+  if (output_) {
+    VectorPtr output = std::move(output_);
+    BaseVector::prepareForReuse(output, size);
+    output_ = std::static_pointer_cast<RowVector>(output);
+  } else {
+    output_ = std::static_pointer_cast<RowVector>(
+        BaseVector::create(outputType_, size, pool()));
+  }
 }
 
 RowVectorPtr HashAggregation::getOutput() {
@@ -200,15 +212,11 @@ RowVectorPtr HashAggregation::getOutput() {
 
   auto batchSize = isGlobal_ ? 1 : outputBatchSize_;
 
-  // TODO Figure out how to re-use 'result' safely.
-  auto result = std::static_pointer_cast<RowVector>(
-      BaseVector::create(outputType_, batchSize, operatorCtx_->pool()));
-  if (!stats_.spilledBytes) {
-    // Set spilledBytes when first getting data. All spill, if any,
-    // will have taken place by then.
-    stats_.spilledBytes = groupingSet_->spilledBytes();
-  }
-  bool hasData = groupingSet_->getOutput(batchSize, resultIterator_, result);
+  // Reuse output vectors if possible.
+  prepareOutput(batchSize);
+
+  bool hasData = groupingSet_->getOutput(
+      batchSize, isPartialOutput_, &resultIterator_, output_);
   if (!hasData) {
     resultIterator_.reset();
 
@@ -222,7 +230,7 @@ RowVectorPtr HashAggregation::getOutput() {
     }
     return nullptr;
   }
-  return result;
+  return output_;
 }
 
 bool HashAggregation::isFinished() {

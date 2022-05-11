@@ -347,7 +347,7 @@ class HashTable : public BaseHashTable {
   std::string toString() override;
 
  private:
-  // Returns the number of elements after which
+  // Returns the number of entries after which the table gets rehashed.
   uint64_t rehashSize() const {
     // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
     return size_ - (size_ / 8);

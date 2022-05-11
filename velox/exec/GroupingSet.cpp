@@ -445,7 +445,12 @@ const HashLookup& GroupingSet::hashLookup() const {
 }
 
 namespace {
-bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
+  // Checks if it is likely that the reservation on 'tracker' can be
+  // incremented by 'increment'. Returns false if this seems
+  // unlikely. Otherwise attempts the reservation increment and
+  // returns true if succeeded. This will be moved to Task when adding
+  // memory contention arbitration.
+  bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
   constexpr int32_t kGrowthQuantum = 8 << 20;
   auto addedReservation = bits::roundUp(increment, kGrowthQuantum);
   // We look up the tracker tree to see if there is a parent that could have
@@ -454,6 +459,7 @@ bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
   auto candidate = &tracker;
   while (candidate) {
     auto limit = candidate->maxTotalBytes();
+    // If this tracker has no limit, proceed to its parent.
     if (limit == memory::kMaxMemory && candidate->parent()) {
       candidate = candidate->parent();
       continue;
@@ -469,16 +475,6 @@ bool maybeReserve(int64_t increment, memory::MemoryUsageTracker& tracker) {
     candidate = candidate->parent();
   }
   return false;
-}
-
-int64_t estimateSerializedSize(const VectorPtr& vector) {
-  vector_size_t bytes = 0;
-  auto bytesPtr = &bytes;
-  VectorStreamGroup::estimateSerializedSize(
-      vector,
-      std::vector<IndexRange>{IndexRange{0, vector->size()}},
-      &bytesPtr);
-  return bytes;
 }
 } // namespace
 

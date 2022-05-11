@@ -50,7 +50,13 @@ class QueryConfig {
 
   // Whether to use the simplified expression evaluation path. False by default.
   static constexpr const char* kExprEvalSimplified =
-      "driver.expr_eval.simplified";
+      "expression.eval_simplified";
+
+  // Whether to track CPU usage for individual expressions (supported by call
+  // and cast expressions). False by default. Can be expensive when processing
+  // small batches, e.g. < 10K rows.
+  static constexpr const char* kExprTrackCpuUsage =
+      "expression.track_cpu_usage";
 
   // Flags used to configure the CAST operator:
 
@@ -170,7 +176,11 @@ class QueryConfig {
     return get<std::string>(kSpillPath);
   }
 
- private:
+  bool exprTrackCpuUsage() const {
+    return get<bool>(kExprTrackCpuUsage, false);
+  }
+
+private:
   template <typename T>
   T get(const std::string& key, const T& defaultValue) const {
     return config_->get<T>(key, defaultValue);
@@ -180,6 +190,7 @@ class QueryConfig {
     return std::optional<T>(config_->get<T>(key));
   }
 
+ private:
   BaseConfigManager* config_;
 };
 } // namespace facebook::velox::core

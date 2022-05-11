@@ -89,7 +89,9 @@ TypePtr Aggregate::intermediateType(
   for (auto& signature : signatures.value()) {
     SignatureBinder binder(*signature, argTypes);
     if (binder.tryBind()) {
-      return binder.tryResolveType(signature->intermediateType());
+      auto type = binder.tryResolveType(signature->intermediateType());
+      VELOX_CHECK(type, "failed to resolve intermediate type for {}", name);
+      return type;
     }
   }
   VELOX_FAIL("Could not infer intermediate type for aggregate {}", name);

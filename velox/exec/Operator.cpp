@@ -65,7 +65,7 @@ core::ExecCtx* OperatorCtx::execCtx() const {
   return execCtx_.get();
 }
 
-std::unique_ptr<connector::ConnectorQueryCtx>
+std::shared_ptr<connector::ConnectorQueryCtx>
 OperatorCtx::createConnectorQueryCtx(
     const std::string& connectorId,
     const std::string& planNodeId) const {
@@ -275,10 +275,12 @@ void OperatorStats::add(const OperatorStats& other) {
   addInputTiming.add(other.addInputTiming);
   inputBytes += other.inputBytes;
   inputPositions += other.inputPositions;
+  inputVectors += other.inputVectors;
 
   getOutputTiming.add(other.getOutputTiming);
   outputBytes += other.outputBytes;
   outputPositions += other.outputPositions;
+  outputVectors += other.outputVectors;
 
   physicalWrittenBytes += other.physicalWrittenBytes;
 

@@ -17,6 +17,7 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/Aggregate.h"
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
@@ -759,6 +760,58 @@ TEST_F(AggregationTest, spill) {
   // No spill in partial aggregation.
   EXPECT_EQ(0, stats[0].operatorStats[1].spilledBytes);
   EXPECT_EQ(numRows, kNumDistinct);
+}
+
+/// Verify number of memory allocations in the HashAggregation operator.
+TEST_F(AggregationTest, memoryAllocations) {
+  vector_size_t size = 1'024;
+  std::vector<RowVectorPtr> data;
+  for (auto i = 0; i < 10; ++i) {
+    data.push_back(makeRowVector({
+        makeFlatVector<int64_t>(size, [](auto row) { return row; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row + 3; }),
+    }));
+  }
+
+  createDuckDbTable(data);
+
+  core::PlanNodeId projectNodeId;
+  core::PlanNodeId aggNodeId;
+  auto plan = PlanBuilder()
+                  .values(data)
+                  .project({"c0 + c1"})
+                  .capturePlanNodeId(projectNodeId)
+                  .singleAggregation({}, {"sum(p0)"})
+                  .capturePlanNodeId(aggNodeId)
+                  .planNode();
+
+  auto task = assertQuery(plan, "SELECT sum(c0 + c1) FROM tmp");
+
+  // Verify memory allocations. Project operator should allocate a single vector
+  // and re-use it. Aggregation should make 2 allocations: 1 for the
+  // RowContainer holding single accumulator and 1 for the result.
+  auto planStats = toPlanStats(task->taskStats());
+  ASSERT_EQ(1, planStats.at(projectNodeId).numMemoryAllocations);
+  ASSERT_EQ(2, planStats.at(aggNodeId).numMemoryAllocations);
+
+  plan = PlanBuilder()
+             .values(data)
+             .project({"c0", "c0 + c1"})
+             .capturePlanNodeId(projectNodeId)
+             .singleAggregation({"c0"}, {"sum(p1)"})
+             .capturePlanNodeId(aggNodeId)
+             .planNode();
+
+  task = assertQuery(plan, "SELECT c0, sum(c0 + c1) FROM tmp GROUP BY 1");
+
+  // Verify memory allocations. Project operator should allocate a single vector
+  // and re-use it. Aggregation should make 5 allocations: 1 for the hash table,
+  // 1 for the RowContainer holding accumulators, 3 for results (2 for values
+  // and nulls buffers of the grouping key column, 1 for sum column).
+  planStats = toPlanStats(task->taskStats());
+  ASSERT_EQ(1, planStats.at(projectNodeId).numMemoryAllocations);
+  ASSERT_EQ(5, planStats.at(aggNodeId).numMemoryAllocations);
+>>>>>>> main
 }
 
 } // namespace

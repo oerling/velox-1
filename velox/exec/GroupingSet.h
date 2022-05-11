@@ -107,14 +107,29 @@ class GroupingSet {
   // enough to make 'input' fit.
   void ensureInputFits(const RowVectorPtr& input);
 
+  //Copies the grouping keys and aggregates for 'groups' into 'result' If partial output, extracts the intermediate type for aggregates, final result otherwise.
   void extractGroups(folly::Range<char**> groups, const RowVectorPtr& result);
 
   bool getOutputWithSpill(const RowVectorPtr& result);
 
   bool mergeNext(const RowVectorPtr& result);
 
+  // Initializes a new row in 'mergeRows' with the keys from the
+  // current element from 'keys'. Accumulators are left in the initial
+  // state with no data accumulated. This is called each time a new
+  // key is received from a merge of spilled data. After this
+  // updateRow() is called on the same element and on every subsequent
+  // element read from the stream until a new key is seen, when we
+  // again call initializeRow(). When enough rows have been
+  // accumulated and we have a new key, we produce the output and
+  // clear 'mergeRows_' with extractSpillResult() and only then do
+  // initializeRow().
   void initializeRow(SpillStream& keys, char* FOLLY_NONNULL row);
+
+  // Updates the accumulators in 'row' with the intermediate type data from 'keys'. This is called for each row received from a merge of spilled data.
   void updateRow(SpillStream& keys, char* FOLLY_NONNULL row);
+
+  // Copies the finalized state from 'mergeRows' to 'result' and clears 'mergeRows'. Used for producing a batch of results when aggregating spilled groups.
   void extractSpillResult(const RowVectorPtr& result);
 
   std::vector<ChannelIndex> keyChannels_;
@@ -136,7 +151,7 @@ class GroupingSet {
   const std::vector<std::vector<VectorPtr>> constantLists_;
 
   // Types for extracting accumulators for spilling.
-  std::vector<TypePtr> intermediateTypes_;
+  const std::vector<TypePtr> intermediateTypes_;
 
   const bool ignoreNullKeys_;
   memory::MappedMemory* FOLLY_NONNULL const mappedMemory_;
