@@ -180,7 +180,7 @@ class QueryConfig {
     return get<bool>(kExprTrackCpuUsage, false);
   }
 
-private:
+ private:
   template <typename T>
   T get(const std::string& key, const T& defaultValue) const {
     return config_->get<T>(key, defaultValue);

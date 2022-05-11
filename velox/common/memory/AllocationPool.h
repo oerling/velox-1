@@ -29,7 +29,7 @@ class AllocationPool {
  public:
   static constexpr int32_t kHashTableOwner = -3;
   static constexpr int32_t kMinPages = 16;
-  
+
   explicit AllocationPool(
       memory::MappedMemory* mappedMemory,
       int32_t owner = kHashTableOwner)

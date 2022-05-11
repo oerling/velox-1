@@ -107,7 +107,9 @@ class GroupingSet {
   // enough to make 'input' fit.
   void ensureInputFits(const RowVectorPtr& input);
 
-  //Copies the grouping keys and aggregates for 'groups' into 'result' If partial output, extracts the intermediate type for aggregates, final result otherwise.
+  // Copies the grouping keys and aggregates for 'groups' into 'result' If
+  // partial output, extracts the intermediate type for aggregates, final result
+  // otherwise.
   void extractGroups(folly::Range<char**> groups, const RowVectorPtr& result);
 
   bool getOutputWithSpill(const RowVectorPtr& result);
@@ -126,10 +128,13 @@ class GroupingSet {
   // initializeRow().
   void initializeRow(SpillStream& keys, char* FOLLY_NONNULL row);
 
-  // Updates the accumulators in 'row' with the intermediate type data from 'keys'. This is called for each row received from a merge of spilled data.
+  // Updates the accumulators in 'row' with the intermediate type data from
+  // 'keys'. This is called for each row received from a merge of spilled data.
   void updateRow(SpillStream& keys, char* FOLLY_NONNULL row);
 
-  // Copies the finalized state from 'mergeRows' to 'result' and clears 'mergeRows'. Used for producing a batch of results when aggregating spilled groups.
+  // Copies the finalized state from 'mergeRows' to 'result' and clears
+  // 'mergeRows'. Used for producing a batch of results when aggregating spilled
+  // groups.
   void extractSpillResult(const RowVectorPtr& result);
 
   std::vector<ChannelIndex> keyChannels_;

@@ -89,7 +89,10 @@ HashAggregation::HashAggregation(
     } else {
       intermediateTypes.push_back(argTypes[0]);
     }
-    VELOX_CHECK_EQ(intermediateTypes.back()->size(), 1, "Intermediate aggregates must have a single argument");
+    VELOX_CHECK_EQ(
+        intermediateTypes.back()->size(),
+        1,
+        "Intermediate aggregates must have a single argument");
     // Setup aggregation mask: convert the Variable Reference name to the
     // channel (projection) index, if there is a mask.
     const auto& aggrMask = aggregationNode->aggregateMasks()[i];
