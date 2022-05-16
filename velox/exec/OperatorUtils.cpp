@@ -28,9 +28,13 @@ void deselectRowsWithNulls(
     core::ExecCtx& execCtx) {
   bool anyChange = false;
   auto numRows = input.size();
-  EvalCtx evalCtx(&execCtx, nullptr, &input);
+
+  DecodedVector scratchDecodedVector;
+  SelectivityVector scratchRows;
   for (auto channel : channels) {
-    evalCtx.ensureFieldLoaded(channel, rows);
+    auto& child = const_cast<VectorPtr&>(input.childAt(channel));
+    LazyVector::ensureLoadedRows(
+        child, rows, scratchDecodedVector, scratchRows);
     auto key = input.loadedChildAt(channel);
     if (key->mayHaveNulls()) {
       auto nulls = key->flatRawNulls(rows);
@@ -187,7 +191,7 @@ wrap(vector_size_t size, BufferPtr mapping, const RowVectorPtr& vector) {
 }
 
 void loadColumns(const RowVectorPtr& input, core::ExecCtx& execCtx) {
-  LocalDecodedVector decodedHolder(&execCtx);
+  LocalDecodedVector decodedHolder(execCtx);
   LocalSelectivityVector baseRowsHolder(&execCtx);
   LocalSelectivityVector rowsHolder(&execCtx);
   SelectivityVector* rows = nullptr;

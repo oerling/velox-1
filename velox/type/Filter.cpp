@@ -233,7 +233,7 @@ xsimd::batch_bool<int64_t> BigintValuesUsingHashTable::testValues(
         resultBits &= ~(1 << lane);
         break;
       }
-      index += 4;
+      index += line.size;
       if (index > sizeMask_) {
         index = 0;
       }
@@ -353,6 +353,17 @@ int compareRanges(const char* lhs, size_t length, const std::string& rhs) {
 } // namespace
 
 bool BytesRange::testBytes(const char* value, int32_t length) const {
+  if (length == 0) {
+    // Empty string. value is null. This is the smallest possible string.
+    // It passes the following filters: < non-empty, <= empty | non-empty, >=
+    // empty.
+    if (lowerUnbounded_) {
+      return !upper_.empty() || !upperExclusive_;
+    }
+
+    return lower_.empty() && !lowerExclusive_;
+  }
+
   if (singleValue_) {
     if (length != lower_.size()) {
       return false;

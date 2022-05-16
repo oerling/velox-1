@@ -83,7 +83,8 @@ void FilterProject::addInput(RowVectorPtr input) {
   if (!resultProjections_.empty()) {
     results_.resize(resultProjections_.back().inputChannel + 1);
     for (auto& result : results_) {
-      if (result && result.unique()) {
+      if (result && result.unique() &&
+          result->encoding() == VectorEncoding::Simple::FLAT) {
         BaseVector::prepareForReuse(result, 0);
       } else {
         result.reset();
@@ -113,7 +114,7 @@ RowVectorPtr FilterProject::getOutput() {
   }
 
   vector_size_t size = input_->size();
-  LocalSelectivityVector localRows(operatorCtx_->execCtx(), size);
+  LocalSelectivityVector localRows(*operatorCtx_->execCtx(), size);
   auto* rows = localRows.get();
   rows->setAll();
   EvalCtx evalCtx(operatorCtx_->execCtx(), exprs_.get(), input_.get());
