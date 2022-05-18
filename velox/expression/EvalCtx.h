@@ -211,6 +211,11 @@ class EvalCtx {
   }
 
  private:
+  // Sets field at 'index' to 'field' in either the top level 'row_'
+  // or 'peeledFields_'. If setting 'peeledFields_', also calls
+  // loadedVector on the top level 'row_' to remove loaded LazyVectors
+  // from inside wrappers.
+  void setFieldAfterLoad(int32_t index, const VectorPtr& field);
   core::ExecCtx* const FOLLY_NONNULL execCtx_;
   ExprSet* FOLLY_NULLABLE const exprSet_;
   const RowVector* FOLLY_NULLABLE row_;

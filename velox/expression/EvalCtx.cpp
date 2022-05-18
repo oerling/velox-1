@@ -184,6 +184,12 @@ void EvalCtx::addError(
 
 void EvalCtx::restore(ContextSaver& saver) {
   peeledFields_ = std::move(saver.peeled);
+  for (auto index = 0; index < peeledFields_.size(); ++index) {
+    auto& field = peeledFields_[index];
+    if (field && isLazyLoaded(*field)) {
+      setFieldAfterLoad(index, field);
+    }
+  }
   nullsPruned_ = saver.nullsPruned;
   if (errors_) {
     int32_t errorSize = errors_->size();
@@ -257,7 +263,7 @@ BaseVector* EvalCtx::getRawField(int32_t index) const {
 }
 
 void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
-  auto field = getField(index);
+  auto& field = getField(index);
   if (isLazyNotLoaded(*field)) {
     const auto& rowsToLoad = isFinalSelection_ ? rows : *finalSelection_;
 
@@ -266,18 +272,32 @@ void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
     LocalSelectivityVector baseRowsHolder(*this, 0);
     auto baseRows = baseRowsHolder.get();
     auto rawField = field.get();
-    LazyVector::ensureLoadedRows(field, rowsToLoad, *decoded, *baseRows);
-    if (rawField != field.get()) {
-      const_cast<RowVector*>(row_)->childAt(index) = field;
-      if (!peeledFields_.empty()) {
-        peeledFields_[index] = field;
-      }
+    auto loadedField = field;
+    LazyVector::ensureLoadedRows(loadedField, rowsToLoad, *decoded, *baseRows);
+    if (rawField != loadedField.get()) {
+      setFieldAfterLoad(index, loadedField);
+    } else {
+      row_->childAt(index)->loadedVector();
     }
   } else {
     // This is needed in any case because wrappers must be initialized also if
     // they contain a loaded lazyVector.
-    field->loadedVector();
-  }
+    if (field->encoding() == VectorEncoding::Simple::LAZY) {
+      setFieldAfterLoad(index, field);
+    } else {
+      field->loadedVector();
+    }
+    }
 }
 
+  void EvalCtx::setFieldAfterLoad(int32_t index, const VectorPtr& field) {
+    if (!peeledFields_.empty()) {
+      assert(peeledFields_.at(index));
+      peeledFields_[index] = field;
+      row_->childAt(index)->loadedVector();
+    } else {
+      const_cast<RowVector*>(row_)->childAt(index) = field;
+    }
+  }
+  
 } // namespace facebook::velox::exec
