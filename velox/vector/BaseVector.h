@@ -753,7 +753,7 @@ bool isLazyNotLoaded(const BaseVector& vector);
 
 // Returns true if 'vector' is a loaded LazyVector or a wrapper around one.
 bool isLazyLoaded(const BaseVector& vector);
-  
+
 // Allocates a buffer to fit at least 'size' indices and initializes them to
 // zero.
 inline BufferPtr allocateIndices(vector_size_t size, memory::MemoryPool* pool) {

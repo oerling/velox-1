@@ -287,17 +287,17 @@ void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
     } else {
       field->loadedVector();
     }
-    }
+  }
 }
 
-  void EvalCtx::setFieldAfterLoad(int32_t index, const VectorPtr& field) {
-    if (!peeledFields_.empty()) {
-      assert(peeledFields_.at(index));
-      peeledFields_[index] = field;
-      row_->childAt(index)->loadedVector();
-    } else {
-      const_cast<RowVector*>(row_)->childAt(index) = field;
-    }
+void EvalCtx::setFieldAfterLoad(int32_t index, const VectorPtr& field) {
+  if (!peeledFields_.empty()) {
+    assert(peeledFields_.at(index));
+    peeledFields_[index] = field;
+    row_->childAt(index)->loadedVector();
+  } else {
+    const_cast<RowVector*>(row_)->childAt(index) = field;
   }
-  
+}
+
 } // namespace facebook::velox::exec

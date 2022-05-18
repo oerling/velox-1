@@ -627,13 +627,12 @@ bool isLazyLoaded(const BaseVector& vector) {
     case VectorEncoding::Simple::SEQUENCE:
       return isLazyLoaded(*vector.valueVector());
     case VectorEncoding::Simple::CONSTANT:
-      return vector.valueVector() ? isLazyLoaded(*vector.valueVector())
-                                  : false;
+      return vector.valueVector() ? isLazyLoaded(*vector.valueVector()) : false;
     default:
       return false;
   }
 }
-  
+
 // static
 bool BaseVector::isReusableFlatVector(const VectorPtr& vector) {
   // If the main shared_ptr has more than one references, or if it's not a flat
