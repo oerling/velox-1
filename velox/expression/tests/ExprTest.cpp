@@ -2859,7 +2859,8 @@ TEST_F(ExprTest, nestedPeelingLazy) {
          wrapMany(
              {indices3, indices2},
              makeLazy<int64_t>(
-                 BIGINT(), 10000, [](vector_size_t row) { return row + 1; })),         wrapMany(
+                 BIGINT(), 10000, [](vector_size_t row) { return row + 1; })),
+         wrapMany(
              {indices3},
              makeLazy<int64_t>(
                  BIGINT(), 10000, [](vector_size_t row) { return row * 2; })),
