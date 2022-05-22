@@ -662,6 +662,50 @@ class ExprTest : public testing::Test, public VectorTestBase {
         }));
   }
 
+  // Makes a lazy which makes a FlatVector<T>< with the loaded positions filled
+  // in by func.
+  template <typename T>
+  VectorPtr makeLazy(
+      TypePtr type,
+      vector_size_t size,
+      std::function<T(vector_size_t)> func) {
+    return std::make_shared<LazyVector>(
+        execCtx_->pool(),
+        type,
+        size,
+        std::make_unique<SimpleVectorLoader>([this, func](RowSet rows) {
+          auto vector = makeFlatVector<T>(
+              rows.back() + 1, [&](auto /*row*/) { return T(); });
+          for (auto& row : rows) {
+            vector->set(row, func(row));
+          }
+          return vector;
+        }));
+  }
+
+  // Wraps 'vector' in multiple levels of dictionary from 'indices', where the
+  // innermost set of indices is last.
+  VectorPtr wrapMany(std::vector<BufferPtr> indices, VectorPtr vector) {
+    for (int32_t i = indices.size() - 1; i >= 0; --i) {
+      vector = BaseVector::wrapInDictionary(
+          BufferPtr(nullptr),
+          indices[i],
+          indices[i]->size() / sizeof(vector_size_t),
+          vector);
+    }
+    return vector;
+  }
+
+  // Returns a flattened copy of 'row'.
+  RowVectorPtr flattenRow(RowVectorPtr row) {
+    std::vector<VectorPtr> children = row->children();
+    for (auto& child : children) {
+      child->loadedVector();
+      BaseVector::flattenVector(&child, child->size());
+    }
+    return makeRowVector(children);
+  }
+
   static std::function<bool(vector_size_t /*row*/)> nullEvery(
       int n,
       int startingFrom = 0) {
@@ -672,6 +716,18 @@ class ExprTest : public testing::Test, public VectorTestBase {
   wrapInDictionary(BufferPtr indices, vector_size_t size, VectorPtr vector) {
     return BaseVector::wrapInDictionary(
         BufferPtr(nullptr), std::move(indices), size, std::move(vector));
+  }
+
+  void compareEncodedAndFlatEval(
+      const char* expr,
+      std::function<RowVectorPtr()> makeData) {
+    auto row = makeData();
+    auto flatRow = flattenRow(makeData());
+
+    auto result = evaluate(expr, row);
+    auto flatResult = evaluate(expr, flatRow);
+    assertEqualVectors(
+        flatResult, result, fmt::format("Encoded vs flat: {}", expr));
   }
 
   BufferPtr makeIndices(
@@ -2779,4 +2835,50 @@ TEST_F(ExprTest, invalidInputs) {
   ASSERT_THROW(
       exec::EvalCtx(execCtx_.get(), exprSet.get(), input.get()),
       VeloxRuntimeError);
+}
+
+TEST_F(ExprTest, nestedPeelingLazy) {
+  BufferPtr indices1 = makeIndices(5000, [](auto i) { return i * 2; });
+  BufferPtr indices2 = makeIndices(2500, [](auto i) { return i * 2; });
+  BufferPtr indices3 = makeIndices(500, [](auto i) { return i * 5; });
+
+  auto makeData = [&]() -> RowVectorPtr {
+    return makeRowVector(
+        {wrapMany(
+             {indices3, indices2, indices1},
+             makeLazy<int64_t>(
+                 BIGINT(), 10000, [](vector_size_t row) { return row; })),
+         wrapMany(
+             {indices3, indices2, indices1},
+             makeLazy<int64_t>(
+                 BIGINT(), 10000, [](vector_size_t row) { return row * 2; })),
+         wrapMany(
+             {indices3, indices2},
+             makeLazy<int64_t>(
+                 BIGINT(), 10000, [](vector_size_t row) { return row; })),
+         wrapMany(
+             {indices3, indices2},
+             makeLazy<int64_t>(
+                 BIGINT(), 10000, [](vector_size_t row) { return row + 1; })),         wrapMany(
+             {indices3},
+             makeLazy<int64_t>(
+                 BIGINT(), 10000, [](vector_size_t row) { return row * 2; })),
+         wrapMany(
+             {indices3},
+             makeLazy<int64_t>(
+                 BIGINT(), 10000, [](vector_size_t row) { return row; }))});
+  };
+  // Leaf exprs are between columns with the same wrapping
+  const char* expr =
+      "(if (c0 % 100 > 50, c1, 1) *"
+      "(if(c2 % 100 > 60,  c3, 2)) * if(c4 % 100 > 60,c5, 2)) +"
+      "(c1 + c3)";
+  compareEncodedAndFlatEval(expr, makeData);
+
+  //  :Leaf exprs are between different wrappings
+  const char* expr2 =
+      "(if (c0 % 100 > 50, c4, 1) *"
+      "(if(c2 % 100 > 60,  c1, 2)) * if(c4 % 100 > 60,c5 + c1, 2 + c0)) +"
+      "(c2+ c4)";
+  compareEncodedAndFlatEval(expr2, makeData);
 }
