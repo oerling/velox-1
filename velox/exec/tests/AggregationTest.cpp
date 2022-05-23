@@ -679,7 +679,7 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
 TEST_F(AggregationTest, spill) {
   using core::QueryConfig;
   constexpr int32_t kNumDistinct = 200000;
-  constexpr int64_t kMaxBytes = 2400LL << 20; // 24 MB
+  constexpr int64_t kMaxBytes = 24LL << 20; // 24 MB
   filesystems::registerLocalFileSystem();
   rng_.seed(1);
   rowType_ = ROW({"c0", "c1", "a"}, {INTEGER(), VARCHAR(), VARCHAR()});
