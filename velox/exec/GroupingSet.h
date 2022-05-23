@@ -130,8 +130,8 @@ class GroupingSet {
   // state with no data accumulated. This is called each time a new
   // key is received from a merge of spilled data. After this
   // updateRow() is called on the same element and on every subsequent
-  // element read from the stream until a new key is seen, when we
-  // again call initializeRow(). When enough rows have been
+  // element read from the stream until a new key is seen, at which
+  // time we again call initializeRow(). When enough rows have been
   // accumulated and we have a new key, we produce the output and
   // clear 'mergeRows_' with extractSpillResult() and only then do
   // initializeRow().

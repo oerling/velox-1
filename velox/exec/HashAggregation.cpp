@@ -147,7 +147,7 @@ void HashAggregation::addInput(RowVectorPtr input) {
     mayPushdown_ = operatorCtx_->driver()->mayPushdownAggregation(this);
     pushdownChecked_ = true;
   }
-  groupingSet_->addInput(input_, mayPushdown_);
+  groupingSet_->addInput(input, mayPushdown_);
   auto spilled = groupingSet_->spilledBytesAndRows();
   stats_.spilledBytes = spilled.first;
   stats_.spilledRows = spilled.second;
