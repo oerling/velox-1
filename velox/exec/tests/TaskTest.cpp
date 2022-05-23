@@ -120,7 +120,8 @@ TEST_F(TaskTest, duplicatePlanNodeIds) {
 
 TEST_F(TaskTest, maybeReserve) {
   constexpr int64_t kMB = 1 << 20;
-  auto config = memory::MemoryUsageConfigBuilder().maxTotalMemory(10 * kMB).build();
+  auto config =
+      memory::MemoryUsageConfigBuilder().maxTotalMemory(10 * kMB).build();
   auto parent = memory::MemoryUsageTracker::create(config);
 
   auto child = parent->addChild();
