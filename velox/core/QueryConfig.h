@@ -171,7 +171,7 @@ class QueryConfig {
   bool exprEvalSimplified() const {
     return get<bool>(kExprEvalSimplified, false);
   }
-  
+
   /// Returns a path for writing spill files. If empty, spilling is
   /// disabled. The path should be interpretable by
   /// filesystems::getFileSystem and may refer to any writable

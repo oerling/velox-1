@@ -227,8 +227,7 @@ RowVectorPtr HashAggregation::getOutput() {
   // Reuse output vectors if possible.
   prepareOutput(batchSize);
 
-  bool hasData = groupingSet_->getOutput(
-      batchSize, resultIterator_, output_);
+  bool hasData = groupingSet_->getOutput(batchSize, resultIterator_, output_);
   if (!hasData) {
     resultIterator_.reset();
 

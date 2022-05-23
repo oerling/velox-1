@@ -808,7 +808,6 @@ TEST_F(AggregationTest, memoryAllocations) {
   planStats = toPlanStats(task->taskStats());
   ASSERT_EQ(1, planStats.at(projectNodeId).numMemoryAllocations);
   ASSERT_EQ(5, planStats.at(aggNodeId).numMemoryAllocations);
->>>>>>> main
 }
 
 } // namespace

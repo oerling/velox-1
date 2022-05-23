@@ -110,7 +110,8 @@ class Spiller {
   }
 
   std::pair<int64_t, int64_t> spilledBytesAndRows() const {
-    return std::make_pair<int64_t, int64_t>(state_.spilledBytes(), spilledRows_);
+    return std::make_pair<int64_t, int64_t>(
+        state_.spilledBytes(), spilledRows_);
   }
 
   // Extracts the keys, dependents or accumulators for 'rows' into '*result'.

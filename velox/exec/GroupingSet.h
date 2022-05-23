@@ -76,7 +76,8 @@ class GroupingSet {
 
   /// Returns the total bytes and rows spilled so far.
   std::pair<int64_t, int64_t> spilledBytesAndRows() const {
-    return spiller_ ? spiller_->spilledBytesAndRows() : std::pair<int64_t, int64_t>(0, 0);
+    return spiller_ ? spiller_->spilledBytesAndRows()
+                    : std::pair<int64_t, int64_t>(0, 0);
   }
 
  private:
@@ -112,14 +113,16 @@ class GroupingSet {
   // partial output, extracts the intermediate type for aggregates, final result
   // otherwise.
   void extractGroups(folly::Range<char**> groups, const RowVectorPtr& result);
-  
+
   /// Produces output in if spilling has occurred. First produces data
   /// from non-spilled partitions, then merges spill runs and
   /// unspilled data form spilled partitions. Returns nullptr when at
   /// end.
   bool getOutputWithSpill(const RowVectorPtr& result);
 
-  /// Reads rows from the current spilled partition until producing a batch of final results in 'result'. Returns false and leaves 'result' empty when the partition is fully read.
+  /// Reads rows from the current spilled partition until producing a batch of
+  /// final results in 'result'. Returns false and leaves 'result' empty when
+  /// the partition is fully read.
   bool mergeNext(const RowVectorPtr& result);
 
   // Initializes a new row in 'mergeRows' with the keys from the
