@@ -32,6 +32,9 @@ namespace facebook::velox {
 
 using ChannelIndex = uint32_t;
 
+constexpr ChannelIndex kConstantChannel =
+    std::numeric_limits<ChannelIndex>::max();
+
 class RowVector : public BaseVector {
  public:
   RowVector(
@@ -41,7 +44,15 @@ class RowVector : public BaseVector {
       size_t length,
       std::vector<VectorPtr> children,
       std::optional<vector_size_t> nullCount = std::nullopt)
-      : BaseVector(pool, type, nulls, length, std::nullopt, nullCount, 1),
+      : BaseVector(
+            pool,
+            type,
+            VectorEncoding::Simple::ROW,
+            nulls,
+            length,
+            std::nullopt,
+            nullCount,
+            1),
         childrenSize_(children.size()),
         children_(std::move(children)) {
     // Some columns may not be projected out
@@ -68,10 +79,6 @@ class RowVector : public BaseVector {
       velox::memory::MemoryPool* pool);
 
   virtual ~RowVector() override {}
-
-  VectorEncoding::Simple encoding() const override {
-    return VectorEncoding::Simple::ROW;
-  }
 
   std::optional<int32_t> compare(
       const BaseVector* other,
@@ -135,6 +142,8 @@ class RowVector : public BaseVector {
   }
 
   uint64_t estimateFlatSize() const override;
+
+  using BaseVector::toString;
 
   std::string toString(vector_size_t index) const override;
 
@@ -202,6 +211,7 @@ class ArrayVector : public BaseVector {
       : BaseVector(
             pool,
             type,
+            VectorEncoding::Simple::ARRAY,
             nulls,
             length,
             std::nullopt /*distinctValueCount*/,
@@ -266,10 +276,6 @@ class ArrayVector : public BaseVector {
   }
 
   virtual ~ArrayVector() override {}
-
-  VectorEncoding::Simple encoding() const override {
-    return VectorEncoding::Simple::ARRAY;
-  }
 
   std::optional<int32_t> compare(
       const BaseVector* other,
@@ -363,6 +369,8 @@ class ArrayVector : public BaseVector {
 
   uint64_t estimateFlatSize() const override;
 
+  using BaseVector::toString;
+
   std::string toString(vector_size_t index) const override;
 
   void ensureWritable(const SelectivityVector& rows) override;
@@ -401,6 +409,7 @@ class MapVector : public BaseVector {
       : BaseVector(
             pool,
             type,
+            VectorEncoding::Simple::MAP,
             nulls,
             length,
             std::nullopt /*distinctValueCount*/,
@@ -433,10 +442,6 @@ class MapVector : public BaseVector {
   }
 
   virtual ~MapVector() override {}
-
-  VectorEncoding::Simple encoding() const override {
-    return VectorEncoding::Simple::MAP;
-  }
 
   std::optional<int32_t> compare(
       const BaseVector* other,
@@ -541,6 +546,8 @@ class MapVector : public BaseVector {
   }
 
   uint64_t estimateFlatSize() const override;
+
+  using BaseVector::toString;
 
   std::string toString(vector_size_t index) const override;
 

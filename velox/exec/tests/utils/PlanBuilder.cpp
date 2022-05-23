@@ -17,6 +17,7 @@
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/tpch/TpchConnector.h"
 #include "velox/duckdb/conversion/DuckParser.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/HashPartitionFunction.h"
@@ -399,6 +400,12 @@ PlanBuilder& PlanBuilder::tableScan(
       subfield = common::Subfield(it->second);
     }
 
+    VELOX_CHECK_EQ(
+        filters.count(subfield),
+        0,
+        "Duplicate subfield: {}",
+        subfield.toString());
+
     filters[std::move(subfield)] = std::move(subfieldFilter);
   }
 
@@ -422,6 +429,30 @@ PlanBuilder& PlanBuilder::tableScan(
   planNode_ = std::make_shared<core::TableScanNode>(
       nextPlanNodeId(), outputType, tableHandle, assignments);
   return *this;
+}
+
+PlanBuilder& PlanBuilder::tableScan(
+    tpch::Table table,
+    std::vector<std::string>&& columnNames,
+    size_t scaleFactor) {
+  std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
+      assignmentsMap;
+  std::vector<TypePtr> outputTypes;
+
+  assignmentsMap.reserve(columnNames.size());
+  outputTypes.reserve(columnNames.size());
+
+  for (const auto& columnName : columnNames) {
+    assignmentsMap.emplace(
+        columnName,
+        std::make_shared<connector::tpch::TpchColumnHandle>(columnName));
+    outputTypes.emplace_back(resolveTpchColumn(table, columnName));
+  }
+  auto rowType = ROW(std::move(columnNames), std::move(outputTypes));
+  return tableScan(
+      rowType,
+      std::make_shared<connector::tpch::TpchTableHandle>(table, scaleFactor),
+      assignmentsMap);
 }
 
 PlanBuilder& PlanBuilder::values(
@@ -924,6 +955,61 @@ RowTypePtr extract(
   }
   return ROW(std::move(names), std::move(types));
 }
+
+// Rename columns in the given row type.
+RowTypePtr rename(
+    const RowTypePtr& type,
+    const std::vector<std::string>& newNames) {
+  VELOX_CHECK_EQ(
+      type->size(),
+      newNames.size(),
+      "Number of types and new type names should be the same");
+  std::vector<std::string> names{newNames};
+  std::vector<TypePtr> types{type->children()};
+  return ROW(std::move(names), std::move(types));
+}
+
+struct LocalPartitionTypes {
+  RowTypePtr inputTypeFromSource;
+  RowTypePtr outputType;
+};
+
+LocalPartitionTypes genLocalPartitionTypes(
+    const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
+    const std::vector<std::string>& outputLayout) {
+  LocalPartitionTypes ret;
+  auto inputType = sources[0]->outputType();
+
+  // We support "col AS alias" syntax, so separate input column names from their
+  // aliases (output names).
+  std::vector<std::string> outputNames;
+  std::vector<std::string> outputAliases;
+  for (const auto& output : outputLayout) {
+    auto untypedExpr = duckdb::parseExpr(output);
+    auto fieldExpr =
+        dynamic_cast<const core::FieldAccessExpr*>(untypedExpr.get());
+    VELOX_CHECK_NOT_NULL(
+        fieldExpr,
+        "Entries in outputLayout of localPartition() must be fields");
+    outputNames.push_back(fieldExpr->getFieldName());
+    outputAliases.push_back(
+        (fieldExpr->alias().has_value()) ? fieldExpr->alias().value()
+                                         : fieldExpr->getFieldName());
+  }
+
+  // Build the type we expect as input from the source(s). The layout can
+  // actually differ from the source's output layout, but the names should
+  // match.
+  ret.inputTypeFromSource =
+      outputNames.empty() ? inputType : extract(inputType, outputNames);
+
+  // If specified, rename the output columns.
+  ret.outputType = outputAliases.empty()
+      ? ret.inputTypeFromSource
+      : rename(ret.inputTypeFromSource, outputAliases);
+
+  return ret;
+};
 } // namespace
 
 PlanBuilder& PlanBuilder::partitionedOutput(
@@ -945,7 +1031,7 @@ PlanBuilder& PlanBuilder::partitionedOutput(
       createPartitionFunctionFactory(planNode_->outputType(), keys);
   planNode_ = std::make_shared<core::PartitionedOutputNode>(
       nextPlanNodeId(),
-      fields(keys),
+      exprs(keys),
       numPartitions,
       false,
       replicateNullsAndAny,
@@ -970,28 +1056,30 @@ PlanBuilder& PlanBuilder::localPartition(
     const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
     const std::vector<std::string>& outputLayout) {
   VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
-  auto inputType = sources[0]->outputType();
-  auto outputType = outputLayout.empty() ? sources[0]->outputType()
-                                         : extract(inputType, outputLayout);
+
+  auto types = genLocalPartitionTypes(sources, outputLayout);
+
   auto partitionFunctionFactory =
-      createPartitionFunctionFactory(inputType, keys);
+      createPartitionFunctionFactory(sources[0]->outputType(), keys);
   planNode_ = std::make_shared<core::LocalPartitionNode>(
       nextPlanNodeId(),
       keys.empty() ? core::LocalPartitionNode::Type::kGather
                    : core::LocalPartitionNode::Type::kRepartition,
       partitionFunctionFactory,
-      outputType,
-      sources);
+      types.outputType,
+      sources,
+      types.inputTypeFromSource);
   return *this;
 }
 
 PlanBuilder& PlanBuilder::localPartitionRoundRobin(
     const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
     const std::vector<std::string>& outputLayout) {
-  VELOX_CHECK_NULL(planNode_, "localPartition() must be the first call");
-  auto inputType = sources[0]->outputType();
-  auto outputType = outputLayout.empty() ? sources[0]->outputType()
-                                         : extract(inputType, outputLayout);
+  VELOX_CHECK_NULL(
+      planNode_, "localPartitionRoundRobin() must be the first call");
+
+  auto types = genLocalPartitionTypes(sources, outputLayout);
+
   auto partitionFunctionFactory = [](auto numPartitions) {
     return std::make_unique<velox::exec::RoundRobinPartitionFunction>(
         numPartitions);
@@ -1000,8 +1088,9 @@ PlanBuilder& PlanBuilder::localPartitionRoundRobin(
       nextPlanNodeId(),
       core::LocalPartitionNode::Type::kRepartition,
       partitionFunctionFactory,
-      outputType,
-      sources);
+      types.outputType,
+      sources,
+      types.inputTypeFromSource);
   return *this;
 }
 
@@ -1185,6 +1274,18 @@ PlanBuilder::fields(const std::vector<std::string>& names) {
 std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
 PlanBuilder::fields(const std::vector<ChannelIndex>& indices) {
   return fields(planNode_->outputType(), indices);
+}
+
+std::vector<std::shared_ptr<const core::ITypedExpr>> PlanBuilder::exprs(
+    const std::vector<std::string>& names) {
+  auto flds = fields(planNode_->outputType(), names);
+  std::vector<std::shared_ptr<const core::ITypedExpr>> expressions;
+  expressions.reserve(flds.size());
+  for (const auto& fld : flds) {
+    expressions.emplace_back(
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(fld));
+  }
+  return expressions;
 }
 
 std::shared_ptr<const core::ITypedExpr> PlanBuilder::inferTypes(

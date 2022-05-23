@@ -174,7 +174,7 @@ class ExecCtx : public Context {
  public:
   ExecCtx(
       memory::MemoryPool* FOLLY_NONNULL pool,
-      QueryCtx* FOLLY_NONNULL queryCtx)
+      QueryCtx* FOLLY_NULLABLE queryCtx)
       : Context{ContextScope::QUERY}, pool_(pool), queryCtx_(queryCtx) {}
 
   velox::memory::MemoryPool* FOLLY_NONNULL pool() const {

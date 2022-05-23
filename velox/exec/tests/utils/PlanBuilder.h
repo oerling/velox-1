@@ -24,6 +24,10 @@ namespace facebook::velox::core {
 class IExpr;
 }
 
+namespace facebook::velox::tpch {
+enum class Table : uint8_t;
+}
+
 namespace facebook::velox::exec::test {
 
 /// Generates unique sequential plan node IDs starting with zero or specified
@@ -145,6 +149,7 @@ class PlanBuilder {
 
   /// Add a TableScanNode using a connector-specific table handle and
   /// assignments. Supports any connector, not just Hive connector.
+  ///
   /// @param outputType List of column names and types to project out. Column
   /// names should match the keys in the 'assignments' map. The 'assignments'
   /// map may contain more columns then 'outputType' if some columns are only
@@ -156,7 +161,19 @@ class PlanBuilder {
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& assignments);
 
+  /// Add a TableScanNode to scan a TPC-H table.
+  ///
+  /// @param tpchTableHandle The handle that specifies the target TPC-H table
+  /// and scale factor.
+  /// @param columnNames The columns to be returned from that table.
+  /// @param scaleFactor The TPC-H scale factor.
+  PlanBuilder& tableScan(
+      tpch::Table table,
+      std::vector<std::string>&& columnNames,
+      size_t scaleFactor = 1);
+
   /// Add a ValuesNode using specified data.
+  ///
   /// @param values The data to use.
   /// @param parallelizable If true, ValuesNode can run multi-threaded, in which
   /// case it will produce duplicate data from each thread, e.g. each thread
@@ -525,7 +542,8 @@ class PlanBuilder {
   /// @param outputLayout Optional output layout in case it is different then
   /// the input. Output columns may appear in different order from the input,
   /// some input columns may be missing in the output, some columns may be
-  /// duplicated in the output.
+  /// duplicated in the output. Supports "col AS alias" syntax to change the
+  /// names for the input columns.
   PlanBuilder& localPartition(
       const std::vector<std::string>& keys,
       const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
@@ -539,7 +557,8 @@ class PlanBuilder {
   /// @param outputLayout Optional output layout in case it is different then
   /// the input. Output columns may appear in different order from the input,
   /// some input columns may be missing in the output, some columns may be
-  /// duplicated in the output.
+  /// duplicated in the output. Supports "col AS alias" syntax to change the
+  /// names for the input columns.
   PlanBuilder& localPartitionRoundRobin(
       const std::vector<std::shared_ptr<const core::PlanNode>>& sources,
       const std::vector<std::string>& outputLayout = {});
@@ -654,6 +673,9 @@ class PlanBuilder {
 
   std::shared_ptr<const core::FieldAccessTypedExpr> field(
       const std::string& name);
+
+  std::vector<std::shared_ptr<const core::ITypedExpr>> exprs(
+      const std::vector<std::string>& names);
 
   std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>> fields(
       const std::vector<std::string>& names);

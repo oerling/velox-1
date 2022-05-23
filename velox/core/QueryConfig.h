@@ -171,7 +171,15 @@ class QueryConfig {
   bool exprEvalSimplified() const {
     return get<bool>(kExprEvalSimplified, false);
   }
-
+  
+  /// Returns a path for writing spill files. If empty, spilling is
+  /// disabled. The path should be interpretable by
+  /// filesystems::getFileSystem and may refer to any writable
+  /// location. Actual file names are composed by appending '/' and a
+  /// filename composed of Task id and serial numbers. The files are
+  /// automatically deleted when no longer needed. Files may be left
+  /// behind after crashes but are identifiable based on the Task id in
+  /// the name.
   std::optional<std::string> spillPath() const {
     return get<std::string>(kSpillPath);
   }

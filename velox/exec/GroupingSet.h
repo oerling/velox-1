@@ -65,17 +65,18 @@ class GroupingSet {
 
   const HashLookup& hashLookup() const;
 
-  // Spills content until under 'targetRows' and under 'targetBytes'
-  // of out of line data are left. If targetRows is 0, spills
-  // everything and physically frees the data in the
-  // 'table_->rows()'. This leaves 'table_' initialized and 'this'
-  // ready to accumulate more input. This is called by ensureInputFits
-  // or by external memory management. In the latter case, the Driver
-  // of this will be in a paused state and off thread.
+  /// Spills content until under 'targetRows' and under 'targetBytes'
+  /// of out of line data are left. If targetRows is 0, spills
+  /// everything and physically frees the data in the
+  /// 'table_->rows()'. This leaves 'table_' initialized and 'this'
+  /// ready to accumulate more input. This is called by ensureInputFits
+  /// or by external memory management. In the latter case, the Driver
+  /// of this will be in a paused state and off thread.
   void spill(int64_t targetRows, int64_t targetBytes);
 
-  int64_t spilledBytes() const {
-    return spiller_ ? spiller_->spilledBytes() : 0;
+  /// Returns the total bytes and rows spilled so far.
+  std::pair<int64_t, int64_t> spilledBytesAndRows() const {
+    return spiller_ ? spiller_->spilledBytesAndRows() : std::pair<int64_t, int64_t>(0, 0);
   }
 
  private:
@@ -111,9 +112,14 @@ class GroupingSet {
   // partial output, extracts the intermediate type for aggregates, final result
   // otherwise.
   void extractGroups(folly::Range<char**> groups, const RowVectorPtr& result);
-
+  
+  /// Produces output in if spilling has occurred. First produces data
+  /// from non-spilled partitions, then merges spill runs and
+  /// unspilled data form spilled partitions. Returns nullptr when at
+  /// end.
   bool getOutputWithSpill(const RowVectorPtr& result);
 
+  /// Reads rows from the current spilled partition until producing a batch of final results in 'result'. Returns false and leaves 'result' empty when the partition is fully read.
   bool mergeNext(const RowVectorPtr& result);
 
   // Initializes a new row in 'mergeRows' with the keys from the

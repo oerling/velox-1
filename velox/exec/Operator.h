@@ -127,6 +127,9 @@ struct OperatorStats {
   // Total bytes written for spilling.
   uint64_t spilledBytes{0};
 
+  // Total rows written for spilling.
+  uint64_t spilledRows{0};
+
   std::unordered_map<std::string, RuntimeMetric> runtimeStats;
 
   int numDrivers = 0;
@@ -418,14 +421,10 @@ class Operator {
       dynamicFilters_;
 };
 
-constexpr ChannelIndex kConstantChannel =
-    std::numeric_limits<ChannelIndex>::max();
-
 /// Given a row type returns indices for the specified subset of columns.
 std::vector<ChannelIndex> toChannels(
     const RowTypePtr& rowType,
-    const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
-        fields);
+    const std::vector<std::shared_ptr<const core::ITypedExpr>>& exprs);
 
 ChannelIndex exprToChannel(const core::ITypedExpr* expr, const TypePtr& type);
 

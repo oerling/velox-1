@@ -109,8 +109,8 @@ class Spiller {
     return state_.startMerge(partition, spillStreamOverRows(partition));
   }
 
-  int64_t spilledBytes() const {
-    return state_.spilledBytes();
+  std::pair<int64_t, int64_t> spilledBytesAndRows() const {
+    return std::make_pair<int64_t, int64_t>(state_.spilledBytes(), spilledRows_);
   }
 
   // Extracts the keys, dependents or accumulators for 'rows' into '*result'.
@@ -226,6 +226,7 @@ class Spiller {
   bool spillFinalized_{false};
   memory::MemoryPool& pool_;
   folly::Executor* const executor_;
+  uint64_t spilledRows_{0};
 };
 
 } // namespace facebook::velox::exec

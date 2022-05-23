@@ -123,7 +123,7 @@ HashAggregation::HashAggregation(
   }
 
   if (isDistinct_) {
-    for (ChannelIndex i = 0; i < hashers.size(); ++i) {
+    for (auto i = 0; i < hashers.size(); ++i) {
       identityProjections_.emplace_back(hashers[i]->channel(), i);
     }
   }
@@ -143,19 +143,28 @@ HashAggregation::HashAggregation(
 }
 
 void HashAggregation::addInput(RowVectorPtr input) {
-  input_ = input;
   if (!pushdownChecked_) {
     mayPushdown_ = operatorCtx_->driver()->mayPushdownAggregation(this);
     pushdownChecked_ = true;
   }
   groupingSet_->addInput(input_, mayPushdown_);
-  stats_.spilledBytes = groupingSet_->spilledBytes();
+  auto spilled = groupingSet_->spilledBytesAndRows();
+  stats_.spilledBytes = spilled.first;
+  stats_.spilledRows = spilled.second;
 
   if (isPartialOutput_ &&
       groupingSet_->allocatedBytes() > maxPartialAggregationMemoryUsage_) {
     partialFull_ = true;
   }
-  newDistincts_ = isDistinct_ && !groupingSet_->hashLookup().newGroups.empty();
+
+  if (isDistinct_) {
+    newDistincts_ = !groupingSet_->hashLookup().newGroups.empty();
+
+    if (newDistincts_) {
+      // Save input to use for output in getOutput().
+      input_ = input;
+    }
+  }
 }
 
 void HashAggregation::prepareOutput(vector_size_t size) {
@@ -219,7 +228,7 @@ RowVectorPtr HashAggregation::getOutput() {
   prepareOutput(batchSize);
 
   bool hasData = groupingSet_->getOutput(
-      batchSize, isPartialOutput_, &resultIterator_, output_);
+      batchSize, resultIterator_, output_);
   if (!hasData) {
     resultIterator_.reset();
 

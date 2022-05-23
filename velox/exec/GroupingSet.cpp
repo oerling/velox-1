@@ -622,10 +622,6 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
 
 bool GroupingSet::mergeNext(const RowVectorPtr& result) {
   constexpr int32_t kBatchBytes = 1 << 20; // 1MB
-  if (mergeSelection_.size() < 64) {
-    mergeSelection_.resize(64);
-    mergeSelection_.clearAll();
-  }
   for (;;) {
     auto next = merge_->nextWithEquals();
     if (!next.first) {
