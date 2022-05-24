@@ -1507,41 +1507,6 @@ ContinueFuture Task::requestPauseLocked(bool pause) {
   return makeFinishFutureLocked("Task::requestPause");
 }
 
-// Checks if it is likely that the reservation on 'tracker' can be
-// incremented by 'increment'. Returns false if this seems
-// unlikely. Otherwise attempts the reservation increment and
-// returns true if succeeded. This will be moved to Task when adding
-// memory contention arbitration.
-// static
-bool Task::maybeReserve(
-    int64_t increment,
-    memory::MemoryUsageTracker& tracker) {
-  constexpr int32_t kGrowthQuantum = 8 << 20;
-  auto addedReservation = bits::roundUp(increment, kGrowthQuantum);
-  // We look up the tracker tree to see if there is a parent that could have
-  // space. If some parent could have space we take the chance and try to
-  // increase reservation.
-  auto candidate = &tracker;
-  while (candidate) {
-    auto limit = candidate->maxTotalBytes();
-    // If this tracker has no limit, proceed to its parent.
-    if (limit == memory::kMaxMemory && candidate->parent()) {
-      candidate = candidate->parent();
-      continue;
-    }
-    if (limit - candidate->getCurrentTotalBytes() > addedReservation) {
-      try {
-        tracker.reserve(addedReservation);
-      } catch (const std::exception& e) {
-        return false;
-      }
-      return true;
-    }
-    candidate = candidate->parent();
-  }
-  return false;
-}
-
 Task::TaskCompletionNotifier::~TaskCompletionNotifier() {
   notify();
 }

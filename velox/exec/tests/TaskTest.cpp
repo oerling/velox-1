@@ -117,22 +117,3 @@ TEST_F(TaskTest, duplicatePlanNodeIds) {
       exec::Task("task-1", std::move(plan), 0, core::QueryCtx::createForTest()),
       "Plan node IDs must be unique. Found duplicate ID: 0.")
 }
-
-TEST_F(TaskTest, maybeReserve) {
-  constexpr int64_t kMB = 1 << 20;
-  auto config =
-      memory::MemoryUsageConfigBuilder().maxTotalMemory(10 * kMB).build();
-  auto parent = memory::MemoryUsageTracker::create(config);
-
-  auto child = parent->addChild();
-  auto childConfig = memory::MemoryUsageConfigBuilder().build();
-  child->updateConfig(childConfig);
-  // 1MB can be reserved, rounds up to 8 and leaves 2 unreserved in parent.
-  EXPECT_TRUE(exec::Task::maybeReserve(kMB, *child));
-  EXPECT_EQ(8 * kMB, child->getAvailableReservation());
-  EXPECT_EQ(2 * kMB, parent->getAvailableReservation());
-  // Fails to reserve 100MB, existing reservations are unchanged.
-  EXPECT_FALSE(exec::Task::maybeReserve(100 * kMB, *child));
-  EXPECT_EQ(8 * kMB, child->getAvailableReservation());
-  EXPECT_EQ(2 * kMB, parent->getAvailableReservation());
-}
