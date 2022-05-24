@@ -488,7 +488,7 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   // reservation.
   auto targetIncrement =
       std::max<int64_t>(increment * 2, tracker->getCurrentUserBytes() / 4);
-  if (Task::maybeReserve(targetIncrement, *tracker)) {
+  if (tracker_->maybeReserve(targetIncrement)) {
     return;
   }
   auto outOfLineBytesPerRow = outOfLineBytes / numDistinct;

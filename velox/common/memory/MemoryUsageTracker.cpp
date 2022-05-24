@@ -104,8 +104,8 @@ bool MemoryUsageTracker::maybeReserve(int64_t increment) {
   while (candidate) {
     auto limit = candidate->maxTotalBytes();
     // If this tracker has no limit, proceed to its parent.
-    if (limit == memory::kMaxMemory && candidate->parent()) {
-      candidate = candidate->parent();
+    if (limit == memory::kMaxMemory && candidate->parent_) {
+      candidate = candidate->parent_.get();
       continue;
     }
     if (limit - candidate->getCurrentTotalBytes() > addedReservation) {
@@ -116,7 +116,7 @@ bool MemoryUsageTracker::maybeReserve(int64_t increment) {
       }
       return true;
     }
-    candidate = candidate->parent();
+    candidate = candidate->parent_.get();
   }
   return false;
 }
