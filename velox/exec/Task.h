@@ -452,14 +452,6 @@ class Task : public std::enable_shared_from_this<Task> {
     return mutex_;
   }
 
-  /// Checks if it is likely that the reservation on 'tracker' can be
-  /// incremented by 'increment'. Returns false if this seems
-  /// unlikely. Otherwise attempts the reservation increment and returns
-  /// true if succeeded.
-  static bool maybeReserve(
-      int64_t increment,
-      memory::MemoryUsageTracker& tracker);
-
  private:
   /// Returns true if state is 'running'.
   bool isRunningLocked() const;
