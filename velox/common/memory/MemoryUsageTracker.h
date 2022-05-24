@@ -277,8 +277,7 @@ class MemoryUsageTracker
   /// incremented by 'increment'. Returns false if this seems
   /// unlikely. Otherwise attempts the reservation increment and returns
   /// true if succeeded.
-  bool maybeReserve(
-      int64_t increment)>;
+  bool maybeReserve(int64_t increment) > ;
 
  private:
   static constexpr int64_t kMB = 1 << 20;

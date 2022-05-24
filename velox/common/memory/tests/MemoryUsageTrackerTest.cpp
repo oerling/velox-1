@@ -186,7 +186,6 @@ TEST(MemoryUsageTrackerTest, grow) {
   EXPECT_EQ(176 * kMB, parent->maxTotalBytes());
 }
 
-
 TEST(MemoryUsageTrackerTest, maybeReserve) {
   constexpr int64_t kMB = 1 << 20;
   auto config =

@@ -97,8 +97,7 @@ void MemoryUsageTracker::decrementUsage(UsageType type, int64_t size) noexcept {
   usage(currentUsageInBytes_, type).fetch_sub(size);
 }
 
-bool MemoryUsageTracker::maybeReserve(
-    int64_t increment) {
+bool MemoryUsageTracker::maybeReserve(int64_t increment) {
   constexpr int32_t kGrowthQuantum = 8 << 20;
   auto addedReservation = bits::roundUp(increment, kGrowthQuantum);
   auto candidate = this;
@@ -121,6 +120,5 @@ bool MemoryUsageTracker::maybeReserve(
   }
   return false;
 }
-
 
 } // namespace facebook::velox::memory
