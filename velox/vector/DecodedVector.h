@@ -40,24 +40,24 @@ class DecodedVector {
   /// Allow std::move.
   DecodedVector(DecodedVector&& other) = default;
 
-  /// Decodes specified vector for a subset of specified rows.
+  /// Decodes 'vector' for 'rows'.
   ///
   /// Decoding is trivial if vector is flat, constant or single-level
   /// dictionary. If a vector is a multi-level dictionary, the indices from all
   /// the dictionaries are combined. The result of decoding is a flat or
-  /// constant base vector and an optional buffer if indices.
+  /// constant base vector and an optional array of indices.
   ///
   /// Loads the underlying lazy vector if not already loaded before decoding
   /// unless loadLazy is false.
   ///
-  /// loadLazy = false is used in HashAggregation to implement push-down of
+  /// loadLazy = false is used in HashAggregation to implement pushdown of
   /// aggregation into table scan. In this case, DecodedVector is used to
   /// combine possibly multiple levels of wrappings into just one and then load
-  /// LazyVector only for the necessary rows using ValueHook which adds values
-  /// to aggregation accumulators directly.
+  /// LazyVector only for the necessary rows. This uses ValueHook which adds
+  /// values to aggregation accumulators wihout intermediate materialization.
   ///
-  /// Limitations: Decoding constant vector wrapping a lazy vector that has not
-  /// been loaded yet with loadLazy = false is not supported.
+  /// Limitations: Decoding a constant vector wrapping a lazy vector that has
+  /// not been loaded yet is not supported with loadLazy = false.
   DecodedVector(
       const BaseVector& vector,
       const SelectivityVector& rows,
@@ -65,39 +65,35 @@ class DecodedVector {
     decode(vector, rows, loadLazy);
   }
 
-  /// Resets the internal state and decodes the specified vector for the subset
-  /// of the specified rows. See constructor.
+  /// Resets the internal state and decodes 'vector' for 'rows'. See
+  /// constructor.
   void decode(
       const BaseVector& vector,
       const SelectivityVector& rows,
       bool loadLazy = true);
 
   /// Given a dictionary vector with at least 'numLevel' levels of dictionary
-  /// wrappings combines 'numLevel' wrappings into one.
+  /// wrapping, combines 'numLevel' wrappings into one.
   void makeIndices(
       const BaseVector& vector,
       const SelectivityVector& rows,
       int32_t numLevels);
 
-  /// Returns the values buffer for the base vector. Assumes the vector is of
-  /// scalar type and has been already decoded. Use indices() to access
+  /// Returns the raw values buffer for the base vector. Assumes the vector is
+  /// of scalar type and has already been decoded. Use indices() to access
   /// individual values, i.e. data()[indices[i]] returns the value at the
-  /// top-level row 'i' given that 'i' is one of the rows specified for
-  /// decoding.
+  /// top-level row 'i', provided 'i' is in 'rows' specified at decode time.
   template <typename T>
   const T* data() const {
     return reinterpret_cast<const T*>(data_);
   }
 
-  /// Returns the nulls buffer for the base vector combined with nulls found in
-  /// dictionary wrappings. May return nullptr if there are no nulls. Use
+  /// Returns the raw nulls buffer for the base vector combined with nulls found
+  /// in dictionary wrappings. May return nullptr if there are no nulls. Use
   /// nullIndices() to access individual null flags, e.g.
   ///
   ///  nulls() ? bits::isBitNull(nulls(), nullIndices() ? nullIndices[i] : i) :
   ///  false
-  ///
-  /// returns the null flag for top-level row 'i' given that 'i' is one of the
-  /// rows specified for decoding.
   const uint64_t* nulls() const {
     return nulls_;
   }
@@ -127,7 +123,7 @@ class DecodedVector {
   }
 
   /// Given a top-level row returns corresponding index in the base vector or
-  /// data() buffer.
+  /// data().
   vector_size_t index(vector_size_t idx) const {
     if (isIdentityMapping_) {
       return idx;
@@ -139,7 +135,7 @@ class DecodedVector {
     return indices_[idx];
   }
 
-  /// Given a top-level row returns corresponding index in the nulls() buffer.
+  /// Given a top-level row returns corresponding bit position in the nulls() buffer.
   vector_size_t nullIndex(vector_size_t idx) const {
     if (isIdentityMapping_ || hasExtraNulls_) {
       return idx;
@@ -151,7 +147,7 @@ class DecodedVector {
     return indices_[idx];
   }
 
-  /// Returns a scalar value for the top-level row.
+  /// Returns a scalar value for top-level row 'idx'.
   template <typename T>
   T valueAt(vector_size_t idx) const {
     return reinterpret_cast<const T*>(data_)[index(idx)];
@@ -163,11 +159,14 @@ class DecodedVector {
     return mayHaveNulls_;
   }
 
+  /// Returns true if the base vector or its component vectors
+  /// (e.g. struct members, map/array values) may contain nulls.
   bool mayHaveNullsRecursive() const {
     return mayHaveNulls_ || baseVector_->mayHaveNullsRecursive();
   }
 
-  /// Return null flag for the top-level row.
+  /// returns true  if top-level row 'i' is null, provided 'i' is one of
+  /// 'rows' given at decode time.
   bool isNullAt(vector_size_t idx) const {
     if (!nulls_) {
       return false;
@@ -175,7 +174,7 @@ class DecodedVector {
     return bits::isBitNull(nulls_, nullIndex(idx));
   }
 
-  /// Returns largest decoded row number + 1, i.e. rows.end().
+  /// Returns the largest decoded row number + 1, i.e. rows.end().
   vector_size_t size() const {
     return size_;
   }
@@ -185,17 +184,17 @@ class DecodedVector {
     return reinterpret_cast<const T*>(data_);
   }
 
-  /// Returns flat or constant base vector.
+  /// Returns the flat or constant base vector.
   const BaseVector* base() const {
     return baseVector_;
   }
 
-  /// Returns true if the original vector was flat.
+  /// Returns true if the decoded vector was flat.
   bool isIdentityMapping() const {
     return isIdentityMapping_;
   }
 
-  /// Returns true if the original vector was constant.
+  /// Returns true if the decoded vector was constant.
   bool isConstantMapping() const {
     return isConstantMapping_;
   }
@@ -209,7 +208,7 @@ class DecodedVector {
       const BaseVector& wrapper,
       const SelectivityVector& rows);
 
-  /// Pre-allocated vector of 0, 1, 2,
+  /// Pre-allocated vector of 0, 1, 2,...
   static const std::vector<vector_size_t>& consecutiveIndices();
 
   /// Pre-allocated vector of all zeros.
