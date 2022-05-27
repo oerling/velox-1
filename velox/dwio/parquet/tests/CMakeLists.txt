@@ -74,3 +74,17 @@ target_link_libraries(
   velox_aggregates
   ${VELOX_LINK_LIBS}
   ${TEST_LINK_LIBS})
+
+
+add_executable(velox_parquet_e2e_filter_test E2EFilterTest.cpp)
+add_test(velox_parquet_e2e_filter_test velox_dwrf_e2e_filter_test)
+
+target_link_libraries(
+  velox_parquet_e2e_filter_test
+  velox_e2e_filter_test_base
+${ARROW}
+  ${LZ4}
+  ${LZO}
+  ${ZSTD}
+  ${ZLIB_LIBRARIES}
+  ${TEST_LINK_LIBS})
