@@ -6,8 +6,8 @@
 
 namespace facebook::velox::parquet {
 
-//template <typename T>
-//void PlainFilterAwareDecoder<T>::next(
+// template <typename T>
+// void PlainFilterAwareDecoder<T>::next(
 //    T*& outputBuffer,
 //    uint64_t numValues,
 //    BitSet& selectivityVec) {
@@ -41,8 +41,8 @@ namespace facebook::velox::parquet {
 //  }
 //}
 
-//template <typename T>
-//void PlainFilterAwareDecoder<T>::next(
+// template <typename T>
+// void PlainFilterAwareDecoder<T>::next(
 //    BufferPtr outputBuffer,
 //    uint64_t outputOffset,
 //    uint64_t numRowsToRead,
@@ -85,12 +85,12 @@ namespace facebook::velox::parquet {
 //  }
 //}
 //
-//template <typename T>
-//void PlainFilterAwareDecoder<T>::skip(uint64_t numValues) {}
+// template <typename T>
+// void PlainFilterAwareDecoder<T>::skip(uint64_t numValues) {}
 
 // no nulls, no validation
-//template <typename T>
-//void PlainFilterAwareDecoder<T>::finish(T* data, BitSet& selectivityVec) {
+// template <typename T>
+// void PlainFilterAwareDecoder<T>::finish(T* data, BitSet& selectivityVec) {
 //  if (leftOverFromLastBatch_ > 0) {
 //    memcpy(
 //        data * sizeof(uint32_t),
@@ -98,7 +98,8 @@ namespace facebook::velox::parquet {
 //        leftOverFromLastBatch_ * sizeof(uint32_t));
 //
 //    if (filter_.has_value()) {
-//      for (uint32_t row_idx = 0; row_idx < leftOverFromLastBatch_; row_idx++) {
+//      for (uint32_t row_idx = 0; row_idx < leftOverFromLastBatch_; row_idx++)
+//      {
 //        T val = *(static_cast<const T*>(inputBuffer_));
 //        inputBuffer_ += sizeof(T);
 //        selectivityVec[row_idx] = filter_.value()->testVal(val);
@@ -112,19 +113,19 @@ namespace facebook::velox::parquet {
 //}
 
 //-----------------------RleBpFilterAwareDecoder-------------------------------
-//template <typename T>
-//const uint32_t RleBpFilterAwareDecoder<T>::BITPACK_MASKS[] = {
+// template <typename T>
+// const uint32_t RleBpFilterAwareDecoder<T>::BITPACK_MASKS[] = {
 //    0,         1,         3,          7,         15,       31,       63,
 //    127,       255,       511,        1023,      2047,     4095,     8191,
 //    16383,     32767,     65535,      131071,    262143,   524287,   1048575,
-//    2097151,   4194303,   8388607,    16777215,  33554431, 67108863, 134217727,
-//    268435455, 536870911, 1073741823, 2147483647};
+//    2097151,   4194303,   8388607,    16777215,  33554431, 67108863,
+//    134217727, 268435455, 536870911, 1073741823, 2147483647};
 //
-//template <typename T>
-//const uint8_t RleBpFilterAwareDecoder<T>::BITPACK_DLEN = 8;
+// template <typename T>
+// const uint8_t RleBpFilterAwareDecoder<T>::BITPACK_DLEN = 8;
 //
-//template <typename T>
-//void RleBpFilterAwareDecoder<T>::next(
+// template <typename T>
+// void RleBpFilterAwareDecoder<T>::next(
 //    BufferPtr outputBuffer,
 //    uint64_t numValues,
 //    BitSet& selectivityVec) {
@@ -135,8 +136,8 @@ namespace facebook::velox::parquet {
 //  }
 //}
 //
-//template <typename T>
-//void RleBpFilterAwareDecoder<T>::readNoFilter(
+// template <typename T>
+// void RleBpFilterAwareDecoder<T>::readNoFilter(
 //    BufferPtr outputBuffer,
 //    uint64_t numValues) {
 //  auto outputBufferPtr = (T*)outputBuffer->template asMutable<T>();
@@ -173,18 +174,19 @@ namespace facebook::velox::parquet {
 //    }
 //  }
 //  if (values_read != numValues) {
-//    throw std::runtime_error("RLE decode did not find enough outputBufferPtr");
+//    throw std::runtime_error("RLE decode did not find enough
+//    outputBufferPtr");
 //  }
 //}
 //
-//template <typename T>
-//void RleBpFilterAwareDecoder<T>::readWithFilter(
+// template <typename T>
+// void RleBpFilterAwareDecoder<T>::readWithFilter(
 //    BufferPtr outputBuffer,
 //    uint64_t numValues,
 //    BitSet& selectivityVec) {}
 //
-//template <typename T>
-//uint32_t RleBpFilterAwareDecoder<T>::varintDecode() {
+// template <typename T>
+// uint32_t RleBpFilterAwareDecoder<T>::varintDecode() {
 //  uint32_t result = 0;
 //  uint8_t shift = 0;
 //  uint8_t len = 0;
@@ -202,8 +204,8 @@ namespace facebook::velox::parquet {
 //  return result;
 //}
 //
-//template <typename T>
-//bool RleBpFilterAwareDecoder<T>::nextCounts() {
+// template <typename T>
+// bool RleBpFilterAwareDecoder<T>::nextCounts() {
 //  // Read the next run's indicator int, it could be a literal or repeated run.
 //  // The int is encoded as a vlq-encoded value.
 //  if (bitpackPosition_ != 0) {
@@ -234,8 +236,8 @@ namespace facebook::velox::parquet {
 //  return true;
 //}
 //
-//template <typename T>
-//uint32_t RleBpFilterAwareDecoder<T>::bitUnpack(T* dest, uint32_t count) {
+// template <typename T>
+// uint32_t RleBpFilterAwareDecoder<T>::bitUnpack(T* dest, uint32_t count) {
 //  auto mask = BITPACK_MASKS[bitWidth_];
 //
 //  for (uint32_t i = 0; i < count; i++) {

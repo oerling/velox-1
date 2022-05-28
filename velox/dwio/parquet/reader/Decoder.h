@@ -82,8 +82,8 @@ class FilterAwareDecoder {
 
 //------------------------PlainFilterAwareDecoder--------------------------------
 //
-//template <typename T>
-//class PlainFilterAwareDecoder : FilterAwareDecoder {
+// template <typename T>
+// class PlainFilterAwareDecoder : FilterAwareDecoder {
 // public:
 //  PlainFilterAwareDecoder(
 //      const void* inputBuffer, // note we have loaded the full page
@@ -104,7 +104,8 @@ class FilterAwareDecoder {
 //  //    uint64_t numBatches = numRows / kWidth;
 //  //    leftOverFromLastBatch_ = numRows - numBatches * kWidth;
 //  //
-//  //    // In dense mode, we need to read the outputBuffer anyways. Just read it
+//  //    // In dense mode, we need to read the outputBuffer anyways. Just read
+//  it
 //  //    all
 //  //    // at once
 //  //    auto bytesToCopy = kWidth * numBatches * sizeof(T);
@@ -122,7 +123,8 @@ class FilterAwareDecoder {
 //  //        __m256i vec =
 //  //            _mm256_loadu_si256(reinterpret_cast<const
 //  //            __m256i*>(inputBuffer_));
-//  //        inputBuffer_ += 32; // an AVX2 vector is 256bits, 256 / 8 = 32 bytes
+//  //        inputBuffer_ += 32; // an AVX2 vector is 256bits, 256 / 8 = 32
+//  bytes
 //  //        //      printVec(vec);
 //  //
 //  //        __m256i cmp = dwrf::testSimd<T>(*filter_.value(), vec);
@@ -160,7 +162,8 @@ class FilterAwareDecoder {
 //      // TODO: guard by runtime SIMD check
 //      for (uint64_t i = 0; i < steps; i++) {
 //        __m256i vec =
-//            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(inputBuffer_));
+//            _mm256_loadu_si256(reinterpret_cast<const
+//            __m256i*>(inputBuffer_));
 //        inputBuffer_ += 32; // an AVX2 vector is 256bits, 256 / 8 = 32 bytes
 //        //      printVec(vec);
 //
@@ -168,7 +171,8 @@ class FilterAwareDecoder {
 //        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp));
 //
 //        //        auto rowOffset = offset / sizeof(T);
-//        //        uint8_t* filterMaskOffset = (uint8_t*)selectivityVec.bits() +
+//        //        uint8_t* filterMaskOffset = (uint8_t*)selectivityVec.bits()
+//        +
 //        //            (rowOffset + i * kWidth) / 8; // 8 bits per byte
 //        //        *filterMaskOffset = ((*filterMaskOffset) | ~mask); // TODO
 //      }
@@ -197,7 +201,8 @@ class FilterAwareDecoder {
 //      } else {
 //        for (uint64_t i = 0; i < leftOverFromLastBatch_; i++) {
 //          T val =
-//              *(static_cast<const T*>(static_cast<const void*>(inputBuffer_)));
+//              *(static_cast<const T*>(static_cast<const
+//              void*>(inputBuffer_)));
 //          // 0 is passed, 1 is filtered
 //          selectivityVec.setBit(
 //              rowOffset + i, !applyFilter(*filter_.value(), val));
@@ -227,7 +232,8 @@ class FilterAwareDecoder {
 //      } else {
 //        for (uint64_t i = 0; i < leftOverFromLastBatch_; i++) {
 //          T val =
-//              *(static_cast<const T*>(static_cast<const void*>(inputBuffer_)));
+//              *(static_cast<const T*>(static_cast<const
+//              void*>(inputBuffer_)));
 //          // 0 is passed, 1 is filtered
 //          //          selectivityVec.setBit(
 //          //              rowOffset + i, !applyFilter(*filter_.value(), val));
@@ -272,19 +278,20 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
     maxVal_ = (1 << bitWidth_) - 1;
   }
 
-//  virtual void next(
-//      BufferPtr outputBuffer,
-//      BitSet& selectivityVec,
-//      uint64_t numRows) override {
-//    DWIO_ENSURE(
-//        outputBuffer->capacity() >= numRows * sizeof(T) + outputBuffer->size());
-//
-//    if (filter_.has_value()) {
-//      readWithFilter(outputBuffer, numRows, selectivityVec);
-//    } else {
-//      readNoFilter(outputBuffer, numRows);
-//    }
-//  }
+  //  virtual void next(
+  //      BufferPtr outputBuffer,
+  //      BitSet& selectivityVec,
+  //      uint64_t numRows) override {
+  //    DWIO_ENSURE(
+  //        outputBuffer->capacity() >= numRows * sizeof(T) +
+  //        outputBuffer->size());
+  //
+  //    if (filter_.has_value()) {
+  //      readWithFilter(outputBuffer, numRows, selectivityVec);
+  //    } else {
+  //      readNoFilter(outputBuffer, numRows);
+  //    }
+  //  }
 
   virtual void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows)
       override {

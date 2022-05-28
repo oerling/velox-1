@@ -39,7 +39,6 @@ static inline int readInput(
     const void** outputBuf,
     int readBytes,
     dwio::common::LogType logType) {
-
   uint64_t toReadBytes = readBytes;
   DWIO_ENSURE(
       stream->Next(outputBuf, &readBytes),
@@ -60,7 +59,8 @@ static int32_t decodeNulls(
     uint32_t maxDefine,
     BufferPtr defineLevelsBuffer,
     BufferPtr nullsOutBuffer) {
-  const uint8_t* defineLevels = defineLevelsBuffer->template as<const uint8_t>();
+  const uint8_t* defineLevels =
+      defineLevelsBuffer->template as<const uint8_t>();
   auto nullsBuf = nullsOutBuffer->template asMutable<uint8_t>();
 
   // TODO: Work on a fast path

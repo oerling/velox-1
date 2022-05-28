@@ -23,8 +23,10 @@ class ThriftBufferedTransport
   //      : stream_(stream) {}
 
   ThriftBufferedTransport(const void* inputBuf, uint64_t len)
-  : inputBuf_(reinterpret_cast<const uint8_t*>(inputBuf)), size_(len), offset_(0) {}
-  
+      : inputBuf_(reinterpret_cast<const uint8_t*>(inputBuf)),
+        size_(len),
+        offset_(0) {}
+
   uint32_t read(uint8_t* outputBuf, uint32_t len) {
     DWIO_ENSURE(offset_ + len <= size_);
     memcpy(outputBuf, inputBuf_ + offset_, len);

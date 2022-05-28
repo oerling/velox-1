@@ -144,7 +144,6 @@ class NativeParquetReader : public dwio::common::Reader {
   std::shared_ptr<ReaderBase> readerBase_;
 };
 
-
 class NativeParquetReaderFactory : public dwio::common::ReaderFactory {
  public:
   NativeParquetReaderFactory()

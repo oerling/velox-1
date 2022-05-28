@@ -16,8 +16,8 @@
 
 #include <folly/init/Init.h>
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
-#include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "velox/dwio/parquet/reader/NativeParquetReader.h"
+#include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/type/tests/FilterBuilder.h"
@@ -41,15 +41,15 @@ class ParquetTableScanTest : public HiveConnectorTestBase {
     HiveConnectorTestBase::TearDown();
   }
 
-//  void SetUp() override {
-//    HiveConnectorTestBase::SetUp();
-//    parquet::registerParquetReaderFactory();
-//  }
-//
-//  void TearDown() override {
-//    parquet::unregisterParquetReaderFactory();
-//    HiveConnectorTestBase::TearDown();
-//  }
+  //  void SetUp() override {
+  //    HiveConnectorTestBase::SetUp();
+  //    parquet::registerParquetReaderFactory();
+  //  }
+  //
+  //  void TearDown() override {
+  //    parquet::unregisterParquetReaderFactory();
+  //    HiveConnectorTestBase::TearDown();
+  //  }
 
   void assertSelect(
       std::vector<std::string>&& outputColumnNames,

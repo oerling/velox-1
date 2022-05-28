@@ -411,8 +411,8 @@ std::shared_ptr<const RowType> ReaderBase::createRowType(
 NativeParquetRowReader::NativeParquetRowReader(
     const std::shared_ptr<ReaderBase>& readerBase,
     const dwio::common::RowReaderOptions& options)
-  : pool_(readerBase->getMemoryPool()),
-    readerBase_(readerBase),
+    : pool_(readerBase->getMemoryPool()),
+      readerBase_(readerBase),
       options_(options),
       rowGroups_(readerBase_->getFileMetaData().row_groups),
       currentRowGroupIdsIdx_(0),

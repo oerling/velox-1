@@ -8,8 +8,8 @@
 
 #include <iosfwd>
 
-#include <thrift/Thrift.h>
 #include <thrift/TApplicationException.h>
+#include <thrift/Thrift.h>
 
 #include <thrift/protocol/TProtocol.h>
 #include <thrift/transport/TTransport.h>
@@ -3727,6 +3727,4 @@ void swap(FileCryptoMetaData& a, FileCryptoMetaData& b);
 
 std::ostream& operator<<(std::ostream& out, const FileCryptoMetaData& obj);
 
-} // namespace thrift
-
-
+} // namespace facebook::velox::parquet

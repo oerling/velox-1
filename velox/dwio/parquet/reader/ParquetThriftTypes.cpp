@@ -7809,4 +7809,4 @@ void FileCryptoMetaData::printTo(std::ostream& out) const {
   (__isset.key_metadata ? (out << to_string(key_metadata)) : (out << "<null>"));
   out << ")";
 }
-} // namespace
+} // namespace facebook::velox::parquet

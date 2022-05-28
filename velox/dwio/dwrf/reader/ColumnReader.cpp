@@ -130,7 +130,7 @@ void ColumnReader::readNulls(
       reinterpret_cast<char*>(nullsPtr), numValues, incomingNulls);
 }
 //
-//ColumnReader::ColumnReader(
+// ColumnReader::ColumnReader(
 //    memory::MemoryPool& memoryPool,
 //    std::shared_ptr<const dwio::common::TypeWithId> nodeType)
 //    : nodeType_(std::move(nodeType)),

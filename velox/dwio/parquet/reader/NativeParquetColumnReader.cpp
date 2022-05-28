@@ -386,7 +386,7 @@ ParquetLeafColumnReader::getPageStream(
 bool ParquetLeafColumnReader::canNotHaveNull() {
   if (maxDefine_ == 0 ||
       (columnChunkStats_ != nullptr && columnChunkStats_->__isset.null_count &&
-      columnChunkStats_->null_count == 0) ||
+       columnChunkStats_->null_count == 0) ||
       // TODO: confirm columnMetaData_->num_values doesn't contain nulls
       columnMetaData_->num_values == currentRowGroup_->num_rows) {
     return true;
@@ -493,8 +493,8 @@ void ParquetVisitorIntegerColumnReader::read(
       bool isDense = rowsBatch.back() == rowsBatch.size() - 1;
       // TODO: Why assign to alwaysTrue since it'll be checked again in
       // fixedWidthScan?
-      common::Filter* filter = scanSpec_->filter() ? scanSpec_->filter()
-          : &dwrf::alwaysTrue();
+      common::Filter* filter =
+          scanSpec_->filter() ? scanSpec_->filter() : &dwrf::alwaysTrue();
       if (scanSpec_->keepValues()) {
         if (scanSpec_->valueHook()) {
           // Not implemented

@@ -64,9 +64,9 @@ class ColumnReader {
   FlatMapContext flatMapContext_;
 
  public:
-//  ColumnReader(
-//      memory::MemoryPool& memoryPool,
-//      std::shared_ptr<const dwio::common::TypeWithId> nodeId);
+  //  ColumnReader(
+  //      memory::MemoryPool& memoryPool,
+  //      std::shared_ptr<const dwio::common::TypeWithId> nodeId);
 
   ColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeId,

@@ -64,8 +64,8 @@ class ParquetReaderBenchmark {
 
     uint64_t total = 0;
     uint64_t count = 0;
-    VectorPtr result =
-        BaseVector::create(reader_.rowType(), 0, &readerOptions_.getMemoryPool());
+    VectorPtr result = BaseVector::create(
+        reader_.rowType(), 0, &readerOptions_.getMemoryPool());
 
     suspender.dismiss();
     for (int i = 0; i < 1; i++) {

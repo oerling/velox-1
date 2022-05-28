@@ -13,8 +13,7 @@
 # limitations under the License.
 
 find_library(THRIFTLIB thrift})
-MESSAGE("Found Thrift lib: ${THRIFTLIB} ")
-
+message("Found Thrift lib: ${THRIFTLIB} ")
 
 add_subdirectory(reader)
 

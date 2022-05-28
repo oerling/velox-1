@@ -124,7 +124,13 @@ class BinaryColumnStatistics : public virtual ColumnStatistics {
       std::optional<uint64_t> rawSize,
       std::optional<uint64_t> size,
       std::optional<uint64_t> length)
-      : ColumnStatistics(valueCount, distinctValueCount, nullCount, hasNull, rawSize, size),
+      : ColumnStatistics(
+            valueCount,
+            distinctValueCount,
+            nullCount,
+            hasNull,
+            rawSize,
+            size),
         length_(length) {}
 
   BinaryColumnStatistics(
@@ -168,7 +174,13 @@ class BooleanColumnStatistics : public virtual ColumnStatistics {
       std::optional<uint64_t> rawSize,
       std::optional<uint64_t> size,
       std::optional<uint64_t> trueCount)
-      : ColumnStatistics(valueCount, distinctValueCount, nullCount, hasNull, rawSize, size),
+      : ColumnStatistics(
+            valueCount,
+            distinctValueCount,
+            nullCount,
+            hasNull,
+            rawSize,
+            size),
         trueCount_(trueCount) {}
 
   BooleanColumnStatistics(
@@ -224,7 +236,13 @@ class DoubleColumnStatistics : public virtual ColumnStatistics {
       std::optional<double> min,
       std::optional<double> max,
       std::optional<double> sum)
-      : ColumnStatistics(valueCount, distinctValueCount, nullCount, hasNull, rawSize, size),
+      : ColumnStatistics(
+            valueCount,
+            distinctValueCount,
+            nullCount,
+            hasNull,
+            rawSize,
+            size),
         min_(min),
         max_(max),
         sum_(sum) {}
@@ -296,7 +314,13 @@ class IntegerColumnStatistics : public virtual ColumnStatistics {
       std::optional<int64_t> min,
       std::optional<int64_t> max,
       std::optional<int64_t> sum)
-      : ColumnStatistics(valueCount, distinctValueCount, nullCount, hasNull, rawSize, size),
+      : ColumnStatistics(
+            valueCount,
+            distinctValueCount,
+            nullCount,
+            hasNull,
+            rawSize,
+            size),
         min_(min),
         max_(max),
         sum_(sum) {}
@@ -368,7 +392,13 @@ class StringColumnStatistics : public virtual ColumnStatistics {
       std::optional<std::string> min,
       std::optional<std::string> max,
       std::optional<int64_t> length)
-      : ColumnStatistics(valueCount, distinctValueCount, nullCount, hasNull, rawSize, size),
+      : ColumnStatistics(
+            valueCount,
+            distinctValueCount,
+            nullCount,
+            hasNull,
+            rawSize,
+            size),
         min_(min),
         max_(max),
         length_(length) {}

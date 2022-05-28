@@ -298,7 +298,8 @@ bool testFilters(
       } else {
         const auto& typeWithId = fileTypeWithId->childByName(name);
         auto columnStats = reader->columnStatistics(typeWithId->id);
-        if (columnStats != nullptr && !testFilter(
+        if (columnStats != nullptr &&
+            !testFilter(
                 child->filter(),
                 columnStats.get(),
                 totalRows.value(),

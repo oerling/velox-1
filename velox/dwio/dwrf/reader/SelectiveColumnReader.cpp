@@ -62,9 +62,9 @@ SelectiveColumnReader::SelectiveColumnReader(
     const TypePtr& type,
     FlatMapContext flatMapContext)
     : ColumnReader(memoryPool, std::move(requestedType)),
-    scanSpec_(scanSpec),
-    type_{type},
-    rowsPerRowGroup_{static_cast<uint32_t>(-1)} {
+      scanSpec_(scanSpec),
+      type_{type},
+      rowsPerRowGroup_{static_cast<uint32_t>(-1)} {
   EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
 }
 

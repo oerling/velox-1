@@ -33,19 +33,19 @@ const T load(const char* ptr) {
 template <typename T>
 static std::optional<T> getMin(const Statistics& columnChunkStats) {
   return columnChunkStats.__isset.min_value
-  ? load<T>(columnChunkStats.min_value.c_str())
-  : (columnChunkStats.__isset.min
-  ? std::optional<T>(load<T>(columnChunkStats.min.c_str()))
-  : std::nullopt);
+      ? load<T>(columnChunkStats.min_value.c_str())
+      : (columnChunkStats.__isset.min
+             ? std::optional<T>(load<T>(columnChunkStats.min.c_str()))
+             : std::nullopt);
 }
 
 template <typename T>
 static std::optional<T> getMax(const Statistics& columnChunkStats) {
   return columnChunkStats.__isset.max_value
-  ? std::optional<T>(load<T>(columnChunkStats.max_value.c_str()))
-  : (columnChunkStats.__isset.max
-  ? std::optional<T>(load<T>(columnChunkStats.max.c_str()))
-  : std::nullopt);
+      ? std::optional<T>(load<T>(columnChunkStats.max_value.c_str()))
+      : (columnChunkStats.__isset.max
+             ? std::optional<T>(load<T>(columnChunkStats.max.c_str()))
+             : std::nullopt);
 }
 
 std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
@@ -140,7 +140,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
           hasNull,
           std::nullopt,
           std::nullopt);
-
   }
 }
 

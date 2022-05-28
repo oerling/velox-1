@@ -15,13 +15,13 @@
  */
 
 #include "velox/dwio/parquet/reader/ParquetReader.h"
+#include "ParquetReaderTest.h"
 #include "velox/dwio/dwrf/test/utils/DataFiles.h"
 #include "velox/type/Filter.h"
 #include "velox/type/Type.h"
 #include "velox/type/tests/FilterBuilder.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/tests/VectorMaker.h"
-#include "ParquetReaderTest.h"
 
 #include <fmt/core.h>
 #include <gtest/gtest.h>
