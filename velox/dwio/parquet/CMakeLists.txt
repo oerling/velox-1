@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+find_library(THRIFTLIB thrift})
+MESSAGE("Found Thrift lib: ${THRIFTLIB} ")
 
-SET (THRIFT_LIB_DIR "/usr/local/lib")
-find_library(THRIFTLIB thrift PATHS ${THRIFT_LIB_DIR})
-MESSAGE("Found Thrift lib: ${THRIFTLIB} at ${THRIFT_LIB_DIR}")
 
 add_subdirectory(reader)
 

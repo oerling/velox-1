@@ -1,4 +1,4 @@
-Git diff# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,11 +16,10 @@ Git diff# Copyright (c) Facebook, Inc. and its affiliates.
 BUILD_BASE_DIR=_build
 BUILD_DIR=release
 BUILD_TYPE=Release
-
 BENCHMARKS_BASIC_DIR=$(BUILD_BASE_DIR)/$(BUILD_DIR)/velox/benchmarks/basic/
 BENCHMARKS_DUMP_DIR=dumps
-TREAT_WARNINGS_AS_ERRORS ?= 0
-ENABLE_WALL ?= 0
+TREAT_WARNINGS_AS_ERRORS ?= 1
+ENABLE_WALL ?= 1
 
 # Option to make a minimal build. By default set to "OFF"; set to
 # "ON" to only build a minimal set of components. This may override
@@ -36,6 +35,11 @@ CMAKE_FLAGS += -DENABLE_ALL_WARNINGS=${ENABLE_WALL}
 
 CMAKE_FLAGS += -DVELOX_BUILD_MINIMAL=${VELOX_BUILD_MINIMAL}
 CMAKE_FLAGS += -DVELOX_BUILD_TESTING=${VELOX_BUILD_TESTING}
+
+CMAKE_FLAGS+= -DVELOX_ENABLE_DUCKDB=ON
+CMAKE_FLAGS+= -DVELOX_ENABLE_TPCH_CONNECTOR=ON
+CMAKE_FLAGS+= -DVELOX_ENABLE_PARQUET=ON
+
 
 CMAKE_FLAGS += -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
@@ -67,13 +71,14 @@ clean:					#: Delete all build artifacts
 
 cmake:					#: Use CMake to create a Makefile build system
 	mkdir -p $(BUILD_BASE_DIR)/$(BUILD_DIR) && \
-	cmake -B \
-		"$(BUILD_BASE_DIR)/$(BUILD_DIR)" \
+	cmake \
 		${CMAKE_FLAGS} \
 		$(GENERATOR) \
 		$(USE_CCACHE) \
 		$(FORCE_COLOR) \
-		${EXTRA_CMAKE_FLAGS}
+		${EXTRA_CMAKE_FLAGS} \
+		-B "$(BUILD_BASE_DIR)/$(BUILD_DIR)" 
+
 
 build:					#: Build the software based in BUILD_DIR and BUILD_TYPE variables
 	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j ${NUM_THREADS}

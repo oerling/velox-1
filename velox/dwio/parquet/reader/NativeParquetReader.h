@@ -67,8 +67,6 @@ class ReaderBase {
   const bool binaryAsString = false;
 };
 
-//------------------------NativeParquetRowReader--------------------------------
-
 class NativeParquetRowReader : public dwio::common::RowReader {
  public:
   NativeParquetRowReader(
@@ -108,8 +106,6 @@ class NativeParquetRowReader : public dwio::common::RowReader {
   RowTypePtr requestedType_;
 };
 
-//-----------------------NativeParquetReader------------------------------------
-
 class NativeParquetReader : public dwio::common::Reader {
  public:
   NativeParquetReader(
@@ -148,7 +144,6 @@ class NativeParquetReader : public dwio::common::Reader {
   std::shared_ptr<ReaderBase> readerBase_;
 };
 
-//----------------------NativeParquetReaderFactory------------------------------
 
 class NativeParquetReaderFactory : public dwio::common::ReaderFactory {
  public:

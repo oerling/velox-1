@@ -385,8 +385,8 @@ ParquetLeafColumnReader::getPageStream(
 
 bool ParquetLeafColumnReader::canNotHaveNull() {
   if (maxDefine_ == 0 ||
-      columnChunkStats_ != nullptr && columnChunkStats_->__isset.null_count &&
-          columnChunkStats_->null_count == 0 ||
+      (columnChunkStats_ != nullptr && columnChunkStats_->__isset.null_count &&
+      columnChunkStats_->null_count == 0) ||
       // TODO: confirm columnMetaData_->num_values doesn't contain nulls
       columnMetaData_->num_values == currentRowGroup_->num_rows) {
     return true;

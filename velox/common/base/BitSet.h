@@ -26,9 +26,9 @@ namespace facebook::velox {
 class BitSet {
  public:
   BitSet(int64_t min, int64_t initialSize)
-      : min_(min),
-        lastSetBit_(initialSize),
-        bits_(ceil(initialSize / 64E1), 0) {}
+      : bits_(ceil(initialSize / 64E1), 0),
+        min_(min),
+        lastSetBit_(initialSize) {}
   // Constructs a bitSet. 'min' is the lowest possible member of the
   // set. Values below this are not present and inserting these is a
   // no-op. 'min' is used when using this as an IN predicate filter.
@@ -109,7 +109,7 @@ class BitSet {
     reset();
   }
 
-  bool operator[] (size_t pos) const {
+  bool operator[](size_t pos) const {
     // TODO:
     return true;
   }

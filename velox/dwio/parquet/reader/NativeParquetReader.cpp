@@ -411,14 +411,14 @@ std::shared_ptr<const RowType> ReaderBase::createRowType(
 NativeParquetRowReader::NativeParquetRowReader(
     const std::shared_ptr<ReaderBase>& readerBase,
     const dwio::common::RowReaderOptions& options)
-    : readerBase_(readerBase),
+  : pool_(readerBase->getMemoryPool()),
+    readerBase_(readerBase),
       options_(options),
       rowGroups_(readerBase_->getFileMetaData().row_groups),
       currentRowGroupIdsIdx_(0),
       currentRowGroupPtr_(&rowGroups_[currentRowGroupIdsIdx_]),
       rowsInCurrentRowGroup_(currentRowGroupPtr_->num_rows),
-      currentRowInGroup_(rowsInCurrentRowGroup_),
-      pool_(readerBase->getMemoryPool()) {
+      currentRowInGroup_(rowsInCurrentRowGroup_) {
   auto& selector = *options.getSelector();
   requestedType_ = selector.buildSelectedReordered();
 

@@ -233,7 +233,9 @@ class ParquetVisitorIntegerColumnReader : public ParquetLeafColumnReader {
       : ParquetLeafColumnReader(dataType, scanSpec, pool, input) {}
 
   //  virtual void initializeRowGroup(const RowGroup& rowGroup) override;
-  uint64_t skip(uint64_t numRows) override {}
+  uint64_t skip(uint64_t numRows) override {
+    VELOX_NYI();
+  }
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
@@ -282,7 +284,7 @@ class ParquetStructColumnReader : public ParquetColumnReader {
         selectivityVec_(0) {
     auto& childSpecs = scanSpec->children();
     for (auto i = 0; i < childSpecs.size(); ++i) {
-//      auto childSpec = childSpecs[i];
+      //      auto childSpec = childSpecs[i];
       if (childSpecs[i]->isConstant()) {
         continue;
       }
