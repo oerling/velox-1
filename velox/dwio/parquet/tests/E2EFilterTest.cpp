@@ -15,10 +15,11 @@
  */
 
 #include "velox/dwio/dwrf/test/E2EFilterTestBase.h"
-#include "velox/dwio/parquet/Writer.h"
+#include "velox/dwio/parquet/writer/Writer.h"
 
 using namespace facebook::velox::dwio::dwrf;
 using namespace facebook::velox::dwrf;
+using namespace facebook::velox::parquet;
 using namespace facebook::velox;
 using namespace facebook::velox::common;
 
@@ -33,7 +34,7 @@ class E2EFilterTest : public E2EFilterTestBase {
       bool forRowGroupSkip) override {
     auto sink = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
     sinkPtr_ = sink.get();
-    writer_ = std::make_unique<Writer>(options, std::move(sink), *pool_);
+    writer_ = std::make_unique<parquet::Writer>(sink.get(), 10000, 100000000);
     for (auto& batch : batches) {
       writer_->write(batch);
     }
@@ -46,7 +47,7 @@ class E2EFilterTest : public E2EFilterTestBase {
     return std::make_unique<DwrfReader>(opts, std::move(input));
   }
 
-  std::unique_ptr<Writer> writer_;
+  std::unique_ptr<velox::parquet::Writer> writer_;
 };
 
 TEST_F(E2EFilterTest, integerDirect) {

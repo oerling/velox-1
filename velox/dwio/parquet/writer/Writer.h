@@ -18,17 +18,29 @@
 #include <parquet/api/writer.h>
 
 namespace facebook::velox::parquet {
-  class Writer {
-    public:
-    Writer(const std::string& path, int32_t stripesize);
+class Writer {
+ public:
+  Writer(
+	 dwio::common::DataSink* FOLLY_NONNULL sink,
+      int32_t rowsInRowGroup,
+      int64_t bytesInRowGroup)
+    : rowsInRowGroup_(rowsInRowGroup),
+    bytesInRowGroup_(bytesInRowGroup),
+    sink_(sink) {}
 
-    void append(const RowVectorPtr& data);
-    
-  private:
-    std::unique_ptr<::parquet::parquetFilewriter> fileWriter_; 
-    
-  };
-  
+      void append(const RowVectorPtr& data);
+  void close();
 
-}
+ private:
+  const int32_t rowsInRowGroup_;
+  const int32_t bytesInRowGroup_{0};
+  int32_t rowsInCurrentGroup_{0};
+  dwio::common::DataSink* sink_;
+  std::shared_ptr<arrow::io::OutputStream> stream_;
+  std::shared_ptr<::parquet::schema::GroupNode> root_;
+  std::vector<::parquet::ColumnWriter*> columnWriters_;
+  ::parquet::RowGroupWriter* rowGroupWriter_{nullptr};
+  std::unique_ptr<::parquet::ParquetFileWriter> fileWriter_;
+};
 
+} // namespace facebook::velox::parquet
