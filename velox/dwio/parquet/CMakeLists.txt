@@ -11,6 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+include(ExternalProject)
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/home/oerling/arrow/cpp//cmake_modules")
+
+find_package(Parquet REQUIRED)
 
 add_subdirectory(reader)
 add_subdirectory(writer)

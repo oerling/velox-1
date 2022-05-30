@@ -17,6 +17,7 @@
 // This file is a drop-in copy of Arrow's C Data Interface, as defined in:
 //   https://arrow.apache.org/docs/format/CDataInterface.html
 
+#ifndef ARROW_FLAG_DICTIONARY_ORDERED
 #pragma once
 
 #include <stdint.h>
@@ -105,3 +106,4 @@ struct ArrowArrayStream {
 #ifdef __cplusplus
 }
 #endif
+#endif // ARROW_FLAG_DICTIONARY_ORDERED

@@ -82,7 +82,7 @@ add_test(velox_parquet_e2e_filter_test velox_dwrf_e2e_filter_test)
 target_link_libraries(
   velox_parquet_e2e_filter_test
   velox_e2e_filter_test_base
-${ARROW}
+velox_dwio_parquet_writer
   ${LZ4}
   ${LZO}
   ${ZSTD}

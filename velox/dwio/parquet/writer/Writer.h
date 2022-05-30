@@ -13,34 +13,84 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include <parquet/api/writer.h>
+#include "velox/dwio/common/DataBuffer.h"
+#include "velox/dwio/common/DataSink.h"
+
+#include "velox/vector/ComplexVector.h"
+
+#include <parquet/arrow/writer.h>
+
 
 namespace facebook::velox::parquet {
+
+class DataBufferSink : public arrow::io::OutputStream {
+public:
+  DataBufferSink(memory::MemoryPool& pool) : buffer_(pool) {}
+
+  arrow::Status Write(const std::shared_ptr<arrow::Buffer>& data) {
+    buffer_.append(buffer_.size(), reinterpret_cast<const char*>(data->data()), data->size());
+  return arrow::Status::OK();
+}
+
+  arrow::Status Write(const void* data, int64_t nbytes) override {
+    buffer_.append(buffer_.size(), reinterpret_cast<const char*>(data), nbytes);
+    return arrow::Status::OK();
+  }
+  
+  
+  arrow::Status Flush() override {
+    return arrow::Status::OK();
+  }
+
+  arrow::Status Write(arrow::util::string_view data) {
+    buffer_.append(buffer_.size(), data.data(), data.size());
+    return arrow::Status::OK();
+  }
+
+  arrow::Result<int64_t> Tell() const override {
+    return buffer_.size();
+  }
+  
+  arrow::Status Close() override {
+				  return arrow::Status::OK();
+  }
+
+  bool closed() const override {
+    return false;
+  }
+  
+  dwio::common::DataBuffer<char>& dataBuffer() {
+    return buffer_;
+  }
+
+ private:
+  dwio::common::DataBuffer<char> buffer_;
+};
+
 class Writer {
  public:
   Writer(
-	 dwio::common::DataSink* FOLLY_NONNULL sink,
-      int32_t rowsInRowGroup,
-      int64_t bytesInRowGroup)
-    : rowsInRowGroup_(rowsInRowGroup),
-    bytesInRowGroup_(bytesInRowGroup),
-    sink_(sink) {}
+      dwio::common::DataSink*FOLLY_NONNULL  sink,
+      memory::MemoryPool& pool,
+      int32_t rowsInRowGroup)
+      : rowsInRowGroup_(rowsInRowGroup),
+	pool_(pool),
+        finalSink_(sink) {}
 
-      void append(const RowVectorPtr& data);
+  void write(const RowVectorPtr& data);
   void close();
 
  private:
+  
   const int32_t rowsInRowGroup_;
-  const int32_t bytesInRowGroup_{0};
   int32_t rowsInCurrentGroup_{0};
-  dwio::common::DataSink* sink_;
-  std::shared_ptr<arrow::io::OutputStream> stream_;
-  std::shared_ptr<::parquet::schema::GroupNode> root_;
-  std::vector<::parquet::ColumnWriter*> columnWriters_;
-  ::parquet::RowGroupWriter* rowGroupWriter_{nullptr};
-  std::unique_ptr<::parquet::ParquetFileWriter> fileWriter_;
+  memory::MemoryPool& pool_;
+  dwio::common::DataSink* finalSink_;
+  std::shared_ptr<DataBufferSink> stream_;
+  std::unique_ptr<::parquet::arrow::FileWriter> arrowWriter_;
 };
 
 } // namespace facebook::velox::parquet
