@@ -36,6 +36,11 @@ CMAKE_FLAGS += -DENABLE_ALL_WARNINGS=${ENABLE_WALL}
 CMAKE_FLAGS += -DVELOX_BUILD_MINIMAL=${VELOX_BUILD_MINIMAL}
 CMAKE_FLAGS += -DVELOX_BUILD_TESTING=${VELOX_BUILD_TESTING}
 
+CMAKE_FLAGS+= -DVELOX_ENABLE_DUCKDB=ON
+CMAKE_FLAGS+= -DVELOX_ENABLE_TPCH_CONNECTOR=ON
+CMAKE_FLAGS+= -DVELOX_ENABLE_PARQUET=ON
+
+
 CMAKE_FLAGS += -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 ifdef AWSSDK_ROOT_DIR
@@ -66,13 +71,14 @@ clean:					#: Delete all build artifacts
 
 cmake:					#: Use CMake to create a Makefile build system
 	mkdir -p $(BUILD_BASE_DIR)/$(BUILD_DIR) && \
-	cmake -B \
-		"$(BUILD_BASE_DIR)/$(BUILD_DIR)" \
+	cmake \
 		${CMAKE_FLAGS} \
 		$(GENERATOR) \
 		$(USE_CCACHE) \
 		$(FORCE_COLOR) \
-		${EXTRA_CMAKE_FLAGS}
+		${EXTRA_CMAKE_FLAGS} \
+		-B "$(BUILD_BASE_DIR)/$(BUILD_DIR)" 
+
 
 build:					#: Build the software based in BUILD_DIR and BUILD_TYPE variables
 	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j ${NUM_THREADS}

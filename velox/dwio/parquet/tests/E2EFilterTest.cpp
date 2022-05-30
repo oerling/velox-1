@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/test/E2EFilterTestBase.h"
 #include "velox/dwio/parquet/writer/Writer.h"
+#include "velox/dwio/parquet/reader/NativeParquetReader.h"
 
 using namespace facebook::velox::dwio::dwrf;
 using namespace facebook::velox::dwrf;
@@ -44,7 +45,7 @@ class E2EFilterTest : public E2EFilterTestBase {
   std::unique_ptr<dwio::common::Reader> makeReader(
       const dwio::common::ReaderOptions& opts,
       std::unique_ptr<dwio::common::InputStream> input) override {
-    return std::make_unique<DwrfReader>(opts, std::move(input));
+    return std::make_unique<NativeParquetReader>(std::move(input), opts);
   }
 
   std::unique_ptr<facebook::velox::parquet::Writer> writer_;

@@ -17,9 +17,14 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/home/oerling/arrow/cpp//cmake_modul
 
 find_package(Parquet REQUIRED)
 
+find_library(THRIFTLIB thrift)
+message("Found Thrift lib: ${THRIFTLIB} ")
+
 add_subdirectory(reader)
 add_subdirectory(writer)
 
+
+message(STATUS "VELOX_BUILD_TESTING: ${VELOX_BUILD_TESTING}")
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
