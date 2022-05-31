@@ -237,3 +237,16 @@ TEST_F(E2EFilterTest, lazyStruct) {
       true,
       false);
 }
+
+TEST_F(E2EFilterTest, filterStruct) {
+  testWithTypes(
+      "long_val:bigint,"
+      "outer_struct: struct<nested1:bigint, "
+      "inner_struct: struct<nested2: bigint>>",
+      [&]() {},
+      true,
+      {"long_val", "outer_struct.inner_struct", "outer_struct.nested1", "outer_struct.inner_struct.nested2"},
+      10,
+      true,
+      false);
+}
