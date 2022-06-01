@@ -35,7 +35,8 @@ class E2EFilterTest : public E2EFilterTestBase {
       bool forRowGroupSkip) override {
     auto sink = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
     sinkPtr_ = sink.get();
-    writer_ = std::make_unique<facebook::velox::parquet::Writer>(sink.get(), *pool_, 10000);
+
+    writer_ = std::make_unique<facebook::velox::parquet::Writer>(std::move(sink), *pool_, 10000);
     for (auto& batch : batches) {
       writer_->write(batch);
     }

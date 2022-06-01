@@ -41,7 +41,6 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
   uint32_t maxDefine_;
 };
 
-//-----------------------ParquetColumnInfo-----------------------------
 
 class Dictionary {
  public:
@@ -52,10 +51,6 @@ class Dictionary {
   uint32_t size_;
 };
 
-//-----------------------ParquetColumnReader-----------------------------
-
-// TODO: move ColumnReader out of dwrf, and extract common functions to
-// common::SelectiveColumnReader
 class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
  public:
   ParquetColumnReader(
@@ -77,8 +72,6 @@ class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
         rowsInRowGroup_(-1) {}
 
   static std::unique_ptr<ParquetColumnReader> build(
-      //    const std::shared_ptr<const ParquetTypeWithId::TypeWithId>&
-      //    requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       common::ScanSpec* scanSpec,
       dwrf::BufferedInput& input,
@@ -87,27 +80,6 @@ class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
   virtual bool filterMatches(const RowGroup& rowGroup) = 0;
   virtual void initializeRowGroup(const RowGroup& rowGroup);
 
-  /**
-   * Read the next group of values into a RowVector.
-   * @param numRows the number of values to read
-   * @param vector to read into
-   */
-  //  virtual void next(
-  //      uint64_t /*numRows*/,
-  //      VectorPtr& /*result*/,
-  //      const uint64_t* /*incomingNulls*/) override {
-  //    VELOX_UNSUPPORTED("next() is only defined in
-  //    ParquetStructColumnReader");
-  //  }
-
-  //  virtual void read(BitSet& selectivityVec) = 0;
-  //  virtual void read(
-  //      vector_size_t
-  //      offset,ParquetReaderTest.cppParquetReaderTest.cppParquetReaderTest.cpp
-  //      RowSet rows,
-  //      const uint64_t* incomingNulls) override = 0;
-
-  //  virtual void getValues(BitSet& selectivityVec, VectorPtr* result) = 0;
 
  protected:
   dwrf::BufferedInput& input_;
@@ -122,7 +94,6 @@ class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
   int64_t numReads_ = 0;
 };
 
-//--------------------ParquetLeafColumnReader--------------------------
 
 class ParquetLeafColumnReader : public ParquetColumnReader {
  public:
@@ -135,7 +106,6 @@ class ParquetLeafColumnReader : public ParquetColumnReader {
         chunkReadOffset_(0),
         remainingRowsInPage_(0),
         dictionary_(nullptr) {
-    //    pageReader_ = std::make_unique<ParquetPageReader>();
   }
 
  protected:
@@ -176,50 +146,6 @@ class ParquetLeafColumnReader : public ParquetColumnReader {
   //  BufferPtr values_; // output buffer
   //  void* rawValues_ = nullptr; // Writable content in 'values_'
 };
-
-//--------------------ParquetIntegerColumnReader--------------------------
-//
-// template <typename T>
-// class ParquetIntegerColumnReader : public ParquetLeafColumnReader {
-// public:
-//  ParquetIntegerColumnReader(
-//      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-//      common::ScanSpec* scanSpec,
-//      memory::MemoryPool& pool,
-//      const RowGroup& rowGroup,
-//      dwrf::BufferedInput& input)
-//      : ParquetLeafColumnReader(dataType, scanSpec, pool, input),
-//        valueSize_(sizeof(T)) {
-//    //  initializeRowGroup(rowGroup);
-//  }
-//
-//  virtual uint64_t skip(uint64_t numRows) override;
-//  //  virtual void read(BitSet& selectivityVec) override;
-//  virtual void read(
-//      vector_size_t offset,
-//      RowSet rows,
-//      const uint64_t* incomingNulls) override;
-//
-//  //  virtual void getValues(BitSet& selectivityVec, VectorPtr* result)
-//  //  override;
-//  virtual void getValues(RowSet rows, VectorPtr* result) override {
-//    // Not implemented
-//  }
-//
-// private:
-//  virtual void prepareRead(RowSet& rows) override;
-//  virtual int loadDataPage(
-//      const PageHeader& pageHeader,
-//      const Encoding::type& pageEncoding) override;
-//
-// private:
-//  uint32_t valueSize_;
-//  std::unique_ptr<PlainFilterAwareDecoder<T>> valuesDecoder_;
-//
-//  //  uint64_t nullRowsInPage_;
-//};
-
-//-----------------------------------------
 
 class ParquetVisitorIntegerColumnReader : public ParquetLeafColumnReader {
  public:
@@ -271,7 +197,7 @@ class ParquetVisitorIntegerColumnReader : public ParquetLeafColumnReader {
   uint32_t valueSize_;
   std::unique_ptr<dwrf::DirectDecoder</*isSigned*/ true>> valuesDecoder_;
 };
-//--------------------ParquetStructColumnReader--------------------------
+
 
 class ParquetStructColumnReader : public ParquetColumnReader {
  public:

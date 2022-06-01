@@ -419,8 +419,8 @@ NativeParquetRowReader::NativeParquetRowReader(
       currentRowGroupPtr_(&rowGroups_[currentRowGroupIdsIdx_]),
       rowsInCurrentRowGroup_(currentRowGroupPtr_->num_rows),
       currentRowInGroup_(rowsInCurrentRowGroup_) {
-  auto& selector = *options.getSelector();
-  requestedType_ = selector.buildSelectedReordered();
+  //auto& selector = *options.getSelector();
+  //requestedType_ = selector.buildSelectedReordered();
 
   // The filter_ comes from ReaderBase schema too, why compare?
   // Validate the requested type is compatible with what's in the file
@@ -436,8 +436,8 @@ NativeParquetRowReader::NativeParquetRowReader(
     return exceptionMessageContext;
   };
 
-  dwio::common::typeutils::CompatChecker::check(
-      *readerBase_->getSchema(), *requestedType_, true, createExceptionContext);
+  //dwio::common::typeutils::CompatChecker::check(
+  //*readerBase_->getSchema(), *requestedType_, true, createExceptionContext);
 
   if (rowGroups_.empty()) {
     return; // TODO
@@ -445,7 +445,6 @@ NativeParquetRowReader::NativeParquetRowReader(
 
   columnReader_ = ParquetColumnReader::build(
       readerBase_->getSchemaWithId(), // Id is schema id
-      //      rowGroups_[rowGroupIds_[currentRowGroupIdsIdx_]],
       options_.getScanSpec().get(),
       readerBase_->getBufferedInput(),
       pool_);

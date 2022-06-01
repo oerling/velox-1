@@ -17,12 +17,10 @@ namespace facebook::velox::parquet {
 
 std::unique_ptr<ParquetColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    //    const RowGroup& rowGroup,
     common::ScanSpec* scanSpec,
     dwrf::BufferedInput& input,
     memory::MemoryPool& pool) {
   auto colName = scanSpec->fieldName();
-  //  uint32_t colIdx = dataType->getChildIdx(colName);
 
   switch (dataType->type->kind()) {
     case TypeKind::INTEGER:
@@ -63,7 +61,6 @@ void ParquetColumnReader::initializeRowGroup(const RowGroup& rowGroup) {
   //      "Only inlined data files are supported (no references)");
 }
 
-//-------------------------ParquetLeafColumnReader--------------------
 
 bool ParquetLeafColumnReader::filterMatches(const RowGroup& rowGroup) {
   bool matched = true;
@@ -411,7 +408,6 @@ bool ParquetLeafColumnReader::canNotHaveNull() {
 //
 //}
 
-//-------------------------ParquetVisitorIntegerColumnReader-------------------
 namespace {
 int32_t sizeOfIntKind(TypeKind kind) {
   switch (kind) {
@@ -615,7 +611,6 @@ int ParquetVisitorIntegerColumnReader::loadDataPage(
     case Encoding::PLAIN:
       valuesDecoder_ = std::make_unique<dwrf::DirectDecoder<true>>(
           std::move(stream), false, pageHeader.uncompressed_page_size);
-      //          (buf, readBytes, scanSpec_->filter());
       break;
     default:
       throw std::runtime_error("Unsupported page encoding");
@@ -624,60 +619,8 @@ int ParquetVisitorIntegerColumnReader::loadDataPage(
   // hack:
   return pageHeader.compressed_page_size;
 }
-//
-// template <bool isDense>
-// void ParquetVisitorIntegerColumnReader::processValueHook(
-//    RowSet rows,
-//    ValueHook* hook) {
-//  switch (hook->kind()) {
-//    case AggregationHook::kSumBigintToBigint:
-//      readHelper<common::AlwaysTrue, isDense>(
-//          &Filters::alwaysTrue,
-//          rows,
-//          ExtractToHook<SumHook<int64_t, int64_t>>(hook));
-//      break;
-//    case AggregationHook::kBigintMax:
-//      readHelper<common::AlwaysTrue, isDense>(
-//          &Filters::alwaysTrue,
-//          rows,
-//          ExtractToHook<MinMaxHook<int64_t, false>>(hook));
-//      break;
-//    case AggregationHook::kBigintMin:
-//      readHelper<common::AlwaysTrue, isDense>(
-//          &Filters::alwaysTrue,
-//          rows,
-//          ExtractToHook<MinMaxHook<int64_t, true>>(hook));
-//      break;
-//    default:
-//      readHelper<common::AlwaysTrue, isDense>(
-//          &Filters::alwaysTrue, rows, ExtractToGenericHook(hook));
-//  }
-//}
 
-//--------------------------ParquetStructColumnReader----------------------
 
-// ParquetStructColumnReader::ParquetStructColumnReader(
-//     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-//     common::ScanSpec* scanSpec,
-//     memory::MemoryPool& pool,
-//     const RowGroup& rowGroup,
-//     dwrf::BufferedInput& input)
-//     : ParquetColumnReader(dataType, scanSpec, pool, rowGroup, input),
-//       selectivityVec_(0) {
-//   auto& childSpecs = scanSpec->children();
-//   for (auto i = 0; i < childSpecs.size(); ++i) {
-//     auto childSpec = childSpecs[i].get();
-//     if (childSpec->isConstant()) {
-//       continue;
-//     }
-//     auto childDataType = nodeType_->childByName(childSpec->fieldName());
-//     //    VELOX_CHECK(selector->shouldReadNode(childDataType->id));
-//
-//     children_.push_back(ParquetColumnReader::build(
-//         childDataType, rowGroup, childSpec, input_, memoryPool_));
-//     childSpec->setSubscript(children_.size() - 1);
-//   }
-// }
 bool ParquetStructColumnReader::filterMatches(const RowGroup& rowGroup) {
   bool matched = true;
 
@@ -767,9 +710,6 @@ void ParquetStructColumnReader::next(
     }
     read(readOffset_, rows_, nullptr);
     getValues(outputRows(), &result);
-    //    prepareRead(numRows);
-    //    read(selectivityVec_);
-    //    getValues(selectivityVec_, &result);
   }
 }
 
@@ -780,45 +720,6 @@ void facebook::velox::parquet::ParquetStructColumnReader::prepareRead(
   numReads_ = scanSpec_->newRead();
 } // namespace facebook::velox::parquet
 
-// void ParquetStructColumnReader::read(BitSet& selectivityVec) {
-//   prepareRead(selectivityVec.size());
-//
-//   auto& childSpecs = scanSpec_->children();
-//   assert(!children_.empty());
-//   for (size_t i = 0; i < childSpecs.size(); ++i) {
-//     auto& childSpec = childSpecs[i];
-//     if (childSpec->isConstant()) {
-//       continue;
-//     }
-//     auto fieldIndex = childSpec->subscript();
-//     auto reader = children_.at(fieldIndex).get();
-//     // TODO: handle lazy vector
-//     //      if (reader->isTopLevel() && childSpec->projectOut() &&
-//     //          !childSpec->filter() && !childSpec->extractValues()) {
-//     //        // Will make a LazyVector.
-//     //        continue;
-//     //      }
-//
-//     if (childSpec->filter()) {
-//       uint64_t activeRowCount = selectivityVec_.getNumSetBits();
-//       SelectivityTimer timer(childSpec->selectivity(), activeRowCount);
-//
-//       reader->resetInitTimeClocks();
-//       reader->read(selectivityVec_);
-//
-//       // Exclude initialization time.
-//       timer.subtract(reader->initTimeClocks());
-//
-//       childSpec->selectivity().addOutput(selectivityVec_.size());
-//
-//       if (selectivityVec_.empty()) {
-//         break;
-//       }
-//     } else {
-//       reader->read(selectivityVec_);
-//     }
-//   }
-// }
 
 void ParquetStructColumnReader::read(
     vector_size_t offset,
@@ -828,8 +729,6 @@ void ParquetStructColumnReader::read(
 
   RowSet activeRows = rows;
   auto& childSpecs = scanSpec_->children();
-  //  const uint64_t* structNulls =
-  //      nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
 
   bool hasFilter = false;
   assert(!children_.empty());
@@ -874,44 +773,6 @@ void ParquetStructColumnReader::read(
   readOffset_ = offset + rows.back() + 1;
 }
 
-// void ParquetStructColumnReader::getValues(
-//     BitSet& selectivityVec,
-//     VectorPtr* result) {
-//   assert(!children_.empty());
-//   VELOX_CHECK(
-//       result != nullptr,
-//       "SelectiveStructColumnReader expects a non-null result");
-//   RowVector* resultRow = dynamic_cast<RowVector*>(result->get());
-//   VELOX_CHECK(resultRow, "Struct reader expects a result of type ROW.");
-//
-//   int64_t numRowsPassed = selectivityVec_.getNumUnSetBits();
-//   resultRow->resize(numRowsPassed);
-//   if (numRowsPassed) {
-//     return;
-//   }
-//
-//   // TODO: is it possible for struct reader to know the nulls from children?
-//   resultRow->clearNulls(0, numRowsPassed);
-//
-//   bool lazyPrepared = false;
-//   auto& childSpecs = scanSpec_->children();
-//   for (auto i = 0; i < childSpecs.size(); ++i) {
-//     auto& childSpec = childSpecs[i];
-//     if (!childSpec->projectOut()) {
-//       continue;
-//     }
-//     auto index = childSpec->subscript();
-//     auto channel = childSpec->channel();
-//     if (childSpec->isConstant()) {
-//       resultRow->childAt(channel) = BaseVector::wrapInConstant(
-//           numRowsPassed, 0, childSpec->constantValue());
-//     } else {
-//       // TODO: Handle Lazy Vector
-//       children_[index]->getValues(selectivityVec,
-//       &resultRow->childAt(channel));
-//     }
-//   }
-// }
 
 void ParquetStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
   assert(!children_.empty());

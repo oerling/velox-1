@@ -73,12 +73,12 @@ public:
 class Writer {
  public:
   Writer(
-      dwio::common::DataSink*FOLLY_NONNULL  sink,
+	 std::unique_ptr<dwio::common::DataSink> sink,
       memory::MemoryPool& pool,
       int32_t rowsInRowGroup)
       : rowsInRowGroup_(rowsInRowGroup),
 	pool_(pool),
-        finalSink_(sink) {}
+        finalSink_(std::move(sink)) {}
 
   void write(const RowVectorPtr& data);
   void close();
@@ -88,7 +88,7 @@ class Writer {
   const int32_t rowsInRowGroup_;
   int32_t rowsInCurrentGroup_{0};
   memory::MemoryPool& pool_;
-  dwio::common::DataSink* finalSink_;
+  std::unique_ptr<dwio::common::DataSink> finalSink_;
   std::shared_ptr<DataBufferSink> stream_;
   std::unique_ptr<::parquet::arrow::FileWriter> arrowWriter_;
 };
