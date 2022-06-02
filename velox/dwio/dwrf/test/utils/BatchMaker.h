@@ -22,6 +22,10 @@
 
 namespace facebook::velox::test {
 
+  // sets child elements of null row/array/map to null.  
+propagateNullsRecursive(baseVector& vector);
+
+  
 struct BatchMaker {
   static VectorPtr createBatch(
       const std::shared_ptr<const Type>& type,
@@ -53,7 +57,7 @@ struct BatchMaker {
       std::function<bool(vector_size_t /*index*/)> isNullAt = nullptr,
       std::mt19937::result_type seed = std::mt19937::default_seed) {
     std::mt19937 gen{seed};
-    return createVector<KIND>(type, size, pool, gen, isNullAt);
+    return vector = createVector<KIND>(type, size, pool, gen, isNullAt);
   }
 };
 

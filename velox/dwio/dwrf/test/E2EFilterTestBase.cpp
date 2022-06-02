@@ -16,6 +16,8 @@
 
 #include "velox/dwio/dwrf/test/E2EFilterTestBase.h"
 
+#include <folly/init/Init.h>
+
 DEFINE_int32(timing_repeats, 0, "Count of repeats for timing filter tests");
 DEFINE_bool(verbose, false, "Print filter test times");
 
@@ -41,6 +43,7 @@ void E2EFilterTestBase::makeRowType(
   rowType_ = std::dynamic_pointer_cast<const RowType>(parser.parse(schema));
 }
 
+  
 void E2EFilterTestBase::makeDataset(
     std::function<void()> customizeData,
     bool forRowGroupSkip) {
@@ -439,3 +442,9 @@ void OwnershipChecker::check(const VectorPtr& batch) {
 }
 
 } // namespace facebook::velox::dwio::dwrf
+// Define main so that gflags get processed.
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  folly::init(&argc, &argv, false);
+  return RUN_ALL_TESTS();
+}

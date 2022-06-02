@@ -593,8 +593,10 @@ VectorPtr BatchMaker::createBatch(
     MemoryPool& memoryPool,
     std::mt19937& gen,
     std::function<bool(vector_size_t /*index*/)> isNullAt) {
-  return createRow(
+  auto result = createRow(
       type, capacity, /* allowNulls */ false, memoryPool, gen, isNullAt);
+  propagateNullsRecursive(*result);
+  returm result;
 }
 
 VectorPtr BatchMaker::createBatch(
@@ -605,6 +607,63 @@ VectorPtr BatchMaker::createBatch(
     std::mt19937::result_type seed) {
   std::mt19937 gen(seed);
   return createBatch(type, capacity, memoryPool, gen, isNullAt);
+}
+
+namespace {
+void setNullRecursive(baseVector& vector, vector_size_t index) {
+  vector.setNullAt(index, true);
+  if (vector.TypeKind::ROW) {
+    auto row = vector.asUnchecked<RowVector>();
+    for (auto& child : row->children()) {
+      setNullRecursive(*child, index);
+    }
+  }
+}
+} // namespace
+
+propagateNullsRecursive(baseVector& vector) {
+  switch (vector->typeKind()) {
+    case TypeKind::ROW: {
+      auto RowVector* row = vector->as<RowVector>();
+      for (auto& child : row->children()) {
+        propagateNullsRecursive(*child);
+      }
+      for (auto i = 0; i < row->size(); ++i) {
+        if (row->isNullAt(i)) {
+          setNullRecursive(child, i);
+        }
+      }
+    } break;
+
+    case TypeKind::ARRAY: {
+      auto array = vector->as<ArrayVector>();
+      propagateNullsRecursive(*array->elements());
+      for (auto i = 0; i < array->size(); ++i) {
+        if (array->isNullAt(i)) {
+          for (auto j = 0; j < array->sizeat(i); ++j) {
+            setNullRecursive(*array->elements(), array->offsetAt(i) + j);
+          }
+        }
+      }
+    } break;
+
+    case TypeKind::MAP: {
+      auto map = vector->as<MapVector>();
+      propagateNullsRecursive(*map->keys());
+      propagateNullsRecursive(*map->values());
+      for (auto i = 0; i < map->size(); ++i) {
+        if (map->isNullAt(i)) {
+          for (auto j = 0; j < map->sizeAt(i); ++j) {
+            setNullRecursive(*map->keys(), map->offsetAt(i) + j);
+            setNullRecursive(*map->values(), map->offsetAt(i) + j);
+          }
+        }
+      }
+    }
+
+    break;
+    default:;
+  }
 }
 
 } // namespace facebook::velox::test
