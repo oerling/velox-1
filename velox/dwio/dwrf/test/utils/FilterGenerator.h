@@ -109,14 +109,17 @@ class ColumnStats : public AbstractColumnStats {
       if (batch != previousBatch) {
         previousBatch = batch;
         auto vector = batches[batch];
+	
         values = getChildBySubfield(vector.get(), subfield, rootType_)
                      ->template asUnchecked<SimpleVector<T>>();
       }
 
       addSample(values, batchRow(row));
     }
-    std::sort(values_.begin(), values_.end());
-  }
+    if constexpr (!std::is_same_v<T, ComplexType>) {
+      std::sort(values_.begin(), values_.end());
+    }
+    }
 
   std::unique_ptr<Filter> filter(
       float startPct,
@@ -203,6 +206,9 @@ class ColumnStats : public AbstractColumnStats {
       ++numNulls_;
       return;
     }
+    if constexpr (std::is_same_v<T, ComplexType>) {
+      return;
+    }
     T value = vector->valueAt(index);
     size_t hash = folly::hasher<T>()(value) & kUniquesMask;
     if (uniques_.find(hash) != uniques_.end()) {
@@ -276,6 +282,97 @@ class ColumnStats : public AbstractColumnStats {
   std::vector<T> values_;
 };
 
+
+class ComplexColumnStats : public AbstractColumnStats {
+ public:
+  explicit ComplexColumnStats(TypePtr type, RowTypePtr rootTypePtr)
+      : AbstractColumnStats(type, rootTypePtr) {}
+
+  void sample(
+      const std::vector<RowVectorPtr>& batches,
+      const Subfield& subfield,
+      std::vector<uint32_t>& rows) override {
+    int32_t previousBatch = -1;
+    VectorPtr values = nullptr;
+    for (auto row : rows) {
+      auto batch = batchNumber(row);
+      if (batch != previousBatch) {
+        previousBatch = batch;
+        auto vector = batches[batch];
+	
+        values = getChildBySubfield(vector.get(), subfield, rootType_);
+      }
+      ++numSamples_;
+      if (values->isNullAt(batchRow(row))) {
+	++numNulls_;
+      }
+    }
+  }
+
+  std::unique_ptr<Filter> filter(
+      float startPct,
+      float selectPct,
+      FilterKind filterKind,
+      const std::vector<RowVectorPtr>& batches,
+      const Subfield& subfield,
+      std::vector<uint32_t>& hits) override {
+    std::unique_ptr<Filter> filter;
+    switch (filterKind) {
+      case FilterKind::kIsNull:
+        filter = std::make_unique<velox::common::IsNull>();
+        break;
+      case FilterKind::kIsNotNull:
+        filter = std::make_unique<velox::common::IsNotNull>();
+        break;
+      default:
+        VELOX_FAIL("Complex types can only have is null or is not null fliters");
+        break;
+    }
+
+    size_t numHits = 0;
+    BaseVector* values = nullptr;
+    int32_t previousBatch = -1;
+    for (auto hit : hits) {
+      auto batch = batchNumber(hit);
+      if (batch != previousBatch) {
+        previousBatch = batch;
+        auto vector = batches[batch];
+        values = getChildBySubfield(batches[batch].get(), subfield, rootType_).get();
+      }
+      auto row = batchRow(hit);
+      if (values->isNullAt(row)) {
+        if (filter->testNull()) {
+          hits[numHits++] = hit;
+        }
+        continue;
+      }
+    }
+    hits.resize(numHits);
+    return filter;
+  }
+
+  std::unique_ptr<Filter> rowGroupSkipFilter(
+      const std::vector<RowVectorPtr>& batches,
+      const Subfield& subfield,
+      std::vector<uint32_t>& hits) override {
+    VELOX_FAIL("N/A in ComplexType");
+  }
+
+ private:
+
+
+  std::unique_ptr<Filter> makeRangeFilter(float startPct, float selectPct) {
+    VELOX_FAIL("N/A in ComplexType");
+  }
+
+  std::unique_ptr<Filter> makeRowGroupSkipRangeFilter(
+      const std::vector<RowVectorPtr>& batches,
+      const Subfield& subfield) {
+        VELOX_FAIL("N/A in ComplexType");
+  }
+
+};
+    
 template <>
 std::unique_ptr<Filter> ColumnStats<bool>::makeRangeFilter(
     float startPct,
@@ -309,7 +406,14 @@ std::unique_ptr<AbstractColumnStats> makeStats(
   return std::make_unique<ColumnStats<T>>(type, rootType);
 }
 
-class FilterGenerator {
+template <>
+inline std::unique_ptr<AbstractColumnStats> makeStats<TypeKind::ROW>(
+    TypePtr type,
+    RowTypePtr rootType) {
+  return std::make_unique<ComplexColumnStats>(type, rootType);
+}
+
+  class FilterGenerator {
  public:
   static std::string specsToString(const std::vector<FilterSpec>& specs);
   static SubfieldFilters cloneSubfieldFilters(const SubfieldFilters& src);

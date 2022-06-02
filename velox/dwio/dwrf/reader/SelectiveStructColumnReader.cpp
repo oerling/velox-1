@@ -152,10 +152,16 @@ void SelectiveStructColumnReader::read(
   const uint64_t* structNulls =
       nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
   bool hasFilter = false;
-  // a struct reader may have a non-null filter
+  raw_vector<vector_size_t> prefiltered;
+  // a struct reader may have a null/non-null filter
   if (scanSpec_->filter()) {
     auto kind = scanSpec_->filter()->kind();
-    VELOX_CHECK(scanSpec_->filter()->kind() == FilterKind::isNotNull
+    VELOX_CHECK(kind == common::FilterKind::kIsNull || kind == common::FilterKind::kIsNotNull);
+    hasFilter = true;
+    filterNulls<int32_t>(rows, kind == common::FilterKind::kIsNull, false);
+    prefiltered = outputRows_;
+    outputRows_.clear();
+    activeRows = prefiltered;
   }
   assert(!children_.empty());
   for (size_t i = 0; i < childSpecs.size(); ++i) {

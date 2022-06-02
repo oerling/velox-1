@@ -122,7 +122,7 @@ void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
   auto numRows = rows.size();
   if (useBulkPath()) {
     bool isDense = rows.back() == rows.size() - 1;
-    if (!scanSpec_->filter()) {
+    if (!scanSpec_->hasFilter()) {
       anyNulls_ = nullsInReadRange_ != nullptr;
       returnReaderNulls_ = anyNulls_ && isDense;
       // No need for null flags if fast path
