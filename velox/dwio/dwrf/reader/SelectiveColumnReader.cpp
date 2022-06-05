@@ -102,11 +102,21 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
   if (offset == readOffset_) {
     return;
   }
+  if (readOffset_ >= parentNullsRecordedTo_) {
+    parentNullsRecordedTo_ = 0;
+    numParentNulls_ = 0;
+  }
   if (readOffset_ < offset) {
-    if (readsNullsOnly) {
-      ColumnReader::skip(offset - readOffset_);
+    if (numParentNulls_) {
+      VELOX_CHECK_LE(parentNullsRecordedTo_, offset, "Must not seek to before parentNullsRecordedTo_");
+    }
+    auto distance = offset - readOffset_ - numParentNulls_;
+	numParentNulls_ = 0;
+	parentNullsRecordedTo_ = 0;
+	if (readsNullsOnly) {
+      ColumnReader::skip(distance);
     } else {
-      skip(offset - readOffset_);
+      skip(distance);
     }
     readOffset_ = offset;
   } else {
@@ -338,6 +348,14 @@ void SelectiveColumnReader::resetFilterCaches() {
   }
 }
 
+  void SelectiveColumnReader::addParentNulls(int32_t nullsRow, const uint64_t* nulls, RowSet rows) {
+    int32_t firstNullIndex = readOffset_ < nullsRow ? 0 : readOffset_ - nullsRow;
+    numParentNulls_ +=
+        bits::countNulls(nulls, firstNullIndex, rows.back() + 1);
+    parentNullsRecordedTo_ = nullsRow + rows.back() + 1;
+  }
+
+  
 std::vector<uint64_t> toPositions(const proto::RowIndexEntry& entry) {
   return std::vector<uint64_t>(
       entry.positions().begin(), entry.positions().end());

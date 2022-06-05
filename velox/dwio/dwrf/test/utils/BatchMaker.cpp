@@ -596,7 +596,7 @@ VectorPtr BatchMaker::createBatch(
   auto result = createRow(
       type, capacity, /* allowNulls */ false, memoryPool, gen, isNullAt);
   propagateNullsRecursive(*result);
-  returm result;
+  return result;
 }
 
 VectorPtr BatchMaker::createBatch(
@@ -610,58 +610,68 @@ VectorPtr BatchMaker::createBatch(
 }
 
 namespace {
-void setNullRecursive(baseVector& vector, vector_size_t index) {
-  vector.setNullAt(index, true);
-  if (vector.TypeKind::ROW) {
-    auto row = vector.asUnchecked<RowVector>();
-    for (auto& child : row->children()) {
-      setNullRecursive(*child, index);
-    }
+void setNullRecursive(BaseVector& vector, vector_size_t i) {
+  vector.setNull(i, true);
+  switch (vector.typeKind()) {
+    case TypeKind::ROW: {
+      auto row = vector.asUnchecked<RowVector>();
+      for (auto& child : row->children()) {
+        setNullRecursive(*child, i);
+      }
+    } break;
+
+    case TypeKind::ARRAY: {
+      auto array = vector.asUnchecked<ArrayVector>();
+      for (auto j = 0; j < array->sizeAt(i); ++j) {
+        setNullRecursive(*array->elements(), array->offsetAt(i) + j);
+      }
+    } break;
+    case TypeKind::MAP: {
+      auto map = vector.asUnchecked<MapVector>();
+      for (auto j = 0; j < map->sizeAt(i); ++j) {
+        setNullRecursive(*map->mapKeys(), map->offsetAt(i) + j);
+        setNullRecursive(*map->mapValues(), map->offsetAt(i) + j);
+      }
+    } break;
+    default:;
   }
 }
 } // namespace
 
-propagateNullsRecursive(baseVector& vector) {
-  switch (vector->typeKind()) {
+void propagateNullsRecursive(BaseVector& vector) {
+  switch (vector.typeKind()) {
     case TypeKind::ROW: {
-      auto RowVector* row = vector->as<RowVector>();
+      auto row = vector.asUnchecked<RowVector>();
       for (auto& child : row->children()) {
         propagateNullsRecursive(*child);
       }
       for (auto i = 0; i < row->size(); ++i) {
         if (row->isNullAt(i)) {
-          setNullRecursive(child, i);
+          setNullRecursive(*row, i);
         }
       }
     } break;
 
     case TypeKind::ARRAY: {
-      auto array = vector->as<ArrayVector>();
+      auto array = vector.asUnchecked<ArrayVector>();
       propagateNullsRecursive(*array->elements());
       for (auto i = 0; i < array->size(); ++i) {
         if (array->isNullAt(i)) {
-          for (auto j = 0; j < array->sizeat(i); ++j) {
-            setNullRecursive(*array->elements(), array->offsetAt(i) + j);
-          }
+          setNullRecursive(*array, i);
         }
       }
     } break;
 
     case TypeKind::MAP: {
-      auto map = vector->as<MapVector>();
-      propagateNullsRecursive(*map->keys());
-      propagateNullsRecursive(*map->values());
+      auto map = vector.asUnchecked<MapVector>();
+      propagateNullsRecursive(*map->mapKeys());
+      propagateNullsRecursive(*map->mapValues());
       for (auto i = 0; i < map->size(); ++i) {
         if (map->isNullAt(i)) {
-          for (auto j = 0; j < map->sizeAt(i); ++j) {
-            setNullRecursive(*map->keys(), map->offsetAt(i) + j);
-            setNullRecursive(*map->values(), map->offsetAt(i) + j);
-          }
+          setNullRecursive(*map, i);
         }
       }
-    }
-
-    break;
+    } break;
     default:;
   }
 }

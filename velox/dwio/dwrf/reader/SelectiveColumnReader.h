@@ -161,6 +161,11 @@ class SelectiveColumnReader : public ColumnReader {
   // offset-th from the start of stripe.
   void seekTo(vector_size_t offset, bool readsNullsOnly);
 
+  void seekToRowGroup(uint32_t /*index*/) {
+    numParentNulls_ = 0;
+    parentNullsRecordedTo_ = 0;
+  }
+  
   const TypePtr& type() const {
     return type_;
   }
@@ -313,6 +318,15 @@ class SelectiveColumnReader : public ColumnReader {
     return scanState_;
   }
 
+  // A reader nested inside nullable containers has fewer rows than
+  // the top level table. addParentNulls records how many parent nulls
+  // there are between the position of 'this' and 'rows.back() + 1',
+  // i.e. the position of the scan in top level rows. 'nullsRow' is
+  // the top level row corresponding to the first nulls bit in
+  // 'nulls'. 'nulls' is in terms of top level rows and represents all
+  // null parents at any enclosing level.
+  void addParentNulls(int32_t nullsRow, const uint64_t* nulls, RowSet rows);
+
  protected:
   static constexpr int8_t kNoValueSize = -1;
   static constexpr uint32_t kRowGroupNotSet = ~0;
@@ -387,6 +401,16 @@ class SelectiveColumnReader : public ColumnReader {
 
   // Row number after last read row, relative to stripe start.
   vector_size_t readOffset_ = 0;
+
+  // Number of parent nulls between 'readOffset_' and 'parentNullsRecordedTo_'.
+  // When skipping, subtract the parent nulls from the skip distance because the
+  // child does not have values for these.
+  int32_t numParentNulls_{0};
+
+  // The end of the row range starting at 'readOffset_' to which
+  // 'numParentNulls_' applies.
+  int32_t parentNullsRecordedTo_{0};
+
   // The rows to process in read(). References memory supplied by
   // caller. The values must remain live until the next call to read().
   RowSet inputRows_;

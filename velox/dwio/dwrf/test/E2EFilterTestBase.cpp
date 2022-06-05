@@ -448,3 +448,7 @@ int main(int argc, char** argv) {
   folly::init(&argc, &argv, false);
   return RUN_ALL_TESTS();
 }
+
+void pv(facebook::velox::BaseVector* v, int from, int to) {
+  std::cout << v->toString(from, to) << std::endl;
+}

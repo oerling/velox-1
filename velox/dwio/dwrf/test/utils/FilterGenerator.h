@@ -206,9 +206,6 @@ class ColumnStats : public AbstractColumnStats {
       ++numNulls_;
       return;
     }
-    if constexpr (std::is_same_v<T, ComplexType>) {
-      return;
-    }
     T value = vector->valueAt(index);
     size_t hash = folly::hasher<T>()(value) & kUniquesMask;
     if (uniques_.find(hash) != uniques_.end()) {
@@ -317,20 +314,15 @@ class ComplexColumnStats : public AbstractColumnStats {
       const Subfield& subfield,
       std::vector<uint32_t>& hits) override {
     std::unique_ptr<Filter> filter;
-    switch (filterKind) {
-      case FilterKind::kIsNull:
+    // A complex type can only have is null and is not null filters. make an is null if selective. 
+    if (selectPct < 20) {
         filter = std::make_unique<velox::common::IsNull>();
-        break;
-      case FilterKind::kIsNotNull:
-        filter = std::make_unique<velox::common::IsNotNull>();
-        break;
-      default:
-        VELOX_FAIL("Complex types can only have is null or is not null fliters");
-        break;
+    } else {
+      filter = std::make_unique<velox::common::IsNotNull>();
     }
-
     size_t numHits = 0;
     BaseVector* values = nullptr;
+    bool isNull = filter->kind() == velox::common::FilterKind::kIsNull;
     int32_t previousBatch = -1;
     for (auto hit : hits) {
       auto batch = batchNumber(hit);
@@ -340,12 +332,13 @@ class ComplexColumnStats : public AbstractColumnStats {
         values = getChildBySubfield(batches[batch].get(), subfield, rootType_).get();
       }
       auto row = batchRow(hit);
-      if (values->isNullAt(row)) {
-        if (filter->testNull()) {
-          hits[numHits++] = hit;
-        }
-        continue;
+      if (values->isNullAt(row) == isNull) {
+	hits[numHits++] = hit;
       }
+    }
+    if (!numHits) {
+      // Do not make a filter that selects nothing.
+      return nullptr;
     }
     hits.resize(numHits);
     return filter;

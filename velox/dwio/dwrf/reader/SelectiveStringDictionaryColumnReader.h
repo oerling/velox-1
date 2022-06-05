@@ -32,7 +32,8 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
-
+    SelectiveColumnReader::seekToRowGroup(index);
+    
     auto positions = toPositions(index_->entry(index));
     PositionProvider positionsProvider(positions);
 

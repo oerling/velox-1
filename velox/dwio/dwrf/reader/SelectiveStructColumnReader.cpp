@@ -198,6 +198,11 @@ void SelectiveStructColumnReader::read(
       reader->read(offset, activeRows, structNulls);
     }
   }
+  // If this adds nulls, the field readers will miss a value for each null added here. 
+  if (structNulls) {
+    addChildParentNulls(offset, rows);
+  }
+
   if (hasFilter) {
     setOutputRows(activeRows);
   }
@@ -205,6 +210,19 @@ void SelectiveStructColumnReader::read(
   readOffset_ = offset + rows.back() + 1;
 }
 
+  void SelectiveStructColumnReader::addChildParentNulls(vector_size_t offset, RowSet rows) {
+    auto& childSpecs = scanSpec_->children();
+    for (auto i = 0; i < childSpecs.size(); ++i) {
+    auto& childSpec = childSpecs[i];
+    if (childSpec->isConstant()) {
+      continue;
+    }
+    auto fieldIndex = childSpec->subscript();
+    auto reader = children_.at(fieldIndex).get();
+    reader->addParentNulls(offset, nullsInReadRange_->as<uint64_t>(), rows);
+    }
+  }
+  
 namespace {
 //   Recursively makes empty RowVectors for positions in 'children'
 //   where the corresponding child type in 'rowType' is a row. The
@@ -276,7 +294,7 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
       resultRow->childAt(channel) = BaseVector::wrapInConstant(
           rows.size(), 0, childSpec->constantValue());
     } else {
-      if (!childSpec->extractValues() && !childSpec->filter() &&
+      if (!childSpec->extractValues() && !childSpec->hasFilter() &&
           children_[index]->isTopLevel()) {
         // LazyVector result.
         if (!lazyPrepared) {

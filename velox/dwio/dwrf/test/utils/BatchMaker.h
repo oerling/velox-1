@@ -22,9 +22,12 @@
 
 namespace facebook::velox::test {
 
-  // sets child elements of null row/array/map to null.  
-propagateNullsRecursive(baseVector& vector);
-
+  // sets child elements of null row/array/map to null. the result of
+  // 'a.b.c is null' can be determined just by looking at 'c' because
+  // a null parent 'b' is also null in 'c'. This makes generating
+  // testing filters simpler. Non-null content under a null container
+  // cannot be represented in file formats in any case.
+void propagateNullsRecursive(BaseVector& vector);
   
 struct BatchMaker {
   static VectorPtr createBatch(
@@ -57,7 +60,7 @@ struct BatchMaker {
       std::function<bool(vector_size_t /*index*/)> isNullAt = nullptr,
       std::mt19937::result_type seed = std::mt19937::default_seed) {
     std::mt19937 gen{seed};
-    return vector = createVector<KIND>(type, size, pool, gen, isNullAt);
+    return createVector<KIND>(type, size, pool, gen, isNullAt);
   }
 };
 

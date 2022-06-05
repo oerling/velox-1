@@ -419,7 +419,9 @@ SubfieldFilters FilterGenerator::makeSubfieldFilters(
           subfield,
           hitRows);
     }
-    filters[Subfield(filterSpec.field)] = std::move(filter);
+    if (filter) {
+      filters[Subfield(filterSpec.field)] = std::move(filter);
+    }
   }
 
   return filters;
