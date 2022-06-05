@@ -65,7 +65,7 @@ class SelectiveIntegerColumnReader : public SelectiveColumnReader {
   // instantiation of processValueHook or processFilter based on
   // possible value hook, filter and denseness.
   template <typename Reader>
-    void readCommon(RowSet rows);
+  void readCommon(RowSet rows);
 };
 
 template <
@@ -203,4 +203,4 @@ void SelectiveIntegerColumnReader::readCommon(RowSet rows) {
   }
 }
 
-} // namespace facebook::dwio::dwrf
+} // namespace facebook::velox::dwrf

@@ -134,7 +134,7 @@ class ExtractToGenericHook {
 
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class DictionaryColumnVisitor;
-  
+
 // Template parameter for controlling filtering and action on a set of rows.
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class ColumnVisitor {
@@ -425,7 +425,8 @@ class ColumnVisitor {
     return reader_->outerNonNullRows();
   }
 
-  DictionaryColumnVisitor<T, TFilter, ExtractValues, isDense> toDictionaryColumnVisitor();
+  DictionaryColumnVisitor<T, TFilter, ExtractValues, isDense>
+  toDictionaryColumnVisitor();
 
  protected:
   TFilter& filter_;

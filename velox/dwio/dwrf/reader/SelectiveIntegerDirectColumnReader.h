@@ -72,7 +72,7 @@ class SelectiveIntegerDirectColumnReader : public SelectiveIntegerColumnReader {
   template <typename ColumnVisitor>
   void readWithVisitor(RowSet rows, ColumnVisitor visitor);
 
-private:
+ private:
   std::unique_ptr<DirectDecoder</*isSigned*/ true>> ints;
 };
 

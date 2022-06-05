@@ -20,7 +20,8 @@
 
 namespace facebook::velox::dwrf {
 
-class SelectiveIntegerDictionaryColumnReader : public SelectiveIntegerColumnReader {
+class SelectiveIntegerDictionaryColumnReader
+    : public SelectiveIntegerColumnReader {
  public:
   using ValueType = int64_t;
 
@@ -58,7 +59,7 @@ class SelectiveIntegerDictionaryColumnReader : public SelectiveIntegerColumnRead
   template <typename ColumnVisitor>
   void readWithVisitor(RowSet rows, ColumnVisitor visitor);
 
-private:
+ private:
   void ensureInitialized();
 
   std::unique_ptr<ByteRleDecoder> inDictionaryReader_;
@@ -78,7 +79,8 @@ void SelectiveIntegerDictionaryColumnReader::readWithVisitor(
   auto dictVisitor = visitor.toDictionaryColumnVisitor();
   auto reader = reinterpret_cast<RleDecoderV1<false>*>(dataReader_.get());
   if (nullsInReadRange_) {
-    reader->readWithVisitor<true>(nullsInReadRange_->as<uint64_t>(), dictVisitor);
+    reader->readWithVisitor<true>(
+        nullsInReadRange_->as<uint64_t>(), dictVisitor);
   } else {
     reader->readWithVisitor<false>(nullptr, dictVisitor);
   }
