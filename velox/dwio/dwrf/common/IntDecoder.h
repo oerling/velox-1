@@ -162,7 +162,14 @@ class IntDecoder {
     visitor.processN(data, numRows);
   }
 
- private:
+  // moves the stream and position in buffer out of 'this'.
+  std::unique_ptr<seekableInputStream> moveStreamAndBuffer(const char*& begin, const char*& end) {
+    begin_ = bufferstart;
+    end = bufferEnd;
+    return std::move(inputStream_);
+  }
+
+private:
   uint64_t skipVarintsInBuffer(uint64_t items);
   void skipVarints(uint64_t items);
 

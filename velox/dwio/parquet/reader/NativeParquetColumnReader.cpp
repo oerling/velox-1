@@ -56,9 +56,6 @@ void ParquetColumnReader::initializeRowGroup(const RowGroup& rowGroup) {
   DWIO_ENSURE(fileColumnId < rowGroup.columns.size());
   columnChunk_ = &rowGroup.columns[fileColumnId];
   DWIO_ENSURE(columnChunk_ != nullptr);
-  //  DWIO_ENSURE(
-  //      columnChunk_->__isset.file_path,
-  //      "Only inlined data files are supported (no references)");
 }
 
 
@@ -121,8 +118,6 @@ void ParquetLeafColumnReader::initializeRowGroup(const RowGroup& rowGroup) {
   }
 }
 
-// Note that unlike SelectiveColumnReader::prepareRead(), the null hundling for
-// parquet can't be done now. Also seekTo is different
 void ParquetLeafColumnReader::prepareRead(RowSet& rows) {
   numRowsToRead_ = rows.back() + 1;
   // TODO: what if numRowsToRead_ == 0?
@@ -164,9 +159,6 @@ void ParquetLeafColumnReader::prepareRead(RowSet& rows) {
 
   if (scanSpec_->keepValues() && !scanSpec_->valueHook()) {
     valueRows_.clear();
-    // Nulls will be read later by the defineDecoder_ after PageHeader is read
-    // We don't know if there're nulls in this page now.
-    //    prepareNulls(rows, nullsInReadRange_ != nullptr);
   }
 }
 
