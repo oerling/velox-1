@@ -41,6 +41,11 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
   uint32_t maxDefine_;
 };
 
+  struct StreamSet {
+    std::unique_ptr<BufferedInput> bufferedInput;
+    std::unordered_map<uint32_t id, std::unique_ptr<SeekableInputStream>> streams;
+  };
+  
 
 class Dictionary {
  public:
@@ -62,7 +67,7 @@ class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
             pool,
             std::move(dataType),
             scanSpec,
-            dataType->type // TODO:
+            dataType->type
             ),
         input_(input),
         maxDefine_(std::dynamic_pointer_cast<const ParquetTypeWithId>(dataType)
@@ -82,7 +87,6 @@ class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
 
 
  protected:
-  dwrf::BufferedInput& input_;
   RowGroup const* currentRowGroup_;
   ColumnChunk const* columnChunk_;
 
@@ -90,37 +94,34 @@ class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
   uint32_t maxRepeat_;
 
   int64_t rowsInRowGroup_;
-  int64_t numRowsToRead_ = 0; // rows to read in this batch
-  int64_t numReads_ = 0;
+  //int64_t numRowsToRead_ = 0; // rows to read in this batch
+  //int64_t numReads_ = 0;
 };
 
 
-class ParquetLeafColumnReader : public ParquetColumnReader {
+class PageDecoder {
  public:
-  ParquetLeafColumnReader(
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      common::ScanSpec* scanSpec,
-      memory::MemoryPool& pool,
-      dwrf::BufferedInput& input)
-      : ParquetColumnReader(dataType, scanSpec, pool, input),
-        chunkReadOffset_(0),
-        remainingRowsInPage_(0),
-        dictionary_(nullptr) {
+  PageDecoder(std::unique_ptr<dwio::dwrf::SeekableInputStream> stream)
+    : inputStream_(std::move(stream)),
+
+      chunkReadOffset_(0),
+      remainingRowsInPage_(0),
+      dictionary_(nullptr) {
+  }
+
+  
+  template <typename Visitor> readWithVisitor(const uint64_t* nulls, Visitor visitor) {
+    VELOX_CHECK(!nulls, "Parquet does not accept incoming nulls");
+    
   }
 
  protected:
-  virtual bool filterMatches(const RowGroup& rowGroup) override;
-  virtual void initializeRowGroup(const RowGroup& rowGroup) override;
-  virtual void prepareRead(RowSet& rows);
   virtual int loadDataPage(
       const PageHeader& pageHeader,
       const Encoding::type& pageEncoding) = 0;
 
   void readNextPage();
   PageHeader readPageHeader();
-  std::unique_ptr<dwrf::SeekableInputStream> getPageStream(
-      int64_t compressedSize,
-      int64_t unCompressedSize);
   void prepareDataPageV1(const PageHeader& pageHeader);
   void prepareDataPageV2(const PageHeader& pageHeader);
   void prepareDictionary(const PageHeader& pageHeader);
@@ -130,6 +131,7 @@ class ParquetLeafColumnReader : public ParquetColumnReader {
   ColumnMetaData const* columnMetaData_;
   Statistics const* columnChunkStats_;
   //  std::unique_ptr<ParquetPageReader> pageReader_;
+
   BufferPtr defineOutBuffer_;
   BufferPtr repeatOutBuffer_;
   std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> repeatDecoder_;

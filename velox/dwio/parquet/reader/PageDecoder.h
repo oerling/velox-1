@@ -20,7 +20,7 @@ namespace facebook::dwio::parquet {
 
 class PageDecoder {
   PageDecoder(std::unique_ptr<dwio::dwrf::SeekableInputStream> stream)
-    : stream_(std::move(stream)) {}
+    : inputStream_(std::move(stream)) {}
 
   template <typename Visitor> readWithVisitor(const uint64_t* nulls, Visitor visitor) {
     VELOX_CHECK(!nulls, "Parquet does not accept incoming nulls");
@@ -29,7 +29,8 @@ class PageDecoder {
 
 private:
 
-  std::unique_ptr<SeekableInputStream> };
+  std::unique_ptr<SeekableInputStream> inputStream_;
+};
   const char* bufferStart_{nullptr};
   const char* bufferEnd_{nullptr};
   std::unique_ptr<dwrf::DirectDecoder> directDecoder_;
