@@ -35,6 +35,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     }
   }
 
+  void seekTo(vector_size_t offset, bool readsNullsOnly) override;
+  
   void seekToRowGroup(uint32_t index) override {
     SelectiveColumnReader::seekToRowGroup(index);
     if (isTopLevel_ && !notNullDecoder_) {

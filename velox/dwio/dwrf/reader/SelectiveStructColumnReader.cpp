@@ -88,6 +88,37 @@ std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
   return stridesToSkip;
 }
 
+void SelectiveStructColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
+  if (offset == readOffset_) {
+    return;
+  }
+  if (readOffset_ < offset) {
+    if (numParentNulls_) {
+      VELOX_CHECK_LE(
+          parentNullsRecordedTo_,
+          offset,
+          "Must not seek to before parentNullsRecordedTo_");
+    }
+    auto distance = offset - readOffset_ - numParentNulls_;
+    auto numNonNulls = ColumnReader::skip(distance);
+    // We inform children how many nulls we between original position
+    // and destination. The children will seek this many less. The
+    // nulls include the nulls found here as well as the enclosing
+    // level nulls reported to this by parents.
+    for (auto& child : children_) {
+      if (child) {
+	child->addSkippedParentNulls(readOffset_, offset, numParentNulls_ + distance - numNonNulls);
+      }
+    }
+        numParentNulls_ = 0;
+	parentNullsRecordedTo_ = 0;
+	readOffset_ = offset;
+  } else {
+    VELOX_FAIL("Seeking backward on a ColumnReader");
+  }
+}
+
+  
 uint64_t SelectiveStructColumnReader::skip(uint64_t numValues) {
   auto numNonNulls = ColumnReader::skip(numValues);
   // 'readOffset_' of struct child readers is aligned with

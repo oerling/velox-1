@@ -159,7 +159,7 @@ class SelectiveColumnReader : public ColumnReader {
 
   // Advances to 'offset', so that the next item to be read is the
   // offset-th from the start of stripe.
-  void seekTo(vector_size_t offset, bool readsNullsOnly);
+  virtual void seekTo(vector_size_t offset, bool readsNullsOnly);
 
   void seekToRowGroup(uint32_t /*index*/) {
     numParentNulls_ = 0;
@@ -327,6 +327,12 @@ class SelectiveColumnReader : public ColumnReader {
   // null parents at any enclosing level.
   void addParentNulls(int32_t nullsRow, const uint64_t* nulls, RowSet rows);
 
+  // When skipping rows in a struct, records how many parent nulls at
+  // any level there are between top level row 'from' and 'to'. If
+  // called many times, the 'from' of the next should be the 'to' of
+  // the previous.
+  void addSkippedParentNulls(vector_size_t from, vector_size_t to, int32_t numNulls);
+  
  protected:
   static constexpr int8_t kNoValueSize = -1;
   static constexpr uint32_t kRowGroupNotSet = ~0;
