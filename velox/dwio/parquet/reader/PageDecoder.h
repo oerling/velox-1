@@ -15,25 +15,54 @@
  */
 
 #pragma once
+#include "velox/dwio/dwrf/common/DirectDecoder.h"
 
 namespace facebook::dwio::parquet {
 
 class PageDecoder {
+ public:
   PageDecoder(std::unique_ptr<dwio::dwrf::SeekableInputStream> stream)
-    : inputStream_(std::move(stream)) {}
+      : inputStream_(std::move(stream)),
 
-  template <typename Visitor> readWithVisitor(const uint64_t* nulls, Visitor visitor) {
+        chunkReadOffset_(0),
+        remainingRowsInPage_(0),
+        dictionary_(nullptr) {}
+
+  template <typename Visitor>
+  void readWithVisitor(const uint64_t* nulls, Visitor visitor) {
     VELOX_CHECK(!nulls, "Parquet does not accept incoming nulls");
-    
   }
 
-private:
+ protected:
+  virtual int loadDataPage(
+      const PageHeader& pageHeader,
+      const Encoding::type& pageEncoding) = 0;
 
-  std::unique_ptr<SeekableInputStream> inputStream_;
+  void readNextPage();
+  PageHeader readPageHeader();
+  void prepareDataPageV1(const PageHeader& pageHeader);
+  void prepareDataPageV2(const PageHeader& pageHeader);
+  void prepareDictionary(const PageHeader& pageHeader);
+  bool canNotHaveNull();
+
+ protected:
+  BufferPtr defineOutBuffer_;
+  BufferPtr repeatOutBuffer_;
+  std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> repeatDecoder_;
+  std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> defineDecoder_;
+
+  // in bytes
+  uint64_t chunkReadOffset_;
+  int64_t remainingRowsInPage_;
+  BufferPtr pageBuffer_;
+
+  std::unique_ptr<Dictionary> dictionary_;
+  const char* dict_ = nullptr;
 };
-  const char* bufferStart_{nullptr};
-  const char* bufferEnd_{nullptr};
-  std::unique_ptr<dwrf::DirectDecoder> directDecoder_;
-  
-  
+
+template <typename Visitor>
+void readWithVisitor(const uint64_t* nulls, Visitor visitor) {
+  VELOX_CHECK(!nulls);
 }
+
+} // namespace facebook::dwio::parquet

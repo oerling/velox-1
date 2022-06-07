@@ -442,11 +442,12 @@ NativeParquetRowReader::NativeParquetRowReader(
   if (rowGroups_.empty()) {
     return; // TODO
   }
-
+  parquetParams params(fileMetaData_);
+  
   columnReader_ = ParquetColumnReader::build(
       readerBase_->getSchemaWithId(), // Id is schema id
       options_.getScanSpec().get(),
-      readerBase_->getBufferedInput(),
+      params,
       pool_);
 
   filterRowGroups();

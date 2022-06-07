@@ -116,6 +116,13 @@ class SelectiveColumnReader : public ColumnReader {
       const TypePtr& type,
       FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
 
+  SelectiveColumnReader(
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      FormatParams& formatParams,
+      common::ScanSpec* scanSpec,
+      const TypePtr& type);
+
+  
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read

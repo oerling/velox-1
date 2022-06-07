@@ -28,6 +28,43 @@
 
 namespace facebook::velox::dwrf {
 
+  // Empty superclass for format-specific state in common between all types of readers.
+class FormatData {
+public:
+  template <typename T>
+  T& as() {
+    return *reinterpret_cast<T*>(this);
+  }
+} ;
+  
+  // superclass for format-specific initialization arguments.
+  class FormatParams {
+  public:
+    explicit FormatParams(memory::MemoryPool& pool)
+      : pool_(pool) {}
+
+    std::unique_ptr<FormatData> toFormatData(const std::shared_ptr<TypeWithId>& type) = 0
+
+      memory::MemoryPool& pool() {
+      return pool_;
+    }
+
+  private:
+    memoryPool& pool_;
+  };
+  // DWRF specific initialization.
+  class DwrfParams : public FormatParams {
+  public:
+    DwrfParams(memory::MemoryPool& pool, Stripestreams&stripe,
+	       FlatMapContext context = FlatMapContext::nonFlatMapContext())
+      : pool_(pool), stripe_(stripe), flatMapContext_(context) {}
+
+
+    StripeStreams& stripe_;
+    FlatMapContext flatMapContext_;
+  };
+  
+  
 /**
  * The interface for reading ORC data types.
  */
@@ -37,6 +74,15 @@ class ColumnReader {
       memory::MemoryPool& memoryPool,
       const std::shared_ptr<const dwio::common::TypeWithId>& type)
       : notNullDecoder_{},
+        nodeType_{type},
+        memoryPool_{memoryPool},
+        flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
+  explicit ColumnReader(
+			const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      FormatParams& formatParams)
+    : formatData(formatParams.toFormatData(type)),
+      pool_(formatParams.pool()),
+      notNullDecoder_{},
         nodeType_{type},
         memoryPool_{memoryPool},
         flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
@@ -58,6 +104,7 @@ class ColumnReader {
       VectorPtr& result,
       const uint64_t* incomingNulls);
 
+  std::unique_ptr<FormatData> formatData_;
   std::unique_ptr<ByteRleDecoder> notNullDecoder_;
   const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   memory::MemoryPool& memoryPool_;

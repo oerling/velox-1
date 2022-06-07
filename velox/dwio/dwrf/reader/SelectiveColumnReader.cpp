@@ -89,6 +89,15 @@ SelectiveColumnReader::SelectiveColumnReader(
       encodingKey.forKind(proto::Stream_Kind_ROW_INDEX), false);
 }
 
+  SelectiveColumnReader::    SelectiveColumnReader(
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      FormatParams& formatParams,
+      common::ScanSpec* scanSpec,
+      const TypePtr& type)
+      : ColumnReader(std::move(requestedType), formatParams),
+      scanSpec_(scanSpec),
+      type_{type} {}
+  
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const StatsContext& context) const {

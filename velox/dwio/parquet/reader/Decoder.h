@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //
 // Created by Ying Su on 3/25/22.
 //
@@ -14,7 +30,8 @@
 namespace facebook::velox::parquet {
 
 // For Parquet, Filter will be pushed to decoding process
-class FilterAwareDecoder {
+
+  class FilterAwareDecoder {
  public:
   //  FilterAwareDecoder(
   //      BufferPtr inputBuffer, // note we have loaded the full page
@@ -57,9 +74,6 @@ class FilterAwareDecoder {
   //  virtual void
   //  next(void*& data, uint64_t numRows, BitSet& selectivityVec) = 0;
 
-  //  virtual void
-  //  next(BufferPtr outputBuffer, BitSet& selectivityVec, uint64_t numRows) =
-  //  0;
   virtual void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows) = 0;
   void next(int64_t* data, uint64_t numValues, const uint64_t* nulls);
 
@@ -80,185 +94,6 @@ class FilterAwareDecoder {
   bool kHasBulkPath_;
 };
 
-//------------------------PlainFilterAwareDecoder--------------------------------
-//
-// template <typename T>
-// class PlainFilterAwareDecoder : FilterAwareDecoder {
-// public:
-//  PlainFilterAwareDecoder(
-//      const void* inputBuffer, // note we have loaded the full page
-//      uint64_t inputBytes,
-//      std::optional<common::Filter*> filter)
-//      : FilterAwareDecoder(inputBuffer, inputBytes, filter),
-//        leftOverFromLastBatch_(0) {}
-//  //  void next(BufferPtr outputBuffer, BitSet& selectivityVec, uint64_t
-//  //  numRows)
-//  //      override {
-//  //    uint64_t offset = outputBuffer->size();
-//  //    DWIO_ENSURE(outputBuffer->capacity() >= numRows * sizeof(T) + offset);
-//  //
-//  //    numRows += leftOverFromLastBatch_;
-//  //
-//  //    uint64_t kWidth =
-//  //        (32 /*bytes*/ / sizeof(T)); // smallest T is 1 byte
-//  //    uint64_t numBatches = numRows / kWidth;
-//  //    leftOverFromLastBatch_ = numRows - numBatches * kWidth;
-//  //
-//  //    // In dense mode, we need to read the outputBuffer anyways. Just read
-//  it
-//  //    all
-//  //    // at once
-//  //    auto bytesToCopy = kWidth * numBatches * sizeof(T);
-//  //    T* output = outputBuffer->template asMutable<T>() + offset;
-//  //    memcpy(output, inputBuffer_, bytesToCopy);
-//  //    // in dense mode, we don't compact results yet
-//  //    outputBuffer->setSize(offset + bytesToCopy);
-//  //
-//  //    // Filtering kWidth values a time
-//  //    if (filter_.value() == nullptr) {
-//  //      inputBuffer_ += bytesToCopy;
-//  //    } else {
-//  //      // TODO: guard by runtime SIMD check
-//  //      for (uint64_t i = 0; i < numBatches; i++) {
-//  //        __m256i vec =
-//  //            _mm256_loadu_si256(reinterpret_cast<const
-//  //            __m256i*>(inputBuffer_));
-//  //        inputBuffer_ += 32; // an AVX2 vector is 256bits, 256 / 8 = 32
-//  bytes
-//  //        //      printVec(vec);
-//  //
-//  //        __m256i cmp = dwrf::testSimd<T>(*filter_.value(), vec);
-//  //        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp));
-//  //
-//  //        auto rowOffset = offset / sizeof(T);
-//  //        uint8_t* filterMaskOffset = (uint8_t*)selectivityVec.bits() +
-//  //            (rowOffset + i * kWidth) / 8; // 8 bits per byte
-//  //        *filterMaskOffset = ((*filterMaskOffset) | ~mask); // TODO
-//  //      }
-//  //    }
-//  //  }
-//
-//  void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows) override {
-//    uint64_t offset = outputBuffer->size();
-//    DWIO_ENSURE(outputBuffer->capacity() >= numRows * sizeof(T) + offset);
-//
-//    constexpr int32_t kWidth = simd::Vectors<T>::VSize;
-//
-//    uint64_t steps = numRows / kWidth;
-//    numRows += leftOverFromLastBatch_;
-//    leftOverFromLastBatch_ = numRows - steps * kWidth;
-//
-//    if (!filter_.has_value() || filter_.value() == nullptr) {
-//      // option 1: copy at next().
-//      // TODO: try copy at getValues()
-//      auto bytesToCopy = kWidth * steps * sizeof(T);
-//      T* output = outputBuffer->template asMutable<T>() + offset;
-//      memcpy(output, inputBuffer_, bytesToCopy);
-//      // in dense mode, we don't compact results yet
-//      outputBuffer->setSize(offset + bytesToCopy);
-//      inputBuffer_ += bytesToCopy;
-//    } else {
-//      // Filtering kWidth values a time
-//      // TODO: guard by runtime SIMD check
-//      for (uint64_t i = 0; i < steps; i++) {
-//        __m256i vec =
-//            _mm256_loadu_si256(reinterpret_cast<const
-//            __m256i*>(inputBuffer_));
-//        inputBuffer_ += 32; // an AVX2 vector is 256bits, 256 / 8 = 32 bytes
-//        //      printVec(vec);
-//
-//        __m256i cmp = dwrf::testSimd<T>(*filter_.value(), vec);
-//        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp));
-//
-//        //        auto rowOffset = offset / sizeof(T);
-//        //        uint8_t* filterMaskOffset = (uint8_t*)selectivityVec.bits()
-//        +
-//        //            (rowOffset + i * kWidth) / 8; // 8 bits per byte
-//        //        *filterMaskOffset = ((*filterMaskOffset) | ~mask); // TODO
-//      }
-//    }
-//  }
-//
-//  virtual void skip(uint64_t numRows) override {
-//    // TODO
-//  }
-//
-//  // No Nulls
-//  void finish(BufferPtr outputBuffer, BitSet& selectivityVec) {
-//    if (leftOverFromLastBatch_ > 0) {
-//      uint64_t offset = outputBuffer->size();
-//      DWIO_ENSURE(
-//          outputBuffer->capacity() >=
-//          leftOverFromLastBatch_ * sizeof(T) + offset);
-//
-//      uint64_t rowOffset = offset / sizeof(T);
-//      T* output = outputBuffer->template asMutable<T>() + rowOffset;
-//      uint64_t bytesToCopy = leftOverFromLastBatch_ * sizeof(T);
-//      memcpy(output, inputBuffer_, bytesToCopy);
-//
-//      if (filter_ == nullptr) {
-//        inputBuffer_ += leftOverFromLastBatch_ * sizeof(T);
-//      } else {
-//        for (uint64_t i = 0; i < leftOverFromLastBatch_; i++) {
-//          T val =
-//              *(static_cast<const T*>(static_cast<const
-//              void*>(inputBuffer_)));
-//          // 0 is passed, 1 is filtered
-//          selectivityVec.setBit(
-//              rowOffset + i, !applyFilter(*filter_.value(), val));
-//          inputBuffer_ += sizeof(T);
-//        }
-//      }
-//
-//      outputBuffer->setSize(offset + bytesToCopy);
-//      leftOverFromLastBatch_ = 0;
-//    }
-//  }
-//
-//  void finish(BufferPtr outputBuffer, RowSet& rows) {
-//    if (leftOverFromLastBatch_ > 0) {
-//      uint64_t offset = outputBuffer->size();
-//      DWIO_ENSURE(
-//          outputBuffer->capacity() >=
-//          leftOverFromLastBatch_ * sizeof(T) + offset);
-//
-//      uint64_t rowOffset = offset / sizeof(T);
-//      T* output = outputBuffer->template asMutable<T>() + rowOffset;
-//      uint64_t bytesToCopy = leftOverFromLastBatch_ * sizeof(T);
-//      memcpy(output, inputBuffer_, bytesToCopy);
-//
-//      if (filter_ == nullptr) {
-//        inputBuffer_ += leftOverFromLastBatch_ * sizeof(T);
-//      } else {
-//        for (uint64_t i = 0; i < leftOverFromLastBatch_; i++) {
-//          T val =
-//              *(static_cast<const T*>(static_cast<const
-//              void*>(inputBuffer_)));
-//          // 0 is passed, 1 is filtered
-//          //          selectivityVec.setBit(
-//          //              rowOffset + i, !applyFilter(*filter_.value(), val));
-//          inputBuffer_ += sizeof(T);
-//        }
-//      }
-//
-//      outputBuffer->setSize(offset + bytesToCopy);
-//      leftOverFromLastBatch_ = 0;
-//    }
-//  }
-//
-//  // readWithVisitor is not currently used
-//  template <bool hasNulls, typename Visitor>
-//  void readWithVisitor(const uint64_t* nulls, Visitor visitor);
-//
-// private:
-//  void finish(T* data, BitSet& selectivityVec);
-//  void finish(T* data, RowSet& rows);
-//
-//  int leftOverFromLastBatch_;
-//  int groupSize_;
-//};
-
-//------------------------RleBpFilterAwareDecoder--------------------------------
 
 template <typename T>
 class RleBpFilterAwareDecoder : FilterAwareDecoder {
@@ -278,20 +113,6 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
     maxVal_ = (1 << bitWidth_) - 1;
   }
 
-  //  virtual void next(
-  //      BufferPtr outputBuffer,
-  //      BitSet& selectivityVec,
-  //      uint64_t numRows) override {
-  //    DWIO_ENSURE(
-  //        outputBuffer->capacity() >= numRows * sizeof(T) +
-  //        outputBuffer->size());
-  //
-  //    if (filter_.has_value()) {
-  //      readWithFilter(outputBuffer, numRows, selectivityVec);
-  //    } else {
-  //      readNoFilter(outputBuffer, numRows);
-  //    }
-  //  }
 
   virtual void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows)
       override {

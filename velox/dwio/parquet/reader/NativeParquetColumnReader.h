@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //
 // Created by Ying Su on 2/14/22.
 //
@@ -41,11 +57,17 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
   uint32_t maxDefine_;
 };
 
-  struct StreamSet {
-    std::unique_ptr<BufferedInput> bufferedInput;
-    std::unordered_map<uint32_t id, std::unique_ptr<SeekableInputStream>> streams;
-  };
-  
+
+  class ParquetParams : public dwrf::FormapParams {
+ public:
+  ParquetParams(memory::MemoryPool& pool, FileMetaData& metaData)
+      : FormatParams(pool), metaData_(metaData) {}
+  std::unique_ptr<FormatData> toFormatData(
+      const std::shared_ptr<TypeWithId>& type);
+
+ private:
+  FileMetaData metaData_;
+};
 
 class Dictionary {
  public:
@@ -56,217 +78,113 @@ class Dictionary {
   uint32_t size_;
 };
 
-class ParquetColumnReader : public velox::dwrf::SelectiveColumnReader {
+class ParquetData {
  public:
-  ParquetColumnReader(
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      common::ScanSpec* scanSpec,
-      memory::MemoryPool& pool,
-      dwrf::BufferedInput& input)
-      : dwrf::SelectiveColumnReader(
-            pool,
-            std::move(dataType),
-            scanSpec,
-            dataType->type
-            ),
-        input_(input),
+  ParquetData(
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      std::vector<RowGroup* FOLLY_NULLABLE> rowGroups)
+    : type_(static_pointer_cast<ParquetTypeWithId>(type)),
+      rowGroups_(std::move(rowGroups)),
         maxDefine_(std::dynamic_pointer_cast<const ParquetTypeWithId>(dataType)
                        ->maxDefine_),
         maxRepeat_(std::dynamic_pointer_cast<const ParquetTypeWithId>(dataType)
                        ->maxRepeat_),
         rowsInRowGroup_(-1) {}
 
-  static std::unique_ptr<ParquetColumnReader> build(
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      common::ScanSpec* scanSpec,
-      dwrf::BufferedInput& input,
-      memory::MemoryPool& pool);
+  void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
 
-  virtual bool filterMatches(const RowGroup& rowGroup) = 0;
-  virtual void initializeRowGroup(const RowGroup& rowGroup);
+  seekToRowGroup(uint32_t index);
 
+  bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
 
  protected:
-  RowGroup const* currentRowGroup_;
-  ColumnChunk const* columnChunk_;
+  std::shared_ptr<ParquetTypeWithId> type_;
+  std::vector<const RowGroup * FOLLY_NULLABLE> rowGroups_;
+  // Streams for this column in each of 'rowGroups_'. Will be created on or ahead of first
+  // use, not at construction.
+  std::vector<std::unique_ptr<SeekableInputStream>> > streams_;
+  const ColumnChunk* columnChunk_;
 
   uint32_t maxDefine_;
   uint32_t maxRepeat_;
 
   int64_t rowsInRowGroup_;
-  //int64_t numRowsToRead_ = 0; // rows to read in this batch
-  //int64_t numReads_ = 0;
+  std::unique_ptr<PageDecoder> decoder_;
 };
 
-
-class PageDecoder {
+// Wrapper for static functions for Parquet columns.
+class ParquetColumnReader {
  public:
-  PageDecoder(std::unique_ptr<dwio::dwrf::SeekableInputStream> stream)
-    : inputStream_(std::move(stream)),
-
-      chunkReadOffset_(0),
-      remainingRowsInPage_(0),
-      dictionary_(nullptr) {
-  }
-
-  
-  template <typename Visitor> readWithVisitor(const uint64_t* nulls, Visitor visitor) {
-    VELOX_CHECK(!nulls, "Parquet does not accept incoming nulls");
-    
-  }
-
- protected:
-  virtual int loadDataPage(
-      const PageHeader& pageHeader,
-      const Encoding::type& pageEncoding) = 0;
-
-  void readNextPage();
-  PageHeader readPageHeader();
-  void prepareDataPageV1(const PageHeader& pageHeader);
-  void prepareDataPageV2(const PageHeader& pageHeader);
-  void prepareDictionary(const PageHeader& pageHeader);
-  bool canNotHaveNull();
-
- protected:
-  ColumnMetaData const* columnMetaData_;
-  Statistics const* columnChunkStats_;
-  //  std::unique_ptr<ParquetPageReader> pageReader_;
-
-  BufferPtr defineOutBuffer_;
-  BufferPtr repeatOutBuffer_;
-  std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> repeatDecoder_;
-  std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> defineDecoder_;
-
-  // in bytes
-  uint64_t chunkReadOffset_;
-  int64_t remainingRowsInPage_;
-  BufferPtr pageBuffer_;
-
-  std::unique_ptr<Dictionary> dictionary_;
-  const char* dict_ = nullptr;
-
-  //  BufferPtr values_; // output buffer
-  //  void* rawValues_ = nullptr; // Writable content in 'values_'
-};
-
-class ParquetVisitorIntegerColumnReader : public ParquetLeafColumnReader {
- public:
-  using ValueType = int64_t;
-
-  ParquetVisitorIntegerColumnReader(
+  static std::unique_ptr<ParquetColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      common::ScanSpec* scanSpec,
-      memory::MemoryPool& pool,
-      dwrf::BufferedInput& input)
-      : ParquetLeafColumnReader(dataType, scanSpec, pool, input) {}
-
-  //  virtual void initializeRowGroup(const RowGroup& rowGroup) override;
-  uint64_t skip(uint64_t numRows) override {
-    VELOX_NYI();
-  }
-
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
-
-  void getValues(RowSet rows, VectorPtr* result) override {
-    getIntValues(rows, nodeType_->type.get(), result);
-  }
-
- private:
-  // Note that this prepareRead is from SelectiveColumnReader
-  template <typename T>
-  void
-  prepareRead(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
-
-  virtual int loadDataPage(
-      const PageHeader& pageHeader,
-      const Encoding::type& pageEncoding) override;
-
-  template <bool isDense, typename ExtractValues>
-  void processFilter(
-      common::Filter* filter,
-      ExtractValues extractValues,
-      RowSet rows);
-
-  template <typename TFilter, bool isDense, typename ExtractValues>
-  void
-  readHelper(common::Filter* filter, RowSet rows, ExtractValues extractValues);
-
-  template <typename ColumnVisitor>
-  void readWithVisitor(RowSet rows, ColumnVisitor visitor);
-
- private:
-  uint32_t valueSize_;
-  std::unique_ptr<dwrf::DirectDecoder</*isSigned*/ true>> valuesDecoder_;
+      ParquetParams& params,
+      common::ScanSpec* scanSpec);
 };
 
-
-class ParquetStructColumnReader : public ParquetColumnReader {
+class ParquetStructColumnReader : public dwrf::SelectiveStructColumnReader {
  public:
   ParquetStructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      ParquetParams& params,
       common::ScanSpec* scanSpec,
-      memory::MemoryPool& pool,
-      dwrf::BufferedInput& input)
-      : ParquetColumnReader(dataType, scanSpec, pool, input),
-        selectivityVec_(0) {
+      memory::MemoryPool& pool)
+      : SelectiveStructColumnReader(dataType, params, scanSpec, type->type), {
     auto& childSpecs = scanSpec->children();
     for (auto i = 0; i < childSpecs.size(); ++i) {
-      //      auto childSpec = childSpecs[i];
       if (childSpecs[i]->isConstant()) {
         continue;
       }
       auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
-      //    VELOX_CHECK(selector->shouldReadNode(childDataType->id));
 
       children_.push_back(ParquetColumnReader::build(
-          childDataType, childSpecs[i].get(), input_, memoryPool_));
+          childDataType, params, childSpecs[i].get(), input_, memoryPool_));
       childSpecs[i]->setSubscript(children_.size() - 1);
     }
   }
 
   bool filterMatches(const RowGroup& rowGroup) override;
-  void initializeRowGroup(const RowGroup& rowGroup) override;
-  uint64_t skip(uint64_t numRows) override;
-  void next(
-      uint64_t numRows,
-      VectorPtr& result,
-      const uint64_t* nulls = nullptr) override;
-  //  virtual void read(BitSet& selectivityVec) override;
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
-  //  virtual void getValues(BitSet& selectivityVec, VectorPtr* result)
-  //  override;
-
-  virtual void getValues(RowSet rows, VectorPtr* result) override;
-
- private:
-  void prepareRead(uint64_t numRows);
-
-  std::vector<std::unique_ptr<ParquetColumnReader>> children_;
-  BitSet selectivityVec_;
-  // Dense set of rows to read in next().
-  raw_vector<vector_size_t> rows_;
+  void seekToRowGroup(uint32_t index index) override;
 };
 
-//--------------------NativeParquetColumnReaderFactory--------------------------
+class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
+ public:
+  IntegerColumnReader(
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      ParquetParams& params,
+      uint32_t numBytes,
+      common::ScanSpec* scanSpec)
+      : SelectiveIntegerColumnReader(
+            std::move(requestedType),
+            params,
+            scanSpec,
+            dataType->type) {}
 
-// class ParquetColumnReaderFactory {
-//  public:
-//   explicit ParquetColumnReaderFactory(common::ScanSpec* scanSpec)
-//       : scanSpec_(scanSpec) {}
-//   virtual ~ParquetColumnReaderFactory() = default;
-//
-//   std::unique_ptr<ParquetColumnReader> build(
-//       //      const std::shared_ptr<const ParquetTypeWithId::TypeWithId>&
-//       //      requestedType,
-//       const std::shared_ptr<const ParquetTypeWithId::TypeWithId>& dataType,
-//       common::ScanSpec* scanSpec);
-//
-//   static ParquetColumnReaderFactory* baseFactory();
-//
-//  private:
-//   common::ScanSpec* const scanSpec_;
-// };
+  bool hasBulkPath() const override {
+    return true;
+  }
+
+  void seekToRowGroup(uint32_t index) override {}
+
+  uint64_t skip(uint64_t numValues) override {
+    auto& parquet = formatData_->as<ParquetData>();
+    parquet->skip(numValues);
+  }
+
+  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
+      override {
+    auto& data = formatData_->as<ParquetData>();
+    VELOX_WIDTH_DISPATCH(
+        sizeOfIntKind(type_->kind()), prepareRead, offset, rows, nullptr);
+
+    readCommon<IntegerColumnReader>(rows);
+  }
+
+  template <typename ColumnVisitor>
+  void readWithVisitor(RowSet rows, ColumnVisitor visitor) {
+    auto& data = formatData<ParquetData>();
+    pageDecoder_->readWithVisitor(nullptr, visitor);
+  }
+}
 
 } // namespace facebook::velox::parquet

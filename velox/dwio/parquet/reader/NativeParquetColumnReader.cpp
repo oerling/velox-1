@@ -31,11 +31,15 @@
 
 namespace facebook::velox::parquet {
 
+std::unique_ptr<FormatData> ParquetParams::toFormatData(
+    const std::shared_ptr<TypeWithId>& type) {
+  return std::make_unique<ParquetData>(std::move(columnChunks)) {}
+}
+
 std::unique_ptr<ParquetColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    common::ScanSpec* scanSpec,
-    dwrf::BufferedInput& input,
-    memory::MemoryPool& pool) {
+    ParquetParams& params,
+    common::ScanSpec* scanSpec) {
   auto colName = scanSpec->fieldName();
 
   switch (dataType->type->kind()) {
@@ -43,11 +47,9 @@ std::unique_ptr<ParquetColumnReader> ParquetColumnReader::build(
     case TypeKind::BIGINT:
     case TypeKind::SMALLINT:
     case TypeKind::TINYINT:
-      return std::make_unique<IntegerColumnReader>(
-          dataType, scanSpec, pool, input);
+      return std::make_unique<IntegerColumnReader>(dataType, params, scanSpec);
     case TypeKind::ROW:
-      return std::make_unique<StructColumnReader>(
-          dataType, scanSpec, pool, input);
+      return std::make_unique<StructColumnReader>(dataType, params, scanSpec);
 
     case TypeKind::REAL:
     case TypeKind::DOUBLE:
@@ -64,33 +66,71 @@ std::unique_ptr<ParquetColumnReader> ParquetColumnReader::build(
   }
 }
 
-  void ParquetColumnReader::enqueueRowGroup(const RowGroup& rowGroup, StreamSet& streams) {
+void ParquetData::enqueueRowGroup(
+    uint32_t idex,
+    BufferedInput& input) {
+  auto chunk = columnChunks_[index];
+  streams[index] = input.enqueue({start, size}, type_->index);
+  DWIO_ENSURE(
+      columnChunk_->__isset.meta_data,
+      "ColumnMetaData does not exist for schema Id ",
+      nodeType_->id);
+  auto columnMetaData = &columnChunk_->meta_data;
+  DWIO_ENSURE(
+      columnChunk_->__isset.meta_data,
+      "ColumnMetaData does not exist for schema Id ",
+      nodeType_->id);
+  columnMetaData_ = &columnChunk_->meta_data;
+  //  valuesInColumnChunk_ = columnMetaData_->num_values;
+
+  chunkReadOffset_ = columnMetaData_->data_page_offset;
+  if (columnMetaData_->__isset.dictionary_page_offset &&
+      columnMetaData_->dictionary_page_offset >= 4) {
+    // this assumes the data pages follow the dict pages directly.
+    chunkReadOffset_ = columnMetaData_->dictionary_page_offset;
+  }
+  DWIO_ENSURE(
+      chunkReadOffset_ >= 0, "Invalid chunkReadOffset_ ", chunkReadOffset_);
+
+  uint64_t readSize = std::min(
+      columnMetaData_->total_compressed_size,
+      columnMetaData_->total_uncompressed_size);
+
+  auto strea streams.bufferedInput.enqueue({chunkReadOffset_, readSize});
+  streams.streams[fileColumnIndex] = std::move(
+
+}
+
+void ParquetColumnReader::openRowGroup(
+    const RowGroup& rowGroup,
+    StreamSet& streams) {
+  currentRowGroup_ = &rowGroup;
+  rowsInRowGroup_ = currentRowGroup_->num_rows;
+
+  uint32_t fileColumnId = nodeType_->column;
+  DWIO_ENSURE(fileColumnId < rowGroup.columns.size());
+  columnChunk_ = &rowGroup.columns[fileColumnId];
+  DWIO_ENSURE(columnChunk_ != nullptr);
+if (columnMetaData_->__isset.statistics) {
+  columnChunkStats_ = &columnMetaData_->statistics;
+
   }
 
-  void ParquetColumnReader::openRowGroup(const RowGroup& rowGroup, StreamSet& streams) {
-    currentRowGroup_ = &rowGroup;
-    rowsInRowGroup_ = currentRowGroup_->num_rows;
 
-    uint32_t fileColumnId = nodeType_->column;
-    DWIO_ENSURE(fileColumnId < rowGroup.columns.size());
-    columnChunk_ = &rowGroup.columns[fileColumnId];
-    DWIO_ENSURE(columnChunk_ != nullptr);
 
-  }
 
-  void ParquetLeafColumnReader::enqueueRowGroup(const RowGroup& rowGroup, StreamSet& streams) {
-    !!;
-  }
+}
+}
 
-  void ParquetLeafColumnReader::openRowGroup(const RowGroup& rowGroup, StreamSet& streams) {
-    uint32_t fileColumnId = nodeType_->column;
-    auto stream = std::move(streams.streams[fileColumnId]);
-    decoder_->reset(std::move(stream));
-  }
+void ParquetLeafColumnReader::openRowGroup(
+    const RowGroup& rowGroup,
+    StreamSet& streams) {
+  uint32_t fileColumnId = nodeType_->column;
+  auto stream = std::move(streams.streams[fileColumnId]);
+  decoder_->reset(std::move(stream));
+}
 
-  
-
-    bool ParquetLeafColumnReader::filterMatches(const RowGroup& rowGroup) {
+bool ParquetLeafColumnReader::filterMatches(const RowGroup& rowGroup) {
   bool matched = true;
   if (scanSpec_->filter()) {
     auto colIdx = nodeType_->column;
@@ -111,29 +151,6 @@ std::unique_ptr<ParquetColumnReader> ParquetColumnReader::build(
     }
   }
   return matched;
-}
-
-    void ParquetLeafColumnReader::enqueueRowGroup(const RowGroup& rowGroup, StreamSet& streams) {
-  ParquetColumnReader::enqueueRowGroup(rowGroup);
-  !!
-    }
-
-    
-  void ParquetLeafColumnReader::enqueueRowGroup(const RowGroup& rowGroup, StreamSet& streams) {
-    DWIO_ENSURE(
-		columnChunk_->__isset.meta_data,
-		"ColumnMetaData does not exist for schema Id ",
-		nodeType_->id);
-    auto columnMetaData = &columnChunk_->meta_data;
-
-    
-
-
-    dictionary_.reset();
-
-    if (columnMetaData_->__isset.statistics) {
-      columnChunkStats_ = &columnMetaData_->statistics;
-  }
 }
 
 void ParquetLeafColumnReader::prepareRead(RowSet& rows) {
@@ -629,7 +646,6 @@ int ParquetVisitorIntegerColumnReader::loadDataPage(
   return pageHeader.compressed_page_size;
 }
 
-
 bool ParquetStructColumnReader::filterMatches(const RowGroup& rowGroup) {
   bool matched = true;
 
@@ -729,7 +745,6 @@ void facebook::velox::parquet::ParquetStructColumnReader::prepareRead(
   numReads_ = scanSpec_->newRead();
 } // namespace facebook::velox::parquet
 
-
 void ParquetStructColumnReader::read(
     vector_size_t offset,
     RowSet rows,
@@ -781,7 +796,6 @@ void ParquetStructColumnReader::read(
   //  lazyVectorReadOffset_ = offset;
   readOffset_ = offset + rows.back() + 1;
 }
-
 
 void ParquetStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
   assert(!children_.empty());

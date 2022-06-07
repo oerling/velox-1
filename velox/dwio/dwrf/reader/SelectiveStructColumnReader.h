@@ -29,6 +29,13 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);
 
+  SelectiveStructColumnReader(
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      FormatParams& params,
+      common::ScanSpec* scanSpec,
+			      const TypePtr& type)
+    : SelectiveColumnReader(type, params, scanspec) , type{}
+
   void resetFilterCaches() override {
     for (auto& child : children_) {
       child->resetFilterCaches();
@@ -128,7 +135,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     return debugString_;
   }
 
- private:
+protected:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
