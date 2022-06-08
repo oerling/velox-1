@@ -33,16 +33,6 @@ namespace facebook::velox::parquet {
 
   class FilterAwareDecoder {
  public:
-  //  FilterAwareDecoder(
-  //      BufferPtr inputBuffer, // note we have loaded the full page
-  //      //      uint64_t numIntValues,
-  //      std::optional<common::Filter*> filter)
-  //      : inputBuffer_(inputBuffer->as<uint8_t>()),
-  //        //        bufferEnd_(inputBuffer_ + numBytes),
-  //        //        numInputValues_(numIntValues),
-  //        filter_(filter) {}
-
-  //  static std::unique_ptr<FilterAwareDecoder> createDecoder() {}
 
   FilterAwareDecoder(
       const void* inputBuffer, // note we have loaded the full page
@@ -50,9 +40,6 @@ namespace facebook::velox::parquet {
       std::optional<common::Filter*> filter)
       : inputBuffer_(reinterpret_cast<const uint8_t*>(inputBuffer)),
         inputBytes_(inputBytes),
-        //      bufferEnd_(bufferEnd),
-        //        bufferEnd_(inputBuffer_ + numBytes),
-        //        numInputValues_(numIntValues),
         filter_(filter),
         kHasBulkPath_(true) {
     DWIO_ENSURE(filter);

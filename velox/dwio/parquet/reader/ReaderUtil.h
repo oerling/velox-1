@@ -8,51 +8,6 @@
 
 namespace facebook::velox::parquet {
 
-static inline int readInput(
-    dwrf::BufferedInput& input,
-    uint64_t inputOffset,
-    const void** outputBuf,
-    int readBytes,
-    dwio::common::LogType logType) {
-  // We have pre-loaded the whole RowGroup in one chunk
-  DWIO_ENSURE(input.isBuffered(inputOffset, readBytes));
-
-  uint64_t toReadBytes = readBytes;
-  auto stream = input.read(inputOffset, readBytes, logType);
-  DWIO_ENSURE(
-      stream->Next(outputBuf, &readBytes),
-      "Failed to read the input at ",
-      inputOffset);
-  DWIO_ENSURE(
-      readBytes == toReadBytes,
-      "Failed to read the input. Supposed to read ",
-      toReadBytes,
-      "bytes, but read ",
-      readBytes);
-  //  inputOffset += readBytes;
-
-  return readBytes;
-}
-
-static inline int readInput(
-    dwrf::SeekableInputStream* stream,
-    const void** outputBuf,
-    int readBytes,
-    dwio::common::LogType logType) {
-  uint64_t toReadBytes = readBytes;
-  DWIO_ENSURE(
-      stream->Next(outputBuf, &readBytes),
-      "Failed to read the page input stream");
-  DWIO_ENSURE(
-      readBytes == toReadBytes,
-      "Failed to read the page input stream. Supposed to read ",
-      toReadBytes,
-      "bytes, but read ",
-      readBytes);
-
-  return readBytes;
-}
-
 static int32_t decodeNulls(
     int64_t offset,
     int32_t batchSize,

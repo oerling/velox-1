@@ -163,10 +163,10 @@ class IntDecoder {
   }
 
   // moves the stream and position in buffer out of 'this'.
-  std::unique_ptr<seekableInputStream> moveStreamAndBuffer(const char*& begin, const char*& end) {
-    begin_ = bufferstart;
+  std::unique_ptr<dwrf::SeekableInputStream> moveStreamAndBuffer(const char*& begin, const char*& end) {
+    begin = bufferStart;
     end = bufferEnd;
-    return std::move(inputStream_);
+    return std::move(inputStream);
   }
 
 private:

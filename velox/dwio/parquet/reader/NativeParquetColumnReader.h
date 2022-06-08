@@ -27,14 +27,10 @@
 #include "dwio/dwrf/common/BufferedInput.h"
 #include "velox/common/base/BitSet.h"
 #include "velox/common/base/RawVector.h"
-#include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/dwrf/common/DirectDecoder.h"
-#include "velox/dwio/dwrf/reader/ColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/parquet/reader/PageDecoder.h"
 
 namespace facebook::velox::parquet {
-
-//-----------------------ParquetColumnInfo-----------------------------
 
 class ParquetTypeWithId : public dwio::common::TypeWithId {
  public:
@@ -57,52 +53,45 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
   uint32_t maxDefine_;
 };
 
-
-  class ParquetParams : public dwrf::FormapParams {
+class ParquetParams : public dwrf::FormatParams {
  public:
   ParquetParams(memory::MemoryPool& pool, FileMetaData& metaData)
       : FormatParams(pool), metaData_(metaData) {}
-  std::unique_ptr<FormatData> toFormatData(
-      const std::shared_ptr<TypeWithId>& type);
+  std::unique_ptr<dwrf::FormatData> toFormatData(
+      const std::shared_ptr<const dwio::common::TypeWithId>& type) override;
 
  private:
   FileMetaData metaData_;
-};
-
-class Dictionary {
- public:
-  Dictionary(const void* dict, uint32_t size) : dict_(dict), size_(size) {}
-
- private:
-  const void* dict_;
-  uint32_t size_;
 };
 
 class ParquetData {
  public:
   ParquetData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      std::vector<RowGroup* FOLLY_NULLABLE> rowGroups)
-    : type_(static_pointer_cast<ParquetTypeWithId>(type)),
-      rowGroups_(std::move(rowGroups)),
-        maxDefine_(std::dynamic_pointer_cast<const ParquetTypeWithId>(dataType)
-                       ->maxDefine_),
-        maxRepeat_(std::dynamic_pointer_cast<const ParquetTypeWithId>(dataType)
-                       ->maxRepeat_),
-        rowsInRowGroup_(-1) {}
+      std::vector<const RowGroup * FOLLY_NULLABLE> rowGroups)
+    : type_(std::static_pointer_cast<ParquetTypeWithId>(type)),
+        rowGroups_(std::move(rowGroups)),
+        maxDefine_(type_ ->maxDefine_),
+        maxRepeat_(type_->maxRepeat_),
+      rowsInRowGroup_(-1) {}
 
   void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
 
-  seekToRowGroup(uint32_t index);
+  void seekToRowGroup(uint32_t index);
 
-  bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
+  bool filterMatches(uint32_t index, common::Filter& filter);
 
- protected:
-  std::shared_ptr<ParquetTypeWithId> type_;
+  template <typename Visitor>
+  void readWithVisitor(Visitor visitor) {
+      decoder_->readWithVisitor(visitor);
+  }
+
+protected:
+  std::shared_ptr<const ParquetTypeWithId> type_;
   std::vector<const RowGroup * FOLLY_NULLABLE> rowGroups_;
-  // Streams for this column in each of 'rowGroups_'. Will be created on or ahead of first
-  // use, not at construction.
-  std::vector<std::unique_ptr<SeekableInputStream>> > streams_;
+  // Streams for this column in each of 'rowGroups_'. Will be created on or
+  // ahead of first use, not at construction.
+  std::vector<std::unique_ptr<dwrf::SeekableInputStream>> streams_;
   const ColumnChunk* columnChunk_;
 
   uint32_t maxDefine_;
@@ -128,7 +117,7 @@ class ParquetStructColumnReader : public dwrf::SelectiveStructColumnReader {
       ParquetParams& params,
       common::ScanSpec* scanSpec,
       memory::MemoryPool& pool)
-      : SelectiveStructColumnReader(dataType, params, scanSpec, type->type), {
+      : SelectiveStructColumnReader(dataType, params, scanSpec, dataType->type) {
     auto& childSpecs = scanSpec->children();
     for (auto i = 0; i < childSpecs.size(); ++i) {
       if (childSpecs[i]->isConstant()) {
@@ -142,8 +131,18 @@ class ParquetStructColumnReader : public dwrf::SelectiveStructColumnReader {
     }
   }
 
-  bool filterMatches(const RowGroup& rowGroup) override;
-  void seekToRowGroup(uint32_t index index) override;
+  std::vector<uint32_t> filterRowGroups(
+    uint64_t rowGroupSize,
+    const StatsContext& context) const override {
+    if (!scanSpec_->filter_) {
+      return {};
+    }
+    return formatData_->as<ParquetData>().filterRowGroups(*scanSpec_->filter());
+  }
+
+  bool filterMatches(const RowGroup& rowGroup);
+
+  void seekToRowGroup(uint32_t index) override;
 };
 
 class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
@@ -164,26 +163,26 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
     return true;
   }
 
-  void seekToRowGroup(uint32_t index) override {}
+  void seekToRowGroup(uint32_t index) override {
+    formatData_->as<ParquetData>.seekToRowGroup(index);
+  }
 
   uint64_t skip(uint64_t numValues) override {
-    auto& parquet = formatData_->as<ParquetData>();
-    parquet->skip(numValues);
+    formatData_->as<ParquetData>().skip(numValues);
   }
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override {
     auto& data = formatData_->as<ParquetData>();
     VELOX_WIDTH_DISPATCH(
-        sizeOfIntKind(type_->kind()), prepareRead, offset, rows, nullptr);
+        sizeOfIntKind(type_->type->kind()), prepareRead, offset, rows, nullptr);
 
     readCommon<IntegerColumnReader>(rows);
   }
 
   template <typename ColumnVisitor>
   void readWithVisitor(RowSet rows, ColumnVisitor visitor) {
-    auto& data = formatData<ParquetData>();
-    pageDecoder_->readWithVisitor(nullptr, visitor);
+    formatData<ParquetData>().readWithVisitor(visitor);
   }
 }
 

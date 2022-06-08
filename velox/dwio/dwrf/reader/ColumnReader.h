@@ -28,43 +28,45 @@
 
 namespace facebook::velox::dwrf {
 
-  // Empty superclass for format-specific state in common between all types of readers.
+// Empty superclass for format-specific state in common between all types of
+// readers.
 class FormatData {
-public:
+ public:
   template <typename T>
   T& as() {
     return *reinterpret_cast<T*>(this);
   }
-} ;
-  
-  // superclass for format-specific initialization arguments.
-  class FormatParams {
-  public:
-    explicit FormatParams(memory::MemoryPool& pool)
-      : pool_(pool) {}
+};
 
-    std::unique_ptr<FormatData> toFormatData(const std::shared_ptr<TypeWithId>& type) = 0
+// superclass for format-specific initialization arguments.
+class FormatParams {
+ public:
+  explicit FormatParams(memory::MemoryPool& pool) : pool_(pool) {}
 
-      memory::MemoryPool& pool() {
-      return pool_;
-    }
+  // Makes format-specific structures for the column of 'type'.
+  virtual std::unique_ptr<FormatData> toFormatData(
+      const std::shared_ptr<const dwio::common::TypeWithId>& type) = 0;
 
-  private:
-    memoryPool& pool_;
-  };
-  // DWRF specific initialization.
-  class DwrfParams : public FormatParams {
-  public:
-    DwrfParams(memory::MemoryPool& pool, Stripestreams&stripe,
-	       FlatMapContext context = FlatMapContext::nonFlatMapContext())
-      : pool_(pool), stripe_(stripe), flatMapContext_(context) {}
+  memory::MemoryPool& pool() {
+    return pool_;
+  }
 
+ private:
+  memory::MemoryPool& pool_;
+};
+// DWRF specific initialization.
+class DwrfParams : public FormatParams {
+ public:
+  DwrfParams(
+      memory::MemoryPool& pool,
+      StripeStreams& stripe,
+      FlatMapContext context = FlatMapContext::nonFlatMapContext())
+      : FormatParams(pool), stripe_(stripe), flatMapContext_(context) {}
 
-    StripeStreams& stripe_;
-    FlatMapContext flatMapContext_;
-  };
-  
-  
+  StripeStreams& stripe_;
+  FlatMapContext flatMapContext_;
+};
+
 /**
  * The interface for reading ORC data types.
  */
@@ -78,13 +80,12 @@ class ColumnReader {
         memoryPool_{memoryPool},
         flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
   explicit ColumnReader(
-			const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
       FormatParams& formatParams)
-    : formatData(formatParams.toFormatData(type)),
-      pool_(formatParams.pool()),
-      notNullDecoder_{},
+      : formatData_(formatParams.toFormatData(type)),
+        notNullDecoder_{},
         nodeType_{type},
-        memoryPool_{memoryPool},
+        memoryPool_(formatParams.pool()),
         flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
 
   // Reads nulls, if any. Sets '*nulls' to nullptr if void

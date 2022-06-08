@@ -32,7 +32,7 @@
 namespace facebook::velox::parquet {
 
 std::unique_ptr<FormatData> ParquetParams::toFormatData(
-    const std::shared_ptr<TypeWithId>& type) {
+    const std::shared_ptr<const TypeWithId>& type) {
   return std::make_unique<ParquetData>(std::move(columnChunks)) {}
 }
 
@@ -130,30 +130,27 @@ void ParquetLeafColumnReader::openRowGroup(
   decoder_->reset(std::move(stream));
 }
 
-bool ParquetLeafColumnReader::filterMatches(const RowGroup& rowGroup) {
-  bool matched = true;
-  if (scanSpec_->filter()) {
+  bool ParquetData::filterMatches(const RowGroup& rowGroup, common::Filter& filter) {
     auto colIdx = nodeType_->column;
-    auto type = nodeType_->type;
+    auto type = type_->type;
     if (rowGroup.columns[colIdx].__isset.meta_data &&
         rowGroup.columns[colIdx].meta_data.__isset.statistics) {
       auto columnStats = buildColumnStatisticsFromThrift(
-          rowGroup.columns[colIdx].meta_data.statistics,
-          *type,
-          rowGroup.num_rows);
+							 rowGroup.columns[colIdx].meta_data.statistics,
+							 *type,
+							 rowGroup.num_rows);
       if (!testFilter(
-              scanSpec_->filter(),
-              columnStats.get(),
-              rowGroup.num_rows,
-              type)) {
-        matched = false;
+		      &filter,
+		      columnStats.get(),
+		      rowGroup.num_rows,
+		      type)) {
+        return false;
       }
     }
+    return true;
   }
-  return matched;
-}
 
-void ParquetLeafColumnReader::prepareRead(RowSet& rows) {
+void ParquetData::prepareRead(RowSet& rows) {
   numRowsToRead_ = rows.back() + 1;
   if (numRowsToRead_ > 0) {
     if (maxRepeat_ > 0) {
@@ -167,202 +164,11 @@ void ParquetLeafColumnReader::prepareRead(RowSet& rows) {
           defineOutBuffer_, numRowsToRead_, &memoryPool_);
       defineOutBuffer_->setSize(0);
 
-      const uint64_t numBytes = bits::nbytes(numRowsToRead_);
-      returnReaderNulls_ = true; // anyNulls_ && isDense;
-      dwrf::detail::ensureCapacity<uint8_t>(
-          nullsInReadRange_, numBytes, &memoryPool_);
-      auto* nullsPtr = nullsInReadRange_->asMutable<uint64_t>();
-      memset(nullsPtr, bits::kNotNullByte, numBytes);
-    } else {
-      nullsInReadRange_ = nullptr; // It's used by ColumnVisitor later
-    }
   }
 
-  // is part of read() and after read returns getValues may be called.
-  mayGetValues_ = true;
-  numOutConfirmed_ = 0;
-  numValues_ = 0;
-
-  inputRows_ = rows;
-  if (scanSpec_->filter()) {
-    // TODO: why not reuse rows?
-    outputRows_.reserve(rows.size());
-  }
-  outputRows_.clear();
-  //  numOutputRows_ = 0;
-
-  if (scanSpec_->keepValues() && !scanSpec_->valueHook()) {
-    valueRows_.clear();
-  }
+}
 }
 
-void ParquetLeafColumnReader::readNextPage() {
-  defineDecoder_.reset();
-  repeatDecoder_.reset();
-
-  PageHeader pageHeader = readPageHeader();
-
-  switch (pageHeader.type) {
-    case PageType::DATA_PAGE:
-      prepareDataPageV1(pageHeader);
-      break;
-    case PageType::DATA_PAGE_V2:
-      prepareDataPageV2(pageHeader);
-      break;
-    case PageType::DICTIONARY_PAGE:
-      // no compression support yet
-      prepareDictionary(pageHeader);
-      break;
-    default:
-      break; // ignore INDEX page type and any other custom extensions
-  }
-}
-
-PageHeader ParquetLeafColumnReader::readPageHeader() {
-  const void* buf;
-  // Note that sizeof(PageHeader) may be longer than actually read
-  readInput(
-      input_,
-      chunkReadOffset_,
-      &buf,
-      sizeof(PageHeader), // This is larger than actual read bytes
-      dwio::common::LogType::HEADER);
-
-  auto thriftTransport =
-      std::make_shared<ThriftBufferedTransport>(buf, sizeof(PageHeader));
-  auto thriftProtocol = std::make_unique<
-      apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
-      thriftTransport);
-
-  PageHeader pageHeader;
-  uint64_t readBytes = pageHeader.read(thriftProtocol.get());
-  chunkReadOffset_ += readBytes;
-  return pageHeader;
-}
-
-void ParquetLeafColumnReader::prepareDataPageV1(const PageHeader& pageHeader) {
-  if (pageHeader.type == PageType::DATA_PAGE &&
-      !pageHeader.__isset.data_page_header) {
-    throw std::runtime_error("Missing data page header from data page");
-  }
-
-  remainingRowsInPage_ = pageHeader.data_page_header.num_values;
-  const void* buf;
-
-  if (maxRepeat_ > 0) {
-    chunkReadOffset_ += readInput(
-        input_,
-        chunkReadOffset_,
-        &buf,
-        sizeof(uint32_t),
-        dwio::common::LogType::HEADER);
-    uint32_t repeatLength = *(static_cast<const uint32_t*>(buf)); // 2
-
-    // 00 00 00 02   00 00 00 14   01 01 00 00   00 00 00 00
-    chunkReadOffset_ += readInput(
-        input_,
-        chunkReadOffset_,
-        &buf,
-        repeatLength,
-        dwio::common::LogType::HEADER);
-
-    repeatDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        buf,
-        repeatLength,
-        nullptr,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxRepeat_));
-  }
-
-  if (maxDefine_ > 0) {
-    chunkReadOffset_ += readInput(
-        input_,
-        chunkReadOffset_,
-        &buf,
-        sizeof(uint32_t),
-        dwio::common::LogType::HEADER);
-    uint32_t defineLength = *(static_cast<const uint32_t*>(buf));
-
-    chunkReadOffset_ += readInput(
-        input_,
-        chunkReadOffset_,
-        &buf,
-        defineLength,
-        dwio::common::LogType::HEADER);
-
-    defineDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        buf,
-        defineLength,
-        nullptr, // We will decode nulls for all rows in the RowSet
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxDefine_));
-  }
-
-  auto encoding = pageHeader.data_page_header.encoding;
-  int readBytes = loadDataPage(pageHeader, encoding);
-  chunkReadOffset_ += readBytes;
-}
-
-void ParquetLeafColumnReader::prepareDataPageV2(const PageHeader& pageHeader) {
-  if (pageHeader.type == PageType::DATA_PAGE_V2 &&
-      !pageHeader.__isset.data_page_header_v2) {
-    throw std::runtime_error("Missing data page header from data page");
-  }
-
-  remainingRowsInPage_ = pageHeader.data_page_header_v2.num_values;
-  const void* buf;
-
-  if (maxRepeat_ > 0) {
-    uint32_t repeatLength =
-        pageHeader.data_page_header_v2.repetition_levels_byte_length;
-
-    // 00 00 00 02   00 00 00 14   01 01 00 00   00 00 00 00
-    chunkReadOffset_ += readInput(
-        input_,
-        chunkReadOffset_,
-        &buf,
-        repeatLength,
-        dwio::common::LogType::HEADER);
-
-    repeatDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        buf,
-        repeatLength,
-        nullptr,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxRepeat_));
-  }
-
-  if (maxDefine_ > 0) {
-    uint32_t defineLength =
-        pageHeader.data_page_header_v2.definition_levels_byte_length;
-
-    chunkReadOffset_ += readInput(
-        input_,
-        chunkReadOffset_,
-        &buf,
-        defineLength,
-        dwio::common::LogType::HEADER);
-
-    defineDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        buf,
-        defineLength,
-        nullptr,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxDefine_));
-  }
-
-  auto encoding = pageHeader.data_page_header_v2.encoding;
-  int readBytes = loadDataPage(pageHeader, encoding);
-  chunkReadOffset_ += readBytes;
-}
-
-void ParquetLeafColumnReader::prepareDictionary(const PageHeader& pageHeader) {
-  auto stream = ParquetLeafColumnReader::getPageStream(
-      pageHeader.compressed_page_size, pageHeader.uncompressed_page_size);
-
-  const void* buf;
-  int readBytes;
-  stream->Next(&buf, &readBytes);
-
-  dictionary_ =
-      std::make_unique<Dictionary>(buf, pageHeader.uncompressed_page_size);
-}
 
 std::unique_ptr<dwrf::SeekableInputStream>
 ParquetLeafColumnReader::getPageStream(
@@ -622,29 +428,6 @@ void ParquetVisitorIntegerColumnReader::readWithVisitor(
   readOffset_ += numRows;
 }
 
-int ParquetVisitorIntegerColumnReader::loadDataPage(
-    const PageHeader& pageHeader,
-    const Encoding::type& pageEncoding) {
-  auto stream = ParquetLeafColumnReader::getPageStream(
-      pageHeader.compressed_page_size, pageHeader.uncompressed_page_size);
-
-  switch (pageEncoding) {
-    case Encoding::RLE_DICTIONARY:
-    case Encoding::PLAIN_DICTIONARY:
-    case Encoding::DELTA_BINARY_PACKED:
-      VELOX_UNSUPPORTED("Encoding not supported yet");
-      break;
-    case Encoding::PLAIN:
-      valuesDecoder_ = std::make_unique<dwrf::DirectDecoder<true>>(
-          std::move(stream), false, pageHeader.uncompressed_page_size);
-      break;
-    default:
-      throw std::runtime_error("Unsupported page encoding");
-  }
-
-  // hack:
-  return pageHeader.compressed_page_size;
-}
 
 bool ParquetStructColumnReader::filterMatches(const RowGroup& rowGroup) {
   bool matched = true;

@@ -34,7 +34,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       FormatParams& params,
       common::ScanSpec* scanSpec,
 			      const TypePtr& type)
-    : SelectiveColumnReader(type, params, scanspec) , type{}
+    : SelectiveColumnReader(requestedType, params, scanSpec, type) {}
 
   void resetFilterCaches() override {
     for (auto& child : children_) {
