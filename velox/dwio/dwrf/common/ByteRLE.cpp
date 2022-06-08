@@ -347,6 +347,7 @@ void ByteRleDecoder::nextBuffer() {
   bufferEnd = bufferStart + bufferLength;
 }
 
+  
 void ByteRleDecoder::seekToRowGroup(PositionProvider& positionProvider) {
   // move the input stream
   inputStream->seekToPosition(positionProvider);
@@ -354,6 +355,8 @@ void ByteRleDecoder::seekToRowGroup(PositionProvider& positionProvider) {
   bufferEnd = bufferStart;
   // force reading a new header
   remainingValues = 0;
+  static int counter = 0;
+  LOG(INFO) << "Suspect Seek #" << counter++;
   // skip ahead the given number of records
   ByteRleDecoder::skip(positionProvider.next());
 }

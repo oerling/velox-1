@@ -499,3 +499,65 @@ TEST_F(MergeJoinTest, lazyVectors) {
       .assertResults(
           "SELECT c0, rc0, c1, rc1, c2, c3  FROM t, u WHERE t.c0 = u.rc0 and c1 + rc1 < 30");
 }
+
+TEST_F(MergeJoinTest, x) {
+  std::vector<std::string> probePaths = {
+    "/tmp/tf/p1",
+    "/tmp/tf/p2"
+  };
+  std::vector<std::string> buildPaths = {
+    "/tmp/tf/bl0",
+    "/tmp/tf/bl1",
+    "/tmp/tf/bl2",
+    "/tmp/tf/bl3",
+    "/tmp/tf/bl4",
+    "/tmp/tf/bl5"
+  };
+
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> probeSplits;
+  for (auto path : probePaths) {
+    probeSplits.push_back(makeHiveConnectorSplit(path));
+  }
+
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> buildSplits;
+  for (auto path : buildPaths) {
+    buildSplits.push_back(makeHiveConnectorSplit(path));
+  }
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  core::PlanNodeId probeScanId;
+  core::PlanNodeId buildScanId;
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .tableScan(
+              ROW({"post_owner_id", "top_level_comment_ordering"},
+                  {BIGINT(), VARCHAR()}),
+              {"post_owner_id != 0",
+               "top_level_comment_ordering = 'ranked_replies'"})
+          .capturePlanNodeId(probeScanId)
+          .hashJoin(
+              {"post_owner_id"},
+              {"userid"},
+              PlanBuilder(planNodeIdGenerator, pool())
+                  .tableScan(
+                      ROW({"userid", "time", "experiment", "condition"},
+                          {BIGINT(), BIGINT(), VARCHAR(), VARCHAR()}),
+                      {
+                          "userid != 0",
+                          "time < 1653634799",
+                          "experiment = 'pf_safety_impersonation_page_v4'",
+                          "condition IN ('control', 'impersonation_v1')",
+                      })
+                  .capturePlanNodeId(buildScanId)
+                  . singleAggregation({"userid"}, {})
+                  .planNode(),
+              "",
+              {})
+          .singleAggregation({}, {"count(1)"})
+          .planNode();
+
+  AssertQueryBuilder(plan, duckDbQueryRunner_)
+      .splits(probeScanId, probeSplits)
+      .splits(buildScanId, buildSplits)
+      .assertResults("SELECT null");
+}
