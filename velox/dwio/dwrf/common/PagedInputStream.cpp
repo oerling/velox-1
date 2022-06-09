@@ -32,9 +32,11 @@ void PagedInputStream::readBuffer(bool failOnEof) {
           reinterpret_cast<const void**>(&inputBufferPtr_), &length)) {
     DWIO_ENSURE(!failOnEof, getName(), ", read past EOF");
     state_ = State::END;
+    inputBufferStart_ = nullptr;
     inputBufferPtr_ = nullptr;
     inputBufferPtrEnd_ = nullptr;
   } else {
+    inputBufferStart_ = inputBufferPtr_;
     inputBufferPtrEnd_ = inputBufferPtr_ + length;
   }
 }
@@ -188,6 +190,13 @@ void PagedInputStream::BackUp(int32_t count) {
       outputBufferPtr_ != nullptr,
       "Backup without previous Next in ",
       getName());
+  if (state_ == State::ORIGINAL) {
+    VELOX_CHECK(outputBufferPtr_ >= inputBufferStart_ && outputBufferPtr_ <= inputBufferPtrEnd_);
+    // 'outputBufferPtr_' ranges over the input buffer if there is no
+    // decompression / decryption. Check that we do not back out of
+    // the last range returned from input_->Next().
+    VELOX_CHECK_GE(inputBufferPtr_ - static_cast<size_t>(count),  inputBufferStart_);
+  }
   outputBufferPtr_ -= static_cast<size_t>(count);
   outputBufferLength_ += static_cast<size_t>(count);
   bytesReturned_ -= count;

@@ -34,9 +34,11 @@ class PagedInputStream : public SeekableInputStream {
         decompressor_{std::move(decompressor)},
         decrypter_{decrypter},
         streamDebugInfo_{streamDebugInfo} {
+    static int counter = 0;
     DWIO_ENSURE(
         decompressor_ || decrypter_,
         "one of decompressor or decryptor is required");
+    LOG(INFO) << "Make " << counter++ << " = " << this;
   }
 
   bool Next(const void** data, int32_t* size) override;
@@ -125,7 +127,11 @@ class PagedInputStream : public SeekableInputStream {
   size_t remainingLength_{0};
 
   // the last buffer returned from the input
+  // The first byte. in the range from input_->Next()
+  const char* inputBufferStart_{nullptr};
+  // The first byte to return in Next. Not the same as inputBufferStart_ if there is a backup().
   const char* inputBufferPtr_{nullptr};
+  // The first byte after the last range returned by input_->Next().
   const char* inputBufferPtrEnd_{nullptr};
 
   // bytes returned by this stream

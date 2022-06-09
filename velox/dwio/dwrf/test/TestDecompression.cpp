@@ -643,6 +643,13 @@ class CompressBuffer {
     buf[2] = static_cast<char>(compressedSize >> 15);
   }
 
+  void writeUncompressedHeader(size_t compressedSize) {
+    buf[0] = static_cast<char>(compressedSize << 1) | 1;
+    buf[1] = static_cast<char>(compressedSize >> 7);
+    buf[2] = static_cast<char>(compressedSize >> 15);
+  }
+
+  
   size_t getCompressedSize() const {
     size_t header = static_cast<unsigned char>(buf[0]);
     header |= static_cast<size_t>(static_cast<unsigned char>(buf[1])) << 8;
@@ -812,7 +819,7 @@ class TestSeek : public ::testing::Test {
     std::unique_ptr<SeekableInputStream> stream = createDecompressor(
         kind,
         std::unique_ptr<SeekableInputStream>(
-            new SeekableArrayInputStream(output, offset2, outputSize)),
+            new SeekableArrayInputStream(output, offset2, outputSize / 10)),
         outputSize,
         pool,
         "TestSeek Decompressor",
@@ -868,4 +875,39 @@ TEST_F(TestSeek, Zstd) {
 TEST_F(TestSeek, Snappy) {
   auto codec = getCodec(CodecType::SNAPPY);
   runTest(*codec, CompressionKind_SNAPPY);
+}
+
+TEST_F(TestSeek, uncompressed) {
+  constexpr int32_t kSize = 1000;
+  constexpr int32_t kReadSize = 100;
+  CompressBuffer data(kSize);
+  data.writeUncompressedHeader(kSize);
+  for (auto i = 0; i < kSize; ++i) {
+      data.getCompressed()[i] = static_cast<char>(i);
+    }
+  auto stream = createTestDecompressor(CompressionKind_SNAPPY,
+				       std::make_unique<
+          SeekableArrayInputStream>(data.getBuffer(), kSize + 3, kReadSize), 5 * kReadSize);
+  const void* result;
+  int32_t size;
+
+  // We expect to see the data in chunks made by the inner input stream.
+  EXPECT_TRUE(stream->Next(&result, &size));
+  EXPECT_EQ(result, data.getBuffer());
+
+    EXPECT_TRUE(stream->Next(&result, &size));
+  EXPECT_EQ(result, data.getBuffer() + kReadSize);
+  
+  // Backup is limited to the last window returned by Next().
+  EXPECT_THROW(stream->BackUp(kReadSize + 1), std::exception);
+  
+  EXPECT_TRUE(stream->Next(&result, &size));
+  EXPECT_EQ(result, data.getBuffer() + 2 * kReadSize);
+
+  PositionProvider position({0, 50});
+  stream->seekToPosition(position);
+
+    EXPECT_TRUE(stream->Next(&result, &size));
+  EXPECT_EQ(result, data.getBuffer() + 50);
+
 }
