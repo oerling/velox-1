@@ -206,10 +206,23 @@ class SelectiveColumnReader : public ColumnReader {
     numValues_ = size;
   }
 
+  int32_t numRows() const {
+    return outputRows.size();
+  }
+  
   void setNumRows(vector_size_t size) {
     outputRows_.resize(size);
   }
 
+  // Adds 'bias' to outputt rows between 'firstRow' and end. Used
+  // whenn combining data from multiple encoding runs, where the
+  // output rows are first in terms of position in the encoding entry.
+  void offsetOutput(int32_t firstRow, int32_t bias) {
+    for (auto i = firstRow; i < outputRows_.size(); ++i) {
+      outputRows_[i] += bias;
+    }
+  }
+  
   void setHasNulls() {
     anyNulls_ = true;
   }

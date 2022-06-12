@@ -336,6 +336,14 @@ class ColumnVisitor {
     return reader_->mutableValues<T>(size);
   }
 
+  int32_t numRows() const {
+    return reader_->numRows();
+  }
+
+  void offsetRows(int32_t firstRow, int32_t bias) const {
+    reader_->offsetRows(firstRow, bias);
+  }
+  
   inline vector_size_t rowAt(vector_size_t index) {
     if (isDense) {
       return index;
@@ -425,6 +433,10 @@ class ColumnVisitor {
     return reader_->outerNonNullRows();
   }
 
+  raw_vector<vector_size_t>& rowsCopy() const {
+    return reader_->scanState().rowsCopy;
+  }
+  
   DictionaryColumnVisitor<T, TFilter, ExtractValues, isDense>
   toDictionaryColumnVisitor();
 

@@ -264,14 +264,6 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
     return count;
   }
 
-  // void readNoFilter(BufferPtr outputBuffer, uint64_t numRows);
-  // void readWithFilter(
-  //     BufferPtr outputBuffer,
-  //     uint64_t numRows,
-  //     BitSet& selectivityVec_);
-  // uint32_t varintDecode();
-  // bool nextCounts();
-  // uint32_t bitUnpack(T* dest, uint32_t count);
 
   constexpr static const uint32_t BITPACK_MASKS[] = {
       0,          1,         3,        7,         15,        31,
