@@ -340,8 +340,8 @@ class ColumnVisitor {
     return reader_->numRows();
   }
 
-  void offsetRows(int32_t firstRow, int32_t bias) const {
-    reader_->offsetRows(firstRow, bias);
+  void offsetOutputRows(int32_t firstRow, int32_t bias) const {
+    reader_->offsetOutputRows(firstRow, bias);
   }
   
   inline vector_size_t rowAt(vector_size_t index) {

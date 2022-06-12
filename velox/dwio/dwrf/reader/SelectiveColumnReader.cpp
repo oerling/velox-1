@@ -91,16 +91,19 @@ SelectiveColumnReader::SelectiveColumnReader(
 
   SelectiveColumnReader::    SelectiveColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      FormatParams& formatParams,
+      common::FormatParams& formatParams,
       common::ScanSpec* scanSpec,
       const TypePtr& type)
-      : ColumnReader(std::move(requestedType), formatParams),
+    : ColumnReader(std::move(requestedType), formatParams),
       scanSpec_(scanSpec),
       type_{type} {}
-  
+
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const StatsContext& context) const {
+  if (formatData_) {
+    return formatData_->filterRowGroups(rowGroupSize, statsContext);
+  }
   if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
     return ColumnReader::filterRowGroups(rowGroupSize, context);
   }

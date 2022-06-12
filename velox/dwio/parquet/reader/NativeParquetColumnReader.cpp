@@ -18,24 +18,22 @@
 // Created by Ying Su on 2/14/22.
 //
 
-#include "NativeParquetColumnReader.h"
-
-#include <dwio/dwrf/reader/ColumnVisitors.h>
+#include "/velox/dwio/parquet/reader/NativeParquetColumnReader.h"
 #include <dwio/dwrf/reader/SelectiveColumnReaderInternal.h>
+
+#include "/velox/dwio/parquet/reader/StructColumnReader.h"
+#include "/velox/dwio/parquet/reader/IntegerColumnReader.h"
+
+
 #include <type/Type.h>
 #include "ParquetThriftTypes.h"
 #include "ReaderUtil.h"
 #include "Statistics.h"
-#include "velox/dwio/dwrf/common/DirectDecoder.h"
-#include "velox/dwio/dwrf/reader/ColumnReader.h"
+
 
 namespace facebook::velox::parquet {
 
-std::unique_ptr<FormatData> ParquetParams::toFormatData(
-    const std::shared_ptr<const TypeWithId>& type) {
-  return std::make_unique<ParquetData>(std::move(columnChunks)) {}
-}
-
+  // static 
 std::unique_ptr<ParquetColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     ParquetParams& params,
@@ -223,37 +221,6 @@ bool ParquetLeafColumnReader::canNotHaveNull() {
   return false;
 }
 
-//
-// template <typename T>
-// void ParquetIntegerColumnReader<T>::prepareRead(RowSet& rows) {
-//  ParquetLeafColumnReader::prepareRead(rows);
-//
-//  numRowsToRead_ = rows.back() + 1;
-//  ensureValuesCapacity<T>(numRowsToRead_);
-//  // TODO: what if numRowsToRead_ == 0?
-//  //  if (numRowsToRead_ > 0) {
-//  //    //  Note: reserving numRowsToRead_ now instead of rows.size()
-//  //    dwrf::ensureCapacity<T>(values_, numRowsToRead_, &memoryPool_);
-//  //    values_->setSize(0);
-//  //    rawValues_ = values_->asMutable<T>();
-//  //  }
-//
-//}
-
-namespace {
-int32_t sizeOfIntKind(TypeKind kind) {
-  switch (kind) {
-    case TypeKind::SMALLINT:
-      return 2;
-    case TypeKind::INTEGER:
-      return 4;
-    case TypeKind::BIGINT:
-      return 8;
-    default:
-      VELOX_FAIL("Not an integer TypeKind");
-  }
-}
-} // namespace
 
 template <typename T>
 void ParquetVisitorIntegerColumnReader::prepareRead(

@@ -10,7 +10,11 @@
 
 namespace facebook::velox::parquet {
 
-//-----------------------------ReaderBase---------------------------------------
+  std::unique_ptr<dwrf::FormatData> toFormatData(
+						 const std::shared_ptr<const dwio::common::TypeWithId>& type) {
+    auto ParquetTypeWithId parquetType = static_cast<const ParquetType*>(type.get());
+    auto column = parquetType->column;
+  }
 
 ReaderBase::ReaderBase(
     std::unique_ptr<dwio::common::InputStream> stream,
@@ -456,17 +460,15 @@ NativeParquetRowReader::NativeParquetRowReader(
 //
 void NativeParquetRowReader::filterRowGroups() {
   auto scanSpec = options_.getScanSpec();
-  if (scanSpec != nullptr) { // TODO: is there any case scanSpec is null?
-    auto rowGroups = readerBase_->getFileMetaData().row_groups;
-    rowGroupIds_.reserve(rowGroups.size());
-
-    for (auto i = 0; i < rowGroups.size(); i++) {
-      if (columnReader_->filterMatches(rowGroups[i])) {
+  auto rowGroups = readerBase_->getFileMetaData().row_groups;
+  rowGroupIds_.reserve(rowGroups.size());
+  auto excluded = columnReader_->formatData()->filterRowGroups(0, common::Statscontext("Parquet", "0"));
+  for (auto i = 0; i < rowGroups.size(); i++) {
+      if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())
         rowGroupIds_.push_back(i);
       }
-    }
-  }
 }
+
 
 uint64_t NativeParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {
   DWIO_ENSURE_GT(size, 0);

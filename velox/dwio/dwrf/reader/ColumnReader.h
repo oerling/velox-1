@@ -21,51 +21,13 @@
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/dwrf/common/ByteRLE.h"
 #include "velox/dwio/dwrf/common/Compression.h"
+#include "velox/dwio/common/FormatData.h"
 #include "velox/dwio/dwrf/common/wrap/dwrf-proto-wrapper.h"
 #include "velox/dwio/dwrf/reader/EncodingContext.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::dwrf {
-
-// Empty superclass for format-specific state in common between all types of
-// readers.
-class FormatData {
- public:
-  template <typename T>
-  T& as() {
-    return *reinterpret_cast<T*>(this);
-  }
-};
-
-// superclass for format-specific initialization arguments.
-class FormatParams {
- public:
-  explicit FormatParams(memory::MemoryPool& pool) : pool_(pool) {}
-
-  // Makes format-specific structures for the column of 'type'.
-  virtual std::unique_ptr<FormatData> toFormatData(
-      const std::shared_ptr<const dwio::common::TypeWithId>& type) = 0;
-
-  memory::MemoryPool& pool() {
-    return pool_;
-  }
-
- private:
-  memory::MemoryPool& pool_;
-};
-// DWRF specific initialization.
-class DwrfParams : public FormatParams {
- public:
-  DwrfParams(
-      memory::MemoryPool& pool,
-      StripeStreams& stripe,
-      FlatMapContext context = FlatMapContext::nonFlatMapContext())
-      : FormatParams(pool), stripe_(stripe), flatMapContext_(context) {}
-
-  StripeStreams& stripe_;
-  FlatMapContext flatMapContext_;
-};
 
 /**
  * The interface for reading ORC data types.
@@ -81,7 +43,7 @@ class ColumnReader {
         flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
   explicit ColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      FormatParams& formatParams)
+      dwio::common::FormatParams& formatParams)
       : formatData_(formatParams.toFormatData(type)),
         notNullDecoder_{},
         nodeType_{type},
@@ -105,7 +67,7 @@ class ColumnReader {
       VectorPtr& result,
       const uint64_t* incomingNulls);
 
-  std::unique_ptr<FormatData> formatData_;
+  std::unique_ptr<dwio::common::FormatData> formatData_;
   std::unique_ptr<ByteRleDecoder> notNullDecoder_;
   const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   memory::MemoryPool& memoryPool_;

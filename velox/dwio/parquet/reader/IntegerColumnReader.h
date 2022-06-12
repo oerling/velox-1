@@ -14,58 +14,14 @@
  * limitations under the License.
  */
 
-//
-// Created by Ying Su on 2/14/22.
-//
-
 #pragma once
 
-#include "velox/dwio/parquet/reader/ParquetData.h"
+
+
+#include "velox/dwio/parquet/reader/NativeParquetColumnReader.h"
 
 namespace facebook::velox::parquet {
 
-// Wrapper for static functions for Parquet columns.
-class ParquetColumnReader {
- public:
-  static std::unique_ptr<ParquetColumnReader> build(
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      ParquetParams& params,
-      common::ScanSpec* scanSpec);
-};
-
-class ParquetStructColumnReader : public dwrf::SelectiveStructColumnReader {
- public:
-  ParquetStructColumnReader(
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      ParquetParams& params,
-      common::ScanSpec* scanSpec)
-      : SelectiveStructColumnReader(dataType, params, scanSpec, dataType->type) {
-    auto& childSpecs = scanSpec->children();
-    for (auto i = 0; i < childSpecs.size(); ++i) {
-      if (childSpecs[i]->isConstant()) {
-        continue;
-      }
-      auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
-
-      children_.push_back(ParquetColumnReader::build(
-          childDataType, params, childSpecs[i].get(), input_, memoryPool_));
-      childSpecs[i]->setSubscript(children_.size() - 1);
-    }
-  }
-
-  std::vector<uint32_t> filterRowGroups(
-    uint64_t rowGroupSize,
-    const StatsContext& context) const override {
-    if (!scanSpec_->filter_) {
-      return {};
-    }
-    return formatData_->as<ParquetData>().filterRowGroups(*scanSpec_->filter());
-  }
-
-  bool filterMatches(const RowGroup& rowGroup);
-
-  void seekToRowGroup(uint32_t index) override;
-};
 
 class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
  public:
@@ -108,4 +64,5 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
   }
 }
 
-} // namespace facebook::velox::parquet
+}
+

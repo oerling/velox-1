@@ -13,9 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
 
-#include "velox/dwio/dwrf/common/PageDecoder.h"
+#include "velox/dwio/parquet/reader/PageDecoder.h"
 
 namespace facebook::velox::parquet {
 
@@ -246,7 +245,7 @@ void PageDecoder::skip(int32_t numRows) {
   }
 
 bool PageDecoder::rowsForPage(
-    folly::Range<vector_size_t>& rowsOnPage,
+    folly::Range<vector_size_t>& rowsForPage,
     const uint64_t* FOLLY_NULLABLE& nulls) {
   auto firstOnNextPage = rowOfPage_ + rowsOnPage_ - lastVisited_;
   int32_t numToVisit;

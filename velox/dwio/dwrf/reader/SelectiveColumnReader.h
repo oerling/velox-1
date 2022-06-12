@@ -118,7 +118,7 @@ class SelectiveColumnReader : public ColumnReader {
 
   SelectiveColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      FormatParams& formatParams,
+      dwio::common::FormatParams& formatParams,
       common::ScanSpec* scanSpec,
       const TypePtr& type);
 
@@ -207,7 +207,7 @@ class SelectiveColumnReader : public ColumnReader {
   }
 
   int32_t numRows() const {
-    return outputRows.size();
+    return outputRows_.size();
   }
   
   void setNumRows(vector_size_t size) {
@@ -217,7 +217,7 @@ class SelectiveColumnReader : public ColumnReader {
   // Adds 'bias' to outputt rows between 'firstRow' and end. Used
   // whenn combining data from multiple encoding runs, where the
   // output rows are first in terms of position in the encoding entry.
-  void offsetOutput(int32_t firstRow, int32_t bias) {
+  void offsetOutputRows(int32_t firstRow, int32_t bias) {
     for (auto i = firstRow; i < outputRows_.size(); ++i) {
       outputRows_[i] += bias;
     }
