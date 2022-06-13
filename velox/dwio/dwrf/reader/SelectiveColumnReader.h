@@ -123,7 +123,6 @@ class SelectiveColumnReader : public ColumnReader {
       common::ScanSpec* scanSpec,
       const TypePtr& type);
 
-  
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read
@@ -210,7 +209,7 @@ class SelectiveColumnReader : public ColumnReader {
   int32_t numRows() const {
     return outputRows_.size();
   }
-  
+
   void setNumRows(vector_size_t size) {
     outputRows_.resize(size);
   }
@@ -223,7 +222,7 @@ class SelectiveColumnReader : public ColumnReader {
       outputRows_[i] += bias;
     }
   }
-  
+
   void setHasNulls() {
     anyNulls_ = true;
   }

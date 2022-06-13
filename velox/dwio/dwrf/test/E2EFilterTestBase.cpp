@@ -174,7 +174,7 @@ void E2EFilterTestBase::readWithoutFilter(
     const std::vector<RowVectorPtr>& batches,
     uint64_t& time) {
   auto input = std::make_unique<MemoryInputStream>(
-						   sinkPtr_->getData(), sinkPtr_->size());
+      sinkPtr_->getData(), sinkPtr_->size());
 
   dwio::common::ReaderOptions readerOpts;
   dwio::common::RowReaderOptions rowReaderOpts;

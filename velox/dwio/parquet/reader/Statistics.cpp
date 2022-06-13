@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-#include "velox/type/Type.h"
 #include "velox/dwio/parquet/reader/Statistics.h"
+#include "velox/type/Type.h"
 
 namespace facebook::velox::parquet {
 
-std::unique_ptr<dwio::common::ColumnStatistics>
-buildColumnStatisticsFromThrift(
+std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     const Statistics& columnChunkStats,
     const velox::Type& type,
     uint64_t numRowsInRowGroup) {
@@ -115,4 +114,4 @@ buildColumnStatisticsFromThrift(
   }
 }
 
-} // namespace velox::dwio::parquet
+} // namespace facebook::velox::parquet

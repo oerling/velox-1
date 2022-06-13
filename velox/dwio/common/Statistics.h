@@ -21,14 +21,14 @@
 
 namespace facebook::velox::dwio::common {
 
-  // Common base for writer version information used in interpreting
-  // metadata. Needed to have format-independent signatures for
-  // format-specific functions. Each format implementation will
-  // downcast this to the format-specific metadata.
+// Common base for writer version information used in interpreting
+// metadata. Needed to have format-independent signatures for
+// format-specific functions. Each format implementation will
+// downcast this to the format-specific metadata.
 struct StatsWriterInfo {
-    virtual ~StatsWriterInfo() = default;
-  };
-  
+  virtual ~StatsWriterInfo() = default;
+};
+
 /**
  * Statistics that are available for all types of columns.
  */

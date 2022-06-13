@@ -34,8 +34,10 @@ class FormatData {
     return *reinterpret_cast<T*>(this);
   }
 
-  virtual void prepareRead(folly::Range<const int32_t*> rows, const uint64_t * incomingNulls) {}
-  
+  virtual void prepareRead(
+      folly::Range<const int32_t*> rows,
+      const uint64_t* incomingNulls) {}
+
   virtual std::vector<uint32_t> filterRowGroups(
       uint64_t rowsPerRowGroup,
       const StatsWriterInfo& context) = 0;
@@ -60,4 +62,4 @@ class FormatParams {
   memory::MemoryPool& pool_;
 };
 
-} // namespace facebook::velox::dwio
+} // namespace facebook::velox::dwio::common

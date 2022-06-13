@@ -29,17 +29,18 @@
 
 namespace facebook::velox::dwrf {
 
-  // DWRF specific functions shared between all readers.
-  class DwrfData : public FormatData {
-  public:
-        virtual std::vector<uint32_t> filterRowGroups(
-						      uint64_t rowsPerRowGroup, vonst StatsWriterInfo & context) {
-	  VELOX_NYI();
-	}
-  };
+// DWRF specific functions shared between all readers.
+class DwrfData : public FormatData {
+ public:
+  virtual std::vector<uint32_t> filterRowGroups(
+      uint64_t rowsPerRowGroup,
+      vonst StatsWriterInfo& context) {
+    VELOX_NYI();
+  }
+};
 
-  };
-  
+};
+
 // DWRF specific initialization.
 class DwrfParams : public FormatParams {
  public:
@@ -49,14 +50,12 @@ class DwrfParams : public FormatParams {
       FlatMapContext context = FlatMapContext::nonFlatMapContext())
       : FormatParams(pool), stripe_(stripe), flatMapContext_(context) {}
 
-  std::unique_ptr<FormatData> toFormatData( 
-					   const std::shared_ptr<const dwio::common::TypeWithId>& type) override {
+  std::unique_ptr<FormatData> toFormatData(
+      const std::shared_ptr<const dwio::common::TypeWithId>& type) override {
     return nullptr;
   }
 
-  
  private:
-  
   StripeStreams& stripe_;
   FlatMapContext flatMapContext_;
 };

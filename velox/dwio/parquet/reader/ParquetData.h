@@ -92,7 +92,8 @@ class ParquetData : public dwio::common::FormatData {
   // Prepares to read data for 'index'th row group.
   void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
 
-  // Positions 'this' at 'index'th row group. enqueueRowGroup must be called first.
+  // Positions 'this' at 'index'th row group. enqueueRowGroup must be called
+  // first.
   void seekToRowGroup(uint32_t index);
 
   bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
@@ -107,7 +108,7 @@ class ParquetData : public dwio::common::FormatData {
   void skip(int32_t numRows) {
     decoder_->skip(numRows);
   }
-  
+
   template <typename Visitor>
   void readWithVisitor(Visitor visitor) {
     decoder_->readWithVisitor(visitor);

@@ -18,10 +18,10 @@
 
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
+#include "velox/dwio/common/FormatData.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/dwrf/common/ByteRLE.h"
 #include "velox/dwio/dwrf/common/Compression.h"
-#include "velox/dwio/common/FormatData.h"
 #include "velox/dwio/dwrf/common/wrap/dwrf-proto-wrapper.h"
 #include "velox/dwio/dwrf/reader/EncodingContext.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
@@ -88,7 +88,7 @@ class ColumnReader {
   dwio::common::FormatData* formatData() const {
     return formatData_.get();
   }
-  
+
   /**
    * Skip number of specified rows.
    * @param numValues the number of values to skip

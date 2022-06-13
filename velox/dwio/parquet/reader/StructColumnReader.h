@@ -54,8 +54,8 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override;
-private:
-  
+
+ private:
   bool filterMatches(const RowGroup& rowGroup);
 };
 
@@ -67,7 +67,7 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
 
 bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
   return true;
-  #if 0
+#if 0
   bool matched = true;
 
   auto& childSpecs = scanSpec_->children();
@@ -91,5 +91,4 @@ bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
 #endif
 }
 
-  
 } // namespace facebook::velox::parquet

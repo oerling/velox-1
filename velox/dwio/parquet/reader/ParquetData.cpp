@@ -20,15 +20,11 @@
 
 namespace facebook::velox::parquet {
 
-
 std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type) {
-  return std::make_unique<ParquetData>(
-      type,
-      metaData_.row_groups,
-      pool());
+  return std::make_unique<ParquetData>(type, metaData_.row_groups, pool());
 }
- 
+
 bool ParquetData::filterMatches(
     const RowGroup& rowGroup,
     common::Filter& filter) {
@@ -81,6 +77,6 @@ void ParquetData::seekToRowGroup(uint32_t index) {
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
   auto codec = rowGroups_[index].columns[type_->column].meta_data.codec;
   decoder_ = std::make_unique<PageDecoder>(
-					   std::move(streams_[index]), pool_, maxDefine_, maxRepeat_, codec);
+      std::move(streams_[index]), pool_, maxDefine_, maxRepeat_, codec);
 }
 } // namespace facebook::velox::parquet

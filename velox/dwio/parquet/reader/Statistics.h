@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/dwio/common/Statistics.h"
+#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {
 
@@ -52,5 +52,5 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     const Statistics& columnChunkStats,
     const velox::Type& type,
     uint64_t numRowsInRowGroup);
-  
+
 } // namespace facebook::velox::parquet

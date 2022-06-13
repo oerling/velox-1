@@ -34,13 +34,16 @@ class Dictionary {
 class PageDecoder {
  public:
   PageDecoder(
-	      std::unique_ptr<dwrf::SeekableInputStream> stream,
-	      memory::MemoryPool& pool,
-	      int32_t maxDefine,
-	      int32_t maxRepeat,
-	      CompressionCodec::type codec)
-    : pool_(pool), inputStream_(std::move(stream)),
-      maxDefine_(maxDefine), maxRepeat_(maxRepeat),codec_(codec) {}
+      std::unique_ptr<dwrf::SeekableInputStream> stream,
+      memory::MemoryPool& pool,
+      int32_t maxDefine,
+      int32_t maxRepeat,
+      CompressionCodec::type codec)
+      : pool_(pool),
+        inputStream_(std::move(stream)),
+        maxDefine_(maxDefine),
+        maxRepeat_(maxRepeat),
+        codec_(codec) {}
 
   // Advances 'numRows' top level rows.
   void skip(int64_t numRows);
@@ -67,7 +70,7 @@ class PageDecoder {
   void prepareDataPageV2(const PageHeader& pageHeader, int64_t row);
   void prepareDictionary(const PageHeader& pageHeader);
   void makeDecoder();
-  
+
   // Returns a pointer to contiguous space for the next 'size' bytes
   // from current position. Copies data into 'copy' if the range
   // straddles buffers. Allocates or resizes 'copy' as needed.
@@ -110,9 +113,9 @@ class PageDecoder {
   bool rowsForPage(
       folly::Range<const vector_size_t*>& rows,
       const uint64_t* FOLLY_NULLABLE& nulls);
-  
+
   memory::MemoryPool& pool_;
-  
+
   std::unique_ptr<dwrf::SeekableInputStream> inputStream_;
   const int32_t maxDefine_;
   const int32_t maxRepeat_;
@@ -178,7 +181,7 @@ class PageDecoder {
 
   // Offset of 'visitorRows_[0]' relative too start of ColumnChunk.
   int64_t visitBase_{0};
-  
+
   //  Temporary for rewriting rows to access in readWithVisitor when moving
   //  between pages. Initialized from the visitor.
   raw_vector<vector_size_t>* FOLLY_NULLABLE rowsCopy_{nullptr};

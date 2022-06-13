@@ -23,24 +23,25 @@
 
 #include <parquet/arrow/writer.h>
 
-
 namespace facebook::velox::parquet {
 
 class DataBufferSink : public arrow::io::OutputStream {
-public:
+ public:
   DataBufferSink(memory::MemoryPool& pool) : buffer_(pool) {}
 
   arrow::Status Write(const std::shared_ptr<arrow::Buffer>& data) {
-    buffer_.append(buffer_.size(), reinterpret_cast<const char*>(data->data()), data->size());
-  return arrow::Status::OK();
-}
+    buffer_.append(
+        buffer_.size(),
+        reinterpret_cast<const char*>(data->data()),
+        data->size());
+    return arrow::Status::OK();
+  }
 
   arrow::Status Write(const void* data, int64_t nbytes) override {
     buffer_.append(buffer_.size(), reinterpret_cast<const char*>(data), nbytes);
     return arrow::Status::OK();
   }
-  
-  
+
   arrow::Status Flush() override {
     return arrow::Status::OK();
   }
@@ -53,15 +54,15 @@ public:
   arrow::Result<int64_t> Tell() const override {
     return buffer_.size();
   }
-  
+
   arrow::Status Close() override {
-				  return arrow::Status::OK();
+    return arrow::Status::OK();
   }
 
   bool closed() const override {
     return false;
   }
-  
+
   dwio::common::DataBuffer<char>& dataBuffer() {
     return buffer_;
   }
@@ -73,18 +74,17 @@ public:
 class Writer {
  public:
   Writer(
-	 std::unique_ptr<dwio::common::DataSink> sink,
+      std::unique_ptr<dwio::common::DataSink> sink,
       memory::MemoryPool& pool,
       int32_t rowsInRowGroup)
       : rowsInRowGroup_(rowsInRowGroup),
-	pool_(pool),
+        pool_(pool),
         finalSink_(std::move(sink)) {}
 
   void write(const RowVectorPtr& data);
   void close();
 
  private:
-  
   const int32_t rowsInRowGroup_;
   int32_t rowsInCurrentGroup_{0};
   memory::MemoryPool& pool_;

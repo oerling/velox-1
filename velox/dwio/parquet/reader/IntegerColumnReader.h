@@ -51,11 +51,7 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
       override {
     auto& data = formatData_->as<ParquetData>();
     VELOX_WIDTH_DISPATCH(
-        dwrf::sizeOfIntKind(type_->kind()),
-        prepareRead,
-        offset,
-        rows,
-        nullptr);
+        dwrf::sizeOfIntKind(type_->kind()), prepareRead, offset, rows, nullptr);
 
     readCommon<IntegerColumnReader>(rows);
   }

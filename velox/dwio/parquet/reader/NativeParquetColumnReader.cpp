@@ -21,20 +21,18 @@
 #include "velox/dwio/parquet/reader/NativeParquetColumnReader.h"
 #include <dwio/dwrf/reader/SelectiveColumnReaderInternal.h>
 
-#include "velox/dwio/parquet/reader/StructColumnReader.h"
 #include "velox/dwio/parquet/reader/IntegerColumnReader.h"
-
+#include "velox/dwio/parquet/reader/StructColumnReader.h"
 
 #include <type/Type.h>
 #include "ParquetThriftTypes.h"
 #include "ReaderUtil.h"
 #include "Statistics.h"
 
-
 namespace facebook::velox::parquet {
 
-  // static 
-  std::unique_ptr<dwrf::SelectiveColumnReader> ParquetColumnReader::build(
+// static
+std::unique_ptr<dwrf::SelectiveColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     ParquetParams& params,
     common::ScanSpec* scanSpec) {
@@ -45,7 +43,8 @@ namespace facebook::velox::parquet {
     case TypeKind::BIGINT:
     case TypeKind::SMALLINT:
     case TypeKind::TINYINT:
-      return std::make_unique<IntegerColumnReader>(dataType, dataType, params, scanSpec);
+      return std::make_unique<IntegerColumnReader>(
+          dataType, dataType, params, scanSpec);
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(dataType, params, scanSpec);
 
@@ -63,8 +62,5 @@ namespace facebook::velox::parquet {
           mapTypeKindToName(dataType->type->kind()));
   }
 }
-
-
-
 
 } // namespace facebook::velox::parquet

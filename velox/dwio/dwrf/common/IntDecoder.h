@@ -163,13 +163,15 @@ class IntDecoder {
   }
 
   // moves the stream and position in buffer out of 'this'.
-  std::unique_ptr<dwrf::SeekableInputStream> moveStreamAndBuffer(const char*& begin, const char*& end) {
+  std::unique_ptr<dwrf::SeekableInputStream> moveStreamAndBuffer(
+      const char*& begin,
+      const char*& end) {
     begin = bufferStart;
     end = bufferEnd;
     return std::move(inputStream);
   }
 
-private:
+ private:
   uint64_t skipVarintsInBuffer(uint64_t items);
   void skipVarints(uint64_t items);
 

@@ -116,12 +116,12 @@ const char* FOLLY_NONNULL PageDecoder::uncompressData(
     uint32_t compressedSize,
     uint32_t uncompressedSize) {
   switch (codec_) {
-      case CompressionCodec::UNCOMPRESSED:
-        return pageData;
-      case CompressionCodec::GZIP: 
-      case CompressionCodec::ZSTD: 
-      default:
-	VELOX_FAIL("Unsupported Parquet compression type ", codec_);
+    case CompressionCodec::UNCOMPRESSED:
+      return pageData;
+    case CompressionCodec::GZIP:
+    case CompressionCodec::ZSTD:
+    default:
+      VELOX_FAIL("Unsupported Parquet compression type ", codec_);
   }
 }
 
@@ -303,7 +303,9 @@ bool PageDecoder::rowsForPage(
       (*rowsCopy_)[i] = visitorRows_[i + currentVisitorRow_] - rowNumberBias_;
     }
     nulls = readNulls(rowsCopy_->back() + 1);
-    rows = folly::Range<const vector_size_t*>(rowsCopy_->data(), rowsCopy_->size());;
+    rows = folly::Range<const vector_size_t*>(
+        rowsCopy_->data(), rowsCopy_->size());
+    ;
   }
   firstUnvisited_ = visitBase_ + visitorRows_[currentVisitorRow_ - 1] + 1;
   currentVisitorRow_ += numToVisit;

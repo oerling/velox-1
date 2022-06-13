@@ -35,7 +35,7 @@ void Writer::write(const RowVectorPtr& data) {
     auto properties = ::parquet::WriterProperties::Builder().build();
     auto arrowProperties = ::parquet::ArrowWriterProperties::Builder().build();
     PARQUET_THROW_NOT_OK(::parquet::arrow::FileWriter::Open(
-							    *recordBatch->schema(),
+        *recordBatch->schema(),
         arrow::default_memory_pool(),
         stream_,
         properties,

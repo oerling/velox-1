@@ -31,10 +31,8 @@ ReaderBase::ReaderBase(
     const dwio::common::ReaderOptions& options)
     : pool_(options.getMemoryPool()),
       options_(options),
-      stream_{std::move(stream)}, 
-      bufferedInputFactory_(
-			    options.getBufferedInputFactory()) {
-			      
+      stream_{std::move(stream)},
+      bufferedInputFactory_(options.getBufferedInputFactory()) {
   input_ = bufferedInputFactory_->create(*stream_, pool_, options.getFileNum());
   fileLength_ = stream_->getLength();
   DWIO_ENSURE(fileLength_ > 0, "Parquet file is empty");
@@ -69,32 +67,38 @@ void ReaderBase::loadFileMetaData() {
   uint64_t readSize =
       preloadFile_ ? fileLength_ : std::min(fileLength_, DIRECTORY_SIZE_GUESS);
 
-  auto stream = input_->read(fileLength_ - readSize, readSize, dwio::common::LogType::FOOTER);
+  auto stream = input_->read(
+      fileLength_ - readSize, readSize, dwio::common::LogType::FOOTER);
 
   std::vector<char> copy(readSize);
   const char* bufferStart;
   const char* bufferEnd;
   dwrf::readBytes(readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
   DWIO_ENSURE(
-	      strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
+      strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
       "No magic bytes found at end of the Parquet file");
 
-  uint32_t footerLength = *(reinterpret_cast<const uint32_t*>(copy.data() + readSize - 8));
+  uint32_t footerLength =
+      *(reinterpret_cast<const uint32_t*>(copy.data() + readSize - 8));
   VELOX_CHECK_LT(footerLength + 12, fileLength_);
-  int32_t footerOffsetInBuffer =  readSize - 8 - footerLength;
+  int32_t footerOffsetInBuffer = readSize - 8 - footerLength;
   if (footerLength > readSize - 8) {
     footerOffsetInBuffer = 0;
     auto missingLength = footerLength - readSize - 8;
-    stream = input_->read(fileLength_ - footerLength - 8, missingLength, dwio::common::LogType::FOOTER);
+    stream = input_->read(
+        fileLength_ - footerLength - 8,
+        missingLength,
+        dwio::common::LogType::FOOTER);
     copy.resize(footerLength);
     std::memmove(copy.data() + missingLength, copy.data(), readSize - 8);
     bufferStart = nullptr;
     bufferEnd = nullptr;
-    dwrf::readBytes(missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
+    dwrf::readBytes(
+        missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
   }
 
-  auto thriftTransport =
-    std::make_shared<ThriftBufferedTransport>(copy.data() + footerOffsetInBuffer, footerLength);
+  auto thriftTransport = std::make_shared<ThriftBufferedTransport>(
+      copy.data() + footerOffsetInBuffer, footerLength);
   auto thriftProtocol = std::make_unique<
       apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
       thriftTransport);
@@ -427,8 +431,8 @@ NativeParquetRowReader::NativeParquetRowReader(
       currentRowGroupPtr_(&rowGroups_[currentRowGroupIdsIdx_]),
       rowsInCurrentRowGroup_(currentRowGroupPtr_->num_rows),
       currentRowInGroup_(rowsInCurrentRowGroup_) {
-  //auto& selector = *options.getSelector();
-  //requestedType_ = selector.buildSelectedReordered();
+  // auto& selector = *options.getSelector();
+  // requestedType_ = selector.buildSelectedReordered();
 
   // The filter_ comes from ReaderBase schema too, why compare?
   // Validate the requested type is compatible with what's in the file
@@ -444,14 +448,14 @@ NativeParquetRowReader::NativeParquetRowReader(
     return exceptionMessageContext;
   };
 
-  //dwio::common::typeutils::CompatChecker::check(
+  // dwio::common::typeutils::CompatChecker::check(
   //*readerBase_->getSchema(), *requestedType_, true, createExceptionContext);
 
   if (rowGroups_.empty()) {
     return; // TODO
   }
   ParquetParams params(pool_, readerBase_->getFileMetaData());
-  
+
   columnReader_ = ParquetColumnReader::build(
       readerBase_->getSchemaWithId(), // Id is schema id
       params,
@@ -465,13 +469,13 @@ void NativeParquetRowReader::filterRowGroups() {
   auto scanSpec = options_.getScanSpec();
   auto rowGroups = readerBase_->getFileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
-  auto excluded = columnReader_->filterRowGroups(0, dwio::common::StatsWriterInfo());
+  auto excluded =
+      columnReader_->filterRowGroups(0, dwio::common::StatsWriterInfo());
   for (auto i = 0; i < rowGroups.size(); i++) {
-      if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())
-        rowGroupIds_.push_back(i);
-      }
+    if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())
+      rowGroupIds_.push_back(i);
+  }
 }
-
 
 uint64_t NativeParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {
   DWIO_ENSURE_GT(size, 0);
@@ -520,7 +524,6 @@ void NativeParquetRowReader::resetFilterCaches() {
 std::optional<size_t> NativeParquetRowReader::estimatedRowSize() const {
   VELOX_FAIL("ParquetRowReader::estimatedRowSize is NYI");
 }
-
 
 NativeParquetReader::NativeParquetReader(
     std::unique_ptr<dwio::common::InputStream> stream,

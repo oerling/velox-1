@@ -31,9 +31,8 @@ namespace facebook::velox::parquet {
 
 // For Parquet, Filter will be pushed to decoding process
 
-  class FilterAwareDecoder {
+class FilterAwareDecoder {
  public:
-
   FilterAwareDecoder(
       const void* inputBuffer, // note we have loaded the full page
       uint64_t inputBytes,
@@ -81,7 +80,6 @@ namespace facebook::velox::parquet {
   bool kHasBulkPath_;
 };
 
-
 template <typename T>
 class RleBpFilterAwareDecoder : FilterAwareDecoder {
  public:
@@ -99,7 +97,6 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
     byteEncodedLen_ = ((bitWidth_ + 7) / 8);
     maxVal_ = (1 << bitWidth_) - 1;
   }
-
 
   virtual void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows)
       override {
@@ -263,7 +260,6 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
     }
     return count;
   }
-
 
   constexpr static const uint32_t BITPACK_MASKS[] = {
       0,          1,         3,        7,         15,        31,

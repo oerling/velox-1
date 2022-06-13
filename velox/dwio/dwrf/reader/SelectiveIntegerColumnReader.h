@@ -45,7 +45,7 @@ class SelectiveIntegerColumnReader : public SelectiveColumnReader {
             formatParams,
             scanSpec,
             type) {}
-  
+
   void getValues(RowSet rows, VectorPtr* result) override {
     getIntValues(rows, nodeType_->type.get(), result);
   }

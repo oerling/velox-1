@@ -13,7 +13,8 @@
 # limitations under the License.
 include(ExternalProject)
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/home/oerling/arrow/cpp//cmake_modules")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
+                      "/home/oerling/arrow/cpp//cmake_modules")
 
 find_package(Parquet REQUIRED)
 
@@ -22,7 +23,6 @@ message("Found Thrift lib: ${THRIFTLIB} ")
 
 add_subdirectory(reader)
 add_subdirectory(writer)
-
 
 message(STATUS "VELOX_BUILD_TESTING: ${VELOX_BUILD_TESTING}")
 
