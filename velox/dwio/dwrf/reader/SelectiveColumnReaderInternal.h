@@ -76,6 +76,9 @@ void SelectiveColumnReader::prepareRead(
     RowSet rows,
     const uint64_t* incomingNulls) {
   seekTo(offset, scanSpec_->readsNullsOnly());
+  if (formatData_) {
+    formatData_->prepareRead(rows, incomingNulls);
+  }
   vector_size_t numRows = rows.back() + 1;
 
   // Do not re-use unless singly-referenced.

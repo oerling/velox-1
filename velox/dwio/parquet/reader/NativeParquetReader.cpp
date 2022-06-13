@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+
+ */
 
 #include "NativeParquetReader.h"
 #include <thrift/protocol/TCompactProtocol.h>
@@ -10,25 +26,16 @@
 
 namespace facebook::velox::parquet {
 
-  std::unique_ptr<dwrf::FormatData> toFormatData(
-						 const std::shared_ptr<const dwio::common::TypeWithId>& type) {
-    auto ParquetTypeWithId parquetType = static_cast<const ParquetType*>(type.get());
-    auto column = parquetType->column;
-  }
-
 ReaderBase::ReaderBase(
     std::unique_ptr<dwio::common::InputStream> stream,
     const dwio::common::ReaderOptions& options)
     : pool_(options.getMemoryPool()),
       options_(options),
-      stream_{std::move(stream)} {
-  //      bufferedInputFactory_(
-  //          options.getBufferedInputFactory()
-  //              ? options.getBufferedInputFactory()
-  //              : dwrf::BufferedInputFactory::baseFactory()),
-  //      dataCacheConfig_(options.getDataCacheConfig().get()) {
-  input_ = std::make_shared<dwrf::BufferedInput>(*stream_, pool_);
-
+      stream_{std::move(stream)}, 
+      bufferedInputFactory_(
+			    options.getBufferedInputFactory()) {
+			      
+  input_ = bufferedInputFactory_->create(*stream_, pool_, options.getFileNum());
   fileLength_ = stream_->getLength();
   DWIO_ENSURE(fileLength_ > 0, "Parquet file is empty");
   DWIO_ENSURE(fileLength_ >= 12, "Parquet file is too small");
@@ -62,35 +69,32 @@ void ReaderBase::loadFileMetaData() {
   uint64_t readSize =
       preloadFile_ ? fileLength_ : std::min(fileLength_, DIRECTORY_SIZE_GUESS);
 
-  input_->enqueue({fileLength_ - readSize, readSize});
-  input_->load(
-      preloadFile_ ? dwio::common::LogType::FILE
-                   : dwio::common::LogType::FOOTER);
+  auto stream = input_->read(fileLength_ - readSize, readSize, dwio::common::LogType::FOOTER);
 
-  int readBytes = 4;
-  const void* buf;
-
-  readInput(*input_, readSize - 4, &buf, 4, dwio::common::LogType::FOOTER);
+  std::vector<char> copy(readSize);
+  const char* bufferStart;
+  const char* bufferEnd;
+  dwrf::readBytes(readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
   DWIO_ENSURE(
-      strncmp(static_cast<const char*>(buf), "PAR1", 4) == 0,
+	      strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
       "No magic bytes found at end of the Parquet file");
 
-  readInput(*input_, readSize - 8, &buf, 4, dwio::common::LogType::FOOTER);
-  uint32_t footerLen = *(static_cast<const uint32_t*>(buf));
-  DWIO_ENSURE(
-      footerLen > 0 && footerLen + 12 < fileLength_,
-      "Footer length error in the Parquet file");
-  //  printf("footerLen %d\n", footerLen);
-
-  readInput(
-      *input_,
-      readSize - (footerLen + 8),
-      &buf,
-      footerLen,
-      dwio::common::LogType::FOOTER);
+  uint32_t footerLength = *(reinterpret_cast<const uint32_t*>(copy.data() + readSize - 8));
+  VELOX_CHECK_LT(footerLength + 12, fileLength_);
+  int footerOffsetInBuffer = copy.data() + readSize - 8 - footerLength;
+  if (footerLength > readSize - 8) {
+    footerOffsetInBuffer = 0;
+    auto missingLength = footerLength - readSize - 8;
+    stream = input.read(fileLength_ - footerLength - 8, missingLength, dwio::common::LogType::FOOTER);
+    copy.resize(footerLength);
+    std::memove(copy.data() + missingLength, copy.data(), readSize - 8);
+    bufferStart = nullptr;
+    bufferEnd = nullptr;
+    dwrf::readBytes(missingLength, stream, copy.data(), bufferStart, bufferEnd);
+  }
 
   auto thriftTransport =
-      std::make_shared<ThriftBufferedTransport>(buf, footerLen);
+    std::make_shared<ThriftBufferedTransport>(copy.data() + footerOffsetInBuffer, footerLen);
   auto thriftProtocol = std::make_unique<
       apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
       thriftTransport);
@@ -517,7 +521,6 @@ std::optional<size_t> NativeParquetRowReader::estimatedRowSize() const {
   VELOX_FAIL("ParquetRowReader::estimatedRowSize is NYI");
 }
 
-//-------------------NativeParquetReader-------------------------------
 
 NativeParquetReader::NativeParquetReader(
     std::unique_ptr<dwio::common::InputStream> stream,

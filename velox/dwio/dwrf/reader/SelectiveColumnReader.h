@@ -20,6 +20,7 @@
 #include "velox/common/process/ProcessBase.h"
 #include "velox/dwio/common/ColumnSelector.h"
 #include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/type/Filter.h"
 
@@ -305,7 +306,7 @@ class SelectiveColumnReader : public ColumnReader {
 
   std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
-      const StatsContext& context) const override;
+      const dwio::common::StatsWriterInfo& context) const override;
 
   raw_vector<int32_t>& innerNonNullRows() {
     return innerNonNullRows_;

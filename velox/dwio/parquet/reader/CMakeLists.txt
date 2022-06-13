@@ -34,7 +34,8 @@ add_library(
   ParquetThriftTypes.cpp
   PageDecoder.cpp
   ParquetData.cpp
-  NativeParquetColumnReader.cpp)
+  NativeParquetColumnReader.cpp
+  Statistics.cpp)
 
 target_link_libraries(
   velox_dwio_native_parquet_reader

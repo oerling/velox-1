@@ -16,12 +16,10 @@
 
 #pragma once
 
-
-
+#include "velox/dwio/dwrf/reader/SelectiveIntegerColumnReader.h"
 #include "velox/dwio/parquet/reader/NativeParquetColumnReader.h"
 
 namespace facebook::velox::parquet {
-
 
 class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
  public:
@@ -42,27 +40,31 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
-    formatData_->as<ParquetData>.seekToRowGroup(index);
+    formatData_->as<ParquetData>().seekToRowGroup(index);
   }
 
   uint64_t skip(uint64_t numValues) override {
     formatData_->as<ParquetData>().skip(numValues);
+    return numValues;
   }
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override {
     auto& data = formatData_->as<ParquetData>();
     VELOX_WIDTH_DISPATCH(
-			 dwrf::sizeOfIntKind(type_->type->kind()), prepareRead, offset, rows, nullptr);
+        dwrf::sizeOfIntKind(type_->kind()),
+        prepareRead,
+        offset,
+        rows,
+        nullptr);
 
     readCommon<IntegerColumnReader>(rows);
   }
 
   template <typename ColumnVisitor>
   void readWithVisitor(RowSet rows, ColumnVisitor visitor) {
-    formatData<ParquetData>().readWithVisitor(visitor);
+    formatData_->as<ParquetData>().readWithVisitor(visitor);
   }
-}
+};
 
-}
-
+} // namespace facebook::velox::parquet

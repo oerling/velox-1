@@ -66,32 +66,56 @@ class ParquetData : public dwio::common::FormatData {
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       std::vector<RowGroup>& rowGroups,
       memory::MemoryPool& pool)
-    : pool_(pool),
-      type_(std::static_pointer_cast<ParquetTypeWithId>(type)),
+      : pool_(pool),
+        type_(std::static_pointer_cast<const ParquetTypeWithId>(type)),
         rowGroups_(rowGroups),
         maxDefine_(type_->maxDefine_),
         maxRepeat_(type_->maxRepeat_),
         rowsInRowGroup_(-1) {}
 
-  void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
-
-  void seekToRowGroup(uint32_t index);
-
-  bool filterMatches(uint32_t index, common::Filter& filter) {
-    return true;
+  // true if no nulls in the current row group
+  bool isNonNull() {
+    VELOX_CHECK_NE(kNoRowGroup, rowGroupIndex_);
+    if (maxDefine_ == 0) {
+      return true;
+    }
+    auto& columnChunk = rowGroups_[rowGroupIndex_].columns[type_->column];
+    VELOX_CHECK(columnChunk.__isset.meta_data);
+    auto& metaData = columnChunk.meta_data;
+    if (metaData.__isset.statistics) {
+      return false;
+    }
+    auto& stats = metaData.statistics;
+    return (stats.__isset.null_count && stats.null_count == 0);
   }
 
-  std::vector<uint32_t> filterRowGroups(const common::Filter& filter) const {
+  // Prepares to read data for 'index'th row group.
+  void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
+
+  // Positions 'this' at 'index'th row group. enqueueRowGroup must be called first.
+  void seekToRowGroup(uint32_t index);
+
+  bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
+
+  std::vector<uint32_t> filterRowGroups(
+      uint64_t rowsPerRowGroup,
+      const dwio::common::StatsWriterInfo& writerInfo) override {
     std::vector<uint32_t> stridesToSkip;
     return stridesToSkip;
   }
 
+  void skip(int32_t numRows) {
+    decoder_->skip(numRows);
+  }
+  
   template <typename Visitor>
   void readWithVisitor(Visitor visitor) {
     decoder_->readWithVisitor(visitor);
   }
 
  protected:
+  static constexpr int32_t kNoRowGroup = -1;
+
   memory::MemoryPool& pool_;
   std::shared_ptr<const ParquetTypeWithId> type_;
   std::vector<RowGroup>& rowGroups_;
@@ -99,11 +123,10 @@ class ParquetData : public dwio::common::FormatData {
   // ahead of first use, not at construction.
   std::vector<std::unique_ptr<dwrf::SeekableInputStream>> streams_;
 
-  int32_t rowGroupIndex_{0};
+  int32_t rowGroupIndex_{kNoRowGroup};
 
   const uint32_t maxDefine_;
   const uint32_t maxRepeat_;
-
   int64_t rowsInRowGroup_;
   std::unique_ptr<PageDecoder> decoder_;
 };
@@ -111,7 +134,7 @@ class ParquetData : public dwio::common::FormatData {
 std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type) {
   return std::make_unique<ParquetData>(
-      std::static_pointer_cast<ParquetTypeWithId>(type),
+      type,
       metaData_.row_groups,
       pool());
 }

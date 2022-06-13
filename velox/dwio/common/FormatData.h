@@ -34,6 +34,8 @@ class FormatData {
     return *reinterpret_cast<T*>(this);
   }
 
+  virtual void prepareRead(RowSet rows, const uint64_t * incomingNulls) {}
+  
   virtual std::vector<uint32_t> filterRowGroups(
       uint64_t rowsPerRowGroup,
       const StatsWriterInfo& context) = 0;

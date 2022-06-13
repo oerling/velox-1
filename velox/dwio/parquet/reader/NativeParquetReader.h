@@ -55,8 +55,8 @@ class ReaderBase {
   memory::MemoryPool& pool_;
   const dwio::common::ReaderOptions& options_;
   const std::unique_ptr<dwio::common::InputStream> stream_;
+  std::shared_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::shared_ptr<velox::dwrf::BufferedInput> input_;
-
   uint64_t fileLength_;
   std::unique_ptr<FileMetaData> fileMetaData_;
   RowTypePtr schema_;

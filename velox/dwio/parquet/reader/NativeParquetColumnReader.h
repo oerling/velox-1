@@ -27,85 +27,9 @@ namespace facebook::velox::parquet {
 // Wrapper for static functions for Parquet columns.
 class ParquetColumnReader {
  public:
-  static std::unique_ptr<ParquetColumnReader> build(
+  static std::unique_ptr<dwrf::SelectiveColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
       common::ScanSpec* scanSpec);
 };
-
-class ParquetStructColumnReader : public dwrf::SelectiveStructColumnReader {
- public:
-  ParquetStructColumnReader(
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      ParquetParams& params,
-      common::ScanSpec* scanSpec)
-      : SelectiveStructColumnReader(dataType, params, scanSpec, dataType->type) {
-    auto& childSpecs = scanSpec->children();
-    for (auto i = 0; i < childSpecs.size(); ++i) {
-      if (childSpecs[i]->isConstant()) {
-        continue;
-      }
-      auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
-
-      children_.push_back(ParquetColumnReader::build(
-          childDataType, params, childSpecs[i].get(), input_, memoryPool_));
-      childSpecs[i]->setSubscript(children_.size() - 1);
-    }
-  }
-
-  std::vector<uint32_t> filterRowGroups(
-    uint64_t rowGroupSize,
-    const StatsContext& context) const override {
-    if (!scanSpec_->filter_) {
-      return {};
-    }
-    return formatData_->as<ParquetData>().filterRowGroups(*scanSpec_->filter());
-  }
-
-  bool filterMatches(const RowGroup& rowGroup);
-
-  void seekToRowGroup(uint32_t index) override;
-};
-
-class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
- public:
-  IntegerColumnReader(
-      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      ParquetParams& params,
-      uint32_t numBytes,
-      common::ScanSpec* scanSpec)
-      : SelectiveIntegerColumnReader(
-            std::move(requestedType),
-            params,
-            scanSpec,
-            dataType->type) {}
-
-  bool hasBulkPath() const override {
-    return true;
-  }
-
-  void seekToRowGroup(uint32_t index) override {
-    formatData_->as<ParquetData>.seekToRowGroup(index);
-  }
-
-  uint64_t skip(uint64_t numValues) override {
-    formatData_->as<ParquetData>().skip(numValues);
-  }
-
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override {
-    auto& data = formatData_->as<ParquetData>();
-    VELOX_WIDTH_DISPATCH(
-			 dwrf::sizeOfIntKind(type_->type->kind()), prepareRead, offset, rows, nullptr);
-
-    readCommon<IntegerColumnReader>(rows);
-  }
-
-  template <typename ColumnVisitor>
-  void readWithVisitor(RowSet rows, ColumnVisitor visitor) {
-    formatData<ParquetData>().readWithVisitor(visitor);
-  }
-}
-
 } // namespace facebook::velox::parquet

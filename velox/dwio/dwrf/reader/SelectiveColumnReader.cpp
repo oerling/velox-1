@@ -91,7 +91,7 @@ SelectiveColumnReader::SelectiveColumnReader(
 
   SelectiveColumnReader::    SelectiveColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      common::FormatParams& formatParams,
+      dwio::common::FormatParams& formatParams,
       common::ScanSpec* scanSpec,
       const TypePtr& type)
     : ColumnReader(std::move(requestedType), formatParams),
@@ -100,12 +100,13 @@ SelectiveColumnReader::SelectiveColumnReader(
 
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
-    const StatsContext& context) const {
+    const dwio::common::StatsWriterInfo& context) const {
   if (formatData_) {
-    return formatData_->filterRowGroups(rowGroupSize, statsContext);
+    return formatData_->filterRowGroups(rowGroupSize, context);
   }
+  const auto& statsContext  = *reinterpret_cast<StatsContext*>(&context);
   if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
-    return ColumnReader::filterRowGroups(rowGroupSize, context);
+    return ColumnReader::filterRowGroups(rowGroupSize, statsContext);
   }
 
   ensureRowGroupIndex();
@@ -115,7 +116,7 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   for (auto i = 0; i < index_->entry_size(); i++) {
     const auto& entry = index_->entry(i);
     auto columnStats =
-        buildColumnStatisticsFromProto(entry.statistics(), context);
+        buildColumnStatisticsFromProto(entry.statistics(), statsContext);
     if (!testFilter(filter, columnStats.get(), rowGroupSize, type_)) {
       VLOG(1) << "Drop stride " << i << " on " << scanSpec_->toString();
       stridesToSkip.push_back(i); // Skipping stride based on column stats.

@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
+#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/vector/BaseVector.h"
 namespace facebook::velox::parquet {
 
@@ -34,12 +34,16 @@ class Dictionary {
 class PageDecoder {
  public:
   PageDecoder(
-      std::unique_ptr<dwrf::SeekableInputStream> stream,
-      memory::MemoryPool& pool)
-      : pool_(pool), inputStream_(std::move(stream)) {}
+	      std::unique_ptr<dwrf::SeekableInputStream> stream,
+	      memory::MemoryPool& pool,
+	      int32_t maxDefine,
+	      int32_t maxRepeat,
+	      CompressionCodec::type codec)
+    : pool_(pool), inputStream_(std::move(stream)),
+      maxDefine_(maxDefine), maxRepeat_(maxRepeat),codec_(codec) {}
 
   // Advances 'numRows' top level rows.
-  void skip(int32_t numRows);
+  void skip(int64_t numRows);
 
   template <typename Visitor>
   void readWithVisitor(Visitor& visitor);
@@ -62,20 +66,24 @@ class PageDecoder {
   void prepareDataPageV1(const PageHeader& pageHeader, int64_t row);
   void prepareDataPageV2(const PageHeader& pageHeader, int64_t row);
   void prepareDictionary(const PageHeader& pageHeader);
-
+  void makeDecoder();
+  
   // Returns a pointer to contiguous space for the next 'size' bytes
   // from current position. Copies data into 'copy' if the range
   // straddles buffers. Allocates or resizes 'copy' as needed.
   const char* FOLLY_NONNULL readBytes(int32_t size, BufferPtr& copy);
+
   // Decompresses data starting at 'pageData_', consuming 'compressedsize' and
   // producing up to 'uncompressedSize' bytes. The The start of the decoding
   // result is returned. an intermediate copy may be made in 'uncompresseddata_'
-  const char* FOLLY_NONNULL
-  uncompressData(int32_t compressedSize, int32_t uncompressedSize);
+  const char* FOLLY_NONNULL uncompressData(
+      const char* FOLLY_NONNULL pageData,
+      uint32_t compressedSize,
+      uint32_t uncompressedSize);
 
   template <typename T>
   T readField(const char*& ptr) {
-    T data = *static_cast<const T*>(ptr);
+    T data = *reinterpret_cast<const T*>(ptr);
     ptr += sizeof(T);
     return data;
   }
@@ -85,9 +93,8 @@ class PageDecoder {
   // unprocessed value in the current page, i.e. the row after the
   // last row touched on a previous call to skip() or
   // readWithVisitor(). This is the first row of the first data page
-  // if first call. Returns the row corresponding to offset 0 in 'rows' from the
-  // start of the ColumnChunk.
-  int64_t startVisit(folly::Range<const vector_size_t*> rows);
+  // if first call.
+  void startVisit(folly::Range<const vector_size_t*> rows);
 
   // Seeks to the next page in a range given by startVisit().
   // Returns true if there are unprocessed rows in the set given to
@@ -101,14 +108,15 @@ class PageDecoder {
   // the null flag for rowsOnPage[0]. there are rowsOnPage.back() -
   // rowsOnPage.front() + 1 bits in 'nulls'.
   bool rowsForPage(
-      folly::Range<const vector_size_t*>& rowsForPage,
+      folly::Range<const vector_size_t*>& rows,
       const uint64_t* FOLLY_NULLABLE& nulls);
-
+  
   memory::MemoryPool& pool_;
-
-  bool canNotHaveNull();
-
+  
   std::unique_ptr<dwrf::SeekableInputStream> inputStream_;
+  const int32_t maxDefine_;
+  const int32_t maxRepeat_;
+  const CompressionCodec::type codec_;
   const char* bufferStart_;
   const char* bufferEnd_;
 
@@ -125,8 +133,6 @@ class PageDecoder {
 
   // Number of rows in current page.
   int32_t rowsInPage_{0};
-
-  int64_t remainingRowsInPage_;
 
   // Copy of data if data straddles buffer boundary.
   BufferPtr pageBuffer_;
@@ -150,29 +156,37 @@ class PageDecoder {
   int64_t pageDataStart_;
 
   // Number of bytes starting at pageData_ for current encoded data.
-  int32_t uncompressedDataSize_{0};
+  int32_t encodedDataSize_{0};
 
   // Below members Keep state between calls to readWithVisitor().
 
   // Original rows in Visitor.
-  vector_size_t* FOLLY_NULLABLE visitorRows_{nullptr};
+  const vector_size_t* FOLLY_NULLABLE visitorRows_{nullptr};
   int32_t numVisitorRows_{0};
-  // Index in 'visitorRows_' for the first row that is beyond the
 
+  // 'rowOfPage_' at the start of readWithVisitor().
+  int64_t initialRowOfPage_{0};
+
+  // Index in 'visitorRows_' for the first row that is beyond the
   // current page. Equals 'numVisitorRows_' if all are on current page.
   int32_t currentVisitorRow_{0};
 
-  // Row relative to ColumnChunk for first unvisited row. 0 if nothing visited.
-  // The rows in readWithVisitor are relative to this.
+  // Row relative to ColumnChunk for first unvisited row. 0 if nothing
+  // visited.  The rows passed to readWithVisitor from rowsForPage()
+  // are relative to this.
   int64_t firstUnvisited_{0};
 
+  // Offset of 'visitorRows_[0]' relative too start of ColumnChunk.
+  int64_t visitBase_{0};
+  
   //  Temporary for rewriting rows to access in readWithVisitor when moving
   //  between pages. Initialized from the visitor.
   raw_vector<vector_size_t>* FOLLY_NULLABLE rowsCopy_{nullptr};
 
-  // If 'rowsCopy_' is used, this is the difference between the rows in 'rowsCopy_' and the row numbers in 'rows' given to readWithVisitor().
+  // If 'rowsCopy_' is used, this is the difference between the rows in
+  // 'rowsCopy_' and the row numbers in 'rows' given to readWithVisitor().
   int32_t rowNumberBias_{0};
-  
+
   // Decoders. Only one will be set at a time.
   std::unique_ptr<dwrf::DirectDecoder<true>> directDecoder_;
 

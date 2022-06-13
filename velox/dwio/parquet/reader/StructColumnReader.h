@@ -16,22 +16,9 @@
 
 #pragma once
 
-
-
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
 namespace facebook::velox::parquet {
-
-
-
-  
-
-uint64_t ParquetStructColumnReader::skip(uint64_t numRows) {
-  return 0;
-}
-
-
-  
 
 class StructColumnReader : public dwrf::SelectiveStructColumnReader {
  public:
@@ -39,7 +26,11 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
       common::ScanSpec* scanSpec)
-      : SelectiveStructColumnReader(dataType, params, scanSpec, dataType->type) {
+      : SelectiveStructColumnReader(
+            dataType,
+            params,
+            scanSpec,
+            dataType->type) {
     auto& childSpecs = scanSpec->children();
     for (auto i = 0; i < childSpecs.size(); ++i) {
       if (childSpecs[i]->isConstant()) {
@@ -48,24 +39,24 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
       auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
 
       children_.push_back(ParquetColumnReader::build(
-          childDataType, params, childSpecs[i].get(), input_, memoryPool_));
+          childDataType, params, childSpecs[i].get()));
       childSpecs[i]->setSubscript(children_.size() - 1);
     }
   }
 
   std::vector<uint32_t> filterRowGroups(
-    uint64_t rowGroupSize,
-    const dwio::common::WriterStatsInfoStatsContext& context) const override {
-    if (!scanSpec_->filter_) {
+      uint64_t rowGroupSize,
+      const dwio::common::StatsWriterInfo& context) const override {
+    if (!scanSpec_->filter()) {
       return {};
     }
     return {};
   }
 
-
   void seekToRowGroup(uint32_t index) override;
-
-
+private:
+  
+  bool filterMatches(const RowGroup& rowGroup);
 };
 
 void StructColumnReader::seekToRowGroup(uint32_t index) {
@@ -75,7 +66,28 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
 }
 
 
-  
-}
+bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
+  bool matched = true;
+
+  auto& childSpecs = scanSpec_->children();
+  assert(!children_.empty());
+  for (size_t i = 0; i < childSpecs.size(); ++i) {
+    auto& childSpec = childSpecs[i];
+    if (childSpec->isConstant()) {
+      // TODO: match constant
+      continue;
+    }
+    auto fieldIndex = childSpec->subscript();
+    auto reader = children_.at(fieldIndex).get();
+    //    auto colName = childSpec->fieldName();
+
+    if (!reader->filterMatches(rowGroup)) {
+      matched = false;
+      break;
+    }
+  }
+  return matched;
 }
 
+  
+} // namespace facebook::velox::parquet

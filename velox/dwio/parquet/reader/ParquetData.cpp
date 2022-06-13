@@ -14,28 +14,63 @@
  * limitations under the License.
  */
 
-
 #include "velox/dwio/parquet/reader/ParquetData.h"
+#include "velox/dwio/dwrf/common/BufferedInput.h"
 
 namespace facebook::velox::parquet {
 
-  void ParquetData::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
-    streams_.resize(rowGroups_.size());
-    auto& columnChunk = rowGroups_[index].columns[type->column];
-    auto columnData = columnChunk.meta_data;
-    auto size = columnData.total_compressed_size;
-    auto start = columnData.data_page_offset;
-      streams_[index] = input->enqueue(dwio::common::Region(start, size), type_->column());
+bool ParquetData::filterMatches(
+    const RowGroup& rowGroup,
+    common::Filter& filter) {
+  auto colIdx = type_->column;
+  auto type = type_->type;
+  if (rowGroup.columns[colIdx].__isset.meta_data &&
+      rowGroup.columns[colIdx].meta_data.__isset.statistics) {
+    auto columnStats = buildColumnStatisticsFromThrift(
+        rowGroup.columns[colIdx].meta_data.statistics,
+        *type,
+        rowGroup.num_rows);
+    if (!testFilter(&filter, columnStats.get(), rowGroup.num_rows, type)) {
+      return false;
+    }
   }
-
-  void ParquetData::seekToRowGroup(uint32_t index) {
-    VELOX_CHECK_LT(index, streams_.size());
-    VELOX_CHECK(streams_[index], "Stream not enqueued for column");
-    decoder_ = std::make_unique<PageDecoder>(std::move(streams_[index], pool_);
-  }
-
-  
-  
+  return true;
 }
 
+void ParquetData::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
+  auto& chunk = rowGroups_[index].columns[type_->column];
+  DWIO_ENSURE(
+      chunk.__isset.meta_data,
+      "ColumnMetaData does not exist for schema Id ",
+      type_->column);
+  auto& columnMetaData = chunk.meta_data;
+  DWIO_ENSURE(
+      chunk.__isset.meta_data,
+      "ColumnMetaData does not exist for schema Id ",
+      type_->column);
+  auto& metaData = chunk.meta_data;
 
+  uint64_t chunkReadOffset = metaData.data_page_offset;
+  if (metaData.__isset.dictionary_page_offset &&
+      metaData.dictionary_page_offset >= 4) {
+    // this assumes the data pages follow the dict pages directly.
+    chunkReadOffset = metaData.dictionary_page_offset;
+  }
+  VELOX_CHECK_GE(chunkReadOffset, 0);
+
+  uint64_t readSize = std::min(
+      metaData.total_compressed_size, metaData.total_uncompressed_size);
+
+  auto id = dwrf::StreamIdentifier(
+      type_->column, 0, 0, dwrf::StreamKind::StreamKind_DATA);
+  streams_[index] = input.enqueue({chunkReadOffset, readSize}, &id);
+}
+
+void ParquetData::seekToRowGroup(uint32_t index) {
+  VELOX_CHECK_LT(index, streams_.size());
+  VELOX_CHECK(streams_[index], "Stream not enqueued for column");
+  auto codec = rowGroups_[index].columns[type->column].meta_data.codec;
+  decoder_ = std::make_unique<PageDecoder>(
+					   std::move(streams_[index]), pool_, maxDefine_, maxRepeat_, codec_);
+}
+} // namespace facebook::velox::parquet

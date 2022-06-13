@@ -106,7 +106,7 @@ class ColumnReader {
   // Stride indices are monotonically increasing.
   virtual std::vector<uint32_t> filterRowGroups(
       uint64_t /*rowGroupSize*/,
-      const StatsContext& /* context */) const {
+      const dwio::common::StatsWriterInfo& /* context */) const {
     static const std::vector<uint32_t> kEmpty;
     return kEmpty;
   }
