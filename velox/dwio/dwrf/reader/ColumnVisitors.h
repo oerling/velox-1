@@ -440,6 +440,13 @@ class ColumnVisitor {
   DictionaryColumnVisitor<T, TFilter, ExtractValues, isDense>
   toDictionaryColumnVisitor();
 
+  // Use for replacing *coall rows with non-null rows for fast path with
+  // processRun and processRle.
+  void setRows(folly::Range<const int32_t*> newRows) {
+    rows_ = newRows.data();
+    numRows_ = newRows.size();
+  }
+  
  protected:
   TFilter& filter_;
   SelectiveColumnReader* reader_;
@@ -713,13 +720,6 @@ class DictionaryColumnVisitor
       return 0;
     }
     return super::currentRow() - previous - 1;
-  }
-
-  // Use for replacing all rows with non-null rows for fast path with
-  // processRun and processRle.
-  void setRows(folly::Range<const int32_t*> newRows) {
-    super::rows_ = newRows.data();
-    super::numRows_ = newRows.size();
   }
 
   // Processes 'numInput' dictionary indices in 'input'. Sets 'values'

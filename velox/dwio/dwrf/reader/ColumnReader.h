@@ -85,6 +85,10 @@ class ColumnReader {
 
   virtual ~ColumnReader() = default;
 
+  dwio::common::FormatData* formatData() const {
+    return formatData_.get();
+  }
+  
   /**
    * Skip number of specified rows.
    * @param numValues the number of values to skip

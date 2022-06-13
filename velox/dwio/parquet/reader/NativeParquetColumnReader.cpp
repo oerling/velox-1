@@ -45,7 +45,7 @@ namespace facebook::velox::parquet {
     case TypeKind::BIGINT:
     case TypeKind::SMALLINT:
     case TypeKind::TINYINT:
-      return std::make_unique<IntegerColumnReader>(dataType, params, scanSpec);
+      return std::make_unique<IntegerColumnReader>(dataType, dataType, params, scanSpec);
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(dataType, params, scanSpec);
 

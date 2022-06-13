@@ -104,7 +104,7 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   if (formatData_) {
     return formatData_->filterRowGroups(rowGroupSize, context);
   }
-  const auto& statsContext  = *reinterpret_cast<StatsContext*>(&context);
+  const auto& statsContext  = *reinterpret_cast<const StatsContext*>(&context);
   if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
     return ColumnReader::filterRowGroups(rowGroupSize, statsContext);
   }

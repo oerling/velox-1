@@ -16,9 +16,19 @@
 
 #include "velox/dwio/parquet/reader/ParquetData.h"
 #include "velox/dwio/dwrf/common/BufferedInput.h"
+#include "velox/dwio/parquet/reader/Statistics.h"
 
 namespace facebook::velox::parquet {
 
+
+std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
+    const std::shared_ptr<const dwio::common::TypeWithId>& type) {
+  return std::make_unique<ParquetData>(
+      type,
+      metaData_.row_groups,
+      pool());
+}
+ 
 bool ParquetData::filterMatches(
     const RowGroup& rowGroup,
     common::Filter& filter) {
@@ -69,8 +79,8 @@ void ParquetData::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
 void ParquetData::seekToRowGroup(uint32_t index) {
   VELOX_CHECK_LT(index, streams_.size());
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
-  auto codec = rowGroups_[index].columns[type->column].meta_data.codec;
+  auto codec = rowGroups_[index].columns[type_->column].meta_data.codec;
   decoder_ = std::make_unique<PageDecoder>(
-					   std::move(streams_[index]), pool_, maxDefine_, maxRepeat_, codec_);
+					   std::move(streams_[index]), pool_, maxDefine_, maxRepeat_, codec);
 }
 } // namespace facebook::velox::parquet

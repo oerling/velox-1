@@ -100,7 +100,7 @@ class NativeParquetRowReader : public dwio::common::RowReader {
   uint64_t rowsInCurrentRowGroup_;
   uint64_t currentRowInGroup_;
 
-  std::unique_ptr<ParquetColumnReader> columnReader_;
+  std::unique_ptr<dwrf::SelectiveColumnReader> columnReader_;
   RowTypePtr requestedType_;
 };
 

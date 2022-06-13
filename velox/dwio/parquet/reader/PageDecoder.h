@@ -201,13 +201,17 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
   auto rows = visitor.rows();
   auto numRows = visitor.numRows();
   startVisit(folly::Range<const vector_size_t*>(rows, numRows));
-  rowsCopy_ = visitor.rowsCopy();
+  rowsCopy_ = &visitor.rowsCopy();
   folly::Range<const vector_size_t*> pageRows;
   const uint64_t* nulls = nullptr;
   while (rowsForPage(pageRows, nulls)) {
     visitor.setRows(pageRows);
     auto firstResult = hasFilter ? visitor.numRows() : 0;
-    directDecoder_->readWithVisitor(nulls, visitor);
+    if (nulls) {
+      directDecoder_->readWithVisitor<true>(nulls, visitor);
+    } else {
+      directDecoder_->readWithVisitor<false>(nulls, visitor);
+    }
     if (hasFilter && rowNumberBias_) {
       visitor.offsetOutputRows(firstResult, rowNumberBias_);
     }

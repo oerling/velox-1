@@ -81,20 +81,20 @@ void ReaderBase::loadFileMetaData() {
 
   uint32_t footerLength = *(reinterpret_cast<const uint32_t*>(copy.data() + readSize - 8));
   VELOX_CHECK_LT(footerLength + 12, fileLength_);
-  int footerOffsetInBuffer = copy.data() + readSize - 8 - footerLength;
+  int32_t footerOffsetInBuffer =  readSize - 8 - footerLength;
   if (footerLength > readSize - 8) {
     footerOffsetInBuffer = 0;
     auto missingLength = footerLength - readSize - 8;
-    stream = input.read(fileLength_ - footerLength - 8, missingLength, dwio::common::LogType::FOOTER);
+    stream = input_->read(fileLength_ - footerLength - 8, missingLength, dwio::common::LogType::FOOTER);
     copy.resize(footerLength);
-    std::memove(copy.data() + missingLength, copy.data(), readSize - 8);
+    std::memmove(copy.data() + missingLength, copy.data(), readSize - 8);
     bufferStart = nullptr;
     bufferEnd = nullptr;
-    dwrf::readBytes(missingLength, stream, copy.data(), bufferStart, bufferEnd);
+    dwrf::readBytes(missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
   }
 
   auto thriftTransport =
-    std::make_shared<ThriftBufferedTransport>(copy.data() + footerOffsetInBuffer, footerLen);
+    std::make_shared<ThriftBufferedTransport>(copy.data() + footerOffsetInBuffer, footerLength);
   auto thriftProtocol = std::make_unique<
       apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
       thriftTransport);
@@ -450,13 +450,12 @@ NativeParquetRowReader::NativeParquetRowReader(
   if (rowGroups_.empty()) {
     return; // TODO
   }
-  parquetParams params(fileMetaData_);
+  ParquetParams params(pool_, readerBase_->getFileMetaData());
   
   columnReader_ = ParquetColumnReader::build(
       readerBase_->getSchemaWithId(), // Id is schema id
-      options_.getScanSpec().get(),
       params,
-      pool_);
+      options_.getScanSpec().get());
 
   filterRowGroups();
 }
@@ -466,7 +465,7 @@ void NativeParquetRowReader::filterRowGroups() {
   auto scanSpec = options_.getScanSpec();
   auto rowGroups = readerBase_->getFileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
-  auto excluded = columnReader_->formatData()->filterRowGroups(0, common::Statscontext("Parquet", "0"));
+  auto excluded = columnReader_->filterRowGroups(0, dwio::common::StatsWriterInfo());
   for (auto i = 0; i < rowGroups.size(); i++) {
       if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())
         rowGroupIds_.push_back(i);
@@ -501,12 +500,13 @@ bool NativeParquetRowReader::advanceToNextRowGroup() {
     return false;
   }
 
+  auto nextRowGroupIndex = currentRowGroupIdsIdx_;
   currentRowGroupPtr_ = &rowGroups_[rowGroupIds_[currentRowGroupIdsIdx_]];
   rowsInCurrentRowGroup_ = currentRowGroupPtr_->num_rows;
   currentRowInGroup_ = 0;
   currentRowGroupIdsIdx_++;
 
-  columnReader_->initializeRowGroup(*currentRowGroupPtr_);
+  columnReader_->seekToRowGroup(nextRowGroupIndex);
   return true;
 }
 

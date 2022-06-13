@@ -65,8 +65,9 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
   }
 }
 
-
 bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
+  return true;
+  #if 0
   bool matched = true;
 
   auto& childSpecs = scanSpec_->children();
@@ -87,6 +88,7 @@ bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
     }
   }
   return matched;
+#endif
 }
 
   

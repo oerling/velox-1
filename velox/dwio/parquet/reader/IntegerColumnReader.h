@@ -27,7 +27,6 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
-      uint32_t numBytes,
       common::ScanSpec* scanSpec)
       : SelectiveIntegerColumnReader(
             std::move(requestedType),

@@ -50,13 +50,13 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
 
 class ParquetParams : public dwio::common::FormatParams {
  public:
-  ParquetParams(memory::MemoryPool& pool, FileMetaData& metaData)
+  ParquetParams(memory::MemoryPool& pool, const FileMetaData& metaData)
       : FormatParams(pool), metaData_(metaData) {}
   std::unique_ptr<dwio::common::FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type) override;
 
  private:
-  FileMetaData metaData_;
+  const FileMetaData& metaData_;
 };
 
 // Format-specific data created for each leaf column of a Parquet rowgroup.
@@ -64,7 +64,7 @@ class ParquetData : public dwio::common::FormatData {
  public:
   ParquetData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      std::vector<RowGroup>& rowGroups,
+      const std::vector<RowGroup>& rowGroups,
       memory::MemoryPool& pool)
       : pool_(pool),
         type_(std::static_pointer_cast<const ParquetTypeWithId>(type)),
@@ -118,7 +118,7 @@ class ParquetData : public dwio::common::FormatData {
 
   memory::MemoryPool& pool_;
   std::shared_ptr<const ParquetTypeWithId> type_;
-  std::vector<RowGroup>& rowGroups_;
+  const std::vector<RowGroup>& rowGroups_;
   // Streams for this column in each of 'rowGroups_'. Will be created on or
   // ahead of first use, not at construction.
   std::vector<std::unique_ptr<dwrf::SeekableInputStream>> streams_;
@@ -130,13 +130,5 @@ class ParquetData : public dwio::common::FormatData {
   int64_t rowsInRowGroup_;
   std::unique_ptr<PageDecoder> decoder_;
 };
-
-std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
-    const std::shared_ptr<const dwio::common::TypeWithId>& type) {
-  return std::make_unique<ParquetData>(
-      type,
-      metaData_.row_groups,
-      pool());
-}
 
 } // namespace facebook::velox::parquet

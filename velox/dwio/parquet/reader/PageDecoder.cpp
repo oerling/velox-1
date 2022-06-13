@@ -266,6 +266,9 @@ void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
 bool PageDecoder::rowsForPage(
     folly::Range<const vector_size_t*>& rows,
     const uint64_t* FOLLY_NULLABLE& nulls) {
+  if (currentVisitorRow_ == numVisitorRows_) {
+    return false;
+  }
   int32_t firstOnNextPage = rowOfPage_ + numRowsInPage_ - visitBase_;
   int32_t numToVisit;
   if (firstOnNextPage > visitorRows_[numVisitorRows_ - 1]) {
@@ -304,6 +307,7 @@ bool PageDecoder::rowsForPage(
   }
   firstUnvisited_ = visitBase_ + visitorRows_[currentVisitorRow_ - 1] + 1;
   currentVisitorRow_ += numToVisit;
+  return true;
 }
 
 } // namespace facebook::velox::parquet
