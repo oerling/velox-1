@@ -189,7 +189,7 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
     SelectiveColumnReader::seekToRowGroup(index);
     
     auto positions = toPositions(index_->entry(index));
-    PositionProvider positionsProvider(positions);
+    dwio::common::PositionProvider positionsProvider(positions);
 
     if (notNullDecoder_) {
       notNullDecoder_->seekToRowGroup(positionsProvider);
@@ -235,7 +235,7 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
         SelectiveColumnReader::seekToRowGroup(index);
     
     auto positions = toPositions(index_->entry(index));
-    PositionProvider positionsProvider(positions);
+    dwio::common::PositionProvider positionsProvider(positions);
 
     if (notNullDecoder_) {
       notNullDecoder_->seekToRowGroup(positionsProvider);
