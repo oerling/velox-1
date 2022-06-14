@@ -45,6 +45,7 @@ bool ParquetData::filterMatches(
 
 void ParquetData::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
   auto& chunk = rowGroups_[index].columns[type_->column];
+  streams_.resize(rowGroups_.size());
   DWIO_ENSURE(
       chunk.__isset.meta_data,
       "ColumnMetaData does not exist for schema Id ",

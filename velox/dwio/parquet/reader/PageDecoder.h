@@ -120,8 +120,8 @@ class PageDecoder {
   const int32_t maxDefine_;
   const int32_t maxRepeat_;
   const CompressionCodec::type codec_;
-  const char* bufferStart_;
-  const char* bufferEnd_;
+  const char* bufferStart_{nullptr};
+  const char* bufferEnd_{nullptr};
 
   BufferPtr defineOutBuffer_;
   BufferPtr repeatOutBuffer_;
@@ -135,7 +135,7 @@ class PageDecoder {
   int64_t rowOfPage_{0};
 
   // Number of rows in current page.
-  int32_t rowsInPage_{0};
+  int32_t numRowsInPage_{0};
 
   // Copy of data if data straddles buffer boundary.
   BufferPtr pageBuffer_;
@@ -149,14 +149,11 @@ class PageDecoder {
   std::unique_ptr<Dictionary> dictionary_;
   const char* dict_ = nullptr;
 
-  // Row count of current page, includes nulls.
-  int32_t numRowsInPage_{0};
-
   // Offset of current page's header from start of ColumnChunk.
-  int64_t pageStart_{0};
+  uint64_t pageStart_{0};
 
   // Offset of first byte after current page' header.
-  int64_t pageDataStart_;
+  uint64_t pageDataStart_{0};
 
   // Number of bytes starting at pageData_ for current encoded data.
   int32_t encodedDataSize_{0};

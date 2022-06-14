@@ -16,7 +16,8 @@
 
 #pragma once
 
-#include "velox/dwio/parquet/reader/StructColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/parquet/reader/NativeParquetColumnReader.h"
 
 namespace facebook::velox::parquet {
 
@@ -55,40 +56,11 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
 
   void seekToRowGroup(uint32_t index) override;
 
- private:
+  void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
+
+private:
+  
   bool filterMatches(const RowGroup& rowGroup);
 };
-
-void StructColumnReader::seekToRowGroup(uint32_t index) {
-  for (auto& child : children_) {
-    child->seekToRowGroup(index);
-  }
-}
-
-bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
-  return true;
-#if 0
-  bool matched = true;
-
-  auto& childSpecs = scanSpec_->children();
-  assert(!children_.empty());
-  for (size_t i = 0; i < childSpecs.size(); ++i) {
-    auto& childSpec = childSpecs[i];
-    if (childSpec->isConstant()) {
-      // TODO: match constant
-      continue;
-    }
-    auto fieldIndex = childSpec->subscript();
-    auto reader = children_.at(fieldIndex).get();
-    //    auto colName = childSpec->fieldName();
-
-    if (!reader->filterMatches(rowGroup)) {
-      matched = false;
-      break;
-    }
-  }
-  return matched;
-#endif
-}
-
+   
 } // namespace facebook::velox::parquet

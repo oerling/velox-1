@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/dwio/common/Statistics.h"
+#include "velox/type/Type.h"
 #include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {

@@ -17,6 +17,8 @@ constexpr uint64_t FILE_PRELOAD_THRESHOLD = 1024 * 1024 * 8;
 
 enum class ParquetMetricsType { HEADER, FILE_METADATA, FILE, BLOCK, TEST };
 
+  class StructColumnReader;
+  
 class ReaderBase {
  public:
   ReaderBase(
@@ -34,11 +36,11 @@ class ReaderBase {
   const FileMetaData& getFileMetaData() const;
   const std::shared_ptr<const RowType>& getSchema() const;
   const std::shared_ptr<const dwio::common::TypeWithId>& getSchemaWithId();
-  //  const std::unique_ptr<dwio::common::Statistics> getStatistics() const;
-  //  const std::unique_ptr<dwio::common::ColumnStatistics> getColumnStatistics(
-  //      uint32_t index) const;
 
- protected:
+  // Ensures that streams are enqueued and loading for the row group at 'currentGroup'. May start loading one or more subsequent groups.
+  void scheduleRowGroups(const std::vector<uint32_t>& groups, int32_t currentGroup, StructColumnReader& reader);
+  
+protected:
   void loadFileMetaData();
   void initializeSchema();
   std::shared_ptr<const ParquetTypeWithId> getParquetColumnInfo(
@@ -63,6 +65,9 @@ class ReaderBase {
   std::shared_ptr<const dwio::common::TypeWithId> schemaWithId_;
 
   const bool binaryAsString = false;
+
+  // Map from row group index to pre-created loading BufferedInput.
+  std::unordered_map<uint32_t, std::unique_ptr<dwrf::BufferedInput>> inputs_;
 };
 
 class NativeParquetRowReader : public dwio::common::RowReader {

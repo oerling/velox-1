@@ -27,6 +27,7 @@ void PageDecoder::readNextPage(int64_t row) {
   repeatDecoder_.reset();
   for (;;) {
     PageHeader pageHeader = readPageHeader();
+    pageStart_ = pageDataStart_ + pageHeader.compressed_page_size;
 
     switch (pageHeader.type) {
       case PageType::DATA_PAGE:
@@ -84,12 +85,13 @@ PageHeader PageDecoder::readPageHeader() {
   }
   PageHeader pageHeader;
   uint64_t readBytes = pageHeader.read(protocol.get());
+  pageDataStart_ = pageStart_ + readBytes;
   // Unread the bytes that were not consumed.
   if (wasInBuffer) {
     bufferStart_ -= sizeof(PageHeader) - readBytes;
   } else {
-    dwrf::PositionProvider position(
-        {pageStart_ + sizeof(PageHeader) - readBytes});
+    std::vector<uint64_t> start = {pageDataStart_};
+    dwrf::PositionProvider position(start);
     inputStream_->seekToPosition(position);
     bufferStart_ = bufferEnd_ = nullptr;
   }
@@ -169,7 +171,7 @@ void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
 
 void PageDecoder::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   VELOX_CHECK(pageHeader.__isset.data_page_header_v2);
-  rowsInPage_ = pageHeader.data_page_header_v2.num_values;
+  numRowsInPage_ = pageHeader.data_page_header_v2.num_values;
   if (numRowsInPage_ + rowOfPage_ <= row) {
     return;
   }

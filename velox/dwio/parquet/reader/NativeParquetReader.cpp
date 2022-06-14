@@ -15,14 +15,14 @@
 
  */
 
-#include "NativeParquetReader.h"
+#include "velox/dwio/parquet/reader/NativeParquetReader.h"
 #include <thrift/protocol/TCompactProtocol.h>
-//#include "ParquetThriftTypes.h"
-#include "ReaderUtil.h"
-//#include "Statistics.h"
-#include "ThriftTransport.h"
+#include "velox/dwio/parquet/reader/ReaderUtil.h"
+#include "velox/dwio/parquet/reader/ThriftTransport.h"
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeUtils.h"
+#include "velox/dwio/parquet/reader/StructColumnReader.h"
+
 
 namespace facebook::velox::parquet {
 
@@ -32,7 +32,10 @@ ReaderBase::ReaderBase(
     : pool_(options.getMemoryPool()),
       options_(options),
       stream_{std::move(stream)},
-      bufferedInputFactory_(options.getBufferedInputFactory()) {
+      bufferedInputFactory_(
+          options.getBufferedInputFactory()
+              ? options.getBufferedInputFactory()
+	  : dwrf::BufferedInputFactory::baseFactoryShared()) {
   input_ = bufferedInputFactory_->create(*stream_, pool_, options.getFileNum());
   fileLength_ = stream_->getLength();
   DWIO_ENSURE(fileLength_ > 0, "Parquet file is empty");
@@ -71,8 +74,8 @@ void ReaderBase::loadFileMetaData() {
       fileLength_ - readSize, readSize, dwio::common::LogType::FOOTER);
 
   std::vector<char> copy(readSize);
-  const char* bufferStart;
-  const char* bufferEnd;
+  const char* bufferStart = nullptr;
+  const char* bufferEnd = nullptr;
   dwrf::readBytes(readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
   DWIO_ENSURE(
       strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
@@ -418,7 +421,32 @@ std::shared_ptr<const RowType> ReaderBase::createRowType(
   return TypeFactory<TypeKind::ROW>::create(
       std::move(childNames), std::move(childTypes));
 }
-//-------------------NativeParquetRowReader-------------------------------
+void ReaderBase::scheduleRowGroups(
+    const std::vector<uint32_t>& rowGroupIds,
+    int32_t currentGroup,
+    StructColumnReader& reader) {
+  auto thisGroup = rowGroupIds[currentGroup];
+  auto nextGroup =
+      currentGroup + 1 < rowGroupIds.size() ? rowGroupIds[currentGroup + 1] : 0;
+  auto input = inputs_[thisGroup].get();
+  if (!input) {
+    auto newInput =
+        bufferedInputFactory_->create(*stream_, pool_, options_.getFileNum());
+    reader.enqueueRowGroup(thisGroup, *newInput);
+    newInput->load(dwio::common::LogType::STRIPE);
+    inputs_[thisGroup] = std::move(newInput);
+  }
+  if (nextGroup) {
+    auto newInput =
+        bufferedInputFactory_->create(*stream_, pool_, options_.getFileNum());
+    reader.enqueueRowGroup(nextGroup, *newInput);
+    newInput->load(dwio::common::LogType::STRIPE);
+    inputs_[nextGroup] = std::move(newInput);
+  }
+  if (currentGroup > 1) {
+    inputs_.erase(rowGroupIds[currentGroup - 1]);
+  }
+}
 
 NativeParquetRowReader::NativeParquetRowReader(
     const std::shared_ptr<ReaderBase>& readerBase,
@@ -491,7 +519,6 @@ uint64_t NativeParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {
       static_cast<uint64_t>(size), rowsInCurrentRowGroup_ - currentRowInGroup_);
 
   if (rowsToRead > 0) {
-    // no nulls support now
     columnReader_->next(rowsToRead, result, nullptr);
     currentRowInGroup_ += rowsToRead;
   }
@@ -504,7 +531,11 @@ bool NativeParquetRowReader::advanceToNextRowGroup() {
     return false;
   }
 
-  auto nextRowGroupIndex = currentRowGroupIdsIdx_;
+  auto nextRowGroupIndex = rowGroupIds_[currentRowGroupIdsIdx_];
+  readerBase_->scheduleRowGroups(
+      rowGroupIds_,
+      currentRowGroupIdsIdx_,
+      *reinterpret_cast<StructColumnReader*>(columnReader_.get()));
   currentRowGroupPtr_ = &rowGroups_[rowGroupIds_[currentRowGroupIdsIdx_]];
   rowsInCurrentRowGroup_ = currentRowGroupPtr_->num_rows;
   currentRowInGroup_ = 0;
