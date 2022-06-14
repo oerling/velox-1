@@ -17,8 +17,8 @@ constexpr uint64_t FILE_PRELOAD_THRESHOLD = 1024 * 1024 * 8;
 
 enum class ParquetMetricsType { HEADER, FILE_METADATA, FILE, BLOCK, TEST };
 
-  class StructColumnReader;
-  
+class StructColumnReader;
+
 class ReaderBase {
  public:
   ReaderBase(
@@ -37,10 +37,14 @@ class ReaderBase {
   const std::shared_ptr<const RowType>& getSchema() const;
   const std::shared_ptr<const dwio::common::TypeWithId>& getSchemaWithId();
 
-  // Ensures that streams are enqueued and loading for the row group at 'currentGroup'. May start loading one or more subsequent groups.
-  void scheduleRowGroups(const std::vector<uint32_t>& groups, int32_t currentGroup, StructColumnReader& reader);
-  
-protected:
+  // Ensures that streams are enqueued and loading for the row group at
+  // 'currentGroup'. May start loading one or more subsequent groups.
+  void scheduleRowGroups(
+      const std::vector<uint32_t>& groups,
+      int32_t currentGroup,
+      StructColumnReader& reader);
+
+ protected:
   void loadFileMetaData();
   void initializeSchema();
   std::shared_ptr<const ParquetTypeWithId> getParquetColumnInfo(

@@ -17,12 +17,11 @@
 
 #include "velox/dwio/parquet/reader/NativeParquetReader.h"
 #include <thrift/protocol/TCompactProtocol.h>
-#include "velox/dwio/parquet/reader/ReaderUtil.h"
-#include "velox/dwio/parquet/reader/ThriftTransport.h"
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeUtils.h"
+#include "velox/dwio/parquet/reader/ReaderUtil.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
-
+#include "velox/dwio/parquet/reader/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 
@@ -35,7 +34,7 @@ ReaderBase::ReaderBase(
       bufferedInputFactory_(
           options.getBufferedInputFactory()
               ? options.getBufferedInputFactory()
-	  : dwrf::BufferedInputFactory::baseFactoryShared()) {
+              : dwrf::BufferedInputFactory::baseFactoryShared()) {
   input_ = bufferedInputFactory_->create(*stream_, pool_, options.getFileNum());
   fileLength_ = stream_->getLength();
   DWIO_ENSURE(fileLength_ > 0, "Parquet file is empty");

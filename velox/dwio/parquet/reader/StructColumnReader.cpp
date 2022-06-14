@@ -14,22 +14,22 @@
  * limitations under the License.
  */
 
-
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
 namespace facebook::velox::parquet {
 
-  void StructColumnReader::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
-    for (auto& child :children_) {
-      if (auto structChild = dynamic_cast<StructColumnReader*>(child.get())) {
-	structChild->enqueueRowGroup(index, input);
-      } else {
-	child->formatData()->as<ParquetData>().enqueueRowGroup(index, input);
-      }
+void StructColumnReader::enqueueRowGroup(
+    uint32_t index,
+    dwrf::BufferedInput& input) {
+  for (auto& child : children_) {
+    if (auto structChild = dynamic_cast<StructColumnReader*>(child.get())) {
+      structChild->enqueueRowGroup(index, input);
+    } else {
+      child->formatData()->as<ParquetData>().enqueueRowGroup(index, input);
+    }
   }
-  }
+}
 
-  
 void StructColumnReader::seekToRowGroup(uint32_t index) {
   for (auto& child : children_) {
     child->seekToRowGroup(index);
@@ -38,7 +38,7 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
 
 bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
   return true;
-  #if 0
+#if 0
   bool matched = true;
 
   auto& childSpecs = scanSpec_->children();
@@ -62,5 +62,4 @@ bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
 #endif
 }
 
-  
-}
+} // namespace facebook::velox::parquet

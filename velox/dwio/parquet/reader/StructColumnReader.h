@@ -58,9 +58,8 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
 
   void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
 
-private:
-  
+ private:
   bool filterMatches(const RowGroup& rowGroup);
 };
-   
+
 } // namespace facebook::velox::parquet
