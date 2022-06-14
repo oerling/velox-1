@@ -41,8 +41,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     case TypeKind::BOOLEAN:
       return std::make_unique<dwio::common::BooleanColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt,
@@ -50,8 +48,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     case TypeKind::TINYINT:
       return std::make_unique<dwio::common::IntegerColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt,
@@ -61,8 +57,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     case TypeKind::SMALLINT:
       return std::make_unique<dwio::common::IntegerColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt,
@@ -72,8 +66,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     case TypeKind::INTEGER:
       return std::make_unique<dwio::common::IntegerColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt,
@@ -83,8 +75,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     case TypeKind::BIGINT:
       return std::make_unique<dwio::common::IntegerColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt,
@@ -95,8 +85,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     case TypeKind::DOUBLE:
       return std::make_unique<dwio::common::DoubleColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt,
@@ -106,8 +94,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     default:
       return std::make_unique<dwio::common::ColumnStatistics>(
           valueCount,
-          distinctValueCount,
-          nullCount,
           hasNull,
           std::nullopt,
           std::nullopt);

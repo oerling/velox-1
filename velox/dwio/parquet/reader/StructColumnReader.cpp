@@ -20,7 +20,7 @@ namespace facebook::velox::parquet {
 
 void StructColumnReader::enqueueRowGroup(
     uint32_t index,
-    dwrf::BufferedInput& input) {
+    dwio::common::BufferedInput& input) {
   for (auto& child : children_) {
     if (auto structChild = dynamic_cast<StructColumnReader*>(child.get())) {
       structChild->enqueueRowGroup(index, input);

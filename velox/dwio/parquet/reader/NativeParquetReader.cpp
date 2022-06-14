@@ -34,7 +34,7 @@ ReaderBase::ReaderBase(
       bufferedInputFactory_(
           options.getBufferedInputFactory()
               ? options.getBufferedInputFactory()
-              : dwrf::BufferedInputFactory::baseFactoryShared()) {
+	  : dwio::common::BufferedInputFactory::baseFactoryShared()) {
   input_ = bufferedInputFactory_->create(*stream_, pool_, options.getFileNum());
   fileLength_ = stream_->getLength();
   DWIO_ENSURE(fileLength_ > 0, "Parquet file is empty");
@@ -56,7 +56,7 @@ const FileMetaData& ReaderBase::getFileMetaData() const {
   return *fileMetaData_;
 }
 
-dwrf::BufferedInput& ReaderBase::getBufferedInput() const {
+  dwio::common::BufferedInput& ReaderBase::getBufferedInput() const {
   return *input_;
 }
 

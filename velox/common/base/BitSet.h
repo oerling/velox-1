@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cstdint>
+#include <math.h>
 #include <vector>
 
 #include "velox/common/base/BitUtil.h"

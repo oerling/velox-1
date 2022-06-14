@@ -56,7 +56,7 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
 
   void seekToRowGroup(uint32_t index) override;
 
-  void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
+  void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
  private:
   bool filterMatches(const RowGroup& rowGroup);

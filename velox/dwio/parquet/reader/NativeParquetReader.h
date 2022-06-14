@@ -1,6 +1,6 @@
 #pragma once
 
-#include <dwio/dwrf/common/BufferedInput.h>
+#include <dwio/common/BufferedInput.h>
 #include <dwio/dwrf/reader/ColumnReader.h>
 #include <thrift/TBase.h>
 #include "NativeParquetColumnReader.h"
@@ -28,7 +28,7 @@ class ReaderBase {
   virtual ~ReaderBase() = default;
 
   memory::MemoryPool& getMemoryPool() const;
-  dwrf::BufferedInput& getBufferedInput() const;
+  dwio::common::BufferedInput& getBufferedInput() const;
 
   const dwio::common::InputStream& getStream() const;
   const uint64_t getFileLength() const;
@@ -61,8 +61,8 @@ class ReaderBase {
   memory::MemoryPool& pool_;
   const dwio::common::ReaderOptions& options_;
   const std::unique_ptr<dwio::common::InputStream> stream_;
-  std::shared_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
-  std::shared_ptr<velox::dwrf::BufferedInput> input_;
+  std::shared_ptr<dwio::common::BufferedInputFactory> bufferedInputFactory_;
+  std::shared_ptr<velox::dwio::common::BufferedInput> input_;
   uint64_t fileLength_;
   std::unique_ptr<FileMetaData> fileMetaData_;
   RowTypePtr schema_;
@@ -71,7 +71,7 @@ class ReaderBase {
   const bool binaryAsString = false;
 
   // Map from row group index to pre-created loading BufferedInput.
-  std::unordered_map<uint32_t, std::unique_ptr<dwrf::BufferedInput>> inputs_;
+  std::unordered_map<uint32_t, std::unique_ptr<dwio::common::BufferedInput>> inputs_;
 };
 
 class NativeParquetRowReader : public dwio::common::RowReader {

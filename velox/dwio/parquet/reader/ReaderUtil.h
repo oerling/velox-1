@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "dwio/dwrf/common/BufferedInput.h"
+#include "velox/dwio/parquet/reader/PageDecoder.h"
 
 namespace facebook::velox::parquet {
 

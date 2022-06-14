@@ -15,7 +15,6 @@
  */
 
 #include "velox/dwio/parquet/reader/ParquetData.h"
-#include "velox/dwio/dwrf/common/BufferedInput.h"
 #include "velox/dwio/parquet/reader/Statistics.h"
 
 namespace facebook::velox::parquet {
@@ -43,7 +42,7 @@ bool ParquetData::filterMatches(
   return true;
 }
 
-void ParquetData::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
+  void ParquetData::enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input) {
   auto& chunk = rowGroups_[index].columns[type_->column];
   streams_.resize(rowGroups_.size());
   DWIO_ENSURE(
@@ -68,8 +67,8 @@ void ParquetData::enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input) {
   uint64_t readSize = std::min(
       metaData.total_compressed_size, metaData.total_uncompressed_size);
 
-  auto id = dwrf::StreamIdentifier(
-      type_->column, 0, 0, dwrf::StreamKind::StreamKind_DATA);
+  auto id = dwio::common::StreamIdentifier(
+      type_->column);
   streams_[index] = input.enqueue({chunkReadOffset, readSize}, &id);
 }
 

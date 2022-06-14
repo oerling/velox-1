@@ -19,7 +19,7 @@
 #include "Decoder.h"
 #include "ParquetThriftTypes.h"
 #include "ThriftTransport.h"
-#include "dwio/dwrf/common/BufferedInput.h"
+#include "dwio/common/BufferedInput.h"
 #include "velox/common/base/BitSet.h"
 #include "velox/common/base/RawVector.h"
 #include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
@@ -90,7 +90,7 @@ class ParquetData : public dwio::common::FormatData {
   }
 
   // Prepares to read data for 'index'th row group.
-  void enqueueRowGroup(uint32_t index, dwrf::BufferedInput& input);
+  void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
   // Positions 'this' at 'index'th row group. enqueueRowGroup must be called
   // first.
@@ -122,7 +122,7 @@ class ParquetData : public dwio::common::FormatData {
   const std::vector<RowGroup>& rowGroups_;
   // Streams for this column in each of 'rowGroups_'. Will be created on or
   // ahead of first use, not at construction.
-  std::vector<std::unique_ptr<dwrf::SeekableInputStream>> streams_;
+  std::vector<std::unique_ptr<dwio::common::SeekableInputStream>> streams_;
 
   int32_t rowGroupIndex_{kNoRowGroup};
 

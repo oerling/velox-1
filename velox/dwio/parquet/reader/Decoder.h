@@ -21,7 +21,7 @@
 #pragma once
 
 #include <cstdint>
-#include "dwio/dwrf/common/BufferedInput.h"
+#include "dwio/common/BufferedInput.h"
 #include "velox/common/base/BitSet.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/type/Filter.h"
@@ -50,15 +50,6 @@ class FilterAwareDecoder {
    */
   virtual void skip(uint64_t numRows) = 0;
 
-  /**
-   * Read a number of values into the batch.
-   * @param data the array to read into
-   * @param numRows the number of values to read
-   * @param nulls If the pointer is null, all values are read. If the
-   *    pointer is not null, positions that are true are skipped.
-   */
-  //  virtual void
-  //  next(void*& data, uint64_t numRows, BitSet& selectivityVec) = 0;
 
   virtual void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows) = 0;
   void next(int64_t* data, uint64_t numValues, const uint64_t* nulls);

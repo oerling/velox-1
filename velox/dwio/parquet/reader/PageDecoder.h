@@ -34,7 +34,7 @@ class Dictionary {
 class PageDecoder {
  public:
   PageDecoder(
-      std::unique_ptr<dwrf::SeekableInputStream> stream,
+	      std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
       int32_t maxDefine,
       int32_t maxRepeat,
@@ -116,7 +116,7 @@ class PageDecoder {
 
   memory::MemoryPool& pool_;
 
-  std::unique_ptr<dwrf::SeekableInputStream> inputStream_;
+  std::unique_ptr<dwio::common::SeekableInputStream> inputStream_;
   const int32_t maxDefine_;
   const int32_t maxRepeat_;
   const CompressionCodec::type codec_;
