@@ -29,7 +29,6 @@ endforeach()
 
 add_library(
   velox_dwio_native_parquet_reader
-  Decoder.cpp
   NativeParquetReader.cpp
   ParquetThriftTypes.cpp
   PageDecoder.cpp
