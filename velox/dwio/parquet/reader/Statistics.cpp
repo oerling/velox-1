@@ -40,11 +40,7 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
   switch (type.kind()) {
     case TypeKind::BOOLEAN:
       return std::make_unique<dwio::common::BooleanColumnStatistics>(
-          valueCount,
-          hasNull,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt);
+          valueCount, hasNull, std::nullopt, std::nullopt, std::nullopt);
     case TypeKind::TINYINT:
       return std::make_unique<dwio::common::IntegerColumnStatistics>(
           valueCount,
@@ -93,10 +89,7 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
           std::nullopt);
     default:
       return std::make_unique<dwio::common::ColumnStatistics>(
-          valueCount,
-          hasNull,
-          std::nullopt,
-          std::nullopt);
+          valueCount, hasNull, std::nullopt, std::nullopt);
   }
 }
 

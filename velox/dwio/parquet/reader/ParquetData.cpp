@@ -42,7 +42,9 @@ bool ParquetData::filterMatches(
   return true;
 }
 
-  void ParquetData::enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input) {
+void ParquetData::enqueueRowGroup(
+    uint32_t index,
+    dwio::common::BufferedInput& input) {
   auto& chunk = rowGroups_[index].columns[type_->column];
   streams_.resize(rowGroups_.size());
   DWIO_ENSURE(
@@ -67,8 +69,7 @@ bool ParquetData::filterMatches(
   uint64_t readSize = std::min(
       metaData.total_compressed_size, metaData.total_uncompressed_size);
 
-  auto id = dwio::common::StreamIdentifier(
-      type_->column);
+  auto id = dwio::common::StreamIdentifier(type_->column);
   streams_[index] = input.enqueue({chunkReadOffset, readSize}, &id);
 }
 

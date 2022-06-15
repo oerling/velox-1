@@ -3,7 +3,6 @@
 //
 #pragma once
 
-
 #include <thrift/transport/TVirtualTransport.h>
 //#include "velox/dwio/common/MetricsLog.h"
 

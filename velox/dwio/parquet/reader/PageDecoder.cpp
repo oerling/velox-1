@@ -98,7 +98,7 @@ PageHeader PageDecoder::readPageHeader() {
   return pageHeader;
 }
 
-  const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
+const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
   if (bufferEnd_ == bufferStart_) {
     const void* buffer = nullptr;
     int32_t size = 0;
@@ -236,7 +236,7 @@ void PageDecoder::makeDecoder() {
       break;
     case Encoding::PLAIN:
       directDecoder_ = std::make_unique<dwrf::DirectDecoder<true>>(
-								   std::make_unique<dwio::common::SeekableArrayInputStream>(
+          std::make_unique<dwio::common::SeekableArrayInputStream>(
               pageData_, encodedDataSize_),
           false,
           encodedDataSize_);

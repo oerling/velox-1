@@ -71,7 +71,8 @@ class ReaderBase {
   const bool binaryAsString = false;
 
   // Map from row group index to pre-created loading BufferedInput.
-  std::unordered_map<uint32_t, std::unique_ptr<dwio::common::BufferedInput>> inputs_;
+  std::unordered_map<uint32_t, std::unique_ptr<dwio::common::BufferedInput>>
+      inputs_;
 };
 
 class NativeParquetRowReader : public dwio::common::RowReader {

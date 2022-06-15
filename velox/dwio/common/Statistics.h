@@ -27,12 +27,13 @@ namespace facebook::velox::dwio::common {
 
 // Common base for writer version information used in interpreting
 // metadata. Needed to have format-independent signatures for
-// format-specific functions. Each format implementation downcasts this to the format-specific metadata.
+// format-specific functions. Each format implementation downcasts this to the
+// format-specific metadata.
 struct StatsWriterInfo {
   virtual ~StatsWriterInfo() = default;
 };
 
-  struct KeyInfo {
+struct KeyInfo {
  public:
   explicit KeyInfo(int64_t intKey)
       : intKey{std::make_optional<int64_t>(intKey)} {}

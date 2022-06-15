@@ -31,8 +31,7 @@ class E2EFilterTest : public E2EFilterTestBase {
  protected:
   void SetUp() override {
     E2EFilterTestBase::SetUp();
-    writerProperties_ =
-      ::parquet::WriterProperties::Builder().build();
+    writerProperties_ = ::parquet::WriterProperties::Builder().build();
   }
 
   void writeToMemory(
@@ -43,7 +42,7 @@ class E2EFilterTest : public E2EFilterTestBase {
     sinkPtr_ = sink.get();
 
     writer_ = std::make_unique<facebook::velox::parquet::Writer>(
-								 std::move(sink), *pool_, 10000, writerProperties_);
+        std::move(sink), *pool_, 10000, writerProperties_);
     for (auto& batch : batches) {
       writer_->write(batch);
     }

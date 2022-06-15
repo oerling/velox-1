@@ -50,7 +50,6 @@ class FilterAwareDecoder {
    */
   virtual void skip(uint64_t numRows) = 0;
 
-
   virtual void next(BufferPtr outputBuffer, RowSet& rows, uint64_t numRows) = 0;
   void next(int64_t* data, uint64_t numValues, const uint64_t* nulls);
 

@@ -34,7 +34,7 @@ class Dictionary {
 class PageDecoder {
  public:
   PageDecoder(
-	      std::unique_ptr<dwio::common::SeekableInputStream> stream,
+      std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
       int32_t maxDefine,
       int32_t maxRepeat,
