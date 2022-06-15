@@ -32,13 +32,12 @@ void Writer::write(const RowVectorPtr& data) {
       recordBatch->schema(), recordBatch->columns(), data->size());
   if (!arrowWriter_) {
     stream_ = std::make_shared<DataBufferSink>(pool_);
-    auto properties = ::parquet::WriterProperties::Builder().build();
     auto arrowProperties = ::parquet::ArrowWriterProperties::Builder().build();
     PARQUET_THROW_NOT_OK(::parquet::arrow::FileWriter::Open(
         *recordBatch->schema(),
         arrow::default_memory_pool(),
         stream_,
-        properties,
+        properties_,
         arrowProperties,
         &arrowWriter_));
   }

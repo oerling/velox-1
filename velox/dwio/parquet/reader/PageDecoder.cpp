@@ -98,7 +98,16 @@ PageHeader PageDecoder::readPageHeader() {
   return pageHeader;
 }
 
-const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
+  const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
+  if (bufferEnd_ == bufferStart_) {
+    const void* buffer = nullptr;
+    int32_t size = 0;
+    if (!inputStream_->Next(&buffer, &size)) {
+      VELOX_FAIL("Read past end");
+    }
+    bufferStart_ = reinterpret_cast<const char*>(buffer);
+    bufferEnd_ = bufferStart_ + size;
+  }
   if (bufferEnd_ - bufferStart_ >= size) {
     bufferStart_ += size;
     return bufferStart_ - size;

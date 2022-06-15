@@ -29,6 +29,12 @@ using dwio::common::MemorySink;
 
 class E2EFilterTest : public E2EFilterTestBase {
  protected:
+  void SetUp() override {
+    E2EFilterTestBase::SetUp();
+    writerProperties_ =
+      ::parquet::WriterProperties::Builder().build();
+  }
+
   void writeToMemory(
       const TypePtr& type,
       const std::vector<RowVectorPtr>& batches,
@@ -37,7 +43,7 @@ class E2EFilterTest : public E2EFilterTestBase {
     sinkPtr_ = sink.get();
 
     writer_ = std::make_unique<facebook::velox::parquet::Writer>(
-        std::move(sink), *pool_, 10000);
+								 std::move(sink), *pool_, 10000, writerProperties_);
     for (auto& batch : batches) {
       writer_->write(batch);
     }
@@ -51,9 +57,12 @@ class E2EFilterTest : public E2EFilterTestBase {
   }
 
   std::unique_ptr<facebook::velox::parquet::Writer> writer_;
+  std::shared_ptr<::parquet::WriterProperties> writerProperties_;
 };
 
 TEST_F(E2EFilterTest, integerDirect) {
+  writerProperties_ =
+      ::parquet::WriterProperties::Builder().disable_dictionary()->build();
   testWithTypes(
       "short_val:smallint,"
       "int_val:int,"

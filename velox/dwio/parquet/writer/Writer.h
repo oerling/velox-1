@@ -76,10 +76,13 @@ class Writer {
   Writer(
       std::unique_ptr<dwio::common::DataSink> sink,
       memory::MemoryPool& pool,
-      int32_t rowsInRowGroup)
+      int32_t rowsInRowGroup,
+      std::shared_ptr<::parquet::WriterProperties> properties =
+          ::parquet::WriterProperties::Builder().build())
       : rowsInRowGroup_(rowsInRowGroup),
         pool_(pool),
-        finalSink_(std::move(sink)) {}
+        finalSink_(std::move(sink)),
+        properties_(std::move(properties)) {}
 
   void write(const RowVectorPtr& data);
   void close();
@@ -91,6 +94,7 @@ class Writer {
   std::unique_ptr<dwio::common::DataSink> finalSink_;
   std::shared_ptr<DataBufferSink> stream_;
   std::unique_ptr<::parquet::arrow::FileWriter> arrowWriter_;
+  std::shared_ptr<::parquet::WriterProperties> properties_;
 };
 
 } // namespace facebook::velox::parquet
