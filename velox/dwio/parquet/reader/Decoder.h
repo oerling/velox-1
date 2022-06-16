@@ -23,9 +23,9 @@
 #include <cstdint>
 #include "dwio/common/BufferedInput.h"
 #include "velox/common/base/BitSet.h"
+#include "velox/common/base/SimdUtil.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/type/Filter.h"
-#include "velox/common/base/SimdUtil.h"
 
 #include <arrow/util/rle_encoding.h>
 
@@ -175,7 +175,7 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
         "RLE/BP decoder did not find enough values to read");
   }
 
-private:
+ private:
   void readWithFilter(
       BufferPtr outputBuffer,
       uint64_t numRows,
