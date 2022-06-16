@@ -25,7 +25,9 @@
 #include "velox/common/base/BitSet.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/type/Filter.h"
-//#include "velox/common/base/SimdUtil.h"
+#include "velox/common/base/SimdUtil.h"
+
+#include <arrow/util/rle_encoding.h>
 
 namespace facebook::velox::parquet {
 
@@ -135,7 +137,6 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
     return ret;
   }
 
- private:
   void readNoFilter(BufferPtr outputBuffer, uint64_t numRows) {
     uint64_t offset = outputBuffer->size();
     auto outputBufferPtr =
@@ -174,6 +175,7 @@ class RleBpFilterAwareDecoder : FilterAwareDecoder {
         "RLE/BP decoder did not find enough values to read");
   }
 
+private:
   void readWithFilter(
       BufferPtr outputBuffer,
       uint64_t numRows,

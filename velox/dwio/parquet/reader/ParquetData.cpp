@@ -76,8 +76,13 @@ void ParquetData::enqueueRowGroup(
 void ParquetData::seekToRowGroup(uint32_t index) {
   VELOX_CHECK_LT(index, streams_.size());
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
-  auto codec = rowGroups_[index].columns[type_->column].meta_data.codec;
+  auto& metadata = rowGroups_[index].columns[type_->column].meta_data;
   decoder_ = std::make_unique<PageDecoder>(
-      std::move(streams_[index]), pool_, maxDefine_, maxRepeat_, codec);
+      std::move(streams_[index]),
+      pool_,
+      maxDefine_,
+      maxRepeat_,
+      metadata.codec,
+      metadata.total_compressed_size);
 }
 } // namespace facebook::velox::parquet

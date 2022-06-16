@@ -60,17 +60,18 @@ class E2EFilterTest : public E2EFilterTestBase {
 };
 
 TEST_F(E2EFilterTest, integerDirect) {
-  writerProperties_ =
-      ::parquet::WriterProperties::Builder().disable_dictionary()->build();
+  writerProperties_ = ::parquet::WriterProperties::Builder()
+                          .disable_dictionary()
+                          ->data_pagesize(6 * 1024)
+                          ->build();
   testWithTypes(
       "short_val:smallint,"
       "int_val:int,"
       "long_val:bigint,"
       "long_null:bigint",
       [&]() { makeAllNulls("long_null"); },
-      true,
+      false,
       {"short_val", "int_val", "long_val"},
       20,
-      true,
       true);
 }

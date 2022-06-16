@@ -38,12 +38,14 @@ class PageDecoder {
       memory::MemoryPool& pool,
       int32_t maxDefine,
       int32_t maxRepeat,
-      CompressionCodec::type codec)
+      CompressionCodec::type codec,
+      int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
         maxDefine_(maxDefine),
         maxRepeat_(maxRepeat),
-        codec_(codec) {}
+        codec_(codec),
+        chunkSize_(chunkSize) {}
 
   // Advances 'numRows' top level rows.
   void skip(int64_t numRows);
@@ -56,6 +58,11 @@ class PageDecoder {
   // is filled for 'numRows' bits.
   const uint64_t* readNulls(int32_t numRows);
 
+  // Skips the define decoder, if any, for 'numValues' top level
+  // rows. Returns the number of non-nulls skipped. The range is the
+  // current page.
+  int32_t skipNulls(int32_t numRows);
+
   // Makes a decoder based on 'encoding_' for bytes from ''pageData_' to
   // 'pageData_' + 'encodedDataSize_'.
   void makedecoder();
@@ -65,7 +72,10 @@ class PageDecoder {
   // the found page.
   void readNextPage(int64_t row);
 
-  PageHeader readPageHeader();
+  // Parses the PageHeader at 'inputStream_'. Will not read more than
+  // 'remainingBytes' since there could be less data left in the
+  // ColumnChunk than the full header size.
+  PageHeader readPageHeader(int64_t remainingSize);
   void prepareDataPageV1(const PageHeader& pageHeader, int64_t row);
   void prepareDataPageV2(const PageHeader& pageHeader, int64_t row);
   void prepareDictionary(const PageHeader& pageHeader);
@@ -120,13 +130,16 @@ class PageDecoder {
   const int32_t maxDefine_;
   const int32_t maxRepeat_;
   const CompressionCodec::type codec_;
+  const int64_t chunkSize_;
   const char* bufferStart_{nullptr};
   const char* bufferEnd_{nullptr};
 
   BufferPtr defineOutBuffer_;
   BufferPtr repeatOutBuffer_;
-  std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> repeatDecoder_;
-  std::unique_ptr<RleBpFilterAwareDecoder<uint8_t>> defineDecoder_;
+  BufferPtr tempNulls_;
+  BufferPtr nullsInReadRange_;
+  std::unique_ptr<arrow::util::RleDecoder> repeatDecoder_;
+  std::unique_ptr<arrow::util::RleDecoder> defineDecoder_;
 
   // Encoding of current page.
   Encoding::type encoding_;

@@ -26,7 +26,7 @@ void PageDecoder::readNextPage(int64_t row) {
   defineDecoder_.reset();
   repeatDecoder_.reset();
   for (;;) {
-    PageHeader pageHeader = readPageHeader();
+    PageHeader pageHeader = readPageHeader(chunkSize_ - pageStart_);
     pageStart_ = pageDataStart_ + pageHeader.compressed_page_size;
 
     switch (pageHeader.type) {
@@ -54,7 +54,7 @@ void PageDecoder::readNextPage(int64_t row) {
   }
 }
 
-PageHeader PageDecoder::readPageHeader() {
+PageHeader PageDecoder::readPageHeader(int64_t remainingSize) {
   // Note that sizeof(PageHeader) may be longer than actually read
   std::shared_ptr<ThriftBufferedTransport> transport;
   std::unique_ptr<
@@ -62,6 +62,13 @@ PageHeader PageDecoder::readPageHeader() {
       protocol;
   char copy[sizeof(PageHeader)];
   bool wasInBuffer = false;
+  if (bufferEnd_ == bufferStart_) {
+    const void* buffer;
+    int32_t size;
+    inputStream_->Next(&buffer, &size);
+    bufferStart_ = reinterpret_cast<const char*>(buffer);
+    bufferEnd_ = bufferStart_ + size;
+  }
   if (bufferEnd_ - bufferStart_ >= sizeof(PageHeader)) {
     wasInBuffer = true;
     transport = std::make_shared<ThriftBufferedTransport>(
@@ -71,7 +78,7 @@ PageHeader PageDecoder::readPageHeader() {
         transport);
   } else {
     dwrf::readBytes(
-        sizeof(PageHeader),
+        std::min<int64_t>(remainingSize, sizeof(PageHeader)),
         inputStream_.get(),
         &copy,
         bufferStart_,
@@ -155,20 +162,18 @@ void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   if (maxRepeat_ > 0) {
     uint32_t repeatLength = readField<int32_t>(pageData_);
     pageData_ += repeatLength;
-    repeatDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        pageData_,
+    repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+        reinterpret_cast<const uint8_t*>(pageData_),
         repeatLength,
-        nullptr,
         RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxRepeat_));
     pageData_ += repeatLength;
   }
 
   if (maxDefine_ > 0) {
     auto defineLength = readField<uint32_t>(pageData_);
-    defineDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        pageData_,
+    defineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+        reinterpret_cast<const uint8_t*>(pageData_),
         defineLength,
-        nullptr,
         RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxDefine_));
     pageData_ += defineLength;
   }
@@ -195,18 +200,16 @@ void PageDecoder::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   pageData_ = readBytes(bytes, pageBuffer_);
 
   if (repeatLength) {
-    repeatDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        pageData_,
+    repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+        reinterpret_cast<const uint8_t*>(pageData_),
         repeatLength,
-        nullptr,
         RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxRepeat_));
   }
 
   if (maxDefine_ > 0) {
-    defineDecoder_ = std::make_unique<RleBpFilterAwareDecoder<uint8_t>>(
-        pageData_ + repeatLength,
+    defineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+        reinterpret_cast<const uint8_t*>(pageData_ + repeatLength),
         defineLength,
-        nullptr,
         RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxDefine_));
   }
   auto levelsSize = repeatLength + defineLength;
@@ -247,6 +250,10 @@ void PageDecoder::makeDecoder() {
 }
 
 void PageDecoder::skip(int64_t numRows) {
+  if (!numRows && firstUnvisited_ != rowOfPage_ + numRowsInPage_) {
+    // Return if no skip and position not at end of page or before first page.
+    return;
+  }
   int rowInPage = firstUnvisited_ - rowOfPage_;
   auto toSkip = numRows;
   if (firstUnvisited_ + numRows >= rowOfPage_ + numRowsInPage_) {
@@ -255,14 +262,49 @@ void PageDecoder::skip(int64_t numRows) {
   }
   firstUnvisited_ += numRows;
 
+  // Skip nulls
+  toSkip = skipNulls(toSkip);
+
   // Skip the decoder
   if (directDecoder_) {
     directDecoder_->skip(toSkip);
   }
 }
 
-const uint64_t* PageDecoder::readNulls(int32_t numRows) {
-  return nullptr;
+int32_t PageDecoder::skipNulls(int32_t numValues) {
+  if (!defineDecoder_) {
+    return numValues;
+  }
+  dwrf::detail::ensureCapacity<char>(tempNulls_, numValues, &pool_);
+  tempNulls_->setSize(0);
+  defineDecoder_->GetBatch<uint8_t>(
+      tempNulls_->asMutable<uint8_t>(), numValues);
+  auto bytes = tempNulls_->as<uint8_t>();
+  int32_t numPresent = 0;
+  for (auto i = 0; i < numValues; ++i) {
+    numPresent += bytes[i] == 1;
+  }
+  return numPresent;
+}
+
+const uint64_t* PageDecoder::readNulls(int32_t numValues) {
+  if (!defineDecoder_) {
+    return nullptr;
+  }
+  dwrf::detail::ensureCapacity<char>(tempNulls_, numValues, &pool_);
+  dwrf::detail::ensureCapacity<bool>(nullsInReadRange_, numValues, &pool_);
+  tempNulls_->setSize(0);
+  defineDecoder_->GetBatch<uint8_t>(
+      tempNulls_->asMutable<uint8_t>(), numValues);
+  xsimd::batch<char> flags;
+  auto nullBytes = tempNulls_->as<uint8_t>();
+  auto intNulls = nullsInReadRange_->asMutable<int32_t>();
+  int32_t nullsIndex = 0;
+  for (auto i = 0; i < numValues; i += 32) {
+    flags = xsimd::batch<char>::load_unaligned(nullBytes + i);
+    intNulls[nullsIndex++] = simd::toBitMask(flags != 0);
+  }
+  return nullsInReadRange_->as<uint64_t>();
 }
 
 void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
