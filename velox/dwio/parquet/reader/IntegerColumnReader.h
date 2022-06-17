@@ -51,8 +51,14 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
       override {
     auto& data = formatData_->as<ParquetData>();
     VELOX_WIDTH_DISPATCH(
-        dwrf::sizeOfIntKind(type_->kind()), prepareRead, offset, rows, nullptr);
-
+        parquetSizeOfIntKind(type_->kind()),
+        prepareRead,
+        offset,
+        rows,
+        nullptr);
+    if (readsNullsOnly()) {
+      data.readNullsOnly(rows.back() + 1, nullsInReadRange_);
+    }
     readCommon<IntegerColumnReader>(rows);
   }
 

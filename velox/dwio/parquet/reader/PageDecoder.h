@@ -17,9 +17,11 @@
 #pragma once
 
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/vector/BaseVector.h"
+
 namespace facebook::velox::parquet {
 
 class Dictionary {
@@ -29,6 +31,47 @@ class Dictionary {
  private:
   const void* dict_;
   uint32_t size_;
+};
+
+// Concatenates multiple bit vectors and produces these in a single
+// Buffer at the end. If only one bits were added, sets the output
+// buffer to nullptr.
+class BitConcatenation {
+ public:
+  BitConcatenation(memory::MemoryPool& pool) : pool_(pool) {}
+
+  void reset(BufferPtr& outBuffer) {
+    buffer_ = &outBuffer;
+    numBits_ = 0;
+  }
+
+  void
+  append(const uint64_t* FOLLY_NULLABLE bits, int32_t begin, int32_t numBits) {
+    if (!bits) {
+      appendOnes(numBits);
+      return;
+    }
+
+    dwrf::detail::ensureCapacity<bool>(*buffer_, numBits_ + numBits, &pool_);
+    bits::copyBits(
+        bits, begin, (*buffer_)->asMutable<uint64_t>(), numBits_, numBits);
+    numBits_ += numBits;
+  }
+
+  // Adds 'numOnes' ones.
+  void appendOnes(int32_t numOnes) {
+    if (*buffer_) {
+      dwrf::detail::ensureCapacity<bool>(*buffer_, numBits_ + numOnes, &pool_);
+      bits::fillBits(
+          (*buffer_)->asMutable<uint64_t>(), numBits_, numBits_ + numOnes, 1);
+    }
+    numBits_ += numOnes;
+  }
+
+ private:
+  memory::MemoryPool& pool_;
+  BufferPtr* FOLLY_NULLABLE buffer_{nullptr};
+  int32_t numBits_{0};
 };
 
 class PageDecoder {
@@ -45,7 +88,8 @@ class PageDecoder {
         maxDefine_(maxDefine),
         maxRepeat_(maxRepeat),
         codec_(codec),
-        chunkSize_(chunkSize) {}
+        chunkSize_(chunkSize),
+        nullConcatenation_(pool_) {}
 
   // Advances 'numRows' top level rows.
   void skip(int64_t numRows);
@@ -53,10 +97,15 @@ class PageDecoder {
   template <typename Visitor>
   void readWithVisitor(Visitor& visitor);
 
+  // Reads 'numValues' null flags into 'nulls' and advances the
+  // decoders by as much. The read may span several pages. If there
+  // are no nulls, buffer may be set to nullptr.
+  void readNullsOnly(int64_t numValues, BufferPtr& buffer);
+
  private:
   // If the current page has nulls, returns a nulls bitmap owned by 'this'. This
   // is filled for 'numRows' bits.
-  const uint64_t* readNulls(int32_t numRows);
+  const uint64_t* readNulls(int32_t numRows, BufferPtr& buffer);
 
   // Skips the define decoder, if any, for 'numValues' top level
   // rows. Returns the number of non-nulls skipped. The range is the
@@ -109,18 +158,17 @@ class PageDecoder {
   // if first call.
   void startVisit(folly::Range<const vector_size_t*> rows);
 
-  // Seeks to the next page in a range given by startVisit().
-  // Returns true if there are unprocessed rows in the set given to
-  // startVisit(). Seeks 'this' to
-  // the appropriate page and sets 'rowsForPage' to refer to the subset
-  // of 'rows' that are on the current page. The numbers in rowsForPage
-  // are relative to the first unprocessed value on the page, for a
-  // new page 0 means the first value. Sets 'nulls' to nullptr if all
-  // rows between the first and last accessed row on the page are
-  // non-null, otherwise sets 'nulls' to a nulls bitmap where bit 0 is
-  // the null flag for rowsOnPage[0]. there are rowsOnPage.back() -
-  // rowsOnPage.front() + 1 bits in 'nulls'.
+  // Seeks to the next page in a range given by startVisit().  Returns
+  // true if there are unprocessed rows in the set given to
+  // startVisit(). Seeks 'this' to the appropriate page and sets
+  // 'rowsForPage' to refer to the subset of 'rows' that are on the
+  // current page. The numbers in rowsForPage are relative to the
+  // first unprocessed value on the page, for a new page 0 means the
+  // first value. Reads possible nulls and sets 'reader's
+  // nullsInReadRange_' to that or to nullptr if no null flags. Returns the data
+  // of nullsInReadRange in 'nulls'.
   bool rowsForPage(
+      dwrf::SelectiveColumnReader& reader,
       folly::Range<const vector_size_t*>& rows,
       const uint64_t* FOLLY_NULLABLE& nulls);
 
@@ -138,6 +186,7 @@ class PageDecoder {
   BufferPtr repeatOutBuffer_;
   BufferPtr tempNulls_;
   BufferPtr nullsInReadRange_;
+  BufferPtr multiPageNulls_;
   std::unique_ptr<arrow::util::RleDecoder> repeatDecoder_;
   std::unique_ptr<arrow::util::RleDecoder> defineDecoder_;
 
@@ -200,6 +249,13 @@ class PageDecoder {
   // 'rowsCopy_' and the row numbers in 'rows' given to readWithVisitor().
   int32_t rowNumberBias_{0};
 
+  // Manages concatenating null flags read from multiple pages. If a
+  // readWithVisitor is contined in one page, the visitor places the
+  // nulls in the reader. If many pages are covered, some with and
+  // some without nulls, we must make a a concatenated null flags to
+  // return to the caller.
+  BitConcatenation nullConcatenation_;
+
   // Decoders. Only one will be set at a time.
   std::unique_ptr<dwrf::DirectDecoder<true>> directDecoder_;
 
@@ -210,25 +266,66 @@ template <typename Visitor>
 void PageDecoder::readWithVisitor(Visitor& visitor) {
   constexpr bool hasFilter =
       !std::is_same<typename Visitor::FilterType, common::AlwaysTrue>::value;
-
+    constexpr bool filterOnly =
+      std::is_same<typename Visitor::Extract, dwrf::DropValues>::value;
+    constexpr bool hasHook =
+      !std::is_same<typename Visitor::HookType, dwrf::NoHook>::value;
+  
+  bool mayProduceNulls = !filterOnly && visitor.allowNulls();
   auto rows = visitor.rows();
   auto numRows = visitor.numRows();
+  auto& reader = visitor.reader();
   startVisit(folly::Range<const vector_size_t*>(rows, numRows));
   rowsCopy_ = &visitor.rowsCopy();
   folly::Range<const vector_size_t*> pageRows;
   const uint64_t* nulls = nullptr;
-  while (rowsForPage(pageRows, nulls)) {
+  bool isMultiPage = false;
+  while (rowsForPage(reader, pageRows, nulls)) {
+    bool nullsFromFastPath = false;
+    int32_t numValuesBeforePage = reader.numValues();
     visitor.setRows(pageRows);
-    auto firstResult = hasFilter ? visitor.numRows() : 0;
     if (nulls) {
+      nullsFromFastPath = dwrf::useFastPath<Visitor, true>(visitor);
       directDecoder_->readWithVisitor<true>(nulls, visitor);
     } else {
       directDecoder_->readWithVisitor<false>(nulls, visitor);
     }
-    if (hasFilter && rowNumberBias_) {
-      visitor.offsetOutputRows(firstResult, rowNumberBias_);
+    if (currentVisitorRow_ < numVisitorRows_) {
+      if (mayProduceNulls) {
+	if (!isMultiPage) {
+	  nullConcatenation_.reset(multiPageNulls_);
+	}
+        if (!nulls) {
+          nullConcatenation_.appendOnes(
+					reader.numValues() - numValuesBeforePage);
+        } else if (reader.returnReaderNulls()) {
+	  // Nulls from decoding go direct to result.
+          nullConcatenation_.append(
+				    reader.nullsInReadRange()->template as<uint64_t>(),
+              0,
+              reader.numValues() - numValuesBeforePage);
+        } else {
+	  // Add the nulls produced from the decoder to the result.
+          nullConcatenation_.append(
+              reader.mutableNulls(0),
+              nullsFromFastPath ? 0 : numValuesBeforePage,
+              reader.numValues() - numValuesBeforePage);
+        }
+      }
+      isMultiPage = true;
+
+      // The passing rows on non-first pages are relative to the start
+      // of the page, adjust them to be relative to start of this
+      // read.
+      if (hasFilter && rowNumberBias_) {
+        reader.offsetOutputRows(numValuesBeforePage, rowNumberBias_);
+      }
     }
   }
-}
+  if (isMultiPage) {
+    reader.setNulls(multiPageNulls_);
+  }
 
+}
+  
 } // namespace facebook::velox::parquet

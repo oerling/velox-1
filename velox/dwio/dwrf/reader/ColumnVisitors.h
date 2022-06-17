@@ -340,10 +340,10 @@ class ColumnVisitor {
     return reader_->numRows();
   }
 
-  void offsetOutputRows(int32_t firstRow, int32_t bias) const {
-    reader_->offsetOutputRows(firstRow, bias);
+  SelectiveColumnReader& reader() const {
+    return *reader_;
   }
-
+  
   inline vector_size_t rowAt(vector_size_t index) {
     if (isDense) {
       return index;

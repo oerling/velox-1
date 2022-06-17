@@ -69,7 +69,7 @@ void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
       numRows + (simd::kPadding / sizeof(T)), &memoryPool_);
   rawValues_ = values_->asMutable<char>();
 }
-
+  
 template <typename T>
 void SelectiveColumnReader::prepareRead(
     vector_size_t offset,
@@ -303,7 +303,7 @@ void SelectiveColumnReader::filterNulls(
     RowSet rows,
     bool isNull,
     bool extractValues) {
-  if (!notNullDecoder_) {
+  if (!nullsInReadRange_) {
     if (isNull) {
       // The whole stripe will be empty. We do not update
       // 'readOffset' since nothing is read from either nulls or data.
