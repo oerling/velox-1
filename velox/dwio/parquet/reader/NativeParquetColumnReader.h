@@ -24,7 +24,7 @@
 
 namespace facebook::velox::parquet {
 
-  // Parquet stores integers of 8, 16, 32 bits with 32 bits and 64 as 64 bits.
+// Parquet stores integers of 8, 16, 32 bits with 32 bits and 64 as 64 bits.
 inline int32_t parquetSizeOfIntKind(TypeKind kind) {
   switch (kind) {
     case TypeKind::TINYINT:
@@ -38,7 +38,6 @@ inline int32_t parquetSizeOfIntKind(TypeKind kind) {
   }
 }
 
-  
 // Wrapper for static functions for Parquet columns.
 class ParquetColumnReader {
  public:

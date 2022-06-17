@@ -105,11 +105,12 @@ class ParquetData : public dwio::common::FormatData {
     return stridesToSkip;
   }
 
-  // Reads null flags for 'numValues' next top level rows. The first 'numValues' bits of 'nulls' are set and the reader is advanced by numValues'.
+  // Reads null flags for 'numValues' next top level rows. The first 'numValues'
+  // bits of 'nulls' are set and the reader is advanced by numValues'.
   void readNullsOnly(int32_t numValues, BufferPtr& nulls) {
     decoder_->readNullsOnly(numValues, nulls);
   }
-  
+
   void skip(int32_t numRows) {
     decoder_->skip(numRows);
   }

@@ -287,27 +287,27 @@ int32_t PageDecoder::skipNulls(int32_t numValues) {
   return numPresent;
 }
 
-  void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
-    auto toRead = numValues;
-    if (buffer) {
-      dwrf::detail::ensureCapacity<bool>(buffer, numValues, &pool_);
-    }
-    BitConcatenation nullConcatenation(pool_);
-    nullConcatenation.reset(buffer);
-    while (toRead) {
-      auto availableOnPage = rowOfPage_ + numRowsInPage_ - firstUnvisited_;
-      if (!availableOnPage) {
-	readNextPage(firstUnvisited_);
-	availableOnPage = numRowsInPage_;
-      }
-      auto numRead = std::min(availableOnPage, toRead);
-      auto nulls = readNulls(numRead, nullsInReadRange_);
-      toRead -= numRead;
-      nullConcatenation_.append(nulls, 0, numRead);
-    }
+void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
+  auto toRead = numValues;
+  if (buffer) {
+    dwrf::detail::ensureCapacity<bool>(buffer, numValues, &pool_);
   }
-  
-  const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
+  BitConcatenation nullConcatenation(pool_);
+  nullConcatenation.reset(buffer);
+  while (toRead) {
+    auto availableOnPage = rowOfPage_ + numRowsInPage_ - firstUnvisited_;
+    if (!availableOnPage) {
+      readNextPage(firstUnvisited_);
+      availableOnPage = numRowsInPage_;
+    }
+    auto numRead = std::min(availableOnPage, toRead);
+    auto nulls = readNulls(numRead, nullsInReadRange_);
+    toRead -= numRead;
+    nullConcatenation_.append(nulls, 0, numRead);
+  }
+}
+
+const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
   if (!defineDecoder_) {
     buffer = nullptr;
     return nullptr;
@@ -338,9 +338,9 @@ void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
 }
 
 bool PageDecoder::rowsForPage(
-			      dwrf::SelectiveColumnReader& reader,
-			      folly::Range<const vector_size_t*>& rows,
-			      const uint64_t* FOLLY_NULLABLE& nulls) {
+    dwrf::SelectiveColumnReader& reader,
+    folly::Range<const vector_size_t*>& rows,
+    const uint64_t* FOLLY_NULLABLE& nulls) {
   if (currentVisitorRow_ == numVisitorRows_) {
     return false;
   }
@@ -361,7 +361,8 @@ bool PageDecoder::rowsForPage(
   // If the page did not change and this is the first call, we can return a view
   // on the original visitor rows.
   if (rowOfPage_ == initialRowOfPage_ && currentVisitorRow_ == 0) {
-    nulls = readNulls(visitorRows_[numToVisit - 1] + 1, reader.nullsInReadRange());
+    nulls =
+        readNulls(visitorRows_[numToVisit - 1] + 1, reader.nullsInReadRange());
     rowNumberBias_ = 0;
     rows = folly::Range<const vector_size_t*>(visitorRows_, numToVisit);
   } else {

@@ -208,7 +208,7 @@ class SelectiveColumnReader : public ColumnReader {
   bool returnReaderNulls() const {
     return returnReaderNulls_;
   }
-  
+
   void setNumValues(vector_size_t size) {
     numValues_ = size;
   }
@@ -226,9 +226,10 @@ class SelectiveColumnReader : public ColumnReader {
     outputRows_.resize(size);
   }
 
-  // Sets the result nulls to be returned in getValues(). This is used for combining nulls from multiple encoding runs. nullptr means no nulls.
+  // Sets the result nulls to be returned in getValues(). This is used for
+  // combining nulls from multiple encoding runs. nullptr means no nulls.
   void setNulls(BufferPtr resultNulls);
-  
+
   // Adds 'bias' to outputt rows between 'firstRow' and end. Used
   // whenn combining data from multiple encoding runs, where the
   // output rows are first in terms of position in the encoding entry.
@@ -333,7 +334,7 @@ class SelectiveColumnReader : public ColumnReader {
   BufferPtr& nullsInReadRange() {
     return nullsInReadRange_;
   }
-  
+
   // Returns true if no filters or deterministic filters/hooks that
   // discard nulls. This is used at read prepare time. useFastPath()
   // in DecoderUtil.h is used at read time and is expected to produce
@@ -366,18 +367,20 @@ class SelectiveColumnReader : public ColumnReader {
   // values or we have an is not null filter and do not return column
   // values. This means that only null flags need be accessed.
   bool readsNullsOnly() const;
-  
+
   template <typename T>
   void ensureValuesCapacity(vector_size_t numRows);
 
-  // Prepares the result buffer for nulls for reading 'rows'. Leaves 'extraSpace' bits worth of space in the nulls buffer.
+  // Prepares the result buffer for nulls for reading 'rows'. Leaves
+  // 'extraSpace' bits worth of space in the nulls buffer.
   void prepareNulls(RowSet rows, bool hasNulls, int32_t extraRows = 0);
 
-  // Filters 'rows' according to 'is_null'. Only applies to cases where readsNullsOnly() is true.
+  // Filters 'rows' according to 'is_null'. Only applies to cases where
+  // readsNullsOnly() is true.
   template <typename T>
   void filterNulls(RowSet rows, bool isNull, bool extractValues);
 
-protected:
+ protected:
   template <typename T>
   void
   prepareRead(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);

@@ -69,7 +69,7 @@ void SelectiveColumnReader::ensureValuesCapacity(vector_size_t numRows) {
       numRows + (simd::kPadding / sizeof(T)), &memoryPool_);
   rawValues_ = values_->asMutable<char>();
 }
-  
+
 template <typename T>
 void SelectiveColumnReader::prepareRead(
     vector_size_t offset,

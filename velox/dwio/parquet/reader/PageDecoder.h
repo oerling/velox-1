@@ -266,11 +266,11 @@ template <typename Visitor>
 void PageDecoder::readWithVisitor(Visitor& visitor) {
   constexpr bool hasFilter =
       !std::is_same<typename Visitor::FilterType, common::AlwaysTrue>::value;
-    constexpr bool filterOnly =
+  constexpr bool filterOnly =
       std::is_same<typename Visitor::Extract, dwrf::DropValues>::value;
-    constexpr bool hasHook =
+  constexpr bool hasHook =
       !std::is_same<typename Visitor::HookType, dwrf::NoHook>::value;
-  
+
   bool mayProduceNulls = !filterOnly && visitor.allowNulls();
   auto rows = visitor.rows();
   auto numRows = visitor.numRows();
@@ -292,20 +292,20 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
     }
     if (currentVisitorRow_ < numVisitorRows_) {
       if (mayProduceNulls) {
-	if (!isMultiPage) {
-	  nullConcatenation_.reset(multiPageNulls_);
-	}
+        if (!isMultiPage) {
+          nullConcatenation_.reset(multiPageNulls_);
+        }
         if (!nulls) {
           nullConcatenation_.appendOnes(
-					reader.numValues() - numValuesBeforePage);
+              reader.numValues() - numValuesBeforePage);
         } else if (reader.returnReaderNulls()) {
-	  // Nulls from decoding go direct to result.
+          // Nulls from decoding go direct to result.
           nullConcatenation_.append(
-				    reader.nullsInReadRange()->template as<uint64_t>(),
+              reader.nullsInReadRange()->template as<uint64_t>(),
               0,
               reader.numValues() - numValuesBeforePage);
         } else {
-	  // Add the nulls produced from the decoder to the result.
+          // Add the nulls produced from the decoder to the result.
           nullConcatenation_.append(
               reader.mutableNulls(0),
               nullsFromFastPath ? 0 : numValuesBeforePage,
@@ -325,7 +325,6 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
   if (isMultiPage) {
     reader.setNulls(multiPageNulls_);
   }
-
 }
-  
+
 } // namespace facebook::velox::parquet

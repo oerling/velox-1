@@ -363,11 +363,12 @@ bool SelectiveColumnReader::readsNullsOnly() const {
   auto filter = scanSpec_->filter();
   if (filter) {
     auto kind = filter->kind();
-    return kind == common::FilterKind::kIsNull || (scanSpec_->keepValues() && kind == common::FilterKind::kIsNotNull);
+    return kind == common::FilterKind::kIsNull ||
+        (scanSpec_->keepValues() && kind == common::FilterKind::kIsNotNull);
   }
   return false;
 }
-  
+
 void SelectiveColumnReader::setNulls(BufferPtr resultNulls) {
   resultNulls_ = resultNulls;
   rawResultNulls_ = resultNulls ? resultNulls->asMutable<uint64_t>() : nullptr;

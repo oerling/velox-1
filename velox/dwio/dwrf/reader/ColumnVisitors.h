@@ -343,7 +343,7 @@ class ColumnVisitor {
   SelectiveColumnReader& reader() const {
     return *reader_;
   }
-  
+
   inline vector_size_t rowAt(vector_size_t index) {
     if (isDense) {
       return index;
