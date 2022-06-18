@@ -400,7 +400,7 @@ class ColumnVisitor {
   void setNumValuesBias(int32_t bias) {
     numValuesBias_ = bias;
   }
-  
+
   void setNumValues(int32_t size) {
     reader_->setNumValues(numValuesBias_ + size);
     if (!std::is_same<TFilter, common::AlwaysTrue>::value) {

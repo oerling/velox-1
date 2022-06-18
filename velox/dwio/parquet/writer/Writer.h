@@ -89,7 +89,7 @@ class Writer {
   void newRowGroup(int32_t numRows) {
     arrowWriter_->NewRowGroup(numRows);
   }
-  
+
   void close();
 
  private:

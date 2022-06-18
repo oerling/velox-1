@@ -344,12 +344,14 @@ bool PageDecoder::rowsForPage(
     return false;
   }
   int32_t numToVisit;
-  // Check if the first row to go to is in the current page. If not, seek to the page that contains the row.
+  // Check if the first row to go to is in the current page. If not, seek to the
+  // page that contains the row.
   auto rowZero = visitBase_ + visitorRows_[currentVisitorRow_];
   if (rowZero >= rowOfPage_ + numRowsInPage_) {
     readNextPage(rowZero);
   }
-  // Then check how many of the rows to visit are on the same page as the current one.
+  // Then check how many of the rows to visit are on the same page as the
+  // current one.
   int32_t firstOnNextPage = rowOfPage_ + numRowsInPage_ - visitBase_;
   if (firstOnNextPage > visitorRows_[numVisitorRows_ - 1]) {
     // All the remaining rows are on this page.
@@ -394,6 +396,6 @@ bool PageDecoder::rowsForPage(
   currentVisitorRow_ += numToVisit;
   firstUnvisited_ = visitBase_ + visitorRows_[currentVisitorRow_ - 1] + 1;
   return true;
-}  
+}
 
 } // namespace facebook::velox::parquet

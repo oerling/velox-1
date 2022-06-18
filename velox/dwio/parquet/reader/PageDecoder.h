@@ -18,10 +18,10 @@
 
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
+#include "velox/dwio/parquet/reader/BitConcatenation.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/vector/BaseVector.h"
-#include "velox/dwio/parquet/reader/BitConcatenation.h"
 
 namespace facebook::velox::parquet {
 
