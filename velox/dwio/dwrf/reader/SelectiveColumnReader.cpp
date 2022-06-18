@@ -373,7 +373,7 @@ void SelectiveColumnReader::setNulls(BufferPtr resultNulls) {
   resultNulls_ = resultNulls;
   rawResultNulls_ = resultNulls ? resultNulls->asMutable<uint64_t>() : nullptr;
   anyNulls_ = rawResultNulls_ &&
-      bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNotNull);
+    !bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNotNull);
   allNull_ =
       anyNulls_ && bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNull);
   returnReaderNulls_ = false;

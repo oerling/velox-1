@@ -397,8 +397,12 @@ class ColumnVisitor {
     return reader_->mutableOutputRows(size);
   }
 
+  void setNumValuesBias(int32_t bias) {
+    numValuesBias_ = bias;
+  }
+  
   void setNumValues(int32_t size) {
-    reader_->setNumValues(size);
+    reader_->setNumValues(numValuesBias_ + size);
     if (!std::is_same<TFilter, common::AlwaysTrue>::value) {
       reader_->setNumRows(size);
     }
@@ -454,6 +458,7 @@ class ColumnVisitor {
   const vector_size_t* rows_;
   vector_size_t numRows_;
   vector_size_t rowIndex_;
+  int32_t numValuesBias_{0};
   ExtractValues values_;
 };
 

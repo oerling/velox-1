@@ -85,6 +85,11 @@ class Writer {
         properties_(std::move(properties)) {}
 
   void write(const RowVectorPtr& data);
+
+  void newRowGroup(int32_t numRows) {
+    arrowWriter_->NewRowGroup(numRows);
+  }
+  
   void close();
 
  private:

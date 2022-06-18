@@ -95,7 +95,7 @@ PageHeader PageDecoder::readPageHeader(int64_t remainingSize) {
   pageDataStart_ = pageStart_ + readBytes;
   // Unread the bytes that were not consumed.
   if (wasInBuffer) {
-    bufferStart_ -= sizeof(PageHeader) - readBytes;
+    bufferStart_ += readBytes;
   } else {
     std::vector<uint64_t> start = {pageDataStart_};
     dwio::common::PositionProvider position(start);
@@ -319,7 +319,7 @@ const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
       tempNulls_->asMutable<uint8_t>(), numValues);
   xsimd::batch<char> flags;
   auto nullBytes = tempNulls_->as<uint8_t>();
-  auto intNulls = nullsInReadRange_->asMutable<int32_t>();
+  auto intNulls = buffer->asMutable<int32_t>();
   int32_t nullsIndex = 0;
   for (auto i = 0; i < numValues; i += 32) {
     flags = xsimd::batch<char>::load_unaligned(nullBytes + i);
@@ -331,9 +331,8 @@ const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
 void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
   visitorRows_ = rows.data();
   numVisitorRows_ = rows.size();
+  currentVisitorRow_ = 0;
   initialRowOfPage_ = rowOfPage_;
-  auto start = firstUnvisited_ + rows[0];
-  skip(start);
   visitBase_ = firstUnvisited_;
 }
 
@@ -344,18 +343,26 @@ bool PageDecoder::rowsForPage(
   if (currentVisitorRow_ == numVisitorRows_) {
     return false;
   }
-  int32_t firstOnNextPage = rowOfPage_ + numRowsInPage_ - visitBase_;
   int32_t numToVisit;
+  // Check if the first row to go to is in the current page. If not, seek to the page that contains the row.
+  auto rowZero = visitBase_ + visitorRows_[currentVisitorRow_];
+  if (rowZero >= rowOfPage_ + numRowsInPage_) {
+    readNextPage(rowZero);
+  }
+  // Then check how many of the rows to visit are on the same page as the current one.
+  int32_t firstOnNextPage = rowOfPage_ + numRowsInPage_ - visitBase_;
   if (firstOnNextPage > visitorRows_[numVisitorRows_ - 1]) {
+    // All the remaining rows are on this page.
     numToVisit = numVisitorRows_ - currentVisitorRow_;
   } else {
-    // See how many of the rows are on this page.
+    // Find the last row in the rows to visit that is on this page.
     auto rangeLeft = folly::Range<const int32_t*>(
         visitorRows_ + currentVisitorRow_,
         numVisitorRows_ - currentVisitorRow_);
     auto it =
         std::lower_bound(rangeLeft.begin(), rangeLeft.end(), firstOnNextPage);
     assert(it != rangeLeft.end());
+    assert(it != rangeLeft.begin());
     numToVisit = it - (visitorRows_ + currentVisitorRow_);
   }
   // If the page did not change and this is the first call, we can return a view
@@ -384,9 +391,9 @@ bool PageDecoder::rowsForPage(
     ;
   }
   reader.prepareNulls(rows, nulls != nullptr, currentVisitorRow_);
-  firstUnvisited_ = visitBase_ + visitorRows_[currentVisitorRow_ - 1] + 1;
   currentVisitorRow_ += numToVisit;
+  firstUnvisited_ = visitBase_ + visitorRows_[currentVisitorRow_ - 1] + 1;
   return true;
-}
+}  
 
 } // namespace facebook::velox::parquet

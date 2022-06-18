@@ -44,7 +44,7 @@ void Writer::write(const RowVectorPtr& data) {
 
   PARQUET_THROW_NOT_OK(arrowWriter_->WriteTable(*table, 10000));
 }
-
+  
 void Writer::close() {
   if (arrowWriter_) {
     arrowWriter_->Close();

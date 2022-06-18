@@ -62,7 +62,7 @@ class E2EFilterTest : public E2EFilterTestBase {
 TEST_F(E2EFilterTest, integerDirect) {
   writerProperties_ = ::parquet::WriterProperties::Builder()
                           .disable_dictionary()
-                          ->data_pagesize(6 * 1024)
+                          ->data_pagesize(4 * 1024)
                           ->build();
   testWithTypes(
       "short_val:smallint,"

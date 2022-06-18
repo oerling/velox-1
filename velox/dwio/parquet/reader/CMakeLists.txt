@@ -30,6 +30,7 @@ endforeach()
 add_library(
   velox_dwio_native_parquet_reader
   NativeParquetReader.cpp
+  BitConcatenation.cpp
   ParquetThriftTypes.cpp
   PageDecoder.cpp
   ParquetData.cpp

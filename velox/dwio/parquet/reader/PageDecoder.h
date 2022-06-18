@@ -21,6 +21,7 @@
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/vector/BaseVector.h"
+#include "velox/dwio/parquet/reader/BitConcatenation.h"
 
 namespace facebook::velox::parquet {
 
@@ -31,47 +32,6 @@ class Dictionary {
  private:
   const void* dict_;
   uint32_t size_;
-};
-
-// Concatenates multiple bit vectors and produces these in a single
-// Buffer at the end. If only one bits were added, sets the output
-// buffer to nullptr.
-class BitConcatenation {
- public:
-  BitConcatenation(memory::MemoryPool& pool) : pool_(pool) {}
-
-  void reset(BufferPtr& outBuffer) {
-    buffer_ = &outBuffer;
-    numBits_ = 0;
-  }
-
-  void
-  append(const uint64_t* FOLLY_NULLABLE bits, int32_t begin, int32_t numBits) {
-    if (!bits) {
-      appendOnes(numBits);
-      return;
-    }
-
-    dwrf::detail::ensureCapacity<bool>(*buffer_, numBits_ + numBits, &pool_);
-    bits::copyBits(
-        bits, begin, (*buffer_)->asMutable<uint64_t>(), numBits_, numBits);
-    numBits_ += numBits;
-  }
-
-  // Adds 'numOnes' ones.
-  void appendOnes(int32_t numOnes) {
-    if (*buffer_) {
-      dwrf::detail::ensureCapacity<bool>(*buffer_, numBits_ + numOnes, &pool_);
-      bits::fillBits(
-          (*buffer_)->asMutable<uint64_t>(), numBits_, numBits_ + numOnes, 1);
-    }
-    numBits_ += numOnes;
-  }
-
- private:
-  memory::MemoryPool& pool_;
-  BufferPtr* FOLLY_NULLABLE buffer_{nullptr};
-  int32_t numBits_{0};
 };
 
 class PageDecoder {
@@ -283,6 +243,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
   while (rowsForPage(reader, pageRows, nulls)) {
     bool nullsFromFastPath = false;
     int32_t numValuesBeforePage = reader.numValues();
+    visitor.setNumValuesBias(numValuesBeforePage);
     visitor.setRows(pageRows);
     if (nulls) {
       nullsFromFastPath = dwrf::useFastPath<Visitor, true>(visitor);
@@ -290,7 +251,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
     } else {
       directDecoder_->readWithVisitor<false>(nulls, visitor);
     }
-    if (currentVisitorRow_ < numVisitorRows_) {
+    if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {
           nullConcatenation_.reset(multiPageNulls_);
@@ -299,7 +260,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
           nullConcatenation_.appendOnes(
               reader.numValues() - numValuesBeforePage);
         } else if (reader.returnReaderNulls()) {
-          // Nulls from decoding go direct to result.
+          // Nulls from decoding go directly to result.
           nullConcatenation_.append(
               reader.nullsInReadRange()->template as<uint64_t>(),
               0,
