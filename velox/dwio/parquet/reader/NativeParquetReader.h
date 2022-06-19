@@ -44,6 +44,12 @@ class ReaderBase {
       int32_t currentGroup,
       StructColumnReader& reader);
 
+  // Returns the uncompressed size for columns in 'type' and its children in row
+  // group.
+  int64_t rowGroupUncompressedSize(
+      int32_t rowGroupIndex,
+      const dwio::common::TypeWithId& type) const;
+
  protected:
   void loadFileMetaData();
   void initializeSchema();
@@ -108,6 +114,7 @@ class NativeParquetRowReader : public dwio::common::RowReader {
   uint32_t currentRowGroupIdsIdx_;
   RowGroup const* currentRowGroupPtr_;
   uint64_t rowsInCurrentRowGroup_;
+  int32_t avgRowSize_{0};
   uint64_t currentRowInGroup_;
 
   std::unique_ptr<dwrf::SelectiveColumnReader> columnReader_;

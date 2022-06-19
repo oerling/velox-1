@@ -25,6 +25,8 @@ namespace facebook::velox::parquet {
 void PageDecoder::readNextPage(int64_t row) {
   defineDecoder_.reset();
   repeatDecoder_.reset();
+  // 'rowOfPage_' is the row number of the first row of the next page.
+  rowOfPage_ += numRowsInPage_;
   for (;;) {
     PageHeader pageHeader = readPageHeader(chunkSize_ - pageStart_);
     pageStart_ = pageDataStart_ + pageHeader.compressed_page_size;
@@ -230,6 +232,21 @@ void PageDecoder::prepareDictionary(const PageHeader& pageHeader) {
   VELOX_NYI();
 }
 
+namespace {
+int32_t parquetTypeBytes(parquet::Type::type type) {
+  switch (type) {
+    case parquet::Type::INT32:
+    case parquet::Type::FLOAT:
+      return 4;
+    case parquet::Type::INT64:
+    case parquet::Type::DOUBLE:
+      return 8;
+    default:
+      VELOX_FAIL("Type does not have a byte width {}", type);
+  }
+}
+} // namespace
+
 void PageDecoder::makeDecoder() {
   switch (encoding_) {
     case Encoding::RLE_DICTIONARY:
@@ -242,7 +259,7 @@ void PageDecoder::makeDecoder() {
           std::make_unique<dwio::common::SeekableArrayInputStream>(
               pageData_, encodedDataSize_),
           false,
-          encodedDataSize_);
+          parquetTypeBytes(type_->parquetType_.value()));
       break;
     default:
       throw std::runtime_error("Unsupported page encoding");
@@ -292,8 +309,7 @@ void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   if (buffer) {
     dwrf::detail::ensureCapacity<bool>(buffer, numValues, &pool_);
   }
-  BitConcatenation nullConcatenation(pool_);
-  nullConcatenation.reset(buffer);
+  nullConcatenation_.reset(buffer);
   while (toRead) {
     auto availableOnPage = rowOfPage_ + numRowsInPage_ - firstUnvisited_;
     if (!availableOnPage) {
@@ -377,7 +393,7 @@ bool PageDecoder::rowsForPage(
   } else {
     // We scale row numbers to be relative to first on this page.
     auto pageOffset = rowOfPage_ - visitBase_;
-    auto rowNumberBias_ = visitorRows_[currentVisitorRow_];
+    rowNumberBias_ = visitorRows_[currentVisitorRow_];
     auto offsetOnPage = rowNumberBias_ + visitorRows_[currentVisitorRow_];
     skip(rowNumberBias_ - pageOffset);
     // The decoder is positioned at 'visitorRows_[currentVisitorRow_']'

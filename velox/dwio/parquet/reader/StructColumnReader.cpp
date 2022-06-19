@@ -31,6 +31,7 @@ void StructColumnReader::enqueueRowGroup(
 }
 
 void StructColumnReader::seekToRowGroup(uint32_t index) {
+  readOffset_ = 0;
   for (auto& child : children_) {
     child->seekToRowGroup(index);
   }

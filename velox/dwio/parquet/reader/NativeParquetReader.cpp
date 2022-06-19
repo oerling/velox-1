@@ -186,6 +186,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               maxSchemaElementIdx,
               -1, // columnIdx,
               schemaElement.name,
+              std::nullopt,
               maxRepeat,
               maxDefine);
         case ConvertedType::MAP_KEY_VALUE: // child of MAP
@@ -200,6 +201,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               maxSchemaElementIdx,
               -1, // columnIdx,
               schemaElement.name,
+              std::nullopt,
               maxRepeat,
               maxDefine);
         default:
@@ -218,6 +220,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             maxSchemaElementIdx,
             -1, // columnIdx,
             schemaElement.name,
+            std::nullopt,
             maxRepeat,
             maxDefine);
       } else {
@@ -229,14 +232,19 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             maxSchemaElementIdx,
             -1, // columnIdx,
             schemaElement.name,
+            std::nullopt,
             maxRepeat,
             maxDefine);
       }
     }
   } else { // leaf node
     const auto veloxType = convertType(schemaElement);
-    std::vector<std::shared_ptr<const ParquetTypeWithId::TypeWithId>>
-        children{};
+    int32_t precision =
+        schemaElement.__isset.precision ? schemaElement.precision : 0;
+    int32_t scale = schemaElement.__isset.scale ? schemaElement.scale : 0;
+    int32_t type_length =
+        schemaElement.__isset.type_length ? schemaElement.type_length : 0;
+    std::vector<std::shared_ptr<const dwio::common::TypeWithId>> children;
     std::shared_ptr<const ParquetTypeWithId> leafTypePtr =
         std::make_shared<const ParquetTypeWithId>(
             veloxType,
@@ -245,8 +253,11 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             maxSchemaElementIdx,
             columnIdx++,
             schemaElement.name,
+            schemaElement.type,
             maxRepeat,
-            maxDefine);
+            maxDefine,
+            precision,
+            scale);
 
     if (schemaElement.repetition_type == FieldRepetitionType::REPEATED) {
       // Array
@@ -259,6 +270,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
           maxSchemaElementIdx,
           columnIdx++,
           schemaElement.name,
+          std::nullopt,
           maxRepeat,
           maxDefine);
     }
@@ -447,6 +459,21 @@ void ReaderBase::scheduleRowGroups(
   }
 }
 
+int64_t ReaderBase::rowGroupUncompressedSize(
+    int32_t rowGroupIndex,
+    const dwio::common::TypeWithId& type) const {
+  if (type.column >= 0) {
+    return fileMetaData_->row_groups[rowGroupIndex]
+        .columns[type.column]
+        .meta_data.total_uncompressed_size;
+  }
+  int64_t sum = 0;
+  for (auto child : type.getChildren()) {
+    sum += rowGroupUncompressedSize(rowGroupIndex, *child);
+  }
+  return sum;
+}
+
 NativeParquetRowReader::NativeParquetRowReader(
     const std::shared_ptr<ReaderBase>& readerBase,
     const dwio::common::RowReaderOptions& options)
@@ -539,7 +566,6 @@ bool NativeParquetRowReader::advanceToNextRowGroup() {
   rowsInCurrentRowGroup_ = currentRowGroupPtr_->num_rows;
   currentRowInGroup_ = 0;
   currentRowGroupIdsIdx_++;
-
   columnReader_->seekToRowGroup(nextRowGroupIndex);
   return true;
 }
@@ -548,11 +574,15 @@ void NativeParquetRowReader::updateRuntimeStats(
     dwio::common::RuntimeStatistics& stats) const {}
 
 void NativeParquetRowReader::resetFilterCaches() {
-  VELOX_FAIL("ParquetRowReader::resetFilterCaches is NYI");
+  columnReader_->resetFilterCaches();
 }
 
 std::optional<size_t> NativeParquetRowReader::estimatedRowSize() const {
-  VELOX_FAIL("ParquetRowReader::estimatedRowSize is NYI");
+  auto index =
+      currentRowGroupIdsIdx_ < 1 ? 0 : rowGroupIds_[currentRowGroupIdsIdx_ - 1];
+  return readerBase_->rowGroupUncompressedSize(
+             index, *readerBase_->getSchemaWithId()) /
+      rowsInCurrentRowGroup_;
 }
 
 NativeParquetReader::NativeParquetReader(

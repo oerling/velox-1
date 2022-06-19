@@ -80,8 +80,7 @@ void ParquetData::seekToRowGroup(uint32_t index) {
   decoder_ = std::make_unique<PageDecoder>(
       std::move(streams_[index]),
       pool_,
-      maxDefine_,
-      maxRepeat_,
+      type_,
       metadata.codec,
       metadata.total_compressed_size);
 }

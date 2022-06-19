@@ -26,28 +26,6 @@
 #include "velox/dwio/parquet/reader/PageDecoder.h"
 
 namespace facebook::velox::parquet {
-
-class ParquetTypeWithId : public dwio::common::TypeWithId {
- public:
-  ParquetTypeWithId(
-      TypePtr type,
-      const std::vector<std::shared_ptr<const TypeWithId>>&& children,
-      uint32_t id,
-      uint32_t maxId,
-      uint32_t column,
-      std::string name,
-      uint32_t maxRepeat,
-      uint32_t maxDefine)
-      : TypeWithId(type, std::move(children), id, maxId, column),
-        name_(name),
-        maxRepeat_(maxRepeat),
-        maxDefine_(maxDefine) {}
-
-  std::string name_;
-  uint32_t maxRepeat_;
-  uint32_t maxDefine_;
-};
-
 class ParquetParams : public dwio::common::FormatParams {
  public:
   ParquetParams(memory::MemoryPool& pool, const FileMetaData& metaData)

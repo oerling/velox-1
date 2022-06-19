@@ -39,6 +39,7 @@ class IntegerColumnReader : public dwrf::SelectiveIntegerColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
+    readOffset_ = 0;
     formatData_->as<ParquetData>().seekToRowGroup(index);
   }
 

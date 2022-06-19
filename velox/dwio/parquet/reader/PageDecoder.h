@@ -20,7 +20,7 @@
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/BitConcatenation.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
+#include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::parquet {
@@ -39,14 +39,14 @@ class PageDecoder {
   PageDecoder(
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
-      int32_t maxDefine,
-      int32_t maxRepeat,
+      ParquetTypeWithIdPtr nodeType,
       CompressionCodec::type codec,
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
-        maxDefine_(maxDefine),
-        maxRepeat_(maxRepeat),
+	type_(std::move(nodeType)),
+        maxRepeat_(type_->maxRepeat_),
+        maxDefine_(type_->maxDefine_),
         codec_(codec),
         chunkSize_(chunkSize),
         nullConcatenation_(pool_) {}
@@ -135,8 +135,9 @@ class PageDecoder {
   memory::MemoryPool& pool_;
 
   std::unique_ptr<dwio::common::SeekableInputStream> inputStream_;
-  const int32_t maxDefine_;
+  ParquetTypeWithIdPtr type_;
   const int32_t maxRepeat_;
+  const int32_t maxDefine_;
   const CompressionCodec::type codec_;
   const int64_t chunkSize_;
   const char* bufferStart_{nullptr};
@@ -254,6 +255,11 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
     if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {
+	  // Do not reuse nulls concatenation buffer if previous
+	  // results are hanging on to it.
+	  if (multiPageNulls_ && !multiPageNulls_->unique()) {
+	    multiPageNulls_ = nullptr;
+	  }
           nullConcatenation_.reset(multiPageNulls_);
         }
         if (!nulls) {
