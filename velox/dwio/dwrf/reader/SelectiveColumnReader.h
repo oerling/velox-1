@@ -197,9 +197,21 @@ class SelectiveColumnReader : public ColumnReader {
     return reinterpret_cast<T*>(rawValues_) + numValues_;
   }
 
+  // Returns a mutable pointer to start of result nulls
+  // bitmap. Ensures that this has at least 'numValues_' + 'size'
+  // capacity and is unique. If extending existing buffer, preserves
+  // previous contents.
   uint64_t* mutableNulls(int32_t size) {
-    DCHECK_GE(resultNulls_->capacity() * 8, numValues_ + size);
-    return rawResultNulls_;
+    if (!resultNulls_->unique()) {
+      resultNulls_ = AlignedBuffer::allocate<bool>(numValues_ + size, &memoryPool_, bits::kNotNull);
+      rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+    }
+    if (resultNulls_->capacity() * 8 < numValues_ + size) {
+      // If a single read() spans many encoding runs then result nulls may occasionally need extending.
+      AlignedBuffer::reallocate<bool>(&resultNulls_,numValues_ + size + simd::kPadding * 8, bits::kNotNull);
+      rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+    }
+      return rawResultNulls_;
   }
 
   // True if this reads contiguous rows starting at 0 and may have

@@ -15,12 +15,13 @@
  */
 
 #pragma once
+
 #include <thrift/protocol/TCompactProtocol.h>
-#include "Decoder.h"
-#include "ParquetThriftTypes.h"
-#include "ThriftTransport.h"
-#include "dwio/common/BufferedInput.h"
-#include "velox/common/base/BitSet.h"
+#include "velox/dwio/parquet/reader/Decoder.h"
+#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
+#include "velox/dwio/parquet/reader/ThriftTransport.h"
+#include "velox/dwio/common/BufferedInput.h"
+#include "velox/dwio/common/ScanSpec.h"
 #include "velox/common/base/RawVector.h"
 #include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
 #include "velox/dwio/parquet/reader/PageDecoder.h"
@@ -77,11 +78,9 @@ class ParquetData : public dwio::common::FormatData {
   bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
 
   std::vector<uint32_t> filterRowGroups(
-      uint64_t rowsPerRowGroup,
-      const dwio::common::StatsWriterInfo& writerInfo) override {
-    std::vector<uint32_t> stridesToSkip;
-    return stridesToSkip;
-  }
+					const common::ScanSpec& scanSpec,
+					uint64_t rowsPerRowGroup,
+      const dwio::common::StatsWriterInfo& writerInfo) override;
 
   // Reads null flags for 'numValues' next top level rows. The first 'numValues'
   // bits of 'nulls' are set and the reader is advanced by numValues'.

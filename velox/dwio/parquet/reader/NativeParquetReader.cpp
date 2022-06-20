@@ -525,6 +525,7 @@ void NativeParquetRowReader::filterRowGroups() {
   rowGroupIds_.reserve(rowGroups.size());
   auto excluded =
       columnReader_->filterRowGroups(0, dwio::common::StatsWriterInfo());
+  skippedRowGroups_ = excluded.size();
   for (auto i = 0; i < rowGroups.size(); i++) {
     if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())
       rowGroupIds_.push_back(i);
@@ -571,7 +572,10 @@ bool NativeParquetRowReader::advanceToNextRowGroup() {
 }
 
 void NativeParquetRowReader::updateRuntimeStats(
-    dwio::common::RuntimeStatistics& stats) const {}
+    dwio::common::RuntimeStatistics& stats) const {
+    stats.skippedStrides += skippedRowGroups_;
+
+}
 
 void NativeParquetRowReader::resetFilterCaches() {
   columnReader_->resetFilterCaches();

@@ -18,11 +18,12 @@
 
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
-#include "velox/dwio/common/Statistics.h"
+ #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
+#include "velox/dwio/common/ScanSpec.h"
 
 namespace facebook::velox::dwio::common {
-
+  
 // Interface base class for format-specific state in common between all types of
 // readers.
 class FormatData {
@@ -39,7 +40,8 @@ class FormatData {
       const uint64_t* incomingNulls) {}
 
   virtual std::vector<uint32_t> filterRowGroups(
-      uint64_t rowsPerRowGroup,
+						const velox::common::ScanSpec& scanSpec,
+						uint64_t rowsPerRowGroup,
       const StatsWriterInfo& context) = 0;
 };
 

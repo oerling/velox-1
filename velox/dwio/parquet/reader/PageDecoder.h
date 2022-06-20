@@ -280,16 +280,17 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
         }
       }
       isMultiPage = true;
-
-      // The passing rows on non-first pages are relative to the start
-      // of the page, adjust them to be relative to start of this
-      // read.
-      if (hasFilter && rowNumberBias_) {
-        reader.offsetOutputRows(numValuesBeforePage, rowNumberBias_);
-      }
+    }
+    // The passing rows on non-first pages are relative to the start
+    // of the page, adjust them to be relative to start of this
+    // read. This can happen on the first processed page as well if
+    // the first page of scan did not contain any of the rows to
+    // visit.
+    if (hasFilter && rowNumberBias_) {
+      reader.offsetOutputRows(numValuesBeforePage, rowNumberBias_);
     }
   }
-  if (isMultiPage) {
+  if (isMultiPage && mayProduceNulls) {
     reader.setNulls(multiPageNulls_);
   }
 }

@@ -404,7 +404,7 @@ class ColumnVisitor {
   void setNumValues(int32_t size) {
     reader_->setNumValues(numValuesBias_ + size);
     if (!std::is_same<TFilter, common::AlwaysTrue>::value) {
-      reader_->setNumRows(size);
+      reader_->setNumRows(numValuesBias_ + size);
     }
   }
 

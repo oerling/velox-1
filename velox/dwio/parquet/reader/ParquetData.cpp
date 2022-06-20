@@ -24,6 +24,22 @@ std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
   return std::make_unique<ParquetData>(type, metaData_.row_groups, pool());
 }
 
+std::vector<uint32_t> ParquetData::filterRowGroups(
+    const common::ScanSpec& scanSpec,
+    uint64_t /*rowsPerRowGroup*/,
+    const dwio::common::StatsWriterInfo& /*writerInfo*/) {
+  if (!scanSpec.filter()) {
+    return {};
+  }
+  std::vector<uint32_t> toSkip;
+  for (auto i = 0; i < rowGroups_.size(); ++i) {
+    if (!filterMatches(rowGroups_[i], *scanSpec.filter())) {
+      toSkip.push_back(i);
+    }
+  }
+  return toSkip;
+}
+
 bool ParquetData::filterMatches(
     const RowGroup& rowGroup,
     common::Filter& filter) {
@@ -84,4 +100,5 @@ void ParquetData::seekToRowGroup(uint32_t index) {
       metadata.codec,
       metadata.total_compressed_size);
 }
+
 } // namespace facebook::velox::parquet

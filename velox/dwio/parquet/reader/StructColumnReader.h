@@ -45,15 +45,6 @@ class StructColumnReader : public dwrf::SelectiveStructColumnReader {
     }
   }
 
-  std::vector<uint32_t> filterRowGroups(
-      uint64_t rowGroupSize,
-      const dwio::common::StatsWriterInfo& context) const override {
-    if (!scanSpec_->filter()) {
-      return {};
-    }
-    return {};
-  }
-
   void seekToRowGroup(uint32_t index) override;
 
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);

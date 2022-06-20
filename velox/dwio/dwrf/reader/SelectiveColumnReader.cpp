@@ -102,7 +102,7 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const dwio::common::StatsWriterInfo& context) const {
   if (formatData_) {
-    return formatData_->filterRowGroups(rowGroupSize, context);
+    return formatData_->filterRowGroups(*scanSpec_, rowGroupSize, context);
   }
   const auto& statsContext = *reinterpret_cast<const StatsContext*>(&context);
   if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
@@ -364,7 +364,7 @@ bool SelectiveColumnReader::readsNullsOnly() const {
   if (filter) {
     auto kind = filter->kind();
     return kind == common::FilterKind::kIsNull ||
-        (scanSpec_->keepValues() && kind == common::FilterKind::kIsNotNull);
+        (!scanSpec_->keepValues() && kind == common::FilterKind::kIsNotNull);
   }
   return false;
 }

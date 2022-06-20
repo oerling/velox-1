@@ -167,7 +167,7 @@ void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
     repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_),
         repeatLength,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxRepeat_));
+        arrow::bit_util::NumRequiredBits(maxRepeat_));
     pageData_ += repeatLength;
   }
 
@@ -176,7 +176,7 @@ void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
     defineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_),
         defineLength,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxDefine_));
+        arrow::bit_util::NumRequiredBits(maxDefine_));
     pageData_ += defineLength;
   }
   encodedDataSize_ = pageEnd - pageData_;
@@ -205,14 +205,14 @@ void PageDecoder::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
     repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_),
         repeatLength,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxRepeat_));
+        arrow::bit_util::NumRequiredBits(maxRepeat_));
   }
 
   if (maxDefine_ > 0) {
     defineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_ + repeatLength),
         defineLength,
-        RleBpFilterAwareDecoder<uint8_t>::computeBitWidth(maxDefine_));
+        arrow::bit_util::NumRequiredBits(maxDefine_));
   }
   auto levelsSize = repeatLength + defineLength;
   pageData_ += levelsSize;
