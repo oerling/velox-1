@@ -53,6 +53,6 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
   const int32_t typeLength_;
 };
 
-using ParquetTypeWithIdPtr =  std::shared_ptr<const ParquetTypeWithId>;
+using ParquetTypeWithIdPtr = std::shared_ptr<const ParquetTypeWithId>;
 
 } // namespace facebook::velox::parquet

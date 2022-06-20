@@ -26,8 +26,4 @@
 
 #include <arrow/util/rle_encoding.h>
 
-namespace facebook::velox::parquet {
-
-
-  
-} // namespace facebook::velox::parquet
+namespace facebook::velox::parquet {} // namespace facebook::velox::parquet

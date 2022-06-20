@@ -573,8 +573,7 @@ bool NativeParquetRowReader::advanceToNextRowGroup() {
 
 void NativeParquetRowReader::updateRuntimeStats(
     dwio::common::RuntimeStatistics& stats) const {
-    stats.skippedStrides += skippedRowGroups_;
-
+  stats.skippedStrides += skippedRowGroups_;
 }
 
 void NativeParquetRowReader::resetFilterCaches() {

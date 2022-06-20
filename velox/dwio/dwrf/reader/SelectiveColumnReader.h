@@ -203,15 +203,20 @@ class SelectiveColumnReader : public ColumnReader {
   // previous contents.
   uint64_t* mutableNulls(int32_t size) {
     if (!resultNulls_->unique()) {
-      resultNulls_ = AlignedBuffer::allocate<bool>(numValues_ + size, &memoryPool_, bits::kNotNull);
+      resultNulls_ = AlignedBuffer::allocate<bool>(
+          numValues_ + size, &memoryPool_, bits::kNotNull);
       rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
     }
     if (resultNulls_->capacity() * 8 < numValues_ + size) {
-      // If a single read() spans many encoding runs then result nulls may occasionally need extending.
-      AlignedBuffer::reallocate<bool>(&resultNulls_,numValues_ + size + simd::kPadding * 8, bits::kNotNull);
+      // If a single read() spans many encoding runs then result nulls may
+      // occasionally need extending.
+      AlignedBuffer::reallocate<bool>(
+          &resultNulls_,
+          numValues_ + size + simd::kPadding * 8,
+          bits::kNotNull);
       rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
     }
-      return rawResultNulls_;
+    return rawResultNulls_;
   }
 
   // True if this reads contiguous rows starting at 0 and may have

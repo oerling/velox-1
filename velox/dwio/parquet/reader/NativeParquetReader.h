@@ -92,7 +92,7 @@ class NativeParquetRowReader : public dwio::common::RowReader {
 
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override;
-  
+
   void resetFilterCaches() override;
 
   std::optional<size_t> estimatedRowSize() const override;

@@ -44,7 +44,7 @@ class PageDecoder {
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
-	type_(std::move(nodeType)),
+        type_(std::move(nodeType)),
         maxRepeat_(type_->maxRepeat_),
         maxDefine_(type_->maxDefine_),
         codec_(codec),
@@ -255,11 +255,11 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
     if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {
-	  // Do not reuse nulls concatenation buffer if previous
-	  // results are hanging on to it.
-	  if (multiPageNulls_ && !multiPageNulls_->unique()) {
-	    multiPageNulls_ = nullptr;
-	  }
+          // Do not reuse nulls concatenation buffer if previous
+          // results are hanging on to it.
+          if (multiPageNulls_ && !multiPageNulls_->unique()) {
+            multiPageNulls_ = nullptr;
+          }
           nullConcatenation_.reset(multiPageNulls_);
         }
         if (!nulls) {

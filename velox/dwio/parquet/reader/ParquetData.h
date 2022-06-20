@@ -17,14 +17,14 @@
 #pragma once
 
 #include <thrift/protocol/TCompactProtocol.h>
-#include "velox/dwio/parquet/reader/Decoder.h"
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
-#include "velox/dwio/parquet/reader/ThriftTransport.h"
+#include "velox/common/base/RawVector.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/common/base/RawVector.h"
 #include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/PageDecoder.h"
+#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
+#include "velox/dwio/parquet/reader/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 class ParquetParams : public dwio::common::FormatParams {
@@ -78,8 +78,8 @@ class ParquetData : public dwio::common::FormatData {
   bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
 
   std::vector<uint32_t> filterRowGroups(
-					const common::ScanSpec& scanSpec,
-					uint64_t rowsPerRowGroup,
+      const common::ScanSpec& scanSpec,
+      uint64_t rowsPerRowGroup,
       const dwio::common::StatsWriterInfo& writerInfo) override;
 
   // Reads null flags for 'numValues' next top level rows. The first 'numValues'
