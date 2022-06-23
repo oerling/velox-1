@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <unordered_set>
@@ -36,6 +37,82 @@ struct MmapAllocatorOptions {
   //  Capacity in bytes, default 512MB
   uint64_t capacity = 1L << 29;
 };
+
+static constexpr uint64_t kMinGrainSizeBytes = 1024 * 1024;
+
+class Arena {
+ public:
+  Arena(size_t capacityBytes);
+  ~Arena();
+
+  void* allocate(uint64_t bytes);
+  void free(void* address, uint64_t bytes);
+  void* address() const {
+    return reinterpret_cast<void*>(address_);
+  }
+
+  uint64_t byteSize() const {
+    return byteSize_;
+  }
+
+  const std::map<uint64_t, uint64_t>& freeList() const {
+    return freeList_;
+  }
+
+  const std::map<uint64_t, std::unordered_set<uint64_t>>& freeLookup() const {
+    return freeLookup_;
+  }
+
+  uint64_t freeBytes() {
+    return freeBytes_;
+  }
+
+  // translate lookup table to a string for debugging purpose only.
+  std::string freeLookupStr() {
+    std::string lookupStr;
+    for (auto itr = freeLookup_.begin(); itr != freeLookup_.end(); itr++) {
+      lookupStr.append("\n{").append(std::to_string(itr->first)).append("->[");
+      for (auto itrInner = itr->second.begin(); itrInner != itr->second.end();
+           itrInner++) {
+        lookupStr.append(std::to_string(*itrInner)).append(", ");
+      }
+      lookupStr.append("]}\n");
+    }
+    return lookupStr;
+  }
+
+ private:
+  // Rounds up size to the next power of 2 if the asked size is larger than 3
+  // quarters of the next power of 2. Otherwise rounds up to the 3 quarters.
+  static uint64_t roundBytes(uint64_t bytes);
+
+  std::map<uint64_t, uint64_t>::iterator addFreeBlock(
+      uint64_t addr,
+      uint64_t bytes);
+
+  void removeFromLookup(uint64_t addr, uint64_t bytes);
+
+  void removeFreeBlock(uint64_t addr, uint64_t bytes);
+
+  void removeFreeBlock(std::map<uint64_t, uint64_t>::iterator& itr);
+
+  // Starting address of this arena
+  uint8_t* FOLLY_NONNULL address_;
+
+  // Total size of this arena
+  const uint64_t byteSize_;
+
+  std::atomic<uint64_t> freeBytes_;
+
+  // A sorted list with each entry mapping from free block address to size of
+  // the free block
+  std::map<uint64_t, uint64_t> freeList_;
+
+  // A sorted look up structure that stores the block size as key and a set of
+  // address of that size as value.
+  std::map<uint64_t, std::unordered_set<uint64_t>> freeLookup_;
+};
+
 // Implementation of MappedMemory with mmap and madvise. Each size
 // class is mmapped for the whole capacity. Each size class has a
 // bitmap of allocated entries and entries that are backed by
@@ -67,9 +144,19 @@ class MmapAllocator : public MappedMemory {
       MachinePageCount numPages,
       Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
-      std::function<void(int64_t)> beforeAllocCB = nullptr) override;
+      std::function<void(int64_t)> beforeAllocCB = nullptr) override {
+    bool result;
+    stats_.recordAlloc(numPages * kPageSize, [&]() {
+      result = allocateContiguousImpl(
+          numPages, collateral, allocation, beforeAllocCB);
+    });
+    return result;
+  }
 
-  void freeContiguous(ContiguousAllocation& allocation) override;
+  void freeContiguous(ContiguousAllocation& allocation) override {
+    stats_.recordFree(
+        allocation.size(), [&]() { freeContiguousImpl(allocation); });
+  }
 
   // Checks internal consistency of allocation data
   // structures. Returns true if OK. May return false if there are
@@ -95,10 +182,21 @@ class MmapAllocator : public MappedMemory {
     injectedFailure_ = failure;
   }
 
+  MachinePageCount numExternalMapped() const {
+    return numExternalMapped_;
+  }
+
   std::string toString() const override;
+
+  Stats stats() const override {
+    auto stats = stats_;
+    stats.numAdvise = numAdvisedPages_;
+    return stats;
+  }
 
  private:
   static constexpr uint64_t kAllSet = 0xffffffffffffffff;
+  static constexpr int32_t kNoLastLookup = -1;
 
   // Represents a range of virtual addresses used for allocating entries of
   // 'unitSize_' machine pages.
@@ -185,6 +283,10 @@ class MmapAllocator : public MappedMemory {
         MachinePageCount& numUnmapped,
         Allocation& allocation);
 
+    // int32_t findCandidateWord();
+    // void markFree(int32_t page);
+    // void markAllocated(int32_t page);
+
     // Serializes access to all data members and private methods.
     std::mutex mutex_;
 
@@ -207,6 +309,13 @@ class MmapAllocator : public MappedMemory {
     // Count of free pages backed by memory.
     ClassPageCount numMappedFreePages_ = 0;
 
+    // Last used index in 'mappedFreeLookup_' -1 if none.
+    int32_t lastLookupIndex_{kNoLastLookup};
+    // has a 1 bit if the corresponding 8 word range in
+    // pageAllocated/pageMapped_ has at least one mapped free bit. Has
+    // 1 bit for each 8 words of pageAllocated/pageMapped.
+    std::vector<uint64_t> mappedFreeLookup_;
+
     // Has a 1 bit if the corresponding size class page is allocated.
     std::vector<uint64_t> pageAllocated_;
 
@@ -223,6 +332,14 @@ class MmapAllocator : public MappedMemory {
     // Cumulative count of madvise for pages of 'this'
     uint64_t numAdvisedAway_ = 0;
   };
+
+  bool allocateContiguousImpl(
+      MachinePageCount numPages,
+      Allocation* FOLLY_NULLABLE collateral,
+      ContiguousAllocation& allocation,
+      std::function<void(int64_t)> beforeAllocCB = nullptr);
+
+  void freeContiguousImpl(ContiguousAllocation& allocation);
 
   // Ensures that there are at least 'newMappedNeeded' pages that are
   // not backing any existing allocation. If capacity_ - numMapped_ <
@@ -266,11 +383,15 @@ class MmapAllocator : public MappedMemory {
 
   std::vector<std::unique_ptr<SizeClass>> sizeClasses_;
 
+  std::mutex arenaMutex_;
+  std::unique_ptr<Arena> arena_;
+
   // Statistics. Not atomic.
   uint64_t numAllocations_ = 0;
   uint64_t numAllocatedPages_ = 0;
   uint64_t numAdvisedPages_ = 0;
   Failure injectedFailure_{Failure::kNone};
+  Stats stats_;
 };
 
 } // namespace facebook::velox::memory

@@ -26,11 +26,82 @@
 #include <gflags/gflags.h>
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
+#include "velox/common/time/Timer.h"
 
 DECLARE_bool(velox_use_malloc);
 DECLARE_int32(velox_memory_pool_mb);
 
 namespace facebook::velox::memory {
+
+struct SizeStats {
+  int32_t size;
+  int64_t allocClocks;
+  int64_t freeClocks;
+  int64_t numAlloc;
+  int64_t cumBytes;
+
+  SizeStats operator-(const SizeStats& other) const {
+    SizeStats result;
+    result.size = size;
+    result.allocClocks = allocClocks - other.allocClocks;
+    result.allocClocks = freeClocks - other.freeClocks;
+    result.numAlloc = numAlloc - other.numAlloc;
+    result.cumBytes = cumBytes - other.cumBytes;
+    return result;
+  }
+
+  uint64_t clocks() const {
+    return allocClocks + freeClocks;
+  }
+};
+
+struct Stats {
+  static constexpr int32_t kNumSizes = 20;
+  Stats() {
+    for (auto i = 0; i < sizes.size(); ++i) {
+      sizes[i].size = 1 << i;
+    }
+  }
+
+  Stats operator-(const Stats& stats) const;
+
+  template <typename Op>
+  void recordAlloc(int64_t bytes, Op op) {
+    uint64_t clocks{0};
+    auto index = sizeIndex(bytes);
+    {
+      velox::ClockTimer timer(&clocks);
+      op();
+    }
+    ++sizes[index].numAlloc;
+    sizes[index].cumBytes += bytes;
+    sizes[index].allocClocks += clocks;
+  }
+
+  template <typename Op>
+  void recordFree(int64_t bytes, Op op) {
+    uint64_t clocks = 0;
+    auto index = sizeIndex(bytes);
+    {
+      ClockTimer timer(&clocks);
+      op();
+    }
+    sizes[index].freeClocks += clocks;
+  }
+
+  std::string toString() const;
+
+  int32_t sizeIndex(int64_t size) {
+    if (!size) {
+      return 0;
+    }
+    int64_t power = bits::nextPowerOfTwo(size / 4096);
+    return std::min(kNumSizes - 1, 63 - bits::countLeadingZeros(power));
+  }
+
+  std::array<SizeStats, kNumSizes> sizes;
+  int64_t numAdvise;
+};
 
 class ScopedMappedMemory;
 
@@ -179,6 +250,14 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
       data_ = nullptr;
     }
 
+    ContiguousAllocation(ContiguousAllocation&& other) noexcept {
+      mappedMemory_ = other.mappedMemory_;
+      data_ = other.data_;
+      size_ = other.size_;
+      other.data_ = nullptr;
+      other.size_ = 0;
+    }
+
     MappedMemory* FOLLY_NULLABLE mappedMemory() const {
       return mappedMemory_;
     }
@@ -213,11 +292,11 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
   // Stats on memory allocated by allocateBytes().
   struct AllocateBytesCounters {
     // Total size of small allocations.
-    uint64_t totalSmall;
+    uint64_t totalSmallAllocateBytes;
     // Total size of allocations from some size class.
-    uint64_t totalInSizeClasses;
+    uint64_t totalSizeClassAllocateBytes;
     // Total in standalone large allocations via allocateContiguous().
-    uint64_t totalLarge;
+    uint64_t totalLargeAllocateBytes;
   };
 
   MappedMemory() {}
@@ -277,15 +356,15 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
 
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
 
-  // Allocates 'size'contiguous bytes and returns the pointer to the
-  // first byte. If 'size' is less than 'maxMallocSize', delegates the
-  // allocation to malloc. If the size is above that and below the
-  // largest size class, allocates one element of the next size
-  // class. If 'size' is greater than the largest size class, calls
-  // allocateContiguous(). Returns nullptr if there is no space. The
-  // amount to allocate is subject to the size limit of 'this'. This
-  // function is not virtual but calls the virtual functions allocate
-  // and allocateContiguous, which can track sizes and enforce caps etc.
+  // Allocates 'bytes' contiguous bytes and returns the pointer to the first
+  // byte. If 'bytes' is less than 'maxMallocSize', delegates the allocation to
+  // malloc. If the size is above that and below the largest size classes' size,
+  // allocates one element of the next size classes' size. If 'size' is greater
+  // than the largest size classes' size, calls allocateContiguous(). Returns
+  // nullptr if there is no space. The amount to allocate is subject to the size
+  // limit of 'this'. This function is not virtual but calls the virtual
+  // functions allocate and allocateContiguous, which can track sizes and
+  // enforce caps etc.
   void* FOLLY_NULLABLE
   allocateBytes(uint64_t bytes, uint64_t maxMallocSize = kMaxMallocBytes);
 
@@ -325,6 +404,10 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
         totalLargeAllocateBytes_};
   }
 
+  virtual Stats stats() const {
+    return Stats();
+  }
+
   virtual std::string toString() const;
 
  protected:
@@ -361,6 +444,7 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
   // by getInstance().
   static MappedMemory* FOLLY_NULLABLE customInstance_;
   static std::mutex initMutex_;
+
   // Static counters for STL and memoryPool users of
   // MappedMemory. Updated by allocateBytes() and freeBytes(). These
   // are intended to be exported via StatsReporter. These are
@@ -443,6 +527,10 @@ class ScopedMappedMemory final : public MappedMemory {
 
   MemoryUsageTracker* FOLLY_NULLABLE tracker() const override {
     return tracker_.get();
+  }
+
+  Stats stats() const override {
+    return parent_->stats();
   }
 
  private:
