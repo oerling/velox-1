@@ -281,6 +281,8 @@ class LambdaExpr : public SpecialForm {
     }
   }
 
+  std::string toString(bool recursive = true) const override;
+
   bool propagatesNulls() const override {
     // A null capture does not result in a null function.
     return false;
@@ -299,7 +301,7 @@ class LambdaExpr : public SpecialForm {
   ExprPtr body_;
   // Filled on first use.
   std::shared_ptr<const RowType> typeWithCapture_;
-  std::vector<ChannelIndex> captureChannels_;
+  std::vector<column_index_t> captureChannels_;
 };
 
 class TryExpr : public SpecialForm {

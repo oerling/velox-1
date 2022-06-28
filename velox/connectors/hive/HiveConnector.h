@@ -17,8 +17,9 @@
 
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/dwio/common/CachedBufferedInput.h"
+#include "velox/dwio/common/IoStatistics.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/OperatorUtils.h"
@@ -62,10 +63,11 @@ using SubfieldFilters =
 class HiveTableHandle : public ConnectorTableHandle {
  public:
   HiveTableHandle(
+      std::string connectorId,
       const std::string& tableName,
       bool filterPushdownEnabled,
       SubfieldFilters subfieldFilters,
-      const std::shared_ptr<const core::ITypedExpr>& remainingFilter);
+      const core::TypedExprPtr& remainingFilter);
 
   ~HiveTableHandle() override;
 
@@ -77,7 +79,7 @@ class HiveTableHandle : public ConnectorTableHandle {
     return subfieldFilters_;
   }
 
-  const std::shared_ptr<const core::ITypedExpr>& remainingFilter() const {
+  const core::TypedExprPtr& remainingFilter() const {
     return remainingFilter_;
   }
 
@@ -87,7 +89,7 @@ class HiveTableHandle : public ConnectorTableHandle {
   const std::string tableName_;
   const bool filterPushdownEnabled_;
   const SubfieldFilters subfieldFilters_;
-  const std::shared_ptr<const core::ITypedExpr> remainingFilter_;
+  const core::TypedExprPtr remainingFilter_;
 };
 
 /**
@@ -144,10 +146,11 @@ class HiveDataSource : public DataSource {
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
   void addDynamicFilter(
-      ChannelIndex outputChannel,
+      column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
-  RowVectorPtr next(uint64_t size) override;
+  std::optional<RowVectorPtr> next(uint64_t size, velox::ContinueFuture& future)
+      override;
 
   uint64_t getCompletedRows() override {
     return completedRows_;
@@ -164,7 +167,7 @@ class HiveDataSource : public DataSource {
  private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
-  // some rows passed the filter. If no or all rows passed
+  // some rows passed the filter. If none or all rows passed
   // filterEvalCtx_.selectedIndices and selectedBits are not updated.
   vector_size_t evaluateRemainingFilter(RowVectorPtr& rowVector);
 
@@ -192,7 +195,7 @@ class HiveDataSource : public DataSource {
   FileHandleFactory* FOLLY_NONNULL fileHandleFactory_;
   velox::memory::MemoryPool* FOLLY_NONNULL pool_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-  std::shared_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
+  std::shared_ptr<dwio::common::BufferedInputFactory> bufferedInputFactory_;
   std::shared_ptr<common::ScanSpec> scanSpec_;
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
@@ -226,6 +229,10 @@ class HiveConnector final : public Connector {
       const std::string& id,
       std::shared_ptr<const Config> properties,
       folly::Executor* FOLLY_NULLABLE executor);
+
+  bool canAddDynamicFilter() const override {
+    return true;
+  }
 
   std::shared_ptr<DataSource> createDataSource(
       const std::shared_ptr<const RowType>& outputType,

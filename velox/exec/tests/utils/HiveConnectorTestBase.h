@@ -79,7 +79,11 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const core::TypedExprPtr& remainingFilter = nullptr,
       const std::string& tableName = "hive_table") {
     return std::make_shared<connector::hive::HiveTableHandle>(
-        tableName, true, std::move(subfieldFilters), remainingFilter);
+        kHiveConnectorId,
+        tableName,
+        true,
+        std::move(subfieldFilters),
+        remainingFilter);
   }
 
   static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
@@ -156,7 +160,7 @@ class HiveConnectorSplitBuilder {
 
  private:
   const std::string filePath_;
-  dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::ORC};
+  dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::DWRF};
   uint64_t start_{0};
   uint64_t length_{std::numeric_limits<uint64_t>::max()};
   std::unordered_map<std::string, std::optional<std::string>> partitionKeys_;

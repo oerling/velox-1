@@ -13,14 +13,8 @@
 # limitations under the License.
 
 set(BENCHMARK_DEPENDENCIES_NO_FUNC
-    velox_functions_test_lib
-    velox_exec
-    velox_exec_test_util
-    gtest
-    gtest_main
-    ${gflags_LIBRARIES}
-    ${FOLLY_WITH_DEPENDENCIES}
-    ${FOLLY_BENCHMARK})
+    velox_functions_test_lib velox_exec velox_exec_test_util
+    ${gflags_LIBRARIES} ${FOLLY_WITH_DEPENDENCIES} ${FOLLY_BENCHMARK})
 
 set(BENCHMARK_DEPENDENCIES
     velox_functions_prestosql velox_functions_lib velox_vector_fuzzer
@@ -129,3 +123,7 @@ add_executable(velox_functions_benchmarks_string_writer_no_nulls
                StringWriterBenchmark.cpp)
 target_link_libraries(velox_functions_benchmarks_string_writer_no_nulls
                       ${BENCHMARK_DEPENDENCIES_NO_FUNC})
+
+add_executable(velox_functions_prestosql_benchmarks_zip ZipBenchmark.cpp)
+target_link_libraries(velox_functions_prestosql_benchmarks_zip
+                      ${BENCHMARK_DEPENDENCIES})

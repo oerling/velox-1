@@ -21,7 +21,7 @@ namespace facebook::velox::exec {
 namespace {
 void notify(std::vector<ContinuePromise>& promises) {
   for (auto& promise : promises) {
-    promise.setValue(true);
+    promise.setValue();
   }
 }
 } // namespace
@@ -278,7 +278,8 @@ LocalPartition::LocalPartition(
               : planNode->partitionFunctionFactory()(numPartitions_)),
       sourceOutputChannels_{calculateOutputChannels(
           planNode->sources()[0]->outputType(),
-          planNode->inputTypeFromSource())},
+          planNode->inputTypeFromSource(),
+          planNode->outputType())},
       blockingReasons_{numPartitions_} {
   VELOX_CHECK(numPartitions_ == 1 || partitionFunction_ != nullptr);
 
@@ -288,7 +289,7 @@ LocalPartition::LocalPartition(
 
   futures_.reserve(numPartitions_);
   for (auto i = 0; i < numPartitions_; i++) {
-    futures_.emplace_back(false);
+    futures_.emplace_back();
   }
 }
 
@@ -390,7 +391,7 @@ void LocalPartition::addInput(RowVectorPtr input) {
       auto partitionData =
           wrapChildren(input_, partitionSize, std::move(indexBuffers[i]));
 
-      ContinueFuture future{false};
+      ContinueFuture future;
       auto reason = enqueue(i, partitionData, &future);
       if (reason != BlockingReason::kNotBlocked) {
         blockingReasons_[numBlockedPartitions_] = reason;

@@ -18,8 +18,6 @@
 #include <memory>
 
 #include "velox/dwio/common/InputStream.h"
-#include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/expression/ControlExpr.h"
 #include "velox/type/Conversions.h"
@@ -41,11 +39,13 @@ static const char* kBucket = "$bucket";
 } // namespace
 
 HiveTableHandle::HiveTableHandle(
+    std::string connectorId,
     const std::string& tableName,
     bool filterPushdownEnabled,
     SubfieldFilters subfieldFilters,
-    const std::shared_ptr<const core::ITypedExpr>& remainingFilter)
-    : tableName_(tableName),
+    const core::TypedExprPtr& remainingFilter)
+    : ConnectorTableHandle(std::move(connectorId)),
+      tableName_(tableName),
       filterPushdownEnabled_(filterPushdownEnabled),
       subfieldFilters_(std::move(subfieldFilters)),
       remainingFilter_(remainingFilter) {}
@@ -253,7 +253,7 @@ HiveDataSource::HiveDataSource(
     // Make sure to add these columns to scanSpec_.
 
     auto filterInputs = remainingFilterExprSet_->expr(0)->distinctFields();
-    ChannelIndex channel = outputType_->size();
+    column_index_t channel = outputType_->size();
     auto names = readerOutputType_->names();
     auto types = readerOutputType_->children();
     for (auto& input : filterInputs) {
@@ -313,7 +313,7 @@ bool testFilters(
   return true;
 }
 
-class InputStreamHolder : public dwrf::AbstractInputStreamHolder {
+class InputStreamHolder : public dwio::common::AbstractInputStreamHolder {
  public:
   InputStreamHolder(
       FileHandleCachedPtr fileHandle,
@@ -360,7 +360,7 @@ velox::variant convertFromString(const std::optional<std::string>& value) {
 } // namespace
 
 void HiveDataSource::addDynamicFilter(
-    ChannelIndex outputChannel,
+    column_index_t outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
   auto& fieldSpec = scanSpec_->getChildByChannel(outputChannel);
   if (fieldSpec.filter()) {
@@ -387,16 +387,17 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   // three are supported to enable comparison.
   if (asyncCache) {
     readerOpts_.setFileNum(fileHandle_->uuid.id());
-    bufferedInputFactory_ = std::make_unique<dwrf::CachedBufferedInputFactory>(
-        (asyncCache),
-        Connector::getTracker(scanId_, readerOpts_.loadQuantum()),
-        fileHandle_->groupId.id(),
-        [factory = fileHandleFactory_, path = split_->filePath]() {
-          return makeStreamHolder(factory, path);
-        },
-        ioStats_,
-        executor_,
-        readerOpts_);
+    bufferedInputFactory_ =
+        std::make_unique<dwio::common::CachedBufferedInputFactory>(
+            (asyncCache),
+            Connector::getTracker(scanId_, readerOpts_.loadQuantum()),
+            fileHandle_->groupId.id(),
+            [factory = fileHandleFactory_, path = split_->filePath]() {
+              return makeStreamHolder(factory, path);
+            },
+            ioStats_,
+            executor_,
+            readerOpts_);
     readerOpts_.setBufferedInputFactory(bufferedInputFactory_);
   }
 
@@ -497,7 +498,9 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       rowReaderOpts_.select(cs).range(split_->start, split_->length));
 }
 
-RowVectorPtr HiveDataSource::next(uint64_t size) {
+std::optional<RowVectorPtr> HiveDataSource::next(
+    uint64_t size,
+    velox::ContinueFuture& /*future*/) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
   if (emptySplit_) {
     resetSplit();
@@ -526,16 +529,21 @@ RowVectorPtr HiveDataSource::next(uint64_t size) {
 
     auto rowVector = std::dynamic_pointer_cast<RowVector>(output_);
 
+    // In case there is a remaining filter that excludes some but not all rows,
+    // collect the indices of the passing rows. If there is no filter, or it
+    // passes on all rows, leave this as null and let exec::wrap skip wrapping
+    // the results.
     BufferPtr remainingIndices;
     if (remainingFilterExprSet_) {
       rowsRemaining = evaluateRemainingFilter(rowVector);
       VELOX_CHECK_LE(rowsRemaining, rowsScanned);
       if (rowsRemaining == 0) {
-        // no rows passed the remaining filter
+        // No rows passed the remaining filter.
         return RowVector::createEmpty(outputType_, pool_);
       }
 
-      if (rowsRemaining < rowsScanned) {
+      if (rowsRemaining < rowVector->size()) {
+        // Some, but not all rows passed the remaining filter.
         remainingIndices = filterEvalCtx_.selectedIndices;
       }
     }

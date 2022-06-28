@@ -13,12 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/FunctionSignature.h"
 
 using facebook::velox::exec::Aggregate;
@@ -190,6 +193,10 @@ static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
 
 class AggregationTest : public OperatorTestBase {
  protected:
+  void SetUp() override {
+    filesystems::registerLocalFileSystem();
+  }
+
   std::vector<RowVectorPtr>
   makeVectors(const RowTypePtr& rowType, vector_size_t size, int numVectors) {
     std::vector<RowVectorPtr> vectors;
@@ -342,6 +349,67 @@ class AggregationTest : public OperatorTestBase {
     }
   }
 
+  // Inserts 'key' into 'order' with random bits and a serial
+  // number. The serial number makes repeats of 'key' unique and the
+  // random bits randomize the order in the set.
+  void insertRandomOrder(
+      int64_t key,
+      int64_t serial,
+      folly::F14FastSet<uint64_t>& order) {
+    // The word has 24 bits of grouping key, 8 random bits and 32 bits of serial
+    // number.
+    order.insert(
+        ((folly::Random::rand32(rng_) & 0xff) << 24) | key | (serial << 32));
+  }
+
+  // Returns the key from a value inserted with insertRandomOrder().
+  int32_t randomOrderKey(uint64_t key) {
+    return key & ((1 << 24) - 1);
+  }
+
+  void addBatch(
+      int32_t count,
+      RowVectorPtr rows,
+      BufferPtr& dictionary,
+      std::vector<RowVectorPtr>& batches) {
+    std::vector<VectorPtr> children;
+    dictionary->setSize(count * sizeof(vector_size_t));
+    children.push_back(BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), dictionary, count, rows->childAt(0)));
+    children.push_back(BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), dictionary, count, rows->childAt(1)));
+    children.push_back(children[1]);
+    batches.push_back(vectorMaker_.rowVector(children));
+    dictionary = AlignedBuffer::allocate<vector_size_t>(
+        dictionary->capacity() / sizeof(vector_size_t), rows->pool());
+  }
+
+  // Makes batches which reference rows in 'rows' via dictionary. The
+  // dictionary indices are given by 'order', wich has values with
+  // indices plus random bits so as to create randomly scattered,
+  // sometimes repeated values.
+  void makeBatches(
+      RowVectorPtr rows,
+      folly::F14FastSet<uint64_t>& order,
+      std::vector<RowVectorPtr>& batches) {
+    constexpr int32_t kBatch = 1000;
+    BufferPtr dictionary =
+        AlignedBuffer::allocate<vector_size_t>(kBatch, rows->pool());
+    auto rawIndices = dictionary->asMutable<vector_size_t>();
+    int32_t counter = 0;
+    for (auto& n : order) {
+      rawIndices[counter++] = randomOrderKey(n);
+      if (counter == kBatch) {
+        addBatch(counter, rows, dictionary, batches);
+        rawIndices = dictionary->asMutable<vector_size_t>();
+        counter = 0;
+      }
+    }
+    if (counter) {
+      addBatch(counter, rows, dictionary, batches);
+    }
+  }
+
   RowTypePtr rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
           {BIGINT(),
@@ -406,7 +474,9 @@ TEST_F(AggregationTest, global) {
 
   assertQuery(
       op,
-      "SELECT sum(15), sum(c1), sum(c2), sum(c4), sum(c5), min(15), min(c1), min(c2), min(c3), min(c4), min(c5), max(15), max(c1), max(c2), max(c3), max(c4), max(c5) FROM tmp");
+      "SELECT sum(15), sum(c1), sum(c2), sum(c4), sum(c5), "
+      "min(15), min(c1), min(c2), min(c3), min(c4), min(c5), "
+      "max(15), max(c1), max(c2), max(c3), max(c4), max(c5) FROM tmp");
 }
 
 TEST_F(AggregationTest, singleBigintKey) {
@@ -611,6 +681,129 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
       .assertResults("SELECT c0, count(1) FROM tmp GROUP BY 1");
 }
 
+// Validates partial aggregate output types for SUM/MIN/MAX.
+TEST_F(AggregationTest, validatePartialTypes) {
+  auto vectors = makeVectors(rowType_, 10, 1);
+  auto execAggr = [&](const std::vector<std::string>& aggregates) {
+    auto plan = PlanBuilder()
+                    .values(vectors)
+                    .partialAggregation({}, aggregates)
+                    .planNode();
+    return AssertQueryBuilder(plan).copyResults(pool());
+  };
+
+  RowVectorPtr output;
+
+  // C0 - BIGINT
+  // TODO: sum(c0) overflows int64_t and fails UBSAN.
+  output = execAggr({"min(c0)", "max(c0)"});
+  EXPECT_EQ(BIGINT(), output->childAt(0)->type());
+  EXPECT_EQ(BIGINT(), output->childAt(1)->type());
+
+  // C1 - SMALLINT
+  output = execAggr({"sum(c1)", "min(c1)", "max(c1)"});
+  EXPECT_EQ(BIGINT(), output->childAt(0)->type());
+  EXPECT_EQ(BIGINT(), output->childAt(1)->type());
+  EXPECT_EQ(BIGINT(), output->childAt(2)->type());
+
+  // C2 - INTEGER
+  output = execAggr({"sum(c2)", "min(c2)", "max(c2)"});
+  EXPECT_EQ(BIGINT(), output->childAt(0)->type());
+  EXPECT_EQ(BIGINT(), output->childAt(1)->type());
+  EXPECT_EQ(BIGINT(), output->childAt(2)->type());
+
+  // C3 - BIGINT
+  // TODO: sum(c3) overflows int64_t and fails UBSAN.
+  output = execAggr({"min(c3)", "max(c3)"});
+  EXPECT_EQ(BIGINT(), output->childAt(0)->type());
+  EXPECT_EQ(BIGINT(), output->childAt(1)->type());
+
+  // C4 - REAL
+  output = execAggr({"sum(c4)", "min(c4)", "max(c4)"});
+  EXPECT_EQ(DOUBLE(), output->childAt(0)->type());
+  EXPECT_EQ(REAL(), output->childAt(1)->type());
+  EXPECT_EQ(REAL(), output->childAt(2)->type());
+
+  // C5 - DOUBLE
+  output = execAggr({"sum(c5)", "min(c5)", "max(c5)"});
+  EXPECT_EQ(DOUBLE(), output->childAt(0)->type());
+  EXPECT_EQ(DOUBLE(), output->childAt(1)->type());
+  EXPECT_EQ(DOUBLE(), output->childAt(2)->type());
+
+  // C6 - VARCHAR
+  output = execAggr({"min(c6)", "max(c6)"});
+  EXPECT_EQ(VARCHAR(), output->childAt(0)->type());
+  EXPECT_EQ(VARCHAR(), output->childAt(1)->type());
+
+  // Can't sum strings.
+  EXPECT_THROW(execAggr({"sum(c6)"}), VeloxUserError);
+}
+
+TEST_F(AggregationTest, spill) {
+  using core::QueryConfig;
+  constexpr int32_t kNumDistinct = 200000;
+  constexpr int64_t kMaxBytes = 24LL << 20; // 24 MB
+  rng_.seed(1);
+  rowType_ = ROW({"c0", "c1", "a"}, {INTEGER(), VARCHAR(), VARCHAR()});
+  // The input batch has kNumDistinct distinct keys. The repeat count of a key
+  // is given by min(1, (k % 100) - 90). The batch is repeated 3 times, each
+  // time in a different order.
+  RowVectorPtr rows = std::static_pointer_cast<RowVector>(
+      BaseVector::create(rowType_, kNumDistinct, pool_.get()));
+  folly::F14FastSet<uint64_t> order1;
+  folly::F14FastSet<uint64_t> order2;
+  folly::F14FastSet<uint64_t> order3;
+  auto c0 = rows->childAt(0)->as<FlatVector<int32_t>>();
+  c0->resize(kNumDistinct);
+  auto c1 = rows->childAt(1)->as<FlatVector<StringView>>();
+  c1->resize(kNumDistinct);
+  int32_t totalCount = 0;
+  for (int32_t i = 0; i < kNumDistinct; ++i) {
+    c0->set(i, i);
+    std::string str = fmt::format("{}{}", i, i);
+    c1->set(i, StringView(str));
+    auto numRepeats = std::max(1, (i % 100) - 90);
+    // We make random permutations of the data by adding the indices into a set
+    // with a random 6 high bits followed by a serial number. These are inlined
+    // in the F14FastSet in an order that depends on the hash number.
+    for (auto j = 0; j < numRepeats; ++j) {
+      ++totalCount;
+      insertRandomOrder(i, totalCount, order1);
+      insertRandomOrder(i, totalCount, order2);
+      insertRandomOrder(i, totalCount, order3);
+    }
+  }
+  std::vector<RowVectorPtr> batches;
+  makeBatches(rows, order1, batches);
+  makeBatches(rows, order2, batches);
+  makeBatches(rows, order3, batches);
+  auto results =
+      AssertQueryBuilder(PlanBuilder()
+                             .values(batches)
+                             .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                             .planNode())
+          .copyResults(pool_.get());
+
+  auto tempDirectory = exec::test::TempDirectoryPath::create();
+  auto queryCtx = core::QueryCtx::createForTest();
+  queryCtx->pool()->setMemoryUsageTracker(
+      velox::memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
+
+  auto task =
+      AssertQueryBuilder(PlanBuilder()
+                             .values(batches)
+                             .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                             .planNode())
+          .queryCtx(queryCtx)
+          .config(QueryConfig::kSpillPath, tempDirectory->path)
+          .assertResults(results);
+
+  auto stats = task->taskStats().pipelineStats;
+
+  // Over 20MB spilled.
+  EXPECT_LT(20 << 20, stats[0].operatorStats[1].spilledBytes);
+}
+
 /// Verify number of memory allocations in the HashAggregation operator.
 TEST_F(AggregationTest, memoryAllocations) {
   vector_size_t size = 1'024;
@@ -660,6 +853,90 @@ TEST_F(AggregationTest, memoryAllocations) {
   planStats = toPlanStats(task->taskStats());
   ASSERT_EQ(1, planStats.at(projectNodeId).numMemoryAllocations);
   ASSERT_EQ(5, planStats.at(aggNodeId).numMemoryAllocations);
+}
+
+TEST_F(AggregationTest, groupingSets) {
+  vector_size_t size = 1'000;
+  auto data = makeRowVector(
+      {"k1", "k2", "a", "b"},
+      {
+          makeFlatVector<int64_t>(size, [](auto row) { return row % 11; }),
+          makeFlatVector<int64_t>(size, [](auto row) { return row % 17; }),
+          makeFlatVector<int64_t>(size, [](auto row) { return row; }),
+          makeFlatVector<StringView>(
+              size,
+              [](auto row) { return StringView(std::string(row % 12, 'x')); }),
+      });
+
+  createDuckDbTable({data});
+
+  auto plan =
+      PlanBuilder()
+          .values({data})
+          .groupId({{"k1"}, {"k2"}}, {"a", "b"})
+          .singleAggregation(
+              {"k1", "k2", "group_id"},
+              {"count(1) as count_1", "sum(a) as sum_a", "max(b) as max_b"})
+          .project({"k1", "k2", "count_1", "sum_a", "max_b"})
+          .planNode();
+
+  assertQuery(
+      plan,
+      "SELECT k1, k2, count(1), sum(a), max(b) FROM tmp GROUP BY GROUPING SETS ((k1), (k2))");
+
+  // Compute a subset of aggregates per grouping set by using masks based on
+  // group_id column.
+  plan = PlanBuilder()
+             .values({data})
+             .groupId({{"k1"}, {"k2"}}, {"a", "b"})
+             .project(
+                 {"k1",
+                  "k2",
+                  "group_id",
+                  "a",
+                  "b",
+                  "group_id = 0 as mask_a",
+                  "group_id = 1 as mask_b"})
+             .singleAggregation(
+                 {"k1", "k2", "group_id"},
+                 {"count(1) as count_1", "sum(a) as sum_a", "max(b) as max_b"},
+                 {"", "mask_a", "mask_b"})
+             .project({"k1", "k2", "count_1", "sum_a", "max_b"})
+             .planNode();
+
+  assertQuery(
+      plan,
+      "SELECT k1, null, count(1), sum(a), null FROM tmp GROUP BY k1 "
+      "UNION ALL "
+      "SELECT null, k2, count(1), null, max(b) FROM tmp GROUP BY k2");
+
+  // Cube.
+  plan = PlanBuilder()
+             .values({data})
+             .groupId({{"k1", "k2"}, {"k1"}, {"k2"}, {}}, {"a", "b"})
+             .singleAggregation(
+                 {"k1", "k2", "group_id"},
+                 {"count(1) as count_1", "sum(a) as sum_a", "max(b) as max_b"})
+             .project({"k1", "k2", "count_1", "sum_a", "max_b"})
+             .planNode();
+
+  assertQuery(
+      plan,
+      "SELECT k1, k2, count(1), sum(a), max(b) FROM tmp GROUP BY CUBE (k1, k2)");
+
+  // Rollup.
+  plan = PlanBuilder()
+             .values({data})
+             .groupId({{"k1", "k2"}, {"k1"}, {}}, {"a", "b"})
+             .singleAggregation(
+                 {"k1", "k2", "group_id"},
+                 {"count(1) as count_1", "sum(a) as sum_a", "max(b) as max_b"})
+             .project({"k1", "k2", "count_1", "sum_a", "max_b"})
+             .planNode();
+
+  assertQuery(
+      plan,
+      "SELECT k1, k2, count(1), sum(a), max(b) FROM tmp GROUP BY ROLLUP (k1, k2)");
 }
 
 } // namespace
