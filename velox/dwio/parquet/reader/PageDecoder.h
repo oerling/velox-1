@@ -230,7 +230,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
   constexpr bool filterOnly =
       std::is_same<typename Visitor::Extract, dwrf::DropValues>::value;
   constexpr bool hasHook =
-      !std::is_same<typename Visitor::HookType, dwrf::NoHook>::value;
+    !std::is_same<typename Visitor::HookType, dwio::common::NoHook>::value;
 
   bool mayProduceNulls = !filterOnly && visitor.allowNulls();
   auto rows = visitor.rows();
@@ -247,7 +247,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
     visitor.setNumValuesBias(numValuesBeforePage);
     visitor.setRows(pageRows);
     if (nulls) {
-      nullsFromFastPath = dwrf::useFastPath<Visitor, true>(visitor);
+      nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
       directDecoder_->readWithVisitor<true>(nulls, visitor);
     } else {
       directDecoder_->readWithVisitor<false>(nulls, visitor);

@@ -21,9 +21,9 @@
 #pragma once
 
 #include "velox/common/base/SimdUtil.h"
-#include "velox/dwio/dwrf/common/DecoderUtil.h"
+#include "velox/dwio/common/DecoderUtil.h"
 #include "velox/type/Filter.h"
 
 #include <arrow/util/rle_encoding.h>
 
-namespace facebook::velox::parquet {} // namespace facebook::velox::parquet
+

@@ -13,27 +13,48 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <gtest/gtest.h>
+#include <array>
 
-#include "velox/dwio/parquet/reader/ParquetReader.h"
-#include "ParquetReaderTest.h"
-#include "velox/dwio/dwrf/test/utils/DataFiles.h"
+#include "velox/dwio/parquet/duckdb_reader/ParquetReader.h"
+#include "velox/dwio/parquet/tests/ParquetReaderTestBase.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/type/Filter.h"
 #include "velox/type/Type.h"
 #include "velox/vector/ComplexVector.h"
-#include "velox/vector/tests/VectorMaker.h"
-
-#include <fmt/core.h>
-#include <gtest/gtest.h>
-#include <array>
 
 using namespace ::testing;
 using namespace facebook::velox::dwio::common;
 using namespace facebook::velox;
-using namespace facebook::velox::parquet;
+
+using namespace facebook::velox::dwio::parquet;
+using namespace facebook::velox::parquet::duckdb_reader;
+
+class ParquetReaderTest : public ParquetReaderTestBase {
+ public:
+  void assertReadWithFilters(
+      const std::string& fileName,
+      const RowTypePtr& fileSchema,
+      FilterMap filters,
+      const RowVectorPtr& expected) {
+    const auto filePath(getExampleFilePath(fileName));
+
+    ReaderOptions readerOptions;
+    auto reader = std::make_unique<parquet::duckdb_reader::ParquetReader>(
+        std::make_unique<FileInputStream>(filePath), readerOptions);
+
+    assertReadWithReaderAndFilters(
+        std::move(reader), fileName, fileSchema, std::move(filters), expected);
+  }
+
+  std::string getExampleFilePath(const std::string& fileName) {
+    return test::getDataFilePath(
+        "velox/dwio/parquet/tests/duckdb_reader", "../examples/" + fileName);
+  }
+};
 
 template <>
-VectorPtr ParquetReaderTest::rangeVector<Date>(size_t size, Date start) {
+VectorPtr ParquetReaderTestBase::rangeVector<Date>(size_t size, Date start) {
   return vectorMaker_->flatVector<Date>(
       size, [&](auto row) { return Date(start.days() + row); });
 }

@@ -48,7 +48,7 @@ void PageDecoder::readNextPage(int64_t row) {
       break;
     }
     rowOfPage_ += numRowsInPage_;
-    dwrf::skipBytes(
+    dwio::common::skipBytes(
         pageHeader.compressed_page_size,
         inputStream_.get(),
         bufferStart_,
@@ -79,7 +79,7 @@ PageHeader PageDecoder::readPageHeader(int64_t remainingSize) {
         apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
         transport);
   } else {
-    dwrf::readBytes(
+    dwio::common::readBytes(
         std::min<int64_t>(remainingSize, sizeof(PageHeader)),
         inputStream_.get(),
         &copy,
@@ -122,7 +122,7 @@ const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
     return bufferStart_ - size;
   }
   dwrf::detail::ensureCapacity<char>(copy, size, &pool_);
-  dwrf::readBytes(
+  dwio::common::readBytes(
       size,
       inputStream_.get(),
       copy->asMutable<char>(),

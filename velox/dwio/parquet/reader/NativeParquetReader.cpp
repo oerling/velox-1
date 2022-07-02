@@ -75,7 +75,7 @@ void ReaderBase::loadFileMetaData() {
   std::vector<char> copy(readSize);
   const char* bufferStart = nullptr;
   const char* bufferEnd = nullptr;
-  dwrf::readBytes(readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
+  dwio::common::readBytes(readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
   DWIO_ENSURE(
       strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
       "No magic bytes found at end of the Parquet file");
@@ -95,7 +95,7 @@ void ReaderBase::loadFileMetaData() {
     std::memmove(copy.data() + missingLength, copy.data(), readSize - 8);
     bufferStart = nullptr;
     bufferEnd = nullptr;
-    dwrf::readBytes(
+    dwio::common::readBytes(
         missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
   }
 

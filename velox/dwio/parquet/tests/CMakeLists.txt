@@ -18,78 +18,15 @@ include_directories(${CMAKE_BINARY_DIR})
 set(TEST_LINK_LIBS
     velox_dwrf_test_utils
     velox_vector_test_lib
-    ${gflags_LIBRARIES}
     gtest
     gtest_main
     gmock
+    ${gflags_LIBRARIES}
     ${GLOG}
     ${FILESYSTEM})
 
-add_executable(velox_dwio_parquet_reader_test ParquetReaderTest.cpp)
-add_test(
-  NAME velox_dwio_parquet_reader_test
-  COMMAND velox_dwio_parquet_reader_test
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_subdirectory(duckdb_reader)
 
-target_link_libraries(velox_dwio_parquet_reader_test velox_dwio_parquet_reader
-                      ${VELOX_LINK_LIBS} ${TEST_LINK_LIBS})
-
-add_executable(velox_dwio_parquet_table_scan_test ParquetTableScanTest.cpp)
-add_test(
-  NAME velox_dwio_parquet_table_scan_test
-  COMMAND velox_dwio_parquet_table_scan_test
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-
-target_link_libraries(
-  velox_dwio_parquet_table_scan_test
-  velox_dwio_parquet_reader
-  ${VELOX_LINK_LIBS}
-  velox_exec_test_util
-  velox_exec
-  velox_hive_connector
-  velox_aggregates
-  ${TEST_LINK_LIBS})
-
-add_executable(velox_dwio_parquet_tpch_test ParquetTpchTest.cpp)
-add_test(
-  NAME velox_dwio_parquet_tpch_test
-  COMMAND velox_dwio_parquet_tpch_test
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-
-target_link_libraries(
-  velox_dwio_parquet_tpch_test
-  velox_dwio_parquet_reader
-  velox_exec_test_util
-  velox_exec
-  velox_hive_connector
-  velox_aggregates
-  ${VELOX_LINK_LIBS}
-  ${TEST_LINK_LIBS})
-
-add_executable(velox_dwio_native_parquet_reader_test NativeParquetReaderTest.cpp
-                                                     ParquetReaderTest.h)
-
-add_test(
-  NAME velox_dwio_native_parquet_reader_test
-  COMMAND velox_dwio_native_parquet_reader_test
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-
-target_link_libraries(velox_dwio_native_parquet_reader_test ${VELOX_LINK_LIBS}
-                      ${TEST_LINK_LIBS})
-
-add_executable(velox_dwio_native_parquet_reader_benchmark
-               ParquetReaderBenchmark.cpp ParquetReaderTest.h)
-
-message("TEST_LINK_LIBS ${TEST_LINK_LIBS}")
-message("FOLLY_WITH_DEPENDENCIES ${FOLLY_WITH_DEPENDENCIES}")
-target_link_libraries(
-  velox_dwio_parquet_table_scan_test
-  ${VELOX_LINK_LIBS}
-  velox_exec_test_util
-  velox_exec
-  velox_hive_connector
-  velox_aggregates
-  ${TEST_LINK_LIBS})
 
 add_executable(velox_parquet_e2e_filter_test E2EFilterTest.cpp)
 add_test(velox_parquet_e2e_filter_test velox_dwrf_e2e_filter_test)
