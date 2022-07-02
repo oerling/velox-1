@@ -43,7 +43,6 @@ void E2EFilterTestBase::makeRowType(
   rowType_ = std::dynamic_pointer_cast<const RowType>(parser.parse(schema));
 }
 
-  
 void E2EFilterTestBase::makeDataset(
     std::function<void()> customizeData,
     bool forRowGroupSkip) {

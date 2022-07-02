@@ -296,7 +296,10 @@ inline int32_t sizeOfIntKind(TypeKind kind) {
 }
 
 template <typename Move>
-void SelectiveColumnReader::compactComplexValues(RowSet rows, Move move, bool isFinal) {
+void SelectiveColumnReader::compactComplexValues(
+    RowSet rows,
+    Move move,
+    bool isFinal) {
   VELOX_CHECK_LE(rows.size(), outputRows_.size());
   VELOX_CHECK(!rows.empty());
   if (rows.size() == outputRows_.size()) {
@@ -345,7 +348,6 @@ void SelectiveColumnReader::compactComplexValues(RowSet rows, Move move, bool is
   valueRows_.resize(numValues_);
 }
 
-  
 template <typename T>
 void SelectiveColumnReader::filterNulls(
     RowSet rows,

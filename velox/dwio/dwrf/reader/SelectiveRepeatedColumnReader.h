@@ -187,7 +187,7 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
     SelectiveColumnReader::seekToRowGroup(index);
-    
+
     auto positions = toPositions(index_->entry(index));
     dwio::common::PositionProvider positionsProvider(positions);
 
@@ -232,8 +232,8 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
-        SelectiveColumnReader::seekToRowGroup(index);
-    
+    SelectiveColumnReader::seekToRowGroup(index);
+
     auto positions = toPositions(index_->entry(index));
     dwio::common::PositionProvider positionsProvider(positions);
 

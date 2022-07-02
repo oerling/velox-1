@@ -395,11 +395,11 @@ SubfieldFilters FilterGenerator::makeSubfieldFilters(
       case TypeKind::DOUBLE:
         stats = makeStats<TypeKind::DOUBLE>(vector->type(), rowType_);
         break;
-    case TypeKind::ROW:
-      stats = makeStats<TypeKind::ROW>(vector->type(), rowType_);
-	break;
+      case TypeKind::ROW:
+        stats = makeStats<TypeKind::ROW>(vector->type(), rowType_);
+        break;
       // TODO:
-        // Add support for TTypeKind::IMESTAMP.
+      // Add support for TTypeKind::IMESTAMP.
       default:
         VELOX_CHECK(
             false,

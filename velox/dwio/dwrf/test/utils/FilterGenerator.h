@@ -109,7 +109,7 @@ class ColumnStats : public AbstractColumnStats {
       if (batch != previousBatch) {
         previousBatch = batch;
         auto vector = batches[batch];
-	
+
         values = getChildBySubfield(vector.get(), subfield, rootType_)
                      ->template asUnchecked<SimpleVector<T>>();
       }
@@ -119,7 +119,7 @@ class ColumnStats : public AbstractColumnStats {
     if constexpr (!std::is_same_v<T, ComplexType>) {
       std::sort(values_.begin(), values_.end());
     }
-    }
+  }
 
   std::unique_ptr<Filter> filter(
       float startPct,
@@ -279,7 +279,6 @@ class ColumnStats : public AbstractColumnStats {
   std::vector<T> values_;
 };
 
-
 class ComplexColumnStats : public AbstractColumnStats {
  public:
   explicit ComplexColumnStats(TypePtr type, RowTypePtr rootTypePtr)
@@ -296,12 +295,12 @@ class ComplexColumnStats : public AbstractColumnStats {
       if (batch != previousBatch) {
         previousBatch = batch;
         auto vector = batches[batch];
-	
+
         values = getChildBySubfield(vector.get(), subfield, rootType_);
       }
       ++numSamples_;
       if (values->isNullAt(batchRow(row))) {
-	++numNulls_;
+        ++numNulls_;
       }
     }
   }
@@ -314,9 +313,10 @@ class ComplexColumnStats : public AbstractColumnStats {
       const Subfield& subfield,
       std::vector<uint32_t>& hits) override {
     std::unique_ptr<Filter> filter;
-    // A complex type can only have is null and is not null filters. make an is null if selective. 
+    // A complex type can only have is null and is not null filters. make an is
+    // null if selective.
     if (selectPct < 20) {
-        filter = std::make_unique<velox::common::IsNull>();
+      filter = std::make_unique<velox::common::IsNull>();
     } else {
       filter = std::make_unique<velox::common::IsNotNull>();
     }
@@ -329,11 +329,12 @@ class ComplexColumnStats : public AbstractColumnStats {
       if (batch != previousBatch) {
         previousBatch = batch;
         auto vector = batches[batch];
-        values = getChildBySubfield(batches[batch].get(), subfield, rootType_).get();
+        values =
+            getChildBySubfield(batches[batch].get(), subfield, rootType_).get();
       }
       auto row = batchRow(hit);
       if (values->isNullAt(row) == isNull) {
-	hits[numHits++] = hit;
+        hits[numHits++] = hit;
       }
     }
     if (!numHits) {
@@ -352,8 +353,6 @@ class ComplexColumnStats : public AbstractColumnStats {
   }
 
  private:
-
-
   std::unique_ptr<Filter> makeRangeFilter(float startPct, float selectPct) {
     VELOX_FAIL("N/A in ComplexType");
   }
@@ -361,11 +360,10 @@ class ComplexColumnStats : public AbstractColumnStats {
   std::unique_ptr<Filter> makeRowGroupSkipRangeFilter(
       const std::vector<RowVectorPtr>& batches,
       const Subfield& subfield) {
-        VELOX_FAIL("N/A in ComplexType");
+    VELOX_FAIL("N/A in ComplexType");
   }
-
 };
-    
+
 template <>
 std::unique_ptr<Filter> ColumnStats<bool>::makeRangeFilter(
     float startPct,
@@ -406,7 +404,7 @@ inline std::unique_ptr<AbstractColumnStats> makeStats<TypeKind::ROW>(
   return std::make_unique<ComplexColumnStats>(type, rootType);
 }
 
-  class FilterGenerator {
+class FilterGenerator {
  public:
   static std::string specsToString(const std::vector<FilterSpec>& specs);
   static SubfieldFilters cloneSubfieldFilters(const SubfieldFilters& src);
