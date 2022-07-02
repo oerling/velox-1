@@ -89,5 +89,4 @@ void SelectiveIntegerDirectColumnReader::readWithVisitor(
   }
   readOffset_ += numRows;
 }
-
 } // namespace facebook::velox::dwrf
