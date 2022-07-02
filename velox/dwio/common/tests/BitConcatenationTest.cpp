@@ -29,7 +29,6 @@ TEST(BitConcatenationTests, basic) {
   std::vector<uint64_t> oneBits(10, ~0UL);
   std::vector<uint64_t> zeroBits(10, 0UL);
 
-  
   // add only one bits, expect nullptr.
   bits.reset(result);
   bits.appendOnes(34);
@@ -49,4 +48,3 @@ TEST(BitConcatenationTests, basic) {
   EXPECT_TRUE(bits::isAllSet(data, 29, 29 + 26, false));
   EXPECT_TRUE(bits::isAllSet(data, 29 + 26, 29 + 26 + 23, true));
 }
-

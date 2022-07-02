@@ -46,7 +46,7 @@ class BitConcatenation {
   int32_t numBits() const {
     return numBits_;
   }
-  
+
  private:
   // Allocates or reallocates '*buffer' to have space for 'numBits_ + newBits'
   // bits.
@@ -63,4 +63,4 @@ class BitConcatenation {
   int32_t numBits_{0};
 };
 
-} // namespace facebook::velox::parquet
+} // namespace facebook::velox::dwio::common
