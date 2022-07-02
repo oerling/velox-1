@@ -88,7 +88,9 @@ std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
   return stridesToSkip;
 }
 
-void SelectiveStructColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
+void SelectiveStructColumnReader::seekTo(
+    vector_size_t offset,
+    bool readsNullsOnly) {
   if (offset == readOffset_) {
     return;
   }
@@ -101,24 +103,24 @@ void SelectiveStructColumnReader::seekTo(vector_size_t offset, bool readsNullsOn
     }
     auto distance = offset - readOffset_ - numParentNulls_;
     auto numNonNulls = ColumnReader::skip(distance);
-    // We inform children how many nulls we between original position
+    // We inform children how many nulls there were between original position
     // and destination. The children will seek this many less. The
     // nulls include the nulls found here as well as the enclosing
     // level nulls reported to this by parents.
     for (auto& child : children_) {
       if (child) {
-	child->addSkippedParentNulls(readOffset_, offset, numParentNulls_ + distance - numNonNulls);
+        child->addSkippedParentNulls(
+            readOffset_, offset, numParentNulls_ + distance - numNonNulls);
       }
     }
-        numParentNulls_ = 0;
-	parentNullsRecordedTo_ = 0;
-	readOffset_ = offset;
+    numParentNulls_ = 0;
+    parentNullsRecordedTo_ = 0;
+    readOffset_ = offset;
   } else {
     VELOX_FAIL("Seeking backward on a ColumnReader");
   }
 }
 
-  
 uint64_t SelectiveStructColumnReader::skip(uint64_t numValues) {
   auto numNonNulls = ColumnReader::skip(numValues);
   // 'readOffset_' of struct child readers is aligned with
@@ -183,16 +185,19 @@ void SelectiveStructColumnReader::read(
   const uint64_t* structNulls =
       nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
   bool hasFilter = false;
-  raw_vector<vector_size_t> prefiltered;
   // a struct reader may have a null/non-null filter
   if (scanSpec_->filter()) {
     auto kind = scanSpec_->filter()->kind();
-    VELOX_CHECK(kind == common::FilterKind::kIsNull || kind == common::FilterKind::kIsNotNull);
+    VELOX_CHECK(
+        kind == common::FilterKind::kIsNull ||
+        kind == common::FilterKind::kIsNotNull);
     hasFilter = true;
     filterNulls<int32_t>(rows, kind == common::FilterKind::kIsNull, false);
-    prefiltered = outputRows_;
-    outputRows_.clear();
-    activeRows = prefiltered;
+    if (outputRows_.empty()) {
+      recordParentNullsInChildren(offset, rows);
+      return;
+    }
+    activeRows = outputRows_;
   }
   assert(!children_.empty());
   for (size_t i = 0; i < childSpecs.size(); ++i) {
@@ -229,10 +234,9 @@ void SelectiveStructColumnReader::read(
       reader->read(offset, activeRows, structNulls);
     }
   }
-  // If this adds nulls, the field readers will miss a value for each null added here. 
-  if (structNulls) {
-    addChildParentNulls(offset, rows);
-  }
+  // If this adds nulls, the field readers will miss a value for each null added
+  // here.
+  recordParentNullsInChildren(offset, rows);
 
   if (hasFilter) {
     setOutputRows(activeRows);
@@ -241,19 +245,24 @@ void SelectiveStructColumnReader::read(
   readOffset_ = offset + rows.back() + 1;
 }
 
-  void SelectiveStructColumnReader::addChildParentNulls(vector_size_t offset, RowSet rows) {
-    auto& childSpecs = scanSpec_->children();
-    for (auto i = 0; i < childSpecs.size(); ++i) {
+void SelectiveStructColumnReader::recordParentNullsInChildren(
+    vector_size_t offset,
+    RowSet rows) {
+  auto& childSpecs = scanSpec_->children();
+  for (auto i = 0; i < childSpecs.size(); ++i) {
     auto& childSpec = childSpecs[i];
     if (childSpec->isConstant()) {
       continue;
     }
     auto fieldIndex = childSpec->subscript();
     auto reader = children_.at(fieldIndex).get();
-    reader->addParentNulls(offset, nullsInReadRange_->as<uint64_t>(), rows);
-    }
+    reader->addParentNulls(
+        offset,
+        nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr,
+        rows);
   }
-  
+}
+
 namespace {
 //   Recursively makes empty RowVectors for positions in 'children'
 //   where the corresponding child type in 'rowType' is a row. The

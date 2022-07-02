@@ -100,7 +100,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   // position of each child reader and the of the range of
   // 'read(). This must be done also if a child is not read so that we
   // know how much to skip when seeking forward within the row group.
-  void addChildParentNulls(vector_size_t offset, RowSet rows);
+  void recordParentNullsInChildren(vector_size_t offset, RowSet rows);
   
   // Returns the nulls bitmap from reading this. Used in LazyVector loaders.
   const uint64_t* nulls() const {

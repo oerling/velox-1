@@ -165,7 +165,7 @@ class SelectiveColumnReader : public ColumnReader {
     numParentNulls_ = 0;
     parentNullsRecordedTo_ = 0;
   }
-  
+
   const TypePtr& type() const {
     return type_;
   }
@@ -321,18 +321,23 @@ class SelectiveColumnReader : public ColumnReader {
   // A reader nested inside nullable containers has fewer rows than
   // the top level table. addParentNulls records how many parent nulls
   // there are between the position of 'this' and 'rows.back() + 1',
-  // i.e. the position of the scan in top level rows. 'nullsRow' is
-  // the top level row corresponding to the first nulls bit in
+  // i.e. the position of the scan in top level rows. 'firstRowInNulls' is
+  // the top level row corresponding to the first bit in
   // 'nulls'. 'nulls' is in terms of top level rows and represents all
-  // null parents at any enclosing level.
-  void addParentNulls(int32_t nullsRow, const uint64_t* nulls, RowSet rows);
+  // null parents at any enclosing level. 'nulls' is nullptr if there are no
+  // parent nulls.
+  void addParentNulls(
+      int32_t firstRowInNulls,
+      const uint64_t* FOLLY_NULLABLE nulls,
+      RowSet rows);
 
   // When skipping rows in a struct, records how many parent nulls at
   // any level there are between top level row 'from' and 'to'. If
   // called many times, the 'from' of the next should be the 'to' of
   // the previous.
-  void addSkippedParentNulls(vector_size_t from, vector_size_t to, int32_t numNulls);
-  
+  void
+  addSkippedParentNulls(vector_size_t from, vector_size_t to, int32_t numNulls);
+
  protected:
   static constexpr int8_t kNoValueSize = -1;
   static constexpr uint32_t kRowGroupNotSet = ~0;
@@ -374,6 +379,14 @@ class SelectiveColumnReader : public ColumnReader {
 
   template <typename T, typename TVector>
   void compactScalarValues(RowSet rows, bool isFinal);
+
+  // Compacts values extracted for a complex type column with
+  // filter. The values for 'rows' are shifted to be consecutive at
+  // indices [0..rows.size() - 1]'. 'move' is a function that takes
+  // two indices source and target and moves the value at source to
+  // target. target is <= source for all calls.
+  template <typename Move>
+  void compactComplexValues(RowSet rows, Move move, bool isFinal);
 
   template <typename T, typename TVector>
   void upcastScalarValues(RowSet rows);

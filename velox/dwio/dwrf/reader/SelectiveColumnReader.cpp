@@ -348,18 +348,25 @@ void SelectiveColumnReader::resetFilterCaches() {
 }
 
 void SelectiveColumnReader::addParentNulls(
-    int32_t nullsRow,
+    int32_t firstRowInNulls,
     const uint64_t* nulls,
     RowSet rows) {
-  int32_t firstNullIndex = readOffset_ < nullsRow ? 0 : readOffset_ - nullsRow;
-  numParentNulls_ += bits::countNulls(nulls, firstNullIndex, rows.back() + 1);
-  parentNullsRecordedTo_ = nullsRow + rows.back() + 1;
+  int32_t firstNullIndex =
+      readOffset_ < firstRowInNulls ? 0 : readOffset_ - firstRowInNulls;
+  numParentNulls_ +=
+      nulls ? bits::countNulls(nulls, firstNullIndex, rows.back() + 1) : 0;
+  parentNullsRecordedTo_ = firstRowInNulls + rows.back() + 1;
 }
 
 void SelectiveColumnReader::addSkippedParentNulls(
     vector_size_t from,
     vector_size_t to,
     int32_t numNulls) {
+  if (from / rowsPerRowGroup_ > parentNullsRecordedTo_ / rowsPerRowGroup_) {
+    // the new nulls are in a different row group than the last.
+    parentNullsRecordedTo_ = from;
+    numParentNulls_ = 0;
+  }
   if (parentNullsRecordedTo_) {
     VELOX_CHECK_EQ(parentNullsRecordedTo_, from);
   }
