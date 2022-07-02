@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwio::common/BitConcatenation.h"
+#include "velox/dwio/common/BitConcatenation.h"
 
 namespace facebook::velox::dwio::common {
 
   void BitConcatenation::append(
     const uint64_t* FOLLY_NULLABLE bits,
     int32_t begin,
-    int32_t numBits) {
-    if (!bits || bits::isAllSet(bits, begin, end, true)) {
+    int32_t end) {
+      int32_t numBits = end - begin;
+      if (!bits || bits::isAllSet(bits, begin, end, true)) {
     appendOnes(numBits);
     return;
   }

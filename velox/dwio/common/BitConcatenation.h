@@ -53,7 +53,9 @@ class BitConcatenation {
   void ensureSpace(int32_t newBits);
 
   void setSize() {
-    (*buffer_)->setSize(bits::roundUp(numBits_, 8) / 8);
+    if (*buffer_) {
+      (*buffer_)->setSize(bits::roundUp(numBits_, 8) / 8);
+    }
   }
 
   memory::MemoryPool& pool_;
