@@ -13,6 +13,7 @@
 # limitations under the License.
 add_executable(
   velox_dwio_common_test
+  BitConCatenationTest.cpp
   ChainedBufferTests.cpp
   DataBufferTests.cpp
   DecoderUtilTest.cpp
