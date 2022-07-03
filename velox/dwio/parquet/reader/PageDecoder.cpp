@@ -406,7 +406,6 @@ bool PageDecoder::rowsForPage(
     nulls = readNulls(rowsCopy_->back() + 1, reader.nullsInReadRange());
     rows = folly::Range<const vector_size_t*>(
         rowsCopy_->data(), rowsCopy_->size());
-    ;
   }
   reader.prepareNulls(rows, nulls != nullptr, currentVisitorRow_);
   currentVisitorRow_ += numToVisit;

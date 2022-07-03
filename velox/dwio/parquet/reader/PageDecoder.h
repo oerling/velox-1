@@ -18,7 +18,7 @@
 
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
-#include "velox/dwio/parquet/reader/BitConcatenation.h"
+#include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/vector/BaseVector.h"
@@ -215,7 +215,7 @@ class PageDecoder {
   // nulls in the reader. If many pages are covered, some with and
   // some without nulls, we must make a a concatenated null flags to
   // return to the caller.
-  BitConcatenation nullConcatenation_;
+  dwio::common::BitConcatenation nullConcatenation_;
 
   // Decoders. Only one will be set at a time.
   std::unique_ptr<dwrf::DirectDecoder<true>> directDecoder_;
@@ -273,10 +273,11 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
               reader.numValues() - numValuesBeforePage);
         } else {
           // Add the nulls produced from the decoder to the result.
+	  auto firstNullIndex = nullsFromFastPath ? 0 : numValuesBeforePage;
           nullConcatenation_.append(
               reader.mutableNulls(0),
-              nullsFromFastPath ? 0 : numValuesBeforePage,
-              reader.numValues() - numValuesBeforePage);
+              firstNullIndex,
+              firstNullIndex + reader.numValues() - numValuesBeforePage);
         }
       }
       isMultiPage = true;
