@@ -12,14 +12,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
-
  */
 
 #include "velox/dwio/parquet/reader/ParquetReader.h"
 #include <thrift/protocol/TCompactProtocol.h>
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeUtils.h"
-#include "velox/dwio/parquet/reader/ReaderUtil.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 #include "velox/dwio/parquet/reader/ThriftTransport.h"
 
