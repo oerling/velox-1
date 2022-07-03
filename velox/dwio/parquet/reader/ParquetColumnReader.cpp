@@ -18,7 +18,7 @@
 // Created by Ying Su on 2/14/22.
 //
 
-#include "velox/dwio/parquet/reader/NativeParquetColumnReader.h"
+#include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 #include <dwio/dwrf/reader/SelectiveColumnReaderInternal.h>
 
 #include "velox/dwio/parquet/reader/IntegerColumnReader.h"

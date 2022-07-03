@@ -17,7 +17,6 @@
 // This file is a drop-in copy of Arrow's C Data Interface, as defined in:
 //   https://arrow.apache.org/docs/format/CDataInterface.html
 
-#ifndef ARROW_FLAG_DICTIONARY_ORDERED
 #pragma once
 
 // Use ARROW_FLAG_DICTIONARY_ORDERED as include guard. Building with

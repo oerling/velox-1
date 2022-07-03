@@ -11,33 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 include(ExternalProject)
-
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
-                      "/home/oerling/arrow/cpp//cmake_modules")
-
-find_package(Parquet REQUIRED)
-
-find_library(THRIFTLIB thrift)
-message("Found Thrift lib: ${THRIFTLIB} ")
-
-add_subdirectory(reader)
-add_subdirectory(writer)
 
 message(STATUS "VELOX_BUILD_TESTING: ${VELOX_BUILD_TESTING}")
-
-include(ExternalProject)
-
-# set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
-# "/home/oerling/arrow/cpp//cmake_modules")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/usr/local/lib64/cmake/arrow")
 
 find_package(Parquet REQUIRED)
 
 add_subdirectory(duckdb_reader)
-
 add_subdirectory(writer)
+add_subdirectory(reader)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

@@ -22,6 +22,7 @@
 using namespace facebook::velox;
 using namespace facebook::velox::common;
 using namespace facebook::velox::dwio::dwrf;
+using namespace facebook::velox::parquet;
 
 using dwio::common::MemoryInputStream;
 using dwio::common::MemorySink;
