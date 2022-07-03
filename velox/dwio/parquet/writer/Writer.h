@@ -25,11 +25,12 @@
 
 namespace facebook::velox::parquet {
 
+// Utility for caapturing Arrow output into a DataBuffer.
 class DataBufferSink : public arrow::io::OutputStream {
  public:
   DataBufferSink(memory::MemoryPool& pool) : buffer_(pool) {}
 
-  arrow::Status Write(const std::shared_ptr<arrow::Buffer>& data) {
+  arrow::Status Write(const std::shared_ptr<arrow::Buffer>& data) override {
     buffer_.append(
         buffer_.size(),
         reinterpret_cast<const char*>(data->data()),
@@ -43,11 +44,6 @@ class DataBufferSink : public arrow::io::OutputStream {
   }
 
   arrow::Status Flush() override {
-    return arrow::Status::OK();
-  }
-
-  arrow::Status Write(arrow::util::string_view data) {
-    buffer_.append(buffer_.size(), data.data(), data.size());
     return arrow::Status::OK();
   }
 
@@ -71,8 +67,13 @@ class DataBufferSink : public arrow::io::OutputStream {
   dwio::common::DataBuffer<char> buffer_;
 };
 
+// Writes Velox vectors into  a DataSink using Arrow Parquet writer.
 class Writer {
  public:
+  // Constructts a writer with output to 'sink'. A new row group is
+  // started every 'rowsInRowGroup[ top level rows. 'pool' is used for
+  // temporary memory. 'properties' specifies Parquet-specific
+  // options.
   Writer(
       std::unique_ptr<dwio::common::DataSink> sink,
       memory::MemoryPool& pool,
@@ -84,21 +85,33 @@ class Writer {
         finalSink_(std::move(sink)),
         properties_(std::move(properties)) {}
 
+  // Appends 'data' into the writer.
   void write(const RowVectorPtr& data);
 
+  // Forces a row group boundary before the data added by next write().
   void newRowGroup(int32_t numRows) {
     arrowWriter_->NewRowGroup(numRows);
   }
 
+  // Closes 'this', After close, data can no longer be added and the completed
+  // Parquet file is flushed into 'sink' provided at construction. 'sink' stays
+  // live until destruction of 'this'.
   void close();
 
  private:
   const int32_t rowsInRowGroup_;
-  int32_t rowsInCurrentGroup_{0};
+
+  // Pool for 'stream_'.
   memory::MemoryPool& pool_;
+
+  // Final destination of output.
   std::unique_ptr<dwio::common::DataSink> finalSink_;
+
+  // Temporary Arrow stream for capturing the output.
   std::shared_ptr<DataBufferSink> stream_;
+
   std::unique_ptr<::parquet::arrow::FileWriter> arrowWriter_;
+
   std::shared_ptr<::parquet::WriterProperties> properties_;
 };
 

@@ -20,6 +20,11 @@
 #ifndef ARROW_FLAG_DICTIONARY_ORDERED
 #pragma once
 
+// Use ARROW_FLAG_DICTIONARY_ORDERED as include guard. Building with
+// Arrow headers will include the Arrow copy of the same and pragma
+// once will not catch the duplication.
+#ifndef ARROW_FLAG_DICTIONARY_ORDERED
+
 #include <stdint.h>
 
 #ifdef __cplusplus

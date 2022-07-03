@@ -15,14 +15,13 @@
  */
 
 #include "velox/dwio/dwrf/test/E2EFilterTestBase.h"
-#include "velox/dwio/parquet/reader/NativeParquetReader.h"
+#include "velox/dwio/parquet/reader/ParquetReader.h"
+#include "velox/dwio/parquet/writer/Writer.h"
 #include "velox/dwio/parquet/writer/Writer.h"
 
-using namespace facebook::velox::dwio::dwrf;
-using namespace facebook::velox::dwrf;
-using namespace facebook::velox::parquet;
 using namespace facebook::velox;
 using namespace facebook::velox::common;
+using namespace facebook::velox::dwio::dwrf;
 
 using dwio::common::MemoryInputStream;
 using dwio::common::MemorySink;
@@ -52,12 +51,23 @@ class E2EFilterTest : public E2EFilterTestBase {
   std::unique_ptr<dwio::common::Reader> makeReader(
       const dwio::common::ReaderOptions& opts,
       std::unique_ptr<dwio::common::InputStream> input) override {
-    return std::make_unique<NativeParquetReader>(std::move(input), opts);
+    return std::make_unique<ParquetReader>(std::move(input), opts);
   }
 
   std::unique_ptr<facebook::velox::parquet::Writer> writer_;
   std::shared_ptr<::parquet::WriterProperties> writerProperties_;
 };
+
+TEST_F(E2EFilterTest, writerMagic) {
+  rowType_ = ROW({INTEGER()});
+  batches_.push_back(std::static_pointer_cast<RowVector>(
+      test::BatchMaker::createBatch(rowType_, 20000, *pool_, nullptr, 0)));
+  writeToMemory(rowType_, batches_, false);
+  auto data = sinkPtr_->getData();
+  auto size = sinkPtr_->size();
+  EXPECT_EQ("PAR1", std::string(data, 4));
+  EXPECT_EQ("PAR1", std::string(data + size - 4, 4));
+}
 
 TEST_F(E2EFilterTest, integerDirect) {
   writerProperties_ = ::parquet::WriterProperties::Builder()
@@ -75,3 +85,4 @@ TEST_F(E2EFilterTest, integerDirect) {
       20,
       true);
 }
+
