@@ -16,7 +16,10 @@
 
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 
+using facebook::velox::exec::test::AssertQueryBuilder;
 using facebook::velox::exec::test::CursorParameters;
 using facebook::velox::exec::test::PlanBuilder;
 
@@ -62,7 +65,7 @@ void AggregationTestBase::testAggregations(
       groupingKeys,
       aggregates,
       postAggregationProjections,
-      duckDbSql);
+      [&](auto& builder) { return builder.assertResults(duckDbSql); });
 }
 
 void AggregationTestBase::testAggregations(
@@ -71,13 +74,12 @@ void AggregationTestBase::testAggregations(
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& postAggregationProjections,
     const std::vector<RowVectorPtr>& expectedResult) {
-  testAggregations<false>(
+  testAggregations(
       [&](PlanBuilder& builder) { builder.values(data); },
       groupingKeys,
       aggregates,
       postAggregationProjections,
-      "",
-      expectedResult);
+      [&](auto& builder) { return builder.assertResults(expectedResult); });
 }
 
 void AggregationTestBase::testAggregations(
@@ -85,17 +87,34 @@ void AggregationTestBase::testAggregations(
     const std::vector<std::string>& groupingKeys,
     const std::vector<std::string>& aggregates,
     const std::string& duckDbSql) {
-  testAggregations(makeSource, groupingKeys, aggregates, {}, duckDbSql);
+  testAggregations(
+      makeSource, groupingKeys, aggregates, {}, [&](auto& builder) {
+        return builder.assertResults(duckDbSql);
+      });
 }
 
-template <bool UseDuckDB>
+namespace {
+// Returns total spilled bytes inside 'task'.
+int64_t spilledBytes(const exec::Task& task) {
+  auto stats = task.taskStats();
+  int64_t spilledBytes = 0;
+  for (auto& pipeline : stats.pipelineStats) {
+    for (auto op : pipeline.operatorStats) {
+      spilledBytes += op.spilledBytes;
+    }
+  }
+
+  return spilledBytes;
+}
+} // namespace
+
 void AggregationTestBase::testAggregations(
     std::function<void(PlanBuilder&)> makeSource,
     const std::vector<std::string>& groupingKeys,
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& postAggregationProjections,
-    const std::string& duckDbSql,
-    const std::vector<RowVectorPtr>& expectedResult) {
+    std::function<std::shared_ptr<exec::Task>(AssertQueryBuilder& builder)>
+        assertResults) {
   // Run partial + final.
   {
     PlanBuilder builder;
@@ -105,11 +124,8 @@ void AggregationTestBase::testAggregations(
       builder.project(postAggregationProjections);
     }
 
-    if constexpr (UseDuckDB) {
-      assertQuery(builder.planNode(), duckDbSql);
-    } else {
-      exec::test::assertQuery(builder.planNode(), expectedResult);
-    }
+    AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
+    assertResults(queryBuilder);
   }
 
   // Run single.
@@ -121,11 +137,25 @@ void AggregationTestBase::testAggregations(
       builder.project(postAggregationProjections);
     }
 
-    if constexpr (UseDuckDB) {
-      assertQuery(builder.planNode(), duckDbSql);
-    } else {
-      exec::test::assertQuery(builder.planNode(), expectedResult);
+    AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
+    assertResults(queryBuilder);
+  }
+
+  // Run single with spilling.
+  if (!noSpill_) {
+    PlanBuilder builder;
+    makeSource(builder);
+    builder.singleAggregation(groupingKeys, aggregates);
+    if (!postAggregationProjections.empty()) {
+      builder.project(postAggregationProjections);
     }
+    auto tempDirectory = exec::test::TempDirectoryPath::create();
+
+    AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
+    auto task = assertResults(
+        queryBuilder.config(core::QueryConfig::kTestingSpillPct, "100")
+            .config(core::QueryConfig::kSpillPath, tempDirectory->path));
+    EXPECT_LT(0, spilledBytes(*task));
   }
 
   // Run partial + intermediate + final.
@@ -139,11 +169,8 @@ void AggregationTestBase::testAggregations(
       builder.project(postAggregationProjections);
     }
 
-    if constexpr (UseDuckDB) {
-      assertQuery(builder.planNode(), duckDbSql);
-    } else {
-      exec::test::assertQuery(builder.planNode(), expectedResult);
-    }
+    AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
+    assertResults(queryBuilder);
   }
 
   // Run partial + local exchange + final.
@@ -164,14 +191,8 @@ void AggregationTestBase::testAggregations(
       builder.project(postAggregationProjections);
     }
 
-    CursorParameters params;
-    params.planNode = builder.planNode();
-    params.maxDrivers = 2;
-    if constexpr (UseDuckDB) {
-      assertQuery(params, duckDbSql);
-    } else {
-      exec::test::assertQuery(params, expectedResult);
-    }
+    AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
+    assertResults(queryBuilder.maxDrivers(2));
   }
 
   // Run partial + local exchange + intermediate + local exchange + final.
@@ -203,14 +224,8 @@ void AggregationTestBase::testAggregations(
       builder.project(postAggregationProjections);
     }
 
-    CursorParameters params;
-    params.planNode = builder.planNode();
-    params.maxDrivers = 2;
-    if constexpr (UseDuckDB) {
-      assertQuery(params, duckDbSql);
-    } else {
-      exec::test::assertQuery(params, expectedResult);
-    }
+    AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
+    assertResults(queryBuilder.maxDrivers(2));
   }
 }
 

@@ -135,7 +135,7 @@ struct ArrayOfStringsWriterFunction {
       const arg_type<int64_t>& input) {
     const size_t size = stringArrayData[input].size();
     out.reserve(size);
-    for (const auto value : stringArrayData[input]) {
+    for (const auto& value : stringArrayData[input]) {
       out.add_item().copy_from(value);
     }
   }
@@ -836,6 +836,57 @@ TEST_F(SimpleFunctionTest, mapStringOut) {
           std::string(value.value().data(), value.value().size()),
           std::to_string(i + 1));
     }
+  }
+}
+
+template <typename T>
+struct NonDeterministicFunc {
+  static constexpr bool is_deterministic = false;
+
+  void call(int64_t& out) {
+    static size_t counter = 0;
+    out = counter++;
+  }
+};
+
+// Test that non-deterministic functions do not participate in CSE
+// optimization, or constant folding.
+TEST_F(SimpleFunctionTest, cseDisabled) {
+  registerFunction<NonDeterministicFunc, int64_t>({"new_value"});
+
+  auto input = vectorMaker_.flatVector<int64_t>({1, 2, 3, 4});
+  auto result = evaluate("new_value() + new_value()", makeRowVector({input}));
+  auto* flatResult = result->asFlatVector<int64_t>();
+  ASSERT_EQ(flatResult->valueAt(0), 4);
+  ASSERT_EQ(flatResult->valueAt(1), 6);
+  ASSERT_EQ(flatResult->valueAt(2), 8);
+  ASSERT_EQ(flatResult->valueAt(3), 10);
+}
+
+template <typename T>
+struct NonDeterministicFuncWithInput {
+  static constexpr bool is_deterministic = false;
+
+  void call(int64_t& out, const int64_t& input) {
+    static size_t counter = 0;
+    out = input + counter++;
+  }
+};
+
+TEST_F(SimpleFunctionTest, cseDisabledFuncWithInput) {
+  registerFunction<NonDeterministicFuncWithInput, int64_t, int64_t>(
+      {"new_value_with_input"});
+
+  auto input = vectorMaker_.flatVector<int64_t>({1, 2, 3, 4});
+  {
+    auto result = evaluate(
+        "new_value_with_input(c0) + new_value_with_input(c0)",
+        makeRowVector({input}));
+    auto* flatResult = result->asFlatVector<int64_t>();
+    ASSERT_EQ(flatResult->valueAt(0), 6);
+    ASSERT_EQ(flatResult->valueAt(1), 10);
+    ASSERT_EQ(flatResult->valueAt(2), 14);
+    ASSERT_EQ(flatResult->valueAt(3), 18);
   }
 }
 

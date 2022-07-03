@@ -16,7 +16,6 @@
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
-#include <stdio.h>
 #include "velox/common/memory/ByteStream.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/BaseVector.h"
@@ -97,13 +96,34 @@ class VectorTest : public testing::Test {
     }
   }
 
+  BufferPtr makeIndices(
+      vector_size_t size,
+      std::function<vector_size_t(vector_size_t)> indexAt) {
+    BufferPtr indices =
+        AlignedBuffer::allocate<vector_size_t>(size, pool_.get());
+    auto rawIndices = indices->asMutable<vector_size_t>();
+
+    for (vector_size_t i = 0; i < size; i++) {
+      rawIndices[i] = indexAt(i);
+    }
+
+    return indices;
+  }
+
+  BufferPtr makeNulls(
+      vector_size_t size,
+      std::function<bool(vector_size_t /*row*/)> isNullAt) {
+    auto nulls = AlignedBuffer::allocate<bool>(size, pool_.get());
+    auto rawNulls = nulls->asMutable<uint64_t>();
+    for (auto i = 0; i < size; i++) {
+      bits::setNull(rawNulls, i, isNullAt(i));
+    }
+    return nulls;
+  }
+
   template <typename T>
   T testValue(int32_t i, BufferPtr& space) {
-    if constexpr (std::is_same_v<T, std::shared_ptr<void>>) {
-      return std::make_shared<NonPOD>(i);
-    } else {
-      return i;
-    }
+    return i;
   }
 
   template <TypeKind KIND>
@@ -201,36 +221,6 @@ class VectorTest : public testing::Test {
         numRows,
         std::move(parentFields),
         BaseVector::countNulls(nulls, numRows));
-  }
-
-  // Sets the position corresponding to a null to kNullIndex in
-  // 'offsets' and 0 in 'sizes'. 'sizes' can be nullptr in the case of
-  // a RowVector or DictionaryVector. Returns true if any null was found.
-  static bool setOffsetsAndSizesByNulls(
-      vector_size_t size,
-      BufferPtr* nulls,
-      BufferPtr* offsets,
-      BufferPtr* sizes) {
-    VELOX_CHECK(*offsets);
-    VELOX_CHECK((*offsets)->capacity() >= size * sizeof(vector_size_t));
-    VELOX_CHECK(!sizes || (*sizes)->capacity() >= size * sizeof(vector_size_t));
-    bool hasNulls = false;
-    auto rawOffsets = (*offsets)->asMutable<vector_size_t>();
-    auto rawSizes = sizes ? (*sizes)->asMutable<vector_size_t>() : nullptr;
-    if (*nulls) {
-      bits::forEachUnsetBit(
-          (*nulls)->as<uint64_t>(),
-          0,
-          size,
-          [rawOffsets, rawSizes, &hasNulls](int32_t row) {
-            rawOffsets[row] = 0;
-            if (rawSizes) {
-              rawSizes[row] = 0;
-            }
-            hasNulls = true;
-          });
-    }
-    return hasNulls;
   }
 
   int32_t createRepeated(
@@ -605,7 +595,6 @@ class VectorTest : public testing::Test {
       BaseVector* source,
       std::vector<vector_size_t>& sizes,
       std::string& string) {
-    int32_t size = string.size();
     int32_t total = 0;
     for (auto size : sizes) {
       total += size;
@@ -632,6 +621,7 @@ class VectorTest : public testing::Test {
         break;
     }
     if (total > 1024) {
+      int32_t size = string.size();
       EXPECT_GE(total, size * (1 - tolerance));
       EXPECT_LE(total, size * (1 + tolerance));
     }
@@ -752,6 +742,21 @@ class VectorTest : public testing::Test {
 };
 
 template <>
+ShortDecimal VectorTest::testValue<ShortDecimal>(
+    int32_t i,
+    BufferPtr& /*space*/) {
+  return ShortDecimal(i);
+}
+
+template <>
+LongDecimal VectorTest::testValue<LongDecimal>(
+    int32_t i,
+    BufferPtr& /*space*/) {
+  int128_t value = buildInt128(i % 2 ? (i * -1) : i, 0xAAAAAAAAAAAAAAAA);
+  return LongDecimal(value);
+}
+
+template <>
 StringView VectorTest::testValue(int32_t n, BufferPtr& buffer) {
   if (!buffer || buffer->capacity() < 1000) {
     buffer = AlignedBuffer::allocate<char>(1000, pool_.get());
@@ -783,6 +788,16 @@ Date VectorTest::testValue(int32_t i, BufferPtr& space) {
   return Date(i);
 }
 
+template <>
+std::shared_ptr<void> VectorTest::testValue(int32_t i, BufferPtr& space) {
+  return std::make_shared<NonPOD>(i);
+}
+
+template <>
+IntervalDayTime VectorTest::testValue(int32_t i, BufferPtr& space) {
+  return IntervalDayTime(i);
+}
+
 VectorPtr VectorTest::createMap(int32_t numRows, bool withNulls) {
   BufferPtr nulls;
   BufferPtr offsets;
@@ -808,7 +823,7 @@ VectorPtr VectorTest::createMap(int32_t numRows, bool withNulls) {
       indices->asMutable<vector_size_t>()[offset++] = index;
     }
   }
-  VELOX_CHECK(offset == elements->size());
+  VELOX_CHECK_EQ(offset, elements->size());
   auto keys = BaseVector::wrapInDictionary(
       BufferPtr(nullptr),
       std::move(indices),
@@ -847,6 +862,12 @@ TEST_F(VectorTest, createOther) {
   testFlat<TypeKind::BOOLEAN>(BOOLEAN(), vectorSize_);
   testFlat<TypeKind::TIMESTAMP>(TIMESTAMP(), vectorSize_);
   testFlat<TypeKind::DATE>(DATE(), vectorSize_);
+  testFlat<TypeKind::INTERVAL_DAY_TIME>(INTERVAL_DAY_TIME(), vectorSize_);
+}
+
+TEST_F(VectorTest, createDecimal) {
+  testFlat<TypeKind::SHORT_DECIMAL>(SHORT_DECIMAL(10, 5), vectorSize_);
+  testFlat<TypeKind::LONG_DECIMAL>(LONG_DECIMAL(30, 5), vectorSize_);
 }
 
 TEST_F(VectorTest, createOpaque) {
@@ -1057,12 +1078,63 @@ TEST_F(VectorTest, wrapInConstant) {
   }
 }
 
+TEST_F(VectorTest, wrapConstantInDictionary) {
+  // Wrap Constant in Dictionary with no extra nulls. Expect Constant.
+  auto indices = makeIndices(10, [](auto row) { return row % 2; });
+  auto vector = BaseVector::wrapInDictionary(
+      nullptr, indices, 10, BaseVector::createConstant(7, 100, pool_.get()));
+  ASSERT_EQ(vector->encoding(), VectorEncoding::Simple::CONSTANT);
+  auto constantVector =
+      std::dynamic_pointer_cast<ConstantVector<int32_t>>(vector);
+  for (auto i = 0; i < 10; ++i) {
+    ASSERT_FALSE(constantVector->isNullAt(i));
+    ASSERT_EQ(7, constantVector->valueAt(i));
+  }
+
+  // Wrap Constant in Dictionary with extra nulls. Expect Dictionary.
+  auto nulls = makeNulls(10, [](auto row) { return row % 3 == 0; });
+  vector = BaseVector::wrapInDictionary(
+      nulls, indices, 10, BaseVector::createConstant(11, 100, pool_.get()));
+  ASSERT_EQ(vector->encoding(), VectorEncoding::Simple::DICTIONARY);
+  auto dictVector = std::dynamic_pointer_cast<SimpleVector<int32_t>>(vector);
+  for (auto i = 0; i < 10; ++i) {
+    if (i % 3 == 0) {
+      ASSERT_TRUE(dictVector->isNullAt(i));
+    } else {
+      ASSERT_FALSE(dictVector->isNullAt(i));
+      ASSERT_EQ(11, dictVector->valueAt(i));
+    }
+  }
+}
+
 TEST_F(VectorTest, setFlatVectorStringView) {
   auto vector = BaseVector::create(VARCHAR(), 1, pool_.get());
   auto flat = vector->asFlatVector<StringView>();
-  flat->set(0, StringView("This string is too long to be inlined"));
-  EXPECT_EQ(
-      flat->valueAt(0).getString(), "This string is too long to be inlined");
+  EXPECT_EQ(0, flat->stringBuffers().size());
+
+  const std::string originalString = "This string is too long to be inlined";
+
+  flat->set(0, StringView(originalString));
+  EXPECT_EQ(flat->valueAt(0).getString(), originalString);
+  EXPECT_EQ(1, flat->stringBuffers().size());
+  EXPECT_EQ(originalString.size(), flat->stringBuffers()[0]->size());
+
+  // Make a copy of the vector. Verify that string buffer is shared.
+  auto copy = BaseVector::create(VARCHAR(), 1, pool_.get());
+  copy->copy(flat, 0, 0, 1);
+
+  auto flatCopy = copy->asFlatVector<StringView>();
+  EXPECT_EQ(1, flatCopy->stringBuffers().size());
+  EXPECT_EQ(flat->stringBuffers()[0].get(), flatCopy->stringBuffers()[0].get());
+
+  // Modify the string in the copy. Make sure it is written into a new string
+  // buffer.
+  const std::string newString = "A different string";
+  flatCopy->set(0, StringView(newString));
+  EXPECT_EQ(2, flatCopy->stringBuffers().size());
+  EXPECT_EQ(flat->stringBuffers()[0].get(), flatCopy->stringBuffers()[0].get());
+  EXPECT_EQ(originalString.size(), flatCopy->stringBuffers()[0]->size());
+  EXPECT_EQ(newString.size(), flatCopy->stringBuffers()[1]->size());
 }
 
 TEST_F(VectorTest, resizeAtConstruction) {
@@ -1348,6 +1420,7 @@ TEST_F(VectorCreateConstantTest, null) {
 
   testNullConstant<TypeKind::TIMESTAMP>(TIMESTAMP());
   testNullConstant<TypeKind::DATE>(DATE());
+  testNullConstant<TypeKind::INTERVAL_DAY_TIME>(INTERVAL_DAY_TIME());
 
   testNullConstant<TypeKind::VARCHAR>(VARCHAR());
   testNullConstant<TypeKind::VARBINARY>(VARBINARY());
@@ -1573,4 +1646,28 @@ TEST_F(VectorTest, constantSetNull) {
   auto vector = vectorMaker->constantVector<int64_t>({{0}});
 
   EXPECT_THROW(vector->setNull(0, true), VeloxRuntimeError);
+}
+
+/// Test lazy vector wrapped in multiple layers of dictionaries.
+TEST_F(VectorTest, multipleDictionariesOverLazy) {
+  auto vectorMaker = std::make_unique<test::VectorMaker>(pool_.get());
+
+  vector_size_t size = 10;
+  auto indices = makeIndices(size, [&](auto row) { return size - row - 1; });
+  auto lazy = std::make_shared<LazyVector>(
+      pool_.get(),
+      INTEGER(),
+      size,
+      std::make_unique<TestingLoader>(vectorMaker->flatVector<int32_t>(
+          size, [](auto row) { return row; })));
+
+  auto dict = BaseVector::wrapInDictionary(
+      nullptr,
+      indices,
+      size,
+      BaseVector::wrapInDictionary(nullptr, indices, size, lazy));
+  dict->loadedVector();
+  for (auto i = 0; i < size; i++) {
+    ASSERT_EQ(i, dict->as<SimpleVector<int32_t>>()->valueAt(i));
+  }
 }

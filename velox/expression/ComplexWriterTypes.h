@@ -19,6 +19,7 @@
 #include <optional>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
@@ -69,27 +70,15 @@ template <typename V>
 bool constexpr provide_std_interface = CppToType<V>::isPrimitiveType &&
     !std::is_same<Varchar, V>::value && !std::is_same<Varbinary, V>::value;
 
+// Adding Any-type items requires commit, but CppToType<Any>::isPrimitiveType is
+// true, so we add an explicit condition for Any here.
 template <typename V>
-bool constexpr requires_commit =
-    !CppToType<V>::isPrimitiveType || std::is_same<Varchar, V>::value ||
-    std::is_same<bool, V>::value || std::is_same<Varbinary, V>::value;
+bool constexpr requires_commit = !CppToType<V>::isPrimitiveType ||
+    std::is_same<Varchar, V>::value || std::is_same<bool, V>::value ||
+    std::is_same<Varbinary, V>::value || std::is_same<Any, V>::value;
 
 // The object passed to the simple function interface that represent a single
 // array entry.
-//
-// General Interface:
-// - add_item()  : Add not null item and return proxy to the value to be
-// written.
-// - add_null()  : Add null item.
-// - size()      : Return the size of the array.
-//
-// Special std::like interfaces when V is primitive:
-// - resize(n)         : Resize to n, nullity not written.
-// - operator[](index) : Returns PrimitiveWriter which can be used to write
-// value and nullity at index.
-// - push_back(std::optional<v> value) : Increase size by 1, adding a value or
-// null.
-// - back() : Return PrimitiveWriter for the last element in the array.
 template <typename V>
 class ArrayWriter {
   using child_writer_t = VectorWriter<V, void>;
@@ -300,25 +289,6 @@ class ArrayWriter {
 
 // The object passed to the simple function interface that represent a single
 // output map entry.
-//
-// General Interface:
-// - add_item()  : return references to key and value writers as tuple.
-// - add_null()  : return key writer, set value to null.
-// - size()      : return the size of the map.
-//
-// Special interface when K, V are primitives:
-// - emplace(key&, value& ) : add new item to the map.
-//
-// `resize` followed by `operator[]` allows for avoiding per item capacity check
-// and length increment and hence results in the best peformance. The map can be
-// viewed as std::vector<std::tuple<k, v>> for that aspect.
-//
-// - operator[](i)   : access item at index i, returns key and value writers.
-// - resize(n)       : add n uninitialized items to the end of the map.
-//
-// The interface does not guarantee that duplicates not written.
-//
-
 template <typename K, typename V>
 class MapWriter {
   using key_writer_t = VectorWriter<K, void>;
@@ -663,7 +633,7 @@ class RowWriter {
 
   template <std::size_t... Is>
   void assignImpl(const std::tuple<T...>& inputs, std::index_sequence<Is...>) {
-    ((exec::get<Is>(*this) = std::get<Is>(inputs)), ...);
+    ((std::get<Is>(childrenVectors_)->set(offset_, std::get<Is>(inputs))), ...);
   }
 
   template <std::size_t... Is>
@@ -679,12 +649,16 @@ class RowWriter {
 
   template <std::size_t... Is>
   void finalizeImpl(std::index_sequence<Is...>) {
+    using children_types = std::tuple<T...>;
     (
         [&]() {
-          if (std::get<Is>(needCommit_)) {
-            // Commit not null.
-            std::get<Is>(childrenWriters_).commit(true);
-            std::get<Is>(needCommit_) = false;
+          if constexpr (requires_commit<
+                            std::tuple_element_t<Is, children_types>>) {
+            if (std::get<Is>(needCommit_)) {
+              // Commit not null.
+              std::get<Is>(childrenWriters_).commit(true);
+              std::get<Is>(needCommit_) = false;
+            }
           }
         }(),
         ...);
@@ -706,6 +680,118 @@ class RowWriter {
 
   template <size_t I, class... Types>
   friend auto get(const RowWriter<Types...>& writer);
+};
+
+// GenericWriter represents a writer of any type. It has to be casted to one
+// specific type first in order to write values to a vector. A GenericWriter
+// must be casted to the same type throughout its lifetime, or an exception will
+// throw. Right now, only casting to the types in writer_variant_t is supported.
+// Casting to unsupported types causes compilation error.
+class GenericWriter {
+ public:
+  // Make sure user do not use these.
+  GenericWriter() = delete;
+
+  GenericWriter(const GenericWriter&) = delete;
+
+  GenericWriter& operator=(const GenericWriter&) = delete;
+
+  template <typename T>
+  using writer_ptr_t = std::shared_ptr<VectorWriter<T, void>>;
+
+  using writer_variant_t = std::variant<
+      writer_ptr_t<bool>,
+      writer_ptr_t<int8_t>,
+      writer_ptr_t<int16_t>,
+      writer_ptr_t<int32_t>,
+      writer_ptr_t<int64_t>,
+      writer_ptr_t<float>,
+      writer_ptr_t<double>,
+      writer_ptr_t<Varchar>,
+      writer_ptr_t<Varbinary>,
+      writer_ptr_t<Array<Any>>,
+      writer_ptr_t<Map<Any, Any>>>;
+
+  GenericWriter(writer_variant_t& castWriter, TypePtr& castType, size_t& index)
+      : castWriter_{castWriter}, castType_{castType}, index_{index} {}
+
+  TypeKind kind() const {
+    return vector_->typeKind();
+  }
+
+  const TypePtr type() const {
+    return vector_->type();
+  }
+
+  template <typename ToType>
+  typename VectorWriter<ToType, void>::exec_out_t& castTo() {
+    VELOX_USER_CHECK(
+        CastTypeChecker<ToType>::check(type()),
+        fmt::format(
+            "castTo type is not compatible with type of vector, vector type is {}, casted to type is {}",
+            type()->toString(),
+            CppToType<ToType>::create()->toString()));
+
+    return *castToImpl<ToType>();
+  }
+
+  template <typename ToType>
+  typename VectorWriter<ToType, void>::exec_out_t* tryCastTo() {
+    if (!CastTypeChecker<ToType>::check(type())) {
+      return nullptr;
+    }
+
+    return castToImpl<ToType>();
+  }
+
+ private:
+  void initialize(BaseVector* vector) {
+    vector_ = vector;
+  }
+
+  template <typename ToType>
+  typename VectorWriter<ToType, void>::exec_out_t* castToImpl() {
+    auto& typedWriter = ensureWriter<ToType>();
+    typedWriter->setOffset(index_);
+    return &typedWriter->current();
+  }
+
+  template <typename B>
+  writer_ptr_t<B>& ensureWriter() {
+    static_assert(
+        !isGenericType<B>::value && !isVariadicType<B>::value,
+        "Cannot cast to VectorWriter of Generic or Variadic");
+
+    // TODO: optimize the mapping between template type B and requestedType.
+    // Make this mapping static since B is known at compile time and among only
+    // a limited number of supported types.
+    auto requestedType = CppToType<B>::create();
+
+    if (castType_) {
+      VELOX_USER_CHECK(
+          castType_->operator==(*requestedType),
+          fmt::format(
+              "Not allowed to cast to two different types {} and {} within the same batch.",
+              castType_->toString(),
+              requestedType->toString()));
+      return std::get<writer_ptr_t<B>>(castWriter_);
+    } else {
+      castType_ = std::move(requestedType);
+
+      castWriter_ = std::make_shared<VectorWriter<B, void>>();
+      auto& writer = std::get<writer_ptr_t<B>>(castWriter_);
+      writer->init(*vector_->as<typename TypeToFlatVector<B>::type>());
+      return writer;
+    }
+  }
+
+  BaseVector* vector_;
+  writer_variant_t& castWriter_;
+  TypePtr& castType_;
+  size_t& index_;
+
+  template <typename A, typename B>
+  friend struct VectorWriter;
 };
 
 } // namespace facebook::velox::exec

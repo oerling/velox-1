@@ -25,18 +25,17 @@ const SortOrder kDescNullsLast(false, false);
 namespace {
 const std::vector<PlanNodePtr> kEmptySources;
 
-std::shared_ptr<RowType> getAggregationOutputType(
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        groupingKeys,
+RowTypePtr getAggregationOutputType(
+    const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
     const std::vector<std::string>& aggregateNames,
-    const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates) {
+    const std::vector<CallTypedExprPtr>& aggregates) {
   VELOX_CHECK_EQ(
       aggregateNames.size(),
       aggregates.size(),
       "Number of aggregate names must be equal to number of aggregates");
 
   std::vector<std::string> names;
-  std::vector<std::shared_ptr<const Type>> types;
+  std::vector<TypePtr> types;
 
   for (auto& key : groupingKeys) {
     auto field =
@@ -58,14 +57,11 @@ std::shared_ptr<RowType> getAggregationOutputType(
 AggregationNode::AggregationNode(
     const PlanNodeId& id,
     Step step,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        groupingKeys,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        preGroupedKeys,
+    const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
+    const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
     const std::vector<std::string>& aggregateNames,
-    const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        aggregateMasks,
+    const std::vector<CallTypedExprPtr>& aggregates,
+    const std::vector<FieldAccessTypedExprPtr>& aggregateMasks,
     bool ignoreNullKeys,
     PlanNodePtr source)
     : PlanNode(id),
@@ -107,7 +103,7 @@ AggregationNode::AggregationNode(
 namespace {
 void addFields(
     std::stringstream& stream,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& keys) {
+    const std::vector<FieldAccessTypedExprPtr>& keys) {
   for (auto i = 0; i < keys.size(); ++i) {
     if (i > 0) {
       stream << ", ";
@@ -116,9 +112,7 @@ void addFields(
   }
 }
 
-void addKeys(
-    std::stringstream& stream,
-    const std::vector<std::shared_ptr<const ITypedExpr>>& keys) {
+void addKeys(std::stringstream& stream, const std::vector<TypedExprPtr>& keys) {
   for (auto i = 0; i < keys.size(); ++i) {
     const auto& expr = keys[i];
     if (i > 0) {
@@ -152,6 +146,75 @@ void AggregationNode::addDetails(std::stringstream& stream) const {
       stream << ", ";
     }
     stream << aggregateNames_[i] << " := " << aggregates_[i]->toString();
+  }
+}
+
+namespace {
+RowTypePtr getGroupIdOutputType(
+    const std::map<std::string, FieldAccessTypedExprPtr>&
+        outputGroupingKeyNames,
+    const std::vector<FieldAccessTypedExprPtr>& aggregationInputs,
+    const std::string& groupIdName) {
+  // Grouping keys come first, followed by aggregation inputs and groupId
+  // column.
+
+  auto numOutputs =
+      outputGroupingKeyNames.size() + aggregationInputs.size() + 1;
+
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+
+  names.reserve(numOutputs);
+  types.reserve(numOutputs);
+
+  for (const auto& [name, groupingKey] : outputGroupingKeyNames) {
+    names.push_back(name);
+    types.push_back(groupingKey->type());
+  }
+
+  for (const auto& input : aggregationInputs) {
+    names.push_back(input->name());
+    types.push_back(input->type());
+  }
+
+  names.push_back(groupIdName);
+  types.push_back(BIGINT());
+
+  return ROW(std::move(names), std::move(types));
+}
+} // namespace
+
+GroupIdNode::GroupIdNode(
+    PlanNodeId id,
+    std::vector<std::vector<FieldAccessTypedExprPtr>> groupingSets,
+    std::map<std::string, FieldAccessTypedExprPtr> outputGroupingKeyNames,
+    std::vector<FieldAccessTypedExprPtr> aggregationInputs,
+    std::string groupIdName,
+    PlanNodePtr source)
+    : PlanNode(std::move(id)),
+      sources_{source},
+      outputType_(getGroupIdOutputType(
+          outputGroupingKeyNames,
+          aggregationInputs,
+          groupIdName)),
+      groupingSets_(std::move(groupingSets)),
+      outputGroupingKeyNames_(std::move(outputGroupingKeyNames)),
+      aggregationInputs_(std::move(aggregationInputs)),
+      groupIdName_(std::move(groupIdName)) {
+  VELOX_CHECK_GE(
+      groupingSets_.size(),
+      2,
+      "GroupIdNode requires two or more grouping sets.");
+}
+
+void GroupIdNode::addDetails(std::stringstream& stream) const {
+  for (auto i = 0; i < groupingSets_.size(); ++i) {
+    if (i > 0) {
+      stream << ", ";
+    }
+    stream << "[";
+    addFields(stream, groupingSets_[i]);
+    stream << "]";
   }
 }
 
@@ -197,8 +260,8 @@ void ExchangeNode::addDetails(std::stringstream& /* stream */) const {
 
 UnnestNode::UnnestNode(
     const PlanNodeId& id,
-    std::vector<std::shared_ptr<const FieldAccessTypedExpr>> replicateVariables,
-    std::vector<std::shared_ptr<const FieldAccessTypedExpr>> unnestVariables,
+    std::vector<FieldAccessTypedExprPtr> replicateVariables,
+    std::vector<FieldAccessTypedExprPtr> unnestVariables,
     const std::vector<std::string>& unnestNames,
     const std::optional<std::string>& ordinalityName,
     const PlanNodePtr& source)
@@ -251,8 +314,8 @@ void UnnestNode::addDetails(std::stringstream& stream) const {
 AbstractJoinNode::AbstractJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& rightKeys,
+    const std::vector<FieldAccessTypedExprPtr>& leftKeys,
+    const std::vector<FieldAccessTypedExprPtr>& rightKeys,
     TypedExprPtr filter,
     PlanNodePtr left,
     PlanNodePtr right,
@@ -362,7 +425,7 @@ void AssignUniqueIdNode::addDetails(std::stringstream& /* stream */) const {
 namespace {
 void addSortingKeys(
     std::stringstream& stream,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& sortingKeys,
+    const std::vector<FieldAccessTypedExprPtr>& sortingKeys,
     const std::vector<SortOrder>& sortingOrders) {
   for (auto i = 0; i < sortingKeys.size(); ++i) {
     if (i > 0) {

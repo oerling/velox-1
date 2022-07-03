@@ -57,11 +57,13 @@ class Expr {
       TypePtr type,
       std::vector<std::shared_ptr<Expr>>&& inputs,
       std::string name,
+      bool specialForm,
       bool trackCpuUsage)
       : type_(std::move(type)),
         inputs_(std::move(inputs)),
         name_(std::move(name)),
         vectorFunction_(nullptr),
+        specialForm_{specialForm},
         trackCpuUsage_{trackCpuUsage} {}
 
   Expr(
@@ -74,6 +76,7 @@ class Expr {
         inputs_(std::move(inputs)),
         name_(std::move(name)),
         vectorFunction_(std::move(vectorFunction)),
+        specialForm_{false},
         trackCpuUsage_{trackCpuUsage} {}
 
   virtual ~Expr() = default;
@@ -136,8 +139,8 @@ class Expr {
     return type()->kind() == TypeKind::VARCHAR;
   }
 
-  virtual bool isSpecialForm() const {
-    return false;
+  bool isSpecialForm() const {
+    return specialForm_;
   }
 
   virtual bool isConditional() const {
@@ -228,12 +231,6 @@ class Expr {
   void
   evalAll(const SelectivityVector& rows, EvalCtx& context, VectorPtr& result);
 
-  static void setDictionaryWrapping(
-      DecodedVector& decoded,
-      const SelectivityVector& rows,
-      BaseVector& firstWrapper,
-      EvalCtx& context);
-
   // Adds nulls from 'rawNulls' to positions of 'result' given by
   // 'rows'. Ensures that '*result' is writable, of sufficient size
   // and that it can take nulls. Makes a new '*result' when
@@ -314,6 +311,7 @@ class Expr {
   const std::vector<std::shared_ptr<Expr>> inputs_;
   const std::string name_;
   const std::shared_ptr<VectorFunction> vectorFunction_;
+  const bool specialForm_;
   const bool trackCpuUsage_;
 
   // TODO make the following metadata const, e.g. call computeMetadata in the
@@ -421,6 +419,11 @@ class ExprSet {
     memoizingExprs_.insert(expr);
   }
 
+  /// Returns text representation of the expression set.
+  /// @param compact If true, uses one-line representation for each expression.
+  /// Otherwise, prints a tree of expressions one node per line.
+  std::string toString(bool compact = true) const;
+
  protected:
   void clearSharedSubexprs();
 
@@ -491,7 +494,20 @@ class ExprSetListener {
   virtual void onCompletion(
       const std::string& uuid,
       const ExprSetCompletionEvent& event) = 0;
+
+  /// Called when a batch of rows encounters errors processing one or more
+  /// rows in a try expression to provide information about these errors. This
+  /// function must neither change rows nor errors.
+  /// @param rows Rows where errors exist.
+  /// @param errors Error vector produced inside the try expression.
+  virtual void onError(
+      const SelectivityVector& rows,
+      const EvalCtx::ErrorVector& errors) = 0;
 };
+
+/// Return the ExprSetListeners having been registered.
+folly::Synchronized<std::vector<std::shared_ptr<ExprSetListener>>>&
+exprSetListeners();
 
 /// Register a listener to be invoked on ExprSet destruction. Returns true if
 /// listener was successfully registered, false if listener is already

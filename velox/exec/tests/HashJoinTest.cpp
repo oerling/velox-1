@@ -16,11 +16,11 @@
 
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/type/tests/FilterBuilder.h"
-#include "velox/type/tests/SubfieldFiltersBuilder.h"
+#include "velox/expression/ExprToSubfieldFilter.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -364,10 +364,10 @@ TEST_F(HashJoinTest, lazyVectors) {
                 .project({"c1 + 1"})
                 .planNode();
 
-  assertQuery(
-      op,
-      {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
-      "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
+  AssertQueryBuilder(op, duckDbQueryRunner_)
+      .split(rightScanId, makeHiveConnectorSplit(rightFile->path))
+      .split(leftScanId, makeHiveConnectorSplit(leftFile->path))
+      .assertResults("SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
 
   planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
   op = PlanBuilder(planNodeIdGenerator)
@@ -389,11 +389,12 @@ TEST_F(HashJoinTest, lazyVectors) {
            .project({"c1 + 1", "bc1", "length(c3)"})
            .planNode();
 
-  assertQuery(
-      op,
-      {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
-      "SELECT t.c1 + 1, U.c1, length(t.c3) FROM t, u "
-      "WHERE t.c0 = u.c0 and t.c2 < 29 and (t.c1 + u.c1) % 33 < 27");
+  AssertQueryBuilder(op, duckDbQueryRunner_)
+      .split(rightScanId, makeHiveConnectorSplit(rightFile->path))
+      .split(leftScanId, makeHiveConnectorSplit(leftFile->path))
+      .assertResults(
+          "SELECT t.c1 + 1, U.c1, length(t.c3) FROM t, u "
+          "WHERE t.c0 = u.c0 and t.c2 < 29 and (t.c1 + u.c1) % 33 < 27");
 }
 
 /// Test hash join where build-side keys come from a small range and allow for
@@ -532,6 +533,59 @@ TEST_F(HashJoinTest, semiJoin) {
       op, "SELECT t.c1 FROM t WHERE t.c0 IN (SELECT c0 FROM u WHERE c0 < 0)");
 }
 
+TEST_F(HashJoinTest, semiJoinWithFilter) {
+  auto leftVectors = makeRowVector(
+      {"t0", "t1"},
+      {
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row % 11; }),
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row; }),
+      });
+
+  auto rightVectors = makeRowVector(
+      {"u0", "u1"},
+      {
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row % 5; }),
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+      });
+
+  createDuckDbTable("t", {leftVectors});
+  createDuckDbTable("u", {rightVectors});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto op = PlanBuilder(planNodeIdGenerator)
+                .values({leftVectors})
+                .hashJoin(
+                    {"t0"},
+                    {"u0"},
+                    PlanBuilder(planNodeIdGenerator)
+                        .values({rightVectors})
+                        .planNode(),
+                    "",
+                    {"t0", "t1"},
+                    core::JoinType::kSemi)
+                .planNode();
+
+  assertQuery(
+      op, "SELECT t.* FROM t WHERE EXISTS (SELECT u0 FROM u WHERE t0 = u0)");
+
+  op = PlanBuilder(planNodeIdGenerator)
+           .values({leftVectors})
+           .hashJoin(
+               {"t0"},
+               {"u0"},
+               PlanBuilder(planNodeIdGenerator)
+                   .values({rightVectors})
+                   .planNode(),
+               "t1 != u1",
+               {"t0", "t1"},
+               core::JoinType::kSemi)
+           .planNode();
+
+  assertQuery(
+      op,
+      "SELECT t.* FROM t WHERE EXISTS (SELECT u0, u1 FROM u WHERE t0 = u0 AND t1 <> u1)");
+}
+
 TEST_F(HashJoinTest, antiJoin) {
   auto leftVectors = makeRowVector({
       makeFlatVector<int32_t>(
@@ -604,6 +658,59 @@ TEST_F(HashJoinTest, antiJoin) {
   assertQuery(op, "SELECT t.c1 FROM t WHERE t.c0 NOT IN (SELECT c0 FROM u)");
 }
 
+TEST_F(HashJoinTest, antiJoinWithFilter) {
+  auto leftVectors = makeRowVector(
+      {"t0", "t1"},
+      {
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row % 11; }),
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row; }),
+      });
+
+  auto rightVectors = makeRowVector(
+      {"u0", "u1"},
+      {
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row % 5; }),
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+      });
+
+  createDuckDbTable("t", {leftVectors});
+  createDuckDbTable("u", {rightVectors});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto op = PlanBuilder(planNodeIdGenerator)
+                .values({leftVectors})
+                .hashJoin(
+                    {"t0"},
+                    {"u0"},
+                    PlanBuilder(planNodeIdGenerator)
+                        .values({rightVectors})
+                        .planNode(),
+                    "",
+                    {"t0", "t1"},
+                    core::JoinType::kAnti)
+                .planNode();
+
+  assertQuery(
+      op, "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0)");
+
+  op = PlanBuilder(planNodeIdGenerator)
+           .values({leftVectors})
+           .hashJoin(
+               {"t0"},
+               {"u0"},
+               PlanBuilder(planNodeIdGenerator)
+                   .values({rightVectors})
+                   .planNode(),
+               "t1 != u1",
+               {"t0", "t1"},
+               core::JoinType::kAnti)
+           .planNode();
+
+  assertQuery(
+      op,
+      "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 <> u1)");
+}
+
 TEST_F(HashJoinTest, dynamicFilters) {
   const int32_t numSplits = 20;
   const int32_t numRowsProbe = 1024;
@@ -665,10 +772,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
                   .project({"c0", "c1 + 1", "c1 + u_c1"})
                   .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c0, t.c1 + 1, t.c1 + u.c1 FROM t, u WHERE t.c0 = u.c0");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c0, t.c1 + 1, t.c1 + u.c1 FROM t, u WHERE t.c0 = u.c0");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_EQ(0, getReplacedWithFilterRows(task, 1).sum);
@@ -688,10 +796,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
              .project({"c0", "c1 + 1"})
              .planNode();
 
-    task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c0, t.c1 + 1 FROM t WHERE t.c0 IN (SELECT c0 FROM u)");
+    task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c0, t.c1 + 1 FROM t WHERE t.c0 IN (SELECT c0 FROM u)");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
@@ -718,10 +827,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
             .project({"a", "b + 1", "b + u_c1"})
             .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c0, t.c1 + 1, t.c1 + u.c1 FROM t, u WHERE t.c0 = u.c0");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c0, t.c1 + 1, t.c1 + u.c1 FROM t, u WHERE t.c0 = u.c0");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_EQ(0, getReplacedWithFilterRows(task, 1).sum);
@@ -738,10 +848,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
                   .project({"c1 + u_c1"})
                   .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c1 + u.c1 FROM t, u WHERE t.c0 = u.c0 AND t.c0 < 500");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c1 + u.c1 FROM t, u WHERE t.c0 = u.c0 AND t.c0 < 500");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_EQ(0, getReplacedWithFilterRows(task, 1).sum);
@@ -759,10 +870,10 @@ TEST_F(HashJoinTest, dynamicFilters) {
             .project({"c0", "c1 + 1"})
             .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c0, t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults("SELECT t.c0, t.c1 + 1 FROM t, u WHERE t.c0 = u.c0");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_EQ(getReplacedWithFilterRows(task, 1).sum, numRowsBuild * numSplits);
@@ -779,10 +890,10 @@ TEST_F(HashJoinTest, dynamicFilters) {
                   .hashJoin({"c0"}, {"u_c0"}, keyOnlyBuildSide, "", {"c0"})
                   .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{probeScanId, leftFiles}},
-        "SELECT t.c0 FROM t JOIN u ON (t.c0 = u.c0)");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(probeScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults("SELECT t.c0 FROM t JOIN u ON (t.c0 = u.c0)");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_EQ(getReplacedWithFilterRows(task, 1).sum, numRowsBuild * numSplits);
@@ -799,10 +910,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
                   .project({"c1 + 1"})
                   .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0 AND t.c0 < 500");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0 AND t.c0 < 500");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
@@ -822,10 +934,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
             .project({"c1 + 1"})
             .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0 AND t.c0 < 200");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c1 + 1 FROM t, u WHERE t.c0 = u.c0 AND t.c0 < 200");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
@@ -840,10 +953,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
              .project({"c1 + 1"})
              .planNode();
 
-    task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c1 + 1 FROM t WHERE t.c0 IN (SELECT c0 FROM u) AND t.c0 < 200");
+    task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c1 + 1 FROM t WHERE t.c0 IN (SELECT c0 FROM u) AND t.c0 < 200");
     EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
@@ -876,10 +990,10 @@ TEST_F(HashJoinTest, dynamicFilters) {
                   .project({"c1 + 1"})
                   .planNode();
 
-    auto task = assertQuery(
-        op,
-        {{leftScanId, leftFiles}},
-        "SELECT t.c1 + 1 FROM t, u WHERE (t.c0 + 1) = u.c0");
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults("SELECT t.c1 + 1 FROM t, u WHERE (t.c0 + 1) = u.c0");
     EXPECT_EQ(0, getFiltersProduced(task, 1).sum);
     EXPECT_EQ(0, getFiltersAccepted(task, 0).sum);
     EXPECT_EQ(numRowsProbe * numSplits, getInputPositions(task, 1));
@@ -1372,12 +1486,7 @@ TEST_F(HashJoinTest, smallOutputBatchSize) {
 
   // Use small output batch size to trigger logic for calculating set of
   // probe-side rows to load lazy vectors for.
-  CursorParameters params;
-  params.planNode = plan;
-  params.queryCtx = core::QueryCtx::createForTest();
-  params.queryCtx->setConfigOverridesUnsafe(
-      {{core::QueryConfig::kPreferredOutputBatchSize, std::to_string(10)}});
-
-  OperatorTestBase::assertQuery(
-      params, "SELECT c0, u_c1 FROM t, u WHERE c0 = u_c0 AND c1 < u_c1");
+  AssertQueryBuilder(plan, duckDbQueryRunner_)
+      .config(core::QueryConfig::kPreferredOutputBatchSize, std::to_string(10))
+      .assertResults("SELECT c0, u_c1 FROM t, u WHERE c0 = u_c0 AND c1 < u_c1");
 }

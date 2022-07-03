@@ -31,6 +31,9 @@ void assertEqualVectors(
     const VectorPtr& actual,
     const std::string& additionalContext = "");
 
+/// Verify that 'vector' is copyable, by copying all rows.
+void assertCopyableVector(const VectorPtr& vector);
+
 class VectorTestBase {
  protected:
   template <typename T>
@@ -455,6 +458,27 @@ class VectorTestBase {
         [&](vector_size_t idx) { return nullValues[idx]; });
   }
 
+  // Convenience function to create vector from vectors of keys and values.
+  // The size of the maps is computed from the difference of offsets.
+  // The sizes of the key and value vectors must be equal.
+  // An optional vector of nulls can be passed to specify null rows.
+  // The offset for a null value must match previous offset
+  // i.e size computed should be zero.
+  // Example:
+  //   auto mapVector = makeMapVector({0, 2 ,2}, keyVector, valueVector, {1});
+  //
+  //   creates a map vector with map at index 1 as null.
+  // You can make higher order MapVectors (i.e maps with maps as values etc),
+  // by repeatedly calling this function and passing in resultant MapVector
+  // and appropriate offsets.
+  MapVectorPtr makeMapVector(
+      const std::vector<vector_size_t>& offsets,
+      const VectorPtr& keyVector,
+      const VectorPtr& valueVector,
+      const std::vector<vector_size_t>& nulls = {}) {
+    return vectorMaker_.mapVector(offsets, keyVector, valueVector, nulls);
+  }
+
   template <typename T>
   VectorPtr makeConstant(T value, vector_size_t size) {
     return BaseVector::createConstant(value, size, pool());
@@ -495,6 +519,10 @@ class VectorTestBase {
   BufferPtr makeIndicesInReverse(vector_size_t size) {
     return ::facebook::velox::test::makeIndicesInReverse(size, pool());
   }
+
+  BufferPtr makeNulls(
+      vector_size_t size,
+      std::function<bool(vector_size_t /*row*/)> isNullAt);
 
   static VectorPtr
   wrapInDictionary(BufferPtr indices, vector_size_t size, VectorPtr vector);

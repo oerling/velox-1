@@ -26,7 +26,7 @@ namespace facebook {
 namespace velox {
 
 // Up to # of elements to show as debug string for `toString()`.
-constexpr vector_size_t LIMIT_ELEMENTS_TO_SHOW = 5;
+constexpr vector_size_t kMaxElementsInToString = 5;
 
 std::string stringifyTruncatedElementList(
     vector_size_t start,
@@ -41,19 +41,16 @@ std::string stringifyTruncatedElementList(
   }
   out << size << " elements starting at " << start << " {";
 
-  bool first = true;
   const vector_size_t limitedSize = std::min(size, limit);
   for (vector_size_t i = 0; i < limitedSize; ++i) {
-    if (first) {
-      first = false;
-    } else {
+    if (i > 0) {
       out << delimiter;
     }
     stringifyElementCB(out, start + i);
   }
 
   if (size > limitedSize) {
-    if (!first) {
+    if (limitedSize) {
       out << delimiter;
     }
     out << "...";
@@ -98,7 +95,7 @@ std::optional<int32_t> RowVector::compare(
   auto compareSize = std::min(children_.size(), otherRow->children_.size());
   for (int32_t i = 0; i < compareSize; ++i) {
     BaseVector* child = children_[i].get();
-    BaseVector* otherChild = otherRow->loadedChildAt(i).get();
+    BaseVector* otherChild = otherRow->childAt(i)->loadedVector();
     if (!child && !otherChild) {
       continue;
     }
@@ -132,7 +129,7 @@ void RowVector::appendToChildren(
     vector_size_t index) {
   for (int32_t i = 0; i < children_.size(); ++i) {
     auto& child = children_[i];
-    child->copy(source->loadedChildAt(i).get(), index, sourceIndex, count);
+    child->copy(source->childAt(i)->loadedVector(), index, sourceIndex, count);
   }
 }
 
@@ -206,7 +203,10 @@ void RowVector::copy(
       vector_size_t wrappedIndex = source->wrappedIndex(sourceIndex + i);
       for (int32_t j = 0; j < children_.size(); ++j) {
         childAt(j)->copy(
-            sourceAsRow->loadedChildAt(j).get(), childIndex, wrappedIndex, 1);
+            sourceAsRow->childAt(j)->loadedVector(),
+            childIndex,
+            wrappedIndex,
+            1);
       }
     }
   }
@@ -250,11 +250,14 @@ std::string RowVector::toString(vector_size_t index) const {
     return "null";
   }
   std::stringstream out;
-  out << "{ [child at " << index << "]: ";
+  out << "{";
   for (int32_t i = 0; i < children_.size(); ++i) {
+    if (i > 0) {
+      out << ", ";
+    }
     out << (children_[i] ? children_[i]->toString(index) : "<not set>");
-    out << ((i < children_.size() - 1) ? ", " : "}");
   }
+  out << "}";
   return out.str();
 }
 
@@ -486,7 +489,7 @@ std::string ArrayVector::toString(vector_size_t index) const {
   return stringifyTruncatedElementList(
       rawOffsets_[index],
       rawSizes_[index],
-      LIMIT_ELEMENTS_TO_SHOW,
+      kMaxElementsInToString,
       ", ",
       [this](std::stringstream& ss, vector_size_t index) {
         ss << elements_->toString(index);
@@ -800,10 +803,10 @@ std::string MapVector::toString(vector_size_t index) const {
   return stringifyTruncatedElementList(
       rawOffsets_[index],
       rawSizes_[index],
-      LIMIT_ELEMENTS_TO_SHOW,
-      ",\n ",
+      kMaxElementsInToString,
+      ", ",
       [this](std::stringstream& ss, vector_size_t index) {
-        ss << keys_->toString(index) << " = " << values_->toString(index);
+        ss << keys_->toString(index) << " => " << values_->toString(index);
       });
 }
 

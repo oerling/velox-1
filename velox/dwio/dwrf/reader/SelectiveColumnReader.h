@@ -380,7 +380,7 @@ class SelectiveColumnReader : public ColumnReader {
   // run time based on adaptation. Owned by caller.
   common::ScanSpec* const scanSpec_;
   TypePtr type_;
-  mutable std::unique_ptr<SeekableInputStream> indexStream_;
+  mutable std::unique_ptr<dwio::common::SeekableInputStream> indexStream_;
   mutable std::unique_ptr<proto::RowIndex> index_;
   // Number of rows in a row group. Last row group may have fewer rows.
   uint32_t rowsPerRowGroup_;
@@ -502,10 +502,13 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
   std::shared_ptr<common::ScanSpec> const scanSpec_;
 };
 
+} // namespace facebook::velox::dwrf
+
+namespace facebook::velox::dwio::common {
 // Template parameter to indicate no hook in fast scan path. This is
 // referenced in decoders, thus needs to be declared in a header.
 struct NoHook : public ValueHook {
   void addValue(vector_size_t /*row*/, const void* /*value*/) override {}
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common

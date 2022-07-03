@@ -270,7 +270,6 @@ void SelectiveStringDictionaryColumnReader::getValues(
                                : resultNulls_,
       numValues_,
       dictionaryValues_,
-      TypeKind::INTEGER,
       values_);
 
   if (scanSpec_->makeFlat()) {
@@ -299,14 +298,13 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
     ensureRowGroupIndex();
     // load stride dictionary offsets
     auto indexStartOffset = flatMapContext_.inMapDecoder
-        ? flatMapContext_.inMapDecoder->loadIndices(*index_, 0)
+        ? flatMapContext_.inMapDecoder->loadIndices(0)
         : 0;
     positionOffset_ = notNullDecoder_
-        ? notNullDecoder_->loadIndices(*index_, indexStartOffset)
+        ? notNullDecoder_->loadIndices(indexStartOffset)
         : indexStartOffset;
-    size_t offset = strideDictStream_->loadIndices(*index_, positionOffset_);
-    strideDictSizeOffset_ =
-        strideDictLengthDecoder_->loadIndices(*index_, offset);
+    size_t offset = strideDictStream_->positionSize() + positionOffset_;
+    strideDictSizeOffset_ = strideDictLengthDecoder_->loadIndices(offset);
   }
   scanState_.updateRawState();
   initialized_ = true;

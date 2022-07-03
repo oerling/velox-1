@@ -138,7 +138,7 @@ ColumnReader::ColumnReader(
       memoryPool_(stripe.getMemoryPool()),
       flatMapContext_(std::move(flatMapContext)) {
   EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
-  std::unique_ptr<SeekableInputStream> stream =
+  std::unique_ptr<dwio::common::SeekableInputStream> stream =
       stripe.getStream(encodingKey.forKind(proto::Stream_Kind_PRESENT), false);
   if (stream) {
     notNullDecoder_ = createBooleanRleDecoder(std::move(stream), encodingKey);
@@ -200,7 +200,7 @@ class ByteRleColumnReader : public ColumnReader {
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       StripeStreams& stripe,
       std::function<std::unique_ptr<ByteRleDecoder>(
-          std::unique_ptr<SeekableInputStream>,
+          std::unique_ptr<dwio::common::SeekableInputStream>,
           const EncodingKey&)> creator,
       FlatMapContext flatMapContext)
       : ColumnReader(std::move(nodeType), stripe, std::move(flatMapContext)) {
@@ -361,8 +361,15 @@ IntegerDirectColumnReader<ReqT>::IntegerDirectColumnReader(
   EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
   auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
   bool dataVInts = stripe.getUseVInts(data);
-  ints = IntDecoder</*isSigned*/ true>::createDirect(
-      stripe.getStream(data, true), dataVInts, numBytes);
+  if (stripe.getFormat() == dwio::common::FileFormat::DWRF) {
+    ints = IntDecoder</*isSigned*/ true>::createDirect(
+        stripe.getStream(data, true), dataVInts, numBytes);
+  } else {
+    auto encoding = stripe.getEncoding(encodingKey);
+    RleVersion vers = convertRleVersion(encoding.kind());
+    ints = IntDecoder</*isSigned*/ true>::createRle(
+        stripe.getStream(data, true), vers, memoryPool_, dataVInts, numBytes);
+  }
 }
 
 template <class ReqT>
@@ -688,7 +695,7 @@ class FloatingPointColumnReader : public ColumnReader {
       override;
 
  private:
-  std::unique_ptr<SeekableInputStream> inputStream;
+  std::unique_ptr<dwio::common::SeekableInputStream> inputStream;
   const char* bufferPointer;
   const char* bufferEnd;
 
@@ -838,7 +845,7 @@ class StringDictionaryColumnReader : public ColumnReader {
   BufferPtr indices_;
   std::unique_ptr<IntDecoder</*isSigned*/ false>> dictIndex;
   std::unique_ptr<ByteRleDecoder> inDictionaryReader;
-  std::unique_ptr<SeekableInputStream> strideDictStream;
+  std::unique_ptr<dwio::common::SeekableInputStream> strideDictStream;
   std::unique_ptr<IntDecoder</*isSigned*/ false>> strideDictLengthDecoder;
 
   FlatVectorPtr<StringView> combinedDictionaryValues_;
@@ -850,19 +857,19 @@ class StringDictionaryColumnReader : public ColumnReader {
   size_t positionOffset;
   size_t strideDictSizeOffset;
 
-  std::unique_ptr<SeekableInputStream> indexStream_;
+  std::unique_ptr<dwio::common::SeekableInputStream> indexStream_;
   std::unique_ptr<proto::RowIndex> rowIndex_;
   const StrideIndexProvider& provider;
 
   // lazy load the dictionary
   std::unique_ptr<IntDecoder</*isSigned*/ false>> lengthDecoder;
-  std::unique_ptr<SeekableInputStream> blobStream;
+  std::unique_ptr<dwio::common::SeekableInputStream> blobStream;
   const bool returnFlatVector_;
   bool initialized_{false};
 
   BufferPtr loadDictionary(
       uint64_t count,
-      SeekableInputStream& data,
+      dwio::common::SeekableInputStream& data,
       IntDecoder</*isSigned*/ false>& lengthDecoder,
       BufferPtr& offsets);
 
@@ -935,8 +942,9 @@ StringDictionaryColumnReader::StringDictionaryColumnReader(
       encodingKey.forKind(proto::Stream_Kind_DICTIONARY_DATA), false);
 
   // handle in dictionary stream
-  std::unique_ptr<SeekableInputStream> inDictStream = stripe.getStream(
-      encodingKey.forKind(proto::Stream_Kind_IN_DICTIONARY), false);
+  std::unique_ptr<dwio::common::SeekableInputStream> inDictStream =
+      stripe.getStream(
+          encodingKey.forKind(proto::Stream_Kind_IN_DICTIONARY), false);
   if (inDictStream) {
     inDictionaryReader =
         createBooleanRleDecoder(std::move(inDictStream), encodingKey);
@@ -973,7 +981,7 @@ uint64_t StringDictionaryColumnReader::skip(uint64_t numValues) {
 
 BufferPtr StringDictionaryColumnReader::loadDictionary(
     uint64_t count,
-    SeekableInputStream& data,
+    dwio::common::SeekableInputStream& data,
     IntDecoder</*isSigned*/ false>& lengthDecoder,
     BufferPtr& offsets) {
   // read lengths from length reader
@@ -1007,7 +1015,7 @@ void StringDictionaryColumnReader::loadStrideDictionary() {
     // seek stride dictionary related streams
     std::vector<uint64_t> pos(
         positions.begin() + positionOffset, positions.end());
-    PositionProvider pp(pos);
+    dwio::common::PositionProvider pp(pos);
     strideDictStream->seekToPosition(pp);
     strideDictLengthDecoder->seekToRowGroup(pp);
 
@@ -1222,12 +1230,7 @@ void StringDictionaryColumnReader::readDictionaryVector(
         dictionaryValues);
   } else {
     result = std::make_shared<DictionaryVector<StringView>>(
-        &memoryPool_,
-        nulls,
-        numValues,
-        dictionaryValues,
-        TypeKind::INTEGER,
-        indices);
+        &memoryPool_, nulls, numValues, dictionaryValues, indices);
     result->setNullCount(nullCount);
   }
 }
@@ -1349,14 +1352,13 @@ void StringDictionaryColumnReader::ensureInitialized() {
     // load stride dictionary offsets
     rowIndex_ = ProtoUtils::readProto<proto::RowIndex>(std::move(indexStream_));
     auto indexStartOffset = flatMapContext_.inMapDecoder
-        ? flatMapContext_.inMapDecoder->loadIndices(*rowIndex_, 0)
+        ? flatMapContext_.inMapDecoder->loadIndices(0)
         : 0;
     positionOffset = notNullDecoder_
-        ? notNullDecoder_->loadIndices(*rowIndex_, indexStartOffset)
+        ? notNullDecoder_->loadIndices(indexStartOffset)
         : indexStartOffset;
-    auto offset = strideDictStream->loadIndices(*rowIndex_, positionOffset);
-    strideDictSizeOffset =
-        strideDictLengthDecoder->loadIndices(*rowIndex_, offset);
+    size_t offset = strideDictStream->positionSize() + positionOffset;
+    strideDictSizeOffset = strideDictLengthDecoder->loadIndices(offset);
   }
   initialized_ = true;
 }
@@ -1364,7 +1366,7 @@ void StringDictionaryColumnReader::ensureInitialized() {
 class StringDirectColumnReader : public ColumnReader {
  private:
   std::unique_ptr<IntDecoder</*isSigned*/ false>> length;
-  std::unique_ptr<SeekableInputStream> blobStream;
+  std::unique_ptr<dwio::common::SeekableInputStream> blobStream;
 
   /**
    * Compute the total length of the values.
@@ -1981,8 +1983,9 @@ struct RleDecoderFactory {};
 
 template <>
 struct RleDecoderFactory<bool> {
-  static std::function<std::unique_ptr<
-      ByteRleDecoder>(std::unique_ptr<SeekableInputStream>, const EncodingKey&)>
+  static std::function<std::unique_ptr<ByteRleDecoder>(
+      std::unique_ptr<dwio::common::SeekableInputStream>,
+      const EncodingKey&)>
   get() {
     return createBooleanRleDecoder;
   }
@@ -1990,8 +1993,9 @@ struct RleDecoderFactory<bool> {
 
 template <>
 struct RleDecoderFactory<int8_t> {
-  static std::function<std::unique_ptr<
-      ByteRleDecoder>(std::unique_ptr<SeekableInputStream>, const EncodingKey&)>
+  static std::function<std::unique_ptr<ByteRleDecoder>(
+      std::unique_ptr<dwio::common::SeekableInputStream>,
+      const EncodingKey&)>
   get() {
     return createByteRleDecoder;
   }
