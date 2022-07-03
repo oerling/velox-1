@@ -162,8 +162,7 @@ class ParquetReader : public dwio::common::Reader {
 
 class ParquetReaderFactory : public dwio::common::ReaderFactory {
  public:
-  ParquetReaderFactory()
-      : ReaderFactory(dwio::common::FileFormat::PARQUET) {}
+  ParquetReaderFactory() : ReaderFactory(dwio::common::FileFormat::PARQUET) {}
 
   std::unique_ptr<dwio::common::Reader> createReader(
       std::unique_ptr<dwio::common::InputStream> stream,

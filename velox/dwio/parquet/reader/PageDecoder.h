@@ -16,9 +16,9 @@
 
 #pragma once
 
+#include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
-#include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/vector/BaseVector.h"
@@ -230,7 +230,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
   constexpr bool filterOnly =
       std::is_same<typename Visitor::Extract, dwrf::DropValues>::value;
   constexpr bool hasHook =
-    !std::is_same<typename Visitor::HookType, dwio::common::NoHook>::value;
+      !std::is_same<typename Visitor::HookType, dwio::common::NoHook>::value;
 
   bool mayProduceNulls = !filterOnly && visitor.allowNulls();
   auto rows = visitor.rows();
@@ -273,7 +273,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
               reader.numValues() - numValuesBeforePage);
         } else {
           // Add the nulls produced from the decoder to the result.
-	  auto firstNullIndex = nullsFromFastPath ? 0 : numValuesBeforePage;
+          auto firstNullIndex = nullsFromFastPath ? 0 : numValuesBeforePage;
           nullConcatenation_.append(
               reader.mutableNulls(0),
               firstNullIndex,

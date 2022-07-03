@@ -25,5 +25,3 @@
 #include "velox/type/Filter.h"
 
 #include <arrow/util/rle_encoding.h>
-
-

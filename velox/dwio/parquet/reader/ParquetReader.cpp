@@ -75,7 +75,8 @@ void ReaderBase::loadFileMetaData() {
   std::vector<char> copy(readSize);
   const char* bufferStart = nullptr;
   const char* bufferEnd = nullptr;
-  dwio::common::readBytes(readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
+  dwio::common::readBytes(
+      readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
   DWIO_ENSURE(
       strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
       "No magic bytes found at end of the Parquet file");
@@ -599,8 +600,7 @@ std::unique_ptr<dwio::common::RowReader> ParquetReader::createRowReader(
 }
 
 void registerParquetReaderFactory() {
-  dwio::common::registerReaderFactory(
-      std::make_shared<ParquetReaderFactory>());
+  dwio::common::registerReaderFactory(std::make_shared<ParquetReaderFactory>());
 }
 
 void unregisterParquetReaderFactory() {

@@ -17,7 +17,6 @@
 #include "velox/dwio/dwrf/test/E2EFilterTestBase.h"
 #include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "velox/dwio/parquet/writer/Writer.h"
-#include "velox/dwio/parquet/writer/Writer.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::common;
@@ -86,4 +85,3 @@ TEST_F(E2EFilterTest, integerDirect) {
       20,
       true);
 }
-
