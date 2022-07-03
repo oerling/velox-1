@@ -14,12 +14,10 @@
 
 include(ExternalProject)
 
-#set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
-#                      "/home/oerling/arrow/cpp//cmake_modules")
+# set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
+# "/home/oerling/arrow/cpp//cmake_modules")
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
-                      "/usr/local/lib64/cmake/arrow")
-
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/usr/local/lib64/cmake/arrow")
 
 find_package(Parquet REQUIRED)
 

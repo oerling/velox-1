@@ -59,7 +59,7 @@ class E2EFilterTest : public E2EFilterTestBase {
 TEST_F(E2EFilterTest, writerMagic) {
   rowType_ = ROW({INTEGER()});
   batches_.push_back(std::static_pointer_cast<RowVector>(
-							 test::BatchMaker::createBatch(rowType_, 20000, *pool_, nullptr, 0)));
+      test::BatchMaker::createBatch(rowType_, 20000, *pool_, nullptr, 0)));
   writeToMemory(rowType_, batches_, false);
   auto data = sinkPtr_->getData();
   auto size = sinkPtr_->size();
