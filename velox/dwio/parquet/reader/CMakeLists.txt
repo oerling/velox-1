@@ -20,7 +20,6 @@ foreach(dir ${dirs})
   message(STATUS "dir='${dir}'")
 endforeach()
 
-
 add_library(
   velox_dwio_native_parquet_reader
   ParquetReader.cpp
