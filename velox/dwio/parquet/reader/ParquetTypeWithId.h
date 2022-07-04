@@ -20,11 +20,13 @@
 #include "velox/dwio/common/TypeWithId.h"
 
 namespace facebook::velox::parquet {
-class ParquetTypeWithId : public dwio::common::TypeWithId {
+
+  // Describes a Parquet column.
+  class ParquetTypeWithId : public dwio::common::TypeWithId {
  public:
   ParquetTypeWithId(
       TypePtr type,
-      const std::vector<std::shared_ptr<const TypeWithId>>&& children,
+      std::vector<std::shared_ptr<const TypeWithId>>&& children,
       uint32_t id,
       uint32_t maxId,
       uint32_t column,

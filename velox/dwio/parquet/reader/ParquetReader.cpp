@@ -132,7 +132,7 @@ void ReaderBase::initializeSchema() {
   uint32_t maxSchemaElementIdx = fileMetaData_->schema.size() - 1;
   schemaWithId_ = getParquetColumnInfo(
       maxSchemaElementIdx, maxRepeat, maxDefine, schemaIdx, columnIdx);
-  schema_ = createRowType(schemaWithId_->getChildren());
+  schema_ = createRowType(schemaWithId_->children());
 }
 
 std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
@@ -180,7 +180,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
           DWIO_ENSURE(children.size() == 1);
           return std::make_shared<const ParquetTypeWithId>(
               children[0]->type,
-              std::move(children[0]->getChildren()),
+              std::move(children[0]->children()),
               curSchemaIdx, // TODO: there are holes in the ids
               maxSchemaElementIdx,
               -1, // columnIdx,
@@ -467,7 +467,7 @@ int64_t ReaderBase::rowGroupUncompressedSize(
         .meta_data.total_uncompressed_size;
   }
   int64_t sum = 0;
-  for (auto child : type.getChildren()) {
+  for (auto child : type.children()) {
     sum += rowGroupUncompressedSize(rowGroupIndex, *child);
   }
   return sum;
@@ -484,10 +484,6 @@ ParquetRowReader::ParquetRowReader(
       currentRowGroupPtr_(&rowGroups_[currentRowGroupIdsIdx_]),
       rowsInCurrentRowGroup_(currentRowGroupPtr_->num_rows),
       currentRowInGroup_(rowsInCurrentRowGroup_) {
-  // auto& selector = *options.getSelector();
-  // requestedType_ = selector.buildSelectedReordered();
-
-  // The filter_ comes from ReaderBase schema too, why compare?
   // Validate the requested type is compatible with what's in the file
   std::function<std::string()> createExceptionContext = [&]() {
     std::string exceptionMessageContext = fmt::format(
@@ -501,8 +497,6 @@ ParquetRowReader::ParquetRowReader(
     return exceptionMessageContext;
   };
 
-  // dwio::common::typeutils::CompatChecker::check(
-  //*readerBase_->getSchema(), *requestedType_, true, createExceptionContext);
 
   if (rowGroups_.empty()) {
     return; // TODO

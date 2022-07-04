@@ -29,6 +29,8 @@ add_library(
   ParquetColumnReader.cpp
   Statistics.cpp
   StructColumnReader.cpp)
+)
+>>>>>>> pq-meta-dev
 
 target_link_libraries(
   velox_dwio_native_parquet_reader

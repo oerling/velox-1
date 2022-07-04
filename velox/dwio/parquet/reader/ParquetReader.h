@@ -17,12 +17,11 @@
 #pragma once
 
 #include <dwio/common/BufferedInput.h>
-#include <dwio/dwrf/reader/ColumnReader.h>
-#include <thrift/TBase.h>
-#include "ParquetColumnReader.h"
-#include "ParquetThriftTypes.h"
+#include <dwio/dwrf/reader/SelectiveColumnReader.h>
 #include "velox/dwio/common/Reader.h"
+#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/dwio/common/ReaderFactory.h"
+#include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 
 namespace facebook::velox::parquet {
 
