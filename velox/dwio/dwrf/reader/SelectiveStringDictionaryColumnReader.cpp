@@ -22,17 +22,17 @@ using namespace dwio::common;
 
 SelectiveStringDictionaryColumnReader::SelectiveStringDictionaryColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
+    dwio::commmon::FormatParams& params,
+    common::ScanSpec* scanSpec)
     : SelectiveColumnReader(
           nodeType,
-          stripe,
+          params,
           scanSpec,
-          nodeType->type,
-          std::move(flatMapContext)),
+          nodeType->type),
       lastStrideIndex_(-1),
-      provider_(stripe.getStrideIndexProvider()) {
+      provider_(stripe.getStrideIndexProvider()),
+      flatMapContext_(params.flatMapContext()){
+  auto& stripe = params.stripeStreams();
   EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
   RleVersion rleVersion =
       convertRleVersion(stripe.getEncoding(encodingKey).kind());

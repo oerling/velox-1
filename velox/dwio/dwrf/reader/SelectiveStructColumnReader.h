@@ -25,9 +25,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   SelectiveStructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flatMapContext);
+      DwrfParams& params,
+      common::ScanSpec* scanSpec);
 
   void resetFilterCaches() override {
     for (auto& child : children_) {
@@ -36,16 +35,12 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
-    if (isTopLevel_ && !notNullDecoder_) {
+    if (isTopLevel_ && !formatData_->hasNulls()) {
       readOffset_ = index * rowsPerRowGroup_;
       return;
     }
-    if (notNullDecoder_) {
-      ensureRowGroupIndex();
-      auto positions = toPositions(index_->entry(index));
-      dwio::common::PositionProvider positionsProvider(positions);
-      notNullDecoder_->seekToRowGroup(positionsProvider);
-    }
+    // There may be a nulls stream but no other streams for the struct.
+    formatData_->seekToRowGroup(index);
     // Set the read offset recursively. Do this before seeking the
     // children because list/map children will reset the offsets for
     // their children.

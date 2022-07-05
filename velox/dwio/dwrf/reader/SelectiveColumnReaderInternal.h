@@ -82,7 +82,7 @@ void SelectiveColumnReader::prepareRead(
   if (nullsInReadRange_ && !nullsInReadRange_->unique()) {
     nullsInReadRange_.reset();
   }
-  readNulls(numRows, incomingNulls, nullptr, nullsInReadRange_);
+  formatData_->readNulls(numRows, incomingNulls, nullsInReadRange_);
   // We check for all nulls and no nulls. We expect both calls to
   // bits::isAllSet to fail early in the common case. We could do a
   // single traversal of null bits counting the bits and then compare

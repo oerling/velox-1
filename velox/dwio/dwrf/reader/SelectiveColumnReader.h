@@ -19,8 +19,8 @@
 #include "velox/common/memory/Memory.h"
 #include "velox/common/process/ProcessBase.h"
 #include "velox/dwio/common/ColumnSelector.h"
+#include "velox/dwio/common/FormatData.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/type/Filter.h"
 
 namespace facebook::velox::dwrf {
@@ -98,7 +98,7 @@ struct ScanState {
   RawScanState rawState;
 };
 
-class SelectiveColumnReader : public ColumnReader {
+class SelectiveColumnReader {
  public:
   static constexpr uint64_t kStringBufferSize = 16 * 1024;
 
@@ -125,9 +125,8 @@ class SelectiveColumnReader : public ColumnReader {
   static std::unique_ptr<SelectiveColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
+      DwrfParams& params,
+      common::ScanSpec* scanSpec);
 
   // Called when filters in ScanSpec change, e.g. a new filter is pushed down
   // from a downstream operator.
@@ -368,22 +367,14 @@ class SelectiveColumnReader : public ColumnReader {
   // copy.
   char* copyStringValue(folly::StringPiece value);
 
-  void ensureRowGroupIndex() const {
-    VELOX_CHECK(index_ || indexStream_, "Reader needs to have an index stream");
-    if (indexStream_) {
-      index_ = ProtoUtils::readProto<proto::RowIndex>(std::move(indexStream_));
-    }
-  }
-
+  // Format specific state and functions.
+  std::unique_ptr<dwio::common::FormatData> formatData_;
+  
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
   // run time based on adaptation. Owned by caller.
   common::ScanSpec* const scanSpec_;
   TypePtr type_;
-  mutable std::unique_ptr<dwio::common::SeekableInputStream> indexStream_;
-  mutable std::unique_ptr<proto::RowIndex> index_;
-  // Number of rows in a row group. Last row group may have fewer rows.
-  uint32_t rowsPerRowGroup_;
 
   // Row number after last read row, relative to stripe start.
   vector_size_t readOffset_ = 0;
@@ -488,12 +479,12 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
       FlatMapContext flatMapContext) override {
+    auto params = DwrfParams(stripe, std::move(flatMapContext)); 
     auto reader = SelectiveColumnReader::build(
         requestedType,
         dataType,
-        stripe,
-        scanSpec_.get(),
-        std::move(flatMapContext));
+        params,
+        scanSpec_.get());
     reader->setIsTopLevel();
     return reader;
   }

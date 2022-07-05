@@ -26,9 +26,8 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
 
   SelectiveStringDictionaryColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flatMapContext);
+      dwio::common::FormatParams& params,
+      common::ScanSpec* scanSpec);
 
   void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();

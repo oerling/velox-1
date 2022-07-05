@@ -56,46 +56,20 @@ void ScanState::updateRawState() {
 
 SelectiveColumnReader::SelectiveColumnReader(
     std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    // TODO: why is data type instead of requested type passed in?
-    const TypePtr& type,
-    FlatMapContext flatMapContext)
-    : ColumnReader(std::move(requestedType), stripe, std::move(flatMapContext)),
+    dwio::common::FormatParams& params,
+    common::ScanSpec& scanSpec,
+    const TypePtr& type)
+  : formatData_(params.toFormatData(type, scanSpec)),
       scanSpec_(scanSpec),
-      type_{type},
-      rowsPerRowGroup_{stripe.rowsPerRowGroup()} {
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
-  // We always initialize indexStream_ because indices are needed as
-  // soon as there is a single filter that can trigger row group skips
-  // anywhere in the reader tree. This is not known at construct time
-  // because the first filter can come from a hash join or other run
-  // time pushdown.
-  indexStream_ = stripe.getStream(
-      encodingKey.forKind(proto::Stream_Kind_ROW_INDEX), false);
-}
+      type_{type} {}
 
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
-    const StatsContext& context) const {
+    const dwio::common::StatsContext& context) const {
+  formatData_->filterRowGroups(rowGroupSize, context);
   if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
     return ColumnReader::filterRowGroups(rowGroupSize, context);
   }
-
-  ensureRowGroupIndex();
-  auto filter = scanSpec_->filter();
-
-  std::vector<uint32_t> stridesToSkip;
-  for (auto i = 0; i < index_->entry_size(); i++) {
-    const auto& entry = index_->entry(i);
-    auto columnStats =
-        buildColumnStatisticsFromProto(entry.statistics(), context);
-    if (!testFilter(filter, columnStats.get(), rowGroupSize, type_)) {
-      VLOG(1) << "Drop stride " << i << " on " << scanSpec_->toString();
-      stridesToSkip.push_back(i); // Skipping stride based on column stats.
-    }
-  }
-  return stridesToSkip;
 }
 
 void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
@@ -104,7 +78,7 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
   }
   if (readOffset_ < offset) {
     if (readsNullsOnly) {
-      ColumnReader::skip(offset - readOffset_);
+      formatData_->skipNulls(offset - readOffset_);
     } else {
       skip(offset - readOffset_);
     }
@@ -345,19 +319,18 @@ std::vector<uint64_t> toPositions(const proto::RowIndexEntry& entry) {
 
 std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-    FlatMapContext flatMapContext,
+    DwrfParams& params,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    StripeStreams& stripe,
     uint32_t numBytes,
     common::ScanSpec* scanSpec) {
-  EncodingKey ek{requestedType->id, flatMapContext.sequence};
+  EncodingKey ek{requestedType->id, params.flatMapContext.sequence};
   switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
     case proto::ColumnEncoding_Kind_DICTIONARY:
       return std::make_unique<SelectiveIntegerDictionaryColumnReader>(
-          requestedType, dataType, stripe, scanSpec, numBytes);
+          requestedType, dataType, params, scanSpec, numBytes);
     case proto::ColumnEncoding_Kind_DIRECT:
       return std::make_unique<SelectiveIntegerDirectColumnReader>(
-          requestedType, dataType, stripe, numBytes, scanSpec);
+          requestedType, dataType, params, numBytes, scanSpec);
     default:
       DWIO_RAISE("buildReader unhandled integer encoding");
   }
@@ -366,9 +339,8 @@ std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
 std::unique_ptr<SelectiveColumnReader> SelectiveColumnReader::build(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext) {
+    DwrfParams& params,
+    common::ScanSpec* scanSpec) {
   CompatChecker::check(*dataType->type, *requestedType->type);
   EncodingKey ek{dataType->id, flatMapContext.sequence};
 
@@ -376,85 +348,80 @@ std::unique_ptr<SelectiveColumnReader> SelectiveColumnReader::build(
     case TypeKind::INTEGER:
       return buildIntegerReader(
           requestedType,
-          std::move(flatMapContext),
           dataType,
-          stripe,
+          params,
           INT_BYTE_SIZE,
           scanSpec);
     case TypeKind::BIGINT:
       return buildIntegerReader(
           requestedType,
-          std::move(flatMapContext),
           dataType,
-          stripe,
+          params,
           LONG_BYTE_SIZE,
           scanSpec);
     case TypeKind::SMALLINT:
       return buildIntegerReader(
           requestedType,
-          std::move(flatMapContext),
           dataType,
-          stripe,
+          params,
           SHORT_BYTE_SIZE,
           scanSpec);
     case TypeKind::ARRAY:
       return std::make_unique<SelectiveListColumnReader>(
-          requestedType, dataType, stripe, scanSpec, flatMapContext);
+          requestedType, dataType, params, scanSpec);
     case TypeKind::MAP:
       if (stripe.getEncoding(ek).kind() ==
           proto::ColumnEncoding_Kind_MAP_FLAT) {
         VELOX_UNSUPPORTED("SelectiveColumnReader does not support flat maps");
       }
       return std::make_unique<SelectiveMapColumnReader>(
-          requestedType, dataType, stripe, scanSpec, std::move(flatMapContext));
+          requestedType, dataType, params, scanSpec);
     case TypeKind::REAL:
       if (requestedType->type->kind() == TypeKind::REAL) {
         return std::make_unique<
             SelectiveFloatingPointColumnReader<float, float>>(
-            requestedType, stripe, scanSpec, std::move(flatMapContext));
+            requestedType, params, scanSpec);
       } else {
         return std::make_unique<
             SelectiveFloatingPointColumnReader<float, double>>(
-            requestedType, stripe, scanSpec, std::move(flatMapContext));
+            requestedType, params, scanSpec);
       }
     case TypeKind::DOUBLE:
       return std::make_unique<
           SelectiveFloatingPointColumnReader<double, double>>(
-          requestedType, stripe, scanSpec, std::move(flatMapContext));
+          requestedType, params, scanSpec);
     case TypeKind::ROW:
       return std::make_unique<SelectiveStructColumnReader>(
-          requestedType, dataType, stripe, scanSpec, std::move(flatMapContext));
+          requestedType, dataType, params, scanSpec);
     case TypeKind::BOOLEAN:
       return std::make_unique<SelectiveByteRleColumnReader>(
           requestedType,
           dataType,
-          stripe,
+          params,
           scanSpec,
-          true,
-          std::move(flatMapContext));
+          true);
     case TypeKind::TINYINT:
       return std::make_unique<SelectiveByteRleColumnReader>(
           requestedType,
           dataType,
-          stripe,
+          params,
           scanSpec,
-          false,
-          std::move(flatMapContext));
+          false);
     case TypeKind::VARBINARY:
     case TypeKind::VARCHAR:
       switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
         case proto::ColumnEncoding_Kind_DIRECT:
           return std::make_unique<SelectiveStringDirectColumnReader>(
-              requestedType, stripe, scanSpec, std::move(flatMapContext));
+              requestedType, params, scanSpec);
         case proto::ColumnEncoding_Kind_DICTIONARY:
           return std::make_unique<SelectiveStringDictionaryColumnReader>(
-              requestedType, stripe, scanSpec, std::move(flatMapContext));
+              requestedType, params, scanSpec);
         default:
           DWIO_RAISE("buildReader string unknown encoding");
       }
     case TypeKind::TIMESTAMP:
       return std::make_unique<SelectiveTimestampColumnReader>(
-          requestedType, stripe, scanSpec, std::move(flatMapContext));
+          requestedType, params, scanSpec);
     default:
       DWIO_RAISE(
           "buildReader unhandled type: " +

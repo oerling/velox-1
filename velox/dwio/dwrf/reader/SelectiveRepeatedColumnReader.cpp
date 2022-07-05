@@ -21,18 +21,17 @@ namespace facebook::velox::dwrf {
 SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
+    DwrfParams& params,
+    common::ScanSpec* scanSpec)
     : SelectiveRepeatedColumnReader(
           dataType,
-          stripe,
+          params,
           scanSpec,
-          dataType->type,
-          std::move(flatMapContext)),
+          dataType->type),
       requestedType_{requestedType} {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
+  auto stripe = params.stripeStreams();
   // count the number of selected sub-columns
   const auto& cs = stripe.getColumnSelector();
   auto& childType = requestedType_->childAt(0);
@@ -112,18 +111,17 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
+    DwrfParams& params,
+    common::ScanSpec* scanSpec)
     : SelectiveRepeatedColumnReader(
           dataType,
-          stripe,
+          params,
           scanSpec,
-          dataType->type,
-          std::move(flatMapContext)),
+          dataType->type),
       requestedType_{requestedType} {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripe();
   if (scanSpec_->children().empty()) {
     scanSpec->getOrCreateChild(common::Subfield("keys"));
     scanSpec->getOrCreateChild(common::Subfield("elements"));

@@ -28,20 +28,12 @@ class SelectiveIntegerDictionaryColumnReader
   SelectiveIntegerDictionaryColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      StripeStreams& stripe,
+      DwrfParams& params,
       common::ScanSpec* scanSpec,
       uint32_t numBytes);
 
   void seekToRowGroup(uint32_t index) override {
-    ensureRowGroupIndex();
-
-    auto positions = toPositions(index_->entry(index));
-    dwio::common::PositionProvider positionsProvider(positions);
-
-    if (notNullDecoder_) {
-      notNullDecoder_->seekToRowGroup(positionsProvider);
-    }
-
+    auto positionsProvider( = formatData_->seekToRowGroup(index);
     if (inDictionaryReader_) {
       inDictionaryReader_->seekToRowGroup(positionsProvider);
     }

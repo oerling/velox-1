@@ -24,19 +24,18 @@ using namespace dwio::common;
 SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
+    DwrfParams& params,
+    common::ScanSpec* scanSpec)
     : SelectiveColumnReader(
           dataType,
-          stripe,
+          params,
           scanSpec,
-          dataType->type,
-          std::move(flatMapContext)),
+          dataType->type),
       requestedType_{requestedType},
       debugString_(getExceptionContext().message()) {
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   DWIO_ENSURE_EQ(encodingKey.node, dataType->id, "working on the same node");
+  auto& stripe = params.stripe();
   auto encoding = static_cast<int64_t>(stripe.getEncoding(encodingKey).kind());
   DWIO_ENSURE_EQ(
       encoding,
