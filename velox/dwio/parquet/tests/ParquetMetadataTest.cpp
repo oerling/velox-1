@@ -34,7 +34,7 @@ class ParquetMetadataTest : public ParquetReaderTest {};
 
 
 TEST_F(ParquetMetadataTest, readRowMap) {
-  const std::string sample(getExampleFilePath("tmp_row.parquet"));
+  const std::string sample(getExampleFilePath("sample.parquet"));
 
   ReaderOptions readerOptions;
   ParquetReader reader(
