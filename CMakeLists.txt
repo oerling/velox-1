@@ -120,6 +120,7 @@ if(VELOX_ENABLE_HDFS)
 endif()
 
 if(VELOX_ENABLE_PARQUET)
+set(VELOX_ENABLE_ARROW ON)
   add_definitions(-DVELOX_ENABLE_PARQUET)
 endif()
 
