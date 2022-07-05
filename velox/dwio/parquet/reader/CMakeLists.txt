@@ -37,7 +37,7 @@ target_link_libraries(
   velox_dwio_common
   velox_dwio_dwrf_common
   velox_dwio_dwrf_proto
-parquet_shared arrow_shared
+  arrow_shared
   ${THRIFTLIB}
   ${FMT})
 target_include_directories(velox_dwio_native_parquet_reader
