@@ -168,7 +168,7 @@ void SelectiveTimestampColumnReader::getValues(RowSet rows, VectorPtr* result) {
       ? (returnReaderNulls_ ? nullsInReadRange_->as<uint64_t>()
                             : rawResultNulls_)
       : nullptr;
-  detail::fillTimestamps(rawTs, rawNulls, secondsData, nanosData, numValues_);
+  fillTimestamps(rawTs, rawNulls, secondsData, nanosData, numValues_);
   values_ = tsValues;
   rawValues_ = values_->asMutable<char>();
   getFlatValues<Timestamp, Timestamp>(rows, result, type_, true);

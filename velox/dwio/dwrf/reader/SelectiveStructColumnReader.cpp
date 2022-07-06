@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
 #include "velox/dwio/dwrf/reader/ColumnLoader.h"
+#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -32,10 +33,11 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
           scanSpec,
           dataType->type),
       requestedType_{requestedType},
+      rowsPerRowGroup_(formatData_->as<DwrfData>().rowsPerRowGroup()),
       debugString_(getExceptionContext().message()) {
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   DWIO_ENSURE_EQ(encodingKey.node, dataType->id, "working on the same node");
-  auto& stripe = params.stripe();
+  auto& stripe = params.stripeStreams();
   auto encoding = static_cast<int64_t>(stripe.getEncoding(encodingKey).kind());
   DWIO_ENSURE_EQ(
       encoding,
@@ -43,7 +45,7 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
       "Unknown encoding for StructColumnReader");
 
   const auto& cs = stripe.getColumnSelector();
-  auto& childSpecs = scanSpec->children();
+  auto& childSpecs = scanSpec.children();
   for (auto i = 0; i < childSpecs.size(); ++i) {
     auto childSpec = childSpecs[i].get();
     if (childSpec->isConstant()) {
@@ -52,20 +54,21 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     auto childDataType = nodeType_->childByName(childSpec->fieldName());
     auto childRequestedType =
         requestedType_->childByName(childSpec->fieldName());
+    auto childParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
     VELOX_CHECK(cs.shouldReadNode(childDataType->id));
-    children_.push_back(SelectiveColumnReader::build(
+    children_.push_back(SelectiveDwrfReader::build(
         childRequestedType,
-        childDataType,
+	childDataType,
+        childParams,
         stripe,
-        childSpec,
-        FlatMapContext{encodingKey.sequence, nullptr}));
+        *childSpec));
     childSpec->setSubscript(children_.size() - 1);
   }
 }
 
 std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
-    const StatsContext& context) const {
+    const dwio::common::StatsContext& context) const {
   auto stridesToSkip =
       SelectiveColumnReader::filterRowGroups(rowGroupSize, context);
   for (const auto& child : children_) {

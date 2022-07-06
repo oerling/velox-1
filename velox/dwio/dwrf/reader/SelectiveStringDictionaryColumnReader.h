@@ -31,8 +31,6 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
       common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override {
-    ensureRowGroupIndex();
-
     auto positions = formatData_.as<DwrfData>().toPositions(index);
     dwio::common::PositionProvider positionsProvider(positions);
 

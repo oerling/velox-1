@@ -47,10 +47,10 @@ std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
   }
 }
 
-  // static
+// static
 std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
-								  const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-								  const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec) {
   CompatChecker::check(*dataType->type, *requestedType->type);

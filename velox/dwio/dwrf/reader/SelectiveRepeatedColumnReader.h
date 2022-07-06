@@ -17,6 +17,8 @@
 #pragma once
 
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
+#include "velox/dwio/common/BufferUtil.h"
 
 namespace facebook::velox::dwrf {
 
@@ -35,7 +37,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
   SelectiveRepeatedColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec,
+      common::ScanSpec& scanSpec,
       const TypePtr& type)
       : SelectiveColumnReader(
             std::move(nodeType),
@@ -63,8 +65,8 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
     // Reads the lengths, leaves an uninitialized gap for a null
     // map/list. Reading these checks the null nask.
     length_->next(allLengths_.data(), rows.back() + 1, nulls);
-    detail::ensureCapacity<vector_size_t>(offsets_, rows.size(), &memoryPool_);
-    detail::ensureCapacity<vector_size_t>(sizes_, rows.size(), &memoryPool_);
+    dwio::common::ensureCapacity<vector_size_t>(offsets_, rows.size(), &memoryPool_);
+    dwio::common::ensureCapacity<vector_size_t>(sizes_, rows.size(), &memoryPool_);
     auto rawOffsets = offsets_->asMutable<vector_size_t>();
     auto rawSizes = sizes_->asMutable<vector_size_t>();
     vector_size_t nestedLength = 0;
@@ -176,14 +178,14 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec& scanSpec);
 
   void resetFilterCaches() override {
     child_->resetFilterCaches();
   }
 
   void seekToRowGroup(uint32_t index) override {
-    auto& positionsProvider = formatData_->seekToRowGroup(index);
+    auto positionsProvider = formatData_->seekToRowGroup(index);
     length_->seekToRowGroup(positionsProvider);
 
     VELOX_CHECK(!positionsProvider.hasNext());
@@ -211,7 +213,7 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec& scanSpec);
 
   void resetFilterCaches() override {
     keyReader_->resetFilterCaches();

@@ -70,6 +70,10 @@ class DwrfData : public dwio::common::FormatData {
     return positionProvider;
   }
 
+  uint32_t rowsPerRowGroup() const {
+    return rowsPerRowGroup_;
+  }
+  
  private:
   void ensureRowGroupIndex();
 

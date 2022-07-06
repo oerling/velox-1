@@ -60,7 +60,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
-      const StatsContext& context) const override;
+      const dwio::common::StatsContext& context) const override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
@@ -103,7 +103,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   void setIsTopLevel() override {
     isTopLevel_ = true;
-    if (!notNullDecoder_) {
+    if (!formatData_->hasNulls()) {
       for (auto& child : children_) {
         child->setIsTopLevel();
       }
@@ -132,6 +132,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   uint64_t numReads_ = 0;
   vector_size_t lazyVectorReadOffset_;
 
+  const int32_t rowsPerRowGroup_;
+  
   // Dense set of rows to read in next().
   raw_vector<vector_size_t> rows_;
 

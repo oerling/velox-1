@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -22,16 +23,12 @@ SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
-    common::ScanSpec* scanSpec)
-    : SelectiveRepeatedColumnReader(
-          dataType,
-          params,
-          scanSpec,
-          dataType->type),
+    common::ScanSpec& scanSpec)
+    : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
       requestedType_{requestedType} {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
-  auto stripe = params.stripeStreams();
+  auto& stripe = params.stripeStreams();
   // count the number of selected sub-columns
   const auto& cs = stripe.getColumnSelector();
   auto& childType = requestedType_->childAt(0);
@@ -39,21 +36,21 @@ SelectiveListColumnReader::SelectiveListColumnReader(
       cs.shouldReadNode(childType->id),
       "SelectiveListColumnReader must select the values stream");
   if (scanSpec_->children().empty()) {
-    scanSpec->getOrCreateChild(common::Subfield("elements"));
+    scanSpec.getOrCreateChild(common::Subfield("elements"));
   }
   scanSpec_->children()[0]->setProjectOut(true);
   scanSpec_->children()[0]->setExtractValues(true);
 
-  child_ = SelectiveColumnReader::build(
+  auto childParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  child_ = SelectiveDwrfReader::build(
       childType,
       nodeType_->childAt(0),
-      stripe,
-      scanSpec_->children()[0].get(),
-      FlatMapContext{encodingKey.sequence, nullptr});
+      childParams,
+      *scanSpec_->children()[0]);
 }
 
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
-  numValues = ColumnReader::skip(numValues);
+  numValues = formatData_->skipNulls(numValues);
   if (child_) {
     std::array<int64_t, kBufferSize> buffer;
     uint64_t childElements = 0;
@@ -112,23 +109,19 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
-    common::ScanSpec* scanSpec)
-    : SelectiveRepeatedColumnReader(
-          dataType,
-          params,
-          scanSpec,
-          dataType->type),
+    common::ScanSpec& scanSpec)
+    : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
       requestedType_{requestedType} {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
-  auto& stripe = params.stripe();
+  auto& stripe = params.stripeStreams();
   if (scanSpec_->children().empty()) {
-    scanSpec->getOrCreateChild(common::Subfield("keys"));
-    scanSpec->getOrCreateChild(common::Subfield("elements"));
+    scanSpec_->getOrCreateChild(common::Subfield("keys"));
+    scanSpec_->getOrCreateChild(common::Subfield("elements"));
   }
-  scanSpec->children()[0]->setProjectOut(true);
-  scanSpec->children()[0]->setExtractValues(true);
-  scanSpec->children()[1]->setProjectOut(true);
+  scanSpec_->children()[0]->setProjectOut(true);
+  scanSpec_->children()[0]->setExtractValues(true);
+  scanSpec_->children()[1]->setProjectOut(true);
   scanSpec_->children()[1]->setExtractValues(true);
 
   const auto& cs = stripe.getColumnSelector();
@@ -136,29 +129,29 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
   VELOX_CHECK(
       cs.shouldReadNode(keyType->id),
       "Map key must be selected in SelectiveMapColumnReader");
-  keyReader_ = SelectiveColumnReader::build(
+  auto keyParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  keyReader_ = SelectiveDwrfReader::build(
       keyType,
       nodeType_->childAt(0),
-      stripe,
-      scanSpec_->children()[0].get(),
-      FlatMapContext{encodingKey.sequence, nullptr});
+      keyParams,
+      *scanSpec_->children()[0].get());
 
   auto& valueType = requestedType_->childAt(1);
   VELOX_CHECK(
       cs.shouldReadNode(valueType->id),
       "Map Values must be selected in SelectiveMapColumnReader");
-  elementReader_ = SelectiveColumnReader::build(
+  auto elementParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  elementReader_ = SelectiveDwrfReader::build(
       valueType,
       nodeType_->childAt(1),
-      stripe,
-      scanSpec_->children()[1].get(),
-      FlatMapContext{encodingKey.sequence, nullptr});
+      elementParams,
+      *scanSpec_->children()[1], );
 
   VLOG(1) << "[Map] Initialized map column reader for node " << nodeType_->id;
 }
 
 uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
-  numValues = ColumnReader::skip(numValues);
+  numValues = formatData_->skipNulls(numValues);
   if (keyReader_ || elementReader_) {
     std::array<int64_t, kBufferSize> buffer;
     uint64_t childElements = 0;

@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #include "velox/buffer/Buffer.h"
 
-namespace facebook::dwio::common {
+namespace facebook::velox::dwio::common {
 
 template <typename T>
 inline void ensureCapacity(
