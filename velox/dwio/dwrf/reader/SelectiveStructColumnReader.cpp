@@ -25,7 +25,7 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     DwrfParams& params,
-    common::ScanSpec* scanSpec)
+    common::ScanSpec& scanSpec)
     : SelectiveColumnReader(
           dataType,
           params,

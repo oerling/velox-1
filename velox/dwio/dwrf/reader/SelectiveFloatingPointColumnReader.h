@@ -26,9 +26,8 @@ class SelectiveFloatingPointColumnReader : public SelectiveColumnReader {
   using ValueType = TRequested;
   SelectiveFloatingPointColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flatMapContext);
+      DwrfData& params,
+      common::ScanSpec& scanSpec);
 
   // Offers fast path only if data and result widths match.
   bool hasBulkPath() const override {
@@ -81,15 +80,13 @@ template <typename TData, typename TRequested>
 SelectiveFloatingPointColumnReader<TData, TRequested>::
     SelectiveFloatingPointColumnReader(
         std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-        StripeStreams& stripe,
-        common::ScanSpec* scanSpec,
-        FlatMapContext flatMapContext)
+        DwrfParams& params,
+        common::ScanSpec& scanSpec)
     : SelectiveColumnReader(
           std::move(requestedType),
-          stripe,
+          params,
           scanSpec,
-          CppToType<TData>::create(),
-          std::move(flatMapContext)),
+          CppToType<TData>::create()),
       decoder_(stripe.getStream(
           EncodingKey{nodeType_->id, flatMapContext_.sequence}.forKind(
               proto::Stream_Kind_DATA),

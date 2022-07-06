@@ -19,6 +19,7 @@
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/dwio/dwrf/reader/DwrfReaderShared.h"
+#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -26,20 +27,32 @@ class DwrfRowReader : public DwrfRowReaderShared {
  protected:
   void resetColumnReaderImpl() override {
     columnReader_.reset();
+    selectiveColumnReader_.reset();
   }
 
   void createColumnReaderImpl(StripeStreams& stripeStreams) override {
-    columnReader_ = (columnReaderFactory_ ? columnReaderFactory_.get()
-                                          : ColumnReaderFactory::baseFactory())
-                        ->build(
+    auto factory = (columnReaderFactory_ ? columnReaderFactory_.get()
+		     : ColumnReaderFactory::baseFactory());
+    if (auto selectiveFactory = dynamic_cast<SelectiveColumnReaderFactor*>(factory)) {
+      selectiveColumnReader_ = selectiveFactory->buildSelective(
                             getColumnSelector().getSchemaWithId(),
                             getReader().getSchemaWithId(),
                             stripeStreams);
+    } else {
+      columnReader = factory->build(
+				    getColumnSelector().getSchemaWithId(),
+				    getReader().getSchemaWithId(),
+				    stripeStreams);
+    }
   }
 
   void seekImpl() override {
-    columnReader_->skip(currentRowInStripe);
-  }
+    if (selectiveColumnReader_) {
+      selectiveColumnReader_->skip(currentRowInStripe);
+    } else {
+      columnReader_->skip(currentRowInStripe);
+    }
+    }
 
  public:
   /**
@@ -81,6 +94,7 @@ class DwrfRowReader : public DwrfRowReaderShared {
   void checkSkipStrides(const StatsContext& context, uint64_t strideSize);
 
   std::unique_ptr<ColumnReader> columnReader_;
+  std::unique_ptr<SelectiveColumnReader> selectiveColumnReader_;
   std::vector<uint32_t> stridesToSkip_;
   // Record of strides to skip in each visited stripe. Used for diagnostics.
   std::unordered_map<uint32_t, std::vector<uint32_t>> stripeStridesToSkip_;

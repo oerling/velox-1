@@ -26,7 +26,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec& scanSpec);
 
   void resetFilterCaches() override {
     for (auto& child : children_) {

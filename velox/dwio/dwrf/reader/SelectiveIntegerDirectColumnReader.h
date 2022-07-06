@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/dwio/dwrf/reader/SelectiveIntegerColumnReader.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
@@ -29,7 +30,7 @@ class SelectiveIntegerDirectColumnReader : public SelectiveIntegerColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
       uint32_t numBytes,
-      common::ScanSpec* scanSpec)
+      common::ScanSpec& scanSpec)
       : SelectiveIntegerColumnReader(
             std::move(requestedType),
             params,

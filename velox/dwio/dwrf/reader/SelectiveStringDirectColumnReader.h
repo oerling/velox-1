@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
@@ -25,7 +26,7 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
   using ValueType = StringView;
   SelectiveStringDirectColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-      FormatParams& params,
+      DwrfParams& params,
       common::ScanSpec* scanSpec);
 
   void seekToRowGroup(uint32_t index) override {

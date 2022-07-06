@@ -23,6 +23,7 @@
 #include "velox/dwio/dwrf/reader/DwrfReaderShared.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
+#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 
 namespace facebook::velox::dwrf {
 

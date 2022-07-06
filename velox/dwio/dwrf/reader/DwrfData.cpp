@@ -23,11 +23,9 @@ namespace facebook::velox::dwrf {
 DwrfData::DwrfData(
 		   std::shared_ptr<const dwio::common::TypeWithId> nodeType,
 		   StripeStreams& stripe,
-	     FlatMapContext flatMapContext,
-	     dwio::common::ScanSpec& scanSpec)
-  :
-    : nodeType_(std::move(nodeType)),
-      memoryPool_(stripe.getMemoryPool()),
+		   FlatMapContext flatMapContext)
+  : pool_(stripe.getMemoryPool()),
+    nodeType_(std::move(nodeType)),
     flatMapContext_(std::move(flatMapContext)),
       rowsPerRowGroup_{stripe.rowsPerRowGroup()}{
   EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
@@ -100,6 +98,23 @@ uint64_t DwrfData::skip(uint64_t numValues) {
       reinterpret_cast<char*>(nullsPtr), numValues, incomingNulls);
 }
 
+uint64_t DwrfData::skipNulls(uint64_t numValues) {
+  if (notNullDecoder_) {
+    // page through the values that we want to skip
+    // and count how many are non-null
+    std::array<char, BUFFER_SIZE> buffer;
+    constexpr auto bitCount = BUFFER_SIZE * 8;
+    uint64_t remaining = numValues;
+    while (remaining > 0) {
+      uint64_t chunkSize = std::min(remaining, bitCount);
+      notNullDecoder_->next(buffer.data(), chunkSize, nullptr);
+      remaining -= chunkSize;
+      numValues -= bits::countNulls(
+          reinterpret_cast<uint64_t*>(buffer.data()), 0, chunkSize);
+    }
+  }
+  return numValues;
+}
   
   
 

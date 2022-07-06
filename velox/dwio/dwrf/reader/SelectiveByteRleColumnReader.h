@@ -1,4 +1,4 @@
-/*
+*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <velox/type/Filter.h>
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 

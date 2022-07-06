@@ -22,7 +22,7 @@ using namespace dwio::common;
 SelectiveIntegerDictionaryColumnReader::SelectiveIntegerDictionaryColumnReader(
     std::shared_ptr<const TypeWithId> requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
-    StripeStreams& stripe,
+    dwio::common::FormatParams& params,
     common::ScanSpec* scanSpec,
     uint32_t numBytes)
     : SelectiveIntegerColumnReader(

@@ -17,6 +17,8 @@
 #pragma once
 
 #include "velox/dwio/dwrf/reader/SelectiveIntegerColumnReader.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
+
 
 namespace facebook::velox::dwrf {
 
@@ -29,7 +31,7 @@ class SelectiveIntegerDictionaryColumnReader
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec,
+      common::ScanSpec& scanSpec,
       uint32_t numBytes);
 
   void seekToRowGroup(uint32_t index) override {

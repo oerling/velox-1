@@ -104,29 +104,21 @@ class SelectiveColumnReader {
 
   SelectiveColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      const TypePtr& type,
-      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
-
+      dwio::common::FormatParams& params,
+      common::ScanSpec& scanSpec,
+      const TypePtr& type);
+  
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read
    * @param vector to read into
    */
-  void next(
+  virtual void next(
       uint64_t /*numValues*/,
       VectorPtr& /*result*/,
-      const uint64_t* /*incomingNulls*/) override {
+      const uint64_t* /*incomingNulls*/) {
     VELOX_UNSUPPORTED("next() is only defined in SelectiveStructColumnReader");
   }
-
-  // Creates a reader for the given stripe.
-  static std::unique_ptr<SelectiveColumnReader> build(
-      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      DwrfParams& params,
-      common::ScanSpec* scanSpec);
 
   // Called when filters in ScanSpec change, e.g. a new filter is pushed down
   // from a downstream operator.
@@ -277,7 +269,7 @@ class SelectiveColumnReader {
 
   std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
-      const StatsContext& context) const override;
+      const dwio::common::StatsContext& context) const;
 
   raw_vector<int32_t>& innerNonNullRows() {
     return innerNonNullRows_;
@@ -367,6 +359,8 @@ class SelectiveColumnReader {
   // copy.
   char* copyStringValue(folly::StringPiece value);
 
+  memory::MemoryPool& memoryPool_;
+  
   // Format specific state and functions.
   std::unique_ptr<dwio::common::FormatData> formatData_;
   
@@ -468,30 +462,6 @@ inline void SelectiveColumnReader::addValue(const folly::StringPiece value) {
   }
   addStringValue(value);
 }
-
-class SelectiveColumnReaderFactory : public ColumnReaderFactory {
- public:
-  explicit SelectiveColumnReaderFactory(
-      std::shared_ptr<common::ScanSpec> scanSpec)
-      : scanSpec_(scanSpec) {}
-  std::unique_ptr<ColumnReader> build(
-      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      StripeStreams& stripe,
-      FlatMapContext flatMapContext) override {
-    auto params = DwrfParams(stripe, std::move(flatMapContext)); 
-    auto reader = SelectiveColumnReader::build(
-        requestedType,
-        dataType,
-        params,
-        scanSpec_.get());
-    reader->setIsTopLevel();
-    return reader;
-  }
-
- private:
-  std::shared_ptr<common::ScanSpec> const scanSpec_;
-};
 
 } // namespace facebook::velox::dwrf
 

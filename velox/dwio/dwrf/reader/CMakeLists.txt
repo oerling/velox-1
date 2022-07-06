@@ -23,6 +23,7 @@ add_library(
   FlatMapHelper.cpp
   ReaderBase.cpp
   SelectiveColumnReader.cpp
+  SelectiveDwrfReader.cpp
   SelectiveByteRleColumnReader.cpp
   SelectiveIntegerDirectColumnReader.cpp
   SelectiveIntegerDictionaryColumnReader.cpp

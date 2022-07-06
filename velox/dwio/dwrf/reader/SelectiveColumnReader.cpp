@@ -14,19 +14,8 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/reader/SelectiveByteRleColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
 
-#include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveIntegerDictionaryColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveIntegerDirectColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
-
-#include "velox/dwio/dwrf/reader/SelectiveStringDictionaryColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveTimestampColumnReader.h"
-
-#include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -59,17 +48,15 @@ SelectiveColumnReader::SelectiveColumnReader(
     dwio::common::FormatParams& params,
     common::ScanSpec& scanSpec,
     const TypePtr& type)
-  : formatData_(params.toFormatData(type, scanSpec)),
-      scanSpec_(scanSpec),
+  : memoryPool_(params.pool()),
+    formatData_(params.toFormatData(requestedType, scanSpec)),
+      scanSpec_(&scanSpec),
       type_{type} {}
 
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const dwio::common::StatsContext& context) const {
-  formatData_->filterRowGroups(rowGroupSize, context);
-  if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
-    return ColumnReader::filterRowGroups(rowGroupSize, context);
-  }
+  return formatData_->filterRowGroups(*scanSpec_, rowGroupSize, context);
 }
 
 void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
@@ -110,7 +97,7 @@ void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
     // Clear whole capacity because future uses could hit
     // uncleared data between capacity() and 'numBytes'.
     simd::memset(rawResultNulls_, bits::kNotNullByte, resultNulls_->capacity());
-    anyNulls_ = false;
+    anyNulls_ = false;g
     return;
   }
 
@@ -309,123 +296,6 @@ void SelectiveColumnReader::resetFilterCaches() {
         scanState_.filterCache.data(),
         FilterResult::kUnknown,
         scanState_.filterCache.size());
-  }
-}
-
-std::vector<uint64_t> toPositions(const proto::RowIndexEntry& entry) {
-  return std::vector<uint64_t>(
-      entry.positions().begin(), entry.positions().end());
-}
-
-std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
-    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-    DwrfParams& params,
-    const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    uint32_t numBytes,
-    common::ScanSpec* scanSpec) {
-  EncodingKey ek{requestedType->id, params.flatMapContext.sequence};
-  switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
-    case proto::ColumnEncoding_Kind_DICTIONARY:
-      return std::make_unique<SelectiveIntegerDictionaryColumnReader>(
-          requestedType, dataType, params, scanSpec, numBytes);
-    case proto::ColumnEncoding_Kind_DIRECT:
-      return std::make_unique<SelectiveIntegerDirectColumnReader>(
-          requestedType, dataType, params, numBytes, scanSpec);
-    default:
-      DWIO_RAISE("buildReader unhandled integer encoding");
-  }
-}
-
-std::unique_ptr<SelectiveColumnReader> SelectiveColumnReader::build(
-    const std::shared_ptr<const TypeWithId>& requestedType,
-    const std::shared_ptr<const TypeWithId>& dataType,
-    DwrfParams& params,
-    common::ScanSpec* scanSpec) {
-  CompatChecker::check(*dataType->type, *requestedType->type);
-  EncodingKey ek{dataType->id, flatMapContext.sequence};
-
-  switch (dataType->type->kind()) {
-    case TypeKind::INTEGER:
-      return buildIntegerReader(
-          requestedType,
-          dataType,
-          params,
-          INT_BYTE_SIZE,
-          scanSpec);
-    case TypeKind::BIGINT:
-      return buildIntegerReader(
-          requestedType,
-          dataType,
-          params,
-          LONG_BYTE_SIZE,
-          scanSpec);
-    case TypeKind::SMALLINT:
-      return buildIntegerReader(
-          requestedType,
-          dataType,
-          params,
-          SHORT_BYTE_SIZE,
-          scanSpec);
-    case TypeKind::ARRAY:
-      return std::make_unique<SelectiveListColumnReader>(
-          requestedType, dataType, params, scanSpec);
-    case TypeKind::MAP:
-      if (stripe.getEncoding(ek).kind() ==
-          proto::ColumnEncoding_Kind_MAP_FLAT) {
-        VELOX_UNSUPPORTED("SelectiveColumnReader does not support flat maps");
-      }
-      return std::make_unique<SelectiveMapColumnReader>(
-          requestedType, dataType, params, scanSpec);
-    case TypeKind::REAL:
-      if (requestedType->type->kind() == TypeKind::REAL) {
-        return std::make_unique<
-            SelectiveFloatingPointColumnReader<float, float>>(
-            requestedType, params, scanSpec);
-      } else {
-        return std::make_unique<
-            SelectiveFloatingPointColumnReader<float, double>>(
-            requestedType, params, scanSpec);
-      }
-    case TypeKind::DOUBLE:
-      return std::make_unique<
-          SelectiveFloatingPointColumnReader<double, double>>(
-          requestedType, params, scanSpec);
-    case TypeKind::ROW:
-      return std::make_unique<SelectiveStructColumnReader>(
-          requestedType, dataType, params, scanSpec);
-    case TypeKind::BOOLEAN:
-      return std::make_unique<SelectiveByteRleColumnReader>(
-          requestedType,
-          dataType,
-          params,
-          scanSpec,
-          true);
-    case TypeKind::TINYINT:
-      return std::make_unique<SelectiveByteRleColumnReader>(
-          requestedType,
-          dataType,
-          params,
-          scanSpec,
-          false);
-    case TypeKind::VARBINARY:
-    case TypeKind::VARCHAR:
-      switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
-        case proto::ColumnEncoding_Kind_DIRECT:
-          return std::make_unique<SelectiveStringDirectColumnReader>(
-              requestedType, params, scanSpec);
-        case proto::ColumnEncoding_Kind_DICTIONARY:
-          return std::make_unique<SelectiveStringDictionaryColumnReader>(
-              requestedType, params, scanSpec);
-        default:
-          DWIO_RAISE("buildReader string unknown encoding");
-      }
-    case TypeKind::TIMESTAMP:
-      return std::make_unique<SelectiveTimestampColumnReader>(
-          requestedType, params, scanSpec);
-    default:
-      DWIO_RAISE(
-          "buildReader unhandled type: " +
-          mapTypeKindToName(dataType->type->kind()));
   }
 }
 
