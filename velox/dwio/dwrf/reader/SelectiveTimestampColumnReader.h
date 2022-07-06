@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 class SelectiveTimestampColumnReader : public SelectiveColumnReader {
@@ -26,9 +27,8 @@ class SelectiveTimestampColumnReader : public SelectiveColumnReader {
 
   SelectiveTimestampColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flaatMapContext);
+      DwrfParams& params,
+      common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override;
   uint64_t skip(uint64_t numValues) override;

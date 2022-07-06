@@ -49,6 +49,7 @@ SelectiveColumnReader::SelectiveColumnReader(
     common::ScanSpec& scanSpec,
     const TypePtr& type)
   : memoryPool_(params.pool()),
+    nodeType_(requestedType),
     formatData_(params.toFormatData(requestedType, scanSpec)),
       scanSpec_(&scanSpec),
       type_{type} {}
@@ -97,7 +98,7 @@ void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
     // Clear whole capacity because future uses could hit
     // uncleared data between capacity() and 'numBytes'.
     simd::memset(rawResultNulls_, bits::kNotNullByte, resultNulls_->capacity());
-    anyNulls_ = false;g
+    anyNulls_ = false;
     return;
   }
 

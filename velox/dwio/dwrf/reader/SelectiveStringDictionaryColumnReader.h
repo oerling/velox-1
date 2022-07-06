@@ -30,7 +30,7 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
       dwio::common::FormatParams& params,
       common::ScanSpec& scanSpec);
 
-  void seekToRowGroup(uSeleint32_t index) override {
+  void seekToRowGroup(uint32_t index) override {
     ensureRowGroupIndex();
 
     auto positions = formatData_.as<DwrfData>().toPositions(index);

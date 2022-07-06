@@ -42,7 +42,10 @@ class FormatData {
       BufferPtr& nulls) = 0;
 
   virtual uint64_t skipNulls(uint64_t numValues) = 0;
-    
+
+  virtual uint64_t skip(uint64_t numValues) = 0;
+
+  
   // True if this produces nulls. For example, if this is ORC and
   // there is a nulls decoder for the column. False if nulls are not
   // managed by this, e.g. in Parquet.

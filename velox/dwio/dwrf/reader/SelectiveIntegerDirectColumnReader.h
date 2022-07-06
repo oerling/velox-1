@@ -39,7 +39,7 @@ class SelectiveIntegerDirectColumnReader : public SelectiveIntegerColumnReader {
     EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
     auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
     auto& stripe = params.stripeStreams();
-    bool dataVInts = stripe().getUseVInts(data);
+    bool dataVInts = stripe.getUseVInts(data);
     auto decoder = IntDecoder</*isSigned*/ true>::createDirect(
         stripe.getStream(data, true), dataVInts, numBytes);
     auto rawDecoder = decoder.release();

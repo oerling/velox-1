@@ -20,14 +20,13 @@
 #include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDictionaryColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveIntegerDirectColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveStringDictionaryColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveTimestampColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStringDictionaryColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveTimestampColumnReader.h"
 
 namespace facebook::velox::dwrf {
-
 
 std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -48,9 +47,10 @@ std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
   }
 }
 
+  // static
 std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
-    const std::shared_ptr<const TypeWithId>& requestedType,
-    const std::shared_ptr<const TypeWithId>& dataType,
+								  const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+								  const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec) {
   CompatChecker::check(*dataType->type, *requestedType->type);
@@ -59,25 +59,13 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
   switch (dataType->type->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(
-          requestedType,
-          dataType,
-          params,
-          INT_BYTE_SIZE,
-          scanSpec);
+          requestedType, dataType, params, INT_BYTE_SIZE, scanSpec);
     case TypeKind::BIGINT:
       return buildIntegerReader(
-          requestedType,
-          dataType,
-          params,
-          LONG_BYTE_SIZE,
-          scanSpec);
+          requestedType, dataType, params, LONG_BYTE_SIZE, scanSpec);
     case TypeKind::SMALLINT:
       return buildIntegerReader(
-          requestedType,
-          dataType,
-          params,
-          SHORT_BYTE_SIZE,
-          scanSpec);
+          requestedType, dataType, params, SHORT_BYTE_SIZE, scanSpec);
     case TypeKind::ARRAY:
       return std::make_unique<SelectiveListColumnReader>(
           requestedType, dataType, params, scanSpec);
@@ -107,18 +95,10 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
           requestedType, dataType, params, scanSpec);
     case TypeKind::BOOLEAN:
       return std::make_unique<SelectiveByteRleColumnReader>(
-          requestedType,
-          dataType,
-          params,
-          scanSpec,
-          true);
+          requestedType, dataType, params, scanSpec, true);
     case TypeKind::TINYINT:
       return std::make_unique<SelectiveByteRleColumnReader>(
-          requestedType,
-          dataType,
-          params,
-          scanSpec,
-          false);
+          requestedType, dataType, params, scanSpec, false);
     case TypeKind::VARBINARY:
     case TypeKind::VARCHAR:
       switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
@@ -141,4 +121,4 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
   }
 }
 
-}
+} // namespace facebook::velox::dwrf

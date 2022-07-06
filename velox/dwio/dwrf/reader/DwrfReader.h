@@ -33,13 +33,13 @@ class DwrfRowReader : public DwrfRowReaderShared {
   void createColumnReaderImpl(StripeStreams& stripeStreams) override {
     auto factory = (columnReaderFactory_ ? columnReaderFactory_.get()
 		     : ColumnReaderFactory::baseFactory());
-    if (auto selectiveFactory = dynamic_cast<SelectiveColumnReaderFactor*>(factory)) {
+    if (auto selectiveFactory = dynamic_cast<SelectiveColumnReaderFactory*>(factory)) {
       selectiveColumnReader_ = selectiveFactory->buildSelective(
                             getColumnSelector().getSchemaWithId(),
                             getReader().getSchemaWithId(),
                             stripeStreams);
     } else {
-      columnReader = factory->build(
+      columnReader_ = factory->build(
 				    getColumnSelector().getSchemaWithId(),
 				    getReader().getSchemaWithId(),
 				    stripeStreams);

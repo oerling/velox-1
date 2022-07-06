@@ -30,74 +30,85 @@
 namespace facebook::velox::dwrf {
 
 // DWRF specific functions shared between all readers.
-  class DwrfData : public dwio::common::FormatData {
-  public:
-    DwrfData(StripeStreams& stripe,
-	     FlatMapContext flatMapContext);
+class DwrfData : public dwio::common::FormatData {
+ public:
+  DwrfData(
+	   std::shared_ptr<const dwio::common::TypeWithId> nodeType,
+      StripeStreams& stripe,
+      FlatMapContext flatMapContext);
 
-
-    void readNulls(
+  void readNulls(
       vector_size_t numValues,
       const uint64_t* incomingNulls,
       BufferPtr& nulls) override;
 
-    uint64_t skipNulls(uint64_t numValues) override;    
-    virtual std::vector<uint32_t> filterRowGroups(
-      uint64_t rowsPerRowGroup,
-      const StatsContext& context) {
-    VELOX_NYI();
+  uint64_t skipNulls(uint64_t numValues) override;
+
+  uint64_t skip(uint64_t numValues) override {
+    return skipNulls(numValues);
   }
 
-    bool hasNulls() const override {
-      return notNullDecoder_ != nullptr;
-    }
-    
-  // seeks possible nulls to the row group and returns a PositionsProvider for the other streams.
-    dwio::common::PositionProvider seektoRowGroup(uint32_t index) {
-      ensureRowGroupIndex();
-      tempPositions_ = toPositionsInner(index_->entry(index));
-      dwio::common::PositionProvider positionProvider(tempPositions_);
-      
+  std::vector<uint32_t> filterRowGroups(
+						const common::ScanSpec& scanSpec,
+						uint64_t rowsPerRowGroup,
+						const dwio::common::StatsContext& context) override;
+
+  bool hasNulls() const override {
+    return notNullDecoder_ != nullptr;
+  }
+
+  // seeks possible nulls to the row group and returns a PositionsProvider for
+  // the other streams.
+  dwio::common::PositionProvider seektoRowGroup(uint32_t index) {
+    ensureRowGroupIndex();
+    tempPositions_ = toPositionsInner(index_->entry(index));
+    dwio::common::PositionProvider positionProvider(tempPositions_);
+
     if (notNullDecoder_) {
       notNullDecoder_->seekToRowGroup(positionProvider);
     }
     return positionProvider;
   }
 
-  
  private:
   void ensureRowGroupIndex();
+
+  static std::vector<uint64_t> toPositionsInner(
+      const proto::RowIndexEntry& entry) {
+    return std::vector<uint64_t>(
+        entry.positions().begin(), entry.positions().end());
+  }
+
+
   
-    static std::vector<uint64_t> toPositionsInner(const proto::RowIndexEntry& entry) {
-  return std::vector<uint64_t>(
-      entry.positions().begin(), entry.positions().end());
-    }
-    std::unique_ptr<ByteRleDecoder> notNullDecoder_;
-  const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   memory::MemoryPool& memoryPool_;
+  const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   FlatMapContext flatMapContext_;
+  std::unique_ptr<ByteRleDecoder> notNullDecoder_;
   std::unique_ptr<dwio::common::SeekableInputStream> indexStream_;
   std::unique_ptr<proto::RowIndex> index_;
   // Number of rows in a row group. Last row group may have fewer rows.
   uint32_t rowsPerRowGroup_;
 
-  // Storage for positions backing a PositionProvider returned from seekToRowGroup().
+  // Storage for positions backing a PositionProvider returned from
+  // seekToRowGroup().
   std::vector<uint64_t> tempPositions_;
-  };  
-
+};
 
 // DWRF specific initialization.
-  class DwrfParams : public dwio::common::FormatParams {
+class DwrfParams : public dwio::common::FormatParams {
  public:
   DwrfParams(
-      memory::MemoryPool& pool,
       StripeStreams& stripeStreams,
       FlatMapContext context = FlatMapContext::nonFlatMapContext())
-      : FormatParams(pool), stripeStreams_(stripeStreams), flatMapContext_(context) {}
+    : FormatParams(stripeStreams.getMemoryPool()),
+        stripeStreams_(stripeStreams),
+        flatMapContext_(context) {}
 
-    std::unique_ptr<dwio::common::FormatData> toFormatData(
-					   const std::shared_ptr<const dwio::common::TypeWithId>& type, dwio::common::ScanSpec& scanSpec) override {
-    return std::make_unique<DwrfData>(type, stripe_, flatMapContext_);
+  std::unique_ptr<dwio::common::FormatData> toFormatData(
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      const common::ScanSpec& /*scanSpec*/) override {
+    return std::make_unique<DwrfData>(type, stripeStreams_, flatMapContext_);
   }
 
   StripeStreams& stripeStreams() {
@@ -107,12 +118,10 @@ namespace facebook::velox::dwrf {
   FlatMapContext flatMapContext() {
     return flatMapContext_;
   }
-  
+
  private:
   StripeStreams& stripeStreams_;
   FlatMapContext flatMapContext_;
 };
 
 } // namespace facebook::velox::dwrf
-
-

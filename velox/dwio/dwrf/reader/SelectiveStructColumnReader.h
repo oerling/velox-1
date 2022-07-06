@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 

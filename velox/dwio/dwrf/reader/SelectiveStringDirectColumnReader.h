@@ -27,7 +27,7 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
   SelectiveStringDirectColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override {
     auto positionsProvider = formatData_->seekToRowGroup(index);

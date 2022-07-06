@@ -16,27 +16,36 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
+#include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/dwio/dwrf/reader/DwrfData.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 
+namespace facebook::velox::dwrf {
 
+// Wrapper for static functions for making DWRF readers
+class SelectiveDwrfReader {
+ public:
+  static std::unique_ptr<SelectiveColumnReader> build(
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      DwrfParams& params,
+      common::ScanSpec& scanSpec);
+};
 
 class SelectiveColumnReaderFactory : public ColumnReaderFactory {
  public:
   explicit SelectiveColumnReaderFactory(
       std::shared_ptr<common::ScanSpec> scanSpec)
       : scanSpec_(scanSpec) {}
-  std::unique_ptr<ColumnReader> build(
+
+  std::unique_ptr<SelectiveColumnReader> buildSelective(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
-      FlatMapContext flatMapContext) override {
-    auto params = DwrfParams(stripe, std::move(flatMapContext)); 
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext()) {
+    auto params = DwrfParams(stripe, std::move(flatMapContext));
     auto reader = SelectiveDwrfReader::build(
-        requestedType,
-        dataType,
-        params,
-        *scanSpec_);
+        requestedType, dataType, params, *scanSpec_);
     reader->setIsTopLevel();
     return reader;
   }
@@ -44,3 +53,4 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
  private:
   std::shared_ptr<common::ScanSpec> const scanSpec_;
 };
+} // namespace facebook::velox::dwrf

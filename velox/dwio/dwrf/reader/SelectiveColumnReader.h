@@ -116,7 +116,7 @@ class SelectiveColumnReader {
   virtual void next(
       uint64_t /*numValues*/,
       VectorPtr& /*result*/,
-      const uint64_t* /*incomingNulls*/) {
+      const uint64_t* /*incomingNulls*/ = nullptr) {
     VELOX_UNSUPPORTED("next() is only defined in SelectiveStructColumnReader");
   }
 
@@ -133,6 +133,10 @@ class SelectiveColumnReader {
   virtual void
   read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls) = 0;
 
+  virtual uint64_t skip(uint64_t numValues) {
+    return formatData_->skip(numValues);
+  }
+  
   // Extracts the values at 'rows' into '*result'. May rewrite or
   // reallocate '*result'. 'rows' must be the same set or a subset of
   // 'rows' passed to the last 'read().
@@ -152,6 +156,9 @@ class SelectiveColumnReader {
   // offset-th from the start of stripe.
   void seekTo(vector_size_t offset, bool readsNullsOnly);
 
+  // Positions this at the start of 'index'th row group. Interpretation of 'index' depends on format.
+  virtual void seekToRowGroup(uint32_t index) = 0;
+  
   const TypePtr& type() const {
     return type_;
   }
@@ -360,6 +367,8 @@ class SelectiveColumnReader {
   char* copyStringValue(folly::StringPiece value);
 
   memory::MemoryPool& memoryPool_;
+
+  std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   
   // Format specific state and functions.
   std::unique_ptr<dwio::common::FormatData> formatData_;

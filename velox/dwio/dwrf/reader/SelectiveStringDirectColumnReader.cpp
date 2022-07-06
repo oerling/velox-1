@@ -20,14 +20,15 @@ namespace facebook::velox::dwrf {
 
 SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-    FormatParams& params,
-    common::ScanSpec* scanSpec)
+    DwrfParams& params,
+    common::ScanSpec& scanSpec)
     : SelectiveColumnReader(
           nodeType,
           params,
           scanSpec,
           nodeType->type) {
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  EncodingKey encodingKey{nodeType->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
   RleVersion rleVersion =
       convertRleVersion(stripe.getEncoding(encodingKey).kind());
   auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
@@ -43,7 +44,7 @@ SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
 }
 
 uint64_t SelectiveStringDirectColumnReader::skip(uint64_t numValues) {
-  numValues = ColumnReader::skip(numValues);
+  numValues = SelectiveColumnReader::skip(numValues);
   detail::ensureCapacity<int64_t>(lengths_, numValues, &memoryPool_);
   lengthDecoder_->nextLengths(lengths_->asMutable<int32_t>(), numValues);
   rawLengths_ = lengths_->as<uint32_t>();
