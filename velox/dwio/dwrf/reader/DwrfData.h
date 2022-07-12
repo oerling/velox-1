@@ -57,26 +57,31 @@ class DwrfData : public dwio::common::FormatData {
     return notNullDecoder_ != nullptr;
   }
 
-  // seeks possible nulls to the row group and returns a PositionsProvider for
-  // the other streams.
-  dwio::common::PositionProvider seektoRowGroup(uint32_t index) {
-    ensureRowGroupIndex();
-    tempPositions_ = toPositionsInner(index_->entry(index));
-    dwio::common::PositionProvider positionProvider(tempPositions_);
-
-    if (notNullDecoder_) {
-      notNullDecoder_->seekToRowGroup(positionProvider);
-    }
-    return positionProvider;
+  auto* FOLLY_NULLABLE notNullDecoder() const {
+    return notNullDecoder_.get();
   }
+
+  const FlatMapContext& flatMapContext() {
+    return flatMapContext_;
+  }
+  
+  // seeks possible flat map in map streams and nulls to the row group
+  // and returns a PositionsProvider for the other streams.
+  dwio::common::PositionProvider seekToRowGroup(uint32_t index) override;
 
   uint32_t rowsPerRowGroup() const {
     return rowsPerRowGroup_;
   }
-  
- private:
+
+  // Decodes the entry from row group index for 'this' in the stripe,
+  // if not already decoded. Throws if no index.
   void ensureRowGroupIndex();
 
+  auto& index() const {
+    return *index_;
+  }
+  
+ private:
   static std::vector<uint64_t> toPositionsInner(
       const proto::RowIndexEntry& entry) {
     return std::vector<uint64_t>(
@@ -119,10 +124,9 @@ class DwrfParams : public dwio::common::FormatParams {
     return stripeStreams_;
   }
 
-  FlatMapContext flatMapContext() {
+  FlatMapContext flatMapContext() const {
     return flatMapContext_;
   }
-
  private:
   StripeStreams& stripeStreams_;
   FlatMapContext flatMapContext_;

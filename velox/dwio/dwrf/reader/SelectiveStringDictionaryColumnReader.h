@@ -27,21 +27,11 @@ class SelectiveStringDictionaryColumnReader : public SelectiveColumnReader {
 
   SelectiveStringDictionaryColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-      dwio::common::FormatParams& params,
+      DwrfParams& params,
       common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override {
-    auto positions = formatData_.as<DwrfData>().toPositions(index);
-    dwio::common::PositionProvider positionsProvider(positions);
-
-    if (flatMapContext_.inMapDecoder) {
-      flatMapContext_.inMapDecoder->seekToRowGroup(positionsProvider);
-    }
-
-    if (notNullDecoder_) {
-      notNullDecoder_->seekToRowGroup(positionsProvider);
-    }
-
+    auto positionsProvider = formatData_->as<DwrfData>().seekToRowGroup(index);
     if (strideDictStream_) {
       strideDictStream_->seekToPosition(positionsProvider);
       strideDictLengthDecoder_->seekToRowGroup(positionsProvider);

@@ -27,7 +27,7 @@ class SelectiveIntegerColumnReader : public SelectiveColumnReader {
   SelectiveIntegerColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       dwio::common::FormatParams& params,
-      common::ScanSpec* scanSpec,
+      common::ScanSpec& scanSpec,
       const TypePtr& type)
       : SelectiveColumnReader(
             std::move(requestedType),

@@ -1,5 +1,5 @@
-*
- * Copyright (c) Facebook, Inc. and its affiliates.
+/*
+* Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
-      common::ScanSpec* scanSpec,
+      common::ScanSpec& scanSpec,
       bool isBool)
       : SelectiveColumnReader(
             std::move(requestedType),

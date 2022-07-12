@@ -28,14 +28,14 @@ class SelectiveIntegerDictionaryColumnReader
   using ValueType = int64_t;
 
   SelectiveIntegerDictionaryColumnReader(
-      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+					 const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
       common::ScanSpec& scanSpec,
       uint32_t numBytes);
 
   void seekToRowGroup(uint32_t index) override {
-    auto positionsProvider( = formatData_->seekToRowGroup(index);
+    auto positionsProvider = formatData_->seekToRowGroup(index);
     if (inDictionaryReader_) {
       inDictionaryReader_->seekToRowGroup(positionsProvider);
     }

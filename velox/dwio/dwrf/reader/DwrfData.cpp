@@ -68,6 +68,21 @@ void DwrfData::ensureRowGroupIndex() {
   }
 }
 
+dwio::common::PositionProvider DwrfData::seekToRowGroup(uint32_t index) {
+  ensureRowGroupIndex();
+  tempPositions_ = toPositionsInner(index_->entry(index));
+  dwio::common::PositionProvider positionProvider(tempPositions_);
+  if (flatMapContext_.inMapDecoder) {
+    flatMapContext_.inMapDecoder->seekToRowGroup(positionProvider);
+  }
+
+  if (notNullDecoder_) {
+    notNullDecoder_->seekToRowGroup(positionProvider);
+  }
+
+  return positionProvider;
+}
+
 void DwrfData::readNulls(
     vector_size_t numValues,
     const uint64_t* incomingNulls,
@@ -78,7 +93,8 @@ void DwrfData::readNulls(
   }
   auto numBytes = bits::nbytes(numValues);
   if (!nulls || nulls->capacity() < numBytes + simd::kPadding) {
-    nulls = AlignedBuffer::allocate<char>(numBytes + simd::kPadding, &memoryPool_);
+    nulls =
+        AlignedBuffer::allocate<char>(numBytes + simd::kPadding, &memoryPool_);
   }
   nulls->setSize(numBytes);
   auto* nullsPtr = nulls->asMutable<uint64_t>();

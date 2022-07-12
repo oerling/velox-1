@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
+#include "velox/dwio/common/TypeUtils.h"
 
 #include "velox/dwio/dwrf/reader/SelectiveByteRleColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
@@ -30,11 +31,12 @@ namespace facebook::velox::dwrf {
 
 std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-    DwrfParams& params,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+    DwrfParams& params,
     uint32_t numBytes,
     common::ScanSpec& scanSpec) {
-  EncodingKey ek{requestedType->id, params.flatMapContext.sequence};
+  EncodingKey ek{requestedType->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
   switch (static_cast<int64_t>(stripe.getEncoding(ek).kind())) {
     case proto::ColumnEncoding_Kind_DICTIONARY:
       return std::make_unique<SelectiveIntegerDictionaryColumnReader>(
@@ -53,9 +55,9 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec) {
-  CompatChecker::check(*dataType->type, *requestedType->type);
-  EncodingKey ek{dataType->id, flatMapContext.sequence};
-
+  dwio::common::typeutils::CompatChecker::check(*dataType->type, *requestedType->type);
+  EncodingKey ek{dataType->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
   switch (dataType->type->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(

@@ -27,11 +27,7 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(
-          dataType,
-          params,
-          scanSpec,
-          dataType->type),
+    : SelectiveColumnReader(dataType, params, scanSpec, dataType->type),
       requestedType_{requestedType},
       rowsPerRowGroup_(formatData_->as<DwrfData>().rowsPerRowGroup()),
       debugString_(getExceptionContext().message()) {
@@ -54,14 +50,11 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     auto childDataType = nodeType_->childByName(childSpec->fieldName());
     auto childRequestedType =
         requestedType_->childByName(childSpec->fieldName());
-    auto childParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+    auto childParams =
+        DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
     VELOX_CHECK(cs.shouldReadNode(childDataType->id));
     children_.push_back(SelectiveDwrfReader::build(
-        childRequestedType,
-	childDataType,
-        childParams,
-        stripe,
-        *childSpec));
+        childRequestedType, childDataType, childParams, *childSpec));
     childSpec->setSubscript(children_.size() - 1);
   }
 }
@@ -91,7 +84,7 @@ std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
 }
 
 uint64_t SelectiveStructColumnReader::skip(uint64_t numValues) {
-  auto numNonNulls = ColumnReader::skip(numValues);
+  auto numNonNulls = formatData_->skipNulls(numValues);
   // 'readOffset_' of struct child readers is aligned with
   // 'readOffset_' of the struct. The child readers may have fewer
   // values since there is no value in children where the struct is

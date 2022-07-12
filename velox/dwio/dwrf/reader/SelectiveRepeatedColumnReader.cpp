@@ -145,7 +145,7 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
       valueType,
       nodeType_->childAt(1),
       elementParams,
-      *scanSpec_->children()[1], );
+      *scanSpec_->children()[1]);
 
   VLOG(1) << "[Map] Initialized map column reader for node " << nodeType_->id;
 }
