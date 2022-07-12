@@ -18,8 +18,8 @@
 
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
-#include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 
@@ -45,20 +45,19 @@ class FormatData {
 
   virtual uint64_t skip(uint64_t numValues) = 0;
 
-  
   // True if this produces nulls. For example, if this is ORC and
   // there is a nulls decoder for the column. False if nulls are not
   // managed by this, e.g. in Parquet.
   virtual bool hasNulls() const = 0;
-  
-    // Seeks the position to the 'index'th row group for the streams
+
+  // Seeks the position to the 'index'th row group for the streams
   // managed by 'this'. Returns a PositionProvider for streams not
   // managed by 'this'. In a format like Parquet where all the reading
   // is in FormatData the provider is at end. For ORC/DWRF the type
   // dependent stream positions are accessed via the provider. The
   // provider is valid until next call of this.
   virtual dwio::common::PositionProvider seekToRowGroup(uint32_t index) = 0;
-  
+
   virtual std::vector<uint32_t> filterRowGroups(
       const velox::common::ScanSpec& scanSpec,
       uint64_t rowsPerRowGroup,
@@ -74,7 +73,8 @@ class FormatParams {
 
   // Makes format-specific structures for the column of 'type'.
   virtual std::unique_ptr<FormatData> toFormatData(
-						   const std::shared_ptr<const dwio::common::TypeWithId>& type, const velox::common::ScanSpec& scanSpec) = 0;
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      const velox::common::ScanSpec& scanSpec) = 0;
 
   memory::MemoryPool& pool() {
     return pool_;

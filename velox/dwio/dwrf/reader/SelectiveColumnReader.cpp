@@ -48,9 +48,9 @@ SelectiveColumnReader::SelectiveColumnReader(
     dwio::common::FormatParams& params,
     common::ScanSpec& scanSpec,
     const TypePtr& type)
-  : memoryPool_(params.pool()),
-    nodeType_(requestedType),
-    formatData_(params.toFormatData(requestedType, scanSpec)),
+    : memoryPool_(params.pool()),
+      nodeType_(requestedType),
+      formatData_(params.toFormatData(requestedType, scanSpec)),
       scanSpec_(&scanSpec),
       type_{type} {}
 

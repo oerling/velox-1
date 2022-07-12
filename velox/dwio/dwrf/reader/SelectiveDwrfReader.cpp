@@ -55,7 +55,8 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec) {
-  dwio::common::typeutils::CompatChecker::check(*dataType->type, *requestedType->type);
+  dwio::common::typeutils::CompatChecker::check(
+      *dataType->type, *requestedType->type);
   EncodingKey ek{dataType->id, params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();
   switch (dataType->type->kind()) {

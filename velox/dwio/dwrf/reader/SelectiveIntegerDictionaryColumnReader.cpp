@@ -21,7 +21,7 @@ namespace facebook::velox::dwrf {
 using namespace dwio::common;
 
 SelectiveIntegerDictionaryColumnReader::SelectiveIntegerDictionaryColumnReader(
-									       const std::shared_ptr<const TypeWithId>& requestedType,
+    const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec,

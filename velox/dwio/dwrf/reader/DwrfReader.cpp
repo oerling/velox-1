@@ -45,7 +45,8 @@ void DwrfRowReader::checkSkipStrides(
   }
 
   if (currentRowInStripe == 0 || recomputeStridesToSkip_) {
-    stridesToSkip_ = selectiveColumnReader_->filterRowGroups(strideSize, context);
+    stridesToSkip_ =
+        selectiveColumnReader_->filterRowGroups(strideSize, context);
     stripeStridesToSkip_[currentStripe] = stridesToSkip_;
     recomputeStridesToSkip_ = false;
   }
@@ -114,11 +115,11 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
       // reading of the data.
       setStrideIndex(strideSize > 0 ? currentRowInStripe / strideSize : 0);
       if (selectiveColumnReader_) {
-	selectiveColumnReader_->next(rowsToRead, result);
+        selectiveColumnReader_->next(rowsToRead, result);
       } else {
-	columnReader_->next(rowsToRead, result);
+        columnReader_->next(rowsToRead, result);
       }
-      }
+    }
 
     // update row number
     previousRow = firstRowOfStripe[currentStripe] + currentRowInStripe;

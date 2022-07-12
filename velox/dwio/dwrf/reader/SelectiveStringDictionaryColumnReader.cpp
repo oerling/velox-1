@@ -25,11 +25,7 @@ SelectiveStringDictionaryColumnReader::SelectiveStringDictionaryColumnReader(
     const std::shared_ptr<const TypeWithId>& nodeType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(
-          nodeType,
-          params,
-          scanSpec,
-          nodeType->type),
+    : SelectiveColumnReader(nodeType, params, scanSpec, nodeType->type),
       lastStrideIndex_(-1),
       provider_(params.stripeStreams().getStrideIndexProvider()) {
   auto& stripe = params.stripeStreams();
@@ -134,7 +130,8 @@ void SelectiveStringDictionaryColumnReader::loadStrideDictionary() {
   }
 
   // get stride dictionary size and load it if needed
-  auto& positions = formatData_->as<DwrfData>().index().entry(nextStride).positions();
+  auto& positions =
+      formatData_->as<DwrfData>().index().entry(nextStride).positions();
   scanState_.dictionary2.numValues = positions.Get(strideDictSizeOffset_);
   if (scanState_.dictionary2.numValues > 0) {
     // seek stride dictionary related streams
@@ -299,10 +296,10 @@ void SelectiveStringDictionaryColumnReader::ensureInitialized() {
     dwrfData.ensureRowGroupIndex();
     // load stride dictionary offsets
     auto indexStartOffset = dwrfData.flatMapContext().inMapDecoder
-      ? dwrfData.flatMapContext().inMapDecoder->loadIndices(0)
+        ? dwrfData.flatMapContext().inMapDecoder->loadIndices(0)
         : 0;
     positionOffset_ = dwrfData.notNullDecoder()
-      ? dwrfData.notNullDecoder()->loadIndices(indexStartOffset)
+        ? dwrfData.notNullDecoder()->loadIndices(indexStartOffset)
         : indexStartOffset;
     size_t offset = strideDictStream_->positionSize() + positionOffset_;
     strideDictSizeOffset_ = strideDictLengthDecoder_->loadIndices(offset);

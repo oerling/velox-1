@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
 #include "velox/dwio/dwrf/reader/DwrfData.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
 
 namespace facebook::velox::dwrf {
 
@@ -133,7 +133,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   vector_size_t lazyVectorReadOffset_;
 
   const int32_t rowsPerRowGroup_;
-  
+
   // Dense set of rows to read in next().
   raw_vector<vector_size_t> rows_;
 

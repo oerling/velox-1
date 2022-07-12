@@ -41,12 +41,10 @@ SelectiveListColumnReader::SelectiveListColumnReader(
   scanSpec_->children()[0]->setProjectOut(true);
   scanSpec_->children()[0]->setExtractValues(true);
 
-  auto childParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  auto childParams =
+      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
   child_ = SelectiveDwrfReader::build(
-      childType,
-      nodeType_->childAt(0),
-      childParams,
-      *scanSpec_->children()[0]);
+      childType, nodeType_->childAt(0), childParams, *scanSpec_->children()[0]);
 }
 
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
@@ -129,7 +127,8 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
   VELOX_CHECK(
       cs.shouldReadNode(keyType->id),
       "Map key must be selected in SelectiveMapColumnReader");
-  auto keyParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  auto keyParams =
+      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
   keyReader_ = SelectiveDwrfReader::build(
       keyType,
       nodeType_->childAt(0),
@@ -140,7 +139,8 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
   VELOX_CHECK(
       cs.shouldReadNode(valueType->id),
       "Map Values must be selected in SelectiveMapColumnReader");
-  auto elementParams = DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  auto elementParams =
+      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
   elementReader_ = SelectiveDwrfReader::build(
       valueType,
       nodeType_->childAt(1),

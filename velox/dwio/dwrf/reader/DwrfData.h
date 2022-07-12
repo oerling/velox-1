@@ -33,7 +33,7 @@ namespace facebook::velox::dwrf {
 class DwrfData : public dwio::common::FormatData {
  public:
   DwrfData(
-	   std::shared_ptr<const dwio::common::TypeWithId> nodeType,
+      std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       StripeStreams& stripe,
       FlatMapContext flatMapContext);
 
@@ -49,9 +49,9 @@ class DwrfData : public dwio::common::FormatData {
   }
 
   std::vector<uint32_t> filterRowGroups(
-						const common::ScanSpec& scanSpec,
-						uint64_t rowsPerRowGroup,
-						const dwio::common::StatsContext& context) override;
+      const common::ScanSpec& scanSpec,
+      uint64_t rowsPerRowGroup,
+      const dwio::common::StatsContext& context) override;
 
   bool hasNulls() const override {
     return notNullDecoder_ != nullptr;
@@ -64,7 +64,7 @@ class DwrfData : public dwio::common::FormatData {
   const FlatMapContext& flatMapContext() {
     return flatMapContext_;
   }
-  
+
   // seeks possible flat map in map streams and nulls to the row group
   // and returns a PositionsProvider for the other streams.
   dwio::common::PositionProvider seekToRowGroup(uint32_t index) override;
@@ -80,7 +80,7 @@ class DwrfData : public dwio::common::FormatData {
   auto& index() const {
     return *index_;
   }
-  
+
  private:
   static std::vector<uint64_t> toPositionsInner(
       const proto::RowIndexEntry& entry) {
@@ -88,8 +88,6 @@ class DwrfData : public dwio::common::FormatData {
         entry.positions().begin(), entry.positions().end());
   }
 
-
-  
   memory::MemoryPool& memoryPool_;
   const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   FlatMapContext flatMapContext_;
@@ -110,7 +108,7 @@ class DwrfParams : public dwio::common::FormatParams {
   DwrfParams(
       StripeStreams& stripeStreams,
       FlatMapContext context = FlatMapContext::nonFlatMapContext())
-    : FormatParams(stripeStreams.getMemoryPool()),
+      : FormatParams(stripeStreams.getMemoryPool()),
         stripeStreams_(stripeStreams),
         flatMapContext_(context) {}
 
@@ -127,6 +125,7 @@ class DwrfParams : public dwio::common::FormatParams {
   FlatMapContext flatMapContext() const {
     return flatMapContext_;
   }
+
  private:
   StripeStreams& stripeStreams_;
   FlatMapContext flatMapContext_;

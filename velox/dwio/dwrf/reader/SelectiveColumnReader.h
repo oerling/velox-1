@@ -107,7 +107,7 @@ class SelectiveColumnReader {
       dwio::common::FormatParams& params,
       common::ScanSpec& scanSpec,
       const TypePtr& type);
-  
+
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read
@@ -136,7 +136,7 @@ class SelectiveColumnReader {
   virtual uint64_t skip(uint64_t numValues) {
     return formatData_->skip(numValues);
   }
-  
+
   // Extracts the values at 'rows' into '*result'. May rewrite or
   // reallocate '*result'. 'rows' must be the same set or a subset of
   // 'rows' passed to the last 'read().
@@ -156,9 +156,10 @@ class SelectiveColumnReader {
   // offset-th from the start of stripe.
   void seekTo(vector_size_t offset, bool readsNullsOnly);
 
-  // Positions this at the start of 'index'th row group. Interpretation of 'index' depends on format.
+  // Positions this at the start of 'index'th row group. Interpretation of
+  // 'index' depends on format.
   virtual void seekToRowGroup(uint32_t index) = 0;
-  
+
   const TypePtr& type() const {
     return type_;
   }
@@ -369,10 +370,10 @@ class SelectiveColumnReader {
   memory::MemoryPool& memoryPool_;
 
   std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
-  
+
   // Format specific state and functions.
   std::unique_ptr<dwio::common::FormatData> formatData_;
-  
+
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
   // run time based on adaptation. Owned by caller.

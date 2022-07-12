@@ -44,8 +44,8 @@ class SelectiveColumnReaderFactory : public ColumnReaderFactory {
       StripeStreams& stripe,
       FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext()) {
     auto params = DwrfParams(stripe, std::move(flatMapContext));
-    auto reader = SelectiveDwrfReader::build(
-        requestedType, dataType, params, *scanSpec_);
+    auto reader =
+        SelectiveDwrfReader::build(requestedType, dataType, params, *scanSpec_);
     reader->setIsTopLevel();
     return reader;
   }

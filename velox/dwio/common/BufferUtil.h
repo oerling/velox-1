@@ -61,5 +61,4 @@ inline void resetIfNotWritable(VectorPtr& result, T&... buffer) {
   }
 }
 
-
-}
+} // namespace facebook::velox::dwio::common

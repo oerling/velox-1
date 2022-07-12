@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
-#include "velox/dwio/dwrf/reader/DwrfData.h"
 #include "velox/dwio/common/BufferUtil.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
+#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
 
 namespace facebook::velox::dwrf {
 
@@ -39,11 +39,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
       DwrfParams& params,
       common::ScanSpec& scanSpec,
       const TypePtr& type)
-      : SelectiveColumnReader(
-            std::move(nodeType),
-            params,
-            scanSpec,
-            type) {
+      : SelectiveColumnReader(std::move(nodeType), params, scanSpec, type) {
     EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
     auto& stripe = params.stripeStreams();
     auto rleVersion = convertRleVersion(stripe.getEncoding(encodingKey).kind());
@@ -65,8 +61,10 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
     // Reads the lengths, leaves an uninitialized gap for a null
     // map/list. Reading these checks the null nask.
     length_->next(allLengths_.data(), rows.back() + 1, nulls);
-    dwio::common::ensureCapacity<vector_size_t>(offsets_, rows.size(), &memoryPool_);
-    dwio::common::ensureCapacity<vector_size_t>(sizes_, rows.size(), &memoryPool_);
+    dwio::common::ensureCapacity<vector_size_t>(
+        offsets_, rows.size(), &memoryPool_);
+    dwio::common::ensureCapacity<vector_size_t>(
+        sizes_, rows.size(), &memoryPool_);
     auto rawOffsets = offsets_->asMutable<vector_size_t>();
     auto rawSizes = sizes_->asMutable<vector_size_t>();
     vector_size_t nestedLength = 0;

@@ -16,9 +16,8 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveIntegerColumnReader.h"
 #include "velox/dwio/dwrf/reader/DwrfData.h"
-
+#include "velox/dwio/dwrf/reader/SelectiveIntegerColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -28,7 +27,7 @@ class SelectiveIntegerDictionaryColumnReader
   using ValueType = int64_t;
 
   SelectiveIntegerDictionaryColumnReader(
-					 const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       DwrfParams& params,
       common::ScanSpec& scanSpec,
