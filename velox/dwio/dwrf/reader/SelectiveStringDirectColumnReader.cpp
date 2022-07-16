@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
 #include "velox/dwio/common/BufferUtil.h"
+#include "velox/dwio/dwrf/common/DecoderUtil.h"
 
 namespace facebook::velox::dwrf {
 
@@ -30,12 +31,12 @@ SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
       convertRleVersion(stripe.getEncoding(encodingKey).kind());
   auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
   bool lenVInts = stripe.getUseVInts(lenId);
-  lengthDecoder_ = IntDecoder</*isSigned*/ false>::createRle(
+  lengthDecoder_ = createRleDecoder</*isSigned*/ false>(
       stripe.getStream(lenId, true),
       rleVersion,
       memoryPool_,
       lenVInts,
-      INT_BYTE_SIZE);
+      dwio::common::INT_BYTE_SIZE);
   blobStream_ =
       stripe.getStream(encodingKey.forKind(proto::Stream_Kind_DATA), true);
 }
@@ -398,6 +399,10 @@ void SelectiveStringDirectColumnReader::processFilter(
       break;
     case common::FilterKind::kBytesValues:
       readHelper<common::BytesValues, isDense>(filter, rows, extractValues);
+      break;
+    case common::FilterKind::kNegatedBytesValues:
+      readHelper<common::NegatedBytesValues, isDense>(
+          filter, rows, extractValues);
       break;
     default:
       readHelper<common::Filter, isDense>(filter, rows, extractValues);

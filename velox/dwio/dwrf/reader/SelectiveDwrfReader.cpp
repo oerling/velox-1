@@ -29,7 +29,9 @@
 
 namespace facebook::velox::dwrf {
 
-std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
+  using namespace facebook::velox::dwio::common;
+
+  std::unique_ptr<SelectiveColumnReader> buildIntegerReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,

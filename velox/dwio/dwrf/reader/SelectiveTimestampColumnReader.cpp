@@ -16,6 +16,7 @@
 
 #include "velox/dwio/dwrf/reader/SelectiveTimestampColumnReader.h"
 #include "velox/dwio/common/BufferUtil.h"
+#include "velox/dwio/dwrf/common/DecoderUtil.h"
 
 namespace facebook::velox::dwrf {
 
@@ -31,11 +32,11 @@ SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
   RleVersion vers = convertRleVersion(stripe.getEncoding(encodingKey).kind());
   auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
   bool vints = stripe.getUseVInts(data);
-  seconds_ = IntDecoder</*isSigned*/ true>::createRle(
+  seconds_ = createRleDecoder</*isSigned*/ true>(
       stripe.getStream(data, true), vers, memoryPool_, vints, LONG_BYTE_SIZE);
   auto nanoData = encodingKey.forKind(proto::Stream_Kind_NANO_DATA);
   bool nanoVInts = stripe.getUseVInts(nanoData);
-  nano_ = IntDecoder</*isSigned*/ false>::createRle(
+  nano_ = createRleDecoder</*isSigned*/ false>(
       stripe.getStream(nanoData, true),
       vers,
       memoryPool_,
