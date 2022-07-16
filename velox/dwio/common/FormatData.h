@@ -45,9 +45,12 @@ class FormatData {
 
   virtual uint64_t skip(uint64_t numValues) = 0;
 
-  // True if this produces nulls. For example, if this is ORC and
-  // there is a nulls decoder for the column. False if nulls are not
-  // managed by this, e.g. in Parquet.
+  // True if 'this' may produce a null. true does not imply the
+  // existence of an actual null, though. For example, if the format
+  // is ORC and there is a nulls decoder for the column this returns
+  // true. False if it is certain there is no null in the range of
+  // 'this'. False also if nulls are not managed by this, e.g. in
+  // Parquet.
   virtual bool hasNulls() const = 0;
 
   // Seeks the position to the 'index'th row group for the streams

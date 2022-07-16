@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/buffer/Buffer.h"
+#include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::dwio::common {
 
