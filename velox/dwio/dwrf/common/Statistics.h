@@ -25,7 +25,7 @@ namespace facebook::velox::dwrf {
 /**
  * StatsContext contains fields required to compute statistics
  */
-struct StatsContext : public dwio::common::StatsWriterInfo {
+struct StatsContext : public dwio::common::StatsContext {
   const std::string writerName;
   WriterVersion writerVersion;
 

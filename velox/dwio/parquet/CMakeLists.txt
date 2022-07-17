@@ -19,8 +19,11 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/usr/local/lib64/cmake/arrow")
 find_package(Parquet REQUIRED)
 
 add_subdirectory(duckdb_reader)
-add_subdirectory(writer)
 add_subdirectory(reader)
+
+if(VELOX_ENABLE_ARROW)
+  add_subdirectory(writer)
+endif()
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
@@ -28,4 +31,4 @@ endif()
 
 add_library(velox_dwio_parquet_reader RegisterParquetReader.cpp)
 target_link_libraries(velox_dwio_parquet_reader
-                      velox_dwio_duckdb_parquet_reader gtest xsimd)
+                      velox_dwio_duckdb_parquet_reader xsimd)

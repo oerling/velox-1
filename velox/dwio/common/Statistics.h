@@ -29,8 +29,8 @@ namespace facebook::velox::dwio::common {
 // metadata. Needed to have format-independent signatures for
 // format-specific functions. Each format implementation downcasts this to the
 // format-specific metadata.
-struct StatsWriterInfo {
-  virtual ~StatsWriterInfo() = default;
+struct StatsContext {
+  virtual ~StatsContext() = default;
 };
 
 struct KeyInfo {

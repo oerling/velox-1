@@ -17,8 +17,8 @@
 #pragma once
 
 #include "velox/common/base/Portability.h"
+#include "velox/dwio/common/DirectDecoder.h"
 #include "velox/dwio/common/TypeUtils.h"
-#include "velox/dwio/dwrf/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/common/FloatingPointDecoder.h"
 #include "velox/dwio/dwrf/common/RLEv1.h"
 #include "velox/dwio/dwrf/reader/ColumnVisitors.h"
@@ -76,16 +76,13 @@ void SelectiveColumnReader::prepareRead(
     RowSet rows,
     const uint64_t* incomingNulls) {
   seekTo(offset, scanSpec_->readsNullsOnly());
-  if (formatData_) {
-    formatData_->prepareRead(rows, incomingNulls);
-  }
   vector_size_t numRows = rows.back() + 1;
 
   // Do not re-use unless singly-referenced.
   if (nullsInReadRange_ && !nullsInReadRange_->unique()) {
     nullsInReadRange_.reset();
   }
-  readNulls(numRows, incomingNulls, nullptr, nullsInReadRange_);
+  formatData_->readNulls(numRows, incomingNulls, nullsInReadRange_);
   // We check for all nulls and no nulls. We expect both calls to
   // bits::isAllSet to fail early in the common case. We could do a
   // single traversal of null bits counting the bits and then compare
@@ -303,7 +300,7 @@ void SelectiveColumnReader::filterNulls(
     RowSet rows,
     bool isNull,
     bool extractValues) {
-  if (!nullsInReadRange_) {
+  if (!formatData_->hasNulls()) {
     if (isNull) {
       // The whole stripe will be empty. We do not update
       // 'readOffset' since nothing is read from either nulls or data.
