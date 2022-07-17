@@ -27,29 +27,20 @@ set(TEST_LINK_LIBS
 
 add_subdirectory(duckdb_reader)
 
-add_executable(velox_parquet_e2e_filter_test E2EFilterTest.cpp)
+if(VELOX_ENABLE_ARROW)
 
-add_test(velox_parquet_e2e_filter_test velox_dwrf_e2e_filter_test)
+  add_executable(velox_parquet_e2e_filter_test E2EFilterTest.cpp)
 
-target_link_libraries(
-  velox_parquet_e2e_filter_test
-  velox_e2e_filter_test_base
-  velox_dwio_parquet_writer
-  ${LZ4}
-  ${LZO}
-  ${ZSTD}
-  ${ZLIB_LIBRARIES}
-  ${TEST_LINK_LIBS})
+  add_test(velox_parquet_e2e_filter_test velox_parquet_e2e_filter_test)
 
-add_executable(velox_parquet_metadata_test ParquetMetadataTest.cpp)
+  target_link_libraries(
+    velox_parquet_e2e_filter_test
+    velox_e2e_filter_test_base
+    velox_dwio_parquet_writer
+    ${LZ4}
+    ${LZO}
+    ${ZSTD}
+    ${ZLIB_LIBRARIES}
+    ${TEST_LINK_LIBS})
 
-add_test(velox_parquet_metadata_test velox_parquet_metadata_test )
-
-target_link_libraries(
-  velox_parquet_metadata_test
-  velox_dwio_native_parquet_reader
-  ${LZ4}
-  ${LZO}
-  ${ZSTD}
-  ${ZLIB_LIBRARIES}
-  ${TEST_LINK_LIBS})
+endif()

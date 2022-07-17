@@ -32,9 +32,9 @@ class E2EFilterTest : public E2EFilterTestBase {
   }
 
   void writeToMemory(
-      const TypePtr& type,
+      const TypePtr&,
       const std::vector<RowVectorPtr>& batches,
-      bool forRowGroupSkip) override {
+      bool /*forRowGroupSkip*/) override {
     auto sink = std::make_unique<MemorySink>(*pool_, 200 * 1024 * 1024);
     sinkPtr_ = sink.get();
 
@@ -47,8 +47,8 @@ class E2EFilterTest : public E2EFilterTestBase {
   }
 
   std::unique_ptr<dwio::common::Reader> makeReader(
-      const dwio::common::ReaderOptions& opts,
-      std::unique_ptr<dwio::common::InputStream> input) override {
+      const dwio::common::ReaderOptions&,
+      std::unique_ptr<dwio::common::InputStream>) override {
     VELOX_NYI();
   }
 

@@ -37,12 +37,16 @@ std::unique_ptr<DwrfRowReader> DwrfReader::createDwrfRowReader(
 void DwrfRowReader::checkSkipStrides(
     const StatsContext& context,
     uint64_t strideSize) {
+  if (!selectiveColumnReader_) {
+    return;
+  }
   if (currentRowInStripe % strideSize != 0) {
     return;
   }
 
   if (currentRowInStripe == 0 || recomputeStridesToSkip_) {
-    stridesToSkip_ = columnReader_->filterRowGroups(strideSize, context);
+    stridesToSkip_ =
+        selectiveColumnReader_->filterRowGroups(strideSize, context);
     stripeStridesToSkip_[currentStripe] = stridesToSkip_;
     recomputeStridesToSkip_ = false;
   }
@@ -67,7 +71,7 @@ void DwrfRowReader::checkSkipStrides(
     }
   }
   if (foundStridesToSkip && currentRowInStripe < rowsInCurrentStripe) {
-    columnReader_->seekToRowGroup(currentStride);
+    selectiveColumnReader_->seekToRowGroup(currentStride);
   }
 }
 
@@ -110,8 +114,11 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
       // Record strideIndex for use by the columnReader_ which may delay actual
       // reading of the data.
       setStrideIndex(strideSize > 0 ? currentRowInStripe / strideSize : 0);
-
-      columnReader_->next(rowsToRead, result);
+      if (selectiveColumnReader_) {
+        selectiveColumnReader_->next(rowsToRead, result);
+      } else {
+        columnReader_->next(rowsToRead, result);
+      }
     }
 
     // update row number
@@ -130,7 +137,7 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
 }
 
 void DwrfRowReader::resetFilterCaches() {
-  dynamic_cast<SelectiveColumnReader*>(columnReader())->resetFilterCaches();
+  selectiveColumnReader_->resetFilterCaches();
   recomputeStridesToSkip_ = true;
 }
 
