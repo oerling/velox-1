@@ -48,7 +48,7 @@ class SelectiveFloatingPointColumnReader
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override {
     using T = SelectiveFloatingPointColumnReader<TData, TRequested>;
-    base:: template readCommon<T>(offset, rows, incomingNulls);
+    base::template readCommon<T>(offset, rows, incomingNulls);
   }
 
   template <typename TVisitor>

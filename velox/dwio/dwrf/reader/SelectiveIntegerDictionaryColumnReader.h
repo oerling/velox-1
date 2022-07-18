@@ -16,13 +16,13 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/DwrfData.h"
 #include "velox/dwio/common/SelectiveIntegerColumnReader.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
 class SelectiveIntegerDictionaryColumnReader
-  : public dwio::common::SelectiveIntegerColumnReader {
+    : public dwio::common::SelectiveIntegerColumnReader {
  public:
   using ValueType = int64_t;
 

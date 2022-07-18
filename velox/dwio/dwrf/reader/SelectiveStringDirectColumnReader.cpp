@@ -318,7 +318,8 @@ void SelectiveStringDirectColumnReader::readWithVisitor(
       std::is_same<typename TVisitor::FilterType, common::AlwaysTrue>::value &&
       std::is_same<
           typename TVisitor::Extract,
-    dwio::common::ExtractToReader<SelectiveStringDirectColumnReader>>::value;
+          dwio::common::ExtractToReader<SelectiveStringDirectColumnReader>>::
+          value;
   auto nulls = nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
 
   if (process::hasAvx2() && isExtract) {
@@ -368,8 +369,9 @@ void SelectiveStringDirectColumnReader::readHelper(
     ExtractValues extractValues) {
   readWithVisitor(
       rows,
-      dwio::common::ColumnVisitor<folly::StringPiece, TFilter, ExtractValues, isDense>(
-          *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
+      dwio::common::
+          ColumnVisitor<folly::StringPiece, TFilter, ExtractValues, isDense>(
+              *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
 }
 
 template <bool isDense, typename ExtractValues>
@@ -428,23 +430,31 @@ void SelectiveStringDirectColumnReader::read(
     if (scanSpec_->valueHook()) {
       if (isDense) {
         readHelper<common::AlwaysTrue, true>(
-					     &dwio::common::alwaysTrue(), rows, dwio::common::ExtractToGenericHook(scanSpec_->valueHook()));
+            &dwio::common::alwaysTrue(),
+            rows,
+            dwio::common::ExtractToGenericHook(scanSpec_->valueHook()));
       } else {
         readHelper<common::AlwaysTrue, false>(
-					      &dwio::common::alwaysTrue(), rows, dwio::common::ExtractToGenericHook(scanSpec_->valueHook()));
+            &dwio::common::alwaysTrue(),
+            rows,
+            dwio::common::ExtractToGenericHook(scanSpec_->valueHook()));
       }
       return;
     }
     if (isDense) {
-      processFilter<true>(scanSpec_->filter(), rows, dwio::common::ExtractToReader(this));
+      processFilter<true>(
+          scanSpec_->filter(), rows, dwio::common::ExtractToReader(this));
     } else {
-      processFilter<false>(scanSpec_->filter(), rows, dwio::common::ExtractToReader(this));
+      processFilter<false>(
+          scanSpec_->filter(), rows, dwio::common::ExtractToReader(this));
     }
   } else {
     if (isDense) {
-      processFilter<true>(scanSpec_->filter(), rows, dwio::common::DropValues());
+      processFilter<true>(
+          scanSpec_->filter(), rows, dwio::common::DropValues());
     } else {
-      processFilter<false>(scanSpec_->filter(), rows, dwio::common::DropValues());
+      processFilter<false>(
+          scanSpec_->filter(), rows, dwio::common::DropValues());
     }
   }
 }

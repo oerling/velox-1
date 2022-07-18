@@ -16,12 +16,13 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/DwrfData.h"
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
-class SelectiveStringDictionaryColumnReader : public dwio::common::SelectiveColumnReader {
+class SelectiveStringDictionaryColumnReader
+    : public dwio::common::SelectiveColumnReader {
  public:
   using ValueType = int32_t;
 
@@ -121,8 +122,9 @@ void SelectiveStringDictionaryColumnReader::readHelper(
     ExtractValues values) {
   readWithVisitor(
       rows,
-      dwio::common::StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>(
-          *reinterpret_cast<TFilter*>(filter), this, rows, values));
+      dwio::common::
+          StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>(
+              *reinterpret_cast<TFilter*>(filter), this, rows, values));
 }
 
 template <bool isDense, typename ExtractValues>

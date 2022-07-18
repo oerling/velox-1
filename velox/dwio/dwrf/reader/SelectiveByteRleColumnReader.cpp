@@ -35,7 +35,7 @@ void SelectiveByteRleColumnReader::read(
   prepareRead<int8_t>(offset, rows, incomingNulls);
   bool isDense = rows.back() == rows.size() - 1;
   common::Filter* filter =
-    scanSpec_->filter() ? scanSpec_->filter() : &dwio::common::alwaysTrue();
+      scanSpec_->filter() ? scanSpec_->filter() : &dwio::common::alwaysTrue();
   if (scanSpec_->keepValues()) {
     if (scanSpec_->valueHook()) {
       if (isDense) {

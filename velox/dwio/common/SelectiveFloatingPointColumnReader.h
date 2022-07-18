@@ -28,12 +28,11 @@ class SelectiveFloatingPointColumnReader : public SelectiveColumnReader {
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(
-          std::move(nodeType),
-          params,
-          scanSpec,
-          CppToType<TData>::create()) {}
-
+      : SelectiveColumnReader(
+            std::move(nodeType),
+            params,
+            scanSpec,
+            CppToType<TData>::create()) {}
 
   // Offers fast path only if data and result widths match.
   bool hasBulkPath() const override {
@@ -41,32 +40,40 @@ class SelectiveFloatingPointColumnReader : public SelectiveColumnReader {
   }
 
   template <typename Reader>
-  void readCommon(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
+  void
+  readCommon(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
 
   void getValues(RowSet rows, VectorPtr* result) override {
     getFlatValues<TRequested, TRequested>(rows, result);
   }
 
  protected:
-  template <typename Reader, typename TFilter, bool isDense, typename ExtractValues>
-  void readHelper(velox::common::Filter* filter, RowSet rows, ExtractValues values);
+  template <
+      typename Reader,
+      typename TFilter,
+      bool isDense,
+      typename ExtractValues>
+  void
+  readHelper(velox::common::Filter* filter, RowSet rows, ExtractValues values);
 
   template <typename Reader, bool isDense, typename ExtractValues>
   void processFilter(
-		     velox::common::Filter* filter,
+      velox::common::Filter* filter,
       RowSet rows,
       ExtractValues extractValues);
 
   template <typename Reader, bool isDense>
   void processValueHook(RowSet rows, ValueHook* hook);
-
 };
 
-
 template <typename TData, typename TRequested>
-template <typename Reader, typename TFilter, bool isDense, typename ExtractValues>
+template <
+    typename Reader,
+    typename TFilter,
+    bool isDense,
+    typename ExtractValues>
 void SelectiveFloatingPointColumnReader<TData, TRequested>::readHelper(
-								       velox::common::Filter* filter,
+    velox::common::Filter* filter,
     RowSet rows,
     ExtractValues extractValues) {
   reinterpret_cast<Reader*>(this)->readWithVisitor(
@@ -78,33 +85,36 @@ void SelectiveFloatingPointColumnReader<TData, TRequested>::readHelper(
 template <typename TData, typename TRequested>
 template <typename Reader, bool isDense, typename ExtractValues>
 void SelectiveFloatingPointColumnReader<TData, TRequested>::processFilter(
-									  velox::common::Filter* filter,
+    velox::common::Filter* filter,
     RowSet rows,
     ExtractValues extractValues) {
   switch (filter ? filter->kind() : velox::common::FilterKind::kAlwaysTrue) {
-    case velox:: common::FilterKind::kAlwaysTrue:
-      readHelper<Reader, velox::common::AlwaysTrue, isDense>(filter, rows, extractValues);
+    case velox::common::FilterKind::kAlwaysTrue:
+      readHelper<Reader, velox::common::AlwaysTrue, isDense>(
+          filter, rows, extractValues);
       break;
-    case velox:: common::FilterKind::kIsNull:
+    case velox::common::FilterKind::kIsNull:
       filterNulls<TRequested>(
           rows,
           true,
           !std::is_same<decltype(extractValues), DropValues>::value);
       break;
-    case velox:: common::FilterKind::kIsNotNull:
+    case velox::common::FilterKind::kIsNotNull:
       if (std::is_same<decltype(extractValues), DropValues>::value) {
         filterNulls<TRequested>(rows, false, false);
       } else {
-        readHelper<Reader, velox::common::IsNotNull, isDense>(filter, rows, extractValues);
+        readHelper<Reader, velox::common::IsNotNull, isDense>(
+            filter, rows, extractValues);
       }
       break;
-    case velox:: common::FilterKind::kDoubleRange:
-    case velox:: common::FilterKind::kFloatRange:
+    case velox::common::FilterKind::kDoubleRange:
+    case velox::common::FilterKind::kFloatRange:
       readHelper<Reader, velox::common::FloatingPointRange<TData>, isDense>(
           filter, rows, extractValues);
       break;
     default:
-      readHelper<Reader, velox::common::Filter, isDense>(filter, rows, extractValues);
+      readHelper<Reader, velox::common::Filter, isDense>(
+          filter, rows, extractValues);
       break;
   }
 }
@@ -165,9 +175,11 @@ void SelectiveFloatingPointColumnReader<TData, TRequested>::readCommon(
       return;
     }
     if (isDense) {
-      processFilter<Reader, true>(scanSpec_->filter(), rows, ExtractToReader(this));
+      processFilter<Reader, true>(
+          scanSpec_->filter(), rows, ExtractToReader(this));
     } else {
-      processFilter<Reader, false>(scanSpec_->filter(), rows, ExtractToReader(this));
+      processFilter<Reader, false>(
+          scanSpec_->filter(), rows, ExtractToReader(this));
     }
   } else {
     if (isDense) {
@@ -178,4 +190,4 @@ void SelectiveFloatingPointColumnReader<TData, TRequested>::readCommon(
   }
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common
