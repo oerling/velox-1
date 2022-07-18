@@ -28,7 +28,7 @@
 
 #include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
+#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/test/utils/FilterGenerator.h"
 #include "velox/dwio/dwrf/writer/Writer.h"

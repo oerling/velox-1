@@ -14,50 +14,13 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
-#include "velox/dwio/dwrf/reader/ColumnLoader.h"
-#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
+#include "velox/dwio/common/SelectiveStructColumnReader.h"
+#include "velox/dwio/common/ColumnLoader.h"
 
-namespace facebook::velox::dwrf {
 
-using namespace dwio::common;
+namespace facebook::velox::dwio::common {
 
-SelectiveStructColumnReader::SelectiveStructColumnReader(
-    const std::shared_ptr<const TypeWithId>& requestedType,
-    const std::shared_ptr<const TypeWithId>& dataType,
-    DwrfParams& params,
-    common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(dataType, params, scanSpec, dataType->type),
-      requestedType_{requestedType},
-      rowsPerRowGroup_(formatData_->as<DwrfData>().rowsPerRowGroup()),
-      debugString_(getExceptionContext().message()) {
-  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
-  DWIO_ENSURE_EQ(encodingKey.node, dataType->id, "working on the same node");
-  auto& stripe = params.stripeStreams();
-  auto encoding = static_cast<int64_t>(stripe.getEncoding(encodingKey).kind());
-  DWIO_ENSURE_EQ(
-      encoding,
-      proto::ColumnEncoding_Kind_DIRECT,
-      "Unknown encoding for StructColumnReader");
 
-  const auto& cs = stripe.getColumnSelector();
-  auto& childSpecs = scanSpec.children();
-  for (auto i = 0; i < childSpecs.size(); ++i) {
-    auto childSpec = childSpecs[i].get();
-    if (childSpec->isConstant()) {
-      continue;
-    }
-    auto childDataType = nodeType_->childByName(childSpec->fieldName());
-    auto childRequestedType =
-        requestedType_->childByName(childSpec->fieldName());
-    auto childParams =
-        DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
-    VELOX_CHECK(cs.shouldReadNode(childDataType->id));
-    children_.push_back(SelectiveDwrfReader::build(
-        childRequestedType, childDataType, childParams, *childSpec));
-    childSpec->setSubscript(children_.size() - 1);
-  }
-}
 
 std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
     uint64_t rowGroupSize,

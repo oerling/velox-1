@@ -16,38 +16,24 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/DwrfData.h"
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/common/SelectiveColumnReaderInternal.h"
 
-namespace facebook::velox::dwrf {
+namespace facebook::velox::dwio::common {
 
 class SelectiveStructColumnReader : public SelectiveColumnReader {
  public:
   SelectiveStructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      DwrfParams& params,
-      common::ScanSpec& scanSpec);
+      FormatParams& params,
+      velox::common::ScanSpec& scanSpec)
+    : SelectiveColumnReader(dataType, 
+			    params, scanSpec, dataType->type),
+      requestedType_(requestedType) {}
 
   void resetFilterCaches() override {
     for (auto& child : children_) {
       child->resetFilterCaches();
-    }
-  }
-
-  void seekToRowGroup(uint32_t index) override {
-    if (isTopLevel_ && !formatData_->hasNulls()) {
-      readOffset_ = index * rowsPerRowGroup_;
-      return;
-    }
-    // There may be a nulls stream but no other streams for the struct.
-    formatData_->seekToRowGroup(index);
-    // Set the read offset recursively. Do this before seeking the
-    // children because list/map children will reset the offsets for
-    // their children.
-    setReadOffsetRecursive(index * rowsPerRowGroup_);
-    for (auto& child : children_) {
-      child->seekToRowGroup(index);
     }
   }
 
@@ -77,17 +63,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   /// Advance field reader to the row group closest to specified offset by
   /// calling seekToRowGroup.
-  void advanceFieldReader(SelectiveColumnReader* reader, vector_size_t offset) {
-    if (!reader->isTopLevel()) {
-      return;
-    }
-    auto rowGroup = reader->readOffset() / rowsPerRowGroup_;
-    auto nextRowGroup = offset / rowsPerRowGroup_;
-    if (nextRowGroup > rowGroup) {
-      reader->seekToRowGroup(nextRowGroup);
-      reader->setReadOffset(nextRowGroup * rowsPerRowGroup_);
-    }
-  }
+  virtual void advanceFieldReader(SelectiveColumnReader* reader, vector_size_t offset) =0;
 
   // Returns the nulls bitmap from reading this. Used in LazyVector loaders.
   const uint64_t* nulls() const {
@@ -124,15 +100,13 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     return debugString_;
   }
 
- private:
+protected:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
   // created by 'this' to verify they are still valid at load.
   uint64_t numReads_ = 0;
   vector_size_t lazyVectorReadOffset_;
-
-  const int32_t rowsPerRowGroup_;
 
   // Dense set of rows to read in next().
   raw_vector<vector_size_t> rows_;

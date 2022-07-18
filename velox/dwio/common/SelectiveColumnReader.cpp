@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/common/SelectiveColumnReaderInternal.h"
 
 
-namespace facebook::velox::dwrf {
+namespace facebook::velox::dwio::common {
 
 using dwio::common::TypeWithId;
 using dwio::common::typeutils::CompatChecker;
 
-common::AlwaysTrue& alwaysTrue() {
-  static common::AlwaysTrue alwaysTrue;
+  velox::common::AlwaysTrue& alwaysTrue() {
+    static velox::common::AlwaysTrue alwaysTrue;
   return alwaysTrue;
 }
 
@@ -46,7 +46,7 @@ void ScanState::updateRawState() {
 SelectiveColumnReader::SelectiveColumnReader(
     std::shared_ptr<const dwio::common::TypeWithId> requestedType,
     dwio::common::FormatParams& params,
-    common::ScanSpec& scanSpec,
+    velox::common::ScanSpec& scanSpec,
     const TypePtr& type)
     : memoryPool_(params.pool()),
       nodeType_(requestedType),
