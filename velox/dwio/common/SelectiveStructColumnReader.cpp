@@ -17,10 +17,7 @@
 #include "velox/dwio/common/SelectiveStructColumnReader.h"
 #include "velox/dwio/common/ColumnLoader.h"
 
-
 namespace facebook::velox::dwio::common {
-
-
 
 std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
@@ -245,4 +242,4 @@ void SelectiveStructColumnReader::getValues(RowSet rows, VectorPtr* result) {
   }
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common

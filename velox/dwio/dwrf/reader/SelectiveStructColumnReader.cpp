@@ -27,7 +27,11 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
     const std::shared_ptr<const TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-  : dwio::common::SelectiveStructColumnReader(requestedType, dataType, params, scanSpec),
+    : dwio::common::SelectiveStructColumnReader(
+          requestedType,
+          dataType,
+          params,
+          scanSpec),
       rowsPerRowGroup_(formatData_->as<DwrfData>().rowsPerRowGroup()) {
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   DWIO_ENSURE_EQ(encodingKey.node, dataType->id, "working on the same node");

@@ -16,12 +16,13 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/DwrfData.h"
 #include "velox/dwio/common/SelectiveStructColumnReader.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
-class SelectiveStructColumnReader : public dwio::common::SelectiveStructColumnReader {
+class SelectiveStructColumnReader
+    : public dwio::common::SelectiveStructColumnReader {
  public:
   SelectiveStructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -47,7 +48,8 @@ class SelectiveStructColumnReader : public dwio::common::SelectiveStructColumnRe
 
   /// Advance field reader to the row group closest to specified offset by
   /// calling seekToRowGroup.
-  void advanceFieldReader(SelectiveColumnReader* reader, vector_size_t offset) override {
+  void advanceFieldReader(SelectiveColumnReader* reader, vector_size_t offset)
+      override {
     if (!reader->isTopLevel()) {
       return;
     }
@@ -60,7 +62,6 @@ class SelectiveStructColumnReader : public dwio::common::SelectiveStructColumnRe
   }
 
  private:
-
   const int32_t rowsPerRowGroup_;
 };
 

@@ -27,9 +27,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(dataType, 
-			    params, scanSpec, dataType->type),
-      requestedType_(requestedType) {}
+      : SelectiveColumnReader(dataType, params, scanSpec, dataType->type),
+        requestedType_(requestedType) {}
 
   void resetFilterCaches() override {
     for (auto& child : children_) {
@@ -63,7 +62,9 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   /// Advance field reader to the row group closest to specified offset by
   /// calling seekToRowGroup.
-  virtual void advanceFieldReader(SelectiveColumnReader* reader, vector_size_t offset) =0;
+  virtual void advanceFieldReader(
+      SelectiveColumnReader* reader,
+      vector_size_t offset) = 0;
 
   // Returns the nulls bitmap from reading this. Used in LazyVector loaders.
   const uint64_t* nulls() const {
@@ -100,7 +101,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     return debugString_;
   }
 
-protected:
+ protected:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders
@@ -119,4 +120,4 @@ protected:
   const std::string debugString_;
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common
