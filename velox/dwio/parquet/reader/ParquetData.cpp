@@ -20,14 +20,14 @@
 namespace facebook::velox::parquet {
 
 std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
-    const std::shared_ptr<const dwio::common::TypeWithId>& type) {
+								      const std::shared_ptr<const dwio::common::TypeWithId>& type, const common::ScanSpec& /*scanSpec*/) {
   return std::make_unique<ParquetData>(type, metaData_.row_groups, pool());
 }
 
 std::vector<uint32_t> ParquetData::filterRowGroups(
     const common::ScanSpec& scanSpec,
     uint64_t /*rowsPerRowGroup*/,
-    const dwio::common::StatsWriterInfo& /*writerInfo*/) {
+    const dwio::common::StatsContext& /*writerInfo*/) {
   if (!scanSpec.filter()) {
     return {};
   }
@@ -89,8 +89,9 @@ void ParquetData::enqueueRowGroup(
   streams_[index] = input.enqueue({chunkReadOffset, readSize}, &id);
 }
 
-void ParquetData::seekToRowGroup(uint32_t index) {
-  VELOX_CHECK_LT(index, streams_.size());
+  dwio::common::PositionProvider ParquetData::seekToRowGroup(uint32_t index) {
+    static std::vector<uint64_t> empty;
+    VELOX_CHECK_LT(index, streams_.size());
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
   auto& metadata = rowGroups_[index].columns[type_->column].meta_data;
   decoder_ = std::make_unique<PageDecoder>(
@@ -99,6 +100,7 @@ void ParquetData::seekToRowGroup(uint32_t index) {
       type_,
       metadata.codec,
       metadata.total_compressed_size);
-}
+  return dwio::common::PositionProvider(empty);
+  }
 
 } // namespace facebook::velox::parquet

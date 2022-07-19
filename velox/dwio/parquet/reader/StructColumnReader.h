@@ -21,26 +21,26 @@
 
 namespace facebook::velox::parquet {
 
-  class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
+class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
  public:
   StructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
-      common::ScanSpec* scanSpec)
-      : SelectiveStructColumnReader(
+      common::ScanSpec& scanSpec)
+      : dwio::common::SelectiveStructColumnReader(
+            dataType,
             dataType,
             params,
-            scanSpec,
-            dataType->type) {
-    auto& childSpecs = scanSpec->children();
+            scanSpec) {
+    auto& childSpecs = scanSpec_->children();
     for (auto i = 0; i < childSpecs.size(); ++i) {
       if (childSpecs[i]->isConstant()) {
         continue;
       }
       auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
 
-      children_.push_back(ParquetColumnReader::build(
-          childDataType, params, childSpecs[i].get()));
+      children_.push_back(
+          ParquetColumnReader::build(childDataType, params, *childSpecs[i]));
       childSpecs[i]->setSubscript(children_.size() - 1);
     }
   }
@@ -48,6 +48,10 @@ namespace facebook::velox::parquet {
   void seekToRowGroup(uint32_t index) override;
 
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
+
+  void advanceFieldReader(
+      dwio::common::SelectiveColumnReader* FOLLY_NONNULL reader,
+      vector_size_t offset) override {}
 
  private:
   bool filterMatches(const RowGroup& rowGroup);

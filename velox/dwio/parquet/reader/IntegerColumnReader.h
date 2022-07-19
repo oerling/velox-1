@@ -27,7 +27,7 @@ namespace facebook::velox::parquet {
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
-      common::ScanSpec* scanSpec)
+      common::ScanSpec& scanSpec)
       : SelectiveIntegerColumnReader(
             std::move(requestedType),
             params,

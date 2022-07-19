@@ -17,7 +17,7 @@
 #pragma once
 
 #include <dwio/common/BufferedInput.h>
-#include <dwio/dwrf/reader/SelectiveColumnReader.h>
+#include <dwio/common/SelectiveColumnReader.h>
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
 #include "velox/dwio/common/ReaderFactory.h"
@@ -133,7 +133,7 @@ class ParquetRowReader : public dwio::common::RowReader {
   uint64_t currentRowInGroup_;
   int skippedRowGroups_{0};
 
-  std::unique_ptr<dwrf::SelectiveColumnReader> columnReader_;
+  std::unique_ptr<dwio::common::SelectiveColumnReader> columnReader_;
   RowTypePtr requestedType_;
 };
 

@@ -20,7 +20,6 @@
 #include "velox/common/base/RawVector.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/PageDecoder.h"
 #include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
@@ -32,7 +31,7 @@ class ParquetParams : public dwio::common::FormatParams {
   ParquetParams(memory::MemoryPool& pool, const FileMetaData& metaData)
       : FormatParams(pool), metaData_(metaData) {}
   std::unique_ptr<dwio::common::FormatData> toFormatData(
-      const std::shared_ptr<const dwio::common::TypeWithId>& type) override;
+							 const std::shared_ptr<const dwio::common::TypeWithId>& type, const common::ScanSpec& scanSpec) override;
 
  private:
   const FileMetaData& metaData_;
@@ -73,14 +72,14 @@ class ParquetData : public dwio::common::FormatData {
 
   // Positions 'this' at 'index'th row group. enqueueRowGroup must be called
   // first.
-  void seekToRowGroup(uint32_t index);
+  dwio::common::PositionProvider seekToRowGroup(uint32_t index);
 
   bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
 
   std::vector<uint32_t> filterRowGroups(
       const common::ScanSpec& scanSpec,
       uint64_t rowsPerRowGroup,
-      const dwio::common::StatsWriterInfo& writerInfo) override;
+      const dwio::common::StatsContext& writerInfo) override;
 
   // Reads null flags for 'numValues' next top level rows. The first 'numValues'
   // bits of 'nulls' are set and the reader is advanced by numValues'.
@@ -88,8 +87,25 @@ class ParquetData : public dwio::common::FormatData {
     decoder_->readNullsOnly(numValues, nulls);
   }
 
-  void skip(int32_t numRows) {
+  bool hasNulls() const override {
+    return maxDefine_ > 0;
+  }
+  
+  void readNulls(
+      vector_size_t numValues,
+      const uint64_t* incomingNulls,
+      BufferPtr& nulls) override {
+    // There are no column-level nulls in Parquet, only page-level ones, so this is always non-null.
+    nulls = nullptr;
+  }
+  
+  uint64_t skipNulls(uint64_t numValues) override {
+    return numValues;
+  }
+  
+  uint64_t skip(uint64_t numRows) override {
     decoder_->skip(numRows);
+    return numRows;
   }
 
   template <typename Visitor>

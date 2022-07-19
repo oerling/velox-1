@@ -41,9 +41,9 @@ inline int32_t parquetSizeOfIntKind(TypeKind kind) {
 // Wrapper for static functions for Parquet columns.
 class ParquetColumnReader {
  public:
-  static std::unique_ptr<dwrf::SelectiveColumnReader> build(
+  static std::unique_ptr<dwio::common::SelectiveColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
-      common::ScanSpec* scanSpec);
+      common::ScanSpec& scanSpec);
 };
 } // namespace facebook::velox::parquet

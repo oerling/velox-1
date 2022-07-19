@@ -19,7 +19,7 @@
 //
 
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
-#include <dwio/dwrf/reader/SelectiveColumnReaderInternal.h>
+#include <dwio/common/SelectiveColumnReaderInternal.h>
 
 #include "velox/dwio/parquet/reader/IntegerColumnReader.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
@@ -30,11 +30,11 @@
 namespace facebook::velox::parquet {
 
 // static
-std::unique_ptr<dwrf::SelectiveColumnReader> ParquetColumnReader::build(
+  std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     ParquetParams& params,
-    common::ScanSpec* scanSpec) {
-  auto colName = scanSpec->fieldName();
+    common::ScanSpec& scanSpec) {
+  auto colName = scanSpec.fieldName();
 
   switch (dataType->type->kind()) {
     case TypeKind::INTEGER:

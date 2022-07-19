@@ -53,15 +53,6 @@ SelectiveColumnReader::SelectiveColumnReader(
       scanSpec_(&scanSpec),
       type_{type} {}
 
-SelectiveColumnReader::SelectiveColumnReader(
-    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-    dwio::common::FormatParams& formatParams,
-    common::ScanSpec* scanSpec,
-    const TypePtr& type)
-    : ColumnReader(std::move(requestedType), formatParams),
-      scanSpec_(scanSpec),
-      type_{type} {}
-
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const dwio::common::StatsContext& context) const {
@@ -306,8 +297,8 @@ bool SelectiveColumnReader::readsNullsOnly() const {
   auto filter = scanSpec_->filter();
   if (filter) {
     auto kind = filter->kind();
-    return kind == common::FilterKind::kIsNull ||
-        (!scanSpec_->keepValues() && kind == common::FilterKind::kIsNotNull);
+    return kind == velox::common::FilterKind::kIsNull ||
+      (!scanSpec_->keepValues() && kind == velox::common::FilterKind::kIsNotNull);
   }
   return false;
 }

@@ -110,6 +110,10 @@ class SelectiveColumnReader {
 
   virtual ~SelectiveColumnReader() = default;
 
+  dwio::common::FormatData& FOLLY_NONNULL formatData() const {
+    return *formatData_;
+  }
+  
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read

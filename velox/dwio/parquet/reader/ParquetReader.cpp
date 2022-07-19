@@ -508,7 +508,7 @@ ParquetRowReader::ParquetRowReader(
   columnReader_ = ParquetColumnReader::build(
       readerBase_->getSchemaWithId(), // Id is schema id
       params,
-      options_.getScanSpec().get());
+      *options_.getScanSpec());
 
   filterRowGroups();
 }
@@ -519,7 +519,7 @@ void ParquetRowReader::filterRowGroups() {
   auto rowGroups = readerBase_->getFileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
   auto excluded =
-      columnReader_->filterRowGroups(0, dwio::common::StatsWriterInfo());
+      columnReader_->filterRowGroups(0, dwio::common::StatsContext());
   skippedRowGroups_ = excluded.size();
   for (auto i = 0; i < rowGroups.size(); i++) {
     if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())

@@ -15,7 +15,7 @@
  */
 
 #include "velox/dwio/parquet/reader/PageDecoder.h"
-#include "velox/dwio/dwrf/reader/ColumnReader.h"
+#include "velox/dwio/common/BufferUtil.h"
 
 #include <thrift/protocol/TCompactProtocol.h>
 #include "ThriftTransport.h"
@@ -121,7 +121,7 @@ const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
     bufferStart_ += size;
     return bufferStart_ - size;
   }
-  dwrf::detail::ensureCapacity<char>(copy, size, &pool_);
+  dwio::common::ensureCapacity<char>(copy, size, &pool_);
   dwio::common::readBytes(
       size,
       inputStream_.get(),
@@ -255,7 +255,7 @@ void PageDecoder::makeDecoder() {
       VELOX_UNSUPPORTED("Encoding not supported yet");
       break;
     case Encoding::PLAIN:
-      directDecoder_ = std::make_unique<dwrf::DirectDecoder<true>>(
+      directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
           std::make_unique<dwio::common::SeekableArrayInputStream>(
               pageData_, encodedDataSize_),
           false,
@@ -292,7 +292,7 @@ int32_t PageDecoder::skipNulls(int32_t numValues) {
   if (!defineDecoder_) {
     return numValues;
   }
-  dwrf::detail::ensureCapacity<char>(tempNulls_, numValues, &pool_);
+  dwio::common::ensureCapacity<char>(tempNulls_, numValues, &pool_);
   tempNulls_->setSize(0);
   defineDecoder_->GetBatch<uint8_t>(
       tempNulls_->asMutable<uint8_t>(), numValues);
@@ -307,7 +307,7 @@ int32_t PageDecoder::skipNulls(int32_t numValues) {
 void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   auto toRead = numValues;
   if (buffer) {
-    dwrf::detail::ensureCapacity<bool>(buffer, numValues, &pool_);
+    dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);
   }
   nullConcatenation_.reset(buffer);
   while (toRead) {
@@ -328,8 +328,8 @@ const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
     buffer = nullptr;
     return nullptr;
   }
-  dwrf::detail::ensureCapacity<char>(tempNulls_, numValues, &pool_);
-  dwrf::detail::ensureCapacity<bool>(buffer, numValues, &pool_);
+  dwio::common::ensureCapacity<char>(tempNulls_, numValues, &pool_);
+  dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);
   tempNulls_->setSize(0);
   defineDecoder_->GetBatch<uint8_t>(
       tempNulls_->asMutable<uint8_t>(), numValues);
@@ -353,7 +353,7 @@ void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
 }
 
 bool PageDecoder::rowsForPage(
-    dwrf::SelectiveColumnReader& reader,
+			      dwio::common::SelectiveColumnReader& reader,
     folly::Range<const vector_size_t*>& rows,
     const uint64_t* FOLLY_NULLABLE& nulls) {
   if (currentVisitorRow_ == numVisitorRows_) {
