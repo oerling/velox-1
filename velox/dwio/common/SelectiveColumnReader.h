@@ -108,6 +108,8 @@ class SelectiveColumnReader {
       velox::common::ScanSpec& scanSpec,
       const TypePtr& type);
 
+  virtual ~SelectiveColumnReader() = default;
+
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read
@@ -323,6 +325,17 @@ class SelectiveColumnReader {
 
   template <typename T>
   void filterNulls(RowSet rows, bool isNull, bool extractValues);
+
+  // Reads nulls, if any. Sets '*nulls' to nullptr if void
+  // the reader has no nulls and there are no incoming
+  //          nulls.Takes 'nulls' from 'result' if '*result' is non -
+  //      null.Otherwise ensures that 'nulls' has a buffer of sufficient
+  //          size and uses this.
+  void readNulls(
+      vector_size_t numValues,
+      const uint64_t* incomingNulls,
+      VectorPtr* result,
+      BufferPtr& nulls);
 
   template <typename T>
   void

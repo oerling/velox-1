@@ -31,21 +31,22 @@ class DwrfRowReader : public DwrfRowReaderShared {
   }
 
   void createColumnReaderImpl(StripeStreams& stripeStreams) override {
-    auto factory =
-        (columnReaderFactory_ ? columnReaderFactory_.get()
-                              : ColumnReaderFactory::baseFactory());
-    if (auto selectiveFactory =
-            dynamic_cast<SelectiveColumnReaderFactory*>(factory)) {
-      selectiveColumnReader_ = selectiveFactory->buildSelective(
-          getColumnSelector().getSchemaWithId(),
-          getReader().getSchemaWithId(),
-          stripeStreams);
+    auto scanSpec = options_.getScanSpec().get();
+    auto requestedType = getColumnSelector().getSchemaWithId();
+    auto dataType = getReader().getSchemaWithId();
+    auto flatMapContext = FlatMapContext::nonFlatMapContext();
+
+    if (scanSpec) {
+      selectiveColumnReader_ = SelectiveDwrfReader::build(
+          requestedType, dataType, stripeStreams, scanSpec, flatMapContext);
+      selectiveColumnReader_->setIsTopLevel();
     } else {
-      columnReader_ = factory->build(
-          getColumnSelector().getSchemaWithId(),
-          getReader().getSchemaWithId(),
-          stripeStreams);
+      columnReader_ = ColumnReader::build(
+          requestedType, dataType, stripeStreams, flatMapContext);
     }
+    DWIO_ENSURE(
+        (columnReader_ != nullptr) != (selectiveColumnReader_ != nullptr),
+        "ColumnReader was not created");
   }
 
   void seekImpl() override {
@@ -75,10 +76,6 @@ class DwrfRowReader : public DwrfRowReaderShared {
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override {
     stats.skippedStrides += skippedStrides_;
-  }
-
-  ColumnReader* columnReader() {
-    return columnReader_.get();
   }
 
   void resetFilterCaches() override;
