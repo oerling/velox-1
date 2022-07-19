@@ -21,7 +21,7 @@
 
 namespace facebook::velox::parquet {
 
-  class IntegerColumnReader : public dwio::common::SelectiveIntegerColumnReader {
+class IntegerColumnReader : public dwio::common::SelectiveIntegerColumnReader {
  public:
   IntegerColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,

@@ -21,8 +21,8 @@
 
 namespace facebook::velox::parquet {
 
-  // Describes a Parquet column.
-  class ParquetTypeWithId : public dwio::common::TypeWithId {
+// Describes a Parquet column.
+class ParquetTypeWithId : public dwio::common::TypeWithId {
  public:
   ParquetTypeWithId(
       TypePtr type,

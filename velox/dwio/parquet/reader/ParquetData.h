@@ -31,7 +31,8 @@ class ParquetParams : public dwio::common::FormatParams {
   ParquetParams(memory::MemoryPool& pool, const FileMetaData& metaData)
       : FormatParams(pool), metaData_(metaData) {}
   std::unique_ptr<dwio::common::FormatData> toFormatData(
-							 const std::shared_ptr<const dwio::common::TypeWithId>& type, const common::ScanSpec& scanSpec) override;
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      const common::ScanSpec& scanSpec) override;
 
  private:
   const FileMetaData& metaData_;
@@ -90,19 +91,20 @@ class ParquetData : public dwio::common::FormatData {
   bool hasNulls() const override {
     return maxDefine_ > 0;
   }
-  
+
   void readNulls(
       vector_size_t numValues,
       const uint64_t* incomingNulls,
       BufferPtr& nulls) override {
-    // There are no column-level nulls in Parquet, only page-level ones, so this is always non-null.
+    // There are no column-level nulls in Parquet, only page-level ones, so this
+    // is always non-null.
     nulls = nullptr;
   }
-  
+
   uint64_t skipNulls(uint64_t numValues) override {
     return numValues;
   }
-  
+
   uint64_t skip(uint64_t numRows) override {
     decoder_->skip(numRows);
     return numRows;

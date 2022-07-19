@@ -176,8 +176,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
     if (schemaElement.__isset.converted_type) {
       switch (schemaElement.converted_type) {
         case ConvertedType::LIST:
-      case ConvertedType::MAP: {
-	  auto element = children[0]->children();
+        case ConvertedType::MAP: {
+          auto element = children[0]->children();
           DWIO_ENSURE(children.size() == 1);
           return std::make_shared<const ParquetTypeWithId>(
               children[0]->type,
@@ -189,8 +189,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               std::nullopt,
               maxRepeat,
               maxDefine);
-      }
-	  case ConvertedType::MAP_KEY_VALUE: // child of MAP
+        }
+        case ConvertedType::MAP_KEY_VALUE: // child of MAP
           DWIO_ENSURE(
               schemaElement.repetition_type == FieldRepetitionType::REPEATED);
           DWIO_ENSURE(children.size() == 2);
@@ -498,7 +498,6 @@ ParquetRowReader::ParquetRowReader(
         requestedType_->toString());
     return exceptionMessageContext;
   };
-
 
   if (rowGroups_.empty()) {
     return; // TODO

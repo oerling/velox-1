@@ -31,7 +31,6 @@ if(VELOX_ENABLE_ARROW)
 
   add_executable(velox_parquet_e2e_filter_test E2EFilterTest.cpp)
 
-
   add_test(velox_parquet_e2e_filter_test velox_parquet_e2e_filter_test)
 
   target_link_libraries(

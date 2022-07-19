@@ -61,8 +61,6 @@ class ParquetReaderTest : public testing::Test {
     return ROW({"int", "bigint"}, {INTEGER(), BIGINT()});
   }
 
-
-
   std::shared_ptr<common::ScanSpec> makeScanSpec(const RowTypePtr& rowType) {
     auto scanSpec = std::make_shared<common::ScanSpec>("");
 

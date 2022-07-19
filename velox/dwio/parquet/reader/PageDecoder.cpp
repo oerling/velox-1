@@ -353,7 +353,7 @@ void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
 }
 
 bool PageDecoder::rowsForPage(
-			      dwio::common::SelectiveColumnReader& reader,
+    dwio::common::SelectiveColumnReader& reader,
     folly::Range<const vector_size_t*>& rows,
     const uint64_t* FOLLY_NULLABLE& nulls) {
   if (currentVisitorRow_ == numVisitorRows_) {

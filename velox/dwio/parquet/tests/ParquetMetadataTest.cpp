@@ -17,10 +17,10 @@
 //
 // Created by Ying Su on 2/27/22.
 //
-#include "velox/dwio/parquet/reader/ParquetReader.h"
 #include "ParquetReaderTest.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/dwrf/test/utils/FilterGenerator.h"
+#include "velox/dwio/parquet/reader/ParquetReader.h"
 
 using namespace facebook::velox::parquet;
 using namespace facebook::velox;
@@ -31,7 +31,6 @@ std::unique_ptr<common::ScanSpec> makeScanSpec(
     const std::shared_ptr<const RowType>& rowType);
 
 class ParquetMetadataTest : public ParquetReaderTest {};
-
 
 TEST_F(ParquetMetadataTest, readRowMap) {
   const std::string sample(getExampleFilePath("sample.parquet"));

@@ -298,7 +298,8 @@ bool SelectiveColumnReader::readsNullsOnly() const {
   if (filter) {
     auto kind = filter->kind();
     return kind == velox::common::FilterKind::kIsNull ||
-      (!scanSpec_->keepValues() && kind == velox::common::FilterKind::kIsNotNull);
+        (!scanSpec_->keepValues() &&
+         kind == velox::common::FilterKind::kIsNotNull);
   }
   return false;
 }

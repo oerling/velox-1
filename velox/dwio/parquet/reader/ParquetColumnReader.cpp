@@ -30,7 +30,7 @@
 namespace facebook::velox::parquet {
 
 // static
-  std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
+std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     ParquetParams& params,
     common::ScanSpec& scanSpec) {

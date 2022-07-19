@@ -30,13 +30,7 @@ add_library(
   Statistics.cpp
   StructColumnReader.cpp)
 
-
-target_link_libraries(
-  velox_dwio_native_parquet_reader
-  velox_type
-  velox_dwio_common
-  arrow_shared
-  ${THRIFTLIB}
-  ${FMT})
+target_link_libraries(velox_dwio_native_parquet_reader velox_type
+                      velox_dwio_common arrow_shared ${THRIFTLIB} ${FMT})
 target_include_directories(velox_dwio_native_parquet_reader
                            PUBLIC /usr/local/include/)
