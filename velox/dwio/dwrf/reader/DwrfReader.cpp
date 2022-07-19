@@ -44,6 +44,9 @@ void DwrfRowReader::checkSkipStrides(
     return;
   }
 
+  DWIO_ENSURE(
+      selectiveColumnReader_ != nullptr, "selectiveColumnReader_ is null.");
+
   if (currentRowInStripe == 0 || recomputeStridesToSkip_) {
     stridesToSkip_ =
         selectiveColumnReader_->filterRowGroups(strideSize, context);
@@ -97,7 +100,7 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
     }
 
     auto strideSize = footer.rowindexstride();
-    if (LIKELY(strideSize > 0)) {
+    if (LIKELY(strideSize > 0) && selectiveColumnReader_) {
       checkSkipStrides(context, strideSize);
     }
 
@@ -114,6 +117,7 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
       // Record strideIndex for use by the columnReader_ which may delay actual
       // reading of the data.
       setStrideIndex(strideSize > 0 ? currentRowInStripe / strideSize : 0);
+
       if (selectiveColumnReader_) {
         selectiveColumnReader_->next(rowsToRead, result);
       } else {
@@ -137,8 +141,12 @@ uint64_t DwrfRowReader::next(uint64_t size, VectorPtr& result) {
 }
 
 void DwrfRowReader::resetFilterCaches() {
-  selectiveColumnReader_->resetFilterCaches();
-  recomputeStridesToSkip_ = true;
+  if (selectiveColumnReader_) {
+    selectiveColumnReader_->resetFilterCaches();
+    recomputeStridesToSkip_ = true;
+  }
+
+  // For columnReader_, this is no-op.
 }
 
 std::unique_ptr<DwrfReader> DwrfReader::create(

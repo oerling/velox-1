@@ -22,6 +22,9 @@ namespace facebook::velox::dwrf {
 using dwio::common::TypeWithId;
 using dwio::common::typeutils::CompatChecker;
 
+// Buffer size for reading length stream
+constexpr uint64_t BUFFER_SIZE = 1024;
+
 common::AlwaysTrue& alwaysTrue() {
   static common::AlwaysTrue alwaysTrue;
   return alwaysTrue;
@@ -111,8 +114,8 @@ void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
 
 bool SelectiveColumnReader::shouldMoveNulls(RowSet rows) {
   if (rows.size() == numValues_) {
-    // Nulls will only be moved if there is a selection on values. A cast alone
-    // does not move nulls.
+    // Nulls will only be moved if there is a selection on values. A cast
+    // alone does not move nulls.
     return false;
   }
   VELOX_CHECK(
