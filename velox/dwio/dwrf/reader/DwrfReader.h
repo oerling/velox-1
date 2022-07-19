@@ -31,21 +31,22 @@ class DwrfRowReader : public DwrfRowReaderShared {
   }
 
   void createColumnReaderImpl(StripeStreams& stripeStreams) override {
-    auto factory =
-        (columnReaderFactory_ ? columnReaderFactory_.get()
-                              : ColumnReaderFactory::baseFactory());
-    if (auto selectiveFactory =
-            dynamic_cast<SelectiveColumnReaderFactory*>(factory)) {
-      selectiveColumnReader_ = selectiveFactory->buildSelective(
-          getColumnSelector().getSchemaWithId(),
-          getReader().getSchemaWithId(),
-          stripeStreams);
+    auto scanSpec = options_.getScanSpec().get();
+    auto requestedType = getColumnSelector().getSchemaWithId();
+    auto dataType = getReader().getSchemaWithId();
+    auto flatMapContext = FlatMapContext::nonFlatMapContext();
+
+    if (scanSpec) {
+      selectiveColumnReader_ = SelectiveDwrfReader::build(
+          requestedType, dataType, stripeStreams, scanSpec, flatMapContext);
+      selectiveColumnReader_->setIsTopLevel();
     } else {
-      columnReader_ = factory->build(
-          getColumnSelector().getSchemaWithId(),
-          getReader().getSchemaWithId(),
-          stripeStreams);
+      columnReader_ = ColumnReader::build(
+          requestedType, dataType, stripeStreams, flatMapContext);
     }
+    DWIO_ENSURE(
+        (columnReader_ != nullptr) != (selectiveColumnReader_ != nullptr),
+        "ColumnReader was not created");
   }
 
   void seekImpl() override {
@@ -77,10 +78,6 @@ class DwrfRowReader : public DwrfRowReaderShared {
     stats.skippedStrides += skippedStrides_;
   }
 
-  ColumnReader* columnReader() {
-    return columnReader_.get();
-  }
-
   void resetFilterCaches() override;
 
   // Returns the skipped strides for 'stripe'. Used for testing.
@@ -96,7 +93,7 @@ class DwrfRowReader : public DwrfRowReaderShared {
   void checkSkipStrides(const StatsContext& context, uint64_t strideSize);
 
   std::unique_ptr<ColumnReader> columnReader_;
-  std::unique_ptr<SelectiveColumnReader> selectiveColumnReader_;
+  std::unique_ptr<dwio::common::SelectiveColumnReader> selectiveColumnReader_;
   std::vector<uint32_t> stridesToSkip_;
   // Record of strides to skip in each visited stripe. Used for diagnostics.
   std::unordered_map<uint32_t, std::vector<uint32_t>> stripeStridesToSkip_;
