@@ -132,8 +132,12 @@ void SelectiveIntegerColumnReader::processFilter(
       readHelper<Reader, velox::common::BigintRange, isDense>(
           filter, rows, extractValues);
       break;
-    case velox::common::FilterKind::kBigintValuesUsingHashTable:
-      readHelper<Reader, velox::common::BigintValuesUsingHashTable, isDense>(
+  case velox::common::FilterKind::kNegatedBigintRange:
+    readHelper<Reader, velox::common::NegatedBigintRange, isDense>(
+          filter, rows, extractValues);
+      break;
+  case velox::common::FilterKind::kBigintValuesUsingHashTable:
+    readHelper<Reader, velox::common::BigintValuesUsingHashTable, isDense>(
           filter, rows, extractValues);
       break;
     case velox::common::FilterKind::kBigintValuesUsingBitmask:
