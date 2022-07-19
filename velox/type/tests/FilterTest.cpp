@@ -175,6 +175,67 @@ TEST(FilterTest, bigIntRange) {
   EXPECT_TRUE(filter->testInt64Range(-100, 10, true));
 }
 
+TEST(FilterTest, negatedBigintRange) {
+  auto filter = notEqual(1, false);
+  EXPECT_FALSE(filter->testNull());
+  EXPECT_FALSE(filter->testInt64(1));
+
+  EXPECT_TRUE(filter->testInt64(-1));
+  EXPECT_TRUE(filter->testInt64(0));
+  EXPECT_TRUE(filter->testInt64(11));
+
+  EXPECT_FALSE(filter->testInt64Range(1, 1, false));
+  EXPECT_FALSE(filter->testInt64Range(1, 1, true));
+  EXPECT_TRUE(filter->testInt64Range(1, 2, false));
+  EXPECT_TRUE(filter->testInt64Range(8, 9, false));
+
+  EXPECT_EQ(filter->lower(), 1);
+  EXPECT_EQ(filter->upper(), 1);
+
+  auto testInt64 = [&](int64_t x) { return filter->testInt64(x); };
+
+  int64_t n4[] = {0, 1, 26, std::numeric_limits<int64_t>::max()};
+  checkSimd(filter.get(), n4, testInt64);
+  int32_t n8[] = {2, 1, 1000, -1000, 1, 15, 0, 1111};
+  checkSimd(filter.get(), n8, testInt64);
+  int16_t n16[] = {
+      2, 1, 1000, -1000, 1, -5, 0, 1111, 2, 1, 1000, -1000, 1, 1, 0, 1111};
+  checkSimd(filter.get(), n16, testInt64);
+
+  filter = notBetween(-5, 15, false);
+  EXPECT_FALSE(filter->testNull());
+  EXPECT_FALSE(filter->testInt64(-5));
+  EXPECT_FALSE(filter->testInt64(-1));
+  EXPECT_FALSE(filter->testInt64(0));
+  EXPECT_FALSE(filter->testInt64(1));
+  EXPECT_FALSE(filter->testInt64(15));
+
+  EXPECT_TRUE(filter->testInt64(-6));
+  EXPECT_TRUE(filter->testInt64(16));
+  EXPECT_TRUE(filter->testInt64(99));
+
+  EXPECT_FALSE(filter->testInt64Range(-5, 15, false));
+  EXPECT_FALSE(filter->testInt64Range(-5, 15, true));
+  EXPECT_FALSE(filter->testInt64Range(-3, -1, false));
+  EXPECT_FALSE(filter->testInt64Range(-4, 0, false));
+  EXPECT_FALSE(filter->testInt64Range(0, 8, false));
+
+  EXPECT_TRUE(filter->testInt64Range(16, 16, false));
+  EXPECT_TRUE(filter->testInt64Range(15, 16, false));
+  EXPECT_TRUE(filter->testInt64Range(-10, 20, false));
+  EXPECT_TRUE(filter->testInt64Range(-6, 15, false));
+  checkSimd(filter.get(), n4, testInt64);
+  checkSimd(filter.get(), n8, testInt64);
+  checkSimd(filter.get(), n16, testInt64);
+
+  EXPECT_EQ(filter->lower(), -5);
+  EXPECT_EQ(filter->upper(), 15);
+
+  auto filter_with_null = filter->clone(true);
+  EXPECT_TRUE(filter_with_null->testNull());
+  EXPECT_TRUE(filter_with_null->testInt64Range(5, 15, true));
+}
+
 TEST(FilterTest, bigintValuesUsingHashTable) {
   auto filter = createBigintValues({1, 10, 100, 10'000}, false);
   ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
@@ -442,16 +503,17 @@ TEST(FilterTest, negatedBigintValuesEdgeCases) {
   auto not_null = createNegatedBigintValues({}, false);
   ASSERT_TRUE(dynamic_cast<IsNotNull*>(not_null.get()));
 
-  auto two_ranges = createNegatedBigintValues({1, 2, 3, 4, 5, 6, 7}, false);
-  ASSERT_TRUE(dynamic_cast<BigintMultiRange*>(two_ranges.get()));
-  EXPECT_FALSE(two_ranges->testInt64(1));
-  EXPECT_FALSE(two_ranges->testInt64(3));
-  EXPECT_FALSE(two_ranges->testInt64(7));
-  EXPECT_FALSE(two_ranges->testNull());
-  EXPECT_TRUE(two_ranges->testInt64(0));
-  EXPECT_TRUE(two_ranges->testInt64(8));
-  EXPECT_TRUE(two_ranges->testInt64(std::numeric_limits<int64_t>::min()));
-  EXPECT_TRUE(two_ranges->testInt64(std::numeric_limits<int64_t>::max()));
+  // cases that should trigger creation of a NegatedBigintRange filter
+  auto negated_range = createNegatedBigintValues({1, 2, 3, 4, 5, 6, 7}, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(negated_range.get()));
+  EXPECT_FALSE(negated_range->testInt64(1));
+  EXPECT_FALSE(negated_range->testInt64(3));
+  EXPECT_FALSE(negated_range->testInt64(7));
+  EXPECT_FALSE(negated_range->testNull());
+  EXPECT_TRUE(negated_range->testInt64(0));
+  EXPECT_TRUE(negated_range->testInt64(8));
+  EXPECT_TRUE(negated_range->testInt64(std::numeric_limits<int64_t>::min()));
+  EXPECT_TRUE(negated_range->testInt64(std::numeric_limits<int64_t>::max()));
 
   std::vector<int64_t> minRangeValues;
   minRangeValues.reserve(10);
@@ -459,7 +521,7 @@ TEST(FilterTest, negatedBigintValuesEdgeCases) {
     minRangeValues.emplace_back(std::numeric_limits<int64_t>::min() + i);
   }
   auto min_range = createNegatedBigintValues(minRangeValues, false);
-  ASSERT_TRUE(dynamic_cast<BigintRange*>(min_range.get()));
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(min_range.get()));
   EXPECT_FALSE(min_range->testInt64(std::numeric_limits<int64_t>::min()));
   EXPECT_FALSE(min_range->testInt64(std::numeric_limits<int64_t>::min() + 9));
   EXPECT_FALSE(min_range->testNull());
@@ -473,13 +535,23 @@ TEST(FilterTest, negatedBigintValuesEdgeCases) {
     maxRangeValues.emplace_back(std::numeric_limits<int64_t>::max() - i);
   }
   auto max_range = createNegatedBigintValues(maxRangeValues, false);
-  ASSERT_TRUE(dynamic_cast<BigintRange*>(max_range.get()));
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(max_range.get()));
   EXPECT_FALSE(max_range->testInt64(std::numeric_limits<int64_t>::max()));
   EXPECT_FALSE(max_range->testInt64(std::numeric_limits<int64_t>::max() - 9));
   EXPECT_FALSE(max_range->testNull());
   EXPECT_TRUE(max_range->testInt64(std::numeric_limits<int64_t>::max() - 10));
   EXPECT_TRUE(max_range->testInt64(0));
   EXPECT_TRUE(max_range->testInt64(std::numeric_limits<int64_t>::min()));
+
+  auto not_equal = createNegatedBigintValues({10}, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(not_equal.get()));
+  EXPECT_FALSE(not_equal->testInt64(10));
+  EXPECT_FALSE(not_equal->testNull());
+  EXPECT_TRUE(not_equal->testInt64(std::numeric_limits<int64_t>::min()));
+  EXPECT_TRUE(not_equal->testInt64(std::numeric_limits<int64_t>::max()));
+  EXPECT_TRUE(not_equal->testInt64(-1));
+  EXPECT_TRUE(not_equal->testInt64(0));
+  EXPECT_TRUE(not_equal->testInt64(1));
 }
 
 TEST(FilterTest, bigintMultiRange) {
@@ -1212,6 +1284,25 @@ TEST(FilterTest, mergeWithBigint) {
   filters.push_back(between(150, 500));
   filters.push_back(between(150, 500, true));
 
+  // Inequality.
+  filters.push_back(notEqual(123));
+  filters.push_back(notEqual(123, true));
+  filters.push_back(notEqual(300));
+  filters.push_back(notEqual(300, true));
+  filters.push_back(notEqual(2));
+  filters.push_back(notEqual(3));
+
+  // Not between.
+  filters.push_back(notBetween(150, 500));
+  filters.push_back(notBetween(150, 500, true));
+  filters.push_back(notBetween(0, 100));
+  filters.push_back(notBetween(0, 100, true));
+  filters.push_back(notBetween(0, 200));
+  filters.push_back(notBetween(400, 600));
+  filters.push_back(notBetween(0, 600));
+  filters.push_back(notBetween(1000, 10'134));
+  filters.push_back(notBetween(200, 300));
+
   // IN-list.
   filters.push_back(in({1, 2, 3, 67'000'000'000, 134}));
   filters.push_back(in({1, 2, 3, 67'000'000'000, 134}, true));
@@ -1321,6 +1412,28 @@ TEST(FilterTest, mergeWithBigintMultiRange) {
   filters.push_back(bigintOr(lessThan(-3), equal(12), between(25, 47)));
   filters.push_back(bigintOr(lessThan(-3), equal(12), between(25, 47), true));
 
+  // not equal
+  filters.push_back(notEqual(20));
+  filters.push_back(notEqual(20, true));
+  filters.push_back(notEqual(12));
+  filters.push_back(notEqual(12, true));
+  filters.push_back(notEqual(-210));
+  filters.push_back(notEqual(-210, true));
+
+  // not between
+  filters.push_back(notBetween(25, 47));
+  filters.push_back(notBetween(25, 47, true));
+  filters.push_back(notBetween(0, 40));
+  filters.push_back(notBetween(30, 40));
+  filters.push_back(notBetween(-20, 40));
+  filters.push_back(notBetween(12, 40));
+  filters.push_back(notBetween(13, 40));
+  filters.push_back(notBetween(20, 50));
+  filters.push_back(notBetween(-10, -1));
+  filters.push_back(notBetween(90, 100));
+  filters.push_back(notBetween(std::numeric_limits<int64_t>::min(), -4));
+  filters.push_back(notBetween(std::numeric_limits<int64_t>::min(), -4, true));
+
   // IN-list using bitmask.
   filters.push_back(in({1, 2, 3, 56}));
   filters.push_back(in({1, 2, 3, 56}, true));
@@ -1328,6 +1441,11 @@ TEST(FilterTest, mergeWithBigintMultiRange) {
   // IN-list using hash table.
   filters.push_back(in({1, 2, 3, 67, 10'134}));
   filters.push_back(in({1, 2, 3, 67, 10'134}, true));
+  filters.push_back(
+      in({std::numeric_limits<int64_t>::min(),
+          0,
+          std::numeric_limits<int64_t>::max()},
+         true));
 
   // NOT IN-list using bitmask.
   filters.push_back(notIn({0, 3, 5, 20, 32, 210}));

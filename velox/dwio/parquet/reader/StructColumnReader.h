@@ -16,12 +16,12 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/common/SelectiveStructColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 
 namespace facebook::velox::parquet {
 
-class StructColumnReader : public dwrf::SelectiveStructColumnReader {
+  class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
  public:
   StructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
