@@ -16,14 +16,13 @@
 
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
 
-
 namespace facebook::velox::dwio::common {
 
 using dwio::common::TypeWithId;
 using dwio::common::typeutils::CompatChecker;
 
-  velox::common::AlwaysTrue& alwaysTrue() {
-    static velox::common::AlwaysTrue alwaysTrue;
+velox::common::AlwaysTrue& alwaysTrue() {
+  static velox::common::AlwaysTrue alwaysTrue;
   return alwaysTrue;
 }
 
@@ -300,4 +299,4 @@ void SelectiveColumnReader::resetFilterCaches() {
   }
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common
