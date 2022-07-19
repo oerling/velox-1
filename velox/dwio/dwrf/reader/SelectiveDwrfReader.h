@@ -31,7 +31,8 @@ class SelectiveDwrfReader {
       DwrfParams& params,
       common::ScanSpec& scanSpec);
 
-  // Compatibility wrapper for tests. Takes the components of DwrfParams as separate.
+  // Compatibility wrapper for tests. Takes the components of DwrfParams as
+  // separate.
   static std::unique_ptr<SelectiveColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
@@ -41,7 +42,6 @@ class SelectiveDwrfReader {
     auto params = DwrfParams(stripe, flatMapContext);
     return build(requestedType, dataType, params, *scanSpec);
   }
-
 };
 
 class SelectiveColumnReaderFactory : public ColumnReaderFactory {
