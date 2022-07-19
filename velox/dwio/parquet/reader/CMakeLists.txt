@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-get_property(
-  dirs
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  PROPERTY INCLUDE_DIRECTORIES)
-foreach(dir ${dirs})
-  message(STATUS "dir='${dir}'")
-endforeach()
-
 add_library(
   velox_dwio_native_parquet_reader
   ParquetReader.cpp
@@ -30,7 +22,12 @@ add_library(
   Statistics.cpp
   StructColumnReader.cpp)
 
-target_link_libraries(velox_dwio_native_parquet_reader velox_type
-                      velox_dwio_common arrow_shared ${THRIFTLIB} ${FMT})
-target_include_directories(velox_dwio_native_parquet_reader
-                           PUBLIC /usr/local/include/)
+target_link_libraries(
+  velox_dwio_native_parquet_reader
+  velox_type
+  velox_dwio_common
+  velox_dwio_dwrf_common
+  velox_dwio_dwrf_proto
+  arrow
+  thrift
+  ${FMT})

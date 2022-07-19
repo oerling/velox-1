@@ -73,7 +73,7 @@ class ParquetData : public dwio::common::FormatData {
 
   // Positions 'this' at 'index'th row group. enqueueRowGroup must be called
   // first.
-  dwio::common::PositionProvider seekToRowGroup(uint32_t index);
+  dwio::common::PositionProvider seekToRowGroup(uint32_t index) override;
 
   bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
 

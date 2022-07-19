@@ -110,7 +110,7 @@ class SelectiveColumnReader {
 
   virtual ~SelectiveColumnReader() = default;
 
-  dwio::common::FormatData& FOLLY_NONNULL formatData() const {
+  dwio::common::FormatData& formatData() const {
     return *formatData_;
   }
   

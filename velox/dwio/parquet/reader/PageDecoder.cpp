@@ -333,12 +333,11 @@ const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
   tempNulls_->setSize(0);
   defineDecoder_->GetBatch<uint8_t>(
       tempNulls_->asMutable<uint8_t>(), numValues);
-  xsimd::batch<char> flags;
   auto nullBytes = tempNulls_->as<uint8_t>();
   auto intNulls = buffer->asMutable<int32_t>();
   int32_t nullsIndex = 0;
   for (auto i = 0; i < numValues; i += 32) {
-    flags = xsimd::batch<char>::load_unaligned(nullBytes + i);
+    auto flags = xsimd::load_unaligned(nullBytes + i);
     intNulls[nullsIndex++] = simd::toBitMask(flags != 0);
   }
   return buffer->as<uint64_t>();
