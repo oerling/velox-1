@@ -19,6 +19,7 @@
 #include "velox/dwio/common/SelectiveIntegerColumnReader.h"
 #include "velox/dwio/dwrf/reader/DwrfData.h"
 
+
 namespace facebook::velox::dwrf {
 
 class SelectiveIntegerDictionaryColumnReader
