@@ -24,7 +24,7 @@
 #include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
 
-    namespace facebook::velox::dwrf {
+namespace facebook::velox::dwrf {
 
 using dwio::common::ColumnSelector;
 using dwio::common::FileFormat;
