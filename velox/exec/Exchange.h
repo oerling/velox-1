@@ -28,14 +28,13 @@ class SerializedPage {
  public:
   static constexpr int kSerializedPageOwner = -11;
 
-  // Construct from IOBuf chain.
-  explicit SerializedPage(std::unique_ptr<folly::IOBuf> iobuf);
-
-  // Construct from IOBuf chain with memory tracked by provided
-  // pool. No copy is made.
+  // Construct from IOBuf chain. The external memory usage of 'iobuf' will be
+  // tracked if 'pool' is not null.
+  //
+  // TODO: consider to enforce setting memory pool if possible.
   explicit SerializedPage(
       std::unique_ptr<folly::IOBuf> iobuf,
-      memory::MemoryPool* pool);
+      memory::MemoryPool* pool = nullptr);
 
   ~SerializedPage();
 
@@ -295,7 +294,7 @@ class ExchangeClient {
     return pool_;
   }
 
-  void setMemoryPool(memory::MemoryPool* pool);
+  void maybeSetMemoryPool(memory::MemoryPool* pool);
 
   void addRemoteTaskId(const std::string& taskId);
 
@@ -332,14 +331,7 @@ class Exchange : public SourceOperator {
             "Exchange"),
         planNodeId_(exchangeNode->id()),
         exchangeClient_(std::move(exchangeClient)) {
-    // ExchangeClient is shared among multiple drivers' Exchange operators so we
-    // only need one of the operator to set it up.
-    if (exchangeClient_->pool() == nullptr) {
-      exchangeClient_->setMemoryPool(operatorCtx_->pool());
-    } else if (exchangeClient_->pool() != operatorCtx_->pool()) {
-      LOG(WARNING)
-          << "Passed in pool from Exchange operator is different than current pool in ExchangeClient.";
-    }
+    exchangeClient_->maybeSetMemoryPool(operatorCtx_->pool());
   }
 
   ~Exchange() override {

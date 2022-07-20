@@ -21,18 +21,6 @@
 
 namespace facebook::velox::exec {
 
-SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-    : iobuf_(std::move(iobuf)), iobufBytes_(chainBytes(*iobuf_.get())) {
-  VELOX_CHECK_NOT_NULL(iobuf_);
-  for (auto& buf : *iobuf_) {
-    int32_t bufSize = buf.size();
-    ranges_.push_back(ByteRange{
-        const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
-        bufSize,
-        0});
-  }
-}
-
 SerializedPage::SerializedPage(
     std::unique_ptr<folly::IOBuf> iobuf,
     memory::MemoryPool* pool)
@@ -40,7 +28,9 @@ SerializedPage::SerializedPage(
       iobufBytes_(chainBytes(*iobuf_.get())),
       pool_(pool) {
   VELOX_CHECK_NOT_NULL(iobuf_);
-  pool_->reserve(iobufBytes_);
+  if (pool_ != nullptr) {
+    pool_->reserve(iobufBytes_);
+  }
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
@@ -180,8 +170,12 @@ std::unique_ptr<ExchangeSource> createLocalExchangeSource(
 
 } // namespace
 
-void ExchangeClient::setMemoryPool(memory::MemoryPool* pool) {
-  pool_ = pool;
+void ExchangeClient::maybeSetMemoryPool(memory::MemoryPool* pool) {
+  // ExchangeClient could be shared by the same exchange operators from
+  // different drivers so we only need to set it on the first operator setup.
+  if (pool_ == nullptr) {
+    pool_ = pool;
+  }
 }
 
 void ExchangeClient::addRemoteTaskId(const std::string& taskId) {

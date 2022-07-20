@@ -21,7 +21,7 @@
 #include "velox/dwio/common/exception/Exceptions.h"
 #include "velox/dwio/dwrf/common/Statistics.h"
 #include "velox/dwio/dwrf/reader/DwrfReaderShared.h"
-#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
+lude "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
 
 namespace facebook::velox::dwrf {
