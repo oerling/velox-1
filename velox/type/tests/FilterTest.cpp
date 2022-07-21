@@ -20,6 +20,7 @@
 #include <numeric>
 #include <optional>
 
+#include <velox/type/Filter.h>
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/type/Filter.h"
 
@@ -840,6 +841,61 @@ TEST(FilterTest, bytesRange) {
   EXPECT_TRUE(filter->testBytes("abc", 3));
 }
 
+TEST(FilterTest, negatedBytesRange) {
+  auto filter = notBetween("a", "c");
+
+  EXPECT_TRUE(filter->testBytes("A", 1));
+  EXPECT_TRUE(filter->testBytes(nullptr, 0));
+  EXPECT_TRUE(filter->testBytes("ca", 2));
+  EXPECT_TRUE(filter->testBytes("z", 1));
+
+  EXPECT_FALSE(filter->testBytes("a", 1));
+  EXPECT_FALSE(filter->testBytes("apple", 5));
+  EXPECT_FALSE(filter->testBytes("c", 1));
+  EXPECT_FALSE(filter->testNull());
+
+  EXPECT_TRUE(filter->testLength(1));
+  EXPECT_TRUE(filter->testLength(3));
+  EXPECT_TRUE(filter->testLength(5));
+  EXPECT_TRUE(filter->testLength(100));
+
+  EXPECT_TRUE(filter->testBytesRange(std::nullopt, "b", false));
+  EXPECT_TRUE(filter->testBytesRange("a", std::nullopt, false));
+  EXPECT_TRUE(filter->testBytesRange("a", "ca", false));
+  EXPECT_TRUE(filter->testBytesRange("", "c", false));
+
+  EXPECT_FALSE(filter->testBytesRange("a", "c", false));
+  EXPECT_FALSE(filter->testBytesRange("ab", "bzzzzzzz", false));
+
+  EXPECT_FALSE(filter->isSingleValue());
+  EXPECT_EQ("a", filter->lower());
+  EXPECT_EQ("c", filter->upper());
+  EXPECT_FALSE(filter->isLowerUnbounded());
+  EXPECT_FALSE(filter->isUpperUnbounded());
+
+  filter = notBetweenExclusive("b", "d");
+  EXPECT_TRUE(filter->testBytes("b", 1));
+  EXPECT_TRUE(filter->testBytes("d", 1));
+
+  EXPECT_TRUE(filter->testBytesRange("b", "c", false));
+  EXPECT_TRUE(filter->testBytesRange("c", "d", false));
+  EXPECT_FALSE(filter->testBytesRange("bb", "cc", true));
+
+  EXPECT_FALSE(filter->isSingleValue());
+  EXPECT_EQ("b", filter->lower());
+  EXPECT_EQ("d", filter->upper());
+  EXPECT_FALSE(filter->isLowerUnbounded());
+  EXPECT_FALSE(filter->isUpperUnbounded());
+
+  auto filter_with_null = filter->clone(true);
+  EXPECT_TRUE(filter_with_null->testBytesRange("bb", "cc", true));
+  EXPECT_TRUE(filter_with_null->testNull());
+
+  auto filter_with_null_copy = filter_with_null->clone();
+  EXPECT_TRUE(filter_with_null_copy->testBytesRange("bb", "cc", true));
+  EXPECT_TRUE(filter_with_null_copy->testNull());
+}
+
 TEST(FilterTest, bytesValues) {
   // The filter has values of size on either side of 8 bytes.
   std::vector<std::string> values({"Igne", "natura", "renovitur", "integra."});
@@ -1573,6 +1629,18 @@ TEST(FilterTest, mergeWithBytesRange) {
   filters.push_back(between("<<", ">>", true));
   filters.push_back(between("ABCDE", "abcde"));
   filters.push_back(between("1", "123456", true));
+
+  filters.push_back(notBetween("b", "f"));
+  filters.push_back(notBetween("b", "f", true));
+  filters.push_back(notBetween("a", "d"));
+  filters.push_back(notBetween("a", "d", true));
+  filters.push_back(notBetweenExclusive("b", "f"));
+  filters.push_back(notBetweenExclusive("b", "f", true));
+
+  // test unbounded negatedRange
+  filters.push_back(
+      std::make_unique<facebook::velox::common::NegatedBytesRange>(
+          "", true, false, "l", false, false, false));
 
   filters.push_back(lessThanOrEqual("k"));
   filters.push_back(lessThanOrEqual("k", true));
