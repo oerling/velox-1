@@ -50,9 +50,9 @@ class FormatData {
       const uint64_t* incomingNulls,
       BufferPtr& nulls) = 0;
 
-  // Reads 'numValues' bits of null flags and returns the number of non-nulls in
-  // the read null flags. No-op for formats that do not have separate null
-  // flags, e.g. Parquet.
+  /// Reads 'numValues' bits of null flags and returns the number of non-nulls
+  /// in the read null flags. No-op for formats that do not have separate null
+  /// flags, e.g. Parquet.
   virtual uint64_t skipNulls(uint64_t numValues) = 0;
 
   /// Skips 'numValues' top level rows and returns the number of

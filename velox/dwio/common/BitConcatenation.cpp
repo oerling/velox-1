@@ -28,29 +28,27 @@ void BitConcatenation::append(
     return;
   }
 
-  ensureSpace(numBits_ + numBits);
-  bits::copyBits(
-      bits, begin, (*buffer_)->asMutable<uint64_t>(), numBits_, numBits);
+  hasZeros_ = true;
+  bits::copyBits(bits, begin, ensureSpace(numBits), numBits_, numBits);
   numBits_ += numBits;
   setSize();
 }
 
 void BitConcatenation::appendOnes(int32_t numOnes) {
-  if (*buffer_) {
-    ensureSpace(numOnes);
-    bits::fillBits(
-        (*buffer_)->asMutable<uint64_t>(), numBits_, numBits_ + numOnes, 1);
+  if (hasZeros_) {
+    bits::fillBits(ensureSpace(numOnes), numBits_, numBits_ + numOnes, 1);
   }
   numBits_ += numOnes;
   setSize();
 }
 
-void BitConcatenation::ensureSpace(int32_t numBits) {
+uint64_t* FOLLY_NONNULL BitConcatenation::ensureSpace(int32_t numBits) {
   if (!*buffer_) {
     *buffer_ = AlignedBuffer::allocate<bool>(numBits_ + numBits, &pool_, true);
   } else if (numBits_ + numBits > (*buffer_)->capacity() * 8) {
     AlignedBuffer::reallocate<bool>(buffer_, 2 * (numBits_ + numBits));
   }
+  return (*buffer_)->asMutable<uint64_t>();
 }
 
 } // namespace facebook::velox::dwio::common

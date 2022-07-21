@@ -32,6 +32,7 @@
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/type/Type.h"
 #include "velox/vector/DictionaryVector.h"
+#include "velox/vector/tests/VectorMaker.h"
 using namespace ::testing;
 using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::dwrf;
@@ -718,8 +719,10 @@ wrapInDictionary(const VectorPtr& batch, size_t stride, MemoryPool& pool) {
 template <typename T>
 void getUniqueKeys(
     std::vector<T>& uniqueKeys,
+    vector_size_t& numRows,
     const std::vector<VectorPtr>& batches) {
   std::unordered_set<T> seenKeys;
+  vector_size_t rowCount = 0;
 
   for (auto batch : batches) {
     auto map = std::dynamic_pointer_cast<MapVector>(batch);
@@ -731,9 +734,71 @@ void getUniqueKeys(
       ASSERT_TRUE(!flatKeys->isNullAt(i));
       seenKeys.insert(flatKeys->valueAt(i));
     }
+    rowCount += map->size();
   }
 
   uniqueKeys.insert(uniqueKeys.end(), seenKeys.begin(), seenKeys.end());
+  numRows = rowCount;
+}
+
+void printStruct(const VectorPtr& rows) {
+  auto rowStruct = std::dynamic_pointer_cast<RowVector>(rows);
+  ASSERT_TRUE(rowStruct);
+  for (int i = 0; i < rowStruct->size(); i++) {
+    LOG(INFO) << i << ": " << rowStruct->toString(i);
+  }
+}
+
+template <typename TKEY, typename TVALUE>
+void fillValues(
+    const std::vector<VectorPtr>& batches,
+    const std::vector<TKEY>& uniqueKeys,
+    VectorPtr& rows) {
+  std::unordered_map<TKEY, int> keyColIndex;
+  for (int i = 0; i < uniqueKeys.size(); i++) {
+    keyColIndex[uniqueKeys[i]] = i; // lookup from key -> column#
+  }
+
+  auto rowStruct = std::dynamic_pointer_cast<RowVector>(rows);
+  ASSERT_TRUE(rowStruct);
+  vector_size_t rowOffset = 0;
+  for (auto batch : batches) {
+    auto map = std::dynamic_pointer_cast<MapVector>(batch);
+    ASSERT_TRUE(map);
+
+    auto keys = map->mapKeys();
+    auto flatKeys = std::dynamic_pointer_cast<FlatVector<TKEY>>(keys);
+    ASSERT_TRUE(flatKeys);
+    auto values = map->mapValues();
+    auto flatValues = std::dynamic_pointer_cast<FlatVector<TVALUE>>(values);
+    ASSERT_TRUE(flatValues);
+
+    auto offsets = map->offsets()->as<vector_size_t>();
+    auto sizes = map->sizes()->as<vector_size_t>();
+
+    // for each row in current batch
+    for (vector_size_t row = 0; row < map->size(); row++) {
+      // for each key in row (single map)
+      for (vector_size_t index = offsets[row],
+                         endOffset = offsets[row] + sizes[row];
+           index < endOffset;
+           index++) {
+        // set value in correct row
+        ASSERT_FALSE(flatKeys->isNullAt(index));
+        // ASSERT_TRUE(!flatValues->isNullAt(offsets[i] + sizes[j]));
+        auto key = flatKeys->valueAt(index);
+        auto element = std::dynamic_pointer_cast<FlatVector<TVALUE>>(
+            rowStruct->childAt(keyColIndex[key]));
+        ASSERT_TRUE(element);
+        element->set(rowOffset + row, flatValues->valueAt(index));
+      }
+    }
+
+    // worry about overflow MapVector total size? use int64?
+    rowOffset += map->size();
+  }
+
+  // printStruct(rows);
 }
 
 template <typename TKEY, typename TVALUE>
@@ -759,11 +824,27 @@ void testMapWriter(
   const auto config = std::make_shared<Config>();
   if (useFlatMap) {
     if (isStruct) {
+      vector_size_t numRows;
       std::vector<TKEY> uniqueKeys;
-      ASSERT_NO_FATAL_FAILURE(getUniqueKeys<TKEY>(uniqueKeys, batches));
+      ASSERT_NO_FATAL_FAILURE(
+          getUniqueKeys<TKEY>(uniqueKeys, numRows, batches));
+      // for (int i = 0; i < uniqueKeys.size(); i++) {
+      //   LOG(INFO) << "key " << i << ": " << uniqueKeys[i];
+      // }
+
+      std::vector<VectorPtr> childrenVectors(uniqueKeys.size());
+      // initialize children of row num size filled with nulls and rowCount
+      VectorMaker maker{&pool};
+      for (int i = 0; i < uniqueKeys.size(); i++) {
+        childrenVectors[i] = maker.allNullFlatVector<TVALUE>(numRows);
+      }
+      VectorPtr rows = maker.rowVector(childrenVectors);
+      // ASSERT_NO_FATAL_FAILURE(
+      fillValues<TKEY, TVALUE>(batches, uniqueKeys, rows); // unable to assert?
+      // );
 
       // config->set(Config::MAP_FLAT_STRUCT_COLS,
-      // /* map of column index->vector of keys */);
+      // /* map of column 0->vector of keys */);
     }
 
     config->set(Config::FLATTEN_MAP, true);

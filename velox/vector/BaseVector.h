@@ -201,6 +201,10 @@ class BaseVector {
     return length_;
   }
 
+  void setSize(vector_size_t newSize) {
+    length_ = newSize;
+  }
+
   virtual void append(const BaseVector* other) {
     auto totalSize = BaseVector::length_ + other->size();
     auto previousSize = BaseVector::size();
@@ -379,16 +383,6 @@ class BaseVector {
         BaseVector::create(vector.type(), vector.size(), vector.pool());
     result->copy(&vector, 0, 0, vector.size());
     return result;
-  }
-
-  // Move or copy an element at 'source' row into 'target' row.
-  // This can be more efficient than copy for complex types.
-  virtual void move(vector_size_t source, vector_size_t target) {
-    VELOX_CHECK_LT(source, size());
-    VELOX_CHECK_LT(target, size());
-    if (source != target) {
-      copy(this, target, source, 1);
-    }
   }
 
   virtual void copy(

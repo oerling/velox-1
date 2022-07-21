@@ -35,6 +35,7 @@ TEST(BitConcatenationTests, basic) {
   bits.append(oneBits.data(), 3, 29);
   EXPECT_EQ(34 + (29 - 3), bits.numBits());
   EXPECT_TRUE(!result);
+  EXPECT_TRUE(!bits.buffer());
 
   // Add ones, then zeros and then ones. Expect bitmap.
   bits.reset(result);
@@ -47,4 +48,12 @@ TEST(BitConcatenationTests, basic) {
   EXPECT_TRUE(bits::isAllSet(data, 0, 29, true));
   EXPECT_TRUE(bits::isAllSet(data, 29, 29 + 26, false));
   EXPECT_TRUE(bits::isAllSet(data, 29 + 26, 29 + 26 + 23, true));
+
+  // Add only one bits, expect nullptr, even though 'result' has a value.
+  bits.reset(result);
+  bits.appendOnes(24);
+  bits.append(oneBits.data(), 3, 29);
+  EXPECT_EQ(24 + (29 - 3), bits.numBits());
+  EXPECT_TRUE(!bits.buffer());
+  EXPECT_FALSE(!result);
 }

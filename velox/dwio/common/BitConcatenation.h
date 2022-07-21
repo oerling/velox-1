@@ -18,30 +18,35 @@
 
 namespace facebook::velox::dwio::common {
 
-// Concatenates multiple bit vectors and produces these in a single
-// Buffer at the end. If only one bits were added, sets the output
-// buffer to nullptr.
+/// Concatenates multiple bit vectors and exposes the result in a
+/// single Buffer. Creates and resizes the result Buffer as needed. If
+/// only one bits were added, sets the output buffer to nullptr.
 class BitConcatenation {
  public:
-  BitConcatenation(memory::MemoryPool& pool) : pool_(pool) {}
+  explicit BitConcatenation(memory::MemoryPool& pool) : pool_(pool) {}
 
-  // Prepares to concatenate bits given to append() or appendOnes()
-  // into 'buffer'. 'buffer' is allocated and resized as needed. If
-  // 'buffer' is initially nullptr and only ones are appended, buffer
-  // may stay nullptr. The size() of 'buffer' is set to the next byte,
-  // so the caller must  use numBits() to get the bit count.
+  /// Prepares to concatenate bits given to append() or appendOnes()
+  /// into 'buffer'. 'buffer' is allocated and resized as needed. If
+  /// 'buffer' is initially nullptr and only ones are appended, buffer
+  /// may stay nullptr. The size() of 'buffer' is set to the next byte,
+  /// so the caller must  use numBits() to get the bit count.
   void reset(BufferPtr& outBuffer) {
     buffer_ = &outBuffer;
     numBits_ = 0;
+    hasZeros_ = false;
   }
 
-  // Appends 'numBits' consecutive bits from 'bits' starting at bit offset
-  // 'begin' to the buffer.
-  void
-  append(const uint64_t* FOLLY_NULLABLE bits, int32_t begin, int32_t numBits);
+  /// Appends  'bits' between bit offset 'begin' and 'end' to the result.
+  /// A nullptr 'bits' is treated as a bit range with all bits set.
+  void append(const uint64_t* FOLLY_NULLABLE bits, int32_t begin, int32_t end);
 
-  // Appends 'numOnes' ones.
+  /// Appends 'numOnes' ones.
   void appendOnes(int32_t numOnes);
+
+  // Returns 'buffer_' or nullptr if only ones have been appended.
+  BufferPtr buffer() const {
+    return hasZeros_ ? *buffer_ : nullptr;
+  }
 
   int32_t numBits() const {
     return numBits_;
@@ -49,8 +54,8 @@ class BitConcatenation {
 
  private:
   // Allocates or reallocates '*buffer' to have space for 'numBits_ + newBits'
-  // bits.
-  void ensureSpace(int32_t newBits);
+  // bits. Retuns a pointer to the first word of 'buffer_'.
+  uint64_t* FOLLY_NONNULL ensureSpace(int32_t newBits);
 
   void setSize() {
     if (*buffer_) {
@@ -61,6 +66,7 @@ class BitConcatenation {
   memory::MemoryPool& pool_;
   BufferPtr* FOLLY_NULLABLE buffer_{nullptr};
   int32_t numBits_{0};
+  bool hasZeros_{false};
 };
 
 } // namespace facebook::velox::dwio::common
