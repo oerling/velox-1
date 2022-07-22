@@ -538,7 +538,7 @@ inline void SelectiveColumnReader::addValue(const folly::StringPiece value) {
   addStringValue(value);
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common
 
 namespace facebook::velox::dwio::common {
 // Template parameter to indicate no hook in fast scan path. This is

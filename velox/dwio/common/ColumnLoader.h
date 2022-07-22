@@ -42,4 +42,4 @@ class ColumnLoader : public velox::VectorLoader {
   const uint64_t version_;
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common

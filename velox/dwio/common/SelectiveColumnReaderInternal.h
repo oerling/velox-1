@@ -17,10 +17,10 @@
 #pragma once
 
 #include "velox/common/base/Portability.h"
-#include "velox/dwio/common/DirectDecoder.h"
-#include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/common/ColumnVisitors.h"
+#include "velox/dwio/common/DirectDecoder.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
+#include "velox/dwio/common/TypeUtils.h"
 #include "velox/exec/AggregationHook.h"
 #include "velox/type/Timestamp.h"
 #include "velox/vector/ConstantVector.h"
@@ -31,7 +31,7 @@
 
 namespace facebook::velox::dwio::common {
 
-  velox::common::AlwaysTrue& alwaysTrue();
+velox::common::AlwaysTrue& alwaysTrue();
 
 class Timer {
  public:
@@ -348,4 +348,4 @@ void SelectiveColumnReader::filterNulls(
   readOffset_ += rows.back() + 1;
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common

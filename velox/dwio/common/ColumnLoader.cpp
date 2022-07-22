@@ -91,4 +91,4 @@ void ColumnLoader::loadInternal(
   }
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common

@@ -403,9 +403,9 @@ class ColumnVisitor {
   }
 
   void setNumValues(int32_t size) {
-    reader_->setNumValues(numValuesBias_ + size);
+    reader_->setNumValues(size);
     if (!std::is_same<TFilter, velox::common::AlwaysTrue>::value) {
-      reader_->setNumRows(numValuesBias_ + size);
+      reader_->setNumRows(size);
     }
   }
 
@@ -1411,4 +1411,4 @@ class DirectRleColumnVisitor
   }
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common
