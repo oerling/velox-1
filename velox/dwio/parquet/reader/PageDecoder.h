@@ -291,8 +291,8 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
       reader.offsetOutputRows(numValuesBeforePage, rowNumberBias_);
     }
   }
-  if (isMultiPage && mayProduceNulls) {
-    reader.setNulls(multiPageNulls_);
+  if (isMultiPage) {
+    reader.setNulls(mayProduceNulls ? nullConcatenation_.buffer() : nullptr);
   }
 }
 

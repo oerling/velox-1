@@ -403,12 +403,13 @@ class ColumnVisitor {
   }
 
   void setNumValues(int32_t size) {
-    reader_->setNumValues(size);
+    reader_->setNumValues(numValuesBias_ + size);
     if (!std::is_same<TFilter, velox::common::AlwaysTrue>::value) {
-      reader_->setNumRows(size);
+      reader_->setNumRows(numValuesBias_ + size);
     }
   }
 
+  
   HookType& hook() {
     return values_.hook();
   }
@@ -426,7 +427,7 @@ class ColumnVisitor {
   }
 
   void setAllNull(int32_t numValues) {
-    reader_->setNumValues(numValues);
+    setNumValues(numValues);
     reader_->setAllNull();
   }
 

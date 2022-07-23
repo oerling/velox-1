@@ -321,6 +321,7 @@ void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
     toRead -= numRead;
     nullConcatenation_.append(nulls, 0, numRead);
   }
+  buffer = nullConcatenation_.buffer();
 }
 
 const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
