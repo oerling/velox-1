@@ -35,7 +35,8 @@ if(VELOX_ENABLE_ARROW)
   add_library(thrift STATIC IMPORTED GLOBAL)
   set(THRIFT_ROOT ${ARROW_PREFIX}/src/arrow_ep-build/thrift_ep-install)
   set(THRIFT_LIB ${THRIFT_ROOT}/lib/libthrift.a)
-  set_property(TARGET thrift PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${THRIFT_ROOT}/include)
+  set_property(TARGET thrift PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+                                      ${THRIFT_ROOT}/include)
   set_property(TARGET thrift PROPERTY IMPORTED_LOCATION ${THRIFT_LIB})
 
   ExternalProject_Add(

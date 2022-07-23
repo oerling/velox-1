@@ -409,7 +409,6 @@ class ColumnVisitor {
     }
   }
 
-  
   HookType& hook() {
     return values_.hook();
   }

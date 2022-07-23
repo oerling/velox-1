@@ -113,7 +113,7 @@ class SelectiveColumnReader {
   dwio::common::FormatData& formatData() const {
     return *formatData_;
   }
-  
+
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read
