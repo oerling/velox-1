@@ -229,7 +229,25 @@ void PageDecoder::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
 }
 
 void PageDecoder::prepareDictionary(const PageHeader& pageHeader) {
-  VELOX_NYI();
+  dictionary_.numValues = pageHeader.dictionary_page_header.num_values;
+  dictionaryEncoding_ = pageHeader.dictionary_page_header.encoding;
+  dictionary_.sorted = pageHeader.dictionary_page_header.__isset.is_sorted &&
+      pageHeader.dictionary_page_header.is_sorted;
+  VELOX_CHECK(
+      dictionaryEncoding_ == Encoding::PLAIN_DICTIONARY ||
+      dictionaryEncoding_ == Encoding::PLAIN);
+  auto kind = type_->type->kind();
+  int32_t typeSize = type_->type->isFixedWidth() ? type_->type->cppSizeInBytes()
+                                                : sizeof(StringView);
+  auto numBytes = dictionary_.numValues * typeSize;
+  dictionary_.values = AlignedBuffer::allocate<char>(numBytes, &pool_);
+  VELOX_CHECK(type_->type->isFixedWidth());
+  dwio::common::readBytes(
+      numBytes,
+      inputStream_.get(),
+      dictionary_.values->asMutable<char>(),
+      bufferStart_,
+      bufferEnd_);
 }
 
 namespace {

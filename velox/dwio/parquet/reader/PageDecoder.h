@@ -25,15 +25,6 @@
 
 namespace facebook::velox::parquet {
 
-class Dictionary {
- public:
-  Dictionary(const void* dict, uint32_t size) : dict_(dict), size_(size) {}
-
- private:
-  const void* dict_;
-  uint32_t size_;
-};
-
 class PageDecoder {
  public:
   PageDecoder(
@@ -169,9 +160,11 @@ class PageDecoder {
   // First byte of uncompressed encoded data. Contains the encoded data as a
   // contiguous run of bytes.
   const char* pageData_{nullptr};
-  std::unique_ptr<Dictionary> dictionary_;
-  const char* dict_ = nullptr;
 
+  // Dictionary contents.
+  dwio::common::DictionaryValues dictionary_;
+  Encoding::type dictionaryEncoding_;
+  
   // Offset of current page's header from start of ColumnChunk.
   uint64_t pageStart_{0};
 

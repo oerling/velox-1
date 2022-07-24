@@ -37,8 +37,12 @@ struct DictionaryValues {
 
   // Number of valid elements in 'values'.
   int32_t numValues{0};
+
+  // True if values are in ascending order.
+  bool sorted{false};
 };
-struct RawDictionaryState {
+
+  struct RawDictionaryState {
   const void* values{nullptr};
   int32_t numValues{0};
 };
