@@ -18,8 +18,7 @@
 #include <memory>
 
 #include "velox/dwio/common/InputStream.h"
-#include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
-#include "velox/expression/ControlExpr.h"
+#include "velox/expression/FieldReference.h"
 #include "velox/type/Conversions.h"
 #include "velox/type/Type.h"
 #include "velox/type/Variant.h"

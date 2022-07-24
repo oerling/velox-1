@@ -35,20 +35,20 @@ class VectorCompareBenchmark : public functions::test::FunctionBenchmarkBase {
       : FunctionBenchmarkBase(), vectorSize_(vectorSize), rows_(vectorSize) {
     VectorFuzzer::Options opts;
     opts.vectorSize = vectorSize_;
-    opts.nullChance = 0;
+    opts.nullRatio = 0;
     opts.containerVariableLength = 1000;
     VectorFuzzer fuzzer(opts, pool(), FLAGS_fuzzer_seed);
 
     flatVector_ = fuzzer.fuzzFlat(BIGINT());
 
     arrayVector_ =
-        fuzzer.fuzzComplex(std::make_shared<ArrayType>(ArrayType(BIGINT())));
+        fuzzer.fuzzFlat(std::make_shared<ArrayType>(ArrayType(BIGINT())));
 
-    mapVector_ = fuzzer.fuzzComplex(
-        std::make_shared<MapType>(MapType(BIGINT(), BIGINT())));
+    mapVector_ =
+        fuzzer.fuzzFlat(std::make_shared<MapType>(MapType(BIGINT(), BIGINT())));
 
-    rowVector_ = fuzzer.fuzzComplex(
-        vectorMaker_.rowType({BIGINT(), BIGINT(), BIGINT()}));
+    rowVector_ =
+        fuzzer.fuzzFlat(vectorMaker_.rowType({BIGINT(), BIGINT(), BIGINT()}));
   }
 
   size_t run(const VectorPtr& vector) {

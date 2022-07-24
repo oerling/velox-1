@@ -15,38 +15,35 @@
  */
 
 #include "velox/dwio/dwrf/reader/SelectiveStringDirectColumnReader.h"
+#include "velox/dwio/common/BufferUtil.h"
+#include "velox/dwio/dwrf/common/DecoderUtil.h"
 
 namespace facebook::velox::dwrf {
 
 SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
-    : SelectiveColumnReader(
-          nodeType,
-          stripe,
-          scanSpec,
-          nodeType->type,
-          std::move(flatMapContext)) {
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+    DwrfParams& params,
+    common::ScanSpec& scanSpec)
+    : SelectiveColumnReader(nodeType, params, scanSpec, nodeType->type) {
+  EncodingKey encodingKey{nodeType->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
   RleVersion rleVersion =
       convertRleVersion(stripe.getEncoding(encodingKey).kind());
   auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
   bool lenVInts = stripe.getUseVInts(lenId);
-  lengthDecoder_ = IntDecoder</*isSigned*/ false>::createRle(
+  lengthDecoder_ = createRleDecoder</*isSigned*/ false>(
       stripe.getStream(lenId, true),
       rleVersion,
       memoryPool_,
       lenVInts,
-      INT_BYTE_SIZE);
+      dwio::common::INT_BYTE_SIZE);
   blobStream_ =
       stripe.getStream(encodingKey.forKind(proto::Stream_Kind_DATA), true);
 }
 
 uint64_t SelectiveStringDirectColumnReader::skip(uint64_t numValues) {
-  numValues = ColumnReader::skip(numValues);
-  detail::ensureCapacity<int64_t>(lengths_, numValues, &memoryPool_);
+  numValues = SelectiveColumnReader::skip(numValues);
+  dwio::common::ensureCapacity<int64_t>(lengths_, numValues, &memoryPool_);
   lengthDecoder_->nextLengths(lengths_->asMutable<int32_t>(), numValues);
   rawLengths_ = lengths_->as<uint32_t>();
   for (auto i = 0; i < numValues; ++i) {
@@ -321,7 +318,8 @@ void SelectiveStringDirectColumnReader::readWithVisitor(
       std::is_same<typename TVisitor::FilterType, common::AlwaysTrue>::value &&
       std::is_same<
           typename TVisitor::Extract,
-          ExtractToReader<SelectiveStringDirectColumnReader>>::value;
+          dwio::common::ExtractToReader<SelectiveStringDirectColumnReader>>::
+          value;
   auto nulls = nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
 
   if (process::hasAvx2() && isExtract) {
@@ -371,8 +369,9 @@ void SelectiveStringDirectColumnReader::readHelper(
     ExtractValues extractValues) {
   readWithVisitor(
       rows,
-      ColumnVisitor<folly::StringPiece, TFilter, ExtractValues, isDense>(
-          *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
+      dwio::common::
+          ColumnVisitor<folly::StringPiece, TFilter, ExtractValues, isDense>(
+              *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
 }
 
 template <bool isDense, typename ExtractValues>
@@ -400,8 +399,16 @@ void SelectiveStringDirectColumnReader::processFilter(
     case common::FilterKind::kBytesRange:
       readHelper<common::BytesRange, isDense>(filter, rows, extractValues);
       break;
+    case common::FilterKind::kNegatedBytesRange:
+      readHelper<common::NegatedBytesRange, isDense>(
+          filter, rows, extractValues);
+      break;
     case common::FilterKind::kBytesValues:
       readHelper<common::BytesValues, isDense>(filter, rows, extractValues);
+      break;
+    case common::FilterKind::kNegatedBytesValues:
+      readHelper<common::NegatedBytesValues, isDense>(
+          filter, rows, extractValues);
       break;
     default:
       readHelper<common::Filter, isDense>(filter, rows, extractValues);
@@ -419,7 +426,7 @@ void SelectiveStringDirectColumnReader::read(
   auto end = rows.back() + 1;
   auto numNulls =
       nullsInReadRange_ ? BaseVector::countNulls(nullsInReadRange_, 0, end) : 0;
-  detail::ensureCapacity<int32_t>(lengths_, end - numNulls, &memoryPool_);
+  dwio::common::ensureCapacity<int32_t>(lengths_, end - numNulls, &memoryPool_);
   lengthDecoder_->nextLengths(lengths_->asMutable<int32_t>(), end - numNulls);
   rawLengths_ = lengths_->as<uint32_t>();
   lengthIndex_ = 0;
@@ -427,23 +434,31 @@ void SelectiveStringDirectColumnReader::read(
     if (scanSpec_->valueHook()) {
       if (isDense) {
         readHelper<common::AlwaysTrue, true>(
-            &alwaysTrue(), rows, ExtractToGenericHook(scanSpec_->valueHook()));
+            &dwio::common::alwaysTrue(),
+            rows,
+            dwio::common::ExtractToGenericHook(scanSpec_->valueHook()));
       } else {
         readHelper<common::AlwaysTrue, false>(
-            &alwaysTrue(), rows, ExtractToGenericHook(scanSpec_->valueHook()));
+            &dwio::common::alwaysTrue(),
+            rows,
+            dwio::common::ExtractToGenericHook(scanSpec_->valueHook()));
       }
       return;
     }
     if (isDense) {
-      processFilter<true>(scanSpec_->filter(), rows, ExtractToReader(this));
+      processFilter<true>(
+          scanSpec_->filter(), rows, dwio::common::ExtractToReader(this));
     } else {
-      processFilter<false>(scanSpec_->filter(), rows, ExtractToReader(this));
+      processFilter<false>(
+          scanSpec_->filter(), rows, dwio::common::ExtractToReader(this));
     }
   } else {
     if (isDense) {
-      processFilter<true>(scanSpec_->filter(), rows, DropValues());
+      processFilter<true>(
+          scanSpec_->filter(), rows, dwio::common::DropValues());
     } else {
-      processFilter<false>(scanSpec_->filter(), rows, DropValues());
+      processFilter<false>(
+          scanSpec_->filter(), rows, dwio::common::DropValues());
     }
   }
 }

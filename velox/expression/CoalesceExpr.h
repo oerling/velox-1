@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include "velox/expression/ControlExpr.h"
+#include "velox/expression/SpecialForm.h"
 
 namespace facebook::velox::exec {
 
@@ -23,7 +23,10 @@ const char* const kCoalesce = "coalesce";
 
 class CoalesceExpr : public SpecialForm {
  public:
-  CoalesceExpr(TypePtr type, std::vector<ExprPtr>&& inputs);
+  CoalesceExpr(
+      TypePtr type,
+      std::vector<ExprPtr>&& inputs,
+      bool inputsSupportFlatNoNullsFastPath);
 
   void evalSpecialForm(
       const SelectivityVector& rows,

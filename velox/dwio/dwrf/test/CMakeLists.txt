@@ -388,6 +388,7 @@ add_test(velox_dwrf_column_writer_test velox_dwrf_column_writer_test)
 target_link_libraries(
   velox_dwrf_column_writer_test
   velox_dwrf_test_utils
+  velox_vector_test_lib
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
   ${FMT}
@@ -474,11 +475,6 @@ target_link_libraries(
   ${ZSTD}
   ${ZLIB_LIBRARIES}
   ${TEST_LINK_LIBS})
-
-add_executable(velox_dwrf_int_decoder_benchmark IntDecoderBenchmark.cpp)
-target_link_libraries(
-  velox_dwrf_int_decoder_benchmark velox_dwio_common_exception velox_exception
-  velox_dwio_dwrf_common ${FOLLY} ${FOLLY_BENCHMARK})
 
 add_executable(velox_dwrf_int_encoder_benchmark IntEncoderBenchmark.cpp)
 target_link_libraries(

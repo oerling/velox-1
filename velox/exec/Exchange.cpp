@@ -14,19 +14,35 @@
  * limitations under the License.
  */
 #include "velox/exec/Exchange.h"
+#include <velox/buffer/Buffer.h>
+#include <velox/common/base/Exceptions.h>
+#include <velox/common/memory/MappedMemory.h>
 #include "velox/exec/PartitionedOutputBufferManager.h"
 
 namespace facebook::velox::exec {
 
-SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-    : iobuf_(std::move(iobuf)), iobufBytes_(chainBytes(*iobuf_.get())) {
-  VELOX_CHECK(iobuf_);
+SerializedPage::SerializedPage(
+    std::unique_ptr<folly::IOBuf> iobuf,
+    memory::MemoryPool* pool)
+    : iobuf_(std::move(iobuf)),
+      iobufBytes_(chainBytes(*iobuf_.get())),
+      pool_(pool) {
+  VELOX_CHECK_NOT_NULL(iobuf_);
+  if (pool_ != nullptr) {
+    pool_->reserve(iobufBytes_);
+  }
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
         0});
+  }
+}
+
+SerializedPage::~SerializedPage() {
+  if (pool_ != nullptr) {
+    pool_->release(iobufBytes_);
   }
 }
 
@@ -45,6 +61,10 @@ std::shared_ptr<ExchangeSource> ExchangeSource::create(
     }
   }
   VELOX_FAIL("No ExchangeSource factory matches {}", taskId);
+}
+
+void ExchangeSource::setMemoryPool(memory::MemoryPool* pool) {
+  pool_ = pool;
 }
 
 // static
@@ -150,6 +170,14 @@ std::unique_ptr<ExchangeSource> createLocalExchangeSource(
 
 } // namespace
 
+void ExchangeClient::maybeSetMemoryPool(memory::MemoryPool* pool) {
+  // ExchangeClient could be shared by the same exchange operators from
+  // different drivers so we only need to set it on the first operator setup.
+  if (pool_ == nullptr) {
+    pool_ = pool;
+  }
+}
+
 void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
   std::shared_ptr<ExchangeSource> toRequest;
   {
@@ -161,6 +189,7 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
       return;
     }
     auto source = ExchangeSource::create(taskId, destination_, queue_);
+    source->setMemoryPool(pool_);
     sources_.push_back(source);
     queue_->addSource();
     if (source->shouldRequestLocked()) {

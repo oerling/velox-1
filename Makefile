@@ -103,21 +103,27 @@ benchmarks-basic-dump:
 unittest: debug			#: Build with debugging and run unit tests
 	cd $(BUILD_BASE_DIR)/debug && ctest -j ${NUM_THREADS} -VV --output-on-failure
 
-fuzzertest: debug		#: Build with debugging and run expression fuzzer test.
-	$(BUILD_BASE_DIR)/debug/velox/expression/tests/velox_expression_fuzzer_test --steps 100000 --logtostderr=1 --minloglevel=0
+# Build with debugging and run expression fuzzer test. Use a fixed seed to 
+# ensure the tests are reproducible.
+fuzzertest: debug
+	$(BUILD_BASE_DIR)/debug/velox/expression/tests/velox_expression_fuzzer_test \
+		--seed 123456 \
+		--steps 100000 \
+		--logtostderr=1 \
+		--minloglevel=0
 
-format-fix: 			#: Fix formatting issues in the current branch
-	scripts/check.py format branch --fix
+format-fix: 			#: Fix formatting issues in the main branch
+	scripts/check.py format main --fix
 
-format-check: 			#: Check for formatting issues on the current branch
+format-check: 			#: Check for formatting issues on the main branch
 	clang-format --version
-	scripts/check.py format branch
+	scripts/check.py format main
 
 header-fix:				#: Fix license header issues in the current branch
-	scripts/check.py header branch --fix
+	scripts/check.py header main --fix
 
-header-check:			#: Check for license header issues on the current branch
-	scripts/check.py header branch
+header-check:			#: Check for license header issues on the main branch
+	scripts/check.py header main
 
 circleci-container:			#: Build the linux container for CircleCi
 	$(MAKE) linux-container CONTAINER_NAME=circleci

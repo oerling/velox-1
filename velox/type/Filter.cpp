@@ -18,6 +18,8 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
+#include <string>
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/type/Filter.h"
@@ -45,6 +47,9 @@ std::string Filter::toString() const {
     case FilterKind::kBigintRange:
       strKind = "BigintRange";
       break;
+    case FilterKind::kNegatedBigintRange:
+      strKind = "NegatedBigintRange";
+      break;
     case FilterKind::kBigintValuesUsingHashTable:
       strKind = "BigintValuesUsingHashTable";
       break;
@@ -66,8 +71,14 @@ std::string Filter::toString() const {
     case FilterKind::kBytesRange:
       strKind = "BytesRange";
       break;
+    case FilterKind::kNegatedBytesRange:
+      strKind = "NegatedBytesRange";
+      break;
     case FilterKind::kBytesValues:
       strKind = "BytesValues";
+      break;
+    case FilterKind::kNegatedBytesValues:
+      strKind = "NegatedBytesValues";
       break;
     case FilterKind::kBigintMultiRange:
       strKind = "BigintMultiRange";
@@ -390,12 +401,14 @@ std::unique_ptr<Filter> createBigintValuesFilter(
     }
     return notNullOrTrue(nullAllowed);
   }
-  // single-value filter aka ==, the != filter is handled below
-  if (values.size() == 1 && !negated) {
+  if (values.size() == 1) {
+    if (negated) {
+      return std::make_unique<NegatedBigintRange>(
+          values.front(), values.front(), nullAllowed);
+    }
     return std::make_unique<BigintRange>(
         values.front(), values.front(), nullAllowed);
   }
-
   int64_t min = values[0];
   int64_t max = values[0];
   for (int i = 1; i < values.size(); ++i) {
@@ -411,30 +424,11 @@ std::unique_ptr<Filter> createBigintValuesFilter(
   bool overflow = __builtin_sub_overflow(max, min, &range);
   if (LIKELY(!overflow)) {
     // all accepted/rejected values form one contiguous block
-    if (range + 1 == values.size()) {
-      if (!negated) {
-        return std::make_unique<BigintRange>(min, max, nullAllowed);
+    if ((uint64_t)range + 1 == values.size()) {
+      if (negated) {
+        return std::make_unique<NegatedBigintRange>(min, max, nullAllowed);
       }
-      std::vector<std::unique_ptr<BigintRange>> ranges;
-      ranges.reserve(2);
-      // add inclusive ranges for above and below the desired range of values
-      if (min != std::numeric_limits<int64_t>::min()) {
-        ranges.emplace_back(std::make_unique<BigintRange>(
-            std::numeric_limits<int64_t>::min(), min - 1, false));
-      }
-      if (max != std::numeric_limits<int64_t>::max()) {
-        ranges.emplace_back(std::make_unique<BigintRange>(
-            max + 1, std::numeric_limits<int64_t>::max(), false));
-      }
-      // all values are rejected
-      if (ranges.size() == 0) {
-        return nullOrFalse(nullAllowed);
-      }
-      // range above or range below does not exist
-      if (ranges.size() == 1) {
-        return std::move(ranges[0]);
-      }
-      return std::make_unique<BigintMultiRange>(std::move(ranges), nullAllowed);
+      return std::make_unique<BigintRange>(min, max, nullAllowed);
     }
 
     if (range < 32 * 64 || range < values.size() * 4 * 64) {
@@ -591,6 +585,78 @@ bool BytesValues::testBytesRange(
   return true;
 }
 
+bool NegatedBytesRange::testBytesRange(
+    std::optional<std::string_view> min,
+    std::optional<std::string_view> max,
+    bool hasNull) const {
+  if (hasNull && nullAllowed_) {
+    return true;
+  }
+
+  if ((!min.has_value() && !isLowerUnbounded()) ||
+      (!max.has_value() && !isUpperUnbounded())) {
+    return true;
+  }
+
+  if (min.has_value() && max.has_value() && min.value() == max.value()) {
+    return testBytes(min->data(), min->length());
+  }
+
+  // if both min and max are within the negated range then reject
+  if (!testBytes(min->data(), min->length()) &&
+      !testBytes(max->data(), max->length())) {
+    return false;
+  }
+
+  return true;
+}
+
+std::unique_ptr<Filter> NegatedBytesRange::toMultiRange() const {
+  std::vector<std::unique_ptr<Filter>> accepted;
+  if (!isLowerUnbounded()) {
+    accepted.push_back(std::make_unique<BytesRange>(
+        "",
+        true,
+        false,
+        lower(),
+        false,
+        !testBytes(lower().data(), lower().length()),
+        false));
+  }
+  if (!isUpperUnbounded()) {
+    accepted.push_back(std::make_unique<BytesRange>(
+        upper(),
+        false,
+        !testBytes(upper().data(), upper().length()),
+        "",
+        true,
+        false,
+        false));
+  }
+
+  if (accepted.size() == 0) {
+    return nullOrFalse(nullAllowed_);
+  }
+  if (accepted.size() == 1) {
+    return accepted[0]->clone(nullAllowed_);
+  }
+  return std::make_unique<MultiRange>(std::move(accepted), nullAllowed_, false);
+}
+
+bool NegatedBytesValues::testBytesRange(
+    std::optional<std::string_view> min,
+    std::optional<std::string_view> max,
+    bool hasNull) const {
+  if (hasNull && nullAllowed_) {
+    return true;
+  }
+  if (min.has_value() && max.has_value() && min.value() == max.value()) {
+    return testBytes(min->data(), min->length());
+  }
+  // a range of strings will always contain at least one string not in a set
+  return true;
+}
+
 namespace {
 int32_t binarySearch(const std::vector<int64_t>& values, int64_t value) {
   auto it = std::lower_bound(values.begin(), values.end(), value);
@@ -743,12 +809,13 @@ std::unique_ptr<Filter> MultiRange::mergeWith(const Filter* other) const {
     // 2. MultiRange(nullAllowed=true) AND IS NOT NULL =>
     // MultiRange(nullAllowed=false)
     // 3. MultiRange(nullAllowed=false) AND IS NULL
-    // => ALWAYS FALSE
+    // => ALWAYS FALS
     // 4. MultiRange(nullAllowed=false) AND IS NOT NULL
     // =>MultiRange(nullAllowed=false)
     case FilterKind::kAlwaysTrue:
     case FilterKind::kAlwaysFalse:
     case FilterKind::kIsNull:
+    case FilterKind::kNegatedBytesRange:
       return other->mergeWith(this);
     case FilterKind::kIsNotNull:
       return this->clone(/*nullAllowed=*/false);
@@ -757,6 +824,7 @@ std::unique_ptr<Filter> MultiRange::mergeWith(const Filter* other) const {
       // TODO: Implement
       VELOX_UNREACHABLE();
     case FilterKind::kBytesValues:
+    case FilterKind::kNegatedBytesValues:
     case FilterKind::kBytesRange:
     case FilterKind::kMultiRange: {
       bool bothNullAllowed = nullAllowed_ && other->testNull();
@@ -792,6 +860,17 @@ std::unique_ptr<Filter> MultiRange::mergeWith(const Filter* other) const {
               for (const auto& value : mergedBytesValues->values()) {
                 byteValues.emplace_back(value);
               }
+              break;
+            }
+            case FilterKind::kMultiRange: {
+              auto innerMergedMulti =
+                  static_cast<const MultiRange*>(innerMerged.get());
+              merged.reserve(
+                  merged.size() + innerMergedMulti->filters().size());
+              for (int i = 0; i < innerMergedMulti->filters().size(); ++i) {
+                merged.emplace_back(innerMergedMulti->filters()[i]->clone());
+              }
+              break;
             }
             default:
               merged.emplace_back(innerMerged.release());
@@ -955,6 +1034,59 @@ std::unique_ptr<Filter> combineNegatedBigintLists(
   return createNegatedBigintValues(allRejected, nullAllowed);
 }
 
+std::unique_ptr<Filter> combineNegatedRangeOnIntRanges(
+    int64_t negatedLower,
+    int64_t negatedUpper,
+    const std::vector<std::unique_ptr<BigintRange>>& ranges,
+    bool nullAllowed) {
+  std::vector<std::unique_ptr<BigintRange>> outRanges;
+  // for a sensible set of ranges, at most one creates 2 output ranges
+  outRanges.reserve(ranges.size() + 1);
+  for (int i = 0; i < ranges.size(); ++i) {
+    if (negatedUpper < ranges[i]->lower() ||
+        ranges[i]->upper() < negatedLower) {
+      outRanges.emplace_back(std::make_unique<BigintRange>(
+          ranges[i]->lower(), ranges[i]->upper(), false));
+    } else {
+      if (ranges[i]->lower() < negatedLower) {
+        outRanges.emplace_back(std::make_unique<BigintRange>(
+            ranges[i]->lower(), negatedLower - 1, false));
+      }
+      if (negatedUpper < ranges[i]->upper()) {
+        outRanges.emplace_back(std::make_unique<BigintRange>(
+            negatedUpper + 1, ranges[i]->upper(), false));
+      }
+    }
+  }
+
+  return combineBigintRanges(std::move(outRanges), nullAllowed);
+}
+
+std::vector<std::unique_ptr<BigintRange>> negatedValuesToRanges(
+    std::vector<int64_t>& values) {
+  VELOX_DCHECK(std::is_sorted(values.begin(), values.end()));
+  auto front = ++(values.begin());
+  auto back = values.begin();
+  std::vector<std::unique_ptr<BigintRange>> res;
+  res.reserve(values.size() + 1);
+  if (*back > std::numeric_limits<int64_t>::min()) {
+    res.emplace_back(std::make_unique<BigintRange>(
+        std::numeric_limits<int64_t>::min(), *back - 1, false));
+  }
+  while (front != values.end()) {
+    if (*back + 1 <= *front - 1) {
+      res.emplace_back(
+          std::make_unique<BigintRange>(*back + 1, *front - 1, false));
+    }
+    ++front;
+    ++back;
+  }
+  if (*back < std::numeric_limits<int64_t>::max()) {
+    res.emplace_back(std::make_unique<BigintRange>(
+        *back + 1, std::numeric_limits<int64_t>::max(), false));
+  }
+  return res;
+}
 } // namespace
 
 std::unique_ptr<Filter> BigintRange::mergeWith(const Filter* other) const {
@@ -979,6 +1111,7 @@ std::unique_ptr<Filter> BigintRange::mergeWith(const Filter* other) const {
 
       return nullOrFalse(bothNullAllowed);
     }
+    case FilterKind::kNegatedBigintRange:
     case FilterKind::kBigintValuesUsingBitmask:
     case FilterKind::kBigintValuesUsingHashTable:
       return other->mergeWith(this);
@@ -1017,6 +1150,99 @@ std::unique_ptr<Filter> BigintRange::mergeWith(const Filter* other) const {
       rangeList.emplace_back(
           std::make_unique<common::BigintRange>(lower_, upper_, false));
       return combineRangesAndNegatedValues(rangeList, vals, bothNullAllowed);
+    }
+    default:
+      VELOX_UNREACHABLE();
+  }
+}
+
+std::unique_ptr<Filter> NegatedBigintRange::mergeWith(
+    const Filter* other) const {
+  switch (other->kind()) {
+    case FilterKind::kAlwaysTrue:
+    case FilterKind::kAlwaysFalse:
+    case FilterKind::kIsNull:
+      return other->mergeWith(this);
+    case FilterKind::kIsNotNull:
+      return this->clone(false);
+    case FilterKind::kBigintRange: {
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      auto otherRange = static_cast<const BigintRange*>(other);
+      std::vector<std::unique_ptr<common::BigintRange>> rangeList;
+      rangeList.emplace_back(std::make_unique<BigintRange>(
+          otherRange->lower(), otherRange->upper(), false));
+      return combineNegatedRangeOnIntRanges(
+          this->lower(), this->upper(), rangeList, bothNullAllowed);
+    }
+    case FilterKind::kNegatedBigintRange: {
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      auto otherNegatedRange = static_cast<const NegatedBigintRange*>(other);
+      if (this->lower() > otherNegatedRange->lower()) {
+        return other->mergeWith(this);
+      }
+      assert(this->lower() <= otherNegatedRange->lower());
+      if (this->upper() + 1 < otherNegatedRange->lower()) {
+        std::vector<std::unique_ptr<common::BigintRange>> outRanges;
+        int64_t smallLower = this->lower();
+        int64_t smallUpper = this->upper();
+        int64_t bigLower = otherNegatedRange->lower();
+        int64_t bigUpper = otherNegatedRange->upper();
+        if (smallLower > std::numeric_limits<int64_t>::min()) {
+          outRanges.emplace_back(std::make_unique<common::BigintRange>(
+              std::numeric_limits<int64_t>::min(), smallLower - 1, false));
+        }
+        if (smallUpper < std::numeric_limits<int64_t>::max() &&
+            bigLower > std::numeric_limits<int64_t>::min()) {
+          outRanges.emplace_back(std::make_unique<common::BigintRange>(
+              smallUpper + 1, bigLower - 1, false));
+        }
+        if (bigUpper < std::numeric_limits<int64_t>::max()) {
+          outRanges.emplace_back(std::make_unique<common::BigintRange>(
+              bigUpper + 1, std::numeric_limits<int64_t>::max(), false));
+        }
+        return combineBigintRanges(std::move(outRanges), bothNullAllowed);
+      }
+      return std::make_unique<common::NegatedBigintRange>(
+          this->lower(),
+          std::max<int64_t>(this->upper(), otherNegatedRange->upper()),
+          bothNullAllowed);
+    }
+    case FilterKind::kBigintMultiRange: {
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      auto otherMultiRanges = static_cast<const BigintMultiRange*>(other);
+      return combineNegatedRangeOnIntRanges(
+          this->lower(),
+          this->upper(),
+          otherMultiRanges->ranges(),
+          bothNullAllowed);
+    }
+    case FilterKind::kBigintValuesUsingHashTable:
+    case FilterKind::kBigintValuesUsingBitmask:
+      return other->mergeWith(this);
+    case FilterKind::kNegatedBigintValuesUsingHashTable:
+    case FilterKind::kNegatedBigintValuesUsingBitmask: {
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      std::vector<int64_t> rejectedValues;
+      if (other->kind() == FilterKind::kNegatedBigintValuesUsingHashTable) {
+        auto otherHashTable =
+            static_cast<const NegatedBigintValuesUsingHashTable*>(other);
+        rejectedValues = otherHashTable->values();
+      } else {
+        auto otherBitmask =
+            static_cast<const NegatedBigintValuesUsingBitmask*>(other);
+        rejectedValues = otherBitmask->values();
+      }
+      if (nonNegated_->isSingleValue()) {
+        if (other->testInt64(this->lower())) {
+          rejectedValues.push_back(this->lower());
+        }
+        return createNegatedBigintValues(rejectedValues, bothNullAllowed);
+      }
+      return combineNegatedRangeOnIntRanges(
+          this->lower(),
+          this->upper(),
+          negatedValuesToRanges(rejectedValues),
+          bothNullAllowed);
     }
     default:
       VELOX_UNREACHABLE();
@@ -1071,6 +1297,7 @@ std::unique_ptr<Filter> BigintValuesUsingHashTable::mergeWith(
       bool bothNullAllowed = nullAllowed_ && other->testNull();
       return createBigintValues(valuesToKeep, bothNullAllowed);
     }
+    case FilterKind::kNegatedBigintRange:
     case FilterKind::kNegatedBigintValuesUsingBitmask:
     case FilterKind::kNegatedBigintValuesUsingHashTable: {
       return mergeWith(min_, max_, other);
@@ -1163,6 +1390,7 @@ std::unique_ptr<Filter> BigintValuesUsingBitmask::mergeWith(
       bool bothNullAllowed = nullAllowed_ && other->testNull();
       return createBigintValues(valuesToKeep, bothNullAllowed);
     }
+    case FilterKind::kNegatedBigintRange:
     case FilterKind::kNegatedBigintValuesUsingBitmask:
     case FilterKind::kNegatedBigintValuesUsingHashTable: {
       return mergeWith(min_, max_, other);
@@ -1212,12 +1440,12 @@ std::unique_ptr<Filter> NegatedBigintValuesUsingHashTable::mergeWith(
     }
     case FilterKind::kNegatedBigintValuesUsingHashTable: {
       auto otherNegated =
-          dynamic_cast<const NegatedBigintValuesUsingHashTable*>(other);
-      VELOX_CHECK_NOT_NULL(otherNegated);
+          static_cast<const NegatedBigintValuesUsingHashTable*>(other);
       bool bothNullAllowed = nullAllowed_ && other->testNull();
       return combineNegatedBigintLists(
           values(), otherNegated->values(), bothNullAllowed);
     }
+    case FilterKind::kNegatedBigintRange:
     case FilterKind::kNegatedBigintValuesUsingBitmask: {
       return other->mergeWith(this);
     }
@@ -1246,6 +1474,7 @@ std::unique_ptr<Filter> NegatedBigintValuesUsingBitmask::mergeWith(
     case FilterKind::kBigintValuesUsingHashTable:
     case FilterKind::kBigintValuesUsingBitmask:
     case FilterKind::kBigintRange:
+    case FilterKind::kNegatedBigintRange:
     case FilterKind::kBigintMultiRange: {
       return other->mergeWith(this);
     }
@@ -1284,6 +1513,7 @@ std::unique_ptr<Filter> BigintMultiRange::mergeWith(const Filter* other) const {
       return std::make_unique<BigintMultiRange>(std::move(ranges), false);
     }
     case FilterKind::kBigintRange:
+    case FilterKind::kNegatedBigintRange:
     case FilterKind::kBigintValuesUsingBitmask:
     case FilterKind::kBigintValuesUsingHashTable: {
       return other->mergeWith(this);
@@ -1358,6 +1588,8 @@ std::unique_ptr<Filter> BytesRange::mergeWith(const Filter* other) const {
     case FilterKind::kIsNotNull:
       return this->clone(false);
     case FilterKind::kBytesValues:
+    case FilterKind::kNegatedBytesValues:
+    case FilterKind::kNegatedBytesRange:
     case FilterKind::kMultiRange:
       return other->mergeWith(this);
     case FilterKind::kBytesRange: {
@@ -1425,6 +1657,29 @@ std::unique_ptr<Filter> BytesRange::mergeWith(const Filter* other) const {
   }
 }
 
+std::unique_ptr<Filter> NegatedBytesRange::mergeWith(
+    const Filter* other) const {
+  switch (other->kind()) {
+    case FilterKind::kAlwaysTrue:
+    case FilterKind::kAlwaysFalse:
+    case FilterKind::kIsNull:
+      return other->mergeWith(this);
+    case FilterKind::kIsNotNull:
+      return this->clone(false);
+    case FilterKind::kBytesValues:
+      return other->mergeWith(this);
+    case FilterKind::kNegatedBytesValues:
+    case FilterKind::kBytesRange:
+    case FilterKind::kNegatedBytesRange:
+    case FilterKind::kMultiRange: {
+      // these cases are likely to end up as a MultiRange anyway
+      return other->mergeWith(toMultiRange().get());
+    }
+    default:
+      VELOX_UNREACHABLE();
+  }
+}
+
 std::unique_ptr<Filter> BytesValues::mergeWith(const Filter* other) const {
   switch (other->kind()) {
     case FilterKind::kAlwaysTrue:
@@ -1454,6 +1709,23 @@ std::unique_ptr<Filter> BytesValues::mergeWith(const Filter* other) const {
 
       for (const auto& value : smallerFilter->values()) {
         if (largerFilter->values_.contains(value)) {
+          newValues.emplace_back(value);
+        }
+      }
+
+      if (newValues.empty()) {
+        return nullOrFalse(bothNullAllowed);
+      }
+
+      return std::make_unique<BytesValues>(
+          std::move(newValues), bothNullAllowed);
+    }
+    case FilterKind::kNegatedBytesValues: {
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      std::vector<std::string> newValues;
+      newValues.reserve(values().size());
+      for (const auto& value : values()) {
+        if (other->testBytes(value.data(), value.length())) {
           newValues.emplace_back(value);
         }
       }
@@ -1495,10 +1767,129 @@ std::unique_ptr<Filter> BytesValues::mergeWith(const Filter* other) const {
       return std::make_unique<BytesValues>(
           std::move(newValues), bothNullAllowed);
     }
+    case FilterKind::kNegatedBytesRange: {
+      auto otherBytesRange = static_cast<const NegatedBytesRange*>(other);
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
 
+      std::vector<std::string> newValues;
+      newValues.reserve(this->values().size());
+      for (const auto& value : this->values()) {
+        if (otherBytesRange->testBytes(value.data(), value.length())) {
+          newValues.emplace_back(value);
+        }
+      }
+
+      if (newValues.empty()) {
+        return nullOrFalse(bothNullAllowed);
+      }
+
+      return std::make_unique<BytesValues>(
+          std::move(newValues), bothNullAllowed);
+    }
+    default:
+      VELOX_UNREACHABLE();
+  }
+} // namespace facebook::velox::common
+
+std::unique_ptr<Filter> NegatedBytesValues::mergeWith(
+    const Filter* other) const {
+  switch (other->kind()) {
+    case FilterKind::kAlwaysTrue:
+    case FilterKind::kAlwaysFalse:
+    case FilterKind::kIsNull:
+    case FilterKind::kBytesValues:
+    case FilterKind::kNegatedBytesRange:
+    case FilterKind::kMultiRange:
+      return other->mergeWith(this);
+    case FilterKind::kIsNotNull:
+      return this->clone(false);
+    case FilterKind::kNegatedBytesValues: {
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      auto negatedBytesOther = static_cast<const NegatedBytesValues*>(other);
+      if (values().size() < negatedBytesOther->values().size()) {
+        return other->mergeWith(this);
+      }
+      std::vector<std::string> rejectedValues;
+      rejectedValues.reserve(
+          values().size() + negatedBytesOther->values().size());
+      rejectedValues.insert(
+          rejectedValues.begin(), values().begin(), values().end());
+      for (auto value : negatedBytesOther->values()) {
+        // put in all values rejected by this filter that pass the other one
+        if (testBytes(value.data(), value.length())) {
+          rejectedValues.emplace_back(value);
+        }
+      }
+      return std::make_unique<NegatedBytesValues>(
+          std::move(rejectedValues), bothNullAllowed);
+    }
+    case FilterKind::kBytesRange: {
+      auto bytesRangeOther = static_cast<const BytesRange*>(other);
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      // ordered set of values in the range that are rejected
+      std::set<std::string> rejectedValues;
+      for (const auto& value : values()) {
+        if (other->testBytes(value.data(), value.length())) {
+          rejectedValues.insert(value);
+        }
+      }
+      // edge checks - if an inclusive endpoint is negated, just make exclusive
+      // std::set contains is C++ 20, so we use count instead :(
+      bool loExclusive = !bytesRangeOther->lowerUnbounded() &&
+          (bytesRangeOther->lowerExclusive() ||
+           rejectedValues.count(bytesRangeOther->lower()) > 0);
+      if (!bytesRangeOther->lowerUnbounded()) {
+        rejectedValues.erase(bytesRangeOther->lower());
+      }
+      bool hiExclusive = !bytesRangeOther->upperUnbounded() &&
+          (bytesRangeOther->upperExclusive() ||
+           rejectedValues.count(bytesRangeOther->upper()) > 0);
+      if (!bytesRangeOther->upperUnbounded()) {
+        rejectedValues.erase(bytesRangeOther->upper());
+      }
+      if (rejectedValues.empty()) {
+        return std::make_unique<BytesRange>(
+            bytesRangeOther->lower(),
+            bytesRangeOther->lowerUnbounded(),
+            loExclusive,
+            bytesRangeOther->upper(),
+            bytesRangeOther->upperUnbounded(),
+            hiExclusive,
+            bothNullAllowed);
+      }
+
+      // accumulate filters in a vector here
+      std::vector<std::unique_ptr<Filter>> ranges;
+      ranges.reserve(rejectedValues.size() + 1);
+      auto back = rejectedValues.begin();
+      auto front = ++(rejectedValues.begin());
+      ranges.emplace_back(std::make_unique<BytesRange>(
+          bytesRangeOther->lower(),
+          bytesRangeOther->lowerUnbounded(),
+          loExclusive,
+          *back,
+          false, // not unbounded
+          true, // exclusive
+          false));
+      while (front != rejectedValues.end()) {
+        ranges.emplace_back(std::make_unique<BytesRange>(
+            *back, false, true, *front, false, true, false));
+        ++front;
+        ++back;
+      }
+      ranges.emplace_back(std::make_unique<BytesRange>(
+          *back,
+          false,
+          true,
+          bytesRangeOther->upper(),
+          bytesRangeOther->upperUnbounded(),
+          hiExclusive,
+          false));
+      return std::make_unique<MultiRange>(
+          std::move(ranges), bothNullAllowed, false);
+    }
     default:
       VELOX_UNREACHABLE();
   }
 }
-
 } // namespace facebook::velox::common

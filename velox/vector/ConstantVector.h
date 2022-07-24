@@ -251,10 +251,6 @@ class ConstantVector final : public SimpleVector<T> {
     return true;
   }
 
-  bool isConstantEncoding() const override {
-    return true;
-  }
-
   bool isScalar() const override {
     return valueVector_ ? valueVector_->isScalar() : true;
   }
@@ -294,11 +290,6 @@ class ConstantVector final : public SimpleVector<T> {
   void addNulls(const uint64_t* /*bits*/, const SelectivityVector& /*rows*/)
       override {
     VELOX_FAIL("addNulls not supported");
-  }
-
-  void move(vector_size_t /*source*/, vector_size_t target) override {
-    VELOX_CHECK_LT(target, BaseVector::length_);
-    // nothing to do
   }
 
   std::optional<int32_t> compare(

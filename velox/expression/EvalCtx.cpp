@@ -16,7 +16,6 @@
 
 #include "velox/expression/EvalCtx.h"
 #include "velox/common/base/RawVector.h"
-#include "velox/expression/ControlExpr.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
@@ -34,8 +33,14 @@ EvalCtx::EvalCtx(core::ExecCtx* execCtx, ExprSet* exprSet, const RowVector* row)
   VELOX_CHECK_NOT_NULL(execCtx);
   VELOX_CHECK_NOT_NULL(exprSet);
   VELOX_CHECK_NOT_NULL(row);
+
+  inputFlatNoNulls_ = true;
   for (const auto& child : row->children()) {
     VELOX_CHECK_NOT_NULL(child);
+    if ((!child->isFlatEncoding() && !child->isConstantEncoding()) ||
+        child->mayHaveNulls()) {
+      inputFlatNoNulls_ = false;
+    }
   }
 }
 

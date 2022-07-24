@@ -68,6 +68,11 @@ enum StreamKind {
   StreamKind_IN_MAP = 11
 };
 
+inline bool isIndexStream(StreamKind kind) {
+  return kind == StreamKind::StreamKind_ROW_INDEX ||
+      kind == StreamKind::StreamKind_BLOOM_FILTER_UTF8;
+}
+
 /**
  * Get the string representation of the StreamKind.
  */
@@ -339,5 +344,11 @@ class PostScript {
   uint64_t metadataLength_;
   uint64_t stripeStatisticsLength_;
 };
+
+enum RleVersion { RleVersion_1, RleVersion_2 };
+
+constexpr int32_t RLE_MINIMUM_REPEAT = 3;
+constexpr int32_t RLE_MAXIMUM_REPEAT = 127 + RLE_MINIMUM_REPEAT;
+constexpr int32_t RLE_MAX_LITERAL_SIZE = 128;
 
 } // namespace facebook::velox::dwrf

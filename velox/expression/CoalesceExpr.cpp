@@ -18,11 +18,15 @@
 
 namespace facebook::velox::exec {
 
-CoalesceExpr::CoalesceExpr(TypePtr type, std::vector<ExprPtr>&& inputs)
+CoalesceExpr::CoalesceExpr(
+    TypePtr type,
+    std::vector<ExprPtr>&& inputs,
+    bool inputsSupportFlatNoNullsFastPath)
     : SpecialForm(
           std::move(type),
           std::move(inputs),
           kCoalesce,
+          inputsSupportFlatNoNullsFastPath,
           false /* trackCpuUsage */) {
   for (auto i = 1; i < inputs_.size(); i++) {
     VELOX_USER_CHECK_EQ(
@@ -36,11 +40,6 @@ void CoalesceExpr::evalSpecialForm(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
-  // Make sure to include current expression in the error message in case of an
-  // exception.
-  ExceptionContextSetter exceptionContext(
-      {[](auto* expr) { return static_cast<Expr*>(expr)->toString(); }, this});
-
   // Null positions to populate.
   exec::LocalSelectivityVector activeRowsHolder(context, rows.end());
   auto activeRows = activeRowsHolder.get();
