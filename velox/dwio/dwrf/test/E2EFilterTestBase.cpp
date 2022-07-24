@@ -182,7 +182,7 @@ void E2EFilterTestBase::readWithoutFilter(
   dwio::common::ReaderOptions readerOpts;
   dwio::common::RowReaderOptions rowReaderOpts;
   auto reader = makeReader(readerOpts, std::move(input));
-  ;
+
   // The spec must stay live over the lifetime of the reader.
   rowReaderOpts.setScanSpec(spec);
   OwnershipChecker ownershipChecker;
@@ -232,7 +232,6 @@ void E2EFilterTestBase::readWithFilter(
   dwio::common::ReaderOptions readerOpts;
   dwio::common::RowReaderOptions rowReaderOpts;
   auto reader = makeReader(readerOpts, std::move(input));
-  auto factory = std::make_unique<SelectiveColumnReaderFactory>(spec);
   // The  spec must stay live over the lifetime of the reader.
   rowReaderOpts.setScanSpec(spec);
   OwnershipChecker ownershipChecker;

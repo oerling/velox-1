@@ -38,14 +38,13 @@ class VectorFunction {
   ///
   /// The rows may or may not be contiguous.
   ///
-  /// Single-argument deterministic functions always receive their argument
-  /// vector as flat. These functions don't need to use DecodedVector to handle
-  /// encodings.
+  /// Single-argument deterministic functions may receive their only argument
+  /// vector as flat or constant, but not dictionary encoded.
   ///
   /// Single-argument functions that specify null-in-null-out behavior, e.g.
-  /// isDefaultNullBehavior returns true, will never see a null row in rows.
-  /// Hence, they can safely assume that args[0] vector is flat and has no nulls
-  /// in specified positions.
+  /// isDefaultNullBehavior returns true, will never see a null row in 'rows'.
+  /// Hence, they can safely assume that args[0] vector is flat or constant and
+  /// has no nulls in specified positions.
   ///
   /// Multi-argument functions that specify null-in-null-out behavior will never
   /// see a null row in any of the arguments. They can safely assume that there
@@ -90,6 +89,14 @@ class VectorFunction {
   // which all arguments are not null.
   virtual bool isDefaultNullBehavior() const {
     return true;
+  }
+
+  /// Returns true if (1) supports evaluation on all constant inputs of size >
+  /// 1; (2) returns flat or constant result when inputs are all flat, all
+  /// constant or a mix of flat and constant; (3) guarantees that if all inputs
+  /// are not null, the result is also not null.
+  virtual bool supportsFlatNoNullsFastPath() const {
+    return false;
   }
 
   // The evaluation engine will scan and set the string encoding of the

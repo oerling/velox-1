@@ -239,15 +239,16 @@ VectorPtr VectorFuzzer::fuzz(const TypePtr& type) {
   return fuzz(type, opts_.vectorSize);
 }
 
-VectorPtr VectorFuzzer::fuzz(const TypePtr& type, vector_size_t size) {
+VectorPtr
+VectorFuzzer::fuzz(const TypePtr& type, vector_size_t size, bool flatEncoding) {
   VectorPtr vector;
 
-  // One in 5 chance of adding a constant vector.
-  if (oneIn(5)) {
+  // 20% chance of adding a constant vector.
+  if (!flatEncoding && coinToss(0.2)) {
     // If adding a constant vector, 50% of chance between:
     // - generate a regular constant vector (only for primitive types).
     // - generate a random vector and wrap it using a constant vector.
-    if (type->isPrimitiveType() && oneIn(2)) {
+    if (type->isPrimitiveType() && coinToss(0.5)) {
       vector = fuzzConstant(type, size);
     } else {
       // Vector size can't be zero.
@@ -255,15 +256,15 @@ VectorPtr VectorFuzzer::fuzz(const TypePtr& type, vector_size_t size) {
           folly::Random::rand32(1, opts_.vectorSize + 1, rng_);
       auto constantIndex = rand<vector_size_t>(rng_) % innerVectorSize;
       vector = BaseVector::wrapInConstant(
-          size, constantIndex, fuzz(type, innerVectorSize));
+          size, constantIndex, fuzz(type, innerVectorSize, flatEncoding));
     }
   } else {
     vector = type->isPrimitiveType() ? fuzzFlat(type, size)
-                                     : fuzzComplex(type, size);
+                                     : fuzzComplex(type, size, flatEncoding);
   }
 
   // Toss a coin and add dictionary indirections.
-  while (oneIn(2)) {
+  while (!flatEncoding && coinToss(0.5)) {
     vector = fuzzDictionary(vector);
   }
   return vector;
@@ -274,7 +275,7 @@ VectorPtr VectorFuzzer::fuzzConstant(const TypePtr& type) {
 }
 
 VectorPtr VectorFuzzer::fuzzConstant(const TypePtr& type, vector_size_t size) {
-  if (oneIn(opts_.nullChance)) {
+  if (coinToss(opts_.nullRatio)) {
     return BaseVector::createNullConstant(type, size, pool_);
   }
   return BaseVector::createConstant(randVariant(type), size, pool_);
@@ -285,6 +286,13 @@ VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type) {
 }
 
 VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type, vector_size_t size) {
+  if (!type->isPrimitiveType()) {
+    return fuzzComplex(
+        type,
+        size,
+        true); // Use Flat encoding recursively throughout the children
+  }
+
   auto vector = BaseVector::create(type, size, pool_);
 
   // First, fill it with random values.
@@ -294,22 +302,24 @@ VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type, vector_size_t size) {
 
   // Second, generate a random null vector.
   for (size_t i = 0; i < vector->size(); ++i) {
-    if (oneIn(opts_.nullChance)) {
+    if (coinToss(opts_.nullRatio)) {
       vector->setNull(i, true);
     }
   }
   return vector;
 }
 
-VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type) {
-  return fuzzComplex(type, opts_.vectorSize);
-}
-
-VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type, vector_size_t size) {
+VectorPtr VectorFuzzer::fuzzComplex(
+    const TypePtr& type,
+    vector_size_t size,
+    bool flatEncoding) {
   VectorPtr vector;
   if (type->kind() == TypeKind::ROW) {
-    vector =
-        fuzzRow(std::dynamic_pointer_cast<const RowType>(type), size, true);
+    vector = fuzzRow(
+        std::dynamic_pointer_cast<const RowType>(type),
+        size,
+        opts_.containerHasNulls,
+        flatEncoding);
   } else {
     auto offsets = allocateOffsets(size, pool_);
     auto rawOffsets = offsets->asMutable<vector_size_t>();
@@ -324,7 +334,8 @@ VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type, vector_size_t size) {
       childSize += length;
     }
 
-    auto nulls = fuzzNulls(size);
+    auto nulls = opts_.containerHasNulls ? fuzzNulls(size) : nullptr;
+
     if (type->kind() == TypeKind::ARRAY) {
       vector = std::make_shared<ArrayVector>(
           pool_,
@@ -333,7 +344,7 @@ VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type, vector_size_t size) {
           size,
           offsets,
           sizes,
-          fuzz(type->asArray().elementType(), childSize));
+          fuzz(type->asArray().elementType(), childSize, flatEncoding));
     } else if (type->kind() == TypeKind::MAP) {
       auto& mapType = type->asMap();
       vector = std::make_shared<MapVector>(
@@ -343,8 +354,8 @@ VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type, vector_size_t size) {
           size,
           offsets,
           sizes,
-          fuzz(mapType.keyType(), childSize),
-          fuzz(mapType.valueType(), childSize));
+          fuzz(mapType.keyType(), childSize, flatEncoding),
+          fuzz(mapType.valueType(), childSize, flatEncoding));
     } else {
       VELOX_UNREACHABLE();
     }
@@ -361,25 +372,25 @@ VectorPtr VectorFuzzer::fuzzDictionary(const VectorPtr& vector) {
     rawIndices[i] = rand<vector_size_t>(rng_) % vectorSize;
   }
 
-  // TODO: We can fuzz nulls here as well.
-  return BaseVector::wrapInDictionary(
-      BufferPtr(nullptr), indices, vectorSize, vector);
+  auto nulls = opts_.dictionaryHasNulls ? fuzzNulls(vectorSize) : nullptr;
+  return BaseVector::wrapInDictionary(nulls, indices, vectorSize, vector);
 }
 
-VectorPtr VectorFuzzer::fuzzRow(const RowTypePtr& rowType) {
-  return fuzzRow(rowType, opts_.vectorSize, false);
+RowVectorPtr VectorFuzzer::fuzzRow(const RowTypePtr& rowType) {
+  return fuzzRow(rowType, opts_.vectorSize, opts_.containerHasNulls);
 }
 
-VectorPtr VectorFuzzer::fuzzRow(
+RowVectorPtr VectorFuzzer::fuzzRow(
     const RowTypePtr& rowType,
     vector_size_t size,
-    bool mayHaveNulls) {
+    bool rowHasNulls,
+    bool flatEncoding) {
   std::vector<VectorPtr> children;
   for (auto i = 0; i < rowType->size(); ++i) {
-    children.push_back(fuzz(rowType->childAt(i), size));
+    children.push_back(fuzz(rowType->childAt(i), size, flatEncoding));
   }
 
-  auto nulls = mayHaveNulls ? fuzzNulls(size) : nullptr;
+  auto nulls = rowHasNulls ? fuzzNulls(size) : nullptr;
   return std::make_shared<RowVector>(
       pool_, rowType, nulls, size, std::move(children));
 }
@@ -387,7 +398,7 @@ VectorPtr VectorFuzzer::fuzzRow(
 BufferPtr VectorFuzzer::fuzzNulls(vector_size_t size) {
   NullsBuilder builder{size, pool_};
   for (size_t i = 0; i < size; ++i) {
-    if (oneIn(opts_.nullChance)) {
+    if (coinToss(opts_.nullRatio)) {
       builder.setNull(i);
     }
   }

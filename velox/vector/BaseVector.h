@@ -190,24 +190,6 @@ class BaseVector {
     return nulls_;
   }
 
-  /*
-   * Allocates or reallocates nulls_ with the given size if nulls_ hasn't
-   * been allocated yet or has been allocated with a smaller capacity.
-   */
-  void ensureNullsCapacity(vector_size_t size, bool setNotNull = false) {
-    if (nulls_ && nulls_->capacity() >= bits::nbytes(size)) {
-      return;
-    }
-    if (nulls_) {
-      AlignedBuffer::reallocate<bool>(
-          &nulls_, size, setNotNull ? bits::kNotNull : bits::kNull);
-    } else {
-      nulls_ = AlignedBuffer::allocate<bool>(
-          size, pool_, setNotNull ? bits::kNotNull : bits::kNull);
-    }
-    rawNulls_ = nulls_->as<uint64_t>();
-  }
-
   std::optional<vector_size_t> getDistinctValueCount() const {
     return distinctValueCount_;
   }
@@ -303,7 +285,12 @@ class BaseVector {
     return false;
   }
 
-  // Returns true if this vector is encoded as constant (ConstantVector).
+  /// Returns true if this vector is encoded as flat (FlatVector).
+  bool isFlatEncoding() const {
+    return encoding_ == VectorEncoding::Simple::FLAT;
+  }
+
+  /// Returns true if this vector is encoded as constant (ConstantVector).
   bool isConstantEncoding() const {
     return encoding_ == VectorEncoding::Simple::CONSTANT;
   }
@@ -396,16 +383,6 @@ class BaseVector {
         BaseVector::create(vector.type(), vector.size(), vector.pool());
     result->copy(&vector, 0, 0, vector.size());
     return result;
-  }
-
-  // Move or copy an element at 'source' row into 'target' row.
-  // This can be more efficient than copy for complex types.
-  virtual void move(vector_size_t source, vector_size_t target) {
-    VELOX_CHECK_LT(source, size());
-    VELOX_CHECK_LT(target, size());
-    if (source != target) {
-      copy(this, target, source, 1);
-    }
   }
 
   virtual void copy(
@@ -674,6 +651,24 @@ class BaseVector {
   }
 
  protected:
+  /*
+   * Allocates or reallocates nulls_ with the given size if nulls_ hasn't
+   * been allocated yet or has been allocated with a smaller capacity.
+   */
+  void ensureNullsCapacity(vector_size_t size, bool setNotNull = false) {
+    if (nulls_ && nulls_->capacity() >= bits::nbytes(size)) {
+      return;
+    }
+    if (nulls_) {
+      AlignedBuffer::reallocate<bool>(
+          &nulls_, size, setNotNull ? bits::kNotNull : bits::kNull);
+    } else {
+      nulls_ = AlignedBuffer::allocate<bool>(
+          size, pool_, setNotNull ? bits::kNotNull : bits::kNull);
+    }
+    rawNulls_ = nulls_->as<uint64_t>();
+  }
+
   FOLLY_ALWAYS_INLINE static std::optional<int32_t>
   compareNulls(bool thisNull, bool otherNull, CompareFlags flags) {
     DCHECK(thisNull || otherNull);

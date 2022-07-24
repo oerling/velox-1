@@ -17,9 +17,14 @@
 #include "velox/expression/ExprCompiler.h"
 #include "velox/expression/CastExpr.h"
 #include "velox/expression/CoalesceExpr.h"
-#include "velox/expression/ControlExpr.h"
+#include "velox/expression/ConjunctExpr.h"
+#include "velox/expression/ConstantExpr.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/FieldReference.h"
+#include "velox/expression/LambdaExpr.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
+#include "velox/expression/SwitchExpr.h"
+#include "velox/expression/TryExpr.h"
 #include "velox/expression/VectorFunction.h"
 
 namespace facebook::velox::exec {
@@ -28,6 +33,12 @@ namespace {
 
 using core::ITypedExpr;
 using core::TypedExprPtr;
+
+const char* const kAnd = "and";
+const char* const kOr = "or";
+const char* const kTry = "try";
+const char* const kSwitch = "switch";
+const char* const kIf = "if";
 
 struct ITypedExprHasher {
   size_t operator()(const ITypedExpr* expr) const {
@@ -176,7 +187,10 @@ ExprPtr getSpecialForm(
     std::vector<ExprPtr>&& compiledChildren,
     bool trackCpuUsage) {
   if (name == kIf || name == kSwitch) {
-    return std::make_shared<SwitchExpr>(type, std::move(compiledChildren));
+    bool inputsSupportFlatNoNullsFastPath =
+        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
+    return std::make_shared<SwitchExpr>(
+        type, std::move(compiledChildren), inputsSupportFlatNoNullsFastPath);
   }
   if (name == kCast) {
     VELOX_CHECK_EQ(compiledChildren.size(), 1);
@@ -187,19 +201,32 @@ ExprPtr getSpecialForm(
         false /* nullOnFailure */);
   }
   if (name == kAnd) {
+    bool inputsSupportFlatNoNullsFastPath =
+        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
     return std::make_shared<ConjunctExpr>(
-        type, std::move(compiledChildren), true);
+        type,
+        std::move(compiledChildren),
+        true /* isAnd */,
+        inputsSupportFlatNoNullsFastPath);
   }
   if (name == kOr) {
+    bool inputsSupportFlatNoNullsFastPath =
+        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
     return std::make_shared<ConjunctExpr>(
-        type, std::move(compiledChildren), false);
+        type,
+        std::move(compiledChildren),
+        false /* isAnd */,
+        inputsSupportFlatNoNullsFastPath);
   }
   if (name == kTry) {
     VELOX_CHECK_EQ(compiledChildren.size(), 1);
     return std::make_shared<TryExpr>(type, std::move(compiledChildren[0]));
   }
   if (name == kCoalesce) {
-    return std::make_shared<CoalesceExpr>(type, std::move(compiledChildren));
+    bool inputsSupportFlatNoNullsFastPath =
+        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
+    return std::make_shared<CoalesceExpr>(
+        type, std::move(compiledChildren), inputsSupportFlatNoNullsFastPath);
   }
   return nullptr;
 }

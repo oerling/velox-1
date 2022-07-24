@@ -67,15 +67,14 @@ struct PrimitiveWriter {
 };
 
 template <typename V>
-bool constexpr provide_std_interface = CppToType<V>::isPrimitiveType &&
-    !std::is_same<Varchar, V>::value && !std::is_same<Varbinary, V>::value;
+bool constexpr provide_std_interface =
+    CppToType<V>::isPrimitiveType && !std::is_same<Varchar, V>::value &&
+    !std::is_same<Varbinary, V>::value && !std::is_same<Any, V>::value;
 
-// Adding Any-type items requires commit, but CppToType<Any>::isPrimitiveType is
-// true, so we add an explicit condition for Any here.
+// bool is an exception, it requires commit but also provides std::interface.
 template <typename V>
-bool constexpr requires_commit = !CppToType<V>::isPrimitiveType ||
-    std::is_same<Varchar, V>::value || std::is_same<bool, V>::value ||
-    std::is_same<Varbinary, V>::value || std::is_same<Any, V>::value;
+bool constexpr requires_commit =
+    !provide_std_interface<V> || std::is_same<bool, V>::value;
 
 // The object passed to the simple function interface that represent a single
 // array entry.
@@ -282,6 +281,11 @@ class ArrayWriter {
 
   template <typename A, typename B>
   friend struct VectorWriter;
+
+  template <typename... T>
+  friend class RowWriter;
+
+  friend class GenericWriter;
 
   template <typename T>
   friend class SimpleFunctionAdapter;
@@ -524,6 +528,11 @@ class MapWriter {
   template <typename A, typename B>
   friend struct VectorWriter;
 
+  template <typename... T>
+  friend class RowWriter;
+
+  friend class GenericWriter;
+
   template <typename T>
   friend class SimpleFunctionAdapter;
 };
@@ -664,6 +673,28 @@ class RowWriter {
         ...);
   }
 
+  void finalizeNull() {
+    finalizeNullImpl(std::index_sequence_for<T...>{});
+  }
+
+  template <std::size_t... Is>
+  void finalizeNullImpl(std::index_sequence<Is...>) {
+    using children_types = std::tuple<T...>;
+    (
+        [&]() {
+          using current_t = std::tuple_element_t<Is, children_types>;
+          if constexpr (
+              !provide_std_interface<current_t> &&
+              !isOpaqueType<current_t>::value) {
+            if (UNLIKELY(std::get<Is>(needCommit_))) {
+              std::get<Is>(childrenWriters_).current().finalizeNull();
+              std::get<Is>(needCommit_) = false;
+            }
+          }
+        }(),
+        ...);
+  }
+
   writers_t childrenWriters_;
 
   std::tuple<typename VectorWriter<T, void>::vector_t*...> childrenVectors_;
@@ -677,6 +708,11 @@ class RowWriter {
 
   template <typename A, typename B>
   friend struct VectorWriter;
+
+  template <typename... A>
+  friend class RowWriter;
+
+  friend class GenericWriter;
 
   template <size_t I, class... Types>
   friend auto get(const RowWriter<Types...>& writer);
@@ -710,7 +746,17 @@ class GenericWriter {
       writer_ptr_t<Varchar>,
       writer_ptr_t<Varbinary>,
       writer_ptr_t<Array<Any>>,
-      writer_ptr_t<Map<Any, Any>>>;
+      writer_ptr_t<Map<Any, Any>>,
+      writer_ptr_t<Row<Any>>,
+      writer_ptr_t<Row<Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any, Any, Any, Any>>>;
 
   GenericWriter(writer_variant_t& castWriter, TypePtr& castType, size_t& index)
       : castWriter_{castWriter}, castType_{castType}, index_{index} {}
@@ -744,6 +790,30 @@ class GenericWriter {
     return castToImpl<ToType>();
   }
 
+  template <typename T>
+  struct isRowWriter : public std::false_type {};
+
+  template <typename... T>
+  struct isRowWriter<writer_ptr_t<Row<T...>>> : public std::false_type {};
+
+  template <typename T>
+  void finalizeNullDispatch(T& writer) {
+    if constexpr (
+        std::is_same_v<T, writer_ptr_t<Array<Any>>> ||
+        std::is_same_v<T, writer_ptr_t<Map<Any, Any>>> ||
+        isRowWriter<T>::value) {
+      writer->current().finalizeNull();
+    }
+  }
+
+  void finalizeNull() {
+    if (castType_) {
+      std::visit(
+          [&](auto&& castedWriter) { finalizeNullDispatch(castedWriter); },
+          castWriter_);
+    }
+  }
+
  private:
   void initialize(BaseVector* vector) {
     vector_ = vector;
@@ -763,8 +833,8 @@ class GenericWriter {
         "Cannot cast to VectorWriter of Generic or Variadic");
 
     // TODO: optimize the mapping between template type B and requestedType.
-    // Make this mapping static since B is known at compile time and among only
-    // a limited number of supported types.
+    // Make this mapping static since B is known at compile time and among
+    // only a limited number of supported types.
     auto requestedType = CppToType<B>::create();
 
     if (castType_) {

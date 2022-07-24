@@ -21,6 +21,7 @@
 
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
+#include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox {
 
@@ -41,33 +42,43 @@ class VectorFuzzer {
   struct Options {
     size_t vectorSize{100};
 
-    // One in X chance of generating a null value in the output vector (e.g: 10
-    // for 10%, 2 for 50%, 1 for 100%, 0 for 0%).
-    size_t nullChance{0};
+    /// Chance of generating a null value in the output vector (`nullRatio` is a
+    /// double between 0 and 1).
+    double nullRatio{0};
 
-    // Size of the generated strings. If `stringVariableLength` is true, the
-    // semantic of this option becomes "string maximum length". Here this
-    // represents number of characters and not bytes.
+    /// If true, fuzzer will generate top-level nulls for containers
+    /// (arrays/maps/rows), i.e, nulls for the containers themselves, not the
+    /// elements.
+    ///
+    /// The amount of nulls are controlled by `nullRatio`.
+    bool containerHasNulls{true};
+
+    /// If true, fuzzer will generate top-level nulls for dictionaries.
+    bool dictionaryHasNulls{true};
+
+    /// Size of the generated strings. If `stringVariableLength` is true, the
+    /// semantic of this option becomes "string maximum length". Here this
+    /// represents number of characters and not bytes.
     size_t stringLength{50};
 
-    // Vector of String charsets to choose from; bias a charset by including it
-    // multiple times.
+    /// Vector of String charsets to choose from; bias a charset by including it
+    /// multiple times.
     std::vector<UTF8CharList> charEncodings{ASCII};
 
-    // If true, the length of strings are randomly generated and `stringLength`
-    // is treated as maximum length.
+    /// If true, the length of strings are randomly generated and `stringLength`
+    /// is treated as maximum length.
     bool stringVariableLength{false};
 
-    // Size of the generated array/map. If `containerVariableLength` is true,
-    // the semantic of this option becomes "container maximum length".
+    /// Size of the generated array/map. If `containerVariableLength` is true,
+    /// the semantic of this option becomes "container maximum length".
     size_t containerLength{10};
 
-    // If true, the length of array/map are randomly generated and
-    // `containerLength` is treated as maximum length.
+    /// If true, the length of array/map are randomly generated and
+    /// `containerLength` is treated as maximum length.
     bool containerVariableLength{false};
 
-    // If true, the random generated timestamp value will only be in
-    // microsecond precision (default is nanosecond).
+    /// If true, the random generated timestamp value will only be in
+    /// microsecond precision (default is nanosecond).
     bool useMicrosecondPrecisionTimestamp{false};
   };
 
@@ -85,7 +96,8 @@ class VectorFuzzer {
   // vector (dictionary).
   VectorPtr fuzz(const TypePtr& type);
 
-  // Returns a flat vector with randomized data and nulls.
+  // Returns a flat vector or a complex vector with flat children with
+  // randomized data and nulls.
   VectorPtr fuzzFlat(const TypePtr& type);
 
   // Returns a random constant vector (which could be a null constant).
@@ -95,11 +107,14 @@ class VectorFuzzer {
   // DictionaryVector.
   VectorPtr fuzzDictionary(const VectorPtr& vector);
 
-  // Returns a complex vector with randomized data and nulls.
-  VectorPtr fuzzComplex(const TypePtr& type);
-
   // Returns a "fuzzed" row vector with randomized data and nulls.
-  VectorPtr fuzzRow(const RowTypePtr& rowType);
+  RowVectorPtr fuzzRow(const RowTypePtr& rowType);
+
+  // Same as the function above, but never return nulls for the top-level row
+  // elements.
+  RowVectorPtr fuzzInputRow(const RowTypePtr& rowType) {
+    return fuzzRow(rowType, opts_.vectorSize, false);
+  }
 
   variant randVariant(const TypePtr& arg);
 
@@ -116,22 +131,33 @@ class VectorFuzzer {
     rng_.seed(seed);
   }
 
-  // Returns true 1/n of times.
-  bool oneIn(size_t n) {
-    return folly::Random::oneIn(n, rng_);
+  /// Returns true n% of times (`n` is a double between 0 and 1).
+  bool coinToss(double n) {
+    return folly::Random::randDouble01(rng_) < n;
   }
 
  private:
-  VectorPtr fuzz(const TypePtr& type, vector_size_t size);
+  VectorPtr
+  fuzz(const TypePtr& type, vector_size_t size, bool flatEncoding = false);
 
   VectorPtr fuzzFlat(const TypePtr& type, vector_size_t size);
 
   VectorPtr fuzzConstant(const TypePtr& type, vector_size_t size);
 
-  VectorPtr fuzzComplex(const TypePtr& type, vector_size_t size);
+  // Returns a complex vector with randomized data and nulls.  The children and
+  // all other descendant vectors will randomly use constant, dictionary, or
+  // flat encodings if flatEncoding is set to false, otherwise they will all be
+  // flat.
+  VectorPtr fuzzComplex(
+      const TypePtr& type,
+      vector_size_t size,
+      bool flatEncoding = false);
 
-  VectorPtr
-  fuzzRow(const RowTypePtr& rowType, vector_size_t size, bool mayHaveNulls);
+  RowVectorPtr fuzzRow(
+      const RowTypePtr& rowType,
+      vector_size_t size,
+      bool rowHasNulls,
+      bool flatEncoding = false);
 
   // Generate a random null vector.
   BufferPtr fuzzNulls(vector_size_t size);

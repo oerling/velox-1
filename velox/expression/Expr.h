@@ -58,12 +58,14 @@ class Expr {
       std::vector<std::shared_ptr<Expr>>&& inputs,
       std::string name,
       bool specialForm,
+      bool supportsFlatNoNullsFastPath,
       bool trackCpuUsage)
       : type_(std::move(type)),
         inputs_(std::move(inputs)),
         name_(std::move(name)),
         vectorFunction_(nullptr),
         specialForm_{specialForm},
+        supportsFlatNoNullsFastPath_{supportsFlatNoNullsFastPath},
         trackCpuUsage_{trackCpuUsage} {}
 
   Expr(
@@ -71,17 +73,24 @@ class Expr {
       std::vector<std::shared_ptr<Expr>>&& inputs,
       std::shared_ptr<VectorFunction> vectorFunction,
       std::string name,
-      bool trackCpuUsage)
-      : type_(std::move(type)),
-        inputs_(std::move(inputs)),
-        name_(std::move(name)),
-        vectorFunction_(std::move(vectorFunction)),
-        specialForm_{false},
-        trackCpuUsage_{trackCpuUsage} {}
+      bool trackCpuUsage);
 
   virtual ~Expr() = default;
 
   void eval(const SelectivityVector& rows, EvalCtx& context, VectorPtr& result);
+
+  /// Evaluates the expression using fast path that assumes all inputs and
+  /// intermediate results are flat or constant and have no nulls.
+  ///
+  /// This path doesn't peel off constant encoding and therefore may be
+  /// expensive to apply to expressions that manipulate strings of complex
+  /// types. It may also be expensive to apply to large batches. Hence, this
+  /// path is enabled only for batch sizes less than 1'000 and expressions where
+  /// all input and intermediate types are primitive and not strings.
+  void evalFlatNoNulls(
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result);
 
   // Simplified path for expression evaluation (flattens all vectors).
   void evalSimplified(
@@ -151,6 +160,10 @@ class Expr {
     return deterministic_;
   }
 
+  bool supportsFlatNoNullsFastPath() const {
+    return supportsFlatNoNullsFastPath_;
+  }
+
   bool isMultiplyReferenced() const {
     return isMultiplyReferenced_;
   }
@@ -176,6 +189,9 @@ class Expr {
   static bool isSubsetOfFields(
       const std::vector<FieldReference*>& subset,
       const std::vector<FieldReference*>& superset);
+
+  static bool allSupportFlatNoNullsFastPath(
+      const std::vector<std::shared_ptr<Expr>>& exprs);
 
   const std::vector<std::shared_ptr<Expr>>& inputs() const {
     return inputs_;
@@ -260,17 +276,6 @@ class Expr {
       EvalCtx& context,
       VectorPtr& result);
 
-  // Calls 'vectorFunction_' on values in 'inputValues_'.
-  void applyVectorFunction(
-      const SelectivityVector& rows,
-      EvalCtx& context,
-      VectorPtr& result);
-
-  void applySingleConstArgVectorFunction(
-      const SelectivityVector& rows,
-      EvalCtx& context,
-      VectorPtr& result);
-
   // Returns true if values in 'distinctFields_' have nulls that are
   // worth skipping. If so, the rows in 'rows' with at least one sure
   // null are deselected in 'nullHolder->get()'.
@@ -312,7 +317,11 @@ class Expr {
   const std::string name_;
   const std::shared_ptr<VectorFunction> vectorFunction_;
   const bool specialForm_;
+  const bool supportsFlatNoNullsFastPath_;
   const bool trackCpuUsage_;
+
+  std::vector<VectorPtr> constantInputs_;
+  std::vector<bool> inputIsConstant_;
 
   // TODO make the following metadata const, e.g. call computeMetadata in the
   // constructor
