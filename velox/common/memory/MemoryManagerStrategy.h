@@ -31,41 +31,27 @@ class MemoryConsumer {
  public:
   virtual ~MemoryConsumer() {}
 
-  virtual void updateMemoryUsageConfig(const MemoryUsageConfig& config) = 0;
+  // Returns the tracker with the current usage and limits.
+  virtual memory::MemoryUsageTracker& tracker() const = 0;
 
   // Returns the number of bytes that may be recoverable with
-  // tryRecoverMemory().
+  // recover().
   virtual int64_t recoverableMemory() const = 0;
 
   //  Recovers memory. Implementations may for example spill or evict
-  //  caches. Returns the number of bytes actually freed.  size
-  //  specifies a target number of bytes to recover.
-  virtual int64_t recover(int64_t size) = 0;
+  //  caches.  size specifies a target number of bytes to recover. The
+  //  actual effect on memory usage isseen in tracker(). This does not
+  //  guarantee any result. Implementations have additional
+  //  requirements for using this method, e.g. a Task must be paused.
+  virtual void recover(int64_t size) = 0;
 };
 
 class MemoryManagerStrategy {
  public:
   virtual ~MemoryManagerStrategy() {}
 
-  // returns true if this can resize initial limits of consumers.
+  // returns true if this can resize limits of consumers.
   virtual bool canResize() const = 0;
-
-  // Returns true if the memory manager allows overcommit for
-  // individual memory pool or mapped memory.
-  virtual bool allowOvercommit() const = 0;
-
-  // Returns true if the memory manager may change memory usage quota
-  // dynamically, depending on the number of queries/tasks in the system.
-  // We use this to implement a fair memory usage policy.
-  virtual bool canChangeLimitsDynamically() const = 0;
-
-  // Returns the recommended initial size for 'level'.
-  // 'level' specifies whether this is for Process, Query, Task or Operators
-  // If canChangeQuotaDynamically() returns true, quota may change dynamically
-  // as the number of MemoryConsumers changes and registered MemoryConsumers
-  // will be/ updated through 'updateMemoryUsageConfig()'.
-  virtual MemoryUsageConfig getDefaultMemoryUsageConfig(
-      UsageLevel Level) const = 0;
 
   // Registers a memory consumer with MemoryManager.
   virtual void registerConsumer(
@@ -109,19 +95,6 @@ class MemoryManagerStrategyBase : public MemoryManagerStrategy {
     return false;
   }
 
-  bool allowOvercommit() const override {
-    return true;
-  }
-
-  bool canChangeLimitsDynamically() const override {
-    return false;
-  }
-
-  MemoryUsageConfig getDefaultMemoryUsageConfig(
-      UsageLevel /*level*/) const override {
-    return MemoryUsageConfig();
-  }
-
   void registerConsumer(
       MemoryConsumer* consumer,
       const std::weak_ptr<MemoryConsumer>& consumerPtr) override {
@@ -144,6 +117,8 @@ class MemoryManagerStrategyBase : public MemoryManagerStrategy {
 
 class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
  public:
+
+  
   // No op.
   bool recover(
       std::shared_ptr<MemoryConsumer> /*requester*/,

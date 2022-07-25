@@ -40,6 +40,9 @@ MemoryUsageTracker::~MemoryUsageTracker() {
 void MemoryUsageTracker::checkAndPropagateReservationIncrement(
     int64_t increment,
     bool updateMinReservation) {
+  if (!increment) {
+    return;
+  }
   std::exception_ptr exception;
   try {
     incrementUsage(type_, increment);
@@ -126,4 +129,14 @@ bool MemoryUsageTracker::maybeReserve(int64_t increment) {
   return false;
 }
 
+std::string MemoryUsageTracker::toString() const {
+  std::stringstream out;
+  out << fmt::format("<tracker total {} MB reserved {} MB {} MB", getCurrentTotalBytes() >> 20, reservation_ >> 20);
+  if (maxTotalBytes() != kMaxMemory) {
+    out << "limit "  << (maxTotalBytes() >> 20);
+  }
+  out << ">";
+  return out.str();
+}
+  
 } // namespace facebook::velox::memory

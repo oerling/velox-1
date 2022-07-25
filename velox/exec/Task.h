@@ -402,14 +402,13 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
     return numRunningDrivers_;
   }
 
-  void updateMemoryUsageConfig(
-      const memory::MemoryUsageConfig& config) override {
-    pool_->getMemoryUsageTracker()->updateConfig(config);
+  memory::MemoryUsageTracker& tracker() const override {
+    return *pool_->getMemoryUsageTracker();
   }
 
   int64_t recoverableMemory() const override;
 
-  int64_t recover(int64_t size) override;
+  void recover(int64_t size) override;
 
   // Returns the Driver running on the current thread or nullptr if the current
   // thread is not running a Driver of 'this'.
@@ -753,16 +752,15 @@ class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
 
   // The requester is a Task and the calling thread is a thread running a Driver
   // in the Task.
-  bool recover(
-      std::shared_ptr<memory::MemoryConsumer> requester,
-      int64_t size) override;
+  bool recover(std::shared_ptr<memory::MemoryConsumer> requester, int64_t size)
+      override;
 
  private:
   using ConsumerPtr = std::shared_ptr<memory::MemoryConsumer>;
   struct ConsumerScore {
     ConsumerPtr consumer;
     // 'candidate' if this is a Task.
-    std::shared_ptr<Task> task;
+    Task* FOLLY_NULLABLE task;
     int64_t available;
   };
 

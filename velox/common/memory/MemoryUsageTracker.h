@@ -134,7 +134,7 @@ class MemoryUsageTracker
   }
 
   ~MemoryUsageTracker();
-  
+
   // Increments the reservation for 'this' so that we can allocate at
   // least 'size' bytes on top of the current allocation. This is used
   // when an a memory user needs to allocate more memory and needs a
@@ -280,6 +280,8 @@ class MemoryUsageTracker
   /// unlikely. Otherwise attempts the reservation increment and returns
   /// true if succeeded.
   bool maybeReserve(int64_t increment);
+
+  std::string toString() const;
 
  private:
   static constexpr int64_t kMB = 1 << 20;

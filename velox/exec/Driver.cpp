@@ -644,9 +644,10 @@ bool Driver::growTaskMemory(
     auto current = tracker.totalReservedBytes();
     auto limit = tracker.maxTotalBytes();
     if (current < limit) {
-      return true;
+      result = true;
+      return;
     }
-    result = memory::MemoryManagerStrategy::instance()->recover(task(), current - limit);
+    result = memory::MemoryManagerStrategy::instance()->recover(task(), size);
   });
   return result;
 }
