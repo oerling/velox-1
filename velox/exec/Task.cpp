@@ -1608,6 +1608,7 @@ bool TaskMemoryStrategy::recover(
       if (task->state() != TaskState::kRunning) {
         continue;
       }
+      VELOX_CHECK_EQ(0, task->numThreads());
       paused.push_back(std::static_pointer_cast<Task>(candidate.consumer));
 
       auto& taskTracker = task->tracker();
@@ -1649,7 +1650,6 @@ bool TaskMemoryStrategy::recover(
   }
 
   for (auto& task : paused) {
-    task->requestPause(false);
     if (task->state() == TaskState::kRunning) {
       Task::resume(task);
     }

@@ -490,6 +490,10 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
     return mutex_;
   }
 
+  int32_t numThreads() const {
+    return numThreads_;
+  }
+  
  private:
   /// Returns true if state is 'running'.
   bool isRunningLocked() const;

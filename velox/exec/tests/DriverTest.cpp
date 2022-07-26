@@ -864,7 +864,7 @@ class TestingConsumer : public Operator {
     if (!input_) {
       return nullptr;
     }
-    int64_t size = 50 << 20;
+    int64_t size = 10 << 20;
     if (!reserveAndRun(
             recoverableTracker_,
             size,
@@ -951,12 +951,29 @@ class ConsumerNodeFactory : public Operator::PlanNodeTranslator {
 } // namespace
 
 TEST_F(DriverTest, memoryReservation) {
+  // Simulates 20 concurrent Tasks each with 5 Drivers. The Drivers
+  // try to grow by 10MB at each batch of input from the source. Each
+  // source produces 200 batches, so the total growth is 2G * 100
+  // drivers. The total memory for running the tasks is 2G. All
+  // drivers are capable of lowering their memory reservation by
+  // 1/3. This means that any 10MB increase can be satisfied by
+  // shrinking a sufficient number of other Drivers by 1/3 of their
+  // size. All drivers will potentially be queued waiting for their
+  // 10MB extra memory. If the total were <= the sum of max concurrent
+  // growth requests we could have a situation where no memory could
+  // be recovered. We set the total to be 2G and the maximum of
+  // concurrent outstanding requests to be 1G so that the growth
+  // requests can be satisfied one after the other.
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
-  constexpr int64_t kProcessBytes = 1 << 30;
-  memory::MemoryManagerStrategy::registerFactory(
+  constexpr int64_t kProcessBytes = 2UL << 30;
+  static bool initialized = false;
+  // Initialize once so that can run with gtest_repeat.
+  if (!initialized) {
+    memory::MemoryManagerStrategy::registerFactory(
       [&]() { return std::make_unique<TaskMemoryStrategy>(kProcessBytes); });
-
+    initialized = true;
+  }
   auto topTracker =
       memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
 
@@ -1010,6 +1027,8 @@ TEST_F(DriverTest, memoryReservation) {
     EXPECT_TRUE(stateFutures_.at(i).isReady());
   }
   executor->join();
+  // The limits are released into topTracker at destruction.
+  tasks_.clear();
   EXPECT_EQ(0, topTracker->getCurrentUserBytes());
 }
 
