@@ -25,11 +25,6 @@ namespace {
 
 class HistogramTest : public AggregationTestBase {
  protected:
-  void SetUp() override {
-    // Single batches of input.
-    disableSpill();
-  }
-
   void testHistogramWithDuck(
       const VectorPtr& vector1,
       const VectorPtr& vector2) {

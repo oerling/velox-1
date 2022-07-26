@@ -13,9 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
+#include "velox/common/file/FileSystems.h"
 #include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
@@ -38,11 +39,17 @@ std::vector<RowVectorPtr> AggregationTestBase::makeVectors(
   return vectors;
 }
 
+void AggregationTestBase::SetUp() {
+  exec::test::OperatorTestBase::SetUp();
+  filesystems::registerLocalFileSystem();
+}
+
 void AggregationTestBase::testAggregations(
     const std::vector<RowVectorPtr>& data,
     const std::vector<std::string>& groupingKeys,
     const std::vector<std::string>& aggregates,
     const std::string& duckDbSql) {
+  SCOPED_TRACE(duckDbSql);
   testAggregations(data, groupingKeys, aggregates, {}, duckDbSql);
 }
 
@@ -60,6 +67,7 @@ void AggregationTestBase::testAggregations(
     const std::vector<std::string>& aggregates,
     const std::vector<std::string>& postAggregationProjections,
     const std::string& duckDbSql) {
+  SCOPED_TRACE(duckDbSql);
   testAggregations(
       [&](PlanBuilder& builder) { builder.values(data); },
       groupingKeys,
@@ -106,6 +114,47 @@ int64_t spilledBytes(const exec::Task& task) {
 
   return spilledBytes;
 }
+
+bool hasNonDeterministicAggregate(
+    std::function<void(PlanBuilder&)> makeSource,
+    const std::vector<std::string>& aggregates) {
+  PlanBuilder builder;
+  makeSource(builder);
+  auto& aggregationNode = builder.partialAggregation({}, aggregates).planNode();
+  auto& aggregateCalls =
+      std::dynamic_pointer_cast<const core::AggregationNode>(aggregationNode)
+          ->aggregates();
+
+  // TODO Store this information in the registry.
+  static const std::unordered_set<std::string> kNonDeterministicAggregations = {
+      // Map_agg function is sensitive to the order of input in case of
+      // duplicate map keys.
+      "map_agg",
+      // Min_by and max_by functions are sensitive to the order of input in case
+      // of ties.
+      "min_by",
+      "max_by",
+      // Variance functions are sensitive to the order of input
+      // because they perform double-precision arithmetic.
+      "stddev",
+      "stddev_pop",
+      "stddev_samp",
+      "variance",
+      "var_pop",
+      "var_samp",
+      // 'Last' function is sensitive to the order of input.
+      "last",
+  };
+
+  for (auto& call : aggregateCalls) {
+    auto aggregate = call->name();
+    if (kNonDeterministicAggregations.count(aggregate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 } // namespace
 
 void AggregationTestBase::testAggregations(
@@ -141,21 +190,41 @@ void AggregationTestBase::testAggregations(
     assertResults(queryBuilder);
   }
 
-  if (!noSpill_) {
+  if (!groupingKeys.empty() &&
+      !hasNonDeterministicAggregate(makeSource, aggregates)) {
     SCOPED_TRACE("Run single with spilling");
     PlanBuilder builder;
     makeSource(builder);
-    builder.singleAggregation(groupingKeys, aggregates);
+
+    // Spilling needs at least 2 batches of input. Use round-robin
+    // repartitioning to split input into multiple batches.
+    core::PlanNodeId partialNodeId;
+    builder.localPartitionRoundRobin()
+        .partialAggregation(groupingKeys, aggregates)
+        .capturePlanNodeId(partialNodeId)
+        .localPartition(groupingKeys)
+        .finalAggregation();
+
     if (!postAggregationProjections.empty()) {
       builder.project(postAggregationProjections);
     }
-    auto tempDirectory = exec::test::TempDirectoryPath::create();
+
+    auto spillDirectory = exec::test::TempDirectoryPath::create();
 
     AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
-    auto task = assertResults(
-        queryBuilder.config(core::QueryConfig::kTestingSpillPct, "100")
-            .config(core::QueryConfig::kSpillPath, tempDirectory->path));
-    EXPECT_LT(0, spilledBytes(*task));
+    queryBuilder.config(core::QueryConfig::kTestingSpillPct, "100")
+        .config(core::QueryConfig::kSpillPath, spillDirectory->path)
+        .maxDrivers(2);
+
+    auto task = assertResults(queryBuilder);
+
+    // Expect > 0 spilled bytes unless there was no input.
+    auto inputRows = toPlanStats(task->taskStats()).at(partialNodeId).inputRows;
+    if (inputRows > 0) {
+      EXPECT_LT(0, spilledBytes(*task));
+    } else {
+      EXPECT_EQ(0, spilledBytes(*task));
+    }
   }
 
   {
@@ -192,7 +261,7 @@ void AggregationTestBase::testAggregations(
     }
 
     AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
-    assertResults(queryBuilder.maxDrivers(2));
+    assertResults(queryBuilder.maxDrivers(4));
   }
 
   {

@@ -897,6 +897,24 @@ PlanBuilder& PlanBuilder::localPartitionRoundRobin(
   return *this;
 }
 
+PlanBuilder& PlanBuilder::localPartitionRoundRobin(
+    const std::vector<std::string>& outputLayout) {
+  auto types = genLocalPartitionTypes({planNode_}, outputLayout);
+
+  auto partitionFunctionFactory = [](auto numPartitions) {
+    return std::make_unique<velox::exec::RoundRobinPartitionFunction>(
+        numPartitions);
+  };
+  planNode_ = std::make_shared<core::LocalPartitionNode>(
+      nextPlanNodeId(),
+      core::LocalPartitionNode::Type::kRepartition,
+      partitionFunctionFactory,
+      types.outputType,
+      std::vector<core::PlanNodePtr>{planNode_},
+      types.inputTypeFromSource);
+  return *this;
+}
+
 PlanBuilder& PlanBuilder::hashJoin(
     const std::vector<std::string>& leftKeys,
     const std::vector<std::string>& rightKeys,
