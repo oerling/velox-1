@@ -730,7 +730,7 @@ class ExprTest : public testing::Test, public VectorTestBase {
 
 TEST_F(ExprTest, encodings) {
   // This test throws a lot of exceptions, so turn off stack trace capturing.
-  FLAGS_velox_exception_stacktrace = false;
+  FLAGS_velox_exception_user_stacktrace_enabled = false;
   int32_t counter = 0;
   for (auto& encoding1 : testEncodings_) {
     fillVectorAndReference<int64_t>(
@@ -815,7 +815,7 @@ TEST_F(ExprTest, encodings) {
 
 TEST_F(ExprTest, encodingsOverLazy) {
   // This test throws a lot of exceptions, so turn off stack trace capturing.
-  FLAGS_velox_exception_stacktrace = false;
+  FLAGS_velox_exception_user_stacktrace_enabled = false;
   int32_t counter = 0;
   for (auto& encoding1 : testEncodings_) {
     fillVectorAndReference<int64_t>(
@@ -1883,11 +1883,11 @@ TEST_F(ExprTest, opaque) {
 
 TEST_F(ExprTest, switchExpr) {
   vector_size_t size = 1'000;
-  auto vector = makeRowVector({
-      makeFlatVector<int32_t>(size, [](auto row) { return row; }),
-      makeFlatVector<int32_t>(
-          size, [](auto row) { return row; }, nullEvery(5)),
-  });
+  auto vector = makeRowVector(
+      {makeFlatVector<int32_t>(size, [](auto row) { return row; }),
+       makeFlatVector<int32_t>(
+           size, [](auto row) { return row; }, nullEvery(5)),
+       makeConstant<int32_t>(0, size)});
 
   auto result =
       evaluate("case c0 when 7 then 1 when 11 then 2 else 0 end", vector);
@@ -1915,6 +1915,14 @@ TEST_F(ExprTest, switchExpr) {
   assertEqualVectors(expected, result);
 
   result = evaluate("case c1 when 7 then 1 when 11 then 2 end", vector);
+  assertEqualVectors(expected, result);
+
+  // No "else" clause and no match.
+  result = evaluate("case 0 when 100 then 1 when 200 then 2 end", vector);
+  expected = makeAllNullFlatVector<int64_t>(size);
+  assertEqualVectors(expected, result);
+
+  result = evaluate("case c2 when 100 then 1 when 200 then 2 end", vector);
   assertEqualVectors(expected, result);
 
   // non-equality case expression
