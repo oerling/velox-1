@@ -50,7 +50,7 @@ class TestingConsumerNode : public core::PlanNode {
 
   void addDetails(std::stringstream& /* stream */) const override {}
 
-   private:
+ private:
   std::vector<std::shared_ptr<const core::PlanNode>> sources_;
 };
 
@@ -876,8 +876,8 @@ class TestingConsumer : public Operator {
               // Use the reserved memory.
               recoverableTracker_->update(
                   recoverableTracker_->getAvailableReservation());
-	      // The reservation is converted to allocation.
-	      recoverableTracker_->release();
+              // The reservation is converted to allocation.
+              recoverableTracker_->release();
             })) {
       VELOX_FAIL("Out of memory");
     }
@@ -907,7 +907,7 @@ class TestingConsumer : public Operator {
     recoverableTracker_->release();
     recoverableTracker_->update(-recoverableTracker_->getCurrentUserBytes());
   }
-  
+
  private:
   std::shared_ptr<memory::MemoryUsageTracker> recoverableTracker_;
   const int32_t sequence_;
@@ -971,7 +971,7 @@ TEST_F(DriverTest, memoryReservation) {
   // Initialize once so that can run with gtest_repeat.
   if (!initialized) {
     memory::MemoryManagerStrategy::registerFactory(
-      [&]() { return std::make_unique<TaskMemoryStrategy>(kProcessBytes); });
+        [&]() { return std::make_unique<TaskMemoryStrategy>(kProcessBytes); });
     initialized = true;
   }
   auto topTracker =

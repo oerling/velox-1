@@ -1561,9 +1561,7 @@ bool TaskMemoryStrategy::recover(
     if (maybeUpdate(minSize, *topTracker)) {
       setLimit(tracker.maxTotalBytes() + minSize, tracker);
       VLOG(1) << fmt::format(
-                       "{} gets {} from unused",
-                       consumerTask->taskId(),
-                       minSize);
+          "{} gets {} from unused", consumerTask->taskId(), minSize);
       return true;
     }
   }
@@ -1622,10 +1620,10 @@ bool TaskMemoryStrategy::recover(
       }
       delta = roundDown(delta, kMinTransfer);
       VLOG(1) << fmt::format(
-                       "{} drops limit by {} to {}",
-                       task->taskId(),
-                       delta,
-                       taskTracker.maxTotalBytes() - delta);
+          "{} drops limit by {} to {}",
+          task->taskId(),
+          delta,
+          taskTracker.maxTotalBytes() - delta);
       setLimit(taskTracker.maxTotalBytes() - delta, taskTracker);
       recovered += delta;
 
@@ -1640,10 +1638,10 @@ bool TaskMemoryStrategy::recover(
   if (success) {
     topTracker->update(minSize - recovered);
     VLOG(1) << fmt::format(
-                     "{} increases limit by {} to {}",
-                     consumerTask->taskId(),
-                     minSize,
-                     tracker.maxTotalBytes() + minSize);
+        "{} increases limit by {} to {}",
+        consumerTask->taskId(),
+        minSize,
+        tracker.maxTotalBytes() + minSize);
     setLimit(tracker.maxTotalBytes() + minSize, tracker);
   } else {
     topTracker->update(-recovered);

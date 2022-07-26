@@ -117,12 +117,9 @@ class MemoryManagerStrategyBase : public MemoryManagerStrategy {
 
 class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
  public:
-
-  
   // No op.
-  bool recover(
-      std::shared_ptr<MemoryConsumer> /*requester*/,
-      int64_t /*size*/) override {
+  bool recover(std::shared_ptr<MemoryConsumer> /*requester*/, int64_t /*size*/)
+      override {
     return false;
   }
 };

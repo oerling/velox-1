@@ -32,8 +32,8 @@
 #include "folly/Random.h"
 #include "folly/SharedMutex.h"
 #include "folly/experimental/FunctionScheduler.h"
-#include "velox/common/memory/MemoryManagerStrategy.h"
 #include "velox/common/base/GTestMacros.h"
+#include "velox/common/memory/MemoryManagerStrategy.h"
 #include "velox/common/memory/MemoryUsage.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
 
@@ -878,7 +878,7 @@ static inline int64_t getTimeInUsec() {
 
 template <typename Allocator, uint16_t ALIGNMENT>
 MemoryManager<Allocator, ALIGNMENT>::MemoryManager(int64_t memoryQuota)
-  : MemoryManager(Allocator::createDefaultAllocator(), memoryQuota) {}
+    : MemoryManager(Allocator::createDefaultAllocator(), memoryQuota) {}
 
 template <typename Allocator, uint16_t ALIGNMENT>
 MemoryManager<Allocator, ALIGNMENT>::MemoryManager(

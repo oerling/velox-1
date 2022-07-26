@@ -238,7 +238,6 @@ class Operator {
     }
   };
 
-
   // 'operatorId' is the initial index of the 'this' in the Driver's
   // list of Operators. This is used as in index into OperatorStats
   // arrays in the Task. 'planNodeId' is a query-level unique
@@ -378,7 +377,7 @@ class Operator {
   virtual int64_t recoverableMemory() const {
     return 0;
   }
-  
+
   // Tries to shrink the memory footprint of 'this' by at least
   // 'minMemoryToRecover' bytes. Returns the approximate amount that
   // was freed. The trackers of the different pools will have
@@ -386,7 +385,7 @@ class Operator {
   virtual int64_t spill(int64_t /* minMemoryToRecover */) {
     return 0;
   }
-  
+
   // Registers 'translator' for mapping user defined PlanNode subclass instances
   // to user-defined Operators.
   static void registerOperator(std::unique_ptr<PlanNodeTranslator> translator);
