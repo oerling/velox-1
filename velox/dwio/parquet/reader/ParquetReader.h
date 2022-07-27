@@ -16,10 +16,10 @@
 
 #pragma once
 
-#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
+#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 
