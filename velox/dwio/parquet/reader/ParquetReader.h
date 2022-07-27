@@ -16,16 +16,14 @@
 
 #pragma once
 
-#include <dwio/common/BufferedInput.h>
-#include <dwio/common/SelectiveColumnReader.h>
+#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
+#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
+#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {
-
-using TypePtr = std::shared_ptr<const velox::Type>;
 
 constexpr uint64_t DIRECTORY_SIZE_GUESS = 1024 * 1024;
 constexpr uint64_t FILE_PRELOAD_THRESHOLD = 1024 * 1024 * 8;
@@ -42,15 +40,37 @@ class ReaderBase {
 
   virtual ~ReaderBase() = default;
 
-  memory::MemoryPool& getMemoryPool() const;
-  dwio::common::BufferedInput& getBufferedInput() const;
+  memory::MemoryPool& getMemoryPool() const {
+    return pool_;
+  }
 
-  const dwio::common::InputStream& getStream() const;
-  const uint64_t getFileLength() const;
-  const uint64_t getFileNumRows() const;
-  const FileMetaData& getFileMetaData() const;
-  const std::shared_ptr<const RowType>& getSchema() const;
-  const std::shared_ptr<const dwio::common::TypeWithId>& getSchemaWithId();
+  dwio::common::BufferedInput& bufferedInput() const {
+    return *input_;
+  }
+
+  dwio::common::InputStream& stream() const {
+    return *stream_;
+  }
+
+  uint64_t fileLength() const {
+    return fileLength_;
+  }
+
+  uint64_t fileNumRows() const {
+    return fileMetaData_->num_rows;
+  }
+
+  const thrift::FileMetaData& fileMetaData() const {
+    return *fileMetaData_;
+  }
+
+  const std::shared_ptr<const RowType>& schema() const {
+    return schema_;
+  }
+
+  const std::shared_ptr<const dwio::common::TypeWithId>& schemaWithId() {
+    return schemaWithId_;
+  }
 
   // Ensures that streams are enqueued and loading for the row group at
   // 'currentGroup'. May start loading one or more subsequent groups.
@@ -65,7 +85,7 @@ class ReaderBase {
       int32_t rowGroupIndex,
       const dwio::common::TypeWithId& type) const;
 
- protected:
+ private:
   void loadFileMetaData();
   void initializeSchema();
   std::shared_ptr<const ParquetTypeWithId> getParquetColumnInfo(
@@ -73,8 +93,10 @@ class ReaderBase {
       uint32_t maxRepeat,
       uint32_t maxDefine,
       uint32_t& schemaIdx,
-      uint32_t& columnIdx);
-  TypePtr convertType(const SchemaElement& schemaElement);
+      uint32_t& columnIdx) const;
+
+  TypePtr convertType(const thrift::SchemaElement& schemaElement) const;
+
   static std::shared_ptr<const RowType> createRowType(
       std::vector<std::shared_ptr<const ParquetTypeWithId::TypeWithId>>
           children);
@@ -85,7 +107,7 @@ class ReaderBase {
   std::shared_ptr<dwio::common::BufferedInputFactory> bufferedInputFactory_;
   std::shared_ptr<velox::dwio::common::BufferedInput> input_;
   uint64_t fileLength_;
-  std::unique_ptr<FileMetaData> fileMetaData_;
+  std::unique_ptr<thrift::FileMetaData> fileMetaData_;
   RowTypePtr schema_;
   std::shared_ptr<const dwio::common::TypeWithId> schemaWithId_;
 
@@ -123,11 +145,11 @@ class ParquetRowReader : public dwio::common::RowReader {
   memory::MemoryPool& pool_;
   const std::shared_ptr<ReaderBase> readerBase_;
   const dwio::common::RowReaderOptions& options_;
-  const std::vector<RowGroup>& rowGroups_;
+  const std::vector<thrift::RowGroup>& rowGroups_;
 
   std::vector<uint32_t> rowGroupIds_;
   uint32_t currentRowGroupIdsIdx_;
-  RowGroup const* currentRowGroupPtr_;
+  thrift::RowGroup const* currentRowGroupPtr_;
   uint64_t rowsInCurrentRowGroup_;
   int32_t avgRowSize_{0};
   uint64_t currentRowInGroup_;
@@ -142,30 +164,25 @@ class ParquetReader : public dwio::common::Reader {
   ParquetReader(
       std::unique_ptr<dwio::common::InputStream> stream,
       const dwio::common::ReaderOptions& options);
+
   ~ParquetReader() override = default;
 
-  /**
-   * Get the total number of rows in a file.
-   * @return the total number of rows in a file
-   */
   std::optional<uint64_t> numberOfRows() const override {
-    return readerBase_->getFileNumRows();
+    return readerBase_->fileNumRows();
   }
 
-  // TODO: Merge the stats for all RowGroups. Parquet column stats is per row
-  // group It's only used in tests for DWRF
   std::unique_ptr<dwio::common::ColumnStatistics> columnStatistics(
       uint32_t index) const override {
     return nullptr;
   }
 
   const velox::RowTypePtr& rowType() const override {
-    return readerBase_->getSchema();
+    return readerBase_->schema();
   }
 
   const std::shared_ptr<const dwio::common::TypeWithId>& typeWithId()
       const override {
-    return readerBase_->getSchemaWithId();
+    return readerBase_->schemaWithId();
   }
 
   std::unique_ptr<dwio::common::RowReader> createRowReader(

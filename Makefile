@@ -36,11 +36,6 @@ CMAKE_FLAGS += -DENABLE_ALL_WARNINGS=${ENABLE_WALL}
 CMAKE_FLAGS += -DVELOX_BUILD_MINIMAL=${VELOX_BUILD_MINIMAL}
 CMAKE_FLAGS += -DVELOX_BUILD_TESTING=${VELOX_BUILD_TESTING}
 
-CMAKE_FLAGS+= -DVELOX_ENABLE_DUCKDB=ON
-CMAKE_FLAGS+= -DVELOX_ENABLE_TPCH_CONNECTOR=ON
-CMAKE_FLAGS+= -DVELOX_ENABLE_PARQUET=ON
-
-
 CMAKE_FLAGS += -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 ifdef AWSSDK_ROOT_DIR
@@ -64,6 +59,9 @@ endif
 NUM_THREADS ?= $(shell getconf _NPROCESSORS_CONF 2>/dev/null || echo 1)
 CPU_TARGET ?= "avx"
 
+FUZZER_SEED ?= 123456
+FUZZER_DURATION_SEC ?= 60
+
 all: release			#: Build the release version
 
 clean:					#: Delete all build artifacts
@@ -71,14 +69,13 @@ clean:					#: Delete all build artifacts
 
 cmake:					#: Use CMake to create a Makefile build system
 	mkdir -p $(BUILD_BASE_DIR)/$(BUILD_DIR) && \
-	cmake \
+	cmake -B \
+		"$(BUILD_BASE_DIR)/$(BUILD_DIR)" \
 		${CMAKE_FLAGS} \
 		$(GENERATOR) \
 		$(USE_CCACHE) \
 		$(FORCE_COLOR) \
-		${EXTRA_CMAKE_FLAGS} \
-		-B "$(BUILD_BASE_DIR)/$(BUILD_DIR)" 
-
+		${EXTRA_CMAKE_FLAGS}
 
 build:					#: Build the software based in BUILD_DIR and BUILD_TYPE variables
 	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j ${NUM_THREADS}
@@ -113,8 +110,8 @@ unittest: debug			#: Build with debugging and run unit tests
 # ensure the tests are reproducible.
 fuzzertest: debug
 	$(BUILD_BASE_DIR)/debug/velox/expression/tests/velox_expression_fuzzer_test \
-		--seed 123456 \
-		--steps 100000 \
+		--seed $(FUZZER_SEED) \
+		--duration_sec $(FUZZER_DURATION_SEC) \
 		--logtostderr=1 \
 		--minloglevel=0
 

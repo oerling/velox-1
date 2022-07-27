@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <gtest/gtest.h>
-#include <array>
 
 #include "velox/dwio/parquet/duckdb_reader/ParquetReader.h"
 #include "velox/dwio/parquet/tests/ParquetReaderTestBase.h"
@@ -23,10 +21,12 @@
 #include "velox/type/Type.h"
 #include "velox/vector/ComplexVector.h"
 
+#include <gtest/gtest.h>
+#include <array>
+
 using namespace ::testing;
 using namespace facebook::velox::dwio::common;
 using namespace facebook::velox;
-
 using namespace facebook::velox::dwio::parquet;
 using namespace facebook::velox::parquet::duckdb_reader;
 
@@ -45,11 +45,6 @@ class ParquetReaderTest : public ParquetReaderTestBase {
 
     assertReadWithReaderAndFilters(
         std::move(reader), fileName, fileSchema, std::move(filters), expected);
-  }
-
-  std::string getExampleFilePath(const std::string& fileName) {
-    return test::getDataFilePath(
-        "velox/dwio/parquet/tests/duckdb_reader", "../examples/" + fileName);
   }
 };
 

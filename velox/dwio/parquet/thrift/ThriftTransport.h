@@ -14,15 +14,12 @@
  * limitations under the License.
  */
 
-//
-// Created by Ying Su on 2/24/22.
-//
 #pragma once
 
 #include <thrift/transport/TVirtualTransport.h>
-//#include "velox/dwio/common/MetricsLog.h"
+#include "velox/dwio/common/BufferedInput.h"
 
-namespace facebook::velox::parquet {
+namespace facebook::velox::parquet::thrift {
 
 class ThriftBufferedTransport
     : public apache::thrift::transport::TVirtualTransport<
@@ -46,4 +43,4 @@ class ThriftBufferedTransport
   uint64_t offset_;
 };
 
-} // namespace facebook::velox::parquet
+} // namespace facebook::velox::parquet::thrift

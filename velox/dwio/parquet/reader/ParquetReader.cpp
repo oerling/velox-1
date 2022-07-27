@@ -19,7 +19,7 @@
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
-#include "velox/dwio/parquet/reader/ThriftTransport.h"
+#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 
@@ -40,26 +40,6 @@ ReaderBase::ReaderBase(
 
   loadFileMetaData();
   initializeSchema();
-}
-
-memory::MemoryPool& ReaderBase::getMemoryPool() const {
-  return pool_;
-}
-
-const dwio::common::InputStream& ReaderBase::getStream() const {
-  return *stream_;
-}
-
-const FileMetaData& ReaderBase::getFileMetaData() const {
-  return *fileMetaData_;
-}
-
-dwio::common::BufferedInput& ReaderBase::getBufferedInput() const {
-  return *input_;
-}
-
-const uint64_t ReaderBase::getFileLength() const {
-  return fileLength_;
 }
 
 void ReaderBase::loadFileMetaData() {
@@ -98,12 +78,12 @@ void ReaderBase::loadFileMetaData() {
         missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
   }
 
-  auto thriftTransport = std::make_shared<ThriftBufferedTransport>(
+  auto thriftTransport = std::make_shared<thrift::ThriftBufferedTransport>(
       copy.data() + footerOffsetInBuffer, footerLength);
-  auto thriftProtocol = std::make_unique<
-      apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
-      thriftTransport);
-  fileMetaData_ = std::make_unique<FileMetaData>();
+  auto thriftProtocol =
+      std::make_unique<apache::thrift::protocol::TCompactProtocolT<
+          thrift::ThriftBufferedTransport>>(thriftTransport);
+  fileMetaData_ = std::make_unique<thrift::FileMetaData>();
   fileMetaData_->read(thriftProtocol.get());
 }
 
@@ -116,7 +96,8 @@ void ReaderBase::initializeSchema() {
       fileMetaData_->schema.size() > 1,
       "Invalid Parquet schema: Need at least one non-root column in the file");
   DWIO_ENSURE(
-      fileMetaData_->schema[0].repetition_type == FieldRepetitionType::REQUIRED,
+      fileMetaData_->schema[0].repetition_type ==
+          thrift::FieldRepetitionType::REQUIRED,
       "Invalid Parquet schema: root element must be REQUIRED");
   DWIO_ENSURE(
       fileMetaData_->schema[0].num_children > 0,
@@ -132,7 +113,7 @@ void ReaderBase::initializeSchema() {
   uint32_t maxSchemaElementIdx = fileMetaData_->schema.size() - 1;
   schemaWithId_ = getParquetColumnInfo(
       maxSchemaElementIdx, maxRepeat, maxDefine, schemaIdx, columnIdx);
-  schema_ = createRowType(schemaWithId_->children());
+  schema_ = createRowType(schemaWithId_->getChildren());
 }
 
 std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
@@ -140,21 +121,21 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
     uint32_t maxRepeat,
     uint32_t maxDefine,
     uint32_t& schemaIdx,
-    uint32_t& columnIdx) {
+    uint32_t& columnIdx) const {
   DWIO_ENSURE(fileMetaData_ != nullptr);
   DWIO_ENSURE(schemaIdx < fileMetaData_->schema.size());
 
   auto& schema = fileMetaData_->schema;
   uint32_t curSchemaIdx = schemaIdx;
   auto& schemaElement = schema[curSchemaIdx];
-  //  schemaIdx++;
 
   if (schemaElement.__isset.repetition_type) {
-    if (schemaElement.repetition_type != FieldRepetitionType::REQUIRED) {
+    if (schemaElement.repetition_type !=
+        thrift::FieldRepetitionType::REQUIRED) {
       maxDefine++;
-      //      printf("%s, %d", schemaElement.name.c_str(), maxDefine);
     }
-    if (schemaElement.repetition_type == FieldRepetitionType::REPEATED) {
+    if (schemaElement.repetition_type ==
+        thrift::FieldRepetitionType::REPEATED) {
       maxRepeat++;
     }
   }
@@ -175,9 +156,9 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
 
     if (schemaElement.__isset.converted_type) {
       switch (schemaElement.converted_type) {
-        case ConvertedType::LIST:
-        case ConvertedType::MAP: {
-          auto element = children[0]->children();
+        case thrift::ConvertedType::LIST:
+        case thrift::ConvertedType::MAP: {
+          auto element = children[0]->getChildren();
           DWIO_ENSURE(children.size() == 1);
           return std::make_shared<const ParquetTypeWithId>(
               children[0]->type,
@@ -190,9 +171,10 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               maxRepeat,
               maxDefine);
         }
-        case ConvertedType::MAP_KEY_VALUE: // child of MAP
+        case thrift::ConvertedType::MAP_KEY_VALUE: // child of MAP
           DWIO_ENSURE(
-              schemaElement.repetition_type == FieldRepetitionType::REPEATED);
+              schemaElement.repetition_type ==
+              thrift::FieldRepetitionType::REPEATED);
           DWIO_ENSURE(children.size() == 2);
           return std::make_shared<const ParquetTypeWithId>(
               TypeFactory<TypeKind::MAP>::create(
@@ -211,7 +193,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               schemaElement.converted_type);
       }
     } else {
-      if (schemaElement.repetition_type == FieldRepetitionType::REPEATED) {
+      if (schemaElement.repetition_type ==
+          thrift::FieldRepetitionType::REPEATED) {
         // child of LIST: "bag"
         DWIO_ENSURE(children.size() == 1);
         return std::make_shared<ParquetTypeWithId>(
@@ -260,7 +243,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             precision,
             scale);
 
-    if (schemaElement.repetition_type == FieldRepetitionType::REPEATED) {
+    if (schemaElement.repetition_type ==
+        thrift::FieldRepetitionType::REPEATED) {
       // Array
       children.reserve(1);
       children.push_back(leafTypePtr);
@@ -280,100 +264,101 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
   }
 }
 
-TypePtr ReaderBase::convertType(const SchemaElement& schemaElement) {
+TypePtr ReaderBase::convertType(
+    const thrift::SchemaElement& schemaElement) const {
   DWIO_ENSURE(schemaElement.__isset.type && schemaElement.num_children == 0);
   DWIO_ENSURE(
-      schemaElement.type != Type::FIXED_LEN_BYTE_ARRAY ||
+      schemaElement.type != thrift::Type::FIXED_LEN_BYTE_ARRAY ||
           schemaElement.__isset.type_length,
       "FIXED_LEN_BYTE_ARRAY requires length to be set");
 
   if (schemaElement.__isset.converted_type) {
     switch (schemaElement.converted_type) {
-      case ConvertedType::INT_8:
+      case thrift::ConvertedType::INT_8:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "INT8 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "INT8 converted type can only be set for value of thrift::Type::INT32");
         return TINYINT();
 
-      case ConvertedType::INT_16:
+      case thrift::ConvertedType::INT_16:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "INT16 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "INT16 converted type can only be set for value of thrift::Type::INT32");
         return SMALLINT();
 
-      case ConvertedType::INT_32:
+      case thrift::ConvertedType::INT_32:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "INT32 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "INT32 converted type can only be set for value of thrift::Type::INT32");
         return INTEGER();
 
-      case ConvertedType::INT_64:
+      case thrift::ConvertedType::INT_64:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32, // TODO: should this be INT64?
-            "INT64 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "INT64 converted type can only be set for value of thrift::Type::INT32");
         return BIGINT();
 
-      case ConvertedType::UINT_8:
+      case thrift::ConvertedType::UINT_8:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "UINT_8 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "UINT_8 converted type can only be set for value of thrift::Type::INT32");
         return TINYINT();
 
-      case ConvertedType::UINT_16:
+      case thrift::ConvertedType::UINT_16:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "UINT_16 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "UINT_16 converted type can only be set for value of thrift::Type::INT32");
         return SMALLINT();
 
-      case ConvertedType::UINT_32:
+      case thrift::ConvertedType::UINT_32:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "UINT_32 converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "UINT_32 converted type can only be set for value of thrift::Type::INT32");
         return INTEGER();
 
-      case ConvertedType::UINT_64:
+      case thrift::ConvertedType::UINT_64:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT64,
-            "UINT_64 converted type can only be set for value of Type::INT64");
+            schemaElement.type == thrift::Type::INT64,
+            "UINT_64 converted type can only be set for value of thrift::Type::INT64");
         return TINYINT();
 
-      case ConvertedType::DATE:
+      case thrift::ConvertedType::DATE:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT32,
-            "DATE converted type can only be set for value of Type::INT32");
+            schemaElement.type == thrift::Type::INT32,
+            "DATE converted type can only be set for value of thrift::Type::INT32");
         return DATE();
 
-      case ConvertedType::TIMESTAMP_MICROS:
-      case ConvertedType::TIMESTAMP_MILLIS:
+      case thrift::ConvertedType::TIMESTAMP_MICROS:
+      case thrift::ConvertedType::TIMESTAMP_MILLIS:
         DWIO_ENSURE(
-            schemaElement.type == Type::INT64,
-            "TIMESTAMP_MICROS or TIMESTAMP_MILLIS converted type can only be set for value of Type::INT64");
+            schemaElement.type == thrift::Type::INT64,
+            "TIMESTAMP_MICROS or TIMESTAMP_MILLIS converted type can only be set for value of thrift::Type::INT64");
         return TIMESTAMP();
 
-      case ConvertedType::DECIMAL:
+      case thrift::ConvertedType::DECIMAL:
         DWIO_ENSURE(
             !schemaElement.__isset.precision || !schemaElement.__isset.scale,
             "DECIMAL requires a length and scale specifier!");
         VELOX_UNSUPPORTED("Decimal type is not supported yet");
 
-      case ConvertedType::UTF8:
+      case thrift::ConvertedType::UTF8:
         switch (schemaElement.type) {
-          case Type::BYTE_ARRAY:
-          case Type::FIXED_LEN_BYTE_ARRAY:
+          case thrift::Type::BYTE_ARRAY:
+          case thrift::Type::FIXED_LEN_BYTE_ARRAY:
             return VARCHAR();
           default:
             DWIO_RAISE(
-                "UTF8 converted type can only be set for Type::(FIXED_LEN_)BYTE_ARRAY");
+                "UTF8 converted type can only be set for thrift::Type::(FIXED_LEN_)BYTE_ARRAY");
         }
-      case ConvertedType::MAP:
-      case ConvertedType::MAP_KEY_VALUE:
-      case ConvertedType::LIST:
-      case ConvertedType::ENUM:
-      case ConvertedType::TIME_MILLIS:
-      case ConvertedType::TIME_MICROS:
-      case ConvertedType::JSON:
-      case ConvertedType::BSON:
-      case ConvertedType::INTERVAL:
+      case thrift::ConvertedType::MAP:
+      case thrift::ConvertedType::MAP_KEY_VALUE:
+      case thrift::ConvertedType::LIST:
+      case thrift::ConvertedType::ENUM:
+      case thrift::ConvertedType::TIME_MILLIS:
+      case thrift::ConvertedType::TIME_MICROS:
+      case thrift::ConvertedType::JSON:
+      case thrift::ConvertedType::BSON:
+      case thrift::ConvertedType::INTERVAL:
       default:
         DWIO_RAISE(
             "Unsupported Parquet SchemaElement converted type: ",
@@ -381,20 +366,20 @@ TypePtr ReaderBase::convertType(const SchemaElement& schemaElement) {
     }
   } else {
     switch (schemaElement.type) {
-      case parquet::Type::type::BOOLEAN:
+      case thrift::Type::type::BOOLEAN:
         return BOOLEAN();
-      case parquet::Type::type::INT32:
+      case thrift::Type::type::INT32:
         return INTEGER();
-      case parquet::Type::type::INT64:
+      case thrift::Type::type::INT64:
         return BIGINT();
-      case parquet::Type::type::INT96:
+      case thrift::Type::type::INT96:
         return DOUBLE(); // TODO: Lose precision
-      case parquet::Type::type::FLOAT:
+      case thrift::Type::type::FLOAT:
         return REAL();
-      case parquet::Type::type::DOUBLE:
+      case thrift::Type::type::DOUBLE:
         return DOUBLE();
-      case parquet::Type::type::BYTE_ARRAY:
-      case parquet::Type::type::FIXED_LEN_BYTE_ARRAY:
+      case thrift::Type::type::BYTE_ARRAY:
+      case thrift::Type::type::FIXED_LEN_BYTE_ARRAY:
         if (binaryAsString) {
           return VARCHAR();
         } else {
@@ -405,19 +390,6 @@ TypePtr ReaderBase::convertType(const SchemaElement& schemaElement) {
         DWIO_RAISE("Unknown Parquet SchemaElement type: ", schemaElement.type);
     }
   }
-}
-
-const uint64_t ReaderBase::getFileNumRows() const {
-  return fileMetaData_->num_rows;
-}
-
-const std::shared_ptr<const RowType>& ReaderBase::getSchema() const {
-  return schema_;
-}
-
-const std::shared_ptr<const dwio::common::TypeWithId>&
-ReaderBase::getSchemaWithId() {
-  return schemaWithId_;
 }
 
 std::shared_ptr<const RowType> ReaderBase::createRowType(
@@ -469,7 +441,7 @@ int64_t ReaderBase::rowGroupUncompressedSize(
         .meta_data.total_uncompressed_size;
   }
   int64_t sum = 0;
-  for (auto child : type.children()) {
+  for (auto child : type.getChildren()) {
     sum += rowGroupUncompressedSize(rowGroupIndex, *child);
   }
   return sum;
@@ -481,7 +453,7 @@ ParquetRowReader::ParquetRowReader(
     : pool_(readerBase->getMemoryPool()),
       readerBase_(readerBase),
       options_(options),
-      rowGroups_(readerBase_->getFileMetaData().row_groups),
+      rowGroups_(readerBase_->fileMetaData().row_groups),
       currentRowGroupIdsIdx_(0),
       currentRowGroupPtr_(&rowGroups_[currentRowGroupIdsIdx_]),
       rowsInCurrentRowGroup_(currentRowGroupPtr_->num_rows),
@@ -493,8 +465,8 @@ ParquetRowReader::ParquetRowReader(
         "Input Stream Name: {},\n"
         "File Footer Schema (without partition columns): {},\n"
         "Input Table Schema (with partition columns): {}\n",
-        readerBase_->getStream().getName(),
-        readerBase_->getSchema()->toString(),
+        readerBase_->stream().getName(),
+        readerBase_->schema()->toString(),
         requestedType_->toString());
     return exceptionMessageContext;
   };
@@ -502,10 +474,10 @@ ParquetRowReader::ParquetRowReader(
   if (rowGroups_.empty()) {
     return; // TODO
   }
-  ParquetParams params(pool_, readerBase_->getFileMetaData());
+  ParquetParams params(pool_, readerBase_->fileMetaData());
 
   columnReader_ = ParquetColumnReader::build(
-      readerBase_->getSchemaWithId(), // Id is schema id
+      readerBase_->schemaWithId(), // Id is schema id
       params,
       *options_.getScanSpec());
 
@@ -515,7 +487,7 @@ ParquetRowReader::ParquetRowReader(
 //
 void ParquetRowReader::filterRowGroups() {
   auto scanSpec = options_.getScanSpec();
-  auto rowGroups = readerBase_->getFileMetaData().row_groups;
+  auto rowGroups = readerBase_->fileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
   auto excluded =
       columnReader_->filterRowGroups(0, dwio::common::StatsContext());
@@ -578,7 +550,7 @@ std::optional<size_t> ParquetRowReader::estimatedRowSize() const {
   auto index =
       currentRowGroupIdsIdx_ < 1 ? 0 : rowGroupIds_[currentRowGroupIdsIdx_ - 1];
   return readerBase_->rowGroupUncompressedSize(
-             index, *readerBase_->getSchemaWithId()) /
+             index, *readerBase_->schemaWithId()) /
       rowsInCurrentRowGroup_;
 }
 

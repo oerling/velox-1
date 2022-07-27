@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "ParquetThriftTypes.h"
 #include "velox/dwio/common/TypeWithId.h"
+#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {
 
@@ -31,7 +31,7 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
       uint32_t maxId,
       uint32_t column,
       std::string name,
-      std::optional<parquet::Type::type> parquetType,
+      std::optional<thrift::Type::type> parquetType,
       uint32_t maxRepeat,
       uint32_t maxDefine,
       int32_t precision = 0,
@@ -47,7 +47,7 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
         typeLength_(typeLength) {}
 
   const std::string name_;
-  const std::optional<parquet::Type::type> parquetType_;
+  const std::optional<thrift::Type::type> parquetType_;
   const uint32_t maxRepeat_;
   const uint32_t maxDefine_;
   const int32_t precision_;
@@ -56,5 +56,4 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
 };
 
 using ParquetTypeWithIdPtr = std::shared_ptr<const ParquetTypeWithId>;
-
 } // namespace facebook::velox::parquet

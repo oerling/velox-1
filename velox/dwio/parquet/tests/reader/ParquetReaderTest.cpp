@@ -14,25 +14,18 @@
  * limitations under the License.
  */
 
-//
-// Created by Ying Su on 2/27/22.
-//
-#include "velox/dwio/parquet/reader/NativeParquetReader.h"
-#include "ParquetReaderTest.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/dwio/dwrf/test/utils/FilterGenerator.h"
+#include "velox/dwio/parquet/reader/ParquetReader.h"
+#include "velox/dwio/parquet/tests/ParquetReaderTestBase.h"
 
-using namespace facebook::velox::parquet;
 using namespace facebook::velox;
-using namespace connector::hive;
+using namespace facebook::velox::common;
+using namespace facebook::velox::dwio::common;
+using namespace facebook::velox::dwio::parquet;
+using namespace facebook::velox::parquet;
 
-std::unique_ptr<common::ScanSpec> makeScanSpec(
-    const SubfieldFilters& filters,
-    const std::shared_ptr<const RowType>& rowType);
+class ParquetReaderTest : public ParquetReaderTestBase {};
 
-class NativeParquetReaderTest : public ParquetReaderTest {};
-
-TEST_F(NativeParquetReaderTest, readBigint) {
+TEST_F(ParquetReaderTest, parseSample) {
   // sample.parquet holds two columns (a: BIGINT, b: DOUBLE) and
   // 20 rows (10 rows per group). Group offsets are 153 and 614.
   // Data is in plain uncompressed format:
@@ -41,9 +34,8 @@ TEST_F(NativeParquetReaderTest, readBigint) {
   const std::string sample(getExampleFilePath("sample.parquet"));
 
   ReaderOptions readerOptions;
-  NativeParquetReader reader(
+  ParquetReader reader(
       std::make_unique<FileInputStream>(sample), readerOptions);
-  //
   EXPECT_EQ(reader.numberOfRows(), 20ULL);
 
   auto type = reader.typeWithId();
@@ -54,24 +46,35 @@ TEST_F(NativeParquetReaderTest, readBigint) {
   EXPECT_EQ(col1->type->kind(), TypeKind::DOUBLE);
   EXPECT_EQ(type->childByName("a"), col0);
   EXPECT_EQ(type->childByName("b"), col1);
-
-  RowTypePtr rowType = ROW({"a"}, {BIGINT()});
-  auto filterGenerator =
-      std::make_unique<dwio::dwrf::FilterGenerator>(rowType, 1);
-  auto scanSpec = filterGenerator->makeScanSpec(SubfieldFilters{});
-  RowReaderOptions rowReaderOpts = getReaderOpts(rowType);
-  rowReaderOpts.setScanSpec(scanSpec);
-  auto rowReader = reader.createRowReader(rowReaderOpts);
-  auto expected = vectorMaker_->rowVector({rangeVector<int64_t>(20, 1)});
-  assertReadExpected(
-      rowType, *rowReader, expected, readerOptions.getMemoryPool());
 }
 
-TEST_F(NativeParquetReaderTest, readRowMap) {
-  const std::string sample(getExampleFilePath("tmp_row.parquet"));
+TEST_F(ParquetReaderTest, parseDate) {
+  // date.parquet holds a single column (date: DATE) and
+  // 25 rows.
+  // Data is in plain uncompressed format:
+  //   date: [1969-12-27 .. 1970-01-20]
+  const std::string sample(getExampleFilePath("date.parquet"));
 
   ReaderOptions readerOptions;
-  NativeParquetReader reader(
+  parquet::ParquetReader reader(
+      std::make_unique<FileInputStream>(sample), readerOptions);
+
+  EXPECT_EQ(reader.numberOfRows(), 25ULL);
+
+  auto type = reader.typeWithId();
+  EXPECT_EQ(type->size(), 1ULL);
+  auto col0 = type->childAt(0);
+  EXPECT_EQ(col0->type->kind(), TypeKind::DATE);
+  EXPECT_EQ(type->childByName("date"), col0);
+}
+
+TEST_F(ParquetReaderTest, parseRowMapArray) {
+  // sample.parquet holds one row of type (ROW(BIGINT c0, MAP(VARCHAR,
+  // ARRAY(INTEGER)) c1) c)
+  const std::string sample(getExampleFilePath("row_map_array.parquet"));
+
+  ReaderOptions readerOptions;
+  parquet::ParquetReader reader(
       std::make_unique<FileInputStream>(sample), readerOptions);
 
   EXPECT_EQ(reader.numberOfRows(), 1ULL);
@@ -93,4 +96,10 @@ TEST_F(NativeParquetReaderTest, readRowMap) {
 
   auto col0_1_0 = col0_1->childAt(0);
   EXPECT_EQ(col0_1_0->type->kind(), TypeKind::VARCHAR);
+
+  auto col0_1_1 = col0_1->childAt(1);
+  EXPECT_EQ(col0_1_1->type->kind(), TypeKind::ARRAY);
+
+  auto col0_1_1_0 = col0_1_1->childAt(0);
+  EXPECT_EQ(col0_1_1_0->type->kind(), TypeKind::INTEGER);
 }

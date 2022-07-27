@@ -15,7 +15,7 @@
  */
 
 #include "velox/common/file/FileSystems.h"
-#include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+#include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/RowContainer.h"
@@ -764,10 +764,16 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
           .customStats.at("flushRowCount")
           .sum,
       0);
+  EXPECT_GT(
+      toPlanStats(task->taskStats())
+          .at(aggNodeId)
+          .customStats.at("flushRowCount")
+          .max,
+      0);
 
   // Count aggregation.
   task = AssertQueryBuilder(duckDbQueryRunner_)
-             .config(core::QueryConfig::kMaxPartialAggregationMemory, "100")
+             .config(core::QueryConfig::kMaxPartialAggregationMemory, "1")
              .plan(PlanBuilder()
                        .values(vectors)
                        .partialAggregation({"c0"}, {"count(1)"})
@@ -781,6 +787,28 @@ TEST_F(AggregationTest, partialAggregationMemoryLimit) {
           .customStats.at("flushRowCount")
           .count,
       0);
+  EXPECT_GT(
+      toPlanStats(task->taskStats())
+          .at(aggNodeId)
+          .customStats.at("flushRowCount")
+          .max,
+      0);
+
+  // Global aggregation.
+  task = AssertQueryBuilder(duckDbQueryRunner_)
+             .config(core::QueryConfig::kMaxPartialAggregationMemory, "1")
+             .plan(PlanBuilder()
+                       .values(vectors)
+                       .partialAggregation({}, {"sum(c0)"})
+                       .capturePlanNodeId(aggNodeId)
+                       .finalAggregation()
+                       .planNode())
+             .assertResults("SELECT sum(c0) FROM tmp");
+  EXPECT_EQ(
+      0,
+      toPlanStats(task->taskStats())
+          .at(aggNodeId)
+          .customStats.count("flushRowCount"));
 }
 
 // Validates partial aggregate output types for SUM/MIN/MAX.

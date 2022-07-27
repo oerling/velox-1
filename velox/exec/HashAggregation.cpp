@@ -159,7 +159,10 @@ void HashAggregation::addInput(RowVectorPtr input) {
   stats_.spilledBytes = spilled.first;
   stats_.spilledRows = spilled.second;
 
-  if (isPartialOutput_ &&
+  // NOTE: we should not trigger partial output flush in case of global
+  // aggregation as the final aggregator will handle it the same way as the
+  // partial aggregator. Hence, we have to use more memory anyway.
+  if (isPartialOutput_ && !isGlobal_ &&
       groupingSet_->allocatedBytes() > maxPartialAggregationMemoryUsage_) {
     partialFull_ = true;
   }
@@ -185,13 +188,15 @@ void HashAggregation::prepareOutput(vector_size_t size) {
   }
 }
 
-void HashAggregation::flushPartialOutputIfNeed() {
-  if (partialFull_) {
-    stats().addRuntimeStat(
-        "flushRowCount", RuntimeCounter(groupingSet_->numRows()));
-    groupingSet_->resetPartial();
-    partialFull_ = false;
+void HashAggregation::resetPartialOutputIfNeed() {
+  if (!partialFull_) {
+    return;
   }
+  VELOX_DCHECK(!isGlobal_);
+  stats().addRuntimeStat("flushRowCount", RuntimeCounter(numOutputRows_));
+  groupingSet_->resetPartial();
+  partialFull_ = false;
+  numOutputRows_ = 0;
 }
 
 RowVectorPtr HashAggregation::getOutput() {
@@ -226,12 +231,13 @@ RowVectorPtr HashAggregation::getOutput() {
     std::copy(lookup.newGroups.begin(), lookup.newGroups.end(), indicesPtr);
     newDistincts_ = false;
     auto output = fillOutput(size, indices);
+    numOutputRows_ += size;
 
     // Drop reference to input_ to make it singly-referenced at the producer and
     // allow for memory reuse.
     input_ = nullptr;
 
-    flushPartialOutputIfNeed();
+    resetPartialOutputIfNeed();
     return output;
   }
 
@@ -243,14 +249,14 @@ RowVectorPtr HashAggregation::getOutput() {
   bool hasData = groupingSet_->getOutput(batchSize, resultIterator_, output_);
   if (!hasData) {
     resultIterator_.reset();
-
-    flushPartialOutputIfNeed();
+    resetPartialOutputIfNeed();
 
     if (noMoreInput_) {
       finished_ = true;
     }
     return nullptr;
   }
+  numOutputRows_ += output_->size();
   return output_;
 }
 

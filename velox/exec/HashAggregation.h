@@ -53,7 +53,10 @@ class HashAggregation : public Operator {
 
  private:
   void prepareOutput(vector_size_t size);
-  void flushPartialOutputIfNeed();
+
+  /// Invoked to reset partial aggregation state if it was full and has been
+  /// flushed.
+  void resetPartialOutputIfNeed();
 
   /// Maximum number of rows in the output batch.
   const uint32_t outputBatchSize_;
@@ -72,6 +75,10 @@ class HashAggregation : public Operator {
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;
   bool mayPushdown_ = false;
+
+  /// Count the number of output rows. It is reset on partial aggregation output
+  /// flush.
+  int64_t numOutputRows_ = 0;
 
   /// Possibly reusable output vector.
   RowVectorPtr output_;

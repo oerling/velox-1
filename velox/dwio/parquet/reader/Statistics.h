@@ -17,7 +17,7 @@
 #pragma once
 
 #include "velox/dwio/common/Statistics.h"
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
+#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 #include "velox/type/Type.h"
 
 namespace facebook::velox::parquet {
@@ -32,7 +32,7 @@ inline const T load(const char* ptr) {
 }
 
 template <typename T>
-inline std::optional<T> getMin(const Statistics& columnChunkStats) {
+inline std::optional<T> getMin(const thrift::Statistics& columnChunkStats) {
   return columnChunkStats.__isset.min_value
       ? load<T>(columnChunkStats.min_value.c_str())
       : (columnChunkStats.__isset.min
@@ -41,7 +41,7 @@ inline std::optional<T> getMin(const Statistics& columnChunkStats) {
 }
 
 template <typename T>
-inline std::optional<T> getMax(const Statistics& columnChunkStats) {
+inline std::optional<T> getMax(const thrift::Statistics& columnChunkStats) {
   return columnChunkStats.__isset.max_value
       ? std::optional<T>(load<T>(columnChunkStats.max_value.c_str()))
       : (columnChunkStats.__isset.max
@@ -50,7 +50,7 @@ inline std::optional<T> getMax(const Statistics& columnChunkStats) {
 }
 
 std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
-    const Statistics& columnChunkStats,
+    const thrift::Statistics& columnChunkStats,
     const velox::Type& type,
     uint64_t numRowsInRowGroup);
 

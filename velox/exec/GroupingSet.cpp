@@ -295,12 +295,11 @@ void GroupingSet::initializeGlobalAggregation() {
     ++nullOffset;
   }
 
-  auto singleGroup = std::vector<vector_size_t>{0};
   lookup_->hits[0] = rows_.allocateFixed(offset);
+  const auto singleGroup = std::vector<vector_size_t>{0};
   for (auto& aggregate : aggregates_) {
     aggregate->initializeNewGroups(lookup_->hits.data(), singleGroup);
   }
-
   globalAggregationInitialized_ = true;
 }
 
@@ -441,7 +440,7 @@ void GroupingSet::extractGroups(
 }
 
 void GroupingSet::resetPartial() {
-  if (table_) {
+  if (table_ != nullptr) {
     table_->clear();
   }
 }

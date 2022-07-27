@@ -24,7 +24,7 @@ using velox::TypeKind;
 
 TypeWithId::TypeWithId(
     std::shared_ptr<const Type> type,
-    const std::vector<std::shared_ptr<const TypeWithId>>&& children,
+    std::vector<std::shared_ptr<const TypeWithId>>&& children,
     uint32_t id,
     uint32_t maxId,
     uint32_t column)

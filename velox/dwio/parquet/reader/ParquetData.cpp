@@ -19,6 +19,8 @@
 
 namespace facebook::velox::parquet {
 
+using thrift::RowGroup;
+
 std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
     const common::ScanSpec& /*scanSpec*/) {
@@ -95,7 +97,7 @@ dwio::common::PositionProvider ParquetData::seekToRowGroup(uint32_t index) {
   VELOX_CHECK_LT(index, streams_.size());
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
   auto& metadata = rowGroups_[index].columns[type_->column].meta_data;
-  decoder_ = std::make_unique<PageDecoder>(
+  decoder_ = std::make_unique<PageReader>(
       std::move(streams_[index]),
       pool_,
       type_,

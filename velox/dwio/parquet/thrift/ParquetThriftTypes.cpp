@@ -21,14 +21,13 @@
  *  @generated
  */
 #include "ParquetThriftTypes.h"
-//#include "ThriftTransport.h"
 
 #include <algorithm>
 #include <ostream>
 
 #include <thrift/TToString.h>
 
-namespace facebook::velox::parquet {
+namespace facebook::velox::parquet::thrift {
 
 int _kTypeValues[] = {
     Type::BOOLEAN,
@@ -7825,4 +7824,4 @@ void FileCryptoMetaData::printTo(std::ostream& out) const {
   (__isset.key_metadata ? (out << to_string(key_metadata)) : (out << "<null>"));
   out << ")";
 }
-} // namespace facebook::velox::parquet
+} // namespace facebook::velox::parquet::thrift

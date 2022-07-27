@@ -39,24 +39,24 @@ namespace {
 // encoding, either FLAT or CONSTANT. Subsequent elements add a wrapper, e.g.
 // DICTIONARY, SEQUENCE or CONSTANT.
 struct EncodingOptions {
-  VectorEncoding::Simple encoding;
+  const VectorEncoding::Simple encoding;
 
   // Specifies the count of values for a FLAT, DICTIONARY or SEQUENCE.
-  int32_t cardinality;
+  const int32_t cardinality;
 
   // Specifies the frequency of nulls added by a DICTIONARY wrapper. 0 means
   // no nulls are added, n means positions divisible by n have a null.
-  int32_t nullFrequency = 0;
+  const int32_t nullFrequency = 0;
 
   // Allows making two dictionaries with the same indices array.
-  BufferPtr indices = nullptr;
+  const BufferPtr indices = nullptr;
 
   // If wrapping vector inside a CONSTANT, specifies the element of the
   // wrapped vector which gives the constant value.
-  int32_t constantIndex = 0;
+  const int32_t constantIndex = 0;
 
-  static EncodingOptions flat(int32_t cardinality, int32_t nullFrequency) {
-    return {VectorEncoding::Simple::FLAT, cardinality, nullFrequency};
+  static EncodingOptions flat(int32_t cardinality) {
+    return {VectorEncoding::Simple::FLAT, cardinality};
   }
 
   static EncodingOptions dictionary(
@@ -139,32 +139,30 @@ class ExprTest : public testing::Test, public VectorTestBase {
         rawIndices[i] = 10 + (i % 80);
       }
     }
-    testEncodings_.push_back({EncodingOptions::flat(kTestSize, 2)});
+    testEncodings_.push_back({EncodingOptions::flat(kTestSize)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
+        {EncodingOptions::flat(100),
          EncodingOptions::dictionary(kTestSize, indices)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
+        {EncodingOptions::flat(100),
          EncodingOptions::dictionary(kTestSize, 0)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
-         EncodingOptions::constant(kTestSize, 3)});
+        {EncodingOptions::flat(100), EncodingOptions::constant(kTestSize, 3)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
-         EncodingOptions::constant(kTestSize, 7)});
+        {EncodingOptions::flat(100), EncodingOptions::constant(kTestSize, 7)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
+        {EncodingOptions::flat(100),
          EncodingOptions::sequence(10),
          EncodingOptions::dictionary(kTestSize, 6)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
+        {EncodingOptions::flat(100),
          EncodingOptions::dictionary(kTestSize, 6)});
     // A dictionary that masks everything as null.
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
+        {EncodingOptions::flat(100),
          EncodingOptions::dictionary(kTestSize, 1)});
     testEncodings_.push_back(
-        {EncodingOptions::flat(100, 2),
+        {EncodingOptions::flat(100),
          EncodingOptions::dictionary(1000, 0),
          EncodingOptions::sequence(10)});
   }
@@ -229,7 +227,6 @@ class ExprTest : public testing::Test, public VectorTestBase {
     VectorPtr current;
     for (auto& option : options) {
       int32_t cardinality = option.cardinality;
-      auto nullFrequency = option.nullFrequency;
       switch (option.encoding) {
         case VectorEncoding::Simple::FLAT: {
           VELOX_CHECK(!current, "A flat vector must be in a leaf position");
@@ -269,6 +266,8 @@ class ExprTest : public testing::Test, public VectorTestBase {
                 cardinality, execCtx_->pool());
             auto rawIndices = indices->asMutable<vector_size_t>();
             uint64_t* rawNulls = nullptr;
+
+            auto nullFrequency = option.nullFrequency;
             if (nullFrequency && !nulls) {
               nulls = AlignedBuffer::allocate<bool>(
                   cardinality, execCtx_->pool(), bits::kNotNull);
@@ -480,6 +479,9 @@ class ExprTest : public testing::Test, public VectorTestBase {
     exprs_.reset();
   }
 
+  /// Evaluates 'text' expression on 'testDataRow()' twice. First, evaluates the
+  /// expression on the first 2/3 of the rows. Then, evaluates the expression on
+  /// the last 1/3 of the rows.
   template <typename T>
   void run(
       const std::string& text,
@@ -575,56 +577,6 @@ class ExprTest : public testing::Test, public VectorTestBase {
         std::make_shared<ConstantVector<T>>(execCtx_->pool(), 1, index, base));
   }
 
-  VectorPtr makeConstantVector(variant value, vector_size_t size) {
-    return BaseVector::createConstant(value, size, execCtx_->pool());
-  }
-
-  template <typename T>
-  FlatVectorPtr<T> makeFlatVector(const std::vector<T>& data) {
-    return vectorMaker_->flatVector<T>(data);
-  }
-
-  template <typename T>
-  FlatVectorPtr<T> makeFlatVector(
-      vector_size_t size,
-      std::function<T(vector_size_t /*row*/)> valueAt,
-      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
-    return vectorMaker_->flatVector<T>(size, valueAt, isNullAt);
-  }
-
-  FlatVectorPtr<StringView> makeFlatVector(
-      const std::vector<std::string>& data) {
-    return vectorMaker_->flatVector(data);
-  }
-
-  template <typename T>
-  FlatVectorPtr<T> makeAllNullFlatVector(vector_size_t size) {
-    return vectorMaker_->allNullFlatVector<T>(size);
-  }
-
-  RowVectorPtr makeRowVector(const std::vector<VectorPtr>& children) {
-    return vectorMaker_->rowVector(children);
-  }
-
-  template <typename T>
-  ArrayVectorPtr makeArrayVector(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
-      std::function<T(vector_size_t /* idx */)> valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
-    return vectorMaker_->arrayVector(size, sizeAt, valueAt, isNullAt);
-  }
-
-  template <typename T>
-  ArrayVectorPtr makeArrayVector(
-      vector_size_t size,
-      std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
-      std::function<T(vector_size_t /* idx */, vector_size_t /*index */)>
-          valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
-    return vectorMaker_->arrayVector(size, sizeAt, valueAt, isNullAt);
-  }
-
   // Create LazyVector that produces a flat vector and asserts that is is being
   // loaded for a specific set of rows.
   template <typename T>
@@ -644,7 +596,7 @@ class ExprTest : public testing::Test, public VectorTestBase {
           for (auto i = 0; i < rows.size(); i++) {
             VELOX_CHECK_EQ(rows[i], expectedRowAt(i));
           }
-          return vectorMaker_->flatVector<T>(size, valueAt, isNullAt);
+          return vectorMaker_.flatVector<T>(size, valueAt, isNullAt);
         }));
   }
 
@@ -654,46 +606,10 @@ class ExprTest : public testing::Test, public VectorTestBase {
         vector->type(),
         vector->size(),
         std::make_unique<SimpleVectorLoader>([=](RowSet /*rows*/) {
-          auto indices = makeIndices(
-              vector->size(), [](vector_size_t row) { return row; });
-          return BaseVector::wrapInDictionary(
-              nullptr, indices, vector->size(), vector);
+          auto indices =
+              makeIndices(vector->size(), [](auto row) { return row; });
+          return wrapInDictionary(indices, vector->size(), vector);
         }));
-  }
-
-  static std::function<bool(vector_size_t /*row*/)> nullEvery(
-      int n,
-      int startingFrom = 0) {
-    return test::VectorMaker::nullEvery(n, startingFrom);
-  }
-
-  static VectorPtr
-  wrapInDictionary(BufferPtr indices, vector_size_t size, VectorPtr vector) {
-    return BaseVector::wrapInDictionary(
-        BufferPtr(nullptr), std::move(indices), size, std::move(vector));
-  }
-
-  BufferPtr makeIndices(
-      vector_size_t size,
-      const std::function<vector_size_t(vector_size_t)>& indexAt) const {
-    BufferPtr indices =
-        AlignedBuffer::allocate<vector_size_t>(size, execCtx_->pool());
-    auto rawIndices = indices->asMutable<vector_size_t>();
-    for (int i = 0; i < size; i++) {
-      rawIndices[i] = indexAt(i);
-    }
-    return indices;
-  }
-
-  BufferPtr makeIndices(const std::vector<vector_size_t>& indices) const {
-    auto size = indices.size();
-    BufferPtr indicesBuffer =
-        AlignedBuffer::allocate<vector_size_t>(size, execCtx_->pool());
-    auto rawIndices = indicesBuffer->asMutable<vector_size_t>();
-    for (int i = 0; i < size; i++) {
-      rawIndices[i] = indices[i];
-    }
-    return indicesBuffer;
   }
 
   void assertError(
@@ -713,12 +629,8 @@ class ExprTest : public testing::Test, public VectorTestBase {
   }
 
   std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
-  std::unique_ptr<memory::MemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
   std::unique_ptr<core::ExecCtx> execCtx_{
       std::make_unique<core::ExecCtx>(pool_.get(), queryCtx_.get())};
-  std::unique_ptr<test::VectorMaker> vectorMaker_{
-      std::make_unique<test::VectorMaker>(pool_.get())};
   TestData testData_;
   RowTypePtr testDataType_;
   std::unique_ptr<exec::ExprSet> exprs_;
@@ -734,7 +646,7 @@ class ExprTest : public testing::Test, public VectorTestBase {
 
 TEST_F(ExprTest, encodings) {
   // This test throws a lot of exceptions, so turn off stack trace capturing.
-  FLAGS_velox_exception_stacktrace = false;
+  FLAGS_velox_exception_user_stacktrace_enabled = false;
   int32_t counter = 0;
   for (auto& encoding1 : testEncodings_) {
     fillVectorAndReference<int64_t>(
@@ -819,7 +731,7 @@ TEST_F(ExprTest, encodings) {
 
 TEST_F(ExprTest, encodingsOverLazy) {
   // This test throws a lot of exceptions, so turn off stack trace capturing.
-  FLAGS_velox_exception_stacktrace = false;
+  FLAGS_velox_exception_user_stacktrace_enabled = false;
   int32_t counter = 0;
   for (auto& encoding1 : testEncodings_) {
     fillVectorAndReference<int64_t>(
@@ -908,7 +820,7 @@ TEST_F(ExprTest, moreEncodings) {
   const vector_size_t size = 1'000;
   std::vector<std::string> fruits = {"apple", "pear", "grapes", "pineapple"};
   VectorPtr a = makeFlatVector<int64_t>(size, [](auto row) { return row; });
-  VectorPtr b = vectorMaker_->flatVector(fruits);
+  VectorPtr b = vectorMaker_.flatVector(fruits);
 
   // Wrap b in a dictionary.
   auto indices =
@@ -934,7 +846,7 @@ TEST_F(ExprTest, moreEncodings) {
 
 TEST_F(ExprTest, reorder) {
   constexpr int32_t kTestSize = 20000;
-  std::vector<EncodingOptions> encoding = {EncodingOptions::flat(kTestSize, 2)};
+  std::vector<EncodingOptions> encoding = {EncodingOptions::flat(kTestSize)};
   fillVectorAndReference<int64_t>(
       encoding,
       [](int32_t row) { return std::optional(static_cast<int64_t>(row)); },
@@ -994,7 +906,7 @@ TEST_F(ExprTest, constantNull) {
       "plus");
 
   // Execute it and check it returns all null results.
-  auto vector = vectorMaker_->flatVectorNullable<int32_t>({1, std::nullopt, 3});
+  auto vector = vectorMaker_.flatVectorNullable<int32_t>({1, std::nullopt, 3});
   auto rowVector = makeRowVector({vector});
   SelectivityVector rows(rowVector->size());
   std::vector<VectorPtr> result(1);
@@ -1003,7 +915,7 @@ TEST_F(ExprTest, constantNull) {
   exec::EvalCtx context(execCtx_.get(), &exprSet, rowVector.get());
   exprSet.eval(rows, &context, &result);
 
-  auto expected = vectorMaker_->flatVectorNullable<int32_t>(
+  auto expected = vectorMaker_.flatVectorNullable<int32_t>(
       {std::nullopt, std::nullopt, std::nullopt});
   assertEqualVectors(expected, result.front());
 }
@@ -1019,7 +931,7 @@ TEST_F(ExprTest, validateReturnType) {
       INTEGER(), std::vector<core::TypedExprPtr>{inputExpr, inputExpr}, "eq");
 
   // Execute it and check it returns all null results.
-  auto vector = vectorMaker_->flatVectorNullable<int32_t>({1, 2, 3});
+  auto vector = vectorMaker_.flatVectorNullable<int32_t>({1, 2, 3});
   auto rowVector = makeRowVector({vector});
   SelectivityVector rows(rowVector->size());
   std::vector<VectorPtr> result(1);
@@ -1085,7 +997,7 @@ TEST_F(ExprTest, constantArray) {
       std::make_unique<exec::ExprSet>(std::move(expressions), execCtx_.get());
 
   const vector_size_t size = 1'000;
-  auto input = vectorMaker_->rowVector(ROW({}), size);
+  auto input = vectorMaker_.rowVector(ROW({}), size);
   exec::EvalCtx context(execCtx_.get(), exprSet.get(), input.get());
 
   SelectivityVector rows(input->size());
@@ -1094,6 +1006,38 @@ TEST_F(ExprTest, constantArray) {
 
   ASSERT_TRUE(a->equalValueAt(result[0].get(), 3, 0));
   ASSERT_TRUE(b->equalValueAt(result[1].get(), 5, 0));
+}
+
+TEST_F(ExprTest, constantComplexNull) {
+  std::vector<core::TypedExprPtr> expressions = {
+      std::make_shared<const core::ConstantTypedExpr>(
+          ARRAY(BIGINT()), variant::null(TypeKind::ARRAY)),
+      std::make_shared<const core::ConstantTypedExpr>(
+          MAP(VARCHAR(), BIGINT()), variant::null(TypeKind::MAP)),
+      std::make_shared<const core::ConstantTypedExpr>(
+          ROW({SMALLINT(), BIGINT()}), variant::null(TypeKind::ROW))};
+  auto exprSet =
+      std::make_unique<exec::ExprSet>(std::move(expressions), execCtx_.get());
+
+  const vector_size_t size = 10;
+  auto input = makeRowVector(ROW({}), size);
+  exec::EvalCtx context(execCtx_.get(), exprSet.get(), input.get());
+
+  SelectivityVector rows(size);
+  std::vector<VectorPtr> result(3);
+  exprSet->eval(rows, &context, &result);
+
+  ASSERT_EQ(VectorEncoding::Simple::CONSTANT, result[0]->encoding());
+  ASSERT_EQ(TypeKind::ARRAY, result[0]->typeKind());
+  ASSERT_TRUE(result[0]->as<ConstantVector<ComplexType>>()->isNullAt(0));
+
+  ASSERT_EQ(VectorEncoding::Simple::CONSTANT, result[1]->encoding());
+  ASSERT_EQ(TypeKind::MAP, result[1]->typeKind());
+  ASSERT_TRUE(result[1]->as<ConstantVector<ComplexType>>()->isNullAt(0));
+
+  ASSERT_EQ(VectorEncoding::Simple::CONSTANT, result[2]->encoding());
+  ASSERT_EQ(TypeKind::ROW, result[2]->typeKind());
+  ASSERT_TRUE(result[2]->as<ConstantVector<ComplexType>>()->isNullAt(0));
 }
 
 TEST_F(ExprTest, constantScalarEquals) {
@@ -1221,7 +1165,7 @@ TEST_F(ExprTest, dictionaryAndConstantOverLazy) {
   auto isNullAt = [](vector_size_t row) { return row % 5 == 0; };
 
   const auto lazyVector =
-      vectorMaker_->lazyFlatVector<int32_t>(size, valueAt, isNullAt);
+      vectorMaker_.lazyFlatVector<int32_t>(size, valueAt, isNullAt);
   auto row = makeRowVector({lazyVector});
   auto result = evaluate("plus5(c0)", row);
 
@@ -1268,7 +1212,7 @@ TEST_F(ExprTest, vectorFunctionOnConstantInput) {
 
   auto row = makeRowVector(
       {makeFlatVector<int64_t>(size, [](auto row) { return row; }),
-       makeConstantVector(3, size)});
+       makeConstant(3, size)});
 
   VectorPtr expected = makeFlatVector<int32_t>(
       size, [](auto row) { return row > 5 ? 3 + 5 : 0; });
@@ -1276,7 +1220,7 @@ TEST_F(ExprTest, vectorFunctionOnConstantInput) {
   assertEqualVectors(expected, result);
 
   result = evaluate("is_null(c1)", row);
-  expected = makeConstantVector(false, size);
+  expected = makeConstant(false, size);
   assertEqualVectors(expected, result);
 }
 
@@ -1331,7 +1275,7 @@ TEST_F(ExprTest, nonDeterministicVectorFunctionOnConstantInput) {
       std::make_unique<PlusRandomIntegerFunction>());
 
   const vector_size_t size = 1'000;
-  auto row = makeRowVector({makeConstantVector(10, size)});
+  auto row = makeRowVector({makeConstant(10, size)});
 
   auto result = evaluate("plus_random(c0)", row);
 
@@ -1349,7 +1293,7 @@ TEST_F(ExprTest, nonDeterministicConstantFolding) {
       std::make_unique<PlusRandomIntegerFunction>());
 
   const vector_size_t size = 1'000;
-  auto emptyRow = vectorMaker_->rowVector(ROW({}, {}), size);
+  auto emptyRow = vectorMaker_.rowVector(ROW({}, {}), size);
 
   auto result = evaluate("plus_random(cast(23 as integer))", emptyRow);
 
@@ -1362,16 +1306,16 @@ TEST_F(ExprTest, nonDeterministicConstantFolding) {
 TEST_F(ExprTest, shortCircuit) {
   vector_size_t size = 4;
 
-  auto a = makeConstantVector(10, size);
+  auto a = makeConstant(10, size);
   auto b = makeFlatVector<int32_t>({-1, -2, -3, -4});
 
   auto result = evaluate("c0 > 0 OR c1 > 0", makeRowVector({a, b}));
-  auto expectedResult = makeConstantVector(true, size);
+  auto expectedResult = makeConstant(true, size);
 
   assertEqualVectors(expectedResult, result);
 
   result = evaluate("c0 < 0 AND c1 < 0", makeRowVector({a, b}));
-  expectedResult = makeConstantVector(false, size);
+  expectedResult = makeConstant(false, size);
 
   assertEqualVectors(expectedResult, result);
 }
@@ -1399,7 +1343,8 @@ TEST_F(ExprTest, cseEncodings) {
 
   auto indices = makeIndices({0, 0, 0, 1, 1});
   auto b = wrapInDictionary(indices, 5, makeFlatVector<int32_t>({11, 15}));
-  auto c = wrapInDictionary(indices, 5, makeFlatVector({"apple", "banana"}));
+  auto c = wrapInDictionary(
+      indices, 5, makeFlatVector<std::string>({"apple", "banana"}));
 
   auto results = evaluateMultiple(
       {"if (c0 > 0 AND c2 = 'apple', 10, 3)",
@@ -1461,16 +1406,18 @@ TEST_F(ExprTest, csePartialEvaluation) {
       std::make_unique<AddSuffixFunction>("_xx"));
 
   auto a = makeFlatVector<int32_t>({1, 2, 3, 4, 5});
-  auto b = makeFlatVector({"a", "b", "c", "d", "e"});
+  auto b = makeFlatVector<std::string>({"a", "b", "c", "d", "e"});
 
   auto results = evaluateMultiple(
       {"if (c0 >= 3, add_suffix(c1), 'n/a')", "add_suffix(c1)"},
       makeRowVector({a, b}));
 
-  auto expected = makeFlatVector({"n/a", "n/a", "c_xx", "d_xx", "e_xx"});
+  auto expected =
+      makeFlatVector<std::string>({"n/a", "n/a", "c_xx", "d_xx", "e_xx"});
   assertEqualVectors(expected, results[0]);
 
-  expected = makeFlatVector({"a_xx", "b_xx", "c_xx", "d_xx", "e_xx"});
+  expected =
+      makeFlatVector<std::string>({"a_xx", "b_xx", "c_xx", "d_xx", "e_xx"});
   assertEqualVectors(expected, results[1]);
 }
 
@@ -1532,7 +1479,7 @@ TEST_F(ExprTest, lazyVectors) {
 
   // Make LazyVector with no nulls
   auto valueAt = [](auto row) { return row; };
-  auto vector = vectorMaker_->lazyFlatVector<int64_t>(size, valueAt);
+  auto vector = vectorMaker_.lazyFlatVector<int64_t>(size, valueAt);
   auto row = makeRowVector({vector});
 
   auto result = evaluate("c0 + coalesce(c0, 1)", row);
@@ -1543,7 +1490,7 @@ TEST_F(ExprTest, lazyVectors) {
 
   // Make LazyVector with nulls
   auto isNullAt = [](auto row) { return row % 5 == 0; };
-  vector = vectorMaker_->lazyFlatVector<int64_t>(size, valueAt, isNullAt);
+  vector = vectorMaker_.lazyFlatVector<int64_t>(size, valueAt, isNullAt);
   row = makeRowVector({vector});
 
   result = evaluate("c0 + coalesce(c0, 1)", row);
@@ -1557,7 +1504,7 @@ TEST_F(ExprTest, lazyVectors) {
 TEST_F(ExprTest, lazyLoading) {
   const vector_size_t size = 1'000;
   VectorPtr vector =
-      vectorMaker_->flatVector<int64_t>(size, [](auto row) { return row % 5; });
+      vectorMaker_.flatVector<int64_t>(size, [](auto row) { return row % 5; });
   VectorPtr lazyVector = std::make_shared<LazyVector>(
       execCtx_->pool(),
       BIGINT(),
@@ -1588,7 +1535,7 @@ TEST_F(ExprTest, lazyLoading) {
 
   result = evaluate(
       "if(c0 = 10, c1 + 5, c0 - 5)", makeRowVector({vector, lazyVector}));
-  expected = vectorMaker_->flatVector<int64_t>(
+  expected = vectorMaker_.flatVector<int64_t>(
       size,
       [](auto row) { return (row / 2) % 5 - 5; },
       [](auto row) { return (row / 2) % 7 == 0; });
@@ -1816,21 +1763,21 @@ TEST_F(ExprTest, opaque) {
   OpaqueState::clearStats();
 
   fillVectorAndReference<int64_t>(
-      {EncodingOptions::flat(kRows, 2)},
+      {EncodingOptions::flat(kRows)},
       [](int32_t row) {
         return row % 7 == 0 ? std::nullopt
                             : std::optional(static_cast<int64_t>(row));
       },
       &testData_.bigint1);
   fillVectorAndReference<int64_t>(
-      {EncodingOptions::flat(kRows, 2)},
+      {EncodingOptions::flat(kRows)},
       [](int32_t row) {
         return (row % 11 == 0) ? std::nullopt
                                : std::optional(static_cast<int64_t>(row * 2));
       },
       &testData_.bigint2);
   fillVectorAndReference<std::shared_ptr<void>>(
-      {EncodingOptions::flat(1, 100), EncodingOptions::constant(kRows, 0)},
+      {EncodingOptions::flat(1), EncodingOptions::constant(kRows, 0)},
       [](int32_t) {
         return std::static_pointer_cast<void>(
             std::make_shared<OpaqueState>(123));
@@ -1887,11 +1834,11 @@ TEST_F(ExprTest, opaque) {
 
 TEST_F(ExprTest, switchExpr) {
   vector_size_t size = 1'000;
-  auto vector = makeRowVector({
-      makeFlatVector<int32_t>(size, [](auto row) { return row; }),
-      makeFlatVector<int32_t>(
-          size, [](auto row) { return row; }, nullEvery(5)),
-  });
+  auto vector = makeRowVector(
+      {makeFlatVector<int32_t>(size, [](auto row) { return row; }),
+       makeFlatVector<int32_t>(
+           size, [](auto row) { return row; }, nullEvery(5)),
+       makeConstant<int32_t>(0, size)});
 
   auto result =
       evaluate("case c0 when 7 then 1 when 11 then 2 else 0 end", vector);
@@ -1919,6 +1866,14 @@ TEST_F(ExprTest, switchExpr) {
   assertEqualVectors(expected, result);
 
   result = evaluate("case c1 when 7 then 1 when 11 then 2 end", vector);
+  assertEqualVectors(expected, result);
+
+  // No "else" clause and no match.
+  result = evaluate("case 0 when 100 then 1 when 200 then 2 end", vector);
+  expected = makeAllNullFlatVector<int64_t>(size);
+  assertEqualVectors(expected, result);
+
+  result = evaluate("case c2 when 100 then 1 when 200 then 2 end", vector);
   assertEqualVectors(expected, result);
 
   // non-equality case expression
@@ -1993,7 +1948,7 @@ TEST_F(ExprTest, ifWithConstant) {
   vector_size_t size = 4;
 
   auto a = makeFlatVector<int32_t>({-1, -2, -3, -4});
-  auto b = makeConstantVector(variant(TypeKind::INTEGER), size); // 4 nulls
+  auto b = makeConstant(variant(TypeKind::INTEGER), size); // 4 nulls
   auto result = evaluate("is_null(if(c0 > 0, c0, c1))", makeRowVector({a, b}));
   EXPECT_EQ(VectorEncoding::Simple::CONSTANT, result->encoding());
   EXPECT_EQ(true, result->as<ConstantVector<bool>>()->valueAt(0));
@@ -2496,7 +2451,7 @@ TEST_F(ExprTest, accessNestedConstantEncoding) {
 
   auto result = evaluate(exprSet.get(), level3);
 
-  assertEqualVectors(makeConstantVector(3, 5), result);
+  assertEqualVectors(makeConstant(3, 5), result);
 }
 
 TEST_F(ExprTest, testEmptyVectors) {
@@ -2588,7 +2543,7 @@ TEST_F(ExprTest, exceptionContext) {
 
 /// Verify the output of ConstantExpr::toString().
 TEST_F(ExprTest, constantToString) {
-  auto arrayVector = vectorMaker_->arrayVectorNullable<float>(
+  auto arrayVector = vectorMaker_.arrayVectorNullable<float>(
       {{{1.2, 3.4, std::nullopt, 5.6}}});
 
   exec::ExprSet exprSet(
@@ -2696,7 +2651,7 @@ TEST_F(ExprTest, tryWithConstantFailure) {
   // EvalCtx this results in reading uninitialized memory triggering ASAN
   // errors.
   registerFunction<AlwaysThrowsFunction, Varchar, Varchar>({"always_throws"});
-  auto c0 = makeConstantVector("test", 5);
+  auto c0 = makeConstant("test", 5);
   auto c1 = makeFlatVector<int64_t>(5, [](vector_size_t row) { return row; });
   auto rowVector = makeRowVector({c0, c1});
 
@@ -2713,14 +2668,14 @@ TEST_F(ExprTest, tryWithConstantFailure) {
 TEST_F(ExprTest, castExceptionContext) {
   assertError(
       "cast(c0 as bigint)",
-      makeFlatVector({"1a"}),
+      makeFlatVector<std::string>({"1a"}),
       "cast((c0) as BIGINT)",
       "Same as context.",
       "Failed to cast from VARCHAR to BIGINT: 1a. Non-whitespace character found after end of conversion: \"a\"");
 
   assertError(
       "cast(c0 as timestamp)",
-      makeFlatVector<int8_t>({1}),
+      makeFlatVector(std::vector<int8_t>{1}),
       "cast((c0) as TIMESTAMP)",
       "Same as context.",
       "Failed to cast from TINYINT to TIMESTAMP: 1. ");
@@ -2729,7 +2684,7 @@ TEST_F(ExprTest, castExceptionContext) {
 TEST_F(ExprTest, switchExceptionContext) {
   assertError(
       "case c0 when 7 then c0 / 0 else 0 end",
-      makeFlatVector<int64_t>({7}),
+      makeFlatVector(std::vector<int64_t>{7}),
       "divide(c0, 0:BIGINT)",
       "switch(eq(c0, 7:BIGINT), divide(c0, 0:BIGINT), 0:BIGINT)",
       "division by zero");
@@ -2737,7 +2692,7 @@ TEST_F(ExprTest, switchExceptionContext) {
 
 TEST_F(ExprTest, conjunctExceptionContext) {
   fillVectorAndReference<int64_t>(
-      {EncodingOptions::flat(20, 2)},
+      {EncodingOptions::flat(20)},
       [](int32_t row) { return std::optional(static_cast<int64_t>(row)); },
       &testData_.bigint1);
 
@@ -2807,7 +2762,7 @@ TEST_F(ExprTest, invalidInputs) {
 TEST_F(ExprTest, lambdaWithRowField) {
   auto array = makeArrayVector<int64_t>(
       10, [](auto /*row*/) { return 5; }, [](auto row) { return row * 3; });
-  auto row = vectorMaker_->rowVector(
+  auto row = vectorMaker_.rowVector(
       {"val"},
       {makeFlatVector<int64_t>(10, [](vector_size_t row) { return row; })});
   core::Expressions::registerLambda(
@@ -2817,11 +2772,106 @@ TEST_F(ExprTest, lambdaWithRowField) {
       parse::parseExpr("x + c0.val >= 0"),
       execCtx_->pool());
 
-  auto rowVector = vectorMaker_->rowVector({"c0", "c1"}, {row, array});
+  auto rowVector = vectorMaker_.rowVector({"c0", "c1"}, {row, array});
 
   // We use strpos and c1 to ensure that the constant is peeled before calling
   // always_throws, not before the try.
   auto evalResult = evaluate("filter(c1, function('lambda1'))", rowVector);
 
   assertEqualVectors(array, evalResult);
+}
+
+TEST_F(ExprTest, flatNoNullsFastPath) {
+  auto data = makeRowVector(
+      {"a", "b", "c", "d"},
+      {
+          makeFlatVector<int32_t>({1, 2, 3}),
+          makeFlatVector<int32_t>({10, 20, 30}),
+          makeFlatVector<float>({0.1, 0.2, 0.3}),
+          makeFlatVector<float>({-1.2, 0.0, 10.67}),
+      });
+  auto rowType = asRowType(data->type());
+
+  // Basic math expressions.
+
+  auto exprSet = compileExpression("a + b", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  auto expectedResult = makeFlatVector<int32_t>({11, 22, 33});
+  auto result = evaluate(exprSet.get(), data);
+  assertEqualVectors(expectedResult, result);
+
+  exprSet = compileExpression("a + b * 5::integer", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  exprSet = compileExpression("floor(c * 1.34::real) / d", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // Switch expressions.
+
+  exprSet = compileExpression("if (a > 10::integer, 0, b)", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // If statement with 'then' or 'else' branch that can return null does not
+  // support fast path.
+  exprSet = compileExpression("if (a > 10::integer, 0, null)", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  exprSet = compileExpression(
+      "case when a > 10::integer then 1 when b > 10::integer then 2 else 3 end",
+      rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // Switch without an else clause doesn't support fast path.
+  exprSet = compileExpression(
+      "case when a > 10::integer then 1 when b > 10::integer then 2 end",
+      rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // AND / OR expressions.
+
+  exprSet = compileExpression("a > 10::integer AND b < 0::integer", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  exprSet = compileExpression(
+      "a > 10::integer OR (b % 7::integer == 4::integer)", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // Coalesce expression.
+
+  exprSet = compileExpression("coalesce(a, b)", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // Multiplying an integer by a double requires a cast, but cast doesn't
+  // support fast path.
+  exprSet = compileExpression("a * 0.1 + b", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
+
+  // Try expression doesn't support fast path.
+  exprSet = compileExpression("try(a / b)", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
+      << exprSet->toString();
 }

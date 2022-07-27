@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-//
-// Created by Ying Su on 3/25/22.
-//
-
 #pragma once
 
-#include "velox/common/base/SimdUtil.h"
-#include "velox/dwio/common/DecoderUtil.h"
-#include "velox/type/Filter.h"
+#include <string>
 
-#include <arrow/util/rle_encoding.h>
+namespace facebook::velox::test {
+
+std::string getDataFilePath(
+    const std::string& baseDir,
+    const std::string& filePath);
+
+}
