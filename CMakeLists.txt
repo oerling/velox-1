@@ -33,7 +33,7 @@ option(VELOX_ENABLE_DUCKDB "Build duckDB to enable differential testing." ON)
 option(VELOX_ENABLE_EXEC "Build exec." ON)
 option(VELOX_ENABLE_AGGREGATES "Build aggregates." ON)
 option(VELOX_ENABLE_HIVE_CONNECTOR "Build Hive connector." ON)
-option(VELOX_ENABLE_TPCH_CONNECTOR "Build TPC-H connector." OFF)
+option(VELOX_ENABLE_TPCH_CONNECTOR "Build TPC-H connector." ON)
 option(VELOX_ENABLE_PRESTO_FUNCTIONS "Build Presto SQL functions." ON)
 option(VELOX_ENABLE_SPARK_FUNCTIONS "Build Spark SQL functions." ON)
 option(VELOX_ENABLE_EXPRESSION "Build expression." ON)
@@ -46,8 +46,8 @@ option(VELOX_ENABLE_BENCHMARKS "Build velox top level benchmarks." OFF)
 option(VELOX_ENABLE_BENCHMARKS_BASIC "Build velox basic benchmarks." OFF)
 option(VELOX_ENABLE_S3 "Build S3 Connector" OFF)
 option(VELOX_ENABLE_HDFS "Build Hdfs Connector" OFF)
-option(VELOX_ENABLE_PARQUET "Enable Parquet support" OM)
-option(VELOX_ENABLE_ARROW "Enable Arrow support" ON)
+option(VELOX_ENABLE_PARQUET "Enable Parquet support" OFF)
+option(VELOX_ENABLE_ARROW "Enable Arrow support" OFF)
 option(VELOX_BUILD_TEST_UTILS "Enable Velox test utilities" OFF)
 
 if(${VELOX_BUILD_MINIMAL})
@@ -71,7 +71,7 @@ endif()
 if(${VELOX_BUILD_TESTING})
   # Enable all components to build testing binaries
   set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
-  set(VELOX_ENABLE_DUCKDB OFF)
+  set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_EXPRESSION ON)
   set(VELOX_ENABLE_PARSE ON)
   set(VELOX_ENABLE_EXEC ON)
@@ -89,7 +89,7 @@ if(${VELOX_ENABLE_EXAMPLES})
 endif()
 
 if(${VELOX_ENABLE_BENCHMARKS} OR ${VELOX_ENABLE_BENCHMARKS_BASIC})
-  set(VELOX_ENABLE_DUCKDB OFF) # Disable DuckDB temporarily
+  set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_PARSE ON)
 endif()
 
@@ -101,8 +101,6 @@ if(${VELOX_BUILD_BENCHMARKS_LARGE})
   set(VELOX_ENABLE_EXEC ON)
   set(VELOX_BUILD_TEST_UTILS ON)
 endif()
-
-message(VELOX_ENABLE_DUCKDB ${VELOX_ENABLE_DUCKDB})
 
 if(VELOX_ENABLE_S3)
   # Set AWS_ROOT_DIR if you have a custom install location of AWS SDK CPP.
@@ -122,7 +120,6 @@ if(VELOX_ENABLE_HDFS)
 endif()
 
 if(VELOX_ENABLE_PARQUET)
-  set(VELOX_ENABLE_ARROW ON)
   add_definitions(-DVELOX_ENABLE_PARQUET)
   # Native Parquet reader requires Apache Thrift and Arrow Parquet writer, which
   # are included in Arrow.
@@ -318,9 +315,12 @@ else()
   set(FILESYSTEM "")
 endif()
 
-# if(VELOX_BUILD_TESTING AND NOT VELOX_ENABLE_DUCKDB) message( FATAL_ERROR "Unit
-# tests require duckDB to be enabled (VELOX_ENABLE_DUCKDB=ON or
-# VELOX_BUILD_TESTING=OFF)" ) endif()
+if(VELOX_BUILD_TESTING AND NOT VELOX_ENABLE_DUCKDB)
+  message(
+    FATAL_ERROR
+      "Unit tests require duckDB to be enabled (VELOX_ENABLE_DUCKDB=ON or VELOX_BUILD_TESTING=OFF)"
+  )
+endif()
 
 # Benchmarks and tests at some places are coupled which is not great. See
 # velox/vector/CMakeLists.txt. TODO: Decouple.

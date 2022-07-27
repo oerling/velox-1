@@ -17,8 +17,10 @@
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/common/BufferUtil.h"
 
+#include "velox/dwio/parquet/ThriftTransport.h"
+
+#include <arrow/util/rle_encoding.h>
 #include <thrift/protocol/TCompactProtocol.h>
-#include "ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 
