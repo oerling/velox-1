@@ -16,12 +16,12 @@
 
 #pragma once
 
-#include "velox/dwio/common/BufferedInput.h"
 #include "dwio/common/SelectiveColumnReader.h"
+#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
-#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
+#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {
 
@@ -56,7 +56,7 @@ class ReaderBase {
   uint64_t fileLength() const {
     return fileLength_;
   }
-  
+
   uint64_t fileNumRows() const {
     return fileMetaData_->num_rows;
   }
@@ -188,7 +188,6 @@ class ParquetReader : public dwio::common::Reader {
 
   std::unique_ptr<dwio::common::RowReader> createRowReader(
       const dwio::common::RowReaderOptions& options = {}) const override;
-
 
  private:
   std::shared_ptr<ReaderBase> readerBase_;

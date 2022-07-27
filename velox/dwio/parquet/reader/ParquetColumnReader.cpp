@@ -24,8 +24,8 @@
 #include "velox/dwio/parquet/reader/IntegerColumnReader.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
-#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 #include "velox/dwio/parquet/reader/Statistics.h"
+#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {
 
@@ -62,4 +62,3 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
 }
 
 } // namespace facebook::velox::parquet
-

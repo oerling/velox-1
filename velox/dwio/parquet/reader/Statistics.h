@@ -50,7 +50,7 @@ inline std::optional<T> getMax(const thrift::Statistics& columnChunkStats) {
 }
 
 std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
-										const thrift::Statistics& columnChunkStats,
+    const thrift::Statistics& columnChunkStats,
     const velox::Type& type,
     uint64_t numRowsInRowGroup);
 

@@ -19,8 +19,8 @@
 
 namespace facebook::velox::parquet {
 
-  using thrift::RowGroup;
-  
+using thrift::RowGroup;
+
 std::unique_ptr<dwio::common::FormatData> ParquetParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
     const common::ScanSpec& /*scanSpec*/) {

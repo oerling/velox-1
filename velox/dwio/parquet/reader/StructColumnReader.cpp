@@ -37,7 +37,7 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
   }
 }
 
-  bool StructColumnReader::filterMatches(const thrift::RowGroup& rowGroup) {
+bool StructColumnReader::filterMatches(const thrift::RowGroup& rowGroup) {
   return true;
 }
 

@@ -22,9 +22,9 @@
 
 namespace facebook::velox::parquet {
 
-  using thrift::Encoding;
-  using thrift::PageHeader;
-  
+using thrift::Encoding;
+using thrift::PageHeader;
+
 void PageDecoder::readNextPage(int64_t row) {
   defineDecoder_.reset();
   repeatDecoder_.reset();
@@ -35,13 +35,13 @@ void PageDecoder::readNextPage(int64_t row) {
     pageStart_ = pageDataStart_ + pageHeader.compressed_page_size;
 
     switch (pageHeader.type) {
-    case thrift::PageType::DATA_PAGE:
+      case thrift::PageType::DATA_PAGE:
         prepareDataPageV1(pageHeader, row);
         break;
-    case thrift::PageType::DATA_PAGE_V2:
+      case thrift::PageType::DATA_PAGE_V2:
         prepareDataPageV2(pageHeader, row);
         break;
-    case thrift::PageType::DICTIONARY_PAGE:
+      case thrift::PageType::DICTIONARY_PAGE:
         prepareDictionary(pageHeader);
         continue;
       default:
@@ -139,10 +139,10 @@ const char* FOLLY_NONNULL PageDecoder::uncompressData(
     uint32_t compressedSize,
     uint32_t uncompressedSize) {
   switch (codec_) {
-  case thrift::CompressionCodec::UNCOMPRESSED:
+    case thrift::CompressionCodec::UNCOMPRESSED:
       return pageData;
-  case thrift::CompressionCodec::GZIP:
-  case thrift::CompressionCodec::ZSTD:
+    case thrift::CompressionCodec::GZIP:
+    case thrift::CompressionCodec::ZSTD:
     default:
       VELOX_FAIL("Unsupported Parquet compression type ", codec_);
   }
@@ -150,7 +150,7 @@ const char* FOLLY_NONNULL PageDecoder::uncompressData(
 
 void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   VELOX_CHECK(
-	      pageHeader.type == thrift::PageType::DATA_PAGE &&
+      pageHeader.type == thrift::PageType::DATA_PAGE &&
       pageHeader.__isset.data_page_header);
   numRowsInPage_ = pageHeader.data_page_header.num_values;
   if (numRowsInPage_ + rowOfPage_ <= row) {
@@ -236,7 +236,7 @@ void PageDecoder::prepareDictionary(const PageHeader& pageHeader) {
 }
 
 namespace {
-  int32_t parquetTypeBytes(thrift::Type::type type) {
+int32_t parquetTypeBytes(thrift::Type::type type) {
   switch (type) {
     case thrift::Type::INT32:
     case thrift::Type::FLOAT:
@@ -252,8 +252,8 @@ namespace {
 
 void PageDecoder::makeDecoder() {
   switch (encoding_) {
-  case Encoding::RLE_DICTIONARY:
-  case Encoding::PLAIN_DICTIONARY:
+    case Encoding::RLE_DICTIONARY:
+    case Encoding::PLAIN_DICTIONARY:
     case Encoding::DELTA_BINARY_PACKED:
       VELOX_UNSUPPORTED("Encoding not supported yet");
       break;
