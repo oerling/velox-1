@@ -12,29 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(
-  velox_dwio_dwrf_common
-  ByteRLE.cpp
-  Common.cpp
-  Compression.cpp
-  Config.cpp
-  DataBufferHolder.cpp
-  Decryption.cpp
-  Encryption.cpp
-  EncryptionSpecification.cpp
-  IntEncoder.cpp
-  OutputStream.cpp
-  PagedInputStream.cpp
-  PagedOutputStream.cpp
-  RLEv1.cpp
-  RLEv2.cpp
-  Range.cpp
-  Statistics.cpp
-  wrap/dwrf-proto-wrapper.cpp
-  wrap/orc-proto-wrapper.cpp)
+add_library(velox_test_util TestValue.cpp)
+target_link_libraries(velox_test_util velox_common_base)
 
-add_dependencies(velox_dwio_dwrf_common velox_dwio_dwrf_proto)
-
-target_link_libraries(
-  velox_dwio_dwrf_common velox_common_base velox_dwio_common
-  velox_dwio_common_compression velox_dwio_dwrf_proto velox_caching)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()

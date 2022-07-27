@@ -11,28 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+include(GoogleTest)
+add_executable(velox_test_util_test TestValueTest.cpp)
+gtest_add_tests(velox_test_util_test "" AUTO)
 
-add_executable(velox_tpch_benchmark TpchBenchmark.cpp)
-
-target_link_libraries(
-  velox_tpch_benchmark
-  velox_aggregates
-  velox_exec
-  velox_exec_test_util
-  velox_dwio_common
-  velox_dwio_common_exception
-  velox_dwio_parquet_reader
-  velox_dwio_type_fbhive
-  velox_dwio_common_test_utils
-  velox_hive_connector
-  velox_exception
-  velox_memory
-  velox_process
-  velox_serialization
-  velox_encode
-  velox_type
-  velox_caching
-  velox_vector
-  ${FOLLY_WITH_DEPENDENCIES}
-  ${FOLLY_BENCHMARK}
-  ${FMT})
+target_link_libraries(velox_test_util_test velox_test_util velox_exception
+                      gtest gtest_main)
