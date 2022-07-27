@@ -165,7 +165,8 @@ std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
     std::unique_ptr<SpillStream>&& extra) {
   VELOX_CHECK_LT(partition, files_.size());
   std::vector<std::unique_ptr<SpillStream>> result;
-  if (auto list = std::move(files_[partition]); list) {
+  auto list = std::move(files_[partition]);
+  if (list) {
     for (auto& file : list->files()) {
       file->startRead();
       result.push_back(std::move(file));
@@ -174,6 +175,7 @@ std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
   if (extra) {
     result.push_back(std::move(extra));
   }
+  VELOX_CHECK(!result.empty());
   return std::make_unique<TreeOfLosers<SpillStream>>(std::move(result));
 }
 
