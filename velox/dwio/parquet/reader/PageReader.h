@@ -34,9 +34,9 @@ class Dictionary {
   uint32_t size_;
 };
 
-class PageDecoder {
+class PageReader {
  public:
-  PageDecoder(
+  PageReader(
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
       ParquetTypeWithIdPtr nodeType,
@@ -224,7 +224,7 @@ class PageDecoder {
 };
 
 template <typename Visitor>
-void PageDecoder::readWithVisitor(Visitor& visitor) {
+void PageReader::readWithVisitor(Visitor& visitor) {
   constexpr bool hasFilter =
       !std::is_same<typename Visitor::FilterType, common::AlwaysTrue>::value;
   constexpr bool filterOnly =

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/parquet/reader/PageDecoder.h"
+#include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/common/BufferUtil.h"
 
 #include <thrift/protocol/TCompactProtocol.h>
@@ -25,7 +25,7 @@ namespace facebook::velox::parquet {
 using thrift::Encoding;
 using thrift::PageHeader;
 
-void PageDecoder::readNextPage(int64_t row) {
+void PageReader::readNextPage(int64_t row) {
   defineDecoder_.reset();
   repeatDecoder_.reset();
   // 'rowOfPage_' is the row number of the first row of the next page.
@@ -59,7 +59,7 @@ void PageDecoder::readNextPage(int64_t row) {
   }
 }
 
-PageHeader PageDecoder::readPageHeader(int64_t remainingSize) {
+PageHeader PageReader::readPageHeader(int64_t remainingSize) {
   // Note that sizeof(PageHeader) may be longer than actually read
   std::shared_ptr<ThriftBufferedTransport> transport;
   std::unique_ptr<
@@ -110,7 +110,7 @@ PageHeader PageDecoder::readPageHeader(int64_t remainingSize) {
   return pageHeader;
 }
 
-const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
+const char* PageReader::readBytes(int32_t size, BufferPtr& copy) {
   if (bufferEnd_ == bufferStart_) {
     const void* buffer = nullptr;
     int32_t size = 0;
@@ -134,7 +134,7 @@ const char* PageDecoder::readBytes(int32_t size, BufferPtr& copy) {
   return copy->as<char>();
 }
 
-const char* FOLLY_NONNULL PageDecoder::uncompressData(
+const char* FOLLY_NONNULL PageReader::uncompressData(
     const char* pageData,
     uint32_t compressedSize,
     uint32_t uncompressedSize) {
@@ -148,7 +148,7 @@ const char* FOLLY_NONNULL PageDecoder::uncompressData(
   }
 }
 
-void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
+void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   VELOX_CHECK(
       pageHeader.type == thrift::PageType::DATA_PAGE &&
       pageHeader.__isset.data_page_header);
@@ -188,7 +188,7 @@ void PageDecoder::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   makeDecoder();
 }
 
-void PageDecoder::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
+void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   VELOX_CHECK(pageHeader.__isset.data_page_header_v2);
   numRowsInPage_ = pageHeader.data_page_header_v2.num_values;
   if (numRowsInPage_ + rowOfPage_ <= row) {
@@ -231,7 +231,7 @@ void PageDecoder::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   makeDecoder();
 }
 
-void PageDecoder::prepareDictionary(const PageHeader& pageHeader) {
+void PageReader::prepareDictionary(const PageHeader& pageHeader) {
   VELOX_NYI();
 }
 
@@ -250,7 +250,7 @@ int32_t parquetTypeBytes(thrift::Type::type type) {
 }
 } // namespace
 
-void PageDecoder::makeDecoder() {
+void PageReader::makeDecoder() {
   switch (encoding_) {
     case Encoding::RLE_DICTIONARY:
     case Encoding::PLAIN_DICTIONARY:
@@ -269,7 +269,7 @@ void PageDecoder::makeDecoder() {
   }
 }
 
-void PageDecoder::skip(int64_t numRows) {
+void PageReader::skip(int64_t numRows) {
   if (!numRows && firstUnvisited_ != rowOfPage_ + numRowsInPage_) {
     // Return if no skip and position not at end of page or before first page.
     return;
@@ -291,7 +291,7 @@ void PageDecoder::skip(int64_t numRows) {
   }
 }
 
-int32_t PageDecoder::skipNulls(int32_t numValues) {
+int32_t PageReader::skipNulls(int32_t numValues) {
   if (!defineDecoder_) {
     return numValues;
   }
@@ -307,7 +307,7 @@ int32_t PageDecoder::skipNulls(int32_t numValues) {
   return numPresent;
 }
 
-void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
+void PageReader::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   auto toRead = numValues;
   if (buffer) {
     dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);
@@ -327,7 +327,7 @@ void PageDecoder::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   buffer = nullConcatenation_.buffer();
 }
 
-const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
+const uint64_t* PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   if (!defineDecoder_) {
     buffer = nullptr;
     return nullptr;
@@ -347,7 +347,7 @@ const uint64_t* PageDecoder::readNulls(int32_t numValues, BufferPtr& buffer) {
   return buffer->as<uint64_t>();
 }
 
-void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
+void PageReader::startVisit(folly::Range<const vector_size_t*> rows) {
   visitorRows_ = rows.data();
   numVisitorRows_ = rows.size();
   currentVisitorRow_ = 0;
@@ -355,7 +355,7 @@ void PageDecoder::startVisit(folly::Range<const vector_size_t*> rows) {
   visitBase_ = firstUnvisited_;
 }
 
-bool PageDecoder::rowsForPage(
+bool PageReader::rowsForPage(
     dwio::common::SelectiveColumnReader& reader,
     folly::Range<const vector_size_t*>& rows,
     const uint64_t* FOLLY_NULLABLE& nulls) {
