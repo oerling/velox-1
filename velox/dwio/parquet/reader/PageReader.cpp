@@ -17,7 +17,7 @@
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/common/BufferUtil.h"
 
-#include "velox/dwio/parquet/reader/ThriftTransport.h"
+#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 #include <arrow/util/rle_encoding.h>
 #include <thrift/protocol/TCompactProtocol.h>
@@ -63,9 +63,9 @@ void PageReader::readNextPage(int64_t row) {
 
 PageHeader PageReader::readPageHeader(int64_t remainingSize) {
   // Note that sizeof(PageHeader) may be longer than actually read
-  std::shared_ptr<ThriftBufferedTransport> transport;
+  std::shared_ptr<thrift::ThriftBufferedTransport> transport;
   std::unique_ptr<
-      apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>
+    apache::thrift::protocol::TCompactProtocolT<thrift::ThriftBufferedTransport>>
       protocol;
   char copy[sizeof(PageHeader)];
   bool wasInBuffer = false;
@@ -78,10 +78,10 @@ PageHeader PageReader::readPageHeader(int64_t remainingSize) {
   }
   if (bufferEnd_ - bufferStart_ >= sizeof(PageHeader)) {
     wasInBuffer = true;
-    transport = std::make_shared<ThriftBufferedTransport>(
+    transport = std::make_shared<thrift::ThriftBufferedTransport>(
         bufferStart_, sizeof(PageHeader));
     protocol = std::make_unique<
-        apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
+      apache::thrift::protocol::TCompactProtocolT<thrift::ThriftBufferedTransport>>(
         transport);
   } else {
     dwio::common::readBytes(
@@ -92,9 +92,9 @@ PageHeader PageReader::readPageHeader(int64_t remainingSize) {
         bufferEnd_);
 
     transport =
-        std::make_shared<ThriftBufferedTransport>(copy, sizeof(PageHeader));
+      std::make_shared<thrift::ThriftBufferedTransport>(copy, sizeof(PageHeader));
     protocol = std::make_unique<
-        apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
+      apache::thrift::protocol::TCompactProtocolT<thrift::ThriftBufferedTransport>>(
         transport);
   }
   PageHeader pageHeader;

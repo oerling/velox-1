@@ -19,7 +19,7 @@
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
-#include "velox/dwio/parquet/reader/ThriftTransport.h"
+#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 
@@ -78,10 +78,10 @@ void ReaderBase::loadFileMetaData() {
         missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
   }
 
-  auto thriftTransport = std::make_shared<ThriftBufferedTransport>(
+  auto thriftTransport = std::make_shared<thrift::ThriftBufferedTransport>(
       copy.data() + footerOffsetInBuffer, footerLength);
   auto thriftProtocol = std::make_unique<
-      apache::thrift::protocol::TCompactProtocolT<ThriftBufferedTransport>>(
+    apache::thrift::protocol::TCompactProtocolT<thrift::ThriftBufferedTransport>>(
       thriftTransport);
   fileMetaData_ = std::make_unique<thrift::FileMetaData>();
   fileMetaData_->read(thriftProtocol.get());
