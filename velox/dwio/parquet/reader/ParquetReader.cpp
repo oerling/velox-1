@@ -113,7 +113,7 @@ void ReaderBase::initializeSchema() {
   uint32_t maxSchemaElementIdx = fileMetaData_->schema.size() - 1;
   schemaWithId_ = getParquetColumnInfo(
       maxSchemaElementIdx, maxRepeat, maxDefine, schemaIdx, columnIdx);
-  schema_ = createRowType(schemaWithId_->children());
+  schema_ = createRowType(schemaWithId_->getChildren());
 }
 
 std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
@@ -158,7 +158,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
       switch (schemaElement.converted_type) {
         case thrift::ConvertedType::LIST:
         case thrift::ConvertedType::MAP: {
-          auto element = children[0]->children();
+          auto element = children[0]->getChildren();
           DWIO_ENSURE(children.size() == 1);
           return std::make_shared<const ParquetTypeWithId>(
               children[0]->type,
@@ -441,7 +441,7 @@ int64_t ReaderBase::rowGroupUncompressedSize(
         .meta_data.total_uncompressed_size;
   }
   int64_t sum = 0;
-  for (auto child : type.children()) {
+  for (auto child : type.getChildren()) {
     sum += rowGroupUncompressedSize(rowGroupIndex, *child);
   }
   return sum;

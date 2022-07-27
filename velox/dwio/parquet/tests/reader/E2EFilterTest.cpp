@@ -20,12 +20,8 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::common;
-<<<<<<< HEAD
-using namespace facebook::velox::dwio::dwrf;
-using namespace facebook::velox::parquet;
-=======
 using namespace facebook::velox::dwio::common;
->>>>>>> main
+using namespace facebook::velox::parquet;
 
 using dwio::common::MemoryInputStream;
 using dwio::common::MemorySink;

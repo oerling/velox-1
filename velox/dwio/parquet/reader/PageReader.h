@@ -19,9 +19,9 @@
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
-#include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/vector/BaseVector.h"
+#include <arrow/util/rle_encoding.h>
 
 namespace facebook::velox::parquet {
 

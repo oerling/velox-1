@@ -20,7 +20,6 @@
 #include "velox/common/base/RawVector.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/parquet/reader/ThriftTransport.h"
 #include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
