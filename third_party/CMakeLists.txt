@@ -35,6 +35,7 @@ if(VELOX_ENABLE_ARROW)
   add_library(thrift STATIC IMPORTED GLOBAL)
   set(THRIFT_ROOT ${ARROW_PREFIX}/src/arrow_ep-build/thrift_ep-install)
   set(THRIFT_LIB ${THRIFT_ROOT}/lib/libthrift.a)
+  file(MAKE_DIRECTORY ${THRIFT_ROOT}/include)
   set_property(TARGET thrift PROPERTY INTERFACE_INCLUDE_DIRECTORIES
                                       ${THRIFT_ROOT}/include)
   set_property(TARGET thrift PROPERTY IMPORTED_LOCATION ${THRIFT_LIB})
@@ -57,8 +58,8 @@ if(VELOX_ENABLE_ARROW)
                              ${ARROW_PREFIX}/install/include)
   set_target_properties(arrow PROPERTIES IMPORTED_LOCATION
                                          ${ARROW_LIBDIR}/libarrow.a)
-  set_property(TARGET arrow PROPERTY INTERFACE_LINK_LIBRARIES ${RE2})
+  set_property(TARGET arrow PROPERTY INTERFACE_LINK_LIBRARIES ${RE2} thrift)
   set_target_properties(parquet PROPERTIES IMPORTED_LOCATION
                                            ${ARROW_LIBDIR}/libparquet.a)
-  set_property(TARGET parquet PROPERTY INTERFACE_LINK_LIBRARIES thrift)
+
 endif()

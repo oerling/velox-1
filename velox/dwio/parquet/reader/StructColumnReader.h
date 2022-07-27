@@ -54,7 +54,7 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
       vector_size_t offset) override {}
 
  private:
-  bool filterMatches(const RowGroup& rowGroup);
+  bool filterMatches(const thrift::RowGroup& rowGroup);
 };
 
 } // namespace facebook::velox::parquet

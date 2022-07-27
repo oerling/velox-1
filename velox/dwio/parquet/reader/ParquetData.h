@@ -22,20 +22,20 @@
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/PageDecoder.h"
-#include "velox/dwio/parquet/reader/ParquetThriftTypes.h"
+#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 #include "velox/dwio/parquet/reader/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 class ParquetParams : public dwio::common::FormatParams {
  public:
-  ParquetParams(memory::MemoryPool& pool, const FileMetaData& metaData)
+  ParquetParams(memory::MemoryPool& pool, const thrift::FileMetaData& metaData)
       : FormatParams(pool), metaData_(metaData) {}
   std::unique_ptr<dwio::common::FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       const common::ScanSpec& scanSpec) override;
 
  private:
-  const FileMetaData& metaData_;
+  const thrift::FileMetaData& metaData_;
 };
 
 // Format-specific data created for each leaf column of a Parquet rowgroup.
@@ -43,7 +43,7 @@ class ParquetData : public dwio::common::FormatData {
  public:
   ParquetData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      const std::vector<RowGroup>& rowGroups,
+      const std::vector<thrift::RowGroup>& rowGroups,
       memory::MemoryPool& pool)
       : pool_(pool),
         type_(std::static_pointer_cast<const ParquetTypeWithId>(type)),
@@ -75,7 +75,7 @@ class ParquetData : public dwio::common::FormatData {
   // first.
   dwio::common::PositionProvider seekToRowGroup(uint32_t index) override;
 
-  bool filterMatches(const RowGroup& rowGroup, common::Filter& filter);
+  bool filterMatches(const thrift::RowGroup& rowGroup, common::Filter& filter);
 
   std::vector<uint32_t> filterRowGroups(
       const common::ScanSpec& scanSpec,
@@ -120,7 +120,7 @@ class ParquetData : public dwio::common::FormatData {
 
   memory::MemoryPool& pool_;
   std::shared_ptr<const ParquetTypeWithId> type_;
-  const std::vector<RowGroup>& rowGroups_;
+  const std::vector<thrift::RowGroup>& rowGroups_;
   // Streams for this column in each of 'rowGroups_'. Will be created on or
   // ahead of first use, not at construction.
   std::vector<std::unique_ptr<dwio::common::SeekableInputStream>> streams_;

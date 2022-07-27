@@ -37,30 +37,8 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
   }
 }
 
-bool StructColumnReader::filterMatches(const RowGroup& rowGroup) {
+  bool StructColumnReader::filterMatches(const thrift::RowGroup& rowGroup) {
   return true;
-#if 0
-  bool matched = true;
-
-  auto& childSpecs = scanSpec_->children();
-  assert(!children_.empty());
-  for (size_t i = 0; i < childSpecs.size(); ++i) {
-    auto& childSpec = childSpecs[i];
-    if (childSpec->isConstant()) {
-      // TODO: match constant
-      continue;
-    }
-    auto fieldIndex = childSpec->subscript();
-    auto reader = children_.at(fieldIndex).get();
-    //    auto colName = childSpec->fieldName();
-
-    if (!reader->filterMatches(rowGroup)) {
-      matched = false;
-      break;
-    }
-  }
-  return matched;
-#endif
 }
 
 } // namespace facebook::velox::parquet

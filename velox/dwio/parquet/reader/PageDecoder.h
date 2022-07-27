@@ -40,7 +40,7 @@ class PageDecoder {
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
       ParquetTypeWithIdPtr nodeType,
-      CompressionCodec::type codec,
+      thrift::CompressionCodec::type codec,
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
@@ -84,10 +84,10 @@ class PageDecoder {
   // Parses the PageHeader at 'inputStream_'. Will not read more than
   // 'remainingBytes' since there could be less data left in the
   // ColumnChunk than the full header size.
-  PageHeader readPageHeader(int64_t remainingSize);
-  void prepareDataPageV1(const PageHeader& pageHeader, int64_t row);
-  void prepareDataPageV2(const PageHeader& pageHeader, int64_t row);
-  void prepareDictionary(const PageHeader& pageHeader);
+  thrift::PageHeader readPageHeader(int64_t remainingSize);
+  void prepareDataPageV1(const thrift::PageHeader& pageHeader, int64_t row);
+  void prepareDataPageV2(const thrift::PageHeader& pageHeader, int64_t row);
+  void prepareDictionary(const thrift::PageHeader& pageHeader);
   void makeDecoder();
 
   // Returns a pointer to contiguous space for the next 'size' bytes
@@ -138,7 +138,7 @@ class PageDecoder {
   ParquetTypeWithIdPtr type_;
   const int32_t maxRepeat_;
   const int32_t maxDefine_;
-  const CompressionCodec::type codec_;
+  const thrift::CompressionCodec::type codec_;
   const int64_t chunkSize_;
   const char* bufferStart_{nullptr};
   const char* bufferEnd_{nullptr};
@@ -152,7 +152,7 @@ class PageDecoder {
   std::unique_ptr<arrow::util::RleDecoder> defineDecoder_;
 
   // Encoding of current page.
-  Encoding::type encoding_;
+  thrift::Encoding::type encoding_;
 
   // Row number of first value in current page from start of ColumnChunk.
   int64_t rowOfPage_{0};
