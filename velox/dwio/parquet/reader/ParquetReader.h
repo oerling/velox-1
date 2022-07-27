@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "dwio/common/SelectiveColumnReader.h"
+#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
@@ -24,7 +24,6 @@
 #include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
 
 namespace facebook::velox::parquet {
-
 
 constexpr uint64_t DIRECTORY_SIZE_GUESS = 1024 * 1024;
 constexpr uint64_t FILE_PRELOAD_THRESHOLD = 1024 * 1024 * 8;
