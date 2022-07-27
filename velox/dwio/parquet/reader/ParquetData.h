@@ -21,8 +21,8 @@
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/parquet/reader/PageReader.h"
-#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 #include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
+#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 class ParquetParams : public dwio::common::FormatParams {

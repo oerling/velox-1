@@ -80,9 +80,9 @@ void ReaderBase::loadFileMetaData() {
 
   auto thriftTransport = std::make_shared<thrift::ThriftBufferedTransport>(
       copy.data() + footerOffsetInBuffer, footerLength);
-  auto thriftProtocol = std::make_unique<
-    apache::thrift::protocol::TCompactProtocolT<thrift::ThriftBufferedTransport>>(
-      thriftTransport);
+  auto thriftProtocol =
+      std::make_unique<apache::thrift::protocol::TCompactProtocolT<
+          thrift::ThriftBufferedTransport>>(thriftTransport);
   fileMetaData_ = std::make_unique<thrift::FileMetaData>();
   fileMetaData_->read(thriftProtocol.get());
 }
