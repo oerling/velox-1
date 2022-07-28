@@ -173,8 +173,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               maxRepeat,
               maxDefine);
         }
-      case thrift::ConvertedType::MAP_KEY_VALUE: {
-	// child of MAP
+        case thrift::ConvertedType::MAP_KEY_VALUE: {
+          // child of MAP
           VELOX_CHECK_EQ(
               schemaElement.repetition_type,
               thrift::FieldRepetitionType::REPEATED);
@@ -191,8 +191,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               std::nullopt,
               maxRepeat,
               maxDefine);
-      }
-	  default:
+        }
+        default:
           VELOX_UNSUPPORTED(
               "Unsupported SchemaElement type: {}",
               schemaElement.converted_type);

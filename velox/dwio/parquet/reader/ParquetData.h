@@ -71,10 +71,12 @@ class ParquetData : public dwio::common::FormatData {
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
   /// Positions 'this' at 'index'th row group. enqueueRowGroup must be called
-  /// first. The returned PositionProvider is empty and should not be used. Other formats may use it.
+  /// first. The returned PositionProvider is empty and should not be used.
+  /// Other formats may use it.
   dwio::common::PositionProvider seekToRowGroup(uint32_t index) override;
 
-  /// True if 'filter' may have hits for the column of 'this' according to the stats in 'rowGroup'.
+  /// True if 'filter' may have hits for the column of 'this' according to the
+  /// stats in 'rowGroup'.
   bool filterMatches(const thrift::RowGroup& rowGroup, common::Filter& filter);
 
   std::vector<uint32_t> filterRowGroups(
@@ -110,7 +112,8 @@ class ParquetData : public dwio::common::FormatData {
     return numRows;
   }
 
-  /// Applies 'visitor' to the data in the column of 'this'. See PageReader::readWithVisitor().
+  /// Applies 'visitor' to the data in the column of 'this'. See
+  /// PageReader::readWithVisitor().
   template <typename Visitor>
   void readWithVisitor(Visitor visitor) {
     reader_->readWithVisitor(visitor);
