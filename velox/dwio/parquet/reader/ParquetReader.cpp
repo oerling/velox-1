@@ -563,13 +563,4 @@ std::unique_ptr<dwio::common::RowReader> ParquetReader::createRowReader(
     const dwio::common::RowReaderOptions& options) const {
   return std::make_unique<ParquetRowReader>(readerBase_, options);
 }
-
-void registerParquetReaderFactory() {
-  dwio::common::registerReaderFactory(std::make_shared<ParquetReaderFactory>());
-}
-
-void unregisterParquetReaderFactory() {
-  dwio::common::unregisterReaderFactory(dwio::common::FileFormat::PARQUET);
-}
-
 } // namespace facebook::velox::parquet
