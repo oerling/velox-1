@@ -37,7 +37,7 @@ class ParquetParams : public dwio::common::FormatParams {
   const thrift::FileMetaData& metaData_;
 };
 
-// Format-specific data created for each leaf column of a Parquet rowgroup.
+/// Format-specific data created for each leaf column of a Parquet rowgroup.
 class ParquetData : public dwio::common::FormatData {
  public:
   ParquetData(
@@ -51,7 +51,7 @@ class ParquetData : public dwio::common::FormatData {
         maxRepeat_(type_->maxRepeat_),
         rowsInRowGroup_(-1) {}
 
-  // true if no nulls in the current row group
+  /// true if no nulls in the current row group
   bool isNonNull() {
     VELOX_CHECK_NE(kNoRowGroup, rowGroupIndex_);
     if (maxDefine_ == 0) {
@@ -67,13 +67,14 @@ class ParquetData : public dwio::common::FormatData {
     return (stats.__isset.null_count && stats.null_count == 0);
   }
 
-  // Prepares to read data for 'index'th row group.
+  /// Prepares to read data for 'index'th row group.
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
-  // Positions 'this' at 'index'th row group. enqueueRowGroup must be called
-  // first.
+  /// Positions 'this' at 'index'th row group. enqueueRowGroup must be called
+  /// first. The returned PositionProvider is empty and should not be used. Other formats may use it.
   dwio::common::PositionProvider seekToRowGroup(uint32_t index) override;
 
+  /// True if 'filter' may have hits for the column of 'this' according to the stats in 'rowGroup'.
   bool filterMatches(const thrift::RowGroup& rowGroup, common::Filter& filter);
 
   std::vector<uint32_t> filterRowGroups(
@@ -84,7 +85,7 @@ class ParquetData : public dwio::common::FormatData {
   // Reads null flags for 'numValues' next top level rows. The first 'numValues'
   // bits of 'nulls' are set and the reader is advanced by numValues'.
   void readNullsOnly(int32_t numValues, BufferPtr& nulls) {
-    decoder_->readNullsOnly(numValues, nulls);
+    reader_->readNullsOnly(numValues, nulls);
   }
 
   bool hasNulls() const override {
@@ -105,13 +106,14 @@ class ParquetData : public dwio::common::FormatData {
   }
 
   uint64_t skip(uint64_t numRows) override {
-    decoder_->skip(numRows);
+    reader_->skip(numRows);
     return numRows;
   }
 
+  /// Applies 'visitor' to the data in the column of 'this'. See PageReader::readWithVisitor().
   template <typename Visitor>
   void readWithVisitor(Visitor visitor) {
-    decoder_->readWithVisitor(visitor);
+    reader_->readWithVisitor(visitor);
   }
 
  protected:
@@ -129,7 +131,7 @@ class ParquetData : public dwio::common::FormatData {
   const uint32_t maxDefine_;
   const uint32_t maxRepeat_;
   int64_t rowsInRowGroup_;
-  std::unique_ptr<PageReader> decoder_;
+  std::unique_ptr<PageReader> reader_;
 };
 
 } // namespace facebook::velox::parquet

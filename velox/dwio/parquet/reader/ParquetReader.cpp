@@ -35,8 +35,8 @@ ReaderBase::ReaderBase(
               : dwio::common::BufferedInputFactory::baseFactoryShared()) {
   input_ = bufferedInputFactory_->create(*stream_, pool_, options.getFileNum());
   fileLength_ = stream_->getLength();
-  DWIO_ENSURE(fileLength_ > 0, "Parquet file is empty");
-  DWIO_ENSURE(fileLength_ >= 12, "Parquet file is too small");
+  VELOX_CHECK_GT(fileLength_, 0, "Parquet file is empty");
+  VELOX_CHECK_GE(fileLength_, 12, "Parquet file is too small");
 
   loadFileMetaData();
   initializeSchema();
@@ -55,7 +55,7 @@ void ReaderBase::loadFileMetaData() {
   const char* bufferEnd = nullptr;
   dwio::common::readBytes(
       readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
-  DWIO_ENSURE(
+  VELOX_CHECK(
       strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
       "No magic bytes found at end of the Parquet file");
 
@@ -92,15 +92,17 @@ void ReaderBase::initializeSchema() {
     VELOX_UNSUPPORTED("Encrypted Parquet files are not supported");
   }
 
-  DWIO_ENSURE(
-      fileMetaData_->schema.size() > 1,
+  VELOX_CHECK_GT(
+      fileMetaData_->schema.size(),
+      1,
       "Invalid Parquet schema: Need at least one non-root column in the file");
-  DWIO_ENSURE(
-      fileMetaData_->schema[0].repetition_type ==
-          thrift::FieldRepetitionType::REQUIRED,
+  VELOX_CHECK_EQ(
+      fileMetaData_->schema[0].repetition_type,
+      thrift::FieldRepetitionType::REQUIRED,
       "Invalid Parquet schema: root element must be REQUIRED");
-  DWIO_ENSURE(
-      fileMetaData_->schema[0].num_children > 0,
+  VELOX_CHECK_GT(
+      fileMetaData_->schema[0].num_children,
+      0,
       "Invalid Parquet schema: root element must have at least 1 child");
 
   std::vector<std::shared_ptr<const ParquetTypeWithId::TypeWithId>> children;
@@ -122,8 +124,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
     uint32_t maxDefine,
     uint32_t& schemaIdx,
     uint32_t& columnIdx) const {
-  DWIO_ENSURE(fileMetaData_ != nullptr);
-  DWIO_ENSURE(schemaIdx < fileMetaData_->schema.size());
+  VELOX_CHECK(fileMetaData_ != nullptr);
+  VELOX_CHECK_LT(schemaIdx, fileMetaData_->schema.size());
 
   auto& schema = fileMetaData_->schema;
   uint32_t curSchemaIdx = schemaIdx;
@@ -141,7 +143,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
   }
 
   if (!schemaElement.__isset.type) { // inner node
-    DWIO_ENSURE(
+    VELOX_CHECK(
         schemaElement.__isset.num_children && schemaElement.num_children > 0,
         "Node has no children but should");
 
@@ -152,14 +154,14 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
           maxSchemaElementIdx, maxRepeat, maxDefine, ++schemaIdx, columnIdx);
       children.push_back(child);
     }
-    DWIO_ENSURE(!children.empty());
+    VELOX_CHECK(!children.empty());
 
     if (schemaElement.__isset.converted_type) {
       switch (schemaElement.converted_type) {
         case thrift::ConvertedType::LIST:
         case thrift::ConvertedType::MAP: {
           auto element = children[0]->getChildren();
-          DWIO_ENSURE(children.size() == 1);
+          VELOX_CHECK_EQ(children.size(), 1);
           return std::make_shared<const ParquetTypeWithId>(
               children[0]->type,
               std::move(element),
@@ -171,12 +173,13 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               maxRepeat,
               maxDefine);
         }
-        case thrift::ConvertedType::MAP_KEY_VALUE: // child of MAP
-          DWIO_ENSURE(
-              schemaElement.repetition_type ==
+      case thrift::ConvertedType::MAP_KEY_VALUE: {
+	// child of MAP
+          VELOX_CHECK_EQ(
+              schemaElement.repetition_type,
               thrift::FieldRepetitionType::REPEATED);
-          DWIO_ENSURE(children.size() == 2);
-	  auto childrenCopy = children;
+          VELOX_CHECK_EQ(children.size(), 2);
+          auto childrenCopy = children;
           return std::make_shared<const ParquetTypeWithId>(
               TypeFactory<TypeKind::MAP>::create(
                   children[0]->type, children[1]->type),
@@ -188,7 +191,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               std::nullopt,
               maxRepeat,
               maxDefine);
-        default:
+      }
+	  default:
           VELOX_UNSUPPORTED(
               "Unsupported SchemaElement type: {}",
               schemaElement.converted_type);
@@ -197,8 +201,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
       if (schemaElement.repetition_type ==
           thrift::FieldRepetitionType::REPEATED) {
         // child of LIST: "bag"
-        DWIO_ENSURE(children.size() == 1);
-	auto childrenCopy = children;
+        VELOX_CHECK_EQ(children.size(), 1);
+        auto childrenCopy = children;
         return std::make_shared<ParquetTypeWithId>(
             TypeFactory<TypeKind::ARRAY>::create(children[0]->type),
             std::move(childrenCopy),
@@ -211,7 +215,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             maxDefine);
       } else {
         // Row type
-	auto childrenCopy = children;
+        auto childrenCopy = children;
         return std::make_shared<const ParquetTypeWithId>(
             createRowType(children),
             std::move(childrenCopy),
@@ -269,8 +273,8 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
 
 TypePtr ReaderBase::convertType(
     const thrift::SchemaElement& schemaElement) const {
-  DWIO_ENSURE(schemaElement.__isset.type && schemaElement.num_children == 0);
-  DWIO_ENSURE(
+  VELOX_CHECK(schemaElement.__isset.type && schemaElement.num_children == 0);
+  VELOX_CHECK(
       schemaElement.type != thrift::Type::FIXED_LEN_BYTE_ARRAY ||
           schemaElement.__isset.type_length,
       "FIXED_LEN_BYTE_ARRAY requires length to be set");
@@ -278,68 +282,78 @@ TypePtr ReaderBase::convertType(
   if (schemaElement.__isset.converted_type) {
     switch (schemaElement.converted_type) {
       case thrift::ConvertedType::INT_8:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "INT8 converted type can only be set for value of thrift::Type::INT32");
         return TINYINT();
 
       case thrift::ConvertedType::INT_16:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "INT16 converted type can only be set for value of thrift::Type::INT32");
         return SMALLINT();
 
       case thrift::ConvertedType::INT_32:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "INT32 converted type can only be set for value of thrift::Type::INT32");
         return INTEGER();
 
       case thrift::ConvertedType::INT_64:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "INT64 converted type can only be set for value of thrift::Type::INT32");
         return BIGINT();
 
       case thrift::ConvertedType::UINT_8:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "UINT_8 converted type can only be set for value of thrift::Type::INT32");
         return TINYINT();
 
       case thrift::ConvertedType::UINT_16:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "UINT_16 converted type can only be set for value of thrift::Type::INT32");
         return SMALLINT();
 
       case thrift::ConvertedType::UINT_32:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "UINT_32 converted type can only be set for value of thrift::Type::INT32");
         return INTEGER();
 
       case thrift::ConvertedType::UINT_64:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT64,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT64,
             "UINT_64 converted type can only be set for value of thrift::Type::INT64");
         return TINYINT();
 
       case thrift::ConvertedType::DATE:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT32,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
             "DATE converted type can only be set for value of thrift::Type::INT32");
         return DATE();
 
       case thrift::ConvertedType::TIMESTAMP_MICROS:
       case thrift::ConvertedType::TIMESTAMP_MILLIS:
-        DWIO_ENSURE(
-            schemaElement.type == thrift::Type::INT64,
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT64,
             "TIMESTAMP_MICROS or TIMESTAMP_MILLIS converted type can only be set for value of thrift::Type::INT64");
         return TIMESTAMP();
 
       case thrift::ConvertedType::DECIMAL:
-        DWIO_ENSURE(
+        VELOX_CHECK(
             !schemaElement.__isset.precision || !schemaElement.__isset.scale,
             "DECIMAL requires a length and scale specifier!");
         VELOX_UNSUPPORTED("Decimal type is not supported yet");
@@ -350,7 +364,7 @@ TypePtr ReaderBase::convertType(
           case thrift::Type::FIXED_LEN_BYTE_ARRAY:
             return VARCHAR();
           default:
-            DWIO_RAISE(
+            VELOX_FAIL(
                 "UTF8 converted type can only be set for thrift::Type::(FIXED_LEN_)BYTE_ARRAY");
         }
       case thrift::ConvertedType::MAP:
@@ -363,7 +377,7 @@ TypePtr ReaderBase::convertType(
       case thrift::ConvertedType::BSON:
       case thrift::ConvertedType::INTERVAL:
       default:
-        DWIO_RAISE(
+        VELOX_FAIL(
             "Unsupported Parquet SchemaElement converted type: ",
             schemaElement.converted_type);
     }
@@ -390,7 +404,7 @@ TypePtr ReaderBase::convertType(
         }
 
       default:
-        DWIO_RAISE("Unknown Parquet SchemaElement type: ", schemaElement.type);
+        VELOX_FAIL("Unknown Parquet SchemaElement type: ", schemaElement.type);
     }
   }
 }
@@ -408,6 +422,7 @@ std::shared_ptr<const RowType> ReaderBase::createRowType(
   return TypeFactory<TypeKind::ROW>::create(
       std::move(childNames), std::move(childTypes));
 }
+
 void ReaderBase::scheduleRowGroups(
     const std::vector<uint32_t>& rowGroupIds,
     int32_t currentGroup,
@@ -502,7 +517,7 @@ void ParquetRowReader::filterRowGroups() {
 }
 
 uint64_t ParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {
-  DWIO_ENSURE_GT(size, 0);
+  VELOX_CHECK_GT(size, 0);
 
   if (currentRowInGroup_ >= rowsInCurrentRowGroup_) {
     // attempt to advance to next row group

@@ -25,15 +25,9 @@
 
 namespace facebook::velox::parquet {
 
-class Dictionary {
- public:
-  Dictionary(const void* dict, uint32_t size) : dict_(dict), size_(size) {}
-
- private:
-  const void* dict_;
-  uint32_t size_;
-};
-
+/// Manages access to pages inside a ColumnChunk. Interprets page headers and
+/// encodings and presents the combination of pages and encoded values as a
+/// continuous stream accessible via readWithVisitor().
 class PageReader {
  public:
   PageReader(
@@ -51,15 +45,20 @@ class PageReader {
         chunkSize_(chunkSize),
         nullConcatenation_(pool_) {}
 
-  // Advances 'numRows' top level rows.
+  /// Advances 'numRows' top level rows.
   void skip(int64_t numRows);
 
+  /// Applies 'visitor' to values in the ColumnChunk of 'this'. The
+  /// operation to perform and The operand rows are given by
+  /// 'visitor'. The rows are relative to the current position. The
+  /// current position after readWithVisitor is immediately after the
+  /// last accessed row.
   template <typename Visitor>
   void readWithVisitor(Visitor& visitor);
 
-  // Reads 'numValues' null flags into 'nulls' and advances the
-  // decoders by as much. The read may span several pages. If there
-  // are no nulls, buffer may be set to nullptr.
+  /// Reads 'numValues' null flags into 'nulls' and advances the
+  /// decoders by as much. The read may span several pages. If there
+  /// are no nulls, buffer may be set to nullptr.
   void readNullsOnly(int64_t numValues, BufferPtr& buffer);
 
  private:
@@ -143,8 +142,6 @@ class PageReader {
   const char* bufferStart_{nullptr};
   const char* bufferEnd_{nullptr};
 
-  BufferPtr defineOutBuffer_;
-  BufferPtr repeatOutBuffer_;
   BufferPtr tempNulls_;
   BufferPtr nullsInReadRange_;
   BufferPtr multiPageNulls_;
@@ -169,8 +166,6 @@ class PageReader {
   // First byte of uncompressed encoded data. Contains the encoded data as a
   // contiguous run of bytes.
   const char* pageData_{nullptr};
-  std::unique_ptr<Dictionary> dictionary_;
-  const char* dict_ = nullptr;
 
   // Offset of current page's header from start of ColumnChunk.
   uint64_t pageStart_{0};

@@ -66,12 +66,12 @@ void ParquetData::enqueueRowGroup(
     dwio::common::BufferedInput& input) {
   auto& chunk = rowGroups_[index].columns[type_->column];
   streams_.resize(rowGroups_.size());
-  DWIO_ENSURE(
+  VELOX_CHECK(
       chunk.__isset.meta_data,
       "ColumnMetaData does not exist for schema Id ",
       type_->column);
   auto& columnMetaData = chunk.meta_data;
-  DWIO_ENSURE(
+  VELOX_CHECK(
       chunk.__isset.meta_data,
       "ColumnMetaData does not exist for schema Id ",
       type_->column);
@@ -97,7 +97,7 @@ dwio::common::PositionProvider ParquetData::seekToRowGroup(uint32_t index) {
   VELOX_CHECK_LT(index, streams_.size());
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
   auto& metadata = rowGroups_[index].columns[type_->column].meta_data;
-  decoder_ = std::make_unique<PageReader>(
+  reader_ = std::make_unique<PageReader>(
       std::move(streams_[index]),
       pool_,
       type_,

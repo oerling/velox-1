@@ -14,17 +14,13 @@
  * limitations under the License.
  */
 
-//
-// Created by Ying Su on 2/14/22.
-//
-
 #pragma once
 
 #include "velox/dwio/parquet/reader/ParquetData.h"
 
 namespace facebook::velox::parquet {
 
-// Parquet stores integers of 8, 16, 32 bits with 32 bits and 64 as 64 bits.
+/// Parquet stores integers of 8, 16, 32 bits with 32 bits and 64 as 64 bits.
 inline int32_t parquetSizeOfIntKind(TypeKind kind) {
   switch (kind) {
     case TypeKind::TINYINT:
@@ -38,9 +34,11 @@ inline int32_t parquetSizeOfIntKind(TypeKind kind) {
   }
 }
 
-// Wrapper for static functions for Parquet columns.
+/// Wrapper for static functions for Parquet columns.
 class ParquetColumnReader {
  public:
+  /// Builds a reader tree producing 'dataType'. The metadata is in 'params'.
+  /// The filters and pruning are in 'scanSpec'.
   static std::unique_ptr<dwio::common::SelectiveColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,

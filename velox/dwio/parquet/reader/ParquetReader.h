@@ -32,7 +32,8 @@ enum class ParquetMetricsType { HEADER, FILE_METADATA, FILE, BLOCK, TEST };
 
 class StructColumnReader;
 
-class ReaderBase {
+  /// Metadata and options for reading Parquet.
+  class ReaderBase {
  public:
   ReaderBase(
       std::unique_ptr<dwio::common::InputStream> stream,
@@ -72,23 +73,26 @@ class ReaderBase {
     return schemaWithId_;
   }
 
-  // Ensures that streams are enqueued and loading for the row group at
-  // 'currentGroup'. May start loading one or more subsequent groups.
+    /// Ensures that streams are enqueued and loading for the row group at
+  /// 'currentGroup'. May start loading one or more subsequent groups.
   void scheduleRowGroups(
       const std::vector<uint32_t>& groups,
       int32_t currentGroup,
       StructColumnReader& reader);
 
-  // Returns the uncompressed size for columns in 'type' and its children in row
-  // group.
+    /// Returns the uncompressed size for columns in 'type' and its children in row
+  /// group.
   int64_t rowGroupUncompressedSize(
       int32_t rowGroupIndex,
       const dwio::common::TypeWithId& type) const;
 
  private:
-  void loadFileMetaData();
-  void initializeSchema();
-  std::shared_ptr<const ParquetTypeWithId> getParquetColumnInfo(
+    // Reads and parses file footer.
+    void loadFileMetaData();
+
+    void initializeSchema();
+
+    std::shared_ptr<const ParquetTypeWithId> getParquetColumnInfo(
       uint32_t maxSchemaElementIdx,
       uint32_t maxRepeat,
       uint32_t maxDefine,
@@ -118,7 +122,8 @@ class ReaderBase {
       inputs_;
 };
 
-class ParquetRowReader : public dwio::common::RowReader {
+  /// Implements the RowReader interface for Parquet.
+  class ParquetRowReader : public dwio::common::RowReader {
  public:
   ParquetRowReader(
       const std::shared_ptr<ReaderBase>& readerBase,
@@ -139,8 +144,11 @@ class ParquetRowReader : public dwio::common::RowReader {
   }
 
  private:
-  void filterRowGroups();
-  bool advanceToNextRowGroup();
+    // Compares row group  metadata to filters in ScanSpec in options of ReaderBase and determines the set of row groups to scan.
+    void filterRowGroups();
+
+    // Positions the reader tre at the start of the next row group, as determined by filterRowGroups().
+    bool advanceToNextRowGroup();
 
   memory::MemoryPool& pool_;
   const std::shared_ptr<ReaderBase> readerBase_;
@@ -159,6 +167,7 @@ class ParquetRowReader : public dwio::common::RowReader {
   RowTypePtr requestedType_;
 };
 
+  ///Implements the reader interface for Parquet.
 class ParquetReader : public dwio::common::Reader {
  public:
   ParquetReader(
