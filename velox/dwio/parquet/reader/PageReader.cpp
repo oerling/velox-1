@@ -113,12 +113,12 @@ PageHeader PageReader::readPageHeader(int64_t remainingSize) {
 const char* PageReader::readBytes(int32_t size, BufferPtr& copy) {
   if (bufferEnd_ == bufferStart_) {
     const void* buffer = nullptr;
-    int32_t size = 0;
-    if (!inputStream_->Next(&buffer, &size)) {
+    int32_t bufferSize = 0;
+    if (!inputStream_->Next(&buffer, &bufferSize)) {
       VELOX_FAIL("Read past end");
     }
     bufferStart_ = reinterpret_cast<const char*>(buffer);
-    bufferEnd_ = bufferStart_ + size;
+    bufferEnd_ = bufferStart_ + bufferSize;
   }
   if (bufferEnd_ - bufferStart_ >= size) {
     bufferStart_ += size;
@@ -137,7 +137,7 @@ const char* PageReader::readBytes(int32_t size, BufferPtr& copy) {
 const char* FOLLY_NONNULL PageReader::uncompressData(
     const char* pageData,
     uint32_t compressedSize,
-    uint32_t uncompressedSize) {
+    uint32_t /*uncompressedSize*/) {
   switch (codec_) {
     case thrift::CompressionCodec::UNCOMPRESSED:
       return pageData;
@@ -231,7 +231,7 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   makeDecoder();
 }
 
-void PageReader::prepareDictionary(const PageHeader& pageHeader) {
+  void PageReader::prepareDictionary(const PageHeader& /*pageHeader*/) {
   VELOX_NYI();
 }
 
@@ -274,7 +274,6 @@ void PageReader::skip(int64_t numRows) {
     // Return if no skip and position not at end of page or before first page.
     return;
   }
-  int rowInPage = firstUnvisited_ - rowOfPage_;
   auto toSkip = numRows;
   if (firstUnvisited_ + numRows >= rowOfPage_ + numRowsInPage_) {
     readNextPage(firstUnvisited_ + numRows);
@@ -397,7 +396,6 @@ bool PageReader::rowsForPage(
     // We scale row numbers to be relative to first on this page.
     auto pageOffset = rowOfPage_ - visitBase_;
     rowNumberBias_ = visitorRows_[currentVisitorRow_];
-    auto offsetOnPage = rowNumberBias_ + visitorRows_[currentVisitorRow_];
     skip(rowNumberBias_ - pageOffset);
     // The decoder is positioned at 'visitorRows_[currentVisitorRow_']'
     // We copy the rows to visit with a bias, so that the first to visit has

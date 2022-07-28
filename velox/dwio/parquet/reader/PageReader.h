@@ -64,7 +64,7 @@ class PageReader {
  private:
   // If the current page has nulls, returns a nulls bitmap owned by 'this'. This
   // is filled for 'numRows' bits.
-  const uint64_t* readNulls(int32_t numRows, BufferPtr& buffer);
+  const uint64_t* FOLLY_NULLABLE readNulls(int32_t numRows, BufferPtr& buffer);
 
   // Skips the define decoder, if any, for 'numValues' top level
   // rows. Returns the number of non-nulls skipped. The range is the
@@ -224,9 +224,6 @@ void PageReader::readWithVisitor(Visitor& visitor) {
       !std::is_same<typename Visitor::FilterType, common::AlwaysTrue>::value;
   constexpr bool filterOnly =
       std::is_same<typename Visitor::Extract, dwio::common::DropValues>::value;
-  constexpr bool hasHook =
-      !std::is_same<typename Visitor::HookType, dwio::common::NoHook>::value;
-
   bool mayProduceNulls = !filterOnly && visitor.allowNulls();
   auto rows = visitor.rows();
   auto numRows = visitor.numRows();

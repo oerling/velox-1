@@ -18,6 +18,28 @@
 
 namespace facebook::velox::parquet {
 
+StructColumnReader::StructColumnReader(
+    const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+    ParquetParams& params,
+    common::ScanSpec& scanSpec)
+    : dwio::common::SelectiveStructColumnReader(
+          dataType,
+          dataType,
+          params,
+          scanSpec) {
+  auto& childSpecs = scanSpec_->children();
+  for (auto i = 0; i < childSpecs.size(); ++i) {
+    if (childSpecs[i]->isConstant()) {
+      continue;
+    }
+    auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
+
+    children_.push_back(
+        ParquetColumnReader::build(childDataType, params, *childSpecs[i]));
+    childSpecs[i]->setSubscript(children_.size() - 1);
+  }
+}
+
 void StructColumnReader::enqueueRowGroup(
     uint32_t index,
     dwio::common::BufferedInput& input) {
@@ -37,7 +59,7 @@ void StructColumnReader::seekToRowGroup(uint32_t index) {
   }
 }
 
-bool StructColumnReader::filterMatches(const thrift::RowGroup& rowGroup) {
+bool StructColumnReader::filterMatches(const thrift::RowGroup& /*rowGroup*/) {
   return true;
 }
 

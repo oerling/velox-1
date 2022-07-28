@@ -160,7 +160,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
       switch (schemaElement.converted_type) {
         case thrift::ConvertedType::LIST:
         case thrift::ConvertedType::MAP: {
-          auto element = children[0]->getChildren();
+          auto element = children.at(0)->getChildren();
           VELOX_CHECK_EQ(children.size(), 1);
           return std::make_shared<const ParquetTypeWithId>(
               children[0]->type,
@@ -178,7 +178,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
           VELOX_CHECK_EQ(
               schemaElement.repetition_type,
               thrift::FieldRepetitionType::REPEATED);
-          VELOX_CHECK_EQ(children.size(), 2);
+          assert(children.size() == 2);
           auto childrenCopy = children;
           return std::make_shared<const ParquetTypeWithId>(
               TypeFactory<TypeKind::MAP>::create(
@@ -201,7 +201,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
       if (schemaElement.repetition_type ==
           thrift::FieldRepetitionType::REPEATED) {
         // child of LIST: "bag"
-        VELOX_CHECK_EQ(children.size(), 1);
+        assert(children.size() == 1);
         auto childrenCopy = children;
         return std::make_shared<ParquetTypeWithId>(
             TypeFactory<TypeKind::ARRAY>::create(children[0]->type),
@@ -511,9 +511,10 @@ void ParquetRowReader::filterRowGroups() {
       columnReader_->filterRowGroups(0, dwio::common::StatsContext());
   skippedRowGroups_ = excluded.size();
   for (auto i = 0; i < rowGroups.size(); i++) {
-    if (std::find(excluded.begin(), excluded.end(), i) == excluded.end())
+    if (std::find(excluded.begin(), excluded.end(), i) == excluded.end()) {
       rowGroupIds_.push_back(i);
-  }
+    }
+    }
 }
 
 uint64_t ParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {

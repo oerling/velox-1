@@ -156,17 +156,22 @@ class ParquetRowReader : public dwio::common::RowReader {
   memory::MemoryPool& pool_;
   const std::shared_ptr<ReaderBase> readerBase_;
   const dwio::common::RowReaderOptions& options_;
+
+  // All row groups from file metadata.
   const std::vector<thrift::RowGroup>& rowGroups_;
 
+  // Indices of row groups where stats match filters.
   std::vector<uint32_t> rowGroupIds_;
   uint32_t currentRowGroupIdsIdx_;
-  thrift::RowGroup const* currentRowGroupPtr_;
+  const thrift::RowGroup * FOLLY_NULLABLE currentRowGroupPtr_{nullptr};
   uint64_t rowsInCurrentRowGroup_;
-  int32_t avgRowSize_{0};
   uint64_t currentRowInGroup_;
-  int skippedRowGroups_{0};
+
+  // Number of row groups skipped based on stats.
+  int32_t skippedRowGroups_{0};
 
   std::unique_ptr<dwio::common::SelectiveColumnReader> columnReader_;
+
   RowTypePtr requestedType_;
 };
 
