@@ -176,10 +176,11 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               schemaElement.repetition_type ==
               thrift::FieldRepetitionType::REPEATED);
           DWIO_ENSURE(children.size() == 2);
+	  auto childrenCopy = children;
           return std::make_shared<const ParquetTypeWithId>(
               TypeFactory<TypeKind::MAP>::create(
                   children[0]->type, children[1]->type),
-              std::move(children),
+              std::move(childrenCopy),
               curSchemaIdx, // TODO: there are holes in the ids
               maxSchemaElementIdx,
               -1, // columnIdx,
@@ -197,9 +198,10 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
           thrift::FieldRepetitionType::REPEATED) {
         // child of LIST: "bag"
         DWIO_ENSURE(children.size() == 1);
+	auto childrenCopy = children;
         return std::make_shared<ParquetTypeWithId>(
             TypeFactory<TypeKind::ARRAY>::create(children[0]->type),
-            std::move(children),
+            std::move(childrenCopy),
             curSchemaIdx,
             maxSchemaElementIdx,
             -1, // columnIdx,
@@ -209,9 +211,10 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             maxDefine);
       } else {
         // Row type
+	auto childrenCopy = children;
         return std::make_shared<const ParquetTypeWithId>(
             createRowType(children),
-            std::move(children),
+            std::move(childrenCopy),
             curSchemaIdx,
             maxSchemaElementIdx,
             -1, // columnIdx,
