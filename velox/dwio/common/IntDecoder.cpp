@@ -2405,6 +2405,34 @@ template void IntDecoder<false>::bulkReadRows(
     int16_t* result,
     int32_t initialRow);
 
+// static
+void IntDecoder::decodeBitsLE(
+    const uint64_t* bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    T* result) {
+  uint64_t mask = bits::lowMask(bitWidth);
+  auto numRows = rows.size();
+  if (bitWidth > 56) {
+      for (auto i = 0; i < numRows; ++i) {
+    auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
+    result[i] = bits::loadWord<T>(bits, bit, bitWidth);
+    }
+    return;
+  }
+
+  for (auto i = 0; i < numRows; ++i) {
+    auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
+    auto byte = bit / 8;
+    auto shift = bit & 7;
+    result[i] = (*reinterpret_cast<uint64_t*>(bytePtr + byte)  >> shift) & mask;
+
+  }
+}
+
+
 #ifdef CODEGEN_BULK_VARINTS
 // Codegen for vint bulk decode. This is to document how varintSwitch
 // and similar functions were made and how to regenerate modified
