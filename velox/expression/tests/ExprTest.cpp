@@ -31,148 +31,18 @@
 using namespace facebook::velox;
 using namespace facebook::velox::test;
 
-struct OpaqueState;
-
-namespace {
-// Specifies an encoding for generating test data. Multiple encodings can be
-// nested. The first element of a list of  EncodingOptions gives the base
-// encoding, either FLAT or CONSTANT. Subsequent elements add a wrapper, e.g.
-// DICTIONARY, SEQUENCE or CONSTANT.
-struct EncodingOptions {
-  const VectorEncoding::Simple encoding;
-
-  // Specifies the count of values for a FLAT, DICTIONARY or SEQUENCE.
-  const int32_t cardinality;
-
-  // Specifies the frequency of nulls added by a DICTIONARY wrapper. 0 means
-  // no nulls are added, n means positions divisible by n have a null.
-  const int32_t nullFrequency = 0;
-
-  // Allows making two dictionaries with the same indices array.
-  const BufferPtr indices = nullptr;
-
-  // If wrapping vector inside a CONSTANT, specifies the element of the
-  // wrapped vector which gives the constant value.
-  const int32_t constantIndex = 0;
-
-  static EncodingOptions flat(int32_t cardinality) {
-    return {VectorEncoding::Simple::FLAT, cardinality};
-  }
-
-  static EncodingOptions dictionary(
-      int32_t cardinality,
-      int32_t nullFrequency) {
-    return {VectorEncoding::Simple::DICTIONARY, cardinality, nullFrequency};
-  }
-
-  static EncodingOptions dictionary(int32_t cardinality, BufferPtr indices) {
-    return {
-        VectorEncoding::Simple::DICTIONARY,
-        cardinality,
-        -1,
-        std::move(indices)};
-  }
-
-  static EncodingOptions sequence(int32_t runLength) {
-    return {VectorEncoding::Simple::SEQUENCE, runLength, -1};
-  }
-
-  static EncodingOptions constant(int32_t cardinality, int32_t index) {
-    return {VectorEncoding::Simple::CONSTANT, cardinality, -1, nullptr, index};
-  }
-};
-
-template <typename T>
-struct VectorAndReference {
-  std::shared_ptr<SimpleVector<T>> vector;
-  std::vector<std::optional<T>> reference;
-};
-
-struct TestData {
-  VectorAndReference<int8_t> tinyint1;
-  VectorAndReference<int16_t> smallint1;
-  VectorAndReference<int32_t> integer1;
-  VectorAndReference<int64_t> bigint1;
-  VectorAndReference<int64_t> bigint2;
-  VectorAndReference<StringView> string1;
-  VectorAndReference<bool> bool1;
-  VectorAndReference<std::shared_ptr<void>> opaquestate1;
-};
-
-} // namespace
-
 class ExprTest : public testing::Test, public VectorTestBase {
  protected:
   void SetUp() override {
     functions::prestosql::registerAllScalarFunctions();
     parse::registerTypeResolver();
-
-    testDataType_ =
-        ROW({"tinyint1",
-             "smallint1",
-             "integer1",
-             "bigint1",
-             "bigint2",
-             "string1",
-             "bool1",
-             "opaquestate1"},
-            {TINYINT(),
-             SMALLINT(),
-             INTEGER(),
-             BIGINT(),
-             BIGINT(),
-             VARCHAR(),
-             BOOLEAN(),
-             OPAQUE<OpaqueState>()});
-    // A set of dictionary indices from >= 0 < 100 with many repeats and a few
-    // values that occur only at one end.
-    constexpr int32_t kTestSize = 10'000;
-    BufferPtr indices =
-        AlignedBuffer::allocate<vector_size_t>(kTestSize, execCtx_->pool());
-    auto rawIndices = indices->asMutable<vector_size_t>();
-    for (int32_t i = 0; i < kTestSize; ++i) {
-      if (i < 1000) {
-        rawIndices[i] = i % 20;
-      } else if (i > 9000) {
-        rawIndices[i] = 80 + (i % 20);
-      } else {
-        rawIndices[i] = 10 + (i % 80);
-      }
-    }
-    testEncodings_.push_back({EncodingOptions::flat(kTestSize)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100),
-         EncodingOptions::dictionary(kTestSize, indices)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100),
-         EncodingOptions::dictionary(kTestSize, 0)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100), EncodingOptions::constant(kTestSize, 3)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100), EncodingOptions::constant(kTestSize, 7)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100),
-         EncodingOptions::sequence(10),
-         EncodingOptions::dictionary(kTestSize, 6)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100),
-         EncodingOptions::dictionary(kTestSize, 6)});
-    // A dictionary that masks everything as null.
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100),
-         EncodingOptions::dictionary(kTestSize, 1)});
-    testEncodings_.push_back(
-        {EncodingOptions::flat(100),
-         EncodingOptions::dictionary(1000, 0),
-         EncodingOptions::sequence(10)});
   }
 
   std::shared_ptr<const core::ITypedExpr> parseExpression(
       const std::string& text,
-      const RowTypePtr& rowType = nullptr) {
-    auto untyped = parse::parseExpr(text);
-    return core::Expressions::inferTypes(
-        untyped, rowType ? rowType : testDataType_, execCtx_->pool());
+      const RowTypePtr& rowType) {
+    auto untyped = parse::parseExpr(text, options_);
+    return core::Expressions::inferTypes(untyped, rowType, execCtx_->pool());
   }
 
   std::unique_ptr<exec::ExprSet> compileExpression(
@@ -215,358 +85,6 @@ class ExprTest : public testing::Test, public VectorTestBase {
     std::vector<VectorPtr> result(1);
     exprSet->eval(rows, &context, &result);
     return result[0];
-  }
-
-  template <typename T>
-  void fillVectorAndReference(
-      const std::vector<EncodingOptions>& options,
-      std::function<std::optional<T>(vector_size_t)> generator,
-      VectorAndReference<T>* result,
-      bool makeLazyVector = false) {
-    auto& reference = result->reference;
-    VectorPtr current;
-    for (auto& option : options) {
-      int32_t cardinality = option.cardinality;
-      switch (option.encoding) {
-        case VectorEncoding::Simple::FLAT: {
-          VELOX_CHECK(!current, "A flat vector must be in a leaf position");
-          auto flatVector =
-              std::dynamic_pointer_cast<FlatVector<T>>(BaseVector::create(
-                  CppToType<T>::create(), cardinality, execCtx_->pool()));
-          reference.resize(cardinality);
-          for (int32_t index = 0; index < cardinality; ++index) {
-            reference[index] = generator(index);
-            if (reference[index].has_value()) {
-              flatVector->set(index, reference[index].value());
-            } else {
-              flatVector->setNull(index, true);
-            }
-          };
-
-          if (makeLazyVector) {
-            current = wrapInLazyDictionary(flatVector);
-          } else {
-            current = flatVector;
-          }
-          break;
-        }
-        case VectorEncoding::Simple::DICTIONARY: {
-          VELOX_CHECK(current, "Dictionary must be non-leaf");
-          BufferPtr indices;
-          BufferPtr nulls;
-          std::vector<std::optional<T>> newReference(cardinality);
-          if (option.indices) {
-            indices = option.indices;
-            auto rawIndices = indices->as<vector_size_t>();
-            for (auto index = 0; index < cardinality; index++) {
-              newReference[index] = reference[rawIndices[index]];
-            }
-          } else {
-            indices = AlignedBuffer::allocate<vector_size_t>(
-                cardinality, execCtx_->pool());
-            auto rawIndices = indices->asMutable<vector_size_t>();
-            uint64_t* rawNulls = nullptr;
-
-            auto nullFrequency = option.nullFrequency;
-            if (nullFrequency && !nulls) {
-              nulls = AlignedBuffer::allocate<bool>(
-                  cardinality, execCtx_->pool(), bits::kNotNull);
-              rawNulls = nulls->asMutable<uint64_t>();
-            }
-            auto baseSize = current->size();
-            for (auto index = 0; index < cardinality; index++) {
-              rawIndices[index] = index % baseSize;
-              if (nullFrequency && index % nullFrequency == 0) {
-                bits::setNull(rawNulls, index);
-                // Set the index for a position where the dictionary
-                // adds a null to be out of range.
-                rawIndices[index] =
-                    static_cast<vector_size_t>(80'000'000L * index);
-                newReference[index] = std::nullopt;
-              } else {
-                newReference[index] = reference[rawIndices[index]];
-              }
-            }
-          }
-          reference = newReference;
-          current = BaseVector::wrapInDictionary(
-              nulls, indices, cardinality, std::move(current));
-          break;
-        }
-        case VectorEncoding::Simple::CONSTANT: {
-          VELOX_CHECK(current, "Constant must be non-leaf");
-          auto constantIndex = option.constantIndex;
-          current =
-              BaseVector::wrapInConstant(cardinality, constantIndex, current);
-          std::vector<std::optional<T>> newReference(cardinality);
-          for (int32_t i = 0; i < cardinality; ++i) {
-            newReference[i] = reference[constantIndex];
-          }
-          reference = newReference;
-          break;
-        }
-        case VectorEncoding::Simple::SEQUENCE: {
-          VELOX_CHECK(current, "Sequence must be non-leaf");
-          BufferPtr sizes;
-          int runLength = cardinality;
-          int currentSize = current->size();
-          std::vector<std::optional<T>> newReference(runLength * currentSize);
-          sizes = AlignedBuffer::allocate<vector_size_t>(
-              currentSize, execCtx_->pool());
-          auto rawSizes = sizes->asMutable<vector_size_t>();
-          for (auto index = 0; index < currentSize; index++) {
-            rawSizes[index] = runLength;
-            for (int i = 0; i < runLength; ++i) {
-              newReference[index * runLength + i] = reference[index];
-            }
-          }
-          reference = newReference;
-          current = BaseVector::wrapInSequence(
-              sizes, runLength * currentSize, std::move(current));
-          break;
-        }
-        default:; // nothing to do
-      }
-    }
-    result->vector = std::static_pointer_cast<SimpleVector<T>>(current);
-
-    if (!makeLazyVector) {
-      // Test that the reference and the vector with possible wrappers
-      // are consistent.
-      SelectivityVector rows(current->size());
-      DecodedVector decoded(*current, rows);
-      compare<T>(
-          rows, decoded, [&](int32_t row) { return reference[row]; }, "");
-    }
-  }
-
-  template <typename T>
-  void compare(
-      const SelectivityVector& rows,
-      DecodedVector& decoded,
-      std::function<std::optional<T>(int32_t)> reference,
-      const std::string& errorPrefix) {
-    auto base = decoded.base()->as<SimpleVector<T>>();
-    auto indices = decoded.indices();
-    auto nulls = decoded.nulls();
-    auto nullIndices = decoded.nullIndices();
-    rows.applyToSelected([&](int32_t row) {
-      auto value = reference(row);
-      auto baseRow = indices[row];
-      auto nullRow = nullIndices ? nullIndices[row] : row;
-      if (value.has_value()) {
-        if (nulls && bits::isBitNull(nulls, nullRow)) {
-          FAIL() << errorPrefix << ": expected non-null at " << row;
-          return;
-        }
-        if (value != base->valueAt(baseRow)) {
-          EXPECT_EQ(value.value(), base->valueAt(baseRow))
-              << errorPrefix << ": at " << row;
-        }
-      } else if (!(nulls && bits::isBitNull(nulls, nullRow))) {
-        FAIL() << errorPrefix << ": reference is null and tests is not null at "
-               << row;
-      }
-    });
-  }
-
-  template <typename T>
-  static void addField(
-      const VectorAndReference<T>& field,
-      std::vector<VectorPtr>& fields,
-      vector_size_t& size) {
-    if (field.vector) {
-      if (size == -1) {
-        size = field.vector->size();
-      } else {
-        size = std::max<int32_t>(size, field.vector->size());
-      }
-      fields.push_back(field.vector);
-    } else {
-      fields.push_back(nullptr);
-    }
-  }
-
-  std::shared_ptr<RowVector> testDataRow() {
-    std::vector<VectorPtr> fields;
-    vector_size_t size = -1;
-    addField(testData_.tinyint1, fields, size);
-    addField(testData_.smallint1, fields, size);
-    addField(testData_.integer1, fields, size);
-    addField(testData_.bigint1, fields, size);
-    addField(testData_.bigint2, fields, size);
-    addField(testData_.string1, fields, size);
-    addField(testData_.bool1, fields, size);
-    addField(testData_.opaquestate1, fields, size);
-
-    // Keep only non-null fields.
-    std::vector<std::string> names;
-    std::vector<TypePtr> types;
-    std::vector<VectorPtr> nonNullFields;
-    for (auto i = 0; i < fields.size(); ++i) {
-      if (fields[i]) {
-        names.push_back(testDataType_->nameOf(i));
-        types.push_back(testDataType_->childAt(i));
-        nonNullFields.push_back(fields[i]);
-      }
-    }
-
-    return std::make_shared<RowVector>(
-        execCtx_->pool(),
-        ROW(std::move(names), std::move(types)),
-        nullptr,
-        size,
-        std::move(nonNullFields));
-  }
-
-  static std::string describeEncoding(const BaseVector* const vector) {
-    std::stringstream out;
-    auto currentVector = vector;
-    for (;;) {
-      auto encoding = currentVector->encoding();
-      out << encoding;
-      if (encoding != VectorEncoding::Simple::DICTIONARY &&
-          encoding != VectorEncoding::Simple::SEQUENCE &&
-          encoding != VectorEncoding::Simple::CONSTANT) {
-        break;
-      }
-      auto inner = currentVector->valueVector().get();
-      if (inner == currentVector || !inner) {
-        break;
-      }
-      out << " over ";
-      currentVector = inner;
-    }
-    return out.str();
-  }
-
-  static std::string makeErrorPrefix(
-      const std::string& text,
-      const RowVectorPtr& row,
-      vector_size_t begin,
-      vector_size_t end) {
-    std::ostringstream message;
-    message << "expression: " << text << ", encodings: ";
-    int32_t nonNullChildCount = 0;
-    for (auto& child : row->children()) {
-      if (child) {
-        message << (nonNullChildCount > 0 ? ", " : "")
-                << describeEncoding(child.get());
-        nonNullChildCount++;
-      }
-    }
-    message << ", begin=" << begin << ", end=" << end << std::endl;
-    return message.str();
-  }
-
-  template <typename T>
-  void runAll(
-      const std::string& text,
-      std::function<std::optional<T>(int32_t)> reference) {
-    auto source = {parseExpression(text)};
-    exprs_ = std::make_unique<exec::ExprSet>(std::move(source), execCtx_.get());
-    auto row = testDataRow();
-    exec::EvalCtx context(execCtx_.get(), exprs_.get(), row.get());
-    auto size = row->size();
-
-    auto rows = selectRange(0, size);
-    std::vector<VectorPtr> result(1);
-    exprs_->eval(rows, &context, &result);
-    DecodedVector decoded(*result[0], rows);
-    compare(rows, decoded, reference, makeErrorPrefix(text, row, 0, size));
-
-    // reset the caches
-    exprs_.reset();
-  }
-
-  /// Evaluates 'text' expression on 'testDataRow()' twice. First, evaluates the
-  /// expression on the first 2/3 of the rows. Then, evaluates the expression on
-  /// the last 1/3 of the rows.
-  template <typename T>
-  void run(
-      const std::string& text,
-      std::function<std::optional<T>(int32_t)> reference) {
-    auto source = {parseExpression(text)};
-    exprs_ = std::make_unique<exec::ExprSet>(source, execCtx_.get());
-    auto row = testDataRow();
-    exec::EvalCtx context(execCtx_.get(), exprs_.get(), row.get());
-    auto size = row->size();
-
-    SelectivityVector allRows(size);
-    *context.mutableIsFinalSelection() = false;
-    *context.mutableFinalSelection() = &allRows;
-
-    vector_size_t begin = 0;
-    vector_size_t end = size / 3 * 2;
-    {
-      auto rows = selectRange(begin, end);
-      std::vector<VectorPtr> result(1);
-      exprs_->eval(rows, &context, &result);
-      DecodedVector decoded(*result[0], rows);
-      compare(rows, decoded, reference, makeErrorPrefix(text, row, begin, end));
-    }
-
-    begin = size / 3;
-    end = size;
-    {
-      auto rows = selectRange(begin, end);
-      std::vector<VectorPtr> result(1);
-      exprs_->eval(0, 1, false, rows, &context, &result);
-      DecodedVector decoded(*result[0], rows);
-      compare(rows, decoded, reference, makeErrorPrefix(text, row, begin, end));
-    }
-  }
-
-  static SelectivityVector selectRange(vector_size_t begin, vector_size_t end) {
-    SelectivityVector rows(end, false);
-    rows.setValidRange(begin, end, true);
-    rows.updateBounds();
-    return rows;
-  }
-
-  void runWithError(const std::string& text) {
-    exec::ExprSet exprs({parseExpression(text)}, execCtx_.get());
-    auto row = testDataRow();
-    exec::EvalCtx context(execCtx_.get(), &exprs, row.get());
-    auto size = row->size();
-
-    vector_size_t begin = 0;
-    vector_size_t end = size / 3 * 2;
-    {
-      auto rows = selectRange(begin, end);
-      std::vector<VectorPtr> result(1);
-      ASSERT_THROW(exprs.eval(rows, &context, &result), VeloxException)
-          << makeErrorPrefix(text, row, begin, end);
-    }
-
-    begin = size / 3;
-    end = size;
-    {
-      auto rows = selectRange(begin, end);
-      std::vector<VectorPtr> result(1);
-      ASSERT_THROW(
-          exprs.eval(0, 1, false, rows, &context, &result), VeloxException)
-          << makeErrorPrefix(text, row, begin, end);
-    }
-  }
-
-  static bool isAllNulls(const VectorPtr& vector) {
-    if (!vector->loadedVector()->mayHaveNulls()) {
-      return false;
-    }
-    for (auto i = 0; i < vector->size(); ++i) {
-      if (!vector->isNullAt(i)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  exec::Expr* compileExpression(const std::string& text) {
-    std::vector<std::shared_ptr<const core::ITypedExpr>> source = {
-        parseExpression(text)};
-    exprs_ = std::make_unique<exec::ExprSet>(std::move(source), execCtx_.get());
-    return exprs_->expr(0).get();
   }
 
   template <typename T = ComplexType>
@@ -631,190 +149,8 @@ class ExprTest : public testing::Test, public VectorTestBase {
   std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   std::unique_ptr<core::ExecCtx> execCtx_{
       std::make_unique<core::ExecCtx>(pool_.get(), queryCtx_.get())};
-  TestData testData_;
-  RowTypePtr testDataType_;
-  std::unique_ptr<exec::ExprSet> exprs_;
-  std::vector<std::vector<EncodingOptions>> testEncodings_;
+  parse::ParseOptions options_;
 };
-
-#define IS_BIGINT1 testData_.bigint1.reference[row].has_value()
-#define IS_BIGINT2 testData_.bigint2.reference[row].has_value()
-#define BIGINT1 testData_.bigint1.reference[row].value()
-#define BIGINT2 testData_.bigint2.reference[row].value()
-#define INT64V(v) std::optional<int64_t>(v)
-#define INT64N std::optional<int64_t>()
-
-TEST_F(ExprTest, encodings) {
-  // This test throws a lot of exceptions, so turn off stack trace capturing.
-  FLAGS_velox_exception_user_stacktrace_enabled = false;
-  int32_t counter = 0;
-  for (auto& encoding1 : testEncodings_) {
-    fillVectorAndReference<int64_t>(
-        encoding1,
-        [](int32_t row) {
-          return row % 7 == 0 ? std::nullopt
-                              : std::optional(static_cast<int64_t>(row));
-        },
-        &testData_.bigint1);
-    for (auto& encoding2 : testEncodings_) {
-      fillVectorAndReference<int64_t>(
-          encoding2,
-          [](int32_t row) {
-            return (row % 11 == 0) ? std::nullopt
-                                   : std::optional(static_cast<int64_t>(row));
-          },
-          &testData_.bigint2);
-      ++counter;
-
-      run<int64_t>("2 * bigint1 + 3 * bigint2", [&](int32_t row) {
-        if (IS_BIGINT1 && IS_BIGINT2) {
-          return INT64V(2 * BIGINT1 + 3 * BIGINT2);
-        }
-        return INT64N;
-      });
-
-      run<int64_t>(
-          "if(bigint1 % 2 = 0, 2 * bigint1 + 10, 3 * bigint2) + 11",
-          [&](int32_t row) {
-            auto temp = (IS_BIGINT1 && BIGINT1 % 2 == 0)
-                ? INT64V(2 * BIGINT1 + 10)
-                : IS_BIGINT2 ? INT64V(3 * BIGINT2)
-                             : INT64N;
-            return temp.has_value() ? INT64V(temp.value() + 11) : temp;
-          });
-
-      run<int64_t>(
-          "if(bigint1 % 2 = 0 and bigint2 < 1000 and bigint1 + bigint2 > 0,"
-          "  bigint1, bigint2) + 11",
-          [&](int32_t row) {
-            if ((IS_BIGINT1 && BIGINT1 % 2 == 0) &&
-                (IS_BIGINT2 && BIGINT2 < 1000) &&
-                (IS_BIGINT1 && IS_BIGINT2 && BIGINT1 + BIGINT2 > 0)) {
-              return IS_BIGINT1 ? INT64V(BIGINT1 + 11) : INT64N;
-            }
-            return IS_BIGINT2 ? INT64V(BIGINT2 + 11) : INT64N;
-          });
-
-      if (!isAllNulls(testData_.bigint2.vector)) {
-        runWithError("bigint2 % 0");
-      }
-
-      // Produce an error if bigint1 is a multiple of 3 or bigint2 is a multiple
-      // of 13. Then mask this error by a false. Return 1 for true and 0 for
-      // false.
-      run<int64_t>(
-          "if ((if (bigint1 % 3 = 0, bigint1 % 0 > 1, bigint1 >= 0)"
-          "and if(bigint2 % 13 = 0, bigint2 % 0 > 1, bigint2 > 0)"
-          "and (bigint1 % 3 > 0) and (bigint2 % 13 > 0)), 1, 0)",
-          [&](int32_t row) {
-            if (IS_BIGINT1 && BIGINT1 % 3 > 0 && IS_BIGINT2 && BIGINT2 % 13 > 0)
-              return 1;
-            return 0;
-          });
-
-      // Test common subexpressions at top level and inside conditionals.
-      run<int64_t>(
-          "if(bigint1 % 2 = 0, 2 * (bigint1 + bigint2),"
-          "   3 * (bigint1 + bigint2)) + "
-          "4 * (bigint1 + bigint2)",
-          [&](int32_t row) -> std::optional<int64_t> {
-            if (!IS_BIGINT1 || !IS_BIGINT2) {
-              return std::nullopt;
-            } else {
-              auto sum = BIGINT1 + BIGINT2;
-              return (BIGINT1 % 2 == 0 ? 2 * sum : 3 * sum) + 4 * sum;
-            }
-          });
-    }
-  }
-}
-
-TEST_F(ExprTest, encodingsOverLazy) {
-  // This test throws a lot of exceptions, so turn off stack trace capturing.
-  FLAGS_velox_exception_user_stacktrace_enabled = false;
-  int32_t counter = 0;
-  for (auto& encoding1 : testEncodings_) {
-    fillVectorAndReference<int64_t>(
-        encoding1,
-        [](int32_t row) {
-          return row % 7 == 0 ? std::nullopt
-                              : std::optional(static_cast<int64_t>(row));
-        },
-        &testData_.bigint1,
-        true);
-    for (auto& encoding2 : testEncodings_) {
-      fillVectorAndReference<int64_t>(
-          encoding2,
-          [](int32_t row) {
-            return (row % 11 == 0) ? std::nullopt
-                                   : std::optional(static_cast<int64_t>(row));
-          },
-          &testData_.bigint2,
-          true);
-      ++counter;
-
-      run<int64_t>("2 * bigint1 + 3 * bigint2", [&](int32_t row) {
-        if (IS_BIGINT1 && IS_BIGINT2) {
-          return INT64V(2 * BIGINT1 + 3 * BIGINT2);
-        }
-        return INT64N;
-      });
-
-      run<int64_t>(
-          "if(bigint1 % 2 = 0, 2 * bigint1 + 10, 3 * bigint2) + 11",
-          [&](int32_t row) {
-            auto temp = (IS_BIGINT1 && BIGINT1 % 2 == 0)
-                ? INT64V(2 * BIGINT1 + 10)
-                : IS_BIGINT2 ? INT64V(3 * BIGINT2)
-                             : INT64N;
-            return temp.has_value() ? INT64V(temp.value() + 11) : temp;
-          });
-
-      run<int64_t>(
-          "if(bigint1 % 2 = 0 and bigint2 < 1000 and bigint1 + bigint2 > 0,"
-          "  bigint1, bigint2) + 11",
-          [&](int32_t row) {
-            if ((IS_BIGINT1 && BIGINT1 % 2 == 0) &&
-                (IS_BIGINT2 && BIGINT2 < 1000) &&
-                (IS_BIGINT1 && IS_BIGINT2 && BIGINT1 + BIGINT2 > 0)) {
-              return IS_BIGINT1 ? INT64V(BIGINT1 + 11) : INT64N;
-            }
-            return IS_BIGINT2 ? INT64V(BIGINT2 + 11) : INT64N;
-          });
-
-      if (!isAllNulls(testData_.bigint2.vector)) {
-        runWithError("bigint2 % 0");
-      }
-
-      // Produce an error if bigint1 is a multiple of 3 or bigint2 is a multiple
-      // of 13. Then mask this error by a false. Return 1 for true and 0 for
-      // false.
-      run<int64_t>(
-          "if ((if (bigint1 % 3 = 0, bigint1 % 0 > 1, bigint1 >= 0)"
-          "and if(bigint2 % 13 = 0, bigint2 % 0 > 1, bigint2 > 0)"
-          "and (bigint1 % 3 > 0) and (bigint2 % 13 > 0)), 1, 0)",
-          [&](int32_t row) {
-            if (IS_BIGINT1 && BIGINT1 % 3 > 0 && IS_BIGINT2 && BIGINT2 % 13 > 0)
-              return 1;
-            return 0;
-          });
-
-      // Test common subexpressions at top level and inside conditionals.
-      run<int64_t>(
-          "if(bigint1 % 2 = 0, 2 * (bigint1 + bigint2),"
-          "   3 * (bigint1 + bigint2)) + "
-          "4 * (bigint1 + bigint2)",
-          [&](int32_t row) -> std::optional<int64_t> {
-            if (!IS_BIGINT1 || !IS_BIGINT2) {
-              return std::nullopt;
-            } else {
-              auto sum = BIGINT1 + BIGINT2;
-              return (BIGINT1 % 2 == 0 ? 2 * sum : 3 * sum) + 4 * sum;
-            }
-          });
-    }
-  }
-}
 
 TEST_F(ExprTest, moreEncodings) {
   const vector_size_t size = 1'000;
@@ -845,23 +181,25 @@ TEST_F(ExprTest, moreEncodings) {
 }
 
 TEST_F(ExprTest, reorder) {
-  constexpr int32_t kTestSize = 20000;
-  std::vector<EncodingOptions> encoding = {EncodingOptions::flat(kTestSize)};
-  fillVectorAndReference<int64_t>(
-      encoding,
-      [](int32_t row) { return std::optional(static_cast<int64_t>(row)); },
-      &testData_.bigint1);
-  run<int64_t>(
-      "if (bigint1 % 409 < 300 and bigint1 %103 < 30, 1, 2)", [&](int32_t row) {
-        return BIGINT1 % 409 < 300 && BIGINT1 % 103 < 30 ? INT64V(1)
-                                                         : INT64V(2);
-      });
-  auto expr = exprs_->expr(0);
-  auto condition =
-      std::dynamic_pointer_cast<exec::ConjunctExpr>(expr->inputs()[0]);
+  constexpr int32_t kTestSize = 20'000;
+
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>(kTestSize, [](auto row) { return row; })});
+  auto exprSet = compileExpression(
+      "if (c0 % 409 < 300 and c0 % 103 < 30, 1, 2)", asRowType(data->type()));
+  auto result = evaluate(exprSet.get(), data);
+
+  auto expectedResult = makeFlatVector<int64_t>(kTestSize, [](auto row) {
+    return (row % 409) < 300 && (row % 103) < 30 ? 1 : 2;
+  });
+
+  auto condition = std::dynamic_pointer_cast<exec::ConjunctExpr>(
+      exprSet->expr(0)->inputs()[0]);
   EXPECT_TRUE(condition != nullptr);
-  // We check that the more efficient filter is first.
+
+  // Verify that more efficient filter is first.
   for (auto i = 1; i < condition->inputs().size(); ++i) {
+    std::cout << condition->selectivityAt(i - 1).timeToDropValue() << std::endl;
     EXPECT_LE(
         condition->selectivityAt(i - 1).timeToDropValue(),
         condition->selectivityAt(i).timeToDropValue());
@@ -869,15 +207,16 @@ TEST_F(ExprTest, reorder) {
 }
 
 TEST_F(ExprTest, constant) {
-  auto expr = compileExpression("1 + 2 + 3 + 4");
-  auto constExpr = dynamic_cast<exec::ConstantExpr*>(expr);
+  auto exprSet = compileExpression("1 + 2 + 3 + 4", ROW({}));
+  auto constExpr = dynamic_cast<exec::ConstantExpr*>(exprSet->expr(0).get());
   ASSERT_NE(constExpr, nullptr);
   auto constant = constExpr->value()->as<ConstantVector<int64_t>>()->valueAt(0);
   EXPECT_EQ(10, constant);
 
-  expr = compileExpression("bigint1 * (1 + 2 + 3)");
-  ASSERT_EQ(2, expr->inputs().size());
-  constExpr = dynamic_cast<exec::ConstantExpr*>(expr->inputs()[1].get());
+  exprSet = compileExpression("a * (1 + 2 + 3)", ROW({"a"}, {BIGINT()}));
+  ASSERT_EQ(2, exprSet->expr(0)->inputs().size());
+  constExpr =
+      dynamic_cast<exec::ConstantExpr*>(exprSet->expr(0)->inputs()[1].get());
   ASSERT_NE(constExpr, nullptr);
   constant = constExpr->value()->as<ConstantVector<int64_t>>()->valueAt(0);
   EXPECT_EQ(6, constant);
@@ -946,7 +285,7 @@ TEST_F(ExprTest, validateReturnType) {
 }
 
 TEST_F(ExprTest, constantFolding) {
-  auto typedExpr = parseExpression("1 + 2");
+  auto typedExpr = parseExpression("1 + 2", ROW({}));
 
   auto extractConstant = [](exec::Expr* expr) {
     auto constExpr = dynamic_cast<exec::ConstantExpr*>(expr);
@@ -979,7 +318,7 @@ TEST_F(ExprTest, constantFolding) {
     // codepoint() takes a single character, so this expression
     // deterministically throws; however, we should never throw at constant
     // folding time. Ensure compiling this expression does not throw..
-    auto typedExpr = parseExpression("codepoint('abcdef')");
+    auto typedExpr = parseExpression("codepoint('abcdef')", ROW({}));
     EXPECT_NO_THROW(exec::ExprSet exprSet({typedExpr}, execCtx_.get(), true));
   }
 }
@@ -1293,7 +632,7 @@ TEST_F(ExprTest, nonDeterministicConstantFolding) {
       std::make_unique<PlusRandomIntegerFunction>());
 
   const vector_size_t size = 1'000;
-  auto emptyRow = vectorMaker_.rowVector(ROW({}, {}), size);
+  auto emptyRow = vectorMaker_.rowVector(ROW({}), size);
 
   auto result = evaluate("plus_random(cast(23 as integer))", emptyRow);
 
@@ -1758,76 +1097,66 @@ bool registerTestUDFs() {
 TEST_F(ExprTest, opaque) {
   registerTestUDFs();
 
-  const int kRows = 100;
+  static constexpr vector_size_t kRows = 100;
 
   OpaqueState::clearStats();
 
-  fillVectorAndReference<int64_t>(
-      {EncodingOptions::flat(kRows)},
-      [](int32_t row) {
-        return row % 7 == 0 ? std::nullopt
-                            : std::optional(static_cast<int64_t>(row));
-      },
-      &testData_.bigint1);
-  fillVectorAndReference<int64_t>(
-      {EncodingOptions::flat(kRows)},
-      [](int32_t row) {
-        return (row % 11 == 0) ? std::nullopt
-                               : std::optional(static_cast<int64_t>(row * 2));
-      },
-      &testData_.bigint2);
-  fillVectorAndReference<std::shared_ptr<void>>(
-      {EncodingOptions::flat(1), EncodingOptions::constant(kRows, 0)},
-      [](int32_t) {
-        return std::static_pointer_cast<void>(
-            std::make_shared<OpaqueState>(123));
-      },
-      &testData_.opaquestate1);
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>(
+          kRows, [](auto row) { return row; }, nullEvery(7)),
+      makeFlatVector<int64_t>(
+          kRows, [](auto row) { return row * 2; }, nullEvery(11)),
+      BaseVector::wrapInConstant(
+          kRows,
+          0,
+          makeFlatVector<std::shared_ptr<void>>(
+              1,
+              [](auto row) {
+                return std::static_pointer_cast<void>(
+                    std::make_shared<OpaqueState>(123));
+              })),
+  });
+
   EXPECT_EQ(1, OpaqueState::constructed);
 
   int nonNulls = 0;
-  for (int i = 0; i < kRows; ++i) {
-    nonNulls += testData_.bigint1.reference[i].has_value() &&
-            testData_.bigint2.reference[i].has_value()
-        ? 1
-        : 0;
+  for (auto i = 0; i < kRows; ++i) {
+    if (i % 7 != 0 && i % 11 != 0) {
+      ++nonNulls;
+    }
   }
 
-  // opaque created each time
+  // Opaque value created each time.
   OpaqueState::clearStats();
-  runAll<int64_t>(
-      "test_opaque_add(test_opaque_create(bigint1), bigint2)",
-      [&](int32_t row) {
-        if (IS_BIGINT1 && IS_BIGINT2) {
-          return INT64V(BIGINT1 + BIGINT2);
-        }
-        return INT64N;
-      });
+  auto result = evaluate("test_opaque_add(test_opaque_create(c0), c1)", data);
+  auto expectedResult = makeFlatVector<int64_t>(
+      kRows,
+      [](auto row) { return row + row * 2; },
+      [](auto row) { return row % 7 == 0 || row % 11 == 0; });
+  assertEqualVectors(expectedResult, result);
+
   EXPECT_EQ(OpaqueState::constructed, nonNulls);
   EXPECT_EQ(OpaqueState::destructed, nonNulls);
 
-  // opaque passed in as a constant explicitly
+  // Opaque value passed in as a constant explicitly.
   OpaqueState::clearStats();
-  runAll<int64_t>("test_opaque_add(opaquestate1, bigint2)", [&](int32_t row) {
-    if (IS_BIGINT2) {
-      return INT64V(123 + BIGINT2);
-    }
-    return INT64N;
-  });
-  // nothing got created!
+  result = evaluate("test_opaque_add(c2, c1)", data);
+  expectedResult = makeFlatVector<int64_t>(
+      kRows, [](auto row) { return 123 + row * 2; }, nullEvery(11));
+  assertEqualVectors(expectedResult, result);
+
+  // Nothing got created!
   EXPECT_EQ(OpaqueState::constructed, 0);
   EXPECT_EQ(OpaqueState::destructed, 0);
 
-  // opaque created by a function taking a literal and should be constant
-  // folded
+  // Opaque value created by a function taking a literal. Should be
+  // constant-folded.
   OpaqueState::clearStats();
-  runAll<int64_t>(
-      "test_opaque_add(test_opaque_create(123), bigint2)", [&](int32_t row) {
-        if (IS_BIGINT2) {
-          return INT64V(123 + BIGINT2);
-        }
-        return INT64N;
-      });
+  result = evaluate("test_opaque_add(test_opaque_create(123), c1)", data);
+  expectedResult = makeFlatVector<int64_t>(
+      kRows, [](auto row) { return 123 + row * 2; }, nullEvery(11));
+  assertEqualVectors(expectedResult, result);
+
   EXPECT_EQ(OpaqueState::constructed, 1);
   EXPECT_EQ(OpaqueState::destructed, 1);
 }
@@ -2691,23 +2020,14 @@ TEST_F(ExprTest, switchExceptionContext) {
 }
 
 TEST_F(ExprTest, conjunctExceptionContext) {
-  fillVectorAndReference<int64_t>(
-      {EncodingOptions::flat(20)},
-      [](int32_t row) { return std::optional(static_cast<int64_t>(row)); },
-      &testData_.bigint1);
+  auto data = makeFlatVector<int64_t>(20, [](auto row) { return row; });
 
-  try {
-    run<int64_t>(
-        "if (bigint1 % 409 < 300 and bigint1 / 0 < 30, 1, 2)",
-        [&](int32_t /*row*/) { return 0; });
-    ASSERT_TRUE(false) << "Expected an error";
-  } catch (VeloxException& e) {
-    ASSERT_EQ("divide(bigint1, 0:BIGINT)", e.context());
-    ASSERT_EQ(
-        "switch(and(lt(mod(bigint1, 409:BIGINT), 300:BIGINT), lt(divide(bigint1, 0:BIGINT), 30:BIGINT)), 1:BIGINT, 2:BIGINT)",
-        e.topLevelContext());
-    ASSERT_EQ("division by zero", e.message());
-  }
+  assertError(
+      "if (c0 % 409 < 300 and c0 / 0 < 30, 1, 2)",
+      data,
+      "divide(c0, 0:BIGINT)",
+      "switch(and(lt(mod(c0, 409:BIGINT), 300:BIGINT), lt(divide(c0, 0:BIGINT), 30:BIGINT)), 1:BIGINT, 2:BIGINT)",
+      "division by zero");
 }
 
 TEST_F(ExprTest, lambdaExceptionContext) {
@@ -2717,7 +2037,7 @@ TEST_F(ExprTest, lambdaExceptionContext) {
       "lambda1",
       ROW({"x"}, {BIGINT()}),
       ROW({ARRAY(BIGINT())}),
-      parse::parseExpr("x / 0 > 1"),
+      parse::parseExpr("x / 0 > 1", options_),
       execCtx_->pool());
   assertError(
       "filter(c0, function('lambda1'))",
@@ -2730,7 +2050,7 @@ TEST_F(ExprTest, lambdaExceptionContext) {
       "lambda2",
       ROW({"x"}, {BIGINT()}),
       ROW({"c1"}, {INTEGER()}),
-      parse::parseExpr("x / c1 > 1"),
+      parse::parseExpr("x / c1 > 1", options_),
       execCtx_->pool());
   assertError(
       "filter(c0, function('lambda2'))",
@@ -2769,7 +2089,7 @@ TEST_F(ExprTest, lambdaWithRowField) {
       "lambda1",
       ROW({"x"}, {BIGINT()}),
       ROW({"c0", "c1"}, {ROW({"val"}, {BIGINT()}), ARRAY(BIGINT())}),
-      parse::parseExpr("x + c0.val >= 0"),
+      parse::parseExpr("x + c0.val >= 0", options_),
       execCtx_->pool());
 
   auto rowVector = vectorMaker_.rowVector({"c0", "c1"}, {row, array});
