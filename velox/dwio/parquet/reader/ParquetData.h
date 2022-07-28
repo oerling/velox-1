@@ -95,7 +95,7 @@ class ParquetData : public dwio::common::FormatData {
   }
 
   void readNulls(
-		 vector_size_t /*numValues*/,
+      vector_size_t /*numValues*/,
       const uint64_t* /*incomingNulls*/,
       BufferPtr& nulls) override {
     // There are no column-level nulls in Parquet, only page-level ones, so this

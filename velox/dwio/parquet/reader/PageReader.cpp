@@ -231,7 +231,7 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   makeDecoder();
 }
 
-  void PageReader::prepareDictionary(const PageHeader& /*pageHeader*/) {
+void PageReader::prepareDictionary(const PageHeader& /*pageHeader*/) {
   VELOX_NYI();
 }
 

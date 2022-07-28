@@ -163,7 +163,7 @@ class ParquetRowReader : public dwio::common::RowReader {
   // Indices of row groups where stats match filters.
   std::vector<uint32_t> rowGroupIds_;
   uint32_t currentRowGroupIdsIdx_;
-  const thrift::RowGroup * FOLLY_NULLABLE currentRowGroupPtr_{nullptr};
+  const thrift::RowGroup* FOLLY_NULLABLE currentRowGroupPtr_{nullptr};
   uint64_t rowsInCurrentRowGroup_;
   uint64_t currentRowInGroup_;
 

@@ -514,7 +514,7 @@ void ParquetRowReader::filterRowGroups() {
     if (std::find(excluded.begin(), excluded.end(), i) == excluded.end()) {
       rowGroupIds_.push_back(i);
     }
-    }
+  }
 }
 
 uint64_t ParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {
