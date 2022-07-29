@@ -46,12 +46,13 @@ std::vector<uint32_t> ParquetData::filterRowGroups(
 bool ParquetData::filterMatches(
     const RowGroup& rowGroup,
     common::Filter& filter) {
-  auto colIdx = type_->column;
+  auto column = type_->column;
   auto type = type_->type;
-  if (rowGroup.columns[colIdx].__isset.meta_data &&
-      rowGroup.columns[colIdx].meta_data.__isset.statistics) {
+  assert(!rowGroup.columns().empty());
+  if (rowGroup.columns[column].__isset.meta_data &&
+      rowGroup.columns[column].meta_data.__isset.statistics) {
     auto columnStats = buildColumnStatisticsFromThrift(
-        rowGroup.columns[colIdx].meta_data.statistics,
+        rowGroup.columns[column].meta_data.statistics,
         *type,
         rowGroup.num_rows);
     if (!testFilter(&filter, columnStats.get(), rowGroup.num_rows, type)) {
@@ -66,12 +67,11 @@ void ParquetData::enqueueRowGroup(
     dwio::common::BufferedInput& input) {
   auto& chunk = rowGroups_[index].columns[type_->column];
   streams_.resize(rowGroups_.size());
-  DWIO_ENSURE(
+  VELOX_CHECK(
       chunk.__isset.meta_data,
       "ColumnMetaData does not exist for schema Id ",
       type_->column);
-  auto& columnMetaData = chunk.meta_data;
-  DWIO_ENSURE(
+  VELOX_CHECK(
       chunk.__isset.meta_data,
       "ColumnMetaData does not exist for schema Id ",
       type_->column);
@@ -97,7 +97,7 @@ dwio::common::PositionProvider ParquetData::seekToRowGroup(uint32_t index) {
   VELOX_CHECK_LT(index, streams_.size());
   VELOX_CHECK(streams_[index], "Stream not enqueued for column");
   auto& metadata = rowGroups_[index].columns[type_->column].meta_data;
-  decoder_ = std::make_unique<PageReader>(
+  reader_ = std::make_unique<PageReader>(
       std::move(streams_[index]),
       pool_,
       type_,

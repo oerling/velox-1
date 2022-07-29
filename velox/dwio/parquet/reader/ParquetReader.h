@@ -32,6 +32,7 @@ enum class ParquetMetricsType { HEADER, FILE_METADATA, FILE, BLOCK, TEST };
 
 class StructColumnReader;
 
+/// Metadata and options for reading Parquet.
 class ReaderBase {
  public:
   ReaderBase(
@@ -72,22 +73,26 @@ class ReaderBase {
     return schemaWithId_;
   }
 
-  // Ensures that streams are enqueued and loading for the row group at
-  // 'currentGroup'. May start loading one or more subsequent groups.
+  /// Ensures that streams are enqueued and loading for the row group at
+  /// 'currentGroup'. May start loading one or more subsequent groups.
   void scheduleRowGroups(
       const std::vector<uint32_t>& groups,
       int32_t currentGroup,
       StructColumnReader& reader);
 
-  // Returns the uncompressed size for columns in 'type' and its children in row
-  // group.
+  /// Returns the uncompressed size for columns in 'type' and its children in
+  /// row
+  /// group.
   int64_t rowGroupUncompressedSize(
       int32_t rowGroupIndex,
       const dwio::common::TypeWithId& type) const;
 
  private:
+  // Reads and parses file footer.
   void loadFileMetaData();
+
   void initializeSchema();
+
   std::shared_ptr<const ParquetTypeWithId> getParquetColumnInfo(
       uint32_t maxSchemaElementIdx,
       uint32_t maxRepeat,
@@ -118,6 +123,7 @@ class ReaderBase {
       inputs_;
 };
 
+/// Implements the RowReader interface for Parquet.
 class ParquetRowReader : public dwio::common::RowReader {
  public:
   ParquetRowReader(
@@ -139,26 +145,37 @@ class ParquetRowReader : public dwio::common::RowReader {
   }
 
  private:
+  // Compares row group  metadata to filters in ScanSpec in options of
+  // ReaderBase and determines the set of row groups to scan.
   void filterRowGroups();
+
+  // Positions the reader tre at the start of the next row group, as determined
+  // by filterRowGroups().
   bool advanceToNextRowGroup();
 
   memory::MemoryPool& pool_;
   const std::shared_ptr<ReaderBase> readerBase_;
   const dwio::common::RowReaderOptions& options_;
+
+  // All row groups from file metadata.
   const std::vector<thrift::RowGroup>& rowGroups_;
 
+  // Indices of row groups where stats match filters.
   std::vector<uint32_t> rowGroupIds_;
   uint32_t currentRowGroupIdsIdx_;
-  thrift::RowGroup const* currentRowGroupPtr_;
+  const thrift::RowGroup* FOLLY_NULLABLE currentRowGroupPtr_{nullptr};
   uint64_t rowsInCurrentRowGroup_;
-  int32_t avgRowSize_{0};
   uint64_t currentRowInGroup_;
-  int skippedRowGroups_{0};
+
+  // Number of row groups skipped based on stats.
+  int32_t skippedRowGroups_{0};
 
   std::unique_ptr<dwio::common::SelectiveColumnReader> columnReader_;
+
   RowTypePtr requestedType_;
 };
 
+/// Implements the reader interface for Parquet.
 class ParquetReader : public dwio::common::Reader {
  public:
   ParquetReader(

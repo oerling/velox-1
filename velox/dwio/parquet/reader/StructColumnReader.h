@@ -26,32 +26,18 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
   StructColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       ParquetParams& params,
-      common::ScanSpec& scanSpec)
-      : dwio::common::SelectiveStructColumnReader(
-            dataType,
-            dataType,
-            params,
-            scanSpec) {
-    auto& childSpecs = scanSpec_->children();
-    for (auto i = 0; i < childSpecs.size(); ++i) {
-      if (childSpecs[i]->isConstant()) {
-        continue;
-      }
-      auto childDataType = nodeType_->childByName(childSpecs[i]->fieldName());
-
-      children_.push_back(
-          ParquetColumnReader::build(childDataType, params, *childSpecs[i]));
-      childSpecs[i]->setSubscript(children_.size() - 1);
-    }
-  }
+      common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override;
 
+  /// Creates the streams for 'rowGroup in 'input'. Does not load yet.
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
+  // No-op in Parquet. All readers switch row groups at the same time, there is
+  // no on-demand skipping to a new row group.
   void advanceFieldReader(
-      dwio::common::SelectiveColumnReader* FOLLY_NONNULL reader,
-      vector_size_t offset) override {}
+      dwio::common::SelectiveColumnReader* FOLLY_NONNULL /*reader*/,
+      vector_size_t /*offset*/) override {}
 
  private:
   bool filterMatches(const thrift::RowGroup& rowGroup);

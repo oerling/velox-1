@@ -54,7 +54,7 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     case TypeKind::VARCHAR:
       VELOX_UNSUPPORTED("Type is not supported: ", dataType->type->kind());
     default:
-      DWIO_RAISE(
+      VELOX_FAIL(
           "buildReader unhandled type: " +
           mapTypeKindToName(dataType->type->kind()));
   }

@@ -23,10 +23,6 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
     const thrift::Statistics& columnChunkStats,
     const velox::Type& type,
     uint64_t numRowsInRowGroup) {
-  std::optional<uint64_t> distinctValueCount =
-      columnChunkStats.__isset.distinct_count
-      ? std::optional<uint64_t>(columnChunkStats.distinct_count)
-      : std::nullopt;
   std::optional<uint64_t> nullCount = columnChunkStats.__isset.null_count
       ? std::optional<uint64_t>(columnChunkStats.null_count)
       : std::nullopt;

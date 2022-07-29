@@ -25,6 +25,12 @@
 
 namespace facebook::velox::parquet {
 
+<<<<<<< HEAD
+=======
+/// Manages access to pages inside a ColumnChunk. Interprets page headers and
+/// encodings and presents the combination of pages and encoded values as a
+/// continuous stream accessible via readWithVisitor().
+>>>>>>> parquet-dev
 class PageReader {
  public:
   PageReader(
@@ -42,21 +48,26 @@ class PageReader {
         chunkSize_(chunkSize),
         nullConcatenation_(pool_) {}
 
-  // Advances 'numRows' top level rows.
+  /// Advances 'numRows' top level rows.
   void skip(int64_t numRows);
 
+  /// Applies 'visitor' to values in the ColumnChunk of 'this'. The
+  /// operation to perform and The operand rows are given by
+  /// 'visitor'. The rows are relative to the current position. The
+  /// current position after readWithVisitor is immediately after the
+  /// last accessed row.
   template <typename Visitor>
   void readWithVisitor(Visitor& visitor);
 
-  // Reads 'numValues' null flags into 'nulls' and advances the
-  // decoders by as much. The read may span several pages. If there
-  // are no nulls, buffer may be set to nullptr.
+  /// Reads 'numValues' null flags into 'nulls' and advances the
+  /// decoders by as much. The read may span several pages. If there
+  /// are no nulls, buffer may be set to nullptr.
   void readNullsOnly(int64_t numValues, BufferPtr& buffer);
 
  private:
   // If the current page has nulls, returns a nulls bitmap owned by 'this'. This
   // is filled for 'numRows' bits.
-  const uint64_t* readNulls(int32_t numRows, BufferPtr& buffer);
+  const uint64_t* FOLLY_NULLABLE readNulls(int32_t numRows, BufferPtr& buffer);
 
   // Skips the define decoder, if any, for 'numValues' top level
   // rows. Returns the number of non-nulls skipped. The range is the
@@ -134,8 +145,6 @@ class PageReader {
   const char* bufferStart_{nullptr};
   const char* bufferEnd_{nullptr};
 
-  BufferPtr defineOutBuffer_;
-  BufferPtr repeatOutBuffer_;
   BufferPtr tempNulls_;
   BufferPtr nullsInReadRange_;
   BufferPtr multiPageNulls_;
@@ -222,9 +231,6 @@ void PageReader::readWithVisitor(Visitor& visitor) {
       !std::is_same<typename Visitor::FilterType, common::AlwaysTrue>::value;
   constexpr bool filterOnly =
       std::is_same<typename Visitor::Extract, dwio::common::DropValues>::value;
-  constexpr bool hasHook =
-      !std::is_same<typename Visitor::HookType, dwio::common::NoHook>::value;
-
   bool mayProduceNulls = !filterOnly && visitor.allowNulls();
   auto rows = visitor.rows();
   auto numRows = visitor.numRows();
