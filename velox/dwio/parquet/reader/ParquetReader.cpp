@@ -15,7 +15,7 @@
  */
 
 #include "velox/dwio/parquet/reader/ParquetReader.h"
-#include <thrift/protocol/TCompactProtocol.h>
+#include <thrift/protocol/TCompactProtocol.h> //@manual
 #include "velox/dwio/common/MetricsLog.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"

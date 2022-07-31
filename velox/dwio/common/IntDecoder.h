@@ -120,6 +120,19 @@ class IntDecoder {
   template <typename T>
   void bulkReadRows(RowSet rows, T* result, int32_t initialRow = 0);
 
+  // Copies bit fields starting at 'bitOffset'th bit of 'bits'  into 'result'.
+  // The indices of the fields are in 'rows' and their bit-width is 'bitWidth'.
+  // 'rowBias' is subtracted from each index in 'rows' before calculating the
+  // bit field's position. The bit fields are considered little endian.
+  template <typename T>
+  static void decodeBitsLE(
+      const uint64_t* FOLLY_NONNULL bits,
+      int32_t bitOffset,
+      RowSet rows,
+      int32_t rowBias,
+      uint8_t bitWidth,
+      T* FOLLY_NONNULL result);
+
  protected:
   template <typename T>
   void bulkReadFixed(uint64_t size, T* result);

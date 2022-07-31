@@ -48,7 +48,7 @@ bool ParquetData::filterMatches(
     common::Filter& filter) {
   auto column = type_->column;
   auto type = type_->type;
-  assert(!rowGroup.columns().empty());
+  assert(!rowGroup.columns.empty());
   if (rowGroup.columns[column].__isset.meta_data &&
       rowGroup.columns[column].meta_data.__isset.statistics) {
     auto columnStats = buildColumnStatisticsFromThrift(

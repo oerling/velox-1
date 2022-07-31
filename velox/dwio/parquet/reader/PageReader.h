@@ -25,12 +25,9 @@
 
 namespace facebook::velox::parquet {
 
-<<<<<<< HEAD
-=======
 /// Manages access to pages inside a ColumnChunk. Interprets page headers and
 /// encodings and presents the combination of pages and encoded values as a
 /// continuous stream accessible via readWithVisitor().
->>>>>>> parquet-dev
 class PageReader {
  public:
   PageReader(
@@ -172,7 +169,7 @@ class PageReader {
 
   // Dictionary contents.
   dwio::common::DictionaryValues dictionary_;
-  Encoding::type dictionaryEncoding_;
+  thrift::Encoding::type dictionaryEncoding_;
   
   // Offset of current page's header from start of ColumnChunk.
   uint64_t pageStart_{0};

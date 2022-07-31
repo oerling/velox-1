@@ -16,11 +16,10 @@
 
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/common/BufferUtil.h"
-
 #include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 #include <arrow/util/rle_encoding.h>
-#include <thrift/protocol/TCompactProtocol.h>
+#include <thrift/protocol/TCompactProtocol.h> //@manual
 
 namespace facebook::velox::parquet {
 
@@ -136,7 +135,7 @@ const char* PageReader::readBytes(int32_t size, BufferPtr& copy) {
 
 const char* FOLLY_NONNULL PageReader::uncompressData(
     const char* pageData,
-    uint32_t compressedSize,
+    uint32_t /*compressedSize*/,
     uint32_t /*uncompressedSize*/) {
   switch (codec_) {
     case thrift::CompressionCodec::UNCOMPRESSED:
@@ -344,7 +343,8 @@ void PageReader::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   buffer = nullConcatenation_.buffer();
 }
 
-const uint64_t* PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
+const uint64_t* FOLLY_NULLABLE
+PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   if (!defineDecoder_) {
     buffer = nullptr;
     return nullptr;
