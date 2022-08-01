@@ -947,7 +947,7 @@ class TestingSeekableInputStream : public SeekableInputStream {
       const char* data,
       uint64_t length,
       uint64_t blockSize)
-    : data_(data), length_(length), blockSize_(blockSize) {}
+      : data_(data), length_(length), blockSize_(blockSize) {}
 
   bool Next(const void** data, int32_t* size) override {
     if (position_ >= length_) {
@@ -1031,7 +1031,8 @@ TEST_F(TestSeek, uncompressedLarge) {
   }
   auto stream = createTestDecompressor(
       CompressionKind_SNAPPY,
-      std::make_unique<TestingSeekableInputStream>(data.data(), written, kReadSize),
+      std::make_unique<TestingSeekableInputStream>(
+          data.data(), written, kReadSize),
       kReadSize);
   const void* result;
   int32_t size;

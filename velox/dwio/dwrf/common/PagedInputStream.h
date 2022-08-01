@@ -141,7 +141,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
 
   // Size returned by the previous call to Next().
   int32_t lastWindowSize_{0};
-  
+
   // decompressor
   std::unique_ptr<Decompressor> decompressor_;
 
