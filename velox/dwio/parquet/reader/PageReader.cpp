@@ -271,8 +271,7 @@ void PageReader::makeDecoder() {
   switch (encoding_) {
     case Encoding::RLE_DICTIONARY:
     case Encoding::PLAIN_DICTIONARY:
-    case Encoding::DELTA_BINARY_PACKED:
-      VELOX_UNSUPPORTED("Encoding not supported yet");
+      rleDecoder_ = std::make_unique<RleDecoder<false>>(pageData_ + 1, pageData_ + encodedDataSize_, pageData_[0]);
       break;
     case Encoding::PLAIN:
       directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
@@ -281,8 +280,10 @@ void PageReader::makeDecoder() {
           false,
           parquetTypeBytes(type_->parquetType_.value()));
       break;
+  case Encoding::DELTA_BINARY_PACKED:
     default:
-      throw std::runtime_error("Unsupported page encoding");
+      VELOX_UNSUPPORTED("Encoding not supported yet");
+
   }
 }
 

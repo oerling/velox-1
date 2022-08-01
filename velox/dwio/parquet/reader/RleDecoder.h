@@ -21,7 +21,6 @@
 #include "velox/dwio/common/DecoderUtil.h"
 #include "velox/dwio/common/IntDecoder.h"
 
-
 namespace facebook::velox::parquet {
 
 struct DropValues;
@@ -31,17 +30,24 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
  public:
   using super = dwio::common::IntDecoder<isSigned>;
 
-  RleDecoder(
-      std::unique_ptr<dwio::common::SeekableInputStream> input,
-      uint8_t bitWidth,
-      uint32_t numBytes)
-      : IntDecoder<isSigned>{std::move(input), useVInts, numBytes},
-	bitWidth_(bitWidth),
-        remainingValues(0),
-        value(0),
-        repeating(false) {}
+  RleDecoder(const char* start, const char* end, uint8_t bitWidth)
+    : super::IntDecoder{start, end},
+        bitWidth_(bitWidth),
+        byteWidth_(bits::roundUp(bitWidth, 8) / 8),
+        bitMask_(bits::lowMask(bitWidth)) {}
 
-  void skip(uint64_t numValues) override;
+    void seekToRowGroup(
+			dwio::common::PositionProvider& positionProvider) override {
+      VELOX_UNREACHABLE();
+    }
+
+  void next(int64_t* data, uint64_t numValues, const uint64_t* nulls) override {
+    VELOX_UNREACHABLE();
+  }
+
+  void skip(uint64_t numValues) override {
+    skip<false>(numValues, 0, nullptr);
+  }
 
   template <bool hasNulls>
   inline void skip(int32_t numValues, int32_t current, const uint64_t* nulls) {
@@ -49,16 +55,16 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       numValues = bits::countNonNulls(nulls, current, current + numValues);
     }
     while (numValues > 0) {
-      if (remainingValues == 0) {
+      if (!remainingValues_) {
         readHeader();
       }
-      uint64_t count = std::min<int>(numValues, remainingValues);
-      remainingValues -= count;
+      uint64_t count = std::min<int>(numValues, remainingValues_);
+      remainingValues_ -= count;
       numValues -= count;
-      if (repeating) {
-        value += delta * static_cast<int64_t>(count);
-      } else {
-        IntDecoder<isSigned>::skipLongsFast(count);
+      if (!repeating_) {
+        auto numBits = bitWidth_ * count + bitOffset_;
+	super::bufferStart += numBits >> 3;
+        bitOffset_ = numBits & 7;
       }
     }
   }
@@ -89,16 +95,16 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
         }
 
         // We are at a non-null value on a row to visit.
-        if (!remainingValues) {
+        if (!remainingValues_) {
           readHeader();
         }
-        if (repeating) {
-          toSkip = visitor.process(value, atEnd);
+        if (repeating_) {
+          toSkip = visitor.process(value_, atEnd);
         } else {
-          value = IntDecoder<isSigned>::readLong();
-          toSkip = visitor.process(value, atEnd);
+          value_ = readBitField();
+          toSkip = visitor.process(value_, atEnd);
         }
-        --remainingValues;
+        --remainingValues_;
       }
       ++current;
       if (toSkip) {
@@ -111,12 +117,15 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     }
   }
 
-  template <typename T>
-  static extractBits(uint8_t bitWidth, int32_t bitOffset, const  uint64_t* base, const int32_t* indices, int32_t numIndices, int32_t indexBias, T* out) {
-    if (bitWidth < 32 
-  }
-  
  private:
+  int64_t readBitField() {
+    return bits::detail::loadBits<int64_t>(reinterpret_cast<const uint64_t*>(super::bufferStart), bitOffset_, bitWidth_) &
+        bitMask_;
+    bitOffset_ += bitWidth_;
+    super::bufferStart += bitOffset_ >> 3;
+    bitOffset_ &= 7;
+  }
+
   template <bool hasNulls, typename Visitor>
   void fastPath(const uint64_t* nulls, Visitor& visitor) {
     constexpr bool hasFilter =
@@ -179,14 +188,16 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       typename Visitor::DataType* values,
       int32_t& numValues,
       Visitor& visitor) {
-    if (Visitor::dense) {
-      super::bulkRead(numRows, values + numValues);
-    } else {
-      super::bulkReadRows(
-          folly::Range<const int32_t*>(rows + rowIndex, numRows),
-          values + numValues,
-          currentRow);
-    }
+    super::decodeBitsLE(
+			reinterpret_cast<const uint64_t*>(super::bufferStart),
+        bitOffset_,
+        folly::Range<const int32_t*>(rows + rowIndex, numRows),
+        currentRow,
+			bitWidth_,
+			values + numValues);
+    auto numBits = bitOffset_ + (rows[numRows - 1] - currentRow) * bitWidth_;
+    super::bufferStart += numBits >> 3;
+    bitOffset_ = numBits & 7;
     visitor.template processRun<hasFilter, hasHook, scatter>(
         values + numValues,
         numRows,
@@ -207,19 +218,19 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       int32_t currentRow) {
     DCHECK_LT(rowIndex, numRows);
     if (dense) {
-      auto left = std::min<int32_t>(remainingValues, numRows - rowIndex);
+      auto left = std::min<int32_t>(remainingValues_, numRows - rowIndex);
       return std::make_pair(left, left);
     }
-    if (rows[rowIndex] - currentRow >= remainingValues) {
+    if (rows[rowIndex] - currentRow >= remainingValues_) {
       return std::make_pair(0, 0);
     }
-    if (rows[numRows - 1] - currentRow < remainingValues) {
+    if (rows[numRows - 1] - currentRow < remainingValues_) {
       return std::pair(numRows - rowIndex, rows[numRows - 1] - currentRow + 1);
     }
     auto range = folly::Range<const int32_t*>(
         rows + rowIndex,
-        std::min<int32_t>(remainingValues, numRows - rowIndex));
-    auto endOfRun = currentRow + remainingValues;
+        std::min<int32_t>(remainingValues_, numRows - rowIndex));
+    auto endOfRun = currentRow + remainingValues_;
     auto bound = std::lower_bound(range.begin(), range.end(), endOfRun);
     return std::make_pair(bound - range.begin(), bound[-1] - currentRow + 1);
   }
@@ -239,15 +250,15 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     auto filterHits = hasFilter ? visitor.outputRows(numRows) : nullptr;
     int32_t numValues = 0;
     for (;;) {
-      if (remainingValues) {
+      if (remainingValues_) {
         auto [numInRun, numAdvanced] =
             findNumInRun<Visitor::dense>(rows, rowIndex, numRows, currentRow);
         if (!numInRun) {
           // We are not at end and the next row of interest is after this run.
           VELOX_CHECK(!numAdvanced, "Would advance past end of RLEv1 run");
-        } else if (repeating) {
+        } else if (repeating_) {
           visitor.template processRle<hasFilter, hasHook, scatter>(
-              value,
+              value_,
               0,
               numInRun,
               currentRow,
@@ -267,16 +278,16 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
               numValues,
               visitor);
         }
-        remainingValues -= numAdvanced;
+        remainingValues_ -= numAdvanced;
         currentRow += numAdvanced;
         rowIndex += numInRun;
         if (visitor.atEnd()) {
           visitor.setNumValues(hasFilter ? numValues : numAllRows);
           return;
         }
-        if (remainingValues) {
-          currentRow += remainingValues;
-          skip<false>(remainingValues, -1, nullptr);
+        if (remainingValues_) {
+          currentRow += remainingValues_;
+          skip<false>(remainingValues_, -1, nullptr);
         }
       }
       readHeader();
@@ -284,22 +295,29 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
   }
 
   inline void readHeader() {
-    signed char ch = IntDecoder<isSigned>::readByte();
-    if (ch < 0) {
-      remainingValues = static_cast<uint64_t>(-ch);
-      repeating = false;
+    bitOffset_ = 0;
+    auto indicator = super::readVuLong();
+    // 0 in low bit means repeating.
+    repeating_ = (indicator & 1) == 0;
+    uint32_t count = indicator >> 1;
+    if (repeating_) {
+      remainingValues_ = count;
+      value_ = *reinterpret_cast<const int64_t*>(super::bufferStart) & bitMask_;
+      super::bufferStart += byteWidth_;
     } else {
-      remainingValues = static_cast<uint64_t>(ch) + RLE_MINIMUM_REPEAT;
-      repeating = true;
-      value = IntDecoder<isSigned>::readLong();
+      VELOX_CHECK_LT(0, count);
+      VELOX_CHECK_LT(count, std::numeric_limits<int32_t>::max() / 8);
+      remainingValues_ = count * 8;
     }
   }
 
-  int8_t bitWidth_;
-  uint64_t remainingValues_;
-  int64_t value_;
-  int8_t bitOffset_{0};
-  bool repeating;
-};
+  const int8_t bitWidth_;
+    const int8_t byteWidth_;
+    const uint64_t bitMask_;
+    uint64_t remainingValues_{0};
+    int64_t value_;
+    int8_t bitOffset_{0};
+    bool repeating_;
+  };
 
 } // namespace facebook::velox::dwrf

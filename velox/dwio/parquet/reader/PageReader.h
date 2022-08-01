@@ -19,6 +19,7 @@
 #include <arrow/util/rle_encoding.h>
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
+#include "velox/dwio/parquet/reader/RleDecoder.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/vector/BaseVector.h"
@@ -71,6 +72,10 @@ class PageReader {
   // current page.
   int32_t skipNulls(int32_t numRows);
 
+  bool isDictionary() const {
+    return encoding_ == thrift::Encoding::PLAIN_DICTIONARY || encoding_ == thrift::Encoding::RLE_DICTIONARY;
+  }
+  
   // Makes a decoder based on 'encoding_' for bytes from ''pageData_' to
   // 'pageData_' + 'encodedDataSize_'.
   void makedecoder();
@@ -218,7 +223,7 @@ class PageReader {
 
   // Decoders. Only one will be set at a time.
   std::unique_ptr<dwio::common::DirectDecoder<true>> directDecoder_;
-
+  std::unique_ptr<RleDecoder<false>> rleDecoder_;
   // Add decoders for other encodings here.
 };
 
@@ -242,12 +247,37 @@ void PageReader::readWithVisitor(Visitor& visitor) {
     int32_t numValuesBeforePage = reader.numValues();
     visitor.setNumValuesBias(numValuesBeforePage);
     visitor.setRows(pageRows);
+    auto& scanState = reader.scanState();
+    bool useDictionary = false;
+    if (isDictionary()) {
+      useDictionary = true;
+      if (scanState.dictionary.values != dictionary_.values) {
+	scanState.dictionary = dictionary_;
+	scanState.updateRawState();
+      }
+    } else {
+      if (scanState.dictionary.values) {
+	reader.dedictionarize();
+	scanState.dictionary.clear();
+      }
+    }  
+
     if (nulls) {
       nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
-      directDecoder_->readWithVisitor<true>(nulls, visitor);
+      if (useDictionary) {
+	auto dictVisitor = visitor.toDictionaryColumnVisitor();
+	rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
+      } else {
+	directDecoder_->readWithVisitor<true>(nulls, visitor);
+      }
     } else {
-      directDecoder_->readWithVisitor<false>(nulls, visitor);
-    }
+      if (useDictionary) {
+	auto dictVisitor = visitor.toDictionaryColumnVisitor();
+	rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
+      } else {
+	directDecoder_->readWithVisitor<false>(nulls, visitor);
+      }
+      }
     if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {

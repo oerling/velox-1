@@ -2435,6 +2435,54 @@ void IntDecoder<isSigned>::decodeBitsLE(
   }
 }
 
+template void IntDecoder<false>::decodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    int32_t* FOLLY_NONNULL result);
+
+template void IntDecoder<false>::decodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    int64_t* FOLLY_NONNULL result);
+
+template void IntDecoder<true>::decodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    int32_t* FOLLY_NONNULL result);
+
+template void IntDecoder<true>::decodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    int64_t* FOLLY_NONNULL result);
+
+template void IntDecoder<false>::decodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    int16_t* FOLLY_NONNULL result);
+
+template void IntDecoder<true>::decodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    int16_t* FOLLY_NONNULL result);
+
 #ifdef CODEGEN_BULK_VARINTS
 // Codegen for vint bulk decode. This is to document how varintSwitch
 // and similar functions were made and how to regenerate modified

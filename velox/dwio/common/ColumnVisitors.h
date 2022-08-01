@@ -441,7 +441,7 @@ class ColumnVisitor {
   raw_vector<vector_size_t>& rowsCopy() const {
     return reader_->scanState().rowsCopy;
   }
-
+  
   DictionaryColumnVisitor<T, TFilter, ExtractValues, isDense>
   toDictionaryColumnVisitor();
 

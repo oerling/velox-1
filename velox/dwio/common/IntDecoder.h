@@ -42,6 +42,10 @@ class IntDecoder {
         useVInts(useVInts),
         numBytes(numBytes) {}
 
+  // Constructs for use in Parquet /Alphawhere the buffer is always preloaded.
+  IntDecoder(const char* start, const char* end)
+      : bufferStart(start), bufferEnd(end), useVInts(false), numBytes(0) {}
+
   virtual ~IntDecoder() = default;
 
   /**
@@ -132,7 +136,7 @@ class IntDecoder {
       int32_t rowBias,
       uint8_t bitWidth,
       T* FOLLY_NONNULL result);
-
+  
  protected:
   template <typename T>
   void bulkReadFixed(uint64_t size, T* result);
