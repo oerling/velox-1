@@ -103,10 +103,15 @@ class ParquetData : public dwio::common::FormatData {
     nulls = nullptr;
   }
 
-  uint64_t skipNulls(uint64_t numValues) override {
+  uint64_t skipNulls(uint64_t numValues, bool nullsOnly) override {
+    // If we are seeking a column where nulls and data are read, the skip is done in skip(). If we are reading nulls only, this is called with 'nullsOnly' set and is responsible for reading however many nulls or pages it takes to skip 'numValues' top level rows.
+    if (nullsOnly) {
+      reader_->skipNullsOnly(numValues);
+    }
     return numValues;
   }
 
+  
   uint64_t skip(uint64_t numRows) override {
     reader_->skip(numRows);
     return numRows;

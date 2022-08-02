@@ -356,6 +356,23 @@ int32_t PageReader::skipNulls(int32_t numValues) {
   return numPresent;
 }
 
+void PageReader::skipNullsOnly(int64_t numRows) {
+  if (!numRows && firstUnvisited_ != rowOfPage_ + numRowsInPage_) {
+    // Return if no skip and position not at end of page or before first page.
+    return;
+  }
+  auto toSkip = numRows;
+  if (firstUnvisited_ + numRows >= rowOfPage_ + numRowsInPage_) {
+    readNextPage(firstUnvisited_ + numRows);
+    firstUnvisited_ += numRows;
+    toSkip = firstUnvisited_ - rowOfPage_;
+  }
+  firstUnvisited_ += numRows;
+
+  // Skip nulls
+  skipNulls(toSkip);
+}
+  
 void PageReader::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   auto toRead = numValues;
   if (buffer) {

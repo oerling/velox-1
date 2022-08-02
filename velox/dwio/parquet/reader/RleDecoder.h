@@ -117,6 +117,45 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     }
   }
 
+  // Copies 'numValues' bits from the encoding into 'buffer',
+  // little-endian. If 'allOnes' is non-nullptr, this function may
+  // check if all the bits are ones, as in a RLE run of all ones and
+  // not copy them into 'buffer' but instead may set '*allOnes' to
+  // true. If allOnes is non-nullptr and not all bits are ones, then
+  // '*allOnes' is set to false and the bits are copied to 'buffer'.
+  void readBits(int32_t numValues, uint64_t* buffer, bool* allOnes = nullptr) {
+    VELOX_CHECK_EQ(1, bitWidth_);
+    auto toRead = numValues;
+    int32_t numWritten = 0;
+    if (allOnes) {
+      // initialize the all ones indicator to false for safety.
+      *allOnes = false;
+    }
+    while (toRead) {
+      if (!remainingValues_) {
+	readHeader();
+      }
+      auto consumed = std::min<int32_t>(toRead, remainingValues_);
+
+      if (repeating_) {
+	if (allOnes && value_ && toRead == numValues && repeating_ <= toRead) {
+	  // The whole read is covered by a RLE of ones and 'allOnes' is provided, so we can shortcut the read.
+	  remainingValues_ -= toRead;
+	  *allOnes = true;
+	  return;
+	}
+	bits::fillBits(buffer, numWritten, numWritten + consumed, value_ != 0);
+      } else {
+	bits::copyBits(reinterpret_cast<const uint64_t*>(super::bufferStart_), bitOffset_, buffer, numWritten, consumed);
+	bitOffset_ += consumed;
+	super::bufferStart_ += bitOffset_ >> 3;
+	bitOffset_ &= 7;
+      }
+      numWritten += consumed;
+      remainingValues_ -= consumed;
+    }
+  }
+  
  private:
   int64_t readBitField() {
     auto value = bits::detail::loadBits<int64_t>(
@@ -142,7 +181,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     if (hasNulls) {
       raw_vector<int32_t>* innerVector = nullptr;
       auto outerVector = &visitor.outerNonNullRows();
-      if (Visitor::dense) {
+      if (Visitor::dense || rowsAsRange.back() == rowsAsRange.size() - 1) {
         dwio::common::nonNullRowsFromDense(nulls, numRows, *outerVector);
         if (outerVector->empty()) {
           visitor.setAllNull(hasFilter ? 0 : numRows);
