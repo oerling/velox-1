@@ -72,9 +72,13 @@ class PageReader {
   // current page.
   int32_t skipNulls(int32_t numRows);
 
+  // True if the current page holds dictionary indices.
   bool isDictionary() const {
     return encoding_ == thrift::Encoding::PLAIN_DICTIONARY || encoding_ == thrift::Encoding::RLE_DICTIONARY;
   }
+
+  // Initializes a filter result cache for the dictionary in 'state'.
+  void makeFilterCache(dwio::common::ScanState& state);
   
   // Makes a decoder based on 'encoding_' for bytes from ''pageData_' to
   // 'pageData_' + 'encodedDataSize_'.
@@ -253,6 +257,9 @@ void PageReader::readWithVisitor(Visitor& visitor) {
       useDictionary = true;
       if (scanState.dictionary.values != dictionary_.values) {
 	scanState.dictionary = dictionary_;
+	if (hasFilter) {
+	  makeFilterCache(scanState);
+	}
 	scanState.updateRawState();
       }
     } else {

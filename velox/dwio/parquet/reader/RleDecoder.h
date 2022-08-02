@@ -119,11 +119,12 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
 
  private:
   int64_t readBitField() {
-    return bits::detail::loadBits<int64_t>(reinterpret_cast<const uint64_t*>(super::bufferStart), bitOffset_, bitWidth_) &
+    auto value = bits::detail::loadBits<int64_t>(reinterpret_cast<const uint64_t*>(super::bufferStart), bitOffset_, bitWidth_) &
         bitMask_;
     bitOffset_ += bitWidth_;
     super::bufferStart += bitOffset_ >> 3;
     bitOffset_ &= 7;
+    return value;
   }
 
   template <bool hasNulls, typename Visitor>
@@ -195,7 +196,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
         currentRow,
 			bitWidth_,
 			values + numValues);
-    auto numBits = bitOffset_ + (rows[numRows - 1] - currentRow) * bitWidth_;
+    auto numBits = bitOffset_ + (rows[rowIndex + numRows - 1] + 1 - currentRow) * bitWidth_;
     super::bufferStart += numBits >> 3;
     bitOffset_ = numBits & 7;
     visitor.template processRun<hasFilter, hasHook, scatter>(

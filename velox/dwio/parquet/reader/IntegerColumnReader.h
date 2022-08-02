@@ -62,6 +62,7 @@ class IntegerColumnReader : public dwio::common::SelectiveIntegerColumnReader {
         nullptr);
     if (readsNullsOnly()) {
       data.readNullsOnly(rows.back() + 1, nullsInReadRange_);
+      prepareNulls(rows, nullsInReadRange_ != nullptr);
     }
     readCommon<IntegerColumnReader>(rows);
   }

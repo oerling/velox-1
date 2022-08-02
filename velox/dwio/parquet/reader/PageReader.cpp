@@ -17,6 +17,7 @@
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/common/BufferUtil.h"
 #include "velox/dwio/parquet/thrift/ThriftTransport.h"
+#include "velox/dwio/common/ColumnVisitors.h"
 
 #include <arrow/util/rle_encoding.h>
 #include <thrift/protocol/TCompactProtocol.h> //@manual
@@ -229,7 +230,7 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   encoding_ = pageHeader.data_page_header_v2.encoding;
   makeDecoder();
 }
-
+  
 void PageReader::prepareDictionary(const PageHeader& pageHeader) {
   dictionary_.numValues = pageHeader.dictionary_page_header.num_values;
   dictionaryEncoding_ = pageHeader.dictionary_page_header.encoding;
@@ -238,20 +239,39 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
   VELOX_CHECK(
       dictionaryEncoding_ == Encoding::PLAIN_DICTIONARY ||
       dictionaryEncoding_ == Encoding::PLAIN);
-  auto kind = type_->type->kind();
-  int32_t typeSize = type_->type->isFixedWidth() ? type_->type->cppSizeInBytes()
-                                                : sizeof(StringView);
-  auto numBytes = dictionary_.numValues * typeSize;
-  dictionary_.values = AlignedBuffer::allocate<char>(numBytes, &pool_);
-  VELOX_CHECK(type_->type->isFixedWidth());
-  dwio::common::readBytes(
-      numBytes,
-      inputStream_.get(),
-      dictionary_.values->asMutable<char>(),
-      bufferStart_,
-      bufferEnd_);
+
+  auto parquetType = type_->parquetType_.value();
+  switch (parquetType) {
+  case thrift::Type::INT32:
+  case thrift::Type::INT64:
+  case thrift::Type::FLOAT:
+  case thrift::Type::DOUBLE: {
+    int32_t typeSize = (parquetType == thrift::Type::INT32 || parquetType == thrift::Type::FLOAT) ? sizeof(float) : sizeof(double);
+    auto numBytes = dictionary_.numValues * typeSize;
+    dictionary_.values = AlignedBuffer::allocate<char>(numBytes, &pool_);
+    dwio::common::readBytes(
+			    numBytes,
+			    inputStream_.get(),
+			    dictionary_.values->asMutable<char>(),
+			    bufferStart_,
+			    bufferEnd_);
+    break;
+  }
+  case thrift::Type::INT96:
+  case thrift::Type::BYTE_ARRAY:
+  case thrift::Type::FIXED_LEN_BYTE_ARRAY:
+  default:
+    VELOX_UNSUPPORTED("Parquet type {} not supported for dictionary", parquetType); 
+  }
 }
 
+  void PageReader::makeFilterCache(dwio::common::ScanState& state) {
+    VELOX_CHECK(!state.dictionary2.values, "Parquet supports only one dictionary");
+    state.filterCache.resize(state.dictionary.numValues);
+    simd::memset(state.filterCache.data(), dwio::common::FilterResult::kUnknown, state.filterCache.size());
+    state.rawState.filterCache = state.filterCache.data();
+  }
+  
 namespace {
 int32_t parquetTypeBytes(thrift::Type::type type) {
   switch (type) {
@@ -303,8 +323,12 @@ void PageReader::skip(int64_t numRows) {
   toSkip = skipNulls(toSkip);
 
   // Skip the decoder
-  if (directDecoder_) {
+  if (isDictionary()) {
+    rleDecoder_->skip(toSkip);
+  } else if (directDecoder_) {
     directDecoder_->skip(toSkip);
+  } else {
+    VELOX_FAIL("No decoder to skip");
   }
 }
 
@@ -340,6 +364,7 @@ void PageReader::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
     auto nulls = readNulls(numRead, nullsInReadRange_);
     toRead -= numRead;
     nullConcatenation_.append(nulls, 0, numRead);
+    firstUnvisited_ += numRead;
   }
   buffer = nullConcatenation_.buffer();
 }
