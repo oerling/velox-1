@@ -19,9 +19,9 @@
 #include <arrow/util/rle_encoding.h>
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
-#include "velox/dwio/parquet/reader/RleDecoder.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
+#include "velox/dwio/parquet/reader/RleDecoder.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::parquet {
@@ -74,12 +74,13 @@ class PageReader {
 
   // True if the current page holds dictionary indices.
   bool isDictionary() const {
-    return encoding_ == thrift::Encoding::PLAIN_DICTIONARY || encoding_ == thrift::Encoding::RLE_DICTIONARY;
+    return encoding_ == thrift::Encoding::PLAIN_DICTIONARY ||
+        encoding_ == thrift::Encoding::RLE_DICTIONARY;
   }
 
   // Initializes a filter result cache for the dictionary in 'state'.
   void makeFilterCache(dwio::common::ScanState& state);
-  
+
   // Makes a decoder based on 'encoding_' for bytes from ''pageData_' to
   // 'pageData_' + 'encodedDataSize_'.
   void makedecoder();
@@ -179,7 +180,7 @@ class PageReader {
   // Dictionary contents.
   dwio::common::DictionaryValues dictionary_;
   thrift::Encoding::type dictionaryEncoding_;
-  
+
   // Offset of current page's header from start of ColumnChunk.
   uint64_t pageStart_{0};
 
@@ -256,35 +257,35 @@ void PageReader::readWithVisitor(Visitor& visitor) {
     if (isDictionary()) {
       useDictionary = true;
       if (scanState.dictionary.values != dictionary_.values) {
-	scanState.dictionary = dictionary_;
-	if (hasFilter) {
-	  makeFilterCache(scanState);
-	}
-	scanState.updateRawState();
+        scanState.dictionary = dictionary_;
+        if (hasFilter) {
+          makeFilterCache(scanState);
+        }
+        scanState.updateRawState();
       }
     } else {
       if (scanState.dictionary.values) {
-	reader.dedictionarize();
-	scanState.dictionary.clear();
+        reader.dedictionarize();
+        scanState.dictionary.clear();
       }
-    }  
+    }
 
     if (nulls) {
       nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
       if (useDictionary) {
-	auto dictVisitor = visitor.toDictionaryColumnVisitor();
-	rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
+        auto dictVisitor = visitor.toDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
       } else {
-	directDecoder_->readWithVisitor<true>(nulls, visitor);
+        directDecoder_->readWithVisitor<true>(nulls, visitor);
       }
     } else {
       if (useDictionary) {
-	auto dictVisitor = visitor.toDictionaryColumnVisitor();
-	rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
+        auto dictVisitor = visitor.toDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
       } else {
-	directDecoder_->readWithVisitor<false>(nulls, visitor);
+        directDecoder_->readWithVisitor<false>(nulls, visitor);
       }
-      }
+    }
     if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {

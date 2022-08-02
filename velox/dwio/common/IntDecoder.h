@@ -136,7 +136,7 @@ class IntDecoder {
       int32_t rowBias,
       uint8_t bitWidth,
       T* FOLLY_NONNULL result);
-  
+
  protected:
   template <typename T>
   void bulkReadFixed(uint64_t size, T* result);

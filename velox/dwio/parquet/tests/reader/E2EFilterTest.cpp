@@ -87,9 +87,8 @@ TEST_F(E2EFilterTest, integerDirect) {
 }
 
 TEST_F(E2EFilterTest, integerDictionary) {
-  writerProperties_ = ::parquet::WriterProperties::Builder()
-.data_pagesize(4 * 1024)
-                          ->build();
+  writerProperties_ =
+      ::parquet::WriterProperties::Builder().data_pagesize(4 * 1024)->build();
 
   testWithTypes(
       "short_val:smallint,"

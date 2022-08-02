@@ -30,7 +30,7 @@ namespace facebook::velox::parquet {
 struct DropValues;
 
 template <bool isSigned>
-class  {
+class {
  public:
   using super = IntDecoder<isSigned>;
 
@@ -39,7 +39,7 @@ class  {
       uint8_t bitWidth,
       uint32_t numBytes)
       : IntDecoder<isSigned>{std::move(input), useVInts, numBytes},
-	bitWidth_(bitWidth),
+        bitWidth_(bitWidth),
         remainingValues(0),
         value(0),
         repeating(false) {}
@@ -115,10 +115,17 @@ class  {
   }
 
   template <typename T>
-  static extractBits(uint8_t bitWidth, int32_t bitOffset, const  uint64_t* base, const int32_t* indices, int32_t numIndices, int32_t indexBias, T* out) {
-    if (bitWidth < 32 
+  static extractBits(
+      uint8_t bitWidth,
+      int32_t bitOffset,
+      const uint64_t* base,
+      const int32_t* indices,
+      int32_t numIndices,
+      int32_t indexBias,
+      T* out) {
+    if (bitWidth < 32
   }
-  
+
  private:
   template <bool hasNulls, typename Visitor>
   void fastPath(const uint64_t* nulls, Visitor& visitor) {
@@ -305,4 +312,4 @@ class  {
   bool repeating;
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::parquet

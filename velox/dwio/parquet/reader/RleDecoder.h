@@ -31,15 +31,15 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
   using super = dwio::common::IntDecoder<isSigned>;
 
   RleDecoder(const char* start, const char* end, uint8_t bitWidth)
-    : super::IntDecoder{start, end},
+      : super::IntDecoder{start, end},
         bitWidth_(bitWidth),
         byteWidth_(bits::roundUp(bitWidth, 8) / 8),
         bitMask_(bits::lowMask(bitWidth)) {}
 
-    void seekToRowGroup(
-			dwio::common::PositionProvider& positionProvider) override {
-      VELOX_UNREACHABLE();
-    }
+  void seekToRowGroup(
+      dwio::common::PositionProvider& positionProvider) override {
+    VELOX_UNREACHABLE();
+  }
 
   void next(int64_t* data, uint64_t numValues, const uint64_t* nulls) override {
     VELOX_UNREACHABLE();
@@ -63,7 +63,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       numValues -= count;
       if (!repeating_) {
         auto numBits = bitWidth_ * count + bitOffset_;
-	super::bufferStart += numBits >> 3;
+        super::bufferStart += numBits >> 3;
         bitOffset_ = numBits & 7;
       }
     }
@@ -119,7 +119,10 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
 
  private:
   int64_t readBitField() {
-    auto value = bits::detail::loadBits<int64_t>(reinterpret_cast<const uint64_t*>(super::bufferStart), bitOffset_, bitWidth_) &
+    auto value = bits::detail::loadBits<int64_t>(
+                     reinterpret_cast<const uint64_t*>(super::bufferStart),
+                     bitOffset_,
+                     bitWidth_) &
         bitMask_;
     bitOffset_ += bitWidth_;
     super::bufferStart += bitOffset_ >> 3;
@@ -190,13 +193,14 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       int32_t& numValues,
       Visitor& visitor) {
     super::decodeBitsLE(
-			reinterpret_cast<const uint64_t*>(super::bufferStart),
+        reinterpret_cast<const uint64_t*>(super::bufferStart),
         bitOffset_,
         folly::Range<const int32_t*>(rows + rowIndex, numRows),
         currentRow,
-			bitWidth_,
-			values + numValues);
-    auto numBits = bitOffset_ + (rows[rowIndex + numRows - 1] + 1 - currentRow) * bitWidth_;
+        bitWidth_,
+        values + numValues);
+    auto numBits = bitOffset_ +
+        (rows[rowIndex + numRows - 1] + 1 - currentRow) * bitWidth_;
     super::bufferStart += numBits >> 3;
     bitOffset_ = numBits & 7;
     visitor.template processRun<hasFilter, hasHook, scatter>(
@@ -313,12 +317,12 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
   }
 
   const int8_t bitWidth_;
-    const int8_t byteWidth_;
-    const uint64_t bitMask_;
-    uint64_t remainingValues_{0};
-    int64_t value_;
-    int8_t bitOffset_{0};
-    bool repeating_;
-  };
+  const int8_t byteWidth_;
+  const uint64_t bitMask_;
+  uint64_t remainingValues_{0};
+  int64_t value_;
+  int8_t bitOffset_{0};
+  bool repeating_;
+};
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::parquet
