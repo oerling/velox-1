@@ -136,7 +136,8 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       auto consumed = std::min<int32_t>(toRead, remainingValues_);
 
       if (repeating_) {
-        if (allOnes && value_ && toRead == numValues && repeating_ >= numValues) {
+        if (allOnes && value_ && toRead == numValues &&
+            repeating_ >= numValues) {
           // The whole read is covered by a RLE of ones and 'allOnes' is
           // provided, so we can shortcut the read.
           remainingValues_ -= toRead;
@@ -351,7 +352,15 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     uint32_t count = indicator >> 1;
     if (repeating_) {
       remainingValues_ = count;
-      value_ = *reinterpret_cast<const int64_t*>(super::bufferStart) & bitMask_;
+      // Do not load past buffer end. Errir in valgrind and could in
+      // principle run into unmapped addresses.
+      if (super::bufferEnd - super::bufferStart >= sizeof(uint64_t)) {
+        value_ =
+            *reinterpret_cast<const int64_t*>(super::bufferStart) & bitMask_;
+      } else {
+        value_ = bits::loadPartialWord(
+            reinterpret_cast<const uint8_t*>(super::bufferStart), byteWidth_);
+      }
       super::bufferStart += byteWidth_;
     } else {
       VELOX_CHECK_LT(0, count);
