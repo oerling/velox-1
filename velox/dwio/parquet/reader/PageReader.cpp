@@ -167,18 +167,18 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   if (maxRepeat_ > 0) {
     uint32_t repeatLength = readField<int32_t>(pageData_);
     pageData_ += repeatLength;
-    repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
-        reinterpret_cast<const uint8_t*>(pageData_),
-        repeatLength,
+    repeatDecoder_ = std::make_unique<RleDecoder<false>>(
+						  pageData_,
+						  pageData_ + repeatLength,
         arrow::bit_util::NumRequiredBits(maxRepeat_));
     pageData_ += repeatLength;
   }
 
   if (maxDefine_ > 0) {
     auto defineLength = readField<uint32_t>(pageData_);
-    defineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
-        reinterpret_cast<const uint8_t*>(pageData_),
-        defineLength,
+    defineDecoder_ = std::make_unique<RleDecoder<false>>(
+        pageData_,
+        pageData_ + defineLength,
         arrow::bit_util::NumRequiredBits(maxDefine_));
     pageData_ += defineLength;
   }
@@ -205,17 +205,17 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   pageData_ = readBytes(bytes, pageBuffer_);
 
   if (repeatLength) {
-    repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
-        reinterpret_cast<const uint8_t*>(pageData_),
-        repeatLength,
+    repeatDecoder_ = std::make_unique<RleDecoder<false>>(
+						  pageData_,
+						  pageData_ + repeatLength,
         arrow::bit_util::NumRequiredBits(maxRepeat_));
   }
 
   if (maxDefine_ > 0) {
-    defineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
-        reinterpret_cast<const uint8_t*>(pageData_ + repeatLength),
-        defineLength,
-        arrow::bit_util::NumRequiredBits(maxDefine_));
+    defineDecoder_ = std::make_unique<RleDecoder<false>>(
+							 pageData_ + repeatLength,
+      pageData_ + repeatLength + defineLength,
+      arrow::bit_util::NumRequiredBits(maxDefine_));
   }
   auto levelsSize = repeatLength + defineLength;
   pageData_ += levelsSize;
@@ -344,15 +344,13 @@ int32_t PageReader::skipNulls(int32_t numValues) {
   if (!defineDecoder_) {
     return numValues;
   }
-  dwio::common::ensureCapacity<char>(tempNulls_, numValues, &pool_);
+  VELOX_CHECK_EQ(1, maxDefine_);
+  dwio::common::ensureCapacity<bool>(tempNulls_, numValues, &pool_);
   tempNulls_->setSize(0);
-  defineDecoder_->GetBatch<uint8_t>(
-      tempNulls_->asMutable<uint8_t>(), numValues);
-  auto bytes = tempNulls_->as<uint8_t>();
-  int32_t numPresent = 0;
-  for (auto i = 0; i < numValues; ++i) {
-    numPresent += bytes[i] == 1;
-  }
+  defineDecoder_->readBits(
+			   numValues, tempNulls_->asMutable<uint64_t>());
+  auto words = tempNulls_->as<uint64_t>();
+  int32_t numPresent = bits::countBits(words, 0, numValues);
   return numPresent;
 }
 
@@ -400,18 +398,10 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
     buffer = nullptr;
     return nullptr;
   }
-  dwio::common::ensureCapacity<char>(tempNulls_, numValues, &pool_);
+  VELOX_CHECK_EQ(1, maxDefine_);
   dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);
-  tempNulls_->setSize(0);
-  defineDecoder_->GetBatch<uint8_t>(
-      tempNulls_->asMutable<uint8_t>(), numValues);
-  auto nullBytes = tempNulls_->as<uint8_t>();
-  auto intNulls = buffer->asMutable<int32_t>();
-  int32_t nullsIndex = 0;
-  for (auto i = 0; i < numValues; i += 32) {
-    auto flags = xsimd::load_unaligned(nullBytes + i);
-    intNulls[nullsIndex++] = simd::toBitMask(flags != 0);
-  }
+  defineDecoder_->readBits(
+				    numValues, buffer->asMutable<uint64_t>());
   return buffer->as<uint64_t>();
 }
 

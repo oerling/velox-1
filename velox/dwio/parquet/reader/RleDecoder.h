@@ -23,7 +23,6 @@
 
 namespace facebook::velox::parquet {
 
-struct DropValues;
 
 template <bool isSigned>
 class RleDecoder : public dwio::common::IntDecoder<isSigned> {
@@ -146,12 +145,13 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
 	}
 	bits::fillBits(buffer, numWritten, numWritten + consumed, value_ != 0);
       } else {
-	bits::copyBits(reinterpret_cast<const uint64_t*>(super::bufferStart_), bitOffset_, buffer, numWritten, consumed);
-	bitOffset_ += consumed;
-	super::bufferStart_ += bitOffset_ >> 3;
-	bitOffset_ &= 7;
+	bits::copyBits(reinterpret_cast<const uint64_t*>(super::bufferStart), bitOffset_, buffer, numWritten, consumed);
+	int64_t offset = bitOffset_ + consumed;
+	super::bufferStart += offset >> 3;
+	bitOffset_ = offset & 7;
       }
       numWritten += consumed;
+      toRead -= consumed;
       remainingValues_ -= consumed;
     }
   }

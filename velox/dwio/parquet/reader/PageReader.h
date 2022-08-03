@@ -158,8 +158,8 @@ class PageReader {
   BufferPtr tempNulls_;
   BufferPtr nullsInReadRange_;
   BufferPtr multiPageNulls_;
-  std::unique_ptr<arrow::util::RleDecoder> repeatDecoder_;
-  std::unique_ptr<arrow::util::RleDecoder> defineDecoder_;
+  std::unique_ptr<RleDecoder<false>> repeatDecoder_;
+  std::unique_ptr<RleDecoder<false>> defineDecoder_;
 
   // Encoding of current page.
   thrift::Encoding::type encoding_;
