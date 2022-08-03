@@ -115,12 +115,12 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     }
   }
 
-  // Copies 'numValues' bits from the encoding into 'buffer',
-  // little-endian. If 'allOnes' is non-nullptr, this function may
-  // check if all the bits are ones, as in a RLE run of all ones and
-  // not copy them into 'buffer' but instead may set '*allOnes' to
-  // true. If allOnes is non-nullptr and not all bits are ones, then
-  // '*allOnes' is set to false and the bits are copied to 'buffer'.
+  /// Copies 'numValues' bits from the encoding into 'buffer',
+  /// little-endian. If 'allOnes' is non-nullptr, this function may
+  /// check if all the bits are ones, as in a RLE run of all ones and
+  /// not copy them into 'buffer' but instead may set '*allOnes' to
+  /// true. If allOnes is non-nullptr and not all bits are ones, then
+  /// '*allOnes' is set to false and the bits are copied to 'buffer'.
   void readBits(int32_t numValues, uint64_t* buffer, bool* allOnes = nullptr) {
     VELOX_CHECK_EQ(1, bitWidth_);
     auto toRead = numValues;
@@ -163,6 +163,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
   }
 
  private:
+  // Reads one value of 'bitWithd_' bits and advances the position.
   int64_t readBitField() {
     auto value = bits::detail::loadBits<int64_t>(
                      reinterpret_cast<const uint64_t*>(super::bufferStart),
@@ -237,15 +238,17 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       typename Visitor::DataType* values,
       int32_t& numValues,
       Visitor& visitor) {
+    auto numBits = bitOffset_ +
+        (rows[rowIndex + numRows - 1] + 1 - currentRow) * bitWidth_;
+
     super::decodeBitsLE(
         reinterpret_cast<const uint64_t*>(super::bufferStart),
         bitOffset_,
         folly::Range<const int32_t*>(rows + rowIndex, numRows),
         currentRow,
         bitWidth_,
+	super::bufferEnd,
         values + numValues);
-    auto numBits = bitOffset_ +
-        (rows[rowIndex + numRows - 1] + 1 - currentRow) * bitWidth_;
     super::bufferStart += numBits >> 3;
     bitOffset_ = numBits & 7;
     visitor.template processRun<hasFilter, hasHook, scatter>(

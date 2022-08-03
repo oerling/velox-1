@@ -2414,6 +2414,7 @@ void IntDecoder<isSigned>::decodeBitsLE(
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* bufferEnd,
     T* FOLLY_NONNULL result) {
   uint64_t mask = bits::lowMask(bitWidth);
   auto numRows = rows.size();
@@ -2424,7 +2425,25 @@ void IntDecoder<isSigned>::decodeBitsLE(
     }
     return;
   }
-  for (auto i = 0; i < numRows; ++i) {
+  auto lastSafe = bufferEnd - sizeof(uint64_t);
+  int32_t numSafeRows = numRows;
+  bool anyUnsafe = false;
+  if (bufferEnd) {
+    const char* endByte = reinterpret_cast<const char*>(bits) + bits::roundUp(bitOffset + (rows.back() - rowBias + 1) * bitWidth, 8) / 8;
+    // redzone is the number of bytes at the end of the accessed range that could overflow the buffer if accessed 64 its wide.
+    int64_t redZone = sizeof(uint64_t) - static_cast<int64_t>(bufferEnd - endByte);
+    if (redZone > 0) {
+      auto numRed = (redZone + 1) * 8 / bitWidth; 
+      int32_t lastSafeIndex = rows.back() - numRed;
+      --numSafeRows;
+      for (; numSafeRows >= 1; --numSafeRows) {
+	if (rows[numSafeRows - 1] < lastSafeIndex) {
+	  break;
+	}
+      }
+    }
+  }
+  for (auto i = 0; i < numSafeRows; ++i) {
     auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
     auto byte = bit / 8;
     auto shift = bit & 7;
@@ -2433,14 +2452,32 @@ void IntDecoder<isSigned>::decodeBitsLE(
                  shift) &
         mask;
   }
+  if (anyUnsafe) {
+    int64_t lastSafeByte = reinterpret_cast<int64_t>(bufferEnd) - reinterpret_cast<int64_t>(bits)- sizeof(uint64_t);
+    for (auto i = numSafeRows; i < numRows; ++i) {
+      auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
+      auto byte = bit / 8;
+      auto shift = bit & 7;
+      if (byte > lastSafeByte) {
+	int32_t byteWidth = bits::roundUp(shift + bitWidth, 8) / 8;
+	result[i] = (bits::loadPartialWord(reinterpret_cast<const uint8_t*>(bits + byte), byteWidth) >> shift) & mask;
+      } else {
+	result[i] = (*reinterpret_cast<const uint64_t*>(
+                     reinterpret_cast<const char*>(bits) + byte) >>
+                 shift) &
+        mask;
+      }
+    }
+}
 }
 
-template void IntDecoder<false>::decodeBitsLE(
+  template void IntDecoder<false>::decodeBitsLE(
     const uint64_t* FOLLY_NONNULL bits,
     int32_t bitOffset,
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* FOLLY_NULLABLE bufferEnd,
     int32_t* FOLLY_NONNULL result);
 
 template void IntDecoder<false>::decodeBitsLE(
@@ -2449,6 +2486,7 @@ template void IntDecoder<false>::decodeBitsLE(
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* FOLLY_NULLABLE bufferEnd,
     int64_t* FOLLY_NONNULL result);
 
 template void IntDecoder<true>::decodeBitsLE(
@@ -2457,6 +2495,7 @@ template void IntDecoder<true>::decodeBitsLE(
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* FOLLY_NULLABLE bufferEnd,
     int32_t* FOLLY_NONNULL result);
 
 template void IntDecoder<true>::decodeBitsLE(
@@ -2465,6 +2504,7 @@ template void IntDecoder<true>::decodeBitsLE(
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* FOLLY_NULLABLE bufferEnd,
     int64_t* FOLLY_NONNULL result);
 
 template void IntDecoder<false>::decodeBitsLE(
@@ -2473,6 +2513,7 @@ template void IntDecoder<false>::decodeBitsLE(
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* FOLLY_NULLABLE bufferEnd,
     int16_t* FOLLY_NONNULL result);
 
 template void IntDecoder<true>::decodeBitsLE(
@@ -2481,6 +2522,7 @@ template void IntDecoder<true>::decodeBitsLE(
     RowSet rows,
     int32_t rowBias,
     uint8_t bitWidth,
+    const char* FOLLY_NULLABLE bufferEnd,
     int16_t* FOLLY_NONNULL result);
 
 #ifdef CODEGEN_BULK_VARINTS

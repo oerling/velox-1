@@ -124,10 +124,14 @@ class IntDecoder {
   template <typename T>
   void bulkReadRows(RowSet rows, T* result, int32_t initialRow = 0);
 
-  // Copies bit fields starting at 'bitOffset'th bit of 'bits'  into 'result'.
-  // The indices of the fields are in 'rows' and their bit-width is 'bitWidth'.
-  // 'rowBias' is subtracted from each index in 'rows' before calculating the
-  // bit field's position. The bit fields are considered little endian.
+  /// Copies bit fields starting at 'bitOffset'th bit of 'bits' into
+  /// 'result'.  The indices of the fields are in 'rows' and their
+  /// bit-width is 'bitWidth'.  'rowBias' is subtracted from each
+  /// index in 'rows' before calculating the bit field's position. The
+  /// bit fields are considered little endian. 'bufferEnd' is the address of the
+  /// first undefined byte after the buffer containing the bits. If non-null,
+  /// extra-wide memory accesses will not be used at thee end of the range to
+  /// stay under 'bufferEnd'.
   template <typename T>
   static void decodeBitsLE(
       const uint64_t* FOLLY_NONNULL bits,
@@ -135,6 +139,7 @@ class IntDecoder {
       RowSet rows,
       int32_t rowBias,
       uint8_t bitWidth,
+      const char* FOLLY_NULLABLE bufferEnd,
       T* FOLLY_NONNULL result);
 
  protected:
