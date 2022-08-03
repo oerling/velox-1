@@ -348,7 +348,8 @@ int32_t PageReader::skipNulls(int32_t numValues) {
   dwio::common::ensureCapacity<bool>(tempNulls_, numValues, &pool_);
   tempNulls_->setSize(0);
   bool allOnes;
-  defineDecoder_->readBits(numValues, tempNulls_->asMutable<uint64_t>(), &allOnes);
+  defineDecoder_->readBits(
+      numValues, tempNulls_->asMutable<uint64_t>(), &allOnes);
   if (allOnes) {
     return numValues;
   }
