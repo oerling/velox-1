@@ -2429,18 +2429,22 @@ void IntDecoder<isSigned>::decodeBitsLE(
   int32_t numSafeRows = numRows;
   bool anyUnsafe = false;
   if (bufferEnd) {
-    const char* endByte = reinterpret_cast<const char*>(bits) + bits::roundUp(bitOffset + (rows.back() - rowBias + 1) * bitWidth, 8) / 8;
-    // redzone is the number of bytes at the end of the accessed range that could overflow the buffer if accessed 64 its wide.
-    int64_t redZone = sizeof(uint64_t) - static_cast<int64_t>(bufferEnd - endByte);
+    const char* endByte = reinterpret_cast<const char*>(bits) +
+        bits::roundUp(bitOffset + (rows.back() - rowBias + 1) * bitWidth, 8) /
+            8;
+    // redzone is the number of bytes at the end of the accessed range that
+    // could overflow the buffer if accessed 64 its wide.
+    int64_t redZone =
+        sizeof(uint64_t) - static_cast<int64_t>(bufferEnd - endByte);
     if (redZone > 0) {
       anyUnsafe = true;
-      auto numRed = (redZone + 1) * 8 / bitWidth; 
+      auto numRed = (redZone + 1) * 8 / bitWidth;
       int32_t lastSafeIndex = rows.back() - numRed;
       --numSafeRows;
       for (; numSafeRows >= 1; --numSafeRows) {
-	if (rows[numSafeRows - 1] < lastSafeIndex) {
-	  break;
-	}
+        if (rows[numSafeRows - 1] < lastSafeIndex) {
+          break;
+        }
       }
     }
   }
@@ -2459,13 +2463,17 @@ void IntDecoder<isSigned>::decodeBitsLE(
       auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
       auto byte = bit / 8;
       auto shift = bit & 7;
-      result[i] = IntDecoder<isSigned>::safeLoadBits(reinterpret_cast<const char*>(bits) + byte, shift, bitWidth, lastSafeWord) & mask;
+      result[i] = IntDecoder<isSigned>::safeLoadBits(
+                      reinterpret_cast<const char*>(bits) + byte,
+                      shift,
+                      bitWidth,
+                      lastSafeWord) &
+          mask;
     }
   }
 }
 
-
-  template void IntDecoder<false>::decodeBitsLE(
+template void IntDecoder<false>::decodeBitsLE(
     const uint64_t* FOLLY_NONNULL bits,
     int32_t bitOffset,
     RowSet rows,

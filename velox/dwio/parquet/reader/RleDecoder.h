@@ -33,7 +33,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
         bitWidth_(bitWidth),
         byteWidth_(bits::roundUp(bitWidth, 8) / 8),
         bitMask_(bits::lowMask(bitWidth)),
-	lastSafeWord_(end - sizeof(uint64_t)) {}
+        lastSafeWord_(end - sizeof(uint64_t)) {}
 
   void seekToRowGroup(
       dwio::common::PositionProvider& positionProvider) override {
