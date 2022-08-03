@@ -20,6 +20,7 @@
 
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/parquet/reader/FloatingPointColumnReader.h"
 #include "velox/dwio/parquet/reader/IntegerColumnReader.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
