@@ -168,8 +168,8 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
     uint32_t repeatLength = readField<int32_t>(pageData_);
     pageData_ += repeatLength;
     repeatDecoder_ = std::make_unique<RleDecoder<false>>(
-						  pageData_,
-						  pageData_ + repeatLength,
+        pageData_,
+        pageData_ + repeatLength,
         arrow::bit_util::NumRequiredBits(maxRepeat_));
     pageData_ += repeatLength;
   }
@@ -206,16 +206,16 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
 
   if (repeatLength) {
     repeatDecoder_ = std::make_unique<RleDecoder<false>>(
-						  pageData_,
-						  pageData_ + repeatLength,
+        pageData_,
+        pageData_ + repeatLength,
         arrow::bit_util::NumRequiredBits(maxRepeat_));
   }
 
   if (maxDefine_ > 0) {
     defineDecoder_ = std::make_unique<RleDecoder<false>>(
-							 pageData_ + repeatLength,
-      pageData_ + repeatLength + defineLength,
-      arrow::bit_util::NumRequiredBits(maxDefine_));
+        pageData_ + repeatLength,
+        pageData_ + repeatLength + defineLength,
+        arrow::bit_util::NumRequiredBits(maxDefine_));
   }
   auto levelsSize = repeatLength + defineLength;
   pageData_ += levelsSize;
@@ -347,8 +347,7 @@ int32_t PageReader::skipNulls(int32_t numValues) {
   VELOX_CHECK_EQ(1, maxDefine_);
   dwio::common::ensureCapacity<bool>(tempNulls_, numValues, &pool_);
   tempNulls_->setSize(0);
-  defineDecoder_->readBits(
-			   numValues, tempNulls_->asMutable<uint64_t>());
+  defineDecoder_->readBits(numValues, tempNulls_->asMutable<uint64_t>());
   auto words = tempNulls_->as<uint64_t>();
   int32_t numPresent = bits::countBits(words, 0, numValues);
   return numPresent;
@@ -370,7 +369,7 @@ void PageReader::skipNullsOnly(int64_t numRows) {
   // Skip nulls
   skipNulls(toSkip);
 }
-  
+
 void PageReader::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
   auto toRead = numValues;
   if (buffer) {
@@ -400,8 +399,7 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   }
   VELOX_CHECK_EQ(1, maxDefine_);
   dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);
-  defineDecoder_->readBits(
-				    numValues, buffer->asMutable<uint64_t>());
+  defineDecoder_->readBits(numValues, buffer->asMutable<uint64_t>());
   return buffer->as<uint64_t>();
 }
 

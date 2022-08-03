@@ -23,7 +23,6 @@
 
 namespace facebook::velox::parquet {
 
-
 template <bool isSigned>
 class RleDecoder : public dwio::common::IntDecoder<isSigned> {
  public:
@@ -132,30 +131,36 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     }
     while (toRead) {
       if (!remainingValues_) {
-	readHeader();
+        readHeader();
       }
       auto consumed = std::min<int32_t>(toRead, remainingValues_);
 
       if (repeating_) {
-	if (allOnes && value_ && toRead == numValues && repeating_ <= toRead) {
-	  // The whole read is covered by a RLE of ones and 'allOnes' is provided, so we can shortcut the read.
-	  remainingValues_ -= toRead;
-	  *allOnes = true;
-	  return;
-	}
-	bits::fillBits(buffer, numWritten, numWritten + consumed, value_ != 0);
+        if (allOnes && value_ && toRead == numValues && repeating_ <= toRead) {
+          // The whole read is covered by a RLE of ones and 'allOnes' is
+          // provided, so we can shortcut the read.
+          remainingValues_ -= toRead;
+          *allOnes = true;
+          return;
+        }
+        bits::fillBits(buffer, numWritten, numWritten + consumed, value_ != 0);
       } else {
-	bits::copyBits(reinterpret_cast<const uint64_t*>(super::bufferStart), bitOffset_, buffer, numWritten, consumed);
-	int64_t offset = bitOffset_ + consumed;
-	super::bufferStart += offset >> 3;
-	bitOffset_ = offset & 7;
+        bits::copyBits(
+            reinterpret_cast<const uint64_t*>(super::bufferStart),
+            bitOffset_,
+            buffer,
+            numWritten,
+            consumed);
+        int64_t offset = bitOffset_ + consumed;
+        super::bufferStart += offset >> 3;
+        bitOffset_ = offset & 7;
       }
       numWritten += consumed;
       toRead -= consumed;
       remainingValues_ -= consumed;
     }
   }
-  
+
  private:
   int64_t readBitField() {
     auto value = bits::detail::loadBits<int64_t>(

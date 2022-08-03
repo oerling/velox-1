@@ -57,9 +57,10 @@ class PageReader {
   template <typename Visitor>
   void readWithVisitor(Visitor& visitor);
 
-  // skips 'numValues' top level rows, touching null flags only. Non-null values are not prepared for reading.
+  // skips 'numValues' top level rows, touching null flags only. Non-null values
+  // are not prepared for reading.
   void skipNullsOnly(int64_t numValues);
-  
+
   /// Reads 'numValues' null flags into 'nulls' and advances the
   /// decoders by as much. The read may span several pages. If there
   /// are no nulls, buffer may be set to nullptr.
