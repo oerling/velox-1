@@ -43,7 +43,7 @@ class DwrfData : public dwio::common::FormatData {
       const uint64_t* FOLLY_NULLABLE incomingNulls,
       BufferPtr& nulls) override;
 
-  uint64_t skipNulls(uint64_t numValues, bool nullsOnly) override;
+  uint64_t skipNulls(uint64_t numValues, bool nullsOnly = false) override;
 
   uint64_t skip(uint64_t numValues) override {
     return skipNulls(numValues);

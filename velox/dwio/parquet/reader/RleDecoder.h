@@ -136,7 +136,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       auto consumed = std::min<int32_t>(toRead, remainingValues_);
 
       if (repeating_) {
-        if (allOnes && value_ && toRead == numValues && repeating_ <= toRead) {
+        if (allOnes && value_ && toRead == numValues && repeating_ >= numValues) {
           // The whole read is covered by a RLE of ones and 'allOnes' is
           // provided, so we can shortcut the read.
           remainingValues_ -= toRead;

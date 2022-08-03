@@ -347,10 +347,13 @@ int32_t PageReader::skipNulls(int32_t numValues) {
   VELOX_CHECK_EQ(1, maxDefine_);
   dwio::common::ensureCapacity<bool>(tempNulls_, numValues, &pool_);
   tempNulls_->setSize(0);
-  defineDecoder_->readBits(numValues, tempNulls_->asMutable<uint64_t>());
+  bool allOnes;
+  defineDecoder_->readBits(numValues, tempNulls_->asMutable<uint64_t>(), &allOnes);
+  if (allOnes) {
+    return numValues;
+  }
   auto words = tempNulls_->as<uint64_t>();
-  int32_t numPresent = bits::countBits(words, 0, numValues);
-  return numPresent;
+  return bits::countBits(words, 0, numValues);
 }
 
 void PageReader::skipNullsOnly(int64_t numRows) {
@@ -399,8 +402,9 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   }
   VELOX_CHECK_EQ(1, maxDefine_);
   dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);
-  defineDecoder_->readBits(numValues, buffer->asMutable<uint64_t>());
-  return buffer->as<uint64_t>();
+  bool allOnes;
+  defineDecoder_->readBits(numValues, buffer->asMutable<uint64_t>(), &allOnes);
+  return allOnes ? nullptr : buffer->as<uint64_t>();
 }
 
 void PageReader::startVisit(folly::Range<const vector_size_t*> rows) {
