@@ -142,6 +142,24 @@ class IntDecoder {
       const char* FOLLY_NULLABLE bufferEnd,
       T* FOLLY_NONNULL result);
 
+  // Loads a bit field from 'ptr' + bitOffset for up to 'bitWidth' bits. makes
+  // sure not to access bytes past lastSafeWord + 7.
+  static inline uint64_t safeLoadBits(
+      const char* ptr,
+      int32_t bitOffset,
+      uint8_t bitWidth,
+      const char* lastSafeWord) {
+    VELOX_DCHECK_GE(7, bitOffset);
+    VELOX_DCHECK_GE(56, bitWidth);
+    if (ptr < lastSafeWord) {
+      return *reinterpret_cast<const uint64_t*>(ptr) >> bitOffset;
+    }
+    int32_t byteWidth = bits::roundUp(bitOffset + bitWidth, 8) / 8;
+    return bits::loadPartialWord(
+               reinterpret_cast<const uint8_t*>(ptr), byteWidth) >>
+        bitOffset;
+  }
+
  protected:
   template <typename T>
   void bulkReadFixed(uint64_t size, T* result);

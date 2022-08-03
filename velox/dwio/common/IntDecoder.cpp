@@ -2433,6 +2433,7 @@ void IntDecoder<isSigned>::decodeBitsLE(
     // redzone is the number of bytes at the end of the accessed range that could overflow the buffer if accessed 64 its wide.
     int64_t redZone = sizeof(uint64_t) - static_cast<int64_t>(bufferEnd - endByte);
     if (redZone > 0) {
+      anyUnsafe = true;
       auto numRed = (redZone + 1) * 8 / bitWidth; 
       int32_t lastSafeIndex = rows.back() - numRed;
       --numSafeRows;
@@ -2453,23 +2454,16 @@ void IntDecoder<isSigned>::decodeBitsLE(
         mask;
   }
   if (anyUnsafe) {
-    int64_t lastSafeByte = reinterpret_cast<int64_t>(bufferEnd) - reinterpret_cast<int64_t>(bits)- sizeof(uint64_t);
+    auto lastSafeWord = bufferEnd - sizeof(uint64_t);
     for (auto i = numSafeRows; i < numRows; ++i) {
       auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
       auto byte = bit / 8;
       auto shift = bit & 7;
-      if (byte > lastSafeByte) {
-	int32_t byteWidth = bits::roundUp(shift + bitWidth, 8) / 8;
-	result[i] = (bits::loadPartialWord(reinterpret_cast<const uint8_t*>(bits + byte), byteWidth) >> shift) & mask;
-      } else {
-	result[i] = (*reinterpret_cast<const uint64_t*>(
-                     reinterpret_cast<const char*>(bits) + byte) >>
-                 shift) &
-        mask;
-      }
+      result[i] = IntDecoder<isSigned>::safeLoadBits(reinterpret_cast<const char*>(bits) + byte, shift, bitWidth, lastSafeWord) & mask;
     }
+  }
 }
-}
+
 
   template void IntDecoder<false>::decodeBitsLE(
     const uint64_t* FOLLY_NONNULL bits,

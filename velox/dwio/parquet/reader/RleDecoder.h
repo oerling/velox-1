@@ -32,7 +32,8 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       : super::IntDecoder{start, end},
         bitWidth_(bitWidth),
         byteWidth_(bits::roundUp(bitWidth, 8) / 8),
-        bitMask_(bits::lowMask(bitWidth)) {}
+        bitMask_(bits::lowMask(bitWidth)),
+	lastSafeWord_(end - sizeof(uint64_t)) {}
 
   void seekToRowGroup(
       dwio::common::PositionProvider& positionProvider) override {
@@ -165,10 +166,8 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
  private:
   // Reads one value of 'bitWithd_' bits and advances the position.
   int64_t readBitField() {
-    auto value = bits::detail::loadBits<int64_t>(
-                     reinterpret_cast<const uint64_t*>(super::bufferStart),
-                     bitOffset_,
-                     bitWidth_) &
+    auto value = dwio::common::IntDecoder<false>::safeLoadBits(
+                     super::bufferStart, bitOffset_, bitWidth_, lastSafeWord_) &
         bitMask_;
     bitOffset_ += bitWidth_;
     super::bufferStart += bitOffset_ >> 3;
@@ -247,7 +246,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
         folly::Range<const int32_t*>(rows + rowIndex, numRows),
         currentRow,
         bitWidth_,
-	super::bufferEnd,
+        super::bufferEnd,
         values + numValues);
     super::bufferStart += numBits >> 3;
     bitOffset_ = numBits & 7;
@@ -355,9 +354,9 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
     uint32_t count = indicator >> 1;
     if (repeating_) {
       remainingValues_ = count;
-      // Do not load past buffer end. Errir in valgrind and could in
+      // Do not load past buffer end. Reports error in valgrind and could in
       // principle run into unmapped addresses.
-      if (super::bufferEnd - super::bufferStart >= sizeof(uint64_t)) {
+      if (super::bufferEnd > lastSafeWord_) {
         value_ =
             *reinterpret_cast<const int64_t*>(super::bufferStart) & bitMask_;
       } else {
@@ -375,6 +374,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
   const int8_t bitWidth_;
   const int8_t byteWidth_;
   const uint64_t bitMask_;
+  const char* const lastSafeWord_;
   uint64_t remainingValues_{0};
   int64_t value_;
   int8_t bitOffset_{0};
