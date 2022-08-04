@@ -169,7 +169,7 @@ class E2EFilterTestBase : public testing::Test {
   }
 
   template <typename T>
-  void makequantizedFloat(
+  void makeQuantizedFloat(
       const common::Subfield& field,
       int64_t buckets,
       bool keepNulls) {
@@ -181,7 +181,7 @@ class E2EFilterTestBase : public testing::Test {
           continue;
         }
         T value = numbers->valueAt(row);
-        numbers->set(row, ceil(numbers * buckets) / buckets);
+        numbers->set(row, ceil(value * buckets) / buckets);
       }
     }
   }

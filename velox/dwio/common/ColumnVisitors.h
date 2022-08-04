@@ -637,11 +637,11 @@ inline void storeTranslate(
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < dictMask.size; ++i) {
     if (inDict & (1 << i)) {
-      auto value = *reinterpret_cast<const TIndex*>(&input[inputIndex + i]);
+      auto index = *reinterpret_cast<const TIndex*>(&input[inputIndex + i]);
       if (sizeof(TIndex) == 2) {
-	value &= 0xffff;
+	index &= 0xffff;
       }
-      values[i] = value;
+      values[i] = dict[index];
     } else {
       auto value = input[inputIndex + i];
       values[i] = value;
