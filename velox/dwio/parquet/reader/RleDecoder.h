@@ -360,7 +360,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
       remainingValues_ = count;
       // Do not load past buffer end. Reports error in valgrind and could in
       // principle run into unmapped addresses.
-      if (super::bufferEnd > lastSafeWord_) {
+      if (super::bufferStart <= lastSafeWord_) {
         value_ =
             *reinterpret_cast<const int64_t*>(super::bufferStart) & bitMask_;
       } else {
