@@ -356,55 +356,62 @@ inline int64_t IntDecoder<isSigned>::readLong() {
   }
 }
 
-  template <>
-  template <>
-inline   void IntDecoder<false>::bulkRead(uint64_t size, double* result) {
-    VELOX_UNREACHABLE();
-  }
+template <>
+template <>
+inline void IntDecoder<false>::bulkRead(uint64_t size, double* result) {
+  VELOX_UNREACHABLE();
+}
 
+template <>
+template <>
+inline void IntDecoder<false>::bulkReadRows(
+    RowSet rows,
+    double* result,
+    int32_t initialRow) {
+  VELOX_UNREACHABLE();
+}
 
-  template <>
-  template <>
-  inline   void IntDecoder<false>::bulkReadRows(RowSet rows, double* result, int32_t initialRow) {
-    VELOX_UNREACHABLE();
-  }
+template <>
+template <>
+inline void IntDecoder<true>::bulkRead(uint64_t size, double* result) {
+  VELOX_UNREACHABLE();
+}
 
-  template <>
-  template <>
-inline   void IntDecoder<true>::bulkRead(uint64_t size, double* result) {
-    VELOX_UNREACHABLE();
-  }
+template <>
+template <>
+inline void IntDecoder<true>::bulkReadRows(
+    RowSet rows,
+    double* result,
+    int32_t initialRow) {
+  VELOX_UNREACHABLE();
+}
 
-  template <>
-  template <>
-  inline   void IntDecoder<true>::bulkReadRows(RowSet rows, double* result, int32_t initialRow) {
-    VELOX_UNREACHABLE();
-  }
+template <>
+template <>
+inline void IntDecoder<false>::bulkRead(uint64_t size, float* result) {
+  VELOX_UNREACHABLE();
+}
 
-  template <>
-  template <>
-inline   void IntDecoder<false>::bulkRead(uint64_t size, float* result) {
-    VELOX_UNREACHABLE();
-  }
+template <>
+template <>
+inline void IntDecoder<false>::bulkReadRows(
+    RowSet rows,
+    float* result,
+    int32_t initialRow) {
+  VELOX_UNREACHABLE();
+}
 
+template <>
+template <>
+inline void IntDecoder<true>::bulkRead(uint64_t size, float* result) {
+  VELOX_UNREACHABLE();
+}
 
-  template <>
-  template <>
-  inline   void IntDecoder<false>::bulkReadRows(RowSet rows, float* result, int32_t initialRow) {
-    VELOX_UNREACHABLE();
-  }
+template <>
+template <>
+inline void
+IntDecoder<true>::bulkReadRows(RowSet rows, float* result, int32_t initialRow) {
+  VELOX_UNREACHABLE();
+}
 
-  template <>
-  template <>
-inline   void IntDecoder<true>::bulkRead(uint64_t size, float* result) {
-    VELOX_UNREACHABLE();
-  }
-
-  template <>
-  template <>
-  inline   void IntDecoder<true>::bulkReadRows(RowSet rows, float* result, int32_t initialRow) {
-    VELOX_UNREACHABLE();
-  }
-  
-  
 } // namespace facebook::velox::dwio::common

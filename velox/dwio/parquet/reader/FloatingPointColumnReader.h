@@ -42,7 +42,7 @@ class FloatingPointColumnReader
     root::readOffset_ = 0;
     root::formatData_->as<ParquetData>().seekToRowGroup(index);
   }
-  
+
   uint64_t skip(uint64_t numValues) override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
@@ -56,11 +56,10 @@ class FloatingPointColumnReader
 };
 
 template <typename TData, typename TRequested>
-FloatingPointColumnReader<TData, TRequested>::
-    FloatingPointColumnReader(
-        std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-        ParquetParams& params,
-        common::ScanSpec& scanSpec)
+FloatingPointColumnReader<TData, TRequested>::FloatingPointColumnReader(
+    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+    ParquetParams& params,
+    common::ScanSpec& scanSpec)
     : dwio::common::SelectiveFloatingPointColumnReader<TData, TRequested>(
           std::move(requestedType),
           params,
@@ -78,7 +77,7 @@ void FloatingPointColumnReader<TData, TRequested>::readWithVisitor(
     RowSet rows,
     TVisitor visitor) {
   root::formatData_->as<ParquetData>().readWithVisitor(visitor);
-    root::readOffset_ += rows.back() + 1;
+  root::readOffset_ += rows.back() + 1;
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::parquet

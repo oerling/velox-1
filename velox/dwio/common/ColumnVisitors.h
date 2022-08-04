@@ -19,8 +19,8 @@
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/dwio/common/DecoderUtil.h"
-#include "velox/dwio/common/TypeUtil.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
+#include "velox/dwio/common/TypeUtil.h"
 
 namespace facebook::velox::dwio::common {
 
@@ -521,7 +521,6 @@ struct LoadIndices<float, A> {
   }
 };
 
-  
 template <typename A>
 struct LoadIndices<int16_t, A> {
   static xsimd::batch<int32_t, A> apply(
@@ -565,7 +564,6 @@ struct LoadIndices<double, A> {
   }
 };
 
-  
 } // namespace detail
 
 template <typename T, typename A = xsimd::default_arch>
@@ -595,11 +593,12 @@ inline void storeTranslatePermute(
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < numBits; ++i) {
     if (inDict & (1 << selectedIndices[i])) {
-      auto index = *reinterpret_cast<const TIndex*>(&input[inputIndex + selectedIndices[i]]);
+      auto index = *reinterpret_cast<const TIndex*>(
+          &input[inputIndex + selectedIndices[i]]);
       if (sizeof(T) == 2) {
-	index &= 0xffff;
+        index &= 0xffff;
       }
-      auto  value = dict[index];
+      auto value = dict[index];
       values[i] = value;
     } else {
       auto value = input[inputIndex + selectedIndices[i]];
@@ -639,7 +638,7 @@ inline void storeTranslate(
     if (inDict & (1 << i)) {
       auto index = *reinterpret_cast<const TIndex*>(&input[inputIndex + i]);
       if (sizeof(TIndex) == 2) {
-	index &= 0xffff;
+        index &= 0xffff;
       }
       values[i] = dict[index];
     } else {
@@ -848,7 +847,7 @@ class DictionaryColumnVisitor
         uint16_t bits = unknowns;
         // Ranges only over inputs that are in dictionary, the not in dictionary
         // were masked off in 'dictMask'.
-	using TIndex = typename make_index<T>::type;
+        using TIndex = typename make_index<T>::type;
         while (bits) {
           int index = bits::getAndClearLastSetBit(bits);
           auto value = static_cast<TIndex>(input[i + index]);
@@ -1025,7 +1024,8 @@ class DictionaryColumnVisitor
           super::rowIndex_ + numValues,
           [&](int row) {
             auto valueIndex = row - super::rowIndex_;
-            out[valueIndex] = dict()[reinterpret_cast<const TIndex*>(values)[valueIndex]];
+            out[valueIndex] =
+                dict()[reinterpret_cast<const TIndex*>(values)[valueIndex]];
             return true;
           });
     } else {

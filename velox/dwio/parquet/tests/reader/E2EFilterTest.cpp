@@ -154,5 +154,3 @@ TEST_F(E2EFilterTest, floatAndDouble) {
       true,
       false);
 }
-
-

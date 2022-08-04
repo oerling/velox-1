@@ -243,7 +243,7 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
 
     using TValues = typename std::remove_reference<decltype(values[0])>::type;
     using TIndex = typename std::make_signed_t<
-      typename dwio::common::make_index<TValues>::type>;
+        typename dwio::common::make_index<TValues>::type>;
     super::decodeBitsLE(
         reinterpret_cast<const uint64_t*>(super::bufferStart),
         bitOffset_,
