@@ -19,6 +19,7 @@
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/dwio/common/DecoderUtil.h"
+#include "velox/dwio/common/TypeUtil.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 
 namespace facebook::velox::dwio::common {
@@ -514,6 +515,14 @@ struct LoadIndices<int32_t, A> {
 };
 
 template <typename A>
+struct LoadIndices<float, A> {
+  static xsimd::batch<int32_t, A> apply(const float* values, const A&) {
+    return xsimd::load_unaligned<A>(reinterpret_cast<const int32_t*>(values));
+  }
+};
+
+  
+template <typename A>
 struct LoadIndices<int16_t, A> {
   static xsimd::batch<int32_t, A> apply(
       const int16_t* values,
@@ -546,6 +555,17 @@ struct LoadIndices<int64_t, A> {
   }
 };
 
+template <typename A>
+struct LoadIndices<double, A> {
+  static xsimd::batch<int32_t, A> apply(const double* values, const A& arch) {
+    return simd::gather<int32_t, int32_t, 8>(
+        reinterpret_cast<const int32_t*>(values),
+        simd::iota<int32_t>(arch),
+        arch);
+  }
+};
+
+  
 } // namespace detail
 
 template <typename T, typename A = xsimd::default_arch>
@@ -570,15 +590,22 @@ inline void storeTranslatePermute(
     int8_t numBits,
     const T* dict,
     T* values) {
+  using TIndex = typename make_index<T>::type;
   auto selectedIndices = simd::byteSetBits(selected);
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < numBits; ++i) {
-    auto value = input[inputIndex + selectedIndices[i]];
     if (inDict & (1 << selectedIndices[i])) {
-      value = dict[value];
+      auto index = *reinterpret_cast<const TIndex*>(&input[inputIndex + selectedIndices[i]]);
+      if (sizeof(T) == 2) {
+	index &= 0xffff;
+      }
+      auto  value = dict[index];
+      values[i] = value;
+    } else {
+      auto value = input[inputIndex + selectedIndices[i]];
+      values[i] = value;
     }
-    values[i] = value;
-  }
+    }
 }
 
 template <>
@@ -606,14 +633,20 @@ inline void storeTranslate(
     xsimd::batch_bool<int32_t> dictMask,
     const T* dict,
     T* values) {
+  using TIndex = typename make_index<T>::type;
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < dictMask.size; ++i) {
-    auto value = input[inputIndex + i];
     if (inDict & (1 << i)) {
-      value = dict[value];
+      auto value = *reinterpret_cast<const TIndex*>(&input[inputIndex + i]);
+      if (sizeof(TIndex) == 2) {
+	value &= 0xffff;
+      }
+      values[i] = value;
+    } else {
+      auto value = input[inputIndex + i];
+      values[i] = value;
     }
-    values[i] = value;
-  }
+    }
 }
 
 template <>
@@ -689,7 +722,7 @@ class DictionaryColumnVisitor
     }
     vector_size_t previous =
         isDense && TFilter::deterministic ? 0 : super::currentRow();
-    std::make_unsigned_t<T> index = value;
+    typename make_index<T>::type index = value;
     T valueInDictionary = dict()[index];
     if (std::is_same<TFilter, velox::common::AlwaysTrue>::value) {
       super::filterPassed(valueInDictionary);
@@ -815,9 +848,10 @@ class DictionaryColumnVisitor
         uint16_t bits = unknowns;
         // Ranges only over inputs that are in dictionary, the not in dictionary
         // were masked off in 'dictMask'.
+	using TIndex = typename make_index<T>::type;
         while (bits) {
           int index = bits::getAndClearLastSetBit(bits);
-          auto value = input[i + index];
+          auto value = static_cast<TIndex>(input[i + index]);
           if (applyFilter(super::filter_, dict()[value])) {
             filterCache()[value] = FilterResult::kSuccess;
             passed |= 1 << index;
@@ -939,7 +973,7 @@ class DictionaryColumnVisitor
       int32_t numValues,
       T* values) {
     for (int32_t i = numInput - 1; i >= 0; --i) {
-      using U = typename std::make_unsigned<T>::type;
+      using U = typename make_index<T>::type;
       T value = input[i];
       if (hasInDict) {
         if (bits::isBitSet(inDict(), super::rows_[super::rowIndex_ + i])) {
@@ -979,9 +1013,10 @@ class DictionaryColumnVisitor
   }
 
   void translateByDict(const T* values, int numValues, T* out) {
+    using TIndex = typename make_index<T>::type;
     if (!inDict()) {
       for (auto i = 0; i < numValues; ++i) {
-        out[i] = dict()[values[i]];
+        out[i] = dict()[reinterpret_cast<const TIndex*>(values)[i]];
       }
     } else if (super::dense) {
       bits::forEachSetBit(
@@ -990,13 +1025,13 @@ class DictionaryColumnVisitor
           super::rowIndex_ + numValues,
           [&](int row) {
             auto valueIndex = row - super::rowIndex_;
-            out[valueIndex] = dict()[values[valueIndex]];
+            out[valueIndex] = dict()[reinterpret_cast<const TIndex*>(values)[valueIndex]];
             return true;
           });
     } else {
       for (auto i = 0; i < numValues; ++i) {
         if (bits::isBitSet(inDict(), super::rows_[super::rowIndex_ + i])) {
-          out[i] = dict()[values[i]];
+          out[i] = dict()[reinterpret_cast<const TIndex*>(values)[i]];
         }
       }
     }

@@ -38,35 +38,33 @@ class FloatingPointColumnReader
       common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override {
-    scanState().clear();
-    readOffset_ = 0;
-    formatData_->as<ParquetData>().seekToRowGroup(index);
+    root::scanState().clear();
+    root::readOffset_ = 0;
+    root::formatData_->as<ParquetData>().seekToRowGroup(index);
   }
   
   uint64_t skip(uint64_t numValues) override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override {
-    using T = SelectiveFloatingPointColumnReader<TData, TRequested>;
+    using T = FloatingPointColumnReader<TData, TRequested>;
     base::template readCommon<T>(offset, rows, incomingNulls);
   }
 
   template <typename TVisitor>
   void readWithVisitor(RowSet rows, TVisitor visitor);
-
-  FloatingPointDecoder<TData, TRequested> decoder_;
 };
 
 template <typename TData, typename TRequested>
-SelectiveFloatingPointColumnReader<TData, TRequested>::
-    SelectiveFloatingPointColumnReader(
+FloatingPointColumnReader<TData, TRequested>::
+    FloatingPointColumnReader(
         std::shared_ptr<const dwio::common::TypeWithId> requestedType,
         ParquetParams& params,
         common::ScanSpec& scanSpec)
     : dwio::common::SelectiveFloatingPointColumnReader<TData, TRequested>(
           std::move(requestedType),
           params,
-          scanSpec), {}
+          scanSpec) {}
 
 template <typename TData, typename TRequested>
 uint64_t FloatingPointColumnReader<TData, TRequested>::skip(
@@ -76,10 +74,10 @@ uint64_t FloatingPointColumnReader<TData, TRequested>::skip(
 
 template <typename TData, typename TRequested>
 template <typename TVisitor>
-void SelectiveFloatingPointColumnReader<TData, TRequested>::readWithVisitor(
+void FloatingPointColumnReader<TData, TRequested>::readWithVisitor(
     RowSet rows,
     TVisitor visitor) {
-    formatData_->as<ParquetData>().readWithVisitor(visitor);
+  root::formatData_->as<ParquetData>().readWithVisitor(visitor);
     root::readOffset_ += rows.back() + 1;
 }
 
