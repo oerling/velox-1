@@ -28,7 +28,10 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
  public:
   using super = dwio::common::IntDecoder<isSigned>;
 
-  RleDecoder(const char* FOLLY_NONNULL start, const char* FOLLY_NONNULL end, uint8_t bitWidth)
+  RleDecoder(
+      const char* FOLLY_NONNULL start,
+      const char* FOLLY_NONNULL end,
+      uint8_t bitWidth)
       : super::IntDecoder{start, end},
         bitWidth_(bitWidth),
         byteWidth_(bits::roundUp(bitWidth, 8) / 8),

@@ -165,7 +165,8 @@ class IntDecoder {
   void bulkReadFixed(uint64_t size, T* FOLLY_NONNULL result);
 
   template <typename T>
-  void bulkReadRowsFixed(RowSet rows, int32_t initialRow, T* FOLLY_NONNULL result);
+  void
+  bulkReadRowsFixed(RowSet rows, int32_t initialRow, T* FOLLY_NONNULL result);
 
   signed char readByte();
 
@@ -191,8 +192,10 @@ class IntDecoder {
   //       this by directly supporting deserialization into the correct
   //       target data type
   template <typename T>
-  void
-  narrow(T* FOLLY_NONNULL const data, const uint64_t numValues, const uint64_t* const nulls) {
+  void narrow(
+      T* FOLLY_NONNULL const data,
+      const uint64_t numValues,
+      const uint64_t* const nulls) {
     DWIO_ENSURE_LE(numBytes, sizeof(T))
     std::array<int64_t, 64> buf;
     uint64_t remain = numValues;
