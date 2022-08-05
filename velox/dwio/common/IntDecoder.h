@@ -67,9 +67,9 @@ class IntDecoder {
    *    pointer is not null, positions that are true are skipped.
    */
   virtual void
-  next(int64_t* data, uint64_t numValues, const uint64_t* nulls) = 0;
+  next(int64_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) = 0;
 
-  virtual void next(int32_t* data, uint64_t numValues, const uint64_t* nulls) {
+  virtual void next(int32_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) {
     if (numValues <= 4) {
       int64_t temp[4];
       next(temp, numValues, nulls);
@@ -86,16 +86,16 @@ class IntDecoder {
   }
 
   virtual void
-  nextInts(int32_t* data, uint64_t numValues, const uint64_t* nulls) {
+  nextInts(int32_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) {
     narrow(data, numValues, nulls);
   }
 
   virtual void
-  nextShorts(int16_t* data, uint64_t numValues, const uint64_t* nulls) {
+  nextShorts(int16_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) {
     narrow(data, numValues, nulls);
   }
 
-  virtual void nextLengths(int32_t* /*values*/, int32_t /*numValues*/) {
+  virtual void nextLengths(int32_t* /* FOLLY_NONNULL values*/, int32_t /*numValues*/) {
     VELOX_FAIL("A length decoder should be a RLEv1");
   }
 
@@ -115,14 +115,14 @@ class IntDecoder {
 
   // Reads 'size' consecutive T' and stores then in 'result'.
   template <typename T>
-  void bulkRead(uint64_t size, T* result);
+  void bulkRead(uint64_t size, T* FOLLY_NONNULL result);
 
   // Reads data at positions 'rows' to 'result'. 'initialRow' is the
   // row number of the first unread element of 'this'. if rows is {10}
   // and 'initialRow' is 9, then this skips one element and reads the
   // next element into 'result'.
   template <typename T>
-  void bulkReadRows(RowSet rows, T* result, int32_t initialRow = 0);
+  void bulkReadRows(RowSet rows, T* FOLLY_NONNULL result, int32_t initialRow = 0);
 
   /// Copies bit fields starting at 'bitOffset'th bit of 'bits' into
   /// 'result'.  The indices of the fields are in 'rows' and their
@@ -145,7 +145,7 @@ class IntDecoder {
   // Loads a bit field from 'ptr' + bitOffset for up to 'bitWidth' bits. makes
   // sure not to access bytes past lastSafeWord + 7.
   static inline uint64_t safeLoadBits(
-      const char* ptr,
+      const char* FOLLY_NONNULL ptr,
       int32_t bitOffset,
       uint8_t bitWidth,
       const char* FOLLY_NONNULL lastSafeWord) {
