@@ -735,7 +735,7 @@ class DictionaryColumnVisitor
           filterCache()[index] == FilterResult::kFailure) {
         super::filterFailed();
       } else {
-        if (super::filter_.testInt64(valueInDictionary)) {
+        if (velox::common::applyFilter(super::filter_, valueInDictionary)) {
           super::filterPassed(valueInDictionary);
           if (TFilter::deterministic) {
             filterCache()[index] = FilterResult::kSuccess;
@@ -971,17 +971,18 @@ class DictionaryColumnVisitor
       const int32_t* scatterRows,
       int32_t numValues,
       T* values) {
+    using TIndex = typename make_index<T>::type;
+
     for (int32_t i = numInput - 1; i >= 0; --i) {
-      using U = typename make_index<T>::type;
-      T value = input[i];
+      T value;
       if (hasInDict) {
         if (bits::isBitSet(inDict(), super::rows_[super::rowIndex_ + i])) {
-          value = dict()[static_cast<U>(value)];
+          value = dict()[reinterpret_cast<const TIndex*>(input)[i]];
         } else if (!scatter) {
           continue;
         }
       } else {
-        value = dict()[static_cast<U>(value)];
+        value = dict()[reinterpret_cast<const TIndex*>(input)[i]];
       }
       if (scatter) {
         values[scatterRows[super::rowIndex_ + i]] = value;
