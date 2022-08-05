@@ -43,7 +43,7 @@ class IntDecoder {
         numBytes(numBytes) {}
 
   // Constructs for use in Parquet /Alphawhere the buffer is always preloaded.
-  IntDecoder(const char* start, const char* end)
+  IntDecoder(const char* FOLLY_NONNULL start, const char* FOLLY_NONNULL end)
       : bufferStart(start), bufferEnd(end), useVInts(false), numBytes(0) {}
 
   virtual ~IntDecoder() = default;
@@ -148,7 +148,7 @@ class IntDecoder {
       const char* ptr,
       int32_t bitOffset,
       uint8_t bitWidth,
-      const char* lastSafeWord) {
+      const char* FOLLY_NONNULL lastSafeWord) {
     VELOX_DCHECK_GE(7, bitOffset);
     VELOX_DCHECK_GE(56, bitWidth);
     if (ptr < lastSafeWord) {
@@ -162,10 +162,10 @@ class IntDecoder {
 
  protected:
   template <typename T>
-  void bulkReadFixed(uint64_t size, T* result);
+  void bulkReadFixed(uint64_t size, T* FOLLY_NONNULL result);
 
   template <typename T>
-  void bulkReadRowsFixed(RowSet rows, int32_t initialRow, T* result);
+  void bulkReadRowsFixed(RowSet rows, int32_t initialRow, T* FOLLY_NONNULL result);
 
   signed char readByte();
 
@@ -192,7 +192,7 @@ class IntDecoder {
   //       target data type
   template <typename T>
   void
-  narrow(T* const data, const uint64_t numValues, const uint64_t* const nulls) {
+  narrow(T* FOLLY_NONNULL const data, const uint64_t numValues, const uint64_t* const nulls) {
     DWIO_ENSURE_LE(numBytes, sizeof(T))
     std::array<int64_t, 64> buf;
     uint64_t remain = numValues;
@@ -213,8 +213,8 @@ class IntDecoder {
   }
 
   const std::unique_ptr<dwio::common::SeekableInputStream> inputStream;
-  const char* bufferStart;
-  const char* bufferEnd;
+  const char* FOLLY_NULLABLE bufferStart;
+  const char* FOLLY_NULLABLE bufferEnd;
   const bool useVInts;
   const uint32_t numBytes;
 };
