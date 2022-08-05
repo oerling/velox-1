@@ -26,41 +26,49 @@ struct make_index {};
 template <>
 struct make_index<int16_t> {
   using type = uint32_t;
+  using same_width_type = uint16_t;
 };
 
 template <>
 struct make_index<uint16_t> {
   using type = uint32_t;
+  using same_width_type = uint16_t;
 };
 
 template <>
 struct make_index<int32_t> {
   using type = uint32_t;
+  using same_width_type = type;
 };
 
 template <>
 struct make_index<uint32_t> {
   using type = uint32_t;
+  using same_width_type = type;
 };
 
 template <>
 struct make_index<int64_t> {
   using type = uint64_t;
+  using same_width_type = type;
 };
 
 template <>
 struct make_index<uint64_t> {
   using type = uint64_t;
+  using same_width_type = type;
 };
 
 template <>
 struct make_index<float> {
   using type = uint32_t;
+  using same_width_type = type;
 };
 
 template <>
 struct make_index<double> {
   using type = uint64_t;
+  using same_width_type = type;
 };
 
 } // namespace facebook::velox::dwio::common

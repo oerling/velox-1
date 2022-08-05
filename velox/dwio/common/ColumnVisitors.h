@@ -588,13 +588,13 @@ inline void storeTranslatePermute(
     int8_t numBits,
     const T* dict,
     T* values) {
-  using TIndex = typename make_index<T>::type;
+  using TIndex = typename make_index<T>::same_width_type;
   auto selectedIndices = simd::byteSetBits(selected);
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < numBits; ++i) {
     if (inDict & (1 << selectedIndices[i])) {
-      auto index = *reinterpret_cast<const TIndex*>(
-          &input[inputIndex + selectedIndices[i]]);
+      auto index = reinterpret_cast<const TIndex*>(
+						    input)[inputIndex + selectedIndices[i]];
       if (sizeof(T) == 2) {
         index &= 0xffff;
       }
@@ -632,14 +632,11 @@ inline void storeTranslate(
     xsimd::batch_bool<int32_t> dictMask,
     const T* dict,
     T* values) {
-  using TIndex = typename make_index<T>::type;
+  using TIndex = typename make_index<T>::same_width_type;
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < dictMask.size; ++i) {
     if (inDict & (1 << i)) {
-      auto index = *reinterpret_cast<const TIndex*>(&input[inputIndex + i]);
-      if (sizeof(TIndex) == 2) {
-        index &= 0xffff;
-      }
+      auto index = reinterpret_cast<const TIndex*>(input)[inputIndex + i];
       values[i] = dict[index];
     } else {
       auto value = input[inputIndex + i];
@@ -705,45 +702,45 @@ class DictionaryColumnVisitor
     return true;
   }
 
-  FOLLY_ALWAYS_INLINE vector_size_t process(T value, bool& atEnd) {
+  FOLLY_ALWAYS_INLINE vector_size_t process(typename make_index<T>::same_width_type value, bool& atEnd) {
     if (!isInDict()) {
       // If reading fixed width values, the not in dictionary value will be read
       // as unsigned at the width of the type. Integer columns are signed, so
       // sign extend the value here.
+      T signedValue;
       if (LIKELY(width_ == 8)) {
-        // No action. This should be the most common case.
+        signedValue = value;
       } else if (width_ == 4) {
-        value = static_cast<int32_t>(value);
+        signedValue = static_cast<int32_t>(value);
       } else {
-        value = static_cast<int16_t>(value);
+        signedValue = static_cast<int16_t>(value);
       }
-      return super::process(value, atEnd);
+      return super::process(signedValue, atEnd);
     }
     vector_size_t previous =
         isDense && TFilter::deterministic ? 0 : super::currentRow();
-    typename make_index<T>::type index = value;
-    T valueInDictionary = dict()[index];
+    T valueInDictionary = dict()[value];
     if (std::is_same<TFilter, velox::common::AlwaysTrue>::value) {
       super::filterPassed(valueInDictionary);
     } else {
       // check the dictionary cache
       if (TFilter::deterministic &&
-          filterCache()[index] == FilterResult::kSuccess) {
+          filterCache()[value] == FilterResult::kSuccess) {
         super::filterPassed(valueInDictionary);
       } else if (
           TFilter::deterministic &&
-          filterCache()[index] == FilterResult::kFailure) {
+          filterCache()[value] == FilterResult::kFailure) {
         super::filterFailed();
       } else {
         if (velox::common::applyFilter(super::filter_, valueInDictionary)) {
           super::filterPassed(valueInDictionary);
           if (TFilter::deterministic) {
-            filterCache()[index] = FilterResult::kSuccess;
+            filterCache()[value] = FilterResult::kSuccess;
           }
         } else {
           super::filterFailed();
           if (TFilter::deterministic) {
-            filterCache()[index] = FilterResult::kFailure;
+            filterCache()[value] = FilterResult::kFailure;
           }
         }
       }
@@ -847,10 +844,10 @@ class DictionaryColumnVisitor
         uint16_t bits = unknowns;
         // Ranges only over inputs that are in dictionary, the not in dictionary
         // were masked off in 'dictMask'.
-        using TIndex = typename make_index<T>::type;
+        using TIndex = typename make_index<T>::same_width_type;
         while (bits) {
           int index = bits::getAndClearLastSetBit(bits);
-          auto value = static_cast<TIndex>(input[i + index]);
+          auto value = reinterpret_cast<const TIndex*>(input)[i + index];
           if (applyFilter(super::filter_, dict()[value])) {
             filterCache()[value] = FilterResult::kSuccess;
             passed |= 1 << index;
@@ -971,7 +968,7 @@ class DictionaryColumnVisitor
       const int32_t* scatterRows,
       int32_t numValues,
       T* values) {
-    using TIndex = typename make_index<T>::type;
+    using TIndex = typename make_index<T>::same_width_type;
 
     for (int32_t i = numInput - 1; i >= 0; --i) {
       T value;
@@ -1013,7 +1010,7 @@ class DictionaryColumnVisitor
   }
 
   void translateByDict(const T* values, int numValues, T* out) {
-    using TIndex = typename make_index<T>::type;
+    using TIndex = typename make_index<T>::same_width_type;
     if (!inDict()) {
       for (auto i = 0; i < numValues; ++i) {
         out[i] = dict()[reinterpret_cast<const TIndex*>(values)[i]];
