@@ -66,10 +66,15 @@ class IntDecoder {
    * @param nulls If the pointer is null, all values are read. If the
    *    pointer is not null, positions that are true are skipped.
    */
-  virtual void
-  next(int64_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) = 0;
+  virtual void next(
+      int64_t* FOLLY_NONNULL data,
+      uint64_t numValues,
+      const uint64_t* FOLLY_NULLABLE nulls) = 0;
 
-  virtual void next(int32_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) {
+  virtual void next(
+      int32_t* FOLLY_NONNULL data,
+      uint64_t numValues,
+      const uint64_t* FOLLY_NULLABLE nulls) {
     if (numValues <= 4) {
       int64_t temp[4];
       next(temp, numValues, nulls);
@@ -85,17 +90,23 @@ class IntDecoder {
     }
   }
 
-  virtual void
-  nextInts(int32_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) {
+  virtual void nextInts(
+      int32_t* FOLLY_NONNULL data,
+      uint64_t numValues,
+      const uint64_t* FOLLY_NULLABLE nulls) {
     narrow(data, numValues, nulls);
   }
 
-  virtual void
-  nextShorts(int16_t* FOLLY_NONNULL data, uint64_t numValues, const uint64_t* FOLLY_NULLABLE nulls) {
+  virtual void nextShorts(
+      int16_t* FOLLY_NONNULL data,
+      uint64_t numValues,
+      const uint64_t* FOLLY_NULLABLE nulls) {
     narrow(data, numValues, nulls);
   }
 
-  virtual void nextLengths(int32_t* /* FOLLY_NONNULL values*/, int32_t /*numValues*/) {
+  virtual void nextLengths(
+      int32_t* /* FOLLY_NONNULL values*/,
+      int32_t /*numValues*/) {
     VELOX_FAIL("A length decoder should be a RLEv1");
   }
 
@@ -122,7 +133,8 @@ class IntDecoder {
   // and 'initialRow' is 9, then this skips one element and reads the
   // next element into 'result'.
   template <typename T>
-  void bulkReadRows(RowSet rows, T* FOLLY_NONNULL result, int32_t initialRow = 0);
+  void
+  bulkReadRows(RowSet rows, T* FOLLY_NONNULL result, int32_t initialRow = 0);
 
   /// Copies bit fields starting at 'bitOffset'th bit of 'bits' into
   /// 'result'.  The indices of the fields are in 'rows' and their
