@@ -52,7 +52,7 @@ class FormatData {
       vector_size_t numValues,
       const uint64_t* incomingNulls,
       BufferPtr& nulls,
-			 bool nullsOnly = false) = 0;
+      bool nullsOnly = false) = 0;
 
   /// Reads 'numValues' bits of null flags and returns the number of
   /// non-nulls in the read null flags. If 'nullsOnly' is false this
