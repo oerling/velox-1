@@ -37,18 +37,22 @@ class FormatData {
   }
 
   /// Reads nulls if the format has nulls separate from the encoded
-  /// data. If there are no nulls, 'nulls' is set to nullptr, else to a
-  /// suitable sized and padded Buffer. 'incomingNulls' may be given if
-  /// there are enclosing level nulls that should be merged into the
-  /// read reasult. If provided, this has 'numValues' bits and each
-  /// zero marks an incoming null for which no bit is read from the
-  /// nulls stream of 'this'. For Parquet, 'nulls' is always set to
-  /// nullptr because nulls are represented by the data pages
-  /// themselves.
+  /// data. If there are no nulls, 'nulls' is set to nullptr, else to
+  /// a suitable sized and padded Buffer. 'incomingNulls' may be given
+  /// if there are enclosing level nulls that should be merged into
+  /// the read reasult. If provided, this has 'numValues' bits and
+  /// each zero marks an incoming null for which no bit is read from
+  /// the nulls stream of 'this'. For Parquet, 'nulls' is always set
+  /// to nullptr because nulls are represented by the data pages
+  /// themselves. If 'nullsOnly' is true, formats like Parquet will
+  /// access the nulls in the pages in range and return the
+  /// concatenated nulls in 'nulls'. This is done when only null flags
+  /// of a column are of interest, e.g. is null filter.
   virtual void readNulls(
       vector_size_t numValues,
       const uint64_t* incomingNulls,
-      BufferPtr& nulls) = 0;
+      BufferPtr& nulls,
+      bool nullsOnly = false) = 0;
 
   /// Reads 'numValues' bits of null flags and returns the number of
   /// non-nulls in the read null flags. If 'nullsOnly' is false this

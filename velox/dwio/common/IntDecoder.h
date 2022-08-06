@@ -105,7 +105,7 @@ class IntDecoder {
   }
 
   virtual void nextLengths(
-      int32_t* /* FOLLY_NONNULL values*/,
+      int32_t* FOLLY_NONNULL /*values*/,
       int32_t /*numValues*/) {
     VELOX_FAIL("A length decoder should be a RLEv1");
   }
@@ -207,7 +207,7 @@ class IntDecoder {
   void narrow(
       T* FOLLY_NONNULL const data,
       const uint64_t numValues,
-      const uint64_t* const nulls) {
+      const uint64_t* FOLLY_NONNULL const nulls) {
     DWIO_ENSURE_LE(numBytes, sizeof(T))
     std::array<int64_t, 64> buf;
     uint64_t remain = numValues;
