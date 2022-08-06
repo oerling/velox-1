@@ -977,8 +977,10 @@ class DictionaryColumnVisitor
           value = dict()[reinterpret_cast<const TIndex*>(input)[i]];
         } else if (!scatter) {
           continue;
-        }
-      } else {
+        } else {
+	  value = input[i];
+	}
+	} else {
         value = dict()[reinterpret_cast<const TIndex*>(input)[i]];
       }
       if (scatter) {
