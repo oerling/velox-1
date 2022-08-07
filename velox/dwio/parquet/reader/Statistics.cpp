@@ -82,7 +82,7 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
           getMin<float>(columnChunkStats),
           getMax<float>(columnChunkStats),
           std::nullopt);
-  case TypeKind::DOUBLE:
+    case TypeKind::DOUBLE:
       return std::make_unique<dwio::common::DoubleColumnStatistics>(
           valueCount,
           hasNull,

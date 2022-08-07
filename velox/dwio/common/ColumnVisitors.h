@@ -594,7 +594,7 @@ inline void storeTranslatePermute(
   for (auto i = 0; i < numBits; ++i) {
     if (inDict & (1 << selectedIndices[i])) {
       auto index = reinterpret_cast<const TIndex*>(
-						    input)[inputIndex + selectedIndices[i]];
+          input)[inputIndex + selectedIndices[i]];
       if (sizeof(T) == 2) {
         index &= 0xffff;
       }
@@ -702,7 +702,8 @@ class DictionaryColumnVisitor
     return true;
   }
 
-  FOLLY_ALWAYS_INLINE vector_size_t process(typename make_index<T>::same_width_type value, bool& atEnd) {
+  FOLLY_ALWAYS_INLINE vector_size_t
+  process(typename make_index<T>::same_width_type value, bool& atEnd) {
     if (!isInDict()) {
       // If reading fixed width values, the not in dictionary value will be read
       // as unsigned at the width of the type. Integer columns are signed, so
@@ -978,9 +979,9 @@ class DictionaryColumnVisitor
         } else if (!scatter) {
           continue;
         } else {
-	  value = input[i];
-	}
-	} else {
+          value = input[i];
+        }
+      } else {
         value = dict()[reinterpret_cast<const TIndex*>(input)[i]];
       }
       if (scatter) {
