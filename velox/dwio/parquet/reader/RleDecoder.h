@@ -39,11 +39,14 @@ class RleDecoder : public dwio::common::IntDecoder<isSigned> {
         lastSafeWord_(end - sizeof(uint64_t)) {}
 
   void seekToRowGroup(
-		      dwio::common::PositionProvider& /*positionProvider*/) override {
+      dwio::common::PositionProvider& /*positionProvider*/) override {
     VELOX_UNREACHABLE();
   }
 
-  void next(int64_t* /*data*/, uint64_t /*numValues*/, const uint64_t* /*nulls*/) override {
+  void next(
+      int64_t* /*data*/,
+      uint64_t /*numValues*/,
+      const uint64_t* /*nulls*/) override {
     VELOX_UNREACHABLE();
   }
 
