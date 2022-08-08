@@ -2458,7 +2458,8 @@ void IntDecoder<isSigned>::decodeBitsLE(
         mask;
   }
   if (anyUnsafe) {
-    auto FOLLY_NONNULL lastSafeWord = bufferEnd - sizeof(uint64_t);
+    auto lastSafeWord = bufferEnd - sizeof(uint64_t);
+    assert(lastSafeWord); // lint
     for (auto i = numSafeRows; i < numRows; ++i) {
       auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
       auto byte = bit / 8;
