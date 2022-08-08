@@ -207,7 +207,7 @@ class IntDecoder {
   void narrow(
       T* FOLLY_NONNULL const data,
       const uint64_t numValues,
-      const uint64_t* FOLLY_NONNULL const nulls) {
+      const uint64_t* FOLLY_NULLABLE const nulls) {
     DWIO_ENSURE_LE(numBytes, sizeof(T))
     std::array<int64_t, 64> buf;
     uint64_t remain = numValues;
