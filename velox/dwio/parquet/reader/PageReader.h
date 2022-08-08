@@ -146,11 +146,19 @@ class PageReader {
       folly::Range<const vector_size_t*>& rows,
       const uint64_t* FOLLY_NULLABLE& nulls);
 
-  // Calls the visitor, specialized on the data type since not all visitors apply to all types.
-  template <typename Visitor,
-	    typename std::enable_if<!std::is_same<typename Visitor::DataType, folly::StringPiece>::value, int>::type = 0>
-  void callDecoder(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
-      if (nulls) {
+  // Calls the visitor, specialized on the data type since not all visitors
+  // apply to all types.
+  template <
+      typename Visitor,
+      typename std::enable_if<
+          !std::is_same<typename Visitor::DataType, folly::StringPiece>::value,
+          int>::type = 0>
+  void callDecoder(
+      const uint64_t* nulls,
+      bool useDictionary,
+      bool& nullsFromFastPath,
+      Visitor visitor) {
+    if (nulls) {
       nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
       if (useDictionary) {
         auto dictVisitor = visitor.toDictionaryColumnVisitor();
@@ -168,10 +176,17 @@ class PageReader {
     }
   }
 
-    template <typename Visitor,
-	      typename std::enable_if<std::is_same<typename Visitor::DataType, folly::StringPiece>::value, int>::type = 0>
-      void callDecoder(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
-      if (nulls) {
+  template <
+      typename Visitor,
+      typename std::enable_if<
+          std::is_same<typename Visitor::DataType, folly::StringPiece>::value,
+          int>::type = 0>
+  void callDecoder(
+      const uint64_t* nulls,
+      bool useDictionary,
+      bool& nullsFromFastPath,
+      Visitor visitor) {
+    if (nulls) {
       nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
       if (useDictionary) {
         auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
@@ -187,8 +202,7 @@ class PageReader {
         stringDecoder_->readWithVisitor<false>(nulls, visitor);
       }
     }
-
-}
+  }
 
   memory::MemoryPool& pool_;
 
@@ -277,7 +291,7 @@ class PageReader {
 
   // Base values of dictionary when reading a string dictionary.
   VectorPtr dictionaryValues_;
-  
+
   // Decoders. Only one will be set at a time.
   std::unique_ptr<dwio::common::DirectDecoder<true>> directDecoder_;
   std::unique_ptr<RleDecoder<false>> rleDecoder_;
@@ -367,5 +381,5 @@ void PageReader::readWithVisitor(Visitor& visitor) {
     reader.setNulls(mayProduceNulls ? nullConcatenation_.buffer() : nullptr);
   }
 }
-  
+
 } // namespace facebook::velox::parquet

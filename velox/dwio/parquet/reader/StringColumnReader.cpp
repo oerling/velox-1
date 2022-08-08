@@ -37,7 +37,7 @@ void StringColumnReader::readHelper(
     RowSet rows,
     ExtractValues extractValues) {
   formatData_->as<ParquetData>().readWithVisitor(
-						  dwio::common::
+      dwio::common::
           ColumnVisitor<folly::StringPiece, TFilter, ExtractValues, isDense>(
               *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
 }
@@ -55,10 +55,12 @@ void StringColumnReader::processFilter(
       filterNulls<StringView>(
           rows,
           true,
-          !std::is_same<decltype(extractValues), dwio::common::DropValues>::value);
+          !std::is_same<decltype(extractValues), dwio::common::DropValues>::
+              value);
       break;
     case common::FilterKind::kIsNotNull:
-      if (std::is_same<decltype(extractValues), dwio::common::DropValues>::value) {
+      if (std::is_same<decltype(extractValues), dwio::common::DropValues>::
+              value) {
         filterNulls<StringView>(rows, false, false);
       } else {
         readHelper<common::IsNotNull, isDense>(filter, rows, extractValues);
@@ -125,4 +127,4 @@ void StringColumnReader::read(
   }
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::parquet

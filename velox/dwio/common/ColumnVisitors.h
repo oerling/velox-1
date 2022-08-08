@@ -137,8 +137,8 @@ class ExtractToGenericHook {
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class DictionaryColumnVisitor;
 
-  template <typename TFilter, typename ExtractValues, bool isDense>
-  class StringDictionaryColumnVisitor;
+template <typename TFilter, typename ExtractValues, bool isDense>
+class StringDictionaryColumnVisitor;
 
 // Template parameter for controlling filtering and action on a set of rows.
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
@@ -452,7 +452,6 @@ class ColumnVisitor {
   StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>
   toStringDictionaryColumnVisitor();
 
-  
   // Use for replacing *coall rows with non-null rows for fast path with
   // processRun and processRle.
   void setRows(folly::Range<const int32_t*> newRows) {
@@ -1077,13 +1076,14 @@ ColumnVisitor<T, TFilter, ExtractValues, isDense>::toDictionaryColumnVisitor() {
 
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>
-ColumnVisitor<T, TFilter, ExtractValues, isDense>::toStringDictionaryColumnVisitor() {
+ColumnVisitor<T, TFilter, ExtractValues, isDense>::
+    toStringDictionaryColumnVisitor() {
   auto result = StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>(
       filter_, reader_, RowSet(rows_ + rowIndex_, numRows_), values_);
   result.setNumValuesBias(numValuesBias_);
   return result;
 }
-  
+
 template <typename TFilter, typename ExtractValues, bool isDense>
 class StringDictionaryColumnVisitor
     : public DictionaryColumnVisitor<int32_t, TFilter, ExtractValues, isDense> {

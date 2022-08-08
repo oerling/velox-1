@@ -21,8 +21,7 @@
 
 namespace facebook::velox::parquet {
 
-class StringColumnReader
-    : public dwio::common::SelectiveColumnReader {
+class StringColumnReader : public dwio::common::SelectiveColumnReader {
  public:
   using ValueType = StringView;
   StringColumnReader(
@@ -35,7 +34,7 @@ class StringColumnReader
     readOffset_ = 0;
     formatData_->as<ParquetData>().seekToRowGroup(index);
   }
-  
+
   uint64_t skip(uint64_t numValues) override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
@@ -69,9 +68,7 @@ class StringColumnReader
       RowSet rows,
       ExtractValues extractValues);
 
-
   bool isDictionary_{false};
-
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::parquet
