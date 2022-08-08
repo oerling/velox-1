@@ -55,11 +55,14 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(dataType, params, scanSpec);
 
-    case TypeKind::BOOLEAN:
-    case TypeKind::ARRAY:
-    case TypeKind::MAP:
     case TypeKind::VARBINARY:
     case TypeKind::VARCHAR:
+      return std::make_unique<StringColumnReader>(dataType, params, scanSpec);
+
+  case TypeKind::BOOLEAN:
+    case TypeKind::ARRAY:
+    case TypeKind::MAP:
+
       VELOX_UNSUPPORTED("Type is not supported: ", dataType->type->kind());
     default:
       VELOX_FAIL(
