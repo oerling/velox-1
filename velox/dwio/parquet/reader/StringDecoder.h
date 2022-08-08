@@ -24,19 +24,15 @@
 
 namespace facebook::velox::parquet {
 
-template <bool isSigned>
-class StringDecoder : public dwio::common::IntDecoder<isSigned> {
+class StringDecoder {
  public:
-  StringDecoder(
-      const char* FOLLY_NONNULL start,
-      const char* FOLLY_NONNULL end)
-      : 
-    bufferStart_(start),
-    bufferEnd(end),
+  StringDecoder(const char* FOLLY_NONNULL start, const char* FOLLY_NONNULL end)
+      : bufferStart_(start),
+        bufferEnd_(end),
 
-    lastSafeWord_(end - simd::kPadding) {}
+        lastSafeWord_(end - simd::kPadding) {}
 
-  void skip(uint64_t numValues) override {
+  void skip(uint64_t numValues) {
     skip<false>(numValues, 0, nullptr);
   }
 
@@ -72,15 +68,7 @@ class StringDecoder : public dwio::common::IntDecoder<isSigned> {
         }
 
         // We are at a non-null value on a row to visit.
-        if (!remainingValues_) {
-          readHeader();
-        }
-        if (repeating_) {
-          toSkip = visitor.process(value_, atEnd);
-        } else {
-          value_ = readString();
-          toSkip = visitor.process(value_, atEnd);
-        }
+        toSkip = visitor.process(readString(), atEnd);
       }
       ++current;
       if (toSkip) {
@@ -92,7 +80,6 @@ class StringDecoder : public dwio::common::IntDecoder<isSigned> {
       }
     }
   }
-
 
  private:
   int32_t lengthAt(const char* buffer) {

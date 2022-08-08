@@ -136,7 +136,9 @@ class ExtractToGenericHook {
 
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
 class DictionaryColumnVisitor;
-class StringDictionaryColumnVisitor;
+
+  template <typename TFilter, typename ExtractValues, bool isDense>
+  class StringDictionaryColumnVisitor;
 
 // Template parameter for controlling filtering and action on a set of rows.
 template <typename T, typename TFilter, typename ExtractValues, bool isDense>
@@ -1078,7 +1080,7 @@ StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>
 ColumnVisitor<T, TFilter, ExtractValues, isDense>::toStringDictionaryColumnVisitor() {
   auto result = StringDictionaryColumnVisitor<TFilter, ExtractValues, isDense>(
       filter_, reader_, RowSet(rows_ + rowIndex_, numRows_), values_);
-  result.numValuesBias_ = numValuesBias_;
+  result.setNumValuesBias(numValuesBias_);
   return result;
 }
   

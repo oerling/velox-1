@@ -147,7 +147,8 @@ class PageReader {
       const uint64_t* FOLLY_NULLABLE& nulls);
 
   // Calls the visitor, specialized on the data type since not all visitors apply to all types.
-  template <typename T, typename Visitor>
+  template <typename Visitor,
+	    typename std::enable_if<!std::is_same<typename Visitor::DataType, folly::StringPiece>::value, int>::type = 0>
   void callDecoder(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
       if (nulls) {
       nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
@@ -166,7 +167,29 @@ class PageReader {
       }
     }
   }
-  
+
+    template <typename Visitor,
+	      typename std::enable_if<std::is_same<typename Visitor::DataType, folly::StringPiece>::value, int>::type = 0>
+      void callDecoder(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
+      if (nulls) {
+      nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
+      if (useDictionary) {
+        auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
+      } else {
+        stringDecoder_->readWithVisitor<true>(nulls, visitor);
+      }
+    } else {
+      if (useDictionary) {
+        auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
+      } else {
+        stringDecoder_->readWithVisitor<false>(nulls, visitor);
+      }
+    }
+
+}
+
   memory::MemoryPool& pool_;
 
   std::unique_ptr<dwio::common::SeekableInputStream> inputStream_;
@@ -300,7 +323,7 @@ void PageReader::readWithVisitor(Visitor& visitor) {
       }
     }
 
-    callDecoder<typename Visitor::DataType>(nulls, useDictionary, nullsFromFastPath, Visitor);
+    callDecoder(nulls, useDictionary, nullsFromFastPath, visitor);
     if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {
@@ -344,29 +367,5 @@ void PageReader::readWithVisitor(Visitor& visitor) {
     reader.setNulls(mayProduceNulls ? nullConcatenation_.buffer() : nullptr);
   }
 }
-
-  template <typename T, typename Visitor>
-  void callDecoder<folly::StringPiece>(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
-      if (nulls) {
-      nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
-      if (useDictionary) {
-        auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
-        rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
-      } else {
-        stringDecoder_->readWithVisitor<true>(nulls, visitor);
-      }
-    } else {
-      if (useDictionary) {
-        auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
-        rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
-      } else {
-        stringDecoder_->readWithVisitor<false>(nulls, visitor);
-      }
-    }
-
-}
-
-  }
-  
   
 } // namespace facebook::velox::parquet

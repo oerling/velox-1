@@ -260,8 +260,23 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
           bufferEnd_);
       break;
     }
+    case thrift::Type::BYTE_ARRAY: {
+      dictionary_.values =
+          AlignedBuffer::allocate<StringView>(dictionary_.numValues, &pool_);
+      auto values = dictionary_.values->asMutable<StringView>();
+      dictionary_.strings =
+          AlignedBuffer::allocate<char>(encodedDataSize_, &pool_);
+      auto strings = dictionary_.strings->asMutable<char>();
+      memcpy(strings, pageData_, encodedDataSize_);
+      auto current = pageData_;
+      for (auto i = 0; i < dictionary_.numValues; ++i) {
+        auto length = *reinterpret_cast<const int32_t*>(current);
+        values[i] = StringView(current + sizeof(int32_t), length);
+        current += length + sizeof(int32_t);
+      }
+      break;
+    }
     case thrift::Type::INT96:
-    case thrift::Type::BYTE_ARRAY:
     case thrift::Type::FIXED_LEN_BYTE_ARRAY:
     default:
       VELOX_UNSUPPORTED(
@@ -296,6 +311,7 @@ int32_t parquetTypeBytes(thrift::Type::type type) {
 } // namespace
 
 void PageReader::makeDecoder() {
+  auto parquetType = type_->parquetType_.value();
   switch (encoding_) {
     case Encoding::RLE_DICTIONARY:
     case Encoding::PLAIN_DICTIONARY:
@@ -303,11 +319,18 @@ void PageReader::makeDecoder() {
           pageData_ + 1, pageData_ + encodedDataSize_, pageData_[0]);
       break;
     case Encoding::PLAIN:
-      directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
-          std::make_unique<dwio::common::SeekableArrayInputStream>(
-              pageData_, encodedDataSize_),
-          false,
-          parquetTypeBytes(type_->parquetType_.value()));
+      switch (parquetType) {
+        case thrift::Type::BYTE_ARRAY:
+          stringDecoder_ = std::make_unique<StringDecoder>(
+              pageData_, pageData_ + encodedDataSize_);
+          break;
+        default:
+          directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
+              std::make_unique<dwio::common::SeekableArrayInputStream>(
+                  pageData_, encodedDataSize_),
+              false,
+              parquetTypeBytes(type_->parquetType_.value()));
+      }
       break;
     case Encoding::DELTA_BINARY_PACKED:
     default:
