@@ -2425,7 +2425,7 @@ void IntDecoder<isSigned>::decodeBitsLE(
     }
     return;
   }
-  auto lastSafe = bufferEnd - sizeof(uint64_t);
+  auto FOLLY_NONNULL lastSafe = bufferEnd - sizeof(uint64_t);
   int32_t numSafeRows = numRows;
   bool anyUnsafe = false;
   if (bufferEnd) {
@@ -2458,7 +2458,7 @@ void IntDecoder<isSigned>::decodeBitsLE(
         mask;
   }
   if (anyUnsafe) {
-    auto lastSafeWord = bufferEnd - sizeof(uint64_t);
+    auto FOLLY_NONNULL lastSafeWord = bufferEnd - sizeof(uint64_t);
     for (auto i = numSafeRows; i < numRows; ++i) {
       auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
       auto byte = bit / 8;
