@@ -154,3 +154,31 @@ TEST_F(E2EFilterTest, floatAndDouble) {
       true,
       false);
 }
+
+TEST_F(E2EFilterTest, stringDirect) {
+  testWithTypes(
+      "string_val:string,"
+      "string_val_2:string",
+      [&]() {
+        makeStringUnique(Subfield("string_val"));
+        makeStringUnique(Subfield("string_val_2"));
+      },
+      false,
+      {"string_val", "string_val_2"},
+      20,
+      true);
+}
+
+TEST_F(E2EFilterTest, stringDictionary) {
+  testWithTypes(
+      "string_val:string,"
+      "string_val_2:string",
+      [&]() {
+        makeStringDistribution(Subfield("string_val"), 100, true, false);
+        makeStringDistribution(Subfield("string_val_2"), 170, false, true);
+      },
+      false,
+      {"string_val", "string_val_2"},
+      20,
+      true);
+}

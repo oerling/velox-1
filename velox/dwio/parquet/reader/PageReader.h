@@ -22,6 +22,7 @@
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/dwio/parquet/reader/RleDecoder.h"
+#include "velox/dwio/parquet/reader/StringDecoder.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::parquet {
@@ -145,6 +146,27 @@ class PageReader {
       folly::Range<const vector_size_t*>& rows,
       const uint64_t* FOLLY_NULLABLE& nulls);
 
+  // Calls the visitor, specialized on the data type since not all visitors apply to all types.
+  template <typename T, typename Visitor>
+  void callDecoder(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
+      if (nulls) {
+      nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
+      if (useDictionary) {
+        auto dictVisitor = visitor.toDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
+      } else {
+        directDecoder_->readWithVisitor<true>(nulls, visitor);
+      }
+    } else {
+      if (useDictionary) {
+        auto dictVisitor = visitor.toDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
+      } else {
+        directDecoder_->readWithVisitor<false>(nulls, visitor);
+      }
+    }
+  }
+  
   memory::MemoryPool& pool_;
 
   std::unique_ptr<dwio::common::SeekableInputStream> inputStream_;
@@ -230,9 +252,13 @@ class PageReader {
   // return to the caller.
   dwio::common::BitConcatenation nullConcatenation_;
 
+  // Base values of dictionary when reading a string dictionary.
+  VectorPtr dictionaryValues_;
+  
   // Decoders. Only one will be set at a time.
   std::unique_ptr<dwio::common::DirectDecoder<true>> directDecoder_;
   std::unique_ptr<RleDecoder<false>> rleDecoder_;
+  std::unique_ptr<StringDecoder> stringDecoder_;
   // Add decoders for other encodings here.
 };
 
@@ -274,22 +300,7 @@ void PageReader::readWithVisitor(Visitor& visitor) {
       }
     }
 
-    if (nulls) {
-      nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
-      if (useDictionary) {
-        auto dictVisitor = visitor.toDictionaryColumnVisitor();
-        rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
-      } else {
-        directDecoder_->readWithVisitor<true>(nulls, visitor);
-      }
-    } else {
-      if (useDictionary) {
-        auto dictVisitor = visitor.toDictionaryColumnVisitor();
-        rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
-      } else {
-        directDecoder_->readWithVisitor<false>(nulls, visitor);
-      }
-    }
+    callDecoder<typename Visitor::DataType>(nulls, useDictionary, nullsFromFastPath, Visitor);
     if (currentVisitorRow_ < numVisitorRows_ || isMultiPage) {
       if (mayProduceNulls) {
         if (!isMultiPage) {
@@ -334,4 +345,28 @@ void PageReader::readWithVisitor(Visitor& visitor) {
   }
 }
 
+  template <typename T, typename Visitor>
+  void callDecoder<folly::StringPiece>(const uint64_t* nulls, bool useDictionary, bool&nullsFromFastPath, Visitor visitor) {
+      if (nulls) {
+      nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
+      if (useDictionary) {
+        auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
+      } else {
+        stringDecoder_->readWithVisitor<true>(nulls, visitor);
+      }
+    } else {
+      if (useDictionary) {
+        auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
+        rleDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
+      } else {
+        stringDecoder_->readWithVisitor<false>(nulls, visitor);
+      }
+    }
+
+}
+
+  }
+  
+  
 } // namespace facebook::velox::parquet

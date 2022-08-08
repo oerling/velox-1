@@ -22,6 +22,7 @@
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
 #include "velox/dwio/parquet/reader/FloatingPointColumnReader.h"
 #include "velox/dwio/parquet/reader/IntegerColumnReader.h"
+#include "velox/dwio/parquet/reader/StringColumnReader.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
 #include "velox/dwio/parquet/reader/Statistics.h"
