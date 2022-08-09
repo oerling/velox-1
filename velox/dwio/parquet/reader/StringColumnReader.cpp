@@ -147,20 +147,22 @@ void StringColumnReader::getValues(RowSet rows, VectorPtr* result) {
   getFlatValues<StringView, StringView>(rows, result, type_);
 }
 
-  void StringColumnReader::dedictionarize() {
-    auto dict = formatData_->as<ParquetData>().dictionaryValues()->as<FlatVector<StringView>>(); 
-    auto indicesBuffer = std::move(values_);
-    auto indices = reinterpret_cast<const vector_size_t*>(rawValues_);
-    rawValues_ = nullptr;
-    auto numValues = numValues_;
-    numValues_ = 0;
-    for (auto i = 0; i < numValues; ++i) {
-      if (anyNulls_ && bits::isBitNull(rawResultNulls_, i)) {
-	++numValues_;
-	continue;
-      }
-      auto& view = dict->valueAt(indices[i]);
-      addStringValue(folly::StringPiece(view.data(), view.size()));
+void StringColumnReader::dedictionarize() {
+  auto dict = formatData_->as<ParquetData>()
+                  .dictionaryValues()
+                  ->as<FlatVector<StringView>>();
+  auto indicesBuffer = std::move(values_);
+  auto indices = reinterpret_cast<const vector_size_t*>(rawValues_);
+  rawValues_ = nullptr;
+  auto numValues = numValues_;
+  numValues_ = 0;
+  for (auto i = 0; i < numValues; ++i) {
+    if (anyNulls_ && bits::isBitNull(rawResultNulls_, i)) {
+      ++numValues_;
+      continue;
     }
-   }
+    auto& view = dict->valueAt(indices[i]);
+    addStringValue(folly::StringPiece(view.data(), view.size()));
+  }
+}
 } // namespace facebook::velox::parquet

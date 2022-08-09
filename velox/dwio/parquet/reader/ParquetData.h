@@ -119,7 +119,7 @@ class ParquetData : public dwio::common::FormatData {
   const VectorPtr& dictionaryValues() {
     return reader_->dictionaryValues();
   }
-  
+
  protected:
   memory::MemoryPool& pool_;
   std::shared_ptr<const ParquetTypeWithId> type_;

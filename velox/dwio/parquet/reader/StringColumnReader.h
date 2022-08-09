@@ -43,7 +43,7 @@ class StringColumnReader : public dwio::common::SelectiveColumnReader {
   void getValues(RowSet rows, VectorPtr* result) override;
 
   void dedictionarize() override;
-  
+
  private:
   template <bool hasNulls>
   void skipInDecode(int32_t numValues, int32_t current, const uint64_t* nulls);

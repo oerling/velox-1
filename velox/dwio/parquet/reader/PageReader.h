@@ -69,7 +69,7 @@ class PageReader {
 
   // Returns the current string dictionary as a FlatVector<StringView>.
   const VectorPtr& dictionaryValues();
-  
+
  private:
   // If the current page has nulls, returns a nulls bitmap owned by 'this'. This
   // is filled for 'numRows' bits.
