@@ -67,6 +67,9 @@ class PageReader {
   /// are no nulls, buffer may be set to nullptr.
   void readNullsOnly(int64_t numValues, BufferPtr& buffer);
 
+  // Returns the current string dictionary as a FlatVector<StringView>.
+  const VectorPtr& dictionaryValues();
+  
  private:
   // If the current page has nulls, returns a nulls bitmap owned by 'this'. This
   // is filled for 'numRows' bits.

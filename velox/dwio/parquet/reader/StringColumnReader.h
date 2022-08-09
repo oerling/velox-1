@@ -40,13 +40,10 @@ class StringColumnReader : public dwio::common::SelectiveColumnReader {
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
 
-  void getValues(RowSet rows, VectorPtr* result) override {
-    rawStringBuffer_ = nullptr;
-    rawStringSize_ = 0;
-    rawStringUsed_ = 0;
-    getFlatValues<StringView, StringView>(rows, result, type_);
-  }
+  void getValues(RowSet rows, VectorPtr* result) override;
 
+  void dedictionarize() override;
+  
  private:
   template <bool hasNulls>
   void skipInDecode(int32_t numValues, int32_t current, const uint64_t* nulls);

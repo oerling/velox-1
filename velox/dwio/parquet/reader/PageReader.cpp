@@ -21,6 +21,7 @@
 
 #include <arrow/util/rle_encoding.h>
 #include <thrift/protocol/TCompactProtocol.h> //@manual
+#include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::parquet {
 
@@ -240,6 +241,10 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
       dictionaryEncoding_ == Encoding::PLAIN_DICTIONARY ||
       dictionaryEncoding_ == Encoding::PLAIN);
 
+  if (pageHeader.compressed_page_size != pageHeader.uncompressed_page_size) {
+    VELOX_NYI("Compressed dictionary");
+  }
+
   auto parquetType = type_->parquetType_.value();
   switch (parquetType) {
     case thrift::Type::INT32:
@@ -263,17 +268,19 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
     case thrift::Type::BYTE_ARRAY: {
       dictionary_.values =
           AlignedBuffer::allocate<StringView>(dictionary_.numValues, &pool_);
+      auto numBytes = pageHeader.uncompressed_page_size;
       auto values = dictionary_.values->asMutable<StringView>();
-      dictionary_.strings =
-          AlignedBuffer::allocate<char>(encodedDataSize_, &pool_);
+      dictionary_.strings = AlignedBuffer::allocate<char>(numBytes, &pool_);
       auto strings = dictionary_.strings->asMutable<char>();
-      memcpy(strings, pageData_, encodedDataSize_);
-      auto current = pageData_;
+      dwio::common::readBytes(
+          numBytes, inputStream_.get(), strings, bufferStart_, bufferEnd_);
+      auto header = strings;
       for (auto i = 0; i < dictionary_.numValues; ++i) {
-        auto length = *reinterpret_cast<const int32_t*>(current);
-        values[i] = StringView(current + sizeof(int32_t), length);
-        current += length + sizeof(int32_t);
+        auto length = *reinterpret_cast<const int32_t*>(header);
+        values[i] = StringView(header + sizeof(int32_t), length);
+        header += length + sizeof(int32_t);
       }
+      VELOX_CHECK_EQ(header, strings + numBytes);
       break;
     }
     case thrift::Type::INT96:
@@ -497,6 +504,19 @@ bool PageReader::rowsForPage(
   currentVisitorRow_ += numToVisit;
   firstUnvisited_ = visitBase_ + visitorRows_[currentVisitorRow_ - 1] + 1;
   return true;
+}
+
+const VectorPtr& PageReader::dictionaryValues() {
+  if (!dictionaryValues_) {
+    dictionaryValues_ = std::make_shared<FlatVector<StringView>>(
+        &pool_,
+        VARCHAR(),
+        nullptr,
+        dictionary_.numValues,
+        dictionary_.values,
+        std::vector<BufferPtr>{dictionary_.strings});
+  }
+  return dictionaryValues_;
 }
 
 } // namespace facebook::velox::parquet
