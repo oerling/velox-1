@@ -373,7 +373,9 @@ inline int64_t IntDecoder<isSigned>::readLong() {
 
 template <>
 template <>
-inline void IntDecoder<false>::bulkRead(uint64_t size, double* result) {
+inline void IntDecoder<false>::bulkRead(
+    uint64_t size,
+    double* FOLLY_NONNULL result) {
   VELOX_UNREACHABLE();
 }
 
@@ -381,14 +383,16 @@ template <>
 template <>
 inline void IntDecoder<false>::bulkReadRows(
     RowSet rows,
-    double* result,
+    double* FOLLY_NONNULL result,
     int32_t initialRow) {
   VELOX_UNREACHABLE();
 }
 
 template <>
 template <>
-inline void IntDecoder<true>::bulkRead(uint64_t size, double* result) {
+inline void IntDecoder<true>::bulkRead(
+    uint64_t size,
+    double* FOLLY_NONNULL result) {
   VELOX_UNREACHABLE();
 }
 
@@ -396,14 +400,16 @@ template <>
 template <>
 inline void IntDecoder<true>::bulkReadRows(
     RowSet rows,
-    double* result,
+    double* FOLLY_NONNULL result,
     int32_t initialRow) {
   VELOX_UNREACHABLE();
 }
 
 template <>
 template <>
-inline void IntDecoder<false>::bulkRead(uint64_t size, float* result) {
+inline void IntDecoder<false>::bulkRead(
+    uint64_t size,
+    float* FOLLY_NONNULL result) {
   VELOX_UNREACHABLE();
 }
 
@@ -411,21 +417,25 @@ template <>
 template <>
 inline void IntDecoder<false>::bulkReadRows(
     RowSet rows,
-    float* result,
+    float* FOLLY_NONNULL result,
     int32_t initialRow) {
   VELOX_UNREACHABLE();
 }
 
 template <>
 template <>
-inline void IntDecoder<true>::bulkRead(uint64_t size, float* result) {
+inline void IntDecoder<true>::bulkRead(
+    uint64_t size,
+    float* FOLLY_NONNULL result) {
   VELOX_UNREACHABLE();
 }
 
 template <>
 template <>
-inline void
-IntDecoder<true>::bulkReadRows(RowSet rows, float* result, int32_t initialRow) {
+inline void IntDecoder<true>::bulkReadRows(
+    RowSet rows,
+    float* FOLLY_NONNULL result,
+    int32_t initialRow) {
   VELOX_UNREACHABLE();
 }
 
