@@ -588,7 +588,7 @@ inline void storeTranslatePermute(
     int8_t numBits,
     const T* dict,
     T* values) {
-  using TIndex = typename make_index<T>::same_width_type;
+  using TIndex = typename make_index<T>::type;
   auto selectedIndices = simd::byteSetBits(selected);
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < numBits; ++i) {
@@ -632,7 +632,7 @@ inline void storeTranslate(
     xsimd::batch_bool<int32_t> dictMask,
     const T* dict,
     T* values) {
-  using TIndex = typename make_index<T>::same_width_type;
+  using TIndex = typename make_index<T>::type;
   auto inDict = simd::toBitMask(dictMask);
   for (auto i = 0; i < dictMask.size; ++i) {
     if (inDict & (1 << i)) {
@@ -703,7 +703,7 @@ class DictionaryColumnVisitor
   }
 
   FOLLY_ALWAYS_INLINE vector_size_t
-  process(typename make_index<T>::same_width_type value, bool& atEnd) {
+  process(typename make_index<T>::type value, bool& atEnd) {
     if (!isInDict()) {
       // If reading fixed width values, the not in dictionary value will be read
       // as unsigned at the width of the type. Integer columns are signed, so
@@ -845,7 +845,7 @@ class DictionaryColumnVisitor
         uint16_t bits = unknowns;
         // Ranges only over inputs that are in dictionary, the not in dictionary
         // were masked off in 'dictMask'.
-        using TIndex = typename make_index<T>::same_width_type;
+        using TIndex = typename make_index<T>::type;
         while (bits) {
           int index = bits::getAndClearLastSetBit(bits);
           auto value = reinterpret_cast<const TIndex*>(input)[i + index];
@@ -969,7 +969,7 @@ class DictionaryColumnVisitor
       const int32_t* scatterRows,
       int32_t numValues,
       T* values) {
-    using TIndex = typename make_index<T>::same_width_type;
+    using TIndex = typename make_index<T>::type;
 
     for (int32_t i = numInput - 1; i >= 0; --i) {
       T value;
@@ -1013,7 +1013,7 @@ class DictionaryColumnVisitor
   }
 
   void translateByDict(const T* values, int numValues, T* out) {
-    using TIndex = typename make_index<T>::same_width_type;
+    using TIndex = typename make_index<T>::type;
     if (!inDict()) {
       for (auto i = 0; i < numValues; ++i) {
         out[i] = dict()[reinterpret_cast<const TIndex*>(values)[i]];
