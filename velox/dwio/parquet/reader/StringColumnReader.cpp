@@ -140,6 +140,7 @@ void StringColumnReader::getValues(RowSet rows, VectorPtr* result) {
         numValues_,
         dictionaryValues,
         values_);
+    return;
   }
   rawStringBuffer_ = nullptr;
   rawStringSize_ = 0;
@@ -156,6 +157,10 @@ void StringColumnReader::dedictionarize() {
   rawValues_ = nullptr;
   auto numValues = numValues_;
   numValues_ = 0;
+  scanState_.clear();
+  rawStringBuffer_ = nullptr;
+  rawStringSize_ = 0;
+  rawStringUsed_ = 0;
   for (auto i = 0; i < numValues; ++i) {
     if (anyNulls_ && bits::isBitNull(rawResultNulls_, i)) {
       ++numValues_;
