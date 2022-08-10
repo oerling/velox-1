@@ -143,7 +143,8 @@ class PageReader {
   // first unprocessed value on the page, for a new page 0 means the
   // first value. Reads possible nulls and sets 'reader's
   // nullsInReadRange_' to that or to nullptr if no null flags. Returns the data
-  // of nullsInReadRange in 'nulls'. Copies dictionary information into 'reader'. If 'hasFilter' is true, sets up dictionary hit cache.
+  // of nullsInReadRange in 'nulls'. Copies dictionary information into
+  // 'reader'. If 'hasFilter' is true, sets up dictionary hit cache.
   bool rowsForPage(
       dwio::common::SelectiveColumnReader& reader,
       bool hasFilter,
@@ -157,10 +158,8 @@ class PageReader {
       typename std::enable_if<
           !std::is_same<typename Visitor::DataType, folly::StringPiece>::value,
           int>::type = 0>
-  void callDecoder(
-      const uint64_t* nulls,
-      bool& nullsFromFastPath,
-      Visitor visitor) {
+  void
+  callDecoder(const uint64_t* nulls, bool& nullsFromFastPath, Visitor visitor) {
     if (nulls) {
       nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
       if (isDictionary()) {
@@ -184,18 +183,17 @@ class PageReader {
       typename std::enable_if<
           std::is_same<typename Visitor::DataType, folly::StringPiece>::value,
           int>::type = 0>
-  void callDecoder(
-      const uint64_t* nulls,
-      bool& nullsFromFastPath,
-      Visitor visitor) {
+  void
+  callDecoder(const uint64_t* nulls, bool& nullsFromFastPath, Visitor visitor) {
     if (nulls) {
       if (isDictionary()) {
-	nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
+        nullsFromFastPath = dwio::common::useFastPath<Visitor, true>(visitor);
         auto dictVisitor = visitor.toStringDictionaryColumnVisitor();
         rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
       } else {
-	nullsFromFastPath = false;
-	prepareNullsForDirectString(visitor.reader(), visitor.rows(), visitor.numRows());
+        nullsFromFastPath = false;
+        prepareNullsForDirectString(
+            visitor.reader(), visitor.rows(), visitor.numRows());
         stringDecoder_->readWithVisitor<true>(nulls, visitor);
       }
     } else {
@@ -209,8 +207,11 @@ class PageReader {
   }
 
   // Initializes nulls buffer for nullable non-dictionary string read.
-  void prepareNullsForDirectString(dwio::common::SelectiveColumnReader& reader,  const vector_size_t* FOLLY_NONNULL rows, int32_t numRows);
-  
+  void prepareNullsForDirectString(
+      dwio::common::SelectiveColumnReader& reader,
+      const vector_size_t* FOLLY_NONNULL rows,
+      int32_t numRows);
+
   memory::MemoryPool& pool_;
 
   std::unique_ptr<dwio::common::SeekableInputStream> inputStream_;

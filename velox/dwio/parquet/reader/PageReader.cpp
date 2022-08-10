@@ -17,8 +17,8 @@
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/common/BufferUtil.h"
 #include "velox/dwio/common/ColumnVisitors.h"
-#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 #include "velox/dwio/parquet/reader/StringColumnReader.h"
+#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 #include <arrow/util/rle_encoding.h>
 #include <thrift/protocol/TCompactProtocol.h> //@manual
@@ -368,7 +368,7 @@ void PageReader::skip(int64_t numRows) {
     directDecoder_->skip(toSkip);
   } else if (stringDecoder_) {
     stringDecoder_->skip(toSkip);
-  }  else {
+  } else {
     VELOX_FAIL("No decoder to skip");
   }
 }
@@ -441,11 +441,14 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   return allOnes ? nullptr : buffer->as<uint64_t>();
 }
 
-  void PageReader::prepareNullsForDirectString(dwio::common::SelectiveColumnReader& reader, const vector_size_t* rows, int32_t numRows) {
-    dynamic_cast<StringColumnReader*>(&reader)->setDirectMode();
-     reader.prepareNulls(RowSet(rows, numRows), true, currentVisitorRow_);
-  }
-  
+void PageReader::prepareNullsForDirectString(
+    dwio::common::SelectiveColumnReader& reader,
+    const vector_size_t* rows,
+    int32_t numRows) {
+  dynamic_cast<StringColumnReader*>(&reader)->setDirectMode();
+  reader.prepareNulls(RowSet(rows, numRows), true, currentVisitorRow_);
+}
+
 void PageReader::startVisit(folly::Range<const vector_size_t*> rows) {
   visitorRows_ = rows.data();
   numVisitorRows_ = rows.size();
@@ -472,11 +475,11 @@ bool PageReader::rowsForPage(
   auto& scanState = reader.scanState();
   if (isDictionary()) {
     if (scanState.dictionary.values != dictionary_.values) {
-        scanState.dictionary = dictionary_;
-        if (hasFilter) {
-          makeFilterCache(scanState);
-        }
-        scanState.updateRawState();
+      scanState.dictionary = dictionary_;
+      if (hasFilter) {
+        makeFilterCache(scanState);
+      }
+      scanState.updateRawState();
     }
   } else {
     if (scanState.dictionary.values) {

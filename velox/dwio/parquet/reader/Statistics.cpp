@@ -102,7 +102,7 @@ std::unique_ptr<dwio::common::ColumnStatistics> buildColumnStatisticsFromThrift(
           getMax<std::string>(columnChunkStats),
           std::nullopt);
 
-  default:
+    default:
       return std::make_unique<dwio::common::ColumnStatistics>(
           valueCount, hasNull, std::nullopt, std::nullopt);
   }
