@@ -30,16 +30,13 @@ class StringColumnReader : public dwio::common::SelectiveColumnReader {
       common::ScanSpec& scanSpec);
 
   bool hasBulkPath() const override {
-    //  Non-dictionary encodings do not have fast path. This is an exceptional
-    //  path that is set by setDirectMode immediately before calling the
-    //  decoder.
-    return !directMode_;
+    //  Non-dictionary encodings do not have fast path.
+    return scanState_.dictionary.values != nullptr;
   }
 
   void seekToRowGroup(uint32_t index) override {
     scanState().clear();
     readOffset_ = 0;
-    directMode_ = false;
     formatData_->as<ParquetData>().seekToRowGroup(index);
   }
 
@@ -51,10 +48,6 @@ class StringColumnReader : public dwio::common::SelectiveColumnReader {
   void getValues(RowSet rows, VectorPtr* result) override;
 
   void dedictionarize() override;
-
-  void setDirectMode() {
-    directMode_ = true;
-  }
 
  private:
   template <bool hasNulls>
@@ -76,9 +69,6 @@ class StringColumnReader : public dwio::common::SelectiveColumnReader {
       common::Filter* filter,
       RowSet rows,
       ExtractValues extractValues);
-
-  // True when no dictionary
-  bool directMode_{false};
 };
 
 } // namespace facebook::velox::parquet

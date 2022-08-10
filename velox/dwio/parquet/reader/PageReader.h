@@ -192,8 +192,6 @@ class PageReader {
         rleDecoder_->readWithVisitor<true>(nulls, dictVisitor);
       } else {
         nullsFromFastPath = false;
-        prepareNullsForDirectString(
-            visitor.reader(), visitor.rows(), visitor.numRows());
         stringDecoder_->readWithVisitor<true>(nulls, visitor);
       }
     } else {
@@ -205,12 +203,6 @@ class PageReader {
       }
     }
   }
-
-  // Initializes nulls buffer for nullable non-dictionary string read.
-  void prepareNullsForDirectString(
-      dwio::common::SelectiveColumnReader& reader,
-      const vector_size_t* FOLLY_NONNULL rows,
-      int32_t numRows);
 
   memory::MemoryPool& pool_;
 

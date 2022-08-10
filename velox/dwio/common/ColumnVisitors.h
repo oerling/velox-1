@@ -610,7 +610,7 @@ inline void storeTranslatePermute(
       auto value = input[inputIndex + selectedIndices[i]];
       values[i] = value;
     }
-    }
+  }
 }
 
 template <>
@@ -648,7 +648,7 @@ inline void storeTranslate(
       auto value = input[inputIndex + i];
       values[i] = value;
     }
-    }
+  }
 }
 
 template <>

@@ -177,7 +177,7 @@ class E2EFilterTestBase : public testing::Test {
       auto numbers =
           common::getChildBySubfield(batch.get(), field)->as<FlatVector<T>>();
       for (auto row = 0; row < numbers->size(); ++row) {
-        if (numbers->isNullAt(row)) {
+        if (keepNulls && numbers->isNullAt(row)) {
           continue;
         }
         T value = numbers->valueAt(row);

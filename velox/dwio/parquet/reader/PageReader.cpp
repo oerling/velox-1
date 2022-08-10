@@ -441,14 +441,6 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   return allOnes ? nullptr : buffer->as<uint64_t>();
 }
 
-void PageReader::prepareNullsForDirectString(
-    dwio::common::SelectiveColumnReader& reader,
-    const vector_size_t* rows,
-    int32_t numRows) {
-  dynamic_cast<StringColumnReader*>(&reader)->setDirectMode();
-  reader.prepareNulls(RowSet(rows, numRows), true, currentVisitorRow_);
-}
-
 void PageReader::startVisit(folly::Range<const vector_size_t*> rows) {
   visitorRows_ = rows.data();
   numVisitorRows_ = rows.size();
