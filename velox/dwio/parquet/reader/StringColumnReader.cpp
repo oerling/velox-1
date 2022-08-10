@@ -40,6 +40,7 @@ void StringColumnReader::readHelper(
       dwio::common::
           ColumnVisitor<folly::StringPiece, TFilter, ExtractValues, isDense>(
               *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
+  readOffset_ += rows.back() + 1;
 }
 
 template <bool isDense, typename ExtractValues>

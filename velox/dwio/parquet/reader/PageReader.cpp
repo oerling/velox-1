@@ -18,6 +18,7 @@
 #include "velox/dwio/common/BufferUtil.h"
 #include "velox/dwio/common/ColumnVisitors.h"
 #include "velox/dwio/parquet/thrift/ThriftTransport.h"
+#include "velox/dwio/parquet/reader/StringColumnReader.h"
 
 #include <arrow/util/rle_encoding.h>
 #include <thrift/protocol/TCompactProtocol.h> //@manual
@@ -365,7 +366,9 @@ void PageReader::skip(int64_t numRows) {
     rleDecoder_->skip(toSkip);
   } else if (directDecoder_) {
     directDecoder_->skip(toSkip);
-  } else {
+  } else if (stringDecoder_) {
+    stringDecoder_->skip(toSkip);
+  }  else {
     VELOX_FAIL("No decoder to skip");
   }
 }
@@ -438,6 +441,11 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
   return allOnes ? nullptr : buffer->as<uint64_t>();
 }
 
+  void PageReader::prepareNullsForDirectString(dwio::common::SelectiveColumnReader& reader, const vector_size_t* rows, int32_t numRows) {
+    dynamic_cast<StringColumnReader*>(&reader)->setDirectMode();
+     reader.prepareNulls(RowSet(rows, numRows), true, currentVisitorRow_);
+  }
+  
 void PageReader::startVisit(folly::Range<const vector_size_t*> rows) {
   visitorRows_ = rows.data();
   numVisitorRows_ = rows.size();
@@ -448,6 +456,7 @@ void PageReader::startVisit(folly::Range<const vector_size_t*> rows) {
 
 bool PageReader::rowsForPage(
     dwio::common::SelectiveColumnReader& reader,
+    bool hasFilter,
     folly::Range<const vector_size_t*>& rows,
     const uint64_t* FOLLY_NULLABLE& nulls) {
   if (currentVisitorRow_ == numVisitorRows_) {
@@ -460,6 +469,22 @@ bool PageReader::rowsForPage(
   if (rowZero >= rowOfPage_ + numRowsInPage_) {
     readNextPage(rowZero);
   }
+  auto& scanState = reader.scanState();
+  if (isDictionary()) {
+    if (scanState.dictionary.values != dictionary_.values) {
+        scanState.dictionary = dictionary_;
+        if (hasFilter) {
+          makeFilterCache(scanState);
+        }
+        scanState.updateRawState();
+    }
+  } else {
+    if (scanState.dictionary.values) {
+      reader.dedictionarize();
+      scanState.dictionary.clear();
+    }
+  }
+
   // Then check how many of the rows to visit are on the same page as the
   // current one.
   int32_t firstOnNextPage = rowOfPage_ + numRowsInPage_ - visitBase_;
