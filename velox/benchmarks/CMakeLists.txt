@@ -13,6 +13,6 @@
 # limitations under the License.
 
 add_subdirectory(basic)
-if(${VELOX_ENABLE_BENCHMARKS})
+#if(${VELOX_ENABLE_BENCHMARKS})
   add_subdirectory(tpch)
-endif()
+#endif()

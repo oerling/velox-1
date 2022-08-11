@@ -24,6 +24,10 @@ namespace facebook::velox::parquet {
 // Describes a Parquet column.
 class ParquetTypeWithId : public dwio::common::TypeWithId {
  public:
+
+  // Occurs in 'column' for non-leaf nodes.
+  static constexpr uint32_t kNonLeaf = ~0;
+
   ParquetTypeWithId(
       TypePtr type,
       std::vector<std::shared_ptr<const TypeWithId>>&& children,
@@ -46,6 +50,16 @@ class ParquetTypeWithId : public dwio::common::TypeWithId {
         scale_(scale),
         typeLength_(typeLength) {}
 
+
+  bool isLeaf() const {
+    // Negative column ordinal means non-leaf column.
+    return  static_cast<int32_t>(column) >= 0;
+  }
+
+  const ParquetTypeWithId& parquetChildAt(uint32_t index) const {
+    return *reinterpret_cast<const ParquetTypeWithId*>(childAt(index).get());
+  }
+  
   const std::string name_;
   const std::optional<thrift::Type::type> parquetType_;
   const uint32_t maxRepeat_;
