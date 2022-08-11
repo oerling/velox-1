@@ -70,6 +70,7 @@ class Spiller {
       RowContainer::Eraser eraser,
       RowTypePtr rowType,
       int32_t numSortingKeys,
+      const std::vector<CompareFlags>& sortCompareFlags,
       const std::string& path,
       int64_t targetFileSize,
       memory::MemoryPool& pool,
@@ -82,6 +83,7 @@ class Spiller {
       RowTypePtr rowType,
       HashBitRange bits,
       int32_t numSortingKeys,
+      const std::vector<CompareFlags>& sortCompareFlags,
       const std::string& path,
       int64_t targetFileSize,
       memory::MemoryPool& pool,
@@ -117,9 +119,26 @@ class Spiller {
     return state_.startMerge(partition, spillStreamOverRows(partition));
   }
 
-  std::pair<int64_t, int64_t> spilledBytesAndRows() const {
-    return std::make_pair<int64_t, int64_t>(
-        state_.spilledBytes(), spilledRows_);
+  // Define the spiller stats.
+  struct Stats {
+    uint64_t spilledBytes = 0;
+    uint64_t spilledRows = 0;
+    uint32_t spilledPartitions = 0;
+
+    Stats(
+        uint64_t _spilledBytes,
+        uint64_t _spilledRows,
+        uint32_t _spilledPartitions)
+        : spilledBytes(_spilledBytes),
+          spilledRows(_spilledRows),
+          spilledPartitions(_spilledPartitions) {}
+
+    Stats() = default;
+  };
+
+  Stats stats() const {
+    return Stats{
+        state_.spilledBytes(), spilledRows_, state_.spilledPartitions()};
   }
 
   int64_t spilledFiles() const {
@@ -232,8 +251,8 @@ class Spiller {
   RowContainer& container_;
   const RowContainer::Eraser eraser_;
   const HashBitRange bits_;
+  const RowTypePtr rowType_;
 
-  RowTypePtr rowType_;
   SpillState state_;
 
   // Indices into 'spillRuns_' that are currently getting spilled.

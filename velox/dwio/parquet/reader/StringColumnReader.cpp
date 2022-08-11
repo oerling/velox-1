@@ -93,8 +93,6 @@ void StringColumnReader::read(
     const uint64_t* incomingNulls) {
   prepareRead<folly::StringPiece>(offset, rows, incomingNulls);
   bool isDense = rows.back() == rows.size() - 1;
-
-  auto end = rows.back() + 1;
   if (scanSpec_->keepValues()) {
     if (scanSpec_->valueHook()) {
       if (isDense) {
