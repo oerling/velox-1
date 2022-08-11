@@ -509,25 +509,25 @@ void ParquetRowReader::filterRowGroups() {
   int32_t rangeBegin = -1;
   int32_t rangeEnd = -1;
   for (auto i = 0; i < rowGroups_.size(); ++i) {
-    VELOX_CHECK(rowGroups_[i].__isset.file_offset); 
+    VELOX_CHECK(rowGroups_[i].__isset.file_offset);
     auto fileOffset = rowGroups_[i].file_offset;
     if (fileOffset >= options_.getOffset() &&
         fileOffset < options_.getLimit()) {
       if (rangeBegin == -1) {
-	rangeBegin = i;
+        rangeBegin = i;
       }
       rangeEnd = i + 1;
     }
-  }  
+  }
   rowGroupIds_.reserve(rowGroups.size());
   auto excluded =
       columnReader_->filterRowGroups(0, dwio::common::StatsContext());
   for (auto i = 0; i < rowGroups.size(); i++) {
     if (i >= rangeBegin && i < rangeEnd) {
       if (std::find(excluded.begin(), excluded.end(), i) == excluded.end()) {
-	rowGroupIds_.push_back(i);
+        rowGroupIds_.push_back(i);
       } else {
-	++skippedRowGroups_;
+        ++skippedRowGroups_;
       }
     }
   }
