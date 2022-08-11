@@ -29,6 +29,14 @@
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/VectorMaker.h"
 
+DEFINE_int32(steps, 10, "Number of expressions to generate and execute.");
+
+DEFINE_int32(
+    duration_sec,
+    0,
+    "For how long it should run (in seconds). If zero, "
+    "it executes exactly --steps iterations and exits.");
+
 DEFINE_int32(
     batch_size,
     100,
@@ -45,11 +53,39 @@ DEFINE_bool(
     false,
     "Retry failed expressions by wrapping it using a try() statement.");
 
+DEFINE_bool(
+    disable_constant_folding,
+    false,
+    "Disable constant-folding in the common evaluation path.");
+
 namespace facebook::velox::test {
 
 namespace {
 
 using exec::SignatureBinder;
+
+void compareExceptions(const VeloxException& ve1, const VeloxException& ve2) {
+  // Error messages sometimes differ; check at least error codes.
+  // Since the common path may peel the input encoding off, whereas the
+  // simplified path flatten input vectors, the common and the simplified
+  // paths may evaluate the input rows in different orders and hence throw
+  // different exceptions depending on which bad input they come across
+  // first. We have seen this happen for the format_datetime Presto function
+  // that leads to unmatched error codes UNSUPPORTED vs. INVALID_ARGUMENT.
+  // Therefore, we intentionally relax the comparision here.
+  VELOX_CHECK(
+      ve1.errorCode() == ve2.errorCode() ||
+      (ve1.errorCode() == "INVALID_ARGUMENT" &&
+       ve2.errorCode() == "UNSUPPORTED") ||
+      (ve2.errorCode() == "INVALID_ARGUMENT" &&
+       ve1.errorCode() == "UNSUPPORTED"));
+  VELOX_CHECK_EQ(ve1.errorSource(), ve2.errorSource());
+  VELOX_CHECK_EQ(ve1.exceptionName(), ve2.exceptionName());
+  if (ve1.message() != ve2.message()) {
+    LOG(WARNING) << "Two different VeloxExceptions were thrown:\n\t"
+                 << ve1.message() << "\nand\n\t" << ve2.message();
+  }
+}
 
 // Called if at least one of the ptrs has an exception.
 void compareExceptions(
@@ -72,14 +108,7 @@ void compareExceptions(
     try {
       std::rethrow_exception(simplifiedPtr);
     } catch (const VeloxException& ve2) {
-      // Error messages sometimes differ; check at least error codes.
-      VELOX_CHECK_EQ(ve1.errorCode(), ve2.errorCode());
-      VELOX_CHECK_EQ(ve1.errorSource(), ve2.errorSource());
-      VELOX_CHECK_EQ(ve1.exceptionName(), ve2.exceptionName());
-      if (ve1.message() != ve2.message()) {
-        LOG(WARNING) << "Two different VeloxExceptions were thrown:\n\t"
-                     << ve1.message() << "\nand\n\t" << ve2.message();
-      }
+      compareExceptions(ve1, ve2);
       return;
     } catch (const std::exception& e2) {
       LOG(WARNING) << "Two different exceptions were thrown:\n\t"
@@ -331,7 +360,7 @@ class ExpressionFuzzer {
     LOG(INFO) << "RowVector contents (" << rowVector->type()->toString()
               << "):";
 
-    for (size_t i = 0; i < rowVector->size(); ++i) {
+    for (vector_size_t i = 0; i < rowVector->size(); ++i) {
       LOG(INFO) << "\tAt " << i << ": " << rowVector->toString(i);
     }
   }
@@ -483,7 +512,8 @@ class ExpressionFuzzer {
 
     // Execute with common expression eval path.
     try {
-      exec::ExprSet exprSetCommon({plan}, &execCtx_);
+      exec::ExprSet exprSetCommon(
+          {plan}, &execCtx_, !FLAGS_disable_constant_folding);
       exec::EvalCtx evalCtxCommon(&execCtx_, &exprSetCommon, rowVector.get());
 
       try {
@@ -535,11 +565,29 @@ class ExpressionFuzzer {
     return true;
   }
 
- public:
-  void go(size_t steps) {
-    VELOX_CHECK(!signatures_.empty(), "No function signatures available.");
+  // If --duration_sec > 0, check if we expired the time budget. Otherwise,
+  // check if we expired the number of iterations (--steps).
+  template <typename T>
+  bool isDone(size_t i, T startTime) const {
+    if (FLAGS_duration_sec > 0) {
+      std::chrono::duration<double> elapsed =
+          std::chrono::system_clock::now() - startTime;
+      return elapsed.count() >= FLAGS_duration_sec;
+    }
+    return i >= FLAGS_steps;
+  }
 
-    for (size_t i = 0; i < steps; ++i) {
+ public:
+  void go() {
+    VELOX_CHECK(!signatures_.empty(), "No function signatures available.");
+    VELOX_CHECK(
+        FLAGS_steps > 0 || FLAGS_duration_sec > 0,
+        "Either --steps or --duration_sec needs to be greater than zero.")
+
+    auto startTime = std::chrono::system_clock::now();
+    size_t i = 0;
+
+    while (!isDone(i, startTime)) {
       LOG(INFO) << "==============================> Started iteration " << i
                 << " (seed: " << currentSeed_ << ")";
       VELOX_CHECK(inputRowTypes_.empty());
@@ -569,6 +617,7 @@ class ExpressionFuzzer {
 
       LOG(INFO) << "==============================> Done with iteration " << i;
       reSeed();
+      ++i;
     }
   }
 
@@ -605,11 +654,8 @@ class ExpressionFuzzer {
 
 } // namespace
 
-void expressionFuzzer(
-    FunctionSignatureMap signatureMap,
-    size_t steps,
-    size_t seed) {
-  ExpressionFuzzer(std::move(signatureMap), seed).go(steps);
+void expressionFuzzer(FunctionSignatureMap signatureMap, size_t seed) {
+  ExpressionFuzzer(std::move(signatureMap), seed).go();
 }
 
 } // namespace facebook::velox::test

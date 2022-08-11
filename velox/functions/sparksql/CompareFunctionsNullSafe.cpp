@@ -43,9 +43,9 @@ void applyTyped(
     });
   } else {
     // (isnull(a) AND isnull(b)) || (a == b)
-    // When flatRawNulls is null it means there are no nulls.
-    auto* rawNulls0 = args[0]->flatRawNulls(rows);
-    auto* rawNulls1 = args[1]->flatRawNulls(rows);
+    // When DecodedVector::nulls() is null it means there are no nulls.
+    auto* rawNulls0 = decoded0->nulls();
+    auto* rawNulls1 = decoded1->nulls();
     rows.applyToSelected([&](vector_size_t i) {
       auto isNull0 = rawNulls0 && bits::isBitNull(rawNulls0, i);
       auto isNull1 = rawNulls1 && bits::isBitNull(rawNulls1, i);
@@ -107,7 +107,7 @@ class EqualtoNullSafe final : public exec::VectorFunction {
 
     DecodedVector* decoded0 = decodedArgs.at(0);
     DecodedVector* decoded1 = decodedArgs.at(1);
-    BaseVector::ensureWritable(rows, BOOLEAN(), context->pool(), result);
+    context->ensureWritable(rows, BOOLEAN(), *result);
     FlatVector<bool>* flatResult = (*result)->asFlatVector<bool>();
     flatResult->mutableRawValues<int64_t>();
 

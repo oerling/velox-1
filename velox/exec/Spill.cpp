@@ -84,6 +84,7 @@ WriteFile& SpillFileList::currentOutput() {
     files_.push_back(std::make_unique<SpillFile>(
         type_,
         numSortingKeys_,
+        sortCompareFlags_,
         fmt::format("{}-{}", path_, files_.size()),
         pool_));
   }
@@ -128,28 +129,38 @@ void SpillFileList::finishFile() {
   }
 }
 
-int64_t SpillFileList::spilledBytes() const {
-  int64_t bytes = 0;
+uint64_t SpillFileList::spilledBytes() const {
+  uint64_t bytes = 0;
   for (auto& file : files_) {
     bytes += file->size();
   }
   return bytes;
 }
 
-void SpillState::setNumPartitions(int32_t numPartitions) {
-  VELOX_CHECK_LE(numPartitions, maxPartitions());
-  VELOX_CHECK_GT(numPartitions, numPartitions_, "May only add partitions");
-  numPartitions_ = numPartitions;
+std::vector<std::string> SpillFileList::testingSpilledFilePaths() const {
+  std::vector<std::string> spilledFiles;
+  for (auto& file : files_) {
+    spilledFiles.push_back(file->testingFilePath());
+  }
+  return spilledFiles;
+}
+
+void SpillState::setPartitionSpilled(int32_t partition) {
+  VELOX_DCHECK_LT(partition, maxPartitions_);
+  VELOX_DCHECK(!isPartitionSpilled_[partition]);
+  isPartitionSpilled_[partition] = true;
 }
 
 void SpillState::appendToPartition(
     int32_t partition,
     const RowVectorPtr& rows) {
+  VELOX_CHECK(isPartitionSpilled(partition));
   // Ensure that partition exist before writing.
   if (!files_.at(partition)) {
     files_[partition] = std::make_unique<SpillFileList>(
         std::static_pointer_cast<const RowType>(rows->type()),
         numSortingKeys_,
+        sortCompareFlags_,
         fmt::format("{}-spill-{}", path_, partition),
         targetFileSize_,
         pool_,
@@ -171,20 +182,59 @@ std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
       result.push_back(std::move(file));
     }
   }
-  if (extra) {
+  VELOX_DCHECK_EQ(!result.empty(), isPartitionSpilled(partition));
+  if (extra != nullptr) {
     result.push_back(std::move(extra));
+  }
+  // Check if the partition is empty or not.
+  if (FOLLY_UNLIKELY(result.empty())) {
+    return nullptr;
   }
   return std::make_unique<TreeOfLosers<SpillStream>>(std::move(result));
 }
 
-int64_t SpillState::spilledBytes() const {
-  int64_t bytes = 0;
+uint64_t SpillState::spilledBytes() const {
+  uint64_t bytes = 0;
   for (auto& list : files_) {
     if (list) {
       bytes += list->spilledBytes();
     }
   }
   return bytes;
+}
+
+uint32_t SpillState::spilledPartitions() const {
+  uint32_t numSpilledPartitions = 0;
+  for (int i = 0; i < isPartitionSpilled_.size(); ++i) {
+    if (isPartitionSpilled_[i]) {
+      ++numSpilledPartitions;
+    }
+  }
+  return numSpilledPartitions;
+}
+
+int64_t SpillState::spilledFiles() const {
+  int64_t numFiles = 0;
+  for (const auto& list : files_) {
+    if (list != nullptr) {
+      numFiles += list->spilledFiles();
+    }
+  }
+  return numFiles;
+}
+
+std::vector<std::string> SpillState::testingSpilledFilePaths() const {
+  std::vector<std::string> spilledFiles;
+  for (const auto& list : files_) {
+    if (list != nullptr) {
+      const auto spilledFilesFromList = list->testingSpilledFilePaths();
+      spilledFiles.insert(
+          spilledFiles.end(),
+          spilledFilesFromList.begin(),
+          spilledFilesFromList.end());
+    }
+  }
+  return spilledFiles;
 }
 
 } // namespace facebook::velox::exec

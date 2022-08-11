@@ -49,6 +49,8 @@ class SimpleVector;
 template <typename T>
 class FlatVector;
 
+class VectorPool;
+
 /**
  * Base class for all columnar-based vectors of any type.
  */
@@ -78,26 +80,14 @@ class BaseVector {
   }
 
   // Returns false if vector has no nulls. Return true if vector may have nulls.
-  // When this method returns true, flatRawNulls is guaranteed to return
-  // non-null.
   virtual bool mayHaveNulls() const {
     return rawNulls_;
   }
 
   // Returns false if this vector and all of its children have no nulls. Returns
   // true if this vector or any of its children may have nulls.
-  // When this method returns true, flatRawNulls called on this vector or any
-  // of its children is guaranteed to return non-null.
   virtual bool mayHaveNullsRecursive() const {
     return mayHaveNulls();
-  }
-
-  // Returns raw nulls or nullptr with one bit per logical position in
-  // the vector, with valid values at least for the rows selected in
-  // 'rows'. Dictionaries, sequences and constants may calculate this on
-  // demand.
-  virtual const uint64_t* flatRawNulls(const SelectivityVector& rows) {
-    return rawNulls_;
   }
 
   inline bool isIndexInRange(vector_size_t index) const {
@@ -449,7 +439,8 @@ class BaseVector {
       const SelectivityVector& rows,
       const TypePtr& type,
       velox::memory::MemoryPool* pool,
-      std::shared_ptr<BaseVector>* result);
+      std::shared_ptr<BaseVector>* result,
+      VectorPool* vectorPool = nullptr);
 
   virtual void ensureWritable(const SelectivityVector& rows);
 
@@ -632,10 +623,25 @@ class BaseVector {
     return left == right || right == TypeKind::UNKNOWN;
   }
 
-  virtual std::string toString() const;
+  /// Returns a brief summary of the vector. If 'recursive' is true, includes a
+  /// summary of all the layers of encodings starting with the top layer.
+  ///
+  /// For example,
+  ///     with recursive 'false':
+  ///
+  ///         [DICTIONARY INTEGER: 5 elements, no nulls]
+  ///
+  ///     with recursive 'true':
+  ///
+  ///         [DICTIONARY INTEGER: 5 elements, no nulls], [FLAT INTEGER: 10
+  ///             elements, no nulls]
+  std::string toString(bool recursive = false) const;
 
+  /// Returns string representation of the value in the specified row.
   virtual std::string toString(vector_size_t index) const;
 
+  /// Returns a list of values in rows [from, to). By default rows are separated
+  /// by a new line and include row numbers.
   std::string toString(
       vector_size_t from,
       vector_size_t to,
@@ -651,6 +657,14 @@ class BaseVector {
   }
 
  protected:
+  /// Returns a brief summary of the vector. The default implementation includes
+  /// encoding, type, number of rows and number of nulls.
+  ///
+  /// For example,
+  ///     [FLAT INTEGER: 3 elements, no nulls]
+  ///     [DICTIONARY INTEGER: 5 elements, 1 nulls]
+  virtual std::string toSummaryString() const;
+
   /*
    * Allocates or reallocates nulls_ with the given size if nulls_ hasn't
    * been allocated yet or has been allocated with a smaller capacity.

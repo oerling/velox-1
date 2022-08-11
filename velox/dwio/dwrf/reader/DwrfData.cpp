@@ -42,7 +42,7 @@ DwrfData::DwrfData(
       encodingKey.forKind(proto::Stream_Kind_ROW_INDEX), false);
 }
 
-uint64_t DwrfData::skipNulls(uint64_t numValues) {
+uint64_t DwrfData::skipNulls(uint64_t numValues, bool /*nullsOnly*/) {
   if (notNullDecoder_) {
     // page through the values that we want to skip
     // and count how many are non-null
@@ -85,8 +85,9 @@ dwio::common::PositionProvider DwrfData::seekToRowGroup(uint32_t index) {
 
 void DwrfData::readNulls(
     vector_size_t numValues,
-    const uint64_t* incomingNulls,
-    BufferPtr& nulls) {
+    const uint64_t* FOLLY_NULLABLE incomingNulls,
+    BufferPtr& nulls,
+    bool /*nullsOnly*/) {
   if (!notNullDecoder_ && !incomingNulls) {
     nulls = nullptr;
     return;

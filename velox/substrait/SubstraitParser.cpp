@@ -30,6 +30,16 @@ std::shared_ptr<SubstraitParser::SubstraitType> SubstraitParser::parseType(
       nullability = substraitType.bool_().nullability();
       break;
     }
+    case ::substrait::Type::KindCase::kI8: {
+      typeName = "TINYINT";
+      nullability = substraitType.i8().nullability();
+      break;
+    }
+    case ::substrait::Type::KindCase::kI16: {
+      typeName = "SMALLINT";
+      nullability = substraitType.i16().nullability();
+      break;
+    }
     case ::substrait::Type::KindCase::kI32: {
       typeName = "INTEGER";
       nullability = substraitType.i32().nullability();
@@ -40,19 +50,14 @@ std::shared_ptr<SubstraitParser::SubstraitType> SubstraitParser::parseType(
       nullability = substraitType.i64().nullability();
       break;
     }
+    case ::substrait::Type::KindCase::kFp32: {
+      typeName = "REAL";
+      nullability = substraitType.fp32().nullability();
+      break;
+    }
     case ::substrait::Type::KindCase::kFp64: {
       typeName = "DOUBLE";
       nullability = substraitType.fp64().nullability();
-      break;
-    }
-    case ::substrait::Type::KindCase::kStruct: {
-      // TODO: Support for Struct is not fully added.
-      typeName = "STRUCT";
-      const auto& substraitStruct = substraitType.struct_();
-      const auto& substraitTypes = substraitStruct.types();
-      for (const auto& type : substraitTypes) {
-        parseType(type);
-      }
       break;
     }
     case ::substrait::Type::KindCase::kString: {
@@ -60,8 +65,39 @@ std::shared_ptr<SubstraitParser::SubstraitType> SubstraitParser::parseType(
       nullability = substraitType.string().nullability();
       break;
     }
+    case ::substrait::Type::KindCase::kBinary: {
+      typeName = "VARBINARY";
+      nullability = substraitType.string().nullability();
+      break;
+    }
+    case ::substrait::Type::KindCase::kStruct: {
+      // The type name of struct is in the format of:
+      // ROW<type0,type1,ROW<type2>>...typen.
+      typeName = "ROW<";
+      const auto& sStruct = substraitType.struct_();
+      const auto& substraitTypes = sStruct.types();
+      for (int i = 0; i < substraitTypes.size(); i++) {
+        if (i > 0) {
+          typeName += ",";
+        }
+        typeName += parseType(substraitTypes[i])->type;
+      }
+      typeName += ">";
+      nullability = substraitType.struct_().nullability();
+      break;
+    }
+    case ::substrait::Type::KindCase::kUserDefined: {
+      // We only support UNKNOWN type to handle the null literal whose type is
+      // not known.
+      VELOX_CHECK_EQ(substraitType.user_defined().type_reference(), 0);
+      typeName = "UNKNOWN";
+      nullability = substraitType.string().nullability();
+      break;
+    }
     default:
-      VELOX_NYI("Substrait parsing for type {} not supported.", typeName);
+      VELOX_NYI(
+          "Parsing for Substrait type not supported: {}",
+          substraitType.DebugString());
   }
 
   bool nullable;

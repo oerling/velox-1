@@ -115,7 +115,9 @@ class DirectDecoder : public IntDecoder<isSigned> {
       int32_t tailSkip = 0;
       raw_vector<int32_t>* innerVector = nullptr;
       auto outerVector = &visitor.outerNonNullRows();
-      if (Visitor::dense) {
+      // In non-DWRF formats, it can be the visitor is not dense but
+      // this run of rows is dense.
+      if (Visitor::dense || rowsAsRange.back() == rowsAsRange.size() - 1) {
         dwio::common::nonNullRowsFromDense(nulls, numRows, *outerVector);
         numNonNull = outerVector->size();
         if (!numNonNull) {
@@ -205,7 +207,7 @@ class DirectDecoder : public IntDecoder<isSigned> {
             hasHook ? velox::iota(numRows, visitor.innerNonNullRows())
                     : nullptr,
             visitor.rawValues(numRows),
-            visitor.outputRows(numRows),
+            hasFilter ? visitor.outputRows(numRows) : nullptr,
             numValues,
             *super::inputStream,
             super::bufferStart,

@@ -32,6 +32,7 @@
 #include "folly/Random.h"
 #include "folly/SharedMutex.h"
 #include "folly/experimental/FunctionScheduler.h"
+#include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/GTestMacros.h"
 #include "velox/common/memory/MemoryManagerStrategy.h"
 #include "velox/common/memory/MemoryUsage.h"
@@ -193,7 +194,7 @@ class ScopedMemoryPool final : public MemoryPool {
     return pool_.reallocate(p, size, newSize);
   }
 
-  void free(void* p, int64_t size) override {
+  void free(void* FOLLY_NULLABLE p, int64_t size) override {
     return pool_.free(p, size);
   }
 
@@ -965,11 +966,11 @@ class Allocator {
   /* implicit */ Allocator(const Allocator<U>& a) : pool{a.pool} {}
 
   T* FOLLY_NULLABLE allocate(size_t n) {
-    return static_cast<T*>(pool.allocate(n * sizeof(T)));
+    return static_cast<T*>(pool.allocate(checkedMultiply(n, sizeof(T))));
   }
 
   void deallocate(T* FOLLY_NULLABLE p, size_t n) {
-    pool.free(p, n * sizeof(T));
+    pool.free(p, checkedMultiply(n, sizeof(T)));
   }
 
   template <typename T1>

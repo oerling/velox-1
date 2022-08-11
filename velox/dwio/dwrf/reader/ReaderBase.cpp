@@ -36,7 +36,7 @@ FooterStatisticsImpl::FooterStatisticsImpl(
     const StatsContext& statsContext) {
   auto& footer = reader.getFooter();
   auto& handler = reader.getDecryptionHandler();
-  colStats_.resize(footer.statistics_size());
+  colStats_.resize(footer.statisticsSize());
   // fill in the encrypted stats
   if (handler.isEncrypted()) {
     auto& encryption = footer.encryption();
@@ -66,7 +66,7 @@ FooterStatisticsImpl::FooterStatisticsImpl(
     }
   }
   // fill in unencrypted stats if not found in encryption groups
-  for (int32_t i = 0; i < footer.statistics_size(); i++) {
+  for (int32_t i = 0; i < footer.statisticsSize(); i++) {
     if (!colStats_[i]) {
       colStats_[i] =
           buildColumnStatisticsFromProto(footer.statistics(i), statsContext);
@@ -155,17 +155,12 @@ ReaderBase::ReaderBase(
       cacheSize, fileLength_, "Corrupted file, cache size is invalid");
   DWIO_ENSURE_LE(tailSize, fileLength_, "Corrupted file, tail size is invalid");
 
-  if (getFileFormat() == FileFormat::DWRF) {
-    DWIO_ENSURE(
-        proto::CompressionKind_IsValid(postScript_->compression()),
-        "Corrupted File, invalid compression kind ",
-        postScript_->compression());
-  } else {
-    DWIO_ENSURE(
-        proto::orc::CompressionKind_IsValid(postScript_->compression()),
-        "Corrupted File, invalid compression kind ",
-        postScript_->compression());
-  }
+  DWIO_ENSURE(
+      (getFileFormat() == FileFormat::DWRF)
+          ? proto::CompressionKind_IsValid(postScript_->compression())
+          : proto::orc::CompressionKind_IsValid(postScript_->compression()),
+      "Corrupted File, invalid compression kind ",
+      postScript_->compression());
 
   if (tailSize > readSize) {
     input_->enqueue({fileLength_ - tailSize, tailSize});
@@ -174,27 +169,36 @@ ReaderBase::ReaderBase(
 
   auto footerStream = input_->read(
       fileLength_ - psLength_ - footerSize - 1, footerSize, LogType::FOOTER);
-  footer_ = google::protobuf::Arena::CreateMessage<proto::Footer>(arena_.get());
+  auto footer =
+      google::protobuf::Arena::CreateMessage<proto::Footer>(arena_.get());
   ProtoUtils::readProtoInto<proto::Footer>(
-      createDecompressedStream(std::move(footerStream), "File Footer"),
-      footer_);
+      createDecompressedStream(std::move(footerStream), "File Footer"), footer);
+  footer_ = std::make_unique<Footer>(footer);
 
-  schema_ = std::dynamic_pointer_cast<const RowType>(convertType(*footer_));
+  schema_ = std::dynamic_pointer_cast<const RowType>(convertType(*footer));
   DWIO_ENSURE_NOT_NULL(schema_, "invalid schema");
 
   // load stripe index/footer cache
   if (cacheSize > 0) {
     DWIO_ENSURE_EQ(getFileFormat(), FileFormat::DWRF);
-    auto cacheBuffer =
-        std::make_shared<dwio::common::DataBuffer<char>>(pool, cacheSize);
-    input_->read(fileLength_ - tailSize, cacheSize, LogType::FOOTER)
-        ->readFully(cacheBuffer->data(), cacheSize);
-    cache_ = std::make_unique<StripeMetadataCache>(
-        postScript_->cacheMode(), *footer_, std::move(cacheBuffer));
-  }
 
-  if (input_->shouldPrefetchStripes()) {
-    auto numStripes = getFooter().stripes_size();
+    if (input_->shouldPrefetchStripes()) {
+      cache_ = std::make_unique<StripeMetadataCache>(
+          postScript_->cacheMode(),
+          *footer_,
+          input_->read(fileLength_ - tailSize, cacheSize, LogType::FOOTER));
+      input_->load(LogType::FOOTER);
+    } else {
+      auto cacheBuffer =
+          std::make_shared<dwio::common::DataBuffer<char>>(pool, cacheSize);
+      input_->read(fileLength_ - tailSize, cacheSize, LogType::FOOTER)
+          ->readFully(cacheBuffer->data(), cacheSize);
+      cache_ = std::make_unique<StripeMetadataCache>(
+          postScript_->cacheMode(), *footer_, std::move(cacheBuffer));
+    }
+  }
+  if (!cache_ && input_->shouldPrefetchStripes()) {
+    auto numStripes = getFooter().stripesSize();
     for (auto i = 0; i < numStripes; i++) {
       const auto& stripe = getFooter().stripes(i);
       input_->enqueue(
@@ -211,7 +215,7 @@ ReaderBase::ReaderBase(
 
 std::vector<uint64_t> ReaderBase::getRowsPerStripe() const {
   std::vector<uint64_t> rowsPerStripe;
-  auto numStripes = getFooter().stripes_size();
+  auto numStripes = getFooter().stripesSize();
   rowsPerStripe.reserve(numStripes);
   for (auto i = 0; i < numStripes; i++) {
     rowsPerStripe.push_back(getFooter().stripes(i).numberofrows());
@@ -228,7 +232,7 @@ std::unique_ptr<ColumnStatistics> ReaderBase::getColumnStatistics(
     uint32_t index) const {
   DWIO_ENSURE_LT(
       index,
-      static_cast<uint32_t>(footer_->statistics_size()),
+      static_cast<uint32_t>(footer_->statisticsSize()),
       "column index out of range");
   StatsContext statsContext(getWriterVersion());
   if (!handler_->isEncrypted(index)) {

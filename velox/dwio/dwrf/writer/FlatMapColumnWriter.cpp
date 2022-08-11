@@ -15,10 +15,25 @@
  */
 
 #include "velox/dwio/dwrf/writer/FlatMapColumnWriter.h"
+#include "velox/type/Type.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::dwrf {
+
+namespace {
+
+template <typename T>
+T getKey(const std::string& val) {
+  return folly::to<T>(val);
+}
+
+template <>
+StringView getKey<StringView>(const std::string& val) {
+  return StringView(val);
+}
+
+} // namespace
 
 using dwio::common::TypeWithId;
 using proto::KeyInfo;
@@ -287,6 +302,28 @@ template <TypeKind K>
 uint64_t FlatMapColumnWriter<K>::write(
     const VectorPtr& slice,
     const Ranges& ranges) {
+  return writeMap(slice, ranges);
+
+  // enable once writeRow() is tested
+
+  // switch (slice->typeKind()) {
+  //   case TypeKind::MAP:
+  //     return writeMap(slice, ranges);
+  //     break;
+  //   case TypeKind::ROW:
+  //     // fail if missing keys
+  //     return writeRow(slice, ranges);
+  //     break;
+  //   default:
+  //     DWIO_ENSURE(slice->as<MapVector>(), "unexpected vector type");
+  //     return -1; // error
+  // }
+}
+
+template <TypeKind K>
+uint64_t FlatMapColumnWriter<K>::writeMap(
+    const VectorPtr& slice,
+    const Ranges& ranges) {
   // Define variables captured and used by below lambdas.
   const vector_size_t* offsets;
   const vector_size_t* lengths;
@@ -380,6 +417,86 @@ uint64_t FlatMapColumnWriter<K>::write(
   }
   rowsInCurrentStride_ += mapCount;
   indexStatsBuilder_->increaseValueCount(mapCount);
+  indexStatsBuilder_->increaseRawSize(rawSize);
+  return rawSize;
+}
+
+template <typename Row>
+Ranges getNonNullRanges(const Ranges& ranges, const Row& row) {
+  Ranges nonNullRanges;
+  if (row.hasNulls()) {
+    for (auto& index : ranges) {
+      if (!row.isNullAt(index)) {
+        nonNullRanges.add(row.index(index), row.index(index) + 1);
+      }
+    }
+  } else {
+    nonNullRanges = ranges;
+  }
+  return nonNullRanges;
+}
+
+template <TypeKind K>
+uint64_t FlatMapColumnWriter<K>::writeRow(
+    const VectorPtr& slice,
+    const Ranges& ranges) {
+  uint64_t rawSize = 0;
+  Ranges nonNullRanges;
+
+  // #1, 2 - writeNulls() & count non-null rows
+  const RowVector* rowSlice = slice->as<RowVector>();
+  if (rowSlice) {
+    // Row is flat
+    writeNulls(slice, ranges);
+    nonNullRanges = getNonNullRanges(ranges, Flat{slice});
+  } else {
+    // Row is encoded. Decode.
+    auto& decodedRow = decode(slice, ranges).get();
+    writeNulls(decodedRow, ranges);
+    rowSlice = decodedRow.base()->template as<RowVector>();
+    // may verify in write() before entering writeRow() -- still needed?
+    DWIO_ENSURE(rowSlice, "unexpected vector type");
+    nonNullRanges = getNonNullRanges(ranges, Decoded{decodedRow});
+  }
+
+  // #3 - create Buffer filled with 1 to reuse for all columns
+  BufferPtr inMapBuffer = AlignedBuffer::allocate<char>(
+      nonNullRanges.size(),
+      &context_.getMemoryPool(MemoryUsageCategory::GENERAL),
+      1);
+
+  // #4 - for each column
+  auto row = std::dynamic_pointer_cast<RowVector>(slice);
+  const auto& stringKeys =
+      std::dynamic_pointer_cast<const RowType>(slice->type())->names();
+  DWIO_ENSURE(stringKeys.size() == row->childrenSize());
+  for (size_t i = 0; i < stringKeys.size(); i++) {
+    // A, B - retrieve keys from type_ and convert string->KeyType
+    if (stringKeys[i].empty()) {
+      continue;
+    }
+
+    auto key = getKey<KeyType>(stringKeys[i]);
+    // C, D - update key statistics & rawSize
+    // looping each non-null row for now; no batch updateKeyStatistics()
+    for (size_t j = 0; j < nonNullRanges.size(); j++) {
+      auto keySize = updateKeyStatistics<K>(*keyFileStatsBuilder_, key);
+      keyFileStatsBuilder_->increaseRawSize(keySize);
+      rawSize += keySize;
+    }
+
+    // E, F - getValueWriter() & writeBuffers()
+    ValueWriter& valueWriter = getValueWriter(key, nonNullRanges.size());
+    valueWriter.writeBuffers(row->childAt(i), nonNullRanges, inMapBuffer);
+  }
+
+  size_t numNullRows = ranges.size() - nonNullRanges.size();
+  if (numNullRows > 0) {
+    indexStatsBuilder_->setHasNull();
+    rawSize += numNullRows * NULL_SIZE;
+  }
+  rowsInCurrentStride_ += nonNullRanges.size();
+  indexStatsBuilder_->increaseValueCount(nonNullRanges.size());
   indexStatsBuilder_->increaseRawSize(rawSize);
   return rawSize;
 }

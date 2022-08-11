@@ -26,10 +26,7 @@ namespace facebook::velox::test {
 BufferPtr makeIndicesInReverse(vector_size_t size, memory::MemoryPool* pool);
 
 // TODO: enable ASSERT_EQ for vectors.
-void assertEqualVectors(
-    const VectorPtr& expected,
-    const VectorPtr& actual,
-    const std::string& additionalContext = "");
+void assertEqualVectors(const VectorPtr& expected, const VectorPtr& actual);
 
 /// Verify that 'vector' is copyable, by copying all rows.
 void assertCopyableVector(const VectorPtr& vector);
@@ -164,6 +161,11 @@ class VectorTestBase {
   template <typename T>
   FlatVectorPtr<T> makeFlatVector(size_t size, const TypePtr& type) {
     return vectorMaker_.flatVector<T>(size, type);
+  }
+
+  template <typename T>
+  FlatVectorPtr<T> makeAllNullFlatVector(vector_size_t size) {
+    return vectorMaker_.allNullFlatVector<T>(size);
   }
 
   FlatVectorPtr<ShortDecimal> makeShortDecimalFlatVector(
@@ -587,7 +589,9 @@ class VectorTestBase {
 
   BufferPtr makeIndices(
       vector_size_t size,
-      std::function<vector_size_t(vector_size_t)> indexAt);
+      std::function<vector_size_t(vector_size_t)> indexAt) const;
+
+  BufferPtr makeIndices(const std::vector<vector_size_t>& indices) const;
 
   BufferPtr makeOddIndices(vector_size_t size);
 

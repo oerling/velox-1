@@ -19,13 +19,13 @@
 
 namespace facebook::velox::exec {
 
-// Deselects rows from 'rows' where any of the 'input' children
-// in 'channels' has a null.
+class VectorHasher;
+
+// Deselects rows from 'rows' where any of the vectors managed by the 'hashers'
+// has a null.
 void deselectRowsWithNulls(
-    const RowVector& input,
-    const std::vector<column_index_t>& channels,
-    SelectivityVector& rows,
-    core::ExecCtx& execCtx);
+    const std::vector<std::unique_ptr<VectorHasher>>& hashers,
+    SelectivityVector& rows);
 
 // Reusable memory needed for processing filter results.
 struct FilterEvalCtx {
@@ -76,5 +76,20 @@ wrap(vector_size_t size, BufferPtr mapping, const RowVectorPtr& vector);
 
 // Ensures that all LazyVectors reachable from 'input' are loaded for all rows.
 void loadColumns(const RowVectorPtr& input, core::ExecCtx& execCtx);
+
+/// Scatter copy from multiple source row vectors into the target row vector.
+/// 'targetIndex' is first row in 'target' to copy to. 'count' specifies how
+/// many rows to copy from the sources. 'sources' and 'sourceIndices' specify
+/// the source rows to copy from. If 'columnMap' is not empty, it provides the
+/// column channel mappings between target row vector and source row vectors.
+///
+/// NOTE: all the source row vectors must have the same data type.
+void gatherCopy(
+    RowVector* target,
+    vector_size_t targetIndex,
+    vector_size_t count,
+    const std::vector<const RowVector*>& sources,
+    const std::vector<vector_size_t>& sourceIndices,
+    const std::vector<IdentityProjection>& columnMap = {});
 
 } // namespace facebook::velox::exec

@@ -24,6 +24,7 @@ add_library(
   ArrayIntersectExcept.cpp
   ArrayPosition.cpp
   ArraySort.cpp
+  DecimalArithmetic.cpp
   ElementAt.cpp
   FilterFunctions.cpp
   FromUnixTime.cpp
@@ -43,6 +44,8 @@ add_library(
   Subscript.cpp
   ToUtf8.cpp
   Transform.cpp
+  TransformKeys.cpp
+  TransformValues.cpp
   URLFunctions.cpp
   VectorArithmetic.cpp
   WidthBucketArray.cpp

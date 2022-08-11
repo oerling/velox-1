@@ -40,10 +40,11 @@ class DwrfData : public dwio::common::FormatData {
 
   void readNulls(
       vector_size_t numValues,
-      const uint64_t* incomingNulls,
-      BufferPtr& nulls) override;
+      const uint64_t* FOLLY_NULLABLE incomingNulls,
+      BufferPtr& nulls,
+      bool nullsOnly = false) override;
 
-  uint64_t skipNulls(uint64_t numValues) override;
+  uint64_t skipNulls(uint64_t numValues, bool nullsOnly = false) override;
 
   uint64_t skip(uint64_t numValues) override {
     return skipNulls(numValues);

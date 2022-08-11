@@ -15,37 +15,122 @@
  */
 
 #include "velox/exec/OperatorUtils.h"
+#include "velox/exec/VectorHasher.h"
 #include "velox/expression/EvalCtx.h"
 #include "velox/vector/ConstantVector.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::exec {
 
-void deselectRowsWithNulls(
-    const RowVector& input,
-    const std::vector<column_index_t>& channels,
-    SelectivityVector& rows,
-    core::ExecCtx& execCtx) {
-  bool anyChange = false;
-  auto numRows = input.size();
+namespace {
 
-  DecodedVector scratchDecodedVector;
-  SelectivityVector scratchRows;
-  for (auto channel : channels) {
-    auto& child = const_cast<VectorPtr&>(input.childAt(channel));
-    LazyVector::ensureLoadedRows(
-        child, rows, scratchDecodedVector, scratchRows);
-    auto key = input.childAt(channel)->loadedVector();
-    if (key->mayHaveNulls()) {
-      auto nulls = key->flatRawNulls(rows);
-      anyChange = true;
-      bits::andBits(
-          rows.asMutableRange().bits(),
-          nulls,
-          0,
-          std::min(rows.size(), numRows));
+template <TypeKind kind>
+void scalarGatherCopy(
+    BaseVector* target,
+    vector_size_t targetIndex,
+    vector_size_t count,
+    const std::vector<const RowVector*>& sources,
+    const std::vector<vector_size_t>& sourceIndices,
+    column_index_t sourceColumnChannel) {
+  VELOX_DCHECK(target->isFlatEncoding());
+
+  using T = typename TypeTraits<kind>::NativeType;
+  auto* flatVector = target->template asUnchecked<FlatVector<T>>();
+  uint64_t* rawNulls = nullptr;
+  if (std::is_same_v<T, StringView>) {
+    for (int i = 0; i < count; ++i) {
+      VELOX_DCHECK(!sources[i]->mayHaveNulls());
+      if (sources[i]
+              ->childAt(sourceColumnChannel)
+              ->isNullAt(sourceIndices[i])) {
+        if (FOLLY_UNLIKELY(rawNulls == nullptr)) {
+          rawNulls = target->mutableRawNulls();
+        }
+        bits::setNull(rawNulls, targetIndex + i, true);
+        continue;
+      }
+      auto* source = sources[i]->childAt(sourceColumnChannel).get();
+      flatVector->setNoCopy(
+          targetIndex + i,
+          source->template asUnchecked<FlatVector<T>>()->valueAt(
+              sourceIndices[i]));
+      flatVector->acquireSharedStringBuffers(source);
+    }
+  } else {
+    for (int i = 0; i < count; ++i) {
+      VELOX_DCHECK(!sources[i]->mayHaveNulls());
+      if (sources[i]
+              ->childAt(sourceColumnChannel)
+              ->isNullAt(sourceIndices[i])) {
+        if (FOLLY_UNLIKELY(rawNulls == nullptr)) {
+          rawNulls = target->mutableRawNulls();
+        }
+        bits::setNull(rawNulls, targetIndex + i, true);
+        continue;
+      }
+      flatVector->set(
+          targetIndex + i,
+          sources[i]
+              ->childAt(sourceColumnChannel)
+              ->template asUnchecked<FlatVector<T>>()
+              ->valueAt(sourceIndices[i]));
     }
   }
+}
+
+void complexGatherCopy(
+    BaseVector* target,
+    vector_size_t targetIndex,
+    vector_size_t count,
+    const std::vector<const RowVector*>& sources,
+    const std::vector<vector_size_t>& sourceIndices,
+    column_index_t sourceChannel) {
+  for (int i = 0; i < count; ++i) {
+    target->copy(
+        sources[i]->childAt(sourceChannel).get(),
+        targetIndex + i,
+        sourceIndices[i],
+        1);
+  }
+}
+
+void gatherCopy(
+    BaseVector* target,
+    vector_size_t targetIndex,
+    vector_size_t count,
+    const std::vector<const RowVector*>& sources,
+    const std::vector<vector_size_t>& sourceIndices,
+    column_index_t sourceChannel) {
+  if (target->isScalar()) {
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        scalarGatherCopy,
+        target->type()->kind(),
+        target,
+        targetIndex,
+        count,
+        sources,
+        sourceIndices,
+        sourceChannel);
+  } else {
+    complexGatherCopy(
+        target, targetIndex, count, sources, sourceIndices, sourceChannel);
+  }
+}
+} // namespace
+
+void deselectRowsWithNulls(
+    const std::vector<std::unique_ptr<VectorHasher>>& hashers,
+    SelectivityVector& rows) {
+  bool anyChange = false;
+  for (int32_t i = 0; i < hashers.size(); ++i) {
+    auto& decoded = hashers[i]->decodedVector();
+    if (decoded.mayHaveNulls()) {
+      anyChange = true;
+      const auto* nulls = hashers[i]->decodedVector().nulls();
+      bits::andBits(rows.asMutableRange().bits(), nulls, 0, rows.end());
+    }
+  }
+
   if (anyChange) {
     rows.updateBounds();
   }
@@ -116,7 +201,6 @@ vector_size_t processEncodedFilterResults(
   auto values = decoded.data<uint64_t>();
   auto nulls = decoded.nulls();
   auto indices = decoded.indices();
-  auto nullIndices = decoded.nullIndices();
 
   vector_size_t passed = 0;
   auto* rawSelected = filterEvalCtx.getRawSelectedIndices(size, pool);
@@ -124,8 +208,7 @@ vector_size_t processEncodedFilterResults(
   memset(rawSelectedBits, 0, bits::nbytes(size));
   for (int32_t i = 0; i < size; ++i) {
     auto index = indices[i];
-    auto nullIndex = nullIndices ? nullIndices[i] : i;
-    if ((!nulls || !bits::isBitNull(nulls, nullIndex)) &&
+    if ((!nulls || !bits::isBitNull(nulls, i)) &&
         bits::isBitSet(values, index)) {
       rawSelected[passed++] = i;
       bits::setBit(rawSelectedBits, i);
@@ -199,6 +282,43 @@ void loadColumns(const RowVectorPtr& input, core::ExecCtx& execCtx) {
           *rows,
           *decodedHolder.get(),
           *baseRowsHolder.get(input->size()));
+    }
+  }
+}
+
+void gatherCopy(
+    RowVector* target,
+    vector_size_t targetIndex,
+    vector_size_t count,
+    const std::vector<const RowVector*>& sources,
+    const std::vector<vector_size_t>& sourceIndices,
+    const std::vector<IdentityProjection>& columnMap) {
+  VELOX_DCHECK_GE(count, 0);
+  if (FOLLY_UNLIKELY(count <= 0)) {
+    return;
+  }
+  VELOX_CHECK_LE(count, sources.size());
+  VELOX_CHECK_LE(count, sourceIndices.size());
+  VELOX_DCHECK_EQ(sources.size(), sourceIndices.size());
+  if (!columnMap.empty()) {
+    for (const auto& columnProjection : columnMap) {
+      gatherCopy(
+          target->childAt(columnProjection.outputChannel).get(),
+          targetIndex,
+          count,
+          sources,
+          sourceIndices,
+          columnProjection.inputChannel);
+    }
+  } else {
+    for (auto i = 0; i < target->type()->size(); ++i) {
+      gatherCopy(
+          target->childAt(i).get(),
+          targetIndex,
+          count,
+          sources,
+          sourceIndices,
+          i);
     }
   }
 }

@@ -22,12 +22,12 @@ source $SCRIPTDIR/setup-helper-functions.sh
 # are the same size.
 CPU_TARGET="${CPU_TARGET:-avx}"
 export COMPILER_FLAGS=$(get_cxx_flags $CPU_TARGET)
-FB_OS_VERSION=v2022.03.14.00
+FB_OS_VERSION=v2022.07.11.00
 NPROC=$(getconf _NPROCESSORS_ONLN)
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
 
 # Install all velox and folly dependencies.
-sudo apt install -y \
+sudo --preserve-env apt install -y \
   g++ \
   cmake \
   ccache \
@@ -49,7 +49,10 @@ sudo apt install -y \
   libre2-dev \
   libsnappy-dev \
   liblzo2-dev \
-  protobuf-compiler
+  protobuf-compiler \
+  bison \
+  flex \
+  tzdata
 
 function run_and_time {
   time "$@"

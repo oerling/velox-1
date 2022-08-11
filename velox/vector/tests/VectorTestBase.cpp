@@ -44,10 +44,9 @@ BufferPtr VectorTestBase::makeEvenIndices(vector_size_t size) {
   return makeIndices(size, [](vector_size_t i) { return 2 * i; });
 }
 
-// static
 BufferPtr VectorTestBase::makeIndices(
     vector_size_t size,
-    std::function<vector_size_t(vector_size_t)> indexAt) {
+    std::function<vector_size_t(vector_size_t)> indexAt) const {
   BufferPtr indices = AlignedBuffer::allocate<vector_size_t>(size, pool());
   auto rawIndices = indices->asMutable<vector_size_t>();
 
@@ -56,6 +55,19 @@ BufferPtr VectorTestBase::makeIndices(
   }
 
   return indices;
+}
+
+BufferPtr VectorTestBase::makeIndices(
+    const std::vector<vector_size_t>& indices) const {
+  auto size = indices.size();
+  BufferPtr indicesBuffer =
+      AlignedBuffer::allocate<vector_size_t>(size, pool());
+  auto rawIndices = indicesBuffer->asMutable<vector_size_t>();
+
+  for (int i = 0; i < size; i++) {
+    rawIndices[i] = indices[i];
+  }
+  return indicesBuffer;
 }
 
 BufferPtr VectorTestBase::makeNulls(
@@ -69,16 +81,15 @@ BufferPtr VectorTestBase::makeNulls(
   return nulls;
 }
 
-void assertEqualVectors(
-    const VectorPtr& expected,
-    const VectorPtr& actual,
-    const std::string& additionalContext) {
-  ASSERT_EQ(expected->size(), actual->size()) << additionalContext;
-  ASSERT_EQ(expected->typeKind(), actual->typeKind());
+void assertEqualVectors(const VectorPtr& expected, const VectorPtr& actual) {
+  ASSERT_EQ(expected->size(), actual->size());
+  ASSERT_TRUE(expected->type()->equivalent(*actual->type()))
+      << "Expected " << expected->type()->toString() << ", but got "
+      << actual->type()->toString();
   for (auto i = 0; i < expected->size(); i++) {
     ASSERT_TRUE(expected->equalValueAt(actual.get(), i, i))
         << "at " << i << ": expected " << expected->toString(i) << ", but got "
-        << actual->toString(i) << additionalContext;
+        << actual->toString(i);
   }
 }
 

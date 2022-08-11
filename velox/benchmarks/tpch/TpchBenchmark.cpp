@@ -22,6 +22,7 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
@@ -67,7 +68,7 @@ void printResults(const std::vector<RowVectorPtr>& results) {
       std::cout << vector->type()->asRow().toString() << std::endl;
       printType = false;
     }
-    for (size_t i = 0; i < vector->size(); ++i) {
+    for (vector_size_t i = 0; i < vector->size(); ++i) {
       std::cout << vector->toString(i) << std::endl;
     }
   }
@@ -156,6 +157,11 @@ BENCHMARK(q6) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q9) {
+  const auto planContext = queryBuilder->getQueryPlan(9);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q10) {
   const auto planContext = queryBuilder->getQueryPlan(10);
   benchmark.run(planContext);
@@ -176,6 +182,11 @@ BENCHMARK(q14) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q15) {
+  const auto planContext = queryBuilder->getQueryPlan(15);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q18) {
   const auto planContext = queryBuilder->getQueryPlan(18);
   benchmark.run(planContext);
@@ -183,6 +194,11 @@ BENCHMARK(q18) {
 
 BENCHMARK(q19) {
   const auto planContext = queryBuilder->getQueryPlan(19);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q22) {
+  const auto planContext = queryBuilder->getQueryPlan(22);
   benchmark.run(planContext);
 }
 

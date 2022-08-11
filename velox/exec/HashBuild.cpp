@@ -107,16 +107,18 @@ HashBuild::HashBuild(
         true, // hasProbedFlag
         mappedMemory_);
   } else {
-    // Semi and anti join with no extra filter only needs to know whether there
-    // is a match. Hence, no need to store entries with duplicate keys.
+    // (Left) semi and anti join with no extra filter only needs to know whether
+    // there is a match. Hence, no need to store entries with duplicate keys.
     const bool dropDuplicates = !joinNode->filter() &&
         (joinNode->isLeftSemiJoin() || joinNode->isAntiJoin());
-
+    // Right semi join needs to tag build rows that were probed.
+    const bool needProbedFlag = joinNode->isRightSemiJoin();
+    // Ignore null keys
     table_ = HashTable<true>::createForJoin(
         std::move(keyHashers),
         dependentTypes,
         !dropDuplicates, // allowDuplicates
-        false, // hasProbedFlag
+        needProbedFlag, // hasProbedFlag
         mappedMemory_);
   }
   analyzeKeys_ = table_->hashMode() != BaseHashTable::HashMode::kHash;
@@ -125,9 +127,16 @@ HashBuild::HashBuild(
 void HashBuild::addInput(RowVectorPtr input) {
   activeRows_.resize(input->size());
   activeRows_.setAll();
+
+  auto& hashers = table_->hashers();
+
+  for (auto i = 0; i < hashers.size(); ++i) {
+    auto key = input->childAt(hashers[i]->channel())->loadedVector();
+    hashers[i]->decode(*key, activeRows_);
+  }
+
   if (!isRightJoin(joinType_) && !isFullJoin(joinType_)) {
-    deselectRowsWithNulls(
-        *input, keyChannels_, activeRows_, *operatorCtx_->execCtx());
+    deselectRowsWithNulls(hashers, activeRows_);
   }
 
   if (joinType_ == core::JoinType::kAnti) {
@@ -144,8 +153,6 @@ void HashBuild::addInput(RowVectorPtr input) {
     hashes_.resize(activeRows_.size());
   }
 
-  auto& hashers = table_->hashers();
-
   // As long as analyzeKeys is true, we keep running the keys through
   // the Vectorhashers so that we get a possible mapping of the keys
   // to small ints for array or normalized key. When mayUseValueIds is
@@ -155,14 +162,8 @@ void HashBuild::addInput(RowVectorPtr input) {
   for (auto& hasher : hashers) {
     // TODO: Load only for active rows, except if right/full outer join.
     if (analyzeKeys_) {
-      hasher->computeValueIds(
-          *input->childAt(hasher->channel())->loadedVector(),
-          activeRows_,
-          hashes_);
+      hasher->computeValueIds(activeRows_, hashes_);
       analyzeKeys_ = hasher->mayUseValueIds();
-    } else {
-      hasher->decode(
-          *input->childAt(hasher->channel())->loadedVector(), activeRows_);
     }
   }
   for (auto i = 0; i < dependentChannels_.size(); ++i) {
