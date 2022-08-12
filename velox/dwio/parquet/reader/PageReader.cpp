@@ -513,8 +513,12 @@ bool PageReader::rowsForPage(
     // We copy the rows to visit with a bias, so that the first to visit has
     // offset 0.
     rowsCopy_->resize(numToVisit);
-    for (auto i = 0; i < numToVisit; ++i) {
-      (*rowsCopy_)[i] = visitorRows_[i + currentVisitorRow_] - rowNumberBias_;
+    auto copy = rowsCopy_->data();
+    // copy has a writable tail of SIMD width.
+    for (auto i = 0; i < numToVisit; i += xsimd::batch<int32_t>::size) {
+      auto rows = xsimd::batch<int32_t>::load_unaligned(&visitorRows_[i + currentVisitorRow_]) - rowNumberBias_;
+      rows.store_unaligned(copy);
+      copy += xsimd::batch<int32_t>::size;
     }
     nulls = readNulls(rowsCopy_->back() + 1, reader.nullsInReadRange());
     rows = folly::Range<const vector_size_t*>(
