@@ -516,7 +516,9 @@ bool PageReader::rowsForPage(
     auto copy = rowsCopy_->data();
     // copy has a writable tail of SIMD width.
     for (auto i = 0; i < numToVisit; i += xsimd::batch<int32_t>::size) {
-      auto rows = xsimd::batch<int32_t>::load_unaligned(&visitorRows_[i + currentVisitorRow_]) - rowNumberBias_;
+      auto rows = xsimd::batch<int32_t>::load_unaligned(
+                      &visitorRows_[i + currentVisitorRow_]) -
+          rowNumberBias_;
       rows.store_unaligned(copy);
       copy += xsimd::batch<int32_t>::size;
     }
