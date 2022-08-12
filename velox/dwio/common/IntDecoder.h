@@ -181,7 +181,6 @@ class IntDecoder {
   bulkReadRowsFixed(RowSet rows, int32_t initialRow, T* FOLLY_NONNULL result);
 
   signed char readByte();
-
   int64_t readLong();
   uint64_t readVuLong();
   int64_t readVsLong();
@@ -339,13 +338,31 @@ FOLLY_ALWAYS_INLINE int64_t IntDecoder<isSigned>::readVsLong() {
 template <bool isSigned>
 inline int64_t IntDecoder<isSigned>::readLongLE() {
   int64_t result = 0;
+  if (bufferStart + sizeof(int64_t) <= bufferEnd) {
+    bufferStart += numBytes;
+    if (numBytes == 8) {
+      return *reinterpret_cast<const int64_t*>(bufferStart - 8);
+    }
+    if (numBytes == 4) {
+      if (isSigned) {
+	return *reinterpret_cast<const int32_t*>(bufferStart - 4);
+      }
+      return *reinterpret_cast<const uint32_t*>(bufferStart - 4);
+    }
+    if (isSigned) {
+      return *reinterpret_cast<const int16_t*>(bufferStart - 2);
+    }
+    return *reinterpret_cast<const uint16_t*>(bufferStart - 2);
+  }
+
   char b;
   int64_t offset = 0;
   for (uint32_t i = 0; i < numBytes; ++i) {
-    b = readByte();
-    result |= (b & BASE_256_MASK) << offset;
-    offset += 8;
-  }
+      b = readByte();
+      result |= (b & BASE_256_MASK) << offset;
+      offset += 8;
+    }
+
   if (isSigned && numBytes < 8) {
     if (numBytes == 2) {
       return static_cast<int16_t>(result);
@@ -370,7 +387,7 @@ inline int64_t IntDecoder<isSigned>::readLong() {
     return readLongLE();
   }
 }
-
+  
 template <>
 template <>
 inline void IntDecoder<false>::bulkRead(

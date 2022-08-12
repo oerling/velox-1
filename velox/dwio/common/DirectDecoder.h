@@ -78,7 +78,13 @@ class DirectDecoder : public IntDecoder<isSigned> {
           }
         }
       }
-      toSkip = visitor.process(IntDecoder<isSigned>::readLong(), atEnd);
+      if (std::is_same<typename Visitor::DataType, float>::value) {
+        toSkip = visitor.process(readFloat(), atEnd);
+      } else if (std::is_same<typename Visitor::DataType, double>::value) {
+        toSkip = visitor.process(readDouble(), atEnd);
+      } else {
+        toSkip = visitor.process(super::readLong(), atEnd);
+      }
     skip:
       ++current;
       if (toSkip) {
@@ -94,7 +100,32 @@ class DirectDecoder : public IntDecoder<isSigned> {
  private:
   using super = IntDecoder<isSigned>;
 
-  template <bool hasNulls, typename Visitor>
+  float readFloat() {
+    float temp;
+    auto buffer = readFixed(sizeof(float), &temp);
+    return *reinterpret_cast<const float*>(buffer);
+  }
+
+  double readDouble() {
+    double temp;
+    auto buffer = readFixed(sizeof(double), &temp);
+    return *reinterpret_cast<const double*>(buffer);
+  }
+
+  // Returns a pointer to the next element of 'size' bytes in the
+  // buffer. If the element would straddle buffers, it is copied to
+  // *temp and temp is returned.
+  const void* readFixed(int32_t size, void* temp) {
+    auto ptr = super::bufferStart;
+    if (ptr + size <= super::bufferEnd) {
+      super::bufferStart += size;
+      return ptr;
+    }
+    readBytes(size, super::inputStream.get(), temp, super::bufferStart, super::bufferEnd);
+    return temp;
+  }      
+
+    template <bool hasNulls, typename Visitor>
   void fastPath(const uint64_t* nulls, Visitor& visitor) {
     using T = typename Visitor::DataType;
     constexpr bool hasFilter =
