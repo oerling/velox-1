@@ -121,11 +121,16 @@ class DirectDecoder : public IntDecoder<isSigned> {
       super::bufferStart += size;
       return ptr;
     }
-    readBytes(size, super::inputStream.get(), temp, super::bufferStart, super::bufferEnd);
+    readBytes(
+        size,
+        super::inputStream.get(),
+        temp,
+        super::bufferStart,
+        super::bufferEnd);
     return temp;
-  }      
+  }
 
-    template <bool hasNulls, typename Visitor>
+  template <bool hasNulls, typename Visitor>
   void fastPath(const uint64_t* nulls, Visitor& visitor) {
     using T = typename Visitor::DataType;
     constexpr bool hasFilter =

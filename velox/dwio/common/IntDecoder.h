@@ -345,7 +345,7 @@ inline int64_t IntDecoder<isSigned>::readLongLE() {
     }
     if (numBytes == 4) {
       if (isSigned) {
-	return *reinterpret_cast<const int32_t*>(bufferStart - 4);
+        return *reinterpret_cast<const int32_t*>(bufferStart - 4);
       }
       return *reinterpret_cast<const uint32_t*>(bufferStart - 4);
     }
@@ -358,10 +358,10 @@ inline int64_t IntDecoder<isSigned>::readLongLE() {
   char b;
   int64_t offset = 0;
   for (uint32_t i = 0; i < numBytes; ++i) {
-      b = readByte();
-      result |= (b & BASE_256_MASK) << offset;
-      offset += 8;
-    }
+    b = readByte();
+    result |= (b & BASE_256_MASK) << offset;
+    offset += 8;
+  }
 
   if (isSigned && numBytes < 8) {
     if (numBytes == 2) {
@@ -387,7 +387,7 @@ inline int64_t IntDecoder<isSigned>::readLong() {
     return readLongLE();
   }
 }
-  
+
 template <>
 template <>
 inline void IntDecoder<false>::bulkRead(

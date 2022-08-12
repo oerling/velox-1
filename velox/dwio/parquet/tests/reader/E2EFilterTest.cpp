@@ -172,14 +172,14 @@ TEST_F(E2EFilterTest, floatAndDouble) {
         makeAllNulls("float_null");
         makeQuantizedFloat<float>(Subfield("float_val2"), 200, true);
         makeQuantizedFloat<double>(Subfield("double_val2"), 522, true);
-	// Make sure there are RLE's.
-	auto floats = batches_[0]->childAt(2)->as<FlatVector<float>>();
-	auto doubles = batches_[0]->childAt(3)->as<FlatVector<double>>();
-	for (auto i = 100; i < 200; ++i) {
-	  // This makes a RLE even if some nulls along the way.
-	  floats->set(i, 0.66);
-	  doubles->set(i, 0.66);
-	}
+        // Make sure there are RLE's.
+        auto floats = batches_[0]->childAt(2)->as<FlatVector<float>>();
+        auto doubles = batches_[0]->childAt(3)->as<FlatVector<double>>();
+        for (auto i = 100; i < 200; ++i) {
+          // This makes a RLE even if some nulls along the way.
+          floats->set(i, 0.66);
+          doubles->set(i, 0.66);
+        }
       },
       false,
       {"float_val", "double_val", "float_val2", "double_val2", "float_null"},
