@@ -115,7 +115,7 @@ class DirectDecoder : public IntDecoder<isSigned> {
   // Returns a pointer to the next element of 'size' bytes in the
   // buffer. If the element would straddle buffers, it is copied to
   // *temp and temp is returned.
-  const void* readFixed(int32_t size, void* temp) {
+  const void* FOLLY_NONNULL readFixed(int32_t size, void* FOLLY_NONNULL temp) {
     auto ptr = super::bufferStart;
     if (ptr + size <= super::bufferEnd) {
       super::bufferStart += size;
