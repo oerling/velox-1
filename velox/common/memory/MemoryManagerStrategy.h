@@ -25,8 +25,6 @@ namespace facebook::velox::memory {
 class MemoryPool;
 class ScopedMemoryPool;
 
-enum class UsageLevel { kDefault, kProcess, kSpiller, kCache, kQuery };
-
 class MemoryConsumer {
  public:
   virtual ~MemoryConsumer() {}

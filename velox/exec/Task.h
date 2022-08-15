@@ -408,6 +408,9 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
 
   int64_t recoverableMemory() const override;
 
+  // Tries to recover at least 'size' bytes of memory by shrinking
+  // allocations or reservations. The actual change in memory
+  // footprint should be retrieved from the Task's MemoryUsageTracker.
   void recover(int64_t size) override;
 
   // Returns the Driver running on the current thread or nullptr if the current

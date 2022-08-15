@@ -1471,7 +1471,6 @@ Driver* FOLLY_NULLABLE Task::thisDriver() const {
 
 int64_t Task::recoverableMemory() const {
   int64_t total = tracker().maxTotalBytes() - tracker().getCurrentUserBytes();
-  ;
   for (auto driver : drivers_) {
     if (driver) {
       total += driver->recoverableMemory();
@@ -1484,14 +1483,20 @@ void Task::recover(int64_t size) {
   VELOX_CHECK_EQ(numThreads_, 0, "recover expects paused task");
   int32_t numDrivers = 0;
   for (auto& driver : drivers_) {
-    numDrivers += driver != nullptr;
+    if (driver) {
+      ++numDrivers;
+    }
   }
   if (!numDrivers) {
     return;
   }
   int64_t recovered = 0;
   while (recovered < size) {
-    // Per driver recovery target is 16MB + target / number of drivers.
+    // Per driver recovery target is 16MB + target / number of
+    // drivers. Spilling less than 16MB makes no sense and a Driver
+    // will typically have only one spillable operator, so the
+    // practical scenario is how many full operators have to be
+    // spilled to make the target.
     auto perDriver = (16 << 20) + ((size - recovered) / numDrivers);
     auto initialRecovered = recovered;
     for (auto& driver : drivers_) {
@@ -1533,8 +1538,8 @@ void setLimit(int64_t bytes, memory::MemoryUsageTracker& tracker) {
 bool TaskMemoryStrategy::recover(
     std::shared_ptr<memory::MemoryConsumer> requester,
     int64_t bytes) {
-  // Returns true if 'bytes' bytes can be transferred to 'consumertask' from
-  // unused space in topTracker and/or s  recovered space from other consumers.
+  // Returns true if 'bytes' bytes can be transferred to 'requester' from
+  // unused space in topTracker and/or recovered space from other consumers.
 
   constexpr int64_t kMinTransfer = 2 << 20;
   constexpr int64_t kInitialSize = 24 << 20;
@@ -1576,14 +1581,16 @@ bool TaskMemoryStrategy::recover(
         auto size = otherTask->tracker().getCurrentTotalBytes();
         if (size > kInitialSize) {
           auto recoverable = otherTask->recoverableMemory();
-          if (recoverable >= 0 /*kMinTransfer*/) {
+          if (recoverable >= kMinTransfer) {
             candidates.push_back({ptr, otherTask, recoverable});
             available += candidates.back().available;
-          } else {
           }
         }
       }
     }
+  }
+  if (available < minSize) {
+    return false;
   }
   std::sort(
       candidates.begin(),
@@ -1592,9 +1599,6 @@ bool TaskMemoryStrategy::recover(
         // Most available first.
         return left.available > right.available;
       });
-  if (available < minSize) {
-    return false;
-  }
   int64_t sizeToGo = minSize;
   int64_t recovered = 0;
   std::vector<std::shared_ptr<Task>> paused;

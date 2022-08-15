@@ -377,7 +377,7 @@ class Operator {
       std::function<int64_t(int64_t)> spillFunc,
       std::function<void(void)> runFunc);
 
-  // Returns an estimate of the maximum number of bytes tat could be
+  // Returns an estimate of the maximum number of bytes that could be
   // freed by calling spill().
   virtual int64_t recoverableMemory() const {
     return 0;
