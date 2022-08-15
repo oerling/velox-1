@@ -378,7 +378,8 @@ void VectorHasher::lookupValueIdsTyped(
     const DecodedVector& decoded,
     SelectivityVector& rows,
     raw_vector<uint64_t>& hashes,
-    uint64_t* result) const {
+    uint64_t* result,
+    bool noNulls) const {
   using T = typename TypeTraits<Kind>::NativeType;
   if (decoded.isConstantMapping()) {
     if (decoded.isNullAt(rows.begin())) {
@@ -398,21 +399,25 @@ void VectorHasher::lookupValueIdsTyped(
       });
     }
   } else if (decoded.isIdentityMapping()) {
-    rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
-      if (decoded.isNullAt(row)) {
-        if (multiplier_ == 1) {
-          result[row] = 0;
+    if (Kind == TypeKind::BIGINT && isRange_ && noNulls) {
+      lookupIdsRange64(decoded, rows, result);
+    } else {
+      rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
+        if (decoded.isNullAt(row)) {
+          if (multiplier_ == 1) {
+            result[row] = 0;
+          }
+          return;
         }
-        return;
-      }
-      T value = decoded.valueAt<T>(row);
-      uint64_t id = lookupValueId(value);
-      if (id == kUnmappable) {
-        rows.setValid(row, false);
-        return;
-      }
-      result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
-    });
+        T value = decoded.valueAt<T>(row);
+        uint64_t id = lookupValueId(value);
+        if (id == kUnmappable) {
+          rows.setValid(row, false);
+          return;
+        }
+        result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
+      });
+    }
     rows.updateBounds();
   } else {
     hashes.resize(decoded.base()->size());
@@ -441,333 +446,405 @@ void VectorHasher::lookupValueIdsTyped(
   }
 }
 
-void VectorHasher::lookupValueIds(
-    const BaseVector& values,
+  template <int8_t kWidth, typename Callable>
+  void forBatches(const SelectivityVector& rows, Callable func) {
+  constexpr int32_t unitMask = (1 << kWidth) - 1;
+  auto bits = rows.asRange().bits();
+  bits::forEachWord(
+      rows.begin(),
+      rows.end(),
+      [&](auto index, uint64_t mask) {
+        uint64_t active = bits[index] & mask;
+	if (!active) {
+	  return;
+	}
+        int32_t skip = (__builtin_ctzll(active) / kWidth) * kWidth;
+	active >>= skip;
+	auto first = skip;
+        while (active) {
+          if (active & unitMask) {
+            func(index * 64 + first, active & unitMask);
+            first += kWidth;
+            active >>= kWidth;
+          } else {
+            skip = (__builtin_ctzll(active) / kWidth) * kWidth;
+            active >>= skip;
+            first += skip;
+          }
+        }
+      },
+      [&](auto index) {
+        uint64_t active = bits[index];
+	if (!active) {
+	  return;
+	}
+        int32_t skip = (__builtin_ctzll(active) / kWidth) * kWidth;
+	active >>= skip;
+	auto first = skip;
+        while (active) {
+          if (active & unitMask) {
+            func(index * 64 + first, active & unitMask);
+            first += kWidth;
+            active >>= kWidth;
+          } else {
+            skip = (__builtin_ctzll(active) / kWidth) * kWidth;
+            active >>= skip;
+            first += skip;
+          }
+        }
+      }
+      );
+}
+
+void VectorHasher::lookupIdsRange64(
+    const DecodedVector& decoded,
     SelectivityVector& rows,
-    ScratchMemory& scratchMemory,
-    raw_vector<uint64_t>& result) const {
-  scratchMemory.decoded.decode(values, rows);
-  VALUE_ID_TYPE_DISPATCH(
-      lookupValueIdsTyped,
-      typeKind_,
-      scratchMemory.decoded,
-      rows,
-      scratchMemory.hashes,
-      result.data());
-}
-
-void VectorHasher::hash(
-    const SelectivityVector& rows,
-    bool mix,
-    raw_vector<uint64_t>& result) {
-  VELOX_DYNAMIC_TYPE_DISPATCH(hashValues, typeKind_, rows, mix, result.data());
-}
-
-void VectorHasher::hashPrecomputed(
-    const SelectivityVector& rows,
-    bool mix,
-    raw_vector<uint64_t>& result) const {
-  rows.applyToSelected([&](vector_size_t row) {
-    result[row] =
-        mix ? bits::hashMix(result[row], precomputedHash_) : precomputedHash_;
+    uint64_t* result) const {
+  auto lower = xsimd::batch<int64_t>::broadcast(min_);
+  auto upper = xsimd::batch<int64_t>::broadcast(max_);
+  auto data = decoded.data<int64_t>();
+  auto offset = lower - 1;
+  auto bits = rows.asMutableRange().bits();
+  forBatches<4>(rows, [&] (auto index, auto mask) {
+    auto values = xsimd::batch<int64_t>::load_unaligned(data + index);
+    uint64_t outOfRange = simd::toBitMask((lower > values) | (values > upper));
+    if (outOfRange) {
+      bits[index / 64] &= ~(outOfRange << (index & 63));
+    }
+    if (outOfRange != 0xf) {
+      if (multiplier_ == 1) {
+	(values - offset).store_unaligned(result + index);
+      } else {
+	(xsimd::batch<int64_t>::load_unaligned(result + index) * xsimd::batch<int64_t>::broadcast(multiplier_) + (values - offset)).store_unaligned(result + index); 
+      }
+    }
   });
 }
 
-void VectorHasher::precompute(const BaseVector& value) {
-  if (value.isNullAt(0)) {
-    precomputedHash_ = kNullHash;
-    return;
+void VectorHasher::lookupValueIds(
+      const BaseVector& values,
+      SelectivityVector& rows,
+      ScratchMemory& scratchMemory,
+      raw_vector<uint64_t>& result,
+      bool noNulls) const {
+    scratchMemory.decoded.decode(values, rows);
+    VALUE_ID_TYPE_DISPATCH(
+        lookupValueIdsTyped,
+        typeKind_,
+        scratchMemory.decoded,
+        rows,
+        scratchMemory.hashes,
+        result.data(),
+        noNulls);
   }
 
-  const SelectivityVector rows(1, true);
-  decoded_.decode(value, rows);
-  precomputedHash_ =
-      VELOX_DYNAMIC_TYPE_DISPATCH(hashOne, typeKind_, decoded_, 0);
-}
+  void VectorHasher::hash(
+      const SelectivityVector& rows, bool mix, raw_vector<uint64_t>& result) {
+    VELOX_DYNAMIC_TYPE_DISPATCH(
+        hashValues, typeKind_, rows, mix, result.data());
+  }
 
-void VectorHasher::analyze(
-    char** groups,
-    int32_t numGroups,
-    int32_t offset,
-    int32_t nullByte,
-    uint8_t nullMask) {
-  VALUE_ID_TYPE_DISPATCH(
-      analyzeTyped, typeKind_, groups, numGroups, offset, nullByte, nullMask);
-}
+  void VectorHasher::hashPrecomputed(
+      const SelectivityVector& rows, bool mix, raw_vector<uint64_t>& result)
+      const {
+    rows.applyToSelected([&](vector_size_t row) {
+      result[row] =
+          mix ? bits::hashMix(result[row], precomputedHash_) : precomputedHash_;
+    });
+  }
 
-template <>
-void VectorHasher::analyzeValue(StringView value) {
-  int size = value.size();
-  auto data = value.data();
-  if (!rangeOverflow_) {
-    if (size > kStringASRangeMaxSize) {
-      rangeOverflow_ = true;
-    } else {
-      int64_t number = stringAsNumber(data, size);
-      updateRange(number);
+  void VectorHasher::precompute(const BaseVector& value) {
+    if (value.isNullAt(0)) {
+      precomputedHash_ = kNullHash;
+      return;
     }
+
+    const SelectivityVector rows(1, true);
+    decoded_.decode(value, rows);
+    precomputedHash_ =
+        VELOX_DYNAMIC_TYPE_DISPATCH(hashOne, typeKind_, decoded_, 0);
   }
-  if (!distinctOverflow_) {
-    UniqueValue unique(data, size);
-    unique.setId(uniqueValues_.size() + 1);
-    auto pair = uniqueValues_.insert(unique);
-    if (pair.second) {
-      if (uniqueValues_.size() > kMaxDistinct) {
-        distinctOverflow_ = true;
-        return;
+
+  void VectorHasher::analyze(
+      char** groups,
+      int32_t numGroups,
+      int32_t offset,
+      int32_t nullByte,
+      uint8_t nullMask) {
+    VALUE_ID_TYPE_DISPATCH(
+        analyzeTyped, typeKind_, groups, numGroups, offset, nullByte, nullMask);
+  }
+
+  template <>
+  void VectorHasher::analyzeValue(StringView value) {
+    int size = value.size();
+    auto data = value.data();
+    if (!rangeOverflow_) {
+      if (size > kStringASRangeMaxSize) {
+        rangeOverflow_ = true;
+      } else {
+        int64_t number = stringAsNumber(data, size);
+        updateRange(number);
       }
-      copyStringToLocal(&*pair.first);
     }
-  }
-}
-
-void VectorHasher::copyStringToLocal(const UniqueValue* unique) {
-  auto size = unique->size();
-  if (size <= sizeof(int64_t)) {
-    return;
-  }
-  if (distinctStringsBytes_ > kMaxDistinctStringsBytes) {
-    distinctOverflow_ = true;
-    return;
-  }
-  if (uniqueValuesStorage_.empty()) {
-    uniqueValuesStorage_.emplace_back();
-    uniqueValuesStorage_.back().reserve(std::max(kStringBufferUnitSize, size));
-    distinctStringsBytes_ += uniqueValuesStorage_.back().capacity();
-  }
-  auto str = &uniqueValuesStorage_.back();
-  if (str->size() + size > str->capacity()) {
-    uniqueValuesStorage_.emplace_back();
-    uniqueValuesStorage_.back().reserve(std::max(kStringBufferUnitSize, size));
-    distinctStringsBytes_ += uniqueValuesStorage_.back().capacity();
-    str = &uniqueValuesStorage_.back();
-  }
-  auto start = str->size();
-  str->resize(start + size);
-  memcpy(str->data() + start, reinterpret_cast<char*>(unique->data()), size);
-  const_cast<UniqueValue*>(unique)->setData(
-      reinterpret_cast<int64_t>(str->data() + start));
-}
-
-std::unique_ptr<common::Filter> VectorHasher::getFilter(
-    bool nullAllowed) const {
-  switch (typeKind_) {
-    case TypeKind::TINYINT:
-    case TypeKind::SMALLINT:
-    case TypeKind::INTEGER:
-    case TypeKind::BIGINT: {
-      if (!distinctOverflow_) {
-        std::vector<int64_t> values;
-        values.reserve(uniqueValues_.size());
-        for (const auto& value : uniqueValues_) {
-          values.emplace_back(value.data());
+    if (!distinctOverflow_) {
+      UniqueValue unique(data, size);
+      unique.setId(uniqueValues_.size() + 1);
+      auto pair = uniqueValues_.insert(unique);
+      if (pair.second) {
+        if (uniqueValues_.size() > kMaxDistinct) {
+          distinctOverflow_ = true;
+          return;
         }
-
-        return common::createBigintValues(values, nullAllowed);
+        copyStringToLocal(&*pair.first);
       }
     }
-    default:
-      // TODO Add support for strings.
-      return nullptr;
   }
-}
 
-namespace {
-template <typename T>
-// Adds 'reserve' to either end of the range between 'min' and 'max' while
-// staying in the range of T.
-void extendRange(int64_t reserve, int64_t& min, int64_t& max) {
-  int64_t kMin = std::numeric_limits<T>::min();
-  int64_t kMax = std::numeric_limits<T>::max();
-  if (kMin + reserve + 1 > min) {
-    min = kMin;
-  } else {
-    min -= reserve;
-  }
-  if (kMax - reserve < max) {
-    max = kMax;
-  } else {
-    max += reserve;
-  }
-}
-
-// Adds 'reservePct' % to either end of the range between 'min' and 'max' while
-// staying in the range of 'kind'.
-void extendRange(
-    TypeKind kind,
-    int32_t reservePct,
-    int64_t& min,
-    int64_t& max) {
-  // The reserve is 2 + reservePct % of the range. Add 2 to make sure
-  // that a non-0 peercentage actually adds something for a small
-  // range.
-  int64_t reserve =
-      reservePct == 0 ? 0 : 2 + (max - min) * (reservePct / 100.0);
-  switch (kind) {
-    case TypeKind::BOOLEAN:
-      break;
-    case TypeKind::TINYINT:
-      extendRange<int8_t>(reserve, min, max);
-      break;
-    case TypeKind::SMALLINT:
-      extendRange<int16_t>(reserve, min, max);
-      break;
-    case TypeKind::INTEGER:
-    case TypeKind::DATE:
-      extendRange<int32_t>(reserve, min, max);
-      break;
-    case TypeKind::BIGINT:
-    case TypeKind::VARCHAR:
-    case TypeKind::VARBINARY:
-      extendRange<int64_t>(reserve, min, max);
-      break;
-
-    default:
-      VELOX_FAIL("Unsupported VectorHasher typeKind {}", kind);
-  }
-}
-
-int64_t addIdReserve(size_t numDistinct, int32_t reservePct) {
-  // A merge of hashers in a hash join build may end up over the limit, so
-  // return that.
-  if (numDistinct > VectorHasher::kMaxDistinct) {
-    return numDistinct;
-  }
-  if (reservePct == VectorHasher::kNoLimit) {
-    return VectorHasher::kMaxDistinct;
-  }
-  return std::min<int64_t>(
-      VectorHasher::kMaxDistinct, numDistinct * (1 + (reservePct / 100.0)));
-}
-} // namespace
-
-void VectorHasher::cardinality(
-    int32_t reservePct,
-    uint64_t& asRange,
-    uint64_t& asDistincts) {
-  if (typeKind_ == TypeKind::BOOLEAN) {
-    hasRange_ = true;
-    asRange = 3;
-    asDistincts = 3;
-    return;
-  }
-  int64_t signedRange;
-  if (!hasRange_ || rangeOverflow_) {
-    asRange = kRangeTooLarge;
-  } else if (__builtin_sub_overflow(max_, min_, &signedRange)) {
-    rangeOverflow_ = true;
-    asRange = kRangeTooLarge;
-  } else if (signedRange < kMaxRange) {
-    // We check that after the extension by reservePct the range of max - min
-    // will still be in int64_t bounds.
-    VELOX_CHECK_GE(100, reservePct);
-    static_assert(kMaxRange < std::numeric_limits<uint64_t>::max() / 4);
-    // We pad the range by 'reservePct'%, half below and half above,
-    // while staying within bounds of the type. We do not pad the
-    // limits yet, this is done only when enabling range mode.
-    int64_t min = min_;
-    int64_t max = max_;
-    extendRange(type_->kind(), reservePct, min, max);
-    asRange = (max - min) + 2;
-  } else {
-    rangeOverflow_ = true;
-    asRange = kRangeTooLarge;
-  }
-  if (distinctOverflow_) {
-    asDistincts = kRangeTooLarge;
-    return;
-  }
-  // Padded count of values + 1 for null.
-  asDistincts = addIdReserve(uniqueValues_.size(), reservePct) + 1;
-}
-
-uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int32_t reservePct) {
-  VELOX_CHECK_NE(
-      typeKind_,
-      TypeKind::BOOLEAN,
-      "A boolean VectorHasher should  always be by range");
-  multiplier_ = multiplier;
-  rangeSize_ = addIdReserve(uniqueValues_.size(), reservePct) + 1;
-  isRange_ = false;
-  uint64_t result;
-  if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
-    return kRangeTooLarge;
-  }
-  return result;
-}
-
-uint64_t VectorHasher::enableValueRange(
-    uint64_t multiplier,
-    int32_t reservePct) {
-  multiplier_ = multiplier;
-  VELOX_CHECK_LE(0, reservePct);
-  VELOX_CHECK(hasRange_);
-  extendRange(type_->kind(), reservePct, min_, max_);
-  isRange_ = true;
-  // No overflow because max range is under 63 bits.
-  if (typeKind_ == TypeKind::BOOLEAN) {
-    rangeSize_ = 3;
-  } else {
-    rangeSize_ = (max_ - min_) + 2;
-  }
-  uint64_t result;
-  if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
-    return kRangeTooLarge;
-  }
-  return result;
-}
-
-void VectorHasher::copyStatsFrom(const VectorHasher& other) {
-  hasRange_ = other.hasRange_;
-  rangeOverflow_ = other.rangeOverflow_;
-  distinctOverflow_ = other.distinctOverflow_;
-
-  min_ = other.min_;
-  max_ = other.max_;
-  uniqueValues_ = other.uniqueValues_;
-}
-
-void VectorHasher::merge(const VectorHasher& other) {
-  if (typeKind_ == TypeKind::BOOLEAN) {
-    return;
-  }
-  if (other.empty()) {
-    return;
-  }
-  if (empty()) {
-    copyStatsFrom(other);
-    return;
-  }
-  if (hasRange_ && other.hasRange_ && !rangeOverflow_ &&
-      !other.rangeOverflow_) {
-    min_ = std::min(min_, other.min_);
-    max_ = std::max(max_, other.max_);
-  } else {
-    hasRange_ = false;
-    rangeOverflow_ = true;
-  }
-  if (!distinctOverflow_ && !other.distinctOverflow_) {
-    // Unique values can be merged without dispatch on type. All the
-    // merged hashers must stay live for string type columns.
-    for (UniqueValue value : other.uniqueValues_) {
-      // Assign a new id at end of range for the case 'value' is not
-      // in 'uniqueValues_'. We do not set overflow here because the
-      // memory is already allocated and there is a known cap on size.
-      value.setId(uniqueValues_.size() + 1);
-      uniqueValues_.insert(value);
+  void VectorHasher::copyStringToLocal(const UniqueValue* unique) {
+    auto size = unique->size();
+    if (size <= sizeof(int64_t)) {
+      return;
     }
-  } else {
-    distinctOverflow_ = true;
+    if (distinctStringsBytes_ > kMaxDistinctStringsBytes) {
+      distinctOverflow_ = true;
+      return;
+    }
+    if (uniqueValuesStorage_.empty()) {
+      uniqueValuesStorage_.emplace_back();
+      uniqueValuesStorage_.back().reserve(
+          std::max(kStringBufferUnitSize, size));
+      distinctStringsBytes_ += uniqueValuesStorage_.back().capacity();
+    }
+    auto str = &uniqueValuesStorage_.back();
+    if (str->size() + size > str->capacity()) {
+      uniqueValuesStorage_.emplace_back();
+      uniqueValuesStorage_.back().reserve(
+          std::max(kStringBufferUnitSize, size));
+      distinctStringsBytes_ += uniqueValuesStorage_.back().capacity();
+      str = &uniqueValuesStorage_.back();
+    }
+    auto start = str->size();
+    str->resize(start + size);
+    memcpy(str->data() + start, reinterpret_cast<char*>(unique->data()), size);
+    const_cast<UniqueValue*>(unique)->setData(
+        reinterpret_cast<int64_t>(str->data() + start));
   }
-}
 
-std::string VectorHasher::toString() const {
-  std::stringstream out;
-  out << "<VectorHasher type=" << type_->toString() << "  isRange_=" << isRange_
-      << " rangeSize= " << rangeSize_ << " min=" << min_ << " max=" << max_
-      << " multiplier=" << multiplier_
-      << " numDistinct=" << uniqueValues_.size() << ">";
-  return out.str();
-}
+  std::unique_ptr<common::Filter> VectorHasher::getFilter(bool nullAllowed)
+      const {
+    switch (typeKind_) {
+      case TypeKind::TINYINT:
+      case TypeKind::SMALLINT:
+      case TypeKind::INTEGER:
+      case TypeKind::BIGINT: {
+        if (!distinctOverflow_) {
+          std::vector<int64_t> values;
+          values.reserve(uniqueValues_.size());
+          for (const auto& value : uniqueValues_) {
+            values.emplace_back(value.data());
+          }
+
+          return common::createBigintValues(values, nullAllowed);
+        }
+      }
+      default:
+        // TODO Add support for strings.
+        return nullptr;
+    }
+  }
+
+  namespace {
+  template <typename T>
+  // Adds 'reserve' to either end of the range between 'min' and 'max' while
+  // staying in the range of T.
+  void extendRange(int64_t reserve, int64_t& min, int64_t& max) {
+    int64_t kMin = std::numeric_limits<T>::min();
+    int64_t kMax = std::numeric_limits<T>::max();
+    if (kMin + reserve + 1 > min) {
+      min = kMin;
+    } else {
+      min -= reserve;
+    }
+    if (kMax - reserve < max) {
+      max = kMax;
+    } else {
+      max += reserve;
+    }
+  }
+
+  // Adds 'reservePct' % to either end of the range between 'min' and 'max'
+  // while staying in the range of 'kind'.
+  void
+  extendRange(TypeKind kind, int32_t reservePct, int64_t& min, int64_t& max) {
+    // The reserve is 2 + reservePct % of the range. Add 2 to make sure
+    // that a non-0 peercentage actually adds something for a small
+    // range.
+    int64_t reserve =
+        reservePct == 0 ? 0 : 2 + (max - min) * (reservePct / 100.0);
+    switch (kind) {
+      case TypeKind::BOOLEAN:
+        break;
+      case TypeKind::TINYINT:
+        extendRange<int8_t>(reserve, min, max);
+        break;
+      case TypeKind::SMALLINT:
+        extendRange<int16_t>(reserve, min, max);
+        break;
+      case TypeKind::INTEGER:
+      case TypeKind::DATE:
+        extendRange<int32_t>(reserve, min, max);
+        break;
+      case TypeKind::BIGINT:
+      case TypeKind::VARCHAR:
+      case TypeKind::VARBINARY:
+        extendRange<int64_t>(reserve, min, max);
+        break;
+
+      default:
+        VELOX_FAIL("Unsupported VectorHasher typeKind {}", kind);
+    }
+  }
+
+  int64_t addIdReserve(size_t numDistinct, int32_t reservePct) {
+    // A merge of hashers in a hash join build may end up over the limit, so
+    // return that.
+    if (numDistinct > VectorHasher::kMaxDistinct) {
+      return numDistinct;
+    }
+    if (reservePct == VectorHasher::kNoLimit) {
+      return VectorHasher::kMaxDistinct;
+    }
+    return std::min<int64_t>(
+        VectorHasher::kMaxDistinct, numDistinct * (1 + (reservePct / 100.0)));
+  }
+  } // namespace
+
+  void VectorHasher::cardinality(
+      int32_t reservePct, uint64_t & asRange, uint64_t & asDistincts) {
+    if (typeKind_ == TypeKind::BOOLEAN) {
+      hasRange_ = true;
+      asRange = 3;
+      asDistincts = 3;
+      return;
+    }
+    int64_t signedRange;
+    if (!hasRange_ || rangeOverflow_) {
+      asRange = kRangeTooLarge;
+    } else if (__builtin_sub_overflow(max_, min_, &signedRange)) {
+      rangeOverflow_ = true;
+      asRange = kRangeTooLarge;
+    } else if (signedRange < kMaxRange) {
+      // We check that after the extension by reservePct the range of max - min
+      // will still be in int64_t bounds.
+      VELOX_CHECK_GE(100, reservePct);
+      static_assert(kMaxRange < std::numeric_limits<uint64_t>::max() / 4);
+      // We pad the range by 'reservePct'%, half below and half above,
+      // while staying within bounds of the type. We do not pad the
+      // limits yet, this is done only when enabling range mode.
+      int64_t min = min_;
+      int64_t max = max_;
+      extendRange(type_->kind(), reservePct, min, max);
+      asRange = (max - min) + 2;
+    } else {
+      rangeOverflow_ = true;
+      asRange = kRangeTooLarge;
+    }
+    if (distinctOverflow_) {
+      asDistincts = kRangeTooLarge;
+      return;
+    }
+    // Padded count of values + 1 for null.
+    asDistincts = addIdReserve(uniqueValues_.size(), reservePct) + 1;
+  }
+
+  uint64_t VectorHasher::enableValueIds(
+      uint64_t multiplier, int32_t reservePct) {
+    VELOX_CHECK_NE(
+        typeKind_,
+        TypeKind::BOOLEAN,
+        "A boolean VectorHasher should  always be by range");
+    multiplier_ = multiplier;
+    rangeSize_ = addIdReserve(uniqueValues_.size(), reservePct) + 1;
+    isRange_ = false;
+    uint64_t result;
+    if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
+      return kRangeTooLarge;
+    }
+    return result;
+  }
+
+  uint64_t VectorHasher::enableValueRange(
+      uint64_t multiplier, int32_t reservePct) {
+    multiplier_ = multiplier;
+    VELOX_CHECK_LE(0, reservePct);
+    VELOX_CHECK(hasRange_);
+    extendRange(type_->kind(), reservePct, min_, max_);
+    isRange_ = true;
+    // No overflow because max range is under 63 bits.
+    if (typeKind_ == TypeKind::BOOLEAN) {
+      rangeSize_ = 3;
+    } else {
+      rangeSize_ = (max_ - min_) + 2;
+    }
+    uint64_t result;
+    if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
+      return kRangeTooLarge;
+    }
+    return result;
+  }
+
+  void VectorHasher::copyStatsFrom(const VectorHasher& other) {
+    hasRange_ = other.hasRange_;
+    rangeOverflow_ = other.rangeOverflow_;
+    distinctOverflow_ = other.distinctOverflow_;
+
+    min_ = other.min_;
+    max_ = other.max_;
+    uniqueValues_ = other.uniqueValues_;
+  }
+
+  void VectorHasher::merge(const VectorHasher& other) {
+    if (typeKind_ == TypeKind::BOOLEAN) {
+      return;
+    }
+    if (other.empty()) {
+      return;
+    }
+    if (empty()) {
+      copyStatsFrom(other);
+      return;
+    }
+    if (hasRange_ && other.hasRange_ && !rangeOverflow_ &&
+        !other.rangeOverflow_) {
+      min_ = std::min(min_, other.min_);
+      max_ = std::max(max_, other.max_);
+    } else {
+      hasRange_ = false;
+      rangeOverflow_ = true;
+    }
+    if (!distinctOverflow_ && !other.distinctOverflow_) {
+      // Unique values can be merged without dispatch on type. All the
+      // merged hashers must stay live for string type columns.
+      for (UniqueValue value : other.uniqueValues_) {
+        // Assign a new id at end of range for the case 'value' is not
+        // in 'uniqueValues_'. We do not set overflow here because the
+        // memory is already allocated and there is a known cap on size.
+        value.setId(uniqueValues_.size() + 1);
+        uniqueValues_.insert(value);
+      }
+    } else {
+      distinctOverflow_ = true;
+    }
+  }
+
+  std::string VectorHasher::toString() const {
+    std::stringstream out;
+    out << "<VectorHasher type=" << type_->toString()
+        << "  isRange_=" << isRange_ << " rangeSize= " << rangeSize_
+        << " min=" << min_ << " max=" << max_ << " multiplier=" << multiplier_
+        << " numDistinct=" << uniqueValues_.size() << ">";
+    return out.str();
+  }
 
 } // namespace facebook::velox::exec
