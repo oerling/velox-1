@@ -56,6 +56,14 @@ HashTable<ignoreNullKeys>::HashTable(
   nextOffset_ = rows_->nextOffset();
 }
 
+struct ProbeContext {
+  char** table;
+  uint8_t* tags;
+  int32_t sizeMask;
+  int32_t groupsLoaded;
+  int32_t rowsLoaded;
+};
+  
 class ProbeState {
  public:
   enum class Operation { kProbe, kInsert, kErase };
