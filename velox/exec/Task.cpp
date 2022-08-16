@@ -151,14 +151,15 @@ Task::Task(
     auto tracker = memory::MemoryUsageTracker::create(
         memory::MemoryUsageConfigBuilder().maxTotalMemory(0).build());
     pool_->setMemoryUsageTracker(tracker);
-    tracker->setGrowCallback([&](memory::MemoryUsageTracker::UsageType type,
-                                 int64_t size,
-                                 memory::MemoryUsageTracker& /*limitingTracker*/) {
-      Driver* driver = thisDriver();
-      VELOX_CHECK(driver, "Allocating Task memory outside of Driver threads");
-      return driver->growTaskMemory(type, size);
-    });
-
+    tracker->setGrowCallback(
+        [&](memory::MemoryUsageTracker::UsageType type,
+            int64_t size,
+            memory::MemoryUsageTracker& /*limitingTracker*/) {
+          Driver* driver = thisDriver();
+          VELOX_CHECK(
+              driver, "Allocating Task memory outside of Driver threads");
+          return driver->growTaskMemory(type, size);
+        });
   }
   auto memoryUsageTracker = pool_->getMemoryUsageTracker();
   if (memoryUsageTracker) {
@@ -1513,8 +1514,8 @@ void Task::recover(int64_t size) {
     for (auto& driver : drivers_) {
       if (driver) {
         auto previous = tracker.getCurrentTotalBytes();
-	driver->spill(perDriver);
-	recovered += previous - tracker.getCurrentTotalBytes();
+        driver->spill(perDriver);
+        recovered += previous - tracker.getCurrentTotalBytes();
         if (recovered >= size) {
           break;
         }
@@ -1554,10 +1555,14 @@ bool TaskMemoryStrategy::recover(
   // Returns true if 'bytes' bytes can be transferred to 'requester' from
   // unused space in topTracker and/or recovered space from other consumers.
 
-  // The minimum amount by which a Task must shrink for a transfer of capacity to make sense. In practice, this is the minimum memory an operator must hold in order to be spillable.
+  // The minimum amount by which a Task must shrink for a transfer of capacity
+  // to make sense. In practice, this is the minimum memory an operator must
+  // hold in order to be spillable.
   constexpr int64_t kMinRecoverableBytes = 10 << 20;
 
-  // When running with memory arbitration, the initial reservation comes from the first action of the first Driver of the new Task. Therefore this is rounded up to at least 24MB per Task.
+  // When running with memory arbitration, the initial reservation comes from
+  // the first action of the first Driver of the new Task. Therefore this is
+  // rounded up to at least 24MB per Task.
   constexpr int64_t kInitialSize = 24 << 20;
   std::lock_guard<std::mutex> l(mutex_);
   Task* consumerTask = dynamic_cast<Task*>(requester.get());
@@ -1631,7 +1636,8 @@ bool TaskMemoryStrategy::recover(
       auto& taskTracker = task->tracker();
       auto previousBytes = taskTracker.maxTotalBytes();
       task->recover(bytesForRequester - recovered);
-      auto recoveredFromTask = previousBytes - taskTracker.getCurrentTotalBytes();
+      auto recoveredFromTask =
+          previousBytes - taskTracker.getCurrentTotalBytes();
       if (recoveredFromTask < kMinRecoverableBytes) {
         // Too little recovered. No change to limit.
         continue;

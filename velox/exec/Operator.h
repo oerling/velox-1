@@ -377,7 +377,8 @@ class Operator {
   }
 
   // Tries to shrink the memory footprint of 'this' by at least
-  // 'minMemoryToRecover' bytes. See the trackers of the different pools for the effect.
+  // 'minMemoryToRecover' bytes. See the trackers of the different pools for the
+  // effect.
   virtual void spill(int64_t /* minMemoryToRecover */) {}
 
   // Registers 'translator' for mapping user defined PlanNode subclass instances

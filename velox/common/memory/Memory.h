@@ -34,8 +34,8 @@
 #include "folly/experimental/FunctionScheduler.h"
 #include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/GTestMacros.h"
-#include "velox/common/memory/MemoryManagerStrategy.h"
 #include "velox/common/base/SuccinctPrinter.h"
+#include "velox/common/memory/MemoryManagerStrategy.h"
 #include "velox/common/memory/MemoryUsage.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
 
