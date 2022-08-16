@@ -18,6 +18,7 @@
 #include <boost/uuid/uuid_io.hpp>
 
 #include "velox/codegen/Codegen.h"
+#include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/CrossJoinBuild.h"
 #include "velox/exec/Exchange.h"
@@ -152,11 +153,20 @@ Task::Task(
     pool_->setMemoryUsageTracker(tracker);
     tracker->setGrowCallback([&](memory::MemoryUsageTracker::UsageType type,
                                  int64_t size,
-                                 memory::MemoryUsageTracker& limit) {
+                                 memory::MemoryUsageTracker& /*limitingTracker*/) {
       Driver* driver = thisDriver();
       VELOX_CHECK(driver, "Allocating Task memory outside of Driver threads");
-      return driver->growTaskMemory(type, size, limit);
+      return driver->growTaskMemory(type, size);
     });
+
+  }
+  auto memoryUsageTracker = pool_->getMemoryUsageTracker();
+  if (memoryUsageTracker) {
+    memoryUsageTracker->setMakeMemoryCapExceededMessage(
+        [&](memory::MemoryUsageTracker& tracker) {
+          VELOX_DCHECK(pool()->getMemoryUsageTracker().get() == &tracker);
+          return this->getErrorMsgOnMemCapExceeded(tracker);
+        });
   }
 }
 
@@ -1491,6 +1501,7 @@ void Task::recover(int64_t size) {
     return;
   }
   int64_t recovered = 0;
+  auto& tracker = *pool_->getMemoryUsageTracker();
   while (recovered < size) {
     // Per driver recovery target is 16MB + target / number of
     // drivers. Spilling less than 16MB makes no sense and a Driver
@@ -1498,17 +1509,19 @@ void Task::recover(int64_t size) {
     // practical scenario is how many full operators have to be
     // spilled to make the target.
     auto perDriver = (16 << 20) + ((size - recovered) / numDrivers);
-    auto initialRecovered = recovered;
+    auto lastRecovered = recovered;
     for (auto& driver : drivers_) {
       if (driver) {
-        recovered += driver->spill(perDriver);
+        auto previous = tracker.getCurrentTotalBytes();
+	driver->spill(perDriver);
+	recovered += previous - tracker.getCurrentTotalBytes();
         if (recovered >= size) {
           break;
         }
       }
     }
-    if (recovered == initialRecovered) {
-      // If nothing recovered, give up.
+    if (recovered == lastRecovered) {
+      // If nothing recovered in this sweep over drivers, give up.
       break;
     }
   }
@@ -1541,7 +1554,10 @@ bool TaskMemoryStrategy::recover(
   // Returns true if 'bytes' bytes can be transferred to 'requester' from
   // unused space in topTracker and/or recovered space from other consumers.
 
-  constexpr int64_t kMinTransfer = 2 << 20;
+  // The minimum amount by which a Task must shrink for a transfer of capacity to make sense. In practice, this is the minimum memory an operator must hold in order to be spillable.
+  constexpr int64_t kMinRecoverableBytes = 10 << 20;
+
+  // When running with memory arbitration, the initial reservation comes from the first action of the first Driver of the new Task. Therefore this is rounded up to at least 24MB per Task.
   constexpr int64_t kInitialSize = 24 << 20;
   std::lock_guard<std::mutex> l(mutex_);
   Task* consumerTask = dynamic_cast<Task*>(requester.get());
@@ -1556,17 +1572,17 @@ bool TaskMemoryStrategy::recover(
   if (consumerTask->state() != kRunning) {
     return false;
   }
-  int64_t minSize =
-      tracker.maxTotalBytes() < kMinTransfer ? kInitialSize : bytes;
+  int64_t bytesForRequester =
+      tracker.maxTotalBytes() < kMinRecoverableBytes ? kInitialSize : bytes;
   auto available =
       topTracker->maxTotalBytes() - topTracker->getCurrentUserBytes();
 
   // Allocation can be made from unallocated memory.
-  if (minSize <= available) {
-    if (maybeUpdate(minSize, *topTracker)) {
-      setLimit(tracker.maxTotalBytes() + minSize, tracker);
+  if (bytesForRequester <= available) {
+    if (maybeUpdate(bytesForRequester, *topTracker)) {
+      setLimit(tracker.maxTotalBytes() + bytesForRequester, tracker);
       VLOG(1) << fmt::format(
-          "{} gets {} from unused", consumerTask->taskId(), minSize);
+          "{} gets {} from unused", consumerTask->taskId(), bytesForRequester);
       return true;
     }
   }
@@ -1581,7 +1597,7 @@ bool TaskMemoryStrategy::recover(
         auto size = otherTask->tracker().getCurrentTotalBytes();
         if (size > kInitialSize) {
           auto recoverable = otherTask->recoverableMemory();
-          if (recoverable >= kMinTransfer) {
+          if (recoverable >= kMinRecoverableBytes) {
             candidates.push_back({ptr, otherTask, recoverable});
             available += candidates.back().available;
           }
@@ -1589,7 +1605,7 @@ bool TaskMemoryStrategy::recover(
       }
     }
   }
-  if (available < minSize) {
+  if (available < bytesForRequester) {
     return false;
   }
   std::sort(
@@ -1599,9 +1615,8 @@ bool TaskMemoryStrategy::recover(
         // Most available first.
         return left.available > right.available;
       });
-  int64_t sizeToGo = minSize;
   int64_t recovered = 0;
-  std::vector<std::shared_ptr<Task>> paused;
+  std::vector<std::shared_ptr<Task>> pausedTasks;
   for (auto& candidate : candidates) {
     if (auto& task = candidate.task) {
       auto future = task->requestPause(true);
@@ -1611,47 +1626,45 @@ bool TaskMemoryStrategy::recover(
         continue;
       }
       VELOX_CHECK_EQ(0, task->numThreads());
-      paused.push_back(std::static_pointer_cast<Task>(candidate.consumer));
+      pausedTasks.push_back(std::static_pointer_cast<Task>(candidate.consumer));
 
       auto& taskTracker = task->tracker();
-      auto preUsage = taskTracker.maxTotalBytes();
-      task->recover(sizeToGo);
-      auto postUsage = taskTracker.getCurrentTotalBytes();
-      auto delta = preUsage - postUsage;
-      if (delta < kMinTransfer) {
-        // Too little reclaimed. No change to limit.
+      auto previousBytes = taskTracker.maxTotalBytes();
+      task->recover(bytesForRequester - recovered);
+      auto recoveredFromTask = previousBytes - taskTracker.getCurrentTotalBytes();
+      if (recoveredFromTask < kMinRecoverableBytes) {
+        // Too little recovered. No change to limit.
         continue;
       }
-      delta = roundDown(delta, kMinTransfer);
+      recovered = roundDown(recoveredFromTask, kMinRecoverableBytes);
       VLOG(1) << fmt::format(
           "{} drops limit by {} to {}",
           task->taskId(),
-          delta,
-          taskTracker.maxTotalBytes() - delta);
-      setLimit(taskTracker.maxTotalBytes() - delta, taskTracker);
-      recovered += delta;
+          recovered,
+          taskTracker.maxTotalBytes() - recovered);
+      setLimit(taskTracker.maxTotalBytes() - recoveredFromTask, taskTracker);
 
-      if (recovered >= minSize) {
+      recovered += recoveredFromTask;
+      if (recovered >= bytesForRequester) {
         break;
       }
-      sizeToGo -= delta;
     }
   }
-  bool success = recovered >= minSize;
+  bool success = recovered >= bytesForRequester;
   // Updating downward, no throw.
   if (success) {
-    topTracker->update(minSize - recovered);
+    topTracker->update(bytesForRequester - recovered);
     VLOG(1) << fmt::format(
         "{} increases limit by {} to {}",
         consumerTask->taskId(),
-        minSize,
-        tracker.maxTotalBytes() + minSize);
-    setLimit(tracker.maxTotalBytes() + minSize, tracker);
+        bytesForRequester,
+        tracker.maxTotalBytes() + bytesForRequester);
+    setLimit(tracker.maxTotalBytes() + bytesForRequester, tracker);
   } else {
     topTracker->update(-recovered);
   }
 
-  for (auto& task : paused) {
+  for (auto& task : pausedTasks) {
     if (task->state() == TaskState::kRunning) {
       Task::resume(task);
     }
@@ -1870,5 +1883,88 @@ void Task::TaskCompletionNotifier::notify() {
 
     active_ = false;
   }
+}
+
+std::string Task::getErrorMsgOnMemCapExceeded(
+    memory::MemoryUsageTracker& tracker) {
+  std::stringstream out;
+  out << "Task total: " << succinctBytes(tracker.getCurrentTotalBytes())
+      << " Peak: " << succinctBytes(tracker.getPeakTotalBytes()) << ".";
+  // Aggregate relevant metrics for each operator across all drivers.
+  struct MemoryUsageStats {
+    int operatorId{0};
+    std::string operatorType;
+    int64_t cumulativeTotalBytes{0};
+    int64_t peakTotalBytes{0};
+    int numInstances{0};
+
+    MemoryUsageStats() = default;
+    explicit MemoryUsageStats(Operator* op) {
+      operatorId = op->stats().operatorId;
+      operatorType = op->stats().operatorType;
+    }
+
+    void add(const std::shared_ptr<memory::MemoryUsageTracker>& tracker) {
+      this->cumulativeTotalBytes += tracker->getCurrentTotalBytes();
+      this->peakTotalBytes =
+          std::max(this->peakTotalBytes, tracker->getPeakTotalBytes());
+      this->numInstances++;
+    }
+  };
+  std::unordered_map<int32_t, MemoryUsageStats> operatorStats;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    for (auto& driver : drivers_) {
+      if (!driver) {
+        continue;
+      }
+      auto operators = driver->operators();
+      for (auto op : operators) {
+        auto it = operatorStats.find(op->stats().operatorId);
+        if (it == operatorStats.end()) {
+          it = operatorStats
+                   .insert({op->stats().operatorId, MemoryUsageStats(op)})
+                   .first;
+        }
+        it->second.add(op->pool()->getMemoryUsageTracker());
+      }
+    }
+  }
+  std::vector<MemoryUsageStats> operatorStatsArray;
+  operatorStatsArray.reserve(operatorStats.size());
+  for (auto& [operatorId, stats] : operatorStats) {
+    operatorStatsArray.push_back(std::move(stats));
+  }
+  static auto compareByCumulativeTotalBytes =
+      [](const MemoryUsageStats& left, const MemoryUsageStats& right) {
+        return left.cumulativeTotalBytes > right.cumulativeTotalBytes;
+      };
+  // Get the top 3.
+  if (operatorStatsArray.size() > 3) {
+    std::nth_element(
+        operatorStatsArray.begin(),
+        operatorStatsArray.begin() + 2,
+        operatorStatsArray.end(),
+        compareByCumulativeTotalBytes);
+    operatorStatsArray.resize(3);
+  }
+  std::sort(
+      operatorStatsArray.begin(),
+      operatorStatsArray.end(),
+      compareByCumulativeTotalBytes);
+  out << " Top " << operatorStatsArray.size()
+      << " Operators (by aggregate usage across all drivers): ";
+  int remainingStatsToAdd = operatorStatsArray.size();
+  for (auto& stats : operatorStatsArray) {
+    out << stats.operatorType << "_#" << stats.operatorId << "_x"
+        << stats.numInstances << ": "
+        << succinctBytes(stats.cumulativeTotalBytes)
+        << " Peak: " << succinctBytes(stats.peakTotalBytes);
+    remainingStatsToAdd--;
+    if (remainingStatsToAdd > 0) {
+      out << ", ";
+    }
+  }
+  return out.str();
 }
 } // namespace facebook::velox::exec

@@ -253,6 +253,9 @@ class Driver : public std::enable_shared_from_this<Driver> {
   // build by id.
   Operator* FOLLY_NULLABLE findOperator(std::string_view planNodeId) const;
 
+  // Returns a list of all operators.
+  std::vector<Operator*> operators() const;
+
   void setError(std::exception_ptr exception);
 
   std::string toString();
@@ -263,33 +266,18 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   // Checks terminate in Task and throws if needed.
   void checkTerminate();
+  // Tries to spill 'size' or more bytes of memory from any
+  // of the operators in 'this'. The effect is seen in the tracker of the Task
+  // of 'this'. 'this' must be off thread or in a suspended state.
+  void spill(int64_t size);
 
-  // Requests 'size' bytes of memory from the process memory manager,
-  // to be added to the limit of 'tracker'. If tracker is
-  // revocable and there is no ready supply, the reservation may be
-  // unchanged. If tracker is not revocable, the allocation will be
-  // made or an error is thrown. This must be called while on thread in a thread
-  // of the Task of 'this'. Returns true if the
-  // limit was increased.
-  bool reserveMemory(memory::MemoryUsageTracker* tracker, int64_t size);
-
-  // Tries to spill 'size' or more bytes of revocable memory from any
-  // of the operators in 'this'. Returns the amount of memory
-  // freed. 'this' must be off thread or in a suspended state.
-  int64_t spill(int64_t size);
-
-  // Attempts to increase the limit of 'tracker' by 'size'.  If 'type'
-  // is kRecoverable then this may fail to increase the limit if the
-  // limit is already high and there is no extra available. If 'type'
-  // is not 'kRecoverable' then this will make a serious effort to
-  // raise the limit, including spilling other queries and will fail
-  // only if this really was not possible. Returns true if the limit
-  // was raised by at least 'size'. The caller must be a thread of the Task of
-  // 'this'.
-  bool growTaskMemory(
-      memory::MemoryUsageTracker::UsageType type,
-      int64_t size,
-      memory::MemoryUsageTracker& tracker);
+  // Attempts to increase the limit of the tracker of the Task of
+  // 'this' by 'size'. this will make a serious effort to raise the
+  // limit, including spilling other queries and will fail only if
+  // this really was not possible. Returns true if the limit was
+  // raised by at least 'size'. The caller must be a thread of the
+  // Task of 'this'.
+  bool growTaskMemory(memory::MemoryUsageTracker::UsageType type, int64_t size);
 
   // Returns an estimate of the bytes that can be recovered by spill().
   int64_t recoverableMemory() const;

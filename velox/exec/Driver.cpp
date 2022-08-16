@@ -590,6 +590,15 @@ Driver::findOperator(std::string_view planNodeId) const {
   return nullptr;
 }
 
+std::vector<Operator*> Driver::operators() const {
+  std::vector<Operator*> operators;
+  operators.reserve(operators_.size());
+  for (auto& op : operators_) {
+    operators.push_back(op.get());
+  }
+  return operators;
+}
+
 void Driver::setError(std::exception_ptr exception) {
   task()->setError(exception);
 }
@@ -639,14 +648,14 @@ int64_t Driver::recoverableMemory() const {
 }
 
 bool Driver::growTaskMemory(
-    memory::MemoryUsageTracker::UsageType type,
-    int64_t size,
-    memory::MemoryUsageTracker& tracker) {
+			    memory::MemoryUsageTracker::UsageType type,
+    int64_t size) {
   bool result;
+  auto& tracker = *ctx_->task->pool()->getMemoryUsageTracker();
   SuspendedSection::suspended(this, [&]() {
     auto current = tracker.totalReservedBytes();
     auto limit = tracker.maxTotalBytes();
-    if (current < limit) {
+    if (current + size < limit) {
       result = true;
       return;
     }
@@ -655,23 +664,23 @@ bool Driver::growTaskMemory(
   return result;
 }
 
-int64_t Driver::spill(int64_t size) {
-  int64_t spilled = 0;
-  if (size > 0) {
-    // Prefer to spill last operator first, e.g. group by should spill
+  void Driver::spill(int64_t size) {
+    auto& tracker = *ctx_->task->pool()->getMemoryUsageTracker();
+    if (size > 0) {
+      // Prefer to spill last operator first, e.g. group by should spill
     // before a colocated hash probe. Most often there will only be
     // one spillable operator.
-    for (int32_t i = operators_.size() - 1; i >= 0; --i) {
+      int64_t spilled = 0;
+      for (int32_t i = operators_.size() - 1; i >= 0; --i) {
       auto op = operators_[i].get();
-      auto spilledByOp = op->spill(std::max(size - spilled, int64_t{}));
-      VELOX_CHECK_LE(0, spilledByOp, "Negative spilled size");
-      spilled += spilledByOp;
+      auto previous = tracker.getCurrentTotalBytes();
+      op->spill(std::max(size - spilled, int64_t{}));
+      spilled += previous - tracker.getCurrentTotalBytes();
       if (spilled >= size) {
         break;
       }
     }
   }
-  return spilled;
 }
 
 std::string blockingReasonToString(BlockingReason reason) {

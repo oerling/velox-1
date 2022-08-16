@@ -251,14 +251,7 @@ class Operator {
       std::shared_ptr<const RowType> outputType,
       int32_t operatorId,
       std::string planNodeId,
-      std::string operatorType)
-      : operatorCtx_(std::make_unique<OperatorCtx>(driverCtx)),
-        stats_(
-            operatorId,
-            driverCtx->pipelineId,
-            std::move(planNodeId),
-            std::move(operatorType)),
-        outputType_(std::move(outputType)) {}
+      std::string operatorType);
 
   virtual ~Operator() = default;
 
@@ -374,7 +367,7 @@ class Operator {
   bool reserveAndRun(
       const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
       int64_t quotaSize,
-      std::function<int64_t(int64_t)> spillFunc,
+      std::function<void(int64_t)> spillFunc,
       std::function<void(void)> runFunc);
 
   // Returns an estimate of the maximum number of bytes that could be
@@ -384,12 +377,8 @@ class Operator {
   }
 
   // Tries to shrink the memory footprint of 'this' by at least
-  // 'minMemoryToRecover' bytes. Returns the approximate amount that
-  // was freed. The trackers of the different pools will have
-  // represent the actual state.
-  virtual int64_t spill(int64_t /* minMemoryToRecover */) {
-    return 0;
-  }
+  // 'minMemoryToRecover' bytes. See the trackers of the different pools for the effect.
+  virtual void spill(int64_t /* minMemoryToRecover */) {}
 
   // Registers 'translator' for mapping user defined PlanNode subclass instances
   // to user-defined Operators.

@@ -37,8 +37,8 @@ class MemoryConsumer {
   virtual int64_t recoverableMemory() const = 0;
 
   //  Recovers memory. Implementations may for example spill or evict
-  //  caches.  size specifies a target number of bytes to recover. The
-  //  actual effect on memory usage isseen in tracker(). This does not
+  //  caches. 'size' specifies a target number of bytes to recover. The
+  //  actual effect on memory usage is seen in tracker(). This does not
   //  guarantee any result. Implementations have additional
   //  requirements for using this method, e.g. a Task must be paused.
   virtual void recover(int64_t size) = 0;

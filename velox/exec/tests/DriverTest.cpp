@@ -870,7 +870,7 @@ class TestingConsumer : public Operator {
             size,
             [this](int64_t size) {
               LOG(INFO) << "Spiller called: " << size;
-              return spill(size);
+              spill(size);
             },
             [&]() {
               // Use the reserved memory.
@@ -896,11 +896,10 @@ class TestingConsumer : public Operator {
     return recoverableTracker_->getCurrentUserBytes() / 3;
   }
 
-  int64_t spill(int64_t size) override {
+  void spill(int64_t size) override {
     int64_t freed = std::min(size, recoverableTracker_->getCurrentUserBytes());
     recoverableTracker_->update(-freed);
     recoverableTracker_->release();
-    return freed;
   }
 
   void close() override {
