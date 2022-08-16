@@ -364,6 +364,10 @@ class Operator {
     return stats_.planNodeId;
   }
 
+  // Tries to increase the reservation of 'tracker' by 'size'. If
+  // successful, calls 'runFunc'. If the reservation fails, calls
+  // 'spillFunc' and tries again. If the reservation fails, the second
+  // time, returns false, else true.
   bool reserveAndRun(
       const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
       int64_t quotaSize,
