@@ -238,6 +238,18 @@ class ProbeState;
 template <bool ignoreNullKeys>
 class HashTable : public BaseHashTable {
  public:
+  // Enables debug stats for collisions. Should be false for normal operation.
+  static constexpr kTrackCollisions = true;
+
+  // If true, tags and pointers to payload are interleaved (16x8 bit
+  // tags, 16*48bit pointers) like in F14. If false, tags and pointers
+  // are stored in separate arrays (like absl Swiss table)
+  static constexpr kInterleaveRows = false;
+
+  // size of a group of 16 tags and 16 48-bit pointers to the
+  // corresponding rows. Applies to interleaved mode.
+  static constexpr uint64_t kTagRowGroupSize = 128;
+
   // Can be used for aggregation or join. An aggregation hash table
   // can also double as a join build side. 'isJoinBuild' is true if
   // this is a build side. 'allowDuplicates' is false for a build side if
@@ -361,7 +373,13 @@ class HashTable : public BaseHashTable {
 
   std::string toString() override;
 
+
+  
  private:
+  // When interleaving tags ad pointers we store 48 bits per pointer.
+  static constexpr int32_t kBytesInPointer = 6;
+  constexpr uint64_t kPointerMask = bits::lowMask(8 * kBytesInPointer);
+  
   // Returns the number of entries after which the table gets rehashed.
   uint64_t rehashSize() const {
     // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
@@ -476,7 +494,43 @@ class HashTable : public BaseHashTable {
     return isJoinBuild_ ? 0 : 50;
   }
 
-  const std::vector<std::unique_ptr<Aggregate>>& aggregates_;
+  // Sets the size and dependent bit masks. The size must be a power
+  // of two and gives the number of tag bytes and the corresponding
+  // row pointers in the table.
+  void setSize(int32_t size) {
+    size_ = size;
+    if (kInterleaveWords) {
+      sizeMask_ = (size_ * sizeof(void*))  - 1;
+      sizeBits_ = __builtin_popcountll(sizeMask_);
+      tagOffsetMask_ = sizeMask_ & ~kTagRowGroupSize;
+    } else {
+      sizeMask_ = size_ - 1;
+      sizeBits_ = __builtin_popcountll(sizeMask_);
+      tagOffsetMask_ = sizeMask_ & ~sizeof(TagWord);
+    }
+  
+  // Returns the offset in bytes of the tag word for 'hash'. The offset is from 'tags_'.
+  int32_t tagVectorOffset(uint64_t hash) const {
+    return hash & tagOffsetMask_;
+  }
+
+  // Returns the offset of the next tag vector from 'offset'. Wraps around at the end of the table.
+  int32_t nextTagVectorOffset(int32_t offset) {
+    return sizeMask_ & (offset + kInterleavedRows  ? kTagRowGroupSize: sizeof(TagVector));
+  }
+  TagVector loadTags(int32_t tagIndex) {
+    return::TagVector::load_unaligned(tagIndex);
+  }
+
+  // Returns the pointer for the 'tagIndex'th tag in the tag vector at offset 'tagVectorOffset'.
+  char* row(int32_t tagVectorOffset, int32_t tagIndex) {
+    if (kInterleavedRows) {
+      return reinterpret_cast<char*>(kPointerMask & *reinterpret_cast<uint64_t*>(tags_ + tagVectorOffset + kBytesInPointer * tagIndex));
+    }
+    return table_[tagIndex];
+  }
+
+  std::vector<std::unique_ptr<Aggregate>>& aggregates_;
   int8_t sizeBits_;
   bool isJoinBuild_ = false;
 
@@ -484,6 +538,9 @@ class HashTable : public BaseHashTable {
   // that the join can be cardinality increasing.
   bool hasDuplicates_ = false;
 
+  // True if tombstones need to be checked. An erase from a group with no empties makes a tombstone.
+  bool hasTombstones_{false};
+  
   // Offset of next row link for join build side, 0 if none. Copied
   // from 'rows_'.
   int32_t nextOffset_;
@@ -492,11 +549,29 @@ class HashTable : public BaseHashTable {
   memory::MappedMemory::ContiguousAllocation tableAllocation_;
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
+
+  // Mask to and to hash number to get offset of the corresponding
+  // tag vector from the start of the tag vectors array. For
+  // interleaved mode, the offset is in the combined tags/row pointers
+  // array.
+  int64_t tagOffsetMask_{0};
   int64_t numDistinct_ = 0;
   HashMode hashMode_ = HashMode::kArray;
   // Owns the memory of multiple build side hash join tables that are
   // combined into a single probe hash table.
   std::vector<std::unique_ptr<HashTable<ignoreNullKeys>>> otherTables_;
+  // Statistics maintained if kTrackCollisions is set.
+  
+  // Number of times a row is looked up or inserted.
+  mutable int64_t numProbe_;
+
+  // Number of times a word of 16 tags is accessed. at least once per probe.
+  mutable int64_t numTagLoad_;
+
+  // Number of times a row of payload is accessed. At leadst once per hit.
+  mutable int64_t numRowLoad_;
+  
+  friend class ProbeState;
 };
 
 } // namespace facebook::velox::exec

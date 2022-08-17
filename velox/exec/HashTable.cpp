@@ -56,7 +56,8 @@ HashTable<ignoreNullKeys>::HashTable(
   nextOffset_ = rows_->nextOffset();
 }
 
-struct ProbeContext {
+  template <bool ignoreNullKeys>
+  struct ProbeContext {
   char** table;
   uint8_t* tags;
   int32_t sizeMask;
@@ -80,21 +81,18 @@ class ProbeState {
   static constexpr uint8_t kTombstoneTag = 0x7f;
   static constexpr int32_t kFullMask = 0xffff;
 
-  static inline int32_t tagsByteOffset(uint64_t hash, uint64_t sizeMask) {
-    return (hash & sizeMask) & ~(sizeof(BaseHashTable::TagVector) - 1);
-  }
-
   int32_t row() const {
     return row_;
   }
 
   // Use one instruction to load 16 tags
   // Use another instruction to make 16 copies of the tag being searched for
+  template <typename Table>
   inline void
-  preProbe(uint8_t* tags, uint64_t sizeMask, uint64_t hash, int32_t row) {
+  preProbe(const table& table, uint64_t sizeMask, uint64_t hash, int32_t row) {
     row_ = row;
-    tagIndex_ = tagsByteOffset(hash, sizeMask);
-    tagsInTable_ = BaseHashTable::loadTags(tags, tagIndex_);
+    tagIndex_ = table.tagVectorOffset(hash);
+    tagsInTable_ = BaseHashTable::loadTags(table.tags_, tagIndex_);
     auto tag = BaseHashTable::hashTag(hash);
     wantedTags_ = BaseHashTable::TagVector::broadcast(tag);
     group_ = nullptr;
@@ -103,19 +101,17 @@ class ProbeState {
 
   // Use one instruction to compare the tag being searched for to 16 tags
   // If there is a match, load corresponding data from the table
-  template <Operation op = Operation::kProbe>
-  inline void firstProbe(char** table, int32_t firstKey) {
+  template <Operation op = Operation::kProbe, typename Table>
+  inline void firstProbe(const Table&table, int32_t firstKey) {
     hits_ = simd::toBitMask(tagsInTable_ == wantedTags_);
     if (hits_) {
       loadNextHit<op>(table, firstKey);
     }
   }
 
-  template <Operation op, typename Compare, typename Insert>
+  template <Operation op, typename Compare, typename Insert, typename Table>
   inline char* FOLLY_NULLABLE fullProbe(
-      uint8_t* tags,
-      char** table,
-      uint64_t sizeMask,
+					Table& hashTable,
       int32_t firstKey,
       Compare compare,
       Insert insert,
@@ -129,7 +125,7 @@ class ProbeState {
 
     auto alreadyChecked = group_;
     if (extraCheck) {
-      tagsInTable_ = BaseHashTable::loadTags(tags, tagIndex_);
+      tagsInTable_ = table.loadTags(tagIndex_);
       hits_ = simd::toBitMask(tagsInTable_ == wantedTags_);
     }
 
@@ -140,7 +136,7 @@ class ProbeState {
     for (;;) {
       if (!hits_) {
         uint16_t empty =
-            simd::toBitMask(tagsInTable_ == kEmptyGroup) & kFullMask;
+            simd::toBitMask(tagsInTable_ == kEmptyGroup);
         if (empty) {
           if (op == Operation::kProbe) {
             return nullptr;
@@ -158,7 +154,7 @@ class ProbeState {
         } else if (op == Operation::kInsert && indexInTags_ == kNotSet) {
           // We passed through a full group.
           uint16_t tombstones =
-              simd::toBitMask(tagsInTable_ == kTombstoneGroup) & kFullMask;
+              simd::toBitMask(tagsInTable_ == kTombstoneGroup);
           if (tombstones) {
             insertTagIndex = tagIndex_;
             indexInTags_ = bits::getAndClearLastSetBit(tombstones);
@@ -169,13 +165,13 @@ class ProbeState {
         if (!(extraCheck && group_ == alreadyChecked) &&
             compare(group_, row_)) {
           if (op == Operation::kErase) {
-            eraseHit(tags);
+            eraseHit(table.tags_);
           }
           return group_;
         }
         continue;
       }
-      tagIndex_ = (tagIndex_ + sizeof(BaseHashTable::TagVector)) & sizeMask;
+      tagIndex_ = table.nextTagOffset(tagIndex_);
       tagsInTable_ = BaseHashTable::loadTags(tags, tagIndex_);
       hits_ = simd::toBitMask(tagsInTable_ == wantedTags_) & kFullMask;
     }
@@ -213,8 +209,8 @@ class ProbeState {
  private:
   static constexpr uint8_t kNotSet = 0xff;
 
-  template <Operation op>
-  inline void loadNextHit(char** table, int32_t firstKey) {
+  template <Operation op, typename Table>
+  inline void loadNextHit(Table& table, int32_t firstKey) {
     int32_t hit = bits::getAndClearLastSetBit(hits_);
 
     if (op == Operation::kErase) {
@@ -267,6 +263,13 @@ void HashTable<ignoreNullKeys>::storeRowPointer(
     char* row) {
   if (hashMode_ != HashMode::kArray) {
     tags_[index] = hashTag(hash);
+    if (kInterleavedRows) {
+      int index = tagIndex & (sizeof(TagVector) - 1);
+      uint64_t* pointer = tags_ + tagIndex + (kBytesInPointer * index); 
+      auto previous = *pointer & ~kPointerMask;
+      *pointer = reinterpret_cast<uint64_t>(row) | previous;
+      return;
+    }
   }
   table_[index] = row;
 }
@@ -595,9 +598,7 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   VELOX_CHECK(bits::isPowerOfTwo(size), "Size is not a power of two: {}", size);
   if (size > 0) {
-    size_ = size;
-    sizeMask_ = size_ - 1;
-    sizeBits_ = __builtin_popcountll(sizeMask_);
+    setSize(size);
     constexpr auto kPageSize = memory::MappedMemory::kPageSize;
     // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
     // tags table.
