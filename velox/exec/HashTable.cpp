@@ -56,15 +56,15 @@ HashTable<ignoreNullKeys>::HashTable(
   nextOffset_ = rows_->nextOffset();
 }
 
-  template <bool ignoreNullKeys>
-  struct ProbeContext {
+template <bool ignoreNullKeys>
+struct ProbeContext {
   char** table;
   uint8_t* tags;
   int32_t sizeMask;
   int32_t groupsLoaded;
   int32_t rowsLoaded;
 };
-  
+
 class ProbeState {
  public:
   enum class Operation { kProbe, kInsert, kErase };
@@ -102,7 +102,7 @@ class ProbeState {
   // Use one instruction to compare the tag being searched for to 16 tags
   // If there is a match, load corresponding data from the table
   template <Operation op = Operation::kProbe, typename Table>
-  inline void firstProbe(const Table&table, int32_t firstKey) {
+  inline void firstProbe(const Table& table, int32_t firstKey) {
     hits_ = simd::toBitMask(tagsInTable_ == wantedTags_);
     if (hits_) {
       loadNextHit<op>(table, firstKey);
@@ -111,7 +111,7 @@ class ProbeState {
 
   template <Operation op, typename Compare, typename Insert, typename Table>
   inline char* FOLLY_NULLABLE fullProbe(
-					Table& hashTable,
+      Table& hashTable,
       int32_t firstKey,
       Compare compare,
       Insert insert,
@@ -135,8 +135,7 @@ class ProbeState {
     const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(0);
     for (;;) {
       if (!hits_) {
-        uint16_t empty =
-            simd::toBitMask(tagsInTable_ == kEmptyGroup);
+        uint16_t empty = simd::toBitMask(tagsInTable_ == kEmptyGroup);
         if (empty) {
           if (op == Operation::kProbe) {
             return nullptr;
@@ -191,13 +190,13 @@ class ProbeState {
         uint16_t empty =
             simd::toBitMask(tagsInTable_ == kEmptyGroup) & kFullMask;
         if (empty) {
-            return nullptr;
-	}
+          return nullptr;
+        }
       } else {
         loadNextHit<Operation::kProbe>(table, 0);
-	if (RowContainer::normalizedKey(group_) == keys[row_]) {
-	  return group_;
-	}
+        if (RowContainer::normalizedKey(group_) == keys[row_]) {
+          return group_;
+        }
         continue;
       }
       tagIndex_ = (tagIndex_ + sizeof(BaseHashTable::TagVector)) & sizeMask;
@@ -205,7 +204,7 @@ class ProbeState {
       hits_ = simd::toBitMask(tagsInTable_ == wantedTags_) & kFullMask;
     }
   }
-  
+
  private:
   static constexpr uint8_t kNotSet = 0xff;
 
@@ -265,7 +264,7 @@ void HashTable<ignoreNullKeys>::storeRowPointer(
     tags_[index] = hashTag(hash);
     if (kInterleavedRows) {
       int index = tagIndex & (sizeof(TagVector) - 1);
-      uint64_t* pointer = tags_ + tagIndex + (kBytesInPointer * index); 
+      uint64_t* pointer = tags_ + tagIndex + (kBytesInPointer * index);
       auto previous = *pointer & ~kPointerMask;
       *pointer = reinterpret_cast<uint64_t>(row) | previous;
       return;
@@ -366,10 +365,10 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::fullProbe(
 }
 
 namespace {
-  // Normalized keys have non0-random bits. Bits need to be propagated
-  // up to make a tag byte and down so that non-lowest bits of
-  // normalized key affect the hash table index.
-  inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
+// Normalized keys have non0-random bits. Bits need to be propagated
+// up to make a tag byte and down so that non-lowest bits of
+// normalized key affect the hash table index.
+inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
   constexpr uint64_t prime1 = 0xc6a4a7935bd1e995UL; // M from Murmurhash.
   constexpr uint64_t prime2 = 527729;
   constexpr uint64_t prime3 = 28047;
@@ -571,19 +570,24 @@ void HashTable<ignoreNullKeys>::joinNormalizedKeyProbe(HashLookup& lookup) {
     state2.firstProbe(table_, 0);
     state3.firstProbe(table_, 0);
     state4.firstProbe(table_, 0);
-    hits[state1.row()] = state1.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
-    hits[state2.row()] = state2.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
-    hits[state3.row()] = state3.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
-    hits[state4.row()] = state4.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state1.row()] =
+        state1.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state2.row()] =
+        state2.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state3.row()] =
+        state3.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state4.row()] =
+        state4.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
   }
   for (; probeIndex < numProbes; ++probeIndex) {
     int32_t row = rows[probeIndex];
     state1.preProbe(tags_, sizeMask_, lookup.hashes[row], row);
     state1.firstProbe(table_, 0);
-    hits[row] = state1.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[row] =
+        state1.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
   }
 }
-  
+
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::initializeNewGroups(HashLookup& lookup) {
   if (lookup.newGroups.empty()) {
