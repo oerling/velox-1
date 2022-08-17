@@ -37,10 +37,16 @@ class DirectDecoder : public IntDecoder<isSigned> {
 
   void skip(uint64_t numValues) override;
 
-  void next(int64_t* data, uint64_t numValues, const uint64_t* nulls) override;
+  void next(
+      int64_t* FOLLY_NONNULL data,
+      uint64_t numValues,
+      const uint64_t* FOLLY_NULLABLE nulls) override;
 
   template <bool hasNulls>
-  inline void skip(int32_t numValues, int32_t current, const uint64_t* nulls) {
+  inline void skip(
+      int32_t numValues,
+      int32_t current,
+      const uint64_t* FOLLY_NULLABLE nulls) {
     if (!numValues) {
       return;
     }
@@ -51,7 +57,7 @@ class DirectDecoder : public IntDecoder<isSigned> {
   }
 
   template <bool hasNulls, typename Visitor>
-  void readWithVisitor(const uint64_t* nulls, Visitor visitor) {
+  void readWithVisitor(const uint64_t* FOLLY_NULLABLE nulls, Visitor visitor) {
     if (dwio::common::useFastPath<Visitor, hasNulls>(visitor)) {
       fastPath<hasNulls>(nulls, visitor);
       return;
@@ -117,7 +123,7 @@ class DirectDecoder : public IntDecoder<isSigned> {
   // *temp and temp is returned.
   const void* FOLLY_NONNULL readFixed(int32_t size, void* FOLLY_NONNULL temp) {
     auto ptr = super::bufferStart;
-    if (ptr + size <= super::bufferEnd) {
+    if (ptr && ptr + size <= super::bufferEnd) {
       super::bufferStart += size;
       return ptr;
     }
@@ -131,7 +137,7 @@ class DirectDecoder : public IntDecoder<isSigned> {
   }
 
   template <bool hasNulls, typename Visitor>
-  void fastPath(const uint64_t* nulls, Visitor& visitor) {
+  void fastPath(const uint64_t* FOLLY_NULLABLE nulls, Visitor& visitor) {
     using T = typename Visitor::DataType;
     constexpr bool hasFilter =
         !std::is_same<typename Visitor::FilterType, velox::common::AlwaysTrue>::

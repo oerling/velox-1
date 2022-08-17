@@ -2558,15 +2558,42 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
 }
 
 TEST_F(DateTimeFunctionsTest, dateParse) {
-  EXPECT_EQ(Timestamp(86400, 0), dateParse("1970-01-02", "%Y-%m-%d"));
-  EXPECT_EQ(Timestamp(0, 0), dateParse("1970-01-01", "%Y-%m-%d"));
-
   // Check null behavior.
   EXPECT_EQ(std::nullopt, dateParse("1970-01-01", std::nullopt));
-  EXPECT_EQ(std::nullopt, dateParse(std::nullopt, "%Y-%m-%d"));
+  EXPECT_EQ(std::nullopt, dateParse(std::nullopt, "YYYY-MM-dd"));
   EXPECT_EQ(std::nullopt, dateParse(std::nullopt, std::nullopt));
 
-  // Ensure it throws.
-  EXPECT_THROW(dateParse("", ""), VeloxUserError);
-  EXPECT_THROW(dateParse("1999-01-01-Jan", "%Y-%m-%d-%M"), VeloxUserError);
+  // Simple tests. More exhaustive tests are provided in DateTimeFormatterTest.
+  EXPECT_EQ(Timestamp(86400, 0), dateParse("1970-01-02", "%Y-%m-%d"));
+  EXPECT_EQ(Timestamp(0, 0), dateParse("1970-01-01", "%Y-%m-%d"));
+  EXPECT_EQ(Timestamp(86400, 0), dateParse("19700102", "%Y%m%d"));
+
+  // Tests for differing query timezones
+  // 118860000 is the number of milliseconds since epoch at 1970-01-02
+  // 09:01:00.000 UTC.
+  EXPECT_EQ(
+      Timestamp(118860, 0), dateParse("1970-01-02+09:01", "%Y-%m-%d+%H:%i"));
+
+  setQueryTimeZone("America/Los_Angeles");
+  EXPECT_EQ(
+      Timestamp(118860, 0), dateParse("1970-01-02+01:01", "%Y-%m-%d+%H:%i"));
+
+  setQueryTimeZone("America/Noronha");
+  EXPECT_EQ(
+      Timestamp(118860, 0), dateParse("1970-01-02+07:01", "%Y-%m-%d+%H:%i"));
+
+  setQueryTimeZone("+04:00");
+  EXPECT_EQ(
+      Timestamp(118860, 0), dateParse("1970-01-02+13:01", "%Y-%m-%d+%H:%i"));
+
+  setQueryTimeZone("Asia/Kolkata");
+  // 66600000 is the number of millisecond since epoch at 1970-01-01
+  // 18:30:00.000 UTC.
+  EXPECT_EQ(
+      Timestamp(66600, 0), dateParse("1970-01-02+00:00", "%Y-%m-%d+%H:%i"));
+
+  // -66600000 is the number of millisecond since epoch at 1969-12-31
+  // 05:30:00.000 UTC.
+  EXPECT_EQ(
+      Timestamp(-66600, 0), dateParse("1969-12-31+11:00", "%Y-%m-%d+%H:%i"));
 }

@@ -338,7 +338,7 @@ FOLLY_ALWAYS_INLINE int64_t IntDecoder<isSigned>::readVsLong() {
 template <bool isSigned>
 inline int64_t IntDecoder<isSigned>::readLongLE() {
   int64_t result = 0;
-  if (bufferStart + sizeof(int64_t) <= bufferEnd) {
+  if (bufferStart && bufferStart + sizeof(int64_t) <= bufferEnd) {
     bufferStart += numBytes;
     if (numBytes == 8) {
       return *reinterpret_cast<const int64_t*>(bufferStart - 8);
