@@ -463,7 +463,7 @@ class HashTable : public BaseHashTable {
 
   // Shortcut path for group by with normalized keys.
   void groupNormalizedKeyProbe(HashLookup& lookup);
-  
+
   // Shortcut for probe with normalized keys.
   void joinNormalizedKeyProbe(HashLookup& lookup);
 
@@ -596,4 +596,4 @@ class HashTable : public BaseHashTable {
   friend class ProbeState;
 };
 
-} // namespace facebook::velox::exe
+} // namespace facebook::velox::exec

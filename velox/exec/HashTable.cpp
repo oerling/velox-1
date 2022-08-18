@@ -181,7 +181,8 @@ class ProbeState {
           return nullptr;
         }
       } else {
-        loadNextHit<Operation::kProbe>(table, -static_cast<int32_t>(sizeof(normalized_key_t)));
+        loadNextHit<Operation::kProbe>(
+            table, -static_cast<int32_t>(sizeof(normalized_key_t)));
         if (RowContainer::normalizedKey(group_) == keys[row_]) {
           return group_;
         }
@@ -259,7 +260,7 @@ void HashTable<ignoreNullKeys>::storeRowPointer(
       // The pointer is in slot (index - start_of_group) after the tags.
       int groupOffset = index & (sizeof(TagVector) - 1);
       uint64_t* pointer = reinterpret_cast<uint64_t*>(
-						      tags_ + groupOffset + (kBytesInPointer * (index - groupOffset)));
+          tags_ + groupOffset + (kBytesInPointer * (index - groupOffset)));
       auto previous = *pointer & ~kPointerMask;
       *pointer = reinterpret_cast<uint64_t>(row) | previous;
       return;
@@ -445,7 +446,8 @@ void HashTable<ignoreNullKeys>::groupNormalizedKeyProbe(HashLookup& lookup) {
   int32_t probeIndex = 0;
   int32_t numProbes = lookup.rows.size();
   auto rows = lookup.rows.data();
-  constexpr int32_t kKeyOffset = -static_cast<int32_t>(sizeof(normalized_key_t));
+  constexpr int32_t kKeyOffset =
+      -static_cast<int32_t>(sizeof(normalized_key_t));
   for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, lookup.hashes[row], row);
@@ -585,7 +587,8 @@ void HashTable<ignoreNullKeys>::joinNormalizedKeyProbe(HashLookup& lookup) {
   const uint64_t* keys = lookup.normalizedKeys.data();
   const uint64_t* hashes = lookup.hashes.data();
   char** hits = lookup.hits.data();
-  constexpr int32_t kKeyOffset = -static_cast<int32_t>(sizeof(normalized_key_t));
+  constexpr int32_t kKeyOffset =
+      -static_cast<int32_t>(sizeof(normalized_key_t));
   for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, hashes[row], row);
