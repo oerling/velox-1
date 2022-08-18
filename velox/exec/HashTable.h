@@ -515,7 +515,7 @@ class HashTable : public BaseHashTable {
   // the end of the table.
   int32_t nextTagVectorOffset(int32_t offset) const {
     return sizeMask_ &
-      (offset + (kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector)));
+        (offset + (kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector)));
   }
 
   TagVector loadTags(int32_t tagIndex) const {
