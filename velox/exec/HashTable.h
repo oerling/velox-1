@@ -222,11 +222,6 @@ class BaseHashTable {
     return TagVector::load_unaligned(tags + tagIndex);
   }
 
-  /// Loads the payload row pointer corresponding to the tag at 'index'.
-  static char* loadRow(char** table, int32_t index) {
-    return table[index];
-  }
-
  protected:
   virtual void setHashMode(HashMode mode, int32_t numNew) = 0;
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
@@ -507,7 +502,7 @@ class HashTable : public BaseHashTable {
     } else {
       sizeMask_ = size_ - 1;
       sizeBits_ = __builtin_popcountll(sizeMask_);
-      tagOffsetMask_ = sizeMask_ & ~sizeof(TagVector);
+      tagOffsetMask_ = sizeMask_ & ~(sizeof(TagVector) - 1);
     }
   }
   // Returns the offset in bytes of the tag word for 'hash'. The offset is
@@ -520,7 +515,7 @@ class HashTable : public BaseHashTable {
   // the end of the table.
   int32_t nextTagVectorOffset(int32_t offset) const {
     return sizeMask_ &
-        (offset + kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector));
+      (offset + (kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector)));
   }
 
   TagVector loadTags(int32_t tagIndex) const {
@@ -536,7 +531,7 @@ class HashTable : public BaseHashTable {
           *reinterpret_cast<uint64_t*>(
               tags_ + tagVectorOffset + kBytesInPointer * tagIndex));
     }
-    return table_[tagIndex];
+    return table_[tagVectorOffset + tagIndex];
   }
 
   void incrementTagLoad() const {
@@ -585,13 +580,13 @@ class HashTable : public BaseHashTable {
   // Statistics maintained if kTrackCollisions is set.
 
   // Number of times a row is looked up or inserted.
-  mutable int64_t numProbe_;
+  mutable int64_t numProbe_{0};
 
   // Number of times a word of 16 tags is accessed. at least once per probe.
-  mutable int64_t numTagLoad_;
+  mutable int64_t numTagLoad_{0};
 
   // Number of times a row of payload is accessed. At leadst once per hit.
-  mutable int64_t numRowLoad_;
+  mutable int64_t numRowLoad_{0};
 
   friend class ProbeState;
 };

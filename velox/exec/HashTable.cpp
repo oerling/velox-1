@@ -393,6 +393,10 @@ void populateNormalizedKeys(HashLookup& lookup, int8_t sizeBits) {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
+  if (kTrackLoads) {
+    numProbe_ += lookup.rows.size();
+  }
+
   if (hashMode_ == HashMode::kArray) {
     arrayGroupProbe(lookup);
     return;
@@ -529,6 +533,9 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
+  if (kTrackLoads) {
+    numProbe_ += lookup.rows.size();
+  }
   if (hashMode_ == HashMode::kArray) {
     for (auto row : lookup.rows) {
       auto index = lookup.hashes[row];
@@ -631,18 +638,33 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   if (size > 0) {
     setSize(size);
     constexpr auto kPageSize = memory::MappedMemory::kPageSize;
-    // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
-    // tags table.
-    auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
-    if (!rows_->mappedMemory()->allocateContiguous(
-            numPages, nullptr, tableAllocation_)) {
-      VELOX_FAIL("Could not allocate join/group by hash table");
+    if (kInterleaveRows) {
+      // The total size is 8 bytes per slot, in groups of 16 slots
+      // with 16 bytes of tags and 16 * 6 bytes of pointers and a
+      // padding of 16 bytes to round up the cache line.
+      auto numPages =
+          bits::roundUp(size * sizeof(char*), kPageSize) / kPageSize;
+      if (!rows_->mappedMemory()->allocateContiguous(
+              numPages, nullptr, tableAllocation_)) {
+        VELOX_FAIL("Could not allocate join/group by hash table");
+      }
+      tags_ = tableAllocation_.data<uint8_t>();
+      table_ = nullptr;
+      memset(tags_, 0, size_ * sizeof(char*));
+    } else {
+      // The total size is 9 bytes per slot, 8 in the pointers table and 1 in
+      // the tags table.
+      auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
+      if (!rows_->mappedMemory()->allocateContiguous(
+              numPages, nullptr, tableAllocation_)) {
+        VELOX_FAIL("Could not allocate join/group by hash table");
+      }
+      table_ = tableAllocation_.data<char*>();
+      tags_ = reinterpret_cast<uint8_t*>(table_ + size);
+      memset(tags_, 0, size_);
+      // Not strictly necessary to clear 'table_' but more debuggable.
+      memset(table_, 0, size_ * sizeof(char*));
     }
-    table_ = tableAllocation_.data<char*>();
-    tags_ = reinterpret_cast<uint8_t*>(table_ + size);
-    memset(tags_, 0, size_);
-    // Not strictly necessary to clear 'table_' but more debuggable.
-    memset(table_, 0, size_ * sizeof(char*));
   }
 }
 
@@ -1137,6 +1159,29 @@ std::string HashTable<ignoreNullKeys>::toString() {
   }
   for (auto& hasher : hashers_) {
     out << hasher->toString();
+  }
+  if (kTrackLoads) {
+    out << std::endl;
+    out << fmt::format(
+        "{} probes {} tag loads {} row loads",
+        numProbe_,
+        numTagLoad_,
+        numRowLoad_);
+  }
+  if (hashMode_ != HashMode::kArray) {
+    // Count of groups indexed by number of non-empty slots.
+    int32_t numGroups[sizeof(TagVector) + 1] = {};
+    int32_t tagIndex = 0;
+    for (auto i = 0; i < size_; i += sizeof(TagVector)) {
+      auto tags = loadTags(tagIndex);
+      auto filled = simd::toBitMask(tags != 0);
+      ++numGroups[__builtin_popcount(filled)];
+      tagIndex = nextTagVectorOffset(tagIndex);
+    }
+    out << std::endl;
+    for (auto i = 0; i < sizeof(numGroups) / sizeof(numGroups[0]); ++i) {
+      out << numGroups[i] << " groups with " << i << " entries" << std::endl;
+    }
   }
   return out.str();
 }
