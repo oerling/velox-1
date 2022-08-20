@@ -798,8 +798,9 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
           tags_[tagIndex + freeOffset] = BaseHashTable::hashTag(hash);
           char** pointer;
           if (kInterleaveRows) {
-            pointer = reinterpret_cast<char**>(tags_ + tagIndex + sizeof(TagVector) +
-					       kBytesInPointer * freeOffset);
+            pointer = reinterpret_cast<char**>(
+                tags_ + tagIndex + sizeof(TagVector) +
+                kBytesInPointer * freeOffset);
           } else {
             pointer = table_ + tagIndex + freeOffset;
           }

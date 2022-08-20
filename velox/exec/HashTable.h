@@ -295,7 +295,7 @@ class HashTable : public BaseHashTable {
   }
 
   virtual ~HashTable() override {
-    //std::cout << "destruct " << toString() << std::endl;
+    // std::cout << "destruct " << toString() << std::endl;
   }
 
   void groupProbe(HashLookup& lookup) override;
@@ -533,7 +533,8 @@ class HashTable : public BaseHashTable {
       return reinterpret_cast<char*>(
           kPointerMask &
           *reinterpret_cast<uint64_t*>(
-				       tags_ + tagVectorOffset + sizeof(TagVector) + kBytesInPointer * tagIndex));
+              tags_ + tagVectorOffset + sizeof(TagVector) +
+              kBytesInPointer * tagIndex));
     }
     return table_[tagVectorOffset + tagIndex];
   }
@@ -550,7 +551,7 @@ class HashTable : public BaseHashTable {
     }
   }
 
-    void incrementHit() const {
+  void incrementHit() const {
     if (kTrackLoads) {
       ++numHit_;
     }
@@ -600,7 +601,7 @@ class HashTable : public BaseHashTable {
 
   // Number of times a match is found.
   mutable int64_t numHit_{0};
-  
+
   friend class ProbeState;
 };
 
