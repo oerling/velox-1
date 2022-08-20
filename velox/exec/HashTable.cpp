@@ -111,6 +111,7 @@ class ProbeState {
       if (op == Operation::kErase) {
         eraseHit(table);
       }
+      table.incrementHit();
       return group_;
     }
 
@@ -121,8 +122,6 @@ class ProbeState {
     }
 
     int32_t insertTagIndex = -1;
-    const auto kTombstoneGroup =
-        BaseHashTable::TagVector::broadcast(kTombstoneTag);
     const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(0);
     for (;;) {
       if (!hits_) {
@@ -143,11 +142,16 @@ class ProbeState {
           return insert(row_, tagIndex_ + pos);
         } else if (op == Operation::kInsert && indexInTags_ == kNotSet) {
           // We passed through a full group.
-          uint16_t tombstones =
-              simd::toBitMask(tagsInTable_ == kTombstoneGroup);
-          if (tombstones) {
-            insertTagIndex = tagIndex_;
-            indexInTags_ = bits::getAndClearLastSetBit(tombstones);
+          if (table.hasTombstones_) {
+            const auto kTombstoneGroup =
+                BaseHashTable::TagVector::broadcast(kTombstoneTag);
+
+            uint16_t tombstones =
+                simd::toBitMask(tagsInTable_ == kTombstoneGroup);
+            if (tombstones) {
+              insertTagIndex = tagIndex_;
+              indexInTags_ = bits::getAndClearLastSetBit(tombstones);
+            }
           }
         }
       } else {
@@ -157,6 +161,7 @@ class ProbeState {
           if (op == Operation::kErase) {
             eraseHit(table);
           }
+          table.incrementHit();
           return group_;
         }
         continue;
@@ -171,6 +176,7 @@ class ProbeState {
   FOLLY_ALWAYS_INLINE char* FOLLY_NULLABLE
   joinNormalizedKeyFullProbe(const Table& table, const uint64_t* keys) {
     if (group_ && RowContainer::normalizedKey(group_) == keys[row_]) {
+      table.incrementHit();
       return group_;
     }
     const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(0);
@@ -184,6 +190,7 @@ class ProbeState {
         loadNextHit<Operation::kProbe>(
             table, -static_cast<int32_t>(sizeof(normalized_key_t)));
         if (RowContainer::normalizedKey(group_) == keys[row_]) {
+          table.incrementHit();
           return group_;
         }
         continue;
@@ -257,10 +264,18 @@ void HashTable<ignoreNullKeys>::storeRowPointer(
   if (hashMode_ != HashMode::kArray) {
     tags_[index] = hashTag(hash);
     if (kInterleaveRows) {
-      // The pointer is in slot (index - start_of_group) after the tags.
-      int groupOffset = index & (sizeof(TagVector) - 1);
+      // The pointer is in slot (index - start_of_group) after the
+      // tags. We first get the base address of the tag/pointer
+      // group. We add the size of the tags. Then we add pointer size
+      // * index of the tag in the tags vector. This is the address of
+      // a 6 byte pointer to the row.
+      int groupOffset = index & ~(kTagRowGroupSize - 1);
       uint64_t* pointer = reinterpret_cast<uint64_t*>(
-          tags_ + groupOffset + (kBytesInPointer * (index - groupOffset)));
+          tags_ + sizeof(TagVector) + groupOffset +
+          (kBytesInPointer * (index - groupOffset)));
+
+      // We store 48 bits, preserving the high 16 bits of the word, which belong
+      // to the next pointer.
       auto previous = *pointer & ~kPointerMask;
       *pointer = reinterpret_cast<uint64_t>(row) | previous;
       return;
@@ -364,8 +379,19 @@ inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
   constexpr uint64_t prime1 = 0xc6a4a7935bd1e995UL; // M from Murmurhash.
   constexpr uint64_t prime2 = 527729;
   constexpr uint64_t prime3 = 28047;
+#if 1
+  return folly::hasher<uint64_t>()(k);
+#elif 0
+  auto h = static_cast<uint64_t>(simd::crc32U64(0, k));
+  auto h2 = static_cast<uint64_t>(simd::crc32U64(prime2, h + k));
+  return h | (h2 << 32);
+#elif 0
   auto h = k * prime1;
   return h + (k ^ (h >> 32));
+#else
+  auto h = (k ^ ((k >> 32))) * prime1;
+  return h + (h >> bits) * prime2 + (h >> (2 * bits)) * prime3;
+#endif
 }
 
 void populateNormalizedKeys(HashLookup& lookup, int8_t sizeBits) {
@@ -406,6 +432,8 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
   checkSize(lookup.rows.size());
   if (hashMode_ == HashMode::kNormalizedKey) {
     populateNormalizedKeys(lookup, sizeBits_);
+    groupNormalizedKeyProbe(lookup);
+    return;
   }
   ProbeState state1;
   ProbeState state2;
@@ -672,7 +700,7 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::clear() {
   rows_->clear();
   if (hashMode_ != HashMode::kArray && tags_) {
-    memset(tags_, 0, size_);
+    memset(tags_, 0, kInterleaveRows ? size_ * sizeof(char*) : size_);
   }
   if (table_) {
     memset(table_, 0, sizeof(char*) * size_);
@@ -682,7 +710,7 @@ void HashTable<ignoreNullKeys>::clear() {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
-  if (!table_ || !size_) {
+  if (!tags_ || !size_) {
     // Initial guess of cardinality is double the first input batch or at
     // least 2K entries.
     // numDistinct_ is non-0 when switching from HashMode::kArray to regular
@@ -755,22 +783,62 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
         hashes[i] = mixNormalizedKey(hash, sizeBits_);
       }
     }
-    for (int32_t i = 0; i < numGroups; ++i) {
-      auto hash = hashes[i];
-      auto tagIndex = tagVectorOffset(hash);
-      auto tagsInTable = BaseHashTable::loadTags(tags_, tagIndex);
-      for (;;) {
-        MaskType free =
-            ~simd::toBitMask(
-                BaseHashTable::TagVector::batch_bool_type(tagsInTable)) &
-            ProbeState::kFullMask;
+    constexpr int32_t kBatchSize = 16;
+    for (int32_t base = 0; base < numGroups; base += kBatchSize) {
+      char** pointers[kBatchSize];
+      auto batchEnd = std::min(base + kBatchSize, numGroups);
+      for (auto j = base; j < batchEnd; ++j) {
+        auto hash = hashes[j];
+        auto tagIndex = tagVectorOffset(hash);
+        auto tagsInTable = BaseHashTable::loadTags(tags_, tagIndex);
+        MaskType free = ~simd::toBitMask(
+            BaseHashTable::TagVector::batch_bool_type(tagsInTable));
         if (free) {
-          auto freeOffset = bits::getAndClearLastSetBit(free);
-          storeRowPointer(tagIndex + freeOffset, hash, groups[i]);
-          break;
+          int freeOffset = __builtin_ctz(free);
+          tags_[tagIndex + freeOffset] = BaseHashTable::hashTag(hash);
+          char** pointer;
+          if (kInterleaveRows) {
+            pointer = reinterpret_cast<char**>(tags_ + tagIndex + sizeof(TagVector) +
+					       kBytesInPointer * freeOffset);
+          } else {
+            pointer = table_ + tagIndex + freeOffset;
+          }
+          __builtin_prefetch(pointer);
+          pointers[j - base] = pointer;
+        } else {
+          pointers[j - base] = nullptr;
         }
-        tagIndex = nextTagVectorOffset(tagIndex);
-        tagsInTable = loadTags(tagIndex);
+      }
+      for (auto j = base; j < batchEnd; ++j) {
+        auto pointer = pointers[j - base];
+        if (pointer) {
+          if (kInterleaveRows) {
+            auto previous =
+                reinterpret_cast<uint64_t>(*pointer) & ~kPointerMask;
+            *pointer = reinterpret_cast<char*>(
+                previous | reinterpret_cast<uint64_t>(groups[j]));
+          } else {
+            *pointer = groups[j];
+          }
+          continue;
+        }
+        // The place in the table was not determined on the first loop. Loop
+        // until finding a free tag.
+        auto hash = hashes[j] +
+            (kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector));
+        auto tagIndex = tagVectorOffset(hash);
+        auto tagsInTable = BaseHashTable::loadTags(tags_, tagIndex);
+        for (;;) {
+          MaskType free = ~simd::toBitMask(
+              BaseHashTable::TagVector::batch_bool_type(tagsInTable));
+          if (free) {
+            auto freeOffset = bits::getAndClearLastSetBit(free);
+            storeRowPointer(tagIndex + freeOffset, hash, groups[j]);
+            break;
+          }
+          tagIndex = nextTagVectorOffset(tagIndex);
+          tagsInTable = loadTags(tagIndex);
+        }
       }
     }
   }
@@ -1114,8 +1182,8 @@ void HashTable<ignoreNullKeys>::decideHashMode(int32_t numNew) {
     return;
   }
   if (hashers_.size() == 1 && distinctsWithReserve > 10000) {
-    // A single part group by that does not go by range or become an array does
-    // not make sense as a normalized key unless it is very small.
+    // A single part group by that does not go by range or become an array
+    // does not make sense as a normalized key unless it is very small.
     setHashMode(HashMode::kHash, numNew);
     return;
   }
@@ -1163,10 +1231,11 @@ std::string HashTable<ignoreNullKeys>::toString() {
   if (kTrackLoads) {
     out << std::endl;
     out << fmt::format(
-        "{} probes {} tag loads {} row loads",
+        "{} probes {} tag loads {} row loads {} hits",
         numProbe_,
         numTagLoad_,
-        numRowLoad_);
+        numRowLoad_,
+        numHit_);
   }
   if (hashMode_ != HashMode::kArray) {
     // Count of groups indexed by number of non-empty slots.
@@ -1174,7 +1243,7 @@ std::string HashTable<ignoreNullKeys>::toString() {
     int32_t tagIndex = 0;
     for (auto i = 0; i < size_; i += sizeof(TagVector)) {
       auto tags = loadTags(tagIndex);
-      auto filled = simd::toBitMask(tags != 0);
+      auto filled = simd::toBitMask(tags != TagVector::broadcast(0));
       ++numGroups[__builtin_popcount(filled)];
       tagIndex = nextTagVectorOffset(tagIndex);
     }

@@ -21,6 +21,8 @@
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
 
+#include <iostream>
+
 namespace facebook::velox::exec {
 
 struct HashLookup {
@@ -234,12 +236,12 @@ template <bool ignoreNullKeys>
 class HashTable : public BaseHashTable {
  public:
   // Enables debug stats for collisions. Should be false for normal operation.
-  static constexpr bool kTrackLoads = true;
+  static constexpr bool kTrackLoads = false;
 
   // If true, tags and pointers to payload are interleaved (16x8 bit
   // tags, 16*48bit pointers) like in F14. If false, tags and pointers
   // are stored in separate arrays (like absl Swiss table)
-  static constexpr bool kInterleaveRows = false;
+  static constexpr bool kInterleaveRows = !ignoreNullKeys;
 
   // size of a group of 16 tags and 16 48-bit pointers to the
   // corresponding rows. Applies to interleaved mode.
@@ -292,7 +294,9 @@ class HashTable : public BaseHashTable {
         memory);
   }
 
-  virtual ~HashTable() override = default;
+  virtual ~HashTable() override {
+    //std::cout << "destruct " << toString() << std::endl;
+  }
 
   void groupProbe(HashLookup& lookup) override;
 
@@ -498,7 +502,7 @@ class HashTable : public BaseHashTable {
     if (kInterleaveRows) {
       sizeMask_ = (size_ * sizeof(void*)) - 1;
       sizeBits_ = __builtin_popcountll(sizeMask_);
-      tagOffsetMask_ = sizeMask_ & ~kTagRowGroupSize;
+      tagOffsetMask_ = sizeMask_ & ~(kTagRowGroupSize - 1);
     } else {
       sizeMask_ = size_ - 1;
       sizeBits_ = __builtin_popcountll(sizeMask_);
@@ -529,7 +533,7 @@ class HashTable : public BaseHashTable {
       return reinterpret_cast<char*>(
           kPointerMask &
           *reinterpret_cast<uint64_t*>(
-              tags_ + tagVectorOffset + kBytesInPointer * tagIndex));
+				       tags_ + tagVectorOffset + sizeof(TagVector) + kBytesInPointer * tagIndex));
     }
     return table_[tagVectorOffset + tagIndex];
   }
@@ -543,6 +547,12 @@ class HashTable : public BaseHashTable {
   void incrementRowLoad() const {
     if (kTrackLoads) {
       ++numRowLoad_;
+    }
+  }
+
+    void incrementHit() const {
+    if (kTrackLoads) {
+      ++numHit_;
     }
   }
 
@@ -588,6 +598,9 @@ class HashTable : public BaseHashTable {
   // Number of times a row of payload is accessed. At leadst once per hit.
   mutable int64_t numRowLoad_{0};
 
+  // Number of times a match is found.
+  mutable int64_t numHit_{0};
+  
   friend class ProbeState;
 };
 
