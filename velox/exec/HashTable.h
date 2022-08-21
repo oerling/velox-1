@@ -463,6 +463,9 @@ class HashTable : public BaseHashTable {
   // Shortcut path for group by with normalized keys.
   void groupNormalizedKeyProbe(HashLookup& lookup);
 
+  // Array probe with SIMD.
+  void arrayJoinProbe(HashLookup& lookup);
+  
   // Shortcut for probe with normalized keys.
   void joinNormalizedKeyProbe(HashLookup& lookup);
 
