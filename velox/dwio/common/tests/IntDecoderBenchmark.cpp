@@ -949,21 +949,6 @@ BENCHMARK_RELATIVE(decodeNew_64) {
       randomInts_u64.size(), buffer_u64.data(), randomInts_u64_result.data());
 }
 
-template <typename T, typename U>
-void checkBitResult(
-    const T* reference,
-    RowSet rows,
-    int8_t bitWidth,
-    const U* result) {
-#if 0
-  uint64_t mask = bits::lowMask(bitWidth);
-  for (auto i = 0; i < rows.size(); ++i) {
-    uint64_t original = reference[rows[i]] & mask;
-    VELOX_CHECK_EQ(original, result[i], "at {}", i);
-  }
-#endif
-}
-
 // Naive unpacking, original version of IntDecoder::decodeBitsLE.
 template <typename T>
 void naiveDecodeBitsLE(
@@ -1038,7 +1023,6 @@ void unpackNaive(RowSet rows, uint8_t bitWidth, T* result) {
   auto numBytes = bits::roundUp((rows.back() + 1) * bitWidth, 8) / 8;
   auto end = reinterpret_cast<const char*>(data) + numBytes;
   naiveDecodeBitsLE(data, 0, rows, 0, bitWidth, end, result32.data());
-  checkBitResult(randomInts_u32.data(), rows, bitWidth, result32.data());
 }
 
 template <typename T>
@@ -1054,7 +1038,6 @@ void unpackFast(RowSet rows, uint8_t bitWidth, T* result) {
       bitWidth,
       end,
       reinterpret_cast<int32_t*>(result32.data()));
-  checkBitResult(randomInts_u32.data(), rows, bitWidth, result32.data());
 }
 
 #define BIT_BM_CASE_32(width)                       \
