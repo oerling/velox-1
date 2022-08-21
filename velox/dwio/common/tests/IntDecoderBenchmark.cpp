@@ -1057,21 +1057,33 @@ void unpackFast(RowSet rows, uint8_t bitWidth, T* result) {
   checkBitResult(randomInts_u32.data(), rows, bitWidth, result32.data());
 }
 
-BENCHMARK(unpackNaive7_32) {
-  unpackNaive(allRows, 7, result32.data());
+#define BIT_BM_CASE_32(width)                       \
+  BENCHMARK(unpackNaive##width##_32) {              \
+    unpackNaive(allRows, width, result32.data());   \
+  }                                                 \
+                                                    \
+  BENCHMARK_RELATIVE(unpackFast##width##_32) {      \
+    unpackFast(allRows, width, result32.data());    \
+  }                                                 \
+                                                    \
+  BENCHMARK_RELATIVE(unpackNaive##width##_32_odd) { \
+    unpackNaive(oddRows, width, result32.data());   \
+  }                                                 \
+                                                    \
+  BENCHMARK_RELATIVE(unpackFast##width##_32_odd) {   \
+    unpackFast(oddRows, 7, result32.data());        \
+  \
 }
 
-BENCHMARK_RELATIVE(unpackFast7_32) {
-  unpackFast(allRows, 7, result32.data());
-}
+BIT_BM_CASE_32(7)
+BIT_BM_CASE_32(8)
+BIT_BM_CASE_32(13)
+BIT_BM_CASE_32(16)
+BIT_BM_CASE_32(22)
+BIT_BM_CASE_32(24)
+BIT_BM_CASE_32(31)
 
-BENCHMARK_RELATIVE(unpackNaive7_32_odd) {
-  unpackNaive(oddRows, 7, result32.data());
-}
 
-BENCHMARK_RELATIVE(unpackFast7_32_odd) {
-  unpackFast(oddRows, 7, result32.data());
-}
 
 void populateBitPacked() {
   bitPackedData.resize(32);
