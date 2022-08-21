@@ -2407,7 +2407,7 @@ template void IntDecoder<false>::bulkReadRows(
 
 typedef int32_t __m256si __attribute__((__vector_size__(32), __may_alias__));
 
-  typedef int32_t __m256si_u
+typedef int32_t __m256si_u
     __attribute__((__vector_size__(32), __may_alias__, __aligned__(1)));
 
 namespace {
@@ -2434,19 +2434,19 @@ inline T* addBytes(T* pointer, int32_t bytes) {
   return reinterpret_cast<T*>(reinterpret_cast<uint64_t>(pointer) + bytes);
 }
 
-  template <typename T>
-  inline __m256i as256i(T x) {
-    return reinterpret_cast<__m256i>(x);
-  }
+template <typename T>
+inline __m256i as256i(T x) {
+  return reinterpret_cast<__m256i>(x);
+}
 
-  template <typename T>
-  inline __m256si as8x32(T x) {
-    return reinterpret_cast<__m256si>(x);
-  }
-  
+template <typename T>
+inline __m256si as8x32(T x) {
+  return reinterpret_cast<__m256si>(x);
+}
+
 template <uint8_t width, typename T>
 int32_t decode2To8(
-		   const uint64_t* bits,
+    const uint64_t* bits,
     int32_t bitOffset,
     const int* rows,
     int32_t numRows,
@@ -2454,12 +2454,11 @@ int32_t decode2To8(
   constexpr uint64_t kMask = bits::lowMask(width);
   constexpr uint64_t kMask2 = kMask | (kMask << 8);
   constexpr uint64_t kMask4 = kMask2 | (kMask2 << 16);
-  constexpr unsigned long long  kDepMask = kMask4 | (kMask4 << 32);
-  constexpr __m256si kMultipliers = {
-          256, 128, 64, 32, 16, 8, 4, 2};
+  constexpr unsigned long long kDepMask = kMask4 | (kMask4 << 32);
+  constexpr __m256si kMultipliers = {256, 128, 64, 32, 16, 8, 4, 2};
 
   int32_t i = 0;
-  auto masks =as8x32(_mm256_set1_epi32(kMask));
+  auto masks = as8x32(_mm256_set1_epi32(kMask));
   for (0; i + 8 <= numRows; i += 8) {
     auto row = rows[i];
     auto endRow = rows[i + 7];
@@ -2470,7 +2469,8 @@ int32_t decode2To8(
         if (!bitOffset) {
           eightBytes = *addBytes(bits, row);
         } else {
-          eightBytes = bits::detail::loadBits<uint64_t>(bits, bitOffset + 8 * row, 64);
+          eightBytes =
+              bits::detail::loadBits<uint64_t>(bits, bitOffset + 8 * row, 64);
         }
       } else {
         auto bit = rows[row] * width + bitOffset;
@@ -2482,22 +2482,21 @@ int32_t decode2To8(
       eightInts = _mm256_cvtepu8_epi32(
           _mm_loadl_epi64(reinterpret_cast<const __m128i*>(&eightBytes)));
     } else {
-      auto indices = *reinterpret_cast<const __m256si_u*>(rows + i) * width + bitOffset;
+      auto indices =
+          *reinterpret_cast<const __m256si_u*>(rows + i) * width + bitOffset;
       __m256si multipliers;
       if (width % 8 != 0) {
-        multipliers =
-	  (__m256si)_mm256_permutevar8x32_epi32(
-						as256i(kMultipliers), as256i(indices & 7));
-
+        multipliers = (__m256si)_mm256_permutevar8x32_epi32(
+            as256i(kMultipliers), as256i(indices & 7));
       }
       auto byteIndices = indices >> 3;
       auto data = as8x32(_mm256_i32gather_epi32(
-						reinterpret_cast<const int*>(bits), as256i(byteIndices), 1));
+          reinterpret_cast<const int*>(bits), as256i(byteIndices), 1));
       if (width % 8 != 0) {
         data = (data * multipliers) >> 8;
       }
       data = data & masks;
-		    eightInts = as256i(data);
+      eightInts = as256i(data);
     }
     store8Ints(eightInts, i, result);
   }
@@ -2560,7 +2559,7 @@ void IntDecoder<isSigned>::decodeBitsLE(
     case 7:
       i = decode2To8<7>(bits, bitOffset, rows.data(), numSafeRows, result);
       break;
-  default: ;
+    default:;
   }
   for (; i < numSafeRows; ++i) {
     auto bit = bitOffset + (rows[i]) * bitWidth;
