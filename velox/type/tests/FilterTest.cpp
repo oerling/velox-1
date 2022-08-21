@@ -448,7 +448,6 @@ TEST(FilterTest, bigintValuesUsingBitmask) {
   checkSimd(filter.get(), n4, verify);
   int32_t n8[] = {-10, 100000, 22, 1000, -10, 100000, 22, 1000};
   checkSimd(filter.get(), n8, verify);
-
 }
 
 TEST(FilterTest, negatedBigintValuesUsingBitmask) {

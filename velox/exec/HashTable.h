@@ -465,7 +465,7 @@ class HashTable : public BaseHashTable {
 
   // Array probe with SIMD.
   void arrayJoinProbe(HashLookup& lookup);
-  
+
   // Shortcut for probe with normalized keys.
   void joinNormalizedKeyProbe(HashLookup& lookup);
 
