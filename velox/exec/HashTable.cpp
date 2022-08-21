@@ -565,11 +565,7 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
     numProbe_ += lookup.rows.size();
   }
   if (hashMode_ == HashMode::kArray) {
-    for (auto row : lookup.rows) {
-      auto index = lookup.hashes[row];
-      DCHECK(index < size_);
-      lookup.hits[row] = table_[index]; // NOLINT
-    }
+    arrayJoinProbe(lookup);
     return;
   }
   if (hashMode_ == HashMode::kNormalizedKey) {
@@ -607,6 +603,43 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
     state1.preProbe(*this, lookup.hashes[row], row);
     state1.firstProbe(*this, 0);
     fullProbe<true>(lookup, state1, false);
+  }
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
+  // Rows are nearly always consecutive.
+  auto& rows = lookup.rows;
+  auto hashes = lookup.hashes.data();
+  auto hits = lookup.hits.data();
+  auto numRows = rows.size();
+  int32_t i = 0;
+  for (; i + 8 <= numRows; i += 8) {
+    auto row = rows[i];
+    if (rows[i + 7] - row == 7) {
+      // 8 consecutive.
+      simd::gather(
+          reinterpret_cast<const int64_t*>(table_),
+          reinterpret_cast<const int64_t*>(hashes + row))
+          .store_unaligned(reinterpret_cast<int64_t*>(hits) + row);
+      simd::gather(
+          reinterpret_cast<const int64_t*>(table_),
+          reinterpret_cast<const int64_t*>(hashes + row + 4))
+          .store_unaligned(reinterpret_cast<int64_t*>(hits) + row + 4);
+    } else {
+      for (auto j = i; j < i + 8; ++j) {
+        auto row = rows[j];
+        auto index = hashes[row];
+        DCHECK(index < size_);
+        hits[row] = table_[index]; // NOLINT
+      }
+    }
+  }
+  for (; i < numRows; ++i) {
+    auto row = rows[i];
+    auto index = hashes[row];
+    DCHECK(index < size_);
+    hits[row] = table_[index]; // NOLINT
   }
 }
 
