@@ -50,7 +50,12 @@ class DecodeBitsTest : public testing::Test {
       auto destination =
           reinterpret_cast<uint64_t*>(bitPackedData_[bitWidth].data());
       for (auto i = 0; i < randomInts_.size(); ++i) {
-        bits::copyBits(source, i * sizeof(*source) * 8, destination, i * bitWidth, bitWidth);
+        bits::copyBits(
+            source,
+            i * sizeof(*source) * 8,
+            destination,
+            i * bitWidth,
+            bitWidth);
       }
     }
   }
@@ -74,7 +79,7 @@ class DecodeBitsTest : public testing::Test {
   void testDecodeRows(uint8_t width, RowSet rows) {
     std::vector<T> result(rows.size());
     int32_t start = 0;
-    
+
     int32_t batch = 1;
     // Read the encoding in progressively larger batches, each time 3x more than
     // previous.

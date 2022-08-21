@@ -2533,7 +2533,7 @@ int32_t decode1To24(
           words[0] = bits::detail::loadBits<uint64_t>(
               bits, bitOffset + width * row, 64);
           words[1] = bits::detail::loadBits<uint64_t>(
-						      bits, bitOffset + width * (row + 4), 64);
+              bits, bitOffset + width * (row + 4), 64);
           if (width == 15) {
             words[0] = _pdep_u64(words[0], kDepMask16);
             words[1] = _pdep_u64(words[1], kDepMask16);

@@ -1053,10 +1053,9 @@ void unpackFast(RowSet rows, uint8_t bitWidth, T* result) {
     unpackNaive(oddRows, width, result32.data());   \
   }                                                 \
                                                     \
-  BENCHMARK_RELATIVE(unpackFast##width##_32_odd) {   \
+  BENCHMARK_RELATIVE(unpackFast##width##_32_odd) {  \
     unpackFast(oddRows, 7, result32.data());        \
-  \
-}
+  }
 
 BIT_BM_CASE_32(7)
 BIT_BM_CASE_32(8)
@@ -1065,8 +1064,6 @@ BIT_BM_CASE_32(16)
 BIT_BM_CASE_32(22)
 BIT_BM_CASE_32(24)
 BIT_BM_CASE_32(31)
-
-
 
 void populateBitPacked() {
   bitPackedData.resize(32);
