@@ -23,9 +23,12 @@
 #include "folly/lang/Bits.h"
 #include "velox/common/base/BitUtil.h"
 #include "velox/dwio/common/IntCodecCommon.h"
+#include "velox/dwio/common/IntDecoder.h"
 #include "velox/dwio/common/exception/Exception.h"
 
+using namespace facebook::velox;
 using namespace facebook::velox::dwio;
+using namespace facebook::velox::dwio::common;
 namespace bits = facebook::velox::bits;
 
 const size_t kNumElements = 1000000;
@@ -44,6 +47,17 @@ static size_t len_u64 = 0;
 std::vector<uint64_t> randomInts_u64;
 std::vector<uint64_t> randomInts_u64_result;
 std::vector<char> buffer_u64;
+
+// Array of bit packed representations of randomInts_u32. The array at index i
+// is packed i bits wide and the values come from the low bits of
+std::vector<std::vector<uint64_t>> bitPackedData;
+
+std::vector<uint32_t> result32;
+
+std::vector<int32_t> allRowNumbers;
+std::vector<int32_t> oddRowNumbers;
+RowSet allRows;
+RowSet oddRows;
 
 uint64_t readVuLong(const char* buffer, size_t& len) {
   if (LIKELY(len >= folly::kMaxVarintLength64)) {
@@ -935,6 +949,152 @@ BENCHMARK_RELATIVE(decodeNew_64) {
       randomInts_u64.size(), buffer_u64.data(), randomInts_u64_result.data());
 }
 
+template <typename T, typename U>
+void checkBitResult(
+    const T* reference,
+    RowSet rows,
+    int8_t bitWidth,
+    const U* result) {
+#if 0
+  uint64_t mask = bits::lowMask(bitWidth);
+  for (auto i = 0; i < rows.size(); ++i) {
+    uint64_t original = reference[rows[i]] & mask;
+    VELOX_CHECK_EQ(original, result[i], "at {}", i);
+  }
+#endif
+}
+
+// Naive unpacking, original version of IntDecoder::decodeBitsLE.
+template <typename T>
+void naiveDecodeBitsLE(
+    const uint64_t* FOLLY_NONNULL bits,
+    int32_t bitOffset,
+    RowSet rows,
+    int32_t rowBias,
+    uint8_t bitWidth,
+    const char* bufferEnd,
+    T* FOLLY_NONNULL result) {
+  uint64_t mask = bits::lowMask(bitWidth);
+  auto numRows = rows.size();
+  if (bitWidth > 56) {
+    for (auto i = 0; i < numRows; ++i) {
+      auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
+      result[i] = bits::detail::loadBits<T>(bits, bit, bitWidth) & mask;
+    }
+    return;
+  }
+  auto FOLLY_NONNULL lastSafe = bufferEnd - sizeof(uint64_t);
+  int32_t numSafeRows = numRows;
+  bool anyUnsafe = false;
+  if (bufferEnd) {
+    const char* endByte = reinterpret_cast<const char*>(bits) +
+        bits::roundUp(bitOffset + (rows.back() - rowBias + 1) * bitWidth, 8) /
+            8;
+    // redzone is the number of bytes at the end of the accessed range that
+    // could overflow the buffer if accessed 64 its wide.
+    int64_t redZone =
+        sizeof(uint64_t) - static_cast<int64_t>(bufferEnd - endByte);
+    if (redZone > 0) {
+      anyUnsafe = true;
+      auto numRed = (redZone + 1) * 8 / bitWidth;
+      int32_t lastSafeIndex = rows.back() - numRed;
+      --numSafeRows;
+      for (; numSafeRows >= 1; --numSafeRows) {
+        if (rows[numSafeRows - 1] < lastSafeIndex) {
+          break;
+        }
+      }
+    }
+  }
+  for (auto i = 0; i < numSafeRows; ++i) {
+    auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
+    auto byte = bit / 8;
+    auto shift = bit & 7;
+    result[i] = (*reinterpret_cast<const uint64_t*>(
+                     reinterpret_cast<const char*>(bits) + byte) >>
+                 shift) &
+        mask;
+  }
+  if (anyUnsafe) {
+    auto lastSafeWord = bufferEnd - sizeof(uint64_t);
+    assert(lastSafeWord); // lint
+    for (auto i = numSafeRows; i < numRows; ++i) {
+      auto bit = bitOffset + (rows[i] - rowBias) * bitWidth;
+      auto byte = bit / 8;
+      auto shift = bit & 7;
+      result[i] = IntDecoder<false>::safeLoadBits(
+                      reinterpret_cast<const char*>(bits) + byte,
+                      shift,
+                      bitWidth,
+                      lastSafeWord) &
+          mask;
+    }
+  }
+}
+
+template <typename T>
+void unpackNaive(RowSet rows, uint8_t bitWidth, T* result) {
+  auto data = bitPackedData[bitWidth].data();
+  auto numBytes = bits::roundUp((rows.back() + 1) * bitWidth, 8) / 8;
+  auto end = reinterpret_cast<const char*>(data) + numBytes;
+  naiveDecodeBitsLE(data, 0, rows, 0, bitWidth, end, result32.data());
+  checkBitResult(randomInts_u32.data(), rows, bitWidth, result32.data());
+}
+
+template <typename T>
+void unpackFast(RowSet rows, uint8_t bitWidth, T* result) {
+  auto data = bitPackedData[bitWidth].data();
+  auto numBytes = bits::roundUp((rows.back() + 1) * bitWidth, 8) / 8;
+  auto end = reinterpret_cast<const char*>(data) + numBytes;
+  IntDecoder<false>::decodeBitsLE(
+      data,
+      0,
+      rows,
+      0,
+      bitWidth,
+      end,
+      reinterpret_cast<int32_t*>(result32.data()));
+  checkBitResult(randomInts_u32.data(), rows, bitWidth, result32.data());
+}
+
+BENCHMARK(unpackNaive7_32) {
+  unpackNaive(allRows, 7, result32.data());
+}
+
+BENCHMARK_RELATIVE(unpackFast7_32) {
+  unpackFast(allRows, 7, result32.data());
+}
+
+BENCHMARK_RELATIVE(unpackNaive7_32_odd) {
+  unpackNaive(oddRows, 7, result32.data());
+}
+
+BENCHMARK_RELATIVE(unpackFast7_32_odd) {
+  unpackFast(oddRows, 7, result32.data());
+}
+
+void populateBitPacked() {
+  bitPackedData.resize(32);
+  for (auto bitWidth = 2; bitWidth < 32; ++bitWidth) {
+    auto numWords = bits::roundUp(randomInts_u32.size() * bitWidth, 64) / 64;
+    bitPackedData[bitWidth].resize(numWords);
+    auto source = reinterpret_cast<uint64_t*>(randomInts_u32.data());
+    auto destination =
+        reinterpret_cast<uint64_t*>(bitPackedData[bitWidth].data());
+    for (auto i = 0; i < randomInts_u32.size(); ++i) {
+      bits::copyBits(source, i * 32, destination, i * bitWidth, bitWidth);
+    }
+  }
+  allRowNumbers.resize(randomInts_u32.size());
+  std::iota(allRowNumbers.begin(), allRowNumbers.end(), 0);
+  oddRowNumbers.resize(randomInts_u32.size() / 2);
+  for (auto i = 0; i < oddRowNumbers.size(); i++) {
+    oddRowNumbers[i] = i * 2 + 1;
+  }
+  allRows = RowSet(allRowNumbers);
+  oddRows = RowSet(oddRowNumbers);
+}
+
 int32_t main(int32_t argc, char* argv[]) {
   folly::init(&argc, &argv);
 
@@ -960,7 +1120,7 @@ int32_t main(int32_t argc, char* argv[]) {
   randomInts_u32_result.resize(randomInts_u32.size());
   len_u32 = pos;
 
-  // Populate uint32 buffer
+  // Populate uint64 buffer
   buffer_u64.resize(kNumElements);
   pos = 0;
   for (int32_t i = 0; i < 100000; i++) {
@@ -968,6 +1128,9 @@ int32_t main(int32_t argc, char* argv[]) {
     randomInts_u64.push_back(randomInt);
     pos = writeVulongToBuffer(randomInt, buffer_u64.data(), pos);
   }
+  populateBitPacked();
+  result32.resize(randomInts_u32.size());
+
   randomInts_u64_result.resize(randomInts_u64.size());
   len_u64 = pos;
 
