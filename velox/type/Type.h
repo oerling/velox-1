@@ -1339,6 +1339,12 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
     } else if ((typeKind) == ::facebook::velox::TypeKind::OPAQUE) {         \
       return CLASS_NAME<::facebook::velox::TypeKind::OPAQUE>::METHOD_NAME(  \
           __VA_ARGS__);                                                     \
+    } else if ((typeKind) == ::facebook::velox::TypeKind::SHORT_DECIMAL) {  \
+      return CLASS_NAME<::facebook::velox::TypeKind::SHORT_DECIMAL>::       \
+          METHOD_NAME(__VA_ARGS__);                                         \
+    } else if ((typeKind) == ::facebook::velox::TypeKind::LONG_DECIMAL) {   \
+      return CLASS_NAME<::facebook::velox::TypeKind::LONG_DECIMAL>::        \
+          METHOD_NAME(__VA_ARGS__);                                         \
     } else {                                                                \
       return VELOX_DYNAMIC_TYPE_DISPATCH_IMPL(                              \
           CLASS_NAME, ::METHOD_NAME, typeKind, __VA_ARGS__);                \
@@ -1950,6 +1956,9 @@ struct CastTypeChecker<Row<T...>> {
   }
 };
 
+/// Return the scalar type for a given 'kind'.
+TypePtr fromKindToScalerType(TypeKind kind);
+
 } // namespace facebook::velox
 
 namespace folly {
@@ -1983,8 +1992,7 @@ class FormatValue<facebook::velox::TypeKind> {
 template <typename T>
 class FormatValue<
     std::shared_ptr<T>,
-    typename std::enable_if<
-        std::is_base_of<facebook::velox::Type, T>::value>::type> {
+    typename std::enable_if_t<std::is_base_of_v<facebook::velox::Type, T>>> {
  public:
   explicit FormatValue(const std::shared_ptr<const facebook::velox::Type>& type)
       : type_(type) {}
