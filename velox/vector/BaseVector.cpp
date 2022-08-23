@@ -64,12 +64,23 @@ BaseVector::BaseVector(
   }
 }
 
-void BaseVector::allocateNulls() {
-  VELOX_CHECK(!nulls_);
-  int32_t bytes = byteSize<bool>(length_);
-  nulls_ = AlignedBuffer::allocate<char>(bytes, pool());
-  nulls_->setSize(bytes);
-  memset(nulls_->asMutable<uint8_t>(), bits::kNotNullByte, bytes);
+void BaseVector::ensureNullsCapacity(vector_size_t size, bool setNotNull) {
+  auto fill = setNotNull ? bits::kNotNull : bits::kNull;
+  if (nulls_ && nulls_->isMutable()) {
+    if (nulls_->capacity() >= bits::nbytes(size)) {
+      return;
+    }
+    AlignedBuffer::reallocate<bool>(&nulls_, size, fill);
+  } else {
+    auto newNulls = AlignedBuffer::allocate<bool>(size, pool_, fill);
+    if (nulls_) {
+      memcpy(
+          newNulls->asMutable<char>(),
+          nulls_->as<char>(),
+          byteSize<bool>(std::min(length_, size)));
+    }
+    nulls_ = std::move(newNulls);
+  }
   rawNulls_ = nulls_->as<uint64_t>();
 }
 
@@ -224,7 +235,7 @@ static VectorPtr createEmpty(
   using T = typename TypeTraits<kind>::NativeType;
 
   BufferPtr values;
-  if constexpr (std::is_same<T, StringView>::value) {
+  if constexpr (std::is_same_v<T, StringView>) {
     // Make sure to initialize StringView values so they can be safely accessed.
     values = AlignedBuffer::allocate<T>(size, pool, T());
   } else {
@@ -324,7 +335,7 @@ VectorPtr BaseVector::createInternal(
           0 /*nullCount*/);
     }
     case TypeKind::UNKNOWN: {
-      BufferPtr nulls = AlignedBuffer::allocate<bool>(size, pool, true);
+      BufferPtr nulls = AlignedBuffer::allocate<bool>(size, pool, bits::kNull);
       return std::make_shared<FlatVector<UnknownValue>>(
           pool,
           nulls,
@@ -412,6 +423,19 @@ void BaseVector::clearNulls(vector_size_t begin, vector_size_t end) {
   nullCount_ = std::nullopt;
 }
 
+void BaseVector::setNulls(const BufferPtr& nulls) {
+  if (nulls) {
+    VELOX_DCHECK_GE(nulls->size(), bits::nbytes(length_));
+    nulls_ = nulls;
+    rawNulls_ = nulls->as<uint64_t>();
+    nullCount_ = std::nullopt;
+  } else {
+    nulls_ = nullptr;
+    rawNulls_ = nullptr;
+    nullCount_ = 0;
+  }
+}
+
 // static
 void BaseVector::resizeIndices(
     vector_size_t size,
@@ -419,10 +443,20 @@ void BaseVector::resizeIndices(
     velox::memory::MemoryPool* pool,
     BufferPtr* indices,
     const vector_size_t** raw) {
-  if (!indices->get()) {
-    *indices = AlignedBuffer::allocate<vector_size_t>(size, pool, initialValue);
-  } else if ((*indices)->size() < size * sizeof(vector_size_t)) {
-    AlignedBuffer::reallocate<vector_size_t>(indices, size, initialValue);
+  if (indices->get() && indices->get()->isMutable()) {
+    if (indices->get()->size() < size * sizeof(vector_size_t)) {
+      AlignedBuffer::reallocate<vector_size_t>(indices, size, initialValue);
+    }
+  } else {
+    auto newIndices =
+        AlignedBuffer::allocate<vector_size_t>(size, pool, initialValue);
+    if (indices->get()) {
+      auto dst = newIndices->asMutable<vector_size_t>();
+      auto src = indices->get()->as<vector_size_t>();
+      auto len = std::min(indices->get()->size(), size * sizeof(vector_size_t));
+      memcpy(dst, src, len);
+    }
+    *indices = newIndices;
   }
   *raw = indices->get()->asMutable<vector_size_t>();
 }
@@ -496,7 +530,7 @@ std::string BaseVector::toString(
 
 void BaseVector::ensureWritable(const SelectivityVector& rows) {
   auto newSize = std::max<vector_size_t>(rows.size(), length_);
-  if (nulls_ && !nulls_->unique()) {
+  if (nulls_ && !(nulls_->unique() && nulls_->isMutable())) {
     BufferPtr newNulls = AlignedBuffer::allocate<bool>(newSize, pool_);
     auto rawNewNulls = newNulls->asMutable<uint64_t>();
     memcpy(rawNewNulls, rawNulls_, bits::nbytes(length_));
@@ -579,7 +613,8 @@ VectorPtr newConstant(
       copy = StringView(value.value<kind>());
     }
   } else if constexpr (
-      std::is_same_v<T, ShortDecimal> || std::is_same_v<T, LongDecimal>) {
+      std::is_same_v<T, UnscaledShortDecimal> ||
+      std::is_same_v<T, UnscaledLongDecimal>) {
     const auto& decimal = value.value<kind>();
     type = DECIMAL(decimal.precision, decimal.scale);
     if (!value.isNull()) {
@@ -639,13 +674,13 @@ std::shared_ptr<BaseVector> BaseVector::createNullConstant(
   }
 
   if (type->kind() == TypeKind::SHORT_DECIMAL) {
-    return std::make_shared<ConstantVector<ShortDecimal>>(
-        pool, size, true, type, ShortDecimal());
+    return std::make_shared<ConstantVector<UnscaledShortDecimal>>(
+        pool, size, true, type, UnscaledShortDecimal());
   }
 
   if (type->kind() == TypeKind::LONG_DECIMAL) {
-    return std::make_shared<ConstantVector<LongDecimal>>(
-        pool, size, true, type, LongDecimal());
+    return std::make_shared<ConstantVector<UnscaledLongDecimal>>(
+        pool, size, true, type, UnscaledLongDecimal());
   }
 
   return BaseVector::createConstant(variant(type->kind()), size, pool);
@@ -733,7 +768,15 @@ uint64_t BaseVector::estimateFlatSize() const {
   }
 
   auto leaf = wrappedVector();
-  VELOX_DCHECK_GT(leaf->size(), 0);
+  // If underlying vector is empty we should return the leaf's single element
+  // size times this vector's size plus any nulls of this vector.
+  if (UNLIKELY(leaf->size() == 0)) {
+    const auto& leafType = leaf->type();
+    return length_ *
+        (leafType->isFixedWidth() ? leafType->cppSizeInBytes() : 0) +
+        BaseVector::retainedSize();
+  }
+
   auto avgRowSize = 1.0 * leaf->retainedSize() / leaf->size();
   return length_ * avgRowSize;
 }
@@ -774,6 +817,70 @@ void BaseVector::prepareForReuse() {
       rawNulls_ = nullptr;
     }
   }
+}
+
+namespace {
+
+size_t typeSize(const Type& type) {
+  switch (type.kind()) {
+    case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY:
+      return sizeof(StringView);
+    case TypeKind::OPAQUE:
+      return sizeof(std::shared_ptr<void>);
+    default:
+      VELOX_DCHECK(type.isPrimitiveType(), type.toString());
+      return type.cppSizeInBytes();
+  }
+}
+
+struct BufferReleaser {
+  explicit BufferReleaser(const BufferPtr& parent) : parent_(parent) {}
+  void addRef() const {}
+  void release() const {}
+
+ private:
+  BufferPtr parent_;
+};
+
+BufferPtr sliceBufferZeroCopy(
+    size_t typeSize,
+    bool podType,
+    const BufferPtr& buf,
+    vector_size_t offset,
+    vector_size_t length) {
+  // Cannot use `Buffer::as<uint8_t>()` here because Buffer::podType_ is false
+  // when type is OPAQUE.
+  auto data =
+      reinterpret_cast<const uint8_t*>(buf->as<void>()) + offset * typeSize;
+  return BufferView<BufferReleaser>::create(
+      data, length * typeSize, BufferReleaser(buf), podType);
+}
+
+} // namespace
+
+// static
+BufferPtr BaseVector::sliceBuffer(
+    const Type& type,
+    const BufferPtr& buf,
+    vector_size_t offset,
+    vector_size_t length,
+    memory::MemoryPool* pool) {
+  if (!buf) {
+    return nullptr;
+  }
+  if (type.kind() != TypeKind::BOOLEAN) {
+    return sliceBufferZeroCopy(
+        typeSize(type), type.isPrimitiveType(), buf, offset, length);
+  }
+  if (offset % 8 == 0) {
+    return sliceBufferZeroCopy(1, true, buf, offset / 8, (length + 7) / 8);
+  }
+  VELOX_DCHECK_NOT_NULL(pool);
+  auto ans = AlignedBuffer::allocate<bool>(length, pool);
+  bits::copyBits(
+      buf->as<uint64_t>(), offset, ans->asMutable<uint64_t>(), 0, length);
+  return ans;
 }
 
 } // namespace velox

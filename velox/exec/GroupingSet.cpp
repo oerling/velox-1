@@ -219,9 +219,14 @@ void GroupingSet::addInputForActiveRows(
 
   table_->groupProbe(*lookup_);
   masks_.addInput(input, activeRows_);
-  for (auto i = 0; i < aggregates_.size(); ++i) {
-    const auto& rows = getSelectivityVector(i);
 
+  for (auto i = 0; i < aggregates_.size(); ++i) {
+    if (!lookup_->newGroups.empty()) {
+      aggregates_[i]->initializeNewGroups(
+          lookup_->hits.data(), lookup_->newGroups);
+    }
+
+    const auto& rows = getSelectivityVector(i);
     // Check is mask is false for all rows.
     if (!rows.hasSelections()) {
       continue;
@@ -539,7 +544,7 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
     }
     assert(mappedMemory_->tracker()); // lint
     const auto fileSize =
-        mappedMemory_->tracker()->getCurrentUserBytes() / spillFileSizeFactor_;
+        mappedMemory_->tracker()->getCurrentUserBytes() * spillFileSizeFactor_;
     spiller_ = std::make_unique<Spiller>(
         Spiller::Type::kAggregate,
         *rows,

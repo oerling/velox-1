@@ -347,12 +347,10 @@ void read<StringView>(
   readNulls(source, size, flatResult);
 
   int32_t dataSize = source->read<int32_t>();
-  auto& stringBuffers = flatResult->stringBuffers();
+  const auto& stringBuffers = flatResult->stringBuffers();
   BufferPtr strings = findOrAllocateStringBuffer(dataSize, stringBuffers, pool);
+  flatResult->setStringBuffers({strings});
   auto rawStrings = strings->asMutable<uint8_t>();
-
-  stringBuffers.resize(1);
-  stringBuffers[0] = std::move(strings);
 
   source->readBytes(rawStrings, dataSize);
   int32_t previousOffset = 0;
@@ -643,8 +641,8 @@ void readColumns(
           {TypeKind::TIMESTAMP, &read<Timestamp>},
           {TypeKind::DATE, &read<Date>},
           {TypeKind::INTERVAL_DAY_TIME, &read<IntervalDayTime>},
-          {TypeKind::SHORT_DECIMAL, &read<ShortDecimal>},
-          {TypeKind::LONG_DECIMAL, &read<LongDecimal>},
+          {TypeKind::SHORT_DECIMAL, &read<UnscaledShortDecimal>},
+          {TypeKind::LONG_DECIMAL, &read<UnscaledLongDecimal>},
           {TypeKind::VARCHAR, &read<StringView>},
           {TypeKind::VARBINARY, &read<StringView>},
           {TypeKind::ARRAY, &readArrayVector},
@@ -924,7 +922,7 @@ void serializeFlatVector(
           continue;
         }
         stream->appendNonNull();
-        if (std::is_same<T, StringView>::value) {
+        if (std::is_same_v<T, StringView>) {
           // Bunching consecutive non-nulls into one append does not work with
           // strings because the lengths will then get out of order with the
           // zero lengths produced by nulls.
@@ -942,7 +940,7 @@ void serializeFlatVector(
         }
       }
     }
-    if (firstNonNull != -1 && !std::is_same<T, StringView>::value) {
+    if (firstNonNull != -1 && !std::is_same_v<T, StringView>) {
       stream->append<T>(folly::Range(
           &rawValues[firstNonNull], 1 + lastNonNull - firstNonNull));
     }
@@ -1384,7 +1382,7 @@ void estimateConstantSerializedSize(
   int32_t elementSize = sizeof(T);
   if (constantVector->isNullAt(0)) {
     elementSize = 1;
-  } else if (std::is_same<T, StringView>::value) {
+  } else if (std::is_same_v<T, StringView>) {
     auto value = constantVector->valueAt(0);
     auto string = reinterpret_cast<const StringView*>(&value);
     elementSize = string->size();

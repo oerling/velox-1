@@ -19,6 +19,17 @@
 
 namespace facebook::velox::functions {
 
+template <typename T>
+struct IsJsonScalarFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(bool& result, const arg_type<Varchar>& json) {
+    auto parsedJson = folly::parseJson(json);
+    result = parsedJson.isNumber() || parsedJson.isString() ||
+        parsedJson.isBool() || parsedJson.isNull();
+  }
+};
+
 // jsonExtractScalar(json, json_path) -> varchar
 // Current implementation support UTF-8 in json, but not in json_path.
 // Like jsonExtract(), but returns the result value as a string (as opposed
@@ -43,6 +54,63 @@ struct JsonExtractScalarFunction {
     } else {
       return false;
     }
+  }
+};
+
+template <typename T>
+struct JsonArrayLengthFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Varchar>& json) {
+    auto parsedJson = folly::parseJson(json);
+    if (!parsedJson.isArray()) {
+      return false;
+    }
+
+    result = parsedJson.size();
+    return true;
+  }
+};
+
+template <typename T>
+struct JsonArrayContainsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  template <typename TInput>
+  FOLLY_ALWAYS_INLINE bool
+  call(bool& result, const arg_type<Varchar>& json, const TInput& value) {
+    auto parsedJson = folly::parseJson(json);
+    if (!parsedJson.isArray()) {
+      return false;
+    }
+
+    result = false;
+    for (const auto& v : parsedJson) {
+      if constexpr (std::is_same_v<TInput, bool>) {
+        if (v.isBool() && v == value) {
+          result = true;
+          break;
+        }
+      } else if constexpr (std::is_same_v<TInput, int64_t>) {
+        if (v.isInt() && v == value) {
+          result = true;
+          break;
+        }
+      } else if constexpr (std::is_same_v<TInput, double>) {
+        if (v.isDouble() && v == value) {
+          result = true;
+          break;
+        }
+      } else {
+        if (v.isString() && v == value) {
+          result = true;
+          break;
+        }
+      }
+    }
+    return true;
   }
 };
 

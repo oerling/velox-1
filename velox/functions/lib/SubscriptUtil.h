@@ -299,7 +299,9 @@ class SubscriptImpl : public exec::VectorFunction {
 
     // Get map keys.
     auto mapKeys = baseMap->mapKeys();
-    exec::LocalDecodedVector mapKeysHolder(context, *mapKeys, rows);
+    exec::LocalSelectivityVector allElementRows(context, mapKeys->size());
+    allElementRows->setAll();
+    exec::LocalDecodedVector mapKeysHolder(context, *mapKeys, *allElementRows);
     auto decodedMapKeys = mapKeysHolder.get();
 
     // Get index vector (second argument).

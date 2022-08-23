@@ -323,4 +323,13 @@ void gatherCopy(
   }
 }
 
+std::string makeOperatorSpillPath(
+    const std::string& spillPath,
+    const std::string& taskId,
+    int driverId,
+    int32_t operatorId) {
+  VELOX_CHECK(!spillPath.empty());
+  return fmt::format("{}/{}_{}_{}", spillPath, taskId, driverId, operatorId);
+}
+
 } // namespace facebook::velox::exec

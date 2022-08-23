@@ -56,12 +56,12 @@ void generateJsonTyped(
         std::is_same_v<T, Date> || std::is_same_v<T, Timestamp> ||
         std::is_same_v<T, IntervalDayTime>) {
       result.append(std::to_string(value));
-    } else if constexpr (std::is_same_v<T, ShortDecimal>) {
-      // ShortDecimal doesn't include precision and scale information
+    } else if constexpr (std::is_same_v<T, UnscaledShortDecimal>) {
+      // UnscaledShortDecimal doesn't include precision and scale information
       // to serialize into JSON.
       VELOX_UNSUPPORTED();
-    } else if constexpr (std::is_same_v<T, LongDecimal>) {
-      // LongDecimal doesn't include precision and scale information
+    } else if constexpr (std::is_same_v<T, UnscaledLongDecimal>) {
+      // UnscaledLongDecimal doesn't include precision and scale information
       // to serialize into JSON.
       VELOX_UNSUPPORTED();
     } else {
@@ -77,7 +77,7 @@ void generateJsonTyped(
 // Casts primitive-type input vectors to Json type.
 template <
     TypeKind kind,
-    typename std::enable_if<TypeTraits<kind>::isPrimitiveType, int>::type = 0>
+    typename std::enable_if_t<TypeTraits<kind>::isPrimitiveType, int> = 0>
 void castToJson(
     const BaseVector& input,
     exec::EvalCtx* context,
@@ -137,7 +137,7 @@ void castToJsonFromRow(
 // Casts complex-type input vectors to Json type.
 template <
     TypeKind kind,
-    typename std::enable_if<!TypeTraits<kind>::isPrimitiveType, int>::type = 0>
+    typename std::enable_if_t<!TypeTraits<kind>::isPrimitiveType, int> = 0>
 void castToJson(
     const BaseVector& input,
     exec::EvalCtx* context,
