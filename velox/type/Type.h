@@ -1956,6 +1956,9 @@ struct CastTypeChecker<Row<T...>> {
   }
 };
 
+/// Return the scalar type for a given 'kind'.
+TypePtr fromKindToScalerType(TypeKind kind);
+
 } // namespace facebook::velox
 
 namespace folly {
@@ -1989,8 +1992,7 @@ class FormatValue<facebook::velox::TypeKind> {
 template <typename T>
 class FormatValue<
     std::shared_ptr<T>,
-    typename std::enable_if<
-        std::is_base_of<facebook::velox::Type, T>::value>::type> {
+    typename std::enable_if_t<std::is_base_of_v<facebook::velox::Type, T>>> {
  public:
   explicit FormatValue(const std::shared_ptr<const facebook::velox::Type>& type)
       : type_(type) {}
