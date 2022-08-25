@@ -99,21 +99,11 @@ class TpchBenchmark {
     functions::prestosql::registerAllScalarFunctions();
     parse::registerTypeResolver();
     filesystems::registerLocalFileSystem();
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-    parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
-=======
->>>>>>> h-bm-dev
     if (FLAGS_use_native_parquet_reader) {
       parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
     } else {
       parquet::registerParquetReaderFactory(parquet::ParquetReaderType::DUCKDB);
     }
-<<<<<<< HEAD
-=======
->>>>>>> main
->>>>>>> h-bm-dev
     dwrf::registerDwrfReaderFactory();
     auto hiveConnector =
         connector::getConnectorFactory(
