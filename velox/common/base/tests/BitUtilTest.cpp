@@ -671,20 +671,21 @@ TEST_F(BitUtilTest, hashMix) {
       bits::commutativeHashMix(123, 321), bits::commutativeHashMix(321, 123));
 }
 
-  TEST_F(BitUtilTest, crc) {
-    const char* text = "We were sailing on the sloop John B., ny grandfather and me...";
-    const char* text2 = "around old Nassau we would rowm";
-      boost::crc_32_type crc32;
-      crc32.process_bytes(text, sizeof(text));
-      crc32.process_bytes(text2, sizeof(text2));
-      auto boostCrc = crc32.checksum();
-    bits::Crc32 crc;
-    crc.process_bytes(text, sizeof(text));
-    crc.process_bytes(text2, sizeof(text2));
-    auto follyCrc = crc.checksum();
+TEST_F(BitUtilTest, crc) {
+  const char* text =
+      "We were sailing on the sloop John B., ny grandfather and me...";
+  const char* text2 = "around old Nassau we would rowm";
+  boost::crc_32_type crc32;
+  crc32.process_bytes(text, sizeof(text));
+  crc32.process_bytes(text2, sizeof(text2));
+  auto boostCrc = crc32.checksum();
+  bits::Crc32 crc;
+  crc.process_bytes(text, sizeof(text));
+  crc.process_bytes(text2, sizeof(text2));
+  auto follyCrc = crc.checksum();
 
-    EXPECT_EQ(boostCrc, follyCrc);
-  }
+  EXPECT_EQ(boostCrc, follyCrc);
+}
 
 } // namespace bits
 } // namespace velox
