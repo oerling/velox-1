@@ -594,15 +594,18 @@ TEST_F(RowContainerTest, partition) {
   std::vector<std::vector<char*>> partitionRows(kNumPartitions);
   auto column = batch->childAt(0)->as<FlatVector<int32_t>>();
   for (auto i = 0; i < kNumRows; ++i) {
-    uint8_t partition = static_cast<uint32_t>(column->valueAt(i)) % kNumPartitions;
+    uint8_t partition =
+        static_cast<uint32_t>(column->valueAt(i)) % kNumPartitions;
     rowPartitions[i] = partition;
     partitionRows[partition].push_back(rows[i]);
   }
-  partitions.appendPartitions(folly::Range<const uint8_t*>(rowPartitions.data(), kNumRows));
-  for (auto partition = 0; partition < kNumPartitions ; ++partition) {
+  partitions.appendPartitions(
+      folly::Range<const uint8_t*>(rowPartitions.data(), kNumRows));
+  for (auto partition = 0; partition < kNumPartitions; ++partition) {
     std::vector<char*> result(partitionRows[partition].size() + 10);
     iter.reset();
-    auto numFound = data->listPartitionRows(iter, partition, result.size() + 10, result.data());
+    auto numFound = data->listPartitionRows(
+        iter, partition, result.size() + 10, result.data());
     EXPECT_EQ(numFound, partitionRows[partition].size());
     result.resize(numFound);
     EXPECT_EQ(partitionRows[partition], result);

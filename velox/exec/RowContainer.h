@@ -68,7 +68,7 @@ class RowPartitions {
   int32_t size() const {
     return size_;
   }
-  
+
  private:
   const int32_t capacity_;
 

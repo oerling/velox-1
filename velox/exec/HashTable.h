@@ -447,9 +447,7 @@ class HashTable : public BaseHashTable {
   // Inserts the rows in 'partition' from this and 'otherTables' into 'this'.
   // The rows that would have gone past the end of the partition are returned in
   // 'overflow'.
-  void buildJoinPartition(
-      uint8_t partition,
-      std::vector<char*>& overflow);
+  void buildJoinPartition(uint8_t partition, std::vector<char*>& overflow);
 
   // Assigns a partition to each row of 'subtable' in RowPartitions of
   // subtable's RowContainer. If 'hashMode_' is kNormalizedKeys, records the

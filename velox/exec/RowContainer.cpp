@@ -566,8 +566,8 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
   }
   while (toSkip) {
     if (toSkip * rowSize <= (iter.endOfRun - iter.currentRow) - rowSize) {
-          iter.currentRow += toSkip * rowSize;
-    break;
+      iter.currentRow += toSkip * rowSize;
+      break;
     }
     int32_t rowsInRun = (iter.endOfRun - iter.currentRow) / rowSize;
     toSkip -= rowsInRun;
@@ -580,8 +580,7 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     }
     auto run = rows_.allocationAt(iter.allocationIndex)->runAt(iter.runIndex);
     if (iter.allocationIndex == rows_.numSmallAllocations() - 1 &&
-	iter.runIndex ==
-	rows_.allocationAt(iter.allocationIndex)->numRuns()) {
+        iter.runIndex == rows_.allocationAt(iter.allocationIndex)->numRuns()) {
       iter.endOfRun = run.data<char>() + rows_.currentOffset();
     } else {
       iter.endOfRun = run.data<char>() + run.numBytes();
@@ -593,7 +592,8 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
 
 RowPartitions& RowContainer::partitions() {
   if (!partitions_) {
-    partitions_ = std::make_unique<RowPartitions>(numRows_, *rows_.mappedMemory());
+    partitions_ =
+        std::make_unique<RowPartitions>(numRows_, *rows_.mappedMemory());
   }
   return *partitions_;
 }
@@ -601,8 +601,7 @@ RowPartitions& RowContainer::partitions() {
 RowPartitions::RowPartitions(
     int32_t numRows,
     memory::MappedMemory& mappedMemory)
-  : capacity_(numRows),
-    allocation_(&mappedMemory){
+    : capacity_(numRows), allocation_(&mappedMemory) {
   auto numPages = bits::roundUp(capacity_, memory::MappedMemory::kPageSize) /
       memory::MappedMemory::kPageSize;
   if (!mappedMemory.allocate(numPages, 0, allocation_)) {
@@ -639,30 +638,29 @@ int32_t RowContainer::listPartitionRows(
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
   while (numResults < maxRows) {
-  auto startRow = iter.rowNumber / kBatch * kBatch;
-  uint32_t firstMask = ~bits::lowMask(iter.rowNumber - startRow);
+    auto startRow = iter.rowNumber / kBatch * kBatch;
+    uint32_t firstMask = ~bits::lowMask(iter.rowNumber - startRow);
     int32_t runIndex;
     int32_t offset;
     auto& allocation = partitions_->allocation();
     allocation.findRun(startRow, &runIndex, &offset);
     auto run = allocation.runAt(runIndex);
     auto runEnd = run.numBytes();
-    auto bytes = allocation.runAt(runIndex).data<uint8_t >() + offset;
+    auto bytes = allocation.runAt(runIndex).data<uint8_t>() + offset;
     for (; offset < runEnd; offset += kBatch) {
       auto bits = simd::toBitMask(
-				  numberVector ==
+                      numberVector ==
                       xsimd::batch<uint8_t>::load_unaligned(bytes + offset)) &
           firstMask;
       firstMask = ~0;
       while (bits) {
         int32_t hit = __builtin_ctz(bits);
-	auto distance = hit + startRow - iter.rowNumber;
+        auto distance = hit + startRow - iter.rowNumber;
         skip(iter, distance);
 
-
-	if (iter.rowNumber >= numRows_) {
-	  return numResults;
-	}
+        if (iter.rowNumber >= numRows_) {
+          return numResults;
+        }
         result[numResults++] = iter.currentRow;
         if (numResults == maxRows) {
           return numResults;
@@ -671,10 +669,10 @@ int32_t RowContainer::listPartitionRows(
       }
       startRow += kBatch;
       if (iter.rowNumber != startRow) {
-	skip(iter, startRow - iter.rowNumber);
+        skip(iter, startRow - iter.rowNumber);
       }
       if (!iter.currentRow || startRow >= size) {
-	return numResults;
+        return numResults;
       }
     }
   }
