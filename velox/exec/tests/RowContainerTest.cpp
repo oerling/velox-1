@@ -86,23 +86,22 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
   std::unique_ptr<RowContainer> roundTrip(const VectorPtr& input) {
     // Create row container.
     std::vector<TypePtr> types{input->type()};
-    auto data = makeRowContainer(types, std::vector<TypePtr>{});
 
     // Store the vector in the rowContainer.
-    RowContainer rowContainer(types, mappedMemory_);
+    auto rowContainer = std::make_unique<RowContainer>(types, mappedMemory_);
     auto size = input->size();
     SelectivityVector allRows(size);
     std::vector<char*> rows(size);
     DecodedVector decoded(*input, allRows);
     for (size_t row = 0; row < size; ++row) {
-      rows[row] = rowContainer.newRow();
-      rowContainer.store(decoded, row, rows[row], 0);
+      rows[row] = rowContainer->newRow();
+      rowContainer->store(decoded, row, rows[row], 0);
     }
 
-    testExtractColumnForAllRows(rowContainer, rows, 0, input);
+    testExtractColumnForAllRows(*rowContainer, rows, 0, input);
 
-    testExtractColumnForOddRows(rowContainer, rows, 0, input);
-    return data;
+    testExtractColumnForOddRows(*rowContainer, rows, 0, input);
+    return rowContainer;
   }
 
   template <typename T>
@@ -595,16 +594,17 @@ TEST_F(RowContainerTest, partition) {
   std::vector<std::vector<char*>> partitionRows(kNumPartitions);
   auto column = batch->childAt(0)->as<FlatVector<int32_t>>();
   for (auto i = 0; i < kNumRows; ++i) {
-    uint8_t partition = column->valueAt(i) % kNumPartitions;
+    uint8_t partition = static_cast<uint32_t>(column->valueAt(i)) % kNumPartitions;
     rowPartitions[i] = partition;
     partitionRows[partition].push_back(rows[i]);
   }
   partitions.appendPartitions(folly::Range<const uint8_t*>(rowPartitions.data(), kNumRows));
   for (auto partition = 0; partition < kNumPartitions ; ++partition) {
-    std::vector<char*> result(partitionRows[partition].size());
+    std::vector<char*> result(partitionRows[partition].size() + 10);
     iter.reset();
-    data->listPartitionRows(iter, partition, result.size(), result.data());
-    EXPECT_EQ(nullptr, iter.currentRow);
+    auto numFound = data->listPartitionRows(iter, partition, result.size() + 10, result.data());
+    EXPECT_EQ(numFound, partitionRows[partition].size());
+    result.resize(numFound);
     EXPECT_EQ(partitionRows[partition], result);
   }
 }

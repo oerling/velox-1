@@ -15,8 +15,8 @@
  */
 
 #include "velox/exec/HashTable.h"
-#include "velox/common/base/Portability.h"
 #include "velox/common/base/AsyncSource.h"
+#include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/process/ProcessBase.h"
 #include "velox/exec/ContainerRowSerde.h"
@@ -551,7 +551,8 @@ bool HashTable<ignoreNullKeys>::hashRows(
     raw_vector<uint64_t>& hashes) {
   if (!initNormalizedKeys && hashMode_ == HashMode::kNormalizedKey) {
     for (auto i = 0; i < rows.size(); ++i) {
-      hashes[i] = mixNormalizedKey(RowContainer::normalizedKey(rows[i]), sizeBits_);
+      hashes[i] =
+          mixNormalizedKey(RowContainer::normalizedKey(rows[i]), sizeBits_);
     }
     return true;
   }
@@ -559,14 +560,13 @@ bool HashTable<ignoreNullKeys>::hashRows(
   for (int32_t i = 0; i < hashers_.size(); ++i) {
     auto& hasher = hashers_[i];
     if (hashMode_ == HashMode::kHash) {
-      rows_->hash(
-		  i, rows, i > 0, hashes.data());
+      rows_->hash(i, rows, i > 0, hashes.data());
     } else {
       // Array or normalized key.
       auto column = rows_->columnAt(i);
       if (!hasher->computeValueIdsForRows(
-					  rows.data(),
-					  rows.size(),
+              rows.data(),
+              rows.size(),
               column.offset(),
               column.nullByte(),
               ignoreNullKeys ? 0 : column.nullMask(),
@@ -577,15 +577,15 @@ bool HashTable<ignoreNullKeys>::hashRows(
     }
     if (hashMode_ == HashMode::kNormalizedKey && initNormalizedKeys) {
       for (auto i = 0; i < rows.size(); ++i) {
-	RowContainer::normalizedKey(rows[i]) = hashes[i];
-	hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
+        RowContainer::normalizedKey(rows[i]) = hashes[i];
+        hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
       }
     }
   }
   return true;
 }
 
-  namespace {
+namespace {
 template <typename Source>
 void syncWork(std::vector<std::shared_ptr<Source>>& work) {
   for (auto& item : work) {
@@ -607,11 +607,12 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   partitionBounds_.resize(numPartitions + 1);
   for (auto i = 0; i < numPartitions; ++i) {
     partitionBounds_.push_back(
-        bits::roundUp((size_ / numPartitions) * i, sizeof(TagVector)));
+        // The bounds are rounded up to cache line size.
+        bits::roundUp((size_ / numPartitions) * i, 64));
   }
   partitionBounds_.push_back(size_);
-  std::vector < std::shared_ptr<AsyncSource<bool>>> partitionWork;
-  std::vector < std::shared_ptr<AsyncSource<bool>>> buildWork;
+  std::vector<std::shared_ptr<AsyncSource<bool>>> partitionWork;
+  std::vector<std::shared_ptr<AsyncSource<bool>>> buildWork;
   auto sync = folly::makeGuard([&]() {
     syncWork(partitionWork);
     syncWork(buildWork);
@@ -619,9 +620,9 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   for (auto i = 0; i < numPartitions; ++i) {
     auto table = i == 0 ? this : otherTables_[i - 1].get();
     partitionWork.push_back(
-			    std::make_shared < AsyncSource<bool>>([this, table, numPartitions]() {
-			      partitionRows(*table, numPartitions);
-			      return std::make_unique<bool>(true);
+        std::make_shared<AsyncSource<bool>>([this, table, numPartitions]() {
+          partitionRows(*table, numPartitions);
+          return std::make_unique<bool>(true);
         }));
     buildExecutor_->add([work = partitionWork.back()]() { work->prepare(); });
   }
@@ -639,8 +640,12 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   raw_vector<uint64_t> hashes;
   for (auto& overflows : overflow) {
     hashes.resize(overflows.size());
-    hashRows(folly::Range<char**>(overflows.data(), overflows.size()), false, hashes);
-    insertForJoin(overflows.data(), hashes.data(), overflows.size(), 0, size_, nullptr);
+    hashRows(
+        folly::Range<char**>(overflows.data(), overflows.size()),
+        false,
+        hashes);
+    insertForJoin(
+        overflows.data(), hashes.data(), overflows.size(), 0, size_, nullptr);
   }
 }
 
@@ -668,11 +673,12 @@ void HashTable<ignoreNullKeys>::partitionRows(
   raw_vector<uint8_t> partitions(kBatch);
   RowContainerIterator iter;
   while (auto numRows = subtable.rows_->listRows(
-						 &iter, kBatch, RowContainer::kUnlimited, rows.data())) {
+             &iter, kBatch, RowContainer::kUnlimited, rows.data())) {
     hashRows(folly::Range<char**>(rows.data(), rows.size()), true, hashes);
     for (auto i = 0; i < numRows; ++i) {
       auto index = ProbeState::tagsByteOffset(hashes[i], sizeMask_);
-      partitions[i] = findPartition(index, partitionBounds_.data() + 1, partitionBounds_.size() - 1);
+      partitions[i] = findPartition(
+          index, partitionBounds_.data() + 1, partitionBounds_.size() - 1);
     }
     subtable.rows_->partitions().appendPartitions(
         folly::Range<const uint8_t*>(partitions.data(), partitions.size()));
@@ -896,6 +902,11 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash() {
   constexpr int32_t kHashBatchSize = 1024;
   // @lint-ignore CLANGTIDY
+  if (buildExecutor_ && !otherTables_.empty() &&
+      size_ / (1 + otherTables_.size()) > 1000) {
+    parallelJoinBuild();
+    return;
+  }
   raw_vector<uint64_t> hashes;
   hashes.resize(kHashBatchSize);
   char* groups[kHashBatchSize];

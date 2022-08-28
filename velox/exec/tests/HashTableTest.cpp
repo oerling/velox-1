@@ -19,6 +19,7 @@
 #include "velox/exec/VectorHasher.h"
 #include "velox/vector/tests/VectorMaker.h"
 
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -35,6 +36,10 @@ using namespace facebook::velox::test;
 // modes.
 class HashTableTest : public testing::Test {
  protected:
+  void SetUp() override {
+    executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(16);
+  }
+
   void testCycle(
       BaseHashTable::HashMode mode,
       int32_t size,
@@ -81,7 +86,7 @@ class HashTableTest : public testing::Test {
       batches_.insert(batches_.end(), batches.begin(), batches.end());
       startOffset += size;
     }
-    topTable_->prepareJoinTable(std::move(otherTables));
+    topTable_->prepareJoinTable(std::move(otherTables), executor_.get());
     EXPECT_EQ(topTable_->hashMode(), mode);
     LOG(INFO) << "Made table " << describeTable();
     testProbe();
@@ -445,6 +450,7 @@ class HashTableTest : public testing::Test {
   // Spacing between consecutive generated keys. Affects whether
   // Vectorhashers make ranges or ids of distinct values.
   int32_t keySpacing_ = 1;
+  std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
 };
 
 TEST_F(HashTableTest, int2DenseArray) {

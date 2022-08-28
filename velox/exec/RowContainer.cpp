@@ -565,28 +565,28 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     rowSize = fixedRowSize_;
   }
   while (toSkip) {
-    if (toSkip * rowSize > (iter.endOfRun - iter.currentRow) - rowSize) {
-      int32_t rowsInRun = (iter.endOfRun - iter.currentRow) / rowSize;
-      toSkip -= rowsInRun;
-      auto numRuns = rows_.allocationAt(iter.allocationIndex)->numRuns();
-      if (iter.runIndex >= numRuns - 1) {
-        ++iter.allocationIndex;
-        iter.runIndex = 0;
-      } else {
-        ++iter.runIndex;
-      }
-      auto run = rows_.allocationAt(iter.allocationIndex)->runAt(iter.runIndex);
-      if (iter.allocationIndex == rows_.numSmallAllocations() - 1 &&
-              iter.runIndex ==
-                  rows_.allocationAt(iter.allocationIndex)->numRuns()) {
-        iter.endOfRun = run.data<char>() + rows_.currentOffset();
-      } else {
-        iter.endOfRun = run.data<char>() + run.numBytes();
-      }
-      iter.currentRow = run.data<char>();
-      continue;
+    if (toSkip * rowSize <= (iter.endOfRun - iter.currentRow) - rowSize) {
+          iter.currentRow += toSkip * rowSize;
+    break;
     }
-    iter.currentRow += toSkip * rowSize;
+    int32_t rowsInRun = (iter.endOfRun - iter.currentRow) / rowSize;
+    toSkip -= rowsInRun;
+    auto numRuns = rows_.allocationAt(iter.allocationIndex)->numRuns();
+    if (iter.runIndex >= numRuns - 1) {
+      ++iter.allocationIndex;
+      iter.runIndex = 0;
+    } else {
+      ++iter.runIndex;
+    }
+    auto run = rows_.allocationAt(iter.allocationIndex)->runAt(iter.runIndex);
+    if (iter.allocationIndex == rows_.numSmallAllocations() - 1 &&
+	iter.runIndex ==
+	rows_.allocationAt(iter.allocationIndex)->numRuns()) {
+      iter.endOfRun = run.data<char>() + rows_.currentOffset();
+    } else {
+      iter.endOfRun = run.data<char>() + run.numBytes();
+    }
+    iter.currentRow = run.data<char>();
   }
   iter.rowNumber += numRows;
 }
@@ -634,6 +634,7 @@ int32_t RowContainer::listPartitionRows(
     char** result) {
   constexpr int32_t kBatch = xsimd::batch<uint8_t>::size;
   int32_t numResults = 0;
+  int32_t size = partitions_->size();
   auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
@@ -655,7 +656,7 @@ int32_t RowContainer::listPartitionRows(
       firstMask = ~0;
       while (bits) {
         int32_t hit = __builtin_ctz(bits);
-	auto distance = hit - +startRow - iter.rowNumber;
+	auto distance = hit + startRow - iter.rowNumber;
         skip(iter, distance);
 
 
@@ -672,10 +673,9 @@ int32_t RowContainer::listPartitionRows(
       if (iter.rowNumber != startRow) {
 	skip(iter, startRow - iter.rowNumber);
       }
-      if (!iter.currentRow) {
+      if (!iter.currentRow || startRow >= size) {
 	return numResults;
       }
-      offset += kBatch;
     }
   }
   return numResults;
