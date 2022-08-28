@@ -81,8 +81,9 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
     EXPECT_EQ(usage, sum);
   }
 
-  // Stores the input vector in Row Container, extracts it and compares.
-  void roundTrip(const VectorPtr& input) {
+  // Stores the input vector in Row Container, extracts it and compares. Returns
+  // the container.
+  std::unique_ptr<RowContainer> roundTrip(const VectorPtr& input) {
     // Create row container.
     std::vector<TypePtr> types{input->type()};
     auto data = makeRowContainer(types, std::vector<TypePtr>{});
@@ -101,6 +102,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
     testExtractColumnForAllRows(rowContainer, rows, 0, input);
 
     testExtractColumnForOddRows(rowContainer, rows, 0, input);
+    return data;
   }
 
   template <typename T>
@@ -554,4 +556,55 @@ TEST_F(RowContainerTest, compareDouble) {
   // Verify descending order
   testCompareFloats<double>(DOUBLE(), false, true);
   testCompareFloats<double>(DOUBLE(), false, false);
+}
+
+TEST_F(RowContainerTest, partition) {
+  // We assign an arbitrary partition number to each row and iterate
+  // over the rows a partition at a time.
+  constexpr int32_t kNumRows = 100000;
+  constexpr uint8_t kNumPartitions = 16;
+  auto batch = makeDataset(
+      ROW(
+          {{"int_val", INTEGER()},
+           {"long_val", BIGINT()},
+           {"string_val", VARCHAR()}}),
+      kNumRows,
+      [](RowVectorPtr rows) {});
+
+  auto data = roundTrip(batch);
+  std::vector<char*> rows(kNumRows);
+  RowContainerIterator iter;
+  data->listRows(&iter, kNumRows, RowContainer::kUnlimited, rows.data());
+
+  // Test random skipping of RowContainerIterator.
+  for (auto count = 0; count < 100; ++count) {
+    auto index = (count * 121) % kNumRows;
+    iter.reset();
+    data->skip(iter, index);
+    EXPECT_EQ(iter.currentRow, rows[index]);
+    if (index + count < kNumRows) {
+      data->skip(iter, count);
+      EXPECT_EQ(iter.currentRow, rows[index + count]);
+    }
+  }
+
+  //
+  auto& partitions = data->partitions();
+  std::vector<uint8_t> rowPartitions(kNumRows);
+  // Assign a partition to each row based on  modulo of first column
+  std::vector<std::vector<char*>> partitionRows(kNumPartitions);
+  auto column = batch->childAt(0)->as<FlatVector<int32_t>>();
+  for (auto i = 0; i < kNumRows; ++i) {
+    uint8_t partition = column->valueAt(i) % kNumPartitions;
+    rowPartitions[i] = partition;
+    partitionRows[partition].push_back(rows[i]);
+  }
+  partitions.appendPartitions(folly::Range<const uint8_t*>(rowPartitions.data(), kNumRows));
+  for (auto partition = 0; partition < kNumPartitions ; ++partition) {
+    std::vector<char*> result(partitionRows[partition].size());
+    iter.reset();
+    data->listPartitionRows(iter, partition, result.size(), result.data());
+    EXPECT_EQ(nullptr, iter.currentRow);
+    EXPECT_EQ(partitionRows[partition], result);
+  }
 }
