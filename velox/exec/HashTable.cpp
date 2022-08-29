@@ -575,11 +575,11 @@ bool HashTable<ignoreNullKeys>::hashRows(
         return false;
       }
     }
-    if (hashMode_ == HashMode::kNormalizedKey && initNormalizedKeys) {
-      for (auto i = 0; i < rows.size(); ++i) {
-        RowContainer::normalizedKey(rows[i]) = hashes[i];
-        hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
-      }
+  }
+  if (hashMode_ == HashMode::kNormalizedKey && initNormalizedKeys) {
+    for (auto i = 0; i < rows.size(); ++i) {
+      RowContainer::normalizedKey(rows[i]) = hashes[i];
+      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
     }
   }
   return true;
@@ -602,15 +602,19 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   int32_t numPartitions = 1 + otherTables_.size();
   VELOX_CHECK_GT(
       size_ / numPartitions,
-      16,
+      160,
       "Less than 160 entries per partition for parallel build");
   partitionBounds_.resize(numPartitions + 1);
+  // Pad the tail of partitionBounds_ to max int.
+  std::fill(
+      partitionBounds_.begin(),
+      partitionBounds_.begin() + partitionBounds_.capacity(),
+      std::numeric_limits<int32_t>::max());
   for (auto i = 0; i < numPartitions; ++i) {
-    partitionBounds_.push_back(
-        // The bounds are rounded up to cache line size.
-        bits::roundUp((size_ / numPartitions) * i, 64));
+    // The bounds are rounded up to cache line size.
+    partitionBounds_[i] = bits::roundUp((size_ / numPartitions) * i, 64);
   }
-  partitionBounds_.push_back(size_);
+  partitionBounds_.back() = size_;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionWork;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildWork;
   auto sync = folly::makeGuard([&]() {
@@ -650,13 +654,14 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
 }
 
 namespace {
-int32_t findPartition(int32_t index, int32_t* bounds, int32_t numPartitions) {
+int32_t
+findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
   auto indexVector = xsimd::batch<int32_t>::broadcast(index);
   for (auto i = 1; i < numPartitions; i += xsimd::batch<int32_t>::size) {
-    auto bits = simd::toBitMask(
-        indexVector >= xsimd::batch<int32_t>::load_unaligned(bounds + i));
+    uint8_t bits = simd::toBitMask(
+				   indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i)) ;
     if (bits) {
-      return i + __builtin_ctz(bits);
+      return i + __builtin_ctz(bits) - 1;
     }
   }
   VELOX_UNREACHABLE("Partition index out of range");
@@ -674,11 +679,11 @@ void HashTable<ignoreNullKeys>::partitionRows(
   RowContainerIterator iter;
   while (auto numRows = subtable.rows_->listRows(
              &iter, kBatch, RowContainer::kUnlimited, rows.data())) {
-    hashRows(folly::Range<char**>(rows.data(), rows.size()), true, hashes);
+    hashRows(folly::Range<char**>(rows.data(), numRows), true, hashes);
     for (auto i = 0; i < numRows; ++i) {
       auto index = ProbeState::tagsByteOffset(hashes[i], sizeMask_);
       partitions[i] = findPartition(
-          index, partitionBounds_.data() + 1, partitionBounds_.size() - 1);
+          index, partitionBounds_.data(), partitionBounds_.size());
     }
     subtable.rows_->partitions().appendPartitions(
         folly::Range<const uint8_t*>(partitions.data(), partitions.size()));
@@ -715,7 +720,9 @@ bool HashTable<ignoreNullKeys>::insertBatch(
     char** groups,
     int32_t numGroups,
     raw_vector<uint64_t>& hashes) {
-  hashRows(folly::Range(groups, numGroups), true, hashes);
+  if (!hashRows(folly::Range(groups, numGroups), true, hashes)) {
+    return false;
+  }
   if (isJoinBuild_) {
     insertForJoin(groups, hashes.data(), numGroups);
   } else {
@@ -737,15 +744,6 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
       table_[index] = groups[i];
     }
   } else {
-    if (hashMode_ == HashMode::kNormalizedKey) {
-      for (int i = 0; i < numGroups; ++i) {
-        auto hash = hashes[i];
-        // Write the normalized key below the row.
-        RowContainer::normalizedKey(groups[i]) = hash;
-        // Shuffle the bits im the normalized key.
-        hashes[i] = mixNormalizedKey(hash, sizeBits_);
-      }
-    }
     for (int32_t i = 0; i < numGroups; ++i) {
       auto hash = hashes[i];
       auto tagIndex = ProbeState::tagsByteOffset(hash, sizeMask_);
@@ -873,16 +871,6 @@ void HashTable<ignoreNullKeys>::insertForJoin(
     return;
   }
 
-  if (partitionEnd == 0 && hashMode_ == HashMode::kNormalizedKey) {
-    // Write the normalized key below each row. The key is only known
-    // at the time of insert, so cannot be filled in at the time of
-    // accumulating the build rows.
-    for (auto i = 0; i < numGroups; ++i) {
-      RowContainer::normalizedKey(groups[i]) = hashes[i];
-      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
-    }
-  }
-
   ProbeState state1;
   for (auto i = 0; i < numGroups; ++i) {
     state1.preProbe(tags_, sizeMask_, hashes[i], i);
@@ -902,8 +890,8 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash() {
   constexpr int32_t kHashBatchSize = 1024;
   // @lint-ignore CLANGTIDY
-  if (buildExecutor_ && !otherTables_.empty() &&
-      size_ / (1 + otherTables_.size()) > 1000) {
+  if (hashMode_ != HashMode::kArray && buildExecutor_ &&
+      !otherTables_.empty() && size_ / (1 + otherTables_.size()) > 1000) {
     parallelJoinBuild();
     return;
   }

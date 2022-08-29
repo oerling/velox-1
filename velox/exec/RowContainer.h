@@ -34,16 +34,24 @@ struct RowContainerIterator {
 
   // Ordinal position of 'currentRow' in RowContainer.
   int32_t rowNumber{0};
-  char* FOLLY_NULLABLE currentRow{nullptr};
+  char* FOLLY_NULLABLE rowBegin{nullptr};
   // First byte after the end of the PageRun containing 'currentRow'.
   char* FOLLY_NULLABLE endOfRun{nullptr};
+
+  // Returns the current row, skipping a possible normalized key below the first
+  // byte of row..
+  char* currentRow() {
+    return (rowBegin && normalizedKeysLeft)
+        ? rowBegin + sizeof(uint64_t)
+        : rowBegin;
+  }
 
   void reset() {
     allocationIndex = 0;
     runIndex = 0;
     rowOffset = 0;
     normalizedKeysLeft = 0;
-    currentRow = nullptr;
+    rowBegin = nullptr;
     rowNumber = 0;
     endOfRun = nullptr;
   }

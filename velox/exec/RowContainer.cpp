@@ -550,11 +550,11 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     VELOX_DCHECK_EQ(0, iter.allocationIndex);
     iter.normalizedKeysLeft = numRowsWithNormalizedKey_;
     auto run = rows_.allocationAt(0)->runAt(0);
-    iter.currentRow = run.data<char>();
-    iter.endOfRun = iter.currentRow + run.numBytes();
+    iter.rowBegin = run.data<char>();
+    iter.endOfRun = iter.rowBegin + run.numBytes();
   }
   if (iter.rowNumber + numRows >= numRows_) {
-    iter.currentRow = nullptr;
+    iter.rowBegin = nullptr;
   }
   int32_t rowSize = fixedRowSize_ +
       (iter.normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);
@@ -565,11 +565,11 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     rowSize = fixedRowSize_;
   }
   while (toSkip) {
-    if (toSkip * rowSize <= (iter.endOfRun - iter.currentRow) - rowSize) {
-      iter.currentRow += toSkip * rowSize;
+    if (toSkip * rowSize <= (iter.endOfRun - iter.rowBegin) - rowSize) {
+      iter.rowBegin += toSkip * rowSize;
       break;
     }
-    int32_t rowsInRun = (iter.endOfRun - iter.currentRow) / rowSize;
+    int32_t rowsInRun = (iter.endOfRun - iter.rowBegin) / rowSize;
     toSkip -= rowsInRun;
     auto numRuns = rows_.allocationAt(iter.allocationIndex)->numRuns();
     if (iter.runIndex >= numRuns - 1) {
@@ -585,7 +585,10 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     } else {
       iter.endOfRun = run.data<char>() + run.numBytes();
     }
-    iter.currentRow = run.data<char>();
+    iter.rowBegin = run.data<char>();
+  }
+  if (iter.normalizedKeysLeft) {
+    iter.normalizedKeysLeft -= numRows;
   }
   iter.rowNumber += numRows;
 }
@@ -661,7 +664,7 @@ int32_t RowContainer::listPartitionRows(
         if (iter.rowNumber >= numRows_) {
           return numResults;
         }
-        result[numResults++] = iter.currentRow;
+        result[numResults++] = iter.currentRow();
         if (numResults == maxRows) {
           return numResults;
         }
@@ -671,7 +674,7 @@ int32_t RowContainer::listPartitionRows(
       if (iter.rowNumber != startRow) {
         skip(iter, startRow - iter.rowNumber);
       }
-      if (!iter.currentRow || startRow >= size) {
+      if (!iter.currentRow() || startRow >= size) {
         return numResults;
       }
     }

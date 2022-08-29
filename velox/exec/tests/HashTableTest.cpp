@@ -465,7 +465,7 @@ TEST_F(HashTableTest, string1DenseArray) {
 
 TEST_F(HashTableTest, string2Normalized) {
   auto type = ROW({"k1", "k2"}, {VARCHAR(), VARCHAR()});
-  testCycle(BaseHashTable::HashMode::kNormalizedKey, 50000, 2, type, 2);
+  testCycle(BaseHashTable::HashMode::kNormalizedKey, 5000, 19, type, 2);
 }
 
 TEST_F(HashTableTest, int2SparseArray) {
@@ -499,7 +499,7 @@ TEST_F(HashTableTest, mixed6Sparse) {
       ROW({"k1", "k2", "k3", "k4", "k5", "k6"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT(), VARCHAR()});
   keySpacing_ = 1000;
-  testCycle(BaseHashTable::HashMode::kHash, 1000000, 2, type, 6);
+  testCycle(BaseHashTable::HashMode::kHash, 1000000, 5, type, 6);
 }
 
 // It should be safe to call clear() before we insert any data into HashTable

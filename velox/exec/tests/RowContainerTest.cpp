@@ -580,10 +580,10 @@ TEST_F(RowContainerTest, partition) {
     auto index = (count * 121) % kNumRows;
     iter.reset();
     data->skip(iter, index);
-    EXPECT_EQ(iter.currentRow, rows[index]);
+    EXPECT_EQ(iter.currentRow(), rows[index]);
     if (index + count < kNumRows) {
       data->skip(iter, count);
-      EXPECT_EQ(iter.currentRow, rows[index + count]);
+      EXPECT_EQ(iter.currentRow(), rows[index + count]);
     }
   }
 

@@ -432,7 +432,7 @@ class HashTable : public BaseHashTable {
       uint64_t* hashes,
       int32_t numGroups,
       int32_t partitionBegin = 0,
-      int32_t partitionEnd = 0,
+      int32_t partitionEnd = std::numeric_limits<int32_t>::max(),
       std::vector<char*>* FOLLY_NULLABLE overflows = nullptr);
 
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
