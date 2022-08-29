@@ -624,7 +624,9 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     auto runSize = allocation_.runAt(run).numBytes();
     auto copySize = std::min<int32_t>(toAdd, runSize - offset);
     memcpy(
-        allocation_.runAt(run).data<uint8_t>() + offset, &partitions[index], copySize);
+        allocation_.runAt(run).data<uint8_t>() + offset,
+        &partitions[index],
+        copySize);
     size_ += copySize;
     index += copySize;
     toAdd -= copySize;
@@ -669,7 +671,7 @@ int32_t RowContainer::listPartitionRows(
         }
         result[numResults++] = iter.currentRow();
         if (numResults == maxRows) {
-	  skip(iter, 1);
+          skip(iter, 1);
           return numResults;
         }
         bits &= bits - 1;

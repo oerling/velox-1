@@ -659,7 +659,7 @@ findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
   auto indexVector = xsimd::batch<int32_t>::broadcast(index);
   for (auto i = 1; i < numPartitions; i += xsimd::batch<int32_t>::size) {
     uint8_t bits = simd::toBitMask(
-				   indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i)) ;
+        indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i));
     if (bits) {
       return i + __builtin_ctz(bits) - 1;
     }

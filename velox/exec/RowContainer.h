@@ -24,7 +24,7 @@
 #include "velox/vector/VectorTypeUtils.h"
 namespace facebook::velox::exec {
 
-  using normalized_key_t = uint64_t;
+using normalized_key_t = uint64_t;
 
 struct RowContainerIterator {
   int32_t allocationIndex = 0;
@@ -42,13 +42,12 @@ struct RowContainerIterator {
 
   // Returns the current row, skipping a possible normalized key below the first
   // byte of row.
-inline char* currentRow() const {
-  return (rowBegin && normalizedKeysLeft)
-      ? rowBegin + sizeof(normalized_key_t)
-      : rowBegin;
-}
+  inline char* currentRow() const {
+    return (rowBegin && normalizedKeysLeft)
+        ? rowBegin + sizeof(normalized_key_t)
+        : rowBegin;
+  }
 
-  
   void reset() {
     allocationIndex = 0;
     runIndex = 0;
@@ -903,7 +902,6 @@ class RowContainer {
     return kEmptyAggregates;
   }
 };
-
 
 template <>
 inline void RowContainer::storeWithNulls<TypeKind::ROW>(
