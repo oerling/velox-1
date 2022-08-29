@@ -239,7 +239,8 @@ void HashBuild::noMoreInput() {
     uint64_t buildMicros = 0;
     {
       MicrosecondTimer builtTimer(&buildMicros);
-      table_->prepareJoinTable(std::move(otherTables));
+      table_->prepareJoinTable(
+			       std::move(otherTables), operatorCtx_->task()->queryCtx()->executor());
     }
     stats_.addRuntimeStat("buildNanos", RuntimeCounter(buildMicros * 1000));
     addRuntimeStats();
