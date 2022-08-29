@@ -143,7 +143,8 @@ class BaseHashTable {
       char** rows) = 0;
 
   virtual void prepareJoinTable(
-      std::vector<std::unique_ptr<BaseHashTable>> tables) = 0;
+      std::vector<std::unique_ptr<BaseHashTable>> tables,
+      folly::Executor* FOLLY_NULLABLE executor = nullptr) = 0;
 
   /// Returns the memory footprint in bytes for any data structures
   /// owned by 'this'.
@@ -359,7 +360,8 @@ class HashTable : public BaseHashTable {
   // with prepareJoinTable. This then takes ownership of all the data
   // and VectorHashers and decides the hash mode and representation.
   void prepareJoinTable(
-      std::vector<std::unique_ptr<BaseHashTable>> tables) override;
+      std::vector<std::unique_ptr<BaseHashTable>> tables,
+      folly::Executor* FOLLY_NULLABLE executor = nullptr) override;
 
   uint64_t hashTableSizeIncrease(int32_t numNewDistinct) const override {
     if (numDistinct_ + numNewDistinct > rehashSize()) {
@@ -440,15 +442,53 @@ class HashTable : public BaseHashTable {
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
   // contents in a RowContainer owned by 'this'. 'hashes' are te hash
   // numbers or array indices (if kArray mode) for each
-  // group. Duplicate key rows are chained via their next link.
-  void insertForJoin(char** groups, uint64_t* hashes, int32_t numGroups);
+  // group. Duplicate key rows are chained via their next link. if
+  // parallel build, partitionEnd is the index of the first entry
+  // after the partition being inserted. If a row would be inserted to
+  // the right of the end, it is not inserted but rather added to the
+  // end of 'overflows'. If 'partitionEnd' is non-0, we are in
+  // parallel build and we expect normalized keys to be in place and
+  // hashes to be mixed from these keys.
+  void insertForJoin(
+      char** groups,
+      uint64_t* hashes,
+      int32_t numGroups,
+      int32_t partitionBegin = 0,
+      int32_t partitionEnd = std::numeric_limits<int32_t>::max(),
+      std::vector<char*>* FOLLY_NULLABLE overflows = nullptr);
 
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
-  // contents in a RowContainer owned by 'this'. 'hashes' are te hash
+  // contents in a RowContainer owned by 'this'. 'hashes' are the hash
   // numbers or array indices (if kArray mode) for each
   // group. 'groups' is expectedd to have no duplicate keys.
-
   void insertForGroupBy(char** groups, uint64_t* hashes, int32_t numGroups);
+
+  // Builds a join table wit numPartitions independent threads using 'executor_'
+  void parallelJoinBuild();
+
+  // Inserts the rows in 'partition' from this and 'otherTables' into 'this'.
+  // The rows that would have gone past the end of the partition are returned in
+  // 'overflow'.
+  void buildJoinPartition(uint8_t partition, std::vector<char*>& overflow);
+
+  // Assigns a partition to each row of 'subtable' in RowPartitions of
+  // subtable's RowContainer. If 'hashMode_' is kNormalizedKeys, records the
+  // normalized key of each row below the row in its container.
+  void partitionRows(
+      HashTable<ignoreNullKeys>& subtable,
+      uint8_t numPartitions);
+
+  // Calculates hashes for 'rows' and returns them in 'hashes'. If
+  // 'initNormalizedKeys' is true, the normalized keys are stored
+  // below each row in the container. If 'initNormalizedKeys' is false
+  // and the table is in normalized keys mode, the keys are retrieved
+  // from the row and the hash is made from this, without recomputing
+  // the normalized key. Returns false if the hash keys are not mappable via the
+  // VectorHashers.
+  bool hashRows(
+      folly::Range<char**> rows,
+      bool initNormalizedKeys,
+      raw_vector<uint64_t>& hashes);
 
   char* insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
 
@@ -477,9 +517,17 @@ class HashTable : public BaseHashTable {
   // with the same key.
   void pushNext(char* row, char* next);
 
-  // Finishes inserting an entry into a join hash table.
-  void
-  buildFullProbe(ProbeState& state, uint64_t hash, char* row, bool extraCheck);
+  // Finishes inserting an entry into a join hash table. If the insert
+  // would fall outside of 'partitionBegin' ... 'partitionEnd', the
+  // insert is not made but the row is instead added to 'overflow'.
+  void buildFullProbe(
+      ProbeState& state,
+      uint64_t hash,
+      char* row,
+      bool extraCheck,
+      int32_t partitionBegin,
+      int32_t partitionEnd,
+      std::vector<char*>* FOLLY_NULLABLE overflows);
 
   // Updates 'hashers_' to correspond to the keys in the
   // content. Returns true if all hashers offer a mapping to value ids
@@ -604,6 +652,19 @@ class HashTable : public BaseHashTable {
   mutable int64_t numHit_{0};
 
   friend class ProbeState;
+
+  // Bounds of independently buildable index ranges in the table. The
+  // range of partition i starts at [i] and ends at [i +1]. Bounds are multiples
+  // of TagVector size.
+  raw_vector<int32_t> partitionBounds_;
+
+  // Executor for parallelizing hash join build. This may be the
+  // executor for Drivers and does not have to provide guarantees of
+  // availability. The parallel steps will be executed on the thread
+  // of prepareJoinTable() if the executor is not provided or does not
+  // perform the steps before the thread of prepareJoinTable() gets to
+  // them.
+  folly::Executor* FOLLY_NULLABLE buildExecutor_{nullptr};
 };
 
 } // namespace facebook::velox::exec

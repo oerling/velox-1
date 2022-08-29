@@ -239,7 +239,8 @@ void HashBuild::noMoreInput() {
     uint64_t buildMicros = 0;
     {
       MicrosecondTimer builtTimer(&buildMicros);
-      table_->prepareJoinTable(std::move(otherTables));
+      table_->prepareJoinTable(
+          std::move(otherTables), operatorCtx_->task()->queryCtx()->executor());
     }
     stats_.addRuntimeStat("buildNanos", RuntimeCounter(buildMicros * 1000));
     addRuntimeStats();
@@ -252,9 +253,9 @@ void HashBuild::noMoreInput() {
 }
 
 void HashBuild::addRuntimeStats() {
-  stats_.addRuntimeStat("joinBuildBytes", RuntimeCounter(table_->allocatedBytes()));
+  stats_.addRuntimeStat(
+      "joinBuildBytes", RuntimeCounter(table_->allocatedBytes()));
 
-  
   // Report range sizes and number of distinct values for the join keys.
   const auto& hashers = table_->hashers();
   uint64_t asRange;
