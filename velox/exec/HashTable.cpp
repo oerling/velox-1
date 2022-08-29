@@ -1115,7 +1115,7 @@ void HashTable<ignoreNullKeys>::insertForJoin(
   for (auto i = 0; i < numGroups; ++i) {
     state1.preProbe(*this, hashes[i], i);
     state1.firstProbe(*this, 0);
-    
+
     buildFullProbe(
         state1,
         hashes[i],
