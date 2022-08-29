@@ -24,6 +24,8 @@
 #include "velox/vector/VectorTypeUtils.h"
 namespace facebook::velox::exec {
 
+  using normalized_key_t = uint64_t;
+
 struct RowContainerIterator {
   int32_t allocationIndex = 0;
   int32_t runIndex = 0;
@@ -39,13 +41,14 @@ struct RowContainerIterator {
   char* FOLLY_NULLABLE endOfRun{nullptr};
 
   // Returns the current row, skipping a possible normalized key below the first
-  // byte of row..
-  char* currentRow() {
-    return (rowBegin && normalizedKeysLeft)
-        ? rowBegin + sizeof(uint64_t)
-        : rowBegin;
-  }
+  // byte of row.
+inline char* currentRow() const {
+  return (rowBegin && normalizedKeysLeft)
+      ? rowBegin + sizeof(normalized_key_t)
+      : rowBegin;
+}
 
+  
   void reset() {
     allocationIndex = 0;
     runIndex = 0;
@@ -57,9 +60,9 @@ struct RowContainerIterator {
   }
 };
 
-// Container with a 4-bit partition number field for each row in a
-// RowContainer. The bit fields correspond 1:1 to rows. Used only
-// for distributed hash join build.
+// Container with a 8-bit partition number field for each row in a
+// RowContainer. The partition number bytes correspond 1:1 to rows. Used only
+// for parallel hash join build.
 class RowPartitions {
  public:
   // Initializes this to hold up to 'numRows'.
@@ -122,8 +125,6 @@ class RowColumn {
 
   const uint64_t packedOffsets_;
 };
-
-using normalized_key_t = uint64_t;
 
 // Collection of rows for aggregation, hash join, order by
 class RowContainer {
@@ -522,8 +523,8 @@ class RowContainer {
       int32_t maxRows,
       char** FOLLY_NONNULL result);
 
-  // Advances 'iterator' by 'numRows'. Updates iterator.currentRow. Sets
-  // currentRow to nullptr if past last row.
+  // Advances 'iterator' by 'numRows'. The current row after skip is
+  // in iter.currentRow(). This is null if past end.
   void skip(RowContainerIterator& iterator, int32_t numRows);
 
   // Returns a container with a partition number for each row. This
@@ -902,6 +903,7 @@ class RowContainer {
     return kEmptyAggregates;
   }
 };
+
 
 template <>
 inline void RowContainer::storeWithNulls<TypeKind::ROW>(

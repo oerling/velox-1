@@ -686,7 +686,7 @@ void HashTable<ignoreNullKeys>::partitionRows(
           index, partitionBounds_.data(), partitionBounds_.size());
     }
     subtable.rows_->partitions().appendPartitions(
-        folly::Range<const uint8_t*>(partitions.data(), partitions.size()));
+        folly::Range<const uint8_t*>(partitions.data(), numRows));
   }
 }
 

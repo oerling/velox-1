@@ -546,6 +546,7 @@ class HashTable : public BaseHashTable {
   // perform the steps before the thread of prepareJoinTable() gets to
   // them.
   folly::Executor* FOLLY_NULLABLE buildExecutor_{nullptr};
+
 };
 
 } // namespace facebook::velox::exec

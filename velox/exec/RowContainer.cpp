@@ -544,6 +544,7 @@ int64_t RowContainer::sizeIncrement(
 }
 
 void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
+  VELOX_DCHECK_LE(0, numRows);
   if (!iter.endOfRun) {
     // Set to first row.
     VELOX_DCHECK_EQ(0, iter.rowNumber);
@@ -615,6 +616,7 @@ RowPartitions::RowPartitions(
 void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
   int32_t toAdd = partitions.size();
   int index = 0;
+  VELOX_CHECK_LE(size_ + toAdd, capacity_);
   while (toAdd) {
     int32_t run;
     int32_t offset;
@@ -622,7 +624,7 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     auto runSize = allocation_.runAt(run).numBytes();
     auto copySize = std::min<int32_t>(toAdd, runSize - offset);
     memcpy(
-        allocation_.runAt(run).data<uint8_t>(), &partitions[index], copySize);
+        allocation_.runAt(run).data<uint8_t>() + offset, &partitions[index], copySize);
     size_ += copySize;
     index += copySize;
     toAdd -= copySize;
@@ -641,7 +643,9 @@ int32_t RowContainer::listPartitionRows(
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
   while (numResults < maxRows) {
+    // Start at multiple of kBatch.
     auto startRow = iter.rowNumber / kBatch * kBatch;
+    // Ignore the possible hits at or below iter.rowNumber.
     uint32_t firstMask = ~bits::lowMask(iter.rowNumber - startRow);
     int32_t runIndex;
     int32_t offset;
@@ -649,7 +653,7 @@ int32_t RowContainer::listPartitionRows(
     allocation.findRun(startRow, &runIndex, &offset);
     auto run = allocation.runAt(runIndex);
     auto runEnd = run.numBytes();
-    auto bytes = allocation.runAt(runIndex).data<uint8_t>() + offset;
+    auto bytes = allocation.runAt(runIndex).data<uint8_t>();
     for (; offset < runEnd; offset += kBatch) {
       auto bits = simd::toBitMask(
                       numberVector ==
@@ -660,12 +664,12 @@ int32_t RowContainer::listPartitionRows(
         int32_t hit = __builtin_ctz(bits);
         auto distance = hit + startRow - iter.rowNumber;
         skip(iter, distance);
-
         if (iter.rowNumber >= numRows_) {
           return numResults;
         }
         result[numResults++] = iter.currentRow();
         if (numResults == maxRows) {
+	  skip(iter, 1);
           return numResults;
         }
         bits &= bits - 1;
