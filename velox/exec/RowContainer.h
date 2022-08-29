@@ -344,7 +344,10 @@ class RowContainer {
     return listRows<ProbeType::kAll>(iter, maxRows, maxBytes, rows);
   }
 
-  int32_t listRows(RowContainerIterator* FOLLY_NONNULL iter, int32_t maxRows, char** FOLLY_NONNULL rows) {
+  int32_t listRows(
+      RowContainerIterator* FOLLY_NONNULL iter,
+      int32_t maxRows,
+      char** FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, kUnlimited, rows);
   }
 
@@ -448,7 +451,7 @@ class RowContainer {
 
   int32_t compareRows(
       const char* FOLLY_NONNULL left,
-      const char FOLLY_NONNULL * right,
+      const char FOLLY_NONNULL* right,
       const std::vector<CompareFlags>& flags = {}) {
     VELOX_DCHECK(flags.empty() || flags.size() == keyTypes_.size());
     for (auto i = 0; i < keyTypes_.size(); ++i) {
@@ -470,7 +473,9 @@ class RowContainer {
   }
 
   // Extract column values for 'rows' into 'result'.
-  void extractRows(const std::vector<char* FOLLY_NONNULL>& rows, const RowVectorPtr& result) {
+  void extractRows(
+      const std::vector<char * FOLLY_NONNULL>& rows,
+      const RowVectorPtr& result) {
     VELOX_CHECK_EQ(rows.size(), result->size());
     for (int i = 0; i < result->childrenSize(); ++i) {
       RowContainer::extractColumn(
