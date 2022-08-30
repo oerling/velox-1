@@ -141,7 +141,7 @@ class RowContainer {
   RowContainer(
       const std::vector<TypePtr>& keyTypes,
       const std::vector<TypePtr>& dependentTypes,
-      memory::MappedMemory* mappedMemory)
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory)
       : RowContainer(
             keyTypes,
             true, // nullableKeys
@@ -183,7 +183,7 @@ class RowContainer {
       const RowSerde& serde);
 
   // Allocates a new row and initializes possible aggregates to null.
-  char* newRow();
+  char* FOLLY_NONNULL newRow();
 
   uint32_t rowSize(const char* FOLLY_NONNULL row) const {
     return fixedRowSize_ +
@@ -210,7 +210,7 @@ class RowContainer {
   // Initialize row. 'reuse' specifies whether the 'row' is reused or
   // not. If it is reused, it will free memory associated with the row
   // elsewhere (such as in HashStringAllocator).
-  char* initializeRow(char* FOLLY_NONNULL row, bool reuse);
+  char* FOLLY_NONNULL initializeRow(char* FOLLY_NONNULL row, bool reuse);
 
   // Stores the 'index'th value in 'decoded' into 'row' at
   // 'columnIndex'.
@@ -265,7 +265,7 @@ class RowContainer {
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** FOLLY_NONNULL rows) {
+      char* FOLLY_NONNULL * FOLLY_NONNULL rows) {
     int32_t count = 0;
     uint64_t totalBytes = 0;
     VELOX_CHECK_EQ(rows_.numLargeAllocations(), 0);
@@ -356,7 +356,7 @@ class RowContainer {
   /// duplicate entries for the cases where single probe row matched multiple
   /// build rows. In case of the full join, 'rows' may include null entries that
   /// correspond to probe rows with no match.
-  void setProbedFlag(char** FOLLY_NONNULL rows, int32_t numRows);
+  void setProbedFlag(char* FOLLY_NONNULL * FOLLY_NONNULL rows, int32_t numRows);
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
   // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
