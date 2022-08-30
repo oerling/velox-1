@@ -669,6 +669,7 @@ int32_t RowContainer::listPartitionRows(
     uint32_t firstMask = ~bits::lowMask(iter.rowNumber - startRow);
     int32_t runIndex;
     int32_t offset;
+    VELOX_CHECK_LT(startRow, numRows_);
     auto& allocation = partitions_->allocation();
     allocation.findRun(startRow, &runIndex, &offset);
     auto run = allocation.runAt(runIndex);
