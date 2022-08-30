@@ -451,7 +451,7 @@ class RowContainer {
 
   int32_t compareRows(
       const char* FOLLY_NONNULL left,
-      const char FOLLY_NONNULL* right,
+      const char* FOLLY_NONNULL right,
       const std::vector<CompareFlags>& flags = {}) {
     VELOX_DCHECK(flags.empty() || flags.size() == keyTypes_.size());
     for (auto i = 0; i < keyTypes_.size(); ++i) {
