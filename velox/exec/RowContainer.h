@@ -265,7 +265,7 @@ class RowContainer {
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char* FOLLY_NONNULL * FOLLY_NONNULL rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     int32_t count = 0;
     uint64_t totalBytes = 0;
     VELOX_CHECK_EQ(rows_.numLargeAllocations(), 0);
@@ -356,7 +356,7 @@ class RowContainer {
   /// duplicate entries for the cases where single probe row matched multiple
   /// build rows. In case of the full join, 'rows' may include null entries that
   /// correspond to probe rows with no match.
-  void setProbedFlag(char* FOLLY_NONNULL * FOLLY_NONNULL rows, int32_t numRows);
+  void setProbedFlag(char* FOLLY_NONNULL* FOLLY_NONNULL rows, int32_t numRows);
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
   // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is

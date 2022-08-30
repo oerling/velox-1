@@ -632,17 +632,18 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     toAdd -= copySize;
     // Zero out to the next multiple of SIMD width for asan/valgring.
     if (!toAdd) {
-      auto roundEnd = std::min<int32_t>(runSize, bits::roundUp(offset + copySize, xsimd::batch<uint8_t>::size));
+      auto roundEnd = std::min<int32_t>(
+          runSize,
+          bits::roundUp(offset + copySize, xsimd::batch<uint8_t>::size));
       if (roundEnd > offset + copySize) {
-	memset(
-	       allocation_.runAt(run).data<uint8_t>() + offset + copySize,
-	       0,
-	       roundEnd - offset - copySize);
+        memset(
+            allocation_.runAt(run).data<uint8_t>() + offset + copySize,
+            0,
+            roundEnd - offset - copySize);
       }
     }
-    }
+  }
 }
-  
 
 int32_t RowContainer::listPartitionRows(
     RowContainerIterator& iter,
@@ -654,7 +655,8 @@ int32_t RowContainer::listPartitionRows(
   if (!numRows_) {
     return 0;
   }
-  VELOX_CHECK(partitions_, "partitions() must be called before listPartitionRows()");
+  VELOX_CHECK(
+      partitions_, "partitions() must be called before listPartitionRows()");
   int32_t size = partitions_->size();
   VELOX_CHECK_EQ(size, numRows_, "All rows must have a partition");
   auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
