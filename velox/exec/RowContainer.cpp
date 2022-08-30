@@ -98,6 +98,8 @@ RowContainer::RowContainer(
   int32_t firstAggregate = offsets_.size();
   int32_t firstAggregateOffset = offset;
   for (auto& aggregate : aggregates) {
+    // Accumulator offset must be aligned by their alignment size.
+    offset = bits::roundUp(offset, aggregate->accumulatorAlignmentSize());
     offsets_.push_back(offset);
     offset += aggregate->accumulatorFixedWidthSize();
     nullOffsets_.push_back(nullOffset);
@@ -630,6 +632,18 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     size_ += copySize;
     index += copySize;
     toAdd -= copySize;
+    // Zero out to the next multiple of SIMD width for asan/valgring.
+    if (!toAdd) {
+      auto roundEnd = std::min<int32_t>(
+          runSize,
+          bits::roundUp(offset + copySize, xsimd::batch<uint8_t>::size));
+      if (roundEnd > offset + copySize) {
+        memset(
+            allocation_.runAt(run).data<uint8_t>() + offset + copySize,
+            0,
+            roundEnd - offset - copySize);
+      }
+    }
   }
 }
 
@@ -640,17 +654,23 @@ int32_t RowContainer::listPartitionRows(
     char** result) {
   constexpr int32_t kBatch = xsimd::batch<uint8_t>::size;
   int32_t numResults = 0;
-  int32_t size = partitions_->size();
+  if (!numRows_) {
+    return 0;
+  }
+  VELOX_CHECK(
+      partitions_, "partitions() must be called before listPartitionRows()");
+  VELOX_CHECK_EQ(partitions_->size(), numRows_, "All rows must have a partition");
   auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
-  while (numResults < maxRows) {
+  while (numResults < maxRows && iter.rowNumber < numRows_) {
     // Start at multiple of kBatch.
     auto startRow = iter.rowNumber / kBatch * kBatch;
     // Ignore the possible hits at or below iter.rowNumber.
     uint32_t firstMask = ~bits::lowMask(iter.rowNumber - startRow);
     int32_t runIndex;
     int32_t offset;
+    VELOX_CHECK_LT(startRow, numRows_);
     auto& allocation = partitions_->allocation();
     allocation.findRun(startRow, &runIndex, &offset);
     auto run = allocation.runAt(runIndex);
@@ -680,7 +700,7 @@ int32_t RowContainer::listPartitionRows(
       if (iter.rowNumber != startRow) {
         skip(iter, startRow - iter.rowNumber);
       }
-      if (!iter.currentRow() || startRow >= size) {
+      if (!iter.currentRow() || startRow >= numRows_) {
         return numResults;
       }
     }
