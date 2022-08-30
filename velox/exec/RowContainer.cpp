@@ -659,12 +659,11 @@ int32_t RowContainer::listPartitionRows(
   }
   VELOX_CHECK(
       partitions_, "partitions() must be called before listPartitionRows()");
-  int32_t size = partitions_->size();
-  VELOX_CHECK_EQ(size, numRows_, "All rows must have a partition");
+  VELOX_CHECK_EQ(partitions_->size(), numRows_, "All rows must have a partition");
   auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
-  while (numResults < maxRows) {
+  while (numResults < maxRows && iter.rowNumber < numRows_) {
     // Start at multiple of kBatch.
     auto startRow = iter.rowNumber / kBatch * kBatch;
     // Ignore the possible hits at or below iter.rowNumber.
@@ -701,7 +700,7 @@ int32_t RowContainer::listPartitionRows(
       if (iter.rowNumber != startRow) {
         skip(iter, startRow - iter.rowNumber);
       }
-      if (!iter.currentRow() || startRow >= size) {
+      if (!iter.currentRow() || startRow >= numRows_) {
         return numResults;
       }
     }
