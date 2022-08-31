@@ -636,7 +636,11 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     toAdd -= copySize;
     // Zero out to the next multiple of SIMD width for asan/valgring.
     if (!toAdd) {
-      padToAlignment(allocation_.runAt(run).data<uint8_t>(), runSize, offset + copySize, xsimd::batch<uint8_t>::size));
+      simd::padToAlignment(
+          allocation_.runAt(run).data<uint8_t>(),
+          runSize,
+          offset + copySize,
+          xsimd::batch<uint8_t>::size);
     }
   }
 }
