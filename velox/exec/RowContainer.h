@@ -234,7 +234,7 @@ class RowContainer {
   // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
   // corresponding row in 'result' to null.
   static void extractColumn(
-      const char* const* FOLLY_NONNULL rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       RowColumn col,
       VectorPtr result);
@@ -340,14 +340,14 @@ class RowContainer {
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** FOLLY_NONNULL rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, maxBytes, rows);
   }
 
   int32_t listRows(
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
-      char** FOLLY_NONNULL rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, kUnlimited, rows);
   }
 
@@ -483,7 +483,7 @@ class RowContainer {
     }
   }
 
-  memory::MappedMemory* mappedMemory() const {
+  memory::MappedMemory* FOLLY_NONNULL mappedMemory() const {
     return stringAllocator_.mappedMemory();
   }
 
@@ -526,7 +526,7 @@ class RowContainer {
       RowContainerIterator& iterator,
       uint8_t partition,
       int32_t maxRows,
-      char** FOLLY_NONNULL result);
+      char* FOLLY_NONNULL* FOLLY_NONNULL result);
 
   /// Advances 'iterator' by 'numRows'. The current row after skip is
   /// in iter.currentRow(). This is null if past end.
@@ -553,7 +553,7 @@ class RowContainer {
 
   template <TypeKind Kind>
   static void extractColumnTyped(
-      const char* const* FOLLY_NONNULL rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       RowColumn column,
       VectorPtr result) {
@@ -574,7 +574,7 @@ class RowContainer {
     }
   }
 
-  char*& nextFree(char* row) {
+  char* FOLLY_NONNULL& nextFree(char* FOLLY_NONNULL row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
@@ -622,7 +622,7 @@ class RowContainer {
 
   template <typename T>
   static void extractValuesWithNulls(
-      const char* const* FOLLY_NONNULL rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       int32_t offset,
       int32_t nullByte,
@@ -663,20 +663,23 @@ class RowContainer {
     }
   }
 
-  static void prepareRead(const char* row, int32_t offset, ByteStream& stream);
+  static void prepareRead(
+      const char* FOLLY_NONNULL row,
+      int32_t offset,
+      ByteStream& stream);
 
   template <TypeKind Kind>
   void hashTyped(
-      const Type* type,
+      const Type* FOLLY_NONNULL type,
       RowColumn column,
       bool nullable,
       folly::Range<char**> rows,
       bool mix,
-      uint64_t* result);
+      uint64_t* FOLLY_NONNULL result);
 
   template <TypeKind Kind>
   inline bool equalsWithNulls(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       int32_t offset,
       int32_t nullByte,
       uint8_t nullMask,
@@ -754,7 +757,7 @@ class RowContainer {
   inline int compare(
       const char* FOLLY_NONNULL left,
       const char* FOLLY_NONNULL right,
-      const Type* type,
+      const Type* FOLLY_NONNULL type,
       RowColumn column,
       CompareFlags flags) {
     using T = typename KindToFlatVector<Kind>::HashRowType;
@@ -809,14 +812,14 @@ class RowContainer {
       uint8_t nullMask = 0);
 
   static void extractComplexType(
-      const char* const* FOLLY_NONNULL rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       RowColumn column,
       VectorPtr result);
 
   static void extractString(
       StringView value,
-      FlatVector<StringView>* values,
+      FlatVector<StringView>* FOLLY_NONNULL values,
       vector_size_t index);
 
   static int32_t compareStringAsc(
@@ -827,16 +830,16 @@ class RowContainer {
   static int32_t compareStringAsc(StringView left, StringView right);
 
   int32_t compareComplexType(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       int32_t offset,
       const DecodedVector& decoded,
       vector_size_t index,
       CompareFlags flags = CompareFlags());
 
   int32_t compareComplexType(
-      const char* left,
-      const char* right,
-      const Type* type,
+      const char* FOLLY_NONNULL left,
+      const char* FOLLY_NONNULL right,
+      const Type* FOLLY_NONNULL type,
       int32_t offset,
       CompareFlags flags);
 
@@ -890,7 +893,7 @@ class RowContainer {
   std::vector<uint8_t> initialNulls_;
   uint64_t numRows_ = 0;
   // Head of linked list of free rows.
-  char* firstFreeRow_ = nullptr;
+  char* FOLLY_NULLABLE firstFreeRow_ = nullptr;
   uint64_t numFreeRows_ = 0;
 
   AllocationPool rows_;
