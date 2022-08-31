@@ -340,14 +340,14 @@ class RowContainer {
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char* FOLLY_NONNULL * FOLLY_NONNULL rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, maxBytes, rows);
   }
 
   int32_t listRows(
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
-      char*FOLLY_NONNULL * FOLLY_NONNULL rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, kUnlimited, rows);
   }
 
@@ -526,7 +526,7 @@ class RowContainer {
       RowContainerIterator& iterator,
       uint8_t partition,
       int32_t maxRows,
-      char*FOLLY_NONNULL * FOLLY_NONNULL result);
+      char* FOLLY_NONNULL* FOLLY_NONNULL result);
 
   /// Advances 'iterator' by 'numRows'. The current row after skip is
   /// in iter.currentRow(). This is null if past end.
@@ -574,7 +574,7 @@ class RowContainer {
     }
   }
 
-  char* FOLLY_NONNULL & nextFree(char* FOLLY_NONNULL row) {
+  char* FOLLY_NONNULL& nextFree(char* FOLLY_NONNULL row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
@@ -663,7 +663,10 @@ class RowContainer {
     }
   }
 
-  static void prepareRead(const char* FOLLY_NONNULL row, int32_t offset, ByteStream& stream);
+  static void prepareRead(
+      const char* FOLLY_NONNULL row,
+      int32_t offset,
+      ByteStream& stream);
 
   template <TypeKind Kind>
   void hashTyped(
