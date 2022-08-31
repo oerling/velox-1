@@ -332,6 +332,18 @@ TEST_F(SimdUtilTest, Batch64_memory) {
   EXPECT_EQ(data[1], 2);
 }
 
+TEST_F(SimdUtilTest, pad) {
+  char bytes[100];
+  memset(bytes, 1, sizeof(bytes));
+  simd::padToAlignment(&bytes[11], 30, 7, 16);
+  // We expect a 0 in bytes[11 +7] ... bytes[11 + 15].
+  EXPECT_EQ(1, bytes[11 + 6]);
+  for (auto i = 11 + 7; i < 11 + 16; ++i) {
+    EXPECT_EQ(0, bytes[i]);
+  }
+  EXPECT_EQ(1, bytes[11 + 16]);
+}
+
 } // namespace
 
 void cpyf(void* d, void* s, int c) {
