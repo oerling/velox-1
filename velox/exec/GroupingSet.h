@@ -40,6 +40,8 @@ class GroupingSet {
       bool isRawInput,
       OperatorCtx* FOLLY_NONNULL operatorCtx);
 
+  ~GroupingSet();
+
   void addInput(const RowVectorPtr& input, bool mayPushdown);
 
   void noMoreInput();
@@ -91,6 +93,8 @@ class GroupingSet {
 
   void initializeGlobalAggregation();
 
+  void destroyGlobalAggregations();
+
   void addGlobalAggregationInput(const RowVectorPtr& input, bool mayPushdown);
 
   bool getGlobalAggregationOutput(
@@ -139,11 +143,11 @@ class GroupingSet {
   // accumulated and we have a new key, we produce the output and
   // clear 'mergeRows_' with extractSpillResult() and only then do
   // initializeRow().
-  void initializeRow(SpillStream& keys, char* FOLLY_NONNULL row);
+  void initializeRow(SpillMergeStream& keys, char* FOLLY_NONNULL row);
 
   // Updates the accumulators in 'row' with the intermediate type data from
   // 'keys'. This is called for each row received from a merge of spilled data.
-  void updateRow(SpillStream& keys, char* FOLLY_NONNULL row);
+  void updateRow(SpillMergeStream& keys, char* FOLLY_NONNULL row);
 
   // Copies the finalized state from 'mergeRows' to 'result' and clears
   // 'mergeRows'. Used for producing a batch of results when aggregating spilled
@@ -221,7 +225,7 @@ class GroupingSet {
   const std::optional<std::string> spillPath_;
 
   std::unique_ptr<Spiller> spiller_;
-  std::unique_ptr<TreeOfLosers<SpillStream>> merge_;
+  std::unique_ptr<TreeOfLosers<SpillMergeStream>> merge_;
 
   // Container for materializing batches of output from spilling.
   std::unique_ptr<RowContainer> mergeRows_;
