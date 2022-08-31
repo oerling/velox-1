@@ -790,16 +790,22 @@ bool HashTable<ignoreNullKeys>::hashRows(
 
 namespace {
 template <typename Source>
-void syncWork(std::vector<std::shared_ptr<Source>>& work) {
-  for (auto& item : work) {
+void syncWorkItems(
+    std::vector<std::shared_ptr<Source>>& items,
+    std::exception_ptr& error) {
+  // All items must be synced also in case of error because the items
+  // hold references to the table and rows which could be destructed
+  // if unwinding the stack did ont pause to sync.
+  for (auto& item : items) {
     try {
       item->move();
     } catch (const std::exception& e) {
-      // Ignore errors.
+      error = std::current_exception();
     }
   }
 }
 } // namespace
+
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   int32_t numPartitions = 1 + otherTables_.size();
@@ -818,34 +824,44 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
     partitionBounds_[i] = bits::roundUp((size_ / numPartitions) * i, 64);
   }
   partitionBounds_.back() = size_;
-  std::vector<std::shared_ptr<AsyncSource<bool>>> partitionWork;
-  std::vector<std::shared_ptr<AsyncSource<bool>>> buildWork;
+  std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
+  std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
   auto sync = folly::makeGuard([&]() {
-    syncWork(partitionWork);
-    syncWork(buildWork);
+    // This is executed on returning path, possibly in unwinding, so must not
+    // throw.
+    std::exception_ptr ignore;
+    syncWorkItems(partitionSteps, ignore);
+    syncWorkItems(buildSteps, ignore);
   });
   for (auto i = 0; i < numPartitions; ++i) {
     auto table = i == 0 ? this : otherTables_[i - 1].get();
-    partitionWork.push_back(
+    partitionSteps.push_back(
         std::make_shared<AsyncSource<bool>>([this, table, numPartitions]() {
           partitionRows(*table, numPartitions);
           return std::make_unique<bool>(true);
         }));
-    buildExecutor_->add([work = partitionWork.back()]() { work->prepare(); });
+    buildExecutor_->add([step = partitionSteps.back()]() { step->prepare(); });
   }
-  syncWork(partitionWork);
-  std::vector<std::vector<char*>> overflow(numPartitions);
+  std::exception_ptr error;
+  syncWorkItems(partitionSteps, error);
+  if (error) {
+    std::rethrow_exception(error);
+  }
+  std::vector<std::vector<char*>> overflowPerPartition(numPartitions);
   for (auto i = 0; i < numPartitions; ++i) {
-    buildWork.push_back(
-        std::make_shared<AsyncSource<bool>>([i, &overflow, this]() {
-          buildJoinPartition(i, overflow[i]);
+    buildSteps.push_back(
+        std::make_shared<AsyncSource<bool>>([i, &overflowPerPartition, this]() {
+          buildJoinPartition(i, overflowPerPartition[i]);
           return std::make_unique<bool>(true);
         }));
-    buildExecutor_->add([work = buildWork.back()]() { work->prepare(); });
+    buildExecutor_->add([step = buildSteps.back()]() { step->prepare(); });
   }
-  syncWork(buildWork);
+  syncWorkItems(buildSteps, error);
+  if (error) {
+    std::rethrow_exception(error);
+  }
   raw_vector<uint64_t> hashes;
-  for (auto& overflows : overflow) {
+  for (auto& overflows : overflowPerPartition) {
     hashes.resize(overflows.size());
     hashRows(
         folly::Range<char**>(overflows.data(), overflows.size()),

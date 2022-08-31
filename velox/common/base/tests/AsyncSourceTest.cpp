@@ -108,6 +108,7 @@ TEST(AsyncSourceTest, errorsWithThreads) {
   constexpr int32_t kNumGizmos = 50;
   constexpr int32_t kNumThreads = 10;
   std::vector<std::shared_ptr<AsyncSource<Gizmo>>> gizmos;
+  std::atomic<int32_t> numErrors{0};
   for (auto i = 0; i < kNumGizmos; ++i) {
     gizmos.push_back(
         std::make_shared<AsyncSource<Gizmo>>([i]() -> std::unique_ptr<Gizmo> {
@@ -119,7 +120,7 @@ TEST(AsyncSourceTest, errorsWithThreads) {
   std::vector<std::thread> threads;
   threads.reserve(kNumThreads);
   for (int32_t threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {
-    threads.push_back(std::thread([threadIndex, &gizmos]() {
+    threads.push_back(std::thread([threadIndex, &gizmos, &numErrors]() {
       if (threadIndex < kNumThreads / 2) {
         // The first half of the threads prepare Gizmos in the background.
         for (auto i = 0; i < kNumGizmos; ++i) {
@@ -136,7 +137,7 @@ TEST(AsyncSourceTest, errorsWithThreads) {
                 gizmos[folly::Random::rand32(rng) % gizmos.size()]->move();
             EXPECT_EQ(nullptr, gizmo);
           } catch (std::exception& e) {
-            // ignore the error.
+            ++numErrors;
           }
         }
       }
@@ -145,4 +146,7 @@ TEST(AsyncSourceTest, errorsWithThreads) {
   for (auto& thread : threads) {
     thread.join();
   }
+  // There will always be errors since the first to wait for any given
+  // gizmo is sure to get an error.
+  EXPECT_LT(0, numErrors);
 }

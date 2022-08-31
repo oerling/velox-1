@@ -77,7 +77,7 @@ class AsyncSource {
       // not. Sotest 'making' so as not to read half-assigned
       // 'exception_'.
       if (!making_ && exception_) {
-	std::rethrow_exception(exception_);
+        std::rethrow_exception(exception_);
       }
       if (item_) {
         return std::move(item_);
@@ -99,10 +99,10 @@ class AsyncSource {
     // Outside of mutex_.
     if (make) {
       try {
-	return make();
+        return make();
       } catch (const std::exception& e) {
-	exception_ = std::current_exception();
-	throw;
+        exception_ = std::current_exception();
+        throw;
       }
     }
     auto& exec = folly::QueuedImmediateExecutor::instance();
