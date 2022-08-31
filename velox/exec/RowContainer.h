@@ -521,12 +521,12 @@ class RowContainer {
   /// 'partition'. Writes up to 'maxRows' pointers to the rows in
   /// 'result'. Returns the number of rows retrieved, 0 when no more
   /// rows are found. 'iterator' is expected to be in initial state
- / // on first call.
-  int32_t listPartitionRows(
-      RowContainerIterator& iterator,
-      uint8_t partition,
-      int32_t maxRows,
-      char** FOLLY_NONNULL result);
+  / // on first call.
+      int32_t listPartitionRows(
+          RowContainerIterator& iterator,
+          uint8_t partition,
+          int32_t maxRows,
+          char** FOLLY_NONNULL result);
 
   /// Advances 'iterator' by 'numRows'. The current row after skip is
   /// in iter.currentRow(). This is null if past end.

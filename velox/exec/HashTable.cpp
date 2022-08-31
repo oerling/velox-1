@@ -587,7 +587,9 @@ bool HashTable<ignoreNullKeys>::hashRows(
 
 namespace {
 template <typename Source>
-void syncWorkItems(std::vector<std::shared_ptr<Source>>& items, std::exception_ptr& error) {
+void syncWorkItems(
+    std::vector<std::shared_ptr<Source>>& items,
+    std::exception_ptr& error) {
   // All items must be synced also in case of error because the items
   // hold references to the table and rows which could be destructed
   // if unwinding the stack did ont pause to sync.
@@ -601,7 +603,7 @@ void syncWorkItems(std::vector<std::shared_ptr<Source>>& items, std::exception_p
 }
 } // namespace
 
-  template <bool ignoreNullKeys>
+template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   int32_t numPartitions = 1 + otherTables_.size();
   VELOX_CHECK_GT(
@@ -622,7 +624,8 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
   auto sync = folly::makeGuard([&]() {
-    // This is executed on returning path, possibly in unwinding, so must not throw.
+    // This is executed on returning path, possibly in unwinding, so must not
+    // throw.
     std::exception_ptr ignore;
     syncWorkItems(partitionSteps, ignore);
     syncWorkItems(buildSteps, ignore);

@@ -181,7 +181,8 @@ RowContainer::RowContainer(
 
 char* RowContainer::newRow() {
   char* row;
-  VELOX_DCHECK(!partitions_, "Rows may not be added after partitions() has been called");
+  VELOX_DCHECK(
+      !partitions_, "Rows may not be added after partitions() has been called");
   ++numRows_;
   if (firstFreeRow_) {
     row = firstFreeRow_;
@@ -636,7 +637,7 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     // Zero out to the next multiple of SIMD width for asan/valgring.
     if (!toAdd) {
       padToAlignment(allocation_.runAt(run).data<uint8_t>(), runSize, offset + copySize, xsimd::batch<uint8_t>::size));
-  }
+    }
   }
 }
 
@@ -650,7 +651,8 @@ int32_t RowContainer::listPartitionRows(
   }
   VELOX_CHECK(
       partitions_, "partitions() must be called before listPartitionRows()");
-  VELOX_CHECK_EQ(partitions_->size(), numRows_, "All rows must have a partition");
+  VELOX_CHECK_EQ(
+      partitions_->size(), numRows_, "All rows must have a partition");
   auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
@@ -687,14 +689,15 @@ int32_t RowContainer::listPartitionRows(
           skip(iter, 1);
           return numResults;
         }
-	// Clear last set bit in 'bits'.
+        // Clear last set bit in 'bits'.
         bits &= bits - 1;
       }
       startRow += kBatch;
       if (iter.rowNumber != startRow) {
         skip(iter, startRow - iter.rowNumber);
       }
-      // The last batch of 32 bytes may have been partly filled. If so, we could have skipped past end.
+      // The last batch of 32 bytes may have been partly filled. If so, we could
+      // have skipped past end.
       if (!iter.currentRow() || startRow >= numRows_) {
         return numResults;
       }

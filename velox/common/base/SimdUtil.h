@@ -408,7 +408,7 @@ inline bool isDense(const T* values, int32_t size) {
 /// pointer + size in any case. Used to initialize memory that may
 /// be partly filled for use with valgring/asan.
 inline void padToAlignment(
-			   void* pointer,
+    void* pointer,
     int32_t size,
     int32_t padIndex,
     int32_t alignment) {
