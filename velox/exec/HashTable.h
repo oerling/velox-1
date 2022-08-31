@@ -418,15 +418,13 @@ class HashTable : public BaseHashTable {
   insertBatch(char** groups, int32_t numGroups, raw_vector<uint64_t>& hashes);
 
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
-  // contents in a RowContainer owned by 'this'. 'hashes' are te hash
+  // contents in a RowContainer owned by 'this'. 'hashes' are the hash
   // numbers or array indices (if kArray mode) for each
   // group. Duplicate key rows are chained via their next link. if
   // parallel build, partitionEnd is the index of the first entry
   // after the partition being inserted. If a row would be inserted to
   // the right of the end, it is not inserted but rather added to the
-  // end of 'overflows'. If 'partitionEnd' is non-0, we are in
-  // parallel build and we expect normalized keys to be in place and
-  // hashes to be mixed from these keys.
+  // end of 'overflows'.
   void insertForJoin(
       char** groups,
       uint64_t* hashes,
@@ -438,10 +436,16 @@ class HashTable : public BaseHashTable {
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
   // contents in a RowContainer owned by 'this'. 'hashes' are the hash
   // numbers or array indices (if kArray mode) for each
-  // group. 'groups' is expectedd to have no duplicate keys.
+  // group. 'groups' is expected to have no duplicate keys.
   void insertForGroupBy(char** groups, uint64_t* hashes, int32_t numGroups);
 
-  // Builds a join table wit numPartitions independent threads using 'executor_'
+  // Builds a join table with '1 + otherTables_.size()' independent
+  // threads using 'executor_'. First all RowContainers get partition
+  // numbers assigned to each row. Next, all threads pick all rows
+  // assigned to their thread-specific partition and insert these. If
+  // a row would overflow past the end of its partition it is added to
+  // a set of overflow rows that are sequentially inserted after all
+  // else.
   void parallelJoinBuild();
 
   // Inserts the rows in 'partition' from this and 'otherTables' into 'this'.
@@ -535,16 +539,14 @@ class HashTable : public BaseHashTable {
   std::vector<std::unique_ptr<HashTable<ignoreNullKeys>>> otherTables_;
 
   // Bounds of independently buildable index ranges in the table. The
-  // range of partition i starts at [i] and ends at [i +1]. Bounds are multiples
-  // of TagVector size.
+  // range of partition i starts at [i] and ends at [i +1]. Bounds are multiple
+  // of cache line  size.
   raw_vector<int32_t> partitionBounds_;
 
   // Executor for parallelizing hash join build. This may be the
-  // executor for Drivers and does not have to provide guarantees of
-  // availability. The parallel steps will be executed on the thread
-  // of prepareJoinTable() if the executor is not provided or does not
-  // perform the steps before the thread of prepareJoinTable() gets to
-  // them.
+  // executor for Drivers. If this executor is indefinitely taken by
+  // other work, the thread of prepareJoinTables() will sequentially
+  // execute the parallel build steps.
   folly::Executor* FOLLY_NULLABLE buildExecutor_{nullptr};
 };
 

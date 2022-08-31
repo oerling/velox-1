@@ -181,6 +181,7 @@ RowContainer::RowContainer(
 
 char* RowContainer::newRow() {
   char* row;
+  VELOX_DCHECK(!partitions_, "Rows may not be added after partitions() has been called");
   ++numRows_;
   if (firstFreeRow_) {
     row = firstFreeRow_;
@@ -634,16 +635,8 @@ void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
     toAdd -= copySize;
     // Zero out to the next multiple of SIMD width for asan/valgring.
     if (!toAdd) {
-      auto roundEnd = std::min<int32_t>(
-          runSize,
-          bits::roundUp(offset + copySize, xsimd::batch<uint8_t>::size));
-      if (roundEnd > offset + copySize) {
-        memset(
-            allocation_.runAt(run).data<uint8_t>() + offset + copySize,
-            0,
-            roundEnd - offset - copySize);
-      }
-    }
+      padToAlignment(allocation_.runAt(run).data<uint8_t>(), runSize, offset + copySize, xsimd::batch<uint8_t>::size));
+  }
   }
 }
 
@@ -652,8 +645,6 @@ int32_t RowContainer::listPartitionRows(
     uint8_t partition,
     int32_t maxRows,
     char** result) {
-  constexpr int32_t kBatch = xsimd::batch<uint8_t>::size;
-  int32_t numResults = 0;
   if (!numRows_) {
     return 0;
   }
@@ -663,7 +654,9 @@ int32_t RowContainer::listPartitionRows(
   auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
+  int32_t numResults = 0;
   while (numResults < maxRows && iter.rowNumber < numRows_) {
+    constexpr int32_t kBatch = xsimd::batch<uint8_t>::size;
     // Start at multiple of kBatch.
     auto startRow = iter.rowNumber / kBatch * kBatch;
     // Ignore the possible hits at or below iter.rowNumber.
@@ -694,12 +687,14 @@ int32_t RowContainer::listPartitionRows(
           skip(iter, 1);
           return numResults;
         }
+	// Clear last set bit in 'bits'.
         bits &= bits - 1;
       }
       startRow += kBatch;
       if (iter.rowNumber != startRow) {
         skip(iter, startRow - iter.rowNumber);
       }
+      // The last batch of 32 bytes may have been partly filled. If so, we could have skipped past end.
       if (!iter.currentRow() || startRow >= numRows_) {
         return numResults;
       }
