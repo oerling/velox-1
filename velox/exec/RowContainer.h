@@ -59,16 +59,16 @@ struct RowContainerIterator {
   }
 };
 
-// Container with a 8-bit partition number field for each row in a
-// RowContainer. The partition number bytes correspond 1:1 to rows. Used only
-// for parallel hash join build.
+/// Container with a 8-bit partition number field for each row in a
+/// RowContainer. The partition number bytes correspond 1:1 to rows. Used only
+/// for parallel hash join build.
 class RowPartitions {
  public:
-  // Initializes this to hold up to 'numRows'.
+  /// Initializes this to hold up to 'numRows'.
   RowPartitions(int32_t numRows, memory::MappedMemory& mappedMemory);
 
-  // Appends 'partitions' to the end of 'this'. Throws if adding more than the
-  // capacity given at construction.
+  /// Appends 'partitions' to the end of 'this'. Throws if adding more than the
+  /// capacity given at construction.
   void appendPartitions(folly::Range<const uint8_t*> partitions);
 
   auto& allocation() const {
@@ -516,24 +516,25 @@ class RowContainer {
   isNullAt(const char* FOLLY_NONNULL row, int32_t nullByte, uint8_t nullMask) {
     return (row[nullByte] & nullMask) != 0;
   }
-  // Retrieves rows from 'iterator' whose partition equals
-  // 'partition'. Writes up to 'maxRows' pointers to the rows in
-  // 'result'. Returns the number of rows retrieved, 0 when no more
-  // rows are found. 'iterator' is expected to be in initial state
-  // on first call.
+
+  /// Retrieves rows from 'iterator' whose partition equals
+  /// 'partition'. Writes up to 'maxRows' pointers to the rows in
+  /// 'result'. Returns the number of rows retrieved, 0 when no more
+  /// rows are found. 'iterator' is expected to be in initial state
+  /// on first call.
   int32_t listPartitionRows(
       RowContainerIterator& iterator,
       uint8_t partition,
       int32_t maxRows,
       char** FOLLY_NONNULL result);
 
-  // Advances 'iterator' by 'numRows'. The current row after skip is
-  // in iter.currentRow(). This is null if past end.
+  /// Advances 'iterator' by 'numRows'. The current row after skip is
+  /// in iter.currentRow(). This is null if past end.
   void skip(RowContainerIterator& iterator, int32_t numRows);
 
-  // Returns a container with a partition number for each row. This
-  // is created on first use. The caller is responsible for filling
-  // this.
+  /// Returns a container with a partition number for each row. This
+  /// is created on first use. The caller is responsible for filling
+  /// this.
   RowPartitions& partitions();
 
  private:
