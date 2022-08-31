@@ -587,12 +587,15 @@ bool HashTable<ignoreNullKeys>::hashRows(
 
 namespace {
 template <typename Source>
-void syncWork(std::vector<std::shared_ptr<Source>>& work) {
+void syncWork(std::vector<std::shared_ptr<Source>>& work, std::exception_ptr& error) {
+  // All items must be synced also in case of error because the items
+  // hold references to the table and rows which could be destructed
+  // if unwinding the stack did ont pause to sync.
   for (auto& item : work) {
     try {
       item->move();
     } catch (const std::exception& e) {
-      // Ignore errors.
+      error = std::current_exception();
     }
   }
 }
@@ -618,8 +621,10 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionWork;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildWork;
   auto sync = folly::makeGuard([&]() {
-    syncWork(partitionWork);
-    syncWork(buildWork);
+    // This is executed on returning path, possibly in unwinding, so must not throw.
+    std::exception_ptr ignore;
+    syncWork(partitionWork, ignore);
+    syncWork(buildWork, ignore);
   });
   for (auto i = 0; i < numPartitions; ++i) {
     auto table = i == 0 ? this : otherTables_[i - 1].get();
@@ -630,7 +635,11 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         }));
     buildExecutor_->add([work = partitionWork.back()]() { work->prepare(); });
   }
-  syncWork(partitionWork);
+  std::exception_ptr error;
+  syncWork(partitionWork, error);
+  if (error) {
+    std::rethrow_exception(error);
+  }
   std::vector<std::vector<char*>> overflow(numPartitions);
   for (auto i = 0; i < numPartitions; ++i) {
     buildWork.push_back(
@@ -640,7 +649,10 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         }));
     buildExecutor_->add([work = buildWork.back()]() { work->prepare(); });
   }
-  syncWork(buildWork);
+  syncWork(buildWork, error);
+  if (error) {
+    std::rethrow_exception(error);
+  }
   raw_vector<uint64_t> hashes;
   for (auto& overflows : overflow) {
     hashes.resize(overflows.size());
