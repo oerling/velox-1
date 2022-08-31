@@ -712,7 +712,9 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
       std::numeric_limits<int32_t>::max());
   for (auto i = 0; i < numPartitions; ++i) {
     // The bounds are rounded up to cache line size.
-    partitionBounds_[i] = bits::roundUp((size_ / numPartitions) * i, 64);
+    partitionBounds_[i] = bits::roundUp(
+        (size_ / numPartitions) * i,
+        folly::hardware_destructive_interference_size);
   }
   partitionBounds_.back() = size_;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
@@ -720,10 +722,14 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   auto sync = folly::makeGuard([&]() {
     // This is executed on returning path, possibly in unwinding, so must not
     // throw.
-    std::exception_ptr ignore;
-    syncWorkItems(partitionSteps, ignore);
-    syncWorkItems(buildSteps, ignore);
+    std::exception_ptr error;
+    syncWorkItems(partitionSteps, error);
+    syncWorkItems(buildSteps, error);
+    if (error) {
+      LOG(ERROR) << "Error in syncing parallel build on error exit";
+    }
   });
+
   for (auto i = 0; i < numPartitions; ++i) {
     auto table = i == 0 ? this : otherTables_[i - 1].get();
     partitionSteps.push_back(
