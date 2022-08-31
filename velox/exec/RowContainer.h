@@ -521,7 +521,7 @@ class RowContainer {
   /// 'partition'. Writes up to 'maxRows' pointers to the rows in
   /// 'result'. Returns the number of rows retrieved, 0 when no more
   /// rows are found. 'iterator' is expected to be in initial state
-  / // on first call.
+  /// on first call.
       int32_t listPartitionRows(
           RowContainerIterator& iterator,
           uint8_t partition,
