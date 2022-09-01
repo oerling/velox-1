@@ -819,13 +819,16 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
       partitionBounds_.begin(),
       partitionBounds_.begin() + partitionBounds_.capacity(),
       std::numeric_limits<int32_t>::max());
+  // The partitioning is in terms of ranges of tag vector index. The stride is
+  // different depending on kInterleaveRows.
+  int64_t tagIndexEnd = sizeMask_ + 1;
   for (auto i = 0; i < numPartitions; ++i) {
     // The bounds are rounded up to cache line size.
     partitionBounds_[i] = bits::roundUp(
-        (size_ / numPartitions) * i,
+        (tagIndexEnd / numPartitions) * i,
         folly::hardware_destructive_interference_size);
   }
-  partitionBounds_.back() = size_;
+  partitionBounds_.back() = tagIndexEnd;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
   auto sync = folly::makeGuard([&]() {
@@ -874,7 +877,12 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         false,
         hashes);
     insertForJoin(
-        overflows.data(), hashes.data(), overflows.size(), 0, size_, nullptr);
+        overflows.data(),
+        hashes.data(),
+        overflows.size(),
+        0,
+        sizeMask_ + 1,
+        nullptr);
   }
 }
 
