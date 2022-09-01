@@ -265,8 +265,8 @@ void HashBuild::noMoreInput() {
       MicrosecondTimer builtTimer(&buildMicros);
       bool hasOthers = !otherTables.empty();
       table_->prepareJoinTable(
-			       std::move(otherTables),
-			       hasOthers ? operatorCtx_->task()->queryCtx()->executor() : nullptr);
+          std::move(otherTables),
+          hasOthers ? operatorCtx_->task()->queryCtx()->executor() : nullptr);
     }
     stats_.addRuntimeStat("buildNanos", RuntimeCounter(buildMicros * 1000));
     addRuntimeStats();

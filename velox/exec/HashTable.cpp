@@ -819,20 +819,29 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
       partitionBounds_.begin(),
       partitionBounds_.begin() + partitionBounds_.capacity(),
       std::numeric_limits<int32_t>::max());
+  // The partitioning is in terms of ranges of tag vector index. The stride is
+  // different depending on kInterleaveRows.
+  int64_t tagIndexEnd = sizeMask_ + 1;
   for (auto i = 0; i < numPartitions; ++i) {
     // The bounds are rounded up to cache line size.
-    partitionBounds_[i] = bits::roundUp((size_ / numPartitions) * i, 64);
+    partitionBounds_[i] = bits::roundUp(
+        (tagIndexEnd / numPartitions) * i,
+        folly::hardware_destructive_interference_size);
   }
-  partitionBounds_.back() = size_;
+  partitionBounds_.back() = tagIndexEnd;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
   auto sync = folly::makeGuard([&]() {
     // This is executed on returning path, possibly in unwinding, so must not
     // throw.
-    std::exception_ptr ignore;
-    syncWorkItems(partitionSteps, ignore);
-    syncWorkItems(buildSteps, ignore);
+    std::exception_ptr error;
+    syncWorkItems(partitionSteps, error);
+    syncWorkItems(buildSteps, error);
+    if (error) {
+      LOG(ERROR) << "Error in syncing parallel build on error exit";
+    }
   });
+
   for (auto i = 0; i < numPartitions; ++i) {
     auto table = i == 0 ? this : otherTables_[i - 1].get();
     partitionSteps.push_back(
@@ -868,7 +877,12 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         false,
         hashes);
     insertForJoin(
-        overflows.data(), hashes.data(), overflows.size(), 0, size_, nullptr);
+        overflows.data(),
+        hashes.data(),
+        overflows.size(),
+        0,
+        sizeMask_ + 1,
+        nullptr);
   }
 }
 

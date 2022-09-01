@@ -560,9 +560,12 @@ class HashTable : public BaseHashTable {
     } else {
       sizeMask_ = size_ - 1;
       sizeBits_ = __builtin_popcountll(sizeMask_);
+      VELOX_CHECK_LE(
+          sizeBits_, 31, "Exceeding signed int range for hash table indices");
       tagOffsetMask_ = sizeMask_ & ~(sizeof(TagVector) - 1);
     }
   }
+
   // Returns the offset in bytes of the tag word for 'hash'. The offset is
   // from 'tags_'.
   int32_t tagVectorOffset(uint64_t hash) const {
