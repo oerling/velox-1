@@ -24,6 +24,8 @@
 #include "velox/vector/VectorTypeUtils.h"
 namespace facebook::velox::exec {
 
+using normalized_key_t = uint64_t;
+
 struct RowContainerIterator {
   int32_t allocationIndex = 0;
   int32_t runIndex = 0;
@@ -32,12 +34,59 @@ struct RowContainerIterator {
   // normalized key. Set in listRows() on first call.
   int64_t normalizedKeysLeft = 0;
 
+  // Ordinal position of 'currentRow' in RowContainer.
+  int32_t rowNumber{0};
+  char* FOLLY_NULLABLE rowBegin{nullptr};
+  // First byte after the end of the PageRun containing 'currentRow'.
+  char* FOLLY_NULLABLE endOfRun{nullptr};
+
+  // Returns the current row, skipping a possible normalized key below the first
+  // byte of row.
+  inline char* FOLLY_NULLABLE currentRow() const {
+    return (rowBegin && normalizedKeysLeft)
+        ? rowBegin + sizeof(normalized_key_t)
+        : rowBegin;
+  }
+
   void reset() {
     allocationIndex = 0;
     runIndex = 0;
     rowOffset = 0;
     normalizedKeysLeft = 0;
+    rowBegin = nullptr;
+    rowNumber = 0;
+    endOfRun = nullptr;
   }
+};
+
+/// Container with a 8-bit partition number field for each row in a
+/// RowContainer. The partition number bytes correspond 1:1 to rows. Used only
+/// for parallel hash join build.
+class RowPartitions {
+ public:
+  /// Initializes this to hold up to 'numRows'.
+  RowPartitions(int32_t numRows, memory::MappedMemory& mappedMemory);
+
+  /// Appends 'partitions' to the end of 'this'. Throws if adding more than the
+  /// capacity given at construction.
+  void appendPartitions(folly::Range<const uint8_t*> partitions);
+
+  auto& allocation() const {
+    return allocation_;
+  }
+
+  int32_t size() const {
+    return size_;
+  }
+
+ private:
+  const int32_t capacity_;
+
+  // Number of partition numbers added.
+  int32_t size_{0};
+
+  // Partition numbers. 1 byte each.
+  memory::MappedMemory::Allocation allocation_;
 };
 
 // Packed representation of offset, null byte offset and null mask for
@@ -76,8 +125,6 @@ class RowColumn {
   const uint64_t packedOffsets_;
 };
 
-using normalized_key_t = uint64_t;
-
 // Collection of rows for aggregation, hash join, order by
 class RowContainer {
  public:
@@ -88,13 +135,13 @@ class RowContainer {
   // allocation.
   RowContainer(
       const std::vector<TypePtr>& keyTypes,
-      memory::MappedMemory* mappedMemory)
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory)
       : RowContainer(keyTypes, std::vector<TypePtr>{}, mappedMemory) {}
 
   RowContainer(
       const std::vector<TypePtr>& keyTypes,
       const std::vector<TypePtr>& dependentTypes,
-      memory::MappedMemory* mappedMemory)
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory)
       : RowContainer(
             keyTypes,
             true, // nullableKeys
@@ -132,13 +179,13 @@ class RowContainer {
       bool isJoinBuild,
       bool hasProbedFlag,
       bool hasNormalizedKey,
-      memory::MappedMemory* mappedMemory,
+      memory::MappedMemory* FOLLY_NONNULL mappedMemory,
       const RowSerde& serde);
 
   // Allocates a new row and initializes possible aggregates to null.
-  char* newRow();
+  char* FOLLY_NONNULL newRow();
 
-  uint32_t rowSize(const char* row) const {
+  uint32_t rowSize(const char* FOLLY_NONNULL row) const {
     return fixedRowSize_ +
         (rowSizeOffset_
              ? *reinterpret_cast<const uint32_t*>(row + rowSizeOffset_)
@@ -154,7 +201,7 @@ class RowContainer {
   // variable length data.
   void eraseRows(folly::Range<char**> rows);
 
-  void incrementRowSize(char* row, uint64_t bytes) {
+  void incrementRowSize(char* FOLLY_NONNULL row, uint64_t bytes) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
     uint64_t size = *ptr + bytes;
     *ptr = std::min<uint64_t>(size, std::numeric_limits<uint32_t>::max());
@@ -163,14 +210,14 @@ class RowContainer {
   // Initialize row. 'reuse' specifies whether the 'row' is reused or
   // not. If it is reused, it will free memory associated with the row
   // elsewhere (such as in HashStringAllocator).
-  char* initializeRow(char* row, bool reuse);
+  char* FOLLY_NONNULL initializeRow(char* FOLLY_NONNULL row, bool reuse);
 
   // Stores the 'index'th value in 'decoded' into 'row' at
   // 'columnIndex'.
   void store(
       const DecodedVector& decoded,
       vector_size_t index,
-      char* row,
+      char* FOLLY_NONNULL row,
       int32_t columnIndex);
 
   HashStringAllocator& stringAllocator() {
@@ -187,7 +234,7 @@ class RowContainer {
   // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
   // corresponding row in 'result' to null.
   static void extractColumn(
-      const char* const* rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       RowColumn col,
       VectorPtr result);
@@ -196,7 +243,7 @@ class RowContainer {
   // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
   //  corresponding row in 'result' to null.
   void extractColumn(
-      const char* const* rows,
+      const char* const* FOLLY_NONNULL rows,
       int32_t numRows,
       int32_t columnIndex,
       VectorPtr result) {
@@ -215,10 +262,10 @@ class RowContainer {
 
   template <ProbeType probeType>
   int32_t listRows(
-      RowContainerIterator* iter,
+      RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     int32_t count = 0;
     uint64_t totalBytes = 0;
     VELOX_CHECK_EQ(rows_.numLargeAllocations(), 0);
@@ -290,14 +337,17 @@ class RowContainer {
   // 0 when at end. Stops after the total size of returned rows exceeds
   // maxBytes.
   int32_t listRows(
-      RowContainerIterator* iter,
+      RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows) {
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, maxBytes, rows);
   }
 
-  int32_t listRows(RowContainerIterator* iter, int32_t maxRows, char** rows) {
+  int32_t listRows(
+      RowContainerIterator* FOLLY_NONNULL iter,
+      int32_t maxRows,
+      char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     return listRows<ProbeType::kAll>(iter, maxRows, kUnlimited, rows);
   }
 
@@ -306,14 +356,14 @@ class RowContainer {
   /// duplicate entries for the cases where single probe row matched multiple
   /// build rows. In case of the full join, 'rows' may include null entries that
   /// correspond to probe rows with no match.
-  void setProbedFlag(char** rows, int32_t numRows);
+  void setProbedFlag(char* FOLLY_NONNULL* FOLLY_NONNULL rows, int32_t numRows);
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
   // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is
   // a fast path for compare().
   template <bool mayHaveNulls>
   bool equals(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       RowColumn column,
       const DecodedVector& decoded,
       vector_size_t index);
@@ -322,7 +372,7 @@ class RowContainer {
   // in 'decoded'. Returns 0 for equal, < 0 for 'row' < 'decoded', > 0
   // otherwise.
   int32_t compare(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       RowColumn column,
       const DecodedVector& decoded,
       vector_size_t index,
@@ -331,15 +381,15 @@ class RowContainer {
   // Compares the value at 'columnIndex' between 'left' and 'right'. Returns
   // 0 for equal, < 0 for left < right, > 0 otherwise.
   int32_t compare(
-      const char* left,
-      const char* right,
+      const char* FOLLY_NONNULL left,
+      const char* FOLLY_NONNULL right,
       int32_t columnIndex,
       CompareFlags flags = CompareFlags());
 
   // Allows get/set of the normalized key. If normalized keys are
   // used, they are stored in the word immediately below the hash
   // table row.
-  static inline normalized_key_t& normalizedKey(char* group) {
+  static inline normalized_key_t& normalizedKey(char* FOLLY_NONNULL group) {
     return reinterpret_cast<normalized_key_t*>(group)[-1];
   }
 
@@ -376,7 +426,7 @@ class RowContainer {
       int32_t columnIndex,
       folly::Range<char**> rows,
       bool mix,
-      uint64_t* result);
+      uint64_t* FOLLY_NONNULL result);
 
   uint64_t allocatedBytes() const {
     return rows_.allocatedBytes() + stringAllocator_.retainedSize();
@@ -400,8 +450,8 @@ class RowContainer {
   void clear();
 
   int32_t compareRows(
-      const char* left,
-      const char* right,
+      const char* FOLLY_NONNULL left,
+      const char* FOLLY_NONNULL right,
       const std::vector<CompareFlags>& flags = {}) {
     VELOX_DCHECK(flags.empty() || flags.size() == keyTypes_.size());
     for (auto i = 0; i < keyTypes_.size(); ++i) {
@@ -423,7 +473,9 @@ class RowContainer {
   }
 
   // Extract column values for 'rows' into 'result'.
-  void extractRows(const std::vector<char*>& rows, const RowVectorPtr& result) {
+  void extractRows(
+      const std::vector<char * FOLLY_NONNULL>& rows,
+      const RowVectorPtr& result) {
     VELOX_CHECK_EQ(rows.size(), result->size());
     for (int i = 0; i < result->childrenSize(); ++i) {
       RowContainer::extractColumn(
@@ -431,7 +483,7 @@ class RowContainer {
     }
   }
 
-  memory::MappedMemory* mappedMemory() const {
+  memory::MappedMemory* FOLLY_NONNULL mappedMemory() const {
     return stringAllocator_.mappedMemory();
   }
 
@@ -461,27 +513,47 @@ class RowContainer {
   void checkConsistency();
 
   static inline bool
-  isNullAt(const char* row, int32_t nullByte, uint8_t nullMask) {
+  isNullAt(const char* FOLLY_NONNULL row, int32_t nullByte, uint8_t nullMask) {
     return (row[nullByte] & nullMask) != 0;
   }
+
+  /// Retrieves rows from 'iterator' whose partition equals
+  /// 'partition'. Writes up to 'maxRows' pointers to the rows in
+  /// 'result'. Returns the number of rows retrieved, 0 when no more
+  /// rows are found. 'iterator' is expected to be in initial state
+  /// on first call.
+  int32_t listPartitionRows(
+      RowContainerIterator& iterator,
+      uint8_t partition,
+      int32_t maxRows,
+      char* FOLLY_NONNULL* FOLLY_NONNULL result);
+
+  /// Advances 'iterator' by 'numRows'. The current row after skip is
+  /// in iter.currentRow(). This is null if past end.
+  void skip(RowContainerIterator& iterator, int32_t numRows);
+
+  /// Returns a container with a partition number for each row. This
+  /// is created on first use. The caller is responsible for filling
+  /// this.
+  RowPartitions& partitions();
 
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
 
   template <typename T>
-  static inline T valueAt(const char* group, int32_t offset) {
+  static inline T valueAt(const char* FOLLY_NONNULL group, int32_t offset) {
     return *reinterpret_cast<const T*>(group + offset);
   }
 
   template <typename T>
-  static inline T& valueAt(char* group, int32_t offset) {
+  static inline T& valueAt(char* FOLLY_NONNULL group, int32_t offset) {
     return *reinterpret_cast<T*>(group + offset);
   }
 
   template <TypeKind Kind>
   static void extractColumnTyped(
-      const char* const* rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       RowColumn column,
       VectorPtr result) {
@@ -502,11 +574,11 @@ class RowContainer {
     }
   }
 
-  char*& nextFree(char* row) {
+  char* FOLLY_NONNULL& nextFree(char* FOLLY_NONNULL row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
-  uint32_t& variableRowSize(char* row) {
+  uint32_t& variableRowSize(char* FOLLY_NONNULL row) {
     DCHECK(rowSizeOffset_);
     return *reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
   }
@@ -515,7 +587,7 @@ class RowContainer {
   inline void storeWithNulls(
       const DecodedVector& decoded,
       vector_size_t index,
-      char* row,
+      char* FOLLY_NONNULL row,
       int32_t offset,
       int32_t nullByte,
       uint8_t nullMask) {
@@ -538,7 +610,7 @@ class RowContainer {
   inline void storeNoNulls(
       const DecodedVector& decoded,
       vector_size_t index,
-      char* group,
+      char* FOLLY_NONNULL group,
       int32_t offset) {
     using T = typename TypeTraits<Kind>::NativeType;
     *reinterpret_cast<T*>(group + offset) = decoded.valueAt<T>(index);
@@ -550,12 +622,12 @@ class RowContainer {
 
   template <typename T>
   static void extractValuesWithNulls(
-      const char* const* rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       int32_t offset,
       int32_t nullByte,
       uint8_t nullMask,
-      FlatVector<T>* result) {
+      FlatVector<T>* FOLLY_NONNULL result) {
     result->resize(numRows);
     BufferPtr nullBuffer = result->mutableNulls(numRows);
     auto nulls = nullBuffer->asMutable<uint64_t>();
@@ -573,10 +645,10 @@ class RowContainer {
 
   template <typename T>
   static void extractValuesNoNulls(
-      const char* const* rows,
+      const char* const* FOLLY_NONNULL rows,
       int32_t numRows,
       int32_t offset,
-      FlatVector<T>* result) {
+      FlatVector<T>* FOLLY_NONNULL result) {
     result->resize(numRows);
     BufferPtr valuesBuffer = result->mutableValues(numRows);
     auto values = valuesBuffer->asMutableRange<T>();
@@ -591,20 +663,23 @@ class RowContainer {
     }
   }
 
-  static void prepareRead(const char* row, int32_t offset, ByteStream& stream);
+  static void prepareRead(
+      const char* FOLLY_NONNULL row,
+      int32_t offset,
+      ByteStream& stream);
 
   template <TypeKind Kind>
   void hashTyped(
-      const Type* type,
+      const Type* FOLLY_NONNULL type,
       RowColumn column,
       bool nullable,
       folly::Range<char**> rows,
       bool mix,
-      uint64_t* result);
+      uint64_t* FOLLY_NONNULL result);
 
   template <TypeKind Kind>
   inline bool equalsWithNulls(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       int32_t offset,
       int32_t nullByte,
       uint8_t nullMask,
@@ -629,7 +704,7 @@ class RowContainer {
 
   template <TypeKind Kind>
   inline bool equalsNoNulls(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       int32_t offset,
       const DecodedVector& decoded,
       vector_size_t index) {
@@ -649,7 +724,7 @@ class RowContainer {
 
   template <TypeKind Kind>
   inline int compare(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       RowColumn column,
       const DecodedVector& decoded,
       vector_size_t index,
@@ -680,9 +755,9 @@ class RowContainer {
 
   template <TypeKind Kind>
   inline int compare(
-      const char* left,
-      const char* right,
-      const Type* type,
+      const char* FOLLY_NONNULL left,
+      const char* FOLLY_NONNULL right,
+      const Type* FOLLY_NONNULL type,
       RowColumn column,
       CompareFlags flags) {
     using T = typename KindToFlatVector<Kind>::HashRowType;
@@ -731,20 +806,20 @@ class RowContainer {
   void storeComplexType(
       const DecodedVector& decoded,
       vector_size_t index,
-      char* row,
+      char* FOLLY_NONNULL row,
       int32_t offset,
       int32_t nullByte = 0,
       uint8_t nullMask = 0);
 
   static void extractComplexType(
-      const char* const* rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       RowColumn column,
       VectorPtr result);
 
   static void extractString(
       StringView value,
-      FlatVector<StringView>* values,
+      FlatVector<StringView>* FOLLY_NONNULL values,
       vector_size_t index);
 
   static int32_t compareStringAsc(
@@ -755,16 +830,16 @@ class RowContainer {
   static int32_t compareStringAsc(StringView left, StringView right);
 
   int32_t compareComplexType(
-      const char* row,
+      const char* FOLLY_NONNULL row,
       int32_t offset,
       const DecodedVector& decoded,
       vector_size_t index,
       CompareFlags flags = CompareFlags());
 
   int32_t compareComplexType(
-      const char* left,
-      const char* right,
-      const Type* type,
+      const char* FOLLY_NONNULL left,
+      const char* FOLLY_NONNULL right,
+      const Type* FOLLY_NONNULL type,
       int32_t offset,
       CompareFlags flags);
 
@@ -818,11 +893,14 @@ class RowContainer {
   std::vector<uint8_t> initialNulls_;
   uint64_t numRows_ = 0;
   // Head of linked list of free rows.
-  char* firstFreeRow_ = nullptr;
+  char* FOLLY_NULLABLE firstFreeRow_ = nullptr;
   uint64_t numFreeRows_ = 0;
 
   AllocationPool rows_;
   HashStringAllocator stringAllocator_;
+
+  // Partition number for each row. Used only in parallel hash join build.
+  std::unique_ptr<RowPartitions> partitions_;
 
   const RowSerde& serde_;
   // RowContainer requires a valid reference to a vector of aggregates. We use
@@ -838,7 +916,7 @@ template <>
 inline void RowContainer::storeWithNulls<TypeKind::ROW>(
     const DecodedVector& decoded,
     vector_size_t index,
-    char* row,
+    char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
@@ -849,7 +927,7 @@ template <>
 inline void RowContainer::storeNoNulls<TypeKind::ROW>(
     const DecodedVector& decoded,
     vector_size_t index,
-    char* row,
+    char* FOLLY_NONNULL row,
     int32_t offset) {
   storeComplexType(decoded, index, row, offset);
 }
@@ -858,7 +936,7 @@ template <>
 inline void RowContainer::storeWithNulls<TypeKind::ARRAY>(
     const DecodedVector& decoded,
     vector_size_t index,
-    char* row,
+    char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
@@ -869,7 +947,7 @@ template <>
 inline void RowContainer::storeNoNulls<TypeKind::ARRAY>(
     const DecodedVector& decoded,
     vector_size_t index,
-    char* row,
+    char* FOLLY_NONNULL row,
     int32_t offset) {
   storeComplexType(decoded, index, row, offset);
 }
@@ -878,7 +956,7 @@ template <>
 inline void RowContainer::storeWithNulls<TypeKind::MAP>(
     const DecodedVector& decoded,
     vector_size_t index,
-    char* row,
+    char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
@@ -889,14 +967,14 @@ template <>
 inline void RowContainer::storeNoNulls<TypeKind::MAP>(
     const DecodedVector& decoded,
     vector_size_t index,
-    char* row,
+    char* FOLLY_NONNULL row,
     int32_t offset) {
   storeComplexType(decoded, index, row, offset);
 }
 
 template <>
 inline void RowContainer::extractValuesNoNulls<StringView>(
-    const char* const* rows,
+    const char* const* FOLLY_NONNULL rows,
     int32_t numRows,
     int32_t offset,
     FlatVector<StringView>* result) {
@@ -913,7 +991,7 @@ inline void RowContainer::extractValuesNoNulls<StringView>(
 
 template <>
 inline void RowContainer::extractValuesWithNulls<StringView>(
-    const char* const* rows,
+    const char* const* FOLLY_NONNULL rows,
     int32_t numRows,
     int32_t offset,
     int32_t nullByte,
@@ -939,7 +1017,7 @@ inline void RowContainer::extractColumnTyped<TypeKind::OPAQUE>(
 }
 
 inline void RowContainer::extractColumn(
-    const char* const* rows,
+    const char* const* FOLLY_NONNULL rows,
     int32_t numRows,
     RowColumn column,
     VectorPtr result) {
@@ -949,7 +1027,7 @@ inline void RowContainer::extractColumn(
 
 template <bool mayHaveNulls>
 inline bool RowContainer::equals(
-    const char* row,
+    const char* FOLLY_NONNULL row,
     RowColumn column,
     const DecodedVector& decoded,
     vector_size_t index) {
@@ -975,7 +1053,7 @@ inline bool RowContainer::equals(
 }
 
 inline int RowContainer::compare(
-    const char* row,
+    const char* FOLLY_NONNULL row,
     RowColumn column,
     const DecodedVector& decoded,
     vector_size_t index,
@@ -985,8 +1063,8 @@ inline int RowContainer::compare(
 }
 
 inline int RowContainer::compare(
-    const char* left,
-    const char* right,
+    const char* FOLLY_NONNULL left,
+    const char* FOLLY_NONNULL right,
     int columnIndex,
     CompareFlags flags) {
   auto type = types_[columnIndex].get();
