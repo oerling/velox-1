@@ -163,7 +163,7 @@ void RowVector::copy(
     const vector_size_t* toSourceRow) {
   for (auto i = 0; i < children_.size(); ++i) {
     BaseVector::ensureWritable(
-        rows, type()->asRow().childAt(i), pool(), &children_[i]);
+        rows, type()->asRow().childAt(i), pool(), children_[i]);
   }
 
   // Copy non-null values.
@@ -278,10 +278,22 @@ void RowVector::ensureWritable(const SelectivityVector& rows) {
   for (int i = 0; i < childrenSize_; i++) {
     if (children_[i]) {
       BaseVector::ensureWritable(
-          rows, children_[i]->type(), BaseVector::pool_, &children_[i]);
+          rows, children_[i]->type(), BaseVector::pool_, children_[i]);
     }
   }
   BaseVector::ensureWritable(rows);
+}
+
+bool RowVector::isWritable() const {
+  for (int i = 0; i < childrenSize_; i++) {
+    if (children_[i]) {
+      if (!BaseVector::isVectorWritable(children_[i])) {
+        return false;
+      }
+    }
+  }
+
+  return isNullsWritable();
 }
 
 uint64_t RowVector::estimateFlatSize() const {
@@ -339,13 +351,13 @@ void ArrayVectorBase::copyRangesImpl(
         SelectivityVector::empty(),
         targetKeys->get()->type(),
         pool(),
-        targetKeys);
+        *targetKeys);
   } else {
     BaseVector::ensureWritable(
         SelectivityVector::empty(),
         targetValues->get()->type(),
         pool(),
-        targetValues);
+        *targetValues);
   }
   auto setNotNulls = mayHaveNulls() || source->mayHaveNulls();
   auto wantWidth = type()->isFixedWidth() ? type()->fixedElementsWidth() : 0;
@@ -451,6 +463,12 @@ void ArrayVectorBase::copyRangesImpl(
 }
 
 namespace {
+
+struct IndexRange {
+  vector_size_t begin;
+  vector_size_t size;
+};
+
 std::optional<int32_t> compareArrays(
     const BaseVector& left,
     const BaseVector& right,
@@ -625,8 +643,20 @@ void ArrayVector::ensureWritable(const SelectivityVector& rows) {
       SelectivityVector::empty(),
       type()->childAt(0),
       BaseVector::pool_,
-      &elements_);
+      elements_);
   BaseVector::ensureWritable(rows);
+}
+
+bool ArrayVector::isWritable() const {
+  if (offsets_ && !(offsets_->unique() && offsets_->isMutable())) {
+    return false;
+  }
+
+  if (sizes_ && !(sizes_->unique() && sizes_->isMutable())) {
+    return false;
+  }
+
+  return isNullsWritable() && BaseVector::isVectorWritable(elements_);
 }
 
 uint64_t ArrayVector::estimateFlatSize() const {
@@ -886,16 +916,26 @@ void MapVector::ensureWritable(const SelectivityVector& rows) {
   // Vectors are write-once and nested elements are append only,
   // hence, all values already written must be preserved.
   BaseVector::ensureWritable(
-      SelectivityVector::empty(),
-      type()->childAt(0),
-      BaseVector::pool_,
-      &keys_);
+      SelectivityVector::empty(), type()->childAt(0), BaseVector::pool_, keys_);
   BaseVector::ensureWritable(
       SelectivityVector::empty(),
       type()->childAt(1),
       BaseVector::pool_,
-      &values_);
+      values_);
   BaseVector::ensureWritable(rows);
+}
+
+bool MapVector::isWritable() const {
+  if (offsets_ && !(offsets_->unique() && offsets_->isMutable())) {
+    return false;
+  }
+
+  if (sizes_ && !(sizes_->unique() && sizes_->isMutable())) {
+    return false;
+  }
+
+  return isNullsWritable() && BaseVector::isVectorWritable(keys_) &&
+      BaseVector::isVectorWritable(values_);
 }
 
 uint64_t MapVector::estimateFlatSize() const {

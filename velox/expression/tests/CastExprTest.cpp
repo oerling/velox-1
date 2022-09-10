@@ -40,12 +40,12 @@ class TestingDictionaryFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK(rows.isAllSelected());
     const auto size = rows.size();
-    auto indices = makeIndicesInReverse(size, context->pool());
-    *result = BaseVector::wrapInDictionary(
+    auto indices = makeIndicesInReverse(size, context.pool());
+    result = BaseVector::wrapInDictionary(
         BufferPtr(nullptr), indices, size, args[0]);
   }
 
@@ -758,4 +758,20 @@ TEST_F(CastExprTest, decimalToDecimal) {
            std::nullopt},
           DECIMAL(12, 0)),
       true);
+
+  // Overflow case.
+  VELOX_ASSERT_THROW(
+      testComplexCast(
+          "c0",
+          makeNullableLongDecimalFlatVector(
+              {UnscaledLongDecimal::max().unscaledValue()}, DECIMAL(38, 0)),
+          makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
+      "Cannot cast DECIMAL '99999999999999999999999999999999999999' to DECIMAL(38,1)");
+  VELOX_ASSERT_THROW(
+      testComplexCast(
+          "c0",
+          makeNullableLongDecimalFlatVector(
+              {UnscaledLongDecimal::min().unscaledValue()}, DECIMAL(38, 0)),
+          makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
+      "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38,1)");
 }

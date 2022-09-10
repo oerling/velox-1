@@ -353,7 +353,7 @@ TEST_F(DriverTest, cancel) {
   int32_t numRead = 0;
   try {
     readResults(params, ResultOperation::kCancel, 1'000'000, &numRead);
-    EXPECT_TRUE(false) << "Expected exception";
+    FAIL() << "Expected exception";
   } catch (const VeloxRuntimeError& e) {
     EXPECT_EQ("Cancelled", e.message());
   }
@@ -385,6 +385,11 @@ TEST_F(DriverTest, terminate) {
     // If this is an exception, it will be a cancellation.
     EXPECT_TRUE(strstr(e.what(), "Aborted") != nullptr) << e.what();
   }
+
+  ASSERT_TRUE(cancelFuture_.valid());
+  auto& executor = folly::QueuedImmediateExecutor::instance();
+  std::move(cancelFuture_).via(&executor).wait();
+
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
   EXPECT_EQ(tasks_[0]->state(), TaskState::kAborted);
@@ -456,10 +461,7 @@ TEST_F(DriverTest, pause) {
 TEST_F(DriverTest, yield) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
-  std::vector<int32_t> counters;
-  counters.reserve(kNumTasks);
-  std::vector<CursorParameters> params;
-  params.resize(kNumTasks);
+  std::vector<CursorParameters> params(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
     params[i].planNode = makeValuesFilterProject(
@@ -472,10 +474,10 @@ TEST_F(DriverTest, yield) {
         &hits);
     params[i].maxDrivers = kThreadsPerTask;
   }
+  std::vector<int32_t> counters(kNumTasks, 0);
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       readResults(params[i], ResultOperation::kYield, 10'000, &counters[i], i);
     }));
@@ -654,10 +656,7 @@ TEST_F(DriverTest, pauserNode) {
   Operator::registerOperator(std::make_unique<PauserNodeFactory>(
       kThreadsPerTask, sequence, testInstance));
 
-  std::vector<int32_t> counters;
-  counters.reserve(kNumTasks);
-  std::vector<CursorParameters> params;
-  params.resize(kNumTasks);
+  std::vector<CursorParameters> params(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
     params[i].queryCtx = std::make_shared<core::QueryCtx>(
@@ -674,10 +673,10 @@ TEST_F(DriverTest, pauserNode) {
     params[i].maxDrivers =
         kThreadsPerTask * 2; // a number larger than kThreadsPerTask
   }
+  std::vector<int32_t> counters(kNumTasks, 0);
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       try {
         readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);

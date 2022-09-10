@@ -141,10 +141,10 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
+      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       splitPlanNodeIds_(collectSplitPlanNodeIds(planFragment_.planNode)),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
-      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       bufferManager_(PartitionedOutputBufferManager::getInstance()) {
   auto memoryUsageTracker = pool_->getMemoryUsageTracker();
   if (memoryUsageTracker) {
@@ -978,6 +978,18 @@ void Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
       "Unable to initialize task. "
       "PartitionedOutputBufferManager was already destructed");
 
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (noMoreBroadcastBuffers_) {
+      // Ignore messages received after no-more-buffers message.
+      return;
+    }
+
+    if (noMoreBuffers) {
+      noMoreBroadcastBuffers_ = true;
+    }
+  }
+
   bufferManager->updateBroadcastOutputBuffers(
       taskId_, numBuffers, noMoreBuffers);
 }
@@ -1290,6 +1302,11 @@ ContinueFuture Task::terminate(TaskState terminalState) {
 
   for (auto& [planNodeId, splits] : remainingRemoteSplits) {
     for (auto& split : splits.first) {
+      if (!exchangeClientByPlanNode_[planNodeId]->pool()) {
+        // If we terminate even before the client's initialization, we
+        // initialize the client with Task's memory pool.
+        exchangeClientByPlanNode_[planNodeId]->initialize(pool_.get());
+      }
       addRemoteSplit(planNodeId, split);
     }
     if (splits.second) {
