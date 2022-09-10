@@ -574,7 +574,7 @@ class RowContainer {
     }
   }
 
-  char* FOLLY_NONNULL& nextFree(char* FOLLY_NONNULL row) {
+  char* FOLLY_NULLABLE& nextFree(char* FOLLY_NONNULL row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
