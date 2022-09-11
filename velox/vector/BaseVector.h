@@ -37,7 +37,6 @@
 #include "velox/vector/SelectivityVector.h"
 #include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorEncoding.h"
-#include "velox/vector/VectorStream.h"
 #include "velox/vector/VectorUtil.h"
 
 namespace facebook {
@@ -321,8 +320,11 @@ class BaseVector {
     return countNulls(nulls, 0, size);
   }
 
+  // Returns whether or not the nulls buffer can be modified.
+  // This does not guarantee the existence of the nulls buffer, if using this
+  // within BaseVector you still may need to call ensureNulls.
   virtual bool isNullsWritable() const {
-    return true;
+    return !nulls_ || (nulls_->unique() && nulls_->isMutable());
   }
 
   // Sets null when 'nulls' has null value for a row in 'rows'
@@ -453,10 +455,31 @@ class BaseVector {
       const SelectivityVector& rows,
       const TypePtr& type,
       velox::memory::MemoryPool* pool,
-      std::shared_ptr<BaseVector>* result,
+      std::shared_ptr<BaseVector>& result,
       VectorPool* vectorPool = nullptr);
 
   virtual void ensureWritable(const SelectivityVector& rows);
+
+  // Returns true if the following conditions hold:
+  //  * The vector is singly referenced.
+  //  * The vector has a Flat-like encoding (Flat, Array, Map, Row).
+  //  * Any child Buffers are mutable  and singly referenced.
+  //  * All of these conditions hold for child Vectors recursively.
+  // This function is templated rather than taking a std::shared_ptr<BaseVector>
+  // because if we were to do that the compiler would allocate a new shared_ptr
+  // when this function is called making it not unique.
+  template <typename T>
+  static bool isVectorWritable(const std::shared_ptr<T>& vector) {
+    if (!vector.unique()) {
+      return false;
+    }
+
+    return vector->isWritable();
+  }
+
+  virtual bool isWritable() const {
+    return false;
+  }
 
   // Flattens the input vector.
   //
@@ -466,12 +489,12 @@ class BaseVector {
   //
   // We don't necessarily need (b) if we only want to flatten vectors.
   static void flattenVector(
-      std::shared_ptr<BaseVector>* vector,
+      std::shared_ptr<BaseVector>& vector,
       size_t vectorSize) {
     BaseVector::ensureWritable(
         SelectivityVector::empty(vectorSize),
-        (*vector)->type(),
-        (*vector)->pool(),
+        vector->type(),
+        vector->pool(),
         vector);
   }
 
@@ -504,17 +527,6 @@ class BaseVector {
 
   virtual const void* valuesAsVoid() const {
     VELOX_UNSUPPORTED("Only flat vectors have a values buffer");
-  }
-
-  // Returns true for flat vectors with unique values buffer and no
-  // nulls or unique nulls buffer. If true, 'this' can be cached for
-  // reuse in ExprCtx.
-  virtual bool isRecyclable() const {
-    return false;
-  }
-
-  bool isFlatNonNull() const {
-    return encoding_ == VectorEncoding::Simple::FLAT && !rawNulls_;
   }
 
   // If 'this' is a wrapper, returns the wrap info, interpretation depends on
@@ -599,10 +611,6 @@ class BaseVector {
   /// data stored in this vector. Returns zero if this is a lazy vector that
   /// hasn't been loaded yet.
   virtual uint64_t estimateFlatSize() const;
-
-  // Returns true if 'vector' is a unique reference to a flat vector
-  // and nulls and values are uniquely referenced.
-  static bool isReusableFlatVector(const std::shared_ptr<BaseVector>& vector);
 
   /// To safely reuse a vector one needs to (1) ensure that the vector as well
   /// as all its buffers and child vectors are singly-referenced and mutable
