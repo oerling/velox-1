@@ -111,6 +111,9 @@ TEST(VariantTest, shortDecimal) {
   // 0.1234 < 1.234
   EXPECT_LT(
       u2.value<TypeKind::SHORT_DECIMAL>(), v.value<TypeKind::SHORT_DECIMAL>());
+  EXPECT_TRUE(dispatchDynamicVariantEquality(v, v, false));
+  EXPECT_TRUE(dispatchDynamicVariantEquality(v, v, true));
+  EXPECT_FALSE(dispatchDynamicVariantEquality(v, u2, true));
 }
 
 TEST(VariantTest, shortDecimalHash) {
@@ -157,6 +160,9 @@ TEST(VariantTest, shortDecimalNull) {
   // n and n3 have same precision and scale.
   auto n3 = n;
   EXPECT_EQ(nHash, n3.hash());
+
+  EXPECT_TRUE(dispatchDynamicVariantEquality(n, n, true));
+  EXPECT_FALSE(dispatchDynamicVariantEquality(n, n, false));
 }
 
 TEST(VariantTest, longDecimal) {
@@ -179,6 +185,9 @@ TEST(VariantTest, longDecimal) {
   // 12.3456 > 12.345
   EXPECT_LT(
       v.value<TypeKind::LONG_DECIMAL>(), u2.value<TypeKind::LONG_DECIMAL>());
+  EXPECT_TRUE(dispatchDynamicVariantEquality(v, v, false));
+  EXPECT_TRUE(dispatchDynamicVariantEquality(v, v, true));
+  EXPECT_FALSE(dispatchDynamicVariantEquality(v, u2, true));
 }
 
 TEST(VariantTest, longDecimalHash) {
@@ -225,6 +234,9 @@ TEST(VariantTest, longDecimalNull) {
   // n and n3 have same precision and scale.
   auto n3 = n;
   EXPECT_EQ(nHash, n3.hash());
+
+  EXPECT_TRUE(dispatchDynamicVariantEquality(n, n, true));
+  EXPECT_FALSE(dispatchDynamicVariantEquality(n, n, false));
 }
 
 /// Test variant::equalsWithEpsilon by summing up large 64-bit integers (> 15
@@ -318,4 +330,52 @@ TEST(VariantTest, equalsWithEpsilonFloat) {
 
   ASSERT_NE(sum1, sum3);
   ASSERT_FALSE(variant(sum1).equalsWithEpsilon(variant(sum3)));
+}
+
+struct SerializableClass {
+  const std::string name;
+  const bool value;
+  SerializableClass(std::string name, bool value)
+      : name(std::move(name)), value(value) {}
+};
+
+TEST(VariantTest, serializeOpaque) {
+  OpaqueType::registerSerialization<SerializableClass>(
+      "serializable_class",
+      [](const std::shared_ptr<SerializableClass>& obj) -> std::string {
+        return folly::toJson(
+            folly::dynamic::object("name", obj->name)("value", obj->value));
+      },
+      [](const std::string& json) -> std::shared_ptr<SerializableClass> {
+        folly::dynamic obj = folly::parseJson(json);
+        return std::make_shared<SerializableClass>(
+            obj["name"].asString(), obj["value"].asBool());
+      });
+
+  auto var = variant::opaque<SerializableClass>(
+      std::make_shared<SerializableClass>("test_class", false));
+
+  auto serialized = var.serialize();
+  auto deserialized_variant = variant::create(serialized);
+  auto opaque = deserialized_variant.value<TypeKind::OPAQUE>().obj;
+
+  auto original_class = std::static_pointer_cast<SerializableClass>(
+      deserialized_variant.value<TypeKind::OPAQUE>().obj);
+  EXPECT_EQ(original_class->name, "test_class");
+  EXPECT_EQ(original_class->value, false);
+}
+
+TEST(VariantTest, opaqueSerializationNotRegistered) {
+  struct opaqueSerializationTestStruct {};
+  auto opaqueBeforeRegistration =
+      variant::opaque<opaqueSerializationTestStruct>(
+          std::make_shared<opaqueSerializationTestStruct>());
+  EXPECT_THROW(opaqueBeforeRegistration.serialize(), VeloxException);
+
+  OpaqueType::registerSerialization<opaqueSerializationTestStruct>(
+      "opaqueSerializationStruct");
+
+  auto opaqueAfterRegistration = variant::opaque<opaqueSerializationTestStruct>(
+      std::make_shared<opaqueSerializationTestStruct>());
+  EXPECT_THROW(opaqueAfterRegistration.serialize(), VeloxException);
 }

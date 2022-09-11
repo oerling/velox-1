@@ -17,6 +17,7 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
+#include "velox/common/base/Exceptions.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/ConstantExpr.h"
@@ -275,7 +276,7 @@ void Expr::evalSimplifiedImpl(
     auto& inputValue = inputValues_[i];
     inputs_[i]->evalSimplified(remainingRows, context, inputValue);
 
-    BaseVector::flattenVector(&inputValue, rows.end());
+    BaseVector::flattenVector(inputValue, rows.end());
     VELOX_CHECK_EQ(VectorEncoding::Simple::FLAT, inputValue->encoding());
 
     // If the resulting vector has nulls, merge them into our current remaining
@@ -298,8 +299,7 @@ void Expr::evalSimplifiedImpl(
   }
 
   // Apply the actual function.
-  vectorFunction_->apply(
-      remainingRows, inputValues_, type(), &context, &result);
+  vectorFunction_->apply(remainingRows, inputValues_, type(), context, result);
 
   // Make sure the returned vector has its null bitmap properly set.
   addNulls(rows, remainingRows.asRange().bits(), context, result);
@@ -417,17 +417,29 @@ bool Expr::checkGetSharedSubexprValues(
   if (!rows.isSubset(*sharedSubexprRows_)) {
     LocalSelectivityVector missingRowsHolder(context, rows);
     auto missingRows = missingRowsHolder.get();
-    assert(missingRows); // lint
+    VELOX_DCHECK_NOT_NULL(missingRows);
     missingRows->deselect(*sharedSubexprRows_);
 
-    // Fix finalSelection at "rows" if missingRows is a strict subset to avoid
-    // losing values outside of missingRows.
-    bool updateFinalSelection = context.isFinalSelection() &&
-        (missingRows->countSelected() < rows.countSelected());
-    VarSetter finalSelectionOr(
-        context.mutableFinalSelection(), &rows, updateFinalSelection);
-    VarSetter isFinalSelectionOr(
-        context.mutableIsFinalSelection(), false, updateFinalSelection);
+    // Add the missingRows to sharedSubexprRows_ that will eventually be
+    // evaluated and added to sharedSubexprValues_.
+    sharedSubexprRows_->select(*missingRows);
+
+    // Fix finalSelection to avoid losing values outside missingRows.
+    LocalSelectivityVector newFinalSelectionHolder(
+        context, *sharedSubexprRows_);
+    auto newFinalSelection = newFinalSelectionHolder.get();
+    VELOX_DCHECK_NOT_NULL(newFinalSelection);
+    if (!context.isFinalSelection()) {
+      // In case currently set finalSelection does not include all rows in
+      // sharedSubexprRows_.
+      VELOX_DCHECK_NOT_NULL(context.finalSelection());
+      newFinalSelection->select(*context.finalSelection());
+    }
+    VarSetter finalSelectionPreservePrecomputedValues(
+        context.mutableFinalSelection(),
+        const_cast<const SelectivityVector*>(newFinalSelection));
+    VarSetter isFinalSelectionPreservePrecomputedValues(
+        context.mutableIsFinalSelection(), false, context.isFinalSelection());
 
     evalEncodings(*missingRows, context, sharedSubexprValues_);
   }
@@ -670,31 +682,39 @@ void Expr::evalEncodings(
     }
 
     if (hasNonFlat) {
-      LocalSelectivityVector newRowsHolder(context);
-      LocalSelectivityVector finalRowsHolder(context);
-      ContextSaver saveContext;
-      LocalDecodedVector decodedHolder(context);
-      auto peelEncodingsResult = peelEncodings(
-          context,
-          saveContext,
-          rows,
-          decodedHolder,
-          newRowsHolder,
-          finalRowsHolder);
-      auto* newRows = peelEncodingsResult.newRows;
-      if (newRows) {
-        VectorPtr peeledResult;
-        // peelEncodings() can potentially produce an empty selectivity vector
-        // if all selected values we are waiting for are nulls. So, here we
-        // check for such a case.
-        if (newRows->hasSelections()) {
-          if (peelEncodingsResult.mayCache) {
-            evalWithMemo(*newRows, context, peeledResult);
-          } else {
-            evalWithNulls(*newRows, context, peeledResult);
+      VectorPtr wrappedResult;
+      // Attempt peeling and bound the scope of the context used for it.
+      {
+        ContextSaver saveContext;
+        LocalSelectivityVector newRowsHolder(context);
+        LocalSelectivityVector finalRowsHolder(context);
+        LocalDecodedVector decodedHolder(context);
+        auto peelEncodingsResult = peelEncodings(
+            context,
+            saveContext,
+            rows,
+            decodedHolder,
+            newRowsHolder,
+            finalRowsHolder);
+        auto* newRows = peelEncodingsResult.newRows;
+        if (newRows) {
+          VectorPtr peeledResult;
+          // peelEncodings() can potentially produce an empty selectivity vector
+          // if all selected values we are waiting for are nulls. So, here we
+          // check for such a case.
+          if (newRows->hasSelections()) {
+            if (peelEncodingsResult.mayCache) {
+              evalWithMemo(*newRows, context, peeledResult);
+            } else {
+              evalWithNulls(*newRows, context, peeledResult);
+            }
           }
+          wrappedResult =
+              context.applyWrapToPeeledResult(this->type(), peeledResult, rows);
         }
-        context.setWrapped(this, peeledResult, rows, result);
+      }
+      if (wrappedResult != nullptr) {
+        context.moveOrCopyResult(wrappedResult, rows, result);
         return;
       }
     }
@@ -752,7 +772,7 @@ void Expr::addNulls(
 
   if (!result.unique() || !result->isNullsWritable()) {
     BaseVector::ensureWritable(
-        SelectivityVector::empty(), type(), context.pool(), &result);
+        SelectivityVector::empty(), type(), context.pool(), result);
   }
 
   if (result->size() < rows.end()) {
@@ -826,7 +846,7 @@ void Expr::evalWithMemo(
     if (cachedDictionaryIndices_) {
       LocalSelectivityVector cachedHolder(context, rows);
       auto cached = cachedHolder.get();
-      assert(cached); // lint
+      VELOX_DCHECK(cached != nullptr);
       cached->intersect(*cachedDictionaryIndices_);
       if (cached->hasSelections()) {
         context.ensureWritable(rows, type(), result);
@@ -835,13 +855,14 @@ void Expr::evalWithMemo(
     }
     LocalSelectivityVector uncachedHolder(context, rows);
     auto uncached = uncachedHolder.get();
-    assert(uncached); // lint
+    VELOX_DCHECK(uncached != nullptr);
     if (cachedDictionaryIndices_) {
       uncached->deselect(*cachedDictionaryIndices_);
     }
     if (uncached->hasSelections()) {
       // Fix finalSelection at "rows" if uncached rows is a strict subset to
-      // avoid losing values not in uncached rows.
+      // avoid losing values not in uncached rows that were copied earlier into
+      // "result" from the cached rows.
       bool updateFinalSelection = context.isFinalSelection() &&
           (uncached->countSelected() < rows.countSelected());
       VarSetter finalSelectionMemo(
@@ -899,7 +920,7 @@ void Expr::setAllNulls(
     EvalCtx& context,
     VectorPtr& result) const {
   if (result) {
-    BaseVector::ensureWritable(rows, type(), context.pool(), &result);
+    BaseVector::ensureWritable(rows, type(), context.pool(), result);
     LocalSelectivityVector notNulls(context, rows.end());
     notNulls.get()->setAll();
     notNulls.get()->deselect(rows);
@@ -1015,7 +1036,7 @@ void Expr::evalAll(
         nonNulls.allocate(rows.end());
         *nonNulls.get() = rows;
         remainingRows = nonNulls.get();
-        assert(remainingRows); // lint
+        VELOX_DCHECK(remainingRows != nullptr);
       }
       LocalDecodedVector decoded(context, *inputValues_[i], rows);
       if (auto* rawNulls = decoded->nulls()) {
@@ -1193,7 +1214,9 @@ bool Expr::applyFunctionWithPeeling(
 
   VectorPtr peeledResult;
   applyFunction(*newRows, context, peeledResult);
-  context.setWrapped(this, peeledResult, rows, result);
+  VectorPtr wrappedResult =
+      context.applyWrapToPeeledResult(this->type(), peeledResult, rows);
+  context.moveOrCopyResult(wrappedResult, rows, result);
   return true;
 }
 
@@ -1210,7 +1233,7 @@ void Expr::applyFunction(
       ? computeIsAsciiForResult(vectorFunction_.get(), inputValues_, rows)
       : std::nullopt;
 
-  vectorFunction_->apply(rows, inputValues_, type(), &context, &result);
+  vectorFunction_->apply(rows, inputValues_, type(), context, result);
 
   if (isAscii.has_value()) {
     result->asUnchecked<SimpleVector<StringView>>()->setIsAscii(

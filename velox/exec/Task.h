@@ -186,7 +186,8 @@ class Task : public std::enable_shared_from_this<Task> {
   /// subsequent calls.
   /// @param noMoreBuffers A flag indicating that numBuffers is the final number
   /// of buffers. No more calls are expected after the call with noMoreBuffers
-  /// == true.
+  /// == true, but occasionally the caller might resend it, so calls
+  /// received after a call with noMoreBuffers == true are ignored.
   void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
 
   /// Returns true if state is 'running'.
@@ -637,6 +638,19 @@ class Task : public std::enable_shared_from_this<Task> {
   const int destination_;
   const std::shared_ptr<core::QueryCtx> queryCtx_;
 
+  /// Root MemoryPool for this Task. All member variables that hold references
+  /// to pool_ must be defined after pool_, childPools_, and
+  /// childMappedMemories_
+  std::unique_ptr<memory::MemoryPool> pool_;
+
+  /// Keep driver and operator memory pools alive for the duration of the task
+  /// to allow for sharing vectors across drivers without copy.
+  std::vector<std::unique_ptr<memory::MemoryPool>> childPools_;
+
+  /// Keep operator MappedMemory instances alive for the duration of the task to
+  /// allow for sharing data without copy.
+  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
+
   /// A set of IDs of leaf plan nodes that require splits. Used to check plan
   /// node IDs specified in split management methods.
   const std::unordered_set<core::PlanNodeId> splitPlanNodeIds_;
@@ -720,21 +734,16 @@ class Task : public std::enable_shared_from_this<Task> {
   std::vector<ContinuePromise> stateChangePromises_;
 
   TaskStats taskStats_;
-  std::unique_ptr<memory::MemoryPool> pool_;
-
-  // Keep driver and operator memory pools alive for the duration of the task to
-  // allow for sharing vectors across drivers without copy.
-  std::vector<std::unique_ptr<memory::MemoryPool>> childPools_;
-
-  // Keep operator MappedMemory instances alive for the duration of the task to
-  // allow for sharing data without copy.
-  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
 
   /// Stores inter-operator state (exchange, bridges) per split group.
   /// During ungrouped execution we use the [0] entry in this vector.
   std::unordered_map<uint32_t, SplitGroupState> splitGroupStates_;
 
   std::weak_ptr<PartitionedOutputBufferManager> bufferManager_;
+
+  /// Boolean indicating that we have already recieved no-more-broadcast-buffers
+  /// message. Subsequent messagees will be ignored.
+  bool noMoreBroadcastBuffers_{false};
 
   // Thread counts and cancellation -related state.
   //

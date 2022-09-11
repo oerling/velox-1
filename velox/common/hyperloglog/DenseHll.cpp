@@ -13,14 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/functions/prestosql/hyperloglog/DenseHll.h"
+#include "velox/common/hyperloglog/DenseHll.h"
+
 #include <exception>
 #include <sstream>
-#include "velox/functions/prestosql/aggregates/IOUtils.h"
-#include "velox/functions/prestosql/hyperloglog/BiasCorrection.h"
-#include "velox/functions/prestosql/hyperloglog/HllUtils.h"
+#include "velox/common/base/IOUtils.h"
+#include "velox/common/hyperloglog/BiasCorrection.h"
+#include "velox/common/hyperloglog/HllUtils.h"
 
-namespace facebook::velox::aggregate::hll {
+namespace facebook::velox::common::hll {
 namespace {
 const int kBitsPerBucket = 4;
 const int8_t kMaxDelta = (1 << kBitsPerBucket) - 1;
@@ -231,7 +232,7 @@ int64_t cardinalityImpl(const DenseHllView& hll) {
 }
 
 DenseHllView deserialize(const char* serialized) {
-  InputByteStream stream(serialized);
+  common::InputByteStream stream(serialized);
 
   auto version = stream.read<int8_t>();
   VELOX_CHECK_EQ(kPrestoDenseV2, version);
@@ -406,7 +407,7 @@ bool DenseHll::canDeserialize(const char* input, int size) {
     return false;
   }
 
-  InputByteStream stream(input);
+  common::InputByteStream stream(input);
   auto version = stream.read<int8_t>();
   if (kPrestoDenseV2 != version) {
     return false;
@@ -460,7 +461,7 @@ bool DenseHll::canDeserialize(const char* input, int size) {
 
 // static
 int8_t DenseHll::deserializeIndexBitLength(const char* input) {
-  InputByteStream stream(input);
+  common::InputByteStream stream(input);
   stream.read<int8_t>();
   return stream.read<int8_t>();
 }
@@ -477,7 +478,7 @@ void DenseHll::serialize(char* output) {
   // sort overflow arrays to get consistent serialization for equivalent HLLs
   sortOverflows();
 
-  OutputByteStream stream(output);
+  common::OutputByteStream stream(output);
   stream.appendOne(kPrestoDenseV2);
   stream.appendOne(indexBitLength_);
   stream.appendOne(baseline_);
@@ -540,7 +541,7 @@ void DenseHll::mergeWith(const DenseHll& other) {
 }
 
 void DenseHll::mergeWith(const char* serialized) {
-  InputByteStream stream(serialized);
+  common::InputByteStream stream(serialized);
 
   auto version = stream.read<int8_t>();
   VELOX_CHECK_EQ(kPrestoDenseV2, version);
@@ -654,4 +655,4 @@ void DenseHll::removeOverflow(int overflowEntry) {
   overflowValues_[overflowEntry] = overflowValues_[overflows_ - 1];
   overflows_--;
 }
-} // namespace facebook::velox::aggregate::hll
+} // namespace facebook::velox::common::hll

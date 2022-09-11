@@ -18,6 +18,7 @@
 
 #include <boost/circular_buffer.hpp>
 #include "velox/exec/Merge.h"
+#include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::exec {
 namespace {
@@ -121,6 +122,7 @@ class MergeExchangeSource : public MergeSource {
       int destination)
       : mergeExchange_(mergeExchange),
         client_(std::make_unique<ExchangeClient>(destination)) {
+    client_->initialize(mergeExchange->pool());
     client_->addRemoteTaskId(taskId);
     client_->noMoreRemoteTasks();
   }

@@ -26,7 +26,6 @@
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
-#include "velox/vector/VectorEncoding.h"
 #include "velox/vector/tests/VectorTestBase.h"
 
 using namespace facebook::velox;
@@ -450,8 +449,8 @@ class PlusConstantFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK_EQ(args.size(), 1);
 
     auto& arg = args[0];
@@ -459,10 +458,10 @@ class PlusConstantFunction : public exec::VectorFunction {
     // The argument may be flat or constant.
     VELOX_CHECK(arg->isFlatEncoding() || arg->isConstantEncoding());
 
-    BaseVector::ensureWritable(rows, INTEGER(), context->pool(), result);
+    BaseVector::ensureWritable(rows, INTEGER(), context.pool(), result);
 
-    auto flatResult = (*result)->asFlatVector<int32_t>();
-    auto rawResult = flatResult->mutableRawValues();
+    auto* flatResult = result->asFlatVector<int32_t>();
+    auto* rawResult = flatResult->mutableRawValues();
 
     flatResult->clearNulls(rows);
 
@@ -576,13 +575,13 @@ class PlusRandomIntegerFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK_EQ(args.size(), 1);
     VELOX_CHECK_EQ(args[0]->typeKind(), facebook::velox::TypeKind::INTEGER);
 
-    BaseVector::ensureWritable(rows, INTEGER(), context->pool(), result);
-    auto flatResult = (*result)->asFlatVector<int32_t>();
+    BaseVector::ensureWritable(rows, INTEGER(), context.pool(), result);
+    auto flatResult = result->asFlatVector<int32_t>();
 
     DecodedVector decoded(*args[0], rows);
     std::srand(1);
@@ -707,18 +706,18 @@ class AddSuffixFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     auto input = args[0]->asFlatVector<StringView>();
     auto localResult = std::dynamic_pointer_cast<FlatVector<StringView>>(
-        BaseVector::create(VARCHAR(), rows.end(), context->pool()));
+        BaseVector::create(VARCHAR(), rows.end(), context.pool()));
     rows.applyToSelected([&](auto row) {
       auto value = fmt::format("{}{}", input->valueAt(row).str(), suffix_);
       localResult->set(row, StringView(value));
       return true;
     });
 
-    context->moveOrCopyResult(localResult, rows, result);
+    context.moveOrCopyResult(localResult, rows, result);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -974,16 +973,16 @@ class StatefulVectorFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK_EQ(args.size(), numInputs_);
     auto numInputs =
-        BaseVector::createConstant(numInputs_, rows.size(), context->pool());
+        BaseVector::createConstant(numInputs_, rows.size(), context.pool());
     if (!result) {
-      *result = numInputs;
+      result = numInputs;
     } else {
-      BaseVector::ensureWritable(rows, INTEGER(), context->pool(), result);
-      (*result)->copy(numInputs.get(), rows, nullptr);
+      BaseVector::ensureWritable(rows, INTEGER(), context.pool(), result);
+      result->copy(numInputs.get(), rows, nullptr);
     }
   }
 
@@ -1341,10 +1340,10 @@ class TestingConstantFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* /*context*/,
-      VectorPtr* result) const override {
+      exec::EvalCtx& /*context*/,
+      VectorPtr& result) const override {
     VELOX_CHECK(rows.isAllSelected());
-    *result = BaseVector::wrapInConstant(rows.size(), 0, args[0]);
+    result = BaseVector::wrapInConstant(rows.size(), 0, args[0]);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -1369,11 +1368,11 @@ class TestingDictionaryFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* /*context*/,
-      VectorPtr* result) const override {
+      exec::EvalCtx& /*context*/,
+      VectorPtr& result) const override {
     VELOX_CHECK(rows.isAllSelected());
-    auto indices = args[1]->as<FlatVector<int32_t>>()->values();
-    *result = BaseVector::wrapInDictionary(
+    auto& indices = args[1]->as<FlatVector<int32_t>>()->values();
+    result = BaseVector::wrapInDictionary(
         BufferPtr(nullptr), indices, rows.size(), args[0]);
   }
 
@@ -1401,11 +1400,11 @@ class TestingSequenceFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK(rows.isAllSelected());
     auto lengths = args[1]->as<FlatVector<int32_t>>()->values();
-    *result = BaseVector::wrapInSequence(lengths, rows.size(), args[0]);
+    result = BaseVector::wrapInSequence(lengths, rows.size(), args[0]);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -1427,12 +1426,12 @@ class TestingSingleArgDeterministicFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     auto& arg = args[0];
     VELOX_CHECK(arg->isFlatEncoding() || arg->isConstantEncoding());
-    BaseVector::ensureWritable(rows, outputType, context->pool(), result);
-    (*result)->copy(arg.get(), rows, nullptr);
+    BaseVector::ensureWritable(rows, outputType, context.pool(), result);
+    result->copy(arg.get(), rows, nullptr);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -1537,11 +1536,11 @@ class NullArrayFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     // This function returns a vector of all nulls
-    BaseVector::ensureWritable(rows, ARRAY(VARCHAR()), context->pool(), result);
-    (*result)->addNulls(nullptr, rows);
+    BaseVector::ensureWritable(rows, ARRAY(VARCHAR()), context.pool(), result);
+    result->addNulls(nullptr, rows);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -1944,14 +1943,14 @@ class TestingShrinkingDictionary : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     BufferPtr indices =
-        AlignedBuffer::allocate<vector_size_t>(rows.end(), context->pool());
+        AlignedBuffer::allocate<vector_size_t>(rows.end(), context.pool());
     auto rawIndices = indices->asMutable<vector_size_t>();
     rows.applyToSelected([&](int row) { rawIndices[row] = row; });
 
-    *result =
+    result =
         BaseVector::wrapInDictionary(nullptr, indices, rows.end() - 1, args[0]);
   }
 
@@ -2236,4 +2235,82 @@ TEST_F(ExprTest, flatNoNullsFastPath) {
   ASSERT_EQ(1, exprSet->exprs().size());
   ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
       << exprSet->toString();
+}
+
+TEST_F(ExprTest, commonSubExpressionWithEncodedInput) {
+  // This test case does a sanity check of the code path that re-uses
+  // precomputed results for common sub-expressions.
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>({1, 1, 2, 2}),
+       makeFlatVector<int64_t>({10, 10, 20, 20}),
+       wrapInDictionary(
+           makeIndices({0, 1, 2, 3}),
+           4,
+           wrapInDictionary(
+               makeIndices({0, 1, 1, 0}),
+               4,
+               makeFlatVector<int64_t>({1, 2, 3, 4}))),
+       makeConstant<int64_t>(1, 4)});
+
+  // Case 1: When the input to the common sub-expression is a dictionary.
+  // c2 > 1 is a common sub-expression. It is used in 3 top-level expressions.
+  // In the first expression, c2 > 1 is evaluated for rows 2, 3.
+  // In the second expression, c2 > 1 is evaluated for rows 0, 1.
+  // In the third expression. c2 > 1 returns pre-computed results for rows 2, 3
+  auto results = makeRowVector(evaluateMultiple(
+      {"c0 = 2 AND c2 > 1", "c0 = 1 AND c2 > 1", "c1 = 20 AND c2 > 1"}, data));
+  auto expectedResults = makeRowVector(
+      {makeFlatVector<bool>({false, false, true, false}),
+       makeFlatVector<bool>({false, true, false, false}),
+       makeFlatVector<bool>({false, false, true, false})});
+  assertEqualVectors(expectedResults, results);
+
+  // Case 2: When the input to the common sub-expression is a constant.
+  results = makeRowVector(evaluateMultiple(
+      {"c0 = 2 AND c3 > 3", "c0 = 1 AND c3 > 3", "c1 = 20 AND c3 > 3"}, data));
+  expectedResults = makeRowVector(
+      {makeFlatVector<bool>({false, false, false, false}),
+       makeFlatVector<bool>({false, false, false, false}),
+       makeFlatVector<bool>({false, false, false, false})});
+  assertEqualVectors(expectedResults, results);
+
+  // Case 3: When cached rows in sub-expression are not present in final
+  // selection.
+  // In the first expression, c2 > 1 is evaluated for rows 2, 3.
+  // In the second expression, c0 = 1 filters out row 2, 3 and the OR
+  // expression sets the final selection to rows 0, 1. Finally, c2 > 1 is
+  // evaluated for rows 0, 1. If finalSelection was not updated to the union of
+  // cached rows and the existing finalSelection then the vector containing
+  // cached values would have been override.
+  // In the third expression. c2 > 1 returns pre-computed results for rows 3, 4
+  // verifying that the vector containing cached values was not overridden.
+  results = makeRowVector(evaluateMultiple(
+      {"c0 = 2 AND c2 > 1",
+       "c0 = 1 AND ( c1 = 20 OR c2 > 1 )",
+       "c1 = 20 AND c2 > 1"},
+      data));
+  expectedResults = makeRowVector(
+      {makeFlatVector<bool>({false, false, true, false}),
+       makeFlatVector<bool>({false, true, false, false}),
+       makeFlatVector<bool>({false, false, true, false})});
+  assertEqualVectors(expectedResults, results);
+}
+
+TEST_F(ExprTest, preservePartialResultsWithEncodedInput) {
+  // This test verifies that partially populated results are preserved when the
+  // input contains an encoded vector. We do this by using an if statement where
+  // partial results are passed between its children expressions based on the
+  // condition.
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6}),
+      wrapInDictionary(
+          makeIndices({0, 1, 2, 0, 1, 2}),
+          6,
+          makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6})),
+  });
+
+  // Create an expression which divides the input to be processed equally
+  // between two different expressions.
+  auto result = evaluate("if(c0 > 3, 7, c1 + 100)", data);
+  assertEqualVectors(makeFlatVector<int64_t>({101, 102, 103, 7, 7, 7}), result);
 }

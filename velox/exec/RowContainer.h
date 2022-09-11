@@ -243,7 +243,7 @@ class RowContainer {
   // 'numRows' rows pointed to by 'rows'. If an entry in 'rows' is null, sets
   //  corresponding row in 'result' to null.
   void extractColumn(
-      const char* const* FOLLY_NONNULL rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       int32_t columnIndex,
       VectorPtr result) {
@@ -574,7 +574,7 @@ class RowContainer {
     }
   }
 
-  char* FOLLY_NONNULL& nextFree(char* FOLLY_NONNULL row) {
+  char* FOLLY_NULLABLE& nextFree(char* FOLLY_NONNULL row) {
     return *reinterpret_cast<char**>(row + kNextFreeOffset);
   }
 
@@ -645,7 +645,7 @@ class RowContainer {
 
   template <typename T>
   static void extractValuesNoNulls(
-      const char* const* FOLLY_NONNULL rows,
+      const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
       int32_t offset,
       FlatVector<T>* FOLLY_NONNULL result) {
@@ -974,10 +974,10 @@ inline void RowContainer::storeNoNulls<TypeKind::MAP>(
 
 template <>
 inline void RowContainer::extractValuesNoNulls<StringView>(
-    const char* const* FOLLY_NONNULL rows,
+    const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
     int32_t numRows,
     int32_t offset,
-    FlatVector<StringView>* result) {
+    FlatVector<StringView>* FOLLY_NONNULL result) {
   result->resize(numRows);
   for (int32_t i = 0; i < numRows; ++i) {
     if (rows[i] == nullptr) {
@@ -991,12 +991,12 @@ inline void RowContainer::extractValuesNoNulls<StringView>(
 
 template <>
 inline void RowContainer::extractValuesWithNulls<StringView>(
-    const char* const* FOLLY_NONNULL rows,
+    const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
     int32_t numRows,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask,
-    FlatVector<StringView>* result) {
+    FlatVector<StringView>* FOLLY_NONNULL result) {
   result->resize(numRows);
   for (int32_t i = 0; i < numRows; ++i) {
     if (!rows[i] || isNullAt(rows[i], nullByte, nullMask)) {
@@ -1009,7 +1009,7 @@ inline void RowContainer::extractValuesWithNulls<StringView>(
 
 template <>
 inline void RowContainer::extractColumnTyped<TypeKind::OPAQUE>(
-    const char* const* /*rows*/,
+    const char* FOLLY_NONNULL const* FOLLY_NONNULL /*rows*/,
     int32_t /*numRows*/,
     RowColumn /*column*/,
     VectorPtr /*result*/) {
@@ -1017,7 +1017,7 @@ inline void RowContainer::extractColumnTyped<TypeKind::OPAQUE>(
 }
 
 inline void RowContainer::extractColumn(
-    const char* const* FOLLY_NONNULL rows,
+    const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
     int32_t numRows,
     RowColumn column,
     VectorPtr result) {

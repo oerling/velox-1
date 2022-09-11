@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/functions/prestosql/hyperloglog/SparseHll.h"
-#include "velox/functions/prestosql/aggregates/IOUtils.h"
-#include "velox/functions/prestosql/hyperloglog/HllUtils.h"
+#include "velox/common/hyperloglog/SparseHll.h"
+#include "velox/common/base/IOUtils.h"
+#include "velox/common/hyperloglog/HllUtils.h"
 
-namespace facebook::velox::aggregate::hll {
+namespace facebook::velox::common::hll {
 namespace {
 const int8_t kValueBitLength = 6;
 const int8_t kIndexBitLength = 26;
@@ -57,8 +57,8 @@ int searchIndex(
   return -(low + 1);
 }
 
-InputByteStream initializeInputStream(const char* serialized) {
-  InputByteStream stream(serialized);
+common::InputByteStream initializeInputStream(const char* serialized) {
+  common::InputByteStream stream(serialized);
 
   auto version = stream.read<int8_t>();
   VELOX_CHECK_EQ(kPrestoSparseV2, version);
@@ -111,7 +111,7 @@ int64_t SparseHll::cardinality(const char* serialized) {
 }
 
 void SparseHll::serialize(int8_t indexBitLength, char* output) const {
-  OutputByteStream stream(output);
+  common::OutputByteStream stream(output);
   stream.appendOne(kPrestoSparseV2);
   stream.appendOne(indexBitLength);
   stream.appendOne((int16_t)entries_.size());
@@ -127,7 +127,7 @@ std::string SparseHll::serializeEmpty(int8_t indexBitLength) {
   std::string serialized;
   serialized.resize(kSize);
 
-  OutputByteStream stream(serialized.data());
+  common::OutputByteStream stream(serialized.data());
   stream.appendOne(kPrestoSparseV2);
   stream.appendOne(indexBitLength);
   stream.appendOne((int16_t)0);
@@ -246,4 +246,4 @@ void SparseHll::toDense(DenseHll& denseHll) const {
   }
 }
 
-} // namespace facebook::velox::aggregate::hll
+} // namespace facebook::velox::common::hll
