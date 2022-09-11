@@ -570,7 +570,8 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     rowSize = fixedRowSize_;
   }
   while (toSkip) {
-    if (iter.rowBegin && toSkip * rowSize <= (iter.endOfRun - iter.rowBegin) - rowSize) {
+    if (iter.rowBegin &&
+        toSkip * rowSize <= (iter.endOfRun - iter.rowBegin) - rowSize) {
       iter.rowBegin += toSkip * rowSize;
       break;
     }
