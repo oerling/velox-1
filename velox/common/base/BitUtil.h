@@ -871,7 +871,8 @@ inline void padToAlignment(
     int32_t alignment) {
   auto roundEnd = std::min<int32_t>(size, bits::roundUp(padIndex, alignment));
   if (roundEnd > padIndex) {
-    std::memset(reinterpret_cast<char*>(pointer) + padIndex, 0, roundEnd - padIndex);
+    std::memset(
+        reinterpret_cast<char*>(pointer) + padIndex, 0, roundEnd - padIndex);
   }
 }
 

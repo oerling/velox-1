@@ -593,7 +593,7 @@ template <typename Source>
 void syncWorkItems(
     std::vector<std::shared_ptr<Source>>& items,
     std::exception_ptr& error,
-		   bool log = false) {
+    bool log = false) {
   // All items must be synced also in case of error because the items
   // hold references to the table and rows which could be destructed
   // if unwinding the stack did ont pause to sync.
@@ -602,7 +602,7 @@ void syncWorkItems(
       item->move();
     } catch (const std::exception& e) {
       if (log) {
-	LOG(ERROR) << "Error in async hash build: " << e.what();
+        LOG(ERROR) << "Error in async hash build: " << e.what();
       }
       error = std::current_exception();
     }

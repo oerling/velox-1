@@ -709,7 +709,6 @@ TEST_F(BitUtilTest, pad) {
   EXPECT_EQ(1, bytes[11 + 13]);
 }
 
-  
 } // namespace bits
 } // namespace velox
 } // namespace facebook
