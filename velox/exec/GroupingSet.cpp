@@ -683,7 +683,7 @@ void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   RowContainerIterator iter;
   if (!rows.empty()) {
     mergeRows_->listRows(
-			 &iter, rows.size(), RowContainer::kUnlimited, rows.data());
+        &iter, rows.size(), RowContainer::kUnlimited, rows.data());
   }
   extractGroups(folly::Range<char**>(rows.data(), rows.size()), result);
   mergeRows_->clear();
