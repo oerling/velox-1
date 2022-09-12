@@ -352,7 +352,6 @@ TEST_F(SimdUtilTest, pad) {
     EXPECT_EQ(0, bytes[i]);
   }
   EXPECT_EQ(1, bytes[11 + 13]);
-
 }
 
 } // namespace
