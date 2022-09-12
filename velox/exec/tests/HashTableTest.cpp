@@ -449,7 +449,7 @@ class HashTableTest : public testing::Test {
   int32_t insertPct_ = 100;
   // Spacing between consecutive generated keys. Affects whether
   // Vectorhashers make ranges or ids of distinct values.
-  int32_t keySpacing_ = 1;
+  int64_t keySpacing_ = 1;
   std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
 };
 
