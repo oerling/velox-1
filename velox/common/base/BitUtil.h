@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #ifdef __BMI2__
 #include <x86intrin.h>
@@ -870,7 +871,7 @@ inline void padToAlignment(
     int32_t alignment) {
   auto roundEnd = std::min<int32_t>(size, bits::roundUp(padIndex, alignment));
   if (roundEnd > padIndex) {
-    memset(reinterpret_cast<char*>(pointer) + padIndex, 0, roundEnd - padIndex);
+    std::memset(reinterpret_cast<char*>(pointer) + padIndex, 0, roundEnd - padIndex);
   }
 }
 
