@@ -514,9 +514,8 @@ void VectorHasher::lookupIdsRange64(
       if (multiplier_ == 1) {
         (values - offset).store_unaligned(result + index);
       } else {
-        (xsimd::batch<int64_t>::load_unaligned(result + index) *
-             xsimd::batch<int64_t>::broadcast(multiplier_) +
-         (values - offset))
+        (xsimd::batch<int64_t>::load_unaligned(result + index) +
+         (xsimd::batch<int64_t>::broadcast(multiplier_) * (values - offset)))
             .store_unaligned(result + index);
       }
     }
