@@ -684,9 +684,9 @@ int32_t RowContainer::listPartitionRows(
       firstMask = ~0;
       bool atEnd = false;
       if (iter.rowNumber + kBatch >= numRows_) {
-	// Clear bits that are for rows past numRows_ - 1.
-	bits &= bits::lowMask(numRows_ - iter.rowNumber);
-	atEnd = true;
+        // Clear bits that are for rows past numRows_ - 1.
+        bits &= bits::lowMask(numRows_ - iter.rowNumber);
+        atEnd = true;
       }
       while (bits) {
         int32_t hit = __builtin_ctz(bits);
@@ -704,7 +704,7 @@ int32_t RowContainer::listPartitionRows(
       // The last batch of 32 bytes may have been partly filled. If so, we could
       // have skipped past end.
       if (atEnd) {
-	iter.rowNumber = numRows_;
+        iter.rowNumber = numRows_;
         return numResults;
       }
 
