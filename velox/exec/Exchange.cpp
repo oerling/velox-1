@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 #include "velox/exec/Exchange.h"
-#include <velox/buffer/Buffer.h>
 #include <velox/common/base/Exceptions.h>
+#include <velox/common/memory/Memory.h>
 #include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::exec {
 
@@ -58,18 +59,15 @@ void SerializedPage::prepareStreamForDeserialize(ByteStream* input) {
 std::shared_ptr<ExchangeSource> ExchangeSource::create(
     const std::string& taskId,
     int destination,
-    std::shared_ptr<ExchangeQueue> queue) {
+    std::shared_ptr<ExchangeQueue> queue,
+    memory::MemoryPool* FOLLY_NONNULL pool) {
   for (auto& factory : factories()) {
-    auto result = factory(taskId, destination, queue);
+    auto result = factory(taskId, destination, queue, pool);
     if (result) {
       return result;
     }
   }
   VELOX_FAIL("No ExchangeSource factory matches {}", taskId);
-}
-
-void ExchangeSource::setMemoryPool(memory::MemoryPool* pool) {
-  pool_ = pool;
 }
 
 // static
@@ -84,8 +82,9 @@ class LocalExchangeSource : public ExchangeSource {
   LocalExchangeSource(
       const std::string& taskId,
       int destination,
-      std::shared_ptr<ExchangeQueue> queue)
-      : ExchangeSource(taskId, destination, queue) {}
+      std::shared_ptr<ExchangeQueue> queue,
+      memory::MemoryPool* FOLLY_NONNULL pool)
+      : ExchangeSource(taskId, destination, queue, pool) {}
 
   bool shouldRequestLocked() override {
     if (atEnd_) {
@@ -131,7 +130,7 @@ class LocalExchangeSource : public ExchangeSource {
             }
             inputPage->unshare();
             pages.push_back(
-                std::make_unique<SerializedPage>(std::move(inputPage)));
+                std::make_unique<SerializedPage>(std::move(inputPage), pool_));
             inputPage = nullptr;
           }
           int64_t ackSequence;
@@ -168,22 +167,19 @@ class LocalExchangeSource : public ExchangeSource {
 std::unique_ptr<ExchangeSource> createLocalExchangeSource(
     const std::string& taskId,
     int destination,
-    std::shared_ptr<ExchangeQueue> queue) {
+    std::shared_ptr<ExchangeQueue> queue,
+    memory::MemoryPool* FOLLY_NONNULL pool) {
   if (strncmp(taskId.c_str(), "local://", 8) == 0) {
     return std::make_unique<LocalExchangeSource>(
-        taskId, destination, std::move(queue));
+        taskId, destination, std::move(queue), pool);
   }
   return nullptr;
 }
 
 } // namespace
 
-void ExchangeClient::maybeSetMemoryPool(memory::MemoryPool* pool) {
-  // ExchangeClient could be shared by the same exchange operators from
-  // different drivers so we only need to set it on the first operator setup.
-  if (pool_ == nullptr) {
-    pool_ = pool;
-  }
+void ExchangeClient::initialize(memory::MemoryPool* FOLLY_NONNULL pool) {
+  pool_ = pool;
 }
 
 void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
@@ -198,8 +194,7 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
       // and the task updates have no guarantees of arriving in order.
       return;
     }
-    auto source = ExchangeSource::create(taskId, destination_, queue_);
-    source->setMemoryPool(pool_);
+    auto source = ExchangeSource::create(taskId, destination_, queue_, pool_);
 
     if (closed_) {
       toClose = std::move(source);
@@ -227,14 +222,11 @@ void ExchangeClient::noMoreRemoteTasks() {
 
 void ExchangeClient::close() {
   std::vector<std::shared_ptr<ExchangeSource>> sources;
-
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
-
     if (closed_) {
       return;
     }
-
     closed_ = true;
     sources = std::move(sources_);
   }
@@ -242,6 +234,10 @@ void ExchangeClient::close() {
   // Outside of mutex.
   for (auto& source : sources) {
     source->close();
+  }
+  {
+    std::lock_guard<std::mutex> l(queue_->mutex());
+    queue_->closeLocked();
   }
 }
 
@@ -288,7 +284,7 @@ std::string ExchangeClient::toString() {
   return out.str();
 }
 
-bool Exchange::getSplits(ContinueFuture* future) {
+bool Exchange::getSplits(ContinueFuture* FOLLY_NONNULL future) {
   if (operatorCtx_->driverCtx()->driverId != 0) {
     // When there are multiple pipelines, a single operator, the one from
     // pipeline 0, is responsible for feeding splits into shared ExchangeClient.
@@ -322,7 +318,7 @@ bool Exchange::getSplits(ContinueFuture* future) {
   }
 }
 
-BlockingReason Exchange::isBlocked(ContinueFuture* future) {
+BlockingReason Exchange::isBlocked(ContinueFuture* FOLLY_NONNULL future) {
   if (currentPage_ || atEnd_) {
     return BlockingReason::kNotBlocked;
   }

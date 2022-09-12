@@ -16,8 +16,17 @@
 
 #include "velox/exec/Spill.h"
 #include "velox/common/file/FileSystems.h"
+#include "velox/serializers/PrestoSerializer.h"
 
 namespace facebook::velox::exec {
+
+// Spilling currently uses the default PrestoSerializer which by default
+// serializes timestamp with millisecond precision to maintain compatibility
+// with presto. Since velox's native timestamp implementation supports
+// nanosecond precision, we use this serde option to ensure the serializer
+// preserves precision.
+static const serializer::presto::PrestoVectorSerde::PrestoOptions
+    kDefaultSerdeOptions(/*useLosslessTimestamp*/ true);
 
 std::atomic<int32_t> SpillFile::ordinalCounter_;
 
@@ -68,7 +77,8 @@ bool SpillFile::nextBatch(RowVectorPtr& rowVector) {
   if (input_->atEnd()) {
     return false;
   }
-  VectorStreamGroup::read(input_.get(), &pool_, type_, &rowVector);
+  VectorStreamGroup::read(
+      input_.get(), &pool_, type_, &rowVector, &kDefaultSerdeOptions);
   return true;
 }
 
@@ -109,7 +119,9 @@ void SpillFileList::write(
   if (!batch_) {
     batch_ = std::make_unique<VectorStreamGroup>(&mappedMemory_);
     batch_->createStreamTree(
-        std::static_pointer_cast<const RowType>(rows->type()), 1000);
+        std::static_pointer_cast<const RowType>(rows->type()),
+        1000,
+        &kDefaultSerdeOptions);
   }
   batch_->append(rows, indices);
 
@@ -214,6 +226,10 @@ uint32_t SpillState::spilledPartitions() const {
   return spilledPartitionSet_.size();
 }
 
+const SpillPartitionNumSet& SpillState::spilledPartitionSet() const {
+  return spilledPartitionSet_;
+}
+
 int64_t SpillState::spilledFiles() const {
   int64_t numFiles = 0;
   for (const auto& list : files_) {
@@ -236,6 +252,18 @@ std::vector<std::string> SpillState::testingSpilledFilePaths() const {
     }
   }
   return spilledFiles;
+}
+
+std::unique_ptr<UnorderedStreamReader<BatchStream>>
+SpillPartition::createReader() {
+  std::vector<std::unique_ptr<BatchStream>> streams;
+  streams.reserve(files_.size());
+  for (auto& file : files_) {
+    streams.push_back(FileSpillBatchStream::create(std::move(file)));
+  }
+  files_.clear();
+  return std::make_unique<UnorderedStreamReader<BatchStream>>(
+      std::move(streams));
 }
 
 } // namespace facebook::velox::exec

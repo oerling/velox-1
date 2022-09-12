@@ -752,6 +752,9 @@ bool HashTable<ignoreNullKeys>::hashRows(
     folly::Range<char**> rows,
     bool initNormalizedKeys,
     raw_vector<uint64_t>& hashes) {
+  if (rows.empty()) {
+    return true;
+  }
   if (!initNormalizedKeys && hashMode_ == HashMode::kNormalizedKey) {
     for (auto i = 0; i < rows.size(); ++i) {
       hashes[i] =

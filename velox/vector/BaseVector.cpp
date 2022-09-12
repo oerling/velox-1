@@ -546,32 +546,32 @@ void BaseVector::ensureWritable(
     const SelectivityVector& rows,
     const TypePtr& type,
     velox::memory::MemoryPool* pool,
-    VectorPtr* result,
+    VectorPtr& result,
     VectorPool* vectorPool) {
-  if (!*result) {
+  if (!result) {
     if (vectorPool) {
-      *result = vectorPool->get(type, rows.size());
+      result = vectorPool->get(type, rows.size());
     } else {
-      *result = BaseVector::create(type, rows.size(), pool);
+      result = BaseVector::create(type, rows.size(), pool);
     }
     return;
   }
-  auto resultType = (*result)->type();
+  auto resultType = result->type();
   bool isUnknownType = resultType->containsUnknown();
-  if ((*result)->encoding() == VectorEncoding::Simple::LAZY) {
+  if (result->encoding() == VectorEncoding::Simple::LAZY) {
     // TODO Figure out how to allow memory reuse for a newly loaded vector.
     // LazyVector holds a reference to loaded vector, hence, unique() check
     // below will never pass.
     VELOX_NYI();
   }
-  if (result->unique() && !isUnknownType) {
-    switch ((*result)->encoding()) {
+  if (result.unique() && !isUnknownType) {
+    switch (result->encoding()) {
       case VectorEncoding::Simple::FLAT:
       case VectorEncoding::Simple::ROW:
       case VectorEncoding::Simple::ARRAY:
       case VectorEncoding::Simple::MAP:
       case VectorEncoding::Simple::FUNCTION: {
-        (*result)->ensureWritable(rows);
+        result->ensureWritable(rows);
         return;
       }
       default:
@@ -581,7 +581,7 @@ void BaseVector::ensureWritable(
 
   // The copy-on-write size is the max of the writable row set and the
   // vector.
-  auto targetSize = std::max<vector_size_t>(rows.size(), (*result)->size());
+  auto targetSize = std::max<vector_size_t>(rows.size(), result->size());
 
   VectorPtr copy;
   if (vectorPool) {
@@ -591,12 +591,12 @@ void BaseVector::ensureWritable(
         BaseVector::create(isUnknownType ? type : resultType, targetSize, pool);
   }
   SelectivityVector copyRows(
-      std::min<vector_size_t>(targetSize, (*result)->size()));
+      std::min<vector_size_t>(targetSize, result->size()));
   copyRows.deselect(rows);
   if (copyRows.hasSelections()) {
-    copy->copy(result->get(), copyRows, nullptr);
+    copy->copy(result.get(), copyRows, nullptr);
   }
-  *result = std::move(copy);
+  result = std::move(copy);
 }
 
 template <TypeKind kind>
@@ -720,42 +720,6 @@ bool isLazyNotLoaded(const BaseVector& vector) {
     default:
       return false;
   }
-}
-
-// static
-bool BaseVector::isReusableFlatVector(const VectorPtr& vector) {
-  // If the main shared_ptr has more than one references, or if it's not a flat
-  // vector, can't reuse.
-  if (!vector.unique() || !isFlat(vector->encoding())) {
-    return false;
-  }
-
-  // Now check if nulls and values buffers also have a single reference and
-  // are mutable.
-  auto checkNullsAndValueBuffers = [&]() {
-    const auto& nulls = vector->nulls();
-    if (!nulls || (nulls->unique() && nulls->isMutable())) {
-      const auto& values = vector->values();
-      if (!values || (values->unique() && values->isMutable())) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  // Check that all string buffers are single referenced.
-  auto checkStringBuffers = [&]() {
-    if (vector->typeKind_ == TypeKind::VARBINARY ||
-        vector->typeKind_ == TypeKind::VARCHAR) {
-      for (auto& buffer : vector->asFlatVector<StringView>()->stringBuffers()) {
-        if (buffer->refCount() > 1) {
-          return false;
-        }
-      }
-    }
-    return true;
-  };
-  return checkNullsAndValueBuffers() && checkStringBuffers();
 }
 
 uint64_t BaseVector::estimateFlatSize() const {

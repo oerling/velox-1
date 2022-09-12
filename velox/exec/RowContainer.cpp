@@ -570,7 +570,8 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     rowSize = fixedRowSize_;
   }
   while (toSkip) {
-    if (toSkip * rowSize <= (iter.endOfRun - iter.rowBegin) - rowSize) {
+    if (iter.rowBegin &&
+        toSkip * rowSize <= (iter.endOfRun - iter.rowBegin) - rowSize) {
       iter.rowBegin += toSkip * rowSize;
       break;
     }
@@ -681,13 +682,16 @@ int32_t RowContainer::listPartitionRows(
                       xsimd::batch<uint8_t>::load_unaligned(bytes + offset)) &
           firstMask;
       firstMask = ~0;
+      bool atEnd = false;
+      if (iter.rowNumber + kBatch >= numRows_) {
+	// Clear bits that are for rows past numRows_ - 1.
+	bits &= bits::lowMask(numRows_ - iter.rowNumber);
+	atEnd = true;
+      }
       while (bits) {
         int32_t hit = __builtin_ctz(bits);
         auto distance = hit + startRow - iter.rowNumber;
         skip(iter, distance);
-        if (iter.rowNumber >= numRows_) {
-          return numResults;
-        }
         result[numResults++] = iter.currentRow();
         if (numResults == maxRows) {
           skip(iter, 1);
@@ -697,13 +701,15 @@ int32_t RowContainer::listPartitionRows(
         bits &= bits - 1;
       }
       startRow += kBatch;
-      if (iter.rowNumber != startRow) {
-        skip(iter, startRow - iter.rowNumber);
-      }
       // The last batch of 32 bytes may have been partly filled. If so, we could
       // have skipped past end.
-      if (!iter.currentRow() || startRow >= numRows_) {
+      if (atEnd) {
+	iter.rowNumber = numRows_;
         return numResults;
+      }
+
+      if (iter.rowNumber != startRow) {
+        skip(iter, startRow - iter.rowNumber);
       }
     }
   }

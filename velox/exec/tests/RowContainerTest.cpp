@@ -560,7 +560,7 @@ TEST_F(RowContainerTest, compareDouble) {
 TEST_F(RowContainerTest, partition) {
   // We assign an arbitrary partition number to each row and iterate
   // over the rows a partition at a time.
-  constexpr int32_t kNumRows = 100000;
+  constexpr int32_t kNumRows = 100019;
   constexpr uint8_t kNumPartitions = 16;
   auto batch = makeDataset(
       ROW(
@@ -604,8 +604,14 @@ TEST_F(RowContainerTest, partition) {
   for (auto partition = 0; partition < kNumPartitions; ++partition) {
     std::vector<char*> result(partitionRows[partition].size() + 10);
     iter.reset();
-    auto numFound = data->listPartitionRows(
-        iter, partition, result.size() + 10, result.data());
+    int32_t numFound = 0;
+    int32_t resultBatch = 1;
+    // Read the rows in multiple batches.
+    while (auto numResults = data->listPartitionRows(
+               iter, partition, resultBatch, result.data() + numFound)) {
+      numFound += numResults;
+      resultBatch += 13;
+    }
     EXPECT_EQ(numFound, partitionRows[partition].size());
     result.resize(numFound);
     EXPECT_EQ(partitionRows[partition], result);
