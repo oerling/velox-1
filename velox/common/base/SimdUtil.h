@@ -401,11 +401,11 @@ template <typename T>
 inline bool isDense(const T* values, int32_t size) {
   return (values[size - 1] - values[0] == size - 1);
 }
-/// Pads bytes starting at pointer + firstPad up until the next
-/// offset from pointer that is a multiple of alignment. If
-/// 'firstPad' is 5 and alignment is 16, writes 11 zero bytes to
+/// Pads bytes starting at 'pointer + padIndex' up until the next
+/// offset from 'pointer' that is a multiple of 'alignment'. If
+/// 'padIndex' is 5 and alignment is 16, writes 11 zero bytes to
 /// [pointer + 5 ... pointer + 15 inclusive. Does not write past
-/// pointer + size in any case. Used to initialize memory that may
+/// 'pointer' + 'size' in any case. Used to initialize memory that may
 /// be partly filled for use with valgring/asan.
 inline void padToAlignment(
     void* pointer,
