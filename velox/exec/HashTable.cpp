@@ -795,7 +795,8 @@ namespace {
 template <typename Source>
 void syncWorkItems(
     std::vector<std::shared_ptr<Source>>& items,
-    std::exception_ptr& error) {
+    std::exception_ptr& error,
+    bool log = false) {
   // All items must be synced also in case of error because the items
   // hold references to the table and rows which could be destructed
   // if unwinding the stack did ont pause to sync.
@@ -803,6 +804,9 @@ void syncWorkItems(
     try {
       item->move();
     } catch (const std::exception& e) {
+      if (log) {
+        LOG(ERROR) << "Error in async hash build: " << e.what();
+      }
       error = std::current_exception();
     }
   }
@@ -838,11 +842,8 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
     // This is executed on returning path, possibly in unwinding, so must not
     // throw.
     std::exception_ptr error;
-    syncWorkItems(partitionSteps, error);
-    syncWorkItems(buildSteps, error);
-    if (error) {
-      LOG(ERROR) << "Error in syncing parallel build on error exit";
-    }
+    syncWorkItems(partitionSteps, error, true);
+    syncWorkItems(buildSteps, error, true);
   });
 
   for (auto i = 0; i < numPartitions; ++i) {
