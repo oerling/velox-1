@@ -192,7 +192,7 @@ void LazyVector::ensureLoadedRows(
 
 std::string LazyVector::toSummaryString() const {
   std::stringstream out;
-  out << BaseVector::toString();
+  out << BaseVector::toSummaryString();
   if (vector_) {
     out << " loaded " << vector_->toString(true) << " loaded for "
         << loadInfo_.rows.toString() << ": " << loadInfo_.loadString;

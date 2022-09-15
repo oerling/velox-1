@@ -1900,7 +1900,7 @@ class DebugActionFunction : public exec::VectorFunction {
 void ensureDebugRegistered() {
   static bool initialized;
   if (!initialized) {
-    VELOX_REGISTER_VECTOR_FUNCTION(udf_concat, "debug_action");
+    //VELOX_REGISTER_VECTOR_FUNCTION(DebugActionFunction, "debug_action");
     initialized = true;
   }
 }
