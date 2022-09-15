@@ -26,7 +26,7 @@
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -54,22 +54,27 @@ class ExprTest : public testing::Test, public VectorTestBase {
         std::move(expressions), execCtx_.get());
   }
 
-  std::vector<VectorPtr> evaluateMultiple(
+  std::unique_ptr<exec::ExprSet> compileMultiple(
       const std::vector<std::string>& texts,
-      const RowVectorPtr& input) {
-    auto rowType = std::dynamic_pointer_cast<const RowType>(input->type());
+      const RowTypePtr& rowType) {
     std::vector<std::shared_ptr<const core::ITypedExpr>> expressions;
     expressions.reserve(texts.size());
     for (const auto& text : texts) {
       expressions.emplace_back(parseExpression(text, rowType));
     }
-    auto exprSet =
-        std::make_unique<exec::ExprSet>(std::move(expressions), execCtx_.get());
+    return std::make_unique<exec::ExprSet>(
+        std::move(expressions), execCtx_.get());
+  }
+
+  std::vector<VectorPtr> evaluateMultiple(
+      const std::vector<std::string>& texts,
+      const RowVectorPtr& input) {
+    auto exprSet = compileMultiple(texts, asRowType(input->type()));
 
     exec::EvalCtx context(execCtx_.get(), exprSet.get(), input.get());
 
     SelectivityVector rows(input->size());
-    std::vector<VectorPtr> result(expressions.size());
+    std::vector<VectorPtr> result(texts.size());
     exprSet->eval(rows, context, result);
     return result;
   }
@@ -758,6 +763,36 @@ TEST_F(ExprTest, csePartialEvaluation) {
   expected =
       makeFlatVector<std::string>({"a_xx", "b_xx", "c_xx", "d_xx", "e_xx"});
   assertEqualVectors(expected, results[1]);
+}
+
+TEST_F(ExprTest, csePartialEvaluationWithEncodings) {
+  auto data = makeRowVector(
+      {wrapInDictionary(
+           makeIndicesInReverse(5),
+           wrapInDictionary(
+               makeIndicesInReverse(5),
+               makeFlatVector<int64_t>({0, 10, 20, 30, 40}))),
+       makeFlatVector<int64_t>({3, 33, 333, 3333, 33333})});
+
+  auto exprSet = compileMultiple(
+      {
+          "concat(concat(cast(c0 as varchar), ',', cast(c1 as varchar)), 'xxx')",
+          "concat(concat(cast(c0 as varchar), ',', cast(c1 as varchar)), 'yyy')",
+      },
+      asRowType(data->type()));
+
+  std::vector<VectorPtr> result(2);
+  {
+    SelectivityVector rows(2);
+    exec::EvalCtx context(execCtx_.get(), exprSet.get(), data.get());
+    exprSet->eval(rows, context, result);
+  }
+
+  {
+    SelectivityVector rows(4);
+    exec::EvalCtx context(execCtx_.get(), exprSet.get(), data.get());
+    exprSet->eval(rows, context, result);
+  }
 }
 
 // Checks that vector function registry overwrites if multiple registry
