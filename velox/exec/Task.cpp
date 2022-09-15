@@ -132,9 +132,8 @@ std::string makeUuid() {
 }
 } // namespace
 
-  void ensureDebugRegistered();
+void ensureDebugRegistered();
 
-  
 Task::Task(
     const std::string& taskId,
     core::PlanFragment planFragment,
@@ -1871,7 +1870,6 @@ void doCommand(std::string command) {
   }
   LOG(ERROR) << "VELOXCMD: Did not understand veloxcmd.txt: " << command;
 }
- 
 
 class DebugActionFunction : public exec::VectorFunction {
  public:
@@ -1906,6 +1904,5 @@ void ensureDebugRegistered() {
     initialized = true;
   }
 }
-
 
 } // namespace facebook::velox::exec

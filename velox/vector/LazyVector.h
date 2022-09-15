@@ -72,14 +72,14 @@ class ValueHook {
   }
 };
 
-  // Debug information produced by loading a LazyVector.
-  struct LoadInfo {
-    // Rows for which the load sets a value.
-    SelectivityVector rows;
-    // Additional debug comment, e.g. origin file / column.
-    std::string loadString;
-  };
-  
+// Debug information produced by loading a LazyVector.
+struct LoadInfo {
+  // Rows for which the load sets a value.
+  SelectivityVector rows;
+  // Additional debug comment, e.g. origin file / column.
+  std::string loadString;
+};
+
 // Produces values for a LazyVector for a set of positions.
 class VectorLoader {
  public:
@@ -95,7 +95,8 @@ class VectorLoader {
 
   // Converts 'rows' into a RowSet and calls load(). Provided for
   // convenience in loading LazyVectors in expression evaluation.
-  LoadInfo load(const SelectivityVector& rows, ValueHook* hook, VectorPtr* result);
+  LoadInfo
+  load(const SelectivityVector& rows, ValueHook* hook, VectorPtr* result);
 
  protected:
   virtual std::string
@@ -292,7 +293,7 @@ class LazyVector : public BaseVector {
   std::string toSummaryString() const override;
 
   static SelectivityVector toSelectivityVector(RowSet rows);
-  
+
   std::unique_ptr<VectorLoader> loader_;
 
   // True if all values are loaded.
