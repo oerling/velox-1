@@ -559,7 +559,9 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     iter.endOfRun = iter.rowBegin + run.numBytes();
   }
   if (iter.rowNumber + numRows >= numRows_) {
+    iter.rowNumber = numRows_;
     iter.rowBegin = nullptr;
+    return;
   }
   int32_t rowSize = fixedRowSize_ +
       (iter.normalizedKeysLeft > 0 ? sizeof(normalized_key_t) : 0);

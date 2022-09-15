@@ -477,6 +477,9 @@ class RowContainer {
       const std::vector<char * FOLLY_NONNULL>& rows,
       const RowVectorPtr& result) {
     VELOX_CHECK_EQ(rows.size(), result->size());
+    if (rows.empty()) {
+      return;
+    }
     for (int i = 0; i < result->childrenSize(); ++i) {
       RowContainer::extractColumn(
           rows.data(), rows.size(), columnAt(i), result->childAt(i));
