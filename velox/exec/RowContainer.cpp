@@ -588,7 +588,7 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     }
     auto run = rows_.allocationAt(iter.allocationIndex)->runAt(iter.runIndex);
     if (iter.allocationIndex == rows_.numSmallAllocations() - 1 &&
-        iter.runIndex == rows_.allocationAt(iter.allocationIndex)->numRuns()) {
+        iter.runIndex == rows_.allocationAt(iter.allocationIndex)->numRuns() - 1) {
       iter.endOfRun = run.data<char>() + rows_.currentOffset();
     } else {
       iter.endOfRun = run.data<char>() + run.numBytes();
@@ -600,52 +600,13 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
   }
   iter.rowNumber += numRows;
 }
-
+  
 RowPartitions& RowContainer::partitions() {
   if (!partitions_) {
     partitions_ =
         std::make_unique<RowPartitions>(numRows_, *rows_.mappedMemory());
   }
   return *partitions_;
-}
-
-RowPartitions::RowPartitions(
-    int32_t numRows,
-    memory::MappedMemory& mappedMemory)
-    : capacity_(numRows), allocation_(&mappedMemory) {
-  auto numPages = bits::roundUp(capacity_, memory::MappedMemory::kPageSize) /
-      memory::MappedMemory::kPageSize;
-  if (!mappedMemory.allocate(numPages, 0, allocation_)) {
-    VELOX_FAIL("Failed to allocate RowContainer partitions");
-  }
-}
-
-void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
-  int32_t toAdd = partitions.size();
-  int index = 0;
-  VELOX_CHECK_LE(size_ + toAdd, capacity_);
-  while (toAdd) {
-    int32_t run;
-    int32_t offset;
-    allocation_.findRun(size_, &run, &offset);
-    auto runSize = allocation_.runAt(run).numBytes();
-    auto copySize = std::min<int32_t>(toAdd, runSize - offset);
-    memcpy(
-        allocation_.runAt(run).data<uint8_t>() + offset,
-        &partitions[index],
-        copySize);
-    size_ += copySize;
-    index += copySize;
-    toAdd -= copySize;
-    // Zero out to the next multiple of SIMD width for asan/valgring.
-    if (!toAdd) {
-      bits::padToAlignment(
-          allocation_.runAt(run).data<uint8_t>(),
-          runSize,
-          offset + copySize,
-          xsimd::batch<uint8_t>::size);
-    }
-  }
 }
 
 int32_t RowContainer::listPartitionRows(
@@ -660,7 +621,7 @@ int32_t RowContainer::listPartitionRows(
       partitions_, "partitions() must be called before listPartitionRows()");
   VELOX_CHECK_EQ(
       partitions_->size(), numRows_, "All rows must have a partition");
-  auto numberVector = xsimd::batch<uint8_t>::broadcast(partition);
+  auto partitionNumberVector = xsimd::batch<uint8_t>::broadcast(partition);
   auto& allocation = partitions_->allocation();
   auto numRuns = allocation.numRuns();
   int32_t numResults = 0;
@@ -669,21 +630,20 @@ int32_t RowContainer::listPartitionRows(
     // Start at multiple of kBatch.
     auto startRow = iter.rowNumber / kBatch * kBatch;
     // Ignore the possible hits at or below iter.rowNumber.
-    uint32_t firstMask = ~bits::lowMask(iter.rowNumber - startRow);
+    uint32_t firstBatchMask = ~bits::lowMask(iter.rowNumber - startRow);
     int32_t runIndex;
-    int32_t offset;
+    int32_t offsetInRun;
     VELOX_CHECK_LT(startRow, numRows_);
-    auto& allocation = partitions_->allocation();
-    allocation.findRun(startRow, &runIndex, &offset);
+    allocation.findRun(startRow, &runIndex, &offsetInRun);
     auto run = allocation.runAt(runIndex);
     auto runEnd = run.numBytes();
-    auto bytes = allocation.runAt(runIndex).data<uint8_t>();
-    for (; offset < runEnd; offset += kBatch) {
+    auto runBytes = run.data<uint8_t>();
+    for (; offsetInRun < runEnd; offsetInRun += kBatch) {
       auto bits = simd::toBitMask(
-                      numberVector ==
-                      xsimd::batch<uint8_t>::load_unaligned(bytes + offset)) &
-          firstMask;
-      firstMask = ~0;
+                      partitionNumberVector ==
+                      xsimd::batch<uint8_t>::load_unaligned(runBytes + offsetInRun)) &
+	firstBatchMask;
+      firstBatchMask = ~0;
       bool atEnd = false;
       if (iter.rowNumber + kBatch >= numRows_) {
         // Clear bits that are for rows past numRows_ - 1.
@@ -716,6 +676,46 @@ int32_t RowContainer::listPartitionRows(
     }
   }
   return numResults;
+}
+
+  
+  RowPartitions::RowPartitions(
+    int32_t numRows,
+    memory::MappedMemory& mappedMemory)
+    : capacity_(numRows), allocation_(&mappedMemory) {
+  auto numPages = bits::roundUp(capacity_, memory::MappedMemory::kPageSize) /
+      memory::MappedMemory::kPageSize;
+  if (!mappedMemory.allocate(numPages, 0, allocation_)) {
+    VELOX_FAIL("Failed to allocate RowContainer partitions: {} pages", numPages);
+  }
+}
+
+void RowPartitions::appendPartitions(folly::Range<const uint8_t*> partitions) {
+  int32_t toAdd = partitions.size();
+  int index = 0;
+  VELOX_CHECK_LE(size_ + toAdd, capacity_);
+  while (toAdd) {
+    int32_t run;
+    int32_t offset;
+    allocation_.findRun(size_, &run, &offset);
+    auto runSize = allocation_.runAt(run).numBytes();
+    auto copySize = std::min<int32_t>(toAdd, runSize - offset);
+    memcpy(
+        allocation_.runAt(run).data<uint8_t>() + offset,
+        &partitions[index],
+        copySize);
+    size_ += copySize;
+    index += copySize;
+    toAdd -= copySize;
+    // Zero out to the next multiple of SIMD width for asan/valgring.
+    if (!toAdd) {
+      bits::padToAlignment(
+          allocation_.runAt(run).data<uint8_t>(),
+          runSize,
+          offset + copySize,
+          xsimd::batch<uint8_t>::size);
+    }
+  }
 }
 
 } // namespace facebook::velox::exec
