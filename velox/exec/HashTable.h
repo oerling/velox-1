@@ -551,7 +551,7 @@ class HashTable : public BaseHashTable {
   // Bounds of independently buildable index ranges in the table. The
   // range of partition i starts at [i] and ends at [i +1]. Bounds are multiple
   // of cache line  size.
-  raw_vector<int32_t> partitionBounds_;
+  raw_vector<int32_t> buildPartitionBounds_;
 
   // Executor for parallelizing hash join build. This may be the
   // executor for Drivers. If this executor is indefinitely taken by

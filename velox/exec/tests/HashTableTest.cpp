@@ -16,6 +16,7 @@
 
 #include "velox/exec/HashTable.h"
 #include "velox/common/base/SelectivityInfo.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/VectorHasher.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
 
@@ -34,10 +35,12 @@ using namespace facebook::velox::test;
 // measures the time for computing hashes/value ids vs the time spent
 // probing the table. Covers kArray, kNormalizedKey and kHash hash
 // modes.
-class HashTableTest : public testing::Test {
+class HashTableTest : public testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
-    executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(16);
+    if (GetParam()) {
+      executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(16);
+    }
   }
 
   void testCycle(
@@ -453,48 +456,48 @@ class HashTableTest : public testing::Test {
   std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
 };
 
-TEST_F(HashTableTest, int2DenseArray) {
+TEST_P(HashTableTest, int2DenseArray) {
   auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
   testCycle(BaseHashTable::HashMode::kArray, 500, 2, type, 2);
 }
 
-TEST_F(HashTableTest, string1DenseArray) {
+TEST_P(HashTableTest, string1DenseArray) {
   auto type = ROW({"k1"}, {VARCHAR()});
   testCycle(BaseHashTable::HashMode::kArray, 500, 2, type, 1);
 }
 
-TEST_F(HashTableTest, string2Normalized) {
+TEST_P(HashTableTest, string2Normalized) {
   auto type = ROW({"k1", "k2"}, {VARCHAR(), VARCHAR()});
   testCycle(BaseHashTable::HashMode::kNormalizedKey, 5000, 19, type, 2);
 }
 
-TEST_F(HashTableTest, int2SparseArray) {
+TEST_P(HashTableTest, int2SparseArray) {
   auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
   keySpacing_ = 1000;
   testCycle(BaseHashTable::HashMode::kArray, 500, 2, type, 2);
 }
 
-TEST_F(HashTableTest, int2SparseNormalized) {
+TEST_P(HashTableTest, int2SparseNormalized) {
   auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
   keySpacing_ = 1000;
   testCycle(BaseHashTable::HashMode::kNormalizedKey, 10000, 2, type, 2);
 }
 
-TEST_F(HashTableTest, int2SparseNormalizedMostMiss) {
+TEST_P(HashTableTest, int2SparseNormalizedMostMiss) {
   auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
   keySpacing_ = 1000;
   insertPct_ = 10;
   testCycle(BaseHashTable::HashMode::kNormalizedKey, 100000, 2, type, 2);
 }
 
-TEST_F(HashTableTest, structKey) {
+TEST_P(HashTableTest, structKey) {
   auto type =
       ROW({"key"}, {ROW({"k1", "k2", "k3"}, {BIGINT(), VARCHAR(), BIGINT()})});
   keySpacing_ = 1000;
   testCycle(BaseHashTable::HashMode::kHash, 100000, 2, type, 1);
 }
 
-TEST_F(HashTableTest, mixed6Sparse) {
+TEST_P(HashTableTest, mixed6Sparse) {
   auto type =
       ROW({"k1", "k2", "k3", "k4", "k5", "k6"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT(), VARCHAR()});
@@ -503,7 +506,7 @@ TEST_F(HashTableTest, mixed6Sparse) {
 }
 
 // It should be safe to call clear() before we insert any data into HashTable
-TEST_F(HashTableTest, clear) {
+TEST_P(HashTableTest, clear) {
   std::vector<std::unique_ptr<VectorHasher>> keyHashers;
   keyHashers.push_back(std::make_unique<VectorHasher>(BIGINT(), 0 /*channel*/));
   std::vector<std::unique_ptr<Aggregate>> aggregates;
@@ -519,7 +522,7 @@ TEST_F(HashTableTest, clear) {
 
 /// Test edge case that used to trigger a rounding error in
 /// HashTable::enableRangeWhereCan.
-TEST_F(HashTableTest, enableRangeWhereCan) {
+TEST_P(HashTableTest, enableRangeWhereCan) {
   auto rowType = ROW({"a", "b", "c"}, {BIGINT(), VARCHAR(), VARCHAR()});
   auto table = createHashTableForAggregation(rowType, 3);
   auto lookup = std::make_unique<HashLookup>(table->hashers());
@@ -559,7 +562,7 @@ TEST_F(HashTableTest, enableRangeWhereCan) {
   insertGroups(*data, *lookup, *table);
 }
 
-TEST_F(HashTableTest, arrayProbeNormalizedKey) {
+TEST_P(HashTableTest, arrayProbeNormalizedKey) {
   auto table = createHashTableForAggregation(ROW({"a"}, {BIGINT()}), 1);
   auto lookup = std::make_unique<HashLookup>(table->hashers());
 
@@ -581,3 +584,8 @@ TEST_F(HashTableTest, arrayProbeNormalizedKey) {
 
   ASSERT_TRUE(table->hashMode() == BaseHashTable::HashMode::kNormalizedKey);
 }
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    HashTableTests,
+    HashTableTest,
+    testing::Values(true, false));
