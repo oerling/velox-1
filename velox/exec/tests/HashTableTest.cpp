@@ -15,8 +15,8 @@
  */
 
 #include "velox/exec/HashTable.h"
-#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/base/SelectivityInfo.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/VectorHasher.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
 

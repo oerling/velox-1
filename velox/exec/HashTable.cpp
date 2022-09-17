@@ -680,12 +680,13 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
 }
 
 namespace {
-  // Returns an index into 'buildPartitionBounds_' given an index into tags of the HashTable.
-  int32_t
+// Returns an index into 'buildPartitionBounds_' given an index into tags of the
+// HashTable.
+int32_t
 findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
-    // The partition bounds are padded to batch size.
-    constexpr int32_t kBatch =  xsimd::batch<int32_t>::size;
-    auto indexVector = xsimd::batch<int32_t>::broadcast(index);
+  // The partition bounds are padded to batch size.
+  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
+  auto indexVector = xsimd::batch<int32_t>::broadcast(index);
   for (auto i = 1; i < numPartitions; i += kBatch) {
     uint8_t bits = simd::toBitMask(
         indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i));
@@ -697,7 +698,7 @@ findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
 }
 } // namespace
 
-  template  <bool ignoreNullKeys>
+template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::partitionRows(
     HashTable<ignoreNullKeys>& subtable,
     uint8_t numPartitions) {
@@ -709,7 +710,10 @@ void HashTable<ignoreNullKeys>::partitionRows(
   while (auto numRows = subtable.rows_->listRows(
              &iter, kBatch, RowContainer::kUnlimited, rows.data())) {
     hashRows(folly::Range<char**>(rows.data(), numRows), true, hashes);
-    VELOX_DCHECK_EQ(0, buildPartitionBounds_.capacity() % xsimd::batch<int32_t>::size, "partition bounds must be padded to SIMD width");
+    VELOX_DCHECK_EQ(
+        0,
+        buildPartitionBounds_.capacity() % xsimd::batch<int32_t>::size,
+        "partition bounds must be padded to SIMD width");
     for (auto i = 0; i < numRows; ++i) {
       auto index = ProbeState::tagsByteOffset(hashes[i], sizeMask_);
       partitions[i] = findPartition(
@@ -920,7 +924,7 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash() {
   constexpr int32_t kHashBatchSize = 1024;
   // @lint-ignore CLANGTIDY
-  if (buildExecutor_ && hashMode_ != HashMode::kArray && 
+  if (buildExecutor_ && hashMode_ != HashMode::kArray &&
       !otherTables_.empty() && size_ / (1 + otherTables_.size()) > 1000) {
     parallelJoinBuild();
     return;

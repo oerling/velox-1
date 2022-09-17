@@ -588,7 +588,8 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     }
     auto run = rows_.allocationAt(iter.allocationIndex)->runAt(iter.runIndex);
     if (iter.allocationIndex == rows_.numSmallAllocations() - 1 &&
-        iter.runIndex == rows_.allocationAt(iter.allocationIndex)->numRuns() - 1) {
+        iter.runIndex ==
+            rows_.allocationAt(iter.allocationIndex)->numRuns() - 1) {
       iter.endOfRun = run.data<char>() + rows_.currentOffset();
     } else {
       iter.endOfRun = run.data<char>() + run.numBytes();
@@ -600,7 +601,7 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
   }
   iter.rowNumber += numRows;
 }
-  
+
 RowPartitions& RowContainer::partitions() {
   if (!partitions_) {
     partitions_ =
@@ -639,10 +640,11 @@ int32_t RowContainer::listPartitionRows(
     auto runEnd = run.numBytes();
     auto runBytes = run.data<uint8_t>();
     for (; offsetInRun < runEnd; offsetInRun += kBatch) {
-      auto bits = simd::toBitMask(
-                      partitionNumberVector ==
-                      xsimd::batch<uint8_t>::load_unaligned(runBytes + offsetInRun)) &
-	firstBatchMask;
+      auto bits =
+          simd::toBitMask(
+              partitionNumberVector ==
+              xsimd::batch<uint8_t>::load_unaligned(runBytes + offsetInRun)) &
+          firstBatchMask;
       firstBatchMask = ~0;
       bool atEnd = false;
       if (iter.rowNumber + kBatch >= numRows_) {
@@ -678,15 +680,15 @@ int32_t RowContainer::listPartitionRows(
   return numResults;
 }
 
-  
-  RowPartitions::RowPartitions(
+RowPartitions::RowPartitions(
     int32_t numRows,
     memory::MappedMemory& mappedMemory)
     : capacity_(numRows), allocation_(&mappedMemory) {
   auto numPages = bits::roundUp(capacity_, memory::MappedMemory::kPageSize) /
       memory::MappedMemory::kPageSize;
   if (!mappedMemory.allocate(numPages, 0, allocation_)) {
-    VELOX_FAIL("Failed to allocate RowContainer partitions: {} pages", numPages);
+    VELOX_FAIL(
+        "Failed to allocate RowContainer partitions: {} pages", numPages);
   }
 }
 
