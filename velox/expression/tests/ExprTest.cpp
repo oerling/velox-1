@@ -38,7 +38,7 @@ class ExprTest : public testing::Test, public VectorTestBase {
     parse::registerTypeResolver();
   }
 
-  std::shared_ptr<const core::ITypedExpr> parseExpression(
+  core::TypedExprPtr parseExpression(
       const std::string& text,
       const RowTypePtr& rowType) {
     auto untyped = parse::parseExpr(text, options_);
@@ -48,7 +48,7 @@ class ExprTest : public testing::Test, public VectorTestBase {
   std::unique_ptr<exec::ExprSet> compileExpression(
       const std::string& expr,
       const RowTypePtr& rowType) {
-    std::vector<std::shared_ptr<const core::ITypedExpr>> expressions = {
+    std::vector<core::TypedExprPtr> expressions = {
         parseExpression(expr, rowType)};
     return std::make_unique<exec::ExprSet>(
         std::move(expressions), execCtx_.get());
@@ -57,7 +57,7 @@ class ExprTest : public testing::Test, public VectorTestBase {
   std::unique_ptr<exec::ExprSet> compileMultiple(
       const std::vector<std::string>& texts,
       const RowTypePtr& rowType) {
-    std::vector<std::shared_ptr<const core::ITypedExpr>> expressions;
+    std::vector<core::TypedExprPtr> expressions;
     expressions.reserve(texts.size());
     for (const auto& text : texts) {
       expressions.emplace_back(parseExpression(text, rowType));
@@ -334,7 +334,7 @@ TEST_F(ExprTest, constantArray) {
   auto b = makeArrayVector<int64_t>(
       10, [](auto /*row*/) { return 7; }, [](auto row) { return row; });
 
-  std::vector<std::shared_ptr<const core::ITypedExpr>> expressions = {
+  std::vector<core::TypedExprPtr> expressions = {
       makeConstantExpr(a, 3), makeConstantExpr(b, 5)};
 
   auto exprSet =
@@ -774,6 +774,8 @@ TEST_F(ExprTest, csePartialEvaluationWithEncodings) {
                makeFlatVector<int64_t>({0, 10, 20, 30, 40}))),
        makeFlatVector<int64_t>({3, 33, 333, 3333, 33333})});
 
+  // Compile the expressions once, then execute two times. First time, evaluate
+  // on 2 rows (0, 1). Seconds time, one 4 rows (0, 1, 2, 3).
   auto exprSet = compileMultiple(
       {
           "concat(concat(cast(c0 as varchar), ',', cast(c1 as varchar)), 'xxx')",
@@ -781,17 +783,35 @@ TEST_F(ExprTest, csePartialEvaluationWithEncodings) {
       },
       asRowType(data->type()));
 
-  std::vector<VectorPtr> result(2);
+  std::vector<VectorPtr> results(2);
   {
     SelectivityVector rows(2);
     exec::EvalCtx context(execCtx_.get(), exprSet.get(), data.get());
-    exprSet->eval(rows, context, result);
+    exprSet->eval(rows, context, results);
+
+    std::vector<VectorPtr> expectedResults = {
+        makeFlatVector<StringView>({"0,3xxx", "10,33xxx"}),
+        makeFlatVector<StringView>({"0,3yyy", "10,33yyy"}),
+    };
+
+    assertEqualVectors(expectedResults[0], results[0]);
+    assertEqualVectors(expectedResults[1], results[1]);
   }
 
   {
     SelectivityVector rows(4);
     exec::EvalCtx context(execCtx_.get(), exprSet.get(), data.get());
-    exprSet->eval(rows, context, result);
+    exprSet->eval(rows, context, results);
+
+    std::vector<VectorPtr> expectedResults = {
+        makeFlatVector<StringView>(
+            {"0,3xxx", "10,33xxx", "20,333xxx", "30,3333xxx"}),
+        makeFlatVector<StringView>(
+            {"0,3yyy", "10,33yyy", "20,333yyy", "30,3333yyy"}),
+    };
+
+    assertEqualVectors(expectedResults[0], results[0]);
+    assertEqualVectors(expectedResults[1], results[1]);
   }
 }
 

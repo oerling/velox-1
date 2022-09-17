@@ -531,14 +531,14 @@ class RowContainer {
       int32_t maxRows,
       char* FOLLY_NONNULL* FOLLY_NONNULL result);
 
-  /// Advances 'iterator' by 'numRows'. The current row after skip is
-  /// in iter.currentRow(). This is null if past end.
-  void skip(RowContainerIterator& iterator, int32_t numRows);
-
   /// Returns a container with a partition number for each row. This
   /// is created on first use. The caller is responsible for filling
   /// this.
   RowPartitions& partitions();
+
+  /// Advances 'iterator' by 'numRows'. The current row after skip is
+  /// in iter.currentRow(). This is null if past end. Public for testing.
+  void skip(RowContainerIterator& iterator, int32_t numRows);
 
  private:
   // Offset of the pointer to the next free row on a free row.

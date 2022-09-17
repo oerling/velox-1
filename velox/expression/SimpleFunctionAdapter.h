@@ -19,8 +19,6 @@
 #include <memory>
 #include <optional>
 
-#include <velox/vector/BaseVector.h>
-#include <velox/vector/ConstantVector.h>
 #include "velox/common/base/Portability.h"
 #include "velox/expression/ComplexWriterTypes.h"
 #include "velox/expression/DecodedArgs.h"
@@ -28,6 +26,9 @@
 #include "velox/expression/VectorFunction.h"
 #include "velox/expression/VectorReaders.h"
 #include "velox/expression/VectorWriters.h"
+#include "velox/vector/BaseVector.h"
+#include "velox/vector/ConstantVector.h"
+#include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::exec {
 
@@ -149,7 +150,15 @@ class SimpleFunctionAdapter : public VectorFunction {
         context.ensureWritable(*rows, outputType, _result);
       }
       result = reinterpret_cast<result_vector_t*>(_result.get());
-      resultWriter.init(*result);
+
+      if constexpr (return_type_traits::isPrimitiveType) {
+        // Avoid checking mutability during initialization.
+        // EnsureWritable gurantees uniqueness and mutability hence if
+        // valuesAsVoid()!= nullptr, then values is writable.
+        resultWriter.init(*result, result->valuesAsVoid());
+      } else {
+        resultWriter.init(*result);
+      }
     }
 
     template <typename Callable>
@@ -165,38 +174,27 @@ class SimpleFunctionAdapter : public VectorFunction {
     bool mayHaveNullsRecursive{false};
   };
 
-  template <
-      int32_t POSITION,
-      typename... Values,
-      typename std::enable_if_t<POSITION<FUNC::num_args, int32_t> = 0> void
-          unpackInitialize(
-              const core::QueryConfig& config,
-              const std::vector<VectorPtr>& packed,
-              const Values*... values) const {
-    if (packed.at(POSITION) != nullptr) {
-      SelectivityVector rows(1);
-      DecodedVector decodedVector(*packed.at(POSITION), rows);
-      auto oneReader = VectorReader<arg_at<POSITION>>(&decodedVector);
-      auto oneValue = oneReader[0];
-
-      unpackInitialize<POSITION + 1>(config, packed, values..., &oneValue);
-    } else {
-      using temp_type = exec_arg_at<POSITION>;
-      unpackInitialize<POSITION + 1>(
-          config, packed, values..., (const temp_type*)nullptr);
-    }
-  }
-
-  // unpackInitialize: base case
-  template <
-      int32_t POSITION,
-      typename... Values,
-      typename std::enable_if_t<POSITION == FUNC::num_args, int32_t> = 0>
+  template <int32_t POSITION, typename... Values>
   void unpackInitialize(
       const core::QueryConfig& config,
-      const std::vector<VectorPtr>& /*packed*/,
+      const std::vector<VectorPtr>& packed,
       const Values*... values) const {
-    return (*fn_).initialize(config, values...);
+    if constexpr (POSITION == FUNC::num_args) {
+      return (*fn_).initialize(config, values...);
+    } else {
+      if (packed.at(POSITION) != nullptr) {
+        SelectivityVector rows(1);
+        DecodedVector decodedVector(*packed.at(POSITION), rows);
+        auto oneReader = VectorReader<arg_at<POSITION>>(&decodedVector);
+        auto oneValue = oneReader[0];
+
+        unpackInitialize<POSITION + 1>(config, packed, values..., &oneValue);
+      } else {
+        using temp_type = exec_arg_at<POSITION>;
+        unpackInitialize<POSITION + 1>(
+            config, packed, values..., (const temp_type*)nullptr);
+      }
+    }
   }
 
  public:
@@ -233,7 +231,10 @@ class SimpleFunctionAdapter : public VectorFunction {
       return nullptr;
     } else if constexpr (
         CppToType<arg_at<POSITION>>::typeKind == return_type_traits::typeKind) {
-      if (BaseVector::isVectorWritable(args[POSITION])) {
+      using type =
+          typename VectorExec::template resolver<arg_at<POSITION>>::in_type;
+      if (args[POSITION]->isFlatEncoding() && args[POSITION].unique() &&
+          args[POSITION]->asUnchecked<FlatVector<type>>()->isWritable()) {
         // Re-use arg for result. We rely on the fact that for each row
         // we read arguments before computing and writing out the
         // result.
@@ -329,8 +330,12 @@ class SimpleFunctionAdapter : public VectorFunction {
     }
 
     if constexpr (fastPathIteration) {
-      if (isResultReused) {
-        (*reusableResult)->clearNulls(rows);
+      // If result is resued and function is is_default_null_behavior then we do
+      // not need to clear nulls.
+      if constexpr (!FUNC::is_default_null_behavior) {
+        if (isResultReused) {
+          (*reusableResult)->clearNulls(rows);
+        }
       }
     }
 
@@ -351,8 +356,9 @@ class SimpleFunctionAdapter : public VectorFunction {
             decoded.at(reuseStringsFromArg).value().get()->base());
       }
     }
-
-    result = std::move(*reusableResult);
+    if (isResultReused) {
+      result = std::move(*reusableResult);
+    }
   }
 
   // Acquire string buffer from source if vector is a string flat vector.
@@ -522,16 +528,29 @@ class SimpleFunctionAdapter : public VectorFunction {
 
     // Compute allNotNull.
     bool allNotNull;
-    if (applyContext.context.nullsPruned()) {
+    if constexpr (FUNC::is_default_null_behavior) {
       allNotNull = true;
     } else {
-      allNotNull = (!readers.mayHaveNulls() && ...);
+      if (applyContext.context.nullsPruned()) {
+        allNotNull = true;
+      } else {
+        allNotNull = (!readers.mayHaveNulls() && ...);
+      }
     }
 
     // Iterate the rows.
     if constexpr (fastPathIteration) {
       uint64_t* nullBuffer = nullptr;
-      auto* data = applyContext.result->mutableRawValues();
+      auto getRawData = [&]() {
+        if constexpr (return_type_traits::typeKind == TypeKind::BOOLEAN) {
+          return applyContext.result->mutableRawValues();
+
+        } else {
+          return applyContext.resultWriter.data_;
+        }
+      };
+
+      auto* data = getRawData();
       auto writeResult = [&applyContext, &nullBuffer, &data](
                              auto row, bool notNull, auto out) INLINE_LAMBDA {
         // For fast path iteration, all active rows were already set as
