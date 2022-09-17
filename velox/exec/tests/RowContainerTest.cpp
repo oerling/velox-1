@@ -587,10 +587,9 @@ TEST_F(RowContainerTest, partition) {
     }
   }
 
-  //
   auto& partitions = data->partitions();
   std::vector<uint8_t> rowPartitions(kNumRows);
-  // Assign a partition to each row based on  modulo of first column
+  // Assign a partition to each row based on  modulo of first column.
   std::vector<std::vector<char*>> partitionRows(kNumPartitions);
   auto column = batch->childAt(0)->as<FlatVector<int32_t>>();
   for (auto i = 0; i < kNumRows; ++i) {

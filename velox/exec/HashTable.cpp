@@ -820,11 +820,11 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
       size_ / numPartitions,
       160,
       "Less than 160 entries per partition for parallel build");
-  partitionBounds_.resize(numPartitions + 1);
-  // Pad the tail of partitionBounds_ to max int.
+  buildPartitionBounds_.resize(numPartitions + 1);
+  // Pad the tail of buildPartitionBounds_ to max int.
   std::fill(
-      partitionBounds_.begin(),
-      partitionBounds_.begin() + partitionBounds_.capacity(),
+      buildPartitionBounds_.begin(),
+      buildPartitionBounds_.begin() + buildPartitionBounds_.capacity(),
       std::numeric_limits<int32_t>::max());
   // The partitioning is in terms of ranges of tag vector index. The stride is
   // different depending on kInterleaveRows.
@@ -891,10 +891,14 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
 }
 
 namespace {
+// Returns an index into 'buildPartitionBounds_' given an index into tags of the
+// HashTable.
 int32_t
 findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
+  // The partition bounds are padded to batch size.
+  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
   auto indexVector = xsimd::batch<int32_t>::broadcast(index);
-  for (auto i = 1; i < numPartitions; i += xsimd::batch<int32_t>::size) {
+  for (auto i = 1; i < numPartitions; i += kBatch) {
     uint8_t bits = simd::toBitMask(
         indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i));
     if (bits) {
@@ -917,10 +921,14 @@ void HashTable<ignoreNullKeys>::partitionRows(
   while (auto numRows = subtable.rows_->listRows(
              &iter, kBatch, RowContainer::kUnlimited, rows.data())) {
     hashRows(folly::Range<char**>(rows.data(), numRows), true, hashes);
+    VELOX_DCHECK_EQ(
+        0,
+        buildPartitionBounds_.capacity() % xsimd::batch<int32_t>::size,
+        "partition bounds must be padded to SIMD width");
     for (auto i = 0; i < numRows; ++i) {
       auto index = tagVectorOffset(hashes[i]);
       partitions[i] = findPartition(
-          index, partitionBounds_.data(), partitionBounds_.size());
+          index, buildPartitionBounds_.data(), buildPartitionBounds_.size());
     }
     subtable.rows_->partitions().appendPartitions(
         folly::Range<const uint8_t*>(partitions.data(), numRows));
@@ -945,8 +953,8 @@ void HashTable<ignoreNullKeys>::buildJoinPartition(
           rows.data(),
           hashes.data(),
           numRows,
-          partitionBounds_[partition],
-          partitionBounds_[partition + 1],
+          buildPartitionBounds_[partition],
+          buildPartitionBounds_[partition + 1],
           &overflow);
     }
   }
@@ -1165,7 +1173,7 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash() {
   constexpr int32_t kHashBatchSize = 1024;
   // @lint-ignore CLANGTIDY
-  if (hashMode_ != HashMode::kArray && buildExecutor_ &&
+  if (buildExecutor_ && hashMode_ != HashMode::kArray &&
       !otherTables_.empty() && size_ / (1 + otherTables_.size()) > 1000) {
     parallelJoinBuild();
     return;
