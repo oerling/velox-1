@@ -874,8 +874,9 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
     std::rethrow_exception(error);
   }
   raw_vector<uint64_t> hashes;
-  for (auto& overflows : overflowPerPartition) {
-    hashes.resize(overflows.size());
+  for (auto i = 0; i < numPartitions; ++i) {
+    auto& overflows = overflowPerPartition[i];
+      hashes.resize(overflows.size());
     hashRows(
         folly::Range<char**>(overflows.data(), overflows.size()),
         false,
@@ -887,6 +888,8 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         0,
         sizeMask_ + 1,
         nullptr);
+    auto table = i == 0 ? this : otherTables_[i - 1].get();
+    VELOX_CHECK_EQ(table->numInsert_, table->rows()->numRows(), "Bad number of inserts for part {} in parallel insert", i);
   }
 }
 
@@ -956,6 +959,7 @@ void HashTable<ignoreNullKeys>::buildJoinPartition(
           buildPartitionBounds_[partition],
           buildPartitionBounds_[partition + 1],
           &overflow);
+      table->numInsert_ += numRows;
     }
   }
 }

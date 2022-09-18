@@ -670,6 +670,8 @@ class HashTable : public BaseHashTable {
   // other work, the thread of prepareJoinTables() will sequentially
   // execute the parallel build steps.
   folly::Executor* FOLLY_NULLABLE buildExecutor_{nullptr};
+
+  std::atomic<int32_t> numInsert_{0};
 };
 
 } // namespace facebook::velox::exec
