@@ -76,9 +76,9 @@ class HivePartitionFunctionTest : public ::testing::Test,
 
     auto size = rowVector->size();
     std::vector<VectorPtr> constValues{
-      // Must declare the literal as std::vector, else function
-      // resolves to makeFlatVector(size_t).
-      makeFlatVector<int64_t>(std::vector<int64_t>{13}),
+        // Must declare the literal as std::vector, else function
+        // resolves to makeFlatVector(size_t).
+        makeFlatVector<int64_t>(std::vector<int64_t>{13}),
         makeFlatVector<int64_t>(std::vector<int64_t>{97})};
 
     std::vector<int> bucketToPartition(bucketCount);

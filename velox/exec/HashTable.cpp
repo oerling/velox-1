@@ -876,7 +876,7 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   raw_vector<uint64_t> hashes;
   for (auto i = 0; i < numPartitions; ++i) {
     auto& overflows = overflowPerPartition[i];
-      hashes.resize(overflows.size());
+    hashes.resize(overflows.size());
     hashRows(
         folly::Range<char**>(overflows.data(), overflows.size()),
         false,
@@ -889,7 +889,11 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         sizeMask_ + 1,
         nullptr);
     auto table = i == 0 ? this : otherTables_[i - 1].get();
-    VELOX_CHECK_EQ(table->numInsert_, table->rows()->numRows(), "Bad number of inserts for part {} in parallel insert", i);
+    VELOX_CHECK_EQ(
+        table->numInsert_,
+        table->rows()->numRows(),
+        "Bad number of inserts for part {} in parallel insert",
+        i);
   }
 }
 
