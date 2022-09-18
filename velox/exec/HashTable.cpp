@@ -831,11 +831,11 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   int64_t tagIndexEnd = sizeMask_ + 1;
   for (auto i = 0; i < numPartitions; ++i) {
     // The bounds are rounded up to cache line size.
-    partitionBounds_[i] = bits::roundUp(
+    buildPartitionBounds_[i] = bits::roundUp(
         (tagIndexEnd / numPartitions) * i,
         folly::hardware_destructive_interference_size);
   }
-  partitionBounds_.back() = tagIndexEnd;
+  buildPartitionBounds_.back() = tagIndexEnd;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
   auto sync = folly::makeGuard([&]() {
