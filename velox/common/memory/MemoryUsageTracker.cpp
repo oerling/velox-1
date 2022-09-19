@@ -160,7 +160,6 @@ std::string MemoryUsageTracker::toString() const {
   return out.str();
 }
 
-
 SimpleMemoryTracker::SimpleMemoryTracker(const MemoryUsageConfig& config)
     : MemoryUsageTracker{nullptr, UsageType::kUserMem, config},
       userMemoryQuota_{config.maxUserMemory.value_or(kMaxMemory)} {}

@@ -865,7 +865,7 @@ class TestingConsumer : public Operator {
     }
     int64_t size = 10 << 20;
     if (!reserveAndRun(
-		       reclaimableTracker_,
+            reclaimableTracker_,
             size,
             [this](int64_t size) {
               LOG(INFO) << "Spiller called: " << size;
@@ -907,8 +907,7 @@ class TestingConsumer : public Operator {
   }
 
  private:
-
-    // Tries to increase the reservation of 'tracker' by 'size'. If
+  // Tries to increase the reservation of 'tracker' by 'size'. If
   // successful, calls 'runFunc'. If the reservation fails, calls
   // 'spillFunc' and tries again. If the reservation fails, the second
   // time, returns false, else true.
@@ -917,42 +916,41 @@ class TestingConsumer : public Operator {
       int64_t reservationSize,
       std::function<void(int64_t)> spillFunc,
       std::function<void(void)> runFunc) {
-  if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
-    return true;
-  }
-
-  // If spill func is specified, try spilling locally first.
-  if (spillFunc) {
-    // Spill any reclaimable memory locally with
-    // the supplied spill function.
-    spillFunc(reservationSize);
-
-    // Try reserving again and run.
     if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
       return true;
     }
-  }
-  return false;
-}
-  
-  static bool tryReserveAndRun(
-    const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
-    int64_t reservationSize,
-    std::function<void(void)> runFunc) {
-  try {
-    tracker->reserve(reservationSize);
-    // Successfully reserved.
-    runFunc();
-    return true;
-  } catch (const VeloxRuntimeError& e) {
-    if (e.errorCode() != ::facebook::velox::error_code::kMemCapExceeded) {
-      // If it is not MemCapExceeded exception, rethrow original exception.
-      throw;
-    }
-  }
-  return false;
-}
 
+    // If spill func is specified, try spilling locally first.
+    if (spillFunc) {
+      // Spill any reclaimable memory locally with
+      // the supplied spill function.
+      spillFunc(reservationSize);
+
+      // Try reserving again and run.
+      if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool tryReserveAndRun(
+      const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
+      int64_t reservationSize,
+      std::function<void(void)> runFunc) {
+    try {
+      tracker->reserve(reservationSize);
+      // Successfully reserved.
+      runFunc();
+      return true;
+    } catch (const VeloxRuntimeError& e) {
+      if (e.errorCode() != ::facebook::velox::error_code::kMemCapExceeded) {
+        // If it is not MemCapExceeded exception, rethrow original exception.
+        throw;
+      }
+    }
+    return false;
+  }
 
   std::shared_ptr<memory::MemoryUsageTracker> reclaimableTracker_;
   const int32_t sequence_;
@@ -1006,7 +1004,7 @@ TEST_F(DriverTest, memoryReservation) {
   // size. All drivers will potentially be queued waiting for their
   // 10MB extra memory. If the total were <= the sum of max concurrent
   // growth requests we could have a situation where no memory could
-   // be reclaimed. We set the total to be 2G and the maximum of
+  // be reclaimed. We set the total to be 2G and the maximum of
   // concurrent outstanding requests to be 1G so that the growth
   // requests can be satisfied one after the other.
   constexpr int32_t kNumTasks = 20;
