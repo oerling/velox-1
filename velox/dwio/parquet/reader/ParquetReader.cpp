@@ -167,7 +167,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               std::move(element),
               curSchemaIdx, // TODO: there are holes in the ids
               maxSchemaElementIdx,
-              -1, // columnIdx,
+              ParquetTypeWithId::kNonLeaf, // columnIdx,
               schemaElement.name,
               std::nullopt,
               maxRepeat,
@@ -186,7 +186,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               std::move(childrenCopy),
               curSchemaIdx, // TODO: there are holes in the ids
               maxSchemaElementIdx,
-              -1, // columnIdx,
+              ParquetTypeWithId::kNonLeaf, // columnIdx,
               schemaElement.name,
               std::nullopt,
               maxRepeat,
@@ -208,7 +208,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             std::move(childrenCopy),
             curSchemaIdx,
             maxSchemaElementIdx,
-            -1, // columnIdx,
+            ParquetTypeWithId::kNonLeaf, // columnIdx,
             schemaElement.name,
             std::nullopt,
             maxRepeat,
@@ -221,7 +221,7 @@ std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
             std::move(childrenCopy),
             curSchemaIdx,
             maxSchemaElementIdx,
-            -1, // columnIdx,
+            ParquetTypeWithId::kNonLeaf, // columnIdx,
             schemaElement.name,
             std::nullopt,
             maxRepeat,
@@ -453,7 +453,7 @@ void ReaderBase::scheduleRowGroups(
 int64_t ReaderBase::rowGroupUncompressedSize(
     int32_t rowGroupIndex,
     const dwio::common::TypeWithId& type) const {
-  if (type.column >= 0) {
+  if (type.column != ParquetTypeWithId::kNonLeaf) {
     return fileMetaData_->row_groups[rowGroupIndex]
         .columns[type.column]
         .meta_data.total_uncompressed_size;
@@ -504,15 +504,25 @@ ParquetRowReader::ParquetRowReader(
 
 //
 void ParquetRowReader::filterRowGroups() {
-  auto scanSpec = options_.getScanSpec();
   auto rowGroups = readerBase_->fileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
-  auto excluded =
-      columnReader_->filterRowGroups(0, dwio::common::StatsContext());
-  skippedRowGroups_ = excluded.size();
+
   for (auto i = 0; i < rowGroups.size(); i++) {
-    if (std::find(excluded.begin(), excluded.end(), i) == excluded.end()) {
-      rowGroupIds_.push_back(i);
+    VELOX_CHECK_GT(rowGroups_[i].columns.size(), 0);
+    auto fileOffset = rowGroups_[i].__isset.file_offset
+        ? rowGroups_[i].file_offset
+        : rowGroups_[i].columns[0].file_offset;
+    VELOX_CHECK_GT(fileOffset, 0);
+    auto rowGroupInRange =
+        (fileOffset >= options_.getOffset() &&
+         fileOffset < options_.getLimit());
+    // A skipped row group is one that is in range and is in the excluded list.
+    if (rowGroupInRange) {
+      if (columnReader_->rowGroupMatches(i)) {
+        rowGroupIds_.push_back(i);
+      } else {
+        ++skippedRowGroups_;
+      }
     }
   }
 }

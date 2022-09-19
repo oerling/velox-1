@@ -279,8 +279,8 @@ class Driver : public std::enable_shared_from_this<Driver> {
   // Task of 'this'.
   bool growTaskMemory(memory::MemoryUsageTracker::UsageType type, int64_t size);
 
-  // Returns an estimate of the bytes that can be recovered by spill().
-  int64_t recoverableMemory() const;
+  // Returns an estimate of the bytes that can be reclaimed by spill().
+  int64_t reclaimableMemory() const;
 
   const std::shared_ptr<Task>& task() const {
     return ctx_->task;
@@ -378,13 +378,15 @@ struct DriverFactory {
     return nullptr;
   }
 
-  bool needsExchangeClient() const {
+  /// Returns Exchange plan node ID if the pipeline receives data from an
+  /// exchange.
+  std::optional<core::PlanNodeId> needsExchangeClient() const {
     VELOX_CHECK(!planNodes.empty());
     if (auto exchangeNode = std::dynamic_pointer_cast<const core::ExchangeNode>(
             planNodes.front())) {
-      return true;
+      return exchangeNode->id();
     }
-    return false;
+    return std::nullopt;
   }
 
   /// Returns LocalPartition plan node ID if the pipeline gets data from a local

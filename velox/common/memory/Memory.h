@@ -24,6 +24,8 @@
 #include <string>
 
 #include <fmt/format.h>
+#include <folly/Synchronized.h>
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #include <velox/common/base/Exceptions.h>
@@ -31,11 +33,11 @@
 #include "folly/Likely.h"
 #include "folly/Random.h"
 #include "folly/SharedMutex.h"
-#include "folly/experimental/FunctionScheduler.h"
 #include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/GTestMacros.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/memory/MemoryManagerStrategy.h"
+#include "velox/common/memory/MappedMemory.h"
 #include "velox/common/memory/MemoryUsage.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
 
@@ -144,7 +146,10 @@ class MemoryPool : public AbstractMemoryPool {
   virtual void reserve(int64_t /* bytes */) {
     VELOX_NYI("reserve() needs to be implemented in derived memory pool.");
   }
-  virtual void release(int64_t /* bytes */) {
+  // Sometimes in memory governance we want to mock an update for quota
+  // accounting purposes and different implementations can
+  // choose to accommodate this differently.
+  virtual void release(int64_t /* bytes */, bool /* mock */ = false) {
     VELOX_NYI("release() needs to be implemented in derived memory pool.");
   }
 };
@@ -295,8 +300,8 @@ class ScopedMemoryPool final : public MemoryPool {
     pool_.reserve(bytes);
   }
 
-  void release(int64_t bytes) override {
-    pool_.release(bytes);
+  void release(int64_t bytes, bool mock = false) override {
+    pool_.release(bytes, mock);
   }
 
  private:
@@ -308,21 +313,53 @@ class ScopedMemoryPool final : public MemoryPool {
 // node tree.
 class MemoryAllocator {
  public:
-  // TODO: move to factory pattern with type trait.
   static std::shared_ptr<MemoryAllocator> createDefaultAllocator();
 
-  void* FOLLY_NULLABLE alloc(int64_t size);
-  void* FOLLY_NULLABLE allocZeroFilled(int64_t numMembers, int64_t sizeEach);
+  virtual ~MemoryAllocator() {}
+
+  virtual void* FOLLY_NULLABLE alloc(int64_t size);
+  virtual void* FOLLY_NULLABLE
+  allocZeroFilled(int64_t numMembers, int64_t sizeEach);
   // TODO: might be able to collapse this with templated class
-  void* FOLLY_NULLABLE allocAligned(uint16_t alignment, int64_t size);
-  void* FOLLY_NULLABLE
+  virtual void* FOLLY_NULLABLE allocAligned(uint16_t alignment, int64_t size);
+  virtual void* FOLLY_NULLABLE
   realloc(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize);
-  void* FOLLY_NULLABLE reallocAligned(
+  virtual void* FOLLY_NULLABLE reallocAligned(
       void* FOLLY_NULLABLE p,
       uint16_t alignment,
       int64_t size,
       int64_t newSize);
-  void free(void* FOLLY_NULLABLE p, int64_t size);
+  virtual void free(void* FOLLY_NULLABLE p, int64_t size);
+};
+
+// An allocator that uses memory::MappedMemory to allocate memory. We leverage
+// MappedMemory for relatively small allocations. Allocations less than 3/4 of
+// smallest size class and larger than largest size class are delegated to
+// malloc still.
+class MmapMemoryAllocator : public MemoryAllocator {
+ public:
+  static std::shared_ptr<MmapMemoryAllocator> createDefaultAllocator();
+
+  MmapMemoryAllocator() : mappedMemory_(MappedMemory::getInstance()) {}
+  void* FOLLY_NULLABLE alloc(int64_t size) override;
+  void* FOLLY_NULLABLE
+  allocZeroFilled(int64_t numMembers, int64_t sizeEach) override;
+  void* FOLLY_NULLABLE allocAligned(uint16_t alignment, int64_t size) override;
+  void* FOLLY_NULLABLE
+  realloc(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize) override;
+  void* FOLLY_NULLABLE reallocAligned(
+      void* FOLLY_NULLABLE p,
+      uint16_t alignment,
+      int64_t size,
+      int64_t newSize) override;
+  void free(void* FOLLY_NULLABLE p, int64_t size) override;
+
+  MappedMemory* FOLLY_NONNULL mappedMemory() {
+    return mappedMemory_;
+  }
+
+ private:
+  MappedMemory* FOLLY_NONNULL mappedMemory_;
 };
 
 class MemoryPoolBase : public std::enable_shared_from_this<MemoryPoolBase>,
@@ -456,7 +493,7 @@ class MemoryPoolImpl : public MemoryPoolBase {
 
   // TODO: consider returning bool instead.
   void reserve(int64_t size) override;
-  void release(int64_t size) override;
+  void release(int64_t size, bool mock = false) override;
 
  private:
   VELOX_FRIEND_TEST(MemoryPoolTest, Ctor);
@@ -683,7 +720,7 @@ void* FOLLY_NULLABLE MemoryPoolImpl<Allocator, ALIGNMENT>::reallocate(
   int64_t difference = alignedNewSize - alignedSize;
   if (UNLIKELY(difference <= 0)) {
     // Track and pretend the shrink took place for accounting purposes.
-    release(-difference);
+    release(-difference, true);
     return p;
   }
 
@@ -870,11 +907,11 @@ void MemoryPoolImpl<Allocator, ALIGNMENT>::reserve(int64_t size) {
 }
 
 template <typename Allocator, uint16_t ALIGNMENT>
-void MemoryPoolImpl<Allocator, ALIGNMENT>::release(int64_t size) {
+void MemoryPoolImpl<Allocator, ALIGNMENT>::release(int64_t size, bool mock) {
   memoryManager_.release(size);
   localMemoryUsage_.incrementCurrentBytes(-size);
   if (memoryUsageTracker_) {
-    memoryUsageTracker_->update(-size);
+    memoryUsageTracker_->update(-size, mock);
   }
 }
 
@@ -984,7 +1021,7 @@ class Allocator {
 
   template <typename T1>
   bool operator==(const Allocator<T1>& rhs) const {
-    if constexpr (std::is_same<T, T1>::value) {
+    if constexpr (std::is_same_v<T, T1>) {
       return &this->pool == &rhs.pool;
     }
     return false;

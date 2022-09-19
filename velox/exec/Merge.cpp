@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#include <boost/circular_buffer.hpp>
-
 #include "velox/exec/Merge.h"
 #include "velox/exec/Task.h"
 
@@ -133,8 +131,14 @@ RowVectorPtr Merge::getOutput() {
     auto stream = treeOfLosers_->next();
 
     if (!stream) {
-      output_->resize(outputSize_);
       finished_ = true;
+
+      // Return nullptr if there is no data.
+      if (outputSize_ == 0) {
+        return nullptr;
+      }
+
+      output_->resize(outputSize_);
       return std::move(output_);
     }
 
@@ -162,6 +166,12 @@ RowVectorPtr Merge::getOutput() {
     if (!sourceBlockingFutures_.empty()) {
       return nullptr;
     }
+  }
+}
+
+void Merge::close() {
+  for (auto& source : sources_) {
+    source->close();
   }
 }
 
@@ -304,8 +314,8 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
             split.connectorSplit);
         VELOX_CHECK(remoteSplit, "Wrong type of split");
 
-        sources_.emplace_back(
-            MergeSource::createMergeExchangeSource(this, remoteSplit->taskId));
+        sources_.emplace_back(MergeSource::createMergeExchangeSource(
+            this, remoteSplit->taskId, operatorCtx_->task()->destination()));
         ++numSplits_;
       } else {
         noMoreSplits_ = true;

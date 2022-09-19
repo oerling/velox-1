@@ -79,6 +79,10 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
     return taskId_;
   }
 
+  const int destination() const {
+    return destination_;
+  }
+
   // Convenience function for shortening a Presto taskId. To be used
   // in debugging messages and listings.
   static std::string shortId(const std::string& id);
@@ -182,7 +186,8 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   /// subsequent calls.
   /// @param noMoreBuffers A flag indicating that numBuffers is the final number
   /// of buffers. No more calls are expected after the call with noMoreBuffers
-  /// == true.
+  /// == true, but occasionally the caller might resend it, so calls
+  /// received after a call with noMoreBuffers == true are ignored.
   void updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
 
   /// Returns true if state is 'running'.
@@ -406,12 +411,12 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
     return *pool_->getMemoryUsageTracker();
   }
 
-  int64_t recoverableMemory() const override;
+  int64_t reclaimableMemory() const override;
 
-  // Tries to recover at least 'size' bytes of memory by shrinking
+  // Tries to reclaim at least 'size' bytes of memory by shrinking
   // allocations or reservations. The actual change in memory
   // footprint should be retrieved from the Task's MemoryUsageTracker.
-  void recover(int64_t size) override;
+  void reclaim(int64_t size) override;
 
   // Returns the Driver running on the current thread or nullptr if the current
   // thread is not running a Driver of 'this'.
@@ -509,11 +514,21 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
       uint32_t splitGroupId,
       const core::PlanNodeId& planNodeId);
 
+  /// Add remote split to ExchangeClient for the specified plan node. Used to
+  /// close remote sources that are added after the task completed early.
+  void addRemoteSplit(
+      const core::PlanNodeId& planNodeId,
+      const exec::Split& split);
+
   /// Retrieve a split or split future from the given split store structure.
   BlockingReason getSplitOrFutureLocked(
       SplitsStore& splitsStore,
       exec::Split& split,
       ContinueFuture& future);
+
+  /// Returns next split from the store. The caller must ensure the store is not
+  /// empty.
+  exec::Split getSplitLocked(SplitsStore& splitsStore);
 
   /// Creates for the given split group and fills up the 'SplitGroupState'
   /// structure, which stores inter-operator state (local exchange, bridges).
@@ -534,9 +549,12 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
 
   void driverClosedLocked();
 
-  /// Returns true if Task is in kRunning state, but all drivers finished
+  /// Returns true if Task is in kRunning state, but all output drivers finished
   /// processing and all output has been consumed. In other words, returns true
   /// if task should transition to kFinished state.
+  ///
+  /// In case of grouped execution, checks that all drivers, not just output
+  /// drivers finished processing.
   bool checkIfFinishedLocked();
 
   /// Check if we have no more split groups coming and adjust the total number
@@ -556,8 +574,6 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   std::unique_ptr<ContinuePromise> addSplitLocked(
       SplitsState& splitsState,
       exec::Split&& split);
-
-  folly::SemiFuture<bool> recoverMemory(int64_t minMemoryToRecover);
 
   std::unique_ptr<ContinuePromise> addSplitToStoreLocked(
       SplitsStore& splitsStore,
@@ -648,6 +664,19 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   const int destination_;
   const std::shared_ptr<core::QueryCtx> queryCtx_;
 
+  /// Root MemoryPool for this Task. All member variables that hold references
+  /// to pool_ must be defined after pool_, childPools_, and
+  /// childMappedMemories_
+  std::unique_ptr<memory::MemoryPool> pool_;
+
+  /// Keep driver and operator memory pools alive for the duration of the task
+  /// to allow for sharing vectors across drivers without copy.
+  std::vector<std::unique_ptr<memory::MemoryPool>> childPools_;
+
+  /// Keep operator MappedMemory instances alive for the duration of the task to
+  /// allow for sharing data without copy.
+  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
+
   /// A set of IDs of leaf plan nodes that require splits. Used to check plan
   /// node IDs specified in split management methods.
   const std::unordered_set<core::PlanNodeId> splitPlanNodeIds_;
@@ -664,6 +693,11 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   /// Exchange clients. One per pipeline / source.
   /// Null for pipelines, which don't need it.
   std::vector<std::shared_ptr<ExchangeClient>> exchangeClients_;
+
+  /// Exchange clients keyed by the corresponding Exchange plan node ID. Used to
+  /// process remaining remote splits after the task has completed early.
+  std::unordered_map<core::PlanNodeId, std::shared_ptr<ExchangeClient>>
+      exchangeClientByPlanNode_;
 
   // Set if terminated by an error. This is the first error reported
   // by any of the instances.
@@ -726,21 +760,16 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   std::vector<ContinuePromise> stateChangePromises_;
 
   TaskStats taskStats_;
-  std::unique_ptr<memory::MemoryPool> pool_;
-
-  // Keep driver and operator memory pools alive for the duration of the task to
-  // allow for sharing vectors across drivers without copy.
-  std::vector<std::unique_ptr<memory::MemoryPool>> childPools_;
-
-  // Keep operator MappedMemory instances alive for the duration of the task to
-  // allow for sharing data without copy.
-  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
 
   /// Stores inter-operator state (exchange, bridges) per split group.
   /// During ungrouped execution we use the [0] entry in this vector.
   std::unordered_map<uint32_t, SplitGroupState> splitGroupStates_;
 
   std::weak_ptr<PartitionedOutputBufferManager> bufferManager_;
+
+  /// Boolean indicating that we have already recieved no-more-broadcast-buffers
+  /// message. Subsequent messagees will be ignored.
+  bool noMoreBroadcastBuffers_{false};
 
   // Thread counts and cancellation -related state.
   //
@@ -773,7 +802,7 @@ class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
 
   // The requester is a Task and the calling thread is a thread running a Driver
   // in the Task.
-  bool recover(std::shared_ptr<memory::MemoryConsumer> requester, int64_t size)
+  bool reclaim(std::shared_ptr<memory::MemoryConsumer> requester, int64_t size)
       override;
 
  private:
@@ -785,7 +814,7 @@ class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
     int64_t available;
   };
 
-  // Serializes calls to recover().
+  // Serializes calls to reclaim().
   std::mutex mutex_;
 };
 

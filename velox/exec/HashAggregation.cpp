@@ -16,6 +16,7 @@
 #include "velox/exec/HashAggregation.h"
 #include <optional>
 #include "velox/exec/Aggregate.h"
+#include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
@@ -41,6 +42,10 @@ HashAggregation::HashAggregation(
           driverCtx->queryConfig().partialAggregationGoodPct()),
       maxExtendedPartialAggregationMemoryUsage_(
           driverCtx->queryConfig().maxExtendedPartialAggregationMemoryUsage()),
+      spillConfig_(makeOperatorSpillConfig(
+          *operatorCtx_->task()->queryCtx(),
+          *operatorCtx_,
+          operatorId)),
       maxPartialAggregationMemoryUsage_(
           driverCtx->queryConfig().maxPartialAggregationMemoryUsage()) {
   VELOX_CHECK_NOT_NULL(memoryTracker_, "Memory usage tracker is not set");
@@ -85,8 +90,13 @@ HashAggregation::HashAggregation(
       channels.push_back(exprToChannel(arg.get(), inputType));
       if (channels.back() == kConstantChannel) {
         auto constant = dynamic_cast<const core::ConstantTypedExpr*>(arg.get());
-        constants.push_back(BaseVector::createConstant(
-            constant->value(), 1, operatorCtx_->pool()));
+        if (constant->hasValueVector()) {
+          constants.push_back(
+              BaseVector::wrapInConstant(1, 0, constant->valueVector()));
+        } else {
+          constants.push_back(BaseVector::createConstant(
+              constant->value(), 1, operatorCtx_->pool()));
+        }
       } else {
         constants.push_back(nullptr);
       }
@@ -95,7 +105,7 @@ HashAggregation::HashAggregation(
       intermediateTypes.push_back(
           Aggregate::intermediateType(aggregate->name(), argTypes));
     } else {
-      assert(!argTypes.empty()); // lint
+      VELOX_DCHECK(!argTypes.empty());
       intermediateTypes.push_back(argTypes[0]);
       VELOX_CHECK_EQ(
           argTypes.size(),
@@ -152,6 +162,7 @@ HashAggregation::HashAggregation(
       aggregationNode->ignoreNullKeys(),
       isPartialOutput_,
       isRawInput(aggregationNode->step()),
+      spillConfig_.has_value() ? &spillConfig_.value() : nullptr,
       operatorCtx_.get());
 }
 

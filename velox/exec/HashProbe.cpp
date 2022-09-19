@@ -25,7 +25,7 @@ namespace {
 
 // Returns the type for the hash table row. Build side keys first,
 // then dependent build side columns.
-std::shared_ptr<const RowType> makeTableType(
+RowTypePtr makeTableType(
     const RowType* type,
     const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
         keys) {
@@ -46,7 +46,40 @@ std::shared_ptr<const RowType> makeTableType(
       types.emplace_back(type->childAt(i));
     }
   }
-  return std::make_shared<RowType>(std::move(names), std::move(types));
+  return ROW(std::move(names), std::move(types));
+}
+
+// Copy values from 'rows' of 'table' according to 'projections' in
+// 'result'. Reuses 'result' children where possible.
+void extractColumns(
+    BaseHashTable* table,
+    folly::Range<char**> rows,
+    folly::Range<const IdentityProjection*> projections,
+    memory::MemoryPool* pool,
+    const RowVectorPtr& result) {
+  for (auto projection : projections) {
+    auto& child = result->childAt(projection.outputChannel);
+    // TODO: Consider reuse of complex types.
+    if (!child || !BaseVector::isVectorWritable(child) ||
+        !child->isFlatEncoding()) {
+      child = BaseVector::create(
+          result->type()->childAt(projection.outputChannel), rows.size(), pool);
+    }
+    child->resize(rows.size());
+    table->rows()->extractColumn(
+        rows.data(), rows.size(), projection.inputChannel, child);
+  }
+}
+
+folly::Range<vector_size_t*> initializeRowNumberMapping(
+    BufferPtr& mapping,
+    vector_size_t size,
+    memory::MemoryPool* pool) {
+  if (!mapping || !mapping->unique() ||
+      mapping->size() < sizeof(vector_size_t) * size) {
+    mapping = allocateIndices(size, pool);
+  }
+  return folly::Range(mapping->asMutable<vector_size_t>(), size);
 }
 } // namespace
 
@@ -107,10 +140,10 @@ HashProbe::HashProbe(
 }
 
 void HashProbe::initializeFilter(
-    const std::shared_ptr<const core::ITypedExpr>& filter,
+    const core::TypedExprPtr& filter,
     const RowTypePtr& probeType,
     const RowTypePtr& tableType) {
-  std::vector<std::shared_ptr<const core::ITypedExpr>> filters = {filter};
+  std::vector<core::TypedExprPtr> filters = {filter};
   filter_ =
       std::make_unique<ExprSet>(std::move(filters), operatorCtx_->execCtx());
 
@@ -156,12 +189,13 @@ BlockingReason HashProbe::isBlocked(ContinueFuture* future) {
               operatorCtx_->driverCtx()->splitGroupId, planNodeId())
           ->tableOrFuture(future);
   if (!hashBuildResult.has_value()) {
+    VELOX_CHECK_NOT_NULL(future);
     return BlockingReason::kWaitForJoinBuild;
   }
 
   if (hashBuildResult->antiJoinHasNullKeys) {
     // Anti join with null keys on the build side always returns nothing.
-    VELOX_CHECK(isAntiJoin(joinType_));
+    VELOX_CHECK(isNullAwareAntiJoin(joinType_));
     finished_ = true;
   } else {
     table_ = hashBuildResult->table;
@@ -220,7 +254,7 @@ void HashProbe::addInput(RowVectorPtr input) {
     // Build side is empty. This state is valid only for anti, left and full
     // joins.
     VELOX_CHECK(
-        isAntiJoin(joinType_) || isLeftJoin(joinType_) ||
+        isNullAwareAntiJoin(joinType_) || isLeftJoin(joinType_) ||
         isFullJoin(joinType_));
     return;
   }
@@ -261,7 +295,8 @@ void HashProbe::addInput(RowVectorPtr input) {
   }
 
   passingInputRowsInitialized_ = false;
-  if (isLeftJoin(joinType_) || isFullJoin(joinType_) || isAntiJoin(joinType_)) {
+  if (isLeftJoin(joinType_) || isFullJoin(joinType_) ||
+      isNullAwareAntiJoin(joinType_)) {
     // Make sure to allocate an entry in 'hits' for every input row to allow for
     // including rows without a match in the output. Also, make sure to
     // initialize all 'hits' to nullptr as HashTable::joinProbe will only
@@ -290,40 +325,6 @@ void HashProbe::addInput(RowVectorPtr input) {
     results_.reset(*lookup_);
   }
 }
-
-namespace {
-// Copy values from 'rows' of 'table' according to 'projections' in
-// 'result'. Reuses 'result' children where possible.
-void extractColumns(
-    BaseHashTable* table,
-    folly::Range<char**> rows,
-    folly::Range<const IdentityProjection*> projections,
-    memory::MemoryPool* pool,
-    const RowVectorPtr& result) {
-  for (auto projection : projections) {
-    auto& child = result->childAt(projection.outputChannel);
-    // TODO: Consider reuse of complex types.
-    if (!child || !BaseVector::isReusableFlatVector(child)) {
-      child = BaseVector::create(
-          result->type()->childAt(projection.outputChannel), rows.size(), pool);
-    }
-    child->resize(rows.size());
-    table->rows()->extractColumn(
-        rows.data(), rows.size(), projection.inputChannel, child);
-  }
-}
-
-folly::Range<vector_size_t*> initializeRowNumberMapping(
-    BufferPtr& mapping,
-    vector_size_t size,
-    memory::MemoryPool* pool) {
-  if (!mapping || !mapping->unique() ||
-      mapping->size() < sizeof(vector_size_t) * size) {
-    mapping = allocateIndices(size, pool);
-  }
-  return folly::Range(mapping->asMutable<vector_size_t>(), size);
-}
-} // namespace
 
 void HashProbe::prepareOutput(vector_size_t size) {
   // Try to re-use memory for the output vectors that contain build-side data.
@@ -438,7 +439,7 @@ RowVectorPtr HashProbe::getOutput() {
   }
 
   const bool isLeftSemiOrAntiJoinNoFilter = !filter_ &&
-      (core::isLeftSemiJoin(joinType_) || core::isAntiJoin(joinType_));
+      (core::isLeftSemiJoin(joinType_) || core::isNullAwareAntiJoin(joinType_));
 
   const bool emptyBuildSide = (table_->numDistinct() == 0);
 
@@ -460,7 +461,7 @@ RowVectorPtr HashProbe::getOutput() {
       // rows, including ones with null join keys.
       std::iota(mapping.begin(), mapping.end(), 0);
       numOut = inputSize;
-    } else if (isAntiJoin(joinType_) && !filter_) {
+    } else if (isNullAwareAntiJoin(joinType_) && !filter_) {
       // When build side is not empty, anti join without a filter returns probe
       // rows with no nulls in the join key and no match in the build side.
       for (auto i = 0; i < inputSize; i++) {
@@ -474,7 +475,7 @@ RowVectorPtr HashProbe::getOutput() {
       numOut = table_->listJoinResults(
           results_,
           isLeftJoin(joinType_) || isFullJoin(joinType_) ||
-              isAntiJoin(joinType_),
+              isNullAwareAntiJoin(joinType_),
           mapping,
           folly::Range(outputRows_.data(), outputRows_.size()));
     }
@@ -546,7 +547,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
   filterRows_.setAll();
 
   EvalCtx evalCtx(operatorCtx_->execCtx(), filter_.get(), filterInput_.get());
-  filter_->eval(0, 1, true, filterRows_, &evalCtx, &filterResult_);
+  filter_->eval(0, 1, true, filterRows_, evalCtx, filterResult_);
 
   decodedFilterResult_.decode(*filterResult_[0], filterRows_);
 
@@ -585,7 +586,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
     if (results_.atEnd()) {
       leftSemiJoinTracker_.finish(addLastMatch);
     }
-  } else if (isAntiJoin(joinType_)) {
+  } else if (isNullAwareAntiJoin(joinType_)) {
     // Identify probe rows with no matches.
     auto addMiss = [&](auto row) {
       outputRows_[numPassed] = nullptr;
@@ -612,7 +613,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
 }
 
 void HashProbe::ensureLoadedIfNotAtEnd(column_index_t channel) {
-  if (core::isLeftSemiJoin(joinType_) || core::isAntiJoin(joinType_) ||
+  if (core::isLeftSemiJoin(joinType_) || core::isNullAwareAntiJoin(joinType_) ||
       results_.atEnd()) {
     return;
   }

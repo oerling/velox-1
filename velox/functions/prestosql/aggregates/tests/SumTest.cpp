@@ -16,7 +16,6 @@
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/AggregationHook.h"
-#include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
 
@@ -34,92 +33,152 @@ class SumTest : public AggregationTestBase {
     allowInputShuffle();
   }
 
-  template <typename InputType, typename ResultType>
-  void testInputTypeLimits(bool expectOverflow = false) {
-    std::vector<InputType> underflowTestCase = {
-        std::numeric_limits<InputType>::min(),
-        std::numeric_limits<InputType>::min() + 2};
-    std::vector<InputType> overflowTestCase = {
-        std::numeric_limits<InputType>::max(),
-        std::numeric_limits<InputType>::max() - 2};
-    auto createRowVectorFromSingleValue = [&](InputType value) {
-      return makeRowVector(
-          {makeFlatVector<InputType>(std::vector<InputType>(1, value))});
-    };
-    for (auto& testCase : {underflowTestCase, overflowTestCase}) {
-      // Test code path for single values with overflow hit in add.
-      std::vector<RowVectorPtr> input = {
-          makeRowVector({makeFlatVector<InputType>(testCase)})};
-      // Test code path for duplicate values with overflow hit in multiply.
-      std::vector<RowVectorPtr> inputConstantVector = {
-          makeRowVector({makeConstant<InputType>(testCase[0] / 3, 4)})};
-      // Test code path for duplicate values with overflow hit in add.
-      std::vector<RowVectorPtr> inputHybridVector = {
-          createRowVectorFromSingleValue(testCase[0]),
-          makeRowVector({makeConstant<InputType>(testCase[1] / 3, 3)})};
-      std::vector<core::PlanNodePtr> plansToTest;
-      // Single Aggregation (raw input in - final result out)
-      plansToTest.push_back(PlanBuilder()
-                                .values(input)
-                                .singleAggregation({}, {"sum(c0)"})
-                                .planNode());
-      plansToTest.push_back(PlanBuilder()
-                                .values(inputConstantVector)
-                                .singleAggregation({}, {"sum(c0)"})
-                                .planNode());
-      plansToTest.push_back(PlanBuilder()
-                                .values(inputHybridVector)
-                                .singleAggregation({}, {"sum(c0)"})
-                                .planNode());
-      // Partial Aggregation (raw input in - partial result out)
-      plansToTest.push_back(PlanBuilder()
-                                .values(input)
-                                .partialAggregation({}, {"sum(c0)"})
-                                .planNode());
-      plansToTest.push_back(PlanBuilder()
-                                .values(inputConstantVector)
-                                .partialAggregation({}, {"sum(c0)"})
-                                .planNode());
-      plansToTest.push_back(PlanBuilder()
-                                .values(inputHybridVector)
-                                .partialAggregation({}, {"sum(c0)"})
-                                .planNode());
-      // Final Aggregation (partial result in - final result out):
-      // To make sure that the overflow occurs in the final aggregation step, we
-      // create 2 plan fragments and plugging their partially aggregated
-      // output into a final aggregate plan node. Each of those input fragments
-      // only have a single input value under the max limit which when added in
-      // the final step causes an overflow.
-      auto planNodeIdGenerator =
-          std::make_shared<exec::test::PlanNodeIdGenerator>();
-      plansToTest.push_back(
-          PlanBuilder(planNodeIdGenerator)
-              .localPartition(
-                  {},
-                  {PlanBuilder(planNodeIdGenerator)
-                       .values({createRowVectorFromSingleValue(testCase[0])})
-                       .partialAggregation({}, {"sum(c0)"})
-                       .planNode(),
-                   PlanBuilder(planNodeIdGenerator)
-                       .values({createRowVectorFromSingleValue(testCase[1])})
-                       .partialAggregation({}, {"sum(c0)"})
-                       .planNode()})
-              .finalAggregation()
-              .planNode());
-      // Run all plan types
-      CursorParameters params;
-      for (auto& plan : plansToTest) {
-        params.planNode = plan;
-        if (expectOverflow) {
-          VELOX_ASSERT_THROW(
-              readCursor(params, [](auto /*task*/) {}), "overflow");
-        } else {
-          readCursor(params, [](auto /*task*/) {});
-        }
+  template <
+      typename InputType,
+      typename ResultType,
+      typename IntermediateType = ResultType>
+  void testAggregateOverflow(
+      bool expectOverflow = false,
+      const TypePtr& type = CppToType<InputType>::create());
+};
+
+template <typename ResultType>
+void verifyAggregates(
+    const std::vector<std::pair<core::PlanNodePtr, ResultType>>& aggsToTest,
+    bool expectOverflow) {
+  for (const auto& [agg, expectedResult] : aggsToTest) {
+    if (expectOverflow) {
+      VELOX_ASSERT_THROW(readSingleValue(agg), "overflow");
+    } else {
+      auto result = readSingleValue(agg);
+      if constexpr (std::is_same_v<ResultType, float>) {
+        ASSERT_FLOAT_EQ(
+            result.template value<TypeKind::REAL>(), expectedResult);
+      } else if constexpr (std::is_same_v<ResultType, double>) {
+        ASSERT_FLOAT_EQ(
+            result.template value<TypeKind::DOUBLE>(), expectedResult);
+      } else if constexpr (std::is_same_v<ResultType, UnscaledShortDecimal>) {
+        auto output = result.template value<TypeKind::SHORT_DECIMAL>();
+        ASSERT_EQ(output.value(), expectedResult);
+      } else if constexpr (std::is_same_v<ResultType, UnscaledLongDecimal>) {
+        auto output = result.template value<TypeKind::LONG_DECIMAL>();
+        ASSERT_EQ(output.value(), expectedResult);
+      } else {
+        ASSERT_EQ(result, expectedResult);
       }
     }
   }
-};
+}
+
+template <typename InputType, typename ResultType, typename IntermediateType>
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+__attribute__((no_sanitize("integer")))
+#endif
+#endif
+void SumTest::testAggregateOverflow(
+    bool expectOverflow,
+    const TypePtr& type) {
+  const InputType maxLimit = std::numeric_limits<InputType>::max();
+  const InputType overflow = InputType(1);
+  const InputType zero = InputType(0);
+
+  // Intermediate type size is always >= result type size. Hence, use
+  // intermediate type to calculate the expected output.
+  IntermediateType limitResult = IntermediateType(maxLimit);
+  IntermediateType overflowResult = IntermediateType(overflow);
+
+  // Single max limit value. 0's to induce dummy calculations.
+  auto limitVector =
+      makeRowVector({makeFlatVector<InputType>({maxLimit, zero, zero}, type)});
+
+  // Test code path for single values with possible overflow hit in add.
+  auto overflowFlatVector =
+      makeRowVector({makeFlatVector<InputType>({maxLimit, overflow}, type)});
+  IntermediateType expectedFlatSum = limitResult + overflowResult;
+
+  // Test code path for duplicate values with possible overflow hit in
+  // multiply.
+  auto overflowConstantVector =
+      makeRowVector({makeConstant<InputType>(maxLimit / 3, 4, type)});
+  IntermediateType expectedConstantSum = (limitResult / 3) * 4;
+
+  // Test code path for duplicate values with possible overflow hit in add.
+  auto overflowHybridVector = {limitVector, overflowConstantVector};
+  IntermediateType expectedHybridSum = limitResult + expectedConstantSum;
+
+  // Vector with element pairs of a partial aggregate node, expected result.
+  std::vector<std::pair<core::PlanNodePtr, IntermediateType>> partialAggsToTest;
+  // Partial Aggregation (raw input in - partial result out).
+  partialAggsToTest.push_back(
+      {PlanBuilder()
+           .values({overflowFlatVector})
+           .partialAggregation({}, {"sum(c0)"})
+           .planNode(),
+       expectedFlatSum});
+  partialAggsToTest.push_back(
+      {PlanBuilder()
+           .values({overflowConstantVector})
+           .partialAggregation({}, {"sum(c0)"})
+           .planNode(),
+       expectedConstantSum});
+  partialAggsToTest.push_back(
+      {PlanBuilder()
+           .values(overflowHybridVector)
+           .partialAggregation({}, {"sum(c0)"})
+           .planNode(),
+       expectedHybridSum});
+
+  // Vector with element pairs of a full aggregate node, expected result.
+  std::vector<std::pair<core::PlanNodePtr, ResultType>> aggsToTest;
+  // Single Aggregation (raw input in - final result out).
+  aggsToTest.push_back(
+      {PlanBuilder()
+           .values({overflowFlatVector})
+           .singleAggregation({}, {"sum(c0)"})
+           .planNode(),
+       expectedFlatSum});
+  aggsToTest.push_back(
+      {PlanBuilder()
+           .values({overflowConstantVector})
+           .singleAggregation({}, {"sum(c0)"})
+           .planNode(),
+       expectedConstantSum});
+  aggsToTest.push_back(
+      {PlanBuilder()
+           .values(overflowHybridVector)
+           .singleAggregation({}, {"sum(c0)"})
+           .planNode(),
+       expectedHybridSum});
+  // Final Aggregation (partial result in - final result out):
+  // To make sure that the overflow occurs in the final aggregation step, we
+  // create 2 plan fragments and plugging their partially aggregated
+  // output into a final aggregate plan node. Each of those input fragments
+  // only have a single input value under the max limit which when added in
+  // the final step causes a potential overflow.
+  auto planNodeIdGenerator =
+      std::make_shared<exec::test::PlanNodeIdGenerator>();
+  aggsToTest.push_back(
+      {PlanBuilder(planNodeIdGenerator)
+           .localPartition(
+               {},
+               {PlanBuilder(planNodeIdGenerator)
+                    .values({limitVector})
+                    .partialAggregation({}, {"sum(c0)"})
+                    .planNode(),
+                PlanBuilder(planNodeIdGenerator)
+                    .values({limitVector})
+                    .partialAggregation({}, {"sum(c0)"})
+                    .planNode()})
+           .finalAggregation()
+           .planNode(),
+       limitResult + limitResult});
+
+  // Verify all partial aggregates.
+  verifyAggregates<IntermediateType>(partialAggsToTest, expectOverflow);
+  // Verify all aggregates.
+  verifyAggregates<ResultType>(aggsToTest, expectOverflow);
+}
 
 TEST_F(SumTest, sumTinyint) {
   auto rowType = ROW({"c0", "c1"}, {BIGINT(), TINYINT()});
@@ -154,6 +213,17 @@ TEST_F(SumTest, sumTinyint) {
       "SELECT sum(c1) FROM tmp WHERE c0 % 2 = 0");
 }
 
+TEST_F(SumTest, sumFloat) {
+  auto data = makeRowVector({makeFlatVector<float>({2.00, 1.00})});
+  createDuckDbTable({data});
+
+  testAggregations(
+      [&](auto& builder) { builder.values({data}); },
+      {},
+      {"sum(c0)"},
+      "SELECT sum(c0) FROM tmp");
+}
+
 TEST_F(SumTest, sumDouble) {
   // Run the test multiple times to ease reproducing the issue:
   // https://github.com/facebookincubator/velox/issues/2198
@@ -175,6 +245,23 @@ TEST_F(SumTest, sumDouble) {
         {"sum(c0)", "sum(c1)"},
         "SELECT sum(c0), sum(c1) FROM tmp");
   }
+}
+
+TEST_F(SumTest, sumDecimal) {
+  auto input = makeRowVector(
+      {makeNullableShortDecimalFlatVector(
+           {1'000, 2'000, 3'000, 4'000, 5'000, std::nullopt}, DECIMAL(10, 1)),
+       makeNullableLongDecimalFlatVector(
+           {buildInt128(10, 100),
+            buildInt128(10, 200),
+            buildInt128(10, 300),
+            buildInt128(10, 400),
+            buildInt128(10, 500),
+            std::nullopt},
+           DECIMAL(23, 4))});
+  createDuckDbTable({input});
+  testAggregations(
+      {input}, {}, {"sum(c0)", "sum(c1)"}, "SELECT sum(c0), sum(c1) FROM tmp");
 }
 
 TEST_F(SumTest, sumWithMask) {
@@ -282,7 +369,6 @@ TEST_F(SumTest, sumWithMask) {
 // Test aggregation over boolean key
 TEST_F(SumTest, boolKey) {
   vector_size_t size = 1'000;
-  auto rowType = ROW({"c0", "c1"}, {BOOLEAN(), INTEGER()});
   auto vector = makeRowVector(
       {makeFlatVector<bool>(size, [](auto row) { return row % 3 == 0; }),
        makeFlatVector<int32_t>(size, [](auto row) { return row; })});
@@ -390,20 +476,25 @@ TEST_F(SumTest, hookLimits) {
   testHookLimits<double, double>();
 }
 
-TEST_F(SumTest, inputTypeLimits) {
-  // Verify sum aggregate function checks and throws an overflow error when
-  // appropriate. Since all integer types have output types as int64, overflow
-  // only occurs if the sum exceeds the max int64 value. For floating points, an
-  // overflow results in an infinite result but does not throw. Results are
-  // manually compared instead of comparing with duckDB as it throws an error
-  // instead when floating points go over limit.
-  testInputTypeLimits<int8_t, int64_t>();
-  testInputTypeLimits<int16_t, int64_t>();
-  testInputTypeLimits<int32_t, int64_t>();
-  testInputTypeLimits<int64_t, int64_t>(true);
-  // TODO: enable this test once Issue #2079 is fixed
-  // testInputTypeLimits<float, float>();
-  testInputTypeLimits<double, double>();
+TEST_F(SumTest, integerAggregateOverflow) {
+  testAggregateOverflow<int8_t, int64_t>();
+  testAggregateOverflow<int16_t, int64_t>();
+  testAggregateOverflow<int32_t, int64_t>();
+  testAggregateOverflow<int64_t, int64_t>(true);
+}
+
+TEST_F(SumTest, floatAggregateOverflow) {
+  testAggregateOverflow<float, float, double>();
+  testAggregateOverflow<double, double>();
+}
+
+TEST_F(SumTest, DISABLED_decimalAggregateOverflow) {
+  testAggregateOverflow<
+      UnscaledShortDecimal,
+      UnscaledLongDecimal,
+      UnscaledLongDecimal>(false, DECIMAL(10, 5));
+  testAggregateOverflow<UnscaledLongDecimal, UnscaledLongDecimal>(
+      true, DECIMAL(20, 5));
 }
 } // namespace
 } // namespace facebook::velox::aggregate::test

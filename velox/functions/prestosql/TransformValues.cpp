@@ -36,8 +36,8 @@ class TransformValuesFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
 
     // Flatten input map.
@@ -49,6 +49,12 @@ class TransformValuesFunction : public exec::VectorFunction {
     std::vector<VectorPtr> lambdaArgs = {
         flatMap->mapKeys(), flatMap->mapValues()};
     auto numValues = flatMap->mapValues()->size();
+
+    SelectivityVector finalSelection;
+    if (!context.isFinalSelection()) {
+      finalSelection = toElementRows<MapVector>(
+          numValues, *context.finalSelection(), flatMap.get());
+    }
 
     VectorPtr transformedValues;
 
@@ -62,7 +68,12 @@ class TransformValuesFunction : public exec::VectorFunction {
           numValues, entry.callable, *entry.rows, flatMap);
 
       entry.callable->apply(
-          valueRows, wrapCapture, context, lambdaArgs, &transformedValues);
+          valueRows,
+          finalSelection,
+          wrapCapture,
+          &context,
+          lambdaArgs,
+          &transformedValues);
     }
 
     auto localResult = std::make_shared<MapVector>(
@@ -74,7 +85,7 @@ class TransformValuesFunction : public exec::VectorFunction {
         flatMap->sizes(),
         flatMap->mapKeys(),
         transformedValues);
-    context->moveOrCopyResult(localResult, rows, result);
+    context.moveOrCopyResult(localResult, rows, result);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {

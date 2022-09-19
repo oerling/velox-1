@@ -37,7 +37,6 @@
 #include "velox/vector/SelectivityVector.h"
 #include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorEncoding.h"
-#include "velox/vector/VectorStream.h"
 #include "velox/vector/VectorUtil.h"
 
 namespace facebook {
@@ -97,27 +96,27 @@ class BaseVector {
 
   template <typename T>
   T* as() {
-    static_assert(std::is_base_of<BaseVector, T>::value);
+    static_assert(std::is_base_of_v<BaseVector, T>);
     return dynamic_cast<T*>(this);
   }
 
   template <typename T>
   const T* as() const {
-    static_assert(std::is_base_of<BaseVector, T>::value);
+    static_assert(std::is_base_of_v<BaseVector, T>);
     return dynamic_cast<const T*>(this);
   }
 
   // Use when the type of 'this' is already known. dynamic_cast() is slow.
   template <typename T>
   T* asUnchecked() {
-    static_assert(std::is_base_of<BaseVector, T>::value);
+    static_assert(std::is_base_of_v<BaseVector, T>);
     DCHECK(dynamic_cast<const T*>(this) != nullptr);
     return static_cast<T*>(this);
   }
 
   template <typename T>
   const T* asUnchecked() const {
-    static_assert(std::is_base_of<BaseVector, T>::value);
+    static_assert(std::is_base_of_v<BaseVector, T>);
     DCHECK(dynamic_cast<const T*>(this) != nullptr);
     return static_cast<const T*>(this);
   }
@@ -189,10 +188,6 @@ class BaseVector {
    */
   vector_size_t size() const {
     return length_;
-  }
-
-  void setSize(vector_size_t newSize) {
-    length_ = newSize;
   }
 
   virtual void append(const BaseVector* other) {
@@ -308,13 +303,10 @@ class BaseVector {
   // Sets the null indicator at 'idx'. 'true' means null.
   FOLLY_ALWAYS_INLINE virtual void setNull(vector_size_t idx, bool value) {
     VELOX_DCHECK(idx >= 0 && idx < length_);
-    if (!nulls_) {
-      if (!value) {
-        return;
-      }
-      allocateNulls();
+    if (!nulls_ && !value) {
+      return;
     }
-
+    ensureNulls();
     bits::setBit(
         nulls_->asMutable<uint64_t>(), idx, bits::kNull ? value : !value);
   }
@@ -328,8 +320,11 @@ class BaseVector {
     return countNulls(nulls, 0, size);
   }
 
+  // Returns whether or not the nulls buffer can be modified.
+  // This does not guarantee the existence of the nulls buffer, if using this
+  // within BaseVector you still may need to call ensureNulls.
   virtual bool isNullsWritable() const {
-    return true;
+    return !nulls_ || (nulls_->unique() && nulls_->isMutable());
   }
 
   // Sets null when 'nulls' has null value for a row in 'rows'
@@ -380,8 +375,29 @@ class BaseVector {
       vector_size_t targetIndex,
       vector_size_t sourceIndex,
       vector_size_t count) {
-    VELOX_UNSUPPORTED("Only flat vectors support copy operation");
+    CopyRange range{sourceIndex, targetIndex, count};
+    copyRanges(source, folly::Range(&range, 1));
   }
+
+  struct CopyRange {
+    vector_size_t sourceIndex;
+    vector_size_t targetIndex;
+    vector_size_t count;
+  };
+
+  // Copy multiple ranges at once.  This is more efficient than calling `copy`
+  // multiple times, especially for ARRAY, MAP, and VARCHAR.
+  virtual void copyRanges(
+      const BaseVector* /*source*/,
+      const folly::Range<const CopyRange*>& /*ranges*/) {
+    VELOX_UNSUPPORTED("Can only copy into flat or complex vectors");
+  }
+
+  // Construct a zero-copy slice of the vector with the indicated offset and
+  // length.
+  virtual std::shared_ptr<BaseVector> slice(
+      vector_size_t offset,
+      vector_size_t length) const = 0;
 
   // Returns a vector of the type of 'source' where 'indices' contains
   // an index into 'source' for each element of 'source'. The
@@ -439,10 +455,31 @@ class BaseVector {
       const SelectivityVector& rows,
       const TypePtr& type,
       velox::memory::MemoryPool* pool,
-      std::shared_ptr<BaseVector>* result,
+      std::shared_ptr<BaseVector>& result,
       VectorPool* vectorPool = nullptr);
 
   virtual void ensureWritable(const SelectivityVector& rows);
+
+  // Returns true if the following conditions hold:
+  //  * The vector is singly referenced.
+  //  * The vector has a Flat-like encoding (Flat, Array, Map, Row).
+  //  * Any child Buffers are mutable  and singly referenced.
+  //  * All of these conditions hold for child Vectors recursively.
+  // This function is templated rather than taking a std::shared_ptr<BaseVector>
+  // because if we were to do that the compiler would allocate a new shared_ptr
+  // when this function is called making it not unique.
+  template <typename T>
+  static bool isVectorWritable(const std::shared_ptr<T>& vector) {
+    if (!vector.unique()) {
+      return false;
+    }
+
+    return vector->isWritable();
+  }
+
+  virtual bool isWritable() const {
+    return false;
+  }
 
   // Flattens the input vector.
   //
@@ -452,12 +489,12 @@ class BaseVector {
   //
   // We don't necessarily need (b) if we only want to flatten vectors.
   static void flattenVector(
-      std::shared_ptr<BaseVector>* vector,
+      std::shared_ptr<BaseVector>& vector,
       size_t vectorSize) {
     BaseVector::ensureWritable(
         SelectivityVector::empty(vectorSize),
-        (*vector)->type(),
-        (*vector)->pool(),
+        vector->type(),
+        vector->pool(),
         vector);
   }
 
@@ -492,17 +529,6 @@ class BaseVector {
     VELOX_UNSUPPORTED("Only flat vectors have a values buffer");
   }
 
-  // Returns true for flat vectors with unique values buffer and no
-  // nulls or unique nulls buffer. If true, 'this' can be cached for
-  // reuse in ExprCtx.
-  virtual bool isRecyclable() const {
-    return false;
-  }
-
-  bool isFlatNonNull() const {
-    return encoding_ == VectorEncoding::Simple::FLAT && !rawNulls_;
-  }
-
   // If 'this' is a wrapper, returns the wrap info, interpretation depends on
   // encoding.
   virtual BufferPtr wrapInfo() const {
@@ -524,9 +550,7 @@ class BaseVector {
     return vector ? vector : create(type, 0, pool);
   }
 
-  BufferPtr* mutableNulls() {
-    return &nulls_;
-  }
+  void setNulls(const BufferPtr& nulls);
 
   void resetNulls() {
     setNulls(nullptr);
@@ -587,10 +611,6 @@ class BaseVector {
   /// data stored in this vector. Returns zero if this is a lazy vector that
   /// hasn't been loaded yet.
   virtual uint64_t estimateFlatSize() const;
-
-  // Returns true if 'vector' is a unique reference to a flat vector
-  // and nulls and values are uniquely referenced.
-  static bool isReusableFlatVector(const std::shared_ptr<BaseVector>& vector);
 
   /// To safely reuse a vector one needs to (1) ensure that the vector as well
   /// as all its buffers and child vectors are singly-referenced and mutable
@@ -669,19 +689,7 @@ class BaseVector {
    * Allocates or reallocates nulls_ with the given size if nulls_ hasn't
    * been allocated yet or has been allocated with a smaller capacity.
    */
-  void ensureNullsCapacity(vector_size_t size, bool setNotNull = false) {
-    if (nulls_ && nulls_->capacity() >= bits::nbytes(size)) {
-      return;
-    }
-    if (nulls_) {
-      AlignedBuffer::reallocate<bool>(
-          &nulls_, size, setNotNull ? bits::kNotNull : bits::kNull);
-    } else {
-      nulls_ = AlignedBuffer::allocate<bool>(
-          size, pool_, setNotNull ? bits::kNotNull : bits::kNull);
-    }
-    rawNulls_ = nulls_->as<uint64_t>();
-  }
+  void ensureNullsCapacity(vector_size_t size, bool setNotNull = false);
 
   FOLLY_ALWAYS_INLINE static std::optional<int32_t>
   compareNulls(bool thisNull, bool otherNull, CompareFlags flags) {
@@ -706,17 +714,23 @@ class BaseVector {
   }
 
   void ensureNulls() {
-    if (!nulls_) {
-      allocateNulls();
-    }
+    ensureNullsCapacity(length_, true);
   }
 
-  void allocateNulls();
+  // Slice a buffer with specific type.
+  //
+  // For boolean type and if the offset is not multiple of 8, return a shifted
+  // copy; otherwise return a BufferView into the original buffer (with shared
+  // ownership of original buffer).
+  static BufferPtr sliceBuffer(
+      const Type&,
+      const BufferPtr&,
+      vector_size_t offset,
+      vector_size_t length,
+      memory::MemoryPool*);
 
-  void setNulls(BufferPtr nulls) {
-    nulls_ = nulls;
-    rawNulls_ = nulls ? nulls->as<uint64_t>() : nullptr;
-    nullCount_ = std::nullopt;
+  BufferPtr sliceNulls(vector_size_t offset, vector_size_t length) const {
+    return sliceBuffer(*BOOLEAN(), nulls_, offset, length, pool_);
   }
 
   const TypePtr type_;
@@ -753,6 +767,11 @@ class BaseVector {
 
 template <>
 uint64_t BaseVector::byteSize<bool>(vector_size_t count);
+
+template <>
+inline uint64_t BaseVector::byteSize<UnknownValue>(vector_size_t) {
+  return 0;
+}
 
 using VectorPtr = std::shared_ptr<BaseVector>;
 

@@ -17,7 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/type/Date.h"
 #include "velox/type/Timestamp.h"
@@ -114,7 +114,7 @@ class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
         rowVector->children()[1]->as<SimpleVector<int16_t>>()->valueAt(0)};
   }
 
-  std::optional<TimestampWithTimezone> dateParse(
+  std::optional<Timestamp> dateParse(
       const std::optional<std::string>& input,
       const std::optional<std::string>& format) {
     auto resultVector = evaluate(
@@ -127,10 +127,7 @@ class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
     if (resultVector->isNullAt(0)) {
       return std::nullopt;
     }
-    auto rowVector = resultVector->as<RowVector>();
-    return TimestampWithTimezone{
-        rowVector->children()[0]->as<SimpleVector<int64_t>>()->valueAt(0),
-        rowVector->children()[1]->as<SimpleVector<int16_t>>()->valueAt(0)};
+    return resultVector->as<SimpleVector<Timestamp>>()->valueAt(0);
   }
 
   std::optional<std::string> dateFormat(
@@ -2249,6 +2246,12 @@ TEST_F(DateTimeFunctionsTest, formatDateTime) {
       "12300000",
       formatDatetime(
           fromTimestampString("2022-01-01 03:30:30.123"), "SSSSSSSS"));
+  EXPECT_EQ(
+      "0990",
+      formatDatetime(fromTimestampString("2022-01-01 03:30:30.099"), "SSSS"));
+  EXPECT_EQ(
+      "0010",
+      formatDatetime(fromTimestampString("2022-01-01 03:30:30.001"), "SSSS"));
 
   // time zone test cases - 'z'
   setQueryTimeZone("Asia/Kolkata");
@@ -2415,6 +2418,12 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_EQ(
       "123000",
       dateFormat(fromTimestampString("2022-01-01 03:30:30.123"), "%f"));
+  EXPECT_EQ(
+      "099000",
+      dateFormat(fromTimestampString("2022-01-01 03:30:30.099"), "%f"));
+  EXPECT_EQ(
+      "001000",
+      dateFormat(fromTimestampString("2022-01-01 03:30:30.001234"), "%f"));
 
   // Hour cases
   for (int i = 0; i < 24; i++) {
@@ -2560,6 +2569,39 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
       VeloxUserError);
 }
 
+TEST_F(DateTimeFunctionsTest, dateFormatTimestampWithTimezone) {
+  const auto testDateFormat =
+      [&](const std::string& formatString,
+          std::optional<int64_t> timestamp,
+          const std::optional<std::string>& timeZoneName) {
+        return evaluateWithTimestampWithTimezone<std::string>(
+            fmt::format("date_format(c0, '{}')", formatString),
+            timestamp,
+            timeZoneName);
+      };
+
+  EXPECT_EQ(
+      "1969-12-31 11:00:00 PM", testDateFormat("%Y-%m-%d %r", 0, "-01:00"));
+  EXPECT_EQ(
+      "1973-11-30 12:33:09 AM",
+      testDateFormat("%Y-%m-%d %r", 123456789000, "+03:00"));
+  EXPECT_EQ(
+      "1966-02-01 12:26:51 PM",
+      testDateFormat("%Y-%m-%d %r", -123456789000, "-14:00"));
+  EXPECT_EQ(
+      "2001-04-19 18:25:21.000000",
+      testDateFormat("%Y-%m-%d %H:%i:%s.%f", 987654321000, "+14:00"));
+  EXPECT_EQ(
+      "1938-09-14 23:34:39.000000",
+      testDateFormat("%Y-%m-%d %H:%i:%s.%f", -987654321000, "+04:00"));
+  EXPECT_EQ(
+      "70-August-22 17:55:15 PM",
+      testDateFormat("%y-%M-%e %T %p", 20220915000, "-07:00"));
+  EXPECT_EQ(
+      "69-May-11 20:04:45 PM",
+      testDateFormat("%y-%M-%e %T %p", -20220915000, "-03:00"));
+}
+
 TEST_F(DateTimeFunctionsTest, dateParse) {
   // Check null behavior.
   EXPECT_EQ(std::nullopt, dateParse("1970-01-01", std::nullopt));
@@ -2567,45 +2609,36 @@ TEST_F(DateTimeFunctionsTest, dateParse) {
   EXPECT_EQ(std::nullopt, dateParse(std::nullopt, std::nullopt));
 
   // Simple tests. More exhaustive tests are provided in DateTimeFormatterTest.
-  EXPECT_EQ(
-      TimestampWithTimezone(86400000, 0), dateParse("1970-01-02", "%Y-%m-%d"));
-  EXPECT_EQ(TimestampWithTimezone(0, 0), dateParse("1970-01-01", "%Y-%m-%d"));
-  EXPECT_EQ(
-      TimestampWithTimezone(86400000, 0), dateParse("19700102", "%Y%m%d"));
+  EXPECT_EQ(Timestamp(86400, 0), dateParse("1970-01-02", "%Y-%m-%d"));
+  EXPECT_EQ(Timestamp(0, 0), dateParse("1970-01-01", "%Y-%m-%d"));
+  EXPECT_EQ(Timestamp(86400, 0), dateParse("19700102", "%Y%m%d"));
 
   // Tests for differing query timezones
   // 118860000 is the number of milliseconds since epoch at 1970-01-02
   // 09:01:00.000 UTC.
   EXPECT_EQ(
-      TimestampWithTimezone(118860000, 0),
-      dateParse("1970-01-02+09:01", "%Y-%m-%d+%H:%i"));
+      Timestamp(118860, 0), dateParse("1970-01-02+09:01", "%Y-%m-%d+%H:%i"));
 
   setQueryTimeZone("America/Los_Angeles");
   EXPECT_EQ(
-      TimestampWithTimezone(
-          118860000, util::getTimeZoneID("America/Los_Angeles")),
-      dateParse("1970-01-02+01:01", "%Y-%m-%d+%H:%i"));
+      Timestamp(118860, 0), dateParse("1970-01-02+01:01", "%Y-%m-%d+%H:%i"));
 
   setQueryTimeZone("America/Noronha");
   EXPECT_EQ(
-      TimestampWithTimezone(118860000, util::getTimeZoneID("America/Noronha")),
-      dateParse("1970-01-02+07:01", "%Y-%m-%d+%H:%i"));
+      Timestamp(118860, 0), dateParse("1970-01-02+07:01", "%Y-%m-%d+%H:%i"));
 
   setQueryTimeZone("+04:00");
   EXPECT_EQ(
-      TimestampWithTimezone(118860000, util::getTimeZoneID("+04:00")),
-      dateParse("1970-01-02+13:01", "%Y-%m-%d+%H:%i"));
+      Timestamp(118860, 0), dateParse("1970-01-02+13:01", "%Y-%m-%d+%H:%i"));
 
   setQueryTimeZone("Asia/Kolkata");
   // 66600000 is the number of millisecond since epoch at 1970-01-01
   // 18:30:00.000 UTC.
   EXPECT_EQ(
-      TimestampWithTimezone(66600000, util::getTimeZoneID("Asia/Kolkata")),
-      dateParse("1970-01-02+00:00", "%Y-%m-%d+%H:%i"));
+      Timestamp(66600, 0), dateParse("1970-01-02+00:00", "%Y-%m-%d+%H:%i"));
 
   // -66600000 is the number of millisecond since epoch at 1969-12-31
   // 05:30:00.000 UTC.
   EXPECT_EQ(
-      TimestampWithTimezone(-66600000, util::getTimeZoneID("Asia/Kolkata")),
-      dateParse("1969-12-31+11:00", "%Y-%m-%d+%H:%i"));
+      Timestamp(-66600, 0), dateParse("1969-12-31+11:00", "%Y-%m-%d+%H:%i"));
 }

@@ -144,7 +144,7 @@ class MemoryUsageTracker
             .build());
   }
 
-  ~MemoryUsageTracker();
+  virtual ~MemoryUsageTracker();
 
   // Increments the reservation for 'this' so that we can allocate at
   // least 'size' bytes on top of the current allocation. This is used
@@ -185,7 +185,10 @@ class MemoryUsageTracker
   // allocation and negative for free. If there is no reservation or
   // the new allocated amount exceeds the reservation, propagates the
   // change upward.
-  void update(int64_t size) {
+  // Sometimes the memory pool wants to mock an update for quota
+  // accounting purposes and different memory usage trackers can
+  // choose to accommodate this differently.
+  virtual void update(int64_t size, bool /* mock */ = false) {
     if (size > 0) {
       int64_t increment = 0;
       {
@@ -203,7 +206,7 @@ class MemoryUsageTracker
     {
       std::lock_guard<std::mutex> l(mutex_);
       auto newUsed = usedReservation_ += size;
-      auto newCap = std::max(minReservation_, newUsed);
+      auto newCap = std::max(minReservation_.load(), newUsed);
       auto newQuantized = quantizedSize(newCap);
       if (newQuantized != reservation_) {
         decrement = reservation_ - newQuantized;
@@ -215,7 +218,7 @@ class MemoryUsageTracker
     }
   }
 
-  int64_t getCurrentUserBytes() const {
+  virtual int64_t getCurrentUserBytes() const {
     return adjustByReservation(user(currentUsageInBytes_));
   }
   int64_t getCurrentSystemBytes() const {
@@ -298,7 +301,7 @@ class MemoryUsageTracker
 
   std::string toString() const;
 
- private:
+ protected:
   static constexpr int64_t kMB = 1 << 20;
 
   template <typename T, size_t size>
@@ -399,10 +402,10 @@ class MemoryUsageTracker
   std::array<std::atomic<int64_t>, 3> numAllocs_{};
   std::array<std::atomic<int64_t>, 3> cumulativeBytes_{};
 
-  int64_t reservation_{0};
+  std::atomic<int64_t> reservation_{0};
 
   // Minimum amount of reserved memory to hold until explicit release().
-  int64_t minReservation_{0};
+  std::atomic<int64_t> minReservation_{0};
   std::atomic<int64_t> usedReservation_{};
 
   GrowCallback growCallback_{};
@@ -453,5 +456,24 @@ class MemoryUsageTracker
           << total(currentUsageInBytes_);
     }
   }
+};
+
+// A temporary solution to MemoryUsageTracker accounting leak without properly
+// remodeling the interface. Only the overridden methods are supposed to be
+// used.
+class SimpleMemoryTracker : public MemoryUsageTracker {
+ public:
+  explicit SimpleMemoryTracker(const MemoryUsageConfig& config);
+  virtual ~SimpleMemoryTracker() override = default;
+
+  virtual void update(int64_t size, bool mock = false) override;
+  virtual int64_t getCurrentUserBytes() const override;
+
+  static std::shared_ptr<SimpleMemoryTracker> create(
+      const MemoryUsageConfig& config = MemoryUsageConfig());
+
+ private:
+  const int64_t userMemoryQuota_;
+  std::atomic_long totalUserMemory_{0};
 };
 } // namespace facebook::velox::memory

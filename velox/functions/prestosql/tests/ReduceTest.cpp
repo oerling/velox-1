@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -122,4 +122,68 @@ TEST_F(ReduceTest, conditional) {
       },
       nullEvery(11));
   assertEqualVectors(expectedResult, result);
+}
+
+TEST_F(ReduceTest, finalSelection) {
+  vector_size_t size = 1'000;
+  auto inputArray = makeArrayVector<int64_t>(
+      size,
+      modN(5),
+      [](auto row, auto index) { return row + index; },
+      nullEvery(11));
+  auto input = makeRowVector({
+      inputArray,
+      makeFlatVector<int64_t>(
+          size, [](auto row) { return row; }, nullEvery(11)),
+  });
+  registerLambda(
+      "sum_input",
+      rowType("s", BIGINT(), "x", BIGINT()),
+      input->type(),
+      "s + x");
+  registerLambda(
+      "row_output",
+      rowType("s", BIGINT()),
+      input->type(),
+      "row_constructor(s)");
+
+  auto result = evaluate<RowVector>(
+      "if (c1 < 100, row_constructor(c1), "
+      "reduce(c0, 10, function('sum_input'), function('row_output')))",
+      input);
+
+  auto expectedResult = makeRowVector({makeFlatVector<int64_t>(
+      size,
+      [](auto row) -> int64_t {
+        if (row < 100) {
+          return row;
+        } else {
+          int64_t sum = 10;
+          for (auto i = 0; i < row % 5; i++) {
+            sum += row + i;
+          }
+          return sum;
+        }
+      },
+      nullEvery(11))});
+  assertEqualVectors(expectedResult, result);
+}
+
+TEST_F(ReduceTest, elementIndicesOverwrite) {
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2}),
+      makeFlatVector<int64_t>({3, 4}),
+  });
+
+  registerLambda(
+      "input",
+      rowType("s", BIGINT(), "x", BIGINT()),
+      ROW({ARRAY(BIGINT())}),
+      "s + x");
+  registerLambda("output", rowType("s", BIGINT()), ROW({ARRAY(BIGINT())}), "s");
+
+  auto result = evaluate(
+      "reduce(array[c0, c1], 100, function('input'), function('output'))",
+      data);
+  assertEqualVectors(makeFlatVector<int64_t>({104, 106}), result);
 }

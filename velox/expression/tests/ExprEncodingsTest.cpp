@@ -23,7 +23,7 @@
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/vector/VectorEncoding.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 
@@ -182,7 +182,7 @@ class ExprEncodingsTest
          EncodingOptions::sequence(10)});
   }
 
-  std::shared_ptr<const core::ITypedExpr> parseExpression(
+  core::TypedExprPtr parseExpression(
       const std::string& text,
       const RowTypePtr& rowType) {
     auto untyped = parse::parseExpr(text, options_);
@@ -412,7 +412,7 @@ class ExprEncodingsTest
       vector_size_t end = size / 3 * 2;
       auto rows = selectRange(begin, end);
       std::vector<VectorPtr> result(1);
-      exprSet->eval(rows, &context, &result);
+      exprSet->eval(rows, context, result);
 
       SCOPED_TRACE(text);
       SCOPED_TRACE(fmt::format("[{} - {})", begin, end));
@@ -424,7 +424,7 @@ class ExprEncodingsTest
       vector_size_t end = size;
       auto rows = selectRange(begin, end);
       std::vector<VectorPtr> result(1);
-      exprSet->eval(0, 1, false, rows, &context, &result);
+      exprSet->eval(0, 1, false, rows, context, result);
 
       SCOPED_TRACE(text);
       SCOPED_TRACE(fmt::format("[{} - {})", begin, end));
@@ -453,7 +453,7 @@ class ExprEncodingsTest
 
       SCOPED_TRACE(text);
       SCOPED_TRACE(fmt::format("[{} - {})", begin, end));
-      ASSERT_THROW(exprs.eval(rows, &context, &result), VeloxException);
+      ASSERT_THROW(exprs.eval(rows, context, result), VeloxException);
     }
 
     begin = size / 3;
@@ -465,7 +465,7 @@ class ExprEncodingsTest
       SCOPED_TRACE(text);
       SCOPED_TRACE(fmt::format("[{} - {})", begin, end));
       ASSERT_THROW(
-          exprs.eval(0, 1, false, rows, &context, &result), VeloxException);
+          exprs.eval(0, 1, false, rows, context, result), VeloxException);
     }
   }
 

@@ -96,7 +96,7 @@ template <typename T>
 struct CeilFunction {
   template <typename TOutput, typename TInput = TOutput>
   FOLLY_ALWAYS_INLINE void call(TOutput& result, const TInput& a) {
-    if constexpr (std::is_integral<TInput>::value) {
+    if constexpr (std::is_integral_v<TInput>) {
       result = a;
     } else {
       result = ceil(a);
@@ -108,7 +108,7 @@ template <typename T>
 struct FloorFunction {
   template <typename TOutput, typename TInput = TOutput>
   FOLLY_ALWAYS_INLINE void call(TOutput& result, const TInput& a) {
-    if constexpr (std::is_integral<TInput>::value) {
+    if constexpr (std::is_integral_v<TInput>) {
       result = a;
     } else {
       result = floor(a);
@@ -171,7 +171,6 @@ struct ClampFunction {
   template <typename TInput>
   FOLLY_ALWAYS_INLINE void
   call(TInput& result, const TInput& v, const TInput& lo, const TInput& hi) {
-    VELOX_USER_CHECK_LE(lo, hi, "Lo > hi in clamp.");
     // std::clamp emits less efficient ASM
     const TInput& a = v < lo ? lo : v;
     result = a > hi ? hi : a;

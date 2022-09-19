@@ -16,6 +16,7 @@ add_executable(
   velox_expression_test
   ExprEncodingsTest.cpp
   ExprTest.cpp
+  ExprCompilerTest.cpp
   EvalCtxTest.cpp
   ExprStatsTest.cpp
   CastExprTest.cpp
@@ -53,7 +54,7 @@ target_link_libraries(
   velox_hive_connector
   velox_dwio_common
   velox_dwio_common_exception
-  velox_exec_test_util
+  velox_exec_test_lib
   velox_expression
   velox_functions_lib
   velox_functions_prestosql

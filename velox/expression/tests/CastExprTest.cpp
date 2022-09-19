@@ -17,9 +17,10 @@
 #include <limits>
 #include "velox/buffer/Buffer.h"
 #include "velox/common/base/VeloxException.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/expression/VectorFunction.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/TypeAliases.h"
@@ -39,12 +40,12 @@ class TestingDictionaryFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK(rows.isAllSelected());
     const auto size = rows.size();
-    auto indices = makeIndicesInReverse(size, context->pool());
-    *result = BaseVector::wrapInDictionary(
+    auto indices = makeIndicesInReverse(size, context.pool());
+    result = BaseVector::wrapInDictionary(
         BufferPtr(nullptr), indices, size, args[0]);
   }
 
@@ -88,10 +89,10 @@ class CastExprTest : public functions::test::FunctionBaseTest {
   }
 
   std::shared_ptr<core::CastTypedExpr> makeCastExpr(
-      const std::shared_ptr<const core::ITypedExpr>& input,
+      const core::TypedExprPtr& input,
       const TypePtr& toType,
       bool nullOnFailure) {
-    std::vector<std::shared_ptr<const core::ITypedExpr>> inputs = {input};
+    std::vector<core::TypedExprPtr> inputs = {input};
     return std::make_shared<core::CastTypedExpr>(toType, inputs, nullOnFailure);
   }
 
@@ -101,7 +102,7 @@ class CastExprTest : public functions::test::FunctionBaseTest {
       const VectorPtr& expected,
       bool nullOnFailure = false) {
     auto rowVector = makeRowVector({data});
-    auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+    auto rowType = asRowType(rowVector->type());
     auto castExpr = makeCastExpr(
         makeTypedExpr(fromExpression, rowType),
         expected->type(),
@@ -113,7 +114,7 @@ class CastExprTest : public functions::test::FunctionBaseTest {
     std::vector<VectorPtr> result(1);
     {
       exec::EvalCtx evalCtx(&execCtx_, &exprSet, rowVector.get());
-      exprSet.eval(rows, &evalCtx, &result);
+      exprSet.eval(rows, evalCtx, result);
 
       assertEqualVectors(expected, result[0]);
     }
@@ -125,7 +126,7 @@ class CastExprTest : public functions::test::FunctionBaseTest {
       auto constantData = BaseVector::wrapInConstant(size, index, data);
       auto constantRow = makeRowVector({constantData});
       exec::EvalCtx evalCtx(&execCtx_, &exprSet, constantRow.get());
-      exprSet.eval(rows, &evalCtx, &result);
+      exprSet.eval(rows, evalCtx, result);
 
       assertEqualVectors(
           BaseVector::wrapInConstant(size, index, expected), result[0]);
@@ -143,7 +144,7 @@ class CastExprTest : public functions::test::FunctionBaseTest {
           nullOnFailure);
       exec::ExprSet dictionaryExprSet({dictionaryCastExpr}, &execCtx_);
       exec::EvalCtx evalCtx(&execCtx_, &dictionaryExprSet, rowVector.get());
-      dictionaryExprSet.eval(rows, &evalCtx, &result);
+      dictionaryExprSet.eval(rows, evalCtx, result);
 
       auto indices = ::makeIndicesInReverse(size, pool());
       assertEqualVectors(wrapInDictionary(indices, size, expected), result[0]);
@@ -655,4 +656,122 @@ TEST_F(CastExprTest, toString) {
       &execCtx_);
   ASSERT_EQ("cast((a) as BIGINT)", exprSet.exprs()[0]->toString());
   ASSERT_EQ("cast((a) as ARRAY<VARCHAR>)", exprSet.exprs()[1]->toString());
+}
+
+TEST_F(CastExprTest, decimalToDecimal) {
+  // short to short, scale up.
+  auto shortFlat =
+      makeShortDecimalFlatVector({-3, -2, -1, 0, 55, 69, 72}, DECIMAL(2, 2));
+  testComplexCast(
+      "c0",
+      shortFlat,
+      makeShortDecimalFlatVector(
+          {-300, -200, -100, 0, 5'500, 6'900, 7'200}, DECIMAL(4, 4)));
+
+  // short to short, scale down.
+  testComplexCast(
+      "c0",
+      shortFlat,
+      makeShortDecimalFlatVector({0, 0, 0, 0, 6, 7, 7}, DECIMAL(4, 1)));
+
+  // long to short, scale up.
+  auto longFlat =
+      makeLongDecimalFlatVector({-201, -109, 0, 105, 208}, DECIMAL(20, 2));
+  testComplexCast(
+      "c0",
+      longFlat,
+      makeShortDecimalFlatVector(
+          {-201'000, -109'000, 0, 105'000, 208'000}, DECIMAL(10, 5)));
+
+  // long to short, scale down.
+  testComplexCast(
+      "c0",
+      longFlat,
+      makeShortDecimalFlatVector({-20, -11, 0, 11, 21}, DECIMAL(10, 1)));
+
+  // long to long, scale up.
+  testComplexCast(
+      "c0",
+      longFlat,
+      makeLongDecimalFlatVector(
+          {-20'100'000'000, -10'900'000'000, 0, 10'500'000'000, 20'800'000'000},
+          DECIMAL(20, 10)));
+
+  // long to long, scale down.
+  testComplexCast(
+      "c0",
+      longFlat,
+      makeLongDecimalFlatVector({-20, -11, 0, 11, 21}, DECIMAL(20, 1)));
+
+  // short to long, scale up.
+  testComplexCast(
+      "c0",
+      shortFlat,
+      makeLongDecimalFlatVector(
+          {-3'000'000'000,
+           -2'000'000'000,
+           -1'000'000'000,
+           0,
+           55'000'000'000,
+           69'000'000'000,
+           72'000'000'000},
+          DECIMAL(20, 11)));
+
+  // short to long, scale down.
+  testComplexCast(
+      "c0",
+      makeShortDecimalFlatVector(
+          {-20'500, -190, 12'345, 19'999}, DECIMAL(6, 4)),
+      makeLongDecimalFlatVector({-21, 0, 12, 20}, DECIMAL(20, 1)));
+
+  // NULLs and overflow.
+  longFlat = makeNullableLongDecimalFlatVector(
+      {-20'000, -1'000'000, 10'000, std::nullopt}, DECIMAL(20, 3));
+  auto expectedShort = makeNullableShortDecimalFlatVector(
+      {-200'000, std::nullopt, 100'000, std::nullopt}, DECIMAL(6, 4));
+
+  // Throws exception if CAST fails.
+  VELOX_ASSERT_THROW(
+      testComplexCast("c0", longFlat, expectedShort),
+      "Cannot cast DECIMAL '-1000.000' to DECIMAL(6,4)");
+
+  // nullOnFailure is true.
+  testComplexCast("c0", longFlat, expectedShort, true);
+
+  // long to short, big numbers.
+  testComplexCast(
+      "c0",
+      makeNullableLongDecimalFlatVector(
+          {buildInt128(-2, 200),
+           buildInt128(-1, 300),
+           buildInt128(0, 400),
+           buildInt128(1, 1),
+           buildInt128(10, 100),
+           std::nullopt},
+          DECIMAL(23, 8)),
+      makeNullableShortDecimalFlatVector(
+          {-368934881474,
+           -184467440737,
+           0,
+           184467440737,
+           std::nullopt,
+           std::nullopt},
+          DECIMAL(12, 0)),
+      true);
+
+  // Overflow case.
+  VELOX_ASSERT_THROW(
+      testComplexCast(
+          "c0",
+          makeNullableLongDecimalFlatVector(
+              {UnscaledLongDecimal::max().unscaledValue()}, DECIMAL(38, 0)),
+          makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
+      "Cannot cast DECIMAL '99999999999999999999999999999999999999' to DECIMAL(38,1)");
+  VELOX_ASSERT_THROW(
+      testComplexCast(
+          "c0",
+          makeNullableLongDecimalFlatVector(
+              {UnscaledLongDecimal::min().unscaledValue()}, DECIMAL(38, 0)),
+          makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
+      "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38,1)");
 }

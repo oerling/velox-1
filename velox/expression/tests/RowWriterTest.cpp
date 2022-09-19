@@ -23,7 +23,7 @@
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/expression/VectorWriters.h"
 #include "velox/functions/Udf.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/type/StringView.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/Type.h"
@@ -53,7 +53,7 @@ class RowWriterTest : public functions::test::FunctionBaseTest {
   VectorPtr prepareResult(const TypePtr& rowType, vector_size_t size = 1) {
     VectorPtr result;
     BaseVector::ensureWritable(
-        SelectivityVector(size), rowType, this->execCtx_.pool(), &result);
+        SelectivityVector(size), rowType, this->execCtx_.pool(), result);
     return result;
   }
 
@@ -503,7 +503,7 @@ TEST_F(RowWriterTest, finishPostSize) {
   auto result = prepareResult(CppToType<out_t>::create());
 
   exec::VectorWriter<out_t> vectorWriter;
-  vectorWriter.init(*result.get()->as<RowVector>());
+  vectorWriter.init(*result->as<RowVector>());
   vectorWriter.setOffset(0);
 
   auto& rowWriter = vectorWriter.current();

@@ -160,4 +160,30 @@ std::string MemoryUsageTracker::toString() const {
   return out.str();
 }
 
+
+SimpleMemoryTracker::SimpleMemoryTracker(const MemoryUsageConfig& config)
+    : MemoryUsageTracker{nullptr, UsageType::kUserMem, config},
+      userMemoryQuota_{config.maxUserMemory.value_or(kMaxMemory)} {}
+
+// Simple memory tracker wants to be accurate for its memory accounting, so
+// it ignores mock updates.
+void SimpleMemoryTracker::update(int64_t size, bool mock) {
+  if (mock) {
+    return;
+  }
+  int64_t previousUsage =
+      totalUserMemory_.fetch_add(size, std::memory_order_relaxed);
+  if (previousUsage + size > userMemoryQuota_) {
+    VELOX_MEM_CAP_EXCEEDED(userMemoryQuota_);
+  }
+}
+
+int64_t SimpleMemoryTracker::getCurrentUserBytes() const {
+  return totalUserMemory_.load(std::memory_order_relaxed);
+}
+
+/* static */ std::shared_ptr<SimpleMemoryTracker> SimpleMemoryTracker::create(
+    const MemoryUsageConfig& config) {
+  return std::make_shared<SimpleMemoryTracker>(config);
+}
 } // namespace facebook::velox::memory

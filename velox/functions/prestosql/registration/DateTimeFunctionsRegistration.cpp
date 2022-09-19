@@ -90,6 +90,8 @@ void registerSimpleFunctions() {
       {"date_diff"});
   registerFunction<DateFormatFunction, Varchar, Timestamp, Varchar>(
       {"date_format"});
+  registerFunction<DateFormatFunction, Varchar, TimestampWithTimezone, Varchar>(
+      {"date_format"});
   registerFunction<FormatDateTimeFunction, Varchar, Timestamp, Varchar>(
       {"format_datetime"});
   registerFunction<
@@ -97,7 +99,7 @@ void registerSimpleFunctions() {
       TimestampWithTimezone,
       Varchar,
       Varchar>({"parse_datetime"});
-  registerFunction<DateParseFunction, TimestampWithTimezone, Varchar, Varchar>(
+  registerFunction<DateParseFunction, Timestamp, Varchar, Varchar>(
       {"date_parse"});
 }
 } // namespace

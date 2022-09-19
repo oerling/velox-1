@@ -16,11 +16,12 @@
 #include "velox/serializers/PrestoSerializer.h"
 #include <folly/Random.h>
 #include <gtest/gtest.h>
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -45,7 +46,10 @@ class PrestoSerializerTest : public ::testing::Test {
     serde_->estimateSerializedSize(rowVector, ranges, rawRowSizes.data());
   }
 
-  void serialize(RowVectorPtr rowVector, std::ostream* output) {
+  void serialize(
+      RowVectorPtr rowVector,
+      std::ostream* output,
+      const VectorSerde::Options* serdeOptions) {
     auto numRows = rowVector->size();
 
     std::vector<IndexRange> rows(numRows);
@@ -59,7 +63,8 @@ class PrestoSerializerTest : public ::testing::Test {
     auto arena =
         std::make_unique<StreamArena>(memory::MappedMemory::getInstance());
     auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
-    auto serializer = serde_->createSerializer(rowType, numRows, arena.get());
+    auto serializer =
+        serde_->createSerializer(rowType, numRows, arena.get(), serdeOptions);
 
     serializer->append(rowVector, folly::Range(rows.data(), numRows));
     facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
@@ -79,11 +84,13 @@ class PrestoSerializerTest : public ::testing::Test {
 
   RowVectorPtr deserialize(
       std::shared_ptr<const RowType> rowType,
-      const std::string& input) {
+      const std::string& input,
+      const VectorSerde::Options* serdeOptions) {
     auto byteStream = toByteStream(input);
 
     RowVectorPtr result;
-    serde_->deserialize(byteStream.get(), pool_.get(), rowType, &result);
+    serde_->deserialize(
+        byteStream.get(), pool_.get(), rowType, &result, serdeOptions);
     return result;
   }
 
@@ -98,13 +105,15 @@ class PrestoSerializerTest : public ::testing::Test {
     return vectorMaker_->rowVector(childVectors);
   }
 
-  void testRoundTrip(VectorPtr vector) {
+  void testRoundTrip(
+      VectorPtr vector,
+      const VectorSerde::Options* serdeOptions = nullptr) {
     auto rowVector = vectorMaker_->rowVector({vector});
     std::ostringstream out;
-    serialize(rowVector, &out);
+    serialize(rowVector, &out, serdeOptions);
 
     auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
-    auto deserialized = deserialize(rowType, out.str());
+    auto deserialized = deserialize(rowType, out.str(), serdeOptions);
     assertEqualVectors(deserialized, rowVector);
   }
 
@@ -116,13 +125,7 @@ class PrestoSerializerTest : public ::testing::Test {
 TEST_F(PrestoSerializerTest, basic) {
   vector_size_t numRows = 1'000;
   auto rowVector = makeTestVector(numRows);
-
-  std::ostringstream out;
-  serialize(rowVector, &out);
-
-  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
-  auto deserialized = deserialize(rowType, out.str());
-  assertEqualVectors(deserialized, rowVector);
+  testRoundTrip(rowVector);
 }
 
 /// Test serialization of a dictionary vector that adds nulls to the base
@@ -155,10 +158,10 @@ TEST_F(PrestoSerializerTest, emptyPage) {
   auto rowVector = vectorMaker_->rowVector(ROW({"a"}, {BIGINT()}), 0);
 
   std::ostringstream out;
-  serialize(rowVector, &out);
+  serialize(rowVector, &out, nullptr);
 
   auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
-  auto deserialized = deserialize(rowType, out.str());
+  auto deserialized = deserialize(rowType, out.str(), nullptr);
   assertEqualVectors(deserialized, rowVector);
 }
 
@@ -235,15 +238,15 @@ TEST_F(PrestoSerializerTest, multiPage) {
 
   // page 1
   auto a = makeTestVector(1'234);
-  serialize(a, &out);
+  serialize(a, &out, nullptr);
 
   // page 2
   auto b = makeTestVector(538);
-  serialize(b, &out);
+  serialize(b, &out, nullptr);
 
   // page 3
   auto c = makeTestVector(2'048);
-  serialize(c, &out);
+  serialize(c, &out, nullptr);
 
   auto bytes = out.str();
 
@@ -251,15 +254,68 @@ TEST_F(PrestoSerializerTest, multiPage) {
   auto byteStream = toByteStream(bytes);
 
   RowVectorPtr deserialized;
-  serde_->deserialize(byteStream.get(), pool_.get(), rowType, &deserialized);
+  serde_->deserialize(
+      byteStream.get(), pool_.get(), rowType, &deserialized, nullptr);
   ASSERT_FALSE(byteStream->atEnd());
   assertEqualVectors(deserialized, a);
 
-  serde_->deserialize(byteStream.get(), pool_.get(), rowType, &deserialized);
+  serde_->deserialize(
+      byteStream.get(), pool_.get(), rowType, &deserialized, nullptr);
   assertEqualVectors(deserialized, b);
   ASSERT_FALSE(byteStream->atEnd());
 
-  serde_->deserialize(byteStream.get(), pool_.get(), rowType, &deserialized);
+  serde_->deserialize(
+      byteStream.get(), pool_.get(), rowType, &deserialized, nullptr);
   assertEqualVectors(deserialized, c);
   ASSERT_TRUE(byteStream->atEnd());
+}
+
+TEST_F(PrestoSerializerTest, timestampWithNanosecondPrecision) {
+  // Verify that nanosecond precision is preserved when the right options are
+  // passed to the serde.
+  const serializer::presto::PrestoVectorSerde::PrestoOptions
+      kUseLosslessTimestampOptions(true);
+  auto timestamp = vectorMaker_->flatVector<Timestamp>(
+      {Timestamp{0, 0},
+       Timestamp{12, 0},
+       Timestamp{0, 17'123'456},
+       Timestamp{1, 17'123'456},
+       Timestamp{-1, 17'123'456}});
+  testRoundTrip(timestamp, &kUseLosslessTimestampOptions);
+
+  // Verify that precision is lost when no option is passed to the serde.
+  auto timestampMillis = vectorMaker_->flatVector<Timestamp>(
+      {Timestamp{0, 0},
+       Timestamp{12, 0},
+       Timestamp{0, 17'000'000},
+       Timestamp{1, 17'000'000},
+       Timestamp{-1, 17'000'000}});
+  auto inputRowVector = vectorMaker_->rowVector({timestamp});
+  auto expectedOutputWithLostPrecision =
+      vectorMaker_->rowVector({timestampMillis});
+  std::ostringstream out;
+  serialize(inputRowVector, &out, {});
+  auto rowType =
+      std::dynamic_pointer_cast<const RowType>(inputRowVector->type());
+  auto deserialized = deserialize(rowType, out.str(), {});
+  assertEqualVectors(deserialized, expectedOutputWithLostPrecision);
+}
+
+TEST_F(PrestoSerializerTest, unscaledLongDecimal) {
+  std::vector<int128_t> decimalValues(102);
+  decimalValues[0] = UnscaledLongDecimal::min().unscaledValue();
+  for (int row = 1; row < 101; row++) {
+    decimalValues[row] = row - 50;
+  }
+  decimalValues[101] = UnscaledLongDecimal::max().unscaledValue();
+  auto vector =
+      vectorMaker_->longDecimalFlatVector(decimalValues, DECIMAL(20, 5));
+
+  testRoundTrip(vector);
+
+  // Add some nulls.
+  for (auto i = 0; i < 102; i += 7) {
+    vector->setNull(i, true);
+  }
+  testRoundTrip(vector);
 }

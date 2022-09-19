@@ -59,6 +59,10 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   return formatData_->filterRowGroups(*scanSpec_, rowGroupSize, context);
 }
 
+bool SelectiveColumnReader::rowGroupMatches(uint32_t rowGroupId) const {
+  return formatData_->rowGroupMatches(rowGroupId, scanSpec_->filter());
+}
+
 void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
   if (offset == readOffset_) {
     return;
@@ -163,6 +167,9 @@ void SelectiveColumnReader::getIntValues(
           default:
             VELOX_FAIL("Unsupported value size");
         }
+        break;
+      case TypeKind::DATE:
+        getFlatValues<Date, Date>(rows, result);
         break;
       case TypeKind::BIGINT:
         switch (valueSize_) {

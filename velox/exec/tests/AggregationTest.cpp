@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/file/FileSystems.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/HashAggregation.h"
@@ -23,176 +24,17 @@
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/SumNonPODAggregate.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/FunctionSignature.h"
 
 using facebook::velox::core::QueryConfig;
 using facebook::velox::exec::Aggregate;
 using facebook::velox::test::BatchMaker;
+using namespace facebook::velox::common::testutil;
 
 namespace facebook::velox::exec::test {
 namespace {
-
-struct NonPODInt64 {
-  static int constructed;
-  static int destructed;
-
-  static void clearStats() {
-    constructed = 0;
-    destructed = 0;
-  }
-
-  int64_t value;
-
-  NonPODInt64(int64_t value_ = 0) : value(value_) {
-    ++constructed;
-  }
-
-  ~NonPODInt64() {
-    value = -1;
-    ++destructed;
-  }
-
-  // No move/copy constructor and assignment operator are used in this case.
-  NonPODInt64(const NonPODInt64& other) = delete;
-  NonPODInt64(NonPODInt64&& other) = delete;
-  NonPODInt64& operator=(const NonPODInt64&) = delete;
-  NonPODInt64& operator=(NonPODInt64&&) = delete;
-};
-
-int NonPODInt64::constructed = 0;
-int NonPODInt64::destructed = 0;
-
-// SumNonPODAggregate uses NonPODInt64 as accumulator which has external memory
-// NonPODInt64::constructed and NonPODInt64::destructed. By asserting their
-// equality, we make sure Velox calls constructor/destructor properly.
-class SumNonPODAggregate : public Aggregate {
- public:
-  explicit SumNonPODAggregate(velox::TypePtr resultType)
-      : Aggregate(resultType) {}
-
-  int32_t accumulatorFixedWidthSize() const override {
-    return sizeof(NonPODInt64);
-  }
-
-  bool accumulatorUsesExternalMemory() const override {
-    return true;
-  }
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const velox::vector_size_t*> indices) override {
-    for (auto i : indices) {
-      new (groups[i] + offset_) NonPODInt64(0);
-    }
-  }
-
-  void destroy(folly::Range<char**> groups) override {
-    for (auto group : groups) {
-      value<NonPODInt64>(group)->~NonPODInt64();
-    }
-  }
-
-  void extractAccumulators(
-      char** groups,
-      int32_t numGroups,
-      velox::VectorPtr* result) override {
-    auto vector = (*result)->as<FlatVector<int64_t>>();
-    vector->resize(numGroups);
-    int64_t* rawValues = vector->mutableRawValues();
-    uint64_t* rawNulls = getRawNulls(vector);
-    for (int32_t i = 0; i < numGroups; ++i) {
-      char* group = groups[i];
-      if (isNull(group)) {
-        vector->setNull(i, true);
-      } else {
-        clearNull(rawNulls, i);
-        rawValues[i] = value<NonPODInt64>(group)->value;
-      }
-    }
-  }
-
-  void extractValues(char** groups, int32_t numGroups, velox::VectorPtr* result)
-      override {
-    extractAccumulators(groups, numGroups, result);
-  }
-
-  void addIntermediateResults(
-      char** groups,
-      const velox::SelectivityVector& rows,
-      const std::vector<velox::VectorPtr>& args,
-      bool /*mayPushdown*/) override {
-    DecodedVector decoded(*args[0], rows);
-
-    rows.applyToSelected([&](vector_size_t i) {
-      if (decoded.isNullAt(i)) {
-        return;
-      }
-      clearNull(groups[i]);
-      value<NonPODInt64>(groups[i])->value += decoded.valueAt<int64_t>(i);
-    });
-  }
-
-  void addRawInput(
-      char** groups,
-      const velox::SelectivityVector& rows,
-      const std::vector<velox::VectorPtr>& args,
-      bool mayPushdown) override {
-    addIntermediateResults(groups, rows, args, mayPushdown);
-  }
-
-  void addSingleGroupIntermediateResults(
-      char* group,
-      const velox::SelectivityVector& rows,
-      const std::vector<velox::VectorPtr>& args,
-      bool /*mayPushdown*/) override {
-    DecodedVector decoded(*args[0], rows);
-
-    rows.applyToSelected([&](vector_size_t i) {
-      if (decoded.isNullAt(i)) {
-        return;
-      }
-      clearNull(group);
-      value<NonPODInt64>(group)->value += decoded.valueAt<int64_t>(i);
-    });
-  }
-
-  void addSingleGroupRawInput(
-      char* group,
-      const velox::SelectivityVector& rows,
-      const std::vector<velox::VectorPtr>& args,
-      bool mayPushdown) override {
-    addSingleGroupIntermediateResults(group, rows, args, mayPushdown);
-  }
-
-  void finalize(char** /*groups*/, int32_t /*numGroups*/) override {}
-};
-
-bool registerSumNonPODAggregate(const std::string& name) {
-  std::vector<std::shared_ptr<velox::exec::AggregateFunctionSignature>>
-      signatures{
-          velox::exec::AggregateFunctionSignatureBuilder()
-              .returnType("bigint")
-              .intermediateType("bigint")
-              .argumentType("bigint")
-              .build(),
-      };
-
-  velox::exec::registerAggregateFunction(
-      name,
-      std::move(signatures),
-      [name](
-          velox::core::AggregationNode::Step /*step*/,
-          const std::vector<velox::TypePtr>& /*argTypes*/,
-          const velox::TypePtr& /*resultType*/)
-          -> std::unique_ptr<velox::exec::Aggregate> {
-        return std::make_unique<SumNonPODAggregate>(velox::BIGINT());
-      });
-  return true;
-}
-
-static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
-    registerSumNonPODAggregate("sumnonpod");
 
 /// No-op implementation of Aggregate. Provides public access to following
 /// base class methods: setNull, clearNull and isNull.
@@ -259,9 +101,17 @@ class AggregateFunc : public Aggregate {
 
 class AggregationTest : public OperatorTestBase {
  protected:
+  static void SetUpTestCase() {
+    OperatorTestBase::SetUpTestCase();
+    TestValue::enable();
+  }
+
   void SetUp() override {
     filesystems::registerLocalFileSystem();
     mappedMemory_ = memory::MappedMemory::getInstance();
+    if (!isRegisteredVectorSerde()) {
+      this->registerVectorSerde();
+    }
   }
 
   std::vector<RowVectorPtr>
@@ -551,7 +401,8 @@ TEST_F(AggregationTest, global) {
                      "max(c2)",
                      "max(c3)",
                      "max(c4)",
-                     "max(c5)"},
+                     "max(c5)",
+                     "sumnonpod(1)"},
                     {},
                     core::AggregationNode::Step::kPartial,
                     false)
@@ -561,7 +412,9 @@ TEST_F(AggregationTest, global) {
       op,
       "SELECT sum(15), sum(c1), sum(c2), sum(c4), sum(c5), "
       "min(15), min(c1), min(c2), min(c3), min(c4), min(c5), "
-      "max(15), max(c1), max(c2), max(c3), max(c4), max(c5) FROM tmp");
+      "max(15), max(c1), max(c2), max(c3), max(c4), max(c5), sum(1) FROM tmp");
+
+  EXPECT_EQ(NonPODInt64::constructed, NonPODInt64::destructed);
 }
 
 TEST_F(AggregationTest, singleBigintKey) {
@@ -1040,8 +893,10 @@ TEST_F(AggregationTest, spillWithEmptyPartition) {
   constexpr int64_t kMaxBytes = 20LL << 20; // 20 MB
   rowType_ = ROW({"c0", "a"}, {INTEGER(), VARCHAR()});
   // Used to calculate the aggregation spilling partition number.
+  const int kPartitionStartBit = 29;
   const int kPartitionsBits = 2;
-  const HashBitRange hashBits{29, 31};
+  const HashBitRange hashBits{
+      kPartitionStartBit, kPartitionStartBit + kPartitionsBits};
   const int kNumPartitions = hashBits.numPartitions();
   std::vector<uint64_t> hashes(1);
 
@@ -1113,6 +968,17 @@ TEST_F(AggregationTest, spillWithEmptyPartition) {
     queryCtx->pool()->setMemoryUsageTracker(
         velox::memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
 
+#ifndef NDEBUG
+    SCOPED_TESTVALUE_SET(
+        "facebook::velox::exec::test::TestObject::set",
+        std::function<void(const HashBitRange*)>(
+            ([&](const HashBitRange* spillerBitRange) {
+              ASSERT_EQ(kPartitionStartBit, spillerBitRange->begin());
+              ASSERT_EQ(
+                  kPartitionStartBit + kPartitionsBits, spillerBitRange->end());
+            })));
+#endif
+
     auto task =
         AssertQueryBuilder(PlanBuilder()
                                .values(batches)
@@ -1123,6 +989,9 @@ TEST_F(AggregationTest, spillWithEmptyPartition) {
             .config(
                 QueryConfig::kSpillPartitionBits,
                 std::to_string(kPartitionsBits))
+            .config(
+                QueryConfig::kSpillStartPartitionBit,
+                std::to_string(kPartitionStartBit))
             .assertResults(results);
 
     auto stats = task->taskStats().pipelineStats;

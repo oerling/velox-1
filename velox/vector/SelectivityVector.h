@@ -252,12 +252,14 @@ class SelectivityVector {
         nulls->asMutable<uint64_t>(), bits_.data(), begin_, end_);
   }
 
-  /**
-   * Merges the valid vector of another SelectivityVector by or'ing
-   * them together. This is used to support memoization where a state
-   * may acquire new values over time.
-   */
+  /// Merges the valid vector of another SelectivityVector by or'ing
+  /// them together. This is used to support memoization where a state
+  /// may acquire new values over time. Grows 'this' if size of 'other' exceeds
+  /// this size.
   void select(const SelectivityVector& other) {
+    if (size_ < other.size()) {
+      resize(other.size(), false);
+    }
     bits::orBits(
         bits_.data(), other.bits_.data(), 0, std::min(size_, other.size()));
     updateBounds();
@@ -300,7 +302,12 @@ class SelectivityVector {
    * Iterate and count the number of selected values in this SelectivityVector
    */
   vector_size_t countSelected() const {
-    return bits::countBits(bits_.data(), begin_, end_);
+    if (allSelected_.has_value() && *allSelected_) {
+      return size();
+    }
+    auto count = bits::countBits(bits_.data(), begin_, end_);
+    allSelected_ = count == size();
+    return count;
   }
 
   vector_size_t size() const {

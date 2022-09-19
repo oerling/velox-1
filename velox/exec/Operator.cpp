@@ -31,8 +31,7 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
       : execCtx_(execCtx) {}
 
   std::unique_ptr<exec::ExprSet> compile(
-      const std::shared_ptr<const core::ITypedExpr>& expression)
-      const override {
+      const core::TypedExprPtr& expression) const override {
     auto expressions = {expression};
     return std::make_unique<exec::ExprSet>(std::move(expressions), execCtx_);
   }
@@ -45,7 +44,7 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
     exec::EvalCtx context(execCtx_, exprSet, input.get());
 
     std::vector<VectorPtr> results = {*result};
-    exprSet->eval(0, 1, true, rows, &context, &results);
+    exprSet->eval(0, 1, true, rows, context, results);
 
     *result = results[0];
   }
@@ -84,7 +83,7 @@ OperatorCtx::createConnectorQueryCtx(
 
 Operator::Operator(
     DriverCtx* driverCtx,
-    std::shared_ptr<const RowType> outputType,
+    RowTypePtr outputType,
     int32_t operatorId,
     std::string planNodeId,
     std::string operatorType)
@@ -108,6 +107,17 @@ Operator::Operator(
         });
   }
 }
+
+Operator::Operator(
+    int32_t operatorId,
+    int32_t pipelineId,
+    std::string planNodeId,
+    std::string operatorType)
+    : stats_(
+          operatorId,
+          pipelineId,
+          std::move(planNodeId),
+          std::move(operatorType)) {}
 
 std::vector<std::unique_ptr<Operator::PlanNodeTranslator>>&
 Operator::translators() {
@@ -250,7 +260,7 @@ std::string Operator::toString() const {
 
 std::vector<column_index_t> toChannels(
     const RowTypePtr& rowType,
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& exprs) {
+    const std::vector<core::TypedExprPtr>& exprs) {
   std::vector<column_index_t> channels;
   channels.reserve(exprs.size());
   for (const auto& expr : exprs) {
@@ -359,49 +369,6 @@ void OperatorStats::clear() {
   memoryStats.clear();
 
   runtimeStats.clear();
-}
-
-namespace {
-bool tryReserveAndRun(
-    const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
-    int64_t reservationSize,
-    std::function<void(void)> runFunc) {
-  try {
-    tracker->reserve(reservationSize);
-    // Successfully reserved.
-    runFunc();
-    return true;
-  } catch (const VeloxRuntimeError& e) {
-    if (e.errorCode() != ::facebook::velox::error_code::kMemCapExceeded) {
-      // If it is not MemCapExceeded exception, rethrow original exception.
-      throw;
-    }
-  }
-  return false;
-}
-} // namespace
-
-bool Operator::reserveAndRun(
-    const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
-    int64_t reservationSize,
-    std::function<void(int64_t)> spillFunc,
-    std::function<void(void)> runFunc) {
-  if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
-    return true;
-  }
-
-  // If spill func is specified, try spilling locally first.
-  if (spillFunc) {
-    // Spill any recoverable memory locally with
-    // the supplied spill function.
-    spillFunc(reservationSize);
-
-    // Try reserving again and run.
-    if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 } // namespace facebook::velox::exec

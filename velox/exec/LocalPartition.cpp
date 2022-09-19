@@ -41,19 +41,18 @@ bool LocalExchangeMemoryManager::increaseMemoryUsage(
   return false;
 }
 
-void LocalExchangeMemoryManager::decreaseMemoryUsage(int64_t removed) {
+std::vector<ContinuePromise> LocalExchangeMemoryManager::decreaseMemoryUsage(
+    int64_t removed) {
   std::vector<ContinuePromise> promises;
   {
     std::lock_guard<std::mutex> l(mutex_);
     bufferedBytes_ -= removed;
 
-    if (bufferedBytes_ < maxBufferSize_ &&
-        bufferedBytes_ + removed >= maxBufferSize_) {
+    if (bufferedBytes_ < maxBufferSize_) {
       promises = std::move(promises_);
     }
   }
-
-  notify(promises);
+  return promises;
 }
 
 void LocalExchangeQueue::addProducer() {
@@ -133,6 +132,7 @@ BlockingReason LocalExchangeQueue::next(
     memory::MemoryPool* pool,
     RowVectorPtr* data) {
   std::vector<ContinuePromise> producerPromises;
+  std::vector<ContinuePromise> memoryPromises;
   auto blockingReason = queue_.withWLock([&](auto& queue) {
     *data = nullptr;
     if (queue.empty()) {
@@ -149,7 +149,8 @@ BlockingReason LocalExchangeQueue::next(
     *data = queue.front();
     queue.pop();
 
-    memoryManager_->decreaseMemoryUsage((*data)->retainedSize());
+    memoryPromises =
+        memoryManager_->decreaseMemoryUsage((*data)->retainedSize());
 
     if (noMoreProducers_ && pendingProducers_ == 0 && queue.empty()) {
       producerPromises = std::move(producerPromises_);
@@ -157,6 +158,7 @@ BlockingReason LocalExchangeQueue::next(
 
     return BlockingReason::kNotBlocked;
   });
+  notify(memoryPromises);
   notify(producerPromises);
   return blockingReason;
 }
@@ -194,6 +196,7 @@ bool LocalExchangeQueue::isFinished() {
 void LocalExchangeQueue::close() {
   std::vector<ContinuePromise> producerPromises;
   std::vector<ContinuePromise> consumerPromises;
+  std::vector<ContinuePromise> memoryPromises;
   queue_.withWLock([&](auto& queue) {
     uint64_t freedBytes = 0;
     while (!queue.empty()) {
@@ -202,7 +205,7 @@ void LocalExchangeQueue::close() {
     }
 
     if (freedBytes) {
-      memoryManager_->decreaseMemoryUsage(freedBytes);
+      memoryPromises = memoryManager_->decreaseMemoryUsage(freedBytes);
     }
 
     producerPromises = std::move(producerPromises_);
@@ -211,6 +214,7 @@ void LocalExchangeQueue::close() {
   });
   notify(producerPromises);
   notify(consumerPromises);
+  notify(memoryPromises);
 }
 
 LocalExchange::LocalExchange(

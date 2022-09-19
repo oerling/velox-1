@@ -17,6 +17,7 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
+#include "velox/common/base/Exceptions.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/ConstantExpr.h"
@@ -25,6 +26,7 @@
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/VarSetter.h"
 #include "velox/expression/VectorFunction.h"
+#include "velox/vector/SelectivityVector.h"
 
 DEFINE_bool(
     force_eval_simplified,
@@ -104,7 +106,6 @@ bool hasConditionals(Expr* expr) {
 
   return false;
 }
-
 } // namespace
 
 Expr::Expr(
@@ -280,7 +281,7 @@ void Expr::evalSimplifiedImpl(
     auto& inputValue = inputValues_[i];
     inputs_[i]->evalSimplified(remainingRows, context, inputValue);
 
-    BaseVector::flattenVector(&inputValue, rows.end());
+    BaseVector::flattenVector(inputValue, rows.end());
     VELOX_CHECK_EQ(VectorEncoding::Simple::FLAT, inputValue->encoding());
 
     // If the resulting vector has nulls, merge them into our current remaining
@@ -303,8 +304,7 @@ void Expr::evalSimplifiedImpl(
   }
 
   // Apply the actual function.
-  vectorFunction_->apply(
-      remainingRows, inputValues_, type(), &context, &result);
+  vectorFunction_->apply(remainingRows, inputValues_, type(), context, result);
 
   // Make sure the returned vector has its null bitmap properly set.
   addNulls(rows, remainingRows.asRange().bits(), context, result);
@@ -431,17 +431,29 @@ bool Expr::checkGetSharedSubexprValues(
   if (!rows.isSubset(*sharedSubexprRows_)) {
     LocalSelectivityVector missingRowsHolder(context, rows);
     auto missingRows = missingRowsHolder.get();
-    assert(missingRows); // lint
+    VELOX_DCHECK_NOT_NULL(missingRows);
     missingRows->deselect(*sharedSubexprRows_);
 
-    // Fix finalSelection at "rows" if missingRows is a strict subset to avoid
-    // losing values outside of missingRows.
-    bool updateFinalSelection = context.isFinalSelection() &&
-        (missingRows->countSelected() < rows.countSelected());
-    VarSetter finalSelectionOr(
-        context.mutableFinalSelection(), &rows, updateFinalSelection);
-    VarSetter isFinalSelectionOr(
-        context.mutableIsFinalSelection(), false, updateFinalSelection);
+    // Add the missingRows to sharedSubexprRows_ that will eventually be
+    // evaluated and added to sharedSubexprValues_.
+    sharedSubexprRows_->select(*missingRows);
+
+    // Fix finalSelection to avoid losing values outside missingRows.
+    LocalSelectivityVector newFinalSelectionHolder(
+        context, *sharedSubexprRows_);
+    auto newFinalSelection = newFinalSelectionHolder.get();
+    VELOX_DCHECK_NOT_NULL(newFinalSelection);
+    if (!context.isFinalSelection()) {
+      // In case currently set finalSelection does not include all rows in
+      // sharedSubexprRows_.
+      VELOX_DCHECK_NOT_NULL(context.finalSelection());
+      newFinalSelection->select(*context.finalSelection());
+    }
+    VarSetter finalSelectionPreservePrecomputedValues(
+        context.mutableFinalSelection(),
+        const_cast<const SelectivityVector*>(newFinalSelection));
+    VarSetter isFinalSelectionPreservePrecomputedValues(
+        context.mutableIsFinalSelection(), false, context.isFinalSelection());
 
     evalEncodings(*missingRows, context, sharedSubexprValues_);
   }
@@ -684,31 +696,39 @@ void Expr::evalEncodings(
     }
 
     if (hasNonFlat) {
-      LocalSelectivityVector newRowsHolder(context);
-      LocalSelectivityVector finalRowsHolder(context);
-      ContextSaver saveContext;
-      LocalDecodedVector decodedHolder(context);
-      auto peelEncodingsResult = peelEncodings(
-          context,
-          saveContext,
-          rows,
-          decodedHolder,
-          newRowsHolder,
-          finalRowsHolder);
-      auto* newRows = peelEncodingsResult.newRows;
-      if (newRows) {
-        VectorPtr peeledResult;
-        // peelEncodings() can potentially produce an empty selectivity vector
-        // if all selected values we are waiting for are nulls. So, here we
-        // check for such a case.
-        if (newRows->hasSelections()) {
-          if (peelEncodingsResult.mayCache) {
-            evalWithMemo(*newRows, context, peeledResult);
-          } else {
-            evalWithNulls(*newRows, context, peeledResult);
+      VectorPtr wrappedResult;
+      // Attempt peeling and bound the scope of the context used for it.
+      {
+        ContextSaver saveContext;
+        LocalSelectivityVector newRowsHolder(context);
+        LocalSelectivityVector finalRowsHolder(context);
+        LocalDecodedVector decodedHolder(context);
+        auto peelEncodingsResult = peelEncodings(
+            context,
+            saveContext,
+            rows,
+            decodedHolder,
+            newRowsHolder,
+            finalRowsHolder);
+        auto* newRows = peelEncodingsResult.newRows;
+        if (newRows) {
+          VectorPtr peeledResult;
+          // peelEncodings() can potentially produce an empty selectivity vector
+          // if all selected values we are waiting for are nulls. So, here we
+          // check for such a case.
+          if (newRows->hasSelections()) {
+            if (peelEncodingsResult.mayCache) {
+              evalWithMemo(*newRows, context, peeledResult);
+            } else {
+              evalWithNulls(*newRows, context, peeledResult);
+            }
           }
+          wrappedResult =
+              context.applyWrapToPeeledResult(this->type(), peeledResult, rows);
         }
-        context.setWrapped(this, peeledResult, rows, result);
+      }
+      if (wrappedResult != nullptr) {
+        context.moveOrCopyResult(wrappedResult, rows, result);
         return;
       }
     }
@@ -766,7 +786,7 @@ void Expr::addNulls(
 
   if (!result.unique() || !result->isNullsWritable()) {
     BaseVector::ensureWritable(
-        SelectivityVector::empty(), type(), context.pool(), &result);
+        SelectivityVector::empty(), type(), context.pool(), result);
   }
 
   if (result->size() < rows.end()) {
@@ -840,7 +860,7 @@ void Expr::evalWithMemo(
     if (cachedDictionaryIndices_) {
       LocalSelectivityVector cachedHolder(context, rows);
       auto cached = cachedHolder.get();
-      assert(cached); // lint
+      VELOX_DCHECK(cached != nullptr);
       cached->intersect(*cachedDictionaryIndices_);
       if (cached->hasSelections()) {
         context.ensureWritable(rows, type(), result);
@@ -849,13 +869,14 @@ void Expr::evalWithMemo(
     }
     LocalSelectivityVector uncachedHolder(context, rows);
     auto uncached = uncachedHolder.get();
-    assert(uncached); // lint
+    VELOX_DCHECK(uncached != nullptr);
     if (cachedDictionaryIndices_) {
       uncached->deselect(*cachedDictionaryIndices_);
     }
     if (uncached->hasSelections()) {
       // Fix finalSelection at "rows" if uncached rows is a strict subset to
-      // avoid losing values not in uncached rows.
+      // avoid losing values not in uncached rows that were copied earlier into
+      // "result" from the cached rows.
       bool updateFinalSelection = context.isFinalSelection() &&
           (uncached->countSelected() < rows.countSelected());
       VarSetter finalSelectionMemo(
@@ -913,7 +934,7 @@ void Expr::setAllNulls(
     EvalCtx& context,
     VectorPtr& result) const {
   if (result) {
-    BaseVector::ensureWritable(rows, type(), context.pool(), &result);
+    BaseVector::ensureWritable(rows, type(), context.pool(), result);
     LocalSelectivityVector notNulls(context, rows.end());
     notNulls.get()->setAll();
     notNulls.get()->deselect(rows);
@@ -1016,25 +1037,37 @@ void Expr::evalAll(
     evalSpecialForm(rows, context, result);
     return;
   }
-  LocalSelectivityVector nonNulls(context);
-  auto* remainingRows = &rows;
   bool tryPeelArgs = deterministic_ ? true : false;
   bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
+
+  // Tracks what subset of rows shall un-evaluated inputs and current expression
+  // evaluates. Initially points to rows.
+  const SelectivityVector* remainingRows = &rows;
+
+  // Points to a mutable remainingRows, allocated using
+  // mutableRemainingRowsHolder only if needed.
+  SelectivityVector* mutableRemainingRows = nullptr;
+  LocalSelectivityVector mutableRemainingRowsHolder(context);
+
   inputValues_.resize(inputs_.size());
   for (int32_t i = 0; i < inputs_.size(); ++i) {
     inputs_[i]->eval(*remainingRows, context, inputValues_[i]);
     tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
+
+    // Avoid subsequent computation on rows with known null output.
     if (defaultNulls && inputValues_[i]->mayHaveNulls()) {
-      if (remainingRows == &rows) {
-        nonNulls.allocate(rows.end());
-        *nonNulls.get() = rows;
-        remainingRows = nonNulls.get();
-        assert(remainingRows); // lint
-      }
-      LocalDecodedVector decoded(context, *inputValues_[i], rows);
+      LocalDecodedVector decoded(context, *inputValues_[i], *remainingRows);
+
       if (auto* rawNulls = decoded->nulls()) {
-        nonNulls.get()->deselectNulls(
+        // Allocate remainingRows before the first time writing to it.
+        if (mutableRemainingRows == nullptr) {
+          mutableRemainingRows = mutableRemainingRowsHolder.get(rows);
+          remainingRows = mutableRemainingRows;
+        }
+
+        mutableRemainingRows->deselectNulls(
             rawNulls, remainingRows->begin(), remainingRows->end());
+
         if (!remainingRows->hasSelections()) {
           releaseInputValues(context);
           setAllNulls(rows, context, result);
@@ -1050,12 +1083,14 @@ void Expr::evalAll(
   // them.  It's safe to skip evaluating them since the value for this branch
   // of the expression tree will be NULL for those rows anyway.
   if (context.errors()) {
-    if (remainingRows == &rows) {
-      nonNulls.allocate(rows.end());
-      *nonNulls.get() = rows;
-      remainingRows = nonNulls.get();
+    // Allocate remainingRows before the first time writing to it.
+    if (mutableRemainingRows == nullptr) {
+      mutableRemainingRows = mutableRemainingRowsHolder.get(rows);
+      remainingRows = mutableRemainingRows;
     }
-    deselectErrors(context, *nonNulls.get());
+    deselectErrors(context, *mutableRemainingRows);
+
+    // All rows have at least one null output or error.
     if (!remainingRows->hasSelections()) {
       releaseInputValues(context);
       setAllNulls(rows, context, result);
@@ -1067,8 +1102,11 @@ void Expr::evalAll(
       !applyFunctionWithPeeling(rows, *remainingRows, context, result)) {
     applyFunction(*remainingRows, context, result);
   }
-  if (remainingRows != &rows) {
-    addNulls(rows, remainingRows->asRange().bits(), context, result);
+
+  // Write non-selected rows in remainingRows as nulls in the result if some
+  // rows have been skipped.
+  if (mutableRemainingRows != nullptr) {
+    addNulls(rows, mutableRemainingRows->asRange().bits(), context, result);
   }
   releaseInputValues(context);
 }
@@ -1207,7 +1245,9 @@ bool Expr::applyFunctionWithPeeling(
 
   VectorPtr peeledResult;
   applyFunction(*newRows, context, peeledResult);
-  context.setWrapped(this, peeledResult, rows, result);
+  VectorPtr wrappedResult =
+      context.applyWrapToPeeledResult(this->type(), peeledResult, rows);
+  context.moveOrCopyResult(wrappedResult, rows, result);
   return true;
 }
 
@@ -1224,7 +1264,7 @@ void Expr::applyFunction(
       ? computeIsAsciiForResult(vectorFunction_.get(), inputValues_, rows)
       : std::nullopt;
 
-  vectorFunction_->apply(rows, inputValues_, type(), &context, &result);
+  vectorFunction_->apply(rows, inputValues_, type(), context, result);
 
   if (isAscii.has_value()) {
     result->asUnchecked<SimpleVector<StringView>>()->setIsAscii(
@@ -1292,16 +1332,15 @@ void Expr::appendInputs(std::stringstream& stream) const {
 }
 
 ExprSet::ExprSet(
-    std::vector<std::shared_ptr<const core::ITypedExpr>>&& sources,
+    std::vector<core::TypedExprPtr>&& sources,
     core::ExecCtx* execCtx,
     bool enableConstantFolding)
     : execCtx_(execCtx) {
   exprs_ = compileExpressions(
       std::move(sources), execCtx, this, enableConstantFolding);
-  std::vector<FieldReference*> allDistinctFields;
   for (auto& expr : exprs_) {
     mergeFields(
-        allDistinctFields, multiplyReferencedFields_, expr->distinctFields());
+        distinctFields_, multiplyReferencedFields_, expr->distinctFields());
   }
 }
 
@@ -1371,9 +1410,9 @@ void ExprSet::eval(
     int32_t end,
     bool initialize,
     const SelectivityVector& rows,
-    EvalCtx* context,
-    std::vector<VectorPtr>* result) {
-  result->resize(exprs_.size());
+    EvalCtx& context,
+    std::vector<VectorPtr>& result) {
+  result.resize(exprs_.size());
   if (initialize) {
     clearSharedSubexprs();
   }
@@ -1386,11 +1425,11 @@ void ExprSet::eval(
   // will load b only for rows where f(a) is true. However, h(b) projection
   // needs all rows for "b".
   for (const auto& field : multiplyReferencedFields_) {
-    context->ensureFieldLoaded(field->index(*context), rows);
+    context.ensureFieldLoaded(field->index(context), rows);
   }
 
   for (int32_t i = begin; i < end; ++i) {
-    exprs_[i]->eval(rows, *context, (*result)[i]);
+    exprs_[i]->eval(rows, context, result[i]);
   }
 }
 
@@ -1405,6 +1444,7 @@ void ExprSet::clear() {
   for (auto* memo : memoizingExprs_) {
     memo->clearMemo();
   }
+  distinctFields_.clear();
   multiplyReferencedFields_.clear();
 }
 
@@ -1413,19 +1453,19 @@ void ExprSetSimplified::eval(
     int32_t end,
     bool initialize,
     const SelectivityVector& rows,
-    EvalCtx* context,
-    std::vector<VectorPtr>* result) {
-  result->resize(exprs_.size());
+    EvalCtx& context,
+    std::vector<VectorPtr>& result) {
+  result.resize(exprs_.size());
   if (initialize) {
     clearSharedSubexprs();
   }
   for (int32_t i = begin; i < end; ++i) {
-    exprs_[i]->evalSimplified(rows, *context, (*result)[i]);
+    exprs_[i]->evalSimplified(rows, context, result[i]);
   }
 }
 
 std::unique_ptr<ExprSet> makeExprSetFromFlag(
-    std::vector<std::shared_ptr<const core::ITypedExpr>>&& source,
+    std::vector<core::TypedExprPtr>&& source,
     core::ExecCtx* execCtx) {
   if (execCtx->queryCtx()->config().exprEvalSimplified() ||
       FLAGS_force_eval_simplified) {

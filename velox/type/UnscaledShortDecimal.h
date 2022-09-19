@@ -25,10 +25,27 @@ namespace facebook::velox {
 
 struct UnscaledShortDecimal {
  public:
+  inline static bool valueInRange(int64_t value) {
+    return (value >= kMin) && (value <= kMax);
+  }
+
   // Default required for creating vector with NULL values.
   UnscaledShortDecimal() = default;
-  constexpr explicit UnscaledShortDecimal(int64_t value)
-      : unscaledValue_(value) {}
+
+  explicit UnscaledShortDecimal(int64_t value) : unscaledValue_(value) {
+    VELOX_DCHECK(
+        valueInRange(unscaledValue_),
+        "Value '{}' is not in the range of ShortDecimal Type",
+        unscaledValue_);
+  }
+
+  static UnscaledShortDecimal min() {
+    return UnscaledShortDecimal(kMin);
+  }
+
+  static UnscaledShortDecimal max() {
+    return UnscaledShortDecimal(kMax);
+  }
 
   int64_t unscaledValue() const {
     return unscaledValue_;
@@ -54,17 +71,64 @@ struct UnscaledShortDecimal {
     return unscaledValue_ <= other.unscaledValue_;
   }
 
+  bool operator<(int other) const {
+    return unscaledValue_ < other;
+  }
+
   bool operator>(const UnscaledShortDecimal& other) const {
     return unscaledValue_ > other.unscaledValue_;
+  }
+
+  UnscaledShortDecimal operator-(const UnscaledShortDecimal& other) const {
+    return UnscaledShortDecimal(unscaledValue_ - other.unscaledValue_);
+  }
+
+  UnscaledShortDecimal operator+(const UnscaledShortDecimal& other) const {
+    return UnscaledShortDecimal(unscaledValue_ + other.unscaledValue_);
+  }
+
+  UnscaledShortDecimal operator*(int value) const {
+    return UnscaledShortDecimal(unscaledValue_ * value);
+  }
+
+  UnscaledShortDecimal& operator*=(int value) {
+    unscaledValue_ *= value;
+    return *this;
   }
 
   bool operator>=(const UnscaledShortDecimal& other) const {
     return unscaledValue_ >= other.unscaledValue_;
   }
 
+  UnscaledShortDecimal operator=(int value) const {
+    return UnscaledShortDecimal(static_cast<int64_t>(value));
+  }
+
+  UnscaledShortDecimal operator/(const UnscaledShortDecimal& other) const {
+    return UnscaledShortDecimal(unscaledValue_ / other.unscaledValue_);
+  }
+
+  UnscaledShortDecimal operator%(const UnscaledShortDecimal& other) const {
+    return UnscaledShortDecimal(unscaledValue_ % other.unscaledValue_);
+  }
+
+  UnscaledShortDecimal& operator++() {
+    unscaledValue_++;
+    return *this;
+  }
+
  private:
+  static constexpr int64_t kMin = -1'000'000'000'000'000'000 + 1;
+  static constexpr int64_t kMax = 1'000'000'000'000'000'000 - 1;
   int64_t unscaledValue_;
 };
+
+static inline UnscaledShortDecimal operator/(
+    const UnscaledShortDecimal& a,
+    int b) {
+  VELOX_CHECK_NE(b, 0, "Divide by zero is not supported");
+  return UnscaledShortDecimal(a.unscaledValue() / b);
+}
 } // namespace facebook::velox
 
 namespace folly {
@@ -76,3 +140,25 @@ struct hasher<::facebook::velox::UnscaledShortDecimal> {
   }
 };
 } // namespace folly
+
+namespace std {
+
+// Required for STL containers like unordered_map.
+template <>
+struct hash<facebook::velox::UnscaledShortDecimal> {
+  size_t operator()(const facebook::velox::UnscaledShortDecimal& val) const {
+    return hash<int64_t>()(val.unscaledValue());
+  }
+};
+
+template <>
+class numeric_limits<facebook::velox::UnscaledShortDecimal> {
+ public:
+  static facebook::velox::UnscaledShortDecimal min() {
+    return facebook::velox::UnscaledShortDecimal::min();
+  }
+  static facebook::velox::UnscaledShortDecimal max() {
+    return facebook::velox::UnscaledShortDecimal::max();
+  }
+};
+} // namespace std

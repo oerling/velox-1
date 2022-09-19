@@ -36,8 +36,8 @@ class TransformKeysFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
 
     // Flatten input map.
@@ -49,6 +49,12 @@ class TransformKeysFunction : public exec::VectorFunction {
     std::vector<VectorPtr> lambdaArgs = {
         flatMap->mapKeys(), flatMap->mapValues()};
     auto numKeys = flatMap->mapKeys()->size();
+
+    SelectivityVector finalSelection;
+    if (!context.isFinalSelection()) {
+      finalSelection = toElementRows<MapVector>(
+          numKeys, *context.finalSelection(), flatMap.get());
+    }
 
     VectorPtr transformedKeys;
 
@@ -62,7 +68,12 @@ class TransformKeysFunction : public exec::VectorFunction {
           numKeys, entry.callable, *entry.rows, flatMap);
 
       entry.callable->apply(
-          keyRows, wrapCapture, context, lambdaArgs, &transformedKeys);
+          keyRows,
+          finalSelection,
+          wrapCapture,
+          &context,
+          lambdaArgs,
+          &transformedKeys);
     }
 
     auto localResult = std::make_shared<MapVector>(
@@ -77,7 +88,7 @@ class TransformKeysFunction : public exec::VectorFunction {
 
     checkDuplicateKeys(localResult, rows);
 
-    context->moveOrCopyResult(localResult, rows, result);
+    context.moveOrCopyResult(localResult, rows, result);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {

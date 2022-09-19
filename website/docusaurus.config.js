@@ -36,18 +36,18 @@ const config = {
           sidebarPath: require.resolve('./sidebars.js'),
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
         },
         blog: {
           showReadingTime: true,
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
         },
         theme: {
           customCss: require.resolve('./src/css/custom.css'),
+        },
+        gtag: {
+          trackingID: 'G-C6M8TCJBRM',
+          anonymizeIP: true,
         },
       }),
     ],
@@ -69,8 +69,8 @@ const config = {
             position: 'left',
           },
           {
-            href: 'https://github.com/facebookincubator/velox#getting-started',
-            label: 'Build and Installation',
+            href: '/docs',
+            label: 'Roadmap',
             position: 'left',
           },
           {
@@ -94,11 +94,23 @@ const config = {
         style: 'dark',
         links: [
           {
-            title: 'Docs',
+            title: 'Documentation',
             items: [
               {
-                label: 'Tutorial',
-                to: '/docs/intro',
+                label: 'Velox in 10 Minutes',
+                href: 'https://facebookincubator.github.io/velox/velox-in-10-min.html',
+              },
+              {
+                label: 'Developer Guides',
+                href: 'https://facebookincubator.github.io/velox/develop.html',
+              },
+              {
+                label: 'Presto Functions',
+                href: 'https://facebookincubator.github.io/velox/functions.html',
+              },
+              {
+                label: 'Monthly Updates',
+                href: 'https://facebookincubator.github.io/velox/monthly-updates.html',
               },
             ],
           },

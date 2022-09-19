@@ -25,7 +25,7 @@ namespace facebook::velox {
 
 /**
  * Provides a vector type that enacts run-length encoding for vectors that have
- * repeated runs of the same value.  For example, this would be usefor for
+ * repeated runs of the same value.  For example, this would be useful for
  * {foo, foo, foo, foo, bar, bar, bar, foo, foo, foo, foo, foo} as it can be
  * reduced to {foo, bar, foo} along with run length information of {4, 3, 5}.
  *
@@ -35,9 +35,9 @@ template <typename T>
 class SequenceVector : public SimpleVector<T> {
  public:
   static constexpr bool can_simd =
-      (std::is_same<T, int64_t>::value || std::is_same<T, int32_t>::value ||
-       std::is_same<T, int16_t>::value || std::is_same<T, int8_t>::value ||
-       std::is_same<T, size_t>::value);
+      (std::is_same_v<T, int64_t> || std::is_same_v<T, int32_t> ||
+       std::is_same_v<T, int16_t> || std::is_same_v<T, int8_t> ||
+       std::is_same_v<T, size_t>);
 
   SequenceVector(
       velox::memory::MemoryPool* pool,
@@ -171,6 +171,14 @@ class SequenceVector : public SimpleVector<T> {
     out << "[" << index << "->" << inner << "] "
         << sequenceValues_->toString(inner);
     return out.str();
+  }
+
+  VectorPtr slice(vector_size_t, vector_size_t) const override {
+    VELOX_NYI();
+  }
+
+  bool isNullsWritable() const override {
+    return false;
   }
 
  private:

@@ -18,9 +18,11 @@
 #include <velox/common/base/Exceptions.h>
 #include "velox/functions/Macros.h"
 #include "velox/functions/Registerer.h"
+#include "velox/functions/lib/RegistrationHelpers.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
+#include "velox/functions/prestosql/Comparisons.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -37,8 +39,8 @@ class BaseFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& resultType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     if (args[0]->isConstantEncoding() &&
         args[1]->encoding() == VectorEncoding::Simple::FLAT) {
       // Fast path for (flat, const).
@@ -49,7 +51,7 @@ class BaseFunction : public exec::VectorFunction {
       auto rawResults =
           getRawResults(rows, args[1], rawValues, resultType, context, result);
 
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         rawResults[row] = Operation::apply(constant, rawValues[row]);
       });
     } else if (
@@ -63,7 +65,7 @@ class BaseFunction : public exec::VectorFunction {
       auto rawResults =
           getRawResults(rows, args[0], rawValues, resultType, context, result);
 
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         rawResults[row] = Operation::apply(rawValues[row], constant);
       });
     } else if (
@@ -76,20 +78,20 @@ class BaseFunction : public exec::VectorFunction {
       auto rawB = flatB->mutableRawValues();
 
       T* rawResults = nullptr;
-      if (!(*result)) {
-        if (BaseVector::isReusableFlatVector(args[0])) {
+      if (!result) {
+        if (BaseVector::isVectorWritable(args[0])) {
           rawResults = rawA;
-          *result = std::move(args[0]);
-        } else if (BaseVector::isReusableFlatVector(args[1])) {
+          result = std::move(args[0]);
+        } else if (BaseVector::isVectorWritable(args[1])) {
           rawResults = rawB;
-          *result = std::move(args[1]);
+          result = std::move(args[1]);
         }
       }
       if (!rawResults) {
         rawResults = prepareResults(rows, resultType, context, result);
       }
 
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         rawResults[row] = Operation::apply(rawA[row], rawB[row]);
       });
     } else {
@@ -98,11 +100,11 @@ class BaseFunction : public exec::VectorFunction {
       auto a = decodedArgs.at(0);
       auto b = decodedArgs.at(1);
 
-      BaseVector::ensureWritable(rows, resultType, context->pool(), result);
+      BaseVector::ensureWritable(rows, resultType, context.pool(), result);
       auto rawResults =
-          (*result)->asUnchecked<FlatVector<T>>()->mutableRawValues();
+          result->asUnchecked<FlatVector<T>>()->mutableRawValues();
 
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         rawResults[row] =
             Operation::apply(a->valueAt<T>(row), b->valueAt<T>(row));
       });
@@ -113,11 +115,11 @@ class BaseFunction : public exec::VectorFunction {
   T* prepareResults(
       const SelectivityVector& rows,
       const TypePtr& resultType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const {
-    BaseVector::ensureWritable(rows, resultType, context->pool(), result);
-    (*result)->clearNulls(rows);
-    return (*result)->asUnchecked<FlatVector<T>>()->mutableRawValues();
+      exec::EvalCtx& context,
+      VectorPtr& result) const {
+    BaseVector::ensureWritable(rows, resultType, context.pool(), result);
+    result->clearNulls(rows);
+    return result->asUnchecked<FlatVector<T>>()->mutableRawValues();
   }
 
   T* getRawResults(
@@ -125,13 +127,13 @@ class BaseFunction : public exec::VectorFunction {
       VectorPtr& flat,
       T* rawValues,
       const TypePtr& resultType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const {
+      exec::EvalCtx& context,
+      VectorPtr& result) const {
     // Check if input can be reused for results.
     T* rawResults;
-    if (!(*result) && BaseVector::isReusableFlatVector(flat)) {
+    if (!result && BaseVector::isVectorWritable(flat)) {
       rawResults = rawValues;
-      *result = std::move(flat);
+      result = std::move(flat);
     } else {
       rawResults = prepareResults(rows, resultType, context, result);
     }
@@ -201,7 +203,7 @@ void registerMultiply(const std::string& name) {
       name, signatures(), make<Multiplication>);
 }
 
-enum class RunConfig { Basic, OneHot, VectorAndOneHot };
+enum class RunConfig { Basic, OneHot, VectorAndOneHot, Simple, AllFused };
 
 std::vector<float> kBenchmarkData{
     2.1476,  -1.3686, 0.7764,  -1.1965, 0.3452,  0.9735,  -1.5781, -1.4886,
@@ -225,14 +227,33 @@ struct OneHotFunction {
   }
 };
 
+template <typename T>
+struct AllFused {
+  FOLLY_ALWAYS_INLINE void call(float& result, float input, float n) {
+    auto oneHot = [](float a, float b) {
+      return (std::floor(a) == b) ? 1.0f : 0.0f;
+    };
+
+    auto clamp = [](float v, float lo, float hi) {
+      VELOX_USER_CHECK_LE(lo, hi, "Lo > hi in clamp.");
+      auto a = v < lo ? lo : v;
+      return a > hi ? hi : a;
+    };
+
+    result = clamp(0.05f * (20.5f + oneHot(input, n)), -10.0f, 10.0f);
+  }
+};
+
 /// Measures performance of a typical ML preprocessing workload.
 class PreprocBenchmark : public functions::test::FunctionBenchmarkBase {
  public:
   PreprocBenchmark() : FunctionBenchmarkBase() {
     functions::prestosql::registerAllScalarFunctions();
+    functions::registerBinaryScalar<functions::EqFunction, bool>({"simple_eq"});
     registerPlus("add_v");
     registerMultiply("mult_v");
     registerFunction<OneHotFunction, float, float, float>({"one_hot"});
+    registerFunction<AllFused, float, float, float>({"all_fused"});
   }
 
   exec::ExprSet compile(const std::vector<std::string>& texts) {
@@ -253,6 +274,10 @@ class PreprocBenchmark : public functions::test::FunctionBenchmarkBase {
         return fmt::format(
             "clamp(0.05::REAL * (20.5::REAL + if(floor(c0) = {}::REAL, 1::REAL, 0::REAL)), (-10.0)::REAL, 10.0::REAL)",
             n);
+      case RunConfig::Simple:
+        return fmt::format(
+            "clamp(0.05::REAL * (20.5::REAL + if(simple_eq(floor(c0) ,{}::REAL), 1::REAL, 0::REAL)), (-10.0)::REAL, 10.0::REAL)",
+            n);
       case RunConfig::OneHot:
         return fmt::format(
             "clamp(0.05::REAL * (20.5::REAL + one_hot(c0, {}::REAL)), (-10.0)::REAL, 10.0::REAL)",
@@ -261,6 +286,8 @@ class PreprocBenchmark : public functions::test::FunctionBenchmarkBase {
         return fmt::format(
             "clamp(mult_v(0.05::REAL, add_v(20.5::REAL, one_hot(c0, {}::REAL))), (-10.0)::REAL, 10.0::REAL)",
             n);
+      case RunConfig::AllFused:
+        return fmt::format("all_fused(c0 , {}::REAL)", n);
     }
     return "";
   }
@@ -279,33 +306,44 @@ class PreprocBenchmark : public functions::test::FunctionBenchmarkBase {
     SelectivityVector rows(data->size());
     std::vector<VectorPtr> results(exprSet.exprs().size());
     exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
-    exprSet.eval(rows, &evalCtx, &results);
+    exprSet.eval(rows, evalCtx, results);
     return results;
   }
 
   // Verify that results of the calculation using one_hot function match the
   // results when using if+floor.
   void test() {
-    auto onehot = evaluateOnce(RunConfig::OneHot);
     auto original = evaluateOnce(RunConfig::Basic);
-    auto vcectorAndOneHot = evaluateOnce(RunConfig::VectorAndOneHot);
 
-    VELOX_CHECK_EQ(onehot.size(), original.size());
-    for (auto i = 0; i < original.size(); ++i) {
-      test::assertEqualVectors(onehot[i], original[i]);
-    }
+    auto onehot = evaluateOnce(RunConfig::OneHot);
+    auto vectorAndOneHot = evaluateOnce(RunConfig::VectorAndOneHot);
+    auto allFused = evaluateOnce(RunConfig::AllFused);
 
-    VELOX_CHECK_EQ(vcectorAndOneHot.size(), original.size());
-    for (auto i = 0; i < original.size(); ++i) {
-      test::assertEqualVectors(vcectorAndOneHot[i], original[i]);
-    }
+    auto checkResult = [&](auto result) {
+      VELOX_CHECK_EQ(result.size(), original.size());
+      for (auto i = 0; i < original.size(); ++i) {
+        test::assertEqualVectors(result[i], original[i]);
+      }
+    };
+
+    checkResult(onehot);
+    checkResult(vectorAndOneHot);
+    checkResult(allFused);
   }
 
   size_t run(RunConfig config, size_t times) {
     folly::BenchmarkSuspender suspender;
 
-    auto data = vectorMaker_.rowVector(
-        {vectorMaker_.flatVector<float>(kBenchmarkData)});
+    auto scaledData = std::vector<float>();
+    scaledData.reserve(kBenchmarkData.size() * scaleFactor_);
+
+    for (int i = 0; i < scaleFactor_; i++) {
+      scaledData.insert(
+          scaledData.end(), kBenchmarkData.begin(), kBenchmarkData.end());
+    }
+
+    auto data =
+        vectorMaker_.rowVector({vectorMaker_.flatVector<float>(scaledData)});
     auto exprSet = compile({
         makeExpression(1, config),
         makeExpression(2, config),
@@ -319,28 +357,44 @@ class PreprocBenchmark : public functions::test::FunctionBenchmarkBase {
     suspender.dismiss();
 
     size_t cnt = 0;
-    for (auto i = 0; i < times * 1'000; i++) {
+    for (auto i = 0; i < times * 10'000; i++) {
       exec::EvalCtx evalCtx(&execCtx_, &exprSet, data.get());
-      exprSet.eval(rows, &evalCtx, &results);
+      exprSet.eval(rows, evalCtx, results);
       cnt += results[0]->size();
     }
     return cnt;
   }
+
+  /// Scale factor for the data.
+  static auto const scaleFactor_ = 1;
 };
 
-BENCHMARK_MULTI(original, n) {
+BENCHMARK_MULTI(ifFloor, n) {
   PreprocBenchmark benchmark;
   return benchmark.run(RunConfig::Basic, n);
 }
 
+// Same as ifFloor, but uses non-SIMD version of the equality operation.
+BENCHMARK_MULTI(ifFloorWithSimpleEq, n) {
+  PreprocBenchmark benchmark;
+  return benchmark.run(RunConfig::Simple, n);
+}
+
+// Replaces if + floor expression with a one_hot function call.
 BENCHMARK_MULTI(oneHot, n) {
   PreprocBenchmark benchmark;
   return benchmark.run(RunConfig::OneHot, n);
 }
 
-BENCHMARK_MULTI(vectorAndOneHot, n) {
+// Same as oneHot, but uses vector functions for plus and multiply.
+BENCHMARK_MULTI(oneHotWithVectorArithmetic, n) {
   PreprocBenchmark benchmark;
   return benchmark.run(RunConfig::VectorAndOneHot, n);
+}
+
+BENCHMARK_MULTI(allFused, n) {
+  PreprocBenchmark benchmark;
+  return benchmark.run(RunConfig::AllFused, n);
 }
 
 } // namespace

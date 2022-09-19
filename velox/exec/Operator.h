@@ -248,8 +248,15 @@ class Operator {
   // corresponds. 'operatorType' is a label for use in stats.
   Operator(
       DriverCtx* driverCtx,
-      std::shared_ptr<const RowType> outputType,
+      RowTypePtr outputType,
       int32_t operatorId,
+      std::string planNodeId,
+      std::string operatorType);
+
+  /// This is only used by test to create mock operator.
+  Operator(
+      int32_t operatorId,
+      int32_t pipelineId,
       std::string planNodeId,
       std::string operatorType);
 
@@ -261,6 +268,7 @@ class Operator {
 
   // Adds input. Not used if operator is a source operator, e.g. the first
   // operator in the pipeline.
+  // @param input Non-empty input vector.
   virtual void addInput(RowVectorPtr input) = 0;
 
   // Informs 'this' that addInput will no longer be called. This means
@@ -276,6 +284,7 @@ class Operator {
   // for outside causes. isBlocked distinguishes between the
   // cases. Sink operator, e.g. the last operator in the pipeline, must return
   // nullptr and pass results to the consumer through a custom mechanism.
+  // @return nullptr or a non-empty output vector.
   virtual RowVectorPtr getOutput() = 0;
 
   // Returns kNotBlocked if 'this' is not prevented from
@@ -364,26 +373,16 @@ class Operator {
     return stats_.planNodeId;
   }
 
-  // Tries to increase the reservation of 'tracker' by 'size'. If
-  // successful, calls 'runFunc'. If the reservation fails, calls
-  // 'spillFunc' and tries again. If the reservation fails, the second
-  // time, returns false, else true.
-  bool reserveAndRun(
-      const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
-      int64_t quotaSize,
-      std::function<void(int64_t)> spillFunc,
-      std::function<void(void)> runFunc);
-
   // Returns an estimate of the maximum number of bytes that could be
   // freed by calling spill().
-  virtual int64_t recoverableMemory() const {
+  virtual int64_t reclaimableMemory() const {
     return 0;
   }
 
   // Tries to shrink the memory footprint of 'this' by at least
-  // 'minMemoryToRecover' bytes. See the trackers of the different pools for the
+  // 'minMemoryToReclaim' bytes. See the trackers of the different pools for the
   // effect.
-  virtual void spill(int64_t /* minMemoryToRecover */) {}
+  virtual void spill(int64_t /* minMemoryToReclaim */) {}
 
   // Registers 'translator' for mapping user defined PlanNode subclass instances
   // to user-defined Operators.
@@ -420,7 +419,7 @@ class Operator {
 
   std::unique_ptr<OperatorCtx> operatorCtx_;
   OperatorStats stats_;
-  const std::shared_ptr<const RowType> outputType_;
+  const RowTypePtr outputType_;
 
   // Holds the last data from addInput until it is processed. Reset after the
   // input is processed.
@@ -445,7 +444,7 @@ class Operator {
 /// Given a row type returns indices for the specified subset of columns.
 std::vector<column_index_t> toChannels(
     const RowTypePtr& rowType,
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& exprs);
+    const std::vector<core::TypedExprPtr>& exprs);
 
 column_index_t exprToChannel(const core::ITypedExpr* expr, const TypePtr& type);
 
@@ -463,7 +462,7 @@ class SourceOperator : public Operator {
  public:
   SourceOperator(
       DriverCtx* driverCtx,
-      std::shared_ptr<const RowType> outputType,
+      RowTypePtr outputType,
       int32_t operatorId,
       const std::string& planNodeId,
       const std::string& operatorType)

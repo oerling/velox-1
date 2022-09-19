@@ -33,8 +33,8 @@ function HomepageHeader() {
                 'button button--success button--lg',
                 styles.getStarted,
               )}
-              to={ useBaseUrl('docs/') }>
-              Learn More
+              to={ "https://github.com/facebookincubator/velox/blob/main/CONTRIBUTING.md" }>
+              Join Us
             </Link>
           </div>
         </div>
@@ -52,7 +52,16 @@ export default function Home() {
       description="Description will go into a meta tag in <head />">
       <HomepageHeader />
       <main>
-        <HomepageFeatures />
+          <section className={styles.features}>
+              <div className="container">
+                  <div className="row">
+                      <div className={clsx('col')}>
+                          <img src={useBaseUrl("img/stack_transform.png")}/>
+                      </div>
+                  </div>
+              </div>
+          </section>
+          <HomepageFeatures />
       </main>
     </Layout>
   );

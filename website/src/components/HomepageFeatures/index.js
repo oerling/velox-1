@@ -5,7 +5,6 @@ import styles from './styles.module.css';
 const FeatureList = [
   {
     title: 'Efficiency',
-    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
         Velox democratizes runtime optimizations previously only implemented
@@ -15,7 +14,6 @@ const FeatureList = [
   },
   {
     title: 'Consistency',
-    Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
     description: (
       <>
         By leveraging the same execution library, compute engines can expose
@@ -25,7 +23,6 @@ const FeatureList = [
   },
   {
     title: 'Reusability',
-    Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
     description: (
       <>
         Features and runtime optimizations available in Velox are developed
@@ -38,9 +35,6 @@ const FeatureList = [
 function Feature({Svg, title, description}) {
   return (
     <div className={clsx('col col--4')}>
-      <div className="text--center">
-        <Svg className={styles.featureSvg} role="img" />
-      </div>
       <div className="text--center padding-horiz--md">
         <h3>{title}</h3>
         <p>{description}</p>

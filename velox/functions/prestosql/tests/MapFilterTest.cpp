@@ -15,7 +15,8 @@
  */
 
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/expression/VarSetter.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -232,4 +233,48 @@ TEST_F(MapFilterTest, dictionaryWithDuplicates) {
       evaluate<BaseVector>("map_filter(c1, function('filter'))", input);
 
   assertEqualVectors(expectedResult, result);
+}
+
+TEST_F(MapFilterTest, lambdaSelectivityVector) {
+  auto data = makeRowVector({
+      wrapInDictionary(
+          makeIndices({0}),
+          1,
+          makeFlatVector<int64_t>(std::vector<int64_t>{10})),
+  });
+
+  // Register lambda as DuckDb parser does not support converting it into Velox
+  // lambda expression.
+  parse::ParseOptions options;
+  core::Expressions::registerLambda(
+      "inn",
+      ROW({"k", "v"}, {BIGINT(), BIGINT()}),
+      ROW({"long_val", "map_val"}, {BIGINT(), MAP(BIGINT(), BIGINT())}),
+      parse::parseExpr("v IS NOT NULL", options),
+      pool_.get());
+
+  // Our expression. Use large numbers to trigger asan if things go wrong.
+  auto exprSet = compileExpression(
+      "map_filter("
+      "MAP(ARRAY[233439836560246536, 398885052601874414, 213334509704047604],"
+      "ARRAY[c0, c0, c0]),"
+      "function('inn'))",
+      asRowType(data->type()));
+
+  // Ensure that our context would have 'final selection' false.
+  exec::EvalCtx context(&execCtx_, exprSet.get(), data.get());
+  const SelectivityVector allRows(data->size());
+  VarSetter finalSelection(context.mutableFinalSelection(), &allRows);
+  VarSetter isFinalSelection(context.mutableIsFinalSelection(), false);
+
+  // Evaluate. Result would be overwritten.
+  std::vector<VectorPtr> result = {
+      makeFlatVector<int64_t>(std::vector<int64_t>{1})};
+  exprSet->eval(allRows, context, result);
+
+  auto expectedKeys = makeFlatVector<int64_t>(
+      {233439836560246536, 398885052601874414, 213334509704047604});
+  auto expectedValues = makeFlatVector<int64_t>({10, 10, 10});
+  auto expected = makeMapVector({0}, expectedKeys, expectedValues);
+  assertEqualVectors(expected, result[0]);
 }

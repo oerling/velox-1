@@ -59,8 +59,7 @@ void DictionaryVector<T>::setInternalState() {
   if (dictionaryValues_->isScalar()) {
     scalarDictionaryValues_ =
         reinterpret_cast<SimpleVector<T>*>(dictionaryValues_->loadedVector());
-    if (scalarDictionaryValues_->isFlatEncoding() &&
-        !std::is_same<T, bool>::value) {
+    if (scalarDictionaryValues_->isFlatEncoding() && !std::is_same_v<T, bool>) {
       rawDictionaryValues_ =
           reinterpret_cast<FlatVector<T>*>(scalarDictionaryValues_)
               ->rawValues();
@@ -186,6 +185,19 @@ xsimd::batch<T> DictionaryVector<T>::loadSIMDValueBufferAt(
   } else {
     VELOX_UNREACHABLE();
   }
+}
+
+template <typename T>
+VectorPtr DictionaryVector<T>::slice(vector_size_t offset, vector_size_t length)
+    const {
+  VELOX_DCHECK(initialized_);
+  return std::make_shared<DictionaryVector<T>>(
+      this->pool_,
+      this->sliceNulls(offset, length),
+      length,
+      valueVector(),
+      BaseVector::sliceBuffer(
+          *INTEGER(), indices_, offset, length, this->pool_));
 }
 
 } // namespace velox

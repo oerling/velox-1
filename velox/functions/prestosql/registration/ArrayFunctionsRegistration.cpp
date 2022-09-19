@@ -63,6 +63,7 @@ void registerArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_zip, "zip");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_position, "array_position");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_sort, "array_sort");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_sum, "array_sum");
 
   exec::registerStatefulVectorFunction(
       "width_bucket", widthBucketArraySignature(), makeWidthBucketArray);

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "velox/common/base/Portability.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/vector/ComplexVector.h"
@@ -72,16 +74,12 @@ class EvalCtx {
 
   void restore(ContextSaver& saver);
 
-  // Creates or updates *result according to 'source'. The
-  // 'source' position corresponding to each position in 'rows' is
-  // given by the wrap produced by the last peeling in
-  // EvalEncoding. If '*result' existed, positions not in 'rows' are
-  // not changed.
-  void setWrapped(
-      Expr* FOLLY_NONNULL expr,
-      VectorPtr source,
-      const SelectivityVector& rows,
-      VectorPtr& result);
+  // Wraps the 'peeledResult' in the wrap produced by the last peeling in
+  // EvalEncoding() and returns the vector created as a result.
+  VectorPtr applyWrapToPeeledResult(
+      const TypePtr& outputType,
+      VectorPtr peeledResult,
+      const SelectivityVector& rows);
 
   void setError(vector_size_t index, const std::exception_ptr& exceptionPtr);
 
@@ -204,18 +202,11 @@ class EvalCtx {
       const SelectivityVector& rows,
       VectorPtr& result) const {
     if (result && !isFinalSelection() && *finalSelection() != rows) {
-      BaseVector::ensureWritable(rows, result->type(), result->pool(), &result);
+      BaseVector::ensureWritable(rows, result->type(), result->pool(), result);
       result->copy(localResult.get(), rows, nullptr);
     } else {
       result = localResult;
     }
-  }
-
-  void moveOrCopyResult(
-      const VectorPtr& localResult,
-      const SelectivityVector& rows,
-      VectorPtr* FOLLY_NONNULL result) const {
-    moveOrCopyResult(localResult, rows, *result);
   }
 
   VectorPool& vectorPool() const {
@@ -241,7 +232,7 @@ class EvalCtx {
       const TypePtr& type,
       VectorPtr& result) {
     BaseVector::ensureWritable(
-        rows, type, execCtx_->pool(), &result, &execCtx_->vectorPool());
+        rows, type, execCtx_->pool(), result, &execCtx_->vectorPool());
   }
 
  private:
@@ -406,9 +397,6 @@ class LocalDecodedVector {
  public:
   explicit LocalDecodedVector(core::ExecCtx& context) : context_(context) {}
 
-  explicit LocalDecodedVector(core::ExecCtx* FOLLY_NONNULL context)
-      : LocalDecodedVector(*context) {}
-
   explicit LocalDecodedVector(EvalCtx& context)
       : context_(*context.execCtx()) {}
 
@@ -424,25 +412,23 @@ class LocalDecodedVector {
     get()->decode(vector, rows, loadLazy);
   }
 
-  LocalDecodedVector(
-      const EvalCtx* FOLLY_NONNULL context,
-      const BaseVector& vector,
-      const SelectivityVector& rows,
-      bool loadLazy = true)
-      : LocalDecodedVector(*context, vector, rows, loadLazy) {}
-
   LocalDecodedVector(LocalDecodedVector&& other) noexcept
       : context_{other.context_}, vector_{std::move(other.vector_)} {}
 
+  void operator=(LocalDecodedVector&& other) {
+    context_ = other.context_;
+    vector_ = std::move(other.vector_);
+  }
+
   ~LocalDecodedVector() {
     if (vector_) {
-      context_.releaseDecodedVector(std::move(vector_));
+      context_.get().releaseDecodedVector(std::move(vector_));
     }
   }
 
   DecodedVector* FOLLY_NONNULL get() {
     if (!vector_) {
-      vector_ = context_.getDecodedVector();
+      vector_ = context_.get().getDecodedVector();
     }
     return vector_.get();
   }
@@ -469,7 +455,7 @@ class LocalDecodedVector {
   }
 
  private:
-  core::ExecCtx& context_;
+  std::reference_wrapper<core::ExecCtx> context_;
   std::unique_ptr<DecodedVector> vector_;
 };
 

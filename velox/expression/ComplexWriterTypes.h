@@ -68,13 +68,13 @@ struct PrimitiveWriter {
 
 template <typename V>
 bool constexpr provide_std_interface =
-    CppToType<V>::isPrimitiveType && !std::is_same<Varchar, V>::value &&
-    !std::is_same<Varbinary, V>::value && !std::is_same<Any, V>::value;
+    CppToType<V>::isPrimitiveType && !std::is_same_v<Varchar, V> &&
+    !std::is_same_v<Varbinary, V> && !std::is_same_v<Any, V>;
 
 // bool is an exception, it requires commit but also provides std::interface.
 template <typename V>
 bool constexpr requires_commit =
-    !provide_std_interface<V> || std::is_same<bool, V>::value;
+    !provide_std_interface<V> || std::is_same_v<bool, V>;
 
 // The object passed to the simple function interface that represent a single
 // array entry.
@@ -170,14 +170,14 @@ class ArrayWriter {
   }
 
   template <typename T = V>
-  typename std::enable_if<provide_std_interface<T>, PrimitiveWriter<T>>::type
+  typename std::enable_if_t<provide_std_interface<T>, PrimitiveWriter<T>>
   operator[](vector_size_t index) {
     VELOX_DCHECK_LT(index, length_, "out of bound access");
     return PrimitiveWriter<V>{elementsVector_, valuesOffset_ + index};
   }
 
   template <typename T = V>
-  typename std::enable_if<provide_std_interface<T>, PrimitiveWriter<T>>::type
+  typename std::enable_if_t<provide_std_interface<T>, PrimitiveWriter<T>>
   back() {
     return PrimitiveWriter<V>{elementsVector_, valuesOffset_ + length_ - 1};
   }

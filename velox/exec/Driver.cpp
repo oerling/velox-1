@@ -73,25 +73,21 @@ void BlockingState::setResume(std::shared_ptr<BlockingState> state) {
   std::move(state->future_)
       .via(&exec)
       .thenValue([state](auto&& /* unused */) {
-        state->operator_->recordBlockingTime(state->sinceMicros_);
         auto driver = state->driver_;
         auto task = driver->task();
-        if (!task) {
-          //'driver' is already removed from its task. No Just drop remaining
-          // references.
+
+        std::lock_guard<std::mutex> l(task->mutex());
+        if (!driver->state().isTerminated) {
+          state->operator_->recordBlockingTime(state->sinceMicros_);
+        }
+        VELOX_CHECK(!driver->state().isSuspended);
+        VELOX_CHECK(driver->state().hasBlockingFuture);
+        driver->state().hasBlockingFuture = false;
+        if (task->pauseRequested()) {
+          // The thread will be enqueued at resume.
           return;
         }
-        {
-          std::lock_guard<std::mutex> l(task->mutex());
-          VELOX_CHECK(!driver->state().isSuspended);
-          VELOX_CHECK(driver->state().hasBlockingFuture);
-          driver->state().hasBlockingFuture = false;
-          if (task->pauseRequested()) {
-            // The thread will be enqueued at resume.
-            return;
-          }
-          Driver::enqueue(state->driver_);
-        }
+        Driver::enqueue(state->driver_);
       })
       .thenError(
           folly::tag_t<std::exception>{}, [state](std::exception const& e) {
@@ -353,6 +349,10 @@ StopReason Driver::runInternal(
               CpuWallTimer timer(op->stats().getOutputTiming);
               result = op->getOutput();
               if (result) {
+                VELOX_CHECK(
+                    result->size() > 0,
+                    "Operator::getOutput() must return nullptr or a non-empty vector: {}",
+                    op->stats().operatorType);
                 op->stats().outputVectors += 1;
                 op->stats().outputPositions += result->size();
                 resultBytes = result->estimateFlatSize();
@@ -405,6 +405,11 @@ StopReason Driver::runInternal(
             CpuWallTimer timer(op->stats().getOutputTiming);
             result = op->getOutput();
             if (result) {
+              VELOX_CHECK(
+                  result->size() > 0,
+                  "Operator::getOutput() must return nullptr or a non-empty vector: {}",
+                  op->stats().operatorType);
+
               // This code path is used only in single-threaded execution.
               blockingReason_ = BlockingReason::kWaitForConsumer;
               guard.notThrown();
@@ -639,10 +644,10 @@ std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", task()->taskId(), ctx_->driverId);
 }
 
-int64_t Driver::recoverableMemory() const {
+int64_t Driver::reclaimableMemory() const {
   int64_t total = 0;
   for (auto& op : operators_) {
-    total += op->recoverableMemory();
+    total += op->reclaimableMemory();
   }
   return total;
 }
@@ -659,7 +664,7 @@ bool Driver::growTaskMemory(
       result = true;
       return;
     }
-    result = memory::MemoryManagerStrategy::instance()->recover(task(), size);
+    result = memory::MemoryManagerStrategy::instance()->reclaim(task(), size);
   });
   return result;
 }

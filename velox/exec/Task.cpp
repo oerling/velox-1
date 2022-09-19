@@ -141,10 +141,10 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
+      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       splitPlanNodeIds_(collectSplitPlanNodeIds(planFragment_.planNode)),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
-      pool_(queryCtx_->pool()->addScopedChild("task_root")),
       bufferManager_(PartitionedOutputBufferManager::getInstance()) {
   auto strategy = memory::MemoryManagerStrategy::instance();
   if (strategy->canResize()) {
@@ -182,9 +182,13 @@ Task::~Task() {
   } catch (const std::exception& e) {
     LOG(WARNING) << "Caught exception in ~Task(): " << e.what();
   }
+  // Remove the cap of 'this' from the total of the top tracker. The
+  // cap of a task level tracker is tracked as a reservation in the
+  // top tracker.
   auto topTracker =
       memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
   topTracker->update(-tracker().maxTotalBytes());
+  memory::getProcessDefaultMemoryManager().unregisterConsumer(this);
 }
 
 velox::memory::MemoryPool* FOLLY_NONNULL Task::addDriverPool() {
@@ -382,9 +386,9 @@ void Task::start(
         factory->inputDriver, factory->outputDriver);
   }
 
-  // Register self for possible memory recovery callback. Do this
+  // Register self for possible memory reclaim callback. Do this
   // after sizing 'drivers_' but before starting the
-  // Drivers. 'drivers_' can be read by memory recovery or
+  // Drivers. 'drivers_' can be read by memory reclaim or
   // cancellation while Drivers are being made, so the array should
   // have final size from the start.
 
@@ -412,17 +416,20 @@ void Task::start(
           self->numDriversInPartitionedOutput_ * numSplitGroups);
     }
 
-    if (factory->needsExchangeClient()) {
+    if (auto exchangeNodeId = factory->needsExchangeClient()) {
       // Low-water mark for filling the exchange queue is 1/2 of the per worker
       // buffer size of the producers.
       self->exchangeClients_[pipeline] = std::make_shared<ExchangeClient>(
           self->destination_,
           self->queryCtx()->config().maxPartitionedOutputBufferSize() / 2);
+
+      self->exchangeClientByPlanNode_.emplace(
+          exchangeNodeId.value(), self->exchangeClients_[pipeline]);
     }
   }
 
   std::unique_lock<std::mutex> l(self->mutex_);
-  // Register self for possible memory recovery callback. Do this
+  // Register self for possible memory reclaim callback. Do this
   // after creating the drivers but before starting them.
   memory::getProcessDefaultMemoryManager().registerConsumer(self.get(), self);
 
@@ -564,8 +571,7 @@ void Task::createDriversLocked(
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
   bool foundDriver = false;
-  bool allOutputDriversFinished = false;
-  TaskCompletionNotifier completionNotifier;
+  bool allFinished = true;
   {
     std::lock_guard<std::mutex> taskLock(self->mutex_);
     for (auto& driverPtr : self->drivers_) {
@@ -581,24 +587,15 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
 
       auto pipelineId = driver->driverCtx()->pipelineId;
 
-      // Check if all drivers in the output pipeline finished. If so, call
-      // Task::terminate(kFinished) to mark the task finished and finish
-      // remaining pipelines quickly.
       if (self->isOutputPipeline(pipelineId)) {
         ++splitGroupState.numFinishedOutputDrivers;
-        if (self->numDrivers(pipelineId) ==
-            splitGroupState.numFinishedOutputDrivers) {
-          allOutputDriversFinished = true;
-        }
       }
 
       // Release the driver, note that after this 'driver' is invalid.
       driverPtr = nullptr;
       self->driverClosedLocked();
 
-      if (self->checkIfFinishedLocked()) {
-        self->activateTaskCompletionNotifier(completionNotifier);
-      }
+      allFinished = self->checkIfFinishedLocked();
 
       // Check if a split group is finished.
       if (splitGroupState.numRunningDrivers == 0) {
@@ -620,13 +617,8 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
     LOG(WARNING) << "Trying to remove a Driver twice from its Task";
   }
 
-  completionNotifier.notify();
-
-  // TODO Add support for terminating processing early in grouped execution.
-  if (self->isUngroupedExecution() && allOutputDriversFinished) {
-    if (!self->hasPartitionedOutput_ || self->partitionedOutputConsumed_) {
-      self->terminate(TaskState::kFinished);
-    }
+  if (allFinished) {
+    self->terminate(TaskState::kFinished);
   }
 }
 
@@ -687,9 +679,11 @@ bool Task::addSplitWithSequence(
   checkPlanNodeIdForSplit(planNodeId);
   std::unique_ptr<ContinuePromise> promise;
   bool added = false;
+  bool isTaskRunning;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (isRunningLocked()) {
+    isTaskRunning = isRunningLocked();
+    if (isTaskRunning) {
       // The same split can be added again in some systems. The systems that
       // want
       // 'one split processed once only' would use this method and duplicate
@@ -701,23 +695,50 @@ bool Task::addSplitWithSequence(
       }
     }
   }
+
   if (promise) {
     promise->setValue();
   }
+
+  if (!isTaskRunning) {
+    addRemoteSplit(planNodeId, split);
+  }
+
   return added;
 }
 
 void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
   checkPlanNodeIdForSplit(planNodeId);
+  bool isTaskRunning;
   std::unique_ptr<ContinuePromise> promise;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (isRunningLocked()) {
+    isTaskRunning = isRunningLocked();
+    if (isTaskRunning) {
       promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
     }
   }
+
   if (promise) {
     promise->setValue();
+  }
+
+  if (!isTaskRunning) {
+    addRemoteSplit(planNodeId, split);
+  }
+}
+
+void Task::addRemoteSplit(
+    const core::PlanNodeId& planNodeId,
+    const exec::Split& split) {
+  if (split.hasConnectorSplit()) {
+    if (exchangeClientByPlanNode_.count(planNodeId)) {
+      auto remoteSplit =
+          std::dynamic_pointer_cast<RemoteConnectorSplit>(split.connectorSplit);
+      VELOX_CHECK(remoteSplit, "Wrong type of split");
+      exchangeClientByPlanNode_[planNodeId]->addRemoteTaskId(
+          remoteSplit->taskId);
+    }
   }
 }
 
@@ -796,7 +817,8 @@ void Task::noMoreSplitsForGroup(
 void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
   checkPlanNodeIdForSplit(planNodeId);
   std::vector<ContinuePromise> splitPromises;
-  TaskCompletionNotifier completionNotifier;
+  bool allFinished;
+  std::shared_ptr<ExchangeClient> exchangeClient;
   {
     std::lock_guard<std::mutex> l(mutex_);
 
@@ -817,15 +839,24 @@ void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
       splitsState.groupSplitsStores.emplace(0, SplitsStore{{}, true, {}});
     }
 
-    if (checkNoMoreSplitGroupsLocked()) {
-      activateTaskCompletionNotifier(completionNotifier);
+    allFinished = checkNoMoreSplitGroupsLocked();
+
+    if (!isRunningLocked() && exchangeClientByPlanNode_.count(planNodeId)) {
+      exchangeClient = exchangeClientByPlanNode_[planNodeId];
+      exchangeClientByPlanNode_.erase(planNodeId);
     }
   }
 
-  completionNotifier.notify();
-
   for (auto& promise : splitPromises) {
     promise.setValue();
+  }
+
+  if (exchangeClient) {
+    exchangeClient->noMoreRemoteTasks();
+  }
+
+  if (allFinished) {
+    terminate(kFinished);
   }
 }
 
@@ -904,7 +935,12 @@ BlockingReason Task::getSplitOrFutureLocked(
     return BlockingReason::kWaitForSplit;
   }
 
-  split = std::move(splitsStore.splits.front());
+  split = getSplitLocked(splitsStore);
+  return BlockingReason::kNotBlocked;
+}
+
+exec::Split Task::getSplitLocked(SplitsStore& splitsStore) {
+  auto split = std::move(splitsStore.splits.front());
   splitsStore.splits.pop_front();
 
   --taskStats_.numQueuedSplits;
@@ -914,7 +950,7 @@ BlockingReason Task::getSplitOrFutureLocked(
     taskStats_.firstSplitStartTimeMs = taskStats_.lastSplitStartTimeMs;
   }
 
-  return BlockingReason::kNotBlocked;
+  return split;
 }
 
 void Task::splitFinished() {
@@ -968,6 +1004,18 @@ void Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
       "Unable to initialize task. "
       "PartitionedOutputBufferManager was already destructed");
 
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (noMoreBroadcastBuffers_) {
+      // Ignore messages received after no-more-buffers message.
+      return;
+    }
+
+    if (noMoreBuffers) {
+      noMoreBroadcastBuffers_ = true;
+    }
+  }
+
   bufferManager->updateBroadcastOutputBuffers(
       taskId_, numBuffers, noMoreBuffers);
 }
@@ -983,29 +1031,14 @@ int Task::getOutputPipelineId() const {
 }
 
 void Task::setAllOutputConsumed() {
-  bool terminateEarly = false;
-  TaskCompletionNotifier completionNotifier;
+  bool allFinished;
   {
     std::lock_guard<std::mutex> l(mutex_);
     partitionedOutputConsumed_ = true;
-    if (checkIfFinishedLocked()) {
-      activateTaskCompletionNotifier(completionNotifier);
-    } else {
-      // TODO Add support for terminating processing early in grouped execution.
-      if (isUngroupedExecution() && !driverFactories_.empty()) {
-        auto outputPipelineId = getOutputPipelineId();
-
-        if (splitGroupStates_[0].numFinishedOutputDrivers ==
-            numDrivers(outputPipelineId)) {
-          terminateEarly = true;
-        }
-      }
-    }
+    allFinished = checkIfFinishedLocked();
   }
 
-  completionNotifier.notify();
-
-  if (terminateEarly) {
+  if (allFinished) {
     terminate(TaskState::kFinished);
   }
 }
@@ -1018,16 +1051,30 @@ void Task::driverClosedLocked() {
 }
 
 bool Task::checkIfFinishedLocked() {
-  if ((numFinishedDrivers_ == numTotalDrivers_) && isRunningLocked()) {
-    if (taskStats_.executionEndTimeMs == 0) {
-      // In case we haven't set executionEndTimeMs due to all splits depleted,
-      // we set it here.
-      // This can happen due to task error or task being cancelled.
-      taskStats_.executionEndTimeMs = getCurrentTimeMs();
+  if (!isRunningLocked()) {
+    return false;
+  }
+
+  // TODO Add support for terminating processing early in grouped execution.
+  bool allFinished = numFinishedDrivers_ == numTotalDrivers_;
+  if (!allFinished && isUngroupedExecution()) {
+    auto outputPipelineId = getOutputPipelineId();
+    if (splitGroupStates_[0].numFinishedOutputDrivers ==
+        numDrivers(outputPipelineId)) {
+      allFinished = true;
+
+      if (taskStats_.executionEndTimeMs == 0) {
+        // In case we haven't set executionEndTimeMs due to all splits
+        // depleted, we set it here. This can happen due to task error or task
+        // being cancelled.
+        taskStats_.executionEndTimeMs = getCurrentTimeMs();
+      }
     }
+  }
+
+  if (allFinished) {
     if ((not hasPartitionedOutput_) || partitionedOutputConsumed_) {
       taskStats_.endTimeMs = getCurrentTimeMs();
-      state_ = TaskState::kFinished;
       return true;
     }
   }
@@ -1227,6 +1274,12 @@ ContinueFuture Task::terminate(TaskState terminalState) {
     }
   }
 
+  for (auto& exchangeClient : exchangeClients_) {
+    if (exchangeClient) {
+      exchangeClient->close();
+    }
+  }
+
   // Release reference to exchange client, so that it will close exchange
   // sources and prevent resending requests for data.
   exchangeClients_.clear();
@@ -1234,6 +1287,9 @@ ContinueFuture Task::terminate(TaskState terminalState) {
   std::vector<ContinuePromise> splitPromises;
   std::vector<std::shared_ptr<JoinBridge>> oldBridges;
   std::vector<SplitGroupState> splitGroupStates;
+  std::
+      unordered_map<core::PlanNodeId, std::pair<std::vector<exec::Split>, bool>>
+          remainingRemoteSplits;
   {
     std::lock_guard<std::mutex> l(mutex_);
     // Collect all the join bridges to clear them.
@@ -1246,9 +1302,41 @@ ContinueFuture Task::terminate(TaskState terminalState) {
 
     // Collect all outstanding split promises from all splits state structures.
     for (auto& pair : splitsStates_) {
+      auto& splitState = pair.second;
       for (auto& it : pair.second.groupSplitsStores) {
         movePromisesOut(it.second.splitPromises, splitPromises);
       }
+
+      // Process remaining remote splits.
+      auto exchangeClientIt = exchangeClientByPlanNode_.find(pair.first);
+      if (exchangeClientIt != exchangeClientByPlanNode_.end()) {
+        auto exchangeClient = exchangeClientIt->second;
+        std::vector<exec::Split> splits;
+        for (auto& [groupId, store] : splitState.groupSplitsStores) {
+          while (!store.splits.empty()) {
+            splits.emplace_back(getSplitLocked(store));
+          }
+        }
+        if (!splits.empty()) {
+          remainingRemoteSplits.emplace(
+              pair.first,
+              std::make_pair(std::move(splits), splitState.noMoreSplits));
+        }
+      }
+    }
+  }
+
+  for (auto& [planNodeId, splits] : remainingRemoteSplits) {
+    for (auto& split : splits.first) {
+      if (!exchangeClientByPlanNode_[planNodeId]->pool()) {
+        // If we terminate even before the client's initialization, we
+        // initialize the client with Task's memory pool.
+        exchangeClientByPlanNode_[planNodeId]->initialize(pool_.get());
+      }
+      addRemoteSplit(planNodeId, split);
+    }
+    if (splits.second) {
+      exchangeClientByPlanNode_[planNodeId]->noMoreRemoteTasks();
     }
   }
 
@@ -1480,18 +1568,18 @@ Driver* FOLLY_NULLABLE Task::thisDriver() const {
   return nullptr;
 }
 
-int64_t Task::recoverableMemory() const {
+int64_t Task::reclaimableMemory() const {
   int64_t total = tracker().maxTotalBytes() - tracker().getCurrentUserBytes();
   for (auto driver : drivers_) {
     if (driver) {
-      total += driver->recoverableMemory();
+      total += driver->reclaimableMemory();
     }
   }
   return total;
 }
 
-void Task::recover(int64_t size) {
-  VELOX_CHECK_EQ(numThreads_, 0, "recover expects paused task");
+void Task::reclaim(int64_t size) {
+  VELOX_CHECK_EQ(numThreads_, 0, "reclaim expects paused task");
   int32_t numDrivers = 0;
   for (auto& driver : drivers_) {
     if (driver) {
@@ -1501,27 +1589,27 @@ void Task::recover(int64_t size) {
   if (!numDrivers) {
     return;
   }
-  int64_t recovered = 0;
+  int64_t reclaimed = 0;
   auto& tracker = *pool_->getMemoryUsageTracker();
-  while (recovered < size) {
-    // Per driver recovery target is 16MB + target / number of
+  while (reclaimed < size) {
+    // Per driver reclaim target is 16MB + target / number of
     // drivers. Spilling less than 16MB makes no sense and a Driver
     // will typically have only one spillable operator, so the
     // practical scenario is how many full operators have to be
     // spilled to make the target.
-    auto perDriver = (16 << 20) + ((size - recovered) / numDrivers);
-    auto lastRecovered = recovered;
+    auto perDriver = (16 << 20) + ((size - reclaimed) / numDrivers);
+    auto lastReclaimed = reclaimed;
     for (auto& driver : drivers_) {
       if (driver) {
         auto previous = tracker.getCurrentTotalBytes();
         driver->spill(perDriver);
-        recovered += previous - tracker.getCurrentTotalBytes();
-        if (recovered >= size) {
+        reclaimed += previous - tracker.getCurrentTotalBytes();
+        if (reclaimed >= size) {
           break;
         }
       }
     }
-    if (recovered == lastRecovered) {
+    if (reclaimed == lastReclaimed) {
       // If nothing recovered in this sweep over drivers, give up.
       break;
     }
@@ -1549,16 +1637,16 @@ void setLimit(int64_t bytes, memory::MemoryUsageTracker& tracker) {
 
 } // namespace
 
-bool TaskMemoryStrategy::recover(
+bool TaskMemoryStrategy::reclaim(
     std::shared_ptr<memory::MemoryConsumer> requester,
     int64_t bytes) {
   // Returns true if 'bytes' bytes can be transferred to 'requester' from
-  // unused space in topTracker and/or recovered space from other consumers.
+  // unused space in topTracker and/or reclaimed space from other consumers.
 
   // The minimum amount by which a Task must shrink for a transfer of capacity
   // to make sense. In practice, this is the minimum memory an operator must
   // hold in order to be spillable.
-  constexpr int64_t kMinRecoverableBytes = 10 << 20;
+  constexpr int64_t kMinReclaimableBytes = 10 << 20;
 
   // When running with memory arbitration, the initial reservation comes from
   // the first action of the first Driver of the new Task. Therefore this is
@@ -1566,7 +1654,7 @@ bool TaskMemoryStrategy::recover(
   constexpr int64_t kInitialSize = 24 << 20;
   std::lock_guard<std::mutex> l(mutex_);
   Task* consumerTask = dynamic_cast<Task*>(requester.get());
-  VELOX_CHECK(consumerTask, "Only a Task can request memory via recover()");
+  VELOX_CHECK(consumerTask, "Only a Task can request memory via reclaim()");
   auto topTracker =
       memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
   auto& tracker = consumerTask->tracker();
@@ -1578,7 +1666,7 @@ bool TaskMemoryStrategy::recover(
     return false;
   }
   int64_t bytesForRequester =
-      tracker.maxTotalBytes() < kMinRecoverableBytes ? kInitialSize : bytes;
+      tracker.maxTotalBytes() < kMinReclaimableBytes ? kInitialSize : bytes;
   auto available =
       topTracker->maxTotalBytes() - topTracker->getCurrentUserBytes();
 
@@ -1601,9 +1689,9 @@ bool TaskMemoryStrategy::recover(
       if (otherTask) {
         auto size = otherTask->tracker().getCurrentTotalBytes();
         if (size > kInitialSize) {
-          auto recoverable = otherTask->recoverableMemory();
-          if (recoverable >= kMinRecoverableBytes) {
-            candidates.push_back({ptr, otherTask, recoverable});
+          auto reclaimable = otherTask->reclaimableMemory();
+          if (reclaimable >= kMinReclaimableBytes) {
+            candidates.push_back({ptr, otherTask, reclaimable});
             available += candidates.back().available;
           }
         }
@@ -1620,7 +1708,7 @@ bool TaskMemoryStrategy::recover(
         // Most available first.
         return left.available > right.available;
       });
-  int64_t recovered = 0;
+  int64_t reclaimed = 0;
   std::vector<std::shared_ptr<Task>> pausedTasks;
   for (auto& candidate : candidates) {
     if (auto& task = candidate.task) {
@@ -1635,31 +1723,31 @@ bool TaskMemoryStrategy::recover(
 
       auto& taskTracker = task->tracker();
       auto previousBytes = taskTracker.maxTotalBytes();
-      task->recover(bytesForRequester - recovered);
-      auto recoveredFromTask =
+      task->reclaim(bytesForRequester - reclaimed);
+      auto reclaimedFromTask =
           previousBytes - taskTracker.getCurrentTotalBytes();
-      if (recoveredFromTask < kMinRecoverableBytes) {
-        // Too little recovered. No change to limit.
+      if (reclaimedFromTask < kMinReclaimableBytes) {
+        // Too little reclaimed. No change to limit.
         continue;
       }
-      recovered = roundDown(recoveredFromTask, kMinRecoverableBytes);
+      reclaimed = roundDown(reclaimedFromTask, kMinReclaimableBytes);
       VLOG(1) << fmt::format(
           "{} drops limit by {} to {}",
           task->taskId(),
-          recovered,
-          taskTracker.maxTotalBytes() - recovered);
-      setLimit(taskTracker.maxTotalBytes() - recoveredFromTask, taskTracker);
+          reclaimed,
+          taskTracker.maxTotalBytes() - reclaimed);
+      setLimit(taskTracker.maxTotalBytes() - reclaimedFromTask, taskTracker);
 
-      recovered += recoveredFromTask;
-      if (recovered >= bytesForRequester) {
+      reclaimed += reclaimedFromTask;
+      if (reclaimed >= bytesForRequester) {
         break;
       }
     }
   }
-  bool success = recovered >= bytesForRequester;
+  bool success = reclaimed >= bytesForRequester;
   // Updating downward, no throw.
   if (success) {
-    topTracker->update(bytesForRequester - recovered);
+    topTracker->update(bytesForRequester - reclaimed);
     VLOG(1) << fmt::format(
         "{} increases limit by {} to {}",
         consumerTask->taskId(),
@@ -1667,7 +1755,7 @@ bool TaskMemoryStrategy::recover(
         tracker.maxTotalBytes() + bytesForRequester);
     setLimit(tracker.maxTotalBytes() + bytesForRequester, tracker);
   } else {
-    topTracker->update(-recovered);
+    topTracker->update(-reclaimed);
   }
 
   for (auto& task : pausedTasks) {

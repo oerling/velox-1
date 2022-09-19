@@ -23,7 +23,7 @@
 #include "velox/common/base/Nulls.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/vector/arrow/Bridge.h"
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 namespace {
 
@@ -700,7 +700,7 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
         nullCount++;
       } else {
         bits::clearNull(rawNulls, i);
-        if constexpr (std::is_same<T, bool>::value) {
+        if constexpr (std::is_same_v<T, bool>) {
           bits::setBit(rawValues, i, *inputValues[i]);
         } else {
           rawValues[i] = *inputValues[i];
@@ -778,7 +778,7 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
     // buffer, depending on the string sizes, in which case the buffers could be
     // reusable. So we don't check them in here.
     if constexpr (!std::is_same_v<T, std::string>) {
-      EXPECT_FALSE(BaseVector::isReusableFlatVector(output));
+      EXPECT_FALSE(BaseVector::isVectorWritable(output));
     }
   }
 

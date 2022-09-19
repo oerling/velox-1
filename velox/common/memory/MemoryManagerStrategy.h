@@ -32,16 +32,16 @@ class MemoryConsumer {
   // Returns the tracker with the current usage and limits.
   virtual memory::MemoryUsageTracker& tracker() const = 0;
 
-  // Returns the number of bytes that may be recoverable with
-  // recover().
-  virtual int64_t recoverableMemory() const = 0;
+  // Returns the number of bytes that may be reclaimable with
+  // reclaim().
+  virtual int64_t reclaimableMemory() const = 0;
 
-  //  Recovers memory. Implementations may for example spill or evict
-  //  caches. 'size' specifies a target number of bytes to recover. The
+  //  Reclaims memory. Implementations may for example spill or evict
+  //  caches. 'size' specifies a target number of bytes to reclaim. The
   //  actual effect on memory usage is seen in tracker(). This does not
   //  guarantee any result. Implementations have additional
   //  requirements for using this method, e.g. a Task must be paused.
-  virtual void recover(int64_t size) = 0;
+  virtual void reclaim(int64_t size) = 0;
 };
 
 class MemoryManagerStrategy {
@@ -59,10 +59,10 @@ class MemoryManagerStrategy {
   // Unregisters a memory consumer with MemoryManager.
   virtual void unregisterConsumer(MemoryConsumer* consumer) = 0;
 
-  // Tries to recover memory so that 'requester' can allocate 'size'
+  // Tries to reclaim memory so that 'requester' can allocate 'size'
   // bytes of new memory. Returns true if the user memory limit of
   // 'requester' was increased by at least 'size'.
-  virtual bool recover(
+  virtual bool reclaim(
       std::shared_ptr<MemoryConsumer> requester,
       int64_t size) = 0;
 
@@ -116,7 +116,7 @@ class MemoryManagerStrategyBase : public MemoryManagerStrategy {
 class DefaultMemoryManagerStrategy : public MemoryManagerStrategyBase {
  public:
   // No op.
-  bool recover(std::shared_ptr<MemoryConsumer> /*requester*/, int64_t /*size*/)
+  bool reclaim(std::shared_ptr<MemoryConsumer> /*requester*/, int64_t /*size*/)
       override {
     return false;
   }

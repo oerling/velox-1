@@ -25,7 +25,7 @@
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 namespace facebook::velox::row {
 namespace {
@@ -87,8 +87,13 @@ TEST_F(UnsafeRowFuzzTests, simpleTypeRoundTripTest) {
     clearBuffer();
     const auto& inputVector = fuzzer.fuzzRow(rowType);
     // Serialize rowVector into bytes.
+    UnsafeRowDynamicSerializer::preloadVector(inputVector);
     auto rowSize = UnsafeRowDynamicSerializer::serialize(
         rowType, inputVector, buffer_, /*idx=*/0);
+
+    auto rowSizeMeasured =
+        UnsafeRowDynamicSerializer::getSizeRow(rowType, inputVector.get(), 0);
+    EXPECT_EQ(rowSize.value_or(0), rowSizeMeasured);
 
     // Deserialize previous bytes back to row vector
     VectorPtr outputVector =

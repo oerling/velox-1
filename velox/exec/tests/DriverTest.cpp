@@ -64,7 +64,7 @@ class TestingPauserNode : public core::PlanNode {
   TestingPauserNode(const core::PlanNodeId& id, core::PlanNodePtr input)
       : PlanNode(id), sources_{input} {}
 
-  const std::shared_ptr<const RowType>& outputType() const override {
+  const RowTypePtr& outputType() const override {
     return sources_[0]->outputType();
   }
 
@@ -117,7 +117,7 @@ class DriverTest : public OperatorTestBase {
   }
 
   core::PlanNodePtr makeValuesFilterProject(
-      const std::shared_ptr<const RowType>& rowType,
+      const RowTypePtr& rowType,
       const std::string& filter,
       const std::string& project,
       int32_t numBatches,
@@ -335,7 +335,7 @@ class DriverTest : public OperatorTestBase {
   // Set to true when it is time to exit 'wakeupThread_'.
   std::atomic<bool> wakeupCancelled_{false};
 
-  std::shared_ptr<const RowType> rowType_;
+  RowTypePtr rowType_;
   std::mutex mutex_;
   std::vector<std::shared_ptr<Task>> tasks_;
   ContinueFuture cancelFuture_;
@@ -383,7 +383,7 @@ TEST_F(DriverTest, cancel) {
   int32_t numRead = 0;
   try {
     readResults(params, ResultOperation::kCancel, 1'000'000, &numRead);
-    EXPECT_TRUE(false) << "Expected exception";
+    FAIL() << "Expected exception";
   } catch (const VeloxRuntimeError& e) {
     EXPECT_EQ("Cancelled", e.message());
   }
@@ -415,6 +415,11 @@ TEST_F(DriverTest, terminate) {
     // If this is an exception, it will be a cancellation.
     EXPECT_TRUE(strstr(e.what(), "Aborted") != nullptr) << e.what();
   }
+
+  ASSERT_TRUE(cancelFuture_.valid());
+  auto& executor = folly::QueuedImmediateExecutor::instance();
+  std::move(cancelFuture_).via(&executor).wait();
+
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
   EXPECT_EQ(tasks_[0]->state(), TaskState::kAborted);
@@ -486,10 +491,7 @@ TEST_F(DriverTest, pause) {
 TEST_F(DriverTest, yield) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
-  std::vector<int32_t> counters;
-  counters.reserve(kNumTasks);
-  std::vector<CursorParameters> params;
-  params.resize(kNumTasks);
+  std::vector<CursorParameters> params(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
     params[i].planNode = makeValuesFilterProject(
@@ -502,10 +504,10 @@ TEST_F(DriverTest, yield) {
         &hits);
     params[i].maxDrivers = kThreadsPerTask;
   }
+  std::vector<int32_t> counters(kNumTasks, 0);
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       readResults(params[i], ResultOperation::kYield, 10'000, &counters[i], i);
     }));
@@ -684,10 +686,7 @@ TEST_F(DriverTest, pauserNode) {
   Operator::registerOperator(std::make_unique<PauserNodeFactory>(
       kThreadsPerTask, sequence, testInstance));
 
-  std::vector<int32_t> counters;
-  counters.reserve(kNumTasks);
-  std::vector<CursorParameters> params;
-  params.resize(kNumTasks);
+  std::vector<CursorParameters> params(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
     params[i].queryCtx = std::make_shared<core::QueryCtx>(
@@ -704,10 +703,10 @@ TEST_F(DriverTest, pauserNode) {
     params[i].maxDrivers =
         kThreadsPerTask * 2; // a number larger than kThreadsPerTask
   }
+  std::vector<int32_t> counters(kNumTasks, 0);
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       try {
         readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);
@@ -732,7 +731,7 @@ class ThrowNode : public core::PlanNode {
   ThrowNode(const core::PlanNodeId& id, core::PlanNodePtr input)
       : PlanNode(id), sources_{input} {}
 
-  const std::shared_ptr<const RowType>& outputType() const override {
+  const RowTypePtr& outputType() const override {
     return sources_[0]->outputType();
   }
 
@@ -846,7 +845,7 @@ class TestingConsumer : public Operator {
       std::shared_ptr<const TestingConsumerNode> node,
       int32_t sequence)
       : Operator(ctx, node->outputType(), id, node->id(), "consumer"),
-        recoverableTracker_(
+        reclaimableTracker_(
             operatorCtx_->pool()->getMemoryUsageTracker()->addChild(
                 false,
                 memory::MemoryUsageConfigBuilder().build())),
@@ -866,7 +865,7 @@ class TestingConsumer : public Operator {
     }
     int64_t size = 10 << 20;
     if (!reserveAndRun(
-            recoverableTracker_,
+		       reclaimableTracker_,
             size,
             [this](int64_t size) {
               LOG(INFO) << "Spiller called: " << size;
@@ -874,10 +873,10 @@ class TestingConsumer : public Operator {
             },
             [&]() {
               // Use the reserved memory.
-              recoverableTracker_->update(
-                  recoverableTracker_->getAvailableReservation());
+              reclaimableTracker_->update(
+                  reclaimableTracker_->getAvailableReservation());
               // The reservation is converted to allocation.
-              recoverableTracker_->release();
+              reclaimableTracker_->release();
             })) {
       VELOX_FAIL("Out of memory");
     }
@@ -892,23 +891,70 @@ class TestingConsumer : public Operator {
     return noMoreInput_ && input_ == nullptr;
   }
 
-  int64_t recoverableMemory() const override {
-    return recoverableTracker_->getCurrentUserBytes() / 3;
+  int64_t reclaimableMemory() const override {
+    return reclaimableTracker_->getCurrentUserBytes() / 3;
   }
 
   void spill(int64_t size) override {
-    int64_t freed = std::min(size, recoverableTracker_->getCurrentUserBytes());
-    recoverableTracker_->update(-freed);
-    recoverableTracker_->release();
+    int64_t freed = std::min(size, reclaimableTracker_->getCurrentUserBytes());
+    reclaimableTracker_->update(-freed);
+    reclaimableTracker_->release();
   }
 
   void close() override {
-    recoverableTracker_->release();
-    recoverableTracker_->update(-recoverableTracker_->getCurrentUserBytes());
+    reclaimableTracker_->release();
+    reclaimableTracker_->update(-reclaimableTracker_->getCurrentUserBytes());
   }
 
  private:
-  std::shared_ptr<memory::MemoryUsageTracker> recoverableTracker_;
+
+    // Tries to increase the reservation of 'tracker' by 'size'. If
+  // successful, calls 'runFunc'. If the reservation fails, calls
+  // 'spillFunc' and tries again. If the reservation fails, the second
+  // time, returns false, else true.
+  bool reserveAndRun(
+      const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
+      int64_t reservationSize,
+      std::function<void(int64_t)> spillFunc,
+      std::function<void(void)> runFunc) {
+  if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
+    return true;
+  }
+
+  // If spill func is specified, try spilling locally first.
+  if (spillFunc) {
+    // Spill any reclaimable memory locally with
+    // the supplied spill function.
+    spillFunc(reservationSize);
+
+    // Try reserving again and run.
+    if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
+      return true;
+    }
+  }
+  return false;
+}
+  
+  static bool tryReserveAndRun(
+    const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
+    int64_t reservationSize,
+    std::function<void(void)> runFunc) {
+  try {
+    tracker->reserve(reservationSize);
+    // Successfully reserved.
+    runFunc();
+    return true;
+  } catch (const VeloxRuntimeError& e) {
+    if (e.errorCode() != ::facebook::velox::error_code::kMemCapExceeded) {
+      // If it is not MemCapExceeded exception, rethrow original exception.
+      throw;
+    }
+  }
+  return false;
+}
+
+
+  std::shared_ptr<memory::MemoryUsageTracker> reclaimableTracker_;
   const int32_t sequence_;
 };
 
@@ -960,7 +1006,7 @@ TEST_F(DriverTest, memoryReservation) {
   // size. All drivers will potentially be queued waiting for their
   // 10MB extra memory. If the total were <= the sum of max concurrent
   // growth requests we could have a situation where no memory could
-  // be recovered. We set the total to be 2G and the maximum of
+   // be reclaimed. We set the total to be 2G and the maximum of
   // concurrent outstanding requests to be 1G so that the growth
   // requests can be satisfied one after the other.
   constexpr int32_t kNumTasks = 20;
@@ -1001,7 +1047,7 @@ TEST_F(DriverTest, memoryReservation) {
         "m1 % 10 > 0",
         "m1 % 3 + m2 % 5 + m3 % 7 + m4 % 11 + m5 % 13 + m6 % 17 + m7 % 19",
         200,
-        2'000,
+        1'000,
         [](int64_t num) { return num % 10 > 0; },
         &hits,
         false,

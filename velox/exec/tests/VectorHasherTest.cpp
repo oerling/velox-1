@@ -16,7 +16,7 @@
 #include "velox/exec/VectorHasher.h"
 #include <gtest/gtest.h>
 #include "velox/type/Type.h"
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -859,4 +859,12 @@ TEST_F(VectorHasherTest, endOfRange) {
     uniques.insert(id);
   }
   EXPECT_EQ(tinyData->size(), uniques.size());
+}
+
+TEST_F(VectorHasherTest, hashCollision) {
+  constexpr int kValue = 42;
+  UniqueValue x(kValue);
+  UniqueValue y(kValue | (1ull << 32));
+  UniqueValueHasher h;
+  EXPECT_NE(h(x), h(y));
 }

@@ -16,9 +16,9 @@
 
 #include "gtest/gtest.h"
 
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -103,13 +103,13 @@ class EvalSimplifiedTest : public FunctionBaseTest {
       std::exception_ptr exceptionSimplifiedPtr;
 
       try {
-        exprSetCommon.eval(rows, &evalCtxCommon, &commonEvalResult);
+        exprSetCommon.eval(rows, evalCtxCommon, commonEvalResult);
       } catch (const std::exception& e) {
         exceptionCommonPtr = std::current_exception();
       }
 
       try {
-        exprSetSimplified.eval(rows, &evalCtxSimplified, &simplifiedEvalResult);
+        exprSetSimplified.eval(rows, evalCtxSimplified, simplifiedEvalResult);
       } catch (const std::exception& e) {
         exceptionSimplifiedPtr = std::current_exception();
       }

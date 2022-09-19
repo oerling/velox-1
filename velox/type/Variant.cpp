@@ -77,6 +77,44 @@ struct VariantEquality<TypeKind::DATE> {
   }
 };
 
+template <>
+struct VariantEquality<TypeKind::SHORT_DECIMAL> {
+  template <bool NullEqualsNull>
+  static bool equals(const variant& a, const variant& b) {
+    const auto lhs = a.value<TypeKind::SHORT_DECIMAL>();
+    const auto rhs = b.value<TypeKind::SHORT_DECIMAL>();
+    const auto lType = DECIMAL(lhs.precision, lhs.scale);
+    const auto rType = DECIMAL(rhs.precision, rhs.scale);
+    if (!lType->equivalent(*rType)) {
+      return false;
+    }
+    if (a.isNull() || b.isNull()) {
+      return evaluateNullEquality<NullEqualsNull>(a, b);
+    } else {
+      return lhs.value() == rhs.value();
+    }
+  }
+};
+
+template <>
+struct VariantEquality<TypeKind::LONG_DECIMAL> {
+  template <bool NullEqualsNull>
+  static bool equals(const variant& a, const variant& b) {
+    const auto lhs = a.value<TypeKind::LONG_DECIMAL>();
+    const auto rhs = b.value<TypeKind::LONG_DECIMAL>();
+    const auto lType = DECIMAL(lhs.precision, lhs.scale);
+    const auto rType = DECIMAL(rhs.precision, rhs.scale);
+    if (!lType->equivalent(*rType)) {
+      return false;
+    }
+    if (a.isNull() || b.isNull()) {
+      return evaluateNullEquality<NullEqualsNull>(a, b);
+    } else {
+      return lhs.value() == rhs.value();
+    }
+  }
+};
+
 // interval day time
 template <>
 struct VariantEquality<TypeKind::INTERVAL_DAY_TIME> {
@@ -329,6 +367,21 @@ std::string variant::toJson() const {
       "Unsupported: given type {} is not json-ready", mapTypeKindToName(kind_));
 }
 
+void serializeOpaque(
+    folly::dynamic& variantObj,
+    detail::OpaqueCapsule opaqueValue) {
+  try {
+    auto serializeFunction = opaqueValue.type->getSerializeFunc();
+    variantObj["value"] = serializeFunction(opaqueValue.obj);
+    variantObj["opaque_type"] = folly::toJson(opaqueValue.type->serialize());
+  } catch (VeloxRuntimeError& ex) {
+    // Re-throw error for backwards compatibility.
+    // Want to return error_code::kNotImplemented rather
+    // than error_code::kInvalidState
+    VELOX_NYI(ex.message());
+  }
+}
+
 folly::dynamic variant::serialize() const {
   folly::dynamic variantObj = folly::dynamic::object;
 
@@ -401,16 +454,15 @@ folly::dynamic variant::serialize() const {
       objValue = value<TypeKind::VARCHAR>();
       break;
     }
-
+    case TypeKind::OPAQUE: {
+      serializeOpaque(variantObj, value<TypeKind::OPAQUE>());
+      break;
+    }
     case TypeKind::DATE:
     case TypeKind::INTERVAL_DAY_TIME:
     case TypeKind::TIMESTAMP:
     case TypeKind::INVALID:
       VELOX_NYI();
-
-    case TypeKind::OPAQUE:
-      VELOX_NYI(
-          "Opaque types serialization is potentially possible but not implemented yet");
 
     default:
       VELOX_NYI();
@@ -419,6 +471,22 @@ folly::dynamic variant::serialize() const {
   return variantObj;
 }
 
+variant deserializeOpaque(const folly::dynamic& variantobj) {
+  auto typ = folly::parseJson(variantobj["opaque_type"].asString());
+  auto opaqueType =
+      std::dynamic_pointer_cast<const OpaqueType>(Type::create(typ));
+
+  try {
+    auto deserializeFunc = opaqueType->getDeserializeFunc();
+    auto value = variantobj["value"].asString();
+    return variant::opaque(deserializeFunc(value), opaqueType);
+  } catch (VeloxRuntimeError& ex) {
+    // Re-throw error for backwards compatibility.
+    // Want to return error_code::kNotImplemented rather
+    // than error_code::kInvalidState
+    VELOX_NYI(ex.message());
+  }
+}
 variant variant::create(const folly::dynamic& variantobj) {
   TypeKind kind = mapNameToTypeKind(variantobj["type"].asString());
   const folly::dynamic& obj = variantobj["value"];
@@ -484,6 +552,9 @@ variant variant::create(const folly::dynamic& variantobj) {
         return variant::create<TypeKind::DOUBLE>(obj.asInt());
       }
       return variant::create<TypeKind::DOUBLE>(obj.asDouble());
+    }
+    case TypeKind::OPAQUE: {
+      return deserializeOpaque(variantobj);
     }
     case TypeKind::DATE:
     case TypeKind::INTERVAL_DAY_TIME:

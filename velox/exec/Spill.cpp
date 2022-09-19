@@ -16,10 +16,19 @@
 
 #include "velox/exec/Spill.h"
 #include "velox/common/file/FileSystems.h"
+#include "velox/serializers/PrestoSerializer.h"
 
 namespace facebook::velox::exec {
 
-std::atomic<int32_t> SpillStream::ordinalCounter_;
+// Spilling currently uses the default PrestoSerializer which by default
+// serializes timestamp with millisecond precision to maintain compatibility
+// with presto. Since velox's native timestamp implementation supports
+// nanosecond precision, we use this serde option to ensure the serializer
+// preserves precision.
+static const serializer::presto::PrestoVectorSerde::PrestoOptions
+    kDefaultSerdeOptions(/*useLosslessTimestamp*/ true);
+
+std::atomic<int32_t> SpillFile::ordinalCounter_;
 
 void SpillInput::next(bool /*throwIfPastEnd*/) {
   int32_t readBytes = std::min(input_->size() - offset_, buffer_->capacity());
@@ -29,7 +38,7 @@ void SpillInput::next(bool /*throwIfPastEnd*/) {
   offset_ += readBytes;
 }
 
-void SpillStream::pop() {
+void SpillMergeStream::pop() {
   if (++index_ >= size_) {
     setNextBatch();
   }
@@ -62,17 +71,15 @@ void SpillFile::startRead() {
   auto buffer = AlignedBuffer::allocate<char>(
       std::min<uint64_t>(fileSize_, kMaxReadBufferSize), &pool_);
   input_ = std::make_unique<SpillInput>(std::move(file), std::move(buffer));
-  nextBatch();
 }
 
-void SpillFile::nextBatch() {
-  index_ = 0;
+bool SpillFile::nextBatch(RowVectorPtr& rowVector) {
   if (input_->atEnd()) {
-    size_ = 0;
-    return;
+    return false;
   }
-  VectorStreamGroup::read(input_.get(), &pool_, type_, &rowVector_);
-  size_ = rowVector_->size();
+  VectorStreamGroup::read(
+      input_.get(), &pool_, type_, &rowVector, &kDefaultSerdeOptions);
+  return true;
 }
 
 WriteFile& SpillFileList::currentOutput() {
@@ -112,7 +119,9 @@ void SpillFileList::write(
   if (!batch_) {
     batch_ = std::make_unique<VectorStreamGroup>(&mappedMemory_);
     batch_->createStreamTree(
-        std::static_pointer_cast<const RowType>(rows->type()), 1000);
+        std::static_pointer_cast<const RowType>(rows->type()),
+        1000,
+        &kDefaultSerdeOptions);
   }
   batch_->append(rows, indices);
 
@@ -147,8 +156,9 @@ std::vector<std::string> SpillFileList::testingSpilledFilePaths() const {
 
 void SpillState::setPartitionSpilled(int32_t partition) {
   VELOX_DCHECK_LT(partition, maxPartitions_);
-  VELOX_DCHECK(!isPartitionSpilled_[partition]);
-  isPartitionSpilled_[partition] = true;
+  VELOX_DCHECK_LT(spilledPartitionSet_.size(), maxPartitions_);
+  VELOX_DCHECK(!spilledPartitionSet_.contains(partition));
+  spilledPartitionSet_.insert(partition);
 }
 
 void SpillState::appendToPartition(
@@ -171,15 +181,14 @@ void SpillState::appendToPartition(
   files_[partition]->write(rows, folly::Range<IndexRange*>(&range, 1));
 }
 
-std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
+std::unique_ptr<TreeOfLosers<SpillMergeStream>> SpillState::startMerge(
     int32_t partition,
-    std::unique_ptr<SpillStream>&& extra) {
+    std::unique_ptr<SpillMergeStream>&& extra) {
   VELOX_CHECK_LT(partition, files_.size());
-  std::vector<std::unique_ptr<SpillStream>> result;
+  std::vector<std::unique_ptr<SpillMergeStream>> result;
   if (auto list = std::move(files_[partition]); list) {
     for (auto& file : list->files()) {
-      file->startRead();
-      result.push_back(std::move(file));
+      result.push_back(FileSpillMergeStream::create(std::move(file)));
     }
   }
   VELOX_DCHECK_EQ(!result.empty(), isPartitionSpilled(partition));
@@ -190,7 +199,17 @@ std::unique_ptr<TreeOfLosers<SpillStream>> SpillState::startMerge(
   if (FOLLY_UNLIKELY(result.empty())) {
     return nullptr;
   }
-  return std::make_unique<TreeOfLosers<SpillStream>>(std::move(result));
+  return std::make_unique<TreeOfLosers<SpillMergeStream>>(std::move(result));
+}
+
+SpillFiles SpillState::files(int32_t partition) {
+  VELOX_CHECK_LT(partition, files_.size());
+
+  auto list = std::move(files_[partition]);
+  if (FOLLY_UNLIKELY(list == nullptr)) {
+    return {};
+  }
+  return list->files();
 }
 
 uint64_t SpillState::spilledBytes() const {
@@ -204,13 +223,11 @@ uint64_t SpillState::spilledBytes() const {
 }
 
 uint32_t SpillState::spilledPartitions() const {
-  uint32_t numSpilledPartitions = 0;
-  for (int i = 0; i < isPartitionSpilled_.size(); ++i) {
-    if (isPartitionSpilled_[i]) {
-      ++numSpilledPartitions;
-    }
-  }
-  return numSpilledPartitions;
+  return spilledPartitionSet_.size();
+}
+
+const SpillPartitionNumSet& SpillState::spilledPartitionSet() const {
+  return spilledPartitionSet_;
 }
 
 int64_t SpillState::spilledFiles() const {
@@ -235,6 +252,18 @@ std::vector<std::string> SpillState::testingSpilledFilePaths() const {
     }
   }
   return spilledFiles;
+}
+
+std::unique_ptr<UnorderedStreamReader<BatchStream>>
+SpillPartition::createReader() {
+  std::vector<std::unique_ptr<BatchStream>> streams;
+  streams.reserve(files_.size());
+  for (auto& file : files_) {
+    streams.push_back(FileSpillBatchStream::create(std::move(file)));
+  }
+  files_.clear();
+  return std::make_unique<UnorderedStreamReader<BatchStream>>(
+      std::move(streams));
 }
 
 } // namespace facebook::velox::exec

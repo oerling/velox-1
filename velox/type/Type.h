@@ -1299,6 +1299,14 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       case ::facebook::velox::TypeKind::ROW: {                                 \
         return PREFIX<::facebook::velox::TypeKind::ROW> SUFFIX(__VA_ARGS__);   \
       }                                                                        \
+      case ::facebook::velox::TypeKind::SHORT_DECIMAL: {                       \
+        return PREFIX<::facebook::velox::TypeKind::SHORT_DECIMAL> SUFFIX(      \
+            __VA_ARGS__);                                                      \
+      }                                                                        \
+      case ::facebook::velox::TypeKind::LONG_DECIMAL: {                        \
+        return PREFIX<::facebook::velox::TypeKind::LONG_DECIMAL> SUFFIX(       \
+            __VA_ARGS__);                                                      \
+      }                                                                        \
       default:                                                                 \
         VELOX_FAIL("not a known type kind: {}", mapTypeKindToName(typeKind));  \
     }                                                                          \
@@ -1313,12 +1321,6 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       return TEMPLATE_FUNC<::facebook::velox::TypeKind::UNKNOWN>(__VA_ARGS__); \
     } else if ((typeKind) == ::facebook::velox::TypeKind::OPAQUE) {            \
       return TEMPLATE_FUNC<::facebook::velox::TypeKind::OPAQUE>(__VA_ARGS__);  \
-    } else if (((typeKind) == ::facebook::velox::TypeKind::SHORT_DECIMAL)) {   \
-      return TEMPLATE_FUNC<::facebook::velox::TypeKind::SHORT_DECIMAL>(        \
-          __VA_ARGS__);                                                        \
-    } else if (((typeKind) == ::facebook::velox::TypeKind::LONG_DECIMAL)) {    \
-      return TEMPLATE_FUNC<::facebook::velox::TypeKind::LONG_DECIMAL>(         \
-          __VA_ARGS__);                                                        \
     } else {                                                                   \
       return VELOX_DYNAMIC_TYPE_DISPATCH_IMPL(                                 \
           TEMPLATE_FUNC, , typeKind, __VA_ARGS__);                             \
@@ -1339,6 +1341,12 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
     } else if ((typeKind) == ::facebook::velox::TypeKind::OPAQUE) {         \
       return CLASS_NAME<::facebook::velox::TypeKind::OPAQUE>::METHOD_NAME(  \
           __VA_ARGS__);                                                     \
+    } else if ((typeKind) == ::facebook::velox::TypeKind::SHORT_DECIMAL) {  \
+      return CLASS_NAME<::facebook::velox::TypeKind::SHORT_DECIMAL>::       \
+          METHOD_NAME(__VA_ARGS__);                                         \
+    } else if ((typeKind) == ::facebook::velox::TypeKind::LONG_DECIMAL) {   \
+      return CLASS_NAME<::facebook::velox::TypeKind::LONG_DECIMAL>::        \
+          METHOD_NAME(__VA_ARGS__);                                         \
     } else {                                                                \
       return VELOX_DYNAMIC_TYPE_DISPATCH_IMPL(                              \
           CLASS_NAME, ::METHOD_NAME, typeKind, __VA_ARGS__);                \
@@ -1449,7 +1457,7 @@ std::shared_ptr<const Type> createType(
   if (children.size() != 0) {
     throw std::invalid_argument{
         std::string(TypeTraits<KIND>::name) +
-        " primitive type takes no childern"};
+        " primitive type takes no children"};
   }
   static_assert(TypeTraits<KIND>::isPrimitiveType);
   return ScalarType<KIND>::create();
@@ -1950,6 +1958,9 @@ struct CastTypeChecker<Row<T...>> {
   }
 };
 
+/// Return the scalar type for a given 'kind'.
+TypePtr fromKindToScalerType(TypeKind kind);
+
 } // namespace facebook::velox
 
 namespace folly {
@@ -1983,8 +1994,7 @@ class FormatValue<facebook::velox::TypeKind> {
 template <typename T>
 class FormatValue<
     std::shared_ptr<T>,
-    typename std::enable_if<
-        std::is_base_of<facebook::velox::Type, T>::value>::type> {
+    typename std::enable_if_t<std::is_base_of_v<facebook::velox::Type, T>>> {
  public:
   explicit FormatValue(const std::shared_ptr<const facebook::velox::Type>& type)
       : type_(type) {}

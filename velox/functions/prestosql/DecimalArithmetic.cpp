@@ -34,15 +34,15 @@ class DecimalBaseFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& resultType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     auto rawResults = prepareResults(rows, resultType, context, result);
     if (args[0]->isConstantEncoding() && args[1]->isFlatEncoding()) {
       // Fast path for (const, flat).
       auto constant = args[0]->asUnchecked<SimpleVector<A>>()->valueAt(0);
       auto flatValues = args[1]->asUnchecked<FlatVector<B>>();
       auto rawValues = flatValues->mutableRawValues();
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         Operation::template apply<R, A, B>(
             rawResults[row], constant, rawValues[row], aRescale_, bRescale_);
       });
@@ -51,7 +51,7 @@ class DecimalBaseFunction : public exec::VectorFunction {
       auto flatValues = args[0]->asUnchecked<FlatVector<A>>();
       auto constant = args[1]->asUnchecked<SimpleVector<B>>()->valueAt(0);
       auto rawValues = flatValues->mutableRawValues();
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         Operation::template apply<R, A, B>(
             rawResults[row], rawValues[row], constant, aRescale_, bRescale_);
       });
@@ -61,7 +61,7 @@ class DecimalBaseFunction : public exec::VectorFunction {
       auto rawA = flatA->mutableRawValues();
       auto flatB = args[1]->asUnchecked<FlatVector<B>>();
       auto rawB = flatB->mutableRawValues();
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         Operation::template apply<R, A, B>(
             rawResults[row], rawA[row], rawB[row], aRescale_, bRescale_);
       });
@@ -70,7 +70,7 @@ class DecimalBaseFunction : public exec::VectorFunction {
       exec::DecodedArgs decodedArgs(rows, args, context);
       auto a = decodedArgs.at(0);
       auto b = decodedArgs.at(1);
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         Operation::template apply<R, A, B>(
             rawResults[row],
             a->valueAt<A>(row),
@@ -85,11 +85,11 @@ class DecimalBaseFunction : public exec::VectorFunction {
   R* prepareResults(
       const SelectivityVector& rows,
       const TypePtr& resultType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const {
-    context->ensureWritable(rows, resultType, *result);
-    (*result)->clearNulls(rows);
-    return (*result)->asUnchecked<FlatVector<R>>()->mutableRawValues();
+      exec::EvalCtx& context,
+      VectorPtr& result) const {
+    context.ensureWritable(rows, resultType, result);
+    result->clearNulls(rows);
+    return result->asUnchecked<FlatVector<R>>()->mutableRawValues();
   }
 
   const uint8_t aRescale_;
@@ -100,7 +100,13 @@ class Addition {
  public:
   template <typename R, typename A, typename B>
   inline static void
-  apply(R& r, const A& a, const B& b, uint8_t aRescale, uint8_t bRescale) {
+  apply(R& r, const A& a, const B& b, uint8_t aRescale, uint8_t bRescale)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
     r.setUnscaledValue(
         a.unscaledValue() * DecimalUtil::kPowersOfTen[aRescale] +
         b.unscaledValue() * DecimalUtil::kPowersOfTen[bRescale]);
@@ -111,11 +117,11 @@ class Addition {
     return std::max(0, toScale - fromScale);
   }
 
-  inline static const std::pair<uint8_t, uint8_t> computeResultPrecisionScale(
-      uint8_t aPrecision,
-      uint8_t aScale,
-      uint8_t bPrecision,
-      uint8_t bScale) {
+  inline static std::pair<uint8_t, uint8_t> computeResultPrecisionScale(
+      const uint8_t aPrecision,
+      const uint8_t aScale,
+      const uint8_t bPrecision,
+      const uint8_t bScale) {
     return {
         std::min(
             38,
@@ -124,6 +130,116 @@ class Addition {
         std::max(aScale, bScale)};
   }
 };
+
+class Subtraction {
+ public:
+  template <typename R, typename A, typename B>
+  inline static void
+  apply(R& r, const A& a, const B& b, uint8_t aRescale, uint8_t bRescale)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
+    r.setUnscaledValue(
+        a.unscaledValue() * DecimalUtil::kPowersOfTen[aRescale] -
+        b.unscaledValue() * DecimalUtil::kPowersOfTen[bRescale]);
+  }
+
+  inline static uint8_t
+  computeRescaleFactor(uint8_t fromScale, uint8_t toScale, uint8_t rScale = 0) {
+    return std::max(0, toScale - fromScale);
+  }
+
+  inline static std::pair<uint8_t, uint8_t> computeResultPrecisionScale(
+      const uint8_t aPrecision,
+      const uint8_t aScale,
+      const uint8_t bPrecision,
+      const uint8_t bScale) {
+    return Addition::computeResultPrecisionScale(
+        aPrecision, aScale, bPrecision, bScale);
+  }
+};
+
+class Multiply {
+ public:
+  template <typename R, typename A, typename B>
+  inline static void
+  apply(R& r, const A& a, const B& b, uint8_t aRescale, uint8_t bRescale) {
+    r.setUnscaledValue(checkedMultiply<int128_t>(
+        checkedMultiply<int128_t>(a.unscaledValue(), b.unscaledValue()),
+        DecimalUtil::kPowersOfTen[aRescale + bRescale]));
+  }
+
+  inline static uint8_t
+  computeRescaleFactor(uint8_t fromScale, uint8_t toScale, uint8_t rScale = 0) {
+    return 0;
+  }
+
+  inline static std::pair<uint8_t, uint8_t> computeResultPrecisionScale(
+      const uint8_t aPrecision,
+      const uint8_t aScale,
+      const uint8_t bPrecision,
+      const uint8_t bScale) {
+    return {std::min(38, aPrecision + bPrecision), aScale + bScale};
+  }
+};
+
+class Divide {
+ public:
+  template <typename R, typename A, typename B>
+  inline static void
+  apply(R& r, const A& a, const B& b, uint8_t aRescale, uint8_t /*bRescale*/) {
+    VELOX_CHECK_NE(b.unscaledValue(), 0, "Division by zero");
+    int resultSign = 1;
+    R unsignedDividendRescaled(a);
+    if (a < 0) {
+      resultSign = -1;
+      unsignedDividendRescaled *= -1;
+    }
+    R unsignedDivisor(b);
+    if (b < 0) {
+      resultSign *= -1;
+      unsignedDivisor *= -1;
+    }
+    unsignedDividendRescaled = checkedMultiply<R>(
+        unsignedDividendRescaled, R(DecimalUtil::kPowersOfTen[aRescale]));
+    R quotient = unsignedDividendRescaled / unsignedDivisor;
+    R remainder = unsignedDividendRescaled % unsignedDivisor;
+    if (remainder * 2 >= unsignedDivisor) {
+      ++quotient;
+    }
+    r = quotient * resultSign;
+  }
+
+  inline static uint8_t
+  computeRescaleFactor(uint8_t fromScale, uint8_t toScale, uint8_t rScale) {
+    return rScale - fromScale + toScale;
+  }
+
+  inline static std::pair<uint8_t, uint8_t> computeResultPrecisionScale(
+      const uint8_t aPrecision,
+      const uint8_t aScale,
+      const uint8_t /*bPrecision*/,
+      const uint8_t bScale) {
+    return {
+        std::min(38, aPrecision + bScale + std::max(0, bScale - aScale)),
+        std::max(aScale, bScale)};
+  }
+};
+
+std::vector<std::shared_ptr<exec::FunctionSignature>>
+decimalMultiplySignature() {
+  return {exec::FunctionSignatureBuilder()
+              .returnType("DECIMAL(r_precision, r_scale)")
+              .argumentType("DECIMAL(a_precision, a_scale)")
+              .argumentType("DECIMAL(b_precision, b_scale)")
+              .variableConstraint(
+                  "r_precision", "min(38, a_precision + b_precision)")
+              .variableConstraint("r_scale", "a_scale + b_scale")
+              .build()};
+}
 
 std::vector<std::shared_ptr<exec::FunctionSignature>>
 decimalAddSubtractSignature() {
@@ -137,6 +253,18 @@ decimalAddSubtractSignature() {
               "min(38, max(a_precision - a_scale, b_precision - b_scale) + max(a_scale, b_scale) + 1)")
           .variableConstraint("r_scale", "max(a_scale, b_scale)")
           .build()};
+}
+
+std::vector<std::shared_ptr<exec::FunctionSignature>> decimalDivideSignature() {
+  return {exec::FunctionSignatureBuilder()
+              .returnType("DECIMAL(r_precision, r_scale)")
+              .argumentType("DECIMAL(a_precision, a_scale)")
+              .argumentType("DECIMAL(b_precision, b_scale)")
+              .variableConstraint(
+                  "r_precision",
+                  "min(38, a_precision + b_scale + max(0, b_scale - a_scale))")
+              .variableConstraint("r_scale", "max(a_scale, b_scale)")
+              .build()};
 }
 
 template <typename Operation>
@@ -201,4 +329,19 @@ VELOX_DECLARE_STATEFUL_VECTOR_FUNCTION(
     udf_decimal_add,
     decimalAddSubtractSignature(),
     createDecimalFunction<Addition>);
+
+VELOX_DECLARE_STATEFUL_VECTOR_FUNCTION(
+    udf_decimal_sub,
+    decimalAddSubtractSignature(),
+    createDecimalFunction<Subtraction>);
+
+VELOX_DECLARE_STATEFUL_VECTOR_FUNCTION(
+    udf_decimal_mul,
+    decimalMultiplySignature(),
+    createDecimalFunction<Multiply>);
+
+VELOX_DECLARE_STATEFUL_VECTOR_FUNCTION(
+    udf_decimal_div,
+    decimalDivideSignature(),
+    createDecimalFunction<Divide>);
 }; // namespace facebook::velox::functions
