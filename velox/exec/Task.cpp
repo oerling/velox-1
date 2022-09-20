@@ -1719,14 +1719,15 @@ bool TaskMemoryStrategy::reclaim(
       auto& taskTracker = task->tracker();
       auto previousBytes = taskTracker.maxTotalBytes();
       auto potentialBytes = task->reclaimableMemory();
-      auto tryBytes = std::max(kMinReclaimableBytes, bytesForRequester - reclaimed);
+      auto tryBytes =
+          std::max(kMinReclaimableBytes, bytesForRequester - reclaimed);
       task->reclaim(tryBytes);
       auto reclaimedFromTask =
           previousBytes - taskTracker.getCurrentTotalBytes();
       if (reclaimedFromTask < kGrowQuantum) {
-	if (potentialBytes > tryBytes) {
-	  LOG(INFO) << "Task did not shrink as promised";
-	}
+        if (potentialBytes > tryBytes) {
+          LOG(INFO) << "Task did not shrink as promised";
+        }
         // Too little reclaimed. No change to limit.
         continue;
       }

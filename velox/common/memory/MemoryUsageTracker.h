@@ -173,13 +173,13 @@ class MemoryUsageTracker
     int64_t freeable;
     {
       if (!minReservation_) {
-	return;
+        return;
       }
       std::lock_guard<std::mutex> l(mutex_);
       auto reservationByUsage = quantizedSize(usedReservation_);
       freeable = reservation_ - reservationByUsage;
       if (reservation_ > reservationByUsage) {
-	reservation_ = reservationByUsage;
+        reservation_ = reservationByUsage;
       }
       minReservation_ = 0;
     }

@@ -173,8 +173,9 @@ TEST(MemoryUsageTrackerTest, reserveAndUpdate) {
   EXPECT_EQ(3 * kMB - 2000, child1->getAvailableReservation());
   child1->update(-15 * kMB);
 
-  // There is 14MB - 2000  of available reservation because the reservation does not
-  // drop below the bar set in reserve(). The used size reflected in the parent drops a little to match the level given in reserver().
+  // There is 14MB - 2000  of available reservation because the reservation does
+  // not drop below the bar set in reserve(). The used size reflected in the
+  // parent drops a little to match the level given in reserver().
   EXPECT_EQ(52 * kMB, parent->getCurrentTotalBytes());
   EXPECT_EQ(14 * kMB - 2000, child1->getAvailableReservation());
 

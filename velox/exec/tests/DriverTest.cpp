@@ -869,8 +869,7 @@ class TestingConsumer : public Operator {
     }
 
     // Use the reserved memory.
-    reclaimableTracker_->update(
-				reclaimableTracker_->getAvailableReservation());
+    reclaimableTracker_->update(reclaimableTracker_->getAvailableReservation());
     // The reservation is converted to allocation.
     reclaimableTracker_->release();
     return std::move(input_);
@@ -900,7 +899,6 @@ class TestingConsumer : public Operator {
   }
 
  private:
-
   static bool tryReserve(
       const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
       int64_t reservationSize) {
