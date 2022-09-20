@@ -676,10 +676,12 @@ void Driver::spill(int64_t size) {
     // before a colocated hash probe. Most often there will only be
     // one spillable operator.
     int64_t spilled = 0;
+    // Never try to reclaim less than 24MB.
+    constexpr int64_t kMinSpill = 24 << 20;
     for (int32_t i = operators_.size() - 1; i >= 0; --i) {
       auto op = operators_[i].get();
       auto previous = tracker.getCurrentTotalBytes();
-      op->spill(std::max(size - spilled, int64_t{}));
+      op->spill(std::max<int64_t>(size - spilled, kMinSpill));
       spilled += previous - tracker.getCurrentTotalBytes();
       if (spilled >= size) {
         break;

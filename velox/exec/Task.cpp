@@ -1592,17 +1592,11 @@ void Task::reclaim(int64_t size) {
   int64_t reclaimed = 0;
   auto& tracker = *pool_->getMemoryUsageTracker();
   while (reclaimed < size) {
-    // Per driver reclaim target is 16MB + target / number of
-    // drivers. Spilling less than 16MB makes no sense and a Driver
-    // will typically have only one spillable operator, so the
-    // practical scenario is how many full operators have to be
-    // spilled to make the target.
-    auto perDriver = (16 << 20) + ((size - reclaimed) / numDrivers);
     auto lastReclaimed = reclaimed;
     for (auto& driver : drivers_) {
       if (driver) {
         auto previous = tracker.getCurrentTotalBytes();
-        driver->spill(perDriver);
+        driver->spill(std::max(TaskMemoryStrategy::kMinSpill, size));
         reclaimed += previous - tracker.getCurrentTotalBytes();
         if (reclaimed >= size) {
           break;
@@ -1646,7 +1640,8 @@ bool TaskMemoryStrategy::reclaim(
   // The minimum amount by which a Task must shrink for a transfer of capacity
   // to make sense. In practice, this is the minimum memory an operator must
   // hold in order to be spillable.
-  constexpr int64_t kMinReclaimableBytes = 10 << 20;
+  constexpr int64_t kGrowQuantum = 8 << 20;
+  constexpr int64_t kMinReclaimableBytes = 3 * kGrowQuantum;
 
   // When running with memory arbitration, the initial reservation comes from
   // the first action of the first Driver of the new Task. Therefore this is
@@ -1723,14 +1718,19 @@ bool TaskMemoryStrategy::reclaim(
 
       auto& taskTracker = task->tracker();
       auto previousBytes = taskTracker.maxTotalBytes();
-      task->reclaim(bytesForRequester - reclaimed);
+      auto potentialBytes = task->reclaimableMemory();
+      auto tryBytes = std::max(kMinReclaimableBytes, bytesForRequester - reclaimed);
+      task->reclaim(tryBytes);
       auto reclaimedFromTask =
           previousBytes - taskTracker.getCurrentTotalBytes();
-      if (reclaimedFromTask < kMinReclaimableBytes) {
+      if (reclaimedFromTask < kGrowQuantum) {
+	if (potentialBytes > tryBytes) {
+	  LOG(INFO) << "Task did not shrink as promised";
+	}
         // Too little reclaimed. No change to limit.
         continue;
       }
-      reclaimed = roundDown(reclaimedFromTask, kMinReclaimableBytes);
+      reclaimed = roundDown(reclaimedFromTask, kGrowQuantum);
       VLOG(1) << fmt::format(
           "{} drops limit by {} to {}",
           task->taskId(),

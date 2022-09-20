@@ -789,6 +789,9 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
 
 class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
  public:
+  // The minimum Task shrink step.
+  static constexpr int64_t kMinSpill = 24 << 20;
+
   explicit TaskMemoryStrategy(int64_t size) {
     auto tracker =
         memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();

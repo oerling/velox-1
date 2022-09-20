@@ -864,22 +864,15 @@ class TestingConsumer : public Operator {
       return nullptr;
     }
     int64_t size = 10 << 20;
-    if (!reserveAndRun(
-            reclaimableTracker_,
-            size,
-            [this](int64_t size) {
-              LOG(INFO) << "Spiller called: " << size;
-              spill(size);
-            },
-            [&]() {
-              // Use the reserved memory.
-              reclaimableTracker_->update(
-                  reclaimableTracker_->getAvailableReservation());
-              // The reservation is converted to allocation.
-              reclaimableTracker_->release();
-            })) {
+    if (!tryReserve(reclaimableTracker_, size)) {
       VELOX_FAIL("Out of memory");
     }
+
+    // Use the reserved memory.
+    reclaimableTracker_->update(
+				reclaimableTracker_->getAvailableReservation());
+    // The reservation is converted to allocation.
+    reclaimableTracker_->release();
     return std::move(input_);
   }
 
@@ -907,41 +900,12 @@ class TestingConsumer : public Operator {
   }
 
  private:
-  // Tries to increase the reservation of 'tracker' by 'size'. If
-  // successful, calls 'runFunc'. If the reservation fails, calls
-  // 'spillFunc' and tries again. If the reservation fails, the second
-  // time, returns false, else true.
-  bool reserveAndRun(
+
+  static bool tryReserve(
       const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
-      int64_t reservationSize,
-      std::function<void(int64_t)> spillFunc,
-      std::function<void(void)> runFunc) {
-    if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
-      return true;
-    }
-
-    // If spill func is specified, try spilling locally first.
-    if (spillFunc) {
-      // Spill any reclaimable memory locally with
-      // the supplied spill function.
-      spillFunc(reservationSize);
-
-      // Try reserving again and run.
-      if (tryReserveAndRun(tracker, reservationSize, runFunc)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  static bool tryReserveAndRun(
-      const std::shared_ptr<memory::MemoryUsageTracker>& tracker,
-      int64_t reservationSize,
-      std::function<void(void)> runFunc) {
+      int64_t reservationSize) {
     try {
       tracker->reserve(reservationSize);
-      // Successfully reserved.
-      runFunc();
       return true;
     } catch (const VeloxRuntimeError& e) {
       if (e.errorCode() != ::facebook::velox::error_code::kMemCapExceeded) {
