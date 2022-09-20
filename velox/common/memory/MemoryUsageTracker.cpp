@@ -33,10 +33,7 @@ std::shared_ptr<MemoryUsageTracker> MemoryUsageTracker::create(
   return std::make_shared<SharedMemoryUsageTracker>(parent, type, config);
 }
 
-MemoryUsageTracker::~MemoryUsageTracker() {
-  release();
-  decrementUsage(type_, usage(currentUsageInBytes_, type_));
-}
+  MemoryUsageTracker::~MemoryUsageTracker() {}
 
 void MemoryUsageTracker::checkAndPropagateReservationIncrement(
     int64_t increment,

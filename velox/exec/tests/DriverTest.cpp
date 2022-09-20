@@ -997,19 +997,23 @@ TEST_F(DriverTest, memoryReservation) {
   // Simulates 20 concurrent Tasks each with 5 Drivers. The Drivers
   // try to grow by 10MB at each batch of input from the source. Each
   // source produces 200 batches, so the total growth is 2G * 100
-  // drivers. The total memory for running the tasks is 2G. All
+  // drivers. The total memory for running the tasks is 8G. All
   // drivers are capable of lowering their memory reservation by
   // 1/3. This means that any 10MB increase can be satisfied by
   // shrinking a sufficient number of other Drivers by 1/3 of their
-  // size. All drivers will potentially be queued waiting for their
+  // held size. A shirinkage of less than 10MB will not be
+  // attempted. So we set the max to 8G so that if all drivers were at
+  // their unshrinkable sizem, i.e. 30MB, there would be memory to go
+  // around, otherwise we would not be guaranteed a successful
+  // run. All drivers will potentially be queued waiting for their
   // 10MB extra memory. If the total were <= the sum of max concurrent
   // growth requests we could have a situation where no memory could
-  // be reclaimed. We set the total to be 2G and the maximum of
+  // be reclaimed. We set the total to be 4G and the maximum of
   // concurrent outstanding requests to be 1G so that the growth
   // requests can be satisfied one after the other.
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
-  constexpr int64_t kProcessBytes = 2UL << 30;
+  constexpr int64_t kProcessBytes = 4UL << 30;
   static bool initialized = false;
   // Initialize once so that can run with gtest_repeat.
   if (!initialized) {
