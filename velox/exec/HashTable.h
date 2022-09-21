@@ -237,15 +237,6 @@ class BaseHashTable {
     return TagVector::load_unaligned(tags + tagIndex);
   }
 
-<<<<<<< HEAD
-=======
-  /// Loads the payload row pointer corresponding to the tag at 'index'.
-  static char* FOLLY_NULLABLE
-  loadRow(char* FOLLY_NULLABLE* FOLLY_NULLABLE table, int32_t index) {
-    return table[index];
-  }
-
->>>>>>> h-bm-dev
  protected:
   virtual void setHashMode(HashMode mode, int32_t numNew) = 0;
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
@@ -523,24 +514,10 @@ class HashTable : public BaseHashTable {
       bool initNormalizedKeys,
       raw_vector<uint64_t>& hashes);
 
-  char* insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
-
   // Assigns a partition to each row of 'subtable' in RowPartitions of
   // subtable's RowContainer. If 'hashMode_' is kNormalizedKeys, records the
   // normalized key of each row below the row in its container.
   void partitionRows(HashTable<ignoreNullKeys>& subtable);
-
-  // Calculates hashes for 'rows' and returns them in 'hashes'. If
-  // 'initNormalizedKeys' is true, the normalized keys are stored
-  // below each row in the container. If 'initNormalizedKeys' is false
-  // and the table is in normalized keys mode, the keys are retrieved
-  // from the row and the hash is made from this, without recomputing
-  // the normalized key. Returns false if the hash keys are not mappable via the
-  // VectorHashers.
-  bool hashRows(
-      folly::Range<char**> rows,
-      bool initNormalizedKeys,
-      raw_vector<uint64_t>& hashes);
 
   char* FOLLY_NULLABLE
   insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
@@ -728,12 +705,8 @@ class HashTable : public BaseHashTable {
   // execute the parallel build steps.
   folly::Executor* FOLLY_NULLABLE buildExecutor_{nullptr};
 
-<<<<<<< HEAD
-  std::atomic<int32_t> numInsert_{0};
-=======
   //  Counts parallel build rows. Used for consistency check.
   std::atomic<int64_t> numParallelBuildRows_{0};
->>>>>>> h-bm-dev
 };
 
 } // namespace facebook::velox::exec
