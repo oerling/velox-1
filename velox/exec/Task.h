@@ -787,7 +787,7 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   std::vector<ContinuePromise> threadFinishPromises_;
 };
 
-  /// Listener invoked on task completion.
+/// Listener invoked on task completion.
 class TaskListener {
  public:
   virtual ~TaskListener() = default;
