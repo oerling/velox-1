@@ -850,9 +850,10 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
     auto table = i == 0 ? this : otherTables_[i - 1].get();
     partitionSteps.push_back(
         std::make_shared<AsyncSource<bool>>([this, table, numPartitions]() {
-          partitionRows(*table, numPartitions);
+          partitionRows(*table);
           return std::make_unique<bool>(true);
         }));
+    assert(!partitionSteps.empty()); // lint
     buildExecutor_->add([step = partitionSteps.back()]() { step->prepare(); });
   }
   std::exception_ptr error;
@@ -867,6 +868,7 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
           buildJoinPartition(i, overflowPerPartition[i]);
           return std::make_unique<bool>(true);
         }));
+    assert(!buildSteps.empty()); // lint
     buildExecutor_->add([step = buildSteps.back()]() { step->prepare(); });
   }
   syncWorkItems(buildSteps, error);
@@ -882,18 +884,9 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         false,
         hashes);
     insertForJoin(
-        overflows.data(),
-        hashes.data(),
-        overflows.size(),
-        0,
-        sizeMask_ + 1,
-        nullptr);
+        overflows.data(), hashes.data(), overflows.size(), 0, size_, nullptr);
     auto table = i == 0 ? this : otherTables_[i - 1].get();
-    VELOX_CHECK_EQ(
-        table->numInsert_,
-        table->rows()->numRows(),
-        "Bad number of inserts for part {} in parallel insert",
-        i);
+    VELOX_CHECK_EQ(table->rows()->numRows(), table->numParallelBuildRows_);
   }
 }
 
@@ -918,8 +911,7 @@ findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::partitionRows(
-    HashTable<ignoreNullKeys>& subtable,
-    uint8_t numPartitions) {
+    HashTable<ignoreNullKeys>& subtable) {
   constexpr int32_t kBatch = 1024;
   raw_vector<char*> rows(kBatch);
   raw_vector<uint64_t> hashes(kBatch);
@@ -963,7 +955,7 @@ void HashTable<ignoreNullKeys>::buildJoinPartition(
           buildPartitionBounds_[partition],
           buildPartitionBounds_[partition + 1],
           &overflow);
-      table->numInsert_ += numRows;
+      table->numParallelBuildRows_ += numRows;
     }
   }
 }

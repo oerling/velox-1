@@ -258,10 +258,18 @@ class RowContainer {
     return 1 << (nullOffset & 7);
   }
 
+  // No tsan because probed flags may have been set by a different
+  // thread. There is a barrier but tsan does not know this.
   enum class ProbeType { kAll, kProbed, kNotProbed };
 
   template <ProbeType probeType>
-  int32_t listRows(
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  __attribute__((__no_sanitize__("thread")))
+#endif
+#endif
+  int32_t
+  listRows(
       RowContainerIterator* FOLLY_NONNULL iter,
       int32_t maxRows,
       uint64_t maxBytes,
@@ -351,12 +359,21 @@ class RowContainer {
     return listRows<ProbeType::kAll>(iter, maxRows, kUnlimited, rows);
   }
 
-  /// Sets 'probed' flag for the specified rows. Used by the right and full join
-  /// to mark build-side rows that matches join condition. 'rows' may contain
-  /// duplicate entries for the cases where single probe row matched multiple
-  /// build rows. In case of the full join, 'rows' may include null entries that
-  /// correspond to probe rows with no match.
-  void setProbedFlag(char* FOLLY_NONNULL* FOLLY_NONNULL rows, int32_t numRows);
+  /// Sets 'probed' flag for the specified rows. Used by the right and
+  /// full join to mark build-side rows that matches join
+  /// condition. 'rows' may contain duplicate entries for the cases
+  /// where single probe row matched multiple build rows. In case of
+  /// the full join, 'rows' may include null entries that correspond
+  /// to probe rows with no match. No tsan because any thread can set
+  /// this without synchronization. There is a barrier between setting
+  /// and reading.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  __attribute__((__no_sanitize__("thread")))
+#endif
+#endif
+  void
+  setProbedFlag(char* FOLLY_NONNULL* FOLLY_NONNULL rows, int32_t numRows);
 
   // Returns true if 'row' at 'column' equals the value at 'index' in
   // 'decoded'. 'mayHaveNulls' specifies if nulls need to be checked. This is

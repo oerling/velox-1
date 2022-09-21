@@ -82,9 +82,9 @@ class BaseHashTable {
       return !rows || lastRowIndex == rows->size();
     }
 
-    const raw_vector<vector_size_t>* rows{nullptr};
-    const raw_vector<char*>* hits{nullptr};
-    char* nextHit{nullptr};
+    const raw_vector<vector_size_t>* FOLLY_NULLABLE rows{nullptr};
+    const raw_vector<char*>* FOLLY_NULLABLE hits{nullptr};
+    char* FOLLY_NULLABLE nextHit{nullptr};
     vector_size_t lastRowIndex{0};
   };
 
@@ -103,7 +103,7 @@ class BaseHashTable {
 
   virtual ~BaseHashTable() = default;
 
-  virtual HashStringAllocator* stringAllocator() = 0;
+  virtual HashStringAllocator* FOLLY_NULLABLE stringAllocator() = 0;
 
   /// Finds or creates a group for each key in 'lookup'. The keys are
   /// returned in 'lookup.hits'.
@@ -130,17 +130,17 @@ class BaseHashTable {
 
   /// Returns rows with 'probed' flag unset. Used by the right/full join.
   virtual int32_t listNotProbedRows(
-      RowsIterator* iter,
+      RowsIterator* FOLLY_NULLABLE iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows) = 0;
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE rows) = 0;
 
   /// Returns rows with 'probed' flag set. Used by the right semi join.
   virtual int32_t listProbedRows(
-      RowsIterator* iter,
+      RowsIterator* FOLLY_NULLABLE iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows) = 0;
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE rows) = 0;
 
   virtual void prepareJoinTable(
       std::vector<std::unique_ptr<BaseHashTable>> tables,
@@ -194,7 +194,8 @@ class BaseHashTable {
   /// Returns a brief description for use in debugging.
   virtual std::string toString() = 0;
 
-  static void storeTag(uint8_t* tags, int32_t index, uint8_t tag) {
+  static void
+  storeTag(uint8_t* FOLLY_NULLABLE tags, int32_t index, uint8_t tag) {
     tags[index] = tag;
   }
 
@@ -202,7 +203,7 @@ class BaseHashTable {
     return hashers_;
   }
 
-  RowContainer* rows() const {
+  RowContainer* FOLLY_NULLABLE rows() const {
     return rows_.get();
   }
 
@@ -220,11 +221,31 @@ class BaseHashTable {
     return static_cast<uint8_t>(hash >> 32) | 0x80;
   }
 
-  /// Loads a vector of tags for bulk comparison.
-  static TagVector loadTags(uint8_t* tags, int32_t tagIndex) {
+  /// Loads a vector of tags for bulk comparison. Disables tsan errors
+  /// because with parallel join build different ranges of the table
+  /// are filled by different threads, after which the main thread
+  /// inserts the entries that would have overflowed past the
+  /// inserting thread's range. There is a sync barrier between but
+  /// tsan does not recognize this.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  __attribute__((__no_sanitize__("thread")))
+#endif
+#endif
+  static TagVector
+  loadTags(uint8_t* FOLLY_NULLABLE tags, int32_t tagIndex) {
     return TagVector::load_unaligned(tags + tagIndex);
   }
 
+<<<<<<< HEAD
+=======
+  /// Loads the payload row pointer corresponding to the tag at 'index'.
+  static char* FOLLY_NULLABLE
+  loadRow(char* FOLLY_NULLABLE* FOLLY_NULLABLE table, int32_t index) {
+    return table[index];
+  }
+
+>>>>>>> h-bm-dev
  protected:
   virtual void setHashMode(HashMode mode, int32_t numNew) = 0;
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
@@ -262,12 +283,12 @@ class HashTable : public BaseHashTable {
       bool allowDuplicates,
       bool isJoinBuild,
       bool hasProbedFlag,
-      memory::MappedMemory* memory);
+      memory::MappedMemory* FOLLY_NULLABLE memory);
 
   static std::unique_ptr<HashTable> createForAggregation(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
       const std::vector<std::unique_ptr<Aggregate>>& aggregates,
-      memory::MappedMemory* memory) {
+      memory::MappedMemory* FOLLY_NULLABLE memory) {
     return std::make_unique<HashTable>(
         std::move(hashers),
         aggregates,
@@ -283,7 +304,7 @@ class HashTable : public BaseHashTable {
       const std::vector<TypePtr>& dependentTypes,
       bool allowDuplicates,
       bool hasProbedFlag,
-      memory::MappedMemory* memory) {
+      memory::MappedMemory* FOLLY_NULLABLE memory) {
     static const std::vector<std::unique_ptr<Aggregate>> kNoAggregates;
     return std::make_unique<HashTable>(
         std::move(hashers),
@@ -310,16 +331,16 @@ class HashTable : public BaseHashTable {
       folly::Range<char**> hits) override;
 
   int32_t listNotProbedRows(
-      RowsIterator* iter,
+      RowsIterator* FOLLY_NULLABLE iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows) override;
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE rows) override;
 
   int32_t listProbedRows(
-      RowsIterator* iter,
+      RowsIterator* FOLLY_NULLABLE iter,
       int32_t maxRows,
       uint64_t maxBytes,
-      char** rows) override;
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE rows) override;
 
   void clear() override;
 
@@ -329,7 +350,7 @@ class HashTable : public BaseHashTable {
     return (1 + sizeof(char*)) * size_ + rows_->allocatedBytes();
   }
 
-  HashStringAllocator* stringAllocator() override {
+  HashStringAllocator* FOLLY_NULLABLE stringAllocator() override {
     return &rows_->stringAllocator();
   }
 
@@ -386,10 +407,13 @@ class HashTable : public BaseHashTable {
   }
 
   template <RowContainer::ProbeType probeType>
-  int32_t
-  listRows(RowsIterator* iter, int32_t maxRows, uint64_t maxBytes, char** rows);
+  int32_t listRows(
+      RowsIterator* FOLLY_NULLABLE iter,
+      int32_t maxRows,
+      uint64_t maxBytes,
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE rows);
 
-  char*& nextRow(char* row) {
+  char* FOLLY_NULLABLE& nextRow(char* FOLLY_NULLABLE row) {
     return *reinterpret_cast<char**>(row + nextOffset_);
   }
 
@@ -425,7 +449,7 @@ class HashTable : public BaseHashTable {
   void rehash();
   void storeKeys(HashLookup& lookup, vector_size_t row);
 
-  void storeRowPointer(int32_t index, uint64_t hash, char* row);
+  void storeRowPointer(int32_t index, uint64_t hash, char* FOLLY_NULLABLE row);
 
   // Allocates new tables for tags and payload pointers. The size must
   // a power of 2.
@@ -436,8 +460,10 @@ class HashTable : public BaseHashTable {
   // Computes hash numbers of the appropriate hash mode for 'groups',
   // stores these in 'hashes' and inserts the groups using
   // insertForJoin or insertForGroupBy.
-  bool
-  insertBatch(char** groups, int32_t numGroups, raw_vector<uint64_t>& hashes);
+  bool insertBatch(
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE groups,
+      int32_t numGroups,
+      raw_vector<uint64_t>& hashes);
 
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
   // contents in a RowContainer owned by 'this'. 'hashes' are the hash
@@ -448,8 +474,8 @@ class HashTable : public BaseHashTable {
   // the right of the end, it is not inserted but rather added to the
   // end of 'overflows'.
   void insertForJoin(
-      char** groups,
-      uint64_t* hashes,
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE groups,
+      uint64_t* FOLLY_NULLABLE hashes,
       int32_t numGroups,
       int32_t partitionBegin = 0,
       int32_t partitionEnd = std::numeric_limits<int32_t>::max(),
@@ -459,7 +485,10 @@ class HashTable : public BaseHashTable {
   // contents in a RowContainer owned by 'this'. 'hashes' are the hash
   // numbers or array indices (if kArray mode) for each
   // group. 'groups' is expected to have no duplicate keys.
-  void insertForGroupBy(char** groups, uint64_t* hashes, int32_t numGroups);
+  void insertForGroupBy(
+      char* FOLLY_NULLABLE* FOLLY_NULLABLE groups,
+      uint64_t* FOLLY_NULLABLE hashes,
+      int32_t numGroups);
 
   // Builds a join table with '1 + otherTables_.size()' independent
   // threads using 'executor_'. First all RowContainers get partition
@@ -496,9 +525,34 @@ class HashTable : public BaseHashTable {
 
   char* insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
 
-  bool compareKeys(const char* group, HashLookup& lookup, vector_size_t row);
+  // Assigns a partition to each row of 'subtable' in RowPartitions of
+  // subtable's RowContainer. If 'hashMode_' is kNormalizedKeys, records the
+  // normalized key of each row below the row in its container.
+  void partitionRows(HashTable<ignoreNullKeys>& subtable);
 
-  bool compareKeys(const char* group, const char* inserted);
+  // Calculates hashes for 'rows' and returns them in 'hashes'. If
+  // 'initNormalizedKeys' is true, the normalized keys are stored
+  // below each row in the container. If 'initNormalizedKeys' is false
+  // and the table is in normalized keys mode, the keys are retrieved
+  // from the row and the hash is made from this, without recomputing
+  // the normalized key. Returns false if the hash keys are not mappable via the
+  // VectorHashers.
+  bool hashRows(
+      folly::Range<char**> rows,
+      bool initNormalizedKeys,
+      raw_vector<uint64_t>& hashes);
+
+  char* FOLLY_NULLABLE
+  insertEntry(HashLookup& lookup, int32_t index, vector_size_t row);
+
+  bool compareKeys(
+      const char* FOLLY_NULLABLE group,
+      HashLookup& lookup,
+      vector_size_t row);
+
+  bool compareKeys(
+      const char* FOLLY_NULLABLE group,
+      const char* FOLLY_NULLABLE inserted);
 
   template <bool isJoin, bool isNormalizedKey = false>
   void fullProbe(HashLookup& lookup, ProbeState& state, bool extraCheck);
@@ -515,11 +569,11 @@ class HashTable : public BaseHashTable {
   // Adds a row to a hash join table in kArray hash mode. Returns true
   // if a new entry was made and false if the row was added to an
   // existing set of rows with the same key.
-  bool arrayPushRow(char* row, int32_t index);
+  bool arrayPushRow(char* FOLLY_NULLABLE row, int32_t index);
 
   // Adds a row to a hash join build side entry with multiple rows
   // with the same key.
-  void pushNext(char* row, char* next);
+  void pushNext(char* FOLLY_NULLABLE row, char* FOLLY_NULLABLE next);
 
   // Finishes inserting an entry into a join hash table. If the insert
   // would fall outside of 'partitionBegin' ... 'partitionEnd', the
@@ -527,7 +581,7 @@ class HashTable : public BaseHashTable {
   void buildFullProbe(
       ProbeState& state,
       uint64_t hash,
-      char* row,
+      char* FOLLY_NULLABLE row,
       bool extraCheck,
       int32_t partitionBegin,
       int32_t partitionEnd,
@@ -539,7 +593,9 @@ class HashTable : public BaseHashTable {
   bool analyze();
   // Erases the entries of rows from the hash table and its RowContainer.
   // 'hashes' must be computed according to 'hashMode_'.
-  void eraseWithHashes(folly::Range<char**> rows, uint64_t* hashes);
+  void eraseWithHashes(
+      folly::Range<char**> rows,
+      uint64_t* FOLLY_NULLABLE hashes);
 
   // Returns the percentage of values to reserve for new keys in range
   // or distinct mode VectorHashers in a group by hash table. 0 for
@@ -617,9 +673,10 @@ class HashTable : public BaseHashTable {
   int8_t sizeBits_;
   bool isJoinBuild_ = false;
 
-  // Set at join build time if the table has duplicates, meaning
-  // that the join can be cardinality increasing.
-  bool hasDuplicates_ = false;
+  // Set at join build time if the table has duplicates, meaning that
+  // the join can be cardinality increasing. Atomic for tsan because
+  // many threads can set this.
+  std::atomic<bool> hasDuplicates_{false};
 
   // True if tombstones need to be checked. An erase from a group with no
   // empties makes a tombstone.
@@ -628,8 +685,8 @@ class HashTable : public BaseHashTable {
   // Offset of next row link for join build side, 0 if none. Copied
   // from 'rows_'.
   int32_t nextOffset_;
-  uint8_t* tags_ = nullptr;
-  char** table_ = nullptr;
+  uint8_t* FOLLY_NULLABLE tags_ = nullptr;
+  char* FOLLY_NULLABLE* FOLLY_NULLABLE table_ = nullptr;
   memory::MappedMemory::ContiguousAllocation tableAllocation_;
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
@@ -671,7 +728,12 @@ class HashTable : public BaseHashTable {
   // execute the parallel build steps.
   folly::Executor* FOLLY_NULLABLE buildExecutor_{nullptr};
 
+<<<<<<< HEAD
   std::atomic<int32_t> numInsert_{0};
+=======
+  //  Counts parallel build rows. Used for consistency check.
+  std::atomic<int64_t> numParallelBuildRows_{0};
+>>>>>>> h-bm-dev
 };
 
 } // namespace facebook::velox::exec

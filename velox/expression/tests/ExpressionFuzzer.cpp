@@ -232,10 +232,10 @@ struct CallableSignature {
 std::optional<CallableSignature> processSignature(
     const std::string& functionName,
     const exec::FunctionSignature& signature) {
-  // Don't support functions with parametrized signatures or variable number of
+  // Don't support functions with parameterized signatures or variable number of
   // arguments yet.
-  if (!signature.typeVariableConstants().empty() || signature.variableArity() ||
-      !signature.variables().empty()) {
+  if (!signature.typeVariableConstraints().empty() ||
+      signature.variableArity()) {
     LOG(WARNING) << "Skipping unsupported signature: " << functionName
                  << signature.toString();
     return std::nullopt;
@@ -288,15 +288,53 @@ class ExpressionFuzzer {
       : vectorFuzzer_(getFuzzerOptions(), execCtx_.pool()) {
     seed(initialSeed);
 
+    size_t totalFunctions = 0;
+    size_t totalFunctionSignatures = 0;
+    size_t supportedFunctions = 0;
+    size_t supportedFunctionSignatures = 0;
     // Process each available signature for every function.
     for (const auto& function : signatureMap) {
+      ++totalFunctions;
+      bool atLeastOneSupported = false;
       for (const auto& signature : function.second) {
+        ++totalFunctionSignatures;
+
         if (auto callableFunction =
                 processSignature(function.first, *signature)) {
+          atLeastOneSupported = true;
+          ++supportedFunctionSignatures;
           signatures_.emplace_back(*callableFunction);
         }
       }
+
+      if (atLeastOneSupported) {
+        ++supportedFunctions;
+      }
     }
+
+    auto unsupportedFunctions = totalFunctions - supportedFunctions;
+    auto unsupportedFunctionSignatures =
+        totalFunctionSignatures - supportedFunctionSignatures;
+    LOG(INFO) << fmt::format(
+        "Total candidate functions: {} ({} signatures)",
+        totalFunctions,
+        totalFunctionSignatures);
+    LOG(INFO) << fmt::format(
+        "Functions with at least one supported signature: {} ({:.2f}%)",
+        supportedFunctions,
+        (double)supportedFunctions / totalFunctions * 100);
+    LOG(INFO) << fmt::format(
+        "Functions with no supported signature: {} ({:.2f}%)",
+        unsupportedFunctions,
+        (double)unsupportedFunctions / totalFunctions * 100);
+    LOG(INFO) << fmt::format(
+        "Supported function signatures: {} ({:.2f}%)",
+        supportedFunctionSignatures,
+        (double)supportedFunctionSignatures / totalFunctionSignatures * 100);
+    LOG(INFO) << fmt::format(
+        "Unsupported function signatures: {} ({:.2f}%)",
+        unsupportedFunctionSignatures,
+        (double)unsupportedFunctionSignatures / totalFunctionSignatures * 100);
 
     // We sort the available signatures to ensure we can deterministically
     // generate expressions across platforms. We just do this once and the
