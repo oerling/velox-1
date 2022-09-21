@@ -573,24 +573,35 @@ TEST(ExceptionTest, context) {
       "\nFile: ");
 
   // With context.
-  auto messageFunction = [](auto* arg) {
-    return std::string(static_cast<char*>(arg));
+  int callCount = 0;
+
+  struct MessageFunctionArg {
+    std::string message;
+    int* callCount;
+  };
+
+  auto messageFunction = [](void* untypedArg) {
+    auto arg = static_cast<MessageFunctionArg*>(untypedArg);
+    ++(*arg->callCount);
+    return arg->message;
   };
 
   {
     // Create multi-layer contexts.
-    std::string topLevelTroubleshootingAid = "Top-level troubleshooting aid.";
+    MessageFunctionArg topLevelTroubleshootingAid{
+        "Top-level troubleshooting aid.", &callCount};
     facebook::velox::ExceptionContextSetter topLevelContext(
-        {messageFunction, topLevelTroubleshootingAid.data()});
+        {messageFunction, &topLevelTroubleshootingAid});
 
-    std::string midLevelTroubleshootingAid = "Mid-level troubleshooting aid.";
+    MessageFunctionArg midLevelTroubleshootingAid{
+        "Mid-level troubleshooting aid.", &callCount};
     facebook::velox::ExceptionContextSetter midLevelContext(
-        {messageFunction, midLevelTroubleshootingAid.data()});
+        {messageFunction, &midLevelTroubleshootingAid});
 
-    std::string innerLevelTroubleshootingAid =
-        "Inner-level troubleshooting aid.";
+    MessageFunctionArg innerLevelTroubleshootingAid{
+        "Inner-level troubleshooting aid.", &callCount};
     facebook::velox::ExceptionContextSetter innerLevelContext(
-        {messageFunction, innerLevelTroubleshootingAid.data()});
+        {messageFunction, &innerLevelTroubleshootingAid});
 
     verifyVeloxException(
         [&]() { VELOX_CHECK_EQ(1, 3); },
@@ -604,15 +615,19 @@ TEST(ExceptionTest, context) {
         "\nTop-Level Context: Top-level troubleshooting aid."
         "\nFunction: operator()"
         "\nFile: ");
+
+    EXPECT_EQ(2, callCount);
   }
 
   // Different context.
   {
+    callCount = 0;
+
     // Create a single layer of context. Context and top-level context are
     // expected to be the same.
-    std::string debuggingInfo = "Debugging info.";
+    MessageFunctionArg debuggingInfo{"Debugging info.", &callCount};
     facebook::velox::ExceptionContextSetter context(
-        {messageFunction, debuggingInfo.data()});
+        {messageFunction, &debuggingInfo});
 
     verifyVeloxException(
         [&]() { VELOX_CHECK_EQ(1, 3); },
@@ -626,7 +641,11 @@ TEST(ExceptionTest, context) {
         "\nTop-Level Context: Same as context."
         "\nFunction: operator()"
         "\nFile: ");
+
+    EXPECT_EQ(1, callCount);
   }
+
+  callCount = 0;
 
   // No context.
   verifyVeloxException(
@@ -639,6 +658,35 @@ TEST(ExceptionTest, context) {
       "\nExpression: 1 == 3"
       "\nFunction: operator()"
       "\nFile: ");
+
+  EXPECT_EQ(0, callCount);
+
+  // With message function throwing an exception.
+  auto throwingMessageFunction = [](void* untypedArg) -> std::string {
+    auto arg = static_cast<MessageFunctionArg*>(untypedArg);
+    ++(*arg->callCount);
+    VELOX_FAIL("Test failure.");
+  };
+  {
+    MessageFunctionArg debuggingInfo{"Debugging info.", &callCount};
+    facebook::velox::ExceptionContextSetter context(
+        {throwingMessageFunction, &debuggingInfo});
+
+    verifyVeloxException(
+        [&]() { VELOX_CHECK_EQ(1, 3); },
+        "Exception: VeloxRuntimeError"
+        "\nError Source: RUNTIME"
+        "\nError Code: INVALID_STATE"
+        "\nReason: (1 vs. 3)"
+        "\nRetriable: False"
+        "\nExpression: 1 == 3"
+        "\nContext: Failed to produce additional context."
+        "\nTop-Level Context: Same as context."
+        "\nFunction: operator()"
+        "\nFile: ");
+
+    EXPECT_EQ(1, callCount);
+  }
 }
 
 TEST(ExceptionTest, traceCollectionEnabling) {

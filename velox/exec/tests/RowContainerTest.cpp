@@ -568,7 +568,7 @@ TEST_F(RowContainerTest, partition) {
            {"long_val", BIGINT()},
            {"string_val", VARCHAR()}}),
       kNumRows,
-      [](RowVectorPtr rows) {});
+      [](RowVectorPtr /*rows*/) {});
 
   auto data = roundTrip(batch);
   std::vector<char*> rows(kNumRows);

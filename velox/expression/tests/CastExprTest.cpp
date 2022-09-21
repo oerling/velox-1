@@ -20,6 +20,7 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/expression/VectorFunction.h"
+#include "velox/functions/prestosql/tests/CastBaseTest.h"
 #include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
@@ -28,39 +29,7 @@
 using namespace facebook::velox;
 using namespace facebook::velox::test;
 
-namespace {
-/// Wraps input in a dictionary that reverses the order of rows.
-class TestingDictionaryFunction : public exec::VectorFunction {
- public:
-  bool isDefaultNullBehavior() const override {
-    return false;
-  }
-
-  void apply(
-      const SelectivityVector& rows,
-      std::vector<VectorPtr>& args,
-      const TypePtr& /* outputType */,
-      exec::EvalCtx& context,
-      VectorPtr& result) const override {
-    VELOX_CHECK(rows.isAllSelected());
-    const auto size = rows.size();
-    auto indices = makeIndicesInReverse(size, context.pool());
-    result = BaseVector::wrapInDictionary(
-        BufferPtr(nullptr), indices, size, args[0]);
-  }
-
-  static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
-    // T, integer -> T
-    return {exec::FunctionSignatureBuilder()
-                .typeVariable("T")
-                .returnType("T")
-                .argumentType("T")
-                .build()};
-  }
-};
-} // namespace
-
-class CastExprTest : public functions::test::FunctionBaseTest {
+class CastExprTest : public functions::test::CastBaseTest {
  protected:
   CastExprTest() {
     exec::registerVectorFunction(
@@ -185,26 +154,16 @@ class CastExprTest : public functions::test::FunctionBaseTest {
     std::string castFunction = tryCast ? "try_cast" : "cast";
     if (expectFailure) {
       EXPECT_THROW(
-          evaluate<FlatVector<typename CppToType<TTo>::NativeType>>(
-              castFunction + "(c0 as " + typeString + ")", rowVector),
+          evaluate(
+              fmt::format("{}(c0 as {})", castFunction, typeString), rowVector),
           VeloxException);
       return;
     }
     // run try cast and get the result vector
-    auto result = evaluate<FlatVector<typename CppToType<TTo>::NativeType>>(
-        castFunction + "(c0 as " + typeString + ")", rowVector);
-
-    std::string msg;
-    // Compare the values and nulls in the output with expected
-    for (int index = 0; index < input.size(); index++) {
-      if (expectedResult[index].has_value()) {
-        EXPECT_TRUE(
-            compareValues(result->valueAt(index), expectedResult[index], msg))
-            << "values at index " << index << " do not match!" << msg;
-      } else {
-        EXPECT_TRUE(result->isNullAt(index)) << " at index " << index;
-      }
-    }
+    auto result =
+        evaluate(castFunction + "(c0 as " + typeString + ")", rowVector);
+    auto expected = makeNullableFlatVector<TTo>(expectedResult);
+    assertEqualVectors(expected, result);
   }
 };
 
@@ -774,4 +733,18 @@ TEST_F(CastExprTest, decimalToDecimal) {
               {UnscaledLongDecimal::min().unscaledValue()}, DECIMAL(38, 0)),
           makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
       "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38,1)");
+}
+
+TEST_F(CastExprTest, castInTry) {
+  // Test try(cast(array(varchar) as array(bigint))) whose input vector is
+  // wrapped in dictinary encoding. The row of ["2a"] should trigger an error
+  // during casting and the try expression should turn this error into a null at
+  // this row.
+  auto input = makeRowVector({makeVectorWithNullArrays<StringView>(
+      {{{"1"_sv}}, {{"2a"_sv}}, std::nullopt, std::nullopt})});
+  auto expected = makeVectorWithNullArrays<int64_t>(
+      {{{1}}, std::nullopt, std::nullopt, std::nullopt});
+
+  evaluateAndVerifyCastInTryDictEncoding(
+      ARRAY(VARCHAR()), ARRAY(BIGINT()), input, expected);
 }

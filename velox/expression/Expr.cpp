@@ -490,8 +490,17 @@ inline void setPeeled(
   peeled[fieldIndex] = leaf;
 }
 
-/// Translates row number of the outer vector into row number of the inner
-/// vector using DecodedVector.
+void setDictionaryWrapping(
+    DecodedVector& decoded,
+    const SelectivityVector& rows,
+    BaseVector& firstWrapper,
+    EvalCtx& context) {
+  auto wrapping = decoded.dictionaryWrapping(firstWrapper, rows);
+  context.setDictionaryWrap(
+      std::move(wrapping.indices), std::move(wrapping.nulls));
+}
+} // namespace
+
 SelectivityVector* translateToInnerRows(
     const SelectivityVector& rows,
     DecodedVector& decoded,
@@ -523,17 +532,6 @@ SelectivityVector* singleRow(
   rows->updateBounds();
   return rows;
 }
-
-void setDictionaryWrapping(
-    DecodedVector& decoded,
-    const SelectivityVector& rows,
-    BaseVector& firstWrapper,
-    EvalCtx& context) {
-  auto wrapping = decoded.dictionaryWrapping(firstWrapper, rows);
-  context.setDictionaryWrap(
-      std::move(wrapping.indices), std::move(wrapping.nulls));
-}
-} // namespace
 
 Expr::PeelEncodingsResult Expr::peelEncodings(
     EvalCtx& context,
@@ -1241,6 +1239,18 @@ bool Expr::applyFunctionWithPeeling(
     newRows = translateToInnerRows(applyRows, *decoded, newRowsHolder);
     context.saveAndReset(saver, rows);
     setDictionaryWrapping(*decoded, rows, *firstWrapper, context);
+
+    // 'newRows' comes from the set of row numbers in the base vector. These
+    // numbers may be larger than rows.end(). Hence, we need to resize constant
+    // inputs.
+    if (newRows->end() > rows.end() && numConstant) {
+      for (int i = 0; i < numConstant; ++i) {
+        if (!constantArgs.empty() && constantArgs[i]) {
+          inputValues_[i] =
+              BaseVector::wrapInConstant(newRows->end(), 0, inputValues_[i]);
+        }
+      }
+    }
   }
 
   VectorPtr peeledResult;
@@ -1338,10 +1348,9 @@ ExprSet::ExprSet(
     : execCtx_(execCtx) {
   exprs_ = compileExpressions(
       std::move(sources), execCtx, this, enableConstantFolding);
-  std::vector<FieldReference*> allDistinctFields;
   for (auto& expr : exprs_) {
     mergeFields(
-        allDistinctFields, multiplyReferencedFields_, expr->distinctFields());
+        distinctFields_, multiplyReferencedFields_, expr->distinctFields());
   }
 }
 
@@ -1445,6 +1454,7 @@ void ExprSet::clear() {
   for (auto* memo : memoizingExprs_) {
     memo->clearMemo();
   }
+  distinctFields_.clear();
   multiplyReferencedFields_.clear();
 }
 
