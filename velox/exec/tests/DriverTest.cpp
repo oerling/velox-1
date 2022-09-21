@@ -898,8 +898,8 @@ class TestingConsumer : public Operator {
     reclaimableTracker_->update(-freed);
     reclaimableTracker_->release();
     auto newSize = reclaimableTracker_->getCurrentTotalBytes();
-    if (initialSize - newSize > 10000000) {
-      LOG(INFO) << "Not much freed";
+    if (initialSize - newSize <  freed / 2) {
+      LOG(INFO) << "Freeing under half of requested " << initialSize - newSize;
     }
   }
 

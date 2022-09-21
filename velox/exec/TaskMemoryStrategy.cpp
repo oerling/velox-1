@@ -49,8 +49,18 @@ bool pauseIfRunning(
   if (task->state() != TaskState::kRunning) {
     return false;
   }
-  VELOX_CHECK_EQ(0, task->numThreads());
   pausedTasks.push_back(task);
+
+  // We assert that the task is stopped. There can be a few
+  // microseconds between realizing the future and having a zero
+  // thread count.
+  for (auto i = 0; i < 100; ++i) {
+    if (task->numThreads() == 0) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  VELOX_CHECK_EQ(0, task->numThreads());
   return true;
 }
 } // namespace
@@ -110,7 +120,7 @@ bool TaskMemoryStrategy::reclaim(
           continue;
         }
         auto& taskTracker = task->tracker();
-        auto previousBytes = taskTracker.maxTotalBytes();
+        auto previousBytes = taskTracker.getCurrentTotalBytes();
         auto potentialBytes = task->reclaimableBytes();
         auto tryBytes =
             std::max(kMinReclaimableBytes, bytesForRequester - reclaimedBytes);
@@ -119,7 +129,8 @@ bool TaskMemoryStrategy::reclaim(
             previousBytes - taskTracker.getCurrentTotalBytes();
         if (reclaimedFromTask < kGrowQuantum) {
           if (potentialBytes > tryBytes) {
-            LOG(INFO) << "Task did not shrink as promised";
+            LOG(INFO) << "Task did not shrink as promised: Tried " << tryBytes
+                      << " got " << reclaimedFromTask;
           }
           // Too little reclaimed. No change to limit.
           continue;
