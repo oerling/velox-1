@@ -787,41 +787,7 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
   std::vector<ContinuePromise> threadFinishPromises_;
 };
 
-class TaskMemoryStrategy : public memory::MemoryManagerStrategyBase {
- public:
-  // The minimum Task shrink step.
-  static constexpr int64_t kMinSpill = 24 << 20;
-
-  explicit TaskMemoryStrategy(int64_t size) {
-    auto tracker =
-        memory::getProcessDefaultMemoryManager().getMemoryUsageTracker();
-    tracker->updateConfig(
-        memory::MemoryUsageConfigBuilder().maxTotalMemory(size).build());
-  }
-
-  bool canResize() const override {
-    return true;
-  }
-
-  // The requester is a Task and the calling thread is a thread running a Driver
-  // in the Task.
-  bool reclaim(std::shared_ptr<memory::MemoryConsumer> requester, int64_t size)
-      override;
-
- private:
-  using ConsumerPtr = std::shared_ptr<memory::MemoryConsumer>;
-  struct ConsumerScore {
-    ConsumerPtr consumer;
-    // 'candidate' if this is a Task.
-    Task* FOLLY_NULLABLE task;
-    int64_t available;
-  };
-
-  // Serializes calls to reclaim().
-  std::mutex mutex_;
-};
-
-/// Listener invoked on task completion.
+  /// Listener invoked on task completion.
 class TaskListener {
  public:
   virtual ~TaskListener() = default;
