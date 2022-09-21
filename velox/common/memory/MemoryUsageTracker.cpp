@@ -146,8 +146,8 @@ bool MemoryUsageTracker::maybeReserve(int64_t increment) {
 
 std::string MemoryUsageTracker::toString() const {
   std::stringstream out;
-  out << "<tracker total " << (getCurrentTotalBytes() >> 20)
-      << " available " << (getAvailableReservation() >> 20);
+  out << "<tracker total " << (getCurrentTotalBytes() >> 20) << " available "
+      << (getAvailableReservation() >> 20);
   if (maxTotalBytes() != kMaxMemory) {
     out << "limit " << (maxTotalBytes() >> 20);
   }
