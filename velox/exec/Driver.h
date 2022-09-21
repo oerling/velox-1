@@ -280,7 +280,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
   bool growTaskMemory(memory::MemoryUsageTracker::UsageType type, int64_t size);
 
   // Returns an estimate of the bytes that can be reclaimed by spill().
-  int64_t reclaimableMemory() const;
+  int64_t reclaimableBytes() const;
 
   const std::shared_ptr<Task>& task() const {
     return ctx_->task;

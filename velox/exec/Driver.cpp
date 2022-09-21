@@ -644,10 +644,10 @@ std::string Driver::label() const {
   return fmt::format("<Driver {}:{}>", task()->taskId(), ctx_->driverId);
 }
 
-int64_t Driver::reclaimableMemory() const {
+int64_t Driver::reclaimableBytes() const {
   int64_t total = 0;
   for (auto& op : operators_) {
-    total += op->reclaimableMemory();
+    total += op->reclaimableBytes();
   }
   return total;
 }

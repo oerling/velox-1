@@ -1568,11 +1568,11 @@ Driver* FOLLY_NULLABLE Task::thisDriver() const {
   return nullptr;
 }
 
-int64_t Task::reclaimableMemory() const {
+int64_t Task::reclaimableBytes() const {
   int64_t total = tracker().maxTotalBytes() - tracker().getCurrentUserBytes();
   for (auto driver : drivers_) {
     if (driver) {
-      total += driver->reclaimableMemory();
+      total += driver->reclaimableBytes();
     }
   }
   return total;
@@ -1684,7 +1684,7 @@ bool TaskMemoryStrategy::reclaim(
       if (otherTask) {
         auto size = otherTask->tracker().getCurrentTotalBytes();
         if (size > kInitialSize) {
-          auto reclaimable = otherTask->reclaimableMemory();
+          auto reclaimable = otherTask->reclaimableBytes();
           if (reclaimable >= kMinReclaimableBytes) {
             candidates.push_back({ptr, otherTask, reclaimable});
             available += candidates.back().available;
@@ -1718,7 +1718,7 @@ bool TaskMemoryStrategy::reclaim(
 
       auto& taskTracker = task->tracker();
       auto previousBytes = taskTracker.maxTotalBytes();
-      auto potentialBytes = task->reclaimableMemory();
+      auto potentialBytes = task->reclaimableBytes();
       auto tryBytes =
           std::max(kMinReclaimableBytes, bytesForRequester - reclaimed);
       task->reclaim(tryBytes);

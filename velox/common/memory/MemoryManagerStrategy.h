@@ -34,7 +34,7 @@ class MemoryConsumer {
 
   // Returns the number of bytes that may be reclaimable with
   // reclaim().
-  virtual int64_t reclaimableMemory() const = 0;
+  virtual int64_t reclaimableBytes() const = 0;
 
   //  Reclaims memory. Implementations may for example spill or evict
   //  caches. 'size' specifies a target number of bytes to reclaim. The

@@ -411,7 +411,7 @@ class Task : public memory::MemoryConsumer, std::enable_shared_from_this<Task> {
     return *pool_->getMemoryUsageTracker();
   }
 
-  int64_t reclaimableMemory() const override;
+  int64_t reclaimableBytes() const override;
 
   // Tries to reclaim at least 'size' bytes of memory by shrinking
   // allocations or reservations. The actual change in memory

@@ -375,7 +375,7 @@ class Operator {
 
   // Returns an estimate of the maximum number of bytes that could be
   // freed by calling spill().
-  virtual int64_t reclaimableMemory() const {
+  virtual int64_t reclaimableBytes() const {
     return 0;
   }
 

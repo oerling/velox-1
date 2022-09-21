@@ -883,14 +883,23 @@ class TestingConsumer : public Operator {
     return noMoreInput_ && input_ == nullptr;
   }
 
-  int64_t reclaimableMemory() const override {
-    return reclaimableTracker_->getCurrentUserBytes() / 3;
+  int64_t reclaimableBytes() const override {
+    auto size = reclaimableTracker_->getCurrentTotalBytes();
+    if (size > 40 << 20) {
+      return size / 3;
+    }
+    return 0;
   }
 
   void spill(int64_t size) override {
-    int64_t freed = std::min(size, reclaimableTracker_->getCurrentUserBytes());
+    auto initialSize = reclaimableTracker_->getCurrentTotalBytes();
+    int64_t freed = std::min(size, initialSize);
     reclaimableTracker_->update(-freed);
     reclaimableTracker_->release();
+    auto newSize = reclaimableTracker_->getCurrentTotalBytes();
+    if (initialSize - newSize > 10000000) {
+      LOG(INFO) << "Not much freed";
+    }
   }
 
   void close() override {
