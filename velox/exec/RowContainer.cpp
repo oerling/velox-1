@@ -647,9 +647,9 @@ int32_t RowContainer::listPartitionRows(
           firstBatchMask;
       firstBatchMask = ~0;
       bool atEnd = false;
-      if (iter.rowNumber + kBatch >= numRows_) {
+      if (startRow + kBatch >= numRows_) {
         // Clear bits that are for rows past numRows_ - 1.
-        bits &= bits::lowMask(numRows_ - iter.rowNumber);
+        bits &= bits::lowMask(numRows_ - startRow);
         atEnd = true;
       }
       while (bits) {
