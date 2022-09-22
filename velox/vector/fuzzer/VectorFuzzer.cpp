@@ -410,6 +410,74 @@ VectorPtr VectorFuzzer::fuzzDictionary(
   return BaseVector::wrapInDictionary(nulls, indices, size, vector);
 }
 
+void VectorFuzzer::fuzzOffsetsAndSizes(
+    BufferPtr& offsets,
+    BufferPtr& sizes,
+    size_t elementsSize,
+    size_t size) {
+  offsets = allocateOffsets(size, pool_);
+  sizes = allocateSizes(size, pool_);
+  auto rawOffsets = offsets->asMutable<vector_size_t>();
+  auto rawSizes = sizes->asMutable<vector_size_t>();
+
+  size_t containerAvgLength = std::max(elementsSize / size, 1UL);
+  size_t childSize = 0;
+  size_t length = 0;
+
+  for (auto i = 0; i < size; ++i) {
+    rawOffsets[i] = childSize;
+
+    // If variable length, generate a random number between zero and 2 *
+    // containerAvgLength (so that the average of generated containers size is
+    // equal to number of input elements).
+    if (opts_.containerVariableLength) {
+      length = folly::Random::rand32(rng_) % (containerAvgLength * 2);
+    } else {
+      length = containerAvgLength;
+    }
+
+    // If we exhausted the available elements, add empty arrays.
+    if ((childSize + length) > elementsSize) {
+      length = 0;
+    }
+    rawSizes[i] = length;
+    childSize += length;
+  }
+}
+
+ArrayVectorPtr VectorFuzzer::fuzzArray(
+    const VectorPtr& elements,
+    vector_size_t size) {
+  BufferPtr offsets, sizes;
+  fuzzOffsetsAndSizes(offsets, sizes, elements->size(), size);
+  return std::make_shared<ArrayVector>(
+      pool_,
+      ARRAY(elements->type()),
+      opts_.containerHasNulls ? fuzzNulls(size) : nullptr,
+      size,
+      offsets,
+      sizes,
+      elements);
+}
+
+MapVectorPtr VectorFuzzer::fuzzMap(
+    const VectorPtr& keys,
+    const VectorPtr& values,
+    vector_size_t size) {
+  size_t elementsSize = std::min(keys->size(), values->size());
+  BufferPtr offsets, sizes;
+  fuzzOffsetsAndSizes(offsets, sizes, elementsSize, size);
+  return std::make_shared<MapVector>(
+      pool_,
+      MAP(keys->type(), values->type()),
+      opts_.containerHasNulls ? fuzzNulls(size) : nullptr,
+      size,
+      offsets,
+      sizes,
+      keys,
+      values);
+}
+
 RowVectorPtr VectorFuzzer::fuzzRow(const RowTypePtr& rowType) {
   return fuzzRow(rowType, opts_.vectorSize, opts_.containerHasNulls);
 }

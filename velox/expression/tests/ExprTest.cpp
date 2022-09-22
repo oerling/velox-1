@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
+#include <fstream>
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/ConjunctExpr.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/functions/Udf.h"
@@ -26,6 +28,7 @@
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/vector/VectorSaver.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
@@ -34,6 +37,8 @@ using namespace facebook::velox::test;
 class ExprTest : public testing::Test, public VectorTestBase {
  protected:
   void SetUp() override {
+    FLAGS_velox_save_input_on_expression_failure_path = tempDirectory_->path;
+
     functions::prestosql::registerAllScalarFunctions();
     parse::registerTypeResolver();
   }
@@ -97,7 +102,12 @@ class ExprTest : public testing::Test, public VectorTestBase {
       const VectorPtr& base,
       vector_size_t index) {
     return std::make_shared<core::ConstantTypedExpr>(
-        std::make_shared<ConstantVector<T>>(execCtx_->pool(), 1, index, base));
+        BaseVector::wrapInConstant(1, index, base));
+  }
+
+  /// Create constant expression from a variant of primitive type.
+  std::shared_ptr<core::ConstantTypedExpr> makeConstantExpr(variant value) {
+    return std::make_shared<core::ConstantTypedExpr>(std::move(value));
   }
 
   // Create LazyVector that produces a flat vector and asserts that is is being
@@ -135,6 +145,34 @@ class ExprTest : public testing::Test, public VectorTestBase {
         }));
   }
 
+  /// Remove ". Input: .*" from the 'context'.
+  std::string trimInputPath(const std::string& context) {
+    auto pos = context.find(". Input: ");
+    if (pos == std::string::npos) {
+      return context;
+    }
+
+    return context.substr(0, pos);
+  }
+
+  /// Extract input path from 'context': "<expression>. Input: <input path>."
+  std::string extractInputPath(const std::string& context) {
+    auto startPos = context.find(". Input: ");
+    VELOX_CHECK(startPos != std::string::npos);
+    startPos += strlen(". Input: ");
+    auto endPos = context.find(".", startPos);
+    VELOX_CHECK(endPos != std::string::npos);
+    return context.substr(startPos, endPos - startPos);
+  }
+
+  VectorPtr restoreVector(const std::string& path) {
+    std::ifstream inputFile(path, std::ifstream::binary);
+    VELOX_CHECK(!inputFile.fail(), "Cannot open file: {}", path);
+    auto copy = facebook::velox::restoreVector(inputFile, pool());
+    inputFile.close();
+    return copy;
+  }
+
   void assertError(
       const std::string& expression,
       const VectorPtr& input,
@@ -145,16 +183,27 @@ class ExprTest : public testing::Test, public VectorTestBase {
       evaluate(expression, makeRowVector({input}));
       ASSERT_TRUE(false) << "Expected an error";
     } catch (VeloxException& e) {
-      ASSERT_EQ(context, e.context());
-      ASSERT_EQ(topLevelContext, e.topLevelContext());
+      ASSERT_EQ(context, trimInputPath(e.context()));
+      ASSERT_EQ(topLevelContext, trimInputPath(e.topLevelContext()));
       ASSERT_EQ(message, e.message());
     }
+  }
+
+  void testToSql(const std::string& expression, const RowTypePtr& rowType) {
+    auto exprSet = compileExpression(expression, rowType);
+    auto sql = exprSet->expr(0)->toSql();
+    auto copy = compileExpression(sql, rowType);
+    ASSERT_EQ(
+        exprSet->toString(false /*compact*/), copy->toString(false /*compact*/))
+        << sql;
   }
 
   std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
   std::unique_ptr<core::ExecCtx> execCtx_{
       std::make_unique<core::ExecCtx>(pool_.get(), queryCtx_.get())};
   parse::ParseOptions options_;
+  std::shared_ptr<exec::test::TempDirectoryPath> tempDirectory_{
+      exec::test::TempDirectoryPath::create()};
 };
 
 TEST_F(ExprTest, moreEncodings) {
@@ -2026,7 +2075,11 @@ TEST_F(ExprTest, exceptionContext) {
     ASSERT_EQ("mod(cast((plus(c0, c1)) as BIGINT), 0:BIGINT)", e.context());
     ASSERT_EQ(
         "plus(cast((c0) as BIGINT), mod(cast((plus(c0, c1)) as BIGINT), 0:BIGINT))",
-        e.topLevelContext());
+        trimInputPath(e.topLevelContext()));
+
+    auto inputPath = extractInputPath(e.topLevelContext());
+    auto copy = restoreVector(inputPath);
+    assertEqualVectors(data, copy);
   }
 
   try {
@@ -2036,7 +2089,11 @@ TEST_F(ExprTest, exceptionContext) {
     ASSERT_EQ("mod(cast((c1) as BIGINT), 0:BIGINT)", e.context());
     ASSERT_EQ(
         "plus(cast((c0) as BIGINT), mod(cast((c1) as BIGINT), 0:BIGINT))",
-        e.topLevelContext());
+        trimInputPath(e.topLevelContext()));
+
+    auto inputPath = extractInputPath(e.topLevelContext());
+    auto copy = restoreVector(inputPath);
+    assertEqualVectors(data, copy);
   }
 }
 
@@ -2057,6 +2114,124 @@ TEST_F(ExprTest, constantToString) {
   ASSERT_EQ(
       "4 elements starting at 0 {1.2000000476837158, 3.4000000953674316, null, 5.599999904632568}:ARRAY<REAL>",
       exprSet.exprs()[2]->toString());
+}
+
+TEST_F(ExprTest, constantToSql) {
+  auto toSql = [&](const variant& value) {
+    exec::ExprSet exprSet({makeConstantExpr(value)}, execCtx_.get());
+    return exprSet.expr(0)->toSql();
+  };
+
+  ASSERT_EQ(toSql(true), "TRUE");
+  ASSERT_EQ(toSql(false), "FALSE");
+  ASSERT_EQ(toSql(variant::null(TypeKind::BOOLEAN)), "NULL");
+
+  ASSERT_EQ(toSql((int8_t)23), "23::TINYINT");
+  ASSERT_EQ(toSql(variant::null(TypeKind::TINYINT)), "NULL");
+
+  ASSERT_EQ(toSql((int16_t)23), "23::SMALLINT");
+  ASSERT_EQ(toSql(variant::null(TypeKind::SMALLINT)), "NULL");
+
+  ASSERT_EQ(toSql(23), "23::INTEGER");
+  ASSERT_EQ(toSql(variant::null(TypeKind::INTEGER)), "NULL");
+
+  ASSERT_EQ(toSql(2134456LL), "2134456::BIGINT");
+  ASSERT_EQ(toSql(variant::null(TypeKind::BIGINT)), "NULL");
+
+  ASSERT_EQ(toSql(1.5f), "1.5::REAL");
+  ASSERT_EQ(toSql(variant::null(TypeKind::REAL)), "NULL");
+
+  ASSERT_EQ(toSql(-78.456), "-78.456::DOUBLE");
+  ASSERT_EQ(toSql(variant::null(TypeKind::DOUBLE)), "NULL");
+
+  ASSERT_EQ(toSql("This is a test."), "'This is a test.'");
+  ASSERT_EQ(
+      toSql("This is a \'test\' with single quotes."),
+      "'This is a \'\'test\'\' with single quotes.'");
+  ASSERT_EQ(toSql(variant::null(TypeKind::VARCHAR)), "NULL");
+
+  auto toSqlComplex = [&](const VectorPtr& vector, vector_size_t index = 0) {
+    exec::ExprSet exprSet({makeConstantExpr(vector, index)}, execCtx_.get());
+    return exprSet.expr(0)->toSql();
+  };
+
+  ASSERT_EQ(
+      toSqlComplex(makeArrayVector<int32_t>({{1, 2, 3}})),
+      "ARRAY[1::INTEGER, 2::INTEGER, 3::INTEGER]");
+  ASSERT_EQ(
+      toSqlComplex(makeArrayVector<int32_t>({{1, 2, 3}, {4, 5, 6}}), 1),
+      "ARRAY[4::INTEGER, 5::INTEGER, 6::INTEGER]");
+  ASSERT_EQ(toSql(variant::null(TypeKind::ARRAY)), "NULL");
+
+  ASSERT_EQ(
+      toSqlComplex(makeMapVector<int32_t, int32_t>({
+          {{1, 10}, {2, 20}, {3, 30}},
+      })),
+      "map(ARRAY[1::INTEGER, 2::INTEGER, 3::INTEGER], ARRAY[10::INTEGER, 20::INTEGER, 30::INTEGER])");
+  ASSERT_EQ(
+      toSqlComplex(
+          makeMapVector<int32_t, int32_t>({
+              {{1, 11}, {2, 12}},
+              {{1, 10}, {2, 20}, {3, 30}},
+          }),
+          1),
+      "map(ARRAY[1::INTEGER, 2::INTEGER, 3::INTEGER], ARRAY[10::INTEGER, 20::INTEGER, 30::INTEGER])");
+  ASSERT_EQ(
+      toSqlComplex(BaseVector::createNullConstant(
+          MAP(INTEGER(), VARCHAR()), 10, pool())),
+      "NULL");
+
+  ASSERT_EQ(
+      toSqlComplex(makeRowVector({
+          makeFlatVector<int32_t>({1, 2, 3}),
+          makeFlatVector<bool>({true, false, true}),
+      })),
+      "row_constructor(1::INTEGER, TRUE)");
+  ASSERT_EQ(
+      toSqlComplex(BaseVector::createNullConstant(
+          ROW({"a", "b"}, {BOOLEAN(), DOUBLE()}), 10, pool())),
+      "NULL");
+}
+
+TEST_F(ExprTest, toSql) {
+  auto rowType = ROW({"a", "b", "c.d"}, {INTEGER(), BIGINT(), VARCHAR()});
+
+  // CAST.
+  testToSql("a + 3", rowType);
+  testToSql("a * b", rowType);
+  testToSql("a * 1.5", rowType);
+
+  // SWITCH.
+  testToSql("if(a > 0, 1, 10)", rowType);
+  testToSql("if(a = 10, true, false)", rowType);
+  testToSql("case a when 7 then 1 when 11 then 2 else 0 end", rowType);
+  testToSql("case a when 7 then 1 when 11 then 2 when 17 then 3 end", rowType);
+  testToSql(
+      "case a when b + 3 then 1 when b * 11 then 2 when b - 17 then a + b end",
+      rowType);
+
+  // AND / OR.
+  testToSql("a > 0 AND b < 100", rowType);
+  testToSql("a > 0 AND b / a < 100", rowType);
+  testToSql("is_null(a) OR is_null(b)", rowType);
+
+  // COALESCE.
+  testToSql("coalesce(a::bigint, b, 123)", rowType);
+
+  // TRY.
+  testToSql("try(a / b)", rowType);
+
+  // String literals.
+  testToSql("length(\"c.d\")", rowType);
+  testToSql("concat(a::varchar, ',', b::varchar, '\'\'')", rowType);
+
+  // Array, map and row literals.
+  testToSql("contains(array[1, 2, 3], a)", rowType);
+  testToSql("map(array[a, b, 5], array[10, 20, 30])", rowType);
+  testToSql(
+      "element_at(map(array[1, 2, 3], array['a', 'b', 'c']), a)", rowType);
+  testToSql("row_constructor(a, b, 'test')", rowType);
+  testToSql("row_constructor(true, 1.5, 'abc', array[1, 2, 3])", rowType);
 }
 
 namespace {
