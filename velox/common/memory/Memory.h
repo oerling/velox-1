@@ -69,7 +69,10 @@ class ScopedMemoryPool;
 
 class AbstractMemoryPool {
  public:
-  virtual ~AbstractMemoryPool() {}
+  static constexpr int64_t kPoolMagic = 0xa110c8007a110c;
+  virtual ~AbstractMemoryPool() {
+    magic_ = 0xdeadbeefbadfeed;
+  }
   virtual void* FOLLY_NULLABLE allocate(int64_t size) = 0;
   virtual void* FOLLY_NULLABLE
   allocateZeroFilled(int64_t numMembers, int64_t sizeEach) = 0;
@@ -77,6 +80,15 @@ class AbstractMemoryPool {
   reallocate(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize) = 0;
   virtual void free(void* FOLLY_NULLABLE p, int64_t size) = 0;
   virtual size_t getPreferredSize(size_t size) = 0;
+
+  void checkMagic() const {
+    if (magic_ != kPoolMagic) {
+      VELOX_FAIL("Bad pool magic");
+    }
+  }
+
+ protected:
+  int64_t magic_ = kPoolMagic;
 };
 
 class MemoryPool : public AbstractMemoryPool {
@@ -422,16 +434,12 @@ class MemoryPoolImpl : public MemoryPoolBase {
       const std::string& name,
       std::weak_ptr<MemoryPool> parent,
       int64_t cap = kMaxMemory);
-
   ~MemoryPoolImpl() {
     if (const auto& tracker = getMemoryUsageTracker()) {
       auto remainingBytes = tracker->getCurrentUserBytes();
-      VELOX_CHECK_EQ(
-          0,
-          remainingBytes,
-          "Memory pool should be destroyed only after all allocated memory "
-          "has been freed. Remaining bytes allocated: {}",
-          remainingBytes);
+      if (remainingBytes) {
+	LOG(ERROR) << "Freeing non-empty " << this << " with " << remainingBytes;
+      }
     }
   }
 
@@ -672,6 +680,7 @@ MemoryPoolImpl<Allocator, ALIGNMENT>::MemoryPoolImpl(
       localMemoryUsage_{},
       cap_{cap},
       allocator_{memoryManager_.getAllocator()} {
+  LOG(INFO) << "Made pool " << this;
   VELOX_USER_CHECK_GT(cap, 0);
 }
 

@@ -514,6 +514,7 @@ class AlignedBuffer : public Buffer {
   }
 
   void freeToPool() override {
+    pool_->checkMagic();
     pool_->free(this, checkedPlus<size_t>(kPaddedSize, capacity_));
   }
 };
