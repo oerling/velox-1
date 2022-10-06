@@ -417,6 +417,7 @@ TEST_F(SpillTest, spillPartitionSet) {
       if (partitionIdSet.contains(id)) {
         continue;
       }
+      partitionIdSet.insert(id);
       spillPartitions.push_back(std::make_unique<SpillPartition>(id));
       ASSERT_EQ(id, spillPartitions.back()->id());
       // Expect an empty reader.
@@ -430,6 +431,10 @@ TEST_F(SpillTest, spillPartitionSet) {
       const auto id = partition->id();
       partitionSet.emplace(id, std::move(partition));
     }
+    const SpillPartitionIdSet generatedPartitionIdSet =
+        toSpillPartitionIdSet(partitionSet);
+    ASSERT_EQ(partitionIdSet, generatedPartitionIdSet);
+
     std::unique_ptr<SpillPartitionId> prevId;
     for (auto& partitionEntry : partitionSet) {
       if (prevId != nullptr) {
@@ -537,4 +542,14 @@ TEST_F(SpillTest, spillPartitionSpilt) {
     }
     ASSERT_EQ(batchIdx, numBatches);
   }
+}
+
+TEST_F(SpillTest, nonExistSpillFileOnDeletion) {
+  const int32_t numRowsPerBatch = 100;
+  std::vector<RowVectorPtr> batches;
+  setupSpillState(kGB, 1, 2, numRowsPerBatch);
+  // Delete the tmp dir to verify the spill file deletion error won't fail the
+  // test.
+  tempDir_.reset();
+  state_.reset();
 }

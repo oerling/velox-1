@@ -26,10 +26,18 @@
 #include "velox/expression/EvalCtx.h"
 #include "velox/vector/SimpleVector.h"
 
-/// GFlag used to enable saving input vector to a file in case of an error
-/// during expression evaluation. The value specifies a path to a directory
-/// where the vectors will be saved. That directory must exist and be writable.
-DECLARE_string(velox_save_input_on_expression_failure_path);
+/// GFlag used to enable saving input vector and expression SQL on disk in case
+/// of any (user or system) error during expression evaluation. The value
+/// specifies a path to a directory where the vectors will be saved. That
+/// directory must exist and be writable.
+DECLARE_string(velox_save_input_on_expression_any_failure_path);
+
+/// GFlag used to enable saving input vector and expression SQL on disk in case
+/// of a system error during expression evaluation. The value specifies a path
+/// to a directory where the vectors will be saved. That directory must exist
+/// and be writable. This flag is ignored if
+/// velox_save_input_on_expression_any_failure_path flag is set.
+DECLARE_string(velox_save_input_on_expression_system_failure_path);
 
 namespace facebook::velox::exec {
 
@@ -53,6 +61,63 @@ struct ExprStats {
     numProcessedRows += other.numProcessedRows;
     numProcessedVectors += other.numProcessedVectors;
   }
+
+  std::string toString() const {
+    return fmt::format(
+        "timing: {}, numProcessedRows: {}, numProcessedVectors: {}",
+        timing.toString(),
+        numProcessedRows,
+        numProcessedVectors);
+  }
+};
+
+/// Data needed to generate exception context for the top-level expression. It
+/// also provides functionality to persist both data and sql to disk for
+/// debugging purpose
+class ExprExceptionContext {
+ public:
+  ExprExceptionContext(
+      const Expr* FOLLY_NONNULL expr,
+      const RowVector* FOLLY_NONNULL vector)
+      : expr_(expr), vector_(vector) {}
+
+  /// Persist data and sql on disk. Data will be persisted in $basePath/vector
+  /// and sql will be persisted in $basePath/sql
+  void persistDataAndSql(const char* FOLLY_NONNULL basePath);
+
+  const Expr* FOLLY_NONNULL expr() const {
+    return expr_;
+  }
+
+  const RowVector* FOLLY_NONNULL vector() const {
+    return vector_;
+  }
+
+  const std::string& dataPath() const {
+    return dataPath_;
+  }
+
+  const std::string& sqlPath() const {
+    return sqlPath_;
+  }
+
+ private:
+  /// The expression.
+  const Expr* FOLLY_NONNULL expr_;
+
+  /// The input vector, i.e. EvalCtx::row(). In some cases, input columns are
+  /// re-used for results. Hence, 'vector' may no longer contain input data at
+  /// the time of exception.
+  const RowVector* FOLLY_NONNULL vector_;
+
+  /// Path of the file storing the serialized 'vector'. Used to avoid
+  /// serializing vector repeatedly in cases when multiple rows generate
+  /// exceptions. This happens when exceptions are suppressed by TRY/AND/OR.
+  std::string dataPath_{""};
+
+  /// Path of the file storing the expression SQL. Used to avoid writing SQL
+  /// repeatedly in cases when multiple rows generate exceptions.
+  std::string sqlPath_{""};
 };
 
 // An executable expression.
@@ -262,7 +327,7 @@ class Expr {
 
   PeelEncodingsResult peelEncodings(
       EvalCtx& context,
-      ContextSaver& saver,
+      ScopedContextSaver& saver,
       const SelectivityVector& rows,
       LocalDecodedVector& localDecoded,
       LocalSelectivityVector& newRowsHolder,
@@ -327,6 +392,11 @@ class Expr {
       const VectorPtr& result);
 
   void evalSimplifiedImpl(
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result);
+
+  void evalSpecialFormWithStats(
       const SelectivityVector& rows,
       EvalCtx& context,
       VectorPtr& result);
@@ -436,7 +506,7 @@ using ExprPtr = std::shared_ptr<Expr>;
 class ExprSet {
  public:
   explicit ExprSet(
-      std::vector<core::TypedExprPtr>&& source,
+      const std::vector<core::TypedExprPtr>& source,
       core::ExecCtx* FOLLY_NONNULL execCtx,
       bool enableConstantFolding = true);
 
@@ -520,9 +590,9 @@ class ExprSet {
 class ExprSetSimplified : public ExprSet {
  public:
   ExprSetSimplified(
-      std::vector<core::TypedExprPtr>&& source,
+      const std::vector<core::TypedExprPtr>& source,
       core::ExecCtx* FOLLY_NONNULL execCtx)
-      : ExprSet(std::move(source), execCtx, /*enableConstantFolding*/ false) {}
+      : ExprSet(source, execCtx, /*enableConstantFolding*/ false) {}
 
   virtual ~ExprSetSimplified() override {}
 
@@ -559,6 +629,8 @@ struct ExprSetCompletionEvent {
   /// Aggregated runtime stats keyed on expression name (e.g. built-in
   /// expression like and, or, switch or a function name).
   std::unordered_map<std::string, exec::ExprStats> stats;
+  /// List containing sql representation of each top level expression in ExprSet
+  std::vector<std::string> sqls;
 };
 
 /// Listener invoked on ExprSet destruction.

@@ -25,7 +25,7 @@
 #include "velox/expression/Expr.h"
 #include "velox/expression/ExprCompiler.h"
 #include "velox/expression/FieldReference.h"
-#include "velox/expression/VarSetter.h"
+#include "velox/expression/ScopedVarSetter.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/vector/SelectivityVector.h"
 #include "velox/vector/VectorSaver.h"
@@ -314,88 +314,108 @@ void Expr::evalSimplifiedImpl(
 }
 
 namespace {
+/// Used to generate context for an error occurred while evaluating
+/// top-level expression or top-level context for an error occurred while
+/// evaluating top-level expression. If
+/// FLAGS_velox_save_input_on_expression_failure_path
+/// is not empty, saves the input vector and expression SQL to files in
+/// that directory.
+///
+/// Returns the output of Expr::toString() for the top-level
+/// expression along with the paths of the files storing the input vector and
+/// expression SQL.
+///
+/// This function may be called multiple times if exceptions are suppressed by
+/// TRY/AND/OR. The input vector will be saved only on first call and the
+/// file path will be saved in ExprExceptionContext::dataPath and
+/// used in subsequent calls. If an error occurs while saving the input
+/// vector, the error message is saved in
+/// ExprExceptionContext::dataPath and save operation is not
+/// attempted again on subsequent calls.
+std::string onTopLevelException(VeloxException::Type exceptionType, void* arg) {
+  auto* context = static_cast<ExprExceptionContext*>(arg);
 
-/// Data needed to generate exception context for the top-level expression.
-struct ExprExceptionContext {
-  /// The expression.
-  Expr* expr;
+  const char* basePath =
+      FLAGS_velox_save_input_on_expression_any_failure_path.c_str();
+  if (strlen(basePath) == 0 && exceptionType == VeloxException::Type::kSystem) {
+    basePath = FLAGS_velox_save_input_on_expression_system_failure_path.c_str();
+  }
+  if (strlen(basePath) == 0) {
+    return context->expr()->toString();
+  }
 
-  /// The input vector, i.e. EvalCtx::row(). In some cases, input columns are
-  /// re-used for results. Hence, 'vector' may no longer contain input data at
-  /// the time of exception.
-  const RowVector* vector;
+  // Save input vector to a file.
+  context->persistDataAndSql(basePath);
 
-  /// Path of the file storing the serialized 'vector'. Used to avoid
-  /// serializing vector repeatedly in cases when multiple rows generate
-  /// exceptions. This happens when exceptions are suppressed by TRY/AND/OR.
-  std::string serializedVectorPath{""};
-};
+  return fmt::format(
+      "{}. Input data: {}. SQL expression: {}.",
+      context->expr()->toString(),
+      context->dataPath(),
+      context->sqlPath());
+}
+
+/// Used to generate context for an error occurred while evaluating
+/// sub-expression. Returns the output of Expr::toString() for the
+/// sub-expression.
+std::string onException(VeloxException::Type /*exceptionType*/, void* arg) {
+  return static_cast<Expr*>(arg)->toString();
+}
 
 /// Generates a file path in specified directory. Returns std::nullopt on
 /// failure.
-std::optional<std::string> generateFilePath(const char* basePath) {
-  auto path = fmt::format("{}/velox_vector_XXXXXX", basePath);
+std::optional<std::string> generateFilePath(
+    const char* basePath,
+    const char* prefix) {
+  auto path = fmt::format("{}/velox_{}_XXXXXX", basePath, prefix);
   auto fd = mkstemp(path.data());
   if (fd == -1) {
     return std::nullopt;
   }
   return path;
 }
-
-/// Used to generate context for an error occurred while evaluating
-/// top-level expression or top-level context for an error occurred while
-/// evaluating top-level expression. If
-/// FLAGS_velox_save_input_on_expression_failure_path
-//  is not empty, saves the input vector to a file in that directory. Returns
-//  the output of Expr::toString() for the top-level
-/// expression along with the path of the file storing the input vector.
-///
-/// This function may be called multiple times if exceptions are suppressed by
-/// TRY/AND/OR. The input vector will be saved only on first call and the
-/// file path will be saved in ExprExceptionContext::serializedVectorPath and
-/// used in subsequent calls. If an error occurs while saving the input vector,
-/// the error message is saved in ExprExceptionContext::serializedVectorPath and
-/// save operation is not attempted again on subsequent calls.
-std::string onTopLevelException(void* arg) {
-  auto* context = static_cast<ExprExceptionContext*>(arg);
-
-  const auto& basePath = FLAGS_velox_save_input_on_expression_failure_path;
-  if (basePath.empty()) {
-    return context->expr->toString();
-  }
-
-  // Save input vector to a file.
-  if (context->serializedVectorPath.empty()) {
-    auto filePath = generateFilePath(basePath.c_str());
-    if (!filePath.has_value()) {
-      context->serializedVectorPath =
-          "Failed to create file for saving input vector.";
-    } else {
-      try {
-        std::ofstream outputFile(filePath.value(), std::ofstream::binary);
-        saveVector(*context->vector, outputFile);
-        outputFile.close();
-        context->serializedVectorPath = filePath.value();
-      } catch (...) {
-        context->serializedVectorPath =
-            fmt::format("Failed to save input vector to {}.", filePath.value());
-      }
-    }
-  }
-
-  return fmt::format(
-      "{}. Input: {}.",
-      context->expr->toString(),
-      context->serializedVectorPath);
-}
-
-/// Used to generate context for an error occurred while evaluating
-/// sub-expression. Returns the output of Expr::toString() for the
-/// sub-expression.
-std::string onException(void* arg) {
-  return static_cast<Expr*>(arg)->toString();
-}
 } // namespace
+
+void ExprExceptionContext::persistDataAndSql(const char* basePath) {
+  // Exception already persisted or failed to persist. We don't persist again in
+  // this situation.
+  if (!dataPath_.empty()) {
+    return;
+  }
+
+  auto dataPath = generateFilePath(basePath, "vector");
+  auto sqlPath = generateFilePath(basePath, "sql");
+  if (!dataPath.has_value()) {
+    dataPath_ = "Failed to create file for saving input vector.";
+    return;
+  }
+  if (!sqlPath.has_value()) {
+    sqlPath_ = "Failed to create file for saving expression SQL.";
+    return;
+  }
+
+  // Persist vector to disk
+  try {
+    std::ofstream outputFile(dataPath.value(), std::ofstream::binary);
+    saveVector(*vector_, outputFile);
+    outputFile.close();
+    dataPath_ = dataPath.value();
+  } catch (...) {
+    dataPath_ =
+        fmt::format("Failed to save input vector to {}.", dataPath.value());
+  }
+
+  // Persist sql to disk
+  try {
+    auto sql = expr_->toSql();
+    std::ofstream outputFile(sqlPath.value(), std::ofstream::binary);
+    outputFile.write(sql.data(), sql.size());
+    outputFile.close();
+    sqlPath_ = sqlPath.value();
+  } catch (...) {
+    sqlPath_ =
+        fmt::format("Failed to save expression SQL to {}.", sqlPath.value());
+  }
+}
 
 void Expr::evalFlatNoNulls(
     const SelectivityVector& rows,
@@ -408,7 +428,7 @@ void Expr::evalFlatNoNulls(
        topLevel ? (void*)&exprExceptionContext : this});
 
   if (isSpecialForm()) {
-    evalSpecialForm(rows, context, result);
+    evalSpecialFormWithStats(rows, context, result);
     return;
   }
 
@@ -541,11 +561,12 @@ bool Expr::checkGetSharedSubexprValues(
       VELOX_DCHECK_NOT_NULL(context.finalSelection());
       newFinalSelection->select(*context.finalSelection());
     }
-    VarSetter finalSelectionPreservePrecomputedValues(
-        context.mutableFinalSelection(),
-        const_cast<const SelectivityVector*>(newFinalSelection));
-    VarSetter isFinalSelectionPreservePrecomputedValues(
-        context.mutableIsFinalSelection(), false, context.isFinalSelection());
+
+    ScopedFinalSelectionSetter scopedFinalSelectionSetter(
+        context,
+        const_cast<const SelectivityVector*>(newFinalSelection),
+        true /*checkCondition*/,
+        true /*override*/);
 
     evalEncodings(*missingRows, context, sharedSubexprValues_);
   }
@@ -627,7 +648,7 @@ SelectivityVector* singleRow(
 
 Expr::PeelEncodingsResult Expr::peelEncodings(
     EvalCtx& context,
-    ContextSaver& saver,
+    ScopedContextSaver& saver,
     const SelectivityVector& rows,
     LocalDecodedVector& localDecoded,
     LocalSelectivityVector& newRowsHolder,
@@ -789,7 +810,7 @@ void Expr::evalEncodings(
       VectorPtr wrappedResult;
       // Attempt peeling and bound the scope of the context used for it.
       {
-        ContextSaver saveContext;
+        ScopedContextSaver saveContext;
         LocalSelectivityVector newRowsHolder(context);
         LocalSelectivityVector finalRowsHolder(context);
         LocalDecodedVector decodedHolder(context);
@@ -913,7 +934,7 @@ void Expr::evalWithNulls(
     if (mayHaveNulls && !distinctFields_.empty()) {
       LocalSelectivityVector nonNullHolder(context);
       if (removeSureNulls(rows, context, nonNullHolder)) {
-        VarSetter noMoreNulls(context.mutableNullsPruned(), true);
+        ScopedVarSetter noMoreNulls(context.mutableNullsPruned(), true);
         if (nonNullHolder.get()->hasSelections()) {
           evalAll(*nonNullHolder.get(), context, result);
         }
@@ -967,12 +988,8 @@ void Expr::evalWithMemo(
       // Fix finalSelection at "rows" if uncached rows is a strict subset to
       // avoid losing values not in uncached rows that were copied earlier into
       // "result" from the cached rows.
-      bool updateFinalSelection = context.isFinalSelection() &&
-          (uncached->countSelected() < rows.countSelected());
-      VarSetter finalSelectionMemo(
-          context.mutableFinalSelection(), &rows, updateFinalSelection);
-      VarSetter isFinalSelectionMemo(
-          context.mutableIsFinalSelection(), false, updateFinalSelection);
+      ScopedFinalSelectionSetter scopedFinalSelectionSetter(
+          context, &rows, uncached->countSelected() < rows.countSelected());
 
       evalWithNulls(*uncached, context, result);
       deselectErrors(context, *uncached);
@@ -1124,7 +1141,7 @@ void Expr::evalAll(
     return;
   }
   if (isSpecialForm()) {
-    evalSpecialForm(rows, context, result);
+    evalSpecialFormWithStats(rows, context, result);
     return;
   }
   bool tryPeelArgs = deterministic_ ? true : false;
@@ -1315,7 +1332,7 @@ bool Expr::applyFunctionWithPeeling(
     return false;
   }
   LocalSelectivityVector newRowsHolder(context);
-  ContextSaver saver;
+  ScopedContextSaver saver;
   // We peel off the wrappers and make a new selection.
   SelectivityVector* newRows;
   LocalDecodedVector localDecoded(context);
@@ -1336,7 +1353,7 @@ bool Expr::applyFunctionWithPeeling(
     // numbers may be larger than rows.end(). Hence, we need to resize constant
     // inputs.
     if (newRows->end() > rows.end() && numConstant) {
-      for (int i = 0; i < numConstant; ++i) {
+      for (int i = 0; i < constantArgs.size(); ++i) {
         if (!constantArgs.empty() && constantArgs[i]) {
           inputValues_[i] =
               BaseVector::wrapInConstant(newRows->end(), 0, inputValues_[i]);
@@ -1348,7 +1365,7 @@ bool Expr::applyFunctionWithPeeling(
   VectorPtr peeledResult;
   applyFunction(*newRows, context, peeledResult);
   VectorPtr wrappedResult =
-      context.applyWrapToPeeledResult(this->type(), peeledResult, rows);
+      context.applyWrapToPeeledResult(this->type(), peeledResult, applyRows);
   context.moveOrCopyResult(wrappedResult, rows, result);
   return true;
 }
@@ -1372,6 +1389,17 @@ void Expr::applyFunction(
     result->asUnchecked<SimpleVector<StringView>>()->setIsAscii(
         isAscii.value(), rows);
   }
+}
+
+void Expr::evalSpecialFormWithStats(
+    const SelectivityVector& rows,
+    EvalCtx& context,
+    VectorPtr& result) {
+  stats_.numProcessedVectors += 1;
+  stats_.numProcessedRows += rows.countSelected();
+  auto timer = cpuWallTimer();
+
+  evalSpecialForm(rows, context, result);
 }
 
 namespace {
@@ -1454,12 +1482,12 @@ void Expr::appendInputsSql(std::stringstream& stream) const {
 }
 
 ExprSet::ExprSet(
-    std::vector<core::TypedExprPtr>&& sources,
+    const std::vector<core::TypedExprPtr>& sources,
     core::ExecCtx* execCtx,
     bool enableConstantFolding)
     : execCtx_(execCtx) {
-  exprs_ = compileExpressions(
-      std::move(sources), execCtx, this, enableConstantFolding);
+  exprs_ = compileExpressions(sources, execCtx, this, enableConstantFolding);
+  std::vector<FieldReference*> allDistinctFields;
   for (auto& expr : exprs_) {
     mergeFields(
         distinctFields_, multiplyReferencedFields_, expr->distinctFields());
@@ -1499,13 +1527,15 @@ ExprSet::~ExprSet() {
     if (!listeners.empty()) {
       std::unordered_map<std::string, exec::ExprStats> stats;
       std::unordered_set<const exec::Expr*> uniqueExprs;
+      std::vector<std::string> sqls;
       for (const auto& expr : exprs()) {
+        sqls.emplace_back(expr->toSql());
         addStats(*expr, stats, uniqueExprs);
       }
 
       auto uuid = makeUuid();
-      for (auto& listener : listeners) {
-        listener->onCompletion(uuid, {stats});
+      for (const auto& listener : listeners) {
+        listener->onCompletion(uuid, {stats, sqls});
       }
     }
   });
