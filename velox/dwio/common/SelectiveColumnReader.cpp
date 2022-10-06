@@ -59,6 +59,10 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   return formatData_->filterRowGroups(*scanSpec_, rowGroupSize, context);
 }
 
+bool SelectiveColumnReader::rowGroupMatches(uint32_t rowGroupId) const {
+  return formatData_->rowGroupMatches(rowGroupId, scanSpec_->filter());
+}
+
 void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
   if (offset == readOffset_) {
     return;
@@ -74,7 +78,7 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
     numParentNulls_ = 0;
     parentNullsRecordedTo_ = 0;
     if (readsNullsOnly) {
-      formatData_->skipNulls(offset - readOffset_);
+      formatData_->skipNulls(offset - readOffset_, true);
     } else {
       skip(distance);
     }
@@ -84,12 +88,15 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
   }
 }
 
-void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
+void SelectiveColumnReader::prepareNulls(
+    RowSet rows,
+    bool hasNulls,
+    int32_t extraRows) {
   if (!hasNulls) {
     anyNulls_ = false;
     return;
   }
-  auto numRows = rows.size();
+  auto numRows = rows.size() + extraRows;
   if (useBulkPath()) {
     bool isDense = rows.back() == rows.size() - 1;
     if (!scanSpec_->hasFilter()) {
@@ -169,6 +176,9 @@ void SelectiveColumnReader::getIntValues(
           default:
             VELOX_FAIL("Unsupported value size");
         }
+        break;
+      case TypeKind::DATE:
+        getFlatValues<Date, Date>(rows, result);
         break;
       case TypeKind::BIGINT:
         switch (valueSize_) {
@@ -297,6 +307,27 @@ void SelectiveColumnReader::addStringValue(folly::StringPiece value) {
   auto copy = copyStringValue(value);
   reinterpret_cast<StringView*>(rawValues_)[numValues_++] =
       StringView(copy, value.size());
+}
+
+bool SelectiveColumnReader::readsNullsOnly() const {
+  auto filter = scanSpec_->filter();
+  if (filter) {
+    auto kind = filter->kind();
+    return kind == velox::common::FilterKind::kIsNull ||
+        (!scanSpec_->keepValues() &&
+         kind == velox::common::FilterKind::kIsNotNull);
+  }
+  return false;
+}
+
+void SelectiveColumnReader::setNulls(BufferPtr resultNulls) {
+  resultNulls_ = resultNulls;
+  rawResultNulls_ = resultNulls ? resultNulls->asMutable<uint64_t>() : nullptr;
+  anyNulls_ = rawResultNulls_ &&
+      !bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNotNull);
+  allNull_ =
+      anyNulls_ && bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNull);
+  returnReaderNulls_ = false;
 }
 
 void SelectiveColumnReader::resetFilterCaches() {

@@ -29,7 +29,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       velox::common::ScanSpec& scanSpec)
       : SelectiveColumnReader(dataType, params, scanSpec, dataType->type),
         requestedType_(requestedType),
-        debugString_(getExceptionContext().message()) {}
+        debugString_(
+            getExceptionContext().message(VeloxException::Type::kSystem)) {}
 
   void resetFilterCaches() override {
     for (auto& child : children_) {
@@ -47,6 +48,8 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
   std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
       const dwio::common::StatsContext& context) const override;
+
+  bool rowGroupMatches(uint32_t rowGroupId) const override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;

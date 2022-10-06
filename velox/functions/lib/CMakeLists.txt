@@ -15,24 +15,23 @@ find_library(RE2 re2 REQUIRED)
 
 add_library(
   velox_functions_lib
-  ApproxMostFrequentStreamSummary.h
   DateTimeFormatter.cpp
   DateTimeFormatterBuilder.cpp
   IsNull.cpp
   JodaDateTime.cpp
   KllSketch.cpp
-  KllSketch.h
-  KllSketch-inl.h
   LambdaFunctionUtil.cpp
   Re2Functions.cpp
-  StringEncodingUtils.cpp
-  ZetaDistribution.h)
+  StringEncodingUtils.cpp)
 
 target_link_libraries(velox_functions_lib velox_vector ${RE2}
                       ${FOLLY_WITH_DEPENDENCIES})
 
 add_subdirectory(string)
 if(${VELOX_BUILD_TESTING})
-  add_subdirectory(benchmarks)
   add_subdirectory(tests)
+endif()
+
+if(${VELOX_ENABLE_BENCHMARKS})
+  add_subdirectory(benchmarks)
 endif()

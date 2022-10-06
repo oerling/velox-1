@@ -28,8 +28,8 @@ namespace {
 class ExprCallable : public Callable {
  public:
   ExprCallable(
-      std::shared_ptr<const RowType> signature,
-      std::shared_ptr<RowVector> capture,
+      RowTypePtr signature,
+      RowVectorPtr capture,
       std::shared_ptr<Expr> body)
       : signature_(std::move(signature)),
         capture_(std::move(capture)),
@@ -41,6 +41,7 @@ class ExprCallable : public Callable {
 
   void apply(
       const SelectivityVector& rows,
+      const SelectivityVector& finalSelection,
       BufferPtr wrapCapture,
       EvalCtx* context,
       const std::vector<VectorPtr>& args,
@@ -63,13 +64,13 @@ class ExprCallable : public Callable {
     EvalCtx lambdaCtx(context->execCtx(), context->exprSet(), row.get());
     if (!context->isFinalSelection()) {
       *lambdaCtx.mutableIsFinalSelection() = false;
-      *lambdaCtx.mutableFinalSelection() = context->finalSelection();
+      *lambdaCtx.mutableFinalSelection() = &finalSelection;
     }
     body_->eval(rows, lambdaCtx, *result);
   }
 
  private:
-  std::shared_ptr<const RowType> signature_;
+  RowTypePtr signature_;
   RowVectorPtr capture_;
   std::shared_ptr<Expr> body_;
 };
@@ -99,6 +100,21 @@ std::string LambdaExpr::toString(bool recursive) const {
   inputs.pop_back();
 
   return fmt::format("({}) -> {}", inputs, body_->toString());
+}
+
+std::string LambdaExpr::toSql() const {
+  std::ostringstream out;
+  out << "(";
+  // Inputs.
+  for (auto i = 0; i < signature_->size(); ++i) {
+    if (i > 0) {
+      out << ", ";
+    }
+    out << signature_->nameOf(i);
+  }
+  out << ") -> " << body_->toSql();
+
+  return out.str();
 }
 
 void LambdaExpr::evalSpecialForm(

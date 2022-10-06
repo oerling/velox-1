@@ -28,6 +28,11 @@ using facebook::velox::duckdb::veloxTimestampToDuckDB;
 namespace facebook::velox::exec::test {
 namespace {
 
+static const std::string kDuckDbTimestampWarning =
+    "Note: DuckDB only supports timestamps of millisecond precision. If this "
+    "test involves timestamp inputs, please make sure you use the right"
+    " precision.";
+
 std::string makeCreateTableSql(
     const std::string& tableName,
     const RowType& rowType) {
@@ -44,6 +49,9 @@ std::string makeCreateTableSql(
     } else if (child->isMap()) {
       sql << "MAP(" << child->asMap().keyType()->kindName() << ", "
           << child->asMap().valueType()->kindName() << ")";
+    } else if (child->isShortDecimal() || child->isLongDecimal()) {
+      const auto& [precision, scale] = getDecimalPrecisionScale(*child);
+      sql << "DECIMAL(" << precision << ", " << scale << ")";
     } else {
       sql << child->kindName();
     }
@@ -83,6 +91,31 @@ template <>
   using T = typename KindToFlatVector<TypeKind::DATE>::WrapperType;
   return ::duckdb::Value::DATE(::duckdb::Date::EpochDaysToDate(
       vector->as<SimpleVector<T>>()->valueAt(index).days()));
+}
+
+template <>
+::duckdb::Value duckValueAt<TypeKind::SHORT_DECIMAL>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  using T = typename KindToFlatVector<TypeKind::SHORT_DECIMAL>::WrapperType;
+  auto type = vector->type()->asShortDecimal();
+  return ::duckdb::Value::DECIMAL(
+      vector->as<SimpleVector<T>>()->valueAt(index).unscaledValue(),
+      type.precision(),
+      type.scale());
+}
+
+template <>
+::duckdb::Value duckValueAt<TypeKind::LONG_DECIMAL>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  using T = typename KindToFlatVector<TypeKind::LONG_DECIMAL>::WrapperType;
+  auto type = vector->type()->asLongDecimal();
+  auto val = vector->as<SimpleVector<T>>()->valueAt(index).unscaledValue();
+  auto duckVal = ::duckdb::hugeint_t();
+  duckVal.lower = (val << 64) >> 64;
+  duckVal.upper = (val >> 64);
+  return ::duckdb::Value::DECIMAL(duckVal, type.precision(), type.scale());
 }
 
 template <>
@@ -196,6 +229,19 @@ velox::variant variantAt(const ::duckdb::Value& value) {
   return velox::variant(value.GetValue<T>());
 }
 
+velox::variant decimalVariantAt(const ::duckdb::Value& value) {
+  uint8_t precision;
+  uint8_t scale;
+  value.type().GetDecimalProperties(precision, scale);
+  auto type = DECIMAL(precision, scale);
+  if (type->isShortDecimal()) {
+    return velox::variant::shortDecimal(value.GetValue<int64_t>(), type);
+  } else {
+    auto val = value.GetValueUnsafe<::duckdb::hugeint_t>();
+    return velox::variant::longDecimal(buildInt128(val.upper, val.lower), type);
+  }
+}
+
 velox::variant rowVariantAt(
     const ::duckdb::Value& vector,
     const TypePtr& rowType) {
@@ -204,6 +250,7 @@ velox::variant rowVariantAt(
   for (size_t i = 0; i < structValue.size(); ++i) {
     auto currChild = structValue[i];
     auto currType = rowType->childAt(i)->kind();
+    // TODO: Add support for ARRAY and MAP children types.
     if (currChild.IsNull()) {
       values.push_back(variant(currType));
     } else if (currType == TypeKind::ROW) {
@@ -232,6 +279,8 @@ velox::variant mapVariantAt(
   const auto& valueList = ::duckdb::ListValue::GetChildren(mapValue[1]);
   VELOX_CHECK_EQ(keyList.size(), valueList.size());
   for (int i = 0; i < keyList.size(); i++) {
+    // TODO: Add support for complex key and value types. Also add support for
+    // NULL keys or values.
     auto variantKey =
         VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(variantAt, keyType, keyList[i]);
     auto variantValue =
@@ -239,6 +288,31 @@ velox::variant mapVariantAt(
     map.insert({variantKey, variantValue});
   }
   return velox::variant::map(map);
+}
+
+velox::variant arrayVariantAt(
+    const ::duckdb::Value& vector,
+    const TypePtr& arrayType) {
+  std::vector<variant> array;
+
+  const auto& elementList = ::duckdb::ListValue::GetChildren(vector);
+
+  auto arrayTypePtr = dynamic_cast<const ArrayType*>(arrayType.get());
+  auto elementType = arrayTypePtr->elementType()->kind();
+  for (int i = 0; i < elementList.size(); i++) {
+    // TODO: Add support for MAP and ROW element types.
+    if (elementList[i].IsNull()) {
+      array.push_back(variant(elementType));
+    } else if (elementType == TypeKind::ARRAY) {
+      array.push_back(
+          arrayVariantAt(elementList[i], arrayTypePtr->elementType()));
+    } else {
+      auto variant = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          variantAt, elementType, elementList[i]);
+      array.push_back(variant);
+    }
+  }
+  return velox::variant::array(std::move(array));
 }
 
 std::vector<MaterializedRow> materialize(
@@ -258,12 +332,17 @@ std::vector<MaterializedRow> materialize(
       auto typeKind = rowType->childAt(j)->kind();
       if (dataChunk->GetValue(j, i).IsNull()) {
         row.push_back(variant(typeKind));
+      } else if (typeKind == TypeKind::ARRAY) {
+        row.push_back(
+            arrayVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
       } else if (typeKind == TypeKind::MAP) {
         row.push_back(
             mapVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
       } else if (typeKind == TypeKind::ROW) {
         row.push_back(
             rowVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));
+      } else if (isDecimalKind(typeKind)) {
+        row.push_back(decimalVariantAt(dataChunk->GetValue(j, i)));
       } else {
         auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
             variantAt, typeKind, dataChunk, i, j);
@@ -282,13 +361,23 @@ velox::variant variantAt(VectorPtr vector, int32_t row) {
 }
 
 template <>
-velox::variant variantAt<TypeKind::TIMESTAMP>(VectorPtr vector, int32_t row) {
-  // DuckDB's timestamps have microseconds precision, while Velox has nanos.
-  // Converting to duckDB and back to Velox to truncate nanoseconds, and thus
-  // allow the comparisons to match.
-  using T = typename KindToFlatVector<TypeKind::TIMESTAMP>::WrapperType;
-  return velox::variant(duckdbTimestampToVelox(
-      veloxTimestampToDuckDB(vector->as<SimpleVector<T>>()->valueAt(row))));
+velox::variant variantAt<TypeKind::SHORT_DECIMAL>(
+    VectorPtr vector,
+    int32_t row) {
+  using T = typename KindToFlatVector<TypeKind::SHORT_DECIMAL>::WrapperType;
+  return velox::variant::shortDecimal(
+      vector->as<SimpleVector<T>>()->valueAt(row).unscaledValue(),
+      vector->type());
+}
+
+template <>
+velox::variant variantAt<TypeKind::LONG_DECIMAL>(
+    VectorPtr vector,
+    int32_t row) {
+  using T = typename KindToFlatVector<TypeKind::LONG_DECIMAL>::WrapperType;
+  return velox::variant::longDecimal(
+      vector->as<SimpleVector<T>>()->valueAt(row).unscaledValue(),
+      vector->type());
 }
 
 velox::variant arrayVariantAt(const VectorPtr& vector, vector_size_t row) {
@@ -379,6 +468,11 @@ std::vector<MaterializedRow> materialize(const RowVectorPtr& vector) {
         row.push_back(arrayVariantAt(vector->childAt(j), i));
       } else if (typeKind == TypeKind::MAP) {
         row.push_back(mapVariantAt(vector->childAt(j), i));
+      } else if (typeKind == TypeKind::SHORT_DECIMAL) {
+        row.push_back(
+            variantAt<TypeKind::SHORT_DECIMAL>(vector->childAt(j), i));
+      } else if (typeKind == TypeKind::LONG_DECIMAL) {
+        row.push_back(variantAt<TypeKind::LONG_DECIMAL>(vector->childAt(j), i));
       } else {
         auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
             variantAt, typeKind, vector->childAt(j), i);
@@ -494,6 +588,12 @@ void DuckDbQueryRunner::createTable(
           appender.Append(duckValueAt<TypeKind::ARRAY>(columnVector, row));
         } else if (rowType.childAt(column)->isMap()) {
           appender.Append(duckValueAt<TypeKind::MAP>(columnVector, row));
+        } else if (rowType.childAt(column)->isShortDecimal()) {
+          appender.Append(
+              duckValueAt<TypeKind::SHORT_DECIMAL>(columnVector, row));
+        } else if (rowType.childAt(column)->isLongDecimal()) {
+          appender.Append(
+              duckValueAt<TypeKind::LONG_DECIMAL>(columnVector, row));
         } else {
           auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
               duckValueAt, rowType.childAt(column)->kind(), columnVector, row);
@@ -594,7 +694,8 @@ void assertResults(
   auto expectedRows = duckDbQueryRunner.execute(duckDbSql, resultType);
   if (not compareMaterializedRows(actualRows, expectedRows)) {
     auto message = generateUserFriendlyDiff(expectedRows, actualRows);
-    EXPECT_TRUE(false) << message << "DuckDB query: " << duckDbSql;
+    EXPECT_TRUE(false) << message << kDuckDbTimestampWarning
+                       << "\nDuckDB query: " << duckDbSql;
   }
 }
 
@@ -702,7 +803,8 @@ void assertResultsOrdered(
         oss << generateUserFriendlyDiff(
             expectedPartIter->second, actualPartIter->second);
       }
-      EXPECT_TRUE(false) << oss.str() << "DuckDB query: " << duckDbSql;
+      EXPECT_TRUE(false) << oss.str() << kDuckDbTimestampWarning
+                         << "\nDuckDB query: " << duckDbSql;
     }
   }
 }
@@ -710,8 +812,9 @@ void assertResultsOrdered(
 std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
     const CursorParameters& params,
     std::function<void(exec::Task*)> addSplits) {
-  std::vector<RowVectorPtr> result;
   auto cursor = std::make_unique<TaskCursor>(params);
+  // 'result' borrows memory from cursor so the life cycle must be shorter.
+  std::vector<RowVectorPtr> result;
   auto* task = cursor->task().get();
   addSplits(task);
 
@@ -720,7 +823,7 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
     addSplits(task);
   }
 
-  EXPECT_TRUE(waitForTaskCompletion(task));
+  EXPECT_TRUE(waitForTaskCompletion(task)) << task->taskId();
   return {std::move(cursor), std::move(result)};
 }
 
@@ -781,7 +884,7 @@ std::shared_ptr<Task> assertQuery(
   }
   auto task = cursor->task();
 
-  EXPECT_TRUE(waitForTaskCompletion(task.get()));
+  EXPECT_TRUE(waitForTaskCompletion(task.get())) << task->taskId();
 
   return task;
 }

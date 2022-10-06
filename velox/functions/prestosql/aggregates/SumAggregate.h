@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/expression/FunctionSignature.h"
+#include "velox/functions/prestosql/CheckedArithmeticImpl.h"
 #include "velox/functions/prestosql/aggregates/SimpleNumericAggregate.h"
 
 namespace facebook::velox::aggregate {
@@ -31,6 +32,10 @@ class SumAggregate
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(TAccumulator);
+  }
+
+  int32_t accumulatorAlignmentSize() const override {
+    return 1;
   }
 
   void initializeNewGroups(
@@ -83,10 +88,10 @@ class SumAggregate
         group,
         rows,
         args[0],
-        [](TAccumulator& result, TInput value) { result += value; },
-        [](TAccumulator& result, TInput value, int n) { result += n * value; },
+        &updateSingleValue<TAccumulator>,
+        &updateDuplicateValues<TAccumulator>,
         mayPushdown,
-        0);
+        TAccumulator(0));
   }
 
   void addSingleGroupIntermediateResults(
@@ -98,10 +103,10 @@ class SumAggregate
         group,
         rows,
         args[0],
-        [](ResultType& result, TInput value) { result += value; },
-        [](ResultType& result, TInput value, int n) { result += n * value; },
+        &updateSingleValue<ResultType>,
+        &updateDuplicateValues<ResultType>,
         mayPushdown,
-        0);
+        ResultType(0));
   }
 
  protected:
@@ -123,21 +128,107 @@ class SumAggregate
 
     if (exec::Aggregate::numNulls_) {
       BaseAggregate::template updateGroups<true, TData>(
-          groups,
-          rows,
-          arg,
-          [](TData& result, TInput value) { result += value; },
-          false);
+          groups, rows, arg, &updateSingleValue<TData>, false);
     } else {
       BaseAggregate::template updateGroups<false, TData>(
-          groups,
-          rows,
-          arg,
-          [](TData& result, TInput value) { result += value; },
-          false);
+          groups, rows, arg, &updateSingleValue<TData>, false);
+    }
+  }
+
+ private:
+  /// Update functions that check for overflows for integer types.
+  /// For floating points, an overflow results in +/- infinity which is a
+  /// valid output.
+  template <typename TData>
+  static void updateSingleValue(TData& result, TData value) {
+    if constexpr (
+        std::is_same_v<TData, double> || std::is_same_v<TData, float>) {
+      result += value;
+    } else {
+      result = functions::checkedPlus<TData>(result, value);
+    }
+  }
+
+  template <typename TData>
+  static void updateDuplicateValues(TData& result, TData value, int n) {
+    if constexpr (
+        std::is_same_v<TData, double> || std::is_same_v<TData, float>) {
+      result += n * value;
+    } else {
+      result = functions::checkedPlus<TData>(
+          result, functions::checkedMultiply<TData>(TData(n), value));
     }
   }
 };
+
+/// Override 'initializeNewGroups' for float values. Make sure to use 'double'
+/// to store the intermediate results in accumulator.
+template <>
+inline void SumAggregate<float, double, float>::initializeNewGroups(
+    char** groups,
+    folly::Range<const vector_size_t*> indices) {
+  exec::Aggregate::setAllNulls(groups, indices);
+  for (auto i : indices) {
+    *exec::Aggregate::value<double>(groups[i]) = 0;
+  }
+}
+
+/// Override 'extractValues' for single aggregation over float values.
+/// Make sure to correctly read 'float' value from 'double' accumulator.
+template <>
+inline void SumAggregate<float, double, float>::extractValues(
+    char** groups,
+    int32_t numGroups,
+    VectorPtr* result) {
+  BaseAggregate::template doExtractValues<float>(
+      groups, numGroups, result, [&](char* group) {
+        return (
+            float)(*BaseAggregate::Aggregate::template value<double>(group));
+      });
+}
+
+/// Override 'initializeNewGroups' for decimal values to call set method to
+/// initialize the decimal value properly.
+template <>
+inline void
+SumAggregate<UnscaledShortDecimal, UnscaledLongDecimal, UnscaledLongDecimal>::
+    initializeNewGroups(
+        char** groups,
+        folly::Range<const vector_size_t*> indices) {
+  exec::Aggregate::setAllNulls(groups, indices);
+  for (auto i : indices) {
+    exec::Aggregate::value<UnscaledLongDecimal>(groups[i])->setUnscaledValue(0);
+  }
+}
+
+template <>
+inline void
+SumAggregate<UnscaledLongDecimal, UnscaledLongDecimal, UnscaledLongDecimal>::
+    initializeNewGroups(
+        char** groups,
+        folly::Range<const vector_size_t*> indices) {
+  exec::Aggregate::setAllNulls(groups, indices);
+  for (auto i : indices) {
+    exec::Aggregate::value<UnscaledLongDecimal>(groups[i])->setUnscaledValue(0);
+  }
+}
+
+/// Override 'accumulatorAlignmentSize' for UnscaledLongDecimal values as it
+/// uses int128_t type. Some CPUs don't support misaligned access to int128_t
+/// type.
+template <>
+inline int32_t
+SumAggregate<UnscaledShortDecimal, UnscaledLongDecimal, UnscaledLongDecimal>::
+    accumulatorAlignmentSize() const {
+  return static_cast<int32_t>(sizeof(UnscaledLongDecimal));
+}
+
+template <>
+inline int32_t
+SumAggregate<UnscaledLongDecimal, UnscaledLongDecimal, UnscaledLongDecimal>::
+    accumulatorAlignmentSize() const {
+  return static_cast<int32_t>(sizeof(UnscaledLongDecimal));
+}
 
 template <template <typename U, typename V, typename W> class T>
 bool registerSumAggregate(const std::string& name) {
@@ -151,6 +242,13 @@ bool registerSumAggregate(const std::string& name) {
           .returnType("double")
           .intermediateType("double")
           .argumentType("double")
+          .build(),
+      exec::AggregateFunctionSignatureBuilder()
+          .integerVariable("a_precision")
+          .integerVariable("a_scale")
+          .argumentType("DECIMAL(a_precision, a_scale)")
+          .intermediateType("DECIMAL(38, a_scale)")
+          .returnType("DECIMAL(38, a_scale)")
           .build(),
   };
 
@@ -190,6 +288,16 @@ bool registerSumAggregate(const std::string& name) {
               return std::make_unique<T<double, double, float>>(resultType);
             }
             return std::make_unique<T<double, double, double>>(DOUBLE());
+          case TypeKind::SHORT_DECIMAL:
+            return std::make_unique<
+                T<UnscaledShortDecimal,
+                  UnscaledLongDecimal,
+                  UnscaledLongDecimal>>(resultType);
+          case TypeKind::LONG_DECIMAL:
+            return std::make_unique<
+                T<UnscaledLongDecimal,
+                  UnscaledLongDecimal,
+                  UnscaledLongDecimal>>(resultType);
           default:
             VELOX_CHECK(
                 false,

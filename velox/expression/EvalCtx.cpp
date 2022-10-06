@@ -20,7 +20,7 @@
 
 namespace facebook::velox::exec {
 
-ContextSaver::~ContextSaver() {
+ScopedContextSaver::~ScopedContextSaver() {
   if (context) {
     context->restore(*this);
   }
@@ -49,17 +49,16 @@ EvalCtx::EvalCtx(core::ExecCtx* execCtx)
   VELOX_CHECK_NOT_NULL(execCtx);
 }
 
-void EvalCtx::setWrapped(
-    Expr* FOLLY_NONNULL expr,
-    VectorPtr source,
-    const SelectivityVector& rows,
-    VectorPtr& result) {
-  VectorPtr localResult;
+VectorPtr EvalCtx::applyWrapToPeeledResult(
+    const TypePtr& outputType,
+    VectorPtr peeledResult,
+    const SelectivityVector& rows) {
+  VectorPtr wrappedResult;
   if (wrapEncoding_ == VectorEncoding::Simple::DICTIONARY) {
-    if (!source) {
+    if (!peeledResult) {
       // If all rows are null, make a constant null vector of the right type.
-      localResult =
-          BaseVector::createNullConstant(expr->type(), rows.size(), pool());
+      wrappedResult =
+          BaseVector::createNullConstant(outputType, rows.size(), pool());
     } else {
       BufferPtr nulls;
       if (!rows.isAllSelected()) {
@@ -87,20 +86,21 @@ void EvalCtx::setWrapped(
       } else {
         nulls = wrapNulls_;
       }
-      localResult = BaseVector::wrapInDictionary(
-          std::move(nulls), wrap_, rows.end(), std::move(source));
+      wrappedResult = BaseVector::wrapInDictionary(
+          std::move(nulls), wrap_, rows.end(), std::move(peeledResult));
     }
   } else if (wrapEncoding_ == VectorEncoding::Simple::CONSTANT) {
-    localResult = BaseVector::wrapInConstant(
-        rows.size(), constantWrapIndex_, std::move(source));
+    wrappedResult = BaseVector::wrapInConstant(
+        rows.size(), constantWrapIndex_, std::move(peeledResult));
   } else {
     VELOX_FAIL("Bad expression wrap encoding {}", wrapEncoding_);
   }
-
-  moveOrCopyResult(localResult, rows, result);
+  return wrappedResult;
 }
 
-void EvalCtx::saveAndReset(ContextSaver& saver, const SelectivityVector& rows) {
+void EvalCtx::saveAndReset(
+    ScopedContextSaver& saver,
+    const SelectivityVector& rows) {
   if (saver.context) {
     return;
   }
@@ -119,15 +119,11 @@ void EvalCtx::saveAndReset(ContextSaver& saver, const SelectivityVector& rows) {
   }
 }
 
-void EvalCtx::addError(
-    vector_size_t index,
-    const std::exception_ptr& exceptionPtr,
-    ErrorVectorPtr& errorsPtr) const {
-  auto errors = errorsPtr.get();
-  auto oldSize = errors ? errors->size() : 0;
-  if (!errors) {
-    auto size = index + 1;
-    errorsPtr = std::make_shared<ErrorVector>(
+void EvalCtx::ensureErrorsVectorSize(ErrorVectorPtr& vector, vector_size_t size)
+    const {
+  auto oldSize = vector ? vector->size() : 0;
+  if (!vector) {
+    vector = std::make_shared<ErrorVector>(
         pool(),
         AlignedBuffer::allocate<bool>(size, pool(), true) /*nulls*/,
         size /*length*/,
@@ -139,21 +135,27 @@ void EvalCtx::addError(
         size /*nullCount*/,
         false /*isSorted*/,
         size /*representedBytes*/);
-    errors = errorsPtr.get();
-  } else if (errors->size() <= index) {
-    errors->resize(index + 1);
+  } else if (vector->size() < size) {
+    vector->resize(size, false);
   }
   // Set all new positions to null, including the one to be set.
-  for (int32_t i = oldSize; i <= index; ++i) {
-    errors->setNull(i, true);
-  }
-  if (errors->isNullAt(index)) {
-    errors->setNull(index, false);
-    errors->set(index, std::make_shared<std::exception_ptr>(exceptionPtr));
+  for (auto i = oldSize; i < size; ++i) {
+    vector->setNull(i, true);
   }
 }
 
-void EvalCtx::restore(ContextSaver& saver) {
+void EvalCtx::addError(
+    vector_size_t index,
+    const std::exception_ptr& exceptionPtr,
+    ErrorVectorPtr& errorsPtr) const {
+  ensureErrorsVectorSize(errorsPtr, index + 1);
+  if (errorsPtr->isNullAt(index)) {
+    errorsPtr->setNull(index, false);
+    errorsPtr->set(index, std::make_shared<std::exception_ptr>(exceptionPtr));
+  }
+}
+
+void EvalCtx::restore(ScopedContextSaver& saver) {
   peeledFields_ = std::move(saver.peeled);
   nullsPruned_ = saver.nullsPruned;
   if (errors_) {
@@ -161,12 +163,10 @@ void EvalCtx::restore(ContextSaver& saver) {
     // A constant wrap has no indices.
     auto indices = wrap_ ? wrap_->as<vector_size_t>() : nullptr;
     auto wrapNulls = wrapNulls_ ? wrapNulls_->as<uint64_t>() : nullptr;
-    SelectivityIterator iter(*saver.rows);
-    vector_size_t row;
-    while (iter.next(row)) {
+    saver.rows->applyToSelected([&](auto row) {
       // A known null in the outer row masks an error.
       if (wrapNulls && bits::isBitNull(wrapNulls, row)) {
-        continue;
+        return;
       }
       vector_size_t innerRow = indices ? indices[row] : constantWrapIndex_;
       if (innerRow < errorSize && !errors_->isNullAt(innerRow)) {
@@ -176,7 +176,7 @@ void EvalCtx::restore(ContextSaver& saver) {
                 errors_->valueAt(innerRow)),
             saver.errors);
       }
-    }
+    });
   }
   errors_ = std::move(saver.errors);
   wrap_ = std::move(saver.wrap);
@@ -214,7 +214,9 @@ const VectorPtr& EvalCtx::getField(int32_t index) const {
   return *field;
 }
 
-void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
+VectorPtr EvalCtx::ensureFieldLoaded(
+    int32_t index,
+    const SelectivityVector& rows) {
   auto field = getField(index);
   if (isLazyNotLoaded(*field)) {
     const auto& rowsToLoad = isFinalSelection_ ? rows : *finalSelection_;
@@ -237,6 +239,27 @@ void EvalCtx::ensureFieldLoaded(int32_t index, const SelectivityVector& rows) {
     // they contain a loaded lazyVector.
     field->loadedVector();
   }
+
+  return field;
+}
+
+ScopedFinalSelectionSetter::ScopedFinalSelectionSetter(
+    EvalCtx& evalCtx,
+    const SelectivityVector* finalSelection,
+    bool checkCondition,
+    bool override)
+    : evalCtx_(evalCtx),
+      oldFinalSelection_(*evalCtx.mutableFinalSelection()),
+      oldIsFinalSelection_(*evalCtx.mutableIsFinalSelection()) {
+  if ((evalCtx.isFinalSelection() && checkCondition) || override) {
+    *evalCtx.mutableFinalSelection() = finalSelection;
+    *evalCtx.mutableIsFinalSelection() = false;
+  }
+}
+
+ScopedFinalSelectionSetter::~ScopedFinalSelectionSetter() {
+  *evalCtx_.mutableFinalSelection() = oldFinalSelection_;
+  *evalCtx_.mutableIsFinalSelection() = oldIsFinalSelection_;
 }
 
 } // namespace facebook::velox::exec

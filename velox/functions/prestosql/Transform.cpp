@@ -26,7 +26,7 @@ class TransformFunction : public exec::VectorFunction {
  public:
   bool isDefaultNullBehavior() const override {
     // transform is null preserving for the array. But since an
-    // expr tree witht a lambda depends on all named fields, including
+    // expr tree with a lambda depends on all named fields, including
     // captures, a null in a capture does not automatically make a
     // null result.
     return false;
@@ -36,8 +36,8 @@ class TransformFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK_EQ(args.size(), 2);
 
     // Flatten input array.
@@ -48,6 +48,12 @@ class TransformFunction : public exec::VectorFunction {
 
     std::vector<VectorPtr> lambdaArgs = {flatArray->elements()};
     auto newNumElements = flatArray->elements()->size();
+
+    SelectivityVector finalSelection;
+    if (!context.isFinalSelection()) {
+      finalSelection = toElementRows<ArrayVector>(
+          newNumElements, *context.finalSelection(), flatArray.get());
+    }
 
     // transformed elements
     VectorPtr newElements;
@@ -62,7 +68,12 @@ class TransformFunction : public exec::VectorFunction {
           newNumElements, entry.callable, *entry.rows, flatArray);
 
       entry.callable->apply(
-          elementRows, wrapCapture, context, lambdaArgs, &newElements);
+          elementRows,
+          finalSelection,
+          wrapCapture,
+          &context,
+          lambdaArgs,
+          &newElements);
     }
 
     VectorPtr localResult = std::make_shared<ArrayVector>(
@@ -73,7 +84,7 @@ class TransformFunction : public exec::VectorFunction {
         flatArray->offsets(),
         flatArray->sizes(),
         newElements);
-    context->moveOrCopyResult(localResult, rows, result);
+    context.moveOrCopyResult(localResult, rows, result);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {

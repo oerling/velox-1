@@ -47,6 +47,12 @@ class Aggregate {
   // width part of the state from the fixed part.
   virtual int32_t accumulatorFixedWidthSize() const = 0;
 
+  /// Returns the alignment size of the accumulator.
+  /// Some types such as int128_t require aligned access.
+  virtual int32_t accumulatorAlignmentSize() const {
+    return 1;
+  }
+
   // Return true if accumulator is allocated from external memory, e.g. memory
   // not managed by Velox.
   virtual bool accumulatorUsesExternalMemory() const {
@@ -226,13 +232,6 @@ class Aggregate {
 
   bool isNull(char* group) const {
     return numNulls_ && (group[nullByte_] & nullMask_);
-  }
-
-  void incrementRowSize(char* row, uint64_t bytes) {
-    VELOX_DCHECK(rowSizeOffset_);
-    uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
-    uint64_t size = *ptr + bytes;
-    *ptr = std::min<uint64_t>(size, std::numeric_limits<uint32_t>::max());
   }
 
   // Sets null flag for all specified groups to true.

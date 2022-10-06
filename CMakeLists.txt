@@ -11,11 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.11)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
 
 # set the project name
 project(velox)
+
+# Include our ThirdPartyToolchain dependencies macros
+include(ThirdpartyToolchain.cmake)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -91,14 +94,6 @@ endif()
 if(${VELOX_ENABLE_BENCHMARKS} OR ${VELOX_ENABLE_BENCHMARKS_BASIC})
   set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_PARSE ON)
-endif()
-
-if(${VELOX_BUILD_BENCHMARKS_LARGE})
-  set(VELOX_ENABLE_PARQUET ON)
-  set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
-  set(VELOX_ENABLE_PARSE ON)
-  set(VELOX_ENABLE_AGGREGATES ON)
-  set(VELOX_ENABLE_EXEC ON)
   set(VELOX_BUILD_TEST_UTILS ON)
 endif()
 
@@ -160,7 +155,7 @@ if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm64" AND ${CMAKE_SYSTEM_NAME} MATCHES
 endif()
 
 # Required so velox code can be used in a dynamic library
-set(POSITION_INDEPENDENT_CODE True)
+set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -231,6 +226,8 @@ if("${ENABLE_ALL_WARNINGS}")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra ${KNOWN_WARNINGS}")
 endif()
 
+message("FINAL CMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}")
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(Boost_USE_MULTITHREADED TRUE)
@@ -281,13 +278,23 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
   link_directories("${ICU_INCLUDE_DIRS}/../lib")
 endif()
 
-find_package(folly CONFIG REQUIRED)
-set(FOLLY_WITH_DEPENDENCIES
-    ${FOLLY_LIBRARIES} ${Boost_LIBRARIES} ${DOUBLE_CONVERSION_LIBRARIES}
-    ${EVENT} ${SNAPPY} ${CMAKE_DL_LIBS})
+set(folly_SOURCE AUTO)
+resolve_dependency(folly)
 
-set(FOLLY ${FOLLY_LIBRARIES})
-set(FOLLY_BENCHMARK Folly::follybenchmark)
+set(FOLLY_WITH_DEPENDENCIES
+    ${FOLLY_LIBRARIES}
+    ${Boost_LIBRARIES}
+    ${DOUBLE_CONVERSION}
+    ${EVENT}
+    ${SNAPPY}
+    ${CMAKE_DL_LIBS}
+    ${FMT})
+
+if(DEFINED FOLLY_BENCHMARK_STATIC_LIB)
+  set(FOLLY_BENCHMARK ${FOLLY_BENCHMARK_STATIC_LIB})
+else()
+  set(FOLLY_BENCHMARK Folly::follybenchmark)
+endif()
 
 if(NOT ${VELOX_BUILD_MINIMAL})
   find_package(BZip2 MODULE)
@@ -322,12 +329,8 @@ if(VELOX_BUILD_TESTING AND NOT VELOX_ENABLE_DUCKDB)
   )
 endif()
 
-# Benchmarks and tests at some places are coupled which is not great. See
-# velox/vector/CMakeLists.txt. TODO: Decouple.
 set(VELOX_DISABLE_GOOGLETEST OFF)
-if(NOT VELOX_BUILD_TEST_UTILS
-   AND NOT VELOX_BUILD_TESTING
-   AND NOT VELOX_ENABLE_BENCHMARKS_BASIC)
+if(NOT VELOX_BUILD_TEST_UTILS AND NOT VELOX_BUILD_TESTING)
   set(VELOX_DISABLE_GOOGLETEST ON)
   add_definitions(-DVELOX_DISABLE_GOOGLETEST)
 endif()

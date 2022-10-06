@@ -61,7 +61,8 @@ GroupingSet::GroupingSet(
     bool ignoreNullKeys,
     bool isPartial,
     bool isRawInput,
-    OperatorCtx* FOLLY_NONNULL operatorCtx)
+    const Spiller::Config* spillConfig,
+    OperatorCtx* operatorCtx)
     : preGroupedKeyChannels_(std::move(preGroupedKeys)),
       hashers_(std::move(hashers)),
       isGlobal_(hashers_.empty()),
@@ -74,16 +75,15 @@ GroupingSet::GroupingSet(
       intermediateTypes_(std::move(intermediateTypes)),
       ignoreNullKeys_(ignoreNullKeys),
       mappedMemory_(operatorCtx->mappedMemory()),
+      spillMemoryThreshold_(operatorCtx->driverCtx()
+                                ->queryConfig()
+                                .aggregationSpillMemoryThreshold()),
+      spillConfig_(spillConfig),
       stringAllocator_(mappedMemory_),
       rows_(mappedMemory_),
       isAdaptive_(
           operatorCtx->task()->queryCtx()->config().hashAdaptivityEnabled()),
-      execCtx_(*operatorCtx->execCtx()),
-      spillPath_(makeSpillPath(isPartial, *operatorCtx)),
-      pool_(*operatorCtx->pool()),
-      spillExecutor_(operatorCtx->task()->queryCtx()->spillExecutor()),
-      testSpillPct_(
-          operatorCtx->task()->queryCtx()->config().testingSpillPct()) {
+      pool_(*operatorCtx->pool()) {
   for (auto& hasher : hashers_) {
     keyChannels_.push_back(hasher->channel());
   }
@@ -95,6 +95,12 @@ GroupingSet::GroupingSet(
   }
   for (const std::vector<column_index_t>& argList : channelLists_) {
     mayPushdown_.push_back(allAreSinglyReferenced(argList, channelUseCount));
+  }
+}
+
+GroupingSet::~GroupingSet() {
+  if (isGlobal_) {
+    destroyGlobalAggregations();
   }
 }
 
@@ -162,6 +168,7 @@ bool GroupingSet::hasOutput() {
 void GroupingSet::addInputForActiveRows(
     const RowVectorPtr& input,
     bool mayPushdown) {
+  VELOX_CHECK(!isGlobal_);
   bool rehash = false;
   if (!table_) {
     rehash = true;
@@ -171,30 +178,33 @@ void GroupingSet::addInputForActiveRows(
   lookup_->reset(activeRows_.end());
   auto mode = table_->hashMode();
   ensureInputFits(input);
+
+  for (auto i = 0; i < hashers.size(); ++i) {
+    auto key = input->childAt(hashers[i]->channel())->loadedVector();
+    hashers[i]->decode(*key, activeRows_);
+  }
+
   if (ignoreNullKeys_) {
     // A null in any of the keys disables the row.
-    deselectRowsWithNulls(*input, keyChannels_, activeRows_, execCtx_);
-    for (int32_t i = 0; i < hashers.size(); ++i) {
-      auto key = input->childAt(hashers[i]->channel())->loadedVector();
-      if (mode != BaseHashTable::HashMode::kHash) {
-        if (!hashers[i]->computeValueIds(*key, activeRows_, lookup_->hashes)) {
-          rehash = true;
-        }
-      } else {
-        hashers[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
+    deselectRowsWithNulls(hashers, activeRows_);
+  }
+
+  for (int32_t i = 0; i < hashers.size(); ++i) {
+    if (mode != BaseHashTable::HashMode::kHash) {
+      if (!hashers[i]->computeValueIds(activeRows_, lookup_->hashes)) {
+        rehash = true;
       }
+    } else {
+      hashers[i]->hash(activeRows_, i > 0, lookup_->hashes);
     }
-  } else {
-    for (int32_t i = 0; i < hashers.size(); ++i) {
-      auto key = input->childAt(hashers[i]->channel())->loadedVector();
-      if (mode != BaseHashTable::HashMode::kHash) {
-        if (!hashers[i]->computeValueIds(*key, activeRows_, lookup_->hashes)) {
-          rehash = true;
-        }
-      } else {
-        hashers[i]->hash(*key, activeRows_, i > 0, lookup_->hashes);
-      }
+  }
+
+  if (rehash) {
+    if (table_->hashMode() != BaseHashTable::HashMode::kHash) {
+      table_->decideHashMode(input->size());
     }
+    addInputForActiveRows(input, mayPushdown);
+    return;
   }
 
   if (activeRows_.isAllSelected()) {
@@ -207,18 +217,16 @@ void GroupingSet::addInputForActiveRows(
         });
   }
 
-  if (rehash) {
-    if (table_->hashMode() != BaseHashTable::HashMode::kHash) {
-      table_->decideHashMode(input->size());
-    }
-    addInputForActiveRows(input, mayPushdown);
-    return;
-  }
   table_->groupProbe(*lookup_);
   masks_.addInput(input, activeRows_);
-  for (auto i = 0; i < aggregates_.size(); ++i) {
-    const auto& rows = getSelectivityVector(i);
 
+  for (auto i = 0; i < aggregates_.size(); ++i) {
+    if (!lookup_->newGroups.empty()) {
+      aggregates_[i]->initializeNewGroups(
+          lookup_->hits.data(), lookup_->newGroups);
+    }
+
+    const auto& rows = getSelectivityVector(i);
     // Check is mask is false for all rows.
     if (!rows.hasSelections()) {
       continue;
@@ -275,7 +283,7 @@ void GroupingSet::initializeGlobalAggregation() {
 
   // Row layout is:
   //  - null flags - one bit per aggregate,
-  // - uint32_t row size,
+  //  - uint32_t row size,
   //  - fixed-width accumulators - one per aggregate
   //
   // Here we always make space for a row size since we only have one
@@ -286,6 +294,8 @@ void GroupingSet::initializeGlobalAggregation() {
 
   for (auto& aggregate : aggregates_) {
     aggregate->setAllocator(&stringAllocator_);
+    // Accumulator offset must be aligned by their alignment size.
+    offset = bits::roundUp(offset, aggregate->accumulatorAlignmentSize());
     aggregate->setOffsets(
         offset,
         RowContainer::nullByte(nullOffset),
@@ -296,15 +306,11 @@ void GroupingSet::initializeGlobalAggregation() {
   }
 
   lookup_->hits[0] = rows_.allocateFixed(offset);
-  resetGlobalAggregation();
-  globalAggregationInitialized_ = true;
-}
-
-void GroupingSet::resetGlobalAggregation() {
   const auto singleGroup = std::vector<vector_size_t>{0};
   for (auto& aggregate : aggregates_) {
     aggregate->initializeNewGroups(lookup_->hits.data(), singleGroup);
   }
+  globalAggregationInitialized_ = true;
 }
 
 void GroupingSet::addGlobalAggregationInput(
@@ -360,8 +366,21 @@ bool GroupingSet::getGlobalAggregationOutput(
       aggregates_[i]->extractValues(groups, 1, &result->childAt(i));
     }
   }
+
   iterator.allocationIndex = std::numeric_limits<int32_t>::max();
   return true;
+}
+
+void GroupingSet::destroyGlobalAggregations() {
+  if (!globalAggregationInitialized_) {
+    return;
+  }
+  for (int32_t i = 0; i < aggregates_.size(); ++i) {
+    if (aggregates_[i]->accumulatorUsesExternalMemory()) {
+      auto groups = lookup_->hits.data();
+      aggregates_[i]->destroy(folly::Range(groups, 1));
+    }
+  }
 }
 
 void GroupingSet::populateTempVectors(
@@ -424,6 +443,9 @@ void GroupingSet::extractGroups(
     folly::Range<char**> groups,
     const RowVectorPtr& result) {
   result->resize(groups.size());
+  if (groups.empty()) {
+    return;
+  }
   RowContainer& rows = table_ ? *table_->rows() : *rowsWhileReadingSpill_;
   auto totalKeys = rows.keyTypes().size();
   for (int32_t i = 0; i < totalKeys; ++i) {
@@ -447,9 +469,6 @@ void GroupingSet::resetPartial() {
   if (table_ != nullptr) {
     table_->clear();
   }
-  if (isGlobal_ && globalAggregationInitialized_) {
-    resetGlobalAggregation();
-  }
 }
 
 uint64_t GroupingSet::allocatedBytes() const {
@@ -467,7 +486,7 @@ const HashLookup& GroupingSet::hashLookup() const {
 void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   // Spilling is considered if this is a final or single aggregation and
   // spillPath is set.
-  if (isPartial_ || !spillPath_.has_value()) {
+  if (isPartial_ || spillConfig_ == nullptr) {
     return;
   }
   auto numDistinct = table_->numDistinct();
@@ -488,12 +507,27 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   int64_t flatBytes = input->estimateFlatSize();
 
   // Test-only spill path.
-  if (testSpillPct_ &&
-      (folly::hasher<uint64_t>()(++spillTestCounter_)) % 100 <= testSpillPct_) {
-    auto rowsToSpill = numDistinct / 10;
+  if (spillConfig_->testSpillPct > 0 &&
+      (folly::hasher<uint64_t>()(++spillTestCounter_)) % 100 <=
+          spillConfig_->testSpillPct) {
+    const auto rowsToSpill = std::max<int64_t>(1, numDistinct / 10);
     spill(
         numDistinct - rowsToSpill,
         outOfLineBytes - (rowsToSpill * outOfLineBytesPerRow));
+    return;
+  }
+
+  auto tracker = mappedMemory_->tracker();
+  const auto currentUsage = tracker->getCurrentUserBytes();
+  if (spillMemoryThreshold_ != 0 && currentUsage > spillMemoryThreshold_) {
+    const int64_t bytesToSpill =
+        currentUsage * spillConfig_->spillableReservationGrowthPct / 100;
+    auto rowsToSpill = std::max<int64_t>(
+        1, bytesToSpill / (rows->fixedRowSize() + outOfLineBytesPerRow));
+    spill(
+        std::max<int64_t>(0, numDistinct - rowsToSpill),
+        std::max<int64_t>(
+            0, outOfLineBytes - (rowsToSpill * outOfLineBytesPerRow)));
     return;
   }
 
@@ -509,27 +543,25 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   auto increment =
       rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0) +
       tableIncrement;
-  auto tracker = mappedMemory_->tracker();
-  assert(tracker);
   // There must be at least 2x the increment in reservation.
   if (tracker->getAvailableReservation() > 2 * increment) {
     return;
   }
-
   // Check if can increase reservation. The increment is the larger of
-  // twice the maximum increment from this input and 1/4 of the current
-  // reservation.
-  auto targetIncrement =
-      std::max<int64_t>(increment * 2, tracker->getCurrentUserBytes() / 4);
+  // twice the maximum increment from this input and
+  // 'spillableReservationGrowthPct_' of the current reservation.
+  auto targetIncrement = std::max<int64_t>(
+      increment * 2,
+      currentUsage * spillConfig_->spillableReservationGrowthPct / 100);
   if (tracker->maybeReserve(targetIncrement)) {
     return;
   }
-  auto rowsToSpill =
-      targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow);
-
+  auto rowsToSpill = std::max<int64_t>(
+      1, targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow));
   spill(
-      numDistinct - rowsToSpill,
-      outOfLineBytes - (rowsToSpill * outOfLineBytesPerRow));
+      std::max<int64_t>(0, numDistinct - rowsToSpill),
+      std::max<int64_t>(
+          0, outOfLineBytes - (rowsToSpill * outOfLineBytesPerRow)));
 }
 
 void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
@@ -542,22 +574,25 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
     for (auto i = 0; i < types.size(); ++i) {
       names.push_back(fmt::format("s{}", i));
     }
-    assert(mappedMemory_->tracker()); // lint
-    auto fileSize = mappedMemory_->tracker()->getCurrentUserBytes() / 4;
+    VELOX_DCHECK(mappedMemory_->tracker() != nullptr);
+    const auto fileSize = mappedMemory_->tracker()->getCurrentUserBytes() *
+        spillConfig_->fileSizeFactor;
     spiller_ = std::make_unique<Spiller>(
-        *rows,
+        Spiller::Type::kAggregate,
+        rows,
         [&](folly::Range<char**> rows) { table_->erase(rows); },
         ROW(std::move(names), std::move(types)),
-        // Spill up to 4 partitions based on bits 29 and 30 of the hash number.
-        // Any two bits would do.
-        HashBitRange(29, 31),
+        // Spill up to 8 partitions based on bits starting from 29th of the hash
+        // number. Any from one to three bits would do.
+        spillConfig_->hashBitRange,
         rows->keyTypes().size(),
-        spillPath_.value(),
+        std::vector<CompareFlags>(),
+        spillConfig_->filePath,
         fileSize,
         Spiller::spillPool(),
-        spillExecutor_);
+        spillConfig_->executor);
   }
-  spiller_->spill(targetRows, targetBytes, spillIterator_);
+  spiller_->spill(targetRows, targetBytes);
 }
 
 bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
@@ -593,7 +628,7 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
     auto limit = std::min<size_t>(
         1000, nonSpilledRows_.value().size() - nonSpilledIndex_);
     for (; numGroups < limit; ++numGroups) {
-      bytes += table_->rows()->rowSize(
+      bytes += rowsWhileReadingSpill_->rowSize(
           nonSpilledRows_.value()[nonSpilledIndex_ + numGroups]);
       if (bytes > maxBatchBytes_) {
         ++numGroups;
@@ -611,7 +646,8 @@ bool GroupingSet::getOutputWithSpill(const RowVectorPtr& result) {
     if (!merge_) {
       merge_ = spiller_->startMerge(outputPartition_);
     }
-    if (!mergeNext(result)) {
+    // NOTE: 'merge_' might be nullptr if 'outputPartition_' is empty.
+    if (merge_ == nullptr || !mergeNext(result)) {
       ++outputPartition_;
       merge_ = nullptr;
       continue;
@@ -643,7 +679,9 @@ bool GroupingSet::mergeNext(const RowVectorPtr& result) {
   }
 }
 
-void GroupingSet::initializeRow(SpillStream& keys, char* FOLLY_NONNULL row) {
+void GroupingSet::initializeRow(
+    SpillMergeStream& keys,
+    char* FOLLY_NONNULL row) {
   for (auto i = 0; i < keyChannels_.size(); ++i) {
     mergeRows_->store(keys.decoded(i), keys.currentIndex(), mergeState_, i);
   }
@@ -657,13 +695,15 @@ void GroupingSet::initializeRow(SpillStream& keys, char* FOLLY_NONNULL row) {
 void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   std::vector<char*> rows(mergeRows_->numRows());
   RowContainerIterator iter;
-  mergeRows_->listRows(
-      &iter, rows.size(), RowContainer::kUnlimited, rows.data());
+  if (!rows.empty()) {
+    mergeRows_->listRows(
+        &iter, rows.size(), RowContainer::kUnlimited, rows.data());
+  }
   extractGroups(folly::Range<char**>(rows.data(), rows.size()), result);
   mergeRows_->clear();
 }
 
-void GroupingSet::updateRow(SpillStream& input, char* FOLLY_NONNULL row) {
+void GroupingSet::updateRow(SpillMergeStream& input, char* FOLLY_NONNULL row) {
   if (input.currentIndex() >= mergeSelection_.size()) {
     mergeSelection_.resize(bits::roundUp(input.currentIndex() + 1, 64));
     mergeSelection_.clearAll();

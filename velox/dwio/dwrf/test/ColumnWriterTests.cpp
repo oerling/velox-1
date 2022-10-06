@@ -20,20 +20,20 @@
 #include <algorithm>
 #include <optional>
 #include <vector>
-#include "folly/DynamicConverter.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/IntDecoder.h"
 #include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/common/exception/Exception.h"
+#include "velox/dwio/common/tests/utils/BatchMaker.h"
+#include "velox/dwio/common/tests/utils/MapBuilder.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
-#include "velox/dwio/dwrf/test/utils/BatchMaker.h"
-#include "velox/dwio/dwrf/test/utils/MapBuilder.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/type/Type.h"
 #include "velox/vector/DictionaryVector.h"
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
+
 using namespace ::testing;
 using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::dwrf;
@@ -81,12 +81,17 @@ class TestStripeStreams : public StripeStreamsBase {
       WriterContext& context,
       const proto::StripeFooter& footer,
       const std::shared_ptr<const RowType>& rowType,
-      bool returnFlatVector = false)
+      bool returnFlatVector = false,
+      std::unordered_map<uint32_t, std::vector<std::string>>
+          structReaderContext = {})
       : StripeStreamsBase{&memory::getProcessDefaultMemoryManager().getRoot()},
         context_{context},
         footer_{footer},
         selector_{rowType} {
     options_.setReturnFlatVector(returnFlatVector);
+    if (!structReaderContext.empty()) {
+      options_.setFlatmapNodeIdsAsStruct(structReaderContext);
+    }
   }
 
   std::unique_ptr<SeekableInputStream> getStream(
@@ -271,7 +276,7 @@ void verifyBatch(
       ASSERT_FALSE(out->isNullAt(index))
           << "null mismatch with index, seed " << index << seed;
 
-      if constexpr (std::is_floating_point<T>::value) {
+      if constexpr (std::is_floating_point_v<T>) {
         // for floating point nan != nan
         if (std::isnan(val.value())) {
           ASSERT_TRUE(std::isnan(outFv->rawValues()[index]))
@@ -675,6 +680,21 @@ void printMap(const std::string& title, const VectorPtr& batch) {
   }
 }
 
+void printRow(const std::string& title, const VectorPtr& batch) {
+  auto row = std::dynamic_pointer_cast<RowVector>(batch);
+  if (!row) {
+    VLOG(3) << "To be implemented for encoded vector";
+    return;
+  }
+
+  VLOG(3) << "*******" << title << "*******";
+  VLOG(3) << "Size: " << row->size()
+          << ", Null count: " << getNullCountStr(*row);
+  for (int i = 0; i < row->size(); i++) {
+    VLOG(3) << "[" << i << "]: " << row->toString(i);
+  }
+}
+
 VectorPtr
 wrapInDictionary(const VectorPtr& batch, size_t stride, MemoryPool& pool) {
   VectorPtr ret = batch;
@@ -717,6 +737,19 @@ wrapInDictionary(const VectorPtr& batch, size_t stride, MemoryPool& pool) {
   return ret;
 }
 
+VectorPtr wrapInDictionaryRow(const VectorPtr& batch, MemoryPool& pool) {
+  auto row = batch->as<RowVector>();
+
+  auto size = row->size();
+  auto indices = AlignedBuffer::allocate<vector_size_t>(size, &pool);
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  for (auto i = 0; i < size; i++) {
+    rawIndices[i] = i;
+  }
+
+  return BaseVector::wrapInDictionary(nullptr, indices, size, batch);
+}
+
 template <typename T>
 void getUniqueKeys(
     std::vector<T>& uniqueKeys,
@@ -735,18 +768,8 @@ void getUniqueKeys(
     }
   }
 
-  uniqueKeys.insert(uniqueKeys.end(), seenKeys.begin(), seenKeys.end());
-}
-
-void printStructs(const std::vector<VectorPtr>& batches) {
-  for (int i = 0; i < batches.size(); i++) {
-    auto rowStruct = std::dynamic_pointer_cast<RowVector>(batches[i]);
-    ASSERT_TRUE(rowStruct);
-    LOG(INFO) << "Batch " << i << ":";
-    for (int j = 0; j < rowStruct->size(); j++) {
-      LOG(INFO) << j << ": " << rowStruct->toString(j);
-    }
-  }
+  uniqueKeys.clear();
+  uniqueKeys.insert(uniqueKeys.end(), seenKeys.cbegin(), seenKeys.cend());
 }
 
 template <typename TKEY, typename TVALUE>
@@ -755,43 +778,45 @@ void mapToStruct(
     std::vector<VectorPtr>& batches,
     const std::vector<TKEY>& uniqueKeys) {
   std::unordered_map<TKEY, int> keyColIndex;
-  for (int i = 0; i < uniqueKeys.size(); i++) {
+  for (auto i = 0; i < uniqueKeys.size(); i++) {
     keyColIndex[uniqueKeys[i]] = i; // lookup from key -> column#
   }
 
   for (size_t i = 0; i < batches.size(); i++) {
-    auto batch = batches[i];
+    auto origBatch = batches[i];
     std::vector<VectorPtr> childrenVectors(uniqueKeys.size());
     // initialize children of batch size filled with nulls
     VectorMaker maker{&pool};
-    for (int column = 0; column < uniqueKeys.size(); column++) {
-      childrenVectors[column] = maker.allNullFlatVector<TVALUE>(batch->size());
+    for (auto column = 0; column < uniqueKeys.size(); column++) {
+      childrenVectors[column] =
+          maker.allNullFlatVector<TVALUE>(origBatch->size());
+      // only flat for scalar types
+      // create function to handle nested complex types
     }
     batches[i] = maker.rowVector(childrenVectors);
     auto batchStruct = std::dynamic_pointer_cast<RowVector>(batches[i]);
 
-    auto map = std::dynamic_pointer_cast<MapVector>(batch);
-    ASSERT_TRUE(map);
+    auto mapBatch = std::dynamic_pointer_cast<MapVector>(origBatch);
+    ASSERT_TRUE(mapBatch);
 
-    auto keys = map->mapKeys();
+    auto keys = mapBatch->mapKeys();
     auto flatKeys = std::dynamic_pointer_cast<FlatVector<TKEY>>(keys);
     ASSERT_TRUE(flatKeys);
-    auto values = map->mapValues();
+    auto values = mapBatch->mapValues();
     auto flatValues = std::dynamic_pointer_cast<FlatVector<TVALUE>>(values);
     ASSERT_TRUE(flatValues);
 
-    auto offsets = map->offsets()->as<vector_size_t>();
-    auto sizes = map->sizes()->as<vector_size_t>();
+    auto offsets = mapBatch->offsets()->as<vector_size_t>();
+    auto sizes = mapBatch->sizes()->as<vector_size_t>();
 
     // for each row in current batch
-    for (vector_size_t row = 0; row < map->size(); row++) {
+    for (vector_size_t row = 0; row < mapBatch->size(); row++) {
       // for each key in row (single map)
       for (vector_size_t index = offsets[row],
                          endOffset = offsets[row] + sizes[row];
            index < endOffset;
            index++) {
         ASSERT_FALSE(flatKeys->isNullAt(index));
-        // ASSERT_TRUE(!flatValues->isNullAt(offsets[i] + sizes[j]));
         // set value in correct row
         auto key = flatKeys->valueAt(index);
         auto element = std::dynamic_pointer_cast<FlatVector<TVALUE>>(
@@ -801,8 +826,6 @@ void mapToStruct(
       }
     }
   }
-
-  // printStructs(batches);
 }
 
 template <typename TKEY, typename TVALUE>
@@ -813,7 +836,7 @@ void testMapWriter(
     bool disableDictionaryEncoding,
     bool testEncoded,
     bool printMaps = true,
-    bool isStruct = false) {
+    bool useStruct = false) {
   const auto rowType = CppToType<Row<Map<TKEY, TVALUE>>>::create();
   const auto dataType = rowType->childAt(0);
   const auto rowTypeWithId = TypeWithId::create(rowType);
@@ -823,30 +846,31 @@ void testMapWriter(
 
   VLOG(2) << "Testing map writer " << dataType->toString() << " using "
           << (useFlatMap ? "Flat Map" : "Regular Map")
-          << (useFlatMap && isStruct ? " - Struct" : "");
+          << (useFlatMap && useStruct ? " - Struct" : "");
 
   const auto config = std::make_shared<Config>();
+  auto* pBatches = &batches;
+  std::vector<VectorPtr> structs;
+  std::unordered_map<uint32_t, std::vector<std::string>> structReaderContext;
   if (useFlatMap) {
-    if (isStruct) {
-      auto structs = batches;
+    if (useStruct) {
+      structs = batches;
+      pBatches = &structs;
       std::vector<TKEY> uniqueKeys;
       ASSERT_NO_FATAL_FAILURE(getUniqueKeys<TKEY>(uniqueKeys, batches));
-      // for (int i = 0; i < uniqueKeys.size(); i++) {
-      //   LOG(INFO) << "key " << i << ": " << uniqueKeys[i];
-      // }
-
       ASSERT_NO_FATAL_FAILURE(
           (mapToStruct<TKEY, TVALUE>(pool, structs, uniqueKeys)));
-      // printStructs(structs);
 
-      // TODO: add config variable, create config map, serialize map, set config
-      // std::map<uint32_t, std::vector<TKEY>> structConfig;
-      // structConfig[0] = uniqueKeys;
-      folly::dynamic structConfig =
-          folly::toDynamic<std::map<std::string, std::vector<TKEY>>>(
-              {{"0", uniqueKeys}});
-
-      config->set(Config::MAP_FLAT_STRUCT_COLS, structConfig);
+      std::vector<std::string> uniqueKeysString;
+      uniqueKeysString.reserve(uniqueKeys.size());
+      std::transform(
+          uniqueKeys.cbegin(),
+          uniqueKeys.cend(),
+          std::back_inserter(uniqueKeysString),
+          [](const auto& e) { return folly::to<std::string>(e); });
+      ASSERT_EQ(writerDataTypeWithId->column, 0);
+      config->set(Config::MAP_FLAT_COLS_STRUCT_KEYS, {uniqueKeysString});
+      structReaderContext[writerDataTypeWithId->id] = uniqueKeysString;
     }
 
     config->set(Config::FLATTEN_MAP, true);
@@ -854,7 +878,7 @@ void testMapWriter(
     config->set(
         Config::MAP_FLAT_DISABLE_DICT_ENCODING, disableDictionaryEncoding);
 
-    // expect that if we pass isStruct true with useFlatMap false, it will fail
+    // expect that if we pass useStruct true with useFlatMap false, it will fail
   }
 
   WriterContext context{config, getDefaultScopedMemoryPool()};
@@ -864,19 +888,28 @@ void testMapWriter(
   size_t strideCount = testEncoded ? 4 : 2;
 
   // Each batch represents an input for a separate stripe
-  for (auto batch : batches) {
+  for (auto batch : *pBatches) {
+    auto isStruct = useFlatMap && useStruct;
     if (printMaps) {
-      printMap<TKEY, TVALUE>("Input", batch);
+      if (isStruct) {
+        printRow("Input", batch);
+      } else {
+        printMap<TKEY, TVALUE>("Input", batch);
+      }
     }
 
     proto::StripeFooter sf;
     std::vector<VectorPtr> writtenBatches;
 
-    // Write map
+    // Write map/row
     for (auto strideI = 0; strideI < strideCount; ++strideI) {
       auto toWrite = batch;
       if (testEncoded) {
-        toWrite = wrapInDictionary(toWrite, strideI, pool);
+        if (isStruct) {
+          toWrite = wrapInDictionaryRow(toWrite, pool);
+        } else {
+          toWrite = wrapInDictionary(toWrite, strideI, pool);
+        }
       }
       writer->write(toWrite, Ranges::of(0, toWrite->size()));
       writer->createIndexEntry();
@@ -888,18 +921,23 @@ void testMapWriter(
     });
 
     auto validate = [&](bool returnFlatVector = false) {
-      TestStripeStreams streams(context, sf, rowType, returnFlatVector);
+      TestStripeStreams streams(
+          context, sf, rowType, returnFlatVector, structReaderContext);
       const auto reader =
           ColumnReader::build(dataTypeWithId, dataTypeWithId, streams);
       VectorPtr out;
 
-      // Read map
+      // Read map/row
       for (auto& writtenBatch : writtenBatches) {
         reader->next(writtenBatch->size(), out);
         ASSERT_EQ(out->size(), writtenBatch->size()) << "Batch size mismatch";
 
         if (printMaps) {
-          printMap<TKEY, TVALUE>("Result", out);
+          if (isStruct) {
+            printRow("Result", batch);
+          } else {
+            printMap<TKEY, TVALUE>("Result", out);
+          }
         }
 
         for (int32_t i = 0; i < writtenBatch->size(); ++i) {
@@ -915,9 +953,9 @@ void testMapWriter(
       EXPECT_THROW({ reader->next(50, out); }, exception::LoggedException);
     };
 
-    validate();
+    ASSERT_NO_FATAL_FAILURE(validate());
     if (useFlatMap) {
-      validate(true);
+      ASSERT_NO_FATAL_FAILURE(validate(true));
     }
 
     context.nextStripe();
@@ -951,26 +989,175 @@ void testMapWriter(
   }
 }
 
+template <typename TVALUE>
+void testMapWriterRow(
+    MemoryPool& pool,
+    const std::vector<VectorPtr>& batches,
+    bool disableDictionaryEncoding,
+    bool testEncoded,
+    bool printInput = true) {
+  const auto rowType = CppToType<Row<Map<int32_t, TVALUE>>>::create();
+  const auto dataType = rowType->childAt(0);
+  const auto rowTypeWithId = TypeWithId::create(rowType);
+  const auto dataTypeWithId = rowTypeWithId->childAt(0);
+  const auto writerSchema = TypeWithId::create(rowType);
+  const auto writerDataTypeWithId = writerSchema->childAt(0);
+
+  VLOG(2) << "Testing map writer struct input " << dataType->toString();
+
+  const auto config = std::make_shared<Config>();
+  std::unordered_map<uint32_t, std::vector<std::string>> structReaderContext;
+  ASSERT_TRUE(batches.size() > 0);
+  auto row = std::dynamic_pointer_cast<RowVector>(batches[0]);
+  ASSERT_TRUE(row);
+
+  // defaulting to int32_t keys
+  std::vector<std::string> uniqueKeysString;
+  uniqueKeysString.reserve(row->childrenSize());
+  for (auto i = 0; i < row->childrenSize(); i++) {
+    uniqueKeysString.push_back(folly::to<std::string>(i));
+  }
+
+  ASSERT_EQ(writerDataTypeWithId->column, 0);
+  config->set(Config::MAP_FLAT_COLS_STRUCT_KEYS, {uniqueKeysString});
+  structReaderContext[writerDataTypeWithId->id] = uniqueKeysString;
+
+  config->set(Config::FLATTEN_MAP, true);
+  config->set(Config::MAP_FLAT_COLS, {writerDataTypeWithId->column});
+  config->set(
+      Config::MAP_FLAT_DISABLE_DICT_ENCODING, disableDictionaryEncoding);
+
+  WriterContext context{config, getDefaultScopedMemoryPool()};
+  const auto writer = BaseColumnWriter::create(context, *writerDataTypeWithId);
+
+  // Each batch represents an input for a separate stripe
+  for (auto batch : batches) {
+    if (printInput) {
+      printRow("Input", batch);
+    }
+
+    proto::StripeFooter sf;
+    std::vector<VectorPtr> writtenBatches;
+
+    // Write map/row
+    auto toWrite = batch;
+    if (testEncoded) {
+      toWrite = wrapInDictionaryRow(toWrite, pool);
+    }
+    writer->write(toWrite, Ranges::of(0, toWrite->size()));
+    writer->createIndexEntry();
+    writtenBatches.push_back(toWrite);
+
+    writer->flush([&sf](uint32_t /* unused */) -> proto::ColumnEncoding& {
+      return *sf.add_encoding();
+    });
+
+    auto validate = [&](bool returnFlatVector = false) {
+      TestStripeStreams streams(
+          context, sf, rowType, returnFlatVector, structReaderContext);
+      const auto reader =
+          ColumnReader::build(dataTypeWithId, dataTypeWithId, streams);
+      VectorPtr out;
+
+      // Read map/row
+      for (auto& writtenBatch : writtenBatches) {
+        reader->next(writtenBatch->size(), out);
+        ASSERT_EQ(out->size(), writtenBatch->size()) << "Batch size mismatch";
+
+        if (printInput) {
+          printRow("Result", batch);
+        }
+
+        for (int32_t i = 0; i < writtenBatch->size(); ++i) {
+          ASSERT_TRUE(writtenBatch->equalValueAt(out.get(), i, i))
+              << "Row mismatch at index " << i;
+        }
+      }
+
+      // Reader API requires the caller to read the Stripe for number of
+      // values and iterate only until that number.
+      // It does not support hasNext/next protocol.
+      // Use a bigger number like 50, as some values may be bit packed.
+      EXPECT_THROW({ reader->next(50, out); }, exception::LoggedException);
+    };
+
+    ASSERT_NO_FATAL_FAILURE(validate());
+    ASSERT_NO_FATAL_FAILURE(validate(true));
+
+    context.nextStripe();
+
+    auto valueNodeId = dataTypeWithId->childAt(1)->id;
+    auto streamCount = 0;
+    context.iterateUnSuppressedStreams([&](auto& pair) {
+      if (pair.first.encodingKey().node == valueNodeId) {
+        ++streamCount;
+      }
+    });
+
+    ASSERT_GT(streamCount, 0) << "Expecting to find at least one value stream";
+
+    writer->reset();
+
+    streamCount = 0;
+    context.iterateUnSuppressedStreams([&](auto& pair) {
+      if (pair.first.encodingKey().node == valueNodeId) {
+        ++streamCount;
+      }
+    });
+
+    ASSERT_EQ(streamCount, 0)
+        << "Expecting all flat map value streams to be disposed";
+  }
+}
+
+template <typename TVALUE>
+void testMapWriterRowImpl() {
+  auto type = CppToType<Row<TVALUE, TVALUE>>::create();
+
+  std::unique_ptr<ScopedMemoryPool> scopedPool = getDefaultScopedMemoryPool();
+  auto& pool = *scopedPool;
+  auto batch = BatchMaker::createVector<TypeKind::ROW>(type, 10, pool);
+
+  std::vector<VectorPtr> batches{batch, batch};
+
+  testMapWriterRow<TVALUE>(pool, batches, true, false);
+  testMapWriterRow<TVALUE>(pool, batches, true, true);
+}
+
+TEST(ColumnWriterTests, TestMapWriterNestedRow) {
+  testMapWriterRowImpl<bool>();
+  testMapWriterRowImpl<Array<int32_t>>();
+  testMapWriterRowImpl<Array<bool>>();
+  testMapWriterRowImpl<Array<StringView>>();
+  testMapWriterRowImpl<Map<int32_t, bool>>();
+  testMapWriterRowImpl<Map<int32_t, int32_t>>();
+  testMapWriterRowImpl<Map<int32_t, StringView>>();
+  testMapWriterRowImpl<Map<int32_t, Array<int32_t>>>();
+  testMapWriterRowImpl<Map<int32_t, Map<int32_t, StringView>>>();
+  testMapWriterRowImpl<Map<int32_t, Row<int32_t, bool, StringView>>>();
+  testMapWriterRowImpl<Row<int32_t, bool, StringView>>();
+}
+
 template <typename TKEY, typename TVALUE>
 void testMapWriter(
     MemoryPool& pool,
     const VectorPtr& batch,
     bool useFlatMap,
     bool printMaps = true,
-    bool isStruct = false) {
+    bool useStruct = false) {
   std::vector<VectorPtr> batches{batch, batch};
   testMapWriter<TKEY, TVALUE>(
-      pool, batches, useFlatMap, true, false, printMaps, isStruct);
+      pool, batches, useFlatMap, true, false, printMaps, useStruct);
   if (useFlatMap) {
     testMapWriter<TKEY, TVALUE>(
-        pool, batches, useFlatMap, false, false, printMaps, isStruct);
+        pool, batches, useFlatMap, false, false, printMaps, useStruct);
     testMapWriter<TKEY, TVALUE>(
-        pool, batches, useFlatMap, true, true, printMaps, isStruct);
+        pool, batches, useFlatMap, true, true, printMaps, useStruct);
   }
 }
 
 template <typename T>
-void testMapWriterNumericKey(bool useFlatMap, bool isStruct = false) {
+void testMapWriterNumericKey(bool useFlatMap, bool useStruct = false) {
   using b = MapBuilder<T, T>;
 
   std::unique_ptr<ScopedMemoryPool> scopedPool = getDefaultScopedMemoryPool();
@@ -985,7 +1172,7 @@ void testMapWriterNumericKey(bool useFlatMap, bool isStruct = false) {
            typename b::pair{
                std::numeric_limits<T>::min(), std::numeric_limits<T>::min()}}});
 
-  testMapWriter<T, T>(pool, batch, useFlatMap, true, isStruct);
+  testMapWriter<T, T>(pool, batch, useFlatMap, true, useStruct);
 }
 
 TEST(ColumnWriterTests, TestMapWriterFloatKey) {
@@ -998,7 +1185,7 @@ TEST(ColumnWriterTests, TestMapWriterFloatKey) {
   EXPECT_THROW(
       {
         testMapWriterNumericKey<float>(
-            /* useFlatMap */ true, /* isStruct */ true);
+            /* useFlatMap */ true, /* useStruct */ true);
       },
       exception::LoggedException);
 }
@@ -1006,25 +1193,25 @@ TEST(ColumnWriterTests, TestMapWriterFloatKey) {
 TEST(ColumnWriterTests, TestMapWriterInt64Key) {
   testMapWriterNumericKey<int64_t>(/* useFlatMap */ false);
   testMapWriterNumericKey<int64_t>(/* useFlatMap */ true);
-  testMapWriterNumericKey<int64_t>(/* useFlatMap */ true, /* isStruct */ true);
+  testMapWriterNumericKey<int64_t>(/* useFlatMap */ true, /* useStruct */ true);
 }
 
 TEST(ColumnWriterTests, TestMapWriterInt32Key) {
   testMapWriterNumericKey<int32_t>(/* useFlatMap */ false);
   testMapWriterNumericKey<int32_t>(/* useFlatMap */ true);
-  testMapWriterNumericKey<int32_t>(/* useFlatMap */ true, /* isStruct */ true);
+  testMapWriterNumericKey<int32_t>(/* useFlatMap */ true, /* useStruct */ true);
 }
 
 TEST(ColumnWriterTests, TestMapWriterInt16Key) {
   testMapWriterNumericKey<int16_t>(/* useFlatMap */ false);
   testMapWriterNumericKey<int16_t>(/* useFlatMap */ true);
-  testMapWriterNumericKey<int16_t>(/* useFlatMap */ true, /* isStruct */ true);
+  testMapWriterNumericKey<int16_t>(/* useFlatMap */ true, /* useStruct */ true);
 }
 
 TEST(ColumnWriterTests, TestMapWriterInt8Key) {
   testMapWriterNumericKey<int8_t>(/* useFlatMap */ false);
   testMapWriterNumericKey<int8_t>(/* useFlatMap */ true);
-  testMapWriterNumericKey<int8_t>(/* useFlatMap */ true, /* isStruct */ true);
+  testMapWriterNumericKey<int8_t>(/* useFlatMap */ true, /* useStruct */ true);
 }
 
 TEST(ColumnWriterTests, TestMapWriterStringKey) {
@@ -1042,7 +1229,7 @@ TEST(ColumnWriterTests, TestMapWriterStringKey) {
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ false);
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ true);
   testMapWriter<keyType, valueType>(
-      pool, batch, /* useFlatMap */ true, /* isStruct */ true);
+      pool, batch, /* useFlatMap */ true, true, /* useStruct */ true);
 }
 
 TEST(ColumnWriterTests, TestMapWriterDifferentNumericKeyValue) {
@@ -1074,8 +1261,6 @@ TEST(ColumnWriterTests, TestMapWriterDifferentKeyValue) {
 
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ false);
 }
-
-TEST(ColumnWriterTests, TestMapWriterIsStructWithoutFlatMap) {}
 
 TEST(ColumnWriterTests, TestMapWriterMixedBatchTypeHandling) {
   using keyType = int32_t;
@@ -1125,7 +1310,8 @@ TEST(ColumnWriterTests, TestMapWriterBinaryKey) {
 
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ false);
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ true);
-  testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ true, true);
+  testMapWriter<keyType, valueType>(
+      pool, batch, /* useFlatMap */ true, true, /* useStruct */ true);
 }
 
 template <typename keyType, typename valueType>
@@ -1138,7 +1324,8 @@ void testMapWriterImpl() {
 
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ false);
   testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ true);
-  testMapWriter<keyType, valueType>(pool, batch, /* useFlatMap */ true, true);
+  // testMapWriter<keyType, valueType>(
+  //     pool, batch, /* useFlatMap */ true, true, /* useStruct */ true);
 }
 
 TEST(ColumnWriterTests, TestMapWriterNestedMap) {
@@ -1281,6 +1468,17 @@ TEST(ColumnWriterTests, TestMapWriterBigBatch) {
       /* useFlatMap */ true);
 }
 
+TEST(ColumnWriterTests, TestStructKeysConfigSerializationDeserialization) {
+  const std::vector<std::vector<std::string>> columns{
+      {"1.45", "hi, you;", "29102819", "1e-4"},
+      {"291", "world"},
+      {},
+      {"one", ", more", "\"two'three$"}};
+  const auto config = std::make_shared<Config>();
+  config->set<decltype(columns)>(Config::MAP_FLAT_COLS_STRUCT_KEYS, columns);
+  EXPECT_EQ(config->get(Config::MAP_FLAT_COLS_STRUCT_KEYS), columns);
+}
+
 std::unique_ptr<DwrfReader> getDwrfReader(
     MemoryPool& pool,
     const std::shared_ptr<const RowType> type,
@@ -1333,10 +1531,10 @@ void testMapWriterStats(const std::shared_ptr<const RowType> type) {
   auto mapReader = getDwrfReader(pool, type, batch, false);
   auto flatMapReader = getDwrfReader(pool, type, batch, true);
   ASSERT_EQ(
-      mapReader->getFooter().statistics_size(),
-      flatMapReader->getFooter().statistics_size());
+      mapReader->getFooter().statisticsSize(),
+      flatMapReader->getFooter().statisticsSize());
 
-  for (int32_t i = 0; i < mapReader->getFooter().statistics_size(); ++i) {
+  for (int32_t i = 0; i < mapReader->getFooter().statisticsSize(); ++i) {
     LOG(INFO) << "Stats " << i
               << "     map: " << mapReader->columnStatistics(i)->toString();
     LOG(INFO) << "Stats " << i

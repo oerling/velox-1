@@ -37,7 +37,18 @@ struct DictionaryValues {
 
   // Number of valid elements in 'values'.
   int32_t numValues{0};
+
+  // True if values are in ascending order.
+  bool sorted{false};
+
+  void clear() {
+    values = nullptr;
+    strings = nullptr;
+    numValues = 0;
+    sorted = false;
+  }
 };
+
 struct RawDictionaryState {
   const void* values{nullptr};
   int32_t numValues{0};
@@ -69,6 +80,13 @@ struct RawScanState {
 struct ScanState {
   // Copies the owned values of 'this' into 'rawState'.
   void updateRawState();
+
+  void clear() {
+    dictionary.clear();
+    dictionary2.clear();
+    inDictionary = nullptr;
+    updateRawState();
+  }
 
   // Dictionary values when there s a dictionary in scope for decoding.
   DictionaryValues dictionary;
@@ -109,6 +127,10 @@ class SelectiveColumnReader {
       const TypePtr& type);
 
   virtual ~SelectiveColumnReader() = default;
+
+  dwio::common::FormatData& formatData() const {
+    return *formatData_;
+  }
 
   /**
    * Read the next group of values into a RowVector.
@@ -189,17 +211,63 @@ class SelectiveColumnReader {
     return reinterpret_cast<T*>(rawValues_) + numValues_;
   }
 
+  // Returns a mutable pointer to start of result nulls
+  // bitmap. Ensures that this has at least 'numValues_' + 'size'
+  // capacity and is unique. If extending existing buffer, preserves
+  // previous contents.
   uint64_t* mutableNulls(int32_t size) {
-    DCHECK_GE(resultNulls_->capacity() * 8, numValues_ + size);
+    if (!resultNulls_->unique()) {
+      resultNulls_ = AlignedBuffer::allocate<bool>(
+          numValues_ + size, &memoryPool_, bits::kNotNull);
+      rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+    }
+    if (resultNulls_->capacity() * 8 < numValues_ + size) {
+      // If a single read() spans many encoding runs then result nulls may
+      // occasionally need extending.
+      AlignedBuffer::reallocate<bool>(
+          &resultNulls_,
+          numValues_ + size + simd::kPadding * 8,
+          bits::kNotNull);
+      rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+    }
     return rawResultNulls_;
+  }
+
+  // True if this reads contiguous rows starting at 0 and may have
+  // nulls. If so, the nulls decoded from the nulls in encoded data
+  // can be returned directly in the vector in getValues().
+  bool returnReaderNulls() const {
+    return returnReaderNulls_;
   }
 
   void setNumValues(vector_size_t size) {
     numValues_ = size;
   }
 
+  // The number of passing after filtering.
+  int32_t numRows() const {
+    return outputRows_.size();
+  }
+
+  // The number of values copied into the results.
+  int32_t numValues() const {
+    return numValues_;
+  }
   void setNumRows(vector_size_t size) {
     outputRows_.resize(size);
+  }
+
+  // Sets the result nulls to be returned in getValues(). This is used for
+  // combining nulls from multiple encoding runs. nullptr means no nulls.
+  void setNulls(BufferPtr resultNulls);
+
+  // Adds 'bias' to outputt rows between 'firstRow' and end. Used
+  // whenn combining data from multiple encoding runs, where the
+  // output rows are first in terms of position in the encoding entry.
+  void offsetOutputRows(int32_t firstRow, int32_t bias) {
+    for (auto i = firstRow; i < outputRows_.size(); ++i) {
+      outputRows_[i] += bias;
+    }
   }
 
   void setHasNulls() {
@@ -235,7 +303,7 @@ class SelectiveColumnReader {
   inline void addValue(const T value) {
     // @lint-ignore-every HOWTOEVEN ConstantArgumentPassByValue
     static_assert(
-        std::is_pod<T>::value,
+        std::is_pod_v<T>,
         "General case of addValue is only for primitive types");
     VELOX_DCHECK_LE(
         rawValues_ && (numValues_ + 1) * sizeof(T), values_->capacity());
@@ -282,6 +350,8 @@ class SelectiveColumnReader {
     initTimeClocks_ = 0;
   }
 
+  virtual bool rowGroupMatches(uint32_t rowGroupId) const;
+
   virtual std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
       const dwio::common::StatsContext& context) const;
@@ -292,6 +362,10 @@ class SelectiveColumnReader {
 
   raw_vector<int32_t>& outerNonNullRows() {
     return outerNonNullRows_;
+  }
+
+  BufferPtr& nullsInReadRange() {
+    return nullsInReadRange_;
   }
 
   // Returns true if no filters or deterministic filters/hooks that
@@ -343,25 +417,32 @@ class SelectiveColumnReader {
   static constexpr int8_t kNoValueSize = -1;
   static constexpr uint32_t kRowGroupNotSet = ~0;
 
+  // True if we have an is null filter and optionally return column
+  // values or we have an is not null filter and do not return column
+  // values. This means that only null flags need be accessed.
+  bool readsNullsOnly() const;
+
   template <typename T>
   void ensureValuesCapacity(vector_size_t numRows);
 
-  void prepareNulls(RowSet rows, bool hasNulls);
+  // Prepares the result buffer for nulls for reading 'rows'. Leaves
+  // 'extraSpace' bits worth of space in the nulls buffer.
+  void prepareNulls(RowSet rows, bool hasNulls, int32_t extraRows = 0);
 
+  // Filters 'rows' according to 'is_null'. Only applies to cases where
+  // readsNullsOnly() is true.
   template <typename T>
   void filterNulls(RowSet rows, bool isNull, bool extractValues);
 
-  // Reads nulls, if any. Sets '*nulls' to nullptr if void
-  // the reader has no nulls and there are no incoming
-  //          nulls.Takes 'nulls' from 'result' if '*result' is non -
-  //      null.Otherwise ensures that 'nulls' has a buffer of sufficient
-  //          size and uses this.
-  void readNulls(
-      vector_size_t numValues,
-      const uint64_t* incomingNulls,
-      VectorPtr* result,
-      BufferPtr& nulls);
+  // If 'this' has values set for returning as dictionary-encoded,
+  // converts these values to flat so that additional values can be
+  // added without reference to dictionary. Resets dictionary info in
+  // 'scanState_'. No-op for non-string readers. This is needed when
+  // scanning a Parquet ColumnChunk that begins with dictionaries and
+  // converts to direct in mid-read.
+  virtual void dedictionarize() {}
 
+ protected:
   template <typename T>
   void
   prepareRead(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);

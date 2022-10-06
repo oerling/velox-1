@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+#include "velox/common/base/tests/GTestUtils.h"
+#include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -28,10 +31,57 @@ using namespace facebook::velox::exec::test;
 
 using facebook::velox::test::BatchMaker;
 
+namespace {
+// Returns aggregated spilled stats by 'task'.
+Spiller::Stats taskSpilledStats(const exec::Task& task) {
+  Spiller::Stats spilledStats;
+  auto stats = task.taskStats();
+  for (auto& pipeline : stats.pipelineStats) {
+    for (auto op : pipeline.operatorStats) {
+      spilledStats.spilledBytes += op.spilledBytes;
+      spilledStats.spilledRows += op.spilledRows;
+      spilledStats.spilledPartitions += op.spilledPartitions;
+    }
+  }
+  return spilledStats;
+}
+} // namespace
+
+struct TestParam {
+  int numDrivers;
+
+  explicit TestParam(int _numDrivers) : numDrivers(_numDrivers) {}
+};
+
 class HashJoinTest : public HiveConnectorTestBase {
  protected:
+  HashJoinTest() : HashJoinTest(TestParam(1)) {}
+
+  explicit HashJoinTest(const TestParam& param)
+      : numDrivers_(param.numDrivers), fuzzer_({}, pool_.get()) {}
+
   void SetUp() override {
     HiveConnectorTestBase::SetUp();
+
+    // NOTE: use the same row types to ensure generating similar data for both
+    // build and probe sides if we use the same random seed to build vectors.
+    leftType_ = ROW(
+        {{"t_k1", INTEGER()},
+         {"t_k2", VARCHAR()},
+         {"t_v1", VARCHAR()},
+         {"t_v2", INTEGER()}});
+    rightType_ = ROW(
+        {{"u_k1", INTEGER()},
+         {"u_k2", VARCHAR()},
+         {"u_v1", VARCHAR()},
+         {"u_v2", INTEGER()}});
+
+    // Small batches create more edge cases.
+    fuzzerOpts_.vectorSize = 10;
+    fuzzerOpts_.nullRatio = 0.1;
+    fuzzerOpts_.stringVariableLength = true;
+    fuzzerOpts_.containerVariableLength = true;
+    fuzzer_.setOptions(fuzzerOpts_);
   }
 
   static std::vector<std::string> concat(
@@ -43,46 +93,189 @@ class HashJoinTest : public HiveConnectorTestBase {
     return result;
   }
 
-  void testJoin(
-      const std::vector<TypePtr>& keyTypes,
-      int32_t numThreads,
-      int32_t leftSize,
-      int32_t rightSize,
+  void runTest(
+      const std::vector<std::string>& leftKeys,
+      std::vector<RowVectorPtr>& leftBatches,
+      bool isLeftParallelizable,
+      const std::vector<std::string>& rightKeys,
+      std::vector<RowVectorPtr>& rightBatches,
+      bool isRightParallelizable,
       const std::string& referenceQuery,
-      const std::string& filter = "") {
-    auto leftType = makeRowType(keyTypes, "t_");
-    auto rightType = makeRowType(keyTypes, "u_");
-
-    auto leftBatch = std::dynamic_pointer_cast<RowVector>(
-        BatchMaker::createBatch(leftType, leftSize, *pool_));
-    auto rightBatch = std::dynamic_pointer_cast<RowVector>(
-        BatchMaker::createBatch(rightType, rightSize, *pool_));
-
+      const std::string& filter,
+      const std::vector<std::string>& outputLayout,
+      core::JoinType joinType,
+      bool injectSpill) {
     CursorParameters params;
     auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
     params.planNode = PlanBuilder(planNodeIdGenerator)
-                          .values({leftBatch}, true)
+                          .values(leftBatches, isLeftParallelizable)
                           .hashJoin(
-                              makeKeyNames(keyTypes.size(), "t_"),
-                              makeKeyNames(keyTypes.size(), "u_"),
+                              leftKeys,
+                              rightKeys,
                               PlanBuilder(planNodeIdGenerator)
-                                  .values({rightBatch}, true)
+                                  .values(rightBatches, isRightParallelizable)
                                   .planNode(),
                               filter,
-                              concat(leftType->names(), rightType->names()))
+                              outputLayout,
+                              joinType)
                           .planNode();
-    params.maxDrivers = numThreads;
+    params.maxDrivers = numDrivers_;
 
-    createDuckDbTable("t", {leftBatch});
-    createDuckDbTable("u", {rightBatch});
+    std::shared_ptr<TempDirectoryPath> spillDirectory;
+    if (injectSpill) {
+      spillDirectory = exec::test::TempDirectoryPath::create();
+      params.queryCtx = core::QueryCtx::createForTest();
+      params.queryCtx->setConfigOverridesUnsafe({
+          {core::QueryConfig::kTestingSpillPct, "100"},
+          {core::QueryConfig::kSpillPath, spillDirectory->path},
+      });
+    }
+
     auto task = ::assertQuery(
         params, [](auto*) {}, referenceQuery, duckDbQueryRunner_);
-
     // A quick sanity check for memory usage reporting. Check that peak total
     // memory usage for the hash join node is > 0.
     auto planStats = toPlanStats(task->taskStats());
     auto joinNodeId = params.planNode->id();
     ASSERT_TRUE(planStats.at(joinNodeId).peakMemoryBytes > 0);
+    auto spillStats = taskSpilledStats(*task);
+    if (injectSpill) {
+      EXPECT_GT(spillStats.spilledRows, 0);
+      EXPECT_GT(spillStats.spilledBytes, 0);
+      EXPECT_GT(spillStats.spilledPartitions, 0);
+    } else {
+      EXPECT_EQ(spillStats.spilledRows, 0);
+      EXPECT_EQ(spillStats.spilledBytes, 0);
+      EXPECT_EQ(spillStats.spilledPartitions, 0);
+    }
+  }
+
+  void testJoin(
+      const std::vector<TypePtr>& keyTypes,
+      int leftBatchSize,
+      int numLeftBatches,
+      int rightBatchSize,
+      int numRightBatches,
+      const std::string& referenceQuery,
+      const std::string& filter = "",
+      const std::vector<std::string>& outputLayout = {},
+      core::JoinType joinType = core::JoinType::kInner,
+      bool injectSpill = false) {
+    auto leftType = makeRowType(keyTypes, "t_");
+    auto rightType = makeRowType(keyTypes, "u_");
+
+    std::vector<RowVectorPtr> leftBatches;
+    std::vector<RowVectorPtr> rightBatches;
+    auto opts = fuzzerOpts_;
+    if (leftBatchSize != 0) {
+      opts.vectorSize = leftBatchSize;
+      fuzzer_.setOptions(opts);
+      for (int i = 0; i < numLeftBatches; ++i) {
+        leftBatches.push_back(fuzzer_.fuzzRow(leftType));
+      }
+    } else {
+      for (int i = 0; i < numLeftBatches; ++i) {
+        leftBatches.push_back(RowVector::createEmpty(leftType, pool_.get()));
+      }
+    }
+
+    if (rightBatchSize != 0) {
+      opts.vectorSize = rightBatchSize;
+      fuzzer_.setOptions(opts);
+      for (int i = 0; i < numRightBatches; ++i) {
+        rightBatches.push_back(fuzzer_.fuzzRow(rightType));
+      }
+    } else {
+      for (int i = 0; i < numRightBatches; ++i) {
+        rightBatches.push_back(RowVector::createEmpty(rightType, pool_.get()));
+      }
+    }
+
+    testJoin(
+        leftType,
+        makeKeyNames(keyTypes.size(), "t_"),
+        leftBatches,
+        rightType,
+        makeKeyNames(keyTypes.size(), "u_"),
+        rightBatches,
+        referenceQuery,
+        filter,
+        outputLayout,
+        joinType,
+        injectSpill);
+  }
+
+  void testJoin(
+      RowTypePtr leftType,
+      const std::vector<std::string>& leftKeys,
+      std::vector<RowVectorPtr>& leftBatches,
+      RowTypePtr rightType,
+      const std::vector<std::string>& rightKeys,
+      std::vector<RowVectorPtr>& rightBatches,
+      const std::string& referenceQuery,
+      const std::string& filter = "",
+      const std::vector<std::string>& outputLayout = {},
+      core::JoinType joinType = core::JoinType::kInner,
+      bool injectSpill = false) {
+    // NOTE: there is one value node copy per driver thread and if the value
+    // node is not parallelizable, then the associated driver pipeline will be
+    // single threaded. We will try to test different multithreading
+    // combinations of build and probe sides, so populate duckdb with all the
+    // data: 'allLeftBatches' and 'allRightBatches'.
+    std::vector<RowVectorPtr> allLeftBatches;
+    allLeftBatches.reserve(leftBatches.size() * numDrivers_);
+    std::vector<RowVectorPtr> allRightBatches;
+    allRightBatches.reserve(rightBatches.size() * numDrivers_);
+    for (int i = 0; i < numDrivers_; ++i) {
+      std::copy(
+          leftBatches.begin(),
+          leftBatches.end(),
+          std::back_inserter(allLeftBatches));
+      std::copy(
+          rightBatches.begin(),
+          rightBatches.end(),
+          std::back_inserter(allRightBatches));
+    }
+
+    createDuckDbTable("t", allLeftBatches);
+    createDuckDbTable("u", allRightBatches);
+
+    struct TestSettings {
+      int leftParallelize;
+      int rightParallelize;
+
+      std::string debugString() const {
+        return fmt::format(
+            "leftParallelize: {}, rightParallelize: {}",
+            leftParallelize,
+            rightParallelize);
+      }
+    };
+
+    std::vector<TestSettings> testSettings;
+    testSettings.push_back({true, true});
+    if (numDrivers_ != 1) {
+      testSettings.push_back({true, false});
+      testSettings.push_back({false, true});
+    }
+
+    for (const auto& testData : testSettings) {
+      SCOPED_TRACE(fmt::format("{}/{}", testData.debugString(), numDrivers_));
+
+      runTest(
+          leftKeys,
+          testData.leftParallelize ? leftBatches : allLeftBatches,
+          testData.leftParallelize,
+          rightKeys,
+          testData.rightParallelize ? rightBatches : allRightBatches,
+          testData.rightParallelize,
+          referenceQuery,
+          filter,
+          outputLayout.empty() ? concat(leftType->names(), rightType->names())
+                               : outputLayout,
+          joinType,
+          injectSpill);
+    }
   }
 
   static std::vector<std::string> makeKeyNames(
@@ -134,94 +327,249 @@ class HashJoinTest : public HiveConnectorTestBase {
     auto stats = task->taskStats().pipelineStats.front().operatorStats;
     return stats[operatorIndex].inputPositions;
   }
+
+  static uint64_t getOutputPositions(
+      const std::shared_ptr<Task>& task,
+      const core::PlanNodeId planId,
+      const std::string& operatorType) {
+    uint64_t count = 0;
+    for (const auto& pipelineStat : task->taskStats().pipelineStats) {
+      for (const auto& operatorStat : pipelineStat.operatorStats) {
+        if (operatorStat.planNodeId == planId &&
+            operatorStat.operatorType == operatorType) {
+          count += operatorStat.outputPositions;
+        }
+      }
+    }
+    return count;
+  }
+
+  const int numDrivers_;
+
+  VectorFuzzer::Options fuzzerOpts_;
+  VectorFuzzer fuzzer_;
+
+  // The default left and right table types used for test.
+  RowTypePtr leftType_;
+  RowTypePtr rightType_;
 };
 
-TEST_F(HashJoinTest, bigintArray) {
+class MultiThreadedHashJoinTest
+    : public HashJoinTest,
+      public testing::WithParamInterface<TestParam> {
+ public:
+  MultiThreadedHashJoinTest() : HashJoinTest(GetParam()) {}
+};
+
+TEST_P(MultiThreadedHashJoinTest, bigintArray) {
   testJoin(
       {BIGINT()},
-      1,
-      16000,
-      15000,
+      1600,
+      5,
+      1500,
+      5,
       "SELECT t_k0, t_data, u_k0, u_data FROM "
       "  t, u "
       "  WHERE t_k0 = u_k0");
 }
 
-TEST_F(HashJoinTest, bigintArrayParallel) {
+TEST_P(MultiThreadedHashJoinTest, outOfJoinKeyColumnOrder) {
+  const int numLeftBatches = 10;
+  std::vector<RowVectorPtr> leftBatches;
+  leftBatches.reserve(numLeftBatches);
+  for (int i = 0; i < numLeftBatches; ++i) {
+    leftBatches.push_back(fuzzer_.fuzzRow(leftType_));
+  }
+  const int numRightBatches = 15;
+  std::vector<RowVectorPtr> rightBatches;
+  rightBatches.reserve(numLeftBatches);
+  for (int i = 0; i < numLeftBatches; ++i) {
+    rightBatches.push_back(fuzzer_.fuzzRow(rightType_));
+  }
+
   testJoin(
-      {BIGINT()},
-      2,
-      16000,
-      15000,
-      "SELECT t_k0, t_data, u_k0, u_data FROM "
+      leftType_,
+      {"t_k2"},
+      leftBatches,
+      rightType_,
+      {"u_k2"},
+      rightBatches,
+      "SELECT t_k1, t_k2, u_k1, u_k2, u_v1 FROM "
       "  t, u "
-      "  WHERE t_k0 = u_k0 "
-      "UNION ALL SELECT t_k0, t_data, u_k0, u_data FROM "
-      "  t, u "
-      "  WHERE t_k0 = u_k0 "
-      "UNION ALL SELECT t_k0, t_data, u_k0, u_data FROM "
-      "  t, u "
-      "  WHERE t_k0 = u_k0 "
-      "UNION ALL SELECT t_k0, t_data, u_k0, u_data FROM "
-      "  t, u "
-      "  WHERE t_k0 = u_k0");
+      "  WHERE t_k2 = u_k2",
+      "",
+      {"t_k1", "t_k2", "u_k1", "u_k2", "u_v1"});
 }
 
-TEST_F(HashJoinTest, emptyBuild) {
+TEST_P(MultiThreadedHashJoinTest, emptyBuild) {
   testJoin(
       {BIGINT()},
-      1,
-      16000,
+      1600,
+      5,
       0,
+      5,
       "SELECT t_k0, t_data, u_k0, u_data FROM "
       "  t, u "
       "  WHERE t_k0 = u_k0");
 }
 
-TEST_F(HashJoinTest, normalizedKey) {
+TEST_P(MultiThreadedHashJoinTest, emptyProbe) {
+  testJoin(
+      {BIGINT()},
+      0,
+      5,
+      1500,
+      5,
+      "SELECT t_k0, t_data, u_k0, u_data FROM "
+      "  t, u "
+      "  WHERE t_k0 = u_k0",
+      "",
+      {},
+      core::JoinType::kInner,
+      true);
+}
+
+TEST_P(MultiThreadedHashJoinTest, normalizedKey) {
   testJoin(
       {BIGINT(), VARCHAR()},
-      1,
-      16000,
-      15000,
+      1600,
+      5,
+      1500,
+      5,
       "SELECT t_k0, t_k1, t_data, u_k0, u_k1, u_data FROM "
       "  t, u "
       "  WHERE t_k0 = u_k0 AND t_k1 = u_k1");
 }
 
-TEST_F(HashJoinTest, normalizedKeyOverflow) {
+TEST_P(MultiThreadedHashJoinTest, normalizedKeyOverflow) {
   testJoin(
       {BIGINT(), VARCHAR(), BIGINT(), BIGINT(), BIGINT(), BIGINT()},
-      1,
-      16000,
-      15000,
+      1600,
+      5,
+      1500,
+      5,
       "SELECT t_k0, t_k1, t_k2, t_k3, t_k4, t_k5, t_data, u_k0, u_k1, u_k2, u_k3, u_k4, u_k5, u_data FROM "
       "  t, u "
       "  WHERE t_k0 = u_k0 AND t_k1 = u_k1 AND t_k2 = u_k2 AND t_k3 = u_k3 AND t_k4 = u_k4 AND t_k5 = u_k5  ");
 }
 
-TEST_F(HashJoinTest, allTypes) {
+TEST_P(MultiThreadedHashJoinTest, allTypes) {
   testJoin(
       {BIGINT(), VARCHAR(), REAL(), DOUBLE(), INTEGER(), SMALLINT(), TINYINT()},
-      1,
-      16000,
-      15000,
+      1600,
+      5,
+      1500,
+      5,
       "SELECT t_k0, t_k1, t_k2, t_k3, t_k4, t_k5, t_k6, t_data, u_k0, u_k1, u_k2, u_k3, u_k4, u_k5, u_k6, u_data FROM "
       "  t, u "
       "  WHERE t_k0 = u_k0 AND t_k1 = u_k1 AND t_k2 = u_k2 AND t_k3 = u_k3 AND t_k4 = u_k4 AND t_k5 = u_k5 AND t_k6 = u_k6 ");
 }
 
-TEST_F(HashJoinTest, filter) {
+TEST_P(MultiThreadedHashJoinTest, filter) {
   testJoin(
       {BIGINT()},
-      1,
-      16000,
-      15000,
+      1600,
+      5,
+      1500,
+      5,
       "SELECT t_k0, t_data, u_k0, u_data FROM "
       "  t, u "
       "  WHERE t_k0 = u_k0 AND ((t_k0 % 100) + (u_k0 % 100)) % 40 < 20",
       "((t_k0 % 100) + (u_k0 % 100)) % 40 < 20");
 }
+
+TEST_P(MultiThreadedHashJoinTest, antiJoinWithNull) {
+  struct {
+    double leftNullRate;
+    double rightNullRate;
+
+    std::string debugString() const {
+      return fmt::format(
+          "leftNullRate: {}, rightNullRate: {}", leftNullRate, rightNullRate);
+    }
+  } testSettings[] = {
+      {0.0, 1.0}, {0.0, 0.1}, {0.1, 1.0}, {0.1, 0.1}, {1.0, 1.0}, {1.0, 0.1}};
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+
+    auto fuzzerOpts = fuzzerOpts_;
+    fuzzerOpts.nullRatio = testData.leftNullRate;
+    fuzzer_.setOptions(fuzzerOpts);
+    const int numLeftBatches = 10;
+    std::vector<RowVectorPtr> leftBatches;
+    leftBatches.reserve(numLeftBatches);
+    for (int i = 0; i < numLeftBatches; ++i) {
+      leftBatches.push_back(fuzzer_.fuzzRow(leftType_));
+    }
+    // The first half number of build (right) side batches having no nulls to
+    // trigger it later during the processing.
+    const int numRightBatches = 50;
+    fuzzerOpts.vectorSize = 5;
+    fuzzerOpts.nullRatio = 0.0;
+    fuzzer_.setOptions(fuzzerOpts);
+    std::vector<RowVectorPtr> rightBatches;
+    rightBatches.reserve(numRightBatches);
+    int i = 0;
+    for (; i < numRightBatches / 2; ++i) {
+      rightBatches.push_back(fuzzer_.fuzzRow(rightType_));
+    }
+    fuzzerOpts.nullRatio = testData.rightNullRate;
+    fuzzer_.setOptions(fuzzerOpts);
+    for (; i < numRightBatches; ++i) {
+      rightBatches.push_back(fuzzer_.fuzzRow(rightType_));
+    }
+
+    testJoin(
+        leftType_,
+        {"t_k2"},
+        leftBatches,
+        rightType_,
+        {"u_k2"},
+        rightBatches,
+        "SELECT t_k1, t_k2 FROM t WHERE t.t_k2 NOT IN (SELECT u_k2 FROM u)",
+        "",
+        {"t_k1", "t_k2"},
+        core::JoinType::kNullAwareAnti);
+  }
+}
+
+TEST_P(MultiThreadedHashJoinTest, rightSemiJoinWithLargeOutput) {
+  const int batchSize = 128;
+  // Build the identical left and right vectors to generate large join outputs.
+  std::vector<RowVectorPtr> leftVectors;
+  for (int i = 0; i < 10; ++i) {
+    leftVectors.push_back(makeRowVector(
+        {"t0", "t1"},
+        {makeFlatVector<int32_t>(batchSize, [](auto row) { return row; }),
+         makeFlatVector<int32_t>(batchSize, [](auto row) { return row; })}));
+  }
+  std::vector<RowVectorPtr> rightVectors;
+  for (int i = 0; i < 10; ++i) {
+    rightVectors.push_back(makeRowVector(
+        {"u0", "u1"},
+        {makeFlatVector<int32_t>(batchSize, [](auto row) { return row; }),
+         makeFlatVector<int32_t>(batchSize, [](auto row) { return row; })}));
+  }
+
+  testJoin(
+      ROW({"t0", "t1"}, {INTEGER(), INTEGER()}),
+      {"t0"},
+      leftVectors,
+      ROW({"u0", "u1"}, {INTEGER(), INTEGER()}),
+      {"u0"},
+      rightVectors,
+      "SELECT u.u1 FROM u WHERE u.u0 IN (SELECT t0 FROM t)",
+      "",
+      {"u1"},
+      core::JoinType::kRightSemi);
+}
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+    HashJoinTest,
+    MultiThreadedHashJoinTest,
+    testing::ValuesIn({TestParam{1}, TestParam{4}}));
+
+// TODO: try to parallelize the following test cases if possible.
 
 TEST_F(HashJoinTest, joinSidesDifferentSchema) {
   // In this join, the tables have different schema. LHS table t has schema
@@ -586,6 +934,149 @@ TEST_F(HashJoinTest, leftSemiJoinWithFilter) {
       "SELECT t.* FROM t WHERE EXISTS (SELECT u0, u1 FROM u WHERE t0 = u0 AND t1 <> u1)");
 }
 
+TEST_F(HashJoinTest, rightSemiJoin) {
+  // leftVector size is greater than rightVector size.
+  auto leftVectors = makeRowVector(
+      {"u0", "u1"},
+      {
+          makeFlatVector<int32_t>(
+              1'234, [](auto row) { return row % 11; }, nullEvery(13)),
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+      });
+
+  auto rightVectors = makeRowVector(
+      {"t0", "t1"},
+      {
+          makeFlatVector<int32_t>(
+              123, [](auto row) { return row % 5; }, nullEvery(7)),
+          makeFlatVector<int32_t>(123, [](auto row) { return row; }),
+      });
+
+  createDuckDbTable("u", {leftVectors});
+  createDuckDbTable("t", {rightVectors});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto op = PlanBuilder(planNodeIdGenerator)
+                .values({leftVectors})
+                .hashJoin(
+                    {"u0"},
+                    {"t0"},
+                    PlanBuilder(planNodeIdGenerator)
+                        .values({rightVectors})
+                        .planNode(),
+                    "",
+                    {"t1"},
+                    core::JoinType::kRightSemi)
+                .planNode();
+
+  assertQuery(op, "SELECT t.t1 FROM t WHERE t.t0 IN (SELECT u0 FROM u)");
+
+  // Make build side larger to test all rows are returned.
+  op =
+      PlanBuilder(planNodeIdGenerator)
+          .values({rightVectors})
+          .hashJoin(
+              {"t0"},
+              {"u0"},
+              PlanBuilder(planNodeIdGenerator).values({leftVectors}).planNode(),
+              "",
+              {"u1"},
+              core::JoinType::kRightSemi)
+          .planNode();
+
+  assertQuery(op, "SELECT u.u1 FROM u WHERE u.u0 IN (SELECT t0 FROM t)");
+
+  // Empty build side.
+  planNodeIdGenerator->reset();
+  op = PlanBuilder(planNodeIdGenerator)
+           .values({leftVectors})
+           .hashJoin(
+               {"u0"},
+               {"t0"},
+               PlanBuilder(planNodeIdGenerator)
+                   .values({rightVectors})
+                   .filter("t0 < 0")
+                   .planNode(),
+               "",
+               {"t1"},
+               core::JoinType::kRightSemi)
+           .planNode();
+
+  auto task = assertQuery(
+      op, "SELECT t.t1 FROM t WHERE t.t0 IN (SELECT u0 FROM u) AND t.t0 < 0");
+  EXPECT_EQ(getInputPositions(task, 1), 0);
+}
+
+TEST_F(HashJoinTest, rightSemiJoinWithFilter) {
+  auto leftVectors = makeRowVector(
+      {"u0", "u1"},
+      {
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row; }),
+      });
+
+  auto rightVectors = makeRowVector(
+      {"t0", "t1"},
+      {
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row; }),
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row; }),
+      });
+
+  createDuckDbTable("u", {leftVectors});
+  createDuckDbTable("t", {rightVectors});
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  core::PlanNodeId hashJoinId;
+  auto plan = [&](const std::string& filter) -> core::PlanNodePtr {
+    return PlanBuilder(planNodeIdGenerator)
+        .values({leftVectors})
+        .hashJoin(
+            {"u0"},
+            {"t0"},
+            PlanBuilder(planNodeIdGenerator).values({rightVectors}).planNode(),
+            filter,
+            {"t0", "t1"},
+            core::JoinType::kRightSemi)
+        .capturePlanNodeId(hashJoinId)
+        .planNode();
+  };
+  {
+    // Always true filter.
+    auto task = assertQuery(
+        plan("u1 > -1"),
+        "SELECT t.* FROM t WHERE EXISTS (SELECT u0 FROM u WHERE t0 = u0 AND u1 > -1)");
+    EXPECT_EQ(getOutputPositions(task, hashJoinId, "HashProbe"), 1'000);
+  }
+  {
+    // Always true filter.
+    auto task = assertQuery(
+        plan("t1 > -1"),
+        "SELECT t.* FROM t WHERE EXISTS (SELECT u0 FROM u WHERE t0 = u0 AND t1 > -1)");
+    EXPECT_EQ(getOutputPositions(task, hashJoinId, "HashProbe"), 1'000);
+  }
+  {
+    // Always false filter.
+    auto task = assertQuery(
+        plan("u1 > 100000"),
+        "SELECT t.* FROM t WHERE EXISTS (SELECT u0 FROM u WHERE t0 = u0 AND u1 > 100000)");
+    EXPECT_EQ(getOutputPositions(task, hashJoinId, "HashProbe"), 0);
+  }
+  {
+    // Always false filter.
+    auto task = assertQuery(
+        plan("t1 > 100000"),
+        "SELECT t.* FROM t WHERE EXISTS (SELECT u0 FROM u WHERE t0 = u0 AND t1 > 100000)");
+    EXPECT_EQ(getOutputPositions(task, hashJoinId, "HashProbe"), 0);
+  }
+  {
+    // Selective filter.
+    auto task = assertQuery(
+        plan("u1 % 5 = 0"),
+        "SELECT t.* FROM t WHERE EXISTS (SELECT u0, u1 FROM u WHERE t0 = u0 AND u1 % 5 = 0)");
+    EXPECT_EQ(getOutputPositions(task, hashJoinId, "HashProbe"), 200);
+  }
+}
+
 TEST_F(HashJoinTest, antiJoin) {
   auto leftVectors = makeRowVector({
       makeFlatVector<int32_t>(
@@ -613,7 +1104,7 @@ TEST_F(HashJoinTest, antiJoin) {
                         .planNode(),
                     "",
                     {"c1"},
-                    core::JoinType::kAnti)
+                    core::JoinType::kNullAwareAnti)
                 .planNode();
 
   assertQuery(
@@ -633,7 +1124,7 @@ TEST_F(HashJoinTest, antiJoin) {
                    .planNode(),
                "",
                {"c1"},
-               core::JoinType::kAnti)
+               core::JoinType::kNullAwareAnti)
            .planNode();
 
   assertQuery(
@@ -652,13 +1143,13 @@ TEST_F(HashJoinTest, antiJoin) {
                    .planNode(),
                "",
                {"c1"},
-               core::JoinType::kAnti)
+               core::JoinType::kNullAwareAnti)
            .planNode();
 
   assertQuery(op, "SELECT t.c1 FROM t WHERE t.c0 NOT IN (SELECT c0 FROM u)");
 }
 
-TEST_F(HashJoinTest, antiJoinWithFilter) {
+TEST_F(HashJoinTest, nullAwareAntiJoinWithFilter) {
   auto leftVectors = makeRowVector(
       {"t0", "t1"},
       {
@@ -687,11 +1178,10 @@ TEST_F(HashJoinTest, antiJoinWithFilter) {
                         .planNode(),
                     "",
                     {"t0", "t1"},
-                    core::JoinType::kAnti)
+                    core::JoinType::kNullAwareAnti)
                 .planNode();
 
-  assertQuery(
-      op, "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0)");
+  assertQuery(op, "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u)");
 
   op = PlanBuilder(planNodeIdGenerator)
            .values({leftVectors})
@@ -703,12 +1193,98 @@ TEST_F(HashJoinTest, antiJoinWithFilter) {
                    .planNode(),
                "t1 != u1",
                {"t0", "t1"},
-               core::JoinType::kAnti)
+               core::JoinType::kNullAwareAnti)
            .planNode();
 
   assertQuery(
       op,
-      "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 <> u1)");
+      "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u WHERE t1 <> u1)");
+}
+
+TEST_F(HashJoinTest, nullAwareAntiJoinWithFilterAndNullKey) {
+  auto leftVectors = makeRowVector(
+      {"t0", "t1"},
+      {
+          makeNullableFlatVector<int32_t>({std::nullopt, 1, 2}),
+          makeFlatVector<int32_t>({0, 1, 2}),
+      });
+  auto rightVectors = makeRowVector(
+      {"u0", "u1"},
+      {
+          makeNullableFlatVector<int32_t>({std::nullopt, 2, 3}),
+          makeFlatVector<int32_t>({0, 2, 3}),
+      });
+  createDuckDbTable("t", {leftVectors});
+  createDuckDbTable("u", {rightVectors});
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  for (const std::string& filter : {"u1 > t1", "u1 * t1 > 0"}) {
+    auto sql = fmt::format(
+        "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u WHERE {})",
+        filter);
+    auto op = PlanBuilder(planNodeIdGenerator)
+                  .values({leftVectors})
+                  .hashJoin(
+                      {"t0"},
+                      {"u0"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .values({rightVectors})
+                          .planNode(),
+                      filter,
+                      {"t0", "t1"},
+                      core::JoinType::kNullAwareAnti)
+                  .planNode();
+    assertQuery(op, sql);
+  }
+}
+
+TEST_F(HashJoinTest, nullAwareAntiJoinWithFilterOnNullableColumn) {
+  auto runTest = [this](
+                     const std::string& desc,
+                     const std::vector<VectorPtr>& leftColumns,
+                     const std::vector<VectorPtr>& rightColumns) {
+    SCOPED_TRACE(desc);
+    auto left = makeRowVector({"t0", "t1"}, leftColumns);
+    auto right = makeRowVector({"u0", "u1"}, rightColumns);
+    createDuckDbTable("t", {left});
+    createDuckDbTable("u", {right});
+    auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    auto op =
+        PlanBuilder(planNodeIdGenerator)
+            .values({left})
+            .hashJoin(
+                {"t0"},
+                {"u0"},
+                PlanBuilder(planNodeIdGenerator).values({right}).planNode(),
+                "t1 <> u1",
+                {"t0", "t1"},
+                core::JoinType::kNullAwareAnti)
+            .planNode();
+    assertQuery(
+        op,
+        "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u WHERE t1 <> u1)");
+  };
+  runTest(
+      "null filter column",
+      {
+          makeFlatVector<int32_t>(1'000, [](auto row) { return row % 11; }),
+          makeFlatVector<int32_t>(1'000, folly::identity, nullEvery(97)),
+      },
+      {
+          makeFlatVector<int32_t>(1'234, [](auto row) { return row % 5; }),
+          makeFlatVector<int32_t>(1'234, folly::identity, nullEvery(91)),
+      });
+  runTest(
+      "null filter and key column",
+      {
+          makeFlatVector<int32_t>(
+              1'000, [](auto row) { return row % 11; }, nullEvery(23)),
+          makeFlatVector<int32_t>(1'000, folly::identity, nullEvery(29)),
+      },
+      {
+          makeFlatVector<int32_t>(
+              1'234, [](auto row) { return row % 5; }, nullEvery(31)),
+          makeFlatVector<int32_t>(1'234, folly::identity, nullEvery(37)),
+      });
 }
 
 TEST_F(HashJoinTest, dynamicFilters) {
@@ -805,8 +1381,31 @@ TEST_F(HashJoinTest, dynamicFilters) {
     EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
     EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
     EXPECT_LT(getInputPositions(task, 1), numRowsProbe * numSplits);
-  }
 
+    // Right semi join.
+    op = PlanBuilder(planNodeIdGenerator)
+             .tableScan(probeType)
+             .capturePlanNodeId(leftScanId)
+             .hashJoin(
+                 {"c0"},
+                 {"u_c0"},
+                 buildSide,
+                 "",
+                 {"c0", "c1"},
+                 core::JoinType::kRightSemi)
+             .project({"c0", "c1 + 1"})
+             .planNode();
+
+    task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c0, t.c1 + 1 FROM t WHERE t.c0 IN (SELECT c0 FROM u)");
+    EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
+    EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
+    EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
+    EXPECT_LT(getInputPositions(task, 1), numRowsProbe * numSplits);
+  }
   // Basic push-down with column names projected out of the table scan having
   // different names than column names in the files.
   {
@@ -955,6 +1554,30 @@ TEST_F(HashJoinTest, dynamicFilters) {
                  "",
                  {"c1"},
                  core::JoinType::kLeftSemi)
+             .project({"c1 + 1"})
+             .planNode();
+
+    task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .splits(leftScanId, makeHiveConnectorSplits(leftFiles))
+            .assertResults(
+                "SELECT t.c1 + 1 FROM t WHERE t.c0 IN (SELECT c0 FROM u) AND t.c0 < 200");
+    EXPECT_EQ(1, getFiltersProduced(task, 1).sum);
+    EXPECT_EQ(1, getFiltersAccepted(task, 0).sum);
+    EXPECT_GT(getReplacedWithFilterRows(task, 1).sum, 0);
+    EXPECT_LT(getInputPositions(task, 1), numRowsProbe * numSplits);
+
+    // Right semi join.
+    op = PlanBuilder(planNodeIdGenerator)
+             .tableScan(probeType, {"c0 < 200::INTEGER"})
+             .capturePlanNodeId(leftScanId)
+             .hashJoin(
+                 {"c0"},
+                 {"u_c0"},
+                 buildSide,
+                 "",
+                 {"c1"},
+                 core::JoinType::kRightSemi)
              .project({"c1 + 1"})
              .planNode();
 

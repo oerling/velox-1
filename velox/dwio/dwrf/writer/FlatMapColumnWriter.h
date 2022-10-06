@@ -135,6 +135,24 @@ class ValueWriter {
     return 0;
   }
 
+  // used for struct encoding writer
+  uint64_t writeBuffers(
+      const VectorPtr& values,
+      const Ranges& nonNullRanges,
+      const BufferPtr& inMapBuffer /* all 1 */) {
+    if (nonNullRanges.size()) {
+      inMap_->add(
+          inMapBuffer->as<char>(),
+          Ranges::of(0, nonNullRanges.size()),
+          nullptr);
+    }
+
+    if (values) {
+      return columnWriter_->write(values, nonNullRanges);
+    }
+    return 0;
+  }
+
   void backfill(uint32_t count) {
     if (count == 0) {
       return;
@@ -251,6 +269,10 @@ class FlatMapColumnWriter : public BaseColumnWriter {
 
   ValueWriter& getValueWriter(KeyType key, uint32_t inMapSize);
 
+  // write() calls writeMap() or writeRow() depending on input type
+  uint64_t writeMap(const VectorPtr& slice, const Ranges& ranges);
+  uint64_t writeRow(const VectorPtr& slice, const Ranges& ranges);
+
   void clearNodes();
 
   // Map of value writers for each key in the dictionary. Needs referential
@@ -271,6 +293,12 @@ class FlatMapColumnWriter : public BaseColumnWriter {
   std::unique_ptr<typename TypeInfo<K>::StatisticsBuilder> keyFileStatsBuilder_;
   std::unique_ptr<const ValueStatisticsBuilder> valueFileStatsBuilder_;
   const uint32_t maxKeyCount_;
+
+  // Stores column keys as string in case of StringView pointers
+  std::vector<std::string> stringKeys_;
+
+  // Stores column keys if writing with RowVector input
+  std::vector<KeyType> structKeys_;
 };
 
 template <>

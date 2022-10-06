@@ -41,9 +41,10 @@ class DwrfData : public dwio::common::FormatData {
   void readNulls(
       vector_size_t numValues,
       const uint64_t* FOLLY_NULLABLE incomingNulls,
-      BufferPtr& nulls) override;
+      BufferPtr& nulls,
+      bool nullsOnly = false) override;
 
-  uint64_t skipNulls(uint64_t numValues) override;
+  uint64_t skipNulls(uint64_t numValues, bool nullsOnly = false) override;
 
   uint64_t skip(uint64_t numValues) override {
     return skipNulls(numValues);
@@ -52,7 +53,14 @@ class DwrfData : public dwio::common::FormatData {
   std::vector<uint32_t> filterRowGroups(
       const common::ScanSpec& scanSpec,
       uint64_t rowsPerRowGroup,
-      const dwio::common::StatsContext& context) override;
+      const dwio::common::StatsContext& writerContext) override;
+
+  // TODO: Refactor filterRowGroups() and implement rowGroupMatches() for DWRF.
+  virtual bool rowGroupMatches(
+      uint32_t rowGroupId,
+      velox::common::Filter* FOLLY_NULLABLE filter) override {
+    VELOX_UNREACHABLE();
+  }
 
   bool hasNulls() const override {
     return notNullDecoder_ != nullptr;

@@ -132,6 +132,9 @@ struct OperatorStats {
   // Total rows written for spilling.
   uint64_t spilledRows{0};
 
+  // Total spilled partitions.
+  uint32_t spilledPartitions{0};
+
   std::unordered_map<std::string, RuntimeMetric> runtimeStats;
 
   int numDrivers = 0;
@@ -161,7 +164,9 @@ struct OperatorStats {
 
 class OperatorCtx {
  public:
-  explicit OperatorCtx(DriverCtx* driverCtx);
+  explicit OperatorCtx(
+      DriverCtx* driverCtx,
+      const std::string& operatorType = "");
 
   const std::shared_ptr<Task>& task() const {
     return driverCtx_->task;
@@ -245,17 +250,17 @@ class Operator {
   // corresponds. 'operatorType' is a label for use in stats.
   Operator(
       DriverCtx* driverCtx,
-      std::shared_ptr<const RowType> outputType,
+      RowTypePtr outputType,
       int32_t operatorId,
       std::string planNodeId,
-      std::string operatorType)
-      : operatorCtx_(std::make_unique<OperatorCtx>(driverCtx)),
-        stats_(
-            operatorId,
-            driverCtx->pipelineId,
-            std::move(planNodeId),
-            std::move(operatorType)),
-        outputType_(std::move(outputType)) {}
+      std::string operatorType);
+
+  /// This is only used by test to create mock operator.
+  Operator(
+      int32_t operatorId,
+      int32_t pipelineId,
+      std::string planNodeId,
+      std::string operatorType);
 
   virtual ~Operator() = default;
 
@@ -265,6 +270,7 @@ class Operator {
 
   // Adds input. Not used if operator is a source operator, e.g. the first
   // operator in the pipeline.
+  // @param input Non-empty input vector.
   virtual void addInput(RowVectorPtr input) = 0;
 
   // Informs 'this' that addInput will no longer be called. This means
@@ -280,6 +286,7 @@ class Operator {
   // for outside causes. isBlocked distinguishes between the
   // cases. Sink operator, e.g. the last operator in the pipeline, must return
   // nullptr and pass results to the consumer through a custom mechanism.
+  // @return nullptr or a non-empty output vector.
   virtual RowVectorPtr getOutput() = 0;
 
   // Returns kNotBlocked if 'this' is not prevented from
@@ -339,6 +346,8 @@ class Operator {
   virtual void close() {
     input_ = nullptr;
     results_.clear();
+    // Release the unused memory reservation on close.
+    operatorCtx_->pool()->getMemoryUsageTracker()->release();
   }
 
   // Returns true if 'this' never has more output rows than input rows.
@@ -401,7 +410,7 @@ class Operator {
 
   std::unique_ptr<OperatorCtx> operatorCtx_;
   OperatorStats stats_;
-  const std::shared_ptr<const RowType> outputType_;
+  const RowTypePtr outputType_;
 
   // Holds the last data from addInput until it is processed. Reset after the
   // input is processed.
@@ -426,7 +435,7 @@ class Operator {
 /// Given a row type returns indices for the specified subset of columns.
 std::vector<column_index_t> toChannels(
     const RowTypePtr& rowType,
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& exprs);
+    const std::vector<core::TypedExprPtr>& exprs);
 
 column_index_t exprToChannel(const core::ITypedExpr* expr, const TypePtr& type);
 
@@ -444,7 +453,7 @@ class SourceOperator : public Operator {
  public:
   SourceOperator(
       DriverCtx* driverCtx,
-      std::shared_ptr<const RowType> outputType,
+      RowTypePtr outputType,
       int32_t operatorId,
       const std::string& planNodeId,
       const std::string& operatorType)

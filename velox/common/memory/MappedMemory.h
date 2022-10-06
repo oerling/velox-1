@@ -24,6 +24,7 @@
 #include <unordered_set>
 
 #include <gflags/gflags.h>
+#include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
 #include "velox/common/time/Timer.h"
@@ -265,7 +266,7 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
     void findRun(
         uint64_t offset,
         int32_t* FOLLY_NONNULL index,
-        int32_t* FOLLY_NONNULL offsetInRun);
+        int32_t* FOLLY_NONNULL offsetInRun) const;
 
    private:
     MappedMemory* FOLLY_NONNULL mappedMemory_;
@@ -409,11 +410,11 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
   // limit of 'this'. This function is not virtual but calls the virtual
   // functions allocate and allocateContiguous, which can track sizes and
   // enforce caps etc.
-  void* FOLLY_NULLABLE
+  virtual void* FOLLY_NULLABLE
   allocateBytes(uint64_t bytes, uint64_t maxMallocSize = kMaxMallocBytes);
 
   // Frees memory allocated with allocateBytes().
-  void freeBytes(
+  virtual void freeBytes(
       void* FOLLY_NONNULL p,
       uint64_t size,
       uint64_t maxMallocSize = kMaxMallocBytes) noexcept;
@@ -450,6 +451,13 @@ class MappedMemory : public std::enable_shared_from_this<MappedMemory> {
         totalSmallAllocateBytes_,
         totalSizeClassAllocateBytes_,
         totalLargeAllocateBytes_};
+  }
+
+  // clears counters to revert effect of previous tests.
+  static void testingClearAllocateBytesStats() {
+    totalSmallAllocateBytes_ = 0;
+    totalSizeClassAllocateBytes_ = 0;
+    totalLargeAllocateBytes_ = 0;
   }
 
   virtual Stats stats() const {
@@ -605,11 +613,12 @@ struct StlMappedMemoryAllocator {
   }
 
   T* FOLLY_NONNULL allocate(std::size_t n) {
-    return reinterpret_cast<T*>(allocator_->allocateBytes(n * sizeof(T)));
+    return reinterpret_cast<T*>(
+        allocator_->allocateBytes(checkedMultiply(n, sizeof(T))));
   }
 
-  void deallocate(T* FOLLY_NONNULL p, std::size_t n) noexcept {
-    allocator_->freeBytes(p, n * sizeof(T));
+  void deallocate(T* FOLLY_NONNULL p, std::size_t n) {
+    allocator_->freeBytes(p, checkedMultiply(n, sizeof(T)));
   }
 
   MappedMemory* FOLLY_NONNULL allocator() const {

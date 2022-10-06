@@ -68,7 +68,7 @@ void printResults(const std::vector<RowVectorPtr>& results) {
       std::cout << vector->type()->asRow().toString() << std::endl;
       printType = false;
     }
-    for (size_t i = 0; i < vector->size(); ++i) {
+    for (vector_size_t i = 0; i < vector->size(); ++i) {
       std::cout << vector->toString(i) << std::endl;
     }
   }
@@ -85,6 +85,7 @@ DEFINE_bool(
     false,
     "Include custom statistics along with execution statistics");
 DEFINE_bool(include_results, false, "Include results in the output");
+DEFINE_bool(use_native_parquet_reader, true, "Use Native Parquet Reader");
 DEFINE_int32(num_drivers, 4, "Number of drivers");
 DEFINE_string(data_format, "parquet", "Data format");
 DEFINE_int32(num_splits_per_file, 10, "Number of splits per file");
@@ -98,7 +99,11 @@ class TpchBenchmark {
     functions::prestosql::registerAllScalarFunctions();
     parse::registerTypeResolver();
     filesystems::registerLocalFileSystem();
-    parquet::registerParquetReaderFactory();
+    if (FLAGS_use_native_parquet_reader) {
+      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+    } else {
+      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::DUCKDB);
+    }
     dwrf::registerDwrfReaderFactory();
     auto hiveConnector =
         connector::getConnectorFactory(
@@ -157,6 +162,21 @@ BENCHMARK(q6) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q7) {
+  const auto planContext = queryBuilder->getQueryPlan(7);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q8) {
+  const auto planContext = queryBuilder->getQueryPlan(8);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q9) {
+  const auto planContext = queryBuilder->getQueryPlan(9);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q10) {
   const auto planContext = queryBuilder->getQueryPlan(10);
   benchmark.run(planContext);
@@ -177,6 +197,16 @@ BENCHMARK(q14) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q15) {
+  const auto planContext = queryBuilder->getQueryPlan(15);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q16) {
+  const auto planContext = queryBuilder->getQueryPlan(16);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q18) {
   const auto planContext = queryBuilder->getQueryPlan(18);
   benchmark.run(planContext);
@@ -184,6 +214,11 @@ BENCHMARK(q18) {
 
 BENCHMARK(q19) {
   const auto planContext = queryBuilder->getQueryPlan(19);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q22) {
+  const auto planContext = queryBuilder->getQueryPlan(22);
   benchmark.run(planContext);
 }
 

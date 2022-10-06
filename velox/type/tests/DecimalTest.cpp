@@ -16,7 +16,8 @@
 
 #include <gtest/gtest.h>
 
-#include "velox/type/DecimalUtils.h"
+#include "velox/common/base/tests/GTestUtils.h"
+#include "velox/type/DecimalUtil.h"
 
 namespace facebook::velox {
 namespace {
@@ -39,24 +40,78 @@ TEST(DecimalTest, toString) {
 }
 
 TEST(DecimalTest, decimalToString) {
-  ASSERT_EQ("1000", DecimalUtil::toString(ShortDecimal(1000), DECIMAL(10, 0)));
-  ASSERT_EQ("1.000", DecimalUtil::toString(ShortDecimal(1000), DECIMAL(10, 3)));
   ASSERT_EQ(
-      "0.001000", DecimalUtil::toString(ShortDecimal(1000), DECIMAL(10, 6)));
+      "1000",
+      DecimalUtil::toString(UnscaledShortDecimal(1000), DECIMAL(10, 0)));
   ASSERT_EQ(
-      "-0.001000", DecimalUtil::toString(ShortDecimal(-1000), DECIMAL(10, 6)));
+      "1.000",
+      DecimalUtil::toString(UnscaledShortDecimal(1000), DECIMAL(10, 3)));
+  ASSERT_EQ(
+      "0.001000",
+      DecimalUtil::toString(UnscaledShortDecimal(1000), DECIMAL(10, 6)));
+  ASSERT_EQ(
+      "-0.001000",
+      DecimalUtil::toString(UnscaledShortDecimal(-1000), DECIMAL(10, 6)));
   ASSERT_EQ(
       "-123.451000",
-      DecimalUtil::toString(ShortDecimal(-123451000), DECIMAL(10, 6)));
+      DecimalUtil::toString(UnscaledShortDecimal(-123451000), DECIMAL(10, 6)));
 
-  ASSERT_EQ("1000", DecimalUtil::toString(LongDecimal(1000), DECIMAL(20, 0)));
-  ASSERT_EQ("1.000", DecimalUtil::toString(LongDecimal(1000), DECIMAL(20, 3)));
+  ASSERT_EQ(
+      "1000", DecimalUtil::toString(UnscaledLongDecimal(1000), DECIMAL(20, 0)));
+  ASSERT_EQ(
+      "1.000",
+      DecimalUtil::toString(UnscaledLongDecimal(1000), DECIMAL(20, 3)));
   ASSERT_EQ(
       "0.0000001000",
-      DecimalUtil::toString(LongDecimal(1000), DECIMAL(20, 10)));
+      DecimalUtil::toString(UnscaledLongDecimal(1000), DECIMAL(20, 10)));
   ASSERT_EQ(
-      "-0.001000", DecimalUtil::toString(LongDecimal(-1000), DECIMAL(20, 6)));
-  ASSERT_EQ("0", DecimalUtil::toString(LongDecimal(0), DECIMAL(20, 9)));
+      "-0.001000",
+      DecimalUtil::toString(UnscaledLongDecimal(-1000), DECIMAL(20, 6)));
+  ASSERT_EQ("0", DecimalUtil::toString(UnscaledLongDecimal(0), DECIMAL(20, 9)));
+
+  const auto minShortDecimal = DecimalUtil::toString(
+      std::numeric_limits<UnscaledShortDecimal>::min(), DECIMAL(18, 0));
+  ASSERT_EQ("-999999999999999999", minShortDecimal);
+  // Additional 1 for negative sign.
+  ASSERT_EQ(minShortDecimal.length(), 19);
+
+  const auto maxShortDecimal = DecimalUtil::toString(
+      std::numeric_limits<UnscaledShortDecimal>::max(), DECIMAL(18, 0));
+  ASSERT_EQ("999999999999999999", maxShortDecimal);
+  ASSERT_EQ(maxShortDecimal.length(), 18);
+
+  const auto minLongDecimal = DecimalUtil::toString(
+      std::numeric_limits<UnscaledLongDecimal>::min(), DECIMAL(38, 0));
+  ASSERT_EQ("-99999999999999999999999999999999999999", minLongDecimal);
+  // Additional 1 for negative sign.
+  ASSERT_EQ(minLongDecimal.length(), 39);
+
+  const auto maxLongDecimal = DecimalUtil::toString(
+      std::numeric_limits<UnscaledLongDecimal>::max(), DECIMAL(38, 0));
+  ASSERT_EQ("99999999999999999999999999999999999999", maxLongDecimal);
+  ASSERT_EQ(maxLongDecimal.length(), 38);
 }
+
+TEST(DecimalTest, overloads) {
+  ASSERT_EQ(UnscaledShortDecimal(3), UnscaledShortDecimal(10) / 3);
+  ASSERT_EQ(UnscaledLongDecimal(33), UnscaledLongDecimal(100) / 3);
+  ASSERT_EQ(UnscaledLongDecimal(300), UnscaledLongDecimal(100) * 3);
+}
+
+DEBUG_ONLY_TEST(DecimalTest, limits) {
+  VELOX_ASSERT_THROW(
+      UnscaledShortDecimal::max() + UnscaledShortDecimal(1),
+      "Value '1000000000000000000' is not in the range of ShortDecimal Type");
+  VELOX_ASSERT_THROW(
+      UnscaledShortDecimal::min() - UnscaledShortDecimal(1),
+      "Value '-1000000000000000000' is not in the range of ShortDecimal Type");
+  VELOX_ASSERT_THROW(
+      UnscaledLongDecimal::max() + UnscaledLongDecimal(1),
+      "Value '100000000000000000000000000000000000000' is not in the range of LongDecimal Type");
+  VELOX_ASSERT_THROW(
+      UnscaledLongDecimal::min() - UnscaledLongDecimal(1),
+      "Value '-100000000000000000000000000000000000000' is not in the range of LongDecimal Type");
+}
+
 } // namespace
 } // namespace facebook::velox

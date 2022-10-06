@@ -89,16 +89,16 @@ struct UniqueValueHasher {
   size_t operator()(const UniqueValue& value) const {
     auto size = value.size();
     if (size <= sizeof(int64_t)) {
-      return simd::crc32U64(value.data(), 1);
+      return simd::crc32U64(0, value.data());
     }
 
-    uint64_t hash = 1;
+    uint32_t hash = 0;
     auto data = reinterpret_cast<const uint64_t*>(value.data());
 
     size_t wordIndex = 0;
     auto numFullWords = size / 8;
     for (; wordIndex < numFullWords; ++wordIndex) {
-      hash = simd::crc32U64(*(data + wordIndex), hash);
+      hash = simd::crc32U64(hash, *(data + wordIndex));
     }
 
     auto numBytesRemaining = size - wordIndex * 8;
@@ -106,7 +106,7 @@ struct UniqueValueHasher {
       auto lastWord = bits::loadPartialWord(
           reinterpret_cast<const uint8_t*>(data + wordIndex),
           numBytesRemaining);
-      hash = simd::crc32U64(lastWord, hash);
+      hash = simd::crc32U64(hash, lastWord);
     }
 
     return hash;
@@ -175,13 +175,22 @@ class VectorHasher {
 
   static constexpr uint64_t kNullHash = BaseVector::kNullHash;
 
-  // Computes a hash for 'rows' in 'values' and stores it in 'result'.
-  // If 'mix' is true, mixes the hash with existing value in 'result'.
-  void hash(
-      const BaseVector& values,
-      const SelectivityVector& rows,
-      bool mix,
-      raw_vector<uint64_t>& result);
+  // Decodes the 'vector' in preparation for calling hash() or
+  // computeValueIds(). The decoded vector can be accessed via decodedVector()
+  // getter.
+  void decode(const BaseVector& vector, const SelectivityVector& rows) {
+    decoded_.decode(vector, rows);
+  }
+
+  DecodedVector& decodedVector() {
+    return decoded_;
+  }
+
+  // Computes a hash for 'rows' in the vector previously decoded via decode()
+  // call and stores it in 'result'. If 'mix' is true, mixes the hash with
+  // existing value in 'result'.
+  void
+  hash(const SelectivityVector& rows, bool mix, raw_vector<uint64_t>& result);
 
   // Computes a hash for 'rows' using precomputedHash_ (just like from a const
   // vector) and stores it in 'result'.
@@ -195,16 +204,15 @@ class VectorHasher {
   // precomputedHash_. Used for constant partition keys.
   void precompute(const BaseVector& value);
 
-  // Computes a normalized key for 'rows' in 'values' and stores this
-  // in 'result'. If this is not the first hasher with normalized
-  // keys, updates the partially computed normalized key in
+  // Computes a normalized key for 'rows' in the vector previously decoded via
+  // decode() call and stores this in 'result'. If this is not the first hasher
+  // with normalized keys, updates the partially computed normalized key in
   // 'result'. Returns true if all the values could be mapped to the
   // normalized key range. If some values could not be mapped
   // the statistics are updated to reflect the new values. This
   // behavior corresponds to group by, where we must rehash if all the
   // new keys could not be represented.
   bool computeValueIds(
-      const BaseVector& values,
       const SelectivityVector& rows,
       raw_vector<uint64_t>& result);
 
@@ -282,14 +290,6 @@ class VectorHasher {
 
   bool isRange() const {
     return isRange_;
-  }
-
-  void decode(const BaseVector& vector, const SelectivityVector& rows) {
-    decoded_.decode(vector, rows);
-  }
-
-  const DecodedVector& decodedVector() const {
-    return decoded_;
   }
 
   static bool typeKindSupportsValueIds(TypeKind kind) {
@@ -433,6 +433,7 @@ class VectorHasher {
       const T* values,
       const SelectivityVector& rows,
       uint64_t* result) {
+    VELOX_DCHECK(isRange_);
     if (!isRange_) {
       return false;
     }
@@ -613,6 +614,7 @@ inline uint64_t VectorHasher::valueId(StringView value) {
     }
     return number - min_ + 1;
   }
+
   UniqueValue unique(data, size);
   unique.setId(uniqueValues_.size() + 1);
   auto pair = uniqueValues_.insert(unique);

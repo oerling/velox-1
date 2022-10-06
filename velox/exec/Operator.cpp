@@ -18,6 +18,7 @@
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 
+#include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/process/ProcessBase.h"
 #include "velox/expression/Expr.h"
 
@@ -30,8 +31,7 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
       : execCtx_(execCtx) {}
 
   std::unique_ptr<exec::ExprSet> compile(
-      const std::shared_ptr<const core::ITypedExpr>& expression)
-      const override {
+      const core::TypedExprPtr& expression) const override {
     auto expressions = {expression};
     return std::make_unique<exec::ExprSet>(std::move(expressions), execCtx_);
   }
@@ -44,7 +44,7 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
     exec::EvalCtx context(execCtx_, exprSet, input.get());
 
     std::vector<VectorPtr> results = {*result};
-    exprSet->eval(0, 1, true, rows, &context, &results);
+    exprSet->eval(0, 1, true, rows, context, results);
 
     *result = results[0];
   }
@@ -54,8 +54,8 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
 };
 } // namespace
 
-OperatorCtx::OperatorCtx(DriverCtx* driverCtx)
-    : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorPool()) {}
+OperatorCtx::OperatorCtx(DriverCtx* driverCtx, const std::string& operatorType)
+    : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorPool(operatorType)) {}
 
 core::ExecCtx* OperatorCtx::execCtx() const {
   if (!execCtx_) {
@@ -80,6 +80,44 @@ OperatorCtx::createConnectorQueryCtx(
       driverCtx_->task->queryCtx()->mappedMemory(),
       fmt::format("{}.{}", driverCtx_->task->taskId(), planNodeId));
 }
+
+Operator::Operator(
+    DriverCtx* driverCtx,
+    RowTypePtr outputType,
+    int32_t operatorId,
+    std::string planNodeId,
+    std::string operatorType)
+    : operatorCtx_(std::make_unique<OperatorCtx>(driverCtx, operatorType)),
+      stats_(
+          operatorId,
+          driverCtx->pipelineId,
+          std::move(planNodeId),
+          std::move(operatorType)),
+      outputType_(std::move(outputType)) {
+  auto memoryUsageTracker = pool()->getMemoryUsageTracker();
+  if (memoryUsageTracker) {
+    memoryUsageTracker->setMakeMemoryCapExceededMessage(
+        [&](memory::MemoryUsageTracker& tracker) {
+          VELOX_DCHECK(pool()->getMemoryUsageTracker().get() == &tracker);
+          std::stringstream out;
+          out << "\nFailed Operator: " << stats_.operatorType << "."
+              << stats_.operatorId << ": "
+              << succinctBytes(tracker.getCurrentTotalBytes());
+          return out.str();
+        });
+  }
+}
+
+Operator::Operator(
+    int32_t operatorId,
+    int32_t pipelineId,
+    std::string planNodeId,
+    std::string operatorType)
+    : stats_(
+          operatorId,
+          pipelineId,
+          std::move(planNodeId),
+          std::move(operatorType)) {}
 
 std::vector<std::unique_ptr<Operator::PlanNodeTranslator>>&
 Operator::translators() {
@@ -222,7 +260,7 @@ std::string Operator::toString() const {
 
 std::vector<column_index_t> toChannels(
     const RowTypePtr& rowType,
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& exprs) {
+    const std::vector<core::TypedExprPtr>& exprs) {
   std::vector<column_index_t> channels;
   channels.reserve(exprs.size());
   for (const auto& expr : exprs) {
@@ -306,6 +344,7 @@ void OperatorStats::add(const OperatorStats& other) {
   numDrivers += other.numDrivers;
   spilledBytes += other.spilledBytes;
   spilledRows += other.spilledRows;
+  spilledPartitions += other.spilledPartitions;
 }
 
 void OperatorStats::clear() {

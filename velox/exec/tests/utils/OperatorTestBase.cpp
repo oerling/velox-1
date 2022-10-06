@@ -16,6 +16,7 @@
 
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/dwio/common/DataSink.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
@@ -26,6 +27,8 @@
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
 
+using namespace facebook::velox::common::testutil;
+
 namespace facebook::velox::exec::test {
 
 // static
@@ -34,15 +37,20 @@ std::shared_ptr<cache::AsyncDataCache> OperatorTestBase::asyncDataCache_;
 OperatorTestBase::OperatorTestBase() {
   using memory::MappedMemory;
   facebook::velox::exec::ExchangeSource::registerFactory();
-  if (!isRegisteredVectorSerde()) {
-    velox::serializer::presto::PrestoVectorSerde::registerVectorSerde();
-  }
   parse::registerTypeResolver();
+}
+
+void OperatorTestBase::registerVectorSerde() {
+  velox::serializer::presto::PrestoVectorSerde::registerVectorSerde();
 }
 
 OperatorTestBase::~OperatorTestBase() {
   // Revert to default process-wide MappedMemory.
   memory::MappedMemory::setDefaultInstance(nullptr);
+}
+
+void OperatorTestBase::TearDownTestCase() {
+  Task::testingWaitForAllTasksToBeDeleted();
 }
 
 void OperatorTestBase::SetUp() {
@@ -53,10 +61,14 @@ void OperatorTestBase::SetUp() {
         memory::MappedMemory::createDefaultInstance(), 4UL << 30);
   }
   memory::MappedMemory::setDefaultInstance(asyncDataCache_.get());
+  if (!isRegisteredVectorSerde()) {
+    this->registerVectorSerde();
+  }
 }
 
 void OperatorTestBase::SetUpTestCase() {
   functions::prestosql::registerAllScalarFunctions();
+  TestValue::enable();
 }
 
 std::shared_ptr<Task> OperatorTestBase::assertQuery(
@@ -137,10 +149,11 @@ std::shared_ptr<core::FieldAccessTypedExpr> OperatorTestBase::toFieldExpr(
       rowType->findChild(name), name);
 }
 
-std::shared_ptr<const core::ITypedExpr> OperatorTestBase::parseExpr(
+core::TypedExprPtr OperatorTestBase::parseExpr(
     const std::string& text,
-    RowTypePtr rowType) {
-  auto untyped = parse::parseExpr(text);
+    RowTypePtr rowType,
+    const parse::ParseOptions& options) {
+  auto untyped = parse::parseExpr(text, options);
   return core::Expressions::inferTypes(untyped, rowType, pool_.get());
 }
 

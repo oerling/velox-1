@@ -231,7 +231,7 @@ class LazyVector : public BaseVector {
   }
 
   bool isScalar() const override {
-    return loadedVector()->isScalar();
+    return type()->isPrimitiveType() || type()->isOpaque();
   }
 
   bool mayHaveNulls() const override {
@@ -244,10 +244,6 @@ class LazyVector : public BaseVector {
 
   bool isNullAt(vector_size_t index) const override {
     return loadedVector()->isNullAt(index);
-  }
-
-  const uint64_t* flatRawNulls(const SelectivityVector& rows) override {
-    return loadedVector()->flatRawNulls(rows);
   }
 
   uint64_t retainedSize() const override {
@@ -263,6 +259,8 @@ class LazyVector : public BaseVector {
   std::string toString(vector_size_t index) const override {
     return loadedVector()->toString(index);
   }
+
+  VectorPtr slice(vector_size_t offset, vector_size_t length) const override;
 
   // Loads 'rows' of 'vector'. 'vector' may be an arbitrary wrapping
   // of a LazyVector. 'rows' are translated through the wrappers. If

@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+#include <exception>
 #include "gtest/gtest.h"
 
 #include "velox/expression/EvalCtx.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -76,4 +77,45 @@ TEST_F(EvalCtxTest, vectorPool) {
   ASSERT_NE(anotherVector, nullptr);
   ASSERT_EQ(anotherVector->size(), 512);
   ASSERT_EQ(anotherVector.get(), vectorPtr);
+}
+
+TEST_F(EvalCtxTest, vectorRecycler) {
+  EvalCtx context(&execCtx_);
+  VectorPtr vector;
+  BaseVector* vectorPtr;
+  {
+    VectorRecycler vectorRecycler(vector, context.vectorPool());
+    vector = context.getVector(BIGINT(), 1'00);
+    vectorPtr = vector.get();
+  }
+  auto newVector = context.getVector(BIGINT(), 1'00);
+  ASSERT_EQ(newVector.get(), vectorPtr);
+  vector.reset();
+  { VectorRecycler vectorRecycler(vector, context.vectorPool()); }
+
+  // Hold the allocated vector on scoped vector destruction.
+  vector = context.getVector(BIGINT(), 1'00);
+  ASSERT_NE(vector.get(), newVector.get());
+  newVector = vector;
+  { VectorRecycler vectorRecycler(vector, context.vectorPool()); }
+  vector = context.getVector(BIGINT(), 1'00);
+  ASSERT_NE(vector.get(), newVector.get());
+}
+
+TEST_F(EvalCtxTest, ensureErrorsVectorSize) {
+  EvalCtx context(&execCtx_);
+  context.ensureErrorsVectorSize(*context.errorsPtr(), 10);
+  ASSERT_GE(context.errors()->size(), 10);
+  ASSERT_EQ(BaseVector::countNulls(context.errors()->nulls(), 10), 10);
+
+  std::exception exception;
+  *context.mutableThrowOnError() = false;
+  context.setError(0, std::make_exception_ptr(exception));
+
+  ASSERT_EQ(BaseVector::countNulls(context.errors()->nulls(), 10), 9);
+
+  context.ensureErrorsVectorSize(*context.errorsPtr(), 20);
+
+  ASSERT_GE(context.errors()->size(), 20);
+  ASSERT_EQ(BaseVector::countNulls(context.errors()->nulls(), 20), 19);
 }

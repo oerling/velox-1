@@ -50,7 +50,7 @@ class VectorFunction {
   /// see a null row in any of the arguments. They can safely assume that there
   /// are no nulls in any of the arguments in specified positions.
   ///
-  /// If context->isFinalSelection() is false, the result may have been
+  /// If context.isFinalSelection() is false, the result may have been
   /// partially populated for the positions not specified in rows. The function
   /// must take care not to overwrite these values. This happens when evaluating
   /// conditional expressions. Consider if(a = 1, f(b), g(c)) expression. The
@@ -59,14 +59,14 @@ class VectorFunction {
   /// but g(c) is called with partially populated result which has f(b) values
   /// in some positions. Function g must preserve these values.
   ///
-  /// Use context->isFinalSelection() to determine whether partially populated
+  /// Use context.isFinalSelection() to determine whether partially populated
   /// results must be preserved or not.
   ///
   /// If 'result' is not null, it can be dictionary, constant or sequence
   /// encoded and therefore may be read-only. Call BaseVector::ensureWritable
   /// before writing into the "result", e.g.
   ///
-  ///    BaseVector::ensureWritable(&rows, caller->type(), context->pool(),
+  ///    BaseVector::ensureWritable(&rows, caller->type(), context.pool(),
   ///        result);
   ///
   /// If 'result' is null, the function can allocate a new vector using
@@ -77,8 +77,8 @@ class VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args, // Not using const ref so we can reuse args
       const TypePtr& outputType,
-      EvalCtx* context,
-      VectorPtr* result) const = 0;
+      EvalCtx& context,
+      VectorPtr& result) const = 0;
 
   virtual bool isDeterministic() const {
     return true;
@@ -141,6 +141,13 @@ class SimpleFunctionAdapterFactory {
 std::optional<std::vector<FunctionSignaturePtr>> getVectorFunctionSignatures(
     const std::string& name);
 
+/// Given name of vector function and argument types, returns
+/// the return type if function exists and have a signature that binds to the
+/// input types otherwise returns nullptr.
+std::shared_ptr<const Type> resolveVectorFunction(
+    const std::string& functionName,
+    const std::vector<TypePtr>& argTypes);
+
 /// Returns an instance of VectorFunction for the given name, input types and
 /// optionally constant input values.
 /// constantInputs should be empty if there are no constant inputs.
@@ -152,6 +159,24 @@ std::shared_ptr<VectorFunction> getVectorFunction(
     const std::vector<TypePtr>& inputTypes,
     const std::vector<VectorPtr>& constantInputs);
 
+struct VectorFunctionMetadata {
+  /// Boolean indicating whether this function supports flattening, i.e.
+  /// converting a set of nested calls into a single call.
+  ///
+  ///     f(a, f(b, f(c, d))) => f(a, b, c, d).
+  ///
+  /// For example, concat(string,...), concat(array,...), map_concat(map,...)
+  /// Presto functions support flattening. Similarly, built-in special format
+  /// AND and OR also support flattening.
+  ///
+  /// A function that supports flattening must have a signature with variadic
+  /// arguments of the same type. The result type must be the same as input
+  /// type.
+  bool supportsFlattening{false};
+
+  // TODO Add is-deterministic flag.
+};
+
 /// Registers stateless VectorFunction. The same instance will be used for all
 /// expressions.
 /// Returns true iff an new function is inserted
@@ -159,6 +184,7 @@ bool registerVectorFunction(
     const std::string& name,
     std::vector<FunctionSignaturePtr> signatures,
     std::unique_ptr<VectorFunction> func,
+    VectorFunctionMetadata metadata = {},
     bool overwrite = true);
 
 // Represents arguments for stateful vector functions. Stores element type, and
@@ -175,6 +201,7 @@ using VectorFunctionFactory = std::function<std::shared_ptr<VectorFunction>(
 struct VectorFunctionEntry {
   std::vector<FunctionSignaturePtr> signatures;
   VectorFunctionFactory factory;
+  VectorFunctionMetadata metadata;
 };
 
 // TODO: Use folly::Singleton here
@@ -207,6 +234,7 @@ bool registerStatefulVectorFunction(
     const std::string& name,
     std::vector<FunctionSignaturePtr> signatures,
     VectorFunctionFactory factory,
+    VectorFunctionMetadata metadata = {},
     bool overwrite = true);
 
 } // namespace facebook::velox::exec
@@ -221,11 +249,25 @@ bool registerStatefulVectorFunction(
         (name), (signatures), (function));                       \
   }
 
+#define VELOX_DECLARE_VECTOR_FUNCTION_WITH_METADATA(             \
+    tag, signatures, metadata, function)                         \
+  void _VELOX_REGISTER_FUNC_NAME(tag)(const std::string& name) { \
+    facebook::velox::exec::registerVectorFunction(               \
+        (name), (signatures), (function), (metadata));           \
+  }
+
 // Declares a stateful vectorized UDF.
 #define VELOX_DECLARE_STATEFUL_VECTOR_FUNCTION(tag, signatures, function) \
   void _VELOX_REGISTER_FUNC_NAME(tag)(const std::string& name) {          \
     facebook::velox::exec::registerStatefulVectorFunction(                \
         (name), (signatures), (function));                                \
+  }
+
+#define VELOX_DECLARE_STATEFUL_VECTOR_FUNCTION_WITH_METADATA(    \
+    tag, signatures, metadata, function)                         \
+  void _VELOX_REGISTER_FUNC_NAME(tag)(const std::string& name) { \
+    facebook::velox::exec::registerStatefulVectorFunction(       \
+        (name), (signatures), (function), (metadata));           \
   }
 
 // Registers a vectorized UDF associated with a given tag.

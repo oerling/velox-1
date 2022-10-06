@@ -324,10 +324,8 @@ bool VectorHasher::makeValueIdsDecoded<bool, false>(
 }
 
 bool VectorHasher::computeValueIds(
-    const BaseVector& values,
     const SelectivityVector& rows,
     raw_vector<uint64_t>& result) {
-  decoded_.decode(values, rows);
   return VALUE_ID_TYPE_DISPATCH(makeValueIds, typeKind_, rows, result.data());
 }
 
@@ -459,11 +457,9 @@ void VectorHasher::lookupValueIds(
 }
 
 void VectorHasher::hash(
-    const BaseVector& values,
     const SelectivityVector& rows,
     bool mix,
     raw_vector<uint64_t>& result) {
-  decoded_.decode(values, rows);
   VELOX_DYNAMIC_TYPE_DISPATCH(hashValues, typeKind_, rows, mix, result.data());
 }
 
@@ -557,9 +553,12 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     bool nullAllowed) const {
   switch (typeKind_) {
     case TypeKind::TINYINT:
+      FOLLY_FALLTHROUGH;
     case TypeKind::SMALLINT:
+      FOLLY_FALLTHROUGH;
     case TypeKind::INTEGER:
-    case TypeKind::BIGINT: {
+      FOLLY_FALLTHROUGH;
+    case TypeKind::BIGINT:
       if (!distinctOverflow_) {
         std::vector<int64_t> values;
         values.reserve(uniqueValues_.size());
@@ -569,7 +568,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
 
         return common::createBigintValues(values, nullAllowed);
       }
-    }
+      FOLLY_FALLTHROUGH;
     default:
       // TODO Add support for strings.
       return nullptr;
@@ -640,6 +639,8 @@ int64_t addIdReserve(size_t numDistinct, int32_t reservePct) {
   if (reservePct == VectorHasher::kNoLimit) {
     return VectorHasher::kMaxDistinct;
   }
+  // NOTE: 'kMaxDistinct' is a small value so no need to check overflow for
+  // reservation here.
   return std::min<int64_t>(
       VectorHasher::kMaxDistinct, numDistinct * (1 + (reservePct / 100.0)));
 }

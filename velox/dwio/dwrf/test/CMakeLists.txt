@@ -15,8 +15,10 @@
 add_subdirectory(utils)
 
 set(TEST_LINK_LIBS
-    velox_dwio_test_utils
-    velox_dwrf_test_utils
+    velox_dwio_common_test_utils
+    velox_dwio_dwrf_proto
+    velox_dwio_dwrf_reader
+    velox_dwio_dwrf_writer
     ${gflags_LIBRARIES}
     gtest
     gtest_main
@@ -337,19 +339,7 @@ add_test(
 
 target_link_libraries(
   velox_dwio_dwrf_reader_test
-  ${VELOX_LINK_LIBS}
-  ${FOLLY_WITH_DEPENDENCIES}
-  ${FMT}
-  ${LZ4}
-  ${LZO}
-  ${ZSTD}
-  ${ZLIB_LIBRARIES}
-  ${TEST_LINK_LIBS})
-
-add_library(velox_e2e_filter_test_base E2EFilterTestBase.cpp)
-
-target_link_libraries(
-  velox_e2e_filter_test_base
+  velox_dwrf_test_utils
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
   ${FMT}
@@ -492,3 +482,20 @@ target_link_libraries(
   ${FOLLY}
   ${FOLLY_BENCHMARK}
   ${FMT})
+
+add_executable(velox_dwio_cache_test CacheInputTest.cpp)
+
+add_test(velox_dwio_cache_test velox_dwio_cache_test)
+
+target_link_libraries(
+  velox_dwio_cache_test
+  ${VELOX_LINK_LIBS}
+  velox_temp_path
+  ${DOUBLE_CONVERSION}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${FMT}
+  ${LZ4}
+  ${LZO}
+  ${ZSTD}
+  ${ZLIB_LIBRARIES}
+  ${TEST_LINK_LIBS})

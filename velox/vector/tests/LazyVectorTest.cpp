@@ -16,7 +16,7 @@
 
 #include <gtest/gtest.h>
 
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -169,4 +169,21 @@ TEST_F(LazyVectorTest, lazyInDoubleDictionary) {
   expected = makeFlatVector<int32_t>(
       kInnerSize, [](auto row) { return row; }, nullEvery(3));
   assertEqualVectors(wrapped, expected);
+}
+
+TEST_F(LazyVectorTest, lazySlice) {
+  auto lazy = std::make_shared<LazyVector>(
+      pool_.get(),
+      INTEGER(),
+      100,
+      std::make_unique<test::SimpleVectorLoader>([&](auto rows) {
+        return makeFlatVector<int32_t>(
+            rows.back() + 1, [](auto row) { return row; });
+      }));
+  EXPECT_THROW(lazy->slice(0, 10), VeloxRuntimeError);
+  lazy->loadedVector();
+  auto slice = lazy->slice(0, 10);
+  for (int i = 0; i < slice->size(); ++i) {
+    EXPECT_TRUE(slice->equalValueAt(lazy.get(), i, i));
+  }
 }

@@ -274,7 +274,7 @@ class AsyncDataCacheEntry {
   // Set after first use of a prefetched entry. Cleared by
   // getAndClearFirstUseFlag(). Does not require synchronization since used for
   // statistics only.
-  bool isFirstUse_{false};
+  std::atomic<bool> isFirstUse_{false};
 
   // Group id. Used for deciding if 'this' should be written to SSD.
   uint64_t groupId_{0};
@@ -532,11 +532,15 @@ class CacheShard {
 
  private:
   static constexpr int32_t kNoThreshold = std::numeric_limits<int32_t>::max();
+
   void calibrateThreshold();
+
   void removeEntryLocked(AsyncDataCacheEntry* FOLLY_NONNULL entry);
+
   // Returns an unused entry if found. 'size' is a hint for selecting an entry
   // that already has the right amount of memory associated with it.
   std::unique_ptr<AsyncDataCacheEntry> getFreeEntryWithSize(uint64_t sizeHint);
+
   CachePin initEntry(
       RawFileCacheKey key,
       AsyncDataCacheEntry* FOLLY_NONNULL entry);
@@ -622,6 +626,17 @@ class AsyncDataCache : public memory::MappedMemory {
 
   void freeContiguous(ContiguousAllocation& allocation) override {
     mappedMemory_->freeContiguous(allocation);
+  }
+
+  void* FOLLY_NULLABLE allocateBytes(
+      uint64_t bytes,
+      uint64_t maxMallocSize = kMaxMallocBytes) override;
+
+  void freeBytes(
+      void* FOLLY_NONNULL p,
+      uint64_t size,
+      uint64_t maxMallocSize = kMaxMallocBytes) noexcept override {
+    mappedMemory_->freeBytes(p, size, maxMallocSize);
   }
 
   bool checkConsistency() const override {
@@ -732,7 +747,6 @@ class AsyncDataCache : public memory::MappedMemory {
   // for memory arbitration to work.
   bool makeSpace(
       memory::MachinePageCount numPages,
-
       std::function<bool()> allocate);
 
   std::shared_ptr<memory::MappedMemory> mappedMemory_;
@@ -747,10 +761,10 @@ class AsyncDataCache : public memory::MappedMemory {
 
   // Approximate counter of bytes allocated to cover misses. When this
   // exceeds 'nextSsdScoreSize_' we update the SSD admission criteria.
-  uint64_t newBytes_{0};
+  std::atomic<uint64_t> newBytes_{0};
 
   // 'newBytes_' value after which SSD admission should be reconsidered.
-  uint64_t nextSsdScoreSize_{};
+  std::atomic<uint64_t> nextSsdScoreSize_{0};
 
   // Approximate counter tracking new entries that could be saved to SSD.
   uint64_t ssdSaveable_{0};

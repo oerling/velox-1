@@ -12,9 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_library(velox_expression_test_utility ArgumentTypeFuzzer.cpp)
+
+target_link_libraries(velox_expression_test_utility velox_type
+                      velox_expression_functions)
+
 add_executable(
   velox_expression_test
+  ArgumentTypeFuzzerTest.cpp
+  ExprEncodingsTest.cpp
   ExprTest.cpp
+  ExprCompilerTest.cpp
   EvalCtxTest.cpp
   ExprStatsTest.cpp
   CastExprTest.cpp
@@ -22,6 +30,7 @@ add_executable(
   ConstantFlatVectorReaderTest.cpp
   MapWriterTest.cpp
   ArrayWriterTest.cpp
+  ReverseSignatureBinderTest.cpp
   RowWriterTest.cpp
   EvalSimplifiedTest.cpp
   SignatureBinderTest.cpp
@@ -52,8 +61,9 @@ target_link_libraries(
   velox_hive_connector
   velox_dwio_common
   velox_dwio_common_exception
-  velox_exec_test_util
+  velox_exec_test_lib
   velox_expression
+  velox_expression_test_utility
   velox_functions_lib
   velox_functions_prestosql
   velox_functions_test_lib

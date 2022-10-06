@@ -33,6 +33,7 @@ void convertVectorValue(
   using T = typename TypeTraits<sourceKind>::NativeType;
 
   auto childToFlatVec = vectorValue->asFlatVector<T>();
+
   //  Get the batchSize and convert each value in it.
   vector_size_t flatVecSize = childToFlatVec->size();
   for (int64_t i = 0; i < flatVecSize; i++) {
@@ -40,9 +41,9 @@ void convertVectorValue(
     if (childToFlatVec->isNullAt(i)) {
       // Process the null value.
       substraitField->MergeFrom(
-          exprConvertor_->toSubstraitNullLiteral(arena, childType));
+          exprConvertor_->toSubstraitNullLiteral(arena, childType->kind()));
     } else {
-      substraitField->MergeFrom(exprConvertor_->toSubstraitLiteral(
+      substraitField->MergeFrom(exprConvertor_->toSubstraitNotNullLiteral(
           arena, static_cast<const variant>(childToFlatVec->valueAt(i))));
     }
   }
@@ -120,7 +121,6 @@ VeloxToSubstraitExprConvertor::toSubstraitExpr(
       substraitFieldExpr->mutable_direct_reference()->mutable_struct_field();
 
   directStruct->set_field(inputType->getChildIdx(exprName));
-
   return *substraitFieldExpr;
 }
 
@@ -134,25 +134,46 @@ const ::substrait::Expression& VeloxToSubstraitExprConvertor::toSubstraitExpr(
   auto inputs = callTypeExpr->inputs();
   auto& functionName = callTypeExpr->name();
 
-  // The processing is different for different function names.
-  // TODO add support for if Expr and switch Expr
   if (functionName != "if" && functionName != "switch") {
     ::substrait::Expression_ScalarFunction* scalarExpr =
         substraitExpr->mutable_scalar_function();
 
-    // TODO need to change yaml file to register function, now is dummy.
+    std::vector<TypePtr> types;
+    types.reserve(callTypeExpr->inputs().size());
+    for (auto& typedExpr : callTypeExpr->inputs()) {
+      types.emplace_back(typedExpr->type());
+    }
 
-    scalarExpr->set_function_reference(functionMap_[functionName]);
+    scalarExpr->set_function_reference(
+        extensionCollector_->getReferenceNumber(functionName, types));
 
     for (auto& arg : inputs) {
-      scalarExpr->add_args()->MergeFrom(toSubstraitExpr(arena, arg, inputType));
+      scalarExpr->add_arguments()->mutable_value()->MergeFrom(
+          toSubstraitExpr(arena, arg, inputType));
     }
 
     scalarExpr->mutable_output_type()->MergeFrom(
         typeConvertor_->toSubstraitType(arena, callTypeExpr->type()));
 
   } else {
-    VELOX_NYI("Unsupported function name '{}'", functionName);
+    // For today's version of Substrait, you'd have to use IfThen if you need
+    // the switch cases to be call typed expression.
+
+    size_t inputsSize = callTypeExpr->inputs().size();
+    bool hasElseInput = inputsSize % 2 == 1;
+
+    auto ifThenExpr = substraitExpr->mutable_if_then();
+    for (int i = 0; i < inputsSize / 2; i++) {
+      auto ifClauseExpr = ifThenExpr->add_ifs();
+      ifClauseExpr->mutable_if_()->MergeFrom(
+          toSubstraitExpr(arena, callTypeExpr->inputs().at(i * 2), inputType));
+      ifClauseExpr->mutable_then()->MergeFrom(toSubstraitExpr(
+          arena, callTypeExpr->inputs().at(i * 2 + 1), inputType));
+    }
+    if (hasElseInput) {
+      ifThenExpr->mutable_else_()->MergeFrom(toSubstraitExpr(
+          arena, callTypeExpr->inputs().at(inputsSize - 1), inputType));
+    }
   }
 
   return *substraitExpr;
@@ -172,6 +193,42 @@ VeloxToSubstraitExprConvertor::toSubstraitExpr(
 
 const ::substrait::Expression_Literal&
 VeloxToSubstraitExprConvertor::toSubstraitLiteral(
+    google::protobuf::Arena& arena,
+    const velox::variant& variantValue) {
+  ::substrait::Expression_Literal* literalExpr =
+      google::protobuf::Arena::CreateMessage<::substrait::Expression_Literal>(
+          &arena);
+
+  if (variantValue.isNull()) {
+    literalExpr->MergeFrom(toSubstraitNullLiteral(arena, variantValue.kind()));
+  } else {
+    literalExpr->MergeFrom(toSubstraitNotNullLiteral(arena, variantValue));
+  }
+  return *literalExpr;
+}
+
+const ::substrait::Expression_Literal&
+VeloxToSubstraitExprConvertor::toSubstraitLiteral(
+    google::protobuf::Arena& arena,
+    const velox::VectorPtr& vectorValue,
+    ::substrait::Expression_Literal_Struct* litValue) {
+  ::substrait::Expression_Literal* substraitField =
+      google::protobuf::Arena::CreateMessage<::substrait::Expression_Literal>(
+          &arena);
+
+  VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      convertVectorValue,
+      vectorValue->type()->kind(),
+      arena,
+      vectorValue,
+      litValue,
+      substraitField);
+
+  return *substraitField;
+}
+
+const ::substrait::Expression_Literal&
+VeloxToSubstraitExprConvertor::toSubstraitNotNullLiteral(
     google::protobuf::Arena& arena,
     const velox::variant& variantValue) {
   ::substrait::Expression_Literal* literalExpr =
@@ -200,36 +257,19 @@ VeloxToSubstraitExprConvertor::toSubstraitLiteral(
           mapTypeKindToName(variantValue.kind()));
   }
 
+  literalExpr->set_nullable(false);
+
   return *literalExpr;
-}
-
-const ::substrait::Expression_Literal&
-VeloxToSubstraitExprConvertor::toSubstraitLiteral(
-    google::protobuf::Arena& arena,
-    const velox::VectorPtr& vectorValue,
-    ::substrait::Expression_Literal_Struct* litValue) {
-  ::substrait::Expression_Literal* substraitField =
-      google::protobuf::Arena::CreateMessage<::substrait::Expression_Literal>(
-          &arena);
-
-  VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      convertVectorValue,
-      vectorValue->type()->kind(),
-      arena,
-      vectorValue,
-      litValue,
-      substraitField);
-  return *substraitField;
 }
 
 const ::substrait::Expression_Literal&
 VeloxToSubstraitExprConvertor::toSubstraitNullLiteral(
     google::protobuf::Arena& arena,
-    const velox::TypePtr& type) {
+    const velox::TypeKind& typeKind) {
   ::substrait::Expression_Literal* substraitField =
       google::protobuf::Arena::CreateMessage<::substrait::Expression_Literal>(
           &arena);
-  switch (type->kind()) {
+  switch (typeKind) {
     case velox::TypeKind::BOOLEAN: {
       ::substrait::Type_Boolean* nullValue =
           google::protobuf::Arena::CreateMessage<::substrait::Type_Boolean>(
@@ -299,10 +339,22 @@ VeloxToSubstraitExprConvertor::toSubstraitNullLiteral(
       substraitField->mutable_null()->set_allocated_fp64(nullValue);
       break;
     }
+    case velox::TypeKind::UNKNOWN: {
+      ::substrait::Type_UserDefined* nullValue =
+          google::protobuf::Arena::CreateMessage<::substrait::Type_UserDefined>(
+              &arena);
+      nullValue->set_nullability(
+          ::substrait::Type_Nullability_NULLABILITY_NULLABLE);
+      nullValue->set_type_reference(0);
+      substraitField->mutable_null()->set_allocated_user_defined(nullValue);
+
+      break;
+    }
     default: {
-      VELOX_UNSUPPORTED("Unsupported type '{}'", std::string(type->kindName()));
+      VELOX_UNSUPPORTED("Unsupported type '{}'", mapTypeKindToName(typeKind));
     }
   }
+  substraitField->set_nullable(true);
   return *substraitField;
 }
 

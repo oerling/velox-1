@@ -20,7 +20,7 @@
 
 #include "velox/expression/VectorWriters.h"
 #include "velox/functions/Udf.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/type/StringView.h"
 #include "velox/type/Type.h"
 
@@ -63,7 +63,7 @@ class ArrayWriterTest : public functions::test::FunctionBaseTest {
   VectorPtr prepareResult(const TypePtr& arrayType, vector_size_t size = 1) {
     VectorPtr result;
     BaseVector::ensureWritable(
-        SelectivityVector(size), arrayType, this->execCtx_.pool(), &result);
+        SelectivityVector(size), arrayType, this->execCtx_.pool(), result);
     return result;
   }
 
@@ -375,7 +375,7 @@ TEST_F(ArrayWriterTest, nestedArray) {
   auto result = prepareResult(std::make_shared<ArrayType>(elementType));
 
   exec::VectorWriter<Array<Array<int32_t>>> vectorWriter;
-  vectorWriter.init(*result.get()->as<ArrayVector>());
+  vectorWriter.init(*result->as<ArrayVector>());
   vectorWriter.setOffset(0);
   auto& arrayWriter = vectorWriter.current();
   // Only general interface is allowed for nested arrays.
@@ -478,7 +478,7 @@ TEST_F(ArrayWriterTest, copyFromEmptyArray) {
   vectorWriter->commit();
   vectorWriter->finish();
 
-  assertEqualVectors(result, makeNullableArrayVector<int64_t>({{}}));
+  assertEqualVectors(result, makeArrayVector<int64_t>({{}}));
 }
 
 TEST_F(ArrayWriterTest, copyFromIntArray) {
@@ -771,7 +771,7 @@ TEST_F(ArrayWriterTest, finishPostSize) {
   auto result = prepareResult(CppToType<out_t>::create());
 
   exec::VectorWriter<out_t> vectorWriter;
-  vectorWriter.init(*result.get()->as<ArrayVector>());
+  vectorWriter.init(*result->as<ArrayVector>());
   vectorWriter.setOffset(0);
 
   // Add 3 items in top level array and 10 in inner array.
