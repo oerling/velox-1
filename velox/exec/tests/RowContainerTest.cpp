@@ -32,44 +32,227 @@ using namespace facebook::velox::test;
 
 class RowContainerTest : public exec::test::RowContainerTestBase {
  protected:
-  void testExtractColumnForOddRows(
+  void testExtractColumn(
+      RowContainer& container,
+      const std::vector<char*>& rows,
+      int column,
+      const VectorPtr& expected) {
+    // This set of tests uses all variations of the extractColumn API to copy
+    // column value for all rows in the container. Run these with offset 0
+    // and offset to skip the first 1/3 rows.
+    testExtractColumnAllRows(container, rows, column, expected, 0);
+    testExtractColumnAllRows(
+        container, rows, column, expected, rows.size() / 3);
+    // This set of tests use extractColumn with an out-of-order pattern
+    // and repetitions. Run these with offset 0 and offset to skip the first
+    // 1/3 rows.
+    testOutOfOrderRowNumbers(container, rows, column, expected, 0);
+    testOutOfOrderRowNumbers(
+        container, rows, column, expected, rows.size() / 3);
+
+    testRepeatedRowNumbers(container, rows, column, expected);
+    testNegativeRowNumbers(container, rows, column, expected);
+  }
+
+  void testExtractColumnAllRows(
+      RowContainer& container,
+      const std::vector<char*>& rows,
+      int column,
+      const VectorPtr& expected,
+      vector_size_t offset) {
+    auto size = rows.size();
+
+    auto testEqualVectors = [](const VectorPtr& lhs,
+                               const VectorPtr& rhs,
+                               vector_size_t lhsIndex,
+                               vector_size_t rhsIndex) {
+      for (auto i = 0; i < lhs->size() - lhsIndex; i++) {
+        EXPECT_TRUE(lhs->equalValueAt(rhs.get(), lhsIndex + i, rhsIndex + i));
+      }
+    };
+
+    auto testBasic = [&]() {
+      // Test the extractColumn API that didn't use the offset parameter and
+      // copied to the start of the result vector.
+      auto result = BaseVector::create(expected->type(), size, pool_.get());
+      container.extractColumn(rows.data(), size, column, result);
+      assertEqualVectors(expected, result);
+    };
+
+    auto testBasicWithOffset = [&]() {
+      // Test extractColumn from offset.
+      auto result = BaseVector::create(expected->type(), size, pool_.get());
+      container.extractColumn(
+          rows.data(), size - offset, column, offset, result);
+      testEqualVectors(result, expected, offset, 0);
+    };
+
+    auto testRowNumbers = [&]() {
+      auto result = BaseVector::create(expected->type(), size, pool_.get());
+
+      std::vector<vector_size_t> rowNumbers;
+      rowNumbers.resize(size - offset);
+      for (int i = 0; i < size - offset; i++) {
+        rowNumbers[i] = i + offset;
+      }
+      folly::Range<const vector_size_t*> rowNumbersRange =
+          folly::Range(rowNumbers.data(), size - offset);
+      container.extractColumn(
+          rows.data(), rowNumbersRange, column, offset, result);
+      testEqualVectors(result, expected, offset, offset);
+    };
+
+    // Test using extractColumn API.
+    testBasic();
+    testBasicWithOffset();
+    // Test using extractColumn (with rowNumbers) API.
+    testRowNumbers();
+  }
+
+  void testOutOfOrderRowNumbers(
+      RowContainer& container,
+      const std::vector<char*>& rows,
+      int column,
+      const VectorPtr& expected,
+      vector_size_t offset) {
+    auto size = rows.size();
+
+    // In this test the extractColumn API is operated on an out-of-order
+    // input (either the base input data or the rowNumbers). The new ordering
+    // has null in even positions and retains odd positions from the original
+    // input.
+
+    // This is a helper method for result verification for the out of order
+    // results.
+    auto verifyResults = [&](const VectorPtr& result, int offset = 0) {
+      EXPECT_EQ(size, result->size());
+      for (vector_size_t i = offset; i < size; ++i) {
+        if (i % 2 == 0) {
+          EXPECT_TRUE(result->isNullAt(i)) << "at " << i;
+        } else {
+          EXPECT_TRUE(expected->equalValueAt(result.get(), i, i))
+              << "at " << i << ": expected " << expected->toString(i)
+              << ", got " << result->toString();
+        }
+      }
+    };
+
+    auto testBasic = [&]() {
+      // Construct an input source with null in even
+      // positions and that retains the original rows in
+      // odd positions. Copy its rows
+      std::vector<char*> input(size, nullptr);
+      for (auto i = 1; i < size; i += 2) {
+        input[i] = rows[i];
+      }
+
+      // Test the extractColumn API that didn't use the offset parameter
+      // and copies to the start of the result vector.
+      auto result = BaseVector::create(expected->type(), size, pool_.get());
+      container.extractColumn(input.data(), size, column, result);
+      verifyResults(result);
+
+      // Test extractColumn from offset.
+      container.extractColumn(
+          input.data() + offset, size - offset, column, offset, result);
+      verifyResults(result, offset);
+    };
+
+    auto testRowNumbers = [&]() {
+      // Setup input rows vector so that the first row is null.
+      std::vector<char*> input(rows);
+      input[0] = nullptr;
+
+      // The rowNumbersBuffer has values like 0, 1, 0, 3, 0, 5, 0, 7, etc
+      // This tests the case of column extraction where the rowNumber values
+      // are repeated and are also out of order.
+      std::vector<vector_size_t> rowNumbers;
+      auto rowNumbersSize = size - offset;
+      rowNumbers.resize(rowNumbersSize);
+
+      for (int i = 0; i < rowNumbersSize; i++) {
+        if ((i + offset) % 2 == 0) {
+          rowNumbers[i] = 0;
+        } else {
+          rowNumbers[i] = i + offset;
+        }
+      }
+
+      auto result = BaseVector::create(expected->type(), size, pool_.get());
+      folly::Range<const vector_size_t*> rowNumbersRange =
+          folly::Range(rowNumbers.data(), rowNumbersSize);
+      container.extractColumn(
+          input.data(), rowNumbersRange, column, offset, result);
+      verifyResults(result, offset);
+    };
+
+    testBasic();
+    testRowNumbers();
+  }
+
+  void testRepeatedRowNumbers(
       RowContainer& container,
       const std::vector<char*>& rows,
       int column,
       const VectorPtr& expected) {
     auto size = rows.size();
-
-    // Extract only odd rows.
-    std::vector<char*> oddRows(size, nullptr);
-    for (auto i = 1; i < size; i += 2) {
-      oddRows[i] = rows[i];
+    // Copy the rows so that we rotate over the values at positions 0, 1, 2.
+    // This is for testing copying repeated row numbers.
+    std::vector<vector_size_t> rowNumbers(size, 0);
+    rowNumbers.resize(size);
+    for (int i = 0; i < size; i++) {
+      rowNumbers[i] = i % 3;
     }
+    auto rowNumbersRange = folly::Range(rowNumbers.data(), size);
 
     auto result = BaseVector::create(expected->type(), size, pool_.get());
-    container.extractColumn(oddRows.data(), size, column, result);
+    container.extractColumn(rows.data(), rowNumbersRange, column, 0, result);
+
     EXPECT_EQ(size, result->size());
-    for (vector_size_t row = 0; row < size; ++row) {
-      if (row % 2 == 0) {
-        EXPECT_TRUE(result->isNullAt(row)) << "at " << row;
-      } else {
-        EXPECT_TRUE(expected->equalValueAt(result.get(), row, row))
-            << "at " << row << ": expected " << expected->toString(row)
-            << ", got " << result->toString();
-      }
+    for (vector_size_t i = 0; i < size; ++i) {
+      EXPECT_TRUE(result->equalValueAt(expected.get(), i, i % 3))
+          << "at " << i << ": expected " << expected->toString(i % 3)
+          << ", got " << result->toString(i);
     }
   }
 
-  void testExtractColumnForAllRows(
+  void testNegativeRowNumbers(
       RowContainer& container,
       const std::vector<char*>& rows,
       int column,
       const VectorPtr& expected) {
     auto size = rows.size();
+    // Negative row numbers result in nullptr being copied to that position.
+    // Alternate between nulls at odd positions and a copy of the values
+    // at even positions.
+    std::vector<vector_size_t> rowNumbers;
+    rowNumbers.resize(size);
+    for (int i = 0; i < size; i++) {
+      if (i % 2) {
+        rowNumbers[i] = -1 * i;
+      } else {
+        rowNumbers[i] = i;
+      }
+    }
+    auto rowNumbersRange = folly::Range(rowNumbers.data(), size);
 
     auto result = BaseVector::create(expected->type(), size, pool_.get());
-    container.extractColumn(rows.data(), size, column, result);
+    container.extractColumn(rows.data(), rowNumbersRange, column, 0, result);
 
-    assertEqualVectors(expected, result);
+    EXPECT_EQ(size, result->size());
+    EXPECT_TRUE(result->equalValueAt(expected.get(), 0, 0))
+        << "at 0 expected " << expected->toString(0) << ", got "
+        << result->toString(0);
+    for (vector_size_t i = 1; i < size; ++i) {
+      if (i % 2) {
+        EXPECT_TRUE(result->isNullAt(i))
+            << "at " << i << "expected null, got " << result->toString(i);
+      } else {
+        EXPECT_TRUE(result->equalValueAt(expected.get(), i, i))
+            << "at " << i << ": expected " << expected->toString(i) << ", got "
+            << result->toString(i);
+      }
+    }
   }
 
   void checkSizes(std::vector<char*>& rows, RowContainer& data) {
@@ -98,9 +281,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
       rowContainer->store(decoded, row, rows[row], 0);
     }
 
-    testExtractColumnForAllRows(*rowContainer, rows, 0, input);
-
-    testExtractColumnForOddRows(*rowContainer, rows, 0, input);
+    testExtractColumn(*rowContainer, rows, 0, input);
     return rowContainer;
   }
 
@@ -372,8 +553,7 @@ TEST_F(RowContainerTest, types) {
   auto copy = std::static_pointer_cast<RowVector>(
       BaseVector::create(batch->type(), batch->size(), pool_.get()));
   for (auto column = 0; column < batch->childrenSize(); ++column) {
-    testExtractColumnForAllRows(*data, rows, column, batch->childAt(column));
-    testExtractColumnForOddRows(*data, rows, column, batch->childAt(column));
+    testExtractColumn(*data, rows, column, batch->childAt(column));
 
     auto extracted = copy->childAt(column);
     extracted->resize(kNumRows);

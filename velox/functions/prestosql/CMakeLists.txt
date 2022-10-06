@@ -36,6 +36,7 @@ add_library(
   MapConcat.cpp
   MapEntries.cpp
   MapKeysAndValues.cpp
+  MapZipWith.cpp
   Not.cpp
   Reduce.cpp
   Reverse.cpp
@@ -51,7 +52,8 @@ add_library(
   URLFunctions.cpp
   VectorArithmetic.cpp
   WidthBucketArray.cpp
-  Zip.cpp)
+  Zip.cpp
+  ZipWith.cpp)
 
 target_link_libraries(
   velox_functions_prestosql_impl
