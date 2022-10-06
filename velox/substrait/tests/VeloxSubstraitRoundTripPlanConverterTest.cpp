@@ -64,17 +64,17 @@ class VeloxSubstraitRoundTripPlanConverterTest : public OperatorTestBase {
     auto substraitPlan = veloxConvertor_->toSubstrait(arena, plan);
 
     // Convert Substrait Plan to the same Velox Plan.
-    auto samePlan =
-        substraitConverter_->toVeloxPlan(substraitPlan, pool_.get());
+    auto samePlan = substraitConverter_->toVeloxPlan(substraitPlan);
 
     // Assert velox again.
     assertQuery(samePlan, duckDbSql);
   }
-
+  std::unique_ptr<memory::ScopedMemoryPool> pool_{
+      memory::getDefaultScopedMemoryPool()};
   std::shared_ptr<VeloxToSubstraitPlanConvertor> veloxConvertor_ =
       std::make_shared<VeloxToSubstraitPlanConvertor>();
   std::shared_ptr<SubstraitVeloxPlanConverter> substraitConverter_ =
-      std::make_shared<SubstraitVeloxPlanConverter>();
+      std::make_shared<SubstraitVeloxPlanConverter>(pool_.get());
 };
 
 TEST_F(VeloxSubstraitRoundTripPlanConverterTest, project) {
@@ -251,6 +251,40 @@ TEST_F(VeloxSubstraitRoundTripPlanConverterTest, avg) {
                   .planNode();
 
   assertPlanConversion(plan, "SELECT avg(c4) FROM tmp");
+}
+
+TEST_F(VeloxSubstraitRoundTripPlanConverterTest, caseWhen) {
+  auto vectors = makeVectors(3, 4, 2);
+  createDuckDbTable(vectors);
+  auto plan =
+      PlanBuilder()
+          .values(vectors)
+          .project(
+              {"case when c0=1 then c1 when c0=2 then c2 else c3  end as x"})
+          .planNode();
+
+  assertPlanConversion(
+      plan,
+      "SELECT case when c0=1 then c1 when c0=2 then c2 else c3 end as x FROM tmp");
+
+  // Switch expression without else.
+  plan = PlanBuilder()
+             .values(vectors)
+             .project({"case when c0=1 then c1 when c0=2 then c2 end as x"})
+             .planNode();
+  assertPlanConversion(
+      plan,
+      "SELECT case when c0=1 then c1 when c0=2 then c2  end as x FROM tmp");
+}
+
+TEST_F(VeloxSubstraitRoundTripPlanConverterTest, ifThen) {
+  auto vectors = makeVectors(3, 4, 2);
+  createDuckDbTable(vectors);
+  auto plan = PlanBuilder()
+                  .values(vectors)
+                  .project({"if (c0=1, c0 + 1, c1 + 2) as x"})
+                  .planNode();
+  assertPlanConversion(plan, "SELECT if (c0=1, c0 + 1, c1 + 2) as x FROM tmp");
 }
 
 int main(int argc, char** argv) {

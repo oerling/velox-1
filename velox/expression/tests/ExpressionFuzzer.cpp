@@ -44,6 +44,14 @@ DEFINE_int32(
     100,
     "The number of elements on each generated vector.");
 
+DEFINE_int32(
+    max_num_varargs,
+    5,
+    "The maximum number of variadic arguments fuzzer will generate for "
+    "functions that accept variadic arguments. Fuzzer will generate up to "
+    "max_num_varargs arguments for the variadic list in addition to the "
+    "required arguments by the function.");
+
 DEFINE_double(
     null_ratio,
     0.1,
@@ -59,6 +67,11 @@ DEFINE_bool(
     disable_constant_folding,
     false,
     "Disable constant-folding in the common evaluation path.");
+
+DEFINE_bool(
+    enable_variadic_signatures,
+    false,
+    "Enable testing of function signatures with variadic arguments.");
 
 namespace facebook::velox::test {
 
@@ -213,6 +226,7 @@ struct CallableSignature {
 
   // Input arguments and return type.
   std::vector<TypePtr> args;
+  bool variableArity{false};
   TypePtr returnType;
 
   // Convenience print function.
@@ -232,11 +246,14 @@ struct CallableSignature {
 std::optional<CallableSignature> processSignature(
     const std::string& functionName,
     const exec::FunctionSignature& signature) {
-  // Don't support functions with parameterized signatures or variable number of
-  // arguments yet.
-  if (!signature.typeVariableConstraints().empty() ||
-      signature.variableArity()) {
+  // Don't support functions with parameterized signatures.
+  if (!signature.typeVariableConstraints().empty()) {
     LOG(WARNING) << "Skipping unsupported signature: " << functionName
+                 << signature.toString();
+    return std::nullopt;
+  }
+  if (signature.variableArity() && !FLAGS_enable_variadic_signatures) {
+    LOG(WARNING) << "Skipping variadic function signature: " << functionName
                  << signature.toString();
     return std::nullopt;
   }
@@ -244,6 +261,7 @@ std::optional<CallableSignature> processSignature(
   CallableSignature callable{
       .name = functionName,
       .args = {},
+      .variableArity = signature.variableArity(),
       .returnType =
           SignatureBinder::tryResolveType(signature.returnType(), {})};
   VELOX_CHECK_NOT_NULL(callable.returnType);
@@ -409,14 +427,15 @@ class ExpressionFuzzer {
   }
 
   void appendConjunctSignatures() {
-    CallableSignature conjunctAndSignature;
-    conjunctAndSignature.name = "and";
-    conjunctAndSignature.returnType = BOOLEAN();
-    conjunctAndSignature.args = {BOOLEAN(), BOOLEAN()};
-    signatures_.emplace_back(conjunctAndSignature);
+    CallableSignature conjunctSignature;
+    conjunctSignature.name = "and";
+    conjunctSignature.returnType = BOOLEAN();
+    conjunctSignature.args = {BOOLEAN(), BOOLEAN()};
+    conjunctSignature.variableArity = true;
+    signatures_.emplace_back(conjunctSignature);
 
-    conjunctAndSignature.name = "or";
-    signatures_.emplace_back(conjunctAndSignature);
+    conjunctSignature.name = "or";
+    signatures_.emplace_back(conjunctSignature);
   }
 
   RowVectorPtr generateRowVector() {
@@ -466,10 +485,17 @@ class ExpressionFuzzer {
 
   std::vector<core::TypedExprPtr> generateArgs(const CallableSignature& input) {
     std::vector<core::TypedExprPtr> inputExpressions;
-    inputExpressions.reserve(input.args.size());
+    auto numVarArgs = !input.variableArity
+        ? 0
+        : folly::Random::rand32(FLAGS_max_num_varargs + 1, rng_);
+    inputExpressions.reserve(input.args.size() + numVarArgs);
 
     for (const auto& arg : input.args) {
       inputExpressions.emplace_back(generateArg(arg));
+    }
+    // Append varargs to the argument list.
+    for (int i = 0; i < numVarArgs; i++) {
+      inputExpressions.emplace_back(generateArg(input.args.back()));
     }
     return inputExpressions;
   }

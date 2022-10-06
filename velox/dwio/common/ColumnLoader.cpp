@@ -49,7 +49,7 @@ ColumnLoader::loadInternal(RowSet rows, ValueHook* hook, VectorPtr* result) {
   raw_vector<vector_size_t> selectedRows;
   RowSet effectiveRows;
   ExceptionContextSetter exceptionContext(
-      {[](auto* reader) {
+      {[](VeloxException::Type /*exceptionType*/, auto* reader) {
          return static_cast<SelectiveStructColumnReader*>(reader)
              ->debugString();
        },

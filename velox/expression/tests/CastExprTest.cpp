@@ -57,6 +57,10 @@ class CastExprTest : public functions::test::CastBaseTest {
     });
   }
 
+  std::shared_ptr<core::ConstantTypedExpr> makeConstantNullExpr(TypeKind kind) {
+    return std::make_shared<core::ConstantTypedExpr>(variant(kind));
+  }
+
   std::shared_ptr<core::CastTypedExpr> makeCastExpr(
       const core::TypedExprPtr& input,
       const TypePtr& toType,
@@ -305,26 +309,29 @@ TEST_F(CastExprTest, timestampAdjustToTimezoneInvalid) {
 }
 
 TEST_F(CastExprTest, date) {
-  testCast<std::string, Date>(
-      "date",
-      {
-          "1970-01-01",
-          "2020-01-01",
-          "2135-11-09",
-          "1969-12-27",
-          "1812-04-15",
-          "1920-01-02",
-          std::nullopt,
-      },
-      {
-          Date(0),
-          Date(18262),
-          Date(60577),
-          Date(-5),
-          Date(-57604),
-          Date(-18262),
-          std::nullopt,
-      });
+  std::vector<std::optional<std::string>> input{
+      "1970-01-01",
+      "2020-01-01",
+      "2135-11-09",
+      "1969-12-27",
+      "1812-04-15",
+      "1920-01-02",
+      std::nullopt,
+  };
+  std::vector<std::optional<Date>> result{
+      Date(0),
+      Date(18262),
+      Date(60577),
+      Date(-5),
+      Date(-57604),
+      Date(-18262),
+      std::nullopt,
+  };
+
+  testCast<std::string, Date>("date", input, result);
+
+  setCastIntByTruncate(true);
+  testCast<std::string, Date>("date", input, result);
 }
 
 TEST_F(CastExprTest, invalidDate) {
@@ -740,11 +747,30 @@ TEST_F(CastExprTest, castInTry) {
   // wrapped in dictinary encoding. The row of ["2a"] should trigger an error
   // during casting and the try expression should turn this error into a null at
   // this row.
-  auto input = makeRowVector({makeVectorWithNullArrays<StringView>(
+  auto input = makeRowVector({makeNullableArrayVector<StringView>(
       {{{"1"_sv}}, {{"2a"_sv}}, std::nullopt, std::nullopt})});
-  auto expected = makeVectorWithNullArrays<int64_t>(
+  auto expected = makeNullableArrayVector<int64_t>(
       {{{1}}, std::nullopt, std::nullopt, std::nullopt});
 
   evaluateAndVerifyCastInTryDictEncoding(
       ARRAY(VARCHAR()), ARRAY(BIGINT()), input, expected);
+}
+
+TEST_F(CastExprTest, primitiveNullConstant) {
+  // Evaluate cast(NULL::double as bigint).
+  auto cast =
+      makeCastExpr(makeConstantNullExpr(TypeKind::DOUBLE), BIGINT(), false);
+
+  auto result = evaluate(
+      cast, makeRowVector({makeFlatVector<int64_t>(std::vector<int64_t>{1})}));
+  auto expectedResult = makeNullableFlatVector<int64_t>({std::nullopt});
+  assertEqualVectors(expectedResult, result);
+
+  // Evaluate cast(try_cast(NULL::varchar as double) as bigint).
+  auto innerCast =
+      makeCastExpr(makeConstantNullExpr(TypeKind::VARCHAR), DOUBLE(), true);
+  auto outerCast = makeCastExpr(innerCast, BIGINT(), false);
+
+  result = evaluate(outerCast, makeRowVector(ROW({}, {}), 1));
+  assertEqualVectors(expectedResult, result);
 }

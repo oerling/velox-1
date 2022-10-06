@@ -46,7 +46,7 @@ void applyCastKernel(
     const BaseVector& input,
     FlatVector<To>* resultFlatVector,
     bool& nullOutput) {
-  auto* flatInput = input.asUnchecked<SimpleVector<From>>();
+  auto* inputVector = input.asUnchecked<SimpleVector<From>>();
 
   // Special handling for string target type
   if constexpr (CppToType<To>::typeKind == TypeKind::VARCHAR) {
@@ -55,7 +55,7 @@ void applyCastKernel(
     } else {
       auto output =
           util::Converter<CppToType<To>::typeKind, void, Truncate>::cast(
-              flatInput->valueAt(row), nullOutput);
+              inputVector->valueAt(row), nullOutput);
       // Write the result output to the output vector
       auto writer = exec::StringWriter<>(resultFlatVector, row);
       writer.resize(output.size());
@@ -67,7 +67,7 @@ void applyCastKernel(
   } else {
     auto result =
         util::Converter<CppToType<To>::typeKind, void, Truncate>::cast(
-            flatInput->valueAt(row), nullOutput);
+            inputVector->valueAt(row), nullOutput);
     if (nullOutput) {
       resultFlatVector->setNull(row, true);
     } else {
@@ -614,22 +614,25 @@ void CastExpr::apply(
   }
 
   VectorPtr localResult;
-  if (decoded->isIdentityMapping()) {
+  if (!nonNullRows->hasSelections()) {
+    localResult =
+        BaseVector::createNullConstant(toType, rows.end(), context.pool());
+  } else if (decoded->isIdentityMapping()) {
     applyPeeled(
         *nonNullRows, *decoded->base(), context, fromType, toType, localResult);
 
   } else {
-    ContextSaver saver;
+    ScopedContextSaver saver;
     LocalSelectivityVector translatedRowsHolder(*context.execCtx());
 
     if (decoded->isConstantMapping()) {
       auto index = decoded->index(nonNullRows->begin());
       singleRow(translatedRowsHolder, index);
-      context.saveAndReset(saver, rows);
+      context.saveAndReset(saver, *nonNullRows);
       context.setConstantWrap(index);
     } else {
       translateToInnerRows(*nonNullRows, *decoded, translatedRowsHolder);
-      context.saveAndReset(saver, rows);
+      context.saveAndReset(saver, *nonNullRows);
       auto wrapping = decoded->dictionaryWrapping(*input, *nonNullRows);
       context.setDictionaryWrap(
           std::move(wrapping.indices), std::move(wrapping.nulls));
@@ -648,8 +651,9 @@ void CastExpr::apply(
   context.moveOrCopyResult(localResult, rows, result);
   context.releaseVector(localResult);
 
-  // Copy nulls from "input".
-  if (nullRows->hasSelections()) {
+  // If we have a mix of null and non-null in input, add nulls to the result.
+  VELOX_CHECK_NOT_NULL(result);
+  if (nullRows->hasSelections() && nonNullRows->hasSelections()) {
     auto targetNulls = result->mutableRawNulls();
     nullRows->applyToSelected(
         [&](auto row) { bits::setNull(targetNulls, row, true); });
@@ -665,9 +669,6 @@ void CastExpr::evalSpecialForm(
   auto fromType = inputs_[0]->type();
   auto toType = std::const_pointer_cast<const Type>(type_);
 
-  stats_.numProcessedVectors += 1;
-  stats_.numProcessedRows += rows.countSelected();
-  auto timer = cpuWallTimer();
   apply(rows, input, context, fromType, toType, result);
   // Return 'input' back to the vector pool in 'context' so it can be reused.
   context.releaseVector(input);
@@ -685,11 +686,57 @@ std::string CastExpr::toString(bool recursive) const {
   return out.str();
 }
 
+namespace {
+
+/// Appends type's SQL string to 'out'. Uses DuckDB SQL.
+void toTypeSql(const TypePtr& type, std::ostream& out) {
+  if (type->isPrimitiveType()) {
+    out << type->toString();
+    return;
+  }
+
+  switch (type->kind()) {
+    case TypeKind::ARRAY:
+      // Append <type>[], e.g. bigint[].
+      toTypeSql(type->childAt(0), out);
+      out << "[]";
+      break;
+    case TypeKind::MAP:
+      // Append map(<key>, <value>), e.g. map(varchar, bigint).
+      out << "map(";
+      toTypeSql(type->childAt(0), out);
+      out << ", ";
+      toTypeSql(type->childAt(1), out);
+      out << ")";
+      break;
+    case TypeKind::ROW: {
+      // Append struct(name1 type1, name2 type2,..), e.g.
+      // struct(a bigint, b real);
+      const auto& rowType = type->asRow();
+      out << "struct(";
+      for (auto i = 0; i < type->size(); ++i) {
+        if (i > 0) {
+          out << ", ";
+        }
+        out << rowType.nameOf(i) << " ";
+        toTypeSql(type->childAt(i), out);
+      }
+      out << ")";
+      break;
+    }
+    default:
+      VELOX_UNSUPPORTED("Type is not supported: {}", type->toString());
+  }
+}
+} // namespace
+
 std::string CastExpr::toSql() const {
   std::stringstream out;
   out << "cast(";
   appendInputsSql(out);
-  out << " as " << type_->toString() << ")";
+  out << " as ";
+  toTypeSql(type_, out);
+  out << ")";
   return out.str();
 }
 } // namespace facebook::velox::exec

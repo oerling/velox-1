@@ -54,8 +54,8 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
 };
 } // namespace
 
-OperatorCtx::OperatorCtx(DriverCtx* driverCtx)
-    : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorPool()) {}
+OperatorCtx::OperatorCtx(DriverCtx* driverCtx, const std::string& operatorType)
+    : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorPool(operatorType)) {}
 
 core::ExecCtx* OperatorCtx::execCtx() const {
   if (!execCtx_) {
@@ -87,7 +87,7 @@ Operator::Operator(
     int32_t operatorId,
     std::string planNodeId,
     std::string operatorType)
-    : operatorCtx_(std::make_unique<OperatorCtx>(driverCtx)),
+    : operatorCtx_(std::make_unique<OperatorCtx>(driverCtx, operatorType)),
       stats_(
           operatorId,
           driverCtx->pipelineId,
@@ -100,7 +100,7 @@ Operator::Operator(
         [&](memory::MemoryUsageTracker& tracker) {
           VELOX_DCHECK(pool()->getMemoryUsageTracker().get() == &tracker);
           std::stringstream out;
-          out << "Failed Operator: " << stats_.operatorType << "_#"
+          out << "\nFailed Operator: " << stats_.operatorType << "."
               << stats_.operatorId << ": "
               << succinctBytes(tracker.getCurrentTotalBytes());
           return out.str();

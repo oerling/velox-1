@@ -78,11 +78,11 @@ cmake:					#: Use CMake to create a Makefile build system
 		${EXTRA_CMAKE_FLAGS}
 
 build:					#: Build the software based in BUILD_DIR and BUILD_TYPE variables
-	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j ${NUM_THREADS}
+	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j $(NUM_THREADS)
 
 debug:					#: Build with debugging symbols
 	$(MAKE) cmake BUILD_DIR=debug BUILD_TYPE=Debug
-	$(MAKE) build BUILD_DIR=debug
+	$(MAKE) build BUILD_DIR=debug -j ${NUM_THREADS}
 
 release:				#: Build the release version
 	$(MAKE) cmake BUILD_DIR=release BUILD_TYPE=Release && \
@@ -93,7 +93,7 @@ min_debug:				#: Minimal build with debugging symbols
 	$(MAKE) build BUILD_DIR=debug
 
 benchmarks-basic-build:
-	$(MAKE) release EXTRA_CMAKE_FLAGS="-DVELOX_BUILD_MINIMAL=ON -DVELOX_ENABLE_BENCHMARKS_BASIC=ON"
+	$(MAKE) release EXTRA_CMAKE_FLAGS="-DVELOX_BUILD_MINIMAL=OFF -DVELOX_ENABLE_BENCHMARKS_BASIC=ON"
 
 benchmarks-basic-run:
 	$(MAKE) benchmarks-basic-build
