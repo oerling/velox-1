@@ -400,7 +400,9 @@ void VectorHasher::lookupValueIdsTyped(
     }
   } else if (decoded.isIdentityMapping()) {
     if (Kind == TypeKind::BIGINT && isRange_ && noNulls) {
-      lookupIdsRange64(decoded, rows, result);
+      lookupIdsRangeSimd<int64_t>(decoded, rows, result);
+    } else if (Kind == TypeKind::INTEGER && isRange_ && noNulls) {
+      lookupIdsRangeSimd<int32_t>(decoded, rows, result);
     } else {
       rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
         if (decoded.isNullAt(row)) {
@@ -446,80 +448,52 @@ void VectorHasher::lookupValueIdsTyped(
   }
 }
 
-template <int8_t kWidth, typename Callable>
-void forBatches(const SelectivityVector& rows, Callable func) {
-  constexpr int32_t unitMask = (1 << kWidth) - 1;
-  auto bits = rows.asRange().bits();
-  bits::forEachWord(
-      rows.begin(),
-      rows.end(),
-      [&](auto index, uint64_t mask) {
-        uint64_t active = bits[index] & mask;
-        if (!active) {
-          return;
-        }
-        int32_t skip = (__builtin_ctzll(active) / kWidth) * kWidth;
-        active >>= skip;
-        auto first = skip;
-        while (active) {
-          if (active & unitMask) {
-            func(index * 64 + first, active & unitMask);
-            first += kWidth;
-            active >>= kWidth;
-          } else {
-            skip = (__builtin_ctzll(active) / kWidth) * kWidth;
-            active >>= skip;
-            first += skip;
-          }
-        }
-      },
-      [&](auto index) {
-        uint64_t active = bits[index];
-        if (!active) {
-          return;
-        }
-        int32_t skip = (__builtin_ctzll(active) / kWidth) * kWidth;
-        active >>= skip;
-        auto first = skip;
-        while (active) {
-          if (active & unitMask) {
-            func(index * 64 + first, active & unitMask);
-            first += kWidth;
-            active >>= kWidth;
-          } else {
-            skip = (__builtin_ctzll(active) / kWidth) * kWidth;
-            active >>= skip;
-            first += skip;
-          }
-        }
-      });
-}
-
-void VectorHasher::lookupIdsRange64(
+template <typename T>
+void VectorHasher::lookupIdsRangeSimd(
     const DecodedVector& decoded,
     SelectivityVector& rows,
     uint64_t* result) const {
-  auto lower = xsimd::batch<int64_t>::broadcast(min_);
-  auto upper = xsimd::batch<int64_t>::broadcast(max_);
-  auto data = decoded.data<int64_t>();
-  auto offset = lower - 1;
+  static_assert(sizeof(T) == 8 || sizeof(T) == 4);
+  auto lower = xsimd::batch<T>::broadcast(min_);
+  auto upper = xsimd::batch<T>::broadcast(max_);
+  auto data = decoded.data<T>();
+  auto offset = min_ - 1;
   auto bits = rows.asMutableRange().bits();
-  forBatches<4>(rows, [&](auto index, auto mask) {
-    auto values = xsimd::batch<int64_t>::load_unaligned(data + index);
-    uint64_t outOfRange = simd::toBitMask((lower > values) | (values > upper));
-    if (outOfRange) {
-      bits[index / 64] &= ~(outOfRange << (index & 63));
-    }
-    if (outOfRange != 0xf) {
-      if (multiplier_ == 1) {
-        (values - offset).store_unaligned(result + index);
-      } else {
-        (xsimd::batch<int64_t>::load_unaligned(result + index) +
-         (xsimd::batch<int64_t>::broadcast(multiplier_) * (values - offset)))
-            .store_unaligned(result + index);
-      }
-    }
-  });
+  bits::forBatches<xsimd::batch<T>::size>(
+      bits, rows.begin(), rows.end(), [&](auto index, auto mask) {
+        auto values = xsimd::batch<T>::load_unaligned(data + index);
+        uint64_t outOfRange =
+            simd::toBitMask((lower > values) | (values > upper));
+        if (outOfRange) {
+          bits[index / 64] &= ~(outOfRange << (index & 63));
+        }
+        if (outOfRange != bits::lowMask(xsimd::batch<T>::size)) {
+          if constexpr (sizeof(T) == 8) {
+            if (multiplier_ == 1) {
+              (values - offset).store_unaligned(result + index);
+            } else {
+              (xsimd::batch<int64_t>::load_unaligned(result + index) +
+               ((values - offset) * multiplier_))
+                  .store_unaligned(result + index);
+            }
+          } else {
+            // Widen 8 to 2 x 4 since result is always 64 wide.
+	    auto first4 = simd::getHalf<int64_t, 0>(values) - offset;
+            auto next4 = simd::getHalf<int64_t, 1>(values) - offset;
+            if (multiplier_ == 1) {
+              first4.store_unaligned(result + index);
+              next4.store_unaligned(result + index + 4);
+            } else {
+              (xsimd::batch<int64_t>::load_unaligned(result + index) +
+               (first4 * multiplier_))
+                  .store_unaligned(result + index);
+              (xsimd::batch<int64_t>::load_unaligned(result + index + 4) +
+               (next4 * multiplier_))
+                  .store_unaligned(result + index + 4);
+            }
+          }
+        }
+      });
 }
 
 void VectorHasher::lookupValueIds(

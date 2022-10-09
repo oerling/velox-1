@@ -391,8 +391,9 @@ class VectorHasher {
       uint64_t* result,
       bool noNulls) const;
 
-  // Shortcut for range mapping of int64 keys.
-  void lookupIdsRange64(
+  // Fast path for range mapping of int64/int32 keys.
+  template <typename T>
+  void lookupIdsRangeSimd(
       const DecodedVector& decoded,
       SelectivityVector& rows,
       uint64_t* result) const;
