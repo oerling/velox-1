@@ -889,7 +889,7 @@ TEST_F(VectorHasherTest, simdRange) {
   auto int64Hasher = VectorHasher::create(BIGINT(), 2);
 
   raw_vector<uint64_t> result(kNumRows);
-  
+
   // Analyze the sample data.
   SelectivityVector rows(kNumRows);
   smallHasher->decode(*smallValues, rows);

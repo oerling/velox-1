@@ -478,7 +478,7 @@ void VectorHasher::lookupIdsRangeSimd(
             }
           } else {
             // Widen 8 to 2 x 4 since result is always 64 wide.
-	    auto first4 = simd::getHalf<int64_t, 0>(values) - offset;
+            auto first4 = simd::getHalf<int64_t, 0>(values) - offset;
             auto next4 = simd::getHalf<int64_t, 1>(values) - offset;
             if (multiplier_ == 1) {
               first4.store_unaligned(result + index);
