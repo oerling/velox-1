@@ -307,9 +307,41 @@ endif()
 include_directories(SYSTEM ${FOLLY_INCLUDE_DIRS})
 
 if(NOT ${VELOX_BUILD_MINIMAL})
+  find_package(absl REQUIRED CONFIG)
+
+  find_package(utf8_range REQUIRED CONFIG)
   # Locate or build protobuf.
   set(Protobuf_SOURCE AUTO)
   resolve_dependency(Protobuf REQUIRED_VERSION 3.21.4)
+
+set(protobuf_ABSL_USED_TARGETS
+  absl::algorithm
+  absl::base
+  absl::bind_front
+  absl::bits
+  absl::cleanup
+  absl::cord
+  absl::core_headers
+  absl::debugging
+  absl::dynamic_annotations
+  absl::flags
+  absl::flat_hash_map
+  absl::flat_hash_set
+  absl::function_ref
+  absl::hash
+  absl::layout
+  absl::memory
+  absl::optional
+  absl::span
+  absl::status
+  absl::statusor
+  absl::strings
+  absl::synchronization
+  absl::time
+  absl::utility
+  absl::variant
+)
+
 endif()
 
 # GCC needs to link a library to enable std::filesystem.
@@ -382,3 +414,7 @@ install(FILES velox/type/Type.h DESTINATION "include/velox")
 
 add_subdirectory(third_party)
 add_subdirectory(velox)
+
+message("Setting protobuf libs=${Protobuf_LIBRARIES}")
+set(utf_range_LIBRARIES "/usr/local/lib64/libutf_range.a")
+message("Setting utf range libs=${utf_range_LIBRARIES}")
