@@ -1,6 +1,6 @@
 CXXFLAGS := -std=c++17 -g 
 #NVFLAGS= -g -G 
-NVFLAGS= -g -O3 
+NVFLAGS= -g -O3 --gpu-architecture=compute_80
 TARGETS := bandwidthtest async transpose async2 indicesofsetbits
 
 indicesofsetbits: IndicesOfSetBitsCuda.o IndicesOfSetBits.o
