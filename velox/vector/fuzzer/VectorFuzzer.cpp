@@ -34,6 +34,32 @@ namespace {
 // the dependency on DWRF.
 constexpr int64_t MAX_NANOS = 1'000'000'000;
 
+// Structure to help temporary changes to Options. This objects saves the
+// current state of the Options object, and restores it when it's destructed.
+// For instance, if you would like to temporarily disable nulls for a particular
+// recursive call:
+//
+//  {
+//    ScopedOptions scopedOptions(this);
+//    opts_.nullRatio = 0;
+//    // perhaps change other opts_ values.
+//    vector = fuzzFlat(...);
+//  }
+//  // At this point, opts_ would have the original values again.
+//
+struct ScopedOptions {
+  explicit ScopedOptions(VectorFuzzer* fuzzer)
+      : fuzzer(fuzzer), savedOpts(fuzzer->getOptions()) {}
+
+  ~ScopedOptions() {
+    fuzzer->setOptions(savedOpts);
+  }
+
+  // Stores a copy of Options so we can restore at destruction time.
+  VectorFuzzer* fuzzer;
+  VectorFuzzer::Options savedOpts;
+};
+
 // Generate random values for the different supported types.
 template <typename T>
 T rand(FuzzerGenerator&) {
@@ -267,16 +293,25 @@ class VectorLoaderWrap : public VectorLoader {
 
 } // namespace
 
-VectorPtr VectorFuzzer::fuzz(const TypePtr& type) {
-  return fuzz(type, opts_.vectorSize, opts_.allowLazyVector);
+VectorPtr VectorFuzzer::fuzzNotNull(const TypePtr& type) {
+  return fuzzNotNull(type, opts_.vectorSize);
 }
 
-VectorPtr
-VectorFuzzer::fuzz(const TypePtr& type, vector_size_t size, bool canBeLazy) {
+VectorPtr VectorFuzzer::fuzzNotNull(const TypePtr& type, vector_size_t size) {
+  ScopedOptions restorer(this);
+  opts_.nullRatio = 0;
+  return fuzz(type, size);
+}
+
+VectorPtr VectorFuzzer::fuzz(const TypePtr& type) {
+  return fuzz(type, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzz(const TypePtr& type, vector_size_t size) {
   VectorPtr vector;
   vector_size_t vectorSize = size;
 
-  bool usingLazyVector = canBeLazy && coinToss(0.1);
+  bool usingLazyVector = opts_.allowLazyVector && coinToss(0.1);
   // Lazy Vectors cannot be sliced, so we skip this if using lazy wrapping.
   if (!usingLazyVector && coinToss(0.1)) {
     // Extend the underlying vector to allow slicing later.
@@ -343,12 +378,27 @@ VectorPtr VectorFuzzer::fuzzConstant(const TypePtr& type, vector_size_t size) {
   // Inner vector size can't be zero.
   auto innerVectorSize = folly::Random::rand32(1, opts_.vectorSize + 1, rng_);
   auto constantIndex = rand<vector_size_t>(rng_) % innerVectorSize;
+
+  ScopedOptions restorer(this);
+  opts_.allowLazyVector = false;
   return BaseVector::wrapInConstant(
-      size, constantIndex, fuzz(type, innerVectorSize, false /*canBeLazy*/));
+      size, constantIndex, fuzz(type, innerVectorSize));
 }
 
 VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type) {
   return fuzzFlat(type, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzzFlatNotNull(const TypePtr& type) {
+  return fuzzFlatNotNull(type, opts_.vectorSize);
+}
+
+VectorPtr VectorFuzzer::fuzzFlatNotNull(
+    const TypePtr& type,
+    vector_size_t size) {
+  ScopedOptions restorer(this);
+  opts_.nullRatio = 0;
+  return fuzzFlat(type, size);
 }
 
 VectorPtr VectorFuzzer::fuzzFlat(const TypePtr& type, vector_size_t size) {
@@ -411,32 +461,22 @@ VectorPtr VectorFuzzer::fuzzFlatPrimitive(
 }
 
 VectorPtr VectorFuzzer::fuzzComplex(const TypePtr& type, vector_size_t size) {
+  ScopedOptions restorer(this);
+  opts_.allowLazyVector = false;
+
   switch (type->kind()) {
     case TypeKind::ROW:
-      return fuzzRow(
-          std::dynamic_pointer_cast<const RowType>(type),
-          size,
-          opts_.containerHasNulls,
-          false /*canChildrenBeLazy*/);
+      return fuzzRow(std::dynamic_pointer_cast<const RowType>(type), size);
 
     case TypeKind::ARRAY:
       return fuzzArray(
-          fuzz(
-              type->asArray().elementType(),
-              size * opts_.containerLength,
-              false /*canBeLazy*/),
+          fuzz(type->asArray().elementType(), size * opts_.containerLength),
           size);
 
     case TypeKind::MAP:
       return fuzzMap(
-          fuzz(
-              type->asMap().keyType(),
-              size * opts_.containerLength,
-              false /*canBeLazy*/),
-          fuzz(
-              type->asMap().valueType(),
-              size * opts_.containerLength,
-              false /*canBeLazy*/),
+          fuzz(type->asMap().keyType(), size * opts_.containerLength),
+          fuzz(type->asMap().valueType(), size * opts_.containerLength),
           size);
 
     default:
@@ -535,6 +575,12 @@ MapVectorPtr VectorFuzzer::fuzzMap(
       values);
 }
 
+RowVectorPtr VectorFuzzer::fuzzInputRow(const RowTypePtr& rowType) {
+  ScopedOptions restorer(this);
+  opts_.containerHasNulls = false;
+  return fuzzRow(rowType, opts_.vectorSize);
+}
+
 RowVectorPtr VectorFuzzer::fuzzRow(
     std::vector<VectorPtr>&& children,
     vector_size_t size) {
@@ -554,24 +600,20 @@ RowVectorPtr VectorFuzzer::fuzzRow(
 }
 
 RowVectorPtr VectorFuzzer::fuzzRow(const RowTypePtr& rowType) {
-  return fuzzRow(
-      rowType,
-      opts_.vectorSize,
-      opts_.containerHasNulls,
-      false /*canChildrenBeLazy*/);
+  ScopedOptions restorer(this);
+  opts_.allowLazyVector = false;
+  return fuzzRow(rowType, opts_.vectorSize);
 }
 
 RowVectorPtr VectorFuzzer::fuzzRow(
     const RowTypePtr& rowType,
-    vector_size_t size,
-    bool rowHasNulls,
-    bool canChildrenBeLazy) {
+    vector_size_t size) {
   std::vector<VectorPtr> children;
   for (auto i = 0; i < rowType->size(); ++i) {
-    children.push_back(fuzz(rowType->childAt(i), size, canChildrenBeLazy));
+    children.push_back(fuzz(rowType->childAt(i), size));
   }
 
-  auto nulls = rowHasNulls ? fuzzNulls(size) : nullptr;
+  auto nulls = opts_.containerHasNulls ? fuzzNulls(size) : nullptr;
   return std::make_shared<RowVector>(
       pool_, rowType, nulls, size, std::move(children));
 }

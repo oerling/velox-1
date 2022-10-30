@@ -44,12 +44,12 @@ enum UTF8CharList {
 ///
 /// #1.
 ///
-/// The `fuzz(type, canBeLazy)` method provides the highest degree of entropy.
-/// It randomly generates different types of (possibly nested) encodings given
-/// the input type, including constants, dictionaries, sliced vectors, and more.
-/// It accepts any primitive, complex, or nested types. Additionally,
-/// 'canBeLazy' can be set to true to enable a chance of generating a lazy
-/// vector:
+/// The `fuzz(type)` method provides the highest degree of entropy. It randomly
+/// generates different types of (possibly nested) encodings given the input
+/// type, including constants, dictionaries, sliced vectors, and more. It
+/// accepts any primitive, complex, or nested types. Additionally,
+/// 'opt.allowLazyVector' can be set to true to enable a chance of generating a
+/// lazy vector:
 ///
 ///   auto vector1 = fuzzer.fuzz(INTEGER(), true);
 ///   auto vector2 =
@@ -147,29 +147,36 @@ class VectorFuzzer {
   }
 
   // Returns a "fuzzed" vector, containing randomized data, nulls, and indices
-  // vector (dictionary). Returns a vector of `opts_.vectorSize` size.
+  // vector (dictionary). Returns a vector containing `opts_.vectorSize` or
+  // `size` elements.
   VectorPtr fuzz(const TypePtr& type);
+  VectorPtr fuzz(const TypePtr& type, vector_size_t size);
+
+  // Same as above, but returns a vector without nulls (regardless of the value
+  // of opts.nullRatio).
+  VectorPtr fuzzNotNull(const TypePtr& type);
+  VectorPtr fuzzNotNull(const TypePtr& type, vector_size_t size);
 
   // Returns a flat vector or a complex vector with flat children with
-  // randomized data and nulls. Returns a vector of `opts_.vectorSize` size.
+  // randomized data and nulls. Returns a vector containing `opts_.vectorSize`
+  // or `size` elements.
   VectorPtr fuzzFlat(const TypePtr& type);
-
-  // Same as above, but returns a vector of `size` size.
   VectorPtr fuzzFlat(const TypePtr& type, vector_size_t size);
 
-  // Returns a random constant vector (which could be a null constant). Returns
-  // a vector with size set to `opts_.vectorSize`.
-  VectorPtr fuzzConstant(const TypePtr& type);
+  // Same as above, but returns a vector without nulls (regardless of the value
+  // of opts.nullRatio).
+  VectorPtr fuzzFlatNotNull(const TypePtr& type);
+  VectorPtr fuzzFlatNotNull(const TypePtr& type, vector_size_t size);
 
-  // Same as above, but returns a vector of `size` size.
+  // Returns a random constant vector (which could be a null constant). Returns
+  // a vector with size set to `opts_.vectorSize` or 'size'.
+  VectorPtr fuzzConstant(const TypePtr& type);
   VectorPtr fuzzConstant(const TypePtr& type, vector_size_t size);
 
   // Wraps `vector` using a randomized indices vector, returning a
   // DictionaryVector which has same number of indices as the underlying
   // `vector` size.
   VectorPtr fuzzDictionary(const VectorPtr& vector);
-
-  // Same as above, but returns a dictionary vector of `size` size.
   VectorPtr fuzzDictionary(const VectorPtr& vector, vector_size_t size);
 
   // Uses `elements` as the internal elements vector, wrapping them into an
@@ -198,9 +205,7 @@ class VectorFuzzer {
 
   // Same as the function above, but never return nulls for the top-level row
   // elements.
-  RowVectorPtr fuzzInputRow(const RowTypePtr& rowType) {
-    return fuzzRow(rowType, opts_.vectorSize, false, opts_.allowLazyVector);
-  }
+  RowVectorPtr fuzzInputRow(const RowTypePtr& rowType);
 
   variant randVariant(const TypePtr& arg);
 
@@ -232,10 +237,6 @@ class VectorFuzzer {
   RowVectorPtr fuzzRowChildrenToLazy(RowVectorPtr rowVector);
 
  private:
-  // Same as above, but returns a vector of `size` size. Additionally, If
-  // 'canBeLazy' is true then the returned vector can be a lazy vector.
-  VectorPtr fuzz(const TypePtr& type, vector_size_t size, bool canBeLazy);
-
   // Generates a flat vector for primitive types.
   VectorPtr fuzzFlatPrimitive(const TypePtr& type, vector_size_t size);
 
@@ -245,13 +246,7 @@ class VectorFuzzer {
   // flat.
   VectorPtr fuzzComplex(const TypePtr& type, vector_size_t size);
 
-  // If 'canChildrenBeLazy' is set to true then the returned vector can have
-  // lazy children.
-  RowVectorPtr fuzzRow(
-      const RowTypePtr& rowType,
-      vector_size_t size,
-      bool rowHasNulls,
-      bool canChildrenBeLazy);
+  RowVectorPtr fuzzRow(const RowTypePtr& rowType, vector_size_t size);
 
   // Generate a random null buffer.
   BufferPtr fuzzNulls(vector_size_t size);
