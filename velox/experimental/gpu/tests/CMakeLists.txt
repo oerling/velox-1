@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_subdirectory(benchmarks)
-add_subdirectory(tests)
 
-add_library(velox_uop UopExec.cpp)
-
-target_link_libraries(velox_uop velox_common_base)
+add_executable(velox_uop_test UopExecTest.cpp)
 

@@ -15,6 +15,8 @@
  */
 
 
+#pragma once
+
 #include <atomic>
 #include <semaphore>
 
@@ -42,16 +44,23 @@ struct Uop {
   
   vx_atomic<int32_t> state;
 
+  
+  
   // The  uOPS that must have a result for 'this' to be runnable.
-  Span<Uop*> inputs;
+  UopSpan inputs;
 
   // The Uops that need a result from 'this' to be runnable.
-  span<Uop*> dependents;
+  Uopspan dependents;
 
   // The Uops whose result is needed only if 'this' becomes runnable
-  Span<Uop*> conditionalInputs;
+  UopSpan conditionalInputs;
+
+  bool noMoreInput{false};
+  bool finished{false};
 };
 
+  using UopSpan = Span<Uop* FOLLY_NONNULL>;
+  
   struct Decompress : public Uop {
     // Double buffer for compressed input.
     Span<char> compressedData[2];
@@ -105,12 +114,37 @@ struct Uop {
   
     
   template <  typename T>
-  struct RingBuffer {
+  class RingBuffer {
+    RingBuffer(Span<T> data)
+      : data_(data),
+	readSem_(0),
+	writeSem_(data.size()),
+	sizeMask_(data.size() - 1) {
+      assert(data.size() == bits::nextPowerOfTwo(data.size());
+    }
+
+	void dequeue(T& data) {
+	readSem_.acquire();
+	auto index = readIndex_++ & sizeMask_;
+	result = data_[index];
+	writeSem_.release();
+      }
+
+      void enqueue() {
+	writeSem_.acquire();
+	int32_t index = writeIndex_++ & sizeMask_;
+	data_[index] = data;
+	readSem_.release();
+      }
+      
+    private:
     Span<T> data;
     vx_atomic<int32_t> writeIndex_;
     vx_atomic<int32_t> readIndex_;
-    std::counting_semaphore sem;
-  };
+    Semaphore readSem;
+    Semaphore writeSem;
+    const int32_t sizeMask_;
+    };
   
 // Represents the state of a Task kernel
 struct Task {
@@ -122,14 +156,18 @@ struct Task {
   
   // Unique id
   int64_t id;
-  std::counting_semaphore<1> runnableSem;
+  vx_atomic<int32_t> numRunnable;
+  RingBuffer<Uop* FOLLY_NONNULL> runnable_;
   Span<Uop*> uops;
   
 };
 
   // Represents the state of interaction with one GPU
   struct GpuState {
+    GpuState() {}
 
+    void startTask(uint64_t id, UopSpan uops); 
+    
       RingBuffer<HostCommand> hostCommands;
   RingBuffer<GpuCommand> gpuCommands;
 

@@ -14,5 +14,13 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/gpu/UopExec.h"
+
+using namespace facebook::velox;
+
+using namespace facebook::velox::cuda;
+
+class UopExecTest : public testing::Test {
+};
 
 
