@@ -18,6 +18,14 @@
 
 namespace facebook::velox::cuda {
 
+  using UopRun = void(*)(Uop* FOLLY_NONNULL uop);
+  
+  Uop::batchDone() {
+    for(auto next : dependdents) {
+      
+    }
+  }
+  
   void Task::runThread() {
     while (numFinished_ < uops_.size()) {
       //__shared__ Uop* sharedUop;
