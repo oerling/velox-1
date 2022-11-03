@@ -98,8 +98,9 @@ namespace {
 using exec::SignatureBinder;
 
 /// Returns if `functionName` with the given `argTypes` is deterministic.
-/// Returns std::nullopt if the function was not found.
-std::optional<bool> isDeterministic(
+/// Returns true if the function was not found or determinism cannot be
+/// established.
+bool isDeterministic(
     const std::string& functionName,
     const std::vector<TypePtr>& argTypes) {
   // Check if this is a simple function.
@@ -136,7 +137,11 @@ std::optional<bool> isDeterministic(
                  << "' is deterministic or not. Assuming it is.";
     return true;
   }
-  return std::nullopt;
+
+  // functionName must be a special form.
+  LOG(WARNING) << "Unable to determine if '" << functionName
+               << "' is deterministic or not. Assuming it is.";
+  return true;
 }
 
 VectorFuzzer::Options getFuzzerOptions() {
@@ -190,7 +195,7 @@ std::optional<CallableSignature> processSignature(
   }
 
   if (onlyPrimitiveTypes || FLAGS_velox_fuzzer_enable_complex_types) {
-    if (isDeterministic(callable.name, callable.args).value()) {
+    if (isDeterministic(callable.name, callable.args)) {
       return callable;
     }
     LOG(WARNING) << "Skipping non-deterministic function: "
@@ -269,11 +274,13 @@ ExpressionFuzzer::ExpressionFuzzer(
     for (const auto& signature : function.second) {
       ++totalFunctionSignatures;
 
-      // Not supporting lambda functions or decimal functions for now.
+      // Not supporting lambda functions, or functions using decimal and
+      // timestamp with time zone types.
       if (useTypeName(*signature, "function") ||
           useTypeName(*signature, "long_decimal") ||
           useTypeName(*signature, "short_decimal") ||
-          useTypeName(*signature, "decimal")) {
+          useTypeName(*signature, "decimal") ||
+          useTypeName(*signature, "timestamp with time zone")) {
         continue;
       }
 
@@ -328,9 +335,6 @@ ExpressionFuzzer::ExpressionFuzzer(
       "Unsupported function signatures: {} ({:.2f}%)",
       unsupportedFunctionSignatures,
       (double)unsupportedFunctionSignatures / totalFunctionSignatures * 100);
-
-  // Add additional signatures that are not in function registry.
-  appendConjunctSignatures();
 
   // We sort the available signatures before inserting them into
   // signaturesMap_. The purpose of this step is to ensure the vector of
@@ -447,18 +451,6 @@ void ExpressionFuzzer::sortSignatureTemplates() {
       });
 }
 
-void ExpressionFuzzer::appendConjunctSignatures() {
-  CallableSignature conjunctSignature;
-  conjunctSignature.name = "and";
-  conjunctSignature.returnType = BOOLEAN();
-  conjunctSignature.args = {BOOLEAN(), BOOLEAN()};
-  conjunctSignature.variableArity = true;
-  signatures_.emplace_back(conjunctSignature);
-
-  conjunctSignature.name = "or";
-  signatures_.emplace_back(conjunctSignature);
-}
-
 RowVectorPtr ExpressionFuzzer::generateRowVector() {
   return vectorFuzzer_.fuzzRow(
       ROW(std::move(inputRowNames_), std::move(inputRowTypes_)));
@@ -468,10 +460,6 @@ core::TypedExprPtr ExpressionFuzzer::generateArgConstant(const TypePtr& arg) {
   if (vectorFuzzer_.coinToss(FLAGS_null_ratio)) {
     return std::make_shared<core::ConstantTypedExpr>(
         arg, variant::null(arg->kind()));
-  }
-  if (arg->isPrimitiveType()) {
-    return std::make_shared<core::ConstantTypedExpr>(
-        vectorFuzzer_.randVariant(arg));
   }
   return std::make_shared<core::ConstantTypedExpr>(
       vectorFuzzer_.fuzzConstant(arg, 1));
@@ -706,7 +694,7 @@ void ExpressionFuzzer::go() {
     VELOX_CHECK(inputRowTypes_.empty());
     VELOX_CHECK(inputRowNames_.empty());
 
-    // Pick a random signature to chose the root return type.
+    // Pick a random signature to choose the root return type.
     size_t idx = folly::Random::rand32(signatures_.size(), rng_);
     const auto& rootType = signatures_[idx].returnType;
 

@@ -922,13 +922,58 @@ class PartitionedOutputNode : public PlanNode {
 };
 
 enum class JoinType {
+  // For each row on the left, find all matching rows on the right and return
+  // all combinations.
   kInner,
+  // For each row on the left, find all matching rows on the right and return
+  // all combinations. In addition, return all rows from the left that have no
+  // match on the right with right-side columns filled with nulls.
   kLeft,
+  // Opposite of kLeft. For each row on the right, find all matching rows on the
+  // left and return all combinations. In addition, return all rows from the
+  // right that have no match on the left with left-side columns filled with
+  // nulls.
   kRight,
+  // A "union" of kLeft and kRight. For each row on the left, find all matching
+  // rows on the right and return all combinations. In addition, return all rows
+  // from the left that have no
+  // match on the right with right-side columns filled with nulls. Also, return
+  // all rows from the
+  // right that have no match on the left with left-side columns filled with
+  // nulls.
   kFull,
-  kLeftSemi,
-  kRightSemi,
+  kLeftSemi, // TODO Remove after updating Prestissimo.
+  // Return a subset of rows from the left side which have a match on the right
+  // side. For this join type, cardinality of the output is less than or equal
+  // to the cardinality of the left side.
+  kLeftSemiFilter,
+  // Return each row from the left side with a boolean flag indicating whether
+  // there exists a match on the right side. For this join type, cardinality of
+  // the output equals the cardinality of the left side.
+  kLeftSemiProject,
+  kRightSemi, // TODO Remove after updating Prestissimo.
+  // Opposite of kLeftSemiFilter. Return a subset of rows from the right side
+  // which have a match on the left side. For this join type, cardinality of the
+  // output is less than or equal to the cardinality of the right side.
+  kRightSemiFilter,
+  // Opposite of kLeftSemiProject. Return each row from the right side with a
+  // boolean flag indicating whether there exists a match on the left side. For
+  // this join type, cardinality of the output equals the cardinality of the
+  // right side.
+  kRightSemiProject,
+  // Return each row from the left side which has no match on the right side.
+  // The handling of the rows with nulls in the join key follows NOT IN
+  // semantic:
+  // (1) return empty result if the right side contains a record with a null in
+  // the join key;
+  // (2) return left-side row with null in the join key only when
+  // the right side is empty.
   kNullAwareAnti,
+  // Return each row from the left side which has no match on the right side.
+  // The handling of the rows with nulls in the join key follows NOT EXISTS
+  // semantic:
+  // (1) ignore right-side rows with nulls in the join keys;
+  // (2) unconditionally return left side rows with nulls in the join keys.
   kAnti,
 };
 
@@ -943,9 +988,15 @@ inline const char* joinTypeName(JoinType joinType) {
     case JoinType::kFull:
       return "FULL";
     case JoinType::kLeftSemi:
-      return "LEFT SEMI";
+    case JoinType::kLeftSemiFilter:
+      return "LEFT SEMI (FILTER)";
     case JoinType::kRightSemi:
-      return "RIGHT SEMI";
+    case JoinType::kRightSemiFilter:
+      return "RIGHT SEMI (FILTER)";
+    case JoinType::kLeftSemiProject:
+      return "LEFT SEMI (PROJECT)";
+    case JoinType::kRightSemiProject:
+      return "RIGHT SEMI (PROJECT)";
     case JoinType::kNullAwareAnti:
       return "NULL-AWARE ANTI";
     case JoinType::kAnti:
@@ -970,12 +1021,22 @@ inline bool isFullJoin(JoinType joinType) {
   return joinType == JoinType::kFull;
 }
 
-inline bool isLeftSemiJoin(JoinType joinType) {
-  return joinType == JoinType::kLeftSemi;
+inline bool isLeftSemiFilterJoin(JoinType joinType) {
+  return joinType == JoinType::kLeftSemiFilter ||
+      joinType == JoinType::kLeftSemi;
 }
 
-inline bool isRightSemiJoin(JoinType joinType) {
-  return joinType == JoinType::kRightSemi;
+inline bool isLeftSemiProjectJoin(JoinType joinType) {
+  return joinType == JoinType::kLeftSemiProject;
+}
+
+inline bool isRightSemiFilterJoin(JoinType joinType) {
+  return joinType == JoinType::kRightSemiFilter ||
+      joinType == JoinType::kRightSemi;
+}
+
+inline bool isRightSemiProjectJoin(JoinType joinType) {
+  return joinType == JoinType::kRightSemiProject;
 }
 
 inline bool isNullAwareAntiJoin(JoinType joinType) {
@@ -1032,12 +1093,22 @@ class AbstractJoinNode : public PlanNode {
     return joinType_ == JoinType::kFull;
   }
 
-  bool isLeftSemiJoin() const {
-    return joinType_ == JoinType::kLeftSemi;
+  bool isLeftSemiFilterJoin() const {
+    return joinType_ == JoinType::kLeftSemiFilter ||
+        joinType_ == JoinType::kLeftSemi;
   }
 
-  bool isRightSemiJoin() const {
-    return joinType_ == JoinType::kRightSemi;
+  bool isLeftSemiProjectJoin() const {
+    return joinType_ == JoinType::kLeftSemiProject;
+  }
+
+  bool isRightSemiFilterJoin() const {
+    return joinType_ == JoinType::kRightSemiFilter ||
+        joinType_ == JoinType::kRightSemi;
+  }
+
+  bool isRightSemiProjectJoin() const {
+    return joinType_ == JoinType::kRightSemiProject;
   }
 
   bool isNullAwareAntiJoin() const {
