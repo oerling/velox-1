@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/qury/PlanToGraph.h"
+#include "velox/experimental/query/PlanToGraph.h"
 
 namespace facebook::velox::query {
 
 Optimization::Optimization(
-    const std::shared_ptr<PlanNode>& plan,
-    MappedMemory& mappedMemory) {
+			   const std::shared_ptr<core::PlanNode>& plan,
+			   const Schema& schema,
+			   memory::MappedMemory& mappedMemory) {
   QueryGraphContext context(
       std::make_unique<HashStringAllocator>(mappedMemory));
   auto dt = CREATE(DerivedTable, context.newId());

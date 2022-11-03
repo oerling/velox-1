@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include "velox/common/base/SimdUtil.h"
 #include  "velox/core/PlanNode.h"
 #include "velox/experimental/query/QueryGraph.h"
 
@@ -22,7 +23,7 @@ namespace facebook::velox::query {
 
   class Optimization {
   public:
-    Optimization(const std::shared_ptr<PlanNode>& plan, const Schema& schema);
+    Optimization(const std::shared_ptr<core::PlanNode>& plan, const Schema& schema);
 
   private:
     const Schema& schema_;

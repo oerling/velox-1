@@ -22,25 +22,34 @@ namespace facebook::velox::query {
 
 /// Base data structures for plan candidate generation.
 
-  class QueryGraphContext {
-    hashStringAllocator* allocator_;
-    int32_t lastId_{0};
+struct PlanObject;
 
-    // PlanObjects are stored at the index given by their id.
-    std::vector<PlanObject*> objects_;
-  };
+using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
 
-  QueryGraphContext& ctx() {
-      thread_local QueryGraphContext context;
+class QueryGraphContext {
+ public:
+  QueryGraphContext() {}
+
+  int32_t newId() {
+    return lastId_++;
+  }
+
+  HashStringAllocator* allocator_;
+  int32_t lastId_{0};
+
+  // PlanObjects are stored at the index given by their id.
+  std::vector<PlanObjectPtr> objects_;
+};
+
+QueryGraphContext& ctx() {
+  thread_local QueryGraphContext context;
   return context;
-  }
+}
 
+#define create(T, destination, ...)                         \
+  T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
+  destination = new (data) T(__VA_ARGS__);
 
-#define create(T, __VA_ARGS__) { \
-    void* data = malloc(sizeof(T));		\
-    return new(data) T(__VA_ARGS__);		\
-  }
-  
 /// Pointers are name <type>Ptr and defined to be raw pointers. We
 /// expect arena allocation with a whole areena freed after plan
 /// selection. The different pointers could also be declared as smart
@@ -70,8 +79,8 @@ struct PlanObject {
 
 struct Value : public PlanObject {
   const Type* type;
-  Variant min;
-  Variant max;
+  variant min;
+  variant max;
   int64_t cardinality;
   bool nullable;
 };
@@ -101,6 +110,13 @@ struct Equivalence {
   std::vector<bool> nullable;
 };
 
+enum class OrderType {
+  kAscNullsFirst,
+  kAscNullsLast,
+  kDescNullsFirst,
+  kDescNullsLast
+};
+
 // Describes output of relational operator. If base table, cardinality is after
 // filtering, column value ranges are after filtering.
 struct Distribution : public PlanObject {
@@ -115,10 +131,12 @@ struct Distribution : public PlanObject {
   // function (e.g. Hive bucket or range partition).
   std::vector<ColumnPtr> partition;
 
-  // Ordering columns. Each partition is ordered by these. Does not specify
-  // asc/desc or null disposition. Specifies that streaming group by or merge
-  // join are possible.
+  // Ordering columns. Each partition is ordered by these. Specifies that
+  // streaming group by or merge join are possible.
   std::vector<ColumnPtr> order;
+
+  // Corresponds 1:1 to 'order'
+  std::vector<OrderType> orderType;
 
   // Specifies the selectivity between the source of the ordered data
   // and 'this'. For example, if orders join lineitem and both are
@@ -149,12 +167,18 @@ struct FilteredColumn {
   float selectivity;
 };
 
-struct Relation;
+using FilteredColumnPtr = FilteredColumn*;
 
-struc JoinEdge {
-  // if left or right are optional, the join can only be placed after the
-  // non-optional side is placed. If neither side is optional, the other side
-  // can be placed if the other one is.
+// Represents a possibly directional binary join edge. A join
+// hyperedge like a.k = b.k + c.k is represented as non-join filters
+// in the containing derived table. a.k can be used as a lookup key
+// if b and c are placed to the left of a.  if left or right are
+// semi, anti or optional, the join can only be placed after the
+// inner side is placed. If neither side is optional, the edge is
+// non-directional and whichever side is not placed can be added. If
+// both sides are optional (full outer join) then the edge is
+// non-directional.
+struct JoinEdge {
   Relation* left;
   Relation* right;
   // Leading left side join keys.
@@ -183,6 +207,8 @@ struc JoinEdge {
   bool leftSemi;
 };
 
+using JoinEdgePtr = JoinEdge*;
+
 struct Relation : public PlanObject {
   Distribution distribution;
   std::vector<ColumnPtr> columns;
@@ -201,16 +227,27 @@ struct BaseTable : public Table {
   std::string name;
 };
 
-struct GroupBy {
-  std::vector<ExprPtr> grouping;
-  std::vector<Aggregate> aggregates;
-  std::vector<Column> result;
+// Aggregate function. The aggregation and arguments are in the
+// inherited Expr. The Value pertains to the aggregation
+// result. adds aggregate-only attributes to Expr.
+struct Aggregate : public Expr {
+  bool distinct{false};
+  ExprPtr condition;
 };
 
-struc OrderBy {
-  std::vector<ExprPtr> keys;
-  std::vector<Column> dependent;
+using AggregatePtr = Aggregate*;
+
+struct GroupBy : public Relation {
+  std::vector<ExprPtr> grouping;
+  std::vector<AggregatePtr> aggregates;
 };
+using GroupByPtr = GroupBy*;
+
+struct OrderBy : public Relation {
+  std::vector<ExprPtr> keys;
+};
+
+using OrderByPtr = OrderBy*;
 
 struct DerivedTable : public Table {
   // Columns projected out. Visible in the enclosing query.
@@ -237,6 +274,8 @@ struct DerivedTable : public Table {
   int32_t limit{-1};
   int32_t offset{0};
 };
+
+using DerivedTablePtr = DerivedTable*;
 
 // Plan candidates.
 //
@@ -282,6 +321,8 @@ struct RelationOp : public Relation {
   float peakResident;
 };
 
+using RelationOpPtr = RelationOp*;
+
 struct TableScan : public RelationOp {
   // Left side of index join, nullptr for a leaf table scan.
   RelationPtr input;
@@ -326,24 +367,14 @@ struct HashJoin : public RelationOp {
   ExprPtr filter;
 };
 
-  
-  class Index {
-    // Number of leading columns in keys on which 'this' is sorted. 0 means not sorted.
-    int32_t numKeys_;
-    // All columns. First 'numKeys' are ordering.
-    std::vector<std::string> keys_;
-    // 1:1 to 'keys_'.
-    std::vector<Value> stats_;
-  };
-  
-  class SchemaTable {
-    std::vector<Index> indices_;
-  };
-  
-  class Schema {
-    std::unordered_map<std::string, std::unique_ptr<SchemaTable>> tables;
-  };
-  
+class Index : public Relation {};
+
+class SchemaTable {
+  std::vector<Index> indices_;
+};
+
+class Schema {
+  std::unordered_map<std::string, std::unique_ptr<SchemaTable>> tables;
+};
+
 } // namespace facebook::velox::query
-
-
