@@ -20,11 +20,13 @@
 
 namespace facebook::velox::query {
 
-  class Optimzation {
+  class Optimization {
   public:
-    Optimization(const std::shared_ptr<PlanNode>& plan);
+    Optimization(const std::shared_ptr<PlanNode>& plan, const Schema& schema);
+
   private:
-    std::uniqua_ptr<QueryGraphContext> context:;
+    const Schema& schema_;
+    std::unique_ptr<QueryGraphContext> context_;
     DerivedTablePtr root_;
   };
 

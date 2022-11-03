@@ -15,16 +15,17 @@
  */
 
 
-#include "velox/experimental/qury/PlanToGraph.h"
+#include "velox/experimental/query/PlanToGraph.h"
 
-namespace facebook::velox::query {
+#include <gtest/gtest.h>
 
-
-  Optimization::Optimization(const std::shared_ptr<PlanNode>& plan, MappedMemory& mappedMemory) {
-    QueryGraphContext context(std::make_unique<HashStringAllocator>(mappedMemory));
-    auto dt = CREATE(DerivedTable, context.newId());
-  }
+using namespace facebook::velox::query;
 
 
+class PlanToGraphTest {
+
+};
+
+TEST_F(PlanToGraphTest, q3) {
 
 }

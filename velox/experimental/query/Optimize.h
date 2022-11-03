@@ -13,12 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include "velox/experimental/query/PlanToGraph.h"
 
 namespace facebook::velox::query {
 
-std::shared_ptr<core::PlanNode> optimize(const std::shared_ptr<PlanNode>& plan);
+  std::shared_ptr<core::PlanNode> optimize(const std::shared_ptr<PlanNode>& plan, const Schema& schema);
 
 }

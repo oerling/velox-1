@@ -23,8 +23,11 @@ namespace facebook::velox::query {
 /// Base data structures for plan candidate generation.
 
   class QueryGraphContext {
-    std::unique_ptr<hashStringAllocator> allocator_;
+    hashStringAllocator* allocator_;
     int32_t lastId_{0};
+
+    // PlanObjects are stored at the index given by their id.
+    std::vector<PlanObject*> objects_;
   };
 
   QueryGraphContext& ctx() {
@@ -323,4 +326,24 @@ struct HashJoin : public RelationOp {
   ExprPtr filter;
 };
 
+  
+  class Index {
+    // Number of leading columns in keys on which 'this' is sorted. 0 means not sorted.
+    int32_t numKeys_;
+    // All columns. First 'numKeys' are ordering.
+    std::vector<std::string> keys_;
+    // 1:1 to 'keys_'.
+    std::vector<Value> stats_;
+  };
+  
+  class SchemaTable {
+    std::vector<Index> indices_;
+  };
+  
+  class Schema {
+    std::unordered_map<std::string, std::unique_ptr<SchemaTable>> tables;
+  };
+  
 } // namespace facebook::velox::query
+
+
