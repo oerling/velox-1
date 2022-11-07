@@ -19,6 +19,35 @@
 namespace facebook::velox::cuda {
 
   using UopRun = void(*)(Uop* FOLLY_NONNULL uop);
+
+  void Uop::inputReady() {
+    int32_t newState = --state_;
+    if (newState == 0) {
+      task_->runnable->add(this);
+      for (auto i = 0; i < optionalInputs.size(); ++i) {
+	optionalInputs_[i]->optionalNeeded();
+      }
+    }
+  }
+
+  void outputReady() {
+    for (auto i = 0; i < comsumers_.size(); ++i) {
+      consumers_[i]->inputReady();
+    }
+  }
+
+  // Called by 'this' after noMoreInput() has been called on 'this' and all
+  // output generated.
+  void noMoreOutput();
+
+  // Called by 'this' to signal that th producers are free to rewrite the input
+  // 'this' consumed.
+
+  void inputConsumed();
+
+  // Called by producers to signal that they will not produce any more.
+  void noMoreInput();
+
   
   Uop::batchDone() {
     for(auto next : dependdents) {
@@ -37,6 +66,14 @@ namespace facebook::velox::cuda {
       uopRun[uop->uopCode](uop);
     }
   }
-  
+
+  void Task::inputReady(UopSpan leaves, Span<InputBuffer> input) {
+    for (auto i = 0; i < leaves.size(); ++i) {
+
+      leaves[i]->setInput(inputs[i]);
+      leaves[i]->inputReady();
+    }
+  }
+
 
 }

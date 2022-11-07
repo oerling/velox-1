@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <folly/Random.h>
+#include <boost/random/uniform_int_distribution.hpp>
 #include <folly/ScopeGuard.h>
 #include <glog/logging.h>
 #include <exception>
@@ -81,6 +81,13 @@ DEFINE_string(
     "Directory path for persistence of data and SQL when fuzzer fails for "
     "future reproduction. Empty string disables this feature.");
 
+DEFINE_bool(
+    persist_and_run_once,
+    false,
+    "Persist repro info before evaluation and only run one iteration. "
+    "This is to rerun with the seed number and persist repro info upon a "
+    "crash failure. Only effective if repro_persist_path is set.");
+
 DEFINE_int32(
     velox_fuzzer_max_level_of_nesting,
     10,
@@ -98,8 +105,9 @@ namespace {
 using exec::SignatureBinder;
 
 /// Returns if `functionName` with the given `argTypes` is deterministic.
-/// Returns std::nullopt if the function was not found.
-std::optional<bool> isDeterministic(
+/// Returns true if the function was not found or determinism cannot be
+/// established.
+bool isDeterministic(
     const std::string& functionName,
     const std::vector<TypePtr>& argTypes) {
   // Check if this is a simple function.
@@ -136,7 +144,11 @@ std::optional<bool> isDeterministic(
                  << "' is deterministic or not. Assuming it is.";
     return true;
   }
-  return std::nullopt;
+
+  // functionName must be a special form.
+  LOG(WARNING) << "Unable to determine if '" << functionName
+               << "' is deterministic or not. Assuming it is.";
+  return true;
 }
 
 VectorFuzzer::Options getFuzzerOptions() {
@@ -190,7 +202,7 @@ std::optional<CallableSignature> processSignature(
   }
 
   if (onlyPrimitiveTypes || FLAGS_velox_fuzzer_enable_complex_types) {
-    if (isDeterministic(callable.name, callable.args).value()) {
+    if (isDeterministic(callable.name, callable.args)) {
       return callable;
     }
     LOG(WARNING) << "Skipping non-deterministic function: "
@@ -254,7 +266,9 @@ ExpressionFuzzer::ExpressionFuzzer(
     : remainingLevelOfNesting_(std::max(1, maxLevelOfNesting)),
       verifier_(
           &execCtx_,
-          {FLAGS_disable_constant_folding, FLAGS_repro_persist_path}),
+          {FLAGS_disable_constant_folding,
+           FLAGS_repro_persist_path,
+           FLAGS_persist_and_run_once}),
       vectorFuzzer_(getFuzzerOptions(), execCtx_.pool()) {
   seed(initialSeed);
 
@@ -269,11 +283,13 @@ ExpressionFuzzer::ExpressionFuzzer(
     for (const auto& signature : function.second) {
       ++totalFunctionSignatures;
 
-      // Not supporting lambda functions or decimal functions for now.
+      // Not supporting lambda functions, or functions using decimal and
+      // timestamp with time zone types.
       if (useTypeName(*signature, "function") ||
           useTypeName(*signature, "long_decimal") ||
           useTypeName(*signature, "short_decimal") ||
-          useTypeName(*signature, "decimal")) {
+          useTypeName(*signature, "decimal") ||
+          useTypeName(*signature, "timestamp with time zone")) {
         continue;
       }
 
@@ -329,9 +345,6 @@ ExpressionFuzzer::ExpressionFuzzer(
       unsupportedFunctionSignatures,
       (double)unsupportedFunctionSignatures / totalFunctionSignatures * 100);
 
-  // Add additional signatures that are not in function registry.
-  appendConjunctSignatures();
-
   // We sort the available signatures before inserting them into
   // signaturesMap_. The purpose of this step is to ensure the vector of
   // function signatures associated with each key in signaturesMap_ has a
@@ -385,7 +398,7 @@ void ExpressionFuzzer::seed(size_t seed) {
 }
 
 void ExpressionFuzzer::reSeed() {
-  seed(folly::Random::rand32(rng_));
+  seed(rng_());
 }
 
 void ExpressionFuzzer::sortConcreteSignatures() {
@@ -447,18 +460,6 @@ void ExpressionFuzzer::sortSignatureTemplates() {
       });
 }
 
-void ExpressionFuzzer::appendConjunctSignatures() {
-  CallableSignature conjunctSignature;
-  conjunctSignature.name = "and";
-  conjunctSignature.returnType = BOOLEAN();
-  conjunctSignature.args = {BOOLEAN(), BOOLEAN()};
-  conjunctSignature.variableArity = true;
-  signatures_.emplace_back(conjunctSignature);
-
-  conjunctSignature.name = "or";
-  signatures_.emplace_back(conjunctSignature);
-}
-
 RowVectorPtr ExpressionFuzzer::generateRowVector() {
   return vectorFuzzer_.fuzzRow(
       ROW(std::move(inputRowNames_), std::move(inputRowTypes_)));
@@ -468,10 +469,6 @@ core::TypedExprPtr ExpressionFuzzer::generateArgConstant(const TypePtr& arg) {
   if (vectorFuzzer_.coinToss(FLAGS_null_ratio)) {
     return std::make_shared<core::ConstantTypedExpr>(
         arg, variant::null(arg->kind()));
-  }
-  if (arg->isPrimitiveType()) {
-    return std::make_shared<core::ConstantTypedExpr>(
-        vectorFuzzer_.randVariant(arg));
   }
   return std::make_shared<core::ConstantTypedExpr>(
       vectorFuzzer_.fuzzConstant(arg, 1));
@@ -486,7 +483,8 @@ core::TypedExprPtr ExpressionFuzzer::generateArgColumn(const TypePtr& arg) {
 }
 
 core::TypedExprPtr ExpressionFuzzer::generateArg(const TypePtr& arg) {
-  size_t argClass = folly::Random::rand32(4, rng_);
+  size_t argClass =
+      boost::random::uniform_int_distribution<uint32_t>(0, 3)(rng_);
 
   // Toss a coin and choose between a constant, a column reference, or another
   // expression (function).
@@ -500,7 +498,7 @@ core::TypedExprPtr ExpressionFuzzer::generateArg(const TypePtr& arg) {
     if (remainingLevelOfNesting_ > 0) {
       return generateExpression(arg);
     }
-    argClass = folly::Random::rand32(2, rng_);
+    argClass = boost::random::uniform_int_distribution<uint32_t>(0, 1)(rng_);
   }
 
   if (argClass == kArgConstant) {
@@ -515,7 +513,8 @@ std::vector<core::TypedExprPtr> ExpressionFuzzer::generateArgs(
   std::vector<core::TypedExprPtr> inputExpressions;
   auto numVarArgs = !input.variableArity
       ? 0
-      : folly::Random::rand32(FLAGS_max_num_varargs + 1, rng_);
+      : boost::random::uniform_int_distribution<uint32_t>(
+            0, FLAGS_max_num_varargs)(rng_);
   inputExpressions.reserve(input.args.size() + numVarArgs);
 
   for (const auto& arg : input.args) {
@@ -574,7 +573,8 @@ core::TypedExprPtr ExpressionFuzzer::generateExpression(
   auto secondAttempt =
       &ExpressionFuzzer::generateExpressionFromSignatureTemplate;
 
-  size_t useSignatureTemplate = folly::Random::rand32(2, rng_);
+  size_t useSignatureTemplate =
+      boost::random::uniform_int_distribution<uint32_t>(0, 1)(rng_);
   if (FLAGS_velox_fuzzer_enable_complex_types && useSignatureTemplate) {
     std::swap(firstAttempt, secondAttempt);
   }
@@ -625,7 +625,8 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
   }
 
   // Randomly pick a function that can return `returnType`.
-  size_t idx = folly::Random::rand32(eligible.size(), rng_);
+  size_t idx = boost::random::uniform_int_distribution<uint32_t>(
+      0, eligible.size() - 1)(rng_);
   const auto& chosen = eligible[idx];
 
   return getCallExprFromCallable(*chosen);
@@ -655,7 +656,8 @@ ExpressionFuzzer::chooseRandomSignatureTemplate(
     return nullptr;
   }
 
-  auto idx = folly::Random::rand32(eligible.size(), rng_);
+  auto idx = boost::random::uniform_int_distribution<uint32_t>(
+      0, eligible.size() - 1)(rng_);
   return eligible[idx];
 }
 
@@ -706,8 +708,9 @@ void ExpressionFuzzer::go() {
     VELOX_CHECK(inputRowTypes_.empty());
     VELOX_CHECK(inputRowNames_.empty());
 
-    // Pick a random signature to chose the root return type.
-    size_t idx = folly::Random::rand32(signatures_.size(), rng_);
+    // Pick a random signature to choose the root return type.
+    size_t idx = boost::random::uniform_int_distribution<uint32_t>(
+        0, signatures_.size() - 1)(rng_);
     const auto& rootType = signatures_[idx].returnType;
 
     // Generate expression tree and input data vectors.

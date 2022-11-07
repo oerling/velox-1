@@ -16,25 +16,24 @@
 
 #pragma once
 
-#include <cstdint>
-#include <mutex>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/future/VeloxPromise.h"
 
-
-
 namespace facebook::velox {
 
-
+/// Similar to std::counting_semaphore in C++ 20.
 class Semaphore {
  public:
- Semaphore(int32_t count)
-   : count_(count) {}
-  
+  Semaphore(int32_t count) : count_(count) {}
+
+  // If count > 0, decrements count. Otherwise blocks until count is incremented
+  // by release() from another thread.
   void acquire() {
     std::unique_lock l(mutex_);
     if (count_) {
@@ -42,28 +41,25 @@ class Semaphore {
     } else {
       ++numWaiting_;
       cv_.wait(l, [&]() { return count_ > 0; });
+      --numWaiting_;
       --count_;
     }
-
   }
 
+  /// Increments count. Releases one blocking call to acquire, if any.
   void release() {
     std::lock_guard<std::mutex> l(mutex_);
-    if (count_ == 0 && numWaiting_ > 0) {
-      --numWaiting_;
-      ++count_;
+    ++count_;
+    if (numWaiting_ > 0) {
       cv_.notify_one();
-    } else {
-      ++count_;
     }
   }
 
  private:
-  
   std::mutex mutex_;
   std::condition_variable cv_;
   volatile int32_t count_;
   volatile int32_t numWaiting_{0};
 };
- 
-}
+
+} // namespace facebook::velox

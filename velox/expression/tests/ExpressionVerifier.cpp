@@ -31,6 +31,11 @@ void printRowVector(const RowVectorPtr& rowVector) {
   }
 }
 
+bool isInvalidArgumentOrUnsupported(const VeloxException& ex) {
+  return ex.errorCode() == "INVALID_ARGUMENT" ||
+      ex.errorCode() == "UNSUPPORTED";
+}
+
 void compareExceptions(
     const VeloxException& left,
     const VeloxException& right) {
@@ -42,17 +47,22 @@ void compareExceptions(
   // first. We have seen this happen for the format_datetime Presto function
   // that leads to unmatched error codes UNSUPPORTED vs. INVALID_ARGUMENT.
   // Therefore, we intentionally relax the comparision here.
-  VELOX_CHECK(
-      left.errorCode() == right.errorCode() ||
-      (left.errorCode() == "INVALID_ARGUMENT" &&
-       right.errorCode() == "UNSUPPORTED") ||
-      (right.errorCode() == "INVALID_ARGUMENT" &&
-       left.errorCode() == "UNSUPPORTED"));
-  VELOX_CHECK_EQ(left.errorSource(), right.errorSource());
-  VELOX_CHECK_EQ(left.exceptionName(), right.exceptionName());
-  if (left.message() != right.message()) {
-    LOG(WARNING) << "Two different VeloxExceptions were thrown:\n\t"
-                 << left.message() << "\nand\n\t" << right.message();
+  if (left.errorCode() == right.errorCode() ||
+      (isInvalidArgumentOrUnsupported(left) &&
+       isInvalidArgumentOrUnsupported(right))) {
+    VELOX_CHECK_EQ(left.errorSource(), right.errorSource());
+    VELOX_CHECK_EQ(left.exceptionName(), right.exceptionName());
+    if (left.message() != right.message()) {
+      LOG(WARNING) << "Two different VeloxExceptions were thrown:\n\t"
+                   << left.message() << "\nand\n\t" << right.message();
+    }
+  } else {
+    LOG(ERROR) << left.what();
+    LOG(ERROR) << right.what();
+    VELOX_FAIL(
+        "Common path and simplified path threw different exceptions: {} vs. {}",
+        left.message(),
+        right.message());
   }
 }
 
@@ -152,8 +162,17 @@ bool ExpressionVerifier::verify(
     std::vector<core::TypedExprPtr> typedExprs = {plan};
     // Disabling constant folding in order to preserver the original
     // expression
-    sql =
-        exec::ExprSet(std::move(typedExprs), execCtx_, false).expr(0)->toSql();
+    try {
+      sql = exec::ExprSet(std::move(typedExprs), execCtx_, false)
+                .expr(0)
+                ->toSql();
+    } catch (const std::exception& e) {
+      LOG(WARNING) << "Failed to generate SQL: " << e.what();
+      sql = "<failed to generate>";
+    }
+    if (options_.persistAndRunOnce) {
+      persistReproInfo(rowVector, copiedResult, sql);
+    }
   }
 
   // Execute expression plan using both common and simplified evals.
@@ -222,11 +241,23 @@ bool ExpressionVerifier::verify(
       compareVectors(commonEvalResult.front(), simplifiedEvalResult.front());
     }
   } catch (...) {
-    if (!options_.reproPersistPath.empty()) {
+    if (!options_.reproPersistPath.empty() && !options_.persistAndRunOnce) {
       persistReproInfo(rowVector, copiedResult, sql);
     }
     throw;
   }
+
+  if (!options_.reproPersistPath.empty() && options_.persistAndRunOnce) {
+    // A guard to make sure it runs only once with persistAndRunOnce flag turned
+    // on. It shouldn't reach here normally since the flag is used to persist
+    // repro info for crash failures. But if it hasn't crashed by now, we still
+    // don't want another iteration.
+    LOG(WARNING)
+        << "Iteration succeeded with --persist_and_run_once flag enabled "
+           "(expecting crash failure)";
+    exit(0);
+  }
+
   return true;
 }
 
@@ -285,11 +316,11 @@ void ExpressionVerifier::persistReproInfo(
   }
 
   std::stringstream ss;
-  ss << "Persisted input at '" << inputPath;
+  ss << "Persisted input: --input_path " << inputPath;
   if (resultVector) {
-    ss << "' and result at '" << resultPath;
+    ss << " --result_path " << resultPath;
   }
-  ss << "' and sql at '" << sqlPath << "'";
+  ss << " --sql_path " << sqlPath;
   LOG(INFO) << ss.str();
 }
 

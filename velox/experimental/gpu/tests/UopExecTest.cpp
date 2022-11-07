@@ -23,4 +23,8 @@ using namespace facebook::velox::cuda;
 class UopExecTest : public testing::Test {
 };
 
-
+TEST_F(UopExecTest, scanFilterProject) {
+  // Reads 5 columns, of which 2 are read only when filters
+  // pass. Evaluates expressions that depend on one or more columns.
+  
+}

@@ -240,8 +240,16 @@ jobs:
           path: /tmp/test_xml_output/
       - run:
           name: "Run Fuzzer Tests"
+          # Run fuzzer using the built executable - we do this instead of make
+          # since currently make fuzzertest tends to rebuild the project.
           command: |
-            make fuzzertest NUM_THREADS=10
+            _build/debug/velox/expression/tests/velox_expression_fuzzer_test \
+                --seed 123456 \
+                --enable_variadic_signatures \
+                --duration_sec 60 \
+                --logtostderr=1 \
+                --minloglevel=0 \
+            && echo -e "\n\nFuzzer run finished successfully."
           no_output_timeout: 5m
       - run:
          name: "Run Example Binaries"
@@ -399,16 +407,19 @@ jobs:
           # the job output for context.
           name: "Run Fuzzer Tests"
           command: |
-            make fuzzertest NUM_THREADS=8 FUZZER_DURATION_SEC=600 FUZZER_SEED=${RANDOM} \
-              > /tmp/fuzzer.log 2>&1 || ( \
+            echo -e "The logs will be saved to \"/tmp/fuzzer.log\" and uploaded" \
+                    "as a job artifact (check the \"Artifacts\" tab above)."
+            _build/debug/velox/expression/tests/velox_expression_fuzzer_test \
+                --seed ${RANDOM} \
+                --duration_sec 600 \
+                --logtostderr=1 \
+                --minloglevel=0 \
+              2>&1 | tee /tmp/fuzzer.log || ( \
                 tail -n 1000 /tmp/fuzzer.log;
-                echo "FAIL: Fuzzer run failed, logs saved to \"/tmp/fuzzer.log\" and uploaded" \
-                     "as job artifact (check the \"Artifacts\" tab above).";
+                echo "FAIL: Fuzzer run failed";
                 exit 1; \
               )
-            tail -n 1000 /tmp/fuzzer.log
-            echo -e "\n\nFuzzer run finished successfully. Logs saved as job artifact " \
-                 "(check the \"Artifacts\" tab above)."
+            echo -e "\n\nFuzzer run finished successfully."
           no_output_timeout: 20m
       - store_artifacts:
           path: '/tmp/fuzzer.log'

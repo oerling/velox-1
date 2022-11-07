@@ -259,13 +259,10 @@ void HashProbe::maybeSetupSpillInput(
           spillInputPartitionIds_.begin()->partitionBitOffset() +
               spillConfig.hashBitRange.numBits()),
       spillConfig.filePath,
-      operatorCtx_->task()
-              ->queryCtx()
-              ->pool()
-              ->getMemoryUsageTracker()
-              ->maxTotalBytes() *
-          spillConfig.fileSizeFactor,
+      spillConfig.maxFileSize,
+      spillConfig.minSpillRunSize,
       Spiller::spillPool(),
+      stats().runtimeStats,
       spillConfig.executor);
   // Set the spill partitions to the corresponding ones at the build side. The
   // hash probe operator itself won't trigger any spilling.
@@ -312,8 +309,8 @@ void HashProbe::asyncWaitForHashTable() {
       }
     }
   } else if (
-      (isInnerJoin(joinType_) || isLeftSemiJoin(joinType_) ||
-       isRightSemiJoin(joinType_)) &&
+      (isInnerJoin(joinType_) || isLeftSemiFilterJoin(joinType_) ||
+       isRightSemiFilterJoin(joinType_) || isRightSemiProjectJoin(joinType_)) &&
       table_->hashMode() != BaseHashTable::HashMode::kHash && !isSpillInput() &&
       !hasMoreSpillData()) {
     // Find out whether there are any upstream operators that can accept
@@ -526,7 +523,7 @@ void HashProbe::addInput(RowVectorPtr input) {
     // joins.
     VELOX_CHECK(
         isAntiJoins(joinType_) || isLeftJoin(joinType_) ||
-        isFullJoin(joinType_));
+        isFullJoin(joinType_) || isLeftSemiProjectJoin(joinType_));
     if (!isAntiJoins(joinType_) || (filter_ == nullptr)) {
       return;
     }
@@ -578,7 +575,7 @@ void HashProbe::addInput(RowVectorPtr input) {
 
   passingInputRowsInitialized_ = false;
   if (isLeftJoin(joinType_) || isFullJoin(joinType_) ||
-      isAntiJoins(joinType_)) {
+      isAntiJoins(joinType_) || isLeftSemiProjectJoin(joinType_)) {
     // Make sure to allocate an entry in 'hits' for every input row to allow for
     // including rows without a match in the output. Also, make sure to
     // initialize all 'hits' to nullptr as HashTable::joinProbe will only
@@ -635,19 +632,36 @@ void HashProbe::fillOutput(vector_size_t size) {
         wrapChild(size, outputRowMapping_, inputChild);
   }
 
-  extractColumns(
-      table_.get(),
-      folly::Range<char**>(outputTableRows_.data(), size),
-      tableOutputProjections_,
-      pool(),
-      output_);
+  if (isLeftSemiProjectJoin(joinType_)) {
+    // Populate 'match' column.
+    auto match = output_->childAt(outputType_->size() - 1);
+    match->resize(size);
+    auto flatMatch = match->as<FlatVector<bool>>();
+    auto rawValues = flatMatch->mutableRawValues<uint64_t>();
+    for (auto i = 0; i < size; ++i) {
+      bits::setBit(rawValues, i, outputTableRows_[i] != nullptr);
+    }
+  } else {
+    extractColumns(
+        table_.get(),
+        folly::Range<char**>(outputTableRows_.data(), size),
+        tableOutputProjections_,
+        pool(),
+        output_);
+  }
 }
 
 RowVectorPtr HashProbe::getBuildSideOutput() {
   outputTableRows_.resize(outputBatchSize_);
   int32_t numOut;
-  if (isRightSemiJoin(joinType_)) {
+  if (isRightSemiFilterJoin(joinType_)) {
     numOut = table_->listProbedRows(
+        &lastProbeIterator_,
+        outputBatchSize_,
+        RowContainer::kUnlimited,
+        outputTableRows_.data());
+  } else if (isRightSemiProjectJoin(joinType_)) {
+    numOut = table_->listAllRows(
         &lastProbeIterator_,
         outputBatchSize_,
         RowContainer::kUnlimited,
@@ -678,6 +692,13 @@ RowVectorPtr HashProbe::getBuildSideOutput() {
       tableOutputProjections_,
       pool(),
       output_);
+
+  if (isRightSemiProjectJoin(joinType_)) {
+    // Populate 'match' column.
+    auto match = output_->childAt(outputType_->size() - 1);
+    table_->rows()->extractProbedFlags(outputTableRows_.data(), numOut, match);
+  }
+
   return output_;
 }
 
@@ -692,12 +713,13 @@ void HashProbe::clearIdentityProjectedOutput() {
 
 bool HashProbe::needLastProbe() const {
   return isRightJoin(joinType_) || isFullJoin(joinType_) ||
-      isRightSemiJoin(joinType_);
+      isRightSemiFilterJoin(joinType_) || isRightSemiProjectJoin(joinType_);
 }
 
 bool HashProbe::skipProbeOnEmptyBuild() const {
-  return isInnerJoin(joinType_) || isLeftSemiJoin(joinType_) ||
-      isRightJoin(joinType_) || isRightSemiJoin(joinType_);
+  return isInnerJoin(joinType_) || isLeftSemiFilterJoin(joinType_) ||
+      isRightJoin(joinType_) || isRightSemiFilterJoin(joinType_) ||
+      isRightSemiProjectJoin(joinType_);
 }
 
 bool HashProbe::spillEnabled() const {
@@ -780,7 +802,7 @@ RowVectorPtr HashProbe::getOutput() {
   }
 
   const bool isLeftSemiOrAntiJoinNoFilter =
-      !filter_ && (isLeftSemiJoin(joinType_) || isAntiJoins(joinType_));
+      !filter_ && (isLeftSemiFilterJoin(joinType_) || isAntiJoins(joinType_));
 
   const bool emptyBuildSide = (table_->numDistinct() == 0);
 
@@ -825,7 +847,7 @@ RowVectorPtr HashProbe::getOutput() {
       numOut = table_->listJoinResults(
           results_,
           isLeftJoin(joinType_) || isFullJoin(joinType_) ||
-              isAntiJoins(joinType_),
+              isAntiJoins(joinType_) || isLeftSemiProjectJoin(joinType_),
           mapping,
           folly::Range(outputTableRows_.data(), outputTableRows_.size()));
     }
@@ -853,7 +875,7 @@ RowVectorPtr HashProbe::getOutput() {
 
     // Right semi join only returns the build side output when the probe side
     // is fully complete. Do not return anything here.
-    if (isRightSemiJoin(joinType_)) {
+    if (isRightSemiFilterJoin(joinType_) || isRightSemiProjectJoin(joinType_)) {
       if (results_.atEnd()) {
         input_ = nullptr;
       }
@@ -1026,8 +1048,7 @@ vector_size_t HashProbe::evalFilterForNullAwareAntiJoin(
 
     const auto probeRow = rawOutputProbeRowMapping[i];
     if (nonNullInputRows_.isValid(probeRow)) {
-      if (!decodedFilterResult_.isNullAt(i) &&
-          decodedFilterResult_.valueAt<bool>(i)) {
+      if (filterPassed(i)) {
         filterPassedRows.setValid(i, true);
       } else {
         nullKeyProbeRows.setValid(probeRow, true);
@@ -1065,12 +1086,7 @@ vector_size_t HashProbe::evalFilterForNullAwareAntiJoin(
     if (filterPropagateNulls && nullFilterInputRows_.isValid(i)) {
       passed = false;
     } else if (nonNullInputRows_.isValid(probeRow)) {
-      if (!decodedFilterResult_.isNullAt(i) &&
-          decodedFilterResult_.valueAt<bool>(i)) {
-        passed = true;
-      } else {
-        passed = !nullKeyProbeRows.isValid(probeRow);
-      }
+      passed = filterPassed(i) || !nullKeyProbeRows.isValid(probeRow);
     } else {
       passed = !crossJoinProbeRows.isValid(probeRow);
     }
@@ -1111,8 +1127,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
       rawOutputProbeRowMapping[numPassed++] = row;
     };
     for (auto i = 0; i < numRows; ++i) {
-      const bool passed = !decodedFilterResult_.isNullAt(i) &&
-          decodedFilterResult_.valueAt<bool>(i);
+      const bool passed = filterPassed(i);
       noMatchDetector_.advance(rawOutputProbeRowMapping[i], passed, addMiss);
       if (passed) {
         outputTableRows_[numPassed] = outputTableRows_[i];
@@ -1122,19 +1137,37 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
     if (results_.atEnd()) {
       noMatchDetector_.finish(addMiss);
     }
-  } else if (isLeftSemiJoin(joinType_)) {
+  } else if (isLeftSemiFilterJoin(joinType_)) {
     auto addLastMatch = [&](auto row) {
       outputTableRows_[numPassed] = nullptr;
       rawOutputProbeRowMapping[numPassed++] = row;
     };
     for (auto i = 0; i < numRows; ++i) {
-      if (!decodedFilterResult_.isNullAt(i) &&
-          decodedFilterResult_.valueAt<bool>(i)) {
-        leftSemiJoinTracker_.advance(rawOutputProbeRowMapping[i], addLastMatch);
+      if (filterPassed(i)) {
+        leftSemiFilterJoinTracker_.advance(
+            rawOutputProbeRowMapping[i], addLastMatch);
       }
     }
     if (results_.atEnd()) {
-      leftSemiJoinTracker_.finish(addLastMatch);
+      leftSemiFilterJoinTracker_.finish(addLastMatch);
+    }
+  } else if (isLeftSemiProjectJoin(joinType_)) {
+    auto addLast = [&](auto row, bool passed) {
+      // NOTE: Set output table row to point to a fake string to indicate there
+      // is a match for this probe 'row'. 'fillOutput' populates the match
+      // column based on the nullable of this pointer.
+      static const char* kPassed = "passed";
+
+      outputTableRows_[numPassed] =
+          passed ? const_cast<char*>(kPassed) : nullptr;
+      rawOutputProbeRowMapping[numPassed++] = row;
+    };
+    for (auto i = 0; i < numRows; ++i) {
+      leftSemiProjectJoinTracker_.advance(
+          rawOutputProbeRowMapping[i], filterPassed(i), addLast);
+    }
+    if (results_.atEnd()) {
+      leftSemiProjectJoinTracker_.finish(addLast);
     }
   } else if (isNullAwareAntiJoin(joinType_)) {
     numPassed = evalFilterForNullAwareAntiJoin(numRows, filterPropagateNulls);
@@ -1145,9 +1178,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
     };
     for (auto i = 0; i < numRows; ++i) {
       auto probeRow = rawOutputProbeRowMapping[i];
-      bool passed = nonNullInputRows_.isValid(probeRow) &&
-          !decodedFilterResult_.isNullAt(i) &&
-          decodedFilterResult_.valueAt<bool>(i);
+      bool passed = nonNullInputRows_.isValid(probeRow) && filterPassed(i);
       noMatchDetector_.advance(probeRow, passed, addMiss);
     }
     if (results_.atEnd()) {
@@ -1155,8 +1186,7 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
     }
   } else {
     for (auto i = 0; i < numRows; ++i) {
-      if (!decodedFilterResult_.isNullAt(i) &&
-          decodedFilterResult_.valueAt<bool>(i)) {
+      if (filterPassed(i)) {
         outputTableRows_[numPassed] = outputTableRows_[i];
         rawOutputProbeRowMapping[numPassed++] = rawOutputProbeRowMapping[i];
       }
@@ -1166,7 +1196,8 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
 }
 
 void HashProbe::ensureLoadedIfNotAtEnd(column_index_t channel) {
-  if (isLeftSemiJoin(joinType_) || isAntiJoins(joinType_) || results_.atEnd()) {
+  if (isLeftSemiFilterJoin(joinType_) || isLeftSemiProjectJoin(joinType_) ||
+      isAntiJoins(joinType_) || results_.atEnd()) {
     return;
   }
 
