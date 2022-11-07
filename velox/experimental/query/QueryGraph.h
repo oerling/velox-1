@@ -138,6 +138,10 @@ struct Distribution : public PlanObject {
   // Corresponds 1:1 to 'order'
   std::vector<OrderType> orderType;
 
+  // Number of leading elements of 'order' such that these uniquely
+  // identify a row. 0 if there is no uniqueness.
+  int32_t numKeysUnique{0};
+  
   // Specifies the selectivity between the source of the ordered data
   // and 'this'. For example, if orders join lineitem and both are
   // ordered on orderkey and there is a 1/1000 selection on orders,
