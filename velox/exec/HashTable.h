@@ -269,7 +269,7 @@ class HashTable : public BaseHashTable {
 #ifdef NDEBUG
   static constexpr bool kTrackLoads = false;
 #else
-    static constexpr bool kTrackLoads = true;
+  static constexpr bool kTrackLoads = true;
 #endif
   // If true, tags and pointers to payload are interleaved (16x8 bit
   // tags, 16*48bit pointers) like in F14. If false, tags and pointers
