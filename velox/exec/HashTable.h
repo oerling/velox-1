@@ -21,7 +21,6 @@
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
 
-#include <iostream>
 
 namespace facebook::velox::exec {
 

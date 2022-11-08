@@ -606,17 +606,17 @@ void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
   // We loop 2 vectors at a time for fewer switches. The rows are in practice
   // always contiguous.
   for (; i + kStep <= numRows; i += kStep) {
-    auto row = rows[i];
-    if (rows[i + kStep - 1] - row == 7) {
+    auto firstRow = rows[i];
+    if (rows[i + kStep - 1] - firstRow == kStep - 1 ) {
       // kStep consecutive.
       simd::gather(
           reinterpret_cast<const int64_t*>(table_),
-          reinterpret_cast<const int64_t*>(hashes + row))
-          .store_unaligned(reinterpret_cast<int64_t*>(hits) + row);
+          reinterpret_cast<const int64_t*>(hashes + firstRow))
+          .store_unaligned(reinterpret_cast<int64_t*>(hits) + firstRow);
       simd::gather(
           reinterpret_cast<const int64_t*>(table_),
-          reinterpret_cast<const int64_t*>(hashes + row + kBatchSize))
-          .store_unaligned(reinterpret_cast<int64_t*>(hits) + row + kBatchSize);
+          reinterpret_cast<const int64_t*>(hashes + firstRow + kBatchSize))
+          .store_unaligned(reinterpret_cast<int64_t*>(hits) + firstRow + kBatchSize);
     } else {
       for (auto j = i; j < i + kStep; ++j) {
         auto row = rows[j];
