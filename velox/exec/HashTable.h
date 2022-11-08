@@ -266,8 +266,11 @@ template <bool ignoreNullKeys>
 class HashTable : public BaseHashTable {
  public:
   // Enables debug stats for collisions. Should be false for normal operation.
+#ifdef NDEBUG
   static constexpr bool kTrackLoads = false;
-
+#else
+    static constexpr bool kTrackLoads = true;
+#endif
   // If true, tags and pointers to payload are interleaved (16x8 bit
   // tags, 16*48bit pointers) like in F14. If false, tags and pointers
   // are stored in separate arrays (like absl Swiss table)
@@ -642,7 +645,7 @@ class HashTable : public BaseHashTable {
   }
 
   TagVector loadTags(int32_t tagIndex) const {
-    return TagVector::load_unaligned(tags_ + tagIndex);
+    return BaseHashTable::loadTags(tags_, tagIndex);
   }
 
   // Returns the row pointer for the 'tagIndex'th tag in the tag vector at

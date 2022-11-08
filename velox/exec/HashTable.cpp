@@ -601,20 +601,24 @@ void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
   auto hits = lookup.hits.data();
   auto numRows = rows.size();
   int32_t i = 0;
-  for (; i + 8 <= numRows; i += 8) {
+  constexpr int32_t kBatchSize = xsimd::batch<int64_t>::size;
+  constexpr int32_t kStep = kBatchSize * 2;
+  // We loop 2 vectors at a time for fewer switches. The rows are in practice
+  // always contiguous.
+  for (; i + kStep <= numRows; i += kStep) {
     auto row = rows[i];
-    if (rows[i + 7] - row == 7) {
-      // 8 consecutive.
+    if (rows[i + kStep - 1] - row == 7) {
+      // kStep consecutive.
       simd::gather(
           reinterpret_cast<const int64_t*>(table_),
           reinterpret_cast<const int64_t*>(hashes + row))
           .store_unaligned(reinterpret_cast<int64_t*>(hits) + row);
       simd::gather(
           reinterpret_cast<const int64_t*>(table_),
-          reinterpret_cast<const int64_t*>(hashes + row + 4))
-          .store_unaligned(reinterpret_cast<int64_t*>(hits) + row + 4);
+          reinterpret_cast<const int64_t*>(hashes + row + kBatchSize))
+          .store_unaligned(reinterpret_cast<int64_t*>(hits) + row + kBatchSize);
     } else {
-      for (auto j = i; j < i + 8; ++j) {
+      for (auto j = i; j < i + kStep; ++j) {
         auto row = rows[j];
         auto index = hashes[row];
         DCHECK(index < size_);
@@ -998,7 +1002,7 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
       table_[index] = groups[i];
     }
   } else {
-    constexpr int32_t kBatchSize = 16;
+    constexpr int32_t kBatchSize = TagVector::size;
     for (int32_t base = 0; base < numGroups; base += kBatchSize) {
       char** pointers[kBatchSize];
       auto batchEnd = std::min(base + kBatchSize, numGroups);
