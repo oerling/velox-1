@@ -1002,6 +1002,39 @@ void Expr::evalWithNulls(
 }
 
 namespace {
+void unionErrors(EvalCtx::ErrorVector& errors, EvalCtx::ErrorVector& result) {
+  if (errors.size() > result.size()) {
+    result.resize(errors.size());
+  }
+  bits::forEachBit(
+      errors.rawNulls(), 0, errors.size(), bits::kNotNull, [&](auto row) {
+        result.setNull(row, false);
+        result.set(row, errors.valueAt(row));
+      });
+}
+
+void clearErrorForUnselected(
+    const SelectivityVector& rows,
+    const EvalCtx::ErrorVectorPtr& errors) {
+  if (!errors) {
+    return;
+  }
+  auto nulls = errors->mutableRawNulls();
+  auto end = std::min(errors->size(), rows.end());
+  // A 0 in rows sets the null flag to 0, i.e. null. Errors on
+  // non-selected rows do not count.
+  bits::andRange<false>(nulls, nulls, rows.asRange().bits(), 0, end);
+}
+
+void rethrowArgumentError(const EvalCtx::ErrorVectorPtr& errors) {
+  bits::forEachBit(
+      errors->rawNulls(), 0, errors->size(), bits::kNotNull, [&](auto row) {
+        auto exceptionPtr =
+            std::static_pointer_cast<std::exception_ptr>(errors->valueAt(row));
+        std::rethrow_exception(*exceptionPtr);
+      });
+}
+
 void deselectErrors(EvalCtx& context, SelectivityVector& rows) {
   auto errors = context.errors();
   if (!errors) {
@@ -1011,6 +1044,7 @@ void deselectErrors(EvalCtx& context, SelectivityVector& rows) {
   rows.deselectNonNulls(
       errors->rawNulls(), rows.begin(), std::min(errors->size(), rows.end()));
 }
+
 } // namespace
 
 void Expr::evalWithMemo(
@@ -1200,7 +1234,7 @@ void Expr::evalAll(
   }
   bool tryPeelArgs = deterministic_ ? true : false;
   bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
-
+  bool throwArgumentErrors = context.throwOnError() && !defaultNulls;
   // Tracks what subset of rows shall un-evaluated inputs and current expression
   // evaluates. Initially points to rows.
   const SelectivityVector* remainingRows = &rows;
@@ -1211,8 +1245,26 @@ void Expr::evalAll(
   LocalSelectivityVector mutableRemainingRowsHolder(context);
 
   inputValues_.resize(inputs_.size());
+  EvalCtx::ErrorVectorPtr argumentErrors;
+  EvalCtx::ErrorVectorPtr errors;
+  if (context.errors()) {
+    context.swapErrors(errors);
+  }
+
   for (int32_t i = 0; i < inputs_.size(); ++i) {
+    ScopedVarSetter throwErrors(
+        context.mutableThrowOnError(), throwArgumentErrors);
     inputs_[i]->eval(*remainingRows, context, inputValues_[i]);
+    if (context.errors()) {
+      // New errors were produced, add them to argumentErrors.
+      if (argumentErrors) {
+	EvalCtx::ErrorVectorPtr temp;
+	context.swapErrors(temp);
+        unionErrors(*temp, *argumentErrors);
+      } else {
+	context.swapErrors(argumentErrors);
+      }
+    }
     tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
 
     // Avoid subsequent computation on rows with known null output.
@@ -1237,7 +1289,21 @@ void Expr::evalAll(
       }
     }
   }
-
+  // If an argument had an error and then a null on the same row for another
+  // argument, mask the error.
+  if (argumentErrors) {
+    if (defaultNulls) {
+      clearErrorForUnselected(*remainingRows, argumentErrors);
+    }
+    if (context.throwOnError()) {
+      rethrowArgumentError(argumentErrors);
+    }
+    if (context.errors()) {
+      unionErrors(*argumentErrors, *context.errors());
+    } else {
+      context.swapErrors(argumentErrors);
+    }
+  }
   // If any errors occurred evaluating the arguments, it's possible (even
   // likely) that the values for those arguments were not defined which could
   // lead to undefined behavior if we try to evaluate the current function on
@@ -1249,6 +1315,7 @@ void Expr::evalAll(
       mutableRemainingRows = mutableRemainingRowsHolder.get(rows);
       remainingRows = mutableRemainingRows;
     }
+
     deselectErrors(context, *mutableRemainingRows);
 
     // All rows have at least one null output or error.

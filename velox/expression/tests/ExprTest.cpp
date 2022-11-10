@@ -2980,3 +2980,24 @@ TEST_F(ExprTest, addNulls) {
     checkResult(slicedVector);
   }
 }
+
+TEST_F(ExprTest, maskErrorByNull) {
+  // Checks that errors in arguments of null-propagating functions are ignored
+  // for rows with at least one null.
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6}),
+       makeFlatVector<int64_t>({1, 0, 3, 0, 5, 6}),
+       makeFlatVector<int64_t>(
+           6,
+           [](auto /*row*/) { return 10; },
+           [](auto row) { return row % 2 == 0; })
+
+      });
+
+  auto resultAB = evaluate("if (c2 is null, 10, null)  + (c0 / c1)", data);
+  auto resultBA = evaluate("(c0 / c1) + if (c2 is null, 10, null)", data);
+
+  assertEqualVectors(resultAB, resultBA);
+  EXPECT_THROW(evaluate("(c0 / c1) + 10", data), VeloxUserError);
+  EXPECT_THROW(evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, null))", data), VeloxUserError);
+}
