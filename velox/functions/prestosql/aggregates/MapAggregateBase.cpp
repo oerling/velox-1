@@ -36,11 +36,11 @@ void MapAggregateBase::extractValues(
 
   for (int32_t i = 0; i < numGroups; ++i) {
     char* group = groups[i];
-    clearNull(rawNulls, i);
 
     auto accumulator = value<MapAccumulator>(group);
     auto mapSize = accumulator->keys.size();
     if (mapSize) {
+      clearNull(rawNulls, i);
       ValueListReader keysReader(accumulator->keys);
       ValueListReader valuesReader(accumulator->values);
       for (auto index = 0; index < mapSize; ++index) {
@@ -50,7 +50,7 @@ void MapAggregateBase::extractValues(
       mapVector->setOffsetAndSize(i, offset, mapSize);
       offset += mapSize;
     } else {
-      mapVector->setOffsetAndSize(i, offset, 0);
+      mapVector->setNull(i, true);
     }
   }
 
@@ -88,7 +88,7 @@ VectorPtr MapAggregateBase::removeDuplicates(MapVectorPtr& mapVector) const {
         // Duplicate key found.
         duplicateCnt++;
         if (!rawNewSizes) {
-          newSizes = allocateSizes(numElements, mapVector->pool());
+          newSizes = allocateSizes(numRows, mapVector->pool());
           rawNewSizes = newSizes->asMutable<vector_size_t>();
 
           elementIndices = allocateIndices(numElements, mapVector->pool());
@@ -104,7 +104,7 @@ VectorPtr MapAggregateBase::removeDuplicates(MapVectorPtr& mapVector) const {
     if (rawNewSizes) {
       rawNewSizes[row] = size - duplicateCnt;
     }
-  };
+  }
 
   if (rawNewSizes) {
     return std::make_shared<MapVector>(

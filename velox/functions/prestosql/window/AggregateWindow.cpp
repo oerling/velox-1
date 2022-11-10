@@ -34,26 +34,29 @@ class AggregateWindowFunction : public exec::WindowFunction {
       const std::string& name,
       const std::vector<exec::WindowFunctionArg>& args,
       const TypePtr& resultType,
-      velox::memory::MemoryPool* pool)
-      : WindowFunction(resultType, pool) {
+      velox::memory::MemoryPool* pool,
+      HashStringAllocator* stringAllocator)
+      : WindowFunction(resultType, pool, stringAllocator) {
     argTypes_.reserve(args.size());
     argIndices_.reserve(args.size());
     argVectors_.reserve(args.size());
     for (const auto& arg : args) {
       argTypes_.push_back(arg.type);
-      // TODO : Enhance code to handle constant arguments.
-      VELOX_CHECK_NULL(
-          arg.constantValue,
-          "Constant arguments are not supported in aggregate window functions.");
-      VELOX_CHECK(arg.index.has_value());
-      argIndices_.push_back(arg.index.value());
-      argVectors_.push_back(BaseVector::create(arg.type, 0, pool_));
+      if (arg.constantValue) {
+        argIndices_.push_back(kConstantChannel);
+        argVectors_.push_back(arg.constantValue);
+      } else {
+        VELOX_CHECK(arg.index.has_value());
+        argIndices_.push_back(arg.index.value());
+        argVectors_.push_back(BaseVector::create(arg.type, 0, pool_));
+      }
     }
     // Create an Aggregate function object to do result computation. Window
     // function usage only requires single group aggregation for calculating
     // the function value for each row.
     aggregate_ = exec::Aggregate::create(
         name, core::AggregationNode::Step::kSingle, argTypes_, resultType);
+    aggregate_->setAllocator(stringAllocator_);
 
     // Aggregate initialization.
     // Row layout is:
@@ -67,6 +70,9 @@ class AggregateWindowFunction : public exec::WindowFunction {
     static const int32_t kNullOffset = 0;
     static const int32_t kRowSizeOffset = bits::nbytes(1);
     singleGroupRowSize_ = kRowSizeOffset + sizeof(int32_t);
+    // Accumulator offset must be aligned by their alignment size.
+    singleGroupRowSize_ = bits::roundUp(
+        singleGroupRowSize_, aggregate_->accumulatorAlignmentSize());
     aggregate_->setOffsets(
         singleGroupRowSize_,
         exec::RowContainer::nullByte(kNullOffset),
@@ -153,18 +159,24 @@ class AggregateWindowFunction : public exec::WindowFunction {
     vector_size_t lastRow = rawFrameEnds[0];
 
     bool nonDecreasingFrameEnd = true;
+    bool fixedFirstRow = true;
     for (int i = 1; i < numRows; i++) {
       firstRow = std::min(firstRow, rawFrameStarts[i]);
       lastRow = std::max(lastRow, rawFrameEnds[i]);
+      fixedFirstRow &= rawFrameStarts[i] == firstRow;
       nonDecreasingFrameEnd &= rawFrameEnds[i] >= rawFrameEnds[i - 1];
     }
-    bool fixedFirstRow = firstRow == rawFrameStarts[0];
 
     vector_size_t numFrameRows = lastRow + 1 - firstRow;
     for (int i = 0; i < argIndices_.size(); i++) {
       argVectors_[i]->resize(numRows);
-      partition_->extractColumn(
-          argIndices_[i], firstRow, numFrameRows, 0, argVectors_[i]);
+      // Only non-constant field argument vectors need to be populated. The
+      // constant vectors are correctly set during aggregate initialization
+      // itself.
+      if (argIndices_[i] != kConstantChannel) {
+        partition_->extractColumn(
+            argIndices_[i], firstRow, numFrameRows, 0, argVectors_[i]);
+      }
     }
 
     return {firstRow, lastRow, fixedFirstRow, nonDecreasingFrameEnd};
@@ -250,6 +262,9 @@ class AggregateWindowFunction : public exec::WindowFunction {
 
   // Args information : their types, column indexes in inputs and vectors
   // used to populate values to pass to the aggregate function.
+  // For a constant argument a column index of kConstantChannel is used in
+  // argIndices_, and its ConstantVector value from the Window operator
+  // is saved in argVectors_.
   std::vector<TypePtr> argTypes_;
   std::vector<column_index_t> argIndices_;
   std::vector<VectorPtr> argVectors_;
@@ -283,10 +298,11 @@ void registerAggregateWindowFunction(const std::string& name) {
         [name](
             const std::vector<exec::WindowFunctionArg>& args,
             const TypePtr& resultType,
-            velox::memory::MemoryPool* pool)
+            velox::memory::MemoryPool* pool,
+            HashStringAllocator* stringAllocator)
             -> std::unique_ptr<exec::WindowFunction> {
           return std::make_unique<AggregateWindowFunction>(
-              name, args, resultType, pool);
+              name, args, resultType, pool, stringAllocator);
         });
   }
 }
