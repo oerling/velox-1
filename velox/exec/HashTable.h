@@ -15,11 +15,13 @@
  */
 #pragma once
 
+#include "velox/common/base/Portability.h"
 #include "velox/common/memory/MappedMemory.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
+
 
 namespace facebook::velox::exec {
 
@@ -271,8 +273,13 @@ class HashTable : public BaseHashTable {
 #endif
   // If true, tags and pointers to payload are interleaved (16x8 bit
   // tags, 16*48bit pointers) like in F14. If false, tags and pointers
-  // are stored in separate arrays (like absl Swiss table)
-  static constexpr bool kInterleaveRows = !ignoreNullKeys;
+  // are stored in separate arrays (like absl Swiss table). Join
+  // tables that miss frequently and have tags but not tags and
+  // pointers fitting in cache may benefit from
+  // non-interleaved. Interleaved tables are slightly smaller and are
+  // more local since half the time the tag and corresponding payload
+  // pointer are in the same cache line.
+  static constexpr bool kInterleaveRows = true;
 
   // size of a group of 16 tags and 16 48-bit pointers to the
   // corresponding rows. Applies to interleaved mode.
@@ -711,16 +718,16 @@ class HashTable : public BaseHashTable {
   // Statistics maintained if kTrackCollisions is set.
 
   // Number of times a row is looked up or inserted.
-  mutable int64_t numProbe_{0};
+  mutable asan_atomic<int64_t> numProbe_{0};
 
   // Number of times a word of 16 tags is accessed. at least once per probe.
-  mutable int64_t numTagLoad_{0};
+  mutable asan_atomic<int64_t> numTagLoad_{0};
 
   // Number of times a row of payload is accessed. At leadst once per hit.
-  mutable int64_t numRowLoad_{0};
+  mutable asan_atomic<int64_t> numRowLoad_{0};
 
   // Number of times a match is found.
-  mutable int64_t numHit_{0};
+  mutable asan_atomic<int64_t> numHit_{0};
 
   friend class ProbeState;
 
