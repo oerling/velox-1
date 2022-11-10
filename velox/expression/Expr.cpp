@@ -1258,11 +1258,11 @@ void Expr::evalAll(
     if (context.errors()) {
       // New errors were produced, add them to argumentErrors.
       if (argumentErrors) {
-	EvalCtx::ErrorVectorPtr temp;
-	context.swapErrors(temp);
+        EvalCtx::ErrorVectorPtr temp;
+        context.swapErrors(temp);
         unionErrors(*temp, *argumentErrors);
       } else {
-	context.swapErrors(argumentErrors);
+        context.swapErrors(argumentErrors);
       }
     }
     tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());

@@ -2999,5 +2999,7 @@ TEST_F(ExprTest, maskErrorByNull) {
 
   assertEqualVectors(resultAB, resultBA);
   EXPECT_THROW(evaluate("(c0 / c1) + 10", data), VeloxUserError);
-  EXPECT_THROW(evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, null))", data), VeloxUserError);
+  EXPECT_THROW(
+      evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, null))", data),
+      VeloxUserError);
 }
