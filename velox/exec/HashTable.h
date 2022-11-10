@@ -22,7 +22,6 @@
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
 
-
 namespace facebook::velox::exec {
 
 struct HashLookup {

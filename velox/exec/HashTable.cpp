@@ -607,7 +607,7 @@ void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
   // always contiguous.
   for (; i + kStep <= numRows; i += kStep) {
     auto firstRow = rows[i];
-    if (rows[i + kStep - 1] - firstRow == kStep - 1 ) {
+    if (rows[i + kStep - 1] - firstRow == kStep - 1) {
       // kStep consecutive.
       simd::gather(
           reinterpret_cast<const int64_t*>(table_),
@@ -616,7 +616,8 @@ void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
       simd::gather(
           reinterpret_cast<const int64_t*>(table_),
           reinterpret_cast<const int64_t*>(hashes + firstRow + kBatchSize))
-          .store_unaligned(reinterpret_cast<int64_t*>(hits) + firstRow + kBatchSize);
+          .store_unaligned(
+              reinterpret_cast<int64_t*>(hits) + firstRow + kBatchSize);
     } else {
       for (auto j = i; j < i + kStep; ++j) {
         auto row = rows[j];
@@ -897,7 +898,12 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         false,
         hashes);
     insertForJoin(
-        overflows.data(), hashes.data(), overflows.size(), 0, tagIndexEnd, nullptr);
+        overflows.data(),
+        hashes.data(),
+        overflows.size(),
+        0,
+        tagIndexEnd,
+        nullptr);
     auto table = i == 0 ? this : otherTables_[i - 1].get();
     VELOX_CHECK_EQ(table->rows()->numRows(), table->numParallelBuildRows_);
   }
