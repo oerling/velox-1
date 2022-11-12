@@ -90,13 +90,29 @@ DEFINE_bool(use_native_parquet_reader, true, "Use Native Parquet Reader");
 DEFINE_int32(num_drivers, 4, "Number of drivers");
 DEFINE_string(data_format, "parquet", "Data format");
 DEFINE_int32(num_splits_per_file, 10, "Number of splits per file");
-
+DEFINE_int32(cache_gb, 0, "GB of process memory for cache and query.. if "
+	     "non-0, uses mmap to allocator and in-process data cache.");
+DEFINE_int32(num_repeats, 1, "Number of times to run each query");
+									
 DEFINE_validator(data_path, &notEmpty);
 DEFINE_validator(data_format, &validateDataFormat);
 
 class TpchBenchmark {
  public:
   void initialize() {
+    if (FLAGS_cache_gb) {
+      int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
+      memory::MmapAllocatorOptions options;
+  options.capacity = memoryBytes;
+  options.useMmapArena = true;
+  options.mmapArenaCapacityRatio = 1;
+  
+  auto allocator = std::make_shared<memory::MmapAllocator>(options);
+  mappedMemory_ = std::make_shared<cache::AsyncDataCache>(
+      allocator, memoryBytes, nullptr);
+
+  memory::MappedMemory::setDefaultInstance(mappedMemory.get());
+    }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
     parse::registerTypeResolver();
@@ -116,6 +132,8 @@ class TpchBenchmark {
 
   std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> run(
       const TpchPlan& tpchPlan) {
+    int32_t repeat = 0;
+    for (;;) {
     CursorParameters params;
     params.maxDrivers = FLAGS_num_drivers;
     params.planNode = tpchPlan.plan;
@@ -137,8 +155,14 @@ class TpchBenchmark {
       }
       noMoreSplits = true;
     };
-    return readCursor(params, addSplits);
+    auto result = readCursor(params, addSplits);
+    if (++repeat >= FLAGS_num_repeats) {
+      return result;
   }
+    }
+  }
+
+  std::shared_ptr<memory::MappedMemory> mappedMemory_;
 };
 
 TpchBenchmark benchmark;
