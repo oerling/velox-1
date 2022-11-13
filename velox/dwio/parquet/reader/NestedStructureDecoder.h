@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/base/Nulls.h"
 #include "velox/buffer/Buffer.h"
 
 namespace facebook::velox::parquet {
@@ -25,6 +26,8 @@ struct NestedData {
   BufferPtr lengths;
   BufferPtr nulls;
   int64_t numNonNulls;
+
+  std::string toString(int32_t from, int32_t to, bool numbers);
 };
 
 class NestedStructureDecoder {

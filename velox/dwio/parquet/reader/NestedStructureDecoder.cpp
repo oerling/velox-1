@@ -22,7 +22,27 @@
 #include <iostream>
 
 namespace facebook::velox::parquet {
+  std::string NestedData::toString(int32_t from, int32_t to, bool numbers) {
+    std::stringstream out;
+    out << fmt::format("<nested  {} numNonNulls {} offsets {} sizes", numNonNulls, offsets->size() / sizeof(int32_t), lengths->size() / sizeof(int32_t)) << std::endl;
+    for (auto i = from; i < to; ++i) {
+      if (numbers) {
+	out << i << ": ";
+      }
+      if (bits::isBitNull(nulls->as<uint64_t>(), i)) {
+	out << " null ";
+      } else {
+	out << fmt::format("[{}: {}] ", offsets->as<int32_t>()[i], lengths->as<int32_t>()[i]);
+      }
+    }
+    if (numbers) {
+      out << "\n";
+      out << std::endl;
+    }
+    return out.str();
+  }
 
+  
 int64_t NestedStructureDecoder::readOffsetsAndNulls(
     const uint8_t* repetitionLevels,
     const uint8_t* definitionLevels,

@@ -110,16 +110,16 @@ void ParquetNestedLeafColumnReader::readPages(int64_t numTopLevelRows) {
 
       if (page != nullptr) {
         if (page->isDictionary_) {
-          dictionaryPage_ = static_pointer_cast<ParquetDictionaryPage>(page);
+          dictionaryPage_ = std::static_pointer_cast<ParquetDictionaryPage>(page);
           page = dataReader.readNextPage();
           VELOX_CHECK(page);
-          VELOX_CHECK(static_pointer_cast<ParquetDataPage>(page));
+          VELOX_CHECK(std::static_pointer_cast<ParquetDataPage>(page));
         }
 
-        dataPages_.push_back(static_pointer_cast<ParquetDataPage>(page));
+        dataPages_.push_back(std::static_pointer_cast<ParquetDataPage>(page));
 
         // Append this page's rep/def to repetitionLevels_ and definitionLevels_
-        readRepDefs(static_pointer_cast<ParquetDataPage>(page));
+        readRepDefs(std::static_pointer_cast<ParquetDataPage>(page));
       } else {
         // End of ColumnChunk means the top level row is ending, since a row
         // cannot stride multiple RowGroups.
