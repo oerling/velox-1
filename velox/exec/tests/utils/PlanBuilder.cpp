@@ -30,6 +30,7 @@
 #include "velox/parse/ExpressionsParser.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::connector;
 using namespace facebook::velox::connector::hive;
 
 namespace facebook::velox::exec::test {
@@ -267,25 +268,30 @@ PlanBuilder& PlanBuilder::filter(const std::string& filter) {
 PlanBuilder& PlanBuilder::tableWrite(
     const std::vector<std::string>& columnNames,
     const std::shared_ptr<core::InsertTableHandle>& insertHandle,
+    WriteProtocol::CommitStrategy commitStrategy,
     const std::string& rowCountColumnName) {
   return tableWrite(
-      planNode_->outputType(), columnNames, insertHandle, rowCountColumnName);
+      planNode_->outputType(),
+      columnNames,
+      insertHandle,
+      commitStrategy,
+      rowCountColumnName);
 }
 
 PlanBuilder& PlanBuilder::tableWrite(
     const RowTypePtr& inputColumns,
     const std::vector<std::string>& tableColumnNames,
     const std::shared_ptr<core::InsertTableHandle>& insertHandle,
+    WriteProtocol::CommitStrategy commitStrategy,
     const std::string& rowCountColumnName) {
-  auto outputType =
-      ROW({rowCountColumnName, "fragments", "commitcontext"},
-          {BIGINT(), VARBINARY(), VARBINARY()});
+  auto outputType = ROW({rowCountColumnName}, {BIGINT()});
   planNode_ = std::make_shared<core::TableWriteNode>(
       nextPlanNodeId(),
       inputColumns,
       tableColumnNames,
       insertHandle,
       outputType,
+      commitStrategy,
       planNode_);
   return *this;
 }
@@ -634,17 +640,25 @@ PlanBuilder& PlanBuilder::groupId(
     groupingSetExprs.push_back(fields(groupingSet));
   }
 
-  std::map<std::string, core::FieldAccessTypedExprPtr> outputGroupingKeyNames;
+  std::vector<core::GroupIdNode::GroupingKeyInfo> groupingKeyInfos;
+  std::set<std::string> names;
+  auto index = 0;
   for (const auto& groupingSet : groupingSetExprs) {
     for (const auto& groupingKey : groupingSet) {
-      outputGroupingKeyNames[groupingKey->name()] = groupingKey;
+      if (names.find(groupingKey->name()) == names.end()) {
+        core::GroupIdNode::GroupingKeyInfo keyInfos;
+        keyInfos.output = groupingKey->name();
+        keyInfos.input = groupingKey;
+        groupingKeyInfos.push_back(keyInfos);
+      }
+      names.insert(groupingKey->name());
     }
   }
 
   planNode_ = std::make_shared<core::GroupIdNode>(
       nextPlanNodeId(),
       groupingSetExprs,
-      std::move(outputGroupingKeyNames),
+      std::move(groupingKeyInfos),
       fields(aggregationInputs),
       std::move(groupIdName),
       planNode_);
