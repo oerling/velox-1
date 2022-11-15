@@ -20,7 +20,7 @@
 
 namespace facebook::velox::parquet {
 
-class ListColumnReader : public ParquetRepeatedColumnReader {
+  class ListColumnReader : public dwio::common::SelectiveListColumnReader {
  public:
   ListColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
@@ -29,10 +29,6 @@ class ListColumnReader : public ParquetRepeatedColumnReader {
       common::ScanSpec& topLevelScanSpec);
 
   void seekToRowGroup(uint32_t index) override;
-
-  const std::vector<SelectiveColumnReader*> children() const override {
-    return std::vector<SelectiveColumnReader*>{elementReader_.get()};
-  }
 
   uint64_t skip(uint64_t numRows) override;
 

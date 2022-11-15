@@ -38,8 +38,13 @@ class SelectiveRepeatedColumnReader
       const TypePtr& type)
     : SelectiveColumnReader(std::move(nodeType), params, scanSpec, type) {}
 
-  virtual void readLengths(int32_t* lengths, RowSet rows, const uint64_t* nulls) = 0;
-  
+  /// Reads 'numLengths' next lengths into 'result'. If 'nulls' is
+  /// non-null, each kNull bit signifies a null with a length of 0 to
+  /// be inserted at the corresponding position in the result. 'nulls'
+  /// is expected to be null flags for 'numRows' next rows at the
+  /// level of this reader.
+  virtual void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths, const uint64_t* FOLLY_NULLABLE nulls) = 0;
+
   void makeNestedRowSet(RowSet rows) {
     allLengths_.resize(rows.back() + 1);
     assert(!allLengths_.empty()); // for lint only.
@@ -47,7 +52,7 @@ class SelectiveRepeatedColumnReader
         nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
     // Reads the lengths, leaves an uninitialized gap for a null
     // map/list. Reading these checks the null nask.
-    readLengths(allLengths_.data(), rows, nulls);
+    readLengths(allLengths_.data(), rows.back() + 1, nulls);
     dwio::common::ensureCapacity<vector_size_t>(
         offsets_, rows.size(), &memoryPool_);
     dwio::common::ensureCapacity<vector_size_t>(
@@ -162,10 +167,14 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       FormatParams& params,
-      common::ScanSpec& scanSpec);
+      velox::common::ScanSpec& scanSpec);
 
 
   uint64_t skip(uint64_t numValues) override;
+
+  const std::vector<SelectiveColumnReader*> children() const override {
+    return std::vector<SelectiveColumnReader*>{child_.get()};
+  }
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
@@ -182,8 +191,8 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
   SelectiveMapColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      DwrfParams& params,
-      common::ScanSpec& scanSpec);
+      FormatParams& params,
+      velox::common::ScanSpec& scanSpec);
 
   void resetFilterCaches() override {
     keyReader_->resetFilterCaches();

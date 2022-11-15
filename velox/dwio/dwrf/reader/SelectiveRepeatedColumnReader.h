@@ -25,7 +25,7 @@
 namespace facebook::velox::dwrf {
 
 
-  class SelectiveListColumnReader : dwio::common::public SelectiveRepeatedColumnReader {
+  class SelectiveListColumnReader : public dwio::common::SelectiveRepeatedColumnReader {
  public:
   SelectiveListColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -49,6 +49,10 @@ namespace facebook::velox::dwrf {
     childTargetReadOffset_ = 0;
   }
 
+  void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths, const uint64_t* FOLLY_NULLABLE nulls) override {
+    length_->next(lengths, numLengths, nulls);
+  }
+    
   uint64_t skip(uint64_t numValues) override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
@@ -90,8 +94,8 @@ namespace facebook::velox::dwrf {
     childTargetReadOffset_ = 0;
   }
 
-  void readLengths(int64_t* lengths, RowSet rows, uint64_t* nulls) override {
-    length_->next(lengths, rows.back() + 1, nulls);
+  void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths, const uint64_t* FOLLY_NULLABLE nulls) override {
+    length_->next(lengths, numLengths, nulls);
   }
   
   uint64_t skip(uint64_t numValues) override;
