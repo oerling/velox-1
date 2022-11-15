@@ -28,26 +28,22 @@ class ListColumnReader : public ParquetRepeatedColumnReader {
       common::ScanSpec& scanSpec,
       common::ScanSpec& topLevelScanSpec);
 
-  void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input)
-      override;
-
   void seekToRowGroup(uint32_t index) override;
+
+  const std::vector<SelectiveColumnReader*> children() const override {
+    return std::vector<SelectiveColumnReader*>{elementReader_.get()};
+  }
+
+  uint64_t skip(uint64_t numRows) override;
 
   void read(
       vector_size_t offset,
       RowSet rows,
       const uint64_t* FOLLY_NULLABLE /*incomingNulls*/) override;
 
-  std::vector<std::shared_ptr<NestedData>> read(uint64_t offset, RowSet rows)
-      override;
-
   void getValues(RowSet rows, VectorPtr* FOLLY_NONNULL result) override;
 
  private:
-  std::unique_ptr<ParquetNestedColumnReader> childColumnReader_;
-
-  BufferPtr offsets_;
-  BufferPtr lengths_;
-  BufferPtr nulls_;
+  std::unique_ptr<SelectiveColumnReader> elementReader_;
 };
 } // namespace facebook::velox::parquet

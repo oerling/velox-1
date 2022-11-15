@@ -111,12 +111,35 @@ class PageReader {
         type_(std::move(nodeType)),
         maxRepeat_(type_->maxRepeat_),
         maxDefine_(type_->maxDefine_),
+        isTopLevel_(maxRepeat_ == 0 && maxDefine_ <= 1),
         codec_(codec),
         chunkSize_(chunkSize),
         nullConcatenation_(pool_) {}
 
   /// Advances 'numRows' top level rows.
   void skip(int64_t numRows);
+
+  /// Reads repdefs for at least 'numTopLevelRows'. Enough pages are
+  /// read to cover the rows.
+  /// Does not
+  /// affect the current position seen by readWithVisitor(). The results are
+  /// left in 'repetitionLevels_' and 'definitionLevels' for all the pages
+  /// accessed. The number of elements in the levels covering 'numTopLevelRows'
+  /// is returned.
+  int32_t decodeRepDefs(int32_t numTopLevelRows);
+
+  void getOffsetsAndNulls(
+      uint8_t maxRepeat,
+      uint8_t maxDefinition,
+      BufferPtr& offsets,
+      BufferPtr& length,
+      BufferPtr nulls);
+
+  void getLeafNulls(BufferPtr& buffer);
+
+  /// Pops off the 'numTopLevelRows' worth repdefs read by the last call to
+  /// decodeRepDefs.
+  void repdefsConsumed();
 
   /// Applies 'visitor' to values in the ColumnChunk of 'this'. The
   /// operation to perform and The operand rows are given by
@@ -152,6 +175,9 @@ class PageReader {
   std::shared_ptr<ParquetPage> readNextPage();
 
  private:
+  // Indicates move to next page in seekToPage.
+  static constexpr int64_t kNextPage = -1;
+
   // If the current page has nulls, returns a nulls bitmap owned by 'this'. This
   // is filled for 'numRows' bits.
   const uint64_t* FOLLY_NULLABLE readNulls(int32_t numRows, BufferPtr& buffer);
@@ -168,10 +194,21 @@ class PageReader {
   // 'pageData_' + 'encodedDataSize_'.
   void makedecoder();
 
-  // Reads and skips pages until finding a data page that contains 'row'. Reads
-  // and sets 'rowOfPage_' and 'numRowsInPage_' and initializes a decoder for
-  // the found page.
+  // Reads and skips pages until finding a data page that contains
+  // 'row'. Reads and sets 'rowOfPage_' and 'numRowsInPage_' and
+  // initializes a decoder for the found page. row kNextPage means
+  // next page. If non-top level column, 'row' is interpreted in terms
+  // of leaf rows, including leaf nulls. Seeking ahead of pages
+  // covered by decodeRepDefs is not allowed for non-top level
+  // columns.
   void seekToPage(int64_t row);
+
+  // Sets row number info after reading a page header.
+  void setPageRowInfo();
+
+  // Updates row position / rep defs consumed info to refer to the first of the
+  // next page.
+  void updateRowInfoAfterPageSkipped();
 
   // Parses the PageHeader at 'inputStream_'. Will not read more than
   // 'remainingBytes' since there could be less data left in the
@@ -312,6 +349,8 @@ class PageReader {
   ParquetTypeWithIdPtr type_;
   const int32_t maxRepeat_;
   const int32_t maxDefine_;
+  const bool isTopLevel_;
+
   const thrift::CompressionCodec::type codec_;
   const int64_t chunkSize_;
   const char* FOLLY_NULLABLE bufferStart_{nullptr};
@@ -322,6 +361,42 @@ class PageReader {
   std::unique_ptr<RleBpDecoder> repeatDecoder_;
   std::unique_ptr<RleBpDecoder> defineDecoder_;
 
+  // index of current page in 'numLeavesInPage_' -1 means before first page.
+  int32_t pageIndex_{-1};
+
+  // Number of leaf values on each page accessed so far. Only used for a non-top
+  // level leaf. Does not include dictionary.
+  std::vector<int32_t> numLeavesInPage_;
+
+  // Number of top level rows represented in 'definitionLevels' and
+  // 'repetitionLevels'.
+  int32_t numTopLevelRowsInLevels_{0};
+
+  // Number of top level rows requested in last decodeRepdefs().
+  int32_t numTopLevelRowsRequested_{0};
+
+  // Number of entries in levels before repDefEnd_.
+  int32_t numTopLevelInRepDefs_{0};
+
+  // Index of first element in '*Levels_' that corresponds to the next row after
+  // 'repDefEnd_'.
+  int32_t repDefEnd_{0};
+
+  // Definition levels for the next 'numTopLevelRowsInLevels_'
+  raw_vector<uint8_t> definitionLevels_;
+
+  // Repetition levels for the next 'numTopLevelRowsInLevels_'
+  raw_vector<uint8_t> repetitionLevels_;
+
+  // Number of valid bits in 'leafNulls_'
+  int32_t numLeafNulls_{0};
+
+  // Number of leaf nulls read since last repDefsConsumed().
+  int32_t numLeafNullsConsumed_{0};
+
+  // Leaf nulls extracted from 'repetitionLevels_/definitionLevels_'
+  raw_vector<uint64_t> leafNulls_;
+
   // Encoding of current page.
   thrift::Encoding::type encoding_;
 
@@ -330,6 +405,10 @@ class PageReader {
 
   // Number of rows in current page.
   int32_t numRowsInPage_{0};
+
+  // Number of repdefs in page. Not the same as number of rows for a non-top
+  // level column.
+  int32_t numRepDefsInPage_{0};
 
   // Copy of data if data straddles buffer boundary.
   BufferPtr pageBuffer_;
@@ -353,6 +432,9 @@ class PageReader {
 
   // Number of bytes starting at pageData_ for current encoded data.
   int32_t encodedDataSize_{0};
+
+  // Offset of first byte of header of current data page. Used for rewind.
+  int64_t currentHeaderStart_{0};
 
   // Below members Keep state between calls to readWithVisitor().
 

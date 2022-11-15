@@ -70,6 +70,10 @@ class ParquetData : public dwio::common::FormatData {
       uint64_t rowsPerRowGroup,
       const dwio::common::StatsContext& writerContext) override;
 
+  PageReader* FOLLY_NONNULL reader() const {
+    return reader_.get();
+  }
+
   // Reads null flags for 'numValues' next top level rows. The first 'numValues'
   // bits of 'nulls' are set and the reader is advanced by numValues'.
   void readNullsOnly(int32_t numValues, BufferPtr& nulls) {

@@ -40,6 +40,13 @@ StructColumnReader::StructColumnReader(
   }
 }
 
+void StructColumnReader::read(
+    vector_size_t offset,
+    RowSet rows,
+    const uint64_t* FOLLY_NULLABLE incomingNulls) {
+  SelectiveStructColumnReader::read(offset, rows, incomingNulls);
+}
+
 void StructColumnReader::enqueueRowGroup(
     uint32_t index,
     dwio::common::BufferedInput& input) {

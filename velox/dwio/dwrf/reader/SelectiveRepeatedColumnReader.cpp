@@ -19,13 +19,38 @@
 
 namespace facebook::velox::dwrf {
 
+namespace {
+std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>>
+makeLengthDecoder(
+		  DwrfParams& params, memory::MemoryPool& pool) {
+  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
+      auto rleVersion =
+          convertRleVersion(stripe.getEncoding(encodingKey).kind());
+      auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
+      bool lenVints = stripe.getUseVInts(lenId);
+      return = createRleDecoder</*isSigned*/ false>(
+          stripe.getStream(lenId, true),
+          rleVersion,
+          memoryPool_,
+          lenVints,
+          dwio::common::INT_BYTE_SIZE);
+}
+}
+
+std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> length_;
+};
+
+}
+
 SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
-      requestedType_{requestedType} {
+      requestedType_{requestedType},
+      length_(makeLengthDecoder(params, memoryPool_)) {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();
@@ -109,7 +134,8 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
     DwrfParams& params,
     common::ScanSpec& scanSpec)
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
-      requestedType_{requestedType} {
+      requestedType_{requestedType},
+      length_(makeLengthDecoder(params, memoryPool_)) {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();

@@ -41,6 +41,10 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
       dwio::common::SelectiveColumnReader* FOLLY_NONNULL /*reader*/,
       vector_size_t /*offset*/) override {}
 
+  void read(      vector_size_t offset,
+		  RowSet rows,
+		  const uint64_t* FOLLY_NULLABLE /*incomingNulls*/) override;
+
  private:
   bool filterMatches(const thrift::RowGroup& rowGroup);
 };

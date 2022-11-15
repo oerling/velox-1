@@ -71,6 +71,20 @@ class NestedStructureDecoder {
       int64_t& numNonNulls,
       memory::MemoryPool& pool);
 
+  /// Writes null flags for the level in maxRepeat/maxDefineition'
+  /// into 'nulls' 'numValues' is the number of repdefes. The
+  /// number of null and non-null values at the level is returned. The
+  /// nulls are written starting at bit offset nullsStartOffset.
+  static int64_t readNulls(
+    const uint8_t* repetitionLevels,
+    const uint8_t* definitionLevels,
+    int64_t numValues,
+    uint8_t maxRepeat,
+    uint8_t maxDefinition,
+    int32_t nullsStartOffset,
+    uint64_t* nulls,
+    int32_t& numNonNulls);
+  
   static std::vector<std::shared_ptr<NestedData>>
   readOffsetsAndNullsForAllLevels(
       const uint8_t* FOLLY_NONNULL repetitionLevels,

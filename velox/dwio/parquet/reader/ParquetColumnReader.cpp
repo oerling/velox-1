@@ -43,10 +43,6 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
 
   switch (dataType->type->kind()) {
     case TypeKind::INTEGER:
-      if (isNested) {
-        return std::make_unique<NestedIntegerColumnReader>(
-            dataType, params, scanSpec, topLevelScanSpec);
-      };
     case TypeKind::BIGINT:
     case TypeKind::SMALLINT:
     case TypeKind::TINYINT:

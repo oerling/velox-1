@@ -21,12 +21,13 @@
 #include "velox/dwio/parquet/reader/NestedStructureDecoder.h"
 #include "velox/dwio/parquet/reader/ParquetData.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
+#include "velox/dwio/parquet/reader/StructColumnReader.h"
 
 namespace facebook::velox::parquet {
 
-class ParquetNestedColumnReader : public dwio::common::SelectiveColumnReader {
+class ParquetRepeatedColumnReader : public dwio::common::SelectiveColumnReader {
  public:
-  ParquetNestedColumnReader(
+  ParquetRepeatedColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       ParquetParams& params,
       common::ScanSpec& scanSpec,
@@ -36,115 +37,67 @@ class ParquetNestedColumnReader : public dwio::common::SelectiveColumnReader {
             params,
             scanSpec,
             requestedType->type),
-        topLevelScanSpec_(&topLevelScanSpec) {
-    auto type = &dynamic_cast<const ParquetTypeWithId&>(*requestedType);
-    while (type->parent) {
-      maxRepeats_.push_back(type->maxRepeat_ + 1);
-      maxDefines_.push_back(type->maxDefine_);
-      type = dynamic_cast<const ParquetTypeWithId*>(type->parent);
+        topLevelScanSpec_(&topLevelScanSpec) {}
+
+  static PageReader* readLeafRepDefs(
+      SelectiveColumnReader* FOLLY_NONNULL reader,
+      int32_t numTop) {
+    auto children = reader->children();
+    if (children.empty()) {
+      auto pageReader = reader->formatData().as<ParquetData>().reader();
+      pageReader->decodeRepDefs(numTop);
+      return pageReader;
     }
-    std::reverse(maxRepeats_.begin(), maxRepeats_.end());
-    std::reverse(maxDefines_.begin(), maxDefines_.end());
-
-    level_ = maxRepeats_.size() - 1;
+    PageReader* pageReader;
+    for (auto i = 0; i < children.size(); ++i) {
+      auto child = children[i];
+      if (i == 0) {
+        pageReader = readLeafRepDefs(child, numTop);
+        auto& type =
+            *reinterpret_cast<const ParquetTypeWithId*>(&reader->nodeType());
+        if (auto structChild = dynamic_cast<StructColumnReader*>(reader)) {
+          VELOX_NYI();
+        }
+        auto nested = dynamic_cast<ParquetRepeatedColumnReader*>(reader);
+        VELOX_CHECK(nested);
+        pageReader->getOffsetsAndNulls(
+            type.maxRepeat_,
+            type.maxDefine_,
+            nested->offsets_,
+            nested->lengths_,
+            nested->nullsInReadRange());
+      } else {
+        readLeafRepDefs(child, numTop);
+      }
+    }
+    return pageReader;
+  }
+  void seekToRowGroup(uint32_t index) override;
+  
+  void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input) {
+    enqueueChildren(this, index, input);
   }
 
-  virtual void enqueueRowGroup(
+ protected:
+  static void enqueueChildren(
+      SelectiveColumnReader* reader,
       uint32_t index,
-      dwio::common::BufferedInput& input) = 0;
-
-  virtual std::vector<std::shared_ptr<NestedData>> read(
-      uint64_t offset,
-      RowSet rows) = 0;
-
-  void read(
-      vector_size_t offset,
-      RowSet rows,
-      const uint64_t* FOLLY_NULLABLE /*incomingNulls*/) override {}
-
- protected:
-  velox::common::ScanSpec* const FOLLY_NONNULL topLevelScanSpec_ = nullptr;
-
-  std::vector<uint32_t> maxRepeats_;
-  std::vector<uint32_t> maxDefines_;
-  uint8_t level_;
-};
-
-class ParquetRepeatedColumnReader : public ParquetNestedColumnReader {
- public:
-  ParquetRepeatedColumnReader(
-      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      ParquetParams& params,
-      common::ScanSpec& scanSpec,
-      common::ScanSpec& topLevelScanSpec)
-      : ParquetNestedColumnReader(
-            requestedType,
-            params,
-            scanSpec,
-            topLevelScanSpec) {}
-
-  void seekToRowGroup(uint32_t index) override;
-};
-
-class ParquetNestedLeafColumnReader : public ParquetNestedColumnReader {
- public:
-  ParquetNestedLeafColumnReader(
-      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
-      ParquetParams& params,
-      common::ScanSpec& scanSpec,
-      common::ScanSpec& topLevelScanSpec)
-      : ParquetNestedColumnReader(
-            requestedType,
-            params,
-            scanSpec,
-            topLevelScanSpec) {
-    dwio::common::ensureCapacity<uint8_t>(repetitionLevels_, 0, &memoryPool_);
-    dwio::common::ensureCapacity<uint8_t>(definitionLevels_, 0, &memoryPool_);
+      dwio::common::BufferedInput& input) {
+    auto children = reader->children();
+    if (children.empty()) {
+      reader->formatData().as<ParquetData>().enqueueRowGroup(index, input);
+      return;
+    }
+    for (auto* child : children) {
+      enqueueChildren(child, index, input);
+    }
   }
 
-  void seekToRowGroup(uint32_t index) override;
+  velox::common::ScanSpec* const FOLLY_NULLABLE topLevelScanSpec_ = nullptr;
 
-  void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input)
-      override;
-
-  std::vector<std::shared_ptr<NestedData>> read(
-      uint64_t offset,
-      RowSet topLevelRows) override;
-
- protected:
-  virtual void prepareRead(vector_size_t offset, RowSet rows);
-
-  void readPages(int64_t topLevelRowCount);
-
-  void readRepDefs(std::shared_ptr<ParquetDataPage> page);
-  void moveRepDefs();
-
-  void readNulls(int32_t numValues);
-
-  void readNoFilter(uint64_t offset, RowSet topRows);
-
-  virtual void decodePage(
-      std::shared_ptr<ParquetDataPage> dataPage,
-      uint32_t numValues,
-      uint32_t outputOffset) = 0;
-
-  virtual void decodePage(
-      std::shared_ptr<ParquetDataPage> dataPage,
-      RowSet leafRowsInPage,
-      uint32_t outputOffset) = 0;
-
-  std::unique_ptr<PageReader> reader_;
-  std::deque<std::shared_ptr<ParquetDataPage>> dataPages_;
-  std::shared_ptr<ParquetDictionaryPage> dictionaryPage_;
-
-  BufferPtr repetitionLevels_;
-  BufferPtr definitionLevels_;
-
-  int32_t numLeafRowsInBatch_;
-  int32_t numNonNullLeafRowsInBatch_;
-  int32_t numRemainingRepDefsInLastBatch_ = 0;
-
-  std::unique_ptr<NestedStructureDecoder> nestedStructureDecoder_;
+  BufferPtr offsets_;
+  BufferPtr lengths_;
 };
+
 
 } // namespace facebook::velox::parquet

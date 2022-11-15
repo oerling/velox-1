@@ -133,6 +133,9 @@ class SelectiveColumnReader {
     return *formatData_;
   }
 
+  /// Returns list of child readers, empty for leaf readers.
+  virtual const std::vector<SelectiveColumnReader*> children() const;
+
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read
@@ -196,6 +199,11 @@ class SelectiveColumnReader {
     return type_;
   }
 
+  const TypeWithId& nodeType() const {
+    return *nodeType_;
+  }
+
+  
   // The below functions are called from ColumnVisitor to fill the result set.
   inline void addOutputRow(vector_size_t row) {
     outputRows_.push_back(row);
