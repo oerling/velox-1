@@ -112,7 +112,7 @@ class TpchBenchmark {
   mappedMemory_ = std::make_shared<cache::AsyncDataCache>(
       allocator, memoryBytes, nullptr);
 
-  memory::MappedMemory::setDefaultInstance(mappedMemory.get());
+  memory::MappedMemory::setDefaultInstance(mappedMemory_.get());
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
