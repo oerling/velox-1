@@ -271,9 +271,9 @@ class E2EFilterTestBase : public testing::Test {
     return readSizes_[nextReadSizeIndex_++];
   }
 
-  const size_t kBatchCount = 1;
+  const size_t kBatchCount = 4;
   // kBatchSize must be greater than 10000 for RowGroup skipping test
-  const size_t kBatchSize = 20;
+  const size_t kBatchSize = 25'000;
 
   std::unique_ptr<test::DataSetBuilder> dataSetBuilder_;
   std::unique_ptr<common::FilterGenerator> filterGenerator_;

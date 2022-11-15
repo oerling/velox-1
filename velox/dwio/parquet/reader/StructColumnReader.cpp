@@ -15,8 +15,7 @@
  */
 
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
-
-#include "velox/dwio/parquet/reader/ParquetNestedColumnReader.h"
+#include "velox/dwio/parquet/reader/RepeatedColumnReader.h"
 
 namespace facebook::velox::parquet {
 
@@ -54,8 +53,8 @@ void StructColumnReader::enqueueRowGroup(
     if (auto structChild = dynamic_cast<StructColumnReader*>(child)) {
       structChild->enqueueRowGroup(index, input);
     } else if (
-        auto nestedChild = dynamic_cast<ParquetRepeatedColumnReader*>(child)) {
-      nestedChild->enqueueRowGroup(index, input);
+	       auto listChild = dynamic_cast<ListColumnReader*>(child)) {
+      listChild->enqueueRowGroup(index, input);
     } else {
       child->formatData().as<ParquetData>().enqueueRowGroup(index, input);
     }

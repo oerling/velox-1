@@ -31,6 +31,9 @@ class SelectiveRepeatedColumnReader
   }
 
  protected:
+  // Buffer size for reading lengths when skipping.
+  static constexpr int32_t kBufferSize = 1024;
+
  SelectiveRepeatedColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       FormatParams& params,
@@ -181,7 +184,6 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
- private:
   std::unique_ptr<SelectiveColumnReader> child_;
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
@@ -199,18 +201,20 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
     elementReader_->resetFilterCaches();
   }
 
+  uint64_t skip(uint64_t numValues) override;
+
+  const std::vector<SelectiveColumnReader*> children() const override {
+    return std::vector<SelectiveColumnReader*>{keyReader_.get(), elementReader_.get()};
+  }
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
+    override;
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
- private:
   std::unique_ptr<SelectiveColumnReader> keyReader_;
   std::unique_ptr<SelectiveColumnReader> elementReader_;
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
 
 } // namespace facebook::velox::dwrf
-
-

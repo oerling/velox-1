@@ -44,7 +44,7 @@ class RleBpDecoder {
   /// Decode @param numValues number of values and copy the decoded values into
   /// @param outputBuffer
   template <typename T>
-  void next(T* FOLLY_NONNULL& outputBuffer, int64_t numValues) {
+  void next(T* FOLLY_NONNULL outputBuffer, int64_t numValues) {
     while (numValues > 0) {
       if (numRemainingUnpackedValues_ > 0) {
         auto numValuesToRead =

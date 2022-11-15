@@ -120,26 +120,20 @@ class PageReader {
   void skip(int64_t numRows);
 
   /// Reads repdefs for at least 'numTopLevelRows'. Enough pages are
-  /// read to cover the rows.
-  /// Does not
-  /// affect the current position seen by readWithVisitor(). The results are
-  /// left in 'repetitionLevels_' and 'definitionLevels' for all the pages
-  /// accessed. The number of elements in the levels covering 'numTopLevelRows'
-  /// is returned.
-  int32_t decodeRepDefs(int32_t numTopLevelRows);
-
+  /// read to cover the rows.  This does not affect the current
+  /// position seen by readWithVisitor(). The results are left in
+  /// 'repetitionLevels_' and 'definitionLevels' for all the pages
+  /// accessed. 'leafNulls_' is set to the leaf level null flags.
+  void decodeRepDefs(int32_t numTopLevelRows);
+  
   void getOffsetsAndNulls(
       uint8_t maxRepeat,
       uint8_t maxDefinition,
       BufferPtr& offsets,
       BufferPtr& length,
-      BufferPtr nulls);
-
+      BufferPtr& nulls);
+  
   void getLeafNulls(BufferPtr& buffer);
-
-  /// Pops off the 'numTopLevelRows' worth repdefs read by the last call to
-  /// decodeRepDefs.
-  void repdefsConsumed();
 
   /// Applies 'visitor' to values in the ColumnChunk of 'this'. The
   /// operation to perform and The operand rows are given by
@@ -203,6 +197,10 @@ class PageReader {
   // columns.
   void seekToPage(int64_t row);
 
+  /// Pops off the 'numTopLevelRows' worth repdefs read by the last call to
+  /// decodeRepDefs.
+  void repDefsConsumed();
+  
   // Sets row number info after reading a page header.
   void setPageRowInfo();
 
@@ -368,15 +366,8 @@ class PageReader {
   // level leaf. Does not include dictionary.
   std::vector<int32_t> numLeavesInPage_;
 
-  // Number of top level rows represented in 'definitionLevels' and
-  // 'repetitionLevels'.
-  int32_t numTopLevelRowsInLevels_{0};
-
-  // Number of top level rows requested in last decodeRepdefs().
-  int32_t numTopLevelRowsRequested_{0};
-
   // Number of entries in levels before repDefEnd_.
-  int32_t numTopLevelInRepDefs_{0};
+  int32_t numTopLevelRowsInRepDefs_{0};
 
   // Index of first element in '*Levels_' that corresponds to the next row after
   // 'repDefEnd_'.

@@ -14,29 +14,28 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
+#include "velox/dwio/common/SelectiveRepeatedColumnReader.h"
 
-namespace facebook::velox::dwrf {
+namespace facebook::velox::dwio::common {
 
 SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     FormatParams& params,
-    common::ScanSpec& scanSpec)
+    velox::common::ScanSpec& scanSpec)
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
       requestedType_{requestedType} {}
 
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
   numValues = formatData_->skipNulls(numValues);
   if (child_) {
-    std::array<int64_t, kBufferSize> buffer;
+    std::array<int32_t, kBufferSize> buffer;
     uint64_t childElements = 0;
     uint64_t lengthsRead = 0;
     while (lengthsRead < numValues) {
       uint64_t chunk =
           std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
-      length_->next(buffer.data(), chunk, nullptr);
+      readLengths(buffer.data(), chunk, nullptr);
       for (size_t i = 0; i < chunk; ++i) {
         childElements += static_cast<size_t>(buffer[i]);
       }
@@ -46,7 +45,8 @@ uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
     child_->setReadOffset(child_->readOffset() + childElements);
   } else {
-    length_->skip(numValues);
+    VELOX_FAIL("Need child reader for list reader");
+    //skipLengths(numValues);
   }
   return numValues;
 }
@@ -86,21 +86,21 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    FornatParams& params,
-    common::ScanSpec& scanSpec)
+    FormatParams& params,
+    velox::common::ScanSpec& scanSpec)
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
-      requestedType_{requestedType} {} {}
+      requestedType_{requestedType} {}
 
 uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
   numValues = formatData_->skipNulls(numValues);
   if (keyReader_ || elementReader_) {
-    std::array<int64_t, kBufferSize> buffer;
+    std::array<int32_t, kBufferSize> buffer;
     uint64_t childElements = 0;
     uint64_t lengthsRead = 0;
     while (lengthsRead < numValues) {
       uint64_t chunk =
           std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
-      length_->next(buffer.data(), chunk, nullptr);
+      readLengths(buffer.data(), chunk, nullptr);
       for (size_t i = 0; i < chunk; ++i) {
         childElements += buffer[i];
       }
@@ -118,7 +118,8 @@ uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
 
   } else {
-    length_->skip(numValues);
+    VELOX_FAIL("Map reader must have child readers");
+    //skipLengths(numValues);
   }
   return numValues;
 }

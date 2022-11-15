@@ -16,11 +16,33 @@
 
 #pragma once
 
-#include "velox/dwio/parquet/reader/ParquetNestedColumnReader.h"
+#include "velox/dwio/common/SelectiveRepeatedColumnReader.h"
+#include "velox/dwio/parquet/reader/ParquetData.h"
 
 namespace facebook::velox::parquet {
 
-  class ListColumnReader : public dwio::common::SelectiveListColumnReader {
+/// Comtainer for the lengths of a repeated reader where the lengths are
+/// pre-filled from repdefs.
+class RepeatedLengths {
+ public:
+  void setLengths(BufferPtr lengths) {
+    lengths_ = std::move(lengths);
+    nextLengthIndex_ = 0;
+  }
+
+  void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths) {
+    VELOX_CHECK_LE(
+        nextLengthIndex_ + numLengths, lengths_->size() / sizeof(int32_t));
+    memcpy(lengths, lengths_->as<int32_t>() + nextLengthIndex_, numLengths);
+    nextLengthIndex_ += numLengths;
+  }
+
+ private:
+  BufferPtr lengths_;
+  int32_t nextLengthIndex_{0};
+};
+
+class ListColumnReader : public dwio::common::SelectiveListColumnReader {
  public:
   ListColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
@@ -30,16 +52,25 @@ namespace facebook::velox::parquet {
 
   void seekToRowGroup(uint32_t index) override;
 
-  uint64_t skip(uint64_t numRows) override;
+  void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
   void read(
       vector_size_t offset,
       RowSet rows,
       const uint64_t* FOLLY_NULLABLE /*incomingNulls*/) override;
 
-  void getValues(RowSet rows, VectorPtr* FOLLY_NONNULL result) override;
+  void setLengths(BufferPtr lengths) {
+    lengths_.setLengths(lengths);
+  }
+  void readLengths(
+      int32_t* FOLLY_NONNULL lengths,
+      int32_t numLengths,
+      const uint64_t* FOLLY_NULLABLE /*nulls*/) override {
+    lengths_.readLengths(lengths, numLengths);
+  }
 
  private:
-  std::unique_ptr<SelectiveColumnReader> elementReader_;
+  RepeatedLengths lengths_;
 };
+
 } // namespace facebook::velox::parquet

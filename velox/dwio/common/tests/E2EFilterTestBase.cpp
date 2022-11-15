@@ -110,13 +110,6 @@ void E2EFilterTestBase::readWithoutFilter(
 
     ownershipChecker.check(resultBatch);
     for (int32_t i = 0; i < resultBatch->size(); ++i) {
-      if (!resultBatch->equalValueAt(batches[batchIndex].get(), i, rowIndex)) {
-        std::cout << "Content mismatch at resultBatch " << batchIndex
-                  << " at index " << rowIndex
-                  << ": expected: " << batches[batchIndex]->toString(rowIndex)
-                  << " actual: " << resultBatch->toString(i) << std::endl;
-        break;
-      }
       ASSERT_TRUE(
           resultBatch->equalValueAt(batches[batchIndex].get(), i, rowIndex))
           << "Content mismatch at resultBatch " << batchIndex << " at index "
