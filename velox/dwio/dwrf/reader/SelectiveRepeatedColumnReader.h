@@ -18,13 +18,14 @@
 
 #include "velox/dwio/common/BufferUtil.h"
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/common/SelectiveRepeatedColumnReader.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
 
-class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
+  class SelectiveListColumnReader : dwio::common::public SelectiveRepeatedColumnReader {
  public:
   SelectiveListColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -61,7 +62,7 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
   std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> length_;
 };
 
-class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
+  class SelectiveMapColumnReader : public dwio::common::SelectiveRepeatedColumnReader {
  public:
   SelectiveMapColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,

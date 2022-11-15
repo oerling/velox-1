@@ -18,8 +18,6 @@
 
 #include "velox/dwio/common/BufferUtil.h"
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
-#include "velox/dwio/dwrf/common/DecoderUtil.h"
-#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwio::common {
 
@@ -36,11 +34,11 @@ class SelectiveRepeatedColumnReader
  SelectiveRepeatedColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       FormatParams& params,
-      common::ScanSpec& scanSpec,
+      velox::common::ScanSpec& scanSpec,
       const TypePtr& type)
     : SelectiveColumnReader(std::move(nodeType), params, scanSpec, type) {}
 
-  virtual void readLengths(uint32_t* lengths, RowSet rows, const uint64_t* nulls) = 0;
+  virtual void readLengths(int32_t* lengths, RowSet rows, const uint64_t* nulls) = 0;
   
   void makeNestedRowSet(RowSet rows) {
     allLengths_.resize(rows.back() + 1);
@@ -49,7 +47,7 @@ class SelectiveRepeatedColumnReader
         nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
     // Reads the lengths, leaves an uninitialized gap for a null
     // map/list. Reading these checks the null nask.
-    readLengths(allLengths_.data(), rows.back() + 1, nulls);
+    readLengths(allLengths_.data(), rows, nulls);
     dwio::common::ensureCapacity<vector_size_t>(
         offsets_, rows.size(), &memoryPool_);
     dwio::common::ensureCapacity<vector_size_t>(
@@ -163,24 +161,9 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
   SelectiveListColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      DwrfParams& params,
+      FormatParams& params,
       common::ScanSpec& scanSpec);
 
-  void resetFilterCaches() override {
-    child_->resetFilterCaches();
-  }
-
-  void seekToRowGroup(uint32_t index) override {
-    SelectiveColumnReader::seekToRowGroup(index);
-    auto positionsProvider = formatData_->seekToRowGroup(index);
-    length_->seekToRowGroup(positionsProvider);
-
-    VELOX_CHECK(!positionsProvider.hasNext());
-
-    child_->seekToRowGroup(index);
-    child_->setReadOffsetRecursive(0);
-    childTargetReadOffset_ = 0;
-  }
 
   uint64_t skip(uint64_t numValues) override;
 
@@ -207,22 +190,6 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
     elementReader_->resetFilterCaches();
   }
 
-  void seekToRowGroup(uint32_t index) override {
-    SelectiveColumnReader::seekToRowGroup(index);
-    auto positionsProvider = formatData_->seekToRowGroup(index);
-
-    length_->seekToRowGroup(positionsProvider);
-
-    VELOX_CHECK(!positionsProvider.hasNext());
-
-    keyReader_->seekToRowGroup(index);
-    keyReader_->setReadOffsetRecursive(0);
-    elementReader_->seekToRowGroup(index);
-    elementReader_->setReadOffsetRecursive(0);
-    childTargetReadOffset_ = 0;
-  }
-
-  uint64_t skip(uint64_t numValues) override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
