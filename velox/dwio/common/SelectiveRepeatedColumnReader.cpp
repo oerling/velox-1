@@ -26,8 +26,6 @@ SelectiveListColumnReader::SelectiveListColumnReader(
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
       requestedType_{requestedType} {}
 
-
-
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
   numValues = formatData_->skipNulls(numValues);
   if (child_) {
@@ -52,8 +50,6 @@ uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
   return numValues;
 }
 
-
-  
 void SelectiveListColumnReader::read(
     vector_size_t offset,
     RowSet rows,
@@ -85,8 +81,6 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
       sizes_,
       elements);
 }
-
-  
 
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -127,7 +121,7 @@ uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
   }
   return numValues;
 }
-  
+
 void SelectiveMapColumnReader::read(
     vector_size_t offset,
     RowSet rows,
@@ -173,6 +167,5 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
       keys,
       values);
 }
-
 
 } // namespace facebook::velox::dwio::common

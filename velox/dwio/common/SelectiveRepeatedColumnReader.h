@@ -185,7 +185,7 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
-protected:
+ protected:
   std::unique_ptr<SelectiveColumnReader> child_;
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };

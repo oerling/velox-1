@@ -60,8 +60,7 @@ class SelectiveListColumnReader
   std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> length_;
 };
 
-class SelectiveMapColumnReader
-    : public dwio::common::SelectiveMapColumnReader {
+class SelectiveMapColumnReader : public dwio::common::SelectiveMapColumnReader {
  public:
   SelectiveMapColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -95,6 +94,7 @@ class SelectiveMapColumnReader
       const uint64_t* FOLLY_NULLABLE nulls) override {
     length_->next(lengths, numLengths, nulls);
   }
+
  private:
   std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> length_;
 };

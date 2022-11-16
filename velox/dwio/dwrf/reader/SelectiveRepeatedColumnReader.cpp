@@ -42,8 +42,12 @@ SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-  : dwio::common::SelectiveListColumnReader(requestedType, dataType, params, scanSpec),
-    length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
+    : dwio::common::SelectiveListColumnReader(
+          requestedType,
+          dataType,
+          params,
+          scanSpec),
+      length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();
@@ -65,14 +69,17 @@ SelectiveListColumnReader::SelectiveListColumnReader(
       childType, nodeType_->childAt(0), childParams, *scanSpec_->children()[0]);
 }
 
-
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-  : dwio::common::SelectiveMapColumnReader(requestedType, dataType, params, scanSpec),
-    length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
+    : dwio::common::SelectiveMapColumnReader(
+          requestedType,
+          dataType,
+          params,
+          scanSpec),
+      length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
   EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();
