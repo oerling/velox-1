@@ -32,154 +32,6 @@ namespace facebook::velox::parquet {
 using thrift::Encoding;
 using thrift::PageHeader;
 
-std::shared_ptr<ParquetPage> PageReader::readNextPage() {
-  if (pageStart_ >= chunkSize_) {
-    return nullptr;
-  }
-
-  currentHeaderStart_ = pageStart_;
-  PageHeader pageHeader = readPageHeader(chunkSize_ - pageStart_);
-  pageStart_ = pageDataStart_ + pageHeader.compressed_page_size;
-
-  switch (pageHeader.type) {
-    case thrift::PageType::DATA_PAGE:
-      prepareDataPageV1(pageHeader, rowOfPage_);
-      break;
-    case thrift::PageType::DATA_PAGE_V2:
-      prepareDataPageV2(pageHeader, rowOfPage_);
-      break;
-    case thrift::PageType::DICTIONARY_PAGE:
-      prepareDictionary(pageHeader);
-      return std::make_shared<ParquetDictionaryPage>(
-          numRowsInPage_, encodedDataSize_, dictionary_, dictionaryEncoding_);
-    default:
-      VELOX_UNREACHABLE(); //
-  }
-
-  rowOfPage_ += numRowsInPage_;
-
-  return std::make_shared<ParquetDataPage>(
-      numRowsInPage_,
-      encodedDataSize_,
-      std::move(repeatDecoder_),
-      std::move(defineDecoder_),
-      encoding_,
-      pageData_);
-}
-
-void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
-  // Position to return to if reading multiple pages.
-  uint64_t rewindOffset = currentHeaderStart_;
-  bool isAtStart = numRepDefsInPage_ == 0;
-  bool needRewind = false;
-  auto pageIndex = pageIndex_;
-  auto rowOfPage = rowOfPage_;
-  auto rowsInPage = numRowsInPage_;
-  auto repdefsInPage = numRepDefsInPage_;
-  repDefsConsumed();
-  int32_t numLevels = definitionLevels_.size();
-  int32_t topFound = 0;
-  int32_t i = 0;
-  // Read pages until we have seen enough top level rows. If we read
-  // past current page, we rewind at the end.
-  for (;;) {
-    for (; i < numLevels; ++i) {
-      if (repetitionLevels_[i] == 0)
-        ++topFound;
-      if (topFound == numTopLevelRows) {
-        break;
-      }
-    }
-
-    if (topFound == numTopLevelRows) {
-      repDefEnd_ = i;
-      numTopLevelRowsInRepDefs_ = topFound;
-      break;
-    }
-    if (topFound == numTopLevelRows) {
-      break;
-    }
-
-    needRewind = !isAtStart;
-    seekToPage(kNextPage);
-    if (isAtStart && dictionary_.values) {
-      rewindOffset = currentHeaderStart_;
-    }
-    isAtStart = false;
-    numLevels = repetitionLevels_.size() + numRowsInPage_;
-    definitionLevels_.resize(numLevels);
-    repetitionLevels_.resize(numLevels);
-    defineDecoder_->next(definitionLevels_.data() + i, numRepDefsInPage_);
-    repeatDecoder_->next(repetitionLevels_.data() + i, numRepDefsInPage_);
-    leafNulls_.resize(bits::nwords(numLeafNulls_ + numRepDefsInPage_));
-    int32_t numNonNull; // unused.
-    auto numLeafValues = NestedStructureDecoder::readNulls(
-        repetitionLevels_.data() + i,
-        definitionLevels_.data() + i,
-        numRowsInPage_,
-        maxRepeat_,
-        maxDefine_,
-        numLeafNulls_,
-        leafNulls_.data(),
-        numNonNull);
-    numLeafNulls_ += numLeafValues;
-    numLeavesInPage_.push_back(numLeafValues);
-  }
-  if (needRewind) {
-    numRowsInPage_ = rowsInPage;
-    rowOfPage_ = rowOfPage;
-    std::vector<uint64_t> rewind = {rewindOffset};
-    dwio::common::PositionProvider position(rewind);
-    inputStream_->seekToPosition(position);
-    bufferStart_ = bufferEnd_ = nullptr;
-    seekToPage(rowOfPage_);
-    pageIndex_ = pageIndex;
-  }
-}
-
-void PageReader::getOffsetsAndNulls(
-    uint8_t maxRepeat,
-    uint8_t maxDefinition,
-    BufferPtr& offsets,
-    BufferPtr& lengths,
-    BufferPtr& nulls) {
-  int64_t numNonNull; // unused.
-  NestedStructureDecoder::readOffsetsAndNulls(
-      repetitionLevels_.data(),
-      definitionLevels_.data(),
-      repDefEnd_,
-      maxRepeat,
-      maxDefinition,
-      offsets,
-      lengths,
-      nulls,
-      numNonNull,
-      pool_);
-}
-
-namespace {
-template <typename T>
-void eraseFirst(raw_vector<T>& vector, int32_t n) {
-  VELOX_CHECK_GE(vector.size(), n);
-  std::memmove(vector.data(), vector.data() + n, vector.size() - n);
-  vector.resize(vector.size() - n);
-}
-}
-
-void PageReader::repDefsConsumed() {
-  VELOX_CHECK_GE(repetitionLevels_.size(), repDefEnd_);
-  eraseFirst(repetitionLevels_, repDefEnd_);
-  eraseFirst(definitionLevels_, repDefEnd_);
-  bits::copyBits(
-      leafNulls_.data(),
-      visitBase_,
-      leafNulls_.data(),
-      0,
-      numLeafNulls_ - numLeafNullsConsumed_);
-  numLeafNulls_ -= numLeafNullsConsumed_;
-  numLeafNullsConsumed_ = 0;
-}
-
 void PageReader::seekToPage(int64_t row) {
   defineDecoder_.reset();
   repeatDecoder_.reset();
@@ -669,6 +521,121 @@ void PageReader::makeDecoder() {
   }
 }
 
+void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
+  // Position to return to if reading multiple pages.
+  uint64_t rewindOffset = currentHeaderStart_;
+  bool isAtStart = numRepDefsInPage_ == 0;
+  bool needRewind = false;
+  auto pageIndex = pageIndex_;
+  auto rowOfPage = rowOfPage_;
+  auto rowsInPage = numRowsInPage_;
+  auto repdefsInPage = numRepDefsInPage_;
+  repDefsConsumed();
+  int32_t numLevels = definitionLevels_.size();
+  int32_t topFound = 0;
+  int32_t i = 0;
+  // Read pages until we have seen enough top level rows. If we read
+  // past current page, we rewind at the end.
+  for (;;) {
+    for (; i < numLevels; ++i) {
+      if (repetitionLevels_[i] == 0)
+        ++topFound;
+      if (topFound == numTopLevelRows) {
+        break;
+      }
+    }
+
+    if (topFound == numTopLevelRows) {
+      repDefEnd_ = i;
+      numTopLevelRowsInRepDefs_ = topFound;
+      break;
+    }
+    if (topFound == numTopLevelRows) {
+      break;
+    }
+
+    needRewind = !isAtStart;
+    seekToPage(kNextPage);
+    if (isAtStart && dictionary_.values) {
+      rewindOffset = currentHeaderStart_;
+    }
+    isAtStart = false;
+    numLevels = repetitionLevels_.size() + numRowsInPage_;
+    definitionLevels_.resize(numLevels);
+    repetitionLevels_.resize(numLevels);
+    defineDecoder_->next(definitionLevels_.data() + i, numRepDefsInPage_);
+    repeatDecoder_->next(repetitionLevels_.data() + i, numRepDefsInPage_);
+    leafNulls_.resize(bits::nwords(numLeafNulls_ + numRepDefsInPage_));
+    int32_t numNonNull; // unused.
+    auto numLeafValues = NestedStructureDecoder::readNulls(
+        repetitionLevels_.data() + i,
+        definitionLevels_.data() + i,
+        numRowsInPage_,
+        maxRepeat_,
+        maxDefine_,
+        numLeafNulls_,
+        leafNulls_.data(),
+        numNonNull);
+    numLeafNulls_ += numLeafValues;
+    numLeavesInPage_.push_back(numLeafValues);
+  }
+  if (needRewind) {
+    numRowsInPage_ = rowsInPage;
+    rowOfPage_ = rowOfPage;
+    std::vector<uint64_t> rewind = {rewindOffset};
+    dwio::common::PositionProvider position(rewind);
+    inputStream_->seekToPosition(position);
+    bufferStart_ = bufferEnd_ = nullptr;
+    seekToPage(rowOfPage_);
+    pageIndex_ = pageIndex;
+  }
+}
+
+void PageReader::getOffsetsAndNulls(
+    uint8_t maxRepeat,
+    uint8_t maxDefinition,
+    BufferPtr& offsets,
+    BufferPtr& lengths,
+    BufferPtr& nulls) {
+  int64_t numNonNull; // unused.
+  NestedStructureDecoder::readOffsetsAndNulls(
+      repetitionLevels_.data(),
+      definitionLevels_.data(),
+      repDefEnd_,
+      maxRepeat,
+      maxDefinition,
+      offsets,
+      lengths,
+      nulls,
+      numNonNull,
+      pool_);
+}
+
+namespace {
+template <typename T>
+void eraseFirst(raw_vector<T>& vector, int32_t n) {
+  VELOX_CHECK_GE(vector.size(), n);
+  std::memmove(vector.data(), vector.data() + n, vector.size() - n);
+  vector.resize(vector.size() - n);
+}
+}
+
+void PageReader::repDefsConsumed() {
+  VELOX_CHECK_GE(repetitionLevels_.size(), repDefEnd_);
+  eraseFirst(repetitionLevels_, repDefEnd_);
+  eraseFirst(definitionLevels_, repDefEnd_);
+  bits::copyBits(
+      leafNulls_.data(),
+      visitBase_,
+      leafNulls_.data(),
+      0,
+      numLeafNulls_ - numLeafNullsConsumed_);
+  numLeafNulls_ -= numLeafNullsConsumed_;
+  numLeafNullsConsumed_ = 0;
+}
+
+
+  
 void PageReader::skip(int64_t numRows) {
   if (!numRows && firstUnvisited_ != rowOfPage_ + numRowsInPage_) {
     // Return if no skip and position not at end of page or before first page.
