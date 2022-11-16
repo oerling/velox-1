@@ -26,6 +26,8 @@ SelectiveListColumnReader::SelectiveListColumnReader(
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
       requestedType_{requestedType} {}
 
+
+
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
   numValues = formatData_->skipNulls(numValues);
   if (child_) {
@@ -45,12 +47,13 @@ uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
     child_->setReadOffset(child_->readOffset() + childElements);
   } else {
-    VELOX_FAIL("Need child reader for list reader");
-    // skipLengths(numValues);
+    VELOX_FAIL("Repeated reader with no children");
   }
   return numValues;
 }
 
+
+  
 void SelectiveListColumnReader::read(
     vector_size_t offset,
     RowSet rows,
@@ -82,6 +85,8 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
       sizes_,
       elements);
 }
+
+  
 
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -118,12 +123,11 @@ uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
 
   } else {
-    VELOX_FAIL("Map reader must have child readers");
-    // skipLengths(numValues);
+    VELOX_FAIL("repeated reader with no children");
   }
   return numValues;
 }
-
+  
 void SelectiveMapColumnReader::read(
     vector_size_t offset,
     RowSet rows,
@@ -169,5 +173,6 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
       keys,
       values);
 }
+
 
 } // namespace facebook::velox::dwio::common
