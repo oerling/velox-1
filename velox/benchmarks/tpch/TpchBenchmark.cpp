@@ -91,10 +91,13 @@ DEFINE_bool(use_native_parquet_reader, true, "Use Native Parquet Reader");
 DEFINE_int32(num_drivers, 4, "Number of drivers");
 DEFINE_string(data_format, "parquet", "Data format");
 DEFINE_int32(num_splits_per_file, 10, "Number of splits per file");
-DEFINE_int32(cache_gb, 0, "GB of process memory for cache and query.. if "
-	     "non-0, uses mmap to allocator and in-process data cache.");
+DEFINE_int32(
+    cache_gb,
+    0,
+    "GB of process memory for cache and query.. if "
+    "non-0, uses mmap to allocator and in-process data cache.");
 DEFINE_int32(num_repeats, 1, "Number of times to run each query");
-									
+
 DEFINE_validator(data_path, &notEmpty);
 DEFINE_validator(data_format, &validateDataFormat);
 
@@ -104,15 +107,15 @@ class TpchBenchmark {
     if (FLAGS_cache_gb) {
       int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
       memory::MmapAllocatorOptions options;
-  options.capacity = memoryBytes;
-  options.useMmapArena = true;
-  options.mmapArenaCapacityRatio = 1;
-  
-  auto allocator = std::make_shared<memory::MmapAllocator>(options);
-  mappedMemory_ = std::make_shared<cache::AsyncDataCache>(
-      allocator, memoryBytes, nullptr);
+      options.capacity = memoryBytes;
+      options.useMmapArena = true;
+      options.mmapArenaCapacityRatio = 1;
 
-  memory::MappedMemory::setDefaultInstance(mappedMemory_.get());
+      auto allocator = std::make_shared<memory::MmapAllocator>(options);
+      mappedMemory_ = std::make_shared<cache::AsyncDataCache>(
+          allocator, memoryBytes, nullptr);
+
+      memory::MappedMemory::setDefaultInstance(mappedMemory_.get());
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
@@ -135,31 +138,32 @@ class TpchBenchmark {
       const TpchPlan& tpchPlan) {
     int32_t repeat = 0;
     for (;;) {
-    CursorParameters params;
-    params.maxDrivers = FLAGS_num_drivers;
-    params.planNode = tpchPlan.plan;
-    const int numSplitsPerFile = FLAGS_num_splits_per_file;
+      CursorParameters params;
+      params.maxDrivers = FLAGS_num_drivers;
+      params.planNode = tpchPlan.plan;
+      const int numSplitsPerFile = FLAGS_num_splits_per_file;
 
-    bool noMoreSplits = false;
-    auto addSplits = [&](exec::Task* task) {
-      if (!noMoreSplits) {
-        for (const auto& entry : tpchPlan.dataFiles) {
-          for (const auto& path : entry.second) {
-            auto const splits = HiveConnectorTestBase::makeHiveConnectorSplits(
-                path, numSplitsPerFile, tpchPlan.dataFileFormat);
-            for (const auto& split : splits) {
-              task->addSplit(entry.first, exec::Split(split));
+      bool noMoreSplits = false;
+      auto addSplits = [&](exec::Task* task) {
+        if (!noMoreSplits) {
+          for (const auto& entry : tpchPlan.dataFiles) {
+            for (const auto& path : entry.second) {
+              auto const splits =
+                  HiveConnectorTestBase::makeHiveConnectorSplits(
+                      path, numSplitsPerFile, tpchPlan.dataFileFormat);
+              for (const auto& split : splits) {
+                task->addSplit(entry.first, exec::Split(split));
+              }
             }
+            task->noMoreSplits(entry.first);
           }
-          task->noMoreSplits(entry.first);
         }
+        noMoreSplits = true;
+      };
+      auto result = readCursor(params, addSplits);
+      if (++repeat >= FLAGS_num_repeats) {
+        return result;
       }
-      noMoreSplits = true;
-    };
-    auto result = readCursor(params, addSplits);
-    if (++repeat >= FLAGS_num_repeats) {
-      return result;
-  }
     }
   }
 
