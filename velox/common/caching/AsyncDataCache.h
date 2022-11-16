@@ -22,6 +22,7 @@
 #include <folly/chrono/Hardware.h>
 #include <folly/futures/SharedPromise.h>
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/Portability.h"
 #include "velox/common/base/CoalesceIo.h"
 #include "velox/common/base/SelectivityInfo.h"
 #include "velox/common/caching/FileGroupStats.h"
@@ -118,7 +119,7 @@ struct hash<::facebook::velox::cache::RawFileCacheKey> {
 } // namespace std
 
 namespace facebook::velox::cache {
-
+  
 // Represents a contiguous range of bytes cached from a file. This
 // is the primary unit of access. These are typically owned via
 // CachePin and can be in shared or exclusive mode. 'numPins_'
@@ -287,13 +288,13 @@ class AsyncDataCacheEntry {
   // SSD. The exact file and offset are needed to include uses in RAM
   // to uses on SSD. Failing this, we could have the hottest data first in
   // line for eviction from SSD.
-  SsdFile* FOLLY_NULLABLE ssdFile_{nullptr};
+  asan_atomic<SsdFile* FOLLY_NULLABLE> ssdFile_{nullptr};
 
   // Offset in 'ssdFile_'.
-  uint64_t ssdOffset_{0};
+  asan_atomic<uint64_t> ssdOffset_{0};
 
   // True if this should be saved to SSD.
-  bool ssdSaveable_{false};
+  std::atomic<bool> ssdSaveable_{false};
 
   friend class CacheShard;
   friend class CachePin;
@@ -724,7 +725,7 @@ class AsyncDataCache : public memory::MappedMemory {
   // Saves all entries with 'ssdSaveable_' to 'ssdCache_'.
   void saveToSsd();
 
-  int32_t& numSkippedSaves() {
+  asan_atomic<int32_t>& numSkippedSaves() {
     return numSkippedSaves_;
   }
 
@@ -753,7 +754,7 @@ class AsyncDataCache : public memory::MappedMemory {
   std::shared_ptr<memory::MappedMemory> mappedMemory_;
   std::unique_ptr<SsdCache> ssdCache_;
   std::vector<std::unique_ptr<CacheShard>> shards_;
-  int32_t shardCounter_{};
+  std::atomic<int32_t> shardCounter_{0};
   std::atomic<memory::MachinePageCount> cachedPages_{0};
   // Number of pages that are allocated and not yet loaded or loaded
   // but not yet hit for the first time.
@@ -768,14 +769,14 @@ class AsyncDataCache : public memory::MappedMemory {
   std::atomic<uint64_t> nextSsdScoreSize_{0};
 
   // Approximate counter tracking new entries that could be saved to SSD.
-  uint64_t ssdSaveable_{0};
+  asan_atomic<uint64_t> ssdSaveable_{0};
 
   CacheStats stats_;
 
   std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
   // Count of skipped saves to 'ssdCache_' due to 'ssdCache_' being
   // busy with write.
-  int32_t numSkippedSaves_{0};
+  asan_atomic<int32_t> numSkippedSaves_{0};
 
   // Used for pseudorandom backoff after failed allocation
   // attempts. Serialization with a mutex is not allowed for

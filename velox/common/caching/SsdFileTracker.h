@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <vector>
+#include "velox/common/base/Portability.h"
 
 namespace facebook::velox::cache {
 
@@ -27,7 +28,7 @@ namespace facebook::velox::cache {
 class SsdFileTracker {
  public:
   void resize(int32_t numRegions) {
-    regionScores_.resize(numRegions);
+    resizeAsanAtomic(regionScores_, numRegions);
   }
 
   void regionRead(int32_t region, int32_t bytes) {
@@ -59,14 +60,21 @@ class SsdFileTracker {
       const std::vector<int32_t>& regionPins);
 
   // Expose the region access data. Used in checkpointing cache state.
-  std::vector<int64_t>& regionScores() {
+  std::vector<asan_atomic<int64_t>>& regionScores() {
     return regionScores_;
   }
 
+  void setRegionScores(std::vector>int64_t>& scores) {
+    VELOX_CHECK_EQ(scors.size, regionScores_.size());
+    for (auto i = 0; i < scors.size(); ++i) {
+      regionScores_[i] = scores[i];
+    }
+  }
+  
  private:
   static constexpr int32_t kDecayInterval = 1000;
 
-  std::vector<int64_t> regionScores_;
+  std::vector<asan_atomic<int64_t>> regionScores_;
 
   // Count of lookups. The scores are decayed every time the count goes
   // over kDecayInterval or half count of cache entries, whichever comes first.

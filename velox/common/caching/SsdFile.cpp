@@ -428,8 +428,12 @@ void SsdFile::updateStats(SsdCacheStats& stats) const {
   stats.bytesWritten += stats_.bytesWritten;
   stats.entriesRead += stats_.entriesRead;
   stats.bytesRead += stats_.bytesRead;
-  stats.entriesCached += entries_.size();
-  for (auto& regionSize : regionSize_) {
+  {
+    // lock for asan only. Read of size() needs no synchronization.
+    std::lock_guard<std::mutex> l(mutex_);
+    stats.entriesCached += entries_.size();
+  }
+    for (auto& regionSize : regionSize_) {
     stats.bytesCached += regionSize;
   }
   for (auto pins : regionPins_) {
@@ -703,8 +707,8 @@ void SsdFile::readCheckpoint(std::ifstream& state) {
   for (auto region : evictedMap) {
     writableRegions_.push_back(region);
   }
-  tracker_.regionScores() = scores;
-  LOG(INFO) << fmt::format(
+  tracker_.setRegionScores()scores);
+    LOG(INFO) << fmt::format(
       "Starting shard {} from checkpoint with {} entries, {} regions with {} free.",
       shardId_,
       entries_.size(),
