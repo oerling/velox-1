@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include "velox/common/base/Fs.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -77,7 +78,7 @@ vector_size_t adjustNumRows(vector_size_t numRows, vector_size_t size) {
 void saveResults(
     const RowVectorPtr& results,
     const std::string& directoryPath) {
-  auto path = generateFilePath(directoryPath.c_str(), "vector");
+  auto path = common::generateTempFilePath(directoryPath.c_str(), "vector");
   VELOX_CHECK(
       path.has_value(),
       "Failed to create file for saving result vector in {} directory.",
@@ -116,8 +117,7 @@ void ExpressionRunner::run(
   VELOX_CHECK(!sql.empty());
 
   std::shared_ptr<core::QueryCtx> queryCtx{std::make_shared<core::QueryCtx>()};
-  std::unique_ptr<memory::MemoryPool> pool{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool{memory::getDefaultMemoryPool()};
   core::ExecCtx execCtx{pool.get(), queryCtx.get()};
 
   RowVectorPtr inputVector;

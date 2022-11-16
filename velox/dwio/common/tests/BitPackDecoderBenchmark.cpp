@@ -22,7 +22,7 @@
 #include "velox/external/duckdb/parquet-amalgamation.hpp"
 #include "velox/vector/TypeAliases.h"
 
-#include <arrow/util/rle_encoding.h>
+#include <arrow/util/rle_encoding.h> // @manual
 #include <folly/Benchmark.h>
 #include <folly/Random.h>
 #include <folly/init/Init.h>
@@ -426,40 +426,10 @@ int32_t main(int32_t argc, char* argv[]) {
   return 0;
 }
 
-#if 0
+/*
 ============================================================================
 [...]mon/tests/BitPackDecoderBenchmark.cpp     relative  time/iter   iters/s
 ============================================================================
-<<<<<<< HEAD
-unpackNaive7_32                                             1.69ms    592.84
-unpackFast7_32                                  98.914%     1.71ms    586.40
-unpackNaive7_32_odd                             202.08%   834.74us     1.20K
-unpackFast7_32_odd                              210.19%   802.51us     1.25K
-unpackNaive8_32                                             1.53ms    652.69
-unpackFast8_32                                  105.86%     1.45ms    690.93
-unpackNaive8_32_odd                             209.97%   729.67us     1.37K
-unpackFast8_32_odd                              215.89%   709.69us     1.41K
-unpackNaive13_32                                            1.48ms    674.62
-unpackFast13_32                                 101.05%     1.47ms    681.73
-unpackNaive13_32_odd                             197.3%   751.28us     1.33K
-unpackFast13_32_odd                             208.79%   709.95us     1.41K
-unpackNaive16_32                                            1.46ms    683.77
-unpackFast16_32                                 103.09%     1.42ms    704.92
-unpackNaive16_32_odd                            191.29%   764.54us     1.31K
-unpackFast16_32_odd                             206.14%   709.45us     1.41K
-unpackNaive22_32                                            1.52ms    655.79
-unpackFast22_32                                 107.48%     1.42ms    704.85
-unpackNaive22_32_odd                            205.88%   740.67us     1.35K
-unpackFast22_32_odd                             214.91%   709.56us     1.41K
-unpackNaive24_32                                            1.47ms    682.47
-unpackFast24_32                                  101.1%     1.45ms    689.99
-unpackNaive24_32_odd                            198.33%   738.79us     1.35K
-unpackFast24_32_odd                             206.57%   709.35us     1.41K
-unpackNaive31_32                                            1.53ms    652.18
-unpackFast31_32                                 102.87%     1.49ms    670.92
-unpackNaive31_32_odd                            202.34%   757.79us     1.32K
-unpackFast31_32_odd                             207.25%   739.84us     1.35K
-=======
 velox_unpack_fullrows_1_8                                 314.64us     3.18K
 legacy_unpack_naive_fullrows_1_8                2.7926%    11.27ms     88.76
 legacy_unpack_fast_fullrows_1_8                 8.3402%     3.77ms    265.07
@@ -859,5 +829,4 @@ legacy_unpack_fast_oddrows_24_32                134.59%     2.42ms    413.97
 legacy_unpack_naive_oddrows_31_32               54.604%     5.95ms    167.94
 legacy_unpack_fast_oddrows_31_32                50.654%     6.42ms    155.80
 ----------------------------------------------------------------------------
-
-#endif
+*/

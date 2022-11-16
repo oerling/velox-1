@@ -178,8 +178,7 @@ class AggregationFuzzer {
   FuzzerGenerator rng_;
   size_t currentSeed_{0};
 
-  std::unique_ptr<memory::MemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
   VectorFuzzer vectorFuzzer_;
 
   Stats stats_;
@@ -214,11 +213,11 @@ void printStats(
   size_t numNotSupportedFunctions = numFunctions - numSupportedFunctions;
   LOG(INFO) << "Functions with no supported signature: "
             << printStat(numNotSupportedFunctions, numFunctions);
-  LOG(INFO) << "Supported function signatures: {} "
+  LOG(INFO) << "Supported function signatures: "
             << printStat(numSupportedSignatures, numSignatures);
 
   size_t numNotSupportedSignatures = numSignatures - numSupportedSignatures;
-  LOG(INFO) << "Unsupported function signatures: {} "
+  LOG(INFO) << "Unsupported function signatures: "
             << printStat(numNotSupportedSignatures, numSignatures);
 }
 
@@ -377,7 +376,7 @@ void persistReproInfo(
   }
 
   // Save input vector.
-  auto inputPathOpt = generateFilePath(basePath.c_str(), "vector");
+  auto inputPathOpt = common::generateTempFilePath(basePath.c_str(), "vector");
   if (!inputPathOpt.has_value()) {
     inputPath = "Failed to create file for saving input vector.";
   } else {
@@ -392,7 +391,7 @@ void persistReproInfo(
 
   // Save plan.
   std::string planPath;
-  auto planPathOpt = generateFilePath(basePath.c_str(), "plan");
+  auto planPathOpt = common::generateTempFilePath(basePath.c_str(), "plan");
   if (!planPathOpt.has_value()) {
     planPath = "Failed to create file for saving SQL.";
   } else {
@@ -685,6 +684,74 @@ std::vector<core::PlanNodePtr> makeAlternativePlans(
   return plans;
 }
 
+std::vector<core::PlanNodePtr> makeStreamingPlans(
+    const std::vector<std::string>& groupingKeys,
+    const std::vector<std::string>& aggregates,
+    const std::vector<std::string>& masks,
+    const std::vector<std::string>& projections,
+    const std::vector<RowVectorPtr>& inputVectors) {
+  std::vector<core::PlanNodePtr> plans;
+
+  // Single aggregation.
+  plans.push_back(PlanBuilder()
+                      .values(inputVectors)
+                      .orderBy(groupingKeys, false)
+                      .streamingAggregation(
+                          groupingKeys,
+                          aggregates,
+                          masks,
+                          core::AggregationNode::Step::kSingle,
+                          false)
+                      .optionalProject(projections)
+                      .planNode());
+
+  // Partial -> final aggregation plan.
+  plans.push_back(
+      PlanBuilder()
+          .values(inputVectors)
+          .orderBy(groupingKeys, false)
+          .partialStreamingAggregation(groupingKeys, aggregates, masks)
+          .finalAggregation()
+          .optionalProject(projections)
+          .planNode());
+
+  // Partial -> intermediate -> final aggregation plan.
+  plans.push_back(
+      PlanBuilder()
+          .values(inputVectors)
+          .orderBy(groupingKeys, false)
+          .partialStreamingAggregation(groupingKeys, aggregates, masks)
+          .intermediateAggregation()
+          .finalAggregation()
+          .optionalProject(projections)
+          .planNode());
+
+  // Partial -> local merge -> final aggregation plan.
+  auto numSources = std::min<size_t>(4, inputVectors.size());
+  std::vector<std::vector<RowVectorPtr>> sourceInputs(numSources);
+  for (auto i = 0; i < inputVectors.size(); ++i) {
+    sourceInputs[i % numSources].push_back(inputVectors[i]);
+  }
+
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  std::vector<core::PlanNodePtr> sources;
+  for (const auto& sourceInput : sourceInputs) {
+    sources.push_back(
+        PlanBuilder(planNodeIdGenerator)
+            .values({sourceInput})
+            .orderBy(groupingKeys, false)
+            .partialStreamingAggregation(groupingKeys, aggregates, masks)
+            .planNode());
+  }
+  plans.push_back(PlanBuilder(planNodeIdGenerator)
+                      .localMerge(groupingKeys, sources)
+                      .finalAggregation()
+                      .optionalProject(projections)
+                      .planNode());
+
+  return plans;
+}
+
 void AggregationFuzzer::testPlans(
     const std::vector<core::PlanNodePtr>& plans,
     bool verifyResults,
@@ -768,6 +835,18 @@ void AggregationFuzzer::verify(
     altPlans = makeAlternativePlans(
         groupingKeys, aggregates, masks, projections, flatInput);
     testPlans(altPlans, verifyResults, resultOrError);
+
+    if (!groupingKeys.empty()) {
+      // Use OrderBy + StreamingAggregation on original input.
+      altPlans = makeStreamingPlans(
+          groupingKeys, aggregates, masks, projections, input);
+      testPlans(altPlans, verifyResults, resultOrError);
+
+      // Use OrderBy + StreamingAggregation on flattened input.
+      altPlans = makeStreamingPlans(
+          groupingKeys, aggregates, masks, projections, flatInput);
+      testPlans(altPlans, verifyResults, resultOrError);
+    }
 
   } catch (...) {
     if (!reproPersistPath_.empty()) {

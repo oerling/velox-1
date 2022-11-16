@@ -2168,7 +2168,7 @@ static void unpackblock0(const uint8_t** pw, uint32_t** pout) {
 #include <altivec.h>
 #elif defined(__GNUC__) && defined(__SPE__)
 /* GCC-compatible compiler, targeting PowerPC with SPE */
-#include <spe.h>
+#include <spe.h> // @manual
 #endif
 
 /* we packed 32 1-bit values, touching 1 64-bit words, using 4 bytes */
