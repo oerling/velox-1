@@ -59,7 +59,8 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   return formatData_->filterRowGroups(*scanSpec_, rowGroupSize, context);
 }
 
-  const std::vector<SelectiveColumnReader*> SelectiveColumnReader::children() const {
+const std::vector<SelectiveColumnReader*> SelectiveColumnReader::children()
+    const {
   static std::vector<SelectiveColumnReader*> empty;
   return empty;
 }
