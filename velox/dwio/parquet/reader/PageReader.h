@@ -132,8 +132,11 @@ class PageReader {
   /// decodeRepDefs.
   void repDefsConsumed();
   
-  // Sets row number info after reading a page header.
-  void setPageRowInfo();
+  // Sets row number info after reading a page header. If 'forRepDef',
+  // does not set non-top level row numbers by repdefs. This is on
+  // when seeking a non-top level page for the first time, i.e. for
+  // getting the repdefs.
+  void setPageRowInfo(bool forRepDef);
 
   // Updates row position / rep defs consumed info to refer to the first of the
   // next page.

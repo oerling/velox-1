@@ -213,8 +213,8 @@ const char* FOLLY_NONNULL PageReader::uncompressData(
   }
 }
 
-void PageReader::setPageRowInfo() {
-  if (isTopLevel_) {
+void PageReader::setPageRowInfo(bool forRepDef) {
+  if (isTopLevel_ || forRepDef) {
     numRowsInPage_ = numRepDefsInPage_;
   } else {
     ++pageIndex_;
@@ -240,7 +240,7 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
       pageHeader.type == thrift::PageType::DATA_PAGE &&
       pageHeader.__isset.data_page_header);
   numRepDefsInPage_ = pageHeader.data_page_header.num_values;
-  setPageRowInfo();
+  setPageRowInfo(row == kNextPage);
   if (row != kNextPage && numRowsInPage_ + rowOfPage_ <= row) {
     return;
   }
@@ -277,8 +277,8 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
 void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   VELOX_CHECK(pageHeader.__isset.data_page_header_v2);
   numRepDefsInPage_ = pageHeader.data_page_header_v2.num_values;
-  setPageRowInfo();
-  if (numRowsInPage_ + rowOfPage_ <= row) {
+  setPageRowInfo(row == kNextPage);
+  if (row == kNextPage || numRowsInPage_ + rowOfPage_ <= row) {
     return;
   }
 
