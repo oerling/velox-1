@@ -14,69 +14,28 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
-#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
+#include "velox/dwio/common/SelectiveRepeatedColumnReader.h"
 
-namespace facebook::velox::dwrf {
-namespace {
-std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> makeLengthDecoder(
-    const dwio::common::TypeWithId& nodeType,
-    DwrfParams& params,
-    memory::MemoryPool& pool) {
-  EncodingKey encodingKey{nodeType.id, params.flatMapContext().sequence};
-  auto& stripe = params.stripeStreams();
-  auto rleVersion = convertRleVersion(stripe.getEncoding(encodingKey).kind());
-  auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
-  bool lenVints = stripe.getUseVInts(lenId);
-  return createRleDecoder</*isSigned*/ false>(
-      stripe.getStream(lenId, true),
-      rleVersion,
-      pool,
-      lenVints,
-      dwio::common::INT_BYTE_SIZE);
-}
-} // namespace
+namespace facebook::velox::dwio::common {
 
 SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    DwrfParams& params,
-    common::ScanSpec& scanSpec)
+    FormatParams& params,
+    velox::common::ScanSpec& scanSpec)
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
-      requestedType_{requestedType},
-      length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
-  DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
-  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
-  auto& stripe = params.stripeStreams();
-  // count the number of selected sub-columns
-  const auto& cs = stripe.getColumnSelector();
-  auto& childType = requestedType_->childAt(0);
-  VELOX_CHECK(
-      cs.shouldReadNode(childType->id),
-      "SelectiveListColumnReader must select the values stream");
-  if (scanSpec_->children().empty()) {
-    scanSpec.getOrCreateChild(common::Subfield("elements"));
-  }
-  scanSpec_->children()[0]->setProjectOut(true);
-  scanSpec_->children()[0]->setExtractValues(true);
-
-  auto childParams =
-      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
-  child_ = SelectiveDwrfReader::build(
-      childType, nodeType_->childAt(0), childParams, *scanSpec_->children()[0]);
-}
+      requestedType_{requestedType} {}
 
 uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
-  constexpr int32_t kBufferSize = 1024;
   numValues = formatData_->skipNulls(numValues);
   if (child_) {
-    std::array<int64_t, kBufferSize> buffer;
+    std::array<int32_t, kBufferSize> buffer;
     uint64_t childElements = 0;
     uint64_t lengthsRead = 0;
     while (lengthsRead < numValues) {
       uint64_t chunk =
           std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
-      length_->next(buffer.data(), chunk, nullptr);
+      readLengths(buffer.data(), chunk, nullptr);
       for (size_t i = 0; i < chunk; ++i) {
         childElements += static_cast<size_t>(buffer[i]);
       }
@@ -86,7 +45,8 @@ uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
     child_->setReadOffset(child_->readOffset() + childElements);
   } else {
-    length_->skip(numValues);
+    VELOX_FAIL("Need child reader for list reader");
+    //skipLengths(numValues);
   }
   return numValues;
 }
@@ -126,62 +86,21 @@ void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    DwrfParams& params,
-    common::ScanSpec& scanSpec)
+    FormatParams& params,
+    velox::common::ScanSpec& scanSpec)
     : SelectiveRepeatedColumnReader(dataType, params, scanSpec, dataType->type),
-      requestedType_{requestedType},
-      length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
-  DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
-  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
-  auto& stripe = params.stripeStreams();
-  if (scanSpec_->children().empty()) {
-    scanSpec_->getOrCreateChild(common::Subfield("keys"));
-    scanSpec_->getOrCreateChild(common::Subfield("elements"));
-  }
-  scanSpec_->children()[0]->setProjectOut(true);
-  scanSpec_->children()[0]->setExtractValues(true);
-  scanSpec_->children()[1]->setProjectOut(true);
-  scanSpec_->children()[1]->setExtractValues(true);
-
-  const auto& cs = stripe.getColumnSelector();
-  auto& keyType = requestedType_->childAt(0);
-  VELOX_CHECK(
-      cs.shouldReadNode(keyType->id),
-      "Map key must be selected in SelectiveMapColumnReader");
-  auto keyParams =
-      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
-  keyReader_ = SelectiveDwrfReader::build(
-      keyType,
-      nodeType_->childAt(0),
-      keyParams,
-      *scanSpec_->children()[0].get());
-
-  auto& valueType = requestedType_->childAt(1);
-  VELOX_CHECK(
-      cs.shouldReadNode(valueType->id),
-      "Map Values must be selected in SelectiveMapColumnReader");
-  auto elementParams =
-      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
-  elementReader_ = SelectiveDwrfReader::build(
-      valueType,
-      nodeType_->childAt(1),
-      elementParams,
-      *scanSpec_->children()[1]);
-
-  VLOG(1) << "[Map] Initialized map column reader for node " << nodeType_->id;
-}
+      requestedType_{requestedType} {}
 
 uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
-  constexpr int32_t kBufferSize = 1024;
   numValues = formatData_->skipNulls(numValues);
   if (keyReader_ || elementReader_) {
-    std::array<int64_t, kBufferSize> buffer;
+    std::array<int32_t, kBufferSize> buffer;
     uint64_t childElements = 0;
     uint64_t lengthsRead = 0;
     while (lengthsRead < numValues) {
       uint64_t chunk =
           std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
-      length_->next(buffer.data(), chunk, nullptr);
+      readLengths(buffer.data(), chunk, nullptr);
       for (size_t i = 0; i < chunk; ++i) {
         childElements += buffer[i];
       }
@@ -199,7 +118,8 @@ uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
 
   } else {
-    length_->skip(numValues);
+    VELOX_FAIL("Map reader must have child readers");
+    //skipLengths(numValues);
   }
   return numValues;
 }
