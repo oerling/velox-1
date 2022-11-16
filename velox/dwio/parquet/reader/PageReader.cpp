@@ -560,12 +560,12 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
       rewindOffset = currentHeaderStart_;
     }
     isAtStart = false;
-    numLevels = repetitionLevels_.size() + numRowsInPage_;
+    numLevels = repetitionLevels_.size() + numRepDefsInPage_;
     definitionLevels_.resize(numLevels);
     repetitionLevels_.resize(numLevels);
     defineDecoder_->next(definitionLevels_.data() + i, numRepDefsInPage_);
     repeatDecoder_->next(repetitionLevels_.data() + i, numRepDefsInPage_);
-    leafNulls_.resize(bits::nwords(numLeafNulls_ + numRepDefsInPage_));
+    leafNulls_.resize(bits::nwords(leafNullsSize_ + numRepDefsInPage_));
     int32_t numNonNull; // unused.
     auto numLeafValues = NestedStructureDecoder::readNulls(
         repetitionLevels_.data() + i,
@@ -573,10 +573,10 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
         numRowsInPage_,
         maxRepeat_,
         maxDefine_,
-        numLeafNulls_,
+        leafNullsSize_,
         leafNulls_.data(),
         numNonNull);
-    numLeafNulls_ += numLeafValues;
+    leafNullsSize_ += numLeafValues;
     numLeavesInPage_.push_back(numLeafValues);
   }
   if (needRewind) {
@@ -629,8 +629,8 @@ void PageReader::repDefsConsumed() {
       visitBase_,
       leafNulls_.data(),
       0,
-      numLeafNulls_ - numLeafNullsConsumed_);
-  numLeafNulls_ -= numLeafNullsConsumed_;
+      leafNullsSize_ - numLeafNullsConsumed_);
+  leafNullsSize_ -= numLeafNullsConsumed_;
   numLeafNullsConsumed_ = 0;
 }
 

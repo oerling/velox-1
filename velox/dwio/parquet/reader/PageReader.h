@@ -314,7 +314,7 @@ class PageReader {
   raw_vector<uint8_t> repetitionLevels_;
 
   // Number of valid bits in 'leafNulls_'
-  int32_t numLeafNulls_{0};
+  int32_t leafNullsSize_{0};
 
   // Number of leaf nulls read since last repDefsConsumed().
   int32_t numLeafNullsConsumed_{0};

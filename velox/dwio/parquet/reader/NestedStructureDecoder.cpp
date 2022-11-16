@@ -22,26 +22,6 @@
 #include <iostream>
 
 namespace facebook::velox::parquet {
-  std::string NestedData::toString(int32_t from, int32_t to, bool numbers) {
-    std::stringstream out;
-    out << fmt::format("<nested  {} numNonNulls {} offsets {} sizes", numNonNulls, offsets->size() / sizeof(int32_t), lengths->size() / sizeof(int32_t)) << std::endl;
-    for (auto i = from; i < to; ++i) {
-      if (numbers) {
-	out << i << ": ";
-      }
-      if (bits::isBitNull(nulls->as<uint64_t>(), i)) {
-	out << " null ";
-      } else {
-	out << fmt::format("[{}: {}] ", offsets->as<int32_t>()[i], lengths->as<int32_t>()[i]);
-      }
-    }
-    if (numbers) {
-      out << "\n";
-      out << std::endl;
-    }
-    return out.str();
-  }
-
   
 int64_t NestedStructureDecoder::readOffsetsAndNulls(
     const uint8_t* repetitionLevels,
@@ -151,35 +131,6 @@ int64_t NestedStructureDecoder::readNulls(
   offset += !wasLastCollectionNull;
 
   return outputIndex;
-}
-
-std::vector<std::shared_ptr<NestedData>>
-NestedStructureDecoder::readOffsetsAndNullsForAllLevels(
-    const uint8_t* repetitionLevels,
-    const uint8_t* definitionLevels,
-    int64_t numValues,
-    std::vector<uint32_t> maxRepeats_,
-    std::vector<uint32_t> maxDefines_,
-    memory::MemoryPool& pool) {
-  std::vector<std::shared_ptr<NestedData>> nestedStructures;
-
-  for (int i = 0; i < maxRepeats_.size(); i++) {
-    std::shared_ptr<NestedData> nestedData = std::make_shared<NestedData>();
-    NestedStructureDecoder::readOffsetsAndNulls(
-        repetitionLevels,
-        definitionLevels,
-        numValues,
-        maxRepeats_[i],
-        maxDefines_[i],
-        nestedData->offsets,
-        nestedData->lengths,
-        nestedData->nulls,
-        nestedData->numNonNulls,
-        pool);
-    nestedStructures.push_back(nestedData);
-  }
-
-  return nestedStructures;
 }
 
 } // namespace facebook::velox::parquet
