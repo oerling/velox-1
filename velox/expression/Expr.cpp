@@ -1003,19 +1003,20 @@ void Expr::evalWithNulls(
 }
 
 namespace {
-void unionErrors(EvalCtx::ErrorVector& errors, EvalCtx::ErrorVector& result) {
+  // Adds the errors from 'errors' to 'result'.
+  void unionErrors(const EvalCtx::ErrorVector& errors, EvalCtx::ErrorVector& result) {
   if (errors.size() > result.size()) {
     result.resize(errors.size());
   }
   bits::forEachBit(
       errors.rawNulls(), 0, errors.size(), bits::kNotNull, [&](auto row) {
-        result.setNull(row, false);
         result.set(row, errors.valueAt(row));
       });
 }
 
 void clearErrorForUnselected(
-    const SelectivityVector& rows,
+			     // Clears the error from 'errors' for unselected 'rows'. 
+			     const SelectivityVector& rows,
     const EvalCtx::ErrorVectorPtr& errors) {
   if (!errors) {
     return;
@@ -1027,7 +1028,7 @@ void clearErrorForUnselected(
   bits::andRange<false>(nulls, nulls, rows.asRange().bits(), 0, end);
 }
 
-void rethrowArgumentError(const EvalCtx::ErrorVectorPtr& errors) {
+void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
   bits::forEachBit(
       errors->rawNulls(), 0, errors->size(), bits::kNotNull, [&](auto row) {
         auto exceptionPtr =
@@ -1235,7 +1236,12 @@ void Expr::evalAll(
   }
   bool tryPeelArgs = deterministic_ ? true : false;
   bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
-  bool throwArgumentErrors = context.throwOnError() && !defaultNulls;
+  // A null argument can mask an error in a previous argument if
+  // 1. errors are not already ignored 2. the function has default
+  // null behavior and the input has nulls. Errors must not be
+  // deferred if there are no nulls because this would disable the
+  // fast path for flat no nulls.
+  bool throwArgumentErrors = context.throwOnError() && (!defaultNulls || context.inputFlatNoNulls());
   // Tracks what subset of rows shall un-evaluated inputs and current expression
   // evaluates. Initially points to rows.
   const SelectivityVector* remainingRows = &rows;
@@ -1297,7 +1303,7 @@ void Expr::evalAll(
       clearErrorForUnselected(*remainingRows, argumentErrors);
     }
     if (context.throwOnError()) {
-      rethrowArgumentError(argumentErrors);
+      rethrowFirstError(argumentErrors);
     }
     if (context.errors()) {
       unionErrors(*argumentErrors, *context.errors());
