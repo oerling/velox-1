@@ -203,7 +203,6 @@ class SelectiveColumnReader {
     return *nodeType_;
   }
 
-  
   // The below functions are called from ColumnVisitor to fill the result set.
   inline void addOutputRow(vector_size_t row) {
     outputRows_.push_back(row);

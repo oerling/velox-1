@@ -23,8 +23,7 @@ namespace facebook::velox::dwio::common {
 
 // Abstract superclass for list and map readers. Encapsulates common
 // logic for dealing with mapping between enclosing and nested rows.
-class SelectiveRepeatedColumnReader
-    : public SelectiveColumnReader {
+class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
  public:
   bool useBulkPath() const override {
     return false;
@@ -34,19 +33,22 @@ class SelectiveRepeatedColumnReader
   // Buffer size for reading lengths when skipping.
   static constexpr int32_t kBufferSize = 1024;
 
- SelectiveRepeatedColumnReader(
+  SelectiveRepeatedColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec,
       const TypePtr& type)
-    : SelectiveColumnReader(std::move(nodeType), params, scanSpec, type) {}
+      : SelectiveColumnReader(std::move(nodeType), params, scanSpec, type) {}
 
   /// Reads 'numLengths' next lengths into 'result'. If 'nulls' is
   /// non-null, each kNull bit signifies a null with a length of 0 to
   /// be inserted at the corresponding position in the result. 'nulls'
   /// is expected to be null flags for 'numRows' next rows at the
   /// level of this reader.
-  virtual void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths, const uint64_t* FOLLY_NULLABLE nulls) = 0;
+  virtual void readLengths(
+      int32_t* FOLLY_NONNULL lengths,
+      int32_t numLengths,
+      const uint64_t* FOLLY_NULLABLE nulls) = 0;
 
   void makeNestedRowSet(RowSet rows) {
     allLengths_.resize(rows.back() + 1);
@@ -172,7 +174,6 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
       FormatParams& params,
       velox::common::ScanSpec& scanSpec);
 
-
   uint64_t skip(uint64_t numValues) override;
 
   const std::vector<SelectiveColumnReader*> children() const override {
@@ -184,6 +185,7 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
+ protected:
   std::unique_ptr<SelectiveColumnReader> child_;
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
@@ -204,11 +206,12 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
   uint64_t skip(uint64_t numValues) override;
 
   const std::vector<SelectiveColumnReader*> children() const override {
-    return std::vector<SelectiveColumnReader*>{keyReader_.get(), elementReader_.get()};
+    return std::vector<SelectiveColumnReader*>{
+        keyReader_.get(), elementReader_.get()};
   }
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-    override;
+      override;
 
   void getValues(RowSet rows, VectorPtr* result) override;
 
@@ -217,4 +220,4 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 };
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common

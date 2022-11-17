@@ -21,7 +21,7 @@
 #include "velox/dwio/parquet/thrift/ThriftTransport.h"
 #include "velox/vector/FlatVector.h"
 
-#include <arrow/util/rle_encoding.h>
+#include <arrow/parquet/level_conversion.h>
 #include <snappy.h>
 #include <thrift/protocol/TCompactProtocol.h> //@manual
 #include <zlib.h>
@@ -484,41 +484,16 @@ int32_t parquetTypeBytes(thrift::Type::type type) {
 }
 } // namespace
 
-void PageReader::makeDecoder() {
-  auto parquetType = type_->parquetType_.value();
-  switch (encoding_) {
-    case Encoding::RLE_DICTIONARY:
-    case Encoding::PLAIN_DICTIONARY:
-      dictionaryIdDecoder_ = std::make_unique<RleBpDataDecoder>(
-          pageData_ + 1, pageData_ + encodedDataSize_, pageData_[0]);
-      break;
-    case Encoding::PLAIN:
-      switch (parquetType) {
-        case thrift::Type::BYTE_ARRAY:
-          stringDecoder_ = std::make_unique<StringDecoder>(
-              pageData_, pageData_ + encodedDataSize_);
-          break;
-        case thrift::Type::FIXED_LEN_BYTE_ARRAY:
-          directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
-              std::make_unique<dwio::common::SeekableArrayInputStream>(
-                  pageData_, encodedDataSize_),
-              false,
-              type_->typeLength_,
-              true);
-          break;
-        default: {
-          directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
-              std::make_unique<dwio::common::SeekableArrayInputStream>(
-                  pageData_, encodedDataSize_),
-              false,
-              parquetTypeBytes(type_->parquetType_.value()));
-        }
-      }
-      break;
-    case Encoding::DELTA_BINARY_PACKED:
-    default:
-      VELOX_UNSUPPORTED("Encoding not supported yet");
+LevelMode PageReader::makelevels(::parquet::internal::LevelInfo& level) {
+  auto type = type_;
+  auto parent(const ParquetTypeWithId& type) { return reinterpret__cast<const ParquetTypeWithId*>(type.parent.get()); };
+  if (type->type->kind() == TypeKind::ARRAY) {
+    new(&info) LevelInfo(0, maxDefine_, maxRepeat_, maxDefine_);
+    return kOffsets;
   }
+  
+  // Look for repeted ancestor.
+  
 }
 
 void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
@@ -536,6 +511,7 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
   int32_t i = 0;
   // Read pages until we have seen enough top level rows. If we read
   // past current page, we rewind at the end.
+  
   for (;;) {
     for (; i < numLevels; ++i) {
       if (repetitionLevels_[i] == 0)

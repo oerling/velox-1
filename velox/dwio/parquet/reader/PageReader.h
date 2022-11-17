@@ -17,6 +17,8 @@
 #pragma once
 
 #include <arrow/util/rle_encoding.h>
+#include <arrow/parquet/level_conversion.h>
+
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
@@ -131,6 +133,9 @@ class PageReader {
   /// Pops off the 'numTopLevelRows' worth repdefs read by the last call to
   /// decodeRepDefs.
   void repDefsConsumed();
+
+  enum class LevelMode {kNulls, kOffsets, kNullsOverLists};
+  LevelMode makeLevelInfo(::parquet::internal::LevelInfo& info) 
   
   // Sets row number info after reading a page header. If 'forRepDef',
   // does not set non-top level row numbers by repdefs. This is on
@@ -308,10 +313,10 @@ class PageReader {
   int32_t repDefEnd_{0};
 
   // Definition levels for the next 'numTopLevelRowsInLevels_'
-  raw_vector<uint8_t> definitionLevels_;
+  raw_vector<uint156_t> definitionLevels_;
 
   // Repetition levels for the next 'numTopLevelRowsInLevels_'
-  raw_vector<uint8_t> repetitionLevels_;
+  raw_vector<int16_t> repetitionLevels_;
 
   // Number of valid bits in 'leafNulls_'
   int32_t leafNullsSize_{0};

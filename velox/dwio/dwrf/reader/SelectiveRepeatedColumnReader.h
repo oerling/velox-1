@@ -24,8 +24,8 @@
 
 namespace facebook::velox::dwrf {
 
-
-  class SelectiveListColumnReader : public dwio::common::SelectiveRepeatedColumnReader {
+class SelectiveListColumnReader
+    : public dwio::common::SelectiveListColumnReader {
  public:
   SelectiveListColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -49,24 +49,18 @@ namespace facebook::velox::dwrf {
     childTargetReadOffset_ = 0;
   }
 
-  void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths, const uint64_t* FOLLY_NULLABLE nulls) override {
+  void readLengths(
+      int32_t* FOLLY_NONNULL lengths,
+      int32_t numLengths,
+      const uint64_t* FOLLY_NULLABLE nulls) override {
     length_->next(lengths, numLengths, nulls);
   }
-    
-  uint64_t skip(uint64_t numValues) override;
-
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
-
-  void getValues(RowSet rows, VectorPtr* result) override;
 
  private:
-  std::unique_ptr<SelectiveColumnReader> child_;
-  const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> length_;
 };
 
-  class SelectiveMapColumnReader : public dwio::common::SelectiveRepeatedColumnReader {
+class SelectiveMapColumnReader : public dwio::common::SelectiveMapColumnReader {
  public:
   SelectiveMapColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -94,21 +88,14 @@ namespace facebook::velox::dwrf {
     childTargetReadOffset_ = 0;
   }
 
-  void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths, const uint64_t* FOLLY_NULLABLE nulls) override {
+  void readLengths(
+      int32_t* FOLLY_NONNULL lengths,
+      int32_t numLengths,
+      const uint64_t* FOLLY_NULLABLE nulls) override {
     length_->next(lengths, numLengths, nulls);
   }
-  
-  uint64_t skip(uint64_t numValues) override;
-
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
-
-  void getValues(RowSet rows, VectorPtr* result) override;
 
  private:
-  std::unique_ptr<SelectiveColumnReader> keyReader_;
-  std::unique_ptr<SelectiveColumnReader> elementReader_;
-  const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> length_;
 };
 

@@ -45,8 +45,7 @@ uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
     child_->setReadOffset(child_->readOffset() + childElements);
   } else {
-    VELOX_FAIL("Need child reader for list reader");
-    //skipLengths(numValues);
+    VELOX_FAIL("Repeated reader with no children");
   }
   return numValues;
 }
@@ -118,8 +117,7 @@ uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
     childTargetReadOffset_ += childElements;
 
   } else {
-    VELOX_FAIL("Map reader must have child readers");
-    //skipLengths(numValues);
+    VELOX_FAIL("repeated reader with no children");
   }
   return numValues;
 }
@@ -170,4 +168,4 @@ void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
       values);
 }
 
-} // namespace facebook::velox::dwrf
+} // namespace facebook::velox::dwio::common
