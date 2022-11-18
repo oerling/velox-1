@@ -17,7 +17,7 @@
 #pragma once
 
 #include <arrow/util/rle_encoding.h>
-#include <arrow/parquet/level_conversion.h>
+#include <parquet/level_conversion.h> //@manual
 
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
@@ -48,7 +48,9 @@ class PageReader {
         isTopLevel_(maxRepeat_ == 0 && maxDefine_ <= 1),
         codec_(codec),
         chunkSize_(chunkSize),
-        nullConcatenation_(pool_) {}
+        nullConcatenation_(pool_) {
+    type_->makeLevelInfo(leafInfo_);
+  }
 
   /// Advances 'numRows' top level rows.
   void skip(int64_t numRows);
@@ -60,14 +62,7 @@ class PageReader {
   /// accessed. 'leafNulls_' is set to the leaf level null flags.
   void decodeRepDefs(int32_t numTopLevelRows);
   
-  void getOffsetsAndNulls(
-      uint8_t maxRepeat,
-      uint8_t maxDefinition,
-      BufferPtr& offsets,
-      BufferPtr& length,
-      BufferPtr& nulls);
-  
-  void getLeafNulls(BufferPtr& buffer);
+  int32_t getLengthsAndNulls(LevelMode mode, const ::parquet::internal::LevelInfo& info, int32_t* FOLLY_NULLABLE lengths, uint64_t* FOLLY_NULLABLE nulls, int32_t nullsStartIndex) const;
 
   /// Applies 'visitor' to values in the ColumnChunk of 'this'. The
   /// operation to perform and The operand rows are given by
@@ -100,8 +95,12 @@ class PageReader {
     dictionaryValues_.reset();
   }
 
+  /// Returns the number of repdefs. this is the upper bound for the length of an enclosing list.
+  int32_t numRepDefs() const {
+    return repDefEnd_;
+  }
 
- private:
+private:
   // Indicates move to next page in seekToPage.
   static constexpr int64_t kNextPage = -1;
 
@@ -134,9 +133,6 @@ class PageReader {
   /// decodeRepDefs.
   void repDefsConsumed();
 
-  enum class LevelMode {kNulls, kOffsets, kNullsOverLists};
-  LevelMode makeLevelInfo(::parquet::internal::LevelInfo& info) 
-  
   // Sets row number info after reading a page header. If 'forRepDef',
   // does not set non-top level row numbers by repdefs. This is on
   // when seeking a non-top level page for the first time, i.e. for
@@ -313,7 +309,7 @@ class PageReader {
   int32_t repDefEnd_{0};
 
   // Definition levels for the next 'numTopLevelRowsInLevels_'
-  raw_vector<uint156_t> definitionLevels_;
+  raw_vector<int16_t> definitionLevels_;
 
   // Repetition levels for the next 'numTopLevelRowsInLevels_'
   raw_vector<int16_t> repetitionLevels_;
@@ -402,6 +398,9 @@ class PageReader {
   // return to the caller.
   dwio::common::BitConcatenation nullConcatenation_;
 
+  // LevelInfo for reading nulls for the leaf column 'this' represents.
+  ::parquet::internal::LevelInfo leafInfo_;
+  
   // Base values of dictionary when reading a string dictionary.
   VectorPtr dictionaryValues_;
 

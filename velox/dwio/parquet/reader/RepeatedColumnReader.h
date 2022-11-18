@@ -30,6 +30,10 @@ class RepeatedLengths {
     nextLengthIndex_ = 0;
   }
 
+  BufferPtr& lengths() {
+    return lengths_;
+  }
+  
   void readLengths(int32_t* FOLLY_NONNULL lengths, int32_t numLengths) {
     VELOX_CHECK_LE(
         nextLengthIndex_ + numLengths, lengths_->size() / sizeof(int32_t));
@@ -69,8 +73,11 @@ class ListColumnReader : public dwio::common::SelectiveListColumnReader {
     lengths_.readLengths(lengths, numLengths);
   }
 
+  void setLengthsFromRepDefs(PageReader& leaf);
+  
  private:
   RepeatedLengths lengths_;
+  ::parquet::internal::LevelInfo levelInfo_;
 };
 
 } // namespace facebook::velox::parquet

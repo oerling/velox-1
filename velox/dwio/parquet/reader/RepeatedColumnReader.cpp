@@ -32,25 +32,17 @@ PageReader* readLeafRepDefs(
   PageReader* pageReader;
   for (auto i = 0; i < children.size(); ++i) {
     auto child = children[i];
-
     if (i == 0) {
       pageReader = readLeafRepDefs(child, numTop);
+
       auto& type =
           *reinterpret_cast<const ParquetTypeWithId*>(&reader->nodeType());
       if (auto structChild = dynamic_cast<StructColumnReader*>(reader)) {
         VELOX_NYI();
       }
-      auto nested = dynamic_cast<ListColumnReader*>(reader);
-      VELOX_CHECK(nested);
-      BufferPtr offsets;
-      BufferPtr lengths;
-      pageReader->getOffsetsAndNulls(
-          type.maxRepeat_,
-          type.maxDefine_,
-          offsets,
-          lengths,
-          nested->nullsInReadRange());
-      nested->setLengths(std::move(lengths));
+      auto list = dynamic_cast<ListColumnReader*>(reader);
+      VELOX_CHECK(list);
+      list->setLengthsFromRepDefs(*pageReader);
     } else {
       readLeafRepDefs(child, numTop);
     }
@@ -75,11 +67,11 @@ void enqueueChildren(
 void ensureRepDefs(
     dwio::common::SelectiveColumnReader& reader,
     int32_t numTop) {
-  auto& nodeType = *reinterpret_cast<const ParquetTypeWithId*>(&reader.nodeType());
+  auto& nodeType =
+      *reinterpret_cast<const ParquetTypeWithId*>(&reader.nodeType());
   if (nodeType.maxDefine_ <= 1)
     readLeafRepDefs(&reader, numTop);
 }
-
 
 ListColumnReader::ListColumnReader(
     std::shared_ptr<const dwio::common::TypeWithId> requestedType,
@@ -92,9 +84,10 @@ ListColumnReader::ListColumnReader(
           params,
           scanSpec) {
   auto& childType = requestedType->childAt(0);
-
   child_ = ParquetColumnReader::build(
       childType, params, *scanSpec.children()[0], scanSpec, true);
+  reinterpret_cast<const ParquetTypeWithId*>(requestedType.get())
+      ->makeLevelInfo(levelInfo_);
 }
 
 void ListColumnReader::enqueueRowGroup(
@@ -108,6 +101,20 @@ void ListColumnReader::seekToRowGroup(uint32_t index) {
   scanState().clear();
   readOffset_ = 0;
   child_->seekToRowGroup(index);
+}
+
+void ListColumnReader::setLengthsFromRepDefs(PageReader& pageReader) {
+  int32_t numRepDefs = pageReader.numRepDefs();
+  BufferPtr lengths = std::move(lengths_.lengths());
+  dwio::common::ensureCapacity<int32_t>(lengths, numRepDefs, &memoryPool_);
+  auto numLists = pageReader.getLengthsAndNulls(
+						LevelMode::kList,
+						levelInfo_,
+      lengths->asMutable<int32_t>(),
+      nullsInReadRange()->asMutable<uint64_t>(),
+      0);
+  lengths->setSize(numLists * sizeof(int32_t));
+  setLengths(std::move(lengths));
 }
 
 void ListColumnReader::read(

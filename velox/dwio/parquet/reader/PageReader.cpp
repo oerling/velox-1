@@ -21,7 +21,6 @@
 #include "velox/dwio/parquet/thrift/ThriftTransport.h"
 #include "velox/vector/FlatVector.h"
 
-#include <arrow/parquet/level_conversion.h>
 #include <snappy.h>
 #include <thrift/protocol/TCompactProtocol.h> //@manual
 #include <zlib.h>
@@ -484,18 +483,6 @@ int32_t parquetTypeBytes(thrift::Type::type type) {
 }
 } // namespace
 
-LevelMode PageReader::makelevels(::parquet::internal::LevelInfo& level) {
-  auto type = type_;
-  auto parent(const ParquetTypeWithId& type) { return reinterpret__cast<const ParquetTypeWithId*>(type.parent.get()); };
-  if (type->type->kind() == TypeKind::ARRAY) {
-    new(&info) LevelInfo(0, maxDefine_, maxRepeat_, maxDefine_);
-    return kOffsets;
-  }
-  
-  // Look for repeted ancestor.
-  
-}
-
 void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
   // Position to return to if reading multiple pages.
   uint64_t rewindOffset = currentHeaderStart_;
@@ -511,7 +498,7 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
   int32_t i = 0;
   // Read pages until we have seen enough top level rows. If we read
   // past current page, we rewind at the end.
-  
+
   for (;;) {
     for (; i < numLevels; ++i) {
       if (repetitionLevels_[i] == 0)
@@ -542,18 +529,11 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
     defineDecoder_->next(definitionLevels_.data() + i, numRepDefsInPage_);
     repeatDecoder_->next(repetitionLevels_.data() + i, numRepDefsInPage_);
     leafNulls_.resize(bits::nwords(leafNullsSize_ + numRepDefsInPage_));
-    int32_t numNonNull; // unused.
-    auto numLeafValues = NestedStructureDecoder::readNulls(
-        repetitionLevels_.data() + i,
-        definitionLevels_.data() + i,
-        numRowsInPage_,
-        maxRepeat_,
-        maxDefine_,
-        leafNullsSize_,
-        leafNulls_.data(),
-        numNonNull);
-    leafNullsSize_ += numLeafValues;
-    numLeavesInPage_.push_back(numLeafValues);
+
+    auto numLeaves = getLengthsAndNulls(
+					LevelMode::kNulls, leafInfo_, nullptr, leafNulls_.data(), leafNullsSize_);
+    leafNullsSize_ += numLeaves;
+    numLeavesInPage_.push_back(numLeaves);
   }
   if (needRewind) {
     numRowsInPage_ = rowsInPage;
@@ -567,24 +547,42 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
   }
 }
 
-void PageReader::getOffsetsAndNulls(
-    uint8_t maxRepeat,
-    uint8_t maxDefinition,
-    BufferPtr& offsets,
-    BufferPtr& lengths,
-    BufferPtr& nulls) {
-  int64_t numNonNull; // unused.
-  NestedStructureDecoder::readOffsetsAndNulls(
-      repetitionLevels_.data(),
-      definitionLevels_.data(),
-      repDefEnd_,
-      maxRepeat,
-      maxDefinition,
-      offsets,
-      lengths,
-      nulls,
-      numNonNull,
-      pool_);
+int32_t PageReader::getLengthsAndNulls(
+    LevelMode mode,
+    const ::parquet::internal::LevelInfo& info,
+    int32_t* lengths,
+    uint64_t* nulls,
+				       int32_t nullsStartIndex) const {
+  ::parquet::internal::ValidityBitmapInputOutput bits;
+  bits.values_read_upper_bound = repDefEnd_,
+  bits.values_read = 0;
+  bits.null_count = 0;
+  bits.valid_bits = reinterpret_cast<uint8_t*>(nulls);
+  bits.valid_bits_offset = nullsStartIndex;
+  switch (mode) {
+    case LevelMode::kNulls:
+      DefLevelsToBitmap(definitionLevels_.data(), repDefEnd_, info, &bits);
+      break;
+    case LevelMode::kList: {
+      ::parquet::internal::DefRepLevelsToList(
+          definitionLevels_.data(),
+          repetitionLevels_.data(),
+          repDefEnd_,
+	  info,
+          &bits,
+          lengths);
+      // Convert offsets to lengths.
+      for (auto i = 0; i < bits.values_read; ++i) {
+        lengths[i] = lengths[i + 1] - lengths[i];
+      }
+      break;
+    }
+  case LevelMode::kStructOverLists:
+      DefRepLevelsToBitmap(
+			   definitionLevels_.data(), repetitionLevels_.data(), repDefEnd_, info, &bits);
+      break;
+  }
+  return bits.values_read;
 }
 
 namespace {
@@ -594,7 +592,7 @@ void eraseFirst(raw_vector<T>& vector, int32_t n) {
   std::memmove(vector.data(), vector.data() + n, vector.size() - n);
   vector.resize(vector.size() - n);
 }
-}
+} // namespace
 
 void PageReader::repDefsConsumed() {
   VELOX_CHECK_GE(repetitionLevels_.size(), repDefEnd_);
@@ -610,7 +608,42 @@ void PageReader::repDefsConsumed() {
   numLeafNullsConsumed_ = 0;
 }
 
-
+void PageReader::makeDecoder() {
+  auto parquetType = type_->parquetType_.value();
+  switch (encoding_) {
+    case Encoding::RLE_DICTIONARY:
+    case Encoding::PLAIN_DICTIONARY:
+      dictionaryIdDecoder_ = std::make_unique<RleBpDataDecoder>(
+          pageData_ + 1, pageData_ + encodedDataSize_, pageData_[0]);
+      break;
+    case Encoding::PLAIN:
+      switch (parquetType) {
+        case thrift::Type::BYTE_ARRAY:
+          stringDecoder_ = std::make_unique<StringDecoder>(
+              pageData_, pageData_ + encodedDataSize_);
+          break;
+        case thrift::Type::FIXED_LEN_BYTE_ARRAY:
+          directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
+              std::make_unique<dwio::common::SeekableArrayInputStream>(
+                  pageData_, encodedDataSize_),
+              false,
+              type_->typeLength_,
+              true);
+          break;
+        default: {
+          directDecoder_ = std::make_unique<dwio::common::DirectDecoder<true>>(
+              std::make_unique<dwio::common::SeekableArrayInputStream>(
+                  pageData_, encodedDataSize_),
+              false,
+              parquetTypeBytes(type_->parquetType_.value()));
+        }
+      }
+      break;
+    case Encoding::DELTA_BINARY_PACKED:
+    default:
+      VELOX_UNSUPPORTED("Encoding not supported yet");
+  }
+}
   
 void PageReader::skip(int64_t numRows) {
   if (!numRows && firstUnvisited_ != rowOfPage_ + numRowsInPage_) {
@@ -710,7 +743,7 @@ PageReader::readNulls(int32_t numValues, BufferPtr& buffer) {
     return allOnes ? nullptr : buffer->as<uint64_t>();
   }
   bits::copyBits(
-		 leafNulls_.data(),
+      leafNulls_.data(),
       numLeafNullsConsumed_,
       buffer->asMutable<uint64_t>(),
       0,
