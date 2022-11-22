@@ -3088,9 +3088,9 @@ TEST_F(ExprTest, maskErrorByNull) {
   // Checks that errors in arguments of null-propagating functions are ignored
   // for rows with at least one null.
   auto data = makeRowVector(
-      {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6}),
-       makeFlatVector<int64_t>({1, 0, 3, 0, 5, 6}),
-       makeNullableFlatVector<int64_t>(
+      {makeFlatVector<int32_t>({1, 2, 3, 4, 5, 6}),
+       makeFlatVector<int32_t>({1, 0, 3, 0, 5, 6}),
+       makeNullableFlatVector<int32_t>(
            {std::nullopt, 10, std::nullopt, 10, std::nullopt, 10})});
 
   auto resultAB = evaluate("if (c2 is null, 10, null)  + (c0 / c1)", data);
@@ -3104,15 +3104,15 @@ TEST_F(ExprTest, maskErrorByNull) {
 
   // Make non null flat input to invoke flat no null path for a subtree.
   data = makeRowVector(
-      {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6}),
-       makeFlatVector<int64_t>({1, 0, 3, 0, 5, 6})});
+      {makeFlatVector<int32_t>({1, 2, 3, 4, 5, 6}),
+       makeFlatVector<int32_t>({1, 0, 3, 0, 5, 6})});
   // Register a function that does not support flat no nulls fast path.
   exec::registerVectorFunction(
       "plus5",
       PlusConstantFunction::signatures(),
       std::make_unique<PlusConstantFunction>(5));
 
-  auto result = evaluate("if (c0 > 4, null, plus5(c0 + c1))", data);
+  auto result = evaluate("plus5(c0 + c1)", data);
   assertEqualVectors(
-      result, makeNullableFlatVector({2, 2, 6, 4, std::nullopt, std::nullopt}));
+      result, makeNullableFlatVector<int32_t>({7, 7, 11, 9, 15, 17}));
 }
