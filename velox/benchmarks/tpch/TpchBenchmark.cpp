@@ -137,6 +137,7 @@ class TpchBenchmark {
   std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> run(
       const TpchPlan& tpchPlan) {
     int32_t repeat = 0;
+    try {
     for (;;) {
       CursorParameters params;
       params.maxDrivers = FLAGS_num_drivers;
@@ -161,9 +162,14 @@ class TpchBenchmark {
         noMoreSplits = true;
       };
       auto result = readCursor(params, addSplits);
+      ensureTaskCompletion(result.first->task().get());
       if (++repeat >= FLAGS_num_repeats) {
         return result;
       }
+    }
+    }catch (const std::exception& e) {
+      LOG(ERROR) << "Query terminated with: " << e.what();
+      return {nullptr, {}};
     }
   }
 
@@ -264,6 +270,10 @@ int main(int argc, char** argv) {
   } else {
     const auto queryPlan = queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
     const auto [cursor, actualResults] = benchmark.run(queryPlan);
+    if (!cursor) {
+      LOG(ERROR) << "Query terminated with error. Exiting"; 
+      exit(1);
+    }
     auto task = cursor->task();
     ensureTaskCompletion(task.get());
     if (FLAGS_include_results) {
