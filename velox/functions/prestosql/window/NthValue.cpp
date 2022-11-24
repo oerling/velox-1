@@ -19,7 +19,7 @@
 #include "velox/expression/FunctionSignature.h"
 #include "velox/vector/FlatVector.h"
 
-namespace facebook::velox::window {
+namespace facebook::velox::window::prestosql {
 
 namespace {
 
@@ -30,7 +30,7 @@ class NthValueFunction : public exec::WindowFunction {
       const std::vector<exec::WindowFunctionArg>& args,
       const TypePtr& resultType,
       velox::memory::MemoryPool* pool)
-      : WindowFunction(resultType, pool) {
+      : WindowFunction(resultType, pool, nullptr) {
     VELOX_CHECK_EQ(args.size(), 2);
     VELOX_CHECK_NULL(args[0].constantValue);
     valueIndex_ = args[0].index.value();
@@ -190,11 +190,12 @@ void registerNthValue(const std::string& name) {
       [name](
           const std::vector<exec::WindowFunctionArg>& args,
           const TypePtr& resultType,
-          velox::memory::MemoryPool* pool)
+          velox::memory::MemoryPool* pool,
+          HashStringAllocator* /*stringAllocator*/)
           -> std::unique_ptr<exec::WindowFunction> {
         auto typeKind = args[0].type->kind();
         return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
             createNthValueFunction, typeKind, args, resultType, pool);
       });
 }
-} // namespace facebook::velox::window
+} // namespace facebook::velox::window::prestosql

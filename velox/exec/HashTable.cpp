@@ -476,7 +476,7 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
   for (; i < numProbes; ++i) {
     auto row = rows[i];
     uint64_t index = hashes[row];
-    VELOX_DCHECK(index < size_);
+    VELOX_DCHECK_LT(index, size_);
     char* group = table_[index];
     if (UNLIKELY(!group)) {
       group = insertEntry(lookup, index, row);
@@ -621,6 +621,9 @@ void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
     // hashing.
     auto newSize = std::max(
         (uint64_t)2048, bits::nextPowerOfTwo(numNew * 2 + numDistinct_));
+    if (numNew + numDistinct_ > rehashSize(newSize)) {
+      newSize *= 2;
+    }
     allocateTables(newSize);
     if (numDistinct_) {
       rehash();

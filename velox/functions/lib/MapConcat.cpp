@@ -51,6 +51,9 @@ class MapConcatFunction : public exec::VectorFunction {
       auto inputMap = decodedArg->base()->as<MapVector>();
       auto rawSizes = inputMap->rawSizes();
       rows.applyToSelected([&](vector_size_t row) {
+        if (EmptyForNull && decodedArg->isNullAt(row)) {
+          return;
+        }
         maxSize += rawSizes[decodedArg->index(row)];
       });
     }
@@ -158,7 +161,7 @@ class MapConcatFunction : public exec::VectorFunction {
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
     // map(K,V), map(K,V), ... -> map(K,V)
     return {exec::FunctionSignatureBuilder()
-                .typeVariable("K")
+                .knownTypeVariable("K")
                 .typeVariable("V")
                 .returnType("map(K,V)")
                 .argumentType("map(K,V)")

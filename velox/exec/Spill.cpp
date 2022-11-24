@@ -149,10 +149,9 @@ uint64_t SpillFileList::spilledBytes() const {
 
 void SpillFileList::recordRuntimeStats() {
   for (const auto& file : files_) {
-    addOperatorRuntimeStats(
+    addThreadLocalRuntimeStat(
         "spillFileSize",
-        RuntimeCounter(file->size(), RuntimeCounter::Unit::kBytes),
-        stats_);
+        RuntimeCounter(file->size(), RuntimeCounter::Unit::kBytes));
   }
 }
 
@@ -184,8 +183,7 @@ void SpillState::appendToPartition(
         fmt::format("{}-spill-{}", path_, partition),
         targetFileSize_,
         pool_,
-        mappedMemory_,
-        stats_);
+        mappedMemory_);
   }
 
   IndexRange range{0, rows->size()};
@@ -241,8 +239,8 @@ const SpillPartitionNumSet& SpillState::spilledPartitionSet() const {
   return spilledPartitionSet_;
 }
 
-int64_t SpillState::spilledFiles() const {
-  int64_t numFiles = 0;
+uint64_t SpillState::spilledFiles() const {
+  uint64_t numFiles = 0;
   for (const auto& list : files_) {
     if (list != nullptr) {
       numFiles += list->spilledFiles();

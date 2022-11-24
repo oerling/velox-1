@@ -14,21 +14,27 @@
  * limitations under the License.
  */
 
-#include <glog/logging.h>
-#include <gtest/gtest.h>
-#include "folly/Conv.h"
-#include "velox/core/Metaprogramming.h"
+#include "pyvelox.h" // @manual
 
-TEST(Metafunctions, ForEachWithIndex) {
-  auto tup = std::make_tuple(1, std::string{"hello"}, 3.1);
-  std::string result;
-  facebook::velox::util::forEachWithIndex(
-      [&](size_t i, auto&& elem) {
-        result += folly::to<std::string>(i);
-        result += ":";
-        result += folly::to<std::string>(elem);
-        result += ";";
-      },
-      std::move(tup));
-  ASSERT_EQ(result, "0:1;1:hello;2:3.1;");
+namespace facebook::velox::py {
+using namespace velox;
+namespace py = pybind11;
+
+std::string serializeType(const std::shared_ptr<const velox::Type>& type) {
+  const auto& obj = type->serialize();
+  return folly::json::serialize(obj, velox::getSerializationOptions());
 }
+
+#ifdef CREATE_PYVELOX_MODULE
+PYBIND11_MODULE(pyvelox, m) {
+  m.doc() = R"pbdoc(
+        PyVelox native code module
+        -----------------------
+       )pbdoc";
+
+  addVeloxBindings(m);
+
+  m.attr("__version__") = "dev";
+}
+#endif
+} // namespace facebook::velox::py

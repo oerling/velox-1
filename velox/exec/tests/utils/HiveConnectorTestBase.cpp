@@ -31,19 +31,15 @@ HiveConnectorTestBase::HiveConnectorTestBase() {
 
 void HiveConnectorTestBase::SetUp() {
   OperatorTestBase::SetUp();
-  executor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, nullptr, executor_.get());
+          ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
   connector::registerConnector(hiveConnector);
   dwrf::registerDwrfReaderFactory();
 }
 
 void HiveConnectorTestBase::TearDown() {
-  if (executor_) {
-    executor_->join();
-  }
   dwrf::unregisterDwrfReaderFactory();
   connector::unregisterConnector(kHiveConnectorId);
   OperatorTestBase::TearDown();
@@ -66,11 +62,9 @@ void HiveConnectorTestBase::writeToFile(
   options.schema = vectors[0]->type();
   auto sink =
       std::make_unique<facebook::velox::dwio::common::FileSink>(filePath);
-  facebook::velox::dwrf::Writer writer{
-      options,
-      std::move(sink),
-      pool_->addChild(kWriter, std::numeric_limits<int64_t>::max())};
-
+  auto childPool =
+      pool_->addChild(kWriter, std::numeric_limits<int64_t>::max());
+  facebook::velox::dwrf::Writer writer{options, std::move(sink), *childPool};
   for (size_t i = 0; i < vectors.size(); ++i) {
     writer.write(vectors[i]);
   }
