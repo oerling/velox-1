@@ -171,16 +171,14 @@ class SpillFileList {
       const std::string& path,
       uint64_t targetFileSize,
       memory::MemoryPool& pool,
-      memory::MappedMemory& mappedMemory,
-      std::unordered_map<std::string, RuntimeMetric>& stats)
+      memory::MappedMemory& mappedMemory)
       : type_(type),
         numSortingKeys_(numSortingKeys),
         sortCompareFlags_(sortCompareFlags),
         path_(path),
         targetFileSize_(targetFileSize),
         pool_(pool),
-        mappedMemory_(mappedMemory),
-        stats_(stats) {
+        mappedMemory_(mappedMemory) {
     // NOTE: if the associated spilling operator has specified the sort
     // comparison flags, then it must match the number of sorting keys.
     VELOX_CHECK(
@@ -209,7 +207,7 @@ class SpillFileList {
 
   uint64_t spilledBytes() const;
 
-  int64_t spilledFiles() const {
+  uint64_t spilledFiles() const {
     return files_.size();
   }
 
@@ -233,7 +231,6 @@ class SpillFileList {
   const uint64_t targetFileSize_;
   memory::MemoryPool& pool_;
   memory::MappedMemory& mappedMemory_;
-  std::unordered_map<std::string, RuntimeMetric>& stats_;
   std::unique_ptr<VectorStreamGroup> batch_;
   SpillFiles files_;
 };
@@ -562,8 +559,7 @@ class SpillState {
       const std::vector<CompareFlags>& sortCompareFlags,
       uint64_t targetFileSize,
       memory::MemoryPool& pool,
-      memory::MappedMemory& mappedMemory,
-      std::unordered_map<std::string, RuntimeMetric>& stats)
+      memory::MappedMemory& mappedMemory)
       : path_(path),
         maxPartitions_(maxPartitions),
         numSortingKeys_(numSortingKeys),
@@ -571,7 +567,6 @@ class SpillState {
         targetFileSize_(targetFileSize),
         pool_(pool),
         mappedMemory_(mappedMemory),
-        stats_(stats),
         files_(maxPartitions_) {}
 
   /// Indicates if a given 'partition' has been spilled or not.
@@ -643,7 +638,8 @@ class SpillState {
   /// Return the spilled partition number set.
   const SpillPartitionNumSet& spilledPartitionSet() const;
 
-  int64_t spilledFiles() const;
+  /// Returns the number of spilled files we have.
+  uint64_t spilledFiles() const;
 
   std::vector<std::string> testingSpilledFilePaths() const;
 
@@ -657,7 +653,6 @@ class SpillState {
 
   memory::MemoryPool& pool_;
   memory::MappedMemory& mappedMemory_;
-  std::unordered_map<std::string, RuntimeMetric>& stats_;
 
   // A set of spilled partition numbers.
   SpillPartitionNumSet spilledPartitionSet_;

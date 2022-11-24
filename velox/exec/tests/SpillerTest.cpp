@@ -17,6 +17,7 @@
 #include "velox/exec/Spiller.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <unordered_set>
+#include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/HashPartitionFunction.h"
@@ -31,6 +32,22 @@ using namespace facebook::velox::common::testutil;
 using facebook::velox::filesystems::FileSystem;
 
 namespace {
+// Class to write runtime stats in the tests to the stats container.
+class TestRuntimeStatWriter : public BaseRuntimeStatWriter {
+ public:
+  explicit TestRuntimeStatWriter(
+      std::unordered_map<std::string, RuntimeMetric>& stats)
+      : stats_{stats} {}
+
+  void addRuntimeStat(const std::string& name, const RuntimeCounter& value)
+      override {
+    addOperatorRuntimeStats(name, value, stats_);
+  }
+
+ private:
+  std::unordered_map<std::string, RuntimeMetric>& stats_;
+};
+
 struct TestParam {
   Spiller::Type type;
   // Specifies the spill executor pool size. If the size is zero, then spill
@@ -93,7 +110,14 @@ class SpillerTest : public exec::test::RowContainerTestBase {
         type_(param.type),
         executorPoolSize_(param.poolSize),
         hashBits_(0, type_ == Spiller::Type::kOrderBy ? 0 : 2),
-        numPartitions_(hashBits_.numPartitions()) {}
+        numPartitions_(hashBits_.numPartitions()),
+        statWriter_(std::make_unique<TestRuntimeStatWriter>(stats_)) {
+    setThreadLocalRunTimeStatWriter(statWriter_.get());
+  }
+
+  ~SpillerTest() {
+    setThreadLocalRunTimeStatWriter(nullptr);
+  }
 
   void SetUp() override {
     RowContainerTestBase::SetUp();
@@ -155,7 +179,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
       return;
     }
     // Verify the spilled file exist on file system.
-    const int numSpilledFiles = spiller_->spilledFiles();
+    const auto numSpilledFiles = spiller_->spilledFiles();
     EXPECT_GT(numSpilledFiles, 0);
     const auto spilledFileSet = spiller_->state().testingSpilledFilePaths();
     EXPECT_EQ(numSpilledFiles, spilledFileSet.size());
@@ -175,6 +199,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
       EXPECT_TRUE(unspilledPartitionRows.empty());
       EXPECT_EQ(0, rowContainer_->numRows());
       EXPECT_EQ(numPartitions_, spiller_->stats().spilledPartitions);
+      EXPECT_EQ(numSpilledFiles, spiller_->stats().spilledFiles);
       for (int i = 0; i < numPartitions_; ++i) {
         expectedSpillPartitions.insert(i);
       }
@@ -183,6 +208,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     } else {
       EXPECT_GE(numPartitions_, spiller_->stats().spilledPartitions);
       EXPECT_GE(numPartitions_, spiller_->state().spilledPartitionSet().size());
+      EXPECT_GE(numSpilledFiles, spiller_->stats().spilledFiles);
     }
     // Assert we can't call any spill function after the spiller has been
     // finalized.
@@ -365,6 +391,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
       uint64_t minSpillRunSize,
       bool makeError) {
     stats_.clear();
+
     if (type_ == Spiller::Type::kHashJoinProbe) {
       // kHashJoinProbe doesn't have associated row container.
       spiller_ = std::make_unique<Spiller>(
@@ -375,7 +402,6 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           targetFileSize,
           minSpillRunSize,
           *pool_,
-          stats_,
           executor());
     } else if (type_ == Spiller::Type::kOrderBy) {
       // We spill 'data' in one partition in type of kOrderBy, otherwise in 4
@@ -391,7 +417,6 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           targetFileSize,
           minSpillRunSize,
           *pool_,
-          stats_,
           executor());
     } else {
       spiller_ = std::make_unique<Spiller>(
@@ -406,7 +431,6 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           targetFileSize,
           minSpillRunSize,
           *pool_,
-          stats_,
           executor());
     }
     if (type_ == Spiller::Type::kOrderBy) {
@@ -754,6 +778,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
   const HashBitRange hashBits_;
   const int32_t numPartitions_;
   std::unordered_map<std::string, RuntimeMetric> stats_;
+  std::unique_ptr<TestRuntimeStatWriter> statWriter_;
   folly::Random::DefaultGenerator rng_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
   std::shared_ptr<TempDirectoryPath> tempDirPath_;
@@ -906,8 +931,8 @@ TEST_P(NoHashJoinNoOrderBy, spillWithEmptyPartitions) {
     ASSERT_TRUE(spiller_->isAnySpilled());
     ASSERT_FALSE(spiller_->isAllSpilled());
 
-    int32_t numNonEmptyPartitions = 0;
-    for (int partition = 0; partition < numPartitions_; ++partition) {
+    uint64_t numNonEmptyPartitions = 0;
+    for (auto partition = 0; partition < numPartitions_; ++partition) {
       if (testData.rowsPerPartition[partition] != 0) {
         ASSERT_TRUE(spiller_->state().isPartitionSpilled(partition));
         ++numNonEmptyPartitions;
@@ -916,7 +941,7 @@ TEST_P(NoHashJoinNoOrderBy, spillWithEmptyPartitions) {
             << partition;
       }
     }
-    const int numSpilledFiles = spiller_->spilledFiles();
+    const auto numSpilledFiles = spiller_->spilledFiles();
     ASSERT_EQ(numNonEmptyPartitions, numSpilledFiles);
     // Expect no non-spilling partitions.
     EXPECT_TRUE(spiller_->finishSpill().empty());
@@ -1081,26 +1106,31 @@ TEST(SpillerTest, stats) {
   EXPECT_EQ(0, sumStats.spilledRows);
   EXPECT_EQ(0, sumStats.spilledBytes);
   EXPECT_EQ(0, sumStats.spilledPartitions);
+  EXPECT_EQ(0, sumStats.spilledFiles);
 
   Spiller::Stats stats;
   stats.spilledRows = 10;
   stats.spilledBytes = 100;
   stats.spilledPartitions = 2;
+  stats.spilledFiles = 3;
 
   sumStats += stats;
   EXPECT_EQ(stats.spilledRows, sumStats.spilledRows);
   EXPECT_EQ(stats.spilledBytes, sumStats.spilledBytes);
   EXPECT_EQ(stats.spilledPartitions, sumStats.spilledPartitions);
+  EXPECT_EQ(stats.spilledFiles, sumStats.spilledFiles);
 
   sumStats += stats;
   EXPECT_EQ(2 * stats.spilledRows, sumStats.spilledRows);
   EXPECT_EQ(2 * stats.spilledBytes, sumStats.spilledBytes);
   EXPECT_EQ(2 * stats.spilledPartitions, sumStats.spilledPartitions);
+  EXPECT_EQ(2 * stats.spilledFiles, sumStats.spilledFiles);
 
   sumStats += stats;
   EXPECT_EQ(3 * stats.spilledRows, sumStats.spilledRows);
   EXPECT_EQ(3 * stats.spilledBytes, sumStats.spilledBytes);
   EXPECT_EQ(3 * stats.spilledPartitions, sumStats.spilledPartitions);
+  EXPECT_EQ(3 * stats.spilledFiles, sumStats.spilledFiles);
 }
 
 TEST(SpillerTest, spillLevel) {

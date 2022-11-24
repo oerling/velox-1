@@ -45,7 +45,9 @@ class E2EFilterTest : public E2EFilterTestBase {
 
     // Always test no null case.
     auto newCustomize = [&]() {
-      customize();
+      if (customize) {
+        customize();
+      }
       makeNotNull(0);
     };
     testSenario(
@@ -214,8 +216,8 @@ TEST_F(E2EFilterTest, shortDecimalDictionary) {
   // decimal(10, 5) maps to 5 bytes FLBA in Parquet.
   // decimal(17, 5) maps to 8 bytes FLBA in Parquet.
   for (const auto& type : {
-           "shortdecimal_val:short_decimal(10, 5)",
-           "shortdecimal_val:short_decimal(17, 5)",
+           "shortdecimal_val:decimal(10, 5)",
+           "shortdecimal_val:decimal(17, 5)",
        }) {
     testWithTypes(
         type,
@@ -244,8 +246,8 @@ TEST_F(E2EFilterTest, shortDecimalDirect) {
   // decimal(10, 5) maps to 5 bytes FLBA in Parquet.
   // decimal(17, 5) maps to 8 bytes FLBA in Parquet.
   for (const auto& type : {
-           "shortdecimal_val:short_decimal(10, 5)",
-           "shortdecimal_val:short_decimal(17, 5)",
+           "shortdecimal_val:decimal(10, 5)",
+           "shortdecimal_val:decimal(17, 5)",
        }) {
     testWithTypes(
         type,
@@ -266,7 +268,7 @@ TEST_F(E2EFilterTest, shortDecimalDirect) {
   }
 
   testWithTypes(
-      "shortdecimal_val:short_decimal(10, 5)",
+      "shortdecimal_val:decimal(10, 5)",
       [&]() {
         useSuppliedValues<UnscaledShortDecimal>(
             "shortdecimal_val",
@@ -282,8 +284,8 @@ TEST_F(E2EFilterTest, longDecimalDictionary) {
   // decimal(30, 10) maps to 13 bytes FLBA in Parquet.
   // decimal(37, 15) maps to 16 bytes FLBA in Parquet.
   for (const auto& type : {
-           "longdecimal_val:long_decimal(30, 10)",
-           "longdecimal_val:long_decimal(37, 15)",
+           "longdecimal_val:decimal(30, 10)",
+           "longdecimal_val:decimal(37, 15)",
        }) {
     testWithTypes(
         type,
@@ -312,8 +314,8 @@ TEST_F(E2EFilterTest, longDecimalDirect) {
   // decimal(30, 10) maps to 13 bytes FLBA in Parquet.
   // decimal(37, 15) maps to 16 bytes FLBA in Parquet.
   for (const auto& type : {
-           "longdecimal_val:long_decimal(30, 10)",
-           "longdecimal_val:long_decimal(37, 15)",
+           "longdecimal_val:decimal(30, 10)",
+           "longdecimal_val:decimal(37, 15)",
        }) {
     testWithTypes(
         type,
@@ -334,7 +336,7 @@ TEST_F(E2EFilterTest, longDecimalDirect) {
   }
 
   testWithTypes(
-      "longdecimal_val:long_decimal(30, 10)",
+      "longdecimal_val:decimal(30, 10)",
       [&]() {
         useSuppliedValues<UnscaledLongDecimal>(
             "longdecimal_val",
@@ -397,6 +399,18 @@ TEST_F(E2EFilterTest, dedictionarize) {
       false,
       {"long_val", "string_val", "string_val_2"},
       20);
+}
+
+TEST_F(E2EFilterTest, scalarList) {
+  // Break up the leaf data in small pages to cover coalescing repdefs.
+  writerProperties_ =
+      ::parquet::WriterProperties::Builder().data_pagesize(4 * 1024)->build();
+  testWithTypes(
+      "long_val:bigint, array_val:array<int>",
+      nullptr,
+      false,
+      {"long_val"},
+      10);
 }
 
 // Define main so that gflags get processed.

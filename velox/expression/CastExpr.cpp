@@ -298,8 +298,6 @@ VectorPtr CastExpr::applyMap(
     const MapType& toType) {
   // Cast input keys/values vector to output keys/values vector using their
   // element selectivity vector
-  auto rawSizes = input->rawSizes();
-  auto rawOffsets = input->rawOffsets();
 
   // Initialize nested rows
   auto mapKeys = input->mapKeys();
@@ -367,9 +365,6 @@ VectorPtr CastExpr::applyArray(
     exec::EvalCtx& context,
     const ArrayType& fromType,
     const ArrayType& toType) {
-  auto inputRawSizes = input->rawSizes();
-  auto inputOffsets = input->rawOffsets();
-
   // Cast input array elements to output array elements based on their types
   // using their linear selectivity vector
   auto arrayElements = input->elements();
@@ -702,5 +697,26 @@ std::string CastExpr::toSql(std::vector<VectorPtr>* complexConstants) const {
   toTypeSql(type_, out);
   out << ")";
   return out.str();
+}
+
+TypePtr CastCallToSpecialForm::resolveType(
+    const std::vector<TypePtr>& /* argTypes */) {
+  VELOX_FAIL("CAST expressions do not support type resolution.");
+}
+
+ExprPtr CastCallToSpecialForm::constructSpecialForm(
+    const TypePtr& type,
+    std::vector<ExprPtr>&& compiledChildren,
+    bool trackCpuUsage) {
+  VELOX_CHECK_EQ(
+      compiledChildren.size(),
+      1,
+      "CAST statements expect exactly 1 argument, received {}",
+      compiledChildren.size());
+  return std::make_shared<CastExpr>(
+      type,
+      std::move(compiledChildren[0]),
+      trackCpuUsage,
+      false /* nullOnFailure */);
 }
 } // namespace facebook::velox::exec

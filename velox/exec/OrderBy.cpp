@@ -113,11 +113,13 @@ void OrderBy::addInput(RowVectorPtr input) {
 
   numRows_ += allRows.size();
   if (spiller_ != nullptr) {
-    const auto stats = spiller_->stats();
-    stats_.spilledBytes = stats.spilledBytes;
-    stats_.spilledRows = stats.spilledRows;
-    stats_.spilledPartitions = stats.spilledPartitions;
-    VELOX_DCHECK_LE(stats_.spilledPartitions, 1);
+    const auto spillStats = spiller_->stats();
+    auto lockedStats = stats_.wlock();
+    lockedStats->spilledBytes = spillStats.spilledBytes;
+    lockedStats->spilledRows = spillStats.spilledRows;
+    lockedStats->spilledPartitions = spillStats.spilledPartitions;
+    lockedStats->spilledFiles = spillStats.spilledFiles;
+    VELOX_DCHECK_LE(lockedStats->spilledPartitions, 1);
   }
 }
 
@@ -218,7 +220,6 @@ void OrderBy::spill(int64_t targetRows, int64_t targetBytes) {
         spillConfig.maxFileSize,
         spillConfig.minSpillRunSize,
         Spiller::spillPool(),
-        stats().runtimeStats,
         spillConfig.executor);
     VELOX_CHECK_EQ(spiller_->state().maxPartitions(), 1);
   }

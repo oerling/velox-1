@@ -121,7 +121,6 @@ class Spiller {
       uint64_t targetFileSize,
       uint64_t minSpillRunSize,
       memory::MemoryPool& pool,
-      std::unordered_map<std::string, RuntimeMetric>& stats,
       folly::Executor* FOLLY_NULLABLE executor);
 
   Spiller(
@@ -132,7 +131,6 @@ class Spiller {
       uint64_t targetFileSize,
       uint64_t minSpillRunSize,
       memory::MemoryPool& pool,
-      std::unordered_map<std::string, RuntimeMetric>& stats,
       folly::Executor* FOLLY_NULLABLE executor);
 
   Spiller(
@@ -147,7 +145,6 @@ class Spiller {
       uint64_t targetFileSize,
       uint64_t minSpillRunSize,
       memory::MemoryPool& pool,
-      std::unordered_map<std::string, RuntimeMetric>& stats,
       folly::Executor* FOLLY_NULLABLE executor);
 
   /// Spills rows from 'this' until there are under 'targetRows' rows
@@ -263,14 +260,17 @@ class Spiller {
     /// NOTE: when we sum up the stats from a group of spill operators, it is
     /// the total number of spilled partitions X number of operators.
     uint32_t spilledPartitions{0};
+    uint64_t spilledFiles{0};
 
     Stats(
         uint64_t _spilledBytes,
         uint64_t _spilledRows,
-        uint32_t _spilledPartitions)
+        uint32_t _spilledPartitions,
+        uint64_t _spilledFiles)
         : spilledBytes(_spilledBytes),
           spilledRows(_spilledRows),
-          spilledPartitions(_spilledPartitions) {}
+          spilledPartitions(_spilledPartitions),
+          spilledFiles(_spilledFiles) {}
 
     Stats() = default;
 
@@ -278,16 +278,21 @@ class Spiller {
       spilledBytes += other.spilledBytes;
       spilledRows += other.spilledRows;
       spilledPartitions += other.spilledPartitions;
+      spilledFiles += other.spilledFiles;
       return *this;
     }
   };
 
   Stats stats() const {
     return Stats{
-        state_.spilledBytes(), spilledRows_, state_.spilledPartitions()};
+        state_.spilledBytes(),
+        spilledRows_,
+        state_.spilledPartitions(),
+        spilledFiles()};
   }
 
-  int64_t spilledFiles() const {
+  /// Return the number of spilled files we have.
+  uint64_t spilledFiles() const {
     return state_.spilledFiles();
   }
 
@@ -423,8 +428,6 @@ class Spiller {
   bool spillFinalized_{false};
 
   memory::MemoryPool& pool_;
-
-  std::unordered_map<std::string, RuntimeMetric>& stats_;
 
   folly::Executor* FOLLY_NULLABLE const executor_;
 

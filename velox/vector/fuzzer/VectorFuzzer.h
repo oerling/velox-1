@@ -232,7 +232,8 @@ class VectorFuzzer {
     return boost::random::uniform_01<double>()(rng_) < n;
   }
 
-  // Wraps the given vector in a LazyVector.
+  // Wraps the given vector in a LazyVector. If there are multiple dictionary
+  // layers then the lazy wrap is applied over the innermost dictionary layer.
   static VectorPtr wrapInLazyVector(VectorPtr baseVector);
 
   // Randomly applies wrapInLazyVector() to the children of the given input row
@@ -240,6 +241,14 @@ class VectorFuzzer {
   // non-null and non-lazy. Is useful when the input rowVector needs to be
   // re-used between multiple evaluations.
   RowVectorPtr fuzzRowChildrenToLazy(RowVectorPtr rowVector);
+
+  // Returns a copy of 'rowVector' but with the columns having indices listed in
+  // 'columnsToWrapInLazy' wrapped in lazy encoding. Must only be used for input
+  // row vectors where all children are non-null and non-lazy.
+  // 'columnsToWrapInLazy' should be a sorted list of column indices.
+  static RowVectorPtr fuzzRowChildrenToLazy(
+      RowVectorPtr rowVector,
+      const std::vector<column_index_t>& columnsToWrapInLazy);
 
  private:
   // Generates a flat vector for primitive types.

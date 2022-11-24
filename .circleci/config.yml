@@ -40,6 +40,7 @@ workflows:
       - doc-gen-job
       - linux-fuzzer-run
       - linux-aggregate-fuzzer-run
+      - docker-compose-ubuntu-cpp
 
   # Hourly build on weekdays
   weekday:
@@ -156,6 +157,7 @@ executors:
     environment:
         CC:  /opt/rh/gcc-toolset-9/root/bin/gcc
         CXX: /opt/rh/gcc-toolset-9/root/bin/g++
+        VELOX_DEPENDENCY_SOURCE: BUNDLED
   check:
     docker:
       - image : ghcr.io/facebookincubator/velox-dev:check-avx
@@ -249,6 +251,8 @@ jobs:
             _build/debug/velox/expression/tests/velox_expression_fuzzer_test \
                 --seed 123456 \
                 --enable_variadic_signatures \
+                --velox_fuzzer_enable_complex_types \
+                --lazy_vector_generation_ratio 0.2 \
                 --duration_sec 60 \
                 --logtostderr=1 \
                 --minloglevel=0 \
@@ -286,6 +290,7 @@ jobs:
       CONBENCH_URL: "https://velox-conbench.voltrondata.run/"
       CONBENCH_HOST: "CircleCI-runner"
       LINUX_DISTRO: "centos"
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
     steps:
       - pre-steps
       - build-benchmarks
@@ -312,6 +317,7 @@ jobs:
       CONBENCH_URL: "https://velox-conbench.voltrondata.run/"
       CONBENCH_HOST: "CircleCI-runner-dedicated"
       LINUX_DISTRO: "ubuntu"
+      VELOX_DEPENDENCY_SOURCE: BUNDLED
     steps:
       - checkout
       - update-submodules
@@ -356,6 +362,8 @@ jobs:
 
   linux-adapters:
     executor: build
+    environment:
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
     steps:
       - pre-steps
       - run:
@@ -398,6 +406,8 @@ jobs:
 
   linux-fuzzer-run:
     executor: build
+    environment:
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
     steps:
       - pre-steps
       - run:
@@ -417,7 +427,10 @@ jobs:
                     "as a job artifact (check the \"Artifacts\" tab above)."
             _build/debug/velox/expression/tests/velox_expression_fuzzer_test \
                 --seed ${RANDOM} \
+                --lazy_vector_generation_ratio 0.2 \
                 --duration_sec 600 \
+                --enable_variadic_signatures \
+                --velox_fuzzer_enable_complex_types \
                 --logtostderr=1 \
                 --minloglevel=0 \
               2>&1 | tee /tmp/fuzzer.log || ( \
@@ -520,3 +533,17 @@ jobs:
               git commit -m "Update documentation"
               git push
             fi
+
+  docker-compose-ubuntu-cpp:
+    machine: # Use machine executor type to use docker-compose
+      image: ubuntu-2204:2022.10.1 # Ubuntu 22.04
+    resource_class: 2xlarge
+    steps:
+      - checkout
+      - update-submodules
+      - run:
+          name: "Build images for ubuntu-CPP declared in docker-compose.yml"
+          command: docker-compose build ubuntu-cpp
+      - run:
+          name: "Run ubuntu-cpp image"
+          command: docker-compose run -e NUM_THREADS=16 --rm ubuntu-cpp
