@@ -20,11 +20,15 @@ namespace facebook::velox::query {
 
 Optimization::Optimization(
 			   const std::shared_ptr<core::PlanNode>& plan,
-			   const Schema& schema,
-			   memory::MappedMemory& mappedMemory) {
-  QueryGraphContext context(
-      std::make_unique<HashStringAllocator>(mappedMemory));
-  auto dt = CREATE(DerivedTable, context.newId());
+			   const Schema& schema)
+  : schema_(schema), inputPlan_(plan) 
+{
+  root_ = makeQueryGraph();
 }
 
+  DerivedTablePtr   Optimization::makeQueryGraph() {
+    return nullptr;
+  }
+
+  
 } // namespace facebook::velox::query

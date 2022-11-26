@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include "velox/common/memory/HashStringAllocator.h"
@@ -28,27 +29,45 @@ using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
 
 class QueryGraphContext {
  public:
-  QueryGraphContext() {}
+  QueryGraphContext(HashStringAllocator& allocator)
+      : allocator_(allocator), stlAllocator_(StlAllocator<void*>(&allocator)) {}
 
-  int32_t newId() {
-    return lastId_++;
+  int32_t newId(PlanObject* FOLLY_NONNULL object) {
+    objects_.push_back(object);
+    return objects_.size() - 1;
   }
 
-  HashStringAllocator* allocator_;
-  int32_t lastId_{0};
+  StlAllocator<void*>* stlAllocator()& {
+    return &stlAllocator_;
+  }
+
+  HashStringAllocator& allocator() { return allocator_; }
+  
+  HashStringAllocator& allocator_;
+  StlAllocator<void*> stlAllocator_;
 
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
 };
 
-QueryGraphContext& ctx() {
-  thread_local QueryGraphContext context;
+inline QueryGraphContext*& queryCtx() {
+  thread_local QueryGraphContext* context;
   return context;
 }
 
-#define create(T, destination, ...)                         \
+template <typename T>
+StlAllocator<T> stl() {
+  return *reinterpret_cast<StlAllocator<T>*>(queryCtx()->stlAllocator());
+}
+
+#define Define(T, destination, ...)                         \
   T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
-  destination = new (data) T(__VA_ARGS__);
+  new (destination) T(__VA_ARGS__);
+
+/// Converts std::string to name used in query graph objects. raw pointer to
+/// arena allocated const chars.
+const char* toName(const std::string& string);
+const char* toName(const std::string& string);
 
 /// Pointers are name <type>Ptr and defined to be raw pointers. We
 /// expect arena allocation with a whole areena freed after plan
@@ -71,37 +90,61 @@ QueryGraphContext& ctx() {
 // Enum for types of plan candidate nodes.
 
 enum class PlanType { kTable, kDerivedTable, kExpr, kProject, kFilter, kJoin };
+const char* planTypeName(PlanType type);
 
 struct PlanObject {
+  PlanObject() {
+    id = queryCtx()->newId(this);
+  }
+
+  std::string toString() {
+    return fmt::format("#{}", id);
+  }
   PlanType type;
   int32_t id;
 };
 
-struct Value : public PlanObject {
-  const Type* type;
+struct Value {
+  Value() = default;
+  Value(const Type* _type, int64_t _cardinality)
+      : type(_type), cardinality(_cardinality) {}
+
+  const Type* FOLLY_NONNULL type;
   variant min;
   variant max;
-  int64_t cardinality;
-  bool nullable;
+  const int64_t cardinality;
+  bool nullable{true};
 };
-struct Expr : public Value {};
+
+struct Expr : public PlanObject {
+  Expr(Value _value) : PlanObject(), value(_value){};
+
+  Value value;
+};
+
+  using ExprPtr = Expr*;
+
+using ExprVector = std::vector<ExprPtr, StlAllocator<ExprPtr>>;
+
 struct Relation;
 using RelationPtr = Relation*;
 
 struct Column : public Expr {
+  Column(const char* _name, RelationPtr _relation, Value value)
+      : Expr(value), name(_name), relation(_relation) {}
+
+  const char* name;
   RelationPtr relation;
-  std::string name;
 };
 
 using ColumnPtr = Column*;
-using ExprPtr = Expr*;
+using ColumnVector = std::vector<ColumnPtr, StlAllocator<ColumnPtr>>;
+
 
 struct Call : public Expr {
   char* func;
   std::vector<ExprPtr> args;
 };
-
-using ExprPtr = Expr*;
 
 struct Equivalence {
   std::vector<ExprPtr> exprs;
@@ -117,23 +160,38 @@ enum class OrderType {
   kDescNullsLast
 };
 
-// Describes output of relational operator. If base table, cardinality is after
-// filtering, column value ranges are after filtering.
-struct Distribution : public PlanObject {
+/// Method for determining a partition given an ordered list of partitioning
+/// keys. Hive hash is an example, range partitioning is another. Add values
+/// here for more types.
+enum class ShuffleMode { kNone, kHive };
+
+/// Distribution of data. 'numPartitions' is 1 if the data is not partitioned.
+/// There is copartitioning if the DistributionType is the same on both sides
+/// and both sides have an equal number of 1:1 type matched partitioning keys.
+struct DistributionType {
+  bool operator==(const DistributionType& other) {
+    return mode == other.mode && numPartitions == other.numPartitions;
+  }
+
+  ShuffleMode mode{ShuffleMode::kNone};
+  int32_t numPartitions{1};
+};
+
+// Describes output of relational operator. If base table, cardinality is
+// after filtering, column value ranges are after filtering.
+struct Distribution {
   int64_t cardinality;
 
-  // Number of workers producing the data, i.e. width of shuffle. 1 regardless f
-  // parallelism if the data has no partitioning key.
-  int32_t numPartitions;
+  DistributionType distributionType;
 
   // Partitioning columns. The values of these columns determine which of
-  // 'numPartitions' contains any given row. This does not specify the partition
-  // function (e.g. Hive bucket or range partition).
-  std::vector<ColumnPtr> partition;
+  // 'numPartitions' contains any given row. This does not specify the
+  // partition function (e.g. Hive bucket or range partition).
+  ColumnVector partition{stl<ColumnPtr>()};
 
   // Ordering columns. Each partition is ordered by these. Specifies that
   // streaming group by or merge join are possible.
-  std::vector<ColumnPtr> order;
+  ColumnVector order{stl<ColumnPtr>()};
 
   // Corresponds 1:1 to 'order'
   std::vector<OrderType> orderType;
@@ -141,12 +199,12 @@ struct Distribution : public PlanObject {
   // Number of leading elements of 'order' such that these uniquely
   // identify a row. 0 if there is no uniqueness.
   int32_t numKeysUnique{0};
-  
+
   // Specifies the selectivity between the source of the ordered data
   // and 'this'. For example, if orders join lineitem and both are
   // ordered on orderkey and there is a 1/1000 selection on orders,
   // the distribution after the filter would have a spacing of 1000,
-  // meaning that lineitem is hit every 1000 irder, meaning that an
+  // meaning that lineitem is hit every 1000 orders, meaning that an
   // index join with lineitem would skip 4000 rows between hits
   // because lineitem has an average of 4 repeats of orderkey.
   int64_t spacing{-1};
@@ -156,7 +214,7 @@ struct Distribution : public PlanObject {
   // once the value of any clustering column changes between consecutive rows,
   // the same combination of clustering columns will not repeat. means that a
   // final group by can be flushed when seeing a change in clustering columns.
-  std::vector<ColumnPtr> clustering;
+  ColumnVector clustering{stl<ColumnPtr>()};
 
   // True if the data is replicated to 'numPartitions'.
   bool isBroadcast;
@@ -194,7 +252,8 @@ struct JoinEdge {
   Expr* condition;
 
   // True if an unprobed right side row produces a result with right side
-  // columns set and left side columns as null. Possible only be hash or merge.
+  // columns set and left side columns as null. Possible only be hash or
+  // merge.
   bool leftOptional;
 
   // True if a right side miss produces a row with left side columns
@@ -213,22 +272,33 @@ struct JoinEdge {
 
 using JoinEdgePtr = JoinEdge*;
 
-struct Relation : public PlanObject {
+/// Differentiates between base tables and operator results.
+enum class RelType { kBase, kOperator };
+
+struct Relation {
+  Relation(
+      RelType _relType,
+      Distribution _distribution,
+      const ColumnVector& _columns)
+      : relType(_relType), distribution(_distribution), columns(_columns) {}
+
+  RelType relType;
   Distribution distribution;
-  std::vector<ColumnPtr> columns;
+  RowTypePtr type;
+  ColumnVector columns{stl<ColumnPtr>()};
 };
 
 struct Table : public Relation {
   // Correlation name, i.e. the AS in the FROM or the 'table' in table.column
   // notation.
-  std::string cname;
+  const char* cname;
 };
 
 using TablePtr = Table*;
 
 struct BaseTable : public Table {
   // Name with catalog.schema.tablename.
-  std::string name;
+  const char* name;
 };
 
 // Aggregate function. The aggregation and arguments are in the
@@ -283,8 +353,8 @@ using DerivedTablePtr = DerivedTable*;
 
 // Plan candidates.
 //
-// A candidate plan is constructed from  the above join graph/derived table tree
-// specification.
+// A candidate plan is constructed from  the above join graph/derived table
+// tree specification.
 
 // A physical operation on a relation. Has a per-row cost, a per-row
 // fanout and a one-time setup cost. For example, a hash join probe
@@ -311,8 +381,8 @@ struct RelationOp : public Relation {
   float fanout;
 
   // One time setup cost. Cost of build subplan for the first use of a hash
-  // build side. 0 for the second use of a hash build side. 0 for table scan or
-  // index access.
+  // build side. 0 for the second use of a hash build side. 0 for table scan
+  // or index access.
   float setupCost;
 
   // Estimate of total size for a hash join build or group/order
@@ -326,28 +396,25 @@ struct RelationOp : public Relation {
 };
 
 using RelationOpPtr = RelationOp*;
+struct Index;
 
 struct TableScan : public RelationOp {
   // Left side of index join, nullptr for a leaf table scan.
   RelationPtr input;
 
-  // Base table. If the table is vertically partitioned (e.g. side tables) this
-  // will be apparent at run time from the splits for the scan, not included
-  // here.
-  std::string table;
-
   // Index (or other materialization of table) used for the physical data
-  // access. Empty for e.g. hive base table scan.
-  std::string index;
+  // access.
+  Index* index;
 
   // Lookup keys, empty if full table scan.
-  std::vector<ExprPtr> keys;
+  ExprVector keys{0, stl<ExprPtr>()};
 
   // Leading key parts of index, 1:1 equal to 'keys'.
-  std::vector<ColumnPtr> keyColumns;
+  ColumnVector keyColumns{stl<ColumnPtr>()};
 
-  // Projected columns, does not necessarily include columns in keys or filters.
-  std::vector<ColumnPtr> projectedColumns;
+  // Projected columns, does not necessarily include columns in keys or
+  // filters.
+  ColumnVector projectedColumns{stl<ColumnPtr>()};
 
   // Filters involving only columns of this.
   std::vector<FilteredColumnPtr> filters;
@@ -359,7 +426,7 @@ struct Filter : public RelationOp {
 
 struct Project : public RelationOp {
   // Exprs. Output description is inherited from Relation.
-  std::vector<ExprPtr> exprs;
+  ExprVector exprs{stl<ExprPtr>()};
 };
 
 struct HashJoin : public RelationOp {
@@ -371,14 +438,63 @@ struct HashJoin : public RelationOp {
   ExprPtr filter;
 };
 
-class Index : public Relation {};
+struct SchemaTable;
+using SchemaTablePtr = SchemaTable*;
 
-class SchemaTable {
-  std::vector<Index> indices_;
+struct Index : public Relation {
+  Index(
+      const char* _name,
+      SchemaTablePtr _table,
+      Distribution distribution,
+      const ColumnVector& _columns)
+      : Relation(RelType::kBase, distribution, _columns),
+        name(_name),
+        table(_table) {}
+
+  const char* name;
+  SchemaTablePtr table;
 };
+
+using IndexPtr = Index*;
+struct SchemaTable {
+  SchemaTable(const char* _name, const RowTypePtr& _type)
+      : name(_name), type(_type) {}
+
+  void addIndex(
+      const char* name,
+      int64_t cardinality,
+      int32_t numKeysUnique,
+      int32_t numOrdering,
+      const ColumnVector& keys,
+      DistributionType distType,
+      const ColumnVector& partition,
+      const ColumnVector& columns);
+
+  ColumnPtr column(const std::string& name, Value value);
+
+  ColumnPtr findColumn(const std::string& name) const;
+
+  // private:
+  std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
+  const std::string name;
+  const RowTypePtr type;
+  std::unordered_map<std::string, ColumnPtr> columns;
+  std::vector<IndexPtr> indices;
+};
+
+using SchemaTablePtr = SchemaTable*;
 
 class Schema {
-  std::unordered_map<std::string, std::unique_ptr<SchemaTable>> tables;
+ public:
+  Schema(const char* _name, std::vector<SchemaTablePtr> tables);
+
+  SchemaTablePtr findTable(const std::string& name);
+
+ private:
+  const char* name;
+  std::unordered_map<std::string, SchemaTablePtr> tables_;
 };
+
+using SchemaPtr = Schema*;
 
 } // namespace facebook::velox::query

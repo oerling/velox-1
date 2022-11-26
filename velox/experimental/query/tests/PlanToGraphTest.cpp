@@ -19,11 +19,21 @@
 
 #include <gtest/gtest.h>
 
+using namespace facebook::velox;
 using namespace facebook::velox::query;
 
 
-class PlanToGraphTest {
+class PlanToGraphTest : public testing::Test {
+  void SetUp() override {
+    allocator_ = std::make_unique<HashStringAllocator>(memory::MappedMemory::getInstance());
+    context_ = std::make_unique<QueryGraphContext>(*allocator_);
+    queryCtx() = context_.get();
+  }
+  
+  std::unique_ptr<HashStringAllocator> allocator_;
 
+  std::unique_ptr<QueryGraphContext> context_;
+  
 };
 
 TEST_F(PlanToGraphTest, q3) {

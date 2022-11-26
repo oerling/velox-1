@@ -16,19 +16,27 @@
 #pragma once
 
 #include "velox/common/base/SimdUtil.h"
-#include  "velox/core/PlanNode.h"
+#include "velox/core/PlanNode.h"
 #include "velox/experimental/query/QueryGraph.h"
 
 namespace facebook::velox::query {
 
-  class Optimization {
-  public:
-    Optimization(const std::shared_ptr<core::PlanNode>& plan, const Schema& schema);
+/// Instance of query optimization. Comverts a plan and schema into an optimized
+/// plan. Depends on QueryGraphContext being set on the calling thread.
+class Optimization {
+ public:
+  Optimization(
+      const std::shared_ptr<core::PlanNode>& plan,
+      const Schema& schema);
 
-  private:
-    const Schema& schema_;
-    std::unique_ptr<QueryGraphContext> context_;
-    DerivedTablePtr root_;
-  };
 
-}
+  
+ private:
+  DerivedTablePtr makeQueryGraph();
+
+  const Schema& schema_;
+  std::shared_ptr<core::PlanNode> inputPlan_;
+  DerivedTablePtr root_;
+};
+
+} // namespace facebook::velox::query
