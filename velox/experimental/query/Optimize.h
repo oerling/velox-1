@@ -20,6 +20,8 @@
 
 namespace facebook::velox::query {
 
-  std::shared_ptr<core::PlanNode> optimize(const std::shared_ptr<PlanNode>& plan, const Schema& schema);
+std::shared_ptr<core::PlanNode> optimize(
+    const std::shared_ptr<PlanNode>& plan,
+    const Schema& schema);
 
 }

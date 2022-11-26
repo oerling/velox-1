@@ -16,14 +16,5 @@ add_executable(velox_plan_to_graph_test PlanToGraphTest.cpp Tpch.cpp)
 
 add_test(velox_plan_to_graph_test velox_plan_to_graph_test)
 
-target_link_libraries(velox_plan_to_graph_test
-  velox_query
-  velox_tpch_gen
-  velox_exec_test_lib
-    gtest
-  gtest_main
-)
-
-
-
-
+target_link_libraries(velox_plan_to_graph_test velox_query velox_tpch_gen
+                      velox_exec_test_lib gtest gtest_main)

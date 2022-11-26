@@ -29,8 +29,6 @@ class Optimization {
       const std::shared_ptr<core::PlanNode>& plan,
       const Schema& schema);
 
-
-  
  private:
   DerivedTablePtr makeQueryGraph();
 

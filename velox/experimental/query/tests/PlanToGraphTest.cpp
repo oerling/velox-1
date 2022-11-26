@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/query/PlanToGraph.h"
 
 #include <gtest/gtest.h>
@@ -22,20 +21,17 @@
 using namespace facebook::velox;
 using namespace facebook::velox::query;
 
-
 class PlanToGraphTest : public testing::Test {
   void SetUp() override {
-    allocator_ = std::make_unique<HashStringAllocator>(memory::MappedMemory::getInstance());
+    allocator_ = std::make_unique<HashStringAllocator>(
+        memory::MappedMemory::getInstance());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
     queryCtx() = context_.get();
   }
-  
+
   std::unique_ptr<HashStringAllocator> allocator_;
 
   std::unique_ptr<QueryGraphContext> context_;
-  
 };
 
-TEST_F(PlanToGraphTest, q3) {
-
-}
+TEST_F(PlanToGraphTest, q3) {}

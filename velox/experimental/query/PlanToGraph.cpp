@@ -19,16 +19,14 @@
 namespace facebook::velox::query {
 
 Optimization::Optimization(
-			   const std::shared_ptr<core::PlanNode>& plan,
-			   const Schema& schema)
-  : schema_(schema), inputPlan_(plan) 
-{
+    const std::shared_ptr<core::PlanNode>& plan,
+    const Schema& schema)
+    : schema_(schema), inputPlan_(plan) {
   root_ = makeQueryGraph();
 }
 
-  DerivedTablePtr   Optimization::makeQueryGraph() {
-    return nullptr;
-  }
+DerivedTablePtr Optimization::makeQueryGraph() {
+  return nullptr;
+}
 
-  
 } // namespace facebook::velox::query

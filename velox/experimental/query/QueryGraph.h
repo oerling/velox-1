@@ -37,12 +37,14 @@ class QueryGraphContext {
     return objects_.size() - 1;
   }
 
-  StlAllocator<void*>* stlAllocator()& {
+  StlAllocator<void*>* stlAllocator() & {
     return &stlAllocator_;
   }
 
-  HashStringAllocator& allocator() { return allocator_; }
-  
+  HashStringAllocator& allocator() {
+    return allocator_;
+  }
+
   HashStringAllocator& allocator_;
   StlAllocator<void*> stlAllocator_;
 
@@ -122,7 +124,7 @@ struct Expr : public PlanObject {
   Value value;
 };
 
-  using ExprPtr = Expr*;
+using ExprPtr = Expr*;
 
 using ExprVector = std::vector<ExprPtr, StlAllocator<ExprPtr>>;
 
@@ -139,7 +141,6 @@ struct Column : public Expr {
 
 using ColumnPtr = Column*;
 using ColumnVector = std::vector<ColumnPtr, StlAllocator<ColumnPtr>>;
-
 
 struct Call : public Expr {
   char* func;
