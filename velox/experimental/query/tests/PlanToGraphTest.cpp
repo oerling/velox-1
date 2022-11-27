@@ -15,23 +15,33 @@
  */
 
 #include "velox/experimental/query/PlanToGraph.h"
-
+#include "velox/experimental/query/tests/Tpch.h"
+#include "velox/exec/tests/utils/TpchQueryBuilder.h"
 #include <gtest/gtest.h>
 
 using namespace facebook::velox;
 using namespace facebook::velox::query;
 
 class PlanToGraphTest : public testing::Test {
+protected:
   void SetUp() override {
     allocator_ = std::make_unique<HashStringAllocator>(
         memory::MappedMemory::getInstance());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
     queryCtx() = context_.get();
+    builder_ = std::make_unique<exec::test::TpchQueryBuilder>(dwio::common::FileFormat::PARQUET); 
   }
 
   std::unique_ptr<HashStringAllocator> allocator_;
 
   std::unique_ptr<QueryGraphContext> context_;
+  std::unique_ptr<exec::test::TpchQueryBuilder> builder_;
 };
 
-TEST_F(PlanToGraphTest, q3) {}
+TEST_F(PlanToGraphTest, q3) {
+  auto q3 = builder_->getQueryPlan(3);
+  auto schema = tpchSchema(100, false, true, false); 
+  Optimization opt(*q3.plan, *schema);
+  auto result = opt.bestPlan();
+  LOG(INFO) << result->toString(true, true);
+}

@@ -26,15 +26,29 @@ namespace facebook::velox::query {
 class Optimization {
  public:
   Optimization(
-      const std::shared_ptr<core::PlanNode>& plan,
+	       const core::PlanNode& plan,
       const Schema& schema);
 
+  std::shared_ptr<const core::PlanNode> bestPlan();
+  
  private:
   DerivedTablePtr makeQueryGraph();
 
+  PlanObjectPtr makeQueryGraph(const core::PlanNode& node);
+
   const Schema& schema_;
-  std::shared_ptr<core::PlanNode> inputPlan_;
+  const core::PlanNode& inputPlan_;
+
   DerivedTablePtr root_;
+
+  DerivedTablePtr currentSelect_;
+  
+  std::unordered_map<std::string, ColumnPtr> renames_;
+  
+  int32_t nameCounter_{0};
 };
 
-} // namespace facebook::velox::query
+  /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString(). Values between 0 and 1.
+  std::unordered_map<std::string, float>& baseSelectivities();
+
+  } // namespace facebook::velox::query

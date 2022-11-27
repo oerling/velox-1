@@ -23,6 +23,8 @@ namespace facebook::velox::query {
 
 /// Base data structures for plan candidate generation.
 
+using Name = const char*;
+
 struct PlanObject;
 
 using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
@@ -31,6 +33,8 @@ class QueryGraphContext {
  public:
   QueryGraphContext(HashStringAllocator& allocator)
       : allocator_(allocator), stlAllocator_(StlAllocator<void*>(&allocator)) {}
+
+  Name toName(std::string_view str);
 
   int32_t newId(PlanObject* FOLLY_NONNULL object) {
     objects_.push_back(object);
@@ -50,6 +54,7 @@ class QueryGraphContext {
 
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
+  std::unordered_set<std::string_view> names_;
 };
 
 inline QueryGraphContext*& queryCtx() {
@@ -68,8 +73,7 @@ StlAllocator<T> stl() {
 
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
-const char* toName(const std::string& string);
-const char* toName(const std::string& string);
+Name toName(const std::string& string);
 
 /// Pointers are name <type>Ptr and defined to be raw pointers. We
 /// expect arena allocation with a whole areena freed after plan
@@ -91,11 +95,19 @@ const char* toName(const std::string& string);
 
 // Enum for types of plan candidate nodes.
 
-enum class PlanType { kTable, kDerivedTable, kExpr, kProject, kFilter, kJoin };
-const char* planTypeName(PlanType type);
+enum class PlanType {
+  kTable,
+  kDerivedTable,
+  kColumn,
+  kCall,
+  kProject,
+  kFilter,
+  kJoin
+};
+Name planTypeName(PlanType type);
 
 struct PlanObject {
-  PlanObject() {
+  PlanObject(PlanType _type) : type(_type) {
     id = queryCtx()->newId(this);
   }
 
@@ -104,6 +116,25 @@ struct PlanObject {
   }
   PlanType type;
   int32_t id;
+};
+
+class PlanObjectSet {
+ public:
+  void add(PlanObjectPtr ptr) {
+    auto id = ptr->id;
+    ensureSize(id);
+    bits::setBit(bits_.data(), id);
+  }
+
+ private:
+  void ensureSize(int32_t id) {
+    auto size = bits::nwords(id + 1);
+    if (bits_.size() < size) {
+      bits_.resize(size);
+    }
+  }
+
+  std::vector<uint64_t, StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
 };
 
 struct Value {
@@ -119,7 +150,7 @@ struct Value {
 };
 
 struct Expr : public PlanObject {
-  Expr(Value _value) : PlanObject(), value(_value){};
+  Expr(PlanType type, Value _value) : PlanObject(type), value(_value) {}
 
   Value value;
 };
@@ -132,19 +163,28 @@ struct Relation;
 using RelationPtr = Relation*;
 
 struct Column : public Expr {
-  Column(const char* _name, RelationPtr _relation, Value value)
-      : Expr(value), name(_name), relation(_relation) {}
+  Column(Name _name, RelationPtr _relation, Value value)
+      : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {}
 
-  const char* name;
+  Name name;
   RelationPtr relation;
 };
 
+  template <typename T>
+  inline folly::Range<const T*>toRange(const std::vector<T, StlAllocator<T>>& v) {
+    return folly::Range<const T*>(v.data(), v.size());
+  }
+  
+  
 using ColumnPtr = Column*;
 using ColumnVector = std::vector<ColumnPtr, StlAllocator<ColumnPtr>>;
 
 struct Call : public Expr {
-  char* func;
-  std::vector<ExprPtr> args;
+  Call(Name _func, Value value, ExprVector _args)
+      : Expr(PlanType::kCall, value), func(_func), args(std::move(_args)) {}
+
+  Name func;
+  ExprVector args;
 };
 
 struct Equivalence {
@@ -277,6 +317,8 @@ using JoinEdgePtr = JoinEdge*;
 enum class RelType { kBase, kOperator };
 
 struct Relation {
+  Relation() = default;
+
   Relation(
       RelType _relType,
       Distribution _distribution,
@@ -287,19 +329,24 @@ struct Relation {
   Distribution distribution;
   RowTypePtr type;
   ColumnVector columns{stl<ColumnPtr>()};
+
+  // Correlation name for base table or derived table in  a plan. nullptr for
+  // schema table.
+  Name cname;
 };
 
-struct Table : public Relation {
-  // Correlation name, i.e. the AS in the FROM or the 'table' in table.column
-  // notation.
-  const char* cname;
-};
+struct SchemaTable;
+using SchemaTablePtr = SchemaTable*;
 
-using TablePtr = Table*;
+struct BaseTable : public PlanObject, public Relation {
+  BaseTable() : PlanObject(PlanType::kTable) {}
 
-struct BaseTable : public Table {
-  // Name with catalog.schema.tablename.
-  const char* name;
+  void setRelation(
+      const Relation& relation,
+      const ColumnVector& columns,
+      const ColumnVector& schemaColumns);
+
+  SchemaTablePtr schemaTable;
 };
 
 // Aggregate function. The aggregation and arguments are in the
@@ -324,21 +371,26 @@ struct OrderBy : public Relation {
 
 using OrderByPtr = OrderBy*;
 
-struct DerivedTable : public Table {
-  // Columns projected out. Visible in the enclosing query.
-  std::vector<ColumnPtr> columns;
+struct DerivedTable : public PlanObject, public Relation {
+  DerivedTable() : PlanObject(PlanType::kDerivedTable) {}
 
-  // Exprs projected out.
-  std::vector<ExprPtr> exprs;
+  // Columns projected out. Visible in the enclosing query.
+  ColumnVector columns{stl<ColumnPtr>()};
+
+  // Exprs projected out.1:1 to 'columns'.
+  ExprVector exprs{stl<ExprPtr>()};
 
   // All tables in from, either Table or DerivedTable. If Table, all
-  // filters resolvable with the table alone are under the table.
-  std::vector<TablePtr> tables;
+  // filters resolvable with the table alone are in single column filters or
+  // 'filter' of Table.
+  std::vector<PlanObjectPtr> tables;
+
   // Join edges between 'tables'. Captures join structure. e.g. a left
   // join (b join c) has a and a derived table with (b join c) in
   // 'tables' and a join edge between these in 'joins'. The join edge
   // has the right side as optional. Join filters are in join edges.
   std::vector<JoinEdgePtr> joins;
+
   // Filters in where for that are not single table expressions and not join
   // filters of explicit joins and not equalities between columns of joined
   // tables.
@@ -439,12 +491,9 @@ struct HashJoin : public RelationOp {
   ExprPtr filter;
 };
 
-struct SchemaTable;
-using SchemaTablePtr = SchemaTable*;
-
 struct Index : public Relation {
   Index(
-      const char* _name,
+      Name _name,
       SchemaTablePtr _table,
       Distribution distribution,
       const ColumnVector& _columns)
@@ -452,17 +501,16 @@ struct Index : public Relation {
         name(_name),
         table(_table) {}
 
-  const char* name;
+  Name name;
   SchemaTablePtr table;
 };
 
 using IndexPtr = Index*;
 struct SchemaTable {
-  SchemaTable(const char* _name, const RowTypePtr& _type)
-      : name(_name), type(_type) {}
+  SchemaTable(Name _name, const RowTypePtr& _type) : name(_name), type(_type) {}
 
   void addIndex(
-      const char* name,
+      Name name,
       int64_t cardinality,
       int32_t numKeysUnique,
       int32_t numOrdering,
@@ -487,12 +535,12 @@ using SchemaTablePtr = SchemaTable*;
 
 class Schema {
  public:
-  Schema(const char* _name, std::vector<SchemaTablePtr> tables);
+  Schema(Name _name, std::vector<SchemaTablePtr> tables);
 
-  SchemaTablePtr findTable(const std::string& name);
+  SchemaTablePtr findTable(const std::string& name) const;
 
  private:
-  const char* name;
+  Name name;
   std::unordered_map<std::string, SchemaTablePtr> tables_;
 };
 
