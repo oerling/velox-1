@@ -70,7 +70,11 @@ StlAllocator<T> stl() {
 #define Define(T, destination, ...)                         \
   T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
   new (destination) T(__VA_ARGS__);
+#define DefineDefault(T, destination)                         \
+  T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
+  new (destination) T();
 
+  
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
 Name toName(const std::string& string);
@@ -99,6 +103,7 @@ enum class PlanType {
   kTable,
   kDerivedTable,
   kColumn,
+  kLiteral,
   kCall,
   kProject,
   kFilter,
@@ -111,6 +116,16 @@ struct PlanObject {
     id = queryCtx()->newId(this);
   }
 
+  template <typename T>
+  T as() {
+    return reinterpret_cast<T>(this);
+  }
+
+  template <typename T>
+  const T as() const {
+    return reinterpret_cast<const T>(this);
+  }
+
   std::string toString() {
     return fmt::format("#{}", id);
   }
@@ -118,6 +133,11 @@ struct PlanObject {
   int32_t id;
 };
 
+struct Expr;
+using ExprPtr = Expr*;
+  struct Column;
+  using ColumnPtr = Column*;
+  
 class PlanObjectSet {
  public:
   void add(PlanObjectPtr ptr) {
@@ -125,10 +145,16 @@ class PlanObjectSet {
     ensureSize(id);
     bits::setBit(bits_.data(), id);
   }
+  void unionColumns(ExprPtr expr);
+
+  void unionSet(const PlanObjectSet& other);
 
  private:
   void ensureSize(int32_t id) {
-    auto size = bits::nwords(id + 1);
+    ensureWords(bits::nwords(id + 1));
+  }
+
+  void ensureWords(int32_t size) {
     if (bits_.size() < size) {
       bits_.resize(size);
     }
@@ -146,6 +172,8 @@ struct Value {
   variant min;
   variant max;
   const int64_t cardinality;
+  // 0 means no nulls, 0.5 means half are null.
+  float nullFraction{0};
   bool nullable{true};
 };
 
@@ -155,40 +183,82 @@ struct Expr : public PlanObject {
   Value value;
 };
 
-using ExprPtr = Expr*;
-
 using ExprVector = std::vector<ExprPtr, StlAllocator<ExprPtr>>;
 
 struct Relation;
 using RelationPtr = Relation*;
+struct Equivalence;
+using EquivalencePtr = Equivalence*;
+
+struct Literal : public Expr {
+  Literal(Value value, variant _literal)
+    : Expr(PlanType::kLiteral, value), literal(_literal) {}
+  variant literal;
+};
 
 struct Column : public Expr {
   Column(Name _name, RelationPtr _relation, Value value)
       : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {}
 
+  void equals(ColumnPtr other);
+
   Name name;
   RelationPtr relation;
+  EquivalencePtr equivalence;
 };
 
-  template <typename T>
-  inline folly::Range<const T*>toRange(const std::vector<T, StlAllocator<T>>& v) {
-    return folly::Range<const T*>(v.data(), v.size());
-  }
-  
-  
-using ColumnPtr = Column*;
+template <typename T>
+inline folly::Range<const T*> toRange(
+    const std::vector<T, StlAllocator<T>>& v) {
+  return folly::Range<const T*>(v.data(), v.size());
+}
+
 using ColumnVector = std::vector<ColumnPtr, StlAllocator<ColumnPtr>>;
 
+class FunctionSet {
+ public:
+  FunctionSet() : set_(0) {}
+  FunctionSet(uint32_t set) : set_(set) {}
+
+  bool contains(int32_t item) {
+    return 0 != (set_ & (1UL << item));
+  }
+
+  FunctionSet operator|(const FunctionSet& other) {
+    return FunctionSet(set_ | other.set_);
+  }
+
+ private:
+  uint64_t set_;
+};
+
 struct Call : public Expr {
-  Call(Name _func, Value value, ExprVector _args)
-      : Expr(PlanType::kCall, value), func(_func), args(std::move(_args)) {}
+  Call(
+      Name _func,
+      Value value,
+      ExprVector _args,
+      PlanObjectSet _columns,
+      FunctionSet _functions)
+      : Expr(PlanType::kCall, value),
+        func(_func),
+        args(std::move(_args)),
+        columns(std::move(_columns)),
+        functions(_functions) {}
 
   Name func;
   ExprVector args;
+
+  // Columns this depends on.
+  PlanObjectSet columns;
+  // Set of functions used in 'this' and 'args'.
+  FunctionSet functions;
 };
 
+  using CallPtr = Call*;
+  
 struct Equivalence {
-  std::vector<ExprPtr> exprs;
+  ColumnVector columns{stl<ColumnPtr>()};
+  ;
   // Corresponds pairwise to 'exprs'. True if the Expr comes from an
   // outer optional side key join and is therefore null or equal.
   std::vector<bool> nullable;
@@ -281,13 +351,11 @@ using FilteredColumnPtr = FilteredColumn*;
 // non-directional and whichever side is not placed can be added. If
 // both sides are optional (full outer join) then the edge is
 // non-directional.
-struct JoinEdge {
-  Relation* left;
-  Relation* right;
+struct Join {
   // Leading left side join keys.
-  std::vector<ExprPtr> leftKeys;
+  ExprVector leftKeys{stl<ExprPtr>()};
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
-  std::vector<ExprPtr> rightKeys;
+  ExprVector rightKeys{stl<ExprPtr>()};
 
   // Join condition for any non-equality  conditions for non-inner joins.
   Expr* condition;
@@ -295,23 +363,23 @@ struct JoinEdge {
   // True if an unprobed right side row produces a result with right side
   // columns set and left side columns as null. Possible only be hash or
   // merge.
-  bool leftOptional;
+  bool leftOptional{false};
 
   // True if a right side miss produces a row with left side columns
   // ad a null for right side columns (left outer join). A full outer
   // join has both left and right optional.
-  bool rightOptional;
+  bool rightOptional{false};
 
   // True if the right side is only checked for existence of a match. If
   // rightOptional is set, this can project out a null for misses.
-  bool rightSemi;
+  bool rightSemi{false};
 
   // True if the join is a right semijoin. This is possible only by hash or
   // merge.
-  bool leftSemi;
+  bool leftSemi{false};
 };
 
-using JoinEdgePtr = JoinEdge*;
+using JoinPtr = Join*;
 
 /// Differentiates between base tables and operator results.
 enum class RelType { kBase, kOperator };
@@ -383,18 +451,16 @@ struct DerivedTable : public PlanObject, public Relation {
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
   // 'filter' of Table.
-  std::vector<PlanObjectPtr> tables;
+  std::vector<PlanObjectPtr, StlAllocator<PlanObjectPtr>> tables{
+      stl<PlanObjectPtr>()};
 
-  // Join edges between 'tables'. Captures join structure. e.g. a left
-  // join (b join c) has a and a derived table with (b join c) in
-  // 'tables' and a join edge between these in 'joins'. The join edge
-  // has the right side as optional. Join filters are in join edges.
-  std::vector<JoinEdgePtr> joins;
+  std::vector<JoinPtr, StlAllocator<JoinPtr>> joins{stl<JoinPtr>()};
+  ;
 
   // Filters in where for that are not single table expressions and not join
   // filters of explicit joins and not equalities between columns of joined
   // tables.
-  std::vector<ExprPtr> conjuncts;
+  ExprVector conjuncts{stl<ExprPtr>()};
 
   GroupByPtr groupBy;
   OrderByPtr orderBy;

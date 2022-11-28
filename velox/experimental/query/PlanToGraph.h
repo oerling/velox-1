@@ -21,6 +21,25 @@
 
 namespace facebook::velox::query {
 
+struct ITypedExprHasher {
+  size_t operator()(const core::ITypedExpr* expr) const {
+    return expr->hash();
+  }
+};
+
+struct ITypedExprComparer {
+  bool operator()(const core::ITypedExpr* lhs, const core::ITypedExpr* rhs) const {
+    return *lhs == *rhs;
+  }
+};
+
+// Map for deduplicating ITypedExpr trees.
+using ExprDedupMap = folly::F14FastMap<
+  const core::ITypedExpr*,
+    ExprPtr,
+    ITypedExprHasher,
+    ITypedExprComparer>;
+ 
 /// Instance of query optimization. Comverts a plan and schema into an optimized
 /// plan. Depends on QueryGraphContext being set on the calling thread.
 class Optimization {
@@ -35,15 +54,23 @@ class Optimization {
   DerivedTablePtr makeQueryGraph();
 
   PlanObjectPtr makeQueryGraph(const core::PlanNode& node);
+  ExprPtr translateExpr(const core::TypedExprPtr& expr);
+  ExprPtr translateColumn(const std::string& name);
+  ExprVector translateColumns(const std::vector<core::FieldAccessTypedExprPtr>& source);
+  void translateJoin(const core::AbstractJoinNode& join);
+
+  OrderByPtr translateOrderBy(const core::OrderByNode& order);
+  GroupByPtr translateGroupBy(const core::AggregationNode& aggregation);
 
   const Schema& schema_;
   const core::PlanNode& inputPlan_;
-
   DerivedTablePtr root_;
 
   DerivedTablePtr currentSelect_;
   
-  std::unordered_map<std::string, ColumnPtr> renames_;
+  std::unordered_map<std::string, ExprPtr> renames_;
+
+  ExprDedupMap exprDedup_;
   
   int32_t nameCounter_{0};
 };
@@ -51,4 +78,7 @@ class Optimization {
   /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString(). Values between 0 and 1.
   std::unordered_map<std::string, float>& baseSelectivities();
 
+  /// Returns bits describing function 'name'.
+  FunctionSet functionBits(Name name);
+  
   } // namespace facebook::velox::query
