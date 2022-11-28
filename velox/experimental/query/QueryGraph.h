@@ -70,11 +70,10 @@ StlAllocator<T> stl() {
 #define Define(T, destination, ...)                         \
   T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
   new (destination) T(__VA_ARGS__);
-#define DefineDefault(T, destination)                         \
+#define DefineDefault(T, destination)                       \
   T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
   new (destination) T();
 
-  
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
 Name toName(const std::string& string);
@@ -135,9 +134,9 @@ struct PlanObject {
 
 struct Expr;
 using ExprPtr = Expr*;
-  struct Column;
-  using ColumnPtr = Column*;
-  
+struct Column;
+using ColumnPtr = Column*;
+
 class PlanObjectSet {
  public:
   void add(PlanObjectPtr ptr) {
@@ -192,7 +191,7 @@ using EquivalencePtr = Equivalence*;
 
 struct Literal : public Expr {
   Literal(Value value, variant _literal)
-    : Expr(PlanType::kLiteral, value), literal(_literal) {}
+      : Expr(PlanType::kLiteral, value), literal(_literal) {}
   variant literal;
 };
 
@@ -254,8 +253,8 @@ struct Call : public Expr {
   FunctionSet functions;
 };
 
-  using CallPtr = Call*;
-  
+using CallPtr = Call*;
+
 struct Equivalence {
   ColumnVector columns{stl<ColumnPtr>()};
   ;

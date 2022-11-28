@@ -149,7 +149,7 @@ ExprPtr Optimization::translateColumn(const std::string& name) {
 }
 
 ExprVector Optimization::translateColumns(
-					  const std::vector<core::FieldAccessTypedExprPtr>& source) {
+    const std::vector<core::FieldAccessTypedExprPtr>& source) {
   ExprVector result{source.size(), stl<ExprPtr>()};
   for (auto i = 0; i < source.size(); ++i) {
     result[i] = translateColumn(source[i]->name());
@@ -157,11 +157,12 @@ ExprVector Optimization::translateColumns(
   return result;
 }
 
-  GroupByPtr Optimization::translateGroupBy(const core::AggregationNode& aggregation) {
+GroupByPtr Optimization::translateGroupBy(
+    const core::AggregationNode& aggregation) {
   return nullptr;
 }
 
-  OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
+OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
   return nullptr;
 }
 
@@ -241,13 +242,14 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
   }
   if (name == "Aggregation") {
     makeQueryGraph(*node.sources()[0]);
-    currentSelect_->groupBy =
-      translateGroupBy(*reinterpret_cast<const core::AggregationNode*>(&node));
+    currentSelect_->groupBy = translateGroupBy(
+        *reinterpret_cast<const core::AggregationNode*>(&node));
     return currentSelect_;
   }
   if (name == "OrderBy") {
     return makeQueryGraph(*node.sources()[0]);
-    currentSelect_->orderBy = translateOrderBy(*reinterpret_cast<const core::OrderByNode*>(&node));
+    currentSelect_->orderBy =
+        translateOrderBy(*reinterpret_cast<const core::OrderByNode*>(&node));
     return currentSelect_;
   }
   if (name == "Limit") {
