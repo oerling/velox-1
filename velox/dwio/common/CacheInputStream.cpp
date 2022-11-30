@@ -72,7 +72,23 @@ bool CacheInputStream::Next(const void** buffer, int32_t* size) {
     *size = region_.length - position_;
   }
   offsetInRun_ += *size;
-  position_ += *size;
+  if (prefetchPct_ < 100) {
+    auto offsetInQuantum = position_ % loadQuantum_;
+    auto nextQuantum = position_ - offsetInQuantum + loadQuantum_;
+    auto prefetchThreshold = loadQuantum_ * prefetchPct_ / 100;
+    if (offsetInQuantum <= prefetchThreshold &&
+        offsetInQuantum + *size > prefetchThreshold &&
+        position_ - offsetInQuantum + loadQuantum_ < region_.length) {
+      // We read past 'prefetchPct_' % of the current load quantum and the
+      // current load quantum is not the last in the region. Prefetch the next
+      // load quantum.
+      auto prefetchSize = std::min(region_.length, nextQuantum + loadQuantum_) - nextQuantum;
+      bufferedInput_->prefetch(
+        Region{region_.offset + nextQuantum, prefetchSize});
+    }
+  }
+    position_ += *size;
+
   if (tracker_) {
     tracker_->recordRead(trackingId_, *size, fileNum_, groupId_);
   }

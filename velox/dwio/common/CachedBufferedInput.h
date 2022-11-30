@@ -118,6 +118,9 @@ class CachedBufferedInput : public BufferedInput {
   std::unique_ptr<SeekableInputStream>
   read(uint64_t offset, uint64_t length, LogType logType) const override;
 
+  /// Schedules load of 'region' on 'executor_'. Fails silently if no memory or if shouldPreload() is false.
+  void prefetch(Region region);
+  
   bool shouldPreload() override;
 
   bool shouldPrefetchStripes() const override {

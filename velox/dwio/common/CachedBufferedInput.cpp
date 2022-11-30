@@ -475,4 +475,10 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::read(
       loadQuantum_);
 }
 
+  void CachedBufferedInput::prefetch(Region region) {
+    auto stream = enqueue(region, nullptr);
+    load(LogType::FILE);
+  }
+  
+  
 } // namespace facebook::velox::dwio::common

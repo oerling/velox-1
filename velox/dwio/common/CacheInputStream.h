@@ -79,6 +79,15 @@ class CacheInputStream : public SeekableInputStream {
   /// outside of the window. Use together wiht clone() and skip().
   void setRemainingBytes(uint64_t remainingBytes);
 
+  /// Causes the next load quantum to be scheduled for read-ahead when
+  /// 'percent' of the current load quantum has been returned by
+  /// Next(). If Next() returns the whole read quantum, them the first
+  /// Next triggers the read ahead of te next quantum right away. a
+  /// value of over 100 causes no prefetches to be made. If there is
+  /// no memory to cover the load quantum to prefetch the prefetch
+  /// fails silently.
+  void setPrefetchPct(int32_t percent);
+  
  private:
   // Ensures that the current position is covered by 'pin_'.
   void loadPosition();
@@ -126,6 +135,9 @@ class CacheInputStream : public SeekableInputStream {
   // A restricted view over 'region'. offset is relative to 'region_'. A cloned
   // CacheInputStream can cover a subrange of the range of the original.
   std::optional<Region> window_;
+
+  // Percentage of 'loadQuantum_' at which the next load quantum gets scheduled. Over 100 means no prefetch.
+  int32_t prefetchPct_{200};
 };
 
 } // namespace facebook::velox::dwio::common
