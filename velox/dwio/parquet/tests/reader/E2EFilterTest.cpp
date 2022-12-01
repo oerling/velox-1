@@ -408,7 +408,7 @@ TEST_F(E2EFilterTest, scalarList) {
   testWithTypes(
       "long_val:bigint, array_val:array<int>",
       nullptr,
-      false,
+      true,
       {"long_val"},
       10);
 }
