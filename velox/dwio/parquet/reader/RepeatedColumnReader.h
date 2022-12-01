@@ -89,4 +89,13 @@ class ListColumnReader : public dwio::common::SelectiveListColumnReader {
   ::parquet::internal::LevelInfo levelInfo_;
 };
 
+  /// Sets nulls and lengths for 'reader' and its children for the
+  /// next 'numTop' top level rows. 'reader' must be a complex type
+  /// reader. 'reader' may be inside structs but may not be inside a
+  /// repeated reader. The topmost repeated reader ensures repdefs for
+  /// all its children.
+  void ensureRepDefs(
+    dwio::common::SelectiveColumnReader& reader,
+    int32_t numTop);
+  
 } // namespace facebook::velox::parquet
