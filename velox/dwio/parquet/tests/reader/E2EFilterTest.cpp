@@ -103,7 +103,7 @@ TEST_F(E2EFilterTest, integerDirect) {
       "long_val:bigint,"
       "long_null:bigint",
       [&]() { makeAllNulls("long_null"); },
-      false,
+      true,
       {"short_val", "int_val", "long_val"},
       20);
 }
