@@ -45,22 +45,6 @@ DECLARE_int32(memory_usage_aggregation_interval_millis);
 namespace facebook {
 namespace velox {
 namespace memory {
-#define VELOX_MEM_MANAGER_CAP_EXCEEDED(cap)                         \
-  _VELOX_THROW(                                                     \
-      ::facebook::velox::VeloxRuntimeError,                         \
-      ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
-      ::facebook::velox::error_code::kMemCapExceeded.c_str(),       \
-      /* isRetriable */ true,                                       \
-      "Exceeded memory manager cap of {} MB",                       \
-      (cap) / 1024 / 1024);
-
-#define VELOX_MEM_MANUAL_CAP()                                      \
-  _VELOX_THROW(                                                     \
-      ::facebook::velox::VeloxRuntimeError,                         \
-      ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
-      ::facebook::velox::error_code::kMemCapExceeded.c_str(),       \
-      /* isRetriable */ true,                                       \
-      "Memory allocation manually capped");
 
 /// This class provides the memory allocation interfaces for a query execution.
 /// Each query execution entity creates a dedicated memory pool object. The
@@ -168,6 +152,39 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
 
   /// Invoked to free an allocated buffer.
   virtual void free(void* FOLLY_NULLABLE p, int64_t size) = 0;
+
+  /// Allocates one or more runs that add up to at least 'numPages', with the
+  /// smallest run being at least 'minSizeClass' pages. 'minSizeClass' must be
+  /// <= the size of the largest size class. The new memory is returned in 'out'
+  /// and any memory formerly referenced by 'out' is freed. The function returns
+  /// true if the allocation succeeded. If returning false, 'out' references no
+  /// memory and any partially allocated memory is freed.
+  virtual bool allocateNonContiguous(
+      MachinePageCount numPages,
+      MemoryAllocator::Allocation& out,
+      MachinePageCount minSizeClass = 0) = 0;
+
+  /// Returns non-contiguous 'allocation'.
+  virtual void freeNonContiguous(
+      MemoryAllocator::Allocation& allocation) = 0;
+
+  /// Returns the largest class size used by non-contiguous memory allocation.
+  virtual MachinePageCount largestSizeClass() const = 0;
+
+  /// Returns the list of supported class sizes used by non-contiguous memory
+  /// allocation.
+  virtual const std::vector<MachinePageCount>& sizeClasses() const = 0;
+
+  /// Makes a large contiguous mmap of 'numPages'. The new mapped pages are
+  /// returned in 'out' on success. Any formly mapped pages referenced by
+  /// 'out' is unmapped in all the cases even if the allocation false.
+  virtual bool allocateContiguous(
+      MachinePageCount numPages,
+      MemoryAllocator::ContiguousAllocation& out) = 0;
+
+  /// Returns contiguous 'allocation'.
+  virtual void freeContiguous(
+      MemoryAllocator::ContiguousAllocation& allocation) = 0;
 
   /// Rounds up to a power of 2 >= size, or to a size halfway between
   /// two consecutive powers of two, i.e 8, 12, 16, 24, 32, .... This
@@ -301,6 +318,24 @@ class MemoryPoolImpl : public MemoryPool {
   reallocate(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize) override;
 
   void free(void* FOLLY_NULLABLE p, int64_t size) override;
+
+  bool allocateNonContiguous(
+      MachinePageCount numPages,
+      MemoryAllocator::Allocation& out,
+      MachinePageCount minSizeClass = 0) override;
+
+  void freeNonContiguous(MemoryAllocator::Allocation& allocation) override;
+
+  MachinePageCount largestSizeClass() const override;
+
+  const std::vector<MachinePageCount>& sizeClasses() const override;
+
+  bool allocateContiguous(
+      MachinePageCount numPages,
+      MemoryAllocator::ContiguousAllocation& allocation) override;
+
+  void freeContiguous(
+      MemoryAllocator::ContiguousAllocation& allocation) override;
 
   //////////////////// Memory Management methods /////////////////////
   // Library checks for low memory mode on a push model. The respective root,

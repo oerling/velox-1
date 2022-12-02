@@ -137,6 +137,7 @@ class AsyncDataCacheEntry {
   static constexpr int32_t kTinyDataSize = 2048;
 
   explicit AsyncDataCacheEntry(CacheShard* FOLLY_NONNULL shard);
+  ~AsyncDataCacheEntry();
 
   // Sets the key and allocates the entry's memory.  Resets
   //  all other state. The entry must be held exclusively and must
@@ -496,8 +497,6 @@ struct CacheStats {
 // and other housekeeping.
 class CacheShard {
  public:
-  static constexpr int32_t kCacheOwner = -4;
-
   explicit CacheShard(AsyncDataCache* FOLLY_NONNULL cache) : cache_(cache) {}
 
   // See AsyncDataCache::findOrCreate.
@@ -622,9 +621,8 @@ class AsyncDataCache : public memory::MemoryAllocator {
 
   bool allocateNonContiguous(
       memory::MachinePageCount numPages,
-      int32_t owner,
       Allocation& out,
-      std::function<void(int64_t, bool)> beforeAllocCB = nullptr,
+      ReservationCallback reservationCB = nullptr,
       memory::MachinePageCount minSizeClass = 0) override;
 
   int64_t freeNonContiguous(Allocation& allocation) override {
@@ -635,7 +633,7 @@ class AsyncDataCache : public memory::MemoryAllocator {
       memory::MachinePageCount numPages,
       Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
-      std::function<void(int64_t, bool)> beforeAllocCB = nullptr) override;
+      ReservationCallback reservationCB = nullptr) override;
 
   void freeContiguous(ContiguousAllocation& allocation) override {
     allocator_->freeContiguous(allocation);

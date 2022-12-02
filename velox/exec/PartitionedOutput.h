@@ -27,8 +27,8 @@ class Destination {
   Destination(
       const std::string& taskId,
       int destination,
-      memory::MemoryAllocator* FOLLY_NONNULL allocator)
-      : taskId_(taskId), destination_(destination), allocator_(allocator) {
+      memory::MemoryPool* FOLLY_NONNULL pool)
+      : taskId_(taskId), destination_(destination), pool_(pool) {
     setTargetSizePct();
   }
 
@@ -89,7 +89,7 @@ class Destination {
 
   const std::string taskId_;
   const int destination_;
-  memory::MemoryAllocator* FOLLY_NONNULL const allocator_;
+  memory::MemoryPool* FOLLY_NONNULL const pool_;
   uint64_t bytesInCurrent_{0};
   std::vector<IndexRange> rows_;
 
@@ -149,8 +149,7 @@ class PartitionedOutput : public Operator {
             planNode->outputType())),
         bufferManager_(PartitionedOutputBufferManager::getInstance()),
         maxBufferedBytes_(
-            ctx->task->queryCtx()->config().maxPartitionedOutputBufferSize()),
-        allocator_{operatorCtx_->allocator()} {
+            ctx->task->queryCtx()->config().maxPartitionedOutputBufferSize()) {
     if (numDestinations_ == 1 || planNode->isBroadcast()) {
       VELOX_CHECK(keyChannels_.empty());
       VELOX_CHECK_NULL(partitionFunction_);
@@ -216,7 +215,6 @@ class PartitionedOutput : public Operator {
   bool replicatedAny_{false};
   std::weak_ptr<exec::PartitionedOutputBufferManager> bufferManager_;
   const int64_t maxBufferedBytes_;
-  memory::MemoryAllocator* FOLLY_NONNULL allocator_;
   RowVectorPtr output_;
 
   // Reusable memory.
