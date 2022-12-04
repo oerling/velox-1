@@ -82,4 +82,27 @@ std::unordered_map<std::string, float>& baseSelectivities();
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
+  class Plan {
+    // The tables from original join graph that are included in this
+    // plan. If this is a derived table in the original plan, the
+    // covered object is the derived table, not its constituent
+    // tables.
+    PlanObjectSet tables_;
+
+    // The produced columns. Includes input columns.
+    PlanObjectSet columns_;
+
+    // Columns that are fixed on input. Applies to index path for a derived table, e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is dt.pkt1.
+    PlanObjectSet input_;
+
+    float setupCost_{0};
+    float perInputCost_{0};
+    
+    // The plan is made assuming that it will be applied to 'planInputCardinality_' rows of input.
+    float plannedInputCardinality_{1};
+
+    RelationPtr root_;
+  }
+} 
+  
 } // namespace facebook::velox::query

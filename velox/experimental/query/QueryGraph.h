@@ -142,6 +142,7 @@ class PlanObjectSet {
   void add(PlanObjectPtr ptr) {
     auto id = ptr->id;
     ensureSize(id);
+    adjustRange(id);
     bits::setBit(bits_.data(), id);
   }
   void unionColumns(ExprPtr expr);
@@ -153,6 +154,14 @@ class PlanObjectSet {
     ensureWords(bits::nwords(id + 1));
   }
 
+  void adjustRange(int32_t id) {
+    if (id < begin_) {
+      begin_ = id;
+  }
+    if (id >= end_) {
+      end_ = id + 1;
+    }
+  
   void ensureWords(int32_t size) {
     if (bits_.size() < size) {
       bits_.resize(size);
@@ -160,6 +169,8 @@ class PlanObjectSet {
   }
 
   std::vector<uint64_t, StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
+  int32_t begin_{0};
+  int32_t end{0};
 };
 
 struct Value {
@@ -179,6 +190,11 @@ struct Value {
 struct Expr : public PlanObject {
   Expr(PlanType type, Value _value) : PlanObject(type), value(_value) {}
 
+  // Returns the single base or derived table 'this' depends on, nullptr if 'this' depends on none or multiple tables.
+  RelationPtr singleTable();
+
+  PlanObjectSet allTables() const;
+  
   Value value;
 };
 
