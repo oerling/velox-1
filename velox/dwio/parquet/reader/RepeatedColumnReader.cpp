@@ -22,29 +22,34 @@ namespace facebook::velox::parquet {
 
 PageReader* readLeafRepDefs(
     dwio::common::SelectiveColumnReader* FOLLY_NONNULL reader,
-    int32_t numTop) {
+    int32_t numTop,
+    bool mustRead) {
   auto children = reader->children();
   if (children.empty()) {
+    if (!mustRead) {
+      return nullptr;
+    }
     auto pageReader = reader->formatData().as<ParquetData>().reader();
     pageReader->decodeRepDefs(numTop);
     return pageReader;
   }
-  PageReader* pageReader;
-  for (auto i = 0; i < children.size(); ++i) {
-    auto child = children[i];
-    if (i == 0) {
-      pageReader = readLeafRepDefs(child, numTop);
-
-      auto& type =
-          *reinterpret_cast<const ParquetTypeWithId*>(&reader->nodeType());
-      if (auto structChild = dynamic_cast<StructColumnReader*>(reader)) {
-        VELOX_NYI();
+  PageReader* pageReader = nullptr;
+  auto& type = *reinterpret_cast<const ParquetTypeWithId*>(&reader->nodeType());
+  if (type.type->kind() == TypeKind::ARRAY) {
+    pageReader = readLeafRepDefs(children[0], numTop, true);
+    auto list = dynamic_cast<ListColumnReader*>(reader);
+    VELOX_CHECK(list);
+    list->setLengthsFromRepDefs(*pageReader);
+    return pageReader;
+  }
+  if (auto structReader = dynamic_cast<StructColumnReader*>(reader)) {
+    pageReader = readLeafRepDefs(structReader->childForRepDefs(), numTop, true);
+    structReader->setNullsFromRepDefs(*pageReader);
+    for (auto i = 0; i < children.size(); ++i) {
+      auto child = children[i];
+      if (child != structReader->childForRepDefs()) {
+        readLeafRepDefs(child, numTop, false);
       }
-      auto list = dynamic_cast<ListColumnReader*>(reader);
-      VELOX_CHECK(list);
-      list->setLengthsFromRepDefs(*pageReader);
-    } else {
-      readLeafRepDefs(child, numTop);
     }
   }
   return pageReader;
@@ -69,11 +74,13 @@ void ensureRepDefs(
     int32_t numTop) {
   auto& nodeType =
       *reinterpret_cast<const ParquetTypeWithId*>(&reader.nodeType());
-  if (nodeType.maxDefine_ <= 1)
-    readLeafRepDefs(&reader, numTop);
+  // Check that this is a direct child of the root struct.
+  if (nodeType.parent && !nodeType.parent->parent) {
+    readLeafRepDefs(&reader, numTop, true);
+  }
 }
 
-ListColumnReader::ListColumnReader(
+  ListColumnReader::ListColumnReader(
     std::shared_ptr<const dwio::common::TypeWithId> requestedType,
     ParquetParams& params,
     common::ScanSpec& scanSpec)

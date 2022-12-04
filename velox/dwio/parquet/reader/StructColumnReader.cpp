@@ -34,6 +34,57 @@ StructColumnReader::StructColumnReader(
     addChild(ParquetColumnReader::build(childDataType, params, *childSpecs[i]));
     childSpecs[i]->setSubscript(children_.size() - 1);
   }
+  auto type = reinterpret_cast<const ParquetTypeWithId*>(nodeType_.get());
+  if (type->parent) {
+    levelMode_ = reinterpret_cast<const ParquetTypeWithId*>(nodeType_.get())->makeLevelInfo(levelInfo_);
+    childForRepDefs_ = findBestLeaf();
+    // Set mode to struct over lists if the child for repdefs has a list between this and the child.
+    auto child = childForRepDefs_;
+    for (;;) {
+      if (child->type()->kind() == TypeKind::ARRAY) {
+	levelMode_ = LevelMode::kStructOverLists;
+	break;
+      }
+      if (child->type()->kind() == TypeKind::ROW) {
+	child = reinterpret_cast<StructColumnReader*>(child)->childForRepDefs();
+	continue;
+      }
+      levelMode_ = LevelMode::kNulls;
+      break;
+    }
+  }
+}
+
+
+dwio::common::SelectiveColumnReader* StructColumnReader::findBestLeaf() {
+  SelectiveColumnReader* best = nullptr;
+  for (auto i = 0; i < children_.size(); ++i) {
+    auto child = children_[i];
+    auto kind = child->type()->kind();
+    // Complex type child repdefs must be read in any case.
+    if (kind == TypeKind::ROW || kind == TypeKind::ARRAY) {
+      return child;
+    }
+    if (!best) {
+      best = child;
+    } else if (best->scanSpec()->filter() && !child->scanSpec()->filter()) {
+      continue;
+    } else if (!best->scanSpec()->filter() && child->scanSpec()->filter()) {
+      best = child;
+      continue;
+    } else if (kind < best->type()->kind()) {
+      best = child;
+    }
+  }
+  return best;
+}
+  
+void StructColumnReader::read(
+    vector_size_t offset,
+    RowSet rows,
+    const uint64_t* incomingNulls) {
+  ensureRepDefs(*this, offset + rows.back() + 1 - readOffset_);
+  SelectiveStructColumnReader::read(offset, rows, nullptr);
 }
 
 void StructColumnReader::enqueueRowGroup(
@@ -50,8 +101,9 @@ void StructColumnReader::enqueueRowGroup(
   }
 }
 
-void StructColumnReader::seekToRowGroup(uint32_t index) {
-  SelectiveColumnReader::seekToRowGroup(index);
+  void StructColumnReader::seekToRowGroup(uint32_t index) {
+
+    SelectiveColumnReader::seekToRowGroup(index);
   readOffset_ = 0;
   for (auto& child : children_) {
     child->seekToRowGroup(index);
@@ -62,4 +114,24 @@ bool StructColumnReader::filterMatches(const thrift::RowGroup& /*rowGroup*/) {
   return true;
 }
 
+void StructColumnReader::setNullsFromRepDefs(PageReader& pageReader) {
+  if (levelInfo_.def_level == 0) {
+    return;
+  }
+    auto repDefRange = pageReader.repDefRange();
+  int32_t numRepDefs = repDefRange.second - repDefRange.first;
+  dwio::common::ensureCapacity<uint64_t>(
+					 nullsInReadRange_, bits::nwords(numRepDefs), &memoryPool_);
+  auto numStructs = pageReader.getLengthsAndNulls(
+      levelMode_,
+      levelInfo_,
+      repDefRange.first,
+      repDefRange.second,
+      numRepDefs,
+      nullptr,
+      nullsInReadRange()->asMutable<uint64_t>(),
+      0);
+  formatData_->as<ParquetData>().setNulls(nullsInReadRange(), numStructs);
+}
+  
 } // namespace facebook::velox::parquet

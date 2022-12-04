@@ -162,6 +162,10 @@ class ParquetData : public dwio::common::FormatData {
     return reader_->isDictionary();
   }
 
+  bool parentNullsInLeaves() const {
+    return true;
+  }
+  
  protected:
   memory::MemoryPool& pool_;
   std::shared_ptr<const ParquetTypeWithId> type_;

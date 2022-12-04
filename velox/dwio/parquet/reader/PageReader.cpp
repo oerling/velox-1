@@ -224,7 +224,7 @@ const char* FOLLY_NONNULL PageReader::uncompressData(
 void PageReader::setPageRowInfo(bool forRepDef) {
   if (isTopLevel_ || forRepDef) {
     numRowsInPage_ = numRepDefsInPage_;
-  } else {
+  } else if (hasChunkRepDefs_) {
     ++pageIndex_;
     VELOX_CHECK_LT(
         pageIndex_,
@@ -232,12 +232,32 @@ void PageReader::setPageRowInfo(bool forRepDef) {
         "Seeking past known repdefs for non top level column page {}",
         pageIndex_);
     numRowsInPage_ = numLeavesInPage_[pageIndex_];
+  } else {
+    numRowsInPage_ = kRowsUnknown;
   }
+}
+
+void PageReader::readPageDefLevels() {
+  VELOX_CHECK_EQ(kRowsUnknown, numRowsInPage_);
+  definitionLevels_.resize(numRepDefsInPage_);
+  wideDefineDecoder_->GetBatch(definitionLevels_.data(), numRepDefsInPage_);
+  leafNulls_.resize(bits::nwords(numRepDefsInPage_));
+  leafNullsSize_ = getLengthsAndNulls(
+      LevelMode::kNulls,
+      leafInfo_,
+      0,
+      numRepDefsInPage_,
+      numRepDefsInPage_,
+      nullptr,
+      leafNulls_.data(),
+      0);
+  numRowsInPage_ = leafNullsSize_;
+  numLeafNullsConsumed_ = 0;
 }
 
 void PageReader::updateRowInfoAfterPageSkipped() {
   rowOfPage_ += numRowsInPage_;
-  if (!isTopLevel_) {
+  if (hasChunkRepDefs_) {
     numLeafNullsConsumed_ = rowOfPage_;
   }
 }
@@ -285,6 +305,10 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   encodedDataSize_ = pageEnd - pageData_;
 
   encoding_ = pageHeader.data_page_header.encoding;
+  if (numRowsInPage_ == kRowsUnknown) {
+    readPageDefLevels();
+  }
+
   if (row != kRepDefOnly) {
     makeDecoder();
   }
@@ -341,7 +365,12 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
 
   encodedDataSize_ = pageHeader.uncompressed_page_size - levelsSize;
   encoding_ = pageHeader.data_page_header_v2.encoding;
-  makeDecoder();
+  if (numRowsInPage_ == kRowsUnknown) {
+    readPageDefLevels();
+  }
+  if (row != kRepDefOnly) {
+    makeDecoder();
+  }
 }
 
 void PageReader::prepareDictionary(const PageHeader& pageHeader) {
@@ -511,6 +540,7 @@ int32_t parquetTypeBytes(thrift::Type::type type) {
 } // namespace
 
 void PageReader::preloadRepDefs() {
+  hasChunkRepDefs_ = true;
   while (pageStart_ < chunkSize_) {
     seekToPage(kRepDefOnly);
     auto begin = repetitionLevels_.size();
