@@ -46,44 +46,38 @@ namespace facebook {
 namespace velox {
 namespace memory {
 
-/// This class provides the memory allocation interfaces for a query execution.
-/// Each query execution entity creates a dedicated memory pool object. The
+/// This class provides the memory allocation interfaces for query execution.
+/// Each query execution creates a dedicated memory pool object. The
 /// memory pool objects from a query are organized as a tree with four levels
-/// which reflects the query's physical execution plan:
+/// which mirror the query's physical execution plan:
 ///
 /// The top level is a single root pool object (query pool) associated with the
 /// query. The query pool is created on the first executed query task and owned
-/// by QueryCtx. Note that the query pool is optional as not all the engines
+/// by QueryCtx. Note that the query pool is optional as not all engines
 /// using memory pool are creating multiple tasks for the same query in the same
 /// process.
 ///
 /// The second level is a number of intermediate pool objects (task pool) with
 /// one per each query task. The query pool is the parent of all the task pools
-/// from the same query. The task pool is created by the query task and owned by
+/// of the same query. The task pool is created by the query task and owned by
 /// Task.
 ///
 /// The third level is a number of intermediate pool objects (node pool) with
 /// one per each query plan node. The task pool is the parent of all the node
 /// pools from the task's physical query plan fragment. The node pool is created
-/// by the first instantiated operator. It is owned by Task in 'childPools_' to
-/// enable the memory sharing within a query task without copy.
+/// by the first operator instantiated for the correspponding plan node. It is owned by Task via 'childPools_'
 ///
-/// The bottom level is a number of leaf pool objects (operator pool) with one
-/// per with each instantiated query operator. Each node pool is the parent of
-/// all the operators instantiated from associated query plan node with one per
-/// each driver. For instance, if the pipeline of a query plan node N has M
-/// drivers in par, then N node pool has M child operator pools. The operator
-/// pool is created by the operator. It is also owned by Task in 'childPools_'
-/// to enable the memory sharing within a query task without copy.
+/// The bottom level consists of per-operator pools. These are children of the node pool that corresponds to the plan node from which the operator is created.
+/// Operator and node pools are owned by the Task via 'childPools_'.
 ///
 /// The query pool is created from IMemoryManager::getChild() as a child of a
 /// singleton root pool object (system pool). There is only one system pool for
-/// a velox runtime system. Hence each query pool objects forms a subtree rooted
+/// a velox process. Hence each query pool objects forms a subtree rooted
 /// from the system pool.
 ///
-/// Each child pool object holds a shared reference on its parent pool object.
+/// Each child pool object holds a shared reference to its parent pool object.
 /// The parent object tracks its child pool objects through the raw pool object
-/// pointer with lock protected. The child pool object destruction first removes
+/// pointer protected by a mutex. The child pool object destruction first removes
 /// its raw pointer from its parent through dropChild() and then drops the
 /// shared reference on the parent.
 ///
@@ -95,9 +89,10 @@ namespace memory {
 /// enforcement.
 ///
 /// In addition to providing memory allocation functions, the memory pool object
-/// also provides the memory usage counting through MemoryUsageTracker which
-/// will be merged into memory pool object implementation later.
+/// also provides  memory usage accounting through MemoryUsageTracker. This
+/// will be merged into memory pool object later.
 ///
+  // oerling: Comment no longer valid?
 /// TODO: extend to provide contiguous and non-contiguous large chunk memory
 /// allocation and remove ScopedMappedMemory.
 class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
@@ -105,8 +100,8 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// Constructs a named memory pool with specified 'parent'.
   MemoryPool(const std::string& name, std::shared_ptr<MemoryPool> parent);
 
-  /// Removes this memory pool's tracking from its parent through dropChild()
-  /// as well as drops the shared reference on its parent.
+  /// Removes this memory pool's tracking from its parent through dropChild().
+  /// Drops the shared reference to its parent.
   virtual ~MemoryPool();
 
   /// Tree methods used to access and manage the memory hierarchy.
@@ -171,18 +166,18 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// Returns the largest class size used by non-contiguous memory allocation.
   virtual MachinePageCount largestSizeClass() const = 0;
 
-  /// Returns the list of supported class sizes used by non-contiguous memory
+  /// Returns the list of supported size class sizes used by non-contiguous memory
   /// allocation.
   virtual const std::vector<MachinePageCount>& sizeClasses() const = 0;
 
   /// Makes a large contiguous mmap of 'numPages'. The new mapped pages are
   /// returned in 'out' on success. Any formly mapped pages referenced by
-  /// 'out' is unmapped in all the cases even if the allocation false.
+  /// 'out' is unmapped in all the cases even if the allocation fails.
   virtual bool allocateContiguous(
       MachinePageCount numPages,
       MemoryAllocator::ContiguousAllocation& out) = 0;
 
-  /// Returns contiguous 'allocation'.
+  /// Frees contiguous 'allocation'. 'allocation' is empty on return.
   virtual void freeContiguous(
       MemoryAllocator::ContiguousAllocation& allocation) = 0;
 
@@ -211,24 +206,28 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// the aggregated usage of subtree. See 'ScopedChildUsageTest' for
   /// difference in their behavior.
   virtual void setMemoryUsageTracker(
-      const std::shared_ptr<MemoryUsageTracker>& tracker) = 0;
+				     // oerling: ->setTracker?
+				     const std::shared_ptr<MemoryUsageTracker>& tracker) = 0;
 
+  // oerling: Can we call this tracker()? New getters should just have the member name and no get, unless they actually do something.
   /// Returns the memory usage tracker associated with this memory pool.
   virtual const std::shared_ptr<MemoryUsageTracker>& getMemoryUsageTracker()
       const = 0;
 
-  /// Used for external aggregation.
+  /// Used for external aggregation.  oerling: can you clarify ?
   virtual void setSubtreeMemoryUsage(int64_t size) = 0;
 
+  // oerling: Comment?
   virtual int64_t updateSubtreeMemoryUsage(int64_t size) = 0;
 
-  /// Used to manage existing externally allocated memories without doing a new
-  /// allocation.
+  /// Used to manage existing externally allocated memory without doing a new
+  /// allocation. oerling: Document effect on tracker.
   virtual void reserve(int64_t /* bytes */) {
     VELOX_NYI("reserve() needs to be implemented in derived memory pool.");
   }
 
-  /// Sometimes in memory governance we want to mock an update for quota
+  // oerling: How does this relate to reserve? 'management' is better than 'governance' in this context.
+  /// Sometimes in memory management we want to mock an update for quota
   /// accounting purposes and different implementations can
   /// choose to accommodate this differently.
   virtual void release(int64_t /* bytes */, bool /* mock */ = false) {
@@ -257,19 +256,20 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
       const std::string& name,
       int64_t cap) = 0;
 
-  /// Invoked only on object destructor to remove this memory pool from its
+  /// Invoked only on destruction to remove this memory pool from its
   /// parent's child memory pool tracking.
   virtual void dropChild(const MemoryPool* FOLLY_NONNULL child);
 
   const std::string name_;
   std::shared_ptr<MemoryPool> parent_;
 
-  /// Used protect the concurrent access to 'children_'.
+  /// Protects 'children_'.
   mutable folly::SharedMutex childrenMutex_;
   std::list<MemoryPool*> children_;
 };
 
-namespace detail {
+  //oerling: Is this used? If used outside of the file, should not be in ::detail?
+  namespace detail {
 static inline MemoryPool& getCheckedReference(std::weak_ptr<MemoryPool> ptr) {
   auto sptr = ptr.lock();
   VELOX_USER_CHECK(sptr);
@@ -337,6 +337,8 @@ class MemoryPoolImpl : public MemoryPool {
   void freeContiguous(
       MemoryAllocator::ContiguousAllocation& allocation) override;
 
+  // oerling: delete commented out code?
+  // oerling: Formatting: Do not use full rows of  or -- or == for framing things.
   //////////////////// Memory Management methods /////////////////////
   // Library checks for low memory mode on a push model. The respective root,
   // component level or global, would compute for memory pressure.
@@ -443,7 +445,7 @@ class IMemoryManager {
 
   /// Returns the total memory usage allowed under this memory manager.
   /// The memory manager maintains this quota as a hard cap, and any allocation
-  /// that would cause a quota breach results in exceptions.
+  /// that would exceed the quota throws.
   virtual int64_t getMemoryQuota() const = 0;
 
   /// Power users that want to explicitly modify the tree should get the root of
@@ -453,6 +455,7 @@ class IMemoryManager {
   /// pool directly.
   virtual MemoryPool& getRoot() const = 0;
 
+oerling: addChild or newChild would be better since get usually means accessing existing one.
   /// Adds a child pool to root for use.
   virtual std::shared_ptr<MemoryPool> getChild(int64_t cap = kMaxMemory) = 0;
 
@@ -472,6 +475,7 @@ class IMemoryManager {
   virtual void release(int64_t size) = 0;
 };
 
+  // oerling: The below is notr entirely clear. 
 /// For now, users wanting multiple different allocators would need to
 /// instantiate different MemoryManager classes and manage them across static
 /// boundaries.
@@ -500,6 +504,7 @@ class MemoryManager final : public IMemoryManager {
 
   ~MemoryManager();
 
+  //oerling: comments for public functions?
   int64_t getMemoryQuota() const final;
 
   MemoryPool& getRoot() const final;
