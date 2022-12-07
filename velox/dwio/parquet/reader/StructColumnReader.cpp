@@ -114,11 +114,27 @@ bool StructColumnReader::filterMatches(const thrift::RowGroup& /*rowGroup*/) {
   return true;
 }
 
+void StructColumnReader::seekToEndOfPresetNulls() {
+  auto numUnread = formatData_->as<ParquetData>().presetNullsLeft();
+  for (auto i = 0; i < children_.size(); ++i) {
+    auto child = children_[i];
+    if (!child) {
+      continue;}
+    if (child->type()->kind() == TypeKind::ARRAY) {
+      child->seekTo(readOffset_ + numUnread, false);
+    }
+    else if (child->type()->kind() == TypeKind::ROW) {
+      reinterpret_cast<StructColumnReader*>(child)->seekToEndOfPresetNulls();
+    }
+  }
+  readOffset_ += numUnread;
+}
+
 void StructColumnReader::setNullsFromRepDefs(PageReader& pageReader) {
   if (levelInfo_.def_level == 0) {
     return;
   }
-    auto repDefRange = pageReader.repDefRange();
+  auto repDefRange = pageReader.repDefRange();
   int32_t numRepDefs = repDefRange.second - repDefRange.first;
   dwio::common::ensureCapacity<uint64_t>(
 					 nullsInReadRange_, bits::nwords(numRepDefs), &memoryPool_);

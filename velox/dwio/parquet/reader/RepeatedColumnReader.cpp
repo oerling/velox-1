@@ -20,6 +20,7 @@
 
 namespace facebook::velox::parquet {
 
+namespace {
 PageReader* readLeafRepDefs(
     dwio::common::SelectiveColumnReader* FOLLY_NONNULL reader,
     int32_t numTop,
@@ -55,6 +56,20 @@ PageReader* readLeafRepDefs(
   return pageReader;
 }
 
+void skipUnreadLengthsAndNulls(dwio::common::SelectiveColumnReader& reader) {
+  auto children = reader.children();
+  if (children.empty()) {
+    return;
+  }
+  if (reader.type()->kind() == TypeKind::ARRAY) {
+    reinterpret_cast<ListColumnReader*>(&reader)->skipUnreadLengths();
+  } else if (reader.type()->kind() == TypeKind::ROW) {
+    reinterpret_cast<StructColumnReader*>(&reader)->seekToEndOfPresetNulls();
+  } else {
+    VELOX_UNREACHABLE();
+  }
+}
+
 void enqueueChildren(
     dwio::common::SelectiveColumnReader* reader,
     uint32_t index,
@@ -68,6 +83,7 @@ void enqueueChildren(
     enqueueChildren(child, index, input);
   }
 }
+} // namespace
 
 void ensureRepDefs(
     dwio::common::SelectiveColumnReader& reader,
@@ -76,11 +92,12 @@ void ensureRepDefs(
       *reinterpret_cast<const ParquetTypeWithId*>(&reader.nodeType());
   // Check that this is a direct child of the root struct.
   if (nodeType.parent && !nodeType.parent->parent) {
+    skipUnreadLengthsAndNulls(reader);
     readLeafRepDefs(&reader, numTop, true);
   }
 }
 
-  ListColumnReader::ListColumnReader(
+ListColumnReader::ListColumnReader(
     std::shared_ptr<const dwio::common::TypeWithId> requestedType,
     ParquetParams& params,
     common::ScanSpec& scanSpec)
@@ -107,6 +124,15 @@ void ListColumnReader::seekToRowGroup(uint32_t index) {
   readOffset_ = 0;
   childTargetReadOffset_ = 0;
   child_->seekToRowGroup(index);
+}
+
+void ListColumnReader::skipUnreadLengths() {
+  auto& previousLengths = lengths_.lengths();
+  if (previousLengths) {
+    auto numPreviousLengths = previousLengths->size() / sizeof(vector_size_t) /
+        lengths_.nextLengthIndex();
+    skip(numPreviousLengths);
+  }
 }
 
 void ListColumnReader::setLengthsFromRepDefs(PageReader& pageReader) {

@@ -51,7 +51,7 @@ void PageReader::seekToPage(int64_t row) {
       case thrift::PageType::DICTIONARY_PAGE:
         if (row == kRepDefOnly) {
           skipBytes(
-              pageHeader.uncompressed_page_size,
+              pageHeader.compressed_page_size,
               inputStream_.get(),
               bufferStart_,
               bufferEnd_);

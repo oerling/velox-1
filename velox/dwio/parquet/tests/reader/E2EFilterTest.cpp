@@ -158,7 +158,7 @@ TEST_F(E2EFilterTest, integerDictionary) {
               30000, // rareMax
               true); // keepNulls
         },
-        false,
+        true,
         {"short_val", "int_val", "long_val"},
         20);
   }
@@ -182,7 +182,7 @@ TEST_F(E2EFilterTest, floatAndDoubleDirect) {
         makeQuantizedFloat<float>("float_val2", 200, true);
         makeQuantizedFloat<double>("double_val2", 522, true);
       },
-      false,
+      true,
       {"float_val", "double_val", "float_val2", "double_val2", "float_null"},
       20);
 }
@@ -207,7 +207,7 @@ TEST_F(E2EFilterTest, floatAndDouble) {
         makeReapeatingValues<float>("float_val2", 0, 100, 200, 10.1);
         makeReapeatingValues<double>("double_val2", 0, 100, 200, 100.8);
       },
-      false,
+      true,
       {"float_val", "double_val", "float_val2", "double_val2", "float_null"},
       20);
 }
@@ -300,7 +300,7 @@ TEST_F(E2EFilterTest, longDecimalDictionary) {
               UnscaledLongDecimal(30000), // rareMax
               true);
         },
-        false,
+        true,
         {},
         20);
   }
@@ -330,7 +330,7 @@ TEST_F(E2EFilterTest, longDecimalDirect) {
               UnscaledLongDecimal(30000), // rareMax
               true);
         },
-        false,
+        true,
         {},
         20);
   }
@@ -362,7 +362,7 @@ TEST_F(E2EFilterTest, stringDirect) {
         makeStringUnique("string_val");
         makeStringUnique("string_val_2");
       },
-      false,
+      true,
       {"string_val", "string_val_2"},
       20);
 }
@@ -377,7 +377,7 @@ TEST_F(E2EFilterTest, stringDictionary) {
         makeStringDistribution("string_val_2", 170, false, true);
         makeStringDistribution("string_const", 1, true, false);
       },
-      false,
+      true,
       {"string_val", "string_val_2"},
       20);
 }
@@ -396,9 +396,27 @@ TEST_F(E2EFilterTest, dedictionarize) {
         makeStringDistribution("string_val", 10000000, true, false);
         makeStringDistribution("string_val_2", 1700000, false, true);
       },
-      false,
+      true,
       {"long_val", "string_val", "string_val_2"},
       20);
+}
+
+TEST_F(E2EFilterTest, filterStruct) {
+  // The data has a struct member with one second level struct
+  // column. Both structs have a column that gets filtered 'nestedxxx'
+  // and one that does not 'dataxxx'.
+  testWithTypes(
+      "long_val:bigint,"
+      "outer_struct: struct<nested1:bigint, "
+      "  data1: string, "
+      "  inner_struct: struct<nested2: bigint, data2: smallint>>",
+      [&]() {},
+      false,
+      {"long_val",
+       "outer_struct.inner_struct",
+       "outer_struct.nested1",
+       "outer_struct.inner_struct.nested2"},
+      40);
 }
 
 TEST_F(E2EFilterTest, scalarList) {
