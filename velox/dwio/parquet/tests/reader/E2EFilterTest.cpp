@@ -424,11 +424,7 @@ TEST_F(E2EFilterTest, scalarList) {
   writerProperties_ =
       ::parquet::WriterProperties::Builder().data_pagesize(4 * 1024)->build();
   testWithTypes(
-      "long_val:bigint, array_val:array<int>",
-      nullptr,
-      true,
-      {"long_val"},
-      10);
+      "long_val:bigint, array_val:array<int>", nullptr, true, {"long_val"}, 10);
 }
 
 // Define main so that gflags get processed.

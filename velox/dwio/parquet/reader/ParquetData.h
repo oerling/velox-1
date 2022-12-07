@@ -18,8 +18,8 @@
 
 #include <thrift/protocol/TCompactProtocol.h> //@manual
 #include "velox/common/base/RawVector.h"
-#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/BufferUtil.h"
+#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"

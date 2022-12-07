@@ -126,7 +126,6 @@ class FormatData {
   virtual bool parentNullsInLeaves() const {
     return false;
   }
-  
 };
 
 /// Base class for format-specific reader initialization arguments.
@@ -146,7 +145,7 @@ class FormatParams {
     return pool_;
   }
 
-private:
+ private:
   memory::MemoryPool& pool_;
 };
 
