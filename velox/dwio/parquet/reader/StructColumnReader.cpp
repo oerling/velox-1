@@ -104,6 +104,8 @@ void StructColumnReader::enqueueRowGroup(
 
 void StructColumnReader::seekToRowGroup(uint32_t index) {
   SelectiveColumnReader::seekToRowGroup(index);
+  BufferPtr noBuffer;
+  formatData_->as<ParquetData>().setNulls(noBuffer, 0);
   readOffset_ = 0;
   for (auto& child : children_) {
     child->seekToRowGroup(index);
@@ -128,6 +130,7 @@ void StructColumnReader::seekToEndOfPresetNulls() {
     }
   }
   readOffset_ += numUnread;
+  formatData_->as<ParquetData>().skipNulls(numUnread, false);
 }
 
 void StructColumnReader::setNullsFromRepDefs(PageReader& pageReader) {

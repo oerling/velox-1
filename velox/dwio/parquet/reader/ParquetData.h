@@ -88,8 +88,10 @@ class ParquetData : public dwio::common::FormatData {
   /// Sets nulls to be returned by readNulls(). Nulls for non-leaf readers come
   /// from leaf repdefs which are gathered before descending the reader tree.
   void setNulls(BufferPtr& nulls, int32_t numValues) {
-    VELOX_CHECK_EQ(presetNullsConsumed_, presetNullsSize_);
-    presetNulls_ = nulls;
+    if (nulls || numValues) {
+      VELOX_CHECK_EQ(presetNullsConsumed_, presetNullsSize_);
+    }
+      presetNulls_ = nulls;
     presetNullsSize_ = numValues;
     presetNullsConsumed_ = 0;
   }
@@ -119,8 +121,8 @@ class ParquetData : public dwio::common::FormatData {
             bits,
             0,
             numValues);
+	presetNullsConsumed_ += numValues;
       }
-      presetNullsConsumed_ += numValues;
       return;
     }
     if (nullsOnly) {

@@ -759,7 +759,7 @@ void PageReader::skipNullsOnly(int64_t numRows) {
 }
 
 void PageReader::readNullsOnly(int64_t numValues, BufferPtr& buffer) {
-  VELOX_CHECK(isTopLevel_);
+  VELOX_CHECK(!maxRepeat_);
   auto toRead = numValues;
   if (buffer) {
     dwio::common::ensureCapacity<bool>(buffer, numValues, &pool_);

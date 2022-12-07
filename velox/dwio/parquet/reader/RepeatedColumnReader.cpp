@@ -123,16 +123,20 @@ void ListColumnReader::seekToRowGroup(uint32_t index) {
   SelectiveColumnReader::seekToRowGroup(index);
   readOffset_ = 0;
   childTargetReadOffset_ = 0;
+  lengths_.setLengths(nullptr);
   child_->seekToRowGroup(index);
 }
 
 void ListColumnReader::skipUnreadLengths() {
   auto& previousLengths = lengths_.lengths();
   if (previousLengths) {
-    auto numPreviousLengths = previousLengths->size() / sizeof(vector_size_t) /
+    auto numPreviousLengths =
+        (previousLengths->size() / sizeof(vector_size_t)) -
         lengths_.nextLengthIndex();
-    skip(numPreviousLengths);
-  }
+    if (numPreviousLengths) {
+      skip(numPreviousLengths);
+    }
+    }
 }
 
 void ListColumnReader::setLengthsFromRepDefs(PageReader& pageReader) {
