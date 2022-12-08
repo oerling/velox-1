@@ -123,7 +123,8 @@ void StructColumnReader::seekToEndOfPresetNulls() {
     if (!child) {
       continue;
     }
-    if (child->type()->kind() == TypeKind::ARRAY) {
+
+    if (child->type()->kind() != TypeKind::ROW) {
       child->seekTo(readOffset_ + numUnread, false);
     } else if (child->type()->kind() == TypeKind::ROW) {
       reinterpret_cast<StructColumnReader*>(child)->seekToEndOfPresetNulls();
