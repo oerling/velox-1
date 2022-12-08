@@ -91,7 +91,7 @@ class ParquetData : public dwio::common::FormatData {
     if (nulls || numValues) {
       VELOX_CHECK_EQ(presetNullsConsumed_, presetNullsSize_);
     }
-      presetNulls_ = nulls;
+    presetNulls_ = nulls;
     presetNullsSize_ = numValues;
     presetNullsConsumed_ = 0;
   }
@@ -121,7 +121,7 @@ class ParquetData : public dwio::common::FormatData {
             bits,
             0,
             numValues);
-	presetNullsConsumed_ += numValues;
+        presetNullsConsumed_ += numValues;
       }
       return;
     }

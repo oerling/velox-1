@@ -48,7 +48,7 @@ class RepeatedLengths {
     nextLengthIndex_ += numLengths;
   }
 
-private:
+ private:
   BufferPtr lengths_;
   int32_t nextLengthIndex_{0};
 };

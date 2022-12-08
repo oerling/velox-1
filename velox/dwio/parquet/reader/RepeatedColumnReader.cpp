@@ -136,7 +136,7 @@ void ListColumnReader::skipUnreadLengths() {
     if (numPreviousLengths) {
       skip(numPreviousLengths);
     }
-    }
+  }
 }
 
 void ListColumnReader::setLengthsFromRepDefs(PageReader& pageReader) {
