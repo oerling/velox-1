@@ -60,8 +60,12 @@ struct AccessStats {
   // works well with a typical formula of time over use count going to
   // zero as uses go up and time goes down. 'now' is the current
   // accessTime(), passed from the caller since getting the time is
-  // expensive and many entries are checked one after the other.
+  // expensive and many entries are checked one after the other. lastUse == 0
+  // means explicitly evictable.
   int32_t score(AccessTime now, uint64_t /*size*/) const {
+    if (!lastUse) {
+      return std::numeric_limits<int32_t>::max();
+    }
     return (now - lastUse) / (1 + numUses);
   }
 
@@ -137,6 +141,7 @@ class AsyncDataCacheEntry {
   static constexpr int32_t kTinyDataSize = 2048;
 
   explicit AsyncDataCacheEntry(CacheShard* FOLLY_NONNULL shard);
+  ~AsyncDataCacheEntry();
 
   // Sets the key and allocates the entry's memory.  Resets
   //  all other state. The entry must be held exclusively and must
@@ -231,6 +236,9 @@ class AsyncDataCacheEntry {
   void setGroupId(uint64_t groupId) {
     groupId_ = groupId;
   }
+
+  /// Sets access stats so that this is immediately evictable.
+  void makeEvictable();
 
   // Moves the promise out of 'this'. Used in order to handle the
   // promise within the lock of the cache shard, so not within private
@@ -496,8 +504,6 @@ struct CacheStats {
 // and other housekeeping.
 class CacheShard {
  public:
-  static constexpr int32_t kCacheOwner = -4;
-
   explicit CacheShard(AsyncDataCache* FOLLY_NONNULL cache) : cache_(cache) {}
 
   // See AsyncDataCache::findOrCreate.
@@ -557,6 +563,9 @@ class CacheShard {
   CachePin initEntry(
       RawFileCacheKey key,
       AsyncDataCacheEntry* FOLLY_NONNULL entry);
+
+  void freeAllocations(
+      std::vector<memory::MemoryAllocator::Allocation>& allocations);
 
   mutable std::mutex mutex_;
   folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry * FOLLY_NONNULL>
@@ -622,9 +631,8 @@ class AsyncDataCache : public memory::MemoryAllocator {
 
   bool allocateNonContiguous(
       memory::MachinePageCount numPages,
-      int32_t owner,
       Allocation& out,
-      std::function<void(int64_t, bool)> beforeAllocCB = nullptr,
+      ReservationCallback reservationCB = nullptr,
       memory::MachinePageCount minSizeClass = 0) override;
 
   int64_t freeNonContiguous(Allocation& allocation) override {
@@ -635,7 +643,7 @@ class AsyncDataCache : public memory::MemoryAllocator {
       memory::MachinePageCount numPages,
       Allocation* FOLLY_NULLABLE collateral,
       ContiguousAllocation& allocation,
-      std::function<void(int64_t, bool)> beforeAllocCB = nullptr) override;
+      ReservationCallback reservationCB = nullptr) override;
 
   void freeContiguous(ContiguousAllocation& allocation) override {
     allocator_->freeContiguous(allocation);

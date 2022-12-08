@@ -17,6 +17,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "velox/common/memory/Memory.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
 
@@ -62,9 +63,10 @@ class MockMemoryPool : public velox::memory::MemoryPool {
     updateLocalMemoryUsage(size);
     return allocator_->allocateBytes(size);
   }
-  void* allocateZeroFilled(int64_t numMembers, int64_t sizeEach) override {
-    updateLocalMemoryUsage(numMembers * sizeEach);
-    return allocator_->allocateZeroFilled(numMembers, sizeEach);
+
+  void* allocateZeroFilled(int64_t numEntries, int64_t sizeEach) override {
+    updateLocalMemoryUsage(numEntries * sizeEach);
+    return allocator_->allocateZeroFilled(numEntries * sizeEach);
   }
 
   // No-op for attempts to shrink buffer.
@@ -81,6 +83,39 @@ class MockMemoryPool : public velox::memory::MemoryPool {
   void free(void* p, int64_t size) override {
     allocator_->freeBytes(p, size);
     updateLocalMemoryUsage(-size);
+  }
+
+  bool allocateNonContiguous(
+      velox::memory::MachinePageCount /*unused*/,
+      velox::memory::MemoryAllocator::Allocation& /*unused*/,
+      velox::memory::MachinePageCount /*unused*/) override {
+    VELOX_UNSUPPORTED("allocateNonContiguous unsupported");
+  }
+
+  void freeNonContiguous(
+      velox::memory::MemoryAllocator::Allocation& /*unused*/) override {
+    VELOX_UNSUPPORTED("freeNonContiguous unsupported");
+  }
+
+  velox::memory::MachinePageCount largestSizeClass() const override {
+    VELOX_UNSUPPORTED("largestSizeClass unsupported");
+  }
+
+  const std::vector<velox::memory::MachinePageCount>& sizeClasses()
+      const override {
+    VELOX_UNSUPPORTED("sizeClasses unsupported");
+  }
+
+  bool allocateContiguous(
+      velox::memory::MachinePageCount /*unused*/,
+      velox::memory::MemoryAllocator::ContiguousAllocation& /*unused*/)
+      override {
+    VELOX_UNSUPPORTED("allocateContiguous unsupported");
+  }
+
+  void freeContiguous(velox::memory::MemoryAllocator::ContiguousAllocation&
+                      /*unused*/) override {
+    VELOX_UNSUPPORTED("freeContiguous unsupported");
   }
 
   int64_t getCurrentBytes() const override {

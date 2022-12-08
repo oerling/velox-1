@@ -92,7 +92,7 @@ OperatorCtx::createConnectorQueryCtx(
 
 std::optional<Spiller::Config> OperatorCtx::makeSpillConfig(
     Spiller::Type type) const {
-  const auto& queryConfig = driverCtx_->task->queryCtx()->config();
+  const auto& queryConfig = driverCtx_->task->queryCtx()->queryConfig();
   if (!queryConfig.spillEnabled()) {
     return std::nullopt;
   }
@@ -230,14 +230,6 @@ std::optional<uint32_t> Operator::maxDrivers(
     }
   }
   return std::nullopt;
-}
-
-memory::MemoryAllocator* OperatorCtx::allocator() const {
-  if (allocator_ == nullptr) {
-    allocator_ =
-        driverCtx_->task->addOperatorMemory(pool_->getMemoryUsageTracker());
-  }
-  return allocator_;
 }
 
 const std::string& OperatorCtx::taskId() const {
