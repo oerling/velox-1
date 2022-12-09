@@ -188,14 +188,15 @@ void ListColumnReader::read(
 
 int32_t arraySum(int* a, int n) {
   int s = 0;
-  for (auto i = 0; i < n; ++i) s += a[i];
+  for (auto i = 0; i < n; ++i)
+    s += a[i];
   return s;
 }
-  int32_t arrayCount(int* a, int n, int e) {
+int32_t arrayCount(int* a, int n, int e) {
   int c = 0;
-  for (auto i =0; i < n; ++i) {
-    if (a[i] == e) ++c;
+  for (auto i = 0; i < n; ++i) {
+    if (a[i] == e)
+      ++c;
   }
   return c;
 }
-
