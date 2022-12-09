@@ -33,7 +33,6 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
     return children_;
   }
 
-  
  protected:
   // Buffer size for reading lengths when skipping.
   static constexpr int32_t kBufferSize = 1024;
