@@ -39,11 +39,11 @@ void PageReader::seekToPage(int64_t row) {
   for (;;) {
     auto dataStart = pageStart_;
     if (chunkSize_ <= pageStart_) {
-    // This may happen if seeking to exactly end of row group.
-    numRepDefsInPage_ = 0;
-    numRowsInPage_ = 0;
-    break;
-  }
+      // This may happen if seeking to exactly end of row group.
+      numRepDefsInPage_ = 0;
+      numRowsInPage_ = 0;
+      break;
+    }
     PageHeader pageHeader = readPageHeader(chunkSize_ - pageStart_);
     pageStart_ = pageDataStart_ + pageHeader.compressed_page_size;
 
