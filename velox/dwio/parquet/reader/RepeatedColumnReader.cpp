@@ -124,6 +124,8 @@ void ListColumnReader::seekToRowGroup(uint32_t index) {
   SelectiveColumnReader::seekToRowGroup(index);
   readOffset_ = 0;
   childTargetReadOffset_ = 0;
+  BufferPtr noBuffer;
+  formatData_->as<ParquetData>().setNulls(noBuffer, 0);
   lengths_.setLengths(nullptr);
   child_->seekToRowGroup(index);
 }
@@ -168,6 +170,32 @@ void ListColumnReader::read(
   // The topmost list reader reads the repdefs for the left subtree.
   ensureRepDefs(*this, offset + rows.back() + 1 - readOffset_);
   SelectiveListColumnReader::read(offset, rows, incomingNulls);
+
+  // The child should be at the end of the range provided to this
+  // read() so that it can receive new repdefs for the next set of top
+  // level rows. The end of the range is not the end of unused lengths
+  // because all lengths maty have been used but the last one might
+  // have been 0.  If the last list was 0 and the previous one was not
+  // in 'rows' we will be at the end of the last non-zero list in
+  // 'rows', which is not the end of the lengths. ORC can seek to this
+  // point on next read, Parquet needs to seek here because new
+  // repdefs will be scanned and new lengths provided, overwriting the
+  // previous ones before the next read().
+  child_->seekTo(childTargetReadOffset_, false);
 }
 
 } // namespace facebook::velox::parquet
+
+int32_t arraySum(int* a, int n) {
+  int s = 0;
+  for (auto i = 0; i < n; ++i) s += a[i];
+  return s;
+}
+  int32_t arrayCount(int* a, int n, int e) {
+  int c = 0;
+  for (auto i =0; i < n; ++i) {
+    if (a[i] == e) ++c;
+  }
+  return c;
+}
+

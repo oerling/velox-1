@@ -83,7 +83,7 @@ dwio::common::SelectiveColumnReader* StructColumnReader::findBestLeaf() {
 void StructColumnReader::read(
     vector_size_t offset,
     RowSet rows,
-    const uint64_t* incomingNulls) {
+    const uint64_t* /*incomingNulls*/) {
   ensureRepDefs(*this, offset + rows.back() + 1 - readOffset_);
   SelectiveStructColumnReader::read(offset, rows, nullptr);
 }

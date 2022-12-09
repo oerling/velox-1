@@ -451,7 +451,7 @@ TEST_F(E2EFilterTest, filterStruct) {
       "long_val:bigint,"
       "outer_struct: struct<nested1:bigint, "
       "  data1: string, "
-      "  inner_struct: struct<nested2: bigint, data2: smallint>>",
+      "  inner_struct: struct<nested2: bigint, data2: array<smallint>>>",
       [&]() {},
       false,
       {"long_val",
@@ -461,12 +461,16 @@ TEST_F(E2EFilterTest, filterStruct) {
       40);
 }
 
-TEST_F(E2EFilterTest, scalarList) {
+TEST_F(E2EFilterTest, list) {
   // Break up the leaf data in small pages to cover coalescing repdefs.
   writerProperties_ =
       ::parquet::WriterProperties::Builder().data_pagesize(4 * 1024)->build();
   testWithTypes(
-      "long_val:bigint, array_val:array<int>", nullptr, true, {"long_val"}, 10);
+      "long_val:bigint, array_val:array<int>, struct_array: array<struct<k:int, v:int>>",
+      nullptr,
+      true,
+      {"long_val"},
+      10);
 }
 
 // Define main so that gflags get processed.
