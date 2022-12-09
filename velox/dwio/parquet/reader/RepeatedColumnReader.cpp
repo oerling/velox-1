@@ -111,6 +111,7 @@ ListColumnReader::ListColumnReader(
       ParquetColumnReader::build(childType, params, *scanSpec.children()[0]);
   reinterpret_cast<const ParquetTypeWithId*>(requestedType.get())
       ->makeLevelInfo(levelInfo_);
+  children_ = {child_.get()};
 }
 
 void ListColumnReader::enqueueRowGroup(

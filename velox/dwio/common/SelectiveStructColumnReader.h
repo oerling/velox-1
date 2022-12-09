@@ -81,7 +81,7 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
     }
   }
 
-  const std::vector<SelectiveColumnReader*> children() const override {
+  const std::vector<SelectiveColumnReader*>& children() const override {
     return children_;
   }
 

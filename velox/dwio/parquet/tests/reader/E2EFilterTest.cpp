@@ -106,8 +106,7 @@ TEST_F(E2EFilterTest, integerDirect) {
       {"short_val", "int_val", "long_val"},
       20);
 }
-
-TEST_F(E2EFilterTest, integerDictionary) {
+TEST_F(E2EFilterTest, compression) {
   for (const auto compression :
        {::parquet::Compression::SNAPPY,
         ::parquet::Compression::ZSTD,
@@ -159,8 +158,53 @@ TEST_F(E2EFilterTest, integerDictionary) {
         },
         true,
         {"short_val", "int_val", "long_val"},
-        20);
+        3);
   }
+}
+
+TEST_F(E2EFilterTest, integerDictionary) {
+    writerProperties_ = ::parquet::WriterProperties::Builder()
+                            .data_pagesize(4 * 1024)
+                            ->build();
+
+    testWithTypes(
+        "short_val:smallint,"
+        "int_val:int,"
+        "long_val:bigint",
+        [&]() {
+          makeIntDistribution<int64_t>(
+              "long_val",
+              10, // min
+              100, // max
+              22, // repeats
+              19, // rareFrequency
+              -9999, // rareMin
+              10000000000, // rareMax
+              true); // keepNulls
+
+          makeIntDistribution<int32_t>(
+              "int_val",
+              10, // min
+              100, // max
+              22, // repeats
+              19, // rareFrequency
+              -9999, // rareMin
+              100000000, // rareMax
+              false); // keepNulls
+
+          makeIntDistribution<int16_t>(
+              "short_val",
+              10, // min
+              100, // max
+              22, // repeats
+              19, // rareFrequency
+              -999, // rareMin
+              30000, // rareMax
+              true); // keepNulls
+        },
+        true,
+        {"short_val", "int_val", "long_val"},
+        20);
 }
 
 TEST_F(E2EFilterTest, floatAndDoubleDirect) {
