@@ -465,6 +465,8 @@ TEST_F(E2EFilterTest, list) {
   // Break up the leaf data in small pages to cover coalescing repdefs.
   writerProperties_ =
       ::parquet::WriterProperties::Builder().data_pagesize(4 * 1024)->build();
+  batchCount_ = 2;
+  batchSize_ = 12000;
   testWithTypes(
       "long_val:bigint, array_val:array<int>,"
       "struct_array: struct<a: array<struct<k:int, v:int, va: array<smallint>>>>",
