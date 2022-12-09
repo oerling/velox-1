@@ -466,9 +466,10 @@ TEST_F(E2EFilterTest, list) {
   writerProperties_ =
       ::parquet::WriterProperties::Builder().data_pagesize(4 * 1024)->build();
   testWithTypes(
-      "long_val:bigint, array_val:array<int>, struct_array: array<struct<k:int, v:int>>",
+      "long_val:bigint, array_val:array<int>,"
+      "struct_array: struct<a: array<struct<k:int, v:int, va: array<smallint>>>>",
       nullptr,
-      true,
+      false,
       {"long_val"},
       10);
 }

@@ -43,6 +43,7 @@ StructColumnReader::StructColumnReader(
     // this and the child.
     auto child = childForRepDefs_;
     for (;;) {
+      assert(child);
       if (child->type()->kind() == TypeKind::ARRAY) {
         levelMode_ = LevelMode::kStructOverLists;
         break;

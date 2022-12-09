@@ -172,7 +172,7 @@ class ParquetData : public dwio::common::FormatData {
     return reader_->isDictionary();
   }
 
-  bool parentNullsInLeaves() const {
+  bool parentNullsInLeaves() const override {
     return true;
   }
 

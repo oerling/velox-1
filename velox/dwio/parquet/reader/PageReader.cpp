@@ -599,10 +599,11 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
   int32_t i = repDefBegin_;
   if (maxRepeat_ > 0) {
     for (; i < numLevels; ++i) {
-      if (repetitionLevels_[i] == 0)
+      if (repetitionLevels_[i] == 0) {
         ++topFound;
-      if (topFound == numTopLevelRows + 1) {
-        break;
+	if (topFound == numTopLevelRows + 1) {
+	  break;
+	}
       }
     }
     repDefEnd_ = i;
