@@ -58,7 +58,7 @@ StructColumnReader::StructColumnReader(
   }
 }
 
-dwio::common::SelectiveColumnReader* StructColumnReader::findBestLeaf() {
+dwio::common::SelectiveColumnReader* FOLLY_NONNULL StructColumnReader::findBestLeaf() {
   SelectiveColumnReader* best = nullptr;
   for (auto i = 0; i < children_.size(); ++i) {
     auto child = children_[i];
@@ -78,6 +78,7 @@ dwio::common::SelectiveColumnReader* StructColumnReader::findBestLeaf() {
       best = child;
     }
   }
+  assert(best);
   return best;
 }
 

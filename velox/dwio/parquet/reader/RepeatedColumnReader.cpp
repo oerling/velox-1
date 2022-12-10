@@ -39,12 +39,13 @@ PageReader* FOLLY_NULLABLE readLeafRepDefs(
   if (type.type->kind() == TypeKind::ARRAY) {
     pageReader = readLeafRepDefs(children[0], numTop, true);
     auto list = dynamic_cast<ListColumnReader*>(reader);
-    VELOX_CHECK(list);
+    assert(list);
     list->setLengthsFromRepDefs(*pageReader);
     return pageReader;
   }
   if (auto structReader = dynamic_cast<StructColumnReader*>(reader)) {
     pageReader = readLeafRepDefs(structReader->childForRepDefs(), numTop, true);
+    assert(pageReader);
     structReader->setNullsFromRepDefs(*pageReader);
     for (auto i = 0; i < children.size(); ++i) {
       auto child = children[i];
@@ -185,18 +186,3 @@ void ListColumnReader::read(
 }
 
 } // namespace facebook::velox::parquet
-
-int32_t arraySum(int* a, int n) {
-  int s = 0;
-  for (auto i = 0; i < n; ++i)
-    s += a[i];
-  return s;
-}
-int32_t arrayCount(int* a, int n, int e) {
-  int c = 0;
-  for (auto i = 0; i < n; ++i) {
-    if (a[i] == e)
-      ++c;
-  }
-  return c;
-}
