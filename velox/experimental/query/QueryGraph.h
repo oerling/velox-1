@@ -25,6 +25,9 @@ namespace facebook::velox::query {
 
 using Name = const char*;
 
+template <typename T>
+using PtrSpan = folly::Range<T**>;
+
 struct PlanObject;
 
 using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
@@ -51,6 +54,10 @@ class QueryGraphContext {
 
   HashStringAllocator& allocator_;
   StlAllocator<void*> stlAllocator_;
+
+  PlanObjectPtr objectAt(int32_t id) {
+    return objects_[id];
+  }
 
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
@@ -108,7 +115,13 @@ enum class PlanType {
   kFilter,
   kJoin
 };
+
 Name planTypeName(PlanType type);
+
+inline bool isExprType(PlanType type) {
+  return type == PlanType::kColumn || type == PlanType::kCall ||
+      type == PlanType::kLiteral;
+}
 
 struct PlanObject {
   PlanObject(PlanType _type) : type(_type) {
@@ -125,6 +138,18 @@ struct PlanObject {
     return reinterpret_cast<const T>(this);
   }
 
+  virtual folly::Range<PlanObjectPtr*> children() {
+    return folly::Range<PlanObjectPtr*>(nullptr, nullptr);
+  }
+
+  template <typename Func>
+  void preorderVisit(Func func) {
+    func(this);
+    for (auto child : children()) {
+      child->preorderVisit(func);
+    }
+  }
+
   std::string toString() {
     return fmt::format("#{}", id);
   }
@@ -139,15 +164,43 @@ using ColumnPtr = Column*;
 
 class PlanObjectSet {
  public:
+  bool contains(PlanObjectPtr object) {
+    return object->id < end_ && bits::isBitSet(bits_.data(), object->id);
+  }
+
+  bool operator==(const PlanObjectSet& other) const;
+
+  size_t hash() const;
+
   void add(PlanObjectPtr ptr) {
     auto id = ptr->id;
     ensureSize(id);
     adjustRange(id);
     bits::setBit(bits_.data(), id);
   }
+
+  void erase(PlanObjectPtr object) {
+    if (object->id < end_) {
+      bits::clearBit(bits_.data(), object->id);
+    }
+  }
+
   void unionColumns(ExprPtr expr);
 
   void unionSet(const PlanObjectSet& other);
+
+  template <typename Func>
+  void forEach(Func func) const {
+    auto ctx = queryCtx();
+    bits::forEachSetBit(
+        bits_.data(), begin_, end_, [&](auto i) { func(ctx->objectAt(i)); });
+  }
+
+  std::vector<PlanObjectPtr> objects() const {
+    std::vector<PlanObjectPtr> result;
+    forEach([&](auto object) { result.push_back(object); });
+    return result;
+  }
 
  private:
   void ensureSize(int32_t id) {
@@ -157,11 +210,11 @@ class PlanObjectSet {
   void adjustRange(int32_t id) {
     if (id < begin_) {
       begin_ = id;
-  }
+    }
     if (id >= end_) {
       end_ = id + 1;
     }
-  
+  }
   void ensureWords(int32_t size) {
     if (bits_.size() < size) {
       bits_.resize(size);
@@ -170,7 +223,7 @@ class PlanObjectSet {
 
   std::vector<uint64_t, StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
   int32_t begin_{0};
-  int32_t end{0};
+  int32_t end_{0};
 };
 
 struct Value {
@@ -181,27 +234,30 @@ struct Value {
   const Type* FOLLY_NONNULL type;
   variant min;
   variant max;
-  const int64_t cardinality;
+  const float cardinality;
   // 0 means no nulls, 0.5 means half are null.
   float nullFraction{0};
   bool nullable{true};
 };
 
+struct Relation;
+using RelationPtr = Relation*;
+
 struct Expr : public PlanObject {
   Expr(PlanType type, Value _value) : PlanObject(type), value(_value) {}
 
-  // Returns the single base or derived table 'this' depends on, nullptr if 'this' depends on none or multiple tables.
-  RelationPtr singleTable();
+  // Returns the single base or derived table 'this' depends on, nullptr if
+  // 'this' depends on none or multiple tables.
+  PlanObjectPtr singleTable();
 
   PlanObjectSet allTables() const;
-  
+
+  PlanObjectSet columns;
   Value value;
 };
 
 using ExprVector = std::vector<ExprPtr, StlAllocator<ExprPtr>>;
 
-struct Relation;
-using RelationPtr = Relation*;
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
 
@@ -212,20 +268,27 @@ struct Literal : public Expr {
 };
 
 struct Column : public Expr {
-  Column(Name _name, RelationPtr _relation, Value value)
-      : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {}
+  Column(Name _name, PlanObjectPtr _relation, Value value)
+      : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {
+    columns.add(this);
+  }
 
   void equals(ColumnPtr other);
 
   Name name;
-  RelationPtr relation;
+  PlanObjectPtr relation;
   EquivalencePtr equivalence;
 };
 
 template <typename T>
-inline folly::Range<const T*> toRange(
-    const std::vector<T, StlAllocator<T>>& v) {
-  return folly::Range<const T*>(v.data(), v.size());
+inline folly::Range<T*> toRange(const std::vector<T, StlAllocator<T>>& v) {
+  return folly::Range<T*>(const_cast<T*>(v.data()), v.size());
+}
+
+template <typename T, typename U>
+inline folly::Range<T*> toRangeCast(const std::vector<U, StlAllocator<U>>& v) {
+  return folly::Range<T*>(
+      reinterpret_cast<T*>(const_cast<U*>(v.data())), v.size());
 }
 
 using ColumnVector = std::vector<ColumnPtr, StlAllocator<ColumnPtr>>;
@@ -248,17 +311,15 @@ class FunctionSet {
 };
 
 struct Call : public Expr {
-  Call(
-      Name _func,
-      Value value,
-      ExprVector _args,
-      PlanObjectSet _columns,
-      FunctionSet _functions)
+  Call(Name _func, Value value, ExprVector _args, FunctionSet _functions)
       : Expr(PlanType::kCall, value),
         func(_func),
         args(std::move(_args)),
-        columns(std::move(_columns)),
-        functions(_functions) {}
+        functions(_functions) {
+    for (auto arg : args) {
+      columns.unionSet(arg->columns);
+    }
+  }
 
   Name func;
   ExprVector args;
@@ -313,11 +374,11 @@ struct Distribution {
   // Partitioning columns. The values of these columns determine which of
   // 'numPartitions' contains any given row. This does not specify the
   // partition function (e.g. Hive bucket or range partition).
-  ColumnVector partition{stl<ColumnPtr>()};
+  ExprVector partition{stl<ExprPtr>()};
 
   // Ordering columns. Each partition is ordered by these. Specifies that
   // streaming group by or merge join are possible.
-  ColumnVector order{stl<ColumnPtr>()};
+  ExprVector order{stl<ExprPtr>()};
 
   // Corresponds 1:1 to 'order'
   std::vector<OrderType> orderType;
@@ -372,6 +433,20 @@ struct Join {
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
   ExprVector rightKeys{stl<ExprPtr>()};
 
+  PlanObjectPtr leftTable{nullptr};
+  PlanObjectPtr rightTable{nullptr};
+
+  // 'rightKeys' select max 1 'leftTable' row.
+  bool leftUnique{false};
+
+  // 'leftKeys' select max 1 'rightTable' row.
+  bool rightUnique{false};
+  // number of right side rows selected for one row on the left.
+  float lrFanout{1};
+
+  // Number of left side rows selected for one row on the right.
+  float rlFanout{1};
+
   // Join condition for any non-equality  conditions for non-inner joins.
   Expr* condition;
 
@@ -392,6 +467,8 @@ struct Join {
   // True if the join is a right semijoin. This is possible only by hash or
   // merge.
   bool leftSemi{false};
+
+  void guessFanout();
 };
 
 using JoinPtr = Join*;
@@ -431,6 +508,8 @@ struct BaseTable : public PlanObject, public Relation {
 
   SchemaTablePtr schemaTable;
 };
+
+using BaseTablePtr = BaseTable*;
 
 // Aggregate function. The aggregation and arguments are in the
 // inherited Expr. The Value pertains to the aggregation
@@ -587,6 +666,33 @@ struct Index : public Relation {
 };
 
 using IndexPtr = Index*;
+
+// Describes the number of rows to look at and the number of expected matches
+// given an arbitrary set of values for a set of columns.
+struct IndexInfo {
+  // Index chosen based on columns.
+  IndexPtr index;
+
+  // True if the column combination is unique. This can be true even if there is
+  // no key order in 'index'.
+  bool unique;
+
+  // The number of rows selected after index lookup based on 'lookupKeys'. For
+  // empty 'lookupKeys', this is the cardinality of 'index'.
+  float scanCardinality;
+
+  // The expected number of hits for an equality match of lookup keys. This is
+  // the expected number of rows given the lookup column combination regardless
+  // of whether an index order can be used.
+  float joinCardinality;
+
+  // The lookup columns that match 'index'. These match 1:1 the leading keys of
+  // 'index'. If 'index' has no ordering columns or if the lookup columns are
+  // not a prefix of these, this is empty.
+  std::vector<ColumnPtr> lookupKeys;
+  PlanObjectSet coveredColumns;
+};
+
 struct SchemaTable {
   SchemaTable(Name _name, const RowTypePtr& _type) : name(_name), type(_type) {}
 
@@ -603,6 +709,11 @@ struct SchemaTable {
   ColumnPtr column(const std::string& name, Value value);
 
   ColumnPtr findColumn(const std::string& name) const;
+  bool isUnique(folly::Range<ColumnPtr*> columns);
+
+  IndexInfo indexInfo(IndexPtr index, folly::Range<ColumnPtr*> columns);
+
+  IndexInfo indexByColumns(folly::Range<ColumnPtr*> columns);
 
   // private:
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
@@ -611,8 +722,6 @@ struct SchemaTable {
   std::unordered_map<std::string, ColumnPtr> columns;
   std::vector<IndexPtr> indices;
 };
-
-using SchemaTablePtr = SchemaTable*;
 
 class Schema {
  public:
@@ -626,5 +735,16 @@ class Schema {
 };
 
 using SchemaPtr = Schema*;
+/// Returns all distinct tables 'exprs' depend on.
+PlanObjectSet allTables(PtrSpan<Expr> exprs);
 
 } // namespace facebook::velox::query
+
+namespace std {
+template <>
+struct hash<::facebook::velox::query::PlanObjectSet> {
+  size_t operator()(const ::facebook::velox::query::PlanObjectSet set) const {
+    return set.hash();
+  }
+};
+} // namespace std

@@ -41,6 +41,8 @@ using ExprDedupMap = folly::F14FastMap<
     ITypedExprHasher,
     ITypedExprComparer>;
 
+class Plan;
+
 /// Instance of query optimization. Comverts a plan and schema into an optimized
 /// plan. Depends on QueryGraphContext being set on the calling thread.
 class Optimization {
@@ -62,6 +64,11 @@ class Optimization {
   OrderByPtr translateOrderBy(const core::OrderByNode& order);
   GroupByPtr translateGroupBy(const core::AggregationNode& aggregation);
 
+  void makePlans(
+      DerivedTablePtr table,
+      RelationOpPtr* FOLLY_NULLABLE left,
+      const PlanObjectSet& boundColumns);
+
   const Schema& schema_;
   const core::PlanNode& inputPlan_;
   DerivedTablePtr root_;
@@ -73,6 +80,8 @@ class Optimization {
   ExprDedupMap exprDedup_;
 
   int32_t nameCounter_{0};
+
+  std::unordered_map<PlanObjectSet, std::vector<Plan * FOLLY_NONNULL>> memo_;
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().
@@ -82,27 +91,30 @@ std::unordered_map<std::string, float>& baseSelectivities();
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
-  class Plan {
-    // The tables from original join graph that are included in this
-    // plan. If this is a derived table in the original plan, the
-    // covered object is the derived table, not its constituent
-    // tables.
-    PlanObjectSet tables_;
+class Plan {
+  // The tables from original join graph that are included in this
+  // plan. If this is a derived table in the original plan, the
+  // covered object is the derived table, not its constituent
+  // tables.
+  PlanObjectSet tables_;
 
-    // The produced columns. Includes input columns.
-    PlanObjectSet columns_;
+  // The produced columns. Includes input columns.
+  PlanObjectSet columns_;
 
-    // Columns that are fixed on input. Applies to index path for a derived table, e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is dt.pkt1.
-    PlanObjectSet input_;
+  // Columns that are fixed on input. Applies to index path for a derived table,
+  // e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is
+  // dt.pkt1.
+  PlanObjectSet input_;
 
-    float setupCost_{0};
-    float perInputCost_{0};
-    
-    // The plan is made assuming that it will be applied to 'planInputCardinality_' rows of input.
-    float plannedInputCardinality_{1};
+  float setupCost_{0};
+  float perInputCost_{0};
 
-    RelationPtr root_;
-  }
-} 
-  
+  // The plan is made assuming that it will be applied to
+  // 'planInputCardinality_' rows of input.
+  float plannedInputCardinality_{1};
+
+  RelationPtr root_;
+};
+
+
 } // namespace facebook::velox::query
