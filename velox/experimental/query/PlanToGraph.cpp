@@ -105,7 +105,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     return literal;
   }
   auto it = exprDedup_.find(expr.get());
-  if (it == exprDedup_.end()) {
+  if (it != exprDedup_.end()) {
     return it->second;
   }
   ExprVector args{expr->inputs().size(), stl<ExprPtr>()};
@@ -178,18 +178,21 @@ void makeJoin(DerivedTablePtr dt, ExprPtr left, ExprPtr right) {
     if (join->leftTable == leftTable && join->rightTable == rightTable) {
       join->leftKeys.push_back(left);
       join->rightKeys.push_back(right);
+      join->guessFanout();
       return;
     } else if (join->rightTable == leftTable && join->leftTable == rightTable) {
       join->leftKeys.push_back(right);
       join->rightKeys.push_back(left);
+      join->guessFanout();
       return;
     }
   }
   Define(Join, join);
   join->leftKeys.push_back(left);
   join->rightKeys.push_back(right);
-  join->leftTable = singleTable(left);
-  join->rightTable = singleTable(right);
+  join->leftTable = leftTable;
+  join->rightTable = rightTable;
+  join->guessFanout();
   dt->joins.push_back(join);
 }
 
@@ -230,6 +233,7 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
 
     Define(BaseTable, baseTable);
     baseTable->cname = toName(cname);
+    baseTable->schemaTable = schemaTable;
     ColumnVector columns{stl<ColumnPtr>()};
     ColumnVector schemaColumns{stl<ColumnPtr>()};
     for (auto& pair : assignments) {
@@ -247,11 +251,13 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
       columns.push_back(column);
       renames_[pair.first] = column;
     }
-    // baseTable->setRelation(*schemaTable, columns, schemaColumns);
+    baseTable->setRelation(*schemaTable->indices[0], columns, schemaColumns);
+    baseTable->distribution.cardinality = schemaTable->indices[0]->distribution.cardinality * selection;
     currentSelect_->tables.push_back(baseTable);
     return baseTable;
   }
   if (name == "Project") {
+    makeQueryGraph(*node.sources()[0]);
     auto project = reinterpret_cast<const core::ProjectNode*>(&node);
     auto names = project->names();
     auto exprs = project->projections();
@@ -259,9 +265,21 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
       Expr* expr = translateExpr(exprs[i]);
       renames_[names[i]] = expr;
     }
+    return currentSelect_;
+  }
+  if (name == "Filter") {
+    makeQueryGraph(*node.sources()[0]);
+    auto filter = reinterpret_cast<const core::FilterNode*>(&node);
+    Expr* expr = translateExpr(filter->filter());
+    currentSelect_->conjuncts.push_back(expr);
+    return currentSelect_;
   }
   if (name == "HashJoin" || name == "MergeJoin") {
     translateJoin(*reinterpret_cast<const core::AbstractJoinNode*>(&node));
+    return currentSelect_;
+  }
+  if (name == "LocalPartition") {
+    makeQueryGraph(*node.sources()[0]);
     return currentSelect_;
   }
   if (name == "Aggregation") {
@@ -271,17 +289,18 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
     return currentSelect_;
   }
   if (name == "OrderBy") {
-    return makeQueryGraph(*node.sources()[0]);
+    makeQueryGraph(*node.sources()[0]);
     currentSelect_->orderBy =
         translateOrderBy(*reinterpret_cast<const core::OrderByNode*>(&node));
     return currentSelect_;
   }
   if (name == "Limit") {
+    makeQueryGraph(*node.sources()[0]);
     auto limit = reinterpret_cast<const core::LimitNode*>(&node);
     currentSelect_->limit = limit->count();
     currentSelect_->offset = limit->offset();
   }
-  return nullptr;
+  return currentSelect_;
 }
 
 float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {

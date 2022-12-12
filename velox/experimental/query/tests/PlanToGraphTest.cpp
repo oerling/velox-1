@@ -15,9 +15,20 @@
  */
 
 #include "velox/experimental/query/PlanToGraph.h"
+#include <folly/init/Init.h>
 #include <gtest/gtest.h>
+#include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
 #include "velox/experimental/query/tests/Tpch.h"
+#include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/parse/TypeResolver.h"
+#include "velox/common/file/FileSystems.h"
+
+DEFINE_string(
+    data_path,
+    "/home/oerling/tpch100pqsnlinks",
+    "Path to directory for TPC-H files");
 
 using namespace facebook::velox;
 using namespace facebook::velox::query;
@@ -29,10 +40,20 @@ class PlanToGraphTest : public testing::Test {
         memory::MappedMemory::getInstance());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
     queryCtx() = context_.get();
+    functions::prestosql::registerAllScalarFunctions();
+    aggregate::prestosql::registerAllAggregateFunctions();
+    parse::registerTypeResolver();
+    filesystems::registerLocalFileSystem();
+    parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
     builder_ = std::make_unique<exec::test::TpchQueryBuilder>(
         dwio::common::FileFormat::PARQUET);
+    builder_->initialize(FLAGS_data_path);
   }
 
+  void makeCheats() {
+    baseSelectivities()["table: lineitem, range filters: [(l_shipdate, BigintRange: [9205, 9223372036854775807] no nulls)]"] = 0.5;
+  }
+  
   std::unique_ptr<HashStringAllocator> allocator_;
 
   std::unique_ptr<QueryGraphContext> context_;
@@ -45,4 +66,10 @@ TEST_F(PlanToGraphTest, q3) {
   Optimization opt(*q3.plan, *schema);
   auto result = opt.bestPlan();
   LOG(INFO) << result->toString(true, true);
+}
+
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  folly::init(&argc, &argv, false);
+  return RUN_ALL_TESTS();
 }

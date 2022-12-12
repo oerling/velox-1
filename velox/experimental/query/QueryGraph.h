@@ -138,8 +138,8 @@ struct PlanObject {
     return reinterpret_cast<const T>(this);
   }
 
-  virtual folly::Range<PlanObjectPtr*> children() {
-    return folly::Range<PlanObjectPtr*>(nullptr, nullptr);
+  virtual PtrSpan<PlanObject> children() {
+    return PtrSpan<PlanObject>(nullptr, nullptr);
   }
 
   template <typename Func>
@@ -150,7 +150,7 @@ struct PlanObject {
     }
   }
 
-  std::string toString() {
+  virtual std::string toString() const {
     return fmt::format("#{}", id);
   }
   PlanType type;
@@ -160,8 +160,8 @@ struct PlanObject {
 struct Expr;
 using ExprPtr = Expr*;
 struct Column;
-using ColumnPtr = Column*;
-
+  using ColumnPtr = Column*;
+  
 class PlanObjectSet {
  public:
   bool contains(PlanObjectPtr object) {
@@ -277,7 +277,9 @@ struct Column : public Expr {
 
   Name name;
   PlanObjectPtr relation;
-  EquivalencePtr equivalence;
+  EquivalencePtr equivalence{nullptr};
+
+  std::string toString() const override;
 };
 
 template <typename T>
@@ -324,10 +326,10 @@ struct Call : public Expr {
   Name func;
   ExprVector args;
 
-  // Columns this depends on.
-  PlanObjectSet columns;
   // Set of functions used in 'this' and 'args'.
   FunctionSet functions;
+
+  std::string toString() const override;
 };
 
 using CallPtr = Call*;
@@ -404,7 +406,7 @@ struct Distribution {
   ColumnVector clustering{stl<ColumnPtr>()};
 
   // True if the data is replicated to 'numPartitions'.
-  bool isBroadcast;
+  bool isBroadcast{false};
 };
 
 struct FilteredColumn {
@@ -507,6 +509,16 @@ struct BaseTable : public PlanObject, public Relation {
       const ColumnVector& schemaColumns);
 
   SchemaTablePtr schemaTable;
+
+  // Top level conjuncts on single columns and literals, column to the left.
+  ExprVector columnFilters{stl<ExprPtr>()};
+
+  // Multicolumn filters dependent on 'this' alone.
+  ExprPtr filter{nullptr};
+  
+
+  // System specific representation of filter on columns, e.g. set of common::Filter.
+  void* nativeFilter;
 };
 
 using BaseTablePtr = BaseTable*;
@@ -709,11 +721,11 @@ struct SchemaTable {
   ColumnPtr column(const std::string& name, Value value);
 
   ColumnPtr findColumn(const std::string& name) const;
-  bool isUnique(folly::Range<ColumnPtr*> columns);
+  bool isUnique(PtrSpan<Column> columns);
 
-  IndexInfo indexInfo(IndexPtr index, folly::Range<ColumnPtr*> columns);
+  IndexInfo indexInfo(IndexPtr index, PtrSpan<Column> columns);
 
-  IndexInfo indexByColumns(folly::Range<ColumnPtr*> columns);
+  IndexInfo indexByColumns(PtrSpan<Column> columns);
 
   // private:
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
