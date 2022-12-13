@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 #include "velox/exec/PartitionedOutputBufferManager.h"
+
 #include <gtest/gtest.h>
-#include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+
+#include "velox/common/memory/MemoryAllocator.h"
+#include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -28,8 +31,7 @@ using facebook::velox::test::BatchMaker;
 class PartitionedOutputBufferManagerTest : public testing::Test {
  protected:
   void SetUp() override {
-    pool_ = facebook::velox::memory::getDefaultScopedMemoryPool();
-    mappedMemory_ = memory::MappedMemory::getInstance();
+    pool_ = facebook::velox::memory::getDefaultMemoryPool();
     bufferManager_ = PartitionedOutputBufferManager::getInstance().lock();
     if (!isRegisteredVectorSerde()) {
       facebook::velox::serializer::presto::PrestoVectorSerde::
@@ -53,7 +55,10 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
                                 BatchMaker::createBatch(rowType, 100, *pool_))})
                             .planFragment();
     auto task = std::make_shared<Task>(
-        taskId, std::move(planFragment), 0, core::QueryCtx::createForTest());
+        taskId,
+        std::move(planFragment),
+        0,
+        std::make_shared<core::QueryCtx>(executor_.get()));
 
     bufferManager_->initializeTask(task, false, numDestinations, numDrivers);
     return task;
@@ -68,7 +73,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
   }
 
   std::unique_ptr<SerializedPage> toSerializedPage(VectorPtr vector) {
-    auto data = std::make_unique<VectorStreamGroup>(mappedMemory_);
+    auto data = std::make_unique<VectorStreamGroup>(pool_.get());
     auto size = vector->size();
     auto range = IndexRange{0, size};
     data->createStreamTree(
@@ -76,7 +81,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
     data->append(
         std::dynamic_pointer_cast<RowVector>(vector), folly::Range(&range, 1));
     auto listener = bufferManager_->newListener();
-    IOBufOutputStream stream(*mappedMemory_, listener.get(), data->size());
+    IOBufOutputStream stream(*pool_, listener.get(), data->size());
     data->flush(&stream);
     return std::make_unique<SerializedPage>(stream.getIOBuf());
   }
@@ -86,7 +91,7 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
       int destination,
       std::shared_ptr<const RowType> rowType,
       vector_size_t size) {
-    ContinueFuture future(false);
+    ContinueFuture future;
     auto blockingReason = bufferManager_->enqueue(
         taskId, destination, makeSerializedPage(rowType, size), &future);
     ASSERT_EQ(blockingReason, BlockingReason::kNotBlocked);
@@ -109,14 +114,13 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
         maxBytes,
         sequence,
         [destination, sequence, expectedGroups, &receivedData](
-            std::vector<std::shared_ptr<SerializedPage>>& groups,
+            std::vector<std::unique_ptr<folly::IOBuf>> pages,
             int64_t inSequence) {
           EXPECT_FALSE(receivedData) << "for destination " << destination;
-          EXPECT_EQ(groups.size(), expectedGroups)
+          EXPECT_EQ(pages.size(), expectedGroups)
               << "for destination " << destination;
-          for (int i = 0; i < groups.size(); i++) {
-            EXPECT_TRUE(groups[i] != nullptr)
-                << "for destination " << destination;
+          for (const auto& page : pages) {
+            EXPECT_TRUE(page != nullptr) << "for destination " << destination;
           }
           EXPECT_EQ(inSequence, sequence) << "for destination " << destination;
           receivedData = true;
@@ -146,11 +150,11 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
   DataAvailableCallback
   receiveEndMarker(int destination, int64_t sequence, bool& receivedEndMarker) {
     return [destination, sequence, &receivedEndMarker](
-               std::vector<std::shared_ptr<SerializedPage>>& groups,
+               std::vector<std::unique_ptr<folly::IOBuf>> pages,
                int64_t inSequence) {
       EXPECT_FALSE(receivedEndMarker) << "for destination " << destination;
-      EXPECT_EQ(groups.size(), 1) << "for destination " << destination;
-      EXPECT_TRUE(groups[0] == nullptr) << "for destination " << destination;
+      EXPECT_EQ(pages.size(), 1) << "for destination " << destination;
+      EXPECT_TRUE(pages[0] == nullptr) << "for destination " << destination;
       EXPECT_EQ(inSequence, sequence) << "for destination " << destination;
       receivedEndMarker = true;
     };
@@ -195,13 +199,13 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
       bool& receivedData) {
     receivedData = false;
     return [destination, sequence, expectedGroups, &receivedData](
-               std::vector<std::shared_ptr<SerializedPage>>& groups,
+               std::vector<std::unique_ptr<folly::IOBuf>> pages,
                int64_t inSequence) {
       EXPECT_FALSE(receivedData) << "for destination " << destination;
-      EXPECT_EQ(groups.size(), expectedGroups)
+      EXPECT_EQ(pages.size(), expectedGroups)
           << "for destination " << destination;
       for (int i = 0; i < expectedGroups; i++) {
-        EXPECT_TRUE(groups[i] != nullptr) << "for destination " << destination;
+        EXPECT_TRUE(pages[i] != nullptr) << "for destination " << destination;
       }
       EXPECT_EQ(inSequence, sequence) << "for destination " << destination;
       receivedData = true;
@@ -224,8 +228,10 @@ class PartitionedOutputBufferManagerTest : public testing::Test {
     EXPECT_FALSE(receivedData) << "for destination " << destination;
   }
 
-  std::unique_ptr<facebook::velox::memory::ScopedMemoryPool> pool_;
-  memory::MappedMemory* mappedMemory_;
+  std::shared_ptr<folly::Executor> executor_{
+      std::make_shared<folly::CPUThreadPoolExecutor>(
+          std::thread::hardware_concurrency())};
+  std::shared_ptr<facebook::velox::memory::MemoryPool> pool_;
   std::shared_ptr<PartitionedOutputBufferManager> bufferManager_;
 };
 
@@ -290,7 +296,7 @@ TEST_F(PartitionedOutputBufferManagerTest, basic) {
   EXPECT_TRUE(task->isRunning());
   deleteResults(taskId, 3);
   fetchEndMarker(taskId, 4, 2);
-
+  bufferManager_->removeTask(taskId);
   EXPECT_TRUE(task->isFinished());
 }
 
@@ -323,6 +329,7 @@ TEST_F(PartitionedOutputBufferManagerTest, maxBytes) {
   for (int destination = 2; destination < 5; destination++) {
     fetchEndMarker(taskId, destination, 0);
   }
+  bufferManager_->removeTask(taskId);
 }
 
 TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
@@ -366,7 +373,50 @@ TEST_F(PartitionedOutputBufferManagerTest, errorInQueue) {
     std::lock_guard<std::mutex> l(queue->mutex());
     queue->setErrorLocked("error");
   }
-  ContinueFuture future(false);
+  ContinueFuture future;
   bool atEnd = false;
   EXPECT_THROW(auto page = queue->dequeue(&atEnd, &future), std::runtime_error);
+}
+
+TEST_F(PartitionedOutputBufferManagerTest, serializedPage) {
+  const uint64_t kBufferSize = 128;
+  // IOBuf managed memory case
+  {
+    auto iobuf = folly::IOBuf::create(kBufferSize);
+    std::string payload = "abcdefghijklmnopq";
+    size_t payloadSize = payload.size();
+    std::memcpy(iobuf->writableData(), payload.data(), payloadSize);
+    iobuf->append(payloadSize);
+
+    EXPECT_EQ(0, pool_->getCurrentBytes());
+    {
+      auto serializedPage =
+          std::make_shared<SerializedPage>(std::move(iobuf), pool_.get());
+      EXPECT_EQ(payloadSize, pool_->getCurrentBytes());
+    }
+    EXPECT_EQ(0, pool_->getCurrentBytes());
+  }
+
+  // External managed memory case
+  {
+    auto mappedMemory = memory::MemoryAllocator::getInstance();
+    void* buffer = mappedMemory->allocateBytes(kBufferSize);
+    auto iobuf = folly::IOBuf::wrapBuffer(buffer, kBufferSize);
+    std::string payload = "abcdefghijklmnopq";
+    std::memcpy(iobuf->writableData(), payload.data(), payload.size());
+
+    EXPECT_EQ(0, pool_->getCurrentBytes());
+    EXPECT_EQ(mappedMemory->allocateBytesStats().totalSmall, kBufferSize);
+    {
+      auto serializedPage = std::make_shared<SerializedPage>(
+          std::move(iobuf),
+          pool_.get(),
+          [mappedMemory, kBufferSize](auto& iobuf) {
+            mappedMemory->freeBytes(iobuf.writableData(), kBufferSize);
+          });
+      EXPECT_EQ(kBufferSize, pool_->getCurrentBytes());
+    }
+    EXPECT_EQ(0, pool_->getCurrentBytes());
+    EXPECT_EQ(mappedMemory->allocateBytesStats().totalSmall, 0);
+  }
 }

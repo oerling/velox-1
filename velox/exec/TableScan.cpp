@@ -34,8 +34,9 @@ TableScan::TableScan(
           "TableScan"),
       tableHandle_(tableScanNode->tableHandle()),
       columnHandles_(tableScanNode->assignments()),
-      driverCtx_(driverCtx),
-      blockingFuture_(false) {}
+      driverCtx_(driverCtx) {
+  connector_ = connector::getConnector(tableHandle_->connectorId());
+}
 
 RowVectorPtr TableScan::getOutput() {
   if (noMoreSplits_) {
@@ -60,14 +61,16 @@ RowVectorPtr TableScan::getOutput() {
         noMoreSplits_ = true;
         if (dataSource_) {
           auto connectorStats = dataSource_->runtimeStats();
+          auto lockedStats = stats_.wlock();
           for (const auto& [name, counter] : connectorStats) {
-            if (UNLIKELY(stats_.runtimeStats.count(name) == 0)) {
-              stats_.runtimeStats.insert(
+            if (UNLIKELY(lockedStats->runtimeStats.count(name) == 0)) {
+              lockedStats->runtimeStats.insert(
                   std::make_pair(name, RuntimeMetric(counter.unit)));
             } else {
-              VELOX_CHECK_EQ(stats_.runtimeStats.at(name).unit, counter.unit);
+              VELOX_CHECK_EQ(
+                  lockedStats->runtimeStats.at(name).unit, counter.unit);
             }
-            stats_.runtimeStats.at(name).addValue(counter.value);
+            lockedStats->runtimeStats.at(name).addValue(counter.value);
           }
         }
         return nullptr;
@@ -76,8 +79,12 @@ RowVectorPtr TableScan::getOutput() {
       const auto& connectorSplit = split.connectorSplit;
       needNewSplit_ = false;
 
-      if (!connector_) {
-        connector_ = connector::getConnector(connectorSplit->connectorId);
+      VELOX_CHECK_EQ(
+          connector_->connectorId(),
+          connectorSplit->connectorId,
+          "Got splits with different connector IDs");
+
+      if (!dataSource_) {
         connectorQueryCtx_ = operatorCtx_->createConnectorQueryCtx(
             connectorSplit->connectorId, planNodeId());
         dataSource_ = connector_->createDataSource(
@@ -89,11 +96,11 @@ RowVectorPtr TableScan::getOutput() {
           dataSource_->addDynamicFilter(entry.first, entry.second);
         }
         pendingDynamicFilters_.clear();
-      } else {
-        VELOX_CHECK(
-            connector_->connectorId() == connectorSplit->connectorId,
-            "Got splits with different connector IDs");
       }
+      debugString_ = fmt::format(
+          "Split {} Task {}",
+          connectorSplit->toString(),
+          operatorCtx_->task()->taskId());
 
       if (connectorSplit->dataSource) {
         // The AsyncSource returns a unique_ptr to a shared_ptr. The
@@ -109,7 +116,9 @@ RowVectorPtr TableScan::getOutput() {
       } else {
         dataSource_->addSplit(connectorSplit);
       }
-      ++stats_.numSplits;
+
+
+      ++stats_.wlock()->numSplits;
       setBatchSize();
     }
 
@@ -119,22 +128,37 @@ RowVectorPtr TableScan::getOutput() {
     if (operatorCtx_->task()->isCancelled()) {
       return nullptr;
     }
-    auto data = dataSource_->next(readBatchSize_);
+    ExceptionContextSetter exceptionContext(
+        {[](VeloxException::Type /*exceptionType*/, auto* debugString) {
+           return *static_cast<std::string*>(debugString);
+         },
+         &debugString_});
+
+    auto dataOptional = dataSource_->next(readBatchSize_, blockingFuture_);
     checkPreload();
-    stats().addRuntimeStat(
-        "dataSourceWallNanos",
-        RuntimeCounter(
-            (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
-            RuntimeCounter::Unit::kNanos));
-    stats_.rawInputPositions = dataSource_->getCompletedRows();
-    stats_.rawInputBytes = dataSource_->getCompletedBytes();
-    if (data) {
-      if (data->size() > 0) {
-        stats_.inputPositions += data->size();
-        stats_.inputBytes += data->retainedSize();
-        return data;
+    if (!dataOptional.has_value()) {
+      blockingReason_ = BlockingReason::kWaitForConnector;
+      return nullptr;
+    }
+
+    {
+      auto lockedStats = stats_.wlock();
+      lockedStats->addRuntimeStat(
+          "dataSourceWallNanos",
+          RuntimeCounter(
+              (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
+              RuntimeCounter::Unit::kNanos));
+      lockedStats->rawInputPositions = dataSource_->getCompletedRows();
+      lockedStats->rawInputBytes = dataSource_->getCompletedBytes();
+      auto data = dataOptional.value();
+      if (data) {
+        if (data->size() > 0) {
+          lockedStats->inputPositions += data->size();
+          lockedStats->inputBytes += data->retainedSize();
+          return data;
+        }
+        continue;
       }
-      continue;
     }
 
     driverCtx_->task->splitFinished();
@@ -207,7 +231,7 @@ void TableScan::setBatchSize() {
 }
 
 void TableScan::addDynamicFilter(
-    ChannelIndex outputChannel,
+    column_index_t outputChannel,
     const std::shared_ptr<common::Filter>& filter) {
   if (dataSource_) {
     dataSource_->addDynamicFilter(outputChannel, filter);

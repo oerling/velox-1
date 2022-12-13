@@ -16,10 +16,10 @@
 
 #pragma once
 
-#include <gtest/gtest_prod.h>
-
+#include "velox/common/base/GTestMacros.h"
 #include "velox/common/time/CpuWallTimer.h"
 #include "velox/dwio/dwrf/common/Compression.h"
+#include "velox/dwio/dwrf/common/EncoderUtil.h"
 #include "velox/dwio/dwrf/writer/IndexBuilder.h"
 #include "velox/dwio/dwrf/writer/IntegerDictionaryEncoder.h"
 #include "velox/dwio/dwrf/writer/RatioTracker.h"
@@ -33,16 +33,15 @@ class WriterContext : public CompressionBufferPool {
  public:
   WriterContext(
       const std::shared_ptr<const Config>& config,
-      std::unique_ptr<memory::ScopedMemoryPool> scopedPool,
+      std::shared_ptr<memory::MemoryPool> pool,
       const dwio::common::MetricsLogPtr& metricLogger =
           dwio::common::MetricsLog::voidLog(),
       std::unique_ptr<encryption::EncryptionHandler> handler = nullptr)
       : config_{config},
-        scopedPool_{std::move(scopedPool)},
-        pool_{scopedPool_->getPool()},
-        dictionaryPool_{pool_.addChild(".dictionary")},
-        outputStreamPool_{pool_.addChild(".compression")},
-        generalPool_{pool_.addChild(".general")},
+        pool_{std::move(pool)},
+        dictionaryPool_{pool_->addChild(".dictionary")},
+        outputStreamPool_{pool_->addChild(".compression")},
+        generalPool_{pool_->addChild(".general")},
         handler_{std::move(handler)},
         compression{getConfig(Config::COMPRESSION)},
         compressionBlockSize{getConfig(Config::COMPRESSION_BLOCK_SIZE)},
@@ -70,19 +69,26 @@ class WriterContext : public CompressionBufferPool {
     }
     validateConfigs();
     VLOG(1) << fmt::format("Compression config: {}", compression);
+    if (auto tracker = pool_->getMemoryUsageTracker()) {
+      dictionaryPool_->setMemoryUsageTracker(tracker->addChild());
+      outputStreamPool_->setMemoryUsageTracker(tracker->addChild());
+      generalPool_->setMemoryUsageTracker(tracker->addChild());
+    }
     compressionBuffer_ = std::make_unique<dwio::common::DataBuffer<char>>(
-        generalPool_, compressionBlockSize + PAGE_HEADER_SIZE);
+        *generalPool_, compressionBlockSize + PAGE_HEADER_SIZE);
   }
 
-  bool hasStream(const StreamIdentifier& stream) const {
+  bool hasStream(const DwrfStreamIdentifier& stream) const {
     return streams_.find(stream) != streams_.end();
   }
 
-  const DataBufferHolder& getStream(const StreamIdentifier& stream) const {
+  const DataBufferHolder& getStream(const DwrfStreamIdentifier& stream) const {
     return streams_.at(stream);
   }
 
-  void addBuffer(const StreamIdentifier& stream, folly::StringPiece buffer) {
+  void addBuffer(
+      const DwrfStreamIdentifier& stream,
+      folly::StringPiece buffer) {
     streams_.at(stream).take(buffer);
   }
 
@@ -95,7 +101,7 @@ class WriterContext : public CompressionBufferPool {
   // capacity vs actual usage problem. However, this is ok as an upperbound for
   // flush policy evaluation and would be more accurate after flush.
   std::unique_ptr<BufferedOutputStream> newStream(
-      const StreamIdentifier& stream) {
+      const DwrfStreamIdentifier& stream) {
     DWIO_ENSURE(
         !hasStream(stream), "Stream already exists ", stream.toString());
     streams_.emplace(
@@ -107,8 +113,9 @@ class WriterContext : public CompressionBufferPool {
             getConfig(Config::COMPRESSION_BLOCK_SIZE_MIN),
             getConfig(Config::COMPRESSION_BLOCK_SIZE_EXTEND_RATIO)));
     auto& holder = streams_.at(stream);
-    auto encrypter = handler_->isEncrypted(stream.node)
-        ? std::addressof(handler_->getEncryptionProvider(stream.node))
+    auto encrypter = handler_->isEncrypted(stream.encodingKey().node)
+        ? std::addressof(
+              handler_->getEncryptionProvider(stream.encodingKey().node))
         : nullptr;
     return newStream(compression, holder, encrypter);
   }
@@ -124,7 +131,7 @@ class WriterContext : public CompressionBufferPool {
   }
 
   std::unique_ptr<BufferedOutputStream> newStream(
-      CompressionKind kind,
+      dwio::common::CompressionKind kind,
       DataBufferHolder& holder,
       const dwio::common::encryption::Encrypter* encrypter = nullptr) {
     return createCompressor(kind, *this, holder, *config_, encrypter);
@@ -143,7 +150,7 @@ class WriterContext : public CompressionBufferPool {
               dictionaryPool,
               generalPool,
               getConfig(Config::DICTIONARY_SORT_KEYS),
-              IntEncoder</* isSigned = */ true>::createDirect(
+              createDirectEncoder</* isSigned */ true>(
                   newStream(
                       {ek.node,
                        ek.sequence,
@@ -165,14 +172,15 @@ class WriterContext : public CompressionBufferPool {
         : std::make_unique<IndexBuilder>(std::move(stream));
   }
 
-  void suppressStream(const StreamIdentifier& stream) {
+  void suppressStream(const DwrfStreamIdentifier& stream) {
     DWIO_ENSURE(hasStream(stream));
     auto& collector = streams_.at(stream);
     collector.suppress();
   }
 
   bool isStreamPaged(uint32_t nodeId) const {
-    return (compression != CompressionKind::CompressionKind_NONE) ||
+    return (compression !=
+            dwio::common::CompressionKind::CompressionKind_NONE) ||
         handler_->isEncrypted(nodeId);
   }
 
@@ -203,11 +211,11 @@ class WriterContext : public CompressionBufferPool {
   memory::MemoryPool& getMemoryPool(const MemoryUsageCategory& category) {
     switch (category) {
       case MemoryUsageCategory::DICTIONARY:
-        return dictionaryPool_;
+        return *dictionaryPool_;
       case MemoryUsageCategory::OUTPUT_STREAM:
-        return outputStreamPool_;
+        return *outputStreamPool_;
       case MemoryUsageCategory::GENERAL:
-        return generalPool_;
+        return *generalPool_;
     }
     VELOX_FAIL("Unreachable");
   }
@@ -216,11 +224,11 @@ class WriterContext : public CompressionBufferPool {
       const MemoryUsageCategory& category) const {
     switch (category) {
       case MemoryUsageCategory::DICTIONARY:
-        return dictionaryPool_;
+        return *dictionaryPool_;
       case MemoryUsageCategory::OUTPUT_STREAM:
-        return outputStreamPool_;
+        return *outputStreamPool_;
       case MemoryUsageCategory::GENERAL:
-        return generalPool_;
+        return *generalPool_;
     }
     VELOX_FAIL("Unreachable");
   }
@@ -237,7 +245,7 @@ class WriterContext : public CompressionBufferPool {
   }
 
   int64_t getMemoryBudget() const {
-    return pool_.getCap();
+    return pool_->cap();
   }
 
   const encryption::EncryptionHandler& getEncryptionHandler() const {
@@ -254,8 +262,8 @@ class WriterContext : public CompressionBufferPool {
   }
 
   void iterateUnSuppressedStreams(
-      std::function<void(std::pair<const StreamIdentifier, DataBufferHolder>&)>
-          callback) {
+      std::function<void(
+          std::pair<const DwrfStreamIdentifier, DataBufferHolder>&)> callback) {
     for (auto& pair : streams_) {
       if (!pair.second.isSuppressed()) {
         callback(pair);
@@ -279,7 +287,7 @@ class WriterContext : public CompressionBufferPool {
   }
 
   virtual void removeStreams(
-      std::function<bool(const StreamIdentifier&)> predicate) {
+      std::function<bool(const DwrfStreamIdentifier&)> predicate) {
     auto it = streams_.begin();
     while (it != streams_.end()) {
       if (predicate(it->first)) {
@@ -436,14 +444,16 @@ class WriterContext : public CompressionBufferPool {
   }
 
   std::shared_ptr<const Config> config_;
-  std::unique_ptr<memory::ScopedMemoryPool> scopedPool_;
-  memory::MemoryPool& pool_;
-  memory::MemoryPool& dictionaryPool_;
-  memory::MemoryPool& outputStreamPool_;
-  memory::MemoryPool& generalPool_;
+  std::shared_ptr<memory::MemoryPool> pool_;
+  std::shared_ptr<memory::MemoryPool> dictionaryPool_;
+  std::shared_ptr<memory::MemoryPool> outputStreamPool_;
+  std::shared_ptr<memory::MemoryPool> generalPool_;
   // Map needs referential stability because reference to map value is stored by
   // another class.
-  folly::F14NodeMap<StreamIdentifier, DataBufferHolder, StreamIdentifierHash>
+  folly::F14NodeMap<
+      DwrfStreamIdentifier,
+      DataBufferHolder,
+      dwio::common::StreamIdentifierHash>
       streams_;
   folly::F14FastMap<
       EncodingKey,
@@ -481,7 +491,7 @@ class WriterContext : public CompressionBufferPool {
   uint64_t stripeRawSize = 0;
 
   // config
-  const CompressionKind compression;
+  const dwio::common::CompressionKind compression;
   const uint64_t compressionBlockSize;
   const bool isIndexEnabled;
   const uint32_t indexStride;
@@ -498,8 +508,8 @@ class WriterContext : public CompressionBufferPool {
   friend class IntegerColumnWriterDirectEncodingIndexTest;
   friend class StringColumnWriterDictionaryEncodingIndexTest;
   friend class StringColumnWriterDirectEncodingIndexTest;
-  FRIEND_TEST(TestWriterContext, GetIntDictionaryEncoder);
-  FRIEND_TEST(TestWriterContext, RemoveIntDictionaryEncoderForNode);
+  VELOX_FRIEND_TEST(TestWriterContext, GetIntDictionaryEncoder);
+  VELOX_FRIEND_TEST(TestWriterContext, RemoveIntDictionaryEncoderForNode);
   // TODO: remove once writer code is consolidated
   template <typename TestType>
   friend class WriterEncodingIndexTest2;

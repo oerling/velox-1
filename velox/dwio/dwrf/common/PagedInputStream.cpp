@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/dwrf/common/PagedInputStream.h"
+#include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/common/exception/Exception.h"
 
 namespace facebook::velox::dwrf {
@@ -32,9 +33,11 @@ void PagedInputStream::readBuffer(bool failOnEof) {
           reinterpret_cast<const void**>(&inputBufferPtr_), &length)) {
     DWIO_ENSURE(!failOnEof, getName(), ", read past EOF");
     state_ = State::END;
+    inputBufferStart_ = nullptr;
     inputBufferPtr_ = nullptr;
     inputBufferPtrEnd_ = nullptr;
   } else {
+    inputBufferStart_ = inputBufferPtr_;
     inputBufferPtrEnd_ = inputBufferPtr_ + length;
   }
 }
@@ -110,6 +113,8 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
     outputBufferPtr_ += outputBufferLength_;
     bytesReturned_ += outputBufferLength_;
     outputBufferLength_ = 0;
+    // This is a rewind of previous output, does not count for
+    // 'lastWindowSize_'.
     return true;
   }
 
@@ -180,6 +185,7 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
 
   outputBufferLength_ = 0;
   bytesReturned_ += *size;
+  lastWindowSize_ = *size;
   return true;
 }
 
@@ -188,6 +194,16 @@ void PagedInputStream::BackUp(int32_t count) {
       outputBufferPtr_ != nullptr,
       "Backup without previous Next in ",
       getName());
+  if (state_ == State::ORIGINAL) {
+    VELOX_CHECK(
+        outputBufferPtr_ >= inputBufferStart_ &&
+        outputBufferPtr_ <= inputBufferPtrEnd_);
+    // 'outputBufferPtr_' ranges over the input buffer if there is no
+    // decompression / decryption. Check that we do not back out of
+    // the last range returned from input_->Next().
+    VELOX_CHECK_GE(
+        inputBufferPtr_ - inputBufferStart_, static_cast<size_t>(count));
+  }
   outputBufferPtr_ -= static_cast<size_t>(count);
   outputBufferLength_ += static_cast<size_t>(count);
   bytesReturned_ -= count;
@@ -220,20 +236,34 @@ void PagedInputStream::clearDecompressionState() {
   inputBufferPtrEnd_ = nullptr;
 }
 
-void PagedInputStream::seekToRowGroup(PositionProvider& positionProvider) {
+void PagedInputStream::seekToPosition(
+    dwio::common::PositionProvider& positionProvider) {
   auto compressedOffset = positionProvider.next();
   auto uncompressedOffset = positionProvider.next();
 
-  if (compressedOffset != lastHeaderOffset_) {
+  // If we are directly returning views into input, we can only backup
+  // to the beginning of the last view or last header, whichever is
+  // later. If we are returning views into the decompression buffer,
+  // we can backup to the beginning of the decompressed buffer
+  auto alreadyRead = bytesReturned_ - bytesReturnedAtLastHeaderOffset_;
+
+  // outsideOriginalWindow is true if we are returning views into
+  // the input stream's buffer and we are seeking below the start of the last
+  // window. The last window began with a header or a window from the underlying
+  // stream. If seeking below that, we must seek the input.
+  auto outsideOriginalWindow = [&]() {
+    return state_ == State::ORIGINAL && compressedOffset == lastHeaderOffset_ &&
+        uncompressedOffset < alreadyRead &&
+        lastWindowSize_ < alreadyRead - uncompressedOffset;
+  };
+
+  if (compressedOffset != lastHeaderOffset_ || outsideOriginalWindow()) {
     std::vector<uint64_t> positions = {compressedOffset};
-    auto provider = PositionProvider(positions);
-    input_->seekToRowGroup(provider);
-
+    auto provider = dwio::common::PositionProvider(positions);
+    input_->seekToPosition(provider);
     clearDecompressionState();
-
     Skip(uncompressedOffset);
   } else {
-    auto alreadyRead = bytesReturned_ - bytesReturnedAtLastHeaderOffset_;
     if (uncompressedOffset < alreadyRead) {
       BackUp(alreadyRead - uncompressedOffset);
     } else {

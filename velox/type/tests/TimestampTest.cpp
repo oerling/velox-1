@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/type/Timestamp.h"
 
 namespace facebook::velox {
@@ -47,6 +48,47 @@ TEST(TimestampTest, fromMillisAndMicros) {
   EXPECT_EQ(ts3, Timestamp::fromMicros(negativeSecond * 1'000'000));
   EXPECT_EQ(ts3, Timestamp::fromMillis(ts3.toMillis()));
   EXPECT_EQ(ts3, Timestamp::fromMicros(ts3.toMicros()));
+}
+
+TEST(TimestampTest, fromNanos) {
+  int64_t positiveSecond = 10'000;
+  int64_t negativeSecond = -10'000;
+  uint64_t nano = 123'456'789;
+
+  Timestamp ts1(positiveSecond, nano);
+  int64_t positiveNanos = positiveSecond * 1'000'000'000 + nano;
+  EXPECT_EQ(ts1, Timestamp::fromNanos(positiveNanos));
+  EXPECT_EQ(ts1, Timestamp::fromNanos(ts1.toNanos()));
+
+  Timestamp ts2(negativeSecond, nano);
+  int64_t negativeNanos = negativeSecond * 1'000'000'000 + nano;
+  EXPECT_EQ(ts2, Timestamp::fromNanos(negativeNanos));
+  EXPECT_EQ(ts2, Timestamp::fromNanos(ts2.toNanos()));
+
+  Timestamp ts3(negativeSecond, 0);
+  EXPECT_EQ(ts3, Timestamp::fromNanos(negativeSecond * 1'000'000'000));
+  EXPECT_EQ(ts3, Timestamp::fromNanos(ts3.toNanos()));
+}
+
+TEST(TimestampTest, arithmeticOverflow) {
+  int64_t positiveSecond = 9223372036854776;
+  uint64_t nano = 123 * 1'000'000;
+
+  Timestamp ts1(positiveSecond, nano);
+  VELOX_ASSERT_THROW(
+      ts1.toMillis(), "integer overflow: 9223372036854776 * 1000");
+  VELOX_ASSERT_THROW(
+      ts1.toMicros(), "integer overflow: 9223372036854776 * 1000000");
+  VELOX_ASSERT_THROW(
+      ts1.toNanos(), "integer overflow: 9223372036854776 * 1000000000");
+
+  Timestamp ts2(-positiveSecond, nano);
+  VELOX_ASSERT_THROW(
+      ts2.toMillis(), "integer overflow: -9223372036854776 * 1000");
+  VELOX_ASSERT_THROW(
+      ts2.toMicros(), "integer overflow: -9223372036854776 * 1000000");
+  VELOX_ASSERT_THROW(
+      ts2.toNanos(), "integer overflow: -9223372036854776 * 1000000000");
 }
 
 } // namespace

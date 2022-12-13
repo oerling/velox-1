@@ -19,13 +19,38 @@
 namespace facebook::velox::exec {
 HashPartitionFunction::HashPartitionFunction(
     int numPartitions,
-    RowTypePtr inputType,
-    std::vector<ChannelIndex> keyChannels)
-    : numPartitions_{numPartitions}, keyChannels_{std::move(keyChannels)} {
-  hashers_.reserve(keyChannels_.size());
-  for (auto channel : keyChannels_) {
-    hashers_.emplace_back(
-        VectorHasher::create(inputType->childAt(channel), channel));
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues)
+    : numPartitions_{numPartitions} {
+  init(inputType, keyChannels, constValues);
+}
+
+HashPartitionFunction::HashPartitionFunction(
+    const HashBitRange& hashBitRange,
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues)
+    : numPartitions_{hashBitRange.numPartitions()},
+      hashBitRange_(hashBitRange) {
+  init(inputType, keyChannels, constValues);
+}
+
+void HashPartitionFunction::init(
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues) {
+  hashers_.reserve(keyChannels.size());
+  size_t constChannel{0};
+  for (const auto channel : keyChannels) {
+    if (channel != kConstantChannel) {
+      hashers_.emplace_back(
+          VectorHasher::create(inputType->childAt(channel), channel));
+    } else {
+      const auto& constValue = constValues[constChannel++];
+      hashers_.emplace_back(VectorHasher::create(constValue->type(), channel));
+      hashers_.back()->precompute(*constValue);
+    }
   }
 }
 
@@ -38,13 +63,25 @@ void HashPartitionFunction::partition(
   rows_.setAll();
 
   hashes_.resize(size);
-  for (auto i = 0; i < keyChannels_.size(); ++i) {
-    hashers_[i]->hash(*input.childAt(keyChannels_[i]), rows_, i > 0, hashes_);
+  for (auto i = 0; i < hashers_.size(); ++i) {
+    auto& hasher = hashers_[i];
+    if (hasher->channel() != kConstantChannel) {
+      hashers_[i]->decode(*input.childAt(hasher->channel()), rows_);
+      hashers_[i]->hash(rows_, i > 0, hashes_);
+    } else {
+      hashers_[i]->hashPrecomputed(rows_, i > 0, hashes_);
+    }
   }
 
   partitions.resize(size);
-  for (auto i = 0; i < size; ++i) {
-    partitions[i] = hashes_[i] % numPartitions_;
+  if (hashBitRange_.has_value()) {
+    for (auto i = 0; i < size; ++i) {
+      partitions[i] = hashBitRange_->partition(hashes_[i]);
+    }
+  } else {
+    for (auto i = 0; i < size; ++i) {
+      partitions[i] = hashes_[i] % numPartitions_;
+    }
   }
 }
 } // namespace facebook::velox::exec

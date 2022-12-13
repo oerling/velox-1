@@ -47,6 +47,12 @@ class Aggregate {
   // width part of the state from the fixed part.
   virtual int32_t accumulatorFixedWidthSize() const = 0;
 
+  /// Returns the alignment size of the accumulator.
+  /// Some types such as int128_t require aligned access.
+  virtual int32_t accumulatorAlignmentSize() const {
+    return 1;
+  }
+
   // Return true if accumulator is allocated from external memory, e.g. memory
   // not managed by Velox.
   virtual bool accumulatorUsesExternalMemory() const {
@@ -106,7 +112,8 @@ class Aggregate {
   // @param rows Rows of the 'args' to add to the accumulators. These may not be
   // contiguous if the aggregation has mask or is configured to drop null
   // grouping keys. The latter would be the case when aggregation is followed
-  // by the join on the grouping keys.
+  // by the join on the grouping keys. 'rows' is guaranteed to have at least one
+  // active row.
   // @param args Raw input.
   // @param mayPushdown True if aggregation can be pushdown down via LazyVector.
   // The pushdown can happen only if this flag is true and 'args' is a single
@@ -124,7 +131,8 @@ class Aggregate {
   // @param rows Rows of the 'args' to add to the accumulators. These may not be
   // contiguous if the aggregation has mask or is configured to drop null
   // grouping keys. The latter would be the case when aggregation is followed
-  // by the join on the grouping keys.
+  // by the join on the grouping keys. 'rows' is guaranteed to have at least one
+  // active row.
   // @param args Intermediate results produced by extractAccumulators().
   // @param mayPushdown True if aggregation can be pushdown down via LazyVector.
   // The pushdown can happen only if this flag is true and 'args' is a single
@@ -139,7 +147,8 @@ class Aggregate {
   // aggregation.
   // @param group Pointer to the start of the group row.
   // @param rows Rows of the 'args' to add to the accumulators. These may not
-  // be contiguous if the aggregation has mask.
+  // be contiguous if the aggregation has mask. 'rows' is guaranteed to have at
+  // least one active row.
   // @param args Raw input to add to the accumulators.
   // @param mayPushdown True if aggregation can be pushdown down via LazyVector.
   // The pushdown can happen only if this flag is true and 'args' is a single
@@ -154,7 +163,8 @@ class Aggregate {
   // aggregation.
   // @param group Pointer to the start of the group row.
   // @param rows Rows of the 'args' to add to the accumulators. These may not
-  // be contiguous if the aggregation has mask.
+  // be contiguous if the aggregation has mask. 'rows' is guaranteed to have at
+  // least one active row.
   // @param args Intermediate results produced by extractAccumulators().
   // @param mayPushdown True if aggregation can be pushdown down via LazyVector.
   // The pushdown can happen only if this flag is true and 'args' is a single
@@ -206,6 +216,12 @@ class Aggregate {
       const std::vector<TypePtr>& argTypes,
       const TypePtr& resultType);
 
+  // Returns the intermediate type for 'name' with signature
+  // 'argTypes'. Throws if cannot resolve.
+  static TypePtr intermediateType(
+      const std::string& name,
+      const std::vector<TypePtr>& argTypes);
+
  protected:
   // Shorthand for maintaining accumulator variable length size in
   // accumulator update methods. Use like: { auto tracker =
@@ -218,13 +234,6 @@ class Aggregate {
     return numNulls_ && (group[nullByte_] & nullMask_);
   }
 
-  void incrementRowSize(char* row, uint64_t bytes) {
-    VELOX_DCHECK(rowSizeOffset_);
-    uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
-    uint64_t size = *ptr + bytes;
-    *ptr = std::min<uint64_t>(size, std::numeric_limits<uint32_t>::max());
-  }
-
   // Sets null flag for all specified groups to true.
   // For any given group, this method can be called at most once.
   void setAllNulls(char** groups, folly::Range<const vector_size_t*> indices) {
@@ -232,6 +241,15 @@ class Aggregate {
       groups[i][nullByte_] |= nullMask_;
     }
     numNulls_ += indices.size();
+  }
+
+  inline bool setNull(char* group) {
+    if (group[nullByte_] & nullMask_) {
+      return false;
+    }
+    group[nullByte_] |= nullMask_;
+    ++numNulls_;
+    return true;
   }
 
   inline bool clearNull(char* group) {
@@ -263,7 +281,7 @@ class Aggregate {
 
   static void clearNull(uint64_t* rawNulls, vector_size_t index) {
     if (rawNulls) {
-      bits::clearBit(rawNulls, index);
+      bits::clearNull(rawNulls, index);
     }
   }
 
@@ -310,6 +328,14 @@ bool registerAggregateFunction(
 /// Returns empty std::optional if function with that name is not found.
 std::optional<std::vector<std::shared_ptr<AggregateFunctionSignature>>>
 getAggregateFunctionSignatures(const std::string& name);
+
+using AggregateFunctionSignatureMap = std::unordered_map<
+    std::string,
+    std::vector<std::shared_ptr<AggregateFunctionSignature>>>;
+
+/// Returns a mapping of all Aggregate functions in registry.
+/// The mapping is function name -> list of function signatures.
+AggregateFunctionSignatureMap getAggregateFunctionSignatures();
 
 struct AggregateFunctionEntry {
   std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures;

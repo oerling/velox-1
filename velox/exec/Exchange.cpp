@@ -14,19 +14,41 @@
  * limitations under the License.
  */
 #include "velox/exec/Exchange.h"
+#include <velox/common/base/Exceptions.h>
+#include <velox/common/memory/Memory.h>
 #include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::exec {
 
-SerializedPage::SerializedPage(std::unique_ptr<folly::IOBuf> iobuf)
-    : iobuf_(std::move(iobuf)), iobufBytes_(chainBytes(*iobuf_.get())) {
-  VELOX_CHECK(iobuf_);
+SerializedPage::SerializedPage(
+    std::unique_ptr<folly::IOBuf> iobuf,
+    memory::MemoryPool* pool,
+    std::function<void(folly::IOBuf&)> onDestructionCb)
+    : iobuf_(std::move(iobuf)),
+      iobufBytes_(chainBytes(*iobuf_.get())),
+      pool_(pool),
+      onDestructionCb_(onDestructionCb) {
+  VELOX_CHECK_NOT_NULL(iobuf_);
+  if (pool_ != nullptr) {
+    pool_->reserve(iobufBytes_);
+  }
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
         const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buf.data())),
         bufSize,
         0});
+  }
+}
+
+SerializedPage::~SerializedPage() {
+  if (onDestructionCb_) {
+    onDestructionCb_(*iobuf_.get());
+  }
+  if (pool_) {
+    // Release the tracked memory consumption for the query
+    pool_->release(iobufBytes_);
   }
 }
 
@@ -37,9 +59,10 @@ void SerializedPage::prepareStreamForDeserialize(ByteStream* input) {
 std::shared_ptr<ExchangeSource> ExchangeSource::create(
     const std::string& taskId,
     int destination,
-    std::shared_ptr<ExchangeQueue> queue) {
+    std::shared_ptr<ExchangeQueue> queue,
+    memory::MemoryPool* FOLLY_NONNULL pool) {
   for (auto& factory : factories()) {
-    auto result = factory(taskId, destination, queue);
+    auto result = factory(taskId, destination, queue, pool);
     if (result) {
       return result;
     }
@@ -59,16 +82,15 @@ class LocalExchangeSource : public ExchangeSource {
   LocalExchangeSource(
       const std::string& taskId,
       int destination,
-      std::shared_ptr<ExchangeQueue> queue)
-      : ExchangeSource(taskId, destination, queue) {}
+      std::shared_ptr<ExchangeQueue> queue,
+      memory::MemoryPool* FOLLY_NONNULL pool)
+      : ExchangeSource(taskId, destination, queue, pool) {}
 
   bool shouldRequestLocked() override {
     if (atEnd_) {
       return false;
     }
-    bool pending = requestPending_;
-    requestPending_ = true;
-    return !pending;
+    return !requestPending_.exchange(true);
   }
 
   void request() override {
@@ -85,8 +107,7 @@ class LocalExchangeSource : public ExchangeSource {
         // Since this lambda may outlive 'this', we need to capture a
         // shared_ptr to the current object (self).
         [self, requestedSequence, buffers, this](
-            std::vector<std::shared_ptr<SerializedPage>>& data,
-            int64_t sequence) {
+            std::vector<std::unique_ptr<folly::IOBuf>> data, int64_t sequence) {
           if (requestedSequence > sequence) {
             VLOG(2) << "Receives earlier sequence than requested: task "
                     << taskId_ << ", destination " << destination_
@@ -105,7 +126,9 @@ class LocalExchangeSource : public ExchangeSource {
               // Keep looping, there could be extra end markers.
               continue;
             }
-            pages.push_back(copyPage(*inputPage));
+            inputPage->unshare();
+            pages.push_back(
+                std::make_unique<SerializedPage>(std::move(inputPage), pool_));
             inputPage = nullptr;
           }
           int64_t ackSequence;
@@ -130,57 +153,90 @@ class LocalExchangeSource : public ExchangeSource {
         });
   }
 
-  void close() override {}
+  void close() override {
+    auto buffers = PartitionedOutputBufferManager::getInstance().lock();
+    buffers->deleteResults(taskId_, destination_);
+  }
 
  private:
   static constexpr uint64_t kMaxBytes = 32 * 1024 * 1024; // 32 MB
-
-  // Copies the IOBufs from 'page' so that they no longer hold memory
-  // acounted in the producer Task.
-  static std::unique_ptr<SerializedPage> copyPage(SerializedPage& page) {
-    auto buf = page.getIOBuf();
-    buf->unshare();
-    return std::make_unique<SerializedPage>(std::move(buf));
-  }
 };
 
 std::unique_ptr<ExchangeSource> createLocalExchangeSource(
     const std::string& taskId,
     int destination,
-    std::shared_ptr<ExchangeQueue> queue) {
+    std::shared_ptr<ExchangeQueue> queue,
+    memory::MemoryPool* FOLLY_NONNULL pool) {
   if (strncmp(taskId.c_str(), "local://", 8) == 0) {
     return std::make_unique<LocalExchangeSource>(
-        taskId, destination, std::move(queue));
+        taskId, destination, std::move(queue), pool);
   }
   return nullptr;
 }
 
 } // namespace
 
+void ExchangeClient::initialize(memory::MemoryPool* FOLLY_NONNULL pool) {
+  pool_ = pool;
+}
+
 void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
   std::shared_ptr<ExchangeSource> toRequest;
+  std::shared_ptr<ExchangeSource> toClose;
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
+
     bool duplicate = !taskIds_.insert(taskId).second;
     if (duplicate) {
       // Do not add sources twice. Presto protocol may add duplicate sources
       // and the task updates have no guarantees of arriving in order.
       return;
     }
-    auto source = ExchangeSource::create(taskId, destination_, queue_);
-    sources_.push_back(source);
-    queue_->addSource();
-    if (source->shouldRequestLocked()) {
-      toRequest = source;
+    auto source = ExchangeSource::create(taskId, destination_, queue_, pool_);
+
+    if (closed_) {
+      toClose = std::move(source);
+    } else {
+      sources_.push_back(source);
+      queue_->addSource();
+      if (source->shouldRequestLocked()) {
+        toRequest = source;
+      }
     }
   }
-  // Outside of lock
-  toRequest->request();
+
+  // Outside of lock.
+  if (toClose) {
+    toClose->close();
+  } else if (toRequest) {
+    toRequest->request();
+  }
 }
 
 void ExchangeClient::noMoreRemoteTasks() {
   std::lock_guard<std::mutex> l(queue_->mutex());
   queue_->noMoreSources();
+}
+
+void ExchangeClient::close() {
+  std::vector<std::shared_ptr<ExchangeSource>> sources;
+  {
+    std::lock_guard<std::mutex> l(queue_->mutex());
+    if (closed_) {
+      return;
+    }
+    closed_ = true;
+    sources = std::move(sources_);
+  }
+
+  // Outside of mutex.
+  for (auto& source : sources) {
+    source->close();
+  }
+  {
+    std::lock_guard<std::mutex> l(queue_->mutex());
+    queue_->closeLocked();
+  }
 }
 
 std::unique_ptr<SerializedPage> ExchangeClient::next(
@@ -215,9 +271,7 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
 }
 
 ExchangeClient::~ExchangeClient() {
-  for (auto& source : sources_) {
-    source->close();
-  }
+  close();
 }
 
 std::string ExchangeClient::toString() {
@@ -228,7 +282,7 @@ std::string ExchangeClient::toString() {
   return out.str();
 }
 
-bool Exchange::getSplits(ContinueFuture* future) {
+bool Exchange::getSplits(ContinueFuture* FOLLY_NONNULL future) {
   if (operatorCtx_->driverCtx()->driverId != 0) {
     // When there are multiple pipelines, a single operator, the one from
     // pipeline 0, is responsible for feeding splits into shared ExchangeClient.
@@ -247,12 +301,13 @@ bool Exchange::getSplits(ContinueFuture* future) {
             split.connectorSplit);
         VELOX_CHECK(remoteSplit, "Wrong type of split");
         exchangeClient_->addRemoteTaskId(remoteSplit->taskId);
-        ++stats_.numSplits;
+        ++stats_.wlock()->numSplits;
       } else {
         exchangeClient_->noMoreRemoteTasks();
         noMoreSplits_ = true;
         if (atEnd_) {
-          operatorCtx_->task()->multipleSplitsFinished(stats_.numSplits);
+          operatorCtx_->task()->multipleSplitsFinished(
+              stats_.rlock()->numSplits);
         }
         return false;
       }
@@ -262,7 +317,7 @@ bool Exchange::getSplits(ContinueFuture* future) {
   }
 }
 
-BlockingReason Exchange::isBlocked(ContinueFuture* future) {
+BlockingReason Exchange::isBlocked(ContinueFuture* FOLLY_NONNULL future) {
   if (currentPage_ || atEnd_) {
     return BlockingReason::kNotBlocked;
   }
@@ -274,11 +329,12 @@ BlockingReason Exchange::isBlocked(ContinueFuture* future) {
     getSplits(&splitFuture_);
   }
 
-  ContinueFuture dataFuture{false};
+  ContinueFuture dataFuture;
   currentPage_ = exchangeClient_->next(&atEnd_, &dataFuture);
   if (currentPage_ || atEnd_) {
     if (atEnd_ && noMoreSplits_) {
-      operatorCtx_->task()->multipleSplitsFinished(stats_.numSplits);
+      const auto numSplits = stats_.rlock()->numSplits;
+      operatorCtx_->task()->multipleSplitsFinished(numSplits);
     }
     return BlockingReason::kNotBlocked;
   }
@@ -291,14 +347,13 @@ BlockingReason Exchange::isBlocked(ContinueFuture* future) {
     futures.push_back(std::move(splitFuture_));
     futures.push_back(std::move(dataFuture));
 
-    *future = folly::collectAny(futures).deferValue(
-        [](auto /*unused*/) { return true; });
+    *future = folly::collectAny(futures).unit();
   } else {
     // Block until data becomes available.
     *future = std::move(dataFuture);
   }
-  return stats_.numSplits == 0 ? BlockingReason::kWaitForSplit
-                               : BlockingReason::kWaitForExchange;
+  return stats_.rlock()->numSplits == 0 ? BlockingReason::kWaitForSplit
+                                        : BlockingReason::kWaitForExchange;
 }
 
 bool Exchange::isFinished() {
@@ -310,17 +365,22 @@ RowVectorPtr Exchange::getOutput() {
     return nullptr;
   }
 
+  uint64_t rawInputBytes{0};
   if (!inputStream_) {
     inputStream_ = std::make_unique<ByteStream>();
-    stats_.rawInputBytes += currentPage_->size();
+    rawInputBytes += currentPage_->size();
     currentPage_->prepareStreamForDeserialize(inputStream_.get());
   }
 
   VectorStreamGroup::read(
       inputStream_.get(), operatorCtx_->pool(), outputType_, &result_);
 
-  stats_.inputPositions += result_->size();
-  stats_.inputBytes += result_->retainedSize();
+  {
+    auto lockedStats = stats_.wlock();
+    lockedStats->rawInputBytes += rawInputBytes;
+    lockedStats->inputPositions += result_->size();
+    lockedStats->inputBytes += result_->retainedSize();
+  }
 
   if (inputStream_->atEnd()) {
     currentPage_ = nullptr;

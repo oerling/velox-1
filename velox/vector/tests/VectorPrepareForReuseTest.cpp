@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 
@@ -75,6 +75,11 @@ TEST_F(VectorPrepareForReuseTest, strings) {
     BaseVector::prepareForReuse(vector, vector->size());
     ASSERT_EQ(originalVector, vector.get());
     ASSERT_EQ(originalBytes, vector->retainedSize());
+
+    // Verify that StringViews are reset to empty strings.
+    for (auto i = 0; i < vector->size(); i++) {
+      ASSERT_EQ("", vector->asFlatVector<StringView>()->valueAt(i).str());
+    }
 
     for (auto i = 0; i < vector->size(); i++) {
       vector->asFlatVector<StringView>()->set(i, stringAt(i));

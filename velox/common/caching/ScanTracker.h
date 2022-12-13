@@ -32,13 +32,9 @@ namespace facebook::velox::cache {
 // number in the file schema tree, i.e. the column.
 class TrackingId {
  public:
-  static constexpr int32_t kNodeShift = 5;
-
   TrackingId() : id_(-1) {}
 
-  TrackingId(int32_t node, int8_t kind) : id_((node << kNodeShift) | kind) {
-    VELOX_CHECK_LT(kind, (1 << kNodeShift), "Tracker kind out of range");
-  }
+  explicit TrackingId(int32_t id) : id_(id) {}
 
   size_t hash() const {
     return std::hash<int32_t>()(id_);
@@ -54,10 +50,6 @@ class TrackingId {
 
   int32_t id() const {
     return id_;
-  }
-
-  int32_t columnId() const {
-    return id_ >> kNodeShift;
   }
 
  private:
@@ -194,7 +186,7 @@ class ScanTracker {
   folly::F14FastMap<TrackingId, TrackingData> data_;
   TrackingData sum_;
   // Maximum size of a read. 10MB would count as two references
-  // if the quantim were 8MB. At the same time this would count as a
+  // if the quantum were 8MB. At the same time this would count as a
   // single 10MB reference for 'fileGroupStats_'. 0 means the read
   // size is unlimited.
   const int32_t loadQuantum_;

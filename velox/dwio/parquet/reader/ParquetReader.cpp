@@ -15,347 +15,577 @@
  */
 
 #include "velox/dwio/parquet/reader/ParquetReader.h"
-#include "velox/duckdb/conversion/DuckConversion.h"
-#include "velox/duckdb/conversion/DuckWrapper.h"
-#include "velox/dwio/parquet/reader/Statistics.h"
+#include <thrift/protocol/TCompactProtocol.h> //@manual
+#include "velox/dwio/common/MetricsLog.h"
+#include "velox/dwio/common/TypeUtils.h"
+#include "velox/dwio/parquet/reader/StructColumnReader.h"
+#include "velox/dwio/parquet/thrift/ThriftTransport.h"
 
 namespace facebook::velox::parquet {
 
-namespace {
+ReaderBase::ReaderBase(
+    std::unique_ptr<dwio::common::BufferedInput> input,
+    const dwio::common::ReaderOptions& options)
+    : pool_(options.getMemoryPool()),
+      options_(options),
+      input_(std::move(input)) {
+  fileLength_ = input_->getReadFile()->size();
+  VELOX_CHECK_GT(fileLength_, 0, "Parquet file is empty");
+  VELOX_CHECK_GE(fileLength_, 12, "Parquet file is too small");
 
-::duckdb::Value makeValue(::duckdb::LogicalType type, int64_t val) {
-  switch (type.id()) {
-    case ::duckdb::LogicalTypeId::INTEGER:
-      return ::duckdb::Value::INTEGER(val);
-    case ::duckdb::LogicalTypeId::BIGINT:
-      return ::duckdb::Value::BIGINT(val);
-    case ::duckdb::LogicalTypeId::DATE:
-      return ::duckdb::Value::DATE(::duckdb::date_t(val));
-    default:
-      VELOX_UNSUPPORTED(
-          "Unsupported column type for integer filter: {}", type.ToString());
+  loadFileMetaData();
+  initializeSchema();
+}
+
+void ReaderBase::loadFileMetaData() {
+  bool preloadFile_ = fileLength_ <= FILE_PRELOAD_THRESHOLD;
+  uint64_t readSize =
+      preloadFile_ ? fileLength_ : std::min(fileLength_, DIRECTORY_SIZE_GUESS);
+
+  auto stream = input_->read(
+      fileLength_ - readSize, readSize, dwio::common::LogType::FOOTER);
+
+  std::vector<char> copy(readSize);
+  const char* bufferStart = nullptr;
+  const char* bufferEnd = nullptr;
+  dwio::common::readBytes(
+      readSize, stream.get(), copy.data(), bufferStart, bufferEnd);
+  VELOX_CHECK(
+      strncmp(copy.data() + readSize - 4, "PAR1", 4) == 0,
+      "No magic bytes found at end of the Parquet file");
+
+  uint32_t footerLength =
+      *(reinterpret_cast<const uint32_t*>(copy.data() + readSize - 8));
+  VELOX_CHECK_LT(footerLength + 12, fileLength_);
+  int32_t footerOffsetInBuffer = readSize - 8 - footerLength;
+  if (footerLength > readSize - 8) {
+    footerOffsetInBuffer = 0;
+    auto missingLength = footerLength - readSize - 8;
+    stream = input_->read(
+        fileLength_ - footerLength - 8,
+        missingLength,
+        dwio::common::LogType::FOOTER);
+    copy.resize(footerLength);
+    std::memmove(copy.data() + missingLength, copy.data(), readSize - 8);
+    bufferStart = nullptr;
+    bufferEnd = nullptr;
+    dwio::common::readBytes(
+        missingLength, stream.get(), copy.data(), bufferStart, bufferEnd);
   }
+
+  auto thriftTransport = std::make_shared<thrift::ThriftBufferedTransport>(
+      copy.data() + footerOffsetInBuffer, footerLength);
+  auto thriftProtocol =
+      std::make_unique<apache::thrift::protocol::TCompactProtocolT<
+          thrift::ThriftBufferedTransport>>(thriftTransport);
+  fileMetaData_ = std::make_unique<thrift::FileMetaData>();
+  fileMetaData_->read(thriftProtocol.get());
 }
 
-std::unique_ptr<::duckdb::ConstantFilter> constantFilter(
-    ::duckdb::ExpressionType expressionType,
-    ::duckdb::Value value) {
-  return std::make_unique<::duckdb::ConstantFilter>(
-      expressionType, std::move(value));
-}
-
-std::unique_ptr<::duckdb::ConstantFilter> constantEqualFilter(
-    ::duckdb::Value value) {
-  return std::make_unique<::duckdb::ConstantFilter>(
-      ::duckdb::ExpressionType::COMPARE_EQUAL, std::move(value));
-}
-
-void buildConjunctOrFilter(
-    uint64_t colIdx,
-    ::duckdb::LogicalType type,
-    const std::vector<int64_t>& values,
-    ::duckdb::TableFilterSet& filters) {
-  if (values.size() == 1) {
-    filters.PushFilter(
-        colIdx, constantEqualFilter(makeValue(type, *values.begin())));
-  } else {
-    auto duckFilter = std::make_unique<::duckdb::ConjunctionOrFilter>();
-    for (const auto& value : values) {
-      duckFilter->child_filters.push_back(
-          constantEqualFilter(makeValue(type, value)));
-    }
-    filters.PushFilter(colIdx, std::move(duckFilter));
+void ReaderBase::initializeSchema() {
+  if (fileMetaData_->__isset.encryption_algorithm) {
+    VELOX_UNSUPPORTED("Encrypted Parquet files are not supported");
   }
+
+  VELOX_CHECK_GT(
+      fileMetaData_->schema.size(),
+      1,
+      "Invalid Parquet schema: Need at least one non-root column in the file");
+  VELOX_CHECK_EQ(
+      fileMetaData_->schema[0].repetition_type,
+      thrift::FieldRepetitionType::REQUIRED,
+      "Invalid Parquet schema: root element must be REQUIRED");
+  VELOX_CHECK_GT(
+      fileMetaData_->schema[0].num_children,
+      0,
+      "Invalid Parquet schema: root element must have at least 1 child");
+
+  std::vector<std::shared_ptr<const ParquetTypeWithId::TypeWithId>> children;
+  children.reserve(fileMetaData_->schema[0].num_children);
+
+  uint32_t maxDefine = 0;
+  uint32_t maxRepeat = 0;
+  uint32_t schemaIdx = 0;
+  uint32_t columnIdx = 0;
+  uint32_t maxSchemaElementIdx = fileMetaData_->schema.size() - 1;
+  schemaWithId_ = getParquetColumnInfo(
+      maxSchemaElementIdx, maxRepeat, maxDefine, schemaIdx, columnIdx);
+  schema_ = createRowType(schemaWithId_->getChildren());
 }
 
-void toDuckDbFilter(
-    uint64_t colIdx,
-    ::duckdb::LogicalType type,
-    common::Filter* filter,
-    ::duckdb::TableFilterSet& filters) {
-  switch (filter->kind()) {
-    case common::FilterKind::kBigintRange: {
-      auto rangeFilter = static_cast<common::BigintRange*>(filter);
-      if (rangeFilter->isSingleValue()) {
-        filters.PushFilter(
-            colIdx, constantEqualFilter(makeValue(type, rangeFilter->lower())));
-      } else {
-        if (rangeFilter->lower() != std::numeric_limits<int64_t>::min()) {
-          filters.PushFilter(
-              colIdx,
-              constantFilter(
-                  ::duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO,
-                  makeValue(type, rangeFilter->lower())));
-        }
-        if (rangeFilter->upper() != std::numeric_limits<int64_t>::max()) {
-          filters.PushFilter(
-              colIdx,
-              constantFilter(
-                  ::duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO,
-                  makeValue(type, rangeFilter->upper())));
-        }
-      }
-      break;
-    }
+std::shared_ptr<const ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
+    uint32_t maxSchemaElementIdx,
+    uint32_t maxRepeat,
+    uint32_t maxDefine,
+    uint32_t& schemaIdx,
+    uint32_t& columnIdx) const {
+  VELOX_CHECK(fileMetaData_ != nullptr);
+  VELOX_CHECK_LT(schemaIdx, fileMetaData_->schema.size());
 
-    case common::FilterKind::kDoubleRange: {
-      auto rangeFilter = static_cast<common::DoubleRange*>(filter);
-      if (!rangeFilter->lowerUnbounded()) {
-        auto expressionType = rangeFilter->lowerExclusive()
-            ? ::duckdb::ExpressionType::COMPARE_GREATERTHAN
-            : ::duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO;
-        filters.PushFilter(
-            colIdx,
-            constantFilter(
-                expressionType, ::duckdb::Value(rangeFilter->lower())));
-      }
-      if (!rangeFilter->upperUnbounded()) {
-        auto expressionType = rangeFilter->upperExclusive()
-            ? ::duckdb::ExpressionType::COMPARE_LESSTHAN
-            : ::duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
-        filters.PushFilter(
-            colIdx,
-            constantFilter(
-                expressionType, ::duckdb::Value(rangeFilter->upper())));
-      }
-      break;
-    }
+  auto& schema = fileMetaData_->schema;
+  uint32_t curSchemaIdx = schemaIdx;
+  auto& schemaElement = schema[curSchemaIdx];
 
-    case common::FilterKind::kBytesValues: {
-      auto valuesFilter = static_cast<common::BytesValues*>(filter);
-      const auto& values = valuesFilter->values();
-      if (values.size() == 1) {
-        filters.PushFilter(colIdx, constantEqualFilter(*values.begin()));
-      } else {
-        auto duckFilter = std::make_unique<::duckdb::ConjunctionOrFilter>();
-        for (const auto& value : values) {
-          duckFilter->child_filters.push_back(constantEqualFilter(value));
-        }
-        filters.PushFilter(colIdx, std::move(duckFilter));
-      }
-      break;
+  if (schemaElement.__isset.repetition_type) {
+    if (schemaElement.repetition_type !=
+        thrift::FieldRepetitionType::REQUIRED) {
+      maxDefine++;
     }
-
-    case common::FilterKind::kBytesRange: {
-      auto rangeFilter = static_cast<common::BytesRange*>(filter);
-      if (!rangeFilter->lowerUnbounded()) {
-        auto expressionType = rangeFilter->lowerExclusive()
-            ? ::duckdb::ExpressionType::COMPARE_GREATERTHAN
-            : ::duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO;
-        filters.PushFilter(
-            colIdx,
-            constantFilter(
-                expressionType, ::duckdb::Value(rangeFilter->lower())));
-      }
-      if (!rangeFilter->upperUnbounded()) {
-        auto expressionType = rangeFilter->upperExclusive()
-            ? ::duckdb::ExpressionType::COMPARE_LESSTHAN
-            : ::duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
-        filters.PushFilter(
-            colIdx,
-            constantFilter(
-                expressionType, ::duckdb::Value(rangeFilter->upper())));
-      }
-      break;
+    if (schemaElement.repetition_type ==
+        thrift::FieldRepetitionType::REPEATED) {
+      maxRepeat++;
     }
-    case common::FilterKind::kBigintValuesUsingBitmask: {
-      auto valuesFilter =
-          static_cast<common::BigintValuesUsingBitmask*>(filter);
-      const auto values = valuesFilter->values();
-      buildConjunctOrFilter(colIdx, type, values, filters);
-      break;
-    }
-    case common::FilterKind::kBigintValuesUsingHashTable: {
-      auto valuesFilter =
-          static_cast<common::BigintValuesUsingHashTable*>(filter);
-      const auto& values = valuesFilter->values();
-      buildConjunctOrFilter(colIdx, type, values, filters);
-      break;
-    }
-    case common::FilterKind::kAlwaysFalse:
-    case common::FilterKind::kAlwaysTrue:
-    case common::FilterKind::kIsNull:
-    case common::FilterKind::kIsNotNull:
-    case common::FilterKind::kBoolValue:
-    case common::FilterKind::kFloatRange:
-    case common::FilterKind::kBigintMultiRange:
-    case common::FilterKind::kMultiRange:
-    default:
-      VELOX_UNSUPPORTED(
-          "Unsupported filter in parquet reader: {}", filter->toString());
   }
-}
 
-std::optional<common::Filter*> findFilter(
-    const std::string& columnName,
-    const common::ScanSpec* scanSpec) {
-  const auto& childSpecs = scanSpec->children();
-  for (const auto& childSpec : childSpecs) {
+  if (!schemaElement.__isset.type) { // inner node
     VELOX_CHECK(
-        !childSpec->extractValues(),
-        "Subfield access is NYI in parquet reader");
+        schemaElement.__isset.num_children && schemaElement.num_children > 0,
+        "Node has no children but should");
 
-    if (childSpec->fieldName() == columnName && childSpec->filter()) {
-      return childSpec->filter();
+    std::vector<std::shared_ptr<const ParquetTypeWithId::TypeWithId>> children;
+
+    for (int32_t i = 0; i < schemaElement.num_children; i++) {
+      auto child = getParquetColumnInfo(
+          maxSchemaElementIdx, maxRepeat, maxDefine, ++schemaIdx, columnIdx);
+      children.push_back(child);
     }
-  }
+    VELOX_CHECK(!children.empty());
 
-  return std::nullopt;
+    if (schemaElement.__isset.converted_type) {
+      switch (schemaElement.converted_type) {
+        case thrift::ConvertedType::LIST:
+        case thrift::ConvertedType::MAP: {
+          auto element = children.at(0)->getChildren();
+          VELOX_CHECK_EQ(children.size(), 1);
+          return std::make_shared<const ParquetTypeWithId>(
+              children[0]->type,
+              std::move(element),
+              curSchemaIdx, // TODO: there are holes in the ids
+              maxSchemaElementIdx,
+              ParquetTypeWithId::kNonLeaf, // columnIdx,
+              schemaElement.name,
+              std::nullopt,
+              maxRepeat + 1,
+              maxDefine);
+        }
+        case thrift::ConvertedType::MAP_KEY_VALUE: {
+          // child of MAP
+          VELOX_CHECK_EQ(
+              schemaElement.repetition_type,
+              thrift::FieldRepetitionType::REPEATED);
+          assert(children.size() == 2);
+          auto childrenCopy = children;
+          return std::make_shared<const ParquetTypeWithId>(
+              TypeFactory<TypeKind::MAP>::create(
+                  children[0]->type, children[1]->type),
+              std::move(childrenCopy),
+              curSchemaIdx, // TODO: there are holes in the ids
+              maxSchemaElementIdx,
+              ParquetTypeWithId::kNonLeaf, // columnIdx,
+              schemaElement.name,
+              std::nullopt,
+              maxRepeat,
+              maxDefine);
+        }
+        default:
+          VELOX_UNSUPPORTED(
+              "Unsupported SchemaElement type: {}",
+              schemaElement.converted_type);
+      }
+    } else {
+      if (schemaElement.repetition_type ==
+          thrift::FieldRepetitionType::REPEATED) {
+        // child of LIST: "bag"
+        assert(children.size() == 1);
+        auto childrenCopy = children;
+        return std::make_shared<ParquetTypeWithId>(
+            TypeFactory<TypeKind::ARRAY>::create(children[0]->type),
+            std::move(childrenCopy),
+            curSchemaIdx,
+            maxSchemaElementIdx,
+            ParquetTypeWithId::kNonLeaf, // columnIdx,
+            schemaElement.name,
+            std::nullopt,
+            maxRepeat,
+            maxDefine);
+      } else {
+        // Row type
+        auto childrenCopy = children;
+        return std::make_shared<const ParquetTypeWithId>(
+            createRowType(children),
+            std::move(childrenCopy),
+            curSchemaIdx,
+            maxSchemaElementIdx,
+            ParquetTypeWithId::kNonLeaf, // columnIdx,
+            schemaElement.name,
+            std::nullopt,
+            maxRepeat,
+            maxDefine);
+      }
+    }
+  } else { // leaf node
+    const auto veloxType = convertType(schemaElement);
+    int32_t precision =
+        schemaElement.__isset.precision ? schemaElement.precision : 0;
+    int32_t scale = schemaElement.__isset.scale ? schemaElement.scale : 0;
+    int32_t type_length =
+        schemaElement.__isset.type_length ? schemaElement.type_length : 0;
+    std::vector<std::shared_ptr<const dwio::common::TypeWithId>> children;
+    std::shared_ptr<const ParquetTypeWithId> leafTypePtr =
+        std::make_shared<const ParquetTypeWithId>(
+            veloxType,
+            std::move(children),
+            curSchemaIdx,
+            maxSchemaElementIdx,
+            columnIdx++,
+            schemaElement.name,
+            schemaElement.type,
+            maxRepeat,
+            maxDefine,
+            precision,
+            scale,
+            type_length);
+
+    if (schemaElement.repetition_type ==
+        thrift::FieldRepetitionType::REPEATED) {
+      // Array
+      children.clear();
+      children.reserve(1);
+      children.push_back(leafTypePtr);
+      return std::make_shared<const ParquetTypeWithId>(
+          TypeFactory<TypeKind::ARRAY>::create(veloxType),
+          std::move(children),
+          curSchemaIdx,
+          maxSchemaElementIdx,
+          columnIdx++,
+          schemaElement.name,
+          std::nullopt,
+          maxRepeat,
+          maxDefine);
+    }
+
+    return leafTypePtr;
+  }
 }
 
-} // anonymous namespace
+TypePtr ReaderBase::convertType(
+    const thrift::SchemaElement& schemaElement) const {
+  VELOX_CHECK(schemaElement.__isset.type && schemaElement.num_children == 0);
+  VELOX_CHECK(
+      schemaElement.type != thrift::Type::FIXED_LEN_BYTE_ARRAY ||
+          schemaElement.__isset.type_length,
+      "FIXED_LEN_BYTE_ARRAY requires length to be set");
+
+  if (schemaElement.__isset.converted_type) {
+    switch (schemaElement.converted_type) {
+      case thrift::ConvertedType::INT_8:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "INT8 converted type can only be set for value of thrift::Type::INT32");
+        return TINYINT();
+
+      case thrift::ConvertedType::INT_16:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "INT16 converted type can only be set for value of thrift::Type::INT32");
+        return SMALLINT();
+
+      case thrift::ConvertedType::INT_32:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "INT32 converted type can only be set for value of thrift::Type::INT32");
+        return INTEGER();
+
+      case thrift::ConvertedType::INT_64:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "INT64 converted type can only be set for value of thrift::Type::INT32");
+        return BIGINT();
+
+      case thrift::ConvertedType::UINT_8:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "UINT_8 converted type can only be set for value of thrift::Type::INT32");
+        return TINYINT();
+
+      case thrift::ConvertedType::UINT_16:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "UINT_16 converted type can only be set for value of thrift::Type::INT32");
+        return SMALLINT();
+
+      case thrift::ConvertedType::UINT_32:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "UINT_32 converted type can only be set for value of thrift::Type::INT32");
+        return INTEGER();
+
+      case thrift::ConvertedType::UINT_64:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT64,
+            "UINT_64 converted type can only be set for value of thrift::Type::INT64");
+        return BIGINT();
+
+      case thrift::ConvertedType::DATE:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT32,
+            "DATE converted type can only be set for value of thrift::Type::INT32");
+        return DATE();
+
+      case thrift::ConvertedType::TIMESTAMP_MICROS:
+      case thrift::ConvertedType::TIMESTAMP_MILLIS:
+        VELOX_CHECK_EQ(
+            schemaElement.type,
+            thrift::Type::INT64,
+            "TIMESTAMP_MICROS or TIMESTAMP_MILLIS converted type can only be set for value of thrift::Type::INT64");
+        return TIMESTAMP();
+
+      case thrift::ConvertedType::DECIMAL: {
+        VELOX_CHECK(
+            schemaElement.__isset.precision && schemaElement.__isset.scale,
+            "DECIMAL requires a length and scale specifier!");
+        return DECIMAL(schemaElement.precision, schemaElement.scale);
+      }
+
+      case thrift::ConvertedType::UTF8:
+        switch (schemaElement.type) {
+          case thrift::Type::BYTE_ARRAY:
+          case thrift::Type::FIXED_LEN_BYTE_ARRAY:
+            return VARCHAR();
+          default:
+            VELOX_FAIL(
+                "UTF8 converted type can only be set for thrift::Type::(FIXED_LEN_)BYTE_ARRAY");
+        }
+      case thrift::ConvertedType::MAP:
+      case thrift::ConvertedType::MAP_KEY_VALUE:
+      case thrift::ConvertedType::LIST:
+      case thrift::ConvertedType::ENUM:
+      case thrift::ConvertedType::TIME_MILLIS:
+      case thrift::ConvertedType::TIME_MICROS:
+      case thrift::ConvertedType::JSON:
+      case thrift::ConvertedType::BSON:
+      case thrift::ConvertedType::INTERVAL:
+      default:
+        VELOX_FAIL(
+            "Unsupported Parquet SchemaElement converted type: ",
+            schemaElement.converted_type);
+    }
+  } else {
+    switch (schemaElement.type) {
+      case thrift::Type::type::BOOLEAN:
+        return BOOLEAN();
+      case thrift::Type::type::INT32:
+        return INTEGER();
+      case thrift::Type::type::INT64:
+        return BIGINT();
+      case thrift::Type::type::INT96:
+        return DOUBLE(); // TODO: Lose precision
+      case thrift::Type::type::FLOAT:
+        return REAL();
+      case thrift::Type::type::DOUBLE:
+        return DOUBLE();
+      case thrift::Type::type::BYTE_ARRAY:
+      case thrift::Type::type::FIXED_LEN_BYTE_ARRAY:
+        if (binaryAsString) {
+          return VARCHAR();
+        } else {
+          return VARBINARY();
+        }
+
+      default:
+        VELOX_FAIL("Unknown Parquet SchemaElement type: ", schemaElement.type);
+    }
+  }
+}
+
+std::shared_ptr<const RowType> ReaderBase::createRowType(
+    std::vector<std::shared_ptr<const ParquetTypeWithId::TypeWithId>>
+        children) {
+  std::vector<std::string> childNames;
+  std::vector<TypePtr> childTypes;
+  for (auto& child : children) {
+    childNames.push_back(
+        std::static_pointer_cast<const ParquetTypeWithId>(child)->name_);
+    childTypes.push_back(child->type);
+  }
+  return TypeFactory<TypeKind::ROW>::create(
+      std::move(childNames), std::move(childTypes));
+}
+
+void ReaderBase::scheduleRowGroups(
+    const std::vector<uint32_t>& rowGroupIds,
+    int32_t currentGroup,
+    StructColumnReader& reader) {
+  auto thisGroup = rowGroupIds[currentGroup];
+  auto nextGroup =
+      currentGroup + 1 < rowGroupIds.size() ? rowGroupIds[currentGroup + 1] : 0;
+  auto input = inputs_[thisGroup].get();
+  if (!input) {
+    auto newInput = input_->clone();
+    reader.enqueueRowGroup(thisGroup, *newInput);
+    newInput->load(dwio::common::LogType::STRIPE);
+    inputs_[thisGroup] = std::move(newInput);
+  }
+  if (nextGroup) {
+    auto newInput = input_->clone();
+    reader.enqueueRowGroup(nextGroup, *newInput);
+    newInput->load(dwio::common::LogType::STRIPE);
+    inputs_[nextGroup] = std::move(newInput);
+  }
+  if (currentGroup > 1) {
+    inputs_.erase(rowGroupIds[currentGroup - 1]);
+  }
+}
+
+int64_t ReaderBase::rowGroupUncompressedSize(
+    int32_t rowGroupIndex,
+    const dwio::common::TypeWithId& type) const {
+  if (type.column != ParquetTypeWithId::kNonLeaf) {
+    return fileMetaData_->row_groups[rowGroupIndex]
+        .columns[type.column]
+        .meta_data.total_uncompressed_size;
+  }
+  int64_t sum = 0;
+  for (auto child : type.getChildren()) {
+    sum += rowGroupUncompressedSize(rowGroupIndex, *child);
+  }
+  return sum;
+}
 
 ParquetRowReader::ParquetRowReader(
-    std::shared_ptr<::duckdb::ParquetReader> reader,
-    const dwio::common::RowReaderOptions& options,
-    memory::MemoryPool& pool)
-    : reader_(std::move(reader)),
-      pool_(pool),
-      scanSpec_{options.getScanSpec()} {
-  auto& selector = *options.getSelector();
-  rowType_ = selector.buildSelectedReordered();
-  duckdbRowType_.reserve(rowType_->size());
+    const std::shared_ptr<ReaderBase>& readerBase,
+    const dwio::common::RowReaderOptions& options)
+    : pool_(readerBase->getMemoryPool()),
+      readerBase_(readerBase),
+      options_(options),
+      rowGroups_(readerBase_->fileMetaData().row_groups),
+      currentRowGroupIdsIdx_(0),
+      currentRowGroupPtr_(&rowGroups_[currentRowGroupIdsIdx_]),
+      rowsInCurrentRowGroup_(currentRowGroupPtr_->num_rows),
+      currentRowInGroup_(rowsInCurrentRowGroup_) {
+  // Validate the requested type is compatible with what's in the file
+  std::function<std::string()> createExceptionContext = [&]() {
+    std::string exceptionMessageContext = fmt::format(
+        "The schema loaded in the reader does not match the schema in the file footer."
+        "Input Name: {},\n"
+        "File Footer Schema (without partition columns): {},\n"
+        "Input Table Schema (with partition columns): {}\n",
+        readerBase_->bufferedInput().getReadFile()->getName(),
+        readerBase_->schema()->toString(),
+        requestedType_->toString());
+    return exceptionMessageContext;
+  };
 
-  auto& projection = selector.getProjection();
-  VELOX_CHECK_EQ(rowType_->size(), projection.size());
-
-  std::vector<::duckdb::column_t> columnIds;
-  columnIds.reserve(rowType_->size());
-  for (uint64_t i = 0; i < projection.size(); i++) {
-    uint64_t columnId = projection[i].column;
-    VELOX_CHECK_LT(
-        columnId,
-        reader_->names.size(),
-        "Unexpected column name: {}",
-        projection[i].name);
-    columnIds.push_back(columnId);
-
-    // DuckDB ParquetReader::return_types contains all columns present in the
-    // file.
-    ::duckdb::LogicalType duckDbType = reader_->return_types[columnId];
-    duckdbRowType_.push_back(duckDbType);
-
-    if (options.getScanSpec()) {
-      auto veloxFilter =
-          findFilter(projection[i].name, options.getScanSpec().get());
-      if (veloxFilter) {
-        toDuckDbFilter(i, duckDbType, veloxFilter.value(), filters_);
-      }
-    }
+  if (rowGroups_.empty()) {
+    return; // TODO
   }
+  ParquetParams params(pool_, readerBase_->fileMetaData());
 
-  std::vector<idx_t> groups;
-  for (idx_t i = 0; i < reader_->NumRowGroups(); i++) {
-    auto groupOffset = reader_->GetFileMetadata()->row_groups[i].file_offset;
-    if (groupOffset >= options.getOffset() &&
-        groupOffset < (options.getLength() + options.getOffset())) {
-      groups.push_back(i);
-    }
-  }
+  columnReader_ = ParquetColumnReader::build(
+      readerBase_->schemaWithId(), // Id is schema id
+      params,
+      *options_.getScanSpec());
 
-  reader_->InitializeScan(
-      state_, std::move(columnIds), std::move(groups), &filters_);
+  filterRowGroups();
 }
 
-uint64_t ParquetRowReader::next(uint64_t /*size*/, velox::VectorPtr& result) {
-  ::duckdb::DataChunk output;
-  output.Initialize(duckdbRowType_);
+//
+void ParquetRowReader::filterRowGroups() {
+  auto rowGroups = readerBase_->fileMetaData().row_groups;
+  rowGroupIds_.reserve(rowGroups.size());
 
-  reader_->Scan(state_, output);
-
-  if (output.size() > 0) {
-    std::vector<VectorPtr> columns;
-    columns.resize(output.data.size());
-    for (auto& spec : scanSpec_->children()) {
-      if (spec->isConstant()) {
-        columns[spec->channel()] =
-            BaseVector::wrapInConstant(output.size(), 0, spec->constantValue());
-      } else if (spec->projectOut()) {
-        auto index = rowType_->getChildIdx(spec->fieldName());
-        columns[spec->channel()] = duckdb::toVeloxVector(
-            output.size(),
-            output.data[index],
-            rowType_->childAt(index),
-            &pool_);
+  for (auto i = 0; i < rowGroups.size(); i++) {
+    VELOX_CHECK_GT(rowGroups_[i].columns.size(), 0);
+    auto fileOffset = rowGroups_[i].__isset.file_offset
+        ? rowGroups_[i].file_offset
+        : rowGroups_[i].columns[0].file_offset;
+    VELOX_CHECK_GT(fileOffset, 0);
+    auto rowGroupInRange =
+        (fileOffset >= options_.getOffset() &&
+         fileOffset < options_.getLimit());
+    // A skipped row group is one that is in range and is in the excluded list.
+    if (rowGroupInRange) {
+      if (columnReader_->rowGroupMatches(i)) {
+        rowGroupIds_.push_back(i);
+      } else {
+        ++skippedRowGroups_;
       }
     }
+  }
+}
 
-    result = std::make_shared<RowVector>(
-        &pool_,
-        rowType_,
-        BufferPtr(nullptr),
-        output.size(),
-        columns,
-        std::nullopt);
+uint64_t ParquetRowReader::next(uint64_t size, velox::VectorPtr& result) {
+  VELOX_CHECK_GT(size, 0);
+
+  if (currentRowInGroup_ >= rowsInCurrentRowGroup_) {
+    // attempt to advance to next row group
+    if (!advanceToNextRowGroup()) {
+      return 0;
+    }
   }
 
-  return output.size();
+  uint64_t rowsToRead = std::min(
+      static_cast<uint64_t>(size), rowsInCurrentRowGroup_ - currentRowInGroup_);
+
+  if (rowsToRead > 0) {
+    columnReader_->next(rowsToRead, result, nullptr);
+    currentRowInGroup_ += rowsToRead;
+  }
+
+  return rowsToRead;
+}
+
+bool ParquetRowReader::advanceToNextRowGroup() {
+  if (currentRowGroupIdsIdx_ == rowGroupIds_.size()) {
+    return false;
+  }
+
+  auto nextRowGroupIndex = rowGroupIds_[currentRowGroupIdsIdx_];
+  readerBase_->scheduleRowGroups(
+      rowGroupIds_,
+      currentRowGroupIdsIdx_,
+      dynamic_cast<StructColumnReader&>(*columnReader_));
+  currentRowGroupPtr_ = &rowGroups_[rowGroupIds_[currentRowGroupIdsIdx_]];
+  rowsInCurrentRowGroup_ = currentRowGroupPtr_->num_rows;
+  currentRowInGroup_ = 0;
+  currentRowGroupIdsIdx_++;
+  columnReader_->seekToRowGroup(nextRowGroupIndex);
+  return true;
 }
 
 void ParquetRowReader::updateRuntimeStats(
-    dwio::common::RuntimeStatistics& /*stats*/) const {}
+    dwio::common::RuntimeStatistics& stats) const {
+  stats.skippedStrides += skippedRowGroups_;
+}
 
 void ParquetRowReader::resetFilterCaches() {
-  // No filter caches to reset.
+  columnReader_->resetFilterCaches();
 }
 
 std::optional<size_t> ParquetRowReader::estimatedRowSize() const {
-  // TODO Implement.
-  return std::nullopt;
+  auto index =
+      currentRowGroupIdsIdx_ < 1 ? 0 : rowGroupIds_[currentRowGroupIdsIdx_ - 1];
+  return readerBase_->rowGroupUncompressedSize(
+             index, *readerBase_->schemaWithId()) /
+      rowsInCurrentRowGroup_;
 }
 
 ParquetReader::ParquetReader(
-    std::unique_ptr<dwio::common::InputStream> stream,
+    std::unique_ptr<dwio::common::BufferedInput> input,
     const dwio::common::ReaderOptions& options)
-    : allocator_(options.getMemoryPool()),
-      fileSystem_(
-          std::make_unique<duckdb::InputStreamFileSystem>(std::move(stream))),
-      reader_(std::make_shared<::duckdb::ParquetReader>(
-          allocator_,
-          fileSystem_->OpenFile())),
-      pool_(options.getMemoryPool()) {
-  auto names = reader_->names;
-  std::vector<TypePtr> types;
-  types.reserve(reader_->return_types.size());
-  for (auto& t : reader_->return_types) {
-    types.emplace_back(duckdb::toVeloxType(t));
-  }
-  type_ = ROW(std::move(names), std::move(types));
-}
-
-std::optional<uint64_t> ParquetReader::numberOfRows() const {
-  return const_cast<::duckdb::ParquetReader*>(reader_.get())->NumRows();
-}
-
-std::unique_ptr<dwio::common::ColumnStatistics> ParquetReader::columnStatistics(
-    uint32_t /*index*/) const {
-  // TODO: implement proper stats
-  return std::make_unique<ColumnStatistics>();
-}
-
-const velox::RowTypePtr& ParquetReader::rowType() const {
-  return type_;
-}
-
-const std::shared_ptr<const dwio::common::TypeWithId>&
-ParquetReader::typeWithId() const {
-  if (!typeWithId_) {
-    typeWithId_ = dwio::common::TypeWithId::create(type_);
-  }
-  return typeWithId_;
-}
+    : readerBase_(std::make_shared<ReaderBase>(std::move(input), options)) {}
 
 std::unique_ptr<dwio::common::RowReader> ParquetReader::createRowReader(
     const dwio::common::RowReaderOptions& options) const {
-  return std::make_unique<ParquetRowReader>(reader_, options, pool_);
+  return std::make_unique<ParquetRowReader>(readerBase_, options);
 }
-
-void registerParquetReaderFactory() {
-  dwio::common::registerReaderFactory(std::make_shared<ParquetReaderFactory>());
-}
-
-void unregisterParquetReaderFactory() {
-  dwio::common::unregisterReaderFactory(dwio::common::FileFormat::PARQUET);
-}
-
 } // namespace facebook::velox::parquet

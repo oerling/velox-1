@@ -26,6 +26,19 @@
 #include "velox/expression/EvalCtx.h"
 #include "velox/vector/SimpleVector.h"
 
+/// GFlag used to enable saving input vector and expression SQL on disk in case
+/// of any (user or system) error during expression evaluation. The value
+/// specifies a path to a directory where the vectors will be saved. That
+/// directory must exist and be writable.
+DECLARE_string(velox_save_input_on_expression_any_failure_path);
+
+/// GFlag used to enable saving input vector and expression SQL on disk in case
+/// of a system error during expression evaluation. The value specifies a path
+/// to a directory where the vectors will be saved. That directory must exist
+/// and be writable. This flag is ignored if
+/// velox_save_input_on_expression_any_failure_path flag is set.
+DECLARE_string(velox_save_input_on_expression_system_failure_path);
+
 namespace facebook::velox::exec {
 
 class ExprSet;
@@ -35,11 +48,26 @@ class VectorFunction;
 struct ExprStats {
   /// Requires QueryConfig.exprTrackCpuUsage() to be 'true'.
   CpuWallTiming timing;
+
+  /// Number of processed rows.
   uint64_t numProcessedRows{0};
+
+  /// Number of processed vectors / batches. Allows to compute average batch
+  /// size.
+  uint64_t numProcessedVectors{0};
 
   void add(const ExprStats& other) {
     timing.add(other.timing);
     numProcessedRows += other.numProcessedRows;
+    numProcessedVectors += other.numProcessedVectors;
+  }
+
+  std::string toString() const {
+    return fmt::format(
+        "timing: {}, numProcessedRows: {}, numProcessedVectors: {}",
+        timing.toString(),
+        numProcessedRows,
+        numProcessedVectors);
   }
 };
 
@@ -50,11 +78,15 @@ class Expr {
       TypePtr type,
       std::vector<std::shared_ptr<Expr>>&& inputs,
       std::string name,
+      bool specialForm,
+      bool supportsFlatNoNullsFastPath,
       bool trackCpuUsage)
       : type_(std::move(type)),
         inputs_(std::move(inputs)),
         name_(std::move(name)),
         vectorFunction_(nullptr),
+        specialForm_{specialForm},
+        supportsFlatNoNullsFastPath_{supportsFlatNoNullsFastPath},
         trackCpuUsage_{trackCpuUsage} {}
 
   Expr(
@@ -62,30 +94,50 @@ class Expr {
       std::vector<std::shared_ptr<Expr>>&& inputs,
       std::shared_ptr<VectorFunction> vectorFunction,
       std::string name,
-      bool trackCpuUsage)
-      : type_(std::move(type)),
-        inputs_(std::move(inputs)),
-        name_(std::move(name)),
-        vectorFunction_(std::move(vectorFunction)),
-        trackCpuUsage_{trackCpuUsage} {}
+      bool trackCpuUsage);
 
   virtual ~Expr() = default;
 
-  void eval(const SelectivityVector& rows, EvalCtx* context, VectorPtr* result);
+  /// Evaluates the expression for the specified 'rows'.
+  ///
+  /// @param topLevel Boolean indicating whether this is a top-level expression
+  /// or one of the sub-expressions. Used to setup exception context.
+  void eval(
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result,
+      bool topLevel = false);
+
+  /// Evaluates the expression using fast path that assumes all inputs and
+  /// intermediate results are flat or constant and have no nulls.
+  ///
+  /// This path doesn't peel off constant encoding and therefore may be
+  /// expensive to apply to expressions that manipulate strings of complex
+  /// types. It may also be expensive to apply to large batches. Hence, this
+  /// path is enabled only for batch sizes less than 1'000 and expressions where
+  /// all input and intermediate types are primitive and not strings.
+  ///
+  /// @param topLevel Boolean indicating whether this is a top-level expression
+  /// or one of the sub-expressions. Used to setup exception context.
+  void evalFlatNoNulls(
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result,
+      bool topLevel = false);
 
   // Simplified path for expression evaluation (flattens all vectors).
   void evalSimplified(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   // Evaluates 'this', including inputs. This is defined only for
   // exprs that have custom error handling or evaluate their arguments
   // conditionally.
   virtual void evalSpecialForm(
       const SelectivityVector& /*rows*/,
-      EvalCtx* /*context*/,
-      VectorPtr* /*result*/) {
+      EvalCtx& /*context*/,
+      VectorPtr& /*result*/) {
     VELOX_NYI();
   }
 
@@ -93,8 +145,8 @@ class Expr {
   // path; fallback to the regular implementation by default.
   virtual void evalSpecialFormSimplified(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result) {
+      EvalCtx& context,
+      VectorPtr& result) {
     evalSpecialForm(rows, context, result);
   }
 
@@ -104,7 +156,8 @@ class Expr {
     if (sharedSubexprRows_) {
       sharedSubexprRows_->clearAll();
     }
-    if (BaseVector::isReusableFlatVector(sharedSubexprValues_)) {
+    if (BaseVector::isVectorWritable(sharedSubexprValues_) &&
+        sharedSubexprValues_->isFlatEncoding()) {
       sharedSubexprValues_->resize(0);
     } else {
       sharedSubexprValues_ = nullptr;
@@ -129,8 +182,8 @@ class Expr {
     return type()->kind() == TypeKind::VARCHAR;
   }
 
-  virtual bool isSpecialForm() const {
-    return false;
+  bool isSpecialForm() const {
+    return specialForm_;
   }
 
   virtual bool isConditional() const {
@@ -139,6 +192,10 @@ class Expr {
 
   bool isDeterministic() const {
     return deterministic_;
+  }
+
+  bool supportsFlatNoNullsFastPath() const {
+    return supportsFlatNoNullsFastPath_;
   }
 
   bool isMultiplyReferenced() const {
@@ -167,6 +224,9 @@ class Expr {
       const std::vector<FieldReference*>& subset,
       const std::vector<FieldReference*>& superset);
 
+  static bool allSupportFlatNoNullsFastPath(
+      const std::vector<std::shared_ptr<Expr>>& exprs);
+
   const std::vector<std::shared_ptr<Expr>>& inputs() const {
     return inputs_;
   }
@@ -175,19 +235,52 @@ class Expr {
   /// their inputs recursively.
   virtual std::string toString(bool recursive = true) const;
 
+  /// Return the expression as SQL string.
+  /// @param complexConstants An optional std::vector of VectorPtr to record
+  /// complex constants (Array, Maps, Structs, ...) that aren't accurately
+  /// expressable as sql. If not given, they will be converted to
+  /// SQL-expressable simple constants.
+  virtual std::string toSql(
+      std::vector<VectorPtr>* FOLLY_NULLABLE complexConstants = nullptr) const;
+
   const ExprStats& stats() const {
     return stats_;
   }
 
- private:
+  // Adds nulls from 'rawNulls' to positions of 'result' given by
+  // 'rows'. Ensures that '*result' is writable, of sufficient size
+  // and that it can take nulls. Makes a new '*result' when
+  // appropriate.
+  static void addNulls(
+      const SelectivityVector& rows,
+      const uint64_t* FOLLY_NULLABLE rawNulls,
+      EvalCtx& context,
+      const TypePtr& type,
+      VectorPtr& result);
+
+  void addNulls(
+      const SelectivityVector& rows,
+      const uint64_t* FOLLY_NULLABLE rawNulls,
+      EvalCtx& context,
+      VectorPtr& result);
+
+  auto& vectorFunction() const {
+    return vectorFunction_;
+  }
+
+  auto& inputValues() {
+    return inputValues_;
+  }
+
   void setAllNulls(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result) const;
+      EvalCtx& context,
+      VectorPtr& result) const;
 
+ private:
   struct PeelEncodingsResult {
-    SelectivityVector* newRows;
-    SelectivityVector* newFinalSelection;
+    SelectivityVector* FOLLY_NULLABLE newRows;
+    SelectivityVector* FOLLY_NULLABLE newFinalSelection;
     bool mayCache;
 
     static PeelEncodingsResult empty() {
@@ -196,8 +289,8 @@ class Expr {
   };
 
   PeelEncodingsResult peelEncodings(
-      EvalCtx* context,
-      ContextSaver* saver,
+      EvalCtx& context,
+      ScopedContextSaver& saver,
       const SelectivityVector& rows,
       LocalDecodedVector& localDecoded,
       LocalSelectivityVector& newRowsHolder,
@@ -205,37 +298,21 @@ class Expr {
 
   void evalEncodings(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   void evalWithMemo(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   void evalWithNulls(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   void
-  evalAll(const SelectivityVector& rows, EvalCtx* context, VectorPtr* result);
-
-  static void setDictionaryWrapping(
-      DecodedVector& decoded,
-      const SelectivityVector& rows,
-      BaseVector& firstWrapper,
-      EvalCtx* context);
-
-  // Adds nulls from 'rawNulls' to positions of 'result' given by
-  // 'rows'. Ensures that '*result' is writable, of sufficient size
-  // and that it can take nulls. Makes a new '*result' when
-  // appropriate.
-  void addNulls(
-      const SelectivityVector& rows,
-      const uint64_t* rawNulls,
-      EvalCtx* context,
-      VectorPtr* result);
+  evalAll(const SelectivityVector& rows, EvalCtx& context, VectorPtr& result);
 
   // Checks 'inputValues_' for peelable wrappers (constants,
   // dictionaries etc) and applies the function of 'this' to distinct
@@ -246,55 +323,57 @@ class Expr {
   bool applyFunctionWithPeeling(
       const SelectivityVector& rows,
       const SelectivityVector& applyRows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   // Calls the function of 'this' on arguments in
   // 'inputValues_'. Handles cases of VectorFunction and SimpleFunction.
   void applyFunction(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
-
-  // Calls 'vectorFunction_' on values in 'inputValues_'.
-  void applyVectorFunction(
-      const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
-
-  void applySingleConstArgVectorFunction(
-      const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   // Returns true if values in 'distinctFields_' have nulls that are
   // worth skipping. If so, the rows in 'rows' with at least one sure
   // null are deselected in 'nullHolder->get()'.
   bool removeSureNulls(
       const SelectivityVector& rows,
-      EvalCtx* context,
+      EvalCtx& context,
       LocalSelectivityVector& nullHolder);
 
   // If this is a common subexpression, checks if there is a previously
   // calculated result and populates the 'result'.
   bool checkGetSharedSubexprValues(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
 
   // If this is a common subexpression, stores the newly calculated result.
   void checkUpdateSharedSubexprValues(
       const SelectivityVector& rows,
-      EvalCtx* context,
+      EvalCtx& context,
       const VectorPtr& result);
 
   void evalSimplifiedImpl(
       const SelectivityVector& rows,
-      EvalCtx* context,
-      VectorPtr* result);
+      EvalCtx& context,
+      VectorPtr& result);
+
+  void evalSpecialFormWithStats(
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result);
 
  protected:
   void appendInputs(std::stringstream& stream) const;
+
+  void appendInputsSql(
+      std::stringstream& stream,
+      std::vector<VectorPtr>* FOLLY_NULLABLE complexConstants) const;
+
+  /// Release 'inputValues_' back to vector pool in 'evalCtx' so they can be
+  /// reused.
+  void releaseInputValues(EvalCtx& evalCtx);
 
   /// Returns an instance of CpuWallTimer if cpu usage tracking is enabled. Null
   /// otherwise.
@@ -307,7 +386,12 @@ class Expr {
   const std::vector<std::shared_ptr<Expr>> inputs_;
   const std::string name_;
   const std::shared_ptr<VectorFunction> vectorFunction_;
+  const bool specialForm_;
+  const bool supportsFlatNoNullsFastPath_;
   const bool trackCpuUsage_;
+
+  std::vector<VectorPtr> constantInputs_;
+  std::vector<bool> inputIsConstant_;
 
   // TODO make the following metadata const, e.g. call computeMetadata in the
   // constructor
@@ -315,7 +399,11 @@ class Expr {
   // The distinct references to input columns in 'inputs_'
   // subtrees. Empty if this is the same as 'distinctFields_' of
   // parent Expr.
-  std::vector<FieldReference*> distinctFields_;
+  std::vector<FieldReference * FOLLY_NONNULL> distinctFields_;
+
+  // Fields referenced by multiple inputs, which is subset of distinctFields_.
+  // Used to determine pre-loading of lazy vectors at current expr.
+  std::unordered_set<FieldReference * FOLLY_NONNULL> multiplyReferencedFields_;
 
   // True if a null in any of 'distinctFields_' causes 'this' to be
   // null for the row.
@@ -357,17 +445,34 @@ class Expr {
   ExprStats stats_;
 };
 
+/// Translates row number of the outer vector into row number of the inner
+/// vector using DecodedVector.
+SelectivityVector* FOLLY_NONNULL translateToInnerRows(
+    const SelectivityVector& rows,
+    DecodedVector& decoded,
+    LocalSelectivityVector& newRowsHolder);
+
+/// Generate a selectivity vector of a single row.
+SelectivityVector* FOLLY_NONNULL
+singleRow(LocalSelectivityVector& holder, vector_size_t row);
+
 using ExprPtr = std::shared_ptr<Expr>;
 
 // A set of Exprs that get evaluated together. Common subexpressions
 // can be deduplicated. This is the top level handle on an expression
 // and is used also if only one Expr is to be evaluated. TODO: Rename to
 // ExprList.
+// Note: Caller must ensure that lazy vectors associated with field references
+// used by the expressions in this ExprSet are pre-loaded (before running
+// evaluation on them) if they are also used/referenced outside the context of
+// this ExprSet. If however such an association cannot be made with certainty,
+// then its advisable to pre-load all lazy vectors to avoid issues associated
+// with partial loading.
 class ExprSet {
  public:
   explicit ExprSet(
-      std::vector<std::shared_ptr<const core::ITypedExpr>>&& source,
-      core::ExecCtx* execCtx,
+      const std::vector<core::TypedExprPtr>& source,
+      core::ExecCtx* FOLLY_NONNULL execCtx,
       bool enableConstantFolding = true);
 
   virtual ~ExprSet();
@@ -375,8 +480,8 @@ class ExprSet {
   // Initialize and evaluate all expressions available in this ExprSet.
   void eval(
       const SelectivityVector& rows,
-      EvalCtx* ctx,
-      std::vector<VectorPtr>* result) {
+      EvalCtx& ctx,
+      std::vector<VectorPtr>& result) {
     eval(0, exprs_.size(), true, rows, ctx, result);
   }
 
@@ -386,13 +491,17 @@ class ExprSet {
       int32_t end,
       bool initialize,
       const SelectivityVector& rows,
-      EvalCtx* ctx,
-      std::vector<VectorPtr>* result);
+      EvalCtx& ctx,
+      std::vector<VectorPtr>& result);
 
   void clear();
 
-  core::ExecCtx* execCtx() const {
+  core::ExecCtx* FOLLY_NULLABLE execCtx() const {
     return execCtx_;
+  }
+
+  auto size() const {
+    return exprs_.size();
   }
 
   const std::vector<std::shared_ptr<Expr>>& exprs() const {
@@ -403,6 +512,10 @@ class ExprSet {
     return exprs_[index];
   }
 
+  const std::vector<FieldReference*>& distinctFields() const {
+    return distinctFields_;
+  }
+
   // Flags a shared subexpression which needs to be reset (e.g. previously
   // computed results must be deleted) when evaluating new batch of data.
   void addToReset(const std::shared_ptr<Expr>& expr) {
@@ -410,14 +523,25 @@ class ExprSet {
   }
 
   // Flags an expression that remembers the results for a dictionary.
-  void addToMemo(Expr* expr) {
+  void addToMemo(Expr* FOLLY_NONNULL expr) {
     memoizingExprs_.insert(expr);
   }
+
+  /// Returns text representation of the expression set.
+  /// @param compact If true, uses one-line representation for each expression.
+  /// Otherwise, prints a tree of expressions one node per line.
+  std::string toString(bool compact = true) const;
 
  protected:
   void clearSharedSubexprs();
 
   std::vector<std::shared_ptr<Expr>> exprs_;
+
+  // The distinct references to input columns among all expressions in ExprSet.
+  std::vector<FieldReference * FOLLY_NONNULL> distinctFields_;
+
+  // Fields referenced by multiple expressions in ExprSet.
+  std::unordered_set<FieldReference * FOLLY_NONNULL> multiplyReferencedFields_;
 
   // Distinct Exprs reachable from 'exprs_' for which reset() needs to
   // be called at the start of eval().
@@ -425,23 +549,23 @@ class ExprSet {
 
   // Exprs which retain memoized state, e.g. from running over dictionaries.
   std::unordered_set<Expr*> memoizingExprs_;
-  core::ExecCtx* const execCtx_;
+  core::ExecCtx* FOLLY_NONNULL const execCtx_;
 };
 
 class ExprSetSimplified : public ExprSet {
  public:
   ExprSetSimplified(
-      std::vector<std::shared_ptr<const core::ITypedExpr>>&& source,
-      core::ExecCtx* execCtx)
-      : ExprSet(std::move(source), execCtx, /*enableConstantFolding*/ false) {}
+      const std::vector<core::TypedExprPtr>& source,
+      core::ExecCtx* FOLLY_NONNULL execCtx)
+      : ExprSet(source, execCtx, /*enableConstantFolding*/ false) {}
 
   virtual ~ExprSetSimplified() override {}
 
   // Initialize and evaluate all expressions available in this ExprSet.
   void eval(
       const SelectivityVector& rows,
-      EvalCtx* ctx,
-      std::vector<VectorPtr>* result) {
+      EvalCtx& ctx,
+      std::vector<VectorPtr>& result) {
     eval(0, exprs_.size(), true, rows, ctx, result);
   }
 
@@ -450,15 +574,15 @@ class ExprSetSimplified : public ExprSet {
       int32_t end,
       bool initialize,
       const SelectivityVector& rows,
-      EvalCtx* ctx,
-      std::vector<VectorPtr>* result) override;
+      EvalCtx& ctx,
+      std::vector<VectorPtr>& result) override;
 };
 
 // Factory method that takes `kExprEvalSimplified` (query parameter) into
 // account and instantiates the correct ExprSet class.
 std::unique_ptr<ExprSet> makeExprSetFromFlag(
-    std::vector<std::shared_ptr<const core::ITypedExpr>>&& source,
-    core::ExecCtx* execCtx);
+    std::vector<core::TypedExprPtr>&& source,
+    core::ExecCtx* FOLLY_NONNULL execCtx);
 
 /// Returns a string representation of the expression trees annotated with
 /// runtime statistics. Expected to be called after calling ExprSet::eval one or
@@ -470,6 +594,10 @@ struct ExprSetCompletionEvent {
   /// Aggregated runtime stats keyed on expression name (e.g. built-in
   /// expression like and, or, switch or a function name).
   std::unordered_map<std::string, exec::ExprStats> stats;
+  /// List containing sql representation of each top level expression in ExprSet
+  std::vector<std::string> sqls;
+  // Query id corresponding query
+  std::string queryId;
 };
 
 /// Listener invoked on ExprSet destruction.
@@ -484,7 +612,20 @@ class ExprSetListener {
   virtual void onCompletion(
       const std::string& uuid,
       const ExprSetCompletionEvent& event) = 0;
+
+  /// Called when a batch of rows encounters errors processing one or more
+  /// rows in a try expression to provide information about these errors. This
+  /// function must neither change rows nor errors.
+  /// @param rows Rows where errors exist.
+  /// @param errors Error vector produced inside the try expression.
+  virtual void onError(
+      const SelectivityVector& rows,
+      const EvalCtx::ErrorVector& errors) = 0;
 };
+
+/// Return the ExprSetListeners having been registered.
+folly::Synchronized<std::vector<std::shared_ptr<ExprSetListener>>>&
+exprSetListeners();
 
 /// Register a listener to be invoked on ExprSet destruction. Returns true if
 /// listener was successfully registered, false if listener is already

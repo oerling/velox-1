@@ -19,6 +19,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+
+#ifdef __BMI2__
+#include <x86intrin.h>
+#endif
 
 namespace facebook {
 namespace velox {
@@ -30,18 +35,11 @@ inline bool isBitSet(const T* bits, int32_t idx) {
       (static_cast<T>(1) << (idx & ((sizeof(bits[0]) * 8) - 1)));
 }
 
-// Masks which store all `0` except one `1`, with the position of that `1` being
-// the index (from the right) of the index in the mask buffer. So e.g.
-// kOneBitmasks[0] has index 0th bit (from the right) set to 1.
-// So the has the sequence 0b00000001, 0b00000010, ..., 0b10000000
-// The reason we do this is that it's 21% faster for setNthBit<Value> in
-// benchmarks compared do doing the calculation inline (See code and results at
-// P127838775).
-static constexpr uint8_t kOneBitmasks[] =
-    {1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7};
-
-// The inversion of kOneBitmasks - so stores all 1s except for one zero
-// being in the sequence 0b11111110, 0b11111101, ..., 0b01111111
+// The reason we do this is that it's slightly faster for
+// setNthBit<Value> in benchmarks compared to doing the calculation
+// inline (see D37623774). We do it only for clearBit because the
+// shift version requires 1 extra `not` instruction; for setBit, the
+// shift is faster.
 static constexpr uint8_t kZeroBitmasks[] = {
     static_cast<uint8_t>(~(1 << 0)),
     static_cast<uint8_t>(~(1 << 1)),
@@ -54,19 +52,19 @@ static constexpr uint8_t kZeroBitmasks[] = {
 };
 
 template <typename T>
-inline void setBit(T* bits, int32_t idx) {
+inline void setBit(T* bits, uint32_t idx) {
   auto bitsAs8Bit = reinterpret_cast<uint8_t*>(bits);
-  bitsAs8Bit[idx / 8] |= kOneBitmasks[idx % 8];
+  bitsAs8Bit[idx / 8] |= (1 << (idx % 8));
 }
 
 template <typename T>
-inline void clearBit(T* bits, int32_t idx) {
+inline void clearBit(T* bits, uint32_t idx) {
   auto bitsAs8Bit = reinterpret_cast<uint8_t*>(bits);
   bitsAs8Bit[idx / 8] &= kZeroBitmasks[idx % 8];
 }
 
 template <typename T>
-inline void setBit(T* bits, int32_t idx, bool value) {
+inline void setBit(T* bits, uint32_t idx, bool value) {
   value ? setBit(bits, idx) : clearBit(bits, idx);
 }
 
@@ -85,7 +83,7 @@ inline void negate(char* bits, int32_t size) {
 }
 
 template <typename T, typename U>
-inline T roundUp(T value, U factor) {
+constexpr inline T roundUp(T value, U factor) {
   return (value + (factor - 1)) / factor * factor;
 }
 
@@ -97,11 +95,11 @@ constexpr inline uint64_t highMask(int32_t bits) {
   return lowMask(bits) << (64 - bits);
 }
 
-inline uint64_t nbytes(int32_t bits) {
+constexpr inline uint64_t nbytes(int32_t bits) {
   return roundUp(bits, 8) / 8;
 }
 
-inline uint64_t nwords(int32_t bits) {
+constexpr inline uint64_t nwords(int32_t bits) {
   return roundUp(bits, 64) / 64;
 }
 
@@ -193,6 +191,65 @@ inline void forEachWord(
   if (end != lastWord) {
     partialWordFunc(lastWord / 64, lowMask(end - lastWord));
   }
+}
+
+/// Variant of forEachWord with a single callable for more concise
+/// invocation for cases with a long callable.
+template <typename PartialWordFunc>
+inline void
+forEachWord(int32_t begin, int32_t end, PartialWordFunc partialWordFunc) {
+  if (begin >= end) {
+    return;
+  }
+  int32_t firstIndex = begin / 64;
+  int32_t lastIndex = (roundUp(end, 64) - 64) / 64;
+  for (auto index = firstIndex; index <= lastIndex; ++index) {
+    uint64_t mask = ~0UL;
+    if (index == firstIndex && begin != firstIndex * 64) {
+      // We do not start at 64 bit boundary, and off the bits below start.
+      mask = highMask((firstIndex + 1) * 64 - begin);
+    }
+    if (index == lastIndex && lastIndex * 64 + 64 != end) {
+      // The last word is partial, and off the bits at and above 'end'.
+      mask &= lowMask(end - lastIndex * 64);
+    }
+    partialWordFunc(index, mask);
+  }
+}
+
+// Applies callable to each group of 'kWidth' values where at least
+// one bit of 'bits' is set. The callable is called with a bit
+// number and a mask of active values, where bit 0 corresponds to
+// the bit at index. The index ranges over multiples of kWidth,
+// skipping kWidth bit runs where no bit is set. This can be used
+// for invoking a SIMD operation kWidth wide over a selected rows
+// bitmap. The first and last invocation of the callable may be
+// outside of begin ... end by up to kWidth - 1 bits but using the
+// mask for example for load with mask will scope the operation to
+// valid values only.
+template <int8_t kWidth, typename Callable>
+void forBatches(
+    const uint64_t* bits,
+    int32_t begin,
+    int32_t end,
+    Callable func) {
+  constexpr int64_t unitMask = kWidth == 64 ? ~0UL : lowMask(kWidth);
+  static_assert(kWidth <= 64 && 64 % kWidth == 0);
+  bits::forEachWord(begin, end, [&](auto index, uint64_t mask) {
+    uint64_t active = bits[index] & mask;
+    int32_t first = 0;
+    while (active) {
+      int32_t skip = (__builtin_ctzll(active) / kWidth) * kWidth;
+      active >>= skip;
+      first += skip;
+      auto selected = active & unitMask;
+      if (selected) {
+        func(index * 64 + first, selected);
+        first += kWidth;
+        active = kWidth == 64 ? 0 : active >> kWidth;
+      }
+    }
+  });
 }
 
 /// Invokes a function for each batch of bits (partial or full words)
@@ -816,6 +873,74 @@ void scatterBits(
     const char* source,
     const uint64_t* targetMask,
     char* target);
+
+// Extract bits from integer 'a' at the corresponding bit locations
+// specified by 'mask' to contiguous low bits in return value; the
+// remaining upper bits in return value are set to zero.
+template <typename T>
+inline T extractBits(T a, T mask);
+
+#ifdef __BMI2__
+template <>
+inline uint32_t extractBits(uint32_t a, uint32_t mask) {
+  return _pext_u32(a, mask);
+}
+template <>
+inline uint64_t extractBits(uint64_t a, uint64_t mask) {
+  return _pext_u64(a, mask);
+}
+#else
+template <typename T>
+T extractBits(T a, T mask) {
+  constexpr int kBitsCount = 8 * sizeof(T);
+  T dst = 0;
+  for (int i = 0, k = 0; i < kBitsCount; ++i) {
+    if (mask & 1) {
+      dst |= ((a & 1) << k);
+      ++k;
+    }
+    a >>= 1;
+    mask >>= 1;
+  }
+  return dst;
+}
+#endif
+
+// Shift the bits of unsigned 32-bit integer a left by the number of
+// bits specified in shift, rotating the most-significant bit to the
+// least-significant bit location, and return the unsigned result.
+inline uint32_t rotateLeft(uint32_t a, int shift) {
+#ifdef __BMI2__
+  return _rotl(a, shift);
+#else
+  return (a << shift) | (a >> (32 - shift));
+#endif
+}
+
+/// Shift the bits of unsigned 64-bit integer to the left by the number of
+/// bits specified in shift, rotating the most-significant bit to the
+/// least-significant bit location, and return the unsigned result.
+inline uint64_t rotateLeft64(uint64_t a, uint32_t shift) {
+  return (a << shift) | (a >> (64 - shift));
+}
+
+/// Pads bytes starting at 'pointer + padIndex' up until the next
+/// offset from 'pointer' that is a multiple of 'alignment'. If
+/// 'padIndex' is 5 and alignment is 16, writes 11 zero bytes to
+/// [pointer + 5 ... pointer + 15 inclusive. Does not write past
+/// 'pointer' + 'size' in any case. Used to initialize memory that may
+/// be partly filled for use with valgring/asan.
+inline void padToAlignment(
+    void* pointer,
+    int32_t size,
+    int32_t padIndex,
+    int32_t alignment) {
+  auto roundEnd = std::min<int32_t>(size, bits::roundUp(padIndex, alignment));
+  if (roundEnd > padIndex) {
+    std::memset(
+        reinterpret_cast<char*>(pointer) + padIndex, 0, roundEnd - padIndex);
+  }
+}
 
 } // namespace bits
 } // namespace velox

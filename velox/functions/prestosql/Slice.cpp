@@ -54,8 +54,8 @@ class SliceFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_USER_CHECK_EQ(
         args[0]->typeKind(),
         TypeKind::ARRAY,
@@ -69,9 +69,17 @@ class SliceFunction : public exec::VectorFunction {
         args[2]->typeKind(),
         "Function slice() requires start and length to be the same type");
 
+    // If the 2nd and 3rd parameters are not constants, we need to ensure that
+    // the 1st parameter is not a constant, so slice() doesn't generate
+    // overlapping ranges. To prevent this, we flatten the first parameter in
+    // these cases.
+    if (!args[1]->isConstantEncoding() || !args[2]->isConstantEncoding()) {
+      BaseVector::flattenVector(args[0], args[0]->size());
+    }
+
     VectorPtr localResult =
         applyArray<int64_t>(rows, args, context, outputType);
-    context->moveOrCopyResult(localResult, rows, result);
+    context.moveOrCopyResult(localResult, rows, result);
   }
 
  private:
@@ -81,9 +89,9 @@ class SliceFunction : public exec::VectorFunction {
   VectorPtr applyArray(
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
-      exec::EvalCtx* context,
+      exec::EvalCtx& context,
       const TypePtr& outputType) const {
-    auto pool = context->pool();
+    auto pool = context.pool();
     BufferPtr offsets = allocateOffsets(rows.end(), pool);
     auto rawOffsets = offsets->asMutable<vector_size_t>();
     BufferPtr sizes = allocateSizes(rows.end(), pool);
@@ -124,13 +132,13 @@ class SliceFunction : public exec::VectorFunction {
       try {
         vector_size_t adjustedStart = adjustIndex(
             static_cast<vector_size_t>(decodedStart->valueAt<T>(0)));
-        context->applyToSelectedNoThrow(
+        context.applyToSelectedNoThrow(
             rows, [&](auto row) { fillResultVectorFunc(row, adjustedStart); });
       } catch (const std::exception& /*e*/) {
-        context->setErrors(rows, std::current_exception());
+        context.setErrors(rows, std::current_exception());
       }
     } else {
-      context->applyToSelectedNoThrow(rows, [&](auto row) {
+      context.applyToSelectedNoThrow(rows, [&](auto row) {
         auto adjustedStart = adjustIndex(
             static_cast<vector_size_t>(decodedStart->valueAt<T>(row)));
         fillResultVectorFunc(row, adjustedStart);

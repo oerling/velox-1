@@ -174,8 +174,9 @@ class ByteStream {
   // input is consecutive ByteRanges in 'ranges_' for the base class
   // but any view over external buffers can be made by specialization.
   virtual void next(bool throwIfPastEnd = true) {
+    VELOX_CHECK(current_ >= &ranges_[0]);
     size_t position = current_ - &ranges_[0];
-    VELOX_CHECK(position >= 0 && position < ranges_.size());
+    VELOX_CHECK(position < ranges_.size());
     if (position == ranges_.size() - 1) {
       if (throwIfPastEnd) {
         throw std::runtime_error("Reading past end of ByteStream");
@@ -327,7 +328,7 @@ class ByteStream {
       if (offset == bytes) {
         return;
       }
-      extend(bits::roundUp(bytes - offset, memory::MappedMemory::kPageSize));
+      extend(bits::roundUp(bytes - offset, memory::MemoryAllocator::kPageSize));
     }
   }
 
@@ -349,7 +350,7 @@ class ByteStream {
   }
 
  private:
-  void extend(int32_t bytes = memory::MappedMemory::kPageSize);
+  void extend(int32_t bytes = memory::MemoryAllocator::kPageSize);
 
   void updateEnd() {
     if (!ranges_.empty() && current_ == &ranges_.back() &&
@@ -384,6 +385,13 @@ inline Timestamp ByteStream::read<Timestamp>() {
 }
 
 template <>
+inline UnscaledLongDecimal ByteStream::read<UnscaledLongDecimal>() {
+  UnscaledLongDecimal value;
+  readBytes(reinterpret_cast<uint8_t*>(&value), sizeof(value));
+  return value;
+}
+
+template <>
 inline Date ByteStream::read<Date>() {
   Date value;
   readBytes(reinterpret_cast<uint8_t*>(&value), sizeof(value));
@@ -393,11 +401,11 @@ inline Date ByteStream::read<Date>() {
 class IOBufOutputStream : public OutputStream {
  public:
   explicit IOBufOutputStream(
-      memory::MappedMemory& mappedMemory,
+      memory::MemoryPool& pool,
       OutputStreamListener* listener = nullptr,
-      int32_t initialSize = memory::MappedMemory::kPageSize)
+      int32_t initialSize = memory::MemoryAllocator::kPageSize)
       : OutputStream(listener),
-        arena_(std::make_shared<StreamArena>(&mappedMemory)),
+        arena_(std::make_shared<StreamArena>(&pool)),
         out_(std::make_unique<ByteStream>(arena_.get())) {
     out_->startWrite(initialSize);
   }

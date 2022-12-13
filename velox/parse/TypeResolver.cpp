@@ -16,45 +16,46 @@
 
 #include "velox/parse/TypeResolver.h"
 #include "velox/core/ITypedExpr.h"
-#include "velox/expression/Expr.h"
+#include "velox/expression/FunctionCallToSpecialForm.h"
 #include "velox/expression/SignatureBinder.h"
-#include "velox/expression/VectorFunction.h"
+#include "velox/functions/FunctionRegistry.h"
 #include "velox/parse/Expressions.h"
 #include "velox/type/Type.h"
 
 namespace facebook::velox::parse {
 namespace {
 
-std::shared_ptr<const Type> resolveType(
-    const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs,
-    const std::shared_ptr<const core::CallExpr>& expr) {
-  if (expr->getFunctionName() == "if") {
-    return !inputs[1]->type()->containsUnknown() ? inputs[1]->type()
-                                                 : inputs[2]->type();
-  }
-
-  if (expr->getFunctionName() == "switch") {
-    auto numInput = inputs.size();
-    for (auto i = 1; i < numInput; i += 2) {
-      if (!inputs[i]->type()->containsUnknown()) {
-        return inputs[i]->type();
-      }
+std::string toString(
+    const std::string& functionName,
+    const std::vector<TypePtr>& argTypes) {
+  std::ostringstream signature;
+  signature << functionName << "(";
+  for (auto i = 0; i < argTypes.size(); i++) {
+    if (i > 0) {
+      signature << ", ";
     }
-    // If all contain unknown, return the type of the else or the last when
-    // clause.
-    return inputs.back()->type();
+    signature << argTypes[i]->toString();
   }
+  signature << ")";
+  return signature.str();
+}
 
-  if (expr->getFunctionName() == "and" || expr->getFunctionName() == "or") {
-    return BOOLEAN();
+std::string toString(
+    const std::vector<const exec::FunctionSignature*>& signatures) {
+  std::stringstream out;
+  for (auto i = 0; i < signatures.size(); ++i) {
+    if (i > 0) {
+      out << ", ";
+    }
+    out << signatures[i]->toString();
   }
+  return out.str();
+}
 
-  if (expr->getFunctionName() == "try" ||
-      expr->getFunctionName() == "coalesce") {
-    VELOX_CHECK(!inputs.empty());
-    return inputs.front()->type();
-  }
-
+TypePtr resolveType(
+    const std::vector<std::shared_ptr<const core::ITypedExpr>>& inputs,
+    const std::shared_ptr<const core::CallExpr>& expr,
+    bool nullOnFailure) {
   // TODO Replace with struct_pack
   if (expr->getFunctionName() == "row_constructor") {
     auto numInput = inputs.size();
@@ -67,23 +68,19 @@ std::shared_ptr<const Type> resolveType(
     return ROW(std::move(names), std::move(types));
   }
 
-  auto signatures = exec::getVectorFunctionSignatures(expr->getFunctionName());
-  if (signatures.has_value()) {
-    std::vector<TypePtr> inputTypes;
-    inputTypes.reserve(inputs.size());
-    for (auto& input : inputs) {
-      inputTypes.emplace_back(input->type());
-    }
-
-    for (const auto& signature : signatures.value()) {
-      exec::SignatureBinder binder(*signature, inputTypes);
-      if (binder.tryBind()) {
-        return binder.tryResolveReturnType();
-      }
-    }
+  std::vector<TypePtr> inputTypes;
+  inputTypes.reserve(inputs.size());
+  for (auto& input : inputs) {
+    inputTypes.emplace_back(input->type());
   }
 
-  return nullptr;
+  if (auto resolvedType = exec::resolveTypeForSpecialForm(
+          expr->getFunctionName(), inputTypes)) {
+    return resolvedType;
+  }
+
+  return resolveScalarFunctionType(
+      expr->getFunctionName(), inputTypes, nullOnFailure);
 }
 
 } // namespace
@@ -92,4 +89,29 @@ void registerTypeResolver() {
   core::Expressions::setTypeResolverHook(&resolveType);
 }
 
+TypePtr resolveScalarFunctionType(
+    const std::string& name,
+    const std::vector<TypePtr>& argTypes,
+    bool nullOnFailure) {
+  auto returnType = resolveFunction(name, argTypes);
+  if (returnType) {
+    return returnType;
+  }
+
+  if (nullOnFailure) {
+    return nullptr;
+  }
+
+  auto allSignatures = getFunctionSignatures();
+  auto it = allSignatures.find(name);
+  if (it == allSignatures.end()) {
+    VELOX_USER_FAIL("Scalar function doesn't exist: {}.", name);
+  } else {
+    const auto& functionSignatures = it->second;
+    VELOX_USER_FAIL(
+        "Scalar function signature is not supported: {}. Supported signatures: {}.",
+        toString(name, argTypes),
+        toString(functionSignatures));
+  }
+}
 } // namespace facebook::velox::parse

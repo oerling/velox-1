@@ -116,8 +116,8 @@ class MapResolverVectorFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     // We cannot make any assumptions about the encoding of the input vectors.
     // In order to access their data as FlatVectors, we need to decode them
     // first:
@@ -130,12 +130,12 @@ class MapResolverVectorFunction : public exec::VectorFunction {
     // because valueAt() will end up copying the shared_ptrs, and that's a
     // little expensive.
     const std::shared_ptr<UserDefinedMap>* opaqueRawVector =
-        opaqueVector->values<std::shared_ptr<UserDefinedMap>>();
+        opaqueVector->data<std::shared_ptr<UserDefinedMap>>();
 
     // Ensure we have an output vector where we can write the output opaqued
     // values.
-    BaseVector::ensureWritable(rows, outputType, context->pool(), result);
-    auto* output = (*result)->as<KindToFlatVector<TypeKind::OPAQUE>::type>();
+    context.ensureWritable(rows, outputType, result);
+    auto* output = result->as<KindToFlatVector<TypeKind::OPAQUE>::type>();
 
     // `applyToSelected()` will execute the lambda below on each row enabled in
     // the input selectivity vector (rows). We don't need to check for null
@@ -188,8 +188,8 @@ int main(int argc, char** argv) {
       udf_map_resolver_vector, "map_resolver_vector");
 
   // Create memory pool and other query-related structures.
-  auto queryCtx = core::QueryCtx::createForTest();
-  auto pool = memory::getDefaultScopedMemoryPool();
+  auto queryCtx = std::make_shared<core::QueryCtx>();
+  auto pool = memory::getDefaultMemoryPool();
   core::ExecCtx execCtx{pool.get(), queryCtx.get()};
 
   // Next, we need to generate an input batch of data (rowVector). We create a
@@ -325,6 +325,6 @@ VectorPtr evaluate(
 
   exec::ExprSet exprSet({exprPlan}, &execCtx);
   exec::EvalCtx evalCtx(&execCtx, &exprSet, rowVector.get());
-  exprSet.eval(rows, &evalCtx, &result);
+  exprSet.eval(rows, evalCtx, result);
   return result.front();
 }

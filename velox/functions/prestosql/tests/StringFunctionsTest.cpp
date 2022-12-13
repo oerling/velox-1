@@ -18,11 +18,11 @@
 #include <cctype>
 #include <random>
 #include "velox/common/base/VeloxException.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/expression/Expr.h"
-#include "velox/functions/Udf.h"
 #include "velox/functions/lib/StringEncodingUtils.h"
 #include "velox/functions/lib/string/StringImpl.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/parse/Expressions.h"
 #include "velox/type/Type.h"
 
@@ -39,7 +39,7 @@ std::string generateRandomString(size_t length) {
 
   std::string randomString;
   for (std::size_t i = 0; i < length; ++i) {
-    randomString += chars[rand() % chars.size()];
+    randomString += chars[folly::Random::rand32() % chars.size()];
   }
   return randomString;
 }
@@ -83,27 +83,20 @@ std::string hexToDec(const std::string& str) {
 
 class StringFunctionsTest : public FunctionBaseTest {
  protected:
-  template <typename VC = FlatVector<StringView>>
   VectorPtr makeStrings(
       vector_size_t size,
       const std::vector<std::string>& inputStrings) {
-    auto strings = std::dynamic_pointer_cast<VC>(BaseVector::create(
-        CppToType<StringView>::create(), size, execCtx_.pool()));
-    for (int i = 0; i < size; i++) {
-      if (!expectNullString(i)) {
-        strings->set(i, StringView(inputStrings[i].c_str()));
-      } else {
-        strings->setNull(i, true);
-      }
-    }
-    return strings;
+    return makeFlatVector<StringView>(
+        size,
+        [&](auto row) { return StringView(inputStrings[row]); },
+        expectNullString);
   }
 
-  template <typename T>
-  int bufferRefCounts(FlatVector<T>* vector) {
+  int bufferRefCounts(FlatVector<StringView>* vector) {
     int refCounts = 0;
-    for (auto& buffer : vector->stringBuffers())
+    for (auto& buffer : vector->stringBuffers()) {
       refCounts += buffer->refCount();
+    }
     return refCounts;
   }
 
@@ -223,8 +216,18 @@ class StringFunctionsTest : public FunctionBaseTest {
       output += ")";
       return output;
     };
+
+    // Evaluate 'concat' expression and verify no excessive memory allocation.
+    // We expect 2 allocations: one for the values buffer and another for the
+    // strings buffer. I.e. FlatVector<StringView>::values and
+    // FlatVector<StringView>::stringBuffers.
+    auto numAllocsBefore = pool()->getMemoryUsageTracker()->getNumAllocs();
+
     auto result = evaluate<FlatVector<StringView>>(
         buildConcatQuery(), makeRowVector(inputVectors));
+
+    auto numAllocsAfter = pool()->getMemoryUsageTracker()->getNumAllocs();
+    ASSERT_EQ(numAllocsAfter - numAllocsBefore, 2);
 
     auto concatStd = [](const std::vector<std::string>& inputs) {
       std::string output;
@@ -235,19 +238,17 @@ class StringFunctionsTest : public FunctionBaseTest {
     };
 
     for (int i = 0; i < inputTable.size(); ++i) {
-      EXPECT_EQ(result->valueAt(i), StringView(concatStd(inputTable[i])));
+      EXPECT_EQ(result->valueAt(i), StringView(concatStd(inputTable[i])))
+          << "at " << i;
     }
   }
 
   void testLengthFlatVector(
       const std::vector<std::tuple<std::string, int64_t>>& tests,
       std::optional<bool> setAscii) {
-    auto inputsFlatVector = std::dynamic_pointer_cast<FlatVector<StringView>>(
-        BaseVector::create(VARCHAR(), tests.size(), execCtx_.pool()));
-
-    for (int i = 0; i < tests.size(); i++) {
-      inputsFlatVector->set(i, StringView(std::get<0>(tests[i])));
-    }
+    auto inputsFlatVector = makeFlatVector<StringView>(
+        tests.size(),
+        [&](auto row) { return StringView(std::get<0>(tests[row])); });
     if (setAscii.has_value()) {
       inputsFlatVector->setAllIsAscii(setAscii.value());
     }
@@ -295,6 +296,12 @@ class StringFunctionsTest : public FunctionBaseTest {
 
   template <typename TInstance>
   void testStringPositionAllFlatVector(
+      const strpos_input_test_t& tests,
+      const std::vector<std::optional<bool>>& stringEncodings,
+      bool withInstanceArgument);
+
+  template <typename TInstance>
+  void testStringPositionFromEndAllFlatVector(
       const strpos_input_test_t& tests,
       const std::vector<std::optional<bool>>& stringEncodings,
       bool withInstanceArgument);
@@ -632,35 +639,6 @@ TEST_F(StringFunctionsTest, substrWithConditionalSingleBuffer) {
   }
 }
 
-/**
- * The test for user exception checking
- */
-TEST_F(StringFunctionsTest, substrArgumentExceptionCheck) {
-  vector_size_t size = 100;
-
-  std::vector<std::string> strings(size);
-  std::generate(strings.begin(), strings.end(), [i = -1]() mutable {
-    i++;
-    return std::to_string(i) + "_MYSTR_" + std::to_string(i * 100);
-  });
-
-  auto stringVector = makeStrings(size, strings);
-
-  auto row = makeRowVector({stringVector});
-
-  EXPECT_THROW(
-      evaluate<FlatVector<StringView>>("substr('my string here', 'A')", row),
-      std::invalid_argument);
-
-  EXPECT_THROW(
-      evaluate<FlatVector<StringView>>("substr('my string here', 1.0)", row),
-      std::invalid_argument);
-
-  EXPECT_THROW(
-      evaluate<FlatVector<StringView>>("substr('my string here')", row),
-      std::invalid_argument);
-}
-
 namespace {
 std::vector<std::tuple<std::string, std::string>> getUpperAsciiTestData() {
   return {
@@ -800,20 +778,82 @@ TEST_F(StringFunctionsTest, concat) {
     // Fill the table
     for (int row = 0; row < rowCount; row++) {
       for (int col = 0; col < argsCount; col++) {
-        inputTable[row][col] = generateRandomString(rand() % maxStringLength);
+        inputTable[row][col] =
+            generateRandomString(folly::Random::rand32() % maxStringLength);
       }
     }
+
+    SCOPED_TRACE(fmt::format("Number of arguments: {}", argsCount));
     testConcatFlatVector(inputTable, argsCount);
   }
 
   // Test constant input vector with 2 args
-  auto rows = makeRowVector(makeRowType({VARCHAR(), VARCHAR()}), 10);
-  auto c0 = generateRandomString(20);
-  auto c1 = generateRandomString(20);
-  auto result = evaluate<SimpleVector<StringView>>(
-      fmt::format("concat('{}', '{}')", c0, c1), rows);
-  for (int i = 0; i < 10; ++i) {
-    EXPECT_EQ(result->valueAt(i), StringView(c0 + c1));
+  {
+    auto rows = makeRowVector(makeRowType({VARCHAR(), VARCHAR()}), 10);
+    auto c0 = generateRandomString(20);
+    auto c1 = generateRandomString(20);
+    auto result = evaluate<SimpleVector<StringView>>(
+        fmt::format("concat('{}', '{}')", c0, c1), rows);
+    for (int i = 0; i < 10; ++i) {
+      EXPECT_EQ(result->valueAt(i), StringView(c0 + c1));
+    }
+  }
+
+  // Multiple consecutive constant inputs.
+  {
+    std::string value;
+    auto data = makeRowVector({
+        makeFlatVector<StringView>(
+            1'000,
+            [&](auto /* row */) {
+              value = generateRandomString(
+                  folly::Random::rand32() % maxStringLength);
+              return StringView(value);
+            }),
+        makeFlatVector<StringView>(
+            1'000,
+            [&](auto /* row */) {
+              value = generateRandomString(
+                  folly::Random::rand32() % maxStringLength);
+              return StringView(value);
+            }),
+    });
+
+    auto c0 = data->childAt(0)->as<FlatVector<StringView>>()->rawValues();
+    auto c1 = data->childAt(1)->as<FlatVector<StringView>>()->rawValues();
+
+    auto result = evaluate<SimpleVector<StringView>>(
+        "concat(c0, ',', c1, ',', 'foo', ',', 'bar')", data);
+
+    auto expected = makeFlatVector<StringView>(1'000, [&](auto row) {
+      value = c0[row].str() + "," + c1[row].str() + ",foo,bar";
+      return StringView(value);
+    });
+
+    test::assertEqualVectors(expected, result);
+
+    result = evaluate<SimpleVector<StringView>>(
+        "concat('aaa', ',', 'bbb', ',', c0, ',', 'ccc', ',', 'ddd', ',', c1, ',', 'eee', ',', 'fff')",
+        data);
+
+    expected = makeFlatVector<StringView>(1'000, [&](auto row) {
+      value =
+          "aaa,bbb," + c0[row].str() + ",ccc,ddd," + c1[row].str() + ",eee,fff";
+      return StringView(value);
+    });
+    test::assertEqualVectors(expected, result);
+
+    result = evaluate<SimpleVector<StringView>>(
+        "concat(c0, ',', c1, ',', 'A somewhat long string.', ',', 'bar')",
+        data);
+
+    expected = makeFlatVector<StringView>(1'000, [&](auto row) {
+      value =
+          c0[row].str() + "," + c1[row].str() + ",A somewhat long string.,bar";
+      return StringView(value);
+    });
+
+    test::assertEqualVectors(expected, result);
   }
 }
 
@@ -936,6 +976,89 @@ TEST_F(StringFunctionsTest, stringPosition) {
   }
 }
 
+// Test strpos function
+template <typename TInstance>
+void StringFunctionsTest::testStringPositionFromEndAllFlatVector(
+    const strpos_input_test_t& tests,
+    const std::vector<std::optional<bool>>& asciiEncodings,
+    bool withInstanceArgument) {
+  auto stringVector = makeFlatVector<StringView>(tests.size());
+  auto subStringVector = makeFlatVector<StringView>(tests.size());
+  auto instanceVector =
+      withInstanceArgument ? makeFlatVector<TInstance>(tests.size()) : nullptr;
+
+  for (int i = 0; i < tests.size(); i++) {
+    stringVector->set(i, StringView(std::get<0>(tests[i].first)));
+    subStringVector->set(i, StringView(std::get<1>(tests[i].first)));
+    if (instanceVector) {
+      instanceVector->set(i, std::get<2>(tests[i].first));
+    }
+  }
+
+  if (asciiEncodings[0].has_value()) {
+    stringVector->setAllIsAscii(asciiEncodings[0].value());
+  }
+  if (asciiEncodings[1].has_value()) {
+    subStringVector->setAllIsAscii(asciiEncodings[1].value());
+  }
+
+  FlatVectorPtr<int64_t> result;
+  if (withInstanceArgument) {
+    result = evaluate<FlatVector<int64_t>>(
+        "strrpos(c0, c1,c2)",
+        makeRowVector({stringVector, subStringVector, instanceVector}));
+  } else {
+    result = evaluate<FlatVector<int64_t>>(
+        "strrpos(c0, c1)", makeRowVector({stringVector, subStringVector}));
+  }
+
+  for (int32_t i = 0; i < tests.size(); ++i) {
+    ASSERT_EQ(result->valueAt(i), tests[i].second);
+  }
+}
+
+TEST_F(StringFunctionsTest, stringPositionFromEnd) {
+  strpos_input_test_t testsAscii = {
+      {{"high", "ig", -1}, {2}},
+      {{"high", "igx", -1}, {0}},
+      {{"high", "h", -1}, {4}},
+      {{"", "h", -1}, {0}},
+      {{"high", "", -1}, {1}},
+      {{"", "", -1}, {1}},
+  };
+
+  strpos_input_test_t testsAsciiWithPosition = {
+      {{"high", "h", 2}, 1},
+      {{"high", "h", 10}, 0},
+      {{"high", "", 2}, {1}},
+      {{"", "", 2}, {1}},
+  };
+
+  strpos_input_test_t testsUnicodeWithPosition = {
+      {{"\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "\u7231", 1}, 4},
+      {{"\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "\u5E0C\u671B", 1}, 6},
+  };
+
+  // We dont have to try all encoding combinations here since there is a test
+  // that test the encoding resolution but we want to to have a test for each
+  // possible resolution
+  testStringPositionFromEndAllFlatVector<int64_t>(
+      testsAscii, {true, true}, false);
+
+  // Try instance parameter using BIGINT and INTEGER.
+  testStringPositionFromEndAllFlatVector<int32_t>(
+      testsAsciiWithPosition, {false, false}, true);
+  testStringPositionFromEndAllFlatVector<int64_t>(
+      testsAsciiWithPosition, {false, false}, true);
+
+  // Test constant vectors
+  auto rows = makeRowVector(makeRowType({BIGINT()}), 10);
+  auto result = evaluate<SimpleVector<int64_t>>("strrpos('high', 'ig')", rows);
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(result->valueAt(i), 2);
+  }
+}
+
 void StringFunctionsTest::testChrFlatVector(
     const std::vector<std::pair<int64_t, std::string>>& tests) {
   auto codePoints = makeFlatVector<int64_t>(tests.size());
@@ -1053,6 +1176,62 @@ TEST_F(StringFunctionsTest, sha256) {
   EXPECT_EQ(std::nullopt, sha256(std::nullopt));
 }
 
+TEST_F(StringFunctionsTest, sha512) {
+  const auto sha512 = [&](std::optional<std::string> arg) {
+    return evaluateOnce<std::string, std::string>(
+        "sha512(c0)", {arg}, {VARBINARY()});
+  };
+
+  EXPECT_EQ(
+      hexToDec(
+          "1f6b05823a0453c1ec55009555087e8226d774c7c49d099784317b8460a0623ddaa083334f9218dda8075e0a0dc8319f89199f04e6b8f3980a73556866b388ae"),
+      sha512("prestodb"));
+  EXPECT_EQ(
+      hexToDec(
+          "7de872ed1c41ce3901bb7f12f20b0c0106331fe5b5ecc5fbbcf3ce6c79df4da595ebb7e221ab8b7fc5d918583eac6890ade1c26436335d3835828011204b7679"),
+      sha512("Infinity"));
+  EXPECT_EQ(
+      hexToDec(
+          "30163935c002fc4e1200906c3d30a9c4956b4af9f6dcaef1eb4b1fcb8fba69e7a7acdc491ea5b1f2864ea8c01b01580ef09defc3b11b3f183cb21d236f7f1a6b"),
+      sha512("hash"));
+  EXPECT_EQ(
+      hexToDec(
+          "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"),
+      sha512(""));
+  EXPECT_EQ(std::nullopt, sha512(std::nullopt));
+}
+
+TEST_F(StringFunctionsTest, HmacSha256) {
+  const auto hmacSha256 = [&](std::optional<std::string> arg,
+                              std::optional<std::string> key) {
+    return evaluateOnce<std::string, std::string>(
+        "hmac_sha256(c0, c1)", {arg, key}, {VARBINARY(), VARBINARY()});
+  };
+  // Use python hmac lib results as the expected value.
+  // >>> import hmac
+  // >>> def sha256(data, key):
+  //         print(hmac.new(key, data, digestmod='sha256').hexdigest())
+  // >>> sha256(b"hashme", b"velox")
+  // 24bb7fa25fd592ef6a4c939d4fb91b7f7f04f8813260961101117ec30f865794
+  // >>> sha256(b"Infinity", b"velox")
+  // f45718c9586ae7d761194485d15cbf6284b5b606ade4f9d5820fbdd1eaf52b75
+  // >>> sha256(b"", b"velox")
+  // fd8658b6a6b6601155fecf9a39b6f95cf030863e550073423a8e250a35c6f5a4
+  EXPECT_EQ(
+      hexToDec(
+          "24bb7fa25fd592ef6a4c939d4fb91b7f7f04f8813260961101117ec30f865794"),
+      hmacSha256("hashme", "velox"));
+  EXPECT_EQ(
+      hexToDec(
+          "f45718c9586ae7d761194485d15cbf6284b5b606ade4f9d5820fbdd1eaf52b75"),
+      hmacSha256("Infinity", "velox"));
+  EXPECT_EQ(
+      hexToDec(
+          "fd8658b6a6b6601155fecf9a39b6f95cf030863e550073423a8e250a35c6f5a4"),
+      hmacSha256("", "velox"));
+  EXPECT_EQ(std::nullopt, hmacSha256(std::nullopt, "velox"));
+}
+
 void StringFunctionsTest::testReplaceInPlace(
     const std::vector<std::pair<std::string, std::string>>& tests,
     const std::string& search,
@@ -1087,13 +1266,13 @@ void StringFunctionsTest::testReplaceInPlace(
   // If its not expected make sure it did not happen.
   auto applyReplaceFunction = [&](std::vector<VectorPtr>& functionInputs,
                                   VectorPtr& resultPtr) {
-    auto replaceFunction = exec::getVectorFunction("replace", {VARCHAR()}, {});
+    auto replaceFunction =
+        exec::getVectorFunction("replace", {VARCHAR(), VARCHAR()}, {});
     SelectivityVector rows(tests.size());
     ExprSet exprSet({}, &execCtx_);
     RowVectorPtr inputRows = makeRowVector({});
     exec::EvalCtx evalCtx(&execCtx_, &exprSet, inputRows.get());
-    replaceFunction->apply(
-        rows, functionInputs, VARCHAR(), &evalCtx, &resultPtr);
+    replaceFunction->apply(rows, functionInputs, VARCHAR(), evalCtx, resultPtr);
   };
 
   std::vector<VectorPtr> functionInputs = {
@@ -1186,6 +1365,30 @@ TEST_F(StringFunctionsTest, replace) {
   }
 }
 
+TEST_F(StringFunctionsTest, replaceWithReusableInputButNoInplace) {
+  auto c0 = ({
+    auto values = makeFlatVector<std::string>({"foo"});
+    auto indices = allocateIndices(100, execCtx_.pool());
+    wrapInDictionary(indices, 100, values);
+  });
+  auto c1 =
+      makeFlatVector<int64_t>(100, [](vector_size_t) { return 2033475965; });
+  auto c2 = makeFlatVector<int64_t>(
+      100,
+      [](vector_size_t) { return 2851588633; },
+      [](auto row) { return row >= 50; });
+  auto result = evaluateSimplified<FlatVector<StringView>>(
+      "substr(replace('bar', rtrim(c0)), c1, c2)", makeRowVector({c0, c1, c2}));
+  ASSERT_EQ(result->size(), 100);
+  for (int i = 0; i < 50; ++i) {
+    EXPECT_FALSE(result->isNullAt(i));
+    EXPECT_EQ(result->valueAt(i), "");
+  }
+  for (int i = 50; i < 100; ++i) {
+    EXPECT_TRUE(result->isNullAt(i));
+  }
+}
+
 TEST_F(StringFunctionsTest, controlExprEncodingPropagation) {
   std::vector<std::string> dataASCII({"ali", "ali", "ali"});
   std::vector<std::string> dataUTF8({"àáâãäåæçè", "àáâãäåæçè", "àáâãäå"});
@@ -1210,6 +1413,26 @@ TEST_F(StringFunctionsTest, controlExprEncodingPropagation) {
   test("if(1=1, lower(C1), lower(C2))", true);
 
   test("if(1!=1, lower(C1), lower(C2))", false);
+}
+
+TEST_F(StringFunctionsTest, crc32) {
+  const auto crc32 = [&](std::optional<std::string> value) {
+    return evaluateOnce<int64_t, std::string>(
+        "crc32(c0)", {value}, {VARBINARY()});
+  };
+  // use python3 zlib result as the expected values,
+  // >>> import zlib
+  // >>> print(zlib.crc32(b"DEAD_BEEF"))
+  // 2634114297
+  // >>> print(zlib.crc32(b"CRC32"))
+  // 4128576900
+  // >>> print(zlib.crc32(b"velox is an open source unified execution engine."))
+  // 2173230066
+  EXPECT_EQ(std::nullopt, crc32(std::nullopt));
+  EXPECT_EQ(2634114297L, crc32("DEAD_BEEF"));
+  EXPECT_EQ(4128576900L, crc32("CRC32"));
+  EXPECT_EQ(
+      2173230066L, crc32("velox is an open source unified execution engine."));
 }
 
 TEST_F(StringFunctionsTest, xxhash64) {
@@ -1320,6 +1543,15 @@ TEST_F(StringFunctionsTest, reverse) {
       "\u671B\u5E0C\u2014\u7231\u2014\u5FF5\u4FE1",
       reverse("\u4FE1\u5FF5\u2014\u7231\u2014\u5E0C\u671B"));
   EXPECT_EQ(expectedInvalidStr, reverse(invalidStr));
+
+  // Test unicode out of the valid range.
+  std::string invalidUnicodeStr;
+  invalidUnicodeStr.resize(3);
+  // An invalid unicode within 0xD800--0xDFFF.
+  int16_t invalidUnicode = 0xeda0;
+  memcpy(invalidUnicodeStr.data(), &invalidUnicode, 2);
+  invalidUnicodeStr[2] = '\0';
+  EXPECT_THROW(reverse(invalidUnicodeStr), VeloxUserError);
 }
 
 TEST_F(StringFunctionsTest, fromBase64) {
@@ -1391,6 +1623,19 @@ TEST_F(StringFunctionsTest, toUtf8) {
       "abc",
       evaluateOnce<std::string>(
           "from_hex(to_hex(to_utf8(c0)))", std::optional<std::string>("abc")));
+
+  // This case is a sanity check for the to_utf8 implementation to make sure the
+  // intermediate flat vector created is of the right size. The following
+  // expression reduces the selectivity vector passed to to_utf8('this') to
+  // [0,1,0] (size=3, begin=1, end=2). Then the literal gets evaluated (due to
+  // simplified evaluation the literal is not folded and instead evaluated
+  // during execution) to a vector of size 2 and passed on to to_utf8(). Here,
+  // if the intermediate flat vector is created for a size > 2 then the function
+  // throws.
+  EXPECT_NO_THROW(evaluateSimplified<FlatVector<bool>>(
+      "to_utf8(c0) = to_utf8('this')",
+      makeRowVector({makeNullableFlatVector<StringView>(
+          {std::nullopt, "test"_sv, std::nullopt})})));
 }
 
 namespace {
@@ -1401,9 +1646,9 @@ class MultiStringFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* /*context*/,
-      VectorPtr* result) const override {
-    *result = BaseVector::wrapInConstant(rows.size(), 0, args[0]);
+      exec::EvalCtx& /*context*/,
+      VectorPtr& result) const override {
+    result = BaseVector::wrapInConstant(rows.size(), 0, args[0]);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -1556,9 +1801,9 @@ class InputModifyingFunction : public MultiStringFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* ctx,
-      VectorPtr* result) const override {
-    MultiStringFunction::apply(rows, args, outputType, ctx, result);
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
+    MultiStringFunction::apply(rows, args, outputType, context, result);
 
     // Modify args and remove its asciness
     for (auto& arg : args) {
@@ -1886,4 +2131,17 @@ TEST_F(StringFunctionsTest, lpad) {
   // Invalid UTF-8 chars
   EXPECT_EQ("x" + invalidString, lpad(invalidString, 8, "x"));
   EXPECT_EQ(invalidPadString + "abc", lpad("abc", 6, invalidPadString));
+}
+
+TEST_F(StringFunctionsTest, concatInSwitchExpr) {
+  auto data = makeRowVector(
+      {makeFlatVector<bool>({true, false}),
+       makeFlatVector<StringView>(
+           {"This is a long sentence"_sv, "This is some other sentence"_sv})});
+
+  auto result =
+      evaluate("if(c0, concat(c1, '-zzz'), concat('aaa-', c1))", data);
+  auto expected = makeFlatVector<StringView>(
+      {"This is a long sentence-zzz"_sv, "aaa-This is some other sentence"_sv});
+  test::assertEqualVectors(expected, result);
 }

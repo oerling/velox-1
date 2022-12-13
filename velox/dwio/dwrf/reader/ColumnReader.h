@@ -104,10 +104,6 @@ class ColumnReader {
     VELOX_NYI();
   }
 
-  virtual void moveScanSpec(ColumnReader& other) {
-    VELOX_NYI();
-  }
-
   /**
    * Create a reader for the given stripe.
    */
@@ -171,7 +167,7 @@ inline void resetIfNotWritable(VectorPtr& result, T&... buffer) {
     return reset;
   };
 
-  if ((... | resetIfShared(buffer))) {
+  if ((... || resetIfShared(buffer))) {
     result.reset();
   }
 }

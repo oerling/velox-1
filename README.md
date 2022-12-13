@@ -81,11 +81,30 @@ git submodule update --init --recursive
 
 ### Setting up on macOS
 
-See [scripts/setup-macos.sh](scripts/setup-macos.sh)
+Once you have checked out Velox, on an Intel MacOS machine you can setup and then build like so:
+
+```shell
+$ ./scripts/setup-macos.sh 
+$ make
+```
+
+On an M1 MacOS machine you can build like so:
+
+```shell
+$ CPU_TARGET="arm64" ./scripts/setup-macos.sh
+$ CPU_TARGET="arm64" make
+```
+
+You can also produce intel binaries on an M1, use `CPU_TARGET="sse"` for the above.
 
 ### Setting up on Linux (Ubuntu 20.04 or later)
 
-See [scripts/setup-ubuntu.sh](scripts/setup-ubuntu.sh)
+Once you have checked out Velox, you can setup and build like so:
+
+```shell
+$ ./scripts/setup-ubuntu.sh 
+$ make
+```
 
 ### Building Velox
 
@@ -106,6 +125,23 @@ Note that,
     * sse
   * On ARM
     * Neon
+
+### Building Velox with docker-compose
+
+If you don't want to install the system dependencies required to build Velox,
+you can also build and run tests for Velox on a docker container
+using [docker-compose](https://docs.docker.com/compose/).
+Use the following commands:
+
+```shell
+$ docker-compose build ubuntu-cpp
+$ docker-compose run --rm ubuntu-cpp
+```
+If you want to increase or decrease the number of threads used when building Velox
+you can override the `NUM_THREADS` environment variable by doing:
+```shell
+$ docker-compose run -e NUM_THREADS=<NUM_THREADS_TO_USE> --rm ubuntu-cpp
+```
 
 ## Contributing
 

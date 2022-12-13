@@ -16,30 +16,24 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/common/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
-class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
+class SelectiveStringDirectColumnReader
+    : public dwio::common::SelectiveColumnReader {
  public:
   using ValueType = StringView;
   SelectiveStringDirectColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flatMapContext);
+      DwrfParams& params,
+      common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override {
-    ensureRowGroupIndex();
-
-    auto positions = toPositions(index_->entry(index));
-    PositionProvider positionsProvider(positions);
-
-    if (notNullDecoder_) {
-      notNullDecoder_->seekToRowGroup(positionsProvider);
-    }
-
-    blobStream_->seekToRowGroup(positionsProvider);
+    SelectiveColumnReader::seekToRowGroup(index);
+    auto positionsProvider = formatData_->seekToRowGroup(index);
+    blobStream_->seekToPosition(positionsProvider);
     lengthDecoder_->seekToRowGroup(positionsProvider);
 
     VELOX_CHECK(!positionsProvider.hasNext());
@@ -100,8 +94,8 @@ class SelectiveStringDirectColumnReader : public SelectiveColumnReader {
   template <bool scatter, bool skip>
   bool try8Consecutive(int32_t start, const int32_t* rows, int32_t row);
 
-  std::unique_ptr<IntDecoder</*isSigned*/ false>> lengthDecoder_;
-  std::unique_ptr<SeekableInputStream> blobStream_;
+  std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> lengthDecoder_;
+  std::unique_ptr<dwio::common::SeekableInputStream> blobStream_;
   const char* bufferStart_ = nullptr;
   const char* bufferEnd_ = nullptr;
   BufferPtr lengths_;

@@ -20,37 +20,35 @@ namespace facebook::velox::dwrf {
 
 using dwio::common::LogType;
 
-const proto::StripeInformation& StripeReaderBase::loadStripe(
+StripeInformationWrapper StripeReaderBase::loadStripe(
     uint32_t index,
     bool& preload) {
+  DWIO_ENSURE(canLoad_);
   auto& footer = reader_->getFooter();
-  DWIO_ENSURE_LT(index, footer.stripes_size(), "invalid stripe index");
-  auto& stripe = footer.stripes(index);
+  DWIO_ENSURE_LT(index, footer.stripesSize(), "invalid stripe index");
+  auto stripe = footer.stripes(index);
   auto& cache = reader_->getMetadataCache();
 
   stripeInput_.reset();
   uint64_t offset = stripe.offset();
   uint64_t length =
-      stripe.indexlength() + stripe.datalength() + stripe.footerlength();
+      stripe.indexLength() + stripe.dataLength() + stripe.footerLength();
   if (reader_->getBufferedInput().isBuffered(offset, length)) {
     // if file is preloaded, return stripe is preloaded
     preload = true;
   } else {
-    stripeInput_ = reader_->bufferedInputFactory().create(
-        reader_->getStream(),
-        reader_->getMemoryPool(),
-        reader_->getDataCacheConfig());
+    stripeInput_ = reader_->getBufferedInput().clone();
 
     if (preload) {
       // If metadata cache exists, adjust read position to avoid re-reading
       // metadata sections
       if (cache) {
-        if (cache->has(proto::StripeCacheMode::INDEX, index)) {
-          offset += stripe.indexlength();
-          length -= stripe.indexlength();
+        if (cache->has(StripeCacheMode::INDEX, index)) {
+          offset += stripe.indexLength();
+          length -= stripe.indexLength();
         }
-        if (cache->has(proto::StripeCacheMode::FOOTER, index)) {
-          length -= stripe.footerlength();
+        if (cache->has(StripeCacheMode::FOOTER, index)) {
+          length -= stripe.footerLength();
         }
       }
 
@@ -60,24 +58,16 @@ const proto::StripeInformation& StripeReaderBase::loadStripe(
   }
 
   // load stripe footer
-  std::unique_ptr<SeekableInputStream> stream;
+  std::unique_ptr<dwio::common::SeekableInputStream> stream;
   if (cache) {
-    stream = cache->get(proto::StripeCacheMode::FOOTER, index);
+    stream = cache->get(StripeCacheMode::FOOTER, index);
   }
 
   if (!stream) {
-    if (reader_->getDataCacheConfig()) {
-      stream = getStripeInput().enqueue(
-          {stripe.offset() + stripe.indexlength() + stripe.datalength(),
-           stripe.footerlength()});
-      // It will not load anything if we hit the cache while enqueuing
-      getStripeInput().load(LogType::STRIPE_FOOTER);
-    } else {
-      stream = getStripeInput().read(
-          stripe.offset() + stripe.indexlength() + stripe.datalength(),
-          stripe.footerlength(),
-          LogType::STRIPE_FOOTER);
-    }
+    stream = getStripeInput().read(
+        stripe.offset() + stripe.indexLength() + stripe.dataLength(),
+        stripe.footerLength(),
+        LogType::STRIPE_FOOTER);
   }
 
   // Reuse footer_'s memory to avoid expensive destruction
@@ -106,12 +96,12 @@ void StripeReaderBase::loadEncryptionKeys(uint32_t index) {
   DWIO_ENSURE_EQ(
       footer_->encryptiongroups_size(), handler_->getEncryptionGroupCount());
   auto& footer = reader_->getFooter();
-  DWIO_ENSURE_LT(index, footer.stripes_size(), "invalid stripe index");
+  DWIO_ENSURE_LT(index, footer.stripesSize(), "invalid stripe index");
 
-  auto& stripe = footer.stripes(index);
+  auto stripe = footer.stripes(index);
   // If current stripe has keys, load these keys.
-  if (stripe.keymetadata_size() > 0) {
-    handler_->setKeys(stripe.keymetadata());
+  if (stripe.keyMetadataSize() > 0) {
+    handler_->setKeys(stripe.keyMetadata());
   } else {
     // If current stripe doesn't have keys, then:
     //  1. If it's sequential read (ie. we've just finished reading one stripe
@@ -127,8 +117,8 @@ void StripeReaderBase::loadEncryptionKeys(uint32_t index) {
       uint32_t prevIndex = index - 1;
       while (true) {
         auto prev = footer.stripes(prevIndex);
-        if (prev.keymetadata_size() > 0) {
-          handler_->setKeys(prev.keymetadata());
+        if (prev.keyMetadataSize() > 0) {
+          handler_->setKeys(prev.keyMetadata());
           break;
         }
         DWIO_ENSURE_GE(prevIndex, 0, "key not found");

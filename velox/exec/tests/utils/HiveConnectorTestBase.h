@@ -20,8 +20,6 @@
 #include "velox/exec/tests/utils/TempFilePath.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
-#include <folly/executors/IOThreadPoolExecutor.h>
-
 namespace facebook::velox::exec::test {
 
 static const std::string kHiveConnectorId = "test-hive";
@@ -44,40 +42,28 @@ class HiveConnectorTestBase : public OperatorTestBase {
           std::make_shared<facebook::velox::dwrf::Config>());
 
   std::vector<RowVectorPtr> makeVectors(
-      const std::shared_ptr<const RowType>& rowType,
+      const RowTypePtr& rowType,
       int32_t numVectors,
       int32_t rowsPerVector);
 
-  std::shared_ptr<exec::Task> assertQuery(
-      const std::shared_ptr<const core::PlanNode>& plan,
-      const std::string& duckDbSql) {
-    return OperatorTestBase::assertQuery(plan, duckDbSql);
-  }
+  using OperatorTestBase::assertQuery;
 
+  /// Assumes plan has a single TableScan node.
   std::shared_ptr<exec::Task> assertQuery(
-      const std::shared_ptr<const core::PlanNode>& plan,
+      const core::PlanNodePtr& plan,
       const std::vector<std::shared_ptr<TempFilePath>>& filePaths,
-      const std::string& duckDbSql);
-
-  std::shared_ptr<exec::Task> assertQuery(
-      const std::shared_ptr<const core::PlanNode>& plan,
-      const std::unordered_map<
-          core::PlanNodeId,
-          std::vector<std::shared_ptr<TempFilePath>>>& filePaths,
       const std::string& duckDbSql);
 
   static std::vector<std::shared_ptr<TempFilePath>> makeFilePaths(int count);
 
-  static std::vector<std::shared_ptr<connector::ConnectorSplit>> makeHiveSplits(
+  static std::vector<std::shared_ptr<connector::ConnectorSplit>>
+  makeHiveConnectorSplits(
       const std::vector<std::shared_ptr<TempFilePath>>& filePaths);
 
-  static std::shared_ptr<connector::hive::HiveConnectorSplit>
-  makeHiveConnectorSplit(
+  static std::shared_ptr<connector::ConnectorSplit> makeHiveConnectorSplit(
       const std::string& filePath,
       uint64_t start = 0,
-      uint64_t length = std::numeric_limits<uint64_t>::max()) {
-    return makeHiveConnectorSplit(filePath, {}, start, length);
-  }
+      uint64_t length = std::numeric_limits<uint64_t>::max());
 
   /// Split file at path 'filePath' into 'splitCount' splits.
   static std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>>
@@ -86,30 +72,50 @@ class HiveConnectorTestBase : public OperatorTestBase {
       uint32_t splitCount,
       dwio::common::FileFormat format);
 
-  static std::shared_ptr<connector::hive::HiveConnectorSplit>
-  makeHiveConnectorSplit(
-      const std::string& filePath,
-      const std::unordered_map<std::string, std::optional<std::string>>&
-          partitionKeys,
-      uint64_t start = 0,
-      uint64_t length = std::numeric_limits<uint64_t>::max());
-
-  static exec::Split makeHiveSplit(
-      const std::string& filePath,
-      uint64_t start = 0,
-      uint64_t length = std::numeric_limits<uint64_t>::max());
-
-  static exec::Split makeHiveSplitWithGroup(
-      const std::string& filePath,
-      int32_t groupId);
-
   static std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
-      common::test::SubfieldFilters subfieldFilters,
-      const std::shared_ptr<const core::ITypedExpr>& remainingFilter = nullptr,
+      common::test::SubfieldFilters subfieldFilters = {},
+      const core::TypedExprPtr& remainingFilter = nullptr,
       const std::string& tableName = "hive_table") {
     return std::make_shared<connector::hive::HiveTableHandle>(
-        tableName, true, std::move(subfieldFilters), remainingFilter);
+        kHiveConnectorId,
+        tableName,
+        true,
+        std::move(subfieldFilters),
+        remainingFilter);
   }
+
+  /// @param targetDirectory Final directory of the target table after commit.
+  /// @param writeDirectory Write directory of the target table before commit.
+  /// @param tableType Whether to create a new table, insert into an existing
+  /// table, or write a temporary table.
+  /// @param writeMode How to write to the target directory.
+  static std::shared_ptr<connector::hive::LocationHandle> makeLocationHandle(
+      std::string targetDirectory,
+      std::optional<std::string> writeDirectory = std::nullopt,
+      connector::hive::LocationHandle::TableType tableType =
+          connector::hive::LocationHandle::TableType::kNew,
+      connector::hive::LocationHandle::WriteMode writeMode = connector::hive::
+          LocationHandle::WriteMode::kDirectToTargetNewDirectory) {
+    return std::make_shared<connector::hive::LocationHandle>(
+        targetDirectory,
+        writeDirectory.value_or(targetDirectory),
+        tableType,
+        writeMode);
+  }
+
+  /// Build a HiveInsertTableHandle.
+  /// @param tableColumnNames Column names of the target table. Corresponding
+  /// type of tableColumnNames[i] is tableColumnTypes[i].
+  /// @param tableColumnTypes Column types of the target table. Corresponding
+  /// name of tableColumnTypes[i] is tableColumnNames[i].
+  /// @param partitionedBy A list of partition columns of the target table.
+  /// @param locationHandle Location handle for the table write.
+  static std::shared_ptr<connector::hive::HiveInsertTableHandle>
+  makeHiveInsertTableHandle(
+      const std::vector<std::string>& tableColumnNames,
+      const std::vector<TypePtr>& tableColumnTypes,
+      const std::vector<std::string>& partitionedBy,
+      std::shared_ptr<connector::hive::LocationHandle> locationHandle);
 
   static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
       const std::string& name,
@@ -123,8 +129,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const std::string& name,
       const TypePtr& type);
 
-  static ColumnHandleMap allRegularColumns(
-      const std::shared_ptr<const RowType>& rowType) {
+  static ColumnHandleMap allRegularColumns(const RowTypePtr& rowType) {
     ColumnHandleMap assignments;
     assignments.reserve(rowType->size());
     for (uint32_t i = 0; i < rowType->size(); ++i) {
@@ -134,20 +139,61 @@ class HiveConnectorTestBase : public OperatorTestBase {
     return assignments;
   }
 
-  static void addConnectorSplit(
-      Task* task,
-      const core::PlanNodeId& planNodeId,
-      const std::shared_ptr<connector::ConnectorSplit>& connectorSplit);
+  memory::MemoryAllocator* allocator() {
+    return memory::MemoryAllocator::getInstance();
+  }
+};
 
-  static void
-  addSplit(Task* task, const core::PlanNodeId& planNodeId, exec::Split&& split);
+class HiveConnectorSplitBuilder {
+ public:
+  HiveConnectorSplitBuilder(std::string filePath)
+      : filePath_{std::move(filePath)} {}
 
-  memory::MappedMemory* mappedMemory() {
-    return memory::MappedMemory::getInstance();
+  HiveConnectorSplitBuilder& start(uint64_t start) {
+    start_ = start;
+    return *this;
   }
 
-  SimpleLRUDataCache* dataCache;
-  std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
+  HiveConnectorSplitBuilder& length(uint64_t length) {
+    length_ = length;
+    return *this;
+  }
+
+  HiveConnectorSplitBuilder& fileFormat(dwio::common::FileFormat format) {
+    fileFormat_ = format;
+    return *this;
+  }
+
+  HiveConnectorSplitBuilder& partitionKey(
+      std::string name,
+      std::optional<std::string> value) {
+    partitionKeys_.emplace(std::move(name), std::move(value));
+    return *this;
+  }
+
+  HiveConnectorSplitBuilder& tableBucketNumber(int32_t bucket) {
+    tableBucketNumber_ = bucket;
+    return *this;
+  }
+
+  std::shared_ptr<connector::hive::HiveConnectorSplit> build() const {
+    return std::make_shared<connector::hive::HiveConnectorSplit>(
+        kHiveConnectorId,
+        "file:" + filePath_,
+        fileFormat_,
+        start_,
+        length_,
+        partitionKeys_,
+        tableBucketNumber_);
+  }
+
+ private:
+  const std::string filePath_;
+  dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::DWRF};
+  uint64_t start_{0};
+  uint64_t length_{std::numeric_limits<uint64_t>::max()};
+  std::unordered_map<std::string, std::optional<std::string>> partitionKeys_;
+  std::optional<int32_t> tableBucketNumber_;
 };
 
 } // namespace facebook::velox::exec::test

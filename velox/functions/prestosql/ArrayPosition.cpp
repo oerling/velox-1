@@ -25,7 +25,7 @@ namespace {
 // Find the index of the first match for primitive types.
 template <
     TypeKind kind,
-    typename std::enable_if<TypeTraits<kind>::isPrimitiveType, int>::type = 0>
+    typename std::enable_if_t<TypeTraits<kind>::isPrimitiveType, int> = 0>
 void applyTypedFirstMatch(
     const SelectivityVector& rows,
     DecodedVector& arrayDecoded,
@@ -43,9 +43,9 @@ void applyTypedFirstMatch(
       searchDecoded.isConstantMapping()) {
     // Fast path for array vector of boolean.
     if constexpr (std::is_same_v<bool, T>) {
-      auto rawElements = elementsDecoded.values<uint64_t>();
+      auto rawElements = elementsDecoded.data<uint64_t>();
 
-      auto search = bits::isBitSet(searchDecoded.values<uint64_t>(), 0);
+      auto search = bits::isBitSet(searchDecoded.data<uint64_t>(), 0);
 
       rows.applyToSelected([&](auto row) {
         auto size = rawSizes[indices[row]];
@@ -66,7 +66,7 @@ void applyTypedFirstMatch(
     }
 
     // Fast path for array vector of types other than boolean.
-    auto rawElements = elementsDecoded.values<T>();
+    auto rawElements = elementsDecoded.data<T>();
 
     auto search = searchDecoded.valueAt<T>(0);
 
@@ -113,7 +113,7 @@ void applyTypedFirstMatch(
 // Find the index of the first match for complex types.
 template <
     TypeKind kind,
-    typename std::enable_if<!TypeTraits<kind>::isPrimitiveType, int>::type = 0>
+    typename std::enable_if_t<!TypeTraits<kind>::isPrimitiveType, int> = 0>
 void applyTypedFirstMatch(
     const SelectivityVector& rows,
     DecodedVector& arrayDecoded,
@@ -168,7 +168,7 @@ FOLLY_ALWAYS_INLINE void getLoopBoundary(
 // Find the index of the instance-th match for primitive types.
 template <
     TypeKind kind,
-    typename std::enable_if<TypeTraits<kind>::isPrimitiveType, int>::type = 0>
+    typename std::enable_if_t<TypeTraits<kind>::isPrimitiveType, int> = 0>
 void applyTypedWithInstance(
     const SelectivityVector& rows,
     DecodedVector& arrayDecoded,
@@ -198,9 +198,9 @@ void applyTypedWithInstance(
 
     // Fast path for array vector of boolean.
     if constexpr (std::is_same_v<bool, T>) {
-      auto rawElements = elementsDecoded.values<uint64_t>();
+      auto rawElements = elementsDecoded.data<uint64_t>();
 
-      auto search = bits::isBitSet(searchDecoded.values<uint64_t>(), 0);
+      auto search = bits::isBitSet(searchDecoded.data<uint64_t>(), 0);
 
       rows.applyToSelected([&](auto row) {
         auto offset = rawOffsets[indices[row]];
@@ -225,7 +225,7 @@ void applyTypedWithInstance(
     }
 
     // Fast path for array vector of types other than boolean.
-    auto rawElements = elementsDecoded.values<T>();
+    auto rawElements = elementsDecoded.data<T>();
 
     auto search = searchDecoded.valueAt<T>(0);
 
@@ -286,7 +286,7 @@ void applyTypedWithInstance(
 // Find the index of the instance-th match for complex types.
 template <
     TypeKind kind,
-    typename std::enable_if<!TypeTraits<kind>::isPrimitiveType, int>::type = 0>
+    typename std::enable_if_t<!TypeTraits<kind>::isPrimitiveType, int> = 0>
 void applyTypedWithInstance(
     const SelectivityVector& rows,
     DecodedVector& arrayDecoded,
@@ -344,16 +344,16 @@ class ArrayPositionFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     const auto& arrayVector = args[0];
     const auto& searchVector = args[1];
     VELOX_CHECK(arrayVector->type()->isArray());
     VELOX_CHECK(arrayVector->type()->asArray().elementType()->kindEquals(
         searchVector->type()));
 
-    BaseVector::ensureWritable(rows, BIGINT(), context->pool(), result);
-    auto flatResult = (*result)->asFlatVector<int64_t>();
+    context.ensureWritable(rows, BIGINT(), result);
+    auto flatResult = result->asFlatVector<int64_t>();
 
     exec::DecodedArgs decodedArgs(rows, args, context);
     auto elements = decodedArgs.at(0)->base()->as<ArrayVector>()->elements();

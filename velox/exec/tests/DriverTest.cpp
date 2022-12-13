@@ -13,8 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <folly/Unit.h>
 #include <folly/init/Init.h>
-#include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+#include <velox/exec/Driver.h>
+#include "velox/common/base/tests/GTestUtils.h"
+#include "velox/dwio/common/tests/utils/BatchMaker.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -31,15 +35,13 @@ using facebook::velox::test::BatchMaker;
 // pauses and resumes other Tasks.
 class TestingPauserNode : public core::PlanNode {
  public:
-  explicit TestingPauserNode(std::shared_ptr<const core::PlanNode> input)
+  explicit TestingPauserNode(core::PlanNodePtr input)
       : PlanNode("Pauser"), sources_{input} {}
 
-  TestingPauserNode(
-      const core::PlanNodeId& id,
-      std::shared_ptr<const core::PlanNode> input)
+  TestingPauserNode(const core::PlanNodeId& id, core::PlanNodePtr input)
       : PlanNode(id), sources_{input} {}
 
-  const std::shared_ptr<const RowType>& outputType() const override {
+  const RowTypePtr& outputType() const override {
     return sources_[0]->outputType();
   }
 
@@ -54,7 +56,7 @@ class TestingPauserNode : public core::PlanNode {
  private:
   void addDetails(std::stringstream& /* stream */) const override {}
 
-  std::vector<std::shared_ptr<const core::PlanNode>> sources_;
+  std::vector<core::PlanNodePtr> sources_;
 };
 
 class DriverTest : public OperatorTestBase {
@@ -84,6 +86,15 @@ class DriverTest : public OperatorTestBase {
   }
 
   void TearDown() override {
+    for (auto& task : tasks_) {
+      if (task != nullptr) {
+        waitForTaskCompletion(task.get(), 1'000'000);
+      }
+    }
+    // NOTE: destroy the tasks first to release all the allocated memory held
+    // by the plan nodes (Values) in tasks.
+    tasks_.clear();
+
     if (wakeupInitialized_) {
       wakeupCancelled_ = true;
       wakeupThread_.join();
@@ -91,8 +102,8 @@ class DriverTest : public OperatorTestBase {
     OperatorTestBase::TearDown();
   }
 
-  std::shared_ptr<const core::PlanNode> makeValuesFilterProject(
-      const std::shared_ptr<const RowType>& rowType,
+  core::PlanNodePtr makeValuesFilterProject(
+      const RowTypePtr& rowType,
       const std::string& filter,
       const std::string& project,
       int32_t numBatches,
@@ -133,10 +144,9 @@ class DriverTest : public OperatorTestBase {
       planBuilder.project(expressions);
     }
     if (addTestingPauser) {
-      planBuilder.addNode(
-          [](std::string id, std::shared_ptr<const core::PlanNode> input) {
-            return std::make_shared<TestingPauserNode>(id, input);
-          });
+      planBuilder.addNode([](std::string id, core::PlanNodePtr input) {
+        return std::make_shared<TestingPauserNode>(id, input);
+      });
     }
 
     return planBuilder.planNode();
@@ -256,14 +266,14 @@ class DriverTest : public OperatorTestBase {
               if (wakeupPromises_.empty()) {
                 break;
               }
-              wakeupPromises_.front().setValue(true);
+              wakeupPromises_.front().setValue();
               wakeupPromises_.pop_front();
             }
           }
         }
       });
     }
-    auto [promise, semiFuture] = makeVeloxPromiseContract<bool>("wakeup");
+    auto [promise, semiFuture] = makeVeloxContinuePromiseContract("wakeup");
     *future = std::move(semiFuture);
     wakeupPromises_.push_back(std::move(promise));
   }
@@ -299,16 +309,16 @@ class DriverTest : public OperatorTestBase {
   // State for registerForWakeup().
   std::mutex wakeupMutex_;
   std::thread wakeupThread_;
-  std::deque<folly::Promise<bool>> wakeupPromises_;
+  std::deque<ContinuePromise> wakeupPromises_;
   bool wakeupInitialized_{false};
   // Set to true when it is time to exit 'wakeupThread_'.
   std::atomic<bool> wakeupCancelled_{false};
 
-  std::shared_ptr<const RowType> rowType_;
+  RowTypePtr rowType_;
   std::mutex mutex_;
   std::vector<std::shared_ptr<Task>> tasks_;
-  ContinueFuture cancelFuture_{false};
-  std::unordered_map<int32_t, folly::Future<bool>> stateFutures_;
+  ContinueFuture cancelFuture_;
+  std::unordered_map<int32_t, ContinueFuture> stateFutures_;
 
   // Mutex for randomTask()
   std::mutex taskMutex_;
@@ -346,13 +356,13 @@ TEST_F(DriverTest, cancel) {
       rowType_,
       "m1 % 10 > 0",
       "m1 % 3 + m2 % 5 + m3 % 7 + m4 % 11 + m5 % 13 + m6 % 17 + m7 % 19",
-      100,
-      100'000);
+      1'000,
+      1'000);
   params.maxDrivers = 10;
   int32_t numRead = 0;
   try {
     readResults(params, ResultOperation::kCancel, 1'000'000, &numRead);
-    EXPECT_TRUE(false) << "Expected exception";
+    FAIL() << "Expected exception";
   } catch (const VeloxRuntimeError& e) {
     EXPECT_EQ("Cancelled", e.message());
   }
@@ -373,8 +383,8 @@ TEST_F(DriverTest, terminate) {
       rowType_,
       "m1 % 10 > 0",
       "m1 % 3 + m2 % 5 + m3 % 7 + m4 % 11 + m5 % 13 + m6 % 17 + m7 % 19",
-      100,
-      100'000);
+      1'000,
+      1'000);
   params.maxDrivers = 10;
   int32_t numRead = 0;
   try {
@@ -384,6 +394,11 @@ TEST_F(DriverTest, terminate) {
     // If this is an exception, it will be a cancellation.
     EXPECT_TRUE(strstr(e.what(), "Aborted") != nullptr) << e.what();
   }
+
+  ASSERT_TRUE(cancelFuture_.valid());
+  auto& executor = folly::QueuedImmediateExecutor::instance();
+  std::move(cancelFuture_).via(&executor).wait();
+
   EXPECT_GE(numRead, 1'000'000);
   EXPECT_TRUE(stateFutures_.at(0).isReady());
   EXPECT_EQ(tasks_[0]->state(), TaskState::kAborted);
@@ -428,11 +443,17 @@ TEST_F(DriverTest, pause) {
       rowType_,
       "m1 % 10 > 0",
       "m1 % 3 + m2 % 5 + m3 % 7 + m4 % 11 + m5 % 13 + m6 % 17 + m7 % 19",
-      100,
-      10'000,
+      1'000,
+      1'000,
       [](int64_t num) { return num % 10 > 0; },
       &hits);
   params.maxDrivers = 10;
+  params.queryCtx = std::make_shared<core::QueryCtx>(
+      executor_.get(),
+      // Make sure CPU usage tracking is enabled.
+      std::make_shared<core::MemConfig>(
+          std::unordered_map<std::string, std::string>{
+              {core::QueryConfig::kOperatorTrackCpuUsage, "true"}}));
   int32_t numRead = 0;
   readResults(params, ResultOperation::kPause, 370'000'000, &numRead);
   // Each thread will fully read the 1M rows in values.
@@ -455,10 +476,7 @@ TEST_F(DriverTest, pause) {
 TEST_F(DriverTest, yield) {
   constexpr int32_t kNumTasks = 20;
   constexpr int32_t kThreadsPerTask = 5;
-  std::vector<int32_t> counters;
-  counters.reserve(kNumTasks);
-  std::vector<CursorParameters> params;
-  params.resize(kNumTasks);
+  std::vector<CursorParameters> params(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
     params[i].planNode = makeValuesFilterProject(
@@ -471,10 +489,10 @@ TEST_F(DriverTest, yield) {
         &hits);
     params[i].maxDrivers = kThreadsPerTask;
   }
+  std::vector<int32_t> counters(kNumTasks, 0);
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       readResults(params[i], ResultOperation::kYield, 10'000, &counters[i], i);
     }));
@@ -513,8 +531,7 @@ class TestingPauser : public Operator {
       int32_t sequence)
       : Operator(ctx, node->outputType(), id, node->id(), "Pauser"),
         test_(test),
-        counter_(sequence),
-        future_(false) {
+        counter_(sequence) {
     test_->registerTask(operatorCtx_->task());
   }
 
@@ -595,7 +612,7 @@ class TestingPauser : public Operator {
 
   // Counter deciding the next action in getOutput().
   int32_t counter_;
-  ContinueFuture future_{ContinueFuture::makeEmpty()};
+  ContinueFuture future_;
 };
 
 std::mutex TestingPauser ::pauseMutex_;
@@ -624,8 +641,7 @@ class PauserNodeFactory : public Operator::PlanNodeTranslator {
     return nullptr;
   }
 
-  std::optional<uint32_t> maxDrivers(
-      const std::shared_ptr<const core::PlanNode>& node) override {
+  std::optional<uint32_t> maxDrivers(const core::PlanNodePtr& node) override {
     if (auto pauser =
             std::dynamic_pointer_cast<const TestingPauserNode>(node)) {
       return maxDrivers_;
@@ -655,10 +671,7 @@ TEST_F(DriverTest, pauserNode) {
   Operator::registerOperator(std::make_unique<PauserNodeFactory>(
       kThreadsPerTask, sequence, testInstance));
 
-  std::vector<int32_t> counters;
-  counters.reserve(kNumTasks);
-  std::vector<CursorParameters> params;
-  params.resize(kNumTasks);
+  std::vector<CursorParameters> params(kNumTasks);
   int32_t hits;
   for (int32_t i = 0; i < kNumTasks; ++i) {
     params[i].queryCtx = std::make_shared<core::QueryCtx>(
@@ -675,10 +688,10 @@ TEST_F(DriverTest, pauserNode) {
     params[i].maxDrivers =
         kThreadsPerTask * 2; // a number larger than kThreadsPerTask
   }
+  std::vector<int32_t> counters(kNumTasks, 0);
   std::vector<std::thread> threads;
   threads.reserve(kNumTasks);
   for (int32_t i = 0; i < kNumTasks; ++i) {
-    counters.push_back(0);
     threads.push_back(std::thread([this, &params, &counters, i]() {
       try {
         readResults(params[i], ResultOperation::kRead, 10'000, &counters[i], i);
@@ -700,12 +713,10 @@ namespace {
 // Custom node for the custom factory.
 class ThrowNode : public core::PlanNode {
  public:
-  ThrowNode(
-      const core::PlanNodeId& id,
-      std::shared_ptr<const core::PlanNode> input)
+  ThrowNode(const core::PlanNodeId& id, core::PlanNodePtr input)
       : PlanNode(id), sources_{input} {}
 
-  const std::shared_ptr<const RowType>& outputType() const override {
+  const RowTypePtr& outputType() const override {
     return sources_[0]->outputType();
   }
 
@@ -720,16 +731,13 @@ class ThrowNode : public core::PlanNode {
  private:
   void addDetails(std::stringstream& /* stream */) const override {}
 
-  std::vector<std::shared_ptr<const core::PlanNode>> sources_;
+  std::vector<core::PlanNodePtr> sources_;
 };
 
 // Custom operator for the custom factory.
 class ThrowOperator : public Operator {
  public:
-  ThrowOperator(
-      DriverCtx* ctx,
-      int32_t id,
-      std::shared_ptr<const core::PlanNode> node)
+  ThrowOperator(DriverCtx* ctx, int32_t id, core::PlanNodePtr node)
       : Operator(ctx, node->outputType(), id, node->id(), "Throw") {}
 
   bool needsInput() const override {
@@ -774,8 +782,7 @@ class ThrowNodeFactory : public Operator::PlanNodeTranslator {
     return nullptr;
   }
 
-  std::optional<uint32_t> maxDrivers(
-      const std::shared_ptr<const core::PlanNode>& node) override {
+  std::optional<uint32_t> maxDrivers(const core::PlanNodePtr& node) override {
     if (std::dynamic_pointer_cast<const ThrowNode>(node)) {
       return 5;
     }
@@ -796,28 +803,19 @@ TEST_F(DriverTest, driverCreationThrow) {
 
   auto rows = makeRowVector({"c0"}, {makeFlatVector<int32_t>({1, 2, 3})});
 
-  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
 
   auto plan = PlanBuilder(planNodeIdGenerator)
                   .values({rows}, true)
-                  .addNode([](std::string id,
-                              std::shared_ptr<const core::PlanNode> input) {
+                  .addNode([](std::string id, core::PlanNodePtr input) {
                     return std::make_shared<ThrowNode>(id, input);
                   })
                   .planNode();
 
   // Ensure execution threw correct error.
-  try {
-    CursorParameters params;
-    params.planNode = std::move(plan);
-    params.maxDrivers = 5;
-    getResults(params);
-    FAIL() << "Expected exception.";
-  } catch (const VeloxException& ex) {
-    EXPECT_NE(
-        std::string::npos,
-        ex.message().find("Can only create 1 'throw driver'."));
-  }
+  VELOX_ASSERT_THROW(
+      AssertQueryBuilder(plan).maxDrivers(5).copyResults(pool()),
+      "Can only create 1 'throw driver'.");
 }
 
 int main(int argc, char** argv) {

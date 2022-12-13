@@ -128,7 +128,7 @@ class CustomJoinBuild : public Operator {
     // the last to finish) can continue from the barrier and finish.
     peers.clear();
     for (auto& promise : promises) {
-      promise.setValue(true);
+      promise.setValue();
     }
 
     auto joinBridge = operatorCtx_->task()->getCustomJoinBridge(
@@ -192,6 +192,12 @@ class CustomJoinProbe : public Operator {
       auto output = input_;
       input_.reset();
       return output;
+    }
+
+    // Return nullptr if there is no data to return.
+    if (remainingLimit_ == 0) {
+      input_.reset();
+      return nullptr;
     }
 
     auto output = std::make_shared<RowVector>(
@@ -284,7 +290,7 @@ class CustomJoinTest : public OperatorTestBase {
       const std::string& referenceQuery) {
     createDuckDbTable("t", {leftBatch});
 
-    auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+    auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     auto leftNode =
         PlanBuilder(planNodeIdGenerator).values({leftBatch}, true).planNode();
     auto rightNode =

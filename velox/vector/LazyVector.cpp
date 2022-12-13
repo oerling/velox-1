@@ -15,29 +15,19 @@
  */
 
 #include "velox/vector/LazyVector.h"
-#include <folly/ThreadLocal.h>
 #include "velox/common/base/RawVector.h"
+#include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/time/Timer.h"
 #include "velox/vector/DecodedVector.h"
 
 namespace facebook::velox {
 
-// Thread local stat writer, if set (not null) are used here to record how much
-// time was spent on IO in lazy vectors.
-static folly::ThreadLocalPtr<BaseRuntimeStatWriter> sRunTimeStatWriters;
-
-void setRunTimeStatWriter(std::unique_ptr<BaseRuntimeStatWriter>&& ptr) {
-  sRunTimeStatWriters.reset(std::move(ptr));
-}
-
 static void writeIOWallTimeStat(size_t ioTimeStartMicros) {
-  if (BaseRuntimeStatWriter* pWriter = sRunTimeStatWriters.get()) {
-    pWriter->addRuntimeStat(
-        "dataSourceLazyWallNanos",
-        RuntimeCounter(
-            (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
-            RuntimeCounter::Unit::kNanos));
-  }
+  addThreadLocalRuntimeStat(
+      "dataSourceLazyWallNanos",
+      RuntimeCounter(
+          (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
+          RuntimeCounter::Unit::kNanos));
 }
 
 void VectorLoader::load(RowSet rows, ValueHook* hook, VectorPtr* result) {
@@ -49,9 +39,7 @@ void VectorLoader::load(RowSet rows, ValueHook* hook, VectorPtr* result) {
     // Record number of rows loaded directly into ValueHook bypassing
     // materialization into vector. This counter can be used to understand
     // whether aggregation pushdown is happening or not.
-    if (auto* pWriter = sRunTimeStatWriters.get()) {
-      pWriter->addRuntimeStat("loadedToValueHook", RuntimeCounter(rows.size()));
-    }
+    addThreadLocalRuntimeStat("loadedToValueHook", RuntimeCounter(rows.size()));
   }
 }
 
@@ -83,6 +71,12 @@ void VectorLoader::loadInternal(
   int index = 0;
   rows.applyToSelected([&](vector_size_t row) { positions[index++] = row; });
   load(positions, hook, result);
+}
+
+VectorPtr LazyVector::slice(vector_size_t offset, vector_size_t length) const {
+  VELOX_CHECK(isLoaded(), "Cannot take slice on unloaded lazy vector");
+  VELOX_DCHECK(vector_);
+  return vector_->slice(offset, length);
 }
 
 //   static
@@ -146,26 +140,39 @@ void LazyVector::ensureLoadedRows(
 
     rowSet = RowSet(rowNumbers);
 
-    // If we have a mapping that is not a single level of dictionary, we
-    // collapse this to a single level of dictionary. The reason is
-    // that the inner levels of dictionary will reference rows that
-    // are not loaded, since the load was done for only the rows that
-    // are reachable from 'vector'.
-    if (vector->encoding() != VectorEncoding::Simple::DICTIONARY ||
-        lazyVector != vector->valueVector().get()) {
-      lazyVector->load(rowSet, nullptr);
-      BufferPtr indices = allocateIndices(vector->size(), vector->pool());
-      std::memcpy(
-          indices->asMutable<vector_size_t>(),
-          decoded.indices(),
-          sizeof(vector_size_t) * vector->size());
-      vector = BaseVector::wrapInDictionary(
-          BufferPtr(nullptr),
-          std::move(indices),
-          vector->size(),
-          lazyVector->loadedVectorShared());
-      return;
+    lazyVector->load(rowSet, nullptr);
+
+    // The loaded base vector may have fewer rows than the original. Make sure
+    // there are no indices referring to rows past the end of the base vector.
+
+    BufferPtr indices = allocateIndices(rows.end(), vector->pool());
+    auto rawIndices = indices->asMutable<vector_size_t>();
+    auto decodedIndices = decoded.indices();
+    rows.applyToSelected(
+        [&](auto row) { rawIndices[row] = decodedIndices[row]; });
+
+    BufferPtr nulls = nullptr;
+    if (decoded.nulls()) {
+      if (!baseRows.hasSelections()) {
+        // All valid values in 'rows' are nulls. Set the nulls buffer to all
+        // nulls to avoid hitting DCHECK when creating a dictionary with a zero
+        // sized base vector.
+        nulls = allocateNulls(rows.end(), vector->pool(), bits::kNull);
+      } else {
+        nulls = allocateNulls(rows.end(), vector->pool());
+        std::memcpy(
+            nulls->asMutable<uint64_t>(),
+            decoded.nulls(),
+            bits::nbytes(rows.end()));
+      }
     }
+
+    vector = BaseVector::wrapInDictionary(
+        std::move(nulls),
+        std::move(indices),
+        rows.end(),
+        lazyVector->loadedVectorShared());
+    return;
   }
   lazyVector->load(rowSet, nullptr);
   // An explicit call to loadedVector() is necessary to allow for proper

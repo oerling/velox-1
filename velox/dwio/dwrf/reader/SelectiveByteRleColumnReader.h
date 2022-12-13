@@ -16,28 +16,29 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/common/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
 
-class SelectiveByteRleColumnReader : public SelectiveColumnReader {
+class SelectiveByteRleColumnReader
+    : public dwio::common::SelectiveColumnReader {
  public:
   using ValueType = int8_t;
 
   SelectiveByteRleColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      bool isBool,
-      FlatMapContext flatMapContext)
+      DwrfParams& params,
+      common::ScanSpec& scanSpec,
+      bool isBool)
       : SelectiveColumnReader(
             std::move(requestedType),
-            stripe,
+            params,
             scanSpec,
-            dataType->type,
-            std::move(flatMapContext)) {
-    EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+            dataType->type) {
+    EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
+    auto& stripe = params.stripeStreams();
     if (isBool) {
       boolRle_ = createBooleanRleDecoder(
           stripe.getStream(encodingKey.forKind(proto::Stream_Kind_DATA), true),
@@ -50,14 +51,8 @@ class SelectiveByteRleColumnReader : public SelectiveColumnReader {
   }
 
   void seekToRowGroup(uint32_t index) override {
-    ensureRowGroupIndex();
-    auto positions = toPositions(index_->entry(index));
-    PositionProvider positionsProvider(positions);
-
-    if (notNullDecoder_) {
-      notNullDecoder_->seekToRowGroup(positionsProvider);
-    }
-
+    SelectiveColumnReader::seekToRowGroup(index);
+    auto positionsProvider = formatData_->seekToRowGroup(index);
     if (boolRle_) {
       boolRle_->seekToRowGroup(positionsProvider);
     } else {
@@ -150,7 +145,7 @@ void SelectiveByteRleColumnReader::readHelper(
     ExtractValues extractValues) {
   readWithVisitor(
       rows,
-      ColumnVisitor<int8_t, TFilter, ExtractValues, isDense>(
+      dwio::common::ColumnVisitor<int8_t, TFilter, ExtractValues, isDense>(
           *reinterpret_cast<TFilter*>(filter), this, rows, extractValues));
 }
 
@@ -168,10 +163,10 @@ void SelectiveByteRleColumnReader::processFilter(
       filterNulls<int8_t>(
           rows,
           true,
-          !std::is_same<decltype(extractValues), DropValues>::value);
+          !std::is_same_v<decltype(extractValues), dwio::common::DropValues>);
       break;
     case FilterKind::kIsNotNull:
-      if (std::is_same<decltype(extractValues), DropValues>::value) {
+      if (std::is_same_v<decltype(extractValues), dwio::common::DropValues>) {
         filterNulls<int8_t>(rows, false, false);
       } else {
         readHelper<common::IsNotNull, isDense>(filter, rows, extractValues);
@@ -180,8 +175,16 @@ void SelectiveByteRleColumnReader::processFilter(
     case FilterKind::kBigintRange:
       readHelper<common::BigintRange, isDense>(filter, rows, extractValues);
       break;
+    case FilterKind::kNegatedBigintRange:
+      readHelper<common::NegatedBigintRange, isDense>(
+          filter, rows, extractValues);
+      break;
     case FilterKind::kBigintValuesUsingBitmask:
       readHelper<common::BigintValuesUsingBitmask, isDense>(
+          filter, rows, extractValues);
+      break;
+    case FilterKind::kNegatedBigintValuesUsingBitmask:
+      readHelper<common::NegatedBigintValuesUsingBitmask, isDense>(
           filter, rows, extractValues);
       break;
     default:
@@ -198,11 +201,15 @@ void SelectiveByteRleColumnReader::processValueHook(
   switch (hook->kind()) {
     case aggregate::AggregationHook::kSumBigintToBigint:
       readHelper<common::AlwaysTrue, isDense>(
-          &alwaysTrue(), rows, ExtractToHook<SumHook<int64_t, int64_t>>(hook));
+          &dwio::common::alwaysTrue(),
+          rows,
+          dwio::common::ExtractToHook<SumHook<int64_t, int64_t>>(hook));
       break;
     default:
       readHelper<common::AlwaysTrue, isDense>(
-          &alwaysTrue(), rows, ExtractToGenericHook(hook));
+          &dwio::common::alwaysTrue(),
+          rows,
+          dwio::common::ExtractToGenericHook(hook));
   }
 }
 

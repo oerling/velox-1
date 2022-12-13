@@ -29,9 +29,7 @@ TopN::TopN(
           topNNode->id(),
           "TopN"),
       count_(topNNode->count()),
-      data_(std::make_unique<RowContainer>(
-          outputType_->children(),
-          operatorCtx_->mappedMemory())),
+      data_(std::make_unique<RowContainer>(outputType_->children(), pool())),
       comparator_(
           outputType_,
           topNNode->sortingKeys(),
@@ -41,7 +39,7 @@ TopN::TopN(
       decodedVectors_(outputType_->children().size()) {}
 
 TopN::Comparator::Comparator(
-    const std::shared_ptr<const RowType>& type,
+    const RowTypePtr& type,
     const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
         sortingKeys,
     const std::vector<core::SortOrder>& sortingOrders,

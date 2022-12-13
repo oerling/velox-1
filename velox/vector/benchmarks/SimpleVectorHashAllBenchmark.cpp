@@ -18,8 +18,8 @@
 #include <folly/init/Init.h>
 
 #include "velox/vector/SimpleVector.h"
-#include "velox/vector/tests/VectorMaker.h"
 #include "velox/vector/tests/VectorTestUtils.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 namespace facebook::velox::test {
 namespace {
@@ -89,7 +89,7 @@ void vectorBenchmark(
     bool sequences,
     VectorEncoding::Simple encoding) {
   folly::BenchmarkSuspender suspender;
-  auto pool = memory::getDefaultScopedMemoryPool();
+  auto pool = memory::getDefaultMemoryPool();
   VectorMaker vectorMaker(pool.get());
 
   for (size_t k = 0; k < iterations; ++k) {

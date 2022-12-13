@@ -67,7 +67,7 @@ template <typename Exception, typename StringType>
       "BUG: we should not pass std::string by value to veloxCheckFail");
   LOG(ERROR) << "Line: " << args.file << ":" << args.line
              << ", Function:" << args.function
-             << ", Expression: " << args.expression << s
+             << ", Expression: " << args.expression << " " << s
              << ", Source: " << args.errorSource
              << ", ErrorCode: " << args.errorCode;
 
@@ -270,7 +270,7 @@ DECLARE_CHECK_FAIL_TEMPLATES(::facebook::velox::VeloxRuntimeError);
       /* isRetriable */ false,                                   \
       ##__VA_ARGS__)
 
-#define VELOX_SCHMEA_MISMATCH_ERROR(...)                         \
+#define VELOX_SCHEMA_MISMATCH_ERROR(...)                         \
   _VELOX_THROW(                                                  \
       ::facebook::velox::VeloxUserError,                         \
       ::facebook::velox::error_source::kErrorSourceUser.c_str(), \

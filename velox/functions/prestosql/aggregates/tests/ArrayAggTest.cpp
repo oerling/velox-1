@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/dwio/dwrf/test/utils/BatchMaker.h"
+#include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
@@ -51,49 +51,13 @@ TEST_F(ArrayAggTest, groupBy) {
   for (auto i = 0; i < 9; ++i) {
     batches.push_back(batches[0]);
   }
-  CursorParameters params;
-  params.planNode = PlanBuilder()
-                        .values(batches)
-                        .partialAggregation({"c0"}, {"array_agg(A)"})
-                        .finalAggregation()
-                        .planNode();
 
-  auto pair = readCursor(params, [](Task*) {});
-  auto reference = batches[0]->as<RowVector>()->childAt(1);
-  for (auto rowVector : pair.second) {
-    auto resultKeys = rowVector->childAt(0)->as<FlatVector<int32_t>>();
-    auto array = rowVector->childAt(1)->as<ArrayVector>();
-    auto elements = array->elements()->as<ArrayVector>();
-    for (auto i = 0; i < rowVector->size(); ++i) {
-      auto group = resultKeys->isNullAt(i) ? 0 : resultKeys->valueAt(i);
-      auto offset = array->offsetAt(i);
-      auto size = array->sizeAt(i);
-      EXPECT_EQ(size, 100);
-      // We check that group n has a result that repeats elements of
-      // reference at n, n+ 10, ... n+90 ten times.
-      for (auto index = 0; index < size; ++index) {
-        EXPECT_TRUE(reference->equalValueAt(
-            elements,
-            group + (i * kNumGroups) % reference->size(),
-            offset + i));
-      }
-    }
-  }
-
-  // Add local exchange before intermediate aggregation. Expect the same result.
-  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
-  params.planNode = PlanBuilder(planNodeIdGenerator)
-                        .localPartition(
-                            {"c0"},
-                            {PlanBuilder(planNodeIdGenerator)
-                                 .values(batches)
-                                 .partialAggregation({"c0"}, {"array_agg(A)"})
-                                 .planNode()})
-                        .intermediateAggregation()
-                        .planNode();
-  params.maxDrivers = 2;
-
-  exec::test::assertQuery(params, pair.second);
+  createDuckDbTable(batches);
+  testAggregations(
+      batches,
+      {"c0"},
+      {"array_agg(a)"},
+      "SELECT c0, array_agg(a) FROM tmp GROUP BY c0");
 }
 
 TEST_F(ArrayAggTest, global) {
@@ -102,56 +66,67 @@ TEST_F(ArrayAggTest, global) {
   std::vector<RowVectorPtr> vectors = {makeRowVector({makeFlatVector<int32_t>(
       size, [](vector_size_t row) { return row * 2; }, nullEvery(3))})};
 
-  auto op = PlanBuilder()
-                .values(vectors)
-                .partialAggregation({}, {"array_agg(c0)"})
-                .finalAggregation()
-                .planNode();
-
-  auto value = readSingleValue(op);
-
-  std::vector<velox::variant> expected;
-  for (auto i = 0; i < size; i++) {
-    if (i % 3 == 0) {
-      expected.emplace_back(TypeKind::INTEGER);
-    } else {
-      expected.emplace_back(i * 2);
-    }
-  }
-  ASSERT_EQ(velox::variant::array(expected), value);
-
-  // Add local exchange before intermediate aggregation. Expect the same result.
-  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
-  op = PlanBuilder(planNodeIdGenerator)
-           .localPartition(
-               {},
-               {PlanBuilder(planNodeIdGenerator)
-                    .localPartitionRoundRobin(
-                        {PlanBuilder(planNodeIdGenerator)
-                             .values(vectors)
-                             .partialAggregation({}, {"array_agg(c0)"})
-                             .planNode()})
-                    .intermediateAggregation()
-                    .planNode()})
-           .finalAggregation()
-           .planNode();
-
-  value = readSingleValue(op, 2);
-  ASSERT_EQ(velox::variant::array(expected), value);
+  createDuckDbTable(vectors);
+  testAggregations(
+      vectors, {}, {"array_agg(c0)"}, "SELECT array_agg(c0) FROM tmp");
 }
 
 TEST_F(ArrayAggTest, globalNoData) {
-  std::vector<RowVectorPtr> vectors = {
-      vectorMaker_.rowVector(ROW({"c0"}, {INTEGER()}), 0)};
+  auto data = makeRowVector(ROW({"c0"}, {INTEGER()}), 0);
 
-  auto op = PlanBuilder()
-                .values(vectors)
-                .partialAggregation({}, {"array_agg(c0)"})
-                .finalAggregation()
-                .planNode();
+  testAggregations({data}, {}, {"array_agg(c0)"}, "SELECT null");
+}
 
-  auto value = readSingleValue(op);
-  ASSERT_EQ(velox::variant::array({}), value);
+TEST_F(ArrayAggTest, mask) {
+  // Global aggregation with all-false mask.
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2, 3, 4, 5}),
+      makeConstant(false, 5),
+  });
+
+  auto plan = PlanBuilder()
+                  .values({data})
+                  .singleAggregation({}, {"array_agg(c0)"}, {"c1"})
+                  .planNode();
+  assertQuery(plan, "SELECT null");
+
+  // Global aggregation with a non-constant mask.
+  data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2, 3, 4, 5}),
+      makeFlatVector<bool>({true, false, true, false, true}),
+  });
+
+  plan = PlanBuilder()
+             .values({data})
+             .singleAggregation({}, {"array_agg(c0)"}, {"c1"})
+             .planNode();
+  assertQuery(plan, "SELECT [1, 3, 5]");
+
+  // Group-by with all-false mask.
+  data = makeRowVector({
+      makeFlatVector<int64_t>({10, 20, 10, 20, 20}),
+      makeFlatVector<int64_t>({1, 2, 3, 4, 5}),
+      makeConstant(false, 5),
+  });
+
+  plan = PlanBuilder()
+             .values({data})
+             .singleAggregation({"c0"}, {"array_agg(c1)"}, {"c2"})
+             .planNode();
+  assertQuery(plan, "VALUES (10, null), (20, null)");
+
+  // Group-by with a non-constant mask.
+  data = makeRowVector({
+      makeFlatVector<int64_t>({10, 20, 10, 20, 20}),
+      makeFlatVector<int64_t>({1, 2, 3, 4, 5}),
+      makeFlatVector<bool>({true, false, true, false, true}),
+  });
+
+  plan = PlanBuilder()
+             .values({data})
+             .singleAggregation({"c0"}, {"array_agg(c1)"}, {"c2"})
+             .planNode();
+  assertQuery(plan, "VALUES (10, [1, 3]), (20, [5])");
 }
 
 } // namespace

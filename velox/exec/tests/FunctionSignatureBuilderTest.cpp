@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
+
 #include "velox/expression/FunctionSignature.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -24,6 +25,7 @@ class FunctionSignatureBuilderTest : public functions::test::FunctionBaseTest {
 };
 
 TEST_F(FunctionSignatureBuilderTest, basicTypeTests) {
+  // All type variables should be used in the inputs arguments.
   assertUserInvalidArgument(
       [=]() {
         FunctionSignatureBuilder()
@@ -32,7 +34,35 @@ TEST_F(FunctionSignatureBuilderTest, basicTypeTests) {
             .argumentType("integer")
             .build();
       },
-      "Not all type parameters used");
+      "Some type variables are not used in the inputs");
+
+  assertUserInvalidArgument(
+      [=]() {
+        FunctionSignatureBuilder()
+            .typeVariable("T")
+            .returnType("T")
+            .argumentType("integer")
+            .build();
+      },
+      "Some type variables are not used in the inputs");
+
+  // Integer variables do not have to be used in the inputs, but in that case
+  // must appear in the return.
+  ASSERT_NO_THROW(FunctionSignatureBuilder()
+                      .integerVariable("a")
+                      .returnType("DECIMAL(a, a)")
+                      .argumentType("integer")
+                      .build(););
+
+  assertUserInvalidArgument(
+      [=]() {
+        FunctionSignatureBuilder()
+            .integerVariable("a")
+            .returnType("integer")
+            .argumentType("integer")
+            .build();
+      },
+      "Some integer variables are not used");
 
   // Duplicate type params.
   assertUserInvalidArgument(
@@ -44,7 +74,18 @@ TEST_F(FunctionSignatureBuilderTest, basicTypeTests) {
             .argumentType("array(T)")
             .build();
       },
-      "Type parameter declared twice");
+      "Variable T declared twice");
+
+  assertUserInvalidArgument(
+      [=]() {
+        FunctionSignatureBuilder()
+            .typeVariable("T")
+            .knownTypeVariable("T")
+            .returnType("integer")
+            .argumentType("array(T)")
+            .build();
+      },
+      "Variable T declared twice");
 
   // Unspecified type params.
   assertUserInvalidArgument(
@@ -52,6 +93,7 @@ TEST_F(FunctionSignatureBuilderTest, basicTypeTests) {
         FunctionSignatureBuilder()
             .typeVariable("T")
             .returnType("integer")
+            .argumentType("T")
             .argumentType("array(M)")
             .build();
       },
@@ -74,7 +116,7 @@ TEST_F(FunctionSignatureBuilderTest, basicTypeTests) {
           .typeVariable("T")
           .typeVariable("M")
           .returnType("Array(M)")
-          .argumentType("Map(Map(Array(T)), Any)")
+          .argumentType("Map(Map(Array(T), M), Any)")
           .build() != nullptr);
 }
 
@@ -112,4 +154,26 @@ TEST_F(FunctionSignatureBuilderTest, typeParamTests) {
             .build();
       },
       "Named type cannot have parameters : T(M)");
+}
+
+TEST_F(FunctionSignatureBuilderTest, anyInReturn) {
+  assertUserInvalidArgument(
+      [=]() {
+        FunctionSignatureBuilder()
+            .typeVariable("T")
+            .returnType("Any")
+            .argumentType("T")
+            .build();
+      },
+      "Type 'Any' cannot appear in return type");
+
+  assertUserInvalidArgument(
+      [=]() {
+        FunctionSignatureBuilder()
+            .typeVariable("T")
+            .returnType("row(any, T)")
+            .argumentType("T")
+            .build();
+      },
+      "Type 'Any' cannot appear in return type");
 }

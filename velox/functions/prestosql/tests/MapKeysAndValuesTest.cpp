@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -133,29 +133,6 @@ class MapKeysAndValuesTest : public FunctionBaseTest {
     }
   }
 
-  void testInvalidInput(std::string functionName) {
-    auto sizeAt = [](vector_size_t row) { return 1 + row % 7; };
-    const vector_size_t size = 10;
-
-    auto mapArg = makeMapVector<int32_t, int64_t>(size, sizeAt, keyAt, valueAt);
-    auto dummyArg = BaseVector::create(BIGINT(), size, execCtx_.pool());
-
-    EXPECT_THROW(
-        evaluate<SimpleVector<int64_t>>(
-            functionName + "(C0)", makeRowVector({dummyArg})),
-        std::invalid_argument);
-
-    EXPECT_THROW(
-        evaluate<SimpleVector<int64_t>>(
-            functionName + "(C0, C1)", makeRowVector({dummyArg, dummyArg})),
-        std::invalid_argument);
-
-    EXPECT_THROW(
-        evaluate<SimpleVector<int64_t>>(
-            functionName + "(C0, C1)", makeRowVector({mapArg, dummyArg})),
-        std::invalid_argument);
-  }
-
   static inline int32_t keyAt(vector_size_t idx) {
     return idx;
   }
@@ -255,8 +232,41 @@ TEST_F(MapKeysTest, partiallyPopulatedSomeNulls) {
   testMapKeysPartiallyPopulated(sizeAt, nullEvery(5));
 }
 
-TEST_F(MapKeysTest, invalidInput) {
-  testInvalidInput("map_keys");
+TEST_F(MapKeysTest, constant) {
+  vector_size_t size = 1'000;
+  auto data = makeMapVector<int64_t, int64_t>({
+      {
+          {0, 0},
+          {1, 10},
+          {2, 20},
+          {3, 30},
+      },
+      {
+          {4, 40},
+          {5, 50},
+      },
+      {
+          {6, 60},
+      },
+  });
+
+  auto evaluateConstant = [&](vector_size_t row, const VectorPtr& vector) {
+    return evaluate(
+        "map_keys(c0)",
+        makeRowVector({BaseVector::wrapInConstant(size, row, vector)}));
+  };
+
+  auto result = evaluateConstant(0, data);
+  auto expected = makeConstantArray<int64_t>(size, {0, 1, 2, 3});
+  test::assertEqualVectors(expected, result);
+
+  result = evaluateConstant(1, data);
+  expected = makeConstantArray<int64_t>(size, {4, 5});
+  test::assertEqualVectors(expected, result);
+
+  result = evaluateConstant(2, data);
+  expected = makeConstantArray<int64_t>(size, {6});
+  test::assertEqualVectors(expected, result);
 }
 
 TEST_F(MapValuesTest, noNulls) {
@@ -284,6 +294,39 @@ TEST_F(MapValuesTest, partiallyPopulatedSomeNulls) {
   testMapValuesPartiallyPopulated(sizeAt, nullEvery(5));
 }
 
-TEST_F(MapValuesTest, invalidInput) {
-  testInvalidInput("map_values");
+TEST_F(MapValuesTest, constant) {
+  vector_size_t size = 1'000;
+  auto data = makeMapVector<int64_t, int64_t>({
+      {
+          {0, 0},
+          {1, 10},
+          {2, 20},
+          {3, 30},
+      },
+      {
+          {4, 40},
+          {5, 50},
+      },
+      {
+          {6, 60},
+      },
+  });
+
+  auto evaluateConstant = [&](vector_size_t row, const VectorPtr& vector) {
+    return evaluate(
+        "map_values(c0)",
+        makeRowVector({BaseVector::wrapInConstant(size, row, vector)}));
+  };
+
+  auto result = evaluateConstant(0, data);
+  auto expected = makeConstantArray<int64_t>(size, {0, 10, 20, 30});
+  test::assertEqualVectors(expected, result);
+
+  result = evaluateConstant(1, data);
+  expected = makeConstantArray<int64_t>(size, {40, 50});
+  test::assertEqualVectors(expected, result);
+
+  result = evaluateConstant(2, data);
+  expected = makeConstantArray<int64_t>(size, {60});
+  test::assertEqualVectors(expected, result);
 }

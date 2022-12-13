@@ -18,6 +18,7 @@
 
 #include <boost/circular_buffer.hpp>
 #include "velox/exec/Merge.h"
+#include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::exec {
 namespace {
@@ -36,6 +37,8 @@ class LocalMergeSource : public MergeSource {
     return queue_.withWLock(
         [&](auto& queue) { return queue.enqueue(input, future); });
   }
+
+  void close() override {}
 
  private:
   class LocalMergeSourceQueue {
@@ -90,14 +93,14 @@ class LocalMergeSource : public MergeSource {
    private:
     void notifyConsumers() {
       for (auto& promise : consumerPromises_) {
-        promise.setValue(true);
+        promise.setValue();
       }
       consumerPromises_.clear();
     }
 
     void notifyProducers() {
       for (auto& promise : producerPromises_) {
-        promise.setValue(true);
+        promise.setValue();
       }
       producerPromises_.clear();
     }
@@ -113,9 +116,13 @@ class LocalMergeSource : public MergeSource {
 
 class MergeExchangeSource : public MergeSource {
  public:
-  MergeExchangeSource(MergeExchange* mergeExchange, const std::string& taskId)
+  MergeExchangeSource(
+      MergeExchange* mergeExchange,
+      const std::string& taskId,
+      int destination)
       : mergeExchange_(mergeExchange),
-        client_(std::make_shared<ExchangeClient>(0)) {
+        client_(std::make_unique<ExchangeClient>(destination)) {
+    client_->initialize(mergeExchange->pool());
     client_->addRemoteTaskId(taskId);
     client_->noMoreRemoteTasks();
   }
@@ -139,7 +146,7 @@ class MergeExchangeSource : public MergeSource {
     }
     if (!inputStream_) {
       inputStream_ = std::make_unique<ByteStream>();
-      mergeExchange_->stats().rawInputBytes += currentPage_->size();
+      mergeExchange_->stats().wlock()->rawInputBytes += currentPage_->size();
       currentPage_->prepareStreamForDeserialize(inputStream_.get());
     }
 
@@ -150,8 +157,9 @@ class MergeExchangeSource : public MergeSource {
           mergeExchange_->outputType(),
           &data);
 
-      mergeExchange_->stats().inputPositions += data->size();
-      mergeExchange_->stats().inputBytes += data->retainedSize();
+      auto lockedStats = mergeExchange_->stats().wlock();
+      lockedStats->inputPositions += data->size();
+      lockedStats->inputBytes += data->retainedSize();
     }
 
     // Since VectorStreamGroup::read() may cause inputStream to be at end,
@@ -165,9 +173,16 @@ class MergeExchangeSource : public MergeSource {
     return BlockingReason::kNotBlocked;
   }
 
+  void close() override {
+    if (client_) {
+      client_->close();
+      client_ = nullptr;
+    }
+  }
+
  private:
   MergeExchange* mergeExchange_;
-  std::shared_ptr<ExchangeClient> client_;
+  std::unique_ptr<ExchangeClient> client_;
   std::unique_ptr<ByteStream> inputStream_;
   std::unique_ptr<SerializedPage> currentPage_;
   bool atEnd_ = false;
@@ -187,14 +202,16 @@ std::shared_ptr<MergeSource> MergeSource::createLocalMergeSource() {
 
 std::shared_ptr<MergeSource> MergeSource::createMergeExchangeSource(
     MergeExchange* mergeExchange,
-    const std::string& taskId) {
-  return std::make_shared<MergeExchangeSource>(mergeExchange, taskId);
+    const std::string& taskId,
+    int destination) {
+  return std::make_shared<MergeExchangeSource>(
+      mergeExchange, taskId, destination);
 }
 
 namespace {
 void notify(std::optional<ContinuePromise>& promise) {
   if (promise) {
-    promise->setValue(true);
+    promise->setValue();
     promise.reset();
   }
 }

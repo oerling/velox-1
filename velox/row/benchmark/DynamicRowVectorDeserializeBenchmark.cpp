@@ -23,7 +23,7 @@
 #include "velox/row/UnsafeRowDynamicSerializer.h"
 #include "velox/type/Type.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 namespace facebook::spark::benchmarks {
 namespace {
@@ -51,9 +51,7 @@ class UnsaferowDeserializer : public Deserializer {
   }
 
  private:
-  std::unique_ptr<memory::ScopedMemoryPool> pool_ =
-      memory::getDefaultScopedMemoryPool();
-  ;
+  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
 };
 
 class UnsaferowBatchDeserializer : public Deserializer {
@@ -68,8 +66,7 @@ class UnsaferowBatchDeserializer : public Deserializer {
   }
 
  private:
-  std::unique_ptr<memory::ScopedMemoryPool> pool_ =
-      memory::getDefaultScopedMemoryPool();
+  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
 };
 
 class BenchmarkHelper {
@@ -95,7 +92,7 @@ class BenchmarkHelper {
 
     VectorFuzzer::Options opts;
     opts.vectorSize = 1;
-    opts.nullChance = 10;
+    opts.nullRatio = 0.1;
     opts.stringVariableLength = true;
     opts.stringLength = 20;
     // Spark uses microseconds to store timestamp
@@ -133,8 +130,7 @@ class BenchmarkHelper {
       MAP(VARCHAR(), ARRAY(INTEGER())),
       ROW({INTEGER()})};
 
-  std::unique_ptr<memory::ScopedMemoryPool> pool_ =
-      memory::getDefaultScopedMemoryPool();
+  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
 };
 
 int deserialize(

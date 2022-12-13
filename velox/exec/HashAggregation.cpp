@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 #include "velox/exec/HashAggregation.h"
+#include <optional>
 #include "velox/exec/Aggregate.h"
+#include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
@@ -32,11 +34,21 @@ HashAggregation::HashAggregation(
               ? "PartialAggregation"
               : "Aggregation"),
       outputBatchSize_{driverCtx->queryConfig().preferredOutputBatchSize()},
-      maxPartialAggregationMemoryUsage_(
-          driverCtx->queryConfig().maxPartialAggregationMemoryUsage()),
       isPartialOutput_(isPartialOutput(aggregationNode->step())),
       isDistinct_(aggregationNode->aggregates().empty()),
-      isGlobal_(aggregationNode->groupingKeys().empty()) {
+      isGlobal_(aggregationNode->groupingKeys().empty()),
+      memoryTracker_(operatorCtx_->pool()->getMemoryUsageTracker()),
+      partialAggregationGoodPct_(
+          driverCtx->queryConfig().partialAggregationGoodPct()),
+      maxExtendedPartialAggregationMemoryUsage_(
+          driverCtx->queryConfig().maxExtendedPartialAggregationMemoryUsage()),
+      spillConfig_(
+          isSpillAllowed(aggregationNode)
+              ? operatorCtx_->makeSpillConfig(Spiller::Type::kAggregate)
+              : std::nullopt),
+      maxPartialAggregationMemoryUsage_(
+          driverCtx->queryConfig().maxPartialAggregationMemoryUsage()) {
+  VELOX_CHECK_NOT_NULL(memoryTracker_, "Memory usage tracker is not set");
   auto inputType = aggregationNode->sources()[0]->outputType();
 
   auto numHashers = aggregationNode->groupingKeys().size();
@@ -51,7 +63,7 @@ HashAggregation::HashAggregation(
     hashers.push_back(VectorHasher::create(key->type(), channel));
   }
 
-  std::vector<ChannelIndex> preGroupedChannels;
+  std::vector<column_index_t> preGroupedChannels;
   preGroupedChannels.reserve(aggregationNode->preGroupedKeys().size());
   for (const auto& key : aggregationNode->preGroupedKeys()) {
     auto channel = exprToChannel(key.get(), inputType);
@@ -61,14 +73,16 @@ HashAggregation::HashAggregation(
   auto numAggregates = aggregationNode->aggregates().size();
   std::vector<std::unique_ptr<Aggregate>> aggregates;
   aggregates.reserve(numAggregates);
-  std::vector<std::optional<ChannelIndex>> aggrMaskChannels;
+  std::vector<std::optional<column_index_t>> aggrMaskChannels;
   aggrMaskChannels.reserve(numAggregates);
-  std::vector<std::vector<ChannelIndex>> args;
+  auto numMasks = aggregationNode->aggregateMasks().size();
+  std::vector<std::vector<column_index_t>> args;
   std::vector<std::vector<VectorPtr>> constantLists;
+  std::vector<TypePtr> intermediateTypes;
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode->aggregates()[i];
 
-    std::vector<ChannelIndex> channels;
+    std::vector<column_index_t> channels;
     std::vector<VectorPtr> constants;
     std::vector<TypePtr> argTypes;
     for (auto& arg : aggregate->inputs()) {
@@ -76,21 +90,40 @@ HashAggregation::HashAggregation(
       channels.push_back(exprToChannel(arg.get(), inputType));
       if (channels.back() == kConstantChannel) {
         auto constant = dynamic_cast<const core::ConstantTypedExpr*>(arg.get());
-        constants.push_back(BaseVector::createConstant(
-            constant->value(), 1, operatorCtx_->pool()));
+        if (constant->hasValueVector()) {
+          constants.push_back(
+              BaseVector::wrapInConstant(1, 0, constant->valueVector()));
+        } else {
+          constants.push_back(BaseVector::createConstant(
+              constant->value(), 1, operatorCtx_->pool()));
+        }
       } else {
         constants.push_back(nullptr);
       }
     }
-
+    if (isRawInput(aggregationNode->step())) {
+      intermediateTypes.push_back(
+          Aggregate::intermediateType(aggregate->name(), argTypes));
+    } else {
+      VELOX_DCHECK(!argTypes.empty());
+      intermediateTypes.push_back(argTypes[0]);
+      VELOX_CHECK_EQ(
+          argTypes.size(),
+          1,
+          "Intermediate aggregates must have a single argument");
+    }
     // Setup aggregation mask: convert the Variable Reference name to the
     // channel (projection) index, if there is a mask.
-    const auto& aggrMask = aggregationNode->aggregateMasks()[i];
-    if (aggrMask == nullptr) {
-      aggrMaskChannels.emplace_back(std::optional<ChannelIndex>{});
+    if (i < numMasks) {
+      const auto& aggrMask = aggregationNode->aggregateMasks()[i];
+      if (aggrMask == nullptr) {
+        aggrMaskChannels.emplace_back(std::nullopt);
+      } else {
+        aggrMaskChannels.emplace_back(
+            inputType->asRow().getChildIdx(aggrMask->name()));
+      }
     } else {
-      aggrMaskChannels.emplace_back(
-          inputType->asRow().getChildIdx(aggrMask->name()));
+      aggrMaskChannels.emplace_back(std::nullopt);
     }
 
     const auto& resultType = outputType_->childAt(numHashers + i);
@@ -113,7 +146,7 @@ HashAggregation::HashAggregation(
   }
 
   if (isDistinct_) {
-    for (ChannelIndex i = 0; i < hashers.size(); ++i) {
+    for (auto i = 0; i < hashers.size(); ++i) {
       identityProjections_.emplace_back(hashers[i]->channel(), i);
     }
   }
@@ -125,23 +158,51 @@ HashAggregation::HashAggregation(
       std::move(aggrMaskChannels),
       std::move(args),
       std::move(constantLists),
+      std::move(intermediateTypes),
       aggregationNode->ignoreNullKeys(),
+      isPartialOutput_,
       isRawInput(aggregationNode->step()),
+      spillConfig_.has_value() ? &spillConfig_.value() : nullptr,
       operatorCtx_.get());
 }
 
+bool HashAggregation::isSpillAllowed(
+    const std::shared_ptr<const core::AggregationNode>& node) const {
+  return !isDistinct_ && node->preGroupedKeys().empty();
+}
+
 void HashAggregation::addInput(RowVectorPtr input) {
-  input_ = input;
   if (!pushdownChecked_) {
     mayPushdown_ = operatorCtx_->driver()->mayPushdownAggregation(this);
     pushdownChecked_ = true;
   }
-  groupingSet_->addInput(input_, mayPushdown_);
-  if (isPartialOutput_ &&
+  groupingSet_->addInput(input, mayPushdown_);
+  numInputRows_ += input->size();
+  {
+    auto spillStats = groupingSet_->spilledStats();
+    auto lockedStats = stats_.wlock();
+    lockedStats->spilledBytes = spillStats.spilledBytes;
+    lockedStats->spilledRows = spillStats.spilledRows;
+    lockedStats->spilledPartitions = spillStats.spilledPartitions;
+    lockedStats->spilledFiles = spillStats.spilledFiles;
+  }
+
+  // NOTE: we should not trigger partial output flush in case of global
+  // aggregation as the final aggregator will handle it the same way as the
+  // partial aggregator. Hence, we have to use more memory anyway.
+  if (isPartialOutput_ && !isGlobal_ &&
       groupingSet_->allocatedBytes() > maxPartialAggregationMemoryUsage_) {
     partialFull_ = true;
   }
-  newDistincts_ = isDistinct_ && !groupingSet_->hashLookup().newGroups.empty();
+
+  if (isDistinct_) {
+    newDistincts_ = !groupingSet_->hashLookup().newGroups.empty();
+
+    if (newDistincts_) {
+      // Save input to use for output in getOutput().
+      input_ = input;
+    }
+  }
 }
 
 void HashAggregation::prepareOutput(vector_size_t size) {
@@ -153,6 +214,60 @@ void HashAggregation::prepareOutput(vector_size_t size) {
     output_ = std::static_pointer_cast<RowVector>(
         BaseVector::create(outputType_, size, pool()));
   }
+}
+
+void HashAggregation::resetPartialOutputIfNeed() {
+  if (!partialFull_) {
+    return;
+  }
+  VELOX_DCHECK(!isGlobal_);
+  const double aggregationPct =
+      numOutputRows_ == 0 ? 0 : (numOutputRows_ * 1.0) / numInputRows_ * 100;
+  {
+    auto lockedStats = stats_.wlock();
+    lockedStats->addRuntimeStat(
+        "flushRowCount", RuntimeCounter(numOutputRows_));
+    lockedStats->addRuntimeStat(
+        "partialAggregationPct", RuntimeCounter(aggregationPct));
+  }
+  groupingSet_->resetPartial();
+  partialFull_ = false;
+  numOutputRows_ = 0;
+  numInputRows_ = 0;
+  if (!finished_) {
+    maybeIncreasePartialAggregationMemoryUsage(aggregationPct);
+  }
+}
+
+void HashAggregation::maybeIncreasePartialAggregationMemoryUsage(
+    double aggregationPct) {
+  VELOX_DCHECK(isPartialOutput_);
+  // Do not increase the aggregation memory usage further if we have already
+  // achieved good aggregation ratio with the current size.
+  if (aggregationPct < partialAggregationGoodPct_ ||
+      maxPartialAggregationMemoryUsage_ >=
+          maxExtendedPartialAggregationMemoryUsage_) {
+    return;
+  }
+  const int64_t extendedPartialAggregationMemoryUsage = std::min(
+      maxPartialAggregationMemoryUsage_ * 2,
+      maxExtendedPartialAggregationMemoryUsage_);
+  // Calculate the memory to reserve to bump up the aggregation buffer size. If
+  // the memory reservation below succeeds, it ensures the partial aggregator
+  // can allocate that much memory in next run.
+  const int64_t memoryToReserve = std::max<int64_t>(
+      0,
+      extendedPartialAggregationMemoryUsage - groupingSet_->allocatedBytes());
+  if (!memoryTracker_->maybeReserve(memoryToReserve)) {
+    return;
+  }
+  // Update the aggregation memory usage size limit on memory reservation
+  // success.
+  maxPartialAggregationMemoryUsage_ = extendedPartialAggregationMemoryUsage;
+  addRuntimeStat(
+      "maxExtendedPartialAggregationMemoryUsage",
+      RuntimeCounter(
+          maxPartialAggregationMemoryUsage_, RuntimeCounter::Unit::kBytes));
 }
 
 RowVectorPtr HashAggregation::getOutput() {
@@ -187,38 +302,31 @@ RowVectorPtr HashAggregation::getOutput() {
     std::copy(lookup.newGroups.begin(), lookup.newGroups.end(), indicesPtr);
     newDistincts_ = false;
     auto output = fillOutput(size, indices);
+    numOutputRows_ += size;
 
     // Drop reference to input_ to make it singly-referenced at the producer and
     // allow for memory reuse.
     input_ = nullptr;
 
-    if (partialFull_) {
-      groupingSet_->resetPartial();
-      partialFull_ = false;
-    }
+    resetPartialOutputIfNeed();
     return output;
   }
 
-  auto batchSize = isGlobal_ ? 1 : outputBatchSize_;
+  const auto batchSize = isGlobal_ ? 1 : outputBatchSize_;
 
   // Reuse output vectors if possible.
   prepareOutput(batchSize);
 
-  bool hasData = groupingSet_->getOutput(
-      batchSize, isPartialOutput_, &resultIterator_, output_);
+  bool hasData = groupingSet_->getOutput(batchSize, resultIterator_, output_);
   if (!hasData) {
     resultIterator_.reset();
-
-    if (partialFull_) {
-      partialFull_ = false;
-      groupingSet_->resetPartial();
-    }
-
     if (noMoreInput_) {
       finished_ = true;
     }
+    resetPartialOutputIfNeed();
     return nullptr;
   }
+  numOutputRows_ += output_->size();
   return output_;
 }
 

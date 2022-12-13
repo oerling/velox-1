@@ -19,7 +19,7 @@
 #include "velox/functions/prestosql/aggregates/ValueList.h"
 #include "velox/vector/ComplexVector.h"
 
-namespace facebook::velox::aggregate {
+namespace facebook::velox::aggregate::prestosql {
 namespace {
 
 struct ArrayAccumulator {
@@ -46,11 +46,7 @@ class ArrayAggAggregate : public exec::Aggregate {
     }
   }
 
-  void finalize(char** groups, int32_t numGroups) override {
-    for (auto i = 0; i < numGroups; i++) {
-      value<ArrayAccumulator>(groups[i])->elements.finalize(allocator_);
-    }
-  }
+  void finalize(char** groups, int32_t numGroups) override {}
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
       override {
@@ -64,11 +60,11 @@ class ArrayAggAggregate : public exec::Aggregate {
     uint64_t* rawNulls = getRawNulls(vector);
     vector_size_t offset = 0;
     for (int32_t i = 0; i < numGroups; ++i) {
-      clearNull(rawNulls, i);
-
       auto& values = value<ArrayAccumulator>(groups[i])->elements;
       auto arraySize = values.size();
       if (arraySize) {
+        clearNull(rawNulls, i);
+
         ValueListReader reader(values);
         for (auto index = 0; index < arraySize; ++index) {
           reader.next(*elements, offset + index);
@@ -76,7 +72,7 @@ class ArrayAggAggregate : public exec::Aggregate {
         vector->setOffsetAndSize(i, offset, arraySize);
         offset += arraySize;
       } else {
-        vector->setOffsetAndSize(i, offset, 0);
+        vector->setNull(i, true);
       }
     }
   }
@@ -198,8 +194,10 @@ bool registerArrayAggregate(const std::string& name) {
   return true;
 }
 
-static bool FB_ANONYMOUS_VARIABLE(g_AggregateFunction) =
-    registerArrayAggregate(kArrayAgg);
-
 } // namespace
-} // namespace facebook::velox::aggregate
+
+void registerArrayAggregate() {
+  registerArrayAggregate(kArrayAgg);
+}
+
+} // namespace facebook::velox::aggregate::prestosql

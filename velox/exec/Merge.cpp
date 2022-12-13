@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-#include <boost/circular_buffer.hpp>
-
 #include "velox/exec/Merge.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/exec/Task.h"
+
+using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
 
@@ -99,6 +100,7 @@ BlockingReason Merge::isBlocked(ContinueFuture* future) {
 }
 
 bool Merge::isFinished() {
+  TestValue::adjust("facebook::velox::exec::Merge::isFinished", &finished_);
   return finished_;
 }
 
@@ -109,7 +111,7 @@ RowVectorPtr Merge::getOutput() {
 
   // No merging is needed if there is only one source.
   if (sources_.size() == 1) {
-    ContinueFuture future{false};
+    ContinueFuture future;
     RowVectorPtr data;
     auto reason = sources_[0]->next(data, &future);
     if (reason != BlockingReason::kNotBlocked) {
@@ -133,8 +135,14 @@ RowVectorPtr Merge::getOutput() {
     auto stream = treeOfLosers_->next();
 
     if (!stream) {
-      output_->resize(outputSize_);
       finished_ = true;
+
+      // Return nullptr if there is no data.
+      if (outputSize_ == 0) {
+        return nullptr;
+      }
+
+      output_->resize(outputSize_);
       return std::move(output_);
     }
 
@@ -162,6 +170,12 @@ RowVectorPtr Merge::getOutput() {
     if (!sourceBlockingFutures_.empty()) {
       return nullptr;
     }
+  }
+}
+
+void Merge::close() {
+  for (auto& source : sources_) {
+    source->close();
   }
 }
 
@@ -214,15 +228,15 @@ void SourceStream::copyToOutput(RowVectorPtr& output) {
 
   outputRows_.clearAll();
 
-  if (currentSourceRow_ == data_->size() - 1) {
+  if (sourceRow == data_->size()) {
     firstSourceRow_ = 0;
   } else {
-    firstSourceRow_ = currentSourceRow_;
+    firstSourceRow_ = sourceRow;
   }
 }
 
 bool SourceStream::fetchMoreData(std::vector<ContinueFuture>& futures) {
-  ContinueFuture future{false};
+  ContinueFuture future;
   auto reason = source_->next(data_, &future);
   if (reason != BlockingReason::kNotBlocked) {
     needData_ = true;
@@ -304,8 +318,8 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
             split.connectorSplit);
         VELOX_CHECK(remoteSplit, "Wrong type of split");
 
-        sources_.emplace_back(
-            MergeSource::createMergeExchangeSource(this, remoteSplit->taskId));
+        sources_.emplace_back(MergeSource::createMergeExchangeSource(
+            this, remoteSplit->taskId, operatorCtx_->task()->destination()));
         ++numSplits_;
       } else {
         noMoreSplits_ = true;

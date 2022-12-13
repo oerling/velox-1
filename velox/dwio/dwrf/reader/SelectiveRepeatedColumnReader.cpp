@@ -15,24 +15,42 @@
  */
 
 #include "velox/dwio/dwrf/reader/SelectiveRepeatedColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 
 namespace facebook::velox::dwrf {
+namespace {
+std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> makeLengthDecoder(
+    const dwio::common::TypeWithId& nodeType,
+    DwrfParams& params,
+    memory::MemoryPool& pool) {
+  EncodingKey encodingKey{nodeType.id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
+  auto rleVersion = convertRleVersion(stripe.getEncoding(encodingKey).kind());
+  auto lenId = encodingKey.forKind(proto::Stream_Kind_LENGTH);
+  bool lenVints = stripe.getUseVInts(lenId);
+  return createRleDecoder</*isSigned*/ false>(
+      stripe.getStream(lenId, true),
+      rleVersion,
+      pool,
+      lenVints,
+      dwio::common::INT_BYTE_SIZE);
+}
+} // namespace
 
 SelectiveListColumnReader::SelectiveListColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
-    : SelectiveRepeatedColumnReader(
+    DwrfParams& params,
+    common::ScanSpec& scanSpec)
+    : dwio::common::SelectiveListColumnReader(
+          requestedType,
           dataType,
-          stripe,
-          scanSpec,
-          dataType->type,
-          std::move(flatMapContext)),
-      requestedType_{requestedType} {
+          params,
+          scanSpec),
+      length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
   // count the number of selected sub-columns
   const auto& cs = stripe.getColumnSelector();
   auto& childType = requestedType_->childAt(0);
@@ -40,97 +58,39 @@ SelectiveListColumnReader::SelectiveListColumnReader(
       cs.shouldReadNode(childType->id),
       "SelectiveListColumnReader must select the values stream");
   if (scanSpec_->children().empty()) {
-    scanSpec->getOrCreateChild(common::Subfield("elements"));
+    scanSpec.getOrCreateChild(common::Subfield("elements"));
   }
   scanSpec_->children()[0]->setProjectOut(true);
   scanSpec_->children()[0]->setExtractValues(true);
 
-  child_ = SelectiveColumnReader::build(
-      childType,
-      nodeType_->childAt(0),
-      stripe,
-      scanSpec_->children()[0].get(),
-      FlatMapContext{encodingKey.sequence, nullptr});
-}
-
-uint64_t SelectiveListColumnReader::skip(uint64_t numValues) {
-  numValues = ColumnReader::skip(numValues);
-  if (child_) {
-    std::array<int64_t, kBufferSize> buffer;
-    uint64_t childElements = 0;
-    uint64_t lengthsRead = 0;
-    while (lengthsRead < numValues) {
-      uint64_t chunk =
-          std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
-      length_->next(buffer.data(), chunk, nullptr);
-      for (size_t i = 0; i < chunk; ++i) {
-        childElements += static_cast<size_t>(buffer[i]);
-      }
-      lengthsRead += chunk;
-    }
-    child_->skip(childElements);
-    childTargetReadOffset_ += childElements;
-    child_->setReadOffset(child_->readOffset() + childElements);
-  } else {
-    length_->skip(numValues);
-  }
-  return numValues;
-}
-
-void SelectiveListColumnReader::read(
-    vector_size_t offset,
-    RowSet rows,
-    const uint64_t* incomingNulls) {
-  // Catch up if the child is behind the length stream.
-  child_->seekTo(childTargetReadOffset_, false);
-  prepareRead<char>(offset, rows, incomingNulls);
-  makeNestedRowSet(rows);
-  if (child_ && !nestedRows_.empty()) {
-    child_->read(child_->readOffset(), nestedRows_, nullptr);
-  }
-  numValues_ = rows.size();
-  readOffset_ = offset + rows.back() + 1;
-}
-
-void SelectiveListColumnReader::getValues(RowSet rows, VectorPtr* result) {
-  compactOffsets(rows);
-  VectorPtr elements;
-  if (child_ && !nestedRows_.empty()) {
-    prepareStructResult(type_->childAt(0), &elements);
-    child_->getValues(nestedRows_, &elements);
-  }
-  *result = std::make_shared<ArrayVector>(
-      &memoryPool_,
-      requestedType_->type,
-      anyNulls_ ? resultNulls_ : nullptr,
-      rows.size(),
-      offsets_,
-      sizes_,
-      elements);
+  auto childParams =
+      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  child_ = SelectiveDwrfReader::build(
+      childType, nodeType_->childAt(0), childParams, *scanSpec_->children()[0]);
+  children_ = {child_.get()};
 }
 
 SelectiveMapColumnReader::SelectiveMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
-    StripeStreams& stripe,
-    common::ScanSpec* scanSpec,
-    FlatMapContext flatMapContext)
-    : SelectiveRepeatedColumnReader(
+    DwrfParams& params,
+    common::ScanSpec& scanSpec)
+    : dwio::common::SelectiveMapColumnReader(
+          requestedType,
           dataType,
-          stripe,
-          scanSpec,
-          dataType->type,
-          std::move(flatMapContext)),
-      requestedType_{requestedType} {
+          params,
+          scanSpec),
+      length_(makeLengthDecoder(*nodeType_, params, memoryPool_)) {
   DWIO_ENSURE_EQ(nodeType_->id, dataType->id, "working on the same node");
-  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+  EncodingKey encodingKey{nodeType_->id, params.flatMapContext().sequence};
+  auto& stripe = params.stripeStreams();
   if (scanSpec_->children().empty()) {
-    scanSpec->getOrCreateChild(common::Subfield("keys"));
-    scanSpec->getOrCreateChild(common::Subfield("elements"));
+    scanSpec_->getOrCreateChild(common::Subfield("keys"));
+    scanSpec_->getOrCreateChild(common::Subfield("elements"));
   }
-  scanSpec->children()[0]->setProjectOut(true);
-  scanSpec->children()[0]->setExtractValues(true);
-  scanSpec->children()[1]->setProjectOut(true);
+  scanSpec_->children()[0]->setProjectOut(true);
+  scanSpec_->children()[0]->setExtractValues(true);
+  scanSpec_->children()[1]->setProjectOut(true);
   scanSpec_->children()[1]->setExtractValues(true);
 
   const auto& cs = stripe.getColumnSelector();
@@ -138,103 +98,28 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
   VELOX_CHECK(
       cs.shouldReadNode(keyType->id),
       "Map key must be selected in SelectiveMapColumnReader");
-  keyReader_ = SelectiveColumnReader::build(
+  auto keyParams =
+      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  keyReader_ = SelectiveDwrfReader::build(
       keyType,
       nodeType_->childAt(0),
-      stripe,
-      scanSpec_->children()[0].get(),
-      FlatMapContext{encodingKey.sequence, nullptr});
+      keyParams,
+      *scanSpec_->children()[0].get());
 
   auto& valueType = requestedType_->childAt(1);
   VELOX_CHECK(
       cs.shouldReadNode(valueType->id),
       "Map Values must be selected in SelectiveMapColumnReader");
-  elementReader_ = SelectiveColumnReader::build(
+  auto elementParams =
+      DwrfParams(stripe, FlatMapContext{encodingKey.sequence, nullptr});
+  elementReader_ = SelectiveDwrfReader::build(
       valueType,
       nodeType_->childAt(1),
-      stripe,
-      scanSpec_->children()[1].get(),
-      FlatMapContext{encodingKey.sequence, nullptr});
+      elementParams,
+      *scanSpec_->children()[1]);
+  children_ = {keyReader_.get(), elementReader_.get()};
 
   VLOG(1) << "[Map] Initialized map column reader for node " << nodeType_->id;
-}
-
-uint64_t SelectiveMapColumnReader::skip(uint64_t numValues) {
-  numValues = ColumnReader::skip(numValues);
-  if (keyReader_ || elementReader_) {
-    std::array<int64_t, kBufferSize> buffer;
-    uint64_t childElements = 0;
-    uint64_t lengthsRead = 0;
-    while (lengthsRead < numValues) {
-      uint64_t chunk =
-          std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
-      length_->next(buffer.data(), chunk, nullptr);
-      for (size_t i = 0; i < chunk; ++i) {
-        childElements += buffer[i];
-      }
-      lengthsRead += chunk;
-    }
-    if (keyReader_) {
-      keyReader_->skip(childElements);
-      keyReader_->setReadOffset(keyReader_->readOffset() + childElements);
-    }
-    if (elementReader_) {
-      elementReader_->skip(childElements);
-      elementReader_->setReadOffset(
-          elementReader_->readOffset() + childElements);
-    }
-    childTargetReadOffset_ += childElements;
-
-  } else {
-    length_->skip(numValues);
-  }
-  return numValues;
-}
-
-void SelectiveMapColumnReader::read(
-    vector_size_t offset,
-    RowSet rows,
-    const uint64_t* incomingNulls) {
-  // Catch up if child readers are behind the length stream.
-  if (keyReader_) {
-    keyReader_->seekTo(childTargetReadOffset_, false);
-  }
-  if (elementReader_) {
-    elementReader_->seekTo(childTargetReadOffset_, false);
-  }
-
-  prepareRead<char>(offset, rows, incomingNulls);
-  makeNestedRowSet(rows);
-  if (keyReader_ && elementReader_ && !nestedRows_.empty()) {
-    keyReader_->read(keyReader_->readOffset(), nestedRows_, nullptr);
-    elementReader_->read(elementReader_->readOffset(), nestedRows_, nullptr);
-  }
-  numValues_ = rows.size();
-  readOffset_ = offset + rows.back() + 1;
-}
-
-void SelectiveMapColumnReader::getValues(RowSet rows, VectorPtr* result) {
-  compactOffsets(rows);
-  VectorPtr keys;
-  VectorPtr values;
-  VELOX_CHECK(
-      keyReader_ && elementReader_,
-      "keyReader_ and elementReaer_ must exist in "
-      "SelectiveMapColumnReader::getValues");
-  if (!nestedRows_.empty()) {
-    keyReader_->getValues(nestedRows_, &keys);
-    prepareStructResult(type_->childAt(1), &values);
-    elementReader_->getValues(nestedRows_, &values);
-  }
-  *result = std::make_shared<MapVector>(
-      &memoryPool_,
-      requestedType_->type,
-      anyNulls_ ? resultNulls_ : nullptr,
-      rows.size(),
-      offsets_,
-      sizes_,
-      keys,
-      values);
 }
 
 } // namespace facebook::velox::dwrf

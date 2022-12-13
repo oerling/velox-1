@@ -14,19 +14,21 @@
  * limitations under the License.
  */
 
-#include "velox/type/Filter.h"
-#include "velox/type/tests/FilterBuilder.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
+
+#include <velox/type/Filter.h>
+#include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/type/Filter.h"
 
 #include <gtest/gtest.h>
 
 using namespace facebook::velox;
-using namespace facebook ::velox::common;
-using namespace facebook ::velox::common::test;
+using namespace facebook::velox::common;
+using namespace facebook::velox::exec;
 
 TEST(FilterTest, alwaysFalse) {
   AlwaysFalse alwaysFalse;
@@ -44,15 +46,15 @@ TEST(FilterTest, alwaysTrue) {
   EXPECT_TRUE(alwaysTrue.testInt64(1));
   EXPECT_TRUE(alwaysTrue.testNonNull());
   EXPECT_TRUE(alwaysTrue.testNull());
-  xsimd::batch<int64_t> int64s;
+  xsimd::batch<int64_t> int64s(1);
   EXPECT_EQ(
       simd::allSetBitMask<int64_t>(),
       simd::toBitMask(alwaysTrue.testValues(int64s)));
-  xsimd::batch<int32_t> int32s;
+  xsimd::batch<int32_t> int32s(2);
   EXPECT_EQ(
       simd::allSetBitMask<int32_t>(),
       simd::toBitMask(alwaysTrue.testValues(int32s)));
-  xsimd::batch<int16_t> int16s;
+  xsimd::batch<int16_t> int16s(3);
   EXPECT_EQ(
       simd::allSetBitMask<int16_t>(),
       simd::toBitMask(alwaysTrue.testValues(int16s)));
@@ -81,13 +83,11 @@ TEST(FilterTest, isNull) {
 // Applies 'filter' to all T type lanes of 'values' and compares the result to
 // the ScalarTest applied to the same.
 template <typename T, typename ScalarTest>
-void checkSimd(
-    const Filter* filter,
-    xsimd::batch<T> values,
-    ScalarTest scalarTest) {
-  auto bits = simd::toBitMask(filter->testValues(values));
-  for (auto i = 0; i < decltype(values)::size; ++i) {
-    auto expected = scalarTest(values.get(i));
+void checkSimd(const Filter* filter, const T* values, ScalarTest scalarTest) {
+  auto v = xsimd::load_unaligned(values);
+  auto bits = simd::toBitMask(filter->testValues(v));
+  for (auto i = 0; i < decltype(v)::size; ++i) {
+    auto expected = scalarTest(v.get(i));
     EXPECT_EQ(bits::isBitSet(&bits, i), expected) << "Lane " << i;
   }
 }
@@ -108,13 +108,13 @@ TEST(FilterTest, bigIntRange) {
   EXPECT_TRUE(filter->testInt64Range(-10, 10, false));
 
   {
-    xsimd::batch<int64_t> n4 = {2, 1, 1000, -1000};
-    checkSimd<int64_t>(filter.get(), n4, testInt64);
-    xsimd::batch<int32_t> n8 = {2, 1, 1000, -1000, 1, 1, 0, 1111};
-    checkSimd<int32_t>(filter.get(), n8, testInt64);
-    xsimd::batch<int16_t> n16 = {
+    int64_t n4[] = {2, 1, 1000, -1000};
+    checkSimd(filter.get(), n4, testInt64);
+    int32_t n8[] = {2, 1, 1000, -1000, 1, 1, 0, 1111};
+    checkSimd(filter.get(), n8, testInt64);
+    int16_t n16[] = {
         2, 1, 1000, -1000, 1, 1, 0, 1111, 2, 1, 1000, -1000, 1, 1, 0, 1111};
-    checkSimd<int16_t>(filter.get(), n16, testInt64);
+    checkSimd(filter.get(), n16, testInt64);
   }
 
   // x between 1 and 10
@@ -127,13 +127,13 @@ TEST(FilterTest, bigIntRange) {
   EXPECT_FALSE(filter->testInt64(11));
 
   {
-    xsimd::batch<int64_t> n4 = {2, 1, 1000, -1000};
-    checkSimd<int64_t>(filter.get(), n4, testInt64);
-    xsimd::batch<int32_t> n8 = {2, 1, 1000, -1000, 1, 1, 0, 1111};
-    checkSimd<int32_t>(filter.get(), n8, testInt64);
-    xsimd::batch<int16_t> n16 = {
+    int64_t n4[] = {2, 1, 1000, -1000};
+    checkSimd(filter.get(), n4, testInt64);
+    int32_t n8[] = {2, 1, 1000, -1000, 1, 1, 0, 1111};
+    checkSimd(filter.get(), n8, testInt64);
+    int16_t n16[] = {
         2, 1, 1000, -1000, 1, 1, 0, 1111, 2, 1, 1000, -1000, 1, 1, 0, 1111};
-    checkSimd<int16_t>(filter.get(), n16, testInt64);
+    checkSimd(filter.get(), n16, testInt64);
   }
 
   EXPECT_FALSE(filter->testInt64Range(-150, -10, false));
@@ -147,12 +147,11 @@ TEST(FilterTest, bigIntRange) {
   EXPECT_FALSE(filter->testInt64(0));
   EXPECT_TRUE(filter->testInt64(10));
   {
-    xsimd::batch<int64_t> n4 = {2, 10000000000, 1000, -1000};
-    checkSimd<int64_t>(filter.get(), n4, testInt64);
-    xsimd::batch<int32_t> n8 = {
-        2, 1, 1000, -1000, 1, 1000000000, 0, -2000000000};
-    checkSimd<int32_t>(filter.get(), n8, testInt64);
-    xsimd::batch<int16_t> n16 = {
+    int64_t n4[] = {2, 10000000000, 1000, -1000};
+    checkSimd(filter.get(), n4, testInt64);
+    int32_t n8[] = {2, 1, 1000, -1000, 1, 1000000000, 0, -2000000000};
+    checkSimd(filter.get(), n8, testInt64);
+    int16_t n16[] = {
         2,
         1,
         32000,
@@ -169,12 +168,73 @@ TEST(FilterTest, bigIntRange) {
         1,
         0,
         1111};
-    checkSimd<int16_t>(filter.get(), n16, testInt64);
+    checkSimd(filter.get(), n16, testInt64);
   }
   EXPECT_FALSE(filter->testInt64Range(-100, 0, false));
   EXPECT_TRUE(filter->testInt64Range(-100, -10, true));
   EXPECT_TRUE(filter->testInt64Range(-100, 10, false));
   EXPECT_TRUE(filter->testInt64Range(-100, 10, true));
+}
+
+TEST(FilterTest, negatedBigintRange) {
+  auto filter = notEqual(1, false);
+  EXPECT_FALSE(filter->testNull());
+  EXPECT_FALSE(filter->testInt64(1));
+
+  EXPECT_TRUE(filter->testInt64(-1));
+  EXPECT_TRUE(filter->testInt64(0));
+  EXPECT_TRUE(filter->testInt64(11));
+
+  EXPECT_FALSE(filter->testInt64Range(1, 1, false));
+  EXPECT_FALSE(filter->testInt64Range(1, 1, true));
+  EXPECT_TRUE(filter->testInt64Range(1, 2, false));
+  EXPECT_TRUE(filter->testInt64Range(8, 9, false));
+
+  EXPECT_EQ(filter->lower(), 1);
+  EXPECT_EQ(filter->upper(), 1);
+
+  auto testInt64 = [&](int64_t x) { return filter->testInt64(x); };
+
+  int64_t n4[] = {0, 1, 26, std::numeric_limits<int64_t>::max()};
+  checkSimd(filter.get(), n4, testInt64);
+  int32_t n8[] = {2, 1, 1000, -1000, 1, 15, 0, 1111};
+  checkSimd(filter.get(), n8, testInt64);
+  int16_t n16[] = {
+      2, 1, 1000, -1000, 1, -5, 0, 1111, 2, 1, 1000, -1000, 1, 1, 0, 1111};
+  checkSimd(filter.get(), n16, testInt64);
+
+  filter = notBetween(-5, 15, false);
+  EXPECT_FALSE(filter->testNull());
+  EXPECT_FALSE(filter->testInt64(-5));
+  EXPECT_FALSE(filter->testInt64(-1));
+  EXPECT_FALSE(filter->testInt64(0));
+  EXPECT_FALSE(filter->testInt64(1));
+  EXPECT_FALSE(filter->testInt64(15));
+
+  EXPECT_TRUE(filter->testInt64(-6));
+  EXPECT_TRUE(filter->testInt64(16));
+  EXPECT_TRUE(filter->testInt64(99));
+
+  EXPECT_FALSE(filter->testInt64Range(-5, 15, false));
+  EXPECT_FALSE(filter->testInt64Range(-5, 15, true));
+  EXPECT_FALSE(filter->testInt64Range(-3, -1, false));
+  EXPECT_FALSE(filter->testInt64Range(-4, 0, false));
+  EXPECT_FALSE(filter->testInt64Range(0, 8, false));
+
+  EXPECT_TRUE(filter->testInt64Range(16, 16, false));
+  EXPECT_TRUE(filter->testInt64Range(15, 16, false));
+  EXPECT_TRUE(filter->testInt64Range(-10, 20, false));
+  EXPECT_TRUE(filter->testInt64Range(-6, 15, false));
+  checkSimd(filter.get(), n4, testInt64);
+  checkSimd(filter.get(), n8, testInt64);
+  checkSimd(filter.get(), n16, testInt64);
+
+  EXPECT_EQ(filter->lower(), -5);
+  EXPECT_EQ(filter->upper(), 15);
+
+  auto filter_with_null = filter->clone(true);
+  EXPECT_TRUE(filter_with_null->testNull());
+  EXPECT_TRUE(filter_with_null->testInt64Range(5, 15, true));
 }
 
 TEST(FilterTest, bigintValuesUsingHashTable) {
@@ -201,11 +261,73 @@ TEST(FilterTest, bigintValuesUsingHashTable) {
 
   EXPECT_TRUE(filter->testInt64Range(5, 50, false));
   EXPECT_FALSE(filter->testInt64Range(11, 11, false));
+  EXPECT_FALSE(filter->testInt64Range(15, 17, false)); // 15, 16, 17 all false
   EXPECT_FALSE(filter->testInt64Range(-10, -5, false));
   EXPECT_TRUE(filter->testInt64Range(10'000, 20'000, false));
   EXPECT_FALSE(filter->testInt64Range(9'000, 9'999, false));
   EXPECT_TRUE(filter->testInt64Range(9'000, 10'000, false));
   EXPECT_TRUE(filter->testInt64Range(0, 1, false));
+}
+
+TEST(FilterTest, negatedBigintValuesUsingHashTable) {
+  auto filter = createNegatedBigintValues({1, 6, 10'000, 8, 9, 100, 10}, false);
+  auto castedFilter =
+      dynamic_cast<NegatedBigintValuesUsingHashTable*>(filter.get());
+  ASSERT_TRUE(castedFilter);
+  std::vector<int64_t> filterVals = {1, 6, 8, 9, 10, 100, 10'000};
+  ASSERT_EQ(castedFilter->values(), filterVals);
+  ASSERT_EQ(castedFilter->min(), 1);
+  ASSERT_EQ(castedFilter->max(), 10'000);
+
+  EXPECT_FALSE(filter->testInt64(1));
+  EXPECT_FALSE(filter->testInt64(10));
+  EXPECT_FALSE(filter->testInt64(100));
+  EXPECT_FALSE(filter->testInt64(10'000));
+  EXPECT_FALSE(filter->testNull());
+
+  EXPECT_TRUE(filter->testInt64(-1));
+  EXPECT_TRUE(filter->testInt64(2));
+  EXPECT_TRUE(filter->testInt64(102));
+  EXPECT_TRUE(filter->testInt64(0xdeadbeefbadefeed));
+  EXPECT_TRUE(filter->testInt64(INT64_MAX));
+
+  EXPECT_TRUE(filter->testInt64Range(5, 50, false));
+  EXPECT_TRUE(filter->testInt64Range(11, 11, false));
+  EXPECT_TRUE(filter->testInt64Range(-10, -5, false));
+  EXPECT_TRUE(filter->testInt64Range(10'234, 20'000, false));
+  EXPECT_TRUE(filter->testInt64Range(0, 1, false));
+  EXPECT_TRUE(filter->testInt64Range(6, 10, false));
+  EXPECT_TRUE(filter->testInt64Range(20, 99, false));
+  EXPECT_TRUE(filter->testInt64Range(0, 1, false));
+  EXPECT_FALSE(filter->testInt64Range(10, 10, false));
+  EXPECT_FALSE(filter->testInt64Range(100, 100, false));
+  EXPECT_FALSE(filter->testInt64Range(8, 10, false));
+  EXPECT_FALSE(filter->testInt64Range(8, 9, false));
+  EXPECT_FALSE(filter->testInt64Range(8, 10, true));
+
+  auto filter_copy = filter->clone();
+  EXPECT_FALSE(filter_copy->testInt64(10));
+  EXPECT_FALSE(filter_copy->testInt64(100));
+  EXPECT_FALSE(filter_copy->testNull());
+  EXPECT_TRUE(filter_copy->testInt64(-1));
+  EXPECT_TRUE(filter_copy->testInt64(2));
+  EXPECT_TRUE(filter_copy->testInt64(102));
+  EXPECT_TRUE(filter_copy->testInt64(0xdeadbeefbadefeed));
+
+  EXPECT_TRUE(filter_copy->testInt64Range(5, 50, false));
+  EXPECT_TRUE(filter_copy->testInt64Range(11, 11, false));
+  EXPECT_FALSE(filter_copy->testInt64Range(100, 100, false));
+  EXPECT_FALSE(filter_copy->testInt64Range(8, 10, false));
+
+  auto filter_with_null = filter->clone(true);
+  EXPECT_TRUE(filter_with_null->testNull());
+  EXPECT_TRUE(filter_with_null->testInt64Range(8, 10, true));
+
+  auto filter_with_null_copy = filter_with_null->clone();
+  EXPECT_TRUE(filter_with_null_copy->testNull());
+
+  auto filter_no_more_null = filter_with_null_copy->clone(false);
+  EXPECT_FALSE(filter_no_more_null->testNull());
 }
 
 constexpr unsigned bitsNeeded(unsigned n) {
@@ -229,7 +351,7 @@ void applySimdTestToVector(
         ++lanes[lane];
       }
     }
-    checkSimd<T>(&filter, xsimd::load_unaligned(lanes), verify);
+    checkSimd<T>(&filter, lanes, verify);
   }
 }
 
@@ -241,9 +363,9 @@ TEST(FilterTest, bigintValuesUsingHashTableSimd) {
   }
   auto filter = createBigintValues(numbers, false);
   ASSERT_TRUE(dynamic_cast<BigintValuesUsingHashTable*>(filter.get()));
-  xsimd::batch<int64_t> outOfRange{-100, -20000, 0x10000000, 0x20000000};
+  int64_t outOfRange[] = {-100, -20000, 0x10000000, 0x20000000};
   auto verify = [&](int64_t x) { return filter->testInt64(x); };
-  checkSimd<int64_t>(filter.get(), outOfRange, verify);
+  checkSimd(filter.get(), outOfRange, verify);
   applySimdTestToVector(numbers, *filter, verify);
   // Make a filter with reasonably distributed entries and retry.
   numbers.clear();
@@ -260,6 +382,43 @@ TEST(FilterTest, bigintValuesUsingHashTableSimd) {
   }
 
   applySimdTestToVector(numbers32, *filter, verify);
+}
+
+TEST(FilterTest, negatedBigintValuesUsingHashTableSimd) {
+  std::vector<int64_t> numbers;
+  // make a worst case filter where every item falls on the same slot.
+  numbers.reserve(1000);
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 0x10000);
+  }
+  auto filter = createNegatedBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintValuesUsingHashTable*>(filter.get()));
+  int64_t outOfRange[] = {-100, -20000, 0x10000000, 0x20000000};
+  auto verify = [&](int64_t x) { return filter->testInt64(x); };
+  checkSimd(filter.get(), outOfRange, verify);
+  applySimdTestToVector(numbers, *filter, verify);
+  // Make a filter with reasonably distributed entries and retry.
+  numbers.clear();
+  for (auto i = 0; i < 1000; ++i) {
+    numbers.push_back(i * 1209);
+  }
+  filter = createNegatedBigintValues(numbers, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintValuesUsingHashTable*>(filter.get()));
+  applySimdTestToVector(numbers, *filter, verify);
+
+  std::vector<int32_t> numbers32(numbers.size());
+  for (auto n : numbers) {
+    numbers32.push_back(n);
+  }
+
+  applySimdTestToVector(numbers32, *filter, verify);
+
+  std::vector<int16_t> numbers16(numbers.size());
+  for (auto n : numbers) {
+    numbers16.push_back(n);
+  }
+
+  applySimdTestToVector(numbers16, *filter, verify);
 }
 
 TEST(FilterTest, bigintValuesUsingBitmask) {
@@ -281,6 +440,119 @@ TEST(FilterTest, bigintValuesUsingBitmask) {
   EXPECT_FALSE(filter->testInt64Range(11, 11, false));
   EXPECT_FALSE(filter->testInt64Range(-10, -5, false));
   EXPECT_FALSE(filter->testInt64Range(1234, 2000, false));
+}
+
+TEST(FilterTest, negatedBigintValuesUsingBitmask) {
+  auto filter = createNegatedBigintValues({1, 6, 1000, 8, 9, 100, 10}, false);
+  auto castedFilter =
+      dynamic_cast<NegatedBigintValuesUsingBitmask*>(filter.get());
+  ASSERT_TRUE(castedFilter);
+  std::vector<int64_t> filterVals = {1, 6, 8, 9, 10, 100, 1000};
+  ASSERT_EQ(castedFilter->values(), filterVals);
+
+  EXPECT_FALSE(filter->testInt64(1));
+  EXPECT_FALSE(filter->testInt64(10));
+  EXPECT_FALSE(filter->testInt64(100));
+  EXPECT_FALSE(filter->testInt64(1000));
+  EXPECT_FALSE(filter->testNull());
+
+  EXPECT_TRUE(filter->testInt64(-1));
+  EXPECT_TRUE(filter->testInt64(0));
+  EXPECT_TRUE(filter->testInt64(2));
+  EXPECT_TRUE(filter->testInt64(102));
+  EXPECT_TRUE(filter->testInt64(INT64_MAX));
+
+  EXPECT_TRUE(filter->testInt64Range(5, 50, false));
+  EXPECT_TRUE(filter->testInt64Range(11, 11, false));
+  EXPECT_TRUE(filter->testInt64Range(-10, -5, false));
+  EXPECT_TRUE(filter->testInt64Range(10'234, 20'000, false));
+  EXPECT_TRUE(filter->testInt64Range(0, 1, false));
+  EXPECT_FALSE(filter->testInt64Range(10, 10, false));
+  EXPECT_FALSE(filter->testInt64Range(100, 100, false));
+  EXPECT_FALSE(filter->testInt64Range(6, 6, true));
+
+  auto filter_copy = filter->clone();
+  EXPECT_FALSE(filter_copy->testInt64(1));
+  EXPECT_FALSE(filter_copy->testInt64(10));
+  EXPECT_FALSE(filter_copy->testInt64(1000));
+  EXPECT_FALSE(filter_copy->testNull());
+
+  EXPECT_TRUE(filter_copy->testInt64(0));
+  EXPECT_TRUE(filter_copy->testInt64(102));
+  EXPECT_TRUE(filter_copy->testInt64(INT64_MAX));
+
+  EXPECT_TRUE(filter_copy->testInt64Range(5, 50, false));
+  EXPECT_TRUE(filter_copy->testInt64Range(11, 11, false));
+  EXPECT_FALSE(filter_copy->testInt64Range(10, 10, false));
+  EXPECT_FALSE(filter_copy->testInt64Range(6, 6, true));
+
+  auto filter_with_null = filter->clone(true);
+  EXPECT_TRUE(filter_with_null->testNull());
+  EXPECT_TRUE(filter_with_null->testInt64Range(6, 6, true));
+
+  auto filter_with_null_copy = filter_with_null->clone();
+  EXPECT_TRUE(filter_with_null->testNull());
+
+  auto filter_no_more_null = filter_with_null->clone(false);
+  EXPECT_FALSE(filter_no_more_null->testNull());
+}
+
+TEST(FilterTest, negatedBigintValuesEdgeCases) {
+  // cases that should be represented by a non-integer filter
+  auto always_true = createNegatedBigintValues({}, true);
+  ASSERT_TRUE(dynamic_cast<AlwaysTrue*>(always_true.get()));
+  auto not_null = createNegatedBigintValues({}, false);
+  ASSERT_TRUE(dynamic_cast<IsNotNull*>(not_null.get()));
+
+  // cases that should trigger creation of a NegatedBigintRange filter
+  auto negated_range = createNegatedBigintValues({1, 2, 3, 4, 5, 6, 7}, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(negated_range.get()));
+  EXPECT_FALSE(negated_range->testInt64(1));
+  EXPECT_FALSE(negated_range->testInt64(3));
+  EXPECT_FALSE(negated_range->testInt64(7));
+  EXPECT_FALSE(negated_range->testNull());
+  EXPECT_TRUE(negated_range->testInt64(0));
+  EXPECT_TRUE(negated_range->testInt64(8));
+  EXPECT_TRUE(negated_range->testInt64(std::numeric_limits<int64_t>::min()));
+  EXPECT_TRUE(negated_range->testInt64(std::numeric_limits<int64_t>::max()));
+
+  std::vector<int64_t> minRangeValues;
+  minRangeValues.reserve(10);
+  for (int i = 0; i < 10; ++i) {
+    minRangeValues.emplace_back(std::numeric_limits<int64_t>::min() + i);
+  }
+  auto min_range = createNegatedBigintValues(minRangeValues, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(min_range.get()));
+  EXPECT_FALSE(min_range->testInt64(std::numeric_limits<int64_t>::min()));
+  EXPECT_FALSE(min_range->testInt64(std::numeric_limits<int64_t>::min() + 9));
+  EXPECT_FALSE(min_range->testNull());
+  EXPECT_TRUE(min_range->testInt64(std::numeric_limits<int64_t>::min() + 10));
+  EXPECT_TRUE(min_range->testInt64(0));
+  EXPECT_TRUE(min_range->testInt64(std::numeric_limits<int64_t>::max()));
+
+  std::vector<int64_t> maxRangeValues;
+  maxRangeValues.reserve(10);
+  for (int i = 0; i < 10; ++i) {
+    maxRangeValues.emplace_back(std::numeric_limits<int64_t>::max() - i);
+  }
+  auto max_range = createNegatedBigintValues(maxRangeValues, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(max_range.get()));
+  EXPECT_FALSE(max_range->testInt64(std::numeric_limits<int64_t>::max()));
+  EXPECT_FALSE(max_range->testInt64(std::numeric_limits<int64_t>::max() - 9));
+  EXPECT_FALSE(max_range->testNull());
+  EXPECT_TRUE(max_range->testInt64(std::numeric_limits<int64_t>::max() - 10));
+  EXPECT_TRUE(max_range->testInt64(0));
+  EXPECT_TRUE(max_range->testInt64(std::numeric_limits<int64_t>::min()));
+
+  auto not_equal = createNegatedBigintValues({10}, false);
+  ASSERT_TRUE(dynamic_cast<NegatedBigintRange*>(not_equal.get()));
+  EXPECT_FALSE(not_equal->testInt64(10));
+  EXPECT_FALSE(not_equal->testNull());
+  EXPECT_TRUE(not_equal->testInt64(std::numeric_limits<int64_t>::min()));
+  EXPECT_TRUE(not_equal->testInt64(std::numeric_limits<int64_t>::max()));
+  EXPECT_TRUE(not_equal->testInt64(-1));
+  EXPECT_TRUE(not_equal->testInt64(0));
+  EXPECT_TRUE(not_equal->testInt64(1));
 }
 
 TEST(FilterTest, bigintMultiRange) {
@@ -337,7 +609,10 @@ TEST(FilterTest, doubleRange) {
 
   EXPECT_FALSE(filter->testNull());
   EXPECT_FALSE(filter->testDouble(1.3));
-  checkSimd<double>(filter.get(), {1.0, std::nan("nan"), 1.3, 1e200}, verify);
+  {
+    double n4[] = {1.0, std::nan("nan"), 1.3, 1e200};
+    checkSimd(filter.get(), n4, verify);
+  }
 
   filter = lessThanOrEqualDouble(1.2);
   EXPECT_TRUE(filter->testDouble(1.2));
@@ -345,9 +620,10 @@ TEST(FilterTest, doubleRange) {
 
   EXPECT_FALSE(filter->testNull());
   EXPECT_FALSE(filter->testDouble(1.3));
-
-  checkSimd<double>(
-      filter.get(), {-1e100, std::nan("nan"), 1.3, 1e200}, verify);
+  {
+    double n4[] = {-1e100, std::nan("nan"), 1.3, 1e200};
+    checkSimd(filter.get(), n4, verify);
+  }
 
   filter = greaterThanDouble(1.2);
   EXPECT_TRUE(filter->testDouble(1.3));
@@ -356,8 +632,10 @@ TEST(FilterTest, doubleRange) {
   EXPECT_FALSE(filter->testNull());
   EXPECT_FALSE(filter->testDouble(1.2));
   EXPECT_FALSE(filter->testDouble(-19.267));
-  checkSimd<double>(
-      filter.get(), {-1e100, std::nan("nan"), 1.3, 1e200}, verify);
+  {
+    double n4[] = {-1e100, std::nan("nan"), 1.3, 1e200};
+    checkSimd(filter.get(), n4, verify);
+  }
 
   filter = betweenDouble(1.2, 3.4);
   EXPECT_TRUE(filter->testDouble(1.2));
@@ -369,7 +647,10 @@ TEST(FilterTest, doubleRange) {
   EXPECT_FALSE(filter->testDouble(55.6));
   EXPECT_FALSE(filter->testDouble(NAN));
 
-  checkSimd<double>(filter.get(), {3.4, 1.3, 1.1, 1e200}, verify);
+  {
+    double n4[] = {3.4, 1.3, 1.1, 1e200};
+    checkSimd(filter.get(), n4, verify);
+  }
 
   EXPECT_THROW(betweenDouble(NAN, NAN), VeloxRuntimeError)
       << "able to create a DoubleRange with NaN";
@@ -383,8 +664,8 @@ TEST(FilterTest, floatRange) {
   EXPECT_FALSE(filter->testNull());
   EXPECT_FALSE(filter->testFloat(1.1f));
   {
-    xsimd::batch<float> n8 = {1.0, std::nanf("nan"), 1.3, 1e20, -1e20, 0, 0, 0};
-    checkSimd<float>(filter.get(), n8, verify);
+    float n8[] = {1.0, std::nanf("nan"), 1.3, 1e20, -1e20, 0, 0, 0};
+    checkSimd(filter.get(), n8, verify);
   }
 
   filter = lessThanFloat(1.2);
@@ -394,9 +675,8 @@ TEST(FilterTest, floatRange) {
   EXPECT_FALSE(filter->testFloat(1.2f));
   EXPECT_FALSE(filter->testFloat(15.632f));
   {
-    xsimd::batch<float> n8 = {
-        1.0, std::nanf("nan"), 1.3, 1e20, -1e20, 0, 1.1, 1.2};
-    checkSimd<float>(filter.get(), n8, verify);
+    float n8[] = {1.0, std::nanf("nan"), 1.3, 1e20, -1e20, 0, 1.1, 1.2};
+    checkSimd(filter.get(), n8, verify);
   }
 
   filter = betweenFloat(1.2, 3.4);
@@ -409,9 +689,8 @@ TEST(FilterTest, floatRange) {
   EXPECT_FALSE(filter->testFloat(15.632f));
   EXPECT_FALSE(filter->testFloat(std::nanf("NAN")));
   {
-    xsimd::batch<float> n8 = {
-        1.0, std::nanf("nan"), 3.4, 3.1, -1e20, 0, 1.1, 1.2};
-    checkSimd<float>(filter.get(), n8, verify);
+    float n8[] = {1.0, std::nanf("nan"), 3.4, 3.1, -1e20, 0, 1.1, 1.2};
+    checkSimd(filter.get(), n8, verify);
   }
 
   EXPECT_THROW(
@@ -426,11 +705,13 @@ TEST(FilterTest, bytesRange) {
     EXPECT_FALSE(filter->testBytes("acb", 3));
     EXPECT_TRUE(filter->testLength(3));
     // The bit for lane 2 should be set.
+    int32_t lens[] = {0, 1, 3, 0, 4, 10, 11, 12};
     EXPECT_EQ(
-        4, simd::toBitMask(filter->testLengths({0, 1, 3, 0, 4, 10, 11, 12})));
+        4, simd::toBitMask(filter->testLengths(xsimd::load_unaligned(lens))));
 
     EXPECT_FALSE(filter->testNull());
     EXPECT_FALSE(filter->testBytes("apple", 5));
+    EXPECT_FALSE(filter->testBytes(nullptr, 0));
     EXPECT_FALSE(filter->testLength(4));
 
     EXPECT_TRUE(filter->testBytesRange("abc", "abc", false));
@@ -446,6 +727,11 @@ TEST(FilterTest, bytesRange) {
     EXPECT_FALSE(filter->testBytesRange("banana", std::nullopt, false));
     EXPECT_TRUE(filter->testBytesRange("abc", std::nullopt, false));
     EXPECT_TRUE(filter->testBytesRange("a", std::nullopt, false));
+
+    // = ''
+    filter = equal("");
+    EXPECT_TRUE(filter->testBytes(nullptr, 0));
+    EXPECT_FALSE(filter->testBytes("abc", 3));
   }
 
   char const* theBestOfTimes =
@@ -533,6 +819,81 @@ TEST(FilterTest, bytesRange) {
   EXPECT_FALSE(filter->testBytes("b", 1));
   EXPECT_TRUE(filter->testBytes("c", 1));
   EXPECT_FALSE(filter->testBytes(nullptr, 0));
+
+  // < ''
+  filter = lessThan("");
+  EXPECT_FALSE(filter->testBytes(nullptr, 0));
+  EXPECT_FALSE(filter->testBytes("abc", 3));
+
+  // <= ''
+  filter = lessThanOrEqual("");
+  EXPECT_TRUE(filter->testBytes(nullptr, 0));
+  EXPECT_FALSE(filter->testBytes("abc", 3));
+
+  // > ''
+  filter = greaterThan("");
+  EXPECT_FALSE(filter->testBytes(nullptr, 0));
+  EXPECT_TRUE(filter->testBytes("abc", 3));
+
+  // >= ''
+  filter = greaterThanOrEqual("");
+  EXPECT_TRUE(filter->testBytes(nullptr, 0));
+  EXPECT_TRUE(filter->testBytes("abc", 3));
+}
+
+TEST(FilterTest, negatedBytesRange) {
+  auto filter = notBetween("a", "c");
+
+  EXPECT_TRUE(filter->testBytes("A", 1));
+  EXPECT_TRUE(filter->testBytes(nullptr, 0));
+  EXPECT_TRUE(filter->testBytes("ca", 2));
+  EXPECT_TRUE(filter->testBytes("z", 1));
+
+  EXPECT_FALSE(filter->testBytes("a", 1));
+  EXPECT_FALSE(filter->testBytes("apple", 5));
+  EXPECT_FALSE(filter->testBytes("c", 1));
+  EXPECT_FALSE(filter->testNull());
+
+  EXPECT_TRUE(filter->testLength(1));
+  EXPECT_TRUE(filter->testLength(3));
+  EXPECT_TRUE(filter->testLength(5));
+  EXPECT_TRUE(filter->testLength(100));
+
+  EXPECT_TRUE(filter->testBytesRange(std::nullopt, "b", false));
+  EXPECT_TRUE(filter->testBytesRange("a", std::nullopt, false));
+  EXPECT_TRUE(filter->testBytesRange("a", "ca", false));
+  EXPECT_TRUE(filter->testBytesRange("", "c", false));
+
+  EXPECT_FALSE(filter->testBytesRange("a", "c", false));
+  EXPECT_FALSE(filter->testBytesRange("ab", "bzzzzzzz", false));
+
+  EXPECT_FALSE(filter->isSingleValue());
+  EXPECT_EQ("a", filter->lower());
+  EXPECT_EQ("c", filter->upper());
+  EXPECT_FALSE(filter->isLowerUnbounded());
+  EXPECT_FALSE(filter->isUpperUnbounded());
+
+  filter = notBetweenExclusive("b", "d");
+  EXPECT_TRUE(filter->testBytes("b", 1));
+  EXPECT_TRUE(filter->testBytes("d", 1));
+
+  EXPECT_TRUE(filter->testBytesRange("b", "c", false));
+  EXPECT_TRUE(filter->testBytesRange("c", "d", false));
+  EXPECT_FALSE(filter->testBytesRange("bb", "cc", true));
+
+  EXPECT_FALSE(filter->isSingleValue());
+  EXPECT_EQ("b", filter->lower());
+  EXPECT_EQ("d", filter->upper());
+  EXPECT_FALSE(filter->isLowerUnbounded());
+  EXPECT_FALSE(filter->isUpperUnbounded());
+
+  auto filter_with_null = filter->clone(true);
+  EXPECT_TRUE(filter_with_null->testBytesRange("bb", "cc", true));
+  EXPECT_TRUE(filter_with_null->testNull());
+
+  auto filter_with_null_copy = filter_with_null->clone();
+  EXPECT_TRUE(filter_with_null_copy->testBytesRange("bb", "cc", true));
+  EXPECT_TRUE(filter_with_null_copy->testNull());
 }
 
 TEST(FilterTest, bytesValues) {
@@ -573,6 +934,69 @@ TEST(FilterTest, bytesValues) {
   EXPECT_FALSE(filter->testBytesRange(std::nullopt, "Banana", false));
 }
 
+TEST(FilterTest, negatedBytesValues) {
+  // create a filter
+  std::vector<std::string> values(
+      {"fifteen", "two", "ten", "extended", "vocabulary"});
+  auto filter = notIn(values);
+
+  EXPECT_TRUE(filter->testBytes("hello", 5));
+  EXPECT_TRUE(filter->testBytes("tent", 4));
+  EXPECT_TRUE(filter->testBytes("", 0));
+  EXPECT_TRUE(filter->testBytes("ten", 1)); // short-circuit accept by length
+
+  EXPECT_FALSE(filter->testBytes("extended", 8));
+  EXPECT_FALSE(filter->testBytes("vocabulary", 10));
+  EXPECT_FALSE(filter->testBytes("two", 3));
+  EXPECT_FALSE(filter->testNull());
+
+  EXPECT_TRUE(filter->testLength(0));
+  EXPECT_TRUE(filter->testLength(1));
+  EXPECT_TRUE(filter->testLength(3));
+  EXPECT_TRUE(filter->testLength(99));
+  EXPECT_TRUE(filter->testLength(std::numeric_limits<int32_t>::max()));
+
+  EXPECT_TRUE(filter->testBytesRange("a", "b", false));
+  EXPECT_TRUE(filter->testBytesRange("hello", "helloa", false));
+  EXPECT_TRUE(filter->testBytesRange("hello", "hello", false));
+  EXPECT_TRUE(filter->testBytesRange("b", "a", false));
+  EXPECT_TRUE(filter->testBytesRange("zzz", std::nullopt, false));
+  EXPECT_TRUE(filter->testBytesRange("", std::nullopt, false));
+  EXPECT_TRUE(filter->testBytesRange(std::nullopt, "a", false));
+  EXPECT_TRUE(filter->testBytesRange(std::nullopt, "zzzzz", false));
+  EXPECT_TRUE(filter->testBytesRange("ten", "two", false));
+
+  EXPECT_FALSE(filter->testBytesRange("two", "two", false));
+  EXPECT_FALSE(filter->testBytesRange("two", "two", true));
+
+  auto filter_copy = std::make_unique<NegatedBytesValues>(*filter, true);
+  EXPECT_TRUE(filter_copy->testNull());
+  EXPECT_TRUE(filter_copy->testBytes("hello", 5));
+  EXPECT_TRUE(filter_copy->testBytes("tent", 4));
+  EXPECT_TRUE(filter_copy->testLength(2));
+  EXPECT_TRUE(filter_copy->testLength(6));
+  EXPECT_TRUE(filter_copy->testBytesRange("hello", "hello", false));
+  EXPECT_TRUE(filter_copy->testBytesRange("two", "two", true));
+
+  EXPECT_FALSE(filter_copy->testBytes("extended", 8));
+  EXPECT_FALSE(filter_copy->testBytesRange("ten", "ten", false));
+
+  auto filter_with_nulls = filter->clone(true);
+  EXPECT_TRUE(filter_with_nulls->testNull());
+  EXPECT_TRUE(filter_with_nulls->testBytesRange("fifteen", "fifteen", true));
+  EXPECT_FALSE(filter_with_nulls->testBytes("fifteen", 7));
+  EXPECT_FALSE(filter_with_nulls->testBytesRange("fifteen", "fifteen", false));
+
+  auto filter_nulls_copy = filter_with_nulls->clone();
+  EXPECT_TRUE(filter_nulls_copy->testNull());
+  EXPECT_TRUE(filter_nulls_copy->testBytesRange("fifteen", "fifteen", true));
+  EXPECT_FALSE(filter_nulls_copy->testBytes("fifteen", 7));
+  EXPECT_FALSE(filter_nulls_copy->testBytesRange("fifteen", "fifteen", false));
+
+  auto filter_no_nulls = filter_nulls_copy->clone(false);
+  EXPECT_FALSE(filter_no_nulls->testNull());
+}
+
 TEST(FilterTest, multiRange) {
   auto filter = orFilter(between("abc", "abc"), greaterThanOrEqual("dragon"));
 
@@ -605,6 +1029,11 @@ TEST(FilterTest, multiRange) {
   EXPECT_FALSE(filter->testFloat(1.2f));
   EXPECT_TRUE(filter->testFloat(1.3f));
   EXPECT_FALSE(filter->testFloat(std::nanf("nan")));
+
+  // != ''
+  filter = orFilter(lessThan(""), greaterThan(""));
+  EXPECT_FALSE(filter->testBytes(nullptr, 0));
+  EXPECT_TRUE(filter->testBytes("abc", 3));
 }
 
 TEST(FilterTest, multiRangeWithNaNs) {
@@ -763,6 +1192,11 @@ void testMergeWithBigint(Filter* left, Filter* right) {
         << ", right: " << right->toString()
         << ", merged: " << merged->toString();
   }
+  // check empty marker
+  ASSERT_EQ(
+      merged->testInt64(0xdeadbeefbadefeedL),
+      left->testInt64(0xdeadbeefbadefeedL) &&
+          right->testInt64(0xdeadbeefbadefeedL));
 }
 
 void testMergeWithDouble(Filter* left, Filter* right) {
@@ -792,6 +1226,7 @@ void testMergeWithBytes(Filter* left, Filter* right) {
       << ", merged: " << merged->toString();
 
   std::vector<std::string> testValues = {
+      "",
       "a",
       "b",
       "c",
@@ -829,6 +1264,7 @@ void testMergeWithBytes(Filter* left, Filter* right) {
       "AB",
       "AC",
       "AD",
+      "0",
       "1",
       "2",
       "11",
@@ -846,6 +1282,7 @@ void testMergeWithBytes(Filter* left, Filter* right) {
       "?",
       "?!",
       "!?!",
+      "+",
       "/",
       "<",
       ">",
@@ -903,6 +1340,25 @@ TEST(FilterTest, mergeWithBigint) {
   filters.push_back(between(150, 500));
   filters.push_back(between(150, 500, true));
 
+  // Inequality.
+  filters.push_back(notEqual(123));
+  filters.push_back(notEqual(123, true));
+  filters.push_back(notEqual(300));
+  filters.push_back(notEqual(300, true));
+  filters.push_back(notEqual(2));
+  filters.push_back(notEqual(3));
+
+  // Not between.
+  filters.push_back(notBetween(150, 500));
+  filters.push_back(notBetween(150, 500, true));
+  filters.push_back(notBetween(0, 100));
+  filters.push_back(notBetween(0, 100, true));
+  filters.push_back(notBetween(0, 200));
+  filters.push_back(notBetween(400, 600));
+  filters.push_back(notBetween(0, 600));
+  filters.push_back(notBetween(1000, 10'134));
+  filters.push_back(notBetween(200, 300));
+
   // IN-list.
   filters.push_back(in({1, 2, 3, 67'000'000'000, 134}));
   filters.push_back(in({1, 2, 3, 67'000'000'000, 134}, true));
@@ -910,6 +1366,26 @@ TEST(FilterTest, mergeWithBigint) {
   filters.push_back(in({-7, -6, -5, -4, -3, -2}, true));
   filters.push_back(in({1, 2, 3, 67, 10'134}));
   filters.push_back(in({1, 2, 3, 67, 10'134}, true));
+  int64_t empty = 0xdeadbeefbadefeedL;
+  filters.push_back(in({1, 5, 210, empty}, false));
+  filters.push_back(in({1, 5, 210, empty}, true));
+  filters.push_back(in({empty - 10, empty, empty + 5}, false));
+  filters.push_back(in({empty - 10, empty, empty + 5}, true));
+
+  // NOT IN-list.
+  filters.push_back(notIn({1, 2, 3, 67'000'000'000, 134}));
+  filters.push_back(notIn({1, 2, 3, 67'000'000'000, 134}, true));
+  filters.push_back(notIn({1, 3, 5, 7, 67'000'000'000, 122}));
+  filters.push_back(notIn({1, 3, 5, 7, 67'000'000'000, 122}, true));
+  filters.push_back(notIn({-4, -3, -2, -1, 0, 1, 2}));
+  filters.push_back(notIn({-4, -3, -2, -1, 0, 1, 2}, true));
+  filters.push_back(notIn({122, 150, 151, 210, 213, 251}));
+  filters.push_back(notIn({122, 150, 151, 210, 213, 251}, true));
+  filters.push_back(notIn({0, 1, 3, 9, empty}, false));
+  filters.push_back(notIn({0, 1, 3, 9, empty}, true));
+  filters.push_back(notIn({empty - 5, empty, empty + 5}, false));
+  filters.push_back(notIn({empty - 5, empty, empty + 5}, true));
+  filters.push_back(notIn({5, 498, 499, 500}, false));
 
   for (const auto& left : filters) {
     for (const auto& right : filters) {
@@ -992,6 +1468,28 @@ TEST(FilterTest, mergeWithBigintMultiRange) {
   filters.push_back(bigintOr(lessThan(-3), equal(12), between(25, 47)));
   filters.push_back(bigintOr(lessThan(-3), equal(12), between(25, 47), true));
 
+  // not equal
+  filters.push_back(notEqual(20));
+  filters.push_back(notEqual(20, true));
+  filters.push_back(notEqual(12));
+  filters.push_back(notEqual(12, true));
+  filters.push_back(notEqual(-210));
+  filters.push_back(notEqual(-210, true));
+
+  // not between
+  filters.push_back(notBetween(25, 47));
+  filters.push_back(notBetween(25, 47, true));
+  filters.push_back(notBetween(0, 40));
+  filters.push_back(notBetween(30, 40));
+  filters.push_back(notBetween(-20, 40));
+  filters.push_back(notBetween(12, 40));
+  filters.push_back(notBetween(13, 40));
+  filters.push_back(notBetween(20, 50));
+  filters.push_back(notBetween(-10, -1));
+  filters.push_back(notBetween(90, 100));
+  filters.push_back(notBetween(std::numeric_limits<int64_t>::min(), -4));
+  filters.push_back(notBetween(std::numeric_limits<int64_t>::min(), -4, true));
+
   // IN-list using bitmask.
   filters.push_back(in({1, 2, 3, 56}));
   filters.push_back(in({1, 2, 3, 56}, true));
@@ -999,6 +1497,29 @@ TEST(FilterTest, mergeWithBigintMultiRange) {
   // IN-list using hash table.
   filters.push_back(in({1, 2, 3, 67, 10'134}));
   filters.push_back(in({1, 2, 3, 67, 10'134}, true));
+  filters.push_back(
+      in({std::numeric_limits<int64_t>::min(),
+          0,
+          std::numeric_limits<int64_t>::max()},
+         true));
+
+  // NOT IN-list using bitmask.
+  filters.push_back(notIn({0, 3, 5, 20, 32, 210}));
+  filters.push_back(notIn({0, 3, 5, 20, 32, 210}, true));
+  filters.push_back(notIn({3, 7, 9, 45, 46, 47, 48}));
+  filters.push_back(notIn({3, 7, 9, 45, 46, 47, 48}, true));
+
+  filters.push_back(notIn({12, 18}));
+  std::vector<int64_t> rejectionRange;
+  rejectionRange.push_back(12);
+  for (int i = 25; i <= 47; ++i) {
+    rejectionRange.push_back(i);
+  }
+  filters.push_back(notIn(rejectionRange));
+
+  // NOT IN-list using hash table.
+  filters.push_back(notIn({0, 3, 5, 20, 32, 15'210}));
+  filters.push_back(notIn({0, 3, 5, 20, 32, 15'210}, true));
 
   for (const auto& left : filters) {
     for (const auto& right : filters) {
@@ -1075,6 +1596,13 @@ TEST(FilterTest, mergeWithBytesValues) {
   filters.push_back(
       in({"!", "!!jj", ">><<", "[]", "12345", "123", "1", "2"}, true));
 
+  filters.push_back(notIn({"a"}));
+  filters.push_back(notIn({"a", "b", "c"}));
+  filters.push_back(notIn({"e", "g", "!"}, true));
+  filters.push_back(notIn({""}));
+  filters.push_back(notIn({"a", "b", "c", "d", "e", "f", "g"}));
+  filters.push_back(notIn({"!!jj", ">><<", "g", "1234", "12345", "15210"}));
+
   for (const auto& left : filters) {
     for (const auto& right : filters) {
       testMergeWithBytes(left.get(), right.get());
@@ -1101,6 +1629,18 @@ TEST(FilterTest, mergeWithBytesRange) {
   filters.push_back(between("<<", ">>", true));
   filters.push_back(between("ABCDE", "abcde"));
   filters.push_back(between("1", "123456", true));
+
+  filters.push_back(notBetween("b", "f"));
+  filters.push_back(notBetween("b", "f", true));
+  filters.push_back(notBetween("a", "d"));
+  filters.push_back(notBetween("a", "d", true));
+  filters.push_back(notBetweenExclusive("b", "f"));
+  filters.push_back(notBetweenExclusive("b", "f", true));
+
+  // test unbounded negatedRange
+  filters.push_back(
+      std::make_unique<facebook::velox::common::NegatedBytesRange>(
+          "", true, false, "l", false, false, false));
 
   filters.push_back(lessThanOrEqual("k"));
   filters.push_back(lessThanOrEqual("k", true));
@@ -1154,6 +1694,15 @@ TEST(FilterTest, mergeWithBytesMultiRange) {
 
   filters.push_back(in({"e", "f", "!", "h"}));
   filters.push_back(in({"e", "f", "g", "h"}, true));
+
+  // test notIn vs. single ranges and multi-ranges
+  filters.push_back(notIn({"a", "c", "g", "t"}));
+  filters.push_back(notIn({"k", "", "tt"}));
+  filters.push_back(notIn({"bc", "cc", "dc"}));
+  filters.push_back(notIn({"+"}, true));
+  filters.push_back(notIn({"1", "3", "2"}));
+  std::vector<std::string> ends = {"p", "t"};
+  filters.push_back(notIn(ends));
 
   filters.push_back(orFilter(between("!", "f"), greaterThanOrEqual("h")));
   filters.push_back(orFilter(between("b", "f"), lessThanOrEqual("a")));

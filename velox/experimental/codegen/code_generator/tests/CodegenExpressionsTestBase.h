@@ -131,11 +131,11 @@ struct RowTypeTrait {
     if constexpr (index == sizeof...(T)) {
       return;
     } else {
-      if constexpr (std::is_same<
+      if constexpr (std::is_same_v<
                         TempStringNullable<TempsAllocator>,
                         typename std::tuple_element<
                             index,
-                            CodegenTupleWritersType>::type>::value) {
+                            CodegenTupleWritersType>::type>) {
         if (std::get<index>(viewTuple).has_value()) {
           std::get<index>(out) = InputReferenceStringNullable{
               InputReferenceString{*std::get<index>(viewTuple)}};
@@ -164,11 +164,11 @@ struct RowTypeTrait {
       return;
 
     } else {
-      if constexpr (std::is_same<
+      if constexpr (std::is_same_v<
                         TempStringNullable<TempsAllocator>,
                         typename std::tuple_element<
                             index,
-                            CodegenTupleWritersType>::type>::value) {
+                            CodegenTupleWritersType>::type>) {
         if (std::get<index>(writers).has_value()) {
           auto& tempString = *std::get<index>(writers);
           std::get<index>(out) = {
@@ -471,7 +471,7 @@ class ExpressionCodegenTestBase : public testing::Test {
       facebook::velox::exec::EvalCtx evalCtx(
           execCtx_.get(), &exprSet, rowVector.get());
       std::vector<VectorPtr> result(1);
-      exprSet.eval(*rows, &evalCtx, &result);
+      exprSet.eval(*rows, evalCtx, result);
       auto resultsRows = OutputRowTypeTrait::getBaseVectorsAsViewTupleRows(
           result[0].get(), *rows);
 
@@ -554,7 +554,7 @@ class ExpressionCodegenTestBase : public testing::Test {
   std::shared_ptr<const core::ConcatTypedExpr> makeConcatTypedExpr(
       const std::string& text,
       const std::shared_ptr<const RowType>& inputRowType) {
-    auto untypedExpr = parse::parseExpr(text);
+    auto untypedExpr = parse::parseExpr(text, options_);
     auto typedExpr = core::Expressions::inferTypes(
         untypedExpr, inputRowType, execCtx_->pool());
 
@@ -580,9 +580,8 @@ class ExpressionCodegenTestBase : public testing::Test {
         core::ConcatTypedExpr({"c0"}, {typedExpr}));
   }
 
-  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
-  std::unique_ptr<memory::MemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{std::make_shared<core::QueryCtx>()};
+  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
   std::unique_ptr<core::ExecCtx> execCtx_{
       std::make_unique<facebook::velox::core::ExecCtx>(
           pool_.get(),
@@ -590,6 +589,7 @@ class ExpressionCodegenTestBase : public testing::Test {
   std::unique_ptr<CodeManager> codeManager_;
   std::unique_ptr<ExprCodeGenerator> generator_;
   DefaultScopedTimer::EventSequence eventSequence_;
+  parse::ParseOptions options_;
 };
 
 } // namespace expressions::test

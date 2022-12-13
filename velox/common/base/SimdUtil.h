@@ -84,6 +84,53 @@ struct HalfBatchImpl;
 template <typename T, typename A = xsimd::default_arch>
 using HalfBatch = typename detail::HalfBatchImpl<T, A>::Type;
 
+// A type to represent HalfBatch of 128 bits vectors.  The field and
+// method names here are to match xsimd::batch, thus not consistent
+// with the rest of Velox.
+template <typename T>
+struct Batch64 {
+  static constexpr size_t size = [] {
+    static_assert(8 % sizeof(T) == 0);
+    return 8 / sizeof(T);
+  }();
+
+  T data[size];
+
+  static Batch64 from(std::initializer_list<T> values) {
+    VELOX_DCHECK_EQ(values.size(), size);
+    Batch64 ans;
+    for (int i = 0; i < size; ++i) {
+      ans.data[i] = *(values.begin() + i);
+    }
+    return ans;
+  }
+
+  void store_unaligned(T* out) const {
+    std::copy(std::begin(data), std::end(data), out);
+  }
+
+  static Batch64 load_aligned(const T* mem) {
+    return load_unaligned(mem);
+  }
+
+  static Batch64 load_unaligned(const T* mem) {
+    Batch64 ans;
+    std::copy(mem, mem + size, ans.data);
+    return ans;
+  }
+
+  friend Batch64 operator+(Batch64 x, T y) {
+    for (int i = 0; i < size; ++i) {
+      x.data[i] += y;
+    }
+    return x;
+  }
+
+  friend Batch64 operator-(Batch64 x, T y) {
+    return x + (-y);
+  }
+};
+
 namespace detail {
 template <typename T, typename IndexType, typename A, int kSizeT = sizeof(T)>
 struct Gather;
@@ -120,6 +167,17 @@ xsimd::batch<T, A> gather(
   return Impl::template apply<kScale>(base, vindex, arch);
 }
 
+template <
+    typename T,
+    typename IndexType,
+    int kScale = sizeof(T),
+    typename A = xsimd::default_arch>
+xsimd::batch<T, A>
+gather(const T* base, Batch64<IndexType> vindex, const A& arch = {}) {
+  using Impl = detail::Gather<T, IndexType, A>;
+  return Impl::template apply<kScale>(base, vindex.data, arch);
+}
+
 // Same as 'gather' above except the indices are read from memory.
 template <
     typename T,
@@ -128,8 +186,8 @@ template <
     typename A = xsimd::default_arch>
 xsimd::batch<T, A>
 gather(const T* base, const IndexType* indices, const A& arch = {}) {
-  auto vindex = detail::Gather<T, IndexType, A>::loadIndices(indices, arch);
-  return gather<T, IndexType, kScale>(base, vindex, arch);
+  using Impl = detail::Gather<T, IndexType, A>;
+  return Impl::template apply<kScale>(base, indices, arch);
 }
 
 // Gather only data where mask[i] is set; otherwise keep the data in
@@ -146,8 +204,23 @@ xsimd::batch<T, A> maskGather(
     const T* base,
     xsimd::batch<IndexType, IndexArch> vindex,
     const A& arch = {}) {
-  return detail::Gather<T, IndexType, A>::template maskApply<kScale>(
-      src, mask, base, vindex, arch);
+  using Impl = detail::Gather<T, IndexType, A>;
+  return Impl::template maskApply<kScale>(src, mask, base, vindex, arch);
+}
+
+template <
+    typename T,
+    typename IndexType,
+    int kScale = sizeof(T),
+    typename A = xsimd::default_arch>
+xsimd::batch<T, A> maskGather(
+    xsimd::batch<T, A> src,
+    xsimd::batch_bool<T, A> mask,
+    const T* base,
+    Batch64<IndexType> vindex,
+    const A& arch = {}) {
+  using Impl = detail::Gather<T, IndexType, A>;
+  return Impl::template maskApply<kScale>(src, mask, base, vindex.data, arch);
 }
 
 // Same as 'maskGather' above but read indices from memory.
@@ -162,8 +235,8 @@ xsimd::batch<T, A> maskGather(
     const T* base,
     const IndexType* indices,
     const A& arch = {}) {
-  auto vindex = detail::Gather<T, IndexType, A>::loadIndices(indices, arch);
-  return maskGather<T, IndexType, kScale>(src, mask, base, vindex, arch);
+  using Impl = detail::Gather<T, IndexType, A>;
+  return Impl::template maskApply<kScale>(src, mask, base, indices, arch);
 }
 
 // Loads up to 16 non-contiguous 16 bit values from 32-bit indices at 'indices'.
@@ -245,16 +318,6 @@ filter(HalfBatch<T, A> data, BitMaskType bitMask, const A& arch = {}) {
 }
 
 namespace detail {
-template <typename T, typename A, size_t kSizeT = sizeof(T)>
-struct Extract;
-}
-
-template <int kIndex, typename T, typename A = xsimd::default_arch>
-T extract(xsimd::batch<T, A> data, const A& arch = {}) {
-  return detail::Extract<T, A>::template apply<kIndex>(data, arch);
-}
-
-namespace detail {
 template <typename To, typename From, typename A>
 struct GetHalf;
 }
@@ -326,6 +389,9 @@ void memset(void* to, char data, int32_t bytes, const A& = {});
       }                                                    \
       case 8: {                                            \
         return TEMPLATE_FUNC<int64_t>(__VA_ARGS__);        \
+      }                                                    \
+      case 16: {                                           \
+        return TEMPLATE_FUNC<int128_t>(__VA_ARGS__);       \
       }                                                    \
       default:                                             \
         VELOX_FAIL("Bad data size {}", numBytes);          \

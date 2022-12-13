@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <fmt/format.h>
+#include <folly/CppAttributes.h>
 #include <limits>
 #include <sstream>
 
@@ -42,10 +44,66 @@ struct RuntimeMetric {
       RuntimeCounter::Unit _unit = RuntimeCounter::Unit::kNone)
       : unit(_unit) {}
 
+  explicit RuntimeMetric(
+      int64_t value,
+      RuntimeCounter::Unit _unit = RuntimeCounter::Unit::kNone)
+      : unit(_unit), sum{value}, count{1}, min{value}, max{value} {}
+
   void addValue(int64_t value);
 
   void printMetric(std::stringstream& stream) const;
 
   void merge(const RuntimeMetric& other);
+
+  std::string toString() const {
+    return fmt::format(
+        "sum:{}, count:{}, min:{}, max:{}", sum, count, min, max);
+  }
 };
+
+/// Simple interface to implement writing of runtime stats to Velox Operator
+/// stats.
+/// Inherit a concrete class from this to implement your writing.
+class BaseRuntimeStatWriter {
+ public:
+  virtual ~BaseRuntimeStatWriter() = default;
+
+  virtual void addRuntimeStat(
+      const std::string& /* name */,
+      const RuntimeCounter& /* value */) {}
+};
+
+/// Setting a concrete runtime stats writer on the thread will ensure that any
+/// code can add runtime counters to the current Operator running on that
+/// thread.
+/// NOTE: This is only used by the Velox Driver at the moment, which ensures the
+/// active Operator is being used by the writer.
+void setThreadLocalRunTimeStatWriter(
+    BaseRuntimeStatWriter* FOLLY_NULLABLE writer);
+
+/// Retrives the current runtime stats writer.
+BaseRuntimeStatWriter* FOLLY_NULLABLE getThreadLocalRunTimeStatWriter();
+
+/// Writes runtime counter to the current Operator running on that thread.
+void addThreadLocalRuntimeStat(
+    const std::string& name,
+    const RuntimeCounter& value);
+
+/// Scope guard to conveniently set and revert back the current stat writer.
+class RuntimeStatWriterScopeGuard {
+ public:
+  explicit RuntimeStatWriterScopeGuard(
+      BaseRuntimeStatWriter* FOLLY_NULLABLE writer)
+      : prevWriter_(getThreadLocalRunTimeStatWriter()) {
+    setThreadLocalRunTimeStatWriter(writer);
+  }
+
+  ~RuntimeStatWriterScopeGuard() {
+    setThreadLocalRunTimeStatWriter(prevWriter_);
+  }
+
+ private:
+  BaseRuntimeStatWriter* const FOLLY_NULLABLE prevWriter_;
+};
+
 } // namespace facebook::velox

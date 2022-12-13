@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #pragma once
+#include <velox/exec/Driver.h>
 #include "velox/core/PlanNode.h"
 #include "velox/exec/Task.h"
 
@@ -54,9 +55,7 @@ class TaskQueue {
   };
 
   explicit TaskQueue(uint64_t maxBytes)
-      : pool_(memory::getDefaultScopedMemoryPool()),
-        maxBytes_(maxBytes),
-        consumerFuture_(false) {}
+      : pool_(memory::getDefaultMemoryPool()), maxBytes_(maxBytes) {}
 
   void setNumProducers(int32_t n) {
     numProducers_ = n;
@@ -68,7 +67,7 @@ class TaskQueue {
   // realized when the producer may continue.
   exec::BlockingReason enqueue(
       RowVectorPtr vector,
-      exec::ContinueFuture* future);
+      velox::ContinueFuture* future);
 
   // Returns nullptr when all producers are at end. Otherwise blocks.
   RowVectorPtr dequeue();
@@ -83,7 +82,7 @@ class TaskQueue {
 
  private:
   // Owns the vectors in 'queue_', hence must be declared first.
-  std::unique_ptr<velox::memory::MemoryPool> pool_;
+  std::shared_ptr<velox::memory::MemoryPool> pool_;
   std::deque<TaskQueueEntry> queue_;
   std::optional<int32_t> numProducers_;
   int32_t producersFinished_ = 0;
@@ -95,7 +94,7 @@ class TaskQueue {
   std::vector<ContinuePromise> producerUnblockPromises_;
   bool consumerBlocked_ = false;
   ContinuePromise consumerPromise_;
-  folly::Future<bool> consumerFuture_;
+  ContinueFuture consumerFuture_;
   bool closed_ = false;
 };
 
@@ -128,14 +127,17 @@ class TaskCursor {
   }
 
  private:
+  static std::atomic<int32_t> serial_;
+
   const int32_t maxDrivers_;
   const int32_t numConcurrentSplitGroups_;
   const int32_t numSplitGroups_;
+
+  std::shared_ptr<folly::Executor> executor_;
   bool started_ = false;
   std::shared_ptr<TaskQueue> queue_;
   std::shared_ptr<exec::Task> task_;
   RowVectorPtr current_;
-  static std::atomic<int32_t> serial_;
   bool atEnd_{false};
 };
 

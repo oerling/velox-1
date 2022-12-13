@@ -35,6 +35,10 @@ struct Date {
     return days_;
   }
 
+  void addDays(int32_t days) {
+    days_ += days;
+  }
+
   bool operator==(const Date& other) const {
     return days_ == other.days_;
   }
@@ -97,6 +101,19 @@ struct hash<::facebook::velox::Date> {
 std::string to_string(const ::facebook::velox::Date& ts);
 
 } // namespace std
+
+template <>
+struct fmt::formatter<facebook::velox::Date> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const facebook::velox::Date& d, FormatContext& ctx) {
+    return fmt::format_to(ctx.out(), "{}", std::to_string(d));
+  }
+};
 
 namespace folly {
 template <>

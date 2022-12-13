@@ -31,3 +31,28 @@
 #else
 #define VELOX_INSTANTIATE_TEST_SUITE_P INSTANTIATE_TEST_CASE_P
 #endif
+
+#define VELOX_ASSERT_THROW(expression, errorMessage)                 \
+  try {                                                              \
+    (expression);                                                    \
+    FAIL() << "Expected an exception";                               \
+  } catch (const VeloxException& e) {                                \
+    ASSERT_TRUE(e.message().find(errorMessage) != std::string::npos) \
+        << "Expected error message to contain '" << errorMessage     \
+        << "', but received '" << e.message() << "'.";               \
+  }
+
+#ifndef NDEBUG
+#define DEBUG_ONLY_TEST(test_fixture, test_name) TEST(test_fixture, test_name)
+#define DEBUG_ONLY_TEST_F(test_fixture, test_name) \
+  TEST_F(test_fixture, test_name)
+#define DEBUG_ONLY_TEST_P(test_fixture, test_name) \
+  TEST_P(test_fixture, test_name)
+#else
+#define DEBUG_ONLY_TEST(test_fixture, test_name) \
+  TEST(test_fixture, DISABLED_##test_name)
+#define DEBUG_ONLY_TEST_F(test_fixture, test_name) \
+  TEST_F(test_fixture, DISABLED_##test_name)
+#define DEBUG_ONLY_TEST_P(test_fixture, test_name) \
+  TEST_P(test_fixture, DISABLED_##test_name)
+#endif

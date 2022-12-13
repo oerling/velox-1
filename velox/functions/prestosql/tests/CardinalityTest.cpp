@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -72,40 +72,4 @@ TEST_F(CardinalityTest, map) {
   auto sizeAt = [](vector_size_t row) { return 1 + row % 7; };
   testMapCardinality(sizeAt, nullptr);
   testMapCardinality(sizeAt, nullEvery(5));
-}
-
-TEST_F(CardinalityTest, invalidInputTest) {
-  auto sizeAt = [](vector_size_t row) { return 1 + row % 7; };
-  const vector_size_t size = 10;
-  auto arrayArg = makeArrayVector<int64_t>(size, sizeAt, valueAt);
-  auto mapArg = makeMapVector<int64_t, int64_t>(size, sizeAt, valueAt, valueAt);
-
-  auto dummyArg = BaseVector::create(BIGINT(), size, execCtx_.pool());
-
-  // Argument with invalid type.
-  EXPECT_THROW(
-      evaluate<SimpleVector<int64_t>>(
-          "cardinality(c0)", makeRowVector({dummyArg})),
-      std::invalid_argument);
-
-  // Multiple arguments to cardinality function with bigint as the first
-  // argument.
-  EXPECT_THROW(
-      evaluate<SimpleVector<int64_t>>(
-          "cardinality(c0, c1)", makeRowVector({dummyArg, dummyArg})),
-      std::invalid_argument);
-
-  // Multiple arguments to cardinality function with array as the first
-  // argument.
-  EXPECT_THROW(
-      evaluate<SimpleVector<int64_t>>(
-          "cardinality(c0, c1)", makeRowVector({arrayArg, dummyArg})),
-      std::invalid_argument);
-
-  // Multiple arguments to cardinality function with map as the first
-  // argument.
-  EXPECT_THROW(
-      evaluate<SimpleVector<int64_t>>(
-          "cardinality(c0, c1)", makeRowVector({mapArg, dummyArg})),
-      std::invalid_argument);
 }

@@ -17,7 +17,6 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <stdexcept>
-#include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/dwrf/reader/ReaderBase.h"
 #include "velox/dwio/dwrf/writer/WriterBase.h"
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
@@ -31,47 +30,52 @@ namespace facebook::velox::dwrf {
 
 class WriterTest : public Test {
  public:
-  WriterTest()
-      : scopedPool{getDefaultScopedMemoryPool()}, pool{scopedPool->getPool()} {}
+  WriterTest() : pool_(getDefaultMemoryPool()) {}
 
   WriterBase& createWriter(
       const std::shared_ptr<Config>& config,
       std::unique_ptr<DataSink> sink = nullptr) {
     if (!sink) {
-      auto memSink = std::make_unique<MemorySink>(pool, 1024);
-      sinkPtr = memSink.get();
+      auto memSink = std::make_unique<MemorySink>(*pool_, 1024);
+      sinkPtr_ = memSink.get();
       sink = std::move(memSink);
     }
-    writer = std::make_unique<WriterBase>(std::move(sink));
-    writer->initContext(config, pool.addScopedChild("test_writer_pool"));
-    return *writer;
+    writer_ = std::make_unique<WriterBase>(std::move(sink));
+    writer_->initContext(config, pool_->addChild("test_writer_pool"));
+    return *writer_;
+  }
+
+  std::unique_ptr<ReaderBase> createReader() {
+    std::string_view data(sinkPtr_->getData(), sinkPtr_->size());
+    auto readFile = std::make_shared<InMemoryReadFile>(data);
+    auto input = std::make_unique<BufferedInput>(std::move(readFile), *pool_);
+    return std::make_unique<ReaderBase>(*pool_, std::move(input));
   }
 
   auto& getContext() {
-    return writer->getContext();
+    return writer_->getContext();
   }
 
   auto& getFooter() {
-    return writer->getFooter();
+    return writer_->getFooter();
   }
 
   auto& addStripeInfo() {
-    return writer->addStripeInfo();
+    return writer_->addStripeInfo();
   }
 
   void writeFooter(const Type& type) {
-    writer->writeFooter(type);
+    writer_->writeFooter(type);
   }
 
   void validateStreamSize(uint64_t streamSize) {
-    StreamIdentifier si{1, 0, 0, proto::Stream_Kind_DATA};
-    writer->validateStreamSize(si, streamSize);
+    DwrfStreamIdentifier si{1, 0, 0, proto::Stream_Kind_DATA};
+    writer_->validateStreamSize(si, streamSize);
   }
 
-  std::unique_ptr<ScopedMemoryPool> scopedPool;
-  MemoryPool& pool;
-  MemorySink* sinkPtr;
-  std::unique_ptr<WriterBase> writer;
+  std::shared_ptr<MemoryPool> pool_;
+  MemorySink* sinkPtr_;
+  std::unique_ptr<WriterBase> writer_;
 };
 
 TEST_F(WriterTest, WriteFooter) {
@@ -84,11 +88,11 @@ TEST_F(WriterTest, WriteFooter) {
 
   for (size_t i = 0; i < 3; ++i) {
     writerSink.setMode(WriterSink::Mode::Index);
-    writerSink.addBuffer(pool, data.data(), data.size());
+    writerSink.addBuffer(*pool_, data.data(), data.size());
     writerSink.setMode(WriterSink::Mode::Data);
-    writerSink.addBuffer(pool, data.data(), data.size());
+    writerSink.addBuffer(*pool_, data.data(), data.size());
     writerSink.setMode(WriterSink::Mode::Footer);
-    writerSink.addBuffer(pool, data.data(), data.size());
+    writerSink.addBuffer(*pool_, data.data(), data.size());
     writerSink.setMode(WriterSink::Mode::None);
     context.stripeRowCount = 123;
     context.stripeRawSize = 345;
@@ -111,62 +115,59 @@ TEST_F(WriterTest, WriteFooter) {
   writer.close();
 
   // deserialize and verify
-  auto input =
-      std::make_unique<MemoryInputStream>(sinkPtr->getData(), sinkPtr->size());
-  auto reader = std::make_unique<ReaderBase>(pool, std::move(input));
+  auto reader = createReader();
 
   auto& ps = reader->getPostScript();
-  ASSERT_TRUE(ps.has_writerversion());
   ASSERT_EQ(reader->getWriterVersion(), config->get(Config::WRITER_VERSION));
-  ASSERT_TRUE(ps.has_compression());
   ASSERT_EQ(reader->getCompressionKind(), config->get(Config::COMPRESSION));
-  ASSERT_TRUE(ps.has_compressionblocksize());
   ASSERT_EQ(
       reader->getCompressionBlockSize(),
       config->get(Config::COMPRESSION_BLOCK_SIZE));
-  ASSERT_EQ(ps.cachesize(), (10 + 10) * 3);
-  ASSERT_EQ(ps.cachemode(), config->get(Config::STRIPE_CACHE_MODE));
+  ASSERT_EQ(ps.cacheSize(), (10 + 10) * 3);
+  ASSERT_EQ(ps.cacheMode(), config->get(Config::STRIPE_CACHE_MODE));
 
   auto& footer = reader->getFooter();
-  ASSERT_TRUE(footer.has_headerlength());
-  ASSERT_EQ(footer.headerlength(), ORC_MAGIC_LEN);
-  ASSERT_TRUE(footer.has_contentlength());
-  ASSERT_EQ(footer.contentlength(), (10 + 10 + 10) * 3);
-  ASSERT_EQ(footer.stripes_size(), 3);
+  ASSERT_TRUE(footer.hasHeaderLength());
+  ASSERT_EQ(footer.headerLength(), ORC_MAGIC_LEN);
+  ASSERT_TRUE(footer.hasContentLength());
+  ASSERT_EQ(footer.contentLength(), (10 + 10 + 10) * 3);
+  ASSERT_EQ(footer.stripesSize(), 3);
   for (size_t i = 0; i < 3; ++i) {
-    auto& stripe = footer.stripes(i);
-    ASSERT_EQ(stripe.rawdatasize(), 345);
-    ASSERT_EQ(stripe.numberofrows(), 123);
+    auto stripe = footer.stripes(i);
+    ASSERT_EQ(stripe.rawDataSize(), 345);
+    ASSERT_EQ(stripe.numberOfRows(), 123);
   }
-  ASSERT_EQ(footer.types_size(), 4);
-  ASSERT_EQ(footer.metadata_size(), 4);
+  ASSERT_EQ(footer.typesSize(), 4);
+  ASSERT_EQ(footer.metadataSize(), 5);
   for (size_t i = 0; i < 4; ++i) {
-    auto& item = footer.metadata(i);
+    auto item = footer.metadata(i);
     if (item.name() == WRITER_NAME_KEY) {
       ASSERT_EQ(item.value(), kDwioWriter);
     } else if (item.name() == WRITER_VERSION_KEY) {
       ASSERT_EQ(
           item.value(), folly::to<std::string>(reader->getWriterVersion()));
+    } else if (item.name() == WRITER_HOSTNAME_KEY) {
+      ASSERT_EQ(item.value(), process::getHostName());
     } else {
       ASSERT_EQ(
           folly::to<size_t>(item.name()) + 1, folly::to<size_t>(item.value()));
     }
   }
-  ASSERT_TRUE(footer.has_numberofrows());
-  ASSERT_EQ(footer.numberofrows(), 123 * 3);
-  ASSERT_TRUE(footer.has_rowindexstride());
-  ASSERT_EQ(footer.rowindexstride(), config->get(Config::ROW_INDEX_STRIDE));
-  ASSERT_TRUE(footer.has_rawdatasize());
-  ASSERT_EQ(footer.rawdatasize(), 345 * 3);
-  ASSERT_TRUE(footer.has_checksumalgorithm());
+  ASSERT_TRUE(footer.hasNumberOfRows());
+  ASSERT_EQ(footer.numberOfRows(), 123 * 3);
+  ASSERT_TRUE(footer.hasRowIndexStride());
+  ASSERT_EQ(footer.rowIndexStride(), config->get(Config::ROW_INDEX_STRIDE));
+  ASSERT_TRUE(footer.hasRawDataSize());
+  ASSERT_EQ(footer.rawDataSize(), 345 * 3);
+  ASSERT_TRUE(footer.hasChecksumAlgorithm());
   ASSERT_EQ(
-      footer.checksumalgorithm(), config->get(Config::CHECKSUM_ALGORITHM));
+      footer.checksumAlgorithm(), config->get(Config::CHECKSUM_ALGORITHM));
   ASSERT_THAT(
-      footer.stripecacheoffsets(), ElementsAre(0, 10, 20, 30, 40, 50, 60));
+      footer.stripeCacheOffsets(), ElementsAre(0, 10, 20, 30, 40, 50, 60));
   auto& cache = reader->getMetadataCache();
   for (size_t i = 0; i < 3; ++i) {
-    ASSERT_TRUE(cache->has(proto::StripeCacheMode::INDEX, i));
-    ASSERT_TRUE(cache->has(proto::StripeCacheMode::FOOTER, i));
+    ASSERT_TRUE(cache->has(StripeCacheMode::INDEX, i));
+    ASSERT_TRUE(cache->has(StripeCacheMode::FOOTER, i));
   }
 }
 
@@ -181,7 +182,7 @@ TEST_F(WriterTest, AddStripeInfo) {
   std::memset(data.data(), 'a', data.size());
   auto& writerSink = writer.getSink();
   writerSink.setMode(WriterSink::Mode::Data);
-  writerSink.addBuffer(pool, data.data(), data.size());
+  writerSink.addBuffer(*pool_, data.data(), data.size());
   writerSink.setMode(WriterSink::Mode::None);
 
   auto& ret = addStripeInfo();
@@ -200,7 +201,7 @@ TEST_F(WriterTest, NoChecksum) {
   std::memset(data.data(), 'a', data.size());
   auto& writerSink = writer.getSink();
   writerSink.setMode(WriterSink::Mode::Data);
-  writerSink.addBuffer(pool, data.data(), data.size());
+  writerSink.addBuffer(*pool_, data.data(), data.size());
   writerSink.setMode(WriterSink::Mode::None);
 
   auto& ret = addStripeInfo();
@@ -216,28 +217,26 @@ TEST_F(WriterTest, NoChecksum) {
   writer.close();
 
   // deserialize and verify
-  auto input =
-      std::make_unique<MemoryInputStream>(sinkPtr->getData(), sinkPtr->size());
-  auto reader = std::make_unique<ReaderBase>(pool, std::move(input));
+  auto reader = createReader();
   auto& footer = reader->getFooter();
-  ASSERT_TRUE(footer.has_checksumalgorithm());
-  ASSERT_EQ(footer.checksumalgorithm(), proto::ChecksumAlgorithm::NULL_);
+  ASSERT_TRUE(footer.hasChecksumAlgorithm());
+  ASSERT_EQ(footer.checksumAlgorithm(), proto::ChecksumAlgorithm::NULL_);
 }
 
 TEST_F(WriterTest, NoCache) {
   auto config = std::make_shared<Config>();
-  config->set(Config::STRIPE_CACHE_MODE, proto::StripeCacheMode::NA);
+  config->set(Config::STRIPE_CACHE_MODE, StripeCacheMode::NA);
   auto& writer = createWriter(config);
 
   std::array<char, 512> data;
   std::memset(data.data(), 'a', data.size());
   auto& writerSink = writer.getSink();
   writerSink.setMode(WriterSink::Mode::Index);
-  writerSink.addBuffer(pool, data.data(), 10);
+  writerSink.addBuffer(*pool_, data.data(), 10);
   writerSink.setMode(WriterSink::Mode::Data);
-  writerSink.addBuffer(pool, data.data(), 10);
+  writerSink.addBuffer(*pool_, data.data(), 10);
   writerSink.setMode(WriterSink::Mode::Footer);
-  writerSink.addBuffer(pool, data.data(), 10);
+  writerSink.addBuffer(*pool_, data.data(), 10);
   writerSink.setMode(WriterSink::Mode::None);
 
   addStripeInfo();
@@ -252,16 +251,12 @@ TEST_F(WriterTest, NoCache) {
   writer.close();
 
   // deserialize and verify
-  auto input =
-      std::make_unique<MemoryInputStream>(sinkPtr->getData(), sinkPtr->size());
-  auto reader = std::make_unique<ReaderBase>(pool, std::move(input));
+  auto reader = createReader();
   auto& footer = reader->getFooter();
-  ASSERT_EQ(footer.stripecacheoffsets_size(), 0);
+  ASSERT_EQ(footer.stripeCacheOffsetsSize(), 0);
   auto& ps = reader->getPostScript();
-  ASSERT_TRUE(ps.has_cachemode());
-  ASSERT_EQ(ps.cachemode(), proto::StripeCacheMode::NA);
-  ASSERT_TRUE(ps.has_cachesize());
-  ASSERT_EQ(ps.cachesize(), 0);
+  ASSERT_EQ(ps.cacheMode(), StripeCacheMode::NA);
+  ASSERT_EQ(ps.cacheSize(), 0);
   ASSERT_EQ(reader->getMetadataCache(), nullptr);
 }
 
@@ -331,14 +326,14 @@ class MockDataSink : public dwio::common::DataSink {
 
 TEST(WriterBaseTest, FlushWriterSinkUponClose) {
   auto config = std::make_shared<Config>();
-  auto pool = getDefaultScopedMemoryPool();
+  auto pool = getDefaultMemoryPool();
   auto sink = std::make_unique<MockDataSink>();
   MockDataSink* sinkPtr = sink.get();
   EXPECT_CALL(*sinkPtr, write(_)).Times(1);
   EXPECT_CALL(*sinkPtr, isBuffered()).WillOnce(Return(false));
   {
     auto writer = std::make_unique<WriterBase>(std::move(sink));
-    writer->initContext(config, pool->addScopedChild("test_writer_pool"));
+    writer->initContext(config, pool->addChild("test_writer_pool"));
     writer->close();
   }
 }

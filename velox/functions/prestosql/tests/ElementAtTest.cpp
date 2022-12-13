@@ -15,8 +15,9 @@
  */
 
 #include <optional>
+#include "velox/expression/Expr.h"
 #include "velox/functions/lib/SubscriptUtil.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::functions::test;
@@ -105,6 +106,62 @@ void ElementAtTest::testVariableInputMap<StringView>() {
 }
 
 } // namespace
+
+TEST_F(ElementAtTest, mapWithDictionaryKeys) {
+  {
+    auto keyIndices = makeIndices({6, 5, 4, 3, 2, 1, 0});
+    auto keys = wrapInDictionary(
+        keyIndices, makeFlatVector<int64_t>({0, 1, 2, 3, 4, 5, 6}));
+
+    // values vector is [100, 200, 300, 400, 500, 600, 0].
+    auto valuesIndices = makeIndices({1, 2, 3, 4, 5, 6, 0});
+    auto values = wrapInDictionary(
+        valuesIndices,
+        makeFlatVector<int64_t>({0, 100, 200, 300, 400, 500, 600}));
+
+    // map vector is [{6->100, 5->200, 4->300}, {3->400, 2->500, 1->600},
+    // {0->0}].
+    auto inputMap = makeMapVector({0, 3, 6}, keys, values);
+
+    auto inputIndices = makeFlatVector<int64_t>({5, 2, 3});
+    auto expected = makeNullableFlatVector<int64_t>({200, 500, std::nullopt});
+
+    auto result =
+        evaluate("element_at(c0, c1)", makeRowVector({inputMap, inputIndices}));
+    test::assertEqualVectors(expected, result);
+  }
+
+  {
+    auto result = evaluateOnce<int64_t>(
+        "element_at(map(array_constructor(85,22,79,76,10,80,57,31),array_constructor(14,10,16,15,12,11,17,13)),85)",
+        makeRowVector({}));
+    ASSERT_EQ(result, 14);
+  }
+}
+
+TEST_F(ElementAtTest, arrayWithDictionaryElements) {
+  {
+    auto elementsIndices = makeIndices({6, 5, 4, 3, 2, 1, 0});
+    auto elements = wrapInDictionary(
+        elementsIndices, makeFlatVector<int64_t>({0, 1, 2, 3, 4, 5, 6}));
+
+    // array vector is [[6, 5, 4], [3, 2, 1], [0]].
+    auto inputArray = makeArrayVector({0, 3, 6}, elements);
+    auto inputIndices = makeFlatVector<int32_t>({3, -3, 1});
+    auto expected = makeFlatVector<int64_t>({4, 3, 0});
+
+    auto result = evaluate(
+        "element_at(c0, c1)", makeRowVector({inputArray, inputIndices}));
+    test::assertEqualVectors(expected, result);
+  }
+
+  {
+    auto result = evaluateOnce<int64_t>(
+        "element_at(array_constructor(14,10,16,15,12,11,17,13), -3)",
+        makeRowVector({}));
+    ASSERT_EQ(result, 11);
+  }
+}
 
 TEST_F(ElementAtTest, constantInputArray) {
   {
@@ -486,61 +543,53 @@ TEST_F(ElementAtTest, errorStatesArray) {
       {arrayVector, indicesVector},
       expectedValueAt,
       [](auto row) { return row == 40; });
-
-  // Wrong data types for second parameter.
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, 1.1)", {arrayVector}, expectedValueAt),
-      std::invalid_argument);
-
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, 'bla')", {arrayVector}, expectedValueAt),
-      std::invalid_argument);
 }
 
-TEST_F(ElementAtTest, errorStatesMap) {
-  auto sizeAt = [](vector_size_t row) { return 2 + row % 7; };
-  auto expectedValueAt = [](vector_size_t row) { return 1 + row % 7; };
-  auto valueAt = [](vector_size_t /* idx */) { return 1; };
-  auto intKeyAt = [](vector_size_t /* idx */) { return 1; };
-  auto strKeyAt = [](vector_size_t /* idx */) { return StringView("hello!"); };
+TEST_F(ElementAtTest, emptyElementVector) {
+  auto keys = makeFlatVector<int64_t>({});
+  auto values = makeFlatVector<int64_t>({});
 
-  auto intMapVector =
-      makeMapVector<int64_t, int64_t>(kVectorSize, sizeAt, intKeyAt, valueAt);
-  auto strMapVector = makeMapVector<StringView, int64_t>(
-      kVectorSize, sizeAt, strKeyAt, valueAt);
+  auto offsets = allocateOffsets(2, pool());
+  auto rawOffsets = offsets->asMutable<vector_size_t>();
 
-  // Check if second parameter matches key type - constant type.
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, 'bla')", {intMapVector}, expectedValueAt),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, 0.5)", {intMapVector}, expectedValueAt),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, 0.5)", {strMapVector}, expectedValueAt),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, 10)", {strMapVector}, expectedValueAt),
-      std::invalid_argument);
+  auto sizes = allocateSizes(2, pool());
+  auto rawSizes = sizes->asMutable<vector_size_t>();
 
-  // Check if second parameter matches key type - variable type.
-  auto doubleVector =
-      makeFlatVector<double>(kVectorSize, [](vector_size_t) { return 0.9; });
-  auto varcharVector = makeFlatVector<StringView>(
-      kVectorSize, [](vector_size_t) { return StringView("asdf"); });
+  SelectivityVector rows(2);
+  rows.setValid(0, false);
+  rows.updateBounds();
 
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, C1)", {intMapVector, varcharVector}, expectedValueAt),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testElementAt<int64_t>(
-          "element_at(C0, C1)", {intMapVector, doubleVector}, expectedValueAt),
-      std::invalid_argument);
+  VectorPtr result;
+
+  // Test map vector.
+  {
+    auto map = std::make_shared<MapVector>(
+        pool(),
+        MAP(BIGINT(), BIGINT()),
+        nullptr,
+        2,
+        offsets,
+        sizes,
+        keys,
+        values);
+    auto expected = makeNullConstant(TypeKind::BIGINT, 2);
+
+    evaluate<SimpleVector<int64_t>>(
+        "element_at(c0, 1)", makeRowVector({map}), rows, result);
+    test::assertEqualVectors(expected, result);
+    evaluate<SimpleVector<int64_t>>(
+        "c0[1]", makeRowVector({map}), rows, result);
+    test::assertEqualVectors(expected, result);
+  }
+
+  // Test array vector.
+  {
+    auto array = std::make_shared<ArrayVector>(
+        pool(), ARRAY(BIGINT()), nullptr, 2, offsets, sizes, values);
+    auto expected = makeNullConstant(TypeKind::BIGINT, 2);
+
+    evaluate<SimpleVector<int64_t>>(
+        "element_at(c0, 1)", makeRowVector({array}), rows, result);
+    test::assertEqualVectors(expected, result);
+  }
 }

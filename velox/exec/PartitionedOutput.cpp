@@ -63,7 +63,7 @@ void Destination::serialize(
     vector_size_t begin,
     vector_size_t end) {
   if (!current_) {
-    current_ = std::make_unique<VectorStreamGroup>(memory_);
+    current_ = std::make_unique<VectorStreamGroup>(pool_);
     auto rowType = std::dynamic_pointer_cast<const RowType>(output->type());
     vector_size_t numRows = 0;
     for (vector_size_t i = begin; i < end; i++) {
@@ -84,7 +84,7 @@ BlockingReason Destination::flush(
   constexpr int32_t kMinMessageSize = 128;
   auto listener = bufferManager.newListener();
   IOBufOutputStream stream(
-      *current_->mappedMemory(),
+      *current_->pool(),
       listener.get(),
       std::max<int64_t>(kMinMessageSize, current_->size()));
   current_->flush(&stream);
@@ -95,8 +95,39 @@ BlockingReason Destination::flush(
   return bufferManager.enqueue(
       taskId_,
       destination_,
-      std::make_shared<SerializedPage>(stream.getIOBuf()),
+      std::make_unique<SerializedPage>(stream.getIOBuf()),
       future);
+}
+
+PartitionedOutput::PartitionedOutput(
+    int32_t operatorId,
+    DriverCtx* FOLLY_NONNULL ctx,
+    const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
+    : Operator(
+          ctx,
+          planNode->outputType(),
+          operatorId,
+          planNode->id(),
+          "PartitionedOutput"),
+      keyChannels_(toChannels(planNode->inputType(), planNode->keys())),
+      numDestinations_(planNode->numPartitions()),
+      replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
+      partitionFunction_(
+          numDestinations_ == 1
+              ? nullptr
+              : planNode->partitionFunctionFactory()(numDestinations_)),
+      outputChannels_(calculateOutputChannels(
+          planNode->inputType(),
+          planNode->outputType(),
+          planNode->outputType())),
+      bufferManager_(PartitionedOutputBufferManager::getInstance()),
+      maxBufferedBytes_(ctx->task->queryCtx()
+                            ->queryConfig()
+                            .maxPartitionedOutputBufferSize()) {
+  if (numDestinations_ == 1 || planNode->isBroadcast()) {
+    VELOX_CHECK(keyChannels_.empty());
+    VELOX_CHECK_NULL(partitionFunction_);
+  }
 }
 
 void PartitionedOutput::initializeInput(RowVectorPtr input) {
@@ -124,8 +155,7 @@ void PartitionedOutput::initializeDestinations() {
   if (destinations_.empty()) {
     auto taskId = operatorCtx_->taskId();
     for (int i = 0; i < numDestinations_; ++i) {
-      destinations_.push_back(
-          std::make_unique<Destination>(taskId, i, mappedMemory_));
+      destinations_.push_back(std::make_unique<Destination>(taskId, i, pool()));
     }
   }
 }
@@ -160,8 +190,11 @@ void PartitionedOutput::estimateRowSizes() {
 
 void PartitionedOutput::addInput(RowVectorPtr input) {
   // TODO Report outputBytes as bytes after serialization
-  stats_.outputBytes += input->retainedSize();
-  stats_.outputPositions += input->size();
+  {
+    auto lockedStats = stats_.wlock();
+    lockedStats->outputBytes += input->retainedSize();
+    lockedStats->outputPositions += input->size();
+  }
 
   initializeInput(std::move(input));
 
@@ -217,12 +250,16 @@ void PartitionedOutput::collectNullRows() {
   nullRows_.resize(size);
   nullRows_.clearAll();
 
+  decodedVectors_.resize(keyChannels_.size());
+
   for (auto i : keyChannels_) {
     auto& keyVector = input_->childAt(i);
     if (keyVector->mayHaveNulls()) {
-      auto* rawNulls = keyVector->flatRawNulls(rows_);
-      bits::orWithNegatedBits(
-          nullRows_.asMutableRange().bits(), rawNulls, 0, size);
+      decodedVectors_[i].decode(*keyVector, rows_);
+      if (auto* rawNulls = decodedVectors_[i].nulls()) {
+        bits::orWithNegatedBits(
+            nullRows_.asMutableRange().bits(), rawNulls, 0, size);
+      }
     }
   }
   nullRows_.updateBounds();
@@ -264,6 +301,7 @@ RowVectorPtr PartitionedOutput::getOutput() {
       }
     }
   } while (workLeft);
+
   if (blockedDestination) {
     // If we are going off-thread, we may as well make the output in
     // progress for other destinations available, unless it is too

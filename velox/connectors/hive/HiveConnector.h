@@ -15,17 +15,22 @@
  */
 #pragma once
 
-#include "velox/common/caching/DataCache.h"
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/dwio/common/CachedBufferedInput.h"
+#include "velox/dwio/common/IoStatistics.h"
+#include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
-#include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/OperatorUtils.h"
 #include "velox/expression/Expr.h"
 #include "velox/type/Filter.h"
 #include "velox/type/Subfield.h"
+
+namespace facebook::velox::connector {
+class WriteProtocol;
+} // namespace facebook::velox::connector
 
 namespace facebook::velox::connector::hive {
 
@@ -51,6 +56,10 @@ class HiveColumnHandle : public ColumnHandle {
     return dataType_;
   }
 
+  bool isPartitionKey() const {
+    return columnType_ == ColumnType::kPartitionKey;
+  }
+
  private:
   const std::string name_;
   const ColumnType columnType_;
@@ -63,10 +72,11 @@ using SubfieldFilters =
 class HiveTableHandle : public ConnectorTableHandle {
  public:
   HiveTableHandle(
+      std::string connectorId,
       const std::string& tableName,
       bool filterPushdownEnabled,
       SubfieldFilters subfieldFilters,
-      const std::shared_ptr<const core::ITypedExpr>& remainingFilter);
+      const core::TypedExprPtr& remainingFilter);
 
   ~HiveTableHandle() override;
 
@@ -78,7 +88,7 @@ class HiveTableHandle : public ConnectorTableHandle {
     return subfieldFilters_;
   }
 
-  const std::shared_ptr<const core::ITypedExpr>& remainingFilter() const {
+  const core::TypedExprPtr& remainingFilter() const {
     return remainingFilter_;
   }
 
@@ -88,41 +98,7 @@ class HiveTableHandle : public ConnectorTableHandle {
   const std::string tableName_;
   const bool filterPushdownEnabled_;
   const SubfieldFilters subfieldFilters_;
-  const std::shared_ptr<const core::ITypedExpr> remainingFilter_;
-};
-
-/**
- * Represents a request for Hive write
- */
-class HiveInsertTableHandle : public ConnectorInsertTableHandle {
- public:
-  explicit HiveInsertTableHandle(const std::string& filePath)
-      : filePath_(filePath) {}
-
-  const std::string& filePath() const {
-    return filePath_;
-  }
-
-  virtual ~HiveInsertTableHandle() {}
-
- private:
-  const std::string filePath_;
-};
-
-class HiveDataSink : public DataSink {
- public:
-  explicit HiveDataSink(
-      std::shared_ptr<const RowType> inputType,
-      const std::string& filePath,
-      velox::memory::MemoryPool* FOLLY_NONNULL memoryPool);
-
-  void appendData(VectorPtr input) override;
-
-  void close() override;
-
- private:
-  const std::shared_ptr<const RowType> inputType_;
-  std::unique_ptr<facebook::velox::dwrf::Writer> writer_;
+  const core::TypedExprPtr remainingFilter_;
 };
 
 class HiveConnector;
@@ -130,26 +106,26 @@ class HiveConnector;
 class HiveDataSource : public DataSource {
  public:
   HiveDataSource(
-      const std::shared_ptr<const RowType>& outputType,
+      const RowTypePtr& outputType,
       const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       FileHandleFactory* FOLLY_NONNULL fileHandleFactory,
       velox::memory::MemoryPool* FOLLY_NONNULL pool,
-      DataCache* FOLLY_NULLABLE dataCache,
       ExpressionEvaluator* FOLLY_NONNULL expressionEvaluator,
-      memory::MappedMemory* FOLLY_NONNULL mappedMemory,
+      memory::MemoryAllocator* FOLLY_NONNULL allocator,
       const std::string& scanId,
       folly::Executor* FOLLY_NULLABLE executor);
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
   void addDynamicFilter(
-      ChannelIndex outputChannel,
+      column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
-  RowVectorPtr next(uint64_t size) override;
+  std::optional<RowVectorPtr> next(uint64_t size, velox::ContinueFuture& future)
+      override;
 
   uint64_t getCompletedRows() override {
     return completedRows_;
@@ -172,7 +148,7 @@ class HiveDataSource : public DataSource {
  private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
   // passed. Populates filterEvalCtx_.selectedIndices and selectedBits if only
-  // some rows passed the filter. If no or all rows passed
+  // some rows passed the filter. If none or all rows passed
   // filterEvalCtx_.selectedIndices and selectedBits are not updated.
   vector_size_t evaluateRemainingFilter(RowVectorPtr& rowVector);
 
@@ -192,7 +168,7 @@ class HiveDataSource : public DataSource {
   /// Clear split_, reader_ and rowReader_ after split has been fully processed.
   void resetSplit();
 
-  const std::shared_ptr<const RowType> outputType_;
+  const RowTypePtr outputType_;
   // Column handles for the partition key columns keyed on partition key column
   // name.
   std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>
@@ -200,7 +176,6 @@ class HiveDataSource : public DataSource {
   FileHandleFactory* FOLLY_NONNULL fileHandleFactory_;
   velox::memory::MemoryPool* FOLLY_NONNULL pool_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
-  std::shared_ptr<dwrf::BufferedInputFactory> bufferedInputFactory_;
   std::shared_ptr<common::ScanSpec> scanSpec_;
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
@@ -208,14 +183,13 @@ class HiveDataSource : public DataSource {
   std::unique_ptr<dwio::common::Reader> reader_;
   std::unique_ptr<dwio::common::RowReader> rowReader_;
   std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;
-  std::shared_ptr<const RowType> readerOutputType_;
+  RowTypePtr readerOutputType_;
   bool emptySplit_;
 
   dwio::common::RuntimeStatistics runtimeStats_;
 
   VectorPtr output_;
   FileHandleCachedPtr fileHandle_;
-  DataCache* FOLLY_NULLABLE dataCache_;
   ExpressionEvaluator* FOLLY_NONNULL expressionEvaluator_;
   uint64_t completedRows_ = 0;
 
@@ -224,9 +198,22 @@ class HiveDataSource : public DataSource {
   SelectivityVector filterRows_;
   exec::FilterEvalCtx filterEvalCtx_;
 
-  memory::MappedMemory* const FOLLY_NONNULL mappedMemory_;
+  memory::MemoryAllocator* const FOLLY_NONNULL allocator_;
   const std::string& scanId_;
   folly::Executor* FOLLY_NULLABLE executor_;
+};
+
+/// Hive connector configs
+class HiveConfig {
+ public:
+  /// Can new data be inserted into existing partitions or existing
+  /// unpartitioned tables
+  static constexpr const char* FOLLY_NONNULL kImmutablePartitions =
+      "hive.immutable-partitions";
+
+  static bool isImmutablePartitions(const Config* FOLLY_NONNULL baseConfig) {
+    return baseConfig->get<bool>(kImmutablePartitions, true);
+  }
 };
 
 class HiveConnector final : public Connector {
@@ -234,11 +221,14 @@ class HiveConnector final : public Connector {
   explicit HiveConnector(
       const std::string& id,
       std::shared_ptr<const Config> properties,
-      std::unique_ptr<DataCache> dataCache,
       folly::Executor* FOLLY_NULLABLE executor);
 
+  bool canAddDynamicFilter() const override {
+    return true;
+  }
+
   std::shared_ptr<DataSource> createDataSource(
-      const std::shared_ptr<const RowType>& outputType,
+      const RowTypePtr& outputType,
       const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
@@ -250,13 +240,8 @@ class HiveConnector final : public Connector {
         columnHandles,
         &fileHandleFactory_,
         connectorQueryCtx->memoryPool(),
-        connectorQueryCtx->config()->get<std::string>(
-            kNodeSelectionStrategy, kNodeSelectionStrategyNoPreference) ==
-                kNodeSelectionStrategySoftAffinity
-            ? dataCache_.get()
-            : nullptr,
         connectorQueryCtx->expressionEvaluator(),
-        connectorQueryCtx->mappedMemory(),
+        connectorQueryCtx->allocator(),
         connectorQueryCtx->scanId(),
         executor_);
   }
@@ -266,18 +251,16 @@ class HiveConnector final : public Connector {
   }
 
   std::shared_ptr<DataSink> createDataSink(
-      std::shared_ptr<const RowType> inputType,
+      RowTypePtr inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
-      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx) override final {
+      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx,
+      std::shared_ptr<WriteProtocol> writeProtocol) override final {
     auto hiveInsertHandle = std::dynamic_pointer_cast<HiveInsertTableHandle>(
         connectorInsertTableHandle);
-    VELOX_CHECK(
-        hiveInsertHandle != nullptr,
-        "Hive connector expecting hive write handle!");
+    VELOX_CHECK_NOT_NULL(
+        hiveInsertHandle, "Hive connector expecting hive write handle!");
     return std::make_shared<HiveDataSink>(
-        inputType,
-        hiveInsertHandle->filePath(),
-        connectorQueryCtx->memoryPool());
+        inputType, hiveInsertHandle, connectorQueryCtx, writeProtocol);
   }
 
   folly::Executor* FOLLY_NULLABLE executor() const override {
@@ -285,16 +268,8 @@ class HiveConnector final : public Connector {
   }
 
  private:
-  std::unique_ptr<DataCache> dataCache_;
   FileHandleFactory fileHandleFactory_;
   folly::Executor* FOLLY_NULLABLE executor_;
-
-  static constexpr const char* FOLLY_NONNULL kNodeSelectionStrategy =
-      "node_selection_strategy";
-  static constexpr const char* FOLLY_NONNULL
-      kNodeSelectionStrategyNoPreference = "NO_PREFERENCE";
-  static constexpr const char* FOLLY_NONNULL
-      kNodeSelectionStrategySoftAffinity = "SOFT_AFFINITY";
 };
 
 class HiveConnectorFactory : public ConnectorFactory {
@@ -315,10 +290,8 @@ class HiveConnectorFactory : public ConnectorFactory {
   std::shared_ptr<Connector> newConnector(
       const std::string& id,
       std::shared_ptr<const Config> properties,
-      std::unique_ptr<DataCache> dataCache = nullptr,
       folly::Executor* FOLLY_NULLABLE executor = nullptr) override {
-    return std::make_shared<HiveConnector>(
-        id, properties, std::move(dataCache), executor);
+    return std::make_shared<HiveConnector>(id, properties, executor);
   }
 };
 

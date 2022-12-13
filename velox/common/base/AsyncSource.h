@@ -16,19 +16,23 @@
 
 #pragma once
 
+#include <folly/Unit.h>
+#include <folly/executors/QueuedImmediateExecutor.h>
+#include <folly/futures/Future.h>
 #include <functional>
 #include <memory>
 
-#include <folly/executors/QueuedImmediateExecutor.h>
-#include <folly/futures/Future.h>
+#include "velox/common/base/Exceptions.h"
+#include "velox/common/future/VeloxPromise.h"
 
 namespace facebook::velox {
 
 // A future-like object that prefabricates Items on an executor and
 // allows consumer threads to pick items as they are ready. If the
-// consumer needs the item before the executor started making it,
-// the consumer will make it instead. If multiple consumers request
-// the same item, exactly one gets it.
+// consumer needs the item before the executor started making it, the
+// consumer will make it instead. If multiple consumers request the
+// same item, exactly one gets it. Propagates exceptions to the
+// consumer.
 template <typename Item>
 class AsyncSource {
  public:
@@ -47,14 +51,25 @@ class AsyncSource {
       making_ = true;
       std::swap(make, make_);
     }
-    item_ = make();
+    std::unique_ptr<Item> item;
+    try {
+      item = make();
+    } catch (std::exception& e) {
+      std::lock_guard<std::mutex> l(mutex_);
+      exception_ = std::current_exception();
+    }
+    std::unique_ptr<ContinuePromise> promise;
     {
       std::lock_guard<std::mutex> l(mutex_);
-      making_ = false;
-      if (promise_) {
-        promise_->setValue(true);
-        promise_ = nullptr;
+      VELOX_CHECK_NULL(item_);
+      if (FOLLY_LIKELY(exception_ == nullptr)) {
+        item_ = std::move(item);
       }
+      making_ = false;
+      promise.swap(promise_);
+    }
+    if (promise != nullptr) {
+      promise->setValue();
     }
   }
 
@@ -63,9 +78,14 @@ class AsyncSource {
   // makes it on the caller thread.
   std::unique_ptr<Item> move() {
     std::function<std::unique_ptr<Item>()> make = nullptr;
-    folly::SemiFuture<bool> wait(false);
+    ContinueFuture wait;
     {
       std::lock_guard<std::mutex> l(mutex_);
+      // 'making_' can be read atomically, 'exception' maybe not. So test
+      // 'making' so as not to read half-assigned 'exception_'.
+      if (!making_ && exception_) {
+        std::rethrow_exception(exception_);
+      }
       if (item_) {
         return std::move(item_);
       }
@@ -74,7 +94,7 @@ class AsyncSource {
         return nullptr;
       }
       if (making_) {
-        promise_ = std::make_unique<folly::Promise<bool>>();
+        promise_ = std::make_unique<ContinuePromise>();
         wait = promise_->getSemiFuture();
       } else {
         if (!make_) {
@@ -85,26 +105,36 @@ class AsyncSource {
     }
     // Outside of mutex_.
     if (make) {
-      return make();
+      try {
+        return make();
+      } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> l(mutex_);
+        exception_ = std::current_exception();
+        throw;
+      }
     }
     auto& exec = folly::QueuedImmediateExecutor::instance();
     std::move(wait).via(&exec).wait();
     std::lock_guard<std::mutex> l(mutex_);
+    if (exception_) {
+      std::rethrow_exception(exception_);
+    }
     return std::move(item_);
   }
 
   // If true, move() will not block. But there is no guarantee that somebody
   // else will not get the item first.
   bool hasValue() const {
-    return item_ != nullptr;
+    return item_ != nullptr || exception_ != nullptr;
   }
 
  private:
   std::mutex mutex_;
   // True if 'prepare() is making the item.
   bool making_{false};
-  std::unique_ptr<folly::Promise<bool>> promise_;
+  std::unique_ptr<ContinuePromise> promise_;
   std::unique_ptr<Item> item_;
   std::function<std::unique_ptr<Item>()> make_;
+  std::exception_ptr exception_;
 };
 } // namespace facebook::velox

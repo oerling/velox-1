@@ -29,8 +29,9 @@ namespace {
 // the number of lineitems in an order is chosen at random with an average of
 // four. This function contains the row count for all authorized scale factors
 // (as described by the TPC-H spec), and approximates the remaining.
-constexpr size_t getLineItemRowCount(size_t scaleFactor) {
-  switch (scaleFactor) {
+constexpr size_t getLineItemRowCount(double scaleFactor) {
+  auto longScaleFactor = static_cast<long>(scaleFactor);
+  switch (longScaleFactor) {
     case 1:
       return 6'001'215;
     case 10:
@@ -77,9 +78,62 @@ std::vector<VectorPtr> allocateVectors(
   return vectors;
 }
 
+double decimalToDouble(int64_t value) {
+  return (double)value * 0.01;
+}
+
+Date toDate(std::string_view stringDate) {
+  Date date;
+  parseTo(stringDate, date);
+  return date;
+}
+
 } // namespace
 
-constexpr size_t getRowCount(Table table, size_t scaleFactor) {
+std::string_view toTableName(Table table) {
+  switch (table) {
+    case Table::TBL_PART:
+      return "part";
+    case Table::TBL_SUPPLIER:
+      return "supplier";
+    case Table::TBL_PARTSUPP:
+      return "partsupp";
+    case Table::TBL_CUSTOMER:
+      return "customer";
+    case Table::TBL_ORDERS:
+      return "orders";
+    case Table::TBL_LINEITEM:
+      return "lineitem";
+    case Table::TBL_NATION:
+      return "nation";
+    case Table::TBL_REGION:
+      return "region";
+  }
+  return ""; // make gcc happy.
+}
+
+Table fromTableName(std::string_view tableName) {
+  static std::unordered_map<std::string_view, Table> map{
+      {"part", Table::TBL_PART},
+      {"supplier", Table::TBL_SUPPLIER},
+      {"partsupp", Table::TBL_PARTSUPP},
+      {"customer", Table::TBL_CUSTOMER},
+      {"orders", Table::TBL_ORDERS},
+      {"lineitem", Table::TBL_LINEITEM},
+      {"nation", Table::TBL_NATION},
+      {"region", Table::TBL_REGION},
+  };
+
+  auto it = map.find(tableName);
+  if (it != map.end()) {
+    return it->second;
+  }
+  throw std::invalid_argument(
+      fmt::format("Invalid TPC-H table name: '{}'", tableName));
+}
+
+size_t getRowCount(Table table, double scaleFactor) {
+  VELOX_CHECK_GE(scaleFactor, 0, "Tpch scale factor must be non-negative");
   switch (table) {
     case Table::TBL_PART:
       return 200'000 * scaleFactor;
@@ -215,7 +269,7 @@ RowTypePtr getTableSchema(Table table) {
               BIGINT(),
               VARCHAR(),
               DOUBLE(),
-              VARCHAR(),
+              DATE(),
               VARCHAR(),
               VARCHAR(),
               INTEGER(),
@@ -255,9 +309,9 @@ RowTypePtr getTableSchema(Table table) {
               DOUBLE(),
               VARCHAR(),
               VARCHAR(),
-              VARCHAR(),
-              VARCHAR(),
-              VARCHAR(),
+              DATE(),
+              DATE(),
+              DATE(),
               VARCHAR(),
               VARCHAR(),
               VARCHAR(),
@@ -299,10 +353,14 @@ RowTypePtr getTableSchema(Table table) {
   return nullptr; // make gcc happy.
 }
 
+TypePtr resolveTpchColumn(Table table, const std::string& columnName) {
+  return getTableSchema(table)->findChild(columnName);
+}
+
 RowVectorPtr genTpchOrders(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto ordersRowType = getTableSchema(Table::TBL_ORDERS);
@@ -314,13 +372,14 @@ RowVectorPtr genTpchOrders(
   auto custKeyVector = children[1]->asFlatVector<int64_t>();
   auto orderStatusVector = children[2]->asFlatVector<StringView>();
   auto totalPriceVector = children[3]->asFlatVector<double>();
-  auto orderDateVector = children[4]->asFlatVector<StringView>();
+  auto orderDateVector = children[4]->asFlatVector<Date>();
   auto orderPriorityVector = children[5]->asFlatVector<StringView>();
   auto clerkVector = children[6]->asFlatVector<StringView>();
   auto shipPriorityVector = children[7]->asFlatVector<int32_t>();
   auto commentVector = children[8]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initOrder(offset);
   order_t order;
 
   // Dbgen generates the dataset one row at a time, so we need to transpose it
@@ -331,8 +390,8 @@ RowVectorPtr genTpchOrders(
     orderKeyVector->set(i, order.okey);
     custKeyVector->set(i, order.custkey);
     orderStatusVector->set(i, StringView(&order.orderstatus, 1));
-    totalPriceVector->set(i, order.totalprice);
-    orderDateVector->set(i, StringView(order.odate, strlen(order.odate)));
+    totalPriceVector->set(i, decimalToDouble(order.totalprice));
+    orderDateVector->set(i, toDate(order.odate));
     orderPriorityVector->set(
         i, StringView(order.opriority, strlen(order.opriority)));
     clerkVector->set(i, StringView(order.clerk, strlen(order.clerk)));
@@ -346,7 +405,7 @@ RowVectorPtr genTpchOrders(
 RowVectorPtr genTpchLineItem(
     size_t maxOrderRows,
     size_t ordersOffset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // We control the buffer size based on the orders table, then allocate the
   // underlying buffer using the worst case (orderVectorSize * 7).
@@ -370,14 +429,15 @@ RowVectorPtr genTpchLineItem(
 
   auto returnFlagVector = children[8]->asFlatVector<StringView>();
   auto lineStatusVector = children[9]->asFlatVector<StringView>();
-  auto shipDateVector = children[10]->asFlatVector<StringView>();
-  auto commitDateVector = children[11]->asFlatVector<StringView>();
-  auto receiptDateVector = children[12]->asFlatVector<StringView>();
+  auto shipDateVector = children[10]->asFlatVector<Date>();
+  auto commitDateVector = children[11]->asFlatVector<Date>();
+  auto receiptDateVector = children[12]->asFlatVector<Date>();
   auto shipInstructVector = children[13]->asFlatVector<StringView>();
   auto shipModeVector = children[14]->asFlatVector<StringView>();
   auto commentVector = children[15]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initOrder(ordersOffset);
   order_t order;
 
   // Dbgen can't generate lineItem one row at a time; instead, it generates
@@ -397,20 +457,17 @@ RowVectorPtr genTpchLineItem(
 
       lineNumberVector->set(lineItemCount + l, line.lcnt);
 
-      quantityVector->set(lineItemCount + l, line.quantity);
-      extendedPriceVector->set(lineItemCount + l, line.eprice);
-      discountVector->set(lineItemCount + l, line.discount);
-      taxVector->set(lineItemCount + l, line.tax);
+      quantityVector->set(lineItemCount + l, decimalToDouble(line.quantity));
+      extendedPriceVector->set(lineItemCount + l, decimalToDouble(line.eprice));
+      discountVector->set(lineItemCount + l, decimalToDouble(line.discount));
+      taxVector->set(lineItemCount + l, decimalToDouble(line.tax));
 
       returnFlagVector->set(lineItemCount + l, StringView(line.rflag, 1));
       lineStatusVector->set(lineItemCount + l, StringView(line.lstatus, 1));
 
-      shipDateVector->set(
-          lineItemCount + l, StringView(line.sdate, strlen(line.sdate)));
-      commitDateVector->set(
-          lineItemCount + l, StringView(line.cdate, strlen(line.cdate)));
-      receiptDateVector->set(
-          lineItemCount + l, StringView(line.rdate, strlen(line.rdate)));
+      shipDateVector->set(lineItemCount + l, toDate(line.sdate));
+      commitDateVector->set(lineItemCount + l, toDate(line.cdate));
+      receiptDateVector->set(lineItemCount + l, toDate(line.rdate));
 
       shipInstructVector->set(
           lineItemCount + l,
@@ -438,7 +495,7 @@ RowVectorPtr genTpchLineItem(
 RowVectorPtr genTpchPart(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto partRowType = getTableSchema(Table::TBL_PART);
@@ -456,7 +513,8 @@ RowVectorPtr genTpchPart(
   auto retailPriceVector = children[7]->asFlatVector<double>();
   auto commentVector = children[8]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initPart(offset);
   part_t part;
 
   // Dbgen generates the dataset one row at a time, so we need to transpose it
@@ -471,7 +529,7 @@ RowVectorPtr genTpchPart(
     typeVector->set(i, StringView(part.type, part.tlen));
     sizeVector->set(i, part.size);
     containerVector->set(i, StringView(part.container, strlen(part.container)));
-    retailPriceVector->set(i, part.retailprice);
+    retailPriceVector->set(i, decimalToDouble(part.retailprice));
     commentVector->set(i, StringView(part.comment, part.clen));
   }
   return std::make_shared<RowVector>(
@@ -481,7 +539,7 @@ RowVectorPtr genTpchPart(
 RowVectorPtr genTpchSupplier(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto supplierRowType = getTableSchema(Table::TBL_SUPPLIER);
@@ -497,7 +555,8 @@ RowVectorPtr genTpchSupplier(
   auto acctbalVector = children[5]->asFlatVector<double>();
   auto commentVector = children[6]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initSupplier(offset);
   supplier_t supp;
 
   // Dbgen generates the dataset one row at a time, so we need to transpose it
@@ -510,7 +569,7 @@ RowVectorPtr genTpchSupplier(
     addressVector->set(i, StringView(supp.address, supp.alen));
     nationKeyVector->set(i, supp.nation_code);
     phoneVector->set(i, StringView(supp.phone, strlen(supp.phone)));
-    acctbalVector->set(i, supp.acctbal);
+    acctbalVector->set(i, decimalToDouble(supp.acctbal));
     commentVector->set(i, StringView(supp.comment, supp.clen));
   }
   return std::make_shared<RowVector>(
@@ -524,7 +583,7 @@ RowVectorPtr genTpchSupplier(
 RowVectorPtr genTpchPartSupp(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto partSuppRowType = getTableSchema(Table::TBL_PARTSUPP);
@@ -538,7 +597,7 @@ RowVectorPtr genTpchPartSupp(
   auto supplyCostVector = children[3]->asFlatVector<double>();
   auto commentVector = children[4]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
   part_t part;
 
   // The iteration logic is a bit more complicated as partsupp records are
@@ -549,6 +608,8 @@ RowVectorPtr genTpchPartSupp(
   size_t partSuppIdx = offset % SUPP_PER_PART;
   size_t partSuppCount = 0;
 
+  dbgenIt.initPart(partIdx);
+
   do {
     dbgenIt.genPart(partIdx + 1, part);
 
@@ -558,7 +619,7 @@ RowVectorPtr genTpchPartSupp(
       partKeyVector->set(partSuppCount, partSupp.partkey);
       suppKeyVector->set(partSuppCount, partSupp.suppkey);
       availQtyVector->set(partSuppCount, partSupp.qty);
-      supplyCostVector->set(partSuppCount, partSupp.scost);
+      supplyCostVector->set(partSuppCount, decimalToDouble(partSupp.scost));
       commentVector->set(
           partSuppCount, StringView(partSupp.comment, partSupp.clen));
 
@@ -582,7 +643,7 @@ RowVectorPtr genTpchPartSupp(
 RowVectorPtr genTpchCustomer(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto customerRowType = getTableSchema(Table::TBL_CUSTOMER);
@@ -599,7 +660,8 @@ RowVectorPtr genTpchCustomer(
   auto mktSegmentVector = children[6]->asFlatVector<StringView>();
   auto commentVector = children[7]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initCustomer(offset);
   customer_t cust;
 
   // Dbgen generates the dataset one row at a time, so we need to transpose it
@@ -612,7 +674,7 @@ RowVectorPtr genTpchCustomer(
     addressVector->set(i, StringView(cust.address, cust.alen));
     nationKeyVector->set(i, cust.nation_code);
     phoneVector->set(i, StringView(cust.phone, strlen(cust.phone)));
-    acctBalVector->set(i, cust.acctbal);
+    acctBalVector->set(i, decimalToDouble(cust.acctbal));
     mktSegmentVector->set(
         i, StringView(cust.mktsegment, strlen(cust.mktsegment)));
     commentVector->set(i, StringView(cust.comment, cust.clen));
@@ -628,7 +690,7 @@ RowVectorPtr genTpchCustomer(
 RowVectorPtr genTpchNation(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto nationRowType = getTableSchema(Table::TBL_NATION);
@@ -641,7 +703,8 @@ RowVectorPtr genTpchNation(
   auto regionKeyVector = children[2]->asFlatVector<int64_t>();
   auto commentVector = children[3]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initNation(offset);
   code_t code;
 
   // Dbgen generates the dataset one row at a time, so we need to transpose it
@@ -661,7 +724,7 @@ RowVectorPtr genTpchNation(
 RowVectorPtr genTpchRegion(
     size_t maxRows,
     size_t offset,
-    size_t scaleFactor,
+    double scaleFactor,
     memory::MemoryPool* pool) {
   // Create schema and allocate vectors.
   auto regionRowType = getTableSchema(Table::TBL_REGION);
@@ -673,7 +736,8 @@ RowVectorPtr genTpchRegion(
   auto nameVector = children[1]->asFlatVector<StringView>();
   auto commentVector = children[2]->asFlatVector<StringView>();
 
-  auto dbgenIt = DBGenIterator::create(scaleFactor);
+  DBGenIterator dbgenIt(scaleFactor);
+  dbgenIt.initRegion(offset);
   code_t code;
 
   // Dbgen generates the dataset one row at a time, so we need to transpose it

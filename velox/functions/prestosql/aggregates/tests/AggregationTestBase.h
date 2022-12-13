@@ -18,10 +18,16 @@
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
+namespace facebook::velox::exec::test {
+class AssertQueryBuilder;
+}
+
 namespace facebook::velox::aggregate::test {
 
 class AggregationTestBase : public exec::test::OperatorTestBase {
  protected:
+  void SetUp() override;
+
   std::vector<RowVectorPtr>
   makeVectors(const RowTypePtr& rowType, vector_size_t size, int numVectors);
 
@@ -66,7 +72,8 @@ class AggregationTestBase : public exec::test::OperatorTestBase {
       const std::vector<std::string>& groupingKeys,
       const std::vector<std::string>& aggregates,
       const std::vector<std::string>& postAggregationProjections,
-      const std::string& duckDbSql);
+      std::function<std::shared_ptr<exec::Task>(
+          exec::test::AssertQueryBuilder& builder)> assertResults);
 
   /// Convenience version that allows to specify input data instead of a
   /// function to build Values plan node.
@@ -84,6 +91,39 @@ class AggregationTestBase : public exec::test::OperatorTestBase {
       const std::vector<std::string>& aggregates,
       const std::vector<std::string>& postAggregationProjections,
       const std::string& duckDbSql);
+
+  /// Convenience version that allows to specify input data instead of a
+  /// function to build Values plan node, and the expected result instead of a
+  /// DuckDB SQL query to validate the result.
+  void testAggregations(
+      const std::vector<RowVectorPtr>& data,
+      const std::vector<std::string>& groupingKeys,
+      const std::vector<std::string>& aggregates,
+      const std::vector<RowVectorPtr>& expectedResult);
+
+  /// Convenience version that allows to specify input data instead of a
+  /// function to build Values plan node, and the expected result instead of a
+  /// DuckDB SQL query to validate the result.
+  void testAggregations(
+      const std::vector<RowVectorPtr>& data,
+      const std::vector<std::string>& groupingKeys,
+      const std::vector<std::string>& aggregates,
+      const std::vector<std::string>& postAggregationProjections,
+      const std::vector<RowVectorPtr>& expectedResult);
+
+  /// Specifies that aggregate functions used in this test are not sensitive
+  /// to the order of inputs.
+  void allowInputShuffle() {
+    allowInputShuffle_ = true;
+  }
+  /// Specifies that aggregate functions used in this test are sensitive
+  /// to the order of inputs.
+  void disallowInputShuffle() {
+    allowInputShuffle_ = false;
+  }
+
+ private:
+  bool allowInputShuffle_{false};
 };
 
 } // namespace facebook::velox::aggregate::test

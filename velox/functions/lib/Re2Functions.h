@@ -21,11 +21,28 @@
 #include <re2/re2.h>
 
 #include "velox/expression/VectorFunction.h"
-#include "velox/expression/VectorUdfTypeSystem.h"
 #include "velox/functions/Udf.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::functions {
+
+/// Representation of different kinds of patterns.
+enum class PatternKind {
+  /// Pattern containing wildcard character '_' only, such as _, __, ____.
+  kExactlyN,
+  /// Pattern containing wildcard characters ('_' or '%') only with atleast one
+  /// '%', such as ___%, _%__.
+  kAtLeastN,
+  /// Pattern with no wildcard characters, such as 'presto', 'foo'.
+  kFixed,
+  /// Fixed pattern followed by one or more '%', such as 'hello%', 'foo%%%%'.
+  kPrefix,
+  /// Fixed pattern preceded by one or more '%', such as '%foo', '%%%hello'.
+  kSuffix,
+  /// Patterns which do not fit any of the above types, such as 'hello_world',
+  /// '_presto%'.
+  kGeneric,
+};
 
 /// The functions in this file use RE2 as the regex engine. RE2 is fast, but
 /// supports only a subset of PCRE syntax and in particular does not support
@@ -77,6 +94,12 @@ std::shared_ptr<exec::VectorFunction> makeRe2Extract(
     const bool emptyNoMatch);
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> re2ExtractSignatures();
+
+/// Return the pair {pattern kind, length of the fixed pattern} for fixed,
+/// prefix, and suffix patterns. Return the pair {pattern kind, number of '_'
+/// characters} for patterns with wildcard characters only. Return
+/// {kGenericPattern, 0} for generic patterns).
+std::pair<PatternKind, vector_size_t> determinePatternKind(StringView pattern);
 
 std::shared_ptr<exec::VectorFunction> makeLike(
     const std::string& name,

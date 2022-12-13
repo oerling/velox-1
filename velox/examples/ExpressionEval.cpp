@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
   // QueryCtx holds the metadata and configuration associated with a
   // particular query. This is shared between all threads of execution
   // for the same query (one object per query).
-  auto queryCtx = core::QueryCtx::createForTest();
+  auto queryCtx = std::make_shared<core::QueryCtx>();
 
   // ExecCtx holds structures associated with a single thread of execution
   // (one per thread). Each thread of execution requires a scoped memory pool,
@@ -64,8 +64,8 @@ int main(int argc, char** argv) {
   // pointer to this pool can be obtained using execCtx.pool().
   //
   // Optionally, one can control the per-thread memory cap by passing it as an
-  // argument to getDefaultScopedMemoryPool() - no limit by default.
-  auto pool = memory::getDefaultScopedMemoryPool();
+  // argument to getDefaultMemoryPool() - no limit by default.
+  auto pool = memory::getDefaultMemoryPool();
   core::ExecCtx execCtx{pool.get(), queryCtx.get()};
 
   // Next, let's create an expression tree to be executed in this example. On a
@@ -155,11 +155,11 @@ int main(int argc, char** argv) {
   // Voila! Here we do the actual evaluation. When this function returns, the
   // output vectors will be available in the results vector. Note that ExprSet's
   // logic is synchronous and single threaded.
-  exprSet.eval(rows, &evalCtx, &result);
+  exprSet.eval(rows, evalCtx, result);
 
   // Print the output vector, just for fun:
   const auto& outputVector = result.front();
-  for (size_t i = 0; i < outputVector->size(); ++i) {
+  for (vector_size_t i = 0; i < outputVector->size(); ++i) {
     LOG(INFO) << outputVector->toString(i);
   }
 

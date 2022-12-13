@@ -48,7 +48,7 @@ class TopN : public Operator {
   class Comparator {
    public:
     Comparator(
-        const std::shared_ptr<const RowType>& outputType,
+        const RowTypePtr& outputType,
         const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
             sortingKeys,
         const std::vector<core::SortOrder>& sortingOrders,
@@ -90,7 +90,7 @@ class TopN : public Operator {
     }
 
    private:
-    std::vector<std::pair<ChannelIndex, core::SortOrder>> keyInfo_;
+    std::vector<std::pair<column_index_t, core::SortOrder>> keyInfo_;
     RowContainer* rowContainer_;
   };
 

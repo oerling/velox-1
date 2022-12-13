@@ -16,19 +16,20 @@
 
 #pragma once
 
-#include "velox/dwio/dwrf/reader/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/common/SelectiveColumnReaderInternal.h"
+#include "velox/dwio/dwrf/reader/DwrfData.h"
 
 namespace facebook::velox::dwrf {
-class SelectiveTimestampColumnReader : public SelectiveColumnReader {
+class SelectiveTimestampColumnReader
+    : public dwio::common::SelectiveColumnReader {
  public:
   // The readers produce int64_t, the vector is Timestamps.
   using ValueType = int64_t;
 
   SelectiveTimestampColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
-      StripeStreams& stripe,
-      common::ScanSpec* scanSpec,
-      FlatMapContext flaatMapContext);
+      DwrfParams& params,
+      common::ScanSpec& scanSpec);
 
   void seekToRowGroup(uint32_t index) override;
   uint64_t skip(uint64_t numValues) override;
@@ -42,8 +43,8 @@ class SelectiveTimestampColumnReader : public SelectiveColumnReader {
   template <bool dense>
   void readHelper(RowSet rows);
 
-  std::unique_ptr<IntDecoder</*isSigned*/ true>> seconds_;
-  std::unique_ptr<IntDecoder</*isSigned*/ false>> nano_;
+  std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ true>> seconds_;
+  std::unique_ptr<dwio::common::IntDecoder</*isSigned*/ false>> nano_;
 
   // Values from copied from 'seconds_'. Nanos are in 'values_'.
   BufferPtr secondsValues_;

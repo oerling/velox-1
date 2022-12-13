@@ -14,29 +14,50 @@
 add_subdirectory(compression)
 add_subdirectory(encryption)
 add_subdirectory(exception)
+
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
+elseif(${VELOX_BUILD_TEST_UTILS})
+  add_subdirectory(tests/utils)
 endif()
+
 add_library(
   velox_dwio_common
+  BitConcatenation.cpp
+  BitPackDecoder.cpp
+  BufferedInput.cpp
+  CachedBufferedInput.cpp
+  CacheInputStream.cpp
   ColumnSelector.cpp
-  DataBuffer.cpp
+  Common.cpp
   DataSink.cpp
+  DecoderUtil.cpp
+  DirectDecoder.cpp
   DwioMetricsLog.cpp
+  FlatMapHelper.cpp
   InputStream.cpp
+  IntDecoder.cpp
   IoStatistics.cpp
   MemoryInputStream.cpp
   Options.cpp
+  Range.cpp
   ReaderFactory.cpp
   ScanSpec.cpp
+  ColumnLoader.cpp
+  SelectiveColumnReader.cpp
+  SelectiveRepeatedColumnReader.cpp
+  SelectiveStructColumnReader.cpp
+  SeekableInputStream.cpp
   TypeWithId.cpp)
 
 target_link_libraries(
   velox_dwio_common
   velox_buffer
-  velox_exception
-  velox_dwio_common_encryption
+  velox_caching
   velox_dwio_common_compression
+  velox_dwio_common_encryption
+  velox_dwio_common_exception
+  velox_exception
   velox_memory
   Boost::regex
   ${FOLLY_WITH_DEPENDENCIES}

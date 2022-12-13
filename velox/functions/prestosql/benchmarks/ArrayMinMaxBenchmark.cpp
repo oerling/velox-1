@@ -25,10 +25,6 @@
 
 namespace facebook::velox::functions {
 
-void registerVectorFunctionFastPath() {
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_min, "vector_fast_path");
-}
-
 void registerVectorFunctionBasic() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_min_basic, "vector_basic");
 }
@@ -53,7 +49,6 @@ class ArrayMinMaxBenchmark : public functions::test::FunctionBenchmarkBase {
   ArrayMinMaxBenchmark() : FunctionBenchmarkBase() {
     functions::prestosql::registerArrayFunctions();
     registerVectorFunctionBasic();
-    registerVectorFunctionFastPath();
     registerSimpleFunctions();
   }
 
@@ -111,11 +106,6 @@ BENCHMARK_MULTI(vectorNoFastPath) {
   return benchmark.runInteger("vector_basic");
 }
 
-BENCHMARK_MULTI(vectorFastPath) {
-  ArrayMinMaxBenchmark benchmark;
-  return benchmark.runInteger("vector_fast_path");
-}
-
 BENCHMARK_MULTI(simpleMinIntegerSkipNullIterator) {
   ArrayMinMaxBenchmark benchmark;
   return benchmark.runInteger("array_min_simple_skip_null_iterator");
@@ -140,7 +130,9 @@ BENCHMARK_MULTI(prestoSQLArrayMin) {
 } // namespace
 } // namespace facebook::velox::functions
 
-int main(int /*argc*/, char** /*argv*/) {
+int main(int argc, char** argv) {
+  folly::init(&argc, &argv);
+
   folly::runBenchmarks();
   return 0;
 }

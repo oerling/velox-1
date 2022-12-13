@@ -19,17 +19,16 @@
 #include <optional>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/expression/UdfTypeResolver.h"
 #include "velox/type/Type.h"
 #include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorTypeUtils.h"
 
 namespace facebook::velox::exec {
-
-template <typename T>
-struct VectorReader;
 
 template <typename T, typename B>
 struct VectorWriter;
@@ -68,30 +67,17 @@ struct PrimitiveWriter {
 };
 
 template <typename V>
-bool constexpr provide_std_interface = CppToType<V>::isPrimitiveType &&
-    !std::is_same<Varchar, V>::value && !std::is_same<Varbinary, V>::value;
+bool constexpr provide_std_interface =
+    CppToType<V>::isPrimitiveType && !std::is_same_v<Varchar, V> &&
+    !std::is_same_v<Varbinary, V> && !std::is_same_v<Any, V>;
 
+// bool is an exception, it requires commit but also provides std::interface.
 template <typename V>
 bool constexpr requires_commit =
-    !CppToType<V>::isPrimitiveType || std::is_same<Varchar, V>::value ||
-    std::is_same<bool, V>::value || std::is_same<Varbinary, V>::value;
+    !provide_std_interface<V> || std::is_same_v<bool, V>;
 
 // The object passed to the simple function interface that represent a single
 // array entry.
-//
-// General Interface:
-// - add_item()  : Add not null item and return proxy to the value to be
-// written.
-// - add_null()  : Add null item.
-// - size()      : Return the size of the array.
-//
-// Special std::like interfaces when V is primitive:
-// - resize(n)         : Resize to n, nullity not written.
-// - operator[](index) : Returns PrimitiveWriter which can be used to write
-// value and nullity at index.
-// - push_back(std::optional<v> value) : Increase size by 1, adding a value or
-// null.
-// - back() : Return PrimitiveWriter for the last element in the array.
 template <typename V>
 class ArrayWriter {
   using child_writer_t = VectorWriter<V, void>;
@@ -184,31 +170,66 @@ class ArrayWriter {
   }
 
   template <typename T = V>
-  typename std::enable_if<provide_std_interface<T>, PrimitiveWriter<T>>::type
+  typename std::enable_if_t<provide_std_interface<T>, PrimitiveWriter<T>>
   operator[](vector_size_t index) {
     VELOX_DCHECK_LT(index, length_, "out of bound access");
     return PrimitiveWriter<V>{elementsVector_, valuesOffset_ + index};
   }
 
   template <typename T = V>
-  typename std::enable_if<provide_std_interface<T>, PrimitiveWriter<T>>::type
+  typename std::enable_if_t<provide_std_interface<T>, PrimitiveWriter<T>>
   back() {
     return PrimitiveWriter<V>{elementsVector_, valuesOffset_ + length_ - 1};
   }
 
-  // Any vector type with std like interface.
+  // Any vector type with std-like optional-free interface.
+  template <typename T>
+  void copy_from(const T& data) {
+    length_ = 0;
+    add_items(data);
+  }
+
+  // Any vector type with std-like optional-free interface.
   template <typename VectorType>
-  void copy_from(const VectorType& data) {
+  void add_items(const VectorType& data) {
     if constexpr (provide_std_interface<V>) {
-      resize(data.size());
+      // TODO: accelerate this with memcpy.
+      auto start = length_;
+      resize(length_ + data.size());
       for (auto i = 0; i < data.size(); i++) {
-        this->operator[](i) = data[i];
+        this->operator[](i + start) = data[i];
       }
     } else {
-      length_ = 0;
       for (const auto& item : data) {
         auto& writer = add_item();
         writer.copy_from(item);
+      }
+    }
+  }
+
+  // Copy from nullable ArrayView.
+  void add_items(
+      const typename VectorExec::template resolver<Array<V>>::in_type&
+          arrayView) {
+    if constexpr (provide_std_interface<V>) {
+      // TODO: accelerate this with memcpy.
+      auto start = length_;
+      resize(length_ + arrayView.size());
+      for (auto i = 0; i < arrayView.size(); i++) {
+        if (arrayView[i].has_value()) {
+          this->operator[](i + start) = arrayView[i].value();
+        } else {
+          this->operator[](i + start) = std::nullopt;
+        }
+      }
+    } else {
+      for (const auto& item : arrayView) {
+        if (item.has_value()) {
+          auto& writer = add_item();
+          writer.copy_from(item.value());
+        } else {
+          add_null();
+        }
       }
     }
   }
@@ -231,6 +252,7 @@ class ArrayWriter {
   void initialize(VectorWriter<Array<V>, void>* writer) {
     childWriter_ = &writer->childWriter_;
     elementsVector_ = &childWriter_->vector();
+    valuesOffset_ = elementsVector_->size();
     childWriter_->ensureSize(1);
     elementsVectorCapacity_ = elementsVector_->size();
   }
@@ -240,8 +262,8 @@ class ArrayWriter {
   // Pointer to child vector writer.
   child_writer_t* childWriter_ = nullptr;
 
-  // Indicate if commit needs to be called on the childWriter_ before adding a
-  // new element or when finalize is called.
+  // Indicate if commit needs to be called on the childWriter_ before adding
+  // a new element or when finalize is called.
   bool needCommit_ = false;
 
   // Length of the array.
@@ -256,31 +278,17 @@ class ArrayWriter {
   template <typename A, typename B>
   friend struct VectorWriter;
 
+  template <typename... T>
+  friend class RowWriter;
+
+  friend class GenericWriter;
+
   template <typename T>
   friend class SimpleFunctionAdapter;
 };
 
-// The object passed to the simple function interface that represent a single
-// output map entry.
-//
-// General Interface:
-// - add_item()  : return references to key and value writers as tuple.
-// - add_null()  : return key writer, set value to null.
-// - size()      : return the size of the map.
-//
-// Special interface when K, V are primitives:
-// - emplace(key&, value& ) : add new item to the map.
-//
-// `resize` followed by `operator[]` allows for avoiding per item capacity check
-// and length increment and hence results in the best peformance. The map can be
-// viewed as std::vector<std::tuple<k, v>> for that aspect.
-//
-// - operator[](i)   : access item at index i, returns key and value writers.
-// - resize(n)       : add n uninitialized items to the end of the map.
-//
-// The interface does not guarantee that duplicates not written.
-//
-
+// The object passed to the simple function interface that represent a
+// single output map entry.
 template <typename K, typename V>
 class MapWriter {
   using key_writer_t = VectorWriter<K, void>;
@@ -327,6 +335,7 @@ class MapWriter {
   template <typename MapType>
   void copy_from(const MapType& data) {
     resize(0);
+    // TODO: acceletare this with memcpy.
     for (const auto& [key, value] : data) {
       auto [keyWriter, valueWriter] = add_item();
       // copy key
@@ -341,6 +350,41 @@ class MapWriter {
         valueWriter = value;
       } else {
         valueWriter.copy_from(value);
+      }
+    }
+  }
+
+  // Copy from nullable mapview.
+  void copy_from(
+      const typename VectorExec::template resolver<Map<K, V>>::in_type&
+          mapView) {
+    resize(0);
+    // TODO: acceletare this with memcpy.
+    for (const auto& [key, value] : mapView) {
+      if (value.has_value()) {
+        auto [keyWriter, valueWriter] = add_item();
+        // copy key
+        if constexpr (provide_std_interface<K>) {
+          keyWriter = key;
+        } else {
+          keyWriter.copy_from(key);
+        }
+
+        // copy value
+        if constexpr (provide_std_interface<V>) {
+          valueWriter = value.value();
+        } else {
+          valueWriter.copy_from(value.value());
+        }
+      } else {
+        // Value is null.
+        auto& keyWriter = add_null();
+        // copy key
+        if constexpr (provide_std_interface<K>) {
+          keyWriter = key;
+        } else {
+          keyWriter.copy_from(key);
+        }
       }
     }
   }
@@ -401,10 +445,11 @@ class MapWriter {
   }
 
   // Should be called by the user (VectorWriter) when null is committed to
-  // pretect against user miss-use (writing to the writer then committing null).
+  // pretect against user miss-use (writing to the writer then committing
+  // null).
   void finalizeNull() {
-    // No need to commit last written items and innerOffset_ stays the same for
-    // the next item.
+    // No need to commit last written items and innerOffset_ stays the same
+    // for the next item.
     length_ = 0;
   }
 
@@ -430,6 +475,8 @@ class MapWriter {
 
     keysVector_ = &keysWriter_->vector();
     valuesVector_ = &valuesWriter_->vector();
+
+    innerOffset_ = std::max(keysVector_->size(), valuesVector_->size());
 
     // Keys can never be null.
     keysVector_->resetNulls();
@@ -489,12 +536,17 @@ class MapWriter {
   template <typename A, typename B>
   friend struct VectorWriter;
 
+  template <typename... T>
+  friend class RowWriter;
+
+  friend class GenericWriter;
+
   template <typename T>
   friend class SimpleFunctionAdapter;
 };
 
-// The object passed to the simple function interface that represent a single
-// output row entry.
+// The object passed to the simple function interface that represent a
+// single output row entry.
 
 template <typename... T>
 class RowWriter;
@@ -520,6 +572,7 @@ class RowWriter {
   template <vector_size_t I>
   void set_null_at() {
     std::get<I>(childrenVectors_)->setNull(offset_, true);
+    std::get<I>(needCommit_) = false;
   }
 
   template <size_t I>
@@ -598,7 +651,7 @@ class RowWriter {
 
   template <std::size_t... Is>
   void assignImpl(const std::tuple<T...>& inputs, std::index_sequence<Is...>) {
-    ((exec::get<Is>(*this) = std::get<Is>(inputs)), ...);
+    ((std::get<Is>(childrenVectors_)->set(offset_, std::get<Is>(inputs))), ...);
   }
 
   template <std::size_t... Is>
@@ -614,12 +667,38 @@ class RowWriter {
 
   template <std::size_t... Is>
   void finalizeImpl(std::index_sequence<Is...>) {
+    using children_types = std::tuple<T...>;
     (
         [&]() {
-          if (std::get<Is>(needCommit_)) {
-            // Commit not null.
-            std::get<Is>(childrenWriters_).commit(true);
-            std::get<Is>(needCommit_) = false;
+          if constexpr (requires_commit<
+                            std::tuple_element_t<Is, children_types>>) {
+            if (std::get<Is>(needCommit_)) {
+              // Commit not null.
+              std::get<Is>(childrenWriters_).commit(true);
+              std::get<Is>(needCommit_) = false;
+            }
+          }
+        }(),
+        ...);
+  }
+
+  void finalizeNull() {
+    finalizeNullImpl(std::index_sequence_for<T...>{});
+  }
+
+  template <std::size_t... Is>
+  void finalizeNullImpl(std::index_sequence<Is...>) {
+    using children_types = std::tuple<T...>;
+    (
+        [&]() {
+          using current_t = std::tuple_element_t<Is, children_types>;
+          if constexpr (
+              !provide_std_interface<current_t> &&
+              !isOpaqueType<current_t>::value) {
+            if (UNLIKELY(std::get<Is>(needCommit_))) {
+              std::get<Is>(childrenWriters_).current().finalizeNull();
+              std::get<Is>(needCommit_) = false;
+            }
           }
         }(),
         ...);
@@ -639,8 +718,184 @@ class RowWriter {
   template <typename A, typename B>
   friend struct VectorWriter;
 
+  template <typename... A>
+  friend class RowWriter;
+
+  friend class GenericWriter;
+
   template <size_t I, class... Types>
   friend auto get(const RowWriter<Types...>& writer);
+};
+
+// GenericWriter represents a writer of any type. It has to be casted to one
+// specific type first in order to write values to a vector. A GenericWriter
+// must be casted to the same type throughout its lifetime, or an exception
+// will throw. Right now, only casting to the types in writer_variant_t is
+// supported. Casting to unsupported types causes compilation error.
+class GenericWriter {
+ public:
+  // Make sure user do not use these.
+  GenericWriter() = delete;
+
+  GenericWriter(const GenericWriter&) = delete;
+
+  GenericWriter& operator=(const GenericWriter&) = delete;
+
+  template <typename T>
+  using writer_ptr_t = std::shared_ptr<VectorWriter<T, void>>;
+
+  using writer_variant_t = std::variant<
+      writer_ptr_t<bool>,
+      writer_ptr_t<int8_t>,
+      writer_ptr_t<int16_t>,
+      writer_ptr_t<int32_t>,
+      writer_ptr_t<int64_t>,
+      writer_ptr_t<float>,
+      writer_ptr_t<double>,
+      writer_ptr_t<Varchar>,
+      writer_ptr_t<Varbinary>,
+      writer_ptr_t<Array<Any>>,
+      writer_ptr_t<Map<Any, Any>>,
+      writer_ptr_t<Row<Any>>,
+      writer_ptr_t<Row<Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<Row<Any, Any, Any, Any, Any, Any, Any, Any, Any, Any>>,
+      writer_ptr_t<DynamicRow>>;
+
+  GenericWriter(writer_variant_t& castWriter, TypePtr& castType, size_t& index)
+      : castWriter_{castWriter}, castType_{castType}, index_{index} {}
+
+  TypeKind kind() const {
+    return vector_->typeKind();
+  }
+
+  const TypePtr type() const {
+    return vector_->type();
+  }
+
+  template <typename ToType>
+  typename VectorWriter<ToType, void>::exec_out_t& castTo() {
+    VELOX_USER_CHECK(
+        CastTypeChecker<ToType>::check(type()),
+        "castTo type is not compatible with type of vector, vector type is {}, casted to type is {}",
+        type()->toString(),
+        std::is_same_v<ToType, DynamicRow>
+            ? "DynamicRow"
+            : CppToType<ToType>::create()->toString());
+
+    return *castToImpl<ToType, false>();
+  }
+
+  template <typename ToType>
+  typename VectorWriter<ToType, void>::exec_out_t* tryCastTo() {
+    if (!CastTypeChecker<ToType>::check(type())) {
+      return nullptr;
+    }
+
+    return castToImpl<ToType, true>();
+  }
+
+  template <typename T>
+  struct isRowWriter : public std::false_type {};
+
+  template <typename... T>
+  struct isRowWriter<writer_ptr_t<Row<T...>>> : public std::false_type {};
+
+  template <typename T>
+  void finalizeNullDispatch(T& writer) {
+    if constexpr (
+        std::is_same_v<T, writer_ptr_t<Array<Any>>> ||
+        std::is_same_v<T, writer_ptr_t<Map<Any, Any>>> ||
+        std::is_same_v<T, writer_ptr_t<DynamicRow>> || isRowWriter<T>::value) {
+      writer->current().finalizeNull();
+    }
+  }
+
+  void finalizeNull() {
+    if (castType_) {
+      std::visit(
+          [&](auto&& castedWriter) { finalizeNullDispatch(castedWriter); },
+          castWriter_);
+    }
+  }
+
+ private:
+  void initialize(BaseVector* vector) {
+    vector_ = vector;
+  }
+
+  template <typename ToType, bool tryCast>
+  typename VectorWriter<ToType, void>::exec_out_t* castToImpl() {
+    writer_ptr_t<ToType>* writer = nullptr;
+
+    if (castType_) {
+      writer = retrieveCastedWriter<ToType>();
+      if (!writer) {
+        if constexpr (tryCast) {
+          return nullptr;
+        } else {
+          VELOX_USER_FAIL(
+              "Not allowed to cast to two different types {} and {} within the same batch.",
+              castType_->toString(),
+              std::is_same_v<ToType, DynamicRow>
+                  ? "DynamicRow"
+                  : CppToType<ToType>::create()->toString());
+        }
+      }
+    } else {
+      writer = ensureWriter<ToType>();
+    }
+
+    auto& typedWriter = *writer;
+    typedWriter->setOffset(index_);
+    return &typedWriter->current();
+  }
+
+  // Assuming the writer has been casted before and castType_ is not null,
+  // return a pointer to the casted writer if B matches with the previous
+  // cast type exactly. Return nullptr otherwise.
+  template <typename B>
+  writer_ptr_t<B>* retrieveCastedWriter() {
+    DCHECK(castType_);
+
+    if (!std::holds_alternative<writer_ptr_t<B>>(castWriter_)) {
+      return nullptr;
+    }
+    return &std::get<writer_ptr_t<B>>(castWriter_);
+  }
+
+  template <typename B>
+  writer_ptr_t<B>* ensureWriter() {
+    static_assert(
+        !isGenericType<B>::value && !isVariadicType<B>::value,
+        "Cannot cast to VectorWriter of Generic or Variadic");
+
+    if constexpr (std::is_same_v<B, DynamicRow>) {
+      castType_ = vector_->type();
+    } else {
+      auto requestedType = CppToType<B>::create();
+      castType_ = std::move(requestedType);
+    }
+
+    castWriter_ = std::make_shared<VectorWriter<B, void>>();
+    auto& writer = std::get<writer_ptr_t<B>>(castWriter_);
+    writer->init(*vector_->as<typename TypeToFlatVector<B>::type>());
+    return &writer;
+  }
+
+  BaseVector* vector_;
+  writer_variant_t& castWriter_;
+  TypePtr& castType_;
+  size_t& index_;
+
+  template <typename A, typename B>
+  friend struct VectorWriter;
 };
 
 } // namespace facebook::velox::exec

@@ -21,6 +21,7 @@
 #include "velox/core/Context.h"
 
 #include <cstdio>
+#include <filesystem>
 
 namespace facebook::velox::filesystems {
 
@@ -75,28 +76,78 @@ class LocalFileSystem : public FileSystem {
     return "Local FS";
   }
 
-  std::unique_ptr<ReadFile> openFileForRead(std::string_view path) override {
+  inline std::string_view extractPath(std::string_view path) {
     if (path.find(kFileScheme) == 0) {
-      return std::make_unique<LocalReadFile>(path.substr(kFileScheme.length()));
+      return path.substr(kFileScheme.length());
     }
-    return std::make_unique<LocalReadFile>(path);
+    return path;
+  }
+
+  std::unique_ptr<ReadFile> openFileForRead(std::string_view path) override {
+    return std::make_unique<LocalReadFile>(extractPath(path));
   }
 
   std::unique_ptr<WriteFile> openFileForWrite(std::string_view path) override {
-    if (path.find(kFileScheme) == 0) {
-      return std::make_unique<LocalWriteFile>(
-          path.substr(kFileScheme.length()));
-    }
-    return std::make_unique<LocalWriteFile>(path);
+    return std::make_unique<LocalWriteFile>(extractPath(path));
   }
 
   void remove(std::string_view path) override {
-    auto file =
-        path.find(kFileScheme) == 0 ? path.substr(kFileScheme.length()) : path;
-    int32_t rc = ::remove(std::string(file).c_str());
-    if (rc < 0) {
-      VELOX_USER_FAIL("Failed to delete file {} with errno {}", file, errno);
+    auto file = extractPath(path);
+    int32_t rc = std::remove(std::string(file).c_str());
+    if (rc < 0 && std::filesystem::exists(file)) {
+      VELOX_USER_FAIL(
+          "Failed to delete file {} with errno {}", file, strerror(errno));
     }
+  }
+
+  void rename(
+      std::string_view oldPath,
+      std::string_view newPath,
+      bool overwrite) override {
+    auto oldFile = extractPath(oldPath);
+    auto newFile = extractPath(newPath);
+    if (!overwrite && exists(newPath)) {
+      VELOX_USER_FAIL(
+          "Failed to rename file {} to {} with as {} exists.",
+          oldFile,
+          newFile,
+          newFile);
+      return;
+    }
+    int32_t rc =
+        ::rename(std::string(oldFile).c_str(), std::string(newFile).c_str());
+    if (rc != 0) {
+      VELOX_USER_FAIL(
+          "Failed to rename file {} to {} with errno {}",
+          oldFile,
+          newFile,
+          folly::errnoStr(errno));
+    }
+  }
+
+  bool exists(std::string_view path) override {
+    auto file = extractPath(path);
+    return std::filesystem::exists(file);
+  }
+
+  virtual std::vector<std::string> list(std::string_view path) override {
+    auto directoryPath = extractPath(path);
+    const std::filesystem::path folder{directoryPath};
+    std::vector<std::string> filePaths;
+    for (auto const& entry : std::filesystem::directory_iterator{folder}) {
+      filePaths.push_back(entry.path());
+    }
+    return filePaths;
+  }
+
+  void mkdir(std::string_view path) override {
+    std::error_code ec;
+    VELOX_CHECK(
+        std::filesystem::create_directories(path, ec),
+        "Mkdir {} failed: {}, message: {}",
+        path,
+        ec,
+        ec.message());
   }
 
   static std::function<bool(std::string_view)> schemeMatcher() {

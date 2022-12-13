@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <cmath>
 #include <optional>
 
 #include <gmock/gmock.h>
 
 #include <velox/common/base/VeloxException.h>
 #include <velox/vector/SimpleVector.h>
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 namespace facebook::velox {
 namespace {
@@ -31,6 +32,10 @@ constexpr float kNanF = std::numeric_limits<float>::quiet_NaN();
 
 MATCHER(IsNan, "is NaN") {
   return arg && std::isnan(*arg);
+}
+
+MATCHER(IsInf, "is Infinity") {
+  return arg && std::isinf(*arg);
 }
 
 class ArithmeticTest : public functions::test::FunctionBaseTest {
@@ -399,6 +404,25 @@ TEST_F(ArithmeticTest, radians) {
   EXPECT_DOUBLE_EQ(-1.0000736613927508, radians(-57.3).value());
 }
 
+TEST_F(ArithmeticTest, degrees) {
+  const auto degrees = [&](std::optional<double> a) {
+    return evaluateOnce<double>("degrees(c0)", a);
+  };
+
+  EXPECT_EQ(std::nullopt, degrees(std::nullopt));
+  EXPECT_DOUBLE_EQ(57.295779513082323, degrees(1).value());
+  EXPECT_DOUBLE_EQ(179.90874767107849, degrees(3.14).value());
+  EXPECT_DOUBLE_EQ(kInf, degrees(kInf).value());
+  EXPECT_DOUBLE_EQ(0, degrees(0).value());
+  EXPECT_DOUBLE_EQ(-57.295779513082323, degrees(-1).value());
+  EXPECT_DOUBLE_EQ(-179.90874767107849, degrees(-3.14).value());
+  EXPECT_DOUBLE_EQ(-kInf, degrees(-kInf).value());
+  EXPECT_DOUBLE_EQ(
+      1.2748734119735194e-306,
+      degrees(std::numeric_limits<double>::min()).value());
+  EXPECT_DOUBLE_EQ(kInf, degrees(std::numeric_limits<double>::max()).value());
+}
+
 TEST_F(ArithmeticTest, signFloatingPoint) {
   const auto sign = [&](std::optional<double> a) {
     return evaluateOnce<double>("sign(c0)", a);
@@ -572,6 +596,14 @@ TEST_F(ArithmeticTest, pi) {
   EXPECT_EQ(piValue(), M_PI);
 }
 
+TEST_F(ArithmeticTest, e) {
+  const auto eulerConstantValue = [&]() {
+    return evaluateOnce<double>("e()", makeRowVector(ROW({}), 1));
+  };
+
+  EXPECT_EQ(eulerConstantValue(), M_E);
+}
+
 TEST_F(ArithmeticTest, clamp) {
   const auto clamp = [&](std::optional<int64_t> v,
                          std::optional<int64_t> lo,
@@ -591,8 +623,62 @@ TEST_F(ArithmeticTest, clamp) {
   EXPECT_EQ(1, clamp(1, -1, 1));
   // lo == hi != v => lo.
   EXPECT_EQ(-1, clamp(2, -1, -1));
-  // lo > hi => VeloxUserError.
-  EXPECT_THROW(clamp(0, 1, -1), VeloxUserError);
+  // lo == hi == v => v.
+  EXPECT_EQ(-1, clamp(-1, -1, -1));
+
+  // lo > hi -> hi.
+  EXPECT_EQ(clamp(-123, 1, -1), -1);
+  EXPECT_EQ(clamp(-1, 1, -1), -1);
+  EXPECT_EQ(clamp(0, 1, -1), -1);
+  EXPECT_EQ(clamp(1, 1, -1), -1);
+  EXPECT_EQ(clamp(2, 1, -1), -1);
+  EXPECT_EQ(clamp(123456, 1, -1), -1);
+}
+
+TEST_F(ArithmeticTest, truncate) {
+  const auto truncate = [&](std::optional<double> a,
+                            std::optional<int32_t> n = 0) {
+    return evaluateOnce<double>("truncate(c0,c1)", a, n);
+  };
+
+  EXPECT_EQ(truncate(0), 0);
+  EXPECT_EQ(truncate(1.5), 1);
+  EXPECT_EQ(truncate(-1.5), -1);
+  EXPECT_EQ(truncate(std::nullopt), std::nullopt);
+  EXPECT_THAT(truncate(kNan), IsNan());
+  EXPECT_THAT(truncate(kInf), IsInf());
+
+  EXPECT_EQ(truncate(0, 0), 0);
+  EXPECT_EQ(truncate(1.5, 0), 1);
+  EXPECT_EQ(truncate(-1.5, 0), -1);
+  EXPECT_EQ(truncate(std::nullopt, 0), std::nullopt);
+  EXPECT_EQ(truncate(1.5, std::nullopt), std::nullopt);
+  EXPECT_THAT(truncate(kNan, 0), IsNan());
+  EXPECT_THAT(truncate(kNan, 1), IsNan());
+  EXPECT_THAT(truncate(kInf, 0), IsInf());
+  EXPECT_THAT(truncate(kInf, 1), IsInf());
+
+  EXPECT_DOUBLE_EQ(truncate(1.5678, 2).value(), 1.56);
+  EXPECT_DOUBLE_EQ(truncate(-1.5678, 2).value(), -1.56);
+  EXPECT_DOUBLE_EQ(truncate(1.333, -1).value(), 0);
+  EXPECT_DOUBLE_EQ(truncate(3.54555, 2).value(), 3.54);
+  EXPECT_DOUBLE_EQ(truncate(1234, 1).value(), 1234);
+  EXPECT_DOUBLE_EQ(truncate(1234, -1).value(), 1230);
+  EXPECT_DOUBLE_EQ(truncate(1234.56, 1).value(), 1234.5);
+  EXPECT_DOUBLE_EQ(truncate(1234.56, -1).value(), 1230.0);
+  EXPECT_DOUBLE_EQ(truncate(1239.999, 2).value(), 1239.99);
+  EXPECT_DOUBLE_EQ(truncate(1239.999, -2).value(), 1200.0);
+  EXPECT_DOUBLE_EQ(
+      truncate(123456789012345678901.23, 3).value(), 123456789012345678901.23);
+  EXPECT_DOUBLE_EQ(
+      truncate(-123456789012345678901.23, 3).value(),
+      -123456789012345678901.23);
+  EXPECT_DOUBLE_EQ(
+      truncate(123456789123456.999, 2).value(), 123456789123456.99);
+  EXPECT_DOUBLE_EQ(truncate(123456789012345678901.0, -21).value(), 0.0);
+  EXPECT_DOUBLE_EQ(truncate(123456789012345678901.23, -21).value(), 0.0);
+  EXPECT_DOUBLE_EQ(truncate(123456789012345678901.0, -21).value(), 0.0);
+  EXPECT_DOUBLE_EQ(truncate(123456789012345678901.23, -21).value(), 0.0);
 }
 
 } // namespace

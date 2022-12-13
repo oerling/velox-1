@@ -24,10 +24,10 @@
 
 namespace facebook::velox::functions::kll {
 
-constexpr uint16_t kDefaultK = 200;
+constexpr uint32_t kDefaultK = 200;
 
 /// Estimate the proper k value to ensure the error bound epsilon.
-uint16_t kFromEpsilon(double epsilon);
+uint32_t kFromEpsilon(double epsilon);
 
 /// Implementation of KLL sketch that can achieve nearly optimal
 /// accuracy per retained item.
@@ -50,15 +50,18 @@ template <
     typename Compare = std::less<T>>
 struct KllSketch {
   KllSketch(
-      uint16_t k = kll::kDefaultK,
+      uint32_t k = kll::kDefaultK,
       const Allocator& = Allocator(),
       uint32_t seed = folly::Random::rand32());
 
   /// Cannot be called after insert().
-  void setK(uint16_t k);
+  void setK(uint32_t k);
 
   /// Add one new value to the sketch.
   void insert(T value);
+
+  /// Call this before serialization can optimize the space used.
+  void compact();
 
   /// Merge this sketch with values from multiple other sketches.
   /// @tparam Iter Iterator type dereferenceable to the same type as this sketch
@@ -85,6 +88,17 @@ struct KllSketch {
   std::vector<T, Allocator> estimateQuantiles(
       const folly::Range<Iter>& quantiles) const;
 
+  /// Estimate the values of the given quantiles.  This is more
+  /// efficient than calling estimateQuantile(double) repeatedly.
+  /// @tparam Iter Iterator type dereferenceable to double
+  /// @param quantiles Range of quantiles in [0, 1] to be estimated
+  /// @param out Pre-allocated memory to hold the result, must be at least as
+  ///  large as `quantiles`
+  template <typename Iter>
+  void estimateQuantiles(
+      const folly::Range<Iter>& quantiles,
+      T* FOLLY_NONNULL out) const;
+
   /// The total number of values being added to the sketch.
   size_t totalCount() const {
     return n_;
@@ -95,11 +109,11 @@ struct KllSketch {
 
   /// Serialize the sketch into bytes.
   /// @param out Pre-allocated memory at least serializedByteSize() in size
-  void serialize(char* out) const;
+  void serialize(char* FOLLY_NONNULL out) const;
 
   /// Deserialize a sketch from bytes.
   static KllSketch<T, Allocator, Compare> deserialize(
-      const char* data,
+      const char* FOLLY_NONNULL data,
       const Allocator& = Allocator(),
       uint32_t seed = folly::Random::rand32());
 
@@ -108,7 +122,7 @@ struct KllSketch {
   static KllSketch<T, Allocator, Compare> fromRepeatedValue(
       T value,
       size_t count,
-      uint16_t k = kll::kDefaultK,
+      uint32_t k = kll::kDefaultK,
       const Allocator& = Allocator(),
       uint32_t seed = folly::Random::rand32());
 
@@ -121,31 +135,13 @@ struct KllSketch {
 
   /// Merge with another deserialized sketch.  This is more efficient
   /// than deserialize then merge.
-  void mergeDeserialized(const char* data);
+  void mergeDeserialized(const char* FOLLY_NONNULL data);
 
- private:
-  KllSketch(const Allocator&, uint32_t seed);
-  uint32_t insertPosition();
-  int findLevelToCompact() const;
-  void addEmptyTopLevelToCompletelyFullSketch();
-
-  template <typename Iter>
-  void estimateQuantiles(const folly::Range<Iter>& fractions, T* out) const;
-
-  uint8_t numLevels() const {
-    return levels_.size() - 1;
-  }
-
-  uint32_t getNumRetained() const {
-    return levels_.back() - levels_[0];
-  }
-
-  uint32_t safeLevelSize(uint8_t level) const {
-    return level < numLevels() ? levels_[level + 1] - levels_[level] : 0;
-  }
+  /// Get frequencies of items being tracked.  The result is sorted by item.
+  std::vector<std::pair<T, uint64_t>> getFrequencies() const;
 
   struct View {
-    uint16_t k;
+    uint32_t k;
     size_t n;
     T minValue;
     T maxValue;
@@ -160,24 +156,46 @@ struct KllSketch {
       return level < numLevels() ? levels[level + 1] - levels[level] : 0;
     }
 
-    void deserialize(const char*);
+    void deserialize(const char* FOLLY_NONNULL);
   };
 
+  void mergeViews(const folly::Range<const View*>& views);
+
   View toView() const;
+
+ private:
+  KllSketch(const Allocator&, uint32_t seed);
+  void doInsert(T);
+  uint32_t insertPosition();
+  int findLevelToCompact() const;
+  void addEmptyTopLevelToCompletelyFullSketch();
+  void shiftItems(uint32_t delta);
+
+  uint8_t numLevels() const {
+    return levels_.size() - 1;
+  }
+
+  uint32_t getNumRetained() const {
+    return levels_.back() - levels_[0];
+  }
+
+  uint32_t safeLevelSize(uint8_t level) const {
+    return level < numLevels() ? levels_[level + 1] - levels_[level] : 0;
+  }
+
   static KllSketch<T, Allocator, Compare>
   fromView(const View&, const Allocator&, uint32_t seed);
-  void mergeViews(const folly::Range<const View*>& views);
 
   using AllocU32 = typename std::allocator_traits<
       Allocator>::template rebind_alloc<uint32_t>;
 
-  uint16_t k_;
+  uint32_t k_;
   Allocator allocator_;
 
-  // Cannot use sfmt19937 here because the object cannot be guaranteed
-  // to be placed on 16 bytes aligned memory (e.g. in
-  // HashStringAllocator).
-  std::independent_bits_engine<std::mt19937, 1, uint32_t> randomBit_;
+  // mt19937 uses too much memory (up to 5000 bytes), we choose to use
+  // default_random_engine here to sacrifice some randomness for memory.
+  std::independent_bits_engine<std::default_random_engine, 1, uint32_t>
+      randomBit_;
 
   size_t n_;
   T minValue_;

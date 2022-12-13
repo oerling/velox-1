@@ -2,8 +2,8 @@
 name = rocksdb
 
 [download]
-url = https://github.com/facebook/rocksdb/archive/refs/tags/v7.0.2.tar.gz
-sha256 = d808c87074aef7a4ea8e329b1b3de718a95cf2895dbe606036d75e66af10d05a
+url = https://github.com/facebook/rocksdb/archive/refs/tags/v7.7.3.tar.gz
+sha256 = b8ac9784a342b2e314c821f6d701148912215666ac5e9bdbccd93cf3767cb611
 
 [dependencies]
 lz4
@@ -11,7 +11,7 @@ snappy
 
 [build]
 builder = cmake
-subdir = rocksdb-7.0.2
+subdir = rocksdb-7.7.3
 
 [cmake.defines]
 WITH_SNAPPY=ON
@@ -38,4 +38,5 @@ ROCKSDB_INSTALL_ON_WINDOWS=ON
 # connect the snappy build outputs to rocksdb's custom logic here.
 # Let's just turn it off on windows.
 WITH_SNAPPY=OFF
-WITH_LZ4=OFF
+WITH_LZ4=ON
+ROCKSDB_SKIP_THIRDPARTY=ON

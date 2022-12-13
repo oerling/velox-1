@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include "velox/common/base/RandomUtil.h"
+#include "velox/common/base/tests/GTestUtils.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
 
@@ -24,40 +26,32 @@ namespace facebook::velox::aggregate::test {
 
 namespace {
 
-std::string
-functionCall(bool keyed, bool weighted, double percentile, double accuracy) {
+std::string functionCall(
+    bool keyed,
+    bool weighted,
+    double percentile,
+    double accuracy,
+    int percentileCount) {
   std::ostringstream buf;
   int columnIndex = keyed;
   buf << "approx_percentile(c" << columnIndex++;
   if (weighted) {
     buf << ", c" << columnIndex++;
   }
-  buf << ", " << percentile;
+  buf << ", ";
+  if (percentileCount == -1) {
+    buf << percentile;
+  } else {
+    buf << "ARRAY[";
+    for (int i = 0; i < percentileCount; ++i) {
+      buf << (i == 0 ? "" : ",") << percentile;
+    }
+    buf << ']';
+  }
   if (accuracy > 0) {
     buf << ", " << accuracy;
   }
   buf << ')';
-  return buf.str();
-}
-
-std::string label(
-    const char* prefix,
-    bool weighted,
-    bool singleAgg,
-    double percentile,
-    double accuracy) {
-  std::ostringstream buf;
-  buf << prefix;
-  if (weighted) {
-    buf << "_weighted";
-  }
-  if (singleAgg) {
-    buf << "_single_agg";
-  }
-  buf << '_' << percentile << "_pct";
-  if (accuracy > 0) {
-    buf << "_" << accuracy << "_accuracy";
-  }
   return buf.str();
 }
 
@@ -66,6 +60,7 @@ class ApproxPercentileTest : public AggregationTestBase {
   void SetUp() override {
     AggregationTestBase::SetUp();
     random::setSeed(0);
+    allowInputShuffle();
   }
 
   template <typename T>
@@ -75,28 +70,23 @@ class ApproxPercentileTest : public AggregationTestBase {
       double percentile,
       double accuracy,
       T expectedResult) {
-    auto call = functionCall(false, weights.get(), percentile, accuracy);
+    SCOPED_TRACE(fmt::format(
+        "weighted={} percentile={} accuracy={}",
+        weights != nullptr,
+        percentile,
+        accuracy));
     auto rows =
         weights ? makeRowVector({values, weights}) : makeRowVector({values});
-    auto op =
-        PlanBuilder().values({rows}).singleAggregation({}, {call}).planNode();
-    assertQuery(
-        op,
-        fmt::format(
-            "/* {} */ SELECT {}",
-            label("global", weights.get(), false, percentile, accuracy),
-            expectedResult));
-    op = PlanBuilder()
-             .values({rows})
-             .partialAggregation({}, {call})
-             .finalAggregation()
-             .planNode();
-    assertQuery(
-        op,
-        fmt::format(
-            "/* {} */ SELECT {}",
-            label("global", weights.get(), true, percentile, accuracy),
-            expectedResult));
+    testAggregations(
+        {rows},
+        {},
+        {functionCall(false, weights.get(), percentile, accuracy, -1)},
+        fmt::format("SELECT {}", expectedResult));
+    testAggregations(
+        {rows},
+        {},
+        {functionCall(false, weights.get(), percentile, accuracy, 3)},
+        fmt::format("SELECT ARRAY[{0},{0},{0}]", expectedResult));
   }
 
   void testGroupByAgg(
@@ -106,20 +96,45 @@ class ApproxPercentileTest : public AggregationTestBase {
       double percentile,
       double accuracy,
       const RowVectorPtr& expectedResult) {
-    auto call = functionCall(true, weights.get(), percentile, accuracy);
     auto rows = weights ? makeRowVector({keys, values, weights})
                         : makeRowVector({keys, values});
-    auto op = PlanBuilder()
-                  .values({rows})
-                  .singleAggregation({"c0"}, {call})
-                  .planNode();
-    assertQuery(op, expectedResult);
-    op = PlanBuilder()
-             .values({rows})
-             .partialAggregation({"c0"}, {call})
-             .finalAggregation()
-             .planNode();
-    assertQuery(op, expectedResult);
+    testAggregations(
+        {rows},
+        {"c0"},
+        {functionCall(true, weights.get(), percentile, accuracy, -1)},
+        {expectedResult});
+    {
+      SCOPED_TRACE("Percentile array");
+      auto resultValues = expectedResult->childAt(1);
+      auto elements = BaseVector::create(
+          resultValues->type(), 3 * resultValues->size(), pool());
+      auto offsets = allocateOffsets(resultValues->size(), pool());
+      auto rawOffsets = offsets->asMutable<vector_size_t>();
+      auto sizes = allocateSizes(resultValues->size(), pool());
+      auto rawSizes = sizes->asMutable<vector_size_t>();
+      for (int i = 0; i < resultValues->size(); ++i) {
+        rawOffsets[i] = 3 * i;
+        rawSizes[i] = 3;
+        elements->copy(resultValues.get(), 3 * i + 0, i, 1);
+        elements->copy(resultValues.get(), 3 * i + 1, i, 1);
+        elements->copy(resultValues.get(), 3 * i + 2, i, 1);
+      }
+      auto expected = makeRowVector(
+          {expectedResult->childAt(0),
+           std::make_shared<ArrayVector>(
+               pool(),
+               ARRAY(elements->type()),
+               nullptr,
+               resultValues->size(),
+               offsets,
+               sizes,
+               elements)});
+      testAggregations(
+          {rows},
+          {"c0"},
+          {functionCall(true, weights.get(), percentile, accuracy, 3)},
+          {expected});
+    }
   }
 };
 
@@ -228,6 +243,95 @@ TEST_F(ApproxPercentileTest, largeWeightsGroupBy) {
       {makeFlatVector(std::vector<int32_t>{0, 1, 2, 3, 4, 5, 6}),
        makeFlatVector(std::vector<int32_t>{16, 17, 18, 19, 20, 21, 22})});
   testGroupByAgg(keys, values, weights, 0.5, -1, expectedResult);
+}
+
+/// Repro of "decodedPercentile_.isConstantMapping() Percentile argument must be
+/// constant for all input rows" error caused by (1) HashAggregation keeping a
+/// reference to input vectors when partial aggregation ran out of memory; (2)
+/// EvalCtx::moveOrCopyResult needlessly flattening constant vector result of a
+/// constant expression.
+TEST_F(ApproxPercentileTest, partialFull) {
+  // Make sure partial aggregation runs out of memory after first batch.
+  CursorParameters params;
+  params.queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+  params.queryCtx->setConfigOverridesUnsafe({
+      {core::QueryConfig::kMaxPartialAggregationMemory, "300000"},
+  });
+
+  auto data = {
+      makeRowVector({
+          makeFlatVector<int32_t>(1'024, [](auto row) { return row % 117; }),
+          makeFlatVector<int32_t>(1'024, [](auto /*row*/) { return 10; }),
+      }),
+      makeRowVector({
+          makeFlatVector<int32_t>(1'024, [](auto row) { return row % 5; }),
+          makeFlatVector<int32_t>(1'024, [](auto /*row*/) { return 15; }),
+      }),
+      makeRowVector({
+          makeFlatVector<int32_t>(1'024, [](auto row) { return row % 7; }),
+          makeFlatVector<int32_t>(1'024, [](auto /*row*/) { return 20; }),
+      }),
+  };
+
+  params.planNode =
+      PlanBuilder()
+          .values(data)
+          .project({"c0", "c1", "1", "0.9995", "0.001"})
+          .partialAggregation({"c0"}, {"approx_percentile(c1, p2, p3, p4)"})
+          .finalAggregation()
+          .planNode();
+
+  auto expected = makeRowVector({
+      makeFlatVector<int32_t>(117, [](auto row) { return row; }),
+      makeFlatVector<int32_t>(117, [](auto row) { return row < 7 ? 20 : 10; }),
+  });
+  exec::test::assertQuery(params, {expected});
+}
+
+TEST_F(ApproxPercentileTest, finalAggregateAccuracy) {
+  auto batch = makeRowVector(
+      {makeFlatVector<int32_t>(1000, [](auto row) { return row; })});
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  std::vector<std::shared_ptr<const core::PlanNode>> sources;
+  for (int i = 0; i < 10; ++i) {
+    sources.push_back(
+        PlanBuilder(planNodeIdGenerator)
+            .values({batch})
+            .partialAggregation({}, {"approx_percentile(c0, 0.005, 0.0001)"})
+            .planNode());
+  }
+  auto op = PlanBuilder(planNodeIdGenerator)
+                .localPartitionRoundRobin(sources)
+                .finalAggregation()
+                .planNode();
+  assertQuery(op, "SELECT 5");
+}
+
+TEST_F(ApproxPercentileTest, invalidEncoding) {
+  auto indices = AlignedBuffer::allocate<vector_size_t>(3, pool());
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  std::iota(rawIndices, rawIndices + indices->size(), 0);
+  auto percentiles = std::make_shared<ArrayVector>(
+      pool(),
+      ARRAY(DOUBLE()),
+      nullptr,
+      1,
+      AlignedBuffer::allocate<vector_size_t>(1, pool(), 0),
+      AlignedBuffer::allocate<vector_size_t>(1, pool(), 3),
+      BaseVector::wrapInDictionary(
+          nullptr, indices, 3, makeFlatVector<double>({0, 0.5, 1})));
+  auto rows = makeRowVector({
+      makeFlatVector<int32_t>(10, folly::identity),
+      BaseVector::wrapInConstant(1, 0, percentiles),
+  });
+  auto plan = PlanBuilder()
+                  .values({rows})
+                  .singleAggregation({}, {"approx_percentile(c0, c1)"})
+                  .planNode();
+  AssertQueryBuilder assertQuery(plan);
+  VELOX_ASSERT_THROW(
+      assertQuery.copyResults(pool()),
+      "Only flat encoding is allowed for percentile array elements");
 }
 
 } // namespace

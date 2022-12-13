@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#include <gtest/gtest.h>
-
-#include "velox/exec/Aggregate.h"
 #include "velox/exec/AggregateFunctionRegistry.h"
+#include <gtest/gtest.h>
+#include "velox/exec/Aggregate.h"
+#include "velox/exec/WindowFunction.h"
 #include "velox/functions/Registerer.h"
 #include "velox/type/Type.h"
 
@@ -72,28 +72,32 @@ class AggregateFunc : public Aggregate {
       char** /*groups*/,
       int32_t /*numGroups*/,
       VectorPtr* /*result*/) override {}
+  static std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures() {
+    std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures{
+        AggregateFunctionSignatureBuilder()
+            .returnType("bigint")
+            .intermediateType("array(bigint)")
+            .argumentType("bigint")
+            .argumentType("double")
+            .build(),
+        AggregateFunctionSignatureBuilder()
+            .typeVariable("T")
+            .returnType("T")
+            .intermediateType("array(T)")
+            .argumentType("T")
+            .argumentType("T")
+            .build(),
+        AggregateFunctionSignatureBuilder()
+            .returnType("date")
+            .intermediateType("date")
+            .build(),
+    };
+    return signatures;
+  }
 };
 
 bool registerAggregateFunc(const std::string& name) {
-  std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures{
-      AggregateFunctionSignatureBuilder()
-          .returnType("bigint")
-          .intermediateType("array(bigint)")
-          .argumentType("bigint")
-          .argumentType("double")
-          .build(),
-      AggregateFunctionSignatureBuilder()
-          .typeVariable("T")
-          .returnType("T")
-          .intermediateType("array(T)")
-          .argumentType("T")
-          .argumentType("T")
-          .build(),
-      AggregateFunctionSignatureBuilder()
-          .returnType("date")
-          .intermediateType("date")
-          .build(),
-  };
+  auto signatures = AggregateFunc::signatures();
 
   registerAggregateFunction(
       name,
@@ -119,6 +123,7 @@ class FunctionRegistryTest : public testing::Test {
  public:
   FunctionRegistryTest() {
     registerAggregateFunc("aggregate_func");
+    registerAggregateFunc("Aggregate_Func_Alias");
   }
 
   void checkEqual(const TypePtr& actual, const TypePtr& expected) {
@@ -165,6 +170,47 @@ TEST_F(FunctionRegistryTest, hasAggregateFunctionSignatureWrongArgType) {
   testResolveAggregateFunction("aggregate_func", {BIGINT()}, nullptr, nullptr);
   testResolveAggregateFunction(
       "aggregate_func", {BIGINT(), BIGINT(), BIGINT()}, nullptr, nullptr);
+}
+
+TEST_F(FunctionRegistryTest, functionNameInMixedCase) {
+  testResolveAggregateFunction(
+      "aggregatE_funC", {BIGINT(), DOUBLE()}, BIGINT(), ARRAY(BIGINT()));
+  testResolveAggregateFunction(
+      "aggregatE_funC_aliaS", {DOUBLE(), DOUBLE()}, DOUBLE(), ARRAY(DOUBLE()));
+}
+
+TEST_F(FunctionRegistryTest, getAggregateFunctionSignatures) {
+  auto functionSignatures = getAggregateFunctionSignatures();
+  auto aggregateFuncSignatures = functionSignatures["aggregate_func"];
+  std::vector<std::string> aggregateFuncSignaturesStr;
+  std::transform(
+      aggregateFuncSignatures.begin(),
+      aggregateFuncSignatures.end(),
+      std::back_inserter(aggregateFuncSignaturesStr),
+      [](auto& signature) { return signature->toString(); });
+
+  auto expectedSignatures = AggregateFunc::signatures();
+  std::vector<std::string> expectedSignaturesStr;
+  std::transform(
+      expectedSignatures.begin(),
+      expectedSignatures.end(),
+      std::back_inserter(expectedSignaturesStr),
+      [](auto& signature) { return signature->toString(); });
+
+  ASSERT_EQ(aggregateFuncSignaturesStr, expectedSignaturesStr);
+}
+
+TEST_F(FunctionRegistryTest, aggregateWindowFunctionSignature) {
+  auto windowFunctionSignatures = getWindowFunctionSignatures("aggregate_func");
+  ASSERT_EQ(windowFunctionSignatures->size(), 3);
+
+  std::set<std::string> functionSignatures;
+  for (const auto& signature : windowFunctionSignatures.value()) {
+    functionSignatures.insert(signature->toString());
+  }
+  ASSERT_EQ(functionSignatures.count("(bigint,double) -> bigint"), 1);
+  ASSERT_EQ(functionSignatures.count("() -> date"), 1);
+  ASSERT_EQ(functionSignatures.count("(T,T) -> T"), 1);
 }
 
 } // namespace facebook::velox::exec::test

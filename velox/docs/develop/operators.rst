@@ -35,6 +35,7 @@ TableScanNode               TableScan                                        Y
 FilterNode                  FilterProject
 ProjectNode                 FilterProject
 AggregationNode             HashAggregation or StreamingAggregation
+GroupIdNode                 GroupId
 HashJoinNode                HashProbe and HashBuild
 MergeJoinNode               MergeJoin
 CrossJoinNode               CrossJoinProbe and CrossJoinBuild
@@ -51,6 +52,7 @@ LocalMergeNode              LocalMerge
 LocalPartitionNode          LocalPartition and LocalExchange
 EnforceSingleRowNode        EnforceSingleRow
 AssignUniqueIdNode          AssignUniqueId
+WindowNode                  Window
 ==========================  ==============================================   ===========================
 
 Plan Nodes
@@ -139,6 +141,32 @@ each measure for each combination of the grouping keys.
    * - ignoreNullKeys
      - A boolean flag indicating whether the aggregation should drop rows with nulls in any of the grouping keys. Used to avoid unnecessary processing for an aggregation followed by an inner join on the grouping keys.
 
+.. _group-id-node:
+GroupIdNode
+~~~~~~~~~~~
+
+Duplicates the input for each of the specified grouping key sets. Used to
+implement aggregations over grouping sets.
+
+The output consists of grouping keys, followed by aggregation inputs,
+followed by the group ID column. The type of group ID column is BIGINT.
+
+.. list-table::
+   :widths: 10 30
+   :align: left
+   :header-rows: 1
+
+   * - Property
+     - Description
+   * - groupingSets
+     - List of grouping key sets. Keys within each set must be unique, but keys can repeat across the sets.
+   * - groupingKeyInfos
+     - The names and order of the grouping key columns in the output.
+   * - aggregationInputs
+     - Input columns to duplicate.
+   * - groupIdName
+     - The name for the group-id column that identifies the grouping set. Zero-based integer corresponding to the position of the grouping set in the 'groupingSets' list.
+
 HashJoinNode and MergeJoinNode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -163,7 +191,7 @@ and emitting results.
    * - Property
      - Description
    * - joinType
-     - Join type: inner, left, right, full, semi, anti. You can read about different join types in this `blog post <https://dataschool.com/how-to-teach-people-sql/sql-join-types-explained-visually/>`_.
+     - Join type: inner, left, right, full, left semi, anti. You can read about different join types in this `blog post <https://dataschool.com/how-to-teach-people-sql/sql-join-types-explained-visually/>`_.
    * - leftKeys
      - Columns from the left hand side input that are part of the equality condition. At least one must be specified.
    * - rightKeys
@@ -455,6 +483,38 @@ the nodes executing the same query stage in a distributed query execution.
      - Column name for the generated unique id column.
    * - taskUniqueId
      - A 24-bit integer to uniquely identify the task id across all the nodes.
+
+.. _window-node:
+WindowNode
+~~~~~~~~~~
+
+The Window operator is used to evaluate window functions. The operator adds columns
+for the window functions output at the end of the input columns.
+
+The window operator groups the input data into partitions based on the values
+of the partition columns. If no partition columns are specified, then all the input
+rows are considered to be in the same partition.
+Within each partition rows are ordered by the values of the sorting columns.
+The window function is computed for each row at a time in this order.
+If no sorting columns are specified then the order of the results is unspecified.
+
+.. list-table::
+  :widths: 10 30
+  :align: left
+  :header-rows: 1
+
+  * - Property
+    - Description
+  * - partitionKeys
+    - Partition by columns for the window functions.
+  * - sortingKeys
+    - Order by columns for the window functions.
+  * - sortingOrders
+    - Sorting order for each sorting key above. The supported sort orders are asc nulls first, asc nulls last, desc nulls first and desc nulls last.
+  * - windowColumnNames
+    - Output column names for each window function invocation in windowFunctions list below.
+  * - windowFunctions
+    - Window function calls with the frame clause. e.g row_number(), first_value(name) between range 10 preceding and current row. The default frame is between range unbounded preceding and current row.
 
 Examples
 --------

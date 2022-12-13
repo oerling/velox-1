@@ -17,8 +17,10 @@
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/futures/Future.h>
 #include <folly/portability/SysSyscall.h>
+#include <memory>
 
 #include "velox/common/future/VeloxPromise.h"
+#include "velox/common/time/CpuWallTimer.h"
 #include "velox/connectors/Connector.h"
 #include "velox/core/PlanNode.h"
 #include "velox/core/QueryCtx.h"
@@ -124,12 +126,21 @@ enum class BlockingReason {
   kWaitForSplit,
   kWaitForExchange,
   kWaitForJoinBuild,
-  kWaitForMemory
+  /// For a build operator, it is blocked waiting for the probe operators to
+  /// finish probing before build the next hash table from one of the previously
+  /// spilled partition data.
+  /// For a probe operator, it is blocked waiting for all its peer probe
+  /// operators to finish probing before notifying the build operators to build
+  /// the next hash table from the previously spilled data.
+  kWaitForJoinProbe,
+  kWaitForMemory,
+  kWaitForConnector,
+  /// Build operator is blocked waiting for all its peers to stop to run group
+  /// spill on all of them.
+  kWaitForSpill,
 };
 
 std::string blockingReasonToString(BlockingReason reason);
-
-using ContinueFuture = folly::SemiFuture<bool>;
 
 class BlockingState {
  public:
@@ -151,6 +162,12 @@ class BlockingState {
 
   BlockingReason reason() {
     return reason_;
+  }
+
+  /// Moves out the blocking future stored inside. Can be called only once. Used
+  /// in single-threaded execution.
+  ContinueFuture future() {
+    return std::move(future_);
   }
 
   /// Returns total number of drivers process wide that are currently in blocked
@@ -192,18 +209,30 @@ struct DriverCtx {
 
   const core::QueryConfig& queryConfig() const;
 
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool();
+  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool(
+      const core::PlanNodeId& planNodeId,
+      const std::string& operatorType);
 };
 
-class Driver {
+class Driver : public std::enable_shared_from_this<Driver> {
  public:
   Driver(
       std::unique_ptr<DriverCtx> driverCtx,
-      std::vector<std::unique_ptr<Operator>>&& operators);
-
-  static void run(std::shared_ptr<Driver> self);
+      std::vector<std::unique_ptr<Operator>> operators);
 
   static void enqueue(std::shared_ptr<Driver> instance);
+
+  /// Run the pipeline until it produces a batch of data or gets blocked. Return
+  /// the data produced or nullptr if pipeline finished processing and will not
+  /// produce more data. Return nullptr and set 'blockingState' if pipeline got
+  /// blocked.
+  ///
+  /// This API supports execution of a Task synchronously in the caller's
+  /// thread. The caller must use either this API or 'enqueue', but not both.
+  /// When using 'enqueue', the last operator in the pipeline (sink) must not
+  /// return any data from Operator::getOutput(). When using 'next', the last
+  /// operator must produce data that will be returned to caller.
+  RowVectorPtr next(std::shared_ptr<BlockingState>& blockingState);
 
   bool isOnThread() const {
     return state_.isOnThread();
@@ -229,14 +258,17 @@ class Driver {
 
   // Returns a subset of channels for which there are operators upstream from
   // filterSource that accept dynamically generated filters.
-  std::unordered_set<ChannelIndex> canPushdownFilters(
+  std::unordered_set<column_index_t> canPushdownFilters(
       const Operator* FOLLY_NONNULL filterSource,
-      const std::vector<ChannelIndex>& channels) const;
+      const std::vector<column_index_t>& channels) const;
 
   // Returns the Operator with 'planNodeId.' or nullptr if not
   // found. For example, hash join probe accesses the corresponding
   // build by id.
   Operator* FOLLY_NULLABLE findOperator(std::string_view planNodeId) const;
+
+  // Returns a list of all operators.
+  std::vector<Operator*> operators() const;
 
   void setError(std::exception_ptr exception);
 
@@ -254,18 +286,36 @@ class Driver {
   // closing non-running Drivers.
   void closeByTask();
 
+  BlockingReason blockingReason() const {
+    return blockingReason_;
+  }
+
  private:
   void enqueueInternal();
 
+  static void run(std::shared_ptr<Driver> self);
+
   StopReason runInternal(
       std::shared_ptr<Driver>& self,
-      std::shared_ptr<BlockingState>* FOLLY_NONNULL blockingState);
+      std::shared_ptr<BlockingState>& blockingState,
+      RowVectorPtr& result);
 
   void close();
 
   // Push down dynamic filters produced by the operator at the specified
   // position in the pipeline.
   void pushdownFilters(int operatorIndex);
+
+  /// If 'trackOperatorCpuUsage_' is true, returns initialized timer object to
+  /// track cpu and wall time of an operation. Returns null otherwise.
+  /// The delta CpuWallTiming object would be passes to 'func' upon destruction
+  /// of the timer.
+  template <typename F>
+  std::unique_ptr<DeltaCpuWallTimer<F>> createDeltaCpuWallTimer(F&& func) {
+    return trackOperatorCpuUsage_
+        ? std::make_unique<DeltaCpuWallTimer<F>>(std::move(func))
+        : nullptr;
+  }
 
   std::unique_ptr<DriverCtx> ctx_;
   std::atomic_bool closed_{false};
@@ -282,6 +332,8 @@ class Driver {
   std::vector<std::unique_ptr<Operator>> operators_;
 
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
+
+  bool trackOperatorCpuUsage_;
 };
 
 using OperatorSupplier = std::function<std::unique_ptr<Operator>(
@@ -323,7 +375,13 @@ struct DriverFactory {
       std::shared_ptr<ExchangeClient> exchangeClient,
       std::function<int(int pipelineId)> numDrivers);
 
-  std::shared_ptr<const core::PartitionedOutputNode> needsPartitionedOutput() {
+  bool supportsSingleThreadedExecution() const {
+    return !needsPartitionedOutput() && !needsExchangeClient() &&
+        !needsLocalExchange();
+  }
+
+  std::shared_ptr<const core::PartitionedOutputNode> needsPartitionedOutput()
+      const {
     VELOX_CHECK(!planNodes.empty());
     if (auto partitionedOutputNode =
             std::dynamic_pointer_cast<const core::PartitionedOutputNode>(
@@ -333,13 +391,15 @@ struct DriverFactory {
     return nullptr;
   }
 
-  bool needsExchangeClient() const {
+  /// Returns Exchange plan node ID if the pipeline receives data from an
+  /// exchange.
+  std::optional<core::PlanNodeId> needsExchangeClient() const {
     VELOX_CHECK(!planNodes.empty());
     if (auto exchangeNode = std::dynamic_pointer_cast<const core::ExchangeNode>(
             planNodes.front())) {
-      return true;
+      return exchangeNode->id();
     }
-    return false;
+    return std::nullopt;
   }
 
   /// Returns LocalPartition plan node ID if the pipeline gets data from a local

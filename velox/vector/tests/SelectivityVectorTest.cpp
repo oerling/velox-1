@@ -410,6 +410,26 @@ TEST(SelectivityVectorTest, resize) {
   ASSERT_TRUE(larger.isAllSelected());
 }
 
+TEST(SelectivityVectorTest, fillAndCompare) {
+  SelectivityVector first(100, true);
+  SelectivityVector second(100, false);
+  first.resize(10);
+  second.resize(10);
+  second.setAll();
+  // The significant 10 bits are equal, the rest are not. Expect == to be true.
+  EXPECT_TRUE(first == second);
+  first.resizeFill(200, false);
+  second.resizeFill(300, false);
+  EXPECT_FALSE(second.isAllSelected());
+  // Vectors with nothing selected are equal even if their max size differs.
+  EXPECT_FALSE(first != second);
+  first.resizeFill(100, true);
+  EXPECT_TRUE(first.isAllSelected());
+  second.resize(100);
+  second.setAll();
+  EXPECT_TRUE(first == second);
+}
+
 TEST(SelectivityVectorTest, select) {
   SelectivityVector first(64);
   SelectivityVector other(32, false);
@@ -426,7 +446,7 @@ TEST(SelectivityVectorTest, select) {
 
   SelectivityVector empty(0);
   empty.select(first);
-  ASSERT_FALSE(empty.isAllSelected());
+  ASSERT_EQ(empty, first);
 
   SelectivityVector bitAfter2(8);
   bitAfter2.setValid(0, false);
@@ -436,6 +456,41 @@ TEST(SelectivityVectorTest, select) {
   bitAfterCheck.setValid(3, true);
   bitAfterCheck.select(bitAfter2);
   assertIsValid(2, 8, bitAfterCheck, true);
+}
+
+TEST(SelectivityVectorTest, selectAndGrow) {
+  {
+    SelectivityVector a(5);
+    SelectivityVector b(7);
+    a.select(b);
+    ASSERT_EQ(a, b);
+  }
+
+  {
+    SelectivityVector a(5);
+    SelectivityVector b(10);
+    b.setValid(7, false);
+    b.updateBounds();
+
+    a.select(b);
+    ASSERT_EQ(a, b);
+  }
+
+  {
+    SelectivityVector a(5);
+    SelectivityVector b(10);
+    b.setValid(2, false);
+    b.setValid(7, false);
+    b.updateBounds();
+
+    a.select(b);
+
+    SelectivityVector expected(10);
+    expected.setValid(7, false);
+    expected.updateBounds();
+
+    ASSERT_EQ(a, expected);
+  }
 }
 
 // Sanity check for toString() method. Primarily to ensure the method doesn't

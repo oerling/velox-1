@@ -43,6 +43,9 @@ namespace facebook::velox::exec {
       case TypeKind::DATE: {                                             \
         return TEMPLATE_FUNC<TypeKind::DATE>(__VA_ARGS__);               \
       }                                                                  \
+      case TypeKind::INTERVAL_DAY_TIME: {                                \
+        return TEMPLATE_FUNC<TypeKind::INTERVAL_DAY_TIME>(__VA_ARGS__);  \
+      }                                                                  \
       case TypeKind::VARCHAR:                                            \
       case TypeKind::VARBINARY: {                                        \
         return TEMPLATE_FUNC<TypeKind::VARCHAR>(__VA_ARGS__);            \
@@ -180,7 +183,7 @@ template <typename T>
 bool VectorHasher::makeValueIdsFlatNoNulls(
     const SelectivityVector& rows,
     uint64_t* result) {
-  const auto* values = decoded_.values<T>();
+  const auto* values = decoded_.data<T>();
   if (isRange_ && tryMapToRange(values, rows, result)) {
     return true;
   }
@@ -210,7 +213,7 @@ template <typename T>
 bool VectorHasher::makeValueIdsFlatWithNulls(
     const SelectivityVector& rows,
     uint64_t* result) {
-  const auto* values = decoded_.values<T>();
+  const auto* values = decoded_.data<T>();
   const auto* nulls = decoded_.nulls();
 
   bool success = true;
@@ -247,7 +250,7 @@ bool VectorHasher::makeValueIdsDecoded(
   std::fill(cachedHashes_.begin(), cachedHashes_.end(), 0);
 
   auto indices = decoded_.indices();
-  auto values = decoded_.values<T>();
+  auto values = decoded_.data<T>();
 
   bool success = true;
   rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
@@ -288,7 +291,7 @@ bool VectorHasher::makeValueIdsDecoded<bool, true>(
     const SelectivityVector& rows,
     uint64_t* result) {
   auto indices = decoded_.indices();
-  auto values = decoded_.values<uint64_t>();
+  auto values = decoded_.data<uint64_t>();
 
   rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
     if (decoded_.isNullAt(row)) {
@@ -310,7 +313,7 @@ bool VectorHasher::makeValueIdsDecoded<bool, false>(
     const SelectivityVector& rows,
     uint64_t* result) {
   auto indices = decoded_.indices();
-  auto values = decoded_.values<uint64_t>();
+  auto values = decoded_.data<uint64_t>();
 
   rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
     bool value = bits::isBitSet(values, indices[row]);
@@ -321,10 +324,8 @@ bool VectorHasher::makeValueIdsDecoded<bool, false>(
 }
 
 bool VectorHasher::computeValueIds(
-    const BaseVector& values,
     const SelectivityVector& rows,
     raw_vector<uint64_t>& result) {
-  decoded_.decode(values, rows);
   return VALUE_ID_TYPE_DISPATCH(makeValueIds, typeKind_, rows, result.data());
 }
 
@@ -377,7 +378,8 @@ void VectorHasher::lookupValueIdsTyped(
     const DecodedVector& decoded,
     SelectivityVector& rows,
     raw_vector<uint64_t>& hashes,
-    uint64_t* result) const {
+    uint64_t* result,
+    bool noNulls) const {
   using T = typename TypeTraits<Kind>::NativeType;
   if (decoded.isConstantMapping()) {
     if (decoded.isNullAt(rows.begin())) {
@@ -397,21 +399,27 @@ void VectorHasher::lookupValueIdsTyped(
       });
     }
   } else if (decoded.isIdentityMapping()) {
-    rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
-      if (decoded.isNullAt(row)) {
-        if (multiplier_ == 1) {
-          result[row] = 0;
+    if (Kind == TypeKind::BIGINT && isRange_ && noNulls) {
+      lookupIdsRangeSimd<int64_t>(decoded, rows, result);
+    } else if (Kind == TypeKind::INTEGER && isRange_ && noNulls) {
+      lookupIdsRangeSimd<int32_t>(decoded, rows, result);
+    } else {
+      rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
+        if (decoded.isNullAt(row)) {
+          if (multiplier_ == 1) {
+            result[row] = 0;
+          }
+          return;
         }
-        return;
-      }
-      T value = decoded.valueAt<T>(row);
-      uint64_t id = lookupValueId(value);
-      if (id == kUnmappable) {
-        rows.setValid(row, false);
-        return;
-      }
-      result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
-    });
+        T value = decoded.valueAt<T>(row);
+        uint64_t id = lookupValueId(value);
+        if (id == kUnmappable) {
+          rows.setValid(row, false);
+          return;
+        }
+        result[row] = multiplier_ == 1 ? id : result[row] + multiplier_ * id;
+      });
+    }
     rows.updateBounds();
   } else {
     hashes.resize(decoded.base()->size());
@@ -440,11 +448,68 @@ void VectorHasher::lookupValueIdsTyped(
   }
 }
 
+template <typename T>
+void VectorHasher::lookupIdsRangeSimd(
+    const DecodedVector& decoded,
+    SelectivityVector& rows,
+    uint64_t* result) const {
+  static_assert(sizeof(T) == 8 || sizeof(T) == 4);
+  auto lower = xsimd::batch<T>::broadcast(min_);
+  auto upper = xsimd::batch<T>::broadcast(max_);
+  auto data = decoded.data<T>();
+  uint64_t offset = min_ - 1;
+  auto bits = rows.asMutableRange().bits();
+  bits::forBatches<xsimd::batch<T>::size>(
+      bits, rows.begin(), rows.end(), [&](auto index, auto /*mask*/) {
+        auto values = xsimd::batch<T>::load_unaligned(data + index);
+        uint64_t outOfRange =
+            simd::toBitMask(lower > values) | simd::toBitMask(values > upper);
+        if (outOfRange) {
+          bits[index / 64] &= ~(outOfRange << (index & 63));
+        }
+        if (outOfRange != bits::lowMask(xsimd::batch<T>::size)) {
+          if constexpr (sizeof(T) == 8) {
+            auto unsignedValues =
+                static_cast<xsimd::batch<typename std::make_unsigned<T>::type>>(
+                    values);
+            if (multiplier_ == 1) {
+              (unsignedValues - offset).store_unaligned(result + index);
+            } else {
+              (xsimd::batch<uint64_t>::load_unaligned(result + index) +
+               ((unsignedValues - offset) * multiplier_))
+                  .store_unaligned(result + index);
+            }
+          } else {
+            // Widen 8 to 2 x 4 since result is always 64 wide.
+            auto first4 = static_cast<xsimd::batch<uint64_t>>(
+                              simd::getHalf<int64_t, 0>(values)) -
+                offset;
+            auto next4 = static_cast<xsimd::batch<uint64_t>>(
+                             simd::getHalf<int64_t, 1>(values)) -
+                offset;
+            if (multiplier_ == 1) {
+              first4.store_unaligned(result + index);
+              next4.store_unaligned(result + index + first4.size);
+            } else {
+              (xsimd::batch<uint64_t>::load_unaligned(result + index) +
+               (first4 * multiplier_))
+                  .store_unaligned(result + index);
+              (xsimd::batch<uint64_t>::load_unaligned(
+                   result + index + first4.size) +
+               (next4 * multiplier_))
+                  .store_unaligned(result + index + first4.size);
+            }
+          }
+        }
+      });
+}
+
 void VectorHasher::lookupValueIds(
     const BaseVector& values,
     SelectivityVector& rows,
     ScratchMemory& scratchMemory,
-    raw_vector<uint64_t>& result) const {
+    raw_vector<uint64_t>& result,
+    bool noNulls) const {
   scratchMemory.decoded.decode(values, rows);
   VALUE_ID_TYPE_DISPATCH(
       lookupValueIdsTyped,
@@ -452,17 +517,37 @@ void VectorHasher::lookupValueIds(
       scratchMemory.decoded,
       rows,
       scratchMemory.hashes,
-      result.data());
+      result.data(),
+      noNulls);
 }
 
 void VectorHasher::hash(
-    const BaseVector& values,
     const SelectivityVector& rows,
     bool mix,
     raw_vector<uint64_t>& result) {
-  decoded_.decode(values, rows);
-  return VELOX_DYNAMIC_TYPE_DISPATCH(
-      hashValues, typeKind_, rows, mix, result.data());
+  VELOX_DYNAMIC_TYPE_DISPATCH(hashValues, typeKind_, rows, mix, result.data());
+}
+
+void VectorHasher::hashPrecomputed(
+    const SelectivityVector& rows,
+    bool mix,
+    raw_vector<uint64_t>& result) const {
+  rows.applyToSelected([&](vector_size_t row) {
+    result[row] =
+        mix ? bits::hashMix(result[row], precomputedHash_) : precomputedHash_;
+  });
+}
+
+void VectorHasher::precompute(const BaseVector& value) {
+  if (value.isNullAt(0)) {
+    precomputedHash_ = kNullHash;
+    return;
+  }
+
+  const SelectivityVector rows(1, true);
+  decoded_.decode(value, rows);
+  precomputedHash_ =
+      VELOX_DYNAMIC_TYPE_DISPATCH(hashOne, typeKind_, decoded_, 0);
 }
 
 void VectorHasher::analyze(
@@ -471,7 +556,7 @@ void VectorHasher::analyze(
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
-  return VALUE_ID_TYPE_DISPATCH(
+  VALUE_ID_TYPE_DISPATCH(
       analyzeTyped, typeKind_, groups, numGroups, offset, nullByte, nullMask);
 }
 
@@ -533,9 +618,12 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     bool nullAllowed) const {
   switch (typeKind_) {
     case TypeKind::TINYINT:
+      FOLLY_FALLTHROUGH;
     case TypeKind::SMALLINT:
+      FOLLY_FALLTHROUGH;
     case TypeKind::INTEGER:
-    case TypeKind::BIGINT: {
+      FOLLY_FALLTHROUGH;
+    case TypeKind::BIGINT:
       if (!distinctOverflow_) {
         std::vector<int64_t> values;
         values.reserve(uniqueValues_.size());
@@ -545,14 +633,88 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
 
         return common::createBigintValues(values, nullAllowed);
       }
-    }
+      FOLLY_FALLTHROUGH;
     default:
       // TODO Add support for strings.
       return nullptr;
   }
 }
 
-void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
+namespace {
+template <typename T>
+// Adds 'reserve' to either end of the range between 'min' and 'max' while
+// staying in the range of T.
+void extendRange(int64_t reserve, int64_t& min, int64_t& max) {
+  int64_t kMin = std::numeric_limits<T>::min();
+  int64_t kMax = std::numeric_limits<T>::max();
+  if (kMin + reserve + 1 > min) {
+    min = kMin;
+  } else {
+    min -= reserve;
+  }
+  if (kMax - reserve < max) {
+    max = kMax;
+  } else {
+    max += reserve;
+  }
+}
+
+// Adds 'reservePct' % to either end of the range between 'min' and 'max'
+// while staying in the range of 'kind'.
+void extendRange(
+    TypeKind kind,
+    int32_t reservePct,
+    int64_t& min,
+    int64_t& max) {
+  // The reserve is 2 + reservePct % of the range. Add 2 to make sure
+  // that a non-0 peercentage actually adds something for a small
+  // range.
+  int64_t reserve =
+      reservePct == 0 ? 0 : 2 + (max - min) * (reservePct / 100.0);
+  switch (kind) {
+    case TypeKind::BOOLEAN:
+      break;
+    case TypeKind::TINYINT:
+      extendRange<int8_t>(reserve, min, max);
+      break;
+    case TypeKind::SMALLINT:
+      extendRange<int16_t>(reserve, min, max);
+      break;
+    case TypeKind::INTEGER:
+    case TypeKind::DATE:
+      extendRange<int32_t>(reserve, min, max);
+      break;
+    case TypeKind::BIGINT:
+    case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY:
+      extendRange<int64_t>(reserve, min, max);
+      break;
+
+    default:
+      VELOX_FAIL("Unsupported VectorHasher typeKind {}", kind);
+  }
+}
+
+int64_t addIdReserve(size_t numDistinct, int32_t reservePct) {
+  // A merge of hashers in a hash join build may end up over the limit, so
+  // return that.
+  if (numDistinct > VectorHasher::kMaxDistinct) {
+    return numDistinct;
+  }
+  if (reservePct == VectorHasher::kNoLimit) {
+    return VectorHasher::kMaxDistinct;
+  }
+  // NOTE: 'kMaxDistinct' is a small value so no need to check overflow for
+  // reservation here.
+  return std::min<int64_t>(
+      VectorHasher::kMaxDistinct, numDistinct * (1 + (reservePct / 100.0)));
+}
+} // namespace
+
+void VectorHasher::cardinality(
+    int32_t reservePct,
+    uint64_t& asRange,
+    uint64_t& asDistincts) {
   if (typeKind_ == TypeKind::BOOLEAN) {
     hasRange_ = true;
     asRange = 3;
@@ -566,9 +728,17 @@ void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
     rangeOverflow_ = true;
     asRange = kRangeTooLarge;
   } else if (signedRange < kMaxRange) {
-    // If min is 10 and max is 20 then cardinality is 11 distinct
-    // values in the closed interval + 1 for null.
-    asRange = signedRange + 2;
+    // We check that after the extension by reservePct the range of max - min
+    // will still be in int64_t bounds.
+    VELOX_CHECK_GE(100, reservePct);
+    static_assert(kMaxRange < std::numeric_limits<uint64_t>::max() / 4);
+    // We pad the range by 'reservePct'%, half below and half above,
+    // while staying within bounds of the type. We do not pad the
+    // limits yet, this is done only when enabling range mode.
+    int64_t min = min_;
+    int64_t max = max_;
+    extendRange(type_->kind(), reservePct, min, max);
+    asRange = (max - min) + 2;
   } else {
     rangeOverflow_ = true;
     asRange = kRangeTooLarge;
@@ -577,17 +747,17 @@ void VectorHasher::cardinality(uint64_t& asRange, uint64_t& asDistincts) {
     asDistincts = kRangeTooLarge;
     return;
   }
-  // Count of values + 1 for null.
-  asDistincts = uniqueValues_.size() + 1;
+  // Padded count of values + 1 for null.
+  asDistincts = addIdReserve(uniqueValues_.size(), reservePct) + 1;
 }
 
-uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int64_t reserve) {
+uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int32_t reservePct) {
   VELOX_CHECK_NE(
       typeKind_,
       TypeKind::BOOLEAN,
       "A boolean VectorHasher should  always be by range");
   multiplier_ = multiplier;
-  rangeSize_ = uniqueValues_.size() + 1 + reserve;
+  rangeSize_ = addIdReserve(uniqueValues_.size(), reservePct) + 1;
   isRange_ = false;
   uint64_t result;
   if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
@@ -596,23 +766,13 @@ uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int64_t reserve) {
   return result;
 }
 
-uint64_t VectorHasher::enableValueRange(uint64_t multiplier, int64_t reserve) {
-  static constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
-  static constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
-  // Use reserve as padding above and below the range.
-  reserve /= 2;
+uint64_t VectorHasher::enableValueRange(
+    uint64_t multiplier,
+    int32_t reservePct) {
   multiplier_ = multiplier;
+  VELOX_CHECK_LE(0, reservePct);
   VELOX_CHECK(hasRange_);
-  if (kMin + reserve + 1 > min_) {
-    min_ = kMin;
-  } else {
-    min_ -= reserve;
-  }
-  if (kMax - reserve < max_) {
-    max_ = kMax;
-  } else {
-    max_ += reserve;
-  }
+  extendRange(type_->kind(), reservePct, min_, max_);
   isRange_ = true;
   // No overflow because max range is under 63 bits.
   if (typeKind_ == TypeKind::BOOLEAN) {

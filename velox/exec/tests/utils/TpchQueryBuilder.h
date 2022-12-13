@@ -23,7 +23,7 @@ namespace facebook::velox::exec::test {
 /// Contains the query plan and input data files keyed on source plan node ID.
 /// All data files use the same file format specified in 'dataFileFormat'.
 struct TpchPlan {
-  std::shared_ptr<core::PlanNode> plan;
+  core::PlanNodePtr plan;
   std::unordered_map<core::PlanNodeId, std::vector<std::string>> dataFiles;
   dwio::common::FileFormat dataFileFormat;
 };
@@ -77,9 +77,21 @@ class TpchQueryBuilder {
 
  private:
   TpchPlan getQ1Plan() const;
+  TpchPlan getQ3Plan() const;
+  TpchPlan getQ5Plan() const;
   TpchPlan getQ6Plan() const;
+  TpchPlan getQ7Plan() const;
+  TpchPlan getQ8Plan() const;
+  TpchPlan getQ9Plan() const;
+  TpchPlan getQ10Plan() const;
+  TpchPlan getQ12Plan() const;
   TpchPlan getQ13Plan() const;
+  TpchPlan getQ14Plan() const;
+  TpchPlan getQ15Plan() const;
+  TpchPlan getQ16Plan() const;
   TpchPlan getQ18Plan() const;
+  TpchPlan getQ19Plan() const;
+  TpchPlan getQ22Plan() const;
 
   const std::vector<std::string>& getTableFilePaths(
       const std::string& tableName) const {
@@ -104,6 +116,16 @@ class TpchQueryBuilder {
   static const std::unordered_map<std::string, std::vector<std::string>>
       kTables_;
   static const std::vector<std::string> kTableNames_;
+
+  static constexpr const char* kLineitem = "lineitem";
+  static constexpr const char* kCustomer = "customer";
+  static constexpr const char* kOrders = "orders";
+  static constexpr const char* kNation = "nation";
+  static constexpr const char* kRegion = "region";
+  static constexpr const char* kPart = "part";
+  static constexpr const char* kSupplier = "supplier";
+  static constexpr const char* kPartsupp = "partsupp";
+  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
 };
 
 } // namespace facebook::velox::exec::test

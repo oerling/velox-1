@@ -20,6 +20,7 @@
 
 #include <boost/intrusive_ptr.hpp>
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Range.h"
 #include "velox/common/base/SimdUtil.h"
@@ -147,15 +148,6 @@ class Buffer {
     mutable_ = isMutable;
   }
 
-  // Checks the magic number at capacity() to detect overrun. No-op
-  // for a BufferView. An overrun is qualitatively a
-  // process-terminating memory corruption. We do not kill the process
-  // here though but rather throw an error so that the the message and
-  // stack propagate to the library user. This may also happen in a
-  // ~AlignedBuffer, which will leak the memory but since the process
-  // is anyway already compromized this is not an issue.
-  virtual void checkEndGuard() const {}
-
   friend std::ostream& operator<<(std::ostream& os, const Buffer& buffer) {
     std::ios_base::fmtflags f(os.flags());
 
@@ -186,8 +178,32 @@ class Buffer {
   }
 
  protected:
-  // Writes a magic word at 'capacity_'. No-op for a BufferView.
-  virtual void setEndGuard() {}
+  // Writes a magic word at 'capacity_'. No-op for a BufferView. The actual
+  // logic is inside a separate virtual function, allowing override by derived
+  // classes. Because of the virtual function dispatch, it's unlikely the
+  // compiler can inline it, so we make it only called in the debug build.
+  void setEndGuard() {
+#ifndef NDEBUG
+    setEndGuardImpl();
+#endif
+  }
+
+  virtual void setEndGuardImpl() {}
+
+  void checkEndGuard() const {
+#ifndef NDEBUG
+    checkEndGuardImpl();
+#endif
+  }
+
+  // Checks the magic number at capacity() to detect overrun. No-op
+  // for a BufferView. An overrun is qualitatively a
+  // process-terminating memory corruption. We do not kill the process
+  // here though but rather throw an error so that the the message and
+  // stack propagate to the library user. This may also happen in a
+  // ~AlignedBuffer, which will leak the memory but since the process
+  // is anyway already compromized this is not an issue.
+  virtual void checkEndGuardImpl() const {}
 
   void setCapacity(size_t capacity) {
     capacity_ = capacity;
@@ -303,8 +319,9 @@ class AlignedBuffer : public Buffer {
       size_t numElements,
       velox::memory::MemoryPool* pool,
       const std::optional<T>& initValue = std::nullopt) {
-    size_t size = numElements * sizeof(T);
-    size_t preferredSize = pool->getPreferredSize(size + kPaddedSize);
+    size_t size = checkedMultiply(numElements, sizeof(T));
+    size_t preferredSize =
+        pool->getPreferredSize(checkedPlus<size_t>(size, kPaddedSize));
     void* memory = pool->allocate(preferredSize);
     auto* buffer = new (memory) ImplClass<T>(pool, preferredSize - kPaddedSize);
     // set size explicitly instead of setSize because `fillNewMemory` already
@@ -324,7 +341,7 @@ class AlignedBuffer : public Buffer {
       BufferPtr* buffer,
       size_t numElements,
       const std::optional<T>& initValue = std::nullopt) {
-    auto size = numElements * sizeof(T);
+    auto size = checkedMultiply(numElements, sizeof(T));
     Buffer* old = buffer->get();
     VELOX_CHECK(old, "Buffer doesn't exist in reallocate");
     old->checkEndGuard();
@@ -343,7 +360,6 @@ class AlignedBuffer : public Buffer {
       return;
     }
     velox::memory::MemoryPool* pool = old->pool();
-    size_t preferredSize = pool->getPreferredSize(size + kPaddedSize);
     if (!is_pod_like_v<T>) {
       // We always take this code path for non-POD types because
       // pool->reallocate below would move memory around without calling move
@@ -368,6 +384,9 @@ class AlignedBuffer : public Buffer {
       *buffer = std::move(newBuffer);
       return;
     }
+    auto oldCapacity = checkedPlus<size_t>(old->capacity(), kPaddedSize);
+    auto preferredSize =
+        pool->getPreferredSize(checkedPlus<size_t>(size, kPaddedSize));
     // Make the buffer no longer owned by '*buffer' because reallocate
     // may free the old buffer. Reassigning the new buffer to
     // '*buffer' would be a double free.
@@ -375,8 +394,13 @@ class AlignedBuffer : public Buffer {
     // Decrement the reference count.  No need to check, we just
     // checked old->unique().
     old->referenceCount_.fetch_sub(1);
-    void* newPtr =
-        pool->reallocate(old, old->capacity() + kPaddedSize, preferredSize);
+    void* newPtr;
+    try {
+      newPtr = pool->reallocate(old, oldCapacity, preferredSize);
+    } catch (const std::exception&) {
+      *buffer = old;
+      throw;
+    }
     if (newPtr == reinterpret_cast<void*>(old)) {
       // The pointer did not change. Put the old pointer back in the
       // smart pointer and adjust capacity.
@@ -407,10 +431,12 @@ class AlignedBuffer : public Buffer {
     size_t bytes = sizeof(T) * numItems;
     size_t size = (*buffer)->size();
     size_t capacity = (*buffer)->capacity();
-    if (size + bytes > capacity) {
-      reallocate<char>(buffer, std::max(2 * capacity, size + bytes));
+    size_t newSize = checkedPlus(size, bytes);
+    if (newSize > capacity) {
+      reallocate<char>(
+          buffer, std::max(checkedMultiply<size_t>(2, capacity), newSize));
     }
-    (*buffer)->setSize(size + bytes);
+    (*buffer)->setSize(newSize);
     auto startOfCopy = (*buffer)->asMutable<uint8_t>() + size;
     memcpy(startOfCopy, items, bytes);
     return reinterpret_cast<T*>(startOfCopy);
@@ -476,19 +502,19 @@ class AlignedBuffer : public Buffer {
     }
   }
 
-  void checkEndGuard() const override {
+ protected:
+  void setEndGuardImpl() override {
+    *reinterpret_cast<uint64_t*>(data_ + capacity_) = kEndGuard;
+  }
+
+  void checkEndGuardImpl() const override {
     if (*reinterpret_cast<uint64_t*>(data_ + capacity_) != kEndGuard) {
       VELOX_FAIL("Write past Buffer capacity() {}", capacity_);
     }
   }
 
- protected:
-  void setEndGuard() override {
-    *reinterpret_cast<uint64_t*>(data_ + capacity_) = kEndGuard;
-  }
-
   void freeToPool() override {
-    pool_->free(this, kPaddedSize + capacity_);
+    pool_->free(this, checkedPlus<size_t>(kPaddedSize, capacity_));
   }
 };
 
@@ -603,7 +629,8 @@ class NonPODAlignedBuffer : public Buffer {
   }
 
   void freeToPool() override {
-    pool_->free(this, AlignedBuffer::kPaddedSize + capacity_);
+    pool_->free(
+        this, checkedPlus<size_t>(AlignedBuffer::kPaddedSize, capacity_));
   }
 
   // Needs to use this class from static methods of AlignedBuffer
@@ -615,8 +642,12 @@ class NonPODAlignedBuffer : public Buffer {
 template <typename Releaser>
 class BufferView : public Buffer {
  public:
-  static BufferPtr create(const uint8_t* data, size_t size, Releaser releaser) {
-    BufferView<Releaser>* view = new BufferView(data, size, releaser);
+  static BufferPtr create(
+      const uint8_t* data,
+      size_t size,
+      Releaser releaser,
+      bool podType = true) {
+    BufferView<Releaser>* view = new BufferView(data, size, releaser, podType);
     BufferPtr result(view);
     return result;
   }
@@ -633,13 +664,13 @@ class BufferView : public Buffer {
   }
 
  private:
-  BufferView(const uint8_t* data, size_t size, Releaser releaser)
+  BufferView(const uint8_t* data, size_t size, Releaser releaser, bool podType)
       // A BufferView must be created over the data held by a cache
       // pin, which is typically const. The Buffer enforces const-ness
       // when returning the pointer. We cast away the const here to
       // avoid a separate code path for const and non-const Buffer
       // payloads.
-      : Buffer(nullptr, const_cast<uint8_t*>(data), size, true /*podType*/),
+      : Buffer(nullptr, const_cast<uint8_t*>(data), size, podType),
         releaser_(releaser) {
     mutable_ = false;
     size_ = size;

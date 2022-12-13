@@ -11,15 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-  add_subdirectory(benchmarks)
-endif()
 
 add_library(
-  velox_aggregates OBJECT
+  velox_aggregates
   AggregateNames.h
   ApproxDistinctAggregate.cpp
+  ApproxMostFrequentAggregate.cpp
   ApproxPercentileAggregate.cpp
   ArbitraryAggregate.cpp
   ArrayAggAggregate.cpp
@@ -29,7 +26,11 @@ add_library(
   CountIfAggregate.cpp
   CovarianceAggregates.cpp
   ChecksumAggregate.cpp
+  HistogramAggregate.cpp
   MapAggAggregate.cpp
+  MapAggregateBase.h
+  MapAggregateBase.cpp
+  MapUnionAggregate.cpp
   MinMaxAggregates.cpp
   MinMaxByAggregates.cpp
   CountAggregate.cpp
@@ -38,7 +39,23 @@ add_library(
   SumAggregate.cpp
   SumAggregate.h
   ValueList.cpp
-  VarianceAggregates.cpp)
+  VarianceAggregates.cpp
+  MaxSizeForStatsAggregate.cpp
+  RegisterAggregateFunctions.cpp)
 
-target_link_libraries(velox_aggregates velox_functions_hyperloglog velox_exec
-                      ${FOLLY_WITH_DEPENDENCIES})
+target_link_libraries(
+  velox_aggregates
+  velox_common_hyperloglog
+  velox_exec
+  velox_presto_serializer
+  velox_functions_lib
+  velox_functions_util
+  ${FOLLY_WITH_DEPENDENCIES})
+
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()
+
+if(${VELOX_ENABLE_BENCHMARKS})
+  add_subdirectory(benchmarks)
+endif()

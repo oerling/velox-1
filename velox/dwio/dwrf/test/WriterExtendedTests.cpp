@@ -19,7 +19,6 @@
 
 #include "folly/Random.h"
 #include "velox/dwio/common/DataSink.h"
-#include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/dwrf/test/utils/E2EWriterTestUtil.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
@@ -61,6 +60,17 @@ struct FlushPolicyTestCase {
   const uint32_t numStripesUpper;
   const uint32_t seed;
   const int64_t memoryBudget;
+
+  std::string debugString() const {
+    return fmt::format(
+        "inputStripeSize {}, dictSize {}, inputNumStripesLower {}, inputNumStripesUpper {}, seed {}, memoryBudget {}",
+        stripeSize,
+        dictSize,
+        numStripesLower,
+        numStripesUpper,
+        seed,
+        memoryBudget);
+  }
 };
 
 struct FlatMapFlushPolicyTestCase : public FlushPolicyTestCase {
@@ -133,8 +143,7 @@ void testWriterStaticBudgetFlushPolicy(
 TEST(E2EWriterTests, FlushPolicySimpleEncoding) {
   const size_t batchCount = 200;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -171,9 +180,9 @@ TEST(E2EWriterTests, FlushPolicySimpleEncoding) {
     config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterDefaultFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -188,8 +197,7 @@ TEST(E2EWriterTests, FlushPolicySimpleEncoding) {
 TEST(E2EWriterTests, FlushPolicyDictionaryEncoding) {
   const size_t batchCount = 500;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -234,9 +242,9 @@ TEST(E2EWriterTests, FlushPolicyDictionaryEncoding) {
     config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterDefaultFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -281,9 +289,9 @@ TEST(E2EWriterTests, FlushPolicyDictionaryEncoding) {
     config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterDefaultFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -315,9 +323,9 @@ TEST(E2EWriterTests, FlushPolicyDictionaryEncoding) {
 
     config->set(Config::MAX_DICTIONARY_SIZE, testCase.dictSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterDefaultFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -331,8 +339,7 @@ TEST(E2EWriterTests, FlushPolicyDictionaryEncoding) {
 TEST(E2EWriterTests, FlushPolicyNestedTypes) {
   const size_t batchCount = 10;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -377,9 +384,9 @@ TEST(E2EWriterTests, FlushPolicyNestedTypes) {
     config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterDefaultFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -393,8 +400,7 @@ TEST(E2EWriterTests, FlushPolicyNestedTypes) {
 TEST(E2EWriterTests, FlushPolicyWithStaticMemoryBudget) {
   const size_t batchCount = 2000;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   // Dictionary encodable types have the richest feature to test.
@@ -469,9 +475,9 @@ TEST(E2EWriterTests, FlushPolicyWithStaticMemoryBudget) {
     config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterStaticBudgetFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -484,8 +490,7 @@ TEST(E2EWriterTests, FlushPolicyWithStaticMemoryBudget) {
 TEST(E2EWriterTests, FlushPolicyDictionaryEncodingWithStaticMemoryBudget) {
   const size_t batchCount = 500;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   // Dictionary encodable types have the richest feature to test.
@@ -534,9 +539,9 @@ TEST(E2EWriterTests, FlushPolicyDictionaryEncodingWithStaticMemoryBudget) {
     config->set(Config::DISABLE_LOW_MEMORY_MODE, true);
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterStaticBudgetFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -550,8 +555,7 @@ TEST(E2EWriterTests, FlushPolicyDictionaryEncodingWithStaticMemoryBudget) {
 TEST(E2EWriterTests, StaticMemoryBudgetTrim) {
   const size_t batchCount = 2000;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   // Dictionary encodable types have the richest feature to test.
@@ -576,7 +580,7 @@ TEST(E2EWriterTests, StaticMemoryBudgetTrim) {
           /*stripeSize*/ 512 * kSizeKB,
           /*dictSize*/ std::numeric_limits<int64_t>::max(),
           /*numStripesLower*/ 86,
-          /*numStripesUpper*/ 86,
+          /*numStripesUpper*/ 87,
           /*seed*/ 630992088,
           6 * kSizeMB},
       FlushPolicyTestCase{
@@ -607,8 +611,8 @@ TEST(E2EWriterTests, StaticMemoryBudgetTrim) {
           /*numStripesUpper*/ 3,
           /*seed*/ 630992088,
           40 * kSizeMB});
-
   for (const auto& testCase : dictionaryEncodingTestCases) {
+    SCOPED_TRACE(testCase.debugString());
     auto config = std::make_shared<Config>();
     config->set(Config::DICTIONARY_NUMERIC_KEY_SIZE_THRESHOLD, 1.0f);
     config->set(Config::DICTIONARY_STRING_KEY_SIZE_THRESHOLD, 1.0f);
@@ -616,9 +620,9 @@ TEST(E2EWriterTests, StaticMemoryBudgetTrim) {
     // This is the one flush policy test that doesn't disable low memory mode.
     config->set(Config::STRIPE_SIZE, testCase.stripeSize);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
     testWriterStaticBudgetFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -632,8 +636,7 @@ TEST(E2EWriterTests, StaticMemoryBudgetTrim) {
 TEST(E2EWriterTests, FlushPolicyFlatMap) {
   const size_t batchCount = 10;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   // A mixture of columns where dictionary sharing is not necessarily
@@ -713,10 +716,10 @@ TEST(E2EWriterTests, FlushPolicyFlatMap) {
     }
     config->set(Config::MAP_FLAT_DICT_SHARE, testCase.enableDictionarySharing);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
 
     testWriterDefaultFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,
@@ -729,8 +732,7 @@ TEST(E2EWriterTests, FlushPolicyFlatMap) {
 TEST(E2EWriterTests, FlushPolicyFlatMapWithStaticMemoryBudget) {
   const size_t batchCount = 10;
   const size_t size = 1000;
-  auto scopedPool = facebook::velox::memory::getDefaultScopedMemoryPool();
-  auto& pool = scopedPool->getPool();
+  auto pool = facebook::velox::memory::getDefaultMemoryPool();
 
   HiveTypeParser parser;
   // A mixture of columns where dictionary sharing is not necessarily
@@ -796,10 +798,10 @@ TEST(E2EWriterTests, FlushPolicyFlatMapWithStaticMemoryBudget) {
     }
     config->set(Config::MAP_FLAT_DICT_SHARE, testCase.enableDictionarySharing);
     auto batches = E2EWriterTestUtil::generateBatches(
-        type, batchCount, size, testCase.seed, pool);
+        type, batchCount, size, testCase.seed, *pool);
 
     testWriterStaticBudgetFlushPolicy(
-        pool,
+        *pool,
         type,
         batches,
         testCase.numStripesLower,

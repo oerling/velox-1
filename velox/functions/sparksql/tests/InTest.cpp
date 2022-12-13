@@ -39,12 +39,12 @@ class TestingDictionaryFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& /* outputType */,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
     VELOX_CHECK(rows.isAllSelected());
     const auto size = rows.size();
-    auto indices = allocateIndices(size, context->pool());
-    *result = BaseVector::wrapInDictionary(nullptr, indices, size, args[0]);
+    auto indices = allocateIndices(size, context.pool());
+    result = BaseVector::wrapInDictionary(nullptr, indices, size, args[0]);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -79,7 +79,7 @@ class InTest : public SparkFunctionBaseTest {
       VectorPtr rhsArrayVector =
           vectorMaker_.arrayVectorNullable<T>({std::optional(rhs)});
       if (asDictionary) {
-        auto indices = makeIndices(rhs.size(), [](auto row) { return row; });
+        auto indices = makeIndices(rhs.size(), [](auto /*row*/) { return 0; });
         rhsArrayVector = wrapInDictionary(indices, rhs.size(), rhsArrayVector);
       }
 
@@ -95,7 +95,7 @@ class InTest : public SparkFunctionBaseTest {
       auto expr = getExpr(asDictonary);
       exec::EvalCtx evalCtx(&execCtx_, &expr, data.get());
       std::vector<VectorPtr> results(1);
-      expr.eval(SelectivityVector(1), &evalCtx, &results);
+      expr.eval(SelectivityVector(1), evalCtx, results);
       // auto last = args.back();
       if (!results[0]->isNullAt(0))
         return results[0]->as<SimpleVector<bool>>()->valueAt(0);

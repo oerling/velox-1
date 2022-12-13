@@ -17,6 +17,8 @@
 #pragma once
 
 #include <folly/Benchmark.h>
+#include <folly/init/Init.h>
+
 #include <algorithm>
 #include "velox/common/base/Exceptions.h"
 #include "velox/exec/OperatorUtils.h"
@@ -123,14 +125,14 @@ class CodegenBenchmark : public CodegenTestCore {
 
   CodegenBenchmark() {
     CodegenTestCore::init();
-    queryCtx = core::QueryCtx::createForTest();
-    pool = memory::getDefaultScopedMemoryPool();
+    queryCtx = std::make_shared<core::QueryCtx>();
+    pool = memory::getDefaultMemoryPool();
     execCtx = std::make_unique<core::ExecCtx>(pool.get(), queryCtx_.get());
   }
 
   std::vector<BenchmarkInfo> templateBenchmarkInfo;
   std::shared_ptr<core::QueryCtx> queryCtx;
-  std::unique_ptr<memory::MemoryPool> pool;
+  std::shared_ptr<memory::MemoryPool> pool;
   std::unique_ptr<core::ExecCtx> execCtx;
   std::vector<BenchmarkInfo> benchmarkInfos;
   bool reusePlanNode = true;
@@ -319,8 +321,8 @@ class CodegenBenchmark : public CodegenTestCore {
                   arguments, // See D27826068
                   // batch.get()->children(),
                   nullptr,
-                  &context,
-                  &batchResult);
+                  context,
+                  batchResult);
           return batchResult;
         }
 
@@ -336,8 +338,8 @@ class CodegenBenchmark : public CodegenTestCore {
                 arguments, // See D27826068
                 // batch.get()->children(),
                 nullptr,
-                &context,
-                &filterResult);
+                context,
+                filterResult);
 
         auto numOut = facebook::velox::exec::processFilterResults(
             filterResult->as<RowVector>()->childAt(0),
@@ -358,7 +360,7 @@ class CodegenBenchmark : public CodegenTestCore {
         dynamic_cast<facebook::velox::exec::VectorFunction*>(
             info.projectionFunc.get())
             ->apply(
-                rows, batch.get()->children(), nullptr, &context, &batchResult);
+                rows, batch.get()->children(), nullptr, context, batchResult);
 
         if (numOut != batch->size()) {
           batchResult = facebook::velox::exec::wrap(
@@ -603,4 +605,4 @@ class BenchmarkGTest : public CodegenTestBase {
     benchmark.compareResults();
   }
 };
-}
+} // namespace facebook::velox::codegen

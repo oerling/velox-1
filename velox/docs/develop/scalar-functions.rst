@@ -58,22 +58,16 @@ above could be re-written as follows:
 
 The argument list must start with an output parameter “result” followed by the
 function arguments. The “result” argument must be a reference. Function
-arguments must be const references. The C++ types of the arguments must match
-Velox types as specified in the following mapping:
+arguments must be const references. The C++ types of the function arguments and
+the result argument must match :doc:`Velox types</develop/types>`.
+Since the result argument must be a reference, some of the types listed below
+have a different result argument type:
 
 ==========  ==============================  =============================
 Velox Type  C++ Argument Type               C++ Result Type
 ==========  ==============================  =============================
-BOOLEAN     bool                            bool
-TINYINT     int8_t                          int8_t
-SMALLINT    int16_t                         int16_t
-INTEGER     int32_t                         int32_t
-BIGINT      int64_t                         int64_t
-REAL        float                           float
-DOUBLE      double                          double
 VARCHAR     StringView                      out_type<Varchar>
 VARBINARY   StringView                      out_type<Varbinary>
-TIMESTAMP   Timestamp                       Timestamp
 ARRAY       arg_type<Array<E>>              out_type<Array<E>>
 MAP         arg_type<Map<K,V>>              out_type<Map<K, V>>
 ROW         arg_type<Row<T1, T2, T3,...>>   out_type<Row<T1, T2, T3,...>>
@@ -329,6 +323,10 @@ individual rows.
     }
   };
 
+If the :func:`initialize` method throws, the exception will be captured and
+reported as output for every single active row. If there are no active rows,
+the exception will not be raised.
+
 Registration
 ^^^^^^^^^^^^
 
@@ -360,6 +358,11 @@ we need to call registerFunction again:
   registerFunction<CeilFunction, float, float>({"ceil", "ceiling");
 
 We need to call registerFunction for each signature we want to support.
+
+For decimal arguments, we use UnscaledLongDecimal or UnscaledShortDecimal for
+registration. Simple functions always require decimal arguments to have the same
+precision and scale. We must explicitly :func:`cast` the decimal arguments if
+required before passing them to simple functions.
 
 Codegen
 ^^^^^^^
@@ -397,51 +400,44 @@ as much as possible to allow for faster compilation in codegen.
 Complex Types
 ^^^^^^^^^^^^^
 
-Complex types as inputs
-***********************
+Inputs (View Types)
+*******************
 Input complex types are represented in the simple function interface using light-weight lazy
 access abstractions that enable efficient direct access to the underlying data in Velox
 vectors.
-As mentioned earlier, the helper alias arg_type can be used in the function signature to
+As mentioned earlier, the helper aliases arg_type and null_free_arg_type can be used in function's signatures to
 map Velox types to the corresponding input types. The table below shows the actual types that are
 used to represent inputs of different complex types.
 
-==========  ==============================  =============================
-Velox Type  C++ Argument Type               C++ Actual Argument Type
-==========  ==============================  =============================
-ARRAY       arg_type<Array<E>>              ArrayView<VectorOptionalValueAccessor<VectorReader<E>>>>
-MAP         arg_type<Map<K,V>>              MapView<arg_type<K>, VectorOptionalValueAccessor<VectorReader<V>>>
-ROW         arg_type<Row<T1, T2, T3,...>>   RowView<VectorOptionalValueAccessor<arg_type<T1>>...>>
-==========  ==============================  =============================
+==============================    =========================   ==============================
+ C++ Argument Type                 C++ Actual Argument Type   Corresponding `std` type
+==============================    =========================   ==============================
+arg_type<Array<E>>                NullableArrayView<E>>       std::vector<std::optional<V>>
+arg_type<Map<K,V>>                NullableMapView<K, V>       std::map<K, std::optional<V>>
+arg_type<Row<T...>>               NullableRowView<T...>       std::tuple<std::optional<T>...
+null_free_arg_type<Array<E>>      NullFreeArrayView<E>        std::vector<V>
+null_free_arg_type<Map<K,V>>      NullFreeMapView<K, V>       std::map<K, V>
+null_free_arg_type<Row<T...>>>    NullFreeRowView<T...>       std::tuple<T...>
+==============================    =========================   ==============================
 
 The view types are designed to have interfaces similar to those of std::containers, in fact in most cases
-they can be used as a drop in replacement. The table below shows the mapping between the Velox type and
+they can be used as a drop in replacement. The table above shows the mapping between the Velox type and
 the corresponding std type. For example: a *Map<Row<int, int>, Array<float>>* corresponds to const
 *std::map<std:::tuple<int, int>, std::vector<float>>*.
 
 All views types are cheap to copy objects, for example the size of ArrayView is 16 bytes at max.
 
-===========      ======================================
-Lazy Input       Corresponding `std` type
-===========      ======================================
-ArrayView        const std::vector<std::optional<V>>
-MapView          const std::map<K, std::optional<V>>
-RowView          const std::tuple<std::optional<T1>...>
-===========      ======================================
+**OptionalAccessor<E>**:
 
-
-
-**1- VectorOptionalValueAccessor<VectorReader<E>>**:
-
-VectorOptionalValueAccessor is an *std::optional* like object that provides lazy access to the nullity and
-value of the underlying Velox vector at a specific index. Currently, it is used to represent elements of input arrays
-and values in the input maps. Note that keys in the map are assumed to be not nullable in Velox.
+OptionalAccessor is an *std::optional* like object that provides lazy access to the nullity and
+value of the underlying Velox vector at a specific index. Currently, it is used to represent elements of nullable input arrays
+and values of nullable input maps. Note that keys in the map are assumed to be always not nullable in Velox.
 
 The object supports the following methods:
 
 - arg_type<E> value()      : unchecked access to the underlying value.
 
-- arg_type<E> operator *() : unchecked access to the underlying value.
+- arg_type<E> operator \*() : unchecked access to the underlying value.
 
 - bool has_value()         : return true if the value is not null.
 
@@ -452,7 +448,7 @@ accessing the value does not have the overhead of checking the nullity. So is ch
 Note that, unlike std::container, function calls to value() and operator* are r-values (temporaries) and not l-values,
 they can bind to const references and l-values but not references.
 
-VectorOptionalValueAccessor<VectorReader<E>> is assignable to and comparable with std::optional<arg_type<E>>.
+OptionalAccessor<E> is assignable to and comparable with std::optional<arg_type<E>> for primitive types.
 The following expressions are valid, where array[0] is an optional accessor.
 
 .. code-block:: c++
@@ -462,10 +458,10 @@ The following expressions are valid, where array[0] is an optional accessor.
     if(std::nullopt == array[0]) ...
     if(array[0]== std::optional<int>{1}) ...
 
-**2- ArrayView<T>**:
+**NullableArrayView<T> and NullFreeArrayView<T>**
 
-ArrayView have an interface similar to that of const *std::vector<std::optional<V>>*, the code
-below shows the function arraySum, a range loop is used to iterate over the values.
+NullableArrayView and NullFreeArrayView have interfaces similar to that of *std::vector<std::optional<V>>* and *std::vector<V>*,
+the code below shows the function arraySum, a range loop is used to iterate over the values.
 
 .. code-block:: c++
 
@@ -489,7 +485,7 @@ ArrayView supports the following:
 
 - size_t size() : return the number of elements in the array.
 
-- VectorOptionalValueAccessor<arg_type<T>> operator[](size_t index) : access element at index.
+- operator[](size_t index) : access element at index. It returns either null_free_arg_type<T> or OptionalAccessor<T>.
 
 - ArrayView<T>::Iterator begin() : iterator to the first element.
 
@@ -543,10 +539,10 @@ would skip reading the nullity when mayHaveNulls() is false.
 Note: calls to operator[], iterator de-referencing, and iterator pointer de-referencing are r-values (temporaries),
 versus l-values in STD containers. Hence those can be bound to const references or l-values but not normal references.
 
-**3- MapView<K, V>**:
+**NullableMapView<K, V> and  NullFreeMapView<K, V>**
 
-MapView has an interface similar to std::map<K, std::optional<V>>,  the code below shows an example function mapSum,
-that sums up the keys and values.
+NullableMapView and NullFreeMapView has an interfaces similar to std::map<K, std::optional<V>> and std::map<K, V>,
+the code below shows an example function mapSum, sums up the keys and values.
 
 .. code-block:: c++
 
@@ -572,20 +568,19 @@ MapView supports the following:
 
 - size_t size()                 : number of elements in the map.
 
-- MapView<K,V>::Iterator find(const arg_type<K>& key): performs a linear search for the key, and returns iterator to the
-element if found otherwise returns end().
+- MapView<K,V>::Iterator find(const key_t& key): performs a linear search for the key, and returns iterator to the element if found otherwise returns end(). Only supported for primitive key types.
 
-- MapView<K,V>::Iterator operator[](const arg_type<K>& key): same as find, throws an exception if element not found.
+- MapView<K,V>::Iterator operator[](const key_t& key): same as find, throws an exception if element not found.
 
 - MapView<K,V>::Element
 
 MapView<K, V>::Element is the type returned by dereferencing MapView<K, V>::Iterator. It has two members:
 
-- first : arg_type<K>
+- first : arg_type<K> | null_free_arg_type<K>
 
-- second: VectorOptionalValueAccessor<V>.
+- second: OptionalAccessor<V> | null_free_arg_type<V>
 
-- MapView<K, V>::Element participates in struct binding: auto [v, k] = *map.begin();
+- MapView<K, V>::Element participates in struct binding: auto [v, k] = \*map.begin();
 
 Note: iterator de-referencing and iterator pointer de-referencing result in temporaries. Hence those can be bound to
 const references or value variables but not normal references.
@@ -628,19 +623,100 @@ Note that in the range-loop, the range expression is assigned to a universal ref
      auto itt = *it;
      for(const auto& e : *itt){..}
 
+.. _outputs-write:
+
+Outputs (Writer Types)
+**********************
+
+Outputs of complex types are represented using special writers that are designed in a way that
+minimizes data copying by writing directly to Velox vectors.
+
+**ArrayWriter<V>**
+
+- out_type<V>& add_item() : add non-null item and return the writer of the added value.
+- add_null(): add null item.
+- reserve(vector_size_t size): make sure space for `size` items is allocated in the underlying vector.
+- vector_size_t size(): get the length of the array.
+- resize(vector_size_t size): change the size of the array reserving space for the new elements if needed.
+
+- void add_items(const T& data): append data from any container with std::vector-like interface.
+- void copy_from(const T& data): assign data to match that of any container with std::vector-like interface.
+
+- void add_items(const NullFreeArrayView<V>& data): append data from array view (faster than item by item).
+- void copy_from(const NullFreeArrayView<V>& data): assign data from array view (faster than item by item).
+
+- void add_items(const NullableArrayView<V>& data): append data from array view (faster than item by item).
+- void copy_from(const NullableArrayView<V>& data): assign data from array view (faster than item by item).
+
+When V is primitive, the following functions are available, making the writer usable as std::vector<V>.
+
+- push_back(std::optional<V>): add item or null.
+- PrimitiveWriter<V> operator[](vector_size_t index): return a primitive writer that is assignable to std::optional<V> for the item at index (should be called after a resize).
+- PrimitiveWriter<V> back(): return a primitive writer that is assignable to std::optional<V> for the item at index length -1.
+
+
+**MapWriter<K, V>**
+
+- reserve(vector_size_t size): make sure space for `size` entries is allocated in the underlying vector.
+- std::tuple<out_type<K>&, out_type<V>&> add_item(): add non-null item and return the writers of key and value as tuple.
+- out_type<K>& add_null(): add null item and return the key writer.
+- vector_size_t size(): return the length of the array.
+
+- void add_items(const T& data): append data from any container with std::vector<tuple<K, V>> like interface.
+- void copy_from(const NullFreeMapView<V>& data): assign data from array view (faster than item by item).
+- void copy_from(const NullableMapView<V>& data): assign data from array view (faster than item by item).
+
+When K and V are primitives, the following functions are available, making the writer usable as std::vector<std::tuple<K, V>>.
+
+- resize(vector_size_t size): change the size.
+- emplace(K, std::optional<V>): add element to the map.
+- std::tuple<K&, PrimitiveWriter<V>> operator[](vector_size_t index): returns pair of writers for element at index. Key writer is assignable to K. while value writer is assignable to std::optional<V>.
+
+**RowWriter<T...>**
+
+- template<vector_size_t I> set_null_at(): set null for row item at index I.
+- template<vector_size_t I> get_writer_at(): set not null for row item at index I, and return writer to to the row element at index I.
+
+When all types T... are primitives, the following functions are available.
+
+- void operator=(const std::tuple<T...>& inputs): assignable to std::tuple<T...>.
+- void operator=(const std::tuple<std::optional<T>...>& inputs): assignable to std::tuple<std::optional<T>...>.
+- void copy_from(const std::tuple<K...>& inputs): similar as the above.
+
+When a given Ti is primitive, the following is valid.
+
+- PrimitiveWriter<Ti> exec::get<I>(RowWriter<T...>): return a primitive writer for item at index I that is assignable to std::optional.
+
+**PrimitiveWriter<T>**
+
+Assignable to std::optional<T> allows writing null or value to the primitive. Returned by complex writers when writing nullable
+primitives.
+
+**StringWriter<>**:
+
+- void reserve(size_t newCapacity) : Reserve a space for the output string with size of at least newCapacity.
+- void resize(size_t newCapacity) : Set the size of the string.
+- char* data(): returns pointer to the first char of the string, can be written to directly (safe to write to index at capacity()-1).
+- vector_size_t capacity(): returns the capacity of the string.
+- vector_size_t size(): returns the size of the string.
+- operator+=(const T& input): append data from char* or any type with data() and size().
+- append(const T& input): append data from char* or any type with data() and size().
+- copy_from(const T& input): append data from char* or any type with data() and size().
+
+When Zero-copy optimization is enabled (see zero-copy-string-result section above), the following functions can be used.
+
+- void setEmpty(): set to empty string.
+- void setNoCopy(const StringView& value): set string to an input string without performing deep copy.
+
 
 Limitations
 ***********
+1. It is not possible to define functions that have generic output types,
+for example Array<T> output, where T is an input type.
 
-1. It is not possible to define functions that accept generic arrays,
-maps or structs (e.g. map_keys, map_values, array_distinct, array_sort) as
-it requires a generic representation for the input type that is still not
-supported.
-
-2. Output complex types now are double materialized; first in the simple functions when they
-are created and then when they are copied again to the Velox vector. Some work is planned to
-avoid that by using writer proxies that write directly to Velox vectors. This section will
-be updated once the new writer interfaces are completed.
+2. If a function throws an exception while writing a complex type, then the output of the
+row being written as well as the output of the next row are undefined. Hence, it's recommended
+to avoid throwing exceptions after writing has started for a complex output within the function.
 
 Variadic Arguments
 ^^^^^^^^^^^^^^^^^^
@@ -650,20 +726,21 @@ invocations of this function may include 0..N arguments of that type at the end
 of the call.  While not a true type in Velox, "Variadic" can be thought of as a
 syntactic type, and behaves somewhat similarly to Array.
 
-==========  ==============================  =============================
-Velox Type  C++ Argument Type               C++ Actual Argument Type
-==========  ==============================  =============================
-VARIADIC    arg_type<Variadic<E>>           VariadicView<VectorOptionalValueAccessor<VectorReader<E>>>>
-==========  ==============================  =============================
+================================  =========================
+C++ Argument Type                 C++ Actual Argument Type
+================================  =========================
+arg_type<Variadic<E>>             NullableVariadicView<E>
+null_free_arg_type<Variadic<E>>   NullFreeVariadicView<E>
+================================  =========================
 
-Like the ArrayView, VariadicView has a similar interface to
+Like the NullableArrayView and NullFreeArrayView, VariadicViews has a similar interface to
 *const std::vector<std::optional<V>>*.
 
-VariadicView supports the following:
+NullableVariadicView, and NullFreeVariadicView, supports the following:
 
 - size_t size() : return the number of arguments that were passed as part of the "Variadic" type in the function invocation.
 
-- VectorOptionalValueAccessor<arg_type<T>> operator[](size_t index) : access the value of the argument at index.
+-  operator[](size_t index) : access the value of the argument at index. It returns either null_free_arg_type<E> or OptionalAccessor<E>.
 
 - VariadicView<T>::Iterator begin() : iterator to the first argument.
 
@@ -726,8 +803,8 @@ implement the “apply” method.
               const SelectivityVector& rows,
               std::vector<VectorPtr>& args,
               Expr* caller,
-              EvalCtx* context,
-              VectorPtr* result) const
+              EvalCtx& context,
+              VectorPtr& result) const
 
 Input rows
 ^^^^^^^^^^
@@ -795,9 +872,10 @@ Input vectors
 The “args” parameter is an std::vector of Velox vectors containing the values
 of the function arguments. These vectors are not necessarily flat and may be
 dictionary or constant encoded. However, a deterministic function that takes
-a single argument is guaranteed to receive its only input as a flat vector.
-By default, a function is assumed to be deterministic. If that’s not the
-case, the function must override isDeterministic method to return false.
+a single argument and has default null behavior is guaranteed to receive its
+only input as a flat or constant vector. By default, a function is assumed to
+be deterministic. If that’s not the case, the function must override
+isDeterministic method to return false.
 
 .. code-block:: c++
 
@@ -840,13 +918,13 @@ Here is an example of using moveOrCopyResult to implement map_keys function:
         const SelectivityVector& rows,
         std::vector<VectorPtr>& args,
         exec::Expr* /* caller */,
-        exec::EvalCtx* context,
-        VectorPtr* result) const override {
+        exec::EvalCtx& context,
+        VectorPtr& result) const override {
       auto mapVector = args[0]->as<MapVector>();
       auto mapKeys = mapVector->mapKeys();
 
       auto localResult = std::make_shared<ArrayVector>(
-          context->pool(),
+          context.pool(),
           ARRAY(mapKeys->type()),
           mapVector->nulls(),
           rows.end(),
@@ -855,7 +933,7 @@ Here is an example of using moveOrCopyResult to implement map_keys function:
           mapKeys,
           mapVector->getNullCount());
 
-      context->moveOrCopyResult(localResult, rows, result);
+      context.moveOrCopyResult(localResult, rows, result);
     }
 
 Use BaseVector::ensureWritable method to initialize “result” to a flat
@@ -880,12 +958,12 @@ cardinality function for maps:
         const SelectivityVector& rows,
         std::vector<VectorPtr>& args,
         exec::Expr* /* caller */,
-        exec::EvalCtx* context,
-        VectorPtr* result) const override {
+        exec::EvalCtx& context,
+        VectorPtr& result) const override {
 
-      BaseVector::ensureWritable(rows, BIGINT(), context->pool(), result);
+      BaseVector::ensureWritable(rows, BIGINT(), context.pool(), result);
       BufferPtr resultValues =
-          (*result)->as<FlatVector<int64_t>>()->mutableValues(rows.size());
+           result->as<FlatVector<int64_t>>()->mutableValues(rows.size());
       auto rawResult = resultValues->asMutable<int64_t>();
 
       auto mapVector = args[0]->as<MapVector>();
@@ -909,8 +987,8 @@ as a simple function. I’m using it here for illustration purposes only.
 .. code-block:: c++
 
     // Initialize flat results vector.
-    BaseVector::ensureWritable(rows, DOUBLE(), context->pool(), result);
-    auto rawResults = (*result)->as<FlatVector<int64_t>>()->mutableRawValues();
+    BaseVector::ensureWritable(rows, DOUBLE(), context.pool(), result);
+    auto rawResults = result->as<FlatVector<int64_t>>()->mutableRawValues();
 
     // Decode the arguments.
     DecodedArgs decodedArgs(rows, args, context);
@@ -996,7 +1074,7 @@ catch block.
       try {
         // ... calculate and store the result for the row
       } catch (const std::exception& e) {
-        context->setError(row, std::current_exception());
+        context.setError(row, std::current_exception());
       }
     });
 
@@ -1005,14 +1083,14 @@ instead of the explicit try-catch block above:
 
 .. code-block:: c++
 
-    context->applyToSelectedNoThrow(rows, [&](auto row) {
+    context.applyToSelectedNoThrow(rows, [&](auto row) {
       // ... calculate and store the result for the row
     });
 
 
 Simple functions are compatible with the TRY expression by default. The framework
 wraps the “call” and “callNullable” methods in a try-catch and reports errors
-using context->setError.
+using context.setError.
 
 Registration
 ^^^^^^^^^^^^
@@ -1034,6 +1112,10 @@ name already exists.
 
 Use exec::registerStatefulVectorFunction to register a stateful vector
 function.
+
+Note: A vector function will be given precedence over a simple function during resolution time.
+This is because in certain cases it makes sense to write an optimized vector function, and thus more precedence is given
+to a vector function over an equivalent simple function.
 
 .. code-block:: c++
 
@@ -1125,7 +1207,7 @@ The map_keys function takes any map and returns an array of map keys.
 
     // map(K,V) -> array(K)
     exec::FunctionSignatureBuilder()
-      .typeVariable("K")
+      .knownTypeVariable("K)
       .typeVariable("V")
       .returnType("array(K)")
       .argumentType("map(K,V)")
@@ -1145,6 +1227,24 @@ element of the array and returns a new array of the results.
       .argumentType("function(T, U)")
       .build();
 
+The signature of a function that handles DECIMAL types can additionally take
+variables and constraints to represent the precision and scale values.
+The constraints are evaluated using a type calculator built from Flex and Bison
+tools. The decimal arithmetic addition function has the following signature:
+
+.. code-block:: c++
+
+    // decimal, decimal -> decimal
+    exec::FunctionSignatureBuilder()
+      .returnType("DECIMAL(r_precision, r_scale)")
+      .argumentType("DECIMAL(a_precision, a_scale)")
+      .argumentType("DECIMAL(b_precision, b_scale)")
+      .variableConstraint(
+          "r_precision",
+          "min(38, max(a_precision - a_scale, b_precision - b_scale) + max(a_scale, b_scale) + 1)")
+      .variableConstraint("r_scale", "max(a_scale, b_scale)")
+      .build();
+
 The type names used in FunctionSignatureBuilder can be either lowercase
 standard types, a special type “any”, or the ones defined by calling
 typeVariable() method. “any” type can be used to specify a printf-like
@@ -1155,7 +1255,7 @@ Testing
 -------
 
 Add a test using FunctionBaseTest from
-velox/functions/prestosql/tests/FunctionBaseTest.h as a base class. Name your test
+velox/functions/prestosql/tests/utils/FunctionBaseTest.h as a base class. Name your test
 and the .cpp file <function-name>Test, e.g. CardinalityTest in
 CardinalityTest.cpp or IsNullTest in IsNullTest.cpp.
 
@@ -1224,6 +1324,53 @@ result. Here is an example of a test for simple function “sqrt”:
       EXPECT_EQ(std::nullopt, sqrt(std::nullopt));
       EXPECT_TRUE(std::isnan(sqrt(kNan).value_or(-1)));
     }
+
+Function names
+--------------
+
+For both simple and vector functions, their names are case insensitive. Function
+names are converted to lower case automatically when the functions are
+registered and when they are resolved for a given expression.
+
+The following names are reserved for special forms and cannot be used as function
+names:
+
+* and
+* or
+* cast
+* if
+* switch
+* coalesce
+* try
+* row_constructor
+
+Function Resolution order
+-------------------------
+
+Vector functions have precedence over simple functions during function resolution. If a function `foo` has
+multiple implementations, then the order in which function resolution will proceed is as follows:
+
+    1. Vector Function
+    2. Simple Function which are generic free and variadic free
+    3. Simple Function has variadic but generic free
+    4. Simple Function has generic but no variadic of generic
+    5. Simple function has variadic of generic
+
+The available function with lowest rank is picked during function resolution.
+If there is more than one function with the same lowest rank, we count the number of concrete types in the signature
+and return the signature with highest concrete types count. (a concrete type is any type other variadic or generic).
+
+For example: consider the two signatures bellow which are both of type 4.
+
+.. code-block:: c++
+
+    void call(bool& out, const int& , const Any& , const& Variadic<int>)    // concrete types = 2
+    void call(bool& out, const int& , const Any& ,const Any&)               // concrete types = 1
+
+
+When both of them are valid for a given input, the first one will be picked  since it has more concrete types.
+When number of concrete types are the same, the call is ambiguous, and it's undefined which function is called.
+
 
 Benchmarking
 ------------

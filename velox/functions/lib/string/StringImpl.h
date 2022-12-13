@@ -103,21 +103,6 @@ void concatStatic(TOutString& output, const Args&... inputs) {
   }...);
 }
 
-/// Concat function that operates on a dynamic number of inputs packed in vector
-template <typename TOutString, typename TInString>
-void concatDynamic(TOutString& output, const std::vector<TInString>& inputs) {
-  for (const auto& curInput : inputs) {
-    if (curInput.size() == 0) {
-      continue;
-    }
-    applyAppendersRecursive(output, [&](TOutString& out) {
-      auto writeOffset = out.size();
-      out.resize(out.size() + curInput.size());
-      std::memcpy(out.data() + writeOffset, curInput.data(), curInput.size());
-    });
-  }
-}
-
 /// Return length of the input string in chars
 template <bool isAscii, typename T>
 FOLLY_ALWAYS_INLINE int64_t length(const T& input) {
@@ -163,22 +148,30 @@ FOLLY_ALWAYS_INLINE int32_t charToCodePoint(const T& inputString) {
   return codePoint;
 }
 
-/// Returns the starting position in characters of the Nth instance of the
-/// substring in string. Positions start with 1. If not found, 0 is returned. If
-/// subString is empty result is 1.
-template <bool isAscii, typename T>
+/// Returns the starting position in characters of the Nth instance(counting
+/// from the left if lpos==true and from the end otherwise) of the substring in
+/// string. Positions start with 1. If not found, 0 is returned. If subString is
+/// empty result is 1.
+template <bool isAscii, bool lpos = true, typename T>
 FOLLY_ALWAYS_INLINE int64_t
 stringPosition(const T& string, const T& subString, int64_t instance = 0) {
+  VELOX_USER_CHECK_GT(instance, 0, "'instance' must be a positive number");
   if (subString.size() == 0) {
     return 1;
   }
 
-  VELOX_USER_CHECK_GT(instance, 0, "'instance' must be a positive number");
-
-  auto byteIndex = findNthInstanceByteIndex(
-      std::string_view(string.data(), string.size()),
-      std::string_view(subString.data(), subString.size()),
-      instance);
+  int64_t byteIndex = -1;
+  if constexpr (lpos) {
+    byteIndex = findNthInstanceByteIndexFromStart(
+        std::string_view(string.data(), string.size()),
+        std::string_view(subString.data(), subString.size()),
+        instance);
+  } else {
+    byteIndex = findNthInstanceByteIndexFromEnd(
+        std::string_view(string.data(), string.size()),
+        std::string_view(subString.data(), subString.size()),
+        instance);
+  }
 
   if (byteIndex == -1) {
     return 0;
@@ -283,6 +276,27 @@ FOLLY_ALWAYS_INLINE bool sha256(TOutString& output, const TInString& input) {
   folly::ssl::OpenSSLHash::sha256(
       folly::MutableByteRange((uint8_t*)output.data(), output.size()),
       folly::ByteRange((const uint8_t*)input.data(), input.size()));
+  return true;
+}
+
+/// Compute the SHA512 Hash.
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE void sha512(TOutString& output, const TInString& input) {
+  output.resize(64);
+  folly::ssl::OpenSSLHash::sha512(
+      folly::MutableByteRange((uint8_t*)output.data(), output.size()),
+      folly::ByteRange((const uint8_t*)input.data(), input.size()));
+}
+
+// Compute the HMAC-SHA256 Hash.
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE bool
+HmacSha256(TOutString& output, const TInString& key, const TInString& data) {
+  output.resize(32);
+  folly::ssl::OpenSSLHash::hmac_sha256(
+      folly::MutableByteRange((uint8_t*)output.data(), output.size()),
+      folly::ByteRange((const uint8_t*)key.data(), key.size()),
+      folly::ByteRange((const uint8_t*)data.data(), data.size()));
   return true;
 }
 
@@ -640,10 +654,12 @@ FOLLY_ALWAYS_INLINE void pad(
     const TInString& string,
     const int64_t size,
     const TInString& padString) {
+  static constexpr size_t padMaxSize = 1024 * 1024; // 1MB
+
   VELOX_USER_CHECK(
-      size >= 0 && size <= std::numeric_limits<int32_t>::max(),
-      "size must be in the range [0..{})",
-      std::numeric_limits<int32_t>::max());
+      size >= 0 && size <= padMaxSize,
+      "pad size must be in the range [0..{})",
+      padMaxSize);
   VELOX_USER_CHECK(padString.size() > 0, "padString must not be empty");
 
   int64_t stringCharLength = length<isAscii>(string);
@@ -704,4 +720,5 @@ FOLLY_ALWAYS_INLINE void pad(
       padString.data(),
       padPrefixByteLength);
 }
+
 } // namespace facebook::velox::functions::stringImpl

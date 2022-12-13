@@ -22,6 +22,7 @@
 #include "velox/exec/EnforceSingleRow.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/FilterProject.h"
+#include "velox/exec/GroupId.h"
 #include "velox/exec/HashAggregation.h"
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/HashProbe.h"
@@ -36,6 +37,7 @@
 #include "velox/exec/TopN.h"
 #include "velox/exec/Unnest.h"
 #include "velox/exec/Values.h"
+#include "velox/exec/Window.h"
 
 namespace facebook::velox::exec {
 
@@ -351,6 +353,11 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
             std::make_unique<HashAggregation>(id, ctx.get(), aggregationNode));
       }
     } else if (
+        auto groupIdNode =
+            std::dynamic_pointer_cast<const core::GroupIdNode>(planNode)) {
+      operators.push_back(
+          std::make_unique<GroupId>(id, ctx.get(), groupIdNode));
+    } else if (
         auto topNNode =
             std::dynamic_pointer_cast<const core::TopNNode>(planNode)) {
       operators.push_back(std::make_unique<TopN>(id, ctx.get(), topNNode));
@@ -363,6 +370,10 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
             std::dynamic_pointer_cast<const core::OrderByNode>(planNode)) {
       operators.push_back(
           std::make_unique<OrderBy>(id, ctx.get(), orderByNode));
+    } else if (
+        auto windowNode =
+            std::dynamic_pointer_cast<const core::WindowNode>(planNode)) {
+      operators.push_back(std::make_unique<Window>(id, ctx.get(), windowNode));
     } else if (
         auto localMerge =
             std::dynamic_pointer_cast<const core::LocalMergeNode>(planNode)) {

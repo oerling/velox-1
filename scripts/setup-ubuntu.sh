@@ -15,16 +15,20 @@
 
 # Minimal setup for Ubuntu 20.04.
 set -eufx -o pipefail
+SCRIPTDIR=$(dirname "${BASH_SOURCE[0]}")
+source $SCRIPTDIR/setup-helper-functions.sh
 
 # Folly must be built with the same compiler flags so that some low level types
 # are the same size.
-export COMPILER_FLAGS="-mavx2 -mfma -mavx -mf16c -mlzcnt"
-FB_OS_VERSION=v2022.03.14.00
+CPU_TARGET="${CPU_TARGET:-avx}"
+COMPILER_FLAGS=$(get_cxx_flags "$CPU_TARGET")
+export COMPILER_FLAGS
+FB_OS_VERSION=v2022.11.14.00
 NPROC=$(getconf _NPROCESSORS_ONLN)
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
 
 # Install all velox and folly dependencies.
-sudo apt install -y \
+sudo --preserve-env apt install -y \
   g++ \
   cmake \
   ccache \
@@ -37,16 +41,17 @@ sudo apt install -y \
   libgoogle-glog-dev \
   libbz2-dev \
   libgflags-dev \
-  libgtest-dev \
   libgmock-dev \
   libevent-dev \
-  libprotobuf-dev \
   liblz4-dev \
   libzstd-dev \
   libre2-dev \
   libsnappy-dev \
   liblzo2-dev \
-  protobuf-compiler
+  bison \
+  flex \
+  tzdata \
+  wget
 
 function run_and_time {
   time "$@"
@@ -68,50 +73,6 @@ function prompt {
   ) 2> /dev/null
 }
 
-# github_checkout $REPO $VERSION clones or re-uses an existing clone of the
-# specified repo, checking out the requested version.
-function github_checkout {
-  local REPO=$1
-  local VERSION=$2
-  local DIRNAME=$(basename "$1")
-
-  cd "${DEPENDENCY_DIR}"
-  if [ -z "${DIRNAME}" ]; then
-    echo "Failed to get repo name from $1"
-    exit 1
-  fi
-  if [ -d "${DIRNAME}" ] && prompt "${DIRNAME} already exists. Delete?"; then
-    rm -rf "${DIRNAME}"
-  fi
-  if [ ! -d "${DIRNAME}" ]; then
-    git clone -q "https://github.com/${REPO}.git"
-  fi
-  cd "${DIRNAME}"
-  git fetch -q
-  git checkout "${VERSION}"
-}
-
-function cmake_install {
-  local NAME=$(basename "$(pwd)")
-  local BINARY_DIR=_build
-  if [ -d "${BINARY_DIR}" ] && prompt "Do you want to rebuild ${NAME}?"; then
-    rm -rf "${BINARY_DIR}"
-  fi
-  mkdir -p "${BINARY_DIR}"
-
-  # CMAKE_POSITION_INDEPENDENT_CODE is required so that Velox can be built into dynamic libraries \
-  cmake -Wno-dev -B"${BINARY_DIR}" \
-    -GNinja \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_CXX_STANDARD=17 \
-    "${INSTALL_PREFIX+-DCMAKE_PREFIX_PATH=}${INSTALL_PREFIX-}" \
-    "${INSTALL_PREFIX+-DCMAKE_INSTALL_PREFIX=}${INSTALL_PREFIX-}" \
-    -DCMAKE_CXX_FLAGS="${COMPILER_FLAGS}" \
-    -DBUILD_TESTING=OFF \
-    "$@"
-  ninja -C "${BINARY_DIR}" install
-}
-
 function install_fmt {
   github_checkout fmtlib/fmt 8.0.0
   cmake_install -DFMT_TEST=OFF
@@ -122,9 +83,17 @@ function install_folly {
   cmake_install -DBUILD_TESTS=OFF
 }
 
+function install_conda {
+  mkdir -p conda && cd conda
+  wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+  MINICONDA_PATH=/opt/miniconda-for-velox
+  sh Miniconda3-latest-Linux-x86_64.sh -b -p $MINICONDA_PATH
+}
+
 function install_velox_deps {
   run_and_time install_fmt
   run_and_time install_folly
+  run_and_time install_conda
 }
 
 (return 2> /dev/null) && return # If script was sourced, don't run commands.

@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
+#include "velox/exec/WindowFunction.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 #include <gtest/gtest.h>
 
@@ -31,12 +33,12 @@ class PlanNodeToStringTest : public testing::Test, public test::VectorTestBase {
  public:
   PlanNodeToStringTest() {
     functions::prestosql::registerAllScalarFunctions();
+    aggregate::prestosql::registerAllAggregateFunctions();
     parse::registerTypeResolver();
-    data_ = makeRowVector({
-        makeFlatVector<int16_t>({0, 1, 2, 3, 4}),
-        makeFlatVector<int32_t>({0, 1, 2, 3, 4}),
-        makeFlatVector<int64_t>({0, 1, 2, 3, 4}),
-    });
+    data_ = makeRowVector(
+        {makeFlatVector<int16_t>({0, 1, 2, 3, 4}),
+         makeFlatVector<int32_t>({0, 1, 2, 3, 4}),
+         makeFlatVector<int64_t>({0, 1, 2, 3, 4})});
 
     plan_ = PlanBuilder()
                 .values({data_})
@@ -48,7 +50,7 @@ class PlanNodeToStringTest : public testing::Test, public test::VectorTestBase {
   }
 
   RowVectorPtr data_;
-  std::shared_ptr<core::PlanNode> plan_;
+  core::PlanNodePtr plan_;
 };
 
 TEST_F(PlanNodeToStringTest, basic) {
@@ -159,6 +161,24 @@ TEST_F(PlanNodeToStringTest, aggregation) {
       "-- Aggregation[PARTIAL a := sum(ROW[\"c0\"]), b := avg(ROW[\"c1\"]), c := min(ROW[\"c2\"])] -> a:BIGINT, b:ROW<\"\":DOUBLE,\"\":BIGINT>, c:BIGINT\n",
       plan->toString(true, false));
 
+  // Global aggregation with masks.
+  auto data = makeRowVector(
+      ROW({"c0", "c1", "c2", "m0", "m1", "m2"},
+          {BIGINT(), INTEGER(), BIGINT(), BOOLEAN(), BOOLEAN(), BOOLEAN()}),
+      100);
+  plan = PlanBuilder()
+             .values({data})
+             .partialAggregation(
+                 {},
+                 {"sum(c0) AS a", "avg(c1) AS b", "min(c2) AS c"},
+                 {"m0", "", "m2"})
+             .planNode();
+
+  ASSERT_EQ("-- Aggregation\n", plan->toString());
+  ASSERT_EQ(
+      "-- Aggregation[PARTIAL a := sum(ROW[\"c0\"]) mask: m0, b := avg(ROW[\"c1\"]), c := min(ROW[\"c2\"]) mask: m2] -> a:BIGINT, b:ROW<\"\":DOUBLE,\"\":BIGINT>, c:BIGINT\n",
+      plan->toString(true, false));
+
   // Group-by aggregation.
   plan = PlanBuilder()
              .values({data_})
@@ -168,6 +188,38 @@ TEST_F(PlanNodeToStringTest, aggregation) {
   ASSERT_EQ("-- Aggregation\n", plan->toString());
   ASSERT_EQ(
       "-- Aggregation[SINGLE [c0] a := sum(ROW[\"c1\"]), b := avg(ROW[\"c2\"])] -> c0:SMALLINT, a:BIGINT, b:DOUBLE\n",
+      plan->toString(true, false));
+
+  // Group-by aggregation with masks.
+  plan = PlanBuilder()
+             .values({data})
+             .singleAggregation(
+                 {"c0"}, {"sum(c1) AS a", "avg(c2) AS b"}, {"m1", "m2"})
+             .planNode();
+
+  ASSERT_EQ("-- Aggregation\n", plan->toString());
+  ASSERT_EQ(
+      "-- Aggregation[SINGLE [c0] a := sum(ROW[\"c1\"]) mask: m1, b := avg(ROW[\"c2\"]) mask: m2] -> c0:BIGINT, a:BIGINT, b:DOUBLE\n",
+      plan->toString(true, false));
+}
+
+TEST_F(PlanNodeToStringTest, groupId) {
+  auto plan = PlanBuilder()
+                  .values({data_})
+                  .groupId({{"c0"}, {"c1"}}, {"c2"})
+                  .planNode();
+  ASSERT_EQ("-- GroupId\n", plan->toString());
+  ASSERT_EQ(
+      "-- GroupId[[c0], [c1]] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT, group_id:BIGINT\n",
+      plan->toString(true, false));
+
+  plan = PlanBuilder()
+             .values({data_})
+             .groupId({{"c0", "c1"}, {"c1"}}, {"c2"}, "gid")
+             .planNode();
+  ASSERT_EQ("-- GroupId\n", plan->toString());
+  ASSERT_EQ(
+      "-- GroupId[[c0, c1], [c1]] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT, gid:BIGINT\n",
       plan->toString(true, false));
 }
 
@@ -364,19 +416,14 @@ TEST_F(PlanNodeToStringTest, unnest) {
 }
 
 TEST_F(PlanNodeToStringTest, localPartition) {
-  auto plan =
-      PlanBuilder()
-          .localPartition({"c0"}, {PlanBuilder().values({data_}).planNode()})
-          .planNode();
+  auto plan = PlanBuilder().values({data_}).localPartition({"c0"}).planNode();
 
   ASSERT_EQ("-- LocalPartition\n", plan->toString());
   ASSERT_EQ(
       "-- LocalPartition[REPARTITION] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
       plan->toString(true, false));
 
-  plan = PlanBuilder()
-             .localPartition({}, {PlanBuilder().values({data_}).planNode()})
-             .planNode();
+  plan = PlanBuilder().values({data_}).localPartition({}).planNode();
 
   ASSERT_EQ("-- LocalPartition\n", plan->toString());
   ASSERT_EQ(
@@ -486,4 +533,54 @@ TEST_F(PlanNodeToStringTest, tableScan) {
         "-> discount:DOUBLE, quantity:DOUBLE, shipdate:VARCHAR, comment:VARCHAR\n",
         plan->toString(true, false));
   }
+}
+
+TEST_F(PlanNodeToStringTest, decimalConstant) {
+  parse::ParseOptions options;
+  options.parseDecimalAsDouble = false;
+
+  auto plan = PlanBuilder()
+                  .setParseOptions(options)
+                  .tableScan(ROW({"a"}, {VARCHAR()}))
+                  .project({"a", "1.234"})
+                  .planNode();
+
+  ASSERT_EQ(
+      "-- Project[expressions: (a:VARCHAR, ROW[\"a\"]), (p1:DECIMAL(4,3), 1.234)] -> a:VARCHAR, p1:DECIMAL(4,3)\n",
+      plan->toString(true));
+}
+
+TEST_F(PlanNodeToStringTest, window) {
+  std::vector<exec::FunctionSignaturePtr> signatures{
+      exec::FunctionSignatureBuilder()
+          .argumentType("BIGINT")
+          .returnType("BIGINT")
+          .build(),
+  };
+  exec::registerWindowFunction("window1", std::move(signatures), nullptr);
+
+  auto plan =
+      PlanBuilder()
+          .tableScan(ROW({"a", "b", "c"}, {VARCHAR(), BIGINT(), BIGINT()}))
+          .window({"window1(c) over (partition by a order by b "
+                   "range between 10 preceding and unbounded following) AS d"})
+          .planNode();
+  ASSERT_EQ("-- Window\n", plan->toString());
+  ASSERT_EQ(
+      "-- Window[partition by [a] order by [b ASC NULLS LAST] "
+      "d := window1(ROW[\"c\"]) RANGE between 10 PRECEDING and UNBOUNDED FOLLOWING] "
+      "-> a:VARCHAR, b:BIGINT, c:BIGINT, d:BIGINT\n",
+      plan->toString(true, false));
+
+  plan = PlanBuilder()
+             .tableScan(ROW({"a", "b", "c"}, {VARCHAR(), BIGINT(), BIGINT()}))
+             .window({"window1(c) over (partition by a "
+                      "range between current row and b following)"})
+             .planNode();
+  ASSERT_EQ("-- Window\n", plan->toString());
+  ASSERT_EQ(
+      "-- Window[partition by [a] order by [] "
+      "w0 := window1(ROW[\"c\"]) RANGE between CURRENT ROW and b FOLLOWING] "
+      "-> a:VARCHAR, b:BIGINT, c:BIGINT, w0:BIGINT\n",
+      plan->toString(true, false));
 }

@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <folly/dynamic.h>
 #include "velox/common/time/CpuWallTimer.h"
 #include "velox/exec/Operator.h"
 
@@ -47,6 +48,9 @@ struct PlanNodeStats {
   /// leaf plan nodes or plan nodes that correspond to a single operator type.
   vector_size_t inputRows{0};
 
+  /// Sum of input batches for all corresponding operators.
+  vector_size_t inputVectors{0};
+
   /// Sum of input bytes for all corresponding operators.
   uint64_t inputBytes{0};
 
@@ -62,6 +66,9 @@ struct PlanNodeStats {
   /// plan node corresponds to multiple operator types, operators of only one of
   /// these types report non-zero output rows.
   vector_size_t outputRows{0};
+
+  /// Sum of output batches for all corresponding operators.
+  vector_size_t outputVectors{0};
 
   /// Sum of output bytes for all corresponding operators.
   uint64_t outputBytes{0};
@@ -92,12 +99,24 @@ struct PlanNodeStats {
   /// Number of total splits.
   int numSplits{0};
 
+  /// Total bytes written for spilling.
+  uint64_t spilledBytes{0};
+
+  /// Total rows written for spilling.
+  uint64_t spilledRows{0};
+
+  /// Total spilled partitions.
+  uint32_t spilledPartitions{0};
+
+  /// Total spilled files.
+  uint32_t spilledFiles{0};
+
   /// Add stats for a single operator instance.
   void add(const OperatorStats& stats);
 
   std::string toString(bool includeInputStats = false) const;
 
-  bool isMultiOperatorNode() const {
+  bool isMultiOperatorTypeNode() const {
     return operatorStats.size() > 1;
   }
 
@@ -107,6 +126,8 @@ struct PlanNodeStats {
 
 std::unordered_map<core::PlanNodeId, PlanNodeStats> toPlanStats(
     const TaskStats& taskStats);
+
+folly::dynamic toPlanStatsJson(const facebook::velox::exec::TaskStats& stats);
 
 /// Returns human-friendly representation of the plan augmented with runtime
 /// statistics. The result has the same plan representation as in

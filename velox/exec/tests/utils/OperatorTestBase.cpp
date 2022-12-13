@@ -16,14 +16,19 @@
 
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/dwio/common/DataSink.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
+
+using namespace facebook::velox::common::testutil;
 
 namespace facebook::velox::exec::test {
 
@@ -31,42 +36,47 @@ namespace facebook::velox::exec::test {
 std::shared_ptr<cache::AsyncDataCache> OperatorTestBase::asyncDataCache_;
 
 OperatorTestBase::OperatorTestBase() {
-  using memory::MappedMemory;
+  using memory::MemoryAllocator;
   facebook::velox::exec::ExchangeSource::registerFactory();
-  if (!isRegisteredVectorSerde()) {
-    velox::serializer::presto::PrestoVectorSerde::registerVectorSerde();
-  }
   parse::registerTypeResolver();
+}
+
+void OperatorTestBase::registerVectorSerde() {
+  velox::serializer::presto::PrestoVectorSerde::registerVectorSerde();
 }
 
 OperatorTestBase::~OperatorTestBase() {
   // Revert to default process-wide MappedMemory.
-  memory::MappedMemory::setDefaultInstance(nullptr);
+  memory::MemoryAllocator::setDefaultInstance(nullptr);
+}
+
+void OperatorTestBase::TearDownTestCase() {
+  Task::testingWaitForAllTasksToBeDeleted();
 }
 
 void OperatorTestBase::SetUp() {
-  // Sets the process MappedMemory according to 'useAsyncCache_'.
-  using namespace memory;
-  if (useAsyncCache_) {
-    // Sets the process default MappedMemory to an async cache of up
-    // to 4GB backed by a default MappedMemory
-    if (!asyncDataCache_) {
-      asyncDataCache_ = std::make_shared<cache::AsyncDataCache>(
-          MappedMemory::createDefaultInstance(), 4UL << 30);
-    }
-    MappedMemory::setDefaultInstance(asyncDataCache_.get());
-  } else {
-    // Revert to initial process-wide default.
-    MappedMemory::setDefaultInstance(nullptr);
+  // Sets the process default MappedMemory to an async cache of up
+  // to 4GB backed by a default MappedMemory
+  if (!asyncDataCache_) {
+    asyncDataCache_ = std::make_shared<cache::AsyncDataCache>(
+        memory::MemoryAllocator::createDefaultInstance(), 4UL << 30);
   }
+  memory::MemoryAllocator::setDefaultInstance(asyncDataCache_.get());
+  if (!isRegisteredVectorSerde()) {
+    this->registerVectorSerde();
+  }
+  driverExecutor_ = std::make_unique<folly::CPUThreadPoolExecutor>(3);
+  ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
 }
 
 void OperatorTestBase::SetUpTestCase() {
   functions::prestosql::registerAllScalarFunctions();
+  aggregate::prestosql::registerAllAggregateFunctions();
+  TestValue::enable();
 }
 
 std::shared_ptr<Task> OperatorTestBase::assertQuery(
-    const std::shared_ptr<const core::PlanNode>& plan,
+    const core::PlanNodePtr& plan,
     const std::vector<std::shared_ptr<connector::ConnectorSplit>>&
         connectorSplits,
     const std::string& duckDbSql,
@@ -80,24 +90,56 @@ std::shared_ptr<Task> OperatorTestBase::assertQuery(
   return assertQuery(plan, std::move(splits), duckDbSql, sortingKeys);
 }
 
+namespace {
+/// Returns the plan node ID of the only leaf plan node. Throws if 'root' has
+/// multiple leaf nodes.
+core::PlanNodeId getOnlyLeafPlanNodeId(const core::PlanNodePtr& root) {
+  const auto& sources = root->sources();
+  if (sources.empty()) {
+    return root->id();
+  }
+
+  VELOX_CHECK_EQ(1, sources.size());
+  return getOnlyLeafPlanNodeId(sources[0]);
+}
+
+std::function<void(Task* task)> makeAddSplit(
+    bool& noMoreSplits,
+    std::unordered_map<core::PlanNodeId, std::vector<exec::Split>>&& splits) {
+  return [&](Task* task) {
+    if (noMoreSplits) {
+      return;
+    }
+    for (auto& [nodeId, nodeSplits] : splits) {
+      for (auto& split : nodeSplits) {
+        task->addSplit(nodeId, std::move(split));
+      }
+      task->noMoreSplits(nodeId);
+    }
+    noMoreSplits = true;
+  };
+}
+} // namespace
+
 std::shared_ptr<Task> OperatorTestBase::assertQuery(
-    const std::shared_ptr<const core::PlanNode>& plan,
+    const core::PlanNodePtr& plan,
     std::vector<exec::Split>&& splits,
+    const std::string& duckDbSql,
+    std::optional<std::vector<uint32_t>> sortingKeys) {
+  const auto splitNodeId = getOnlyLeafPlanNodeId(plan);
+  return assertQuery(
+      plan, {{splitNodeId, std::move(splits)}}, duckDbSql, sortingKeys);
+}
+
+std::shared_ptr<Task> OperatorTestBase::assertQuery(
+    const core::PlanNodePtr& plan,
+    std::unordered_map<core::PlanNodeId, std::vector<exec::Split>>&& splits,
     const std::string& duckDbSql,
     std::optional<std::vector<uint32_t>> sortingKeys) {
   bool noMoreSplits = false;
   return test::assertQuery(
       plan,
-      [&](Task* task) {
-        if (noMoreSplits) {
-          return;
-        }
-        for (auto& split : splits) {
-          task->addSplit("0", std::move(split));
-        }
-        task->noMoreSplits("0");
-        noMoreSplits = true;
-      },
+      makeAddSplit(noMoreSplits, std::move(splits)),
       duckDbSql,
       duckDbQueryRunner_,
       sortingKeys);
@@ -106,39 +148,17 @@ std::shared_ptr<Task> OperatorTestBase::assertQuery(
 // static
 std::shared_ptr<core::FieldAccessTypedExpr> OperatorTestBase::toFieldExpr(
     const std::string& name,
-    const std::shared_ptr<const RowType>& rowType) {
+    const RowTypePtr& rowType) {
   return std::make_shared<core::FieldAccessTypedExpr>(
       rowType->findChild(name), name);
 }
 
-std::shared_ptr<const core::ITypedExpr> OperatorTestBase::parseExpr(
+core::TypedExprPtr OperatorTestBase::parseExpr(
     const std::string& text,
-    std::shared_ptr<const RowType> rowType) {
-  auto untyped = parse::parseExpr(text);
+    RowTypePtr rowType,
+    const parse::ParseOptions& options) {
+  auto untyped = parse::parseExpr(text, options);
   return core::Expressions::inferTypes(untyped, rowType, pool_.get());
-}
-
-RowVectorPtr OperatorTestBase::getResults(
-    std::shared_ptr<const core::PlanNode> planNode) {
-  CursorParameters params;
-  params.planNode = std::move(planNode);
-  return getResults(params);
-}
-
-RowVectorPtr OperatorTestBase::getResults(const CursorParameters& params) {
-  auto [cursor, results] = readCursor(params, [](auto) {});
-
-  auto totalCount = 0;
-  for (const auto& result : results) {
-    totalCount += result->size();
-  }
-
-  auto copy = std::dynamic_pointer_cast<RowVector>(
-      BaseVector::create(params.planNode->outputType(), totalCount, pool()));
-  for (const auto& result : results) {
-    copy->copy(result.get(), 0, 0, result->size());
-  }
-  return copy;
 }
 
 } // namespace facebook::velox::exec::test

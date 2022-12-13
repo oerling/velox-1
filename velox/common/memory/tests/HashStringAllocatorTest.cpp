@@ -33,8 +33,8 @@ struct Multipart {
 class HashStringAllocatorTest : public testing::Test {
  protected:
   void SetUp() override {
-    instance_ = std::make_unique<HashStringAllocator>(
-        memory::MappedMemory::getInstance());
+    pool_ = memory::getDefaultMemoryPool();
+    instance_ = std::make_unique<HashStringAllocator>(pool_.get());
     rng_.seed(1);
   }
 
@@ -82,6 +82,7 @@ class HashStringAllocatorTest : public testing::Test {
     return result;
   }
 
+  std::shared_ptr<memory::MemoryPool> pool_;
   std::unique_ptr<HashStringAllocator> instance_;
   int32_t sequence_ = 0;
   folly::Random::DefaultGenerator rng_;
@@ -314,4 +315,11 @@ TEST_F(HashStringAllocatorTest, alignedStlAllocatorWithF14Map) {
   // We allow for some overhead for free lists after all is freed. Map tends to
   // generate more free blocks at the end, so we loosen the upper bound a bit.
   EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 130);
+}
+
+TEST_F(HashStringAllocatorTest, stlAllocatorOverflow) {
+  StlAllocator<int64_t> alloc(instance_.get());
+  EXPECT_THROW(alloc.allocate(1ULL << 62), VeloxException);
+  AlignedStlAllocator<int64_t, 16> alignedAlloc(instance_.get());
+  EXPECT_THROW(alignedAlloc.allocate(1ULL << 62), VeloxException);
 }

@@ -25,36 +25,35 @@
 #include "folly/Range.h"
 #include "velox/dwio/type/TypeParser.h"
 
-namespace facebook {
-namespace velox {
-namespace dwio {
-namespace type {
-namespace fbhive {
+namespace facebook::velox::dwio::type::fbhive {
 
 // TODO : Find out what to do with these types
 // NUMERIC, INTERVAL, VARCHAR, VOID
 enum class TokenType {
-  Boolean = 0,
-  Byte = 1,
-  Short = 2,
-  Integer = 3,
-  Long = 4,
-  Float = 5,
-  Double = 6,
-  String = 7,
-  Binary = 8,
-  Timestamp = 9,
-  List = 10,
-  Map = 11,
-  Struct = 12,
-  StartSubType = 13,
-  EndSubType = 14,
-  Colon = 15,
-  Comma = 16,
-  Number = 17,
-  Identifier = 18,
-  EndOfStream = 19,
-  MaxTokenType = 19
+  Boolean,
+  Byte,
+  Short,
+  Integer,
+  Long,
+  Float,
+  Double,
+  String,
+  Binary,
+  Timestamp,
+  List,
+  Map,
+  Struct,
+  StartSubType,
+  EndSubType,
+  Colon,
+  Comma,
+  Number,
+  Identifier,
+  EndOfStream,
+  ShortDecimal,
+  LeftRoundBracket,
+  RightRoundBracket,
+  MaxTokenType
 };
 
 struct TokenMetadata {
@@ -152,8 +151,4 @@ class HiveTypeParser : public type::TypeParser {
   folly::StringPiece remaining_;
 };
 
-} // namespace fbhive
-} // namespace type
-} // namespace dwio
-} // namespace velox
-} // namespace facebook
+} // namespace facebook::velox::dwio::type::fbhive

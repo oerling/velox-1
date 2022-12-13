@@ -13,49 +13,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+SCRIPTDIR=$(dirname "$0")
+source $SCRIPTDIR/setup-helper-functions.sh
+
 # Propagate errors and improve debugging.
 set -eufx -o pipefail
 
+SCRIPTDIR=$(dirname "${BASH_SOURCE[0]}")
+source $SCRIPTDIR/setup-helper-functions.sh
+DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
+
 function install_aws-sdk-cpp {
-  local NAME="aws-sdk-cpp"
+  local AWS_REPO_NAME="aws/aws-sdk-cpp"
   local AWS_SDK_VERSION="1.9.96"
 
-  if [ -d "${NAME}" ]; then
-    read -r -p "do you want to rebuild '${NAME}'? (y/n) " confirm
-    if [[ "${confirm}" =~ ^[yy]$ ]]; then
-      rm -rf "${NAME}"
-    else
-      return 0
-    fi
-  fi
-
-  git clone --depth 1 --recurse-submodules --branch "${AWS_SDK_VERSION}" https://github.com/aws/aws-sdk-cpp.git "${NAME}"
-  mkdir "${NAME}_build"
-  cd "${NAME}_build" || exit
-  cmake ../"${NAME}" \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DBUILD_ONLY:STRING="s3;identity-management" \
-    -DBUILD_SHARED_LIBS:BOOL=OFF \
-    -DMINIMIZE_SIZE:BOOL=ON \
-    -DENABLE_TESTING:BOOL=OFF \
-    -DCMAKE_INSTALL_PREFIX="${DEPENDENCY_DIR}/install" \
-    -GNinja \
-    .
-  local _ret=$?
-  if [ $_ret -ne 0 ] ; then
-     echo "cmake returned with exit code $_ret, aborting!" >&2
-     return $_ret
-  fi
-  ninja
-  ninja install
+  github_checkout $AWS_REPO_NAME $AWS_SDK_VERSION --depth 1 --recurse-submodules
+  cmake_install -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS:BOOL=OFF -DMINIMIZE_SIZE:BOOL=ON -DENABLE_TESTING:BOOL=OFF -DBUILD_ONLY:STRING="s3;identity-management" -DCMAKE_INSTALL_PREFIX="${DEPENDENCY_DIR}/install"
 }
 
+function install_libhdfs3 {
+  github_checkout apache/hawq master
+  cd $DEPENDENCY_DIR/hawq/depends/libhdfs3
+  if [[ "$OSTYPE" == darwin* ]]; then
+     sed -i '' -e "/FIND_PACKAGE(GoogleTest REQUIRED)/d" ./CMakeLists.txt
+     sed -i '' -e "s/dumpversion/dumpfullversion/" ./CMakeLists.txt
+  fi
+
+  if [[ "$OSTYPE" == linux-gnu* ]]; then
+    sed -i "/FIND_PACKAGE(GoogleTest REQUIRED)/d" ./CMakeLists.txt
+    sed -i "s/dumpversion/dumpfullversion/" ./CMake/Platform.cmake
+  fi
+  cmake_install
+}
+
+DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
 cd "${DEPENDENCY_DIR}" || exit
 # aws-sdk-cpp missing dependencies
-yum install -y curl-devel
 
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+   # /etc/os-release is a standard way to query various distribution
+   # information and is available everywhere
+   LINUX_DISTRIBUTION=$(. /etc/os-release && echo ${ID})
+   if [[ "$LINUX_DISTRIBUTION" == "ubuntu" ]]; then
+      apt install -y --no-install-recommends libxml2-dev libgsasl-dev uuid-dev
+   else # Assume Fedora/CentOS
+      yum -y install libxml2-devel libgsasl-devel libuuid-devel
+   fi
+fi
+
+if [[ "$OSTYPE" == darwin* ]]; then
+   brew install libxml2 gsasl
+fi
 install_aws-sdk-cpp
+install_libhdfs3
+
 _ret=$?
 if [ $_ret -eq 0 ] ; then
    echo "All deps for Velox adapters installed!"

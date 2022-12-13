@@ -22,11 +22,13 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/common/Options.h"
-#include "velox/dwio/parquet/reader/ParquetReader.h"
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
+#include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
+#include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
 
@@ -41,12 +43,12 @@ static bool notEmpty(const char* /*flagName*/, const std::string& value) {
 }
 
 static bool validateDataFormat(const char* flagname, const std::string& value) {
-  if ((value.compare("parquet") == 0) || (value.compare("orc") == 0)) {
+  if ((value.compare("parquet") == 0) || (value.compare("dwrf") == 0)) {
     return true;
   }
   std::cout
       << fmt::format(
-             "Invalid value for --{}: {}. Allowed values are [\"parquet\", \"orc\"]",
+             "Invalid value for --{}: {}. Allowed values are [\"parquet\", \"dwrf\"]",
              flagname,
              value)
       << std::endl;
@@ -56,6 +58,21 @@ static bool validateDataFormat(const char* flagname, const std::string& value) {
 void ensureTaskCompletion(exec::Task* task) {
   // ASSERT_TRUE requires a function with return type void.
   ASSERT_TRUE(waitForTaskCompletion(task));
+}
+
+void printResults(const std::vector<RowVectorPtr>& results) {
+  std::cout << "Results:" << std::endl;
+  bool printType = true;
+  for (const auto& vector : results) {
+    // Print RowType only once.
+    if (printType) {
+      std::cout << vector->type()->asRow().toString() << std::endl;
+      printType = false;
+    }
+    for (vector_size_t i = 0; i < vector->size(); ++i) {
+      std::cout << vector->toString(i) << std::endl;
+    }
+  }
 }
 } // namespace
 
@@ -68,6 +85,8 @@ DEFINE_bool(
     include_custom_stats,
     false,
     "Include custom statistics along with execution statistics");
+DEFINE_bool(include_results, false, "Include results in the output");
+DEFINE_bool(use_native_parquet_reader, true, "Use Native Parquet Reader");
 DEFINE_int32(num_drivers, 4, "Number of drivers");
 DEFINE_string(data_format, "parquet", "Data format");
 DEFINE_int32(num_splits_per_file, 10, "Number of splits per file");
@@ -79,9 +98,14 @@ class TpchBenchmark {
  public:
   void initialize() {
     functions::prestosql::registerAllScalarFunctions();
+    aggregate::prestosql::registerAllAggregateFunctions();
     parse::registerTypeResolver();
     filesystems::registerLocalFileSystem();
-    parquet::registerParquetReaderFactory();
+    if (FLAGS_use_native_parquet_reader) {
+      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+    } else {
+      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::DUCKDB);
+    }
     dwrf::registerDwrfReaderFactory();
     auto hiveConnector =
         connector::getConnectorFactory(
@@ -90,7 +114,8 @@ class TpchBenchmark {
     connector::registerConnector(hiveConnector);
   }
 
-  std::shared_ptr<Task> run(const TpchPlan& tpchPlan) {
+  std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> run(
+      const TpchPlan& tpchPlan) {
     CursorParameters params;
     params.maxDrivers = FLAGS_num_drivers;
     params.planNode = tpchPlan.plan;
@@ -112,8 +137,7 @@ class TpchBenchmark {
       }
       noMoreSplits = true;
     };
-    auto [cursor, results] = readCursor(params, addSplits);
-    return cursor->task();
+    return readCursor(params, addSplits);
   }
 };
 
@@ -125,8 +149,43 @@ BENCHMARK(q1) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q3) {
+  const auto planContext = queryBuilder->getQueryPlan(3);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q5) {
+  const auto planContext = queryBuilder->getQueryPlan(5);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q6) {
   const auto planContext = queryBuilder->getQueryPlan(6);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q7) {
+  const auto planContext = queryBuilder->getQueryPlan(7);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q8) {
+  const auto planContext = queryBuilder->getQueryPlan(8);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q9) {
+  const auto planContext = queryBuilder->getQueryPlan(9);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q10) {
+  const auto planContext = queryBuilder->getQueryPlan(10);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q12) {
+  const auto planContext = queryBuilder->getQueryPlan(12);
   benchmark.run(planContext);
 }
 
@@ -135,8 +194,33 @@ BENCHMARK(q13) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q14) {
+  const auto planContext = queryBuilder->getQueryPlan(14);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q15) {
+  const auto planContext = queryBuilder->getQueryPlan(15);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q16) {
+  const auto planContext = queryBuilder->getQueryPlan(16);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q18) {
   const auto planContext = queryBuilder->getQueryPlan(18);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q19) {
+  const auto planContext = queryBuilder->getQueryPlan(19);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q22) {
+  const auto planContext = queryBuilder->getQueryPlan(22);
   benchmark.run(planContext);
 }
 
@@ -150,8 +234,13 @@ int main(int argc, char** argv) {
     folly::runBenchmarks();
   } else {
     const auto queryPlan = queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
-    const auto task = benchmark.run(queryPlan);
+    const auto [cursor, actualResults] = benchmark.run(queryPlan);
+    auto task = cursor->task();
     ensureTaskCompletion(task.get());
+    if (FLAGS_include_results) {
+      printResults(actualResults);
+      std::cout << std::endl;
+    }
     const auto stats = task->taskStats();
     std::cout << fmt::format(
                      "Execution time: {}",

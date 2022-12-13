@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <velox/exec/HashBitRange.h>
 #include <velox/exec/VectorHasher.h>
 #include "velox/core/PlanNode.h"
 
@@ -24,17 +25,33 @@ class HashPartitionFunction : public core::PartitionFunction {
  public:
   HashPartitionFunction(
       int numPartitions,
-      RowTypePtr inputType,
-      std::vector<ChannelIndex> keyChannels);
+      const RowTypePtr& inputType,
+      const std::vector<column_index_t>& keyChannels,
+      const std::vector<VectorPtr>& constValues = {});
+
+  HashPartitionFunction(
+      const HashBitRange& hashBitRange,
+      const RowTypePtr& inputType,
+      const std::vector<column_index_t>& keyChannels,
+      const std::vector<VectorPtr>& constValues = {});
 
   ~HashPartitionFunction() override = default;
 
   void partition(const RowVector& input, std::vector<uint32_t>& partitions)
       override;
 
+  int numPartitions() const {
+    return numPartitions_;
+  }
+
  private:
+  void init(
+      const RowTypePtr& inputType,
+      const std::vector<column_index_t>& keyChannels,
+      const std::vector<VectorPtr>& constValues);
+
   const int numPartitions_;
-  const std::vector<ChannelIndex> keyChannels_;
+  const std::optional<HashBitRange> hashBitRange_ = std::nullopt;
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
 
   // Reusable memory.

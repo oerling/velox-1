@@ -18,15 +18,14 @@
 
 #include "velox/common/base/VeloxException.h"
 #include "velox/common/memory/Memory.h"
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 using namespace facebook::velox;
 using facebook::velox::test::VectorMaker;
 
 class VectorMakerTest : public ::testing::Test {
  protected:
-  std::unique_ptr<memory::ScopedMemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
   VectorMaker maker_{pool_.get()};
 };
 
@@ -199,6 +198,106 @@ TEST_F(VectorMakerTest, nullableFlatVectorBool) {
     } else {
       EXPECT_FALSE(flatVector->isNullAt(i));
       EXPECT_EQ(*data[i], flatVector->valueAt(i));
+    }
+  }
+}
+
+class DecimalVectorMakerTest {
+ public:
+  template <typename T, typename P>
+  static void verifyStats(
+      const std::shared_ptr<FlatVector<T>>& flatVector,
+      const std::vector<P>& data) {
+    // No VectorMakerStats for DECIMAL flat vectors.
+    EXPECT_FALSE(flatVector->getNullCount().has_value());
+    EXPECT_FALSE(flatVector->isSorted().has_value());
+    EXPECT_FALSE(flatVector->getDistinctValueCount().has_value());
+    EXPECT_FALSE(flatVector->getMin().has_value());
+    EXPECT_FALSE(flatVector->getMax().has_value());
+  }
+
+  template <typename T, typename P>
+  static void verify(
+      const std::shared_ptr<FlatVector<T>>& flatVector,
+      const std::vector<P>& data) {
+    EXPECT_EQ(data.size(), flatVector->size());
+    verifyStats(flatVector, data);
+    for (vector_size_t i = 0; i < data.size(); i++) {
+      EXPECT_FALSE(flatVector->isNullAt(i));
+      EXPECT_EQ(data[i], flatVector->valueAt(i).unscaledValue());
+    }
+  }
+
+  template <typename T, typename P>
+  static void verifyNullable(
+      const std::shared_ptr<FlatVector<T>>& flatVector,
+      const std::vector<std::optional<P>>& data) {
+    EXPECT_EQ(data.size(), flatVector->size());
+    verifyStats(flatVector, data);
+    for (vector_size_t i = 0; i < data.size(); i++) {
+      if (data[i] == std::nullopt) {
+        EXPECT_TRUE(flatVector->isNullAt(i));
+      } else {
+        EXPECT_FALSE(flatVector->isNullAt(i));
+        EXPECT_EQ(data[i].value(), flatVector->valueAt(i).unscaledValue());
+      }
+    }
+  }
+};
+
+TEST_F(VectorMakerTest, flatVectorDecimal) {
+  // int64_t values can be used to build both short and long decimal vectors.
+  {
+    std::vector<int64_t> data = {1000265, 35610, -314159, 7, 0};
+    {
+      auto flatVector = maker_.shortDecimalFlatVector(data, DECIMAL(10, 7));
+      DecimalVectorMakerTest::verify(flatVector, data);
+      EXPECT_FALSE(flatVector->mayHaveNulls());
+    }
+    {
+      auto flatVector = maker_.longDecimalFlatVector(data, DECIMAL(20, 7));
+      DecimalVectorMakerTest::verify(flatVector, data);
+      EXPECT_FALSE(flatVector->mayHaveNulls());
+    }
+  }
+  // int128_t values can be used to build long decimal vectors.
+  {
+    std::vector<int128_t> data = {1000265, 35610, -314159, 7, 0};
+    {
+      auto flatVector = maker_.longDecimalFlatVector(data, DECIMAL(20, 7));
+      DecimalVectorMakerTest::verify(flatVector, data);
+      EXPECT_FALSE(flatVector->mayHaveNulls());
+    }
+  }
+}
+
+TEST_F(VectorMakerTest, nullableFlatVectorDecimal) {
+  // int64_t values can be used to build both short and long decimal vectors.
+  {
+    std::vector<std::optional<int64_t>> data = {
+        1000265, 35610, -314159, 7, std::nullopt};
+    {
+      auto flatVector =
+          maker_.shortDecimalFlatVectorNullable(data, DECIMAL(10, 7));
+      DecimalVectorMakerTest::verifyNullable(flatVector, data);
+      EXPECT_TRUE(flatVector->mayHaveNulls());
+    }
+    {
+      auto flatVector =
+          maker_.longDecimalFlatVectorNullable(data, DECIMAL(20, 7));
+      DecimalVectorMakerTest::verifyNullable(flatVector, data);
+      EXPECT_TRUE(flatVector->mayHaveNulls());
+    }
+  }
+  // int128_t values can be used to build long decimal vectors.
+  {
+    std::vector<std::optional<int128_t>> data = {
+        1000265, 35610, -314159, 7, std::nullopt};
+    {
+      auto flatVector =
+          maker_.longDecimalFlatVectorNullable(data, DECIMAL(20, 7));
+      DecimalVectorMakerTest::verifyNullable(flatVector, data);
+      EXPECT_TRUE(flatVector->mayHaveNulls());
     }
   }
 }
@@ -590,6 +689,77 @@ TEST_F(VectorMakerTest, arrayVectorUsingBaseVector) {
       maker_.arrayVector({0, 2, 4, 6}, elementsVector, {3});
   EXPECT_EQ(arrayVectorWithNull->isNullAt(3), true);
   EXPECT_EQ(arrayVectorWithNull->sizeAt(3), 0);
+}
+
+TEST_F(VectorMakerTest, mapVectorUsingKeyValueVectorsNoNulls) {
+  auto keys = maker_.flatVector<int32_t>({1, 2, 3, 4, 5, 6});
+  auto values = maker_.flatVector<int64_t>({7, 8, 9, 10, 11, 12});
+
+  // Create a map vector with 2 entries per map.
+  auto mapVector = maker_.mapVector({0, 2, 4}, keys, values);
+
+  EXPECT_EQ(mapVector->size(), 3);
+  for (int i = 0; i < 3; i++) {
+    EXPECT_EQ(mapVector->sizeAt(i), 2);
+    EXPECT_EQ(mapVector->isNullAt(i), false);
+  }
+
+  auto rawMapKeys = mapVector->mapKeys()->values()->as<int32_t>();
+  auto baseKeys = keys->values()->as<int32_t>();
+  EXPECT_EQ(memcmp(rawMapKeys, baseKeys, keys->size() * sizeof(int32_t)), 0);
+
+  auto rawMapValues = mapVector->mapValues()->values()->as<int64_t>();
+  auto baseValues = values->values()->as<int64_t>();
+  EXPECT_EQ(
+      memcmp(rawMapValues, baseValues, values->size() * sizeof(int64_t)), 0);
+}
+
+TEST_F(VectorMakerTest, mapVectorUsingKeyValueVectorsSomeNulls) {
+  auto keys = maker_.flatVector<int32_t>({1, 2, 3, 4, 5, 6});
+  auto values = maker_.flatVector<int64_t>({7, 8, 9, 10, 11, 12});
+
+  // Create map vector with last map as null.
+  auto mapVectorWithLastNull =
+      maker_.mapVector({0, 2, 4, 6}, keys, values, {3});
+  EXPECT_EQ(mapVectorWithLastNull->isNullAt(3), true);
+  EXPECT_EQ(mapVectorWithLastNull->sizeAt(3), 0);
+
+  // Create map vector with middle map as null.
+  auto mapVectorWithMiddleNull =
+      maker_.mapVector({0, 2, 2, 4, 6}, keys, values, {1});
+  EXPECT_EQ(mapVectorWithMiddleNull->isNullAt(1), true);
+  EXPECT_EQ(mapVectorWithMiddleNull->sizeAt(1), 0);
+}
+
+TEST_F(VectorMakerTest, mapVectorUsingKeyValueVectorsAllNulls) {
+  auto keys = maker_.flatVector<int32_t>({});
+  auto values = maker_.flatVector<int64_t>({});
+
+  // Create map vector with last map as null.
+  auto mapVector = maker_.mapVector({0, 0, 0}, keys, values, {0, 1, 2});
+
+  EXPECT_EQ(mapVector->size(), 3);
+  for (int i = 0; i < 3; i++) {
+    EXPECT_EQ(mapVector->sizeAt(i), 0);
+    EXPECT_EQ(mapVector->isNullAt(i), true);
+  }
+}
+
+TEST_F(VectorMakerTest, mapVectorUsingKeyValueVectorsUnevenKeysValues) {
+  auto keys = maker_.flatVector<int32_t>({1, 2, 3, 4, 5, 6});
+  // Create map vector with uneven keys and values, should fail.
+  auto values = maker_.flatVector<int64_t>({7, 8, 9});
+  EXPECT_THROW(maker_.mapVector({0, 2, 4}, keys, values), VeloxRuntimeError);
+}
+
+TEST_F(VectorMakerTest, mapVectorUsingKeyValueVectorsNullsInvalidIndices) {
+  auto keys = maker_.flatVector<int32_t>({0, 1, 2, 3, 4, 5});
+  auto values = maker_.flatVector<int64_t>({6, 7, 8, 9, 10, 11});
+
+  // The middle map is NULL, but according to the offsets it has size 2, this
+  // should fail.
+  EXPECT_THROW(
+      maker_.mapVector({0, 2, 4}, keys, values, {1}), VeloxRuntimeError);
 }
 
 TEST_F(VectorMakerTest, biasVector) {

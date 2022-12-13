@@ -57,6 +57,12 @@ endif
 endif
 
 NUM_THREADS ?= $(shell getconf _NPROCESSORS_CONF 2>/dev/null || echo 1)
+CPU_TARGET ?= "avx"
+
+FUZZER_SEED ?= 123456
+FUZZER_DURATION_SEC ?= 60
+
+PYTHON_EXECUTABLE ?= $(shell which python)
 
 all: release			#: Build the release version
 
@@ -74,11 +80,11 @@ cmake:					#: Use CMake to create a Makefile build system
 		${EXTRA_CMAKE_FLAGS}
 
 build:					#: Build the software based in BUILD_DIR and BUILD_TYPE variables
-	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j ${NUM_THREADS}
+	cmake --build $(BUILD_BASE_DIR)/$(BUILD_DIR) -j $(NUM_THREADS)
 
 debug:					#: Build with debugging symbols
 	$(MAKE) cmake BUILD_DIR=debug BUILD_TYPE=Debug
-	$(MAKE) build BUILD_DIR=debug
+	$(MAKE) build BUILD_DIR=debug -j ${NUM_THREADS}
 
 release:				#: Build the release version
 	$(MAKE) cmake BUILD_DIR=release BUILD_TYPE=Release && \
@@ -89,34 +95,37 @@ min_debug:				#: Minimal build with debugging symbols
 	$(MAKE) build BUILD_DIR=debug
 
 benchmarks-basic-build:
-	$(MAKE) release EXTRA_CMAKE_FLAGS="-DVELOX_BUILD_MINIMAL=ON -DVELOX_ENABLE_BENCHMARKS_BASIC=ON"
+	$(MAKE) release EXTRA_CMAKE_FLAGS="-DVELOX_BUILD_BENCHMARKS=ON"
 
 benchmarks-basic-run:
 	$(MAKE) benchmarks-basic-build
-	scripts/benchmark-runner.py run \
-		--path $(BENCHMARKS_BASIC_DIR) ${EXTRA_BENCHMARK_FLAGS}
-
-benchmarks-basic-dump:
-	$(MAKE) benchmarks-basic-run EXTRA_BENCHMARK_FLAGS="--dump-path ${BENCHMARKS_DUMP_DIR}"
+	scripts/veloxbench/veloxbench/cpp_micro_benchmarks.py --bm_max_secs 10 --bm_max_trials 1000000
 
 unittest: debug			#: Build with debugging and run unit tests
 	cd $(BUILD_BASE_DIR)/debug && ctest -j ${NUM_THREADS} -VV --output-on-failure
 
-fuzzertest: debug		#: Build with debugging and run expression fuzzer test.
-	$(BUILD_BASE_DIR)/debug/velox/expression/tests/velox_expression_fuzzer_test --steps 100000 --logtostderr=1 --minloglevel=0
+# Build with debugging and run expression fuzzer test. Use a fixed seed to
+# ensure the tests are reproducible.
+fuzzertest: debug
+	$(BUILD_BASE_DIR)/debug/velox/expression/tests/velox_expression_fuzzer_test \
+		--seed $(FUZZER_SEED) \
+		--duration_sec $(FUZZER_DURATION_SEC) \
+		--repro_persist_path $(FUZZER_REPRO_PERSIST_PATH) \
+		--logtostderr=1 \
+		--minloglevel=0
 
-format-fix: 			#: Fix formatting issues in the current branch
-	scripts/check.py format branch --fix
+format-fix: 			#: Fix formatting issues in the main branch
+	scripts/check.py format main --fix
 
-format-check: 			#: Check for formatting issues on the current branch
+format-check: 			#: Check for formatting issues on the main branch
 	clang-format --version
-	scripts/check.py format branch
+	scripts/check.py format main
 
 header-fix:				#: Fix license header issues in the current branch
-	scripts/check.py header branch --fix
+	scripts/check.py header main --fix
 
-header-check:			#: Check for license header issues on the current branch
-	scripts/check.py header branch
+header-check:			#: Check for license header issues on the main branch
+	scripts/check.py header main
 
 circleci-container:			#: Build the linux container for CircleCi
 	$(MAKE) linux-container CONTAINER_NAME=circleci
@@ -130,11 +139,20 @@ velox-torcharrow-container:
 linux-container:
 	rm -rf /tmp/docker && \
 	mkdir -p /tmp/docker && \
-	cp scripts/setup-$(CONTAINER_NAME).sh scripts/$(CONTAINER_NAME)-container.dockfile /tmp/docker && \
+	cp scripts/setup-helper-functions.sh scripts/setup-$(CONTAINER_NAME).sh scripts/$(CONTAINER_NAME)-container.dockfile /tmp/docker && \
 	cd /tmp/docker && \
-	docker build --tag "prestocpp/velox-$(CONTAINER_NAME):${USER}-$(shell date +%Y%m%d)" -f $(CONTAINER_NAME)-container.dockfile .
+	docker build --build-arg cpu_target=$(CPU_TARGET) --tag "prestocpp/velox-$(CPU_TARGET)-$(CONTAINER_NAME):${USER}-$(shell date +%Y%m%d)" -f $(CONTAINER_NAME)-container.dockfile .
 
 help:					#: Show the help messages
 	@cat $(firstword $(MAKEFILE_LIST)) | \
 	awk '/^[-a-z]+:/' | \
 	awk -F: '{ printf("%-20s   %s\n", $$1, $$NF) }'
+
+python-clean:
+	DEBUG=1 ${PYTHON_EXECUTABLE} setup.py clean
+
+python-build:
+	DEBUG=1 ${PYTHON_EXECUTABLE} setup.py develop
+
+python-test: python-build
+	DEBUG=1 ${PYTHON_EXECUTABLE} -m unittest -v

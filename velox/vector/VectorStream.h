@@ -17,17 +17,14 @@
 
 #include "velox/buffer/Buffer.h"
 #include "velox/common/memory/ByteStream.h"
-#include "velox/common/memory/MappedMemory.h"
 #include "velox/common/memory/Memory.h"
+#include "velox/common/memory/MemoryAllocator.h"
 #include "velox/common/memory/StreamArena.h"
-#include "velox/type/Type.h"
-#include "velox/vector/SelectivityVector.h"
+#include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox {
 
-class BaseVector;
 class ByteStream;
-class RowVector;
 
 struct IndexRange {
   vector_size_t begin;
@@ -39,76 +36,74 @@ class VectorSerializer {
   virtual ~VectorSerializer() = default;
 
   virtual void append(
-      std::shared_ptr<RowVector> vector,
+      RowVectorPtr vector,
       const folly::Range<const IndexRange*>& ranges) = 0;
 
   // Writes the contents to 'stream' in wire format
-  virtual void flush(OutputStream* stream) = 0;
+  virtual void flush(OutputStream* FOLLY_NONNULL stream) = 0;
 };
 
 class VectorSerde {
  public:
   virtual ~VectorSerde() = default;
+  // Lets the caller pass options to the Serde. This can be extended to add
+  // custom options by each of its extended classes.
+  struct Options {
+    virtual ~Options() {}
+  };
 
   virtual void estimateSerializedSize(
-      std::shared_ptr<BaseVector> vector,
+      VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes) = 0;
+      vector_size_t* FOLLY_NONNULL* FOLLY_NONNULL sizes) = 0;
 
   virtual std::unique_ptr<VectorSerializer> createSerializer(
-      std::shared_ptr<const RowType> type,
+      RowTypePtr type,
       int32_t numRows,
-      StreamArena* streamArena) = 0;
+      StreamArena* FOLLY_NONNULL streamArena,
+      const Options* FOLLY_NULLABLE options = nullptr) = 0;
 
   virtual void deserialize(
-      ByteStream* source,
-      velox::memory::MemoryPool* pool,
-      std::shared_ptr<const RowType> type,
-      std::shared_ptr<RowVector>* result) = 0;
+      ByteStream* FOLLY_NONNULL source,
+      velox::memory::MemoryPool* FOLLY_NONNULL pool,
+      RowTypePtr type,
+      RowVectorPtr* FOLLY_NONNULL result,
+      const Options* FOLLY_NULLABLE options = nullptr) = 0;
 };
 
 bool registerVectorSerde(std::unique_ptr<VectorSerde> serde);
 
 bool isRegisteredVectorSerde();
 
-#define _VELOX_REGISTER_VECTOR_SERDE_NAME(serde) registerVectorSerde_##serde
-
-#define VELOX_DECLARE_VECTOR_SERDE(serde)             \
-  void _VELOX_REGISTER_VECTOR_SERDE_NAME(serde)() {   \
-    registerVectorSerde((std::make_unique<serde>())); \
-  }
-
-#define VELOX_REGISTER_VECTOR_SERDE(serde)                  \
-  {                                                         \
-    extern void _VELOX_REGISTER_VECTOR_SERDE_NAME(serde)(); \
-    _VELOX_REGISTER_VECTOR_SERDE_NAME(serde)();             \
-  }
-
 class VectorStreamGroup : public StreamArena {
  public:
-  explicit VectorStreamGroup(memory::MappedMemory* mappedMemory)
-      : StreamArena(mappedMemory) {}
+  explicit VectorStreamGroup(memory::MemoryPool* FOLLY_NONNULL pool)
+      : StreamArena(pool) {}
 
-  void createStreamTree(std::shared_ptr<const RowType> type, int32_t numRows);
+  void createStreamTree(
+      RowTypePtr type,
+      int32_t numRows,
+      const VectorSerde::Options* FOLLY_NULLABLE options = nullptr);
 
   static void estimateSerializedSize(
-      std::shared_ptr<BaseVector> vector,
+      VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes);
+      vector_size_t* FOLLY_NONNULL* FOLLY_NONNULL sizes);
 
   void append(
-      std::shared_ptr<RowVector> vector,
+      RowVectorPtr vector,
       const folly::Range<const IndexRange*>& ranges);
 
   // Writes the contents to 'stream' in wire format.
-  void flush(OutputStream* stream);
+  void flush(OutputStream* FOLLY_NONNULL stream);
 
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
-      ByteStream* source,
-      velox::memory::MemoryPool* pool,
-      std::shared_ptr<const RowType> type,
-      std::shared_ptr<RowVector>* result);
+      ByteStream* FOLLY_NONNULL source,
+      velox::memory::MemoryPool* FOLLY_NONNULL pool,
+      RowTypePtr type,
+      RowVectorPtr* FOLLY_NONNULL result,
+      const VectorSerde::Options* FOLLY_NULLABLE options = nullptr);
 
  private:
   std::unique_ptr<VectorSerializer> serializer_;

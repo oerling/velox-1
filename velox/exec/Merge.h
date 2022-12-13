@@ -44,12 +44,10 @@ class Merge : public SourceOperator {
 
   RowVectorPtr getOutput() override;
 
+  void close() override;
+
   const RowTypePtr& outputType() const {
     return outputType_;
-  }
-
-  memory::MappedMemory* mappedMemory() const {
-    return operatorCtx_->mappedMemory();
   }
 
  protected:
@@ -63,7 +61,7 @@ class Merge : public SourceOperator {
   /// Maximum number of rows in the output batch.
   const uint32_t outputBatchSize_;
 
-  std::vector<std::pair<ChannelIndex, CompareFlags>> sortingKeys_;
+  std::vector<std::pair<column_index_t, CompareFlags>> sortingKeys_;
 
   /// A list of cursors over batches of ordered source data. One per source.
   /// Aligned with 'sources'.
@@ -88,7 +86,7 @@ class SourceStream final : public MergeStream {
  public:
   SourceStream(
       MergeSource* source,
-      const std::vector<std::pair<ChannelIndex, CompareFlags>>& sortingKeys,
+      const std::vector<std::pair<column_index_t, CompareFlags>>& sortingKeys,
       uint32_t outputBatchSize)
       : source_{source},
         sortingKeys_{sortingKeys},
@@ -140,7 +138,7 @@ class SourceStream final : public MergeStream {
 
   MergeSource* source_;
 
-  const std::vector<std::pair<ChannelIndex, CompareFlags>>& sortingKeys_;
+  const std::vector<std::pair<column_index_t, CompareFlags>>& sortingKeys_;
 
   /// Ordered source rows.
   RowVectorPtr data_;

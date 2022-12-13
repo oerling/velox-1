@@ -17,8 +17,8 @@
 
 #include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/RuntimeMetrics.h"
-#include "velox/common/caching/DataCache.h"
 #include "velox/common/caching/ScanTracker.h"
+#include "velox/common/future/VeloxPromise.h"
 #include "velox/core/Context.h"
 #include "velox/vector/ComplexVector.h"
 
@@ -29,11 +29,13 @@ class Filter;
 }
 namespace facebook::velox::core {
 class ITypedExpr;
-}
+} // namespace facebook::velox::core
 namespace facebook::velox::exec {
 class ExprSet;
 }
 namespace facebook::velox::connector {
+class ConnectorCommitInfo;
+class WriteProtocol;
 
 class DataSource;
 
@@ -61,8 +63,19 @@ class ColumnHandle {
 
 class ConnectorTableHandle {
  public:
+  explicit ConnectorTableHandle(std::string connectorId)
+      : connectorId_(std::move(connectorId)) {}
+
   virtual ~ConnectorTableHandle() = default;
+
   virtual std::string toString() const = 0;
+
+  const std::string& connectorId() const {
+    return connectorId_;
+  }
+
+ private:
+  const std::string connectorId_;
 };
 
 /**
@@ -83,6 +96,10 @@ class DataSink {
  public:
   virtual ~DataSink() = default;
 
+  // Get commit info of the connector.
+  virtual std::shared_ptr<ConnectorCommitInfo> getConnectorCommitInfo()
+      const = 0;
+
   // Add the next data (vector) to be written. This call is blocking
   // TODO maybe at some point we want to make it async
   virtual void appendData(VectorPtr input) = 0;
@@ -102,15 +119,20 @@ class DataSource {
   virtual void addSplit(std::shared_ptr<ConnectorSplit> split) = 0;
 
   // Process a split added via addSplit. Returns nullptr if split has been fully
-  // processed.
-  virtual RowVectorPtr next(uint64_t size) = 0;
+  // processed. Returns std::nullopt and sets the 'future' if started
+  // asynchronous work and needs to wait for it to complete to continue
+  // processing. The caller will wait for the 'future' to complete before
+  // calling 'next' again.
+  virtual std::optional<RowVectorPtr> next(
+      uint64_t size,
+      velox::ContinueFuture& future) = 0;
 
   // Add dynamically generated filter.
   // @param outputChannel index into outputType specified in
   // Connector::createDataSource() that identifies the column this filter
   // applies to.
   virtual void addDynamicFilter(
-      ChannelIndex outputChannel,
+      column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) = 0;
 
   // Returns the number of input bytes processed so far.
@@ -146,9 +168,6 @@ class DataSource {
   virtual int64_t estimatedRowSize() {
     return kUnknownRowSize;
   }
-
-  // TODO Allow DataSource to indicate that it is blocked (say waiting for IO)
-  // to avoid holding up the thread.
 };
 
 // Exposes expression evaluation functionality of the engine to the connector.
@@ -165,59 +184,72 @@ class ExpressionEvaluator {
   // Evaluates previously compiled expression on the specified rows.
   // Re-uses result vector if it is not null.
   virtual void evaluate(
-      exec::ExprSet* exprSet,
+      exec::ExprSet* FOLLY_NONNULL exprSet,
       const SelectivityVector& rows,
       RowVectorPtr& input,
-      VectorPtr* result) const = 0;
+      VectorPtr* FOLLY_NULLABLE result) const = 0;
 };
 
 class ConnectorQueryCtx {
  public:
   ConnectorQueryCtx(
-      memory::MemoryPool* pool,
-      Config* config,
-      ExpressionEvaluator* expressionEvaluator,
-      memory::MappedMemory* mappedMemory,
-      const std::string& scanId)
+      memory::MemoryPool* FOLLY_NONNULL pool,
+      const Config* FOLLY_NONNULL connectorConfig,
+      ExpressionEvaluator* FOLLY_NULLABLE expressionEvaluator,
+      memory::MemoryAllocator* FOLLY_NONNULL allocator,
+      const std::string& taskId,
+      const std::string& planNodeId,
+      int driverId)
       : pool_(pool),
-        config_(config),
+        config_(connectorConfig),
         expressionEvaluator_(expressionEvaluator),
-        mappedMemory_(mappedMemory),
-        scanId_(scanId) {}
+        allocator_(allocator),
+        scanId_(fmt::format("{}.{}", taskId, planNodeId)),
+        taskId_(taskId),
+        driverId_(driverId) {}
 
-  memory::MemoryPool* memoryPool() const {
+  memory::MemoryPool* FOLLY_NONNULL memoryPool() const {
     return pool_;
   }
 
-  Config* config() const {
+  const Config* FOLLY_NONNULL config() const {
     return config_;
   }
 
-  ExpressionEvaluator* expressionEvaluator() const {
+  ExpressionEvaluator* FOLLY_NULLABLE expressionEvaluator() const {
     return expressionEvaluator_;
   }
 
-  // MappedMemory for large allocations. Used for caching with
-  // CachedBufferedImput if this implements cache::AsyncDataCache.
-  memory::MappedMemory* mappedMemory() const {
-    return mappedMemory_;
+  /// MemoryAllocator used for large allocations. Used for caching with
+  /// CachedBufferedInput if this implements cache::AsyncDataCache.
+  memory::MemoryAllocator* FOLLY_NONNULL allocator() const {
+    return allocator_;
   }
 
-  // Returns an id that allows sharing state between different threads
-  // of the same scan. This is typically a query id plus the scan's
-  // PlanNodeId. This is used for locating a scanTracker, which tracks
-  // the read density of columns for prefetch and other memory
-  // hierarchy purposes.
+  // This is a combination of task id and the scan's PlanNodeId. This is an id
+  // that allows sharing state between different threads of the same scan. This
+  // is used for locating a scanTracker, which tracks the read density of
+  // columns for prefetch and other memory hierarchy purposes.
   const std::string& scanId() const {
     return scanId_;
   }
 
+  const std::string& taskId() const {
+    return taskId_;
+  }
+
+  int driverId() const {
+    return driverId_;
+  }
+
  private:
-  memory::MemoryPool* pool_;
-  Config* config_;
-  ExpressionEvaluator* expressionEvaluator_;
-  memory::MappedMemory* mappedMemory_;
-  std::string scanId_;
+  memory::MemoryPool* FOLLY_NONNULL const pool_;
+  const Config* FOLLY_NONNULL const config_;
+  ExpressionEvaluator* FOLLY_NULLABLE const expressionEvaluator_;
+  memory::MemoryAllocator* FOLLY_NONNULL const allocator_;
+  const std::string scanId_;
+  const std::string taskId_;
+  const int driverId_;
 };
 
 class Connector {
@@ -237,18 +269,19 @@ class Connector {
     return properties_;
   }
 
-  // TODO Generalize to specify TableHandle/Layout and ColumnHandles.
-  // We should basically aim to match the interface defined at
-  // https://github.com/prestodb/presto/blob/master/presto-main/src/main/
-  //      java/com/facebook/presto/split/PageSourceProvider.java
-  // except that the split should NOT be part of the signature.
+  // Returns true if this connector would accept a filter dynamically generated
+  // during query execution.
+  virtual bool canAddDynamicFilter() const {
+    return false;
+  }
+
   virtual std::shared_ptr<DataSource> createDataSource(
-      const std::shared_ptr<const RowType>& outputType,
+      const RowTypePtr& outputType,
       const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx) = 0;
+      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx) = 0;
 
   // Returns true if addSplit of DataSource can use 'dataSource' from
   // ConnectorSplit in addSplit(). If so, TableScan can preload splits
@@ -259,9 +292,10 @@ class Connector {
   }
 
   virtual std::shared_ptr<DataSink> createDataSink(
-      std::shared_ptr<const RowType> inputType,
+      RowTypePtr inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
-      ConnectorQueryCtx* connectorQueryCtx) = 0;
+      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx,
+      std::shared_ptr<WriteProtocol> writeProtocol) = 0;
 
   // Returns a ScanTracker for 'id'. 'id' uniquely identifies the
   // tracker and different threads will share the same
@@ -276,7 +310,7 @@ class Connector {
   }
 
  private:
-  static void unregisterTracker(cache::ScanTracker* tracker);
+  static void unregisterTracker(cache::ScanTracker* FOLLY_NONNULL tracker);
 
   const std::string id_;
 
@@ -289,7 +323,7 @@ class Connector {
 
 class ConnectorFactory {
  public:
-  explicit ConnectorFactory(const char* name) : name_(name) {}
+  explicit ConnectorFactory(const char* FOLLY_NONNULL name) : name_(name) {}
 
   virtual ~ConnectorFactory() = default;
 
@@ -300,8 +334,7 @@ class ConnectorFactory {
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
       std::shared_ptr<const Config> properties,
-      std::unique_ptr<DataCache> dataCache = nullptr,
-      folly::Executor* executor = nullptr) = 0;
+      folly::Executor* FOLLY_NULLABLE executor = nullptr) = 0;
 
  private:
   const std::string name_;

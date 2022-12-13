@@ -21,7 +21,15 @@ Mathematical Functions
 .. function:: clamp(x, low, high) -> [same as x]
 
     Returns ``low`` if ``x`` is less than ``low``. Returns ``high`` if ``x`` is greater than ``high``.
-    Returns ``x`` otherwise. ``low`` must be less than or equal to ``high``.
+    Returns ``x`` otherwise.
+
+    ``low`` is expected to be less than or equal to ``high``. This expection is not
+    verified for performance reasons. Returns ``high`` for all values of ``x``
+    when ``low`` is greater than ``high``.
+
+.. function:: degrees(x) -> double
+
+    Converts angle x in radians to degrees.
 
 .. function:: divide(x, y) -> [same as x]
 
@@ -30,6 +38,10 @@ Mathematical Functions
     division by zero results in an error. For floating point types,  division by
     zero returns positive infinity if x is greater than zero, negative infinity if
     x if less than zero and NaN if x is equal to zero.
+
+.. function:: e() -> double
+
+    Returns the value of Euler's Constant.
 
 .. function:: exp(x) -> double
 
@@ -117,6 +129,14 @@ Mathematical Functions
 .. function:: to_base(x, radix) -> varchar
 
     Returns the base-``radix`` representation of ``x``. ``radix`` must be between 2 and 36.
+
+.. function:: truncate(x) -> double
+
+    Returns x rounded to integer by dropping digits after decimal point.
+
+.. function:: truncate(x, n) -> double
+
+    Returns x truncated to n decimal places. n can be negative to truncate n digits left of the decimal point.
 
 .. function:: width_bucket(x, bound1, bound2, n) -> bigint
 

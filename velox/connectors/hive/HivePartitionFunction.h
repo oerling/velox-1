@@ -25,7 +25,8 @@ class HivePartitionFunction : public core::PartitionFunction {
   HivePartitionFunction(
       int numBuckets,
       std::vector<int> bucketToPartition,
-      std::vector<ChannelIndex> keyChannels);
+      std::vector<column_index_t> keyChannels,
+      const std::vector<VectorPtr>& constValues = {});
 
   ~HivePartitionFunction() override = default;
 
@@ -33,13 +34,18 @@ class HivePartitionFunction : public core::PartitionFunction {
       override;
 
  private:
+  // Precompute single value hive hash for a constant partition key.
+  void precompute(const BaseVector& value, size_t column_index_t);
+
   const int numBuckets_;
   const std::vector<int> bucketToPartition_;
-  const std::vector<ChannelIndex> keyChannels_;
+  const std::vector<column_index_t> keyChannels_;
 
   // Reusable memory.
   std::vector<uint32_t> hashes_;
   SelectivityVector rows_;
   std::vector<DecodedVector> decodedVectors_;
+  // Precomputed hashes for constant partition keys (one per key).
+  std::vector<uint32_t> precomputedHashes_;
 };
 } // namespace facebook::velox::connector::hive

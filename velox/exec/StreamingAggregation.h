@@ -44,6 +44,8 @@ class StreamingAggregation : public Operator {
 
   bool isFinished() override;
 
+  void close() override;
+
  private:
   // Returns the rows to aggregate with masking applied if applicable.
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
@@ -71,10 +73,10 @@ class StreamingAggregation : public Operator {
 
   const core::AggregationNode::Step step_;
 
-  std::vector<ChannelIndex> groupingKeys_;
+  std::vector<column_index_t> groupingKeys_;
   std::vector<std::unique_ptr<Aggregate>> aggregates_;
   std::unique_ptr<AggregationMasks> masks_;
-  std::vector<std::vector<ChannelIndex>> args_;
+  std::vector<std::vector<column_index_t>> args_;
   std::vector<std::vector<VectorPtr>> constantArgs_;
   std::vector<DecodedVector> decodedKeys_;
 

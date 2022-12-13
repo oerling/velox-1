@@ -20,8 +20,8 @@
 #include <string>
 
 #include "velox/vector/SimpleVector.h"
-#include "velox/vector/tests/VectorMaker.h"
 #include "velox/vector/tests/VectorTestUtils.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 namespace facebook::velox::test {
 
@@ -102,8 +102,7 @@ class SimpleVectorTest : public ::testing::Test {
   }
 
  protected:
-  std::unique_ptr<memory::ScopedMemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
   VectorMaker maker_{pool_.get()};
 };
 

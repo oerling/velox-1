@@ -18,6 +18,21 @@
 #include "velox/dwio/common/Statistics.h"
 
 namespace facebook::velox::common {
+ScanSpec::ScanSpec(const ScanSpec& other)
+    : subscript_(other.subscript_),
+      fieldName_(other.fieldName_),
+
+      channel_(other.channel_),
+      constantValue_(other.constantValue_),
+      projectOut_(other.projectOut_),
+      extractValues_(other.extractValues_),
+      makeFlat_(other.makeFlat_),
+      filter_(other.filter_),
+      selectivity_(other.selectivity_),
+      enableFilterReorder_(other.enableFilterReorder_),
+      children_(other.children_),
+      stableChildren_(other.stableChildren_),
+      valueHook_(other.valueHook_) {}
 
 ScanSpec* ScanSpec::getOrCreateChild(const Subfield& subfield) {
   auto container = this;
@@ -68,9 +83,9 @@ void ScanSpec::reorder() {
       children_.begin(),
       children_.end(),
       [this](
-          const std::unique_ptr<ScanSpec>& left,
-          const std::unique_ptr<ScanSpec>& right) {
-        if (left->filter_ && right->filter_) {
+          const std::shared_ptr<ScanSpec>& left,
+          const std::shared_ptr<ScanSpec>& right) {
+        if (left->hasFilter() && right->hasFilter()) {
           if (enableFilterReorder_ &&
               (left->selectivity_.numIn() || right->selectivity_.numIn())) {
             return left->selectivity_.timeToDropValue() <
@@ -78,12 +93,23 @@ void ScanSpec::reorder() {
           }
           // Integer filters are before other filters if there is no
           // history data.
-          return left->filter_->kind() < right->filter_->kind();
+          if (left->filter_ && right->filter_) {
+            return left->filter_->kind() < right->filter_->kind();
+          }
+          // If hasFilter() is true but 'filter_' is nullptr, we have a filter
+          // on complex type members. The simple type filter goes first.
+          if (left->filter_) {
+            return true;
+          }
+          if (right->filter_) {
+            return false;
+          }
+          return left->fieldName_ < right->fieldName_;
         }
-        if (left->filter_) {
+        if (left->hasFilter()) {
           return true;
         }
-        if (right->filter_) {
+        if (right->hasFilter()) {
           return false;
         }
         return left->fieldName_ < right->fieldName_;
@@ -121,7 +147,7 @@ bool ScanSpec::hasFilter() const {
 
 void ScanSpec::moveAdaptationFrom(ScanSpec& other) {
   // moves the filters and filter order from 'other'.
-  std::vector<std::unique_ptr<ScanSpec>> newChildren;
+  std::vector<std::shared_ptr<ScanSpec>> newChildren;
   for (auto& otherChild : other.children_) {
     bool found = false;
     for (auto& child : children_) {
@@ -335,7 +361,7 @@ bool testFilter(
   return true;
 }
 
-ScanSpec& ScanSpec::getChildByChannel(ChannelIndex channel) {
+ScanSpec& ScanSpec::getChildByChannel(column_index_t channel) {
   for (auto& child : children_) {
     if (child->channel_ == channel) {
       return *child;
@@ -353,13 +379,24 @@ std::string ScanSpec::toString() const {
     }
   }
   if (!children_.empty()) {
-    out << "(";
+    out << " (";
     for (auto& child : children_) {
       out << child->toString() << ", ";
     }
     out << ")";
   }
   return out.str();
+}
+
+std::shared_ptr<ScanSpec> ScanSpec::removeChild(const ScanSpec* child) {
+  for (auto it = children_.begin(); it != children_.end(); ++it) {
+    if (it->get() == child) {
+      auto removed = std::move(*it);
+      children_.erase(it);
+      return removed;
+    }
+  }
+  return nullptr;
 }
 
 } // namespace facebook::velox::common

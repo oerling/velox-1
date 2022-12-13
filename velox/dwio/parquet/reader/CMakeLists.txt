@@ -12,10 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_subdirectory(duckdb)
-
-add_library(velox_dwio_parquet_reader ParquetReader.cpp)
+add_library(
+  velox_dwio_native_parquet_reader
+  NestedStructureDecoder.cpp
+  ParquetReader.cpp
+  ParquetTypeWithId.cpp
+  PageReader.cpp
+  ParquetColumnReader.cpp
+  ParquetData.cpp
+  RepeatedColumnReader.cpp
+  RleBpDecoder.cpp
+  Statistics.cpp
+  StructColumnReader.cpp
+  StringColumnReader.cpp)
 
 target_link_libraries(
-  velox_dwio_parquet_reader velox_dwio_parquet_reader_duckdb velox_dwio_common
-  velox_duckdb_conversion duckdb ${FMT})
+  velox_dwio_native_parquet_reader
+  velox_dwio_parquet_thrift
+  velox_type
+  velox_dwio_common
+  arrow
+  parquet
+  thrift
+  ${FMT})

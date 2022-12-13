@@ -15,21 +15,34 @@
  */
 
 #include "velox/exec/HashTable.h"
+#include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/process/ProcessBase.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/vector/VectorTypeUtils.h"
 
-namespace facebook::velox::exec {
+using facebook::velox::common::testutil::TestValue;
 
-template <TypeKind Kind>
-static int32_t kindSize() {
-  return sizeof(typename KindToFlatVector<Kind>::HashRowType);
+namespace facebook::velox::exec {
+namespace {
+constexpr int32_t kMinTableSizeForParallelJoinBuild = 1000;
 }
 
-static int32_t typeKindSize(TypeKind kind) {
-  return VELOX_DYNAMIC_TYPE_DISPATCH(kindSize, kind);
+// static
+std::string BaseHashTable::modeString(HashMode mode) {
+  switch (mode) {
+    case HashMode::kHash:
+      return "HASH";
+    case HashMode::kArray:
+      return "ARRAY";
+    case HashMode::kNormalizedKey:
+      return "NORMALIZED_KEY";
+    default:
+      return fmt::format(
+          "Unknown HashTable mode:{}", static_cast<int32_t>(mode));
+  }
 }
 
 template <bool ignoreNullKeys>
@@ -40,10 +53,8 @@ HashTable<ignoreNullKeys>::HashTable(
     bool allowDuplicates,
     bool isJoinBuild,
     bool hasProbedFlag,
-    memory::MappedMemory* mappedMemory)
-    : BaseHashTable(std::move(hashers)),
-      aggregates_(aggregates),
-      isJoinBuild_(isJoinBuild) {
+    memory::MemoryPool* pool)
+    : BaseHashTable(std::move(hashers)), isJoinBuild_(isJoinBuild) {
   std::vector<TypePtr> keys;
   for (auto& hasher : hashers_) {
     keys.push_back(hasher->type());
@@ -60,7 +71,7 @@ HashTable<ignoreNullKeys>::HashTable(
       isJoinBuild,
       hasProbedFlag,
       hashMode_ != HashMode::kHash,
-      mappedMemory,
+      pool,
       ContainerRowSerde::instance());
   nextOffset_ = rows_->nextOffset();
 }
@@ -68,17 +79,17 @@ HashTable<ignoreNullKeys>::HashTable(
 class ProbeState {
  public:
   enum class Operation { kProbe, kInsert, kErase };
-  // Special tag for an erased entry. This counts as occupied for
-  // probe and as empty for insert. If a tag word with empties gets an
-  // erase, we make the erased tag empty. If the tag word getting the
-  // erase has no empties, the erase is marked with a tombstone. A
-  // probe always stops with a tag word with empties. Adding an empty
-  // to a tag word with no empties would break probes that needed to
-  // skip this tag word. This is standard practice for open addressing
-  // hash tables. F14 has more sophistication in this but we do not
-  // need it here since erase is very rare and is not expected to
-  // change the load factor by much in the expected uses.
+  // Special tag for an erased entry. This counts as occupied for probe and as
+  // empty for insert. If a tag word with empties gets an erase, we make the
+  // erased tag empty. If the tag word getting the erase has no empties, the
+  // erase is marked with a tombstone. A probe always stops with a tag word with
+  // empties. Adding an empty to a tag word with no empties would break probes
+  // that needed to skip this tag word. This is standard practice for open
+  // addressing hash tables. F14 has more sophistication in this but we do not
+  // need it here since erase is very rare except spilling and is not expected
+  // to change the load factor by much in the expected uses.
   static constexpr uint8_t kTombstoneTag = 0x7f;
+  static constexpr uint8_t kEmptyTag = 0x00;
   static constexpr int32_t kFullMask = 0xffff;
 
   static inline int32_t tagsByteOffset(uint64_t hash, uint64_t sizeMask) {
@@ -120,10 +131,11 @@ class ProbeState {
       int32_t firstKey,
       Compare compare,
       Insert insert,
-      bool extraCheck = false) {
+      int64_t& numTombstones,
+      bool extraCheck) {
     if (group_ && compare(group_, row_)) {
       if (op == Operation::kErase) {
-        eraseHit(tags);
+        eraseHit(tags, numTombstones);
       }
       return group_;
     }
@@ -137,12 +149,12 @@ class ProbeState {
     int32_t insertTagIndex = -1;
     const auto kTombstoneGroup =
         BaseHashTable::TagVector::broadcast(kTombstoneTag);
-    const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(0);
+    const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(kEmptyTag);
     for (;;) {
       if (!hits_) {
         uint16_t empty =
             simd::toBitMask(tagsInTable_ == kEmptyGroup) & kFullMask;
-        if (empty) {
+        if (empty > 0) {
           if (op == Operation::kProbe) {
             return nullptr;
           }
@@ -152,15 +164,18 @@ class ProbeState {
           if (indexInTags_ != kNotSet) {
             // We came to the end of the probe without a hit. We replace the
             // first tombstone on the way.
+            --numTombstones;
             return insert(row_, insertTagIndex + indexInTags_);
           }
+          //--numTombstoneGroups;
           auto pos = bits::getAndClearLastSetBit(empty);
           return insert(row_, tagIndex_ + pos);
-        } else if (op == Operation::kInsert && indexInTags_ == kNotSet) {
+        }
+        if (op == Operation::kInsert && indexInTags_ == kNotSet) {
           // We passed through a full group.
           uint16_t tombstones =
               simd::toBitMask(tagsInTable_ == kTombstoneGroup) & kFullMask;
-          if (tombstones) {
+          if (tombstones > 0) {
             insertTagIndex = tagIndex_;
             indexInTags_ = bits::getAndClearLastSetBit(tombstones);
           }
@@ -170,8 +185,37 @@ class ProbeState {
         if (!(extraCheck && group_ == alreadyChecked) &&
             compare(group_, row_)) {
           if (op == Operation::kErase) {
-            eraseHit(tags);
+            eraseHit(tags, numTombstones);
           }
+          return group_;
+        }
+        continue;
+      }
+      tagIndex_ = (tagIndex_ + sizeof(BaseHashTable::TagVector)) & sizeMask;
+      tagsInTable_ = BaseHashTable::loadTags(tags, tagIndex_);
+      hits_ = simd::toBitMask(tagsInTable_ == wantedTags_) & kFullMask;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE char* FOLLY_NULLABLE joinNormalizedKeyFullProbe(
+      uint8_t* tags,
+      char** table,
+      uint64_t sizeMask,
+      const uint64_t* keys) {
+    if (group_ && RowContainer::normalizedKey(group_) == keys[row_]) {
+      return group_;
+    }
+    const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(kEmptyTag);
+    for (;;) {
+      if (!hits_) {
+        uint16_t empty =
+            simd::toBitMask(tagsInTable_ == kEmptyGroup) & kFullMask;
+        if (empty) {
+          return nullptr;
+        }
+      } else {
+        loadNextHit<Operation::kProbe>(table, 0);
+        if (RowContainer::normalizedKey(group_) == keys[row_]) {
           return group_;
         }
         continue;
@@ -196,12 +240,14 @@ class ProbeState {
     __builtin_prefetch(group_ + firstKey);
   }
 
-  void eraseHit(uint8_t* tags) {
-    const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(0);
-    auto empty = simd::toBitMask(tagsInTable_ == kEmptyGroup);
+  void eraseHit(uint8_t* tags, int64_t& numTombstones) {
+    const auto kEmptyGroup = BaseHashTable::TagVector::broadcast(kEmptyTag);
+    const bool hasEmptyGroup =
+        simd::toBitMask(tagsInTable_ == kEmptyGroup) != 0;
 
     BaseHashTable::storeTag(
-        tags, tagIndex_ + indexInTags_, empty ? 0 : kTombstoneTag);
+        tags, tagIndex_ + indexInTags_, hasEmptyGroup ? 0 : kTombstoneTag);
+    numTombstones += !hasEmptyGroup;
   }
 
   char* group_;
@@ -318,6 +364,7 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::fullProbe(
         [&](int32_t index, int32_t row) {
           return isJoin ? nullptr : insertEntry(lookup, row, index);
         },
+        numTombstones_,
         !isJoin && extraCheck);
     return;
   }
@@ -331,27 +378,36 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::fullProbe(
       [&](int32_t index, int32_t row) {
         return isJoin ? nullptr : insertEntry(lookup, row, index);
       },
+      numTombstones_,
       !isJoin && extraCheck);
 }
 
 namespace {
-// A normalized key is spread evenly over 64 bits. This mixes the bits
-// so that they affect the low 'bits', which are actually used for
-// indexing the hash table.
+// Normalized keys have non0-random bits. Bits need to be propagated
+// up to make a tag byte and down so that non-lowest bits of
+// normalized key affect the hash table index.
 inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
-  constexpr uint64_t prime1 = 0xc6a4a7935bd1e995UL; // M from Murmurhash.
-  constexpr uint64_t prime2 = 527729;
-  constexpr uint64_t prime3 = 28047;
-  auto h = (k ^ ((k >> 32))) * prime1;
-  return h + (h >> bits) * prime2 + (h >> (2 * bits)) * prime3;
+  return folly::hasher<uint64_t>()(k);
 }
 
 void populateNormalizedKeys(HashLookup& lookup, int8_t sizeBits) {
   lookup.normalizedKeys.resize(lookup.rows.back() + 1);
-  auto hashes = lookup.hashes.data();
+  uint64_t* __restrict hashes = lookup.hashes.data();
+  uint64_t* __restrict keys = lookup.normalizedKeys.data();
+  int32_t end = lookup.rows.back() + 1;
+  if (end / 4 < lookup.rows.size()) {
+    // For more than 1/4 of the positions in use, run the loop on all
+    // elements, since the loop will do 4 at a time.
+    for (auto row = 0; row < end; ++row) {
+      auto hash = hashes[row];
+      keys[row] = hash; // NOLINT
+      hashes[row] = mixNormalizedKey(hash, sizeBits);
+    }
+    return;
+  }
   for (auto row : lookup.rows) {
     auto hash = hashes[row];
-    lookup.normalizedKeys[row] = hash; // NOLINT
+    keys[row] = hash; // NOLINT
     hashes[row] = mixNormalizedKey(hash, sizeBits);
   }
 }
@@ -400,7 +456,6 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
     state1.firstProbe(table_, 0);
     fullProbe<false>(lookup, state1, false);
   }
-  initializeNewGroups(lookup);
 }
 
 template <bool ignoreNullKeys>
@@ -444,7 +499,7 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
   for (; i < numProbes; ++i) {
     auto row = rows[i];
     uint64_t index = hashes[row];
-    VELOX_DCHECK(index < size_);
+    VELOX_DCHECK_LT(index, size_);
     char* group = table_[index];
     if (UNLIKELY(!group)) {
       group = insertEntry(lookup, index, row);
@@ -452,7 +507,6 @@ void HashTable<ignoreNullKeys>::arrayGroupProbe(HashLookup& lookup) {
     groups[row] = group;
     lookup.hits[row] = group; // NOLINT
   }
-  initializeNewGroups(lookup);
 }
 
 template <bool ignoreNullKeys>
@@ -460,13 +514,15 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   if (hashMode_ == HashMode::kArray) {
     for (auto row : lookup.rows) {
       auto index = lookup.hashes[row];
-      DCHECK(index < size_);
+      DCHECK_LT(index, size_);
       lookup.hits[row] = table_[index]; // NOLINT
     }
     return;
   }
   if (hashMode_ == HashMode::kNormalizedKey) {
     populateNormalizedKeys(lookup, sizeBits_);
+    joinNormalizedKeyProbe(lookup);
+    return;
   }
   int32_t probeIndex = 0;
   int32_t numProbes = lookup.rows.size();
@@ -502,36 +558,68 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
 }
 
 template <bool ignoreNullKeys>
-void HashTable<ignoreNullKeys>::initializeNewGroups(HashLookup& lookup) {
-  if (lookup.newGroups.empty()) {
-    return;
+void HashTable<ignoreNullKeys>::joinNormalizedKeyProbe(HashLookup& lookup) {
+  int32_t probeIndex = 0;
+  int32_t numProbes = lookup.rows.size();
+  const vector_size_t* rows = lookup.rows.data();
+  ProbeState state1;
+  ProbeState state2;
+  ProbeState state3;
+  ProbeState state4;
+  const uint64_t* keys = lookup.normalizedKeys.data();
+  const uint64_t* hashes = lookup.hashes.data();
+  char** hits = lookup.hits.data();
+  for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
+    int32_t row = rows[probeIndex];
+    state1.preProbe(tags_, sizeMask_, hashes[row], row);
+    row = rows[probeIndex + 1];
+    state2.preProbe(tags_, sizeMask_, hashes[row], row);
+    row = rows[probeIndex + 2];
+    state3.preProbe(tags_, sizeMask_, hashes[row], row);
+    row = rows[probeIndex + 3];
+    state4.preProbe(tags_, sizeMask_, hashes[row], row);
+    state1.firstProbe(table_, 0);
+    state2.firstProbe(table_, 0);
+    state3.firstProbe(table_, 0);
+    state4.firstProbe(table_, 0);
+    hits[state1.row()] =
+        state1.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state2.row()] =
+        state2.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state3.row()] =
+        state3.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
+    hits[state4.row()] =
+        state4.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
   }
-  for (auto& aggregate : aggregates_) {
-    aggregate->initializeNewGroups(lookup.hits.data(), lookup.newGroups);
+  for (; probeIndex < numProbes; ++probeIndex) {
+    int32_t row = rows[probeIndex];
+    state1.preProbe(tags_, sizeMask_, lookup.hashes[row], row);
+    state1.firstProbe(table_, 0);
+    hits[row] =
+        state1.joinNormalizedKeyFullProbe(tags_, table_, sizeMask_, keys);
   }
 }
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   VELOX_CHECK(bits::isPowerOfTwo(size), "Size is not a power of two: {}", size);
-  if (size > 0) {
-    size_ = size;
-    sizeMask_ = size_ - 1;
-    sizeBits_ = __builtin_popcountll(sizeMask_);
-    constexpr auto kPageSize = memory::MappedMemory::kPageSize;
-    // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
-    // tags table.
-    auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
-    if (!rows_->mappedMemory()->allocateContiguous(
-            numPages, nullptr, tableAllocation_)) {
-      VELOX_FAIL("Could not allocate join/group by hash table");
-    }
-    table_ = tableAllocation_.data<char*>();
-    tags_ = reinterpret_cast<uint8_t*>(table_ + size);
-    memset(tags_, 0, size_);
-    // Not strictly necessary to clear 'table_' but more debuggable.
-    memset(table_, 0, size_ * sizeof(char*));
+  VELOX_CHECK_GT(size, 0);
+  size_ = size;
+  numTombstones_ = 0;
+  sizeMask_ = size_ - 1;
+  sizeBits_ = __builtin_popcountll(sizeMask_);
+  constexpr auto kPageSize = memory::MemoryAllocator::kPageSize;
+  // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
+  // tags table.
+  auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
+  if (!rows_->pool()->allocateContiguous(numPages, tableAllocation_)) {
+    VELOX_FAIL("Could not allocate join/group by hash table");
   }
+  table_ = tableAllocation_.data<char*>();
+  tags_ = reinterpret_cast<uint8_t*>(table_ + size);
+  memset(tags_, 0, size_);
+  // Not strictly necessary to clear 'table_' but more debuggable.
+  memset(table_, 0, size_ * sizeof(char*));
 }
 
 template <bool ignoreNullKeys>
@@ -548,6 +636,14 @@ void HashTable<ignoreNullKeys>::clear() {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
+  VELOX_CHECK(
+      size_ == 0 || size_ > (numDistinct_ + numTombstones_),
+      "size_:{} numDistinct_:{} numTombstoneRows_:{}",
+      size_,
+      numDistinct_,
+      numTombstones_);
+
+  const int64_t newNumDistincts = numNew + numDistinct_;
   if (!table_ || !size_) {
     // Initial guess of cardinality is double the first input batch or at
     // least 2K entries.
@@ -555,34 +651,52 @@ void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
     // hashing.
     auto newSize = std::max(
         (uint64_t)2048, bits::nextPowerOfTwo(numNew * 2 + numDistinct_));
+    if (newNumDistincts > rehashSize(newSize)) {
+      newSize *= 2;
+    }
     allocateTables(newSize);
-    if (numDistinct_) {
+    if (numDistinct_ > 0) {
       rehash();
     }
-  } else if (numNew + numDistinct_ > size_ - (size_ / 8)) {
-    // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
-    auto newSize = bits::nextPowerOfTwo(size_ + numNew);
+    // We are not always able to reuse a tombstone slot as a free one for hash
+    // collision handling purpose. For example, if all the table slots are
+    // either occupied or tombstone, then we can't store any new entry in the
+    // table. Also, if there is non-trivial amount of tombstone slots in table,
+    // then the table lookup will become slow. Given that, we treat tombstone
+    // slot as non-empty slot here to decide whether to trigger rehash or not.
+  } else if (newNumDistincts > rehashSize()) {
+    auto newSize = bits::nextPowerOfTwo(newNumDistincts);
     allocateTables(newSize);
     rehash();
   }
 }
 
 template <bool ignoreNullKeys>
-bool HashTable<ignoreNullKeys>::insertBatch(
-    char** groups,
-    int32_t numGroups,
+bool HashTable<ignoreNullKeys>::hashRows(
+    folly::Range<char**> rows,
+    bool initNormalizedKeys,
     raw_vector<uint64_t>& hashes) {
+  if (rows.empty()) {
+    return true;
+  }
+  if (!initNormalizedKeys && hashMode_ == HashMode::kNormalizedKey) {
+    for (auto i = 0; i < rows.size(); ++i) {
+      hashes[i] =
+          mixNormalizedKey(RowContainer::normalizedKey(rows[i]), sizeBits_);
+    }
+    return true;
+  }
+
   for (int32_t i = 0; i < hashers_.size(); ++i) {
     auto& hasher = hashers_[i];
     if (hashMode_ == HashMode::kHash) {
-      rows_->hash(
-          i, folly::Range<char**>(groups, numGroups), i > 0, hashes.data());
+      rows_->hash(i, rows, i > 0, hashes.data());
     } else {
       // Array or normalized key.
       auto column = rows_->columnAt(i);
       if (!hasher->computeValueIdsForRows(
-              groups,
-              numGroups,
+              rows.data(),
+              rows.size(),
               column.offset(),
               column.nullByte(),
               ignoreNullKeys ? 0 : column.nullMask(),
@@ -591,6 +705,207 @@ bool HashTable<ignoreNullKeys>::insertBatch(
         return false;
       }
     }
+  }
+  if (hashMode_ == HashMode::kNormalizedKey && initNormalizedKeys) {
+    for (auto i = 0; i < rows.size(); ++i) {
+      RowContainer::normalizedKey(rows[i]) = hashes[i];
+      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
+    }
+  }
+  return true;
+}
+
+namespace {
+template <typename Source>
+void syncWorkItems(
+    std::vector<std::shared_ptr<Source>>& items,
+    std::exception_ptr& error,
+    bool log = false) {
+  // All items must be synced also in case of error because the items
+  // hold references to the table and rows which could be destructed
+  // if unwinding the stack did ont pause to sync.
+  for (auto& item : items) {
+    try {
+      item->move();
+    } catch (const std::exception& e) {
+      if (log) {
+        LOG(ERROR) << "Error in async hash build: " << e.what();
+      }
+      error = std::current_exception();
+    }
+  }
+}
+} // namespace
+
+template <bool ignoreNullKeys>
+bool HashTable<ignoreNullKeys>::canApplyParallelJoinBuild() const {
+  if (!isJoinBuild_ || buildExecutor_ == nullptr) {
+    return false;
+  }
+  if (hashMode_ == HashMode::kArray) {
+    return false;
+  }
+  if (otherTables_.empty()) {
+    return false;
+  }
+  return (size_ / (1 + otherTables_.size())) >
+      kMinTableSizeForParallelJoinBuild;
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::parallelJoinBuild() {
+  TestValue::adjust(
+      "facebook::velox::exec::HashTable::parallelJoinBuild", nullptr);
+  int32_t numPartitions = 1 + otherTables_.size();
+  VELOX_CHECK_GT(
+      size_ / numPartitions,
+      kMinTableSizeForParallelJoinBuild,
+      "Less than {} entries per partition for parallel build",
+      kMinTableSizeForParallelJoinBuild);
+  buildPartitionBounds_.resize(numPartitions + 1);
+  // Pad the tail of buildPartitionBounds_ to max int.
+  std::fill(
+      buildPartitionBounds_.begin(),
+      buildPartitionBounds_.begin() + buildPartitionBounds_.capacity(),
+      std::numeric_limits<int32_t>::max());
+  for (auto i = 0; i < numPartitions; ++i) {
+    // The bounds are rounded up to cache line size.
+    buildPartitionBounds_[i] = bits::roundUp(
+        (size_ / numPartitions) * i,
+        folly::hardware_destructive_interference_size);
+  }
+  buildPartitionBounds_.back() = size_;
+  std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
+  std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
+  auto sync = folly::makeGuard([&]() {
+    // This is executed on returning path, possibly in unwinding, so must not
+    // throw.
+    std::exception_ptr error;
+    syncWorkItems(partitionSteps, error, true);
+    syncWorkItems(buildSteps, error, true);
+  });
+
+  for (auto i = 0; i < numPartitions; ++i) {
+    auto table = i == 0 ? this : otherTables_[i - 1].get();
+    partitionSteps.push_back(
+        std::make_shared<AsyncSource<bool>>([this, table, numPartitions]() {
+          partitionRows(*table);
+          return std::make_unique<bool>(true);
+        }));
+    assert(!partitionSteps.empty()); // lint
+    buildExecutor_->add([step = partitionSteps.back()]() { step->prepare(); });
+  }
+  std::exception_ptr error;
+  syncWorkItems(partitionSteps, error);
+  if (error) {
+    std::rethrow_exception(error);
+  }
+  std::vector<std::vector<char*>> overflowPerPartition(numPartitions);
+  for (auto i = 0; i < numPartitions; ++i) {
+    buildSteps.push_back(
+        std::make_shared<AsyncSource<bool>>([i, &overflowPerPartition, this]() {
+          buildJoinPartition(i, overflowPerPartition[i]);
+          return std::make_unique<bool>(true);
+        }));
+    assert(!buildSteps.empty()); // lint
+    buildExecutor_->add([step = buildSteps.back()]() { step->prepare(); });
+  }
+  syncWorkItems(buildSteps, error);
+  if (error) {
+    std::rethrow_exception(error);
+  }
+  raw_vector<uint64_t> hashes;
+  for (auto i = 0; i < numPartitions; ++i) {
+    auto& overflows = overflowPerPartition[i];
+    hashes.resize(overflows.size());
+    hashRows(
+        folly::Range<char**>(overflows.data(), overflows.size()),
+        false,
+        hashes);
+    insertForJoin(
+        overflows.data(), hashes.data(), overflows.size(), 0, size_, nullptr);
+    auto table = i == 0 ? this : otherTables_[i - 1].get();
+    VELOX_CHECK_EQ(table->rows()->numRows(), table->numParallelBuildRows_);
+  }
+}
+
+namespace {
+// Returns an index into 'buildPartitionBounds_' given an index into tags of the
+// HashTable.
+int32_t
+findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
+  // The partition bounds are padded to batch size.
+  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
+  auto indexVector = xsimd::batch<int32_t>::broadcast(index);
+  for (auto i = 1; i < numPartitions; i += kBatch) {
+    uint8_t bits = simd::toBitMask(
+        indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i));
+    if (bits) {
+      return i + __builtin_ctz(bits) - 1;
+    }
+  }
+  VELOX_UNREACHABLE("Partition index out of range");
+}
+} // namespace
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::partitionRows(
+    HashTable<ignoreNullKeys>& subtable) {
+  constexpr int32_t kBatch = 1024;
+  raw_vector<char*> rows(kBatch);
+  raw_vector<uint64_t> hashes(kBatch);
+  raw_vector<uint8_t> partitions(kBatch);
+  RowContainerIterator iter;
+  while (auto numRows = subtable.rows_->listRows(
+             &iter, kBatch, RowContainer::kUnlimited, rows.data())) {
+    hashRows(folly::Range<char**>(rows.data(), numRows), true, hashes);
+    VELOX_DCHECK_EQ(
+        0,
+        buildPartitionBounds_.capacity() % xsimd::batch<int32_t>::size,
+        "partition bounds must be padded to SIMD width");
+    for (auto i = 0; i < numRows; ++i) {
+      auto index = ProbeState::tagsByteOffset(hashes[i], sizeMask_);
+      partitions[i] = findPartition(
+          index, buildPartitionBounds_.data(), buildPartitionBounds_.size());
+    }
+    subtable.rows_->partitions().appendPartitions(
+        folly::Range<const uint8_t*>(partitions.data(), numRows));
+  }
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::buildJoinPartition(
+    uint8_t partition,
+    std::vector<char*>& overflow) {
+  constexpr int32_t kBatch = 1024;
+  raw_vector<char*> rows(kBatch);
+  raw_vector<uint64_t> hashes(kBatch);
+  int32_t numPartitions = 1 + otherTables_.size();
+  for (auto i = 0; i < numPartitions; ++i) {
+    auto table = i == 0 ? this : otherTables_[i - 1].get();
+    RowContainerIterator iter;
+    while (auto numRows = table->rows_->listPartitionRows(
+               iter, partition, kBatch, rows.data())) {
+      hashRows(folly::Range(rows.data(), numRows), false, hashes);
+      insertForJoin(
+          rows.data(),
+          hashes.data(),
+          numRows,
+          buildPartitionBounds_[partition],
+          buildPartitionBounds_[partition + 1],
+          &overflow);
+      table->numParallelBuildRows_ += numRows;
+    }
+  }
+}
+
+template <bool ignoreNullKeys>
+bool HashTable<ignoreNullKeys>::insertBatch(
+    char** groups,
+    int32_t numGroups,
+    raw_vector<uint64_t>& hashes) {
+  if (!hashRows(folly::Range(groups, numGroups), true, hashes)) {
+    return false;
   }
   if (isJoinBuild_) {
     insertForJoin(groups, hashes.data(), numGroups);
@@ -613,15 +928,6 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
       table_[index] = groups[i];
     }
   } else {
-    if (hashMode_ == HashMode::kNormalizedKey) {
-      for (int i = 0; i < numGroups; ++i) {
-        auto hash = hashes[i];
-        // Write the normalized key below the row.
-        RowContainer::normalizedKey(groups[i]) = hash;
-        // Shuffle the bits im the normalized key.
-        hashes[i] = mixNormalizedKey(hash, sizeBits_);
-      }
-    }
     for (int32_t i = 0; i < numGroups; ++i) {
       auto hash = hashes[i];
       auto tagIndex = ProbeState::tagsByteOffset(hash, sizeMask_);
@@ -674,7 +980,10 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
     ProbeState& state,
     uint64_t hash,
     char* inserted,
-    bool extraCheck) {
+    bool extraCheck,
+    int32_t partitionBegin,
+    int32_t partitionEnd,
+    std::vector<char*>* FOLLY_NULLABLE overflows) {
   if (hashMode_ == HashMode::kNormalizedKey) {
     state.fullProbe<ProbeState::Operation::kInsert>(
         tags_,
@@ -692,9 +1001,14 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
           return false;
         },
         [&](int32_t /*row*/, int32_t index) {
+          if (index < partitionBegin || index > partitionEnd) {
+            overflows->push_back(inserted);
+            return nullptr;
+          }
           storeRowPointer(index, hash, inserted);
           return nullptr;
         },
+        numTombstones_,
         extraCheck);
   } else {
     state.fullProbe<ProbeState::Operation::kInsert>(
@@ -712,9 +1026,14 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
           return false;
         },
         [&](int32_t /*row*/, int32_t index) {
+          if (index < partitionBegin || index > partitionEnd) {
+            overflows->push_back(inserted);
+            return nullptr;
+          }
           storeRowPointer(index, hash, inserted);
           return nullptr;
         },
+        numTombstones_,
         extraCheck);
   }
 }
@@ -723,16 +1042,10 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::insertForJoin(
     char** groups,
     uint64_t* hashes,
-    int32_t numGroups) {
-  if (hashMode_ == HashMode::kNormalizedKey) {
-    // Write the normalized key below each row. The key is only known
-    // at the time of insert, so cannot be filled in at the time of
-    // accumulating the build rows.
-    for (auto i = 0; i < numGroups; ++i) {
-      RowContainer::normalizedKey(groups[i]) = hashes[i];
-      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
-    }
-  }
+    int32_t numGroups,
+    int32_t partitionBegin,
+    int32_t partitionEnd,
+    std::vector<char*>* overflow) {
   // The insertable rows are in the table, all get put in the hash
   // table or array.
   if (hashMode_ == HashMode::kArray) {
@@ -748,14 +1061,24 @@ void HashTable<ignoreNullKeys>::insertForJoin(
   for (auto i = 0; i < numGroups; ++i) {
     state1.preProbe(tags_, sizeMask_, hashes[i], i);
     state1.firstProbe(table_, 0);
-    buildFullProbe(state1, hashes[i], groups[i], i);
+    buildFullProbe(
+        state1,
+        hashes[i],
+        groups[i],
+        i,
+        partitionBegin,
+        partitionEnd,
+        overflow);
   }
 }
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash() {
   constexpr int32_t kHashBatchSize = 1024;
-  // @lint-ignore CLANGTIDY
+  if (canApplyParallelJoinBuild()) {
+    parallelJoinBuild();
+    return;
+  }
   raw_vector<uint64_t> hashes;
   hashes.resize(kHashBatchSize);
   char* groups[kHashBatchSize];
@@ -770,7 +1093,7 @@ void HashTable<ignoreNullKeys>::rehash() {
                       ->rows()
                       ->listRows(&iterator, kHashBatchSize, groups);
       if (!insertBatch(groups, numGroups, hashes)) {
-        VELOX_CHECK(hashMode_ != HashMode::kHash);
+        VELOX_CHECK_NE(hashMode_, HashMode::kHash);
         setHashMode(HashMode::kHash, 0);
         return;
       }
@@ -780,14 +1103,16 @@ void HashTable<ignoreNullKeys>::rehash() {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::setHashMode(HashMode mode, int32_t numNew) {
-  VELOX_CHECK(hashMode_ != HashMode::kHash);
+  VELOX_CHECK_NE(hashMode_, HashMode::kHash);
   if (mode == HashMode::kArray) {
     auto bytes = size_ * sizeof(char*);
-    constexpr auto kPageSize = memory::MappedMemory::kPageSize;
+    constexpr auto kPageSize = memory::MemoryAllocator::kPageSize;
     auto numPages = bits::roundUp(bytes, kPageSize) / kPageSize;
-    if (!rows_->mappedMemory()->allocateContiguous(
-            numPages, nullptr, tableAllocation_)) {
-      VELOX_FAIL("Could not allocate array for array mode hash table");
+    if (!rows_->pool()->allocateContiguous(numPages, tableAllocation_)) {
+      VELOX_FAIL(
+          "Could not allocate array with {} bytes/{} pages for array mode hash table",
+          bytes,
+          numPages);
     }
     table_ = tableAllocation_.data<char*>();
     memset(table_, 0, bytes);
@@ -829,7 +1154,7 @@ bool HashTable<ignoreNullKeys>::analyze() {
       }
       uint64_t rangeSize;
       uint64_t distinctSize;
-      hasher->cardinality(rangeSize, distinctSize);
+      hasher->cardinality(0, rangeSize, distinctSize);
       if (distinctSize == VectorHasher::kRangeTooLarge &&
           rangeSize == VectorHasher::kRangeTooLarge) {
         return false;
@@ -886,11 +1211,9 @@ void HashTable<ignoreNullKeys>::enableRangeWhereCan(
   auto calculateNewMultipler = [&]() {
     uint64_t multipler = 1;
     for (auto i = 0; i < rangeSizes.size(); ++i) {
-      auto kind = hashers_[i]->typeKind();
       // NOLINT
-      multipler = safeMul(
-          multipler,
-          addReserve(useRange[i] ? rangeSizes[i] : distinctSizes[i], kind));
+      multipler =
+          safeMul(multipler, useRange[i] ? rangeSizes[i] : distinctSizes[i]);
     }
     return multipler;
   };
@@ -909,32 +1232,6 @@ void HashTable<ignoreNullKeys>::enableRangeWhereCan(
   }
 }
 
-// Returns the total number of values to reserve given a distinct
-// count or a range size and a type. The maximum size is the
-// cardinality of the type + 1 to indicate null.
-template <bool ignoreNullKeys>
-int64_t HashTable<ignoreNullKeys>::addReserve(int64_t count, TypeKind kind) {
-  if (isJoinBuild_) {
-    return count;
-  }
-  if (count >= VectorHasher::kRangeTooLarge / 2) {
-    return count;
-  }
-  auto range = count + (count / 2);
-  switch (kind) {
-    case TypeKind::BOOLEAN:
-      return 3;
-    case TypeKind::TINYINT:
-      return std::min<int64_t>(range, 257);
-    case TypeKind::SMALLINT:
-      return std::min<int64_t>(range, 0x10001);
-    case TypeKind::INTEGER:
-      return std::min<int64_t>(range, 0x10000001);
-    default:
-      return range;
-  }
-}
-
 template <bool ignoreNullKeys>
 uint64_t HashTable<ignoreNullKeys>::setHasherMode(
     const std::vector<std::unique_ptr<VectorHasher>>& hashers,
@@ -942,14 +1239,11 @@ uint64_t HashTable<ignoreNullKeys>::setHasherMode(
     const std::vector<uint64_t>& rangeSizes,
     const std::vector<uint64_t>& distinctSizes) {
   uint64_t multiplier = 1;
+  // A group by leaves 50% space for values not yet seen.
   for (int i = 0; i < hashers.size(); ++i) {
-    auto kind = hashers[i]->typeKind();
     multiplier = useRange.size() > i && useRange[i]
-        ? hashers[i]->enableValueRange(
-              multiplier, addReserve(rangeSizes[i], kind) - rangeSizes[i])
-        : hashers[i]->enableValueIds(
-              multiplier,
-              addReserve(distinctSizes[i], kind) - distinctSizes[i]);
+        ? hashers[i]->enableValueRange(multiplier, reservePct())
+        : hashers[i]->enableValueIds(multiplier, reservePct());
     VELOX_CHECK_NE(multiplier, VectorHasher::kRangeTooLarge);
   }
   return multiplier;
@@ -977,26 +1271,20 @@ void HashTable<ignoreNullKeys>::decideHashMode(int32_t numNew) {
     }
   }
   for (int i = 0; i < hashers_.size(); ++i) {
-    auto kind = hashers_[i]->typeKind();
-    hashers_[i]->cardinality(rangeSizes[i], distinctSizes[i]);
-    distinctsWithReserve =
-        safeMul(distinctsWithReserve, addReserve(distinctSizes[i], kind));
-    rangesWithReserve =
-        safeMul(rangesWithReserve, addReserve(rangeSizes[i], kind));
+    hashers_[i]->cardinality(reservePct(), rangeSizes[i], distinctSizes[i]);
+    distinctsWithReserve = safeMul(distinctsWithReserve, distinctSizes[i]);
+    rangesWithReserve = safeMul(rangesWithReserve, rangeSizes[i]);
     if (distinctSizes[i] == VectorHasher::kRangeTooLarge &&
         rangeSizes[i] != VectorHasher::kRangeTooLarge) {
       useRange[i] = true;
-      bestWithReserve =
-          safeMul(bestWithReserve, addReserve(rangeSizes[i], kind));
+      bestWithReserve = safeMul(bestWithReserve, rangeSizes[i]);
     } else if (
         rangeSizes[i] != VectorHasher::kRangeTooLarge &&
         rangeSizes[i] <= distinctSizes[i] * 20) {
       useRange[i] = true;
-      bestWithReserve =
-          safeMul(bestWithReserve, addReserve(rangeSizes[i], kind));
+      bestWithReserve = safeMul(bestWithReserve, rangeSizes[i]);
     } else {
-      bestWithReserve =
-          safeMul(bestWithReserve, addReserve(distinctSizes[i], kind));
+      bestWithReserve = safeMul(bestWithReserve, distinctSizes[i]);
     }
   }
 
@@ -1058,8 +1346,10 @@ std::string HashTable<ignoreNullKeys>::toString() {
       occupied += table_[i] != nullptr;
     }
   }
-  out << "[HashTable  size: " << size_ << " occupied: " << occupied << "]";
-  if (!table_) {
+  out << "[HashTable  size: " << size_ << " occupied: " << occupied
+      << " distinct count: " << numDistinct_
+      << " tombstone count: " << numTombstones_ << "]";
+  if (table_ == nullptr) {
     out << "(no table) ";
   }
   for (auto& hasher : hashers_) {
@@ -1084,7 +1374,9 @@ bool mayUseValueIds(const BaseHashTable& table) {
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::prepareJoinTable(
-    std::vector<std::unique_ptr<BaseHashTable>> tables) {
+    std::vector<std::unique_ptr<BaseHashTable>> tables,
+    folly::Executor* FOLLY_NULLABLE executor) {
+  buildExecutor_ = executor;
   otherTables_.reserve(tables.size());
   for (auto& table : tables) {
     otherTables_.emplace_back(std::unique_ptr<HashTable<ignoreNullKeys>>(
@@ -1135,6 +1427,9 @@ int32_t HashTable<ignoreNullKeys>::listJoinResults(
     folly::Range<vector_size_t*> inputRows,
     folly::Range<char**> hits) {
   VELOX_CHECK_LE(inputRows.size(), hits.size());
+  if (!hasDuplicates_) {
+    return listJoinResultsNoDuplicates(iter, includeMisses, inputRows, hits);
+  }
   int numOut = 0;
   auto maxOut = inputRows.size();
   while (iter.lastRowIndex < iter.rows->size()) {
@@ -1179,13 +1474,69 @@ int32_t HashTable<ignoreNullKeys>::listJoinResults(
 }
 
 template <bool ignoreNullKeys>
-int32_t HashTable<ignoreNullKeys>::listNotProbedRows(
-    NotProbedRowsIterator* iter,
+int32_t HashTable<ignoreNullKeys>::listJoinResultsNoDuplicates(
+    JoinResultIterator& iter,
+    bool includeMisses,
+    folly::Range<vector_size_t*> inputRows,
+    folly::Range<char**> hits) {
+  int32_t numOut = 0;
+  auto maxOut = inputRows.size();
+  int32_t i = iter.lastRowIndex;
+  auto numRows = iter.rows->size();
+
+  constexpr int32_t kWidth = xsimd::batch<int64_t>::size;
+  auto sourceHits = reinterpret_cast<int64_t*>(iter.hits->data());
+  auto sourceRows = iter.rows->data();
+  // We pass the pointers as int64_t's in 'hitWords'.
+  auto resultHits = reinterpret_cast<int64_t*>(hits.data());
+  auto resultRows = inputRows.data();
+  int32_t outLimit = maxOut - kWidth;
+  for (; i + kWidth <= numRows && numOut < outLimit; i += kWidth) {
+    auto indices = simd::loadGatherIndices<int64_t, int32_t>(sourceRows + i);
+    auto hitWords = simd::gather(sourceHits, indices);
+    auto misses = includeMisses ? 0 : simd::toBitMask(hitWords == 0);
+    if (misses == 0xf) {
+      continue;
+    }
+    if (!misses) {
+      hitWords.store_unaligned(resultHits + numOut);
+      indices.store_unaligned(resultRows + numOut);
+      numOut += kWidth;
+      continue;
+    }
+    auto matches = misses ^ bits::lowMask(kWidth);
+    simd::filter<int64_t>(hitWords, matches, xsimd::default_arch{})
+        .store_unaligned(resultHits + numOut);
+    simd::filter<int32_t>(indices, matches, xsimd::default_arch{})
+        .store_unaligned(resultRows + numOut);
+    numOut += __builtin_popcount(matches);
+  }
+  for (; i < numRows; ++i) {
+    auto row = sourceRows[i];
+    if (includeMisses || sourceHits[row]) {
+      resultHits[numOut] = sourceHits[row];
+      resultRows[numOut] = row;
+      ++numOut;
+      if (numOut >= maxOut) {
+        ++i;
+        break;
+      }
+    }
+  }
+
+  iter.lastRowIndex = i;
+  return numOut;
+}
+
+template <bool ignoreNullKeys>
+template <RowContainer::ProbeType probeType>
+int32_t HashTable<ignoreNullKeys>::listRows(
+    RowsIterator* iter,
     int32_t maxRows,
     uint64_t maxBytes,
     char** rows) {
   if (iter->hashTableIndex_ == -1) {
-    auto numRows = rows_->listNotProbedRows(
+    auto numRows = rows_->listRows<probeType>(
         &iter->rowContainerIterator_, maxRows, maxBytes, rows);
     if (numRows) {
       return numRows;
@@ -1195,8 +1546,10 @@ int32_t HashTable<ignoreNullKeys>::listNotProbedRows(
   }
   while (iter->hashTableIndex_ < otherTables_.size()) {
     auto numRows =
-        otherTables_[iter->hashTableIndex_]->rows()->listNotProbedRows(
-            &iter->rowContainerIterator_, maxRows, maxBytes, rows);
+        otherTables_[iter->hashTableIndex_]
+            ->rows()
+            ->template listRows<probeType>(
+                &iter->rowContainerIterator_, maxRows, maxBytes, rows);
     if (numRows) {
       return numRows;
     }
@@ -1205,6 +1558,35 @@ int32_t HashTable<ignoreNullKeys>::listNotProbedRows(
   }
 
   return 0;
+}
+
+template <bool ignoreNullKeys>
+int32_t HashTable<ignoreNullKeys>::listNotProbedRows(
+    RowsIterator* iter,
+    int32_t maxRows,
+    uint64_t maxBytes,
+    char** rows) {
+  return listRows<RowContainer::ProbeType::kNotProbed>(
+      iter, maxRows, maxBytes, rows);
+}
+
+template <bool ignoreNullKeys>
+int32_t HashTable<ignoreNullKeys>::listProbedRows(
+    RowsIterator* iter,
+    int32_t maxRows,
+    uint64_t maxBytes,
+    char** rows) {
+  return listRows<RowContainer::ProbeType::kProbed>(
+      iter, maxRows, maxBytes, rows);
+}
+
+template <bool ignoreNullKeys>
+int32_t HashTable<ignoreNullKeys>::listAllRows(
+    RowsIterator* iter,
+    int32_t maxRows,
+    uint64_t maxBytes,
+    char** rows) {
+  return listRows<RowContainer::ProbeType::kAll>(iter, maxRows, maxBytes, rows);
 }
 
 template <bool ignoreNullKeys>
@@ -1262,11 +1644,40 @@ void HashTable<ignoreNullKeys>::eraseWithHashes(
           0,
           [&](const char* group, int32_t row) { return rows[row] == group; },
           [&](int32_t /*index*/, int32_t /*row*/) { return nullptr; },
+          numTombstones_,
           false);
     }
   }
   numDistinct_ -= numRows;
   rows_->eraseRows(rows);
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::checkConsistency() const {
+  VELOX_CHECK_GE(size_, numDistinct_);
+  if (hashMode_ == BaseHashTable::HashMode::kArray) {
+    return;
+  }
+  uint64_t numEmpty = 0;
+  uint64_t numTombstone = 0;
+  for (int64_t i = 0; i < size_; ++i) {
+    if (tags_[i] == ProbeState::kTombstoneTag) {
+      ++numTombstone;
+      continue;
+    }
+    if (tags_[i] == ProbeState::kEmptyTag) {
+      ++numEmpty;
+      continue;
+    }
+  }
+  VELOX_CHECK_EQ(
+      numEmpty + numTombstone + numDistinct_,
+      size_,
+      "size_:{}, numEmpty:{}, numTombstone:{}, numDistinct_:{}",
+      size_,
+      numTombstone,
+      numEmpty,
+      numDistinct_);
 }
 
 template class HashTable<true>;

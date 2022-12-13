@@ -14,15 +14,24 @@
  * limitations under the License.
  */
 
-#include "gtest/gtest.h"
+#include <arrow/c/abi.h>
+#include <arrow/c/bridge.h>
+#include <arrow/testing/gtest_util.h>
+#include <gtest/gtest.h>
 
-#include "velox/common/base/Nulls.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/vector/arrow/Bridge.h"
 
 namespace {
 
 using namespace facebook::velox;
 static void mockRelease(ArrowSchema*) {}
+
+void exportToArrow(const TypePtr& type, ArrowSchema& out) {
+  auto pool =
+      &facebook::velox::memory::getProcessDefaultMemoryManager().getRoot();
+  exportToArrow(BaseVector::create(type, 0, pool), out);
+}
 
 class ArrowBridgeSchemaExportTest : public testing::Test {
  protected:
@@ -48,35 +57,37 @@ class ArrowBridgeSchemaExportTest : public testing::Test {
     ArrowSchema arrowSchema;
     exportToArrow(type, arrowSchema);
 
-    verifyNestedType(type, arrowSchema);
+    verifyNestedType(type, &arrowSchema);
 
     arrowSchema.release(&arrowSchema);
     EXPECT_EQ(nullptr, arrowSchema.release);
     EXPECT_EQ(nullptr, arrowSchema.private_data);
   }
 
-  void verifyNestedType(const TypePtr& type, ArrowSchema& schema) {
+  void verifyNestedType(const TypePtr& type, ArrowSchema* schema) {
     if (type->kind() == TypeKind::ARRAY) {
-      EXPECT_EQ(std::string{"+L"}, std::string{schema.format});
+      EXPECT_EQ(std::string{"+l"}, std::string{schema->format});
     } else if (type->kind() == TypeKind::MAP) {
-      EXPECT_EQ(std::string{"+m"}, std::string{schema.format});
+      EXPECT_EQ(std::string{"+m"}, std::string{schema->format});
+      ASSERT_EQ(schema->n_children, 1);
+      schema = schema->children[0];
     } else if (type->kind() == TypeKind::ROW) {
-      EXPECT_EQ(std::string{"+s"}, std::string{schema.format});
+      EXPECT_EQ(std::string{"+s"}, std::string{schema->format});
     }
     // Scalar type.
     else {
-      EXPECT_EQ(nullptr, schema.children);
+      EXPECT_EQ(nullptr, schema->children);
     }
-    EXPECT_EQ(type->size(), schema.n_children);
+    ASSERT_EQ(type->size(), schema->n_children);
 
     // Recurse down the children.
     for (size_t i = 0; i < type->size(); ++i) {
-      verifyNestedType(type->childAt(i), *schema.children[i]);
+      verifyNestedType(type->childAt(i), schema->children[i]);
 
       // If this is a rowType, assert that the children returned with the
       // correct name set.
       if (auto rowType = std::dynamic_pointer_cast<const RowType>(type)) {
-        EXPECT_EQ(rowType->nameOf(i), std::string(schema.children[i]->name));
+        EXPECT_EQ(rowType->nameOf(i), std::string(schema->children[i]->name));
       }
     }
   }
@@ -112,6 +123,9 @@ TEST_F(ArrowBridgeSchemaExportTest, scalar) {
 
   testScalarType(TIMESTAMP(), "ttn");
   testScalarType(DATE(), "tdD");
+
+  testScalarType(DECIMAL(10, 4), "d:10,4");
+  testScalarType(DECIMAL(20, 15), "d:20,15");
 }
 
 TEST_F(ArrowBridgeSchemaExportTest, nested) {
@@ -190,11 +204,20 @@ class ArrowBridgeSchemaImportTest : public ArrowBridgeSchemaExportTest {
     }
 
     auto mainSchema = makeArrowSchema(mainFormat);
-    mainSchema.n_children = (int64_t)schemaPtrs.size();
-    mainSchema.children = schemaPtrs.data();
-    auto type = importFromArrow(mainSchema);
-    mainSchema.release(&mainSchema);
-    return type;
+    if (strcmp(mainFormat, "+m") == 0) {
+      // Arrow wraps key and value in a struct.
+      auto child = makeArrowSchema("+s");
+      auto children = &child;
+      child.n_children = schemaPtrs.size();
+      child.children = schemaPtrs.data();
+      mainSchema.n_children = 1;
+      mainSchema.children = &children;
+      return importFromArrow(mainSchema);
+    } else {
+      mainSchema.n_children = (int64_t)schemaPtrs.size();
+      mainSchema.children = schemaPtrs.data();
+      return importFromArrow(mainSchema);
+    }
   }
 };
 
@@ -215,14 +238,24 @@ TEST_F(ArrowBridgeSchemaImportTest, scalar) {
   // Temporal.
   EXPECT_EQ(*TIMESTAMP(), *testSchemaImport("ttn"));
   EXPECT_EQ(*DATE(), *testSchemaImport("tdD"));
+
+  EXPECT_EQ(*DECIMAL(10, 4), *testSchemaImport("d:10,4"));
+  EXPECT_EQ(*DECIMAL(20, 15), *testSchemaImport("d:20,15"));
+  VELOX_ASSERT_THROW(
+      *testSchemaImport("d2,15"),
+      "Unable to convert 'd2,15' ArrowSchema decimal format to Velox decimal");
 }
 
 TEST_F(ArrowBridgeSchemaImportTest, complexTypes) {
   // Array.
-  EXPECT_EQ(*ARRAY(BIGINT()), *testSchemaImportComplex("+L", {"l"}));
-  EXPECT_EQ(*ARRAY(TIMESTAMP()), *testSchemaImportComplex("+L", {"ttn"}));
-  EXPECT_EQ(*ARRAY(DATE()), *testSchemaImportComplex("+L", {"tdD"}));
-  EXPECT_EQ(*ARRAY(VARCHAR()), *testSchemaImportComplex("+L", {"U"}));
+  EXPECT_EQ(*ARRAY(BIGINT()), *testSchemaImportComplex("+l", {"l"}));
+  EXPECT_EQ(*ARRAY(TIMESTAMP()), *testSchemaImportComplex("+l", {"ttn"}));
+  EXPECT_EQ(*ARRAY(DATE()), *testSchemaImportComplex("+l", {"tdD"}));
+  EXPECT_EQ(*ARRAY(VARCHAR()), *testSchemaImportComplex("+l", {"U"}));
+
+  EXPECT_EQ(*ARRAY(DECIMAL(10, 4)), *testSchemaImportComplex("+l", {"d:10,4"}));
+  EXPECT_EQ(
+      *ARRAY(DECIMAL(20, 15)), *testSchemaImportComplex("+l", {"d:20,15"}));
 
   // Map.
   EXPECT_EQ(
@@ -251,7 +284,6 @@ TEST_F(ArrowBridgeSchemaImportTest, unsupported) {
   EXPECT_THROW(testSchemaImport("L"), VeloxUserError);
   EXPECT_THROW(testSchemaImport("e"), VeloxUserError);
 
-  EXPECT_THROW(testSchemaImport("d:19,10"), VeloxUserError);
   EXPECT_THROW(testSchemaImport("w:42"), VeloxUserError);
 
   EXPECT_THROW(testSchemaImport("tdm"), VeloxUserError);
@@ -261,7 +293,7 @@ TEST_F(ArrowBridgeSchemaImportTest, unsupported) {
   EXPECT_THROW(testSchemaImport("tiM"), VeloxUserError);
 
   EXPECT_THROW(testSchemaImport("+"), VeloxUserError);
-  EXPECT_THROW(testSchemaImport("+l"), VeloxUserError);
+  EXPECT_THROW(testSchemaImport("+L"), VeloxUserError);
   EXPECT_THROW(testSchemaImport("+b"), VeloxUserError);
   EXPECT_THROW(testSchemaImport("+z"), VeloxUserError);
   EXPECT_THROW(testSchemaImport("+u"), VeloxUserError);
@@ -296,6 +328,31 @@ TEST_F(ArrowBridgeSchemaTest, roundtrip) {
       ROW({"a", "b"}, {DOUBLE(), VARBINARY()}),
       INTEGER(),
   }));
+}
+
+TEST_F(ArrowBridgeSchemaTest, validateInArrow) {
+  const std::pair<TypePtr, std::shared_ptr<arrow::DataType>> kTypes[] = {
+      {BOOLEAN(), arrow::boolean()},
+      {VARCHAR(), arrow::utf8()},
+      {DECIMAL(10, 4), arrow::decimal(10, 4)},
+      {DECIMAL(20, 15), arrow::decimal(20, 15)},
+      {ARRAY(DOUBLE()), arrow::list(arrow::float64())},
+      {ARRAY(ARRAY(DOUBLE())), arrow::list(arrow::list(arrow::float64()))},
+      {MAP(VARCHAR(), REAL()), arrow::map(arrow::utf8(), arrow::float32())},
+      {ROW({"c0", "c1"}, {VARCHAR(), BIGINT()}),
+       arrow::struct_(
+           {arrow::field("c0", arrow::utf8()),
+            arrow::field("c1", arrow::int64())})},
+  };
+  for (auto& [tv, ta] : kTypes) {
+    VLOG(1) << "Validating conversion between " << tv->toString() << " and "
+            << ta->ToString();
+    ArrowSchema schema;
+    exportToArrow(tv, schema);
+    ASSERT_OK_AND_ASSIGN(auto actual, arrow::ImportType(&schema));
+    ASSERT_FALSE(schema.release);
+    EXPECT_EQ(*actual, *ta);
+  }
 }
 
 } // namespace

@@ -17,17 +17,18 @@ add_executable(
   ByteStreamTest.cpp
   CompactDoubleListTest.cpp
   HashStringAllocatorTest.cpp
+  MemoryAllocatorTest.cpp
   MemoryHeaderTest.cpp
   MemoryManagerTest.cpp
   MemoryPoolTest.cpp
   MemoryUsageTest.cpp
-  MemoryUsageTrackerTest.cpp
-  MappedMemoryTest.cpp)
+  MemoryUsageTrackerTest.cpp)
 
 target_link_libraries(
   velox_memory_test
   velox_memory
   velox_exception
+  velox_test_util
   gtest
   gtest_main
   ${gflags_LIBRARIES}

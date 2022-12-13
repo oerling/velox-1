@@ -50,12 +50,12 @@ StreamingAggregation::StreamingAggregation(
 
   auto numAggregates = aggregationNode->aggregates().size();
   aggregates_.reserve(numAggregates);
-  std::vector<std::optional<ChannelIndex>> maskChannels;
+  std::vector<std::optional<column_index_t>> maskChannels;
   maskChannels.reserve(numAggregates);
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode->aggregates()[i];
 
-    std::vector<ChannelIndex> channels;
+    std::vector<column_index_t> channels;
     std::vector<VectorPtr> constants;
     std::vector<TypePtr> argTypes;
     for (auto& arg : aggregate->inputs()) {
@@ -99,8 +99,17 @@ StreamingAggregation::StreamingAggregation(
       false,
       false,
       false,
-      operatorCtx_->mappedMemory(),
+      pool(),
       ContainerRowSerde::instance());
+}
+
+void StreamingAggregation::close() {
+  for (int32_t i = 0; i < aggregates_.size(); ++i) {
+    if (aggregates_[i]->accumulatorUsesExternalMemory()) {
+      aggregates_[i]->destroy(folly::Range(groups_.data(), groups_.size()));
+    }
+  }
+  Operator::close();
 }
 
 void StreamingAggregation::addInput(RowVectorPtr input) {
@@ -111,7 +120,7 @@ namespace {
 // Compares a row in one vector with another row in another vector and returns
 // true if two rows match in all grouping key columns.
 bool equalKeys(
-    const std::vector<ChannelIndex>& keys,
+    const std::vector<column_index_t>& keys,
     const RowVectorPtr& batch,
     vector_size_t index,
     const RowVectorPtr& otherBatch,
@@ -160,6 +169,7 @@ RowVectorPtr StreamingAggregation::createOutput(size_t numGroups) {
   auto numKeys = groupingKeys_.size();
   for (auto i = 0; i < aggregates_.size(); ++i) {
     auto& aggregate = aggregates_[i];
+    aggregate->finalize(groups_.data(), numGroups);
     auto& result = output->childAt(numKeys + i);
     if (isPartialOutput(step_)) {
       aggregate->extractAccumulators(groups_.data(), numGroups, &result);

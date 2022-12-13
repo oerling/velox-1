@@ -15,7 +15,7 @@
  */
 #include "velox/duckdb/conversion/DuckWrapper.h"
 #include "velox/external/duckdb/duckdb.hpp"
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 #include <gtest/gtest.h>
 
@@ -61,15 +61,37 @@ class BaseDuckWrapperTest : public testing::Test {
     verifyUnaryResult<T>(move(query), move(expectedOutput), move(nulls));
   }
 
+  template <class T>
+  void verifyDuckToVeloxDecimal(
+      const std::string& query,
+      const std::vector<std::optional<T>>& expected) {
+    auto result = db_->execute(query);
+    ASSERT_EQ(result->success(), true)
+        << "Query failed: " << result->errorMessage();
+    ASSERT_EQ(result->columnCount(), 1);
+    size_t currentOffset = 0;
+    while (result->next()) {
+      auto rowVector = result->getVector();
+      auto simpleVector = rowVector->childAt(0)->as<SimpleVector<T>>();
+      ASSERT_NE(simpleVector, nullptr);
+      for (auto i = 0; i < simpleVector->size(); i++) {
+        if (simpleVector->isNullAt(i)) {
+          ASSERT_FALSE(expected[i].has_value());
+          continue;
+        }
+        ASSERT_EQ(simpleVector->valueAt(i), expected[i]);
+      }
+    }
+  }
+
   void execute(const std::string& query) {
     auto result = db_->execute(query);
     ASSERT_EQ(result->success(), true)
         << "Query failed: " << result->errorMessage();
   }
 
-  std::shared_ptr<core::QueryCtx> queryCtx_{core::QueryCtx::createForTest()};
-  std::unique_ptr<memory::MemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<core::QueryCtx> queryCtx_{std::make_shared<core::QueryCtx>()};
+  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
   std::unique_ptr<core::ExecCtx> execCtx_{
       std::make_unique<core::ExecCtx>(pool_.get(), queryCtx_.get())};
   std::unique_ptr<DuckDBWrapper> db_{
@@ -188,12 +210,98 @@ TEST_F(BaseDuckWrapperTest, tpchSF1) {
   // test TPC-H loading and querying SF0.01
   execute("CALL dbgen(sf=0.01)");
   // test conversion of date, decimal and string
-  verifyUnaryResult<double>("SELECT l_discount FROM lineitem LIMIT 1", {0.04});
+  verifyUnaryResult<UnscaledShortDecimal>(
+      "SELECT l_discount FROM lineitem LIMIT 1", {UnscaledShortDecimal(4)});
   verifyUnaryResult<Date>(
       "SELECT l_shipdate FROM lineitem LIMIT 1", {Date(9568)});
   verifyUnaryResult<StringView>(
       "SELECT l_comment FROM lineitem LIMIT 1",
       {StringView("egular courts above the")});
+}
+
+TEST_F(BaseDuckWrapperTest, duckToVeloxDecimal) {
+  // Test SMALLINT decimal to UnscaledShortDecimal conversion.
+  verifyDuckToVeloxDecimal<UnscaledShortDecimal>(
+      "select * from (values (NULL), ('1.2'::decimal(2,1)),"
+      "('2.2'::decimal(2,1)),('-4.2'::decimal(2,1)), (NULL))",
+      {std::nullopt,
+       UnscaledShortDecimal(12),
+       UnscaledShortDecimal(22),
+       UnscaledShortDecimal(-42),
+       std::nullopt});
+
+  // Test INTEGER decimal to UnscaledShortDecimal conversion.
+  verifyDuckToVeloxDecimal<UnscaledShortDecimal>(
+      "select * from (values ('1111.1111'::decimal(8,4)),"
+      "('2222.2222'::decimal(8,4)),('-3333.3333'::decimal(8,4)))",
+      {UnscaledShortDecimal(11111111),
+       UnscaledShortDecimal(22222222),
+       UnscaledShortDecimal(-33333333)});
+
+  // Test BIGINT decimal to UnscaledLongDecimal conversion.
+  verifyDuckToVeloxDecimal<UnscaledShortDecimal>(
+      "select * from (values ('-111111.111111'::decimal(12,6)),"
+      "('222222.222222'::decimal(12,6)),('333333.333333'::decimal(12,6)))",
+      {UnscaledShortDecimal(-111111111111),
+       UnscaledShortDecimal(222222222222),
+       UnscaledShortDecimal(333333333333)});
+
+  verifyDuckToVeloxDecimal<UnscaledLongDecimal>(
+      "select * from (values (NULL),"
+      "('12345678901234.789'::decimal(18,3) * 10000.555::decimal(20,3)),"
+      "('-55555555555555.789'::decimal(18,3) * 10000.555::decimal(20,3)), (NULL),"
+      "('-22222222222222.789'::decimal(18,3) * 10000.555::decimal(20,3)))",
+      {std::nullopt,
+       UnscaledLongDecimal(buildInt128(0X1a24, 0Xfa35bb8777ffff77)),
+       UnscaledLongDecimal(buildInt128(0XFFFFFFFFFFFF8A59, 0X99FC706655BFAC11)),
+       std::nullopt,
+       UnscaledLongDecimal(
+           buildInt128(0XFFFFFFFFFFFFD0F0, 0XA3FE935B081D8D69))});
+}
+
+TEST_F(BaseDuckWrapperTest, decimalDictCoversion) {
+  constexpr int32_t size = 6;
+  ::duckdb::LogicalType* duckDecimalType =
+      static_cast<::duckdb::LogicalType*>(duckdb_create_decimal_type(4, 2));
+  ::duckdb::Vector data(*duckDecimalType, size);
+  auto dataPtr = reinterpret_cast<int16_t*>(data.GetBuffer()->GetData());
+  // Make dirty data which shouldn't be accessed.
+  memset(dataPtr, 0xAB, sizeof(int16_t) * size);
+  dataPtr[0] = 5000;
+  dataPtr[2] = 1000;
+  dataPtr[4] = 2000;
+  // Turn vector into dictionary.
+  ::duckdb::SelectionVector sel(size);
+  sel.set_index(0, 2);
+  sel.set_index(1, 4);
+  sel.set_index(2, 0);
+  sel.set_index(3, 4);
+  sel.set_index(4, 2);
+  sel.set_index(5, 0);
+  data.Slice(sel, size);
+
+  auto decimalType = DECIMAL(4, 2);
+  auto actual = toVeloxVector(size, data, decimalType, pool_.get());
+  std::vector<UnscaledShortDecimal> expectedData(
+      {UnscaledShortDecimal(1000),
+       UnscaledShortDecimal(2000),
+       UnscaledShortDecimal(5000),
+       UnscaledShortDecimal(2000),
+       UnscaledShortDecimal(1000),
+       UnscaledShortDecimal(5000)});
+
+  test::VectorMaker maker(pool_.get());
+  auto expectedFlatVector =
+      maker.flatVector<UnscaledShortDecimal>(size, decimalType);
+
+  for (auto i = 0; i < expectedData.size(); ++i) {
+    expectedFlatVector->set(i, expectedData[i]);
+  }
+
+  for (auto i = 0; i < actual->size(); i++) {
+    ASSERT_TRUE(expectedFlatVector->equalValueAt(actual.get(), i, i));
+  }
+  delete duckDecimalType;
 }
 
 TEST_F(BaseDuckWrapperTest, dictConversion) {

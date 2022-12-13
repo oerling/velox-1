@@ -25,18 +25,17 @@ const SortOrder kDescNullsLast(false, false);
 namespace {
 const std::vector<PlanNodePtr> kEmptySources;
 
-std::shared_ptr<RowType> getAggregationOutputType(
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        groupingKeys,
+RowTypePtr getAggregationOutputType(
+    const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
     const std::vector<std::string>& aggregateNames,
-    const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates) {
+    const std::vector<CallTypedExprPtr>& aggregates) {
   VELOX_CHECK_EQ(
       aggregateNames.size(),
       aggregates.size(),
       "Number of aggregate names must be equal to number of aggregates");
 
   std::vector<std::string> names;
-  std::vector<std::shared_ptr<const Type>> types;
+  std::vector<TypePtr> types;
 
   for (auto& key : groupingKeys) {
     auto field =
@@ -58,14 +57,11 @@ std::shared_ptr<RowType> getAggregationOutputType(
 AggregationNode::AggregationNode(
     const PlanNodeId& id,
     Step step,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        groupingKeys,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        preGroupedKeys,
+    const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
+    const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
     const std::vector<std::string>& aggregateNames,
-    const std::vector<std::shared_ptr<const CallTypedExpr>>& aggregates,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>&
-        aggregateMasks,
+    const std::vector<CallTypedExprPtr>& aggregates,
+    const std::vector<FieldAccessTypedExprPtr>& aggregateMasks,
     bool ignoreNullKeys,
     PlanNodePtr source)
     : PlanNode(id),
@@ -105,14 +101,33 @@ AggregationNode::AggregationNode(
 }
 
 namespace {
-void addKeys(
+void addFields(
     std::stringstream& stream,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& keys) {
+    const std::vector<FieldAccessTypedExprPtr>& keys) {
   for (auto i = 0; i < keys.size(); ++i) {
     if (i > 0) {
       stream << ", ";
     }
     stream << keys[i]->name();
+  }
+}
+
+void addKeys(std::stringstream& stream, const std::vector<TypedExprPtr>& keys) {
+  for (auto i = 0; i < keys.size(); ++i) {
+    const auto& expr = keys[i];
+    if (i > 0) {
+      stream << ", ";
+    }
+    if (auto field =
+            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr)) {
+      stream << field->name();
+    } else if (
+        auto constant =
+            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(expr)) {
+      stream << constant->toString();
+    } else {
+      stream << expr->toString();
+    }
   }
 }
 } // namespace
@@ -122,7 +137,7 @@ void AggregationNode::addDetails(std::stringstream& stream) const {
 
   if (!groupingKeys_.empty()) {
     stream << "[";
-    addKeys(stream, groupingKeys_);
+    addFields(stream, groupingKeys_);
     stream << "] ";
   }
 
@@ -131,6 +146,76 @@ void AggregationNode::addDetails(std::stringstream& stream) const {
       stream << ", ";
     }
     stream << aggregateNames_[i] << " := " << aggregates_[i]->toString();
+    if (aggregateMasks_.size() > i && aggregateMasks_[i]) {
+      stream << " mask: " << aggregateMasks_[i]->name();
+    }
+  }
+}
+
+namespace {
+RowTypePtr getGroupIdOutputType(
+    const std::vector<GroupIdNode::GroupingKeyInfo>& groupingKeyInfos,
+    const std::vector<FieldAccessTypedExprPtr>& aggregationInputs,
+    const std::string& groupIdName) {
+  // Grouping keys come first, followed by aggregation inputs and groupId
+  // column.
+
+  auto numOutputs = groupingKeyInfos.size() + aggregationInputs.size() + 1;
+
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+
+  names.reserve(numOutputs);
+  types.reserve(numOutputs);
+
+  for (const auto& groupingKeyInfo : groupingKeyInfos) {
+    names.push_back(groupingKeyInfo.output);
+    types.push_back(groupingKeyInfo.input->type());
+  }
+
+  for (const auto& input : aggregationInputs) {
+    names.push_back(input->name());
+    types.push_back(input->type());
+  }
+
+  names.push_back(groupIdName);
+  types.push_back(BIGINT());
+
+  return ROW(std::move(names), std::move(types));
+}
+} // namespace
+
+GroupIdNode::GroupIdNode(
+    PlanNodeId id,
+    std::vector<std::vector<FieldAccessTypedExprPtr>> groupingSets,
+    std::vector<GroupIdNode::GroupingKeyInfo> groupingKeyInfos,
+    std::vector<FieldAccessTypedExprPtr> aggregationInputs,
+    std::string groupIdName,
+    PlanNodePtr source)
+    : PlanNode(std::move(id)),
+      sources_{source},
+      outputType_(getGroupIdOutputType(
+          groupingKeyInfos,
+          aggregationInputs,
+          groupIdName)),
+      groupingSets_(std::move(groupingSets)),
+      groupingKeyInfos_(std::move(groupingKeyInfos)),
+      aggregationInputs_(std::move(aggregationInputs)),
+      groupIdName_(std::move(groupIdName)) {
+  VELOX_CHECK_GE(
+      groupingSets_.size(),
+      2,
+      "GroupIdNode requires two or more grouping sets.");
+}
+
+void GroupIdNode::addDetails(std::stringstream& stream) const {
+  for (auto i = 0; i < groupingSets_.size(); ++i) {
+    if (i > 0) {
+      stream << ", ";
+    }
+    stream << "[";
+    addFields(stream, groupingSets_[i]);
+    stream << "]";
   }
 }
 
@@ -176,8 +261,8 @@ void ExchangeNode::addDetails(std::stringstream& /* stream */) const {
 
 UnnestNode::UnnestNode(
     const PlanNodeId& id,
-    std::vector<std::shared_ptr<const FieldAccessTypedExpr>> replicateVariables,
-    std::vector<std::shared_ptr<const FieldAccessTypedExpr>> unnestVariables,
+    std::vector<FieldAccessTypedExprPtr> replicateVariables,
+    std::vector<FieldAccessTypedExprPtr> unnestVariables,
     const std::vector<std::string>& unnestNames,
     const std::optional<std::string>& ordinalityName,
     const PlanNodePtr& source)
@@ -224,14 +309,14 @@ UnnestNode::UnnestNode(
 }
 
 void UnnestNode::addDetails(std::stringstream& stream) const {
-  addKeys(stream, unnestVariables_);
+  addFields(stream, unnestVariables_);
 }
 
 AbstractJoinNode::AbstractJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& leftKeys,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& rightKeys,
+    const std::vector<FieldAccessTypedExprPtr>& leftKeys,
+    const std::vector<FieldAccessTypedExprPtr>& rightKeys,
     TypedExprPtr filter,
     PlanNodePtr left,
     PlanNodePtr right,
@@ -248,9 +333,6 @@ AbstractJoinNode::AbstractJoinNode(
       leftKeys_.size(),
       rightKeys_.size(),
       "JoinNode requires same number of join keys on left and right sides");
-  if (isSemiJoin() || isAntiJoin()) {
-    VELOX_CHECK_NULL(filter, "Semi and anti join does not support filter");
-  }
   auto leftType = sources_[0]->outputType();
   for (auto key : leftKeys_) {
     VELOX_CHECK(
@@ -271,14 +353,41 @@ AbstractJoinNode::AbstractJoinNode(
         rightKeys_[i]->type()->kind(),
         "Join key types on the left and right sides must match");
   }
-  for (auto i = 0; i < outputType_->size(); ++i) {
+
+  auto numOutputColumms = outputType_->size();
+  if (core::isLeftSemiProjectJoin(joinType) ||
+      core::isRightSemiProjectJoin(joinType)) {
+    // Last output column must be a boolean 'match'.
+    --numOutputColumms;
+    VELOX_CHECK_EQ(outputType_->childAt(numOutputColumms), BOOLEAN());
+
+    // Verify that 'match' column name doesn't match any column from left or
+    // right source.
+    const auto& name = outputType->nameOf(numOutputColumms);
+    VELOX_CHECK(!leftType->containsChild(name));
+    VELOX_CHECK(!rightType->containsChild(name));
+  }
+
+  // Output of right semi join cannot include columns from the left side.
+  bool outputMayIncludeLeftColumns =
+      !(core::isRightSemiFilterJoin(joinType) ||
+        core::isRightSemiProjectJoin(joinType));
+
+  // Output of left semi and anti joins cannot include columns from the right
+  // side.
+  bool outputMayIncludeRightColumns =
+      !(core::isLeftSemiFilterJoin(joinType) ||
+        core::isLeftSemiProjectJoin(joinType) || core::isAntiJoin(joinType) ||
+        core::isNullAwareAntiJoin(joinType));
+
+  for (auto i = 0; i < numOutputColumms; ++i) {
     auto name = outputType_->nameOf(i);
-    if (leftType->containsChild(name)) {
+    if (outputMayIncludeLeftColumns && leftType->containsChild(name)) {
       VELOX_CHECK(
           !rightType->containsChild(name),
           "Duplicate column name found on join's left and right sides: {}",
           name);
-    } else if (rightType->containsChild(name)) {
+    } else if (outputMayIncludeRightColumns && rightType->containsChild(name)) {
       VELOX_CHECK(
           !leftType->containsChild(name),
           "Duplicate column name found on join's left and right sides: {}",
@@ -339,9 +448,110 @@ void AssignUniqueIdNode::addDetails(std::stringstream& /* stream */) const {
 }
 
 namespace {
+RowTypePtr getWindowOutputType(
+    const RowTypePtr& inputType,
+    const std::vector<std::string>& windowColumnNames,
+    const std::vector<WindowNode::Function>& windowFunctions) {
+  VELOX_CHECK_EQ(
+      windowColumnNames.size(),
+      windowFunctions.size(),
+      "Number of window column names must be equal to number of window functions");
+
+  std::vector<std::string> names = inputType->names();
+  std::vector<TypePtr> types = inputType->children();
+
+  for (int32_t i = 0; i < windowColumnNames.size(); i++) {
+    names.push_back(windowColumnNames[i]);
+    types.push_back(windowFunctions[i].functionCall->type());
+  }
+  return ROW(std::move(names), std::move(types));
+}
+
+const char* frameBoundString(const WindowNode::BoundType boundType) {
+  switch (boundType) {
+    case WindowNode::BoundType::kCurrentRow:
+      return "CURRENT ROW";
+    case WindowNode::BoundType::kPreceding:
+      return "PRECEDING";
+    case WindowNode::BoundType::kFollowing:
+      return "FOLLOWING";
+    case WindowNode::BoundType::kUnboundedPreceding:
+      return "UNBOUNDED PRECEDING";
+    case WindowNode::BoundType::kUnboundedFollowing:
+      return "UNBOUNDED FOLLOWING";
+  }
+  VELOX_UNREACHABLE();
+}
+
+const char* windowTypeString(const WindowNode::WindowType windowType) {
+  switch (windowType) {
+    case WindowNode::WindowType::kRows:
+      return "ROWS";
+    case WindowNode::WindowType::kRange:
+      return "RANGE";
+  }
+  VELOX_UNREACHABLE();
+}
+
+void addWindowFunction(
+    std::stringstream& stream,
+    const WindowNode::Function& windowFunction) {
+  stream << windowFunction.functionCall->toString() << " ";
+  auto frame = windowFunction.frame;
+  if (frame.startType == WindowNode::BoundType::kUnboundedFollowing) {
+    VELOX_USER_FAIL("Window frame start cannot be UNBOUNDED FOLLOWING");
+  }
+  if (frame.endType == WindowNode::BoundType::kUnboundedPreceding) {
+    VELOX_USER_FAIL("Window frame end cannot be UNBOUNDED PRECEDING");
+  }
+
+  stream << windowTypeString(frame.type) << " between ";
+  if (frame.startValue) {
+    addKeys(stream, {frame.startValue});
+    stream << " ";
+  }
+  stream << frameBoundString(frame.startType) << " and ";
+  if (frame.endValue) {
+    addKeys(stream, {frame.endValue});
+    stream << " ";
+  }
+  stream << frameBoundString(frame.endType);
+}
+
+} // namespace
+
+WindowNode::WindowNode(
+    PlanNodeId id,
+    std::vector<FieldAccessTypedExprPtr> partitionKeys,
+    std::vector<FieldAccessTypedExprPtr> sortingKeys,
+    std::vector<SortOrder> sortingOrders,
+    std::vector<std::string> windowColumnNames,
+    std::vector<Function> windowFunctions,
+    PlanNodePtr source)
+    : PlanNode(std::move(id)),
+      partitionKeys_(std::move(partitionKeys)),
+      sortingKeys_(std::move(sortingKeys)),
+      sortingOrders_(std::move(sortingOrders)),
+      windowFunctions_(std::move(windowFunctions)),
+      sources_{std::move(source)},
+      outputType_(getWindowOutputType(
+          sources_[0]->outputType(),
+          windowColumnNames,
+          windowFunctions_)) {
+  VELOX_CHECK_GT(
+      windowFunctions_.size(),
+      0,
+      "Window node must have at least one window function");
+  VELOX_CHECK_EQ(
+      sortingKeys_.size(),
+      sortingOrders_.size(),
+      "Number of sorting keys must be equal to the number of sorting orders");
+}
+
+namespace {
 void addSortingKeys(
     std::stringstream& stream,
-    const std::vector<std::shared_ptr<const FieldAccessTypedExpr>>& sortingKeys,
+    const std::vector<FieldAccessTypedExprPtr>& sortingKeys,
     const std::vector<SortOrder>& sortingOrders) {
   for (auto i = 0; i < sortingKeys.size(); ++i) {
     if (i > 0) {
@@ -420,6 +630,28 @@ void OrderByNode::addDetails(std::stringstream& stream) const {
     stream << "PARTIAL ";
   }
   addSortingKeys(stream, sortingKeys_, sortingOrders_);
+}
+
+void WindowNode::addDetails(std::stringstream& stream) const {
+  stream << "partition by [";
+  if (!partitionKeys_.empty()) {
+    addFields(stream, partitionKeys_);
+  }
+  stream << "] ";
+
+  stream << "order by [";
+  addSortingKeys(stream, sortingKeys_, sortingOrders_);
+  stream << "] ";
+
+  auto numInputCols = sources_[0]->outputType()->size();
+  auto numOutputCols = outputType_->size();
+  for (auto i = numInputCols; i < numOutputCols; i++) {
+    if (i >= numInputCols + 1) {
+      stream << ", ";
+    }
+    stream << outputType_->names()[i] << " := ";
+    addWindowFunction(stream, windowFunctions_[i - numInputCols]);
+  }
 }
 
 void PlanNode::toString(

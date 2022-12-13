@@ -38,7 +38,7 @@ namespace common {
 // mutable by readers to reflect filter order and other adaptation.
 class ScanSpec {
  public:
-  static constexpr ChannelIndex kNoChannel = ~0;
+  static constexpr column_index_t kNoChannel = ~0;
 
   explicit ScanSpec(const Subfield::PathElement& element) {
     if (element.kind() == kNestedField) {
@@ -52,6 +52,8 @@ class ScanSpec {
 
   explicit ScanSpec(const std::string& name) : fieldName_(name) {}
 
+  ScanSpec(const ScanSpec& other);
+  
   // Filter to apply. If 'this' corresponds to a struct/list/map, this
   // can only be isNull or isNotNull, other filtering is given by
   // 'children'.
@@ -135,16 +137,16 @@ class ScanSpec {
 
   // Position in the RowVector returned by the top level scan. Applies
   // only to children of the root struct where projectOut_ is true.
-  ChannelIndex channel() const {
+  column_index_t channel() const {
     VELOX_CHECK(channel_ != kNoChannel);
     return channel_;
   }
 
-  void setChannel(ChannelIndex channel) {
+  void setChannel(column_index_t channel) {
     channel_ = channel;
   }
 
-  const std::vector<std::unique_ptr<ScanSpec>>& children() const {
+  const std::vector<std::shared_ptr<ScanSpec>>& children() const {
     return children_;
   }
 
@@ -196,6 +198,10 @@ class ScanSpec {
     }
     return nullptr;
   }
+
+  // Remove a child from this scan spec, returning the removed child.  This is
+  // used for example to transform a flatmap scan spec into a struct scan spec.
+  std::shared_ptr<ScanSpec> removeChild(const ScanSpec* child);
 
   SelectivityInfo& selectivity() {
     return selectivity_;
@@ -253,7 +259,7 @@ class ScanSpec {
   }
 
   // Returns the child which produces values for 'channel'. Throws if not found.
-  ScanSpec& getChildByChannel(ChannelIndex channel);
+  ScanSpec& getChildByChannel(column_index_t channel);
 
   void moveAdaptationFrom(ScanSpec& other);
 
@@ -281,7 +287,7 @@ class ScanSpec {
   std::string fieldName_;
   // Ordinal position of the extracted value in the containing
   // RowVector. Set only when this describes a struct member.
-  ChannelIndex channel_ = kNoChannel;
+  column_index_t channel_ = kNoChannel;
 
   VectorPtr constantValue_;
   bool projectOut_ = false;
@@ -289,7 +295,7 @@ class ScanSpec {
   // True if a string dictionary or flat map in this field should be
   // returned as flat.
   bool makeFlat_ = false;
-  std::unique_ptr<common::Filter> filter_;
+  std::shared_ptr<common::Filter> filter_;
   SelectivityInfo selectivity_;
   // Sort children by filtering efficiency.
   bool enableFilterReorder_ = true;
@@ -308,11 +314,12 @@ class ScanSpec {
   // extractValues true.  Having at least one child with extractValues
   // true differentiates pruning from the case of extracting all children.
 
-  std::vector<std::unique_ptr<ScanSpec>> children_;
+  std::vector<std::shared_ptr<ScanSpec>> children_;
   // Read-only copy of children, not subject to reordering. Used when
   // asynchronously constructing reader trees for read-ahead, while
   // 'children_' is reorderable by a running scan.
   std::vector<ScanSpec*> stableChildren_;
+
   mutable std::optional<bool> hasFilter_;
   ValueHook* valueHook_ = nullptr;
 };

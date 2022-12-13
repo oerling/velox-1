@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/core/PlanNode.h"
 #include "velox/substrait/SubstraitToVeloxExpr.h"
 
 namespace facebook::velox::substrait {
@@ -24,73 +25,109 @@ namespace facebook::velox::substrait {
 /// This class is used to convert the Substrait plan into Velox plan.
 class SubstraitVeloxPlanConverter {
  public:
-  /// Used to convert Substrait AggregateRel into Velox PlanNode.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::AggregateRel& sAgg);
+  explicit SubstraitVeloxPlanConverter(memory::MemoryPool* pool)
+      : pool_(pool) {}
+  struct SplitInfo {
+    /// The Partition index.
+    u_int32_t partitionIndex;
 
-  /// Used to convert Substrait ProjectRel into Velox PlanNode.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::ProjectRel& sProject);
+    /// The file paths to be scanned.
+    std::vector<std::string> paths;
 
-  /// Used to convert Substrait FilterRel into Velox PlanNode.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::FilterRel& sFilter);
+    /// The file starts in the scan.
+    std::vector<u_int64_t> starts;
 
-  /// Used to convert Substrait ReadRel into Velox PlanNode.
+    /// The lengths to be scanned.
+    std::vector<u_int64_t> lengths;
+
+    /// The file format of the files to be scanned.
+    dwio::common::FileFormat format;
+  };
+
+  /// Convert Substrait AggregateRel into Velox PlanNode.
+  core::PlanNodePtr toVeloxPlan(const ::substrait::AggregateRel& aggRel);
+
+  /// Convert Substrait ProjectRel into Velox PlanNode.
+  core::PlanNodePtr toVeloxPlan(const ::substrait::ProjectRel& projectRel);
+
+  /// Convert Substrait FilterRel into Velox PlanNode.
+  core::PlanNodePtr toVeloxPlan(const ::substrait::FilterRel& filterRel);
+
+  /// Convert Substrait ReadRel into Velox PlanNode.
   /// Index: the index of the partition this item belongs to.
   /// Starts: the start positions in byte to read from the items.
   /// Lengths: the lengths in byte to read from the items.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::ReadRel& sRead,
-      u_int32_t& index,
-      std::vector<std::string>& paths,
-      std::vector<u_int64_t>& starts,
-      std::vector<u_int64_t>& lengths);
+  core::PlanNodePtr toVeloxPlan(
+      const ::substrait::ReadRel& readRel,
+      std::shared_ptr<SplitInfo>& splitInfo);
 
-  /// Used to convert Substrait Rel into Velox PlanNode.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::Rel& sRel);
+  /// Convert Substrait ReadRel into Velox Values Node.
+  core::PlanNodePtr toVeloxPlan(
+      const ::substrait::ReadRel& readRel,
+      const RowTypePtr& type);
 
-  /// Used to convert Substrait RelRoot into Velox PlanNode.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::RelRoot& sRoot);
+  /// Convert Substrait Rel into Velox PlanNode.
+  core::PlanNodePtr toVeloxPlan(const ::substrait::Rel& rel);
 
-  /// Used to convert Substrait Plan into Velox PlanNode.
-  std::shared_ptr<const core::PlanNode> toVeloxPlan(
-      const ::substrait::Plan& sPlan);
+  /// Convert Substrait RelRoot into Velox PlanNode.
+  core::PlanNodePtr toVeloxPlan(const ::substrait::RelRoot& root);
 
-  /// Will return the index of Partition to be scanned.
-  u_int32_t getPartitionIndex() {
-    return partitionIndex_;
+  /// Convert Substrait Plan into Velox PlanNode.
+  core::PlanNodePtr toVeloxPlan(const ::substrait::Plan& substraitPlan);
+
+  /// Check the Substrait type extension only has one unknown extension.
+  bool checkTypeExtension(const ::substrait::Plan& substraitPlan);
+
+  /// Construct the function map between the index and the Substrait function
+  /// name.
+  void constructFunctionMap(const ::substrait::Plan& substraitPlan);
+
+  /// Return the function map used by this plan converter.
+  const std::unordered_map<uint64_t, std::string>& getFunctionMap() const {
+    return functionMap_;
   }
 
-  /// Will return the paths of the files to be scanned.
-  const std::vector<std::string>& getPaths() {
-    return paths_;
+  /// Return the splitInfo map used by this plan converter.
+  const std::unordered_map<core::PlanNodeId, std::shared_ptr<SplitInfo>>&
+  splitInfos() const {
+    return splitInfoMap_;
   }
 
-  /// Will return the starts of the files to be scanned.
-  const std::vector<u_int64_t>& getStarts() {
-    return starts_;
-  }
-
-  /// Will return the lengths to be scanned for each file.
-  const std::vector<u_int64_t>& getLengths() {
-    return lengths_;
-  }
+  /// Looks up a function by ID and returns function name if found. Throws if
+  /// function with specified ID doesn't exist. Returns a compound
+  /// function specification consisting of the function name and the input
+  /// types. The format is as follows: <function
+  /// name>:<arg_type0>_<arg_type1>_..._<arg_typeN>
+  const std::string& findFunction(uint64_t id) const;
 
  private:
-  /// The Partition index.
-  u_int32_t partitionIndex_;
+  /// Returns unique ID to use for plan node. Produces sequential numbers
+  /// starting from zero.
+  std::string nextPlanNodeId();
 
-  /// The file paths to be scanned.
-  std::vector<std::string> paths_;
+  /// Used to convert Substrait Filter into Velox SubfieldFilters which will
+  /// be used in TableScan.
+  connector::hive::SubfieldFilters toVeloxFilter(
+      const std::vector<std::string>& inputNameList,
+      const std::vector<TypePtr>& inputTypeList,
+      const ::substrait::Expression& substraitFilter);
 
-  /// The file starts in the scan.
-  std::vector<u_int64_t> starts_;
+  /// Multiple conditions are connected to a binary tree structure with
+  /// the relation key words, including AND, OR, and etc. Currently, only
+  /// AND is supported. This function is used to extract all the Substrait
+  /// conditions in the binary tree structure into a vector.
+  void flattenConditions(
+      const ::substrait::Expression& substraitFilter,
+      std::vector<::substrait::Expression_ScalarFunction>& scalarFunctions);
 
-  /// The lengths to be scanned.
-  std::vector<u_int64_t> lengths_;
+  /// The Substrait parser used to convert Substrait representations into
+  /// recognizable representations.
+  std::shared_ptr<SubstraitParser> substraitParser_{
+      std::make_shared<SubstraitParser>()};
+
+  /// The Expression converter used to convert Substrait representations into
+  /// Velox expressions.
+  std::shared_ptr<SubstraitVeloxExprConverter> exprConverter_;
 
   /// The unique identification for each PlanNode.
   int planNodeId_ = 0;
@@ -99,33 +136,12 @@ class SubstraitVeloxPlanConverter {
   /// name. Will be constructed based on the Substrait representation.
   std::unordered_map<uint64_t, std::string> functionMap_;
 
-  /// The Substrait parser used to convert Substrait representations into
-  /// recognizable representations.
-  std::shared_ptr<SubstraitParser> subParser_{
-      std::make_shared<SubstraitParser>()};
+  /// Mapping from leaf plan node ID to splits.
+  std::unordered_map<core::PlanNodeId, std::shared_ptr<SplitInfo>>
+      splitInfoMap_;
 
-  /// The Expression converter used to convert Substrait representations into
-  /// Velox expressions.
-  std::shared_ptr<SubstraitVeloxExprConverter> exprConverter_;
-
-  /// A function returning current function id and adding the plan node id by
-  /// one once called.
-  std::string nextPlanNodeId();
-
-  /// Used to convert Substrait Filter into Velox SubfieldFilters which will
-  /// be used in TableScan.
-  connector::hive::SubfieldFilters toVeloxFilter(
-      const std::vector<std::string>& inputNameList,
-      const std::vector<TypePtr>& inputTypeList,
-      const ::substrait::Expression& sFilter);
-
-  /// Multiple conditions are connected to a binary tree structure with
-  /// the relation key words, including AND, OR, and etc. Currently, only
-  /// AND is supported. This function is used to extract all the Substrait
-  /// conditions in the binary tree structure into a vector.
-  void flattenConditions(
-      const ::substrait::Expression& sFilter,
-      std::vector<::substrait::Expression_ScalarFunction>& scalarFunctions);
+  /// Memory pool.
+  memory::MemoryPool* pool_;
 };
 
 } // namespace facebook::velox::substrait

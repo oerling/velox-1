@@ -310,15 +310,15 @@ class SkipNullsIterator {
   const BaseIterator end_;
 };
 
-// Given a vectorReader T, this class represents a lazy access optional wrapper
-// around an element in the vectorReader with interface similar to
-// std::optional<T::exec_in_t>. This is used to represent elements of ArrayView
-// and values of MapView. VectorOptionalValueAccessor can be compared with and
-// assigned to std::optional.
+// Given a type T, this class represents a lazy access optional wrapper
+// around an element in the VectorReader<T> with interface similar to
+// std::optional<VectorReader<T>::exec_in_t>. This is used to represent elements
+// of ArrayView and values of MapView. OptionalAccessor can be
+// compared with and assigned to std::optional.
 template <typename T>
-class VectorOptionalValueAccessor {
+class OptionalAccessor {
  public:
-  using element_t = typename T::exec_in_t;
+  using element_t = typename VectorReader<T>::exec_in_t;
 
   explicit operator bool() const {
     return has_value();
@@ -336,7 +336,7 @@ class VectorOptionalValueAccessor {
   template <typename B>
   operator B() const = delete;
 
-  bool operator==(const VectorOptionalValueAccessor& other) const {
+  bool operator==(const OptionalAccessor& other) const {
     if (other.has_value() != has_value()) {
       return false;
     }
@@ -348,7 +348,7 @@ class VectorOptionalValueAccessor {
     return true;
   }
 
-  bool operator!=(const VectorOptionalValueAccessor& other) const {
+  bool operator!=(const OptionalAccessor& other) const {
     return !(*this == other);
   }
 
@@ -372,11 +372,11 @@ class VectorOptionalValueAccessor {
     return PointerWrapper(value());
   }
 
-  VectorOptionalValueAccessor<T>(const T* reader, int64_t index)
+  OptionalAccessor(const VectorReader<T>* reader, int64_t index)
       : reader_(reader), index_(index) {}
 
  private:
-  const T* reader_;
+  const VectorReader<T>* reader_;
   // Index of element within the reader.
   int64_t index_;
 
@@ -394,12 +394,10 @@ class VectorOptionalValueAccessor {
 };
 
 template <typename T, typename U>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator==(
-    const std::optional<T>& lhs,
-    const VectorOptionalValueAccessor<U>& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator==(const std::optional<T>& lhs, const OptionalAccessor<U>& rhs) {
   if (lhs.has_value() != rhs.has_value()) {
     return false;
   }
@@ -412,85 +410,79 @@ operator==(
 }
 
 template <typename U, typename T>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator==(
-    const VectorOptionalValueAccessor<U>& lhs,
-    const std::optional<T>& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator==(const OptionalAccessor<U>& lhs, const std::optional<T>& rhs) {
   return rhs == lhs;
 }
 
 template <typename T, typename U>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator!=(
-    const std::optional<T>& lhs,
-    const VectorOptionalValueAccessor<U>& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator!=(const std::optional<T>& lhs, const OptionalAccessor<U>& rhs) {
   return !(lhs == rhs);
 }
 
 template <typename U, typename T>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator!=(
-    const VectorOptionalValueAccessor<U>& lhs,
-    const std::optional<T>& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator!=(const OptionalAccessor<U>& lhs, const std::optional<T>& rhs) {
   return !(lhs == rhs);
 }
 
 template <typename T>
-bool operator==(std::nullopt_t, const VectorOptionalValueAccessor<T>& rhs) {
+bool operator==(std::nullopt_t, const OptionalAccessor<T>& rhs) {
   return !rhs.has_value();
 }
 
 template <typename T>
-bool operator!=(std::nullopt_t, const VectorOptionalValueAccessor<T>& rhs) {
+bool operator!=(std::nullopt_t, const OptionalAccessor<T>& rhs) {
   return rhs.has_value();
 }
 
 template <typename T>
-bool operator==(const VectorOptionalValueAccessor<T>& lhs, std::nullopt_t) {
+bool operator==(const OptionalAccessor<T>& lhs, std::nullopt_t) {
   return !lhs.has_value();
 }
 
 template <typename T>
-bool operator!=(const VectorOptionalValueAccessor<T>& lhs, std::nullopt_t) {
+bool operator!=(const OptionalAccessor<T>& lhs, std::nullopt_t) {
   return lhs.has_value();
 }
 
-// Allow comparing VectorOptionalValueAccessor<T> with T::exec_t.
+// Allow comparing OptionalAccessor<T> with T::exec_t.
 template <typename T, typename U>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator==(const T& lhs, const VectorOptionalValueAccessor<U>& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator==(const T& lhs, const OptionalAccessor<U>& rhs) {
   return rhs.has_value() && (*rhs == lhs);
 }
 
 template <typename U, typename T>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator==(const VectorOptionalValueAccessor<U>& lhs, const T& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator==(const OptionalAccessor<U>& lhs, const T& rhs) {
   return rhs == lhs;
 }
 
 template <typename T, typename U>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator!=(const T& lhs, const VectorOptionalValueAccessor<U>& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator!=(const T& lhs, const OptionalAccessor<U>& rhs) {
   return !(lhs == rhs);
 }
 
 template <typename U, typename T>
-typename std::enable_if<
-    std::is_trivially_constructible<typename U::exec_in_t, T>::value,
-    bool>::type
-operator!=(const VectorOptionalValueAccessor<U>& lhs, const T& rhs) {
+typename std::enable_if_t<
+    std::is_trivially_constructible_v<typename VectorReader<U>::exec_in_t, T>,
+    bool>
+operator!=(const OptionalAccessor<U>& lhs, const T& rhs) {
   return !(lhs == rhs);
 }
 
@@ -522,10 +514,8 @@ class ArrayView {
   ArrayView(const reader_t* reader, vector_size_t offset, vector_size_t size)
       : reader_(reader), offset_(offset), size_(size) {}
 
-  using Element = typename std::conditional<
-      returnsOptionalValues,
-      VectorOptionalValueAccessor<reader_t>,
-      element_t>::type;
+  using Element = typename std::
+      conditional<returnsOptionalValues, OptionalAccessor<V>, element_t>::type;
 
   class ElementAccessor {
    public:
@@ -674,6 +664,14 @@ class ArrayView {
         "efficient to use the standard iterator interface.");
   }
 
+  const BaseVector* elementsVector() const {
+    return reader_->baseVector();
+  }
+
+  vector_size_t offset() const {
+    return offset_;
+  }
+
  private:
   const reader_t* reader_;
   vector_size_t offset_;
@@ -704,7 +702,7 @@ class MapView {
 
   using ValueAccessor = typename std::conditional<
       returnsOptionalValues,
-      VectorOptionalValueAccessor<value_reader_t>,
+      OptionalAccessor<V>,
       typename value_reader_t::exec_null_free_in_t>::type;
 
   using KeyAccessor = typename std::conditional<
@@ -822,6 +820,11 @@ class MapView {
     return at(key);
   }
 
+  // Beware!! runtime is O(N)!!
+  bool contains(const key_element_t& key) const {
+    return find(key) != end();
+  }
+
   using materialize_t = typename std::conditional<
       returnsOptionalValues,
       typename MaterializeType<Map<K, V>>::nullable_t,
@@ -845,6 +848,18 @@ class MapView {
     return result;
   }
 
+  const BaseVector* keysVector() const {
+    return keyReader_->baseVector();
+  }
+
+  const BaseVector* valuesVector() const {
+    return valueReader_->baseVector();
+  }
+
+  vector_size_t offset() const {
+    return offset_;
+  }
+
  private:
   const key_reader_t* keyReader_;
   const value_reader_t* valueReader_;
@@ -855,24 +870,33 @@ class MapView {
 template <bool returnsOptionalValues, typename... T>
 class RowView {
   using reader_t = std::tuple<std::unique_ptr<VectorReader<T>>...>;
+  using types = std::tuple<T...>;
+
   template <size_t N>
   using elem_n_t = typename std::conditional<
       returnsOptionalValues,
-      VectorOptionalValueAccessor<
-          typename std::tuple_element<N, reader_t>::type::element_type>,
+      OptionalAccessor<typename std::tuple_element<N, types>::type>,
       typename std::tuple_element<N, reader_t>::type::element_type::
           exec_null_free_in_t>::type;
+
+  vector_size_t offset() const {
+    return offset_;
+  }
+
+  vector_size_t childVectorAt() const {
+    return offset_;
+  }
 
  public:
   RowView(const reader_t* childReaders, vector_size_t offset)
       : childReaders_{childReaders}, offset_{offset} {}
 
-  template <size_t N>
-  elem_n_t<N> at() const {
+  template <size_t I>
+  elem_n_t<I> at() const {
     if constexpr (returnsOptionalValues) {
-      return elem_n_t<N>{std::get<N>(*childReaders_).get(), offset_};
+      return elem_n_t<I>{std::get<I>(*childReaders_).get(), offset_};
     } else {
-      return std::get<N>(*childReaders_)->readNullFree(offset_);
+      return std::get<I>(*childReaders_)->readNullFree(offset_);
     }
   }
 
@@ -1052,48 +1076,6 @@ class GenericView {
   }
 
  private:
-  // Utility class that checks that vectorType matches T.
-  template <typename T>
-  struct CastTypeChecker {
-    static bool check(const TypePtr& vectorType) {
-      return CppToType<T>::typeKind == vectorType->kind();
-    }
-  };
-
-  template <typename T>
-  struct CastTypeChecker<Generic<T>> {
-    static bool check(const TypePtr&) {
-      return true;
-    }
-  };
-
-  template <typename T>
-  struct CastTypeChecker<Array<T>> {
-    static bool check(const TypePtr& vectorType) {
-      return TypeKind::ARRAY == vectorType->kind() &&
-          CastTypeChecker<T>::check(vectorType->childAt(0));
-    }
-  };
-
-  template <typename K, typename V>
-  struct CastTypeChecker<Map<K, V>> {
-    static bool check(const TypePtr& vectorType) {
-      return TypeKind::MAP == vectorType->kind() &&
-          CastTypeChecker<K>::check(vectorType->childAt(0)) &&
-          CastTypeChecker<V>::check(vectorType->childAt(1));
-    }
-  };
-
-  template <typename... T>
-  struct CastTypeChecker<Row<T...>> {
-    static bool check(const TypePtr& vectorType) {
-      int index = 0;
-      return TypeKind::ROW == vectorType->kind() &&
-          (CastTypeChecker<T>::check(vectorType->childAt(index++)) && ... &&
-           true);
-    }
-  };
-
   template <typename B>
   VectorReader<B>* ensureReader() const {
     static_assert(

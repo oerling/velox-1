@@ -24,9 +24,38 @@ namespace velox {
 
 template <typename T>
 void DictionaryVector<T>::setInternalState() {
-  VELOX_CHECK(indexType_ == TypeKind::INTEGER);
   rawIndices_ = indices_->as<vector_size_t>();
+
+  // Sanity check indices for non-null positions. Enabled in debug mode only to
+  // avoid performance hit in production.
+#ifndef NDEBUG
+  for (auto i = 0; i < BaseVector::length_; ++i) {
+    const bool isNull =
+        BaseVector::rawNulls_ && bits::isBitNull(BaseVector::rawNulls_, i);
+    if (isNull) {
+      continue;
+    }
+
+    // Verify index for a non-null position. It must be >= 0 and < size of the
+    // base vector.
+    VELOX_DCHECK_GE(
+        rawIndices_[i],
+        0,
+        "Dictionary index must be greater than zero. Index: {}.",
+        i);
+    VELOX_DCHECK_LT(
+        rawIndices_[i],
+        dictionaryValues_->size(),
+        "Dictionary index must be less than base vector's size. Index: {}.",
+        i);
+  }
+#endif
+
   if (isLazyNotLoaded(*dictionaryValues_)) {
+    VELOX_CHECK(
+        dictionaryValues_->markAsContainingLazyAndWrapped(),
+        "An unloaded lazy vector cannot be wrapped by two different"
+        " top level vectors.");
     // Do not load Lazy vector
     return;
   }
@@ -34,8 +63,7 @@ void DictionaryVector<T>::setInternalState() {
   if (dictionaryValues_->isScalar()) {
     scalarDictionaryValues_ =
         reinterpret_cast<SimpleVector<T>*>(dictionaryValues_->loadedVector());
-    if (scalarDictionaryValues_->encoding() == VectorEncoding::Simple::FLAT &&
-        !std::is_same<T, bool>::value) {
+    if (scalarDictionaryValues_->isFlatEncoding() && !std::is_same_v<T, bool>) {
       rawDictionaryValues_ =
           reinterpret_cast<FlatVector<T>*>(scalarDictionaryValues_)
               ->rawValues();
@@ -43,6 +71,8 @@ void DictionaryVector<T>::setInternalState() {
   }
   initialized_ = true;
 
+  BaseVector::inMemoryBytes_ =
+      BaseVector::nulls_ ? BaseVector::nulls_->capacity() : 0;
   BaseVector::inMemoryBytes_ += indices_->capacity();
   BaseVector::inMemoryBytes_ += dictionaryValues_->inMemoryBytes();
 }
@@ -53,7 +83,6 @@ DictionaryVector<T>::DictionaryVector(
     BufferPtr nulls,
     size_t length,
     std::shared_ptr<BaseVector> dictionaryValues,
-    TypeKind indexType,
     BufferPtr dictionaryIndices,
     const SimpleVectorStats<T>& stats,
     std::optional<vector_size_t> distinctValueCount,
@@ -64,6 +93,7 @@ DictionaryVector<T>::DictionaryVector(
     : SimpleVector<T>(
           pool,
           dictionaryValues->type(),
+          VectorEncoding::Simple::DICTIONARY,
           nulls,
           length,
           stats,
@@ -71,8 +101,7 @@ DictionaryVector<T>::DictionaryVector(
           nullCount,
           isSorted,
           representedBytes,
-          storageByteCount),
-      dictionaryStats_(stats) {
+          storageByteCount) {
   VELOX_CHECK(dictionaryValues != nullptr, "dictionaryValues must not be null");
   VELOX_CHECK(
       dictionaryIndices != nullptr, "dictionaryIndices must not be null");
@@ -81,7 +110,6 @@ DictionaryVector<T>::DictionaryVector(
       length * sizeof(vector_size_t),
       "Malformed dictionary, index array is shorter than DictionaryVector");
   dictionaryValues_ = dictionaryValues;
-  indexType_ = indexType;
   indices_ = dictionaryIndices;
   setInternalState();
 }
@@ -164,32 +192,16 @@ xsimd::batch<T> DictionaryVector<T>::loadSIMDValueBufferAt(
 }
 
 template <typename T>
-const uint64_t* DictionaryVector<T>::flatRawNulls(
-    const SelectivityVector& rows) {
+VectorPtr DictionaryVector<T>::slice(vector_size_t offset, vector_size_t length)
+    const {
   VELOX_DCHECK(initialized_);
-  if (!mayHaveNulls()) {
-    return nullptr;
-  }
-  loadedVector();
-  if (flatNullsBuffer_) {
-    return flatNullsBuffer_->as<uint64_t>();
-  }
-  if (!dictionaryValues_->mayHaveNulls()) {
-    return BaseVector::rawNulls_;
-  }
-  int32_t bytes = BaseVector::byteSize<bool>(BaseVector::length_);
-  flatNullsBuffer_ = AlignedBuffer::allocate<char>(bytes, this->pool());
-  auto flatNulls = flatNullsBuffer_->asMutable<uint64_t>();
-  memset(flatNulls, bits::kNotNullByte, flatNullsBuffer_->capacity());
-  SelectivityVector allRows(dictionaryValues_->size());
-  auto valueNulls = dictionaryValues_->flatRawNulls(allRows);
-  for (int32_t i = 0; i < BaseVector::length_; ++i) {
-    if (BaseVector::isNullAt(i) ||
-        bits::isBitNull(valueNulls, rawIndices_[i])) {
-      bits::setNull(flatNulls, i);
-    }
-  }
-  return flatNulls;
+  return std::make_shared<DictionaryVector<T>>(
+      this->pool_,
+      this->sliceNulls(offset, length),
+      length,
+      valueVector(),
+      BaseVector::sliceBuffer(
+          *INTEGER(), indices_, offset, length, this->pool_));
 }
 
 } // namespace velox

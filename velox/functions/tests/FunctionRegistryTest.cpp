@@ -100,8 +100,8 @@ class VectorFuncOne : public velox::exec::VectorFunction {
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
       const TypePtr& /* outputType */,
-      velox::exec::EvalCtx* /* context */,
-      velox::VectorPtr* /* result */) const override {}
+      velox::exec::EvalCtx& /* context */,
+      velox::VectorPtr& /* result */) const override {}
 
   static std::vector<std::shared_ptr<velox::exec::FunctionSignature>>
   signatures() {
@@ -119,8 +119,8 @@ class VectorFuncTwo : public velox::exec::VectorFunction {
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
       const TypePtr& /* outputType */,
-      velox::exec::EvalCtx* /* context */,
-      velox::VectorPtr* /* result */) const override {}
+      velox::exec::EvalCtx& /* context */,
+      velox::VectorPtr& /* result */) const override {}
 
   static std::vector<std::shared_ptr<velox::exec::FunctionSignature>>
   signatures() {
@@ -138,8 +138,8 @@ class VectorFuncThree : public velox::exec::VectorFunction {
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
       const TypePtr& /* outputType */,
-      velox::exec::EvalCtx* /* context */,
-      velox::VectorPtr* /* result */) const override {}
+      velox::exec::EvalCtx& /* context */,
+      velox::VectorPtr& /* result */) const override {}
 
   static std::vector<std::shared_ptr<velox::exec::FunctionSignature>>
   signatures() {
@@ -157,14 +157,14 @@ class VectorFuncFour : public velox::exec::VectorFunction {
       const velox::SelectivityVector& /* rows */,
       std::vector<velox::VectorPtr>& /* args */,
       const TypePtr& /* outputType */,
-      velox::exec::EvalCtx* /* context */,
-      velox::VectorPtr* /* result */) const override {}
+      velox::exec::EvalCtx& /* context */,
+      velox::VectorPtr& /* result */) const override {}
 
   static std::vector<std::shared_ptr<velox::exec::FunctionSignature>>
   signatures() {
     // map(K,V) -> array(K)
     return {velox::exec::FunctionSignatureBuilder()
-                .typeVariable("K")
+                .knownTypeVariable("K")
                 .typeVariable("V")
                 .returnType("array(K)")
                 .argumentType("map(K,V)")
@@ -199,7 +199,7 @@ VELOX_DECLARE_VECTOR_FUNCTION(
 
 inline void registerTestFunctions() {
   // If no alias is specified, ensure it will fallback to the struct name.
-  registerFunction<FuncOne, Varchar, Varchar>({"func_one"});
+  registerFunction<FuncOne, Varchar, Varchar>({"func_one", "Func_One_Alias"});
 
   // func_two has two signatures.
   registerFunction<FuncTwo, int64_t, int64_t, int32_t>({"func_two"});
@@ -213,9 +213,11 @@ inline void registerTestFunctions() {
   registerFunction<FuncFour, Varchar, Varchar>({"func_five"});
   registerFunction<FuncFive, int64_t, int64_t>({"func_four"});
 
-  registerFunction<VariadicFunc, Varchar, Variadic<Varchar>>({"variadic_func"});
+  registerFunction<VariadicFunc, Varchar, Variadic<Varchar>>(
+      {"variadic_func", "Variadic_Func_Alias"});
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_one, "vector_func_one");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_one, "Vector_Func_One_Alias");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_two, "vector_func_two");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_three, "vector_func_three");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_vector_func_four, "vector_func_four");
@@ -247,7 +249,7 @@ class FunctionRegistryTest : public ::testing::Test {
 
 TEST_F(FunctionRegistryTest, getFunctionSignatures) {
   auto functionSignatures = getFunctionSignatures();
-  ASSERT_EQ(functionSignatures.size(), 11);
+  ASSERT_EQ(functionSignatures.size(), 14);
 
   ASSERT_EQ(functionSignatures.count("func_one"), 1);
   ASSERT_EQ(functionSignatures.count("func_two"), 1);
@@ -370,7 +372,7 @@ TEST_F(FunctionRegistryTest, getFunctionSignatures) {
   ASSERT_EQ(
       functionSignatures["vector_func_four"].at(0)->toString(),
       exec::FunctionSignatureBuilder()
-          .typeVariable("K")
+          .knownTypeVariable("K")
           .typeVariable("V")
           .returnType("array(K)")
           .argumentType("map(K,V)")
@@ -447,6 +449,21 @@ TEST_F(FunctionRegistryTest, registerFunctionTwice) {
   ASSERT_EQ(signatures.size(), 1);
 }
 
+TEST_F(FunctionRegistryTest, functionNameInMixedCase) {
+  auto result = resolveFunction("funC_onE", {VARCHAR()});
+  ASSERT_EQ(*result, *VARCHAR());
+  result = resolveFunction("funC_onE_aliaS", {VARCHAR()});
+  ASSERT_EQ(*result, *VARCHAR());
+
+  testResolveVectorFunction("vectoR_funC_onE_aliaS", {VARCHAR()}, BIGINT());
+  testResolveVectorFunction("vectoR_funC_onE", {VARCHAR()}, BIGINT());
+
+  result = resolveFunction("variadiC_funC_aliaS", {VARCHAR(), VARCHAR()});
+  ASSERT_EQ(*result, *VARCHAR());
+  result = resolveFunction("variadiC_funC", {});
+  ASSERT_EQ(*result, *VARCHAR());
+}
+
 template <typename T>
 struct TestFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -455,7 +472,7 @@ struct TestFunction {
       out_type<Varchar>& out,
       const arg_type<Varchar>&,
       const arg_type<Varchar>&) {
-    out = "1"_sv;
+    out.copy_from("1"_sv);
   }
 
   void call(int32_t& out, const arg_type<Variadic<Varchar>>&) {

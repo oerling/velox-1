@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -23,8 +23,7 @@ class InPredicateTest : public FunctionBaseTest {
  protected:
   template <typename T>
   void testIntegers() {
-    std::unique_ptr<memory::MemoryPool> pool{
-        memory::getDefaultScopedMemoryPool()};
+    std::shared_ptr<memory::MemoryPool> pool{memory::getDefaultMemoryPool()};
 
     const vector_size_t size = 1'000;
     auto vector = makeFlatVector<T>(size, [](auto row) { return row % 17; });
@@ -132,6 +131,12 @@ class InPredicateTest : public FunctionBaseTest {
     rowVector = makeRowVector({dict});
     result = evaluate<SimpleVector<bool>>("c0 IN (2, 5, 9)", rowVector);
     assertEqualVectors(expected, result);
+
+    // an in list with nulls only is always null.
+    result = evaluate<SimpleVector<bool>>("c0 IN (null)", rowVector);
+    auto expectedConstant =
+        BaseVector::createNullConstant(BOOLEAN(), size, pool_.get());
+    assertEqualVectors(expectedConstant, result);
   }
 
   template <typename T>
@@ -299,4 +304,15 @@ TEST_F(InPredicateTest, varcharConstant) {
   result = evaluate<SimpleVector<bool>>(
       "c1 IN ('apple', 'pear', 'banana')", rowVector);
   assertEqualVectors(constNull, result);
+}
+
+TEST_F(InPredicateTest, varbinary) {
+  auto input = makeRowVector({
+      makeNullableFlatVector<std::string>({"apple", "banana"}, VARBINARY()),
+  });
+
+  std::string predicate =
+      "c0 IN (CAST('apple' as VARBINARY), CAST('banana' as VARBINARY))";
+  auto result = evaluate<SimpleVector<bool>>(predicate, input);
+  assertEqualVectors(makeConstant(true, input->size()), result);
 }

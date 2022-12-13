@@ -12,24 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(velox_expression_functions FunctionRegistry.h FunctionSignature.cpp
-                                       SignatureBinder.cpp)
+add_library(
+  velox_expression_functions FunctionSignature.cpp SignatureBinder.cpp
+                             ReverseSignatureBinder.cpp)
 
-target_link_libraries(velox_expression_functions velox_common_base)
+target_link_libraries(velox_expression_functions velox_common_base
+                      velox_type_calculation)
 
 add_library(
   velox_expression
+  BooleanMix.cpp
   CastExpr.cpp
   CoalesceExpr.cpp
-  ControlExpr.cpp
+  ConjunctExpr.cpp
+  ConstantExpr.cpp
   EvalCtx.cpp
   Expr.cpp
   ExprCompiler.cpp
+  ExprToSubfieldFilter.cpp
+  FieldReference.cpp
+  FunctionCallToSpecialForm.cpp
+  LambdaExpr.cpp
   VectorFunction.cpp
-  SimpleFunctionRegistry.cpp)
+  SimpleFunctionRegistry.cpp
+  SwitchExpr.cpp
+  TryExpr.cpp)
 
-target_link_libraries(velox_expression velox_core velox_vector
-                      velox_common_base velox_expression_functions)
+target_link_libraries(
+  velox_expression velox_core velox_vector velox_common_base
+  velox_expression_functions velox_functions_util)
+
+add_subdirectory(type_calculation)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

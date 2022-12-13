@@ -15,7 +15,7 @@
  */
 
 #include <optional>
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -306,24 +306,26 @@ TEST_F(ArrayDistinctTest, nonContiguousRows) {
   assertEqualVectors(expected, result);
 }
 
-// Test for invalid signature and types.
-TEST_F(ArrayDistinctTest, invalidTypes) {
-  auto array = makeNullableArrayVector<int32_t>({{1}});
-  auto expected = makeNullableArrayVector<int32_t>({{1}});
+TEST_F(ArrayDistinctTest, constant) {
+  vector_size_t size = 1'000;
+  auto data =
+      makeArrayVector<int64_t>({{1, 2, 3, 2, 1}, {4, 5, 4, 5}, {6, 6, 6, 6}});
 
-  EXPECT_THROW(
-      testExpr(expected, "array_distinct(1)", {array}), std::invalid_argument);
-  EXPECT_THROW(
-      testExpr(expected, "array_distinct(C0, CO)", {array, array}),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testExpr(expected, "array_distinct(ARRAY[1], 1)", {array}),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testExpr(expected, "array_distinct(ARRAY[ARRAY[1]])", {array}),
-      facebook::velox::VeloxUserError);
-  EXPECT_THROW(
-      testExpr(expected, "array_distinct()", {array}), std::invalid_argument);
+  auto evaluateConstant = [&](vector_size_t row, const VectorPtr& vector) {
+    return evaluate(
+        "array_distinct(c0)",
+        makeRowVector({BaseVector::wrapInConstant(size, row, vector)}));
+  };
 
-  EXPECT_NO_THROW(testExpr(expected, "array_distinct(C0)", {array}));
+  auto result = evaluateConstant(0, data);
+  auto expected = makeConstantArray<int64_t>(size, {1, 2, 3});
+  assertEqualVectors(expected, result);
+
+  result = evaluateConstant(1, data);
+  expected = makeConstantArray<int64_t>(size, {4, 5});
+  assertEqualVectors(expected, result);
+
+  result = evaluateConstant(2, data);
+  expected = makeConstantArray<int64_t>(size, {6});
+  assertEqualVectors(expected, result);
 }

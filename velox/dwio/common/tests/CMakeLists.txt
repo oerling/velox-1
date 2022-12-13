@@ -11,23 +11,31 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+add_subdirectory(utils)
+
 add_executable(
   velox_dwio_common_test
-  ChainedBufferTests.cpp DataBufferTests.cpp RetryTests.cpp
-  TestColumnSelector.cpp TypeTests.cpp LoggedExceptionTest.cpp)
-
+  BitConcatenationTest.cpp
+  BitPackDecoderTest.cpp
+  ChainedBufferTests.cpp
+  DataBufferTests.cpp
+  DecoderUtilTest.cpp
+  LoggedExceptionTest.cpp
+  RangeTests.cpp
+  RetryTests.cpp
+  TestBufferedInput.cpp
+  TestColumnSelector.cpp
+  TypeTests.cpp)
 add_test(velox_dwio_common_test velox_dwio_common_test)
-
 target_link_libraries(
   velox_dwio_common_test
-  velox_memory
-  velox_dwio_common
-  velox_dwio_common_exception
-  velox_dwio_type_fbhive
-  velox_exception
-  velox_process
-  velox_type
+  velox_dwio_common_test_utils
+  velox_temp_path
   Boost::regex
+  ${VELOX_LINK_LIBS}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${TEST_LINK_LIBS}
   ${gflags_LIBRARIES}
   gtest
   gtest_main
@@ -40,3 +48,29 @@ add_executable(velox_dwio_common_data_buffer_benchmark DataBufferBenchmark.cpp)
 target_link_libraries(
   velox_dwio_common_data_buffer_benchmark velox_dwio_common velox_memory
   velox_dwio_common_exception ${FOLLY} ${FOLLY_BENCHMARK})
+
+add_executable(velox_dwio_common_int_decoder_benchmark IntDecoderBenchmark.cpp)
+target_link_libraries(
+  velox_dwio_common_int_decoder_benchmark velox_dwio_common_exception
+  velox_exception velox_dwio_dwrf_common ${FOLLY} ${FOLLY_BENCHMARK})
+
+add_library(velox_e2e_filter_test_base E2EFilterTestBase.cpp)
+
+target_link_libraries(
+  velox_e2e_filter_test_base
+  ${VELOX_LINK_LIBS}
+  ${FOLLY_WITH_DEPENDENCIES}
+  ${FMT}
+  ${LZ4}
+  ${LZO}
+  ${ZSTD}
+  ${ZLIB_LIBRARIES}
+  ${TEST_LINK_LIBS})
+
+if(VELOX_ENABLE_ARROW)
+  add_executable(velox_dwio_common_bitpack_decoder_benchmark
+                 BitPackDecoderBenchmark.cpp)
+  target_link_libraries(
+    velox_dwio_common_bitpack_decoder_benchmark velox_dwio_common arrow duckdb
+    ${FOLLY} ${FOLLY_BENCHMARK})
+endif()

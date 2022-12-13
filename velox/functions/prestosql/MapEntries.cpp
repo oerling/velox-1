@@ -26,39 +26,65 @@ class MapEntriesFunction : public exec::VectorFunction {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       const TypePtr& outputType,
-      exec::EvalCtx* context,
-      VectorPtr* result) const override {
-    VELOX_CHECK_EQ(args.size(), 1);
-    VELOX_CHECK_EQ(args[0]->type()->kind(), TypeKind::MAP);
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
+    auto& arg = args[0];
 
-    const auto inputMap = args[0]->as<MapVector>();
+    VectorPtr localResult;
+
+    // Input can be constant or flat.
+    if (arg->isConstantEncoding()) {
+      auto* constantMap = arg->as<ConstantVector<ComplexType>>();
+      const auto& flatMap = constantMap->valueVector();
+      const auto flatIndex = constantMap->index();
+
+      SelectivityVector singleRow(flatIndex + 1, false);
+      singleRow.setValid(flatIndex, true);
+      singleRow.updateBounds();
+
+      localResult = applyFlat(singleRow, flatMap, outputType, context);
+      localResult =
+          BaseVector::wrapInConstant(rows.size(), flatIndex, localResult);
+    } else {
+      localResult = applyFlat(rows, arg, outputType, context);
+    }
+
+    context.moveOrCopyResult(localResult, rows, result);
+  }
+
+  static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
+    // map(K,V) -> array(row(K,V))
+    return {exec::FunctionSignatureBuilder()
+                .knownTypeVariable("K")
+                .typeVariable("V")
+                .returnType("array(row(K,V))")
+                .argumentType("map(K,V)")
+                .build()};
+  }
+
+ private:
+  VectorPtr applyFlat(
+      const SelectivityVector& rows,
+      const VectorPtr& arg,
+      const TypePtr& outputType,
+      exec::EvalCtx& context) const {
+    const auto inputMap = arg->as<MapVector>();
 
     VectorPtr resultElements = std::make_shared<RowVector>(
-        context->pool(),
+        context.pool(),
         outputType->childAt(0),
         BufferPtr(nullptr),
         inputMap->mapKeys()->size(),
         std::vector<VectorPtr>{inputMap->mapKeys(), inputMap->mapValues()});
-    auto resultArray = std::make_shared<ArrayVector>(
-        context->pool(),
+
+    return std::make_shared<ArrayVector>(
+        context.pool(),
         outputType,
         inputMap->nulls(),
         rows.size(),
         inputMap->offsets(),
         inputMap->sizes(),
         resultElements);
-
-    context->moveOrCopyResult(resultArray, rows, result);
-  }
-
-  static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
-    // map(K,V) -> array(row(K,V))
-    return {exec::FunctionSignatureBuilder()
-                .typeVariable("K")
-                .typeVariable("V")
-                .returnType("array(row(K,V))")
-                .argumentType("map(K,V)")
-                .build()};
   }
 };
 } // namespace

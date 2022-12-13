@@ -15,7 +15,7 @@
  */
 
 #include <optional>
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -175,52 +175,25 @@ TEST_F(ArrayDuplicatesTest, nonContiguousRows) {
   assertEqualVectors(expected, result);
 }
 
-// Test for invalid signature and types.
-TEST_F(ArrayDuplicatesTest, invalidTypes) {
-  auto array = makeNullableArrayVector<int64_t>({{1, 1}});
-  auto expected = makeNullableArrayVector<int64_t>({{1}});
+TEST_F(ArrayDuplicatesTest, constant) {
+  vector_size_t size = 1'000;
+  auto data = makeArrayVector<int64_t>({{1, 2, 3}, {4, 5, 4, 5}, {6, 6, 6, 6}});
 
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(1)", {array}),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(C0, CO)", {array, array}),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(ARRAY[1], 1)", {array}),
-      std::invalid_argument);
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(ARRAY[ARRAY[1]])", {array}),
-      facebook::velox::VeloxUserError);
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates()", {array}), std::invalid_argument);
+  auto evaluateConstant = [&](vector_size_t row, const VectorPtr& vector) {
+    return evaluate(
+        "array_duplicates(c0)",
+        makeRowVector({BaseVector::wrapInConstant(size, row, vector)}));
+  };
 
-  EXPECT_NO_THROW(testExpr(expected, "array_duplicates(C0)", {array}));
-}
+  auto result = evaluateConstant(0, data);
+  auto expected = makeConstantArray<int64_t>(size, {});
+  assertEqualVectors(expected, result);
 
-TEST_F(ArrayDuplicatesTest, invalidBooleanElementType) {
-  auto array = makeNullableArrayVector<bool>({{true, true}});
-  auto expected = makeNullableArrayVector<bool>({{true}});
+  result = evaluateConstant(1, data);
+  expected = makeConstantArray<int64_t>(size, {4, 5});
+  assertEqualVectors(expected, result);
 
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(C0)", {array}),
-      std::invalid_argument);
-}
-
-TEST_F(ArrayDuplicatesTest, invalidFloatElementType) {
-  auto array = makeNullableArrayVector<float>({{1.1, 1.1}});
-  auto expected = makeNullableArrayVector<float>({{1.1}});
-
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(C0)", {array}),
-      std::invalid_argument);
-}
-
-TEST_F(ArrayDuplicatesTest, invalidDoubleElementType) {
-  auto array = makeNullableArrayVector<double>({{1.1, 1.1}});
-  auto expected = makeNullableArrayVector<double>({{1.1}});
-
-  EXPECT_THROW(
-      testExpr(expected, "array_duplicates(C0)", {array}),
-      std::invalid_argument);
+  result = evaluateConstant(2, data);
+  expected = makeConstantArray<int64_t>(size, {6});
+  assertEqualVectors(expected, result);
 }

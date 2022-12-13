@@ -19,6 +19,7 @@
 #include <cmath>
 #include <type_traits>
 #include "folly/CPortability.h"
+#include "velox/type/DoubleUtil.h"
 
 namespace facebook::velox::functions {
 
@@ -28,10 +29,9 @@ namespace facebook::velox::functions {
 template <typename TNum, typename TDecimals, bool alwaysRoundNegDec = false>
 FOLLY_ALWAYS_INLINE TNum
 round(const TNum& number, const TDecimals& decimals = 0) {
-  static_assert(
-      !std::is_same<TNum, bool>::value && "round not supported for bool");
+  static_assert(!std::is_same_v<TNum, bool> && "round not supported for bool");
 
-  if constexpr (std::is_integral<TNum>::value) {
+  if constexpr (std::is_integral_v<TNum>) {
     if constexpr (alwaysRoundNegDec) {
       if (decimals >= 0)
         return number;
@@ -131,6 +131,34 @@ template <typename T>
 T ceil(const T& arg) {
   T results = std::ceil(arg);
   return results;
+}
+
+FOLLY_ALWAYS_INLINE double truncate(
+    const double& number,
+    const int32_t& decimals = 0) {
+  const bool decNegative = (decimals < 0);
+  const auto log10Size = DoubleUtil::kPowersOfTen.size(); // 309
+  if (decNegative && decimals <= -log10Size) {
+    return 0.0;
+  }
+
+  const uint64_t absDec = decNegative ? -decimals : decimals;
+  const double tmp = (absDec < log10Size) ? DoubleUtil::kPowersOfTen[absDec]
+                                          : std::pow(10.0, (double)absDec);
+
+  const double valueMulTmp = number * tmp;
+  if (!decNegative && !std::isfinite(valueMulTmp)) {
+    return number;
+  }
+
+  const double valueDivTmp = number / tmp;
+  if (number >= 0.0) {
+    return decimals < 0 ? std::floor(valueDivTmp) * tmp
+                        : std::floor(valueMulTmp) / tmp;
+  } else {
+    return decimals < 0 ? std::ceil(valueDivTmp) * tmp
+                        : std::ceil(valueMulTmp) / tmp;
+  }
 }
 
 } // namespace facebook::velox::functions

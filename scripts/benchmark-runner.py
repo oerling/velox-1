@@ -16,14 +16,9 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
-
-
-_FIND_BINARIES_CMD = "find %s -maxdepth 1 -type f -executable"
-_FIND_JSON_CMD = "find %s -maxdepth 1 -name '*.json' -type f"
-_BENCHMARK_CMD = "%s --bm_max_secs 10 --bm_max_trials 1000000"
-_BENCHMARK_WITH_DUMP_CMD = _BENCHMARK_CMD + " --bm_json_verbose %s"
+import tempfile
+from veloxbench.veloxbench.cpp_micro_benchmarks import LocalCppMicroBenchmarks
 
 _OUTPUT_NUM_COLS = 100
 
@@ -43,59 +38,6 @@ def color_green(text) -> str:
 
 def bold(text) -> str:
     return "\033[1m{}\033[00m".format(text) if sys.stdout.isatty() else text
-
-
-def execute(cmd, print_stdout=False):
-    """
-    Executes an external process using Popen.
-    Either print the process output or return it in a list (based on print_stdout).
-    """
-    result = None
-
-    if print_stdout:
-        process = subprocess.Popen(cmd, stdout=sys.stdout, shell=True)
-    else:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
-        result = [line.strip().decode("ascii") for line in process.stdout.readlines()]
-
-    if process.wait() != 0:
-        raise subprocess.SubprocessError(
-            "'{}' returned a non-zero code ({}).".format(cmd, process.returncode)
-        )
-    return result
-
-
-def run(args):
-    files = execute(_FIND_BINARIES_CMD % args.path)
-
-    if not files:
-        print("No benchmark binaries found in path '%s'. Aborting..." % args.path)
-        return 1
-
-    if args.dump_path:
-        os.makedirs(args.dump_path, exist_ok=True)
-    print("Benchmark-runner found %i benchmarks binaries to execute." % len(files))
-
-    # Execute and dump results for each benchmark file.
-    for file_path in files:
-        file_name = os.path.basename(file_path)
-
-        if args.dump_path:
-            json_file_name = os.path.join(args.dump_path, "%s.json" % file_name)
-            print(
-                "Executing and dumping results for '%s' to '%s':"
-                % (file_name, json_file_name)
-            )
-            cmd = _BENCHMARK_WITH_DUMP_CMD % (file_path, json_file_name)
-        else:
-            print("Executing '%s':" % file_name)
-            cmd = _BENCHMARK_CMD % file_path
-
-        print("$ %s" % cmd)
-        execute(cmd, print_stdout=True)
-        print()
-
-    return 0
 
 
 def get_benchmark_handle(file_path, name):
@@ -143,7 +85,7 @@ def compare_file(args, target_data, baseline_data):
 
         if abs(delta) > args.threshold:
             if delta > 0:
-                status = color_green("✓ Pass")
+                status = color_green("🗲 Pass")
                 passes.append(benchmark_handle)
                 faster.append(benchmark_handle)
             else:
@@ -164,6 +106,15 @@ def compare_file(args, target_data, baseline_data):
     return passes, faster, failures
 
 
+def find_json_files(path):
+    json_files = {}
+    with os.scandir(path) as files:
+        for file_found in files:
+            if file_found.name.endswith(".json"):
+                json_files[file_found.name] = file_found.path
+    return json_files
+
+
 def compare(args):
     print(
         "=> Starting comparison using {} ({}%) as threshold.".format(
@@ -174,11 +125,8 @@ def compare(args):
     print("=>    (positive means speedup; negative means regression).")
 
     # Read file lists from both directories.
-    baseline_files = execute(_FIND_JSON_CMD % args.baseline_dump_path)
-    target_files = execute(_FIND_JSON_CMD % args.target_dump_path)
-
-    baseline_map = {os.path.basename(f): f for f in baseline_files}
-    target_map = {os.path.basename(f): f for f in target_files}
+    baseline_map = find_json_files(args.baseline_path)
+    target_map = find_json_files(args.target_path)
 
     all_passes = []
     all_faster = []
@@ -226,34 +174,82 @@ def compare(args):
     return 0
 
 
+def run(args):
+    LocalCppMicroBenchmarks().run(
+        output_dir=args.output_path or tempfile.mkdtemp(),
+        binary_path=args.binary_path,
+        binary_filter=args.binary_filter,
+        bm_filter=args.bm_filter,
+        bm_max_secs=args.bm_max_secs,
+        bm_max_trials=args.bm_max_trials,
+        bm_estimate_time=args.bm_estimate_time,
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Velox Benchmark Runner Utility.")
     parser.set_defaults(func=lambda _: parser.print_help())
 
     subparsers = parser.add_subparsers(help="Please specify one of the subcommands.")
 
+    # Arguments for the "run" subparser.
     parser_run = subparsers.add_parser("run", help="Run benchmarks and dump results.")
     parser_run.add_argument(
-        "--path", required=True, help="Path containing the benchmark binaries."
+        "--binary_path",
+        default=None,
+        help="Directory where benchmark binaries are stored. "
+        "Defaults to release build directory.",
     )
     parser_run.add_argument(
-        "--dump-path",
+        "--output_path",
         default=None,
-        help="Path where json results will be dumped. By default only print to stdout.",
+        help="Directory where output json files will be written to. "
+        "By default generate a temporary directory.",
+    )
+    parser_run.add_argument(
+        "--binary_filter",
+        default=None,
+        help="Filter applied to binary names. "
+        "By default execute all binaries found.",
+    )
+    parser_run.add_argument(
+        "--bm_filter",
+        default=None,
+        help="Filter applied to benchmark names within binaries. "
+        "By default execute all benchmarks.",
+    )
+    parser_run.add_argument(
+        "--bm_max_secs",
+        default=None,
+        type=int,
+        help="For how many seconds to run each benchmark in a binary.",
+    )
+    parser_run.add_argument(
+        "--bm_max_trials",
+        default=None,
+        type=int,
+        help="Maximum number of trials (iterations) executed for each benchmark.",
+    )
+    parser_run.add_argument(
+        "--bm_estimate_time",
+        default=False,
+        action="store_true",
+        help="Use folly benchmark --bm_estimate_time flag.",
     )
     parser_run.set_defaults(func=run)
 
+    # Arguments for the "compare" subparser.
     parser_compare = subparsers.add_parser(
         "compare", help="Compare benchmark dumped results."
     )
     parser_compare.set_defaults(func=compare)
     parser_compare.add_argument(
-        "--baseline-dump-path",
+        "--baseline_path",
         required=True,
         help="Path where containing base dump results.",
     )
     parser_compare.add_argument(
-        "--target-dump-path",
+        "--target_path",
         required=True,
         help="Path where containing target dump results.",
     )
@@ -261,10 +257,10 @@ def parse_args():
         "-t",
         "--threshold",
         type=float,
-        default=0.2,
+        default=0.05,
         help="Comparison threshold. "
         "Variations larger than this threshold will be reported as failures. "
-        "Default 0.2 (20%%).",
+        "Default 0.05 (5%%).",
     )
     return parser.parse_args()
 

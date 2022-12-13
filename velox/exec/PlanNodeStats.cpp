@@ -34,12 +34,14 @@ void PlanNodeStats::add(const OperatorStats& stats) {
 void PlanNodeStats::addTotals(const OperatorStats& stats) {
   inputRows += stats.inputPositions;
   inputBytes += stats.inputBytes;
+  inputVectors += stats.inputVectors;
 
   rawInputRows += stats.rawInputPositions;
   rawInputBytes += stats.rawInputBytes;
 
   outputRows += stats.outputPositions;
   outputBytes += stats.outputBytes;
+  outputVectors += stats.outputVectors;
 
   cpuWallTiming.add(stats.addInputTiming);
   cpuWallTiming.add(stats.getOutputTiming);
@@ -61,27 +63,32 @@ void PlanNodeStats::addTotals(const OperatorStats& stats) {
   // Populating number of drivers for plan nodes with multiple operators is not
   // useful. Each operator could have been executed in different pipelines with
   // different number of drivers.
-  if (!isMultiOperatorNode()) {
+  if (!isMultiOperatorTypeNode()) {
     numDrivers += stats.numDrivers;
   } else {
     numDrivers = 0;
   }
 
   numSplits += stats.numSplits;
+
+  spilledBytes += stats.spilledBytes;
+  spilledRows += stats.spilledRows;
+  spilledPartitions += stats.spilledPartitions;
+  spilledFiles += stats.spilledFiles;
 }
 
 std::string PlanNodeStats::toString(bool includeInputStats) const {
   std::stringstream out;
   if (includeInputStats) {
     out << "Input: " << inputRows << " rows (" << succinctBytes(inputBytes)
-        << "), ";
+        << ", " << inputVectors << " batches), ";
     if ((rawInputRows > 0) && (rawInputRows != inputRows)) {
       out << "Raw Input: " << rawInputRows << " rows ("
           << succinctBytes(rawInputBytes) << "), ";
     }
   }
   out << "Output: " << outputRows << " rows (" << succinctBytes(outputBytes)
-      << ")"
+      << ", " << outputVectors << " batches)"
       << ", Cpu time: " << succinctNanos(cpuWallTiming.cpuNanos)
       << ", Blocked wall time: " << succinctNanos(blockedWallNanos)
       << ", Peak memory: " << succinctBytes(peakMemoryBytes)
@@ -116,6 +123,41 @@ std::unordered_map<core::PlanNodeId, PlanNodeStats> toPlanStats(
   }
 
   return planStats;
+}
+
+folly::dynamic toPlanStatsJson(const facebook::velox::exec::TaskStats& stats) {
+  folly::dynamic jsonStats = folly::dynamic::array;
+  auto planStats = facebook::velox::exec::toPlanStats(stats);
+  for (const auto& planStat : planStats) {
+    for (const auto& operatorStat : planStat.second.operatorStats) {
+      folly::dynamic stat = folly::dynamic::object;
+      stat["planNodeId"] = planStat.first;
+      stat["operatorType"] = operatorStat.first;
+      stat["inputRows"] = operatorStat.second->inputRows;
+      stat["inputVectors"] = operatorStat.second->inputVectors;
+      stat["inputBytes"] = operatorStat.second->inputBytes;
+      stat["rawInputRows"] = operatorStat.second->rawInputRows;
+      stat["rawInputBytes"] = operatorStat.second->rawInputBytes;
+      stat["outputRows"] = operatorStat.second->outputRows;
+      stat["outputVectors"] = operatorStat.second->outputVectors;
+      stat["outputBytes"] = operatorStat.second->outputBytes;
+      stat["cpuWallTiming"] = operatorStat.second->cpuWallTiming.toString();
+      stat["blockedWallNanos"] = operatorStat.second->blockedWallNanos;
+      stat["peakMemoryBytes"] = operatorStat.second->peakMemoryBytes;
+      stat["numMemoryAllocations"] = operatorStat.second->numMemoryAllocations;
+      stat["numDrivers"] = operatorStat.second->numDrivers;
+      stat["numSplits"] = operatorStat.second->numSplits;
+
+      folly::dynamic cs = folly::dynamic::object;
+      for (const auto& cstat : operatorStat.second->customStats) {
+        cs[cstat.first] = cstat.second.toString();
+      }
+      stat["customStats"] = cs;
+
+      jsonStats.push_back(stat);
+    }
+  }
+  return jsonStats;
 }
 
 namespace {
@@ -166,7 +208,7 @@ std::string printPlanWithStats(
 
         // Include break down by operator type for plan nodes with multiple
         // operators. Print input rows and sizes for all such nodes.
-        if (stats.isMultiOperatorNode()) {
+        if (stats.isMultiOperatorTypeNode()) {
           for (const auto& entry : stats.operatorStats) {
             stream << std::endl;
             stream << indentation << entry.first << ": "

@@ -16,9 +16,9 @@
 
 #pragma once
 
+#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/reader/ReaderBase.h"
-#include "velox/dwio/dwrf/reader/StripeReaderBase.h"
 
 namespace facebook::velox::dwrf {
 
@@ -32,11 +32,12 @@ class StripeReaderBase {
   // for testing purpose
   StripeReaderBase(
       const std::shared_ptr<ReaderBase>& reader,
-      proto::StripeFooter* footer)
+      const proto::StripeFooter* footer)
       : reader_{reader},
-        footer_{footer},
+        footer_{const_cast<proto::StripeFooter*>(footer)},
         handler_{std::make_unique<encryption::DecryptionHandler>(
-            reader_->getDecryptionHandler())} {
+            reader_->getDecryptionHandler())},
+        canLoad_{false} {
     // The footer is expected to be arena allocated and to stay
     // live for the lifetime of 'this'.
     DWIO_ENSURE(footer->GetArena());
@@ -44,14 +45,14 @@ class StripeReaderBase {
 
   virtual ~StripeReaderBase() = default;
 
-  const proto::StripeInformation& loadStripe(uint32_t index, bool& preload);
+  StripeInformationWrapper loadStripe(uint32_t index, bool& preload);
 
   const proto::StripeFooter& getStripeFooter() const {
     DWIO_ENSURE_NOT_NULL(footer_, "stripe not loaded");
     return *footer_;
   }
 
-  BufferedInput& getStripeInput() const {
+  dwio::common::BufferedInput& getStripeInput() const {
     return stripeInput_ ? *stripeInput_ : reader_->getBufferedInput();
   }
 
@@ -69,10 +70,11 @@ class StripeReaderBase {
 
  private:
   std::shared_ptr<ReaderBase> reader_;
-  std::unique_ptr<BufferedInput> stripeInput_;
+  std::unique_ptr<dwio::common::BufferedInput> stripeInput_;
   proto::StripeFooter* footer_ = nullptr;
   std::unique_ptr<encryption::DecryptionHandler> handler_;
   std::optional<uint32_t> lastStripeIndex_;
+  bool canLoad_{true};
 
   void loadEncryptionKeys(uint32_t index);
 

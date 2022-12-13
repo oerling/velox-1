@@ -15,6 +15,7 @@
  */
 
 #include <folly/Benchmark.h>
+#include <folly/init/Init.h>
 #include <gflags/gflags.h>
 
 #include "velox/common/base/CompareFlags.h"
@@ -35,20 +36,17 @@ class VectorCompareBenchmark : public functions::test::FunctionBenchmarkBase {
       : FunctionBenchmarkBase(), vectorSize_(vectorSize), rows_(vectorSize) {
     VectorFuzzer::Options opts;
     opts.vectorSize = vectorSize_;
-    opts.nullChance = 0;
+    opts.nullRatio = 0;
     opts.containerVariableLength = 1000;
     VectorFuzzer fuzzer(opts, pool(), FLAGS_fuzzer_seed);
 
     flatVector_ = fuzzer.fuzzFlat(BIGINT());
 
-    arrayVector_ =
-        fuzzer.fuzzComplex(std::make_shared<ArrayType>(ArrayType(BIGINT())));
+    arrayVector_ = fuzzer.fuzzFlat(ARRAY(BIGINT()));
 
-    mapVector_ = fuzzer.fuzzComplex(
-        std::make_shared<MapType>(MapType(BIGINT(), BIGINT())));
+    mapVector_ = fuzzer.fuzzFlat(MAP(BIGINT(), BIGINT()));
 
-    rowVector_ = fuzzer.fuzzComplex(
-        vectorMaker_.rowType({BIGINT(), BIGINT(), BIGINT()}));
+    rowVector_ = fuzzer.fuzzFlat(ROW({BIGINT(), BIGINT(), BIGINT()}));
   }
 
   size_t run(const VectorPtr& vector) {
@@ -87,24 +85,24 @@ class VectorCompareBenchmark : public functions::test::FunctionBenchmarkBase {
 
 std::unique_ptr<VectorCompareBenchmark> benchmark;
 
-BENCHMARK_MULTI(compareSimilarSimpleFlat) {
-  return benchmark->run(benchmark->flatVector_);
+BENCHMARK(compareSimilarSimpleFlat) {
+  benchmark->run(benchmark->flatVector_);
 }
 
-BENCHMARK_MULTI(compareSimilarSimpleFlatNoDispatch) {
-  return benchmark->runFastFlat();
+BENCHMARK(compareSimilarSimpleFlatNoDispatch) {
+  benchmark->runFastFlat();
 }
 
-BENCHMARK_MULTI(compareSimilarArray) {
-  return benchmark->run(benchmark->arrayVector_);
+BENCHMARK(compareSimilarArray) {
+  benchmark->run(benchmark->arrayVector_);
 }
 
-BENCHMARK_MULTI(CompareSimilarMap) {
-  return benchmark->run(benchmark->mapVector_);
+BENCHMARK(compareSimilarMap) {
+  benchmark->run(benchmark->mapVector_);
 }
 
-BENCHMARK_MULTI(CompareSimilarRow) {
-  return benchmark->run(benchmark->rowVector_);
+BENCHMARK(compareSimilarRow) {
+  benchmark->run(benchmark->rowVector_);
 }
 
 BENCHMARK_DRAW_LINE();
@@ -112,6 +110,7 @@ BENCHMARK_DRAW_LINE();
 } // namespace
 
 int main(int argc, char* argv[]) {
+  folly::init(&argc, &argv);
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   benchmark = std::make_unique<VectorCompareBenchmark>(1000);

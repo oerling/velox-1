@@ -16,8 +16,10 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <string>
 
 #include "velox/codegen/Codegen.h"
+#include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/CrossJoinBuild.h"
 #include "velox/exec/Exchange.h"
@@ -33,12 +35,32 @@
 namespace facebook::velox::exec {
 
 namespace {
+
 folly::Synchronized<std::vector<std::shared_ptr<TaskListener>>>& listeners() {
   static folly::Synchronized<std::vector<std::shared_ptr<TaskListener>>>
       kListeners;
   return kListeners;
 }
+
+std::string errorMessageImpl(const std::exception_ptr& exception) {
+  if (!exception) {
+    return "";
+  }
+  std::string message;
+  try {
+    std::rethrow_exception(exception);
+  } catch (const std::exception& e) {
+    message = e.what();
+  } catch (...) {
+    message = "<Unknown exception type>";
+  }
+  return message;
+}
+
 } // namespace
+
+std::atomic<uint64_t> Task::numCreatedTasks_ = 0;
+std::atomic<uint64_t> Task::numDeletedTasks_ = 0;
 
 bool registerTaskListener(std::shared_ptr<TaskListener> listener) {
   return listeners().withWLock([&](auto& listeners) {
@@ -140,11 +162,21 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
+      pool_(
+          queryCtx_->pool()->addChild(fmt::format("task.{}", taskId_.c_str()))),
       splitPlanNodeIds_(collectSplitPlanNodeIds(planFragment_.planNode)),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
-      pool_(queryCtx_->pool()->addScopedChild("task_root")),
-      bufferManager_(PartitionedOutputBufferManager::getInstance()) {}
+      bufferManager_(PartitionedOutputBufferManager::getInstance()) {
+  auto memoryUsageTracker = pool_->getMemoryUsageTracker();
+  if (memoryUsageTracker) {
+    memoryUsageTracker->setMakeMemoryCapExceededMessage(
+        [&](memory::MemoryUsageTracker& tracker) {
+          VELOX_DCHECK(pool()->getMemoryUsageTracker().get() == &tracker);
+          return this->getErrorMsgOnMemCapExceeded(tracker);
+        });
+  }
+}
 
 Task::~Task() {
   try {
@@ -158,28 +190,140 @@ Task::~Task() {
   }
 }
 
-velox::memory::MemoryPool* FOLLY_NONNULL Task::addDriverPool() {
-  childPools_.push_back(pool_->addScopedChild("driver_root"));
-  auto* driverPool = childPools_.back().get();
-  auto parentTracker = pool_->getMemoryUsageTracker();
-  if (parentTracker) {
-    driverPool->setMemoryUsageTracker(parentTracker->addChild());
+velox::memory::MemoryPool* FOLLY_NONNULL
+Task::getOrAddNodePool(const core::PlanNodeId& planNodeId) {
+  if (nodePools_.count(planNodeId) == 1) {
+    return nodePools_[planNodeId];
   }
-
-  return driverPool;
+  childPools_.push_back(pool_->addChild(fmt::format("node.{}", planNodeId)));
+  auto* nodePool = childPools_.back().get();
+  auto parentTracker = pool_->getMemoryUsageTracker();
+  if (parentTracker != nullptr) {
+    nodePool->setMemoryUsageTracker(parentTracker->addChild());
+  }
+  return nodePool;
 }
 
-velox::memory::MemoryPool* FOLLY_NONNULL
-Task::addOperatorPool(velox::memory::MemoryPool* FOLLY_NONNULL driverPool) {
-  childPools_.push_back(driverPool->addScopedChild("operator_ctx"));
+velox::memory::MemoryPool* FOLLY_NONNULL Task::addOperatorPool(
+    const core::PlanNodeId& planNodeId,
+    int pipelineId,
+    const std::string& operatorType) {
+  auto* nodePool = getOrAddNodePool(planNodeId);
+  childPools_.push_back(nodePool->addChild(
+      fmt::format("op.{}.{}.{}", planNodeId, pipelineId, operatorType)));
   return childPools_.back().get();
 }
 
-memory::MappedMemory* FOLLY_NONNULL Task::addOperatorMemory(
-    const std::shared_ptr<memory::MemoryUsageTracker>& tracker) {
-  auto mappedMemory = queryCtx_->mappedMemory()->addChild(tracker);
-  childMappedMemories_.emplace_back(mappedMemory);
-  return mappedMemory.get();
+bool Task::supportsSingleThreadedExecution() const {
+  std::vector<std::unique_ptr<DriverFactory>> driverFactories;
+
+  if (consumerSupplier_) {
+    return false;
+  }
+
+  LocalPlanner::plan(planFragment_, nullptr, &driverFactories, 1);
+
+  for (const auto& factory : driverFactories) {
+    if (!factory->supportsSingleThreadedExecution()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+RowVectorPtr Task::next() {
+  VELOX_CHECK_EQ(
+      core::ExecutionStrategy::kUngrouped,
+      planFragment_.executionStrategy,
+      "Single-threaded execution supports only ungrouped execution");
+
+  if (!splitPlanNodeIds_.empty()) {
+    for (const auto& id : splitPlanNodeIds_) {
+      VELOX_CHECK(
+          splitsStates_[id].noMoreSplits,
+          "Single-threaded execution requires all splits to be added before calling Task::next().");
+    }
+  }
+
+  VELOX_CHECK_EQ(state_, kRunning, "Task has already finished processing.");
+
+  // On first call, create the drivers.
+  if (driverFactories_.empty()) {
+    VELOX_CHECK_NULL(
+        consumerSupplier_,
+        "Single-threaded execution doesn't support delivering results to a callback");
+
+    LocalPlanner::plan(planFragment_, nullptr, &driverFactories_, 1);
+
+    exchangeClients_.resize(driverFactories_.size());
+
+    for (const auto& factory : driverFactories_) {
+      VELOX_CHECK(factory->supportsSingleThreadedExecution());
+      numDriversPerSplitGroup_ += factory->numDrivers;
+      numTotalDrivers_ += factory->numTotalDrivers;
+      taskStats_.pipelineStats.emplace_back(
+          factory->inputDriver, factory->outputDriver);
+    }
+
+    // Create drivers.
+    auto self = shared_from_this();
+    std::vector<std::shared_ptr<Driver>> drivers;
+    drivers.reserve(numDriversPerSplitGroup_);
+    createSplitGroupStateLocked(self, 0);
+    createDriversLocked(self, 0, drivers);
+
+    drivers_ = std::move(drivers);
+  }
+
+  // Run drivers one at a time. If a driver blocks, continue running the other
+  // drivers. Running other drivers is expected to unblock some or all blocked
+  // drivers.
+  const auto numDrivers = drivers_.size();
+
+  std::vector<ContinueFuture> futures;
+  futures.resize(numDrivers);
+
+  for (;;) {
+    int runnableDrivers = 0;
+    int blockedDrivers = 0;
+    for (auto i = 0; i < numDrivers; ++i) {
+      if (drivers_[i] == nullptr) {
+        // This driver has finished processing.
+        continue;
+      }
+
+      if (!futures[i].isReady()) {
+        // This driver is still blocked.
+        ++blockedDrivers;
+        continue;
+      }
+
+      ++runnableDrivers;
+
+      std::shared_ptr<BlockingState> blockingState;
+      auto result = drivers_[i]->next(blockingState);
+      if (result) {
+        return result;
+      }
+
+      if (blockingState) {
+        futures[i] = blockingState->future();
+      }
+
+      if (error()) {
+        std::rethrow_exception(error());
+      }
+    }
+
+    if (runnableDrivers == 0) {
+      VELOX_CHECK_EQ(
+          0,
+          blockedDrivers,
+          "Cannot make progress as all remaining drivers are blocked");
+      return nullptr;
+    }
+  }
 }
 
 void Task::start(
@@ -200,7 +344,7 @@ void Task::start(
   }
 
 #if CODEGEN_ENABLED == 1
-  const auto& config = self->queryCtx()->config();
+  const auto& config = self->queryCtx()->queryConfig();
   if (config.codegenEnabled() &&
       config.codegenConfigurationFilePath().length() != 0) {
     auto codegenLogger =
@@ -258,8 +402,7 @@ void Task::start(
   for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
     auto& factory = self->driverFactories_[pipeline];
 
-    auto partitionedOutputNode = factory->needsPartitionedOutput();
-    if (partitionedOutputNode) {
+    if (auto partitionedOutputNode = factory->needsPartitionedOutput()) {
       self->numDriversInPartitionedOutput_ = factory->numDrivers;
       VELOX_CHECK(
           !self->hasPartitionedOutput_,
@@ -272,12 +415,15 @@ void Task::start(
           self->numDriversInPartitionedOutput_ * numSplitGroups);
     }
 
-    if (factory->needsExchangeClient()) {
+    if (auto exchangeNodeId = factory->needsExchangeClient()) {
       // Low-water mark for filling the exchange queue is 1/2 of the per worker
       // buffer size of the producers.
       self->exchangeClients_[pipeline] = std::make_shared<ExchangeClient>(
           self->destination_,
-          self->queryCtx()->config().maxPartitionedOutputBufferSize() / 2);
+          self->queryCtx()->queryConfig().maxPartitionedOutputBufferSize() / 2);
+
+      self->exchangeClientByPlanNode_.emplace(
+          exchangeNodeId.value(), self->exchangeClients_[pipeline]);
     }
   }
 
@@ -416,13 +562,22 @@ void Task::createDriversLocked(
       driverIndex += factory->numDrivers;
     }
   }
+
+  // Start all the join bridges before we start driver execution.
+  for (auto& bridgeEntry : splitGroupState.bridges) {
+    bridgeEntry.second->start();
+  }
+
+  // Start all the spill groups before we start the driver execution.
+  for (auto& coordinatorEntry : splitGroupState.spillOperatorGroups) {
+    coordinatorEntry.second->start();
+  }
 }
 
 // static
 void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
   bool foundDriver = false;
-  bool allOutputDriversFinished = false;
-  TaskCompletionNotifier completionNotifier;
+  bool allFinished = true;
   {
     std::lock_guard<std::mutex> taskLock(self->mutex_);
     for (auto& driverPtr : self->drivers_) {
@@ -438,24 +593,15 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
 
       auto pipelineId = driver->driverCtx()->pipelineId;
 
-      // Check if all drivers in the output pipeline finished. If so, call
-      // Task::terminate(kFinished) to mark the task finished and finish
-      // remaining pipelines quickly.
       if (self->isOutputPipeline(pipelineId)) {
         ++splitGroupState.numFinishedOutputDrivers;
-        if (self->numDrivers(pipelineId) ==
-            splitGroupState.numFinishedOutputDrivers) {
-          allOutputDriversFinished = true;
-        }
       }
 
       // Release the driver, note that after this 'driver' is invalid.
       driverPtr = nullptr;
       self->driverClosedLocked();
 
-      if (self->checkIfFinishedLocked()) {
-        self->activateTaskCompletionNotifier(completionNotifier);
-      }
+      allFinished = self->checkIfFinishedLocked();
 
       // Check if a split group is finished.
       if (splitGroupState.numRunningDrivers == 0) {
@@ -477,13 +623,8 @@ void Task::removeDriver(std::shared_ptr<Task> self, Driver* driver) {
     LOG(WARNING) << "Trying to remove a Driver twice from its Task";
   }
 
-  completionNotifier.notify();
-
-  // TODO Add support for terminating processing early in grouped execution.
-  if (self->isUngroupedExecution() && allOutputDriversFinished) {
-    if (!self->hasPartitionedOutput_ || self->partitionedOutputConsumed_) {
-      self->terminate(TaskState::kFinished);
-    }
+  if (allFinished) {
+    self->terminate(TaskState::kFinished);
   }
 }
 
@@ -544,13 +685,14 @@ bool Task::addSplitWithSequence(
   checkPlanNodeIdForSplit(planNodeId);
   std::unique_ptr<ContinuePromise> promise;
   bool added = false;
+  bool isTaskRunning;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (isRunningLocked()) {
+    isTaskRunning = isRunningLocked();
+    if (isTaskRunning) {
       // The same split can be added again in some systems. The systems that
-      // want
-      // 'one split processed once only' would use this method and duplicate
-      // splits would be ignored.
+      // want 'one split processed once only' would use this method and
+      // duplicate splits would be ignored.
       auto& splitsState = splitsStates_[planNodeId];
       if (sequenceId > splitsState.maxSequenceId) {
         promise = addSplitLocked(splitsState, std::move(split));
@@ -558,23 +700,50 @@ bool Task::addSplitWithSequence(
       }
     }
   }
+
   if (promise) {
-    promise->setValue(false);
+    promise->setValue();
   }
+
+  if (!isTaskRunning) {
+    addRemoteSplit(planNodeId, split);
+  }
+
   return added;
 }
 
 void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
   checkPlanNodeIdForSplit(planNodeId);
+  bool isTaskRunning;
   std::unique_ptr<ContinuePromise> promise;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (isRunningLocked()) {
+    isTaskRunning = isRunningLocked();
+    if (isTaskRunning) {
       promise = addSplitLocked(splitsStates_[planNodeId], std::move(split));
     }
   }
+
   if (promise) {
-    promise->setValue(false);
+    promise->setValue();
+  }
+
+  if (!isTaskRunning) {
+    addRemoteSplit(planNodeId, split);
+  }
+}
+
+void Task::addRemoteSplit(
+    const core::PlanNodeId& planNodeId,
+    const exec::Split& split) {
+  if (split.hasConnectorSplit()) {
+    if (exchangeClientByPlanNode_.count(planNodeId)) {
+      auto remoteSplit =
+          std::dynamic_pointer_cast<RemoteConnectorSplit>(split.connectorSplit);
+      VELOX_CHECK(remoteSplit, "Wrong type of split");
+      exchangeClientByPlanNode_[planNodeId]->addRemoteTaskId(
+          remoteSplit->taskId);
+    }
   }
 }
 
@@ -652,14 +821,15 @@ void Task::noMoreSplitsForGroup(
     }
   }
   for (auto& promise : promises) {
-    promise.setValue(false);
+    promise.setValue();
   }
 }
 
 void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
   checkPlanNodeIdForSplit(planNodeId);
   std::vector<ContinuePromise> splitPromises;
-  TaskCompletionNotifier completionNotifier;
+  bool allFinished;
+  std::shared_ptr<ExchangeClient> exchangeClient;
   {
     std::lock_guard<std::mutex> l(mutex_);
 
@@ -680,15 +850,24 @@ void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
       splitsState.groupSplitsStores.emplace(0, SplitsStore{{}, true, {}});
     }
 
-    if (checkNoMoreSplitGroupsLocked()) {
-      activateTaskCompletionNotifier(completionNotifier);
+    allFinished = checkNoMoreSplitGroupsLocked();
+
+    if (!isRunningLocked() && exchangeClientByPlanNode_.count(planNodeId)) {
+      exchangeClient = exchangeClientByPlanNode_[planNodeId];
+      exchangeClientByPlanNode_.erase(planNodeId);
     }
   }
 
-  completionNotifier.notify();
-
   for (auto& promise : splitPromises) {
-    promise.setValue(false);
+    promise.setValue();
+  }
+
+  if (exchangeClient) {
+    exchangeClient->noMoreRemoteTasks();
+  }
+
+  if (allFinished) {
+    terminate(kFinished);
   }
 }
 
@@ -772,12 +951,20 @@ BlockingReason Task::getSplitOrFutureLocked(
     if (splitsStore.noMoreSplits) {
       return BlockingReason::kNotBlocked;
     }
-    auto [splitPromise, splitFuture] = makeVeloxPromiseContract<bool>(
+    auto [splitPromise, splitFuture] = makeVeloxContinuePromiseContract(
         fmt::format("Task::getSplitOrFuture {}", taskId_));
     future = std::move(splitFuture);
     splitsStore.splitPromises.push_back(std::move(splitPromise));
     return BlockingReason::kWaitForSplit;
   }
+
+  split = getSplitLocked(splitsStore, maxPreloadSplits, preload);
+  return BlockingReason::kNotBlocked;
+}
+
+  exec::Split Task::getSplitLocked(SplitsStore& splitsStore,
+				   int32_t maxPreloadSplits,
+      std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload) {
   int32_t readySplitIndex = -1;
   if (maxPreloadSplits) {
     for (auto i = 0; i < splitsStore.splits.size() && i < maxPreloadSplits;
@@ -794,7 +981,7 @@ BlockingReason Task::getSplitOrFutureLocked(
   if (readySplitIndex == -1) {
     readySplitIndex = 0;
   }
-  split = std::move(splitsStore.splits[readySplitIndex]);
+  auto split = std::move(splitsStore.splits[readySplitIndex]);
   splitsStore.splits.erase(splitsStore.splits.begin() + readySplitIndex);
 
   --taskStats_.numQueuedSplits;
@@ -804,7 +991,8 @@ BlockingReason Task::getSplitOrFutureLocked(
     taskStats_.firstSplitStartTimeMs = taskStats_.lastSplitStartTimeMs;
   }
 
-  return BlockingReason::kNotBlocked;
+
+  return split;
 }
 
 void Task::splitFinished() {
@@ -858,6 +1046,18 @@ void Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
       "Unable to initialize task. "
       "PartitionedOutputBufferManager was already destructed");
 
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (noMoreBroadcastBuffers_) {
+      // Ignore messages received after no-more-buffers message.
+      return;
+    }
+
+    if (noMoreBuffers) {
+      noMoreBroadcastBuffers_ = true;
+    }
+  }
+
   bufferManager->updateBroadcastOutputBuffers(
       taskId_, numBuffers, noMoreBuffers);
 }
@@ -873,29 +1073,14 @@ int Task::getOutputPipelineId() const {
 }
 
 void Task::setAllOutputConsumed() {
-  bool terminateEarly = false;
-  TaskCompletionNotifier completionNotifier;
+  bool allFinished;
   {
     std::lock_guard<std::mutex> l(mutex_);
     partitionedOutputConsumed_ = true;
-    if (checkIfFinishedLocked()) {
-      activateTaskCompletionNotifier(completionNotifier);
-    } else {
-      // TODO Add support for terminating processing early in grouped execution.
-      if (isUngroupedExecution() && !driverFactories_.empty()) {
-        auto outputPipelineId = getOutputPipelineId();
-
-        if (splitGroupStates_[0].numFinishedOutputDrivers ==
-            numDrivers(outputPipelineId)) {
-          terminateEarly = true;
-        }
-      }
-    }
+    allFinished = checkIfFinishedLocked();
   }
 
-  completionNotifier.notify();
-
-  if (terminateEarly) {
+  if (allFinished) {
     terminate(TaskState::kFinished);
   }
 }
@@ -908,16 +1093,30 @@ void Task::driverClosedLocked() {
 }
 
 bool Task::checkIfFinishedLocked() {
-  if ((numFinishedDrivers_ == numTotalDrivers_) && isRunningLocked()) {
-    if (taskStats_.executionEndTimeMs == 0) {
-      // In case we haven't set executionEndTimeMs due to all splits depleted,
-      // we set it here.
-      // This can happen due to task error or task being cancelled.
-      taskStats_.executionEndTimeMs = getCurrentTimeMs();
+  if (!isRunningLocked()) {
+    return false;
+  }
+
+  // TODO Add support for terminating processing early in grouped execution.
+  bool allFinished = numFinishedDrivers_ == numTotalDrivers_;
+  if (!allFinished && isUngroupedExecution()) {
+    auto outputPipelineId = getOutputPipelineId();
+    if (splitGroupStates_[0].numFinishedOutputDrivers ==
+        numDrivers(outputPipelineId)) {
+      allFinished = true;
+
+      if (taskStats_.executionEndTimeMs == 0) {
+        // In case we haven't set executionEndTimeMs due to all splits
+        // depleted, we set it here. This can happen due to task error or task
+        // being cancelled.
+        taskStats_.executionEndTimeMs = getCurrentTimeMs();
+      }
     }
+  }
+
+  if (allFinished) {
     if ((not hasPartitionedOutput_) || partitionedOutputConsumed_) {
       taskStats_.endTimeMs = getCurrentTimeMs();
-      state_ = TaskState::kFinished;
       return true;
     }
   }
@@ -933,7 +1132,9 @@ bool Task::allPeersFinished(
     std::vector<std::shared_ptr<Driver>>& peers) {
   std::lock_guard<std::mutex> l(mutex_);
   if (exception_) {
-    VELOX_FAIL("Task is terminating because of error: {}", errorMessage());
+    VELOX_FAIL(
+        "Task is terminating because of error: {}",
+        errorMessageImpl(exception_));
   }
   const auto splitGroupId = caller->driverCtx()->splitGroupId;
   auto& barriers = splitGroupStates_[splitGroupId].barriers;
@@ -970,6 +1171,10 @@ void Task::addHashJoinBridgesLocked(
   for (const auto& planNodeId : planNodeIds) {
     splitGroupState.bridges.emplace(
         planNodeId, std::make_shared<HashJoinBridge>());
+    splitGroupState.spillOperatorGroups.emplace(
+        planNodeId,
+        std::make_unique<SpillOperatorGroup>(
+            taskId_, splitGroupId, planNodeId));
   }
 }
 
@@ -1007,6 +1212,12 @@ std::shared_ptr<HashJoinBridge> Task::getHashJoinBridge(
   return getJoinBridgeInternal<HashJoinBridge>(splitGroupId, planNodeId);
 }
 
+std::shared_ptr<HashJoinBridge> Task::getHashJoinBridgeLocked(
+    uint32_t splitGroupId,
+    const core::PlanNodeId& planNodeId) {
+  return getJoinBridgeInternalLocked<HashJoinBridge>(splitGroupId, planNodeId);
+}
+
 std::shared_ptr<CrossJoinBridge> Task::getCrossJoinBridge(
     uint32_t splitGroupId,
     const core::PlanNodeId& planNodeId) {
@@ -1018,6 +1229,13 @@ std::shared_ptr<TBridgeType> Task::getJoinBridgeInternal(
     uint32_t splitGroupId,
     const core::PlanNodeId& planNodeId) {
   std::lock_guard<std::mutex> l(mutex_);
+  return getJoinBridgeInternalLocked<TBridgeType>(splitGroupId, planNodeId);
+}
+
+template <class TBridgeType>
+std::shared_ptr<TBridgeType> Task::getJoinBridgeInternalLocked(
+    uint32_t splitGroupId,
+    const core::PlanNodeId& planNodeId) {
   const auto& splitGroupState = splitGroupStates_[splitGroupId];
 
   auto it = splitGroupState.bridges.find(planNodeId);
@@ -1117,12 +1335,22 @@ ContinueFuture Task::terminate(TaskState terminalState) {
     }
   }
 
+  for (auto& exchangeClient : exchangeClients_) {
+    if (exchangeClient) {
+      exchangeClient->close();
+    }
+  }
+
   // Release reference to exchange client, so that it will close exchange
   // sources and prevent resending requests for data.
   exchangeClients_.clear();
 
   std::vector<ContinuePromise> splitPromises;
   std::vector<std::shared_ptr<JoinBridge>> oldBridges;
+  std::vector<SplitGroupState> splitGroupStates;
+  std::
+      unordered_map<core::PlanNodeId, std::pair<std::vector<exec::Split>, bool>>
+          remainingRemoteSplits;
   {
     std::lock_guard<std::mutex> l(mutex_);
     // Collect all the join bridges to clear them.
@@ -1130,19 +1358,55 @@ ContinueFuture Task::terminate(TaskState terminalState) {
       for (auto& pair : splitGroupState.second.bridges) {
         oldBridges.emplace_back(std::move(pair.second));
       }
-      splitGroupState.second.clear();
+      splitGroupStates.push_back(std::move(splitGroupState.second));
     }
 
     // Collect all outstanding split promises from all splits state structures.
     for (auto& pair : splitsStates_) {
+      auto& splitState = pair.second;
       for (auto& it : pair.second.groupSplitsStores) {
         movePromisesOut(it.second.splitPromises, splitPromises);
+      }
+
+      // Process remaining remote splits.
+      auto exchangeClientIt = exchangeClientByPlanNode_.find(pair.first);
+      if (exchangeClientIt != exchangeClientByPlanNode_.end()) {
+        auto exchangeClient = exchangeClientIt->second;
+        std::vector<exec::Split> splits;
+        for (auto& [groupId, store] : splitState.groupSplitsStores) {
+          while (!store.splits.empty()) {
+            splits.emplace_back(getSplitLocked(store, 0, nullptr));
+          }
+        }
+        if (!splits.empty()) {
+          remainingRemoteSplits.emplace(
+              pair.first,
+              std::make_pair(std::move(splits), splitState.noMoreSplits));
+        }
       }
     }
   }
 
+  for (auto& [planNodeId, splits] : remainingRemoteSplits) {
+    for (auto& split : splits.first) {
+      if (!exchangeClientByPlanNode_[planNodeId]->pool()) {
+        // If we terminate even before the client's initialization, we
+        // initialize the client with Task's memory pool.
+        exchangeClientByPlanNode_[planNodeId]->initialize(pool_.get());
+      }
+      addRemoteSplit(planNodeId, split);
+    }
+    if (splits.second) {
+      exchangeClientByPlanNode_[planNodeId]->noMoreRemoteTasks();
+    }
+  }
+
+  for (auto& splitGroupState : splitGroupStates) {
+    splitGroupState.clear();
+  }
+
   for (auto& promise : splitPromises) {
-    promise.setValue(true);
+    promise.setValue();
   }
 
   for (auto& bridge : oldBridges) {
@@ -1154,10 +1418,10 @@ ContinueFuture Task::terminate(TaskState terminalState) {
 }
 
 ContinueFuture Task::makeFinishFutureLocked(const char* FOLLY_NONNULL comment) {
-  auto [promise, future] = makeVeloxPromiseContract<bool>(comment);
+  auto [promise, future] = makeVeloxContinuePromiseContract(comment);
 
   if (numThreads_ == 0) {
-    promise.setValue(true);
+    promise.setValue();
     return std::move(future);
   }
   threadFinishPromises_.push_back(std::move(promise));
@@ -1176,7 +1440,41 @@ void Task::addOperatorStats(OperatorStats& stats) {
   taskStats_.pipelineStats[stats.pipelineId]
       .operatorStats[stats.operatorId]
       .add(stats);
-  stats.clear();
+}
+
+TaskStats Task::taskStats() const {
+  std::lock_guard<std::mutex> l(mutex_);
+
+  // 'taskStats_' contains task stats plus stats for the completed drivers
+  // (their operators).
+  TaskStats taskStats = taskStats_;
+
+  taskStats.numTotalDrivers = drivers_.size();
+
+  // Add stats of the drivers (their operators) that are still running.
+  for (const auto& driver : drivers_) {
+    // Driver can be null.
+    if (driver == nullptr) {
+      ++taskStats.numCompletedDrivers;
+      continue;
+    }
+
+    for (auto& op : driver->operators()) {
+      auto statsCopy = op->stats(false);
+      taskStats.pipelineStats[statsCopy.pipelineId]
+          .operatorStats[statsCopy.operatorId]
+          .add(statsCopy);
+    }
+    if (driver->isOnThread()) {
+      ++taskStats.numRunningDrivers;
+    } else if (driver->isTerminated()) {
+      ++taskStats.numTerminatedDrivers;
+    } else {
+      ++taskStats.numBlockedDrivers[driver->blockingReason()];
+    }
+  }
+
+  return taskStats;
 }
 
 uint64_t Task::timeSinceStartMs() const {
@@ -1197,8 +1495,22 @@ uint64_t Task::timeSinceEndMs() const {
 
 void Task::onTaskCompletion() {
   listeners().withRLock([&](auto& listeners) {
+    if (listeners.empty()) {
+      return;
+    }
+
+    TaskStats stats;
+    TaskState state;
+    std::exception_ptr exception;
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      stats = taskStats_;
+      state = state_;
+      exception = exception_;
+    }
+
     for (auto& listener : listeners) {
-      listener->onTaskCompletion(uuid_, state_, exception_, taskStats_);
+      listener->onTaskCompletion(uuid_, taskId_, state, exception, stats);
     }
   });
 }
@@ -1208,12 +1520,12 @@ ContinueFuture Task::stateChangeFuture(uint64_t maxWaitMicros) {
   // If 'this' is running, the future is realized on timeout or when
   // this no longer is running.
   if (not isRunningLocked()) {
-    return ContinueFuture(true);
+    return ContinueFuture();
   }
-  auto [promise, future] = makeVeloxPromiseContract<bool>(
+  auto [promise, future] = makeVeloxContinuePromiseContract(
       fmt::format("Task::stateChangeFuture {}", taskId_));
   stateChangePromises_.emplace_back(std::move(promise));
-  if (maxWaitMicros) {
+  if (maxWaitMicros > 0) {
     return std::move(future).within(std::chrono::microseconds(maxWaitMicros));
   }
   return std::move(future);
@@ -1300,7 +1612,7 @@ void Task::createLocalExchangeQueuesLocked(
   //  in all split groups?
   LocalExchangeState exchange;
   exchange.memoryManager = std::make_shared<LocalExchangeMemoryManager>(
-      queryCtx_->config().maxLocalExchangeBufferSize());
+      queryCtx_->queryConfig().maxLocalExchangeBufferSize());
 
   exchange.queues.reserve(numPartitions);
   for (auto i = 0; i < numPartitions; ++i) {
@@ -1379,16 +1691,8 @@ void Task::setError(const std::string& message) {
 }
 
 std::string Task::errorMessage() const {
-  if (!exception_) {
-    return "";
-  }
-  std::string message;
-  try {
-    std::rethrow_exception(exception_);
-  } catch (const std::exception& e) {
-    message = e.what();
-  }
-  return message;
+  std::lock_guard<std::mutex> l(mutex_);
+  return errorMessageImpl(exception_);
 }
 
 StopReason Task::enter(ThreadState& state) {
@@ -1511,7 +1815,7 @@ StopReason Task::shouldStop() {
 
 void Task::finishedLocked() {
   for (auto& promise : threadFinishPromises_) {
-    promise.setValue(true);
+    promise.setValue();
   }
   threadFinishPromises_.clear();
 }
@@ -1550,7 +1854,7 @@ void Task::TaskCompletionNotifier::activate(
 void Task::TaskCompletionNotifier::notify() {
   if (active_) {
     for (auto& promise : promises_) {
-      promise.setValue(true);
+      promise.setValue();
     }
     promises_.clear();
 
@@ -1559,4 +1863,198 @@ void Task::TaskCompletionNotifier::notify() {
     active_ = false;
   }
 }
+
+namespace {
+// Describes memory usage stats of a Memory Pool (optionally aggregated).
+struct MemoryUsage {
+  int64_t totalBytes{0};
+  int64_t minBytes{std::numeric_limits<int64_t>::max()};
+  int64_t maxBytes{0};
+  size_t numEntries{0};
+
+  void update(int64_t bytes) {
+    maxBytes = std::max(maxBytes, bytes);
+    minBytes = std::min(minBytes, bytes);
+    totalBytes += bytes;
+    ++numEntries;
+  }
+
+  void toString(std::stringstream& out, const char* entriesName = "entries")
+      const {
+    out << succinctBytes(totalBytes) << " in " << numEntries << " "
+        << entriesName << ", min " << succinctBytes(minBytes) << ", max "
+        << succinctBytes(maxBytes);
+  }
+};
+
+// Aggregated memory usage stats of a single task plan node memory pool.
+struct NodeMemoryUsage {
+  MemoryUsage total;
+  std::unordered_map<std::string, MemoryUsage> operators;
+};
+
+// Aggregated memory usage stats of a single Task Pipeline Memory Pool.
+struct TaskMemoryUsage {
+  std::string taskId;
+  MemoryUsage total;
+  // The map from node id to its collected memory usage.
+  std::map<std::string, NodeMemoryUsage> nodes;
+
+  void toString(std::stringstream& out) const {
+    // Using 4 spaces for indent in the output.
+    out << "\n    ";
+    out << taskId;
+    out << ": ";
+    total.toString(out, "nodes");
+    for (const auto& [nodeId, nodeMemoryUsage] : nodes) {
+      out << "\n        ";
+      out << nodeId;
+      out << ": ";
+      nodeMemoryUsage.total.toString(out, "operators");
+      for (const auto& it : nodeMemoryUsage.operators) {
+        out << "\n            ";
+        out << it.first;
+        out << ": ";
+        it.second.toString(out, "instances");
+      }
+    }
+  }
+};
+
+void collectOperatorMemoryUsage(
+    NodeMemoryUsage& nodeMemoryUsage,
+    memory::MemoryPool* operatorPool) {
+  const auto numBytes =
+      operatorPool->getMemoryUsageTracker()->getCurrentTotalBytes();
+  nodeMemoryUsage.total.update(numBytes);
+  auto& operatorMemoryUsage = nodeMemoryUsage.operators[operatorPool->name()];
+  operatorMemoryUsage.update(numBytes);
+}
+
+void collectNodeMemoryUsage(
+    TaskMemoryUsage& taskMemoryUsage,
+    memory::MemoryPool* nodePool) {
+  // Update task's stats from each node.
+  taskMemoryUsage.total.update(
+      nodePool->getMemoryUsageTracker()->getCurrentTotalBytes());
+
+  // NOTE: we use a plan node id as the node memory pool's name.
+  const auto& poolName = nodePool->name();
+  auto& nodeMemoryUsage = taskMemoryUsage.nodes[poolName];
+
+  // Run through the node's child operator pools and update the memory usage.
+  nodePool->visitChildren([&nodeMemoryUsage](memory::MemoryPool* operatorPool) {
+    collectOperatorMemoryUsage(nodeMemoryUsage, operatorPool);
+  });
+}
+
+void collectTaskMemoryUsage(
+    TaskMemoryUsage& taskMemoryUsage,
+    memory::MemoryPool* taskPool) {
+  taskMemoryUsage.taskId = taskPool->name();
+  taskPool->visitChildren([&taskMemoryUsage](memory::MemoryPool* nodePool) {
+    collectNodeMemoryUsage(taskMemoryUsage, nodePool);
+  });
+}
+
+std::string getQueryMemoryUsageString(memory::MemoryPool* queryPool) {
+  // Collect the memory usage numbers from query's tasks, nodes and operators.
+  std::vector<TaskMemoryUsage> taskMemoryUsages;
+  taskMemoryUsages.reserve(queryPool->getChildCount());
+  queryPool->visitChildren([&taskMemoryUsages](memory::MemoryPool* taskPool) {
+    taskMemoryUsages.emplace_back(TaskMemoryUsage{});
+    collectTaskMemoryUsage(taskMemoryUsages.back(), taskPool);
+  });
+
+  // We will collect each operator's aggregated memory usage to later show the
+  // largest memory consumers.
+  struct TopMemoryUsage {
+    int64_t totalBytes;
+    std::string description;
+  };
+  std::vector<TopMemoryUsage> topOperatorMemoryUsages;
+
+  // Build the query memory use tree (task->node->operator).
+  std::stringstream out;
+  out << "\n";
+  out << queryPool->name();
+  out << ": total: ";
+  out << succinctBytes(
+      queryPool->getMemoryUsageTracker()->getCurrentTotalBytes());
+  for (const auto& taskMemoryUsage : taskMemoryUsages) {
+    taskMemoryUsage.toString(out);
+    // Collect each operator's memory usage into the vector.
+    for (const auto& [nodeId, nodeMemUsage] : taskMemoryUsage.nodes) {
+      for (const auto& it : nodeMemUsage.operators) {
+        const MemoryUsage& operatorMemoryUsage = it.second;
+        // Ignore operators with zero memory for top memory users.
+        if (operatorMemoryUsage.totalBytes > 0) {
+          topOperatorMemoryUsages.emplace_back(TopMemoryUsage{
+              operatorMemoryUsage.totalBytes,
+              fmt::format(
+                  "{}.{}.{}", taskMemoryUsage.taskId, nodeId, it.first)});
+        }
+      }
+    }
+  }
+
+  // Sort and show top memory users.
+  out << "\nTop operator memory usages:";
+  std::sort(
+      topOperatorMemoryUsages.begin(),
+      topOperatorMemoryUsages.end(),
+      [](const TopMemoryUsage& left, const TopMemoryUsage& right) {
+        return left.totalBytes > right.totalBytes;
+      });
+  for (const auto& top : topOperatorMemoryUsages) {
+    out << "\n    " << top.description << ": " << succinctBytes(top.totalBytes);
+  }
+
+  return out.str();
+}
+} // namespace
+
+std::shared_ptr<SpillOperatorGroup> Task::getSpillOperatorGroupLocked(
+    uint32_t splitGroupId,
+    const core::PlanNodeId& planNodeId) {
+  auto& groups = splitGroupStates_[splitGroupId].spillOperatorGroups;
+  auto it = groups.find(planNodeId);
+  VELOX_CHECK(it != groups.end(), "Split group is not set {}", splitGroupId);
+  auto group = it->second;
+  VELOX_CHECK_NOT_NULL(
+      group,
+      "Spill group for plan node ID {} is not set in split group {}",
+      planNodeId,
+      splitGroupId);
+  return group;
+}
+
+std::string Task::getErrorMsgOnMemCapExceeded(
+    memory::MemoryUsageTracker& /*tracker*/) {
+  return getQueryMemoryUsageString(queryCtx()->pool());
+}
+
+// static
+void Task::testingWaitForAllTasksToBeDeleted(uint64_t maxWaitUs) {
+  const uint64_t numCreatedTasks = Task::numCreatedTasks();
+  uint64_t numDeletedTasks = Task::numDeletedTasks();
+  uint64_t waitUs = 0;
+  while (numCreatedTasks > numDeletedTasks) {
+    constexpr uint64_t kWaitInternalUs = 1'000;
+    std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
+    waitUs += kWaitInternalUs;
+    numDeletedTasks = Task::numDeletedTasks();
+    if (waitUs >= maxWaitUs) {
+      break;
+    }
+  }
+  VELOX_CHECK_EQ(
+      numDeletedTasks,
+      numCreatedTasks,
+      "{} tasks have been created while only {} have been deleted after waiting for {} us",
+      numCreatedTasks,
+      numDeletedTasks,
+      waitUs);
+}
+
 } // namespace facebook::velox::exec

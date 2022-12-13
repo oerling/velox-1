@@ -25,7 +25,7 @@
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/vector/tests/VectorTestBase.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 namespace facebook::velox::row {
 namespace {
@@ -42,8 +42,7 @@ class UnsafeRowFuzzTests : public ::testing::Test {
     std::memset(buffer_, 0, BUFFER_SIZE);
   }
 
-  std::unique_ptr<memory::ScopedMemoryPool> pool_ =
-      memory::getDefaultScopedMemoryPool();
+  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
   BufferPtr bufferPtr_ =
       AlignedBuffer::allocate<char>(BUFFER_SIZE, pool_.get(), true);
   char* buffer_ = bufferPtr_->asMutable<char>();
@@ -68,7 +67,9 @@ TEST_F(UnsafeRowFuzzTests, simpleTypeRoundTripTest) {
 
   VectorFuzzer::Options opts;
   opts.vectorSize = 1;
-  opts.nullChance = 10;
+  opts.nullRatio = 0.1;
+  opts.containerHasNulls = false;
+  opts.dictionaryHasNulls = false;
   opts.stringVariableLength = true;
   opts.stringLength = 20;
   // Spark uses microseconds to store timestamp
@@ -77,6 +78,7 @@ TEST_F(UnsafeRowFuzzTests, simpleTypeRoundTripTest) {
 
   auto seed = folly::Random::rand32();
   LOG(INFO) << "seed: " << seed;
+  SCOPED_TRACE(fmt::format("seed: {}", seed));
   VectorFuzzer fuzzer(opts, pool_.get(), seed);
 
   const auto iterations = 1000;
@@ -84,16 +86,20 @@ TEST_F(UnsafeRowFuzzTests, simpleTypeRoundTripTest) {
     clearBuffer();
     const auto& inputVector = fuzzer.fuzzRow(rowType);
     // Serialize rowVector into bytes.
+    UnsafeRowDynamicSerializer::preloadVector(inputVector);
     auto rowSize = UnsafeRowDynamicSerializer::serialize(
         rowType, inputVector, buffer_, /*idx=*/0);
+
+    auto rowSizeMeasured =
+        UnsafeRowDynamicSerializer::getSizeRow(rowType, inputVector.get(), 0);
+    EXPECT_EQ(rowSize.value_or(0), rowSizeMeasured);
 
     // Deserialize previous bytes back to row vector
     VectorPtr outputVector =
         UnsafeRowDynamicVectorBatchDeserializer::deserializeComplex(
             std::string_view(buffer_, rowSize.value()), rowType, pool_.get());
 
-    assertEqualVectors(
-        inputVector, outputVector, fmt::format(" (seed {}).", seed));
+    assertEqualVectors(inputVector, outputVector);
   }
 }
 

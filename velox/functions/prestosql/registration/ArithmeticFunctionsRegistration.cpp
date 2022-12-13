@@ -33,6 +33,7 @@ void registerSimpleFunctions() {
   registerUnaryNumeric<AbsFunction>({"abs"});
   registerUnaryFloatingPoint<NegateFunction>({"negate"});
   registerFunction<RadiansFunction, double, double>({"radians"});
+  registerFunction<DegreesFunction, double, double>({"degrees"});
   registerUnaryNumeric<RoundFunction>({"round"});
   registerFunction<RoundFunction, int8_t, int8_t, int32_t>({"round"});
   registerFunction<RoundFunction, int16_t, int16_t, int32_t>({"round"});
@@ -84,6 +85,9 @@ void registerSimpleFunctions() {
   registerFunction<FromBaseFunction, int64_t, Varchar, int64_t>({"from_base"});
   registerFunction<ToBaseFunction, Varchar, int64_t, int64_t>({"to_base"});
   registerFunction<PiFunction, double>({"pi"});
+  registerFunction<EulerConstantFunction, double>({"e"});
+  registerFunction<TruncateFunction, double, double>({"truncate"});
+  registerFunction<TruncateFunction, double, double, int32_t>({"truncate"});
 }
 
 } // namespace
@@ -91,6 +95,10 @@ void registerSimpleFunctions() {
 void registerArithmeticFunctions() {
   registerSimpleFunctions();
   VELOX_REGISTER_VECTOR_FUNCTION(udf_not, "not");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_add, "plus");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_sub, "minus");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_mul, "multiply");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_div, "divide");
 }
 
 } // namespace facebook::velox::functions

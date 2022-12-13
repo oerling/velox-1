@@ -16,6 +16,7 @@
 #pragma once
 
 #include <folly/container/F14Map.h>
+#include <folly/container/F14Set.h>
 #include <folly/dynamic.h>
 #include <gflags/gflags_declare.h>
 
@@ -37,9 +38,9 @@ class FlatVector final : public SimpleVector<T> {
   using value_type = T;
 
   static constexpr bool can_simd =
-      (std::is_same<T, int64_t>::value || std::is_same<T, int32_t>::value ||
-       std::is_same<T, int16_t>::value || std::is_same<T, int8_t>::value ||
-       std::is_same<T, bool>::value || std::is_same<T, size_t>::value);
+      (std::is_same_v<T, int64_t> || std::is_same_v<T, int32_t> ||
+       std::is_same_v<T, int16_t> || std::is_same_v<T, int8_t> ||
+       std::is_same_v<T, bool> || std::is_same_v<T, size_t>);
 
   // Minimum size of a string buffer. 32 KB value is chosen to ensure that a
   // single buffer is sufficient for a "typical" vector: 1K rows, medium size
@@ -93,6 +94,7 @@ class FlatVector final : public SimpleVector<T> {
       : SimpleVector<T>(
             pool,
             type,
+            VectorEncoding::Simple::FLAT,
             std::move(nulls),
             length,
             stats,
@@ -102,8 +104,13 @@ class FlatVector final : public SimpleVector<T> {
             representedBytes,
             storageByteCount),
         values_(std::move(values)),
-        rawValues_(values_.get() ? const_cast<T*>(values_->as<T>()) : nullptr),
-        stringBuffers_(std::move(stringBuffers)) {
+        rawValues_(values_.get() ? const_cast<T*>(values_->as<T>()) : nullptr) {
+    setStringBuffers(std::move(stringBuffers));
+    VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
+    VELOX_DCHECK_EQ(
+        (std::is_same_v<T, UnscaledShortDecimal>), type->isShortDecimal());
+    VELOX_DCHECK_EQ(
+        (std::is_same_v<T, UnscaledLongDecimal>), type->isLongDecimal());
     VELOX_CHECK(
         values_ || BaseVector::nulls_,
         "FlatVector needs to either have values or nulls");
@@ -111,7 +118,7 @@ class FlatVector final : public SimpleVector<T> {
       return;
     }
     auto byteSize = BaseVector::byteSize<T>(BaseVector::length_);
-    VELOX_CHECK(values_->capacity() >= byteSize);
+    VELOX_CHECK_GE(values_->capacity(), byteSize);
     if (values_->size() < byteSize) {
       // If values_ is resized, this guarantees that elements below
       // 'length_' get preserved. If the size is already sufficient,
@@ -127,10 +134,6 @@ class FlatVector final : public SimpleVector<T> {
   }
 
   virtual ~FlatVector() override = default;
-
-  inline VectorEncoding::Simple encoding() const override {
-    return VectorEncoding::Simple::FLAT;
-  }
 
   const T valueAtFast(vector_size_t idx) const;
 
@@ -149,7 +152,7 @@ class FlatVector final : public SimpleVector<T> {
    */
   xsimd::batch<T> loadSIMDValueBufferAt(size_t index) const;
 
-  // dictionary vector makes internal use here for SIMD functions
+  // dictionary vector makes internal usehere for SIMD functions
   template <typename X>
   friend class DictionaryVector;
 
@@ -167,7 +170,8 @@ class FlatVector final : public SimpleVector<T> {
   }
 
   BufferPtr mutableValues(vector_size_t size) {
-    if (values_ && values_->capacity() >= BaseVector::byteSize<T>(size)) {
+    if (values_ && values_->isMutable() &&
+        values_->capacity() >= BaseVector::byteSize<T>(size)) {
       return values_;
     }
 
@@ -200,7 +204,7 @@ class FlatVector final : public SimpleVector<T> {
   // Bool uses compact representation, use mutableRawValues<uint64_t> and
   // bits::setBit instead.
   T* mutableRawValues() {
-    if (!values_ || !values_->unique()) {
+    if (!(values_ && values_->unique() && values_->isMutable())) {
       BufferPtr newValues =
           AlignedBuffer::allocate<T>(BaseVector::length_, BaseVector::pool());
       if (values_) {
@@ -253,32 +257,111 @@ class FlatVector final : public SimpleVector<T> {
     copyValuesAndNulls(source, targetIndex, sourceIndex, count);
   }
 
-  void resize(vector_size_t size, bool setNotNull = true) override;
+  void copyRanges(
+      const BaseVector* source,
+      const folly::Range<const BaseVector::CopyRange*>& ranges) override {
+    for (auto& range : ranges) {
+      copy(source, range.targetIndex, range.sourceIndex, range.count);
+    }
+  }
+
+  void resize(vector_size_t newSize, bool setNotNull = true) override;
+
+  VectorPtr slice(vector_size_t offset, vector_size_t length) const override;
 
   std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
       vector_size_t otherIndex,
       CompareFlags flags) const override {
-    if (other->encoding() == VectorEncoding::Simple::FLAT) {
+    if (other->isFlatEncoding()) {
       auto otherFlat = other->asUnchecked<FlatVector<T>>();
-      bool otherNull = otherFlat->isNullAt(otherIndex);
-      bool isNull = BaseVector::isNullAt(index);
-      if (isNull || otherNull) {
-        return BaseVector::compareNulls(isNull, otherNull, flags);
-      }
-
-      auto thisValue = valueAtFast(index);
-      auto otherValue = otherFlat->valueAtFast(otherIndex);
-      auto result = SimpleVector<T>::comparePrimitiveAsc(thisValue, otherValue);
-      return flags.ascending ? result : result * -1;
+      return compareFlat<true>(otherFlat, index, otherIndex, flags);
     }
 
     return SimpleVector<T>::compare(other, index, otherIndex, flags);
   }
 
+  template <bool compareNulls>
+  std::optional<int32_t> compareFlat(
+      const FlatVector<T>* other,
+      vector_size_t index,
+      vector_size_t otherIndex,
+      CompareFlags flags) const {
+    if constexpr (compareNulls) {
+      bool otherNull = other->isNullAt(otherIndex);
+      bool isNull = BaseVector::isNullAt(index);
+      if (isNull || otherNull) {
+        return BaseVector::compareNulls(isNull, otherNull, flags);
+      }
+    }
+
+    auto thisValue = valueAtFast(index);
+    auto otherValue = other->valueAtFast(otherIndex);
+    auto result = SimpleVector<T>::comparePrimitiveAsc(thisValue, otherValue);
+    return flags.ascending ? result : result * -1;
+  }
+
+  void sortIndices(std::vector<vector_size_t>& indices, CompareFlags flags)
+      const override {
+    auto compareNonNull = [&](vector_size_t left, vector_size_t right) {
+      auto leftValue = valueAtFast(left);
+      auto rightValue = valueAtFast(right);
+      auto result = SimpleVector<T>::comparePrimitiveAsc(leftValue, rightValue);
+      return (flags.ascending ? result : result * -1) < 0;
+    };
+
+    if (BaseVector::rawNulls_) {
+      std::sort(
+          indices.begin(),
+          indices.end(),
+          [&](vector_size_t left, vector_size_t right) {
+            bool leftNull = BaseVector::isNullAt(left);
+            bool rightNull = BaseVector::isNullAt(right);
+            if (leftNull || rightNull) {
+              return BaseVector::compareNulls(leftNull, rightNull, flags)
+                         .value() < 0;
+            }
+
+            return compareNonNull(left, right);
+          });
+    } else {
+      std::sort(indices.begin(), indices.end(), compareNonNull);
+    }
+  }
+
+  void sortIndices(
+      std::vector<vector_size_t>& indices,
+      const vector_size_t* mapping,
+      CompareFlags flags) const override {
+    auto compareNonNull = [&](vector_size_t left, vector_size_t right) {
+      auto leftValue = valueAtFast(mapping[left]);
+      auto rightValue = valueAtFast(mapping[right]);
+      auto result = SimpleVector<T>::comparePrimitiveAsc(leftValue, rightValue);
+      return (flags.ascending ? result : result * -1) < 0;
+    };
+
+    if (BaseVector::rawNulls_) {
+      std::sort(
+          indices.begin(),
+          indices.end(),
+          [&](vector_size_t left, vector_size_t right) {
+            bool leftNull = BaseVector::isNullAt(mapping[left]);
+            bool rightNull = BaseVector::isNullAt(mapping[right]);
+            if (leftNull || rightNull) {
+              return BaseVector::compareNulls(leftNull, rightNull, flags)
+                         .value() < 0;
+            }
+
+            return compareNonNull(left, right);
+          });
+    } else {
+      std::sort(indices.begin(), indices.end(), compareNonNull);
+    }
+  }
+
   bool isScalar() const override {
-    return true;
+    return this->typeKind() != TypeKind::UNKNOWN;
   }
 
   uint64_t retainedSize() const override {
@@ -290,26 +373,49 @@ class FlatVector final : public SimpleVector<T> {
     return size;
   }
 
-  bool isNullsWritable() const override {
-    return true;
-  }
-
   /**
    * Used for vectors of type VARCHAR and VARBINARY to hold data referenced by
    * StringView's. It is safe to share these among multiple vectors. These
    * buffers are append only. It is allowed to append data, but it is prohibited
    * to modify already written data.
    */
-  std::vector<BufferPtr>& stringBuffers() {
-    return stringBuffers_;
-  }
-
   const std::vector<BufferPtr>& stringBuffers() const {
     return stringBuffers_;
   }
 
+  /// Used for vectors of type VARCHAR and VARBINARY to replace the old data
+  /// buffers with 'buffers' which are referenced by StringView's.
   void setStringBuffers(std::vector<BufferPtr> buffers) {
+    VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
+
     stringBuffers_ = std::move(buffers);
+    stringBufferSet_.clear();
+    stringBufferSet_.reserve(stringBuffers_.size());
+    for (const auto& bufferPtr : stringBuffers_) {
+      stringBufferSet_.insert(bufferPtr.get());
+    }
+  }
+
+  /// Used for vectors of type VARCHAR and VARBINARY to release the data buffers
+  /// referenced by StringView's.
+  void clearStringBuffers() {
+    VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
+
+    stringBuffers_.clear();
+    stringBufferSet_.clear();
+  }
+
+  /// Used for vectors of type VARCHAR and VARBINARY to hold a reference on
+  /// 'buffer'. The function returns false if 'buffer' has already been
+  /// referenced by this vector.
+  bool addStringBuffer(const BufferPtr& buffer) {
+    VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
+
+    if (FOLLY_UNLIKELY(!stringBufferSet_.insert(buffer.get()).second)) {
+      return false;
+    }
+    stringBuffers_.push_back(buffer);
+    return true;
   }
 
   void acquireSharedStringBuffers(const BaseVector* source);
@@ -319,6 +425,11 @@ class FlatVector final : public SimpleVector<T> {
   }
 
   void ensureWritable(const SelectivityVector& rows) override;
+
+  bool isWritable() const override {
+    return this->isNullsWritable() &&
+        (!values_ || (values_->unique() && values_->isMutable()));
+  }
 
   /// Calls BaseVector::prapareForReuse() to check and reset nulls buffer if
   /// needed, checks and resets values buffer. Resets all strings buffers except
@@ -338,6 +449,13 @@ class FlatVector final : public SimpleVector<T> {
       vector_size_t sourceIndex,
       vector_size_t count);
 
+  // Ensures that the values buffer has space for 'newSize' elements and is
+  // mutable. Sets elements between the old and new sizes to 'initialValue' if
+  // the new size > old size.
+  void resizeValues(
+      vector_size_t newSize,
+      const std::optional<T>& initialValue);
+
   // Contiguous values.
   // If strings, these are velox::StringViews into memory held by
   // 'stringBuffers_'
@@ -349,6 +467,13 @@ class FlatVector final : public SimpleVector<T> {
   // If T is velox::StringView, the referenced is held by
   // one of these.
   std::vector<BufferPtr> stringBuffers_;
+
+  // Used by 'acquireSharedStringBuffers()' to fast check if a buffer to share
+  // has already been referenced by 'stringBuffers_'.
+  //
+  // NOTE: we need to ensure 'stringBuffers_' and 'stringBufferSet_' are always
+  // consistent.
+  folly::F14FastSet<const Buffer*> stringBufferSet_;
 };
 
 template <>
@@ -385,6 +510,11 @@ void FlatVector<StringView>::copy(
     vector_size_t count);
 
 template <>
+void FlatVector<StringView>::copyRanges(
+    const BaseVector* source,
+    const folly::Range<const CopyRange*>& ranges);
+
+template <>
 void FlatVector<bool>::copyValuesAndNulls(
     const BaseVector* source,
     const SelectivityVector& rows,
@@ -399,6 +529,9 @@ void FlatVector<bool>::copyValuesAndNulls(
 
 template <>
 Buffer* FlatVector<StringView>::getBufferWithSpace(vector_size_t size);
+
+template <>
+void FlatVector<StringView>::prepareForReuse();
 
 template <typename T>
 using FlatVectorPtr = std::shared_ptr<FlatVector<T>>;

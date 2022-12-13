@@ -38,6 +38,11 @@ std::string genAggr(const char* aggrName, const char* colName) {
 // The test class.
 class VarianceAggregationTest : public AggregationTestBase {
  protected:
+  void SetUp() override {
+    AggregationTestBase::SetUp();
+    allowInputShuffle();
+  }
+
   RowTypePtr rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
           {BIGINT(), SMALLINT(), INTEGER(), BIGINT(), REAL(), DOUBLE()})};
@@ -150,6 +155,12 @@ TEST_F(VarianceAggregationTest, varianceNulls) {
 }
 
 TEST_F(VarianceAggregationTest, variance) {
+  // TODO Variance functions are not sensitive to the order of inputs except
+  // when inputs are very large integers (> 15 digits long). Unfortunately
+  // makeVectors() generates data that contains a lot of very large integers.
+  // Replace makeVectors() with a dataset that doesn't contain very large
+  // integers and enable more testing by calling allowInputShuffle() from
+  // Setup().
   auto vectors = makeVectors(rowType_, 10, 20);
   createDuckDbTable(vectors);
 

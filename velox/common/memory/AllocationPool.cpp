@@ -13,21 +13,44 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "velox/common/memory/AllocationPool.h"
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/Exceptions.h"
+#include "velox/common/memory/MemoryAllocator.h"
 
 namespace facebook::velox {
 
 void AllocationPool::clear() {
-  // Trigger Allocation's destructor to free allocated memory
-  auto copy = std::move(allocation_);
+  // Trigger Allocation's destructor to free allocated memory.
+  auto allocationToClear = std::move(allocation_);
   allocations_.clear();
+  auto largeAllocationToClear = std::move(largeAllocations_);
+  largeAllocations_.clear();
 }
 
 char* AllocationPool::allocateFixed(uint64_t bytes) {
   VELOX_CHECK_GT(bytes, 0, "Cannot allocate zero bytes");
+
+  auto numPages = bits::roundUp(bytes, memory::MemoryAllocator::kPageSize) /
+      memory::MemoryAllocator::kPageSize;
+
+  // Use contiguous allocations from mapped memory if allocation size is large
+  if (numPages > pool_->largestSizeClass()) {
+    auto largeAlloc =
+        std::make_unique<memory::MemoryAllocator::ContiguousAllocation>();
+    if (!pool_->allocateContiguous(numPages, *largeAlloc)) {
+      throw std::bad_alloc();
+    }
+    largeAllocations_.emplace_back(std::move(largeAlloc));
+    auto res = largeAllocations_.back()->data<char>();
+    VELOX_CHECK_NOT_NULL(
+        res, "Unexpected nullptr for large contiguous allocation");
+    return res;
+  }
+
   if (availableInRun() < bytes) {
-    newRun(bytes);
+    newRunImpl(numPages);
   }
   auto run = currentRun();
   uint64_t size = run.numBytes();
@@ -36,27 +59,28 @@ char* AllocationPool::allocateFixed(uint64_t bytes) {
   return reinterpret_cast<char*>(run.data() + currentOffset_ - bytes);
 }
 
-void AllocationPool::newRun(int32_t preferredSize) {
+void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   ++currentRun_;
   if (currentRun_ >= allocation_.numRuns()) {
     if (allocation_.numRuns()) {
-      allocations_.push_back(std::make_unique<memory::MappedMemory::Allocation>(
-          std::move(allocation_)));
+      allocations_.push_back(
+          std::make_unique<memory::MemoryAllocator::Allocation>(
+              std::move(allocation_)));
     }
-    auto numPages =
-        bits::roundUp(preferredSize, memory::MappedMemory::kPageSize) /
-        memory::MappedMemory::kPageSize;
-    if (!mappedMemory_->allocate(
-            std::max<int32_t>(16, numPages),
-            owner_,
-            allocation_,
-            nullptr,
-            numPages)) {
+    if (!pool_->allocateNonContiguous(
+            std::max<int32_t>(kMinPages, numPages), allocation_, numPages)) {
       throw std::bad_alloc();
     }
     currentRun_ = 0;
   }
   currentOffset_ = 0;
+}
+
+void AllocationPool::newRun(int32_t preferredSize) {
+  auto numPages =
+      bits::roundUp(preferredSize, memory::MemoryAllocator::kPageSize) /
+      memory::MemoryAllocator::kPageSize;
+  newRunImpl(numPages);
 }
 
 } // namespace facebook::velox

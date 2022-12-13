@@ -15,14 +15,14 @@
  */
 #include "velox/exec/RoundRobinPartitionFunction.h"
 #include <gtest/gtest.h>
-#include "velox/vector/tests/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 using namespace facebook::velox;
 
 TEST(RoundRobinPartitionFunctionTest, basic) {
   exec::RoundRobinPartitionFunction partitionFunction(10);
 
-  auto pool = memory::getDefaultScopedMemoryPool();
+  auto pool = memory::getDefaultMemoryPool();
   test::VectorMaker vm(pool.get());
 
   auto data = vm.rowVector(ROW({}, {}), 31);

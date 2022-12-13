@@ -28,11 +28,13 @@
 set -e # Exit on error.
 set -x # Print commands that are executed.
 
-FB_OS_VERSION=v2022.03.14.00
+SCRIPTDIR=$(dirname "${BASH_SOURCE[0]}")
+source $SCRIPTDIR/setup-helper-functions.sh
+
 NPROC=$(getconf _NPROCESSORS_ONLN)
-COMPILER_FLAGS="-mavx2 -mfma -mavx -mf16c -masm=intel -mlzcnt"
+
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
-MACOS_DEPS="ninja cmake ccache protobuf icu4c boost gflags glog libevent lz4 lzo snappy xz zstd openssl@1.1"
+MACOS_DEPS="ninja flex bison cmake ccache protobuf icu4c boost gflags glog libevent lz4 lzo snappy xz zstd openssl@1.1"
 
 function run_and_time {
   time "$@"
@@ -52,47 +54,6 @@ function prompt {
       fi
     done
   ) 2> /dev/null
-}
-
-# github_checkout $REPO $VERSION clones or re-uses an existing clone of the
-# specified repo, checking out the requested version.
-function github_checkout {
-  local REPO=$1
-  local VERSION=$2
-  local DIRNAME=$(basename "$1")
-
-  cd "${DEPENDENCY_DIR}"
-  if [ -z "${DIRNAME}" ]; then
-    echo "Failed to get repo name from $1"
-    exit 1
-  fi
-  if [ -d "${DIRNAME}" ] && prompt "${DIRNAME} already exists. Delete?"; then
-    rm -rf "${DIRNAME}"
-  fi
-  if [ ! -d "${DIRNAME}" ]; then
-    git clone -q "https://github.com/${REPO}.git"
-  fi
-  cd "${DIRNAME}"
-  git fetch -q
-  git checkout "${VERSION}"
-}
-
-function cmake_install {
-  local NAME=$(basename "$(pwd)")
-  local BINARY_DIR=_build
-  if [ -d "${BINARY_DIR}" ] && prompt "Do you want to rebuild ${NAME}?"; then
-    rm -rf "${BINARY_DIR}"
-  fi
-  mkdir -p "${BINARY_DIR}"
-  cmake -Wno-dev -B"${BINARY_DIR}" \
-    -GNinja \
-    -DCMAKE_CXX_STANDARD=17 \
-    "${INSTALL_PREFIX+-DCMAKE_PREFIX_PATH=}${INSTALL_PREFIX-}" \
-    "${INSTALL_PREFIX+-DCMAKE_INSTALL_PREFIX=}${INSTALL_PREFIX-}" \
-    -DCMAKE_CXX_FLAGS="${COMPILER_FLAGS}" \
-    -DBUILD_TESTING=OFF \
-    "$@"
-  ninja -C "${BINARY_DIR}" install
 }
 
 function update_brew {
@@ -129,14 +90,8 @@ function install_double_conversion {
   cmake_install -DBUILD_TESTING=OFF
 }
 
-function install_folly {
-  github_checkout facebook/folly "${FB_OS_VERSION}"
-  OPENSSL_ROOT_DIR=$(brew --prefix openssl@1.1) \
-    cmake_install -DBUILD_TESTS=OFF
-}
-
 function install_ranges_v3 {
-  github_checkout ericniebler/range-v3 master
+  github_checkout ericniebler/range-v3 0.12.0
   cmake_install -DRANGES_ENABLE_WERROR=OFF -DRANGE_V3_TESTS=OFF -DRANGE_V3_EXAMPLES=OFF
 }
 
@@ -152,7 +107,6 @@ function install_velox_deps {
   run_and_time install_ranges_v3
   run_and_time install_fmt
   run_and_time install_double_conversion
-  run_and_time install_folly
   run_and_time install_re2
 }
 

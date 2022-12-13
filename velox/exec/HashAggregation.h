@@ -52,17 +52,38 @@ class HashAggregation : public Operator {
   }
 
  private:
+  // Checks if the spilling is allowed for this hash aggregation. As for now, we
+  // don't allow spilling for distinct aggregation
+  // (https://github.com/facebookincubator/velox/issues/3263) and pre-grouped
+  // aggregation (https://github.com/facebookincubator/velox/issues/3264). We
+  // will add support later to re-enable.
+  bool isSpillAllowed(
+      const std::shared_ptr<const core::AggregationNode>& node) const;
+
   void prepareOutput(vector_size_t size);
 
-  /// Maximum number of rows in the output batch.
-  const uint32_t outputBatchSize_;
+  // Invoked to reset partial aggregation state if it was full and has been
+  // flushed.
+  void resetPartialOutputIfNeed();
 
-  const int64_t maxPartialAggregationMemoryUsage_;
+  // Invoked on partial output flush to try to bump up the partial aggregation
+  // memory usage if it needs. 'aggregationPct' is the ratio between the number
+  // of output rows and the number of input rows as a percentage. It is a
+  // measure of the effectiveness of the partial aggregation.
+  void maybeIncreasePartialAggregationMemoryUsage(double aggregationPct);
+
+  // Maximum number of rows in the output batch.
+  const uint32_t outputBatchSize_;
 
   const bool isPartialOutput_;
   const bool isDistinct_;
   const bool isGlobal_;
+  const std::shared_ptr<memory::MemoryUsageTracker> memoryTracker_;
+  const double partialAggregationGoodPct_;
+  const int64_t maxExtendedPartialAggregationMemoryUsage_;
+  const std::optional<Spiller::Config> spillConfig_;
 
+  int64_t maxPartialAggregationMemoryUsage_;
   std::unique_ptr<GroupingSet> groupingSet_;
 
   bool partialFull_ = false;
@@ -71,6 +92,13 @@ class HashAggregation : public Operator {
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;
   bool mayPushdown_ = false;
+
+  /// Count the number of input rows. It is reset on partial aggregation output
+  /// flush.
+  int64_t numInputRows_ = 0;
+  /// Count the number of output rows. It is reset on partial aggregation output
+  /// flush.
+  int64_t numOutputRows_ = 0;
 
   /// Possibly reusable output vector.
   RowVectorPtr output_;

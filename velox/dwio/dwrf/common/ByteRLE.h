@@ -19,11 +19,11 @@
 #include <memory>
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Nulls.h"
+#include "velox/dwio/common/IntCodecCommon.h"
+#include "velox/dwio/common/Range.h"
+#include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/dwrf/common/Common.h"
-#include "velox/dwio/dwrf/common/InputStream.h"
-#include "velox/dwio/dwrf/common/IntCodecCommon.h"
 #include "velox/dwio/dwrf/common/OutputStream.h"
-#include "velox/dwio/dwrf/common/Range.h"
 #include "velox/dwio/dwrf/common/wrap/dwrf-proto-wrapper.h"
 #include "velox/vector/TypeAliases.h"
 
@@ -40,12 +40,14 @@ class ByteRleEncoder {
    * @param nulls If the pointer is null, all values are added. If the
    *    pointer is not null, positions that are true are skipped.
    */
-  virtual uint64_t
-  add(const char* data, const Ranges& ranges, const uint64_t* nulls) = 0;
+  virtual uint64_t add(
+      const char* data,
+      const common::Ranges& ranges,
+      const uint64_t* nulls) = 0;
 
   virtual uint64_t add(
       const std::function<char(vector_size_t)>& valueAt,
-      const Ranges& ranges,
+      const common::Ranges& ranges,
       const std::function<bool(vector_size_t)>& isNullAt) = 0;
 
   /**
@@ -58,13 +60,13 @@ class ByteRleEncoder {
    */
   virtual uint64_t addBits(
       const uint64_t* data,
-      const Ranges& ranges,
+      const common::Ranges& ranges,
       const uint64_t* nulls,
       bool invert) = 0;
 
   virtual uint64_t addBits(
       const std::function<bool(vector_size_t)>& valueAt,
-      const Ranges& ranges,
+      const common::Ranges& ranges,
       const std::function<bool(vector_size_t)>& isNullAt,
       bool invert) = 0;
 
@@ -92,7 +94,9 @@ class ByteRleEncoder {
 
 class ByteRleDecoder {
  public:
-  ByteRleDecoder(std::unique_ptr<SeekableInputStream> input, EncodingKey ek)
+  ByteRleDecoder(
+      std::unique_ptr<dwio::common::SeekableInputStream> input,
+      EncodingKey ek)
       : inputStream{std::move(input)},
         remainingValues{0},
         value{0},
@@ -106,7 +110,7 @@ class ByteRleDecoder {
   /**
    * Seek to a specific row group.
    */
-  virtual void seekToRowGroup(PositionProvider& positionProvider);
+  virtual void seekToRowGroup(dwio::common::PositionProvider& positionProvider);
 
   /**
    * Seek over a given number of values.
@@ -125,10 +129,8 @@ class ByteRleDecoder {
   /**
    * Load the RowIndex values for the stream this is reading.
    */
-  virtual size_t loadIndices(
-      const proto::RowIndex& rowIndex,
-      size_t startIndex) {
-    return inputStream->loadIndices(rowIndex, startIndex) + 1;
+  virtual size_t loadIndices(size_t startIndex) {
+    return inputStream->positionSize() + startIndex + 1;
   }
 
   void skipBytes(size_t bytes);
@@ -216,7 +218,7 @@ class ByteRleDecoder {
     }
   }
 
-  std::unique_ptr<SeekableInputStream> inputStream;
+  std::unique_ptr<dwio::common::SeekableInputStream> inputStream;
   size_t remainingValues;
   char value;
   const char* bufferStart;
@@ -244,13 +246,13 @@ std::unique_ptr<ByteRleEncoder> createBooleanRleEncoder(
  * @param input the input stream to read from
  */
 std::unique_ptr<ByteRleDecoder> createByteRleDecoder(
-    std::unique_ptr<SeekableInputStream> input,
+    std::unique_ptr<dwio::common::SeekableInputStream> input,
     const EncodingKey& ek);
 
 class BooleanRleDecoder : public ByteRleDecoder {
  public:
   BooleanRleDecoder(
-      std::unique_ptr<SeekableInputStream> input,
+      std::unique_ptr<dwio::common::SeekableInputStream> input,
       const EncodingKey& ek)
       : ByteRleDecoder{std::move(input), ek},
         remainingBits{0},
@@ -258,15 +260,15 @@ class BooleanRleDecoder : public ByteRleDecoder {
 
   ~BooleanRleDecoder() override = default;
 
-  void seekToRowGroup(PositionProvider& positionProvider) override;
+  void seekToRowGroup(
+      dwio::common::PositionProvider& positionProvider) override;
 
   void skip(uint64_t numValues) override;
 
   void next(char* data, uint64_t numValues, const uint64_t* nulls) override;
 
-  size_t loadIndices(const proto::RowIndex& rowIndex, size_t startIndex)
-      override {
-    return ByteRleDecoder::loadIndices(rowIndex, startIndex) + 1;
+  size_t loadIndices(size_t startIndex) override {
+    return ByteRleDecoder::loadIndices(startIndex) + 1;
   }
 
   // Advances 'dataPosition' by 'numValue' non-nulls, where 'current'
@@ -351,7 +353,7 @@ class BooleanRleDecoder : public ByteRleDecoder {
  * @param input the input stream to read from
  */
 std::unique_ptr<BooleanRleDecoder> createBooleanRleDecoder(
-    std::unique_ptr<SeekableInputStream> input,
+    std::unique_ptr<dwio::common::SeekableInputStream> input,
     const EncodingKey& ek);
 
 } // namespace facebook::velox::dwrf

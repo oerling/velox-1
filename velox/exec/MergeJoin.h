@@ -45,17 +45,17 @@ class MergeJoin : public Operator {
  private:
   // Sets up 'filter_' and related member variables.
   void initializeFilter(
-      const std::shared_ptr<const core::ITypedExpr>& filter,
+      const core::TypedExprPtr& filter,
       const RowTypePtr& leftType,
       const RowTypePtr& rightType);
 
   RowVectorPtr doGetOutput();
 
   static int32_t compare(
-      const std::vector<ChannelIndex>& keys,
+      const std::vector<column_index_t>& keys,
       const RowVectorPtr& batch,
       vector_size_t index,
-      const std::vector<ChannelIndex>& otherKeys,
+      const std::vector<column_index_t>& otherKeys,
       const RowVectorPtr& otherBatch,
       vector_size_t otherIndex);
 
@@ -145,7 +145,7 @@ class MergeJoin : public Operator {
   bool findEndOfMatch(
       Match& match,
       const RowVectorPtr& input,
-      const std::vector<ChannelIndex>& keys);
+      const std::vector<column_index_t>& keys);
 
   /// Initialize 'output_' vector using 'ouputType_' and 'outputBatchSize_' if
   /// it is null.
@@ -174,9 +174,11 @@ class MergeJoin : public Operator {
       vector_size_t rightIndex);
 
   /// Adds one row of output for a left-side row with no right-side match.
-  /// Copies values from the 'index_' row on the left side and fills in nulls
+  /// Copies values from the 'leftIndex' row of 'left' and fills in nulls
   /// for columns that correspond to the right side.
-  void addOutputRowForLeftJoin();
+  void addOutputRowForLeftJoin(
+      const RowVectorPtr& left,
+      vector_size_t leftIndex);
 
   /// Evaluates join filter on 'filterInput_' and returns 'output' that contains
   /// a subset of rows on which the filter passed. Returns nullptr if no rows
@@ -342,8 +344,8 @@ class MergeJoin : public Operator {
   /// Number of join keys.
   const size_t numKeys_;
 
-  std::vector<ChannelIndex> leftKeys_;
-  std::vector<ChannelIndex> rightKeys_;
+  std::vector<column_index_t> leftKeys_;
+  std::vector<column_index_t> rightKeys_;
   std::vector<IdentityProjection> leftProjections_;
   std::vector<IdentityProjection> rightProjections_;
 

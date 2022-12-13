@@ -12,7 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(velox_plan_conversion_test PlanConversionTest.cpp)
+add_executable(
+  velox_plan_conversion_test
+  Substrait2VeloxPlanConversionTest.cpp
+  Substrait2VeloxValuesNodeConversionTest.cpp
+  FunctionTest.cpp
+  JsonToProtoConverter.cpp
+  VeloxSubstraitRoundTripTest.cpp
+  VeloxToSubstraitTypeTest.cpp
+  VeloxSubstraitSignatureTest.cpp
+  SubstraitExtensionCollectorTest.cpp)
+
 add_dependencies(velox_plan_conversion_test velox_substrait_plan_converter)
 
 add_test(
@@ -33,7 +43,7 @@ target_link_libraries(
   velox_hive_connector
   velox_type
   velox_serialization
-  velox_exec_test_util
+  velox_exec_test_lib
   velox_functions_json
   velox_vector
   velox_memory

@@ -22,18 +22,16 @@
 #include "gtest/gtest.h"
 #include "velox/expression/Expr.h"
 #include "velox/functions/Udf.h"
-#include "velox/functions/prestosql/tests/FunctionBaseTest.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DecodedVector.h"
 #include "velox/vector/SelectivityVector.h"
 
-namespace {
-
 using namespace facebook::velox;
 using namespace facebook::velox::test;
-
+namespace {
 class SimpleFunctionTest : public functions::test::FunctionBaseTest {
  protected:
   VectorPtr arraySum(const std::vector<std::vector<int64_t>>& data) {
@@ -135,7 +133,7 @@ struct ArrayOfStringsWriterFunction {
       const arg_type<int64_t>& input) {
     const size_t size = stringArrayData[input].size();
     out.reserve(size);
-    for (const auto value : stringArrayData[input]) {
+    for (const auto& value : stringArrayData[input]) {
       out.add_item().copy_from(value);
     }
   }
@@ -769,6 +767,41 @@ TEST_F(SimpleFunctionTest, arrayStringReuse) {
 }
 
 template <typename T>
+struct Substr {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  void call(
+      out_type<Varchar>& out,
+      const arg_type<Varchar>& str,
+      const int32_t& start,
+      const int32_t& length) {
+    out.copy_from(StringView(str.data() + start, length));
+  }
+};
+
+TEST_F(SimpleFunctionTest, stringReuseConstant) {
+  // Test reusing the strings from an argument when that argument is in a
+  // ConstantVector.  Note that the other 2 arguments are FlatVectors to
+  // prevent constant peeling.
+  registerFunction<Substr, Varchar, Varchar, int32_t, int32_t>({"substr"});
+
+  auto constantVector = vectorMaker_.constantVector<StringView>(
+      {"super happy fun string"_sv,
+       "super happy fun string"_sv,
+       "super happy fun string"_sv});
+  auto starts = vectorMaker_.flatVector({0, 1, 2});
+  auto lengths = vectorMaker_.flatVector({1, 2, 3});
+
+  auto result = evaluate<FlatVector<StringView>>(
+      "substr(c0, c1, c2)", makeRowVector({constantVector, starts, lengths}));
+
+  auto expected = vectorMaker_.flatVector({"s"_sv, "up"_sv, "per"_sv});
+  assertEqualVectors(expected, result);
+}
+
+template <typename T>
 struct MapStringOut {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -804,4 +837,232 @@ TEST_F(SimpleFunctionTest, mapStringOut) {
   }
 }
 
+template <typename T>
+struct NonDeterministicFunc {
+  static constexpr bool is_deterministic = false;
+
+  void call(int64_t& out) {
+    static size_t counter = 0;
+    out = counter++;
+  }
+};
+
+// Test that non-deterministic functions do not participate in CSE
+// optimization, or constant folding.
+TEST_F(SimpleFunctionTest, cseDisabled) {
+  registerFunction<NonDeterministicFunc, int64_t>({"new_value"});
+
+  auto input = vectorMaker_.flatVector<int64_t>({1, 2, 3, 4});
+  auto result = evaluate("new_value() + new_value()", makeRowVector({input}));
+  auto* flatResult = result->asFlatVector<int64_t>();
+  ASSERT_EQ(flatResult->valueAt(0), 4);
+  ASSERT_EQ(flatResult->valueAt(1), 6);
+  ASSERT_EQ(flatResult->valueAt(2), 8);
+  ASSERT_EQ(flatResult->valueAt(3), 10);
+}
+
+template <typename T>
+struct NonDeterministicFuncWithInput {
+  static constexpr bool is_deterministic = false;
+
+  void call(int64_t& out, const int64_t& input) {
+    static size_t counter = 0;
+    out = input + counter++;
+  }
+};
+
+TEST_F(SimpleFunctionTest, cseDisabledFuncWithInput) {
+  registerFunction<NonDeterministicFuncWithInput, int64_t, int64_t>(
+      {"new_value_with_input"});
+
+  auto input = vectorMaker_.flatVector<int64_t>({1, 2, 3, 4});
+  {
+    auto result = evaluate(
+        "new_value_with_input(c0) + new_value_with_input(c0)",
+        makeRowVector({input}));
+    auto* flatResult = result->asFlatVector<int64_t>();
+    ASSERT_EQ(flatResult->valueAt(0), 6);
+    ASSERT_EQ(flatResult->valueAt(1), 10);
+    ASSERT_EQ(flatResult->valueAt(2), 14);
+    ASSERT_EQ(flatResult->valueAt(3), 18);
+  }
+}
+
+TEST_F(SimpleFunctionTest, reuseArgVector) {
+  std::mt19937 rng;
+
+  vector_size_t size = 256;
+  auto data = makeRowVector({
+      makeFlatVector<float>(
+          size, [&](auto /*row*/) { return folly::Random::randDouble01(rng); }),
+  });
+
+  auto rowType = asRowType(data->type());
+  auto exprSet =
+      compileExpressions({"(c0 - 0.5::REAL) * 2.0::REAL + 0.3::REAL"}, rowType);
+
+  pool_->setMemoryUsageTracker(memory::MemoryUsageTracker::create());
+
+  auto prevAllocations = pool_->getMemoryUsageTracker()->getNumAllocs();
+
+  evaluate(*exprSet, data);
+  auto currAllocations = pool_->getMemoryUsageTracker()->getNumAllocs();
+
+  // Expect a single allocation for the result. Intermediate results should
+  // reuse memory.
+  ASSERT_EQ(1, currAllocations - prevAllocations);
+}
+
+template <typename T>
+struct FunctionWithVariadic {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  template <typename OUTPUT>
+  void call(OUTPUT& out, const arg_type<Variadic<int64_t>>& inputs) {
+    out = 0;
+    for (const auto& input : inputs) {
+      out += input.has_value() ? input.value() : 0;
+    }
+  }
+};
+
+VectorPtr testVariadicArgReuse(
+    core::ExecCtx* execCtx,
+    VectorMaker& vectorMaker,
+    std::vector<VectorPtr>& inputs,
+    const std::string& functionName,
+    const TypePtr& outputType) {
+  // This is a bit of a round about way of creating the SimpleFunctionAdapter,
+  // especially since it requires the caller to register the function as well,
+  // but it should be easier to maintain.
+  auto function =
+      exec::SimpleFunctions()
+          .resolveFunction(functionName, {})
+          ->createFunction()
+          ->createVectorFunction(execCtx->queryCtx()->queryConfig(), {});
+
+  // Create a dummy EvalCtx.
+  SelectivityVector rows(inputs[0]->size());
+  exec::ExprSet exprSet({}, execCtx);
+  RowVectorPtr inputRows = vectorMaker.rowVector({});
+  exec::EvalCtx evalCtx(execCtx, &exprSet, inputRows.get());
+
+  VectorPtr resultPtr;
+  function->apply(rows, inputs, outputType, evalCtx, resultPtr);
+
+  return resultPtr;
+}
+
+TEST_F(SimpleFunctionTest, variadicReuseFirstArg) {
+  std::string functionName = "function_with_variadic";
+  registerFunction<FunctionWithVariadic, int64_t, Variadic<int64_t>>(
+      {functionName});
+
+  vector_size_t size = 10;
+  std::vector<VectorPtr> inputs{
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; }),
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; })};
+
+  // SimpleFunctionAdapter will std::move the input when it's reused, so capture
+  // the pointer so we can compare it to the result.
+  auto* expectedVectorReused = inputs[0].get();
+  auto resultPtr = testVariadicArgReuse(
+      &execCtx_, vectorMaker_, inputs, functionName, BIGINT());
+
+  ASSERT_EQ(resultPtr.get(), expectedVectorReused);
+}
+
+TEST_F(SimpleFunctionTest, variadicReuseSecondArg) {
+  std::string functionName = "function_with_variadic";
+  registerFunction<FunctionWithVariadic, int64_t, Variadic<int64_t>>(
+      {functionName});
+
+  vector_size_t size = 10;
+  std::vector<VectorPtr> inputs{
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; }),
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; })};
+
+  // Copy the shared_ptr so it's not uniquely referenced and therefore
+  // ineligible to be reused.
+  VectorPtr firstArgHolder = inputs[0];
+  // SimpleFunctionAdapter will std::move the input when it's reused, so capture
+  // the pointer so we can compare it to the result.
+  auto* expectedVectorReused = inputs[1].get();
+  auto resultPtr = testVariadicArgReuse(
+      &execCtx_, vectorMaker_, inputs, functionName, BIGINT());
+
+  ASSERT_EQ(resultPtr.get(), expectedVectorReused);
+}
+
+TEST_F(SimpleFunctionTest, variadicReuseNoArgs) {
+  std::string functionName = "function_with_variadic";
+  registerFunction<FunctionWithVariadic, int64_t, Variadic<int64_t>>(
+      {functionName});
+
+  vector_size_t size = 10;
+  std::vector<VectorPtr> inputs{
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; }),
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; })};
+
+  // Copy the shared_ptrs so their not uniquely referenced and therefore
+  // ineligible to be reused.
+  std::vector<VectorPtr> inputsCopy = inputs;
+  auto resultPtr = testVariadicArgReuse(
+      &execCtx_, vectorMaker_, inputs, functionName, BIGINT());
+
+  ASSERT_NE(resultPtr, inputs[0]);
+  ASSERT_NE(resultPtr, inputs[1]);
+}
+
+TEST_F(SimpleFunctionTest, variadicReuseNoArgsDifferentType) {
+  std::string functionName = "function_with_variadic";
+  registerFunction<FunctionWithVariadic, int32_t, Variadic<int64_t>>(
+      {functionName});
+
+  vector_size_t size = 10;
+  std::vector<VectorPtr> inputs{
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; }),
+      makeFlatVector<int64_t>(size, [&](auto row) { return row; })};
+
+  // SimpleFunctionAdapter will std::move the input when it's reused, so capture
+  // the pointer so we can compare it to the result.
+  auto* capturedArg0 = inputs[0].get();
+  auto* capturedArg1 = inputs[1].get();
+  auto resultPtr = testVariadicArgReuse(
+      &execCtx_, vectorMaker_, inputs, functionName, INTEGER());
+
+  ASSERT_NE(resultPtr.get(), capturedArg0);
+  ASSERT_NE(resultPtr.get(), capturedArg1);
+}
+
+// Test isAsciiArgs in the simple function adapter.
+template <typename T>
+struct StringInputFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  void call(int32_t& out, const arg_type<Varchar>& input) {
+    out = input.size();
+  }
+};
+
+TEST_F(SimpleFunctionTest, isAsciiArgs) {
+  VectorPtr input = vectorMaker_.flatVector<StringView>({"ab"_sv, "cd"_sv});
+  SelectivityVector rows(2);
+  // Create instance of the function.
+  using holder_class_t = core::UDFHolder<
+      StringInputFunction<exec::VectorExec>,
+      exec::VectorExec,
+      int32_t,
+      Varchar>;
+  using function_t = exec::SimpleFunctionAdapter<holder_class_t>;
+
+  ASSERT_FALSE(function_t::isAsciiArgs(rows, {input}));
+
+  input->as<SimpleVector<StringView>>()->computeAndSetIsAscii(
+      SelectivityVector(1));
+  ASSERT_FALSE(function_t::isAsciiArgs(rows, {input}));
+
+  input->as<SimpleVector<StringView>>()->computeAndSetIsAscii(rows);
+  ASSERT_TRUE(function_t::isAsciiArgs(rows, {input}));
+}
 } // namespace

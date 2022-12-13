@@ -35,13 +35,13 @@ class DecodedArgs {
   DecodedArgs(
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
-      exec::EvalCtx* context) {
+      exec::EvalCtx& context) {
     for (auto& arg : args) {
-      holders_.emplace_back(context, *arg.get(), rows);
+      holders_.emplace_back(context, *arg, rows);
     }
   }
 
-  DecodedVector* at(int i) const {
+  DecodedVector* FOLLY_NONNULL at(int i) const {
     return const_cast<exec::LocalDecodedVector*>(&holders_[i])->get();
   }
 

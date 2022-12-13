@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 #include "velox/exec/Operator.h"
+#include "velox/common/base/SuccinctPrinter.h"
+#include "velox/common/process/ProcessBase.h"
 #include "velox/exec/Driver.h"
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
-
-#include "velox/common/process/ProcessBase.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
@@ -30,8 +30,7 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
       : execCtx_(execCtx) {}
 
   std::unique_ptr<exec::ExprSet> compile(
-      const std::shared_ptr<const core::ITypedExpr>& expression)
-      const override {
+      const core::TypedExprPtr& expression) const override {
     auto expressions = {expression};
     return std::make_unique<exec::ExprSet>(std::move(expressions), execCtx_);
   }
@@ -44,7 +43,7 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
     exec::EvalCtx context(execCtx_, exprSet, input.get());
 
     std::vector<VectorPtr> results = {*result};
-    exprSet->eval(0, 1, true, rows, &context, &results);
+    exprSet->eval(0, 1, true, rows, context, results);
 
     *result = results[0];
   }
@@ -54,8 +53,16 @@ class SimpleExpressionEvaluator : public connector::ExpressionEvaluator {
 };
 } // namespace
 
-OperatorCtx::OperatorCtx(DriverCtx* driverCtx)
-    : driverCtx_(driverCtx), pool_(driverCtx_->addOperatorPool()) {}
+OperatorCtx::OperatorCtx(
+    DriverCtx* driverCtx,
+    const core::PlanNodeId& planNodeId,
+    int32_t operatorId,
+    const std::string& operatorType)
+    : driverCtx_(driverCtx),
+      planNodeId_(planNodeId),
+      operatorId_(operatorId),
+      operatorType_(operatorType),
+      pool_(driverCtx_->addOperatorPool(planNodeId, operatorType)) {}
 
 core::ExecCtx* OperatorCtx::execCtx() const {
   if (!execCtx_) {
@@ -77,8 +84,91 @@ OperatorCtx::createConnectorQueryCtx(
       pool_,
       driverCtx_->task->queryCtx()->getConnectorConfig(connectorId),
       expressionEvaluator_.get(),
-      driverCtx_->task->queryCtx()->mappedMemory(),
-      fmt::format("{}.{}", driverCtx_->task->taskId(), planNodeId));
+      driverCtx_->task->queryCtx()->allocator(),
+      taskId(),
+      planNodeId,
+      driverCtx_->driverId);
+}
+
+std::optional<Spiller::Config> OperatorCtx::makeSpillConfig(
+    Spiller::Type type) const {
+  const auto& queryConfig = driverCtx_->task->queryCtx()->queryConfig();
+  if (!queryConfig.spillEnabled()) {
+    return std::nullopt;
+  }
+  if (!queryConfig.spillPath().has_value()) {
+    return std::nullopt;
+  }
+  switch (type) {
+    case Spiller::Type::kOrderBy:
+      if (!queryConfig.orderBySpillEnabled()) {
+        return std::nullopt;
+      }
+      break;
+    case Spiller::Type::kAggregate:
+      if (!queryConfig.aggregationSpillEnabled()) {
+        return std::nullopt;
+      }
+      break;
+    case Spiller::Type::kHashJoinBuild:
+      FOLLY_FALLTHROUGH;
+    case Spiller::Type::kHashJoinProbe:
+      if (!queryConfig.joinSpillEnabled()) {
+        return std::nullopt;
+      }
+      break;
+    default:
+      LOG(ERROR) << "Unknown spiller type: " << Spiller::typeName(type);
+      return std::nullopt;
+  }
+
+  return Spiller::Config(
+      makeOperatorSpillPath(
+          queryConfig.spillPath().value(),
+          taskId(),
+          driverCtx()->driverId,
+          operatorId_),
+      queryConfig.maxSpillFileSize(),
+      queryConfig.minSpillRunSize(),
+      driverCtx_->task->queryCtx()->spillExecutor(),
+      queryConfig.spillableReservationGrowthPct(),
+      HashBitRange(
+          queryConfig.spillStartPartitionBit(),
+          queryConfig.spillStartPartitionBit() +
+              queryConfig.spillPartitionBits()),
+      queryConfig.maxSpillLevel(),
+      queryConfig.testingSpillPct());
+}
+
+Operator::Operator(
+    DriverCtx* driverCtx,
+    RowTypePtr outputType,
+    int32_t operatorId,
+    std::string planNodeId,
+    std::string operatorType)
+    : operatorCtx_(std::make_unique<OperatorCtx>(
+          driverCtx,
+          planNodeId,
+          operatorId,
+          operatorType)),
+      stats_(OperatorStats{
+          operatorId,
+          driverCtx->pipelineId,
+          std::move(planNodeId),
+          std::move(operatorType)}),
+      outputType_(std::move(outputType)) {
+  auto memoryUsageTracker = pool()->getMemoryUsageTracker();
+  if (memoryUsageTracker) {
+    memoryUsageTracker->setMakeMemoryCapExceededMessage(
+        [&](memory::MemoryUsageTracker& tracker) {
+          VELOX_DCHECK(pool()->getMemoryUsageTracker().get() == &tracker);
+          std::stringstream out;
+          out << "\nFailed Operator: " << this->operatorType() << "."
+              << this->operatorId() << ": "
+              << succinctBytes(tracker.getCurrentTotalBytes());
+          return out.str();
+        });
+  }
 }
 
 std::vector<std::unique_ptr<Operator::PlanNodeTranslator>>&
@@ -142,14 +232,6 @@ std::optional<uint32_t> Operator::maxDrivers(
   return std::nullopt;
 }
 
-memory::MappedMemory* OperatorCtx::mappedMemory() const {
-  if (!mappedMemory_) {
-    mappedMemory_ =
-        driverCtx_->task->addOperatorMemory(pool_->getMemoryUsageTracker());
-  }
-  return mappedMemory_;
-}
-
 const std::string& OperatorCtx::taskId() const {
   return driverCtx_->task->taskId();
 }
@@ -199,41 +281,53 @@ RowVectorPtr Operator::fillOutput(vector_size_t size, BufferPtr mapping) {
       std::move(columns));
 }
 
+OperatorStats Operator::stats(bool clear) {
+  if (!clear) {
+    return *stats_.rlock();
+  }
+
+  auto lockedStats = stats_.wlock();
+  OperatorStats ret{*lockedStats};
+  lockedStats->clear();
+  return ret;
+}
+
 void Operator::recordBlockingTime(uint64_t start) {
   uint64_t now =
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::high_resolution_clock::now().time_since_epoch())
           .count();
-  stats_.blockedWallNanos += (now - start) * 1000;
+  stats_.wlock()->blockedWallNanos += (now - start) * 1000;
 }
 
 std::string Operator::toString() const {
   std::stringstream out;
   if (auto task = operatorCtx_->task()) {
     auto driverCtx = operatorCtx_->driverCtx();
-    out << stats_.operatorType << "(" << stats_.operatorId << ")<"
-        << task->taskId() << ":" << driverCtx->pipelineId << "."
-        << driverCtx->driverId << " " << this;
+    out << operatorType() << "(" << operatorId() << ")<" << task->taskId()
+        << ":" << driverCtx->pipelineId << "." << driverCtx->driverId << " "
+        << this;
   } else {
     out << "<Terminated, no task>";
   }
   return out.str();
 }
 
-std::vector<ChannelIndex> toChannels(
+std::vector<column_index_t> toChannels(
     const RowTypePtr& rowType,
-    const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
-        fields) {
-  std::vector<ChannelIndex> channels;
-  channels.reserve(fields.size());
-  for (const auto& field : fields) {
-    auto channel = exprToChannel(field.get(), rowType);
+    const std::vector<core::TypedExprPtr>& exprs) {
+  std::vector<column_index_t> channels;
+  channels.reserve(exprs.size());
+  for (const auto& expr : exprs) {
+    auto channel = exprToChannel(expr.get(), rowType);
     channels.push_back(channel);
   }
   return channels;
 }
 
-ChannelIndex exprToChannel(const core::ITypedExpr* expr, const TypePtr& type) {
+column_index_t exprToChannel(
+    const core::ITypedExpr* expr,
+    const TypePtr& type) {
   if (auto field = dynamic_cast<const core::FieldAccessTypedExpr*>(expr)) {
     return type->as<TypeKind::ROW>().getChildIdx(field->name());
   }
@@ -244,20 +338,24 @@ ChannelIndex exprToChannel(const core::ITypedExpr* expr, const TypePtr& type) {
   return 0; // not reached.
 }
 
-std::vector<ChannelIndex> calculateOutputChannels(
-    const RowTypePtr& inputType,
-    const RowTypePtr& outputType) {
-  // Note that outputType may have more columns than inputType as some columns
-  // can be duplicated.
+std::vector<column_index_t> calculateOutputChannels(
+    const RowTypePtr& sourceOutputType,
+    const RowTypePtr& targetInputType,
+    const RowTypePtr& targetOutputType) {
+  // Note that targetInputType may have more columns than sourceOutputType as
+  // some columns can be duplicated.
+  bool identicalProjection =
+      sourceOutputType->size() == targetInputType->size();
+  const auto& outputNames = targetInputType->names();
 
-  bool identicalProjection = inputType->size() == outputType->size();
-  const auto& outputNames = outputType->names();
-
-  std::vector<ChannelIndex> outputChannels;
+  std::vector<column_index_t> outputChannels;
   outputChannels.resize(outputNames.size());
   for (auto i = 0; i < outputNames.size(); i++) {
-    outputChannels[i] = inputType->getChildIdx(outputNames[i]);
+    outputChannels[i] = sourceOutputType->getChildIdx(outputNames[i]);
     if (outputChannels[i] != i) {
+      identicalProjection = false;
+    }
+    if (outputNames[i] != targetOutputType->nameOf(i)) {
       identicalProjection = false;
     }
   }
@@ -265,6 +363,12 @@ std::vector<ChannelIndex> calculateOutputChannels(
     outputChannels.clear();
   }
   return outputChannels;
+}
+
+void OperatorStats::addRuntimeStat(
+    const std::string& name,
+    const RuntimeCounter& value) {
+  addOperatorRuntimeStats(name, value, runtimeStats);
 }
 
 void OperatorStats::add(const OperatorStats& other) {
@@ -275,10 +379,12 @@ void OperatorStats::add(const OperatorStats& other) {
   addInputTiming.add(other.addInputTiming);
   inputBytes += other.inputBytes;
   inputPositions += other.inputPositions;
+  inputVectors += other.inputVectors;
 
   getOutputTiming.add(other.getOutputTiming);
   outputBytes += other.outputBytes;
   outputPositions += other.outputPositions;
+  outputVectors += other.outputVectors;
 
   physicalWrittenBytes += other.physicalWrittenBytes;
 
@@ -297,6 +403,10 @@ void OperatorStats::add(const OperatorStats& other) {
   }
 
   numDrivers += other.numDrivers;
+  spilledBytes += other.spilledBytes;
+  spilledRows += other.spilledRows;
+  spilledPartitions += other.spilledPartitions;
+  spilledFiles += other.spilledFiles;
 }
 
 void OperatorStats::clear() {

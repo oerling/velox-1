@@ -25,25 +25,24 @@ class CovarianceAggregationTest
     : public virtual AggregationTestBase,
       public testing::WithParamInterface<std::string> {
  protected:
+  void SetUp() override {
+    AggregationTestBase::SetUp();
+    allowInputShuffle();
+  }
+
   void testGroupBy(const std::string& aggName, const RowVectorPtr& data) {
     auto partialAgg = fmt::format("{}(c1, c2)", aggName);
-    auto sql = fmt::format(
-        "SELECT c0, round({}(c1, c2), 2) FROM tmp GROUP BY 1", aggName);
+    auto sql =
+        fmt::format("SELECT c0, {}(c1, c2) FROM tmp GROUP BY 1", aggName);
 
-    testAggregations(
-        {data},
-        {"c0"},
-        {partialAgg},
-        {"c0", "round(a0, cast(2 as integer))"},
-        sql);
+    testAggregations({data}, {"c0"}, {partialAgg}, sql);
   }
 
   void testGlobalAgg(const std::string& aggName, const RowVectorPtr& data) {
     auto partialAgg = fmt::format("{}(c1, c2)", aggName);
-    auto sql = fmt::format("SELECT round({}(c1, c2), 2) FROM tmp", aggName);
+    auto sql = fmt::format("SELECT {}(c1, c2) FROM tmp", aggName);
 
-    testAggregations(
-        {data}, {}, {partialAgg}, {"round(a0, cast(2 as integer))"}, sql);
+    testAggregations({data}, {}, {partialAgg}, sql);
   }
 };
 
@@ -59,6 +58,7 @@ TEST_P(CovarianceAggregationTest, doubleNoNulls) {
 
   auto aggName = GetParam();
   testGlobalAgg(aggName, data);
+
   testGroupBy(aggName, data);
 }
 

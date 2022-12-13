@@ -18,6 +18,8 @@
 
 #include "folly/Range.h"
 #include "velox/type/StringView.h"
+#include "velox/type/UnscaledLongDecimal.h"
+#include "velox/type/UnscaledShortDecimal.h"
 
 #include <sstream>
 
@@ -30,6 +32,8 @@ namespace velox {
 
 static_assert(Buffer::is_pod_like_v<int64_t>, "");
 static_assert(Buffer::is_pod_like_v<StringView>, "");
+static_assert(Buffer::is_pod_like_v<UnscaledLongDecimal>, "");
+static_assert(Buffer::is_pod_like_v<UnscaledShortDecimal>, "");
 static_assert(Buffer::is_pod_like_v<folly::Range<const char*>>, "");
 static_assert(Buffer::is_pod_like_v<velox::Range<const char*>>, "");
 static_assert(!Buffer::is_pod_like_v<std::shared_ptr<int>>, "");
@@ -37,12 +41,11 @@ static_assert(!Buffer::is_pod_like_v<std::shared_ptr<int>>, "");
 class BufferTest : public testing::Test {
  protected:
   void SetUp() override {
-    pool_ = memoryManager_.getScopedPool();
+    pool_ = memoryManager_.getChild();
   }
 
-  memory::MemoryManager<memory::MemoryAllocator, AlignedBuffer::kAlignment>
-      memoryManager_;
-  std::unique_ptr<memory::ScopedMemoryPool> pool_;
+  memory::MemoryManager memoryManager_;
+  std::shared_ptr<memory::MemoryPool> pool_;
 };
 
 TEST_F(BufferTest, testAlignedBuffer) {
@@ -331,6 +334,15 @@ TEST_F(BufferTest, testNonPODMemoryUsage) {
   const int64_t currentBytes = pool_->getCurrentBytes();
   { auto buffer = AlignedBuffer::allocate<T>(0, pool_.get()); }
   EXPECT_EQ(pool_->getCurrentBytes(), currentBytes);
+}
+
+TEST_F(BufferTest, testAllocateSizeOverflow) {
+  EXPECT_THROW(
+      AlignedBuffer::allocate<int64_t>(1ull << 62, pool_.get()),
+      VeloxException);
+  auto buf = AlignedBuffer::allocate<int64_t>(8, pool_.get());
+  EXPECT_THROW(
+      AlignedBuffer::reallocate<int64_t>(&buf, 1ull << 62), VeloxException);
 }
 
 } // namespace velox

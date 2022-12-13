@@ -52,6 +52,13 @@ class UniqueValue {
     data_ = value.days();
   }
 
+  explicit UniqueValue(IntervalDayTime value) {
+    // The number of valid bytes of IntervalDayTime stored in data_ is
+    // (int64_t)value.milliseconds().
+    size_ = sizeof(int64_t);
+    data_ = value.milliseconds();
+  }
+
   uint32_t size() const {
     return size_;
   }
@@ -82,16 +89,16 @@ struct UniqueValueHasher {
   size_t operator()(const UniqueValue& value) const {
     auto size = value.size();
     if (size <= sizeof(int64_t)) {
-      return simd::crc32U64(value.data(), 1);
+      return simd::crc32U64(0, value.data());
     }
 
-    uint64_t hash = 1;
+    uint32_t hash = 0;
     auto data = reinterpret_cast<const uint64_t*>(value.data());
 
     size_t wordIndex = 0;
     auto numFullWords = size / 8;
     for (; wordIndex < numFullWords; ++wordIndex) {
-      hash = simd::crc32U64(*(data + wordIndex), hash);
+      hash = simd::crc32U64(hash, *(data + wordIndex));
     }
 
     auto numBytesRemaining = size - wordIndex * 8;
@@ -99,7 +106,7 @@ struct UniqueValueHasher {
       auto lastWord = bits::loadPartialWord(
           reinterpret_cast<const uint8_t*>(data + wordIndex),
           numBytesRemaining);
-      hash = simd::crc32U64(lastWord, hash);
+      hash = simd::crc32U64(hash, lastWord);
     }
 
     return hash;
@@ -130,8 +137,14 @@ class VectorHasher {
   // data and 3 of length).
   static constexpr int64_t kMaxRange = ~0UL >> 5;
   static constexpr uint64_t kRangeTooLarge = ~0UL;
+  // Stop counting distinct values after this many and revert to regular hash.
+  static constexpr int32_t kMaxDistinct = 100'000;
 
-  VectorHasher(TypePtr type, ChannelIndex channel)
+  // Indicates reserving kMaxDistinct possible values when supplied as
+  // reservePct to enableValueIds().
+  static constexpr int32_t kNoLimit = -1;
+
+  VectorHasher(TypePtr type, column_index_t channel)
       : channel_(channel), type_(std::move(type)), typeKind_(type_->kind()) {
     if (typeKind_ == TypeKind::BOOLEAN) {
       // We do not need samples to know the cardinality or limits of a bool
@@ -144,11 +157,11 @@ class VectorHasher {
 
   static std::unique_ptr<VectorHasher> create(
       TypePtr type,
-      ChannelIndex channel) {
+      column_index_t channel) {
     return std::make_unique<VectorHasher>(std::move(type), channel);
   }
 
-  ChannelIndex channel() const {
+  column_index_t channel() const {
     return channel_;
   }
 
@@ -162,24 +175,44 @@ class VectorHasher {
 
   static constexpr uint64_t kNullHash = BaseVector::kNullHash;
 
-  // Computes a hash for 'rows' in 'values' and stores it in 'result'.
+  // Decodes the 'vector' in preparation for calling hash() or
+  // computeValueIds(). The decoded vector can be accessed via decodedVector()
+  // getter.
+  void decode(const BaseVector& vector, const SelectivityVector& rows) {
+    decoded_.decode(vector, rows);
+  }
+
+  DecodedVector& decodedVector() {
+    return decoded_;
+  }
+
+  // Computes a hash for 'rows' in the vector previously decoded via decode()
+  // call and stores it in 'result'. If 'mix' is true, mixes the hash with
+  // existing value in 'result'.
+  void
+  hash(const SelectivityVector& rows, bool mix, raw_vector<uint64_t>& result);
+
+  // Computes a hash for 'rows' using precomputedHash_ (just like from a const
+  // vector) and stores it in 'result'.
   // If 'mix' is true, mixes the hash with existing value in 'result'.
-  void hash(
-      const BaseVector& values,
+  void hashPrecomputed(
       const SelectivityVector& rows,
       bool mix,
-      raw_vector<uint64_t>& result);
+      raw_vector<uint64_t>& result) const;
 
-  // Computes a normalized key for 'rows' in 'values' and stores this
-  // in 'result'. If this is not the first hasher with normalized
-  // keys, updates the partially computed normalized key in
+  // Precompute hash of a given single value (vector has just one row) into
+  // precomputedHash_. Used for constant partition keys.
+  void precompute(const BaseVector& value);
+
+  // Computes a normalized key for 'rows' in the vector previously decoded via
+  // decode() call and stores this in 'result'. If this is not the first hasher
+  // with normalized keys, updates the partially computed normalized key in
   // 'result'. Returns true if all the values could be mapped to the
   // normalized key range. If some values could not be mapped
   // the statistics are updated to reflect the new values. This
   // behavior corresponds to group by, where we must rehash if all the
   // new keys could not be represented.
   bool computeValueIds(
-      const BaseVector& values,
       const SelectivityVector& rows,
       raw_vector<uint64_t>& result);
 
@@ -203,12 +236,14 @@ class VectorHasher {
   // have a miss if any of the keys has a value that is not represented.
   //
   // This method can be called concurrently from multiple threads. To allow for
-  // that the caller must provide 'scratchMemory'.
+  // that the caller must provide 'scratchMemory'. 'noNulls' means that the
+  // positions in 'rows' are not checked for null values.
   void lookupValueIds(
       const BaseVector& values,
       SelectivityVector& rows,
       ScratchMemory& scratchMemory,
-      raw_vector<uint64_t>& result) const;
+      raw_vector<uint64_t>& result,
+      bool noNulls = true) const;
 
   // Returns true if either range or distinct values have not overflowed.
   bool mayUseValueIds() const {
@@ -224,13 +259,29 @@ class VectorHasher {
     uniqueValuesStorage_.clear();
   }
 
-  uint64_t enableValueRange(uint64_t multiplier, int64_t reserve);
+  // Sets 'this' to range mode and adds 'reservePct' values to the
+  // range, half below and half above, staying within bounds of the
+  // data type. In this mode, hashed values become offsets from the
+  // lower end of the padded range times 'multiplier'. Returns
+  // 'multiplier' times the number of distinct values 'this' can
+  // produce. Does not accept kNoLimit for 'reservePct'.
+  uint64_t enableValueRange(uint64_t multiplier, int32_t reservePct);
 
-  uint64_t enableValueIds(uint64_t multiplier, int64_t reserve);
+  // Sets this to 'value ids' mode, where each distinct value has an
+  // integer id times 'multiplier'. Leaves 'reservePct' % values at
+  // the end of the distinct ids range. Returns 'multiplier' times the
+  // number of distinct values reserved. 'reservePct' = kNoLimit means
+  // that we reserve kMaxDistinct distinct values.
+  uint64_t enableValueIds(uint64_t multiplier, int32_t reservePct);
 
   // Returns the number of distinct values in range and distinct-values modes.
-  // kRangeTooLarge means that the mode is not applicable.
-  void cardinality(uint64_t& asRange, uint64_t& asDistincts);
+  // kRangeTooLarge means that the mode is not applicable. If 'reservePct' is
+  // non-zero, pads the range with 'reservePct' % extra values. For 'asRange'
+  // half is added below and half above the range, however not exceeding limits
+  // of the data type. For 'asDistinct' the values are added to the end of the
+  // range of ids.
+  void
+  cardinality(int32_t reservePct, uint64_t& asRange, uint64_t& asDistincts);
 
   void analyze(
       char** groups,
@@ -243,14 +294,6 @@ class VectorHasher {
     return isRange_;
   }
 
-  void decode(const BaseVector& vector, const SelectivityVector& rows) {
-    decoded_.decode(vector, rows);
-  }
-
-  const DecodedVector& decodedVector() const {
-    return decoded_;
-  }
-
   static bool typeKindSupportsValueIds(TypeKind kind) {
     switch (kind) {
       case TypeKind::BOOLEAN:
@@ -261,6 +304,7 @@ class VectorHasher {
       case TypeKind::VARCHAR:
       case TypeKind::VARBINARY:
       case TypeKind::DATE:
+      case TypeKind::INTERVAL_DAY_TIME:
         return true;
       default:
         return false;
@@ -282,8 +326,6 @@ class VectorHasher {
   static constexpr uint32_t kStringASRangeMaxSize = 7;
   static constexpr uint32_t kStringBufferUnitSize = 1024;
   static constexpr uint64_t kMaxDistinctStringsBytes = 1 << 20;
-  // Stop counting distinct values after this many and revert to regular hash.
-  static constexpr int32_t kMaxDistinct = 100'000;
 
   // Maps a binary string of up to 7 bytes to int64_t. Each size maps
   // to a different numeric range, so leading zeros are considered.
@@ -346,6 +388,14 @@ class VectorHasher {
       const DecodedVector& decoded,
       SelectivityVector& rows,
       raw_vector<uint64_t>& hashes,
+      uint64_t* result,
+      bool noNulls) const;
+
+  // Fast path for range mapping of int64/int32 keys.
+  template <typename T>
+  void lookupIdsRangeSimd(
+      const DecodedVector& decoded,
+      SelectivityVector& rows,
       uint64_t* result) const;
 
   template <TypeKind Kind>
@@ -393,6 +443,7 @@ class VectorHasher {
       const T* values,
       const SelectivityVector& rows,
       uint64_t* result) {
+    VELOX_DCHECK(isRange_);
     if (!isRange_) {
       return false;
     }
@@ -488,12 +539,15 @@ class VectorHasher {
   template <TypeKind Kind>
   void hashValues(const SelectivityVector& rows, bool mix, uint64_t* result);
 
-  const ChannelIndex channel_;
+  const column_index_t channel_;
   const TypePtr type_;
   const TypeKind typeKind_;
 
   DecodedVector decoded_;
   raw_vector<uint64_t> cachedHashes_;
+
+  // Single precomputed hash for constant partition keys.
+  uint64_t precomputedHash_{0};
 
   // Members for fast map to int domain for array/normalized key.
   // Maximum integer mapping. If distinct count exceeds this,
@@ -532,6 +586,11 @@ inline int64_t VectorHasher::toInt64(Date value) const {
 }
 
 template <>
+inline int64_t VectorHasher::toInt64(IntervalDayTime value) const {
+  return value.milliseconds();
+}
+
+template <>
 bool VectorHasher::makeValueIdsForRows<TypeKind::VARCHAR>(
     char** groups,
     int32_t numGroups,
@@ -565,6 +624,7 @@ inline uint64_t VectorHasher::valueId(StringView value) {
     }
     return number - min_ + 1;
   }
+
   UniqueValue unique(data, size);
   unique.setId(uniqueValues_.size() + 1);
   auto pair = uniqueValues_.insert(unique);

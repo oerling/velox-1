@@ -15,7 +15,9 @@
  */
 
 #include "velox/exec/Aggregate.h"
+#include "velox/exec/AggregateWindow.h"
 #include "velox/expression/FunctionSignature.h"
+#include "velox/expression/SignatureBinder.h"
 
 namespace facebook::velox::exec {
 
@@ -37,8 +39,10 @@ AggregateFunctionMap& aggregateFunctions() {
 namespace {
 std::optional<const AggregateFunctionEntry*> getAggregateFunctionEntry(
     const std::string& name) {
+  auto sanitizedName = sanitizeFunctionName(name);
+
   auto& functionsMap = aggregateFunctions();
-  auto it = functionsMap.find(name);
+  auto it = functionsMap.find(sanitizedName);
   if (it != functionsMap.end()) {
     return &it->second;
   }
@@ -51,8 +55,29 @@ bool registerAggregateFunction(
     const std::string& name,
     std::vector<std::shared_ptr<AggregateFunctionSignature>> signatures,
     AggregateFunctionFactory factory) {
-  aggregateFunctions()[name] = {std::move(signatures), std::move(factory)};
+  auto sanitizedName = sanitizeFunctionName(name);
+
+  aggregateFunctions()[sanitizedName] = {
+      std::move(signatures), std::move(factory)};
+
+  // Register the aggregate as a window function also.
+  registerAggregateWindowFunction(sanitizedName);
   return true;
+}
+
+std::unordered_map<
+    std::string,
+    std::vector<std::shared_ptr<AggregateFunctionSignature>>>
+getAggregateFunctionSignatures() {
+  std::unordered_map<
+      std::string,
+      std::vector<std::shared_ptr<AggregateFunctionSignature>>>
+      map;
+  auto aggregateFunctions = exec::aggregateFunctions();
+  for (const auto& aggregateFunction : aggregateFunctions) {
+    map[aggregateFunction.first] = aggregateFunction.second.signatures;
+  }
+  return map;
 }
 
 std::optional<std::vector<std::shared_ptr<AggregateFunctionSignature>>>
@@ -75,6 +100,25 @@ std::unique_ptr<Aggregate> Aggregate::create(
   }
 
   VELOX_USER_FAIL("Aggregate function not registered: {}", name);
+}
+
+// static
+TypePtr Aggregate::intermediateType(
+    const std::string& name,
+    const std::vector<TypePtr>& argTypes) {
+  auto signatures = getAggregateFunctionSignatures(name);
+  if (!signatures.has_value()) {
+    VELOX_FAIL("Aggregate {} not registered", name);
+  }
+  for (auto& signature : signatures.value()) {
+    SignatureBinder binder(*signature, argTypes);
+    if (binder.tryBind()) {
+      auto type = binder.tryResolveType(signature->intermediateType());
+      VELOX_CHECK(type, "failed to resolve intermediate type for {}", name);
+      return type;
+    }
+  }
+  VELOX_FAIL("Could not infer intermediate type for aggregate {}", name);
 }
 
 } // namespace facebook::velox::exec

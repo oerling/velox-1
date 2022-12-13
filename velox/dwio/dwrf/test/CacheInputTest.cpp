@@ -19,48 +19,33 @@
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/memory/MmapAllocator.h"
-#include "velox/dwio/dwrf/common/CachedBufferedInput.h"
+#include "velox/dwio/common/CachedBufferedInput.h"
+#include "velox/dwio/dwrf/common/Common.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 #include <gtest/gtest.h>
 
 using namespace facebook::velox;
 using namespace facebook::velox::dwio;
+using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::cache;
 
-using facebook::velox::dwio::common::IoStatistics;
-using facebook::velox::dwio::common::Region;
-using memory::MappedMemory;
-using IoStatisticsPtr =
-    std::shared_ptr<facebook::velox::dwio::common::IoStatistics>;
+using memory::MemoryAllocator;
+using IoStatisticsPtr = std::shared_ptr<IoStatistics>;
 
 // Testing stream producing deterministic data. The byte at offset is
 // the low byte of 'seed_' + offset.
-class TestInputStream : public facebook::velox::dwio::common::InputStream {
+class TestReadFile : public ReadFile {
  public:
-  TestInputStream(
-      const std::string& path,
-      uint64_t seed,
-      uint64_t length,
-      IoStatisticsPtr ioStats)
-      : InputStream(path),
-        seed_(seed),
-        length_(length),
-        ioStats_(std::move(ioStats)) {}
+  TestReadFile(uint64_t seed, uint64_t length, IoStatisticsPtr ioStats)
+      : seed_(seed), length_(length), ioStats_(std::move(ioStats)) {}
 
-  uint64_t getLength() const override {
+  uint64_t size() const override {
     return length_;
   }
 
-  uint64_t getNaturalReadSize() const override {
-    return 1024 * 1024;
-  }
-
-  void read(
-      void* buffer,
-      uint64_t length,
-      uint64_t offset,
-      facebook::velox::dwio::common::LogType) override {
+  std::string_view pread(uint64_t offset, uint64_t length, void* buffer)
+      const override {
     int fill;
     uint64_t content = offset + seed_;
     uint64_t available = std::min(length_ - offset, length);
@@ -68,6 +53,7 @@ class TestInputStream : public facebook::velox::dwio::common::InputStream {
       reinterpret_cast<char*>(buffer)[fill] = content + fill;
     }
     ioStats_->incRawBytesRead(length);
+    return std::string_view(static_cast<const char*>(buffer), fill);
   }
 
   // Asserts that 'bytes' is as would be read from 'offset'.
@@ -79,24 +65,26 @@ class TestInputStream : public facebook::velox::dwio::common::InputStream {
     }
   }
 
+  uint64_t memoryUsage() const override {
+    VELOX_NYI();
+  }
+
+  bool shouldCoalesce() const override {
+    VELOX_NYI();
+  }
+
+  std::string getName() const override {
+    return "<TestReadFile>";
+  }
+
+  uint64_t getNaturalReadSize() const override {
+    VELOX_NYI();
+  }
+
  private:
   const uint64_t seed_;
   const uint64_t length_;
   IoStatisticsPtr ioStats_;
-};
-
-class TestInputStreamHolder : public dwrf::AbstractInputStreamHolder {
- public:
-  explicit TestInputStreamHolder(
-      std::shared_ptr<facebook::velox::dwio::common::InputStream> stream)
-      : stream_(std::move(stream)) {}
-
-  facebook::velox::dwio::common::InputStream& get() override {
-    return *stream_;
-  }
-
- private:
-  std::shared_ptr<facebook::velox::dwio::common::InputStream> stream_;
 };
 
 class CacheTest : public testing::Test {
@@ -105,16 +93,16 @@ class CacheTest : public testing::Test {
 
   // Describes a piece of file potentially read by this test.
   struct StripeData {
-    TestInputStream* file;
-    std::unique_ptr<dwrf::CachedBufferedInput> input;
-    std::vector<std::unique_ptr<dwrf::SeekableInputStream>> streams;
-    std::vector<facebook::velox::dwio::common::Region> regions;
+    TestReadFile* file;
+    std::unique_ptr<CachedBufferedInput> input;
+    std::vector<std::unique_ptr<SeekableInputStream>> streams;
+    std::vector<Region> regions;
   };
 
   void SetUp() override {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
     rng_.seed(1);
-    ioStats_ = std::make_shared<facebook::velox::dwio::common::IoStatistics>();
+    ioStats_ = std::make_shared<IoStatistics>();
   }
 
   void TearDown() override {
@@ -137,14 +125,15 @@ class CacheTest : public testing::Test {
           executor_.get());
       groupStats_ = &ssd->groupStats();
     }
-    memory::MmapAllocatorOptions options = {maxBytes};
+    memory::MmapAllocatorOptions options;
+    options.capacity = maxBytes;
     cache_ = std::make_shared<AsyncDataCache>(
         std::make_shared<memory::MmapAllocator>(options),
         maxBytes,
         std::move(ssd));
     cache_->setVerifyHook(checkEntry);
     for (auto i = 0; i < kMaxStreams; ++i) {
-      streamIds_.push_back(std::make_unique<dwrf::StreamIdentifier>(
+      streamIds_.push_back(std::make_unique<dwrf::DwrfStreamIdentifier>(
           i, i, 0, dwrf::StreamKind_DATA));
     }
     streamStarts_.resize(kMaxStreams + 1);
@@ -202,7 +191,7 @@ class CacheTest : public testing::Test {
     return lease.id();
   }
 
-  std::shared_ptr<facebook::velox::dwio::common::InputStream>
+  std::shared_ptr<TestReadFile>
   inputByPath(const std::string& path, uint64_t& fileId, uint64_t& groupId) {
     std::lock_guard<std::mutex> l(mutex_);
     StringIdLease lease(fileIds(), path);
@@ -213,8 +202,7 @@ class CacheTest : public testing::Test {
     if (it == pathToInput_.end()) {
       fileIds_.push_back(lease);
       fileIds_.push_back(groupLease);
-      auto stream = std::make_shared<TestInputStream>(
-          path,
+      auto stream = std::make_shared<TestReadFile>(
           lease.id(),
           1UL << 63,
           std::make_shared<dwio::common::IoStatistics>());
@@ -228,7 +216,7 @@ class CacheTest : public testing::Test {
   // enqueued. 'numColumns' streams are evenly selected from
   // kMaxStreams.
   std::unique_ptr<StripeData> makeStripeData(
-      std::shared_ptr<facebook::velox::dwio::common::InputStream> inputStream,
+      std::shared_ptr<TestReadFile> readFile,
       int32_t numColumns,
       std::shared_ptr<ScanTracker> tracker,
       uint64_t fileId,
@@ -236,23 +224,20 @@ class CacheTest : public testing::Test {
       int64_t offset,
       const IoStatisticsPtr& ioStats) {
     auto data = std::make_unique<StripeData>();
-    facebook::velox::dwio::common::DataCacheConfig config{nullptr, fileId};
-    data->input = std::make_unique<dwrf::CachedBufferedInput>(
-        *inputStream,
+    data->input = std::make_unique<CachedBufferedInput>(
+        readFile,
         *pool_,
-        &config,
+        MetricsLog::voidLog(),
+        fileId,
         cache_.get(),
         tracker,
         groupId,
-        [inputStream]() {
-          return std::make_unique<TestInputStreamHolder>(inputStream);
-        },
         ioStats,
         executor_.get(),
         dwio::common::ReaderOptions::kDefaultLoadQuantum, // loadQuantum 8MB.
         512 << 10 // Max coalesce distance 512K.
     );
-    data->file = dynamic_cast<TestInputStream*>(inputStream.get());
+    data->file = readFile.get();
     for (auto i = 0; i < numColumns; ++i) {
       int32_t streamIndex = i * (kMaxStreams / numColumns);
 
@@ -281,6 +266,7 @@ class CacheTest : public testing::Test {
       auto region = stripe.regions[columnIndex];
       random = folly::hasher<uint64_t>()(region.offset + columnIndex);
     } else {
+      std::lock_guard<std::mutex> l(mutex_);
       random = folly::Random::rand32(rng_);
     }
     return random % 100 < readPct / ((columnIndex % modulo) + 1);
@@ -302,19 +288,19 @@ class CacheTest : public testing::Test {
       // Test random access
       std::vector<uint64_t> offsets = {
           0, region.length / 3, region.length * 2 / 3};
-      dwrf::PositionProvider positions(offsets);
+      PositionProvider positions(offsets);
       for (auto i = 0; i < offsets.size(); ++i) {
-        stream.seekToRowGroup(positions);
+        stream.seekToPosition(positions);
         checkRandomRead(stripe, stream, offsets, i, region);
       }
     }
   }
   void checkRandomRead(
       const StripeData& stripe,
-      dwrf::SeekableInputStream& stream,
+      SeekableInputStream& stream,
       const std::vector<uint64_t>& offsets,
       int32_t i,
-      facebook::velox::dwio::common::Region region) {
+      Region region) {
     const void* data;
     int32_t size;
     int64_t numRead = 0;
@@ -366,8 +352,7 @@ class CacheTest : public testing::Test {
     std::vector<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
     uint64_t groupId;
-    std::shared_ptr<facebook::velox::dwio::common::InputStream> input =
-        inputByPath(filename, fileId, groupId);
+    auto readFile = inputByPath(filename, fileId, groupId);
     if (groupStats_) {
       groupStats_->recordFile(fileId, groupId, numStripes);
     }
@@ -379,7 +364,7 @@ class CacheTest : public testing::Test {
            prefetchStripeIndex < lastPrefetchStripe;
            ++prefetchStripeIndex) {
         stripes.push_back(makeStripeData(
-            input,
+            readFile,
             numColumns,
             tracker,
             fileId,
@@ -387,13 +372,12 @@ class CacheTest : public testing::Test {
             prefetchStripeIndex * streamStarts_[kMaxStreams - 1],
             ioStats));
         if (stripes.back()->input->shouldPreload()) {
-          stripes.back()->input->load(
-              facebook::velox::dwio::common::LogType::TEST);
+          stripes.back()->input->load(LogType::TEST);
         }
       }
       auto currentStripe = std::move(stripes.front());
       stripes.erase(stripes.begin());
-      currentStripe->input->load(facebook::velox::dwio::common::LogType::TEST);
+      currentStripe->input->load(LogType::TEST);
       for (auto columnIndex = 0; columnIndex < numColumns; ++columnIndex) {
         if (shouldRead(*currentStripe, columnIndex, readPct, readPctModulo)) {
           readStream(*currentStripe, columnIndex);
@@ -437,21 +421,16 @@ class CacheTest : public testing::Test {
   // Serializes 'pathToInput_' and 'fileIds_' in multithread test.
   std::mutex mutex_;
   std::vector<StringIdLease> fileIds_;
-  folly::F14FastMap<
-      uint64_t,
-      std::shared_ptr<facebook::velox::dwio::common::InputStream>>
-      pathToInput_;
+  folly::F14FastMap<uint64_t, std::shared_ptr<TestReadFile>> pathToInput_;
   std::shared_ptr<exec::test::TempDirectoryPath> tempDirectory_;
-  facebook::velox::dwio::common::DataCacheConfig config_;
   cache::FileGroupStats* FOLLY_NULLABLE groupStats_ = nullptr;
   std::shared_ptr<AsyncDataCache> cache_;
-  std::shared_ptr<facebook::velox::dwio::common::IoStatistics> ioStats_;
+  std::shared_ptr<IoStatistics> ioStats_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
-  std::unique_ptr<memory::MemoryPool> pool_{
-      memory::getDefaultScopedMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
 
   // Id of simulated streams. Corresponds 1:1 to 'streamStarts_'.
-  std::vector<std::unique_ptr<dwrf::StreamIdentifier>> streamIds_;
+  std::vector<std::unique_ptr<dwrf::DwrfStreamIdentifier>> streamIds_;
 
   // Start offset of each simulated stream in a simulated stripe.
   std::vector<uint64_t> streamStarts_;
@@ -464,6 +443,67 @@ class CacheTest : public testing::Test {
   // off so as not to inflate cache hits.
   bool testRandomSeek_{true};
 };
+
+TEST_F(CacheTest, window) {
+  constexpr int32_t kMB = 1 << 20;
+  initializeCache(64 * kMB);
+  auto tracker = std::make_shared<ScanTracker>(
+      "testTracker",
+      nullptr,
+      dwio::common::ReaderOptions::kDefaultLoadQuantum,
+      groupStats_);
+  uint64_t fileId;
+  uint64_t groupId;
+  auto file = inputByPath("test_for_window", fileId, groupId);
+  auto input = std::make_unique<CachedBufferedInput>(
+      file,
+      *pool_,
+      MetricsLog::voidLog(),
+      fileId,
+      cache_.get(),
+      tracker,
+      groupId,
+      ioStats_,
+      executor_.get(),
+      dwio::common::ReaderOptions::kDefaultLoadQuantum, // loadQuantum 8MB.
+      512 << 10 // Max coalesce distance 512K.
+  );
+  auto begin = 4 * kMB;
+  auto end = 17 * kMB;
+  auto stream = input->read(begin, end - begin, LogType::TEST);
+  auto cacheInput = dynamic_cast<CacheInputStream*>(stream.get());
+  EXPECT_TRUE(cacheInput != nullptr);
+  auto maxSize =
+      cache_->sizeClasses().back() * memory::MemoryAllocator::kPageSize;
+  const void* buffer;
+  int32_t size;
+  int32_t numRead = 0;
+  while (numRead < end - begin) {
+    EXPECT_TRUE(stream->Next(&buffer, &size));
+    numRead += size;
+  }
+  EXPECT_FALSE(stream->Next(&buffer, &size));
+
+  // We seek to 0.5 MB below the boundary of the 8MB load quantum and make a
+  // clone to read a range on either side of the load quantum boundary.
+  std::vector<uint64_t> positions = {7 * kMB + kMB / 2};
+  auto provider = PositionProvider(positions);
+  // We seek the first stream to 7.5MB inside its range.
+  cacheInput->seekToPosition(provider);
+  // We make a second stream that ranges over a subset of the range of the first
+  // one.
+  auto clone = cacheInput->clone();
+  clone->Skip(100);
+  clone->setRemainingBytes(kMB);
+  EXPECT_TRUE(clone->Next(&buffer, &size));
+  // Half MB minus the 100 bytes skipped above should be left in the first load
+  // quantum of 8MB.
+  EXPECT_EQ(kMB / 2 - 100, size);
+  EXPECT_TRUE(clone->Next(&buffer, &size));
+  EXPECT_EQ(kMB / 2 + 100, size);
+  // There should be no more data in the window.
+  EXPECT_FALSE(clone->Next(&buffer, &size));
+}
 
 TEST_F(CacheTest, bufferedInput) {
   // Size 160 MB. Frequent evictions and not everything fits in prefetch window.
@@ -573,9 +613,10 @@ TEST_F(CacheTest, ssdThreads) {
   // file 1 etc. Each tread reads its file 4 times.
   for (int i = 0; i < kNumThreads; ++i) {
     stats.push_back(std::make_shared<dwio::common::IoStatistics>());
-    threads.push_back(std::thread([i, this, &stats]() {
+    threads.push_back(std::thread([i, this, threadStats = stats.back()]() {
       for (auto counter = 0; counter < 4; ++counter) {
-        readLoop(fmt::format("testfile{}", i / 2), 10, 70, 10, 20, 2, stats[i]);
+        readLoop(
+            fmt::format("testfile{}", i / 2), 10, 70, 10, 20, 2, threadStats);
       }
     }));
   }
@@ -595,4 +636,127 @@ TEST_F(CacheTest, ssdThreads) {
         stats[i]->read().bytes() + stats[i]->ssdRead().bytes());
   }
   LOG(INFO) << cache_->toString();
+}
+
+class FileWithReadAhead {
+ public:
+  static constexpr int32_t kFileSize = 21 << 20;
+  static constexpr int64_t kLoadQuantum = 4 << 20;
+  FileWithReadAhead(
+      const std::string& name,
+      cache::AsyncDataCache* FOLLY_NONNULL cache,
+      IoStatisticsPtr stats,
+      memory::MemoryPool& pool,
+      folly::Executor* executor) {
+    fileId_ = std::make_unique<StringIdLease>(fileIds(), name);
+    file_ = std::make_shared<TestReadFile>(fileId_->id(), kFileSize, stats);
+    bufferedInput_ = std::make_unique<CachedBufferedInput>(
+        file_,
+        pool,
+        MetricsLog::voidLog(),
+        fileId_->id(),
+        cache,
+        nullptr,
+        0,
+        stats,
+        executor,
+        kLoadQuantum,
+        0);
+    auto sequential = StreamIdentifier::sequentialFile();
+    stream_ = bufferedInput_->enqueue(Region{0, file_->size()}, &sequential);
+    // Trigger load of next 4MB after reading the first 2MB of the previous 4MB
+    // quantum.
+    reinterpret_cast<CacheInputStream*>(stream_.get())->setPrefetchPct(50);
+    reinterpret_cast<CacheInputStream*>(stream_.get())->setNoRetention();
+    bufferedInput_->load(LogType::FILE);
+  }
+
+  bool next(const void*& buffer, int32_t& size) {
+    return stream_->Next(&buffer, &size);
+  }
+
+ private:
+  std::unique_ptr<StringIdLease> fileId_;
+  std::unique_ptr<CachedBufferedInput> bufferedInput_;
+  std::unique_ptr<SeekableInputStream> stream_;
+  std::shared_ptr<TestReadFile> file_;
+};
+
+TEST_F(CacheTest, readAhead) {
+  constexpr int32_t kNumThreads = 3;
+  constexpr int32_t kFilesPerThread = 100;
+  constexpr int32_t kMinRead = 700000;
+
+  constexpr int64_t kExpectedSize =
+      kNumThreads * kFilesPerThread * FileWithReadAhead::kLoadQuantum;
+  initializeCache(kExpectedSize * 1.7, 0);
+  deterministic_ = true;
+  std::vector<IoStatisticsPtr> stats;
+  stats.reserve(kNumThreads);
+  std::vector<std::thread> threads;
+  threads.reserve(kNumThreads);
+
+  // We read kFilesPerThread on each thread. The files are read in parallel,
+  // advancing each file in turn. Read-ahead is triggered when a fraction of the
+  // current cache entry of each file is consumed.
+
+  for (int threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {
+    stats.push_back(std::make_shared<dwio::common::IoStatistics>());
+    threads.push_back(std::thread([threadIndex,
+                                   this,
+                                   threadStats = stats.back()]() {
+      std::vector<std::unique_ptr<FileWithReadAhead>> files;
+      auto firstFileNumber = threadIndex * kFilesPerThread;
+      for (auto i = 0; i < kFilesPerThread; ++i) {
+        auto name = fmt::format("prefetch_{}", i + firstFileNumber);
+        files.push_back(std::make_unique<FileWithReadAhead>(
+            name, cache_.get(), threadStats, *pool_, executor_.get()));
+      }
+      std::vector<int64_t> totalRead(kFilesPerThread);
+      std::vector<int64_t> bytesLeft(kFilesPerThread);
+      for (auto counter = 0; counter < 100; ++counter) {
+        for (auto i = 0; i < kFilesPerThread; ++i) {
+          if (!files[i]) {
+            continue; // This set of files is finished.
+          }
+          // Read from the next file. Different files advance at slightly
+          // different rates.
+          auto bytesNeeded = kMinRead + i * 1000;
+          while (bytesLeft[i] < bytesNeeded) {
+            const void* buffer;
+            int32_t size;
+            if (!files[i]->next(buffer, size)) {
+              // End of file. Check that a multiple of file size has been read.
+              EXPECT_EQ(0, totalRead[i] % FileWithReadAhead::kFileSize);
+              if (totalRead[i] >= 3 * FileWithReadAhead::kFileSize) {
+                files[i] = nullptr;
+                break;
+              }
+              // Open a new file with a different unique name.
+              auto newName = fmt::format(
+                  "prefetch_{}",
+                  (static_cast<int64_t>(firstFileNumber) + i + i) * 1000000000 +
+                      totalRead[i]);
+              files[i] = std::make_unique<FileWithReadAhead>(
+                  newName, cache_.get(), threadStats, *pool_, executor_.get());
+              continue;
+            }
+            totalRead[i] += size;
+            bytesLeft[i] += size;
+          }
+          bytesLeft[i] -= bytesNeeded;
+        }
+      }
+    }));
+  }
+  int64_t bytes = 0;
+  int32_t count = 0;
+  for (int i = 0; i < kNumThreads; ++i) {
+    threads[i].join();
+    bytes += stats[i]->prefetch().bytes();
+    count += stats[i]->prefetch().count();
+  }
+  executor_->join();
+
+  LOG(INFO) << count << " prefetches with total " << bytes << " bytes";
 }

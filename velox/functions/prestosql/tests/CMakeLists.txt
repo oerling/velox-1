@@ -12,41 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(velox_functions_test_lib FunctionBaseTest.cpp)
-
-target_link_libraries(velox_functions_test_lib velox_exec velox_exec_test_util
-                      velox_vector_test_lib velox_parse_parser)
+add_subdirectory(utils)
 
 add_executable(
   velox_functions_test
   ArithmeticTest.cpp
+  ArrayCombinationsTest.cpp
   ArrayConstructorTest.cpp
   ArrayContainsTest.cpp
   ArrayDistinctTest.cpp
   ArrayDuplicatesTest.cpp
   ArrayExceptTest.cpp
   ArrayFilterTest.cpp
+  ArrayJoinTest.cpp
+  ArrayHasDuplicatesTest.cpp
   ArrayIntersectTest.cpp
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
   ArrayPositionTest.cpp
+  ArraySortTest.cpp
   ArraysOverlapTest.cpp
+  ArraySumTest.cpp
   BitwiseTest.cpp
   CardinalityTest.cpp
   CeilFloorTest.cpp
   ComparisonsTest.cpp
   DateTimeFunctionsTest.cpp
+  DecimalArithmeticTest.cpp
   ElementAtTest.cpp
   HyperLogLogCastTest.cpp
   HyperLogLogFunctionsTest.cpp
   InPredicateTest.cpp
   JsonCastTest.cpp
   JsonExtractScalarTest.cpp
-  MapConcatTest.cpp
+  JsonFunctionsTest.cpp
   MapEntriesTest.cpp
   MapFilterTest.cpp
   MapKeysAndValuesTest.cpp
   MapTest.cpp
+  MapZipWithTest.cpp
   NotTest.cpp
   ReduceTest.cpp
   RegexpReplaceTest.cpp
@@ -56,10 +60,13 @@ add_executable(
   SplitTest.cpp
   StringFunctionsTest.cpp
   TransformTest.cpp
+  TransformKeysTest.cpp
+  TransformValuesTest.cpp
   URLFunctionsTest.cpp
   WidthBucketArrayTest.cpp
   GreatestLeastTest.cpp
-  ZipTest.cpp)
+  ZipTest.cpp
+  ZipWithTest.cpp)
 
 add_test(velox_functions_test velox_functions_test)
 
@@ -70,9 +77,11 @@ target_link_libraries(
   velox_expression
   velox_functions_prestosql
   velox_functions_lib
-  velox_exec_test_util
-  velox_dwrf_test_utils
+  velox_exec_test_lib
+  velox_dwio_common_test_utils
+  velox_vector_fuzzer
   gtest
   gtest_main
   ${gflags_LIBRARIES}
-  gmock)
+  gmock
+  gmock_main)
