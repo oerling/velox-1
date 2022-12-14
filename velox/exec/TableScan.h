@@ -91,6 +91,12 @@ class TableScan : public SourceOperator {
   std::function<void(std::shared_ptr<connector::ConnectorSplit>)>
       splitPreloader_{nullptr};
 
+  // Count of splits that started background preload.
+  int32_t numPreloadedSplits_{0};
+
+  // Count of splits that finished preloading before being read.
+  int32_t numReadyPreloadedSplits_{0};
+  
   int32_t readBatchSize_{kDefaultBatchSize};
 
   // String shown in ExceptionContext inside DataSource and LazyVector loading.
