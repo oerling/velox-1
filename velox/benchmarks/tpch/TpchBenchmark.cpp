@@ -138,36 +138,36 @@ class TpchBenchmark {
       const TpchPlan& tpchPlan) {
     int32_t repeat = 0;
     try {
-    for (;;) {
-      CursorParameters params;
-      params.maxDrivers = FLAGS_num_drivers;
-      params.planNode = tpchPlan.plan;
-      const int numSplitsPerFile = FLAGS_num_splits_per_file;
+      for (;;) {
+        CursorParameters params;
+        params.maxDrivers = FLAGS_num_drivers;
+        params.planNode = tpchPlan.plan;
+        const int numSplitsPerFile = FLAGS_num_splits_per_file;
 
-      bool noMoreSplits = false;
-      auto addSplits = [&](exec::Task* task) {
-        if (!noMoreSplits) {
-          for (const auto& entry : tpchPlan.dataFiles) {
-            for (const auto& path : entry.second) {
-              auto const splits =
-                  HiveConnectorTestBase::makeHiveConnectorSplits(
-                      path, numSplitsPerFile, tpchPlan.dataFileFormat);
-              for (const auto& split : splits) {
-                task->addSplit(entry.first, exec::Split(split));
+        bool noMoreSplits = false;
+        auto addSplits = [&](exec::Task* task) {
+          if (!noMoreSplits) {
+            for (const auto& entry : tpchPlan.dataFiles) {
+              for (const auto& path : entry.second) {
+                auto const splits =
+                    HiveConnectorTestBase::makeHiveConnectorSplits(
+                        path, numSplitsPerFile, tpchPlan.dataFileFormat);
+                for (const auto& split : splits) {
+                  task->addSplit(entry.first, exec::Split(split));
+                }
               }
+              task->noMoreSplits(entry.first);
             }
-            task->noMoreSplits(entry.first);
           }
+          noMoreSplits = true;
+        };
+        auto result = readCursor(params, addSplits);
+        ensureTaskCompletion(result.first->task().get());
+        if (++repeat >= FLAGS_num_repeats) {
+          return result;
         }
-        noMoreSplits = true;
-      };
-      auto result = readCursor(params, addSplits);
-      ensureTaskCompletion(result.first->task().get());
-      if (++repeat >= FLAGS_num_repeats) {
-        return result;
       }
-    }
-    }catch (const std::exception& e) {
+    } catch (const std::exception& e) {
       LOG(ERROR) << "Query terminated with: " << e.what();
       return {nullptr, {}};
     }
@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
     const auto queryPlan = queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
     const auto [cursor, actualResults] = benchmark.run(queryPlan);
     if (!cursor) {
-      LOG(ERROR) << "Query terminated with error. Exiting"; 
+      LOG(ERROR) << "Query terminated with error. Exiting";
       exit(1);
     }
     auto task = cursor->task();

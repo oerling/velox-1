@@ -250,7 +250,9 @@ class ProbeState {
       table.hasTombstones_ = true;
     }
     BaseHashTable::storeTag(
-        table.tags_, tagIndex_ + indexInTags_, hasEmptyGroup ? 0 : kTombstoneTag);
+        table.tags_,
+        tagIndex_ + indexInTags_,
+        hasEmptyGroup ? 0 : kTombstoneTag);
     numTombstones += !hasEmptyGroup;
   }
 
@@ -711,8 +713,7 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
       // padding of 16 bytes to round up the cache line.
       auto numPages =
           bits::roundUp(size * sizeof(char*), kPageSize) / kPageSize;
-      if (!rows_->pool()->allocateContiguous(
-              numPages, tableAllocation_)) {
+      if (!rows_->pool()->allocateContiguous(numPages, tableAllocation_)) {
         VELOX_FAIL("Could not allocate join/group by hash table");
       }
       tags_ = tableAllocation_.data<uint8_t>();
@@ -722,8 +723,7 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
       // The total size is 9 bytes per slot, 8 in the pointers table and 1 in
       // the tags table.
       auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
-      if (!rows_->pool()->allocateContiguous(
-              numPages, tableAllocation_)) {
+      if (!rows_->pool()->allocateContiguous(numPages, tableAllocation_)) {
         VELOX_FAIL("Could not allocate join/group by hash table");
       }
       table_ = tableAllocation_.data<char*>();
