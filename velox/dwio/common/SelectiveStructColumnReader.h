@@ -99,7 +99,7 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
     auto otherStruct = dynamic_cast<SelectiveStructColumnReaderBase*>(&other);
     scanSpec_->moveAdaptationFrom(*otherStruct->scanSpec_);
   }
-  
+
   const std::string& debugString() const {
     return debugString_;
   }

@@ -53,7 +53,7 @@ class ScanSpec {
   explicit ScanSpec(const std::string& name) : fieldName_(name) {}
 
   ScanSpec(const ScanSpec& other);
-  
+
   // Filter to apply. If 'this' corresponds to a struct/list/map, this
   // can only be isNull or isNotNull, other filtering is given by
   // 'children'.

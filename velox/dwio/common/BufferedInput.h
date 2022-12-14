@@ -120,7 +120,6 @@ class BufferedInput {
     return nullptr;
   }
 
-  
  protected:
   std::shared_ptr<ReadFileInputStream> input_;
   memory::MemoryPool& pool_;

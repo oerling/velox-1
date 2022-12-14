@@ -124,7 +124,7 @@ class DwrfRowReader : public StrideIndexProvider,
   // Creates column reader tree and may start prefetch of frequently read
   // columns.
   void startNextStripe();
-  
+
  private:
   using StripeReaderSource = AsyncSource<DwrfRowReader>;
 

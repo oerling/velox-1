@@ -567,7 +567,9 @@ class Task : public std::enable_shared_from_this<Task> {
 
   /// Returns next split from the store. The caller must ensure the store is not
   /// empty.
-  exec::Split getSplitLocked(SplitsStore& splitsStore,       int32_t maxPreloadSplits,
+  exec::Split getSplitLocked(
+      SplitsStore& splitsStore,
+      int32_t maxPreloadSplits,
       std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload);
 
   /// Creates for the given split group and fills up the 'SplitGroupState'

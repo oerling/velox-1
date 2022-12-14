@@ -364,8 +364,6 @@ class SelectiveColumnReader {
     VELOX_NYI();
   }
 
-
-  
   virtual bool rowGroupMatches(uint32_t rowGroupId) const;
 
   virtual std::vector<uint32_t> filterRowGroups(

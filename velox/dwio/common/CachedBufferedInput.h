@@ -163,7 +163,7 @@ class CachedBufferedInput : public BufferedInput {
   folly::Executor* FOLLY_NULLABLE executor() const override {
     return executor_;
   }
-  
+
  private:
   // Sorts requests and makes CoalescedLoads for nearby requests. If 'prefetch'
   // is true, starts background loading.

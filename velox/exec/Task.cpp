@@ -962,9 +962,10 @@ BlockingReason Task::getSplitOrFutureLocked(
   return BlockingReason::kNotBlocked;
 }
 
-  exec::Split Task::getSplitLocked(SplitsStore& splitsStore,
-				   int32_t maxPreloadSplits,
-      std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload) {
+exec::Split Task::getSplitLocked(
+    SplitsStore& splitsStore,
+    int32_t maxPreloadSplits,
+    std::function<void(std::shared_ptr<connector::ConnectorSplit>)> preload) {
   int32_t readySplitIndex = -1;
   if (maxPreloadSplits) {
     for (auto i = 0; i < splitsStore.splits.size() && i < maxPreloadSplits;
@@ -990,7 +991,6 @@ BlockingReason Task::getSplitOrFutureLocked(
   if (taskStats_.firstSplitStartTimeMs == 0) {
     taskStats_.firstSplitStartTimeMs = taskStats_.lastSplitStartTimeMs;
   }
-
 
   return split;
 }

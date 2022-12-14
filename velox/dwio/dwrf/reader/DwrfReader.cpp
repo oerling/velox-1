@@ -15,10 +15,10 @@
  */
 
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
-#include "velox/dwio/common/TypeUtils.h"
-#include "velox/dwio/common/exception/Exception.h"
 #include "velox/dwio/common/CachedBufferedInput.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
+#include "velox/dwio/common/TypeUtils.h"
+#include "velox/dwio/common/exception/Exception.h"
 
 DEFINE_bool(prefetch_stripes, true, "Enable prefetch of stripes.");
 
@@ -32,7 +32,6 @@ using dwio::common::RowReaderOptions;
 using dwio::common::TypeWithId;
 using dwio::common::typeutils::CompatChecker;
 
-  
 DwrfRowReader::DwrfRowReader(
     const std::shared_ptr<ReaderBase>& reader,
     const RowReaderOptions& opts)
@@ -90,10 +89,9 @@ DwrfRowReader::DwrfRowReader(
   CompatChecker::check(
       *getReader().getSchema(), *getType(), true, createExceptionContext);
 }
-  
+
 bool DwrfRowReader::mayPrefetch() const {
-  return FLAGS_prefetch_stripes &&
-      getReader().getBufferedInput().executor();
+  return FLAGS_prefetch_stripes && getReader().getBufferedInput().executor();
 }
 
 std::unique_ptr<dwio::common::RowReader> DwrfReader::createRowReader(
