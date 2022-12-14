@@ -153,10 +153,12 @@ RowVectorPtr TableScan::getOutput() {
       lockedStats->addRuntimeStat(
           "preloadedSplits",
           RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
+      numPreloadedSplits_ = 0;
       lockedStats->addRuntimeStat(
           "readyPreloadedSplits",
           RuntimeCounter(
               numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
+      numReadyPreloadedSplits_ = 0;
       lockedStats->addRuntimeStat(
           "dataSourceWallNanos",
           RuntimeCounter(

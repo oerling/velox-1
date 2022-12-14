@@ -107,10 +107,12 @@ class TpchBenchmark {
       parquet::registerParquetReaderFactory(parquet::ParquetReaderType::DUCKDB);
     }
     dwrf::registerDwrfReaderFactory();
+  ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
+
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, nullptr);
+      ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
   }
 
@@ -139,6 +141,8 @@ class TpchBenchmark {
     };
     return readCursor(params, addSplits);
   }
+
+    std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
 };
 
 TpchBenchmark benchmark;
