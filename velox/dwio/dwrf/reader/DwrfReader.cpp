@@ -340,7 +340,7 @@ uint64_t DwrfRowReader::nextInStripe(uint64_t size, VectorPtr& result) {
     // reading of the data.
     setStrideIndex(strideSize > 0 ? currentRowInStripe / strideSize : 0);
 
-    columnReader_->next(rowsToRead, result);
+    selectiveColumnReader_->next(rowsToRead, result);
   }
 
   // update row number

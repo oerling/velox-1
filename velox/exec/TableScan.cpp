@@ -102,6 +102,12 @@ RowVectorPtr TableScan::getOutput() {
           connectorSplit->toString(),
           operatorCtx_->task()->taskId());
 
+      ExceptionContextSetter exceptionContext(
+          {[](VeloxException::Type /*exceptionType*/, auto* debugString) {
+             return *static_cast<std::string*>(debugString);
+           },
+           &debugString_});
+
       if (connectorSplit->dataSource) {
         // The AsyncSource returns a unique_ptr to a shared_ptr. The
         // unique_ptr will be nullptr if there was a cancellation.
@@ -116,7 +122,6 @@ RowVectorPtr TableScan::getOutput() {
       } else {
         dataSource_->addSplit(connectorSplit);
       }
-
 
       ++stats_.wlock()->numSplits;
       setBatchSize();
@@ -185,6 +190,14 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
           return nullptr;
         }
         auto ptr = std::make_unique<DataSourcePtr>();
+        auto debugString =
+            fmt::format("Split {} Task {}", split->toString(), task->taskId());
+        ExceptionContextSetter exceptionContext(
+            {[](VeloxException::Type /*exceptionType*/, auto* debugString) {
+               return *static_cast<std::string*>(debugString);
+             },
+             &debugString});
+
         *ptr = connector->createDataSource(type, table, columns, ctx.get());
         if (task->isCancelled()) {
           return nullptr;

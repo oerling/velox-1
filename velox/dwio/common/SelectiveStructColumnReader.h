@@ -95,6 +95,11 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
     inputRows_ = outputRows_;
   }
 
+  void moveScanSpec(SelectiveColumnReader& other) override {
+    auto otherStruct = dynamic_cast<SelectiveStructColumnReaderBase*>(&other);
+    scanSpec_->moveAdaptationFrom(*otherStruct->scanSpec_);
+  }
+  
   const std::string& debugString() const {
     return debugString_;
   }
@@ -145,11 +150,6 @@ struct SelectiveStructColumnReader : SelectiveStructColumnReaderBase {
     childrenOwned_.push_back(std::move(child));
   }
 
-  void moveScanSpec(SelectiveColumnReader& other) override {
-    auto otherStruct = dynamic_cast<SelectiveStructColumnReader*>(&other);
-    scanSpec_->moveAdaptationFrom(*otherStruct->scanSpec_);
-  }
-  
  private:
   // Store the actual child readers.  In `children_` we only kept the raw
   // pointers and do not have ownership.
