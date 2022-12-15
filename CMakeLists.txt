@@ -11,7 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-cmake_minimum_required(VERSION 3.11)
+cmake_minimum_required(VERSION 3.14)
+
+# the policy allows us to change options without caching
+cmake_policy(SET CMP0077 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
 
 # set the project name
@@ -240,7 +245,9 @@ endif()
 if("${ENABLE_ALL_WARNINGS}")
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(KNOWN_COMPILER_SPECIFIC_WARNINGS
-        "-Wno-range-loop-analysis -Wno-mismatched-tags")
+        "-Wno-range-loop-analysis \
+         -Wno-mismatched-tags \
+         -Wno-nullability-completeness")
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set(KNOWN_COMPILER_SPECIFIC_WARNINGS
         "-Wno-implicit-fallthrough \
@@ -292,7 +299,8 @@ include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 find_package(gflags COMPONENTS shared)
 find_package(glog REQUIRED)
 
-find_library(FMT fmt)
+set_source(fmt)
+resolve_dependency(fmt)
 
 find_library(EVENT event)
 
