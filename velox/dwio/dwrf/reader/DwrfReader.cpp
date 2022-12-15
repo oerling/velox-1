@@ -91,7 +91,7 @@ DwrfRowReader::DwrfRowReader(
 }
 
 bool DwrfRowReader::mayPrefetch() const {
-  return FLAGS_prefetch_stripes && getReader().getBufferedInput().executor();
+  return FLAGS_prefetch_stripes && options_.getScanSpec() && getReader().getBufferedInput().executor();
 }
 
 std::unique_ptr<dwio::common::RowReader> DwrfReader::createRowReader(
@@ -337,8 +337,11 @@ uint64_t DwrfRowReader::nextInStripe(uint64_t size, VectorPtr& result) {
     // Record strideIndex for use by the columnReader_ which may delay actual
     // reading of the data.
     setStrideIndex(strideSize > 0 ? currentRowInStripe / strideSize : 0);
-
-    selectiveColumnReader_->next(rowsToRead, result);
+    if (selectiveColumnReader_) {
+      selectiveColumnReader_->next(rowsToRead, result);
+    } else {
+      columnReader_->next(rowsToRead, result);
+    }
   }
 
   // update row number
