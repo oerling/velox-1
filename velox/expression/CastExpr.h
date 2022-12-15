@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/expression/FunctionCallToSpecialForm.h"
 #include "velox/expression/SpecialForm.h"
 
 namespace facebook::velox::exec {
@@ -143,7 +144,7 @@ class CastExpr : public SpecialForm {
   /// @param result The result vector
   void apply(
       const SelectivityVector& rows,
-      VectorPtr& input,
+      const VectorPtr& input,
       exec::EvalCtx& context,
       const TypePtr& fromType,
       const TypePtr& toType,
@@ -168,7 +169,7 @@ class CastExpr : public SpecialForm {
       const RowVector* input,
       exec::EvalCtx& context,
       const RowType& fromType,
-      const RowType& toType);
+      const TypePtr& toType);
 
   /// Apply the cast between decimal vectors.
   /// @param rows Non-null rows of the input vector.
@@ -201,6 +202,16 @@ class CastExpr : public SpecialForm {
   // Custom cast operator for the to-type. Nullptr if the type is native or
   // doesn't support cast-to.
   CastOperatorPtr castToOperator_;
+};
+
+class CastCallToSpecialForm : public FunctionCallToSpecialForm {
+ public:
+  TypePtr resolveType(const std::vector<TypePtr>& argTypes) override;
+
+  ExprPtr constructSpecialForm(
+      const TypePtr& type,
+      std::vector<ExprPtr>&& compiledChildren,
+      bool trackCpuUsage) override;
 };
 
 } // namespace facebook::velox::exec

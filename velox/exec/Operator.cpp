@@ -84,7 +84,7 @@ OperatorCtx::createConnectorQueryCtx(
       pool_,
       driverCtx_->task->queryCtx()->getConnectorConfig(connectorId),
       expressionEvaluator_.get(),
-      driverCtx_->task->queryCtx()->mappedMemory(),
+      driverCtx_->task->queryCtx()->allocator(),
       taskId(),
       planNodeId,
       driverCtx_->driverId);
@@ -92,11 +92,11 @@ OperatorCtx::createConnectorQueryCtx(
 
 std::optional<Spiller::Config> OperatorCtx::makeSpillConfig(
     Spiller::Type type) const {
-  const auto& queryConfig = driverCtx_->task->queryCtx()->config();
+  const auto& queryConfig = driverCtx_->task->queryCtx()->queryConfig();
   if (!queryConfig.spillEnabled()) {
     return std::nullopt;
   }
-  if (!queryConfig.spillPath().has_value()) {
+  if (driverCtx_->task->spillDirectory().empty()) {
     return std::nullopt;
   }
   switch (type) {
@@ -124,8 +124,8 @@ std::optional<Spiller::Config> OperatorCtx::makeSpillConfig(
 
   return Spiller::Config(
       makeOperatorSpillPath(
-          queryConfig.spillPath().value(),
-          taskId(),
+          driverCtx_->task->spillDirectory(),
+          driverCtx()->pipelineId,
           driverCtx()->driverId,
           operatorId_),
       queryConfig.maxSpillFileSize(),
@@ -230,14 +230,6 @@ std::optional<uint32_t> Operator::maxDrivers(
     }
   }
   return std::nullopt;
-}
-
-memory::MappedMemory* OperatorCtx::mappedMemory() const {
-  if (!mappedMemory_) {
-    mappedMemory_ =
-        driverCtx_->task->addOperatorMemory(pool_->getMemoryUsageTracker());
-  }
-  return mappedMemory_;
 }
 
 const std::string& OperatorCtx::taskId() const {
@@ -414,6 +406,7 @@ void OperatorStats::add(const OperatorStats& other) {
   spilledBytes += other.spilledBytes;
   spilledRows += other.spilledRows;
   spilledPartitions += other.spilledPartitions;
+  spilledFiles += other.spilledFiles;
 }
 
 void OperatorStats::clear() {

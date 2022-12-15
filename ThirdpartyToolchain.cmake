@@ -37,12 +37,12 @@ include(CheckCXXCompilerFlag)
 if(DEFINED ENV{VELOX_FOLLY_URL})
   set(FOLLY_SOURCE_URL "$ENV{VELOX_FOLLY_URL}")
 else()
-  set(VELOX_FOLLY_BUILD_VERSION v2022.07.11.00)
+  set(VELOX_FOLLY_BUILD_VERSION v2022.11.14.00)
   set(FOLLY_SOURCE_URL
       "https://github.com/facebook/folly/archive/${VELOX_FOLLY_BUILD_VERSION}.tar.gz"
   )
   set(VELOX_FOLLY_BUILD_SHA256_CHECKSUM
-      b6cc4082afd1530fdb8d759bc3878c1ea8588f6d5bc9eddf8e1e8abe63f41735)
+      b249436cb61b6dfd5288093565438d8da642b07ae021191a4042b221bc1bdc0e)
 endif()
 
 macro(build_folly)
@@ -181,6 +181,31 @@ macro(build_pybind11)
 endmacro()
 
 # ================================ END PYBIND11 ================================
+# ================================ FMT =========================================
+if(DEFINED ENV{VELOX_FMT_URL})
+  set(VELOX_FMT_SOURCE_URL "$ENV{VELOX_FMT_URL}")
+else()
+  set(VELOX_FMT_VERSION 8.0.1)
+  set(VELOX_FMT_SOURCE_URL
+      "https://github.com/fmtlib/fmt/archive/${VELOX_FMT_VERSION}.tar.gz")
+  set(VELOX_FMT_BUILD_SHA256_CHECKSUM
+      b06ca3130158c625848f3fb7418f235155a4d389b2abc3a6245fb01cb0eb1e01)
+endif()
+
+macro(build_fmt)
+  message(STATUS "Building fmt from source")
+  FetchContent_Declare(
+    fmt
+    URL ${VELOX_FMT_SOURCE_URL}
+    URL_HASH SHA256=${VELOX_FMT_BUILD_SHA256_CHECKSUM})
+
+  # Force fmt to create fmt-config.cmake which can be found by other dependecies
+  # (e.g. folly)
+  set(FMT_INSTALL ON)
+  set(fmt_BUILD_TESTS OFF)
+  FetchContent_MakeAvailable(fmt)
+endmacro()
+# ================================ END FMT ================================
 
 macro(build_dependency DEPENDENCY_NAME)
   if("${DEPENDENCY_NAME}" STREQUAL "folly")
@@ -189,6 +214,8 @@ macro(build_dependency DEPENDENCY_NAME)
     build_protobuf()
   elseif("${DEPENDENCY_NAME}" STREQUAL "pybind11")
     build_pybind11()
+  elseif("${DEPENDENCY_NAME}" STREQUAL "fmt")
+    build_fmt()
   else()
     message(
       FATAL_ERROR "Unknown thirdparty dependency to build: ${DEPENDENCY_NAME}")

@@ -67,6 +67,12 @@ class Task : public std::enable_shared_from_this<Task> {
 
   ~Task();
 
+  /// Specify directory to which data will be spilled if spilling is enabled and
+  /// required.
+  void setSpillDirectory(const std::string& spillDirectory) {
+    spillDirectory_ = spillDirectory;
+  }
+
   std::string toString() const;
 
   /// Returns universally unique identifier of the task.
@@ -271,12 +277,6 @@ class Task : public std::enable_shared_from_this<Task> {
       const core::PlanNodeId& planNodeId,
       int pipelineId,
       const std::string& operatorType);
-
-  /// Creates new instance of MappedMemory, stores it in the task to ensure
-  /// lifetime and returns a raw pointer. Not thread safe, e.g. must be called
-  /// from the Operator's constructor.
-  memory::MappedMemory* FOLLY_NONNULL
-  addOperatorMemory(const std::shared_ptr<memory::MemoryUsageTracker>& tracker);
 
   // Removes driver from the set of drivers in 'self'. The task will be kept
   // alive by 'self'. 'self' going out of scope may cause the Task to
@@ -496,6 +496,10 @@ class Task : public std::enable_shared_from_this<Task> {
 
   static uint64_t numDeletedTasks() {
     return numDeletedTasks_;
+  }
+
+  const std::string& spillDirectory() const {
+    return spillDirectory_;
   }
 
   /// Invoked to wait for all the tasks created by the test to be deleted.
@@ -740,10 +744,6 @@ class Task : public std::enable_shared_from_this<Task> {
   // NOTE: ''childPools_' holds the ownerships of node memory pools.
   std::unordered_map<core::PlanNodeId, memory::MemoryPool*> nodePools_;
 
-  // Keep operator MappedMemory instances alive for the duration of the task to
-  // allow for sharing data without copy.
-  std::vector<std::shared_ptr<memory::MappedMemory>> childMappedMemories_;
-
   // A set of IDs of leaf plan nodes that require splits. Used to check plan
   // node IDs specified in split management methods.
   const std::unordered_set<core::PlanNodeId> splitPlanNodeIds_;
@@ -852,6 +852,9 @@ class Task : public std::enable_shared_from_this<Task> {
   // terminate(). They are fulfilled when the last thread stops
   // running for 'this'.
   std::vector<ContinuePromise> threadFinishPromises_;
+
+  /// Base spill directory for this task.
+  std::string spillDirectory_;
 };
 
 /// Listener invoked on task completion.

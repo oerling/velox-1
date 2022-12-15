@@ -99,8 +99,6 @@ class AggregateFunc : public Aggregate {
       char** /*groups*/,
       int32_t /*numGroups*/,
       VectorPtr* /*result*/) override {}
-
-  void finalize(char** /*groups*/, int32_t /*numGroups*/) override {}
 };
 
 class AggregationTest : public OperatorTestBase {
@@ -113,7 +111,7 @@ class AggregationTest : public OperatorTestBase {
   void SetUp() override {
     OperatorTestBase::SetUp();
     filesystems::registerLocalFileSystem();
-    mappedMemory_ = memory::MappedMemory::getInstance();
+    allocator_ = memory::MemoryAllocator::getInstance();
     registerSumNonPODAggregate("sumnonpod");
   }
 
@@ -343,7 +341,7 @@ class AggregationTest : public OperatorTestBase {
         false,
         true,
         true,
-        mappedMemory_,
+        pool_.get(),
         ContainerRowSerde::instance());
   }
 
@@ -357,7 +355,7 @@ class AggregationTest : public OperatorTestBase {
            DOUBLE(),
            VARCHAR()})};
   folly::Random::DefaultGenerator rng_;
-  memory::MappedMemory* mappedMemory_;
+  memory::MemoryAllocator* allocator_;
 };
 
 template <>
@@ -875,9 +873,9 @@ TEST_F(AggregationTest, spillWithMemoryLimit) {
                         .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
                         .planNode())
                     .queryCtx(queryCtx)
+                    .spillDirectory(tempDirectory->path)
                     .config(QueryConfig::kSpillEnabled, "true")
                     .config(QueryConfig::kAggregationSpillEnabled, "true")
-                    .config(QueryConfig::kSpillPath, tempDirectory->path)
                     .config(
                         QueryConfig::kAggregationSpillMemoryThreshold,
                         std::to_string(testData.aggregationMemLimit))
@@ -983,9 +981,9 @@ DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
                                .singleAggregation({"c0"}, {"array_agg(c1)"})
                                .planNode())
             .queryCtx(queryCtx)
+            .spillDirectory(tempDirectory->path)
             .config(QueryConfig::kSpillEnabled, "true")
             .config(QueryConfig::kAggregationSpillEnabled, "true")
-            .config(QueryConfig::kSpillPath, tempDirectory->path)
             .config(QueryConfig::kMinSpillRunSize, std::to_string(1000'000'000))
             .config(
                 QueryConfig::kSpillPartitionBits,
@@ -1094,9 +1092,9 @@ TEST_F(AggregationTest, spillWithNonSpillingPartition) {
                              .singleAggregation({"c0"}, {"array_agg(c1)"})
                              .planNode())
           .queryCtx(queryCtx)
+          .spillDirectory(tempDirectory->path)
           .config(QueryConfig::kSpillEnabled, "true")
           .config(QueryConfig::kAggregationSpillEnabled, "true")
-          .config(QueryConfig::kSpillPath, tempDirectory->path)
           .config(
               QueryConfig::kSpillPartitionBits, std::to_string(kPartitionsBits))
           // Set to increase the hash table a little bit to only trigger spill
@@ -1332,11 +1330,11 @@ TEST_F(AggregationTest, outputBatchSizeCheckWithSpill) {
                                .values(batches)
                                .singleAggregation({"c0", "c1"}, {"sum(c2)"})
                                .planNode())
+            .spillDirectory(tempDirectory->path)
             .config(QueryConfig::kSpillEnabled, "true")
             .config(QueryConfig::kAggregationSpillEnabled, "true")
             // Set one spill partition to avoid the test flakiness.
             .config(QueryConfig::kSpillPartitionBits, "0")
-            .config(QueryConfig::kSpillPath, tempDirectory->path)
             .config(
                 QueryConfig::kPreferredOutputBatchSize,
                 std::to_string(outputBufferSize))
@@ -1349,6 +1347,63 @@ TEST_F(AggregationTest, outputBatchSizeCheckWithSpill) {
         folly::divCeil(opStats.outputPositions, outputBufferSize),
         opStats.outputVectors);
   }
+}
+
+TEST_F(AggregationTest, distinctWithSpilling) {
+  auto vectors = makeVectors(rowType_, 10, 100);
+  createDuckDbTable(vectors);
+  auto spillDirectory = exec::test::TempDirectoryPath::create();
+  core::PlanNodeId aggrNodeId;
+  auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                  .spillDirectory(spillDirectory->path)
+                  .config(QueryConfig::kSpillEnabled, "true")
+                  .config(QueryConfig::kAggregationSpillEnabled, "true")
+                  .config(QueryConfig::kTestingSpillPct, "100")
+                  .plan(PlanBuilder()
+                            .values(vectors)
+                            .singleAggregation({"c0"}, {}, {})
+                            .capturePlanNodeId(aggrNodeId)
+                            .planNode())
+                  .assertResults("SELECT distinct c0 FROM tmp");
+  // Verify that spilling is not triggered.
+  ASSERT_EQ(toPlanStats(task->taskStats()).at(aggrNodeId).spilledBytes, 0);
+}
+
+TEST_F(AggregationTest, preGroupedAggregationWithSpilling) {
+  std::vector<RowVectorPtr> vectors;
+  int64_t val = 0;
+  for (int32_t i = 0; i < 4; ++i) {
+    vectors.push_back(makeRowVector(
+        {// Pre-grouped key.
+         makeFlatVector<int64_t>(10, [&](auto /*row*/) { return val++ / 5; }),
+         // Payload.
+         makeFlatVector<int64_t>(10, [](auto row) { return row; }),
+         makeFlatVector<int64_t>(10, [](auto row) { return row; })}));
+  }
+  createDuckDbTable(vectors);
+  auto spillDirectory = exec::test::TempDirectoryPath::create();
+  core::PlanNodeId aggrNodeId;
+  auto task =
+      AssertQueryBuilder(duckDbQueryRunner_)
+          .spillDirectory(spillDirectory->path)
+          .config(QueryConfig::kSpillEnabled, "true")
+          .config(QueryConfig::kAggregationSpillEnabled, "true")
+          .config(QueryConfig::kTestingSpillPct, "100")
+          .plan(PlanBuilder()
+                    .values(vectors)
+                    .aggregation(
+                        {"c0", "c1"},
+                        {"c0"},
+                        {"sum(c2)"},
+                        {},
+                        core::AggregationNode::Step::kSingle,
+                        false)
+                    .capturePlanNodeId(aggrNodeId)
+                    .planNode())
+          .assertResults("SELECT c0, c1, sum(c2) FROM tmp GROUP BY c0, c1");
+  auto stats = task->taskStats().pipelineStats;
+  // Verify that spilling is not triggered.
+  ASSERT_EQ(toPlanStats(task->taskStats()).at(aggrNodeId).spilledBytes, 0);
 }
 
 } // namespace

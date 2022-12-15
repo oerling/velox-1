@@ -46,12 +46,6 @@ class ArrayAggAggregate : public exec::Aggregate {
     }
   }
 
-  void finalize(char** groups, int32_t numGroups) override {
-    for (auto i = 0; i < numGroups; i++) {
-      value<ArrayAccumulator>(groups[i])->elements.finalize(allocator_);
-    }
-  }
-
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
       override {
     auto vector = (*result)->as<ArrayVector>();

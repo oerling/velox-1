@@ -46,9 +46,14 @@ void HdfsWriteFile::close() {
       0,
       "Failed to close hdfs file: {}",
       std::string(hdfsGetLastError()));
+  hdfsFile_ = nullptr;
 }
 
 void HdfsWriteFile::flush() {
+  VELOX_CHECK_NOT_NULL(
+      hdfsFile_,
+      "Cannot flush HDFS file because file handle is null, file path: {}",
+      filePath_);
   int success = hdfsFlush(hdfsClient_, hdfsFile_);
   VELOX_CHECK_EQ(
       success, 0, "Hdfs flush error: {}", std::string(hdfsGetLastError()));
@@ -58,6 +63,10 @@ void HdfsWriteFile::append(std::string_view data) {
   if (data.size() == 0) {
     return;
   }
+  VELOX_CHECK_NOT_NULL(
+      hdfsFile_,
+      "Cannot append to HDFS file because file handle is null, file path: {}",
+      filePath_);
   int64_t totalWrittenBytes =
       hdfsWrite(hdfsClient_, hdfsFile_, std::string(data).c_str(), data.size());
   VELOX_CHECK_EQ(

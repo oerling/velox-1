@@ -93,8 +93,8 @@ class LocalFileSystem : public FileSystem {
 
   void remove(std::string_view path) override {
     auto file = extractPath(path);
-    int32_t rc = ::remove(std::string(file).c_str());
-    if (rc < 0) {
+    int32_t rc = std::remove(std::string(file).c_str());
+    if (rc < 0 && std::filesystem::exists(file)) {
       VELOX_USER_FAIL(
           "Failed to delete file {} with errno {}", file, strerror(errno));
     }
@@ -138,6 +138,16 @@ class LocalFileSystem : public FileSystem {
       filePaths.push_back(entry.path());
     }
     return filePaths;
+  }
+
+  void mkdir(std::string_view path) override {
+    std::error_code ec;
+    VELOX_CHECK(
+        std::filesystem::create_directories(path, ec),
+        "Mkdir {} failed: {}, message: {}",
+        path,
+        ec,
+        ec.message());
   }
 
   static std::function<bool(std::string_view)> schemeMatcher() {

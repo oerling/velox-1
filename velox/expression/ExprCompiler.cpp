@@ -36,9 +36,6 @@ using core::TypedExprPtr;
 
 const char* const kAnd = "and";
 const char* const kOr = "or";
-const char* const kTry = "try";
-const char* const kSwitch = "switch";
-const char* const kIf = "if";
 const char* const kRowConstructor = "row_constructor";
 
 struct ITypedExprHasher {
@@ -220,52 +217,19 @@ ExprPtr getSpecialForm(
     const TypePtr& type,
     std::vector<ExprPtr>&& compiledChildren,
     bool trackCpuUsage) {
-  if (name == kIf || name == kSwitch) {
-    bool inputsSupportFlatNoNullsFastPath =
-        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
-    return std::make_shared<SwitchExpr>(
-        type, std::move(compiledChildren), inputsSupportFlatNoNullsFastPath);
-  }
-  if (name == kCast) {
-    VELOX_CHECK_EQ(compiledChildren.size(), 1);
-    return std::make_shared<CastExpr>(
-        type,
-        std::move(compiledChildren[0]),
-        trackCpuUsage,
-        false /* nullOnFailure */);
-  }
-  if (name == kAnd) {
-    bool inputsSupportFlatNoNullsFastPath =
-        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
-    return std::make_shared<ConjunctExpr>(
-        type,
-        std::move(compiledChildren),
-        true /* isAnd */,
-        inputsSupportFlatNoNullsFastPath);
-  }
-  if (name == kOr) {
-    bool inputsSupportFlatNoNullsFastPath =
-        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
-    return std::make_shared<ConjunctExpr>(
-        type,
-        std::move(compiledChildren),
-        false /* isAnd */,
-        inputsSupportFlatNoNullsFastPath);
-  }
-  if (name == kTry) {
-    VELOX_CHECK_EQ(compiledChildren.size(), 1);
-    return std::make_shared<TryExpr>(type, std::move(compiledChildren[0]));
-  }
-  if (name == kCoalesce) {
-    bool inputsSupportFlatNoNullsFastPath =
-        Expr::allSupportFlatNoNullsFastPath(compiledChildren);
-    return std::make_shared<CoalesceExpr>(
-        type, std::move(compiledChildren), inputsSupportFlatNoNullsFastPath);
-  }
   if (name == kRowConstructor) {
     return getRowConstructorExpr(
         type, std::move(compiledChildren), trackCpuUsage);
   }
+
+  // If we just check the output of constructSpecialForm we'll have moved
+  // compiledChildren, and if the function isn't a special form we'll still need
+  // compiledChildren. Splitting the check in two avoids this use after move.
+  if (isFunctionCallToSpecialFormRegistered(name)) {
+    return constructSpecialForm(
+        name, type, std::move(compiledChildren), trackCpuUsage);
+  }
+
   return nullptr;
 }
 
@@ -457,16 +421,40 @@ ExprPtr compileExpression(
           call->name(),
           trackCpuUsage);
     } else {
-      VELOX_FAIL(
-          "Scalar function not registered: {} ({})",
-          call->name(),
-          folly::join(", ", inputTypes));
+      const auto& functionName = call->name();
+      auto vectorFunctionSignatures = getVectorFunctionSignatures(functionName);
+      auto simpleFunctionSignatures =
+          SimpleFunctions().getFunctionSignatures(functionName);
+      std::vector<std::string> signatures;
+
+      if (vectorFunctionSignatures.has_value()) {
+        for (const auto& signature : vectorFunctionSignatures.value()) {
+          signatures.push_back(fmt::format("({})", signature->toString()));
+        }
+      }
+
+      for (const auto& signature : simpleFunctionSignatures) {
+        signatures.push_back(fmt::format("({})", signature->toString()));
+      }
+
+      if (signatures.empty()) {
+        VELOX_FAIL(
+            "Scalar function name not registered: {}, called with arguments: ({}).",
+            call->name(),
+            folly::join(", ", inputTypes));
+      } else {
+        VELOX_FAIL(
+            "Scalar function {} not registered with arguments: ({}).  Found function registered with the following signatures:\n{}",
+            call->name(),
+            folly::join(", ", inputTypes),
+            folly::join("\n", signatures));
+      }
     }
   } else if (
       auto access =
           dynamic_cast<const core::FieldAccessTypedExpr*>(expr.get())) {
     auto fieldReference = std::make_shared<FieldReference>(
-        expr->type(), move(compiledInputs), access->name());
+        expr->type(), std::move(compiledInputs), access->name());
     if (access->isInputColumn()) {
       // We only want to capture references to top level fields, not struct
       // fields.
@@ -565,7 +553,7 @@ std::vector<std::shared_ptr<Expr>> compileExpressions(
     exprs.push_back(compileExpression(
         source,
         &scope,
-        execCtx->queryCtx()->config(),
+        execCtx->queryCtx()->queryConfig(),
         execCtx->pool(),
         flatteningCandidates,
         enableConstantFolding));

@@ -18,14 +18,15 @@
 # (so users without conbench installed can run this file as a script).
 # The conbench integration is set up in implemented_benchmarks.py
 
+import argparse
 import copy
 import os
 import pathlib
+import re
 import subprocess
+import sys
 import tempfile
 
-
-REPO_ROOT = pathlib.Path(__file__).parent.parent.parent.parent
 
 RUN_OPTIONS = {
     "iterations": {
@@ -56,32 +57,56 @@ class LocalCppMicroBenchmarks:
     # see TODO about COMMON_OPTIONS above, set an empty dict for now
     options = copy.deepcopy(COMMON_OPTIONS)
     options.update(**RUN_OPTIONS)
-    description = "Run the Velox C++ micro benchmarks."
+    description = "Run Velox C++ micro-benchmarks."
     iterations = 1
     flags = {"language": "C++"}
 
-    def run(self, result_dir, **kwargs):
-        binaries = self._find_binaries(
-            REPO_ROOT.joinpath("_build", "release", "velox", "benchmarks", "basic")
-        )
-        result_dir_path = pathlib.Path(result_dir)
+    def run(
+        self,
+        output_dir,
+        binary_path=None,
+        binary_filter=None,
+        bm_filter=None,
+        bm_max_secs=None,
+        bm_max_trials=None,
+        bm_estimate_time=False,
+        **kwargs,
+    ):
+        if binary_path:
+            binary_path = self._normalize_path(binary_path)
+        else:
+            binary_path = self._default_binary_path()
+
+        binaries = self._find_binaries(binary_path)
+        output_dir_path = pathlib.Path(output_dir)
+        output_dir_path.mkdir(parents=True, exist_ok=True)
 
         for binary_path in binaries:
-            out_path = result_dir_path / f"{binary_path.name}.json"
+            if binary_filter and not re.search(binary_filter, binary_path.name):
+                continue
+
+            out_path = output_dir_path / f"{binary_path.name}.json"
             print(f"Executing and dumping results for '{binary_path}' to '{out_path}':")
             run_command = [
                 binary_path,
-                "--bm_max_secs",
-                "10",
-                "--bm_max_trials",
-                "1000000",
                 "--bm_json_verbose",
                 out_path,
             ]
 
-            # TODO: extend cpp micro benchmarks to allow for iterations
-            iterations = kwargs.get("iterations", None)
-            if iterations:
+            if bm_max_secs:
+                run_command.extend(["--bm_max_secs", str(bm_max_secs)])
+
+            if bm_max_trials:
+                run_command.extend(["--bm_max_trials", str(bm_max_trials)])
+
+            if bm_filter:
+                run_command.extend(["--bm_regex", bm_filter])
+
+            if bm_estimate_time:
+                run_command.append("--bm_estimate_time")
+
+            # TODO: Extend cpp micro benchmarks to allow for iterations.
+            if kwargs.get("iterations", None):
                 raise NotImplementedError()
 
             try:
@@ -92,21 +117,35 @@ class LocalCppMicroBenchmarks:
                 raise e
 
     @staticmethod
-    def _find_binaries(binary_dir: pathlib.Path):
+    def _find_binaries(binary_path: pathlib.Path):
+        print(f"Looking for binaries at '{binary_path}'")
+
         # Must run `make benchmarks-basic-build` before this
         binaries = [
             path
-            for path in binary_dir.glob("*")
+            for path in binary_path.glob("*")
             if os.access(path, os.X_OK) and path.is_file()
         ]
         if not binaries:
-            raise ValueError(f"No binaries found at path {binary_dir.resolve()}")
+            raise ValueError(f"No binaries found at path '{binary_path.resolve()}'")
 
-        print(f"Found {len(binaries)} binaries to execute")
+        print(f"Found {len(binaries)} benchmark binaries")
         return binaries
 
     @staticmethod
-    def _parse_benchmark_name(full_name):
+    def _default_binary_path():
+        repo_root = pathlib.Path(__file__).parent.parent.parent.parent.absolute()
+        return repo_root.joinpath("_build", "release", "velox", "benchmarks", "basic")
+
+    @staticmethod
+    def _normalize_path(binary_path: str) -> pathlib.Path:
+        path = pathlib.Path(binary_path)
+        if not path.is_absolute():
+            path = pathlib.Path.cwd().joinpath(path).resolve()
+        return path
+
+    @staticmethod
+    def _parse_benchmark_name(full_name: str):
         # TODO: Do we need something more complicated?
         # https://github.com/ursacomputing/benchmarks/blob/033eee0951adbf41931a2de95caccbac887da6ff/benchmarks/cpp_micro_benchmarks.py#L86-L103
         if full_name[0] == "%":
@@ -129,8 +168,3 @@ class LocalCppMicroBenchmarks:
         if x == "items_per_second":
             return "i/s"
         return x
-
-
-if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as result_dir:
-        LocalCppMicroBenchmarks().run(result_dir=result_dir)
