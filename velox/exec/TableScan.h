@@ -96,7 +96,7 @@ class TableScan : public SourceOperator {
 
   // Count of splits that finished preloading before being read.
   int32_t numReadyPreloadedSplits_{0};
-  
+
   int32_t readBatchSize_{kDefaultBatchSize};
 
   // String shown in ExceptionContext inside DataSource and LazyVector loading.
