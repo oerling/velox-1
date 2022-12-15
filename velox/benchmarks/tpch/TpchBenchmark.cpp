@@ -112,10 +112,9 @@ class TpchBenchmark {
       options.mmapArenaCapacityRatio = 1;
 
       auto allocator = std::make_shared<memory::MmapAllocator>(options);
-      mappedMemory_ = std::make_shared<cache::AsyncDataCache>(
+      allocator_ = std::make_shared<cache::AsyncDataCache>(
           allocator, memoryBytes, nullptr);
-
-      memory::MappedMemory::setDefaultInstance(mappedMemory_.get());
+      memory::MemoryAllocator::setDefaultInstance(allocator_.get());
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
@@ -127,10 +126,12 @@ class TpchBenchmark {
       parquet::registerParquetReaderFactory(parquet::ParquetReaderType::DUCKDB);
     }
     dwrf::registerDwrfReaderFactory();
+    ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
+
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, nullptr);
+            ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
   }
 
@@ -173,7 +174,8 @@ class TpchBenchmark {
     }
   }
 
-  std::shared_ptr<memory::MappedMemory> mappedMemory_;
+  std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
+  std::shared_ptr<memory::MemoryAllocator> allocator_;
 };
 
 TpchBenchmark benchmark;
