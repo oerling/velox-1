@@ -29,6 +29,8 @@
 #include "velox/expression/ConstantExpr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
+
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
@@ -3135,10 +3137,11 @@ TEST_F(ExprTest, maskErrorByNull) {
   auto resultBA = evaluate("(c0 / c1) + if (c2 is null, 10, null)", data);
 
   assertEqualVectors(resultAB, resultBA);
-  EXPECT_THROW(evaluate("(c0 / c1) + 10", data), VeloxUserError);
-  EXPECT_THROW(
-      evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, null))", data),
-      VeloxUserError);
+  functions::test::FunctionBaseTest::assertUserError(
+      [&]() { evaluate("(c0 / c1) + 10", data); }, "division by zero");
+  functions::test::FunctionBaseTest::assertUserError(
+      [&]() { evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, null))", data); },
+      "division by zero");
 
   // Make non null flat input to invoke flat no null path for a subtree.
   data = makeRowVector(
