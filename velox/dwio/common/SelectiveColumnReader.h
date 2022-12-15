@@ -359,6 +359,11 @@ class SelectiveColumnReader {
     initTimeClocks_ = 0;
   }
 
+  /// Moves the adaptation encoded in ScanSpec from 'other' to 'this'.
+  virtual void moveScanSpec(SelectiveColumnReader& other) {
+    VELOX_NYI();
+  }
+
   virtual bool rowGroupMatches(uint32_t rowGroupId) const;
 
   virtual std::vector<uint32_t> filterRowGroups(

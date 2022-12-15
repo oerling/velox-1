@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/base/AsyncSource.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
@@ -81,15 +82,32 @@ class DwrfRowReader : public StrideIndexProvider,
   // Estimate the row size for projected columns
   std::optional<size_t> estimatedRowSize() const override;
 
-  // Returns number of rows read. Guaranteed to be less then or equal to size.
+  // Returns number of rows read. Guaranteed to be less then or equal
+  // to size. May initiate prefetch of stripes beyond the current one.
   uint64_t next(uint64_t size, VectorPtr& result) override;
 
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override {
-    stats.skippedStrides += skippedStrides_;
+    if (delegate_) {
+      stats.skippedStrides += delegate_->skippedStrides_;
+    } else {
+      stats.skippedStrides += skippedStrides_;
+    }
+  }
+
+  ColumnReader* columnReader() {
+    if (delegate_) {
+      return delegate_->columnReader_.get();
+    } else {
+      return columnReader_.get();
+    }
   }
 
   void resetFilterCaches() override;
+
+  bool moveAdaptationFrom(RowReader& other) override;
+
+  bool allPrefetchIssued() const override;
 
   // Returns the skipped strides for 'stripe'. Used for testing.
   std::optional<std::vector<uint32_t>> stridesToSkip(uint32_t stripe) const {
@@ -100,7 +118,29 @@ class DwrfRowReader : public StrideIndexProvider,
     return it->second;
   }
 
+  // Returns true if stripe prefetch is enabled and an executor is
+  // specified via the BufferedInput factory.
+  bool mayPrefetch() const;
+  // Creates column reader tree and may start prefetch of frequently read
+  // columns.
+  void startNextStripe();
+
  private:
+  using StripeReaderSource = AsyncSource<DwrfRowReader>;
+
+  // Gets next rows within 'this'.
+  uint64_t nextInStripe(uint64_t size, VectorPtr& result);
+
+  // Asynchronously makes a DwrfRowReader for 'stripeIndex'.
+  void preloadStripe(int32_t stripeIndex);
+
+  // Returns a single-stripe DwrfRowReader for 'stripeIndex'. This
+  // must have been prepared by preloadStripe() for the same stripe
+  // index.
+  std::unique_ptr<DwrfRowReader> readerForStripe(int32_t stripeIndex);
+
+  void checkSkipStrides(const StatsContext& context, uint64_t strideSize);
+
   // footer
   std::vector<uint64_t> firstRowOfStripe;
   mutable std::shared_ptr<const dwio::common::TypeWithId> selectedSchema;
@@ -128,16 +168,27 @@ class DwrfRowReader : public StrideIndexProvider,
   // Number of skipped strides.
   int64_t skippedStrides_{0};
 
+  // The RowReader for the current stripe. If set, calls are delegated
+  // to 'delegate_'. Multiple delegates are prefetched concurrently
+  // for consecutive stripes and then used in turn. This allows
+  // multiple stripes worth of read ahead.
+  std::unique_ptr<DwrfRowReader> delegate_;
+
+  // Indicates that next() needs to take a new delegate to read a new
+  // stripe. The delegate for the previous stripe must stay live for
+  // serving up lazy loads even if scan is at end of stripe.
+  bool startWithNewDelegate_{false};
+
+  // Map from stripe number to prepared stripe reader.
+  folly::F14FastMap<int32_t, std::shared_ptr<StripeReaderSource>>
+      prefetchedStripeReaders_;
+
   // Set to true after clearing filter caches, i.e.  adding a dynamic
   // filter. Causes filters to be re-evaluated against stride stats on
   // next stride instead of next stripe.
   bool recomputeStridesToSkip_{false};
 
   // internal methods
-
-  // Creates column reader tree and may start prefetch of frequently read
-  // columns.
-  void startNextStripe();
 
   std::optional<size_t> estimatedRowSizeHelper(
       const FooterWrapper& footer,
@@ -155,8 +206,6 @@ class DwrfRowReader : public StrideIndexProvider,
   void setStrideIndex(uint64_t index) {
     strideIndex_ = index;
   }
-
-  void checkSkipStrides(const StatsContext& context, uint64_t strideSize);
 };
 
 class DwrfReader : public dwio::common::Reader {

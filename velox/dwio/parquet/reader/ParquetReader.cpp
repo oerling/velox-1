@@ -496,9 +496,14 @@ ParquetRowReader::ParquetRowReader(
       *options_.getScanSpec());
 
   filterRowGroups();
+  if (!rowGroupIds_.empty()) {
+    // schedule prefetch of first row group right after reading the metadata.
+    // This is usually on a split preload thread before the split goes to table
+    // scan.
+    advanceToNextRowGroup();
+  }
 }
 
-//
 void ParquetRowReader::filterRowGroups() {
   auto rowGroups = readerBase_->fileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
