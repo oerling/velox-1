@@ -91,7 +91,8 @@ DwrfRowReader::DwrfRowReader(
 }
 
 bool DwrfRowReader::mayPrefetch() const {
-  return FLAGS_prefetch_stripes && options_.getScanSpec() && getReader().getBufferedInput().executor();
+  return FLAGS_prefetch_stripes && options_.getScanSpec() &&
+      getReader().getBufferedInput().executor();
 }
 
 std::unique_ptr<dwio::common::RowReader> DwrfReader::createRowReader(
