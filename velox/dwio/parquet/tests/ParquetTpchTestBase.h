@@ -29,7 +29,7 @@
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
 
-DECLARE_int32(FLAGS_split_preload_per_driver);
+DECLARE_int32(split_preload_per_driver);
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
