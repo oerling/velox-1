@@ -186,7 +186,7 @@ class FunctionBaseTest : public testing::Test,
                                : ReturnType(result->valueAt(0));
   }
 
-public:
+ public:
   // Asserts that `func` throws `VeloxUserError`. Optionally, checks if
   // `expectedErrorMessage` is a substr of the exception message thrown.
   template <typename TFunc>
@@ -219,7 +219,7 @@ public:
     }
   }
 
-protected:
+ protected:
   core::TypedExprPtr parseExpression(
       const std::string& text,
       const RowTypePtr& rowType) {

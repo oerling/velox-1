@@ -1010,8 +1010,10 @@ void Expr::evalWithNulls(
 }
 
 namespace {
-  // Adds the errors from 'errors' to 'result'.
-  void unionErrors(const EvalCtx::ErrorVector& errors, EvalCtx::ErrorVector& result) {
+// Adds the errors from 'errors' to 'result'.
+void unionErrors(
+    const EvalCtx::ErrorVector& errors,
+    EvalCtx::ErrorVector& result) {
   if (errors.size() > result.size()) {
     result.resize(errors.size());
   }
@@ -1022,8 +1024,8 @@ namespace {
 }
 
 void clearErrorForUnselected(
-			     // Clears the error from 'errors' for unselected 'rows'. 
-			     const SelectivityVector& rows,
+    // Clears the error from 'errors' for unselected 'rows'.
+    const SelectivityVector& rows,
     const EvalCtx::ErrorVectorPtr& errors) {
   if (!errors) {
     return;
@@ -1248,7 +1250,8 @@ void Expr::evalAll(
   // null behavior and the input has nulls. Errors must not be
   // deferred if there are no nulls because this would disable the
   // fast path for flat no nulls.
-  bool throwArgumentErrors = context.throwOnError() && (!defaultNulls || context.inputFlatNoNulls());
+  bool throwArgumentErrors =
+      context.throwOnError() && (!defaultNulls || context.inputFlatNoNulls());
   // Tracks what subset of rows shall un-evaluated inputs and current expression
   // evaluates. Initially points to rows.
   const SelectivityVector* remainingRows = &rows;
