@@ -150,8 +150,11 @@ class ScanSpec {
     return children_;
   }
 
-  // Returns 'children in a stable order. May be used for parallel construction
-  // and read-ahead of reader trees while the main user of 'this' is running.
+  // Returns 'children in a stable order. May be used for parallel
+  // construction and read-ahead of reader trees while the main user
+  // of 'this' is running. 'children_' may be reordered while running
+  // but the tree being constructed must see a single, unchanging
+  // order.
   const std::vector<ScanSpec*>& stableChildren();
 
   // Returns a read sequence number. This can b used for tagging
@@ -261,6 +264,12 @@ class ScanSpec {
   // Returns the child which produces values for 'channel'. Throws if not found.
   ScanSpec& getChildByChannel(column_index_t channel);
 
+  // sets filter order and filters of 'this' from 'other'. Used when
+  // initializing a ScanSpec for a new split or stripe. This transfers
+  // dynamically acquired filters and adaptive filter order. 'other'
+  // should not be used after this. Different splits or stripes may
+  // have their own ScanSpec trees, so we only move the content, not
+  // the ScanSpec tree itself.
   void moveAdaptationFrom(ScanSpec& other);
 
   std::string toString() const;
