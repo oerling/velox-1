@@ -46,7 +46,7 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
   // prepared while the previous one is reading.
   auto& childSpecs = scanSpec.stableChildren();
   for (auto i = 0; i < childSpecs.size(); ++i) {
-    auto childSpec = childSpecs[i].get();
+    auto childSpec = childSpecs[i];
     if (childSpec->isConstant()) {
       continue;
     }
