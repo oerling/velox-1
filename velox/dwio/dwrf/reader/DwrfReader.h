@@ -96,7 +96,7 @@ class DwrfRowReader : public StrideIndexProvider,
   bool allPrefetchIssued() const override {
     return true;
   }
-  
+
   // Returns the skipped strides for 'stripe'. Used for testing.
   std::optional<std::vector<uint32_t>> stridesToSkip(uint32_t stripe) const {
     auto it = stripeStridesToSkip_.find(stripe);
