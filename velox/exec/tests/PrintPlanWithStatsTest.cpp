@@ -183,7 +183,11 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"          skippedSplitBytes         sum: 0B, count: 1, min: 0B, max: 0B"},
        {"          skippedSplits             sum: 0, count: 1, min: 0, max: 0"},
        {"          skippedStrides            sum: 0, count: 1, min: 0, max: 0"},
-       {"          storageReadBytes          sum: .+, count: 1, min: .+, max: .+"}});
+       {"          storageReadBytes          sum: .+, count: 1, min: .+, max: .+"}
+       {"    -- Project\\[expressions: \\(u_c0:INTEGER, ROW\\[\"c0\"\\]\\), \\(u_c1:BIGINT, ROW\\[\"c1\"\\]\\)\\] -> u_c0:INTEGER, u_c1:BIGINT"},
+       {"       Output: 100 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: 0B, Memory allocations: .+, Threads: 1"},
+       {"      -- Values\\[100 rows in 1 vectors\\] -> c0:INTEGER, c1:BIGINT"},
+       {"         Input: 0 rows \\(.+\\), Output: 100 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: 0B, Memory allocations: .+, Threads: 1"}});
 }
 
 TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
