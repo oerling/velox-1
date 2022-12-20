@@ -28,6 +28,7 @@ ScanSpec::ScanSpec(const ScanSpec& other)
       extractValues_(other.extractValues_),
       makeFlat_(other.makeFlat_),
       filter_(other.filter_),
+      metadataFilters_(other.metadataFilters_),
       selectivity_(other.selectivity_),
       enableFilterReorder_(other.enableFilterReorder_),
       children_(other.children_),
