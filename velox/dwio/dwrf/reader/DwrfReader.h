@@ -106,6 +106,10 @@ class DwrfRowReader : public StrideIndexProvider,
     return it->second;
   }
 
+    // Creates column reader tree and may start prefetch of frequently read
+  // columns.
+  void startNextStripe();
+
  private:
   // footer
   std::vector<uint64_t> firstRowOfStripe;
@@ -140,10 +144,6 @@ class DwrfRowReader : public StrideIndexProvider,
   bool recomputeStridesToSkip_{false};
 
   // internal methods
-
-  // Creates column reader tree and may start prefetch of frequently read
-  // columns.
-  void startNextStripe();
 
   std::optional<size_t> estimatedRowSizeHelper(
       const FooterWrapper& footer,
