@@ -1040,7 +1040,8 @@ TEST_F(E2EEncryptionTest, ReadWithoutKey) {
     RowReaderOptions rowReaderOpts;
     rowReaderOpts.select(
         std::make_shared<ColumnSelector>(type, std::vector<uint64_t>{1}));
-    ASSERT_THROW(reader->createRowReader(rowReaderOpts), exception::LoggedException);
+    ASSERT_THROW(
+        reader->createRowReader(rowReaderOpts), exception::LoggedException);
   }
 }
 
