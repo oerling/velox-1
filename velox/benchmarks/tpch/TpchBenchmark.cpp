@@ -106,7 +106,7 @@ class TpchBenchmark {
   void initialize() {
     if (FLAGS_cache_gb) {
       int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
-      memory::MmapAllocatorOptions options;
+      memory::MmapAllocator::Options options;
       options.capacity = memoryBytes;
       options.useMmapArena = true;
       options.mmapArenaCapacityRatio = 1;
@@ -114,7 +114,7 @@ class TpchBenchmark {
       auto allocator = std::make_shared<memory::MmapAllocator>(options);
       allocator_ = std::make_shared<cache::AsyncDataCache>(
           allocator, memoryBytes, nullptr);
-      memory::MemoryAllocator::setDefaultInstance(allocator_.get());
+      memory::MappedMemory::setDefaultInstance(allocator_.get());
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
@@ -175,7 +175,7 @@ class TpchBenchmark {
   }
 
   std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
-  std::shared_ptr<memory::MemoryAllocator> allocator_;
+  std::shared_ptr<memory::MappedMemory> allocator_;
 };
 
 TpchBenchmark benchmark;
@@ -243,6 +243,11 @@ BENCHMARK(q15) {
 
 BENCHMARK(q16) {
   const auto planContext = queryBuilder->getQueryPlan(16);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q17) {
+  const auto planContext = queryBuilder->getQueryPlan(17);
   benchmark.run(planContext);
 }
 
