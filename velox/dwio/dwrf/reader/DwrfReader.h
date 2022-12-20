@@ -106,7 +106,7 @@ class DwrfRowReader : public StrideIndexProvider,
     return it->second;
   }
 
-    // Creates column reader tree and may start prefetch of frequently read
+  // Creates column reader tree and may start prefetch of frequently read
   // columns.
   void startNextStripe();
 
