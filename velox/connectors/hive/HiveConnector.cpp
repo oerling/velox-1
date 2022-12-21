@@ -172,7 +172,7 @@ HiveDataSource::HiveDataSource(
     FileHandleFactory* fileHandleFactory,
     velox::memory::MemoryPool* pool,
     ExpressionEvaluator* expressionEvaluator,
-    memory::MemoryAllocator* allocator,
+    memory::MappedMemory* mappedMemory,
     const std::string& scanId,
     folly::Executor* executor)
     : outputType_(outputType),
@@ -180,7 +180,7 @@ HiveDataSource::HiveDataSource(
       pool_(pool),
       readerOpts_(pool),
       expressionEvaluator_(expressionEvaluator),
-      allocator_(allocator),
+      mappedMemory_(mappedMemory),
       scanId_(scanId),
       executor_(executor) {
   // Column handled keyed on the column alias, the name used in the query.
@@ -225,6 +225,8 @@ HiveDataSource::HiveDataSource(
 
   const auto& remainingFilter = hiveTableHandle->remainingFilter();
   if (remainingFilter) {
+    metadataFilter_ =
+        std::make_shared<common::MetadataFilter>(*scanSpec_, *remainingFilter);
     remainingFilterExprSet_ = expressionEvaluator_->compile(remainingFilter);
 
     // Remaining filter may reference columns that are not used otherwise,
@@ -251,6 +253,7 @@ HiveDataSource::HiveDataSource(
   }
 
   rowReaderOpts_.setScanSpec(scanSpec_);
+  rowReaderOpts_.setMetadataFilter(metadataFilter_);
 
   ioStats_ = std::make_shared<dwio::common::IoStatistics>();
 }
@@ -334,7 +337,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
   std::unique_ptr<dwio::common::BufferedInput> input;
-  if (auto* asyncCache = dynamic_cast<cache::AsyncDataCache*>(allocator_)) {
+  if (auto* asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_)) {
     input = std::make_unique<dwio::common::CachedBufferedInput>(
         fileHandle_->file,
         readerOpts_.getMemoryPool(),
