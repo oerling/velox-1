@@ -1252,10 +1252,9 @@ void Expr::evalAll(
   inputValues_.resize(inputs_.size());
   EvalCtx::ErrorVectorPtr argumentErrors;
   EvalCtx::ErrorVectorPtr errors;
-    if (context.errors()) {
+  if (context.errors()) {
     context.swapErrors(errors);
   }
-
 
   {
     ScopedVarSetter throwErrors(
