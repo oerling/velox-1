@@ -1011,7 +1011,7 @@ void Expr::evalWithNulls(
 
 namespace {
 // Adds the errors from 'errors' to 'result'.
-void unionErrors(
+void addErrors(
     const EvalCtx::ErrorVector& errors,
     EvalCtx::ErrorVector& result) {
   if (errors.size() > result.size()) {
@@ -1045,17 +1045,6 @@ void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
         std::rethrow_exception(*exceptionPtr);
       });
 }
-
-void deselectErrors(EvalCtx& context, SelectivityVector& rows) {
-  auto errors = context.errors();
-  if (!errors) {
-    return;
-  }
-  // A non-null in errors resets the row. AND with the errors null mask.
-  rows.deselectNonNulls(
-      errors->rawNulls(), rows.begin(), std::min(errors->size(), rows.end()));
-}
-
 } // namespace
 
 void Expr::evalWithMemo(
@@ -1245,15 +1234,14 @@ void Expr::evalAll(
   }
   bool tryPeelArgs = deterministic_ ? true : false;
   bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
-  // A null argument can mask an error in a previous argument if
-  // 1. errors are not already ignored 2. the function has default
-  // null behavior and the input has nulls. Errors must not be
-  // deferred if there are no nulls because this would disable the
-  // fast path for flat no nulls.
+  // Set if argument errors should be thrown as soon as they
+  // happen. False if argument errors will be converted into a null if
+  // another argument for the same row is null.
   bool throwArgumentErrors =
       context.throwOnError() && (!defaultNulls || context.inputFlatNoNulls());
-  // Tracks what subset of rows shall un-evaluated inputs and current expression
-  // evaluates. Initially points to rows.
+  // Tracks the rows for which the function needs to be called. For a
+  // null-propagating function, a null in an argument removes the row
+  // from this.
   const SelectivityVector* remainingRows = &rows;
 
   // Points to a mutable remainingRows, allocated using
@@ -1264,48 +1252,53 @@ void Expr::evalAll(
   inputValues_.resize(inputs_.size());
   EvalCtx::ErrorVectorPtr argumentErrors;
   EvalCtx::ErrorVectorPtr errors;
-  if (context.errors()) {
+    if (context.errors()) {
     context.swapErrors(errors);
   }
 
-  for (int32_t i = 0; i < inputs_.size(); ++i) {
+
+  {
     ScopedVarSetter throwErrors(
         context.mutableThrowOnError(), throwArgumentErrors);
-    inputs_[i]->eval(*remainingRows, context, inputValues_[i]);
-    if (context.errors()) {
-      // New errors were produced, add them to argumentErrors.
-      if (argumentErrors) {
-        EvalCtx::ErrorVectorPtr temp;
-        context.swapErrors(temp);
-        unionErrors(*temp, *argumentErrors);
-      } else {
-        context.swapErrors(argumentErrors);
-      }
-    }
-    tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
 
-    // Avoid subsequent computation on rows with known null output.
-    if (defaultNulls && inputValues_[i]->mayHaveNulls()) {
-      LocalDecodedVector decoded(context, *inputValues_[i], *remainingRows);
-
-      if (auto* rawNulls = decoded->nulls()) {
-        // Allocate remainingRows before the first time writing to it.
-        if (mutableRemainingRows == nullptr) {
-          mutableRemainingRows = mutableRemainingRowsHolder.get(rows);
-          remainingRows = mutableRemainingRows;
+    for (int32_t i = 0; i < inputs_.size(); ++i) {
+      inputs_[i]->eval(*remainingRows, context, inputValues_[i]);
+      if (context.errors()) {
+        // New errors were produced, add them to argumentErrors.
+        if (argumentErrors) {
+          EvalCtx::ErrorVectorPtr temp;
+          context.swapErrors(temp);
+          addErrors(*temp, *argumentErrors);
+        } else {
+          context.swapErrors(argumentErrors);
         }
+      }
+      tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
 
-        mutableRemainingRows->deselectNulls(
-            rawNulls, remainingRows->begin(), remainingRows->end());
+      // Avoid subsequent computation on rows with known null output.
+      if (defaultNulls && inputValues_[i]->mayHaveNulls()) {
+        LocalDecodedVector decoded(context, *inputValues_[i], *remainingRows);
 
-        if (!remainingRows->hasSelections()) {
-          releaseInputValues(context);
-          setAllNulls(rows, context, result);
-          return;
+        if (auto* rawNulls = decoded->nulls()) {
+          // Allocate remainingRows before the first time writing to it.
+          if (mutableRemainingRows == nullptr) {
+            mutableRemainingRows = mutableRemainingRowsHolder.get(rows);
+            remainingRows = mutableRemainingRows;
+          }
+
+          mutableRemainingRows->deselectNulls(
+              rawNulls, remainingRows->begin(), remainingRows->end());
+
+          if (!remainingRows->hasSelections()) {
+            releaseInputValues(context);
+            setAllNulls(rows, context, result);
+            return;
+          }
         }
       }
     }
   }
+
   // If an argument had an error and then a null on the same row for another
   // argument, mask the error.
   if (argumentErrors) {
@@ -1315,11 +1308,13 @@ void Expr::evalAll(
     if (context.throwOnError()) {
       rethrowFirstError(argumentErrors);
     }
-    if (context.errors()) {
-      unionErrors(*argumentErrors, *context.errors());
-    } else {
-      context.swapErrors(argumentErrors);
+    if (errors) {
+      addErrors(*argumentErrors, *errors);
     }
+    context.swapErrors(argumentErrors);
+  } else {
+    // Put the original errors back in 'context'.
+    context.swapErrors(errors);
   }
   // If any errors occurred evaluating the arguments, it's possible (even
   // likely) that the values for those arguments were not defined which could
