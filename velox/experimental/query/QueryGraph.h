@@ -259,7 +259,7 @@ struct Expr : public PlanObject {
   PlanObjectSet allTables() const;
 
   PlanObjectSet equivTables() const;
-  
+
   PlanObjectSet columns;
   Value value;
 };
@@ -538,16 +538,16 @@ struct BaseTable : public PlanObject, public Relation {
   JoinVector joinedBy{stl<JoinPtr>()};
 
   // Top level conjuncts on single columns and literals, column to the left.
-ExprVector columnFilters{stl<ExprPtr>()};
+  ExprVector columnFilters{stl<ExprPtr>()};
 
-// Multicolumn filters dependent on 'this' alone.
-ExprPtr filter{nullptr};
+  // Multicolumn filters dependent on 'this' alone.
+  ExprPtr filter{nullptr};
 
-// System specific representation of filter on columns, e.g. set of
-// common::Filter.
-void* nativeFilter;
+  // System specific representation of filter on columns, e.g. set of
+  // common::Filter.
+  void* nativeFilter;
 
-std::string toString() const override;
+  std::string toString() const override;
 };
 
 using BaseTablePtr = BaseTable*;

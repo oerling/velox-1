@@ -465,22 +465,22 @@ void Optimization::makeJoins(
     for (auto i : ids) {
       auto from = dt->tables[i];
       if (from->type == PlanType::kTable) {
-	auto table = from->as<BaseTablePtr>();
-	auto indices = chooseLeafIndex(table->as<BaseTablePtr>(), dt);
-	// Make plan starting with each relevant index of the table.
-	state.tables.add(table);
-	for (auto index : indices) {
-	  Define(TableScan, scan);
-	  scan->relType = RelType::kTableScan;
-	  scan->baseTable = table;
-	  scan->index = index;
-	  scan->distribution = index->distribution;
-	  scan->columns = table->columns;
-	  makeJoins(dt, scan, state);
-	}
+        auto table = from->as<BaseTablePtr>();
+        auto indices = chooseLeafIndex(table->as<BaseTablePtr>(), dt);
+        // Make plan starting with each relevant index of the table.
+        state.tables.add(table);
+        for (auto index : indices) {
+          Define(TableScan, scan);
+          scan->relType = RelType::kTableScan;
+          scan->baseTable = table;
+          scan->index = index;
+          scan->distribution = index->distribution;
+          scan->columns = table->columns;
+          makeJoins(dt, scan, state);
+        }
       } else {
-	// Start with a derived table.
-	VELOX_NYI();
+        // Start with a derived table.
+        VELOX_NYI();
       }
       state.tables.erase(from);
     }

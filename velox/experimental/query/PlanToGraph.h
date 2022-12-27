@@ -174,12 +174,12 @@ class Optimization {
       RelationOpPtr* FOLLY_NULLABLE left,
       const PlanObjectSet& boundColumns);
 
-  std::vector<JoinCandidate>
-  nextJoins(DerivedTablePtr dt, PlanState& state);
+  std::vector<JoinCandidate> nextJoins(DerivedTablePtr dt, PlanState& state);
 
   // Adds group by, order by, top k to 'plan'. Updates 'plan' if
   // relation ops added.  Sets cost in 'state'.
-  void addPostprocess(DerivedTablePtr dt, RelationOpPtr& plan, PlanState& state);
+  void
+  addPostprocess(DerivedTablePtr dt, RelationOpPtr& plan, PlanState& state);
 
   const Schema& schema_;
   const velox::core::PlanNode& inputPlan_;

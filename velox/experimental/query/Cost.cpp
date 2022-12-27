@@ -62,7 +62,7 @@ void GroupBy::setCost() {
       grouping.size() * Costs::hashProbeCost(inputCardinality - numDuplicate);
 }
 
-  void Repartition::setCost() {
+void Repartition::setCost() {
   int32_t size = 0;
   for (auto column : columns) {
     size += column->value.byteSize();
