@@ -19,59 +19,173 @@
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::velox::query {
+namespace facebook::verax {
 
 struct ITypedExprHasher {
-  size_t operator()(const core::ITypedExpr* expr) const {
+  size_t operator()(const velox::core::ITypedExpr* expr) const {
     return expr->hash();
   }
 };
 
 struct ITypedExprComparer {
-  bool operator()(const core::ITypedExpr* lhs, const core::ITypedExpr* rhs)
-      const {
+  bool operator()(
+      const velox::core::ITypedExpr* lhs,
+      const velox::core::ITypedExpr* rhs) const {
     return *lhs == *rhs;
   }
 };
 
 // Map for deduplicating ITypedExpr trees.
 using ExprDedupMap = folly::F14FastMap<
-    const core::ITypedExpr*,
+    const velox::core::ITypedExpr*,
     ExprPtr,
     ITypedExprHasher,
     ITypedExprComparer>;
 
-class Plan;
+struct PlanState;
+
+/// Item produced by optimization and kept in memo. Corresponds to
+/// pre-costed physical plan with costs and data properties.
+struct Plan {
+  Plan(RelationOpPtr op, const PlanState& state);
+  bool isStateBetter(const PlanState& state) const;
+
+  RelationOpPtr op;
+
+  float unitCost{0};
+  float setupCost{0};
+  float fanout{1};
+
+  // The plan is made assuming that it will be applied to
+  // 'planInputCardinality' rows of input.
+  float plannedInputCardinality{1};
+
+  // The tables from original join graph that are included in this
+  // plan. If this is a derived table in the original plan, the
+  // covered object is the derived table, not its constituent
+  // tables.
+  PlanObjectSet tables;
+
+  // The produced columns. Includes input columns.
+  PlanObjectSet columns;
+
+  // Columns that are fixed on input. Applies to index path for a derived table,
+  // e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is
+  // dt.pkt1.
+  PlanObjectSet input;
+};
+
+using PlanPtr = Plan*;
+
+struct PlanSet {
+  PlanPtr best{nullptr};
+
+  /// Compares 'plan' to already seen plans and retains it if it is interesting,
+  /// e.g. better than the best so far or has an interesting order.
+  void addPlan(RelationOpPtr plan, PlanState& state);
+};
+
+struct PlanState {
+  // The tables that have been placed so far.
+  PlanObjectSet tables;
+
+  // The columns that have a value.
+  PlanObjectSet columns;
+
+  // The columns that need a value at the end of the plan. A dt can
+  // be planned for just join columns or all payload.
+  PlanObjectSet targetColumns;
+
+  // The number of inputs for the current dt. 1 unless this is an index-based dt
+  // plan.
+  float inputCardinality{1};
+
+  // The cumulative cost of the plan so far.
+  float cost{0};
+
+  // Number of rows per row of input across left deep sequence of operators.
+  float fanout{1};
+
+  // Sum of setup costs for build sides.
+  float setupCost{0};
+
+  bool HasCutoff{true};
+
+  // Interesting completed plans for the dt being planned. For
+  // example, best by cost and maybe plans with interesting orders.
+  PlanSet plans;
+
+  void addCost(const RelationOp& op);
+};
+
+// Represents the next table/derived table to join. May consist of several
+// tables for a bushy build side.
+
+struct JoinCandidate {
+  JoinCandidate() = default;
+
+  JoinCandidate(JoinPtr _join, PlanObjectPtr _right, float _fanout)
+      : join(_join), tables({_right}), fanout(_fanout) {}
+
+  JoinPtr join{nullptr};
+
+  // Tables to join on the build side. The tables must not occur on the left
+  // side.
+  std::vector<PlanObjectPtr> tables;
+
+  // Joins imported from the left side for reducing a build
+  // size. These could be ignored without affecting the result but can
+  // be included to restrict the size of build, e.g. lineitem join
+  // part left (partsupp exists part) would have the second part in
+  // 'existences' and partsupp in 'tables' because we know that
+  // partsupp will not be probed with keys that are not in part, so
+  // there is no point building with these.
+  std::vector<std::vector<PlanObjectPtr>> existences;
+
+  // Number of right side hits for one row on the left. The join
+  // selectivity in 'tables' affects this but the selectivity in
+  // 'existences' does not.
+  float fanout;
+};
 
 /// Instance of query optimization. Comverts a plan and schema into an optimized
 /// plan. Depends on QueryGraphContext being set on the calling thread.
 class Optimization {
  public:
-  Optimization(const core::PlanNode& plan, const Schema& schema);
+  Optimization(const velox::core::PlanNode& plan, const Schema& schema);
 
-  std::shared_ptr<const core::PlanNode> bestPlan();
+  std::shared_ptr<const velox::core::PlanNode> bestPlan();
 
  private:
   DerivedTablePtr makeQueryGraph();
 
-  PlanObjectPtr makeQueryGraph(const core::PlanNode& node);
-  ExprPtr translateExpr(const core::TypedExprPtr& expr);
+  PlanObjectPtr makeQueryGraph(const velox::core::PlanNode& node);
+  ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
   ExprPtr translateColumn(const std::string& name);
   ExprVector translateColumns(
-      const std::vector<core::FieldAccessTypedExprPtr>& source);
-  void translateJoin(const core::AbstractJoinNode& join);
+      const std::vector<velox::core::FieldAccessTypedExprPtr>& source);
+  void translateJoin(const velox::core::AbstractJoinNode& join);
 
-  OrderByPtr translateOrderBy(const core::OrderByNode& order);
-  GroupByPtr translateGroupBy(const core::AggregationNode& aggregation);
+  OrderByPtr translateOrderBy(const velox::core::OrderByNode& order);
+  GroupByPtr translateGroupBy(const velox::core::AggregationNode& aggregation);
 
   void makePlans(
       DerivedTablePtr table,
       RelationOpPtr* FOLLY_NULLABLE left,
       const PlanObjectSet& boundColumns);
 
+  std::vector<JoinCandidate>
+  nextJoins(DerivedTablePtr dt, PlanState& state);
+
+  // Adds group by, order by, top k to 'plan'. Updates 'plan' if
+  // relation ops added.  Sets cost in 'state'.
+  void addPostprocess(DerivedTablePtr dt, RelationOpPtr& plan, PlanState& state);
+
   const Schema& schema_;
-  const core::PlanNode& inputPlan_;
+  const velox::core::PlanNode& inputPlan_;
   DerivedTablePtr root_;
+
+  void makeJoins(DerivedTablePtr dt, RelationOpPtr plan, PlanState& state);
 
   DerivedTablePtr currentSelect_;
 
@@ -81,7 +195,7 @@ class Optimization {
 
   int32_t nameCounter_{0};
 
-  std::unordered_map<PlanObjectSet, std::vector<Plan * FOLLY_NONNULL>> memo_;
+  std::unordered_map<PlanObjectSet, PlanSet> memo_;
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().
@@ -91,30 +205,4 @@ std::unordered_map<std::string, float>& baseSelectivities();
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
-class Plan {
-  // The tables from original join graph that are included in this
-  // plan. If this is a derived table in the original plan, the
-  // covered object is the derived table, not its constituent
-  // tables.
-  PlanObjectSet tables_;
-
-  // The produced columns. Includes input columns.
-  PlanObjectSet columns_;
-
-  // Columns that are fixed on input. Applies to index path for a derived table,
-  // e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is
-  // dt.pkt1.
-  PlanObjectSet input_;
-
-  float setupCost_{0};
-  float perInputCost_{0};
-
-  // The plan is made assuming that it will be applied to
-  // 'planInputCardinality_' rows of input.
-  float plannedInputCardinality_{1};
-
-  RelationPtr root_;
-};
-
-
-} // namespace facebook::velox::query
+} // namespace facebook::verax

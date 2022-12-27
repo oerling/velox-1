@@ -18,7 +18,9 @@
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/experimental/query/PlanUtils.h"
 
-namespace facebook::velox::query {
+namespace facebook::verax {
+
+using namespace facebook::velox;
 
 using velox::connector::hive::HiveColumnHandle;
 using velox::connector::hive::HiveTableHandle;
@@ -26,6 +28,7 @@ using velox::connector::hive::HiveTableHandle;
 Optimization::Optimization(const core::PlanNode& plan, const Schema& schema)
     : schema_(schema), inputPlan_(plan) {
   root_ = makeQueryGraph();
+  root_->expandJoins();
 }
 
 std::shared_ptr<const core::PlanNode> Optimization::bestPlan() {
@@ -67,12 +70,14 @@ void BaseTable::setRelation(
     const ColumnVector& schemaColumns) {
   // if all partitioning columns are projected, the output is partitioned.
   if (isSubset(
-          toRange(schemaColumns), toRangeCast<ColumnPtr>(relation.distribution.partition))) {
+          toRange(schemaColumns),
+          toRangeCast<ColumnPtr>(relation.distribution.partition))) {
     distribution.partition = relation.distribution.partition;
     distribution.distributionType = relation.distribution.distributionType;
   }
-  auto numPrefix =
-      prefixSize(toRangeCast<ColumnPtr>(relation.distribution.order), toRange(schemaColumns));
+  auto numPrefix = prefixSize(
+      toRangeCast<ColumnPtr>(relation.distribution.order),
+      toRange(schemaColumns));
   if (numPrefix > 0) {
     distribution.order = relation.distribution.order;
     distribution.order.resize(numPrefix);
@@ -242,17 +247,13 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
       auto schemaColumn = schemaTable->findColumn(handle->name());
       schemaColumns.push_back(schemaColumn);
       auto value = schemaColumn->value;
-      Define(
-          Column,
-          column,
-          toName(fmt::format("{}.{}", cname, handle->name())),
-          baseTable,
-          value);
+      Define(Column, column, toName(handle->name()), baseTable, value);
       columns.push_back(column);
       renames_[pair.first] = column;
     }
     baseTable->setRelation(*schemaTable->indices[0], columns, schemaColumns);
-    baseTable->distribution.cardinality = schemaTable->indices[0]->distribution.cardinality * selection;
+    baseTable->distribution.cardinality =
+        schemaTable->indices[0]->distribution.cardinality * selection;
     currentSelect_->tables.push_back(baseTable);
     return baseTable;
   }
@@ -303,6 +304,32 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
   return currentSelect_;
 }
 
+Plan::Plan(RelationOpPtr _op, const PlanState& state)
+    : op(_op),
+      unitCost(state.cost),
+      setupCost(state.setupCost),
+      fanout(state.fanout),
+      tables(state.tables),
+      columns(state.targetColumns) {}
+
+bool Plan::isStateBetter(const PlanState& state) const {
+  return unitCost * plannedInputCardinality + setupCost >
+      state.cost * state.inputCardinality + state.setupCost;
+}
+
+void PlanState::addCost(const RelationOp& op) {
+  cost += inputCardinality * fanout * op.unitCost;
+  setupCost += op.setupCost;
+  fanout *= op.fanout;
+}
+
+void PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
+  if (!best || best->isStateBetter(state)) {
+    Define(Plan, newPlan, plan, state);
+    best = newPlan;
+  }
+}
+
 float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
   if (table->type == PlanType::kTable) {
     return table->as<BaseTablePtr>()->distribution.cardinality;
@@ -310,10 +337,12 @@ float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
   return 10;
 }
 
-PlanObjectPtr otherTable(JoinPtr join, PlanObjectPtr table) {
-  return join->leftTable == table ? join->rightTable
-      : join->rightTable == table ? join->leftTable
-                                  : nullptr;
+std::pair<PlanObjectPtr, float> otherTable(JoinPtr join, PlanObjectPtr table) {
+  return join->leftTable == table && !join->leftOptional && !join->leftExists
+      ? std::pair<PlanObjectPtr, float>{join->rightTable, join->lrFanout}
+      : join->rightTable == table && !join->rightOptional && !join->rightExists
+      ? std::pair<PlanObjectPtr, float>{join->leftTable, join->rlFanout}
+      : std::pair<PlanObjectPtr, float>{nullptr, 0};
 }
 
 std::vector<PlanObjectPtr>
@@ -327,38 +356,149 @@ joinedTables(DerivedTablePtr dt, PlanObjectPtr from, PlanObjectSet except) {
   return set.objects();
 }
 
-void reducingJoins(
-    DerivedTablePtr dt,
-    PlanObjectPtr from,
-    PlanObjectSet visited,
-    std::vector<PlanObjectPtr> path,
-    PlanObjectSet result) {}
+const JoinVector& joinedBy(PlanObjectPtr table) {
+  if (table->type == PlanType::kTable) {
+    return table->as<BaseTablePtr>()->joinedBy;
+  }
+  VELOX_DCHECK_EQ(table->type, PlanType::kDerivedTable);
+  return table->as<DerivedTablePtr>()->joinedBy;
+}
 
-std::vector<PlanObjectPtr> nextTables(DerivedTablePtr dt, Plan* plan) {
+// Calls 'func' with join, joined table and fanout for the joinable tables.
+template <typename Func>
+void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
+  PlanObjectSet joinable;
+  state.tables.forEach([&](PlanObjectPtr placedTable) {
+    for (auto join : joinedBy(placedTable)) {
+      auto [table, fanout] = otherTable(join, placedTable);
+      if (table) {
+        func(join, table, fanout);
+      } else {
+        if (!join->leftTable) {
+          bool usable = true;
+          for (auto key : join->leftKeys) {
+            if (!state.tables.isSubset(key->allTables())) {
+              usable = false;
+              break;
+            }
+          }
+          if (usable) {
+            func(join, join->rightTable, join->lrFanout);
+          }
+        }
+      }
+    }
+  });
+}
+
+JoinCandidate
+reducingJoins(DerivedTablePtr dt, const PlanState& state, PlanObjectPtr start) {
+  PlanObjectSet selected;
+  PlanObjectSet visited = state.tables;
+  // Look for reducing joins against tables not in the plan.
+#if 0
+  reducingJoinsRecursive(dt, start, selected, visited);
+  visited = selected;
+  forDirectJoins(table, [&](JoinPtr join, PlanObjectPtr other) {
+    
+  });
+#endif
+  return JoinCandidate();
+}
+
+std::vector<JoinCandidate> Optimization::nextJoins(
+    DerivedTablePtr dt,
+    PlanState& state) {
+  std::vector<JoinCandidate> candidates;
+  forJoinedTables(
+      dt, state, [&](JoinPtr join, PlanObjectPtr joined, float fanout) {
+        candidates.emplace_back(join, joined, fanout);
+      });
+
+  std::vector<JoinCandidate> bushes;
+  // Take the  first hand joined tables and bundle them with reducing joins that
+  // can go on the build side.
+  for (auto& candidate : candidates) {
+    auto bush = reducingJoins(dt, state, candidate.tables[0]);
+    if (!bush.tables.empty()) {
+      bushes.push_back(std::move(bush));
+    }
+  }
+  candidates.insert(candidates.begin(), bushes.begin(), bushes.end());
+  std::sort(
+      candidates.begin(),
+      candidates.end(),
+      [](const JoinCandidate& left, const JoinCandidate& right) {
+        return left.fanout < right.fanout;
+      });
+  return candidates;
+}
+
+void Optimization::addPostprocess(
+    DerivedTablePtr dt,
+    RelationOpPtr& plan,
+    PlanState& state) {
+  if (dt->groupBy) {
+    Define(GroupBy, newGroupBy, *dt->groupBy);
+  }
+}
+
+std::vector<IndexPtr> chooseLeafIndex(BaseTablePtr table, DerivedTablePtr dt) {
+  return {table->schemaTable->indices[0]};
+}
+
+void Optimization::makeJoins(
+    DerivedTablePtr dt,
+    RelationOpPtr plan,
+    PlanState& state) {
   if (!plan) {
     std::vector<float> scores(dt->tables.size());
     for (auto i = 0; i < dt->tables.size(); ++i) {
       auto table = dt->tables[i];
       scores[i] = startingScore(table, dt);
     }
-    std::vector<int32_t> indices(dt->tables.size());
-    std::iota(indices.begin(), indices.end(), 0);
-    std::sort(indices.begin(), indices.end(), [&](int32_t left, int32_t right) {
+    std::vector<int32_t> ids(dt->tables.size());
+    std::iota(ids.begin(), ids.end(), 0);
+    std::sort(ids.begin(), ids.end(), [&](int32_t left, int32_t right) {
       return scores[left] > scores[right];
     });
-    for (auto i : indices) {
-      // Make plan starting with
+    for (auto i : ids) {
+      auto from = dt->tables[i];
+      if (from->type == PlanType::kTable) {
+	auto table = from->as<BaseTablePtr>();
+	auto indices = chooseLeafIndex(table->as<BaseTablePtr>(), dt);
+	// Make plan starting with each relevant index of the table.
+	state.tables.add(table);
+	for (auto index : indices) {
+	  Define(TableScan, scan);
+	  scan->relType = RelType::kTableScan;
+	  scan->baseTable = table;
+	  scan->index = index;
+	  scan->distribution = index->distribution;
+	  scan->columns = table->columns;
+	  makeJoins(dt, scan, state);
+	}
+      } else {
+	// Start with a derived table.
+	VELOX_NYI();
+      }
+      state.tables.erase(from);
     }
   } else {
-    //auto candidates = nextJoins(dt, plan);
+    auto candidates = nextJoins(dt, state);
+    if (candidates.empty()) {
+      addPostprocess(dt, plan, state);
+      state.plans.addPlan(plan, state);
+    }
+    for (auto& candidate : candidates) {
+    }
   }
-  return {};
 }
 
-  #if 0
+#if 0
 void Optimization::makePlans(
     derivedTablePtr table,
     RelationOpPtr* input,
     const PlanObjectSet& boundColumns) {}
 #endif
-} // namespace facebook::velox::query
+} // namespace facebook::verax

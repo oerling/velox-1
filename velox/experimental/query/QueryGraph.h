@@ -19,7 +19,7 @@
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/core/PlanNode.h"
 
-namespace facebook::velox::query {
+namespace facebook::verax {
 
 /// Base data structures for plan candidate generation.
 
@@ -34,8 +34,9 @@ using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
 
 class QueryGraphContext {
  public:
-  QueryGraphContext(HashStringAllocator& allocator)
-      : allocator_(allocator), stlAllocator_(StlAllocator<void*>(&allocator)) {}
+  QueryGraphContext(velox::HashStringAllocator& allocator)
+      : allocator_(allocator),
+        stlAllocator_(velox::StlAllocator<void*>(&allocator)) {}
 
   Name toName(std::string_view str);
 
@@ -44,16 +45,16 @@ class QueryGraphContext {
     return objects_.size() - 1;
   }
 
-  StlAllocator<void*>* stlAllocator() & {
+  velox::StlAllocator<void*>* stlAllocator() & {
     return &stlAllocator_;
   }
 
-  HashStringAllocator& allocator() {
+  velox::HashStringAllocator& allocator() {
     return allocator_;
   }
 
-  HashStringAllocator& allocator_;
-  StlAllocator<void*> stlAllocator_;
+  velox::HashStringAllocator& allocator_;
+  velox::StlAllocator<void*> stlAllocator_;
 
   PlanObjectPtr objectAt(int32_t id) {
     return objects_[id];
@@ -70,13 +71,14 @@ inline QueryGraphContext*& queryCtx() {
 }
 
 template <typename T>
-StlAllocator<T> stl() {
-  return *reinterpret_cast<StlAllocator<T>*>(queryCtx()->stlAllocator());
+velox::StlAllocator<T> stl() {
+  return *reinterpret_cast<velox::StlAllocator<T>*>(queryCtx()->stlAllocator());
 }
 
 #define Define(T, destination, ...)                         \
   T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
   new (destination) T(__VA_ARGS__);
+
 #define DefineDefault(T, destination)                       \
   T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
   new (destination) T();
@@ -112,8 +114,7 @@ enum class PlanType {
   kLiteral,
   kCall,
   kProject,
-  kFilter,
-  kJoin
+  kFilter
 };
 
 Name planTypeName(PlanType type);
@@ -160,12 +161,12 @@ struct PlanObject {
 struct Expr;
 using ExprPtr = Expr*;
 struct Column;
-  using ColumnPtr = Column*;
-  
+using ColumnPtr = Column*;
+
 class PlanObjectSet {
  public:
   bool contains(PlanObjectPtr object) {
-    return object->id < end_ && bits::isBitSet(bits_.data(), object->id);
+    return object->id < end_ && velox::bits::isBitSet(bits_.data(), object->id);
   }
 
   bool operator==(const PlanObjectSet& other) const;
@@ -176,12 +177,15 @@ class PlanObjectSet {
     auto id = ptr->id;
     ensureSize(id);
     adjustRange(id);
-    bits::setBit(bits_.data(), id);
+    velox::bits::setBit(bits_.data(), id);
   }
+
+  /// Returns true if 'this' is a subset of 'super'.
+  bool isSubset(const PlanObjectSet& super) const;
 
   void erase(PlanObjectPtr object) {
     if (object->id < end_) {
-      bits::clearBit(bits_.data(), object->id);
+      velox::bits::clearBit(bits_.data(), object->id);
     }
   }
 
@@ -192,7 +196,7 @@ class PlanObjectSet {
   template <typename Func>
   void forEach(Func func) const {
     auto ctx = queryCtx();
-    bits::forEachSetBit(
+    velox::bits::forEachSetBit(
         bits_.data(), begin_, end_, [&](auto i) { func(ctx->objectAt(i)); });
   }
 
@@ -204,7 +208,7 @@ class PlanObjectSet {
 
  private:
   void ensureSize(int32_t id) {
-    ensureWords(bits::nwords(id + 1));
+    ensureWords(velox::bits::nwords(id + 1));
   }
 
   void adjustRange(int32_t id) {
@@ -221,19 +225,21 @@ class PlanObjectSet {
     }
   }
 
-  std::vector<uint64_t, StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
+  std::vector<uint64_t, velox::StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
   int32_t begin_{0};
   int32_t end_{0};
 };
 
 struct Value {
   Value() = default;
-  Value(const Type* _type, int64_t _cardinality)
+  Value(const velox::Type* _type, float _cardinality)
       : type(_type), cardinality(_cardinality) {}
 
-  const Type* FOLLY_NONNULL type;
-  variant min;
-  variant max;
+  int32_t byteSize() const;
+
+  const velox::Type* FOLLY_NONNULL type;
+  velox::variant min;
+  velox::variant max;
   const float cardinality;
   // 0 means no nulls, 0.5 means half are null.
   float nullFraction{0};
@@ -252,19 +258,21 @@ struct Expr : public PlanObject {
 
   PlanObjectSet allTables() const;
 
+  PlanObjectSet equivTables() const;
+  
   PlanObjectSet columns;
   Value value;
 };
 
-using ExprVector = std::vector<ExprPtr, StlAllocator<ExprPtr>>;
+using ExprVector = std::vector<ExprPtr, velox::StlAllocator<ExprPtr>>;
 
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
 
 struct Literal : public Expr {
-  Literal(Value value, variant _literal)
+  Literal(Value value, velox::variant _literal)
       : Expr(PlanType::kLiteral, value), literal(_literal) {}
-  variant literal;
+  velox::variant literal;
 };
 
 struct Column : public Expr {
@@ -283,17 +291,19 @@ struct Column : public Expr {
 };
 
 template <typename T>
-inline folly::Range<T*> toRange(const std::vector<T, StlAllocator<T>>& v) {
+inline folly::Range<T*> toRange(
+    const std::vector<T, velox::StlAllocator<T>>& v) {
   return folly::Range<T*>(const_cast<T*>(v.data()), v.size());
 }
 
 template <typename T, typename U>
-inline folly::Range<T*> toRangeCast(const std::vector<U, StlAllocator<U>>& v) {
+inline folly::Range<T*> toRangeCast(
+    const std::vector<U, velox::StlAllocator<U>>& v) {
   return folly::Range<T*>(
       reinterpret_cast<T*>(const_cast<U*>(v.data())), v.size());
 }
 
-using ColumnVector = std::vector<ColumnPtr, StlAllocator<ColumnPtr>>;
+using ColumnVector = std::vector<ColumnPtr, velox::StlAllocator<ColumnPtr>>;
 
 class FunctionSet {
  public:
@@ -369,7 +379,7 @@ struct DistributionType {
 // Describes output of relational operator. If base table, cardinality is
 // after filtering, column value ranges are after filtering.
 struct Distribution {
-  int64_t cardinality;
+  float cardinality;
 
   DistributionType distributionType;
 
@@ -458,25 +468,40 @@ struct Join {
   bool leftOptional{false};
 
   // True if a right side miss produces a row with left side columns
-  // ad a null for right side columns (left outer join). A full outer
+  // and a null for right side columns (left outer join). A full outer
   // join has both left and right optional.
   bool rightOptional{false};
 
   // True if the right side is only checked for existence of a match. If
   // rightOptional is set, this can project out a null for misses.
-  bool rightSemi{false};
+  bool rightExists{false};
 
   // True if the join is a right semijoin. This is possible only by hash or
   // merge.
-  bool leftSemi{false};
+  bool leftExists{false};
+
+  // True if produces a result for left if no match on the right.
+  bool rightNotExists{false};
 
   void guessFanout();
 };
 
 using JoinPtr = Join*;
 
-/// Differentiates between base tables and operator results.
-enum class RelType { kBase, kOperator };
+using JoinVector = std::vector<JoinPtr, velox::StlAllocator<JoinPtr>>;
+
+/// Identifies a base table or the operator type producing the relation. Base
+/// data as in Index has type kBase. The result of a table scan is kTableScan.
+enum class RelType {
+  kBase,
+  kTableScan,
+  kRepartition,
+  kFilter,
+  kProject,
+  kHashJoin,
+  kAggregate,
+  kOrderBy
+};
 
 struct Relation {
   Relation() = default;
@@ -489,7 +514,7 @@ struct Relation {
 
   RelType relType;
   Distribution distribution;
-  RowTypePtr type;
+  velox::RowTypePtr type;
   ColumnVector columns{stl<ColumnPtr>()};
 
   // Correlation name for base table or derived table in  a plan. nullptr for
@@ -510,15 +535,19 @@ struct BaseTable : public PlanObject, public Relation {
 
   SchemaTablePtr schemaTable;
 
+  JoinVector joinedBy{stl<JoinPtr>()};
+
   // Top level conjuncts on single columns and literals, column to the left.
-  ExprVector columnFilters{stl<ExprPtr>()};
+ExprVector columnFilters{stl<ExprPtr>()};
 
-  // Multicolumn filters dependent on 'this' alone.
-  ExprPtr filter{nullptr};
-  
+// Multicolumn filters dependent on 'this' alone.
+ExprPtr filter{nullptr};
 
-  // System specific representation of filter on columns, e.g. set of common::Filter.
-  void* nativeFilter;
+// System specific representation of filter on columns, e.g. set of
+// common::Filter.
+void* nativeFilter;
+
+std::string toString() const override;
 };
 
 using BaseTablePtr = BaseTable*;
@@ -533,10 +562,7 @@ struct Aggregate : public Expr {
 
 using AggregatePtr = Aggregate*;
 
-struct GroupBy : public Relation {
-  std::vector<ExprPtr> grouping;
-  std::vector<AggregatePtr> aggregates;
-};
+struct GroupBy;
 using GroupByPtr = GroupBy*;
 
 struct OrderBy : public Relation {
@@ -554,13 +580,15 @@ struct DerivedTable : public PlanObject, public Relation {
   // Exprs projected out.1:1 to 'columns'.
   ExprVector exprs{stl<ExprPtr>()};
 
+  JoinVector joinedBy{stl<JoinPtr>()};
+
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
-  // 'filter' of Table.
-  std::vector<PlanObjectPtr, StlAllocator<PlanObjectPtr>> tables{
+  // 'filter' of BaseTable.
+  std::vector<PlanObjectPtr, velox::StlAllocator<PlanObjectPtr>> tables{
       stl<PlanObjectPtr>()};
 
-  std::vector<JoinPtr, StlAllocator<JoinPtr>> joins{stl<JoinPtr>()};
+  std::vector<JoinPtr, velox::StlAllocator<JoinPtr>> joins{stl<JoinPtr>()};
   ;
 
   // Filters in where for that are not single table expressions and not join
@@ -572,6 +600,10 @@ struct DerivedTable : public PlanObject, public Relation {
   OrderByPtr orderBy;
   int32_t limit{-1};
   int32_t offset{0};
+
+  // after 'joins' is filled in, links tables to their direct and
+  // equivalence-implied joins.
+  void expandJoins();
 };
 
 using DerivedTablePtr = DerivedTable*;
@@ -594,38 +626,48 @@ using DerivedTablePtr = DerivedTable*;
 // input cardinality. A lookup that hits densely is cheaper than one
 // that hits sparsely. An index lookup has no setup cost.
 struct RelationOp : public Relation {
-  // Cost Cardinality of the output of the left deep input tree. 1 for a leaf
+  // Input of filter/project/group by etc., Left side of join, nullptr for a
+  // leaf table scan.
+  struct RelationOp* input;
+
+  // Cardinality of the output of the left deep input tree. 1 for a leaf
   // scan.
-  float inputCardinality;
+  float inputCardinality{1};
 
   // Cost of processing one input tuple. Complete cost of the operation for a
   // leaf.
-  float unitCost;
+  float unitCost{0};
 
-  // 'fanout * inputCardinality' is the number of result riws.
-  float fanout;
+  // 'fanout * inputCardinality' is the number of result rows. For a leaf scan,
+  // this is the number of rows.
+  float fanout{1};
 
   // One time setup cost. Cost of build subplan for the first use of a hash
   // build side. 0 for the second use of a hash build side. 0 for table scan
   // or index access.
-  float setupCost;
+  float setupCost{0};
 
   // Estimate of total size for a hash join build or group/order
   // by/distinct. This does not account for spilling.
-  float peakSize;
+  float peakSize{0};
 
   // Maximum memory occupancy. Smaller than 'peakSize' if spilling is
   // expected. Ratio of peakSize / peakResident gives the spill, which
   // is reflected in higher per-row unit cost.
-  float peakResident;
+  float peakResident{0};
+
+  virtual void setCost(){};
 };
 
 using RelationOpPtr = RelationOp*;
+
 struct Index;
 
 struct TableScan : public RelationOp {
-  // Left side of index join, nullptr for a leaf table scan.
-  RelationPtr input;
+  // The base table reference. May occur in multiple scans if the base
+  // table decomposes into access via secondary index joined to pk or
+  // if doing another pass for late materialization.
+  BaseTablePtr baseTable;
 
   // Index (or other materialization of table) used for the physical data
   // access.
@@ -640,9 +682,10 @@ struct TableScan : public RelationOp {
   // Projected columns, does not necessarily include columns in keys or
   // filters.
   ColumnVector projectedColumns{stl<ColumnPtr>()};
+};
 
-  // Filters involving only columns of this.
-  std::vector<FilteredColumnPtr> filters;
+struct Repartition : public RelationOp {
+  void setCost() override;
 };
 
 struct Filter : public RelationOp {
@@ -655,12 +698,20 @@ struct Project : public RelationOp {
 };
 
 struct HashJoin : public RelationOp {
-  core::JoinType joinType;
+  velox::core::JoinType joinType;
   RelationOpPtr left;
   RelationOpPtr right;
   std::vector<ColumnPtr> leftKeys;
   std::vector<ColumnPtr> rightKeys;
   ExprPtr filter;
+};
+
+struct GroupBy : public RelationOp {
+  std::vector<ExprPtr> grouping;
+  std::vector<AggregatePtr> aggregates;
+  bool isPartial{false};
+
+  void setCost() override;
 };
 
 struct Index : public Relation {
@@ -687,7 +738,7 @@ struct IndexInfo {
 
   // True if the column combination is unique. This can be true even if there is
   // no key order in 'index'.
-  bool unique;
+  bool unique{false};
 
   // The number of rows selected after index lookup based on 'lookupKeys'. For
   // empty 'lookupKeys', this is the cardinality of 'index'.
@@ -706,11 +757,12 @@ struct IndexInfo {
 };
 
 struct SchemaTable {
-  SchemaTable(Name _name, const RowTypePtr& _type) : name(_name), type(_type) {}
+  SchemaTable(Name _name, const velox::RowTypePtr& _type)
+      : name(_name), type(_type) {}
 
   void addIndex(
       Name name,
-      int64_t cardinality,
+      float cardinality,
       int32_t numKeysUnique,
       int32_t numOrdering,
       const ColumnVector& keys,
@@ -730,7 +782,7 @@ struct SchemaTable {
   // private:
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
   const std::string name;
-  const RowTypePtr type;
+  const velox::RowTypePtr type;
   std::unordered_map<std::string, ColumnPtr> columns;
   std::vector<IndexPtr> indices;
 };
@@ -750,12 +802,12 @@ using SchemaPtr = Schema*;
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
 
-} // namespace facebook::velox::query
+} // namespace facebook::verax
 
 namespace std {
 template <>
-struct hash<::facebook::velox::query::PlanObjectSet> {
-  size_t operator()(const ::facebook::velox::query::PlanObjectSet set) const {
+struct hash<::facebook::verax::PlanObjectSet> {
+  size_t operator()(const ::facebook::verax::PlanObjectSet set) const {
     return set.hash();
   }
 };

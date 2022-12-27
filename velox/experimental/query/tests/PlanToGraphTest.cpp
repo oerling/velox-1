@@ -31,7 +31,7 @@ DEFINE_string(
     "Path to directory for TPC-H files");
 
 using namespace facebook::velox;
-using namespace facebook::velox::query;
+using namespace facebook::verax;
 
 class PlanToGraphTest : public testing::Test {
  protected:
@@ -48,10 +48,13 @@ class PlanToGraphTest : public testing::Test {
     builder_ = std::make_unique<exec::test::TpchQueryBuilder>(
         dwio::common::FileFormat::PARQUET);
     builder_->initialize(FLAGS_data_path);
+    makeCheats();
   }
 
   void makeCheats() {
     baseSelectivities()["table: lineitem, range filters: [(l_shipdate, BigintRange: [9205, 9223372036854775807] no nulls)]"] = 0.5;
+    baseSelectivities()["table: orders, range filters: [(o_orderdate, BigintRange: [-9223372036854775808, 9203] no nulls)]"] = 0.5;
+    baseSelectivities()["table: customer, range filters: [(c_mktsegment, Filter(BytesValues, deterministic, null not allowed))]"] = 0.2;
   }
   
   std::unique_ptr<HashStringAllocator> allocator_;
