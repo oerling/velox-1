@@ -199,7 +199,7 @@ class PlanObjectSet {
       add(object);
     }
   }
-  
+
   template <typename Func>
   void forEach(Func func) const {
     auto ctx = queryCtx();
@@ -270,7 +270,7 @@ struct Expr : public PlanObject {
   /// True if '&other == this' or is recursively equal with column
   /// leaves either same or in same equivalence.
   bool sameOrEqual(const Expr& other) const;
-  
+
   PlanObjectSet columns;
   Value value;
 };
@@ -380,11 +380,10 @@ enum class OrderType {
 /// RelationOp, a non-null locus means that the op is pushed down into
 /// the corresponding system. Distributions can be copartitioned only
 /// if their locus is pointer equal to the other locus.
-struct Locus {
-};
+struct Locus {};
 
 using LocusPtr = Locus*;
-  
+
 /// Method for determining a partition given an ordered list of partitioning
 /// keys. Hive hash is an example, range partitioning is another. Add values
 /// here for more types.
@@ -395,7 +394,8 @@ enum class ShuffleMode { kNone, kHive };
 /// and both sides have an equal number of 1:1 type matched partitioning keys.
 struct DistributionType {
   bool operator==(const DistributionType& other) const {
-    return mode == other.mode && numPartitions == other.numPartitions && locus == other.locus;
+    return mode == other.mode && numPartitions == other.numPartitions &&
+        locus == other.locus;
   }
 
   ShuffleMode mode{ShuffleMode::kNone};
@@ -446,7 +446,6 @@ struct Distribution {
   bool isBroadcast{false};
 
   bool isSamePartition(const Distribution& other) const;
-
 };
 
 struct FilteredColumn {
@@ -734,8 +733,8 @@ struct Project : public RelationOp {
   ExprVector exprs{stl<ExprPtr>()};
 };
 
-enum class JoinMethod {kHash, kMerge};
-  
+enum class JoinMethod { kHash, kMerge };
+
 struct JoinOp : public RelationOp {
   JoinMethod method;
   velox::core::JoinType joinType;

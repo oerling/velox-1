@@ -347,9 +347,9 @@ void PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
         continue;
       }
       if (old->op->distribution.isSamePartition(plan->distribution)) {
-          replaceIndex = i;
-          continue;
-        }
+        replaceIndex = i;
+        continue;
+      }
     }
   }
   if (insert || replaceIndex != -1) {
@@ -596,7 +596,7 @@ RelationOpPtr repartitionForIndex(
 }
 
 void Optimization::joinByIndex(
-			       RelationOpPtr plan,
+    RelationOpPtr plan,
     const JoinCandidate& candidate,
     PlanState& state) {
   if (candidate.tables[0]->type != PlanType::kTable) {
@@ -652,14 +652,13 @@ std::vector<int32_t> joinKeyPartition(
   return positions;
 }
 
-
 void Optimization::joinByHashSingle(
-				    RelationOpPtr plan,
+    RelationOpPtr plan,
     const JoinCandidate& candidate,
     PlanState& state) {
   auto build = candidate.sideOf(candidate.tables[0]);
   auto probe = candidate.sideOf(candidate.tables[0], true);
-  //auto& builds = listBuilds(candidate, BuildMode::kSingle);
+  // auto& builds = listBuilds(candidate, BuildMode::kSingle);
 
   auto partKeys = joinKeyPartition(plan, probe.keys);
   if (partKeys.empty()) {
@@ -676,9 +675,7 @@ void Optimization::addJoin(
   joinByHashSingle(plan, candidate, state);
 }
 
-void Optimization::makeJoins(
-    RelationOpPtr plan,
-    PlanState& state) {
+void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
   auto& dt = state.dt;
   if (!plan) {
     std::vector<float> scores(dt->tables.size());

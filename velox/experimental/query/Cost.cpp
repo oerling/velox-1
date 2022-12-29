@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/Costs.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/experimental/query/Costs.h"
 #include "velox/experimental/query/PlanToGraph.h"
 #include "velox/experimental/query/PlanUtils.h"
 
@@ -77,7 +77,7 @@ float shuffleCost(const ColumnVector& columns) {
 }
 
 float shuffleCost(const ExprVector& columns) {
-return shuffleCostV(columns);
+  return shuffleCostV(columns);
 }
 
 void Repartition::setCost() {

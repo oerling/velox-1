@@ -80,16 +80,16 @@ using PlanPtr = Plan*;
 struct PlanSet {
   std::vector<PlanPtr> plans;
 
-  // Returns the best plan that produces 'distribution'. If If the best plan has some other distribution, sets 'needsShuffle ' to true.
+  // Returns the best plan that produces 'distribution'. If If the best plan has
+  // some other distribution, sets 'needsShuffle ' to true.
   PlanPtr best(const Distribution& distribution, bool& needShuffle);
-  
+
   /// Compares 'plan' to already seen plans and retains it if it is interesting,
   /// e.g. better than the best so far or has an interesting order.
   void addPlan(RelationOpPtr plan, PlanState& state);
 };
 
 struct PlanState {
-
   // The derived table from which the tables are drawn.
   DerivedTablePtr dt{nullptr};
 
@@ -105,7 +105,7 @@ struct PlanState {
 
   // lookup keys for an index based derived table.
   PlanObjectSet input;
-  
+
   // The number of inputs for the current dt. 1 unless this is an index-based dt
   // plan.
   float inputCardinality{1};
@@ -128,33 +128,36 @@ struct PlanState {
   void addCost(const RelationOp& op);
 };
 
-  struct CostSaver {
-  public:
-    CostSaver(PlanState& state)
+struct CostSaver {
+ public:
+  CostSaver(PlanState& state)
       : state_(state),
-	cost_(state.cost), fanout_(state.fanout), setupCost_(state.setupCost) {}
+        cost_(state.cost),
+        fanout_(state.fanout),
+        setupCost_(state.setupCost) {}
 
-    ~CostSaver() {
-      state_.cost = cost_;
-      state_.fanout = fanout_;
-      state_.setupCost = setupCost_;
-    }
-  private:
-    PlanState& state_;
-    const float cost_;
-    const float fanout_;
-    const float setupCost_;
-  };
+  ~CostSaver() {
+    state_.cost = cost_;
+    state_.fanout = fanout_;
+    state_.setupCost = setupCost_;
+  }
 
-  struct JoinSide {
-    PlanObjectPtr table;
-    ExprVector& keys;
-    bool isOptional;
-    bool isExists;
-    bool isAnti;
-  };
-  
-  // Represents the next table/derived table to join. May consist of several
+ private:
+  PlanState& state_;
+  const float cost_;
+  const float fanout_;
+  const float setupCost_;
+};
+
+struct JoinSide {
+  PlanObjectPtr table;
+  ExprVector& keys;
+  bool isOptional;
+  bool isExists;
+  bool isAnti;
+};
+
+// Represents the next table/derived table to join. May consist of several
 // tables for a bushy build side.
 struct JoinCandidate {
   JoinCandidate() = default;
@@ -162,9 +165,10 @@ struct JoinCandidate {
   JoinCandidate(JoinPtr _join, PlanObjectPtr _right, float _fanout)
       : join(_join), tables({_right}), fanout(_fanout) {}
 
-  // Returns the joi side info for 'table'. If 'other' is set, returns the other side.
+  // Returns the joi side info for 'table'. If 'other' is set, returns the other
+  // side.
   JoinSide sideOf(PlanObjectPtr side, bool other = false) const;
-  
+
   JoinPtr join{nullptr};
 
   // Tables to join on the build side. The tables must not occur on the left
@@ -197,7 +201,7 @@ class Optimization {
   std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(RelationOpPtr plan) {
     return nullptr;
   }
-  
+
  private:
   DerivedTablePtr makeQueryGraph();
 
@@ -229,11 +233,21 @@ class Optimization {
 
   void makeJoins(RelationOpPtr plan, PlanState& state);
 
-  void addJoin(DerivedTablePtr dt, const JoinCandidate& candidate, RelationOpPtr plan, PlanState& state);
-  void joinByIndex(RelationOpPtr plan, const JoinCandidate& candidate, PlanState& state);
+  void addJoin(
+      DerivedTablePtr dt,
+      const JoinCandidate& candidate,
+      RelationOpPtr plan,
+      PlanState& state);
+  void joinByIndex(
+      RelationOpPtr plan,
+      const JoinCandidate& candidate,
+      PlanState& state);
 
-  void joinByHashSingle(RelationOpPtr plan, const JoinCandidate& candidate, PlanState& state);
-  
+  void joinByHashSingle(
+      RelationOpPtr plan,
+      const JoinCandidate& candidate,
+      PlanState& state);
+
   DerivedTablePtr currentSelect_;
 
   std::unordered_map<std::string, ExprPtr> renames_;
