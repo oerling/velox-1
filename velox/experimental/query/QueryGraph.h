@@ -193,6 +193,13 @@ class PlanObjectSet {
 
   void unionSet(const PlanObjectSet& other);
 
+  template <typename V>
+  void unionObjects(const V& objects) {
+    for (PlanObjectPtr& object : objects) {
+      add(object);
+    }
+  }
+  
   template <typename Func>
   void forEach(Func func) const {
     auto ctx = queryCtx();
@@ -260,6 +267,10 @@ struct Expr : public PlanObject {
 
   PlanObjectSet equivTables() const;
 
+  /// True if '&other == this' or is recursively equal with column
+  /// leaves either same or in same equivalence.
+  bool sameOrEqual(const Expr& other) const;
+  
   PlanObjectSet columns;
   Value value;
 };
@@ -359,6 +370,21 @@ enum class OrderType {
   kDescNullsLast
 };
 
+/// Represents a system that contains or produces data. nullptr means
+/// a shared access distributed file system or data lake for schema
+/// objects. nullptr means the system running the top level query for
+/// a RelationOp. For cases of federation where data is only
+/// accessible via a specific instance of a specific type of system,
+/// the locus represents the instance and the subclass of Locus
+/// represents the type of system for a schema object. For a
+/// RelationOp, a non-null locus means that the op is pushed down into
+/// the corresponding system. Distributions can be copartitioned only
+/// if their locus is pointer equal to the other locus.
+struct Locus {
+};
+
+using LocusPtr = Locus*;
+  
 /// Method for determining a partition given an ordered list of partitioning
 /// keys. Hive hash is an example, range partitioning is another. Add values
 /// here for more types.
@@ -368,12 +394,13 @@ enum class ShuffleMode { kNone, kHive };
 /// There is copartitioning if the DistributionType is the same on both sides
 /// and both sides have an equal number of 1:1 type matched partitioning keys.
 struct DistributionType {
-  bool operator==(const DistributionType& other) {
-    return mode == other.mode && numPartitions == other.numPartitions;
+  bool operator==(const DistributionType& other) const {
+    return mode == other.mode && numPartitions == other.numPartitions && locus == other.locus;
   }
 
   ShuffleMode mode{ShuffleMode::kNone};
   int32_t numPartitions{1};
+  LocusPtr locus{nullptr};
 };
 
 // Describes output of relational operator. If base table, cardinality is
@@ -417,6 +444,9 @@ struct Distribution {
 
   // True if the data is replicated to 'numPartitions'.
   bool isBroadcast{false};
+
+  bool isSamePartition(const Distribution& other) const;
+
 };
 
 struct FilteredColumn {
@@ -499,6 +529,7 @@ enum class RelType {
   kFilter,
   kProject,
   kHashJoin,
+  kMergeJoin,
   kAggregate,
   kOrderBy
 };
@@ -657,6 +688,10 @@ struct RelationOp : public Relation {
   float peakResident{0};
 
   virtual void setCost(){};
+
+  virtual std::string toString(bool /*recursive*/, bool /*detail*/) const {
+    return "";
+  }
 };
 
 using RelationOpPtr = RelationOp*;
@@ -674,14 +709,16 @@ struct TableScan : public RelationOp {
   Index* index;
 
   // Lookup keys, empty if full table scan.
-  ExprVector keys{0, stl<ExprPtr>()};
-
-  // Leading key parts of index, 1:1 equal to 'keys'.
-  ColumnVector keyColumns{stl<ColumnPtr>()};
+  ExprVector keys{stl<ExprPtr>()};
 
   // Projected columns, does not necessarily include columns in keys or
   // filters.
   ColumnVector projectedColumns{stl<ColumnPtr>()};
+
+  // If this is a lookup, 'joinType' can  be inner, left outer or left anti.
+  velox::core::JoinType joinType{velox::core::JoinType::kInner};
+
+  ExprPtr joinFilter{nullptr};
 };
 
 struct Repartition : public RelationOp {
@@ -697,9 +734,11 @@ struct Project : public RelationOp {
   ExprVector exprs{stl<ExprPtr>()};
 };
 
-struct HashJoin : public RelationOp {
+enum class JoinMethod {kHash, kMerge};
+  
+struct JoinOp : public RelationOp {
+  JoinMethod method;
   velox::core::JoinType joinType;
-  RelationOpPtr left;
   RelationOpPtr right;
   std::vector<ColumnPtr> leftKeys;
   std::vector<ColumnPtr> rightKeys;

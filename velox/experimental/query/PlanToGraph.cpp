@@ -16,6 +16,7 @@
 
 #include "velox/experimental/query/PlanToGraph.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/experimental/query/Costs.h"
 #include "velox/experimental/query/PlanUtils.h"
 
 namespace facebook::verax {
@@ -31,8 +32,13 @@ Optimization::Optimization(const core::PlanNode& plan, const Schema& schema)
   root_->expandJoins();
 }
 
-std::shared_ptr<const core::PlanNode> Optimization::bestPlan() {
-  return nullptr;
+RelationOpPtr Optimization::bestPlan() {
+  PlanState state;
+  state.dt = root_;
+  makeJoins(nullptr, state);
+  Distribution empty;
+  bool ignore;
+  return state.plans.best(empty, ignore)->op;
 }
 
 std::unordered_map<std::string, float>& baseSelectivities() {
@@ -324,10 +330,63 @@ void PlanState::addCost(const RelationOp& op) {
 }
 
 void PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
-  if (!best || best->isStateBetter(state)) {
-    Define(Plan, newPlan, plan, state);
-    best = newPlan;
+  bool insert = plans.empty();
+  int32_t replaceIndex = -1;
+  if (!insert) {
+    // Compare with existing. If there is one with same distribution
+    // and new is better, replace. If there is one with a different
+    // distribution and the new one can produce the same distribution
+    // by repartition, for cheaper, add the new one and delete the old
+    // one.
+    for (auto i = 0; i < plans.size(); ++i) {
+      auto old = plans[i];
+      if (!(state.input == old->input)) {
+        continue;
+      }
+      if (!old->isStateBetter(state)) {
+        continue;
+      }
+      if (old->op->distribution.isSamePartition(plan->distribution)) {
+          replaceIndex = i;
+          continue;
+        }
+    }
   }
+  if (insert || replaceIndex != -1) {
+    Define(Plan, newPlan, plan, state);
+    if (replaceIndex < 0) {
+      plans[replaceIndex] = newPlan;
+    } else {
+      plans.push_back(newPlan);
+    }
+  }
+}
+
+PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
+  PlanPtr best = nullptr;
+  PlanPtr match = nullptr;
+  float bestCost = -1;
+  float matchCost = -1;
+  for (auto i = 0; i < plans.size(); ++i) {
+    float cost = plans[i]->fanout * plans[i]->unitCost + plans[i]->setupCost;
+    if (!best || bestCost > cost) {
+      best = plans[i];
+      bestCost = cost;
+    }
+    if (plans[i]->op->distribution.isSamePartition(distribution)) {
+      match = plans[i];
+      matchCost = cost;
+    }
+  }
+  if (best != match && match) {
+    float shuffle = shuffleCost(best->op->columns) * best->fanout;
+    if (bestCost + shuffle < matchCost) {
+      needsShuffle = true;
+      return best;
+    }
+  }
+  needsShuffle = best != match;
+  return best;
 }
 
 float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
@@ -406,6 +465,23 @@ reducingJoins(DerivedTablePtr dt, const PlanState& state, PlanObjectPtr start) {
   return JoinCandidate();
 }
 
+JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
+  if (side == join->rightTable && !other) {
+    return {
+        join->rightTable,
+        join->rightKeys,
+        join->rightOptional,
+        join->rightExists,
+        join->rightNotExists};
+  }
+  return {
+      join->leftTable,
+      join->leftKeys,
+      join->leftOptional,
+      join->leftExists,
+      false};
+}
+
 std::vector<JoinCandidate> Optimization::nextJoins(
     DerivedTablePtr dt,
     PlanState& state) {
@@ -447,10 +523,163 @@ std::vector<IndexPtr> chooseLeafIndex(BaseTablePtr table, DerivedTablePtr dt) {
   return {table->schemaTable->indices[0]};
 }
 
-void Optimization::makeJoins(
-    DerivedTablePtr dt,
+template <typename V>
+PtrSpan<Column> leadingColumns(V& exprs) {
+  int32_t i = 0;
+  for (; i < exprs.size(); ++i) {
+    if (exprs[i]->type != PlanType::kColumn) {
+      break;
+    }
+  }
+  return PtrSpan<Column>(reinterpret_cast<ColumnPtr*>(&exprs[0]), i);
+}
+
+bool isIndexColocated(
+    const IndexInfo& info,
+    const ExprVector& lookupValues,
+    RelationOpPtr input) {
+  if (info.index->distribution.isBroadcast &&
+      input->distribution.distributionType.locus ==
+          info.index->distribution.distributionType.locus) {
+    return true;
+  }
+
+  // True if 'input' is partitioned so that each partitioning key is joined to
+  // the corresponding partition key in 'info'.
+  if (!(input->distribution.distributionType ==
+        info.index->distribution.distributionType)) {
+    return false;
+  }
+  if (input->distribution.partition.empty()) {
+    return false;
+  }
+  if (input->distribution.partition.size() !=
+      info.index->distribution.partition.size()) {
+    return false;
+  }
+  for (auto i = 0; i < input->distribution.partition.size(); ++i) {
+    auto nthKey = position(lookupValues, *input->distribution.partition[i]);
+    if (nthKey >= 0) {
+      if (info.lookupKeys[nthKey] != info.index->distribution.partition[i]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+RelationOpPtr repartitionForIndex(
+    const IndexInfo& info,
+    const ExprVector& lookupValues,
     RelationOpPtr plan,
     PlanState& state) {
+  if (isIndexColocated(info, lookupValues, plan)) {
+    return plan;
+  }
+  ExprVector keyExprs{stl<ExprPtr>()};
+  auto& partition = info.index->distribution.partition;
+  for (auto key : partition) {
+    auto nthKey = position(info.lookupKeys, *key);
+    if (nthKey >= 0) {
+      keyExprs.push_back(lookupValues[nthKey]);
+    } else {
+      return nullptr;
+    }
+  }
+
+  Define(Repartition, repartition);
+  repartition->distribution.partition = std::move(keyExprs);
+  repartition->distribution.distributionType =
+      info.index->distribution.distributionType;
+  repartition->columns = plan->columns;
+  return repartition;
+}
+
+void Optimization::joinByIndex(
+			       RelationOpPtr plan,
+    const JoinCandidate& candidate,
+    PlanState& state) {
+  if (candidate.tables[0]->type != PlanType::kTable) {
+    return;
+  }
+  auto right = candidate.tables[0]->as<BaseTablePtr>();
+  auto left = candidate.sideOf(right, true);
+  auto& keys = candidate.join->leftTable == right ? candidate.join->leftKeys
+                                                  : candidate.join->rightKeys;
+  auto keyColumns = leadingColumns(keys);
+  if (keyColumns.empty()) {
+    return;
+  }
+  for (auto& index : right->schemaTable->indices) {
+    auto info = right->schemaTable->indexInfo(index, keyColumns);
+    if (info.lookupKeys.empty()) {
+      continue;
+    }
+    auto newPartition = repartitionForIndex(info, left.keys, plan, state);
+    if (!newPartition) {
+      continue;
+    }
+    CostSaver save(state);
+    if (newPartition != plan) {
+      state.addCost(*newPartition);
+    }
+    Define(TableScan, scan);
+    scan->input = newPartition;
+    scan->index = info.index;
+    scan->keys = left.keys;
+    appendToVector(scan->keys, info.lookupKeys);
+    scan->fanout = info.scanCardinality;
+    state.tables.add(candidate.tables[0]);
+    state.addCost(*scan);
+    makeJoins(scan, state);
+    state.tables.erase(candidate.tables[0]);
+  }
+}
+
+// Returns the positions in 'keys' for the expressions that determine the
+// partition. empty if the partition is not decided by 'keys'
+std::vector<int32_t> joinKeyPartition(
+    RelationOpPtr op,
+    const ExprVector& keys) {
+  std::vector<int32_t> positions;
+  for (auto i = 0; i < op->distribution.partition.size(); ++i) {
+    auto nthKey = position(keys, *op->distribution.partition[i]);
+    if (nthKey < 0) {
+      return {};
+    }
+    positions.push_back(nthKey);
+  }
+  return positions;
+}
+
+
+void Optimization::joinByHashSingle(
+				    RelationOpPtr plan,
+    const JoinCandidate& candidate,
+    PlanState& state) {
+  auto build = candidate.sideOf(candidate.tables[0]);
+  auto probe = candidate.sideOf(candidate.tables[0], true);
+  //auto& builds = listBuilds(candidate, BuildMode::kSingle);
+
+  auto partKeys = joinKeyPartition(plan, probe.keys);
+  if (partKeys.empty()) {
+    // Not partitioned on join key.
+  }
+}
+
+void Optimization::addJoin(
+    DerivedTablePtr dt,
+    const JoinCandidate& candidate,
+    RelationOpPtr plan,
+    PlanState& state) {
+  joinByIndex(plan, candidate, state);
+  joinByHashSingle(plan, candidate, state);
+}
+
+void Optimization::makeJoins(
+    RelationOpPtr plan,
+    PlanState& state) {
+  auto& dt = state.dt;
   if (!plan) {
     std::vector<float> scores(dt->tables.size());
     for (auto i = 0; i < dt->tables.size(); ++i) {
@@ -476,7 +705,7 @@ void Optimization::makeJoins(
           scan->index = index;
           scan->distribution = index->distribution;
           scan->columns = table->columns;
-          makeJoins(dt, scan, state);
+          makeJoins(scan, state);
         }
       } else {
         // Start with a derived table.
@@ -491,6 +720,7 @@ void Optimization::makeJoins(
       state.plans.addPlan(plan, state);
     }
     for (auto& candidate : candidates) {
+      addJoin(dt, candidate, plan, state);
     }
   }
 }

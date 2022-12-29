@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/query/Costs.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/experimental/query/PlanToGraph.h"
 #include "velox/experimental/query/PlanUtils.h"
@@ -62,12 +63,25 @@ void GroupBy::setCost() {
       grouping.size() * Costs::hashProbeCost(inputCardinality - numDuplicate);
 }
 
-void Repartition::setCost() {
+template <typename V>
+float shuffleCostV(const V& columns) {
   int32_t size = 0;
   for (auto column : columns) {
     size += column->value.byteSize();
   }
-  unitCost = size * Costs::byteShuffleCost();
+  return size * Costs::byteShuffleCost();
+}
+
+float shuffleCost(const ColumnVector& columns) {
+  return shuffleCostV(columns);
+}
+
+float shuffleCost(const ExprVector& columns) {
+return shuffleCostV(columns);
+}
+
+void Repartition::setCost() {
+  unitCost = shuffleCost(columns);
 }
 
 } // namespace facebook::verax
