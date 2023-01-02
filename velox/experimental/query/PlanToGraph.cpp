@@ -835,9 +835,12 @@ void Optimization::joinByHash(
   joinOp->right = buildOp;
   joinOp->leftKeys = probe.keys;
   joinOp->rightKeys = build.keys;
-  joinOp->distribution.distributionType = probeInput->distribution.distributionType;
+  joinOp->distribution.distributionType =
+      probeInput->distribution.distributionType;
   joinOp->distribution.partition = probeInput->distribution.partition;
-  downstream.forEach([&](auto object) {joinOp->columns.push_back(reinterpret_cast<ColumnPtr>(object));});
+  downstream.forEach([&](auto object) {
+    joinOp->columns.push_back(reinterpret_cast<ColumnPtr>(object));
+  });
   auto buildCost = buildPlan->unitCost;
   if (buildShuffle) {
     buildShuffle->setCost();
