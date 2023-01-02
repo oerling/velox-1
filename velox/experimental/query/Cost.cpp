@@ -16,8 +16,8 @@
  */
 
 #include "velox/connectors/hive/HiveConnector.h"
-#include "velox/experimental/query/Costs.h"
-#include "velox/experimental/query/PlanToGraph.h"
+#include "velox/experimental/query/Cost.h"
+#include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 
 namespace facebook::verax {

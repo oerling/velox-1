@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/PlanToGraph.h"
+#include "velox/experimental/query/Plan.h"
 #include <folly/init/Init.h>
 #include <gtest/gtest.h>
 #include "velox/common/file/FileSystems.h"

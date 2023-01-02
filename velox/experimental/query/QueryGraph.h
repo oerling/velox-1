@@ -283,6 +283,10 @@ struct Expr : public PlanObject {
   Value value;
 };
 
+
+  /// If 'object' is an Expr, returns Expr::singleTable, else nullptr.
+  PlanObjectPtr singleTable(PlanObjectPtr object);
+  
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
 
