@@ -396,7 +396,7 @@ struct Call : public Expr {
   PtrSpan<PlanObject> children() const override {
     return toRangeCast<PlanObjectPtr>(args);
   }
-  
+
   std::string toString() const override;
 };
 
@@ -854,7 +854,8 @@ struct Aggregation : public RelationOp {
   // to any() aggregates.
   PlanObjectSet dependentKeys;
 
-  std::vector<AggregatePtr, velox::StlAllocator<AggregatePtr>> aggregates{stl<AggregatePtr>()};
+  std::vector<AggregatePtr, velox::StlAllocator<AggregatePtr>> aggregates{
+      stl<AggregatePtr>()};
 
   velox::core::AggregationNode::Step step{
       velox::core::AggregationNode::Step::kSingle};

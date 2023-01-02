@@ -22,7 +22,6 @@ namespace facebook::verax {
 
 using namespace facebook::velox;
 
-
 Optimization::Optimization(const core::PlanNode& plan, const Schema& schema)
     : schema_(schema), inputPlan_(plan) {
   root_ = makeQueryGraph();

@@ -14,16 +14,15 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/Plan.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/experimental/query/Plan.h"
 
 namespace facebook::verax {
 
-  using namespace facebook::velox;
+using namespace facebook::velox;
 
-  using velox::connector::hive::HiveColumnHandle;
+using velox::connector::hive::HiveColumnHandle;
 using velox::connector::hive::HiveTableHandle;
-
 
 DerivedTablePtr Optimization::makeQueryGraph() {
   Define(DerivedTable, root);
@@ -98,7 +97,6 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   VELOX_NYI();
   return nullptr;
 }
-  
 
 ExprPtr Optimization::translateColumn(const std::string& name) {
   auto column = renames_.find(name);
@@ -118,19 +116,29 @@ ExprVector Optimization::translateColumns(
 }
 
 AggregationPtr Optimization::translateGroupBy(
-					      const core::AggregationNode& source) {
-					      using velox::core::AggregationNode;
+    const core::AggregationNode& source) {
+  using velox::core::AggregationNode;
 
-  if (source.step() == AggregationNode::Step::kPartial || source.step() == AggregationNode::Step::kSingle) {
+  if (source.step() == AggregationNode::Step::kPartial ||
+      source.step() == AggregationNode::Step::kSingle) {
     Define(Aggregation, aggregation);
     aggregation->grouping = translateColumns(source.groupingKeys());
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
       auto rawFunc = translateExpr(source.aggregates()[i])->as<CallPtr>();
       ExprPtr condition = nullptr;
       if (source.aggregateMasks()[i]) {
-	condition = translateExpr(source.aggregateMasks()[i]);
+        condition = translateExpr(source.aggregateMasks()[i]);
       }
-      Define(Aggregate, agg, rawFunc->func, rawFunc->value, rawFunc->args, rawFunc->functions, false, condition, false);
+      Define(
+          Aggregate,
+          agg,
+          rawFunc->func,
+          rawFunc->value,
+          rawFunc->args,
+          rawFunc->functions,
+          false,
+          condition,
+          false);
       auto dedupped = queryCtx()->dedup(agg);
       aggregation->aggregates.push_back(dedupped->as<AggregatePtr>());
       auto name = toName(source.aggregateNames()[i]);
@@ -139,7 +147,7 @@ AggregationPtr Optimization::translateGroupBy(
     return aggregation;
   }
   return nullptr;
-  }
+}
 
 OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
   return nullptr;
@@ -276,4 +284,4 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
   return currentSelect_;
 }
 
-}
+} // namespace facebook::verax

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include "velox/connectors/hive/HiveConnector.h"
 #include "velox/experimental/query/Cost.h"
+#include "velox/connectors/hive/HiveConnector.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 
@@ -44,7 +44,7 @@ struct Costs {
   static constexpr float kLargeHashCost = 40; // 2 LLC misses
 };
 
-void  Aggregation::setCost() {
+void Aggregation::setCost() {
   float cardinality = 1;
   for (auto key : grouping) {
     cardinality *= key->value.cardinality;
