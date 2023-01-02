@@ -31,6 +31,7 @@ using PtrSpan = folly::Range<T**>;
 struct PlanObject;
 
 using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
+using PlanObjectConstPtr = const PlanObject* FOLLY_NONNULL;
 
 class QueryGraphContext {
  public:
@@ -162,10 +163,11 @@ struct Expr;
 using ExprPtr = Expr*;
 struct Column;
 using ColumnPtr = Column*;
+using ExprVector = std::vector<ExprPtr, velox::StlAllocator<ExprPtr>>;
 
 class PlanObjectSet {
  public:
-  bool contains(PlanObjectPtr object) {
+  bool contains(PlanObjectConstPtr object) const {
     return object->id < end_ && velox::bits::isBitSet(bits_.data(), object->id);
   }
 
@@ -191,7 +193,11 @@ class PlanObjectSet {
 
   void unionColumns(ExprPtr expr);
 
+  void unionColumns(const ExprVector& exprs);
+
   void unionSet(const PlanObjectSet& other);
+
+  void intersect(const PlanObjectSet& other);
 
   template <typename V>
   void unionObjects(const V& objects) {
@@ -207,9 +213,11 @@ class PlanObjectSet {
         bits_.data(), begin_, end_, [&](auto i) { func(ctx->objectAt(i)); });
   }
 
-  std::vector<PlanObjectPtr> objects() const {
-    std::vector<PlanObjectPtr> result;
-    forEach([&](auto object) { result.push_back(object); });
+  template <typename T = PlanObjectPtr>
+  std::vector<T> objects() const {
+    std::vector<T> result;
+    forEach(
+        [&](auto object) { result.push_back(reinterpret_cast<T>(object)); });
     return result;
   }
 
@@ -274,8 +282,6 @@ struct Expr : public PlanObject {
   PlanObjectSet columns;
   Value value;
 };
-
-using ExprVector = std::vector<ExprPtr, velox::StlAllocator<ExprPtr>>;
 
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
@@ -433,7 +439,7 @@ struct Distribution {
   // meaning that lineitem is hit every 1000 orders, meaning that an
   // index join with lineitem would skip 4000 rows between hits
   // because lineitem has an average of 4 repeats of orderkey.
-  int64_t spacing{-1};
+  float spacing{-1};
 
   // specifies that data in each partition is clustered by these columns, i.e.
   // all rows with any value k1=v1,...kn =vn are consecutive. Specifies that
@@ -489,7 +495,7 @@ struct Join {
   float rlFanout{1};
 
   // Join condition for any non-equality  conditions for non-inner joins.
-  Expr* condition;
+  Expr* filter;
 
   // True if an unprobed right side row produces a result with right side
   // columns set and left side columns as null. Possible only be hash or
@@ -577,6 +583,10 @@ struct BaseTable : public PlanObject, public Relation {
   // common::Filter.
   void* nativeFilter;
 
+  // Columns referenced from 'this' that do not participate in filters, joins,
+  // grouping or ordering.
+  PlanObjectSet payload;
+
   std::string toString() const override;
 };
 
@@ -597,6 +607,11 @@ using GroupByPtr = GroupBy*;
 
 struct OrderBy : public Relation {
   std::vector<ExprPtr> keys;
+
+  // Keys where the key expression is functionally dependent on
+  // another key or keys. These can be late materialized or converted
+  // to payload.
+  PlanObjectSet dependentKeys;
 };
 
 using OrderByPtr = OrderBy*;
@@ -619,7 +634,6 @@ struct DerivedTable : public PlanObject, public Relation {
       stl<PlanObjectPtr>()};
 
   std::vector<JoinPtr, velox::StlAllocator<JoinPtr>> joins{stl<JoinPtr>()};
-  ;
 
   // Filters in where for that are not single table expressions and not join
   // filters of explicit joins and not equalities between columns of joined
@@ -634,6 +648,14 @@ struct DerivedTable : public PlanObject, public Relation {
   // after 'joins' is filled in, links tables to their direct and
   // equivalence-implied joins.
   void expandJoins();
+
+  /// Initializes 'this' to join 'tables' from 'super'. Adds the joins from
+  /// 'existences' as semijoins to limit cardinality when making a hash join
+  /// build side. Allows importing a reducing join from probe to build.
+  void import(
+      const DerivedTable& super,
+      const PlanObjectSet& tables,
+      const std::vector<PlanObjectSet>& existences);
 };
 
 using DerivedTablePtr = DerivedTable*;
@@ -710,19 +732,25 @@ struct TableScan : public RelationOp {
   // Lookup keys, empty if full table scan.
   ExprVector keys{stl<ExprPtr>()};
 
-  // Projected columns, does not necessarily include columns in keys or
-  // filters.
-  ColumnVector projectedColumns{stl<ColumnPtr>()};
+  // Columns read from 'baseTable'. Can be more than 'columns' if
+  // there are filters that need columns that are not projected out to
+  // next op.
+  PlanObjectSet extractedColumns;
 
-  // If this is a lookup, 'joinType' can  be inner, left outer or left anti.
+  // If this is a lookup, 'joinType' can  be inner, left or anti.
   velox::core::JoinType joinType{velox::core::JoinType::kInner};
 
   ExprPtr joinFilter{nullptr};
+
+  /// Columns of base table available in 'index'.
+  PlanObjectSet availableColumns();
 };
 
 struct Repartition : public RelationOp {
   void setCost() override;
 };
+
+using RepartitionPtr = Repartition*;
 
 struct Filter : public RelationOp {
   ExprPtr expr;
@@ -739,13 +767,33 @@ struct JoinOp : public RelationOp {
   JoinMethod method;
   velox::core::JoinType joinType;
   RelationOpPtr right;
-  std::vector<ColumnPtr> leftKeys;
-  std::vector<ColumnPtr> rightKeys;
+  ExprVector leftKeys{stl<ExprPtr>()};
+  ExprVector rightKeys{stl<ExprPtr>()};
   ExprPtr filter;
 };
 
+using JoinOpPtr = JoinOp*;
+
+/// Occurs as right input of JoinOp with type kHash. Contains the
+/// cost and memory specific to building the table. Can be
+/// referenced from multiple JoinOps. The unit cost * input
+/// cardinality of this is counted as setup cost in the first
+/// referencing join and not counted in subsequent ones.
+struct HashBuild : public RelationOp {
+  int32_t buildId{0};
+  ExprVector keys{stl<ExprPtr>()};
+};
+
+using HashBuildPtr = HashBuild*;
+
 struct GroupBy : public RelationOp {
   std::vector<ExprPtr> grouping;
+
+  // Keys where the key expression is functionally dependent on
+  // another key or keys. These can be late materialized or converted
+  // to any() aggregates.
+  PlanObjectSet dependentKeys;
+
   std::vector<AggregatePtr> aggregates;
   bool isPartial{false};
 
@@ -845,7 +893,7 @@ PlanObjectSet allTables(PtrSpan<Expr> exprs);
 namespace std {
 template <>
 struct hash<::facebook::verax::PlanObjectSet> {
-  size_t operator()(const ::facebook::verax::PlanObjectSet set) const {
+  size_t operator()(const ::facebook::verax::PlanObjectSet& set) const {
     return set.hash();
   }
 };

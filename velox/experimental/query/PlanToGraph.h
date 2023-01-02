@@ -80,7 +80,7 @@ using PlanPtr = Plan*;
 struct PlanSet {
   std::vector<PlanPtr> plans;
 
-  // Returns the best plan that produces 'distribution'. If If the best plan has
+  // Returns the best plan that produces 'distribution'. If the best plan has
   // some other distribution, sets 'needsShuffle ' to true.
   PlanPtr best(const Distribution& distribution, bool& needShuffle);
 
@@ -94,7 +94,7 @@ struct PlanState {
   DerivedTablePtr dt{nullptr};
 
   // The tables that have been placed so far.
-  PlanObjectSet tables;
+  PlanObjectSet placed;
 
   // The columns that have a value.
   PlanObjectSet columns;
@@ -125,18 +125,31 @@ struct PlanState {
   // example, best by cost and maybe plans with interesting orders.
   PlanSet plans;
 
+  // Caches results of downstreamColumns(). This is a pure function of 'placed'
+  // a'targetColumns' and 'dt'.
+  mutable std::unordered_map<PlanObjectSet, PlanObjectSet>
+      downstreamPrecomputed;
+
   void addCost(const RelationOp& op);
+
+  /// The set of columns referenced in unplaced joins/filters union
+  /// targetColumns. Gets smaller as more tables are placed.
+  PlanObjectSet downstreamColumns() const;
 };
 
-struct CostSaver {
+struct StateSaver {
  public:
-  CostSaver(PlanState& state)
+  StateSaver(PlanState& state)
       : state_(state),
+        placed_(state.placed),
+        columns_(state.columns),
         cost_(state.cost),
         fanout_(state.fanout),
         setupCost_(state.setupCost) {}
 
-  ~CostSaver() {
+  ~StateSaver() {
+    state_.placed = std::move(placed_);
+    state_.columns = std::move(columns_);
     state_.cost = cost_;
     state_.fanout = fanout_;
     state_.setupCost = setupCost_;
@@ -144,6 +157,8 @@ struct CostSaver {
 
  private:
   PlanState& state_;
+  PlanObjectSet placed_;
+  PlanObjectSet columns_;
   const float cost_;
   const float fanout_;
   const float setupCost_;
@@ -165,8 +180,8 @@ struct JoinCandidate {
   JoinCandidate(JoinPtr _join, PlanObjectPtr _right, float _fanout)
       : join(_join), tables({_right}), fanout(_fanout) {}
 
-  // Returns the joi side info for 'table'. If 'other' is set, returns the other
-  // side.
+  // Returns the join side info for 'table'. If 'other' is set, returns the
+  // other side.
   JoinSide sideOf(PlanObjectPtr side, bool other = false) const;
 
   JoinPtr join{nullptr};
@@ -182,13 +197,35 @@ struct JoinCandidate {
   // 'existences' and partsupp in 'tables' because we know that
   // partsupp will not be probed with keys that are not in part, so
   // there is no point building with these.
-  std::vector<PlanObjectPtr> existences;
+  std::vector<PlanObjectSet> existences;
 
   // Number of right side hits for one row on the left. The join
   // selectivity in 'tables' affects this but the selectivity in
   // 'existences' does not.
   float fanout;
 };
+
+struct MemoKey {
+  bool operator==(const MemoKey& other) const;
+  size_t hash() const;
+
+  PlanObjectSet columns;
+  PlanObjectSet tables;
+  std::vector<PlanObjectSet> existences;
+};
+
+} // namespace facebook::verax
+
+namespace std {
+template <>
+struct hash<::facebook::verax::MemoKey> {
+  size_t operator()(const ::facebook::verax::MemoKey& key) const {
+    return key.hash();
+  }
+};
+} // namespace std
+
+namespace facebook::verax {
 
 /// Instance of query optimization. Comverts a plan and schema into an optimized
 /// plan. Depends on QueryGraphContext being set on the calling thread.
@@ -215,10 +252,12 @@ class Optimization {
   OrderByPtr translateOrderBy(const velox::core::OrderByNode& order);
   GroupByPtr translateGroupBy(const velox::core::AggregationNode& aggregation);
 
-  void makePlans(
-      DerivedTablePtr table,
-      RelationOpPtr* FOLLY_NULLABLE left,
-      const PlanObjectSet& boundColumns);
+  PlanPtr makePlan(
+      const MemoKey& key,
+      const Distribution& distribution,
+      const PlanObjectSet& boundColumns,
+      PlanState& state,
+      bool needsShuffle);
 
   std::vector<JoinCandidate> nextJoins(DerivedTablePtr dt, PlanState& state);
 
@@ -243,7 +282,7 @@ class Optimization {
       const JoinCandidate& candidate,
       PlanState& state);
 
-  void joinByHashSingle(
+  void joinByHash(
       RelationOpPtr plan,
       const JoinCandidate& candidate,
       PlanState& state);
@@ -256,7 +295,7 @@ class Optimization {
 
   int32_t nameCounter_{0};
 
-  std::unordered_map<PlanObjectSet, PlanSet> memo_;
+  std::unordered_map<MemoKey, PlanSet> memo_;
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().
