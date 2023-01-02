@@ -33,6 +33,14 @@ struct PlanObject;
 using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
 using PlanObjectConstPtr = const PlanObject* FOLLY_NONNULL;
 
+struct PlanObjectPtrHasher {
+  size_t operator()(const PlanObjectPtr& object) const;
+};
+
+struct PlanObjectPtrComparer {
+  bool operator()(const PlanObjectPtr& lhs, const PlanObjectPtr& rhs) const;
+};
+
 class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
@@ -57,6 +65,11 @@ class QueryGraphContext {
   velox::HashStringAllocator& allocator_;
   velox::StlAllocator<void*> stlAllocator_;
 
+  /// Returns a canonical instance for all logically equal values of 'object'.
+  /// Returns 'object' on first call with object, thereafter the same physical
+  /// object if the argument is equal.
+  PlanObjectPtr dedup(PlanObjectPtr object);
+
   PlanObjectPtr objectAt(int32_t id) {
     return objects_[id];
   }
@@ -64,6 +77,8 @@ class QueryGraphContext {
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
   std::unordered_set<std::string_view> names_;
+  std::unordered_set<PlanObjectPtr, PlanObjectPtrHasher, PlanObjectPtrComparer>
+      deduppedObjects_;
 };
 
 inline QueryGraphContext*& queryCtx() {
@@ -114,6 +129,7 @@ enum class PlanType {
   kColumn,
   kLiteral,
   kCall,
+  kAggregate,
   kProject,
   kFilter
 };
@@ -140,7 +156,7 @@ struct PlanObject {
     return reinterpret_cast<const T>(this);
   }
 
-  virtual PtrSpan<PlanObject> children() {
+  virtual PtrSpan<PlanObject> children() const {
     return PtrSpan<PlanObject>(nullptr, nullptr);
   }
 
@@ -151,6 +167,12 @@ struct PlanObject {
       child->preorderVisit(func);
     }
   }
+
+  virtual bool isExpr() const {
+    return false;
+  }
+
+  size_t hash() const;
 
   virtual std::string toString() const {
     return fmt::format("#{}", id);
@@ -267,6 +289,10 @@ using RelationPtr = Relation*;
 struct Expr : public PlanObject {
   Expr(PlanType type, Value _value) : PlanObject(type), value(_value) {}
 
+  bool isExpr() const override {
+    return true;
+  }
+
   // Returns the single base or derived table 'this' depends on, nullptr if
   // 'this' depends on none or multiple tables.
   PlanObjectPtr singleTable();
@@ -283,10 +309,9 @@ struct Expr : public PlanObject {
   Value value;
 };
 
+/// If 'object' is an Expr, returns Expr::singleTable, else nullptr.
+PlanObjectPtr singleTable(PlanObjectPtr object);
 
-  /// If 'object' is an Expr, returns Expr::singleTable, else nullptr.
-  PlanObjectPtr singleTable(PlanObjectPtr object);
-  
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
 
@@ -344,8 +369,13 @@ class FunctionSet {
 };
 
 struct Call : public Expr {
-  Call(Name _func, Value value, ExprVector _args, FunctionSet _functions)
-      : Expr(PlanType::kCall, value),
+  Call(
+      PlanType _type,
+      Name _func,
+      Value value,
+      ExprVector _args,
+      FunctionSet _functions)
+      : Expr(_type, value),
         func(_func),
         args(std::move(_args)),
         functions(_functions) {
@@ -354,12 +384,19 @@ struct Call : public Expr {
     }
   }
 
+  Call(Name _func, Value value, ExprVector _args, FunctionSet _functions)
+      : Call(PlanType::kCall, _func, value, _args, _functions) {}
+
   Name func;
   ExprVector args;
 
   // Set of functions used in 'this' and 'args'.
   FunctionSet functions;
 
+  PtrSpan<PlanObject> children() const override {
+    return toRangeCast<PlanObjectPtr>(args);
+  }
+  
   std::string toString() const override;
 };
 
@@ -537,9 +574,9 @@ enum class RelType {
   kRepartition,
   kFilter,
   kProject,
-  kHashJoin,
-  kMergeJoin,
-  kAggregate,
+  kJoin,
+  kHashBuild,
+  kAggregation,
   kOrderBy
 };
 
@@ -597,17 +634,35 @@ struct BaseTable : public PlanObject, public Relation {
 using BaseTablePtr = BaseTable*;
 
 // Aggregate function. The aggregation and arguments are in the
-// inherited Expr. The Value pertains to the aggregation
-// result. adds aggregate-only attributes to Expr.
-struct Aggregate : public Expr {
-  bool distinct{false};
+// inherited Call. The Value pertains to the aggregation
+// result or accumulator.
+struct Aggregate : public Call {
+  Aggregate(
+      Name _func,
+      Value value,
+      ExprVector _args,
+      FunctionSet _functions,
+      bool _isDistinct,
+      ExprPtr _condition,
+      bool _isAccumulator)
+      : Call(PlanType::kAggregate, _func, value, args, _functions),
+        isDistinct(_isDistinct),
+        condition(_condition),
+        isAccumulator(_isAccumulator) {
+    if (condition) {
+      columns.unionSet(condition->columns);
+    }
+  }
+
+  bool isDistinct;
   ExprPtr condition;
+  bool isAccumulator;
 };
 
 using AggregatePtr = Aggregate*;
 
-struct GroupBy;
-using GroupByPtr = GroupBy*;
+struct Aggregation;
+using AggregationPtr = Aggregation*;
 
 struct OrderBy : public Relation {
   std::vector<ExprPtr> keys;
@@ -644,7 +699,8 @@ struct DerivedTable : public PlanObject, public Relation {
   // tables.
   ExprVector conjuncts{stl<ExprPtr>()};
 
-  GroupByPtr groupBy;
+  AggregationPtr aggregation;
+  ExprPtr having{nullptr};
   OrderByPtr orderBy;
   int32_t limit{-1};
   int32_t offset{0};
@@ -790,16 +846,18 @@ struct HashBuild : public RelationOp {
 
 using HashBuildPtr = HashBuild*;
 
-struct GroupBy : public RelationOp {
-  std::vector<ExprPtr> grouping;
+struct Aggregation : public RelationOp {
+  ExprVector grouping{stl<ExprPtr>()};
 
   // Keys where the key expression is functionally dependent on
   // another key or keys. These can be late materialized or converted
   // to any() aggregates.
   PlanObjectSet dependentKeys;
 
-  std::vector<AggregatePtr> aggregates;
-  bool isPartial{false};
+  std::vector<AggregatePtr, velox::StlAllocator<AggregatePtr>> aggregates{stl<AggregatePtr>()};
+
+  velox::core::AggregationNode::Step step{
+      velox::core::AggregationNode::Step::kSingle};
 
   void setCost() override;
 };

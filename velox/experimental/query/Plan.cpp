@@ -306,8 +306,8 @@ void Optimization::addPostprocess(
     DerivedTablePtr dt,
     RelationOpPtr& plan,
     PlanState& state) {
-  if (dt->groupBy) {
-    Define(GroupBy, newGroupBy, *dt->groupBy);
+  if (dt->aggregation) {
+    Define(Aggregation, newGroupBy, *dt->aggregation);
   }
 }
 

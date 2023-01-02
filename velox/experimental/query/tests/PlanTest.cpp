@@ -33,6 +33,10 @@ DEFINE_string(
 using namespace facebook::velox;
 using namespace facebook::verax;
 
+std::string nodeString(core::PlanNode* node) {
+  return node->toString(true, true);
+}
+
 class PlanToGraphTest : public testing::Test {
  protected:
   void SetUp() override {

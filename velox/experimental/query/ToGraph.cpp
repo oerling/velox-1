@@ -25,7 +25,6 @@ namespace facebook::verax {
 using velox::connector::hive::HiveTableHandle;
 
 
-
 DerivedTablePtr Optimization::makeQueryGraph() {
   Define(DerivedTable, root);
   root_ = root;
@@ -99,6 +98,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   VELOX_NYI();
   return nullptr;
 }
+  
 
 ExprPtr Optimization::translateColumn(const std::string& name) {
   auto column = renames_.find(name);
@@ -117,10 +117,29 @@ ExprVector Optimization::translateColumns(
   return result;
 }
 
-GroupByPtr Optimization::translateGroupBy(
-    const core::AggregationNode& aggregation) {
+AggregationPtr Optimization::translateGroupBy(
+					      const core::AggregationNode& source) {
+					      using velox::core::AggregationNode;
+
+  if (source.step() == AggregationNode::Step::kPartial || source.step() == AggregationNode::Step::kSingle) {
+    Define(Aggregation, aggregation);
+    aggregation->grouping = translateColumns(source.groupingKeys());
+    for (auto i = 0; i < source.aggregateNames().size(); ++i) {
+      auto rawFunc = translateExpr(source.aggregates()[i])->as<CallPtr>();
+      ExprPtr condition = nullptr;
+      if (source.aggregateMasks()[i]) {
+	condition = translateExpr(source.aggregateMasks()[i]);
+      }
+      Define(Aggregate, agg, rawFunc->func, rawFunc->value, rawFunc->args, rawFunc->functions, false, condition, false);
+      auto dedupped = queryCtx()->dedup(agg);
+      aggregation->aggregates.push_back(dedupped->as<AggregatePtr>());
+      auto name = toName(source.aggregateNames()[i]);
+      renames_[name] = dedupped->as<ExprPtr>();
+    }
+    return aggregation;
+  }
   return nullptr;
-}
+  }
 
 OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
   return nullptr;
@@ -235,8 +254,11 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
   }
   if (name == "Aggregation") {
     makeQueryGraph(*node.sources()[0]);
-    currentSelect_->groupBy = translateGroupBy(
+    auto agg = translateGroupBy(
         *reinterpret_cast<const core::AggregationNode*>(&node));
+    if (agg) {
+      currentSelect_->aggregation = agg;
+    }
     return currentSelect_;
   }
   if (name == "OrderBy") {

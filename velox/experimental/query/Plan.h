@@ -244,13 +244,14 @@ class Optimization {
 
   PlanObjectPtr makeQueryGraph(const velox::core::PlanNode& node);
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
+
   ExprPtr translateColumn(const std::string& name);
   ExprVector translateColumns(
       const std::vector<velox::core::FieldAccessTypedExprPtr>& source);
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
   OrderByPtr translateOrderBy(const velox::core::OrderByNode& order);
-  GroupByPtr translateGroupBy(const velox::core::AggregationNode& aggregation);
+  AggregationPtr translateGroupBy(const velox::core::AggregationNode& aggregation);
 
   PlanPtr makePlan(
       const MemoKey& key,
