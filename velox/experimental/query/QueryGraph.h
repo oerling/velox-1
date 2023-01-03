@@ -243,6 +243,8 @@ class PlanObjectSet {
     return result;
   }
 
+  std::string toString(bool names) const;
+  
  private:
   void ensureSize(int32_t id) {
     ensureWords(velox::bits::nwords(id + 1));
@@ -645,7 +647,7 @@ struct Aggregate : public Call {
       bool _isDistinct,
       ExprPtr _condition,
       bool _isAccumulator)
-      : Call(PlanType::kAggregate, _func, value, args, _functions),
+    : Call(PlanType::kAggregate, _func, value, std::move(_args), _functions),
         isDistinct(_isDistinct),
         condition(_condition),
         isAccumulator(_isAccumulator) {
