@@ -1,0 +1,664 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "velox/experimental/query/QueryGraph.h"
+#include "velox/experimental/query/PlanUtils.h"
+
+namespace facebook::verax {
+
+size_t PlanObjectPtrHasher::operator()(const PlanObjectPtr& object) const {
+  return object->hash();
+}
+
+bool PlanObjectPtrComparer::operator()(
+    const PlanObjectPtr& lhs,
+    const PlanObjectPtr& rhs) const {
+  if (rhs == lhs) {
+    return true;
+  }
+  return rhs && lhs && lhs->isExpr() && rhs->isExpr() &&
+      reinterpret_cast<const Expr*>(lhs)->sameOrEqual(
+          *reinterpret_cast<const Expr*>(rhs));
+}
+
+size_t PlanObject::hash() const {
+  size_t h = static_cast<size_t>(type);
+  for (auto& child : children()) {
+    h = velox::bits::hashMix(h, child->hash());
+  }
+  return h;
+}
+
+PlanObjectPtr QueryGraphContext::dedup(PlanObjectPtr object) {
+  auto pair = deduppedObjects_.insert(object);
+  return *pair.first;
+}
+
+const char* QueryGraphContext::toName(std::string_view str) {
+  auto it = names_.find(str);
+  if (it != names_.end()) {
+    return it->data();
+  }
+  char* data = allocator_.allocate(str.size() + 1)->begin();
+  memcpy(data, str.data(), str.size());
+  data[str.size()] = 0;
+  names_.insert(std::string_view(data, str.size()));
+  return data;
+}
+
+const char* toName(const std::string& str) {
+  return queryCtx()->toName(std::string_view(str.data(), str.size()));
+}
+
+const char* planTypeName(PlanType type) {
+  switch (type) {
+    case PlanType::kTable:
+      return "table";
+    case PlanType::kDerivedTable:
+      return "derived table";
+    case PlanType::kCall:
+      return "call";
+    case PlanType::kProject:
+      return "project";
+    case PlanType::kFilter:
+      return "filter";
+    default:
+      return "unknown";
+  }
+}
+
+int32_t Value::byteSize() const {
+  if (type->isFixedWidth()) {
+    return type->cppSizeInBytes();
+  }
+  switch (type->kind()) {
+      // Add complex types here.
+    default:
+      return 16;
+  }
+}
+namespace {
+template <typename V>
+bool isZero(const V& bits, size_t begin, size_t end) {
+  for (auto i = begin; i < end; ++i) {
+    if (bits[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+} // namespace
+
+bool PlanObjectSet::operator==(const PlanObjectSet& other) const {
+  // The sets are equal if they have the same bits set. Trailing words of zeros
+  // do not count.
+  auto l1 = bits_.size();
+  auto l2 = other.bits_.size();
+  for (auto i = 0; i < l1 && i < l2; ++i) {
+    if (bits_[i] != other.bits_[i]) {
+      return false;
+    }
+  }
+  if (l1 < l2) {
+    return isZero(other.bits_, l1, l2);
+  }
+  if (l2 < l1) {
+    return isZero(bits_, l2, l1);
+  }
+  return true;
+}
+
+bool PlanObjectSet::isSubset(const PlanObjectSet& super) const {
+  auto l1 = bits_.size();
+  auto l2 = super.bits_.size();
+  for (auto i = 0; i < l1 && i < l2; ++i) {
+    if (bits_[i] & ~super.bits_[i]) {
+      return false;
+    }
+  }
+  if (l2 < l1) {
+    return isZero(bits_, l2, l1);
+  }
+  return true;
+}
+
+size_t PlanObjectSet::hash() const {
+  // The hash is a mix of the hashes of all non-zero words.
+  size_t hash = 123;
+  for (auto i = 0; i < bits_.size(); ++i) {
+    if (bits_[i]) {
+      hash += hash * i + folly::hasher<uint64_t>()(bits_[i]);
+    }
+  }
+  return hash;
+}
+
+void PlanObjectSet::unionColumns(ExprPtr expr) {
+  switch (expr->type) {
+    case PlanType::kLiteral:
+      return;
+    case PlanType::kColumn:
+      add(expr);
+      return;
+    case PlanType::kAggregate: {
+      auto condition = reinterpret_cast<AggregatePtr>(expr)->condition;
+      if (condition) {
+        unionColumns(condition);
+      }
+    }
+      // Fall through.
+    case PlanType::kCall: {
+      auto call = reinterpret_cast<const Call*>(expr);
+      unionSet(call->columns);
+      return;
+    }
+    default:
+      VELOX_UNREACHABLE();
+  }
+}
+
+void PlanObjectSet::unionColumns(const ExprVector& exprs) {
+  for (auto& expr : exprs) {
+    unionColumns(expr);
+  }
+}
+
+void PlanObjectSet::unionSet(const PlanObjectSet& other) {
+  ensureWords(other.bits_.size());
+  for (auto i = 0; i < bits_.size(); ++i) {
+    bits_[i] |= other.bits_[i];
+  }
+}
+
+void PlanObjectSet::intersect(const PlanObjectSet& other) {
+  bits_.resize(std::min(bits_.size(), other.bits_.size()));
+  for (auto i = 0; i < bits_.size(); ++i) {
+    bits_[i] &= other.bits_[i];
+  }
+}
+
+std::string PlanObjectSet::toString(bool names) const {
+  std::stringstream out;
+  forEach([&](auto object) {
+    out << object->id;
+    if (names) {
+      out << ": " << object->toString() << std::endl;
+    } else {
+      out << " ";
+    }
+  });
+  return out.str();
+}
+
+void Column::equals(ColumnPtr other) {
+  if (!equivalence && !other->equivalence) {
+    Define(Equivalence, equiv);
+    equiv->columns.push_back(this);
+    equiv->columns.push_back(other);
+    equivalence = equiv;
+    other->equivalence = equiv;
+    return;
+  }
+  if (!other->equivalence) {
+    other->equivalence = equivalence;
+    equivalence->columns.push_back(other);
+    return;
+  }
+  if (!equivalence) {
+    other->equals(this);
+    return;
+  }
+  for (auto& column : other->equivalence->columns) {
+    equivalence->columns.push_back(column);
+    column->equivalence = equivalence;
+  }
+}
+
+std::string Column::toString() const {
+  Name cname = relation->type == PlanType::kTable
+      ? relation->as<BaseTablePtr>()->cname
+      : relation->type == PlanType::kDerivedTable
+      ? relation->as<DerivedTablePtr>()->cname
+      : "--";
+
+  return fmt::format("{}.{}", cname, name);
+}
+
+std::string Call::toString() const {
+  std::stringstream out;
+  out << func << "(";
+  for (auto i = 0; i < args.size(); ++i) {
+    out << args[i]->toString() << (i == args.size() - 1 ? ")" : ", ");
+  }
+  return out.str();
+}
+
+std::string BaseTable::toString() const {
+  std::stringstream out;
+  out << "{" << PlanObject::toString();
+  out << schemaTable->name << " " << cname << "}";
+  return out.str();
+}
+
+bool Expr::sameOrEqual(const Expr& other) const {
+  if (this == &other) {
+    return true;
+  }
+  if (type != other.type) {
+    return false;
+  }
+  switch (type) {
+    case PlanType::kColumn:
+      return as<const Column*>()->equivalence &&
+          as<const Column*>()->equivalence ==
+          other.as<const Column*>()->equivalence;
+    case PlanType::kAggregate: {
+      auto a = reinterpret_cast<const Aggregate*>(this);
+      auto b = reinterpret_cast<const Aggregate*>(&other);
+      if (a->isDistinct != b->isDistinct ||
+          a->isAccumulator != b->isAccumulator ||
+          !(a->condition == b->condition ||
+            (a->condition && b->condition &&
+             a->condition->sameOrEqual(*b->condition)))) {
+        return false;
+      }
+    }
+      // Fall through.
+    case PlanType::kCall: {
+      if (as<const Call*>()->func != other.as<const Call*>()->func) {
+        return false;
+      }
+      auto numArgs = as<const Call*>()->args.size();
+      if (numArgs != other.as<const Call*>()->args.size()) {
+        return false;
+      }
+      for (auto i = 0; i < numArgs; ++i) {
+        if (as<const Call*>()->args[i]->sameOrEqual(
+                *other.as<const Call*>()->args[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+PlanObjectPtr singleTable(PlanObjectPtr object) {
+  if (isExprType(object->type)) {
+    return object->as<ExprPtr>()->singleTable();
+  }
+  return nullptr;
+}
+
+PlanObjectPtr Expr::singleTable() {
+  if (type == PlanType::kColumn) {
+    return as<ColumnPtr>()->relation;
+  }
+  PlanObjectPtr table = nullptr;
+  bool multiple = false;
+  columns.forEach([&](PlanObjectPtr object) {
+    VELOX_CHECK_EQ(object->type, PlanType::kColumn);
+    if (!table) {
+      table = object->as<ColumnPtr>()->relation;
+    } else if (table != object->as<ColumnPtr>()->relation) {
+      multiple = true;
+    }
+  });
+  return multiple ? nullptr : table;
+}
+
+PlanObjectSet Expr::allTables() const {
+  PlanObjectSet set;
+  columns.forEach([&](PlanObjectPtr object) {
+    set.add(object->as<ColumnPtr>()->relation);
+  });
+  return set;
+}
+
+PlanObjectSet Expr::equivTables() const {
+  PlanObjectSet set;
+  columns.forEach([&](PlanObjectPtr object) {
+    auto column = object->as<ColumnPtr>();
+    set.add(column->relation);
+    if (column->equivalence) {
+      for (auto equivalent : column->equivalence->columns) {
+        set.add(equivalent->relation);
+      }
+    }
+  });
+  return set;
+}
+
+PlanObjectSet allTables(PtrSpan<Expr> exprs) {
+  PlanObjectSet all;
+  for (auto expr : exprs) {
+    auto set = expr->allTables();
+    all.unionSet(set);
+  }
+  return all;
+}
+
+void DerivedTable::expandJoins() {
+  for (auto join : joins) {
+    PlanObjectSet tables;
+    for (auto key : join->leftKeys) {
+      tables.unionSet(key->equivTables());
+    }
+    for (auto key : join->rightKeys) {
+      tables.unionSet(key->equivTables());
+    }
+    if (join->filter) {
+      tables.unionSet(join->filter->allTables());
+    }
+    tables.forEach([&](PlanObjectPtr table) {
+      if (table->type == PlanType::kTable) {
+        table->as<BaseTablePtr>()->joinedBy.push_back(join);
+      } else {
+        VELOX_CHECK_EQ(table->type, PlanType::kDerivedTable);
+        table->as<DerivedTablePtr>()->joinedBy.push_back(join);
+      }
+    });
+  }
+}
+
+void DerivedTable::import(
+    const DerivedTable& super,
+    const PlanObjectSet& _tables,
+    const std::vector<PlanObjectSet>& existences) {
+  _tables.forEach([&](auto table) { tables.push_back(table); });
+  for (auto join : super.joins) {
+    if (_tables.contains(join->rightTable) && join->leftTable &&
+        _tables.contains(join->leftTable)) {
+      joins.push_back(join);
+    }
+  }
+}
+
+PlanObjectSet TableScan::availableColumns() {
+  // The columns of base table that exist in 'index'.
+  PlanObjectSet result;
+  for (auto column : index->columns) {
+    for (auto baseColumn : baseTable->columns) {
+      if (baseColumn->name == column->name) {
+        result.add(baseColumn);
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+std::vector<ColumnPtr> SchemaTable::toColumns(
+    const std::vector<std::string>& names) {
+  std::vector<ColumnPtr> columns(names.size());
+  for (auto i = 0; i < names.size(); ++i) {
+    columns[i] = findColumn(name);
+  }
+
+  return columns;
+}
+
+void SchemaTable::addIndex(
+    const char* name,
+    float cardinality,
+    int32_t numKeysUnique,
+    int32_t numOrdering,
+    const ColumnVector& keys,
+    DistributionType distType,
+    const ColumnVector& partition,
+    const ColumnVector& columns) {
+  Distribution distribution;
+  distribution.cardinality = cardinality;
+  for (auto i = 0; i < numOrdering; ++i) {
+    distribution.orderType.push_back(OrderType::kAscNullsFirst);
+  }
+  distribution.numKeysUnique = numKeysUnique;
+  appendToVector(distribution.order, keys);
+  distribution.distributionType = distType;
+  appendToVector(distribution.partition, partition);
+  Define(Index, index, name, this, distribution, columns);
+  indices.push_back(index);
+}
+
+ColumnPtr SchemaTable::column(const std::string& name, Value value) {
+  auto it = columns.find(name);
+  if (it != columns.end()) {
+    return it->second;
+  }
+  Define(Column, column, toName(name), nullptr, value);
+  columns[name] = column;
+  return column;
+}
+
+ColumnPtr SchemaTable::findColumn(const std::string& name) const {
+  auto it = columns.find(name);
+  VELOX_CHECK(it != columns.end());
+  return it->second;
+}
+
+Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
+    : name(_name) {
+  for (auto& table : tables) {
+    tables_[table->name] = table;
+  }
+}
+
+SchemaTablePtr Schema::findTable(const std::string& name) const {
+  auto it = tables_.find(name);
+  if (it == tables_.end()) {
+    VELOX_FAIL("No table {}", name);
+  }
+  return it->second;
+}
+
+template <typename T>
+ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
+  for (auto column : columns) {
+    if (column->type == PlanType::kColumn &&
+        column->template as<ColumnPtr>()->name == name) {
+      return column->template as<ColumnPtr>();
+    }
+  }
+  return nullptr;
+}
+
+void BaseTable::setRelation(
+    const Relation& relation,
+    const ColumnVector& columns,
+    const ColumnVector& schemaColumns) {
+  // if all partitioning columns are projected, the output is partitioned.
+  if (isSubset(
+          toRange(schemaColumns),
+          toRangeCast<ColumnPtr>(relation.distribution.partition))) {
+    distribution.partition = relation.distribution.partition;
+    distribution.distributionType = relation.distribution.distributionType;
+  }
+  auto numPrefix = prefixSize(
+      toRangeCast<ColumnPtr>(relation.distribution.order),
+      toRange(schemaColumns));
+  if (numPrefix > 0) {
+    distribution.order = relation.distribution.order;
+    distribution.order.resize(numPrefix);
+    distribution.orderType = relation.distribution.orderType;
+    distribution.orderType.resize(numPrefix);
+    if (relation.distribution.numKeysUnique <= numPrefix) {
+      distribution.numKeysUnique = relation.distribution.numKeysUnique;
+    }
+  }
+}
+
+bool SchemaTable::isUnique(folly::Range<ColumnPtr*> columns) {
+  for (auto index : indices) {
+    auto nUnique = index->distribution.numKeysUnique;
+    if (!nUnique) {
+      continue;
+    }
+    bool unique = true;
+    for (auto i = 0; i < nUnique; ++i) {
+      auto part = findColumnByName(columns, index->columns[i]->name);
+      if (!part) {
+        unique = false;
+        break;
+      }
+    }
+    if (unique) {
+      return true;
+    }
+  }
+  return false;
+}
+
+float combine(float card, int32_t ith, float otherCard) {
+  if (ith == 0) {
+    return card / otherCard;
+  }
+  if (otherCard > card) {
+    return 1;
+  }
+  return card / otherCard;
+}
+
+IndexInfo SchemaTable::indexInfo(
+    IndexPtr index,
+    folly::Range<ColumnPtr*> columns) {
+  IndexInfo info;
+  info.index = index;
+  info.scanCardinality = index->distribution.cardinality;
+  int32_t numPrefix = 0;
+  PlanObjectSet covered;
+  for (auto i = 0; i < index->distribution.order.size(); ++i) {
+    auto part = findColumnByName(
+        columns, index->distribution.order[i]->as<ColumnPtr>()->name);
+    if (!part) {
+      break;
+    }
+    info.scanCardinality = combine(
+        info.scanCardinality,
+        i,
+        index->distribution.order[i]->value.cardinality);
+    info.lookupKeys.push_back(part);
+    covered.add(part);
+    ++numPrefix;
+  }
+  info.joinCardinality = info.scanCardinality;
+
+  auto numCovered = info.lookupKeys.size();
+  for (auto i = 0; i < columns.size(); ++i) {
+    auto column = columns[i];
+    if (covered.contains(column)) {
+      continue;
+    }
+    auto part = findColumnByName(toRange(index->columns), column->name);
+    if (!part) {
+      continue;
+    }
+    covered.add(column);
+    ++numCovered;
+    info.joinCardinality =
+        combine(info.joinCardinality, numCovered, column->value.cardinality);
+  }
+  info.coveredColumns = std::move(covered);
+  return info;
+}
+
+IndexInfo SchemaTable::indexByColumns(folly::Range<ColumnPtr*> columns) {
+  // Match 'columns' against all indices. Pick the one that has the
+  // longest prefix intersection with 'columns'. If 'columns' are a
+  // unique combination on any index, then unique is true of the
+  // result.
+  IndexInfo pkInfo;
+  IndexInfo best;
+  bool unique = isUnique(columns);
+  float bestPrediction = 0;
+  for (auto iIndex = 0; iIndex < indices.size(); ++iIndex) {
+    auto index = indices[iIndex];
+    auto candidate = indexInfo(index, columns);
+    if (iIndex == 0) {
+      pkInfo = candidate;
+      best = candidate;
+      bestPrediction = best.joinCardinality;
+      continue;
+    }
+    if (candidate.lookupKeys.empty()) {
+      // No prefix match for secondary idex.
+      continue;
+    }
+    // The join cardinality estimate from the longest prefix is preferred for
+    // the estimate. The index with the least scan cardinality is preferred
+    if (candidate.lookupKeys.size() > best.lookupKeys.size()) {
+      bestPrediction = candidate.joinCardinality;
+    }
+    if (candidate.scanCardinality < best.scanCardinality) {
+      best = candidate;
+    }
+  }
+  best.joinCardinality = bestPrediction;
+  best.unique = unique;
+  return best;
+}
+
+IndexInfo joinCardinality(PlanObjectPtr table, folly::Range<ColumnPtr*> keys) {
+  if (table->type == PlanType::kTable) {
+    auto schemaTable = table->as<BaseTablePtr>()->schemaTable;
+    return schemaTable->indexByColumns(keys);
+  }
+  VELOX_NYI();
+}
+
+// The fraction of rows of a base table selected by non-join filters. 0.2
+// means 1 in 5 are selected.
+float baseSelectivity(PlanObjectPtr object) {
+  if (object->type == PlanType::kTable) {
+    auto table = object->as<BaseTablePtr>();
+    return table->distribution.cardinality /
+        table->schemaTable->indices[0]->distribution.cardinality;
+  }
+  return 1;
+}
+
+void Join::guessFanout() {
+  auto left = joinCardinality(leftTable, toRangeCast<ColumnPtr>(leftKeys));
+  auto right = joinCardinality(rightTable, toRangeCast<ColumnPtr>(rightKeys));
+  leftUnique = left.unique;
+  rightUnique = right.unique;
+  lrFanout = right.joinCardinality * baseSelectivity(leftTable);
+  rlFanout = left.joinCardinality * baseSelectivity(leftTable);
+  if (rightUnique) {
+    lrFanout = baseSelectivity(rightTable);
+  }
+  if (leftUnique) {
+    rlFanout = baseSelectivity(leftTable);
+  }
+}
+
+bool Distribution::isSamePartition(const Distribution& other) const {
+  if (!(distributionType == other.distributionType)) {
+    return false;
+  }
+  if (partition.size() != other.partition.size()) {
+    return false;
+  }
+  for (auto i = 0; i < partition.size(); ++i) {
+    if (!partition[i]->sameOrEqual(*other.partition[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+} // namespace facebook::verax
