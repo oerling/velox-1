@@ -604,16 +604,16 @@ struct Relation {
 struct SchemaTable;
 using SchemaTablePtr = SchemaTable*;
 
-struct BaseTable : public PlanObject, public Relation {
+struct BaseTable : public PlanObject {
   BaseTable() : PlanObject(PlanType::kTable) {}
 
-  void setRelation(
-      const Relation& relation,
-      const ColumnVector& columns,
-      const ColumnVector& schemaColumns);
+  Name cname;
 
   SchemaTablePtr schemaTable;
 
+  ColumnVector columns{stl<ColumnPtr>()};
+  ColumnVector schemaColumns{stl<ColumnPtr>()};
+  
   JoinVector joinedBy{stl<JoinPtr>()};
 
   // Top level conjuncts on single columns and literals, column to the left.
@@ -622,6 +622,9 @@ struct BaseTable : public PlanObject, public Relation {
   // Multicolumn filters dependent on 'this' alone.
   ExprPtr filter{nullptr};
 
+  // the fraction of base table rows selected by all filters involving this table only.
+  float filterSelectivity{1};
+  
   // System specific representation of filter on columns, e.g. set of
   // common::Filter.
   void* nativeFilter;
@@ -677,9 +680,11 @@ struct OrderBy : public Relation {
 
 using OrderByPtr = OrderBy*;
 
-struct DerivedTable : public PlanObject, public Relation {
+struct DerivedTable : public PlanObject {
   DerivedTable() : PlanObject(PlanType::kDerivedTable) {}
 
+  Name cname;
+  
   // Columns projected out. Visible in the enclosing query.
   ColumnVector columns{stl<ColumnPtr>()};
 
@@ -806,6 +811,11 @@ struct TableScan : public RelationOp {
 
   /// Columns of base table available in 'index'.
   PlanObjectSet availableColumns();
+
+  void setRelation(
+      const ColumnVector& columns,
+      const ColumnVector& schemaColumns);
+
 };
 
 struct Repartition : public RelationOp {

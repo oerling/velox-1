@@ -228,8 +228,8 @@ void Column::equals(ColumnPtr other) {
 }
 
 std::string Column::toString() const {
-  Name cname = relation->type == PlanType::kTable
-      ? relation->as<BaseTablePtr>()->cname
+  Name cname = !relation                   ? ""
+      : relation->type == PlanType::kTable ? relation->as<BaseTablePtr>()->cname
       : relation->type == PlanType::kDerivedTable
       ? relation->as<DerivedTablePtr>()->cname
       : "--";
@@ -477,27 +477,32 @@ ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
   return nullptr;
 }
 
-void BaseTable::setRelation(
-    const Relation& relation,
+void TableScan::setRelation(
     const ColumnVector& columns,
     const ColumnVector& schemaColumns) {
+  distribution.cardinality =
+      index->distribution.cardinality * baseTable->filterSelectivity;
   // if all partitioning columns are projected, the output is partitioned.
   if (isSubset(
-          toRange(schemaColumns),
-          toRangeCast<ColumnPtr>(relation.distribution.partition))) {
-    distribution.partition = relation.distribution.partition;
-    distribution.distributionType = relation.distribution.distributionType;
+          toRangeCast<ColumnPtr>(index->distribution.partition),
+          toRange(schemaColumns))) {
+    distribution.partition = index->distribution.partition;
+    replace(
+        toRangeCast<ColumnPtr>(distribution.partition),
+        toRange(schemaColumns),
+        &columns[0]);
+    distribution.distributionType = index->distribution.distributionType;
   }
   auto numPrefix = prefixSize(
-      toRangeCast<ColumnPtr>(relation.distribution.order),
+      toRangeCast<ColumnPtr>(index->distribution.order),
       toRange(schemaColumns));
   if (numPrefix > 0) {
-    distribution.order = relation.distribution.order;
+    distribution.order = index->distribution.order;
     distribution.order.resize(numPrefix);
-    distribution.orderType = relation.distribution.orderType;
+    distribution.orderType = index->distribution.orderType;
     distribution.orderType.resize(numPrefix);
-    if (relation.distribution.numKeysUnique <= numPrefix) {
-      distribution.numKeysUnique = relation.distribution.numKeysUnique;
+    if (index->distribution.numKeysUnique <= numPrefix) {
+      distribution.numKeysUnique = index->distribution.numKeysUnique;
     }
   }
 }
@@ -624,9 +629,7 @@ IndexInfo joinCardinality(PlanObjectPtr table, folly::Range<ColumnPtr*> keys) {
 // means 1 in 5 are selected.
 float baseSelectivity(PlanObjectPtr object) {
   if (object->type == PlanType::kTable) {
-    auto table = object->as<BaseTablePtr>();
-    return table->distribution.cardinality /
-        table->schemaTable->indices[0]->distribution.cardinality;
+    return object->as<BaseTablePtr>()->filterSelectivity;
   }
   return 1;
 }

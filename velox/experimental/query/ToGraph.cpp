@@ -228,9 +228,9 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
       columns.push_back(column);
       renames_[pair.first] = column;
     }
-    baseTable->setRelation(*schemaTable->indices[0], columns, schemaColumns);
-    baseTable->distribution.cardinality =
-        schemaTable->indices[0]->distribution.cardinality * selection;
+    baseTable->columns = columns;
+    baseTable->schemaColumns = schemaColumns;
+    baseTable->filterSelectivity = selection;
     currentSelect_->tables.push_back(baseTable);
     return baseTable;
   }
