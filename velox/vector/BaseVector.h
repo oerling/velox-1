@@ -136,7 +136,8 @@ class BaseVector {
   }
 
   virtual bool isNullAt(vector_size_t idx) const {
-    VELOX_DCHECK(isIndexInRange(idx));
+    VELOX_DCHECK_GE(idx, 0, "Index must not be negative");
+    VELOX_DCHECK_LT(idx, length_, "Index is too large");
     return rawNulls_ ? bits::isBitNull(rawNulls_, idx) : false;
   }
 
@@ -746,10 +747,10 @@ class BaseVector {
   virtual std::string toSummaryString() const;
 
   /*
-   * Allocates or reallocates nulls_ with the given size if nulls_ hasn't
-   * been allocated yet or has been allocated with a smaller capacity.
+   * Allocates or reallocates nulls_ with at least the given size if nulls_
+   * hasn't been allocated yet or has been allocated with a smaller capacity.
    */
-  void ensureNullsCapacity(vector_size_t size, bool setNotNull = false);
+  void ensureNullsCapacity(vector_size_t minimumSize, bool setNotNull = false);
 
   FOLLY_ALWAYS_INLINE static std::optional<int32_t>
   compareNulls(bool thisNull, bool otherNull, CompareFlags flags) {

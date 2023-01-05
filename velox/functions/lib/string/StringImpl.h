@@ -231,13 +231,12 @@ FOLLY_ALWAYS_INLINE void replaceInPlace(
 
 /// Compute the MD5 Hash.
 template <typename TOutString, typename TInString>
-FOLLY_ALWAYS_INLINE bool md5(TOutString& output, const TInString& input) {
+FOLLY_ALWAYS_INLINE void md5(TOutString& output, const TInString& input) {
   static const auto kByteLength = 16;
   output.resize(kByteLength);
   crypto::MD5Context md5Context;
   md5Context.Add((const uint8_t*)input.data(), input.size());
   md5Context.Finish((uint8_t*)output.data());
-  return true;
 }
 
 /// Compute the MD5 Hash.
@@ -271,12 +270,11 @@ FOLLY_ALWAYS_INLINE bool md5_radix(
 
 /// Compute the SHA256 Hash.
 template <typename TOutString, typename TInString>
-FOLLY_ALWAYS_INLINE bool sha256(TOutString& output, const TInString& input) {
+FOLLY_ALWAYS_INLINE void sha256(TOutString& output, const TInString& input) {
   output.resize(32);
   folly::ssl::OpenSSLHash::sha256(
       folly::MutableByteRange((uint8_t*)output.data(), output.size()),
       folly::ByteRange((const uint8_t*)input.data(), input.size()));
-  return true;
 }
 
 /// Compute the SHA512 Hash.
@@ -286,6 +284,39 @@ FOLLY_ALWAYS_INLINE void sha512(TOutString& output, const TInString& input) {
   folly::ssl::OpenSSLHash::sha512(
       folly::MutableByteRange((uint8_t*)output.data(), output.size()),
       folly::ByteRange((const uint8_t*)input.data(), input.size()));
+}
+
+// Compute the HMAC-SHA1 Hash.
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE void
+hmacSha1(TOutString& output, const TInString& key, const TInString& data) {
+  output.resize(20);
+  folly::ssl::OpenSSLHash::hmac_sha1(
+      folly::MutableByteRange((uint8_t*)output.data(), output.size()),
+      folly::ByteRange((const uint8_t*)key.data(), key.size()),
+      folly::ByteRange((const uint8_t*)data.data(), data.size()));
+}
+
+// Compute the HMAC-SHA256 Hash.
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE void
+hmacSha256(TOutString& output, const TInString& key, const TInString& data) {
+  output.resize(32);
+  folly::ssl::OpenSSLHash::hmac_sha256(
+      folly::MutableByteRange((uint8_t*)output.data(), output.size()),
+      folly::ByteRange((const uint8_t*)key.data(), key.size()),
+      folly::ByteRange((const uint8_t*)data.data(), data.size()));
+}
+
+// Compute the HMAC-SHA512 Hash.
+template <typename TOutString, typename TInString>
+FOLLY_ALWAYS_INLINE void
+hmacSha512(TOutString& output, const TInString& key, const TInString& data) {
+  output.resize(64);
+  folly::ssl::OpenSSLHash::hmac_sha512(
+      folly::MutableByteRange((uint8_t*)output.data(), output.size()),
+      folly::ByteRange((const uint8_t*)key.data(), key.size()),
+      folly::ByteRange((const uint8_t*)data.data(), data.size()));
 }
 
 template <typename TOutString, typename TInString>

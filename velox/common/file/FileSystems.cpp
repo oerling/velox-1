@@ -140,6 +140,18 @@ class LocalFileSystem : public FileSystem {
     return filePaths;
   }
 
+  void mkdir(std::string_view path) override {
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    VELOX_CHECK_EQ(
+        0,
+        ec.value(),
+        "Mkdir {} failed: {}, message: {}",
+        path,
+        ec,
+        ec.message());
+  }
+
   static std::function<bool(std::string_view)> schemeMatcher() {
     // Note: presto behavior is to prefix local paths with 'file:'.
     // Check for that prefix and prune to absolute regular paths as needed.

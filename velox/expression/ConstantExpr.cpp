@@ -37,13 +37,14 @@ void ConstantExpr::evalSpecialForm(
 
   if (sharedSubexprValues_.unique()) {
     sharedSubexprValues_->resize(rows.end());
-    context.moveOrCopyResult(sharedSubexprValues_, rows, result);
   } else {
-    context.moveOrCopyResult(
-        BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
-        rows,
-        result);
+    // By reassigning sharedSubexprValues_ we increase the chances that it will
+    // be unique the next time this expression is evaluated.
+    sharedSubexprValues_ =
+        BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_);
   }
+
+  context.moveOrCopyResult(sharedSubexprValues_, rows, result);
 }
 
 void ConstantExpr::evalSpecialFormSimplified(
@@ -212,6 +213,8 @@ void appendSqlLiteral(
       break;
     }
     default:
+      // TODO: update ExprStatsTest.exceptionPreparingStatsForListener once
+      // support for VARBINARY is added.
       VELOX_UNSUPPORTED(
           "Type not supported yet: {}", vector.type()->toString());
   }

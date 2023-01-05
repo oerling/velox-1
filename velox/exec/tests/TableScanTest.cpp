@@ -1544,6 +1544,71 @@ TEST_F(TableScanTest, stringNotEqualFilter) {
       "SELECT * FROM tmp WHERE c1 != ''");
 }
 
+TEST_F(TableScanTest, arrayIsNullFilter) {
+  std::vector<RowVectorPtr> vectors(3);
+  auto filePaths = makeFilePaths(vectors.size());
+  for (int i = 0; i < vectors.size(); ++i) {
+    auto isNullAt = [&](vector_size_t j) {
+      // Non-nulls for first file, all nulls for second file, half nulls for
+      // third file.
+      return i == 0 ? false : i == 1 ? true : j % 2 != 0;
+    };
+    auto c0 = makeArrayVector<int64_t>(
+        100,
+        [](vector_size_t i) { return 3 + i % 3; },
+        [](vector_size_t, vector_size_t j) { return j; },
+        isNullAt);
+    vectors[i] = makeRowVector({"c0"}, {c0});
+    writeToFile(filePaths[i]->path, vectors[i]);
+  }
+  createDuckDbTable(vectors);
+  auto rowType = asRowType(vectors[0]->type());
+  auto makePlan = [&](const std::vector<std::string>& filters) {
+    return PlanBuilder().tableScan(rowType, filters).planNode();
+  };
+  assertQuery(
+      makePlan({"c0 is not null"}),
+      filePaths,
+      "SELECT * FROM tmp WHERE c0 is not null");
+  assertQuery(
+      makePlan({"c0 is null"}),
+      filePaths,
+      "SELECT * FROM tmp WHERE c0 is null");
+}
+
+TEST_F(TableScanTest, mapIsNullFilter) {
+  std::vector<RowVectorPtr> vectors(3);
+  auto filePaths = makeFilePaths(vectors.size());
+  for (int i = 0; i < vectors.size(); ++i) {
+    auto isNullAt = [&](vector_size_t j) {
+      // Non-nulls for first file, all nulls for second file, half nulls for
+      // third file.
+      return i == 0 ? false : i == 1 ? true : j % 2 != 0;
+    };
+    auto c0 = makeMapVector<int64_t, int64_t>(
+        100,
+        [](vector_size_t i) { return 3 + i % 3; },
+        [](vector_size_t j) { return j; },
+        [](vector_size_t j) { return 2 * j; },
+        isNullAt);
+    vectors[i] = makeRowVector({"c0"}, {c0});
+    writeToFile(filePaths[i]->path, vectors[i]);
+  }
+  createDuckDbTable(vectors);
+  auto rowType = asRowType(vectors[0]->type());
+  auto makePlan = [&](const std::vector<std::string>& filters) {
+    return PlanBuilder().tableScan(rowType, filters).planNode();
+  };
+  assertQuery(
+      makePlan({"c0 is not null"}),
+      filePaths,
+      "SELECT * FROM tmp WHERE c0 is not null");
+  assertQuery(
+      makePlan({"c0 is null"}),
+      filePaths,
+      "SELECT * FROM tmp WHERE c0 is null");
+}
+
 TEST_F(TableScanTest, remainingFilter) {
   auto rowType = ROW(
       {"c0", "c1", "c2", "c3"}, {INTEGER(), INTEGER(), DOUBLE(), BOOLEAN()});
@@ -1600,6 +1665,39 @@ TEST_F(TableScanTest, remainingFilter) {
           .planNode(),
       filePaths,
       "SELECT c1, c2 FROM tmp WHERE c1 > c0");
+}
+
+TEST_F(TableScanTest, remainingFilterSkippedStrides) {
+  auto rowType = ROW({{"c0", BIGINT()}, {"c1", BIGINT()}});
+  std::vector<RowVectorPtr> vectors(3);
+  auto filePaths = makeFilePaths(vectors.size());
+  for (int j = 0; j < vectors.size(); ++j) {
+    auto c =
+        BaseVector::create<FlatVector<int64_t>>(BIGINT(), 100, pool_.get());
+    for (int i = 0; i < c->size(); ++i) {
+      c->set(i, j);
+    }
+    vectors[j] = std::make_shared<RowVector>(
+        pool_.get(),
+        rowType,
+        nullptr,
+        c->size(),
+        std::vector<VectorPtr>({c, c}));
+    writeToFile(filePaths[j]->path, vectors[j]);
+  }
+  createDuckDbTable(vectors);
+  core::PlanNodeId tableScanNodeId;
+  auto plan = PlanBuilder()
+                  .tableScan(rowType, {}, "c0 = 0 or c1 = 2")
+                  .capturePlanNodeId(tableScanNodeId)
+                  .planNode();
+  auto task =
+      assertQuery(plan, filePaths, "SELECT * FROM tmp WHERE c0 = 0 or c1 = 2");
+  auto skippedStrides = toPlanStats(task->taskStats())
+                            .at(tableScanNodeId)
+                            .customStats.at("skippedStrides");
+  EXPECT_EQ(skippedStrides.count, 1);
+  EXPECT_EQ(skippedStrides.sum, 1);
 }
 
 /// Test the handling of constant remaining filter results which occur when
@@ -2100,15 +2198,14 @@ TEST_F(TableScanTest, addSplitsToFailedTask) {
 }
 
 TEST_F(TableScanTest, errorInLoadLazy) {
-  auto cache =
-      dynamic_cast<cache::AsyncDataCache*>(memory::MappedMemory::getInstance());
+  auto cache = dynamic_cast<cache::AsyncDataCache*>(
+      memory::MemoryAllocator::getInstance());
   VELOX_CHECK_NOT_NULL(cache);
-
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, vectors);
 
-  int32_t counter = 0;
+  std::atomic<int32_t> counter = 0;
   cache->setVerifyHook([&](const cache::AsyncDataCacheEntry&) {
     if (++counter >= 7) {
       VELOX_FAIL("Testing error");

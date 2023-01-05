@@ -17,8 +17,8 @@
 #pragma once
 
 #include "velox/common/time/Timer.h"
+#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/DataSink.h"
-#include "velox/dwio/common/MemoryInputStream.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
@@ -173,7 +173,7 @@ class E2EFilterTestBase : public testing::Test {
 
   virtual std::unique_ptr<dwio::common::Reader> makeReader(
       const dwio::common::ReaderOptions& opts,
-      std::unique_ptr<dwio::common::InputStream> input) = 0;
+      std::unique_ptr<dwio::common::BufferedInput> input) = 0;
 
   virtual void setUpRowReaderOptions(
       dwio::common::RowReaderOptions& opts,
@@ -259,6 +259,17 @@ class E2EFilterTestBase : public testing::Test {
       const std::vector<std::string>& filterable,
       int32_t numCombinations);
 
+ private:
+  void testMetadataFilterImpl(
+      const std::vector<RowVectorPtr>& batches,
+      common::Subfield filterField,
+      std::unique_ptr<common::Filter> filter,
+      const std::string& remainingFilter,
+      std::function<bool(int64_t a, int64_t c)> validationFilter);
+
+ protected:
+  void testMetadataFilter();
+
   // Allows testing reading with different batch sizes.
   void resetReadBatchSizes() {
     nextReadSizeIndex_ = 0;
@@ -286,6 +297,8 @@ class E2EFilterTestBase : public testing::Test {
   int32_t flushEveryNBatches_{10};
   int32_t nextReadSizeIndex_{0};
   std::vector<int32_t> readSizes_;
+  int32_t batchCount_ = kBatchCount;
+  int32_t batchSize_ = kBatchSize;
 };
 
 } // namespace facebook::velox::dwio::common

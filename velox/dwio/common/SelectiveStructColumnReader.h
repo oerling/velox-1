@@ -35,11 +35,10 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
       VectorPtr& result,
       const uint64_t* incomingNulls) override;
 
-  std::vector<uint32_t> filterRowGroups(
+  void filterRowGroups(
       uint64_t rowGroupSize,
-      const dwio::common::StatsContext& context) const override;
-
-  bool rowGroupMatches(uint32_t rowGroupId) const override;
+      const dwio::common::StatsContext& context,
+      FormatData::FilterRowGroupsResult&) const override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
@@ -79,6 +78,10 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
         child->setIsTopLevel();
       }
     }
+  }
+
+  const std::vector<SelectiveColumnReader*>& children() const override {
+    return children_;
   }
 
   // Sets 'rows' as the set of rows for which 'this' or its children

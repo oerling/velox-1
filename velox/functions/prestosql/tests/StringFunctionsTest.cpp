@@ -221,12 +221,12 @@ class StringFunctionsTest : public FunctionBaseTest {
     // We expect 2 allocations: one for the values buffer and another for the
     // strings buffer. I.e. FlatVector<StringView>::values and
     // FlatVector<StringView>::stringBuffers.
-    auto numAllocsBefore = pool()->getMemoryUsageTracker()->getNumAllocs();
+    auto numAllocsBefore = pool()->getMemoryUsageTracker()->numAllocs();
 
     auto result = evaluate<FlatVector<StringView>>(
         buildConcatQuery(), makeRowVector(inputVectors));
 
-    auto numAllocsAfter = pool()->getMemoryUsageTracker()->getNumAllocs();
+    auto numAllocsAfter = pool()->getMemoryUsageTracker()->numAllocs();
     ASSERT_EQ(numAllocsAfter - numAllocsBefore, 2);
 
     auto concatStd = [](const std::vector<std::string>& inputs) {
@@ -1201,6 +1201,94 @@ TEST_F(StringFunctionsTest, sha512) {
   EXPECT_EQ(std::nullopt, sha512(std::nullopt));
 }
 
+TEST_F(StringFunctionsTest, HmacSha1) {
+  const auto hmacSha1 = [&](std::optional<std::string> arg,
+                            std::optional<std::string> key) {
+    return evaluateOnce<std::string, std::string>(
+        "hmac_sha1(c0, c1)", {arg, key}, {VARBINARY(), VARBINARY()});
+  };
+  // Use python hmac lib results as the expected value.
+  // >>> import hmac
+  // >>> def sha1(data, key):
+  //         print(hmac.new(key, data, digestmod='sha1').hexdigest())
+  // >>> sha1(b"hashme", b"velox")
+  // d49c944625bdde6c47ad93ea63952bfcf16a630a
+  // >>> sha1(b"Infinity", b"velox")
+  // c19b6b753fe4ac28579c7e84d18feb29760a0d1c
+  // >>> sha1(b"", b"velox")
+  // d0569c4a4f3df995b04ec497b12872c4a2f97517
+  // >>> sha1(b"12345abcde54321", b"velox")
+  // 183054bdaf8c83320fee4376e76ffd7e773a650f
+  // sha1(b"velox", b"")
+  // 3ec5ea98df0f5ddb139231ecee2c8a9810a82e08
+  EXPECT_EQ(
+      hexToDec("d49c944625bdde6c47ad93ea63952bfcf16a630a"),
+      hmacSha1("hashme", "velox"));
+  EXPECT_EQ(
+      hexToDec("c19b6b753fe4ac28579c7e84d18feb29760a0d1c"),
+      hmacSha1("Infinity", "velox"));
+  EXPECT_EQ(
+      hexToDec("d0569c4a4f3df995b04ec497b12872c4a2f97517"),
+      hmacSha1("", "velox"));
+  EXPECT_EQ(std::nullopt, hmacSha1(std::nullopt, "velox"));
+  EXPECT_EQ(
+      hexToDec("183054bdaf8c83320fee4376e76ffd7e773a650f"),
+      hmacSha1("12345abcde54321", "velox"));
+  EXPECT_EQ(
+      hexToDec("3ec5ea98df0f5ddb139231ecee2c8a9810a82e08"),
+      hmacSha1("velox", ""));
+  EXPECT_EQ(std::nullopt, hmacSha1("velox", std::nullopt));
+}
+
+TEST_F(StringFunctionsTest, HmacSha256) {
+  const auto hmacSha256 = [&](std::optional<std::string> arg,
+                              std::optional<std::string> key) {
+    return evaluateOnce<std::string, std::string>(
+        "hmac_sha256(c0, c1)", {arg, key}, {VARBINARY(), VARBINARY()});
+  };
+  // Use python hmac lib results as the expected value.
+  // >>> import hmac
+  // >>> def sha256(data, key):
+  //         print(hmac.new(key, data, digestmod='sha256').hexdigest())
+  // >>> sha256(b"hashme", b"velox")
+  // 24bb7fa25fd592ef6a4c939d4fb91b7f7f04f8813260961101117ec30f865794
+  // >>> sha256(b"Infinity", b"velox")
+  // f45718c9586ae7d761194485d15cbf6284b5b606ade4f9d5820fbdd1eaf52b75
+  // >>> sha256(b"", b"velox")
+  // fd8658b6a6b6601155fecf9a39b6f95cf030863e550073423a8e250a35c6f5a4
+  EXPECT_EQ(
+      hexToDec(
+          "24bb7fa25fd592ef6a4c939d4fb91b7f7f04f8813260961101117ec30f865794"),
+      hmacSha256("hashme", "velox"));
+  EXPECT_EQ(
+      hexToDec(
+          "f45718c9586ae7d761194485d15cbf6284b5b606ade4f9d5820fbdd1eaf52b75"),
+      hmacSha256("Infinity", "velox"));
+  EXPECT_EQ(
+      hexToDec(
+          "fd8658b6a6b6601155fecf9a39b6f95cf030863e550073423a8e250a35c6f5a4"),
+      hmacSha256("", "velox"));
+  EXPECT_EQ(std::nullopt, hmacSha256(std::nullopt, "velox"));
+}
+
+TEST_F(StringFunctionsTest, HmacSha512) {
+  const auto hmacSha512 = [&](std::optional<std::string> arg,
+                              std::optional<std::string> key) {
+    return evaluateOnce<std::string, std::string>(
+        "hmac_sha512(c0, c1)", {arg, key}, {VARBINARY(), VARBINARY()});
+  };
+  // Use the same expected value from TestVarbinaryFunctions of presto java
+  EXPECT_EQ(
+      hexToDec(
+          "84FA5AA0279BBC473267D05A53EA03310A987CECC4C1535FF29B6D76B8F1444A728DF3AADB89D4A9A6709E1998F373566E8F824A8CA93B1821F0B69BC2A2F65E"),
+      hmacSha512("", "key"));
+  EXPECT_EQ(
+      hexToDec(
+          "FEFA712B67DED871E1ED987F8B20D6A69EB9FCC87974218B9A1A6D5202B54C18ECDA4839A979DED22F07E0881CF40B762691992D120408F49D6212E112509D72"),
+      hmacSha512("hashme", "key"));
+  EXPECT_EQ(std::nullopt, hmacSha512(std::nullopt, "velox"));
+}
+
 void StringFunctionsTest::testReplaceInPlace(
     const std::vector<std::pair<std::string, std::string>>& tests,
     const std::string& search,
@@ -1382,6 +1470,26 @@ TEST_F(StringFunctionsTest, controlExprEncodingPropagation) {
   test("if(1=1, lower(C1), lower(C2))", true);
 
   test("if(1!=1, lower(C1), lower(C2))", false);
+}
+
+TEST_F(StringFunctionsTest, crc32) {
+  const auto crc32 = [&](std::optional<std::string> value) {
+    return evaluateOnce<int64_t, std::string>(
+        "crc32(c0)", {value}, {VARBINARY()});
+  };
+  // use python3 zlib result as the expected values,
+  // >>> import zlib
+  // >>> print(zlib.crc32(b"DEAD_BEEF"))
+  // 2634114297
+  // >>> print(zlib.crc32(b"CRC32"))
+  // 4128576900
+  // >>> print(zlib.crc32(b"velox is an open source unified execution engine."))
+  // 2173230066
+  EXPECT_EQ(std::nullopt, crc32(std::nullopt));
+  EXPECT_EQ(2634114297L, crc32("DEAD_BEEF"));
+  EXPECT_EQ(4128576900L, crc32("CRC32"));
+  EXPECT_EQ(
+      2173230066L, crc32("velox is an open source unified execution engine."));
 }
 
 TEST_F(StringFunctionsTest, xxhash64) {

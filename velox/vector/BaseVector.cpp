@@ -64,8 +64,12 @@ BaseVector::BaseVector(
   }
 }
 
-void BaseVector::ensureNullsCapacity(vector_size_t size, bool setNotNull) {
+void BaseVector::ensureNullsCapacity(
+    vector_size_t minimumSize,
+    bool setNotNull) {
   auto fill = setNotNull ? bits::kNotNull : bits::kNull;
+  // Ensure the size of nulls_ is always at least as large as length_.
+  auto size = std::max(minimumSize, length_);
   if (nulls_ && nulls_->isMutable()) {
     if (nulls_->capacity() < bits::nbytes(size)) {
       AlignedBuffer::reallocate<bool>(&nulls_, size, fill);
@@ -498,6 +502,7 @@ std::string BaseVector::toString(bool recursive) const {
 }
 
 std::string BaseVector::toString(vector_size_t index) const {
+  VELOX_CHECK_LT(index, length_, "Vector index should be less than length.");
   std::stringstream out;
   if (!nulls_) {
     out << "no nulls";

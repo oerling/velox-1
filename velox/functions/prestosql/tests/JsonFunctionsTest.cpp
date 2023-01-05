@@ -39,6 +39,12 @@ class JsonFunctionsTest : public functions::test::FunctionBaseTest {
     return evaluateOnce<bool>("json_array_contains(c0, c1)", json, value);
   }
 
+  std::optional<int64_t> json_size(
+      std::optional<std::string> json,
+      std::optional<std::string> path) {
+    return evaluateOnce<int64_t>("json_size(c0, c1)", json, path);
+  }
+
   static std::unordered_set<std::string> getSignatureStrings(
       const std::string& functionName) {
     auto allSignatures = getFunctionSignatures();
@@ -51,6 +57,48 @@ class JsonFunctionsTest : public functions::test::FunctionBaseTest {
     return signatureStrings;
   }
 };
+
+TEST_F(JsonFunctionsTest, jsonFormat) {
+  const auto jsonFormat = [&](std::optional<std::string> value) {
+    return evaluateOnce<std::string, std::string>(
+        "json_format(c0)", {value}, {JSON()});
+  };
+
+  EXPECT_EQ(jsonFormat(std::nullopt), std::nullopt);
+  EXPECT_EQ(jsonFormat(R"(true)"), "true");
+  EXPECT_EQ(jsonFormat(R"(null)"), "null");
+  EXPECT_EQ(jsonFormat(R"(42)"), "42");
+  EXPECT_EQ(jsonFormat(R"("abc")"), "\"abc\"");
+  EXPECT_EQ(jsonFormat(R"([1, 2, 3])"), "[1, 2, 3]");
+  EXPECT_EQ(jsonFormat(R"({"k1":"v1"})"), "{\"k1\":\"v1\"}");
+
+  auto data = makeRowVector({makeFlatVector<StringView>(
+      {"This is a long sentence", "This is some other sentence"})});
+
+  auto result = evaluate("json_format(c0)", data);
+  auto expected = makeFlatVector<StringView>(
+      {"This is a long sentence", "This is some other sentence"});
+  facebook::velox::test::assertEqualVectors(expected, result);
+
+  data = makeRowVector({makeConstant("apple", 2)});
+  result = evaluate("json_format(c0)", data);
+  expected = makeFlatVector<StringView>({{"apple", "apple"}});
+
+  facebook::velox::test::assertEqualVectors(expected, result);
+
+  data = makeRowVector(
+      {makeFlatVector<bool>({true, false}),
+       makeFlatVector<StringView>(
+           {"This is a long sentence", "This is some other sentence"})});
+
+  result = evaluate("if(c0, 'foo', json_format(c1))", data);
+  expected = makeFlatVector<StringView>({"foo", "This is some other sentence"});
+  facebook::velox::test::assertEqualVectors(expected, result);
+
+  result = evaluate("if(c0, json_format(c1), 'bar')", data);
+  expected = makeFlatVector<StringView>({"This is a long sentence", "bar"});
+  facebook::velox::test::assertEqualVectors(expected, result);
+}
 
 TEST_F(JsonFunctionsTest, isJsonScalarSignatures) {
   auto signatures = getSignatureStrings("is_json_scalar");
@@ -81,6 +129,13 @@ TEST_F(JsonFunctionsTest, jsonArrayContainsSignatures) {
   ASSERT_EQ(1, signatures.count("(json,bigint) -> boolean"));
   ASSERT_EQ(1, signatures.count("(json,double) -> boolean"));
   ASSERT_EQ(1, signatures.count("(json,boolean) -> boolean"));
+}
+
+TEST_F(JsonFunctionsTest, jsonSizeSignatures) {
+  auto signatures = getSignatureStrings("json_size");
+  ASSERT_EQ(1, signatures.size());
+
+  ASSERT_EQ(1, signatures.count("(json,varchar) -> bigint"));
 }
 
 TEST_F(JsonFunctionsTest, isJsonScalar) {
@@ -292,6 +347,32 @@ TEST_F(JsonFunctionsTest, jsonArrayContainsString) {
           R"(["the fox jumped over the fence", "hello presto world"])",
           "the fox jumped over the fence"),
       true);
+}
+
+TEST_F(JsonFunctionsTest, jsonSize) {
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": 1})", "$.k1.k2"), 0);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": 1})", "$.k1"), 1);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": 1})", "$"), 2);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": 1})", "$.k3"), 0);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": [1, 2, 3, 4]})", "$.k3"), 4);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": 1})", "$.k4"), std::nullopt);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3"})", "$.k4"), std::nullopt);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": true})", "$.k3"), 0);
+  EXPECT_EQ(json_size(R"({"k1":{"k2": 999}, "k3": null})", "$.k3"), 0);
+  EXPECT_EQ(
+      json_size(
+          R"({"k1":{"k2": 999, "k3": [{"k4": [1, 2, 3]}]}})", "$.k1.k3[0].k4"),
+      3);
+}
+
+TEST_F(JsonFunctionsTest, invalidPath) {
+  EXPECT_THROW(json_size(R"([0,1,2])", ""), VeloxUserError);
+  EXPECT_THROW(json_size(R"([0,1,2])", "$[]"), VeloxUserError);
+  EXPECT_THROW(json_size(R"([0,1,2])", "$[-1]"), VeloxUserError);
+  EXPECT_THROW(json_size(R"({"k1":"v1"})", "$k1"), VeloxUserError);
+  EXPECT_THROW(json_size(R"({"k1":"v1"})", "$.k1."), VeloxUserError);
+  EXPECT_THROW(json_size(R"({"k1":"v1"})", "$.k1]"), VeloxUserError);
+  EXPECT_THROW(json_size(R"({"k1":"v1)", "$.k1]"), VeloxUserError);
 }
 
 } // namespace

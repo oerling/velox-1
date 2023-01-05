@@ -32,6 +32,7 @@ add_library(
   FromUnixTime.cpp
   GreatestLeast.cpp
   InPredicate.cpp
+  JsonFunctions.cpp
   Map.cpp
   MapEntries.cpp
   MapKeysAndValues.cpp
@@ -63,7 +64,8 @@ target_link_libraries(
   md5
   velox_type_tz
   velox_presto_types
-  velox_functions_util)
+  velox_functions_util
+  ${FOLLY})
 
 set_property(TARGET velox_functions_prestosql_impl PROPERTY JOB_POOL_COMPILE
                                                             high_memory_pool)

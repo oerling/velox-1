@@ -19,17 +19,13 @@
 #include <limits>
 #include <unordered_set>
 
+#include <folly/Executor.h>
 #include "velox/common/memory/Memory.h"
-#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/ColumnSelector.h"
 #include "velox/dwio/common/ErrorTolerance.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/encryption/Encryption.h"
-
-namespace facebook::velox::dwio::common {
-class ColumnReaderFactory;
-} // namespace facebook::velox::dwio::common
 
 namespace facebook {
 namespace velox {
@@ -96,6 +92,7 @@ class RowReaderOptions {
   ErrorTolerance errorTolerance_;
   std::shared_ptr<ColumnSelector> selector_;
   std::shared_ptr<velox::common::ScanSpec> scanSpec_ = nullptr;
+  std::shared_ptr<velox::common::MetadataFilter> metadataFilter_;
   // Node id for map column to a list of keys to be projected as a struct.
   std::unordered_map<uint32_t, std::vector<std::string>> flatmapNodeIdAsStruct_;
   // Optional executors to enable internal reader parallelism.
@@ -114,6 +111,7 @@ class RowReaderOptions {
     errorTolerance_ = other.errorTolerance_;
     selector_ = other.selector_;
     scanSpec_ = other.scanSpec_;
+    metadataFilter_ = other.metadataFilter_;
     returnFlatVector_ = other.returnFlatVector_;
     flatmapNodeIdAsStruct_ = other.flatmapNodeIdAsStruct_;
   }
@@ -234,12 +232,22 @@ class RowReaderOptions {
     return errorTolerance_;
   }
 
-  const std::shared_ptr<velox::common::ScanSpec> getScanSpec() const {
+  const std::shared_ptr<velox::common::ScanSpec>& getScanSpec() const {
     return scanSpec_;
   }
 
   void setScanSpec(std::shared_ptr<velox::common::ScanSpec> scanSpec) {
-    scanSpec_ = scanSpec;
+    scanSpec_ = std::move(scanSpec);
+  }
+
+  const std::shared_ptr<velox::common::MetadataFilter>& getMetadataFilter()
+      const {
+    return metadataFilter_;
+  }
+
+  void setMetadataFilter(
+      std::shared_ptr<velox::common::MetadataFilter> metadataFilter) {
+    metadataFilter_ = std::move(metadataFilter);
   }
 
   void setFlatmapNodeIdsAsStruct(
@@ -323,9 +331,7 @@ class ReaderOptions {
   int32_t loadQuantum_{kDefaultLoadQuantum};
   int32_t maxCoalesceDistance_{kDefaultCoalesceDistance};
   SerDeOptions serDeOptions;
-  uint64_t fileNum;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
-  std::shared_ptr<BufferedInputFactory> bufferedInputFactory_;
 
  public:
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
@@ -355,9 +361,7 @@ class ReaderOptions {
     autoPreloadLength = other.autoPreloadLength;
     prefetchMode = other.prefetchMode;
     serDeOptions = other.serDeOptions;
-    fileNum = other.fileNum;
     decrypterFactory_ = other.decrypterFactory_;
-    bufferedInputFactory_ = other.bufferedInputFactory_;
     return *this;
   }
 
@@ -379,11 +383,6 @@ class ReaderOptions {
    */
   ReaderOptions& setFileFormat(FileFormat format) {
     fileFormat = format;
-    return *this;
-  }
-
-  ReaderOptions& setFileNum(uint64_t num) {
-    fileNum = num;
     return *this;
   }
 
@@ -456,12 +455,6 @@ class ReaderOptions {
     return *this;
   }
 
-  ReaderOptions& setBufferedInputFactory(
-      std::shared_ptr<BufferedInputFactory> factory) {
-    bufferedInputFactory_ = factory;
-    return *this;
-  }
-
   /**
    * Get the desired tail location.
    * @return if not set, return the maximum long.
@@ -475,10 +468,6 @@ class ReaderOptions {
    */
   velox::memory::MemoryPool& getMemoryPool() const {
     return *memoryPool;
-  }
-
-  uint64_t getFileNum() const {
-    return fileNum;
   }
 
   /**
@@ -522,10 +511,6 @@ class ReaderOptions {
   const std::shared_ptr<encryption::DecrypterFactory> getDecrypterFactory()
       const {
     return decrypterFactory_;
-  }
-
-  std::shared_ptr<BufferedInputFactory> getBufferedInputFactory() const {
-    return bufferedInputFactory_;
   }
 };
 

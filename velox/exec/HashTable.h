@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include "velox/common/memory/MappedMemory.h"
+#include "velox/common/memory/MemoryAllocator.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/RowContainer.h"
@@ -48,6 +48,14 @@ struct HashLookup {
   std::vector<vector_size_t> newGroups;
 };
 
+struct HashTableStats {
+  int64_t capacity{0};
+  int64_t numRehashes{0};
+  int64_t numDistinct{0};
+  /// Counts the number of tombstone table slots.
+  int64_t numTombstones{0};
+};
+
 class BaseHashTable {
  public:
   using normalized_key_t = uint64_t;
@@ -62,7 +70,12 @@ class BaseHashTable {
 
   // 2M entries, i.e. 16MB is the largest array based hash table.
   static constexpr uint64_t kArrayHashMaxSize = 2L << 20;
+
+  /// Specifies the hash mode of a table.
   enum class HashMode { kHash, kArray, kNormalizedKey };
+
+  /// Returns the string of the given 'mode'.
+  static std::string modeString(HashMode mode);
 
   // Keeps track of results returned from a join table. One batch of
   // keys can produce multiple batches of results. This is initialized
@@ -163,12 +176,20 @@ class BaseHashTable {
   /// be used for flushing a partial group by, for example.
   virtual void clear() = 0;
 
+  /// Returns the capacity of the internal hash table which is number of rows
+  /// it can stores in a group by or hash join build.
+  virtual uint64_t capacity() const = 0;
+
   /// Returns the number of rows in a group by or hash join build
   /// side. This is used for sizing the internal hash table.
   virtual uint64_t numDistinct() const = 0;
 
-  // Returns table growth in bytes after adding 'numNewDistinct' distinct
-  // entries. This only concerns the hash table, not the payload rows.
+  /// Return a number of current stats that can help with debugging and
+  /// profiling.
+  virtual HashTableStats stats() const = 0;
+
+  /// Returns table growth in bytes after adding 'numNewDistinct' distinct
+  /// entries. This only concerns the hash table, not the payload rows.
   virtual uint64_t hashTableSizeIncrease(int32_t numNewDistinct) const = 0;
 
   /// Returns true if the hash table contains rows with duplicate keys.
@@ -260,9 +281,17 @@ class BaseHashTable {
 
  protected:
   virtual void setHashMode(HashMode mode, int32_t numNew) = 0;
+
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   std::unique_ptr<RowContainer> rows_;
 };
+
+FOLLY_ALWAYS_INLINE std::ostream& operator<<(
+    std::ostream& os,
+    const BaseHashTable::HashMode& mode) {
+  os << BaseHashTable::modeString(mode);
+  return os;
+}
 
 class ProbeState;
 
@@ -283,12 +312,12 @@ class HashTable : public BaseHashTable {
       bool allowDuplicates,
       bool isJoinBuild,
       bool hasProbedFlag,
-      memory::MappedMemory* FOLLY_NULLABLE memory);
+      memory::MemoryPool* FOLLY_NULLABLE pool);
 
   static std::unique_ptr<HashTable> createForAggregation(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
       const std::vector<std::unique_ptr<Aggregate>>& aggregates,
-      memory::MappedMemory* FOLLY_NULLABLE memory) {
+      memory::MemoryPool* FOLLY_NULLABLE pool) {
     return std::make_unique<HashTable>(
         std::move(hashers),
         aggregates,
@@ -296,7 +325,7 @@ class HashTable : public BaseHashTable {
         false, // allowDuplicates
         false, // isJoinBuild
         false, // hasProbedFlag
-        memory);
+        pool);
   }
 
   static std::unique_ptr<HashTable> createForJoin(
@@ -304,7 +333,7 @@ class HashTable : public BaseHashTable {
       const std::vector<TypePtr>& dependentTypes,
       bool allowDuplicates,
       bool hasProbedFlag,
-      memory::MappedMemory* FOLLY_NULLABLE memory) {
+      memory::MemoryPool* FOLLY_NULLABLE pool) {
     static const std::vector<std::unique_ptr<Aggregate>> kNoAggregates;
     return std::make_unique<HashTable>(
         std::move(hashers),
@@ -313,7 +342,7 @@ class HashTable : public BaseHashTable {
         allowDuplicates,
         true, // isJoinBuild
         hasProbedFlag,
-        memory);
+        pool);
   }
 
   virtual ~HashTable() override = default;
@@ -350,16 +379,25 @@ class HashTable : public BaseHashTable {
 
   int64_t allocatedBytes() const override {
     // for each row: 1 byte per tag + sizeof(Entry) per table entry + memory
-    // allocated with MappedMemory for fixed-width rows and strings.
-    return (1 + sizeof(char*)) * size_ + rows_->allocatedBytes();
+    // allocated with MemoryAllocator for fixed-width rows and strings.
+    return (1 + sizeof(char*)) * capacity_ + rows_->allocatedBytes();
   }
 
   HashStringAllocator* FOLLY_NULLABLE stringAllocator() override {
     return &rows_->stringAllocator();
   }
 
+  uint64_t capacity() const override {
+    return capacity_;
+  }
+
   uint64_t numDistinct() const override {
     return numDistinct_;
+  }
+
+  HashTableStats stats() const override {
+    return HashTableStats{
+        capacity_, numRehashes_, numDistinct_, numTombstones_};
   }
 
   bool hasDuplicateKeys() const override {
@@ -392,16 +430,29 @@ class HashTable : public BaseHashTable {
     if (numDistinct_ + numNewDistinct > rehashSize()) {
       // If rehashed, the table adds size_ entries (i.e. doubles),
       // adding one pointer and one tag byte for each new position.
-      return size_ * (sizeof(void*) + 1);
+      return capacity_ * (sizeof(void*) + 1);
     }
     return 0;
   }
 
   uint64_t rehashSize() const {
-    return rehashSize(size_);
+    return rehashSize(capacity_ - numTombstones_);
   }
 
   std::string toString() override;
+
+  /// Invoked to check the consistency of the internal state. The function scans
+  /// all the table slots to check if the relevant slot counting are correct
+  /// such as the number of used slots ('numDistinct_') and the number of
+  /// tombstone slots ('numTombstones_').
+  ///
+  /// NOTE: the check cost is non-trivial and is mostly intended for testing
+  /// purpose.
+  void checkConsistency() const;
+
+  void testingSetHashMode(HashMode mode, int32_t numNew) {
+    setHashMode(mode, numNew);
+  }
 
  private:
   // Returns the number of entries after which the table gets rehashed.
@@ -604,10 +655,14 @@ class HashTable : public BaseHashTable {
   int32_t nextOffset_;
   uint8_t* FOLLY_NULLABLE tags_ = nullptr;
   char* FOLLY_NULLABLE* FOLLY_NULLABLE table_ = nullptr;
-  memory::MappedMemory::ContiguousAllocation tableAllocation_;
-  int64_t size_ = 0;
-  int64_t sizeMask_ = 0;
-  int64_t numDistinct_ = 0;
+  memory::MemoryAllocator::ContiguousAllocation tableAllocation_;
+  int64_t capacity_{0};
+  int64_t sizeMask_{0};
+  int64_t numDistinct_{0};
+  /// Counts the number of tombstone table slots.
+  int64_t numTombstones_{0};
+  /// Counts the number of rehash() calls.
+  int64_t numRehashes_{0};
   HashMode hashMode_ = HashMode::kArray;
   // Owns the memory of multiple build side hash join tables that are
   // combined into a single probe hash table.

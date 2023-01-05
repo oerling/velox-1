@@ -152,14 +152,10 @@ class ApproxPercentileAggregate : public exec::Aggregate {
     }
   }
 
-  void finalize(char** groups, int32_t numGroups) override {
-    for (auto i = 0; i < numGroups; ++i) {
-      value<KllSketchAccumulator<T>>(groups[i])->finalize();
-    }
-  }
-
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
       override {
+    finalize(groups, numGroups);
+
     VELOX_CHECK(result);
     if (percentiles_ && percentiles_->isArray) {
       folly::Range percentiles(
@@ -205,6 +201,8 @@ class ApproxPercentileAggregate : public exec::Aggregate {
 
   void extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result)
       override {
+    finalize(groups, numGroups);
+
     VELOX_CHECK(result);
     auto rowResult = (*result)->as<RowVector>();
     VELOX_CHECK(rowResult);
@@ -373,10 +371,11 @@ class ApproxPercentileAggregate : public exec::Aggregate {
 
         auto value = decodedValue_.valueAt<T>(row);
         auto weight = decodedWeight_.valueAt<int64_t>(row);
-        VELOX_USER_CHECK_GE(
-            weight,
-            1,
-            "The value of the weight parameter must be greater than or equal to 1.");
+        VELOX_USER_CHECK(
+            1 <= weight && weight < (1ll << 60),
+            "{}: value of weight must be in range [1, 2^60), got {}",
+            kApproxPercentile,
+            weight);
         accumulator->append(value, weight);
       });
     } else {
@@ -405,6 +404,12 @@ class ApproxPercentileAggregate : public exec::Aggregate {
   }
 
  private:
+  void finalize(char** groups, int32_t numGroups) {
+    for (auto i = 0; i < numGroups; ++i) {
+      value<KllSketchAccumulator<T>>(groups[i])->finalize();
+    }
+  }
+
   template <typename VectorType, typename ExtractFunc>
   void extract(
       char** groups,
