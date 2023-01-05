@@ -152,7 +152,9 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
 
 float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
   if (table->type == PlanType::kTable) {
-    return table->as<BaseTablePtr>()->schemaTable->indices[0]->distribution.cardinality;
+    return table->as<BaseTablePtr>()
+        ->schemaTable->indices[0]
+        ->distribution.cardinality;
   }
   return 10;
 }
@@ -627,7 +629,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
           scan->relType = RelType::kTableScan;
           scan->baseTable = table;
           scan->index = index;
-	  scan->setRelation(table->columns, table->schemaColumns);
+          scan->setRelation(table->columns, table->schemaColumns);
           state.addCost(*scan);
           makeJoins(scan, state);
         }

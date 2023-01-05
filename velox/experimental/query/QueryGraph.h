@@ -244,7 +244,7 @@ class PlanObjectSet {
   }
 
   std::string toString(bool names) const;
-  
+
  private:
   void ensureSize(int32_t id) {
     ensureWords(velox::bits::nwords(id + 1));
@@ -613,7 +613,7 @@ struct BaseTable : public PlanObject {
 
   ColumnVector columns{stl<ColumnPtr>()};
   ColumnVector schemaColumns{stl<ColumnPtr>()};
-  
+
   JoinVector joinedBy{stl<JoinPtr>()};
 
   // Top level conjuncts on single columns and literals, column to the left.
@@ -622,9 +622,10 @@ struct BaseTable : public PlanObject {
   // Multicolumn filters dependent on 'this' alone.
   ExprPtr filter{nullptr};
 
-  // the fraction of base table rows selected by all filters involving this table only.
+  // the fraction of base table rows selected by all filters involving this
+  // table only.
   float filterSelectivity{1};
-  
+
   // System specific representation of filter on columns, e.g. set of
   // common::Filter.
   void* nativeFilter;
@@ -650,7 +651,7 @@ struct Aggregate : public Call {
       bool _isDistinct,
       ExprPtr _condition,
       bool _isAccumulator)
-    : Call(PlanType::kAggregate, _func, value, std::move(_args), _functions),
+      : Call(PlanType::kAggregate, _func, value, std::move(_args), _functions),
         isDistinct(_isDistinct),
         condition(_condition),
         isAccumulator(_isAccumulator) {
@@ -684,7 +685,7 @@ struct DerivedTable : public PlanObject {
   DerivedTable() : PlanObject(PlanType::kDerivedTable) {}
 
   Name cname;
-  
+
   // Columns projected out. Visible in the enclosing query.
   ColumnVector columns{stl<ColumnPtr>()};
 
@@ -815,7 +816,6 @@ struct TableScan : public RelationOp {
   void setRelation(
       const ColumnVector& columns,
       const ColumnVector& schemaColumns);
-
 };
 
 struct Repartition : public RelationOp {
