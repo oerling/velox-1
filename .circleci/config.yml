@@ -25,7 +25,6 @@ workflows:
       - format-check
       - header-check
       - linux-benchmarks-basic
-      - linux-benchmarks-basic-dedicated
 
   # Daily documentation update
   nightly:
@@ -41,9 +40,11 @@ workflows:
       - linux-presto-fuzzer-run
       - linux-spark-fuzzer-run
       - linux-aggregate-fuzzer-run
+      - linux-join-fuzzer-run
       - docker-compose-ubuntu-cpp
       - docker-compose-centos-cpp
       - docker-compose-presto-native
+
 
   # Hourly build on weekdays
   weekday:
@@ -113,44 +114,52 @@ commands:
           path: '/tmp/test_xml_output/'
 
   build-benchmarks:
+    parameters:
+      binary_output:
+        type: string
+      benchmark_class:
+        type: string
     steps:
       - run:
-          name: "Build Benchmarks"
+          name: "Build Benchmarks - << parameters.benchmark_class >>"
           command: |
             make benchmarks-basic-build NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
             ccache -s
+            mkdir -p << parameters.binary_output >>
+            cp -r --verbose _build/release/velox/benchmarks/basic/* << parameters.binary_output >>
 
-  run-benchmarks:
+  fuzzer-run:
+    parameters:
+      fuzzer_output:
+        type: string
+      fuzzer_name:
+        type: string
+      fuzzer_exe:
+        type: string
+      fuzzer_args:
+        type: string
     steps:
+      - pre-steps
       - run:
-          name: "Run Benchmarks"
+          name: Build
           command: |
-            # get to the directory with benchmarks
-            cd scripts/veloxbench/veloxbench
-
-            # setup .conbench file
-            touch .conbench
-            echo "url: $CONBENCH_URL" >> .conbench
-            echo "email: $CONBENCH_EMAIL" >> .conbench
-            echo "password: $CONBENCH_PASSWORD" >> .conbench
-            echo "host_name: $CONBENCH_HOST" >> .conbench
-
-            # Figure out the run name and run reason
-            if [[ $CIRCLE_BRANCH == 'main' ]]; then
-              # Currently, the names of runs to be included in Conbench history must
-              # start with 'commit:'
-              # (https://github.com/conbench/conbench/issues/350)
-              # This way we can keep track of performance over time on the main branch
-              # separately from pull request branches and manual runs.
-
-              run_name="commit: $(git rev-parse HEAD)"
-              run_reason='commit'
-            else
-              run_name="pull request $CIRCLE_PR_NUMBER: $(git rev-parse HEAD)"
-              run_reason='pull request'
-            fi
-
-            conbench cpp-micro --run-name="$run_name" --run-reason="$run_reason"
+            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+            ccache -s
+          no_output_timeout: 1h
+      - run:
+          name: "Run << parameters.fuzzer_name >> Fuzzer"
+          command: |
+            eval " << parameters.fuzzer_exe >> << parameters.fuzzer_args >> " \
+                  2>&1 | tee "<< parameters.fuzzer_output >>" || ( \
+                    tail -n 1000 "<< parameters.fuzzer_output >>" ; \
+                    echo "FAIL: << parameters.fuzzer_name >> run failed"; \
+                    exit 1; \
+                  )
+                echo -e "\n << parameters.fuzzer_name >> run finished successfully."
+          no_output_timeout: 120m
+      - store_artifacts:
+          path: << parameters.fuzzer_output >>
+      - post-steps
 
 executors:
   build:
@@ -277,6 +286,23 @@ jobs:
       - store_artifacts:
           path: '/tmp/fuzzer_repro'
       - run:
+          name: "Run Aggregate Fuzzer Tests"
+          # Run aggregation fuzzer using the built executable.
+          command: |
+            mkdir -p /tmp/aggregate_fuzzer_repro/
+            rm -rfv /tmp/aggregate_fuzzer_repro/*
+            chmod -R 777 /tmp/aggregate_fuzzer_repro
+            _build/debug/velox/exec/tests/velox_aggregation_fuzzer_test \
+                --seed 123456 \
+                --duration_sec 60 \
+                --logtostderr=1 \
+                --minloglevel=0 \
+                --repro_persist_path=/tmp/aggregate_fuzzer_repro \
+            && echo -e "\n\nAggregation fuzzer run finished successfully."
+          no_output_timeout: 5m
+      - store_artifacts:
+          path: '/tmp/aggregate_fuzzer_repro'
+      - run:
          name: "Run Example Binaries"
          command: |
            find _build/debug/velox/examples/ -maxdepth 1 -type f -executable -exec "{}" \;
@@ -300,32 +326,6 @@ jobs:
       - post-steps
 
   linux-benchmarks-basic:
-    executor: build
-    environment:
-      CONBENCH_URL: "https://velox-conbench.voltrondata.run/"
-      CONBENCH_HOST: "CircleCI-runner"
-      LINUX_DISTRO: "centos"
-      VELOX_DEPENDENCY_SOURCE: SYSTEM
-      ICU_SOURCE: BUNDLED
-    steps:
-      - pre-steps
-      - build-benchmarks
-      - run:
-          name: "Install benchmark dependencies"
-          command: |
-            # upgrade python to 3.8 for this job
-            yum install -y python38
-            pip3.8 install -r scripts/benchmark-requirements.txt
-      - run-benchmarks
-      # TODO: Disabling conbench github notifications for now until results are more stable.
-      #- run:
-      #  name: "Analyze Benchmark Regressions and Post to Github"
-      #    command: |
-      #      export GITHUB_APP_PRIVATE_KEY=$(echo $GITHUB_APP_PRIVATE_KEY_ENCODED | base64 -d)
-      #      python3.8 scripts/benchmark-github-status.py --z-score-threshold 50
-      - post-steps
-
-  linux-benchmarks-basic-dedicated:
     machine:
       image: ubuntu-2004:current
     resource_class: 2xlarge
@@ -334,8 +334,8 @@ jobs:
       CONBENCH_HOST: "CircleCI-runner-dedicated"
       LINUX_DISTRO: "ubuntu"
       VELOX_DEPENDENCY_SOURCE: BUNDLED
-      BASELINE_OUTPUT_PATH: "/tmp/baseline_output/"
-      TARGET_OUTPUT_PATH: "/tmp/target_output/"
+      BASELINE_OUTPUT_PATH: "benchmark-results/baseline/"
+      TARGET_OUTPUT_PATH: "benchmark-results/target/"
     steps:
       - checkout
       - update-submodules
@@ -344,32 +344,81 @@ jobs:
           command: |
             sudo ./scripts/setup-ubuntu.sh
       - setup-environment
-      - build-benchmarks
-      # TODO: For now we just compare the target binary with itself, until we
-      # stabilize benchmark runs. We should eventually have two different
-      # set of binaries.
+
+      # First we checkout main to build the baseline version of the benchmarks. 
       - run:
-          name: "Run Benchmarks - Baseline"
+          name: "Checkout Main"
           command: |
-            ./scripts/benchmark-runner.py run \
-                --bm_estimate_time \
-                --bm_max_secs 10 \
-                --bm_max_trials 10000 \
-                --output_path ${BASELINE_OUTPUT_PATH}
+            git checkout $(git merge-base origin/main HEAD)
+      - build-benchmarks:
+          benchmark_class: "Baseline"
+          binary_output: "_build/benchmarks/baseline/"
+
+      # Then we checkout the current PR branch to build the target (contender).
       - run:
-          name: "Run Benchmarks - Target"
+          name: "Checkout Target"
           command: |
-            ./scripts/benchmark-runner.py run \
-                --bm_estimate_time \
-                --bm_max_secs 10 \
-                --bm_max_trials 10000 \
-                --output_path ${TARGET_OUTPUT_PATH}
+            git checkout -
+      - build-benchmarks:
+          benchmark_class: "Target"
+          binary_output: "_build/benchmarks/target/"
+
+      # Now we go ahead and run.
       - run:
-          name: "Benchmark Summary"
+          name: "Install benchmark dependencies"
+          command: |
+            pip3 install -r scripts/benchmark-requirements.txt
+      - run:
+          name: "Run Benchmarks - Full Round"
+          command: |
+            # TODO: For now we just compare the target binary with itself, until we
+            # stabilize benchmark runs. We should eventually have two different
+            # set of binaries.
+            make benchmarks-basic-run \
+                EXTRA_BENCHMARK_FLAGS="--binary_path _build/benchmarks/baseline/ --output_path ${BASELINE_OUTPUT_PATH}"
+            make benchmarks-basic-run \
+                EXTRA_BENCHMARK_FLAGS="--binary_path _build/benchmarks/target/ --output_path ${TARGET_OUTPUT_PATH} --conbench_upload_run_id CircleCI-${CIRCLE_BUILD_NUM}-dedicated"
+
+            ./scripts/benchmark-runner.py compare \
+                --baseline_path ${BASELINE_OUTPUT_PATH} \
+                --target_path ${TARGET_OUTPUT_PATH} \
+                --rerun_json_output "benchmark-results/rerun_json_output_0.json" \
+                --do_not_fail
+      - run:
+          name: "Run Benchmarks - Reruns"
+          command: |
+
+            for i in 1 2 3 4 5; do
+              CURRENT_JSON_RERUN="benchmark-results/rerun_json_output_$((${i} - 1)).json"
+              NEXT_JSON_RERUN="benchmark-results/rerun_json_output_${i}.json"
+
+              if [ ! -s "${CURRENT_JSON_RERUN}" ]; then
+                echo "--> Rerun iteration ${i} found empty file. Finalizing."
+                break
+              fi
+              echo "--> Starting rerun iteration: ${i}"
+
+              make benchmarks-basic-run \
+                  EXTRA_BENCHMARK_FLAGS="--binary_path _build/benchmarks/baseline/ --output_path ${BASELINE_OUTPUT_PATH}/rerun-${i}/ --rerun_json_input ${CURRENT_JSON_RERUN}"
+              make benchmarks-basic-run \
+                  EXTRA_BENCHMARK_FLAGS="--binary_path _build/benchmarks/target/ --output_path ${TARGET_OUTPUT_PATH}/rerun-${i}/ --rerun_json_input ${CURRENT_JSON_RERUN} --conbench_upload_run_id CircleCI-${CIRCLE_BUILD_NUM}-dedicated"
+
+              ./scripts/benchmark-runner.py compare \
+                  --baseline_path ${BASELINE_OUTPUT_PATH}/rerun-${i}/ \
+                  --target_path ${TARGET_OUTPUT_PATH}/rerun-${i}/ \
+                  --rerun_json_output ${NEXT_JSON_RERUN} \
+                  --do_not_fail
+            done
+      - run:
+          name: "Run Benchmarks - Summary"
           command: |
             ./scripts/benchmark-runner.py compare \
                 --baseline_path ${BASELINE_OUTPUT_PATH} \
-                --target_path ${TARGET_OUTPUT_PATH} || true
+                --target_path ${TARGET_OUTPUT_PATH} \
+                --recursive \
+                --do_not_fail
+      - store_artifacts:
+          path: "benchmark-results"
       - post-steps
 
   # Build with different options
@@ -441,116 +490,51 @@ jobs:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
-      ICU_SOURCE: BUNDLED
     steps:
-      - pre-steps
-      - run:
-          name: Build
-          command: |
-            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
-            ccache -s
-          no_output_timeout: 1h
-      - run:
-          # Run Fuzzer, save the output to /tmp/fuzzer.log, and upload the file
-          # as job artifact to make it convenient for users to inspect it -
-          # these logs can also be quite large. Always prints the last 1k lines to
-          # the job output for context.
-          name: "Run Fuzzer Tests"
-          command: |
-            echo -e "The logs will be saved to \"/tmp/fuzzer.log\" and uploaded" \
-                    "as a job artifact (check the \"Artifacts\" tab above)."
-            _build/debug/velox/expression/tests/velox_expression_fuzzer_test \
-                --seed ${RANDOM} \
-                --lazy_vector_generation_ratio 0.2 \
-                --duration_sec 600 \
-                --enable_variadic_signatures \
-                --velox_fuzzer_enable_complex_types \
-                --velox_fuzzer_enable_column_reuse \
-                --velox_fuzzer_enable_expression_reuse \
-                --logtostderr=1 \
-                --minloglevel=0 \
-              2>&1 | tee /tmp/fuzzer.log || ( \
-                tail -n 1000 /tmp/fuzzer.log;
-                echo "FAIL: Fuzzer run failed";
-                exit 1; \
-              )
-            echo -e "\n\nFuzzer run finished successfully."
-          no_output_timeout: 20m
-      - store_artifacts:
-          path: '/tmp/fuzzer.log'
-      - post-steps
+      - fuzzer-run:
+          fuzzer_output: "/tmp/fuzzer.log"
+          fuzzer_name: "Expression"
+          fuzzer_exe: "_build/debug/velox/expression/tests/velox_expression_fuzzer_test"
+          fuzzer_args: " --seed ${RANDOM} --lazy_vector_generation_ratio 0.2 \
+          --duration_sec 600 --enable_variadic_signatures \
+          --velox_fuzzer_enable_complex_types \
+          --velox_fuzzer_enable_column_reuse \
+          --velox_fuzzer_enable_expression_reuse \
+          --logtostderr=1 --minloglevel=0 "
 
   linux-spark-fuzzer-run:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
     steps:
-      - pre-steps
-      - run:
-          name: Build
-          command: |
-            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
-            ccache -s
-          no_output_timeout: 1h
-      - run:
-          # Run Spark Fuzzer, save the output to /tmp/spark_fuzzer.log, and upload the file
-          # as job artifact to make it convenient for users to inspect it -
-          # these logs can also be quite large. Always prints the last 1k lines to
-          # the job output for context.
-          name: "Run Spark Fuzzer Tests"
-          command: |
-            echo -e "The logs will be saved to \"/tmp/spark_fuzzer.log\" and uploaded" \
-                    "as a job artifact (check the \"Artifacts\" tab above)."
-            _build/debug/velox/expression/tests/spark_expression_fuzzer_test \
-                --seed ${RANDOM} \
-                --duration_sec 600 \
-                --logtostderr=1 \
-                --minloglevel=0 \
-              2>&1 | tee /tmp/spark_fuzzer.log || ( \
-                tail -n 1000 /tmp/spark_fuzzer.log;
-                echo "FAIL: Fuzzer run failed";
-                exit 1; \
-              )
-            echo -e "\n\nSpark Fuzzer run finished successfully."
-          no_output_timeout: 20m
-      - store_artifacts:
-          path: '/tmp/spark_fuzzer.log'
-      - post-steps
+      - fuzzer-run:
+          fuzzer_output: "/tmp/spark_fuzzer.log"
+          fuzzer_name: "Spark"
+          fuzzer_exe: "_build/debug/velox/expression/tests/spark_expression_fuzzer_test"
+          fuzzer_args: " --seed ${RANDOM} --duration_sec 600 --logtostderr=1 --minloglevel=0 "
+
 
   linux-aggregate-fuzzer-run:
     executor: build
+    environment:
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
     steps:
-      - pre-steps
-      - run:
-          name: Build
-          command: |
-            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
-            ccache -s
-          no_output_timeout: 2h
-      - run:
-          # Run Aggregate Fuzzer, save the output to /tmp/aggregate_fuzzer.log, and upload the file
-          # as job artifact to make it convenient for users to inspect it -
-          # these logs can also be quite large. Always prints the last 1k lines to
-          # the job output for context.
-          name: "Run Aggregate Fuzzer Tests"
-          command: |
-            echo -e "The logs will be saved to \"/tmp/aggregate_fuzzer.log\" and uploaded" \
-                    "as a job artifact (check the \"Artifacts\" tab above)."
-            _build/debug/velox/exec/tests/velox_aggregation_fuzzer_test \
-                --seed ${RANDOM} \
-                --duration_sec 3600 \
-                --logtostderr=1 \
-                --minloglevel=0 \
-              2>&1 | tee /tmp/aggregate_fuzzer.log || ( \
-                tail -n 1000 /tmp/aggregate_fuzzer.log;
-                echo "FAIL: Aggregate Fuzzer run failed";
-                exit 1; \
-              )
-            echo -e "\n\nAggregate Fuzzer run finished successfully."
-          no_output_timeout: 120m
-      - store_artifacts:
-          path: '/tmp/aggregate_fuzzer.log'
-      - post-steps
+      - fuzzer-run:
+          fuzzer_output: "/tmp/aggregate_fuzzer.log"
+          fuzzer_name: "Aggregate"
+          fuzzer_exe: "_build/debug/velox/exec/tests/velox_aggregation_fuzzer_test"
+          fuzzer_args: " --seed ${RANDOM} --duration_sec 3600 --logtostderr=1 --minloglevel=0 "
+
+  linux-join-fuzzer-run:
+    executor: build
+    environment:
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
+    steps:
+      - fuzzer-run:
+          fuzzer_output: "/tmp/join_fuzzer.log"
+          fuzzer_name: "Join"
+          fuzzer_exe: "_build/debug/velox/exec/tests/velox_join_fuzzer_test"
+          fuzzer_args: " --seed ${RANDOM} --duration_sec 3600 --logtostderr=1 --minloglevel=0 "
 
   format-check:
     executor: check
