@@ -39,17 +39,85 @@ struct Costs {
                                : kLargeHashCost;
   }
 
+  static constexpr float kKeyCompareCost =
+      6; // ~30 instructions to find, decode and an compare
   static constexpr float kArrayProbeCost = 2; // ~10 instructions.
   static constexpr float kSmallHashCost = 10; // 50 instructions
   static constexpr float kLargeHashCost = 40; // 2 LLC misses
+  static constexpr float kColumnRowCost = 5;
+  static constexpr float kColumnByteCost = 0.1;
+
+  // Cost of hash function on one column.
+  static constexpr float kHashColumnCost = 0.5;
+
+  // Cost of getting a column from a hash table
+  static constexpr float kHashExtractColumnCost = 0.5;
 };
 
-void Aggregation::setCost() {
+void RelationOp::setCost(const PlanState& state) {
+  inputCardinality = state.fanout;
+}
+
+float Index::lookupCost(float range) {
+  return Costs::kKeyCompareCost * log(range) / log(2);
+}
+
+float orderPrefixDistance(
+    RelationOpPtr input,
+    IndexPtr index,
+    const ExprVector& keys) {
+  int32_t i = 0;
+  float selection = 1;
+  for (; i < input->distribution.order.size() &&
+       i < index->distribution.order.size() && i < keys.size();
+       ++i) {
+    if (input->distribution.order[i]->sameOrEqual(*keys[i])) {
+      selection *= index->distribution.order[i]->value.cardinality;
+    }
+  }
+  return selection;
+}
+
+void TableScan::setCost(const PlanState& input) {
+  RelationOp::setCost(input);
+  float size = 0;
+  for (auto& column : columns) {
+    size += column->value.byteSize();
+  }
+
+  if (!keys.empty()) {
+    float lookupRange(index->distribution.cardinality);
+    float orderSelectivity = orderPrefixDistance(this->input, index, keys);
+    auto distance = lookupRange * orderSelectivity;
+    float batchSize = std::min<float>(inputCardinality, 10000);
+    if (orderSelectivity == 1) {
+      // The data does not come in key order.
+      float batchCost = index->lookupCost(lookupRange) +
+          index->lookupCost(lookupRange / batchSize) *
+              std::max<float>(1, batchSize);
+      unitCost = batchCost / batchSize;
+    } else {
+      float batchCost = index->lookupCost(lookupRange) +
+          index->lookupCost(distance) * std::max<float>(1, batchSize);
+      unitCost = batchCost / batchSize;
+    }
+    return;
+  } else {
+    fanout = index->distribution.cardinality * baseTable->filterSelectivity;
+  }
+  auto numColumns = columns.size();
+  auto rowCost = numColumns * Costs::kColumnRowCost +
+      std::max<float>(0, size - 8 * numColumns) * Costs::kColumnByteCost;
+  unitCost += fanout * rowCost;
+}
+
+void Aggregation::setCost(const PlanState& input) {
+  RelationOp::setCost(input);
   float cardinality = 1;
   for (auto key : grouping) {
     cardinality *= key->value.cardinality;
   }
-  auto inputCardinality = input->inputCardinality * input->fanout;
+  auto inputCardinality = this->input->inputCardinality * this->input->fanout;
   // The estimated output is input minus the times an input is a duplicate of a
   // key already in the input. The probability of a duplicate is approximated as
   // (1 - (1 / d))^n. where d is the number of potentially distinct keys  and n
@@ -80,8 +148,24 @@ float shuffleCost(const ExprVector& columns) {
   return shuffleCostV(columns);
 }
 
-void Repartition::setCost() {
+void Repartition::setCost(const PlanState& input) {
+  RelationOp::setCost(input);
+
   unitCost = shuffleCost(columns);
+}
+
+void HashBuild::setCost(const PlanState& input) {
+  unitCost = keys.size() * Costs::kHashColumnCost +
+      Costs::hashProbeCost(inputCardinality) +
+      this->input->columns.size() * Costs::kHashExtractColumnCost * 2;
+}
+
+void JoinOp::setCost(const PlanState& input) {
+  RelationOp::setCost(input);
+  float buildSize = right->inputCardinality;
+  auto rowCost = right->input->columns.size() * Costs::kHashExtractColumnCost;
+  unitCost = Costs::hashProbeCost(buildSize) + fanout * rowCost +
+      leftKeys.size() * Costs::kHashColumnCost;
 }
 
 } // namespace facebook::verax

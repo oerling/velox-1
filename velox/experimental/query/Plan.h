@@ -78,7 +78,7 @@ struct Plan {
 using PlanPtr = Plan*;
 
 struct PlanSet {
-  std::vector<PlanPtr> plans;
+  std::vector<std::unique_ptr<Plan>> plans;
 
   // Returns the best plan that produces 'distribution'. If the best plan has
   // some other distribution, sets 'needsShuffle ' to true.
@@ -243,6 +243,7 @@ class Optimization {
   DerivedTablePtr makeQueryGraph();
 
   PlanObjectPtr makeQueryGraph(const velox::core::PlanNode& node);
+  void setDerivedTableOutput(DerivedTablePtr dt, const velox::core::PlanNode& planNode);
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
 
   ExprPtr translateColumn(const std::string& name);

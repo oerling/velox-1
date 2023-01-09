@@ -91,12 +91,14 @@ velox::StlAllocator<T> stl() {
   return *reinterpret_cast<velox::StlAllocator<T>*>(queryCtx()->stlAllocator());
 }
 
-#define Define(T, destination, ...)                         \
-  T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
+#define Define(T, destination, ...)                          \
+  T* destination = reinterpret_cast<T*>(                     \
+      queryCtx()->allocator().allocate(sizeof(T))->begin()); \
   new (destination) T(__VA_ARGS__);
 
-#define DefineDefault(T, destination)                       \
-  T* destination = reinterpret_cast<T*>(malloc(sizeof(T))); \
+#define DefineDefault(T, destination)                        \
+  T* destination = reinterpret_cast<T*>(                     \
+      queryCtx()->allocator().allocate(sizeof(T))->begin()); \
   new (destination) T();
 
 /// Converts std::string to name used in query graph objects. raw pointer to
@@ -146,6 +148,10 @@ struct PlanObject {
     id = queryCtx()->newId(this);
   }
 
+  void operator delete(void* ptr) {
+    LOG(FATAL) << "Plan objects are not deletable";
+  }
+
   template <typename T>
   T as() {
     return reinterpret_cast<T>(this);
@@ -190,7 +196,8 @@ using ExprVector = std::vector<ExprPtr, velox::StlAllocator<ExprPtr>>;
 class PlanObjectSet {
  public:
   bool contains(PlanObjectConstPtr object) const {
-    return object->id < end_ && velox::bits::isBitSet(bits_.data(), object->id);
+    return object->id < bits_.size() * 64 &&
+        velox::bits::isBitSet(bits_.data(), object->id);
   }
 
   bool operator==(const PlanObjectSet& other) const;
@@ -200,7 +207,6 @@ class PlanObjectSet {
   void add(PlanObjectPtr ptr) {
     auto id = ptr->id;
     ensureSize(id);
-    adjustRange(id);
     velox::bits::setBit(bits_.data(), id);
   }
 
@@ -208,7 +214,7 @@ class PlanObjectSet {
   bool isSubset(const PlanObjectSet& super) const;
 
   void erase(PlanObjectPtr object) {
-    if (object->id < end_) {
+    if (object->id < bits_.size() * 64) {
       velox::bits::clearBit(bits_.data(), object->id);
     }
   }
@@ -231,8 +237,9 @@ class PlanObjectSet {
   template <typename Func>
   void forEach(Func func) const {
     auto ctx = queryCtx();
-    velox::bits::forEachSetBit(
-        bits_.data(), begin_, end_, [&](auto i) { func(ctx->objectAt(i)); });
+    velox::bits::forEachSetBit(bits_.data(), 0, bits_.size() * 64, [&](auto i) {
+      func(ctx->objectAt(i));
+    });
   }
 
   template <typename T = PlanObjectPtr>
@@ -250,14 +257,6 @@ class PlanObjectSet {
     ensureWords(velox::bits::nwords(id + 1));
   }
 
-  void adjustRange(int32_t id) {
-    if (id < begin_) {
-      begin_ = id;
-    }
-    if (id >= end_) {
-      end_ = id + 1;
-    }
-  }
   void ensureWords(int32_t size) {
     if (bits_.size() < size) {
       bits_.resize(size);
@@ -265,8 +264,6 @@ class PlanObjectSet {
   }
 
   std::vector<uint64_t, velox::StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
-  int32_t begin_{0};
-  int32_t end_{0};
 };
 
 struct Value {
@@ -274,7 +271,7 @@ struct Value {
   Value(const velox::Type* _type, float _cardinality)
       : type(_type), cardinality(_cardinality) {}
 
-  int32_t byteSize() const;
+  float byteSize() const;
 
   const velox::Type* FOLLY_NONNULL type;
   velox::variant min;
@@ -324,16 +321,17 @@ struct Literal : public Expr {
 };
 
 struct Column : public Expr {
-  Column(Name _name, PlanObjectPtr _relation, Value value)
-      : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {
-    columns.add(this);
-  }
-
+  Column(Name _name, PlanObjectPtr _relation, Value value);
   void equals(ColumnPtr other);
 
   Name name;
   PlanObjectPtr relation;
   EquivalencePtr equivalence{nullptr};
+
+  // If this is a column of a BaseTable, points to the corresponding
+  // column in the SchemaTable. Used for matching with
+  // ordering/partitioning columns in the SchemaTable.
+  Column* schemaColumn{nullptr};
 
   std::string toString() const override;
 };
@@ -455,6 +453,10 @@ struct DistributionType {
 // Describes output of relational operator. If base table, cardinality is
 // after filtering, column value ranges are after filtering.
 struct Distribution {
+  Distribution() = default;
+  Distribution(DistributionType type, ExprVector _partition)
+      : distributionType(std::move(type)), partition(std::move(_partition)) {}
+
   float cardinality;
 
   DistributionType distributionType;
@@ -495,6 +497,7 @@ struct Distribution {
   bool isBroadcast{false};
 
   bool isSamePartition(const Distribution& other) const;
+  std::string toString() const;
 };
 
 struct FilteredColumn {
@@ -585,20 +588,20 @@ enum class RelType {
 struct Relation {
   Relation() = default;
 
+  Relation(RelType type) : relType(type) {}
+
   Relation(
       RelType _relType,
       Distribution _distribution,
       const ColumnVector& _columns)
-      : relType(_relType), distribution(_distribution), columns(_columns) {}
+      : relType(_relType),
+        distribution(std::move(_distribution)),
+        columns(_columns) {}
 
   RelType relType;
   Distribution distribution;
   velox::RowTypePtr type;
   ColumnVector columns{stl<ColumnPtr>()};
-
-  // Correlation name for base table or derived table in  a plan. nullptr for
-  // schema table.
-  Name cname;
 };
 
 struct SchemaTable;
@@ -607,7 +610,7 @@ using SchemaTablePtr = SchemaTable*;
 struct BaseTable : public PlanObject {
   BaseTable() : PlanObject(PlanType::kTable) {}
 
-  Name cname;
+  Name cname{nullptr};
 
   SchemaTablePtr schemaTable;
 
@@ -684,7 +687,7 @@ using OrderByPtr = OrderBy*;
 struct DerivedTable : public PlanObject {
   DerivedTable() : PlanObject(PlanType::kDerivedTable) {}
 
-  Name cname;
+  Name cname{nullptr};
 
   // Columns projected out. Visible in the enclosing query.
   ColumnVector columns{stl<ColumnPtr>()};
@@ -727,6 +730,7 @@ struct DerivedTable : public PlanObject {
 };
 
 using DerivedTablePtr = DerivedTable*;
+struct PlanState;
 
 // Plan candidates.
 //
@@ -746,9 +750,27 @@ using DerivedTablePtr = DerivedTable*;
 // input cardinality. A lookup that hits densely is cheaper than one
 // that hits sparsely. An index lookup has no setup cost.
 struct RelationOp : public Relation {
+  RelationOp(
+      RelType type,
+      boost::intrusive_ptr<RelationOp> input,
+      Distribution _distribution)
+      : Relation(relType, _distribution, ColumnVector{stl<ColumnPtr>()}),
+        input(std::move(input)) {}
+
+  virtual ~RelationOp() = default;
+
+  void operator delete(void* ptr) {
+    queryCtx()->allocator().free(velox::HashStringAllocator::headerOf(ptr));
+  }
+
+  // thread local reference count. PlanObjects are freed when the
+  // QueryGraphContext arena is freed, candidate plans are freed when no longer
+  // referenced.
+  int32_t refCount{0};
+
   // Input of filter/project/group by etc., Left side of join, nullptr for a
   // leaf table scan.
-  struct RelationOp* input;
+  boost::intrusive_ptr<struct RelationOp> input;
 
   // Cardinality of the output of the left deep input tree. 1 for a leaf
   // scan.
@@ -776,18 +798,40 @@ struct RelationOp : public Relation {
   // is reflected in higher per-row unit cost.
   float peakResident{0};
 
-  virtual void setCost(){};
+  virtual void setCost(const PlanState& input);
 
-  virtual std::string toString(bool /*recursive*/, bool /*detail*/) const {
+  virtual std::string toString(bool recursive, bool detail) const {
+    if (input && recursive) {
+      return input->toString(true, detail);
+    }
     return "";
   }
 };
 
-using RelationOpPtr = RelationOp*;
+using RelationOpPtr = boost::intrusive_ptr<RelationOp>;
+static inline void intrusive_ptr_add_ref(RelationOp* op) {
+  ++op->refCount;
+}
+
+static inline void intrusive_ptr_release(RelationOp* op) {
+  if (0 == --op->refCount) {
+    delete op;
+  }
+}
 
 struct Index;
+using IndexPtr = Index*;
 
 struct TableScan : public RelationOp {
+  TableScan(
+      RelationOpPtr input,
+      Distribution _distribution,
+      BaseTablePtr table,
+      IndexPtr _index)
+      : RelationOp(RelType::kTableScan, input, _distribution),
+        baseTable(table),
+        index(_index) {}
+
   // The base table reference. May occur in multiple scans if the base
   // table decomposes into access via secondary index joined to pk or
   // if doing another pass for late materialization.
@@ -795,7 +839,7 @@ struct TableScan : public RelationOp {
 
   // Index (or other materialization of table) used for the physical data
   // access.
-  Index* index;
+  IndexPtr index;
 
   // Lookup keys, empty if full table scan.
   ExprVector keys{stl<ExprPtr>()};
@@ -816,10 +860,25 @@ struct TableScan : public RelationOp {
   void setRelation(
       const ColumnVector& columns,
       const ColumnVector& schemaColumns);
+
+  void setCost(const PlanState& input) override;
+  std::string toString(bool recursive, bool detail) const override;
 };
 
 struct Repartition : public RelationOp {
-  void setCost() override;
+  Repartition(
+      RelationOpPtr input,
+      Distribution _distribution,
+      const ColumnVector& _columns)
+      : RelationOp(
+            RelType::kRepartition,
+            std::move(input),
+            std::move(_distribution)) {
+    columns = std::move(_columns);
+  }
+
+  void setCost(const PlanState& input) override;
+  std::string toString(bool recursive, bool detail) const override;
 };
 
 using RepartitionPtr = Repartition*;
@@ -836,12 +895,28 @@ struct Project : public RelationOp {
 enum class JoinMethod { kHash, kMerge };
 
 struct JoinOp : public RelationOp {
+  JoinOp(
+      JoinMethod _method,
+      velox::core::JoinType _joinType,
+      RelationOpPtr input,
+      RelationOpPtr right,
+      ColumnVector _columns)
+      : RelationOp(RelType::kJoin, input, input->distribution),
+        method(_method),
+        joinType(_joinType),
+        right(std::move(right)) {
+    columns = std::move(_columns);
+  }
+
   JoinMethod method;
   velox::core::JoinType joinType;
   RelationOpPtr right;
   ExprVector leftKeys{stl<ExprPtr>()};
   ExprVector rightKeys{stl<ExprPtr>()};
   ExprPtr filter;
+
+  void setCost(const PlanState& input) override;
+  std::string toString(bool recursive, bool detail) const override;
 };
 
 using JoinOpPtr = JoinOp*;
@@ -852,13 +927,26 @@ using JoinOpPtr = JoinOp*;
 /// cardinality of this is counted as setup cost in the first
 /// referencing join and not counted in subsequent ones.
 struct HashBuild : public RelationOp {
+  HashBuild(RelationOpPtr input, ExprVector _keys)
+      : RelationOp(RelType::kHashBuild, input, input->distribution),
+        keys(std::move(_keys)) {}
+
   int32_t buildId{0};
   ExprVector keys{stl<ExprPtr>()};
+
+  void setCost(const PlanState& input) override;
 };
 
 using HashBuildPtr = HashBuild*;
 
 struct Aggregation : public RelationOp {
+  Aggregation(RelationOpPtr input, ExprVector _grouping)
+      : RelationOp(
+            RelType::kAggregation,
+            input,
+            input ? input->distribution : Distribution()),
+        grouping(std::move(_grouping)) {}
+
   ExprVector grouping{stl<ExprPtr>()};
 
   // Keys where the key expression is functionally dependent on
@@ -872,7 +960,7 @@ struct Aggregation : public RelationOp {
   velox::core::AggregationNode::Step step{
       velox::core::AggregationNode::Step::kSingle};
 
-  void setCost() override;
+  void setCost(const PlanState& input) override;
 };
 
 struct Index : public Relation {
@@ -887,9 +975,12 @@ struct Index : public Relation {
 
   Name name;
   SchemaTablePtr table;
-};
 
-using IndexPtr = Index*;
+  /// Returns cost of next lookup when the hit is within 'range' rows
+  /// of the previous hit. If lookups are not batched or not ordered,
+  /// then 'range' should be the cardinality of the index.
+  float lookupCost(float range);
+};
 
 // Describes the number of rows to look at and the number of expected matches
 // given an arbitrary set of values for a set of columns.
@@ -915,6 +1006,10 @@ struct IndexInfo {
   // not a prefix of these, this is empty.
   std::vector<ColumnPtr> lookupKeys;
   PlanObjectSet coveredColumns;
+
+  /// Returns the schema column for the BaseTable column 'column' or nullptr if
+  /// not in the index.
+  ColumnPtr schemaColumn(ColumnPtr keyValue) const;
 };
 
 struct SchemaTable {

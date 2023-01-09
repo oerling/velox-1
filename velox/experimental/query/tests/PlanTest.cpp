@@ -37,11 +37,11 @@ std::string nodeString(core::PlanNode* node) {
   return node->toString(true, true);
 }
 
-class PlanToGraphTest : public testing::Test {
+class PlanTest : public testing::Test {
  protected:
   void SetUp() override {
     allocator_ = std::make_unique<HashStringAllocator>(
-        memory::MappedMemory::getInstance());
+						       pool_.get());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
     queryCtx() = context_.get();
     functions::prestosql::registerAllScalarFunctions();
@@ -67,13 +67,16 @@ class PlanToGraphTest : public testing::Test {
             0.2;
   }
 
+    std::shared_ptr<memory::MemoryPool> pool_ =
+      memory::getDefaultMemoryPool();
+
   std::unique_ptr<HashStringAllocator> allocator_;
 
   std::unique_ptr<QueryGraphContext> context_;
   std::unique_ptr<exec::test::TpchQueryBuilder> builder_;
 };
 
-TEST_F(PlanToGraphTest, q3) {
+TEST_F(PlanTest, q3) {
   auto q3 = builder_->getQueryPlan(3);
   auto schema = tpchSchema(100, false, true, false);
   Optimization opt(*q3.plan, *schema);

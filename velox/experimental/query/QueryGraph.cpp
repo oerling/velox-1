@@ -35,7 +35,7 @@ bool PlanObjectPtrComparer::operator()(
 }
 
 size_t PlanObject::hash() const {
-  size_t h = static_cast<size_t>(type);
+  size_t h = static_cast<size_t>(id);
   for (auto& child : children()) {
     h = velox::bits::hashMix(h, child->hash());
   }
@@ -80,7 +80,7 @@ const char* planTypeName(PlanType type) {
   }
 }
 
-int32_t Value::byteSize() const {
+float Value::byteSize() const {
   if (type->isFixedWidth()) {
     return type->cppSizeInBytes();
   }
@@ -178,7 +178,7 @@ void PlanObjectSet::unionColumns(const ExprVector& exprs) {
 
 void PlanObjectSet::unionSet(const PlanObjectSet& other) {
   ensureWords(other.bits_.size());
-  for (auto i = 0; i < bits_.size(); ++i) {
+  for (auto i = 0; i < other.bits_.size(); ++i) {
     bits_[i] |= other.bits_[i];
   }
 }
@@ -353,6 +353,15 @@ PlanObjectSet allTables(PtrSpan<Expr> exprs) {
   return all;
 }
 
+Column::Column(Name _name, PlanObjectPtr _relation, Value value)
+    : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {
+  columns.add(this);
+  if (relation && relation->type == PlanType::kTable) {
+    schemaColumn = relation->as<BaseTablePtr>()->schemaTable->findColumn(name);
+    VELOX_CHECK(schemaColumn);
+  }
+}
+
 void DerivedTable::expandJoins() {
   for (auto join : joins) {
     PlanObjectSet tables;
@@ -505,6 +514,7 @@ void TableScan::setRelation(
       distribution.numKeysUnique = index->distribution.numKeysUnique;
     }
   }
+  this->columns = columns;
 }
 
 bool SchemaTable::isUnique(folly::Range<ColumnPtr*> columns) {
@@ -578,6 +588,8 @@ IndexInfo SchemaTable::indexInfo(
         combine(info.joinCardinality, numCovered, column->value.cardinality);
   }
   info.coveredColumns = std::move(covered);
+  info.unique = index->distribution.numKeysUnique &&
+      index->distribution.numKeysUnique <= info.lookupKeys.size();
   return info;
 }
 
@@ -625,6 +637,15 @@ IndexInfo joinCardinality(PlanObjectPtr table, folly::Range<ColumnPtr*> keys) {
   VELOX_NYI();
 }
 
+ColumnPtr IndexInfo::schemaColumn(ColumnPtr keyValue) const {
+  for (auto& column : index->columns) {
+    if (column->name == keyValue->name) {
+      return column;
+    }
+  }
+  return nullptr;
+}
+
 // The fraction of rows of a base table selected by non-join filters. 0.2
 // means 1 in 5 are selected.
 float baseSelectivity(PlanObjectPtr object) {
@@ -662,6 +683,82 @@ bool Distribution::isSamePartition(const Distribution& other) const {
     }
   }
   return true;
+}
+
+void exprsToString(const ExprVector& exprs, std::stringstream& out) {
+  int32_t size = exprs.size();
+  for (auto i = 0; i < size; ++i) {
+    out << exprs[i]->toString() << (i < size - 1 ? ", " : "");
+  }
+}
+
+std::string Distribution::toString() const {
+  if (isBroadcast) {
+    return "broadcast";
+  }
+  std::stringstream out;
+  if (!partition.empty()) {
+    out << "P ";
+    exprsToString(partition, out);
+    out << " " << distributionType.numPartitions;
+  }
+  if (!order.empty()) {
+    out << "O ";
+    exprsToString(order, out);
+  }
+  if (numKeysUnique >= order.size()) {
+    out << " first " << numKeysUnique << " unique";
+  }
+  return out.str();
+}
+
+const char* joinTypeLabel(velox::core::JoinType type) {
+  switch (type) {
+    case velox::core::JoinType::kLeft:
+      return "left";
+    case velox::core::JoinType::kRight:
+      return "right";
+    case velox::core::JoinType::kLeftSemiFilter:
+      return "exists";
+    case velox::core::JoinType::kLeftSemiProject:
+      return "exists-flag";
+    case velox::core::JoinType::kAnti:
+      return "not exists";
+    default:
+      return "";
+  }
+}
+
+std::string TableScan::toString(bool /*recursive*/, bool detail) const {
+  std::stringstream out;
+  if (input) {
+    out << input->toString(true, detail);
+    out << " *I " << joinTypeLabel(joinType);
+  }
+  out << baseTable->schemaTable->name << " " << baseTable->cname;
+  return out.str();
+}
+
+std::string JoinOp::toString(bool recursive, bool detail) const {
+  std::stringstream out;
+  if (recursive) {
+    out << input->toString(true, detail);
+  }
+  out << "*" << (method == JoinMethod::kHash ? "H" : "M") << " "
+      << joinTypeLabel(joinType);
+  if (recursive) {
+    out << " (" << right->toString(true, detail) << ")";
+  }
+  return out.str();
+}
+
+std::string Repartition::toString(bool recursive, bool detail) const {
+  std::stringstream out;
+  if (recursive) {
+    out << input->toString(true, detail) << " ";
+  }
+  out << (distribution.isBroadcast ? "broadcast" : "shuffle") << " ";
+  return out.str();
 }
 
 } // namespace facebook::verax
