@@ -24,20 +24,22 @@ using namespace facebook::velox;
 using velox::connector::hive::HiveColumnHandle;
 using velox::connector::hive::HiveTableHandle;
 
-  void Optimization::setDerivedTableOutput(DerivedTablePtr dt, const velox::core::PlanNode& planNode) {
-    auto& outputType = planNode.outputType();
-    for (auto i = 0; i < outputType->size(); ++i) {
-      auto fieldType = outputType->childAt(i);
-      auto fieldName = outputType->nameOf(i);
-      auto expr = translateColumn(fieldName);
-      Value value(fieldType.get(), 0);
-      Define(Column, column, toName(fieldName), dt, value);
-      dt->columns.push_back(column);
-      dt->exprs.push_back(expr);
-      renames_[fieldName] = column;
-    }
+void Optimization::setDerivedTableOutput(
+    DerivedTablePtr dt,
+    const velox::core::PlanNode& planNode) {
+  auto& outputType = planNode.outputType();
+  for (auto i = 0; i < outputType->size(); ++i) {
+    auto fieldType = outputType->childAt(i);
+    auto fieldName = outputType->nameOf(i);
+    auto expr = translateColumn(fieldName);
+    Value value(fieldType.get(), 0);
+    Define(Column, column, toName(fieldName), dt, value);
+    dt->columns.push_back(column);
+    dt->exprs.push_back(expr);
+    renames_[fieldName] = column;
   }
-  
+}
+
 DerivedTablePtr Optimization::makeQueryGraph() {
   Define(DerivedTable, root);
   root_ = root;
@@ -135,7 +137,11 @@ AggregationPtr Optimization::translateGroupBy(
 
   if (source.step() == AggregationNode::Step::kPartial ||
       source.step() == AggregationNode::Step::kSingle) {
-    Define(Aggregation, aggregation, nullptr, translateColumns(source.groupingKeys()));
+    Define(
+        Aggregation,
+        aggregation,
+        nullptr,
+        translateColumns(source.groupingKeys()));
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
       auto rawFunc = translateExpr(source.aggregates()[i])->as<CallPtr>();
       ExprPtr condition = nullptr;

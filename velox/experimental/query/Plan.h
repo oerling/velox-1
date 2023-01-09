@@ -243,7 +243,9 @@ class Optimization {
   DerivedTablePtr makeQueryGraph();
 
   PlanObjectPtr makeQueryGraph(const velox::core::PlanNode& node);
-  void setDerivedTableOutput(DerivedTablePtr dt, const velox::core::PlanNode& planNode);
+  void setDerivedTableOutput(
+      DerivedTablePtr dt,
+      const velox::core::PlanNode& planNode);
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
 
   ExprPtr translateColumn(const std::string& name);

@@ -40,8 +40,7 @@ std::string nodeString(core::PlanNode* node) {
 class PlanTest : public testing::Test {
  protected:
   void SetUp() override {
-    allocator_ = std::make_unique<HashStringAllocator>(
-						       pool_.get());
+    allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
     queryCtx() = context_.get();
     functions::prestosql::registerAllScalarFunctions();
@@ -67,8 +66,7 @@ class PlanTest : public testing::Test {
             0.2;
   }
 
-    std::shared_ptr<memory::MemoryPool> pool_ =
-      memory::getDefaultMemoryPool();
+  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
 
   std::unique_ptr<HashStringAllocator> allocator_;
 
