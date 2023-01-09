@@ -48,6 +48,7 @@ struct PlanState;
 /// pre-costed physical plan with costs and data properties.
 struct Plan {
   Plan(RelationOpPtr op, const PlanState& state);
+
   bool isStateBetter(const PlanState& state) const;
 
   RelationOpPtr op;
@@ -73,6 +74,9 @@ struct Plan {
   // e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is
   // dt.pkt1.
   PlanObjectSet input;
+
+   std::string printCost() const;
+  std::string toString(bool detail) const;
 };
 
 using PlanPtr = Plan*;
@@ -85,8 +89,8 @@ struct PlanSet {
   PlanPtr best(const Distribution& distribution, bool& needShuffle);
 
   /// Compares 'plan' to already seen plans and retains it if it is interesting,
-  /// e.g. better than the best so far or has an interesting order.
-  void addPlan(RelationOpPtr plan, PlanState& state);
+  /// e.g. better than the best so far or has an interesting order. Returns true if retained.
+  bool addPlan(RelationOpPtr plan, PlanState& state);
 };
 
 struct PlanState {
@@ -135,6 +139,9 @@ struct PlanState {
   /// The set of columns referenced in unplaced joins/filters union
   /// targetColumns. Gets smaller as more tables are placed.
   PlanObjectSet downstreamColumns() const;
+
+  std::string printCost() const;
+  std::string printPlan(RelationOpPtr op, bool detail) const;
 };
 
 struct StateSaver {
@@ -231,7 +238,7 @@ namespace facebook::verax {
 /// plan. Depends on QueryGraphContext being set on the calling thread.
 class Optimization {
  public:
-  Optimization(const velox::core::PlanNode& plan, const Schema& schema);
+  Optimization(const velox::core::PlanNode& plan, const Schema& schema, int32_t traceFlags = 0);
 
   RelationOpPtr bestPlan();
 
@@ -301,6 +308,7 @@ class Optimization {
   int32_t nameCounter_{0};
 
   std::unordered_map<MemoKey, PlanSet> memo_;
+  int32_t traceFlags_{0};
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().

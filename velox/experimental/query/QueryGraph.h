@@ -41,6 +41,8 @@ struct PlanObjectPtrComparer {
   bool operator()(const PlanObjectPtr& lhs, const PlanObjectPtr& rhs) const;
 };
 
+class Plan;
+  
 class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
@@ -74,11 +76,17 @@ class QueryGraphContext {
     return objects_[id];
   }
 
+  /// Returns the top level plan being processed when printing operator trees. If non-null, allows showing percentages.
+  Plan*& contextPlan() {
+    return contextPlan_;
+  }
+  
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
   std::unordered_set<std::string_view> names_;
   std::unordered_set<PlanObjectPtr, PlanObjectPtrHasher, PlanObjectPtrComparer>
       deduppedObjects_;
+  Plan* FOLLY_NULLABLE contextPlan_{nullptr};
 };
 
 inline QueryGraphContext*& queryCtx() {
@@ -107,11 +115,7 @@ Name toName(const std::string& string);
 
 /// Pointers are name <type>Ptr and defined to be raw pointers. We
 /// expect arena allocation with a whole areena freed after plan
-/// selection. The different pointers could also be declared as smart
-/// pointers for e.g. reference counting. std::shared_ptr would be
-/// expensive but a non thread safe intrusive_ptr could be an
-/// alternative.
-
+/// selection.
 /// The join structure is described as a tree of derived tables with
 /// base tables as leaves. Joins are described as join graph
 /// edges. Edges describe direction for non-inner joins. Scalar and
@@ -123,8 +127,7 @@ Name toName(const std::string& string);
 /// flag. The filter would be expresssed as a conjunct under the top
 /// derived table with x-exists or y-exists.
 
-// Enum for types of plan candidate nodes.
-
+/// Enum for types of query graph nodes.
 enum class PlanType {
   kTable,
   kDerivedTable,
@@ -793,14 +796,12 @@ struct RelationOp : public Relation {
   // or index access.
   float setupCost{0};
 
-  // Estimate of total size for a hash join build or group/order
-  // by/distinct. This does not account for spilling.
-  float peakSize{0};
+  // Estimate of total data volume  for a hash join build or group/order
+  // by/distinct / repartition. The memory footprint may not be this if the operation is streaming or spills.
+  float totalBytes{0};
 
-  // Maximum memory occupancy. Smaller than 'peakSize' if spilling is
-  // expected. Ratio of peakSize / peakResident gives the spill, which
-  // is reflected in higher per-row unit cost.
-  float peakResident{0};
+  // Maximum memory occupancy. If the operation is blocking, e.g. group by, the amount of spill is 'totalBytes' - 'peakResidentBytes'.
+  float peakResidentBytes{0};
 
   virtual void setCost(const PlanState& input);
 
@@ -810,6 +811,9 @@ struct RelationOp : public Relation {
     } 
    return "";
   }
+
+  // adds a line of cost information to 'out'
+  void printCost(bool detail, std::stringstream& out) const;
 };
 
 using RelationOpPtr = boost::intrusive_ptr<RelationOp>;

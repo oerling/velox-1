@@ -16,6 +16,8 @@
 
 #include "velox/experimental/query/QueryGraph.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/experimental/query/Plan.h"
+#include "velox/common/base/SuccinctPrinter.h"
 
 namespace facebook::verax {
 
@@ -704,18 +706,31 @@ std::string Distribution::toString() const {
   if (!partition.empty()) {
     out << "P ";
     exprsToString(partition, out);
-    out << " " << distributionType.numPartitions;
+    out << " " << distributionType.numPartitions << " ways";
   }
   if (!order.empty()) {
-    out << "O ";
+    out << " O ";
     exprsToString(order, out);
   }
-  if (numKeysUnique >= order.size()) {
+  if (numKeysUnique && numKeysUnique >= order.size()) {
     out << " first " << numKeysUnique << " unique";
   }
   return out.str();
 }
 
+void RelationOp::printCost(bool detail, std::stringstream& out) const {
+  auto ctx = queryCtx();
+  if (ctx && ctx->contextPlan()) {
+    auto plan = ctx->contextPlan();
+    auto totalCost = plan->unitCost + plan->setupCost;
+    auto pct = 100 * inputCardinality * unitCost / totalCost;
+    out << " " << std::fixed << std::setprecision(2) << pct << "% ";
+  }
+  if (detail) {
+    out << " " << costString(inputCardinality * fanout, inputCardinality * unitCost, setupCost) << std::endl;
+  }
+}
+  
 const char* joinTypeLabel(velox::core::JoinType type) {
   switch (type) {
     case velox::core::JoinType::kLeft:
@@ -740,6 +755,12 @@ std::string TableScan::toString(bool /*recursive*/, bool detail) const {
     out << " *I " << joinTypeLabel(joinType);
   }
   out << baseTable->schemaTable->name << " " << baseTable->cname;
+  if (detail) {
+    printCost(detail, out);
+    if (!input) {
+      out << distribution.toString() << std::endl;
+    }
+  }
   return out.str();
 }
 
@@ -750,6 +771,7 @@ std::string JoinOp::toString(bool recursive, bool detail) const {
   }
   out << "*" << (method == JoinMethod::kHash ? "H" : "M") << " "
       << joinTypeLabel(joinType);
+  printCost(detail, out);
   if (recursive) {
     out << " (" << right->toString(true, detail) << ")";
   }
@@ -762,6 +784,15 @@ std::string Repartition::toString(bool recursive, bool detail) const {
     out << input->toString(true, detail) << " ";
   }
   out << (distribution.isBroadcast ? "broadcast" : "shuffle") << " ";
+  if (detail) {
+    out << velox::succinctBytes(totalBytes) << " ";
+  }
+  if (detail && !distribution.isBroadcast) {
+    out << distribution.toString();
+    printCost(detail, out);
+  } else if (detail) {
+    printCost(detail, out);
+  }
   return out.str();
 }
 
@@ -771,6 +802,7 @@ std::string Aggregation::toString(bool recursive, bool detail) const {
     out << input->toString(true, detail) << " ";
   }
   out << velox::core::AggregationNode::stepName(step) << " agg";
+  printCost(detail, out);
   return out.str();
 }
   

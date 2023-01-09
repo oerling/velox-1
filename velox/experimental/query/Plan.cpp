@@ -22,8 +22,8 @@ namespace facebook::verax {
 
 using namespace facebook::velox;
 
-Optimization::Optimization(const core::PlanNode& plan, const Schema& schema)
-    : schema_(schema), inputPlan_(plan) {
+  Optimization::Optimization(const core::PlanNode& plan, const Schema& schema, int32_t traceFlags)
+    : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
   root_ = makeQueryGraph();
   root_->expandJoins();
   setDerivedTableOutput(root_, inputPlan_);
@@ -63,6 +63,17 @@ bool Plan::isStateBetter(const PlanState& state) const {
       state.cost * state.inputCardinality + state.setupCost;
 }
 
+std::string Plan::printCost() const {
+  return costString(fanout, unitCost, setupCost);
+}
+
+std::string Plan::toString(bool detail) const {
+  queryCtx()->contextPlan() = const_cast<Plan*>(this);
+  auto result = op->toString(true, detail);
+  queryCtx()->contextPlan() = nullptr;
+  return result;
+}
+
 void PlanState::addCost(const RelationOp& op) {
   cost += inputCardinality * fanout * op.unitCost;
   setupCost += op.setupCost;
@@ -94,7 +105,16 @@ PlanObjectSet PlanState::downstreamColumns() const {
   return result;
 }
 
-void PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
+std::string PlanState::printCost() const {
+  return costString(fanout, cost, setupCost);
+}
+
+std::string PlanState::printPlan(RelationOpPtr op, bool detail) const {
+  auto plan = std::make_unique<Plan>(op, *this);
+  return plan->toString(detail);
+}
+
+bool PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   bool insert = plans.empty();
   int32_t replaceIndex = -1;
   if (!insert) {
@@ -124,7 +144,9 @@ void PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
     } else {
       plans.push_back(std::move(newPlan));
     }
+    return true;
   }
+  return false;
 }
 
 PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
@@ -325,24 +347,22 @@ RelationOpPtr repartitionForAgg(
   if (!shuffle) {
     return plan;
   }
-    
-  Distribution distribution(
-			    plan->distribution.distributionType, keyValues);
+
+  Distribution distribution(plan->distribution.distributionType, keyValues);
   Define(
       Repartition, repartition, plan, std::move(distribution), plan->columns);
   state.addCost(*repartition);
   return repartition;
 }
 
-  
 void Optimization::addPostprocess(
     DerivedTablePtr dt,
     RelationOpPtr& plan,
     PlanState& state) {
   if (dt->aggregation) {
-    plan = repartitionForAgg(dt->aggregation->grouping, plan,  state);
+    plan = repartitionForAgg(dt->aggregation->grouping, plan, state);
     Define(Aggregation, newGroupBy, *dt->aggregation);
-    newGroupBy->input = plan; 
+    newGroupBy->input = plan;
     plan = newGroupBy;
   }
 }
@@ -435,7 +455,7 @@ RelationOpPtr repartitionForIndex(
 }
 
 void Optimization::joinByIndex(
-			       const RelationOpPtr& plan,
+    const RelationOpPtr& plan,
     const JoinCandidate& candidate,
     PlanState& state) {
   if (candidate.tables[0]->type != PlanType::kTable) {
@@ -505,7 +525,7 @@ void Optimization::joinByIndex(
 // Returns the positions in 'keys' for the expressions that determine the
 // partition. empty if the partition is not decided by 'keys'
 std::vector<int32_t> joinKeyPartition(
-				      const RelationOpPtr& op,
+    const RelationOpPtr& op,
     const ExprVector& keys) {
   std::vector<int32_t> positions;
   for (auto i = 0; i < op->distribution.partition.size(); ++i) {
@@ -533,7 +553,7 @@ bool isBroadcastable(PlanPtr build, PlanState& /*state*/) {
 }
 
 void Optimization::joinByHash(
-			      const RelationOpPtr& plan,
+    const RelationOpPtr& plan,
     const JoinCandidate& candidate,
     PlanState& state) {
   auto build = candidate.sideOf(candidate.tables[0]);
@@ -576,12 +596,7 @@ void Optimization::joinByHash(
     if (needsShuffle) {
       Distribution dist(
           plan->distribution.distributionType, distribution.partition);
-      Define(
-          Repartition,
-          shuffleTemp,
-          buildInput,
-          dist,
-          buildInput->columns);
+      Define(Repartition, shuffleTemp, buildInput, dist, buildInput->columns);
       buildInput = shuffleTemp;
     }
   } else if (isBroadcastable(buildPlan, state)) {
@@ -593,7 +608,7 @@ void Optimization::joinByHash(
         buildInput,
         std::move(dist),
         buildInput->columns);
-    buildShuffle = buildInput;
+    buildShuffle = broadcast;
     buildInput = broadcast;
   } else {
     // The probe gets shuffled to align with build. If build is not partitioned
@@ -603,11 +618,7 @@ void Optimization::joinByHash(
       // The build is not aligned on join keys.
       Distribution buildDist(plan->distribution.distributionType, build.keys);
       Define(
-          Repartition,
-          shuffleTemp,
-          buildInput,
-          buildDist,
-          buildInput->columns);
+          Repartition, shuffleTemp, buildInput, buildDist, buildInput->columns);
       buildShuffle = shuffleTemp;
       buildInput = buildShuffle;
     }

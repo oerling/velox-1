@@ -132,26 +132,28 @@ void Aggregation::setCost(const PlanState& input) {
 }
 
 template <typename V>
-float shuffleCostV(const V& columns) {
+std::pair<float, float> shuffleCostV(const V& columns) {
   int32_t size = 0;
   for (auto column : columns) {
     size += column->value.byteSize();
   }
-  return size * Costs::byteShuffleCost();
+  return {size * Costs::byteShuffleCost(), size};
 }
 
 float shuffleCost(const ColumnVector& columns) {
-  return shuffleCostV(columns);
+  return shuffleCostV(columns).second;
 }
 
 float shuffleCost(const ExprVector& columns) {
-  return shuffleCostV(columns);
+  return shuffleCostV(columns).second;
 }
 
 void Repartition::setCost(const PlanState& input) {
   RelationOp::setCost(input);
 
-  unitCost = shuffleCost(columns);
+  auto pair = shuffleCostV(columns);
+  unitCost = pair.second;
+  totalBytes = inputCardinality * pair.first;
 }
 
 void HashBuild::setCost(const PlanState& input) {
