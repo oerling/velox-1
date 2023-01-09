@@ -255,7 +255,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   std::vector<JoinCandidate> candidates;
   forJoinedTables(
       dt, state, [&](JoinPtr join, PlanObjectPtr joined, float fanout) {
-        if (!state.placed.contains(joined)) {
+        if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
           candidates.emplace_back(join, joined, fanout);
         }
       });
@@ -309,12 +309,41 @@ bool MemoKey::operator==(const MemoKey& other) const {
   return false;
 }
 
+RelationOpPtr repartitionForAgg(
+    const ExprVector& keyValues,
+    const RelationOpPtr& plan,
+    PlanState& state) {
+  // No shuffle if all grouping keys are in partitioning.
+  bool shuffle = false;
+  for (auto& key : keyValues) {
+    auto nthKey = position(plan->distribution.partition, *key);
+    if (nthKey < 0) {
+      shuffle = true;
+      break;
+    }
+  }
+  if (!shuffle) {
+    return plan;
+  }
+    
+  Distribution distribution(
+			    plan->distribution.distributionType, keyValues);
+  Define(
+      Repartition, repartition, plan, std::move(distribution), plan->columns);
+  state.addCost(*repartition);
+  return repartition;
+}
+
+  
 void Optimization::addPostprocess(
     DerivedTablePtr dt,
     RelationOpPtr& plan,
     PlanState& state) {
   if (dt->aggregation) {
+    plan = repartitionForAgg(dt->aggregation->grouping, plan,  state);
     Define(Aggregation, newGroupBy, *dt->aggregation);
+    newGroupBy->input = plan; 
+    plan = newGroupBy;
   }
 }
 
@@ -336,7 +365,7 @@ PtrSpan<Column> leadingColumns(V& exprs) {
 bool isIndexColocated(
     const IndexInfo& info,
     const ExprVector& lookupValues,
-    RelationOpPtr input) {
+    const RelationOpPtr& input) {
   if (info.index->distribution.isBroadcast &&
       input->distribution.distributionType.locus ==
           info.index->distribution.distributionType.locus) {
@@ -363,6 +392,8 @@ bool isIndexColocated(
           info.index->distribution.partition[i]) {
         return false;
       }
+    } else {
+      return false;
     }
   }
   return true;
@@ -371,7 +402,7 @@ bool isIndexColocated(
 RelationOpPtr repartitionForIndex(
     const IndexInfo& info,
     const ExprVector& lookupValues,
-    RelationOpPtr plan,
+    const RelationOpPtr& plan,
     PlanState& state) {
   if (isIndexColocated(info, lookupValues, plan)) {
     return plan;
@@ -404,7 +435,7 @@ RelationOpPtr repartitionForIndex(
 }
 
 void Optimization::joinByIndex(
-    RelationOpPtr plan,
+			       const RelationOpPtr& plan,
     const JoinCandidate& candidate,
     PlanState& state) {
   if (candidate.tables[0]->type != PlanType::kTable) {
@@ -474,7 +505,7 @@ void Optimization::joinByIndex(
 // Returns the positions in 'keys' for the expressions that determine the
 // partition. empty if the partition is not decided by 'keys'
 std::vector<int32_t> joinKeyPartition(
-    RelationOpPtr op,
+				      const RelationOpPtr& op,
     const ExprVector& keys) {
   std::vector<int32_t> positions;
   for (auto i = 0; i < op->distribution.partition.size(); ++i) {
@@ -502,7 +533,7 @@ bool isBroadcastable(PlanPtr build, PlanState& /*state*/) {
 }
 
 void Optimization::joinByHash(
-    RelationOpPtr plan,
+			      const RelationOpPtr& plan,
     const JoinCandidate& candidate,
     PlanState& state) {
   auto build = candidate.sideOf(candidate.tables[0]);
@@ -529,12 +560,13 @@ void Optimization::joinByHash(
   }
   auto downstream = state.downstreamColumns();
   buildColumns.intersect(downstream);
+  buildColumns.unionColumns(build.keys);
   auto key = MemoKey{buildColumns, buildTables, candidate.existences};
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto buildPlan = makePlan(key, distribution, empty, state, needsShuffle);
   bool partitionByProbe = !partKeys.empty();
-  RelationOpPtr buildInput = nullptr;
+  RelationOpPtr buildInput = buildPlan->op;
   RepartitionPtr buildShuffle = nullptr;
   HashBuildPtr buildOp = nullptr;
   RelationOpPtr probeInput = plan;
@@ -547,9 +579,9 @@ void Optimization::joinByHash(
       Define(
           Repartition,
           shuffleTemp,
-          buildPlan->op,
+          buildInput,
           dist,
-          buildPlan->op->columns);
+          buildInput->columns);
       buildInput = shuffleTemp;
     }
   } else if (isBroadcastable(buildPlan, state)) {
@@ -558,25 +590,24 @@ void Optimization::joinByHash(
     Define(
         Repartition,
         broadcast,
-        buildPlan->op,
+        buildInput,
         std::move(dist),
-        buildPlan->op->columns);
+        buildInput->columns);
+    buildShuffle = buildInput;
     buildInput = broadcast;
   } else {
     // The probe gets shuffled to align with build. If build is not partitioned
     // on its keys, shuffle the build too.
-    auto buildPart = joinKeyPartition(buildPlan->op, build.keys);
-    buildInput = buildPlan->op;
+    auto buildPart = joinKeyPartition(buildInput, build.keys);
     if (buildPart.empty()) {
       // The build is not aligned on join keys.
-
       Distribution buildDist(plan->distribution.distributionType, build.keys);
       Define(
           Repartition,
           shuffleTemp,
-          buildPlan->op,
+          buildInput,
           buildDist,
-          buildPlan->op->columns);
+          buildInput->columns);
       buildShuffle = shuffleTemp;
       buildInput = buildShuffle;
     }
@@ -633,7 +664,7 @@ void Optimization::joinByHash(
 void Optimization::addJoin(
     DerivedTablePtr dt,
     const JoinCandidate& candidate,
-    RelationOpPtr plan,
+    const RelationOpPtr& plan,
     PlanState& state) {
   joinByIndex(plan, candidate, state);
   joinByHash(plan, candidate, state);

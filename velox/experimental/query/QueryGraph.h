@@ -710,9 +710,9 @@ struct DerivedTable : public PlanObject {
   // tables.
   ExprVector conjuncts{stl<ExprPtr>()};
 
-  AggregationPtr aggregation;
+  AggregationPtr aggregation{nullptr};
   ExprPtr having{nullptr};
-  OrderByPtr orderBy;
+  OrderByPtr orderBy{nullptr};
   int32_t limit{-1};
   int32_t offset{0};
 
@@ -727,6 +727,10 @@ struct DerivedTable : public PlanObject {
       const DerivedTable& super,
       const PlanObjectSet& tables,
       const std::vector<PlanObjectSet>& existences);
+
+  bool hasTable(PlanObjectPtr table) {
+    return std::find(tables.begin(), tables.end(), table) != tables.end();
+  }
 };
 
 using DerivedTablePtr = DerivedTable*;
@@ -803,8 +807,8 @@ struct RelationOp : public Relation {
   virtual std::string toString(bool recursive, bool detail) const {
     if (input && recursive) {
       return input->toString(true, detail);
-    }
-    return "";
+    } 
+   return "";
   }
 };
 
@@ -961,6 +965,7 @@ struct Aggregation : public RelationOp {
       velox::core::AggregationNode::Step::kSingle};
 
   void setCost(const PlanState& input) override;
+  std::string toString(bool recursive, bool detail) const override;
 };
 
 struct Index : public Relation {

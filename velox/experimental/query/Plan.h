@@ -280,15 +280,15 @@ class Optimization {
   void addJoin(
       DerivedTablePtr dt,
       const JoinCandidate& candidate,
-      RelationOpPtr plan,
+      const RelationOpPtr& plan,
       PlanState& state);
   void joinByIndex(
-      RelationOpPtr plan,
+		   const RelationOpPtr& plan,
       const JoinCandidate& candidate,
       PlanState& state);
 
   void joinByHash(
-      RelationOpPtr plan,
+		  const RelationOpPtr& plan,
       const JoinCandidate& candidate,
       PlanState& state);
 

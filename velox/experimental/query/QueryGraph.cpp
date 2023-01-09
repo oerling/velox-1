@@ -510,6 +510,10 @@ void TableScan::setRelation(
     distribution.order.resize(numPrefix);
     distribution.orderType = index->distribution.orderType;
     distribution.orderType.resize(numPrefix);
+    replace(
+        toRangeCast<ColumnPtr>(distribution.order),
+        toRange(schemaColumns),
+        &columns[0]);
     if (index->distribution.numKeysUnique <= numPrefix) {
       distribution.numKeysUnique = index->distribution.numKeysUnique;
     }
@@ -761,4 +765,13 @@ std::string Repartition::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
+std::string Aggregation::toString(bool recursive, bool detail) const {
+  std::stringstream out;
+  if (recursive) {
+    out << input->toString(true, detail) << " ";
+  }
+  out << velox::core::AggregationNode::stepName(step) << " agg";
+  return out.str();
+}
+  
 } // namespace facebook::verax

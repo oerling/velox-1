@@ -88,7 +88,7 @@ void TableScan::setCost(const PlanState& input) {
   if (!keys.empty()) {
     float lookupRange(index->distribution.cardinality);
     float orderSelectivity = orderPrefixDistance(this->input, index, keys);
-    auto distance = lookupRange * orderSelectivity;
+    auto distance = lookupRange / std::max<float>(1, orderSelectivity);
     float batchSize = std::min<float>(inputCardinality, 10000);
     if (orderSelectivity == 1) {
       // The data does not come in key order.
