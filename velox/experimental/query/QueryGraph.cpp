@@ -15,9 +15,9 @@
  */
 
 #include "velox/experimental/query/QueryGraph.h"
-#include "velox/experimental/query/PlanUtils.h"
-#include "velox/experimental/query/Plan.h"
 #include "velox/common/base/SuccinctPrinter.h"
+#include "velox/experimental/query/Plan.h"
+#include "velox/experimental/query/PlanUtils.h"
 
 namespace facebook::verax {
 
@@ -727,10 +727,15 @@ void RelationOp::printCost(bool detail, std::stringstream& out) const {
     out << " " << std::fixed << std::setprecision(2) << pct << "% ";
   }
   if (detail) {
-    out << " " << costString(inputCardinality * fanout, inputCardinality * unitCost, setupCost) << std::endl;
+    out << " "
+        << costString(
+               inputCardinality * fanout,
+               inputCardinality * unitCost,
+               setupCost)
+        << std::endl;
   }
 }
-  
+
 const char* joinTypeLabel(velox::core::JoinType type) {
   switch (type) {
     case velox::core::JoinType::kLeft:
@@ -805,5 +810,5 @@ std::string Aggregation::toString(bool recursive, bool detail) const {
   printCost(detail, out);
   return out.str();
 }
-  
+
 } // namespace facebook::verax

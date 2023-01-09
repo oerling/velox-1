@@ -75,7 +75,7 @@ struct Plan {
   // dt.pkt1.
   PlanObjectSet input;
 
-   std::string printCost() const;
+  std::string printCost() const;
   std::string toString(bool detail) const;
 };
 
@@ -89,7 +89,8 @@ struct PlanSet {
   PlanPtr best(const Distribution& distribution, bool& needShuffle);
 
   /// Compares 'plan' to already seen plans and retains it if it is interesting,
-  /// e.g. better than the best so far or has an interesting order. Returns true if retained.
+  /// e.g. better than the best so far or has an interesting order. Returns true
+  /// if retained.
   bool addPlan(RelationOpPtr plan, PlanState& state);
 };
 
@@ -238,7 +239,10 @@ namespace facebook::verax {
 /// plan. Depends on QueryGraphContext being set on the calling thread.
 class Optimization {
  public:
-  Optimization(const velox::core::PlanNode& plan, const Schema& schema, int32_t traceFlags = 0);
+  Optimization(
+      const velox::core::PlanNode& plan,
+      const Schema& schema,
+      int32_t traceFlags = 0);
 
   RelationOpPtr bestPlan();
 
@@ -290,12 +294,12 @@ class Optimization {
       const RelationOpPtr& plan,
       PlanState& state);
   void joinByIndex(
-		   const RelationOpPtr& plan,
+      const RelationOpPtr& plan,
       const JoinCandidate& candidate,
       PlanState& state);
 
   void joinByHash(
-		  const RelationOpPtr& plan,
+      const RelationOpPtr& plan,
       const JoinCandidate& candidate,
       PlanState& state);
 

@@ -42,7 +42,7 @@ struct PlanObjectPtrComparer {
 };
 
 class Plan;
-  
+
 class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
@@ -76,11 +76,12 @@ class QueryGraphContext {
     return objects_[id];
   }
 
-  /// Returns the top level plan being processed when printing operator trees. If non-null, allows showing percentages.
+  /// Returns the top level plan being processed when printing operator trees.
+  /// If non-null, allows showing percentages.
   Plan*& contextPlan() {
     return contextPlan_;
   }
-  
+
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
   std::unordered_set<std::string_view> names_;
@@ -797,10 +798,12 @@ struct RelationOp : public Relation {
   float setupCost{0};
 
   // Estimate of total data volume  for a hash join build or group/order
-  // by/distinct / repartition. The memory footprint may not be this if the operation is streaming or spills.
+  // by/distinct / repartition. The memory footprint may not be this if the
+  // operation is streaming or spills.
   float totalBytes{0};
 
-  // Maximum memory occupancy. If the operation is blocking, e.g. group by, the amount of spill is 'totalBytes' - 'peakResidentBytes'.
+  // Maximum memory occupancy. If the operation is blocking, e.g. group by, the
+  // amount of spill is 'totalBytes' - 'peakResidentBytes'.
   float peakResidentBytes{0};
 
   virtual void setCost(const PlanState& input);
@@ -808,8 +811,8 @@ struct RelationOp : public Relation {
   virtual std::string toString(bool recursive, bool detail) const {
     if (input && recursive) {
       return input->toString(true, detail);
-    } 
-   return "";
+    }
+    return "";
   }
 
   // adds a line of cost information to 'out'

@@ -22,7 +22,10 @@ namespace facebook::verax {
 
 using namespace facebook::velox;
 
-  Optimization::Optimization(const core::PlanNode& plan, const Schema& schema, int32_t traceFlags)
+Optimization::Optimization(
+    const core::PlanNode& plan,
+    const Schema& schema,
+    int32_t traceFlags)
     : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
   root_ = makeQueryGraph();
   root_->expandJoins();
