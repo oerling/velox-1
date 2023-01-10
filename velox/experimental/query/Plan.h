@@ -95,6 +95,11 @@ struct PlanSet {
 };
 
 struct PlanState {
+  PlanState() = default;
+
+  PlanState(PlanPtr plan)
+    : cost(plan->unitCost), fanout(plan->fanout), setupCost(plan->setupCost) {}
+
   // The derived table from which the tables are drawn.
   DerivedTablePtr dt{nullptr};
 
@@ -135,7 +140,7 @@ struct PlanState {
   mutable std::unordered_map<PlanObjectSet, PlanObjectSet>
       downstreamPrecomputed;
 
-  void addCost(const RelationOp& op);
+  void addCost(RelationOp& op);
 
   /// The set of columns referenced in unplaced joins/filters union
   /// targetColumns. Gets smaller as more tables are placed.

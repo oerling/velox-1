@@ -59,7 +59,9 @@ void RelationOp::setCost(const PlanState& state) {
 }
 
 float Index::lookupCost(float range) {
-  return Costs::kKeyCompareCost * log(range) / log(2);
+  // Add 2 because it takes a compare and access also if hitting the
+  // same row. log(1) == 0, so this would other wise be zero cost.
+  return Costs::kKeyCompareCost * log(range + 2) / log(2);
 }
 
 float orderPrefixDistance(

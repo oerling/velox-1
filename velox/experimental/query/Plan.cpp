@@ -77,7 +77,10 @@ std::string Plan::toString(bool detail) const {
   return result;
 }
 
-void PlanState::addCost(const RelationOp& op) {
+void PlanState::addCost(RelationOp& op) {
+  if (!op.unitCost) {
+    op.setCost(*this);
+  }
   cost += inputCardinality * fanout * op.unitCost;
   setupCost += op.setupCost;
   fanout *= op.fanout;
@@ -454,6 +457,7 @@ RelationOpPtr repartitionForIndex(
       info.index->distribution.distributionType, std::move(keyExprs));
   Define(
       Repartition, repartition, plan, std::move(distribution), plan->columns);
+  state.addCost(*repartition);
   return repartition;
 }
 
@@ -477,13 +481,10 @@ void Optimization::joinByIndex(
     if (info.lookupKeys.empty()) {
       continue;
     }
+    StateSaver save(state);
     auto newPartition = repartitionForIndex(info, left.keys, plan, state);
     if (!newPartition) {
       continue;
-    }
-    StateSaver save(state);
-    if (newPartition != plan) {
-      state.addCost(*newPartition);
     }
     Define(
         TableScan,
@@ -495,7 +496,7 @@ void Optimization::joinByIndex(
     scan->keys = left.keys;
     // The number of keys is  the prefix that matches index order.
     scan->keys.resize(info.lookupKeys.size());
-    scan->fanout = info.scanCardinality;
+    scan->fanout = info.scanCardinality * right->filterSelectivity;
     state.columns.unionSet(scan->availableColumns());
 
     PlanObjectSet c = state.downstreamColumns();
@@ -519,7 +520,6 @@ void Optimization::joinByIndex(
     } else if (join->rightNotExists) {
       scan->joinType = velox::core::JoinType::kAnti;
     }
-    scan->setCost(state);
     state.addCost(*scan);
     makeJoins(scan, state);
   }
@@ -588,13 +588,10 @@ void Optimization::joinByHash(
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto buildPlan = makePlan(key, distribution, empty, state, needsShuffle);
+  PlanState buildState(buildPlan);
   bool partitionByProbe = !partKeys.empty();
   RelationOpPtr buildInput = buildPlan->op;
-  RepartitionPtr buildShuffle = nullptr;
-  HashBuildPtr buildOp = nullptr;
   RelationOpPtr probeInput = plan;
-  RepartitionPtr probeShuffle = nullptr;
-  JoinOpPtr joinOp = nullptr;
   if (partitionByProbe) {
     if (needsShuffle) {
       Distribution dist(
@@ -611,7 +608,7 @@ void Optimization::joinByHash(
         buildInput,
         std::move(dist),
         buildInput->columns);
-    buildShuffle = broadcast;
+    buildState.addCost(*broadcast);
     buildInput = broadcast;
   } else {
     // The probe gets shuffled to align with build. If build is not partitioned
@@ -621,8 +618,8 @@ void Optimization::joinByHash(
       // The build is not aligned on join keys.
       Distribution buildDist(plan->distribution.distributionType, build.keys);
       Define(
-          Repartition, shuffleTemp, buildInput, buildDist, buildInput->columns);
-      buildShuffle = shuffleTemp;
+          Repartition, buildShuffle, buildInput, buildDist, buildInput->columns);
+      buildState.addCost(*buildShuffle);
       buildInput = buildShuffle;
     }
 
@@ -635,13 +632,12 @@ void Optimization::joinByHash(
 
     Distribution probeDist(
         probeInput->distribution.distributionType, std::move(distCols));
-
-    Define(Repartition, probeTemp, plan, std::move(probeDist), plan->columns);
-    probeShuffle = probeTemp;
+    Define(Repartition, probeShuffle, plan, std::move(probeDist), plan->columns);
+    state.addCost(*probeShuffle);
     probeInput = probeShuffle;
   }
-  Define(HashBuild, buildTemp, buildInput, build.keys);
-  buildOp = buildTemp;
+  Define(HashBuild, buildOp, buildInput, build.keys);
+  buildState.addCost(*buildOp);
 
   ColumnVector columns{stl<ColumnPtr>()};
   downstream.forEach([&](auto object) {
@@ -651,27 +647,17 @@ void Optimization::joinByHash(
   auto joinType = velox::core::JoinType::kInner;
   Define(
       JoinOp,
-      joinTemp,
+      joinOp,
       JoinMethod::kHash,
       joinType,
       probeInput,
       buildOp,
       std::move(columns));
-  joinOp = joinTemp;
   joinOp->leftKeys = probe.keys;
   joinOp->rightKeys = build.keys;
-  auto buildCost = buildPlan->unitCost;
-  if (buildShuffle) {
-    buildShuffle->setCost(state);
-    buildCost += buildShuffle->unitCost * buildPlan->fanout;
-  }
-  buildOp->setCost(state);
-  buildCost += buildOp->unitCost * buildPlan->fanout;
-  if (probeShuffle) {
-    state.addCost(*probeShuffle);
-  }
+  joinOp->fanout = candidate.fanout;
   state.addCost(*joinOp);
-  state.setupCost += buildCost;
+  state.setupCost += buildState.cost;
   makeJoins(joinOp, state);
 }
 
@@ -731,7 +717,6 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
           scan->setRelation(columns, schemaColumns);
           scan->fanout =
               index->distribution.cardinality * table->filterSelectivity;
-          scan->setCost(state);
           state.addCost(*scan);
           makeJoins(scan, state);
         }

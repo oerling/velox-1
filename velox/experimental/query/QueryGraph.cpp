@@ -779,6 +779,9 @@ std::string JoinOp::toString(bool recursive, bool detail) const {
   printCost(detail, out);
   if (recursive) {
     out << " (" << right->toString(true, detail) << ")";
+    if (detail) {
+      out << std::endl;
+    }
   }
   return out.str();
 }
