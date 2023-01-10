@@ -98,7 +98,9 @@ struct PlanState {
   PlanState() = default;
 
   PlanState(PlanPtr plan)
-    : cost(plan->unitCost), fanout(plan->fanout), setupCost(plan->setupCost) {}
+      : cost(plan->unitCost),
+        fanout(plan->fanout),
+        setupCost(plan->setupCost) {}
 
   // The derived table from which the tables are drawn.
   DerivedTablePtr dt{nullptr};

@@ -618,7 +618,11 @@ void Optimization::joinByHash(
       // The build is not aligned on join keys.
       Distribution buildDist(plan->distribution.distributionType, build.keys);
       Define(
-          Repartition, buildShuffle, buildInput, buildDist, buildInput->columns);
+          Repartition,
+          buildShuffle,
+          buildInput,
+          buildDist,
+          buildInput->columns);
       buildState.addCost(*buildShuffle);
       buildInput = buildShuffle;
     }
@@ -632,7 +636,8 @@ void Optimization::joinByHash(
 
     Distribution probeDist(
         probeInput->distribution.distributionType, std::move(distCols));
-    Define(Repartition, probeShuffle, plan, std::move(probeDist), plan->columns);
+    Define(
+        Repartition, probeShuffle, plan, std::move(probeDist), plan->columns);
     state.addCost(*probeShuffle);
     probeInput = probeShuffle;
   }
