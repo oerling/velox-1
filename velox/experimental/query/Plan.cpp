@@ -261,7 +261,7 @@ reducingJoins(DerivedTablePtr dt, const PlanState& state, PlanObjectPtr start) {
 }
 
 JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
-  if (side == join->rightTable && !other) {
+  if ((side == join->rightTable && !other) || (side == join->leftTable && other)) {
     return {
         join->rightTable,
         join->rightKeys,

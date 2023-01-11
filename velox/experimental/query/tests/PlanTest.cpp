@@ -79,7 +79,7 @@ TEST_F(PlanTest, q3) {
   auto schema = tpchSchema(100, false, true, false);
   Optimization opt(*q3.plan, *schema);
   auto result = opt.bestPlan();
-  LOG(INFO) << result->toString(true, true);
+  std::cout << result->toString(true, true);
 }
 
 int main(int argc, char** argv) {
