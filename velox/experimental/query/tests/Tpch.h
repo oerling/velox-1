@@ -18,6 +18,7 @@
 
 namespace facebook::verax {
 
-  SchemaPtr tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary);
+SchemaPtr
+tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary);
 
 }

@@ -92,6 +92,6 @@ int32_t position(const V& exprs, Getter getter, const Expr& expr) {
 /// , k, M, G T, P.
 std::string succinctNumber(double value, int32_t precision = 2);
 
-  std::string costString(float fanout, float cost, float setupCost);
+std::string costString(float fanout, float cost, float setupCost);
 
 } // namespace facebook::verax

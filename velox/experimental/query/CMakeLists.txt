@@ -14,8 +14,8 @@
 
 add_subdirectory(tests)
 
-
-add_library(velox_verax ToGraph.cpp Plan.cpp QueryGraph.cpp Cost.cpp PlanUtils.cpp)
+add_library(velox_verax ToGraph.cpp Plan.cpp QueryGraph.cpp Cost.cpp
+                        PlanUtils.cpp)
 
 add_dependencies(velox_verax velox_hive_connector)
 
