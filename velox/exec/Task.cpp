@@ -729,6 +729,7 @@ void Task::addSplit(const core::PlanNodeId& planNodeId, exec::Split&& split) {
   }
 
   if (!isTaskRunning) {
+    // Safe because 'split' is moved away above only if 'isTaskRunning'.
     addRemoteSplit(planNodeId, split);
   }
 }
@@ -982,6 +983,7 @@ exec::Split Task::getSplitLocked(
   if (readySplitIndex == -1) {
     readySplitIndex = 0;
   }
+  assert(!splitsStore.splits.empty());
   auto split = std::move(splitsStore.splits[readySplitIndex]);
   splitsStore.splits.erase(splitsStore.splits.begin() + readySplitIndex);
 

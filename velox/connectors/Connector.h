@@ -155,7 +155,7 @@ class DataSource {
   // into 'this' Adaptation like dynamic filters stay in effect but
   // the parts dealing with open files, prefetched data etc. are moved. 'source'
   // is freed after the move.
-  virtual void setFromDataSource(std::shared_ptr<DataSource> source) {
+  virtual void setFromDataSource(std::shared_ptr<DataSource> /*source*/) {
     VELOX_UNSUPPORTED("setFromDataSource");
   }
 

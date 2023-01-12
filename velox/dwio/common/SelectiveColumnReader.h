@@ -360,7 +360,7 @@ class SelectiveColumnReader {
   }
 
   /// Moves the adaptation encoded in ScanSpec from 'other' to 'this'.
-  virtual void moveScanSpec(SelectiveColumnReader& other) {
+  virtual void moveScanSpec(SelectiveColumnReader& /*other*/) {
     VELOX_NYI();
   }
 

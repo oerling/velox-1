@@ -66,7 +66,7 @@ class RowReader {
   // Moves the adaptively acquired filters/filter order from 'other'
   // to 'this'. Returns true if 'this' is ready to read, false if
   // 'this' is known to be empty.
-  virtual bool moveAdaptationFrom(RowReader& other) {
+  virtual bool moveAdaptationFrom(RowReader& /*other*/) {
     return true;
   }
 
