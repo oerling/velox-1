@@ -46,14 +46,14 @@ RowVectorPtr TableScan::getOutput() {
   for (;;) {
     if (needNewSplit_) {
       exec::Split split;
-      auto reason = driverCtx_->task->getSplitOrFuture(
+      blockingReason_ = driverCtx_->task->getSplitOrFuture(
           driverCtx_->splitGroupId,
           planNodeId(),
           split,
           blockingFuture_,
           maxPreloadedSplits_,
           splitPreloader_);
-      if (reason != BlockingReason::kNotBlocked) {
+      if (blockingReason_ != BlockingReason::kNotBlocked) {
         return nullptr;
       }
 
