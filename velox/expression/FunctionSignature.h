@@ -25,7 +25,7 @@
 
 namespace facebook::velox::exec {
 
-std::string sanitizeFunctionName(const std::string& name);
+std::string sanitizeName(const std::string& name);
 
 inline bool isCommonDecimalName(const std::string& typeName) {
   return (typeName == "DECIMAL");
@@ -191,7 +191,7 @@ class AggregateFunctionSignature : public FunctionSignature {
 
 namespace {
 
-void addVariable(
+inline void addVariable(
     std::unordered_map<std::string, SignatureVariable>& variables,
     const SignatureVariable& variable) {
   VELOX_USER_CHECK(

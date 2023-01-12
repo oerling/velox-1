@@ -24,9 +24,7 @@
 #include "velox/expression/Expr.h"
 #include "velox/expression/FunctionSignature.h"
 #include "velox/expression/ReverseSignatureBinder.h"
-#include "velox/expression/SignatureBinder.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
-#include "velox/expression/VectorFunction.h"
 #include "velox/expression/tests/ArgumentTypeFuzzer.h"
 #include "velox/expression/tests/ExpressionFuzzer.h"
 
@@ -73,6 +71,11 @@ DEFINE_bool(
     "Enable testing of function signatures with variadic arguments.");
 
 DEFINE_bool(enable_cast, false, "Enable testing with cast expression.");
+
+DEFINE_bool(
+    choose_root_type_from_signature_template,
+    false,
+    "Allow choosing the top-level root type from signature templates.");
 
 DEFINE_string(
     repro_persist_path,
@@ -177,24 +180,17 @@ VectorFuzzer::Options getFuzzerOptions() {
   return opts;
 }
 
-std::optional<CallableSignature> processSignature(
+std::optional<CallableSignature> processConcreteSignature(
     const std::string& functionName,
+    const std::vector<TypePtr>& argTypes,
     const exec::FunctionSignature& signature) {
-  // Don't support functions with parameterized signatures.
-  if (!signature.variables().empty()) {
-    LOG(WARNING) << "Skipping unsupported signature: " << functionName
-                 << signature.toString();
-    return std::nullopt;
-  }
-  if (signature.variableArity() && !FLAGS_enable_variadic_signatures) {
-    LOG(WARNING) << "Skipping variadic function signature: " << functionName
-                 << signature.toString();
-    return std::nullopt;
-  }
+  VELOX_CHECK(
+      signature.variables().empty(),
+      "Only concrete signatures are processed here.");
 
   CallableSignature callable{
       .name = functionName,
-      .args = {},
+      .args = argTypes,
       .variableArity = signature.variableArity(),
       .returnType =
           SignatureBinder::tryResolveType(signature.returnType(), {}, {})};
@@ -202,40 +198,26 @@ std::optional<CallableSignature> processSignature(
 
   bool onlyPrimitiveTypes = callable.returnType->isPrimitiveType();
 
-  // Process each argument and figure out its type.
-  for (const auto& arg : signature.argumentTypes()) {
-    auto resolvedType = SignatureBinder::tryResolveType(arg, {}, {});
-
-    // TODO: Check if any input is Generic and substitute all
-    // possible primitive types, creating a list of signatures to fuzz.
-    if (!resolvedType) {
-      LOG(WARNING) << "Skipping unsupported signature with generic: "
-                   << functionName << signature.toString();
-      return std::nullopt;
-    }
-
-    onlyPrimitiveTypes &= resolvedType->isPrimitiveType();
-    callable.args.emplace_back(resolvedType);
+  for (const auto& arg : argTypes) {
+    onlyPrimitiveTypes = onlyPrimitiveTypes && arg->isPrimitiveType();
   }
 
-  if (onlyPrimitiveTypes || FLAGS_velox_fuzzer_enable_complex_types) {
-    if (isDeterministic(callable.name, callable.args)) {
-      return callable;
-    }
-    LOG(WARNING) << "Skipping non-deterministic function: "
-                 << callable.toString();
-  }
-  LOG(WARNING) << "Skipping '" << callable.toString()
-               << "' because it contains non-primitive types.";
+  if (!(onlyPrimitiveTypes || FLAGS_velox_fuzzer_enable_complex_types)) {
+    LOG(WARNING) << "Skipping '" << callable.toString()
+                 << "' because it contains non-primitive types.";
 
-  return std::nullopt;
+    return std::nullopt;
+  }
+  return callable;
 }
 
-// Determine whether type is or contains typeName.
+// Determine whether type is or contains typeName. typeName should be in lower
+// case.
 bool containTypeName(
     const exec::TypeSignature& type,
     const std::string& typeName) {
-  if (type.baseName() == typeName) {
+  auto sanitizedTypeName = exec::sanitizeName(type.baseName());
+  if (sanitizedTypeName == typeName) {
     return true;
   }
   for (const auto& parameter : type.parameters()) {
@@ -247,7 +229,7 @@ bool containTypeName(
 }
 
 // Determine whether the signature has an argument or return type that contains
-// typeName.
+// typeName. typeName should be in lower case.
 bool useTypeName(
     const exec::FunctionSignature& signature,
     const std::string& typeName) {
@@ -260,6 +242,20 @@ bool useTypeName(
     }
   }
   return false;
+}
+
+bool isSupportedSignature(const exec::FunctionSignature& signature) {
+  // Not supporting lambda functions, or functions using decimal and
+  // timestamp with time zone types.
+  return !(
+      useTypeName(signature, "function") ||
+      useTypeName(signature, "long_decimal") ||
+      useTypeName(signature, "short_decimal") ||
+      useTypeName(signature, "decimal") ||
+      useTypeName(signature, "timestamp with time zone") ||
+      useTypeName(signature, "interval day to second") ||
+      (FLAGS_velox_fuzzer_enable_complex_types &&
+       useTypeName(signature, "unknown")));
 }
 
 // Randomly pick columns from the input row vector to wrap in lazy.
@@ -295,7 +291,7 @@ ExpressionFuzzer::ExpressionFuzzer(
 
   size_t totalFunctions = 0;
   size_t totalFunctionSignatures = 0;
-  size_t supportedFunctions = 0;
+  std::vector<std::string> supportedFunctions;
   size_t supportedFunctionSignatures = 0;
   // Process each available signature for every function.
   for (const auto& function : signatureMap) {
@@ -304,25 +300,51 @@ ExpressionFuzzer::ExpressionFuzzer(
     for (const auto& signature : function.second) {
       ++totalFunctionSignatures;
 
-      // Not supporting lambda functions, or functions using decimal and
-      // timestamp with time zone types.
-      if (useTypeName(*signature, "function") ||
-          useTypeName(*signature, "long_decimal") ||
-          useTypeName(*signature, "short_decimal") ||
-          useTypeName(*signature, "decimal") ||
-          useTypeName(*signature, "timestamp with time zone") ||
-          useTypeName(*signature, "interval day to second") ||
-          (FLAGS_velox_fuzzer_enable_complex_types &&
-           useTypeName(*signature, "unknown"))) {
+      if (!isSupportedSignature(*signature)) {
+        continue;
+      }
+      if (!(signature->variables().empty() ||
+            FLAGS_velox_fuzzer_enable_complex_types)) {
+        LOG(WARNING) << "Skipping unsupported signature: " << function.first
+                     << signature->toString();
+        continue;
+      }
+      if (signature->variableArity() && !FLAGS_enable_variadic_signatures) {
+        LOG(WARNING) << "Skipping variadic function signature: "
+                     << function.first << signature->toString();
+        continue;
+      }
+
+      // Determine a list of concrete argument types that can bind to the
+      // signature. For non-parameterized signatures, these argument types will
+      // be used to create a callable signature. For parameterized signatures,
+      // these argument types are only used to fetch the function instance to
+      // get their determinism.
+      std::vector<TypePtr> argTypes;
+      if (signature->variables().empty()) {
+        for (const auto& arg : signature->argumentTypes()) {
+          auto resolvedType = SignatureBinder::tryResolveType(arg, {}, {});
+          if (!resolvedType) {
+            LOG(WARNING) << "Skipping unsupported signature with generic: "
+                         << function.first << signature->toString();
+            continue;
+          }
+          argTypes.push_back(resolvedType);
+        }
+      } else {
+        ArgumentTypeFuzzer typeFuzzer{*signature, rng_};
+        typeFuzzer.fuzzReturnType();
+        VELOX_CHECK_EQ(
+            typeFuzzer.fuzzArgumentTypes(FLAGS_max_num_varargs), true);
+        argTypes = typeFuzzer.argumentTypes();
+      }
+      if (!isDeterministic(function.first, argTypes)) {
+        LOG(WARNING) << "Skipping non-deterministic function: "
+                     << function.first << signature->toString();
         continue;
       }
 
       if (!signature->variables().empty()) {
-        // Avoid building signatureTemplates_ if the feature is not enabled.
-        if (!FLAGS_velox_fuzzer_enable_complex_types) {
-          continue;
-        }
-
         std::unordered_set<std::string> typeVariables;
         for (const auto& [name, _] : signature->variables()) {
           typeVariables.insert(name);
@@ -333,7 +355,7 @@ ExpressionFuzzer::ExpressionFuzzer(
             function.first, signature, std::move(typeVariables)});
       } else if (
           auto callableFunction =
-              processSignature(function.first, *signature)) {
+              processConcreteSignature(function.first, argTypes, *signature)) {
         atLeastOneSupported = true;
         ++supportedFunctionSignatures;
         signatures_.emplace_back(*callableFunction);
@@ -341,11 +363,11 @@ ExpressionFuzzer::ExpressionFuzzer(
     }
 
     if (atLeastOneSupported) {
-      ++supportedFunctions;
+      supportedFunctions.push_back(function.first);
     }
   }
 
-  auto unsupportedFunctions = totalFunctions - supportedFunctions;
+  auto unsupportedFunctions = totalFunctions - supportedFunctions.size();
   auto unsupportedFunctionSignatures =
       totalFunctionSignatures - supportedFunctionSignatures;
   LOG(INFO) << fmt::format(
@@ -354,8 +376,8 @@ ExpressionFuzzer::ExpressionFuzzer(
       totalFunctionSignatures);
   LOG(INFO) << fmt::format(
       "Functions with at least one supported signature: {} ({:.2f}%)",
-      supportedFunctions,
-      (double)supportedFunctions / totalFunctions * 100);
+      supportedFunctions.size(),
+      (double)supportedFunctions.size() / totalFunctions * 100);
   LOG(INFO) << fmt::format(
       "Functions with no supported signature: {} ({:.2f}%)",
       unsupportedFunctions,
@@ -407,6 +429,15 @@ ExpressionFuzzer::ExpressionFuzzer(
   registerFuncOverride(
       &ExpressionFuzzer::generateRegexpReplaceArgs, "regexp_replace");
   registerFuncOverride(&ExpressionFuzzer::generateSwitchArgs, "switch");
+
+  // Init stats and register listener.
+  for (auto& name : supportedFunctions) {
+    exprNameToStats_.insert({name, ExprUsageStats()});
+  }
+  statListener_ = std::make_shared<ExprStatsListener>(exprNameToStats_);
+  if (!exec::registerExprSetListener(statListener_)) {
+    LOG(WARNING) << "Listener should only be registered once.";
+  }
 }
 
 template <typename TFunc>
@@ -665,6 +696,7 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
       0, eligible.size() - 1)(rng_);
   const auto& chosen = eligible[idx];
 
+  markSelected(chosen->name);
   return getCallExprFromCallable(*chosen);
 }
 
@@ -714,6 +746,7 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromSignatureTemplate(
 
   CallableSignature callable{chosen->name, argumentTypes, false, returnType};
 
+  markSelected(chosen->name);
   return getCallExprFromCallable(callable);
 }
 
@@ -774,8 +807,62 @@ void ExpressionFuzzer::reset() {
   typeToExpressions_.clear();
 }
 
+void ExpressionFuzzer::logStats() {
+  std::vector<std::pair<std::string, ExprUsageStats>> entries;
+  uint64_t totalSelections = 0;
+  for (auto& elem : exprNameToStats_) {
+    totalSelections += elem.second.numTimesSelected;
+    entries.push_back(elem);
+  }
+
+  // sort by numProcessedRows
+  std::sort(entries.begin(), entries.end(), [](auto& left, auto& right) {
+    return left.second.numProcessedRows > right.second.numProcessedRows;
+  });
+  int maxEntriesLimit = std::min<size_t>(10, entries.size());
+  LOG(INFO) << "==============================> Top " << maxEntriesLimit
+            << " by number of rows processed";
+  LOG(INFO)
+      << "Format: functionName numTimesSelected proportionOfTimesSelected "
+         "numProcessedRows";
+  for (int i = 0; i < maxEntriesLimit; i++) {
+    LOG(INFO) << entries[i].first << " " << entries[i].second.numTimesSelected
+              << " " << std::fixed << std::setprecision(2)
+              << (entries[i].second.numTimesSelected * 100.00) / totalSelections
+              << "% " << entries[i].second.numProcessedRows;
+  }
+
+  LOG(INFO) << "==============================> Bottom " << maxEntriesLimit
+            << " by number of rows processed";
+  LOG(INFO)
+      << "Format: functionName numTimesSelected proportionOfTimesSelected "
+         "numProcessedRows";
+  for (int i = entries.size() - 1; i >= entries.size() - maxEntriesLimit; i--) {
+    LOG(INFO) << entries[i].first << " " << entries[i].second.numTimesSelected
+              << " " << std::fixed << std::setprecision(2)
+              << (entries[i].second.numTimesSelected * 100.00) / totalSelections
+              << "% " << entries[i].second.numProcessedRows;
+  }
+
+  // sort by numTimesSelected
+  std::sort(entries.begin(), entries.end(), [](auto& left, auto& right) {
+    return left.second.numTimesSelected > right.second.numTimesSelected;
+  });
+
+  LOG(INFO) << "==============================> All stats sorted by number "
+               "of times the function was chosen";
+  LOG(INFO)
+      << "Format: functionName numTimesSelected proportionOfTimesSelected "
+         "numProcessedRows";
+  for (auto& elem : entries) {
+    LOG(INFO) << elem.first << " " << elem.second.numTimesSelected << " "
+              << std::fixed << std::setprecision(2)
+              << (elem.second.numTimesSelected * 100.00) / totalSelections
+              << "% " << elem.second.numProcessedRows;
+  }
+}
+
 void ExpressionFuzzer::go() {
-  VELOX_CHECK(!signatures_.empty(), "No function signatures available.");
   VELOX_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
       "Either --steps or --duration_sec needs to be greater than zero.")
@@ -788,10 +875,29 @@ void ExpressionFuzzer::go() {
               << " (seed: " << currentSeed_ << ")";
     reset();
 
-    // Pick a random signature to choose the root return type.
-    size_t idx = boost::random::uniform_int_distribution<uint32_t>(
-        0, signatures_.size() - 1)(rng_);
-    const auto& rootType = signatures_[idx].returnType;
+    auto chooseFromConcreteSignatures =
+        boost::random::uniform_int_distribution<uint32_t>(0, 1)(rng_);
+    chooseFromConcreteSignatures =
+        (chooseFromConcreteSignatures && !signatures_.empty()) ||
+        (!chooseFromConcreteSignatures && signatureTemplates_.empty());
+    TypePtr rootType;
+    if (!FLAGS_choose_root_type_from_signature_template ||
+        chooseFromConcreteSignatures) {
+      // Pick a random signature to choose the root return type.
+      VELOX_CHECK(!signatures_.empty(), "No function signature available.");
+      size_t idx = boost::random::uniform_int_distribution<uint32_t>(
+          0, signatures_.size() - 1)(rng_);
+      rootType = signatures_[idx].returnType;
+    } else {
+      // Pick a random concrete return type that can bind to the return type of
+      // a chosen signature.
+      VELOX_CHECK(
+          !signatureTemplates_.empty(), "No function signature available.");
+      size_t idx = boost::random::uniform_int_distribution<uint32_t>(
+          0, signatureTemplates_.size() - 1)(rng_);
+      ArgumentTypeFuzzer typeFuzzer{*signatureTemplates_[idx].signature, rng_};
+      rootType = typeFuzzer.fuzzReturnType();
+    }
 
     // Generate expression tree and input data vectors.
     auto plan = generateExpression(rootType);
@@ -835,6 +941,7 @@ void ExpressionFuzzer::go() {
     reSeed();
     ++i;
   }
+  logStats();
 }
 
 void expressionFuzzer(FunctionSignatureMap signatureMap, size_t seed) {

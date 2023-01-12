@@ -29,8 +29,8 @@ void ConstantExpr::evalSpecialForm(
   if (needToSetIsAscii_) {
     auto* vector =
         sharedSubexprValues_->asUnchecked<SimpleVector<StringView>>();
-    LocalSelectivityVector singleRow(context);
-    bool isAscii = vector->computeAndSetIsAscii(*singleRow.get(1, true));
+    LocalSingleRow singleRow(context, 0);
+    bool isAscii = vector->computeAndSetIsAscii(*singleRow);
     vector->setAllIsAscii(isAscii);
     needToSetIsAscii_ = false;
   }
@@ -213,6 +213,8 @@ void appendSqlLiteral(
       break;
     }
     default:
+      // TODO: update ExprStatsTest.exceptionPreparingStatsForListener once
+      // support for VARBINARY is added.
       VELOX_UNSUPPORTED(
           "Type not supported yet: {}", vector.type()->toString());
   }
