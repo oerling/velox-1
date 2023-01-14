@@ -22,7 +22,6 @@
 
 namespace facebook::verax {
 
-
 /// Pointers are name <type>Ptr and defined to be raw pointers. We
 /// expect arena allocation with a whole areena freed after plan
 /// selection.
@@ -36,7 +35,6 @@ namespace facebook::verax {
 /// left semijoin. The semijoins project out one column, an existence
 /// flag. The filter would be expresssed as a conjunct under the top
 /// derived table with x-exists or y-exists.
-
 
 struct Relation;
 using RelationPtr = Relation*;
@@ -93,14 +91,12 @@ struct Column : public Expr {
 };
 
 template <typename T>
-inline folly::Range<T*> toRange(
-    const std::vector<T, QGAllocator<T>>& v) {
+inline folly::Range<T*> toRange(const std::vector<T, QGAllocator<T>>& v) {
   return folly::Range<T*>(const_cast<T*>(v.data()), v.size());
 }
 
 template <typename T, typename U>
-inline folly::Range<T*> toRangeCast(
-    const std::vector<U, QGAllocator<U>>& v) {
+inline folly::Range<T*> toRangeCast(const std::vector<U, QGAllocator<U>>& v) {
   return folly::Range<T*>(
       reinterpret_cast<T*>(const_cast<U*>(v.data())), v.size());
 }
@@ -362,7 +358,7 @@ struct DerivedTable : public PlanObject {
 
 using DerivedTablePtr = DerivedTable*;
 
-  /// Returns all distinct tables 'exprs' depend on.
+/// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
 
 } // namespace facebook::verax

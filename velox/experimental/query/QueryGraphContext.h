@@ -46,7 +46,7 @@ class Plan;
 class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
-    : allocator_(allocator) {}
+      : allocator_(allocator) {}
 
   Name toName(std::string_view str);
 
@@ -89,12 +89,12 @@ inline QueryGraphContext*& queryCtx() {
   return context;
 }
 
-#define Declare(T, destination, ...)			     \
+#define Declare(T, destination, ...)                         \
   T* destination = reinterpret_cast<T*>(                     \
       queryCtx()->allocator().allocate(sizeof(T))->begin()); \
   new (destination) T(__VA_ARGS__);
 
-#define DeclaretDefault(T, destination)                        \
+#define DeclaretDefault(T, destination)                      \
   T* destination = reinterpret_cast<T*>(                     \
       queryCtx()->allocator().allocate(sizeof(T))->begin()); \
   new (destination) T();
@@ -107,10 +107,12 @@ template <class T>
 struct QGAllocator {
   using value_type = T;
 
-
   T* FOLLY_NONNULL allocate(std::size_t n) {
     return reinterpret_cast<T*>(
-				queryCtx()->allocator().allocate(velox::checkedMultiply(n, sizeof(T)))->begin());
+        queryCtx()
+            ->allocator()
+            .allocate(velox::checkedMultiply(n, sizeof(T)))
+            ->begin());
   }
 
   void deallocate(T* FOLLY_NONNULL p, std::size_t /*n*/) noexcept {
@@ -132,5 +134,5 @@ struct Column;
 using ColumnPtr = Column*;
 using ExprVector = std::vector<ExprPtr, QGAllocator<ExprPtr>>;
 using ColumnVector = std::vector<ColumnPtr, QGAllocator<ColumnPtr>>;
- 
+
 } // namespace facebook::verax

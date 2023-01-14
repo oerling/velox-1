@@ -39,8 +39,6 @@ inline bool isExprType(PlanType type) {
       type == PlanType::kLiteral;
 }
 
-
-  
 struct PlanObject {
   PlanObject(PlanType _type) : type(_type) {
     id = queryCtx()->newId(this);
@@ -85,7 +83,7 @@ struct PlanObject {
   int32_t id;
 };
 
-  class PlanObjectSet {
+class PlanObjectSet {
  public:
   bool contains(PlanObjectConstPtr object) const {
     return object->id < bits_.size() * 64 &&
@@ -158,4 +156,4 @@ struct PlanObject {
   std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
 };
 
-}
+} // namespace facebook::verax

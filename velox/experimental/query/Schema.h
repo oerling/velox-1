@@ -18,9 +18,7 @@
 
 #include "velox/experimental/query/PlanObject.h"
 
-
 namespace facebook::verax {
-
 
 struct Value {
   Value() = default;
@@ -38,7 +36,7 @@ struct Value {
   bool nullable{true};
 };
 
-  enum class OrderType {
+enum class OrderType {
   kAscNullsFirst,
   kAscNullsLast,
   kDescNullsFirst,
@@ -120,7 +118,7 @@ struct Distribution {
   // the same combination of clustering columns will not repeat. means that a
   // final group by can be flushed when seeing a change in clustering columns.
   ColumnVector clustering;
-  
+
   // True if the data is replicated to 'numPartitions'.
   bool isBroadcast{false};
 
@@ -128,7 +126,7 @@ struct Distribution {
   std::string toString() const;
 };
 
- /// Identifies a base table or the operator type producing the relation. Base
+/// Identifies a base table or the operator type producing the relation. Base
 /// data as in Index has type kBase. The result of a table scan is kTableScan.
 enum class RelType {
   kBase,
@@ -141,7 +139,6 @@ enum class RelType {
   kAggregation,
   kOrderBy
 };
-
 
 struct Relation {
   Relation() = default;
@@ -164,7 +161,7 @@ struct Relation {
 
 struct SchemaTable;
 using SchemaTablePtr = SchemaTable*;
-  
+
 struct Index : public Relation {
   Index(
       Name _name,
@@ -184,9 +181,9 @@ struct Index : public Relation {
   float lookupCost(float range);
 };
 
- using IndexPtr = Index*;
+using IndexPtr = Index*;
 
- // Describes the number of rows to look at and the number of expected matches
+// Describes the number of rows to look at and the number of expected matches
 // given an arbitrary set of values for a set of columns.
 struct IndexInfo {
   // Index chosen based on columns.

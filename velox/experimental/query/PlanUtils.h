@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/experimental/query/QueryGraph.h"
 #include <folly/Range.h>
+#include "velox/experimental/query/QueryGraph.h"
 
 namespace facebook::verax {
 
