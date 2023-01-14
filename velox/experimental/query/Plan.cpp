@@ -356,7 +356,7 @@ RelationOpPtr repartitionForAgg(
   }
 
   Distribution distribution(plan->distribution.distributionType, keyValues);
-  Define(
+  Declare(
       Repartition, repartition, plan, std::move(distribution), plan->columns);
   state.addCost(*repartition);
   return repartition;
@@ -368,7 +368,7 @@ void Optimization::addPostprocess(
     PlanState& state) {
   if (dt->aggregation) {
     plan = repartitionForAgg(dt->aggregation->grouping, plan, state);
-    Define(Aggregation, newGroupBy, *dt->aggregation);
+    Declare(Aggregation, newGroupBy, *dt->aggregation);
     newGroupBy->input = plan;
     plan = newGroupBy;
   }
@@ -456,7 +456,7 @@ RelationOpPtr repartitionForIndex(
 
   Distribution distribution(
       info.index->distribution.distributionType, std::move(keyExprs));
-  Define(
+  Declare(
       Repartition, repartition, plan, std::move(distribution), plan->columns);
   state.addCost(*repartition);
   return repartition;
@@ -487,7 +487,7 @@ void Optimization::joinByIndex(
     if (!newPartition) {
       continue;
     }
-    Define(
+    Declare(
         TableScan,
         scan,
         newPartition,
@@ -597,13 +597,13 @@ void Optimization::joinByHash(
     if (needsShuffle) {
       Distribution dist(
           plan->distribution.distributionType, distribution.partition);
-      Define(Repartition, shuffleTemp, buildInput, dist, buildInput->columns);
+      Declare(Repartition, shuffleTemp, buildInput, dist, buildInput->columns);
       buildInput = shuffleTemp;
     }
   } else if (isBroadcastable(buildPlan, state)) {
     Distribution dist;
     dist.isBroadcast = true;
-    Define(
+    Declare(
         Repartition,
         broadcast,
         buildInput,
@@ -618,7 +618,7 @@ void Optimization::joinByHash(
     if (buildPart.empty()) {
       // The build is not aligned on join keys.
       Distribution buildDist(plan->distribution.distributionType, build.keys);
-      Define(
+      Declare(
           Repartition,
           buildShuffle,
           buildInput,
@@ -637,12 +637,12 @@ void Optimization::joinByHash(
 
     Distribution probeDist(
         probeInput->distribution.distributionType, std::move(distCols));
-    Define(
+    Declare(
         Repartition, probeShuffle, plan, std::move(probeDist), plan->columns);
     state.addCost(*probeShuffle);
     probeInput = probeShuffle;
   }
-  Define(HashBuild, buildOp, buildInput, build.keys);
+  Declare(HashBuild, buildOp, buildInput, build.keys);
   buildState.addCost(*buildOp);
 
   ColumnVector columns{stl<ColumnPtr>()};
@@ -651,7 +651,7 @@ void Optimization::joinByHash(
   });
 
   auto joinType = velox::core::JoinType::kInner;
-  Define(
+  Declare(
       JoinOp,
       joinOp,
       JoinMethod::kHash,
@@ -716,7 +716,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
         for (auto index : indices) {
           StateSaver save(state);
           state.placed.add(table);
-          Define(TableScan, scan, nullptr, Distribution(), table, index);
+          Declare(TableScan, scan, nullptr, Distribution(), table, index);
           ColumnVector columns{stl<ColumnPtr>()};
           ColumnVector schemaColumns{stl<ColumnPtr>()};
           indexColumns(downstream, index, table, columns, schemaColumns);

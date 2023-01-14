@@ -207,7 +207,7 @@ std::string PlanObjectSet::toString(bool names) const {
 
 void Column::equals(ColumnPtr other) {
   if (!equivalence && !other->equivalence) {
-    Define(Equivalence, equiv);
+    Declare(Equivalence, equiv);
     equiv->columns.push_back(this);
     equiv->columns.push_back(other);
     equivalence = equiv;
@@ -442,7 +442,7 @@ void SchemaTable::addIndex(
   appendToVector(distribution.order, keys);
   distribution.distributionType = distType;
   appendToVector(distribution.partition, partition);
-  Define(Index, index, name, this, distribution, columns);
+  Declare(Index, index, name, this, distribution, columns);
   indices.push_back(index);
 }
 
@@ -451,7 +451,7 @@ ColumnPtr SchemaTable::column(const std::string& name, Value value) {
   if (it != columns.end()) {
     return it->second;
   }
-  Define(Column, column, toName(name), nullptr, value);
+  Declare(Column, column, toName(name), nullptr, value);
   columns[name] = column;
   return column;
 }

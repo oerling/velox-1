@@ -33,7 +33,7 @@ void Optimization::setDerivedTableOutput(
     auto fieldName = outputType->nameOf(i);
     auto expr = translateColumn(fieldName);
     Value value(fieldType.get(), 0);
-    Define(Column, column, toName(fieldName), dt, value);
+    Declare(Column, column, toName(fieldName), dt, value);
     dt->columns.push_back(column);
     dt->exprs.push_back(expr);
     renames_[fieldName] = column;
@@ -41,7 +41,7 @@ void Optimization::setDerivedTableOutput(
 }
 
 DerivedTablePtr Optimization::makeQueryGraph() {
-  Define(DerivedTable, root);
+  Declare(DerivedTable, root);
   root_ = root;
   currentSelect_ = root_;
   makeQueryGraph(inputPlan_);
@@ -76,7 +76,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   }
   if (auto constant =
           dynamic_cast<const core::ConstantTypedExpr*>(expr.get())) {
-    Define(
+    Declare(
         Literal, literal, Value(constant->type().get(), 1), constant->value());
     return literal;
   }
@@ -100,7 +100,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     auto name = toName(call->name());
     funcs = funcs | functionBits(name);
 
-    Define(
+    Declare(
         Call,
         callExpr,
         name,
@@ -137,7 +137,7 @@ AggregationPtr Optimization::translateGroupBy(
 
   if (source.step() == AggregationNode::Step::kPartial ||
       source.step() == AggregationNode::Step::kSingle) {
-    Define(
+    Declare(
         Aggregation,
         aggregation,
         nullptr,
@@ -148,7 +148,7 @@ AggregationPtr Optimization::translateGroupBy(
       if (source.aggregateMasks()[i]) {
         condition = translateExpr(source.aggregateMasks()[i]);
       }
-      Define(
+      Declare(
           Aggregate,
           agg,
           rawFunc->func,
@@ -188,7 +188,7 @@ void makeJoin(DerivedTablePtr dt, ExprPtr left, ExprPtr right) {
       return;
     }
   }
-  Define(Join, join);
+  Declare(Join, join);
   join->leftKeys.push_back(left);
   join->rightKeys.push_back(right);
   join->leftTable = leftTable;
@@ -232,7 +232,7 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
     float selection = subfieldSelectivity(*tableHandle);
     auto cname = fmt::format("t{}", ++nameCounter_);
 
-    Define(BaseTable, baseTable);
+    Declare(BaseTable, baseTable);
     baseTable->cname = toName(cname);
     baseTable->schemaTable = schemaTable;
     ColumnVector columns{stl<ColumnPtr>()};
@@ -243,7 +243,7 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
       auto schemaColumn = schemaTable->findColumn(handle->name());
       schemaColumns.push_back(schemaColumn);
       auto value = schemaColumn->value;
-      Define(Column, column, toName(handle->name()), baseTable, value);
+      Declare(Column, column, toName(handle->name()), baseTable, value);
       columns.push_back(column);
       renames_[pair.first] = column;
     }

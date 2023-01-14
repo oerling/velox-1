@@ -17,7 +17,7 @@
 
 #include "velox/common/base/SimdUtil.h"
 #include "velox/core/PlanNode.h"
-#include "velox/experimental/query/QueryGraph.h"
+#include "velox/experimental/query/RelationOp.h"
 
 namespace facebook::verax {
 

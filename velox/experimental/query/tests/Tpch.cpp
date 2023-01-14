@@ -79,7 +79,7 @@ SchemaTablePtr makeTable(
 
   auto type = tpch::getTableSchema(id);
   auto name = tpch::toTableName(id);
-  Define(
+  Declare(
       SchemaTable, table, toName(std::string(name.data(), name.size())), type);
   ColumnVector orderedColumns{stl<ColumnPtr>()};
   for (auto i = 0; i < type->size(); ++i) {
@@ -136,7 +136,7 @@ tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary) {
           tpch::Table::TBL_REGION, scale, ordered, partitioned, secondary),
   };
 
-  Define(Schema, schema, toName(title), std::move(tables));
+  Declare(Schema, schema, toName(title), std::move(tables));
   return schema;
 }
 
