@@ -59,5 +59,4 @@ std::string succinctNumber(double value, int32_t precision) {
       precision);
 }
 
-
 } // namespace facebook::verax

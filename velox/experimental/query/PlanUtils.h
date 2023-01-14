@@ -103,13 +103,13 @@ float byteSize(const V& exprs) {
   return size;
 }
 
-  template <typename Target, typename V, typename Func>
-  Target transform(const V& set, Func func) {
-    Target result;
-    for (auto& elt : set) {
-      result.push_back(func(elt));
-    }
-    return result;
+template <typename Target, typename V, typename Func>
+Target transform(const V& set, Func func) {
+  Target result;
+  for (auto& elt : set) {
+    result.push_back(func(elt));
   }
-  
+  return result;
+}
+
 } // namespace facebook::verax

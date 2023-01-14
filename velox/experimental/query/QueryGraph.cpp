@@ -491,7 +491,8 @@ ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
 void TableScan::setRelation(
     const ColumnVector& columns,
     const ColumnVector& schemaColumns) {
-  auto cc = transform<ColumnVector>(columns, [](auto& c) {return c->schemaColumn;});
+  auto cc =
+      transform<ColumnVector>(columns, [](auto& c) { return c->schemaColumn; });
   distribution.cardinality =
       index->distribution.cardinality * baseTable->filterSelectivity;
   // if all partitioning columns are projected, the output is partitioned.
@@ -718,10 +719,11 @@ std::string Distribution::toString() const {
   }
   return out.str();
 }
-  std::string Cost::toString(bool detail, bool isUnit) const {
+std::string Cost::toString(bool detail, bool isUnit) const {
   std::stringstream out;
   float multiplier = isUnit ? 1 : inputCardinality;
-  out << succinctNumber(fanout * multiplier) << " rows " << succinctNumber(unitCost * multiplier) << "CU";
+  out << succinctNumber(fanout * multiplier) << " rows "
+      << succinctNumber(unitCost * multiplier) << "CU";
   if (setupCost > 0) {
     out << ", setup " << succinctNumber(setupCost) << "CU";
   }
@@ -731,7 +733,6 @@ std::string Distribution::toString() const {
   return out.str();
 }
 
-  
 void RelationOp::printCost(bool detail, std::stringstream& out) const {
   auto ctx = queryCtx();
   if (ctx && ctx->contextPlan()) {
@@ -741,9 +742,7 @@ void RelationOp::printCost(bool detail, std::stringstream& out) const {
     out << " " << std::fixed << std::setprecision(2) << pct << "% ";
   }
   if (detail) {
-    out << " "
-        << cost_.toString(detail, true)
-        << std::endl;
+    out << " " << cost_.toString(detail, true) << std::endl;
   }
 }
 

@@ -54,7 +54,7 @@ struct Plan {
   RelationOpPtr op;
 
   Cost cost;
-  
+
   // The tables from original join graph that are included in this
   // plan. If this is a derived table in the original plan, the
   // covered object is the derived table, not its constituent
@@ -91,8 +91,7 @@ struct PlanSet {
 struct PlanState {
   PlanState() = default;
 
-  PlanState(PlanPtr plan)
-      : cost(plan->cost) {}
+  PlanState(PlanPtr plan) : cost(plan->cost) {}
 
   // The derived table from which the tables are drawn.
   DerivedTablePtr dt{nullptr};
@@ -164,16 +163,16 @@ struct JoinSide {
   /// Returns the join type to use if 'this' is the right side.
   velox::core::JoinType leftJoinType() {
     if (isNotExists) {
-    return velox::core::JoinType::kAnti;
+      return velox::core::JoinType::kAnti;
     }
     if (isExists) {
-    return velox::core::JoinType::kLeftSemiFilter;
+      return velox::core::JoinType::kLeftSemiFilter;
     }
     if (isOptional) {
-    return velox::core::JoinType::kLeft;
+      return velox::core::JoinType::kLeft;
     }
     return velox::core::JoinType::kInner;
-    }
+  }
 };
 
 // Represents the next table/derived table to join. May consist of several

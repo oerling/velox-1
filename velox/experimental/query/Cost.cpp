@@ -101,7 +101,8 @@ void TableScan::setCost(const PlanState& input) {
     }
     return;
   } else {
-    cost_.fanout = index->distribution.cardinality * baseTable->filterSelectivity;
+    cost_.fanout =
+        index->distribution.cardinality * baseTable->filterSelectivity;
   }
   auto numColumns = columns.size();
   auto rowCost = numColumns * Costs::kColumnRowCost +
@@ -120,12 +121,12 @@ void Aggregation::setCost(const PlanState& input) {
   // (1 - (1 / d))^n. where d is the number of potentially distinct keys  and n
   // is the number of keys in the input. This approaches d as n goes to
   // infinity.
-  auto numDuplicate =
-      cost_.inputCardinality * pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
+  auto numDuplicate = cost_.inputCardinality *
+      pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
   auto nOut = cost_.inputCardinality - numDuplicate;
   cost_.fanout = nOut / cost_.inputCardinality;
-  cost_.unitCost =
-      grouping.size() * Costs::hashProbeCost(cost_.inputCardinality - numDuplicate);
+  cost_.unitCost = grouping.size() *
+      Costs::hashProbeCost(cost_.inputCardinality - numDuplicate);
   float rowBytes = byteSize(grouping) + byteSize(aggregates);
   cost_.totalBytes = nOut * rowBytes;
 }

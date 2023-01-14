@@ -41,8 +41,8 @@ struct PlanState;
 // input cardinality. A lookup that hits densely is cheaper than one
 // that hits sparsely. An index lookup has no setup cost.
 
- struct Cost {
-// Cardinality of the output of the left deep input tree. 1 for a leaf
+struct Cost {
+  // Cardinality of the output of the left deep input tree. 1 for a leaf
   // scan.
   float inputCardinality{1};
 
@@ -68,12 +68,12 @@ struct PlanState;
   // amount of spill is 'totalBytes' - 'peakResidentBytes'.
   float peakResidentBytes{0};
 
-   /// If 'isUnit' shows the cost/cardinality for one row, else for 'inputCardinality' rows.
-   std::string toString(bool detail, bool isUnit = false) const;
- };
+  /// If 'isUnit' shows the cost/cardinality for one row, else for
+  /// 'inputCardinality' rows.
+  std::string toString(bool detail, bool isUnit = false) const;
+};
 
-
- struct RelationOp : public Relation {
+struct RelationOp : public Relation {
   RelationOp(
       RelType type,
       boost::intrusive_ptr<RelationOp> input,
@@ -103,7 +103,6 @@ struct PlanState;
   // adds a line of cost information to 'out'
   void printCost(bool detail, std::stringstream& out) const;
 
-  
   // thread local reference count. PlanObjects are freed when the
   // QueryGraphContext arena is freed, candidate plans are freed when no longer
   // referenced.
@@ -113,14 +112,13 @@ struct PlanState;
   // leaf table scan.
   boost::intrusive_ptr<struct RelationOp> input;
 
-
  protected:
   Cost cost_;
 };
 
 using RelationOpPtr = boost::intrusive_ptr<RelationOp>;
 
- static inline void intrusive_ptr_add_ref(RelationOp* op) {
+static inline void intrusive_ptr_add_ref(RelationOp* op) {
   ++op->refCount;
 }
 
@@ -139,14 +137,13 @@ struct TableScan : public RelationOp {
       Distribution _distribution,
       BaseTablePtr table,
       IndexPtr _index,
-	    float fanout)
+      float fanout)
       : RelationOp(RelType::kTableScan, input, _distribution),
         baseTable(table),
         index(_index) {
     cost_.fanout = fanout;
   }
 
-  
   /// Columns of base table available in 'index'.
   PlanObjectSet availableColumns();
 
@@ -170,7 +167,7 @@ struct TableScan : public RelationOp {
   // there are filters that need columns that are not projected out to
   // next op.
   PlanObjectSet extractedColumns;
-  
+
   // Lookup keys, empty if full table scan.
   ExprVector keys;
 
@@ -220,13 +217,13 @@ struct JoinOp : public RelationOp {
       ExprPtr filter,
       float fanout,
       ColumnVector _columns)
-    : RelationOp(RelType::kJoin, input, input->distribution),
+      : RelationOp(RelType::kJoin, input, input->distribution),
         method(_method),
         joinType(_joinType),
-    right(std::move(right)),
-    leftKeys(std::move(leftKeys)),
-    rightKeys(std::move(rightKeys)),
-    filter(filter) {
+        right(std::move(right)),
+        leftKeys(std::move(leftKeys)),
+        rightKeys(std::move(rightKeys)),
+        filter(filter) {
     cost_.fanout = fanout;
     columns = std::move(_columns);
   }
