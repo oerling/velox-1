@@ -81,7 +81,7 @@ SchemaTablePtr makeTable(
   auto name = tpch::toTableName(id);
   Declare(
       SchemaTable, table, toName(std::string(name.data(), name.size())), type);
-  ColumnVector orderedColumns{stl<ColumnPtr>()};
+  ColumnVector orderedColumns;
   for (auto i = 0; i < type->size(); ++i) {
     auto name = toName(type->nameOf(i));
     auto value = columnValue(name, type->childAt(i), scale, cardinality);
@@ -96,7 +96,7 @@ SchemaTablePtr makeTable(
     // uniqueness defining columns must be first in index.
     std::swap(pkColumns[1], pkColumns[3]);
   }
-  ColumnVector partition{stl<ColumnPtr>()};
+  ColumnVector partition;
   DistributionType dist;
   if (partitioned) {
     partition.push_back(pkColumns[0]);

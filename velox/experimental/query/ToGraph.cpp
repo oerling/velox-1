@@ -84,7 +84,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   if (it != exprDedup_.end()) {
     return it->second;
   }
-  ExprVector args{expr->inputs().size(), stl<ExprPtr>()};
+  ExprVector args{expr->inputs().size()};
   PlanObjectSet columns;
   FunctionSet funcs;
   auto& inputs = expr->inputs();
@@ -124,7 +124,7 @@ ExprPtr Optimization::translateColumn(const std::string& name) {
 
 ExprVector Optimization::translateColumns(
     const std::vector<core::FieldAccessTypedExprPtr>& source) {
-  ExprVector result{source.size(), stl<ExprPtr>()};
+  ExprVector result{source.size()};
   for (auto i = 0; i < source.size(); ++i) {
     result[i] = translateColumn(source[i]->name());
   }
@@ -235,8 +235,8 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
     Declare(BaseTable, baseTable);
     baseTable->cname = toName(cname);
     baseTable->schemaTable = schemaTable;
-    ColumnVector columns{stl<ColumnPtr>()};
-    ColumnVector schemaColumns{stl<ColumnPtr>()};
+    ColumnVector columns;
+    ColumnVector schemaColumns;
     for (auto& pair : assignments) {
       auto handle =
           reinterpret_cast<const HiveColumnHandle*>(pair.second.get());

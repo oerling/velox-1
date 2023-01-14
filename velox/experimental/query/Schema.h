@@ -92,11 +92,11 @@ struct Distribution {
   // Partitioning columns. The values of these columns determine which of
   // 'numPartitions' contains any given row. This does not specify the
   // partition function (e.g. Hive bucket or range partition).
-  ExprVector partition{stl<ExprPtr>()};
+  ExprVector partition;
 
   // Ordering columns. Each partition is ordered by these. Specifies that
   // streaming group by or merge join are possible.
-  ExprVector order{stl<ExprPtr>()};
+  ExprVector order;
 
   // Corresponds 1:1 to 'order'
   std::vector<OrderType> orderType;
@@ -119,8 +119,8 @@ struct Distribution {
   // once the value of any clustering column changes between consecutive rows,
   // the same combination of clustering columns will not repeat. means that a
   // final group by can be flushed when seeing a change in clustering columns.
-  ColumnVector clustering{stl<ColumnPtr>()};
-
+  ColumnVector clustering;
+  
   // True if the data is replicated to 'numPartitions'.
   bool isBroadcast{false};
 
@@ -159,7 +159,7 @@ struct Relation {
   RelType relType;
   Distribution distribution;
   velox::RowTypePtr type;
-  ColumnVector columns{stl<ColumnPtr>()};
+  ColumnVector columns;
 };
 
 struct SchemaTable;

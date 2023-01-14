@@ -46,8 +46,7 @@ class Plan;
 class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
-      : allocator_(allocator),
-        stlAllocator_(velox::StlAllocator<void*>(&allocator)) {}
+    : allocator_(allocator) {}
 
   Name toName(std::string_view str);
 
@@ -56,16 +55,11 @@ class QueryGraphContext {
     return objects_.size() - 1;
   }
 
-  velox::StlAllocator<void*>* stlAllocator() & {
-    return &stlAllocator_;
-  }
-
   velox::HashStringAllocator& allocator() {
     return allocator_;
   }
 
   velox::HashStringAllocator& allocator_;
-  velox::StlAllocator<void*> stlAllocator_;
 
   /// Returns a canonical instance for all logically equal values of 'object'.
   /// Returns 'object' on first call with object, thereafter the same physical
@@ -95,12 +89,7 @@ inline QueryGraphContext*& queryCtx() {
   return context;
 }
 
-template <typename T>
-velox::StlAllocator<T> stl() {
-  return *reinterpret_cast<velox::StlAllocator<T>*>(queryCtx()->stlAllocator());
-}
-
-#define Declare(T, destination, ...)                          \
+#define Declare(T, destination, ...)			     \
   T* destination = reinterpret_cast<T*>(                     \
       queryCtx()->allocator().allocate(sizeof(T))->begin()); \
   new (destination) T(__VA_ARGS__);
@@ -114,12 +103,34 @@ velox::StlAllocator<T> stl() {
 /// arena allocated const chars.
 Name toName(const std::string& string);
 
+template <class T>
+struct QGAllocator {
+  using value_type = T;
+
+
+  T* FOLLY_NONNULL allocate(std::size_t n) {
+    return reinterpret_cast<T*>(
+				queryCtx()->allocator().allocate(velox::checkedMultiply(n, sizeof(T)))->begin());
+  }
+
+  void deallocate(T* FOLLY_NONNULL p, std::size_t /*n*/) noexcept {
+    queryCtx()->allocator().free(velox::HashStringAllocator::headerOf(p));
+  }
+
+  friend bool operator==(const QGAllocator& lhs, const QGAllocator& rhs) {
+    return true;
+  }
+
+  friend bool operator!=(const QGAllocator& lhs, const QGAllocator& rhs) {
+    return !(lhs == rhs);
+  }
+};
 
 struct Expr;
 using ExprPtr = Expr*;
 struct Column;
 using ColumnPtr = Column*;
-using ExprVector = std::vector<ExprPtr, velox::StlAllocator<ExprPtr>>;
-using ColumnVector = std::vector<ColumnPtr, velox::StlAllocator<ColumnPtr>>;
+using ExprVector = std::vector<ExprPtr, QGAllocator<ExprPtr>>;
+using ColumnVector = std::vector<ColumnPtr, QGAllocator<ColumnPtr>>;
  
 } // namespace facebook::verax

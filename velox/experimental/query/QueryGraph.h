@@ -94,13 +94,13 @@ struct Column : public Expr {
 
 template <typename T>
 inline folly::Range<T*> toRange(
-    const std::vector<T, velox::StlAllocator<T>>& v) {
+    const std::vector<T, QGAllocator<T>>& v) {
   return folly::Range<T*>(const_cast<T*>(v.data()), v.size());
 }
 
 template <typename T, typename U>
 inline folly::Range<T*> toRangeCast(
-    const std::vector<U, velox::StlAllocator<U>>& v) {
+    const std::vector<U, QGAllocator<U>>& v) {
   return folly::Range<T*>(
       reinterpret_cast<T*>(const_cast<U*>(v.data())), v.size());
 }
@@ -157,7 +157,7 @@ struct Call : public Expr {
 using CallPtr = Call*;
 
 struct Equivalence {
-  ColumnVector columns{stl<ColumnPtr>()};
+  ColumnVector columns;
   ;
   // Corresponds pairwise to 'exprs'. True if the Expr comes from an
   // outer optional side key join and is therefore null or equal.
@@ -186,9 +186,9 @@ using FilteredColumnPtr = FilteredColumn*;
 // non-directional.
 struct Join {
   // Leading left side join keys.
-  ExprVector leftKeys{stl<ExprPtr>()};
+  ExprVector leftKeys;
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
-  ExprVector rightKeys{stl<ExprPtr>()};
+  ExprVector rightKeys;
 
   PlanObjectPtr leftTable{nullptr};
   PlanObjectPtr rightTable{nullptr};
@@ -233,7 +233,7 @@ struct Join {
 
 using JoinPtr = Join*;
 
-using JoinVector = std::vector<JoinPtr, velox::StlAllocator<JoinPtr>>;
+using JoinVector = std::vector<JoinPtr, QGAllocator<JoinPtr>>;
 
 struct BaseTable : public PlanObject {
   BaseTable() : PlanObject(PlanType::kTable) {}
@@ -242,13 +242,13 @@ struct BaseTable : public PlanObject {
 
   SchemaTablePtr schemaTable;
 
-  ColumnVector columns{stl<ColumnPtr>()};
-  ColumnVector schemaColumns{stl<ColumnPtr>()};
+  ColumnVector columns;
+  ColumnVector schemaColumns;
 
-  JoinVector joinedBy{stl<JoinPtr>()};
+  JoinVector joinedBy;
 
   // Top level conjuncts on single columns and literals, column to the left.
-  ExprVector columnFilters{stl<ExprPtr>()};
+  ExprVector columnFilters;
 
   // Multicolumn filters dependent on 'this' alone.
   ExprPtr filter{nullptr};
@@ -318,25 +318,24 @@ struct DerivedTable : public PlanObject {
   Name cname{nullptr};
 
   // Columns projected out. Visible in the enclosing query.
-  ColumnVector columns{stl<ColumnPtr>()};
+  ColumnVector columns;
 
   // Exprs projected out.1:1 to 'columns'.
-  ExprVector exprs{stl<ExprPtr>()};
+  ExprVector exprs;
 
-  JoinVector joinedBy{stl<JoinPtr>()};
+  JoinVector joinedBy;
 
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
   // 'filter' of BaseTable.
-  std::vector<PlanObjectPtr, velox::StlAllocator<PlanObjectPtr>> tables{
-      stl<PlanObjectPtr>()};
+  std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> tables;
 
-  std::vector<JoinPtr, velox::StlAllocator<JoinPtr>> joins{stl<JoinPtr>()};
+  JoinVector joins;
 
   // Filters in where for that are not single table expressions and not join
   // filters of explicit joins and not equalities between columns of joined
   // tables.
-  ExprVector conjuncts{stl<ExprPtr>()};
+  ExprVector conjuncts;
 
   AggregationPtr aggregation{nullptr};
   ExprPtr having{nullptr};

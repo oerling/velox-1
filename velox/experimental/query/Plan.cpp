@@ -434,7 +434,7 @@ RelationOpPtr repartitionForIndex(
   if (isIndexColocated(info, lookupValues, plan)) {
     return plan;
   }
-  ExprVector keyExprs{stl<ExprPtr>()};
+  ExprVector keyExprs;
   auto& partition = info.index->distribution.partition;
   for (auto key : partition) {
     // partition is in schema columns, lookupKeys is in BaseTable columns. Use
@@ -628,7 +628,7 @@ void Optimization::joinByHash(
       buildInput = buildShuffle;
     }
 
-    ExprVector distCols{stl<ExprPtr>()};
+    ExprVector distCols;
     for (auto i = 0; i < probeInput->distribution.partition.size(); ++i) {
       auto key = buildInput->distribution.partition[i];
       auto nthKey = position(build.keys, *key);
@@ -645,7 +645,7 @@ void Optimization::joinByHash(
   Declare(HashBuild, buildOp, buildInput, build.keys);
   buildState.addCost(*buildOp);
 
-  ColumnVector columns{stl<ColumnPtr>()};
+  ColumnVector columns;
   downstream.forEach([&](auto object) {
     columns.push_back(reinterpret_cast<ColumnPtr>(object));
   });
@@ -717,8 +717,8 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
           StateSaver save(state);
           state.placed.add(table);
           Declare(TableScan, scan, nullptr, Distribution(), table, index);
-          ColumnVector columns{stl<ColumnPtr>()};
-          ColumnVector schemaColumns{stl<ColumnPtr>()};
+          ColumnVector columns;
+          ColumnVector schemaColumns;
           indexColumns(downstream, index, table, columns, schemaColumns);
           scan->setRelation(columns, schemaColumns);
           scan->fanout =

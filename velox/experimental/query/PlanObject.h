@@ -155,7 +155,7 @@ struct PlanObject {
     }
   }
 
-  std::vector<uint64_t, velox::StlAllocator<uint64_t>> bits_{stl<uint64_t>()};
+  std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
 };
 
 }
