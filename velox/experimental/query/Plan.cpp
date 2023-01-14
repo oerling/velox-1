@@ -21,6 +21,7 @@
 namespace facebook::verax {
 
 using namespace facebook::velox;
+using facebook::velox::core::JoinType;
 
 Optimization::Optimization(
     const core::PlanNode& plan,
@@ -55,19 +56,17 @@ FunctionSet functionBits(Name name) {
 
 Plan::Plan(RelationOpPtr _op, const PlanState& state)
     : op(_op),
-      unitCost(state.cost),
-      setupCost(state.setupCost),
-      fanout(state.fanout),
+      cost(state.cost),
       tables(state.placed),
       columns(state.targetColumns) {}
 
 bool Plan::isStateBetter(const PlanState& state) const {
-  return unitCost * plannedInputCardinality + setupCost >
-      state.cost * state.inputCardinality + state.setupCost;
+  return cost.unitCost * cost.inputCardinality + cost.setupCost >
+      state.cost.unitCost * state.cost.inputCardinality + state.cost.setupCost;
 }
 
 std::string Plan::printCost() const {
-  return costString(fanout, unitCost, setupCost);
+  return cost.toString(true, false);
 }
 
 std::string Plan::toString(bool detail) const {
@@ -78,12 +77,12 @@ std::string Plan::toString(bool detail) const {
 }
 
 void PlanState::addCost(RelationOp& op) {
-  if (!op.unitCost) {
+  if (!op.cost().unitCost) {
     op.setCost(*this);
   }
-  cost += inputCardinality * fanout * op.unitCost;
-  setupCost += op.setupCost;
-  fanout *= op.fanout;
+  cost.unitCost += cost.inputCardinality * cost.fanout * op.cost().unitCost;
+  cost.setupCost += op.cost().setupCost;
+  cost.fanout *= op.cost().fanout;
 }
 
 PlanObjectSet PlanState::downstreamColumns() const {
@@ -112,7 +111,7 @@ PlanObjectSet PlanState::downstreamColumns() const {
 }
 
 std::string PlanState::printCost() const {
-  return costString(fanout, cost, setupCost);
+  return cost.toString(true, true);
 }
 
 std::string PlanState::printPlan(RelationOpPtr op, bool detail) const {
@@ -161,7 +160,8 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
   float bestCost = -1;
   float matchCost = -1;
   for (auto i = 0; i < plans.size(); ++i) {
-    float cost = plans[i]->fanout * plans[i]->unitCost + plans[i]->setupCost;
+    float cost = plans[i]->cost.fanout * plans[i]->cost.unitCost +
+        plans[i]->cost.setupCost;
     if (!best || bestCost > cost) {
       best = plans[i].get();
       bestCost = cost;
@@ -172,7 +172,7 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
     }
   }
   if (best != match && match) {
-    float shuffle = shuffleCost(best->op->columns) * best->fanout;
+    float shuffle = shuffleCost(best->op->columns) * best->cost.fanout;
     if (bestCost + shuffle < matchCost) {
       needsShuffle = true;
       return best;
@@ -462,6 +462,19 @@ RelationOpPtr repartitionForIndex(
   return repartition;
 }
 
+float fanoutJoinTypeLimit(JoinType joinType, float fanout) {
+  switch (joinType) {
+    case JoinType::kLeft:
+      return std::max<float>(1, fanout);
+    case JoinType::kLeftSemiFilter:
+      return std::min<float>(1, fanout);
+    case JoinType::kAnti:
+      return 1 - std::min<float>(1, fanout);
+    default:
+      return fanout;
+  }
+}
+
 void Optimization::joinByIndex(
     const RelationOpPtr& plan,
     const JoinCandidate& candidate,
@@ -469,16 +482,16 @@ void Optimization::joinByIndex(
   if (candidate.tables[0]->type != PlanType::kTable) {
     return;
   }
-  auto right = candidate.tables[0]->as<BaseTablePtr>();
-  auto left = candidate.sideOf(right, true);
-  auto& keys = candidate.join->leftTable == right ? candidate.join->leftKeys
-                                                  : candidate.join->rightKeys;
+  auto rightTable = candidate.tables[0]->as<BaseTablePtr>();
+  auto left = candidate.sideOf(rightTable, true);
+  auto right = candidate.sideOf(rightTable);
+  auto& keys = right.keys;
   auto keyColumns = leadingColumns(keys);
   if (keyColumns.empty()) {
     return;
   }
-  for (auto& index : right->schemaTable->indices) {
-    auto info = right->schemaTable->indexInfo(index, keyColumns);
+  for (auto& index : rightTable->schemaTable->indices) {
+    auto info = rightTable->schemaTable->indexInfo(index, keyColumns);
     if (info.lookupKeys.empty()) {
       continue;
     }
@@ -487,39 +500,35 @@ void Optimization::joinByIndex(
     if (!newPartition) {
       continue;
     }
+    state.placed.add(candidate.tables[0]);
+    auto joinType = right.leftJoinType();
+    auto fanout = fanoutJoinTypeLimit(
+        joinType, info.scanCardinality * rightTable->filterSelectivity);
     Declare(
         TableScan,
         scan,
         newPartition,
         newPartition->distribution,
-        right,
-        info.index);
+        rightTable,
+        info.index,
+        fanout);
+    scan->joinType = joinType;
     scan->keys = left.keys;
     // The number of keys is  the prefix that matches index order.
     scan->keys.resize(info.lookupKeys.size());
-    scan->fanout = info.scanCardinality * right->filterSelectivity;
     state.columns.unionSet(scan->availableColumns());
-
     PlanObjectSet c = state.downstreamColumns();
     c.intersect(state.columns);
 
-    state.placed.add(candidate.tables[0]);
     c.forEach(
         [&](auto o) { scan->columns.push_back(reinterpret_cast<Column*>(o)); });
-    if (scan->baseTable->filter) {
-      scan->extractedColumns.unionSet(scan->baseTable->filter->columns);
+    for (auto& filter : scan->baseTable->filter) {
+      scan->extractedColumns.unionSet(filter->columns);
     }
     auto join = candidate.join;
     if (join->filter) {
       scan->joinFilter = join->filter;
       scan->extractedColumns.unionSet(join->filter->columns);
-      if (join->rightOptional) {
-        scan->joinType = velox::core::JoinType::kLeft;
-        scan->fanout = std::max<float>(1, scan->fanout);
-      } else if (join->rightExists)
-        scan->joinType = velox::core::JoinType::kLeftSemiFilter;
-    } else if (join->rightNotExists) {
-      scan->joinType = velox::core::JoinType::kAnti;
     }
     state.addCost(*scan);
     makeJoins(scan, state);
@@ -553,7 +562,7 @@ PlanObjectSet availableColumns(PlanObjectPtr object) {
 }
 
 bool isBroadcastable(PlanPtr build, PlanState& /*state*/) {
-  return build->fanout < 100000;
+  return build->cost.fanout < 100000;
 }
 
 void Optimization::joinByHash(
@@ -651,6 +660,7 @@ void Optimization::joinByHash(
   });
 
   auto joinType = velox::core::JoinType::kInner;
+  auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   Declare(
       JoinOp,
       joinOp,
@@ -658,12 +668,13 @@ void Optimization::joinByHash(
       joinType,
       probeInput,
       buildOp,
+      probe.keys,
+      build.keys,
+      candidate.join->filter,
+      fanout,
       std::move(columns));
-  joinOp->leftKeys = probe.keys;
-  joinOp->rightKeys = build.keys;
-  joinOp->fanout = candidate.fanout;
   state.addCost(*joinOp);
-  state.setupCost += buildState.cost;
+  state.cost.setupCost += buildState.cost.unitCost;
   makeJoins(joinOp, state);
 }
 
@@ -716,13 +727,19 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
         for (auto index : indices) {
           StateSaver save(state);
           state.placed.add(table);
-          Declare(TableScan, scan, nullptr, Distribution(), table, index);
+          Declare(
+              TableScan,
+              scan,
+              nullptr,
+              Distribution(),
+              table,
+              index,
+              index->distribution.cardinality * table->filterSelectivity);
           ColumnVector columns;
           ColumnVector schemaColumns;
           indexColumns(downstream, index, table, columns, schemaColumns);
           scan->setRelation(columns, schemaColumns);
-          scan->fanout =
-              index->distribution.cardinality * table->filterSelectivity;
+
           state.addCost(*scan);
           makeJoins(scan, state);
         }

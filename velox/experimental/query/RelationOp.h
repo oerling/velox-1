@@ -40,30 +40,9 @@ struct PlanState;
 // cost is a function of the index size and the input spacing and
 // input cardinality. A lookup that hits densely is cheaper than one
 // that hits sparsely. An index lookup has no setup cost.
-struct RelationOp : public Relation {
-  RelationOp(
-      RelType type,
-      boost::intrusive_ptr<RelationOp> input,
-      Distribution _distribution)
-      : Relation(relType, _distribution, ColumnVector{}),
-        input(std::move(input)) {}
 
-  virtual ~RelationOp() = default;
-
-  void operator delete(void* ptr) {
-    queryCtx()->allocator().free(velox::HashStringAllocator::headerOf(ptr));
-  }
-
-  // thread local reference count. PlanObjects are freed when the
-  // QueryGraphContext arena is freed, candidate plans are freed when no longer
-  // referenced.
-  mutable int32_t refCount{0};
-
-  // Input of filter/project/group by etc., Left side of join, nullptr for a
-  // leaf table scan.
-  boost::intrusive_ptr<struct RelationOp> input;
-
-  // Cardinality of the output of the left deep input tree. 1 for a leaf
+ struct Cost {
+// Cardinality of the output of the left deep input tree. 1 for a leaf
   // scan.
   float inputCardinality{1};
 
@@ -89,6 +68,29 @@ struct RelationOp : public Relation {
   // amount of spill is 'totalBytes' - 'peakResidentBytes'.
   float peakResidentBytes{0};
 
+   /// If 'isUnit' shows the cost/cardinality for one row, else for 'inputCardinality' rows.
+   std::string toString(bool detail, bool isUnit = false) const;
+ };
+
+
+ struct RelationOp : public Relation {
+  RelationOp(
+      RelType type,
+      boost::intrusive_ptr<RelationOp> input,
+      Distribution _distribution)
+      : Relation(relType, _distribution, ColumnVector{}),
+        input(std::move(input)) {}
+
+  virtual ~RelationOp() = default;
+
+  void operator delete(void* ptr) {
+    queryCtx()->allocator().free(velox::HashStringAllocator::headerOf(ptr));
+  }
+
+  const Cost& cost() const {
+    return cost_;
+  }
+
   virtual void setCost(const PlanState& input);
 
   virtual std::string toString(bool recursive, bool detail) const {
@@ -100,6 +102,20 @@ struct RelationOp : public Relation {
 
   // adds a line of cost information to 'out'
   void printCost(bool detail, std::stringstream& out) const;
+
+  
+  // thread local reference count. PlanObjects are freed when the
+  // QueryGraphContext arena is freed, candidate plans are freed when no longer
+  // referenced.
+  mutable int32_t refCount{0};
+
+  // Input of filter/project/group by etc., Left side of join, nullptr for a
+  // leaf table scan.
+  boost::intrusive_ptr<struct RelationOp> input;
+
+
+ protected:
+  Cost cost_;
 };
 
 using RelationOpPtr = boost::intrusive_ptr<RelationOp>;
@@ -122,10 +138,24 @@ struct TableScan : public RelationOp {
       RelationOpPtr input,
       Distribution _distribution,
       BaseTablePtr table,
-      IndexPtr _index)
+      IndexPtr _index,
+	    float fanout)
       : RelationOp(RelType::kTableScan, input, _distribution),
         baseTable(table),
-        index(_index) {}
+        index(_index) {
+    cost_.fanout = fanout;
+  }
+
+  
+  /// Columns of base table available in 'index'.
+  PlanObjectSet availableColumns();
+
+  void setRelation(
+      const ColumnVector& columns,
+      const ColumnVector& schemaColumns);
+
+  void setCost(const PlanState& input) override;
+  std::string toString(bool recursive, bool detail) const override;
 
   // The base table reference. May occur in multiple scans if the base
   // table decomposes into access via secondary index joined to pk or
@@ -136,28 +166,18 @@ struct TableScan : public RelationOp {
   // access.
   IndexPtr index;
 
-  // Lookup keys, empty if full table scan.
-  ExprVector keys;
-
   // Columns read from 'baseTable'. Can be more than 'columns' if
   // there are filters that need columns that are not projected out to
   // next op.
   PlanObjectSet extractedColumns;
+  
+  // Lookup keys, empty if full table scan.
+  ExprVector keys;
 
   // If this is a lookup, 'joinType' can  be inner, left or anti.
   velox::core::JoinType joinType{velox::core::JoinType::kInner};
 
   ExprPtr joinFilter{nullptr};
-
-  /// Columns of base table available in 'index'.
-  PlanObjectSet availableColumns();
-
-  void setRelation(
-      const ColumnVector& columns,
-      const ColumnVector& schemaColumns);
-
-  void setCost(const PlanState& input) override;
-  std::string toString(bool recursive, bool detail) const override;
 };
 
 struct Repartition : public RelationOp {
@@ -195,11 +215,19 @@ struct JoinOp : public RelationOp {
       velox::core::JoinType _joinType,
       RelationOpPtr input,
       RelationOpPtr right,
+      ExprVector leftKeys,
+      ExprVector rightKeys,
+      ExprPtr filter,
+      float fanout,
       ColumnVector _columns)
-      : RelationOp(RelType::kJoin, input, input->distribution),
+    : RelationOp(RelType::kJoin, input, input->distribution),
         method(_method),
         joinType(_joinType),
-        right(std::move(right)) {
+    right(std::move(right)),
+    leftKeys(std::move(leftKeys)),
+    rightKeys(std::move(rightKeys)),
+    filter(filter) {
+    cost_.fanout = fanout;
     columns = std::move(_columns);
   }
 

@@ -491,6 +491,7 @@ ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
 void TableScan::setRelation(
     const ColumnVector& columns,
     const ColumnVector& schemaColumns) {
+  auto cc = transform<ColumnVector>(columns, [](auto& c) {return c->schemaColumn;});
   distribution.cardinality =
       index->distribution.cardinality * baseTable->filterSelectivity;
   // if all partitioning columns are projected, the output is partitioned.
@@ -717,21 +718,31 @@ std::string Distribution::toString() const {
   }
   return out.str();
 }
+  std::string Cost::toString(bool detail, bool isUnit) const {
+  std::stringstream out;
+  float multiplier = isUnit ? 1 : inputCardinality;
+  out << succinctNumber(fanout * multiplier) << " rows " << succinctNumber(unitCost * multiplier) << "CU";
+  if (setupCost > 0) {
+    out << ", setup " << succinctNumber(setupCost) << "CU";
+  }
+  if (totalBytes) {
+    out << " " << velox::succinctBytes(totalBytes);
+  }
+  return out.str();
+}
 
+  
 void RelationOp::printCost(bool detail, std::stringstream& out) const {
   auto ctx = queryCtx();
   if (ctx && ctx->contextPlan()) {
     auto plan = ctx->contextPlan();
-    auto totalCost = plan->unitCost + plan->setupCost;
-    auto pct = 100 * inputCardinality * unitCost / totalCost;
+    auto totalCost = plan->cost.unitCost + plan->cost.setupCost;
+    auto pct = 100 * cost_.inputCardinality * cost_.unitCost / totalCost;
     out << " " << std::fixed << std::setprecision(2) << pct << "% ";
   }
   if (detail) {
     out << " "
-        << costString(
-               inputCardinality * fanout,
-               inputCardinality * unitCost,
-               setupCost)
+        << cost_.toString(detail, true)
         << std::endl;
   }
 }
@@ -792,9 +803,6 @@ std::string Repartition::toString(bool recursive, bool detail) const {
     out << input->toString(true, detail) << " ";
   }
   out << (distribution.isBroadcast ? "broadcast" : "shuffle") << " ";
-  if (detail) {
-    out << velox::succinctBytes(totalBytes) << " ";
-  }
   if (detail && !distribution.isBroadcast) {
     out << distribution.toString();
     printCost(detail, out);

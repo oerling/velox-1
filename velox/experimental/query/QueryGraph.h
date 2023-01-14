@@ -247,7 +247,7 @@ struct BaseTable : public PlanObject {
   ExprVector columnFilters;
 
   // Multicolumn filters dependent on 'this' alone.
-  ExprPtr filter{nullptr};
+  ExprVector filter;
 
   // the fraction of base table rows selected by all filters involving this
   // table only.
@@ -256,10 +256,6 @@ struct BaseTable : public PlanObject {
   // System specific representation of filter on columns, e.g. set of
   // common::Filter.
   void* nativeFilter;
-
-  // Columns referenced from 'this' that do not participate in filters, joins,
-  // grouping or ordering.
-  PlanObjectSet payload;
 
   std::string toString() const override;
 };

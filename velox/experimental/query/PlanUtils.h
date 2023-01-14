@@ -93,6 +93,23 @@ int32_t position(const V& exprs, Getter getter, const Expr& expr) {
 /// , k, M, G T, P.
 std::string succinctNumber(double value, int32_t precision = 2);
 
-std::string costString(float fanout, float cost, float setupCost);
+/// Returns the sum of the sizes of 'exprs'.
+template <typename V>
+float byteSize(const V& exprs) {
+  float size = 0;
+  for (auto& expr : exprs) {
+    size += expr->value.byteSize();
+  }
+  return size;
+}
 
+  template <typename Target, typename V, typename Func>
+  Target transform(const V& set, Func func) {
+    Target result;
+    for (auto& elt : set) {
+      result.push_back(func(elt));
+    }
+    return result;
+  }
+  
 } // namespace facebook::verax

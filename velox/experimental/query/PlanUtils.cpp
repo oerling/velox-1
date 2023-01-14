@@ -59,13 +59,5 @@ std::string succinctNumber(double value, int32_t precision) {
       precision);
 }
 
-std::string costString(float fanout, float cost, float setupCost) {
-  std::stringstream out;
-  out << succinctNumber(fanout) << " rows " << succinctNumber(cost) << "CU";
-  if (setupCost > 0) {
-    out << ", setup " << succinctNumber(setupCost) << "CU";
-  }
-  return out.str();
-}
 
 } // namespace facebook::verax

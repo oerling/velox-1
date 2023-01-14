@@ -55,7 +55,7 @@ struct Costs {
 };
 
 void RelationOp::setCost(const PlanState& state) {
-  inputCardinality = state.fanout;
+  cost_.inputCardinality = state.cost.fanout;
 }
 
 float Index::lookupCost(float range) {
@@ -82,35 +82,31 @@ float orderPrefixDistance(
 
 void TableScan::setCost(const PlanState& input) {
   RelationOp::setCost(input);
-  float size = 0;
-  for (auto& column : columns) {
-    size += column->value.byteSize();
-  }
-
+  float size = byteSize(columns);
   if (!keys.empty()) {
     float lookupRange(index->distribution.cardinality);
     float orderSelectivity = orderPrefixDistance(this->input, index, keys);
     auto distance = lookupRange / std::max<float>(1, orderSelectivity);
-    float batchSize = std::min<float>(inputCardinality, 10000);
+    float batchSize = std::min<float>(cost_.inputCardinality, 10000);
     if (orderSelectivity == 1) {
       // The data does not come in key order.
       float batchCost = index->lookupCost(lookupRange) +
           index->lookupCost(lookupRange / batchSize) *
               std::max<float>(1, batchSize);
-      unitCost = batchCost / batchSize;
+      cost_.unitCost = batchCost / batchSize;
     } else {
       float batchCost = index->lookupCost(lookupRange) +
           index->lookupCost(distance) * std::max<float>(1, batchSize);
-      unitCost = batchCost / batchSize;
+      cost_.unitCost = batchCost / batchSize;
     }
     return;
   } else {
-    fanout = index->distribution.cardinality * baseTable->filterSelectivity;
+    cost_.fanout = index->distribution.cardinality * baseTable->filterSelectivity;
   }
   auto numColumns = columns.size();
   auto rowCost = numColumns * Costs::kColumnRowCost +
       std::max<float>(0, size - 8 * numColumns) * Costs::kColumnByteCost;
-  unitCost += fanout * rowCost;
+  cost_.unitCost += cost_.fanout * rowCost;
 }
 
 void Aggregation::setCost(const PlanState& input) {
@@ -119,26 +115,24 @@ void Aggregation::setCost(const PlanState& input) {
   for (auto key : grouping) {
     cardinality *= key->value.cardinality;
   }
-  auto inputCardinality = this->input->inputCardinality * this->input->fanout;
   // The estimated output is input minus the times an input is a duplicate of a
   // key already in the input. The probability of a duplicate is approximated as
   // (1 - (1 / d))^n. where d is the number of potentially distinct keys  and n
   // is the number of keys in the input. This approaches d as n goes to
   // infinity.
   auto numDuplicate =
-      inputCardinality * pow(1.0 - (1.0 / cardinality), inputCardinality);
-  auto nOut = inputCardinality - numDuplicate;
-  fanout = nOut / inputCardinality;
-  unitCost =
-      grouping.size() * Costs::hashProbeCost(inputCardinality - numDuplicate);
+      cost_.inputCardinality * pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
+  auto nOut = cost_.inputCardinality - numDuplicate;
+  cost_.fanout = nOut / cost_.inputCardinality;
+  cost_.unitCost =
+      grouping.size() * Costs::hashProbeCost(cost_.inputCardinality - numDuplicate);
+  float rowBytes = byteSize(grouping) + byteSize(aggregates);
+  cost_.totalBytes = nOut * rowBytes;
 }
 
 template <typename V>
 std::pair<float, float> shuffleCostV(const V& columns) {
-  int32_t size = 0;
-  for (auto column : columns) {
-    size += column->value.byteSize();
-  }
+  float size = byteSize(columns);
   return {size * Costs::byteShuffleCost(), size};
 }
 
@@ -154,21 +148,21 @@ void Repartition::setCost(const PlanState& input) {
   RelationOp::setCost(input);
 
   auto pair = shuffleCostV(columns);
-  unitCost = pair.second;
-  totalBytes = inputCardinality * pair.first;
+  cost_.unitCost = pair.second;
+  cost_.totalBytes = cost_.inputCardinality * pair.first;
 }
 
 void HashBuild::setCost(const PlanState& input) {
-  unitCost = keys.size() * Costs::kHashColumnCost +
-      Costs::hashProbeCost(inputCardinality) +
+  cost_.unitCost = keys.size() * Costs::kHashColumnCost +
+      Costs::hashProbeCost(cost_.inputCardinality) +
       this->input->columns.size() * Costs::kHashExtractColumnCost * 2;
 }
 
 void JoinOp::setCost(const PlanState& input) {
   RelationOp::setCost(input);
-  float buildSize = right->inputCardinality;
+  float buildSize = right->cost().inputCardinality;
   auto rowCost = right->input->columns.size() * Costs::kHashExtractColumnCost;
-  unitCost = Costs::hashProbeCost(buildSize) + fanout * rowCost +
+  cost_.unitCost = Costs::hashProbeCost(buildSize) + cost_.fanout * rowCost +
       leftKeys.size() * Costs::kHashColumnCost;
 }
 

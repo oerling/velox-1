@@ -53,14 +53,8 @@ struct Plan {
 
   RelationOpPtr op;
 
-  float unitCost{0};
-  float setupCost{0};
-  float fanout{1};
-
-  // The plan is made assuming that it will be applied to
-  // 'planInputCardinality' rows of input.
-  float plannedInputCardinality{1};
-
+  Cost cost;
+  
   // The tables from original join graph that are included in this
   // plan. If this is a derived table in the original plan, the
   // covered object is the derived table, not its constituent
@@ -98,9 +92,7 @@ struct PlanState {
   PlanState() = default;
 
   PlanState(PlanPtr plan)
-      : cost(plan->unitCost),
-        fanout(plan->fanout),
-        setupCost(plan->setupCost) {}
+      : cost(plan->cost) {}
 
   // The derived table from which the tables are drawn.
   DerivedTablePtr dt{nullptr};
@@ -118,18 +110,7 @@ struct PlanState {
   // lookup keys for an index based derived table.
   PlanObjectSet input;
 
-  // The number of inputs for the current dt. 1 unless this is an index-based dt
-  // plan.
-  float inputCardinality{1};
-
-  // The cumulative cost of the plan so far.
-  float cost{0};
-
-  // Number of rows per row of input across left deep sequence of operators.
-  float fanout{1};
-
-  // Sum of setup costs for build sides.
-  float setupCost{0};
+  Cost cost;
 
   bool HasCutoff{true};
 
@@ -158,25 +139,19 @@ struct StateSaver {
       : state_(state),
         placed_(state.placed),
         columns_(state.columns),
-        cost_(state.cost),
-        fanout_(state.fanout),
-        setupCost_(state.setupCost) {}
+        cost_(state.cost) {}
 
   ~StateSaver() {
     state_.placed = std::move(placed_);
     state_.columns = std::move(columns_);
     state_.cost = cost_;
-    state_.fanout = fanout_;
-    state_.setupCost = setupCost_;
   }
 
  private:
   PlanState& state_;
   PlanObjectSet placed_;
   PlanObjectSet columns_;
-  const float cost_;
-  const float fanout_;
-  const float setupCost_;
+  const Cost cost_;
 };
 
 struct JoinSide {
@@ -184,7 +159,21 @@ struct JoinSide {
   ExprVector& keys;
   bool isOptional;
   bool isExists;
-  bool isAnti;
+  bool isNotExists;
+
+  /// Returns the join type to use if 'this' is the right side.
+  velox::core::JoinType leftJoinType() {
+    if (isNotExists) {
+    return velox::core::JoinType::kAnti;
+    }
+    if (isExists) {
+    return velox::core::JoinType::kLeftSemiFilter;
+    }
+    if (isOptional) {
+    return velox::core::JoinType::kLeft;
+    }
+    return velox::core::JoinType::kInner;
+    }
 };
 
 // Represents the next table/derived table to join. May consist of several
