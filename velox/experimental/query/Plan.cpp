@@ -18,6 +18,8 @@
 #include "velox/experimental/query/Cost.h"
 #include "velox/experimental/query/PlanUtils.h"
 
+#include <iostream>
+
 namespace facebook::verax {
 
 using namespace facebook::velox;
@@ -33,7 +35,7 @@ Optimization::Optimization(
   setDerivedTableOutput(root_, inputPlan_);
 }
 
-RelationOpPtr Optimization::bestPlan() {
+PlanPtr Optimization::bestPlan() {
   PlanState state;
   state.dt = root_;
   for (auto expr : root_->exprs) {
@@ -42,7 +44,7 @@ RelationOpPtr Optimization::bestPlan() {
   makeJoins(nullptr, state);
   Distribution empty;
   bool ignore;
-  return state.plans.best(empty, ignore)->op;
+  return state.plans.best(empty, ignore);
 }
 
 std::unordered_map<std::string, float>& baseSelectivities() {
@@ -119,7 +121,7 @@ std::string PlanState::printPlan(RelationOpPtr op, bool detail) const {
   return plan->toString(detail);
 }
 
-bool PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
+PlanPtr PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   bool insert = plans.empty();
   int32_t replaceIndex = -1;
   if (!insert) {
@@ -144,14 +146,15 @@ bool PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   }
   if (insert || replaceIndex != -1) {
     auto newPlan = std::make_unique<Plan>(plan, state);
+    auto result = newPlan.get();
     if (replaceIndex >= 0) {
       plans[replaceIndex] = std::move(newPlan);
     } else {
       plans.push_back(std::move(newPlan));
     }
-    return true;
+    return result;
   }
-  return false;
+  return nullptr;
 }
 
 PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
@@ -573,6 +576,7 @@ void Optimization::joinByHash(
   auto probe = candidate.sideOf(candidate.tables[0], true);
   auto partKeys = joinKeyPartition(plan, probe.keys);
   Distribution distribution;
+  distribution.distributionType = plan->distribution.distributionType;
   // If every partition key of the probe side is a join key, then the build
   // should be partitioned by the partition of the probe.
   for (auto nthKey : partKeys) {
@@ -607,6 +611,7 @@ void Optimization::joinByHash(
       Distribution dist(
           plan->distribution.distributionType, distribution.partition);
       Declare(Repartition, shuffleTemp, buildInput, dist, buildInput->columns);
+      buildState.addCost(*shuffleTemp);
       buildInput = shuffleTemp;
     }
   } else if (isBroadcastable(buildPlan, state)) {
@@ -752,7 +757,12 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     auto candidates = nextJoins(dt, state);
     if (candidates.empty()) {
       addPostprocess(dt, plan, state);
-      state.plans.addPlan(plan, state);
+      auto kept = state.plans.addPlan(plan, state);
+      if (kept && traceFlags_) {
+        std::cout << "Retain "
+                  << succinctNumber(kept->cost.unitCost + kept->cost.setupCost)
+                  << "CU" << kept->toString(false) << std::endl;
+      }
     }
     for (auto& candidate : candidates) {
       addJoin(dt, candidate, plan, state);
@@ -765,7 +775,7 @@ PlanPtr Optimization::makePlan(
     const Distribution& distribution,
     const PlanObjectSet& boundColumns,
     PlanState& state,
-    bool needsShuffle) {
+    bool& needsShuffle) {
   auto it = memo_.find(key);
   PlanSet* plans;
   if (it == memo_.end()) {

@@ -255,6 +255,8 @@ struct HashBuild : public RelationOp {
   ExprVector keys;
 
   void setCost(const PlanState& input) override;
+
+  std::string toString(bool recursive, bool detail) const override;
 };
 
 using HashBuildPtr = HashBuild*;

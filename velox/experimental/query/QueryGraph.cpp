@@ -742,7 +742,7 @@ void RelationOp::printCost(bool detail, std::stringstream& out) const {
     out << " " << std::fixed << std::setprecision(2) << pct << "% ";
   }
   if (detail) {
-    out << " " << cost_.toString(detail, true) << std::endl;
+    out << " " << cost_.toString(detail, false) << std::endl;
   }
 }
 
@@ -821,4 +821,14 @@ std::string Aggregation::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
+std::string HashBuild::toString(bool recursive, bool detail) const {
+  std::stringstream out;
+  if (recursive) {
+    out << input->toString(true, detail) << " ";
+  }
+  out << " Build ";
+  printCost(detail, out);
+  return out.str();
+}
+  
 } // namespace facebook::verax

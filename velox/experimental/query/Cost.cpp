@@ -147,16 +147,17 @@ float shuffleCost(const ExprVector& columns) {
 
 void Repartition::setCost(const PlanState& input) {
   RelationOp::setCost(input);
-
   auto pair = shuffleCostV(columns);
   cost_.unitCost = pair.second;
   cost_.totalBytes = cost_.inputCardinality * pair.first;
 }
 
 void HashBuild::setCost(const PlanState& input) {
+  RelationOp::setCost(input);
   cost_.unitCost = keys.size() * Costs::kHashColumnCost +
       Costs::hashProbeCost(cost_.inputCardinality) +
       this->input->columns.size() * Costs::kHashExtractColumnCost * 2;
+  cost_.totalBytes = cost_.inputCardinality * byteSize(this->input->columns);
 }
 
 void JoinOp::setCost(const PlanState& input) {

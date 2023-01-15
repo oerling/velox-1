@@ -83,9 +83,9 @@ struct PlanSet {
   PlanPtr best(const Distribution& distribution, bool& needShuffle);
 
   /// Compares 'plan' to already seen plans and retains it if it is interesting,
-  /// e.g. better than the best so far or has an interesting order. Returns true
-  /// if retained.
-  bool addPlan(RelationOpPtr plan, PlanState& state);
+  /// e.g. better than the best so far or has an interesting order. Returns the plan
+  /// if retained, nullptr if not.
+  PlanPtr addPlan(RelationOpPtr plan, PlanState& state);
 };
 
 struct PlanState {
@@ -239,7 +239,7 @@ class Optimization {
       const Schema& schema,
       int32_t traceFlags = 0);
 
-  RelationOpPtr bestPlan();
+  PlanPtr bestPlan();
 
   std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(RelationOpPtr plan) {
     return nullptr;
@@ -268,7 +268,7 @@ class Optimization {
       const Distribution& distribution,
       const PlanObjectSet& boundColumns,
       PlanState& state,
-      bool needsShuffle);
+      bool& needsShuffle);
 
   std::vector<JoinCandidate> nextJoins(DerivedTablePtr dt, PlanState& state);
 
