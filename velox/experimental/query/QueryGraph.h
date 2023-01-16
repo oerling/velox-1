@@ -217,14 +217,13 @@ struct Join {
   // rightOptional is set, this can project out a null for misses.
   bool rightExists{false};
 
-  // True if the join is a right semijoin. This is possible only by hash or
-  // merge.
-  bool leftExists{false};
-
   // True if produces a result for left if no match on the right.
   bool rightNotExists{false};
 
   void guessFanout();
+  bool isInner() const {
+    return !leftOptional && !rightOptional && !rightExists && !rightNotExists;
+  }
 };
 
 using JoinPtr = Join*;

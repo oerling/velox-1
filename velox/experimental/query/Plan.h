@@ -42,7 +42,14 @@ using ExprDedupMap = folly::F14FastMap<
     ITypedExprHasher,
     ITypedExprComparer>;
 
+struct Plan;
 struct PlanState;
+
+using PlanPtr = Plan*;
+
+/// A set of build sides. a candidate plan tracks all builds so that they can be
+/// reused
+using BuildSet = std::vector<HashBuildPtr>;
 
 /// Item produced by optimization and kept in memo. Corresponds to
 /// pre-costed physical plan with costs and data properties.
@@ -64,93 +71,37 @@ struct Plan {
   // The produced columns. Includes input columns.
   PlanObjectSet columns;
 
-  // Columns that are fixed on input. Applies to index path for a derived table,
-  // e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt inputs is
-  // dt.pkt1.
+  // Columns that are fixed on input. Applies to index path for a derived
+  // table, e.g. a left (t1 left t2) dt on dt.t1pk = a.fk. In a memo of dt
+  // inputs is dt.pkt1.
   PlanObjectSet input;
+
+  // hash join builds placed in the plan. Allows reusing a build.
+  BuildSet builds;
 
   std::string printCost() const;
   std::string toString(bool detail) const;
 };
 
-using PlanPtr = Plan*;
-
 struct PlanSet {
+  // Interesting equivalent plans.
   std::vector<std::unique_ptr<Plan>> plans;
+
+  // plan with lowest cost + setupCost. Member of 'plans'.
+  PlanPtr bestPlan{nullptr};
+
+  // Cost of 'bestPlan' plus shuffle. If a cutoff is applicable, nothing more
+  // expensive than this should be tried.
+  float bestCostWithShuffle{0};
 
   // Returns the best plan that produces 'distribution'. If the best plan has
   // some other distribution, sets 'needsShuffle ' to true.
   PlanPtr best(const Distribution& distribution, bool& needShuffle);
 
-  /// Compares 'plan' to already seen plans and retains it if it is interesting,
-  /// e.g. better than the best so far or has an interesting order. Returns the plan
-  /// if retained, nullptr if not.
+  /// Compares 'plan' to already seen plans and retains it if it is
+  /// interesting, e.g. better than the best so far or has an interesting
+  /// order. Returns the plan if retained, nullptr if not.
   PlanPtr addPlan(RelationOpPtr plan, PlanState& state);
-};
-
-struct PlanState {
-  PlanState() = default;
-
-  PlanState(PlanPtr plan) : cost(plan->cost) {}
-
-  // The derived table from which the tables are drawn.
-  DerivedTablePtr dt{nullptr};
-
-  // The tables that have been placed so far.
-  PlanObjectSet placed;
-
-  // The columns that have a value.
-  PlanObjectSet columns;
-
-  // The columns that need a value at the end of the plan. A dt can
-  // be planned for just join columns or all payload.
-  PlanObjectSet targetColumns;
-
-  // lookup keys for an index based derived table.
-  PlanObjectSet input;
-
-  Cost cost;
-
-  bool HasCutoff{true};
-
-  // Interesting completed plans for the dt being planned. For
-  // example, best by cost and maybe plans with interesting orders.
-  PlanSet plans;
-
-  // Caches results of downstreamColumns(). This is a pure function of 'placed'
-  // a'targetColumns' and 'dt'.
-  mutable std::unordered_map<PlanObjectSet, PlanObjectSet>
-      downstreamPrecomputed;
-
-  void addCost(RelationOp& op);
-
-  /// The set of columns referenced in unplaced joins/filters union
-  /// targetColumns. Gets smaller as more tables are placed.
-  PlanObjectSet downstreamColumns() const;
-
-  std::string printCost() const;
-  std::string printPlan(RelationOpPtr op, bool detail) const;
-};
-
-struct StateSaver {
- public:
-  StateSaver(PlanState& state)
-      : state_(state),
-        placed_(state.placed),
-        columns_(state.columns),
-        cost_(state.cost) {}
-
-  ~StateSaver() {
-    state_.placed = std::move(placed_);
-    state_.columns = std::move(columns_);
-    state_.cost = cost_;
-  }
-
- private:
-  PlanState& state_;
-  PlanObjectSet placed_;
-  PlanObjectSet columns_;
-  const Cost cost_;
 };
 
 struct JoinSide {
@@ -206,6 +157,114 @@ struct JoinCandidate {
   // selectivity in 'tables' affects this but the selectivity in
   // 'existences' does not.
   float fanout;
+};
+
+/// Represents a join to add to a partial plan. One join candidate can make
+/// many NextJoins, e.g, for different join methods. If one is clearly best,
+/// not all need be tried.
+struct NextJoin {
+  NextJoin(
+      const JoinCandidate* candidate,
+      const RelationOpPtr& plan,
+      const Cost& cost,
+      const PlanObjectSet& placed,
+      const BuildSet builds)
+      : candidate(candidate),
+        plan(plan),
+        cost(cost),
+        placed(placed),
+        newBuilds(builds) {}
+
+  const JoinCandidate* FOLLY_NONNULL candidate;
+  RelationOpPtr plan;
+  Cost cost;
+  PlanObjectSet placed;
+  BuildSet newBuilds;
+
+  /// If true, only 'other' should be tried. Use to compare equivalent joins
+  /// with different join method or partitioning.
+  bool isWorse(const NextJoin& other) const;
+};
+
+struct PlanState {
+  PlanState() = default;
+
+  PlanState(PlanPtr plan) : cost(plan->cost) {}
+
+  // The derived table from which the tables are drawn.
+  DerivedTablePtr dt{nullptr};
+
+  // The tables that have been placed so far.
+  PlanObjectSet placed;
+
+  // The columns that have a value.
+  PlanObjectSet columns;
+
+  // The columns that need a value at the end of the plan. A dt can
+  // be planned for just join columns or all payload.
+  PlanObjectSet targetColumns;
+
+  // lookup keys for an index based derived table.
+  PlanObjectSet input;
+
+  Cost cost;
+
+  BuildSet builds;
+
+  bool hasCutoff{true};
+
+  // Interesting completed plans for the dt being planned. For
+  // example, best by cost and maybe plans with interesting orders.
+  PlanSet plans;
+
+  // Caches results of downstreamColumns(). This is a pure function of
+  // 'placed' a'targetColumns' and 'dt'.
+  mutable std::unordered_map<PlanObjectSet, PlanObjectSet>
+      downstreamPrecomputed;
+
+  void addCost(RelationOp& op);
+  void addBuilds(const BuildSet& added);
+  /// The set of columns referenced in unplaced joins/filters union
+  /// targetColumns. Gets smaller as more tables are placed.
+  PlanObjectSet downstreamColumns() const;
+  void addNextJoin(
+      const JoinCandidate* candidate,
+      RelationOpPtr plan,
+      BuildSet builds,
+      std::vector<NextJoin>& toTry) const;
+  std::string printCost() const;
+  std::string printPlan(RelationOpPtr op, bool detail) const;
+
+  /// True if the costs accumulated so far are so high that this should not be
+  /// explored further.
+  bool isOverBest() const {
+    return hasCutoff && plans.bestPlan &&
+        cost.unitCost + cost.setupCost > plans.bestCostWithShuffle;
+  }
+};
+
+struct StateSaver {
+ public:
+  StateSaver(PlanState& state)
+      : state_(state),
+        placed_(state.placed),
+        columns_(state.columns),
+        cost_(state.cost),
+        numBuilds_(state.builds.size()) {}
+
+  ~StateSaver() {
+    state_.placed = std::move(placed_);
+    state_.columns = std::move(columns_);
+    state_.cost = cost_;
+    state_.builds.resize(numBuilds_);
+  }
+
+ private:
+  PlanState& state_;
+  PlanObjectSet placed_;
+  PlanObjectSet columns_;
+  const Cost cost_;
+  const int32_t numBuilds_;
 };
 
 struct MemoKey {
@@ -283,20 +342,25 @@ class Optimization {
 
   void makeJoins(RelationOpPtr plan, PlanState& state);
 
+  void tryNextJoins(PlanState& state, const std::vector<NextJoin>& nextJoins);
+
   void addJoin(
       DerivedTablePtr dt,
       const JoinCandidate& candidate,
       const RelationOpPtr& plan,
-      PlanState& state);
+      PlanState& state,
+      std::vector<NextJoin>& result);
   void joinByIndex(
       const RelationOpPtr& plan,
       const JoinCandidate& candidate,
-      PlanState& state);
+      PlanState& state,
+      std::vector<NextJoin>& toTry);
 
   void joinByHash(
       const RelationOpPtr& plan,
       const JoinCandidate& candidate,
-      PlanState& state);
+      PlanState& state,
+      std::vector<NextJoin>&);
 
   DerivedTablePtr currentSelect_;
 
@@ -307,7 +371,10 @@ class Optimization {
   int32_t nameCounter_{0};
 
   std::unordered_map<MemoKey, PlanSet> memo_;
+
+  PlanState topState_;
   int32_t traceFlags_{0};
+  int32_t buildCounter_{0};
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().

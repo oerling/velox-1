@@ -36,15 +36,14 @@ Optimization::Optimization(
 }
 
 PlanPtr Optimization::bestPlan() {
-  PlanState state;
-  state.dt = root_;
+  topState_.dt = root_;
   for (auto expr : root_->exprs) {
-    state.targetColumns.unionColumns(expr);
+    topState_.targetColumns.unionColumns(expr);
   }
-  makeJoins(nullptr, state);
+  makeJoins(nullptr, topState_);
   Distribution empty;
   bool ignore;
-  return state.plans.best(empty, ignore);
+  return topState_.plans.best(empty, ignore);
 }
 
 std::unordered_map<std::string, float>& baseSelectivities() {
@@ -85,6 +84,24 @@ void PlanState::addCost(RelationOp& op) {
   cost.unitCost += cost.inputCardinality * cost.fanout * op.cost().unitCost;
   cost.setupCost += op.cost().setupCost;
   cost.fanout *= op.cost().fanout;
+}
+
+void PlanState::addNextJoin(
+    const JoinCandidate* candidate,
+    RelationOpPtr plan,
+    BuildSet builds,
+    std::vector<NextJoin>& toTry) const {
+  if (!isOverBest()) {
+    toTry.emplace_back(candidate, plan, cost, placed, builds);
+  }
+}
+
+void PlanState::addBuilds(const BuildSet& added) {
+  for (auto build : added) {
+    if (std::find(builds.begin(), builds.end(), build) == builds.end()) {
+      builds.push_back(build);
+    }
+  }
 }
 
 PlanObjectSet PlanState::downstreamColumns() const {
@@ -152,6 +169,13 @@ PlanPtr PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
     } else {
       plans.push_back(std::move(newPlan));
     }
+    if (!bestPlan ||
+        bestPlan->cost.unitCost + bestPlan->cost.setupCost >
+            result->cost.unitCost + result->cost.setupCost) {
+      bestPlan = result;
+      bestCostWithShuffle = result->cost.unitCost + result->cost.setupCost +
+          shuffleCost(result->op->columns) * result->cost.fanout;
+    }
     return result;
   }
   return nullptr;
@@ -195,22 +219,11 @@ float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
 }
 
 std::pair<PlanObjectPtr, float> otherTable(JoinPtr join, PlanObjectPtr table) {
-  return join->leftTable == table && !join->leftOptional && !join->leftExists
+  return join->leftTable == table && !join->leftOptional
       ? std::pair<PlanObjectPtr, float>{join->rightTable, join->lrFanout}
       : join->rightTable == table && !join->rightOptional && !join->rightExists
       ? std::pair<PlanObjectPtr, float>{join->leftTable, join->rlFanout}
       : std::pair<PlanObjectPtr, float>{nullptr, 0};
-}
-
-std::vector<PlanObjectPtr>
-joinedTables(DerivedTablePtr dt, PlanObjectPtr from, PlanObjectSet except) {
-  std::vector<PlanObjectPtr> result;
-  PlanObjectSet set;
-  for (auto join : dt->joins) {
-    set.unionSet(allTables(toRange(join->leftKeys)));
-    set.unionSet(allTables(toRange(join->rightKeys)));
-  }
-  return set.objects();
 }
 
 const JoinVector& joinedBy(PlanObjectPtr table) {
@@ -219,6 +232,97 @@ const JoinVector& joinedBy(PlanObjectPtr table) {
   }
   VELOX_DCHECK_EQ(table->type, PlanType::kDerivedTable);
   return table->as<DerivedTablePtr>()->joinedBy;
+}
+
+void reducingJoinsRecursive(
+    PlanObjectPtr candidate,
+    float fanout,
+    float maxFanout,
+    std::vector<PlanObjectPtr>& path,
+    PlanObjectSet& visited,
+    PlanObjectSet& result,
+    float& reduction) {
+  bool isLeaf = true;
+  for (auto join : joinedBy(candidate)) {
+    if (join->leftOptional || join->rightOptional) {
+      continue;
+    }
+    JoinCandidate temp;
+    temp.join = join;
+    JoinSide other = temp.sideOf(candidate, true);
+    if (other.table->type != PlanType::kTable) {
+      continue;
+    }
+    if (visited.contains(other.table)) {
+      continue;
+    }
+    float joinFanout =
+        other.table == join->rightTable ? join->lrFanout : join->rlFanout;
+    if (joinFanout > maxFanout) {
+      continue;
+    }
+    visited.add(other.table);
+    fanout *= joinFanout;
+    if (fanout < 0.9) {
+      result.add(other.table);
+      for (auto step : path) {
+        result.add(step);
+        maxFanout = 1;
+      }
+    }
+    path.push_back(other.table);
+    isLeaf = false;
+    reducingJoinsRecursive(
+        other.table, fanout, maxFanout, path, visited, result, reduction);
+    path.pop_back();
+  }
+  if (fanout < 1 && isLeaf) {
+    reduction *= fanout;
+  }
+}
+
+JoinCandidate reducingJoins(
+    const PlanState& state,
+    const JoinCandidate& candidate) {
+  // For an inner join, see if can bundle reducing joins on the build.
+  JoinCandidate reducing;
+  reducing.join = candidate.join;
+  PlanObjectSet reducingSet;
+  if (candidate.join->isInner()) {
+    PlanObjectSet visited = state.placed;
+    visited.add(candidate.tables[0]);
+    reducingSet.add(candidate.tables[0]);
+    std::vector<PlanObjectPtr> path{candidate.tables[0]};
+    float reduction = 1;
+    reducingJoinsRecursive(
+        candidate.tables[0], 1, 1.2, path, visited, reducingSet, reduction);
+    if (reduction < 0.9) {
+      reducingSet.forEach(
+          [&](auto object) { reducing.tables.push_back(object); });
+      reducing.fanout = candidate.fanout * reduction;
+    }
+  }
+  PlanObjectSet exists;
+  float reduction = 1;
+  std::vector<PlanObjectPtr> path{candidate.tables[0]};
+  // Look for reducing joins that were not added before, also covering already
+  // placed tables. This may copy reducing joins from a probe to the
+  // corresponding build.
+  reducingSet.add(candidate.tables[0]);
+  reducingJoinsRecursive(
+      candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
+  if (reduction < 0.7) {
+    reducing.existences.push_back(std::move(exists));
+  }
+  if (reducing.tables.empty() && reducing.existences.empty()) {
+    // No reduction.
+    return JoinCandidate{};
+  }
+  if (reducing.tables.empty()) {
+    // No reducing joins but reducing existences from probe side.
+    reducing.tables = candidate.tables;
+  }
+  return reducing;
 }
 
 // Calls 'func' with join, joined table and fanout for the joinable tables.
@@ -247,22 +351,7 @@ void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
     }
   });
 }
-
-JoinCandidate
-reducingJoins(DerivedTablePtr dt, const PlanState& state, PlanObjectPtr start) {
-  PlanObjectSet selected;
-  PlanObjectSet visited = state.placed;
-  // Look for reducing joins against tables not in the plan.
-#if 0
-  reducingJoinsRecursive(dt, start, selected, visited);
-  visited = selected;
-  forDirectJoins(table, [&](JoinPtr join, PlanObjectPtr other) {
-    
-  });
-#endif
-  return JoinCandidate();
-}
-
+  
 JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
   if ((side == join->rightTable && !other) ||
       (side == join->leftTable && other)) {
@@ -273,12 +362,15 @@ JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
         join->rightExists,
         join->rightNotExists};
   }
-  return {
-      join->leftTable,
-      join->leftKeys,
-      join->leftOptional,
-      join->leftExists,
-      false};
+  return {join->leftTable, join->leftKeys, join->leftOptional, false, false};
+}
+
+bool NextJoin::isWorse(const NextJoin& other) const {
+  float shuffle = plan->distribution.isSamePartition(other.plan->distribution)
+      ? 0
+      : plan->cost().fanout * shuffleCost(plan->columns);
+  return cost.unitCost + cost.setupCost + shuffle >
+      other.cost.unitCost + other.cost.setupCost;
 }
 
 std::vector<JoinCandidate> Optimization::nextJoins(
@@ -296,7 +388,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   // Take the  first hand joined tables and bundle them with reducing joins that
   // can go on the build side.
   for (auto& candidate : candidates) {
-    auto bush = reducingJoins(dt, state, candidate.tables[0]);
+    auto bush = reducingJoins(state, candidate);
     if (!bush.tables.empty()) {
       bushes.push_back(std::move(bush));
     }
@@ -373,6 +465,7 @@ void Optimization::addPostprocess(
     plan = repartitionForAgg(dt->aggregation->grouping, plan, state);
     Declare(Aggregation, newGroupBy, *dt->aggregation);
     newGroupBy->input = plan;
+    state.addCost(*newGroupBy);
     plan = newGroupBy;
   }
 }
@@ -481,8 +574,11 @@ float fanoutJoinTypeLimit(JoinType joinType, float fanout) {
 void Optimization::joinByIndex(
     const RelationOpPtr& plan,
     const JoinCandidate& candidate,
-    PlanState& state) {
-  if (candidate.tables[0]->type != PlanType::kTable) {
+    PlanState& state,
+    std::vector<NextJoin>& toTry) {
+  if (candidate.tables[0]->type != PlanType::kTable ||
+      candidate.tables.size() > 1 || !candidate.existences.empty()) {
+    // Index applies to single base tables.
     return;
   }
   auto rightTable = candidate.tables[0]->as<BaseTablePtr>();
@@ -534,7 +630,7 @@ void Optimization::joinByIndex(
       scan->extractedColumns.unionSet(join->filter->columns);
     }
     state.addCost(*scan);
-    makeJoins(scan, state);
+    state.addNextJoin(&candidate, scan, {}, toTry);
   }
 }
 
@@ -571,7 +667,8 @@ bool isBroadcastable(PlanPtr build, PlanState& /*state*/) {
 void Optimization::joinByHash(
     const RelationOpPtr& plan,
     const JoinCandidate& candidate,
-    PlanState& state) {
+    PlanState& state,
+    std::vector<NextJoin>& toTry) {
   auto build = candidate.sideOf(candidate.tables[0]);
   auto probe = candidate.sideOf(candidate.tables[0], true);
   auto partKeys = joinKeyPartition(plan, probe.keys);
@@ -656,7 +753,8 @@ void Optimization::joinByHash(
     state.addCost(*probeShuffle);
     probeInput = probeShuffle;
   }
-  Declare(HashBuild, buildOp, buildInput, build.keys);
+  Declare(
+      HashBuild, buildOp, buildInput, ++buildCounter_, build.keys, buildPlan);
   buildState.addCost(*buildOp);
 
   ColumnVector columns;
@@ -680,16 +778,27 @@ void Optimization::joinByHash(
       std::move(columns));
   state.addCost(*joinOp);
   state.cost.setupCost += buildState.cost.unitCost;
-  makeJoins(joinOp, state);
+  state.addNextJoin(&candidate, joinOp, {buildOp}, toTry);
 }
 
 void Optimization::addJoin(
     DerivedTablePtr dt,
     const JoinCandidate& candidate,
     const RelationOpPtr& plan,
-    PlanState& state) {
-  joinByIndex(plan, candidate, state);
-  joinByHash(plan, candidate, state);
+    PlanState& state,
+    std::vector<NextJoin>& result) {
+  std::vector<NextJoin> toTry;
+  joinByIndex(plan, candidate, state, toTry);
+  joinByHash(plan, candidate, state, toTry);
+  // If one is much better do not try the other.
+  if (toTry.size() == 2 && candidate.tables.size() == 1) {
+    if (toTry[0].isWorse(toTry[1])) {
+      toTry.erase(toTry.begin());
+    } else if (toTry[1].isWorse(toTry[0])) {
+      toTry.erase(toTry.begin() + 1);
+    }
+  }
+  result.insert(result.end(), toTry.begin(), toTry.end());
 }
 
 // Sets 'columns' and 'schemaColumns' to the columns in 'downstream' that exist
@@ -706,6 +815,18 @@ void indexColumns(
       columns.push_back(table->columns[nthColumn]);
       schemaColumns.push_back(table->schemaColumns[nthColumn]);
     }
+  }
+}
+
+void Optimization::tryNextJoins(
+    PlanState& state,
+    const std::vector<NextJoin>& nextJoins) {
+  for (auto& next : nextJoins) {
+    StateSaver save(state);
+    state.placed = next.placed;
+    state.cost = next.cost;
+    state.addBuilds(next.newBuilds);
+    makeJoins(next.plan, state);
   }
 }
 
@@ -754,6 +875,9 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       }
     }
   } else {
+    if (state.isOverBest()) {
+      return;
+    }
     auto candidates = nextJoins(dt, state);
     if (candidates.empty()) {
       addPostprocess(dt, plan, state);
@@ -764,9 +888,11 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
                   << "CU" << kept->toString(false) << std::endl;
       }
     }
+    std::vector<NextJoin> nextJoins;
     for (auto& candidate : candidates) {
-      addJoin(dt, candidate, plan, state);
+      addJoin(dt, candidate, plan, state, nextJoins);
     }
+    tryNextJoins(state, nextJoins);
   }
 }
 
