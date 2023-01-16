@@ -271,6 +271,7 @@ struct MemoKey {
   bool operator==(const MemoKey& other) const;
   size_t hash() const;
 
+  PlanObjectPtr firstTable;
   PlanObjectSet columns;
   PlanObjectSet tables;
   std::vector<PlanObjectSet> existences;
@@ -384,4 +385,6 @@ std::unordered_map<std::string, float>& baseSelectivities();
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
+const JoinVector& joinedBy(PlanObjectPtr table);
+  
 } // namespace facebook::verax

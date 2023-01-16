@@ -235,6 +235,7 @@ const JoinVector& joinedBy(PlanObjectPtr table) {
 }
 
 void reducingJoinsRecursive(
+    const PlanState& state,
     PlanObjectPtr candidate,
     float fanout,
     float maxFanout,
@@ -250,6 +251,9 @@ void reducingJoinsRecursive(
     JoinCandidate temp;
     temp.join = join;
     JoinSide other = temp.sideOf(candidate, true);
+    if (!state.dt->tableSet.contains(other.table)) {
+      continue;
+    }
     if (other.table->type != PlanType::kTable) {
       continue;
     }
@@ -273,7 +277,14 @@ void reducingJoinsRecursive(
     path.push_back(other.table);
     isLeaf = false;
     reducingJoinsRecursive(
-        other.table, fanout, maxFanout, path, visited, result, reduction);
+        state,
+        other.table,
+        fanout,
+        maxFanout,
+        path,
+        visited,
+        result,
+        reduction);
     path.pop_back();
   }
   if (fanout < 1 && isLeaf) {
@@ -295,10 +306,22 @@ JoinCandidate reducingJoins(
     std::vector<PlanObjectPtr> path{candidate.tables[0]};
     float reduction = 1;
     reducingJoinsRecursive(
-        candidate.tables[0], 1, 1.2, path, visited, reducingSet, reduction);
+        state,
+        candidate.tables[0],
+        1,
+        1.2,
+        path,
+        visited,
+        reducingSet,
+        reduction);
     if (reduction < 0.9) {
-      reducingSet.forEach(
-          [&](auto object) { reducing.tables.push_back(object); });
+      // The only table in 'candidate' must be first in the bushy table list.
+      reducing.tables = candidate.tables;
+      reducingSet.forEach([&](auto object) {
+        if (object != reducing.tables[0]) {
+          reducing.tables.push_back(object);
+        }
+      });
       reducing.fanout = candidate.fanout * reduction;
     }
   }
@@ -310,7 +333,7 @@ JoinCandidate reducingJoins(
   // corresponding build.
   reducingSet.add(candidate.tables[0]);
   reducingJoinsRecursive(
-      candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
+      state, candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
   if (reduction < 0.7) {
     reducing.existences.push_back(std::move(exists));
   }
@@ -332,6 +355,9 @@ void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
   state.placed.forEach([&](PlanObjectPtr placedTable) {
     for (auto join : joinedBy(placedTable)) {
       auto [table, fanout] = otherTable(join, placedTable);
+      if (!state.dt->tableSet.contains(table)) {
+        continue;
+      }
       if (table) {
         func(join, table, fanout);
       } else {
@@ -351,7 +377,7 @@ void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
     }
   });
 }
-  
+
 JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
   if ((side == join->rightTable && !other) ||
       (side == join->leftTable && other)) {
@@ -412,7 +438,8 @@ size_t MemoKey::hash() const {
 }
 
 bool MemoKey::operator==(const MemoKey& other) const {
-  if (columns == other.columns && tables == other.tables) {
+  if (firstTable == other.firstTable && columns == other.columns &&
+      tables == other.tables) {
     if (existences.size() != other.existences.size()) {
       return false;
     }
@@ -695,7 +722,8 @@ void Optimization::joinByHash(
   auto downstream = state.downstreamColumns();
   buildColumns.intersect(downstream);
   buildColumns.unionColumns(build.keys);
-  auto key = MemoKey{buildColumns, buildTables, candidate.existences};
+  auto key = MemoKey{
+      candidate.tables[0], buildColumns, buildTables, candidate.existences};
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto buildPlan = makePlan(key, distribution, empty, state, needsShuffle);
@@ -906,7 +934,7 @@ PlanPtr Optimization::makePlan(
   PlanSet* plans;
   if (it == memo_.end()) {
     DerivedTable dt;
-    dt.import(*state.dt, key.tables, key.existences);
+    dt.import(*state.dt, key.firstTable, key.tables, key.existences);
     PlanState inner;
     inner.targetColumns = key.columns;
     inner.dt = &dt;

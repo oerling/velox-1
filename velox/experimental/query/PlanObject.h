@@ -119,7 +119,7 @@ class PlanObjectSet {
 
   template <typename V>
   void unionObjects(const V& objects) {
-    for (PlanObjectPtr& object : objects) {
+    for (auto& object : objects) {
       add(object);
     }
   }

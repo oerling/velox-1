@@ -387,15 +387,62 @@ void DerivedTable::expandJoins() {
   }
 }
 
+// Returns a left exists (semijoin) with 'table' on the left and one of 'tables'
+// on the right.
+JoinPtr makeExists(PlanObjectPtr table, PlanObjectSet tables) {
+  for (auto join : joinedBy(table)) {
+    if (join->leftTable == table) {
+      Declare(Join, exists);
+      exists->leftTable = table;
+      exists->rightTable = join->rightTable;
+      exists->leftKeys = join->leftKeys;
+      exists->rightKeys = join->rightKeys;
+      exists->rightExists = true;
+      return exists;
+    }
+    if (join->rightTable == table) {
+      Declare(Join, exists);
+      exists->leftTable = table;
+      exists->rightTable = join->leftTable;
+      exists->leftKeys = join->rightKeys;
+      exists->rightKeys = join->leftKeys;
+      exists->rightExists = true;
+      return exists;
+    }
+  }
+  VELOX_UNREACHABLE("No join to make an exists build side restriction");
+}
+
 void DerivedTable::import(
     const DerivedTable& super,
+    PlanObjectPtr firstTable,
     const PlanObjectSet& _tables,
     const std::vector<PlanObjectSet>& existences) {
+  tableSet = _tables;
   _tables.forEach([&](auto table) { tables.push_back(table); });
   for (auto join : super.joins) {
     if (_tables.contains(join->rightTable) && join->leftTable &&
         _tables.contains(join->leftTable)) {
       joins.push_back(join);
+    }
+  }
+  for (auto& exists : existences) {
+    auto existsJoin = makeExists(firstTable, exists);
+    joins.push_back(existsJoin);
+    std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> existsTables;
+    exists.forEach([&](auto object) { existsTables.push_back(object); });
+    if (existsTables.size() > 1) {
+      // There is a join on the right of exists. Needs its own dt.
+      Declare(DerivedTable, existsDt);
+      PlanObjectSet existsTableSet;
+      existsTableSet.unionObjects(existsTables);
+      existsDt->import(super, firstTable, existsTableSet, {});
+      for (auto& k : existsJoin->rightKeys) {
+	//TODO make a column alias for the expr. this would not work if the join term was not a column.
+	existsDt->columns.push_back(dynamic_cast<ColumnPtr>(k));
+        existsDt->exprs.push_back(k);
+      }
+      existsJoin->rightTable = existsDt;
     }
   }
 }
@@ -830,5 +877,5 @@ std::string HashBuild::toString(bool recursive, bool detail) const {
   printCost(detail, out);
   return out.str();
 }
-  
+
 } // namespace facebook::verax

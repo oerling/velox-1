@@ -321,6 +321,9 @@ struct DerivedTable : public PlanObject {
   // 'filter' of BaseTable.
   std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> tables;
 
+  // Repeats the contents of 'tables'. Used for membership check.
+  PlanObjectSet tableSet;
+
   JoinVector joins;
 
   // Filters in where for that are not single table expressions and not join
@@ -341,8 +344,11 @@ struct DerivedTable : public PlanObject {
   /// Initializes 'this' to join 'tables' from 'super'. Adds the joins from
   /// 'existences' as semijoins to limit cardinality when making a hash join
   /// build side. Allows importing a reducing join from probe to build.
+  /// 'firstTable' is the joined table that is restricted by the other tables in
+  /// 'tables' and 'existences'.
   void import(
       const DerivedTable& super,
+      PlanObjectPtr firstTable,
       const PlanObjectSet& tables,
       const std::vector<PlanObjectSet>& existences);
 

@@ -251,6 +251,7 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
     baseTable->schemaColumns = schemaColumns;
     baseTable->filterSelectivity = selection;
     currentSelect_->tables.push_back(baseTable);
+    currentSelect_->tableSet.add(baseTable);
     return baseTable;
   }
   if (name == "Project") {
