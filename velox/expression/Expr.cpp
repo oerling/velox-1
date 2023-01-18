@@ -303,6 +303,44 @@ void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
         std::rethrow_exception(*exceptionPtr);
       });
 }
+
+void clearMaskedErrors(
+    EvalCtx::ErrorVectorPtr& errors,
+    EvalCtx::ErrorVectorPtr& argumentErrors,
+    bool defaultNulls,
+    const SelectivityVector* remainingRows,
+    EvalCtx& context) {
+  if (argumentErrors) {
+    if (defaultNulls) {
+      clearErrorForUnselected(*remainingRows, argumentErrors);
+    }
+    if (context.throwOnError()) {
+      rethrowFirstError(argumentErrors);
+    }
+    if (errors) {
+      addErrors(*argumentErrors, *errors);
+    }
+    context.swapErrors(errors);
+  } else {
+    context.swapErrors(errors);
+  }
+}
+
+void addErrorsFromArgument(
+    EvalCtx::ErrorVectorPtr& errors,
+    EvalCtx::ErrorVectorPtr& argumentErrors,
+    EvalCtx& context) {
+  if (context.errors()) {
+    // New errors were produced, add them to argumentErrors.
+    if (argumentErrors) {
+      EvalCtx::ErrorVectorPtr temp;
+      context.swapErrors(temp);
+      addErrors(*temp, *argumentErrors);
+    } else {
+      context.swapErrors(argumentErrors);
+    }
+  }
+}
 } // namespace
 
 void Expr::evalSimplifiedImpl(
@@ -345,6 +383,8 @@ void Expr::evalSimplifiedImpl(
           inputValue->encoding() == VectorEncoding::Simple::MAP ||
           inputValue->encoding() == VectorEncoding::Simple::ROW);
 
+      addErrorsFromArgument(errors, argumentErrors, context);
+
       // If the resulting vector has nulls, merge them into our current
       // remaining rows bitmap.
       if (defaultNulls && inputValue->mayHaveNulls()) {
@@ -360,37 +400,17 @@ void Expr::evalSimplifiedImpl(
         releaseInputValues(context);
         result =
             BaseVector::createNullConstant(type(), rows.size(), context.pool());
-        return;
-      }
-      if (context.errors()) {
-        // New errors were produced, add them to argumentErrors.
-        if (argumentErrors) {
-          EvalCtx::ErrorVectorPtr temp;
-          context.swapErrors(temp);
-          addErrors(*temp, *argumentErrors);
-        } else {
-          context.swapErrors(argumentErrors);
+        if (errors) {
+          context.swapErrors(errors);
         }
+        return;
       }
     }
   }
   // If an argument had an error and then a null on the same row for another
   // argument, mask the error.
-  if (argumentErrors) {
-    if (defaultNulls) {
-      clearErrorForUnselected(remainingRows, argumentErrors);
-    }
-    if (context.throwOnError()) {
-      rethrowFirstError(argumentErrors);
-    }
-  }
-  if (argumentErrors) {
-    EvalCtx::ErrorVectorPtr temp;
-    context.swapErrors(temp);
-    addErrors(*temp, *argumentErrors);
-  } else {
-    context.swapErrors(argumentErrors);
-  }
+  clearMaskedErrors(
+      errors, argumentErrors, defaultNulls, &remainingRows, context);
 
   // Apply the actual function.
   try {
@@ -1304,16 +1324,7 @@ void Expr::evalAll(
 
     for (int32_t i = 0; i < inputs_.size(); ++i) {
       inputs_[i]->eval(*remainingRows, context, inputValues_[i]);
-      if (context.errors()) {
-        // New errors were produced, add them to argumentErrors.
-        if (argumentErrors) {
-          EvalCtx::ErrorVectorPtr temp;
-          context.swapErrors(temp);
-          addErrors(*temp, *argumentErrors);
-        } else {
-          context.swapErrors(argumentErrors);
-        }
-      }
+      addErrorsFromArgument(errors, argumentErrors, context);
       tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
 
       // Avoid subsequent computation on rows with known null output.
@@ -1333,6 +1344,9 @@ void Expr::evalAll(
           if (!remainingRows->hasSelections()) {
             releaseInputValues(context);
             setAllNulls(rows, context, result);
+            if (errors) {
+              context.swapErrors(errors);
+            }
             return;
           }
         }
@@ -1342,26 +1356,15 @@ void Expr::evalAll(
 
   // If an argument had an error and then a null on the same row for another
   // argument, mask the error.
-  if (argumentErrors) {
-    if (defaultNulls) {
-      clearErrorForUnselected(*remainingRows, argumentErrors);
-    }
-    if (context.throwOnError()) {
-      rethrowFirstError(argumentErrors);
-    }
-    if (errors) {
-      addErrors(*argumentErrors, *errors);
-    }
-    context.swapErrors(argumentErrors);
-  } else {
-    // Put the original errors back in 'context'.
-    context.swapErrors(errors);
-  }
+  clearMaskedErrors(
+      errors, argumentErrors, defaultNulls, remainingRows, context);
+
   // If any errors occurred evaluating the arguments, it's possible (even
-  // likely) that the values for those arguments were not defined which could
-  // lead to undefined behavior if we try to evaluate the current function on
-  // them.  It's safe to skip evaluating them since the value for this branch
-  // of the expression tree will be NULL for those rows anyway.
+  // likely) that the values for those arguments were not defined which
+  // could lead to undefined behavior if we try to evaluate the current
+  // function on them.  It's safe to skip evaluating them since the value
+  // for this branch of the expression tree will be NULL for those rows
+  // anyway.
   if (context.errors()) {
     // Allocate remainingRows before the first time writing to it.
     if (mutableRemainingRows == nullptr) {
