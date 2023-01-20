@@ -30,6 +30,8 @@ DEFINE_string(
     "/home/oerling/tpch100pqsnlinks",
     "Path to directory for TPC-H files");
 
+DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
+
 using namespace facebook::velox;
 using namespace facebook::verax;
 
@@ -47,7 +49,10 @@ class PlanTest : public testing::Test {
     aggregate::prestosql::registerAllAggregateFunctions();
     parse::registerTypeResolver();
     filesystems::registerLocalFileSystem();
-    parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+    if (!registered) {
+      registered = true;
+      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+    }
     builder_ = std::make_unique<exec::test::TpchQueryBuilder>(
         dwio::common::FileFormat::PARQUET);
     builder_->initialize(FLAGS_data_path);
@@ -72,12 +77,24 @@ class PlanTest : public testing::Test {
 
   std::unique_ptr<QueryGraphContext> context_;
   std::unique_ptr<exec::test::TpchQueryBuilder> builder_;
+  static bool registered;
 };
+
+bool PlanTest::registered;
+
 
 TEST_F(PlanTest, q3) {
   auto q3 = builder_->getQueryPlan(3);
   auto schema = tpchSchema(100, false, true, false);
-  Optimization opt(*q3.plan, *schema);
+  Optimization opt(*q3.plan, *schema, FLAGS_trace);
+  auto result = opt.bestPlan();
+  std::cout << result->toString(true);
+}
+
+TEST_F(PlanTest, q9) {
+  auto q9 = builder_->getQueryPlan(9);
+  auto schema = tpchSchema(100, false, true, false);
+  Optimization opt(*q9.plan, *schema, FLAGS_trace);
   auto result = opt.bestPlan();
   std::cout << result->toString(true);
 }

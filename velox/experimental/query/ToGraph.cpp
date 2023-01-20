@@ -172,31 +172,6 @@ OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
   return nullptr;
 }
 
-void makeJoin(DerivedTablePtr dt, ExprPtr left, ExprPtr right) {
-  auto leftTable = singleTable(left);
-  auto rightTable = singleTable(right);
-  for (auto& join : dt->joins) {
-    if (join->leftTable == leftTable && join->rightTable == rightTable) {
-      join->leftKeys.push_back(left);
-      join->rightKeys.push_back(right);
-      join->guessFanout();
-      return;
-    } else if (join->rightTable == leftTable && join->leftTable == rightTable) {
-      join->leftKeys.push_back(right);
-      join->rightKeys.push_back(left);
-      join->guessFanout();
-      return;
-    }
-  }
-  Declare(Join, join);
-  join->leftKeys.push_back(left);
-  join->rightKeys.push_back(right);
-  join->leftTable = leftTable;
-  join->rightTable = rightTable;
-  join->guessFanout();
-  dt->joins.push_back(join);
-}
-
 void Optimization::translateJoin(const core::AbstractJoinNode& join) {
   makeQueryGraph(*join.sources()[0]);
   auto leftKeys = translateColumns(join.leftKeys());
@@ -210,7 +185,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
       auto r = rightKeys[i];
       if (l->type == PlanType::kColumn && r->type == PlanType::kColumn) {
         l->as<ColumnPtr>()->equals(r->as<ColumnPtr>());
-        makeJoin(currentSelect_, l, r);
+        currentSelect_->addJoinEquality(l, r, false, false, false, false);
       } else {
         VELOX_NYI("Only column to column inner joins");
       }

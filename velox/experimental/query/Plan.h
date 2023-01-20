@@ -227,7 +227,9 @@ struct PlanState {
   /// The set of columns referenced in unplaced joins/filters union
   /// targetColumns. Gets smaller as more tables are placed.
   PlanObjectSet downstreamColumns() const;
-  void addNextJoin(
+
+  // Adds a placed join to the set of partial queries to be developed. Returns true if the plan is not over cutoff cost.
+  bool addNextJoin(
       const JoinCandidate* candidate,
       RelationOpPtr plan,
       BuildSet builds,
@@ -294,6 +296,8 @@ namespace facebook::verax {
 /// plan. Depends on QueryGraphContext being set on the calling thread.
 class Optimization {
  public:
+  static constexpr int32_t kRetained = 1;
+  static constexpr int32_t kExceededBest = 2;
   Optimization(
       const velox::core::PlanNode& plan,
       const Schema& schema,
@@ -362,7 +366,8 @@ class Optimization {
       const JoinCandidate& candidate,
       PlanState& state,
       std::vector<NextJoin>&);
-
+  void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
+  
   DerivedTablePtr currentSelect_;
 
   std::unordered_map<std::string, ExprPtr> renames_;
@@ -386,5 +391,5 @@ std::unordered_map<std::string, float>& baseSelectivities();
 FunctionSet functionBits(Name name);
 
 const JoinVector& joinedBy(PlanObjectPtr table);
-  
+
 } // namespace facebook::verax

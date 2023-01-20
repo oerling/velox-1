@@ -224,6 +224,16 @@ struct Join {
   bool isInner() const {
     return !leftOptional && !rightOptional && !rightExists && !rightNotExists;
   }
+
+  // True if all tables referenced from 'leftKeys' must be placed before placing
+  // this.
+  bool isNonCommutative() const {
+    // Inner and full outer joins are commutative.
+    return !leftTable || (rightOptional && !leftOptional) || rightExists ||
+        rightNotExists;
+  }
+
+  std::string toString() const;
 };
 
 using JoinPtr = Join*;
@@ -321,9 +331,13 @@ struct DerivedTable : public PlanObject {
   // 'filter' of BaseTable.
   std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> tables;
 
-  // Repeats the contents of 'tables'. Used for membership check.
+  // Repeats the contents of 'tables'. Used for membership check. A DerivedTable can be a subset of another, for example when planning a join for a build side. In this case joins that refer to tables not in 'tableSet' are not considered.
   PlanObjectSet tableSet;
 
+  // Tables that are not to the right sides of non-commutative joins.
+  PlanObjectSet startTables;
+
+  // Joins between 'tables'.
   JoinVector joins;
 
   // Filters in where for that are not single table expressions and not join
@@ -337,9 +351,22 @@ struct DerivedTable : public PlanObject {
   int32_t limit{-1};
   int32_t offset{0};
 
+  /// Adds an equijoin edge between 'left' and 'right'. The flags correspond to
+  /// the like-named members in Join.
+  void addJoinEquality(
+      ExprPtr left,
+      ExprPtr right,
+      bool leftOptional,
+      bool rightOptional,
+      bool rightExists,
+      bool rightNotExists);
+
   // after 'joins' is filled in, links tables to their direct and
   // equivalence-implied joins.
-  void expandJoins();
+  void linkTablesToJoins();
+
+  /// Completes 'joins' with edges implied by column equivalences.
+  void addImpliedJoins();
 
   /// Initializes 'this' to join 'tables' from 'super'. Adds the joins from
   /// 'existences' as semijoins to limit cardinality when making a hash join
@@ -355,6 +382,9 @@ struct DerivedTable : public PlanObject {
   bool hasTable(PlanObjectPtr table) {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
   }
+
+private:
+  void setStartTables();
 };
 
 using DerivedTablePtr = DerivedTable*;

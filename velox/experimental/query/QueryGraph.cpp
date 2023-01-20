@@ -255,6 +255,35 @@ std::string BaseTable::toString() const {
   return out.str();
 }
 
+std::string Join::toString() const {
+  std::stringstream out;
+  out << "<join " << (leftTable ? leftTable->toString() : " multiple tables ");
+  if (leftOptional && rightOptional) {
+    out << " full outr ";
+  } else if (rightExists && rightOptional) {
+    out << " exists project ";
+  } else if (rightOptional) {
+    out << " exists ";
+  } else if (rightOptional) {
+    out << " left outer ";
+  } else if (rightNotExists) {
+    out << " not exists ";
+  } else {
+    out << " inner ";
+  }
+  out << rightTable->toString();
+  out << " on ";
+  for (auto i = 0; i < leftKeys.size(); ++i) {
+    out << leftKeys[i]->toString() << " = " << rightKeys[i]->toString()
+        << (i < leftKeys.size() - 1 ? " and " : "");
+  }
+  if (filter) {
+    out << " filter " << filter->toString();
+  }
+  out << ">";
+  return out.str();
+}
+
 bool Expr::sameOrEqual(const Expr& other) const {
   if (this == &other) {
     return true;
@@ -364,14 +393,137 @@ Column::Column(Name _name, PlanObjectPtr _relation, Value value)
   }
 }
 
-void DerivedTable::expandJoins() {
+void DerivedTable::addJoinEquality(
+    ExprPtr left,
+    ExprPtr right,
+    bool leftOptional,
+    bool rightOptional,
+    bool rightExists,
+    bool rightNotExists) {
+  auto leftTable = singleTable(left);
+  auto rightTable = singleTable(right);
+  for (auto& join : joins) {
+    if (join->leftTable == leftTable && join->rightTable == rightTable) {
+      join->leftKeys.push_back(left);
+      join->rightKeys.push_back(right);
+      join->guessFanout();
+      return;
+    } else if (join->rightTable == leftTable && join->leftTable == rightTable) {
+      join->leftKeys.push_back(right);
+      join->rightKeys.push_back(left);
+      join->guessFanout();
+      return;
+    }
+  }
+  Declare(Join, join);
+  join->leftKeys.push_back(left);
+  join->rightKeys.push_back(right);
+  join->leftTable = leftTable;
+  join->rightTable = rightTable;
+  join->leftOptional = leftOptional;
+  join->rightOptional = rightOptional;
+  join->rightExists = rightExists;
+  join->rightNotExists = rightNotExists;
+  join->guessFanout();
+  joins.push_back(join);
+}
+
+using EdgeSet = std::unordered_set<std::pair<int32_t, int32_t>>;
+
+bool hasEdge(const EdgeSet& edges, int32_t id1, int32_t id2) {
+  if (id1 == id2) {
+    return true;
+  }
+  auto it = edges.find(
+      id1 > id2 ? std::pair<int32_t, int32_t>(id2, id1)
+                : std::pair<int32_t, int32_t>(id1, id2));
+  return it != edges.end();
+}
+
+void addEdge(EdgeSet& edges, int32_t id1, int32_t id2) {
+  if (id1 > id2) {
+    edges.insert(std::pair<int32_t, int32_t>(id2, id1));
+  } else {
+    edges.insert(std::pair<int32_t, int32_t>(id1, id2));
+  }
+}
+
+void fillJoins(
+    PlanObjectPtr column,
+    const Equivalence& equivalence,
+    EdgeSet& edges,
+    DerivedTablePtr dt) {
+  for (auto& other : equivalence.columns) {
+    if (!hasEdge(edges, column->id, other->id)) {
+      addEdge(edges, column->id, other->id);
+      dt->addJoinEquality(
+          column->as<ColumnPtr>(),
+          other->as<ColumnPtr>(),
+          false,
+          false,
+          false,
+          false);
+    }
+  }
+}
+
+void DerivedTable::addImpliedJoins() {
+  EdgeSet edges;
+  for (auto& join : joins) {
+    if (join->isInner()) {
+      for (auto i = 0; i < join->leftKeys.size(); ++i) {
+        if (join->leftKeys[i]->type == PlanType::kColumn &&
+            join->rightKeys[i]->type == PlanType::kColumn) {
+          addEdge(edges, join->leftKeys[i]->id, join->rightKeys[i]->id);
+        }
+      }
+    }
+  }
+  // The appends to 'joins', so loop over a copy.
+  JoinVector joinsCopy = joins;
+  for (auto& join : joinsCopy) {
+    if (join->isInner()) {
+      for (auto i = 0; i < join->leftKeys.size(); ++i) {
+        if (join->leftKeys[i]->type == PlanType::kColumn &&
+            join->rightKeys[i]->type == PlanType::kColumn) {
+          auto leftEq = join->leftKeys[i]->as<ColumnPtr>()->equivalence;
+          auto rightEq = join->rightKeys[i]->as<ColumnPtr>()->equivalence;
+          if (rightEq && leftEq) {
+            for (auto& left : leftEq->columns) {
+              fillJoins(left, *rightEq, edges, this);
+            }
+          } else if (leftEq) {
+            fillJoins(join->rightKeys[i], *leftEq, edges, this);
+          } else if (rightEq) {
+            fillJoins(join->leftKeys[i], *rightEq, edges, this);
+          }
+        }
+      }
+    }
+  }
+}
+void DerivedTable::setStartTables() {
+  startTables = tableSet;
+  for (auto join : joins) {
+    if (join->isNonCommutative()) {
+      startTables.erase(join->rightTable);
+    }
+  }
+}
+
+void DerivedTable::linkTablesToJoins() {
+  setStartTables();
+
+  // All tables directly mentioned by a join link to the join. A non-inner
+  // that depends on multiple left tables has no leftTable but is still linked
+  // from all the tables it depends on.
   for (auto join : joins) {
     PlanObjectSet tables;
     for (auto key : join->leftKeys) {
-      tables.unionSet(key->equivTables());
+      tables.unionSet(key->allTables());
     }
     for (auto key : join->rightKeys) {
-      tables.unionSet(key->equivTables());
+      tables.unionSet(key->allTables());
     }
     if (join->filter) {
       tables.unionSet(join->filter->allTables());
@@ -438,27 +590,15 @@ void DerivedTable::import(
       existsTableSet.unionObjects(existsTables);
       existsDt->import(super, firstTable, existsTableSet, {});
       for (auto& k : existsJoin->rightKeys) {
-	//TODO make a column alias for the expr. this would not work if the join term was not a column.
-	existsDt->columns.push_back(dynamic_cast<ColumnPtr>(k));
+        // TODO make a column alias for the expr. this would not work if the
+        // join term was not a column.
+        existsDt->columns.push_back(dynamic_cast<ColumnPtr>(k));
         existsDt->exprs.push_back(k);
       }
       existsJoin->rightTable = existsDt;
     }
   }
-}
-
-PlanObjectSet TableScan::availableColumns() {
-  // The columns of base table that exist in 'index'.
-  PlanObjectSet result;
-  for (auto column : index->columns) {
-    for (auto baseColumn : baseTable->columns) {
-      if (baseColumn->name == column->name) {
-        result.add(baseColumn);
-        break;
-      }
-    }
-  }
-  return result;
+  setStartTables();
 }
 
 std::vector<ColumnPtr> SchemaTable::toColumns(
@@ -533,43 +673,6 @@ ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
     }
   }
   return nullptr;
-}
-
-void TableScan::setRelation(
-    const ColumnVector& columns,
-    const ColumnVector& schemaColumns) {
-  auto cc =
-      transform<ColumnVector>(columns, [](auto& c) { return c->schemaColumn; });
-  distribution.cardinality =
-      index->distribution.cardinality * baseTable->filterSelectivity;
-  // if all partitioning columns are projected, the output is partitioned.
-  if (isSubset(
-          toRangeCast<ColumnPtr>(index->distribution.partition),
-          toRange(schemaColumns))) {
-    distribution.partition = index->distribution.partition;
-    replace(
-        toRangeCast<ColumnPtr>(distribution.partition),
-        toRange(schemaColumns),
-        &columns[0]);
-    distribution.distributionType = index->distribution.distributionType;
-  }
-  auto numPrefix = prefixSize(
-      toRangeCast<ColumnPtr>(index->distribution.order),
-      toRange(schemaColumns));
-  if (numPrefix > 0) {
-    distribution.order = index->distribution.order;
-    distribution.order.resize(numPrefix);
-    distribution.orderType = index->distribution.orderType;
-    distribution.orderType.resize(numPrefix);
-    replace(
-        toRangeCast<ColumnPtr>(distribution.order),
-        toRange(schemaColumns),
-        &columns[0]);
-    if (index->distribution.numKeysUnique <= numPrefix) {
-      distribution.numKeysUnique = index->distribution.numKeysUnique;
-    }
-  }
-  this->columns = columns;
 }
 
 bool SchemaTable::isUnique(folly::Range<ColumnPtr*> columns) {
@@ -764,117 +867,6 @@ std::string Distribution::toString() const {
   if (numKeysUnique && numKeysUnique >= order.size()) {
     out << " first " << numKeysUnique << " unique";
   }
-  return out.str();
-}
-std::string Cost::toString(bool detail, bool isUnit) const {
-  std::stringstream out;
-  float multiplier = isUnit ? 1 : inputCardinality;
-  out << succinctNumber(fanout * multiplier) << " rows "
-      << succinctNumber(unitCost * multiplier) << "CU";
-  if (setupCost > 0) {
-    out << ", setup " << succinctNumber(setupCost) << "CU";
-  }
-  if (totalBytes) {
-    out << " " << velox::succinctBytes(totalBytes);
-  }
-  return out.str();
-}
-
-void RelationOp::printCost(bool detail, std::stringstream& out) const {
-  auto ctx = queryCtx();
-  if (ctx && ctx->contextPlan()) {
-    auto plan = ctx->contextPlan();
-    auto totalCost = plan->cost.unitCost + plan->cost.setupCost;
-    auto pct = 100 * cost_.inputCardinality * cost_.unitCost / totalCost;
-    out << " " << std::fixed << std::setprecision(2) << pct << "% ";
-  }
-  if (detail) {
-    out << " " << cost_.toString(detail, false) << std::endl;
-  }
-}
-
-const char* joinTypeLabel(velox::core::JoinType type) {
-  switch (type) {
-    case velox::core::JoinType::kLeft:
-      return "left";
-    case velox::core::JoinType::kRight:
-      return "right";
-    case velox::core::JoinType::kLeftSemiFilter:
-      return "exists";
-    case velox::core::JoinType::kLeftSemiProject:
-      return "exists-flag";
-    case velox::core::JoinType::kAnti:
-      return "not exists";
-    default:
-      return "";
-  }
-}
-
-std::string TableScan::toString(bool /*recursive*/, bool detail) const {
-  std::stringstream out;
-  if (input) {
-    out << input->toString(true, detail);
-    out << " *I " << joinTypeLabel(joinType);
-  }
-  out << baseTable->schemaTable->name << " " << baseTable->cname;
-  if (detail) {
-    printCost(detail, out);
-    if (!input) {
-      out << distribution.toString() << std::endl;
-    }
-  }
-  return out.str();
-}
-
-std::string JoinOp::toString(bool recursive, bool detail) const {
-  std::stringstream out;
-  if (recursive) {
-    out << input->toString(true, detail);
-  }
-  out << "*" << (method == JoinMethod::kHash ? "H" : "M") << " "
-      << joinTypeLabel(joinType);
-  printCost(detail, out);
-  if (recursive) {
-    out << " (" << right->toString(true, detail) << ")";
-    if (detail) {
-      out << std::endl;
-    }
-  }
-  return out.str();
-}
-
-std::string Repartition::toString(bool recursive, bool detail) const {
-  std::stringstream out;
-  if (recursive) {
-    out << input->toString(true, detail) << " ";
-  }
-  out << (distribution.isBroadcast ? "broadcast" : "shuffle") << " ";
-  if (detail && !distribution.isBroadcast) {
-    out << distribution.toString();
-    printCost(detail, out);
-  } else if (detail) {
-    printCost(detail, out);
-  }
-  return out.str();
-}
-
-std::string Aggregation::toString(bool recursive, bool detail) const {
-  std::stringstream out;
-  if (recursive) {
-    out << input->toString(true, detail) << " ";
-  }
-  out << velox::core::AggregationNode::stepName(step) << " agg";
-  printCost(detail, out);
-  return out.str();
-}
-
-std::string HashBuild::toString(bool recursive, bool detail) const {
-  std::stringstream out;
-  if (recursive) {
-    out << input->toString(true, detail) << " ";
-  }
-  out << " Build ";
-  printCost(detail, out);
   return out.str();
 }
 

@@ -31,8 +31,21 @@ Optimization::Optimization(
     int32_t traceFlags)
     : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
   root_ = makeQueryGraph();
-  root_->expandJoins();
+  root_->addImpliedJoins();
+  root_->linkTablesToJoins();
   setDerivedTableOutput(root_, inputPlan_);
+}
+
+void Optimization::trace(
+    int32_t event,
+    int32_t id,
+    const Cost& cost,
+    RelationOp& plan) {
+  if (event & traceFlags_) {
+    std::cout << (event == kRetained ? "Retained: " : "Abandoned: ") << id
+              << " " << succinctNumber(cost.unitCost + cost.setupCost) << " "
+              << plan.toString(true, false) << std::endl;
+  }
 }
 
 PlanPtr Optimization::bestPlan() {
@@ -86,14 +99,16 @@ void PlanState::addCost(RelationOp& op) {
   cost.fanout *= op.cost().fanout;
 }
 
-void PlanState::addNextJoin(
+bool PlanState::addNextJoin(
     const JoinCandidate* candidate,
     RelationOpPtr plan,
     BuildSet builds,
     std::vector<NextJoin>& toTry) const {
   if (!isOverBest()) {
     toTry.emplace_back(candidate, plan, cost, placed, builds);
+    return true;
   }
+  return false;
 }
 
 void PlanState::addBuilds(const BuildSet& added) {
@@ -351,28 +366,29 @@ JoinCandidate reducingJoins(
 // Calls 'func' with join, joined table and fanout for the joinable tables.
 template <typename Func>
 void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
-  PlanObjectSet joinable;
+  std::unordered_set<JoinPtr> visited;
   state.placed.forEach([&](PlanObjectPtr placedTable) {
     for (auto join : joinedBy(placedTable)) {
-      auto [table, fanout] = otherTable(join, placedTable);
-      if (!state.dt->tableSet.contains(table)) {
-        continue;
-      }
-      if (table) {
-        func(join, table, fanout);
-      } else {
-        if (!join->leftTable) {
-          bool usable = true;
-          for (auto key : join->leftKeys) {
-            if (!state.placed.isSubset(key->allTables())) {
-              usable = false;
-              break;
-            }
-          }
-          if (usable) {
-            func(join, join->rightTable, join->lrFanout);
+      if (join->isNonCommutative()) {
+        if (!visited.insert(join).second) {
+          continue;
+        }
+        bool usable = true;
+        for (auto key : join->leftKeys) {
+          if (!state.placed.isSubset(key->allTables())) {
+            usable = false;
+            break;
           }
         }
+        if (usable) {
+          func(join, join->rightTable, join->lrFanout);
+        }
+      } else {
+        auto [table, fanout] = otherTable(join, placedTable);
+        if (!state.dt->tableSet.contains(table)) {
+          continue;
+        }
+        func(join, table, fanout);
       }
     }
   });
@@ -657,7 +673,9 @@ void Optimization::joinByIndex(
       scan->extractedColumns.unionSet(join->filter->columns);
     }
     state.addCost(*scan);
-    state.addNextJoin(&candidate, scan, {}, toTry);
+    if (!state.addNextJoin(&candidate, scan, {}, toTry)) {
+      trace(kExceededBest, state.dt->id, state.cost, *scan);
+    }
   }
 }
 
@@ -806,7 +824,9 @@ void Optimization::joinByHash(
       std::move(columns));
   state.addCost(*joinOp);
   state.cost.setupCost += buildState.cost.unitCost;
-  state.addNextJoin(&candidate, joinOp, {buildOp}, toTry);
+  if (!state.addNextJoin(&candidate, joinOp, {buildOp}, toTry)) {
+    trace(kExceededBest, state.dt->id, state.cost, *joinOp);
+  }
 }
 
 void Optimization::addJoin(
@@ -861,18 +881,20 @@ void Optimization::tryNextJoins(
 void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
   auto& dt = state.dt;
   if (!plan) {
-    std::vector<float> scores(dt->tables.size());
-    for (auto i = 0; i < dt->tables.size(); ++i) {
-      auto table = dt->tables[i];
+    std::vector<PlanObjectPtr> firstTables;
+    dt->startTables.forEach([&](auto table) {firstTables.push_back(table); });
+    std::vector<float> scores(firstTables.size());
+    for (auto i = 0; i < firstTables.size(); ++i) {
+      auto table = firstTables[i];
       scores[i] = startingScore(table, dt);
     }
-    std::vector<int32_t> ids(dt->tables.size());
+    std::vector<int32_t> ids(firstTables.size());
     std::iota(ids.begin(), ids.end(), 0);
     std::sort(ids.begin(), ids.end(), [&](int32_t left, int32_t right) {
       return scores[left] > scores[right];
     });
     for (auto i : ids) {
-      auto from = dt->tables[i];
+      auto from = firstTables[i];
       if (from->type == PlanType::kTable) {
         auto table = from->as<BaseTablePtr>();
         auto indices = chooseLeafIndex(table->as<BaseTablePtr>(), dt);
@@ -904,16 +926,15 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     }
   } else {
     if (state.isOverBest()) {
+      trace(kExceededBest, dt->id, state.cost, *plan);
       return;
     }
     auto candidates = nextJoins(dt, state);
     if (candidates.empty()) {
       addPostprocess(dt, plan, state);
       auto kept = state.plans.addPlan(plan, state);
-      if (kept && traceFlags_) {
-        std::cout << "Retain "
-                  << succinctNumber(kept->cost.unitCost + kept->cost.setupCost)
-                  << "CU" << kept->toString(false) << std::endl;
+      if (kept) {
+        trace(kRetained, dt->id, state.cost, *kept->op);
       }
     }
     std::vector<NextJoin> nextJoins;
