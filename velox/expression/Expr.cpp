@@ -326,13 +326,13 @@ void processNullsAndErrorsFromArgument(
   // A null with no error deselects the row and clears a possible error. An
   // error adds itself to argument errors.
   if (context.errors()) {
-    auto& remaining = getRemainingRows();
-    ensureErrorsSize(*context.errors(), remaining.end());
+    auto& remainingRows = getRemainingRows();
+    ensureErrorsSize(*context.errors(), remainingRows.end());
     auto newErrors = context.errors();
     if (flatNulls) {
       auto errorNulls = newErrors->mutableRawNulls();
-      auto rowBits = remaining.asMutableRange().bits();
-      auto nwords = bits::nwords(remaining.end());
+      auto rowBits = remainingRows.asMutableRange().bits();
+      auto nwords = bits::nwords(remainingRows.end());
       for (auto i = 0; i < nwords; ++i) {
         auto nullNoError = flatNulls[i] | errorNulls[i];
         rowBits[i] &= nullNoError;
@@ -340,6 +340,7 @@ void processNullsAndErrorsFromArgument(
           argumentErrors->mutableRawNulls()[i] &= nullNoError;
         }
       }
+      remainingRows.updateBounds();
     }
     if (argumentErrors) {
       EvalCtx::ErrorVectorPtr temp;
@@ -350,13 +351,13 @@ void processNullsAndErrorsFromArgument(
     }
   } else {
     if (flatNulls) {
-      auto& remaining = getRemainingRows();
+      auto& remainingRows = getRemainingRows();
       if (argumentErrors) {
         // A null with no error clears an error. If the null behavior is
         // non-default, flatNulls is nullptr.
-        argumentErrors->addNulls(flatNulls, remaining);
+        argumentErrors->addNulls(flatNulls, remainingRows);
       }
-      remaining.deselectNulls(flatNulls, remaining.begin(), remaining.end());
+      remainingRows.deselectNulls(flatNulls, remainingRows.begin(), remainingRows.end());
     }
   }
 }

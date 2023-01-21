@@ -165,6 +165,33 @@ TEST_F(MapTest, fewerValuesThanKeys) {
       evaluate<MapVector>("try(map(c0, c1))", makeRowVector({keys, values})));
 }
 
+TEST_F(MapTest, fewerValuesThanKeysInLast) {
+  // Element 0 of the map vector is valid, element 1 is missing values
+  // and should come out empty when not throwing errors. The starts of
+  // the keys and values are aligned but the lengths are not.
+  auto size = 2;
+
+  auto keys = makeArrayVector<int64_t>(
+      size,
+      [](vector_size_t row) { return 10; },
+      [](vector_size_t row) { return row % 11; });
+  auto values = makeArrayVector<int32_t>(
+      size,
+      [](vector_size_t row) { return row == 0 ? 10 : 1; },
+      [](vector_size_t row) { return row % 13; });
+
+  VELOX_ASSERT_THROW(
+      evaluate<MapVector>("map(c0, c1)", makeRowVector({keys, values})),
+      "(10 vs. 1) Key and value arrays must be the same length");
+
+  MapVectorPtr map;
+  ASSERT_NO_THROW(
+      map = evaluate<MapVector>(
+          "try(map(c0, c1))", makeRowVector({keys, values})));
+  EXPECT_EQ(10, map->sizeAt(0));
+  EXPECT_EQ(0, map->sizeAt(1));
+}
+ 
 TEST_F(MapTest, fewerKeysThanValues) {
   auto size = 1'000;
 
