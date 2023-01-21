@@ -357,7 +357,8 @@ void processNullsAndErrorsFromArgument(
         // non-default, flatNulls is nullptr.
         argumentErrors->addNulls(flatNulls, remainingRows);
       }
-      remainingRows.deselectNulls(flatNulls, remainingRows.begin(), remainingRows.end());
+      remainingRows.deselectNulls(
+          flatNulls, remainingRows.begin(), remainingRows.end());
     }
   }
 }

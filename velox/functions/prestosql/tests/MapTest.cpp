@@ -191,7 +191,7 @@ TEST_F(MapTest, fewerValuesThanKeysInLast) {
   EXPECT_EQ(10, map->sizeAt(0));
   EXPECT_EQ(0, map->sizeAt(1));
 }
- 
+
 TEST_F(MapTest, fewerKeysThanValues) {
   auto size = 1'000;
 
