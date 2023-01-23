@@ -86,7 +86,7 @@ struct RelationOp : public Relation {
   virtual ~RelationOp() = default;
 
   void operator delete(void* ptr) {
-    queryCtx()->allocator().free(velox::HashStringAllocator::headerOf(ptr));
+    queryCtx()->free(ptr);
   }
 
   const Cost& cost() const {

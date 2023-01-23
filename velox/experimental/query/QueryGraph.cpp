@@ -581,6 +581,7 @@ void DerivedTable::import(
     }
   }
   for (auto& exists : existences) {
+    importedExistences.unionSet(exists);
     auto existsJoin = makeExists(firstTable, exists);
     joins.push_back(existsJoin);
     std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> existsTables;
@@ -598,6 +599,11 @@ void DerivedTable::import(
         existsDt->exprs.push_back(k);
       }
       existsJoin->rightTable = existsDt;
+      tables.push_back(existsDt);
+      tableSet.add(existsDt);
+    } else {
+      tables.push_back(existsTables[0]);
+      tableSet.add(existsTables[0]);
     }
   }
   setStartTables();
@@ -714,6 +720,7 @@ IndexInfo SchemaTable::indexInfo(
   IndexInfo info;
   info.index = index;
   info.scanCardinality = index->distribution.cardinality;
+  info.joinCardinality = index->distribution.cardinality;
   PlanObjectSet covered;
   int32_t numCovered = 0;
   int32_t numSorting = index->distribution.orderType.size();

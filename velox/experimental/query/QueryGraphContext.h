@@ -19,6 +19,8 @@
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/core/PlanNode.h"
 
+//#define QG_USE_MALLOC
+
 namespace facebook::verax {
 
 /// Base data structures for plan candidate generation.
@@ -55,11 +57,27 @@ class QueryGraphContext {
     return objects_.size() - 1;
   }
 
+#if 0
   velox::HashStringAllocator& allocator() {
     return allocator_;
   }
+#endif
 
-  velox::HashStringAllocator& allocator_;
+  void* allocate(size_t size) {
+#ifdef QG_USE_MALLOC
+    return ::malloc(size);
+#else
+    return allocator_.allocate(size)->begin();
+#endif
+  }
+
+  void free(void* ptr) {
+#ifdef QG_USE_MALLOC
+    ::free(ptr);
+#else
+    allocator_.free(velox::HashStringAllocator::headerOf(ptr));
+#endif
+  }
 
   /// Returns a canonical instance for all logically equal values of 'object'.
   /// Returns 'object' on first call with object, thereafter the same physical
@@ -76,6 +94,8 @@ class QueryGraphContext {
     return contextPlan_;
   }
 
+  velox::HashStringAllocator& allocator_;
+
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
   std::unordered_set<std::string_view> names_;
@@ -89,14 +109,13 @@ inline QueryGraphContext*& queryCtx() {
   return context;
 }
 
-#define Declare(T, destination, ...)                         \
-  T* destination = reinterpret_cast<T*>(                     \
-      queryCtx()->allocator().allocate(sizeof(T))->begin()); \
+#define Declare(T, destination, ...)                                      \
+  T* destination = reinterpret_cast<T*>(queryCtx()->allocate(sizeof(T))); \
   new (destination) T(__VA_ARGS__);
 
-#define DeclaretDefault(T, destination)                      \
-  T* destination = reinterpret_cast<T*>(                     \
-      queryCtx()->allocator().allocate(sizeof(T))->begin()); \
+#define DeclaretDefault(T, destination)                              \
+  T* destination =                                                   \
+      reinterpret_cast<T*>(queryCtx().allocate(sizeof(T))->begin()); \
   new (destination) T();
 
 /// Converts std::string to name used in query graph objects. raw pointer to
@@ -109,14 +128,11 @@ struct QGAllocator {
 
   T* FOLLY_NONNULL allocate(std::size_t n) {
     return reinterpret_cast<T*>(
-        queryCtx()
-            ->allocator()
-            .allocate(velox::checkedMultiply(n, sizeof(T)))
-            ->begin());
+        queryCtx()->allocate(velox::checkedMultiply(n, sizeof(T))));
   }
 
   void deallocate(T* FOLLY_NONNULL p, std::size_t /*n*/) noexcept {
-    queryCtx()->allocator().free(velox::HashStringAllocator::headerOf(p));
+    queryCtx()->free(p);
   }
 
   friend bool operator==(const QGAllocator& lhs, const QGAllocator& rhs) {

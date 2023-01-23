@@ -348,6 +348,9 @@ struct DerivedTable : public PlanObject {
   // tables.
   ExprVector conjuncts;
 
+  // Set of reducing joined tables imported to reduce build size. Set if 'this' represents a build side join.
+  PlanObjectSet importedExistences;
+  
   AggregationPtr aggregation{nullptr};
   ExprPtr having{nullptr};
   OrderByPtr orderBy{nullptr};

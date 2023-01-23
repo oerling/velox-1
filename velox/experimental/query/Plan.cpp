@@ -180,17 +180,17 @@ PlanPtr PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   if (insert || replaceIndex != -1) {
     auto newPlan = std::make_unique<Plan>(plan, state);
     auto result = newPlan.get();
-    if (replaceIndex >= 0) {
-      plans[replaceIndex] = std::move(newPlan);
-    } else {
-      plans.push_back(std::move(newPlan));
-    }
     if (!bestPlan ||
         bestPlan->cost.unitCost + bestPlan->cost.setupCost >
             result->cost.unitCost + result->cost.setupCost) {
       bestPlan = result;
       bestCostWithShuffle = result->cost.unitCost + result->cost.setupCost +
           shuffleCost(result->op->columns) * result->cost.fanout;
+    }
+    if (replaceIndex >= 0) {
+      plans[replaceIndex] = std::move(newPlan);
+    } else {
+      plans.push_back(std::move(newPlan));
     }
     return result;
   }
@@ -362,7 +362,7 @@ JoinCandidate reducingJoins(
   // placed tables. This may copy reducing joins from a probe to the
   // corresponding build.
   reducingSet.add(candidate.tables[0]);
-  reducingJoinsRecursive(
+  reducingSet.unionSet(state.dt->importedExistences);  reducingJoinsRecursive(
       state, candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
   if (reduction < 0.7) {
     // The original table is added to the reducing existences because the path
@@ -424,6 +424,18 @@ JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
         join->rightNotExists};
   }
   return {join->leftTable, join->leftKeys, join->leftOptional, false, false};
+}
+
+std::string JoinCandidate::toString() const {
+  std::stringstream out;
+  out << join->toString() << " fanout " << fanout;
+  for (auto i = 1; i < tables.size(); ++i) {
+    out << " + " << tables[i]->toString();
+  }
+  if (!existences.empty()) {
+    out << " exists " << existences[0].toString(false);
+  }
+  return out.str();
 }
 
 bool NextJoin::isWorse(const NextJoin& other) const {
@@ -952,6 +964,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       if (kept) {
         trace(kRetained, dt->id, state.cost, *kept->op);
       }
+      return;
     }
     std::vector<NextJoin> nextJoins;
     nextJoins.reserve(candidates.size());
