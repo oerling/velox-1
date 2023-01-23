@@ -89,7 +89,7 @@ class PlanTest : public testing::Test {
       }
     }
     return fmt::format(
-		       "=== {} {}:\n{}\n",
+        "=== {} {}:\n{}\n",
         partitioned ? "Partitioned on PK" : "Not partitioned",
         ordered ? "sorted on PK" : "not sorted",
         string);

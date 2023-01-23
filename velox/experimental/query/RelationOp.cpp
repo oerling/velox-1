@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/QueryGraph.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/experimental/query/QueryGraph.h"
 
 namespace facebook::verax {
 
-  
 void TableScan::setRelation(
     const ColumnVector& columns,
     const ColumnVector& schemaColumns) {
@@ -59,7 +58,6 @@ void TableScan::setRelation(
   this->columns = columns;
 }
 
-  
 PlanObjectSet TableScan::availableColumns() {
   // The columns of base table that exist in 'index'.
   PlanObjectSet result;
@@ -186,4 +184,4 @@ std::string HashBuild::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
-}
+} // namespace facebook::verax

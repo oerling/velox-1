@@ -331,7 +331,10 @@ struct DerivedTable : public PlanObject {
   // 'filter' of BaseTable.
   std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> tables;
 
-  // Repeats the contents of 'tables'. Used for membership check. A DerivedTable can be a subset of another, for example when planning a join for a build side. In this case joins that refer to tables not in 'tableSet' are not considered.
+  // Repeats the contents of 'tables'. Used for membership check. A DerivedTable
+  // can be a subset of another, for example when planning a join for a build
+  // side. In this case joins that refer to tables not in 'tableSet' are not
+  // considered.
   PlanObjectSet tableSet;
 
   // Tables that are not to the right sides of non-commutative joins.
@@ -351,9 +354,10 @@ struct DerivedTable : public PlanObject {
   int32_t limit{-1};
   int32_t offset{0};
 
-  // Guess of cardinality. The actual cardinality is calculated with a plan but. This is only for deciding in which order to cost candidates.
+  // Guess of cardinality. The actual cardinality is calculated with a plan but.
+  // This is only for deciding in which order to cost candidates.
   float baseCardinality{1};
-  
+
   /// Adds an equijoin edge between 'left' and 'right'. The flags correspond to
   /// the like-named members in Join.
   void addJoinEquality(
@@ -386,7 +390,7 @@ struct DerivedTable : public PlanObject {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
   }
 
-private:
+ private:
   void setStartTables();
   void guessBaseCardinality();
 };

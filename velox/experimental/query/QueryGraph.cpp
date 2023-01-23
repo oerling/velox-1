@@ -511,9 +511,8 @@ void DerivedTable::setStartTables() {
   }
 }
 
-void DerivedTable::guessBaseCardinality() {
-}
-  
+void DerivedTable::guessBaseCardinality() {}
+
 void DerivedTable::linkTablesToJoins() {
   setStartTables();
 
@@ -719,7 +718,7 @@ IndexInfo SchemaTable::indexInfo(
   int32_t numCovered = 0;
   int32_t numSorting = index->distribution.orderType.size();
   int32_t numUnique = index->distribution.numKeysUnique;
-  for (auto i = 0; i < numSorting|| i < numUnique; ++i) {
+  for (auto i = 0; i < numSorting || i < numUnique; ++i) {
     auto part = findColumnByName(
         columns, index->distribution.order[i]->as<ColumnPtr>()->name);
     if (!part) {
@@ -728,18 +727,17 @@ IndexInfo SchemaTable::indexInfo(
     ++numCovered;
     covered.add(part);
     if (i < numSorting) {
-    info.scanCardinality = combine(
-        info.scanCardinality,
-        i,
-        index->distribution.order[i]->value.cardinality);
-    info.lookupKeys.push_back(part);
-    info.joinCardinality = info.scanCardinality;
+      info.scanCardinality = combine(
+          info.scanCardinality,
+          i,
+          index->distribution.order[i]->value.cardinality);
+      info.lookupKeys.push_back(part);
+      info.joinCardinality = info.scanCardinality;
     } else {
       info.joinCardinality = combine(
-        info.joinCardinality,
-        i,
-        index->distribution.order[i]->value.cardinality);
-
+          info.joinCardinality,
+          i,
+          index->distribution.order[i]->value.cardinality);
     }
     if (i == numUnique - 1) {
       info.unique = true;

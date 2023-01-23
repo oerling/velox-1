@@ -187,16 +187,13 @@ struct NextJoin {
 };
 
 class Optimization;
-  
+
 struct PlanState {
+  PlanState(Optimization& optimization, DerivedTablePtr dt)
+      : optimization(optimization), dt(dt) {}
 
-  PlanState(Optimization& optimization, DerivedTablePtr dt) :
-    optimization(optimization), dt(dt) {}
-
-  
-  PlanState(Optimization& optimization, DerivedTablePtr dt, PlanPtr plan) :
-    optimization(optimization), dt(dt), cost(plan->cost) {}
-
+  PlanState(Optimization& optimization, DerivedTablePtr dt, PlanPtr plan)
+      : optimization(optimization), dt(dt), cost(plan->cost) {}
 
   Optimization& optimization;
   // The derived table from which the tables are drawn.
@@ -236,7 +233,8 @@ struct PlanState {
   /// targetColumns. Gets smaller as more tables are placed.
   PlanObjectSet downstreamColumns() const;
 
-  // Adds a placed join to the set of partial queries to be developed. No op if cost exceeds best so far and cutoff is enabled.
+  // Adds a placed join to the set of partial queries to be developed. No op if
+  // cost exceeds best so far and cutoff is enabled.
   void addNextJoin(
       const JoinCandidate* candidate,
       RelationOpPtr plan,
@@ -319,7 +317,7 @@ class Optimization {
 
   // Produces trace output if event matches 'traceFalgs_'.
   void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
-  
+
  private:
   DerivedTablePtr makeQueryGraph();
 
@@ -377,7 +375,7 @@ class Optimization {
       const JoinCandidate& candidate,
       PlanState& state,
       std::vector<NextJoin>&);
-  
+
   DerivedTablePtr currentSelect_;
 
   std::unordered_map<std::string, ExprPtr> renames_;

@@ -249,17 +249,17 @@ using JoinOpPtr = JoinOp*;
 /// cardinality of this is counted as setup cost in the first
 /// referencing join and not counted in subsequent ones.
 struct HashBuild : public RelationOp {
- HashBuild(RelationOpPtr input, int32_t id, ExprVector _keys, PlanPtr plan)
+  HashBuild(RelationOpPtr input, int32_t id, ExprVector _keys, PlanPtr plan)
       : RelationOp(RelType::kHashBuild, input, input->distribution),
-    buildId(id),
-    keys(std::move(_keys)),
-    plan(plan) {}
+        buildId(id),
+        keys(std::move(_keys)),
+        plan(plan) {}
 
   int32_t buildId{0};
   ExprVector keys;
   // The plan producing the build data. Used for deduplicating joins.
   PlanPtr plan;
-  
+
   void setCost(const PlanState& input) override;
 
   std::string toString(bool recursive, bool detail) const override;
