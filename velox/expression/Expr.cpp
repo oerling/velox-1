@@ -1262,7 +1262,7 @@ void Expr::evalAll(
 
   // Write non-selected rows in remainingRows as nulls in the result if some
   // rows have been skipped.
-  if (mutableRemainingRows != nullptr) {
+  if (mutableRemainingRows && !mutableRemainingRows->isAllSelected()) {
     addNulls(rows, mutableRemainingRows->asRange().bits(), context, result);
   }
   releaseInputValues(context);
@@ -1286,9 +1286,6 @@ bool Expr::applyFunctionWithPeeling(
     const SelectivityVector& applyRows,
     EvalCtx& context,
     VectorPtr& result) {
-  if (context.wrapEncoding() == VectorEncoding::Simple::CONSTANT) {
-    return false;
-  }
   int numLevels = 0;
   bool peeled;
   int32_t numConstant = 0;
@@ -1390,13 +1387,13 @@ bool Expr::applyFunctionWithPeeling(
     // All the fields are constant across the rows of interest.
     newRows = singleRow(newRowsHolder, rows.begin());
 
-    context.saveAndReset(saver, rows);
+    context.saveAndReset(saver, applyRows);
     context.setConstantWrap(rows.begin());
   } else {
     auto decoded = localDecoded.get();
     decoded->makeIndices(*firstWrapper, rows, numLevels);
     newRows = translateToInnerRows(applyRows, *decoded, newRowsHolder);
-    context.saveAndReset(saver, rows);
+    context.saveAndReset(saver, applyRows);
     setDictionaryWrapping(*decoded, rows, *firstWrapper, context);
 
     // 'newRows' comes from the set of row numbers in the base vector. These
@@ -1417,6 +1414,12 @@ bool Expr::applyFunctionWithPeeling(
   VectorPtr wrappedResult =
       context.applyWrapToPeeledResult(this->type(), peeledResult, applyRows);
   context.moveOrCopyResult(wrappedResult, rows, result);
+
+  // Recycle peeledResult if it's not owned by the result vector. Examples of
+  // when this can happen is when the result is a primitive constant vector, or
+  // when moveOrCopyResult copies wrappedResult content.
+  context.releaseVector(peeledResult);
+
   return true;
 }
 
