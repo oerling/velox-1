@@ -139,7 +139,7 @@ struct JoinCandidate {
   JoinSide sideOf(PlanObjectPtr side, bool other = false) const;
 
   std::string toString() const;
-  
+
   JoinPtr join{nullptr};
 
   // Tables to join on the build side. The tables must not occur on the left

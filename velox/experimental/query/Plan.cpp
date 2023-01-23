@@ -362,7 +362,8 @@ JoinCandidate reducingJoins(
   // placed tables. This may copy reducing joins from a probe to the
   // corresponding build.
   reducingSet.add(candidate.tables[0]);
-  reducingSet.unionSet(state.dt->importedExistences);  reducingJoinsRecursive(
+  reducingSet.unionSet(state.dt->importedExistences);
+  reducingJoinsRecursive(
       state, candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
   if (reduction < 0.7) {
     // The original table is added to the reducing existences because the path
