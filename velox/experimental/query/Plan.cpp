@@ -43,6 +43,7 @@ void Optimization::trace(
     RelationOp& plan) {
   if (event & traceFlags_) {
     std::cout << (event == kRetained ? "Retained: " : "Abandoned: ") << id
+              << ":"
               << " " << succinctNumber(cost.unitCost + cost.setupCost) << " "
               << plan.toString(true, false) << std::endl;
   }
@@ -99,16 +100,16 @@ void PlanState::addCost(RelationOp& op) {
   cost.fanout *= op.cost().fanout;
 }
 
-bool PlanState::addNextJoin(
+void PlanState::addNextJoin(
     const JoinCandidate* candidate,
     RelationOpPtr plan,
     BuildSet builds,
     std::vector<NextJoin>& toTry) const {
   if (!isOverBest()) {
     toTry.emplace_back(candidate, plan, cost, placed, builds);
-    return true;
+  } else {
+    optimization.trace(Optimization::kExceededBest, dt->id, cost, *plan);
   }
-  return false;
 }
 
 void PlanState::addBuilds(const BuildSet& added) {
@@ -249,10 +250,20 @@ const JoinVector& joinedBy(PlanObjectPtr table) {
   return table->as<DerivedTablePtr>()->joinedBy;
 }
 
+// Traverses joins from 'candidate'. Follows any join that goes to a
+// table not in 'visited' with a fanout <
+// 'maxFanout'. 'fanoutFromRoot' is the product of the fanouts
+// between 'candidate' and the 'candidate' of the top level call to
+// this. 'path' is the set of joined tables between this invocation
+// and the top level. 'fanoutFromRoot' is thus the selectivity of
+// the linear join sequence in 'path'.  When a reducing join
+// sequence is found, the tables on the path are added to
+// 'result'. 'reduction' is the product of the fanouts of all the
+// reducing join paths added to 'result'.
 void reducingJoinsRecursive(
     const PlanState& state,
     PlanObjectPtr candidate,
-    float fanout,
+    float fanoutFromRoot,
     float maxFanout,
     std::vector<PlanObjectPtr>& path,
     PlanObjectSet& visited,
@@ -281,7 +292,7 @@ void reducingJoinsRecursive(
       continue;
     }
     visited.add(other.table);
-    fanout *= joinFanout;
+    auto fanout = fanoutFromRoot * joinFanout;
     if (fanout < 0.9) {
       result.add(other.table);
       for (auto step : path) {
@@ -302,8 +313,11 @@ void reducingJoinsRecursive(
         reduction);
     path.pop_back();
   }
-  if (fanout < 1 && isLeaf) {
-    reduction *= fanout;
+  if (fanoutFromRoot < 1 && isLeaf) {
+    // We are at the end of a reducing sequence of joins. Update the total
+    // fanout for the set of all reducing join paths from the top level
+    // 'candidate'.
+    reduction *= fanoutFromRoot;
   }
 }
 
@@ -313,6 +327,7 @@ JoinCandidate reducingJoins(
   // For an inner join, see if can bundle reducing joins on the build.
   JoinCandidate reducing;
   reducing.join = candidate.join;
+  reducing.fanout = candidate.fanout;
   PlanObjectSet reducingSet;
   if (candidate.join->isInner()) {
     PlanObjectSet visited = state.placed;
@@ -350,6 +365,10 @@ JoinCandidate reducingJoins(
   reducingJoinsRecursive(
       state, candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
   if (reduction < 0.7) {
+    // The original table is added to the reducing existences because the path
+    // starts with it but it is not joined twice since it already is the start
+    // of the main join.
+    exists.erase(candidate.tables[0]);
     reducing.existences.push_back(std::move(exists));
   }
   if (reducing.tables.empty() && reducing.existences.empty()) {
@@ -419,6 +438,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(
     DerivedTablePtr dt,
     PlanState& state) {
   std::vector<JoinCandidate> candidates;
+  candidates.reserve(state.dt->tables.size());
   forJoinedTables(
       dt, state, [&](JoinPtr join, PlanObjectPtr joined, float fanout) {
         if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
@@ -673,9 +693,7 @@ void Optimization::joinByIndex(
       scan->extractedColumns.unionSet(join->filter->columns);
     }
     state.addCost(*scan);
-    if (!state.addNextJoin(&candidate, scan, {}, toTry)) {
-      trace(kExceededBest, state.dt->id, state.cost, *scan);
-    }
+    state.addNextJoin(&candidate, scan, {}, toTry);
   }
 }
 
@@ -745,7 +763,7 @@ void Optimization::joinByHash(
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto buildPlan = makePlan(key, distribution, empty, state, needsShuffle);
-  PlanState buildState(buildPlan);
+  PlanState buildState(state.optimization, state.dt, buildPlan);
   bool partitionByProbe = !partKeys.empty();
   RelationOpPtr buildInput = buildPlan->op;
   RelationOpPtr probeInput = plan;
@@ -824,9 +842,7 @@ void Optimization::joinByHash(
       std::move(columns));
   state.addCost(*joinOp);
   state.cost.setupCost += buildState.cost.unitCost;
-  if (!state.addNextJoin(&candidate, joinOp, {buildOp}, toTry)) {
-    trace(kExceededBest, state.dt->id, state.cost, *joinOp);
-  }
+  state.addNextJoin(&candidate, joinOp, {buildOp}, toTry);
 }
 
 void Optimization::addJoin(
@@ -882,7 +898,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
   auto& dt = state.dt;
   if (!plan) {
     std::vector<PlanObjectPtr> firstTables;
-    dt->startTables.forEach([&](auto table) {firstTables.push_back(table); });
+    dt->startTables.forEach([&](auto table) { firstTables.push_back(table); });
     std::vector<float> scores(firstTables.size());
     for (auto i = 0; i < firstTables.size(); ++i) {
       auto table = firstTables[i];
@@ -938,6 +954,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       }
     }
     std::vector<NextJoin> nextJoins;
+    nextJoins.reserve(candidates.size());
     for (auto& candidate : candidates) {
       addJoin(dt, candidate, plan, state, nextJoins);
     }
@@ -956,9 +973,8 @@ PlanPtr Optimization::makePlan(
   if (it == memo_.end()) {
     DerivedTable dt;
     dt.import(*state.dt, key.firstTable, key.tables, key.existences);
-    PlanState inner;
+    PlanState inner(*this, &dt);
     inner.targetColumns = key.columns;
-    inner.dt = &dt;
     makeJoins(nullptr, inner);
     memo_[key] = std::move(inner.plans);
     plans = &memo_[key];

@@ -511,6 +511,9 @@ void DerivedTable::setStartTables() {
   }
 }
 
+void DerivedTable::guessBaseCardinality() {
+}
+  
 void DerivedTable::linkTablesToJoins() {
   setStartTables();
 
@@ -712,25 +715,37 @@ IndexInfo SchemaTable::indexInfo(
   IndexInfo info;
   info.index = index;
   info.scanCardinality = index->distribution.cardinality;
-  int32_t numPrefix = 0;
   PlanObjectSet covered;
-  for (auto i = 0; i < index->distribution.order.size(); ++i) {
+  int32_t numCovered = 0;
+  int32_t numSorting = index->distribution.orderType.size();
+  int32_t numUnique = index->distribution.numKeysUnique;
+  for (auto i = 0; i < numSorting|| i < numUnique; ++i) {
     auto part = findColumnByName(
         columns, index->distribution.order[i]->as<ColumnPtr>()->name);
     if (!part) {
       break;
     }
+    ++numCovered;
+    covered.add(part);
+    if (i < numSorting) {
     info.scanCardinality = combine(
         info.scanCardinality,
         i,
         index->distribution.order[i]->value.cardinality);
     info.lookupKeys.push_back(part);
-    covered.add(part);
-    ++numPrefix;
-  }
-  info.joinCardinality = info.scanCardinality;
+    info.joinCardinality = info.scanCardinality;
+    } else {
+      info.joinCardinality = combine(
+        info.joinCardinality,
+        i,
+        index->distribution.order[i]->value.cardinality);
 
-  auto numCovered = info.lookupKeys.size();
+    }
+    if (i == numUnique - 1) {
+      info.unique = true;
+    }
+  }
+
   for (auto i = 0; i < columns.size(); ++i) {
     auto column = columns[i];
     if (covered.contains(column)) {
@@ -746,8 +761,6 @@ IndexInfo SchemaTable::indexInfo(
         combine(info.joinCardinality, numCovered, column->value.cardinality);
   }
   info.coveredColumns = std::move(covered);
-  info.unique = index->distribution.numKeysUnique &&
-      index->distribution.numKeysUnique <= info.lookupKeys.size();
   return info;
 }
 
@@ -813,6 +826,16 @@ float baseSelectivity(PlanObjectPtr object) {
   return 1;
 }
 
+float tableCardinality(PlanObjectPtr table) {
+  if (table->type == PlanType::kTable) {
+    return table->as<BaseTablePtr>()
+        ->schemaTable->indices[0]
+        ->distribution.cardinality;
+  }
+  VELOX_CHECK(table->type == PlanType::kDerivedTable);
+  return table->as<DerivedTablePtr>()->baseCardinality;
+}
+
 void Join::guessFanout() {
   auto left = joinCardinality(leftTable, toRangeCast<ColumnPtr>(leftKeys));
   auto right = joinCardinality(rightTable, toRangeCast<ColumnPtr>(rightKeys));
@@ -820,11 +843,17 @@ void Join::guessFanout() {
   rightUnique = right.unique;
   lrFanout = right.joinCardinality * baseSelectivity(leftTable);
   rlFanout = left.joinCardinality * baseSelectivity(leftTable);
+  // If one side is unique, the other side is a pk to fk join, with fanout =
+  // fk-table-card / pk-table-card.
   if (rightUnique) {
     lrFanout = baseSelectivity(rightTable);
+    rlFanout = tableCardinality(leftTable) / tableCardinality(rightTable) *
+        baseSelectivity(leftTable);
   }
   if (leftUnique) {
     rlFanout = baseSelectivity(leftTable);
+    lrFanout = tableCardinality(rightTable) / tableCardinality(leftTable) *
+        baseSelectivity(rightTable);
   }
 }
 

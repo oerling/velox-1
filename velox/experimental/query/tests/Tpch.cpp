@@ -120,20 +120,20 @@ tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary) {
       fmt::format("tpch{}{}", partitioned ? "p" : "", ordered ? "o" : "");
   std::vector<SchemaTablePtr> tables{
       makeTable(
-          tpch::Table::TBL_LINEITEM, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_LINEITEM, scale, partitioned, ordered, secondary),
       makeTable(
-          tpch::Table::TBL_ORDERS, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_ORDERS, scale, partitioned, ordered, secondary),
       makeTable(
-          tpch::Table::TBL_CUSTOMER, scale, ordered, partitioned, secondary),
-      makeTable(tpch::Table::TBL_PART, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_CUSTOMER, scale, partitioned, ordered, secondary),
+      makeTable(tpch::Table::TBL_PART, scale, partitioned, ordered, secondary),
       makeTable(
-          tpch::Table::TBL_PARTSUPP, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_PARTSUPP, scale, partitioned, ordered, secondary),
       makeTable(
-          tpch::Table::TBL_SUPPLIER, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_SUPPLIER, scale, partitioned, ordered, secondary),
       makeTable(
-          tpch::Table::TBL_NATION, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_NATION, scale, partitioned, ordered, secondary),
       makeTable(
-          tpch::Table::TBL_REGION, scale, ordered, partitioned, secondary),
+          tpch::Table::TBL_REGION, scale, partitioned, ordered, secondary),
   };
 
   Declare(Schema, schema, toName(title), std::move(tables));

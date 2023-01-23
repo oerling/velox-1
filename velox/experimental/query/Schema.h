@@ -96,11 +96,13 @@ struct Distribution {
   // streaming group by or merge join are possible.
   ExprVector order;
 
-  // Corresponds 1:1 to 'order'
+  // Corresponds 1:1 to 'order'. The size of this gives the number of leading
+  // columns of 'order' on which the data is sorted.
   std::vector<OrderType> orderType;
 
   // Number of leading elements of 'order' such that these uniquely
-  // identify a row. 0 if there is no uniqueness.
+  // identify a row. 0 if there is no uniqueness. This can be non-0 also if data
+  // is not sorted. This indicates a uniqueness for joining.
   int32_t numKeysUnique{0};
 
   // Specifies the selectivity between the source of the ordered data

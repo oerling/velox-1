@@ -49,7 +49,7 @@ DerivedTablePtr Optimization::makeQueryGraph() {
 }
 
 float subfieldSelectivity(const HiveTableHandle& handle) {
-  if (handle.subfieldFilters().empty()) {
+  if (handle.subfieldFilters().empty() && !handle.remainingFilter()) {
     return 1;
   }
   auto string = handle.toString();

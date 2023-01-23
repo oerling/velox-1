@@ -69,6 +69,30 @@ class PlanTest : public testing::Test {
     baseSelectivities()
         ["table: customer, range filters: [(c_mktsegment, Filter(BytesValues, deterministic, null not allowed))]"] =
             0.2;
+    baseSelectivities()
+        ["table: part, remaining filter: (like(ROW[\"p_name\"],\"%green%\"))"] =
+            1.0 / 17;
+  }
+
+  std::string makePlan(
+      std::shared_ptr<const core::PlanNode> plan,
+      bool partitioned,
+      bool ordered,
+      int numRepeats = 1) {
+    auto schema = tpchSchema(100, partitioned, ordered, false);
+    std::string string;
+    for (auto counter = 0; counter < numRepeats; ++counter) {
+      Optimization opt(*plan, *schema, FLAGS_trace);
+      auto result = opt.bestPlan();
+      if (counter == numRepeats - 1) {
+        string = result->toString(true);
+      }
+    }
+    return fmt::format(
+		       "=== {} {}:\n{}\n",
+        partitioned ? "Partitioned on PK" : "Not partitioned",
+        ordered ? "sorted on PK" : "not sorted",
+        string);
   }
 
   std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
@@ -82,21 +106,20 @@ class PlanTest : public testing::Test {
 
 bool PlanTest::registered;
 
-
 TEST_F(PlanTest, q3) {
-  auto q3 = builder_->getQueryPlan(3);
-  auto schema = tpchSchema(100, false, true, false);
-  Optimization opt(*q3.plan, *schema, FLAGS_trace);
-  auto result = opt.bestPlan();
-  std::cout << result->toString(true);
+  auto q = builder_->getQueryPlan(3).plan;
+  auto result = makePlan(q, true, true);
+  std::cout << result;
+  result = makePlan(q, true, false);
+  std::cout << result;
 }
 
 TEST_F(PlanTest, q9) {
-  auto q9 = builder_->getQueryPlan(9);
-  auto schema = tpchSchema(100, false, true, false);
-  Optimization opt(*q9.plan, *schema, FLAGS_trace);
-  auto result = opt.bestPlan();
-  std::cout << result->toString(true);
+  auto q = builder_->getQueryPlan(9).plan;
+  auto result = makePlan(q, true, true);
+  std::cout << result;
+  result = makePlan(q, true, false);
+  std::cout << result;
 }
 
 int main(int argc, char** argv) {

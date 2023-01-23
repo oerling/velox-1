@@ -351,6 +351,9 @@ struct DerivedTable : public PlanObject {
   int32_t limit{-1};
   int32_t offset{0};
 
+  // Guess of cardinality. The actual cardinality is calculated with a plan but. This is only for deciding in which order to cost candidates.
+  float baseCardinality{1};
+  
   /// Adds an equijoin edge between 'left' and 'right'. The flags correspond to
   /// the like-named members in Join.
   void addJoinEquality(
@@ -385,6 +388,7 @@ struct DerivedTable : public PlanObject {
 
 private:
   void setStartTables();
+  void guessBaseCardinality();
 };
 
 using DerivedTablePtr = DerivedTable*;
