@@ -104,29 +104,7 @@ struct PlanSet {
   PlanPtr addPlan(RelationOpPtr plan, PlanState& state);
 };
 
-struct JoinSide {
-  PlanObjectPtr table;
-  ExprVector& keys;
-  bool isOptional;
-  bool isExists;
-  bool isNotExists;
-
-  /// Returns the join type to use if 'this' is the right side.
-  velox::core::JoinType leftJoinType() {
-    if (isNotExists) {
-      return velox::core::JoinType::kAnti;
-    }
-    if (isExists) {
-      return velox::core::JoinType::kLeftSemiFilter;
-    }
-    if (isOptional) {
-      return velox::core::JoinType::kLeft;
-    }
-    return velox::core::JoinType::kInner;
-  }
-};
-
-// Represents the next table/derived table to join. May consist of several
+  // Represents the next table/derived table to join. May consist of several
 // tables for a bushy build side.
 struct JoinCandidate {
   JoinCandidate() = default;

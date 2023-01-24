@@ -92,7 +92,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   for (auto i = 0; i < inputs.size(); ++i) {
     args[i] = translateExpr(inputs[i]);
     cardinality = std::max(cardinality, args[i]->value.cardinality);
-    if (args[i]->type == PlanType::kCall) {
+    if (args[i]->type() == PlanType::kCall) {
       funcs = funcs | args[i]->as<CallPtr>()->functions;
     }
   }
@@ -183,7 +183,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
     for (auto i = 0; i < leftKeys.size(); ++i) {
       auto l = leftKeys[i];
       auto r = rightKeys[i];
-      if (l->type == PlanType::kColumn && r->type == PlanType::kColumn) {
+      if (l->type() == PlanType::kColumn && r->type() == PlanType::kColumn) {
         l->as<ColumnPtr>()->equals(r->as<ColumnPtr>());
         currentSelect_->addJoinEquality(l, r, false, false, false, false);
       } else {

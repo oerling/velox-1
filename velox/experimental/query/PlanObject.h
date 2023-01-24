@@ -32,32 +32,50 @@ enum class PlanType {
   kFilter
 };
 
-Name planTypeName(PlanType type);
 
-inline bool isExprType(PlanType type) {
+  /// True if 'type' is an expression with a value.
+  inline bool isExprType(PlanType type) {
   return type == PlanType::kColumn || type == PlanType::kCall ||
       type == PlanType::kLiteral;
 }
 
-struct PlanObject {
-  PlanObject(PlanType _type) : type(_type) {
-    id = queryCtx()->newId(this);
-  }
-
+  /// Common superclass of all vertices of a query graph. This
+  /// includes tables, columns, expressions, derived tables etc. These
+  /// all have a unique small integer id. Ids are often to track
+  /// membership in PlanObjectSets. These stand for e.g. the columns
+  /// assigned by an operator or the tables in a partial plan.  Joins
+  /// are edges of the graph but do not have ids, rather, they are
+  /// identified by the ids of their end points. PlanObjects are created at the start of planning and are arena allocated to be all dropped when the planning is complete.
+class PlanObject {
+public:
+  PlanObject(PlanType _type) : type_(_type),
+			       id_(queryCtx()->newId(this)) {}
+  
   void operator delete(void* ptr) {
     LOG(FATAL) << "Plan objects are not deletable";
   }
 
+  int32_t id() const {
+    return id_;
+  }
+
+  PlanType type() const {
+    return type_;
+  }
+  
+  /// Returns 'this' as T.
   template <typename T>
   T as() {
     return reinterpret_cast<T>(this);
   }
 
+  /// Returns 'this' as const T.
   template <typename T>
   const T as() const {
     return reinterpret_cast<const T>(this);
   }
 
+  /// Returns a view on children, e.g. arguments of a function call.
   virtual PtrSpan<PlanObject> children() const {
     return PtrSpan<PlanObject>(nullptr, nullptr);
   }
@@ -77,25 +95,39 @@ struct PlanObject {
   size_t hash() const;
 
   virtual std::string toString() const {
-    return fmt::format("#{}", id);
+    return fmt::format("#{}", id_);
   }
-  PlanType type;
-  int32_t id;
+
+private:
+  const PlanType type_;
+  const int32_t id_;
 };
 
 class PlanObjectSet {
  public:
+  /// True if id of 'object' is in 'this'.
   bool contains(PlanObjectConstPtr object) const {
-    return object->id < bits_.size() * 64 &&
-        velox::bits::isBitSet(bits_.data(), object->id);
+    return object->id() < bits_.size() * 64 &&
+      velox::bits::isBitSet(bits_.data(), object->id());
   }
 
   bool operator==(const PlanObjectSet& other) const;
 
   size_t hash() const;
 
-  void add(PlanObjectPtr ptr) {
-    auto id = ptr->id;
+  // True if no members.
+  bool empty() const {
+    for (auto word : bits_) {
+      if (word) {
+	return false;
+      }
+    }
+    return true;
+  }
+  
+  /// Inserts id of 'object'.
+  void add(PlanObjectPtr object) {
+    auto id = object->id();
     ensureSize(id);
     velox::bits::setBit(bits_.data(), id);
   }
@@ -103,20 +135,26 @@ class PlanObjectSet {
   /// Returns true if 'this' is a subset of 'super'.
   bool isSubset(const PlanObjectSet& super) const;
 
+  /// Erases id of 'object'.
   void erase(PlanObjectPtr object) {
-    if (object->id < bits_.size() * 64) {
-      velox::bits::clearBit(bits_.data(), object->id);
+    if (object->id() < bits_.size() * 64) {
+      velox::bits::clearBit(bits_.data(), object->id());
     }
   }
 
+  /// Adds ids of all columns 'expr' depends on.
   void unionColumns(ExprPtr expr);
 
+  /// Adds ids of all columns 'exprs' depend on.
   void unionColumns(const ExprVector& exprs);
 
+  /// Adds all ids in 'other'.
   void unionSet(const PlanObjectSet& other);
 
+  /// Erases all ids not in 'other'.
   void intersect(const PlanObjectSet& other);
 
+  /// Adds ids of all objects in 'objects'.
   template <typename V>
   void unionObjects(const V& objects) {
     for (auto& object : objects) {
@@ -124,6 +162,7 @@ class PlanObjectSet {
     }
   }
 
+  /// Applies 'func' to each object in 'this'.
   template <typename Func>
   void forEach(Func func) const {
     auto ctx = queryCtx();
@@ -132,6 +171,7 @@ class PlanObjectSet {
     });
   }
 
+  /// Returns the objects corresponding to ids in 'this' as a vector of T.
   template <typename T = PlanObjectPtr>
   std::vector<T> objects() const {
     std::vector<T> result;
@@ -140,6 +180,7 @@ class PlanObjectSet {
     return result;
   }
 
+  /// Prnts the contents with ids and the string representation of the objects if 'names' is true.
   std::string toString(bool names) const;
 
  private:
@@ -153,6 +194,7 @@ class PlanObjectSet {
     }
   }
 
+  // A one bit corresponds to the id of each member.
   std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
 };
 

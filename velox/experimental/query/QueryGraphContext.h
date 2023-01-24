@@ -28,7 +28,7 @@ namespace facebook::verax {
 using Name = const char*;
 
 template <typename T>
-using PtrSpan = folly::Range<T**>;
+using PtrSpan = folly::Range<T* const *>;
 
 struct PlanObject;
 

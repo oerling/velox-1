@@ -21,44 +21,54 @@
 
 namespace facebook::verax {
 
-void TableScan::setRelation(
-    const ColumnVector& columns,
-    const ColumnVector& schemaColumns) {
-  auto cc =
+// static
+Distribution TableScan::outputDistribution(
+    BaseTablePtr baseTable,
+    IndexPtr index,
+    const ColumnVector& columns) {
+  auto schemaColumns =
       transform<ColumnVector>(columns, [](auto& c) { return c->schemaColumn; });
-  distribution.cardinality =
-      index->distribution.cardinality * baseTable->filterSelectivity;
+
+  ExprVector partition;
+  ExprVector order;
+  OrderTypeVector orderType;
   // if all partitioning columns are projected, the output is partitioned.
   if (isSubset(
           toRangeCast<ColumnPtr>(index->distribution.partition),
           toRange(schemaColumns))) {
-    distribution.partition = index->distribution.partition;
+    partition = index->distribution.partition;
     replace(
-        toRangeCast<ColumnPtr>(distribution.partition),
-        toRange(schemaColumns),
-        &columns[0]);
-    distribution.distributionType = index->distribution.distributionType;
+        toRangeCast<ColumnPtr>(partition), toRange(schemaColumns), &columns[0]);
   }
   auto numPrefix = prefixSize(
       toRangeCast<ColumnPtr>(index->distribution.order),
       toRange(schemaColumns));
   if (numPrefix > 0) {
-    distribution.order = index->distribution.order;
-    distribution.order.resize(numPrefix);
-    distribution.orderType = index->distribution.orderType;
-    distribution.orderType.resize(numPrefix);
+    order = index->distribution.order;
+    order.resize(numPrefix);
+    orderType = index->distribution.orderType;
+    orderType.resize(numPrefix);
     replace(
-        toRangeCast<ColumnPtr>(distribution.order),
+        toRangeCast<ColumnPtr>(order),
         toRange(schemaColumns),
         &columns[0]);
-    if (index->distribution.numKeysUnique <= numPrefix) {
-      distribution.numKeysUnique = index->distribution.numKeysUnique;
-    }
   }
-  this->columns = columns;
+  return Distribution(
+      index->distribution.distributionType,
+      index->distribution.cardinality * baseTable->filterSelectivity,
+      std::move(partition),
+      std::move(order),
+      std::move(orderType),
+      index->distribution.numKeysUnique <= numPrefix
+          ? index->distribution.numKeysUnique
+          : 0,
+      1.0 / baseTable->filterSelectivity);
 }
 
-PlanObjectSet TableScan::availableColumns() {
+// static
+PlanObjectSet TableScan::availableColumns(
+    BaseTablePtr baseTable,
+    IndexPtr index) {
   // The columns of base table that exist in 'index'.
   PlanObjectSet result;
   for (auto column : index->columns) {

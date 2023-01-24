@@ -79,8 +79,9 @@ struct RelationOp : public Relation {
   RelationOp(
       RelType type,
       boost::intrusive_ptr<RelationOp> input,
-      Distribution _distribution)
-      : Relation(relType, _distribution, ColumnVector{}),
+      Distribution _distribution,
+      ColumnVector columns = {})
+      : Relation(relType, std::move(_distribution), std::move(columns)),
         input(std::move(input)) {}
 
   virtual ~RelationOp() = default;
@@ -91,6 +92,10 @@ struct RelationOp : public Relation {
 
   const Cost& cost() const {
     return cost_;
+  }
+
+  float resultCardinality() const {
+    return cost_.inputCardinality * cost_.fanout;
   }
 
   virtual void setCost(const PlanState& input);
@@ -139,19 +144,31 @@ struct TableScan : public RelationOp {
       Distribution _distribution,
       BaseTablePtr table,
       IndexPtr _index,
-      float fanout)
-      : RelationOp(RelType::kTableScan, input, _distribution),
+      float fanout,
+      ColumnVector columns,
+      ExprVector lookupKeys = {},
+      velox::core::JoinType joinType = velox::core::JoinType::kInner,
+      ExprPtr joinFilter = nullptr)
+      : RelationOp(
+            RelType::kTableScan,
+            input,
+            std::move(_distribution),
+            std::move(columns)),
         baseTable(table),
-        index(_index) {
+    index(_index),
+    keys(std::move(lookupKeys)),
+    joinType(joinType),
+    joinFilter(joinFilter) {
     cost_.fanout = fanout;
   }
 
   /// Columns of base table available in 'index'.
-  PlanObjectSet availableColumns();
+  static PlanObjectSet availableColumns(BaseTablePtr baseTable, IndexPtr index);
 
-  void setRelation(
-      const ColumnVector& columns,
-      const ColumnVector& schemaColumns);
+  static Distribution outputDistribution(
+      BaseTablePtr baseTable,
+      IndexPtr index,
+      const ColumnVector& columns);
 
   void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;

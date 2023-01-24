@@ -171,15 +171,40 @@ struct FilteredColumn {
 
 using FilteredColumnPtr = FilteredColumn*;
 
-// Represents a possibly directional binary join edge. A join
-// hyperedge like a.k = b.k + c.k is represented as non-join filters
-// in the containing derived table. a.k can be used as a lookup key
-// if b and c are placed to the left of a.  if left or right are
-// semi, anti or optional, the join can only be placed after the
-// inner side is placed. If neither side is optional, the edge is
-// non-directional and whichever side is not placed can be added. If
-// both sides are optional (full outer join) then the edge is
-// non-directional.
+  /// Represents one side of a join.
+struct JoinSide {
+  PlanObjectPtr table;
+  const ExprVector& keys;
+  const bool isOptional;
+  const bool isExists;
+  const bool isNotExists;
+
+  /// Returns the join type to use if 'this' is the right side.
+  velox::core::JoinType leftJoinType() const {
+    if (isNotExists) {
+      return velox::core::JoinType::kAnti;
+    }
+    if (isExists) {
+      return velox::core::JoinType::kLeftSemiFilter;
+    }
+    if (isOptional) {
+      return velox::core::JoinType::kLeft;
+    }
+    return velox::core::JoinType::kInner;
+  }
+};
+
+
+/// Represents a possibly directional equality join edge. 
+
+/// in the containing derived table. a.k can be used as a lookup key
+/// if b and c are placed to the left of a.  if left or right are
+/// semi, anti or optional, the join can only be placed after the
+/// inner side is placed. If neither side is optional, the edge is
+/// non-directional and whichever side is not placed can be added. If
+/// both sides are optional (full outer join) then the edge is
+/// non-directional.
+  /// [rightTable' is always set. 'leftTable' is nullptr if 'leftKeys' come from different tables. If so, 'this' must be non-inner and not full outer.
 struct Join {
   // Leading left side join keys.
   ExprVector leftKeys;
@@ -232,6 +257,10 @@ struct Join {
     return !leftTable || (rightOptional && !leftOptional) || rightExists ||
         rightNotExists;
   }
+
+    // Returns the join side info for 'table'. If 'other' is set, returns the
+  // other side.
+  const JoinSide sideOf(PlanObjectPtr side, bool other = false) const;
 
   std::string toString() const;
 };

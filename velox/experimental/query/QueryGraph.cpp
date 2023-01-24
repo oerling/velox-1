@@ -37,7 +37,7 @@ bool PlanObjectPtrComparer::operator()(
 }
 
 size_t PlanObject::hash() const {
-  size_t h = static_cast<size_t>(id);
+  size_t h = static_cast<size_t>(id_);
   for (auto& child : children()) {
     h = velox::bits::hashMix(h, child->hash());
   }
@@ -63,23 +63,6 @@ const char* QueryGraphContext::toName(std::string_view str) {
 
 const char* toName(const std::string& str) {
   return queryCtx()->toName(std::string_view(str.data(), str.size()));
-}
-
-const char* planTypeName(PlanType type) {
-  switch (type) {
-    case PlanType::kTable:
-      return "table";
-    case PlanType::kDerivedTable:
-      return "derived table";
-    case PlanType::kCall:
-      return "call";
-    case PlanType::kProject:
-      return "project";
-    case PlanType::kFilter:
-      return "filter";
-    default:
-      return "unknown";
-  }
 }
 
 float Value::byteSize() const {
@@ -149,7 +132,7 @@ size_t PlanObjectSet::hash() const {
 }
 
 void PlanObjectSet::unionColumns(ExprPtr expr) {
-  switch (expr->type) {
+  switch (expr->type()) {
     case PlanType::kLiteral:
       return;
     case PlanType::kColumn:
@@ -195,7 +178,7 @@ void PlanObjectSet::intersect(const PlanObjectSet& other) {
 std::string PlanObjectSet::toString(bool names) const {
   std::stringstream out;
   forEach([&](auto object) {
-    out << object->id;
+    out << object->id();
     if (names) {
       out << ": " << object->toString() << std::endl;
     } else {
@@ -230,9 +213,10 @@ void Column::equals(ColumnPtr other) {
 }
 
 std::string Column::toString() const {
-  Name cname = !relation                   ? ""
-      : relation->type == PlanType::kTable ? relation->as<BaseTablePtr>()->cname
-      : relation->type == PlanType::kDerivedTable
+  Name cname = !relation ? ""
+      : relation->type() == PlanType::kTable
+      ? relation->as<BaseTablePtr>()->cname
+      : relation->type() == PlanType::kDerivedTable
       ? relation->as<DerivedTablePtr>()->cname
       : "--";
 
@@ -253,6 +237,13 @@ std::string BaseTable::toString() const {
   out << "{" << PlanObject::toString();
   out << schemaTable->name << " " << cname << "}";
   return out.str();
+}
+
+const JoinSide Join::sideOf(PlanObjectPtr side, bool other) const {
+  if ((side == rightTable && !other) || (side == leftTable && other)) {
+    return {rightTable, rightKeys, rightOptional, rightExists, rightNotExists};
+  }
+  return {leftTable, leftKeys, leftOptional, false, false};
 }
 
 std::string Join::toString() const {
@@ -288,10 +279,10 @@ bool Expr::sameOrEqual(const Expr& other) const {
   if (this == &other) {
     return true;
   }
-  if (type != other.type) {
+  if (type() != other.type()) {
     return false;
   }
-  switch (type) {
+  switch (type()) {
     case PlanType::kColumn:
       return as<const Column*>()->equivalence &&
           as<const Column*>()->equivalence ==
@@ -330,20 +321,20 @@ bool Expr::sameOrEqual(const Expr& other) const {
 }
 
 PlanObjectPtr singleTable(PlanObjectPtr object) {
-  if (isExprType(object->type)) {
+  if (isExprType(object->type())) {
     return object->as<ExprPtr>()->singleTable();
   }
   return nullptr;
 }
 
 PlanObjectPtr Expr::singleTable() {
-  if (type == PlanType::kColumn) {
+  if (type() == PlanType::kColumn) {
     return as<ColumnPtr>()->relation;
   }
   PlanObjectPtr table = nullptr;
   bool multiple = false;
   columns.forEach([&](PlanObjectPtr object) {
-    VELOX_CHECK_EQ(object->type, PlanType::kColumn);
+    VELOX_CHECK_EQ(object->type(), PlanType::kColumn);
     if (!table) {
       table = object->as<ColumnPtr>()->relation;
     } else if (table != object->as<ColumnPtr>()->relation) {
@@ -387,7 +378,7 @@ PlanObjectSet allTables(PtrSpan<Expr> exprs) {
 Column::Column(Name _name, PlanObjectPtr _relation, Value value)
     : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {
   columns.add(this);
-  if (relation && relation->type == PlanType::kTable) {
+  if (relation && relation->type() == PlanType::kTable) {
     schemaColumn = relation->as<BaseTablePtr>()->schemaTable->findColumn(name);
     VELOX_CHECK(schemaColumn);
   }
@@ -454,8 +445,8 @@ void fillJoins(
     EdgeSet& edges,
     DerivedTablePtr dt) {
   for (auto& other : equivalence.columns) {
-    if (!hasEdge(edges, column->id, other->id)) {
-      addEdge(edges, column->id, other->id);
+    if (!hasEdge(edges, column->id(), other->id())) {
+      addEdge(edges, column->id(), other->id());
       dt->addJoinEquality(
           column->as<ColumnPtr>(),
           other->as<ColumnPtr>(),
@@ -472,20 +463,20 @@ void DerivedTable::addImpliedJoins() {
   for (auto& join : joins) {
     if (join->isInner()) {
       for (auto i = 0; i < join->leftKeys.size(); ++i) {
-        if (join->leftKeys[i]->type == PlanType::kColumn &&
-            join->rightKeys[i]->type == PlanType::kColumn) {
-          addEdge(edges, join->leftKeys[i]->id, join->rightKeys[i]->id);
+        if (join->leftKeys[i]->type() == PlanType::kColumn &&
+            join->rightKeys[i]->type() == PlanType::kColumn) {
+          addEdge(edges, join->leftKeys[i]->id(), join->rightKeys[i]->id());
         }
       }
     }
   }
-  // The appends to 'joins', so loop over a copy.
+  // The loop appends to 'joins', so loop over a copy.
   JoinVector joinsCopy = joins;
   for (auto& join : joinsCopy) {
     if (join->isInner()) {
       for (auto i = 0; i < join->leftKeys.size(); ++i) {
-        if (join->leftKeys[i]->type == PlanType::kColumn &&
-            join->rightKeys[i]->type == PlanType::kColumn) {
+        if (join->leftKeys[i]->type() == PlanType::kColumn &&
+            join->rightKeys[i]->type() == PlanType::kColumn) {
           auto leftEq = join->leftKeys[i]->as<ColumnPtr>()->equivalence;
           auto rightEq = join->rightKeys[i]->as<ColumnPtr>()->equivalence;
           if (rightEq && leftEq) {
@@ -531,10 +522,10 @@ void DerivedTable::linkTablesToJoins() {
       tables.unionSet(join->filter->allTables());
     }
     tables.forEach([&](PlanObjectPtr table) {
-      if (table->type == PlanType::kTable) {
+      if (table->type() == PlanType::kTable) {
         table->as<BaseTablePtr>()->joinedBy.push_back(join);
       } else {
-        VELOX_CHECK_EQ(table->type, PlanType::kDerivedTable);
+        VELOX_CHECK_EQ(table->type(), PlanType::kDerivedTable);
         table->as<DerivedTablePtr>()->joinedBy.push_back(join);
       }
     });
@@ -675,7 +666,7 @@ SchemaTablePtr Schema::findTable(const std::string& name) const {
 template <typename T>
 ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
   for (auto column : columns) {
-    if (column->type == PlanType::kColumn &&
+    if (column->type() == PlanType::kColumn &&
         column->template as<ColumnPtr>()->name == name) {
       return column->template as<ColumnPtr>();
     }
@@ -683,7 +674,7 @@ ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
   return nullptr;
 }
 
-bool SchemaTable::isUnique(folly::Range<ColumnPtr*> columns) {
+bool SchemaTable::isUnique(PtrSpan<Column> columns) {
   for (auto index : indices) {
     auto nUnique = index->distribution.numKeysUnique;
     if (!nUnique) {
@@ -716,7 +707,7 @@ float combine(float card, int32_t ith, float otherCard) {
 
 IndexInfo SchemaTable::indexInfo(
     IndexPtr index,
-    folly::Range<ColumnPtr*> columns) {
+    PtrSpan<Column> columns) {
   IndexInfo info;
   info.index = index;
   info.scanCardinality = index->distribution.cardinality;
@@ -769,7 +760,7 @@ IndexInfo SchemaTable::indexInfo(
   return info;
 }
 
-IndexInfo SchemaTable::indexByColumns(folly::Range<ColumnPtr*> columns) {
+IndexInfo SchemaTable::indexByColumns(PtrSpan<Column> columns) {
   // Match 'columns' against all indices. Pick the one that has the
   // longest prefix intersection with 'columns'. If 'columns' are a
   // unique combination on any index, then unique is true of the
@@ -806,7 +797,7 @@ IndexInfo SchemaTable::indexByColumns(folly::Range<ColumnPtr*> columns) {
 }
 
 IndexInfo joinCardinality(PlanObjectPtr table, folly::Range<ColumnPtr*> keys) {
-  if (table->type == PlanType::kTable) {
+  if (table->type() == PlanType::kTable) {
     auto schemaTable = table->as<BaseTablePtr>()->schemaTable;
     return schemaTable->indexByColumns(keys);
   }
@@ -825,19 +816,19 @@ ColumnPtr IndexInfo::schemaColumn(ColumnPtr keyValue) const {
 // The fraction of rows of a base table selected by non-join filters. 0.2
 // means 1 in 5 are selected.
 float baseSelectivity(PlanObjectPtr object) {
-  if (object->type == PlanType::kTable) {
+  if (object->type() == PlanType::kTable) {
     return object->as<BaseTablePtr>()->filterSelectivity;
   }
   return 1;
 }
 
 float tableCardinality(PlanObjectPtr table) {
-  if (table->type == PlanType::kTable) {
+  if (table->type() == PlanType::kTable) {
     return table->as<BaseTablePtr>()
         ->schemaTable->indices[0]
         ->distribution.cardinality;
   }
-  VELOX_CHECK(table->type == PlanType::kDerivedTable);
+  VELOX_CHECK(table->type() == PlanType::kDerivedTable);
   return table->as<DerivedTablePtr>()->baseCardinality;
 }
 

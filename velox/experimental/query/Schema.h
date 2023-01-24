@@ -43,6 +43,8 @@ enum class OrderType {
   kDescNullsLast
 };
 
+using OrderTypeVector = std::vector<OrderType, QGAllocator<OrderType>>;
+
 /// Represents a system that contains or produces data. nullptr means
 /// a shared access distributed file system or data lake for schema
 /// objects. nullptr means the system running the top level query for
@@ -80,12 +82,35 @@ struct DistributionType {
 // after filtering, column value ranges are after filtering.
 struct Distribution {
   Distribution() = default;
-  Distribution(DistributionType type, ExprVector _partition)
-      : distributionType(std::move(type)), partition(std::move(_partition)) {}
+  Distribution(
+      DistributionType type,
+      float cardinality,
+      ExprVector _partition,
+      ExprVector _order = {},
+      OrderTypeVector _orderType = {},
+      int32_t uniquePrefix = 0,
+      int _spacing = 0)
+      : distributionType(std::move(type)),
+	cardinality(cardinality),
+        partition(std::move(_partition)),
+        order(std::move(_order)),
+        orderType(std::move(_orderType)),
+        numKeysUnique(uniquePrefix),
+        spacing(_spacing) {}
 
-  float cardinality;
+  static Distribution broadcast(DistributionType type, float cardinality) {
+    Distribution result(type, cardinality, {});
+    result.isBroadcast = true;
+    return result;
+  }
+
+  bool isSamePartition(const Distribution& other) const;
+  std::string toString() const;
 
   DistributionType distributionType;
+
+  // Number of rows 'this' applies to. This is the size in rows if 'this' occurs in a table or index.
+  float cardinality;
 
   // Partitioning columns. The values of these columns determine which of
   // 'numPartitions' contains any given row. This does not specify the
@@ -98,7 +123,7 @@ struct Distribution {
 
   // Corresponds 1:1 to 'order'. The size of this gives the number of leading
   // columns of 'order' on which the data is sorted.
-  std::vector<OrderType> orderType;
+  OrderTypeVector orderType;
 
   // Number of leading elements of 'order' such that these uniquely
   // identify a row. 0 if there is no uniqueness. This can be non-0 also if data
@@ -114,18 +139,8 @@ struct Distribution {
   // because lineitem has an average of 4 repeats of orderkey.
   float spacing{-1};
 
-  // specifies that data in each partition is clustered by these columns, i.e.
-  // all rows with any value k1=v1,...kn =vn are consecutive. Specifies that
-  // once the value of any clustering column changes between consecutive rows,
-  // the same combination of clustering columns will not repeat. means that a
-  // final group by can be flushed when seeing a change in clustering columns.
-  ColumnVector clustering;
-
   // True if the data is replicated to 'numPartitions'.
   bool isBroadcast{false};
-
-  bool isSamePartition(const Distribution& other) const;
-  std::string toString() const;
 };
 
 /// Identifies a base table or the operator type producing the relation. Base
