@@ -17,14 +17,13 @@
 #pragma once
 
 #include "velox/experimental/query/PlanObject.h"
-  /// Schema representation for use in query planning. All objects are
-  /// arena allocated for the duration of planning the query. We do
-  /// not expect to keep a full schema in memory, rather we expect to
-  /// instantiate the relevant schema objects based on the query. The
-  /// arena for these can be different from that for the PlanObjects,
-  /// though, so that a schema cache can have its own lifetime.
+/// Schema representation for use in query planning. All objects are
+/// arena allocated for the duration of planning the query. We do
+/// not expect to keep a full schema in memory, rather we expect to
+/// instantiate the relevant schema objects based on the query. The
+/// arena for these can be different from that for the PlanObjects,
+/// though, so that a schema cache can have its own lifetime.
 namespace facebook::verax {
-
 
 /// Represents constraints on a column value or intermediate result.
 struct Value {
@@ -32,25 +31,28 @@ struct Value {
   Value(const velox::Type* _type, float _cardinality)
       : type(_type), cardinality(_cardinality) {}
 
-  /// Returns the average byte size of a value when it occurs as an intermediate result without dictionary or other encoding.
+  /// Returns the average byte size of a value when it occurs as an intermediate
+  /// result without dictionary or other encoding.
   float byteSize() const;
 
   const velox::Type* FOLLY_NONNULL type;
   velox::variant min;
   velox::variant max;
 
-  // Count of distinct values. Is not exact and is used for estimating cardinalities of group bys or joins.
+  // Count of distinct values. Is not exact and is used for estimating
+  // cardinalities of group bys or joins.
   const float cardinality;
 
   // 0 means no nulls, 0.5 means half are null.
   float nullFraction{0};
 
-  // True if nulls may occur. 'false' means that plans that allow no nulls may be generated.
+  // True if nulls may occur. 'false' means that plans that allow no nulls may
+  // be generated.
   bool nullable{true};
 };
 
-  /// Describes order in an order by or index.
-  enum class OrderType {
+/// Describes order in an order by or index.
+enum class OrderType {
   kAscNullsFirst,
   kAscNullsLast,
   kDescNullsFirst,
@@ -105,7 +107,7 @@ struct Distribution {
       int32_t uniquePrefix = 0,
       int _spacing = 0)
       : distributionType(std::move(type)),
-	cardinality(cardinality),
+        cardinality(cardinality),
         partition(std::move(_partition)),
         order(std::move(_order)),
         orderType(std::move(_orderType)),
@@ -119,14 +121,17 @@ struct Distribution {
     return result;
   }
 
-  /// True if 'this' and 'other' have the same number/type of keys and same distribution type. Data is copartitioned if both sides have a 1:1 equality on all partitioning key columns.
+  /// True if 'this' and 'other' have the same number/type of keys and same
+  /// distribution type. Data is copartitioned if both sides have a 1:1 equality
+  /// on all partitioning key columns.
   bool isSamePartition(const Distribution& other) const;
 
   std::string toString() const;
 
   DistributionType distributionType;
 
-  // Number of rows 'this' applies to. This is the size in rows if 'this' occurs in a table or index.
+  // Number of rows 'this' applies to. This is the size in rows if 'this' occurs
+  // in a table or index.
   float cardinality;
 
   // Partitioning columns. The values of these columns determine which of
@@ -174,7 +179,9 @@ enum class RelType {
   kOrderBy
 };
 
-  /// Represents a relation (table) that is either physically stored or is the streaming output of a query operator. This has a distribution describing partitioning and data order and a set of columns describing the payload.
+/// Represents a relation (table) that is either physically stored or is the
+/// streaming output of a query operator. This has a distribution describing
+/// partitioning and data order and a set of columns describing the payload.
 struct Relation {
   Relation() = default;
 
@@ -197,7 +204,9 @@ struct Relation {
 struct SchemaTable;
 using SchemaTablePtr = SchemaTable*;
 
-  /// Represents a stored collection of rows. An index may have a uniqueness constraint over a set of columns, a partitioning and an ordering plus a set of payload columns.
+/// Represents a stored collection of rows. An index may have a uniqueness
+/// constraint over a set of columns, a partitioning and an ordering plus a set
+/// of payload columns.
 struct Index : public Relation {
   Index(
       Name _name,
@@ -249,13 +258,16 @@ struct IndexInfo {
   ColumnPtr schemaColumn(ColumnPtr keyValue) const;
 };
 
-    /// A table in a schema. The table may have multiple differently ordered and partitioned physical representations (indices). Not all indices need to contain all columns.
+/// A table in a schema. The table may have multiple differently ordered and
+/// partitioned physical representations (indices). Not all indices need to
+/// contain all columns.
 
 struct SchemaTable {
   SchemaTable(Name _name, const velox::RowTypePtr& _type)
       : name(_name), type(_type) {}
 
-  /// Adds an ide	ndex. The arguments set the corresponding members of a Distribution.
+  /// Adds an ide	ndex. The arguments set the corresponding members of a
+  /// Distribution.
   void addIndex(
       Name name,
       float cardinality,
@@ -273,33 +285,35 @@ struct SchemaTable {
   /// True if 'columns' match no more than one row.
   bool isUnique(PtrSpan<Column> columns);
 
-  /// Returns   uniqueness and cardinality information for a lookup on 'index' where 'columns' have an equality constraint.
+  /// Returns   uniqueness and cardinality information for a lookup on 'index'
+  /// where 'columns' have an equality constraint.
   IndexInfo indexInfo(IndexPtr index, PtrSpan<Column> columns);
 
-  /// Returns the best index to use for lookup where 'columns' have an equality constraint.
+  /// Returns the best index to use for lookup where 'columns' have an equality
+  /// constraint.
   IndexInfo indexByColumns(PtrSpan<Column> columns);
 
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
   const std::string name;
   const velox::RowTypePtr type;
 
-  // Lookup from name to column. 
+  // Lookup from name to column.
   std::unordered_map<std::string, ColumnPtr> columns;
 
   // All indices. Must contain at least one.
   std::vector<IndexPtr> indices;
 };
 
-  /// Represents a collection of tables. Normally filled in ad hoc given the set of tables referenced by a query.
-  class Schema {
+/// Represents a collection of tables. Normally filled in ad hoc given the set
+/// of tables referenced by a query.
+class Schema {
  public:
   Schema(Name _name, std::vector<SchemaTablePtr> tables);
 
-    /// Returns the table with 'name' or nullptr if not found.
-    SchemaTablePtr findTable(const std::string& name) const;
+  /// Returns the table with 'name' or nullptr if not found.
+  SchemaTablePtr findTable(const std::string& name) const;
 
-
-  private:
+ private:
   Name name;
   std::unordered_map<std::string, SchemaTablePtr> tables_;
 };

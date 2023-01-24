@@ -32,25 +32,25 @@ enum class PlanType {
   kFilter
 };
 
-
-  /// True if 'type' is an expression with a value.
-  inline bool isExprType(PlanType type) {
+/// True if 'type' is an expression with a value.
+inline bool isExprType(PlanType type) {
   return type == PlanType::kColumn || type == PlanType::kCall ||
       type == PlanType::kLiteral;
 }
 
-  /// Common superclass of all vertices of a query graph. This
-  /// includes tables, columns, expressions, derived tables etc. These
-  /// all have a unique small integer id. Ids are often to track
-  /// membership in PlanObjectSets. These stand for e.g. the columns
-  /// assigned by an operator or the tables in a partial plan.  Joins
-  /// are edges of the graph but do not have ids, rather, they are
-  /// identified by the ids of their end points. PlanObjects are created at the start of planning and are arena allocated to be all dropped when the planning is complete.
+/// Common superclass of all vertices of a query graph. This
+/// includes tables, columns, expressions, derived tables etc. These
+/// all have a unique small integer id. Ids are often to track
+/// membership in PlanObjectSets. These stand for e.g. the columns
+/// assigned by an operator or the tables in a partial plan.  Joins
+/// are edges of the graph but do not have ids, rather, they are
+/// identified by the ids of their end points. PlanObjects are created at the
+/// start of planning and are arena allocated to be all dropped when the
+/// planning is complete.
 class PlanObject {
-public:
-  PlanObject(PlanType _type) : type_(_type),
-			       id_(queryCtx()->newId(this)) {}
-  
+ public:
+  PlanObject(PlanType _type) : type_(_type), id_(queryCtx()->newId(this)) {}
+
   void operator delete(void* ptr) {
     LOG(FATAL) << "Plan objects are not deletable";
   }
@@ -62,7 +62,7 @@ public:
   PlanType type() const {
     return type_;
   }
-  
+
   /// Returns 'this' as T.
   template <typename T>
   T as() {
@@ -91,18 +91,18 @@ public:
     return fmt::format("#{}", id_);
   }
 
-private:
+ private:
   const PlanType type_;
   const int32_t id_;
 };
 
-  /// Set of PlanObjects. Uses the objects id() as an index into a bitmap.
+/// Set of PlanObjects. Uses the objects id() as an index into a bitmap.
 class PlanObjectSet {
  public:
   /// True if id of 'object' is in 'this'.
   bool contains(PlanObjectConstPtr object) const {
     return object->id() < bits_.size() * 64 &&
-      velox::bits::isBitSet(bits_.data(), object->id());
+        velox::bits::isBitSet(bits_.data(), object->id());
   }
 
   bool operator==(const PlanObjectSet& other) const;
@@ -113,12 +113,12 @@ class PlanObjectSet {
   bool empty() const {
     for (auto word : bits_) {
       if (word) {
-	return false;
+        return false;
       }
     }
     return true;
   }
-  
+
   /// Inserts id of 'object'.
   void add(PlanObjectPtr object) {
     auto id = object->id();
@@ -174,7 +174,8 @@ class PlanObjectSet {
     return result;
   }
 
-  /// Prnts the contents with ids and the string representation of the objects if 'names' is true.
+  /// Prnts the contents with ids and the string representation of the objects
+  /// if 'names' is true.
   std::string toString(bool names) const;
 
  private:
@@ -193,7 +194,6 @@ class PlanObjectSet {
 };
 
 } // namespace facebook::verax
-
 
 namespace std {
 template <>

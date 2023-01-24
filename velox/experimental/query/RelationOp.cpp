@@ -48,10 +48,7 @@ Distribution TableScan::outputDistribution(
     order.resize(numPrefix);
     orderType = index->distribution.orderType;
     orderType.resize(numPrefix);
-    replace(
-        toRangeCast<ColumnPtr>(order),
-        toRange(schemaColumns),
-        &columns[0]);
+    replace(toRangeCast<ColumnPtr>(order), toRange(schemaColumns), &columns[0]);
   }
   return Distribution(
       index->distribution.distributionType,

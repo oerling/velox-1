@@ -25,13 +25,13 @@
 
 namespace facebook::verax {
 
+/// Pointer to an arena allocated interned copy of a null terminated string.
+/// Used for identifiers. Allows comparing strings by comparing pointers.
+using Name = const char*;
 
-  /// Pointer to an arena allocated interned copy of a null terminated string. Used for identifiers. Allows comparing strings by comparing pointers. 
-  using Name = const char*;
-
-  /// Shorthand for a view on an array of T*
-  template <typename T>
-using PtrSpan = folly::Range<T* const *>;
+/// Shorthand for a view on an array of T*
+template <typename T>
+using PtrSpan = folly::Range<T* const*>;
 
 struct PlanObject;
 
@@ -48,14 +48,14 @@ struct PlanObjectPtrComparer {
 
 class Plan;
 
-  /// Context for making a query plan. Owns all memory associated to
-  /// planning, except for the input PlanNode tree. The result of
-  /// planning is also owned by 'this', so the planning result must be
-  /// copied into a non-owned target specific representation before
-  /// destroying 'this'. QueryGraphContext is not thread safe and may
-  /// be accessed from one thread at a time. Memory allocation
-  /// references this via a thread local through queryCtx().
-  class QueryGraphContext {
+/// Context for making a query plan. Owns all memory associated to
+/// planning, except for the input PlanNode tree. The result of
+/// planning is also owned by 'this', so the planning result must be
+/// copied into a non-owned target specific representation before
+/// destroying 'this'. QueryGraphContext is not thread safe and may
+/// be accessed from one thread at a time. Memory allocation
+/// references this via a thread local through queryCtx().
+class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
       : allocator_(allocator) {}
@@ -66,13 +66,16 @@ class Plan;
   /// pointers.
   Name toName(std::string_view str);
 
-  /// Returns a new unique id to use for 'object' and associates 'object' to this id. Tagging objects with integere ids is useful for efficiently representing sets of objects as bitmaps.
+  /// Returns a new unique id to use for 'object' and associates 'object' to
+  /// this id. Tagging objects with integere ids is useful for efficiently
+  /// representing sets of objects as bitmaps.
   int32_t newId(PlanObject* FOLLY_NONNULL object) {
     objects_.push_back(object);
     return objects_.size() - 1;
   }
 
-  /// Allocates 'size' bytes from the arena of 'this'. The allocation lives until free() is called on it or the arena is destroyed.
+  /// Allocates 'size' bytes from the arena of 'this'. The allocation lives
+  /// until free() is called on it or the arena is destroyed.
   void* allocate(size_t size) {
 #ifdef QG_USE_MALLOC
     return ::malloc(size);
@@ -81,7 +84,9 @@ class Plan;
 #endif
   }
 
-  /// Frees ptr, which must have been allocated with allocate() above. Calling this is not mandatory since objects from the arena get freed at latest when the arena is destroyed.
+  /// Frees ptr, which must have been allocated with allocate() above. Calling
+  /// this is not mandatory since objects from the arena get freed at latest
+  /// when the arena is destroyed.
   void free(void* ptr) {
 #ifdef QG_USE_MALLOC
     ::free(ptr);
@@ -106,28 +111,31 @@ class Plan;
     return contextPlan_;
   }
 
-  private:
+ private:
   velox::HashStringAllocator& allocator_;
 
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
 
-    // Set of interned copies of identifiers. insert() into this returns the canonical interned copy of any string. Lifetime is limited to 'allocator_'.
-    std::unordered_set<std::string_view> names_;
+  // Set of interned copies of identifiers. insert() into this returns the
+  // canonical interned copy of any string. Lifetime is limited to 'allocator_'.
+  std::unordered_set<std::string_view> names_;
 
-    // Set for deduplicating planObject trees.
-    std::unordered_set<PlanObjectPtr, PlanObjectPtrHasher, PlanObjectPtrComparer>
+  // Set for deduplicating planObject trees.
+  std::unordered_set<PlanObjectPtr, PlanObjectPtrHasher, PlanObjectPtrComparer>
       deduppedObjects_;
   Plan* FOLLY_NULLABLE contextPlan_{nullptr};
 };
 
-  /// Returns a mutable reference to the calling thread's QueryGraphContext.
-  inline QueryGraphContext*& queryCtx() {
+/// Returns a mutable reference to the calling thread's QueryGraphContext.
+inline QueryGraphContext*& queryCtx() {
   thread_local QueryGraphContext* context;
   return context;
 }
 
-  /// Declares 'destination' as a pointer to T, allocated from the thread's QueryGraphContext arena. The remaining arguments are passed to the constructor of T.
+/// Declares 'destination' as a pointer to T, allocated from the thread's
+/// QueryGraphContext arena. The remaining arguments are passed to the
+/// constructor of T.
 #define Declare(T, destination, ...)                                      \
   T* destination = reinterpret_cast<T*>(queryCtx()->allocate(sizeof(T))); \
   new (destination) T(__VA_ARGS__);
@@ -136,8 +144,9 @@ class Plan;
 /// arena allocated const chars.
 Name toName(const std::string& string);
 
-  /// STL compatible allocator that manages std:: containers allocated in the QueryGraphContext arena.
-  template <class T>
+/// STL compatible allocator that manages std:: containers allocated in the
+/// QueryGraphContext arena.
+template <class T>
 struct QGAllocator {
   using value_type = T;
 
@@ -159,8 +168,8 @@ struct QGAllocator {
   }
 };
 
-  // Forward declarations of common types and collections.
-  struct Expr;
+// Forward declarations of common types and collections.
+struct Expr;
 using ExprPtr = Expr*;
 struct Column;
 using ColumnPtr = Column*;
