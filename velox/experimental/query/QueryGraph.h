@@ -20,11 +20,15 @@
 
 #include "velox/core/PlanNode.h"
 
+/// Defines subclasses of PlanObject for describing the logical
+/// structure of queries. These are the constraints that guide
+/// generation of plan candidates. These are referenced from
+/// candidates but stay immutable acrosss the candidate
+/// generation. Sometimes new derived tables may be added for
+/// representing constraints on partial plans but otherwise these stay
+/// constant.
 namespace facebook::verax {
 
-/// Pointers are name <type>Ptr and defined to be raw pointers. We
-/// expect arena allocation with a whole areena freed after plan
-/// selection.
 /// The join structure is described as a tree of derived tables with
 /// base tables as leaves. Joins are described as join graph
 /// edges. Edges describe direction for non-inner joins. Scalar and
@@ -36,9 +40,7 @@ namespace facebook::verax {
 /// flag. The filter would be expresssed as a conjunct under the top
 /// derived table with x-exists or y-exists.
 
-struct Relation;
-using RelationPtr = Relation*;
-
+  /// Superclass for all expressions.
 struct Expr : public PlanObject {
   Expr(PlanType type, Value _value) : PlanObject(type), value(_value) {}
 
@@ -50,15 +52,17 @@ struct Expr : public PlanObject {
   // 'this' depends on none or multiple tables.
   PlanObjectPtr singleTable();
 
+  /// Returns all tables 'this' depends on.
   PlanObjectSet allTables() const;
-
-  PlanObjectSet equivTables() const;
 
   /// True if '&other == this' or is recursively equal with column
   /// leaves either same or in same equivalence.
   bool sameOrEqual(const Expr& other) const;
 
+  // The columns this depends on.
   PlanObjectSet columns;
+
+  // Type Constraints on the value of 'this'.
   Value value;
 };
 
@@ -68,18 +72,24 @@ PlanObjectPtr singleTable(PlanObjectPtr object);
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
 
-struct Literal : public Expr {
+  /// Represents a literal.
+  struct Literal : public Expr {
   Literal(Value value, velox::variant _literal)
       : Expr(PlanType::kLiteral, value), literal(_literal) {}
   velox::variant literal;
 };
 
+  /// Represents a column. A column is always defined by a relation, whether table or derived table.
 struct Column : public Expr {
   Column(Name _name, PlanObjectPtr _relation, Value value);
+
+  /// Asserts that 'this' and 'other' are joined on equality. This has a transitive effect, so if a and b are previously asserted equal and c is asserted equal to b, a and c are also equal.
   void equals(ColumnPtr other);
 
   Name name;
   PlanObjectPtr relation;
+
+  // Equivalence class. Lists all columns directly or indirectly asserted equal to 'this'.
   EquivalencePtr equivalence{nullptr};
 
   // If this is a column of a BaseTable, points to the corresponding
@@ -101,16 +111,19 @@ inline folly::Range<T*> toRangeCast(const std::vector<U, QGAllocator<U>>& v) {
       reinterpret_cast<T*>(const_cast<U*>(v.data())), v.size());
 }
 
+  /// A bit set that qualifies a function call. Represents which functions/kinds of functions are found inside the children of a function call.
 class FunctionSet {
  public:
   FunctionSet() : set_(0) {}
   FunctionSet(uint32_t set) : set_(set) {}
 
+  /// True if 'item' is in 'this'.
   bool contains(int32_t item) {
     return 0 != (set_ & (1UL << item));
   }
 
-  FunctionSet operator|(const FunctionSet& other) {
+  /// Unions 'this' and 'other' and returns the result.
+  FunctionSet operator|(const FunctionSet& other) const {
     return FunctionSet(set_ | other.set_);
   }
 
@@ -118,7 +131,8 @@ class FunctionSet {
   uint64_t set_;
 };
 
-struct Call : public Expr {
+  /// Represents a function call or a special form, any expression with subexpressions.
+  struct Call : public Expr {
   Call(
       PlanType _type,
       Name _func,
@@ -152,26 +166,12 @@ struct Call : public Expr {
 
 using CallPtr = Call*;
 
-struct Equivalence {
+  /// Represens a set of transitively equal columns.
+  struct Equivalence {
   ColumnVector columns;
-  ;
-  // Corresponds pairwise to 'exprs'. True if the Expr comes from an
-  // outer optional side key join and is therefore null or equal.
-  std::vector<bool> nullable;
 };
 
-struct FilteredColumn {
-  // The single column on which 'expr' depends.
-  ColumnPtr column;
-  // Filter normalized so that Column is leftmost argument if possible.
-  ExprPtr filter;
-  // e.g 0.2 for 1/5 passing.
-  float selectivity;
-};
-
-using FilteredColumnPtr = FilteredColumn*;
-
-  /// Represents one side of a join.
+  /// Represents one side of a join. See Join below for the meaning of the members.
 struct JoinSide {
   PlanObjectPtr table;
   const ExprVector& keys;
@@ -196,15 +196,7 @@ struct JoinSide {
 
 
 /// Represents a possibly directional equality join edge. 
-
-/// in the containing derived table. a.k can be used as a lookup key
-/// if b and c are placed to the left of a.  if left or right are
-/// semi, anti or optional, the join can only be placed after the
-/// inner side is placed. If neither side is optional, the edge is
-/// non-directional and whichever side is not placed can be added. If
-/// both sides are optional (full outer join) then the edge is
-/// non-directional.
-  /// [rightTable' is always set. 'leftTable' is nullptr if 'leftKeys' come from different tables. If so, 'this' must be non-inner and not full outer.
+  /// 'rightTable' is always set. 'leftTable' is nullptr if 'leftKeys' come from different tables. If so, 'this' must be non-inner and not full outer.
 struct Join {
   // Leading left side join keys.
   ExprVector leftKeys;
@@ -245,7 +237,10 @@ struct Join {
   // True if produces a result for left if no match on the right.
   bool rightNotExists{false};
 
+  //// Fills in 'lrFanout' and 'rlFanout', 'leftUnique', 'rightUnique'.
   void guessFanout();
+
+  /// True if inner join.
   bool isInner() const {
     return !leftOptional && !rightOptional && !rightExists && !rightNotExists;
   }
@@ -269,17 +264,20 @@ using JoinPtr = Join*;
 
 using JoinVector = std::vector<JoinPtr, QGAllocator<JoinPtr>>;
 
-struct BaseTable : public PlanObject {
+  /// Represents a reference to a table from a query. The There is one of these for each occurrence of the schema table. A TableScan references one baseTable but the same BaseTable can be referenced from many TableScans, for example if accessing different indices in a secondary to primary key lookup.
+  struct BaseTable : public PlanObject {
   BaseTable() : PlanObject(PlanType::kTable) {}
 
-  Name cname{nullptr};
+    // Correlation name, distinguishes between uses of the same schema table.
+    Name cname{nullptr};
 
   SchemaTablePtr schemaTable;
 
-  ColumnVector columns;
-  ColumnVector schemaColumns;
+    /// All columns referenced from 'schemaTable' under this correlation name. Different indices may have to be combined in different TableScans to cover 'columns'.
+    ColumnVector columns;
 
-  JoinVector joinedBy;
+    // All joins where 'this' is an end point.
+    JoinVector joinedBy;
 
   // Top level conjuncts on single columns and literals, column to the left.
   ExprVector columnFilters;
@@ -328,12 +326,14 @@ struct Aggregate : public Call {
 
 using AggregatePtr = Aggregate*;
 
-struct Aggregation;
+  struct Aggregation;
 using AggregationPtr = Aggregation*;
 
+  /// Represents an order by for a derived table.
 struct OrderBy : public Relation {
-  std::vector<ExprPtr> keys;
-
+  ExprVector keys;
+  OrderTypeVector orderTypes;
+  
   // Keys where the key expression is functionally dependent on
   // another key or keys. These can be late materialized or converted
   // to payload.
@@ -342,10 +342,12 @@ struct OrderBy : public Relation {
 
 using OrderByPtr = OrderBy*;
 
-struct DerivedTable : public PlanObject {
+  /// Represents a derived table, i.e. a select in a from clause. This is the basic unit of planning. Derived tables can be merged and split apart from other ones. Join types and orders are decided within each derived table. A derived table is likewise a reorderable unit inside its parent derived table. Joins can move between derived tables within limits, considering the semantics of e.g. group by.
+  struct DerivedTable : public PlanObject {
   DerivedTable() : PlanObject(PlanType::kDerivedTable) {}
 
-  Name cname{nullptr};
+    // Correlation name.
+    Name cname{nullptr};
 
   // Columns projected out. Visible in the enclosing query.
   ColumnVector columns;
@@ -353,7 +355,8 @@ struct DerivedTable : public PlanObject {
   // Exprs projected out.1:1 to 'columns'.
   ExprVector exprs;
 
-  JoinVector joinedBy;
+    // References all joins where 'this' is an end point.
+    JoinVector joinedBy;
 
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
@@ -381,7 +384,8 @@ struct DerivedTable : public PlanObject {
   // represents a build side join.
   PlanObjectSet importedExistences;
 
-  AggregationPtr aggregation{nullptr};
+    // Postprocessing clauses, group by, having, order by, limit, offset.
+    AggregationPtr aggregation{nullptr};
   ExprPtr having{nullptr};
   OrderByPtr orderBy{nullptr};
   int32_t limit{-1};
@@ -419,7 +423,8 @@ struct DerivedTable : public PlanObject {
       const PlanObjectSet& tables,
       const std::vector<PlanObjectSet>& existences);
 
-  bool hasTable(PlanObjectPtr table) {
+    //// True if 'table' is of 'this'.
+    bool hasTable(PlanObjectPtr table) {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
   }
 
@@ -434,12 +439,3 @@ using DerivedTablePtr = DerivedTable*;
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
 
 } // namespace facebook::verax
-
-namespace std {
-template <>
-struct hash<::facebook::verax::PlanObjectSet> {
-  size_t operator()(const ::facebook::verax::PlanObjectSet& set) const {
-    return set.hash();
-  }
-};
-} // namespace std

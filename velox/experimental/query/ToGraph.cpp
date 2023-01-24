@@ -223,7 +223,6 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
       renames_[pair.first] = column;
     }
     baseTable->columns = columns;
-    baseTable->schemaColumns = schemaColumns;
     baseTable->filterSelectivity = selection;
     currentSelect_->tables.push_back(baseTable);
     currentSelect_->tableSet.add(baseTable);

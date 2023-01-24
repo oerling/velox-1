@@ -80,14 +80,7 @@ public:
     return PtrSpan<PlanObject>(nullptr, nullptr);
   }
 
-  template <typename Func>
-  void preorderVisit(Func func) {
-    func(this);
-    for (auto child : children()) {
-      child->preorderVisit(func);
-    }
-  }
-
+  /// Returns true if 'this' is an expression with a value.
   virtual bool isExpr() const {
     return false;
   }
@@ -103,6 +96,7 @@ private:
   const int32_t id_;
 };
 
+  /// Set of PlanObjects. Uses the objects id() as an index into a bitmap.
 class PlanObjectSet {
  public:
   /// True if id of 'object' is in 'this'.
@@ -199,3 +193,13 @@ class PlanObjectSet {
 };
 
 } // namespace facebook::verax
+
+
+namespace std {
+template <>
+struct hash<::facebook::verax::PlanObjectSet> {
+  size_t operator()(const ::facebook::verax::PlanObjectSet& set) const {
+    return set.hash();
+  }
+};
+} // namespace std

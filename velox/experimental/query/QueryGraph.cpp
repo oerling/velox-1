@@ -352,20 +352,6 @@ PlanObjectSet Expr::allTables() const {
   return set;
 }
 
-PlanObjectSet Expr::equivTables() const {
-  PlanObjectSet set;
-  columns.forEach([&](PlanObjectPtr object) {
-    auto column = object->as<ColumnPtr>();
-    set.add(column->relation);
-    if (column->equivalence) {
-      for (auto equivalent : column->equivalence->columns) {
-        set.add(equivalent->relation);
-      }
-    }
-  });
-  return set;
-}
-
 PlanObjectSet allTables(PtrSpan<Expr> exprs) {
   PlanObjectSet all;
   for (auto expr : exprs) {
@@ -705,9 +691,7 @@ float combine(float card, int32_t ith, float otherCard) {
   return card / otherCard;
 }
 
-IndexInfo SchemaTable::indexInfo(
-    IndexPtr index,
-    PtrSpan<Column> columns) {
+IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns) {
   IndexInfo info;
   info.index = index;
   info.scanCardinality = index->distribution.cardinality;

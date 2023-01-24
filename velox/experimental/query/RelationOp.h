@@ -19,16 +19,15 @@
 #include "velox/experimental/query/QueryGraph.h"
 #include "velox/experimental/query/Schema.h"
 
+/// Plan candidates.
+/// A candidate plan is constructed based  on the join graph/derived table
+/// tree.
+
 namespace facebook::verax {
 
 struct Plan;
 using PlanPtr = Plan*;
 struct PlanState;
-
-// Plan candidates.
-//
-// A candidate plan is constructed from  the above join graph/derived table
-// tree specification.
 
 // A physical operation on a relation. Has a per-row cost, a per-row
 // fanout and a one-time setup cost. For example, a hash join probe
@@ -42,7 +41,6 @@ struct PlanState;
 // cost is a function of the index size and the input spacing and
 // input cardinality. A lookup that hits densely is cheaper than one
 // that hits sparsely. An index lookup has no setup cost.
-
 struct Cost {
   // Cardinality of the output of the left deep input tree. 1 for a leaf
   // scan.
@@ -75,6 +73,12 @@ struct Cost {
   std::string toString(bool detail, bool isUnit = false) const;
 };
 
+/// Common superclass of all elements of candidate plans. The
+/// immutable Exprs, Columns and BaseTables in the query graph are
+/// referenced from these. RelationOp instances are also arena
+/// allocated but are reference counted so that no longer interesting
+/// candidate plans can be freed, since a very large number of these
+/// could be generated.
 struct RelationOp : public Relation {
   RelationOp(
       RelType type,
@@ -98,6 +102,8 @@ struct RelationOp : public Relation {
     return cost_.inputCardinality * cost_.fanout;
   }
 
+  /// Fills in 'cost_' after construction. Depends on 'input' and is defined for
+  /// each subclass.
   virtual void setCost(const PlanState& input);
 
   virtual std::string toString(bool recursive, bool detail) const {
@@ -135,9 +141,7 @@ static inline void intrusive_ptr_release(RelationOp* op) {
   }
 }
 
-struct Index;
-using IndexPtr = Index*;
-
+/// Represents a full table scan or an index lookup.
 struct TableScan : public RelationOp {
   TableScan(
       RelationOpPtr input,
@@ -155,22 +159,26 @@ struct TableScan : public RelationOp {
             std::move(_distribution),
             std::move(columns)),
         baseTable(table),
-    index(_index),
-    keys(std::move(lookupKeys)),
-    joinType(joinType),
-    joinFilter(joinFilter) {
+        index(_index),
+        keys(std::move(lookupKeys)),
+        joinType(joinType),
+        joinFilter(joinFilter) {
     cost_.fanout = fanout;
   }
 
   /// Columns of base table available in 'index'.
   static PlanObjectSet availableColumns(BaseTablePtr baseTable, IndexPtr index);
 
+  /// Returns the distribution given the table, index and columns. If
+  /// partitioning/ordering columns are in the output columns, the
+  /// distribution reflects the distribution of the index.
   static Distribution outputDistribution(
       BaseTablePtr baseTable,
       IndexPtr index,
       const ColumnVector& columns);
 
   void setCost(const PlanState& input) override;
+
   std::string toString(bool recursive, bool detail) const override;
 
   // The base table reference. May occur in multiple scans if the base
@@ -193,9 +201,12 @@ struct TableScan : public RelationOp {
   // If this is a lookup, 'joinType' can  be inner, left or anti.
   velox::core::JoinType joinType{velox::core::JoinType::kInner};
 
+  // If this is a non-inner join,  extra filter for the join.
   ExprPtr joinFilter{nullptr};
 };
 
+/// Represents a repartition, i.e. query fragment boundary. The distribution of
+/// the output is '_distribution'.
 struct Repartition : public RelationOp {
   Repartition(
       RelationOpPtr input,
@@ -214,17 +225,15 @@ struct Repartition : public RelationOp {
 
 using RepartitionPtr = Repartition*;
 
+/// Represents a usually multitable filter not associated with any non-inner
+/// join. Non-equality constraints over inner joins become Filters.
 struct Filter : public RelationOp {
   ExprPtr expr;
 };
 
-struct Project : public RelationOp {
-  // Exprs. Output description is inherited from Relation.
-  ExprVector exprs;
-};
-
 enum class JoinMethod { kHash, kMerge };
 
+/// Represents a hash or merge join.
 struct JoinOp : public RelationOp {
   JoinOp(
       JoinMethod _method,
@@ -284,6 +293,7 @@ struct HashBuild : public RelationOp {
 
 using HashBuildPtr = HashBuild*;
 
+/// Represents aggregation with or without grouping.
 struct Aggregation : public RelationOp {
   Aggregation(RelationOpPtr input, ExprVector _grouping)
       : RelationOp(
@@ -292,6 +302,7 @@ struct Aggregation : public RelationOp {
             input ? input->distribution : Distribution()),
         grouping(std::move(_grouping)) {}
 
+  // Grouping keys
   ExprVector grouping;
 
   // Keys where the key expression is functionally dependent on

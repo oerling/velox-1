@@ -18,7 +18,8 @@
 #include "velox/common/base/SimdUtil.h"
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/RelationOp.h"
-
+/// Planning-time data structures. Represent the state of the planning process
+/// plus utilities.
 namespace facebook::verax {
 
 struct ITypedExprHasher {
@@ -56,10 +57,15 @@ using BuildSet = std::vector<HashBuildPtr>;
 struct Plan {
   Plan(RelationOpPtr op, const PlanState& state);
 
+  /// True if 'state' has a lower cost than 'this'.
   bool isStateBetter(const PlanState& state) const;
 
+  // Root of the plan tree.
   RelationOpPtr op;
 
+  // Total cost of 'op'. Setup costs and memory sizes are added up. The unit
+  // cost is the sum of the unit costs of the left-deep branch of 'op', where
+  // each unit cost is multiplied by the product of the fanouts of its inputs.
   Cost cost;
 
   // The tables from original join graph that are included in this
@@ -83,6 +89,8 @@ struct Plan {
   std::string toString(bool detail) const;
 };
 
+/// The set of plans produced for a set of tables and columns. The plans may
+/// have different output orders and  distributions.
 struct PlanSet {
   // Interesting equivalent plans.
   std::vector<std::unique_ptr<Plan>> plans;
@@ -104,7 +112,7 @@ struct PlanSet {
   PlanPtr addPlan(RelationOpPtr plan, PlanState& state);
 };
 
-  // Represents the next table/derived table to join. May consist of several
+// Represents the next table/derived table to join. May consist of several
 // tables for a bushy build side.
 struct JoinCandidate {
   JoinCandidate() = default;
@@ -168,6 +176,8 @@ struct NextJoin {
 
 class Optimization;
 
+/// Tracks the set of tables / columns that have been placed or are till needed
+/// when constructing a partial plan.
 struct PlanState {
   PlanState(Optimization& optimization, DerivedTablePtr dt)
       : optimization(optimization), dt(dt) {}
@@ -182,7 +192,7 @@ struct PlanState {
   // The tables that have been placed so far.
   PlanObjectSet placed;
 
-  // The columns that have a value.
+  // The columns that have a value from placed tables.
   PlanObjectSet columns;
 
   // The columns that need a value at the end of the plan. A dt can
@@ -192,10 +202,15 @@ struct PlanState {
   // lookup keys for an index based derived table.
   PlanObjectSet input;
 
+  // The total cost for the PlanObjects placed thus far.
   Cost cost;
 
+  // All the hash join builds in any branch of the partial plan constructed so
+  // far.
   BuildSet builds;
 
+  // True if we should backtrack when 'costs' exceeds the best cost with shuffle
+  // from already generated plans.
   bool hasCutoff{true};
 
   // Interesting completed plans for the dt being planned. For
@@ -207,9 +222,13 @@ struct PlanState {
   mutable std::unordered_map<PlanObjectSet, PlanObjectSet>
       downstreamPrecomputed;
 
+  /// Updates 'cost_' to reflect 'op' being placed on top of the partial plan.
   void addCost(RelationOp& op);
+
+  /// Adds 'added' to all hash join builds.
   void addBuilds(const BuildSet& added);
-  /// The set of columns referenced in unplaced joins/filters union
+
+  /// Returns the  set of columns referenced in unplaced joins/filters union
   /// targetColumns. Gets smaller as more tables are placed.
   PlanObjectSet downstreamColumns() const;
 
@@ -231,6 +250,7 @@ struct PlanState {
   }
 };
 
+/// A scoped guard that restores fields of PlanState on destruction.
 struct StateSaver {
  public:
   StateSaver(PlanState& state)
@@ -255,6 +275,12 @@ struct StateSaver {
   const int32_t numBuilds_;
 };
 
+/// Key for collection of memoized partial plans. These are all made for hash
+/// join builds with different cardinality reducing joins pushed down. The first
+/// table is the table for which the key represents the build side. The 'tables'
+/// set is the set of reducing joins applied to 'firstTable', including the
+/// table itself. 'existences' is another set of reducing joins that are
+/// semijoined to the join of 'tables' in order to restrict the build side.
 struct MemoKey {
   bool operator==(const MemoKey& other) const;
   size_t hash() const;
