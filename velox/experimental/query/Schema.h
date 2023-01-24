@@ -105,7 +105,7 @@ struct Distribution {
       ExprVector _order = {},
       OrderTypeVector _orderType = {},
       int32_t uniquePrefix = 0,
-      int _spacing = 0)
+      float _spacing = 0)
       : distributionType(std::move(type)),
         cardinality(cardinality),
         partition(std::move(_partition)),

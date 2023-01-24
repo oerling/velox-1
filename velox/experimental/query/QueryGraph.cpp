@@ -18,6 +18,7 @@
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/common/base/SimdUtil.h"
 
 namespace facebook::verax {
 
@@ -124,11 +125,9 @@ size_t PlanObjectSet::hash() const {
   // The hash is a mix of the hashes of all non-zero words.
   size_t hash = 123;
   for (auto i = 0; i < bits_.size(); ++i) {
-    if (bits_[i]) {
-      hash += hash * i + folly::hasher<uint64_t>()(bits_[i]);
-    }
+    hash = velox::simd::crc32U64(hash, bits_[i]);
   }
-  return hash;
+  return hash * hash;
 }
 
 void PlanObjectSet::unionColumns(ExprPtr expr) {

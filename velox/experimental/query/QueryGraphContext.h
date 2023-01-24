@@ -17,9 +17,11 @@
 #pragma once
 
 #include "velox/common/memory/HashStringAllocator.h"
+#include "velox/experimental/query/ArenaCache.h"
 #include "velox/core/PlanNode.h"
 
 //#define QG_USE_MALLOC
+#define QG_CACHE_ARENA
 
 /// Thread local context and utilities for query planning.
 
@@ -58,7 +60,7 @@ class Plan;
 class QueryGraphContext {
  public:
   QueryGraphContext(velox::HashStringAllocator& allocator)
-      : allocator_(allocator) {}
+    : allocator_(allocator), cache_(allocator_) {}
 
   /// Returns the interned representation of 'str', i.e. Returns a
   /// pointer to a canonical null terminated const char* with the same
@@ -79,6 +81,8 @@ class QueryGraphContext {
   void* allocate(size_t size) {
 #ifdef QG_USE_MALLOC
     return ::malloc(size);
+#elif defined(QG_CACHE_ARENA)
+    return cache_.allocate(size);
 #else
     return allocator_.allocate(size)->begin();
 #endif
@@ -90,6 +94,8 @@ class QueryGraphContext {
   void free(void* ptr) {
 #ifdef QG_USE_MALLOC
     ::free(ptr);
+#elif defined(QG_CACHE_ARENA)
+    cache_.free(ptr);
 #else
     allocator_.free(velox::HashStringAllocator::headerOf(ptr));
 #endif
@@ -113,7 +119,8 @@ class QueryGraphContext {
 
  private:
   velox::HashStringAllocator& allocator_;
-
+  ArenaCache cache_;
+  
   // PlanObjects are stored at the index given by their id.
   std::vector<PlanObjectPtr> objects_;
 
