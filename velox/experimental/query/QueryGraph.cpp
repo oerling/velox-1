@@ -15,10 +15,10 @@
  */
 
 #include "velox/experimental/query/QueryGraph.h"
+#include "velox/common/base/SimdUtil.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
-#include "velox/common/base/SimdUtil.h"
 
 namespace facebook::verax {
 

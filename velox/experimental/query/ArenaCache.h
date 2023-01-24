@@ -17,8 +17,8 @@
 #pragma once
 
 #include <vector>
-#include "velox/common/memory/HashStringAllocator.h"
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/memory/HashStringAllocator.h"
 
 namespace facebook::verax {
 
