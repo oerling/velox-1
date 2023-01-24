@@ -3148,14 +3148,19 @@ TEST_F(ExprTest, maskErrorByNull) {
        makeNullableFlatVector<int32_t>(
            {std::nullopt, 10, std::nullopt, 10, std::nullopt, 10})});
 
-  auto resultAB = evaluate("if (c2 is null, 10, CAST(null as BIGINT))  + (c0 / c1)", data);
-  auto resultBA = evaluate("(c0 / c1) + if (c2 is null, 10, CAST(null as BIGINT))", data);
+  auto resultAB =
+      evaluate("if (c2 is null, 10, CAST(null as BIGINT))  + (c0 / c1)", data);
+  auto resultBA =
+      evaluate("(c0 / c1) + if (c2 is null, 10, CAST(null as BIGINT))", data);
 
   assertEqualVectors(resultAB, resultBA);
   functions::test::FunctionBaseTest::assertUserError(
       [&]() { evaluate("(c0 / c1) + 10", data); }, "division by zero");
   functions::test::FunctionBaseTest::assertUserError(
-      [&]() { evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, CAST(null as BIGINT)))", data); },
+      [&]() {
+        evaluate(
+            "(c0 / c1) + (c0 + if(c1 = 0, 10, CAST(null as BIGINT)))", data);
+      },
       "division by zero");
 
   // Make non null flat input to invoke flat no null path for a subtree.
