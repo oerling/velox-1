@@ -212,10 +212,20 @@ class MapFunction : public exec::VectorFunction {
       const SelectivityVector& rows) const {
     VELOX_CHECK_GE(keys->size(), rows.end());
     VELOX_CHECK_GE(values->size(), rows.end());
-    return rows.testSelected([&](vector_size_t row) {
-      return keys->offsetAt(row) == values->offsetAt(row) &&
-          keys->sizeAt(row) == values->sizeAt(row);
-    });
+    // the fast path takes a reference to the keys and values and the
+    // offsets and sizes from keys. This is valid only if the keys and
+    // values align for all rows for both size and offset. Anything
+    // else will break canonicalize().
+    if (keys->size() != values->size()) {
+      return false;
+    }
+    for (auto row = 0; row < keys->size(); ++row) {
+      if (keys->offsetAt(row) != values->offsetAt(row) ||
+          keys->offsetAt(row) != values->sizeAt(row)) {
+        return false;
+      }
+    }
+    return true;
   }
 };
 } // namespace
