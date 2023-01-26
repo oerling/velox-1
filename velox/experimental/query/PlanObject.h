@@ -74,7 +74,6 @@ class PlanObject {
     return reinterpret_cast<const T*>(this);
   }
 
-  
   /// Returns a view on children, e.g. arguments of a function call.
   virtual PtrSpan<PlanObject> children() const {
     return PtrSpan<PlanObject>(nullptr, nullptr);
@@ -173,7 +172,6 @@ class PlanObjectSet {
     });
   }
 
-  
   /// Returns the objects corresponding to ids in 'this' as a vector of T.
   template <typename T = PlanObjectPtr>
   std::vector<T> objects() const {

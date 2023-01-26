@@ -167,7 +167,9 @@ struct TableScan : public RelationOp {
   }
 
   /// Columns of base table available in 'index'.
-  static PlanObjectSet availableColumns(const BaseTable* baseTable, IndexPtr index);
+  static PlanObjectSet availableColumns(
+      const BaseTable* baseTable,
+      IndexPtr index);
 
   /// Returns the distribution given the table, index and columns. If
   /// partitioning/ordering columns are in the output columns, the

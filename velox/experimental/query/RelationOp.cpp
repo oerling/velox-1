@@ -23,7 +23,7 @@ namespace facebook::verax {
 
 // static
 Distribution TableScan::outputDistribution(
-					   const BaseTable* baseTable,
+    const BaseTable* baseTable,
     IndexPtr index,
     const ColumnVector& columns) {
   auto schemaColumns =
@@ -33,16 +33,11 @@ Distribution TableScan::outputDistribution(
   ExprVector order;
   OrderTypeVector orderType;
   // if all partitioning columns are projected, the output is partitioned.
-  if (isSubset(
-	       index->distribution().partition,
-	       schemaColumns)) {
+  if (isSubset(index->distribution().partition, schemaColumns)) {
     partition = index->distribution().partition;
-    replace(
-	    partition, schemaColumns, columns.data());
+    replace(partition, schemaColumns, columns.data());
   }
-  auto numPrefix = prefixSize(
-			      index->distribution().order,
-			      schemaColumns);
+  auto numPrefix = prefixSize(index->distribution().order, schemaColumns);
   if (numPrefix > 0) {
     order = index->distribution().order;
     order.resize(numPrefix);

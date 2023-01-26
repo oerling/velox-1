@@ -212,9 +212,8 @@ void Column::equals(ColumnPtr other) const {
 }
 
 std::string Column::toString() const {
-  Name cname = !relation ? ""
-      : relation->type() == PlanType::kTable
-      ? relation->as<BaseTable>()->cname
+  Name cname = !relation                     ? ""
+      : relation->type() == PlanType::kTable ? relation->as<BaseTable>()->cname
       : relation->type() == PlanType::kDerivedTable
       ? relation->as<DerivedTable>()->cname
       : "--";
@@ -284,8 +283,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
   switch (type()) {
     case PlanType::kColumn:
       return as<Column>()->equivalence &&
-          as<Column>()->equivalence ==
-          other.as<Column>()->equivalence;
+          as<Column>()->equivalence == other.as<Column>()->equivalence;
     case PlanType::kAggregate: {
       auto a = reinterpret_cast<const Aggregate*>(this);
       auto b = reinterpret_cast<const Aggregate*>(&other);
@@ -307,8 +305,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
         return false;
       }
       for (auto i = 0; i < numArgs; ++i) {
-        if (as<Call>()->args[i]->sameOrEqual(
-                *other.as<Call>()->args[i])) {
+        if (as<Call>()->args[i]->sameOrEqual(*other.as<Call>()->args[i])) {
           return false;
         }
       }
@@ -560,7 +557,8 @@ void DerivedTable::import(
     importedExistences.unionSet(exists);
     auto existsJoin = makeExists(firstTable, exists);
     joins.push_back(existsJoin);
-    std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>> existsTables;
+    std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>>
+        existsTables;
     exists.forEach([&](auto object) { existsTables.push_back(object); });
     if (existsTables.size() > 1) {
       // There is a join on the right of exists. Needs its own dt.
@@ -690,7 +688,8 @@ float combine(float card, int32_t ith, float otherCard) {
   return card / otherCard;
 }
 
-IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns) const {
+IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
+    const {
   IndexInfo info;
   info.index = index;
   info.scanCardinality = index->distribution().cardinality;

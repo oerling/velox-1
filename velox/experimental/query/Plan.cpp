@@ -235,7 +235,9 @@ float startingScore(PlanObjectConstPtr table, DerivedTablePtr dt) {
   return 10;
 }
 
-std::pair<PlanObjectConstPtr, float> otherTable(JoinPtr join, PlanObjectConstPtr table) {
+std::pair<PlanObjectConstPtr, float> otherTable(
+    JoinPtr join,
+    PlanObjectConstPtr table) {
   return join->leftTable == table && !join->leftOptional
       ? std::pair<PlanObjectConstPtr, float>{join->rightTable, join->lrFanout}
       : join->rightTable == table && !join->rightOptional && !join->rightExists
@@ -540,7 +542,9 @@ void Optimization::addPostprocess(
   }
 }
 
-std::vector<IndexPtr> chooseLeafIndex(const BaseTable* table, DerivedTablePtr dt) {
+std::vector<IndexPtr> chooseLeafIndex(
+    const BaseTable* table,
+    DerivedTablePtr dt) {
   return {table->schemaTable->indices[0]};
 }
 
@@ -687,7 +691,8 @@ void Optimization::joinByIndex(
     }
 
     ColumnVector columns;
-    c.forEach([&](PlanObjectConstPtr o) { columns.push_back(o->as<Column>()); });
+    c.forEach(
+        [&](PlanObjectConstPtr o) { columns.push_back(o->as<Column>()); });
 
     Declare(
         TableScan,
@@ -883,8 +888,7 @@ void Optimization::addJoin(
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
   downstream.forEach([&](PlanObjectConstPtr object) {
-    if (position(index->columns(), *object->as<Column>()->schemaColumn) >=
-        0) {
+    if (position(index->columns(), *object->as<Column>()->schemaColumn) >= 0) {
       result.push_back(object->as<Column>());
     }
   });

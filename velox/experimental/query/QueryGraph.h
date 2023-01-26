@@ -109,15 +109,14 @@ inline folly::Range<T*> toRange(const std::vector<T, QGAllocator<T>>& v) {
   return folly::Range<T const*>(v.data(), v.size());
 }
 
-  template <typename T>
-  inline   folly::Range<const T**> asMutableRange(void* ptr, int32_t size) {
-    return folly::Range<const T**>(reinterpret_cast<const T**>(ptr), size);
-  }
-  
+template <typename T>
+inline folly::Range<const T**> asMutableRange(void* ptr, int32_t size) {
+  return folly::Range<const T**>(reinterpret_cast<const T**>(ptr), size);
+}
+
 template <typename T, typename U>
 inline PtrSpan<T> toRangeCast(U v) {
-  return PtrSpan<T>(
-      reinterpret_cast<const T* const *>(v.data()), v.size());
+  return PtrSpan<T>(reinterpret_cast<const T* const*>(v.data()), v.size());
 }
 
 /// A bit set that qualifies a function call. Represents which functions/kinds
@@ -169,7 +168,8 @@ struct Call : public Expr {
   FunctionSet functions;
 
   PtrSpan<PlanObject> children() const override {
-    return folly::Range<const PlanObject* const*>(reinterpret_cast<const PlanObject* const*>(args.data()), args.size());
+    return folly::Range<const PlanObject* const*>(
+        reinterpret_cast<const PlanObject* const*>(args.data()), args.size());
   }
 
   std::string toString() const override;

@@ -45,7 +45,8 @@ struct PlanObjectPtrHasher {
 };
 
 struct PlanObjectPtrComparer {
-  bool operator()(const PlanObjectConstPtr& lhs, const PlanObjectConstPtr& rhs) const;
+  bool operator()(const PlanObjectConstPtr& lhs, const PlanObjectConstPtr& rhs)
+      const;
 };
 
 class Plan;
@@ -115,7 +116,6 @@ class QueryGraphContext {
     return objects_[id];
   }
 
-  
   /// Returns the top level plan being processed when printing operator trees.
   /// If non-null, allows showing percentages.
   Plan*& contextPlan() {
