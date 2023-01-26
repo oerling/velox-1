@@ -50,7 +50,7 @@ struct Expr : public PlanObject {
 
   // Returns the single base or derived table 'this' depends on, nullptr if
   // 'this' depends on none or multiple tables.
-  PlanObjectPtr singleTable();
+  PlanObjectConstPtr singleTable() const;
 
   /// Returns all tables 'this' depends on.
   PlanObjectSet allTables() const;
@@ -67,7 +67,7 @@ struct Expr : public PlanObject {
 };
 
 /// If 'object' is an Expr, returns Expr::singleTable, else nullptr.
-PlanObjectPtr singleTable(PlanObjectPtr object);
+PlanObjectConstPtr singleTable(PlanObjectConstPtr object);
 
 struct Equivalence;
 using EquivalencePtr = Equivalence*;
@@ -87,32 +87,37 @@ struct Column : public Expr {
   /// Asserts that 'this' and 'other' are joined on equality. This has a
   /// transitive effect, so if a and b are previously asserted equal and c is
   /// asserted equal to b, a and c are also equal.
-  void equals(ColumnPtr other);
+  void equals(ColumnPtr other) const;
 
   Name name;
   PlanObjectPtr relation;
 
   // Equivalence class. Lists all columns directly or indirectly asserted equal
   // to 'this'.
-  EquivalencePtr equivalence{nullptr};
+  mutable EquivalencePtr equivalence{nullptr};
 
   // If this is a column of a BaseTable, points to the corresponding
   // column in the SchemaTable. Used for matching with
   // ordering/partitioning columns in the SchemaTable.
-  Column* schemaColumn{nullptr};
+  ColumnPtr schemaColumn{nullptr};
 
   std::string toString() const override;
 };
 
 template <typename T>
 inline folly::Range<T*> toRange(const std::vector<T, QGAllocator<T>>& v) {
-  return folly::Range<T*>(const_cast<T*>(v.data()), v.size());
+  return folly::Range<T const*>(v.data(), v.size());
 }
 
+  template <typename T>
+  inline   folly::Range<const T**> asMutableRange(void* ptr, int32_t size) {
+    return folly::Range<const T**>(reinterpret_cast<const T**>(ptr), size);
+  }
+  
 template <typename T, typename U>
-inline folly::Range<T*> toRangeCast(const std::vector<U, QGAllocator<U>>& v) {
-  return folly::Range<T*>(
-      reinterpret_cast<T*>(const_cast<U*>(v.data())), v.size());
+inline PtrSpan<T> toRangeCast(U v) {
+  return PtrSpan<T>(
+      reinterpret_cast<const T* const *>(v.data()), v.size());
 }
 
 /// A bit set that qualifies a function call. Represents which functions/kinds
@@ -164,13 +169,13 @@ struct Call : public Expr {
   FunctionSet functions;
 
   PtrSpan<PlanObject> children() const override {
-    return toRangeCast<PlanObjectPtr>(args);
+    return folly::Range<const PlanObject* const*>(reinterpret_cast<const PlanObject* const*>(args.data()), args.size());
   }
 
   std::string toString() const override;
 };
 
-using CallPtr = Call*;
+using CallPtr = const Call*;
 
 /// Represens a set of transitively equal columns.
 struct Equivalence {
@@ -180,7 +185,7 @@ struct Equivalence {
 /// Represents one side of a join. See Join below for the meaning of the
 /// members.
 struct JoinSide {
-  PlanObjectPtr table;
+  PlanObjectConstPtr table;
   const ExprVector& keys;
   const bool isOptional;
   const bool isExists;
@@ -210,8 +215,8 @@ struct Join {
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
   ExprVector rightKeys;
 
-  PlanObjectPtr leftTable{nullptr};
-  PlanObjectPtr rightTable{nullptr};
+  PlanObjectConstPtr leftTable{nullptr};
+  PlanObjectConstPtr rightTable{nullptr};
 
   // 'rightKeys' select max 1 'leftTable' row.
   bool leftUnique{false};
@@ -262,7 +267,7 @@ struct Join {
 
   // Returns the join side info for 'table'. If 'other' is set, returns the
   // other side.
-  const JoinSide sideOf(PlanObjectPtr side, bool other = false) const;
+  const JoinSide sideOf(PlanObjectConstPtr side, bool other = false) const;
 
   std::string toString() const;
 };
@@ -336,7 +341,7 @@ struct Aggregate : public Call {
   bool isAccumulator;
 };
 
-using AggregatePtr = Aggregate*;
+using AggregatePtr = const Aggregate*;
 
 struct Aggregation;
 using AggregationPtr = Aggregation*;
@@ -378,7 +383,7 @@ struct DerivedTable : public PlanObject {
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
   // 'filter' of BaseTable.
-  std::vector<PlanObjectPtr, QGAllocator<PlanObjectPtr>> tables;
+  std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>> tables;
 
   // Repeats the contents of 'tables'. Used for membership check. A DerivedTable
   // can be a subset of another, for example when planning a join for a build
@@ -436,12 +441,12 @@ struct DerivedTable : public PlanObject {
   /// 'tables' and 'existences'.
   void import(
       const DerivedTable& super,
-      PlanObjectPtr firstTable,
+      PlanObjectConstPtr firstTable,
       const PlanObjectSet& tables,
       const std::vector<PlanObjectSet>& existences);
 
   //// True if 'table' is of 'this'.
-  bool hasTable(PlanObjectPtr table) {
+  bool hasTable(PlanObjectConstPtr table) {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
   }
 

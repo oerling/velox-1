@@ -22,11 +22,9 @@
 namespace facebook::verax {
 
 template <typename T, typename U>
-bool isSubset(folly::Range<T*> subset, folly::Range<U*> superset) {
+bool isSubset(const T& subset, const U& superset) {
   for (auto item : subset) {
-    if (std::find(
-            superset.begin(), superset.end(), reinterpret_cast<U>(item)) ==
-        superset.end()) {
+    if (std::find(superset.begin(), superset.end(), item) == superset.end()) {
       return false;
     }
   }
@@ -34,11 +32,10 @@ bool isSubset(folly::Range<T*> subset, folly::Range<U*> superset) {
 }
 
 // Returns how many leading members of 'ordered' are covered by 'set'
-template <typename T, typename U>
-int32_t prefixSize(folly::Range<T*> ordered, folly::Range<U*> set) {
+template <typename Ordered, typename Set>
+int32_t prefixSize(Ordered ordered, Set set) {
   for (auto i = 0; i < ordered.size(); ++i) {
-    if (std::find(set.begin(), set.end(), reinterpret_cast<U>(ordered[i])) ==
-        set.end()) {
+    if (std::find(set.begin(), set.end(), ordered[i]) == set.end()) {
       return i;
     }
   }
@@ -47,11 +44,8 @@ int32_t prefixSize(folly::Range<T*> ordered, folly::Range<U*> set) {
 
 // Replaces each element of 'set' that matches an element of 'originals' with
 // the corresponding element of 'replaceWith'.
-template <typename T>
-void replace(
-    folly::Range<T*> set,
-    folly::Range<T*> originals,
-    T const* replaceWith) {
+template <typename Set, typename Old, typename New>
+void replace(Set& set, Old& originals, New replaceWith) {
   for (auto& element : set) {
     auto it = std::find(originals.begin(), originals.end(), element);
     if (it == originals.end()) {

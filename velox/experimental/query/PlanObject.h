@@ -63,18 +63,18 @@ class PlanObject {
     return type_;
   }
 
-  /// Returns 'this' as T.
   template <typename T>
-  T as() {
-    return reinterpret_cast<T>(this);
+  T* as2() {
+    return reinterpret_cast<T*>(this);
   }
 
   /// Returns 'this' as const T.
   template <typename T>
-  const T as() const {
-    return reinterpret_cast<const T>(this);
+  const T* as2() const {
+    return reinterpret_cast<const T*>(this);
   }
 
+  
   /// Returns a view on children, e.g. arguments of a function call.
   virtual PtrSpan<PlanObject> children() const {
     return PtrSpan<PlanObject>(nullptr, nullptr);
@@ -120,7 +120,7 @@ class PlanObjectSet {
   }
 
   /// Inserts id of 'object'.
-  void add(PlanObjectPtr object) {
+  void add(PlanObjectConstPtr object) {
     auto id = object->id();
     ensureSize(id);
     velox::bits::setBit(bits_.data(), id);
@@ -130,7 +130,7 @@ class PlanObjectSet {
   bool isSubset(const PlanObjectSet& super) const;
 
   /// Erases id of 'object'.
-  void erase(PlanObjectPtr object) {
+  void erase(PlanObjectConstPtr object) {
     if (object->id() < bits_.size() * 64) {
       velox::bits::clearBit(bits_.data(), object->id());
     }
@@ -165,6 +165,15 @@ class PlanObjectSet {
     });
   }
 
+  template <typename Func>
+  void forEachMutable(Func func) const {
+    auto ctx = queryCtx();
+    velox::bits::forEachSetBit(bits_.data(), 0, bits_.size() * 64, [&](auto i) {
+      func(ctx->mutableObjectAt(i));
+    });
+  }
+
+  
   /// Returns the objects corresponding to ids in 'this' as a vector of T.
   template <typename T = PlanObjectPtr>
   std::vector<T> objects() const {

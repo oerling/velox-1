@@ -23,7 +23,7 @@ namespace facebook::verax {
 
 // static
 Distribution TableScan::outputDistribution(
-    BaseTablePtr baseTable,
+					   const BaseTable* baseTable,
     IndexPtr index,
     const ColumnVector& columns) {
   auto schemaColumns =
@@ -34,21 +34,21 @@ Distribution TableScan::outputDistribution(
   OrderTypeVector orderType;
   // if all partitioning columns are projected, the output is partitioned.
   if (isSubset(
-          toRangeCast<ColumnPtr>(index->distribution().partition),
-          toRange(schemaColumns))) {
+	       index->distribution().partition,
+	       schemaColumns)) {
     partition = index->distribution().partition;
     replace(
-        toRangeCast<ColumnPtr>(partition), toRange(schemaColumns), &columns[0]);
+	    partition, schemaColumns, columns.data());
   }
   auto numPrefix = prefixSize(
-      toRangeCast<ColumnPtr>(index->distribution().order),
-      toRange(schemaColumns));
+			      index->distribution().order,
+			      schemaColumns);
   if (numPrefix > 0) {
     order = index->distribution().order;
     order.resize(numPrefix);
     orderType = index->distribution().orderType;
     orderType.resize(numPrefix);
-    replace(toRangeCast<ColumnPtr>(order), toRange(schemaColumns), &columns[0]);
+    replace(order, schemaColumns, columns.data());
   }
   return Distribution(
       index->distribution().distributionType,
@@ -64,7 +64,7 @@ Distribution TableScan::outputDistribution(
 
 // static
 PlanObjectSet TableScan::availableColumns(
-    BaseTablePtr baseTable,
+    const BaseTable* baseTable,
     IndexPtr index) {
   // The columns of base table that exist in 'index'.
   PlanObjectSet result;

@@ -225,9 +225,9 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
   return best;
 }
 
-float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
+float startingScore(PlanObjectConstPtr table, DerivedTablePtr dt) {
   if (table->type() == PlanType::kTable) {
-    return table->as<BaseTablePtr>()
+    return table->as2<BaseTable>()
         ->schemaTable->indices[0]
         ->distribution()
         .cardinality;
@@ -235,20 +235,20 @@ float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
   return 10;
 }
 
-std::pair<PlanObjectPtr, float> otherTable(JoinPtr join, PlanObjectPtr table) {
+std::pair<PlanObjectConstPtr, float> otherTable(JoinPtr join, PlanObjectConstPtr table) {
   return join->leftTable == table && !join->leftOptional
-      ? std::pair<PlanObjectPtr, float>{join->rightTable, join->lrFanout}
+      ? std::pair<PlanObjectConstPtr, float>{join->rightTable, join->lrFanout}
       : join->rightTable == table && !join->rightOptional && !join->rightExists
-      ? std::pair<PlanObjectPtr, float>{join->leftTable, join->rlFanout}
-      : std::pair<PlanObjectPtr, float>{nullptr, 0};
+      ? std::pair<PlanObjectConstPtr, float>{join->leftTable, join->rlFanout}
+      : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
 }
 
-const JoinVector& joinedBy(PlanObjectPtr table) {
+const JoinVector& joinedBy(PlanObjectConstPtr table) {
   if (table->type() == PlanType::kTable) {
-    return table->as<BaseTablePtr>()->joinedBy;
+    return table->as2<BaseTable>()->joinedBy;
   }
   VELOX_DCHECK_EQ(table->type(), PlanType::kDerivedTable);
-  return table->as<DerivedTablePtr>()->joinedBy;
+  return table->as2<DerivedTable>()->joinedBy;
 }
 
 // Traverses joins from 'candidate'. Follows any join that goes to a
@@ -263,10 +263,10 @@ const JoinVector& joinedBy(PlanObjectPtr table) {
 // reducing join paths added to 'result'.
 void reducingJoinsRecursive(
     const PlanState& state,
-    PlanObjectPtr candidate,
+    PlanObjectConstPtr candidate,
     float fanoutFromRoot,
     float maxFanout,
-    std::vector<PlanObjectPtr>& path,
+    std::vector<PlanObjectConstPtr>& path,
     PlanObjectSet& visited,
     PlanObjectSet& result,
     float& reduction) {
@@ -332,7 +332,7 @@ JoinCandidate reducingJoins(
     PlanObjectSet visited = state.placed;
     visited.add(candidate.tables[0]);
     reducingSet.add(candidate.tables[0]);
-    std::vector<PlanObjectPtr> path{candidate.tables[0]};
+    std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
     float reduction = 1;
     reducingJoinsRecursive(
         state,
@@ -356,7 +356,7 @@ JoinCandidate reducingJoins(
   }
   PlanObjectSet exists;
   float reduction = 1;
-  std::vector<PlanObjectPtr> path{candidate.tables[0]};
+  std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
   // Look for reducing joins that were not added before, also covering already
   // placed tables. This may copy reducing joins from a probe to the
   // corresponding build.
@@ -386,7 +386,7 @@ JoinCandidate reducingJoins(
 template <typename Func>
 void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
   std::unordered_set<JoinPtr> visited;
-  state.placed.forEach([&](PlanObjectPtr placedTable) {
+  state.placed.forEach([&](PlanObjectConstPtr placedTable) {
     for (auto join : joinedBy(placedTable)) {
       if (join->isNonCommutative()) {
         if (!visited.insert(join).second) {
@@ -413,7 +413,7 @@ void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
   });
 }
 
-JoinSide JoinCandidate::sideOf(PlanObjectPtr side, bool other) const {
+JoinSide JoinCandidate::sideOf(PlanObjectConstPtr side, bool other) const {
   return join->sideOf(side, other);
 }
 
@@ -444,7 +444,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
-      dt, state, [&](JoinPtr join, PlanObjectPtr joined, float fanout) {
+      dt, state, [&](JoinPtr join, PlanObjectConstPtr joined, float fanout) {
         if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
           candidates.emplace_back(join, joined, fanout);
         }
@@ -540,7 +540,7 @@ void Optimization::addPostprocess(
   }
 }
 
-std::vector<IndexPtr> chooseLeafIndex(BaseTablePtr table, DerivedTablePtr dt) {
+std::vector<IndexPtr> chooseLeafIndex(const BaseTable* table, DerivedTablePtr dt) {
   return {table->schemaTable->indices[0]};
 }
 
@@ -552,7 +552,7 @@ PtrSpan<Column> leadingColumns(V& exprs) {
       break;
     }
   }
-  return PtrSpan<Column>(reinterpret_cast<Column* const*>(&exprs[0]), i);
+  return PtrSpan<Column>(reinterpret_cast<const Column* const*>(&exprs[0]), i);
 }
 
 bool isIndexColocated(
@@ -609,7 +609,7 @@ RelationOpPtr repartitionForIndex(
         info.lookupKeys,
         [](auto c) {
           return c->type() == PlanType::kColumn
-              ? c->template as<ColumnPtr>()->schemaColumn
+              ? c->template as2<Column>()->schemaColumn
               : c;
         },
         *key);
@@ -653,7 +653,7 @@ void Optimization::joinByIndex(
     // Index applies to single base tables.
     return;
   }
-  auto rightTable = candidate.tables[0]->as<BaseTablePtr>();
+  auto rightTable = candidate.tables[0]->as2<BaseTable>();
   auto left = candidate.sideOf(rightTable, true);
   auto right = candidate.sideOf(rightTable);
   auto& keys = right.keys;
@@ -687,7 +687,7 @@ void Optimization::joinByIndex(
     }
 
     ColumnVector columns;
-    c.forEach([&](auto o) { columns.push_back(reinterpret_cast<Column*>(o)); });
+    c.forEach([&](PlanObjectConstPtr o) { columns.push_back(o->as2<Column>()); });
 
     Declare(
         TableScan,
@@ -723,10 +723,10 @@ std::vector<int32_t> joinKeyPartition(
   return positions;
 }
 
-PlanObjectSet availableColumns(PlanObjectPtr object) {
+PlanObjectSet availableColumns(PlanObjectConstPtr object) {
   PlanObjectSet set;
   if (object->type() == PlanType::kTable) {
-    for (auto& c : object->as<BaseTablePtr>()->columns) {
+    for (auto& c : object->as2<BaseTable>()->columns) {
       set.add(c);
     }
   }
@@ -882,10 +882,10 @@ void Optimization::addJoin(
 // in 'index' of 'table'.
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
-  downstream.forEach([&](PlanObjectPtr object) {
-    if (position(index->columns(), *object->as<ColumnPtr>()->schemaColumn) >=
+  downstream.forEach([&](PlanObjectConstPtr object) {
+    if (position(index->columns(), *object->as2<Column>()->schemaColumn) >=
         0) {
-      result.push_back(object->as<ColumnPtr>());
+      result.push_back(object->as2<Column>());
     }
   });
   return result;
@@ -906,7 +906,7 @@ void Optimization::tryNextJoins(
 void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
   auto& dt = state.dt;
   if (!plan) {
-    std::vector<PlanObjectPtr> firstTables;
+    std::vector<PlanObjectConstPtr> firstTables;
     dt->startTables.forEach([&](auto table) { firstTables.push_back(table); });
     std::vector<float> scores(firstTables.size());
     for (auto i = 0; i < firstTables.size(); ++i) {
@@ -921,8 +921,8 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     for (auto i : ids) {
       auto from = firstTables[i];
       if (from->type() == PlanType::kTable) {
-        auto table = from->as<BaseTablePtr>();
-        auto indices = chooseLeafIndex(table->as<BaseTablePtr>(), dt);
+        auto table = from->as2<BaseTable>();
+        auto indices = chooseLeafIndex(table->as2<BaseTable>(), dt);
         // Make plan starting with each relevant index of the table.
         auto downstream = state.downstreamColumns();
         for (auto index : indices) {

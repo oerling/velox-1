@@ -146,7 +146,7 @@ struct TableScan : public RelationOp {
   TableScan(
       RelationOpPtr input,
       Distribution _distribution,
-      BaseTablePtr table,
+      const BaseTable* table,
       IndexPtr _index,
       float fanout,
       ColumnVector columns,
@@ -167,13 +167,13 @@ struct TableScan : public RelationOp {
   }
 
   /// Columns of base table available in 'index'.
-  static PlanObjectSet availableColumns(BaseTablePtr baseTable, IndexPtr index);
+  static PlanObjectSet availableColumns(const BaseTable* baseTable, IndexPtr index);
 
   /// Returns the distribution given the table, index and columns. If
   /// partitioning/ordering columns are in the output columns, the
   /// distribution reflects the distribution of the index.
   static Distribution outputDistribution(
-      BaseTablePtr baseTable,
+      const BaseTable* baseTable,
       IndexPtr index,
       const ColumnVector& columns);
 
@@ -184,7 +184,7 @@ struct TableScan : public RelationOp {
   // The base table reference. May occur in multiple scans if the base
   // table decomposes into access via secondary index joined to pk or
   // if doing another pass for late materialization.
-  BaseTablePtr baseTable;
+  const BaseTable* baseTable;
 
   // Index (or other materialization of table) used for the physical data
   // access.

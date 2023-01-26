@@ -33,19 +33,19 @@ using Name = const char*;
 
 /// Shorthand for a view on an array of T*
 template <typename T>
-using PtrSpan = folly::Range<T* const*>;
+using PtrSpan = folly::Range<const T* const*>;
 
 struct PlanObject;
 
-using PlanObjectPtr = PlanObject* FOLLY_NONNULL;
-using PlanObjectConstPtr = const PlanObject* FOLLY_NONNULL;
+using PlanObjectPtr = PlanObject*;
+using PlanObjectConstPtr = const PlanObject*;
 
 struct PlanObjectPtrHasher {
-  size_t operator()(const PlanObjectPtr& object) const;
+  size_t operator()(const PlanObjectConstPtr& object) const;
 };
 
 struct PlanObjectPtrComparer {
-  bool operator()(const PlanObjectPtr& lhs, const PlanObjectPtr& rhs) const;
+  bool operator()(const PlanObjectConstPtr& lhs, const PlanObjectConstPtr& rhs) const;
 };
 
 class Plan;
@@ -107,10 +107,15 @@ class QueryGraphContext {
   PlanObjectPtr dedup(PlanObjectPtr object);
 
   /// Returns the object associated to 'id'. See newId()
-  PlanObjectPtr objectAt(int32_t id) {
+  PlanObjectConstPtr objectAt(int32_t id) {
     return objects_[id];
   }
 
+  PlanObjectPtr mutableObjectAt(int32_t id) {
+    return objects_[id];
+  }
+
+  
   /// Returns the top level plan being processed when printing operator trees.
   /// If non-null, allows showing percentages.
   Plan*& contextPlan() {
@@ -177,9 +182,9 @@ struct QGAllocator {
 
 // Forward declarations of common types and collections.
 struct Expr;
-using ExprPtr = Expr*;
+using ExprPtr = const Expr*;
 struct Column;
-using ColumnPtr = Column*;
+using ColumnPtr = const Column*;
 using ExprVector = std::vector<ExprPtr, QGAllocator<ExprPtr>>;
 using ColumnVector = std::vector<ColumnPtr, QGAllocator<ColumnPtr>>;
 

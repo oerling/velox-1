@@ -295,15 +295,15 @@ struct SchemaTable {
   ColumnPtr findColumn(const std::string& name) const;
 
   /// True if 'columns' match no more than one row.
-  bool isUnique(PtrSpan<Column> columns);
+  bool isUnique(PtrSpan<Column> columns) const;
 
   /// Returns   uniqueness and cardinality information for a lookup on 'index'
   /// where 'columns' have an equality constraint.
-  IndexInfo indexInfo(IndexPtr index, PtrSpan<Column> columns);
+  IndexInfo indexInfo(IndexPtr index, PtrSpan<Column> columns) const;
 
   /// Returns the best index to use for lookup where 'columns' have an equality
   /// constraint.
-  IndexInfo indexByColumns(PtrSpan<Column> columns);
+  IndexInfo indexByColumns(PtrSpan<Column> columns) const;
 
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
   const std::string name;

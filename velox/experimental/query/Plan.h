@@ -117,12 +117,12 @@ struct PlanSet {
 struct JoinCandidate {
   JoinCandidate() = default;
 
-  JoinCandidate(JoinPtr _join, PlanObjectPtr _right, float _fanout)
+  JoinCandidate(JoinPtr _join, PlanObjectConstPtr _right, float _fanout)
       : join(_join), tables({_right}), fanout(_fanout) {}
 
   // Returns the join side info for 'table'. If 'other' is set, returns the
   // other side.
-  JoinSide sideOf(PlanObjectPtr side, bool other = false) const;
+  JoinSide sideOf(PlanObjectConstPtr side, bool other = false) const;
 
   std::string toString() const;
 
@@ -130,7 +130,7 @@ struct JoinCandidate {
 
   // Tables to join on the build side. The tables must not occur on the left
   // side.
-  std::vector<PlanObjectPtr> tables;
+  std::vector<PlanObjectConstPtr> tables;
 
   // Joins imported from the left side for reducing a build
   // size. These could be ignored without affecting the result but can
@@ -285,7 +285,7 @@ struct MemoKey {
   bool operator==(const MemoKey& other) const;
   size_t hash() const;
 
-  PlanObjectPtr firstTable;
+  PlanObjectConstPtr firstTable;
   PlanObjectSet columns;
   PlanObjectSet tables;
   std::vector<PlanObjectSet> existences;
@@ -404,6 +404,6 @@ std::unordered_map<std::string, float>& baseSelectivities();
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
-const JoinVector& joinedBy(PlanObjectPtr table);
+const JoinVector& joinedBy(PlanObjectConstPtr table);
 
 } // namespace facebook::verax
