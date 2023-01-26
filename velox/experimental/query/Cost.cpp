@@ -71,7 +71,7 @@ float orderPrefixDistance(
   int32_t i = 0;
   float selection = 1;
   for (; i < input->distribution().order.size() &&
-	 i < index->distribution().order.size() && i < keys.size();
+       i < index->distribution().order.size() && i < keys.size();
        ++i) {
     if (input->distribution().order[i]->sameOrEqual(*keys[i])) {
       selection *= index->distribution().order[i]->value.cardinality;
@@ -102,7 +102,7 @@ void TableScan::setCost(const PlanState& input) {
     return;
   } else {
     cost_.fanout =
-      index->distribution().cardinality * baseTable->filterSelectivity;
+        index->distribution().cardinality * baseTable->filterSelectivity;
   }
   auto numColumns = columns_.size();
   auto rowCost = numColumns * Costs::kColumnRowCost +
@@ -156,7 +156,7 @@ void HashBuild::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   cost_.unitCost = keys.size() * Costs::kHashColumnCost +
       Costs::hashProbeCost(cost_.inputCardinality) +
-    this->input->columns().size() * Costs::kHashExtractColumnCost * 2;
+      this->input->columns().size() * Costs::kHashExtractColumnCost * 2;
   cost_.totalBytes = cost_.inputCardinality * byteSize(this->input->columns());
 }
 

@@ -701,7 +701,7 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns) {
   int32_t numUnique = index->distribution().numKeysUnique;
   for (auto i = 0; i < numSorting || i < numUnique; ++i) {
     auto part = findColumnByName(
-				 columns, index->distribution().order[i]->as<ColumnPtr>()->name);
+        columns, index->distribution().order[i]->as<ColumnPtr>()->name);
     if (!part) {
       break;
     }
@@ -809,7 +809,8 @@ float tableCardinality(PlanObjectPtr table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTablePtr>()
         ->schemaTable->indices[0]
-      ->distribution().cardinality;
+        ->distribution()
+        .cardinality;
   }
   VELOX_CHECK(table->type() == PlanType::kDerivedTable);
   return table->as<DerivedTablePtr>()->baseCardinality;

@@ -216,8 +216,7 @@ struct Repartition : public RelationOp {
             RelType::kRepartition,
             std::move(input),
             std::move(distribution),
-	    std::move(columns)) {};
-
+            std::move(columns)){};
 
   void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;
@@ -245,7 +244,7 @@ struct JoinOp : public RelationOp {
       ExprPtr filter,
       float fanout,
       ColumnVector columns)
-    : RelationOp(RelType::kJoin, input, input->distribution(), columns),
+      : RelationOp(RelType::kJoin, input, input->distribution(), columns),
         method(_method),
         joinType(_joinType),
         right(std::move(right)),
@@ -275,7 +274,7 @@ using JoinOpPtr = JoinOp*;
 /// referencing join and not counted in subsequent ones.
 struct HashBuild : public RelationOp {
   HashBuild(RelationOpPtr input, int32_t id, ExprVector _keys, PlanPtr plan)
-    : RelationOp(RelType::kHashBuild, input, input->distribution(), {}),
+      : RelationOp(RelType::kHashBuild, input, input->distribution(), {}),
         buildId(id),
         keys(std::move(_keys)),
         plan(plan) {}

@@ -34,14 +34,14 @@ Distribution TableScan::outputDistribution(
   OrderTypeVector orderType;
   // if all partitioning columns are projected, the output is partitioned.
   if (isSubset(
-	       toRangeCast<ColumnPtr>(index->distribution().partition),
+          toRangeCast<ColumnPtr>(index->distribution().partition),
           toRange(schemaColumns))) {
     partition = index->distribution().partition;
     replace(
         toRangeCast<ColumnPtr>(partition), toRange(schemaColumns), &columns[0]);
   }
   auto numPrefix = prefixSize(
-			      toRangeCast<ColumnPtr>(index->distribution().order),
+      toRangeCast<ColumnPtr>(index->distribution().order),
       toRange(schemaColumns));
   if (numPrefix > 0) {
     order = index->distribution().order;
@@ -51,13 +51,13 @@ Distribution TableScan::outputDistribution(
     replace(toRangeCast<ColumnPtr>(order), toRange(schemaColumns), &columns[0]);
   }
   return Distribution(
-		      index->distribution().distributionType,
-		      index->distribution().cardinality * baseTable->filterSelectivity,
+      index->distribution().distributionType,
+      index->distribution().cardinality * baseTable->filterSelectivity,
       std::move(partition),
       std::move(order),
       std::move(orderType),
-		      index->distribution().numKeysUnique <= numPrefix
-		      ? index->distribution().numKeysUnique
+      index->distribution().numKeysUnique <= numPrefix
+          ? index->distribution().numKeysUnique
           : 0,
       1.0 / baseTable->filterSelectivity);
 }

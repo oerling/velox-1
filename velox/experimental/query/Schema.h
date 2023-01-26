@@ -183,9 +183,9 @@ enum class RelType {
 /// streaming output of a query operator. This has a distribution describing
 /// partitioning and data order and a set of columns describing the payload.
 class Relation {
-public:
+ public:
   Relation(
-	   RelType relType,
+      RelType relType,
       Distribution distribution,
       const ColumnVector& columns)
       : relType_(relType),
@@ -203,11 +203,11 @@ public:
   const ColumnVector& columns() const {
     return columns_;
   }
-  
-protected:
+
+ protected:
   const RelType relType_;
   const Distribution distribution_;
-  #if 0
+#if 0
   velox::RowTypePtr type_;
 #endif
   const ColumnVector columns_;

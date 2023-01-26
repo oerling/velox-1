@@ -185,7 +185,7 @@ PlanPtr PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
             result->cost.unitCost + result->cost.setupCost) {
       bestPlan = result;
       bestCostWithShuffle = result->cost.unitCost + result->cost.setupCost +
-	shuffleCost(result->op->columns()) * result->cost.fanout;
+          shuffleCost(result->op->columns()) * result->cost.fanout;
     }
     if (replaceIndex >= 0) {
       plans[replaceIndex] = std::move(newPlan);
@@ -229,7 +229,8 @@ float startingScore(PlanObjectPtr table, DerivedTablePtr dt) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTablePtr>()
         ->schemaTable->indices[0]
-      ->distribution().cardinality;
+        ->distribution()
+        .cardinality;
   }
   return 10;
 }
@@ -429,9 +430,10 @@ std::string JoinCandidate::toString() const {
 }
 
 bool NextJoin::isWorse(const NextJoin& other) const {
-  float shuffle = plan->distribution().isSamePartition(other.plan->distribution())
+  float shuffle =
+      plan->distribution().isSamePartition(other.plan->distribution())
       ? 0
-    : plan->cost().fanout * shuffleCost(plan->columns());
+      : plan->cost().fanout * shuffleCost(plan->columns());
   return cost.unitCost + cost.setupCost + shuffle >
       other.cost.unitCost + other.cost.setupCost;
 }
@@ -516,11 +518,11 @@ RelationOpPtr repartitionForAgg(
   }
 
   Distribution distribution(
-			    plan->distribution().distributionType,
+      plan->distribution().distributionType,
       plan->resultCardinality(),
       keyValues);
   Declare(
-	  Repartition, repartition, plan, std::move(distribution), plan->columns());
+      Repartition, repartition, plan, std::move(distribution), plan->columns());
   state.addCost(*repartition);
   return repartition;
 }
@@ -559,7 +561,7 @@ bool isIndexColocated(
     const RelationOpPtr& input) {
   if (info.index->distribution().isBroadcast &&
       input->distribution().distributionType.locus ==
-      info.index->distribution().distributionType.locus) {
+          info.index->distribution().distributionType.locus) {
     return true;
   }
 
@@ -619,11 +621,11 @@ RelationOpPtr repartitionForIndex(
   }
 
   Distribution distribution(
-			    info.index->distribution().distributionType,
+      info.index->distribution().distributionType,
       plan->resultCardinality(),
       std::move(keyExprs));
   Declare(
-	  Repartition, repartition, plan, std::move(distribution), plan->columns());
+      Repartition, repartition, plan, std::move(distribution), plan->columns());
   state.addCost(*repartition);
   return repartition;
 }
@@ -777,7 +779,8 @@ void Optimization::joinByHash(
   if (partitionByProbe) {
     if (needsShuffle) {
       Distribution dist(plan->distribution().distributionType, 0, copartition);
-      Declare(Repartition, shuffleTemp, buildInput, dist, buildInput->columns());
+      Declare(
+          Repartition, shuffleTemp, buildInput, dist, buildInput->columns());
       buildState.addCost(*shuffleTemp);
       buildInput = shuffleTemp;
     }
@@ -787,7 +790,7 @@ void Optimization::joinByHash(
         broadcast,
         buildInput,
         Distribution::broadcast(
-				plan->distribution().distributionType, plan->resultCardinality()),
+            plan->distribution().distributionType, plan->resultCardinality()),
         buildInput->columns());
     buildState.addCost(*broadcast);
     buildInput = broadcast;
@@ -798,7 +801,7 @@ void Optimization::joinByHash(
     if (buildPart.empty()) {
       // The build is not aligned on join keys.
       Distribution buildDist(
-			     plan->distribution().distributionType,
+          plan->distribution().distributionType,
           plan->resultCardinality(),
           build.keys);
       Declare(
@@ -819,11 +822,11 @@ void Optimization::joinByHash(
     }
 
     Distribution probeDist(
-			   probeInput->distribution().distributionType,
+        probeInput->distribution().distributionType,
         probeInput->resultCardinality(),
         std::move(distCols));
     Declare(
-	    Repartition, probeShuffle, plan, std::move(probeDist), plan->columns());
+        Repartition, probeShuffle, plan, std::move(probeDist), plan->columns());
     state.addCost(*probeShuffle);
     probeInput = probeShuffle;
   }
@@ -880,7 +883,8 @@ void Optimization::addJoin(
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
   downstream.forEach([&](PlanObjectPtr object) {
-    if (position(index->columns(), *object->as<ColumnPtr>()->schemaColumn) >= 0) {
+    if (position(index->columns(), *object->as<ColumnPtr>()->schemaColumn) >=
+        0) {
       result.push_back(object->as<ColumnPtr>());
     }
   });
