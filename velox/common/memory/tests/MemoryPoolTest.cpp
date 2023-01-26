@@ -18,12 +18,15 @@
 #include <gtest/gtest.h>
 
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdCache.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/common/testutil/TestValue.h"
 
 using namespace ::testing;
 using namespace facebook::velox::common::testutil;
+using namespace facebook::velox::cache;
 
 constexpr int64_t KB = 1024L;
 constexpr int64_t MB = 1024L * KB;
@@ -33,24 +36,59 @@ namespace facebook {
 namespace velox {
 namespace memory {
 
-class MemoryPoolTest : public testing::TestWithParam<bool> {
- protected:
+struct TestParam {
+  bool useMmap;
+  bool useCache;
+
+  TestParam(bool _useMmap, bool _useCache)
+      : useMmap(_useMmap), useCache(_useCache) {}
+
+  std::string toString() const {
+    return fmt::format("useMmap{} useCache{}", useMmap, useCache);
+  }
+};
+
+class MemoryPoolTest : public testing::TestWithParam<TestParam> {
+ public:
+  static const std::vector<TestParam> getTestParams() {
+    std::vector<TestParam> params;
+    params.push_back({true, true});
+    params.push_back({true, false});
+    params.push_back({false, true});
+    params.push_back({false, false});
+    return params;
+  }
+
  protected:
   static void SetUpTestCase() {
     TestValue::enable();
   }
 
-  MemoryPoolTest() : useMmap_(GetParam()) {}
+  MemoryPoolTest()
+      : useMmap_(GetParam().useMmap), useCache_(GetParam().useCache) {}
 
   void SetUp() override {
     // For duration of the test, make a local MmapAllocator that will not be
     // seen by any other test.
+    const uint64_t kCapacity = 8UL << 30;
     if (useMmap_) {
       MmapAllocator::Options opts{8UL << 30};
       mmapAllocator_ = std::make_shared<MmapAllocator>(opts);
-      MemoryAllocator::setDefaultInstance(mmapAllocator_.get());
+      if (useCache_) {
+        cache_ = std::make_shared<AsyncDataCache>(
+            mmapAllocator_, kCapacity, nullptr);
+        MemoryAllocator::setDefaultInstance(cache_.get());
+      } else {
+        MemoryAllocator::setDefaultInstance(mmapAllocator_.get());
+      }
     } else {
-      MemoryAllocator::setDefaultInstance(nullptr);
+      if (useCache_) {
+        cache_ = std::make_shared<AsyncDataCache>(
+            MemoryAllocator::createDefaultInstance(), kCapacity, nullptr);
+        MemoryAllocator::setDefaultInstance(cache_.get());
+      } else {
+        MemoryAllocator::setDefaultInstance(nullptr);
+      }
     }
     const auto seed =
         std::chrono::system_clock::now().time_since_epoch().count();
@@ -59,6 +97,9 @@ class MemoryPoolTest : public testing::TestWithParam<bool> {
   }
 
   void TearDown() override {
+    if (mmapAllocator_ != nullptr) {
+      mmapAllocator_->testingClearFailureInjection();
+    }
     MmapAllocator::setDefaultInstance(nullptr);
   }
 
@@ -73,8 +114,10 @@ class MemoryPoolTest : public testing::TestWithParam<bool> {
   }
 
   const bool useMmap_;
+  const bool useCache_;
   folly::Random::DefaultGenerator rng_;
   std::shared_ptr<MmapAllocator> mmapAllocator_;
+  std::shared_ptr<AsyncDataCache> cache_;
 };
 
 TEST(MemoryPoolTest, Ctor) {
@@ -83,36 +126,24 @@ TEST(MemoryPoolTest, Ctor) {
   // While not recommended, the root allocator should be valid.
   auto& root = dynamic_cast<MemoryPoolImpl&>(manager.getRoot());
 
-  ASSERT_EQ(8 * GB, root.cap_);
   ASSERT_EQ(0, root.getCurrentBytes());
   ASSERT_EQ(root.parent(), nullptr);
 
   {
-    auto fakeRoot = std::make_shared<MemoryPoolImpl>(
-        manager, "fake_root", nullptr, MemoryPool::Options{.capacity = 4 * GB});
+    auto fakeRoot =
+        std::make_shared<MemoryPoolImpl>(manager, "fake_root", nullptr);
     ASSERT_EQ("fake_root", fakeRoot->name());
-    ASSERT_EQ(4 * GB, fakeRoot->cap_);
     ASSERT_EQ(&root.allocator_, &fakeRoot->allocator_);
     ASSERT_EQ(0, fakeRoot->getCurrentBytes());
     ASSERT_EQ(fakeRoot->parent(), nullptr);
   }
   {
-    auto child = root.addChild("favorite_child");
+    auto child = root.addChild("child");
     ASSERT_EQ(child->parent(), &root);
     auto& favoriteChild = dynamic_cast<MemoryPoolImpl&>(*child);
-    ASSERT_EQ("favorite_child", favoriteChild.name());
-    ASSERT_EQ(std::numeric_limits<int64_t>::max(), favoriteChild.cap_);
+    ASSERT_EQ("child", favoriteChild.name());
     ASSERT_EQ(&root.allocator_, &favoriteChild.allocator_);
     ASSERT_EQ(0, favoriteChild.getCurrentBytes());
-  }
-  {
-    auto child = root.addChild("naughty_child", 3 * GB);
-    ASSERT_EQ(child->parent(), &root);
-    auto& naughtyChild = dynamic_cast<MemoryPoolImpl&>(*child);
-    ASSERT_EQ("naughty_child", naughtyChild.name());
-    ASSERT_EQ(3 * GB, naughtyChild.cap_);
-    ASSERT_EQ(&root.allocator_, &naughtyChild.allocator_);
-    ASSERT_EQ(0, naughtyChild.getCurrentBytes());
   }
 }
 
@@ -122,7 +153,7 @@ TEST(MemoryPoolTest, AddChild) {
 
   ASSERT_EQ(0, root.getChildCount());
   auto childOne = root.addChild("child_one");
-  auto childTwo = root.addChild("child_two", 4L * 1024L * 1024L);
+  auto childTwo = root.addChild("child_two");
 
   std::vector<MemoryPool*> nodes{};
   ASSERT_EQ(2, root.getChildCount());
@@ -134,11 +165,6 @@ TEST(MemoryPoolTest, AddChild) {
   // We no longer care about name uniqueness.
   auto childTree = root.addChild("child_one");
   EXPECT_EQ(3, root.getChildCount());
-
-  // Adding child while capped.
-  root.capMemoryAllocation();
-  auto childFour = root.addChild("child_four");
-  EXPECT_TRUE(childFour->isMemoryCapped());
 }
 
 TEST_P(MemoryPoolTest, dropChild) {
@@ -149,7 +175,7 @@ TEST_P(MemoryPoolTest, dropChild) {
   ASSERT_EQ(0, root.getChildCount());
   auto childOne = root.addChild("child_one");
   ASSERT_EQ(childOne->parent(), &root);
-  auto childTwo = root.addChild("child_two", 4L * 1024L * 1024L);
+  auto childTwo = root.addChild("child_two");
   ASSERT_EQ(childTwo->parent(), &root);
   ASSERT_EQ(2, root.getChildCount());
 
@@ -180,98 +206,6 @@ TEST_P(MemoryPoolTest, dropChild) {
   ASSERT_EQ(1, rawChild->getChildCount());
   grandChild2.reset();
   ASSERT_EQ(0, root.getChildCount());
-}
-
-TEST(MemoryPoolTest, CapSubtree) {
-  MemoryManager manager{};
-  auto& root = manager.getRoot();
-
-  // left subtree.
-  auto node_a = root.addChild("node_a");
-  auto node_aa = node_a->addChild("node_aa");
-  auto node_ab = node_a->addChild("node_ab");
-  auto node_aba = node_ab->addChild("node_aba");
-
-  // right subtree
-  auto node_b = root.addChild("node_b");
-  auto node_ba = node_b->addChild("node_ba");
-  auto node_bb = node_b->addChild("node_bb");
-  auto node_bc = node_b->addChild("node_bc");
-
-  // Cap left subtree and check that right subtree is not impacted.
-  node_a->capMemoryAllocation();
-  ASSERT_TRUE(node_a->isMemoryCapped());
-  ASSERT_TRUE(node_aa->isMemoryCapped());
-  ASSERT_TRUE(node_ab->isMemoryCapped());
-  ASSERT_TRUE(node_aba->isMemoryCapped());
-
-  ASSERT_FALSE(root.isMemoryCapped());
-  ASSERT_FALSE(node_b->isMemoryCapped());
-  ASSERT_FALSE(node_ba->isMemoryCapped());
-  ASSERT_FALSE(node_bb->isMemoryCapped());
-  ASSERT_FALSE(node_bc->isMemoryCapped());
-
-  // Cap the entire tree.
-  root.capMemoryAllocation();
-  ASSERT_TRUE(root.isMemoryCapped());
-  ASSERT_TRUE(node_a->isMemoryCapped());
-  ASSERT_TRUE(node_aa->isMemoryCapped());
-  ASSERT_TRUE(node_ab->isMemoryCapped());
-  ASSERT_TRUE(node_aba->isMemoryCapped());
-  ASSERT_TRUE(node_b->isMemoryCapped());
-  ASSERT_TRUE(node_ba->isMemoryCapped());
-  ASSERT_TRUE(node_bb->isMemoryCapped());
-  ASSERT_TRUE(node_bc->isMemoryCapped());
-}
-
-TEST(MemoryPoolTest, UncapMemory) {
-  MemoryManager manager{};
-  auto& root = manager.getRoot();
-
-  auto node_a = root.addChild("node_a");
-  auto node_aa = node_a->addChild("node_aa");
-  auto node_ab = node_a->addChild("node_ab", 31);
-  auto node_aba = node_ab->addChild("node_aba");
-
-  auto node_b = root.addChild("node_b");
-  auto node_ba = node_b->addChild("node_ba");
-  auto node_bb = node_b->addChild("node_bb");
-  auto node_bc = node_b->addChild("node_bc");
-
-  // Uncap should be recursive.
-  node_a->capMemoryAllocation();
-  node_b->capMemoryAllocation();
-  ASSERT_FALSE(root.isMemoryCapped());
-  ASSERT_TRUE(node_a->isMemoryCapped());
-  ASSERT_TRUE(node_aa->isMemoryCapped());
-  ASSERT_TRUE(node_ab->isMemoryCapped());
-  ASSERT_TRUE(node_aba->isMemoryCapped());
-  ASSERT_TRUE(node_b->isMemoryCapped());
-  ASSERT_TRUE(node_ba->isMemoryCapped());
-  ASSERT_TRUE(node_bb->isMemoryCapped());
-  ASSERT_TRUE(node_bc->isMemoryCapped());
-
-  node_a->uncapMemoryAllocation();
-  ASSERT_FALSE(root.isMemoryCapped());
-  ASSERT_FALSE(node_a->isMemoryCapped());
-  ASSERT_FALSE(node_aa->isMemoryCapped());
-  ASSERT_FALSE(node_ab->isMemoryCapped());
-  ASSERT_FALSE(node_aba->isMemoryCapped());
-
-  ASSERT_TRUE(node_b->isMemoryCapped());
-  ASSERT_TRUE(node_ba->isMemoryCapped());
-  ASSERT_TRUE(node_bb->isMemoryCapped());
-  ASSERT_TRUE(node_bc->isMemoryCapped());
-
-  // Cannot uncap a node when parent is still capped.
-  ASSERT_TRUE(node_b->isMemoryCapped());
-  ASSERT_TRUE(node_bb->isMemoryCapped());
-  node_bb->uncapMemoryAllocation();
-  ASSERT_TRUE(node_b->isMemoryCapped());
-  ASSERT_TRUE(node_bb->isMemoryCapped());
-
-  // Don't uncap if the local cap is exceeded when intermediate
-  // caps are supported again.
 }
 
 // Mainly tests how it tracks externally allocated memory.
@@ -468,38 +402,6 @@ TEST_P(MemoryPoolTest, ReallocTestLower) {
   EXPECT_EQ(3 * kChunkSize, pool->getMaxBytes());
 }
 
-TEST_P(MemoryPoolTest, CapAllocation) {
-  auto manager = getMemoryManager(8 * GB);
-  auto& root = manager->getRoot();
-
-  auto pool = root.addChild("static_quota", 64L * MB);
-
-  // Capping malloc.
-  {
-    ASSERT_EQ(0, pool->getCurrentBytes());
-    ASSERT_FALSE(pool->isMemoryCapped());
-    void* oneChunk = pool->allocate(32L * MB);
-    ASSERT_EQ(32L * MB, pool->getCurrentBytes());
-    EXPECT_THROW(pool->allocate(34L * MB), velox::VeloxRuntimeError);
-    EXPECT_FALSE(pool->isMemoryCapped());
-
-    pool->free(oneChunk, 32L * MB);
-  }
-  // Capping realloc.
-  {
-    ASSERT_EQ(0, pool->getCurrentBytes());
-    ASSERT_FALSE(pool->isMemoryCapped());
-    void* oneChunk = pool->allocate(32L * MB);
-    ASSERT_EQ(32L * MB, pool->getCurrentBytes());
-    EXPECT_THROW(
-        pool->reallocate(oneChunk, 32L * MB, 66L * MB),
-        velox::VeloxRuntimeError);
-    EXPECT_FALSE(pool->isMemoryCapped());
-
-    pool->free(oneChunk, 32L * MB);
-  }
-}
-
 TEST_P(MemoryPoolTest, allocateZeroFilled) {
   auto manager = getMemoryManager(8 * GB);
   auto& root = manager->getRoot();
@@ -577,28 +479,11 @@ TEST_P(MemoryPoolTest, MemoryCapExceptions) {
   MemoryManager manager{{.capacity = 127L * MB}};
   auto& root = manager.getRoot();
 
-  auto pool = root.addChild("static_quota", 63L * MB);
+  auto pool = root.addChild("static_quota");
 
-  // Capping locally.
-  {
-    ASSERT_EQ(0, pool->getCurrentBytes());
-    ASSERT_FALSE(pool->isMemoryCapped());
-    try {
-      pool->allocate(64L * MB);
-    } catch (const velox::VeloxRuntimeError& ex) {
-      EXPECT_EQ(error_source::kErrorSourceRuntime.c_str(), ex.errorSource());
-      EXPECT_EQ(error_code::kMemCapExceeded.c_str(), ex.errorCode());
-      EXPECT_TRUE(ex.isRetriable());
-      EXPECT_EQ(
-          "Exceeded memory cap of 63.00MB when requesting 64.00MB",
-          ex.message());
-    }
-    ASSERT_FALSE(pool->isMemoryCapped());
-  }
   // Capping memory manager.
   {
     ASSERT_EQ(0, pool->getCurrentBytes());
-    ASSERT_FALSE(pool->isMemoryCapped());
     try {
       pool->allocate(128L * MB);
     } catch (const velox::VeloxRuntimeError& ex) {
@@ -606,21 +491,6 @@ TEST_P(MemoryPoolTest, MemoryCapExceptions) {
       EXPECT_EQ(error_code::kMemCapExceeded.c_str(), ex.errorCode());
       EXPECT_TRUE(ex.isRetriable());
       EXPECT_EQ("Exceeded memory manager cap of 127 MB", ex.message());
-    }
-    ASSERT_FALSE(pool->isMemoryCapped());
-  }
-  // Capping manually.
-  {
-    ASSERT_EQ(0, pool->getCurrentBytes());
-    pool->capMemoryAllocation();
-    ASSERT_TRUE(pool->isMemoryCapped());
-    try {
-      pool->allocate(8L * MB);
-    } catch (const velox::VeloxRuntimeError& ex) {
-      EXPECT_EQ(error_source::kErrorSourceRuntime.c_str(), ex.errorSource());
-      EXPECT_EQ(error_code::kMemCapExceeded.c_str(), ex.errorCode());
-      EXPECT_TRUE(ex.isRetriable());
-      EXPECT_EQ("Memory allocation manually capped", ex.message());
     }
   }
 }
@@ -644,13 +514,9 @@ TEST_P(MemoryPoolTest, MemoryManagerGlobalCap) {
   auto pool = root.addChild("unbounded");
   auto child = pool->addChild("unbounded");
   void* oneChunk = child->allocate(32L * MB);
-  ASSERT_FALSE(root.isMemoryCapped());
   ASSERT_EQ(0L, root.getCurrentBytes());
-  ASSERT_FALSE(child->isMemoryCapped());
   EXPECT_THROW(child->allocate(32L * MB), velox::VeloxRuntimeError);
-  ASSERT_FALSE(root.isMemoryCapped());
   ASSERT_EQ(0L, root.getCurrentBytes());
-  ASSERT_FALSE(child->isMemoryCapped());
   EXPECT_THROW(
       child->reallocate(oneChunk, 32L * MB, 64L * MB),
       velox::VeloxRuntimeError);
@@ -817,18 +683,19 @@ TEST_P(MemoryPoolTest, contiguousAllocate) {
       {1},
       {largestSizeClass * 2},
       {largestSizeClass * 3 + 1}};
-  std::vector<MemoryAllocator::ContiguousAllocation> allocations;
+  std::vector<ContiguousAllocation> allocations;
   const char c('M');
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
-    MemoryAllocator::ContiguousAllocation allocation;
+    ContiguousAllocation allocation;
     ASSERT_TRUE(allocation.empty());
     ASSERT_TRUE(pool->allocateContiguous(testData.numAllocPages, allocation));
     ASSERT_FALSE(allocation.empty());
     ASSERT_EQ(allocation.pool(), pool.get());
     ASSERT_EQ(allocation.numPages(), testData.numAllocPages);
     ASSERT_EQ(
-        allocation.size(), testData.numAllocPages * MemoryAllocator::kPageSize);
+        allocation.size(),
+        testData.numAllocPages * AllocationTraits::kPageSize);
     for (int32_t i = 0; i < allocation.size(); ++i) {
       allocation.data()[i] = c;
     }
@@ -849,7 +716,7 @@ TEST_P(MemoryPoolTest, contiguousAllocate) {
   for (int32_t i = 0; i < numIterations; ++i) {
     const MachinePageCount pagesToAllocate =
         1 + folly::Random().rand32() % kMaxAllocationPages;
-    MemoryAllocator::ContiguousAllocation allocation;
+    ContiguousAllocation allocation;
     if (folly::Random().oneIn(2) && !allocations.empty()) {
       const int32_t freeAllocationIdx =
           folly::Random().rand32() % allocations.size();
@@ -885,12 +752,12 @@ TEST_P(MemoryPoolTest, contiguousAllocate) {
 
 TEST_P(MemoryPoolTest, contiguousAllocateExceedLimit) {
   const MachinePageCount kMaxNumPages = 1 << 10;
-  const auto kMemoryCapBytes = kMaxNumPages * MemoryAllocator::kPageSize;
+  const auto kMemoryCapBytes = kMaxNumPages * AllocationTraits::kPageSize;
   auto manager = getMemoryManager(kMemoryCapBytes);
   auto pool = manager->getChild();
   auto tracker = MemoryUsageTracker::create(kMemoryCapBytes);
   pool->setMemoryUsageTracker(tracker);
-  MemoryAllocator::ContiguousAllocation allocation;
+  ContiguousAllocation allocation;
   ASSERT_TRUE(pool->allocateContiguous(kMaxNumPages, allocation));
   ASSERT_THROW(
       pool->allocateContiguous(2 * kMaxNumPages, allocation),
@@ -906,23 +773,25 @@ DEBUG_ONLY_TEST_P(MemoryPoolTest, contiguousAllocateError) {
   auto manager = getMemoryManager(8 * GB);
   auto pool = manager->getChild();
   if (useMmap_) {
-    auto instance =
-        dynamic_cast<MmapAllocator*>(MemoryAllocator::getInstance());
-    instance->testingInjectFailure(MmapAllocator::Failure::kMmap);
+    mmapAllocator_->testingSetFailureInjection(
+        MmapAllocator::Failure::kMmap, true);
   }
-  std::atomic<bool> testingInjectFailureOnce{true};
+  std::atomic<bool> injectFailure = true;
   SCOPED_TESTVALUE_SET(
-      "facebook::velox::memory::MemoryAllocatorImpl::allocateContiguousImpl",
+      "facebook::velox::memory::MallocAllocator::allocateContiguousImpl",
       std::function<void(bool*)>([&](bool* testFlag) {
-        if (!testingInjectFailureOnce.exchange(false)) {
-          return;
+        if (injectFailure) {
+          *testFlag = true;
         }
-        *testFlag = true;
       }));
   constexpr MachinePageCount kAllocSize = 8;
-  std::unique_ptr<MemoryAllocator::ContiguousAllocation> allocation(
-      new MemoryAllocator::ContiguousAllocation());
+  std::unique_ptr<ContiguousAllocation> allocation(new ContiguousAllocation());
   ASSERT_FALSE(pool->allocateContiguous(kAllocSize, *allocation));
+  ASSERT_TRUE(allocation->empty());
+  injectFailure = false;
+  if (useMmap_) {
+    mmapAllocator_->testingClearFailureInjection();
+  }
   ASSERT_TRUE(pool->allocateContiguous(kAllocSize, *allocation));
   pool->freeContiguous(*allocation);
   ASSERT_TRUE(allocation->empty());
@@ -963,10 +832,10 @@ TEST_P(MemoryPoolTest, nonContiguousAllocate) {
         {sizeClass * 2, sizeClass * 2},
         {sizeClass * 2, sizeClass * 2 + 1},
         {sizeClass * 2, sizeClass * 2 * 2}};
-    std::vector<MemoryAllocator::Allocation> allocations;
+    std::vector<Allocation> allocations;
     for (const auto& testData : testSettings) {
       SCOPED_TRACE(testData.debugString());
-      MemoryAllocator::Allocation allocation;
+      Allocation allocation;
       ASSERT_TRUE(allocation.empty());
       ASSERT_TRUE(pool->allocateNonContiguous(
           testData.numAllocPages,
@@ -984,11 +853,11 @@ TEST_P(MemoryPoolTest, nonContiguousAllocate) {
   const int32_t numIterations = 100;
   const MachinePageCount kMaxAllocationPages = 32 << 10; // Total 128MB
   int32_t numAllocatedPages = 0;
-  std::vector<MemoryAllocator::Allocation> allocations;
+  std::vector<Allocation> allocations;
   for (int32_t i = 0; i < numIterations; ++i) {
     const MachinePageCount pagesToAllocate =
         1 + folly::Random().rand32() % kMaxAllocationPages;
-    MemoryAllocator::Allocation allocation;
+    Allocation allocation;
     if (folly::Random().oneIn(2) && !allocations.empty()) {
       const int32_t freeAllocationIdx =
           folly::Random().rand32() % allocations.size();
@@ -1016,12 +885,12 @@ TEST_P(MemoryPoolTest, nonContiguousAllocate) {
 
 TEST_P(MemoryPoolTest, nonContiguousAllocateExceedLimit) {
   const MachinePageCount kMaxNumPages = 1 << 10;
-  const auto kMemoryCapBytes = kMaxNumPages * MemoryAllocator::kPageSize;
+  const auto kMemoryCapBytes = kMaxNumPages * AllocationTraits::kPageSize;
   auto manager = getMemoryManager(kMemoryCapBytes);
   auto pool = manager->getChild();
   auto tracker = MemoryUsageTracker::create(kMemoryCapBytes);
   pool->setMemoryUsageTracker(tracker);
-  MemoryAllocator::Allocation allocation;
+  Allocation allocation;
   ASSERT_TRUE(pool->allocateNonContiguous(kMaxNumPages, allocation));
   ASSERT_THROW(
       pool->allocateNonContiguous(2 * kMaxNumPages, allocation),
@@ -1036,35 +905,69 @@ TEST_P(MemoryPoolTest, nonContiguousAllocateExceedLimit) {
 DEBUG_ONLY_TEST_P(MemoryPoolTest, nonContiguousAllocateError) {
   auto manager = getMemoryManager(8 * GB);
   auto pool = manager->getChild();
-  const std::string testValueStr = useMmap_
-      ? "facebook::velox::memory::MmapAllocator::allocateNonContiguous"
-      : "facebook::velox::memory::MemoryAllocatorImpl::allocateNonContiguous";
-  std::atomic<bool> testingInjectFailureOnce{true};
+  if (useMmap_) {
+    mmapAllocator_->testingSetFailureInjection(
+        MmapAllocator::Failure::kAllocate, true);
+  }
+  std::atomic<bool> injectFailure{true};
   SCOPED_TESTVALUE_SET(
-      testValueStr, std::function<void(bool*)>([&](bool* testFlag) {
-        if (!testingInjectFailureOnce.exchange(false)) {
+      "facebook::velox::memory::MallocAllocator::allocateNonContiguous",
+      std::function<void(bool*)>([&](bool* testFlag) {
+        if (!injectFailure) {
           return;
         }
-        if (useMmap_) {
-          *testFlag = false;
-        } else {
-          *testFlag = true;
-        }
+        *testFlag = true;
       }));
 
   constexpr MachinePageCount kAllocSize = 8;
-  std::unique_ptr<MemoryAllocator::Allocation> allocation(
-      new MemoryAllocator::Allocation());
+  std::unique_ptr<Allocation> allocation(new Allocation());
   ASSERT_FALSE(pool->allocateNonContiguous(kAllocSize, *allocation));
+  ASSERT_TRUE(allocation->empty());
+  injectFailure = false;
+  if (useMmap_) {
+    mmapAllocator_->testingClearFailureInjection();
+  }
   ASSERT_TRUE(pool->allocateNonContiguous(kAllocSize, *allocation));
   pool->freeNonContiguous(*allocation);
+  ASSERT_TRUE(allocation->empty());
+}
+
+DEBUG_ONLY_TEST_P(MemoryPoolTest, transientNonContiguousAllocateError) {
+  auto manager = getMemoryManager(8 * GB);
+  auto pool = manager->getChild();
+  if (useMmap_) {
+    mmapAllocator_->testingSetFailureInjection(
+        MmapAllocator::Failure::kAllocate);
+  }
+  std::atomic<bool> testingSetFailureInjectionOnce{true};
+  SCOPED_TESTVALUE_SET(
+      "facebook::velox::memory::MallocAllocator::allocateNonContiguous",
+      std::function<void(bool*)>([&](bool* testFlag) {
+        if (!testingSetFailureInjectionOnce.exchange(false)) {
+          return;
+        }
+        *testFlag = true;
+      }));
+
+  constexpr MachinePageCount kAllocSize = 8;
+  std::unique_ptr<Allocation> allocation(new Allocation());
+  if (useCache_) {
+    // We expect async data cache will retry the transient memory allocation
+    // failures.
+    ASSERT_TRUE(pool->allocateNonContiguous(kAllocSize, *allocation));
+    pool->freeNonContiguous(*allocation);
+  } else {
+    ASSERT_FALSE(pool->allocateNonContiguous(kAllocSize, *allocation));
+    ASSERT_TRUE(pool->allocateNonContiguous(kAllocSize, *allocation));
+    pool->freeNonContiguous(*allocation);
+  }
   ASSERT_TRUE(allocation->empty());
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     MemoryPoolTestSuite,
     MemoryPoolTest,
-    testing::Values(true, false));
+    testing::ValuesIn(MemoryPoolTest::getTestParams()));
 
 } // namespace memory
 } // namespace velox

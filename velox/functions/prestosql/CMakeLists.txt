@@ -23,6 +23,7 @@ add_library(
   ArrayDuplicates.cpp
   ArrayIntersectExcept.cpp
   ArrayPosition.cpp
+  ArrayShuffle.cpp
   ArraySort.cpp
   ArraySum.cpp
   Comparisons.cpp
@@ -39,6 +40,7 @@ add_library(
   MapZipWith.cpp
   Not.cpp
   Reduce.cpp
+  Repeat.cpp
   Reverse.cpp
   RowFunction.cpp
   Slice.cpp

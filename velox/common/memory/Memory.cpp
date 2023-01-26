@@ -31,14 +31,6 @@ namespace {
       "Exceeded memory manager cap of {} MB",                       \
       (cap) / 1024 / 1024);
 
-#define VELOX_MEM_MANUAL_CAP()                                      \
-  _VELOX_THROW(                                                     \
-      ::facebook::velox::VeloxRuntimeError,                         \
-      ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
-      ::facebook::velox::error_code::kMemCapExceeded.c_str(),       \
-      /* isRetriable */ true,                                       \
-      "Memory allocation manually capped");
-
 constexpr folly::StringPiece kRootNodeName{"__root__"};
 } // namespace
 
@@ -70,23 +62,17 @@ uint64_t MemoryPool::getChildCount() const {
   return children_.size();
 }
 
-void MemoryPool::visitChildren(
-    std::function<void(MemoryPool* FOLLY_NONNULL)> visitor) const {
+void MemoryPool::visitChildren(std::function<void(MemoryPool*)> visitor) const {
   folly::SharedMutex::ReadHolder guard{childrenMutex_};
   for (const auto& child : children_) {
     visitor(child);
   }
 }
 
-std::shared_ptr<MemoryPool> MemoryPool::addChild(
-    const std::string& name,
-    int64_t cap) {
+std::shared_ptr<MemoryPool> MemoryPool::addChild(const std::string& name) {
   folly::SharedMutex::WriteHolder guard{childrenMutex_};
   // Upon name collision we would throw and not modify the map.
-  auto child = genChild(shared_from_this(), name, cap);
-  if (isMemoryCapped()) {
-    child->capMemoryAllocation();
-  }
+  auto child = genChild(shared_from_this(), name);
   if (auto usageTracker = getMemoryUsageTracker()) {
     child->setMemoryUsageTracker(usageTracker->addChild());
   }
@@ -130,12 +116,9 @@ MemoryPoolImpl::MemoryPoolImpl(
     std::shared_ptr<MemoryPool> parent,
     const Options& options)
     : MemoryPool{name, parent, options},
-      cap_{options.capacity},
       memoryManager_{memoryManager},
       localMemoryUsage_{},
-      allocator_{memoryManager_.getAllocator()} {
-  VELOX_USER_CHECK_GT(cap_, 0);
-}
+      allocator_{memoryManager_.getAllocator()} {}
 
 MemoryPoolImpl::~MemoryPoolImpl() {
   if (const auto& tracker = getMemoryUsageTracker()) {
@@ -159,18 +142,12 @@ int64_t MemoryPoolImpl::sizeAlign(int64_t size) {
 }
 
 void* MemoryPoolImpl::allocate(int64_t size) {
-  if (this->isMemoryCapped()) {
-    VELOX_MEM_MANUAL_CAP();
-  }
   const auto alignedSize = sizeAlign(size);
   reserve(alignedSize);
   return allocator_.allocateBytes(alignedSize, alignment_);
 }
 
 void* MemoryPoolImpl::allocateZeroFilled(int64_t numEntries, int64_t sizeEach) {
-  if (this->isMemoryCapped()) {
-    VELOX_MEM_MANUAL_CAP();
-  }
   const auto alignedSize = sizeAlign(sizeEach * numEntries);
   reserve(alignedSize);
   return allocator_.allocateZeroFilled(alignedSize);
@@ -196,7 +173,9 @@ void* MemoryPoolImpl::reallocate(
     free(p, alignedSize);
     auto errorMessage = fmt::format(
         MEM_CAP_EXCEEDED_ERROR_FORMAT,
-        succinctBytes(cap_),
+        // This is not accurate either way. We'll make it the proper memory
+        // quota when we migrate all of capping and tracking to memory tracker.
+        succinctBytes(getMemoryUsageTracker()->maxMemory()),
         succinctBytes(difference));
     VELOX_MEM_CAP_EXCEEDED(errorMessage);
   }
@@ -211,7 +190,7 @@ void MemoryPoolImpl::free(void* p, int64_t size) {
 
 bool MemoryPoolImpl::allocateNonContiguous(
     MachinePageCount numPages,
-    MemoryAllocator::Allocation& out,
+    Allocation& out,
     MachinePageCount minSizeClass) {
   if (!allocator_.allocateNonContiguous(
           numPages,
@@ -232,8 +211,7 @@ bool MemoryPoolImpl::allocateNonContiguous(
   return true;
 }
 
-void MemoryPoolImpl::freeNonContiguous(
-    MemoryAllocator::Allocation& allocation) {
+void MemoryPoolImpl::freeNonContiguous(Allocation& allocation) {
   const int64_t freedBytes = allocator_.freeNonContiguous(allocation);
   VELOX_CHECK(allocation.empty());
   if (memoryUsageTracker_ != nullptr) {
@@ -251,7 +229,7 @@ const std::vector<MachinePageCount>& MemoryPoolImpl::sizeClasses() const {
 
 bool MemoryPoolImpl::allocateContiguous(
     MachinePageCount numPages,
-    MemoryAllocator::ContiguousAllocation& out) {
+    ContiguousAllocation& out) {
   if (!allocator_.allocateContiguous(
           numPages, nullptr, out, [this](int64_t allocBytes, bool preAlloc) {
             if (memoryUsageTracker_) {
@@ -267,8 +245,7 @@ bool MemoryPoolImpl::allocateContiguous(
   return true;
 }
 
-void MemoryPoolImpl::freeContiguous(
-    MemoryAllocator::ContiguousAllocation& allocation) {
+void MemoryPoolImpl::freeContiguous(ContiguousAllocation& allocation) {
   const int64_t bytesToFree = allocation.size();
   allocator_.freeContiguous(allocation);
   VELOX_CHECK(allocation.empty());
@@ -300,12 +277,6 @@ MemoryPoolImpl::getMemoryUsageTracker() const {
   return memoryUsageTracker_;
 }
 
-void MemoryPoolImpl::setSubtreeMemoryUsage(int64_t size) {
-  updateSubtreeMemoryUsage([size](MemoryUsage& subtreeUsage) {
-    subtreeUsage.setCurrentBytes(size);
-  });
-}
-
 int64_t MemoryPoolImpl::updateSubtreeMemoryUsage(int64_t size) {
   int64_t aggregateBytes;
   updateSubtreeMemoryUsage([&aggregateBytes, size](MemoryUsage& subtreeUsage) {
@@ -315,46 +286,15 @@ int64_t MemoryPoolImpl::updateSubtreeMemoryUsage(int64_t size) {
   return aggregateBytes;
 }
 
-int64_t MemoryPoolImpl::cap() const {
-  return cap_;
-}
-
 uint16_t MemoryPoolImpl::getAlignment() const {
   return alignment_;
 }
 
-void MemoryPoolImpl::capMemoryAllocation() {
-  capped_.store(true);
-  for (const auto& child : children_) {
-    child->capMemoryAllocation();
-  }
-}
-
-void MemoryPoolImpl::uncapMemoryAllocation() {
-  // This means if we try to post-order traverse the tree like we do
-  // in MemoryManager, only parent has the right to lift the cap.
-  // This suffices because parent will then recursively lift the cap on the
-  // entire tree.
-  if (getAggregateBytes() > cap()) {
-    return;
-  }
-  if (parent_ != nullptr && parent_->isMemoryCapped()) {
-    return;
-  }
-  capped_.store(false);
-  visitChildren([](MemoryPool* child) { child->uncapMemoryAllocation(); });
-}
-
-bool MemoryPoolImpl::isMemoryCapped() const {
-  return capped_.load();
-}
-
 std::shared_ptr<MemoryPool> MemoryPoolImpl::genChild(
     std::shared_ptr<MemoryPool> parent,
-    const std::string& name,
-    int64_t cap) {
+    const std::string& name) {
   return std::make_shared<MemoryPoolImpl>(
-      memoryManager_, name, parent, Options{alignment_, cap});
+      memoryManager_, name, parent, Options{.alignment = alignment_});
 }
 
 const MemoryUsage& MemoryPoolImpl::getLocalMemoryUsage() const {
@@ -396,25 +336,13 @@ void MemoryPoolImpl::reserve(int64_t size) {
   localMemoryUsage_.incrementCurrentBytes(size);
 
   bool success = memoryManager_.reserve(size);
-  bool manualCap = isMemoryCapped();
-  int64_t aggregateBytes = getAggregateBytes();
-  if (UNLIKELY(!success || manualCap || aggregateBytes > cap_)) {
+  if (UNLIKELY(!success)) {
     // NOTE: If we can make the reserve and release a single transaction we
     // would have more accurate aggregates in intermediate states. However, this
     // is low-pri because we can only have inflated aggregates, and be on the
     // more conservative side.
     release(size);
-    if (!success) {
-      VELOX_MEM_MANAGER_CAP_EXCEEDED(memoryManager_.getMemoryQuota());
-    }
-    if (manualCap) {
-      VELOX_MEM_MANUAL_CAP();
-    }
-    auto errorMessage = fmt::format(
-        MEM_CAP_EXCEEDED_ERROR_FORMAT,
-        succinctBytes(cap_),
-        succinctBytes(size));
-    VELOX_MEM_CAP_EXCEEDED(errorMessage);
+    VELOX_MEM_MANAGER_CAP_EXCEEDED(memoryManager_.getMemoryQuota());
   }
 }
 
@@ -459,12 +387,14 @@ MemoryPool& MemoryManager::getRoot() const {
   return *root_;
 }
 
+std::shared_ptr<MemoryPool> MemoryManager::getRootAsSharedPtr() const {
+  return root_;
+}
+
 std::shared_ptr<MemoryPool> MemoryManager::getChild(int64_t cap) {
-  return root_->addChild(
-      fmt::format(
-          "default_usage_node_{}",
-          folly::to<std::string>(folly::Random::rand64())),
-      cap);
+  return root_->addChild(fmt::format(
+      "default_usage_node_{}",
+      folly::to<std::string>(folly::Random::rand64())));
 }
 
 int64_t MemoryManager::getTotalBytes() const {

@@ -16,7 +16,6 @@
 #pragma once
 
 #include "velox/connectors/Connector.h"
-#include "velox/connectors/WriteProtocol.h"
 #include "velox/core/Expressions.h"
 #include "velox/core/QueryConfig.h"
 
@@ -397,7 +396,7 @@ class TableWriteNode : public PlanNode {
       const std::vector<std::string>& columnNames,
       const std::shared_ptr<InsertTableHandle>& insertTableHandle,
       const RowTypePtr& outputType,
-      connector::WriteProtocol::CommitStrategy commitStrategy,
+      connector::CommitStrategy commitStrategy,
       const PlanNodePtr& source)
       : PlanNode(id),
         sources_{source},
@@ -436,7 +435,7 @@ class TableWriteNode : public PlanNode {
     return insertTableHandle_;
   }
 
-  connector::WriteProtocol::CommitStrategy commitStrategy() const {
+  connector::CommitStrategy commitStrategy() const {
     return commitStrategy_;
   }
 
@@ -452,7 +451,7 @@ class TableWriteNode : public PlanNode {
   const std::vector<std::string> columnNames_;
   const std::shared_ptr<InsertTableHandle> insertTableHandle_;
   const RowTypePtr outputType_;
-  const connector::WriteProtocol::CommitStrategy commitStrategy_;
+  const connector::CommitStrategy commitStrategy_;
 };
 
 class AggregationNode : public PlanNode {
@@ -1007,6 +1006,11 @@ enum class JoinType {
   // Return each row from the left side with a boolean flag indicating whether
   // there exists a match on the right side. For this join type, cardinality of
   // the output equals the cardinality of the left side.
+  //
+  // The handling of the rows with nulls in the join key depends on the
+  // 'nullAware' boolean specified separately.
+  //
+  // Null-aware join follows IN semantic. Regular join follows EXISTS semantic.
   kLeftSemiProject,
   // Opposite of kLeftSemiFilter. Return a subset of rows from the right side
   // which have a match on the left side. For this join type, cardinality of the
@@ -1016,16 +1020,12 @@ enum class JoinType {
   // boolean flag indicating whether there exists a match on the left side. For
   // this join type, cardinality of the output equals the cardinality of the
   // right side.
+  //
+  // The handling of the rows with nulls in the join key depends on the
+  // 'nullAware' boolean specified separately.
+  //
+  // Null-aware join follows IN semantic. Regular join follows EXISTS semantic.
   kRightSemiProject,
-  // Deprecated. TODO Remove after Prestissimo is updated.
-  // Return each row from the left side which has no match on the right side.
-  // The handling of the rows with nulls in the join key follows NOT IN
-  // semantic:
-  // (1) return empty result if the right side contains a record with a null in
-  // the join key;
-  // (2) return left-side row with null in the join key only when
-  // the right side is empty.
-  kNullAwareAnti,
   // Return each row from the left side which has no match on the right side.
   // The handling of the rows with nulls in the join key depends on the
   // 'nullAware' boolean specified separately.
@@ -1060,8 +1060,6 @@ inline const char* joinTypeName(JoinType joinType) {
       return "LEFT SEMI (PROJECT)";
     case JoinType::kRightSemiProject:
       return "RIGHT SEMI (PROJECT)";
-    case JoinType::kNullAwareAnti:
-      return "NULL-AWARE ANTI";
     case JoinType::kAnti:
       return "ANTI";
   }
@@ -1232,30 +1230,16 @@ class HashJoinNode : public AbstractJoinNode {
       VELOX_USER_CHECK(
           isNullAwareSupported(joinType),
           "Null-aware flag is supported only for semi and anti joins");
+      VELOX_USER_CHECK_EQ(
+          1, leftKeys_.size(), "Null-aware joins allow only one join key");
+
+      if (filter_) {
+        VELOX_USER_CHECK(
+            !isRightSemiProjectJoin(),
+            "Null-aware right semi project join doesn't support extra filter");
+      }
     }
   }
-
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  HashJoinNode(
-      const PlanNodeId& id,
-      JoinType joinType,
-      const std::vector<FieldAccessTypedExprPtr>& leftKeys,
-      const std::vector<FieldAccessTypedExprPtr>& rightKeys,
-      TypedExprPtr filter,
-      PlanNodePtr left,
-      PlanNodePtr right,
-      const RowTypePtr outputType)
-      : HashJoinNode(
-            id,
-            joinType == JoinType::kNullAwareAnti ? JoinType::kAnti : joinType,
-            joinType == JoinType::kNullAwareAnti ? true : false,
-            leftKeys,
-            rightKeys,
-            filter,
-            left,
-            right,
-            outputType) {}
-#endif
 
   std::string_view name() const override {
     return "HashJoin";

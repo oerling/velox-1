@@ -54,6 +54,25 @@ TEST_F(ParquetReaderTest, parseSample) {
   EXPECT_EQ(type->childByName("b"), col1);
 }
 
+TEST_F(ParquetReaderTest, parseEmpty) {
+  // empty.parquet holds two columns (a: BIGINT, b: DOUBLE) and
+  // 0 rows.
+  const std::string empty(getExampleFilePath("empty.parquet"));
+
+  ReaderOptions readerOptions;
+  ParquetReader reader = createReader(empty, readerOptions);
+  EXPECT_EQ(reader.numberOfRows(), 0ULL);
+
+  auto type = reader.typeWithId();
+  EXPECT_EQ(type->size(), 2ULL);
+  auto col0 = type->childAt(0);
+  EXPECT_EQ(col0->type->kind(), TypeKind::BIGINT);
+  auto col1 = type->childAt(1);
+  EXPECT_EQ(col1->type->kind(), TypeKind::DOUBLE);
+  EXPECT_EQ(type->childByName("a"), col0);
+  EXPECT_EQ(type->childByName("b"), col1);
+}
+
 TEST_F(ParquetReaderTest, parseDate) {
   // date.parquet holds a single column (date: DATE) and
   // 25 rows.
@@ -106,4 +125,22 @@ TEST_F(ParquetReaderTest, parseRowMapArray) {
 
   auto col0_1_1_0 = col0_1_1->childAt(0);
   EXPECT_EQ(col0_1_1_0->type->kind(), TypeKind::INTEGER);
+}
+
+TEST_F(ParquetReaderTest, projectNoColumns) {
+  // This is the case for count(*).
+  auto rowType = ROW({}, {});
+  ReaderOptions readerOpts;
+  ParquetReader reader =
+      createReader(getExampleFilePath("sample.parquet"), readerOpts);
+  RowReaderOptions rowReaderOpts;
+  rowReaderOpts.setScanSpec(makeScanSpec(rowType));
+  auto rowReader = reader.createRowReader(rowReaderOpts);
+  auto result = BaseVector::create(rowType, 1, pool_.get());
+  constexpr int kBatchSize = 100;
+  ASSERT_TRUE(rowReader->next(kBatchSize, result));
+  EXPECT_EQ(result->size(), 10);
+  ASSERT_TRUE(rowReader->next(kBatchSize, result));
+  EXPECT_EQ(result->size(), 10);
+  ASSERT_FALSE(rowReader->next(kBatchSize, result));
 }
