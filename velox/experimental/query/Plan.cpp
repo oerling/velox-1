@@ -227,7 +227,7 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
 
 float startingScore(PlanObjectConstPtr table, DerivedTablePtr dt) {
   if (table->type() == PlanType::kTable) {
-    return table->as2<BaseTable>()
+    return table->as<BaseTable>()
         ->schemaTable->indices[0]
         ->distribution()
         .cardinality;
@@ -245,10 +245,10 @@ std::pair<PlanObjectConstPtr, float> otherTable(JoinPtr join, PlanObjectConstPtr
 
 const JoinVector& joinedBy(PlanObjectConstPtr table) {
   if (table->type() == PlanType::kTable) {
-    return table->as2<BaseTable>()->joinedBy;
+    return table->as<BaseTable>()->joinedBy;
   }
   VELOX_DCHECK_EQ(table->type(), PlanType::kDerivedTable);
-  return table->as2<DerivedTable>()->joinedBy;
+  return table->as<DerivedTable>()->joinedBy;
 }
 
 // Traverses joins from 'candidate'. Follows any join that goes to a
@@ -609,7 +609,7 @@ RelationOpPtr repartitionForIndex(
         info.lookupKeys,
         [](auto c) {
           return c->type() == PlanType::kColumn
-              ? c->template as2<Column>()->schemaColumn
+              ? c->template as<Column>()->schemaColumn
               : c;
         },
         *key);
@@ -653,7 +653,7 @@ void Optimization::joinByIndex(
     // Index applies to single base tables.
     return;
   }
-  auto rightTable = candidate.tables[0]->as2<BaseTable>();
+  auto rightTable = candidate.tables[0]->as<BaseTable>();
   auto left = candidate.sideOf(rightTable, true);
   auto right = candidate.sideOf(rightTable);
   auto& keys = right.keys;
@@ -687,7 +687,7 @@ void Optimization::joinByIndex(
     }
 
     ColumnVector columns;
-    c.forEach([&](PlanObjectConstPtr o) { columns.push_back(o->as2<Column>()); });
+    c.forEach([&](PlanObjectConstPtr o) { columns.push_back(o->as<Column>()); });
 
     Declare(
         TableScan,
@@ -726,7 +726,7 @@ std::vector<int32_t> joinKeyPartition(
 PlanObjectSet availableColumns(PlanObjectConstPtr object) {
   PlanObjectSet set;
   if (object->type() == PlanType::kTable) {
-    for (auto& c : object->as2<BaseTable>()->columns) {
+    for (auto& c : object->as<BaseTable>()->columns) {
       set.add(c);
     }
   }
@@ -883,9 +883,9 @@ void Optimization::addJoin(
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
   downstream.forEach([&](PlanObjectConstPtr object) {
-    if (position(index->columns(), *object->as2<Column>()->schemaColumn) >=
+    if (position(index->columns(), *object->as<Column>()->schemaColumn) >=
         0) {
-      result.push_back(object->as2<Column>());
+      result.push_back(object->as<Column>());
     }
   });
   return result;
@@ -921,8 +921,8 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     for (auto i : ids) {
       auto from = firstTables[i];
       if (from->type() == PlanType::kTable) {
-        auto table = from->as2<BaseTable>();
-        auto indices = chooseLeafIndex(table->as2<BaseTable>(), dt);
+        auto table = from->as<BaseTable>();
+        auto indices = chooseLeafIndex(table->as<BaseTable>(), dt);
         // Make plan starting with each relevant index of the table.
         auto downstream = state.downstreamColumns();
         for (auto index : indices) {

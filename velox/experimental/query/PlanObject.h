@@ -64,13 +64,13 @@ class PlanObject {
   }
 
   template <typename T>
-  T* as2() {
+  T* as() {
     return reinterpret_cast<T*>(this);
   }
 
   /// Returns 'this' as const T.
   template <typename T>
-  const T* as2() const {
+  const T* as() const {
     return reinterpret_cast<const T*>(this);
   }
 

@@ -93,7 +93,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     args[i] = translateExpr(inputs[i]);
     cardinality = std::max(cardinality, args[i]->value.cardinality);
     if (args[i]->type() == PlanType::kCall) {
-      funcs = funcs | args[i]->as2<Call>()->functions;
+      funcs = funcs | args[i]->as<Call>()->functions;
     }
   }
   if (auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get())) {
@@ -143,7 +143,7 @@ AggregationPtr Optimization::translateGroupBy(
         nullptr,
         translateColumns(source.groupingKeys()));
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
-      auto rawFunc = translateExpr(source.aggregates()[i])->as2<Call>();
+      auto rawFunc = translateExpr(source.aggregates()[i])->as<Call>();
       ExprPtr condition = nullptr;
       if (source.aggregateMasks()[i]) {
         condition = translateExpr(source.aggregateMasks()[i]);
@@ -159,9 +159,9 @@ AggregationPtr Optimization::translateGroupBy(
           condition,
           false);
       auto dedupped = queryCtx()->dedup(agg);
-      aggregation->aggregates.push_back(dedupped->as2<Aggregate>());
+      aggregation->aggregates.push_back(dedupped->as<Aggregate>());
       auto name = toName(source.aggregateNames()[i]);
-      renames_[name] = dedupped->as2<Expr>();
+      renames_[name] = dedupped->as<Expr>();
     }
     return aggregation;
   }
@@ -184,7 +184,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
       auto l = leftKeys[i];
       auto r = rightKeys[i];
       if (l->type() == PlanType::kColumn && r->type() == PlanType::kColumn) {
-        l->as2<Column>()->equals(r->as2<Column>());
+        l->as<Column>()->equals(r->as<Column>());
         currentSelect_->addJoinEquality(l, r, false, false, false, false);
       } else {
         VELOX_NYI("Only column to column inner joins");
