@@ -329,6 +329,7 @@ ExprPtr tryFoldIfConstant(const ExprPtr& expr, Scope* scope) {
     // instance, if other arguments are all null in a function with default null
     // behavior), the query won't fail.
     catch (const std::exception&) {
+      expr->inputValues().clear();
     }
   }
   return expr;
