@@ -357,7 +357,7 @@ PlanObjectSet allTables(PtrSpan<Expr> exprs) {
   return all;
 }
 
-Column::Column(Name _name, PlanObjectPtr _relation, Value value)
+Column::Column(Name _name, PlanObjectPtr _relation, const Value& value)
     : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {
   columns.add(this);
   if (relation && relation->type() == PlanType::kTable) {
@@ -615,7 +615,7 @@ void SchemaTable::addIndex(
   indices.push_back(index);
 }
 
-ColumnPtr SchemaTable::column(const std::string& name, Value value) {
+ColumnPtr SchemaTable::column(const std::string& name, const Value& value) {
   auto it = columns.find(name);
   if (it != columns.end()) {
     return it->second;

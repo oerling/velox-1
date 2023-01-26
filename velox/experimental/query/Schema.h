@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/experimental/query/PlanObject.h"
+
 /// Schema representation for use in query planning. All objects are
 /// arena allocated for the duration of planning the query. We do
 /// not expect to keep a full schema in memory, rather we expect to
@@ -73,7 +74,7 @@ using OrderTypeVector = std::vector<OrderType, QGAllocator<OrderType>>;
 /// if their locus is equal (==) to the other locus.
 struct Locus {};
 
-using LocusPtr = Locus*;
+using LocusPtr = const Locus*;
 
 /// Method for determining a partition given an ordered list of partitioning
 /// keys. Hive hash is an example, range partitioning is another. Add values
@@ -207,14 +208,11 @@ class Relation {
  protected:
   const RelType relType_;
   const Distribution distribution_;
-#if 0
-  velox::RowTypePtr type_;
-#endif
   const ColumnVector columns_;
 };
 
 struct SchemaTable;
-using SchemaTablePtr = SchemaTable*;
+using SchemaTablePtr = const SchemaTable*;
 
 /// Represents a stored collection of rows. An index may have a uniqueness
 /// constraint over a set of columns, a partitioning and an ordering plus a set
@@ -235,13 +233,13 @@ struct Index : public Relation {
   /// Returns cost of next lookup when the hit is within 'range' rows
   /// of the previous hit. If lookups are not batched or not ordered,
   /// then 'range' should be the cardinality of the index.
-  float lookupCost(float range);
+  float lookupCost(float range) const;
 };
 
 using IndexPtr = Index*;
 
 // Describes the number of rows to look at and the number of expected matches
-// given an arbitrary set of values for a set of columns.
+// given equality constraints for a set of columns. See SchemaTable::indexInfo().
 struct IndexInfo {
   // Index chosen based on columns.
   IndexPtr index;
@@ -263,6 +261,10 @@ struct IndexInfo {
   // 'index'. If 'index' has no ordering columns or if the lookup columns are
   // not a prefix of these, this is empty.
   std::vector<ColumnPtr> lookupKeys;
+
+  // The columns that were considered in 'scanCardinality' and
+  // 'joinCardinality'. This may be fewer columns than given to
+  // indexInfo() if the index does not cover some columns.
   PlanObjectSet coveredColumns;
 
   /// Returns the schema column for the BaseTable column 'column' or nullptr if
@@ -278,7 +280,7 @@ struct SchemaTable {
   SchemaTable(Name _name, const velox::RowTypePtr& _type)
       : name(_name), type(_type) {}
 
-  /// Adds an ide	ndex. The arguments set the corresponding members of a
+  /// Adds an index. The arguments set the corresponding members of a
   /// Distribution.
   void addIndex(
       Name name,
@@ -290,7 +292,8 @@ struct SchemaTable {
       const ColumnVector& partition,
       const ColumnVector& columns);
 
-  ColumnPtr column(const std::string& name, Value value);
+  /// Finds or adds a column with 'name' and 'value'.
+  ColumnPtr column(const std::string& name, const Value& value);
 
   ColumnPtr findColumn(const std::string& name) const;
 

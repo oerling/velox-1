@@ -58,7 +58,7 @@ void RelationOp::setCost(const PlanState& state) {
   cost_.inputCardinality = state.cost.fanout;
 }
 
-float Index::lookupCost(float range) {
+float Index::lookupCost(float range) const {
   // Add 2 because it takes a compare and access also if hitting the
   // same row. log(1) == 0, so this would other wise be zero cost.
   return Costs::kKeyCompareCost * log(range + 2) / log(2);

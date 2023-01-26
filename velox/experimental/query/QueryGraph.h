@@ -42,7 +42,7 @@ namespace facebook::verax {
 
 /// Superclass for all expressions.
 struct Expr : public PlanObject {
-  Expr(PlanType type, Value _value) : PlanObject(type), value(_value) {}
+  Expr(PlanType type, const Value& _value) : PlanObject(type), value(_value) {}
 
   bool isExpr() const override {
     return true;
@@ -74,7 +74,7 @@ using EquivalencePtr = Equivalence*;
 
 /// Represents a literal.
 struct Literal : public Expr {
-  Literal(Value value, velox::variant _literal)
+  Literal(const Value& value, velox::variant _literal)
       : Expr(PlanType::kLiteral, value), literal(_literal) {}
   velox::variant literal;
 };
@@ -82,7 +82,7 @@ struct Literal : public Expr {
 /// Represents a column. A column is always defined by a relation, whether table
 /// or derived table.
 struct Column : public Expr {
-  Column(Name _name, PlanObjectPtr _relation, Value value);
+  Column(Name _name, PlanObjectPtr _relation, const Value& value);
 
   /// Asserts that 'this' and 'other' are joined on equality. This has a
   /// transitive effect, so if a and b are previously asserted equal and c is
@@ -139,24 +139,27 @@ class FunctionSet {
 /// subexpressions.
 struct Call : public Expr {
   Call(
-      PlanType _type,
-      Name _func,
-      Value value,
-      ExprVector _args,
-      FunctionSet _functions)
-      : Expr(_type, value),
-        func(_func),
-        args(std::move(_args)),
-        functions(_functions) {
+      PlanType type,
+      Name func,
+      const Value& value,
+      ExprVector args,
+      FunctionSet functions)
+      : Expr(type, value),
+        func(func),
+        args(std::move(args)),
+        functions(functions) {
     for (auto arg : args) {
       columns.unionSet(arg->columns);
     }
   }
 
-  Call(Name _func, Value value, ExprVector _args, FunctionSet _functions)
-      : Call(PlanType::kCall, _func, value, _args, _functions) {}
+  Call(Name _func, Value value, ExprVector args, FunctionSet functions)
+      : Call(PlanType::kCall, func, value, args, functions) {}
 
+  // name of function.
   Name func;
+
+  // Arguments.
   ExprVector args;
 
   // Set of functions used in 'this' and 'args'.
@@ -174,6 +177,7 @@ using CallPtr = const Call*;
 
 /// Represens a set of transitively equal columns.
 struct Equivalence {
+  // Each element has a direct or implied equality edge to every other.
   ColumnVector columns;
 };
 
@@ -308,24 +312,24 @@ struct BaseTable : public PlanObject {
   std::string toString() const override;
 };
 
-using BaseTablePtr = BaseTable*;
+using BaseTablePtr = const BaseTable*;
 
 // Aggregate function. The aggregation and arguments are in the
 // inherited Call. The Value pertains to the aggregation
 // result or accumulator.
 struct Aggregate : public Call {
   Aggregate(
-      Name _func,
-      Value value,
-      ExprVector _args,
-      FunctionSet _functions,
-      bool _isDistinct,
-      ExprPtr _condition,
-      bool _isAccumulator)
-      : Call(PlanType::kAggregate, _func, value, std::move(_args), _functions),
-        isDistinct(_isDistinct),
-        condition(_condition),
-        isAccumulator(_isAccumulator) {
+      Name func,
+      const Value& value,
+      ExprVector args,
+      FunctionSet functions,
+      bool isDistinct,
+      ExprPtr condition,
+      bool isAccumulator)
+      : Call(PlanType::kAggregate, func, value, std::move(args), functions),
+        isDistinct(isDistinct),
+        condition(condition),
+        isAccumulator(isAccumulator) {
     if (condition) {
       columns.unionSet(condition->columns);
     }
