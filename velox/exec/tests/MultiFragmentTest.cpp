@@ -177,6 +177,46 @@ TEST_F(MultiFragmentTest, aggregationSingleKey) {
   for (auto& task : tasks) {
     ASSERT_TRUE(waitForTaskCompletion(task.get())) << task->taskId();
   }
+
+  // Verify the created memory pools.
+  for (int i = 0; i < tasks.size(); ++i) {
+    SCOPED_TRACE(fmt::format("task {}", tasks[i]->taskId()));
+    int32_t numPools = 0;
+    std::unordered_map<std::string, memory::MemoryPool*> poolsByName;
+    std::vector<memory::MemoryPool*> pools;
+    pools.push_back(tasks[i]->pool());
+    poolsByName[tasks[i]->pool()->name()] = tasks[i]->pool();
+    while (!pools.empty()) {
+      numPools += pools.size();
+      std::vector<memory::MemoryPool*> childPools;
+      for (auto pool : pools) {
+        pool->visitChildren([&](memory::MemoryPool* childPool) {
+          ASSERT_EQ(poolsByName.count(childPool->name()), 0)
+              << childPool->name();
+          poolsByName[childPool->name()] = childPool;
+          if (childPool->parent() != nullptr) {
+            ASSERT_EQ(poolsByName.count(childPool->parent()->name()), 1);
+            ASSERT_EQ(
+                poolsByName[childPool->parent()->name()], childPool->parent());
+          }
+          childPools.push_back(childPool);
+        });
+      }
+      pools.swap(childPools);
+    }
+    if (i == 0) {
+      // For leaf task, it has total 21 memory pools: task pool + 4 plan node
+      // pools (TableScan, FilterProject, PartialAggregation, PartitionedOutput)
+      // and 16 operator pools (4 drivers * number of plan nodes).
+      ASSERT_EQ(numPools, 21);
+    } else {
+      // For root task, it has total 8 memory pools: task pool + 3 plan node
+      // pools (Exchange, Aggregation, PartitionedOutput) and 4 leaf pools: 3
+      // operator pools (1 driver * number of plan nodes) + 1 exchange client
+      // pool.
+      ASSERT_EQ(numPools, 8);
+    }
+  }
 }
 
 TEST_F(MultiFragmentTest, aggregationMultiKey) {
@@ -522,12 +562,12 @@ TEST_F(MultiFragmentTest, limit) {
   auto file = TempFilePath::create();
   writeToFile(file->path, {data});
 
-  // Make leaf task: Values -> PartialLimit(1) -> Repartitioning(0).
+  // Make leaf task: Values -> PartialLimit(10) -> Repartitioning(0).
   auto leafTaskId = makeTaskId("leaf", 0);
   auto leafPlan =
       PlanBuilder()
           .tableScan(std::dynamic_pointer_cast<const RowType>(data->type()))
-          .limit(0, 10, false)
+          .limit(0, 10, true)
           .partitionedOutput({}, 1)
           .planNode();
   auto leafTask = makeTask(leafTaskId, leafPlan, 0);
@@ -536,7 +576,7 @@ TEST_F(MultiFragmentTest, limit) {
   leafTask.get()->addSplit(
       "0", exec::Split(makeHiveConnectorSplit(file->path)));
 
-  // Make final task: Exchange -> FinalLimit(1).
+  // Make final task: Exchange -> FinalLimit(10).
   auto plan = PlanBuilder()
                   .exchange(leafPlan->outputType())
                   .localPartition({})
@@ -557,7 +597,7 @@ TEST_F(MultiFragmentTest, limit) {
         task->addSplit("0", std::move(split));
         splitAdded = true;
       },
-      "VALUES (null), (1), (2), (3), (4), (5), (6), (7), (8), (9)",
+      "VALUES (null), (1), (2), (3), (4), (5), (6), (null), (8), (9)",
       duckDbQueryRunner_);
 
   ASSERT_TRUE(waitForTaskCompletion(task.get())) << task->taskId();
