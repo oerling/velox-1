@@ -109,11 +109,6 @@ inline folly::Range<T*> toRange(const std::vector<T, QGAllocator<T>>& v) {
   return folly::Range<T const*>(v.data(), v.size());
 }
 
-template <typename T>
-inline folly::Range<const T**> asMutableRange(void* ptr, int32_t size) {
-  return folly::Range<const T**>(reinterpret_cast<const T**>(ptr), size);
-}
-
 template <typename T, typename U>
 inline PtrSpan<T> toRangeCast(U v) {
   return PtrSpan<T>(reinterpret_cast<const T* const*>(v.data()), v.size());
