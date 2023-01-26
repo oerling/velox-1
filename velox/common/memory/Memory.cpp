@@ -62,8 +62,7 @@ uint64_t MemoryPool::getChildCount() const {
   return children_.size();
 }
 
-void MemoryPool::visitChildren(
-    std::function<void(MemoryPool* FOLLY_NONNULL)> visitor) const {
+void MemoryPool::visitChildren(std::function<void(MemoryPool*)> visitor) const {
   folly::SharedMutex::ReadHolder guard{childrenMutex_};
   for (const auto& child : children_) {
     visitor(child);
@@ -191,7 +190,7 @@ void MemoryPoolImpl::free(void* p, int64_t size) {
 
 bool MemoryPoolImpl::allocateNonContiguous(
     MachinePageCount numPages,
-    MemoryAllocator::Allocation& out,
+    Allocation& out,
     MachinePageCount minSizeClass) {
   if (!allocator_.allocateNonContiguous(
           numPages,
@@ -212,8 +211,7 @@ bool MemoryPoolImpl::allocateNonContiguous(
   return true;
 }
 
-void MemoryPoolImpl::freeNonContiguous(
-    MemoryAllocator::Allocation& allocation) {
+void MemoryPoolImpl::freeNonContiguous(Allocation& allocation) {
   const int64_t freedBytes = allocator_.freeNonContiguous(allocation);
   VELOX_CHECK(allocation.empty());
   if (memoryUsageTracker_ != nullptr) {
@@ -231,7 +229,7 @@ const std::vector<MachinePageCount>& MemoryPoolImpl::sizeClasses() const {
 
 bool MemoryPoolImpl::allocateContiguous(
     MachinePageCount numPages,
-    MemoryAllocator::ContiguousAllocation& out) {
+    ContiguousAllocation& out) {
   if (!allocator_.allocateContiguous(
           numPages, nullptr, out, [this](int64_t allocBytes, bool preAlloc) {
             if (memoryUsageTracker_) {
@@ -247,8 +245,7 @@ bool MemoryPoolImpl::allocateContiguous(
   return true;
 }
 
-void MemoryPoolImpl::freeContiguous(
-    MemoryAllocator::ContiguousAllocation& allocation) {
+void MemoryPoolImpl::freeContiguous(ContiguousAllocation& allocation) {
   const int64_t bytesToFree = allocation.size();
   allocator_.freeContiguous(allocation);
   VELOX_CHECK(allocation.empty());
