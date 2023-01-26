@@ -182,23 +182,35 @@ enum class RelType {
 /// Represents a relation (table) that is either physically stored or is the
 /// streaming output of a query operator. This has a distribution describing
 /// partitioning and data order and a set of columns describing the payload.
-struct Relation {
-  Relation() = default;
-
-  Relation(RelType type) : relType(type) {}
-
+class Relation {
+public:
   Relation(
-      RelType _relType,
-      Distribution _distribution,
-      const ColumnVector& _columns)
-      : relType(_relType),
-        distribution(std::move(_distribution)),
-        columns(_columns) {}
+	   RelType relType,
+      Distribution distribution,
+      const ColumnVector& columns)
+      : relType_(relType),
+        distribution_(std::move(distribution)),
+        columns_(columns) {}
 
-  RelType relType;
-  Distribution distribution;
-  velox::RowTypePtr type;
-  ColumnVector columns;
+  RelType relType() const {
+    return relType_;
+  }
+
+  const Distribution& distribution() const {
+    return distribution_;
+  }
+
+  const ColumnVector& columns() const {
+    return columns_;
+  }
+  
+protected:
+  const RelType relType_;
+  const Distribution distribution_;
+  #if 0
+  velox::RowTypePtr type_;
+#endif
+  const ColumnVector columns_;
 };
 
 struct SchemaTable;

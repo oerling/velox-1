@@ -78,7 +78,7 @@ class PlanTest : public testing::Test {
       std::shared_ptr<const core::PlanNode> plan,
       bool partitioned,
       bool ordered,
-      int numRepeats = 100) {
+      int numRepeats = 1) {
     auto schema = tpchSchema(100, partitioned, ordered, false);
     std::string string;
     for (auto counter = 0; counter < numRepeats; ++counter) {

@@ -661,13 +661,13 @@ ColumnPtr findColumnByName(folly::Range<T*> columns, Name name) {
 
 bool SchemaTable::isUnique(PtrSpan<Column> columns) {
   for (auto index : indices) {
-    auto nUnique = index->distribution.numKeysUnique;
+    auto nUnique = index->distribution().numKeysUnique;
     if (!nUnique) {
       continue;
     }
     bool unique = true;
     for (auto i = 0; i < nUnique; ++i) {
-      auto part = findColumnByName(columns, index->columns[i]->name);
+      auto part = findColumnByName(columns, index->columns()[i]->name);
       if (!part) {
         unique = false;
         break;
@@ -693,15 +693,15 @@ float combine(float card, int32_t ith, float otherCard) {
 IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns) {
   IndexInfo info;
   info.index = index;
-  info.scanCardinality = index->distribution.cardinality;
-  info.joinCardinality = index->distribution.cardinality;
+  info.scanCardinality = index->distribution().cardinality;
+  info.joinCardinality = index->distribution().cardinality;
   PlanObjectSet covered;
   int32_t numCovered = 0;
-  int32_t numSorting = index->distribution.orderType.size();
-  int32_t numUnique = index->distribution.numKeysUnique;
+  int32_t numSorting = index->distribution().orderType.size();
+  int32_t numUnique = index->distribution().numKeysUnique;
   for (auto i = 0; i < numSorting || i < numUnique; ++i) {
     auto part = findColumnByName(
-        columns, index->distribution.order[i]->as<ColumnPtr>()->name);
+				 columns, index->distribution().order[i]->as<ColumnPtr>()->name);
     if (!part) {
       break;
     }
@@ -711,14 +711,14 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns) {
       info.scanCardinality = combine(
           info.scanCardinality,
           i,
-          index->distribution.order[i]->value.cardinality);
+          index->distribution().order[i]->value.cardinality);
       info.lookupKeys.push_back(part);
       info.joinCardinality = info.scanCardinality;
     } else {
       info.joinCardinality = combine(
           info.joinCardinality,
           i,
-          index->distribution.order[i]->value.cardinality);
+          index->distribution().order[i]->value.cardinality);
     }
     if (i == numUnique - 1) {
       info.unique = true;
@@ -730,7 +730,7 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns) {
     if (covered.contains(column)) {
       continue;
     }
-    auto part = findColumnByName(toRange(index->columns), column->name);
+    auto part = findColumnByName(toRange(index->columns()), column->name);
     if (!part) {
       continue;
     }
@@ -788,7 +788,7 @@ IndexInfo joinCardinality(PlanObjectPtr table, folly::Range<ColumnPtr*> keys) {
 }
 
 ColumnPtr IndexInfo::schemaColumn(ColumnPtr keyValue) const {
-  for (auto& column : index->columns) {
+  for (auto& column : index->columns()) {
     if (column->name == keyValue->name) {
       return column;
     }
@@ -809,7 +809,7 @@ float tableCardinality(PlanObjectPtr table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTablePtr>()
         ->schemaTable->indices[0]
-        ->distribution.cardinality;
+      ->distribution().cardinality;
   }
   VELOX_CHECK(table->type() == PlanType::kDerivedTable);
   return table->as<DerivedTablePtr>()->baseCardinality;

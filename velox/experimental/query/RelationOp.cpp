@@ -34,30 +34,30 @@ Distribution TableScan::outputDistribution(
   OrderTypeVector orderType;
   // if all partitioning columns are projected, the output is partitioned.
   if (isSubset(
-          toRangeCast<ColumnPtr>(index->distribution.partition),
+	       toRangeCast<ColumnPtr>(index->distribution().partition),
           toRange(schemaColumns))) {
-    partition = index->distribution.partition;
+    partition = index->distribution().partition;
     replace(
         toRangeCast<ColumnPtr>(partition), toRange(schemaColumns), &columns[0]);
   }
   auto numPrefix = prefixSize(
-      toRangeCast<ColumnPtr>(index->distribution.order),
+			      toRangeCast<ColumnPtr>(index->distribution().order),
       toRange(schemaColumns));
   if (numPrefix > 0) {
-    order = index->distribution.order;
+    order = index->distribution().order;
     order.resize(numPrefix);
-    orderType = index->distribution.orderType;
+    orderType = index->distribution().orderType;
     orderType.resize(numPrefix);
     replace(toRangeCast<ColumnPtr>(order), toRange(schemaColumns), &columns[0]);
   }
   return Distribution(
-      index->distribution.distributionType,
-      index->distribution.cardinality * baseTable->filterSelectivity,
+		      index->distribution().distributionType,
+		      index->distribution().cardinality * baseTable->filterSelectivity,
       std::move(partition),
       std::move(order),
       std::move(orderType),
-      index->distribution.numKeysUnique <= numPrefix
-          ? index->distribution.numKeysUnique
+		      index->distribution().numKeysUnique <= numPrefix
+		      ? index->distribution().numKeysUnique
           : 0,
       1.0 / baseTable->filterSelectivity);
 }
@@ -68,7 +68,7 @@ PlanObjectSet TableScan::availableColumns(
     IndexPtr index) {
   // The columns of base table that exist in 'index'.
   PlanObjectSet result;
-  for (auto column : index->columns) {
+  for (auto column : index->columns()) {
     for (auto baseColumn : baseTable->columns) {
       if (baseColumn->name == column->name) {
         result.add(baseColumn);
@@ -133,7 +133,7 @@ std::string TableScan::toString(bool /*recursive*/, bool detail) const {
   if (detail) {
     printCost(detail, out);
     if (!input) {
-      out << distribution.toString() << std::endl;
+      out << distribution_.toString() << std::endl;
     }
   }
   return out.str();
@@ -161,9 +161,9 @@ std::string Repartition::toString(bool recursive, bool detail) const {
   if (recursive) {
     out << input->toString(true, detail) << " ";
   }
-  out << (distribution.isBroadcast ? "broadcast" : "shuffle") << " ";
-  if (detail && !distribution.isBroadcast) {
-    out << distribution.toString();
+  out << (distribution().isBroadcast ? "broadcast" : "shuffle") << " ";
+  if (detail && !distribution().isBroadcast) {
+    out << distribution().toString();
     printCost(detail, out);
   } else if (detail) {
     printCost(detail, out);

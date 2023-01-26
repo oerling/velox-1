@@ -83,9 +83,9 @@ struct RelationOp : public Relation {
   RelationOp(
       RelType type,
       boost::intrusive_ptr<RelationOp> input,
-      Distribution _distribution,
+      Distribution distribution,
       ColumnVector columns = {})
-      : Relation(relType, std::move(_distribution), std::move(columns)),
+      : Relation(type, std::move(distribution), std::move(columns)),
         input(std::move(input)) {}
 
   virtual ~RelationOp() = default;
@@ -210,14 +210,14 @@ struct TableScan : public RelationOp {
 struct Repartition : public RelationOp {
   Repartition(
       RelationOpPtr input,
-      Distribution _distribution,
-      const ColumnVector& _columns)
+      Distribution distribution,
+      const ColumnVector& columns)
       : RelationOp(
             RelType::kRepartition,
             std::move(input),
-            std::move(_distribution)) {
-    columns = std::move(_columns);
-  }
+            std::move(distribution),
+	    std::move(columns)) {};
+
 
   void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;
@@ -244,8 +244,8 @@ struct JoinOp : public RelationOp {
       ExprVector rightKeys,
       ExprPtr filter,
       float fanout,
-      ColumnVector _columns)
-      : RelationOp(RelType::kJoin, input, input->distribution),
+      ColumnVector columns)
+    : RelationOp(RelType::kJoin, input, input->distribution(), columns),
         method(_method),
         joinType(_joinType),
         right(std::move(right)),
@@ -253,7 +253,6 @@ struct JoinOp : public RelationOp {
         rightKeys(std::move(rightKeys)),
         filter(filter) {
     cost_.fanout = fanout;
-    columns = std::move(_columns);
   }
 
   JoinMethod method;
@@ -276,7 +275,7 @@ using JoinOpPtr = JoinOp*;
 /// referencing join and not counted in subsequent ones.
 struct HashBuild : public RelationOp {
   HashBuild(RelationOpPtr input, int32_t id, ExprVector _keys, PlanPtr plan)
-      : RelationOp(RelType::kHashBuild, input, input->distribution),
+    : RelationOp(RelType::kHashBuild, input, input->distribution(), {}),
         buildId(id),
         keys(std::move(_keys)),
         plan(plan) {}
@@ -299,7 +298,7 @@ struct Aggregation : public RelationOp {
       : RelationOp(
             RelType::kAggregation,
             input,
-            input ? input->distribution : Distribution()),
+            input ? input->distribution() : Distribution()),
         grouping(std::move(_grouping)) {}
 
   // Grouping keys
