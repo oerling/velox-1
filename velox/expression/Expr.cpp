@@ -382,7 +382,8 @@ void Expr::evalSimplifiedImpl(
   LocalDecodedVector decodedVector(context);
 
   bool throwArgumentErrors = context.throwOnError() &&
-      (!defaultNulls || (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
+      (!defaultNulls ||
+       (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
 
   EvalCtx::ErrorVectorPtr argumentErrors;
   EvalCtx::ErrorVectorPtr errors;
@@ -1338,7 +1339,8 @@ void Expr::evalAll(
   // happen. False if argument errors will be converted into a null if
   // another argument for the same row is null.
   bool throwArgumentErrors = context.throwOnError() &&
-      (!defaultNulls || (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
+      (!defaultNulls ||
+       (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
   // Tracks the rows for which the function needs to be called. For a
   // null-propagating function, a null in an argument removes the row
   // from this.
