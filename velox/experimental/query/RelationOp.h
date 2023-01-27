@@ -29,9 +29,9 @@ struct Plan;
 using PlanPtr = Plan*;
 struct PlanState;
 
-// A physical operation on a relation. Has a per-row cost, a per-row
-// fanout and a one-time setup cost. For example, a hash join probe
-// has a fanout of 0.3 if 3 of 10 input rows are expected to hit, a
+// Represents the cost and cardinmality of a RelationOp or Plan. A Cost has a
+// per-row cost, a per-row fanout and a one-time setup cost. For example, a hash
+// join probe has a fanout of 0.3 if 3 of 10 input rows are expected to hit, a
 // constant small per-row cost that is fixed and a setup cost that is
 // the one time cost of the build side subplan. The inputCardinality
 // is a precalculated product of the left deep inputs for the hash
@@ -73,13 +73,14 @@ struct Cost {
   std::string toString(bool detail, bool isUnit = false) const;
 };
 
-/// Common superclass of all elements of candidate plans. The
-/// immutable Exprs, Columns and BaseTables in the query graph are
-/// referenced from these. RelationOp instances are also arena
+/// Physical relational operator. This is the common base class of all elements
+/// of plan candidates. The immutable Exprs, Columns and BaseTables in the query
+/// graph are referenced from these. RelationOp instances are also arena
 /// allocated but are reference counted so that no longer interesting
 /// candidate plans can be freed, since a very large number of these
 /// could be generated.
-struct RelationOp : public Relation {
+class RelationOp : public Relation {
+ public:
   RelationOp(
       RelType type,
       boost::intrusive_ptr<RelationOp> input,
@@ -102,6 +103,7 @@ struct RelationOp : public Relation {
     return cost_;
   }
 
+  /// Returns the number of output rows.
   float resultCardinality() const {
     return cost_.inputCardinality * cost_.fanout;
   }
@@ -110,12 +112,14 @@ struct RelationOp : public Relation {
   /// each subclass.
   virtual void setCost(const PlanState& input);
 
+  /// Returns human redable string for 'this' and inputs if 'recursive' is true.
+  /// If 'detail' is true, includes cost and other details.
   virtual std::string toString(bool recursive, bool detail) const;
 
+ protected:
   // adds a line of cost information to 'out'
   void printCost(bool detail, std::stringstream& out) const;
 
- protected:
   // Input of filter/project/group by etc., Left side of join, nullptr for a
   // leaf table scan.
   boost::intrusive_ptr<struct RelationOp> input_;
@@ -212,7 +216,8 @@ struct TableScan : public RelationOp {
 
 /// Represents a repartition, i.e. query fragment boundary. The distribution of
 /// the output is '_distribution'.
-struct Repartition : public RelationOp {
+class Repartition : public RelationOp {
+ public:
   Repartition(
       RelationOpPtr input,
       Distribution distribution,
@@ -227,12 +232,25 @@ struct Repartition : public RelationOp {
   std::string toString(bool recursive, bool detail) const override;
 };
 
-using RepartitionPtr = Repartition*;
+using RepartitionPtr = const Repartition*;
 
 /// Represents a usually multitable filter not associated with any non-inner
 /// join. Non-equality constraints over inner joins become Filters.
-struct Filter : public RelationOp {
-  ExprPtr expr;
+class Filter : public RelationOp {
+ public:
+  Filter(RelationOpPtr input, ExprPtr expr)
+      : RelationOp(
+            RelType::kFilter,
+            input,
+            input->distribution(),
+            input->columns()),
+        expr_(expr) {}
+  ExprPtr expr() const {
+    return expr_;
+  }
+
+ private:
+  ExprPtr const expr_;
 };
 
 enum class JoinMethod { kHash, kMerge };
