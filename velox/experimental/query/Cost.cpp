@@ -85,7 +85,7 @@ void TableScan::setCost(const PlanState& input) {
   float size = byteSize(columns_);
   if (!keys.empty()) {
     float lookupRange(index->distribution().cardinality);
-    float orderSelectivity = orderPrefixDistance(this->input, index, keys);
+    float orderSelectivity = orderPrefixDistance(this->input(), index, keys);
     auto distance = lookupRange / std::max<float>(1, orderSelectivity);
     float batchSize = std::min<float>(cost_.inputCardinality, 10000);
     if (orderSelectivity == 1) {
@@ -156,14 +156,14 @@ void HashBuild::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   cost_.unitCost = keys.size() * Costs::kHashColumnCost +
       Costs::hashProbeCost(cost_.inputCardinality) +
-      this->input->columns().size() * Costs::kHashExtractColumnCost * 2;
-  cost_.totalBytes = cost_.inputCardinality * byteSize(this->input->columns());
+    this->input()->columns().size() * Costs::kHashExtractColumnCost * 2;
+  cost_.totalBytes = cost_.inputCardinality * byteSize(this->input()->columns());
 }
 
 void Join::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   float buildSize = right->cost().inputCardinality;
-  auto rowCost = right->input->columns().size() * Costs::kHashExtractColumnCost;
+  auto rowCost = right->input()->columns().size() * Costs::kHashExtractColumnCost;
   cost_.unitCost = Costs::hashProbeCost(buildSize) + cost_.fanout * rowCost +
       leftKeys.size() * Costs::kHashColumnCost;
 }

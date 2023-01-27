@@ -21,6 +21,14 @@
 
 namespace facebook::verax {
 
+  std::string RelationOp::toString(bool recursive, bool detail) const {
+    if (input_ && recursive) {
+      return input_->toString(true, detail);
+    }
+    return "";
+  }
+
+  
 // static
 Distribution TableScan::outputDistribution(
     const BaseTable* baseTable,
@@ -120,14 +128,14 @@ const char* joinTypeLabel(velox::core::JoinType type) {
 
 std::string TableScan::toString(bool /*recursive*/, bool detail) const {
   std::stringstream out;
-  if (input) {
-    out << input->toString(true, detail);
+  if (input()) {
+    out << input()->toString(true, detail);
     out << " *I " << joinTypeLabel(joinType);
   }
   out << baseTable->schemaTable->name << " " << baseTable->cname;
   if (detail) {
     printCost(detail, out);
-    if (!input) {
+    if (!input()) {
       out << distribution_.toString() << std::endl;
     }
   }
@@ -137,7 +145,7 @@ std::string TableScan::toString(bool /*recursive*/, bool detail) const {
 std::string Join::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {
-    out << input->toString(true, detail);
+    out << input()->toString(true, detail);
   }
   out << "*" << (method == JoinMethod::kHash ? "H" : "M") << " "
       << joinTypeLabel(joinType);
@@ -154,7 +162,7 @@ std::string Join::toString(bool recursive, bool detail) const {
 std::string Repartition::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {
-    out << input->toString(true, detail) << " ";
+    out << input()->toString(true, detail) << " ";
   }
   out << (distribution().isBroadcast ? "broadcast" : "shuffle") << " ";
   if (detail && !distribution().isBroadcast) {
@@ -169,7 +177,7 @@ std::string Repartition::toString(bool recursive, bool detail) const {
 std::string Aggregation::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {
-    out << input->toString(true, detail) << " ";
+    out << input()->toString(true, detail) << " ";
   }
   out << velox::core::AggregationNode::stepName(step) << " agg";
   printCost(detail, out);
@@ -179,7 +187,7 @@ std::string Aggregation::toString(bool recursive, bool detail) const {
 std::string HashBuild::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {
-    out << input->toString(true, detail) << " ";
+    out << input()->toString(true, detail) << " ";
   }
   out << " Build ";
   printCost(detail, out);

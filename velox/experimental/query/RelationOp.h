@@ -86,12 +86,16 @@ struct RelationOp : public Relation {
       Distribution distribution,
       ColumnVector columns = {})
       : Relation(type, std::move(distribution), std::move(columns)),
-        input(std::move(input)) {}
+        input_(std::move(input)) {}
 
   virtual ~RelationOp() = default;
 
   void operator delete(void* ptr) {
     queryCtx()->free(ptr);
+  }
+
+  const boost::intrusive_ptr<struct RelationOp>& input() const {
+    return input_;
   }
 
   const Cost& cost() const {
@@ -106,37 +110,36 @@ struct RelationOp : public Relation {
   /// each subclass.
   virtual void setCost(const PlanState& input);
 
-  virtual std::string toString(bool recursive, bool detail) const {
-    if (input && recursive) {
-      return input->toString(true, detail);
-    }
-    return "";
-  }
+  virtual std::string toString(bool recursive, bool detail) const;
 
   // adds a line of cost information to 'out'
   void printCost(bool detail, std::stringstream& out) const;
 
+ protected:
+  // Input of filter/project/group by etc., Left side of join, nullptr for a
+  // leaf table scan.
+  boost::intrusive_ptr<struct RelationOp> input_;
+
+  Cost cost_;
+
+ private:
   // thread local reference count. PlanObjects are freed when the
   // QueryGraphContext arena is freed, candidate plans are freed when no longer
   // referenced.
-  mutable int32_t refCount{0};
+  mutable int32_t refCount_{0};
 
-  // Input of filter/project/group by etc., Left side of join, nullptr for a
-  // leaf table scan.
-  boost::intrusive_ptr<struct RelationOp> input;
-
- protected:
-  Cost cost_;
+  friend void intrusive_ptr_add_ref(RelationOp* op);
+  friend void intrusive_ptr_release(RelationOp* op);
 };
 
 using RelationOpPtr = boost::intrusive_ptr<RelationOp>;
 
-static inline void intrusive_ptr_add_ref(RelationOp* op) {
-  ++op->refCount;
+inline void intrusive_ptr_add_ref(RelationOp* op) {
+  ++op->refCount_;
 }
 
-static inline void intrusive_ptr_release(RelationOp* op) {
-  if (0 == --op->refCount) {
+inline void intrusive_ptr_release(RelationOp* op) {
+  if (0 == --op->refCount_) {
     delete op;
   }
 }
@@ -295,6 +298,11 @@ using HashBuildPtr = HashBuild*;
 
 /// Represents aggregation with or without grouping.
 struct Aggregation : public RelationOp {
+  Aggregation(const Aggregation& other, RelationOpPtr input)
+      : Aggregation(other) {
+    input_ = std::move(input);
+  }
+
   Aggregation(RelationOpPtr input, ExprVector _grouping)
       : RelationOp(
             RelType::kAggregation,

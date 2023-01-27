@@ -537,8 +537,7 @@ void Optimization::addPostprocess(
     PlanState& state) {
   if (dt->aggregation) {
     plan = repartitionForAgg(dt->aggregation->grouping, plan, state);
-    Declare(Aggregation, newGroupBy, *dt->aggregation);
-    newGroupBy->input = plan;
+    Declare(Aggregation, newGroupBy, *dt->aggregation, plan);
     state.addCost(*newGroupBy);
     plan = newGroupBy;
   }
