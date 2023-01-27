@@ -156,14 +156,16 @@ void HashBuild::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   cost_.unitCost = keys.size() * Costs::kHashColumnCost +
       Costs::hashProbeCost(cost_.inputCardinality) +
-    this->input()->columns().size() * Costs::kHashExtractColumnCost * 2;
-  cost_.totalBytes = cost_.inputCardinality * byteSize(this->input()->columns());
+      this->input()->columns().size() * Costs::kHashExtractColumnCost * 2;
+  cost_.totalBytes =
+      cost_.inputCardinality * byteSize(this->input()->columns());
 }
 
 void Join::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   float buildSize = right->cost().inputCardinality;
-  auto rowCost = right->input()->columns().size() * Costs::kHashExtractColumnCost;
+  auto rowCost =
+      right->input()->columns().size() * Costs::kHashExtractColumnCost;
   cost_.unitCost = Costs::hashProbeCost(buildSize) + cost_.fanout * rowCost +
       leftKeys.size() * Costs::kHashColumnCost;
 }

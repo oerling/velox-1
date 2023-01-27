@@ -21,14 +21,13 @@
 
 namespace facebook::verax {
 
-  std::string RelationOp::toString(bool recursive, bool detail) const {
-    if (input_ && recursive) {
-      return input_->toString(true, detail);
-    }
-    return "";
+std::string RelationOp::toString(bool recursive, bool detail) const {
+  if (input_ && recursive) {
+    return input_->toString(true, detail);
   }
+  return "";
+}
 
-  
 // static
 Distribution TableScan::outputDistribution(
     const BaseTable* baseTable,
