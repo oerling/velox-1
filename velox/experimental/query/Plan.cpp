@@ -137,7 +137,7 @@ PlanObjectSet PlanState::downstreamColumns() const {
       result.unionColumns(join->rightKeys);
     }
     if (numNeeded && join->filter) {
-      result.unionSet(join->filter->columns);
+      result.unionSet(join->filter->columns());
     }
   }
   result.unionSet(targetColumns);
@@ -613,7 +613,7 @@ RelationOpPtr repartitionForIndex(
         info.lookupKeys,
         [](auto c) {
           return c->type() == PlanType::kColumn
-              ? c->template as<Column>()->schemaColumn
+	    ? c->template as<Column>()->schemaColumn()
               : c;
         },
         *key);
@@ -687,7 +687,7 @@ void Optimization::joinByIndex(
     PlanObjectSet c = state.downstreamColumns();
     c.intersect(state.columns);
     for (auto& filter : rightTable->filter) {
-      c.unionSet(filter->columns);
+      c.unionSet(filter->columns());
     }
 
     ColumnVector columns;
@@ -888,7 +888,7 @@ void Optimization::addJoin(
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
   downstream.forEach([&](PlanObjectConstPtr object) {
-    if (position(index->columns(), *object->as<Column>()->schemaColumn) >= 0) {
+    if (position(index->columns(), *object->as<Column>()->schemaColumn()) >= 0) {
       result.push_back(object->as<Column>());
     }
   });

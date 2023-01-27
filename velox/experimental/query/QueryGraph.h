@@ -41,8 +41,9 @@ namespace facebook::verax {
 /// derived table with x-exists or y-exists.
 
 /// Superclass for all expressions.
-struct Expr : public PlanObject {
-  Expr(PlanType type, const Value& _value) : PlanObject(type), value(_value) {}
+class Expr : public PlanObject {
+ public:
+  Expr(PlanType type, const Value& value) : PlanObject(type), value_(value) {}
 
   bool isExpr() const override {
     return true;
@@ -59,11 +60,20 @@ struct Expr : public PlanObject {
   /// leaves either same or in same equivalence.
   bool sameOrEqual(const Expr& other) const;
 
+  const PlanObjectSet& columns() const {
+    return columns_;
+  }
+
+  const Value& value() const {
+    return value_;
+  }
+
+ protected:
   // The columns this depends on.
-  PlanObjectSet columns;
+  PlanObjectSet columns_;
 
   // Type Constraints on the value of 'this'.
-  Value value;
+  Value value_;
 };
 
 /// If 'object' is an Expr, returns Expr::singleTable, else nullptr.
@@ -73,35 +83,63 @@ struct Equivalence;
 using EquivalencePtr = Equivalence*;
 
 /// Represents a literal.
-struct Literal : public Expr {
-  Literal(const Value& value, velox::variant _literal)
-      : Expr(PlanType::kLiteral, value), literal(_literal) {}
-  velox::variant literal;
+class Literal : public Expr {
+public:
+  Literal(const Value& value, velox::variant literal)
+      : Expr(PlanType::kLiteral, value), literal_(literal) {}
+
+  const velox::variant& literal() const {
+    return literal_;
+  }
+
+ private:
+  velox::variant literal_;
 };
 
 /// Represents a column. A column is always defined by a relation, whether table
 /// or derived table.
-struct Column : public Expr {
+class Column : public Expr {
+ public:
   Column(Name _name, PlanObjectPtr _relation, const Value& value);
+
+  Name name() const {
+    return name_;
+  }
+
+  PlanObjectConstPtr relation() const {
+    return relation_;
+  }
+
+  ColumnPtr schemaColumn() const {
+    return schemaColumn_;
+  }
 
   /// Asserts that 'this' and 'other' are joined on equality. This has a
   /// transitive effect, so if a and b are previously asserted equal and c is
   /// asserted equal to b, a and c are also equal.
   void equals(ColumnPtr other) const;
 
-  Name name;
-  PlanObjectPtr relation;
+  std::string toString() const override;
+
+  struct Equivalence* equivalence() const {
+    return equivalence_;
+  }
+  
+ private:
+  // Last part of qualified name.
+  Name name_;
+
+  // The defining BaseTable or DerivedTable.
+  PlanObjectPtr relation_;
 
   // Equivalence class. Lists all columns directly or indirectly asserted equal
   // to 'this'.
-  mutable EquivalencePtr equivalence{nullptr};
+  mutable EquivalencePtr equivalence_{nullptr};
 
   // If this is a column of a BaseTable, points to the corresponding
   // column in the SchemaTable. Used for matching with
   // ordering/partitioning columns in the SchemaTable.
-  ColumnPtr schemaColumn{nullptr};
-
-  std::string toString() const override;
+  ColumnPtr schemaColumn_{nullptr};
 };
 
 template <typename T>
@@ -137,40 +175,54 @@ class FunctionSet {
 
 /// Represents a function call or a special form, any expression with
 /// subexpressions.
-struct Call : public Expr {
+class Call : public Expr {
+ public:
   Call(
       PlanType type,
-      Name _func,
+      Name name,
       const Value& value,
-      ExprVector _args,
+      ExprVector args,
       FunctionSet functions)
       : Expr(type, value),
-        func(_func),
-        args(std::move(_args)),
-        functions(functions) {
-    for (auto arg : args) {
-      columns.unionSet(arg->columns);
+        name_(name),
+        args_(std::move(args)),
+        functions_(functions) {
+    for (auto arg : args_) {
+      columns_.unionSet(arg->columns());
     }
   }
 
-  Call(Name func, Value value, ExprVector args, FunctionSet functions)
-      : Call(PlanType::kCall, func, value, args, functions) {}
+  Call(Name name, Value value, ExprVector args, FunctionSet functions)
+      : Call(PlanType::kCall, name, value, args, functions) {}
 
-  // name of function.
-  Name func;
+  Name name() const {
+    return name_;
+  }
 
-  // Arguments.
-  ExprVector args;
+  const FunctionSet functions() const {
+    return functions_;
+  }
 
-  // Set of functions used in 'this' and 'args'.
-  FunctionSet functions;
-
+  const ExprVector args() const {
+    return args_;
+  }
+  
   PtrSpan<PlanObject> children() const override {
     return folly::Range<const PlanObject* const*>(
-        reinterpret_cast<const PlanObject* const*>(args.data()), args.size());
+        reinterpret_cast<const PlanObject* const*>(args_.data()), args_.size());
   }
 
   std::string toString() const override;
+
+ private:
+  // name of function.
+  Name const name_;
+
+  // Arguments.
+  const ExprVector args_;
+
+  // Set of functions used in 'this' and 'args'.
+  const FunctionSet functions_;
 };
 
 using CallPtr = const Call*;
@@ -317,27 +369,41 @@ using BaseTablePtr = const BaseTable*;
 // Aggregate function. The aggregation and arguments are in the
 // inherited Call. The Value pertains to the aggregation
 // result or accumulator.
-struct Aggregate : public Call {
+class Aggregate : public Call {
+public:
   Aggregate(
-      Name func,
+      Name name,
       const Value& value,
       ExprVector args,
       FunctionSet functions,
       bool isDistinct,
       ExprPtr condition,
       bool isAccumulator)
-      : Call(PlanType::kAggregate, func, value, std::move(args), functions),
-        isDistinct(isDistinct),
-        condition(condition),
-        isAccumulator(isAccumulator) {
-    if (condition) {
-      columns.unionSet(condition->columns);
+      : Call(PlanType::kAggregate, name, value, std::move(args), functions),
+        isDistinct_(isDistinct),
+        condition_(condition),
+        isAccumulator_(isAccumulator) {
+    if (condition_) {
+      columns_.unionSet(condition_->columns());
     }
   }
 
-  bool isDistinct;
-  ExprPtr condition;
-  bool isAccumulator;
+  ExprPtr condition() const {
+    return condition_;
+  }
+
+  bool isDistinct() const {
+    return isDistinct_;
+  }
+  
+  bool isAccumulator() const {
+    return isAccumulator_;
+  }
+  
+private:
+  bool isDistinct_;
+  ExprPtr condition_;
+  bool isAccumulator_;
 };
 
 using AggregatePtr = const Aggregate*;

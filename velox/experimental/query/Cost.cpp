@@ -74,7 +74,7 @@ float orderPrefixDistance(
        i < index->distribution().order.size() && i < keys.size();
        ++i) {
     if (input->distribution().order[i]->sameOrEqual(*keys[i])) {
-      selection *= index->distribution().order[i]->value.cardinality;
+      selection *= index->distribution().order[i]->value().cardinality;
     }
   }
   return selection;
@@ -114,7 +114,7 @@ void Aggregation::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   float cardinality = 1;
   for (auto key : grouping) {
-    cardinality *= key->value.cardinality;
+    cardinality *= key->value().cardinality;
   }
   // The estimated output is input minus the times an input is a duplicate of a
   // key already in the input. The probability of a duplicate is approximated as

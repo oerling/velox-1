@@ -27,7 +27,7 @@ Distribution TableScan::outputDistribution(
     IndexPtr index,
     const ColumnVector& columns) {
   auto schemaColumns =
-      transform<ColumnVector>(columns, [](auto& c) { return c->schemaColumn; });
+    transform<ColumnVector>(columns, [](auto& c) { return c->schemaColumn(); });
 
   ExprVector partition;
   ExprVector order;
@@ -65,7 +65,7 @@ PlanObjectSet TableScan::availableColumns(
   PlanObjectSet result;
   for (auto column : index->columns()) {
     for (auto baseColumn : baseTable->columns) {
-      if (baseColumn->name == column->name) {
+      if (baseColumn->name() == column->name()) {
         result.add(baseColumn);
         break;
       }

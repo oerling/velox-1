@@ -91,9 +91,9 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   float cardinality = 1;
   for (auto i = 0; i < inputs.size(); ++i) {
     args[i] = translateExpr(inputs[i]);
-    cardinality = std::max(cardinality, args[i]->value.cardinality);
+    cardinality = std::max(cardinality, args[i]->value().cardinality);
     if (args[i]->type() == PlanType::kCall) {
-      funcs = funcs | args[i]->as<Call>()->functions;
+      funcs = funcs | args[i]->as<Call>()->functions();
     }
   }
   if (auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get())) {
@@ -151,10 +151,10 @@ AggregationPtr Optimization::translateGroupBy(
       Declare(
           Aggregate,
           agg,
-          rawFunc->func,
-          rawFunc->value,
-          rawFunc->args,
-          rawFunc->functions,
+          rawFunc->name(),
+          rawFunc->value(),
+          rawFunc->args(),
+          rawFunc->functions(),
           false,
           condition,
           false);
@@ -217,7 +217,7 @@ PlanObjectPtr Optimization::makeQueryGraph(const core::PlanNode& node) {
           reinterpret_cast<const HiveColumnHandle*>(pair.second.get());
       auto schemaColumn = schemaTable->findColumn(handle->name());
       schemaColumns.push_back(schemaColumn);
-      auto value = schemaColumn->value;
+      auto value = schemaColumn->value();
       Declare(Column, column, toName(handle->name()), baseTable, value);
       columns.push_back(column);
       renames_[pair.first] = column;

@@ -92,7 +92,7 @@ template <typename V>
 float byteSize(const V& exprs) {
   float size = 0;
   for (auto& expr : exprs) {
-    size += expr->value.byteSize();
+    size += expr->value().byteSize();
   }
   return size;
 }

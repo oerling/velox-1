@@ -138,7 +138,7 @@ void PlanObjectSet::unionColumns(ExprPtr expr) {
       add(expr);
       return;
     case PlanType::kAggregate: {
-      auto condition = reinterpret_cast<AggregatePtr>(expr)->condition;
+      auto condition = expr->as<Aggregate>()->condition();
       if (condition) {
         unionColumns(condition);
       }
@@ -146,7 +146,7 @@ void PlanObjectSet::unionColumns(ExprPtr expr) {
       // Fall through.
     case PlanType::kCall: {
       auto call = reinterpret_cast<const Call*>(expr);
-      unionSet(call->columns);
+      unionSet(call->columns());
       return;
     }
     default:
@@ -188,44 +188,44 @@ std::string PlanObjectSet::toString(bool names) const {
 }
 
 void Column::equals(ColumnPtr other) const {
-  if (!equivalence && !other->equivalence) {
+  if (!equivalence_ && !other->equivalence_) {
     Declare(Equivalence, equiv);
     equiv->columns.push_back(this);
     equiv->columns.push_back(other);
-    equivalence = equiv;
-    other->equivalence = equiv;
+    equivalence_ = equiv;
+    other->equivalence_ = equiv;
     return;
   }
-  if (!other->equivalence) {
-    other->equivalence = equivalence;
-    equivalence->columns.push_back(other);
+  if (!other->equivalence_) {
+    other->equivalence_ = equivalence_;
+    equivalence_->columns.push_back(other);
     return;
   }
-  if (!equivalence) {
+  if (!equivalence_) {
     other->equals(this);
     return;
   }
-  for (auto& column : other->equivalence->columns) {
-    equivalence->columns.push_back(column);
-    column->equivalence = equivalence;
+  for (auto& column : other->equivalence_->columns) {
+    equivalence_->columns.push_back(column);
+    column->equivalence_ = equivalence_;
   }
 }
 
 std::string Column::toString() const {
-  Name cname = !relation                     ? ""
-      : relation->type() == PlanType::kTable ? relation->as<BaseTable>()->cname
-      : relation->type() == PlanType::kDerivedTable
-      ? relation->as<DerivedTable>()->cname
+  Name cname = !relation_                     ? ""
+      : relation_->type() == PlanType::kTable ? relation_->as<BaseTable>()->cname
+      : relation_->type() == PlanType::kDerivedTable
+      ? relation_->as<DerivedTable>()->cname
       : "--";
 
-  return fmt::format("{}.{}", cname, name);
+  return fmt::format("{}.{}", cname, name_);
 }
 
 std::string Call::toString() const {
   std::stringstream out;
-  out << func << "(";
-  for (auto i = 0; i < args.size(); ++i) {
-    out << args[i]->toString() << (i == args.size() - 1 ? ")" : ", ");
+  out << name_ << "(";
+  for (auto i = 0; i < args_.size(); ++i) {
+    out << args_[i]->toString() << (i == args_.size() - 1 ? ")" : ", ");
   }
   return out.str();
 }
@@ -282,30 +282,30 @@ bool Expr::sameOrEqual(const Expr& other) const {
   }
   switch (type()) {
     case PlanType::kColumn:
-      return as<Column>()->equivalence &&
-          as<Column>()->equivalence == other.as<Column>()->equivalence;
+      return as<Column>()->equivalence() &&
+	as<Column>()->equivalence() == other.as<Column>()->equivalence();
     case PlanType::kAggregate: {
       auto a = reinterpret_cast<const Aggregate*>(this);
       auto b = reinterpret_cast<const Aggregate*>(&other);
-      if (a->isDistinct != b->isDistinct ||
-          a->isAccumulator != b->isAccumulator ||
-          !(a->condition == b->condition ||
-            (a->condition && b->condition &&
-             a->condition->sameOrEqual(*b->condition)))) {
+      if (a->isDistinct() != b->isDistinct() ||
+          a->isAccumulator() != b->isAccumulator() ||
+          !(a->condition() == b->condition() ||
+            (a->condition() && b->condition() &&
+             a->condition()->sameOrEqual(*b->condition())))) {
         return false;
       }
     }
       // Fall through.
     case PlanType::kCall: {
-      if (as<Call>()->func != other.as<Call>()->func) {
+      if (as<Call>()->name() != other.as<Call>()->name()) {
         return false;
       }
-      auto numArgs = as<Call>()->args.size();
-      if (numArgs != other.as<Call>()->args.size()) {
+      auto numArgs = as<Call>()->args().size();
+      if (numArgs != other.as<Call>()->args().size()) {
         return false;
       }
       for (auto i = 0; i < numArgs; ++i) {
-        if (as<Call>()->args[i]->sameOrEqual(*other.as<Call>()->args[i])) {
+        if (as<Call>()->args()[i]->sameOrEqual(*other.as<Call>()->args()[i])) {
           return false;
         }
       }
@@ -325,15 +325,15 @@ PlanObjectConstPtr singleTable(PlanObjectConstPtr object) {
 
 PlanObjectConstPtr Expr::singleTable() const {
   if (type() == PlanType::kColumn) {
-    return as<Column>()->relation;
+    return as<Column>()->relation();
   }
   PlanObjectConstPtr table = nullptr;
   bool multiple = false;
-  columns.forEach([&](PlanObjectConstPtr object) {
+  columns_.forEach([&](PlanObjectConstPtr object) {
     VELOX_CHECK_EQ(object->type(), PlanType::kColumn);
     if (!table) {
-      table = object->template as<Column>()->relation;
-    } else if (table != object->as<Column>()->relation) {
+      table = object->template as<Column>()->relation();
+    } else if (table != object->as<Column>()->relation()) {
       multiple = true;
     }
   });
@@ -342,8 +342,8 @@ PlanObjectConstPtr Expr::singleTable() const {
 
 PlanObjectSet Expr::allTables() const {
   PlanObjectSet set;
-  columns.forEach([&](PlanObjectConstPtr object) {
-    set.add(object->as<Column>()->relation);
+  columns_.forEach([&](PlanObjectConstPtr object) {
+    set.add(object->as<Column>()->relation());
   });
   return set;
 }
@@ -357,12 +357,12 @@ PlanObjectSet allTables(PtrSpan<Expr> exprs) {
   return all;
 }
 
-Column::Column(Name _name, PlanObjectPtr _relation, const Value& value)
-    : Expr(PlanType::kColumn, value), name(_name), relation(_relation) {
-  columns.add(this);
-  if (relation && relation->type() == PlanType::kTable) {
-    schemaColumn = relation->as<BaseTable>()->schemaTable->findColumn(name);
-    VELOX_CHECK(schemaColumn);
+Column::Column(Name name, PlanObjectPtr relation, const Value& value)
+    : Expr(PlanType::kColumn, value), name_(name), relation_(relation) {
+  columns_.add(this);
+  if (relation_ && relation_->type() == PlanType::kTable) {
+    schemaColumn_ = relation->as<BaseTable>()->schemaTable->findColumn(name_);
+    VELOX_CHECK(schemaColumn_);
   }
 }
 
@@ -459,8 +459,8 @@ void DerivedTable::addImpliedJoins() {
       for (auto i = 0; i < join->leftKeys.size(); ++i) {
         if (join->leftKeys[i]->type() == PlanType::kColumn &&
             join->rightKeys[i]->type() == PlanType::kColumn) {
-          auto leftEq = join->leftKeys[i]->as<Column>()->equivalence;
-          auto rightEq = join->rightKeys[i]->as<Column>()->equivalence;
+          auto leftEq = join->leftKeys[i]->as<Column>()->equivalence();
+          auto rightEq = join->rightKeys[i]->as<Column>()->equivalence();
           if (rightEq && leftEq) {
             for (auto& left : leftEq->columns) {
               fillJoins(left, *rightEq, edges, this);
@@ -650,7 +650,7 @@ template <typename T>
 ColumnPtr findColumnByName(const T& columns, Name name) {
   for (auto column : columns) {
     if (column->type() == PlanType::kColumn &&
-        column->template as<Column>()->name == name) {
+        column->template as<Column>()->name() == name) {
       return column->template as<Column>();
     }
   }
@@ -665,7 +665,7 @@ bool SchemaTable::isUnique(PtrSpan<Column> columns) const {
     }
     bool unique = true;
     for (auto i = 0; i < nUnique; ++i) {
-      auto part = findColumnByName(columns, index->columns()[i]->name);
+      auto part = findColumnByName(columns, index->columns()[i]->name());
       if (!part) {
         unique = false;
         break;
@@ -700,7 +700,7 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
   int32_t numUnique = index->distribution().numKeysUnique;
   for (auto i = 0; i < numSorting || i < numUnique; ++i) {
     auto part = findColumnByName(
-        columns, index->distribution().order[i]->as<Column>()->name);
+				 columns, index->distribution().order[i]->as<Column>()->name());
     if (!part) {
       break;
     }
@@ -710,14 +710,14 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
       info.scanCardinality = combine(
           info.scanCardinality,
           i,
-          index->distribution().order[i]->value.cardinality);
+          index->distribution().order[i]->value().cardinality);
       info.lookupKeys.push_back(part);
       info.joinCardinality = info.scanCardinality;
     } else {
       info.joinCardinality = combine(
           info.joinCardinality,
           i,
-          index->distribution().order[i]->value.cardinality);
+          index->distribution().order[i]->value().cardinality);
     }
     if (i == numUnique - 1) {
       info.unique = true;
@@ -729,14 +729,14 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
     if (covered.contains(column)) {
       continue;
     }
-    auto part = findColumnByName(index->columns(), column->name);
+    auto part = findColumnByName(index->columns(), column->name());
     if (!part) {
       continue;
     }
     covered.add(column);
     ++numCovered;
     info.joinCardinality =
-        combine(info.joinCardinality, numCovered, column->value.cardinality);
+      combine(info.joinCardinality, numCovered, column->value().cardinality);
   }
   info.coveredColumns = std::move(covered);
   return info;
@@ -788,7 +788,7 @@ IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
 
 ColumnPtr IndexInfo::schemaColumn(ColumnPtr keyValue) const {
   for (auto& column : index->columns()) {
-    if (column->name == keyValue->name) {
+    if (column->name() == keyValue->name()) {
       return column;
     }
   }
