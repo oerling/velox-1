@@ -239,7 +239,8 @@ struct Index : public Relation {
 using IndexPtr = Index*;
 
 // Describes the number of rows to look at and the number of expected matches
-// given equality constraints for a set of columns. See SchemaTable::indexInfo().
+// given equality constraints for a set of columns. See
+// SchemaTable::indexInfo().
 struct IndexInfo {
   // Index chosen based on columns.
   IndexPtr index;

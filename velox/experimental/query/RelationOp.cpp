@@ -26,8 +26,8 @@ Distribution TableScan::outputDistribution(
     const BaseTable* baseTable,
     IndexPtr index,
     const ColumnVector& columns) {
-  auto schemaColumns =
-    transform<ColumnVector>(columns, [](auto& c) { return c->schemaColumn(); });
+  auto schemaColumns = transform<ColumnVector>(
+      columns, [](auto& c) { return c->schemaColumn(); });
 
   ExprVector partition;
   ExprVector order;

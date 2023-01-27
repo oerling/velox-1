@@ -212,8 +212,9 @@ void Column::equals(ColumnPtr other) const {
 }
 
 std::string Column::toString() const {
-  Name cname = !relation_                     ? ""
-      : relation_->type() == PlanType::kTable ? relation_->as<BaseTable>()->cname
+  Name cname = !relation_ ? ""
+      : relation_->type() == PlanType::kTable
+      ? relation_->as<BaseTable>()->cname
       : relation_->type() == PlanType::kDerivedTable
       ? relation_->as<DerivedTable>()->cname
       : "--";
@@ -283,7 +284,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
   switch (type()) {
     case PlanType::kColumn:
       return as<Column>()->equivalence() &&
-	as<Column>()->equivalence() == other.as<Column>()->equivalence();
+          as<Column>()->equivalence() == other.as<Column>()->equivalence();
     case PlanType::kAggregate: {
       auto a = reinterpret_cast<const Aggregate*>(this);
       auto b = reinterpret_cast<const Aggregate*>(&other);
@@ -700,7 +701,7 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
   int32_t numUnique = index->distribution().numKeysUnique;
   for (auto i = 0; i < numSorting || i < numUnique; ++i) {
     auto part = findColumnByName(
-				 columns, index->distribution().order[i]->as<Column>()->name());
+        columns, index->distribution().order[i]->as<Column>()->name());
     if (!part) {
       break;
     }
@@ -736,7 +737,7 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
     covered.add(column);
     ++numCovered;
     info.joinCardinality =
-      combine(info.joinCardinality, numCovered, column->value().cardinality);
+        combine(info.joinCardinality, numCovered, column->value().cardinality);
   }
   info.coveredColumns = std::move(covered);
   return info;

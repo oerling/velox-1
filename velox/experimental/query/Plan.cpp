@@ -446,7 +446,9 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
-      dt, state, [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
+      dt,
+      state,
+      [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
         if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
           candidates.emplace_back(join, joined, fanout);
         }
@@ -613,7 +615,7 @@ RelationOpPtr repartitionForIndex(
         info.lookupKeys,
         [](auto c) {
           return c->type() == PlanType::kColumn
-	    ? c->template as<Column>()->schemaColumn()
+              ? c->template as<Column>()->schemaColumn()
               : c;
         },
         *key);
@@ -847,7 +849,7 @@ void Optimization::joinByHash(
   auto joinType = velox::core::JoinType::kInner;
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   Declare(
-	  Join,
+      Join,
       join,
       JoinMethod::kHash,
       joinType,
@@ -888,7 +890,8 @@ void Optimization::addJoin(
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
   downstream.forEach([&](PlanObjectConstPtr object) {
-    if (position(index->columns(), *object->as<Column>()->schemaColumn()) >= 0) {
+    if (position(index->columns(), *object->as<Column>()->schemaColumn()) >=
+        0) {
       result.push_back(object->as<Column>());
     }
   });

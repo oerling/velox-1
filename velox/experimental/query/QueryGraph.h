@@ -84,7 +84,7 @@ using EquivalencePtr = Equivalence*;
 
 /// Represents a literal.
 class Literal : public Expr {
-public:
+ public:
   Literal(const Value& value, velox::variant literal)
       : Expr(PlanType::kLiteral, value), literal_(literal) {}
 
@@ -124,7 +124,7 @@ class Column : public Expr {
   struct Equivalence* equivalence() const {
     return equivalence_;
   }
-  
+
  private:
   // Last part of qualified name.
   Name name_;
@@ -206,7 +206,7 @@ class Call : public Expr {
   const ExprVector args() const {
     return args_;
   }
-  
+
   PtrSpan<PlanObject> children() const override {
     return folly::Range<const PlanObject* const*>(
         reinterpret_cast<const PlanObject* const*>(args_.data()), args_.size());
@@ -370,7 +370,7 @@ using BaseTablePtr = const BaseTable*;
 // inherited Call. The Value pertains to the aggregation
 // result or accumulator.
 class Aggregate : public Call {
-public:
+ public:
   Aggregate(
       Name name,
       const Value& value,
@@ -395,12 +395,12 @@ public:
   bool isDistinct() const {
     return isDistinct_;
   }
-  
+
   bool isAccumulator() const {
     return isAccumulator_;
   }
-  
-private:
+
+ private:
   bool isDistinct_;
   ExprPtr condition_;
   bool isAccumulator_;
