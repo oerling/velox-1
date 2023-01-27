@@ -140,20 +140,20 @@ class FunctionSet {
 struct Call : public Expr {
   Call(
       PlanType type,
-      Name func,
+      Name _func,
       const Value& value,
-      ExprVector args,
+      ExprVector _args,
       FunctionSet functions)
       : Expr(type, value),
-        func(func),
-        args(std::move(args)),
+        func(_func),
+        args(std::move(_args)),
         functions(functions) {
     for (auto arg : args) {
       columns.unionSet(arg->columns);
     }
   }
 
-  Call(Name _func, Value value, ExprVector args, FunctionSet functions)
+  Call(Name func, Value value, ExprVector args, FunctionSet functions)
       : Call(PlanType::kCall, func, value, args, functions) {}
 
   // name of function.
