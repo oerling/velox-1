@@ -208,7 +208,7 @@ struct JoinSide {
 /// Represents a possibly directional equality join edge.
 /// 'rightTable' is always set. 'leftTable' is nullptr if 'leftKeys' come from
 /// different tables. If so, 'this' must be non-inner and not full outer.
-struct Join {
+struct JoinEdge {
   // Leading left side join keys.
   ExprVector leftKeys;
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
@@ -271,9 +271,9 @@ struct Join {
   std::string toString() const;
 };
 
-using JoinPtr = Join*;
+using JoinEdgePtr = JoinEdge*;
 
-using JoinVector = std::vector<JoinPtr, QGAllocator<JoinPtr>>;
+using JoinEdgeVector = std::vector<JoinEdgePtr, QGAllocator<JoinEdgePtr>>;
 
 /// Represents a reference to a table from a query. The There is one of these
 /// for each occurrence of the schema table. A TableScan references one
@@ -293,7 +293,7 @@ struct BaseTable : public PlanObject {
   ColumnVector columns;
 
   // All joins where 'this' is an end point.
-  JoinVector joinedBy;
+  JoinEdgeVector joinedBy;
 
   // Top level conjuncts on single columns and literals, column to the left.
   ExprVector columnFilters;
@@ -377,7 +377,7 @@ struct DerivedTable : public PlanObject {
   ExprVector exprs;
 
   // References all joins where 'this' is an end point.
-  JoinVector joinedBy;
+  JoinEdgeVector joinedBy;
 
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
@@ -394,7 +394,7 @@ struct DerivedTable : public PlanObject {
   PlanObjectSet startTables;
 
   // Joins between 'tables'.
-  JoinVector joins;
+  JoinEdgeVector joins;
 
   // Filters in where for that are not single table expressions and not join
   // filters of explicit joins and not equalities between columns of joined

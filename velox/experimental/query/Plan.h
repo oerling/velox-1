@@ -117,7 +117,7 @@ struct PlanSet {
 struct JoinCandidate {
   JoinCandidate() = default;
 
-  JoinCandidate(JoinPtr _join, PlanObjectConstPtr _right, float _fanout)
+  JoinCandidate(JoinEdgePtr _join, PlanObjectConstPtr _right, float _fanout)
       : join(_join), tables({_right}), fanout(_fanout) {}
 
   // Returns the join side info for 'table'. If 'other' is set, returns the
@@ -126,7 +126,7 @@ struct JoinCandidate {
 
   std::string toString() const;
 
-  JoinPtr join{nullptr};
+  JoinEdgePtr join{nullptr};
 
   // Tables to join on the build side. The tables must not occur on the left
   // side.
@@ -404,6 +404,6 @@ std::unordered_map<std::string, float>& baseSelectivities();
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
-const JoinVector& joinedBy(PlanObjectConstPtr table);
+const JoinEdgeVector& joinedBy(PlanObjectConstPtr table);
 
 } // namespace facebook::verax

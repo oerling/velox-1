@@ -134,7 +134,7 @@ std::string TableScan::toString(bool /*recursive*/, bool detail) const {
   return out.str();
 }
 
-std::string JoinOp::toString(bool recursive, bool detail) const {
+std::string Join::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {
     out << input->toString(true, detail);

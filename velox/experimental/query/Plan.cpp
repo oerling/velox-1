@@ -236,7 +236,7 @@ float startingScore(PlanObjectConstPtr table, DerivedTablePtr dt) {
 }
 
 std::pair<PlanObjectConstPtr, float> otherTable(
-    JoinPtr join,
+    JoinEdgePtr join,
     PlanObjectConstPtr table) {
   return join->leftTable == table && !join->leftOptional
       ? std::pair<PlanObjectConstPtr, float>{join->rightTable, join->lrFanout}
@@ -245,7 +245,7 @@ std::pair<PlanObjectConstPtr, float> otherTable(
       : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
 }
 
-const JoinVector& joinedBy(PlanObjectConstPtr table) {
+const JoinEdgeVector& joinedBy(PlanObjectConstPtr table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()->joinedBy;
   }
@@ -387,7 +387,7 @@ JoinCandidate reducingJoins(
 // Calls 'func' with join, joined table and fanout for the joinable tables.
 template <typename Func>
 void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
-  std::unordered_set<JoinPtr> visited;
+  std::unordered_set<JoinEdgePtr> visited;
   state.placed.forEach([&](PlanObjectConstPtr placedTable) {
     for (auto join : joinedBy(placedTable)) {
       if (join->isNonCommutative()) {
@@ -446,7 +446,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
-      dt, state, [&](JoinPtr join, PlanObjectConstPtr joined, float fanout) {
+      dt, state, [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
         if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
           candidates.emplace_back(join, joined, fanout);
         }
@@ -847,8 +847,8 @@ void Optimization::joinByHash(
   auto joinType = velox::core::JoinType::kInner;
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   Declare(
-      JoinOp,
-      joinOp,
+	  Join,
+      join,
       JoinMethod::kHash,
       joinType,
       probeInput,
@@ -858,9 +858,9 @@ void Optimization::joinByHash(
       candidate.join->filter,
       fanout,
       std::move(columns));
-  state.addCost(*joinOp);
+  state.addCost(*join);
   state.cost.setupCost += buildState.cost.unitCost;
-  state.addNextJoin(&candidate, joinOp, {buildOp}, toTry);
+  state.addNextJoin(&candidate, join, {buildOp}, toTry);
 }
 
 void Optimization::addJoin(

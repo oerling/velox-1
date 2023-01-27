@@ -235,8 +235,8 @@ struct Filter : public RelationOp {
 enum class JoinMethod { kHash, kMerge };
 
 /// Represents a hash or merge join.
-struct JoinOp : public RelationOp {
-  JoinOp(
+struct Join : public RelationOp {
+  Join(
       JoinMethod _method,
       velox::core::JoinType _joinType,
       RelationOpPtr input,
@@ -267,7 +267,7 @@ struct JoinOp : public RelationOp {
   std::string toString(bool recursive, bool detail) const override;
 };
 
-using JoinOpPtr = JoinOp*;
+using JoinPtr = Join*;
 
 /// Occurs as right input of JoinOp with type kHash. Contains the
 /// cost and memory specific to building the table. Can be

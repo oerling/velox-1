@@ -237,14 +237,14 @@ std::string BaseTable::toString() const {
   return out.str();
 }
 
-const JoinSide Join::sideOf(PlanObjectConstPtr side, bool other) const {
+const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
   if ((side == rightTable && !other) || (side == leftTable && other)) {
     return {rightTable, rightKeys, rightOptional, rightExists, rightNotExists};
   }
   return {leftTable, leftKeys, leftOptional, false, false};
 }
 
-std::string Join::toString() const {
+std::string JoinEdge::toString() const {
   std::stringstream out;
   out << "<join " << (leftTable ? leftTable->toString() : " multiple tables ");
   if (leftOptional && rightOptional) {
@@ -388,7 +388,7 @@ void DerivedTable::addJoinEquality(
       return;
     }
   }
-  Declare(Join, join);
+  Declare(JoinEdge, join);
   join->leftKeys.push_back(left);
   join->rightKeys.push_back(right);
   join->leftTable = leftTable;
@@ -453,7 +453,7 @@ void DerivedTable::addImpliedJoins() {
     }
   }
   // The loop appends to 'joins', so loop over a copy.
-  JoinVector joinsCopy = joins;
+  JoinEdgeVector joinsCopy = joins;
   for (auto& join : joinsCopy) {
     if (join->isInner()) {
       for (auto i = 0; i < join->leftKeys.size(); ++i) {
@@ -516,10 +516,10 @@ void DerivedTable::linkTablesToJoins() {
 
 // Returns a left exists (semijoin) with 'table' on the left and one of 'tables'
 // on the right.
-JoinPtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
+JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   for (auto join : joinedBy(table)) {
     if (join->leftTable == table) {
-      Declare(Join, exists);
+      Declare(JoinEdge, exists);
       exists->leftTable = table;
       exists->rightTable = join->rightTable;
       exists->leftKeys = join->leftKeys;
@@ -528,7 +528,7 @@ JoinPtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
       return exists;
     }
     if (join->rightTable == table) {
-      Declare(Join, exists);
+      Declare(JoinEdge, exists);
       exists->leftTable = table;
       exists->rightTable = join->leftTable;
       exists->leftKeys = join->rightKeys;
@@ -815,7 +815,7 @@ float tableCardinality(PlanObjectConstPtr table) {
   return table->as<DerivedTable>()->baseCardinality;
 }
 
-void Join::guessFanout() {
+void JoinEdge::guessFanout() {
   auto left = joinCardinality(leftTable, toRangeCast<Column>(leftKeys));
   auto right = joinCardinality(rightTable, toRangeCast<Column>(rightKeys));
   leftUnique = left.unique;

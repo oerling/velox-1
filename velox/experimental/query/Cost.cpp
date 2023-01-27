@@ -160,7 +160,7 @@ void HashBuild::setCost(const PlanState& input) {
   cost_.totalBytes = cost_.inputCardinality * byteSize(this->input->columns());
 }
 
-void JoinOp::setCost(const PlanState& input) {
+void Join::setCost(const PlanState& input) {
   RelationOp::setCost(input);
   float buildSize = right->cost().inputCardinality;
   auto rowCost = right->input->columns().size() * Costs::kHashExtractColumnCost;
