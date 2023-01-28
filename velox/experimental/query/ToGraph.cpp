@@ -185,7 +185,8 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
       auto r = rightKeys[i];
       if (l->type() == PlanType::kColumn && r->type() == PlanType::kColumn) {
         l->as<Column>()->equals(r->as<Column>());
-        currentSelect_->addJoinEquality(l, r, nullptr, false, false, false, false);
+        currentSelect_->addJoinEquality(
+            l, r, nullptr, false, false, false, false);
       } else {
         VELOX_NYI("Only column to column inner joins");
       }

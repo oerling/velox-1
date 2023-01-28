@@ -241,7 +241,12 @@ std::string BaseTable::toString() const {
 const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
   if ((side == rightTable_ && !other) || (side == leftTable_ && other)) {
     return {
-      rightTable_, rightKeys_, lrFanout_, rightOptional_, rightExists_, rightNotExists_};
+        rightTable_,
+        rightKeys_,
+        lrFanout_,
+        rightOptional_,
+        rightExists_,
+        rightNotExists_};
   }
   return {leftTable_, leftKeys_, rlFanout_, leftOptional_, false, false};
 }
@@ -254,7 +259,8 @@ void JoinEdge::addEquality(ExprPtr left, ExprPtr right) {
 
 std::string JoinEdge::toString() const {
   std::stringstream out;
-  out << "<join " << (leftTable_ ? leftTable_->toString() : " multiple tables ");
+  out << "<join "
+      << (leftTable_ ? leftTable_->toString() : " multiple tables ");
   if (leftOptional_ && rightOptional_) {
     out << " full outr ";
   } else if (rightExists_ && rightOptional_) {
@@ -439,7 +445,7 @@ void fillJoins(
       dt->addJoinEquality(
           column->as<Column>(),
           other->as<Column>(),
-	  nullptr,
+          nullptr,
           false,
           false,
           false,
@@ -484,7 +490,7 @@ void DerivedTable::addImpliedJoins() {
   }
 }
 
-  void DerivedTable::setStartTables() {
+void DerivedTable::setStartTables() {
   startTables = tableSet;
   for (auto join : joins) {
     if (join->isNonCommutative()) {
@@ -523,20 +529,40 @@ void DerivedTable::linkTablesToJoins() {
   }
 }
 
-// Returns a left exists (semijoin) with 'table' on the left and one of 'tables'// on the right. If 'dt' is non-nullptr, this is placed on the right of exists instead of the original table. This will 
-  JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
-    for (auto join : joinedBy(table)) {
+// Returns a left exists (semijoin) with 'table' on the left and one of
+// 'tables'// on the right. If 'dt' is non-nullptr, this is placed on the right
+// of exists instead of the original table. This will
+JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
+  for (auto join : joinedBy(table)) {
     if (join->leftTable() == table) {
-      Declare(JoinEdge, exists, table, join->rightTable() , nullptr, false, false, true, false);
+      Declare(
+          JoinEdge,
+          exists,
+          table,
+          join->rightTable(),
+          nullptr,
+          false,
+          false,
+          true,
+          false);
       for (auto i = 0; i < join->leftKeys().size(); ++i) {
-	exists->addEquality(join->leftKeys()[i], join->rightKeys()[i]);
+        exists->addEquality(join->leftKeys()[i], join->rightKeys()[i]);
       }
-	return exists;
+      return exists;
     }
     if (join->rightTable() == table) {
-      Declare(JoinEdge, exists, table, join->leftTable(), nullptr, false, false, true, false);
+      Declare(
+          JoinEdge,
+          exists,
+          table,
+          join->leftTable(),
+          nullptr,
+          false,
+          false,
+          true,
+          false);
       for (auto i = 0; i < join->leftKeys().size(); ++i) {
-	exists->addEquality(join->rightKeys()[i], join->leftKeys()[i]);
+        exists->addEquality(join->rightKeys()[i], join->leftKeys()[i]);
       }
       return exists;
     }
@@ -549,7 +575,7 @@ void DerivedTable::import(
     PlanObjectConstPtr firstTable,
     const PlanObjectSet& _tables,
     const std::vector<PlanObjectSet>& existences,
-			  float existsFanout) {
+    float existsFanout) {
   tableSet = _tables;
   _tables.forEach([&](auto table) { tables.push_back(table); });
   for (auto join : super.joins) {
@@ -583,10 +609,20 @@ void DerivedTable::import(
         existsDt->columns.push_back(dynamic_cast<ColumnPtr>(k));
         existsDt->exprs.push_back(k);
       }
-      Declare(JoinEdge, joinWithDt, firstTable, existsDt, nullptr, false, false, true, false);
+      Declare(
+          JoinEdge,
+          joinWithDt,
+          firstTable,
+          existsDt,
+          nullptr,
+          false,
+          false,
+          true,
+          false);
       joinWithDt->setFanouts(existsFanout, 1);
       for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
-	joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
+        joinWithDt->addEquality(
+            existsJoin->leftKeys()[i], existsDt->columns[i]);
       }
       joins.push_back(joinWithDt);
       tables.push_back(existsDt);

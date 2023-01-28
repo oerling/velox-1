@@ -129,8 +129,8 @@ struct JoinCandidate {
   // The join between already placed tables and the table(s) in 'this'.
   JoinEdgePtr join{nullptr};
 
-  // Tables to join on the build side. The tables must not be already placed in the plan.
-  // side, i.e. be alread
+  // Tables to join on the build side. The tables must not be already placed in
+  // the plan. side, i.e. be alread
   std::vector<PlanObjectConstPtr> tables;
 
   // Joins imported from the left side for reducing a build
@@ -139,7 +139,8 @@ struct JoinCandidate {
   // part left (partsupp exists part) would have the second part in
   // 'existences' and partsupp in 'tables' because we know that
   // partsupp will not be probed with keys that are not in part, so
-  // there is no point building with these. This may involve tables already placed in the plan.
+  // there is no point building with these. This may involve tables already
+  // placed in the plan.
   std::vector<PlanObjectSet> existences;
 
   // Number of right side hits for one row on the left. The join
@@ -154,7 +155,9 @@ struct JoinCandidate {
 
 /// Represents a join to add to a partial plan. One join candidate can make
 /// many NextJoins, e.g, for different join methods. If one is clearly best,
-/// not all need be tried. If many NextJoins are disconnected (no JoinEdge between them), these may be statically orderable without going through permutations.
+/// not all need be tried. If many NextJoins are disconnected (no JoinEdge
+/// between them), these may be statically orderable without going through
+/// permutations.
 struct NextJoin {
   NextJoin(
       const JoinCandidate* candidate,
@@ -247,7 +250,8 @@ struct PlanState {
 
   std::string printCost() const;
 
-  /// Makes a string of 'op' with 'details'. Costs are annotated with percentage of total in 'this->cost'.
+  /// Makes a string of 'op' with 'details'. Costs are annotated with percentage
+  /// of total in 'this->cost'.
   std::string printPlan(RelationOpPtr op, bool detail) const;
 
   /// True if the costs accumulated so far are so high that this should not be
@@ -465,12 +469,14 @@ class Optimization {
   // Maps unique core::TypedExprs from 'inputPlan_' to deduplicated Exps.
   ExprDedupMap exprDedup_;
 
-  // Counter for generating unique correlation names for BaseTables and DerivedTables.
+  // Counter for generating unique correlation names for BaseTables and
+  // DerivedTables.
   int32_t nameCounter_{0};
 
   std::unordered_map<MemoKey, PlanSet> memo_;
 
-  // The top level PlanState. Contains the set of top level interesting plans. Must stay alive as long as the Plans and RelationOps are reeferenced.
+  // The top level PlanState. Contains the set of top level interesting plans.
+  // Must stay alive as long as the Plans and RelationOps are reeferenced.
   PlanState topState_{*this, nullptr};
 
   // Controls tracing.
