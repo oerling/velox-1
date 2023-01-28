@@ -239,36 +239,43 @@ std::string BaseTable::toString() const {
 }
 
 const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
-  if ((side == rightTable && !other) || (side == leftTable && other)) {
-    return {rightTable, rightKeys, rightOptional, rightExists, rightNotExists};
+  if ((side == rightTable_ && !other) || (side == leftTable_ && other)) {
+    return {
+      rightTable_, rightKeys_, lrFanout_, rightOptional_, rightExists_, rightNotExists_};
   }
-  return {leftTable, leftKeys, leftOptional, false, false};
+  return {leftTable_, leftKeys_, rlFanout_, leftOptional_, false, false};
+}
+
+void JoinEdge::addEquality(ExprPtr left, ExprPtr right) {
+  leftKeys_.push_back(left);
+  rightKeys_.push_back(right);
+  guessFanout();
 }
 
 std::string JoinEdge::toString() const {
   std::stringstream out;
-  out << "<join " << (leftTable ? leftTable->toString() : " multiple tables ");
-  if (leftOptional && rightOptional) {
+  out << "<join " << (leftTable_ ? leftTable_->toString() : " multiple tables ");
+  if (leftOptional_ && rightOptional_) {
     out << " full outr ";
-  } else if (rightExists && rightOptional) {
+  } else if (rightExists_ && rightOptional_) {
     out << " exists project ";
-  } else if (rightOptional) {
+  } else if (rightOptional_) {
     out << " exists ";
-  } else if (rightOptional) {
+  } else if (rightOptional_) {
     out << " left outer ";
-  } else if (rightNotExists) {
+  } else if (rightNotExists_) {
     out << " not exists ";
   } else {
     out << " inner ";
   }
-  out << rightTable->toString();
+  out << rightTable_->toString();
   out << " on ";
-  for (auto i = 0; i < leftKeys.size(); ++i) {
-    out << leftKeys[i]->toString() << " = " << rightKeys[i]->toString()
-        << (i < leftKeys.size() - 1 ? " and " : "");
+  for (auto i = 0; i < leftKeys_.size(); ++i) {
+    out << leftKeys_[i]->toString() << " = " << rightKeys_[i]->toString()
+        << (i < leftKeys_.size() - 1 ? " and " : "");
   }
-  if (filter) {
-    out << " filter " << filter->toString();
+  if (filter_) {
+    out << " filter " << filter_->toString();
   }
   out << ">";
   return out.str();
@@ -370,6 +377,7 @@ Column::Column(Name name, PlanObjectPtr relation, const Value& value)
 void DerivedTable::addJoinEquality(
     ExprPtr left,
     ExprPtr right,
+    ExprPtr filter,
     bool leftOptional,
     bool rightOptional,
     bool rightExists,
@@ -377,28 +385,26 @@ void DerivedTable::addJoinEquality(
   auto leftTable = singleTable(left);
   auto rightTable = singleTable(right);
   for (auto& join : joins) {
-    if (join->leftTable == leftTable && join->rightTable == rightTable) {
-      join->leftKeys.push_back(left);
-      join->rightKeys.push_back(right);
-      join->guessFanout();
+    if (join->leftTable() == leftTable && join->rightTable() == rightTable) {
+      join->addEquality(left, right);
       return;
-    } else if (join->rightTable == leftTable && join->leftTable == rightTable) {
-      join->leftKeys.push_back(right);
-      join->rightKeys.push_back(left);
-      join->guessFanout();
+    } else if (
+        join->rightTable() == leftTable && join->leftTable() == rightTable) {
+      join->addEquality(right, left);
       return;
     }
   }
-  Declare(JoinEdge, join);
-  join->leftKeys.push_back(left);
-  join->rightKeys.push_back(right);
-  join->leftTable = leftTable;
-  join->rightTable = rightTable;
-  join->leftOptional = leftOptional;
-  join->rightOptional = rightOptional;
-  join->rightExists = rightExists;
-  join->rightNotExists = rightNotExists;
-  join->guessFanout();
+  Declare(
+      JoinEdge,
+      join,
+      leftTable,
+      rightTable,
+      filter,
+      leftOptional,
+      rightOptional,
+      rightExists,
+      rightNotExists);
+  join->addEquality(left, right);
   joins.push_back(join);
 }
 
@@ -433,6 +439,7 @@ void fillJoins(
       dt->addJoinEquality(
           column->as<Column>(),
           other->as<Column>(),
+	  nullptr,
           false,
           false,
           false,
@@ -445,10 +452,10 @@ void DerivedTable::addImpliedJoins() {
   EdgeSet edges;
   for (auto& join : joins) {
     if (join->isInner()) {
-      for (auto i = 0; i < join->leftKeys.size(); ++i) {
-        if (join->leftKeys[i]->type() == PlanType::kColumn &&
-            join->rightKeys[i]->type() == PlanType::kColumn) {
-          addEdge(edges, join->leftKeys[i]->id(), join->rightKeys[i]->id());
+      for (auto i = 0; i < join->leftKeys().size(); ++i) {
+        if (join->leftKeys()[i]->type() == PlanType::kColumn &&
+            join->rightKeys()[i]->type() == PlanType::kColumn) {
+          addEdge(edges, join->leftKeys()[i]->id(), join->rightKeys()[i]->id());
         }
       }
     }
@@ -457,30 +464,31 @@ void DerivedTable::addImpliedJoins() {
   JoinEdgeVector joinsCopy = joins;
   for (auto& join : joinsCopy) {
     if (join->isInner()) {
-      for (auto i = 0; i < join->leftKeys.size(); ++i) {
-        if (join->leftKeys[i]->type() == PlanType::kColumn &&
-            join->rightKeys[i]->type() == PlanType::kColumn) {
-          auto leftEq = join->leftKeys[i]->as<Column>()->equivalence();
-          auto rightEq = join->rightKeys[i]->as<Column>()->equivalence();
+      for (auto i = 0; i < join->leftKeys().size(); ++i) {
+        if (join->leftKeys()[i]->type() == PlanType::kColumn &&
+            join->rightKeys()[i]->type() == PlanType::kColumn) {
+          auto leftEq = join->leftKeys()[i]->as<Column>()->equivalence();
+          auto rightEq = join->rightKeys()[i]->as<Column>()->equivalence();
           if (rightEq && leftEq) {
             for (auto& left : leftEq->columns) {
               fillJoins(left, *rightEq, edges, this);
             }
           } else if (leftEq) {
-            fillJoins(join->rightKeys[i], *leftEq, edges, this);
+            fillJoins(join->rightKeys()[i], *leftEq, edges, this);
           } else if (rightEq) {
-            fillJoins(join->leftKeys[i], *rightEq, edges, this);
+            fillJoins(join->leftKeys()[i], *rightEq, edges, this);
           }
         }
       }
     }
   }
 }
-void DerivedTable::setStartTables() {
+
+  void DerivedTable::setStartTables() {
   startTables = tableSet;
   for (auto join : joins) {
     if (join->isNonCommutative()) {
-      startTables.erase(join->rightTable);
+      startTables.erase(join->rightTable());
     }
   }
 }
@@ -495,14 +503,14 @@ void DerivedTable::linkTablesToJoins() {
   // from all the tables it depends on.
   for (auto join : joins) {
     PlanObjectSet tables;
-    for (auto key : join->leftKeys) {
+    for (auto key : join->leftKeys()) {
       tables.unionSet(key->allTables());
     }
-    for (auto key : join->rightKeys) {
+    for (auto key : join->rightKeys()) {
       tables.unionSet(key->allTables());
     }
-    if (join->filter) {
-      tables.unionSet(join->filter->allTables());
+    if (join->filter()) {
+      tables.unionSet(join->filter()->allTables());
     }
     tables.forEachMutable([&](PlanObjectPtr table) {
       if (table->type() == PlanType::kTable) {
@@ -515,26 +523,21 @@ void DerivedTable::linkTablesToJoins() {
   }
 }
 
-// Returns a left exists (semijoin) with 'table' on the left and one of 'tables'
-// on the right.
-JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
-  for (auto join : joinedBy(table)) {
-    if (join->leftTable == table) {
-      Declare(JoinEdge, exists);
-      exists->leftTable = table;
-      exists->rightTable = join->rightTable;
-      exists->leftKeys = join->leftKeys;
-      exists->rightKeys = join->rightKeys;
-      exists->rightExists = true;
-      return exists;
+// Returns a left exists (semijoin) with 'table' on the left and one of 'tables'// on the right. If 'dt' is non-nullptr, this is placed on the right of exists instead of the original table. This will 
+  JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
+    for (auto join : joinedBy(table)) {
+    if (join->leftTable() == table) {
+      Declare(JoinEdge, exists, table, join->rightTable() , nullptr, false, false, true, false);
+      for (auto i = 0; i < join->leftKeys().size(); ++i) {
+	exists->addEquality(join->leftKeys()[i], join->rightKeys()[i]);
+      }
+	return exists;
     }
-    if (join->rightTable == table) {
-      Declare(JoinEdge, exists);
-      exists->leftTable = table;
-      exists->rightTable = join->leftTable;
-      exists->leftKeys = join->rightKeys;
-      exists->rightKeys = join->leftKeys;
-      exists->rightExists = true;
+    if (join->rightTable() == table) {
+      Declare(JoinEdge, exists, table, join->leftTable(), nullptr, false, false, true, false);
+      for (auto i = 0; i < join->leftKeys().size(); ++i) {
+	exists->addEquality(join->rightKeys()[i], join->leftKeys()[i]);
+      }
       return exists;
     }
   }
@@ -545,38 +548,51 @@ void DerivedTable::import(
     const DerivedTable& super,
     PlanObjectConstPtr firstTable,
     const PlanObjectSet& _tables,
-    const std::vector<PlanObjectSet>& existences) {
+    const std::vector<PlanObjectSet>& existences,
+			  float existsFanout) {
   tableSet = _tables;
   _tables.forEach([&](auto table) { tables.push_back(table); });
   for (auto join : super.joins) {
-    if (_tables.contains(join->rightTable) && join->leftTable &&
-        _tables.contains(join->leftTable)) {
+    if (_tables.contains(join->rightTable()) && join->leftTable() &&
+        _tables.contains(join->leftTable())) {
       joins.push_back(join);
     }
   }
   for (auto& exists : existences) {
+    // We filter the derived table by importing reducing semijoins.
+    // These are based on joins on the outer query but become
+    // existences so as not to change cardinality. The reducing join
+    // is against one or more tables. If more than one table, the join
+    // of these tables goes into its own derived table which is joined
+    // with exists to the main table(s) in the 'this'.
     importedExistences.unionSet(exists);
-    auto existsJoin = makeExists(firstTable, exists);
-    joins.push_back(existsJoin);
     std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>>
         existsTables;
     exists.forEach([&](auto object) { existsTables.push_back(object); });
+    auto existsJoin = makeExists(firstTable, exists);
+
     if (existsTables.size() > 1) {
       // There is a join on the right of exists. Needs its own dt.
       Declare(DerivedTable, existsDt);
       PlanObjectSet existsTableSet;
       existsTableSet.unionObjects(existsTables);
       existsDt->import(super, firstTable, existsTableSet, {});
-      for (auto& k : existsJoin->rightKeys) {
+      for (auto& k : existsJoin->rightKeys()) {
         // TODO make a column alias for the expr. this would not work if the
         // join term was not a column.
         existsDt->columns.push_back(dynamic_cast<ColumnPtr>(k));
         existsDt->exprs.push_back(k);
       }
-      existsJoin->rightTable = existsDt;
+      Declare(JoinEdge, joinWithDt, firstTable, existsDt, nullptr, false, false, true, false);
+      joinWithDt->setFanouts(existsFanout, 1);
+      for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
+	joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
+      }
+      joins.push_back(joinWithDt);
       tables.push_back(existsDt);
       tableSet.add(existsDt);
     } else {
+      joins.push_back(existsJoin);
       tables.push_back(existsTables[0]);
       tableSet.add(existsTables[0]);
     }
@@ -817,23 +833,26 @@ float tableCardinality(PlanObjectConstPtr table) {
 }
 
 void JoinEdge::guessFanout() {
-  auto left = joinCardinality(leftTable, toRangeCast<Column>(leftKeys));
-  auto right = joinCardinality(rightTable, toRangeCast<Column>(rightKeys));
-  leftUnique = left.unique;
-  rightUnique = right.unique;
-  lrFanout = right.joinCardinality * baseSelectivity(leftTable);
-  rlFanout = left.joinCardinality * baseSelectivity(leftTable);
+  if (fanoutsFixed_) {
+    return;
+  }
+  auto left = joinCardinality(leftTable_, toRangeCast<Column>(leftKeys_));
+  auto right = joinCardinality(rightTable_, toRangeCast<Column>(rightKeys_));
+  leftUnique_ = left.unique;
+  rightUnique_ = right.unique;
+  lrFanout_ = right.joinCardinality * baseSelectivity(rightTable_);
+  rlFanout_ = left.joinCardinality * baseSelectivity(leftTable_);
   // If one side is unique, the other side is a pk to fk join, with fanout =
   // fk-table-card / pk-table-card.
-  if (rightUnique) {
-    lrFanout = baseSelectivity(rightTable);
-    rlFanout = tableCardinality(leftTable) / tableCardinality(rightTable) *
-        baseSelectivity(leftTable);
+  if (rightUnique_) {
+    lrFanout_ = baseSelectivity(rightTable_);
+    rlFanout_ = tableCardinality(leftTable_) / tableCardinality(rightTable_) *
+        baseSelectivity(leftTable_);
   }
-  if (leftUnique) {
-    rlFanout = baseSelectivity(leftTable);
-    lrFanout = tableCardinality(rightTable) / tableCardinality(leftTable) *
-        baseSelectivity(rightTable);
+  if (leftUnique_) {
+    rlFanout_ = baseSelectivity(leftTable_);
+    lrFanout_ = tableCardinality(rightTable_) / tableCardinality(leftTable_) *
+        baseSelectivity(rightTable_);
   }
 }
 

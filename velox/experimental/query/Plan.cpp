@@ -128,16 +128,16 @@ PlanObjectSet PlanState::downstreamColumns() const {
   PlanObjectSet result;
   for (auto join : dt->joins) {
     int32_t numNeeded = 0;
-    if (!placed.contains(join->rightTable)) {
+    if (!placed.contains(join->rightTable())) {
       ++numNeeded;
-      result.unionColumns(join->leftKeys);
+      result.unionColumns(join->leftKeys());
     }
-    if (join->leftTable && !placed.contains(join->leftTable)) {
+    if (join->leftTable() && !placed.contains(join->leftTable())) {
       ++numNeeded;
-      result.unionColumns(join->rightKeys);
+      result.unionColumns(join->rightKeys());
     }
-    if (numNeeded && join->filter) {
-      result.unionSet(join->filter->columns());
+    if (numNeeded && join->filter()) {
+      result.unionSet(join->filter()->columns());
     }
   }
   result.unionSet(targetColumns);
@@ -235,16 +235,6 @@ float startingScore(PlanObjectConstPtr table, DerivedTablePtr dt) {
   return 10;
 }
 
-std::pair<PlanObjectConstPtr, float> otherTable(
-    JoinEdgePtr join,
-    PlanObjectConstPtr table) {
-  return join->leftTable == table && !join->leftOptional
-      ? std::pair<PlanObjectConstPtr, float>{join->rightTable, join->lrFanout}
-      : join->rightTable == table && !join->rightOptional && !join->rightExists
-      ? std::pair<PlanObjectConstPtr, float>{join->leftTable, join->rlFanout}
-      : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
-}
-
 const JoinEdgeVector& joinedBy(PlanObjectConstPtr table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()->joinedBy;
@@ -274,7 +264,7 @@ void reducingJoinsRecursive(
     float& reduction) {
   bool isLeaf = true;
   for (auto join : joinedBy(candidate)) {
-    if (join->leftOptional || join->rightOptional) {
+    if (join->leftOptional() || join->rightOptional()) {
       continue;
     }
     JoinSide other = join->sideOf(candidate, true);
@@ -287,13 +277,11 @@ void reducingJoinsRecursive(
     if (visited.contains(other.table)) {
       continue;
     }
-    float joinFanout =
-        other.table == join->rightTable ? join->lrFanout : join->rlFanout;
-    if (joinFanout > maxFanout) {
+    if (other.fanout > maxFanout) {
       continue;
     }
     visited.add(other.table);
-    auto fanout = fanoutFromRoot * joinFanout;
+    auto fanout = fanoutFromRoot * other.fanout;
     if (fanout < 0.9) {
       result.add(other.table);
       for (auto step : path) {
@@ -372,6 +360,7 @@ JoinCandidate reducingJoins(
     // of the main join.
     exists.erase(candidate.tables[0]);
     reducing.existences.push_back(std::move(exists));
+    reducing.existsFanout *= reduction;
   }
   if (reducing.tables.empty() && reducing.existences.empty()) {
     // No reduction.
@@ -395,17 +384,17 @@ void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
           continue;
         }
         bool usable = true;
-        for (auto key : join->leftKeys) {
+        for (auto key : join->leftKeys()) {
           if (!state.placed.isSubset(key->allTables())) {
             usable = false;
             break;
           }
         }
         if (usable) {
-          func(join, join->rightTable, join->lrFanout);
+          func(join, join->rightTable(), join->lrFanout());
         }
       } else {
-        auto [table, fanout] = otherTable(join, placedTable);
+        auto [table, fanout] = join->otherTable(placedTable);
         if (!state.dt->tableSet.contains(table)) {
           continue;
         }
@@ -671,7 +660,7 @@ void Optimization::joinByIndex(
     if (info.lookupKeys.empty()) {
       continue;
     }
-    StateSaver save(state);
+    PlanStateSaver save(state);
     auto newPartition = repartitionForIndex(info, left.keys, plan, state);
     if (!newPartition) {
       continue;
@@ -706,7 +695,7 @@ void Optimization::joinByIndex(
         columns,
         lookupKeys,
         joinType,
-        candidate.join->filter);
+        candidate.join->filter());
 
     state.addCost(*scan);
     state.addNextJoin(&candidate, scan, {}, toTry);
@@ -757,7 +746,7 @@ void Optimization::joinByHash(
     // align with build.
     copartition = build.keys;
   }
-  StateSaver save(state);
+  PlanStateSaver save(state);
   PlanObjectSet buildTables;
   PlanObjectSet buildColumns;
   for (auto build : candidate.tables) {
@@ -776,6 +765,7 @@ void Optimization::joinByHash(
       key,
       Distribution(plan->distribution().distributionType, 0, copartition),
       empty,
+      candidate.existsFanout,
       state,
       needsShuffle);
   PlanState buildState(state.optimization, state.dt, buildPlan);
@@ -856,7 +846,7 @@ void Optimization::joinByHash(
       buildOp,
       probe.keys,
       build.keys,
-      candidate.join->filter,
+      candidate.join->filter(),
       fanout,
       std::move(columns));
   state.addCost(*join);
@@ -865,7 +855,6 @@ void Optimization::joinByHash(
 }
 
 void Optimization::addJoin(
-    DerivedTablePtr dt,
     const JoinCandidate& candidate,
     const RelationOpPtr& plan,
     PlanState& state,
@@ -901,7 +890,7 @@ void Optimization::tryNextJoins(
     PlanState& state,
     const std::vector<NextJoin>& nextJoins) {
   for (auto& next : nextJoins) {
-    StateSaver save(state);
+    PlanStateSaver save(state);
     state.placed = next.placed;
     state.cost = next.cost;
     state.addBuilds(next.newBuilds);
@@ -932,7 +921,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
         // Make plan starting with each relevant index of the table.
         auto downstream = state.downstreamColumns();
         for (auto index : indices) {
-          StateSaver save(state);
+          PlanStateSaver save(state);
           state.placed.add(table);
           auto columns = indexColumns(downstream, index);
 
@@ -971,7 +960,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     std::vector<NextJoin> nextJoins;
     nextJoins.reserve(candidates.size());
     for (auto& candidate : candidates) {
-      addJoin(dt, candidate, plan, state, nextJoins);
+      addJoin(candidate, plan, state, nextJoins);
     }
     tryNextJoins(state, nextJoins);
   }
@@ -981,13 +970,15 @@ PlanPtr Optimization::makePlan(
     const MemoKey& key,
     const Distribution& distribution,
     const PlanObjectSet& boundColumns,
+    float existsFanout,
     PlanState& state,
     bool& needsShuffle) {
   auto it = memo_.find(key);
   PlanSet* plans;
   if (it == memo_.end()) {
     DerivedTable dt;
-    dt.import(*state.dt, key.firstTable, key.tables, key.existences);
+    dt.import(
+        *state.dt, key.firstTable, key.tables, key.existences, existsFanout);
     PlanState inner(*this, &dt);
     inner.targetColumns = key.columns;
     makeJoins(nullptr, inner);

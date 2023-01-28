@@ -238,6 +238,7 @@ struct Equivalence {
 struct JoinSide {
   PlanObjectConstPtr table;
   const ExprVector& keys;
+  float fanout;
   const bool isOptional;
   const bool isExists;
   const bool isNotExists;
@@ -260,67 +261,141 @@ struct JoinSide {
 /// Represents a possibly directional equality join edge.
 /// 'rightTable' is always set. 'leftTable' is nullptr if 'leftKeys' come from
 /// different tables. If so, 'this' must be non-inner and not full outer.
-struct JoinEdge {
-  // Leading left side join keys.
-  ExprVector leftKeys;
-  // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
-  ExprVector rightKeys;
+class JoinEdge {
+ public:
+  JoinEdge(
+      PlanObjectConstPtr leftTable,
+      PlanObjectConstPtr rightTable,
+      ExprPtr filter,
+      bool leftOptional,
+      bool rightOptional,
+      bool rightExists,
+      bool rightNotExists)
+      : leftTable_(leftTable),
+        rightTable_(rightTable),
+        filter_(filter),
+        leftOptional_(leftOptional),
+        rightOptional_(rightOptional),
+        rightExists_(rightExists),
+        rightNotExists_(rightNotExists) {}
 
-  PlanObjectConstPtr leftTable{nullptr};
-  PlanObjectConstPtr rightTable{nullptr};
+  PlanObjectConstPtr leftTable() const {
+    return leftTable_;
+  }
 
-  // 'rightKeys' select max 1 'leftTable' row.
-  bool leftUnique{false};
+  PlanObjectConstPtr rightTable() const {
+    return rightTable_;
+  }
 
-  // 'leftKeys' select max 1 'rightTable' row.
-  bool rightUnique{false};
-  // number of right side rows selected for one row on the left.
-  float lrFanout{1};
+  const ExprVector& leftKeys() const {
+    return leftKeys_;
+  }
 
-  // Number of left side rows selected for one row on the right.
-  float rlFanout{1};
+  const ExprVector& rightKeys() const {
+    return rightKeys_;
+  }
 
-  // Join condition for any non-equality  conditions for non-inner joins.
-  Expr* filter;
+  float lrFanout() const {
+    return lrFanout_;
+  }
 
-  // True if an unprobed right side row produces a result with right side
-  // columns set and left side columns as null. Possible only be hash or
-  // merge.
-  bool leftOptional{false};
+  bool leftOptional() const {
+    return leftOptional_;
+  }
 
-  // True if a right side miss produces a row with left side columns
-  // and a null for right side columns (left outer join). A full outer
-  // join has both left and right optional.
-  bool rightOptional{false};
+  bool rightOptional() const {
+    return rightOptional_;
+  }
 
-  // True if the right side is only checked for existence of a match. If
-  // rightOptional is set, this can project out a null for misses.
-  bool rightExists{false};
-
-  // True if produces a result for left if no match on the right.
-  bool rightNotExists{false};
-
-  //// Fills in 'lrFanout' and 'rlFanout', 'leftUnique', 'rightUnique'.
-  void guessFanout();
+  void addEquality(ExprPtr left, ExprPtr right);
 
   /// True if inner join.
   bool isInner() const {
-    return !leftOptional && !rightOptional && !rightExists && !rightNotExists;
+    return !leftOptional_ && !rightOptional_ && !rightExists_ &&
+        !rightNotExists_;
   }
 
   // True if all tables referenced from 'leftKeys' must be placed before placing
   // this.
   bool isNonCommutative() const {
     // Inner and full outer joins are commutative.
-    return !leftTable || (rightOptional && !leftOptional) || rightExists ||
-        rightNotExists;
+    return !leftTable_ || (rightOptional_ && !leftOptional_) || rightExists_ ||
+        rightNotExists_;
   }
-
   // Returns the join side info for 'table'. If 'other' is set, returns the
   // other side.
   const JoinSide sideOf(PlanObjectConstPtr side, bool other = false) const;
 
+  /// Returns the table on the otherside of 'table' and the number of rows in
+  /// the returned table for one row in 'table'. If the join is not inner
+  /// returns nullptr, 0.
+  std::pair<PlanObjectConstPtr, float> otherTable(
+      PlanObjectConstPtr table) const {
+    return leftTable_ == table && !leftOptional_
+        ? std::pair<PlanObjectConstPtr, float>{rightTable_, lrFanout_}
+        : rightTable_ == table && !rightOptional_ && !rightExists_
+        ? std::pair<PlanObjectConstPtr, float>{leftTable_, rlFanout_}
+        : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
+  }
+
+  ExprPtr filter() const {
+    return filter_;
+  }
+
+  void setFanouts(float rl, float lr) {
+    fanoutsFixed_ = true;
+    lrFanout_ = lr;
+    rlFanout_ = rl;
+  }
+
   std::string toString() const;
+
+ private:
+  //// Fills in 'lrFanout' and 'rlFanout', 'leftUnique', 'rightUnique'.
+  void guessFanout();
+
+  // Leading left side join keys.
+  ExprVector leftKeys_;
+  // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
+  ExprVector rightKeys_;
+
+  PlanObjectConstPtr const leftTable_;
+  PlanObjectConstPtr const rightTable_;
+
+  // 'rightKeys' select max 1 'leftTable' row.
+  bool leftUnique_{false};
+
+  // 'leftKeys' select max 1 'rightTable' row.
+  bool rightUnique_{false};
+
+  // number of right side rows selected for one row on the left.
+  float lrFanout_{1};
+
+  // Number of left side rows selected for one row on the right.
+  float rlFanout_{1};
+
+  // True if 'lrFanout_' and 'rlFanout_' are set by setFanouts.
+  bool fanoutsFixed_{false};
+
+  // Join condition for any non-equality  conditions for non-inner joins.
+  ExprPtr const filter_;
+
+  // True if an unprobed right side row produces a result with right side
+  // columns set and left side columns as null. Possible only be hash or
+  // merge.
+  const bool leftOptional_;
+
+  // True if a right side miss produces a row with left side columns
+  // and a null for right side columns (left outer join). A full outer
+  // join has both left and right optional.
+  const bool rightOptional_;
+
+  // True if the right side is only checked for existence of a match. If
+  // rightOptional is set, this can project out a null for misses.
+  const bool rightExists_;
+
+  // True if produces a result for left if no match on the right.
+  const bool rightNotExists_;
 };
 
 using JoinEdgePtr = JoinEdge*;
@@ -487,6 +562,7 @@ struct DerivedTable : public PlanObject {
   void addJoinEquality(
       ExprPtr left,
       ExprPtr right,
+      ExprPtr filter,
       bool leftOptional,
       bool rightOptional,
       bool rightExists,
@@ -503,12 +579,14 @@ struct DerivedTable : public PlanObject {
   /// 'existences' as semijoins to limit cardinality when making a hash join
   /// build side. Allows importing a reducing join from probe to build.
   /// 'firstTable' is the joined table that is restricted by the other tables in
-  /// 'tables' and 'existences'.
+  /// 'tables' and 'existences'. 'existsFanout' us the reduction from joining
+  /// 'firstTable' with 'existences'.
   void import(
       const DerivedTable& super,
       PlanObjectConstPtr firstTable,
       const PlanObjectSet& tables,
-      const std::vector<PlanObjectSet>& existences);
+      const std::vector<PlanObjectSet>& existences,
+      float existsFanout = 1);
 
   //// True if 'table' is of 'this'.
   bool hasTable(PlanObjectConstPtr table) {

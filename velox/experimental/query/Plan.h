@@ -126,10 +126,11 @@ struct JoinCandidate {
 
   std::string toString() const;
 
+  // The join between already placed tables and the table(s) in 'this'.
   JoinEdgePtr join{nullptr};
 
-  // Tables to join on the build side. The tables must not occur on the left
-  // side.
+  // Tables to join on the build side. The tables must not be already placed in the plan.
+  // side, i.e. be alread
   std::vector<PlanObjectConstPtr> tables;
 
   // Joins imported from the left side for reducing a build
@@ -138,18 +139,22 @@ struct JoinCandidate {
   // part left (partsupp exists part) would have the second part in
   // 'existences' and partsupp in 'tables' because we know that
   // partsupp will not be probed with keys that are not in part, so
-  // there is no point building with these.
+  // there is no point building with these. This may involve tables already placed in the plan.
   std::vector<PlanObjectSet> existences;
 
   // Number of right side hits for one row on the left. The join
   // selectivity in 'tables' affects this but the selectivity in
   // 'existences' does not.
   float fanout;
+
+  // the selectivity from 'existences'. 0.2 means that the join of 'tables' is
+  // reduced 5x.
+  float existsFanout{1};
 };
 
 /// Represents a join to add to a partial plan. One join candidate can make
 /// many NextJoins, e.g, for different join methods. If one is clearly best,
-/// not all need be tried.
+/// not all need be tried. If many NextJoins are disconnected (no JoinEdge between them), these may be statically orderable without going through permutations.
 struct NextJoin {
   NextJoin(
       const JoinCandidate* candidate,
@@ -176,7 +181,7 @@ struct NextJoin {
 
 class Optimization;
 
-/// Tracks the set of tables / columns that have been placed or are till needed
+/// Tracks the set of tables / columns that have been placed or are still needed
 /// when constructing a partial plan.
 struct PlanState {
   PlanState(Optimization& optimization, DerivedTablePtr dt)
@@ -239,7 +244,10 @@ struct PlanState {
       RelationOpPtr plan,
       BuildSet builds,
       std::vector<NextJoin>& toTry) const;
+
   std::string printCost() const;
+
+  /// Makes a string of 'op' with 'details'. Costs are annotated with percentage of total in 'this->cost'.
   std::string printPlan(RelationOpPtr op, bool detail) const;
 
   /// True if the costs accumulated so far are so high that this should not be
@@ -251,16 +259,16 @@ struct PlanState {
 };
 
 /// A scoped guard that restores fields of PlanState on destruction.
-struct StateSaver {
+struct PlanStateSaver {
  public:
-  StateSaver(PlanState& state)
+  PlanStateSaver(PlanState& state)
       : state_(state),
         placed_(state.placed),
         columns_(state.columns),
         cost_(state.cost),
         numBuilds_(state.builds.size()) {}
 
-  ~StateSaver() {
+  ~PlanStateSaver() {
     state_.placed = std::move(placed_);
     state_.columns = std::move(columns_);
     state_.cost = cost_;
@@ -305,7 +313,9 @@ struct hash<::facebook::verax::MemoKey> {
 namespace facebook::verax {
 
 /// Instance of query optimization. Comverts a plan and schema into an optimized
-/// plan. Depends on QueryGraphContext being set on the calling thread.
+/// plan. Depends on QueryGraphContext being set on the calling thread. There is
+/// one instance per query to plan. The instance must stay live as long as a
+/// returned plan is live.
 class Optimization {
  public:
   static constexpr int32_t kRetained = 1;
@@ -315,40 +325,83 @@ class Optimization {
       const Schema& schema,
       int32_t traceFlags = 0);
 
+  /// Returns the optimized RelationOp plan for 'plan' given at construction.
   PlanPtr bestPlan();
 
+  /// Returns   a Velox PlanNode tree for a RelationOp tree.
   std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(RelationOpPtr plan) {
-    return nullptr;
+    VELOX_NYI();
   }
 
-  // Produces trace output if event matches 'traceFalgs_'.
+  // Produces trace output if event matches 'traceFlags_'.
   void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
 
  private:
+  // Initializes a tree of DerivedTables with JoinEdges from 'plan' given at
+  // construction. Sets 'root_' to the root DerivedTable.
   DerivedTablePtr makeQueryGraph();
 
   PlanObjectPtr makeQueryGraph(const velox::core::PlanNode& node);
+
+  // Sets the columns to project out from the root DerivedTable  based on
+  // 'plan'.
   void setDerivedTableOutput(
       DerivedTablePtr dt,
       const velox::core::PlanNode& planNode);
+
+  // Makes a deduplicated Expr tree from 'expr'.
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
 
+  // Converts 'name' to a deduplicated ExprPtr. If 'name' is assigned to an
+  // expression in a projection, returns the deduplicated ExprPtr of the
+  // expression.
   ExprPtr translateColumn(const std::string& name);
+
+  //  Applies translateColumn to a 'source'.
   ExprVector translateColumns(
       const std::vector<velox::core::FieldAccessTypedExprPtr>& source);
+
+  // Adds a JoinEdge corresponding to 'join' to the enclosing DerivedTable.
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
+  // Adds order by information to the enclosing DerivedTable.
   OrderByPtr translateOrderBy(const velox::core::OrderByNode& order);
+
+  // Adds aggregation information to the enclosing DerivedTable.
   AggregationPtr translateGroupBy(
       const velox::core::AggregationNode& aggregation);
 
+  /// Retrieves or makes a plan from 'key'. 'key' specifies a set of
+  /// top level joined tables or a hash join build side table or
+  /// join. 'distribution' is the desired output distribution or a
+  /// distribution with no partitioning if this does
+  /// matter. 'boundColumns' is a set of columns that are lookup keys
+  /// for an index based path through the joins in
+  /// 'key'. 'existsFanout' is the selectivity for the 'existences' in
+  /// 'key', i.e. extra reducing joins for a hash join build side,
+  /// reflecting reducing joins on the probe side, 1 if none. 'state'
+  /// is the state of the caller, empty for a top level call and the
+  /// state with the planned objects so far if planning a derived
+  /// table. 'needsShuffle' is set to true if a shuffle is needed to
+  /// align the result of the made plan with 'distribution'.
   PlanPtr makePlan(
       const MemoKey& key,
       const Distribution& distribution,
       const PlanObjectSet& boundColumns,
+      float existsFanout,
       PlanState& state,
       bool& needsShuffle);
 
+  // Returns a sorted list of candidates to add to the plan in
+  // 'state'. The joinable tables depend on the tables already present
+  // in 'plan'. A candidate will be a single table for all the single
+  // tables that can be joined. Additionally, when the single table
+  // can be joined to more tables not in 'state' to form a reducing
+  // join, this is produced as a candidate for a bushy hash join. When
+  // a single table or join to be used as a hash build side is made,
+  // we further check if reducing joins applying to the probe can be
+  // used to furthr reduce the build. These last joins are added as
+  // 'existences' in the candidate.
   std::vector<JoinCandidate> nextJoins(DerivedTablePtr dt, PlanState& state);
 
   // Adds group by, order by, top k to 'plan'. Updates 'plan' if
@@ -356,43 +409,71 @@ class Optimization {
   void
   addPostprocess(DerivedTablePtr dt, RelationOpPtr& plan, PlanState& state);
 
-  const Schema& schema_;
-  const velox::core::PlanNode& inputPlan_;
-  DerivedTablePtr root_;
-
+  // Lists the possible joins based on 'state.placed' and adds each on top of
+  // 'plan'. This is a set of plans extending 'plan' by one join (single table
+  // or bush). Calls itself on the interesting next plans. If all tables have
+  // been used, adds postprocess and adds the plan to 'plans' in 'state'. If
+  // 'state' enables cutoff and a partial plan is worse than the best so far,
+  // discards the candidate.
   void makeJoins(RelationOpPtr plan, PlanState& state);
 
+  // Helper function that calls makeJoins recursively for each of
+  // 'nextJoins'. The point of making 'nextJoins' first and only then
+  // calling makeJoins is to allow detecting a star pattern of a fact
+  // table and independently joined dimensions. These can be ordered
+  // based on partitioning and size and we do not need to evaluate
+  // their different permutations.
   void tryNextJoins(PlanState& state, const std::vector<NextJoin>& nextJoins);
 
+  // Adds the join represented by'candidate' on top of 'plan'. Tries index and
+  // hash based methods and adds the index and hash based plans to 'result'. If
+  // one of these is clearly superior, only adds the better one.
   void addJoin(
-      DerivedTablePtr dt,
       const JoinCandidate& candidate,
       const RelationOpPtr& plan,
       PlanState& state,
       std::vector<NextJoin>& result);
+
+  // If 'candidate' can be added on top 'plan' as a merge/index lookup, adds the
+  // plan to 'toTry'. Adds any necessary repartitioning.
   void joinByIndex(
       const RelationOpPtr& plan,
       const JoinCandidate& candidate,
       PlanState& state,
       std::vector<NextJoin>& toTry);
 
+  // Adds 'candidate' on top of 'plan as a hash join. Adds possibly needed
+  // repartitioning to both probe and build and makes a broadcast build if
+  // indicated. If 'candidate' calls for a join on the build ide, plans a
+  // derived table with the build side tables and optionl 'existences' from
+  // 'candidate'.
   void joinByHash(
       const RelationOpPtr& plan,
       const JoinCandidate& candidate,
       PlanState& state,
-      std::vector<NextJoin>&);
+      std::vector<NextJoin>& toTry);
+
+  const Schema& schema_;
+  const velox::core::PlanNode& inputPlan_;
+  DerivedTablePtr root_;
 
   DerivedTablePtr currentSelect_;
 
+  // Maps names in project noes of 'inputPlan_' to deduplicated Exprs.
   std::unordered_map<std::string, ExprPtr> renames_;
 
+  // Maps unique core::TypedExprs from 'inputPlan_' to deduplicated Exps.
   ExprDedupMap exprDedup_;
 
+  // Counter for generating unique correlation names for BaseTables and DerivedTables.
   int32_t nameCounter_{0};
 
   std::unordered_map<MemoKey, PlanSet> memo_;
 
+  // The top level PlanState. Contains the set of top level interesting plans. Must stay alive as long as the Plans and RelationOps are reeferenced.
   PlanState topState_{*this, nullptr};
+
+  // Controls tracing.
   int32_t traceFlags_{0};
   int32_t buildCounter_{0};
 };
