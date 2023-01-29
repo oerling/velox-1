@@ -316,6 +316,49 @@ struct ArraySumFunction {
   }
 };
 
+template <typename T>
+struct ArrayAverageFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      double& out,
+      const arg_type<Array<double>>& array) {
+    // If the array is empty, then set result to null.
+    if (array.size() == 0) {
+      return false;
+    }
+
+    double sum = 0;
+    size_t count = 0;
+    for (const auto& item : array) {
+      if (item.has_value()) {
+        sum += *item;
+        count++;
+      }
+    }
+    if (count != 0) {
+      out = sum / count;
+    }
+    return count != 0;
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullFree(
+      double& out,
+      const null_free_arg_type<Array<double>>& array) {
+    // If the array is empty, then set result to null.
+    if (array.size() == 0) {
+      return false;
+    }
+
+    double sum = 0;
+    for (const auto& item : array) {
+      sum += item;
+    }
+    out = sum / array.size();
+    return true;
+  }
+};
+
 template <typename TExecCtx, typename T>
 struct ArrayHasDuplicatesFunction {
   VELOX_DEFINE_FUNCTION_TYPES(TExecCtx);
@@ -353,6 +396,25 @@ struct ArrayHasDuplicatesFunction {
         break;
       }
     }
+  }
+};
+
+// Function Signature: array<T> -> map<T, int>, where T is ("bigint", "varchar")
+// Returns a map with frequency of each element in the input array vector.
+template <typename TExecParams, typename T>
+struct ArrayFrequencyFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(TExecParams);
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<velox::Map<T, int>>& out,
+      arg_type<velox::Array<T>> inputArray) {
+    folly::F14FastMap<arg_type<T>, int> frequencyCount;
+
+    for (const auto& item : inputArray.skipNulls()) {
+      frequencyCount[item]++;
+    }
+
+    out.copy_from(frequencyCount);
   }
 };
 

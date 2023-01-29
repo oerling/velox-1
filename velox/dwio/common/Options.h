@@ -101,6 +101,7 @@ class RowReaderOptions {
   // operations.
   std::shared_ptr<folly::Executor> decodingExecutor_;
   std::shared_ptr<folly::Executor> ioExecutor_;
+  bool appendRowNumberColumn_ = false;
 
  public:
   RowReaderOptions(const RowReaderOptions& other) {
@@ -114,6 +115,7 @@ class RowReaderOptions {
     metadataFilter_ = other.metadataFilter_;
     returnFlatVector_ = other.returnFlatVector_;
     flatmapNodeIdAsStruct_ = other.flatmapNodeIdAsStruct_;
+    appendRowNumberColumn_ = other.appendRowNumberColumn_;
   }
 
   RowReaderOptions() noexcept
@@ -275,6 +277,18 @@ class RowReaderOptions {
     ioExecutor_ = executor;
   }
 
+  /*
+   * Set to true, if you want to add a new column to the results containing the
+   * row numbers.
+   */
+  void setAppendRowNumberColumn(bool value) {
+    appendRowNumberColumn_ = value;
+  }
+
+  bool getAppendRowNumberColumn() const {
+    return appendRowNumberColumn_;
+  }
+
   const std::shared_ptr<folly::Executor>& getDecodingExecutor() const {
     return decodingExecutor_;
   }
@@ -337,9 +351,7 @@ class ReaderOptions {
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
   static constexpr int32_t kDefaultCoalesceDistance = 512 << 10; // 512K
 
-  ReaderOptions(
-      velox::memory::MemoryPool* pool =
-          &facebook::velox::memory::getProcessDefaultMemoryManager().getRoot())
+  ReaderOptions(velox::memory::MemoryPool* pool)
       : tailLocation(std::numeric_limits<uint64_t>::max()),
         memoryPool(pool),
         fileFormat(FileFormat::UNKNOWN),

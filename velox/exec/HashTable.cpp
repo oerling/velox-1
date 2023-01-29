@@ -614,13 +614,11 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   numTombstones_ = 0;
   sizeMask_ = capacity_ - 1;
   sizeBits_ = __builtin_popcountll(sizeMask_);
-  constexpr auto kPageSize = memory::MemoryAllocator::kPageSize;
+  constexpr auto kPageSize = memory::AllocationTraits::kPageSize;
   // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
   // tags table.
   auto numPages = bits::roundUp(size * 9, kPageSize) / kPageSize;
-  if (!rows_->pool()->allocateContiguous(numPages, tableAllocation_)) {
-    VELOX_FAIL("Could not allocate join/group by hash table");
-  }
+  rows_->pool()->allocateContiguous(numPages, tableAllocation_);
   table_ = tableAllocation_.data<char*>();
   tags_ = reinterpret_cast<uint8_t*>(table_ + size);
   memset(tags_, 0, capacity_);
@@ -1120,15 +1118,9 @@ void HashTable<ignoreNullKeys>::setHashMode(HashMode mode, int32_t numNew) {
   VELOX_CHECK_NE(hashMode_, HashMode::kHash);
   if (mode == HashMode::kArray) {
     auto bytes = capacity_ * sizeof(char*);
-    constexpr auto kPageSize = memory::MemoryAllocator::kPageSize;
+    constexpr auto kPageSize = memory::AllocationTraits::kPageSize;
     auto numPages = bits::roundUp(bytes, kPageSize) / kPageSize;
-    if (!rows_->pool()->allocateContiguous(numPages, tableAllocation_)) {
-      VELOX_FAIL(
-          "Could not allocate array with {} bytes/{} pages "
-          "for array mode hash table",
-          bytes,
-          numPages);
-    }
+    rows_->pool()->allocateContiguous(numPages, tableAllocation_);
     table_ = tableAllocation_.data<char*>();
     memset(table_, 0, bytes);
     hashMode_ = HashMode::kArray;

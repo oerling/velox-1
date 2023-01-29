@@ -2,6 +2,10 @@
 Array Functions
 =============================
 
+.. function:: array_average(array(double)) -> double
+
+    Returns the average of all non-null elements of the array. If there are no non-null elements, returns null.
+
 .. function:: array_distinct(array(E)) -> array(E)
 
     Remove duplicate values from the input array. ::
@@ -26,6 +30,16 @@ Array Functions
         SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 1, 2]); -- []
         SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 3, 4]); -- [2]
         SELECT array_except(ARRAY [1, NULL, NULL], ARRAY [1, 1, NULL]); -- []
+
+.. function:: array_frequency(array(E) x) -> map(E, int)
+
+    Returns a map: keys are the unique elements in the array, values are how many times the key appears.
+    Ignores null elements. Empty array returns empty map. E must be bigint or varchar. ::
+
+        SELECT array_frequency(ARRAY [1, 1, 2, 2, 2, 2]); -- {1 -> 2, 2 -> 4}
+        SELECT array_frequency(ARRAY [1, 1, NULL, NULL, NULL]); -- {1 -> 2}
+        SELECT array_frequency(ARRAY ["knock", "knock", "who", "?"]); -- {"knock" -> 2, "who" -> 1, "?" -> 1}
+        SELECT array_frequency(ARRAY []); -- {}
 
 .. function:: array_has_duplicates(array(E)) -> boolean
 
@@ -155,6 +169,14 @@ Array Functions
 .. function:: reverse(array(E)) -> array(E)
 
     Returns an array which has the reversed order of the input array.
+
+.. function:: shuffle(array(E)) -> array(E)
+
+    Generate a random permutation of the given ``array``::
+
+        SELECT shuffle(ARRAY [1, 2, 3]); -- [3, 1, 2] or any other random permutation
+        SELECT shuffle(ARRAY [0, 0, 0]); -- [0, 0, 0]
+        SELECT shuffle(ARRAY [1, NULL, 1, NULL, 2]); -- [2, NULL, NULL, NULL, 1] or any other random permutation
 
 .. function:: slice(array(E), start, length) -> array(E)
 

@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <string>
 #include <cstring>
+#include <string>
 
 #ifdef __BMI2__
 #include <x86intrin.h>
