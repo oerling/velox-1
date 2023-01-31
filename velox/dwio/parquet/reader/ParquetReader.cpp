@@ -528,7 +528,7 @@ struct ParquetStatsContext : dwio::common::StatsContext {};
 } // namespace
 
 void ParquetRowReader::filterRowGroups() {
-  auto rowGroups = readerBase_->fileMetaData().row_groups;
+  const auto& rowGroups = readerBase_->fileMetaData().row_groups;
   rowGroupIds_.reserve(rowGroups.size());
 
   ParquetData::FilterRowGroupsResult res;
