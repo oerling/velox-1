@@ -171,16 +171,16 @@ RowVectorPtr TableScan::getOutput() {
     {
       auto lockedStats = stats_.wlock();
       lockedStats->addRuntimeStat(
-				  "preloadedSplits",
-				  RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
+          "preloadedSplits",
+          RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
       numPreloadedSplits_ = 0;
       lockedStats->addRuntimeStat(
-				  "readyPreloadedSplits",
-				  RuntimeCounter(
-						 numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
+          "readyPreloadedSplits",
+          RuntimeCounter(
+              numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
       numReadyPreloadedSplits_ = 0;
     }
-    
+
     driverCtx_->task->splitFinished();
     needNewSplit_ = true;
   }

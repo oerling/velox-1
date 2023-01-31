@@ -468,12 +468,12 @@ bool DwrfRowReader::moveAdaptationFrom(RowReader& other) {
   auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
   if (!selectiveColumnReader_) {
     VLOG(1) << "PRESPL: Moving adaptation to reader with no reader tree. Can "
-	    << "happen if split contains no stripe begin.";
+            << "happen if split contains no stripe begin.";
     return false;
   }
   if (!otherReader->selectiveColumnReader_) {
     VLOG(1) << "PRESPL: Moving adaptation from reader with no tree. "
-	    << "No adaptation moved but continuing.";
+            << "No adaptation moved but continuing.";
     return true;
   }
   selectiveColumnReader_->moveScanSpec(*otherReader->selectiveColumnReader_);

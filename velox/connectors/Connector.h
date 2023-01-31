@@ -35,9 +35,9 @@ class ExprSet;
 }
 namespace facebook::velox::connector {
 
-  class DataSource;
+class DataSource;
 
-  // A split represents a chunk of data that a connector should load and return
+// A split represents a chunk of data that a connector should load and return
 // as a RowVectorPtr, potentially after processing pushdowns.
 struct ConnectorSplit {
   const std::string connectorId;
