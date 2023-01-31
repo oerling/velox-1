@@ -97,6 +97,7 @@ RowVectorPtr TableScan::getOutput() {
         }
         pendingDynamicFilters_.clear();
       }
+
       debugString_ = fmt::format(
           "Split {} Task {}",
           connectorSplit->toString(),
@@ -124,7 +125,6 @@ RowVectorPtr TableScan::getOutput() {
       } else {
         dataSource_->addSplit(connectorSplit);
       }
-
       ++stats_.wlock()->numSplits;
       setBatchSize();
     }
@@ -151,15 +151,6 @@ RowVectorPtr TableScan::getOutput() {
     {
       auto lockedStats = stats_.wlock();
       lockedStats->addRuntimeStat(
-          "preloadedSplits",
-          RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
-      numPreloadedSplits_ = 0;
-      lockedStats->addRuntimeStat(
-          "readyPreloadedSplits",
-          RuntimeCounter(
-              numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
-      numReadyPreloadedSplits_ = 0;
-      lockedStats->addRuntimeStat(
           "dataSourceWallNanos",
           RuntimeCounter(
               (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
@@ -177,6 +168,19 @@ RowVectorPtr TableScan::getOutput() {
       }
     }
 
+    {
+      auto lockedStats = stats_.wlock();
+      lockedStats->addRuntimeStat(
+				  "preloadedSplits",
+				  RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
+      numPreloadedSplits_ = 0;
+      lockedStats->addRuntimeStat(
+				  "readyPreloadedSplits",
+				  RuntimeCounter(
+						 numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
+      numReadyPreloadedSplits_ = 0;
+    }
+    
     driverCtx_->task->splitFinished();
     needNewSplit_ = true;
   }

@@ -466,8 +466,15 @@ std::optional<size_t> DwrfRowReader::estimatedRowSize() const {
 
 bool DwrfRowReader::moveAdaptationFrom(RowReader& other) {
   auto otherReader = dynamic_cast<DwrfRowReader*>(&other);
-  if (!selectiveColumnReader_ || !otherReader->selectiveColumnReader_) {
+  if (!selectiveColumnReader_) {
+    VLOG(1) << "PRESPL: Moving adaptation to reader with no reader tree. Can "
+	    << "happen if split contains no stripe begin.";
     return false;
+  }
+  if (!otherReader->selectiveColumnReader_) {
+    VLOG(1) << "PRESPL: Moving adaptation from reader with no tree. "
+	    << "No adaptation moved but continuing.";
+    return true;
   }
   selectiveColumnReader_->moveScanSpec(*otherReader->selectiveColumnReader_);
   return true;
@@ -701,7 +708,13 @@ std::unique_ptr<dwio::common::RowReader> DwrfReader::createRowReader(
 
 std::unique_ptr<DwrfRowReader> DwrfReader::createDwrfRowReader(
     const RowReaderOptions& opts) const {
-  return std::make_unique<DwrfRowReader>(readerBase_, opts);
+  auto rowReader = std::make_unique<DwrfRowReader>(readerBase_, opts);
+  // Load the first stripe on construction so that readers created in
+  // background have a reader tree and can preload the first
+  // stripe. Also the reader tree needs to exist in order to receive
+  // adaptation from a previous reader.
+  rowReader->startNextStripe();
+  return rowReader;
 }
 
 std::unique_ptr<DwrfReader> DwrfReader::create(
