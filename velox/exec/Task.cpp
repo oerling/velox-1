@@ -1520,11 +1520,12 @@ ContinueFuture Task::stateChangeFuture(uint64_t maxWaitMicros) {
 }
 
 std::string Task::toString() const {
+  std::lock_guard<std::mutex> l(mutex_);
   std::stringstream out;
   out << "{Task " << shortId(taskId_) << " (" << taskId_ << ")";
 
   if (exception_) {
-    out << "Error: " << errorMessage() << std::endl;
+    out << "Error: " << errorMessageLocked() << std::endl;
   }
 
   if (planFragment_.planNode) {
@@ -1676,9 +1677,13 @@ void Task::setError(const std::string& message) {
   }
 }
 
+std::string Task::errorMessageLocked() const {
+  return errorMessageImpl(exception_);
+}
+
 std::string Task::errorMessage() const {
   std::lock_guard<std::mutex> l(mutex_);
-  return errorMessageImpl(exception_);
+  return errorMessageLocked();
 }
 
 StopReason Task::enter(ThreadState& state) {

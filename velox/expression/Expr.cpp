@@ -380,7 +380,6 @@ void Expr::evalSimplifiedImpl(
   const bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
 
   LocalDecodedVector decodedVector(context);
-
   bool throwArgumentErrors = context.throwOnError() &&
       (!defaultNulls ||
        (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
@@ -443,6 +442,19 @@ void Expr::evalSimplifiedImpl(
     context.deselectErrors(remainingRows);
 
     // All rows have at least one null output or error.
+    if (!remainingRows.hasSelections()) {
+      releaseInputValues(context);
+      result =
+          BaseVector::createNullConstant(type(), rows.size(), context.pool());
+      return;
+    }
+  }
+
+  // We need to deselect rows with errors since otherwise they will
+  // be cleared by Conjunct special form , as current assumption is
+  // that they are only invoked on rows that do not have exceptions.
+  if (context.errors()) {
+    context.deselectErrors(remainingRows);
     if (!remainingRows.hasSelections()) {
       releaseInputValues(context);
       result =
@@ -752,7 +764,11 @@ bool Expr::checkGetSharedSubexprValues(
         true /*override*/);
 
     evalEncodings(*missingRows, context, sharedSubexprValues_);
+
+    // Clear the rows which failed to compute.
+    context.deselectErrors(*sharedSubexprRows_);
   }
+
   context.moveOrCopyResult(sharedSubexprValues_, rows, result);
   return true;
 }
@@ -769,7 +785,17 @@ void Expr::checkUpdateSharedSubexprValues(
   if (!sharedSubexprRows_) {
     sharedSubexprRows_ = context.execCtx()->getSelectivityVector(rows.size());
   }
+
   *sharedSubexprRows_ = rows;
+  if (context.errors()) {
+    // Clear the rows which failed to compute.
+    context.deselectErrors(*sharedSubexprRows_);
+    if (!sharedSubexprRows_->hasSelections()) {
+      // Do not store a reference to 'result' if we cannot use any rows from it.
+      return;
+    }
+  }
+
   sharedSubexprValues_ = result;
 }
 

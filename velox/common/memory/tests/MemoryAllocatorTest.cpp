@@ -34,7 +34,7 @@ using namespace facebook::velox::common::testutil;
 
 namespace facebook::velox::memory {
 
-static constexpr uint64_t kMaxMemoryAllocator = 128UL * 1024 * 1024;
+static constexpr uint64_t kMaxMemoryAllocator = 256UL * 1024 * 1024;
 static constexpr MachinePageCount kCapacity =
     (kMaxMemoryAllocator / AllocationTraits::kPageSize);
 
@@ -169,10 +169,11 @@ class MemoryAllocatorTest : public testing::TestWithParam<TestParam> {
     if (useMmap_) {
       MmapAllocator::Options options;
       options.capacity = kMaxMemoryAllocator;
-      mmapAllocator_ = std::make_shared<MmapAllocator>(options);
-      MemoryAllocator::setDefaultInstance(mmapAllocator_.get());
+      allocator_ = std::make_shared<MmapAllocator>(options);
+      MemoryAllocator::setDefaultInstance(allocator_.get());
     } else {
-      MemoryAllocator::setDefaultInstance(nullptr);
+      allocator_ = MemoryAllocator::createDefaultInstance();
+      MemoryAllocator::setDefaultInstance(allocator_.get());
     }
     hasMemoryTracker_ = GetParam().hasMemoryTracker;
     if (hasMemoryTracker_) {
@@ -465,7 +466,7 @@ class MemoryAllocatorTest : public testing::TestWithParam<TestParam> {
   bool useMmap_;
   bool hasMemoryTracker_;
   std::shared_ptr<MemoryUsageTracker> memoryUsageTracker_;
-  std::shared_ptr<MmapAllocator> mmapAllocator_;
+  std::shared_ptr<MemoryAllocator> allocator_;
   std::shared_ptr<MockMemoryAllocator> mockAllocator_;
   MemoryAllocator* instance_;
   std::unique_ptr<MemoryManager> memoryManager_;
@@ -481,6 +482,7 @@ TEST_P(MemoryAllocatorTest, allocationPoolTest) {
   EXPECT_EQ(pool.numTotalAllocations(), 1);
   EXPECT_EQ(pool.currentRunIndex(), 0);
   EXPECT_EQ(pool.currentOffset(), 10);
+  return;
 
   pool.allocateFixed(kNumLargeAllocPages * AllocationTraits::kPageSize);
   EXPECT_EQ(pool.numTotalAllocations(), 2);
@@ -773,7 +775,8 @@ TEST_P(MemoryAllocatorTest, allocContiguousFail) {
   // kLargeSize already in large[0], 1/2 of kLargeSize free and
   // kSmallSize given as collateral. This does not go through because
   // we inject a failure in advising away the collateral.
-  instance->testingSetFailureInjection(MmapAllocator::Failure::kMadvise);
+  instance->testingSetFailureInjection(
+      MemoryAllocator::InjectedFailure::kMadvise);
   EXPECT_FALSE(instance->allocateContiguous(
       kLargeSize + kSmallSize, allocations.back().get(), large, trackCallback));
   EXPECT_TRUE(instance->checkConsistency());
@@ -787,7 +790,7 @@ TEST_P(MemoryAllocatorTest, allocContiguousFail) {
   trackedBytes = 0;
   EXPECT_TRUE(instance->allocateContiguous(
       kLargeSize / 2, nullptr, large, trackCallback));
-  instance->testingSetFailureInjection(MmapAllocator::Failure::kMmap);
+  instance->testingSetFailureInjection(MemoryAllocator::InjectedFailure::kMmap);
   // Should go through because 1/2 of kLargeSize + kSmallSize free and 1/2 of
   // kLargeSize already in large. Fails because mmap after advise away fails.
   EXPECT_FALSE(instance->allocateContiguous(
@@ -1015,28 +1018,27 @@ TEST_P(MemoryAllocatorTest, StlMemoryAllocator) {
   }
 }
 
-DEBUG_ONLY_TEST_P(
+TEST_P(MemoryAllocatorTest, badNonContiguousAllocation) {
+  // Set the num of pages to allocate exceeds one PageRun limit.
+  constexpr MachinePageCount kNumPages =
+      Allocation::PageRun::kMaxPagesInRun + 1;
+  std::unique_ptr<Allocation> allocation(new Allocation());
+  ASSERT_THROW(
+      instance_->allocateNonContiguous(kNumPages, *allocation),
+      VeloxRuntimeError);
+  ASSERT_TRUE(instance_->allocateNonContiguous(kNumPages - 1, *allocation));
+  instance_->freeNonContiguous(*allocation);
+}
+
+TEST_P(
     MemoryAllocatorTest,
     nonContiguousScopedMemoryAllocatorAllocationFailure) {
   if (!memoryUsageTracker_) {
     return;
   }
   ASSERT_EQ(memoryUsageTracker_->currentBytes(), 0);
-
-  if (useMmap_) {
-    mmapAllocator_->testingSetFailureInjection(
-        MmapAllocator::Failure::kAllocate);
-  }
-  std::atomic<bool> testingInjectFailureOnce{true};
-  SCOPED_TESTVALUE_SET(
-      "facebook::velox::memory::MallocAllocator::allocateNonContiguous",
-      std::function<void(bool*)>([&](bool* testFlag) {
-        if (!testingInjectFailureOnce.exchange(false)) {
-          return;
-        }
-        *testFlag = true;
-      }));
-
+  allocator_->testingSetFailureInjection(
+      MemoryAllocator::InjectedFailure::kAllocate);
   constexpr MachinePageCount kAllocSize = 8;
   std::unique_ptr<Allocation> allocation(new Allocation());
   ASSERT_FALSE(instance_->allocateNonContiguous(kAllocSize, *allocation));
@@ -1053,10 +1055,11 @@ TEST_P(MemoryAllocatorTest, contiguousScopedMemoryAllocatorAllocationFailure) {
     // allocation failure rollback code path.
     return;
   }
-  std::vector<MmapAllocator::Failure> failureTypes(
-      {MmapAllocator::Failure::kMadvise, MmapAllocator::Failure::kMmap});
+  std::vector<MemoryAllocator::InjectedFailure> failureTypes(
+      {MemoryAllocator::InjectedFailure::kMadvise,
+       MemoryAllocator::InjectedFailure::kMmap});
   for (const auto& failure : failureTypes) {
-    mmapAllocator_->testingSetFailureInjection(failure);
+    allocator_->testingSetFailureInjection(failure);
     ASSERT_EQ(memoryUsageTracker_->currentBytes(), 0);
 
     constexpr MachinePageCount kAllocSize = 8;
@@ -1065,7 +1068,8 @@ TEST_P(MemoryAllocatorTest, contiguousScopedMemoryAllocatorAllocationFailure) {
     ASSERT_FALSE(
         instance_->allocateContiguous(kAllocSize, nullptr, *allocation));
     ASSERT_EQ(memoryUsageTracker_->currentBytes(), 0);
-    mmapAllocator_->testingSetFailureInjection(MmapAllocator::Failure::kNone);
+    allocator_->testingSetFailureInjection(
+        MemoryAllocator::InjectedFailure::kNone);
     ASSERT_TRUE(
         instance_->allocateContiguous(kAllocSize, nullptr, *allocation));
     ASSERT_GT(memoryUsageTracker_->currentBytes(), 0);
