@@ -214,7 +214,7 @@ class MmapAllocator : public MemoryAllocator {
 
     // Adds 'numPages' mapped free pages of this size class to 'allocation'. May
     // only be called if 'mappedFreePages_' >= 'numPages'.
-    void allocateFromMappdFree(int32_t numPages, Allocation& allocation);
+    void allocateFromMappedFree(int32_t numPages, Allocation& allocation);
 
     // Marks that 'page' is free and mapped. Called when freeing the page.
     // 'page' is a page number iin this class.
@@ -324,15 +324,6 @@ class MmapAllocator : public MemoryAllocator {
 
   // Serializes moving capacity between size classes
   std::mutex sizeClassBalanceMutex_;
-
-  // Number of allocated pages. Allocation succeeds if an atomic increment of
-  // this by the desired amount is <= 'capacity_'.
-  std::atomic<MachinePageCount> numAllocated_;
-
-  // Number of machine pages backed by memory in the address ranges in
-  // 'sizeClasses_'. It includes pages that are already freed. Hence it should
-  // be larger than numAllocated_
-  std::atomic<MachinePageCount> numMapped_;
 
   // Number of pages allocated and explicitly mmap'd by the
   // application via allocateContiguous, outside of

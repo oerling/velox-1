@@ -25,8 +25,6 @@ namespace facebook::velox::memory {
 MmapAllocator::MmapAllocator(const Options& options)
     : kind_(MemoryAllocator::Kind::kMmap),
       useMmapArena_(options.useMmapArena),
-      numAllocated_(0),
-      numMapped_(0),
       capacity_(bits::roundUp(
           options.capacity / AllocationTraits::kPageSize,
           64 * sizeClassSizes_.back())) {
@@ -531,7 +529,7 @@ bool MmapAllocator::SizeClass::allocateLocked(
   auto numPagesToAllocate = numPages;
   if (considerMappedOnly > 0) {
     const auto previousPages = out.numPages();
-    allocateFromMappdFree(considerMappedOnly, out);
+    allocateFromMappedFree(considerMappedOnly, out);
     const auto numAllocated = (out.numPages() - previousPages) / unitSize_;
     VELOX_CHECK_EQ(
         numAllocated,
@@ -610,7 +608,7 @@ xsimd::batch<uint64_t> MmapAllocator::SizeClass::mappedFreeBits(int32_t index) {
       xsimd::load_unaligned(pageMapped_.data() + index);
 }
 
-void MmapAllocator::SizeClass::allocateFromMappdFree(
+void MmapAllocator::SizeClass::allocateFromMappedFree(
     int32_t numPages,
     Allocation& allocation) {
   constexpr int32_t kWidth = xsimd::batch<int64_t>::size;
@@ -622,7 +620,9 @@ void MmapAllocator::SizeClass::allocateFromMappdFree(
       return;
     }
     bool anyFound = false;
-    for (auto index = group; index <= group + kWidth; index += kWidth) {
+    bool groupEmpty = false;
+    for (auto index = group; index <= group + kWidth && !groupEmpty;
+         index += kWidth) {
       auto bits = mappedFreeBits(index);
       uint16_t mask = simd::allSetBitMask<int64_t>() ^
           simd::toBitMask(bits == xsimd::broadcast<uint64_t>(0));
@@ -659,6 +659,7 @@ void MmapAllocator::SizeClass::allocateFromMappdFree(
         if (index == group + kWidth ||
             isAllZero(mappedFreeBits(index + kWidth))) {
           bits::setBit(mappedFreeLookup_.data(), group / kWordsPerGroup, false);
+          groupEmpty = true;
         }
       }
       if (!needed) {
@@ -694,7 +695,7 @@ MachinePageCount MmapAllocator::SizeClass::adviseAway(
 bool MmapAllocator::SizeClass::isInRange(uint8_t* ptr) const {
   if (ptr >= address_ && ptr < address_ + byteSize_) {
     // See that ptr falls on a page boundary.
-    if ((ptr - address_) % unitSize_ != 0) {
+    if ((ptr - address_) % AllocationTraits::pageBytes(unitSize_) != 0) {
       VELOX_FAIL("Pointer is in a SizeClass but not at page boundary");
     }
     return true;
