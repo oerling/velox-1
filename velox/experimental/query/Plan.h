@@ -341,11 +341,35 @@ class Optimization {
   void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
 
  private:
+  static constexpr uint64_t kAllAllowedInDt = ~0UL;
+
+  // True if 'op' is in 'mask.
+  static bool contains(uint64_t mask, PlanType op) {
+    return 0 != (mask & (1UL << static_cast<int32_t>(op)));
+  }
+
+  // Returns a mask that allows 'op' in the same derived table.
+  uint64_t allow(PlanType op) {
+    return 1UL << static_cast<int32_t>(op);
+  }
+
+  // Removes 'op' from the set of operators allowed in the current derived
+  // table. makeQueryGraph() starts a new derived table if it finds an operator
+  // that does not belong to the mask.
+  static uint64_t makeDtIf(uint64_t mask, PlanType op) {
+    return mask & ~(1UL << static_cast<int32_t>(op));
+  }
+
   // Initializes a tree of DerivedTables with JoinEdges from 'plan' given at
   // construction. Sets 'root_' to the root DerivedTable.
   DerivedTablePtr makeQueryGraph();
 
-  PlanObjectPtr makeQueryGraph(const velox::core::PlanNode& node);
+  // Converts 'plan' to PlanObjects and records join edges into
+  // 'currentSelect_'. If 'node' does not match  allowedInDt, wraps 'node' in a
+  // new DerivedTable.
+  PlanObjectPtr makeQueryGraph(
+      const velox::core::PlanNode& node,
+      uint64_t allowedInDt);
 
   // Sets the columns to project out from the root DerivedTable  based on
   // 'plan'.
@@ -355,6 +379,10 @@ class Optimization {
 
   // Makes a deduplicated Expr tree from 'expr'.
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
+
+  // Adds conjuncts combined by any number of enclosing ands from 'input' to
+  // 'flat'.
+  void translateConjuncts(const velox::core::TypedExprPtr& input, ExprVector& flat);
 
   // Converts 'name' to a deduplicated ExprPtr. If 'name' is assigned to an
   // expression in a projection, returns the deduplicated ExprPtr of the
@@ -372,8 +400,14 @@ class Optimization {
   OrderByPtr translateOrderBy(const velox::core::OrderByNode& order);
 
   // Adds aggregation information to the enclosing DerivedTable.
-  AggregationPtr translateGroupBy(
+  AggregationPtr translateAggregation(
       const velox::core::AggregationNode& aggregation);
+
+  // Adds 'node' and descendants to query graph wrapped inside a
+  // DerivedTable. Done for joins to the right of non-inner joins,
+  // group bys as non-top operators, whenever descendents of 'node'
+  // are not freely reorderable with its parents' descendents.
+  PlanObjectPtr wrapInDt(const velox::core::PlanNode& node);
 
   /// Retrieves or makes a plan from 'key'. 'key' specifies a set of
   /// top level joined tables or a hash join build side table or
@@ -481,7 +515,14 @@ class Optimization {
 
   // Controls tracing.
   int32_t traceFlags_{0};
+
+  // Generates unique ids for build sides.
   int32_t buildCounter_{0};
+
+  // When making a graph from 'inputPlan_' the output of an aggregation comes
+  // from the topmost (final) and the input from the lefmost (whichever consumes
+  // raw values). Records the output type of the final aggregation.
+  velox::RowTypePtr aggFinalType_;
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().

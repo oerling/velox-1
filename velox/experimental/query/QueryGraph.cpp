@@ -231,6 +231,15 @@ std::string Call::toString() const {
   return out.str();
 }
 
+std::string conjunctsToString(const ExprVector& conjuncts) {
+  std::stringstream out;
+  for (auto i = 0; i < conjuncts.size(); ++i) {
+    out << conjuncts[i]->toString()
+        << (i == conjuncts.size() - 1 ? "" : " and ");
+  }
+  return out.str();
+}
+
 std::string BaseTable::toString() const {
   std::stringstream out;
   out << "{" << PlanObject::toString();
@@ -280,8 +289,8 @@ std::string JoinEdge::toString() const {
     out << leftKeys_[i]->toString() << " = " << rightKeys_[i]->toString()
         << (i < leftKeys_.size() - 1 ? " and " : "");
   }
-  if (filter_) {
-    out << " filter " << filter_->toString();
+  if (!filter_.empty()) {
+    out << " filter " << conjunctsToString(filter_);
   }
   out << ">";
   return out.str();
@@ -383,7 +392,7 @@ Column::Column(Name name, PlanObjectPtr relation, const Value& value)
 void DerivedTable::addJoinEquality(
     ExprPtr left,
     ExprPtr right,
-    ExprPtr filter,
+    const ExprVector& filter,
     bool leftOptional,
     bool rightOptional,
     bool rightExists,
@@ -445,7 +454,7 @@ void fillJoins(
       dt->addJoinEquality(
           column->as<Column>(),
           other->as<Column>(),
-          nullptr,
+          {},
           false,
           false,
           false,
@@ -499,8 +508,6 @@ void DerivedTable::setStartTables() {
   }
 }
 
-void DerivedTable::guessBaseCardinality() {}
-
 void DerivedTable::linkTablesToJoins() {
   setStartTables();
 
@@ -515,8 +522,10 @@ void DerivedTable::linkTablesToJoins() {
     for (auto key : join->rightKeys()) {
       tables.unionSet(key->allTables());
     }
-    if (join->filter()) {
-      tables.unionSet(join->filter()->allTables());
+    if (!join->filter().empty()) {
+      for (auto& conjunct : join->filter()) {
+        tables.unionSet(conjunct->allTables());
+      }
     }
     tables.forEachMutable([&](PlanObjectPtr table) {
       if (table->type() == PlanType::kTable) {
@@ -529,9 +538,8 @@ void DerivedTable::linkTablesToJoins() {
   }
 }
 
-// Returns a left exists (semijoin) with 'table' on the left and one of
-// 'tables'// on the right. If 'dt' is non-nullptr, this is placed on the right
-// of exists instead of the original table. This will
+// Returns a right exists (semijoin) with 'table' on the left and one of
+// 'tables'// on the right.
 JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   for (auto join : joinedBy(table)) {
     if (join->leftTable() == table) {
@@ -540,7 +548,7 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
           exists,
           table,
           join->rightTable(),
-          nullptr,
+          {},
           false,
           false,
           true,
@@ -556,7 +564,7 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
           exists,
           table,
           join->leftTable(),
-          nullptr,
+          {},
           false,
           false,
           true,
@@ -596,7 +604,6 @@ void DerivedTable::import(
         existsTables;
     exists.forEach([&](auto object) { existsTables.push_back(object); });
     auto existsJoin = makeExists(firstTable, exists);
-
     if (existsTables.size() > 1) {
       // There is a join on the right of exists. Needs its own dt.
       Declare(DerivedTable, existsDt);
@@ -614,7 +621,7 @@ void DerivedTable::import(
           joinWithDt,
           firstTable,
           existsDt,
-          nullptr,
+          {},
           false,
           false,
           true,
@@ -634,6 +641,19 @@ void DerivedTable::import(
     }
   }
   setStartTables();
+}
+
+std::string DerivedTable::toString() const {
+  std::stringstream out;
+  out << "{dt " << cname;
+  for (auto& join : joins) {
+    out << join->toString();
+  }
+  if (!conjuncts.empty()) {
+    out << " where " << conjunctsToString(conjuncts);
+  }
+  out << "}";
+  return out.str();
 }
 
 std::vector<ColumnPtr> SchemaTable::toColumns(
@@ -836,7 +856,25 @@ IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
     auto schemaTable = table->as<BaseTable>()->schemaTable;
     return schemaTable->indexByColumns(keys);
   }
-  VELOX_NYI();
+  VELOX_CHECK_EQ(table->type(), PlanType::kDerivedTable);
+  auto dt = table->as<DerivedTable>();
+  auto distribution = dt->distribution;
+  assert(distribution);
+  IndexInfo result;
+  result.scanCardinality = distribution->cardinality;
+  const ExprVector* groupingKeys = nullptr;
+  if (dt->aggregation) {
+    groupingKeys = &dt->aggregation->grouping;
+  }
+  result.joinCardinality = result.scanCardinality;
+  for (auto i = 0; i < keys.size(); ++i) {
+    result.joinCardinality =
+        combine(result.joinCardinality, i, keys[i]->value().cardinality);
+  }
+  if (groupingKeys && keys.size() >= groupingKeys->size()) {
+    result.unique = true;
+  }
+  return result;
 }
 
 ColumnPtr IndexInfo::schemaColumn(ColumnPtr keyValue) const {
@@ -865,7 +903,7 @@ float tableCardinality(PlanObjectConstPtr table) {
         .cardinality;
   }
   VELOX_CHECK(table->type() == PlanType::kDerivedTable);
-  return table->as<DerivedTable>()->baseCardinality;
+  return table->as<DerivedTable>()->distribution->cardinality;
 }
 
 void JoinEdge::guessFanout() {
@@ -896,7 +934,15 @@ bool Distribution::isSamePartition(const Distribution& other) const {
   if (!(distributionType == other.distributionType)) {
     return false;
   }
+  if (isBroadcast || other.isBroadcast) {
+    return true;
+  }
   if (partition.size() != other.partition.size()) {
+    return false;
+  }
+  if (partition.size() == 0) {
+    // If the partitioning columns are not in the columns or if there
+    // are no partitioning columns, there can be  no copartitioning.
     return false;
   }
   for (auto i = 0; i < partition.size(); ++i) {

@@ -62,17 +62,42 @@ enum class OrderType {
 
 using OrderTypeVector = std::vector<OrderType, QGAllocator<OrderType>>;
 
-/// Represents a system that contains or produces data. nullptr means
-/// a shared access distributed file system or data lake for schema
-/// objects. nullptr means the system running the top level query for
-/// a RelationOp. For cases of federation where data is only
-/// accessible via a specific instance of a specific type of system,
-/// the locus represents the instance and the subclass of Locus
+struct RelationOp;
+
+/// Represents a system that contains or produces data.For cases of federation
+/// where data is only accessible via a specific instance of a specific type of
+/// system, the locus represents the instance and the subclass of Locus
 /// represents the type of system for a schema object. For a
-/// RelationOp, a non-null locus means that the op is pushed down into
+/// RelationOp, the  locus of its distribution means that the op is performed by
 /// the corresponding system. Distributions can be copartitioned only
 /// if their locus is equal (==) to the other locus.
-struct Locus {};
+class Locus {
+ public:
+  Locus(Name name) : name_(name) {}
+
+  virtual ~Locus() {
+    LOG(FATAL) << "Locus is arena allocated";
+  }
+
+  /// Sets the cardinality in op. Returns true if set. If false, default
+  /// cardinality determination.
+  virtual bool setCardinality(RelationOp& op) const {
+    return false;
+  }
+
+  /// Sets the cost. Returns true if set. If false, the default cost is set with
+  /// RelationOp::setCost.
+  virtual bool setCost(RelationOp& op) const {
+    return false;
+  }
+
+  std::string toString() const {
+    return name_;
+  }
+
+ private:
+  Name name_;
+};
 
 using LocusPtr = const Locus*;
 

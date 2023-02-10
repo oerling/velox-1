@@ -127,17 +127,17 @@ PlanObjectSet PlanState::downstreamColumns() const {
   }
   PlanObjectSet result;
   for (auto join : dt->joins) {
-    int32_t numNeeded = 0;
+    bool addFilter = false;
     if (!placed.contains(join->rightTable())) {
-      ++numNeeded;
+      addFilter = true;
       result.unionColumns(join->leftKeys());
     }
     if (join->leftTable() && !placed.contains(join->leftTable())) {
-      ++numNeeded;
+      addFilter = true;
       result.unionColumns(join->rightKeys());
     }
-    if (numNeeded && join->filter()) {
-      result.unionSet(join->filter()->columns());
+    if (addFilter && !join->filter().empty()) {
+      result.unionColumns(join->filter());
     }
   }
   result.unionSet(targetColumns);
@@ -878,6 +878,9 @@ void Optimization::addJoin(
 ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
   ColumnVector result;
   downstream.forEach([&](PlanObjectConstPtr object) {
+    if (!object->as<Column>()->schemaColumn()) {
+      return;
+    }
     if (position(index->columns(), *object->as<Column>()->schemaColumn()) >=
         0) {
       result.push_back(object->as<Column>());

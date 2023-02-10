@@ -261,23 +261,30 @@ struct JoinSide {
 /// Represents a possibly directional equality join edge.
 /// 'rightTable' is always set. 'leftTable' is nullptr if 'leftKeys' come from
 /// different tables. If so, 'this' must be non-inner and not full outer.
+/// 'filter' is a list of post join conjuncts. This should be present only in
+/// non-inner joins. For inner joins these are representable as freely
+/// decomposable and reorderable conjuncts.
 class JoinEdge {
  public:
   JoinEdge(
       PlanObjectConstPtr leftTable,
       PlanObjectConstPtr rightTable,
-      ExprPtr filter,
+      ExprVector filter,
       bool leftOptional,
       bool rightOptional,
       bool rightExists,
       bool rightNotExists)
       : leftTable_(leftTable),
         rightTable_(rightTable),
-        filter_(filter),
+        filter_(std::move(filter)),
         leftOptional_(leftOptional),
         rightOptional_(rightOptional),
         rightExists_(rightExists),
-        rightNotExists_(rightNotExists) {}
+        rightNotExists_(rightNotExists) {
+    if (isInner()) {
+      VELOX_CHECK(filter_.empty());
+    }
+  }
 
   PlanObjectConstPtr leftTable() const {
     return leftTable_;
@@ -338,7 +345,7 @@ class JoinEdge {
         : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
   }
 
-  ExprPtr filter() const {
+  const ExprVector& filter() const {
     return filter_;
   }
 
@@ -378,7 +385,7 @@ class JoinEdge {
   bool fanoutsFixed_{false};
 
   // Join condition for any non-equality  conditions for non-inner joins.
-  ExprPtr const filter_;
+  const ExprVector filter_;
 
   // True if an unprobed right side row produces a result with right side
   // columns set and left side columns as null. Possible only be hash or
@@ -483,20 +490,10 @@ class Aggregate : public Call {
 
 using AggregatePtr = const Aggregate*;
 
-struct Aggregation;
+class Aggregation;
 using AggregationPtr = Aggregation*;
 
-/// Represents an order by for a derived table.
-struct OrderBy : public Relation {
-  ExprVector keys;
-  OrderTypeVector orderTypes;
-
-  // Keys where the key expression is functionally dependent on
-  // another key or keys. These can be late materialized or converted
-  // to payload.
-  PlanObjectSet dependentKeys;
-};
-
+class OrderBy;
 using OrderByPtr = OrderBy*;
 
 /// Represents a derived table, i.e. a select in a from clause. This is the
@@ -507,6 +504,13 @@ using OrderByPtr = OrderBy*;
 /// semantics of e.g. group by.
 struct DerivedTable : public PlanObject {
   DerivedTable() : PlanObject(PlanType::kDerivedTable) {}
+
+  // Distribution that gives partition, cardinality and
+  // order/uniqueness for the dt alone. This is expressed in terms of
+  // outside visible 'columns'. Actual uses of the dt in candidate
+  // plans may be modified from this by e.g. importing restrictions
+  // from enclosing query. Set for a non-top level dt.
+  Distribution* distribution{nullptr};
 
   // Correlation name.
   Name cname{nullptr};
@@ -548,21 +552,17 @@ struct DerivedTable : public PlanObject {
 
   // Postprocessing clauses, group by, having, order by, limit, offset.
   AggregationPtr aggregation{nullptr};
-  ExprPtr having{nullptr};
+  ExprVector having;
   OrderByPtr orderBy{nullptr};
   int32_t limit{-1};
   int32_t offset{0};
-
-  // Guess of cardinality. The actual cardinality is calculated with a plan but.
-  // This is only for deciding in which order to cost candidates.
-  float baseCardinality{1};
 
   /// Adds an equijoin edge between 'left' and 'right'. The flags correspond to
   /// the like-named members in Join.
   void addJoinEquality(
       ExprPtr left,
       ExprPtr right,
-      ExprPtr filter,
+      const ExprVector& filter,
       bool leftOptional,
       bool rightOptional,
       bool rightExists,
@@ -593,9 +593,11 @@ struct DerivedTable : public PlanObject {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
   }
 
- private:
+  /// Fills in 'startTables_' to 'tables_' that are not to the right of
+  /// non-commutative joins.
   void setStartTables();
-  void guessBaseCardinality();
+
+  std::string toString() const override;
 };
 
 using DerivedTablePtr = DerivedTable*;

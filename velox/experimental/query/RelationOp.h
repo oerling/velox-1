@@ -108,6 +108,12 @@ class RelationOp : public Relation {
     return cost_.inputCardinality * cost_.fanout;
   }
 
+  /// Returns the value constraints of 'expr' at the output of
+  /// 'this'. For example, a filter or join may limit values. An Expr
+  /// will for example have no more distinct values than the number of
+  /// rows. This is computed on first use.
+  const Value& value(ExprPtr expr) const;
+  
   /// Fills in 'cost_' after construction. Depends on 'input' and is defined for
   /// each subclass.
   virtual void setCost(const PlanState& input);
@@ -159,7 +165,7 @@ struct TableScan : public RelationOp {
       ColumnVector columns,
       ExprVector lookupKeys = {},
       velox::core::JoinType joinType = velox::core::JoinType::kInner,
-      ExprPtr joinFilter = nullptr)
+      ExprVector joinFilter = {})
       : RelationOp(
             RelType::kTableScan,
             input,
@@ -169,7 +175,7 @@ struct TableScan : public RelationOp {
         index(_index),
         keys(std::move(lookupKeys)),
         joinType(joinType),
-        joinFilter(joinFilter) {
+        joinFilter(std::move(joinFilter)) {
     cost_.fanout = fanout;
   }
 
@@ -211,7 +217,7 @@ struct TableScan : public RelationOp {
   velox::core::JoinType joinType{velox::core::JoinType::kInner};
 
   // If this is a non-inner join,  extra filter for the join.
-  ExprPtr joinFilter{nullptr};
+  const ExprVector joinFilter;
 };
 
 /// Represents a repartition, i.e. query fragment boundary. The distribution of
@@ -264,7 +270,7 @@ struct Join : public RelationOp {
       RelationOpPtr right,
       ExprVector leftKeys,
       ExprVector rightKeys,
-      ExprPtr filter,
+      ExprVector filter,
       float fanout,
       ColumnVector columns)
       : RelationOp(RelType::kJoin, input, input->distribution(), columns),
@@ -273,7 +279,7 @@ struct Join : public RelationOp {
         right(std::move(right)),
         leftKeys(std::move(leftKeys)),
         rightKeys(std::move(rightKeys)),
-        filter(filter) {
+        filter(std::move(filter)) {
     cost_.fanout = fanout;
   }
 
@@ -282,7 +288,7 @@ struct Join : public RelationOp {
   RelationOpPtr right;
   ExprVector leftKeys;
   ExprVector rightKeys;
-  ExprPtr filter;
+  ExprVector filter;
 
   void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;
@@ -318,6 +324,7 @@ using HashBuildPtr = HashBuild*;
 struct Aggregation : public RelationOp {
   Aggregation(const Aggregation& other, RelationOpPtr input)
       : Aggregation(other) {
+    *const_cast<Distribution*>(&distribution_) = input->distribution();
     input_ = std::move(input);
   }
 
@@ -345,4 +352,13 @@ struct Aggregation : public RelationOp {
   std::string toString(bool recursive, bool detail) const override;
 };
 
+/// Represents an order by. The order is given by the distribution.
+struct OrderBy : public RelationOp {
+  // Keys where the key expression is functionally dependent on
+  // another key or keys. These can be late materialized or converted
+  // to payload.
+  PlanObjectSet dependentKeys;
+};
+
+  
 } // namespace facebook::verax

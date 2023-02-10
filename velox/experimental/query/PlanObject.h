@@ -20,7 +20,9 @@
 
 namespace facebook::verax {
 
-/// Enum for types of query graph nodes.
+/// Enum for types of query graph nodes. Used when making a tree into
+/// a query graph and later to differentiate between tables, derived
+/// tables and different expressions.
 enum class PlanType {
   kTable,
   kDerivedTable,
@@ -28,8 +30,12 @@ enum class PlanType {
   kLiteral,
   kCall,
   kAggregate,
+  kAggregation,
   kProject,
-  kFilter
+  kFilter,
+  kJoin,
+  kOrderBy,
+  kLimit
 };
 
 /// True if 'type' is an expression with a value.

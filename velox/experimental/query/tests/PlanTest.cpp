@@ -122,6 +122,18 @@ TEST_F(PlanTest, q9) {
   std::cout << result;
 }
 
+TEST_F(PlanTest, q17) {
+  auto q = builder_->getQueryPlan(17).plan;
+  auto result = makePlan(q, true, true);
+  std::cout << result;
+  result = makePlan(q, true, false);
+  std::cout << result;
+}
+ 
+void printPlan(core::PlanNode* plan, bool r, bool d) {
+  std::cout << plan->toString(r, d) << std::endl;
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   folly::init(&argc, &argv, false);

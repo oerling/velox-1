@@ -21,6 +21,13 @@
 
 namespace facebook::verax {
 
+const Value& RelationOp::value(ExprPtr expr) const {
+  // Compute new Value by applying restrictions from operators
+  // between the place Expr is first defined and the output of
+  // 'this'. Memoize the result in 'this'.
+  return expr->value();
+}
+
 std::string RelationOp::toString(bool recursive, bool detail) const {
   if (input_ && recursive) {
     return input_->toString(true, detail);
