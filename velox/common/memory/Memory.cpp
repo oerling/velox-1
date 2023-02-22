@@ -63,33 +63,58 @@ uint64_t MemoryPool::getChildCount() const {
 }
 
 void MemoryPool::visitChildren(std::function<void(MemoryPool*)> visitor) const {
-  folly::SharedMutex::ReadHolder guard{childrenMutex_};
-  for (const auto& child : children_) {
-    visitor(child);
+  std::vector<std::shared_ptr<MemoryPool>> children;
+  {
+    folly::SharedMutex::ReadHolder guard{childrenMutex_};
+    children.reserve(children_.size());
+    for (const auto& entry : children_) {
+      auto child = entry.second.lock();
+      if (child != nullptr) {
+        children.push_back(std::move(child));
+      }
+    }
+  }
+
+  // NOTE: we should call 'visitor' on child pool object out of
+  // 'childrenMutex_' to avoid potential recursive locking issues. Firstly, the
+  // user provided 'visitor' might try to acquire this memory pool lock again.
+  // Secondly, the shared child pool reference created from the weak pointer
+  // might be the last reference if some other threads drop all the external
+  // references during this time window. Then drop of this last shared reference
+  // after 'visitor' call will trigger child memory pool destruction in that
+  // case. The child memory pool destructor will remove its weak pointer
+  // reference from the parent pool which needs to acquire this memory pool lock
+  // again.
+  for (const auto& child : children) {
+    visitor(child.get());
   }
 }
 
 std::shared_ptr<MemoryPool> MemoryPool::addChild(const std::string& name) {
   folly::SharedMutex::WriteHolder guard{childrenMutex_};
-  // Upon name collision we would throw and not modify the map.
+  VELOX_CHECK_EQ(
+      children_.count(name),
+      0,
+      "Child memory pool {} already exists in {}",
+      name,
+      toString());
   auto child = genChild(shared_from_this(), name);
-  if (auto usageTracker = getMemoryUsageTracker()) {
-    child->setMemoryUsageTracker(usageTracker->addChild());
+  if (auto tracker = getMemoryUsageTracker()) {
+    child->setMemoryUsageTracker(tracker->addChild());
   }
-  children_.emplace_back(child.get());
+  children_.emplace(name, child);
   return child;
 }
 
-void MemoryPool::dropChild(const MemoryPool* FOLLY_NONNULL child) {
+void MemoryPool::dropChild(const MemoryPool* child) {
   folly::SharedMutex::WriteHolder guard{childrenMutex_};
-  // Implicitly synchronized in dtor of child so it's impossible for
-  // MemoryManager to access after destruction of child.
-  auto iter = std::find_if(
-      children_.begin(), children_.end(), [child](const MemoryPool* e) {
-        return e == child;
-      });
-  VELOX_CHECK(iter != children_.end());
-  children_.erase(iter);
+  const auto ret = children_.erase(child->name());
+  VELOX_CHECK_EQ(
+      ret,
+      1,
+      "Child memory pool {} doesn't exist in {}",
+      child->name(),
+      toString());
 }
 
 size_t MemoryPool::getPreferredSize(size_t size) {
@@ -128,7 +153,8 @@ MemoryPoolImpl::~MemoryPoolImpl() {
     VELOX_CHECK_EQ(
         0,
         remainingBytes,
-        "Memory pool should be destroyed only after all allocated memory has been freed. Remaining bytes allocated: {}, cumulative bytes allocated: {}, number of allocations: {}",
+        "Memory pool {} should be destroyed only after all allocated memory has been freed. Remaining bytes allocated: {}, cumulative bytes allocated: {}, number of allocations: {}",
+        name(),
         remainingBytes,
         tracker->cumulativeBytes(),
         tracker->numAllocs());
@@ -176,12 +202,6 @@ void* MemoryPoolImpl::reallocate(
   auto alignedSize = sizeAlign(size);
   auto alignedNewSize = sizeAlign(newSize);
   const int64_t difference = alignedNewSize - alignedSize;
-  if (FOLLY_UNLIKELY(difference <= 0)) {
-    // Track and pretend the shrink took place for accounting purposes.
-    release(-difference);
-    return p;
-  }
-
   reserve(difference);
   void* newP =
       allocator_.reallocateBytes(p, alignedSize, alignedNewSize, alignment_);
@@ -398,7 +418,8 @@ MemoryManager::MemoryManager(const Options& options)
 MemoryManager::~MemoryManager() {
   auto currentBytes = getTotalBytes();
   if (currentBytes > 0) {
-    LOG(WARNING) << "Leaked total memory of " << currentBytes << " bytes.";
+    VELOX_MEM_LOG(WARNING) << "Leaked total memory of " << currentBytes
+                           << " bytes.";
   }
 }
 
@@ -415,9 +436,8 @@ MemoryPool& MemoryManager::getRoot() const {
 }
 
 std::shared_ptr<MemoryPool> MemoryManager::getChild(int64_t cap) {
-  return root_->addChild(fmt::format(
-      "default_usage_node_{}",
-      folly::to<std::string>(folly::Random::rand64())));
+  static std::atomic<int64_t> poolId{0};
+  return root_->addChild(fmt::format("default_usage_node_{}", poolId++));
 }
 
 int64_t MemoryManager::getTotalBytes() const {

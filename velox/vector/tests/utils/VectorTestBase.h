@@ -148,8 +148,9 @@ class VectorTestBase {
   FlatVectorPtr<T> makeFlatVector(
       vector_size_t size,
       std::function<T(vector_size_t /*row*/)> valueAt,
-      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr) {
-    return vectorMaker_.flatVector<T>(size, valueAt, isNullAt);
+      std::function<bool(vector_size_t /*row*/)> isNullAt = nullptr,
+      const TypePtr& type = CppToType<T>::create()) {
+    return vectorMaker_.flatVector<T>(size, valueAt, isNullAt, type);
   }
 
   /// Decimal Vector type cannot be inferred from the cpp type alone as the cpp
@@ -601,7 +602,7 @@ class VectorTestBase {
   }
 
   VectorPtr makeConstant(const variant& value, vector_size_t size) {
-    return BaseVector::createConstant(value, size, pool());
+    return BaseVector::createConstant(value.inferType(), value, size, pool());
   }
 
   template <typename T>
@@ -644,7 +645,8 @@ class VectorTestBase {
   }
 
   VectorPtr makeNullConstant(TypeKind typeKind, vector_size_t size) {
-    return BaseVector::createConstant(variant(typeKind), size, pool());
+    return BaseVector::createNullConstant(
+        createType(typeKind, {}), size, pool());
   }
 
   BufferPtr makeIndices(

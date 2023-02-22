@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(velox_codegen_test CodegenTest.cpp)
-target_link_libraries(velox_codegen_test gtest gtest_main velox_codegen)
+add_library(velox_fuzzer_connector OBJECT FuzzerConnector.cpp)
 
-add_test(velox_codegen_test velox_codegen_test)
+target_link_libraries(velox_fuzzer_connector velox_connector
+                      velox_vector_fuzzer)
+
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()
