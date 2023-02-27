@@ -295,7 +295,7 @@ VectorPtr wrapOne(
   // If another column has the same wrapping and does not add nulls, we can use
   // the same transposed indices.
   state.transposeResults.push_back(
-				   std::make_pair<Buffer*, Buffer*>(indices.get(), newIndices.get()));
+      std::make_pair<Buffer*, Buffer*>(indices.get(), newIndices.get()));
   return BaseVector::wrapInDictionary(extraNulls, newIndices, size, base);
 }
 

@@ -169,8 +169,7 @@ void GroupingSet::addInputForActiveRows(
 
   for (auto i = 0; i < hashers.size(); ++i) {
     auto key = input->childAt(hashers[i]->channel());
-    LazyVector::ensureLoadedRows(
-				 key, activeRows_);
+    LazyVector::ensureLoadedRows(key, activeRows_);
     hashers[i]->decode(*key, activeRows_);
   }
 

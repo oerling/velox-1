@@ -133,7 +133,8 @@ VectorPtr BaseVector::wrapInDictionary(
     VectorPtr vector) {
   // Dictionary that doesn't add nulls over constant is same as constant. Just
   // make sure to adjust the size.
-  if (vector->encoding() == VectorEncoding::Simple::LAZY && vector->asUnchecked<LazyVector>()->isLoaded()) {
+  if (vector->encoding() == VectorEncoding::Simple::LAZY &&
+      vector->asUnchecked<LazyVector>()->isLoaded()) {
     vector = loadedVectorShared(vector);
   }
   if (vector->encoding() == VectorEncoding::Simple::CONSTANT && !nulls) {
@@ -964,7 +965,7 @@ void BaseVector::transposeIndicesWithNulls(
 
 // static
 void BaseVector::transposeDictionaryValues(
-					   vector_size_t size,
+    vector_size_t size,
     BufferPtr& nulls,
     BufferPtr& indices,
     std::shared_ptr<BaseVector>& dictionaryValues) {

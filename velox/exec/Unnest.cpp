@@ -80,7 +80,7 @@ RowVectorPtr Unnest::getOutput() {
   rawOffsets.resize(unnestChannels_.size());
   rawIndices.resize(unnestChannels_.size());
   WrapState state;
-  
+
   for (auto channel = 0; channel < unnestChannels_.size(); ++channel) {
     const auto& unnestVector = input_->childAt(unnestChannels_[channel]);
     unnestDecoded_[channel].decode(*unnestVector, inputRows_);
@@ -141,7 +141,11 @@ RowVectorPtr Unnest::getOutput() {
   std::vector<VectorPtr> outputs(outputType_->size());
   for (const auto& projection : identityProjections_) {
     outputs[projection.outputChannel] = wrapOne(
-						numElements, repeatedIndices, input_->childAt(projection.inputChannel), nullptr, state);
+        numElements,
+        repeatedIndices,
+        input_->childAt(projection.inputChannel),
+        nullptr,
+        state);
   }
 
   // Create unnest columns.
@@ -199,19 +203,27 @@ RowVectorPtr Unnest::getOutput() {
                 numElements,
                 elementIndices,
                 unnestBaseArray->elements(),
-                nulls, state);
+                nulls,
+                state);
     } else {
       // Construct two unnest columns for Map keys and values vectors wrapped
       // using above created dictionary.
       auto unnestBaseMap = currentDecoded.base()->as<MapVector>();
-      outputs[outputsIndex++] = identityMapping
-          ? unnestBaseMap->mapKeys()
-          : wrapOne(
-		      numElements, elementIndices, unnestBaseMap->mapKeys(), nulls, state);
+      outputs[outputsIndex++] = identityMapping ? unnestBaseMap->mapKeys()
+                                                : wrapOne(
+                                                      numElements,
+                                                      elementIndices,
+                                                      unnestBaseMap->mapKeys(),
+                                                      nulls,
+                                                      state);
       outputs[outputsIndex++] = identityMapping
           ? unnestBaseMap->mapValues()
           : wrapOne(
-		      numElements, elementIndices, unnestBaseMap->mapValues(), nulls, state);
+                numElements,
+                elementIndices,
+                unnestBaseMap->mapValues(),
+                nulls,
+                state);
     }
   }
 

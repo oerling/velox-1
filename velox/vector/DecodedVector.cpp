@@ -185,14 +185,14 @@ void DecodedVector::combineWrappers(
         setBaseData(*values, rows);
         return;
       case VectorEncoding::Simple::DICTIONARY: {
-	//LOG(ERROR) << "Multilevel dict ";
-	VELOX_FAIL("Limit to one level");
+        // LOG(ERROR) << "Multilevel dict ";
+        VELOX_FAIL("Limit to one level");
         applyDictionaryWrapper(*values, rows);
         values = values->valueVector().get();
         break;
       }
       case VectorEncoding::Simple::SEQUENCE: {
-	VELOX_FAIL("Limit to one level");
+        VELOX_FAIL("Limit to one level");
         applySequenceWrapper(*values, rows);
         values = values->valueVector().get();
         break;

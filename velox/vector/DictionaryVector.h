@@ -154,7 +154,7 @@ class DictionaryVector : public SimpleVector<T> {
       // Lazy load made a dictionary. Rewrite indices of 'this' to refer to the
       // base vector of 'dictionaryValues_'.
       BaseVector::transposeDictionaryValues(
-					    BaseVector::length_, BaseVector::nulls_, indices_, dictionaryValues_);
+          BaseVector::length_, BaseVector::nulls_, indices_, dictionaryValues_);
       BaseVector::rawNulls_ =
           BaseVector::nulls_ ? BaseVector::nulls_->as<uint64_t>() : nullptr;
     }

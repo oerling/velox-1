@@ -249,13 +249,15 @@ RowVectorPtr Operator::fillOutput(vector_size_t size, BufferPtr mapping) {
     auto input = input_->children();
     for (auto& projection : identityProjections_) {
       columns[projection.outputChannel] = wrapResults
-	? wrapOne(size, mapping, input[projection.inputChannel], nullptr, state)
+          ? wrapOne(
+                size, mapping, input[projection.inputChannel], nullptr, state)
           : input[projection.inputChannel];
     }
   }
   for (auto& projection : resultProjections_) {
     columns[projection.outputChannel] = wrapResults
-      ? wrapOne(size, mapping, results_[projection.inputChannel], nullptr, state)
+        ? wrapOne(
+              size, mapping, results_[projection.inputChannel], nullptr, state)
         : results_[projection.inputChannel];
   }
 

@@ -99,7 +99,9 @@ struct WrapState {
   // extra nulls must be applied to all columns.
   Buffer* nulls;
 
-  // Set of distinct wrappers with its transpose result as second. These are non-owning references and live during making a result vector that wraps inputs.
+  // Set of distinct wrappers with its transpose result as second. These are
+  // non-owning references and live during making a result vector that wraps
+  // inputs.
   std::vector<std::pair<Buffer*, Buffer*>> transposeResults;
 };
 
