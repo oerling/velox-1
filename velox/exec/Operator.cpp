@@ -243,18 +243,19 @@ RowVectorPtr Operator::fillOutput(vector_size_t size, BufferPtr mapping) {
     wrapResults = false;
   }
 
+  WrapState state;
   std::vector<VectorPtr> columns(outputType_->size());
   if (!identityProjections_.empty()) {
     auto input = input_->children();
     for (auto& projection : identityProjections_) {
       columns[projection.outputChannel] = wrapResults
-          ? wrapChild(size, mapping, input[projection.inputChannel])
+	? wrapOne(size, mapping, input[projection.inputChannel], nullptr, state)
           : input[projection.inputChannel];
     }
   }
   for (auto& projection : resultProjections_) {
     columns[projection.outputChannel] = wrapResults
-        ? wrapChild(size, mapping, results_[projection.inputChannel])
+      ? wrapOne(size, mapping, results_[projection.inputChannel], nullptr, state)
         : results_[projection.inputChannel];
   }
 

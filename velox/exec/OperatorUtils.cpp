@@ -234,59 +234,6 @@ vector_size_t processFilterResults(
   }
 }
 
-struct WrapState {
-  std::vector<Buffer*> previousIndices;
-  std::vector<BufferPtr> newIndices;
-};
-
-void transposeWithNulls(
-    const vector_size_t* base,
-    const uint64_t* nulls,
-    vector_size_t size,
-    const vector_size_t* indices,
-    const uint64_t* extraNulls,
-    vector_size_t* result,
-    uint64_t* resultNulls) {
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  for (auto i = 0; i < size; i += kBatch) {
-    auto indexBatch = xsimd::load_unaligned(indices + i);
-    uint8_t extraNullsByte = i + kBatch > size ? bits::lowMask(size - i) : 0xff;
-
-    if (extraNulls) {
-      extraNullsByte &= reinterpret_cast<const uint8_t*>(extraNulls)[i / 8];
-    }
-    if (extraNullsByte != 0xff) {
-      auto mask = simd::fromBitMask<int32_t>(extraNullsByte);
-      indexBatch = indexBatch &
-          xsimd::load_unaligned(reinterpret_cast<const vector_size_t*>(&mask));
-    }
-    uint8_t flags = simd::gather8Bits(nulls, indexBatch, 8);
-    flags &= extraNullsByte;
-    reinterpret_cast<uint8_t*>(resultNulls)[i / 8] = flags;
-    simd::gather<int32_t>(base, indexBatch).store_unaligned(result + i);
-  }
-}
-
-void transpose(
-    const vector_size_t* base,
-    vector_size_t size,
-    const vector_size_t* indices,
-    vector_size_t* result) {
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  int32_t i = 0;
-  for (; i + kBatch <= size; i += kBatch) {
-    auto indexBatch = xsimd::load_unaligned(indices + i);
-    simd::gather(base, indexBatch).store_unaligned(result + i);
-  }
-  if (i < size) {
-    auto indexBatch = xsimd::load_unaligned(indices + i);
-    auto mask = simd::leadingMask<int32_t>(size - i);
-    simd::maskGather(
-        xsimd::batch<int32_t>::broadcast(0), mask, base, indexBatch)
-        .store_unaligned(result + i);
-  }
-}
-
 VectorPtr wrapOne(
     vector_size_t size,
     BufferPtr mapping,
@@ -299,42 +246,57 @@ VectorPtr wrapOne(
   if (vector->encoding() != VectorEncoding::Simple::DICTIONARY) {
     return BaseVector::wrapInDictionary(extraNulls, mapping, size, vector);
   }
+  if (state.transposeResults.empty()) {
+    state.nulls = extraNulls.get();
+  } else {
+    VELOX_CHECK(
+        state.nulls == extraNulls.get(),
+        "Must have identical extra nulls for all wrapped columns");
+  }
   auto indices = vector->wrapInfo();
   auto base = vector->valueVector();
-  for (auto i = 0; i < state.previousIndices.size(); ++i) {
-    if (indices.get() == state.previousIndices[i]) {
-      return BaseVector::wrapInDictionary(
-          nullptr, state.newIndices[i], size, vector);
+  auto rawNulls = vector->rawNulls();
+  if (!rawNulls) {
+    // if another column had the same indices as this one and this one does not
+    // add nulls, we use the same transposed wrapping.
+    for (auto& result : state.transposeResults) {
+      if (indices.get() == result.first) {
+        return BaseVector::wrapInDictionary(
+            extraNulls, BufferPtr(result.second), size, base);
+      }
     }
-    if (const uint64_t* rawNulls = vector->rawNulls()) {
-      // Dictionary adds nulls.
-      BufferPtr newIndices =
-          AlignedBuffer::allocate<vector_size_t>(size, vector->pool());
-      BufferPtr newNulls = AlignedBuffer::allocate<bool>(size, vector->pool());
-      const uint64_t* rawExtraNulls =
-          extraNulls ? extraNulls->as<uint64_t>() : nullptr;
-      transposeWithNulls(
-          indices->as<vector_size_t>(),
-          rawNulls,
-          size,
-          mapping->as<vector_size_t>(),
-          rawExtraNulls,
-          newIndices->asMutable<vector_size_t>(),
-          newNulls->asMutable<uint64_t>());
+  }
 
-      return BaseVector::wrapInDictionary(newNulls, newIndices, size, base);
-    }
+  if (rawNulls) {
+    // Dictionary adds nulls.
+    BufferPtr newIndices =
+        AlignedBuffer::allocate<vector_size_t>(size, vector->pool());
+    BufferPtr newNulls = AlignedBuffer::allocate<bool>(size, vector->pool());
+    const uint64_t* rawExtraNulls =
+        extraNulls ? extraNulls->as<uint64_t>() : nullptr;
+    BaseVector::transposeIndicesWithNulls(
+        indices->as<vector_size_t>(),
+        rawNulls,
+        size,
+        mapping->as<vector_size_t>(),
+        rawExtraNulls,
+        newIndices->asMutable<vector_size_t>(),
+        newNulls->asMutable<uint64_t>());
+
+    return BaseVector::wrapInDictionary(newNulls, newIndices, size, base);
   }
   auto newIndices =
       AlignedBuffer::allocate<vector_size_t>(size, vector->pool());
-  transpose(
+  BaseVector::transposeIndices(
       indices->as<vector_size_t>(),
       size,
       mapping->as<vector_size_t>(),
       newIndices->asMutable<vector_size_t>());
-  state.previousIndices.push_back(indices.get());
-  state.newIndices.push_back(newIndices);
-  return BaseVector::wrapInDictionary(extraNulls, newIndices, size, vector);
+  // If another column has the same wrapping and does not add nulls, we can use
+  // the same transposed indices.
+  state.transposeResults.push_back(
+				   std::make_pair<Buffer*, Buffer*>(indices.get(), newIndices.get()));
+  return BaseVector::wrapInDictionary(extraNulls, newIndices, size, base);
 }
 
 VectorPtr wrapChild(
@@ -374,8 +336,9 @@ RowVectorPtr wrap(
   }
   std::vector<VectorPtr> wrappedChildren;
   wrappedChildren.reserve(childVectors.size());
+  WrapState state;
   for (auto& child : childVectors) {
-    wrappedChildren.emplace_back(wrapChild(size, mapping, child));
+    wrappedChildren.emplace_back(wrapOne(size, mapping, child, nullptr, state));
   }
   return std::make_shared<RowVector>(
       pool, rowType, nullptr, size, wrappedChildren);

@@ -693,7 +693,8 @@ void HashProbe::fillLeftSemiProjectMatchColumn(vector_size_t size) {
 
 void HashProbe::fillOutput(vector_size_t size) {
   prepareOutput(size);
-
+  WrapState state;
+  
   for (auto projection : identityProjections_) {
     // Load input vector if it is being split into multiple batches. It is not
     // safe to wrap unloaded LazyVector into two different dictionaries.
@@ -701,7 +702,7 @@ void HashProbe::fillOutput(vector_size_t size) {
     auto inputChild = input_->childAt(projection.inputChannel);
 
     output_->childAt(projection.outputChannel) =
-        wrapChild(size, outputRowMapping_, inputChild);
+      wrapOne(size, outputRowMapping_, inputChild, nullptr, state);
   }
 
   if (isLeftSemiProjectJoin(joinType_)) {
@@ -969,11 +970,12 @@ void HashProbe::fillFilterInput(vector_size_t size) {
   if (!filterInput_) {
     filterInput_ = BaseVector::create<RowVector>(filterInputType_, 1, pool());
   }
+  WrapState state;
   filterInput_->resize(size);
   for (auto projection : filterInputProjections_) {
     ensureLoadedIfNotAtEnd(projection.inputChannel);
-    filterInput_->childAt(projection.outputChannel) = wrapChild(
-        size, outputRowMapping_, input_->childAt(projection.inputChannel));
+    filterInput_->childAt(projection.outputChannel) = wrapOne(
+								size, outputRowMapping_, input_->childAt(projection.inputChannel), nullptr, state);
   }
 
   extractColumns(
