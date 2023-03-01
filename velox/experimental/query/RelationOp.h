@@ -244,19 +244,22 @@ using RepartitionPtr = const Repartition*;
 /// join. Non-equality constraints over inner joins become Filters.
 class Filter : public RelationOp {
  public:
-  Filter(RelationOpPtr input, ExprPtr expr)
+  Filter(RelationOpPtr input, ExprVector exprs)
       : RelationOp(
             RelType::kFilter,
             input,
             input->distribution(),
             input->columns()),
-        expr_(expr) {}
-  ExprPtr expr() const {
-    return expr_;
+        exprs_(std::move(exprs)) {}
+  const ExprVector& exprs() const {
+    return exprs_;
   }
 
+    void setCost(const PlanState& input) override;
+  std::string toString(bool recursive, bool detail) const override;
+  
  private:
-  ExprPtr const expr_;
+  const ExprVector exprs_;
 };
 
 enum class JoinMethod { kHash, kMerge };

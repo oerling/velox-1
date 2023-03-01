@@ -255,9 +255,17 @@ const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
         lrFanout_,
         rightOptional_,
         rightExists_,
-        rightNotExists_};
+        rightNotExists_,
+        rightUnique_};
   }
-  return {leftTable_, leftKeys_, rlFanout_, leftOptional_, false, false};
+  return {
+      leftTable_,
+      leftKeys_,
+      rlFanout_,
+      leftOptional_,
+      false,
+      false,
+      leftUnique_};
 }
 
 void JoinEdge::addEquality(ExprPtr left, ExprPtr right) {
@@ -529,10 +537,10 @@ void DerivedTable::linkTablesToJoins() {
     }
     tables.forEachMutable([&](PlanObjectPtr table) {
       if (table->type() == PlanType::kTable) {
-        table->as<BaseTable>()->joinedBy.push_back(join);
+        table->as<BaseTable>()->addJoinedBy(join);
       } else {
         VELOX_CHECK_EQ(table->type(), PlanType::kDerivedTable);
-        table->as<DerivedTable>()->joinedBy.push_back(join);
+        table->as<DerivedTable>()->addJoinedBy(join);
       }
     });
   }
@@ -640,7 +648,242 @@ void DerivedTable::import(
       tableSet.add(existsTables[0]);
     }
   }
-  setStartTables();
+  if (firstTable->type() == PlanType::kDerivedTable) {
+    importJoinsIntoFirstDt(firstTable->as<DerivedTable>());
+  } else {
+    fullyImported = _tables;
+  }
+  linkTablesToJoins();
+}
+
+// Returns a copy of 'expr,, replacing instances of columns in 'outer' with the
+// corresponding expression from 'inner'
+ExprPtr
+importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
+  if (!expr) {
+    return nullptr;
+  }
+  switch (expr->type()) {
+    case PlanType::kColumn:
+      for (auto i = 0; i < inner.size(); ++i) {
+        if (outer[i] == expr) {
+          return inner[i];
+        }
+      }
+      return expr;
+    case PlanType::kLiteral:
+      return expr;
+    case PlanType::kCall:
+    case PlanType::kAggregate: {
+      auto children = expr->children();
+      std::vector<ExprPtr> newChildren(children.size());
+      FunctionSet functions;
+      bool anyChange = false;
+      for (auto i = 0; i < children.size(); ++i) {
+        newChildren[i] = importExpr(children[i]->as<Expr>(), outer, inner);
+        anyChange |= newChildren[i] != children[i];
+        if (newChildren[i]->isFunction()) {
+          functions = functions | newChildren[i]->as<Call>()->functions();
+        }
+      }
+      ExprPtr newCondition = nullptr;
+      if (expr->type() == PlanType::kAggregate) {
+        newCondition =
+            importExpr(expr->as<Aggregate>()->condition(), outer, inner);
+        anyChange |= newCondition != expr->as<Aggregate>()->condition();
+        if (newCondition->isFunction()) {
+          functions = functions | newCondition->as<Call>()->functions();
+        }
+      }
+      if (!anyChange) {
+        return expr;
+      }
+      ExprVector childVector;
+      childVector.insert(
+          childVector.begin(), newChildren.begin(), newChildren.end());
+      if (expr->type() == PlanType::kCall) {
+        auto call = expr->as<Call>();
+        Declare(
+            Call,
+            copy,
+            call->name(),
+            call->value(),
+            std::move(childVector),
+            functions);
+        return copy;
+      } else if (expr->type() == PlanType::kAggregate) {
+        auto aggregate = expr->as<Aggregate>();
+        Declare(
+            Aggregate,
+            copy,
+            aggregate->name(),
+            aggregate->value(),
+            std::move(childVector),
+            functions,
+            aggregate->isDistinct(),
+            newCondition,
+            aggregate->isAccumulator());
+        return copy;
+      }
+    }
+    default:
+      VELOX_UNREACHABLE();
+  }
+}
+
+PlanObjectConstPtr otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
+  if (side == join->leftTable()) {
+    return join->rightTable();
+  } else if (join->rightTable() == side) {
+    return join->leftTable();
+  }
+  return nullptr;
+}
+
+bool isProjected(PlanObjectConstPtr table, PlanObjectSet columns) {
+  bool projected = false;
+  columns.forEach([&](PlanObjectConstPtr column) {
+    projected |= column->as<Column>()->relation() == table;
+  });
+  return projected;
+}
+
+// True if 'join'  has max 1 match for a row of 'side'.
+bool isUnique(JoinEdgePtr join, PlanObjectConstPtr side) {
+  return join->sideOf(side, true).isUnique;
+}
+
+PlanObjectConstPtr nextJoin(
+    PlanObjectConstPtr start,
+    const JoinEdgeVector& joins,
+    PlanObjectSet columns,
+    PlanObjectSet visited,
+    bool& isContained) {
+  for (auto& join : joins) {
+    auto other = otherSide(join, start);
+    if (!other) {
+      continue;
+    }
+    if (visited.contains(other)) {
+      continue;
+    }
+    if (!isUnique(join, other) || isProjected(other, columns)) {
+      isContained = false;
+    }
+    return other;
+  }
+  return nullptr;
+}
+
+void joinChain(
+    PlanObjectConstPtr start,
+    const JoinEdgeVector& joins,
+    PlanObjectSet columns,
+    PlanObjectSet visited,
+    bool& isContained,
+    std::vector<PlanObjectConstPtr>& path) {
+  auto next = nextJoin(start, joins, columns, visited, isContained);
+  if (!next) {
+    return;
+  }
+  visited.add(next);
+  path.push_back(next);
+  joinChain(next, joins, columns, visited, isContained, path);
+}
+JoinEdgePtr importedJoin(
+    JoinEdgePtr join,
+    PlanObjectConstPtr other,
+    ExprPtr innerKey,
+    bool isContained) {
+  auto left = singleTable(innerKey);
+  VELOX_CHECK(left);
+  auto otherKey = join->sideOf(other).keys[0];
+  Declare(
+      JoinEdge, newJoin, left, other, {}, false, false, !isContained, false);
+  newJoin->addEquality(innerKey, otherKey);
+  return newJoin;
+}
+
+template <typename V, typename E>
+void eraseFirst(V& set, E element) {
+  set.erase(std::find(set.begin(), set.end(), element));
+}
+
+void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
+  if (firstDt->limit != -1 || firstDt->orderBy) {
+    return;
+  }
+  auto& outer = firstDt->columns;
+  auto& inner = firstDt->exprs;
+  PlanObjectSet projected;
+  for (auto& expr : exprs) {
+    projected.unionColumns(exprs);
+  }
+
+  Declare(DerivedTable, newFirst, *firstDt->as<DerivedTable>());
+  for (auto& join : joins) {
+    auto other = otherSide(join, firstDt);
+    if (!other) {
+      continue;
+    }
+    auto side = join->sideOf(firstDt);
+    if (side.keys.size() > 1 || !join->filter().empty()) {
+      continue;
+    }
+    auto innerKey = importExpr(side.keys[0], outer, inner);
+    if (innerKey->containsFunction(FunctionSet::kAggregate)) {
+      // If the join key is an aggregate, the join can't be moved below the agg.
+      continue;
+    }
+
+    PlanObjectSet visited;
+    visited.add(firstDt);
+    visited.add(other);
+    std::vector<PlanObjectConstPtr> path;
+    bool isContained = true;
+    joinChain(other, joins, projected, visited, isContained, path);
+    if (path.empty()) {
+      newFirst->tables.push_back(other);
+      newFirst->tableSet.add(other);
+      newFirst->joins.push_back(
+          importedJoin(join, other, innerKey, isContained));
+    } else {
+      Declare(DerivedTable, chainDt);
+      PlanObjectSet chainSet;
+      for (auto& object : path) {
+        chainSet.add(object);
+      }
+      chainDt->import(*this, other, chainSet, {}, 1);
+      newFirst->tables.push_back(chainDt);
+      newFirst->tableSet.add(chainDt);
+      newFirst->joins.push_back(
+          importedJoin(join, other, innerKey, isContained));
+    }
+    if (isContained) {
+      newFirst->fullyImported.add(other);
+      newFirst->fullyImported.unionObjects(path);
+      eraseFirst(tables, other);
+      tableSet.erase(other);
+      for (auto& table : path) {
+        eraseFirst(tables, table);
+        tableSet.erase(table);
+      }
+    }
+  }
+  tables[0] = newFirst;
+  if (tables.size() == 1) {
+    // All the joins and existences were added into the first derived table. Flatten the first dt into 'this'.
+    tables = newFirst->tables;
+    tableSet = newFirst->tableSet;
+    joins = newFirst->joins;
+    columns = newFirst->columns;
+    exprs = newFirst->exprs;
+    fullyImported = newFirst->fullyImported;
+    aggregation = newFirst->aggregation;
+    having = newFirst->having;
+  } else {
+    newFirst->linkTablesToJoins();
+  }
 }
 
 std::string DerivedTable::toString() const {

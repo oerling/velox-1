@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
@@ -52,6 +51,9 @@ struct Costs {
 
   // Cost of getting a column from a hash table
   static constexpr float kHashExtractColumnCost = 0.5;
+
+  // Minimal cost of calling a filter function, e.g. comparing two numeric exprss.
+  static constexpr float kMinimumFilterCost = 2;
 };
 
 void RelationOp::setCost(const PlanState& state) {
@@ -170,4 +172,12 @@ void Join::setCost(const PlanState& input) {
       leftKeys.size() * Costs::kHashColumnCost;
 }
 
+  void Filter::setCost(const PlanState& input) {
+    cost_.unitCost = Costs::kMinimumFilterCost * exprs_.size();
+    // We assume each filter selects 4/5. Small effect makes it so
+    // join and scan selectivities that are better known have more
+    // influence on plan cardinality. To be filled in from history.
+    cost_.fanout = pow(0.8, exprs_.size());
+  }
+  
 } // namespace facebook::verax

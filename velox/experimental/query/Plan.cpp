@@ -73,7 +73,8 @@ Plan::Plan(RelationOpPtr _op, const PlanState& state)
     : op(_op),
       cost(state.cost),
       tables(state.placed),
-      columns(state.targetColumns) {}
+      columns(state.targetColumns),
+      fullyImported(state.dt->fullyImported) {}
 
 bool Plan::isStateBetter(const PlanState& state) const {
   return cost.unitCost * cost.inputCardinality + cost.setupCost >
@@ -138,6 +139,11 @@ PlanObjectSet PlanState::downstreamColumns() const {
     }
     if (addFilter && !join->filter().empty()) {
       result.unionColumns(join->filter());
+    }
+  }
+  for (auto& filter : dt->conjuncts) {
+    if (!placed.contains(filter)) {
+      result.unionColumns(filter);
     }
   }
   result.unionSet(targetColumns);
@@ -697,6 +703,7 @@ void Optimization::joinByIndex(
         joinType,
         candidate.join->filter());
 
+    state.columns.unionSet(c);
     state.addCost(*scan);
     state.addNextJoin(&candidate, scan, {}, toTry);
   }
@@ -757,6 +764,7 @@ void Optimization::joinByHash(
   auto downstream = state.downstreamColumns();
   buildColumns.intersect(downstream);
   buildColumns.unionColumns(build.keys);
+  state.columns.unionSet(buildColumns);
   auto key = MemoKey{
       candidate.tables[0], buildColumns, buildTables, candidate.existences};
   PlanObjectSet empty;
@@ -811,12 +819,16 @@ void Optimization::joinByHash(
     }
 
     ExprVector distCols;
-    for (auto i = 0; i < probeInput->distribution().partition.size(); ++i) {
-      auto key = buildInput->distribution().partition[i];
-      auto nthKey = position(build.keys, *key);
-      distCols.push_back(probe.keys[nthKey]);
+    for (auto i = 0; i < probe.keys.size(); ++i) {
+      auto key = build.keys[i];
+      auto nthKey = position(buildInput->distribution().partition, *key);
+      if (nthKey >= 0) {
+        if (distCols.size() <= nthKey) {
+          distCols.resize(nthKey + 1);
+        }
+        distCols[nthKey] = probe.keys[i];
+      }
     }
-
     Distribution probeDist(
         probeInput->distribution().distributionType,
         probeInput->resultCardinality(),
@@ -901,6 +913,69 @@ void Optimization::tryNextJoins(
   }
 }
 
+void Optimization::placeDerivedTable(
+    const DerivedTable* from,
+    PlanState& state) {
+  PlanStateSaver save(state);
+
+  state.placed.add(from);
+  PlanObjectSet columns = state.downstreamColumns();
+  PlanObjectSet dtColumns;
+  for (auto column : from->columns) {
+    dtColumns.add(column);
+  }
+  columns.intersect(dtColumns);
+  state.columns.unionSet(columns);
+  MemoKey key;
+  key.columns = columns;
+  key.firstTable = from;
+  key.tables.add(from);
+  bool ignore;
+  auto plan = makePlan(key, Distribution(), PlanObjectSet(), 1, state, ignore);
+  // Make plans based on the dt alone as first.
+  makeJoins(plan->op, state);
+
+  // We see if there are reducing joins to import inside the dt.
+  PlanObjectSet visited = state.placed;
+  visited.add(from);
+  visited.unionSet(state.dt->importedExistences);
+  visited.unionSet(state.dt->fullyImported);
+  PlanObjectSet reducingSet;
+  reducingSet.add(from);
+  std::vector<PlanObjectConstPtr> path{from};
+  float reduction = 1;
+  reducingJoinsRecursive(
+      state, from, 1, 1.2, path, visited, reducingSet, reduction);
+  if (reduction < 0.9) {
+    key.tables = reducingSet;
+    state.placed.unionSet(reducingSet);
+    key.columns = state.downstreamColumns();
+    plan = makePlan(key, Distribution(), PlanObjectSet(), 1, state, ignore);
+    makeJoins(plan->op, state);
+  }
+}
+
+RelationOpPtr Optimization::placeConjuncts(
+    const RelationOpPtr& plan,
+    PlanState& state) {
+  ExprVector filters;
+  for (auto& conjunct : state.dt->conjuncts) {
+    if (state.columns.contains(conjunct)) {
+      continue;
+    }
+    if (conjunct->columns().isSubset(state.columns)) {
+      state.columns.add(conjunct);
+      filters.push_back(conjunct);
+    }
+  }
+  if (!filters.empty()) {
+    Declare(Filter, filter, plan, std::move(filters));
+    state.addCost(*filter);
+    return filter;
+  }
+  return plan;
+}
+
 void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
   auto& dt = state.dt;
   if (!plan) {
@@ -938,12 +1013,13 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
               index->distribution().cardinality * table->filterSelectivity,
               columns);
 
+          state.columns.unionObjects(columns);
           state.addCost(*scan);
           makeJoins(scan, state);
         }
       } else {
         // Start with a derived table.
-        VELOX_NYI();
+        placeDerivedTable(from->as<const DerivedTable>(), state);
       }
     }
   } else {
@@ -951,6 +1027,8 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       trace(kExceededBest, dt->id(), state.cost, *plan);
       return;
     }
+    // Add multitable filters not associated to a non-inner join.
+    plan = placeConjuncts(plan, state);
     auto candidates = nextJoins(dt, state);
     if (candidates.empty()) {
       addPostprocess(dt, plan, state);

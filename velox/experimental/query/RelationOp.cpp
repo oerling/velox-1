@@ -200,4 +200,24 @@ std::string HashBuild::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
+std::string Filter::toString(bool recursive, bool detail) const {
+  std::stringstream out;
+  if (recursive) {
+    out << input()->toString(true, detail) << " ";
+  }
+  if (detail) {
+    out << "Filter (";
+    for (auto i = 0; i < exprs_.size(); ++i) {
+      out << exprs_[i]->toString();
+      if (i < exprs_.size() - 1) {
+        out << " and ";
+      }
+    }
+    out << ")\n";
+  } else {
+    out << "filter " << exprs_.size() << " exprs ";
+  }
+  return out.str();
+}
+
 } // namespace facebook::verax

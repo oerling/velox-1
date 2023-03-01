@@ -90,6 +90,12 @@ class PlanObject {
     return false;
   }
 
+  /// Returns true if 'this' is a function call or aggregate function call.
+  virtual bool isFunction() const {
+    return false;
+  }
+
+
   size_t hash() const;
 
   virtual std::string toString() const {

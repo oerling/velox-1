@@ -68,6 +68,11 @@ class Expr : public PlanObject {
     return value_;
   }
 
+  /// True if 'this' contains any function from 'set'. See FunctionSet.
+  virtual bool containsFunction(uint64_t set) const {
+    return false;
+  }
+
  protected:
   // The columns this depends on.
   PlanObjectSet columns_;
@@ -156,11 +161,14 @@ inline PtrSpan<T> toRangeCast(U v) {
 /// of functions are found inside the children of a function call.
 class FunctionSet {
  public:
+  /// Indicates and aggregate function in the set.
+  static constexpr uint64_t kAggregate = 1;
+
   FunctionSet() : set_(0) {}
   FunctionSet(uint32_t set) : set_(set) {}
 
   /// True if 'item' is in 'this'.
-  bool contains(int32_t item) {
+  bool contains(int32_t item) const {
     return 0 != (set_ & (1UL << item));
   }
 
@@ -203,6 +211,14 @@ class Call : public Expr {
     return functions_;
   }
 
+  bool isFunction() const override {
+    return true;
+  }
+
+  virtual bool containsFunction(uint64_t set) const {
+    return functions_.contains(set);
+  }
+
   const ExprVector args() const {
     return args_;
   }
@@ -242,6 +258,7 @@ struct JoinSide {
   const bool isOptional;
   const bool isExists;
   const bool isNotExists;
+  const bool isUnique;
 
   /// Returns the join type to use if 'this' is the right side.
   velox::core::JoinType leftJoinType() const {
@@ -409,6 +426,14 @@ using JoinEdgePtr = JoinEdge*;
 
 using JoinEdgeVector = std::vector<JoinEdgePtr, QGAllocator<JoinEdgePtr>>;
 
+/// Adds 'element' to 'vector' if it is not in it.
+template <typename V, typename E>
+inline void pushBackUnique(V& vector, E& element) {
+  if (std::find(vector.begin(), vector.end(), element) == vector.end()) {
+    vector.push_back(element);
+  }
+}
+
 /// Represents a reference to a table from a query. The There is one of these
 /// for each occurrence of the schema table. A TableScan references one
 /// baseTable but the same BaseTable can be referenced from many TableScans, for
@@ -443,6 +468,10 @@ struct BaseTable : public PlanObject {
   // common::Filter.
   void* nativeFilter;
 
+  void addJoinedBy(JoinEdgePtr join) {
+    pushBackUnique(joinedBy, join);
+  }
+
   std::string toString() const override;
 };
 
@@ -461,7 +490,12 @@ class Aggregate : public Call {
       bool isDistinct,
       ExprPtr condition,
       bool isAccumulator)
-      : Call(PlanType::kAggregate, name, value, std::move(args), functions),
+      : Call(
+            PlanType::kAggregate,
+            name,
+            value,
+            std::move(args),
+            functions | FunctionSet::kAggregate),
         isDistinct_(isDistinct),
         condition_(condition),
         isAccumulator_(isAccumulator) {
@@ -550,6 +584,14 @@ struct DerivedTable : public PlanObject {
   // represents a build side join.
   PlanObjectSet importedExistences;
 
+  // The set of tables in import() '_tables' that are fully covered by this dt
+  // and need not be considered outside of it. If 'firstTable' in import is a
+  // group by dt, for example, some joins may be imported as reducing existences
+  // but will still have to be considered by the enclosing query. Such tables
+  // are not included in 'fullyImported' If 'firstTable' in import is a base
+  // table, then 'fullyImported' is '_tables'.
+  PlanObjectSet fullyImported;
+
   // Postprocessing clauses, group by, having, order by, limit, offset.
   AggregationPtr aggregation{nullptr};
   ExprVector having;
@@ -598,6 +640,18 @@ struct DerivedTable : public PlanObject {
   void setStartTables();
 
   std::string toString() const override;
+  void addJoinedBy(JoinEdgePtr join) {
+    pushBackUnique(joinedBy, join);
+  }
+
+ private:
+  // Imports the joins in 'this' inside 'firstDt', which must be a
+  // member of 'this'. The import is possible if the join is not
+  // through aggregates in 'firstDt'. On return, all joins that can go
+  // inside firstDt are imported below aggregation in
+  // firstDt. 'firstDt' is not modified, its original contents are
+  // copied in a new dt before the import.
+  void importJoinsIntoFirstDt(const DerivedTable* firstDt);
 };
 
 using DerivedTablePtr = DerivedTable*;

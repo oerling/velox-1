@@ -85,6 +85,11 @@ struct Plan {
   // hash join builds placed in the plan. Allows reusing a build.
   BuildSet builds;
 
+  // the tables/derived tables that are contained in this plan and need not be
+  // addressed by enclosing plans. This is all the tables in a build side join
+  // but not necessarily all tables that were added to a group by derived table.
+  PlanObjectSet fullyImported;
+
   std::string printCost() const;
   std::string toString(bool detail) const;
 };
@@ -382,7 +387,9 @@ class Optimization {
 
   // Adds conjuncts combined by any number of enclosing ands from 'input' to
   // 'flat'.
-  void translateConjuncts(const velox::core::TypedExprPtr& input, ExprVector& flat);
+  void translateConjuncts(
+      const velox::core::TypedExprPtr& input,
+      ExprVector& flat);
 
   // Converts 'name' to a deduplicated ExprPtr. If 'name' is assigned to an
   // expression in a projection, returns the deduplicated ExprPtr of the
@@ -447,6 +454,10 @@ class Optimization {
   void
   addPostprocess(DerivedTablePtr dt, RelationOpPtr& plan, PlanState& state);
 
+  // Places a derived table as first table in a plan. Imports possibly reducing
+  // joins into the plan if can.
+  void placeDerivedTable(const DerivedTable* from, PlanState& state);
+
   // Lists the possible joins based on 'state.placed' and adds each on top of
   // 'plan'. This is a set of plans extending 'plan' by one join (single table
   // or bush). Calls itself on the interesting next plans. If all tables have
@@ -454,6 +465,14 @@ class Optimization {
   // 'state' enables cutoff and a partial plan is worse than the best so far,
   // discards the candidate.
   void makeJoins(RelationOpPtr plan, PlanState& state);
+
+  // Adds the items from 'dt.conjuncts' that are not placed in 'state'
+  // and whose prerequisite columns are placed in a Filter. Returns a
+  // Filter if any conjuncts were found, otherwise returns 'plan'. If
+  // conjuncts were placed, these are added to 'state.placed'.
+  RelationOpPtr placeConjuncts(
+      const RelationOpPtr& plan,
+      PlanState& state);
 
   // Helper function that calls makeJoins recursively for each of
   // 'nextJoins'. The point of making 'nextJoins' first and only then
