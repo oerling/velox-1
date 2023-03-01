@@ -95,7 +95,6 @@ class PlanObject {
     return false;
   }
 
-
   size_t hash() const;
 
   virtual std::string toString() const {

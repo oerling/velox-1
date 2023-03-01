@@ -129,7 +129,7 @@ TEST_F(PlanTest, q17) {
   result = makePlan(q, true, false);
   std::cout << result;
 }
- 
+
 void printPlan(core::PlanNode* plan, bool r, bool d) {
   std::cout << plan->toString(r, d) << std::endl;
 }

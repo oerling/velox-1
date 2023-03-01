@@ -113,7 +113,7 @@ class RelationOp : public Relation {
   /// will for example have no more distinct values than the number of
   /// rows. This is computed on first use.
   const Value& value(ExprPtr expr) const;
-  
+
   /// Fills in 'cost_' after construction. Depends on 'input' and is defined for
   /// each subclass.
   virtual void setCost(const PlanState& input);
@@ -255,9 +255,9 @@ class Filter : public RelationOp {
     return exprs_;
   }
 
-    void setCost(const PlanState& input) override;
+  void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;
-  
+
  private:
   const ExprVector exprs_;
 };
@@ -363,5 +363,4 @@ struct OrderBy : public RelationOp {
   PlanObjectSet dependentKeys;
 };
 
-  
 } // namespace facebook::verax

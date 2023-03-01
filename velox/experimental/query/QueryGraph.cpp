@@ -872,7 +872,8 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
   }
   tables[0] = newFirst;
   if (tables.size() == 1) {
-    // All the joins and existences were added into the first derived table. Flatten the first dt into 'this'.
+    // All the joins and existences were added into the first derived table.
+    // Flatten the first dt into 'this'.
     tables = newFirst->tables;
     tableSet = newFirst->tableSet;
     joins = newFirst->joins;

@@ -470,9 +470,7 @@ class Optimization {
   // and whose prerequisite columns are placed in a Filter. Returns a
   // Filter if any conjuncts were found, otherwise returns 'plan'. If
   // conjuncts were placed, these are added to 'state.placed'.
-  RelationOpPtr placeConjuncts(
-      const RelationOpPtr& plan,
-      PlanState& state);
+  RelationOpPtr placeConjuncts(const RelationOpPtr& plan, PlanState& state);
 
   // Helper function that calls makeJoins recursively for each of
   // 'nextJoins'. The point of making 'nextJoins' first and only then
