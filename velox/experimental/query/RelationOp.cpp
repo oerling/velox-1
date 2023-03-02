@@ -240,5 +240,4 @@ std::string Project::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
-  
 } // namespace facebook::verax

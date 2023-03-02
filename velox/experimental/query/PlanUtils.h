@@ -43,7 +43,8 @@ int32_t prefixSize(Ordered ordered, Set set) {
 }
 
 // Replaces each element of 'set' that matches an element of 'originals' with
-// the corresponding element of 'replaceWith'. Returns true if all elements were replaced.
+// the corresponding element of 'replaceWith'. Returns true if all elements were
+// replaced.
 template <typename Set, typename Old, typename New>
 bool replace(Set& set, Old& originals, New replaceWith) {
   bool allReplaced = true;

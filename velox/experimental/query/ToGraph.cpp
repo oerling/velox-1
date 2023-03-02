@@ -45,7 +45,8 @@ DerivedTablePtr Optimization::makeQueryGraph() {
   Declare(DerivedTable, root);
   root_ = root;
   currentSelect_ = root_;
-  root->cname = toName(fmt::format("dt{}", ++nameCounter_));;
+  root->cname = toName(fmt::format("dt{}", ++nameCounter_));
+  ;
   makeQueryGraph(inputPlan_, kAllAllowedInDt);
   return root_;
 }

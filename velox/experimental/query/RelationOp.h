@@ -266,7 +266,11 @@ class Filter : public RelationOp {
 class Project : public RelationOp {
  public:
   Project(RelationOpPtr input, ExprVector exprs, ColumnVector columns)
-    : RelationOp(RelType::kProject, input, input->distribution().rename(exprs, columns), columns),
+      : RelationOp(
+            RelType::kProject,
+            input,
+            input->distribution().rename(exprs, columns),
+            columns),
         exprs_(std::move(exprs)),
         columns_(std::move(columns)) {}
 
@@ -329,7 +333,11 @@ using JoinPtr = Join*;
 /// referencing join and not counted in subsequent ones.
 struct HashBuild : public RelationOp {
   HashBuild(RelationOpPtr input, int32_t id, ExprVector _keys, PlanPtr plan)
-    : RelationOp(RelType::kHashBuild, input, input->distribution(), input->columns()),
+      : RelationOp(
+            RelType::kHashBuild,
+            input,
+            input->distribution(),
+            input->columns()),
         buildId(id),
         keys(std::move(_keys)),
         plan(plan) {}

@@ -175,7 +175,7 @@ struct NextJoin {
         plan(plan),
         cost(cost),
         placed(placed),
-	columns(columns),
+        columns(columns),
         newBuilds(builds) {}
 
   const JoinCandidate* FOLLY_NONNULL candidate;

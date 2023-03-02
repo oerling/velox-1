@@ -129,8 +129,7 @@ void Aggregation::setCost(const PlanState& input) {
       cardinality * pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
   auto numDuplicate = cost_.inputCardinality - nOut;
   cost_.fanout = nOut / cost_.inputCardinality;
-  cost_.unitCost = grouping.size() *
-      Costs::hashProbeCost(nOut);
+  cost_.unitCost = grouping.size() * Costs::hashProbeCost(nOut);
   float rowBytes = byteSize(grouping) + byteSize(aggregates);
   cost_.totalBytes = nOut * rowBytes;
 }
