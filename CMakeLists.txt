@@ -17,13 +17,13 @@ cmake_minimum_required(VERSION 3.14)
 cmake_policy(SET CMP0077 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
-
 # set the project name
 project(velox)
 
+list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/CMake")
+
 # Include our ThirdPartyToolchain dependencies macros
-include(ThirdpartyToolchain.cmake)
+include(ResolveDependency)
 
 set_with_default(VELOX_DEPENDENCY_SOURCE_DEFAULT VELOX_DEPENDENCY_SOURCE AUTO)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
@@ -37,17 +37,17 @@ option(
   VELOX_BUILD_MINIMAL
   "Build a minimal set of components only. This will override other build options."
   OFF)
-# option() always creats a BOOL variable so we have to use a normal cache
+# option() always creates a BOOL variable so we have to use a normal cache
 # variable with STRING type for this option.
 #
-# * AUTO: Try SYSTEM first fall back to
-# * BUNDLED SYSTEM Use installed dependencies via find_package
-# * BUNDLED Build dependencies from source
+# * AUTO: Try SYSTEM first fall back to BUNDLED.
+# * SYSTEM: Use installed dependencies via find_package.
+# * BUNDLED: Build dependencies from source.
 set(VELOX_DEPENDENCY_SOURCE
     ${VELOX_DEPENDENCY_SOURCE_DEFAULT}
     CACHE
       STRING
-      "Default source for all dependencies with source builds enabled. AUTO SYSTEM BUNDLED"
+      "Default source for all dependencies with source builds enabled: AUTO SYSTEM BUNDLED."
 )
 option(VELOX_ENABLE_DUCKDB "Build duckDB to enable differential testing." ON)
 option(VELOX_ENABLE_EXEC "Build exec." ON)
@@ -68,6 +68,7 @@ option(VELOX_ENABLE_S3 "Build S3 Connector" OFF)
 option(VELOX_ENABLE_HDFS "Build Hdfs Connector" OFF)
 option(VELOX_ENABLE_PARQUET "Enable Parquet support" OFF)
 option(VELOX_ENABLE_ARROW "Enable Arrow support" OFF)
+option(VELOX_ENABLE_CCACHE "Use ccache if installed." ON)
 
 option(VELOX_BUILD_TEST_UTILS "Builds Velox test utilities" OFF)
 option(VELOX_BUILD_PYTHON_PACKAGE "Builds Velox Python bindings" OFF)
@@ -128,10 +129,10 @@ endif()
 if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(VELOX_BUILD_TESTING OFF)
   set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
-  set(VELOX_ENABLE_DUCKDB OFF)
+  set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_EXPRESSION ON)
-  set(VELOX_ENABLE_PARSE OFF)
-  set(VELOX_ENABLE_EXEC OFF)
+  set(VELOX_ENABLE_PARSE ON)
+  set(VELOX_ENABLE_EXEC ON)
   set(VELOX_ENABLE_AGGREGATES OFF)
   set(VELOX_ENABLE_HIVE_CONNECTOR OFF)
   set(VELOX_ENABLE_TPCH_CONNECTOR OFF)
@@ -141,6 +142,21 @@ if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(VELOX_ENABLE_SUBSTRAIT OFF)
   set(VELOX_CODEGEN_SUPPORT OFF)
   set(VELOX_ENABLE_BENCHMARKS_BASIC OFF)
+endif()
+
+if(VELOX_ENABLE_CCACHE
+   AND NOT CMAKE_C_COMPILER_LAUNCHER
+   AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+
+  find_program(CCACHE_FOUND ccache)
+
+  if(CCACHE_FOUND)
+    message(STATUS "Using ccache: ${CCACHE_FOUND}")
+    set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_FOUND})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_FOUND})
+    # keep comments as they might matter to the compiler
+    set(ENV{CCACHE_COMMENTS} "1")
+  endif()
 endif()
 
 if(VELOX_ENABLE_S3)

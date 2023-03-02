@@ -20,6 +20,11 @@
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
 #include <velox/buffer/StringViewBufferHolder.h>
+#include <velox/expression/Expr.h>
+#include <velox/functions/prestosql/registration/RegistrationFunctions.h>
+#include <velox/parse/Expressions.h>
+#include <velox/parse/ExpressionsParser.h>
+#include <velox/parse/TypeResolver.h>
 #include <velox/type/Type.h>
 #include <velox/type/Variant.h>
 #include <velox/vector/FlatVector.h>
@@ -29,7 +34,51 @@ namespace facebook::velox::py {
 
 namespace py = pybind11;
 
-std::string serializeType(const std::shared_ptr<const velox::Type>& type);
+struct PyVeloxContext {
+  PyVeloxContext() = default;
+  PyVeloxContext(const PyVeloxContext&) = delete;
+  PyVeloxContext(const PyVeloxContext&&) = delete;
+  PyVeloxContext& operator=(const PyVeloxContext&) = delete;
+  PyVeloxContext& operator=(const PyVeloxContext&&) = delete;
+
+  static inline PyVeloxContext& getInstance() {
+    if (!instance_) {
+      instance_ = std::make_unique<PyVeloxContext>();
+    }
+    return *instance_.get();
+  }
+
+  facebook::velox::memory::MemoryPool* pool() {
+    return pool_.get();
+  }
+  facebook::velox::core::QueryCtx* queryCtx() {
+    return queryCtx_.get();
+  }
+  facebook::velox::core::ExecCtx* execCtx() {
+    return execCtx_.get();
+  }
+
+  static inline void cleanup() {
+    if (instance_) {
+      instance_.reset();
+    }
+  }
+
+ private:
+  std::shared_ptr<facebook::velox::memory::MemoryPool> pool_ =
+      facebook::velox::memory::getDefaultMemoryPool();
+  std::shared_ptr<facebook::velox::core::QueryCtx> queryCtx_ =
+      std::make_shared<facebook::velox::core::QueryCtx>();
+  std::unique_ptr<facebook::velox::core::ExecCtx> execCtx_ =
+      std::make_unique<facebook::velox::core::ExecCtx>(
+          pool_.get(),
+          queryCtx_.get());
+
+  static inline std::unique_ptr<PyVeloxContext> instance_;
+};
+
+static std::string serializeType(
+    const std::shared_ptr<const velox::Type>& type);
 
 inline void checkBounds(VectorPtr& v, vector_size_t idx) {
   if (idx < 0 || idx >= v->size()) {
@@ -60,7 +109,7 @@ inline velox::variant pyToVariant(const py::handle& obj) {
 }
 
 template <TypeKind T>
-inline VectorPtr variantsToFlatVector(
+static inline VectorPtr variantsToFlatVector(
     const std::vector<velox::variant>& variants,
     facebook::velox::memory::MemoryPool* pool) {
   using NativeType = typename TypeTraits<T>::NativeType;
@@ -92,7 +141,7 @@ inline VectorPtr variantsToFlatVector(
   return result;
 }
 
-inline VectorPtr pyListToVector(
+static inline VectorPtr pyListToVector(
     const py::list& list,
     facebook::velox::memory::MemoryPool* pool) {
   std::vector<velox::variant> variants;
@@ -180,6 +229,11 @@ inline void appendVectors(VectorPtr& u, VectorPtr& v) {
   u->append(v.get());
 }
 
+static VectorPtr evaluateExpression(
+    std::shared_ptr<const facebook::velox::core::IExpr>& expr,
+    std::vector<std::string> names,
+    std::vector<VectorPtr>& inputs);
+
 inline void addDataTypeBindings(
     py::module& m,
     bool asModuleLocalDefinitions = true) {
@@ -237,9 +291,6 @@ inline void addDataTypeBindings(
       m, "MapType", py::module_local(asModuleLocalDefinitions));
   py::class_<RowType, Type, std::shared_ptr<RowType>> rowType(
       m, "RowType", py::module_local(asModuleLocalDefinitions));
-  py::class_<FixedSizeArrayType, Type, std::shared_ptr<FixedSizeArrayType>>
-      fixedArrayType(
-          m, "FixedSizeArrayType", py::module_local(asModuleLocalDefinitions));
 
   // Basic operations on Type.
   type.def("__str__", &Type::toString);
@@ -278,9 +329,6 @@ inline void addDataTypeBindings(
   arrayType.def(py::init<std::shared_ptr<Type>>());
   arrayType.def(
       "element_type", &ArrayType::elementType, "Return the element type");
-  fixedArrayType.def(py::init<int, velox::TypePtr>())
-      .def("element_type", &velox::FixedSizeArrayType::elementType)
-      .def("fixed_width", &velox::FixedSizeArrayType::fixedElementsWidth);
   mapType.def(py::init<std::shared_ptr<Type>, std::shared_ptr<Type>>());
   mapType.def("key_type", &MapType::keyType, "Return the key type");
   mapType.def("value_type", &MapType::valueType, "Return the value type");
@@ -318,7 +366,6 @@ inline void addVectorBindings(
     py::module& m,
     bool asModuleLocalDefinitions = true) {
   using namespace facebook::velox;
-  std::shared_ptr<memory::MemoryPool> pool = memory::getDefaultMemoryPool();
 
   py::enum_<velox::VectorEncoding::Simple>(
       m, "VectorEncodingSimple", py::module_local(asModuleLocalDefinitions))
@@ -366,10 +413,14 @@ inline void addVectorBindings(
           })
       .def("encoding", &BaseVector::encoding)
       .def("append", [](VectorPtr& u, VectorPtr& v) { appendVectors(u, v); });
-  m.def("from_list", [pool](const py::list& list) mutable {
-    return pyListToVector(list, pool.get());
+  m.def("from_list", [](const py::list& list) mutable {
+    return pyListToVector(list, PyVeloxContext::getInstance().pool());
   });
 }
+
+static void addExpressionBindings(
+    py::module& m,
+    bool asModuleLocalDefinitions = true);
 
 ///  Adds Velox Python Bindings to the module m.
 ///
@@ -386,8 +437,14 @@ inline void addVectorBindings(
 inline void addVeloxBindings(
     py::module& m,
     bool asModuleLocalDefinitions = true) {
+  google::InitGoogleLogging("pyvelox");
+  FLAGS_minloglevel = 3; // To disable log spam when throwing an exception
   addDataTypeBindings(m, asModuleLocalDefinitions);
   addVectorBindings(m, asModuleLocalDefinitions);
+  addExpressionBindings(m, asModuleLocalDefinitions);
+  auto atexit = py::module_::import("atexit");
+  atexit.attr("register")(
+      py::cpp_function([]() { PyVeloxContext::cleanup(); }));
 }
 
 } // namespace facebook::velox::py

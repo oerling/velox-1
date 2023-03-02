@@ -19,6 +19,9 @@
 #include "velox/core/Expressions.h"
 #include "velox/core/QueryConfig.h"
 
+#include "velox/vector/arrow/Abi.h"
+#include "velox/vector/arrow/Bridge.h"
+
 namespace facebook::velox::core {
 
 typedef std::string PlanNodeId;
@@ -97,6 +100,14 @@ class PlanNode {
 
   virtual const std::vector<std::shared_ptr<const PlanNode>>& sources()
       const = 0;
+
+  /// Returns true if this is a leaf plan node and corresponding operator
+  /// requires an ExchangeClient to retrieve data. For instance, TableScanNode
+  /// is a leaf node that doesn't require an ExchangeClient. But ExchangeNode is
+  /// a leaf node that requires an ExchangeClient.
+  virtual bool requiresExchangeClient() const {
+    return false;
+  }
 
   /// Returns true if this is a leaf plan node and corresponding operator
   /// requires splits to make progress. ValueNode is a leaf node that doesn't
@@ -236,6 +247,39 @@ class ValuesNode : public PlanNode {
   const std::vector<RowVectorPtr> values_;
   const RowTypePtr outputType_;
   const bool parallelizable_;
+};
+
+class ArrowStreamNode : public PlanNode {
+ public:
+  ArrowStreamNode(
+      const PlanNodeId& id,
+      const RowTypePtr& outputType,
+      std::shared_ptr<ArrowArrayStream> arrowStream)
+      : PlanNode(id),
+        outputType_(outputType),
+        arrowStream_(std::move(arrowStream)) {
+    VELOX_CHECK_NOT_NULL(arrowStream_);
+  }
+
+  const RowTypePtr& outputType() const override {
+    return outputType_;
+  }
+
+  const std::vector<PlanNodePtr>& sources() const override;
+
+  const std::shared_ptr<ArrowArrayStream>& arrowStream() const {
+    return arrowStream_;
+  }
+
+  std::string_view name() const override {
+    return "ArrowStream";
+  }
+
+ private:
+  void addDetails(std::stringstream& stream) const override;
+
+  const RowTypePtr outputType_;
+  std::shared_ptr<ArrowArrayStream> arrowStream_;
 };
 
 class FilterNode : public PlanNode {
@@ -683,6 +727,10 @@ class ExchangeNode : public PlanNode {
   }
 
   const std::vector<PlanNodePtr>& sources() const override;
+
+  bool requiresExchangeClient() const override {
+    return true;
+  }
 
   bool requiresSplits() const override {
     return true;
