@@ -107,7 +107,7 @@ void PlanState::addNextJoin(
     BuildSet builds,
     std::vector<NextJoin>& toTry) const {
   if (!isOverBest()) {
-    toTry.emplace_back(candidate, plan, cost, placed, builds);
+    toTry.emplace_back(candidate, plan, cost, placed, columns, builds);
   } else {
     optimization.trace(Optimization::kExceededBest, dt->id(), cost, *plan);
   }
@@ -536,6 +536,10 @@ void Optimization::addPostprocess(
     state.addCost(*newGroupBy);
     plan = newGroupBy;
   }
+  if (!dt->columns.empty()) {
+    Declare(Project, project, plan, dt->exprs, dt->columns);
+    plan = project;
+  }
 }
 
 std::vector<IndexPtr> chooseLeafIndex(
@@ -843,10 +847,12 @@ void Optimization::joinByHash(
   buildState.addCost(*buildOp);
 
   ColumnVector columns;
+  PlanObjectSet columnSet;
   downstream.forEach([&](auto object) {
     columns.push_back(reinterpret_cast<ColumnPtr>(object));
+    columnSet.add(object);
   });
-
+  state.columns = columnSet;
   auto joinType = velox::core::JoinType::kInner;
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   Declare(
@@ -907,6 +913,7 @@ void Optimization::tryNextJoins(
   for (auto& next : nextJoins) {
     PlanStateSaver save(state);
     state.placed = next.placed;
+    state.columns = next.columns;
     state.cost = next.cost;
     state.addBuilds(next.newBuilds);
     makeJoins(next.plan, state);

@@ -152,6 +152,8 @@ struct Distribution {
   /// on all partitioning key columns.
   bool isSamePartition(const Distribution& other) const;
 
+  Distribution rename(const ExprVector& exprs, const ColumnVector& names) const;
+
   std::string toString() const;
 
   DistributionType distributionType;

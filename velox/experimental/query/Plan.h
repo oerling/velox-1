@@ -169,17 +169,20 @@ struct NextJoin {
       const RelationOpPtr& plan,
       const Cost& cost,
       const PlanObjectSet& placed,
+      const PlanObjectSet columns,
       const BuildSet builds)
       : candidate(candidate),
         plan(plan),
         cost(cost),
         placed(placed),
+	columns(columns),
         newBuilds(builds) {}
 
   const JoinCandidate* FOLLY_NONNULL candidate;
   RelationOpPtr plan;
   Cost cost;
   PlanObjectSet placed;
+  PlanObjectSet columns;
   BuildSet newBuilds;
 
   /// If true, only 'other' should be tried. Use to compare equivalent joins

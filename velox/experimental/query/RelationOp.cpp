@@ -220,4 +220,25 @@ std::string Filter::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
+std::string Project::toString(bool recursive, bool detail) const {
+  std::stringstream out;
+  if (recursive) {
+    out << input()->toString(true, detail) << " ";
+  }
+  if (detail) {
+    out << "Project (";
+    for (auto i = 0; i < exprs_.size(); ++i) {
+      out << columns_[i]->toString() << " = " << exprs_[i]->toString();
+      if (i < exprs_.size() - 1) {
+        out << ", ";
+      }
+    }
+    out << ")\n";
+  } else {
+    out << "project " << exprs_.size() << " columns ";
+  }
+  return out.str();
+}
+
+  
 } // namespace facebook::verax

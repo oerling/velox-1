@@ -119,17 +119,18 @@ void Aggregation::setCost(const PlanState& input) {
   for (auto key : grouping) {
     cardinality *= key->value().cardinality;
   }
-  // The estimated output is input minus the times an input is a duplicate of a
-  // key already in the input. The probability of a duplicate is approximated as
-  // (1 - (1 / d))^n. where d is the number of potentially distinct keys  and n
-  // is the number of keys in the input. This approaches d as n goes to
-  // infinity.
-  auto numDuplicate = cost_.inputCardinality *
-      pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
-  auto nOut = cost_.inputCardinality - numDuplicate;
+  // The estimated output is input minus the times an input is a
+  // duplicate of a key already in the input. The cardinality of the
+  // result is (d - d * 1 - (1 / d))^n. where d is the number of
+  // potentially distinct keys and n is the number of elements in the
+  // input. This approaches d as n goes to infinity. The chance of one in d
+  // being unique after n values is 1 - (1/d)^n.
+  auto nOut = cardinality -
+      cardinality * pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
+  auto numDuplicate = cost_.inputCardinality - nOut;
   cost_.fanout = nOut / cost_.inputCardinality;
   cost_.unitCost = grouping.size() *
-      Costs::hashProbeCost(cost_.inputCardinality - numDuplicate);
+      Costs::hashProbeCost(nOut);
   float rowBytes = byteSize(grouping) + byteSize(aggregates);
   cost_.totalBytes = nOut * rowBytes;
 }

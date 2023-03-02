@@ -810,6 +810,10 @@ void eraseFirst(V& set, E element) {
 }
 
 void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
+  if (tables.size() == 1 && tables[0]->type() == PlanType::kDerivedTable) {
+    flattenDt(tables[0]->as<DerivedTable>());
+    return;
+  }
   if (firstDt->limit != -1 || firstDt->orderBy) {
     return;
   }
@@ -821,6 +825,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
   }
 
   Declare(DerivedTable, newFirst, *firstDt->as<DerivedTable>());
+  newFirst->cname = firstDt->as<DerivedTable>()->cname;
   for (auto& join : joins) {
     auto other = otherSide(join, firstDt);
     if (!other) {
@@ -874,17 +879,22 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
   if (tables.size() == 1) {
     // All the joins and existences were added into the first derived table.
     // Flatten the first dt into 'this'.
-    tables = newFirst->tables;
-    tableSet = newFirst->tableSet;
-    joins = newFirst->joins;
-    columns = newFirst->columns;
-    exprs = newFirst->exprs;
-    fullyImported = newFirst->fullyImported;
-    aggregation = newFirst->aggregation;
-    having = newFirst->having;
+    flattenDt(newFirst);
   } else {
     newFirst->linkTablesToJoins();
   }
+}
+
+void DerivedTable::flattenDt(const DerivedTable* dt) {
+  tables = dt->tables;
+  cname = dt->cname;
+  tableSet = dt->tableSet;
+  joins = dt->joins;
+  columns = dt->columns;
+  exprs = dt->exprs;
+  fullyImported = dt->fullyImported;
+  aggregation = dt->aggregation;
+  having = dt->having;
 }
 
 std::string DerivedTable::toString() const {
@@ -1195,6 +1205,22 @@ bool Distribution::isSamePartition(const Distribution& other) const {
     }
   }
   return true;
+}
+
+Distribution Distribution::rename(
+    const ExprVector& exprs,
+    const ColumnVector& names) const {
+  Distribution result = *this;
+  // Partitioning survives projection if all partitioning columns are projected
+  // out.
+  if (!replace(result.partition, exprs, names)) {
+    result.partition.clear();
+  }
+  // Ordering survives if a prefix of the previous order continues to be
+  // projected out.
+  result.order.resize(prefixSize(result.order, exprs));
+  replace(result.order, exprs, names);
+  return result;
 }
 
 void exprsToString(const ExprVector& exprs, std::stringstream& out) {

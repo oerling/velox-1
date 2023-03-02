@@ -43,16 +43,19 @@ int32_t prefixSize(Ordered ordered, Set set) {
 }
 
 // Replaces each element of 'set' that matches an element of 'originals' with
-// the corresponding element of 'replaceWith'.
+// the corresponding element of 'replaceWith'. Returns true if all elements were replaced.
 template <typename Set, typename Old, typename New>
-void replace(Set& set, Old& originals, New replaceWith) {
+bool replace(Set& set, Old& originals, New replaceWith) {
+  bool allReplaced = true;
   for (auto& element : set) {
     auto it = std::find(originals.begin(), originals.end(), element);
     if (it == originals.end()) {
+      allReplaced = false;
       continue;
     }
     element = replaceWith[it - originals.begin()];
   }
+  return allReplaced;
 }
 
 template <typename T, typename U>

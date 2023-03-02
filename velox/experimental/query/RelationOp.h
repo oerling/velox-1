@@ -29,7 +29,7 @@ struct Plan;
 using PlanPtr = Plan*;
 struct PlanState;
 
-// Represents the cost and cardinmality of a RelationOp or Plan. A Cost has a
+// Represents the cost and cardinality of a RelationOp or Plan. A Cost has a
 // per-row cost, a per-row fanout and a one-time setup cost. For example, a hash
 // join probe has a fanout of 0.3 if 3 of 10 input rows are expected to hit, a
 // constant small per-row cost that is fixed and a setup cost that is
@@ -262,6 +262,29 @@ class Filter : public RelationOp {
   const ExprVector exprs_;
 };
 
+/// Assigns names to expressions. Used to rename output from a derived table.
+class Project : public RelationOp {
+ public:
+  Project(RelationOpPtr input, ExprVector exprs, ColumnVector columns)
+    : RelationOp(RelType::kProject, input, input->distribution().rename(exprs, columns), columns),
+        exprs_(std::move(exprs)),
+        columns_(std::move(columns)) {}
+
+  const ExprVector& exprs() const {
+    return exprs_;
+  }
+
+  const ColumnVector& columns() const {
+    return columns_;
+  }
+
+  std::string toString(bool recursive, bool detail) const override;
+
+ private:
+  const ExprVector exprs_;
+  const ColumnVector columns_;
+};
+
 enum class JoinMethod { kHash, kMerge };
 
 /// Represents a hash or merge join.
@@ -306,7 +329,7 @@ using JoinPtr = Join*;
 /// referencing join and not counted in subsequent ones.
 struct HashBuild : public RelationOp {
   HashBuild(RelationOpPtr input, int32_t id, ExprVector _keys, PlanPtr plan)
-      : RelationOp(RelType::kHashBuild, input, input->distribution(), {}),
+    : RelationOp(RelType::kHashBuild, input, input->distribution(), input->columns()),
         buildId(id),
         keys(std::move(_keys)),
         plan(plan) {}

@@ -652,6 +652,9 @@ struct DerivedTable : public PlanObject {
   // firstDt. 'firstDt' is not modified, its original contents are
   // copied in a new dt before the import.
   void importJoinsIntoFirstDt(const DerivedTable* firstDt);
+
+  // Sets 'dt' to be the complete contents of 'this'.
+  void flattenDt(const DerivedTable* dt);
 };
 
 using DerivedTablePtr = DerivedTable*;
