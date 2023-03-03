@@ -99,8 +99,6 @@ class AggregateFunc : public Aggregate {
       char** /*groups*/,
       int32_t /*numGroups*/,
       VectorPtr* /*result*/) override {}
-
-  void finalize(char** /*groups*/, int32_t /*numGroups*/) override {}
 };
 
 class AggregationTest : public OperatorTestBase {
@@ -113,7 +111,6 @@ class AggregationTest : public OperatorTestBase {
   void SetUp() override {
     OperatorTestBase::SetUp();
     filesystems::registerLocalFileSystem();
-    allocator_ = memory::MemoryAllocator::getInstance();
     registerSumNonPODAggregate("sumnonpod");
   }
 
@@ -253,8 +250,8 @@ class AggregationTest : public OperatorTestBase {
     RowVectorPtr rowVector;
     for (auto count = 0; count < numRows; ++count) {
       if (count % 1000 == 0) {
-        rowVector = std::static_pointer_cast<RowVector>(BaseVector::create(
-            rowType, std::min(1000, numRows - count), pool_.get()));
+        rowVector = BaseVector::create<RowVector>(
+            rowType, std::min(1000, numRows - count), pool_.get());
         batches.push_back(rowVector);
         for (auto& child : rowVector->children()) {
           child->resize(1000);
@@ -357,7 +354,6 @@ class AggregationTest : public OperatorTestBase {
            DOUBLE(),
            VARCHAR()})};
   folly::Random::DefaultGenerator rng_;
-  memory::MemoryAllocator* allocator_;
 };
 
 template <>
@@ -463,17 +459,12 @@ TEST_F(AggregationTest, multiKeyDistinct) {
 }
 
 TEST_F(AggregationTest, aggregateOfNulls) {
-  auto rowType = ROW({"c0", "c1"}, {BIGINT(), SMALLINT()});
-
-  auto children = {
+  auto rowVector = makeRowVector({
       BatchMaker::createVector<TypeKind::BIGINT>(
           rowType_->childAt(0), 100, *pool_),
-      BaseVector::createConstant(
-          facebook::velox::variant(TypeKind::SMALLINT), 100, pool_.get()),
-  };
+      makeNullConstant(TypeKind::SMALLINT, 100),
+  });
 
-  auto rowVector = std::make_shared<RowVector>(
-      pool_.get(), rowType, BufferPtr(nullptr), 100, children);
   auto vectors = {rowVector};
   createDuckDbTable(vectors);
 
@@ -802,10 +793,8 @@ TEST_F(AggregationTest, partialAggregationMaybeReservationReleaseCheck) {
        std::to_string(kMaxPartialMemoryUsage)},
   });
   {
-    const auto config = memory::MemoryUsageConfigBuilder()
-                            .maxUserMemory(kMaxUserMemoryUsage)
-                            .build();
-    params.queryCtx->pool()->getMemoryUsageTracker()->updateConfig(config);
+    params.queryCtx->pool()->getMemoryUsageTracker()->testingUpdateMaxMemory(
+        kMaxUserMemoryUsage);
   }
   core::PlanNodeId aggNodeId;
   params.planNode = PlanBuilder()
@@ -821,11 +810,10 @@ TEST_F(AggregationTest, partialAggregationMaybeReservationReleaseCheck) {
   EXPECT_EQ(0, runtimeStats.count("maxExtendedPartialAggregationMemoryUsage"));
   EXPECT_EQ(0, runtimeStats.count("partialAggregationPct"));
   // Check all the reserved memory have been released.
-  EXPECT_EQ(
-      0, task->pool()->getMemoryUsageTracker()->getAvailableReservation());
+  EXPECT_EQ(0, task->pool()->getMemoryUsageTracker()->availableReservation());
   EXPECT_GT(
       kMaxPartialMemoryUsage,
-      task->pool()->getMemoryUsageTracker()->getCurrentTotalBytes());
+      task->pool()->getMemoryUsageTracker()->currentBytes());
 }
 
 TEST_F(AggregationTest, spillWithMemoryLimit) {
@@ -861,7 +849,7 @@ TEST_F(AggregationTest, spillWithMemoryLimit) {
     auto tempDirectory = exec::test::TempDirectoryPath::create();
     auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     queryCtx->pool()->setMemoryUsageTracker(
-        velox::memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
+        velox::memory::MemoryUsageTracker::create(kMaxBytes));
     auto results = AssertQueryBuilder(
                        PlanBuilder()
                            .values(batches)
@@ -875,9 +863,9 @@ TEST_F(AggregationTest, spillWithMemoryLimit) {
                         .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
                         .planNode())
                     .queryCtx(queryCtx)
+                    .spillDirectory(tempDirectory->path)
                     .config(QueryConfig::kSpillEnabled, "true")
                     .config(QueryConfig::kAggregationSpillEnabled, "true")
-                    .config(QueryConfig::kSpillPath, tempDirectory->path)
                     .config(
                         QueryConfig::kAggregationSpillMemoryThreshold,
                         std::to_string(testData.aggregationMemLimit))
@@ -885,6 +873,7 @@ TEST_F(AggregationTest, spillWithMemoryLimit) {
 
     auto stats = task->taskStats().pipelineStats;
     ASSERT_EQ(testData.expectSpill, stats[0].operatorStats[1].spilledBytes > 0);
+    OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
   }
 }
 
@@ -906,8 +895,8 @@ DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
     // The input batch has kNumDistinct distinct keys. The repeat count of a key
     // is given by min(1, (k % 100) - 90). The batch is repeated 3 times, each
     // time in a different order.
-    RowVectorPtr rowVector = std::static_pointer_cast<RowVector>(
-        BaseVector::create(rowType_, kNumDistinct, pool_.get()));
+    auto rowVector =
+        BaseVector::create<RowVector>(rowType_, kNumDistinct, pool_.get());
     SelectivityVector allRows(kNumDistinct);
     const TypePtr keyType = rowVector->type()->childAt(0);
     const TypePtr valueType = rowVector->type()->childAt(1);
@@ -966,7 +955,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
     auto tempDirectory = exec::test::TempDirectoryPath::create();
     auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     queryCtx->pool()->setMemoryUsageTracker(
-        velox::memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
+        velox::memory::MemoryUsageTracker::create(kMaxBytes));
 
     SCOPED_TESTVALUE_SET(
         "facebook::velox::exec::Spiller",
@@ -983,9 +972,9 @@ DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
                                .singleAggregation({"c0"}, {"array_agg(c1)"})
                                .planNode())
             .queryCtx(queryCtx)
+            .spillDirectory(tempDirectory->path)
             .config(QueryConfig::kSpillEnabled, "true")
             .config(QueryConfig::kAggregationSpillEnabled, "true")
-            .config(QueryConfig::kSpillPath, tempDirectory->path)
             .config(QueryConfig::kMinSpillRunSize, std::to_string(1000'000'000))
             .config(
                 QueryConfig::kSpillPartitionBits,
@@ -999,6 +988,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
     // Check spilled bytes.
     EXPECT_LT(0, stats[0].operatorStats[1].spilledBytes);
     EXPECT_GE(kNumPartitions - 1, stats[0].operatorStats[1].spilledPartitions);
+    OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
   }
 }
 
@@ -1020,8 +1010,8 @@ TEST_F(AggregationTest, spillWithNonSpillingPartition) {
   // The input batch has kNumDistinct distinct keys. The repeat count of a key
   // is given by min(1, (k % 100) - 90). The batch is repeated 3 times, each
   // time in a different order.
-  RowVectorPtr rowVector = std::static_pointer_cast<RowVector>(
-      BaseVector::create(rowType_, kNumDistinct, pool_.get()));
+  auto rowVector =
+      BaseVector::create<RowVector>(rowType_, kNumDistinct, pool_.get());
   SelectivityVector allRows(kNumDistinct);
   const TypePtr keyType = rowVector->type()->childAt(0);
   const TypePtr valueType = rowVector->type()->childAt(1);
@@ -1086,7 +1076,7 @@ TEST_F(AggregationTest, spillWithNonSpillingPartition) {
   auto tempDirectory = exec::test::TempDirectoryPath::create();
   auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   queryCtx->pool()->setMemoryUsageTracker(
-      velox::memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
+      velox::memory::MemoryUsageTracker::create(kMaxBytes));
 
   auto task =
       AssertQueryBuilder(PlanBuilder()
@@ -1094,9 +1084,9 @@ TEST_F(AggregationTest, spillWithNonSpillingPartition) {
                              .singleAggregation({"c0"}, {"array_agg(c1)"})
                              .planNode())
           .queryCtx(queryCtx)
+          .spillDirectory(tempDirectory->path)
           .config(QueryConfig::kSpillEnabled, "true")
           .config(QueryConfig::kAggregationSpillEnabled, "true")
-          .config(QueryConfig::kSpillPath, tempDirectory->path)
           .config(
               QueryConfig::kSpillPartitionBits, std::to_string(kPartitionsBits))
           // Set to increase the hash table a little bit to only trigger spill
@@ -1108,6 +1098,7 @@ TEST_F(AggregationTest, spillWithNonSpillingPartition) {
   // Check spilled bytes.
   EXPECT_LT(0, stats[0].operatorStats[1].spilledBytes);
   EXPECT_EQ(1, stats[0].operatorStats[1].spilledPartitions);
+  OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
 }
 
 /// Verify number of memory allocations in the HashAggregation operator.
@@ -1332,11 +1323,11 @@ TEST_F(AggregationTest, outputBatchSizeCheckWithSpill) {
                                .values(batches)
                                .singleAggregation({"c0", "c1"}, {"sum(c2)"})
                                .planNode())
+            .spillDirectory(tempDirectory->path)
             .config(QueryConfig::kSpillEnabled, "true")
             .config(QueryConfig::kAggregationSpillEnabled, "true")
             // Set one spill partition to avoid the test flakiness.
             .config(QueryConfig::kSpillPartitionBits, "0")
-            .config(QueryConfig::kSpillPath, tempDirectory->path)
             .config(
                 QueryConfig::kPreferredOutputBatchSize,
                 std::to_string(outputBufferSize))
@@ -1348,6 +1339,7 @@ TEST_F(AggregationTest, outputBatchSizeCheckWithSpill) {
     ASSERT_EQ(
         folly::divCeil(opStats.outputPositions, outputBufferSize),
         opStats.outputVectors);
+    OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
   }
 }
 
@@ -1357,9 +1349,9 @@ TEST_F(AggregationTest, distinctWithSpilling) {
   auto spillDirectory = exec::test::TempDirectoryPath::create();
   core::PlanNodeId aggrNodeId;
   auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                  .spillDirectory(spillDirectory->path)
                   .config(QueryConfig::kSpillEnabled, "true")
                   .config(QueryConfig::kAggregationSpillEnabled, "true")
-                  .config(QueryConfig::kSpillPath, spillDirectory->path)
                   .config(QueryConfig::kTestingSpillPct, "100")
                   .plan(PlanBuilder()
                             .values(vectors)
@@ -1369,6 +1361,7 @@ TEST_F(AggregationTest, distinctWithSpilling) {
                   .assertResults("SELECT distinct c0 FROM tmp");
   // Verify that spilling is not triggered.
   ASSERT_EQ(toPlanStats(task->taskStats()).at(aggrNodeId).spilledBytes, 0);
+  OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
 }
 
 TEST_F(AggregationTest, preGroupedAggregationWithSpilling) {
@@ -1387,9 +1380,9 @@ TEST_F(AggregationTest, preGroupedAggregationWithSpilling) {
   core::PlanNodeId aggrNodeId;
   auto task =
       AssertQueryBuilder(duckDbQueryRunner_)
+          .spillDirectory(spillDirectory->path)
           .config(QueryConfig::kSpillEnabled, "true")
           .config(QueryConfig::kAggregationSpillEnabled, "true")
-          .config(QueryConfig::kSpillPath, spillDirectory->path)
           .config(QueryConfig::kTestingSpillPct, "100")
           .plan(PlanBuilder()
                     .values(vectors)
@@ -1406,6 +1399,7 @@ TEST_F(AggregationTest, preGroupedAggregationWithSpilling) {
   auto stats = task->taskStats().pipelineStats;
   // Verify that spilling is not triggered.
   ASSERT_EQ(toPlanStats(task->taskStats()).at(aggrNodeId).spilledBytes, 0);
+  OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
 }
 
 } // namespace

@@ -21,29 +21,25 @@ void ConstantExpr::evalSpecialForm(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
-  if (!sharedSubexprValues_) {
-    sharedSubexprValues_ =
-        BaseVector::createConstant(value_, 1, context.execCtx()->pool());
-  }
-
   if (needToSetIsAscii_) {
     auto* vector =
         sharedSubexprValues_->asUnchecked<SimpleVector<StringView>>();
-    LocalSelectivityVector singleRow(context);
-    bool isAscii = vector->computeAndSetIsAscii(*singleRow.get(1, true));
+    LocalSingleRow singleRow(context, 0);
+    bool isAscii = vector->computeAndSetIsAscii(*singleRow);
     vector->setAllIsAscii(isAscii);
     needToSetIsAscii_ = false;
   }
 
   if (sharedSubexprValues_.unique()) {
     sharedSubexprValues_->resize(rows.end());
-    context.moveOrCopyResult(sharedSubexprValues_, rows, result);
   } else {
-    context.moveOrCopyResult(
-        BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_),
-        rows,
-        result);
+    // By reassigning sharedSubexprValues_ we increase the chances that it will
+    // be unique the next time this expression is evaluated.
+    sharedSubexprValues_ =
+        BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_);
   }
+
+  context.moveOrCopyResult(sharedSubexprValues_, rows, result);
 }
 
 void ConstantExpr::evalSpecialFormSimplified(
@@ -58,22 +54,14 @@ void ConstantExpr::evalSpecialFormSimplified(
 
   // Simplified path should never ask us to write to a vector that was already
   // pre-allocated.
-  VELOX_CHECK(result == nullptr);
+  VELOX_CHECK_NULL(result);
 
-  if (sharedSubexprValues_ == nullptr) {
-    result = BaseVector::createConstant(value_, rows.end(), context.pool());
-  } else {
-    result = BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_);
-  }
+  result = BaseVector::wrapInConstant(rows.end(), 0, sharedSubexprValues_);
 }
 
 std::string ConstantExpr::toString(bool /*recursive*/) const {
-  if (sharedSubexprValues_ == nullptr) {
-    return fmt::format("{}:{}", value_.toJson(), type()->toString());
-  } else {
-    return fmt::format(
-        "{}:{}", sharedSubexprValues_->toString(0), type()->toString());
-  }
+  return fmt::format(
+      "{}:{}", sharedSubexprValues_->toString(0), type()->toString());
 }
 
 namespace {
@@ -212,6 +200,8 @@ void appendSqlLiteral(
       break;
     }
     default:
+      // TODO: update ExprStatsTest.exceptionPreparingStatsForListener once
+      // support for VARBINARY is added.
       VELOX_UNSUPPORTED(
           "Type not supported yet: {}", vector.type()->toString());
   }

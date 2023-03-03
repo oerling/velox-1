@@ -58,7 +58,6 @@ class UnsafeRowVectorSerializer : public VectorSerializer {
         // Write row data.
         auto rowSize = velox::row::UnsafeRowDynamicSerializer::getSizeRow(
             vector->type(), vector.get(), i);
-
         auto size =
             velox::row::UnsafeRowDynamicSerializer::serialize(
                 vector->type(), vector, buffer + offset + sizeof(size_t), i)
@@ -112,8 +111,7 @@ void UnsafeRowVectorSerde::deserialize(
   }
 
   if (serializedRows.empty()) {
-    *result =
-        std::dynamic_pointer_cast<RowVector>(BaseVector::create(type, 0, pool));
+    *result = BaseVector::create<RowVector>(type, 0, pool);
     return;
   }
 

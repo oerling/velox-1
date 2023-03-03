@@ -41,7 +41,7 @@ DEFINE_double(
     "Chance of adding a null value in a vector "
     "(expressed as double from 0 to 1).");
 
-DEFINE_bool(enable_spill, false, "Whether to test plans with spilling enabled");
+DEFINE_bool(enable_spill, true, "Whether to test plans with spilling enabled");
 
 namespace facebook::velox::exec::test {
 
@@ -78,8 +78,8 @@ class JoinFuzzer {
 
   void verify(core::JoinType joinType);
 
-  /// Returns a list of up to 5 randomly generated join key types.
-  std::vector<TypePtr> generateJoinKeyTypes();
+  /// Returns a list of randomly generated join key types.
+  std::vector<TypePtr> generateJoinKeyTypes(int32_t numKeys);
 
   /// Returns randomly generated probe input with upto 3 additional payload
   /// columns.
@@ -141,15 +141,13 @@ core::JoinType JoinFuzzer::pickJoinType() {
       core::JoinType::kLeftSemiFilter,
       core::JoinType::kLeftSemiProject,
       core::JoinType::kAnti,
-      core::JoinType::kNullAwareAnti,
   };
 
   size_t idx = randInt(0, kJoinTypes.size() - 1);
   return kJoinTypes[idx];
 }
 
-std::vector<TypePtr> JoinFuzzer::generateJoinKeyTypes() {
-  auto numKeys = randInt(1, 5);
+std::vector<TypePtr> JoinFuzzer::generateJoinKeyTypes(int32_t numKeys) {
   std::vector<TypePtr> types;
   types.reserve(numKeys);
   for (auto i = 0; i < numKeys; ++i) {
@@ -265,7 +263,7 @@ RowVectorPtr JoinFuzzer::execute(
     builder.config(core::QueryConfig::kSpillEnabled, "true")
         .config(core::QueryConfig::kAggregationSpillEnabled, "true")
         .config(core::QueryConfig::kTestingSpillPct, "100")
-        .config(core::QueryConfig::kSpillPath, spillDirectory->path);
+        .spillDirectory(spillDirectory->path);
   }
 
   auto result = builder.maxDrivers(2).copyResults(pool_.get());
@@ -308,6 +306,7 @@ core::PlanNodePtr tryFlipJoinSides(const core::HashJoinNode& joinNode) {
   return std::make_shared<core::HashJoinNode>(
       joinNode.id(),
       flippedJoinType.value(),
+      joinNode.isNullAware(),
       joinNode.rightKeys(),
       joinNode.leftKeys(),
       joinNode.filter(),
@@ -406,23 +405,23 @@ std::optional<MaterializedRowMultiset> JoinFuzzer::computeDuckDbResult(
           << " FROM u)";
       break;
     case core::JoinType::kLeftSemiProject:
-      if (joinNode->leftKeys().size() > 1) {
-        return std::nullopt;
+      if (joinNode->isNullAware()) {
+        sql << ", " << joinKeysToSql(joinNode->leftKeys()) << " IN (SELECT "
+            << joinKeysToSql(joinNode->rightKeys()) << " FROM u) FROM t";
+      } else {
+        sql << ", EXISTS (SELECT * FROM u WHERE " << equiClausesToSql(joinNode)
+            << ") FROM t";
       }
-      sql << ", " << joinKeysToSql(joinNode->leftKeys()) << " IN (SELECT "
-          << joinKeysToSql(joinNode->rightKeys()) << " FROM u) FROM t";
       break;
     case core::JoinType::kAnti:
-      sql << " FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE "
-          << equiClausesToSql(joinNode) << ")";
-      break;
-    case core::JoinType::kNullAwareAnti:
-      if (joinNode->leftKeys().size() > 1) {
-        return std::nullopt;
+      if (joinNode->isNullAware()) {
+        sql << " FROM t WHERE " << joinKeysToSql(joinNode->leftKeys())
+            << " NOT IN (SELECT " << joinKeysToSql(joinNode->rightKeys())
+            << " FROM u)";
+      } else {
+        sql << " FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE "
+            << equiClausesToSql(joinNode) << ")";
       }
-      sql << " FROM t WHERE " << joinKeysToSql(joinNode->leftKeys())
-          << " NOT IN (SELECT " << joinKeysToSql(joinNode->rightKeys())
-          << " FROM u)";
       break;
     default:
       VELOX_UNREACHABLE();
@@ -443,6 +442,7 @@ std::vector<std::string> fieldNames(
 
 core::PlanNodePtr makeDefaultPlan(
     core::JoinType joinType,
+    bool nullAware,
     const std::vector<std::string>& probeKeys,
     const std::vector<std::string>& buildKeys,
     const std::vector<RowVectorPtr>& probeInput,
@@ -457,7 +457,8 @@ core::PlanNodePtr makeDefaultPlan(
           PlanBuilder(planNodeIdGenerator).values(buildInput).planNode(),
           "" /*filter*/,
           output,
-          joinType)
+          joinType,
+          nullAware)
       .planNode();
 }
 
@@ -509,7 +510,8 @@ void makeAlternativePlans(
                               .planNode(),
                           "" /*filter*/,
                           joinNode->outputType()->names(),
-                          joinNode->joinType())
+                          joinNode->joinType(),
+                          joinNode->isNullAware())
                       .planNode());
 
   // Use OrderBy + MergeJoin (if join type is inner or left).
@@ -575,8 +577,13 @@ RowTypePtr concat(const RowTypePtr& a, const RowTypePtr& b) {
 }
 
 void JoinFuzzer::verify(core::JoinType joinType) {
+  const bool nullAware =
+      isNullAwareSupported(joinType) && vectorFuzzer_.coinToss(0.5);
+
+  const auto numKeys = nullAware ? 1 : randInt(1, 5);
+
   // Pick number and types of join keys.
-  std::vector<TypePtr> keyTypes = generateJoinKeyTypes();
+  std::vector<TypePtr> keyTypes = generateJoinKeyTypes(numKeys);
   std::vector<std::string> probeKeys = makeNames("t", keyTypes.size());
   std::vector<std::string> buildKeys = makeNames("u", keyTypes.size());
 
@@ -601,8 +608,7 @@ void JoinFuzzer::verify(core::JoinType joinType) {
 
   auto output =
       (core::isLeftSemiProjectJoin(joinType) ||
-       core::isLeftSemiFilterJoin(joinType) || core::isAntiJoin(joinType) ||
-       core::isNullAwareAntiJoin(joinType))
+       core::isLeftSemiFilterJoin(joinType) || core::isAntiJoin(joinType))
       ? asRowType(probeInput[0]->type())->names()
       : concat(
             asRowType(probeInput[0]->type()), asRowType(buildInput[0]->type()))
@@ -623,7 +629,13 @@ void JoinFuzzer::verify(core::JoinType joinType) {
   shuffleJoinKeys(probeKeys, buildKeys);
 
   auto plan = makeDefaultPlan(
-      joinType, probeKeys, buildKeys, probeInput, buildInput, output);
+      joinType,
+      nullAware,
+      probeKeys,
+      buildKeys,
+      probeInput,
+      buildInput,
+      output);
 
   auto expected = execute(plan, false /*injectSpill*/);
 
@@ -636,7 +648,13 @@ void JoinFuzzer::verify(core::JoinType joinType) {
 
   std::vector<core::PlanNodePtr> altPlans;
   altPlans.push_back(makeDefaultPlan(
-      joinType, probeKeys, buildKeys, flatProbeInput, flatBuildInput, output));
+      joinType,
+      nullAware,
+      probeKeys,
+      buildKeys,
+      flatProbeInput,
+      flatBuildInput,
+      output));
   makeAlternativePlans(plan, probeInput, buildInput, altPlans);
   makeAlternativePlans(plan, flatProbeInput, flatBuildInput, altPlans);
 

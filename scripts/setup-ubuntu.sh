@@ -26,9 +26,10 @@ export COMPILER_FLAGS
 FB_OS_VERSION=v2022.11.14.00
 NPROC=$(getconf _NPROCESSORS_ONLN)
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
+export CMAKE_BUILD_TYPE=Release
 
 # Install all velox and folly dependencies.
-sudo --preserve-env apt install -y \
+sudo --preserve-env apt update && apt install -y \
   g++ \
   cmake \
   ccache \
@@ -37,6 +38,7 @@ sudo --preserve-env apt install -y \
   git \
   libssl-dev \
   libboost-all-dev \
+  libicu-dev \
   libdouble-conversion-dev \
   libgoogle-glog-dev \
   libbz2-dev \
@@ -74,7 +76,7 @@ function prompt {
 }
 
 function install_fmt {
-  github_checkout fmtlib/fmt 8.0.0
+  github_checkout fmtlib/fmt 8.0.1
   cmake_install -DFMT_TEST=OFF
 }
 
@@ -87,7 +89,7 @@ function install_conda {
   mkdir -p conda && cd conda
   wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
   MINICONDA_PATH=/opt/miniconda-for-velox
-  sh Miniconda3-latest-Linux-x86_64.sh -b -p $MINICONDA_PATH
+  bash Miniconda3-latest-Linux-x86_64.sh -b -p $MINICONDA_PATH
 }
 
 function install_velox_deps {

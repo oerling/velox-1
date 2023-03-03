@@ -28,10 +28,6 @@
 #include "velox/type/Filter.h"
 #include "velox/type/Subfield.h"
 
-namespace facebook::velox::connector {
-class WriteProtocol;
-} // namespace facebook::velox::connector
-
 namespace facebook::velox::connector::hive {
 
 class HiveColumnHandle : public ColumnHandle {
@@ -41,8 +37,12 @@ class HiveColumnHandle : public ColumnHandle {
   HiveColumnHandle(
       const std::string& name,
       ColumnType columnType,
-      TypePtr dataType)
-      : name_(name), columnType_(columnType), dataType_(std::move(dataType)) {}
+      TypePtr dataType,
+      std::vector<common::Subfield> requiredSubfields = {})
+      : name_(name),
+        columnType_(columnType),
+        dataType_(std::move(dataType)),
+        requiredSubfields_(std::move(requiredSubfields)) {}
 
   const std::string& name() const {
     return name_;
@@ -56,6 +56,26 @@ class HiveColumnHandle : public ColumnHandle {
     return dataType_;
   }
 
+  // Applies to columns of complex types: arrays, maps and structs.  When a
+  // query uses only some of the subfields, the engine provides the complete
+  // list of required subfields and the connector is free to prune the rest.
+  //
+  // Examples:
+  //  - SELECT a[1], b['x'], x.y FROM t
+  //  - SELECT a FROM t WHERE b['y'] > 10
+  //
+  // Pruning a struct means populating some of the members with null values.
+  //
+  // Pruning a map means dropping keys not listed in the required subfields.
+  //
+  // Pruning arrays means dropping values with indices larger than maximum
+  // required index.
+  //
+  // Only one level of subfield is supported for pruning.
+  const std::vector<common::Subfield>& requiredSubfields() const {
+    return requiredSubfields_;
+  }
+
   bool isPartitionKey() const {
     return columnType_ == ColumnType::kPartitionKey;
   }
@@ -64,6 +84,7 @@ class HiveColumnHandle : public ColumnHandle {
   const std::string name_;
   const ColumnType columnType_;
   const TypePtr dataType_;
+  const std::vector<common::Subfield> requiredSubfields_;
 };
 
 using SubfieldFilters =
@@ -137,7 +158,21 @@ class HiveDataSource : public DataSource {
 
   std::unordered_map<std::string, RuntimeCounter> runtimeStats() override;
 
+  bool allPrefetchIssued() const override {
+    return rowReader_ && rowReader_->allPrefetchIssued();
+  }
+
+  void setFromDataSource(std::shared_ptr<DataSource> source) override;
+
   int64_t estimatedRowSize() override;
+
+  // Internal API, made public to be accessible in unit tests.  Do not use in
+  // other places.
+  static std::shared_ptr<common::ScanSpec> makeScanSpec(
+      const SubfieldFilters& filters,
+      const RowTypePtr& rowType,
+      const std::vector<const HiveColumnHandle*>& columnHandles,
+      memory::MemoryPool* pool);
 
  private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
@@ -148,6 +183,7 @@ class HiveDataSource : public DataSource {
 
   void setConstantValue(
       common::ScanSpec* FOLLY_NONNULL spec,
+      const TypePtr& type,
       const velox::variant& value) const;
 
   void setNullConstantValue(
@@ -171,6 +207,7 @@ class HiveDataSource : public DataSource {
   velox::memory::MemoryPool* FOLLY_NONNULL pool_;
   std::shared_ptr<dwio::common::IoStatistics> ioStats_;
   std::shared_ptr<common::ScanSpec> scanSpec_;
+  std::shared_ptr<common::MetadataFilter> metadataFilter_;
   std::shared_ptr<HiveConnectorSplit> split_;
   dwio::common::ReaderOptions readerOpts_;
   dwio::common::RowReaderOptions rowReaderOpts_;
@@ -187,7 +224,7 @@ class HiveDataSource : public DataSource {
   ExpressionEvaluator* FOLLY_NONNULL expressionEvaluator_;
   uint64_t completedRows_ = 0;
 
-  // Reusable memory for remaining filter evaluation
+  // Reusable memory for remaining filter evaluation.
   VectorPtr filterResult_;
   SelectivityVector filterRows_;
   exec::FilterEvalCtx filterEvalCtx_;
@@ -195,19 +232,6 @@ class HiveDataSource : public DataSource {
   memory::MemoryAllocator* const FOLLY_NONNULL allocator_;
   const std::string& scanId_;
   folly::Executor* FOLLY_NULLABLE executor_;
-};
-
-/// Hive connector configs
-class HiveConfig {
- public:
-  /// Can new data be inserted into existing partitions or existing
-  /// unpartitioned tables
-  static constexpr const char* FOLLY_NONNULL kImmutablePartitions =
-      "hive.immutable-partitions";
-
-  static bool isImmutablePartitions(const Config* FOLLY_NONNULL baseConfig) {
-    return baseConfig->get<bool>(kImmutablePartitions, true);
-  }
 };
 
 class HiveConnector final : public Connector {
@@ -240,20 +264,24 @@ class HiveConnector final : public Connector {
         executor_);
   }
 
+  bool supportsSplitPreload() override {
+    return true;
+  }
+
   std::shared_ptr<DataSink> createDataSink(
       RowTypePtr inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
-      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx,
-      std::shared_ptr<WriteProtocol> writeProtocol) override final {
+      ConnectorQueryCtx* connectorQueryCtx,
+      CommitStrategy commitStrategy) override final {
     auto hiveInsertHandle = std::dynamic_pointer_cast<HiveInsertTableHandle>(
         connectorInsertTableHandle);
     VELOX_CHECK_NOT_NULL(
         hiveInsertHandle, "Hive connector expecting hive write handle!");
     return std::make_shared<HiveDataSink>(
-        inputType, hiveInsertHandle, connectorQueryCtx, writeProtocol);
+        inputType, hiveInsertHandle, connectorQueryCtx, commitStrategy);
   }
 
-  folly::Executor* FOLLY_NULLABLE executor() {
+  folly::Executor* FOLLY_NULLABLE executor() const override {
     return executor_;
   }
 
@@ -269,12 +297,12 @@ class HiveConnectorFactory : public ConnectorFactory {
       "hive-hadoop2";
 
   HiveConnectorFactory() : ConnectorFactory(kHiveConnectorName) {
-    dwio::common::FileSink::registerFactory();
+    dwio::common::LocalFileSink::registerFactory();
   }
 
   HiveConnectorFactory(const char* FOLLY_NONNULL connectorName)
       : ConnectorFactory(connectorName) {
-    dwio::common::FileSink::registerFactory();
+    dwio::common::LocalFileSink::registerFactory();
   }
 
   std::shared_ptr<Connector> newConnector(

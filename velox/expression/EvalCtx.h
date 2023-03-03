@@ -132,6 +132,17 @@ class EvalCtx {
       const BufferPtr& elementToTopLevelRows,
       ErrorVectorPtr& topLevelErrors);
 
+  void deselectErrors(SelectivityVector& rows) const {
+    if (!errors_) {
+      return;
+    }
+    // A non-null in errors resets the row. AND with the errors null mask.
+    rows.deselectNonNulls(
+        errors_->rawNulls(),
+        rows.begin(),
+        std::min(errors_->size(), rows.end()));
+  }
+
   // Returns the vector of errors or nullptr if no errors. This is
   // intentionally a raw pointer to signify that the caller may not
   // retain references to this.
@@ -198,6 +209,10 @@ class EvalCtx {
 
   VectorEncoding::Simple wrapEncoding() const {
     return wrapEncoding_;
+  }
+
+  bool hasWrap() const {
+    return wrapEncoding_ != VectorEncoding::Simple::FLAT;
   }
 
   void setConstantWrap(vector_size_t wrapIndex) {
@@ -306,6 +321,43 @@ struct ScopedContextSaver {
   const SelectivityVector* FOLLY_NONNULL rows;
   const SelectivityVector* FOLLY_NULLABLE finalSelection;
   EvalCtx::ErrorVectorPtr errors;
+};
+
+/// Produces a SelectivityVector with a single row selected using a pool of
+/// SelectivityVectors managed by the EvalCtx::execCtx().
+class LocalSingleRow {
+ public:
+  LocalSingleRow(EvalCtx& context, vector_size_t row)
+      : context_(*context.execCtx()),
+        vector_(context_.getSelectivityVector(row + 1)) {
+    vector_->clearAll();
+    vector_->setValid(row, true);
+    vector_->updateBounds();
+  }
+
+  ~LocalSingleRow() {
+    context_.releaseSelectivityVector(std::move(vector_));
+  }
+
+  SelectivityVector& operator*() {
+    return *vector_;
+  }
+
+  const SelectivityVector& operator*() const {
+    return *vector_;
+  }
+
+  SelectivityVector* operator->() {
+    return vector_.get();
+  }
+
+  const SelectivityVector* operator->() const {
+    return vector_.get();
+  }
+
+ private:
+  core::ExecCtx& context_;
+  std::unique_ptr<SelectivityVector> vector_;
 };
 
 class LocalSelectivityVector {

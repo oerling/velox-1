@@ -91,14 +91,24 @@ class DwrfRowReader : public StrideIndexProvider,
 
   void resetFilterCaches() override;
 
+  bool moveAdaptationFrom(RowReader& other) override;
+
+  bool allPrefetchIssued() const override {
+    return true;
+  }
+
   // Returns the skipped strides for 'stripe'. Used for testing.
-  std::optional<std::vector<uint32_t>> stridesToSkip(uint32_t stripe) const {
+  std::optional<std::vector<uint64_t>> stridesToSkip(uint32_t stripe) const {
     auto it = stripeStridesToSkip_.find(stripe);
     if (it == stripeStridesToSkip_.end()) {
       return std::nullopt;
     }
     return it->second;
   }
+
+  // Creates column reader tree and may start prefetch of frequently read
+  // columns.
+  void startNextStripe();
 
  private:
   // footer
@@ -122,9 +132,10 @@ class DwrfRowReader : public StrideIndexProvider,
 
   std::unique_ptr<ColumnReader> columnReader_;
   std::unique_ptr<dwio::common::SelectiveColumnReader> selectiveColumnReader_;
-  std::vector<uint32_t> stridesToSkip_;
+  const uint64_t* stridesToSkip_;
+  int stridesToSkipSize_;
   // Record of strides to skip in each visited stripe. Used for diagnostics.
-  std::unordered_map<uint32_t, std::vector<uint32_t>> stripeStridesToSkip_;
+  std::unordered_map<uint32_t, std::vector<uint64_t>> stripeStridesToSkip_;
   // Number of skipped strides.
   int64_t skippedStrides_{0};
 
@@ -134,10 +145,6 @@ class DwrfRowReader : public StrideIndexProvider,
   bool recomputeStridesToSkip_{false};
 
   // internal methods
-
-  // Creates column reader tree and may start prefetch of frequently read
-  // columns.
-  void startNextStripe();
 
   std::optional<size_t> estimatedRowSizeHelper(
       const FooterWrapper& footer,

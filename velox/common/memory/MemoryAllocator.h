@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <gflags/gflags.h>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -24,9 +23,10 @@
 #include <mutex>
 #include <unordered_set>
 
-#include "folly/SharedMutex.h"
+#include <gflags/gflags.h>
 #include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/memory/Allocation.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
 #include "velox/common/time/Timer.h"
 
@@ -54,7 +54,7 @@ struct SizeClassStats {
   /// size class.
   std::atomic<int64_t> totalBytes{0};
 
-  SizeClassStats() {}
+  SizeClassStats() = default;
   SizeClassStats(const SizeClassStats& other) {
     *this = other;
   }
@@ -77,7 +77,7 @@ struct SizeClassStats {
     return result;
   }
 
-  // Returns the total clocks for this size class.
+  /// Returns the total clocks for this size class.
   uint64_t clocks() const {
     return allocateClocks + freeClocks;
   }
@@ -126,11 +126,10 @@ struct Stats {
   /// steps of powers of two. Allocators may have their own size classes or
   /// allocate exact sizes.
   static int32_t sizeIndex(int64_t size) {
-    constexpr int32_t kPageSize = 4096;
     if (size == 0) {
       return 0;
     }
-    const int64_t power = bits::nextPowerOfTwo(size / kPageSize);
+    const auto power = bits::nextPowerOfTwo(size / AllocationTraits::kPageSize);
     return std::min(kNumSizes - 1, 63 - bits::countLeadingZeros(power));
   }
 
@@ -140,11 +139,6 @@ struct Stats {
   /// Cumulative count of pages advised away, if the allocator exposes this.
   int64_t numAdvise{0};
 };
-
-class MemoryPool;
-
-/// Denotes a number of machine pages as in mmap and related functions.
-using MachinePageCount = uint64_t;
 
 /// This class provides interface for the actual memory allocations from memory
 /// pool. It allocates runs of machine pages from predefined size classes, and
@@ -159,16 +153,30 @@ using MachinePageCount = uint64_t;
 /// all large allocation come from a single source to have dynamic balancing
 /// between different users. Proxy subclasses may provide context specific
 /// tracking while delegating the allocation to a root allocator.
-class MemoryAllocator : std::enable_shared_from_this<MemoryAllocator> {
+class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
  public:
+  /// Defines the memory allocator kinds.
+  enum class Kind {
+    /// The default memory allocator kind which is implemented by
+    /// MallocAllocator. It delegates the memory allocations to std::malloc.
+    kMalloc,
+    /// The memory allocator kind which is implemented by MmapAllocator. It
+    /// manages the large chunk of memory allocations on its own by leveraging
+    /// mmap and madvice, to optimize the memory fragmentation in the long
+    /// running service such as Prestissimo.
+    kMmap,
+  };
+
+  static std::string kindString(Kind kind);
+
   /// Returns the process-wide default instance or an application-supplied
   /// custom instance set via setDefaultInstance().
-  static MemoryAllocator* FOLLY_NONNULL getInstance();
+  static MemoryAllocator* getInstance();
 
   /// Overrides the process-wide default instance. The caller keeps ownership
   /// and must not destroy the instance until it is empty. Calling this with
   /// nullptr restores the initial process-wide default instance.
-  static void setDefaultInstance(MemoryAllocator* FOLLY_NULLABLE instance);
+  static void setDefaultInstance(MemoryAllocator* instance);
 
   /// Creates a default MemoryAllocator instance but does not set this to
   /// process default.
@@ -176,277 +184,17 @@ class MemoryAllocator : std::enable_shared_from_this<MemoryAllocator> {
 
   static void testingDestroyInstance();
 
-  MemoryAllocator() = default;
   virtual ~MemoryAllocator() = default;
 
-  static constexpr uint64_t kPageSize = 4096;
   static constexpr int32_t kMaxSizeClasses = 12;
-  /// Allocations smaller than 3K should go to malloc for MmapAllocator.
+  /// Allocations smaller than 3K should go to malloc.
   static constexpr int32_t kMaxMallocBytes = 3072;
-  static constexpr uint16_t kMinAlignment = 8;
+  static constexpr uint16_t kMinAlignment = alignof(max_align_t);
   static constexpr uint16_t kMaxAlignment = 64;
 
-  static void validateAlignment(uint16_t alignment);
-
-  /// Represents a number of consecutive pages of kPageSize bytes.
-  class PageRun {
-   public:
-    static constexpr uint8_t kPointerSignificantBits = 48;
-    static constexpr uint64_t kPointerMask = 0xffffffffffff;
-    static constexpr uint32_t kMaxPagesInRun =
-        (1UL << (64U - kPointerSignificantBits)) - 1;
-
-    PageRun(void* FOLLY_NONNULL address, MachinePageCount numPages) {
-      auto word = reinterpret_cast<uint64_t>(address); // NOLINT
-      if (!FLAGS_velox_use_malloc) {
-        VELOX_CHECK_EQ(
-            word & (kPageSize - 1),
-            0,
-            "Address is not page-aligned for PageRun");
-      }
-      VELOX_CHECK_LE(numPages, kMaxPagesInRun);
-      VELOX_CHECK_EQ(
-          word & ~kPointerMask, 0, "A pointer must have its 16 high bits 0");
-      data_ =
-          word | (static_cast<uint64_t>(numPages) << kPointerSignificantBits);
-    }
-
-    template <typename T = uint8_t>
-    T* FOLLY_NONNULL data() const {
-      return reinterpret_cast<T*>(data_ & kPointerMask); // NOLINT
-    }
-
-    MachinePageCount numPages() const {
-      return data_ >> kPointerSignificantBits;
-    }
-
-    uint64_t numBytes() const {
-      return numPages() * kPageSize;
-    }
-
-   private:
-    uint64_t data_;
-  };
-
-  /// Represents a set of PageRuns that are allocated together.
-  class Allocation {
-   public:
-    Allocation() = default;
-    ~Allocation();
-
-    Allocation(const Allocation& other) = delete;
-
-    Allocation(Allocation&& other) noexcept {
-      pool_ = other.pool_;
-      runs_ = std::move(other.runs_);
-      numPages_ = other.numPages_;
-      other.numPages_ = 0;
-      other.runs_.clear();
-      other.pool_ = nullptr;
-      sanityCheck();
-    }
-
-    void operator=(const Allocation& other) = delete;
-
-    void operator=(Allocation&& other) {
-      pool_ = other.pool_;
-      runs_ = std::move(other.runs_);
-      numPages_ = other.numPages_;
-      other.numPages_ = 0;
-      other.pool_ = nullptr;
-    }
-
-    MachinePageCount numPages() const {
-      return numPages_;
-    }
-
-    uint32_t numRuns() const {
-      return runs_.size();
-    }
-
-    PageRun runAt(int32_t index) const {
-      return runs_[index];
-    }
-
-    uint64_t byteSize() const {
-      return numPages_ * kPageSize;
-    }
-
-    void append(uint8_t* FOLLY_NONNULL address, int32_t numPages);
-
-    void setPool(MemoryPool* FOLLY_NONNULL pool) {
-      VELOX_CHECK_NOT_NULL(pool);
-      VELOX_CHECK_NULL(pool_);
-      pool_ = pool;
-    }
-
-    MemoryPool* FOLLY_NULLABLE pool() const {
-      return pool_;
-    }
-
-    void clear() {
-      runs_.clear();
-      numPages_ = 0;
-      pool_ = nullptr;
-    }
-
-    /// Returns the run number in 'runs_' and the position within the run
-    /// corresponding to 'offset' from the start of 'this'.
-    void findRun(
-        uint64_t offset,
-        int32_t* FOLLY_NONNULL index,
-        int32_t* FOLLY_NONNULL offsetInRun) const;
-
-    /// Returns if this allocation is empty.
-    bool empty() const {
-      sanityCheck();
-      return numPages_ == 0;
-    }
-
-    std::string toString() const;
-
-   private:
-    FOLLY_ALWAYS_INLINE void sanityCheck() const {
-      VELOX_CHECK_EQ(numPages_ == 0, runs_.empty());
-      VELOX_CHECK(numPages_ != 0 || pool_ == nullptr);
-    }
-
-    MemoryPool* FOLLY_NULLABLE pool_{nullptr};
-    std::vector<PageRun> runs_;
-    int32_t numPages_ = 0;
-  };
-
-  /// Represents a run of contiguous pages that do not belong to any size class.
-  class ContiguousAllocation {
-   public:
-    ContiguousAllocation() = default;
-    ~ContiguousAllocation();
-
-    ContiguousAllocation(const ContiguousAllocation& other) = delete;
-
-    ContiguousAllocation& operator=(ContiguousAllocation&& other) {
-      pool_ = other.pool_;
-      data_ = other.data_;
-      size_ = other.size_;
-      other.pool_ = nullptr;
-      other.data_ = nullptr;
-      other.size_ = 0;
-      sanityCheck();
-      return *this;
-    }
-
-    ContiguousAllocation(ContiguousAllocation&& other) noexcept {
-      pool_ = other.pool_;
-      data_ = other.data_;
-      size_ = other.size_;
-      other.pool_ = nullptr;
-      other.data_ = nullptr;
-      other.size_ = 0;
-      sanityCheck();
-    }
-
-    MachinePageCount numPages() const;
-
-    template <typename T = uint8_t>
-    T* FOLLY_NULLABLE data() const {
-      return reinterpret_cast<T*>(data_);
-    }
-
-    /// size in bytes.
-    uint64_t size() const {
-      return size_;
-    }
-
-    void setPool(MemoryPool* FOLLY_NONNULL pool) {
-      VELOX_CHECK_NOT_NULL(pool);
-      VELOX_CHECK_NULL(pool_);
-      pool_ = pool;
-    }
-    MemoryPool* FOLLY_NULLABLE pool() const {
-      return pool_;
-    }
-
-    bool empty() const {
-      sanityCheck();
-      return size_ == 0;
-    }
-
-    void set(void* FOLLY_NULLABLE data, uint64_t size);
-    void clear();
-
-    std::string toString() const;
-
-   private:
-    FOLLY_ALWAYS_INLINE void sanityCheck() const {
-      VELOX_CHECK_EQ(size_ == 0, data_ == nullptr);
-      VELOX_CHECK(size_ != 0 || pool_ == nullptr);
-    }
-
-    MemoryPool* FOLLY_NULLABLE pool_{nullptr};
-    void* FOLLY_NULLABLE data_{nullptr};
-    uint64_t size_{0};
-  };
-
-  /// Stats on memory allocated by allocateBytes().
-  struct AllocateBytesStats {
-    /// Total size of small allocations.
-    uint64_t totalSmall;
-    /// Total size of allocations from some size class.
-    uint64_t totalInSizeClasses;
-    /// Total in standalone large allocations via allocateContiguous().
-    uint64_t totalLarge;
-
-    AllocateBytesStats operator-(const AllocateBytesStats& other) const {
-      auto result = *this;
-      result.totalSmall -= other.totalSmall;
-      result.totalInSizeClasses -= other.totalInSizeClasses;
-      result.totalLarge -= other.totalLarge;
-      return result;
-    }
-  };
-
-  /// Allocates 'bytes' contiguous bytes and returns the pointer to the first
-  /// byte. If 'bytes' is less than 'maxMallocSize', delegates the allocation to
-  /// malloc. If the size is above that and below the largest size classes'
-  /// size, allocates one element of the next size classes' size. If 'size' is
-  /// greater than the largest size classes' size, calls allocateContiguous().
-  /// Returns nullptr if there is no space. The amount to allocate is subject to
-  /// the size limit of 'this'. This function is not virtual but calls the
-  /// virtual functions allocateNonContiguous and allocateContiguous, which can
-  /// track sizes and enforce caps etc.
-  ///
-  /// NOTE: if not zero, 'alignment' must be power of two and in range of
-  /// [kMinAlignment, kMaxAlignment].
-  virtual void* FOLLY_NULLABLE allocateBytes(
-      uint64_t bytes,
-      uint16_t alignment = 0,
-      uint64_t maxMallocSize = kMaxMallocBytes) = 0;
-
-  /// Allocates a zero-filled contiguous bytes.
-  ///
-  /// NOTE: if not zero, 'alignment' must be power of two and in range of
-  /// [kMinAlignment, kMaxAlignment].
-  virtual void* FOLLY_NULLABLE
-  allocateZeroFilled(uint64_t bytes, uint64_t alignment = 0);
-
-  /// Allocates 'newSize' contiguous bytes. If 'p' is not null, this function
-  /// copies std::min(size, newSize) bytes from 'p' to the newly allocated
-  /// buffer and free 'p' after that.
-  ///
-  /// NOTE: if not zero, 'alignment' must be power of two and in range of
-  /// [kMinAlignment, kMaxAlignment].g
-  virtual void* FOLLY_NULLABLE reallocateBytes(
-      void* FOLLY_NULLABLE p,
-      int64_t size,
-      int64_t newSize,
-      uint16_t alignment = 0);
-
-  /// Frees contiguous memory allocated by allocateBytes, allocateZeroFilled,
-  /// reallocateBytes.
-  virtual void freeBytes(
-      void* FOLLY_NONNULL p,
-      uint64_t size,
-      uint64_t maxMallocSize = kMaxMallocBytes) noexcept = 0;
+  /// Returns the kind of this memory allocator. For AsyncDataCache, it returns
+  /// the kind of the delegated memory allocator underneath.
+  virtual Kind kind() const = 0;
 
   using ReservationCallback = std::function<void(int64_t, bool)>;
 
@@ -492,12 +240,49 @@ class MemoryAllocator : std::enable_shared_from_this<MemoryAllocator> {
   /// 'freeContiguous' on the same memory allocator object.
   virtual bool allocateContiguous(
       MachinePageCount numPages,
-      Allocation* FOLLY_NULLABLE collateral,
+      Allocation* collateral,
       ContiguousAllocation& allocation,
       ReservationCallback reservationCB = nullptr) = 0;
 
   /// Frees contiguous 'allocation'. 'allocation' is empty on return.
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
+
+  /// Allocates 'bytes' contiguous bytes and returns the pointer to the first
+  /// byte. If 'bytes' is less than 'kMaxMallocBytes', delegates the allocation
+  /// to malloc. If the size is above that and below the largest size classes'
+  /// size, allocates one element of the next size classes' size. If 'size' is
+  /// greater than the largest size classes' size, calls allocateContiguous().
+  /// Returns nullptr if there is no space. The amount to allocate is subject to
+  /// the size limit of 'this'. This function is not virtual but calls the
+  /// virtual functions allocateNonContiguous and allocateContiguous, which can
+  /// track sizes and enforce caps etc. If 'alignment' is not kMinAlignment,
+  /// then 'bytes' must be a multiple of 'alignment'.
+  ///
+  /// NOTE: 'alignment' must be power of two and in range of [kMinAlignment,
+  /// kMaxAlignment].
+  virtual void* allocateBytes(
+      uint64_t bytes,
+      uint16_t alignment = kMinAlignment) = 0;
+
+  /// Allocates a zero-filled contiguous bytes.
+  virtual void* allocateZeroFilled(uint64_t bytes);
+
+  /// Allocates 'newSize' contiguous bytes. If 'p' is not null, this function
+  /// copies std::min(size, newSize) bytes from 'p' to the newly allocated
+  /// buffer and free 'p' after that. If 'alignment' is not kMinAlignment, then
+  /// newSize must be a multiple of 'alignment'.
+  ///
+  /// NOTE: 'alignment' must be power of two and in range of [kMinAlignment,
+  /// kMaxAlignment].
+  virtual void* reallocateBytes(
+      void* p,
+      int64_t size,
+      int64_t newSize,
+      uint16_t alignment = kMinAlignment);
+
+  /// Frees contiguous memory allocated by allocateBytes, allocateZeroFilled,
+  /// reallocateBytes.
+  virtual void freeBytes(void* p, uint64_t size) noexcept = 0;
 
   /// Checks internal consistency of allocation data structures. Returns true if
   /// OK.
@@ -516,31 +301,57 @@ class MemoryAllocator : std::enable_shared_from_this<MemoryAllocator> {
 
   virtual MachinePageCount numMapped() const = 0;
 
-  /// Returns static counters for allocateBytes usage.
-  static AllocateBytesStats allocateBytesStats() {
-    return {
-        totalSmallAllocateBytes_,
-        totalSizeClassAllocateBytes_,
-        totalLargeAllocateBytes_};
-  }
-
-  /// Clears counters to revert effect of previous tests.
-  static void testingClearAllocateBytesStats() {
-    totalSmallAllocateBytes_ = 0;
-    totalSizeClassAllocateBytes_ = 0;
-    totalLargeAllocateBytes_ = 0;
-  }
-
   virtual Stats stats() const {
     return Stats();
   }
 
-  virtual std::string toString() const;
+  virtual std::string toString() const = 0;
+
+  /// Invoked to check if 'alignmentBytes' is valid and 'allocateBytes' is
+  /// multiple of 'alignmentBytes'.
+  static void alignmentCheck(uint64_t allocateBytes, uint16_t alignmentBytes);
+
+  /// Causes 'failure' to occur in memory allocation calls. This is a test-only
+  /// function for validating error paths which are rare to trigger in unit
+  /// test. If 'persistent' is false, then we only inject failure once in the
+  /// next call. Otherwise, we keep injecting failures until next
+  /// 'testingClearFailureInjection' call.
+  enum class InjectedFailure {
+    kNone,
+    /// Mimic case of not finding anything to advise away.
+    ///
+    /// NOTE: this only applies for MmapAllocator.
+    kMadvise,
+    /// Mimic running out of mmaps for process.
+    ///
+    /// NOTE: this only applies for MmapAllocator.
+    kMmap,
+    /// Mimic the actual memory allocation failure.
+    kAllocate,
+    /// Mimic the case that exceeds the memory allocator's internal cap limit.
+    ///
+    /// NOTE: this only applies for MmapAllocator.
+    kCap
+  };
+  void testingSetFailureInjection(
+      InjectedFailure failure,
+      bool persistent = false) {
+    injectedFailure_ = failure;
+    isPersistentFailureInjection_ = persistent;
+  }
+
+  void testingClearFailureInjection() {
+    injectedFailure_ = InjectedFailure::kNone;
+    isPersistentFailureInjection_ = false;
+  }
 
  protected:
-  // Invoked to check if 'alignmentBytes' is valid and 'allocateBytes' is
-  // multiple of 'alignmentBytes'.
-  static void alignmentCheck(uint64_t allocateBytes, uint16_t alignmentBytes);
+  MemoryAllocator() = default;
+
+  // Returns the size class size that corresponds to 'bytes'.
+  static MachinePageCount roundUpToSizeClassSize(
+      size_t bytes,
+      const std::vector<MachinePageCount>& sizes);
 
   // Represents a mix of blocks of different sizes for covering a single
   // allocation.
@@ -556,83 +367,46 @@ class MemoryAllocator : std::enable_shared_from_this<MemoryAllocator> {
     int32_t totalPages{0};
   };
 
-  // Returns the size class size that corresponds to 'bytes'.
-  static MachinePageCount roundUpToSizeClassSize(
-      size_t bytes,
-      const std::vector<MachinePageCount>& sizes);
-
   // Returns a mix of standard sizes and allocation counts for covering
-  // 'numPages' worth of memory. 'minSizeClass' is the size of the smallest
-  // usable size class.
+  // 'numPages' worth of memory. 'minSizeClass' is the size of the
+  // smallest usable size class.
   SizeMix allocationSize(
       MachinePageCount numPages,
       MachinePageCount minSizeClass) const;
+
+  FOLLY_ALWAYS_INLINE bool testingHasInjectedFailure(InjectedFailure failure) {
+    if (FOLLY_LIKELY(injectedFailure_ != failure)) {
+      return false;
+    }
+    if (!isPersistentFailureInjection_) {
+      injectedFailure_ = InjectedFailure::kNone;
+    }
+    return true;
+  }
 
   // The machine page counts corresponding to different sizes in order
   // of increasing size.
   const std::vector<MachinePageCount>
       sizeClassSizes_{1, 2, 4, 8, 16, 32, 64, 128, 256};
 
-  // Static counters for STL and memoryPool users of
-  // MemoryAllocator. Updated by allocateBytes() and freeBytes(). These
-  // are intended to be exported via StatsReporter. These are
-  // respectively backed by malloc, allocate from a single size class
-  // and standalone mmap.
-  inline static std::atomic<uint64_t> totalSmallAllocateBytes_;
-  inline static std::atomic<uint64_t> totalSizeClassAllocateBytes_;
-  inline static std::atomic<uint64_t> totalLargeAllocateBytes_;
+  std::atomic<MachinePageCount> numAllocated_{0};
+  // Tracks the number of mapped pages.
+  std::atomic<MachinePageCount> numMapped_{0};
+
+  // Indicates if the failure injection is persistent or transient.
+  //
+  // NOTE: this is only used for testing purpose.
+  InjectedFailure injectedFailure_{InjectedFailure::kNone};
+  bool isPersistentFailureInjection_{false};
 
  private:
-  inline static folly::SharedMutex instanceMutex_;
+  static std::mutex initMutex_;
   // Singleton instance.
-  inline static std::shared_ptr<MemoryAllocator> instance_;
+  static std::shared_ptr<MemoryAllocator> instance_;
   // Application-supplied custom implementation of MemoryAllocator to be
   // returned by getInstance().
-  inline static MemoryAllocator* FOLLY_NULLABLE customInstance_;
+  static MemoryAllocator* customInstance_;
 };
 
-/// An Allocator backed by MemoryAllocator for STL containers.
-template <class T>
-struct StlMemoryAllocator {
-  using value_type = T;
-
-  explicit StlMemoryAllocator(MemoryAllocator* FOLLY_NONNULL allocator)
-      : allocator_{allocator} {
-    VELOX_CHECK_NOT_NULL(allocator_);
-  }
-
-  template <class U>
-  explicit StlMemoryAllocator(const StlMemoryAllocator<U>& allocator)
-      : allocator_{allocator.allocator()} {
-    VELOX_CHECK_NOT_NULL(allocator_);
-  }
-
-  T* FOLLY_NONNULL allocate(std::size_t n) {
-    return reinterpret_cast<T*>(
-        allocator_->allocateBytes(checkedMultiply(n, sizeof(T))));
-  }
-
-  void deallocate(T* FOLLY_NONNULL p, std::size_t n) {
-    allocator_->freeBytes(p, checkedMultiply(n, sizeof(T)));
-  }
-
-  MemoryAllocator* FOLLY_NONNULL allocator() const {
-    return allocator_;
-  }
-
-  friend bool operator==(
-      const StlMemoryAllocator& lhs,
-      const StlMemoryAllocator& rhs) {
-    return lhs.allocator_ == rhs.allocator_;
-  }
-  friend bool operator!=(
-      const StlMemoryAllocator& lhs,
-      const StlMemoryAllocator& rhs) {
-    return !(lhs == rhs);
-  }
-
- private:
-  MemoryAllocator* FOLLY_NONNULL const allocator_;
-};
-
+std::ostream& operator<<(std::ostream& out, const MemoryAllocator::Kind& kind);
 } // namespace facebook::velox::memory

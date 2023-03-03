@@ -199,10 +199,8 @@ void GroupingSet::addInputForActiveRows(
     std::iota(lookup_->rows.begin(), lookup_->rows.end(), 0);
   } else {
     lookup_->rows.clear();
-    bits::forEachSetBit(
-        activeRows_.asRange().bits(), 0, activeRows_.size(), [&](auto row) {
-          lookup_->rows.push_back(row);
-        });
+    activeRows_.applyToSelected(
+        [&](auto row) { lookup_->rows.push_back(row); });
   }
 
   table_->groupProbe(*lookup_);
@@ -347,7 +345,6 @@ bool GroupingSet::getGlobalAggregationOutput(
 
   auto groups = lookup_->hits.data();
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(groups, 1);
     if (isPartial) {
       aggregates_[i]->extractAccumulators(groups, 1, &result->childAt(i));
     } else {
@@ -441,7 +438,6 @@ void GroupingSet::extractGroups(
     rows.extractColumn(groups.data(), groups.size(), i, keyVector);
   }
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
-    aggregates_[i]->finalize(groups.data(), groups.size());
     auto& aggregateVector = result->childAt(i + totalKeys);
     if (isPartial_) {
       aggregates_[i]->extractAccumulators(
@@ -506,7 +502,7 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   }
 
   auto tracker = pool_.getMemoryUsageTracker();
-  const auto currentUsage = tracker->getCurrentUserBytes();
+  const auto currentUsage = tracker->currentBytes();
   if (spillMemoryThreshold_ != 0 && currentUsage > spillMemoryThreshold_) {
     const int64_t bytesToSpill =
         currentUsage * spillConfig_->spillableReservationGrowthPct / 100;
@@ -532,7 +528,7 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
       rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0) +
       tableIncrement;
   // There must be at least 2x the increment in reservation.
-  if (tracker->getAvailableReservation() > 2 * increment) {
+  if (tracker->availableReservation() > 2 * increment) {
     return;
   }
   // Check if can increase reservation. The increment is the larger of

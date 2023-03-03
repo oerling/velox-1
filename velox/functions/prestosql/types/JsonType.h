@@ -38,7 +38,6 @@ class JsonCastOperator : public exec::CastOperator {
       const BaseVector& input,
       exec::EvalCtx& context,
       const SelectivityVector& rows,
-      bool nullOnFailure,
       const TypePtr& resultType,
       VectorPtr& result) const override;
 
@@ -46,7 +45,6 @@ class JsonCastOperator : public exec::CastOperator {
       const BaseVector& input,
       exec::EvalCtx& context,
       const SelectivityVector& rows,
-      bool nullOnFailure,
       const TypePtr& resultType,
       VectorPtr& result) const override;
 
@@ -67,6 +65,11 @@ class JsonType : public VarcharType {
 
   static const std::shared_ptr<const exec::CastOperator>& getCastOperator() {
     return JsonCastOperator::get();
+  }
+
+  bool equivalent(const Type& other) const override {
+    // Pointer comparison works since this type is a singleton.
+    return this == &other;
   }
 
   std::string toString() const override {

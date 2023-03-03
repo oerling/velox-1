@@ -43,7 +43,7 @@ HashAggregation::HashAggregation(
       maxExtendedPartialAggregationMemoryUsage_(
           driverCtx->queryConfig().maxExtendedPartialAggregationMemoryUsage()),
       spillConfig_(
-          isSpillAllowed(aggregationNode)
+          aggregationNode->canSpill(driverCtx->queryConfig())
               ? operatorCtx_->makeSpillConfig(Spiller::Type::kAggregate)
               : std::nullopt),
       maxPartialAggregationMemoryUsage_(
@@ -90,13 +90,7 @@ HashAggregation::HashAggregation(
       channels.push_back(exprToChannel(arg.get(), inputType));
       if (channels.back() == kConstantChannel) {
         auto constant = dynamic_cast<const core::ConstantTypedExpr*>(arg.get());
-        if (constant->hasValueVector()) {
-          constants.push_back(
-              BaseVector::wrapInConstant(1, 0, constant->valueVector()));
-        } else {
-          constants.push_back(BaseVector::createConstant(
-              constant->value(), 1, operatorCtx_->pool()));
-        }
+        constants.push_back(constant->toConstantVector(pool()));
       } else {
         constants.push_back(nullptr);
       }
@@ -166,11 +160,6 @@ HashAggregation::HashAggregation(
       operatorCtx_.get());
 }
 
-bool HashAggregation::isSpillAllowed(
-    const std::shared_ptr<const core::AggregationNode>& node) const {
-  return !isDistinct_ && node->preGroupedKeys().empty();
-}
-
 void HashAggregation::addInput(RowVectorPtr input) {
   if (!pushdownChecked_) {
     mayPushdown_ = operatorCtx_->driver()->mayPushdownAggregation(this);
@@ -179,12 +168,24 @@ void HashAggregation::addInput(RowVectorPtr input) {
   groupingSet_->addInput(input, mayPushdown_);
   numInputRows_ += input->size();
   {
-    auto spillStats = groupingSet_->spilledStats();
+    const auto spillStats = groupingSet_->spilledStats();
+    const auto hashTableStats = groupingSet_->hashTableStats();
     auto lockedStats = stats_.wlock();
     lockedStats->spilledBytes = spillStats.spilledBytes;
     lockedStats->spilledRows = spillStats.spilledRows;
     lockedStats->spilledPartitions = spillStats.spilledPartitions;
     lockedStats->spilledFiles = spillStats.spilledFiles;
+
+    lockedStats->runtimeStats["hashtable.capacity"] =
+        RuntimeMetric(hashTableStats.capacity);
+    lockedStats->runtimeStats["hashtable.numRehashes"] =
+        RuntimeMetric(hashTableStats.numRehashes);
+    lockedStats->runtimeStats["hashtable.numDistinct"] =
+        RuntimeMetric(hashTableStats.numDistinct);
+    if (hashTableStats.numTombstones != 0) {
+      lockedStats->runtimeStats["hashtable.numTombstones"] =
+          RuntimeMetric(hashTableStats.numTombstones);
+    }
   }
 
   // NOTE: we should not trigger partial output flush in case of global

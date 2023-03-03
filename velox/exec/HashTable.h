@@ -49,6 +49,14 @@ struct HashLookup {
   std::vector<vector_size_t> newGroups;
 };
 
+struct HashTableStats {
+  int64_t capacity{0};
+  int64_t numRehashes{0};
+  int64_t numDistinct{0};
+  /// Counts the number of tombstone table slots.
+  int64_t numTombstones{0};
+};
+
 class BaseHashTable {
  public:
   using normalized_key_t = uint64_t;
@@ -169,12 +177,20 @@ class BaseHashTable {
   /// be used for flushing a partial group by, for example.
   virtual void clear() = 0;
 
+  /// Returns the capacity of the internal hash table which is number of rows
+  /// it can stores in a group by or hash join build.
+  virtual uint64_t capacity() const = 0;
+
   /// Returns the number of rows in a group by or hash join build
   /// side. This is used for sizing the internal hash table.
   virtual uint64_t numDistinct() const = 0;
 
-  // Returns table growth in bytes after adding 'numNewDistinct' distinct
-  // entries. This only concerns the hash table, not the payload rows.
+  /// Return a number of current stats that can help with debugging and
+  /// profiling.
+  virtual HashTableStats stats() const = 0;
+
+  /// Returns table growth in bytes after adding 'numNewDistinct' distinct
+  /// entries. This only concerns the hash table, not the payload rows.
   virtual uint64_t hashTableSizeIncrease(int32_t numNewDistinct) const = 0;
 
   /// Returns true if the hash table contains rows with duplicate keys.
@@ -291,7 +307,7 @@ class HashTable : public BaseHashTable {
   // non-interleaved. Interleaved tables are slightly smaller and are
   // more local since half the time the tag and corresponding payload
   // pointer are in the same cache line.
-  static constexpr bool kInterleaveRows = true;
+  static constexpr bool kInterleaveRows = false;
 
   // size of a group of 16 tags and 16 48-bit pointers to the
   // corresponding rows. Applies to interleaved mode.
@@ -376,16 +392,25 @@ class HashTable : public BaseHashTable {
 
   int64_t allocatedBytes() const override {
     // for each row: 1 byte per tag + sizeof(Entry) per table entry + memory
-    // allocated with MappedMemory for fixed-width rows and strings.
-    return (1 + sizeof(char*)) * size_ + rows_->allocatedBytes();
+    // allocated with MemoryAllocator for fixed-width rows and strings.
+    return (1 + sizeof(char*)) * capacity_ + rows_->allocatedBytes();
   }
 
   HashStringAllocator* FOLLY_NULLABLE stringAllocator() override {
     return &rows_->stringAllocator();
   }
 
+  uint64_t capacity() const override {
+    return capacity_;
+  }
+
   uint64_t numDistinct() const override {
     return numDistinct_;
+  }
+
+  HashTableStats stats() const override {
+    return HashTableStats{
+        capacity_, numRehashes_, numDistinct_, numTombstones_};
   }
 
   bool hasDuplicateKeys() const override {
@@ -418,13 +443,13 @@ class HashTable : public BaseHashTable {
     if (numDistinct_ + numNewDistinct > rehashSize()) {
       // If rehashed, the table adds size_ entries (i.e. doubles),
       // adding one pointer and one tag byte for each new position.
-      return size_ * (sizeof(void*) + 1);
+      return capacity_ * (sizeof(void*) + 1);
     }
     return 0;
   }
 
   uint64_t rehashSize() const {
-    return rehashSize(size_ - numTombstones_);
+    return rehashSize(capacity_ - numTombstones_);
   }
 
   std::string toString() override;
@@ -437,6 +462,10 @@ class HashTable : public BaseHashTable {
   /// NOTE: the check cost is non-trivial and is mostly intended for testing
   /// purpose.
   void checkConsistency() const;
+
+  void testingSetHashMode(HashMode mode, int32_t numNew) {
+    setHashMode(mode, numNew);
+  }
 
  private:
   // When interleaving tags ad pointers we store 48 bits per pointer.
@@ -643,24 +672,6 @@ class HashTable : public BaseHashTable {
     return isJoinBuild_ ? 0 : 50;
   }
 
-  // Sets the size and dependent bit masks. The size must be a power
-  // of two and gives the number of tag bytes and the corresponding
-  // row pointers in the table.
-  void setSize(int32_t size) {
-    size_ = size;
-    if (kInterleaveRows) {
-      sizeMask_ = (size_ * sizeof(void*)) - 1;
-      sizeBits_ = __builtin_popcountll(sizeMask_);
-      tagOffsetMask_ = sizeMask_ & ~(kTagRowGroupSize - 1);
-    } else {
-      sizeMask_ = size_ - 1;
-      sizeBits_ = __builtin_popcountll(sizeMask_);
-      VELOX_CHECK_LE(
-          sizeBits_, 31, "Exceeding signed int range for hash table indices");
-      tagOffsetMask_ = sizeMask_ & ~(sizeof(TagVector) - 1);
-    }
-  }
-
   // Returns the offset in bytes of the tag word for 'hash'. The offset is
   // from 'tags_'.
   int32_t tagVectorOffset(uint64_t hash) const {
@@ -726,18 +737,19 @@ class HashTable : public BaseHashTable {
   int32_t nextOffset_;
   uint8_t* FOLLY_NULLABLE tags_ = nullptr;
   char* FOLLY_NULLABLE* FOLLY_NULLABLE table_ = nullptr;
-  memory::MemoryAllocator::ContiguousAllocation tableAllocation_;
-  int64_t size_ = 0;
-  int64_t sizeMask_ = 0;
-
+  memory::ContiguousAllocation tableAllocation_;
+  int64_t capacity_{0};
+  int64_t sizeMask_{0};
   // Mask to and to hash number to get offset of the corresponding
   // tag vector from the start of the tag vectors array. For
   // interleaved mode, the offset is in the combined tags/row pointers
   // array.
   int64_t tagOffsetMask_{0};
-  int64_t numDistinct_ = 0;
-  // Counts the number of tombstone table slots.
-  int64_t numTombstones_ = 0;
+  int64_t numDistinct_{0};
+  /// Counts the number of tombstone table slots.
+  int64_t numTombstones_{0};
+  /// Counts the number of rehash() calls.
+  int64_t numRehashes_{0};
   HashMode hashMode_ = HashMode::kArray;
   // Owns the memory of multiple build side hash join tables that are
   // combined into a single probe hash table.

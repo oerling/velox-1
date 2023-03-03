@@ -266,13 +266,13 @@ PlanBuilder& PlanBuilder::filter(const std::string& filter) {
 }
 
 PlanBuilder& PlanBuilder::tableWrite(
-    const std::vector<std::string>& columnNames,
+    const std::vector<std::string>& tableColumnNames,
     const std::shared_ptr<core::InsertTableHandle>& insertHandle,
-    WriteProtocol::CommitStrategy commitStrategy,
+    CommitStrategy commitStrategy,
     const std::string& rowCountColumnName) {
   return tableWrite(
       planNode_->outputType(),
-      columnNames,
+      tableColumnNames,
       insertHandle,
       commitStrategy,
       rowCountColumnName);
@@ -282,7 +282,7 @@ PlanBuilder& PlanBuilder::tableWrite(
     const RowTypePtr& inputColumns,
     const std::vector<std::string>& tableColumnNames,
     const std::shared_ptr<core::InsertTableHandle>& insertHandle,
-    WriteProtocol::CommitStrategy commitStrategy,
+    CommitStrategy commitStrategy,
     const std::string& rowCountColumnName) {
   auto outputType = ROW({rowCountColumnName}, {BIGINT()});
   planNode_ = std::make_shared<core::TableWriteNode>(
@@ -895,7 +895,8 @@ PlanBuilder& PlanBuilder::hashJoin(
     const core::PlanNodePtr& build,
     const std::string& filter,
     const std::vector<std::string>& outputLayout,
-    core::JoinType joinType) {
+    core::JoinType joinType,
+    bool nullAware) {
   VELOX_CHECK_EQ(leftKeys.size(), rightKeys.size());
 
   auto leftType = planNode_->outputType();
@@ -929,6 +930,7 @@ PlanBuilder& PlanBuilder::hashJoin(
   planNode_ = std::make_shared<core::HashJoinNode>(
       nextPlanNodeId(),
       joinType,
+      nullAware,
       leftKeyFields,
       rightKeyFields,
       std::move(filterExpr),

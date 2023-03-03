@@ -359,11 +359,15 @@ class SelectiveColumnReader {
     initTimeClocks_ = 0;
   }
 
-  virtual bool rowGroupMatches(uint32_t rowGroupId) const;
+  /// Moves the adaptation encoded in ScanSpec from 'other' to 'this'.
+  virtual void moveScanSpec(SelectiveColumnReader& /*other*/) {
+    VELOX_NYI();
+  }
 
-  virtual std::vector<uint32_t> filterRowGroups(
+  virtual void filterRowGroups(
       uint64_t rowGroupSize,
-      const dwio::common::StatsContext& context) const;
+      const dwio::common::StatsContext& context,
+      FormatData::FilterRowGroupsResult&) const;
 
   raw_vector<int32_t>& innerNonNullRows() {
     return innerNonNullRows_;
@@ -480,7 +484,7 @@ class SelectiveColumnReader {
   void getFlatValues(
       RowSet rows,
       VectorPtr* FOLLY_NONNULL result,
-      const TypePtr& type = CppToType<TVector>::create(),
+      const TypePtr& type,
       bool isFinal = false);
 
   template <typename T, typename TVector>

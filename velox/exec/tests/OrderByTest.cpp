@@ -170,11 +170,11 @@ class OrderByTest : public OperatorTestBase {
           {core::QueryConfig::kTestingSpillPct, "100"},
           {core::QueryConfig::kSpillEnabled, "true"},
           {core::QueryConfig::kOrderBySpillEnabled, "true"},
-          {core::QueryConfig::kSpillPath, spillDirectory->path},
       });
       CursorParameters params;
       params.planNode = planNode;
       params.queryCtx = queryCtx;
+      params.spillDirectory = spillDirectory->path;
       auto task = assertQueryOrdered(params, duckDbSql, sortingKeys);
       auto inputRows = toPlanStats(task->taskStats()).at(orderById).inputRows;
       if (inputRows > 0) {
@@ -186,6 +186,7 @@ class OrderByTest : public OperatorTestBase {
       } else {
         EXPECT_EQ(0, spilledStats(*task).spilledBytes);
       }
+      OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
     }
   }
 };
@@ -330,10 +331,10 @@ TEST_F(OrderByTest, varfields) {
 
 TEST_F(OrderByTest, unknown) {
   vector_size_t size = 1'000;
-  auto vector = makeRowVector(
-      {makeFlatVector<int64_t>(size, [](auto row) { return row % 7; }),
-       BaseVector::createConstant(
-           variant(TypeKind::UNKNOWN), size, pool_.get())});
+  auto vector = makeRowVector({
+      makeFlatVector<int64_t>(size, [](auto row) { return row % 7; }),
+      BaseVector::createNullConstant(UNKNOWN(), size, pool()),
+  });
 
   // Exclude "UNKNOWN" column as DuckDB doesn't understand UNKNOWN type
   createDuckDbTable(
@@ -428,11 +429,10 @@ TEST_F(OrderByTest, spill) {
   auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   constexpr int64_t kMaxBytes = 20LL << 20; // 20 MB
   queryCtx->pool()->setMemoryUsageTracker(
-      memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
+      memory::MemoryUsageTracker::create(kMaxBytes));
   // Set 'kSpillableReservationGrowthPct' to an extreme large value to trigger
   // disk spilling by failed memory growth reservation.
   queryCtx->setConfigOverridesUnsafe({
-      {core::QueryConfig::kSpillPath, spillDirectory->path},
       {core::QueryConfig::kSpillEnabled, "true"},
       {core::QueryConfig::kOrderBySpillEnabled, "true"},
       {core::QueryConfig::kSpillableReservationGrowthPct, "1000"},
@@ -440,6 +440,7 @@ TEST_F(OrderByTest, spill) {
   CursorParameters params;
   params.planNode = plan;
   params.queryCtx = queryCtx;
+  params.spillDirectory = spillDirectory->path;
   auto task = assertQueryOrdered(
       params, "SELECT * FROM tmp ORDER BY c0 ASC NULLS LAST", {0});
   auto stats = task->taskStats().pipelineStats;
@@ -448,6 +449,7 @@ TEST_F(OrderByTest, spill) {
   EXPECT_LT(0, stats[0].operatorStats[1].spilledBytes);
   EXPECT_EQ(1, stats[0].operatorStats[1].spilledPartitions);
   EXPECT_EQ(2, stats[0].operatorStats[1].spilledFiles);
+  OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
 }
 
 TEST_F(OrderByTest, spillWithMemoryLimit) {
@@ -480,7 +482,7 @@ TEST_F(OrderByTest, spillWithMemoryLimit) {
     auto tempDirectory = exec::test::TempDirectoryPath::create();
     auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     queryCtx->pool()->setMemoryUsageTracker(
-        memory::MemoryUsageTracker::create(kMaxBytes, 0, kMaxBytes));
+        memory::MemoryUsageTracker::create(kMaxBytes));
     auto results =
         AssertQueryBuilder(
             PlanBuilder()
@@ -496,16 +498,16 @@ TEST_F(OrderByTest, spillWithMemoryLimit) {
                 .orderBy({fmt::format("{} ASC NULLS LAST", "c0")}, false)
                 .planNode())
             .queryCtx(queryCtx)
-            .config(QueryConfig::kSpillPath, tempDirectory->path)
+            .spillDirectory(tempDirectory->path)
             .config(core::QueryConfig::kSpillEnabled, "true")
             .config(core::QueryConfig::kOrderBySpillEnabled, "true")
             .config(
                 QueryConfig::kOrderBySpillMemoryThreshold,
                 std::to_string(testData.orderByMemLimit))
-            .config(QueryConfig::kSpillPath, tempDirectory->path)
             .assertResults(results);
 
     auto stats = task->taskStats().pipelineStats;
     ASSERT_EQ(testData.expectSpill, stats[0].operatorStats[1].spilledBytes > 0);
+    OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
   }
 }

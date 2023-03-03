@@ -94,7 +94,9 @@ class Aggregate {
     rowSizeOffset_ = rowSizeOffset;
   }
 
-  // Initializes null flags and accumulators for newly encountered groups.
+  // Initializes null flags and accumulators for newly encountered groups.  This
+  // function should be called only once for each group.
+  //
   // @param groups Pointers to the start of the new group rows.
   // @param indices Indices into 'groups' of the new entries.
   virtual void initializeNewGroups(
@@ -174,10 +176,6 @@ class Aggregate {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) = 0;
-
-  // Finalizes the state in groups. Defaults to no op for cases like
-  // sum and max.
-  virtual void finalize(char** groups, int32_t numGroups) = 0;
 
   // Extracts final results (used for final and single aggregations).
   // @param groups Pointers to the start of the group rows.

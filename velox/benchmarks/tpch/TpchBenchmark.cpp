@@ -77,7 +77,20 @@ void printResults(const std::vector<RowVectorPtr>& results) {
 }
 } // namespace
 
-DEFINE_string(data_path, "", "Root path of TPC-H data");
+DEFINE_string(
+    data_path,
+    "",
+    "Root path of TPC-H data. Data layout must follow Hive-style partitioning. "
+    "Example layout for '-data_path=/data/tpch10'\n"
+    "       /data/tpch10/customer\n"
+    "       /data/tpch10/lineitem\n"
+    "       /data/tpch10/nation\n"
+    "       /data/tpch10/orders\n"
+    "       /data/tpch10/part\n"
+    "       /data/tpch10/partsupp\n"
+    "       /data/tpch10/region\n"
+    "       /data/tpch10/supplier\n");
+
 DEFINE_int32(
     run_query_verbose,
     -1,
@@ -106,16 +119,15 @@ class TpchBenchmark {
   void initialize() {
     if (FLAGS_cache_gb) {
       int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
-      memory::MmapAllocatorOptions options;
+      memory::MmapAllocator::Options options;
       options.capacity = memoryBytes;
       options.useMmapArena = true;
       options.mmapArenaCapacityRatio = 1;
 
       auto allocator = std::make_shared<memory::MmapAllocator>(options);
-      mappedMemory_ = std::make_shared<cache::AsyncDataCache>(
+      allocator_ = std::make_shared<cache::AsyncDataCache>(
           allocator, memoryBytes, nullptr);
-
-      memory::MappedMemory::setDefaultInstance(mappedMemory_.get());
+      memory::MemoryAllocator::setDefaultInstance(allocator_.get());
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
@@ -127,10 +139,12 @@ class TpchBenchmark {
       parquet::registerParquetReaderFactory(parquet::ParquetReaderType::DUCKDB);
     }
     dwrf::registerDwrfReaderFactory();
+    ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
+
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, nullptr);
+            ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
   }
 
@@ -169,11 +183,12 @@ class TpchBenchmark {
       }
     } catch (const std::exception& e) {
       LOG(ERROR) << "Query terminated with: " << e.what();
-      return {nullptr, {}};
+      return {nullptr, std::vector<RowVectorPtr>()};
     }
   }
 
-  std::shared_ptr<memory::MappedMemory> mappedMemory_;
+  std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
+  std::shared_ptr<memory::MemoryAllocator> allocator_;
 };
 
 TpchBenchmark benchmark;
@@ -244,6 +259,11 @@ BENCHMARK(q16) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q17) {
+  const auto planContext = queryBuilder->getQueryPlan(17);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q18) {
   const auto planContext = queryBuilder->getQueryPlan(18);
   benchmark.run(planContext);
@@ -254,12 +274,25 @@ BENCHMARK(q19) {
   benchmark.run(planContext);
 }
 
+BENCHMARK(q20) {
+  const auto planContext = queryBuilder->getQueryPlan(20);
+  benchmark.run(planContext);
+}
+
+BENCHMARK(q21) {
+  const auto planContext = queryBuilder->getQueryPlan(21);
+  benchmark.run(planContext);
+}
+
 BENCHMARK(q22) {
   const auto planContext = queryBuilder->getQueryPlan(22);
   benchmark.run(planContext);
 }
 
 int main(int argc, char** argv) {
+  std::string usage(
+      "This program benchmarks TPC-H queries. Run 'velox_tpch_benchmark -helpon=Tpchbenchmark' for available options.\n");
+  gflags::SetUsageMessage(usage);
   folly::init(&argc, &argv, false);
   benchmark.initialize();
   queryBuilder =

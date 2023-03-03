@@ -328,7 +328,7 @@ ExprPtr tryFoldIfConstant(const ExprPtr& expr, Scope* scope) {
     // If not, in case this expression is never hit at execution time (for
     // instance, if other arguments are all null in a function with default null
     // behavior), the query won't fail.
-    catch (const std::exception&) {
+    catch (const VeloxUserError&) {
     }
   }
   return expr;
@@ -361,8 +361,11 @@ ExprPtr compileExpression(
   if (alreadyCompiled) {
     if (!alreadyCompiled->isMultiplyReferenced()) {
       scope->exprSet->addToReset(alreadyCompiled);
+      alreadyCompiled->setMultiplyReferenced();
+      // A property of this expression changed, namely isMultiplyReferenced_,
+      // that affects metadata, so we re-compute it.
+      alreadyCompiled->computeMetadata();
     }
-    alreadyCompiled->setMultiplyReferenced();
     return alreadyCompiled;
   }
 
@@ -379,11 +382,13 @@ ExprPtr compileExpression(
         resultType, std::move(compiledInputs), trackCpuUsage);
   } else if (auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get())) {
     VELOX_CHECK(!compiledInputs.empty());
-    result = std::make_shared<CastExpr>(
-        resultType,
-        std::move(compiledInputs[0]),
-        trackCpuUsage,
-        cast->nullOnFailure());
+    auto castExpr = std::make_shared<CastExpr>(
+        resultType, std::move(compiledInputs[0]), trackCpuUsage);
+    if (cast->nullOnFailure()) {
+      result = getSpecialForm("try", resultType, {castExpr}, trackCpuUsage);
+    } else {
+      result = castExpr;
+    }
   } else if (auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get())) {
     if (auto specialForm = getSpecialForm(
             call->name(),
@@ -409,7 +414,7 @@ ExprPtr compileExpression(
           "Found incompatible return types for '{}' ({} vs. {}) "
           "for input types ({}).",
           call->name(),
-          metadata.returnType(),
+          simpleFunctionEntry->type(),
           resultType,
           folly::join(", ", inputTypes));
       auto func = simpleFunctionEntry->createFunction()->createVectorFunction(
@@ -421,10 +426,35 @@ ExprPtr compileExpression(
           call->name(),
           trackCpuUsage);
     } else {
-      VELOX_FAIL(
-          "Scalar function not registered: {} ({})",
-          call->name(),
-          folly::join(", ", inputTypes));
+      const auto& functionName = call->name();
+      auto vectorFunctionSignatures = getVectorFunctionSignatures(functionName);
+      auto simpleFunctionSignatures =
+          SimpleFunctions().getFunctionSignatures(functionName);
+      std::vector<std::string> signatures;
+
+      if (vectorFunctionSignatures.has_value()) {
+        for (const auto& signature : vectorFunctionSignatures.value()) {
+          signatures.push_back(fmt::format("({})", signature->toString()));
+        }
+      }
+
+      for (const auto& signature : simpleFunctionSignatures) {
+        signatures.push_back(fmt::format("({})", signature->toString()));
+      }
+
+      if (signatures.empty()) {
+        VELOX_FAIL(
+            "Scalar function name not registered: {}, called with arguments: ({}).",
+            call->name(),
+            folly::join(", ", inputTypes));
+      } else {
+        VELOX_FAIL(
+            "Scalar function {} not registered with arguments: ({}). "
+            "Found function registered with the following signatures:\n{}",
+            call->name(),
+            folly::join(", ", inputTypes),
+            folly::join("\n", signatures));
+      }
     }
   } else if (
       auto access =
@@ -442,17 +472,7 @@ ExprPtr compileExpression(
   } else if (
       auto constant =
           dynamic_cast<const core::ConstantTypedExpr*>(expr.get())) {
-    if (constant->hasValueVector()) {
-      result = std::make_shared<ConstantExpr>(constant->valueVector());
-    } else {
-      if (constant->value().isNull()) {
-        result = std::make_shared<ConstantExpr>(
-            BaseVector::createNullConstant(constant->type(), 1, pool));
-      } else {
-        result = std::make_shared<ConstantExpr>(
-            BaseVector::createConstant(constant->value(), 1, pool));
-      }
-    }
+    result = std::make_shared<ConstantExpr>(constant->toConstantVector(pool));
   } else if (
       auto lambda = dynamic_cast<const core::LambdaTypedExpr*>(expr.get())) {
     result = compileLambda(

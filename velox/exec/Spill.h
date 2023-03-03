@@ -56,6 +56,11 @@ class SpillInput : public ByteStream {
 /// Represents a spill file that is first in write mode and then
 /// turns into a source of spilled RowVectors. Owns a file system file that
 /// contains the spilled data and is live for the duration of 'this'.
+
+/// NOTE: The class will not delete spill file upon destruction, so the user
+/// needs to remove the unused spill files at some point later. For example, a
+/// query Task deletes all the generated spill files in one operation using
+/// rmdir() call.
 class SpillFile {
  public:
   SpillFile(
@@ -76,8 +81,6 @@ class SpillFile {
         sortCompareFlags_.empty() ||
         sortCompareFlags_.size() == numSortingKeys_);
   }
-
-  ~SpillFile();
 
   int32_t numSortingKeys() const {
     return numSortingKeys_;
@@ -158,9 +161,8 @@ class SpillFileList {
   /// Constructs a set of spill files. 'type' is a RowType describing the
   /// content. 'numSortingKeys' is the number of leading columns on which the
   /// data is sorted. 'path' is a file path prefix. ' 'targetFileSize' is the
-  /// target byte size of a single file in the file set. 'pool' and
-  /// 'mappedMemory' are used for buffering and constructing the result data
-  /// read from 'this'.
+  /// target byte size of a single file in the file set. 'pool' is used for
+  /// buffering and constructing the result data read from 'this'.
   ///
   /// When writing sorted spill runs, the caller is responsible for buffering
   /// and sorting the data. write is called multiple times, followed by flush().
@@ -541,14 +543,13 @@ using SpillPartitionSet =
 /// by. This has one SpillFileList per partition of spill data.
 class SpillState {
  public:
-  // Constructs a SpillState. 'type' is the content RowType. 'path' is
-  // the file system path prefix. 'bits' is the hash bit field for
-  // partitioning data between files. This also gives the maximum
-  // number of partitions. 'numSortingKeys' is the number of leading columns
-  // on which the data is sorted, 0 if only hash partitioning is used.
-  // 'targetFileSize' is the target size of a single
-  // file.  'pool' and 'mappedMemory' own
-  // the memory for state and results.
+  /// Constructs a SpillState. 'type' is the content RowType. 'path' is the file
+  /// system path prefix. 'bits' is the hash bit field for partitioning data
+  /// between files. This also gives the maximum number of partitions.
+  /// 'numSortingKeys' is the number of leading columns on which the data is
+  /// sorted, 0 if only hash partitioning is used. 'targetFileSize' is the
+  /// target size of a single file.  'pool' owns the memory for state and
+  /// results.
   SpillState(
       const std::string& path,
       int32_t maxPartitions,

@@ -251,6 +251,14 @@ void TableScanNode::addDetails(std::stringstream& stream) const {
   stream << tableHandle_->toString();
 }
 
+const std::vector<PlanNodePtr>& ArrowStreamNode::sources() const {
+  return kEmptySources;
+}
+
+void ArrowStreamNode::addDetails(std::stringstream& stream) const {
+  // Nothing to add.
+}
+
 const std::vector<PlanNodePtr>& ExchangeNode::sources() const {
   return kEmptySources;
 }
@@ -377,8 +385,7 @@ AbstractJoinNode::AbstractJoinNode(
   // side.
   bool outputMayIncludeRightColumns =
       !(core::isLeftSemiFilterJoin(joinType) ||
-        core::isLeftSemiProjectJoin(joinType) || core::isAntiJoin(joinType) ||
-        core::isNullAwareAntiJoin(joinType));
+        core::isLeftSemiProjectJoin(joinType) || core::isAntiJoin(joinType));
 
   for (auto i = 0; i < numOutputColumms; ++i) {
     auto name = outputType_->nameOf(i);
@@ -412,6 +419,13 @@ void AbstractJoinNode::addDetails(std::stringstream& stream) const {
 
   if (filter_) {
     stream << ", filter: " << filter_->toString();
+  }
+}
+
+void HashJoinNode::addDetails(std::stringstream& stream) const {
+  AbstractJoinNode::addDetails(stream);
+  if (nullAware_) {
+    stream << ", null aware";
   }
 }
 

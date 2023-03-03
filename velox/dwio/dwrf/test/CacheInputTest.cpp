@@ -125,7 +125,7 @@ class CacheTest : public testing::Test {
           executor_.get());
       groupStats_ = &ssd->groupStats();
     }
-    memory::MmapAllocatorOptions options;
+    memory::MmapAllocator::Options options;
     options.capacity = maxBytes;
     cache_ = std::make_shared<AsyncDataCache>(
         std::make_shared<memory::MmapAllocator>(options),
@@ -474,7 +474,7 @@ TEST_F(CacheTest, window) {
   auto cacheInput = dynamic_cast<CacheInputStream*>(stream.get());
   EXPECT_TRUE(cacheInput != nullptr);
   auto maxSize =
-      cache_->sizeClasses().back() * memory::MemoryAllocator::kPageSize;
+      cache_->sizeClasses().back() * memory::AllocationTraits::kPageSize;
   const void* buffer;
   int32_t size;
   int32_t numRead = 0;

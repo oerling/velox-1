@@ -50,11 +50,12 @@ HashBuild::HashBuild(
     : Operator(driverCtx, nullptr, operatorId, joinNode->id(), "HashBuild"),
       joinNode_(std::move(joinNode)),
       joinType_{joinNode_->joinType()},
+      nullAware_{joinNode_->isNullAware()},
       joinBridge_(operatorCtx_->task()->getHashJoinBridgeLocked(
           operatorCtx_->driverCtx()->splitGroupId,
           planNodeId())),
       spillConfig_(
-          isSpillAllowed()
+          joinNode_->canSpill(driverCtx->queryConfig())
               ? operatorCtx_->makeSpillConfig(Spiller::Type::kHashJoinBuild)
               : std::nullopt),
       spillGroup_(
@@ -101,7 +102,7 @@ HashBuild::HashBuild(
   setupTable();
   setupSpiller();
 
-  if (isAntiJoins(joinType_) && joinNode_->filter()) {
+  if (isAntiJoin(joinType_) && joinNode_->filter()) {
     setupFilterForAntiJoins(keyChannelMap);
   }
 }
@@ -137,12 +138,12 @@ void HashBuild::setupTable() {
     // there is a match. Hence, no need to store entries with duplicate keys.
     const bool dropDuplicates = !joinNode_->filter() &&
         (joinNode_->isLeftSemiFilterJoin() ||
-         joinNode_->isLeftSemiProjectJoin() || isAntiJoins(joinType_));
+         joinNode_->isLeftSemiProjectJoin() || isAntiJoin(joinType_));
     // Right semi join needs to tag build rows that were probed.
     const bool needProbedFlag = joinNode_->isRightSemiFilterJoin();
-    if (isNullAwareAntiJoinWithFilter(joinNode_)) {
+    if (isLeftNullAwareJoinWithFilter(joinNode_)) {
       // We need to check null key rows in build side in case of null-aware anti
-      // join with filter set.
+      // or left semi project join with filter set.
       table_ = HashTable<false>::createForJoin(
           std::move(keyHashers),
           dependentTypes,
@@ -295,7 +296,7 @@ void HashBuild::addInput(RowVectorPtr input) {
 
   if (!isRightJoin(joinType_) && !isFullJoin(joinType_) &&
       !isRightSemiProjectJoin(joinType_) &&
-      !isNullAwareAntiJoinWithFilter(joinNode_)) {
+      !isLeftNullAwareJoinWithFilter(joinNode_)) {
     deselectRowsWithNulls(hashers, activeRows_);
   }
 
@@ -304,15 +305,13 @@ void HashBuild::addInput(RowVectorPtr input) {
         *input->childAt(dependentChannels_[i])->loadedVector(), activeRows_);
   }
 
-  if (isAntiJoins(joinType_) && joinNode_->filter()) {
+  if (isAntiJoin(joinType_) && joinNode_->filter()) {
     if (filterPropagatesNulls_) {
       removeInputRowsForAntiJoinFilter();
     }
-  } else if (
-      (isNullAwareAntiJoin(joinType_) || isLeftSemiProjectJoin(joinType_)) &&
-      activeRows_.countSelected() < input->size()) {
+  } else if (nullAware_ && activeRows_.countSelected() < input->size()) {
     joinHasNullKeys_ = true;
-    if (isNullAwareAntiJoin(joinType_)) {
+    if (isAntiJoin(joinType_)) {
       // Null-aware anti join with no extra filter returns no rows if build side
       // has nulls in join keys. Hence, we can stop processing on first null.
       noMoreInput();
@@ -426,9 +425,9 @@ bool HashBuild::reserveMemory(const RowVectorPtr& input) {
   const auto increment =
       rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0);
 
-  auto& tracker = pool()->getMemoryUsageTracker();
+  auto tracker = pool()->getMemoryUsageTracker();
   // There must be at least 2x the increments in reservation.
-  if (tracker->getAvailableReservation() > 2 * increment) {
+  if (tracker->availableReservation() > 2 * increment) {
     return true;
   }
 
@@ -437,8 +436,8 @@ bool HashBuild::reserveMemory(const RowVectorPtr& input) {
   // 'spillableReservationGrowthPct_' of the current reservation.
   auto targetIncrement = std::max<int64_t>(
       increment * 2,
-      tracker->getCurrentUserBytes() *
-          spillConfig()->spillableReservationGrowthPct / 100);
+      tracker->currentBytes() * spillConfig()->spillableReservationGrowthPct /
+          100);
   if (tracker->maybeReserve(targetIncrement)) {
     return true;
   }
@@ -690,7 +689,7 @@ bool HashBuild::finishHashBuild() {
   otherTables.reserve(peers.size());
   SpillPartitionSet spillPartitions;
   Spiller::Stats spillStats;
-  if (joinHasNullKeys_ && isNullAwareAntiJoin(joinType_)) {
+  if (joinHasNullKeys_ && (isAntiJoin(joinType_) && nullAware_)) {
     joinBridge_->setAntiJoinHasNullKeys();
   } else {
     for (auto& peer : peers) {
@@ -699,7 +698,7 @@ bool HashBuild::finishHashBuild() {
       VELOX_CHECK(build);
       if (build->joinHasNullKeys_) {
         joinHasNullKeys_ = true;
-        if (isNullAwareAntiJoin(joinType_)) {
+        if (isAntiJoin(joinType_) && nullAware_) {
           break;
         }
       }
@@ -710,7 +709,7 @@ bool HashBuild::finishHashBuild() {
       }
     }
 
-    if (joinHasNullKeys_ && isNullAwareAntiJoin(joinType_)) {
+    if (joinHasNullKeys_ && (isAntiJoin(joinType_) && nullAware_)) {
       joinBridge_->setAntiJoinHasNullKeys();
     } else {
       if (spiller_ != nullptr) {
@@ -733,10 +732,14 @@ bool HashBuild::finishHashBuild() {
         }
       }
 
-      const bool hasOthers = !otherTables.empty();
+      // TODO: re-enable parallel join build with spilling triggered after
+      // https://github.com/facebookincubator/velox/issues/3567 is fixed.
+      const bool allowPrallelJoinBuild =
+          !otherTables.empty() && spillPartitions.empty();
       table_->prepareJoinTable(
           std::move(otherTables),
-          hasOthers ? operatorCtx_->task()->queryCtx()->executor() : nullptr);
+          allowPrallelJoinBuild ? operatorCtx_->task()->queryCtx()->executor()
+                                : nullptr);
 
       addRuntimeStats();
       if (joinBridge_->setHashTable(
@@ -820,9 +823,11 @@ void HashBuild::processSpillInput() {
 void HashBuild::addRuntimeStats() {
   // Report range sizes and number of distinct values for the join keys.
   const auto& hashers = table_->hashers();
+  const auto hashTableStats = table_->stats();
   uint64_t asRange;
   uint64_t asDistinct;
   auto lockedStats = stats_.wlock();
+
   for (auto i = 0; i < hashers.size(); i++) {
     hashers[i]->cardinality(0, asRange, asDistinct);
     if (asRange != VectorHasher::kRangeTooLarge) {
@@ -834,6 +839,18 @@ void HashBuild::addRuntimeStats() {
           fmt::format("distinctKey{}", i), RuntimeCounter(asDistinct));
     }
   }
+
+  lockedStats->runtimeStats["hashtable.capacity"] =
+      RuntimeMetric(hashTableStats.capacity);
+  lockedStats->runtimeStats["hashtable.numRehashes"] =
+      RuntimeMetric(hashTableStats.numRehashes);
+  lockedStats->runtimeStats["hashtable.numDistinct"] =
+      RuntimeMetric(hashTableStats.numDistinct);
+  if (hashTableStats.numTombstones != 0) {
+    lockedStats->runtimeStats["hashtable.numTombstones"] =
+        RuntimeMetric(hashTableStats.numTombstones);
+  }
+
   // Add max spilling level stats if spilling has been triggered.
   if (spiller_ != nullptr && spiller_->isAnySpilled()) {
     lockedStats->addRuntimeStat(

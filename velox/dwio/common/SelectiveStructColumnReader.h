@@ -35,11 +35,10 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
       VectorPtr& result,
       const uint64_t* incomingNulls) override;
 
-  std::vector<uint32_t> filterRowGroups(
+  void filterRowGroups(
       uint64_t rowGroupSize,
-      const dwio::common::StatsContext& context) const override;
-
-  bool rowGroupMatches(uint32_t rowGroupId) const override;
+      const dwio::common::StatsContext& context,
+      FormatData::FilterRowGroupsResult&) const override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
@@ -93,6 +92,11 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
   void setLoadableRows(RowSet rows) {
     setOutputRows(rows);
     inputRows_ = outputRows_;
+  }
+
+  void moveScanSpec(SelectiveColumnReader& other) override {
+    auto otherStruct = dynamic_cast<SelectiveStructColumnReaderBase*>(&other);
+    scanSpec_->moveAdaptationFrom(*otherStruct->scanSpec_);
   }
 
   const std::string& debugString() const {

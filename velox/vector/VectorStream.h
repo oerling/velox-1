@@ -40,7 +40,7 @@ class VectorSerializer {
       const folly::Range<const IndexRange*>& ranges) = 0;
 
   // Writes the contents to 'stream' in wire format
-  virtual void flush(OutputStream* FOLLY_NONNULL stream) = 0;
+  virtual void flush(OutputStream* stream) = 0;
 };
 
 class VectorSerde {
@@ -55,25 +55,27 @@ class VectorSerde {
   virtual void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t* FOLLY_NONNULL* FOLLY_NONNULL sizes) = 0;
+      vector_size_t** sizes) = 0;
 
   virtual std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,
       int32_t numRows,
-      StreamArena* FOLLY_NONNULL streamArena,
-      const Options* FOLLY_NULLABLE options = nullptr) = 0;
+      StreamArena* streamArena,
+      const Options* options = nullptr) = 0;
 
   virtual void deserialize(
-      ByteStream* FOLLY_NONNULL source,
-      velox::memory::MemoryPool* FOLLY_NONNULL pool,
+      ByteStream* source,
+      velox::memory::MemoryPool* pool,
       RowTypePtr type,
-      RowVectorPtr* FOLLY_NONNULL result,
-      const Options* FOLLY_NULLABLE options = nullptr) = 0;
+      RowVectorPtr* result,
+      const Options* options = nullptr) = 0;
 };
 
-bool registerVectorSerde(std::unique_ptr<VectorSerde> serde);
+void registerVectorSerde(std::unique_ptr<VectorSerde> serdeToRegister);
 
 bool isRegisteredVectorSerde();
+
+VectorSerde* getVectorSerde();
 
 class VectorStreamGroup : public StreamArena {
  public:
@@ -83,27 +85,27 @@ class VectorStreamGroup : public StreamArena {
   void createStreamTree(
       RowTypePtr type,
       int32_t numRows,
-      const VectorSerde::Options* FOLLY_NULLABLE options = nullptr);
+      const VectorSerde::Options* options = nullptr);
 
   static void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t* FOLLY_NONNULL* FOLLY_NONNULL sizes);
+      vector_size_t** sizes);
 
   void append(
       RowVectorPtr vector,
       const folly::Range<const IndexRange*>& ranges);
 
   // Writes the contents to 'stream' in wire format.
-  void flush(OutputStream* FOLLY_NONNULL stream);
+  void flush(OutputStream* stream);
 
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
-      ByteStream* FOLLY_NONNULL source,
-      velox::memory::MemoryPool* FOLLY_NONNULL pool,
+      ByteStream* source,
+      velox::memory::MemoryPool* pool,
       RowTypePtr type,
-      RowVectorPtr* FOLLY_NONNULL result,
-      const VectorSerde::Options* FOLLY_NULLABLE options = nullptr);
+      RowVectorPtr* result,
+      const VectorSerde::Options* options = nullptr);
 
  private:
   std::unique_ptr<VectorSerializer> serializer_;

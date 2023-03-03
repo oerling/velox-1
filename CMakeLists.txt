@@ -11,14 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-cmake_minimum_required(VERSION 3.11)
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
+cmake_minimum_required(VERSION 3.14)
+
+# the policy allows us to change options without caching
+cmake_policy(SET CMP0077 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
 # set the project name
 project(velox)
 
+list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/CMake")
+
 # Include our ThirdPartyToolchain dependencies macros
-include(ThirdpartyToolchain.cmake)
+include(ResolveDependency)
 
 set_with_default(VELOX_DEPENDENCY_SOURCE_DEFAULT VELOX_DEPENDENCY_SOURCE AUTO)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
@@ -32,17 +37,17 @@ option(
   VELOX_BUILD_MINIMAL
   "Build a minimal set of components only. This will override other build options."
   OFF)
-# option() always creats a BOOL variable so we have to use a normal cache
+# option() always creates a BOOL variable so we have to use a normal cache
 # variable with STRING type for this option.
 #
-# * AUTO: Try SYSTEM first fall back to
-# * BUNDLED SYSTEM Use installed dependencies via find_package
-# * BUNDLED Build dependencies from source
+# * AUTO: Try SYSTEM first fall back to BUNDLED.
+# * SYSTEM: Use installed dependencies via find_package.
+# * BUNDLED: Build dependencies from source.
 set(VELOX_DEPENDENCY_SOURCE
     ${VELOX_DEPENDENCY_SOURCE_DEFAULT}
     CACHE
       STRING
-      "Default source for all dependencies with source builds enabled. AUTO SYSTEM BUNDLED"
+      "Default source for all dependencies with source builds enabled: AUTO SYSTEM BUNDLED."
 )
 option(VELOX_ENABLE_DUCKDB "Build duckDB to enable differential testing." ON)
 option(VELOX_ENABLE_EXEC "Build exec." ON)
@@ -63,6 +68,7 @@ option(VELOX_ENABLE_S3 "Build S3 Connector" OFF)
 option(VELOX_ENABLE_HDFS "Build Hdfs Connector" OFF)
 option(VELOX_ENABLE_PARQUET "Enable Parquet support" OFF)
 option(VELOX_ENABLE_ARROW "Enable Arrow support" OFF)
+option(VELOX_ENABLE_CCACHE "Use ccache if installed." ON)
 
 option(VELOX_BUILD_TEST_UTILS "Builds Velox test utilities" OFF)
 option(VELOX_BUILD_PYTHON_PACKAGE "Builds Velox Python bindings" OFF)
@@ -123,10 +129,10 @@ endif()
 if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(VELOX_BUILD_TESTING OFF)
   set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
-  set(VELOX_ENABLE_DUCKDB OFF)
+  set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_EXPRESSION ON)
-  set(VELOX_ENABLE_PARSE OFF)
-  set(VELOX_ENABLE_EXEC OFF)
+  set(VELOX_ENABLE_PARSE ON)
+  set(VELOX_ENABLE_EXEC ON)
   set(VELOX_ENABLE_AGGREGATES OFF)
   set(VELOX_ENABLE_HIVE_CONNECTOR OFF)
   set(VELOX_ENABLE_TPCH_CONNECTOR OFF)
@@ -136,6 +142,21 @@ if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(VELOX_ENABLE_SUBSTRAIT OFF)
   set(VELOX_CODEGEN_SUPPORT OFF)
   set(VELOX_ENABLE_BENCHMARKS_BASIC OFF)
+endif()
+
+if(VELOX_ENABLE_CCACHE
+   AND NOT CMAKE_C_COMPILER_LAUNCHER
+   AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+
+  find_program(CCACHE_FOUND ccache)
+
+  if(CCACHE_FOUND)
+    message(STATUS "Using ccache: ${CCACHE_FOUND}")
+    set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_FOUND})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_FOUND})
+    # keep comments as they might matter to the compiler
+    set(ENV{CCACHE_COMMENTS} "1")
+  endif()
 endif()
 
 if(VELOX_ENABLE_S3)
@@ -217,6 +238,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SCRIPT_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D USE_VELOX_COMMON_BASE")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D HAS_UNCAUGHT_EXCEPTIONS")
+if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsigned-char")
+endif()
 
 # Under Ninja, we are able to designate certain targets large enough to require
 # restricted parallelism.
@@ -240,7 +264,9 @@ endif()
 if("${ENABLE_ALL_WARNINGS}")
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(KNOWN_COMPILER_SPECIFIC_WARNINGS
-        "-Wno-range-loop-analysis -Wno-mismatched-tags")
+        "-Wno-range-loop-analysis \
+         -Wno-mismatched-tags \
+         -Wno-nullability-completeness")
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set(KNOWN_COMPILER_SPECIFIC_WARNINGS
         "-Wno-implicit-fallthrough \
@@ -254,7 +280,8 @@ if("${ENABLE_ALL_WARNINGS}")
          -Wno-unused-result \
          -Wno-format-overflow \
          -Wno-strict-aliasing \
-         -Wno-type-limits")
+         -Wno-type-limits \
+         -Wno-stringop-overflow")
   endif()
 
   set(KNOWN_WARNINGS
@@ -271,20 +298,34 @@ message("FINAL CMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(Boost_USE_MULTITHREADED TRUE)
-find_package(
-  Boost
-  1.66.0
-  REQUIRED
-  program_options
-  context
-  filesystem
-  regex
-  thread
-  system
-  date_time
-  atomic)
-include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
+set_source(Boost)
+set_source(ICU)
+
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin" OR ${Boost_SOURCE} STREQUAL "BUNDLED")
+  if(${ICU_SOURCE} STREQUAL "BUNDLED")
+    resolve_dependency(ICU)
+    include_directories(${ICU_INCLUDE_DIRS})
+    link_directories(${ICU_LIBRARIES})
+  else()
+    if(ON_APPLE_M1)
+      set(CMAKE_PREFIX_PATH "/opt/homebrew/opt/icu4c" ${CMAKE_PREFIX_PATH})
+    else()
+      set(CMAKE_PREFIX_PATH "/usr/local/opt/icu4c" ${CMAKE_PREFIX_PATH})
+    endif()
+  endif()
+endif()
+
+set(BOOST_INCLUDE_LIBRARIES
+    atomic
+    context
+    date_time
+    filesystem
+    program_options
+    regex
+    system
+    thread)
+
+resolve_dependency(Boost 1.66.0 COMPONENTS ${BOOST_INCLUDE_LIBRARIES})
 
 # Range-v3 will be enable when the codegen code actually lands keeping it here
 # for reference. find_package(range-v3)
@@ -292,42 +333,40 @@ include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 find_package(gflags COMPONENTS shared)
 find_package(glog REQUIRED)
 
-find_library(FMT fmt)
+set_source(fmt)
+resolve_dependency(fmt)
 
 find_library(EVENT event)
 
 find_library(DOUBLE_CONVERSION double-conversion)
 
+# Required for boost.
+find_package(ZLIB)
+
 if(NOT ${VELOX_BUILD_MINIMAL})
   find_library(LZ4 lz4)
   find_library(LZO lzo2)
   find_library(ZSTD zstd)
-  find_package(ZLIB)
   find_library(SNAPPY snappy)
 endif()
 
 find_library(RE2 re2 REQUIRED)
 
-if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
-  if(ON_APPLE_M1)
-    set(CMAKE_PREFIX_PATH "/opt/homebrew/opt/icu4c" ${CMAKE_PREFIX_PATH})
-  else()
-    set(CMAKE_PREFIX_PATH "/usr/local/opt/icu4c" ${CMAKE_PREFIX_PATH})
-  endif()
-  find_package(ICU REQUIRED)
-  include_directories(${ICU_INCLUDE_DIRS})
-  link_directories("${ICU_INCLUDE_DIRS}/../lib")
-endif()
-
 if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(pybind11_SOURCE AUTO)
-  resolve_dependency(pybind11 REQUIRED_VERSION 2.10.0)
+  resolve_dependency(pybind11 2.10.0)
   add_subdirectory(pyvelox)
 endif()
 
 # Locate or build folly.
 set_source(folly)
 resolve_dependency(folly)
+
+# If we use BUNDLED boost we need to set this manually AFTER folly is configured
+if(NOT DEFINED Boost_LIBRARIES)
+  set(Boost_LIBRARIES ${BOOST_INCLUDE_LIBRARIES})
+  list(TRANSFORM Boost_LIBRARIES PREPEND Boost::)
+endif()
 
 set(FOLLY_WITH_DEPENDENCIES
     ${FOLLY_LIBRARIES}
@@ -356,7 +395,8 @@ include_directories(SYSTEM ${FOLLY_INCLUDE_DIRS})
 if(NOT ${VELOX_BUILD_MINIMAL})
   # Locate or build protobuf.
   set_source(Protobuf)
-  resolve_dependency(Protobuf REQUIRED_VERSION 3.21.4)
+  resolve_dependency(Protobuf 3.21.4)
+  include_directories(${Protobuf_INCLUDE_DIRS})
 endif()
 
 # GCC needs to link a library to enable std::filesystem.

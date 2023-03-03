@@ -63,6 +63,7 @@ std::string stringifyTruncatedElementList(
 std::shared_ptr<RowVector> RowVector::createEmpty(
     std::shared_ptr<const Type> type,
     velox::memory::MemoryPool* pool) {
+  VELOX_CHECK_NOT_NULL(type, "Vector creation requires a non-null type.");
   VELOX_CHECK(type->isRow());
   return std::static_pointer_cast<RowVector>(BaseVector::create(type, 0, pool));
 }
@@ -323,6 +324,7 @@ std::unique_ptr<SimpleVector<uint64_t>> RowVector::hashAll() const {
 }
 
 std::string RowVector::toString(vector_size_t index) const {
+  VELOX_CHECK_LT(index, length_, "Vector index should be less than length.");
   if (isNullAt(index)) {
     return "null";
   }
@@ -424,7 +426,6 @@ void ArrayVectorBase::copyRangesImpl(
         *targetValues);
   }
   auto setNotNulls = mayHaveNulls() || source->mayHaveNulls();
-  auto wantWidth = type()->isFixedWidth() ? type()->fixedElementsWidth() : 0;
   auto* mutableOffsets = offsets_->asMutable<vector_size_t>();
   auto* mutableSizes = sizes_->asMutable<vector_size_t>();
   vector_size_t childSize = targetValues->get()->size();
@@ -446,15 +447,6 @@ void ArrayVectorBase::copyRangesImpl(
       mutableSizes[range.targetIndex] = copySize;
 
       if (copySize > 0) {
-        // If we are populating a FixedSizeArray we validate here that
-        // the entries we are populating are the correct sizes.
-        if (wantWidth != 0) {
-          VELOX_CHECK_EQ(
-              copySize,
-              wantWidth,
-              "Invalid length element at wrappedIndex {}",
-              wrappedIndex);
-        }
         auto copyOffset = sourceArray->offsetAt(wrappedIndex);
         targetValues->get()->resize(childSize + copySize);
         targetValues->get()->copy(
@@ -486,17 +478,6 @@ void ArrayVectorBase::copyRangesImpl(
           vector_size_t copySize = sourceArray->sizeAt(wrappedIndex);
 
           if (copySize > 0) {
-            // If we are populating a FixedSizeArray we validate here that the
-            // entries we are populating are the correct sizes.
-            if (wantWidth != 0) {
-              VELOX_CHECK_EQ(
-                  copySize,
-                  wantWidth,
-                  "Invalid length element at index {}, wrappedIndex {}",
-                  i,
-                  wrappedIndex);
-            }
-
             auto copyOffset = sourceArray->offsetAt(wrappedIndex);
 
             // If we're copying two adjacent ranges, merge them.  This only
@@ -682,6 +663,7 @@ std::unique_ptr<SimpleVector<uint64_t>> ArrayVector::hashAll() const {
 }
 
 std::string ArrayVector::toString(vector_size_t index) const {
+  VELOX_CHECK_LT(index, length_, "Vector index should be less than length.");
   if (isNullAt(index)) {
     return "null";
   }
@@ -944,6 +926,7 @@ BufferPtr MapVector::elementIndices() const {
 }
 
 std::string MapVector::toString(vector_size_t index) const {
+  VELOX_CHECK_LT(index, length_, "Vector index should be less than length.");
   if (isNullAt(index)) {
     return "null";
   }

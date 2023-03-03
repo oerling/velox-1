@@ -87,7 +87,7 @@ class RowPartitions {
   int32_t size_{0};
 
   // Partition numbers. 1 byte each.
-  memory::MemoryAllocator::Allocation allocation_;
+  memory::Allocation allocation_;
 };
 
 // Packed representation of offset, null byte offset and null mask for
@@ -307,14 +307,15 @@ class RowContainer {
 
   /// Copies the 'probed' flags for the specified rows into 'result'.
   /// The 'result' is expected to be flat vector of type boolean.
-  /// Sets null in 'result' for rows with null keys.
-  /// If 'replaceFalseWithNull' is true, replaces the false probed
-  /// flag with null in 'result' for rows with no null keys. This is used for
-  /// right semi project join type when probe side has nulls in the join keys.
+  /// For rows with null keys, sets null in 'result' if 'setNullForNullKeysRow'
+  /// is true and false otherwise. For rows with 'false' probed flag, sets null
+  /// in 'result' if 'setNullForNonProbedRow' is true and false otherwise. This
+  /// is used for null aware and regular right semi project join types.
   void extractProbedFlags(
       const char* FOLLY_NONNULL const* FOLLY_NONNULL rows,
       int32_t numRows,
-      bool replaceFalseWithNull,
+      bool setNullForNullKeysRow,
+      bool setNullForNonProbedRow,
       const VectorPtr& result);
 
   static inline int32_t nullByte(int32_t nullOffset) {
@@ -355,13 +356,13 @@ class RowContainer {
       auto allocation = rows_.allocationAt(i);
       auto numRuns = allocation->numRuns();
       for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
-        memory::MemoryAllocator::PageRun run = allocation->runAt(runIndex);
+        memory::Allocation::PageRun run = allocation->runAt(runIndex);
         auto data = run.data<char>();
         int64_t limit;
         if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
           limit = rows_.currentOffset();
         } else {
-          limit = run.numPages() * memory::MemoryAllocator::kPageSize;
+          limit = run.numPages() * memory::AllocationTraits::kPageSize;
         }
         auto row = iter->rowOffset;
         while (row + rowSize <= limit) {
@@ -1088,6 +1089,13 @@ class RowContainer {
 };
 
 template <>
+inline UnscaledLongDecimal RowContainer::valueAt<UnscaledLongDecimal>(
+    const char* FOLLY_NONNULL group,
+    int32_t offset) {
+  return UnscaledLongDecimal::deserialize(group + offset);
+}
+
+template <>
 inline void RowContainer::storeWithNulls<TypeKind::ROW>(
     const DecodedVector& decoded,
     vector_size_t index,
@@ -1145,6 +1153,31 @@ inline void RowContainer::storeNoNulls<TypeKind::MAP>(
     char* FOLLY_NONNULL row,
     int32_t offset) {
   storeComplexType(decoded, index, row, offset);
+}
+
+template <>
+inline void RowContainer::storeWithNulls<TypeKind::LONG_DECIMAL>(
+    const DecodedVector& decoded,
+    vector_size_t index,
+    char* FOLLY_NONNULL row,
+    int32_t offset,
+    int32_t nullByte,
+    uint8_t nullMask) {
+  UnscaledLongDecimal::serialize(
+      decoded.valueAt<UnscaledLongDecimal>(index), row + offset);
+  if (decoded.isNullAt(index)) {
+    row[nullByte] |= nullMask;
+  }
+}
+
+template <>
+inline void RowContainer::storeNoNulls<TypeKind::LONG_DECIMAL>(
+    const DecodedVector& decoded,
+    vector_size_t index,
+    char* FOLLY_NONNULL row,
+    int32_t offset) {
+  UnscaledLongDecimal::serialize(
+      decoded.valueAt<UnscaledLongDecimal>(index), row + offset);
 }
 
 template <>

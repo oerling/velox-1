@@ -19,7 +19,6 @@
 #include <velox/core/PlanFragment.h>
 #include <velox/core/PlanNode.h>
 #include "velox/common/memory/Memory.h"
-#include "velox/connectors/WriteProtocol.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
 
@@ -235,22 +234,22 @@ class PlanBuilder {
       const RowTypePtr& inputColumns,
       const std::vector<std::string>& tableColumnNames,
       const std::shared_ptr<core::InsertTableHandle>& insertHandle,
-      connector::WriteProtocol::CommitStrategy commitStrategy =
-          connector::WriteProtocol::CommitStrategy::kNoCommit,
+      connector::CommitStrategy commitStrategy =
+          connector::CommitStrategy::kNoCommit,
       const std::string& rowCountColumnName = "rowCount");
 
-  /// Add a TableWriteNode assuming that input columns names match column names
-  /// in the target table.
+  /// Add a TableWriteNode assuming that input columns match the source node
+  /// columns in order.
   ///
-  /// @param columnNames A subset of input columns to write.
+  /// @param tableColumnNames Column names in the target table.
   /// @param insertHandle Connector-specific table handle.
   /// @param rowCountColumnName The name of the output column containing the
   /// number of rows written.
   PlanBuilder& tableWrite(
-      const std::vector<std::string>& columnNames,
+      const std::vector<std::string>& tableColumnNames,
       const std::shared_ptr<core::InsertTableHandle>& insertHandle,
-      connector::WriteProtocol::CommitStrategy commitStrategy =
-          connector::WriteProtocol::CommitStrategy::kNoCommit,
+      connector::CommitStrategy commitStrategy =
+          connector::CommitStrategy::kNoCommit,
       const std::string& rowCountColumnName = "rowCount");
 
   /// Add an AggregationNode representing partial aggregation with the
@@ -581,13 +580,16 @@ class PlanBuilder {
   /// @param outputLayout Output layout consisting of columns from probe and
   /// build sides.
   /// @param joinType Type of the join: inner, left, right, full, semi, or anti.
+  /// @param nullAware Applies to semi and anti joins. Indicates whether the
+  /// join follows IN (null-aware) or EXISTS (regular) semantic.
   PlanBuilder& hashJoin(
       const std::vector<std::string>& leftKeys,
       const std::vector<std::string>& rightKeys,
       const core::PlanNodePtr& build,
       const std::string& filter,
       const std::vector<std::string>& outputLayout,
-      core::JoinType joinType = core::JoinType::kInner);
+      core::JoinType joinType = core::JoinType::kInner,
+      bool nullAware = false);
 
   /// Add a MergeJoinNode to join two inputs using one or more join keys and an
   /// optional filter. The caller is responsible to ensure that inputs are

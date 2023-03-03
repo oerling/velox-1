@@ -228,6 +228,9 @@ TEST(LocalFile, mkdir) {
   EXPECT_NO_THROW(localFs->mkdir(path));
   EXPECT_TRUE(localFs->exists(path));
 
+  // Create a completely existing directory - we should not throw.
+  EXPECT_NO_THROW(localFs->mkdir(path));
+
   // Write a file to our directory to double check it exist.
   path += "/a.txt";
   const std::string data("aaaaa");
@@ -237,4 +240,38 @@ TEST(LocalFile, mkdir) {
     writeFile->close();
   }
   EXPECT_TRUE(localFs->exists(path));
+}
+
+TEST(LocalFile, rmdir) {
+  filesystems::registerLocalFileSystem();
+  auto tempFolder = ::exec::test::TempDirectoryPath::create();
+
+  std::string path = tempFolder->path;
+  auto localFs = filesystems::getFileSystem(path, nullptr);
+
+  // Create 3 levels of directories and ensure they exist.
+  path += "/level1/level2/level3";
+  EXPECT_NO_THROW(localFs->mkdir(path));
+  EXPECT_TRUE(localFs->exists(path));
+
+  // Write a file to our directory to double check it exist.
+  path += "/a.txt";
+  const std::string data("aaaaa");
+  {
+    auto writeFile = localFs->openFileForWrite(path);
+    writeFile->append(data);
+    writeFile->close();
+  }
+  EXPECT_TRUE(localFs->exists(path));
+
+  // Now delete the whole temp folder and ensure it is gone.
+  EXPECT_NO_THROW(localFs->rmdir(tempFolder->path));
+  EXPECT_FALSE(localFs->exists(tempFolder->path));
+
+  // Delete a non-existing directory.
+  path += "/does_not_exist/subdir";
+  EXPECT_FALSE(localFs->exists(path));
+  // The function does not throw, but will return zero files and folders
+  // deleted, which is not an error.
+  EXPECT_NO_THROW(localFs->rmdir(tempFolder->path));
 }

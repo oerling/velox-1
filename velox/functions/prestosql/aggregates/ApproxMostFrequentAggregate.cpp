@@ -92,8 +92,6 @@ struct ApproxMostFrequentAggregate : exec::Aggregate {
     addIntermediate<true>(group, rows, args);
   }
 
-  void finalize(char**, int32_t) override {}
-
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
       override {
     (*result)->resize(numGroups);
@@ -136,9 +134,9 @@ struct ApproxMostFrequentAggregate : exec::Aggregate {
     auto rowVec = (*result)->as<RowVector>();
     VELOX_CHECK(rowVec);
     rowVec->childAt(0) = std::make_shared<ConstantVector<int64_t>>(
-        rowVec->pool(), numGroups, false, int64_t(buckets_));
+        rowVec->pool(), numGroups, false, BIGINT(), int64_t(buckets_));
     rowVec->childAt(1) = std::make_shared<ConstantVector<int64_t>>(
-        rowVec->pool(), numGroups, false, int64_t(capacity_));
+        rowVec->pool(), numGroups, false, BIGINT(), int64_t(capacity_));
     auto values = rowVec->childAt(2)->as<ArrayVector>();
     auto counts = rowVec->childAt(3)->as<ArrayVector>();
     rowVec->resize(numGroups);

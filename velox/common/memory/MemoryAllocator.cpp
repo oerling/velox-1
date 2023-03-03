@@ -17,131 +17,47 @@
 #include "velox/common/memory/MemoryAllocator.h"
 
 #include <sys/mman.h>
-
 #include <iostream>
 #include <numeric>
 
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/memory/Memory.h"
-#include "velox/common/testutil/TestValue.h"
-
-using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::memory {
-/*static*/
-void MemoryAllocator::validateAlignment(uint16_t alignment) {
-  if (alignment == 0) {
-    return;
-  }
-  VELOX_CHECK_LE(MemoryAllocator::kMinAlignment, alignment);
-  VELOX_CHECK_GE(MemoryAllocator::kMaxAlignment, alignment);
-  VELOX_CHECK_EQ(alignment & (alignment - 1), 0);
-}
 
-MemoryAllocator::Allocation::~Allocation() {
-  if (pool_ != nullptr) {
-    pool_->freeNonContiguous(*this);
-  }
-  VELOX_CHECK_EQ(numPages_, 0);
-  VELOX_CHECK(runs_.empty());
-}
+std::shared_ptr<MemoryAllocator> MemoryAllocator::instance_;
+MemoryAllocator* MemoryAllocator::customInstance_;
+std::mutex MemoryAllocator::initMutex_;
 
-void MemoryAllocator::Allocation::append(uint8_t* address, int32_t numPages) {
-  numPages_ += numPages;
-  if (runs_.empty()) {
-    runs_.emplace_back(address, numPages);
-    return;
-  }
-
-  PageRun last = runs_.back();
-  VELOX_CHECK_NE(
-      address, last.data(), "Appending a duplicate address into a PageRun");
-
-  // Increment page count if new data starts at end of the last run
-  // and the combined page count is within limits.
-  if (address == last.data() + last.numPages() * kPageSize &&
-      last.numPages() + numPages <= PageRun::kMaxPagesInRun) {
-    runs_.back() = PageRun(last.data(), last.numPages() + numPages);
-  } else {
-    runs_.emplace_back(address, numPages);
+std::string MemoryAllocator::kindString(Kind kind) {
+  switch (kind) {
+    case Kind::kMalloc:
+      return "MALLOC";
+    case Kind::kMmap:
+      return "MMAP";
+    default:
+      return fmt::format("UNKNOWN: {}", static_cast<int>(kind));
   }
 }
 
-void MemoryAllocator::Allocation::findRun(
-    uint64_t offset,
-    int32_t* index,
-    int32_t* offsetInRun) const {
-  uint64_t skipped = 0;
-  for (int32_t i = 0; i < runs_.size(); ++i) {
-    uint64_t size = runs_[i].numPages() * kPageSize;
-    if (offset - skipped < size) {
-      *index = i;
-      *offsetInRun = static_cast<int32_t>(offset - skipped);
-      return;
-    }
-    skipped += size;
-  }
-  VELOX_UNREACHABLE(
-      "Seeking to an out of range offset {} in Allocation with {} pages and {} runs",
-      offset,
-      numPages_,
-      runs_.size());
-}
-
-std::string MemoryAllocator::Allocation::toString() const {
-  return fmt::format(
-      "Allocation[numPages:{}, numRuns:{}, pool:{}]",
-      numPages_,
-      runs_.size(),
-      pool_ == nullptr ? "null" : "set");
-}
-
-MemoryAllocator::ContiguousAllocation::~ContiguousAllocation() {
-  if (pool_ != nullptr) {
-    pool_->freeContiguous(*this);
-    data_ = nullptr;
-    pool_ = nullptr;
-    size_ = 0;
-  }
-  VELOX_CHECK_NULL(data_);
-  VELOX_CHECK_EQ(size_, 0);
-}
-
-void MemoryAllocator::ContiguousAllocation::set(void* data, uint64_t size) {
-  data_ = data;
-  size_ = size;
-  sanityCheck();
-}
-
-void MemoryAllocator::ContiguousAllocation::clear() {
-  pool_ = nullptr;
-  set(nullptr, 0);
-}
-
-MachinePageCount MemoryAllocator::ContiguousAllocation::numPages() const {
-  return bits::roundUp(size_, kPageSize) / kPageSize;
-}
-
-std::string MemoryAllocator::ContiguousAllocation::toString() const {
-  return fmt::format(
-      "ContiguousAllocation[data:{}, size:{}, pool:{}]",
-      data_,
-      size_,
-      pool_ == nullptr ? "null" : "set");
+std::ostream& operator<<(std::ostream& out, const MemoryAllocator::Kind& kind) {
+  out << MemoryAllocator::kindString(kind);
+  return out;
 }
 
 MemoryAllocator::SizeMix MemoryAllocator::allocationSize(
     MachinePageCount numPages,
     MachinePageCount minSizeClass) const {
-  int32_t needed = numPages;
-  int32_t pagesToAlloc = 0;
-  SizeMix mix;
   VELOX_CHECK_LE(
       minSizeClass,
       sizeClassSizes_.back(),
       "Requesting minimum size {} larger than largest size class {}",
       minSizeClass,
       sizeClassSizes_.back());
+
+  MemoryAllocator::SizeMix mix;
+  int32_t needed = numPages;
+  int32_t pagesToAlloc = 0;
   for (int32_t sizeIndex = sizeClassSizes_.size() - 1; sizeIndex >= 0;
        --sizeIndex) {
     const int32_t size = sizeClassSizes_[sizeIndex];
@@ -161,6 +77,14 @@ MemoryAllocator::SizeMix MemoryAllocator::allocationSize(
       ++numUnits;
       needed -= size;
     }
+    if (FOLLY_UNLIKELY(numUnits * size > Allocation::PageRun::kMaxPagesInRun)) {
+      VELOX_MEM_ALLOC_ERROR(fmt::format(
+          "Too many pages {} to allocate, the number of units {} at size class of {} exceeds the PageRun limit {}",
+          numPages,
+          numUnits,
+          size,
+          Allocation::PageRun::kMaxPagesInRun));
+    }
     mix.sizeCounts[mix.numSizes] = numUnits;
     pagesToAlloc += numUnits * size;
     mix.sizeIndices[mix.numSizes++] = sizeIndex;
@@ -172,30 +96,19 @@ MemoryAllocator::SizeMix MemoryAllocator::allocationSize(
   return mix;
 }
 
-// static
-void MemoryAllocator::alignmentCheck(
-    uint64_t allocateBytes,
-    uint16_t alignmentBytes) {
-  if (FOLLY_LIKELY(alignmentBytes == 0)) {
-    return;
-  }
-  VELOX_CHECK_GE(alignmentBytes, MemoryAllocator::kMinAlignment);
-  VELOX_CHECK_LE(alignmentBytes, MemoryAllocator::kMaxAlignment);
-  VELOX_CHECK_EQ(allocateBytes % alignmentBytes, 0);
-  VELOX_CHECK_EQ((alignmentBytes & (alignmentBytes - 1)), 0);
-}
-
 namespace {
 // The implementation of MemoryAllocator using malloc.
-class MemoryAllocatorImpl : public MemoryAllocator {
+class MallocAllocator : public MemoryAllocator {
  public:
-  MemoryAllocatorImpl();
+  MallocAllocator();
 
-  void* allocateBytes(uint64_t bytes, uint16_t alignment, uint64_t /*unused*/)
-      override;
+  ~MallocAllocator() {
+    VELOX_CHECK((numAllocated_ == 0) && (numMapped_ == 0), "{}", toString());
+  }
 
-  void freeBytes(void* p, uint64_t bytes, uint64_t /*unused*/) noexcept
-      override;
+  Kind kind() const override {
+    return kind_;
+  }
 
   bool allocateNonContiguous(
       MachinePageCount numPages,
@@ -210,9 +123,9 @@ class MemoryAllocatorImpl : public MemoryAllocator {
       Allocation* collateral,
       ContiguousAllocation& allocation,
       ReservationCallback reservationCB = nullptr) override {
-    // VELOX_CHECK_GT(numPages, 0);
+    VELOX_CHECK_GT(numPages, 0);
     bool result;
-    stats_.recordAllocate(numPages * kPageSize, 1, [&]() {
+    stats_.recordAllocate(AllocationTraits::pageBytes(numPages), 1, [&]() {
       result = allocateContiguousImpl(
           numPages, collateral, allocation, reservationCB);
     });
@@ -223,6 +136,18 @@ class MemoryAllocatorImpl : public MemoryAllocator {
     stats_.recordFree(
         allocation.size(), [&]() { freeContiguousImpl(allocation); });
   }
+
+  void* allocateBytes(uint64_t bytes, uint16_t alignment) override;
+
+  void* allocateZeroFilled(uint64_t bytes) override;
+
+  void* reallocateBytes(
+      void* p,
+      int64_t size,
+      int64_t newSize,
+      uint16_t alignment) override;
+
+  void freeBytes(void* p, uint64_t bytes) noexcept override;
 
   MachinePageCount numAllocated() const override {
     return numAllocated_;
@@ -238,6 +163,8 @@ class MemoryAllocatorImpl : public MemoryAllocator {
 
   bool checkConsistency() const override;
 
+  std::string toString() const override;
+
  private:
   bool allocateContiguousImpl(
       MachinePageCount numPages,
@@ -247,9 +174,7 @@ class MemoryAllocatorImpl : public MemoryAllocator {
 
   void freeContiguousImpl(ContiguousAllocation& allocation);
 
-  std::atomic<MachinePageCount> numAllocated_;
-  // When using mmap/madvise, the current of number pages backed by memory.
-  std::atomic<MachinePageCount> numMapped_;
+  const Kind kind_;
 
   std::mutex mallocsMutex_;
   // Tracks malloc'd pointers to detect bad frees.
@@ -259,54 +184,33 @@ class MemoryAllocatorImpl : public MemoryAllocator {
 
 } // namespace
 
-MemoryAllocatorImpl::MemoryAllocatorImpl() : numAllocated_(0), numMapped_(0) {}
+MallocAllocator::MallocAllocator() : kind_(MemoryAllocator::Kind::kMalloc) {}
 
-void* MemoryAllocatorImpl::allocateBytes(
-    uint64_t bytes,
-    uint16_t alignment,
-    uint64_t /*unused*/) {
-  alignmentCheck(bytes, alignment);
-  auto* result =
-      alignment != 0 ? ::aligned_alloc(alignment, bytes) : ::malloc(bytes);
-  if (result != nullptr) {
-    totalSmallAllocateBytes_ += bytes;
-  } else {
-    LOG(ERROR) << "Invalid aligned memory allocation with " << alignment
-               << " alignment and " << bytes << " bytes";
-  }
-  return result;
-}
-
-void MemoryAllocatorImpl::freeBytes(
-    void* p,
-    uint64_t bytes,
-    uint64_t /*unused*/) noexcept {
-  ::free(p); // NOLINT
-  totalSmallAllocateBytes_ -= bytes;
-  VELOX_CHECK_GE(totalSmallAllocateBytes_, 0);
-}
-
-bool MemoryAllocatorImpl::allocateNonContiguous(
+bool MallocAllocator::allocateNonContiguous(
     MachinePageCount numPages,
     Allocation& out,
     ReservationCallback reservationCB,
     MachinePageCount minSizeClass) {
   VELOX_CHECK_GT(numPages, 0);
+
+  const SizeMix mix = allocationSize(numPages, minSizeClass);
+
   const uint64_t freedBytes = freeNonContiguous(out);
-
-  const auto mix = allocationSize(numPages, minSizeClass);
-
   uint64_t bytesToAllocate = 0;
   if (reservationCB != nullptr) {
     for (int32_t i = 0; i < mix.numSizes; ++i) {
-      MachinePageCount numClassPages =
+      MachinePageCount numPages =
           mix.sizeCounts[i] * sizeClassSizes_[mix.sizeIndices[i]];
-      bytesToAllocate += numClassPages * kPageSize;
+      bytesToAllocate += AllocationTraits::pageBytes(numPages);
     }
     bytesToAllocate -= freedBytes;
     try {
       reservationCB(bytesToAllocate, true);
     } catch (std::exception& e) {
+      VELOX_MEM_LOG(WARNING) << "Failed to reserve " << bytesToAllocate
+                             << " bytes for non-contiguous allocation of "
+                             << numPages << " pages, then release "
+                             << freedBytes << " bytes from the old allocation";
       // If the new memory reservation fails, we need to release the memory
       // reservation of the freed memory of previously allocation.
       reservationCB(freedBytes, false);
@@ -317,35 +221,25 @@ bool MemoryAllocatorImpl::allocateNonContiguous(
   std::vector<void*> pages;
   pages.reserve(mix.numSizes);
   for (int32_t i = 0; i < mix.numSizes; ++i) {
-    if (TestValue::enabled()) {
-      // NOTE: if 'injectAllocFailure' is set to true by test callback, then
-      // we break out the loop to trigger a memory allocation failure scenario
-      // which doesn't have all the request memory allocated.
-      bool injectAllocFailure = false;
-      TestValue::adjust(
-          "facebook::velox::memory::MemoryAllocatorImpl::allocateNonContiguous",
-          &injectAllocFailure);
-      if (injectAllocFailure) {
-        break;
-      }
+    // Trigger allocation failure by breaking out the loop.
+    if (testingHasInjectedFailure(InjectedFailure::kAllocate)) {
+      break;
     }
-    MachinePageCount numClassPages =
+    MachinePageCount numPages =
         mix.sizeCounts[i] * sizeClassSizes_[mix.sizeIndices[i]];
     void* ptr;
     stats_.recordAllocate(
-        sizeClassSizes_[mix.sizeIndices[i]] * kPageSize,
+        AllocationTraits::pageBytes(sizeClassSizes_[mix.sizeIndices[i]]),
         mix.sizeCounts[i],
         [&]() {
-          ptr = ::aligned_alloc(
-              MemoryAllocator::kMaxAlignment,
-              numClassPages * kPageSize); // NOLINT
+          ptr = ::malloc(AllocationTraits::pageBytes(numPages)); // NOLINT
         });
     if (ptr == nullptr) {
       // Failed to allocate memory from memory.
       break;
     }
     pages.emplace_back(ptr);
-    out.append(reinterpret_cast<uint8_t*>(ptr), numClassPages); // NOLINT
+    out.append(reinterpret_cast<uint8_t*>(ptr), numPages); // NOLINT
   }
 
   if (pages.size() != mix.numSizes) {
@@ -356,6 +250,10 @@ bool MemoryAllocatorImpl::allocateNonContiguous(
     }
     out.clear();
     if (reservationCB != nullptr) {
+      VELOX_MEM_LOG(WARNING)
+          << "Failed to allocate memory for non-contiguous allocation of "
+          << numPages << " pages, then release " << bytesToAllocate + freedBytes
+          << " bytes of memory reservation including the old gallocation";
       reservationCB(bytesToAllocate + freedBytes, false);
     }
     return false;
@@ -371,20 +269,21 @@ bool MemoryAllocatorImpl::allocateNonContiguous(
   return true;
 }
 
-bool MemoryAllocatorImpl::allocateContiguousImpl(
+bool MallocAllocator::allocateContiguousImpl(
     MachinePageCount numPages,
     Allocation* collateral,
     ContiguousAllocation& allocation,
     ReservationCallback reservationCB) {
   MachinePageCount numCollateralPages = 0;
   if (collateral != nullptr) {
-    numCollateralPages = freeNonContiguous(*collateral) / kPageSize;
+    numCollateralPages =
+        freeNonContiguous(*collateral) / AllocationTraits::kPageSize;
   }
   auto numContiguousCollateralPages = allocation.numPages();
   if (numContiguousCollateralPages > 0) {
     if (::munmap(allocation.data(), allocation.size()) < 0) {
-      LOG(ERROR) << "munmap got " << folly::errnoStr(errno) << "for "
-                 << allocation.data() << ", " << allocation.size();
+      VELOX_MEM_LOG(ERROR) << "munmap got " << folly::errnoStr(errno) << "for "
+                           << allocation.data() << ", " << allocation.size();
     }
     numMapped_.fetch_sub(numContiguousCollateralPages);
     numAllocated_.fetch_sub(numContiguousCollateralPages);
@@ -394,46 +293,46 @@ bool MemoryAllocatorImpl::allocateContiguousImpl(
       numPages - numCollateralPages - numContiguousCollateralPages;
   if (reservationCB != nullptr) {
     try {
-      reservationCB(numNeededPages * kPageSize, true);
+      reservationCB(AllocationTraits::pageBytes(numNeededPages), true);
     } catch (std::exception& e) {
       // If the new memory reservation fails, we need to release the memory
       // reservation of the freed contiguous and non-contiguous memory.
+      VELOX_MEM_LOG(WARNING)
+          << "Failed to reserve " << AllocationTraits::pageBytes(numNeededPages)
+          << " bytes for contiguous allocation of " << numPages
+          << " pages, then release "
+          << (numCollateralPages + numContiguousCollateralPages) *
+              AllocationTraits::kPageSize
+          << " bytes from the old allocations";
       reservationCB(
-          (numCollateralPages + numContiguousCollateralPages) * kPageSize,
+          (numCollateralPages + numContiguousCollateralPages) *
+              AllocationTraits::kPageSize,
           false);
       std::rethrow_exception(std::current_exception());
     }
   }
   numAllocated_.fetch_add(numPages);
-  numMapped_.fetch_add(numNeededPages + numContiguousCollateralPages);
+  numMapped_.fetch_add(numPages);
 
-  if (TestValue::enabled()) {
-    bool injectMmapError = false;
-    TestValue::adjust(
-        "facebook::velox::memory::MemoryAllocatorImpl::allocateContiguousImpl",
-        &injectMmapError);
-    if (injectMmapError) {
-      return false;
-    }
-  }
   void* data = ::mmap(
       nullptr,
-      numPages * kPageSize,
+      AllocationTraits::pageBytes(numPages),
       PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS,
       -1,
       0);
-  allocation.set(data, numPages * kPageSize);
+  // TODO: add handling of MAP_FAILED.
+  allocation.set(data, AllocationTraits::pageBytes(numPages));
   return true;
 }
 
-int64_t MemoryAllocatorImpl::freeNonContiguous(Allocation& allocation) {
+int64_t MallocAllocator::freeNonContiguous(Allocation& allocation) {
   if (allocation.empty()) {
     return 0;
   }
   MachinePageCount numFreed = 0;
   for (int32_t i = 0; i < allocation.numRuns(); ++i) {
-    PageRun run = allocation.runAt(i);
+    Allocation::PageRun run = allocation.runAt(i);
     numFreed += run.numPages();
     void* ptr = run.data();
     {
@@ -443,47 +342,97 @@ int64_t MemoryAllocatorImpl::freeNonContiguous(Allocation& allocation) {
     }
     stats_.recordFree(
         std::min<int64_t>(
-            sizeClassSizes_.back() * kPageSize, run.numPages() * kPageSize),
+            AllocationTraits::pageBytes(sizeClassSizes_.back()),
+            AllocationTraits::pageBytes(run.numPages())),
         [&]() {
           ::free(ptr); // NOLINT
         });
   }
   numAllocated_.fetch_sub(numFreed);
   allocation.clear();
-  return numFreed * kPageSize;
+  return AllocationTraits::pageBytes(numFreed);
 }
 
-void MemoryAllocatorImpl::freeContiguousImpl(ContiguousAllocation& allocation) {
+void MallocAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
   if (allocation.empty()) {
     return;
   }
 
   if (::munmap(allocation.data(), allocation.size()) < 0) {
-    LOG(ERROR) << "munmap returned " << folly::errnoStr(errno) << " for "
-               << allocation.data() << ", " << allocation.size();
+    VELOX_MEM_LOG(ERROR) << "munmap returned " << folly::errnoStr(errno)
+                         << " for " << allocation.data() << ", "
+                         << allocation.size();
   }
   numMapped_.fetch_sub(allocation.numPages());
   numAllocated_.fetch_sub(allocation.numPages());
   allocation.clear();
 }
 
-bool MemoryAllocatorImpl::checkConsistency() const {
+void* MallocAllocator::allocateBytes(uint64_t bytes, uint16_t alignment) {
+  alignmentCheck(bytes, alignment);
+  void* result = (alignment > kMinAlignment) ? ::aligned_alloc(alignment, bytes)
+                                             : ::malloc(bytes);
+  if (FOLLY_UNLIKELY(result == nullptr)) {
+    VELOX_MEM_LOG(ERROR) << "Failed to allocateBytes " << bytes
+                         << " bytes with " << alignment << " alignment";
+  }
+  return result;
+}
+
+void* MallocAllocator::allocateZeroFilled(uint64_t bytes) {
+  void* result = std::calloc(1, bytes);
+  if (FOLLY_UNLIKELY(result == nullptr)) {
+    VELOX_MEM_LOG(ERROR) << "Failed to allocateZeroFilled " << bytes
+                         << " bytes";
+  }
+  return result;
+}
+
+void* MallocAllocator::reallocateBytes(
+    void* p,
+    int64_t size,
+    int64_t newSize,
+    uint16_t alignment) {
+  VELOX_CHECK_GT(newSize, 0);
+  alignmentCheck(newSize, alignment);
+
+  void* newPtr = nullptr;
+  if (alignment <= kMinAlignment) {
+    newPtr = ::realloc(p, newSize);
+  } else {
+    newPtr = ::aligned_alloc(alignment, newSize);
+    if (newPtr != nullptr) {
+      ::memcpy(newPtr, p, std::min(size, newSize));
+      freeBytes(p, size);
+    }
+  }
+  if (FOLLY_UNLIKELY(newPtr == nullptr)) {
+    VELOX_MEM_LOG(ERROR) << "Failed to reallocateBytes " << newSize << " bytes "
+                         << " with " << size << " old bytes";
+  }
+  return newPtr;
+}
+
+void MallocAllocator::freeBytes(void* p, uint64_t bytes) noexcept {
+  ::free(p); // NOLINT
+}
+
+bool MallocAllocator::checkConsistency() const {
   return true;
+}
+
+std::string MallocAllocator::toString() const {
+  return fmt::format(
+      "[allocated pages {}, mapped pages {}]", numAllocated_, numMapped_);
 }
 
 // static
 MemoryAllocator* MemoryAllocator::getInstance() {
-  {
-    folly::SharedMutex::ReadHolder readGuard(instanceMutex_);
-    if (customInstance_) {
-      return customInstance_;
-    }
-    if (instance_) {
-      return instance_.get();
-    }
+  std::lock_guard<std::mutex> l(initMutex_);
+  if (customInstance_ != nullptr) {
+    return customInstance_;
   }
-  folly::SharedMutex::WriteHolder writeGuard(instanceMutex_);
-  if (instance_) {
+  if (instance_ != nullptr) {
     return instance_.get();
   }
   instance_ = createDefaultInstance();
@@ -492,55 +441,67 @@ MemoryAllocator* MemoryAllocator::getInstance() {
 
 // static
 std::shared_ptr<MemoryAllocator> MemoryAllocator::createDefaultInstance() {
-  return std::make_shared<MemoryAllocatorImpl>();
+  return std::make_shared<MallocAllocator>();
 }
 
 // static
 void MemoryAllocator::setDefaultInstance(MemoryAllocator* instance) {
-  folly::SharedMutex::WriteHolder writeGuard(instanceMutex_);
+  std::lock_guard<std::mutex> l(initMutex_);
   customInstance_ = instance;
 }
 
 // static
 void MemoryAllocator::testingDestroyInstance() {
-  folly::SharedMutex::WriteHolder writeGuard(instanceMutex_);
+  std::lock_guard<std::mutex> l(initMutex_);
   instance_ = nullptr;
 }
 
 // static
+void MemoryAllocator::alignmentCheck(
+    uint64_t allocateBytes,
+    uint16_t alignmentBytes) {
+  VELOX_CHECK_GE(alignmentBytes, kMinAlignment);
+  if (alignmentBytes == kMinAlignment) {
+    return;
+  }
+  VELOX_CHECK_LE(alignmentBytes, kMaxAlignment);
+  VELOX_CHECK_EQ(allocateBytes % alignmentBytes, 0);
+  VELOX_CHECK_EQ((alignmentBytes & (alignmentBytes - 1)), 0);
+}
+
+// static.
 MachinePageCount MemoryAllocator::roundUpToSizeClassSize(
     size_t bytes,
     const std::vector<MachinePageCount>& sizes) {
-  auto pages = bits::roundUp(bytes, MemoryAllocator::kPageSize) /
-      MemoryAllocator::kPageSize;
+  auto pages = bits::roundUp(bytes, AllocationTraits::kPageSize) /
+      AllocationTraits::kPageSize;
   VELOX_CHECK_LE(pages, sizes.back());
   return *std::lower_bound(sizes.begin(), sizes.end(), pages);
 }
 
-std::string MemoryAllocator::toString() const {
-  return fmt::format("MemoryAllocator: Allocated pages {}", numAllocated());
-}
-
-void* MemoryAllocator::allocateZeroFilled(uint64_t bytes, uint64_t alignment) {
-  auto* result = allocateBytes(bytes, alignment);
+void* MemoryAllocator::allocateZeroFilled(uint64_t bytes) {
+  void* result = allocateBytes(bytes);
   if (result != nullptr) {
     ::memset(result, 0, bytes);
+  } else {
+    VELOX_MEM_LOG(ERROR) << "Failed to allocateZeroFilled " << bytes
+                         << " bytes";
   }
   return result;
 }
 
-void* FOLLY_NULLABLE MemoryAllocator::reallocateBytes(
-    void* FOLLY_NULLABLE p,
+void* MemoryAllocator::reallocateBytes(
+    void* p,
     int64_t size,
     int64_t newSize,
     uint16_t alignment) {
-  auto* newAlloc = allocateBytes(newSize, alignment);
-  if (p == nullptr || newAlloc == nullptr) {
-    return newAlloc;
+  auto* newPtr = allocateBytes(newSize, alignment);
+  if (p == nullptr) {
+    return newPtr;
   }
-  ::memcpy(newAlloc, p, std::min(size, newSize));
+  ::memcpy(newPtr, p, std::min(size, newSize));
   freeBytes(p, size);
-  return newAlloc;
+  return newPtr;
 }
 
 Stats Stats::operator-(const Stats& other) const {

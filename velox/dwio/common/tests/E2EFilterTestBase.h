@@ -105,12 +105,12 @@ class E2EFilterTestBase : public testing::Test {
   template <typename T>
   void makeIntDistribution(
       const std::string& fieldName,
-      T min,
-      T max,
+      int64_t min,
+      int64_t max,
       int32_t repeats,
       int32_t rareFrequency,
-      T rareMin,
-      T rareMax,
+      int64_t rareMin,
+      int64_t rareMax,
       bool keepNulls) {
     dataSetBuilder_->withIntDistributionForField<T>(
         Subfield(fieldName),
@@ -258,6 +258,19 @@ class E2EFilterTestBase : public testing::Test {
       bool wrapInStruct,
       const std::vector<std::string>& filterable,
       int32_t numCombinations);
+
+ private:
+  void testMetadataFilterImpl(
+      const std::vector<RowVectorPtr>& batches,
+      common::Subfield filterField,
+      std::unique_ptr<common::Filter> filter,
+      const std::string& remainingFilter,
+      std::function<bool(int64_t a, int64_t c)> validationFilter);
+
+ protected:
+  void testMetadataFilter();
+
+  void testSubfieldsPruning();
 
   // Allows testing reading with different batch sizes.
   void resetReadBatchSizes() {

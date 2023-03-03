@@ -309,8 +309,8 @@ class HashTableTest : public testing::TestWithParam<bool> {
             nullptr);
 
       case TypeKind::VARCHAR: {
-        auto strings = std::static_pointer_cast<FlatVector<StringView>>(
-            BaseVector::create(VARCHAR(), size, pool_.get()));
+        auto strings = BaseVector::create<FlatVector<StringView>>(
+            VARCHAR(), size, pool_.get());
         for (auto row = 0; row < size; ++row) {
           auto string = fmt::format("{}", keySpacing_ * (sequence + row));
           // Make strings that overflow the inline limit for 1/10 of
@@ -521,6 +521,73 @@ TEST_P(HashTableTest, clear) {
   table->clear();
 }
 
+// Test a specific code path in HashTable::decodeHashMode where
+// rangesWithReserve overflows, distinctsWithReserve fits and bestWithReserve =
+// rangesWithReserve.
+TEST_P(HashTableTest, bestWithReserveOverflow) {
+  auto rowType =
+      ROW({"a", "b", "c", "d"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+  const auto numKeys = 4;
+  auto table = createHashTableForAggregation(rowType, numKeys);
+  auto lookup = std::make_unique<HashLookup>(table->hashers());
+
+  // Make sure rangesWithReserve overflows.
+  //  Ranges for keys are: 200K, 200K, 200K, 100K.
+  //  With 50% reserve at both ends: 400K, 400K, 400K, 200K.
+  //  Combined ranges with reserve: 400K * 400K * 400K * 200K =
+  //  12,800,000,000,000,000,000,000.
+  // Also, make sure that distinctsWithReserve fits.
+  //  Number of distinct values (ndv) are: 20K, 20K, 20K, 10K.
+  //  With 50% reserve: 30K, 30K, 30K, 15K.
+  //  Combined ndvs with reserve: 30K * 30K * 30K * 15K =
+  //  405,000,000,000,000,000.
+  // Also, make sure bestWithReserve == rangesWithReserve and therefore
+  // overflows as well.
+  //  Range is considered 'best' if range < 20 * ndv.
+  //
+  // Finally, make sure last key has some duplicate values. The original bug
+  // this test is reproducing was when HashTable failed to set multiplier for
+  // the VectorHasher, which caused the combined value IDs to be computed using
+  // only the last VectorHasher. Hence, all values where last key was the same
+  // were assigned the same value IDs.
+  auto data = vectorMaker_->rowVector({
+      vectorMaker_->flatVector<int64_t>(
+          20'000, [](auto row) { return row * 10; }),
+      vectorMaker_->flatVector<int64_t>(
+          20'000, [](auto row) { return 1 + row * 10; }),
+      vectorMaker_->flatVector<int64_t>(
+          20'000, [](auto row) { return 2 + row * 10; }),
+      vectorMaker_->flatVector<int64_t>(
+          20'000, [](auto row) { return 3 + (row / 2) * 10; }),
+  });
+
+  lookup->reset(data->size());
+  insertGroups(*data, *lookup, *table);
+
+  // Expect 'normalized key' hash mode using distinct values, not ranges.
+  ASSERT_EQ(table->hashMode(), BaseHashTable::HashMode::kNormalizedKey);
+  ASSERT_EQ(table->numDistinct(), data->size());
+
+  for (auto i = 0; i < numKeys; ++i) {
+    ASSERT_FALSE(table->hashers()[i]->isRange());
+    ASSERT_TRUE(table->hashers()[i]->mayUseValueIds());
+  }
+
+  // Compute value IDs and verify all are unique.
+  SelectivityVector rows(data->size());
+  raw_vector<uint64_t> valueIds(data->size());
+
+  for (int32_t i = 0; i < numKeys; ++i) {
+    bool ok = table->hashers()[i]->computeValueIds(rows, valueIds);
+    ASSERT_TRUE(ok);
+  }
+
+  std::unordered_set<uint64_t> uniqueValueIds;
+  for (auto id : valueIds) {
+    ASSERT_TRUE(uniqueValueIds.insert(id).second) << id;
+  }
+}
+
 /// Test edge case that used to trigger a rounding error in
 /// HashTable::enableRangeWhereCan.
 TEST_P(HashTableTest, enableRangeWhereCan) {
@@ -581,6 +648,7 @@ TEST_P(HashTableTest, arrayProbeNormalizedKey) {
     rows.setValidRange(5'000, 10'000, true);
     rows.updateBounds();
     insertGroups(*data, rows, *lookup, *table);
+    EXPECT_LE(table->stats().numDistinct, table->rehashSize());
   }
 
   ASSERT_EQ(table->hashMode(), BaseHashTable::HashMode::kNormalizedKey);
@@ -617,6 +685,36 @@ TEST_P(HashTableTest, regularHashingTableSize) {
 TEST_P(HashTableTest, groupBySpill) {
   auto type = ROW({"k1"}, {BIGINT()});
   testGroupBySpill(5'000'000, type, 1, 1000, 1000);
+}
+
+TEST_P(HashTableTest, checkSizeValidation) {
+  auto rowType = ROW({"a"}, {BIGINT()});
+  auto table = createHashTableForAggregation(rowType, 1);
+  auto lookup = std::make_unique<HashLookup>(table->hashers());
+
+  // The initial set hash mode with table size of 256K entries.
+  table->testingSetHashMode(BaseHashTable::HashMode::kHash, 131'072);
+  ASSERT_EQ(table->capacity(), 256 << 10);
+
+  auto vector1 = vectorMaker_->rowVector({vectorMaker_->flatVector<int64_t>(
+      131'072, [&](auto row) { return row; })});
+  // The first insertion of 128KB distinct entries.
+  insertGroups(*vector1, *lookup, *table);
+  ASSERT_EQ(table->capacity(), 256 << 10);
+
+  auto vector2 = vectorMaker_->rowVector({vectorMaker_->flatVector<int64_t>(
+      131'072, [&](auto row) { return 131'072 + row; })});
+  // The second insertion of 128KB distinct entries triggers the table resizing.
+  // And we expect the table size bumps up to 512KB.
+  insertGroups(*vector2, *lookup, *table);
+  ASSERT_EQ(table->capacity(), 512 << 10);
+
+  auto vector3 = vectorMaker_->rowVector(
+      {vectorMaker_->flatVector<int64_t>(1, [&](auto row) { return row; })});
+  // The last insertion triggers the check size which see the table size matches
+  // the number of distinct entries that it stores.
+  insertGroups(*vector3, *lookup, *table);
+  ASSERT_EQ(table->capacity(), 512 << 10);
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

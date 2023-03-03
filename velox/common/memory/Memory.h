@@ -30,12 +30,14 @@
 
 #include <velox/common/base/Exceptions.h>
 #include "folly/CPortability.h"
+#include "folly/GLog.h"
 #include "folly/Likely.h"
 #include "folly/Random.h"
 #include "folly/SharedMutex.h"
 #include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/GTestMacros.h"
 #include "velox/common/base/SuccinctPrinter.h"
+#include "velox/common/memory/Allocation.h"
 #include "velox/common/memory/MemoryAllocator.h"
 #include "velox/common/memory/MemoryUsage.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
@@ -45,15 +47,28 @@ DECLARE_int32(memory_usage_aggregation_interval_millis);
 namespace facebook {
 namespace velox {
 namespace memory {
+#define VELOX_MEM_LOG_PREFIX "[MEM] "
+#define VELOX_MEM_LOG(severity) LOG(severity) << VELOX_MEM_LOG_PREFIX
+#define VELOX_MEM_LOG_EVERY_MS(severity, ms) \
+  FB_LOG_EVERY_MS(severity, ms) << VELOX_MEM_LOG_PREFIX
 
-/// This class provides the memory allocation interfaces for query execution.
-/// Each query execution creates a dedicated memory pool object. The memory pool
-/// objects from a query are organized as a tree with four levels which mirrors
-/// the query's physical execution plan:
+#define VELOX_MEM_ALLOC_ERROR(errorMessage)                         \
+  _VELOX_THROW(                                                     \
+      ::facebook::velox::VeloxRuntimeError,                         \
+      ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
+      ::facebook::velox::error_code::kMemAllocError.c_str(),        \
+      /* isRetriable */ true,                                       \
+      "{}",                                                         \
+      errorMessage);
+
+/// This class provides the memory allocation interfaces for a query execution.
+/// Each query execution entity creates a dedicated memory pool object. The
+/// memory pool objects from a query are organized as a tree with four levels
+/// which reflects the query's physical execution plan:
 ///
 /// The top level is a single root pool object (query pool) associated with the
 /// query. The query pool is created on the first executed query task and owned
-/// by QueryCtx. Note that the query pool is optional as not all engines
+/// by QueryCtx. Note that the query pool is optional as not all the engines
 /// using memory pool are creating multiple tasks for the same query in the same
 /// process.
 ///
@@ -106,7 +121,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   MemoryPool(
       const std::string& name,
       std::shared_ptr<MemoryPool> parent,
-      uint16_t alignment);
+      const Options& options);
 
   /// Removes this memory pool's tracking from its parent through dropChild().
   /// Drops the shared reference to its parent.
@@ -122,38 +137,33 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// NOTE: users are only safe to access the returned parent pool pointer while
   /// they hold the shared reference on this child memory pool. Otherwise, the
   /// parent memory pool might have been destroyed.
-  virtual MemoryPool* FOLLY_NULLABLE parent() const;
+  virtual MemoryPool* parent() const;
 
   /// Returns the number of child memory pools.
   virtual uint64_t getChildCount() const;
 
   /// Invoked to traverse the memory pool subtree rooted at this, and calls
   /// 'visitor' on each visited child memory pool.
-  virtual void visitChildren(
-      std::function<void(MemoryPool* FOLLY_NONNULL)> visitor) const;
+  virtual void visitChildren(std::function<void(MemoryPool*)> visitor) const;
 
   /// Invoked to create a named child memory pool from this with specified
   /// 'cap'.
-  virtual std::shared_ptr<MemoryPool> addChild(
-      const std::string& name,
-      int64_t cap = kMaxMemory);
+  virtual std::shared_ptr<MemoryPool> addChild(const std::string& name);
 
   /// Allocates a buffer with specified 'size'.
-  virtual void* FOLLY_NULLABLE allocate(int64_t size) = 0;
+  virtual void* allocate(int64_t size) = 0;
 
   /// Allocates a zero-filled buffer with capacity that can store 'numEntries'
   /// entries with each size of 'sizeEach'.
-  virtual void* FOLLY_NULLABLE
-  allocateZeroFilled(int64_t numEntries, int64_t sizeEach) = 0;
+  virtual void* allocateZeroFilled(int64_t numEntries, int64_t sizeEach) = 0;
 
-  /// Re-allocatea from an existing buffer with 'newSize' and update memory
+  /// Re-allocates from an existing buffer with 'newSize' and update memory
   /// usage counting accordingly. If 'newSize' is larger than the current buffer
   /// 'size', the function will allocate a new buffer and free the old buffer.
-  virtual void* FOLLY_NULLABLE
-  reallocate(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize) = 0;
+  virtual void* reallocate(void* p, int64_t size, int64_t newSize) = 0;
 
   /// Frees an allocated buffer.
-  virtual void free(void* FOLLY_NULLABLE p, int64_t size) = 0;
+  virtual void free(void* p, int64_t size) = 0;
 
   /// Allocates one or more runs that add up to at least 'numPages', with the
   /// smallest run being at least 'minSizeClass' pages. 'minSizeClass' must be
@@ -161,13 +171,13 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// and any memory formerly referenced by 'out' is freed. The function returns
   /// true if the allocation succeeded. If returning false, 'out' references no
   /// memory and any partially allocated memory is freed.
-  virtual bool allocateNonContiguous(
+  virtual void allocateNonContiguous(
       MachinePageCount numPages,
-      MemoryAllocator::Allocation& out,
+      Allocation& out,
       MachinePageCount minSizeClass = 0) = 0;
 
   /// Frees non-contiguous 'allocation'. 'allocation' is empty on return.
-  virtual void freeNonContiguous(MemoryAllocator::Allocation& allocation) = 0;
+  virtual void freeNonContiguous(Allocation& allocation) = 0;
 
   /// Returns the largest class size used by non-contiguous memory allocation.
   virtual MachinePageCount largestSizeClass() const = 0;
@@ -179,13 +189,12 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// Makes a large contiguous mmap of 'numPages'. The new mapped pages are
   /// returned in 'out' on success. Any formly mapped pages referenced by
   /// 'out' is unmapped in all the cases even if the allocation fails.
-  virtual bool allocateContiguous(
+  virtual void allocateContiguous(
       MachinePageCount numPages,
-      MemoryAllocator::ContiguousAllocation& out) = 0;
+      ContiguousAllocation& out) = 0;
 
   /// Frees contiguous 'allocation'. 'allocation' is empty on return.
-  virtual void freeContiguous(
-      MemoryAllocator::ContiguousAllocation& allocation) = 0;
+  virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
 
   /// Rounds up to a power of 2 >= size, or to a size halfway between
   /// two consecutive powers of two, i.e 8, 12, 16, 24, 32, .... This
@@ -194,7 +203,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
 
   /// Returns the memory allocation alignment size applied internally by this
   /// memory pool object.
-  virtual uint16_t alignment() const {
+  virtual uint16_t getAlignment() const {
     return alignment_;
   }
 
@@ -220,9 +229,6 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   virtual const std::shared_ptr<MemoryUsageTracker>& getMemoryUsageTracker()
       const = 0;
 
-  /// Used for external aggregation.
-  virtual void setSubtreeMemoryUsage(int64_t size) = 0;
-
   virtual int64_t updateSubtreeMemoryUsage(int64_t size) = 0;
 
   /// Tracks the externally allocated memory usage without doing a new
@@ -231,38 +237,25 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     VELOX_NYI("reserve() needs to be implemented in derived memory pool.");
   }
 
-  /// Sometimes in memory management we want to mock an update for quota
+  /// Sometimes in memory governance we want to mock an update for quota
   /// accounting purposes and different implementations can
   /// choose to accommodate this differently.
-  virtual void release(int64_t /* bytes */, bool /* mock */ = false) {
+  virtual void release(int64_t /* bytes */) {
     VELOX_NYI("release() needs to be implemented in derived memory pool.");
   }
 
-  /// Get the cap for the memory node and its subtree.
-  virtual int64_t cap() const = 0;
-
-  /// Called by MemoryManager and MemoryPool upon memory usage updates and
-  /// propagates down the subtree recursively.
-  virtual void capMemoryAllocation() = 0;
-
-  /// Called by MemoryManager and propagates down recursively if applicable.
-  virtual void uncapMemoryAllocation() = 0;
-
-  /// We might need to freeze memory allocating operations under severe global
-  /// memory pressure.
-  virtual bool isMemoryCapped() const = 0;
+  virtual std::string toString() const = 0;
 
  protected:
   /// Invoked by addChild() to create a child memory pool object. 'parent' is
   /// a shared pointer created from this.
   virtual std::shared_ptr<MemoryPool> genChild(
       std::shared_ptr<MemoryPool> parent,
-      const std::string& name,
-      int64_t cap) = 0;
+      const std::string& name) = 0;
 
   /// Invoked only on destruction to remove this memory pool from its parent's
   /// child memory pool tracking.
-  virtual void dropChild(const MemoryPool* FOLLY_NONNULL child);
+  virtual void dropChild(const MemoryPool* child);
 
   const std::string name_;
   const uint16_t alignment_;
@@ -270,7 +263,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
 
   /// Protects 'children_'.
   mutable folly::SharedMutex childrenMutex_;
-  std::list<MemoryPool*> children_;
+  std::unordered_map<std::string, std::weak_ptr<MemoryPool>> children_;
 };
 
 class MemoryManager;
@@ -286,52 +279,36 @@ class MemoryPoolImpl : public MemoryPool {
       std::shared_ptr<MemoryPool> parent,
       const Options& options = Options{});
 
-  ~MemoryPoolImpl() {
-    if (const auto& tracker = getMemoryUsageTracker()) {
-      auto remainingBytes = tracker->getCurrentUserBytes();
-      VELOX_CHECK_EQ(
-          0,
-          remainingBytes,
-          "Memory pool should be destroyed only after all allocated memory has been freed. Remaining bytes allocated: {}, cumulative bytes allocated: {}, number of allocations: {}",
-          remainingBytes,
-          tracker->getCumulativeBytes(),
-          tracker->getNumAllocs());
-    }
-  }
+  ~MemoryPoolImpl();
 
   // Actual memory allocation operations. Can be delegated.
   // Access global MemoryManager to check usage of current node and enforce
-  // memory cap accordingly. Since MemoryManager walks the MemoryPoolImpl
-  // tree periodically, this is slightly stale and we have to reserve our own
-  // overhead.
-  void* FOLLY_NULLABLE allocate(int64_t size) override;
+  // memory cap accordingly.
+  void* allocate(int64_t size) override;
 
-  void* FOLLY_NULLABLE
-  allocateZeroFilled(int64_t numMembers, int64_t sizeEach) override;
+  void* allocateZeroFilled(int64_t numMembers, int64_t sizeEach) override;
 
   // No-op for attempts to shrink buffer.
-  void* FOLLY_NULLABLE
-  reallocate(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize) override;
+  void* reallocate(void* p, int64_t size, int64_t newSize) override;
 
-  void free(void* FOLLY_NULLABLE p, int64_t size) override;
+  void free(void* p, int64_t size) override;
 
-  bool allocateNonContiguous(
+  void allocateNonContiguous(
       MachinePageCount numPages,
-      MemoryAllocator::Allocation& out,
+      Allocation& out,
       MachinePageCount minSizeClass = 0) override;
 
-  void freeNonContiguous(MemoryAllocator::Allocation& allocation) override;
+  void freeNonContiguous(Allocation& allocation) override;
 
   MachinePageCount largestSizeClass() const override;
 
   const std::vector<MachinePageCount>& sizeClasses() const override;
 
-  bool allocateContiguous(
+  void allocateContiguous(
       MachinePageCount numPages,
-      MemoryAllocator::ContiguousAllocation& allocation) override;
+      ContiguousAllocation& allocation) override;
 
-  void freeContiguous(
-      MemoryAllocator::ContiguousAllocation& allocation) override;
+  void freeContiguous(ContiguousAllocation& allocation) override;
 
   /// Memory Management methods.
 
@@ -345,25 +322,12 @@ class MemoryPoolImpl : public MemoryPool {
 
   const std::shared_ptr<MemoryUsageTracker>& getMemoryUsageTracker()
       const override;
-
-  void setSubtreeMemoryUsage(int64_t size) override;
-
   int64_t updateSubtreeMemoryUsage(int64_t size) override;
-
-  int64_t cap() const override;
-
-  uint16_t alignment() const override;
-
-  void capMemoryAllocation() override;
-
-  void uncapMemoryAllocation() override;
-
-  bool isMemoryCapped() const override;
+  uint16_t getAlignment() const override;
 
   std::shared_ptr<MemoryPool> genChild(
       std::shared_ptr<MemoryPool> parent,
-      const std::string& name,
-      int64_t cap) override;
+      const std::string& name) override;
 
   // Gets the memory allocation stats of the MemoryPoolImpl attached to the
   // current MemoryPoolImpl. Not to be confused with total memory usage of the
@@ -379,23 +343,19 @@ class MemoryPoolImpl : public MemoryPool {
   // TODO: consider returning bool instead.
   void reserve(int64_t size) override;
 
-  void release(int64_t size, bool mock = false) override;
+  void release(int64_t size) override;
+
+  std::string toString() const override;
 
  private:
   VELOX_FRIEND_TEST(MemoryPoolTest, Ctor);
 
   int64_t sizeAlign(int64_t size);
 
-  void* FOLLY_NULLABLE
-  reallocAligned(void* FOLLY_NULLABLE p, int64_t size, int64_t newSize) {
-    return allocator_.reallocateBytes(p, size, newSize, alignment_);
-  }
-
   void accessSubtreeMemoryUsage(
       std::function<void(const MemoryUsage&)> visitor) const;
   void updateSubtreeMemoryUsage(std::function<void(MemoryUsage&)> visitor);
 
-  const int64_t cap_;
   MemoryManager& memoryManager_;
 
   // Memory allocated attributed to the memory node.
@@ -403,7 +363,6 @@ class MemoryPoolImpl : public MemoryPool {
   std::shared_ptr<MemoryUsageTracker> memoryUsageTracker_;
   mutable folly::SharedMutex subtreeUsageMutex_;
   MemoryUsage subtreeMemoryUsage_;
-  std::atomic_bool capped_{false};
 
   MemoryAllocator& allocator_;
 };
@@ -421,15 +380,15 @@ class IMemoryManager {
     int64_t capacity{kMaxMemory};
 
     /// Specifies the backing memory allocator.
-    MemoryAllocator* FOLLY_NONNULL allocator{MemoryAllocator::getInstance()};
+    MemoryAllocator* allocator{MemoryAllocator::getInstance()};
   };
 
   virtual ~IMemoryManager() = default;
 
-  /// Returns the total memory usage in bytes allowed under this memory manager.
-  /// The memory manager maintains this capacity as a hard cap, and any
-  /// allocation that would exceed the quota throws.
-  virtual int64_t capacity() const = 0;
+  /// Returns the total memory usage allowed under this memory manager.
+  /// The memory manager maintains this quota as a hard cap, and any allocation
+  /// that would exceed the quota throws.
+  virtual int64_t getMemoryQuota() const = 0;
 
   /// Returns the memory allocation alignment of this memory manager.
   virtual uint16_t alignment() const = 0;
@@ -447,7 +406,7 @@ class IMemoryManager {
   /// Returns the current total memory usage under this memory manager.
   virtual int64_t getTotalBytes() const = 0;
 
-  /// Reserves size for the allocation. Return a true if the total usage remains
+  /// Reserves size for the allocation. Returns true if the total usage remains
   /// under quota after the reservation. Caller is responsible for releasing the
   /// offending reservation.
   ///
@@ -460,17 +419,20 @@ class IMemoryManager {
   virtual void release(int64_t size) = 0;
 };
 
+/// For now, users wanting multiple different allocators would need to
+/// instantiate different MemoryManager classes and manage them across static
+/// boundaries.
 class MemoryManager final : public IMemoryManager {
  public:
   /// Tries to get the singleton memory manager. If not previously initialized,
-  /// the process singleton manager will be initialized with the 'options'.
+  /// the process singleton manager will be initialized with the given quota.
   FOLLY_EXPORT static MemoryManager& getInstance(
       const Options& options = Options{},
-      bool ensureCapacity = false) {
+      bool ensureQuota = false) {
     static MemoryManager manager{options};
-    auto actualCapacity = manager.capacity();
+    auto actualCapacity = manager.getMemoryQuota();
     VELOX_USER_CHECK(
-        !ensureCapacity || actualCapacity == options.capacity,
+        !ensureQuota || actualCapacity == options.capacity,
         "Process level manager manager created with input capacity: {}, actual capacity: {}",
         options.capacity,
         actualCapacity);
@@ -482,7 +444,7 @@ class MemoryManager final : public IMemoryManager {
 
   ~MemoryManager();
 
-  int64_t capacity() const final;
+  int64_t getMemoryQuota() const final;
 
   uint16_t alignment() const final;
 
@@ -498,16 +460,11 @@ class MemoryManager final : public IMemoryManager {
   MemoryAllocator& getAllocator();
 
  private:
-  VELOX_FRIEND_TEST(MemoryPoolImplTest, CapSubtree);
-  VELOX_FRIEND_TEST(MemoryPoolImplTest, CapAllocation);
-  VELOX_FRIEND_TEST(MemoryPoolImplTest, UncapMemory);
   VELOX_FRIEND_TEST(MemoryPoolImplTest, MemoryManagerGlobalCap);
-  VELOX_FRIEND_TEST(MultiThreadingUncappingTest, Flat);
-  VELOX_FRIEND_TEST(MultiThreadingUncappingTest, SimpleTree);
 
-  MemoryAllocator* const FOLLY_NONNULL allocator_;
+  const std::shared_ptr<MemoryAllocator> allocator_;
+  const int64_t memoryQuota_;
   const uint16_t alignment_;
-  const int64_t capacity_;
 
   std::shared_ptr<MemoryPool> root_;
   mutable folly::SharedMutex mutex_;
@@ -520,28 +477,28 @@ IMemoryManager& getProcessDefaultMemoryManager();
 /// set to the input value provided.
 std::shared_ptr<MemoryPool> getDefaultMemoryPool(int64_t cap = kMaxMemory);
 
-/// Allocator that uses passed in memory pool to allocate memory.
+/// An Allocator backed by a memory pool for STL containers.
 template <typename T>
-class Allocator {
+class StlAllocator {
  public:
   typedef T value_type;
   MemoryPool& pool;
 
-  /* implicit */ Allocator(MemoryPool& pool) : pool{pool} {}
+  /* implicit */ StlAllocator(MemoryPool& pool) : pool{pool} {}
 
   template <typename U>
-  /* implicit */ Allocator(const Allocator<U>& a) : pool{a.pool} {}
+  /* implicit */ StlAllocator(const StlAllocator<U>& a) : pool{a.pool} {}
 
-  T* FOLLY_NULLABLE allocate(size_t n) {
+  T* allocate(size_t n) {
     return static_cast<T*>(pool.allocate(checkedMultiply(n, sizeof(T))));
   }
 
-  void deallocate(T* FOLLY_NULLABLE p, size_t n) {
+  void deallocate(T* p, size_t n) {
     pool.free(p, checkedMultiply(n, sizeof(T)));
   }
 
   template <typename T1>
-  bool operator==(const Allocator<T1>& rhs) const {
+  bool operator==(const StlAllocator<T1>& rhs) const {
     if constexpr (std::is_same_v<T, T1>) {
       return &this->pool == &rhs.pool;
     }
@@ -549,7 +506,7 @@ class Allocator {
   }
 
   template <typename T1>
-  bool operator!=(const Allocator<T1>& rhs) const {
+  bool operator!=(const StlAllocator<T1>& rhs) const {
     return !(*this == rhs);
   }
 };

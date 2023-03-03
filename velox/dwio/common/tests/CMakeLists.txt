@@ -21,8 +21,10 @@ add_executable(
   ChainedBufferTests.cpp
   DataBufferTests.cpp
   DecoderUtilTest.cpp
+  LocalFileSinkTest.cpp
   LoggedExceptionTest.cpp
   RangeTests.cpp
+  ReadFileInputStreamTests.cpp
   RetryTests.cpp
   TestBufferedInput.cpp
   TestColumnSelector.cpp
@@ -58,6 +60,9 @@ add_library(velox_e2e_filter_test_base E2EFilterTestBase.cpp)
 
 target_link_libraries(
   velox_e2e_filter_test_base
+  velox_functions_prestosql
+  velox_parse_parser
+  velox_vector_test_lib
   ${VELOX_LINK_LIBS}
   ${FOLLY_WITH_DEPENDENCIES}
   ${FMT}

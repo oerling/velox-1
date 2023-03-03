@@ -15,7 +15,6 @@
  */
 #include <folly/experimental/FunctionScheduler.h>
 #include "velox/connectors/Connector.h"
-#include "velox/connectors/WriteProtocol.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -94,8 +93,8 @@ class TestDataSource : public connector::DataSource {
     }
 
     needSplit_ = true;
-    auto data = std::dynamic_pointer_cast<FlatVector<int64_t>>(
-        BaseVector::create({BIGINT()}, size, pool_));
+    auto data =
+        BaseVector::create<FlatVector<int64_t>>({BIGINT()}, size, pool_);
     for (auto i = 0; i < size; i++) {
       data->set(i, i);
     }
@@ -151,8 +150,8 @@ class TestConnector : public connector::Connector {
       RowTypePtr /*inputType*/,
       std::shared_ptr<
           ConnectorInsertTableHandle> /*connectorInsertTableHandle*/,
-      ConnectorQueryCtx* FOLLY_NONNULL /*connectorQueryCtx*/,
-      std::shared_ptr<WriteProtocol> /*writeProtocol*/) override final {
+      ConnectorQueryCtx* /*connectorQueryCtx*/,
+      CommitStrategy /*commitStrategy*/) override final {
     VELOX_NYI();
   }
 };

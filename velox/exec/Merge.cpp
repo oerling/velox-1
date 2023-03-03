@@ -100,7 +100,6 @@ BlockingReason Merge::isBlocked(ContinueFuture* future) {
 }
 
 bool Merge::isFinished() {
-  TestValue::adjust("facebook::velox::exec::Merge::isFinished", &finished_);
   return finished_;
 }
 
@@ -124,8 +123,8 @@ RowVectorPtr Merge::getOutput() {
   }
 
   if (!output_) {
-    output_ = std::dynamic_pointer_cast<RowVector>(BaseVector::create(
-        outputType_, outputBatchSize_, operatorCtx_->pool()));
+    output_ = BaseVector::create<RowVector>(
+        outputType_, outputBatchSize_, operatorCtx_->pool());
     for (auto& child : output_->children()) {
       child->resize(outputBatchSize_);
     }
@@ -317,9 +316,15 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
         auto remoteSplit = std::dynamic_pointer_cast<RemoteConnectorSplit>(
             split.connectorSplit);
         VELOX_CHECK(remoteSplit, "Wrong type of split");
-
+        auto* pool = operatorCtx_->task()->addMergeSourcePool(
+            operatorCtx_->planNodeId(),
+            operatorCtx_->driverCtx()->pipelineId,
+            numSplits_);
         sources_.emplace_back(MergeSource::createMergeExchangeSource(
-            this, remoteSplit->taskId, operatorCtx_->task()->destination()));
+            this,
+            remoteSplit->taskId,
+            operatorCtx_->task()->destination(),
+            pool));
         ++numSplits_;
       } else {
         noMoreSplits_ = true;

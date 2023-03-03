@@ -110,7 +110,7 @@ class OperatorUtilsTest
 };
 
 TEST_F(OperatorUtilsTest, wrapChildConstant) {
-  auto constant = BaseVector::createConstant(11, 1'000, pool_.get());
+  auto constant = makeConstant(11, 1'000);
 
   BufferPtr mapping = allocateIndices(1'234, pool_.get());
   auto rawMapping = mapping->asMutable<vector_size_t>();
@@ -175,10 +175,10 @@ TEST_F(OperatorUtilsTest, gatherCopy) {
 
   // Test with UNKNOWN type.
   int kNumRows = 100;
-  auto sourceVector = makeRowVector(
-      {makeFlatVector<int64_t>(kNumRows, [](auto row) { return row % 7; }),
-       BaseVector::createConstant(
-           variant(TypeKind::UNKNOWN), kNumRows, pool_.get())});
+  auto sourceVector = makeRowVector({
+      makeFlatVector<int64_t>(kNumRows, [](auto row) { return row % 7; }),
+      BaseVector::createNullConstant(UNKNOWN(), kNumRows, pool()),
+  });
   std::vector<const RowVector*> sourceVectors(kNumRows);
   std::vector<vector_size_t> sourceIndices(kNumRows);
   for (int i = 0; i < kNumRows; ++i) {
@@ -204,7 +204,7 @@ TEST_F(OperatorUtilsTest, gatherCopy) {
 }
 
 TEST_F(OperatorUtilsTest, makeOperatorSpillPath) {
-  EXPECT_EQ("spill/task_1_100", makeOperatorSpillPath("spill", "task", 1, 100));
+  EXPECT_EQ("spill/3_1_100", makeOperatorSpillPath("spill", 3, 1, 100));
 }
 
 TEST_F(OperatorUtilsTest, wrap) {

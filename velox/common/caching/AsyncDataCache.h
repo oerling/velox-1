@@ -148,19 +148,19 @@ class AsyncDataCacheEntry {
   //  hold no memory when calling this.
   void initialize(FileCacheKey key);
 
-  memory::MemoryAllocator::Allocation& data() {
+  memory::Allocation& data() {
     return data_;
   }
 
-  const memory::MemoryAllocator::Allocation& data() const {
+  const memory::Allocation& data() const {
     return data_;
   }
 
-  const char* FOLLY_NULLABLE tinyData() const {
+  const char* tinyData() const {
     return tinyData_.empty() ? nullptr : tinyData_.data();
   }
 
-  char* FOLLY_NULLABLE tinyData() {
+  char* tinyData() {
     return tinyData_.empty() ? nullptr : tinyData_.data();
   }
 
@@ -215,13 +215,13 @@ class AsyncDataCacheEntry {
 
   void setExclusiveToShared();
 
-  void setSsdFile(SsdFile* FOLLY_NULLABLE file, uint64_t offset) {
+  void setSsdFile(SsdFile* file, uint64_t offset) {
     ssdFile_ = file;
     ssdOffset_ = offset;
     ssdSaveable_ = false;
   }
 
-  SsdFile* FOLLY_NULLABLE ssdFile() const {
+  SsdFile* ssdFile() const {
     return ssdFile_;
   }
 
@@ -265,13 +265,13 @@ class AsyncDataCacheEntry {
   // Holds an owning reference to the file number.
   FileCacheKey key_;
 
-  CacheShard* const FOLLY_NONNULL shard_;
+  CacheShard* const shard_;
 
   // The data being cached.
-  memory::MemoryAllocator::Allocation data_;
+  memory::Allocation data_;
 
-  // Contains the cached data if this is much smaller than a MappedMemory page
-  // (kTinyDataSize).
+  // Contains the cached data if this is much smaller than a MemoryAllocator
+  // page (kTinyDataSize).
   std::string tinyData_;
 
   std::unique_ptr<folly::SharedPromise<bool>> promise_;
@@ -303,7 +303,7 @@ class AsyncDataCacheEntry {
   // SSD. The exact file and offset are needed to include uses in RAM
   // to uses on SSD. Failing this, we could have the hottest data first in
   // line for eviction from SSD.
-  tsan_atomic<SsdFile * FOLLY_NULLABLE> ssdFile_{nullptr};
+  tsan_atomic<SsdFile*> ssdFile_{nullptr};
 
   // Offset in 'ssdFile_'.
   tsan_atomic<uint64_t> ssdOffset_{0};
@@ -351,11 +351,11 @@ class CachePin {
     release();
     entry_ = nullptr;
   }
-  AsyncDataCacheEntry* FOLLY_NULLABLE entry() const {
+  AsyncDataCacheEntry* entry() const {
     return entry_;
   }
 
-  AsyncDataCacheEntry* FOLLY_NONNULL checkedEntry() const {
+  AsyncDataCacheEntry* checkedEntry() const {
     assert(entry_);
     return entry_;
   }
@@ -382,13 +382,13 @@ class CachePin {
     entry_ = nullptr;
   }
 
-  void setEntry(AsyncDataCacheEntry* FOLLY_NONNULL entry) {
+  void setEntry(AsyncDataCacheEntry* entry) {
     release();
     VELOX_CHECK(entry->isExclusive() || entry->isShared());
     entry_ = entry;
   }
 
-  AsyncDataCacheEntry* FOLLY_NULLABLE entry_{nullptr};
+  AsyncDataCacheEntry* entry_{nullptr};
 
   friend class CacheShard;
 };
@@ -415,7 +415,7 @@ class CoalescedLoad {
   // process of doing this and 'wait' is null, returns immediately. If another
   // thread is in the process of doing this and 'wait' is not null, waits for
   // the other thread to be done.
-  bool loadOrFuture(folly::SemiFuture<bool>* FOLLY_NULLABLE wait);
+  bool loadOrFuture(folly::SemiFuture<bool>* wait);
 
   LoadState state() const {
     tsan_lock_guard<std::mutex> l(mutex_);
@@ -510,12 +510,12 @@ class CacheShard {
   CachePin findOrCreate(
       RawFileCacheKey key,
       uint64_t size,
-      folly::SemiFuture<bool>* FOLLY_NULLABLE readyFuture);
+      folly::SemiFuture<bool>* readyFuture);
 
   // Returns true if there is an entry for 'key'. Updates access time.
   bool exists(RawFileCacheKey key) const;
 
-  AsyncDataCache* FOLLY_NONNULL cache() {
+  AsyncDataCache* cache() {
     return cache_;
   }
   std::mutex& mutex() {
@@ -533,7 +533,7 @@ class CacheShard {
   // inside the shard mutex and returns it so that it can be realized outside of
   // the mutex.
   std::unique_ptr<folly::SharedPromise<bool>> removeEntry(
-      AsyncDataCacheEntry* FOLLY_NONNULL entry);
+      AsyncDataCacheEntry* entry);
 
   // Adds the stats of 'this' to 'stats'.
   void updateStats(CacheStats& stats);
@@ -554,22 +554,18 @@ class CacheShard {
 
   void calibrateThreshold();
 
-  void removeEntryLocked(AsyncDataCacheEntry* FOLLY_NONNULL entry);
+  void removeEntryLocked(AsyncDataCacheEntry* entry);
 
   // Returns an unused entry if found. 'size' is a hint for selecting an entry
   // that already has the right amount of memory associated with it.
   std::unique_ptr<AsyncDataCacheEntry> getFreeEntryWithSize(uint64_t sizeHint);
 
-  CachePin initEntry(
-      RawFileCacheKey key,
-      AsyncDataCacheEntry* FOLLY_NONNULL entry);
+  CachePin initEntry(RawFileCacheKey key, AsyncDataCacheEntry* entry);
 
-  void freeAllocations(
-      std::vector<memory::MemoryAllocator::Allocation>& allocations);
+  void freeAllocations(std::vector<memory::Allocation>& allocations);
 
   mutable std::mutex mutex_;
-  folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry * FOLLY_NONNULL>
-      entryMap_;
+  folly::F14FastMap<RawFileCacheKey, AsyncDataCacheEntry*> entryMap_;
   // Entries associated to a key.
   std::deque<std::unique_ptr<AsyncDataCacheEntry>> entries_;
   // Unused indices in 'entries_'.
@@ -577,7 +573,7 @@ class CacheShard {
   // A reserve of entries that are not associated to a key. Keeps a
   // few around to avoid allocating one inside 'mutex_'.
   std::vector<std::unique_ptr<AsyncDataCacheEntry>> freeEntries_;
-  AsyncDataCache* const FOLLY_NONNULL cache_;
+  AsyncDataCache* const cache_;
   // Index in 'entries_' for the next eviction candidate.
   uint32_t clockHand_{};
   // Number of gets  since last stats sampling.
@@ -598,7 +594,7 @@ class CacheShard {
   // Sum of evict scores. This divided by 'numEvict_' correlates to
   // time data stays in cache.
   uint64_t sumEvictScore_{};
-  // Tracker of time spent in allocating/freeing MappedMemory space
+  // Tracker of time spent in allocating/freeing MemoryAllocator space
   // for backing cached data.
   std::atomic<uint64_t> allocClocks_;
 };
@@ -624,41 +620,39 @@ class AsyncDataCache : public memory::MemoryAllocator {
   CachePin findOrCreate(
       RawFileCacheKey key,
       uint64_t size,
-      folly::SemiFuture<bool>* FOLLY_NULLABLE waitFuture = nullptr);
+      folly::SemiFuture<bool>* waitFuture = nullptr);
 
   // Returns true if there is an entry for 'key'. Updates access time.
   bool exists(RawFileCacheKey key) const;
 
+  Kind kind() const override {
+    return allocator_->kind();
+  }
+
   bool allocateNonContiguous(
       memory::MachinePageCount numPages,
-      Allocation& out,
+      memory::Allocation& out,
       ReservationCallback reservationCB = nullptr,
       memory::MachinePageCount minSizeClass = 0) override;
 
-  int64_t freeNonContiguous(Allocation& allocation) override {
+  int64_t freeNonContiguous(memory::Allocation& allocation) override {
     return allocator_->freeNonContiguous(allocation);
   }
 
   bool allocateContiguous(
       memory::MachinePageCount numPages,
-      Allocation* FOLLY_NULLABLE collateral,
-      ContiguousAllocation& allocation,
+      memory::Allocation* FOLLY_NULLABLE collateral,
+      memory::ContiguousAllocation& allocation,
       ReservationCallback reservationCB = nullptr) override;
 
-  void freeContiguous(ContiguousAllocation& allocation) override {
+  void freeContiguous(memory::ContiguousAllocation& allocation) override {
     allocator_->freeContiguous(allocation);
   }
 
-  void* FOLLY_NULLABLE allocateBytes(
-      uint64_t bytes,
-      uint16_t alignment,
-      uint64_t maxMallocSize = kMaxMallocBytes) override;
+  void* allocateBytes(uint64_t bytes, uint16_t alignment) override;
 
-  void freeBytes(
-      void* FOLLY_NONNULL p,
-      uint64_t size,
-      uint64_t maxMallocSize = kMaxMallocBytes) noexcept override {
-    allocator_->freeBytes(p, size, maxMallocSize);
+  void freeBytes(void* p, uint64_t size) noexcept override {
+    allocator_->freeBytes(p, size);
   }
 
   bool checkConsistency() const override {
@@ -695,7 +689,7 @@ class AsyncDataCache : public memory::MemoryAllocator {
     return maxBytes_;
   }
 
-  SsdCache* FOLLY_NULLABLE ssdCache() const {
+  SsdCache* ssdCache() const {
     return ssdCache_.get();
   }
 
