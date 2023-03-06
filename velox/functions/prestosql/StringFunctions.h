@@ -343,8 +343,11 @@ struct SubstrFunction {
         stringCore::getByteRange<isAscii>(input.data(), start, length);
 
     // Generating output string
+    if (byteRange.second < byteRange.first) {
+      VELOX_FAIL();
+    }
     result.setNoCopy(StringView(
-        input.data() + byteRange.first, byteRange.second - byteRange.first));
+				input.data() + byteRange.first, byteRange.second - byteRange.first));
     return true;
   }
 };
