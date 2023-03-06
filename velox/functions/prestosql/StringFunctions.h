@@ -347,7 +347,7 @@ struct SubstrFunction {
       VELOX_FAIL();
     }
     result.setNoCopy(StringView(
-				input.data() + byteRange.first, byteRange.second - byteRange.first));
+        input.data() + byteRange.first, byteRange.second - byteRange.first));
     return true;
   }
 };
