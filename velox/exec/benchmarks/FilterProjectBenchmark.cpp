@@ -16,14 +16,32 @@
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 
-#include "velox/parse/TypeResolver.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/vector/tests/utils/VectorTestBase.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/parse/TypeResolver.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
+
+/// Benchmark for running expressions on differently wrapped
+/// columns. Runs a sequence of filters and projects wher where each
+/// filter adds a row number mapping. Expressions are evaluated on
+/// data filtered by one or more filters, of which each adds a
+/// dictionary mapping output rows to input rows.
+///
+/// Benchmarks are run on 100K values, either in 10 x 10K or 2000 * 50 row
+/// vectors. Benchmarks are run with 4 consecutive filters, each of which passes
+/// either 95% or 50% of the input.  The sequences of 4 filters are compared to
+/// a single filter followed by 4 projections to measure the cost of wrapping
+/// data in dictionaries and subsequently peeling these off.
+///
+/// String data is benchmarked with either flat or dictionary encoded
+/// input. The dictionary encoded case is either with a different set
+/// of base values in each vector or each vector sharing the same base
+/// values. The latter case allows memoization of expressions on
+/// different elements of the base values.
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -31,6 +49,7 @@ using namespace facebook::velox::exec::test;
 using namespace facebook::velox::test;
 
 struct TestCase {
+  // Dataset to be processed by the below plans.
   std::vector<RowVectorPtr> rows;
 
   // plan that processes data in one FilterProject selecting 80%
@@ -216,14 +235,16 @@ class FilterProjectBenchmark : public VectorTestBase {
           run(*plan);
           return 1;
         });
-    folly::addBenchmark(__FILE__, name + "_95^4", [plan = &test->plan95, this]() {
-      run(*plan);
-      return 1;
-    });
-    folly::addBenchmark(__FILE__, name + "_50^4", [plan = &test->plan50, this]() {
-      run(*plan);
-      return 1;
-    });
+    folly::addBenchmark(
+        __FILE__, name + "_95^4", [plan = &test->plan95, this]() {
+          run(*plan);
+          return 1;
+        });
+    folly::addBenchmark(
+        __FILE__, name + "_50^4", [plan = &test->plan50, this]() {
+          run(*plan);
+          return 1;
+        });
     cases_.push_back(std::move(test));
   }
 
@@ -262,16 +283,19 @@ int main(int argc, char** argv) {
        {"c3", VARCHAR()},
        {"c4", VARCHAR()}});
 
+  // Integers.
   bm.makeBenchmark("Bigint4_10K", bigint4, 10, 10000);
   bm.makeBenchmark("Bigint4_50", bigint4, 2000, 50);
 
+  // Flat strings.
   bm.makeBenchmark("Str4_10K", varchar4, 10, 10000);
   bm.makeBenchmark("Str4_50", varchar4, 2000, 50);
 
-  bm.makeBenchmark(
-      "StrDict4_10K", varchar4, 10, 10000, 800, true, false, true);
+  // Strings dictionary encoded.
+  bm.makeBenchmark("StrDict4_10K", varchar4, 10, 10000, 800, true, false, true);
   bm.makeBenchmark("StrDict4_50", varchar4, 2000, 50, 80, true, false, true);
 
+  // Strings with dictionary base values shared between batches.
   bm.makeBenchmark(
       "StrRepDict4_10K", varchar4, 10, 10000, 8000, true, true, true);
   bm.makeBenchmark(
