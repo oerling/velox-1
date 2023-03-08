@@ -45,9 +45,9 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
-using namespace facebook::velox::exec::test;
 using namespace facebook::velox::test;
 
+namespace {
 struct TestCase {
   // Dataset to be processed by the below plans.
   std::vector<RowVectorPtr> rows;
@@ -88,7 +88,8 @@ class FilterProjectBenchmark : public VectorTestBase {
       int32_t numStages,
       int32_t passPct,
       std::vector<RowVectorPtr> data) {
-    PlanBuilder builder;
+    assert(!data.empty());
+    exec::test::PlanBuilder builder;
     auto& type = data[0]->type()->as<TypeKind::ROW>();
     builder.values(data);
     for (auto level = 0; level < numStages; ++level) {
@@ -179,9 +180,10 @@ class FilterProjectBenchmark : public VectorTestBase {
       bool dictionaryStrings,
       bool shareStringDicts,
       bool stringNulls) {
-    auto type = rows[0]->type()->as<TypeKind::ROW>();
+    assert(!rows.empty());
+    as auto type = rows[0]->type()->as<TypeKind::ROW>();
     auto numColumns = rows[0]->type()->size();
-    for (auto column = 0; column < numColumns; ++column)
+    for (auto column = 0; column < numColumns; ++column) {
       if (type.childAt(column)->kind() == TypeKind::VARCHAR) {
         VectorPtr strings;
         if (dictionaryStrings && shareStringDicts) {
@@ -207,6 +209,7 @@ class FilterProjectBenchmark : public VectorTestBase {
           row->childAt(column) = values;
         }
       }
+    }
   }
 
   void makeBenchmark(
@@ -251,7 +254,7 @@ class FilterProjectBenchmark : public VectorTestBase {
   int64_t run(std::shared_ptr<const core::PlanNode> plan) {
     auto start = getCurrentTimeMicro();
     int32_t numRows = 0;
-    auto result = AssertQueryBuilder(plan).copyResults(pool_.get());
+    auto result = exec::test::AssertQueryBuilder(plan).copyResults(pool_.get());
     numRows += result->childAt(0)->as<FlatVector<int64_t>>()->valueAt(0);
     auto elapsedMicros = getCurrentTimeMicro() - start;
     return elapsedMicros;
@@ -260,6 +263,7 @@ class FilterProjectBenchmark : public VectorTestBase {
   std::vector<std::unique_ptr<TestCase>> cases_;
   folly::Random::DefaultGenerator rng_;
 };
+} // namespace
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv);
