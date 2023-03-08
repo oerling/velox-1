@@ -78,5 +78,3 @@ endif()
 if(VELOX_ENABLE_PARQUET)
   add_subdirectory(experimental/query)
 endif()
-
-

@@ -28,12 +28,12 @@ namespace facebook::verax {
 
 template <typename T>
 using NameMap = std::unordered_map<
-  Name,
+    Name,
     T,
     std::hash<Name>,
     std::equal_to<Name>,
     QGAllocator<std::pair<const Name, T>>>;
-  
+
 /// Represents constraints on a column value or intermediate result.
 struct Value {
   Value() = default;

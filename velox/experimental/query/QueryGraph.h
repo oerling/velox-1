@@ -98,7 +98,7 @@ class Literal : public Expr {
   }
 
  private:
-  const velox::variant * const literal_;
+  const velox::variant* const literal_;
 };
 
 /// Represents a column. A column is always defined by a relation, whether table

@@ -144,7 +144,8 @@ void PlanObjectSet::unionColumns(ExprPtr expr) {
       }
     }
       // Fall through.
-    FOLLY_FALLTHROUGH; case PlanType::kCall: {
+      FOLLY_FALLTHROUGH;
+    case PlanType::kCall: {
       auto call = reinterpret_cast<const Call*>(expr);
       unionSet(call->columns());
       return;
@@ -327,7 +328,8 @@ bool Expr::sameOrEqual(const Expr& other) const {
       }
     }
       // Fall through.
-    FOLLY_FALLTHROUGH; case PlanType::kCall: {
+      FOLLY_FALLTHROUGH;
+    case PlanType::kCall: {
       if (as<Call>()->name() != other.as<Call>()->name()) {
         return false;
       }
@@ -726,7 +728,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
         return copy;
       }
     }
-    FOLLY_FALLTHROUGH; default:
+      FOLLY_FALLTHROUGH;
+    default:
       VELOX_UNREACHABLE();
   }
 }
@@ -957,7 +960,7 @@ ColumnPtr SchemaTable::findColumn(const std::string& name) const {
   VELOX_CHECK(it != columns.end());
   return it->second;
 }
- 
+
 Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
     : name(_name) {
   for (auto& table : tables) {
