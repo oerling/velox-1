@@ -182,7 +182,6 @@ class FunctionSet {
     return FunctionSet(set_ | other);
   }
 
-  
  private:
   uint64_t set_;
 };
