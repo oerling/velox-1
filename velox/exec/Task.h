@@ -471,12 +471,7 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Requests the Task to stop activity.  The returned future is
   /// realized when all running threads have stopped running. Activity
   /// can be resumed with resume() after the future is realized.
-  ContinueFuture requestPause(bool pause) {
-    std::lock_guard<std::mutex> l(mutex_);
-    return requestPauseLocked(pause);
-  }
-
-  ContinueFuture requestPauseLocked(bool pause);
+  ContinueFuture requestPause();
 
   /// Requests activity of 'this' to stop. The returned future will be
   /// realized when the last thread stops running for 'this'. This is used to
@@ -536,6 +531,9 @@ class Task : public std::enable_shared_from_this<Task> {
   /// NOTE: it is assumed that there is no more task to be created after or
   /// during this wait call. This is for testing purpose for now.
   static void testingWaitForAllTasksToBeDeleted(uint64_t maxWaitUs = 3'000'000);
+
+  /// Invoked to run provided 'callback' on each alive driver of the task.
+  void testingVisitDrivers(const std::function<void(Driver*)>& callback);
 
  private:
   // Returns reference to the SplitsState structure for the specified plan node

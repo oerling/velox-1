@@ -768,7 +768,7 @@ TEST_F(JsonCastTest, toInteger) {
       JSON(),
       TINYINT(),
       {"128.01"_sv},
-      "Cannot cast from Json value 128.01 to TINYINT: value is outside the range of TINYINT: [-128, 127].");
+      "Cannot cast from Json value 128.01 to TINYINT: value is out of range [-128, 127]: 128.01");
   testThrow<JsonNativeType, int8_t>(
       JSON(),
       TINYINT(),
@@ -778,12 +778,12 @@ TEST_F(JsonCastTest, toInteger) {
       JSON(),
       TINYINT(),
       {"Infinity"_sv},
-      "Cannot cast from Json value Infinity to TINYINT: value is outside the range of TINYINT: [-128, 127]");
+      "Cannot cast from Json value Infinity to TINYINT: value is out of range [-128, 127]: inf");
   testThrow<JsonNativeType, int8_t>(
       JSON(),
       TINYINT(),
       {"NaN"_sv},
-      "Cannot cast from Json value NaN to TINYINT: value is outside the range of TINYINT: [-128, 127]");
+      "Cannot cast from Json value NaN to TINYINT: value is out of range [-128, 127]: nan");
   testThrow<JsonNativeType, int8_t>(
       JSON(), TINYINT(), {""_sv}, "Not a JSON input");
 }
@@ -927,6 +927,18 @@ TEST_F(JsonCastTest, toMap) {
       {std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
 
   testCast<ComplexType>(JSON(), MAP(VARCHAR(), BIGINT()), data, expected);
+
+  // Null keys or non-string keys in JSON maps are not allowed.
+  testThrow<JsonNativeType, ComplexType>(
+      JSON(),
+      MAP(VARCHAR(), DOUBLE()),
+      {R"({"red":1.1,"blue":2.2})"_sv, R"({null:3.3,"yellow":4.4})"_sv},
+      "Not a JSON input");
+  testThrow<JsonNativeType, ComplexType>(
+      JSON(),
+      MAP(BIGINT(), DOUBLE()),
+      {"{1:1.1,2:2.2}"_sv},
+      "Not a JSON input");
 }
 
 TEST_F(JsonCastTest, toRow) {
@@ -1060,14 +1072,6 @@ TEST_F(JsonCastTest, toInvalid) {
       JSON(), TIMESTAMP(), {"null"_sv}, "Cannot cast JSON to TIMESTAMP");
   testThrow<JsonNativeType, Date>(
       JSON(), DATE(), {"null"_sv}, "Cannot cast JSON to DATE");
-
-  // TODO Fix this test case. The input JSON is invalid as it is not possible to
-  // use NULL key. Map keys cannot be NULL.
-  testThrow<JsonNativeType, ComplexType>(
-      JSON(),
-      MAP(VARCHAR(), DOUBLE()),
-      {R"({"red":1.1,"blue":2.2})"_sv, R"({null:3.3,"yellow":4.4})"_sv},
-      "Not a JSON input");
 
   // Casting JSON arrays to ROW type with different number of fields or
   // unmatched field order is not allowed.
