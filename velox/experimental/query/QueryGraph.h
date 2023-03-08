@@ -165,10 +165,10 @@ class FunctionSet {
   static constexpr uint64_t kAggregate = 1;
 
   FunctionSet() : set_(0) {}
-  explicit FunctionSet(uint32_t set) : set_(set) {}
+  explicit FunctionSet(uint64_t set) : set_(set) {}
 
   /// True if 'item' is in 'this'.
-  bool contains(int32_t item) const {
+  bool contains(int64_t item) const {
     return 0 != (set_ & (1UL << item));
   }
 
@@ -177,6 +177,12 @@ class FunctionSet {
     return FunctionSet(set_ | other.set_);
   }
 
+  /// Unions 'this' and 'other' and returns the result.
+  FunctionSet operator|(uint64_t other) const {
+    return FunctionSet(set_ | other);
+  }
+
+  
  private:
   uint64_t set_;
 };
