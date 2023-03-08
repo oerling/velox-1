@@ -96,7 +96,7 @@ std::string Cost::toString(bool detail, bool isUnit) const {
   if (setupCost > 0) {
     out << ", setup " << succinctNumber(setupCost) << "CU";
   }
-  if (totalBytes) {
+  if (static_cast<bool>(totalBytes)) {
     out << " " << velox::succinctBytes(totalBytes);
   }
   return out.str();

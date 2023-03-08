@@ -60,7 +60,7 @@ class Plan;
 /// references this via a thread local through queryCtx().
 class QueryGraphContext {
  public:
-  QueryGraphContext(velox::HashStringAllocator& allocator)
+  explicit QueryGraphContext(velox::HashStringAllocator& allocator)
       : allocator_(allocator), cache_(allocator_) {}
 
   /// Returns the interned representation of 'str', i.e. Returns a
@@ -161,6 +161,10 @@ Name toName(const std::string& string);
 template <class T>
 struct QGAllocator {
   using value_type = T;
+  QGAllocator() = default;
+
+  template <typename U>
+  explicit QGAllocator(QGAllocator<U>) {}
 
   T* FOLLY_NONNULL allocate(std::size_t n) {
     return reinterpret_cast<T*>(

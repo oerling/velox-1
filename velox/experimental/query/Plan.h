@@ -169,8 +169,8 @@ struct NextJoin {
       const RelationOpPtr& plan,
       const Cost& cost,
       const PlanObjectSet& placed,
-      const PlanObjectSet columns,
-      const BuildSet builds)
+      const PlanObjectSet& columns,
+      const BuildSet& builds)
       : candidate(candidate),
         plan(plan),
         cost(cost),
@@ -273,7 +273,7 @@ struct PlanState {
 /// A scoped guard that restores fields of PlanState on destruction.
 struct PlanStateSaver {
  public:
-  PlanStateSaver(PlanState& state)
+  explicit PlanStateSaver(PlanState& state)
       : state_(state),
         placed_(state.placed),
         columns_(state.columns),

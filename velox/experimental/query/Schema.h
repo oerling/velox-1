@@ -26,6 +26,14 @@
 /// though, so that a schema cache can have its own lifetime.
 namespace facebook::verax {
 
+template <typename T>
+using NameMap = std::unordered_map<
+  Name,
+    T,
+    std::hash<Name>,
+    std::equal_to<Name>,
+    QGAllocator<std::pair<const Name, T>>>;
+  
 /// Represents constraints on a column value or intermediate result.
 struct Value {
   Value() = default;
@@ -37,8 +45,8 @@ struct Value {
   float byteSize() const;
 
   const velox::Type* FOLLY_NONNULL type;
-  velox::variant min;
-  velox::variant max;
+  const velox::variant* min{nullptr};
+  const velox::variant* max{nullptr};
 
   // Count of distinct values. Is not exact and is used for estimating
   // cardinalities of group bys or joins.
@@ -73,7 +81,7 @@ struct RelationOp;
 /// if their locus is equal (==) to the other locus.
 class Locus {
  public:
-  Locus(Name name) : name_(name) {}
+  explicit Locus(Name name) : name_(name) {}
 
   virtual ~Locus() {
     LOG(FATAL) << "Locus is arena allocated";
@@ -337,14 +345,14 @@ struct SchemaTable {
   IndexInfo indexByColumns(PtrSpan<Column> columns) const;
 
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
-  const std::string name;
+  Name name;
   const velox::RowTypePtr type;
 
   // Lookup from name to column.
-  std::unordered_map<std::string, ColumnPtr> columns;
+  NameMap<ColumnPtr> columns;
 
   // All indices. Must contain at least one.
-  std::vector<IndexPtr> indices;
+  std::vector<IndexPtr, QGAllocator<IndexPtr>> indices;
 };
 
 /// Represents a collection of tables. Normally filled in ad hoc given the set
@@ -358,7 +366,7 @@ class Schema {
 
  private:
   Name name;
-  std::unordered_map<std::string, SchemaTablePtr> tables_;
+  NameMap<SchemaTablePtr> tables_;
 };
 
 using SchemaPtr = Schema*;

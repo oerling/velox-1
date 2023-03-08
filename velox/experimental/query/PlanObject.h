@@ -55,8 +55,10 @@ inline bool isExprType(PlanType type) {
 /// planning is complete.
 class PlanObject {
  public:
-  PlanObject(PlanType _type) : type_(_type), id_(queryCtx()->newId(this)) {}
+  explicit PlanObject(PlanType _type) : type_(_type), id_(queryCtx()->newId(this)) {}
 
+  virtual ~PlanObject() = default;
+  
   void operator delete(void* ptr) {
     LOG(FATAL) << "Plan objects are not deletable";
   }

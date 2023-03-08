@@ -232,7 +232,7 @@ class Repartition : public RelationOp {
             RelType::kRepartition,
             std::move(input),
             std::move(distribution),
-            std::move(columns)){};
+            std::move(columns)){}
 
   void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;

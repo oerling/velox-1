@@ -93,7 +93,7 @@ std::string Plan::toString(bool detail) const {
 }
 
 void PlanState::addCost(RelationOp& op) {
-  if (!op.cost().unitCost) {
+  if (!static_cast<bool>(op.cost().unitCost)) {
     op.setCost(*this);
   }
   cost.unitCost += cost.inputCardinality * cost.fanout * op.cost().unitCost;

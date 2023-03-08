@@ -27,7 +27,7 @@ class ArenaCache {
   static constexpr int32_t kGranularity = 16;
 
  public:
-  ArenaCache(velox::HashStringAllocator& allocator)
+  explicit ArenaCache(velox::HashStringAllocator& allocator)
       : allocator_(allocator), allocated_(kMaxSize / kGranularity) {}
 
   void* allocate(size_t size) {

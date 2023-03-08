@@ -90,15 +90,15 @@ using EquivalencePtr = Equivalence*;
 /// Represents a literal.
 class Literal : public Expr {
  public:
-  Literal(const Value& value, velox::variant literal)
+  Literal(const Value& value, const velox::variant* literal)
       : Expr(PlanType::kLiteral, value), literal_(literal) {}
 
   const velox::variant& literal() const {
-    return literal_;
+    return *literal_;
   }
 
  private:
-  velox::variant literal_;
+  const velox::variant * const literal_;
 };
 
 /// Represents a column. A column is always defined by a relation, whether table
@@ -165,7 +165,7 @@ class FunctionSet {
   static constexpr uint64_t kAggregate = 1;
 
   FunctionSet() : set_(0) {}
-  FunctionSet(uint32_t set) : set_(set) {}
+  explicit FunctionSet(uint32_t set) : set_(set) {}
 
   /// True if 'item' is in 'this'.
   bool contains(int32_t item) const {
@@ -215,7 +215,7 @@ class Call : public Expr {
     return true;
   }
 
-  virtual bool containsFunction(uint64_t set) const {
+  bool containsFunction(uint64_t set) const override {
     return functions_.contains(set);
   }
 

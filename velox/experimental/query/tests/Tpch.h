@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #include "velox/experimental/query/QueryGraph.h"
 
 namespace facebook::verax {

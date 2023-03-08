@@ -144,7 +144,7 @@ void PlanObjectSet::unionColumns(ExprPtr expr) {
       }
     }
       // Fall through.
-    case PlanType::kCall: {
+    FOLLY_FALLTHROUGH; case PlanType::kCall: {
       auto call = reinterpret_cast<const Call*>(expr);
       unionSet(call->columns());
       return;
@@ -327,7 +327,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
       }
     }
       // Fall through.
-    case PlanType::kCall: {
+    FOLLY_FALLTHROUGH; case PlanType::kCall: {
       if (as<Call>()->name() != other.as<Call>()->name()) {
         return false;
       }
@@ -726,7 +726,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
         return copy;
       }
     }
-    default:
+    FOLLY_FALLTHROUGH; default:
       VELOX_UNREACHABLE();
   }
 }
@@ -943,21 +943,21 @@ void SchemaTable::addIndex(
 }
 
 ColumnPtr SchemaTable::column(const std::string& name, const Value& value) {
-  auto it = columns.find(name);
+  auto it = columns.find(toName(name));
   if (it != columns.end()) {
     return it->second;
   }
   Declare(Column, column, toName(name), nullptr, value);
-  columns[name] = column;
+  columns[toName(name)] = column;
   return column;
 }
 
 ColumnPtr SchemaTable::findColumn(const std::string& name) const {
-  auto it = columns.find(name);
+  auto it = columns.find(toName(name));
   VELOX_CHECK(it != columns.end());
   return it->second;
 }
-
+ 
 Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
     : name(_name) {
   for (auto& table : tables) {
@@ -966,7 +966,7 @@ Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
 }
 
 SchemaTablePtr Schema::findTable(const std::string& name) const {
-  auto it = tables_.find(name);
+  auto it = tables_.find(toName(name));
   if (it == tables_.end()) {
     VELOX_FAIL("No table {}", name);
   }

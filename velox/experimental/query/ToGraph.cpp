@@ -102,7 +102,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   if (auto constant =
           dynamic_cast<const core::ConstantTypedExpr*>(expr.get())) {
     Declare(
-        Literal, literal, Value(constant->type().get(), 1), constant->value());
+        Literal, literal, Value(constant->type().get(), 1), &constant->value());
     return literal;
   }
   auto it = exprDedup_.find(expr.get());
