@@ -151,7 +151,7 @@ ExprVector Optimization::translateColumns(
     const std::vector<core::FieldAccessTypedExprPtr>& source) {
   ExprVector result{source.size()};
   for (auto i = 0; i < source.size(); ++i) {
-    result[i] = translateColumn(source[i]->name());
+    result[i] = translateColumn(source[i]->name()); //NOLINT
   }
   return result;
 }
@@ -212,7 +212,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
     // independent bidirectional join edge.
     for (auto i = 0; i < leftKeys.size(); ++i) {
       auto l = leftKeys[i];
-      auto r = rightKeys[i];
+      auto r = rightKeys.at(i);
       if (l->type() == PlanType::kColumn && r->type() == PlanType::kColumn) {
         l->as<Column>()->equals(r->as<Column>());
         currentSelect_->addJoinEquality(l, r, {}, false, false, false, false);
@@ -345,7 +345,7 @@ PlanObjectPtr Optimization::makeQueryGraph(
     auto names = project->names();
     auto exprs = project->projections();
     for (auto i = 0; i < names.size(); ++i) {
-      auto expr = translateExpr(exprs[i]);
+      auto expr = translateExpr(exprs.at(i));
       renames_[names[i]] = expr;
     }
     return currentSelect_;

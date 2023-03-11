@@ -36,7 +36,6 @@ using NameMap = std::unordered_map<
 
 /// Represents constraints on a column value or intermediate result.
 struct Value {
-  Value() = default;
   Value(const velox::Type* _type, float _cardinality)
       : type(_type), cardinality(_cardinality) {}
 
@@ -50,7 +49,7 @@ struct Value {
 
   // Count of distinct values. Is not exact and is used for estimating
   // cardinalities of group bys or joins.
-  const float cardinality;
+  const float cardinality{1};
 
   // 0 means no nulls, 0.5 means half are null.
   float nullFraction{0};
@@ -70,7 +69,7 @@ enum class OrderType {
 
 using OrderTypeVector = std::vector<OrderType, QGAllocator<OrderType>>;
 
-struct RelationOp;
+class RelationOp;
 
 /// Represents a system that contains or produces data.For cases of federation
 /// where data is only accessible via a specific instance of a specific type of
@@ -89,13 +88,13 @@ class Locus {
 
   /// Sets the cardinality in op. Returns true if set. If false, default
   /// cardinality determination.
-  virtual bool setCardinality(RelationOp& op) const {
+  virtual bool setCardinality(RelationOp& /*op*/) const {
     return false;
   }
 
   /// Sets the cost. Returns true if set. If false, the default cost is set with
   /// RelationOp::setCost.
-  virtual bool setCost(RelationOp& op) const {
+  virtual bool setCost(RelationOp& /*op*/) const {
     return false;
   }
 
@@ -364,8 +363,13 @@ class Schema {
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTablePtr findTable(const std::string& name) const;
 
- private:
-  Name name;
+
+  Name name() const {
+    return name_;
+  }
+
+private:
+  Name name_;
   NameMap<SchemaTablePtr> tables_;
 };
 

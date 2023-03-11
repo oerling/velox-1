@@ -22,6 +22,12 @@
 
 namespace facebook::verax {
 
+  
+QueryGraphContext*& queryCtx() {
+  thread_local QueryGraphContext* context;
+  return context;
+}
+
 size_t PlanObjectPtrHasher::operator()(const PlanObjectConstPtr& object) const {
   return object->hash();
 }
@@ -79,7 +85,7 @@ float Value::byteSize() const {
 namespace {
 template <typename V>
 bool isZero(const V& bits, size_t begin, size_t end) {
-  for (unsigned i = begin; i < end; ++i) {
+  for (size_t i = begin; i < end; ++i) {
     if (bits[i]) {
       return false;
     }
@@ -702,7 +708,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
         newCondition =
             importExpr(expr->as<Aggregate>()->condition(), outer, inner);
         anyChange |= newCondition != expr->as<Aggregate>()->condition();
-        if (newCondition->isFunction()) {
+	
+        if (newCondition && newCondition->isFunction()) {
           functions = functions | newCondition->as<Call>()->functions();
         }
       }
@@ -766,7 +773,7 @@ bool isUnique(JoinEdgePtr join, PlanObjectConstPtr side) {
   return join->sideOf(side, true).isUnique;
 }
 
-PlanObjectConstPtr nextJoin(
+PlanObjectConstPtr FOLLY_NULLABLE nextJoin(
     PlanObjectConstPtr start,
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
@@ -849,6 +856,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
       continue;
     }
     auto innerKey = importExpr(side.keys[0], outer, inner);
+    assert(innerKey);
     if (innerKey->containsFunction(FunctionSet::kAggregate)) {
       // If the join key is an aggregate, the join can't be moved below the agg.
       continue;
@@ -973,7 +981,7 @@ ColumnPtr SchemaTable::findColumn(const std::string& name) const {
 }
 
 Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
-    : name(_name) {
+    : name_(_name) {
   for (auto& table : tables) {
     tables_[table->name] = table;
   }

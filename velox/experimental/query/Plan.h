@@ -341,7 +341,7 @@ class Optimization {
   PlanPtr bestPlan();
 
   /// Returns   a Velox PlanNode tree for a RelationOp tree.
-  std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(RelationOpPtr plan) {
+  std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(RelationOpPtr /*plan*/) {
     VELOX_NYI();
   }
 
@@ -407,10 +407,10 @@ class Optimization {
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
   // Adds order by information to the enclosing DerivedTable.
-  OrderByPtr translateOrderBy(const velox::core::OrderByNode& order);
+  OrderByPtr FOLLY_NULLABLE translateOrderBy(const velox::core::OrderByNode& order);
 
   // Adds aggregation information to the enclosing DerivedTable.
-  AggregationPtr translateAggregation(
+  AggregationPtr FOLLY_NULLABLE translateAggregation(
       const velox::core::AggregationNode& aggregation);
 
   // Adds 'node' and descendants to query graph wrapped inside a
@@ -450,7 +450,7 @@ class Optimization {
   // we further check if reducing joins applying to the probe can be
   // used to furthr reduce the build. These last joins are added as
   // 'existences' in the candidate.
-  std::vector<JoinCandidate> nextJoins(DerivedTablePtr dt, PlanState& state);
+  std::vector<JoinCandidate> nextJoins(PlanState& state);
 
   // Adds group by, order by, top k to 'plan'. Updates 'plan' if
   // relation ops added.  Sets cost in 'state'.

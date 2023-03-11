@@ -28,7 +28,7 @@ const Value& RelationOp::value(ExprPtr expr) const {
   return expr->value();
 }
 
-std::string RelationOp::toString(bool recursive, bool detail) const {
+  std::string RelationOp::toString(bool recursive, bool detail) const {
   if (input_ && recursive) {
     return input_->toString(true, detail);
   }

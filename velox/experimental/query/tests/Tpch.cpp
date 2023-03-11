@@ -75,12 +75,13 @@ SchemaTablePtr makeTable(
     bool partitioned,
     bool ordered,
     bool secondary) {
+  VELOX_CHECK(!secondary, "Secondary indices not implemented");
   auto cardinality = tpch::getRowCount(id, scale);
 
   auto type = tpch::getTableSchema(id);
-  auto name = tpch::toTableName(id);
+  auto tableName = tpch::toTableName(id);
   Declare(
-      SchemaTable, table, toName(std::string(name.data(), name.size())), type);
+      SchemaTable, table, toName(std::string(tableName.data(), tableName.size())), type);
   ColumnVector orderedColumns;
   for (auto i = 0; i < type->size(); ++i) {
     auto name = toName(type->nameOf(i));

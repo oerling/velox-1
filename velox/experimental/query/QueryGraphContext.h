@@ -35,7 +35,7 @@ using Name = const char*;
 template <typename T>
 using PtrSpan = folly::Range<const T* const*>;
 
-struct PlanObject;
+class PlanObject;
 
 using PlanObjectPtr = PlanObject*;
 using PlanObjectConstPtr = const PlanObject*;
@@ -140,10 +140,7 @@ class QueryGraphContext {
 };
 
 /// Returns a mutable reference to the calling thread's QueryGraphContext.
-inline QueryGraphContext*& queryCtx() {
-  thread_local QueryGraphContext* context;
-  return context;
-}
+QueryGraphContext*& queryCtx();
 
 /// Declares 'destination' as a pointer to T, allocated from the thread's
 /// QueryGraphContext arena. The remaining arguments are passed to the
@@ -168,14 +165,15 @@ struct QGAllocator {
 
   T* FOLLY_NONNULL allocate(std::size_t n) {
     return reinterpret_cast<T*>(
-        queryCtx()->allocate(velox::checkedMultiply(n, sizeof(T))));
+				// NOLINT
+				queryCtx()->allocate(velox::checkedMultiply(n, sizeof(T))));
   }
 
   void deallocate(T* FOLLY_NONNULL p, std::size_t /*n*/) noexcept {
     queryCtx()->free(p);
   }
 
-  friend bool operator==(const QGAllocator& lhs, const QGAllocator& rhs) {
+  friend bool operator==(const QGAllocator& /*lhs*/, const QGAllocator& /*rhs*/) {
     return true;
   }
 
@@ -185,9 +183,9 @@ struct QGAllocator {
 };
 
 // Forward declarations of common types and collections.
-struct Expr;
+class Expr;
 using ExprPtr = const Expr*;
-struct Column;
+class Column;
 using ColumnPtr = const Column*;
 using ExprVector = std::vector<ExprPtr, QGAllocator<ExprPtr>>;
 using ColumnVector = std::vector<ColumnPtr, QGAllocator<ColumnPtr>>;

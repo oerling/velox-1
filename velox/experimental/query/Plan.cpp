@@ -160,7 +160,7 @@ std::string PlanState::printPlan(RelationOpPtr op, bool detail) const {
   return plan->toString(detail);
 }
 
-PlanPtr PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
+PlanPtr FOLLY_NULLABLE PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   bool insert = plans.empty();
   int32_t replaceIndex = -1;
   if (!insert) {
@@ -224,6 +224,7 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
     float shuffle = shuffleCost(best->op->columns()) * best->cost.fanout;
     if (bestCost + shuffle < matchCost) {
       needsShuffle = true;
+      assert(best != nullptr);
       return best;
     }
   }
@@ -354,6 +355,7 @@ JoinCandidate reducingJoins(
   }
   PlanObjectSet exists;
   float reduction = 1;
+  assert(!candidate.tables.empty());
   std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
   // Look for reducing joins that were not added before, also covering already
   // placed tables. This may copy reducing joins from a probe to the
@@ -438,7 +440,6 @@ bool NextJoin::isWorse(const NextJoin& other) const {
 }
 
 std::vector<JoinCandidate> Optimization::nextJoins(
-    DerivedTablePtr dt,
     PlanState& state) {
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
@@ -584,8 +585,8 @@ bool isIndexColocated(
   for (auto i = 0; i < input->distribution().partition.size(); ++i) {
     auto nthKey = position(lookupValues, *input->distribution().partition[i]);
     if (nthKey != kNotFound) {
-      if (info.schemaColumn(info.lookupKeys[nthKey]) !=
-          info.index->distribution().partition[i]) {
+      if (info.schemaColumn(info.lookupKeys.at(nthKey)) !=
+          info.index->distribution().partition.at(i)) {
         return false;
       }
     } else {
@@ -651,7 +652,7 @@ void Optimization::joinByIndex(
     const JoinCandidate& candidate,
     PlanState& state,
     std::vector<NextJoin>& toTry) {
-  if (candidate.tables[0]->type() != PlanType::kTable ||
+  if (candidate.tables.at(0)->type() != PlanType::kTable ||
       candidate.tables.size() > 1 || !candidate.existences.empty()) {
     // Index applies to single base tables.
     return;
@@ -747,6 +748,7 @@ void Optimization::joinByHash(
     const JoinCandidate& candidate,
     PlanState& state,
     std::vector<NextJoin>& toTry) {
+  assert(!candidate.tables.empty());
   auto build = candidate.sideOf(candidate.tables[0]);
   auto probe = candidate.sideOf(candidate.tables[0], true);
   ExprVector copartition;
@@ -759,10 +761,10 @@ void Optimization::joinByHash(
   PlanStateSaver save(state);
   PlanObjectSet buildTables;
   PlanObjectSet buildColumns;
-  for (auto build : candidate.tables) {
-    buildColumns.unionSet(availableColumns(build));
-    state.placed.add(build);
-    buildTables.add(build);
+  for (auto buildTable : candidate.tables) {
+    buildColumns.unionSet(availableColumns(buildTable));
+    state.placed.add(buildTable);
+    buildTables.add(buildTable);
   }
   auto downstream = state.downstreamColumns();
   buildColumns.intersect(downstream);
@@ -822,13 +824,14 @@ void Optimization::joinByHash(
     }
 
     ExprVector distCols;
-    for (auto i = 0; i < probe.keys.size(); ++i) {
+    for (size_t i = 0; i < probe.keys.size(); ++i) {
       auto key = build.keys[i];
       auto nthKey = position(buildInput->distribution().partition, *key);
       if (nthKey != kNotFound) {
         if (distCols.size() <= nthKey) {
           distCols.resize(nthKey + 1);
         }
+	assert(!distCols.empty());
         distCols[nthKey] = probe.keys[i];
       }
     }
@@ -990,7 +993,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     std::vector<float> scores(firstTables.size());
     for (auto i = 0; i < firstTables.size(); ++i) {
       auto table = firstTables[i];
-      scores[i] = startingScore(table, dt);
+      scores.at(i) = startingScore(table, dt);
     }
     std::vector<int32_t> ids(firstTables.size());
     std::iota(ids.begin(), ids.end(), 0);
@@ -998,7 +1001,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       return scores[left] > scores[right];
     });
     for (auto i : ids) {
-      auto from = firstTables[i];
+      auto from = firstTables.at(i);
       if (from->type() == PlanType::kTable) {
         auto table = from->as<BaseTable>();
         auto indices = chooseLeafIndex(table->as<BaseTable>());
@@ -1035,7 +1038,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     }
     // Add multitable filters not associated to a non-inner join.
     plan = placeConjuncts(plan, state);
-    auto candidates = nextJoins(dt, state);
+    auto candidates = nextJoins(state);
     if (candidates.empty()) {
       addPostprocess(dt, plan, state);
       auto kept = state.plans.addPlan(plan, state);
@@ -1056,7 +1059,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
 PlanPtr Optimization::makePlan(
     const MemoKey& key,
     const Distribution& distribution,
-    const PlanObjectSet& boundColumns,
+    const PlanObjectSet& /*boundColumns*/,
     float existsFanout,
     PlanState& state,
     bool& needsShuffle) {

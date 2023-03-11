@@ -60,7 +60,7 @@ class PlanObject {
 
   virtual ~PlanObject() = default;
 
-  void operator delete(void* ptr) {
+  void operator delete(void* /*ptr*/) {
     LOG(FATAL) << "Plan objects are not deletable";
   }
 

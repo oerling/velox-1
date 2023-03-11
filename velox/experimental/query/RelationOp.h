@@ -95,7 +95,7 @@ class RelationOp : public Relation {
     queryCtx()->free(ptr);
   }
 
-  const boost::intrusive_ptr<struct RelationOp>& input() const {
+  const boost::intrusive_ptr<class RelationOp>& input() const {
     return input_;
   }
 
@@ -128,7 +128,7 @@ class RelationOp : public Relation {
 
   // Input of filter/project/group by etc., Left side of join, nullptr for a
   // leaf table scan.
-  boost::intrusive_ptr<struct RelationOp> input_;
+  boost::intrusive_ptr<class RelationOp> input_;
 
   Cost cost_;
 
@@ -227,7 +227,7 @@ class Repartition : public RelationOp {
   Repartition(
       RelationOpPtr input,
       Distribution distribution,
-      const ColumnVector& columns)
+      ColumnVector columns)
       : RelationOp(
             RelType::kRepartition,
             std::move(input),
