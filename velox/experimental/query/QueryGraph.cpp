@@ -555,7 +555,7 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   for (auto join : joinedBy(table)) {
     if (join->leftTable() == table) {
       if (!tables.contains(join->rightTable())) {
-	continue;
+        continue;
       }
       Declare(
           JoinEdge,
@@ -574,7 +574,7 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
     }
     if (join->rightTable() == table) {
       if (!join->leftTable() || !tables.contains(join->leftTable())) {
-	continue;
+        continue;
       }
 
       Declare(
@@ -743,7 +743,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
   }
 }
 
-PlanObjectConstPtr FOLLY_NULLABLE otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
+PlanObjectConstPtr FOLLY_NULLABLE
+otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
   if (side == join->leftTable()) {
     return join->rightTable();
   } else if (join->rightTable() == side) {
@@ -925,7 +926,7 @@ std::string DerivedTable::toString() const {
 std::vector<ColumnPtr> SchemaTable::toColumns(
     const std::vector<std::string>& names) {
   std::vector<ColumnPtr> columns(names.size());
-  assert(!columns.empty()); //lint
+  assert(!columns.empty()); // lint
   for (auto i = 0; i < names.size(); ++i) {
     columns[i] = findColumn(name);
   }

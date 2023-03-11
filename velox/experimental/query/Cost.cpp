@@ -172,7 +172,7 @@ void Join::setCost(const PlanState& input) {
       leftKeys.size() * Costs::kHashColumnCost;
 }
 
-  void Filter::setCost(const PlanState& /*input*/) {
+void Filter::setCost(const PlanState& /*input*/) {
   cost_.unitCost = Costs::kMinimumFilterCost * exprs_.size();
   // We assume each filter selects 4/5. Small effect makes it so
   // join and scan selectivities that are better known have more

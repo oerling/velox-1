@@ -65,7 +65,7 @@ std::unordered_map<std::string, float>& baseSelectivities() {
   return map;
 }
 
-  FunctionSet functionBits(Name /*name*/) {
+FunctionSet functionBits(Name /*name*/) {
   return FunctionSet(0);
 }
 
@@ -232,7 +232,7 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
   return best;
 }
 
-  float startingScore(PlanObjectConstPtr table, DerivedTablePtr /*dt*/) {
+float startingScore(PlanObjectConstPtr table, DerivedTablePtr /*dt*/) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()
         ->schemaTable->indices[0]
@@ -327,7 +327,7 @@ JoinCandidate reducingJoins(
   PlanObjectSet reducingSet;
   if (candidate.join->isInner()) {
     PlanObjectSet visited = state.placed;
-    assert(!candidate.tables.empty()); //lint
+    assert(!candidate.tables.empty()); // lint
     visited.add(candidate.tables[0]);
     reducingSet.add(candidate.tables[0]);
     std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
@@ -443,8 +443,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
-      state,
-      [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
+      state, [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
         if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
           candidates.emplace_back(join, joined, fanout);
         }
@@ -543,8 +542,7 @@ void Optimization::addPostprocess(
   }
 }
 
-std::vector<IndexPtr> chooseLeafIndex(
-    const BaseTable* table) {
+std::vector<IndexPtr> chooseLeafIndex(const BaseTable* table) {
   assert(!table->schemaTable->indices.empty());
   return {table->schemaTable->indices[0]};
 }
@@ -775,7 +773,7 @@ void Optimization::joinByHash(
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto buildPlan = makePlan(
-			    memoKey,
+      memoKey,
       Distribution(plan->distribution().distributionType, 0, copartition),
       empty,
       candidate.existsFanout,
@@ -900,7 +898,8 @@ ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
     if (!object->as<Column>()->schemaColumn()) {
       return;
     }
-    if (position(index->columns(), *object->as<Column>()->schemaColumn()) != kNotFound) {
+    if (position(index->columns(), *object->as<Column>()->schemaColumn()) !=
+        kNotFound) {
       result.push_back(object->as<Column>());
     }
   });
