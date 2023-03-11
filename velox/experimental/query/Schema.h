@@ -363,12 +363,11 @@ class Schema {
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTablePtr findTable(const std::string& name) const;
 
-
   Name name() const {
     return name_;
   }
 
-private:
+ private:
   Name name_;
   NameMap<SchemaTablePtr> tables_;
 };

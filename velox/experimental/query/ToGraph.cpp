@@ -151,7 +151,7 @@ ExprVector Optimization::translateColumns(
     const std::vector<core::FieldAccessTypedExprPtr>& source) {
   ExprVector result{source.size()};
   for (auto i = 0; i < source.size(); ++i) {
-    result[i] = translateColumn(source[i]->name()); //NOLINT
+    result[i] = translateColumn(source[i]->name()); // NOLINT
   }
   return result;
 }

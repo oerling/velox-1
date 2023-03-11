@@ -81,7 +81,10 @@ SchemaTablePtr makeTable(
   auto type = tpch::getTableSchema(id);
   auto tableName = tpch::toTableName(id);
   Declare(
-      SchemaTable, table, toName(std::string(tableName.data(), tableName.size())), type);
+      SchemaTable,
+      table,
+      toName(std::string(tableName.data(), tableName.size())),
+      type);
   ColumnVector orderedColumns;
   for (auto i = 0; i < type->size(); ++i) {
     auto name = toName(type->nameOf(i));

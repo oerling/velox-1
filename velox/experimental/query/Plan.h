@@ -341,7 +341,8 @@ class Optimization {
   PlanPtr bestPlan();
 
   /// Returns   a Velox PlanNode tree for a RelationOp tree.
-  std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(RelationOpPtr /*plan*/) {
+  std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(
+      RelationOpPtr /*plan*/) {
     VELOX_NYI();
   }
 
@@ -407,11 +408,12 @@ class Optimization {
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
   // Adds order by information to the enclosing DerivedTable.
-  OrderByPtr FOLLY_NULLABLE translateOrderBy(const velox::core::OrderByNode& order);
+  OrderByPtr FOLLY_NULLABLE
+  translateOrderBy(const velox::core::OrderByNode& order);
 
   // Adds aggregation information to the enclosing DerivedTable.
-  AggregationPtr FOLLY_NULLABLE translateAggregation(
-      const velox::core::AggregationNode& aggregation);
+  AggregationPtr FOLLY_NULLABLE
+  translateAggregation(const velox::core::AggregationNode& aggregation);
 
   // Adds 'node' and descendants to query graph wrapped inside a
   // DerivedTable. Done for joins to the right of non-inner joins,

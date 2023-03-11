@@ -439,8 +439,7 @@ bool NextJoin::isWorse(const NextJoin& other) const {
       other.cost.unitCost + other.cost.setupCost;
 }
 
-std::vector<JoinCandidate> Optimization::nextJoins(
-    PlanState& state) {
+std::vector<JoinCandidate> Optimization::nextJoins(PlanState& state) {
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
@@ -831,7 +830,7 @@ void Optimization::joinByHash(
         if (distCols.size() <= nthKey) {
           distCols.resize(nthKey + 1);
         }
-	assert(!distCols.empty());
+        assert(!distCols.empty());
         distCols[nthKey] = probe.keys[i];
       }
     }

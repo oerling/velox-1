@@ -165,15 +165,17 @@ struct QGAllocator {
 
   T* FOLLY_NONNULL allocate(std::size_t n) {
     return reinterpret_cast<T*>(
-				// NOLINT
-				queryCtx()->allocate(velox::checkedMultiply(n, sizeof(T))));
+        // NOLINT
+        queryCtx()->allocate(velox::checkedMultiply(n, sizeof(T))));
   }
 
   void deallocate(T* FOLLY_NONNULL p, std::size_t /*n*/) noexcept {
     queryCtx()->free(p);
   }
 
-  friend bool operator==(const QGAllocator& /*lhs*/, const QGAllocator& /*rhs*/) {
+  friend bool operator==(
+      const QGAllocator& /*lhs*/,
+      const QGAllocator& /*rhs*/) {
     return true;
   }
 

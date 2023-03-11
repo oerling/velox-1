@@ -22,7 +22,6 @@
 
 namespace facebook::verax {
 
-  
 QueryGraphContext*& queryCtx() {
   thread_local QueryGraphContext* context;
   return context;
@@ -708,7 +707,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
         newCondition =
             importExpr(expr->as<Aggregate>()->condition(), outer, inner);
         anyChange |= newCondition != expr->as<Aggregate>()->condition();
-	
+
         if (newCondition && newCondition->isFunction()) {
           functions = functions | newCondition->as<Call>()->functions();
         }
