@@ -1497,7 +1497,7 @@ bool Expr::applyFunctionWithPeeling(
   applyFunction(*newRows, context, peeledResult);
   VectorPtr wrappedResult =
       context.applyWrapToPeeledResult(this->type(), peeledResult, applyRows);
-  context.moveOrCopyResult(wrappedResult, rows, result);
+  context.moveOrCopyResult(wrappedResult, applyRows, result);
 
   // Recycle peeledResult if it's not owned by the result vector. Examples of
   // when this can happen is when the result is a primitive constant vector, or
@@ -1648,6 +1648,18 @@ void Expr::appendInputsSql(
     // Function with no inputs.
     stream << "()";
   }
+}
+
+bool Expr::isConstant() const {
+  if (!isDeterministic()) {
+    return false;
+  }
+  for (auto& input : inputs_) {
+    if (!dynamic_cast<ConstantExpr*>(input.get())) {
+      return false;
+    }
+  }
+  return true;
 }
 
 ExprSet::ExprSet(

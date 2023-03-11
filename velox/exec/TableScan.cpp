@@ -18,7 +18,7 @@
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
-DEFINE_int32(split_preload_per_driver, 0, "Prefetch split metadata");
+DEFINE_int32(split_preload_per_driver, 2, "Prefetch split metadata");
 
 namespace facebook::velox::exec {
 
@@ -198,7 +198,8 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
        table = tableHandle_,
        columns = columnHandles_,
        connector = connector_,
-       ctx = connectorQueryCtx_,
+       ctx = operatorCtx_->createConnectorQueryCtx(
+           split->connectorId, planNodeId()),
        task = operatorCtx_->task(),
        split]() -> std::unique_ptr<DataSourcePtr> {
         if (task->isCancelled()) {

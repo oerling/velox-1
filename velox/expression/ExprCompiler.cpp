@@ -296,15 +296,9 @@ std::shared_ptr<Expr> compileLambda(
 }
 
 ExprPtr tryFoldIfConstant(const ExprPtr& expr, Scope* scope) {
-  if (expr->isDeterministic() && !expr->inputs().empty() &&
+  if (expr->isConstant() && !expr->inputs().empty() &&
       scope->exprSet->execCtx()) {
     try {
-      // Check that all inputs are literals.
-      for (auto& input : expr->inputs()) {
-        if (!dynamic_cast<ConstantExpr*>(input.get())) {
-          return expr;
-        }
-      }
       auto rowType = ROW({}, {});
       auto execCtx = scope->exprSet->execCtx();
       auto row = BaseVector::create(rowType, 1, execCtx->pool());
@@ -382,11 +376,13 @@ ExprPtr compileExpression(
         resultType, std::move(compiledInputs), trackCpuUsage);
   } else if (auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get())) {
     VELOX_CHECK(!compiledInputs.empty());
-    result = std::make_shared<CastExpr>(
-        resultType,
-        std::move(compiledInputs[0]),
-        trackCpuUsage,
-        cast->nullOnFailure());
+    auto castExpr = std::make_shared<CastExpr>(
+        resultType, std::move(compiledInputs[0]), trackCpuUsage);
+    if (cast->nullOnFailure()) {
+      result = getSpecialForm("try", resultType, {castExpr}, trackCpuUsage);
+    } else {
+      result = castExpr;
+    }
   } else if (auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get())) {
     if (auto specialForm = getSpecialForm(
             call->name(),
