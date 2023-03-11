@@ -114,7 +114,7 @@ struct PlanSet {
   /// Compares 'plan' to already seen plans and retains it if it is
   /// interesting, e.g. better than the best so far or has an interesting
   /// order. Returns the plan if retained, nullptr if not.
-  PlanPtr addPlan(RelationOpPtr plan, PlanState& state);
+  PlanPtr FOLLY_NULLABLE addPlan(RelationOpPtr plan, PlanState& state);
 };
 
 // Represents the next table/derived table to join. May consist of several

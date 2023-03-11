@@ -79,7 +79,7 @@ float Value::byteSize() const {
 namespace {
 template <typename V>
 bool isZero(const V& bits, size_t begin, size_t end) {
-  for (auto i = begin; i < end; ++i) {
+  for (unsigned i = begin; i < end; ++i) {
     if (bits[i]) {
       return false;
     }
@@ -93,7 +93,7 @@ bool PlanObjectSet::operator==(const PlanObjectSet& other) const {
   // do not count.
   auto l1 = bits_.size();
   auto l2 = other.bits_.size();
-  for (auto i = 0; i < l1 && i < l2; ++i) {
+  for (unsigned i = 0; i < l1 && i < l2; ++i) {
     if (bits_[i] != other.bits_[i]) {
       return false;
     }
@@ -110,7 +110,7 @@ bool PlanObjectSet::operator==(const PlanObjectSet& other) const {
 bool PlanObjectSet::isSubset(const PlanObjectSet& super) const {
   auto l1 = bits_.size();
   auto l2 = super.bits_.size();
-  for (auto i = 0; i < l1 && i < l2; ++i) {
+  for (unsigned i = 0; i < l1 && i < l2; ++i) {
     if (bits_[i] & ~super.bits_[i]) {
       return false;
     }
@@ -124,7 +124,7 @@ bool PlanObjectSet::isSubset(const PlanObjectSet& super) const {
 size_t PlanObjectSet::hash() const {
   // The hash is a mix of the hashes of all non-zero words.
   size_t hash = 123;
-  for (auto i = 0; i < bits_.size(); ++i) {
+  for (unsigned i = 0; i < bits_.size(); ++i) {
     hash = velox::simd::crc32U64(hash, bits_[i]);
   }
   return hash * hash;
@@ -171,6 +171,7 @@ void PlanObjectSet::unionSet(const PlanObjectSet& other) {
 void PlanObjectSet::intersect(const PlanObjectSet& other) {
   bits_.resize(std::min(bits_.size(), other.bits_.size()));
   for (auto i = 0; i < bits_.size(); ++i) {
+    assert(!other.bits_.empty());
     bits_[i] &= other.bits_[i];
   }
 }
@@ -349,7 +350,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
   }
 }
 
-PlanObjectConstPtr singleTable(PlanObjectConstPtr object) {
+PlanObjectConstPtr FOLLY_NULLABLE singleTable(PlanObjectConstPtr object) {
   if (isExprType(object->type())) {
     return object->as<Expr>()->singleTable();
   }
@@ -553,6 +554,9 @@ void DerivedTable::linkTablesToJoins() {
 JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   for (auto join : joinedBy(table)) {
     if (join->leftTable() == table) {
+      if (!tables.contains(join->rightTable())) {
+	continue;
+      }
       Declare(
           JoinEdge,
           exists,
@@ -569,6 +573,10 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
       return exists;
     }
     if (join->rightTable() == table) {
+      if (!join->leftTable() || !tables.contains(join->leftTable())) {
+	continue;
+      }
+
       Declare(
           JoinEdge,
           exists,
@@ -646,6 +654,7 @@ void DerivedTable::import(
       tableSet.add(existsDt);
     } else {
       joins.push_back(existsJoin);
+      assert(!existsTables.empty());
       tables.push_back(existsTables[0]);
       tableSet.add(existsTables[0]);
     }
@@ -660,7 +669,7 @@ void DerivedTable::import(
 
 // Returns a copy of 'expr,, replacing instances of columns in 'outer' with the
 // corresponding expression from 'inner'
-ExprPtr
+ExprPtr FOLLY_NULLABLE
 importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
   if (!expr) {
     return nullptr;
@@ -734,7 +743,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
   }
 }
 
-PlanObjectConstPtr otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
+PlanObjectConstPtr FOLLY_NULLABLE otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
   if (side == join->leftTable()) {
     return join->rightTable();
   } else if (join->rightTable() == side) {
@@ -824,7 +833,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
   auto& inner = firstDt->exprs;
   PlanObjectSet projected;
   for (auto& expr : exprs) {
-    projected.unionColumns(exprs);
+    projected.unionColumns(expr);
   }
 
   Declare(DerivedTable, newFirst, *firstDt->as<DerivedTable>());
@@ -916,6 +925,7 @@ std::string DerivedTable::toString() const {
 std::vector<ColumnPtr> SchemaTable::toColumns(
     const std::vector<std::string>& names) {
   std::vector<ColumnPtr> columns(names.size());
+  assert(!columns.empty()); //lint
   for (auto i = 0; i < names.size(); ++i) {
     columns[i] = findColumn(name);
   }
@@ -1134,7 +1144,7 @@ IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
   return result;
 }
 
-ColumnPtr IndexInfo::schemaColumn(ColumnPtr keyValue) const {
+ColumnPtr FOLLY_NULLABLE IndexInfo::schemaColumn(ColumnPtr keyValue) const {
   for (auto& column : index->columns()) {
     if (column->name() == keyValue->name()) {
       return column;

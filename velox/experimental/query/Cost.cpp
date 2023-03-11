@@ -127,7 +127,6 @@ void Aggregation::setCost(const PlanState& input) {
   // being unique after n values is 1 - (1/d)^n.
   auto nOut = cardinality -
       cardinality * pow(1.0 - (1.0 / cardinality), cost_.inputCardinality);
-  auto numDuplicate = cost_.inputCardinality - nOut;
   cost_.fanout = nOut / cost_.inputCardinality;
   cost_.unitCost = grouping.size() * Costs::hashProbeCost(nOut);
   float rowBytes = byteSize(grouping) + byteSize(aggregates);
@@ -173,7 +172,7 @@ void Join::setCost(const PlanState& input) {
       leftKeys.size() * Costs::kHashColumnCost;
 }
 
-void Filter::setCost(const PlanState& input) {
+  void Filter::setCost(const PlanState& /*input*/) {
   cost_.unitCost = Costs::kMinimumFilterCost * exprs_.size();
   // We assume each filter selects 4/5. Small effect makes it so
   // join and scan selectivities that are better known have more

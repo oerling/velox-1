@@ -65,7 +65,7 @@ std::unordered_map<std::string, float>& baseSelectivities() {
   return map;
 }
 
-FunctionSet functionBits(Name name) {
+  FunctionSet functionBits(Name /*name*/) {
   return FunctionSet(0);
 }
 
@@ -228,10 +228,11 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
     }
   }
   needsShuffle = best != match;
+  assert(best != nullptr);
   return best;
 }
 
-float startingScore(PlanObjectConstPtr table, DerivedTablePtr dt) {
+  float startingScore(PlanObjectConstPtr table, DerivedTablePtr /*dt*/) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()
         ->schemaTable->indices[0]
@@ -326,6 +327,7 @@ JoinCandidate reducingJoins(
   PlanObjectSet reducingSet;
   if (candidate.join->isInner()) {
     PlanObjectSet visited = state.placed;
+    assert(!candidate.tables.empty()); //lint
     visited.add(candidate.tables[0]);
     reducingSet.add(candidate.tables[0]);
     std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
@@ -381,7 +383,7 @@ JoinCandidate reducingJoins(
 
 // Calls 'func' with join, joined table and fanout for the joinable tables.
 template <typename Func>
-void forJoinedTables(DerivedTablePtr dt, const PlanState& state, Func func) {
+void forJoinedTables(const PlanState& state, Func func) {
   std::unordered_set<JoinEdgePtr> visited;
   state.placed.forEach([&](PlanObjectConstPtr placedTable) {
     for (auto join : joinedBy(placedTable)) {
@@ -441,7 +443,6 @@ std::vector<JoinCandidate> Optimization::nextJoins(
   std::vector<JoinCandidate> candidates;
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
-      dt,
       state,
       [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
         if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
@@ -507,7 +508,7 @@ RelationOpPtr repartitionForAgg(
   bool shuffle = false;
   for (auto& key : keyValues) {
     auto nthKey = position(plan->distribution().partition, *key);
-    if (nthKey < 0) {
+    if (nthKey == kNotFound) {
       shuffle = true;
       break;
     }
@@ -543,8 +544,8 @@ void Optimization::addPostprocess(
 }
 
 std::vector<IndexPtr> chooseLeafIndex(
-    const BaseTable* table,
-    DerivedTablePtr dt) {
+    const BaseTable* table) {
+  assert(!table->schemaTable->indices.empty());
   return {table->schemaTable->indices[0]};
 }
 
@@ -584,7 +585,7 @@ bool isIndexColocated(
   }
   for (auto i = 0; i < input->distribution().partition.size(); ++i) {
     auto nthKey = position(lookupValues, *input->distribution().partition[i]);
-    if (nthKey >= 0) {
+    if (nthKey != kNotFound) {
       if (info.schemaColumn(info.lookupKeys[nthKey]) !=
           info.index->distribution().partition[i]) {
         return false;
@@ -617,7 +618,7 @@ RelationOpPtr repartitionForIndex(
               : c;
         },
         *key);
-    if (nthKey >= 0) {
+    if (nthKey != kNotFound) {
       keyExprs.push_back(lookupValues[nthKey]);
     } else {
       return nullptr;
@@ -715,13 +716,13 @@ void Optimization::joinByIndex(
 
 // Returns the positions in 'keys' for the expressions that determine the
 // partition. empty if the partition is not decided by 'keys'
-std::vector<int32_t> joinKeyPartition(
+std::vector<uint32_t> joinKeyPartition(
     const RelationOpPtr& op,
     const ExprVector& keys) {
-  std::vector<int32_t> positions;
-  for (auto i = 0; i < op->distribution().partition.size(); ++i) {
+  std::vector<uint32_t> positions;
+  for (unsigned i = 0; i < op->distribution().partition.size(); ++i) {
     auto nthKey = position(keys, *op->distribution().partition[i]);
-    if (nthKey < 0) {
+    if (nthKey == kNotFound) {
       return {};
     }
     positions.push_back(nthKey);
@@ -769,12 +770,12 @@ void Optimization::joinByHash(
   buildColumns.intersect(downstream);
   buildColumns.unionColumns(build.keys);
   state.columns.unionSet(buildColumns);
-  auto key = MemoKey{
+  auto memoKey = MemoKey{
       candidate.tables[0], buildColumns, buildTables, candidate.existences};
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto buildPlan = makePlan(
-      key,
+			    memoKey,
       Distribution(plan->distribution().distributionType, 0, copartition),
       empty,
       candidate.existsFanout,
@@ -826,7 +827,7 @@ void Optimization::joinByHash(
     for (auto i = 0; i < probe.keys.size(); ++i) {
       auto key = build.keys[i];
       auto nthKey = position(buildInput->distribution().partition, *key);
-      if (nthKey >= 0) {
+      if (nthKey != kNotFound) {
         if (distCols.size() <= nthKey) {
           distCols.resize(nthKey + 1);
         }
@@ -899,8 +900,7 @@ ColumnVector indexColumns(const PlanObjectSet& downstream, IndexPtr index) {
     if (!object->as<Column>()->schemaColumn()) {
       return;
     }
-    if (position(index->columns(), *object->as<Column>()->schemaColumn()) >=
-        0) {
+    if (position(index->columns(), *object->as<Column>()->schemaColumn()) != kNotFound) {
       result.push_back(object->as<Column>());
     }
   });
@@ -1002,7 +1002,7 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       auto from = firstTables[i];
       if (from->type() == PlanType::kTable) {
         auto table = from->as<BaseTable>();
-        auto indices = chooseLeafIndex(table->as<BaseTable>(), dt);
+        auto indices = chooseLeafIndex(table->as<BaseTable>());
         // Make plan starting with each relevant index of the table.
         auto downstream = state.downstreamColumns();
         for (auto index : indices) {

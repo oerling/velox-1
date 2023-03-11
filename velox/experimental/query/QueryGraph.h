@@ -69,7 +69,7 @@ class Expr : public PlanObject {
   }
 
   /// True if 'this' contains any function from 'set'. See FunctionSet.
-  virtual bool containsFunction(uint64_t set) const {
+  virtual bool containsFunction(uint64_t /*set*/) const {
     return false;
   }
 
@@ -529,10 +529,10 @@ class Aggregate : public Call {
 
 using AggregatePtr = const Aggregate*;
 
-class Aggregation;
+struct Aggregation;
 using AggregationPtr = Aggregation*;
 
-class OrderBy;
+struct OrderBy;
 using OrderByPtr = OrderBy*;
 
 /// Represents a derived table, i.e. a select in a from clause. This is the

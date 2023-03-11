@@ -33,7 +33,7 @@ bool isSubset(const T& subset, const U& superset) {
 
 // Returns how many leading members of 'ordered' are covered by 'set'
 template <typename Ordered, typename Set>
-int32_t prefixSize(Ordered ordered, Set set) {
+uint32_t prefixSize(Ordered ordered, Set set) {
   for (auto i = 0; i < ordered.size(); ++i) {
     if (std::find(set.begin(), set.end(), ordered[i]) == set.end()) {
       return i;
@@ -66,25 +66,33 @@ void appendToVector(T& destination, U& source) {
   }
 }
 
-/// Returns index of 'expr' in collection 'exprs'. -1 if not found.
+constexpr uint32_t kNotFound = ~0U;
+
+/// Returns index of 'expr' in collection 'exprs'. kNotFound if not found.
+/// Compares with equivalence classes, so that equal columns are
+/// interchangeable.
 template <typename V>
-int32_t position(const V& exprs, const Expr& expr) {
+uint32_t position(const V& exprs, const Expr& expr) {
   for (auto i = 0; i < exprs.size(); ++i) {
     if (exprs[i]->sameOrEqual(expr)) {
       return i;
     }
   }
-  return -1;
+  return kNotFound;
 }
 
+/// Returns index of 'expr' in collection 'exprs'. kNotFound if not found.
+/// Compares with equivalence classes, so that equal columns are
+/// interchangeable. Applies 'getter' to each element of 'exprs' before
+/// comparison.
 template <typename V, typename Getter>
-int32_t position(const V& exprs, Getter getter, const Expr& expr) {
+uint32_t position(const V& exprs, Getter getter, const Expr& expr) {
   for (auto i = 0; i < exprs.size(); ++i) {
     if (getter(exprs[i])->sameOrEqual(expr)) {
       return i;
     }
   }
-  return -1;
+  return kNotFound;
 }
 
 /// Prints a number with precision' digits followed by a scale letter (n, u, m,
