@@ -674,7 +674,7 @@ void Optimization::joinByIndex(
     if (!newPartition) {
       continue;
     }
-    state.placed.add(candidate.tables[0]);
+    state.placed.add(candidate.tables.at(0));
     auto joinType = right.leftJoinType();
     auto fanout = fanoutJoinTypeLimit(
         joinType, info.scanCardinality * rightTable->filterSelectivity);
