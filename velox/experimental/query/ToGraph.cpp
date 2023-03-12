@@ -156,7 +156,7 @@ ExprVector Optimization::translateColumns(
   return result;
 }
 
-AggregationPtr Optimization::translateAggregation(
+AggregationPtr FOLLY_NULLABLE Optimization::translateAggregation(
     const core::AggregationNode& source) {
   using velox::core::AggregationNode;
 
@@ -193,7 +193,7 @@ AggregationPtr Optimization::translateAggregation(
   return nullptr;
 }
 
-OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
+  OrderByPtr FOLLY_NULLABLE Optimization::translateOrderBy(const core::OrderByNode& /*order*/) {
   return nullptr;
 }
 

@@ -60,7 +60,7 @@ const char* QueryGraphContext::toName(std::string_view str) {
   if (it != names_.end()) {
     return it->data();
   }
-  char* data = allocator_.allocate(str.size() + 1)->begin();
+  char* data = allocator_.allocate(str.size() + 1)->begin(); // NOLINT
   memcpy(data, str.data(), str.size());
   data[str.size()] = 0;
   names_.insert(std::string_view(data, str.size()));

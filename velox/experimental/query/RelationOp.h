@@ -25,8 +25,6 @@
 
 namespace facebook::verax {
 
-struct Plan;
-using PlanPtr = Plan*;
 struct PlanState;
 
 // Represents the cost and cardinality of a RelationOp or Plan. A Cost has a

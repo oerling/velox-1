@@ -88,7 +88,7 @@ PlanObjectSet TableScan::availableColumns(
   return result;
 }
 
-std::string Cost::toString(bool detail, bool isUnit) const {
+  std::string Cost::toString(bool /*detail*/, bool isUnit) const {
   std::stringstream out;
   float multiplier = isUnit ? 1 : inputCardinality;
   out << succinctNumber(fanout * multiplier) << " rows "

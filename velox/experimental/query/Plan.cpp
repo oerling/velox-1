@@ -656,7 +656,7 @@ void Optimization::joinByIndex(
     // Index applies to single base tables.
     return;
   }
-  auto rightTable = candidate.tables[0]->as<BaseTable>();
+  auto rightTable = candidate.tables.at(0)->as<BaseTable>();
   auto left = candidate.sideOf(rightTable, true);
   auto right = candidate.sideOf(rightTable);
   auto& keys = right.keys;
