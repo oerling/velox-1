@@ -52,8 +52,7 @@ struct PlanObjectPtrComparer {
 struct Plan;
 using PlanPtr = Plan*;
 
-
-  /// Context for making a query plan. Owns all memory associated to
+/// Context for making a query plan. Owns all memory associated to
 /// planning, except for the input PlanNode tree. The result of
 /// planning is also owned by 'this', so the planning result must be
 /// copied into a non-owned target specific representation before
