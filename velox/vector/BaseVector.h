@@ -292,11 +292,6 @@ class BaseVector {
    */
   virtual std::unique_ptr<SimpleVector<uint64_t>> hashAll() const = 0;
 
-  // Returns true if all values in the specified rows are the same.
-  virtual bool isConstant(const SelectivityVector& rows) const {
-    return false;
-  }
-
   /// Returns true if this vector is encoded as flat (FlatVector).
   bool isFlatEncoding() const {
     return encoding_ == VectorEncoding::Simple::FLAT;
@@ -439,6 +434,7 @@ class BaseVector {
       std::shared_ptr<BaseVector>&& source);
 
   static std::shared_ptr<BaseVector> createConstant(
+      const TypePtr& type,
       variant value,
       vector_size_t size,
       velox::memory::MemoryPool* pool);

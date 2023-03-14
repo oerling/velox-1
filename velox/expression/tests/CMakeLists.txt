@@ -16,7 +16,7 @@ add_library(velox_expression_test_utility ArgumentTypeFuzzer.cpp
                                           FuzzerToolkit.cpp)
 
 target_link_libraries(velox_expression_test_utility velox_type
-                      velox_expression_functions)
+                      velox_expression_functions gtest)
 
 add_executable(
   velox_expression_test
@@ -24,6 +24,7 @@ add_executable(
   CustomTypeTest.cpp
   ExprEncodingsTest.cpp
   ExprTest.cpp
+  ExprToSubfieldFilterTest.cpp
   ExprCompilerTest.cpp
   EvalCtxTest.cpp
   ExprStatsTest.cpp
@@ -79,7 +80,7 @@ target_link_libraries(
   gtest_main
   gmock
   ${FOLLY_WITH_DEPENDENCIES}
-  ${gflags_LIBRARIES}
+  gflags::gflags
   glog::glog
   ${FMT})
 
@@ -89,7 +90,7 @@ target_link_libraries(
   velox_expression_verifier velox_vector_test_lib velox_vector_fuzzer
   velox_type velox_expression_test_utility)
 
-add_library(velox_expression_fuzzer ExpressionFuzzer.cpp)
+add_library(velox_expression_fuzzer ExpressionFuzzer.cpp FuzzerRunner.cpp)
 
 target_link_libraries(
   velox_expression_fuzzer

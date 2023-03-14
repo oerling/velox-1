@@ -184,10 +184,8 @@ TEST_F(MapTest, fewerValuesThanKeysInLast) {
       evaluate<MapVector>("map(c0, c1)", makeRowVector({keys, values})),
       "(10 vs. 1) Key and value arrays must be the same length");
 
-  MapVectorPtr map;
-  ASSERT_NO_THROW(
-      map = evaluate<MapVector>(
-          "try(map(c0, c1))", makeRowVector({keys, values})));
+  auto map =
+      evaluate<MapVector>("try(map(c0, c1))", makeRowVector({keys, values}));
   EXPECT_EQ(10, map->sizeAt(0));
   EXPECT_EQ(0, map->sizeAt(1));
 

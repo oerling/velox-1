@@ -70,20 +70,19 @@ class InputTypedExpr : public ITypedExpr {
 
 class ConstantTypedExpr : public ITypedExpr {
  public:
-  // Creates constant expression of scalar type.
-  explicit ConstantTypedExpr(variant value)
-      : ITypedExpr{value.inferType()}, value_{std::move(value)} {}
-
-  // Creates constant expression for cases when type cannot be properly inferred
-  // from the variant, like variant::null(). For complex types, only
-  // variant::null() is supported.
+  // Creates constant expression. For complex types, only
+  // variant::null() value is supported.
   ConstantTypedExpr(std::shared_ptr<const Type> type, variant value)
       : ITypedExpr{std::move(type)}, value_{std::move(value)} {}
 
   // Creates constant expression of scalar or complex type. The value comes from
   // index zero.
   explicit ConstantTypedExpr(const VectorPtr& value)
-      : ITypedExpr{value->type()}, valueVector_{value} {}
+      : ITypedExpr{value->type()},
+        valueVector_{
+            value->isConstantEncoding()
+                ? value
+                : BaseVector::wrapInConstant(1, 0, value)} {}
 
   std::string toString() const override {
     if (hasValueVector()) {
@@ -109,10 +108,20 @@ class ConstantTypedExpr : public ITypedExpr {
     return value_;
   }
 
-  // Returns value vector if hasValueVector() is true. Vector can be of scalar
-  // or complex type. The value is at index zero.
+  /// Return constant value vector if hasValueVector() is true. Returns null
+  /// otherwise.
   const VectorPtr& valueVector() const {
     return valueVector_;
+  }
+
+  VectorPtr toConstantVector(memory::MemoryPool* pool) const {
+    if (valueVector_) {
+      return valueVector_;
+    }
+    if (value_.isNull()) {
+      return BaseVector::createNullConstant(type(), 1, pool);
+    }
+    return BaseVector::createConstant(type(), value_, 1, pool);
   }
 
   const std::vector<TypedExprPtr>& inputs() const {
@@ -130,7 +139,7 @@ class ConstantTypedExpr : public ITypedExpr {
     }
   }
 
-  bool operator==(const ITypedExpr& other) const final {
+  bool equals(const ITypedExpr& other) const {
     const auto* casted = dynamic_cast<const ConstantTypedExpr*>(&other);
     if (!casted) {
       return false;
@@ -149,6 +158,14 @@ class ConstantTypedExpr : public ITypedExpr {
     }
 
     return this->value_ == casted->value_;
+  }
+
+  bool operator==(const ITypedExpr& other) const final {
+    return this->equals(other);
+  }
+
+  bool operator==(const ConstantTypedExpr& other) const {
+    return this->equals(other);
   }
 
   VELOX_DEFINE_CLASS_NAME(ConstantTypedExpr)
