@@ -346,13 +346,14 @@ void processNullsAndErrorsFromArgument(
     EvalCtx::ErrorVectorPtr& argumentErrors,
     EvalCtx& context) {
   if (!defaultNulls) {
-    // If the function does not propagate nulls, errors simply deselect rows for next arguments and the function.
+    // If the function does not propagate nulls, errors simply deselect rows for
+    // next arguments and the function.
     if (context.errors()) {
       context.deselectErrors(getRemainingRows());
       if (argumentErrors) {
-	addErrors(*context.errors(), *argumentErrors);
+        addErrors(*context.errors(), *argumentErrors);
       } else {
-	context.swapErrors(argumentErrors);
+        context.swapErrors(argumentErrors);
       }
     }
     return;
@@ -446,7 +447,7 @@ void Expr::evalSimplifiedImpl(
       }
       processNullsAndErrorsFromArgument(
           flatNulls,
-	  defaultNulls,
+          defaultNulls,
           [&]() -> SelectivityVector& { return remainingRows; },
           argumentErrors,
           context);
@@ -457,8 +458,8 @@ void Expr::evalSimplifiedImpl(
           releaseInputValues(context);
           result = BaseVector::createNullConstant(
               type(), rows.size(), context.pool());
-	  mergeOrThrowArgumentErrors(errors, argumentErrors, context);
-	  return;
+          mergeOrThrowArgumentErrors(errors, argumentErrors, context);
+          return;
         }
       }
     }
@@ -1528,19 +1529,17 @@ void Expr::evalAllImpl(
 
       processNullsAndErrorsFromArgument(
           flatNulls,
-	  defaultNulls,
-          [&]() -> SelectivityVector& {
-            return remainingRows.mutableRows();
-          },
+          defaultNulls,
+          [&]() -> SelectivityVector& { return remainingRows.mutableRows(); },
           argumentErrors,
           context);
 
       tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
       if (!remainingRows.rows().hasSelections()) {
-	releaseInputValues(context);
-	setAllNulls(rows, context, result);
-	mergeOrThrowArgumentErrors(errors, argumentErrors, context);
-	return;
+        releaseInputValues(context);
+        setAllNulls(rows, context, result);
+        mergeOrThrowArgumentErrors(errors, argumentErrors, context);
+        return;
       }
     }
   }
