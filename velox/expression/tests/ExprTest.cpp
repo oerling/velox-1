@@ -3174,13 +3174,9 @@ TEST_F(ExprTest, maskErrorByNull) {
       evaluate("(c0 / c1) + if (c2 is null, 10, CAST(null as BIGINT))", data);
 
   assertEqualVectors(resultAB, resultBA);
-  functions::test::FunctionBaseTest::assertUserError(
-      [&]() { evaluate("(c0 / c1) + 10", data); }, "division by zero");
-  functions::test::FunctionBaseTest::assertUserError(
-      [&]() {
-        evaluate(
-            "(c0 / c1) + (c0 + if(c1 = 0, 10, CAST(null as BIGINT)))", data);
-      },
+  VELOX_ASSERT_THROW(evaluate("(c0 / c1) + 10", data), "division by zero");
+  VELOX_ASSERT_THROW(
+      evaluate("(c0 / c1) + (c0 + if(c1 = 0, 10, CAST(null as BIGINT)))", data),
       "division by zero");
 
   // Make non null flat input to invoke flat no null path for a subtree.
@@ -3523,4 +3519,23 @@ TEST_F(ExprTest, smallerWrappedBaseVector) {
            std::nullopt,
            std::nullopt}),
       result[0]);
+}
+
+TEST_F(ExprTest, peelingWithSmallerConstantInput) {
+  // This test ensures that when a dictionary-encoded vector is peeled together
+  // with a constant vector whose size is smaller than the corresponding
+  // selected rows of the dictionary base vector, the subsequent evaluation on
+  // the constant vector doesn't access values beyond its size.
+  auto data = makeRowVector({makeFlatVector<int64_t>({1, 2})});
+  auto c0 = makeRowVector(
+      {makeFlatVector<int64_t>({1, 3, 5, 7, 9})}, nullEvery(1, 2));
+  auto indices = makeIndices({2, 3, 4});
+  auto d0 = wrapInDictionary(indices, c0);
+  auto c1 = BaseVector::wrapInConstant(3, 1, data);
+
+  // After evaluating d0, Coalesce copies values from c1 to an existing result
+  // vector. c1 should be large enough so that this copy step does not access
+  // values out of bound.
+  auto result = evaluate("coalesce(c0, c1)", makeRowVector({d0, c1}));
+  assertEqualVectors(c1, result);
 }
